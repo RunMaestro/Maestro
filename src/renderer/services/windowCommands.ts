@@ -11,6 +11,7 @@
 
 import type { WindowContextValue, WindowMoveResult } from '../contexts/WindowContext';
 import { useSessionStore } from '../stores/sessionStore';
+import { getLiveSessionsSnapshot } from '../hooks/session/useLiveSessions';
 import {
 	NEW_WINDOW_TARGET,
 	type WindowCommandRequest,
@@ -62,7 +63,8 @@ function describeDestinations(targets: WindowMoveTarget[]): string {
 
 /** Every open window with the top-level agents it surfaces. */
 export function summarizeWindows(windows: WindowContextValue['windows']): WindowSummary[] {
-	const sessions = useSessionStore.getState().sessions.filter((s) => !s.parentSessionId);
+	// Live agents only: a dormant Pianola (flag off) is not listed in any window.
+	const sessions = getLiveSessionsSnapshot().filter((s) => !s.parentSessionId);
 	return buildWindowMoveTargets(windows, '').map((target) => ({
 		windowId: target.windowId,
 		windowNumber: target.windowNumber,
@@ -97,7 +99,8 @@ export async function runRemoteWindowCommand(
 
 	const targetId = request.targetId ?? '';
 	const to = request.to ?? '';
-	const { sessions, groups } = useSessionStore.getState();
+	const { groups } = useSessionStore.getState();
+	const sessions = getLiveSessionsSnapshot();
 	if (request.action === 'move-agent' && !sessions.some((s) => s.id === targetId)) {
 		return { success: false, error: `Agent not found: ${targetId}` };
 	}

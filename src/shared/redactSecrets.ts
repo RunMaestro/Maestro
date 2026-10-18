@@ -32,6 +32,7 @@ export type SecretKind =
 	| 'aws_access_key'
 	| 'bearer'
 	| 'credit_card'
+	| 'one_time_code'
 	| 'secret';
 
 export const SECRET_PLACEHOLDERS: Readonly<Record<SecretKind, string>> = {
@@ -41,6 +42,7 @@ export const SECRET_PLACEHOLDERS: Readonly<Record<SecretKind, string>> = {
 	aws_access_key: '[REDACTED_AWS_ACCESS_KEY]',
 	bearer: '[REDACTED_BEARER_TOKEN]',
 	credit_card: '[REDACTED_CREDIT_CARD]',
+	one_time_code: '[REDACTED_CODE]',
 	secret: '[REDACTED_SECRET]',
 };
 
@@ -59,6 +61,13 @@ export interface RedactSecretsOptions {
 	 * which stores prompts rather than screens, opts in.
 	 */
 	hexBlobs?: boolean;
+	/**
+	 * Also redact one-time codes in prose ("Your code is 123456", "123456 is
+	 * your login code", "G-123456"). Off by default: a 4-8 digit number near
+	 * the word "code" is common in ordinary text. Computer History opts in,
+	 * because a screen full of SMS and email is exactly where they appear.
+	 */
+	oneTimeCodes?: boolean;
 }
 
 export interface RedactSecretsResult {
@@ -162,6 +171,50 @@ const RULES: readonly Rule[] = [
 
 const HEX_BLOB_RULE: Rule = { kind: 'secret', pattern: /\b[A-Fa-f0-9]{40,}\b/g };
 
+/** "your status code", "your zip code": codes that are data, not credentials. */
+const NOT_AUTH_CODE_WORD =
+	'(?!(?:status|exit|error|zip|postal|area|country|promo|coupon|discount|source|response|return|tracking|reference|qr|bar)\\b)';
+const CODE_FILLER = `(?:\\s{1,3}${NOT_AUTH_CODE_WORD}[A-Za-z]{1,20}){0,2}`;
+const CODE_KEYWORD = `(?:(?:verification|security|login|sign[- ]?in|confirmation|access|auth(?:entication)?|one[- ]time|2fa|mfa|device|user|activation|pairing|your${CODE_FILLER})\\s{1,3}code|(?:one[- ]time|temporary|verification|security|login)\\s{1,3}(?:password|pin)|passcode|otp)`;
+
+/** A device-login code ("WDJB-MJHT"): upper case, checked case-sensitively. */
+const DEVICE_CODE = /[A-Z0-9]{3,6}-[A-Z0-9]{3,6}$/;
+
+/** Every gap is bounded, so each rule is linear on any input. */
+const ONE_TIME_CODE_RULES: readonly Rule[] = [
+	// "verification code: 123-456", "Your Uber code is 1234", "passcode 1234".
+	// A bare "code" needs a qualifier, so "exit code 1234" and "status code
+	// 4040" in a terminal or log stay readable.
+	{
+		kind: 'one_time_code',
+		pattern: new RegExp(
+			`\\b(${CODE_KEYWORD}\\b[^\\d\\n]{0,20}?)\\b(\\d{3}[- ]?\\d{3}|\\d{4,8})\\b`,
+			'gi'
+		),
+		keepGroup: 1,
+	},
+	// "Your device code is WDJB-MJHT".
+	{
+		kind: 'one_time_code',
+		pattern: new RegExp(
+			`\\b(${CODE_KEYWORD}\\b[^\\n]{0,20}?)\\b([A-Z0-9]{3,6}-[A-Z0-9]{3,6})\\b`,
+			'gi'
+		),
+		keepGroup: 1,
+		accept: (match) => DEVICE_CODE.test(match),
+	},
+	// "123456 is your Instagram code".
+	{
+		kind: 'one_time_code',
+		pattern: new RegExp(
+			`\\b\\d{4,8}(?=\\s{1,3}is\\s{1,3}your${CODE_FILLER}\\s{1,3}(?:code|passcode|otp|pin)\\b)`,
+			'gi'
+		),
+	},
+	// Google's "G-123456".
+	{ kind: 'one_time_code', pattern: /\bG-\d{6}\b/g },
+];
+
 // ReDoS audit (every rule is exercised on 64 KB adversarial inputs in
 // redactSecrets.test.ts): the remaining unbounded quantifiers either start at
 // a fixed literal and succeed by consuming their run (`sk-`, `ghp_`, `xox*-`,
@@ -176,7 +229,11 @@ export function redactSecrets(
 	options: RedactSecretsOptions = {}
 ): RedactSecretsResult {
 	if (!text) return { text, redacted: false };
-	const rules = options.hexBlobs ? [...RULES, HEX_BLOB_RULE] : RULES;
+	const rules = [
+		...RULES,
+		...(options.hexBlobs ? [HEX_BLOB_RULE] : []),
+		...(options.oneTimeCodes ? ONE_TIME_CODE_RULES : []),
+	];
 	let out = text;
 	let redacted = false;
 	for (const rule of rules) {

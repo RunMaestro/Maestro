@@ -111,6 +111,8 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		// Tab naming
 		automaticTabNamingEnabled: true,
 		setAutomaticTabNamingEnabled: mockSetAutomaticTabNamingEnabled,
+		shortenLongTabNames: false,
+		setShortenLongTabNames: vi.fn(),
 		// Power management
 		preventSleepEnabled: false,
 		setPreventSleepEnabled: mockSetPreventSleepEnabled,

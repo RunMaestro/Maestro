@@ -6,16 +6,27 @@ import { asThinkingMode } from '../../../shared/types';
 import { getSessionIdsBusyWithCli } from '../../../shared/cli-activity';
 import { isAgentBusy, isAiTabProcessActive } from '../../utils/agent-busy';
 import { isImageRef, resolveToDataUrlSync } from '../../storage/session-image-store';
+import { findStoredAiTab } from '../../stores/deferred-session-content';
+import { filterLiveAgents } from '../../../shared/agentVisibility';
 
 export function registerSessionCallbacks(
 	server: WebServer,
-	deps: Pick<WebServerFactoryDependencies, 'sessionsStore' | 'groupsStore' | 'getProcessManager'>
+	deps: Pick<WebServerFactoryDependencies, 'sessionsStore' | 'groupsStore' | 'getProcessManager'> &
+		Partial<Pick<WebServerFactoryDependencies, 'settingsStore'>>
 ): void {
-	const { sessionsStore, groupsStore, getProcessManager } = deps;
+	const { sessionsStore, groupsStore, getProcessManager, settingsStore } = deps;
+
+	// Live agents only: a dormant Pianola (flag off) is neither listed nor
+	// targetable from the web client.
+	const readLiveSessions = (): StoredSession[] =>
+		filterLiveAgents(
+			sessionsStore.get<StoredSession[]>('sessions', []),
+			settingsStore?.get('encoreFeatures')
+		);
 
 	// Set up callback for web server to fetch sessions list
 	server.setGetSessionsCallback(() => {
-		const sessions = sessionsStore.get<StoredSession[]>('sessions', []);
+		const sessions = readLiveSessions();
 		const groups = groupsStore.get<Group[]>('groups', []);
 		const cliBusySessionIds = getSessionIdsBusyWithCli();
 		const processManager = getProcessManager();
@@ -110,7 +121,7 @@ export function registerSessionCallbacks(
 	// session store (same source the renderer pushes to via `sessions:save`),
 	// then reconciles it with live managed-process and CLI-activity evidence.
 	server.setListDesktopSessionsCallback(() => {
-		const sessions = sessionsStore.get<StoredSession[]>('sessions', []);
+		const sessions = readLiveSessions();
 		const processManager = getProcessManager();
 		// Resolved once: this used to be a per-agent call that re-read and
 		// re-parsed the CLI activity file on every iteration.
@@ -172,10 +183,11 @@ export function registerSessionCallbacks(
 	// discriminate. `stdout` is treated as `assistant` because legacy /
 	// non-AI agent flows store assistant replies under that source.
 	server.setGetSessionHistoryCallback((tabId, options) => {
-		const sessions = sessionsStore.get<StoredSession[]>('sessions', []);
+		const sessions = readLiveSessions();
 		for (const s of sessions) {
-			const aiTabs = (s.aiTabs as Array<Record<string, any>> | undefined) ?? [];
-			const tab = aiTabs.find((t) => t && t.id === tabId);
+			// A snoozed tab is out of `aiTabs` but still exists: answering
+			// TAB_NOT_FOUND for it would make a Pianola watcher retire the target.
+			const tab = findStoredAiTab(s, tabId) as Record<string, any> | undefined;
 			if (!tab) continue;
 			const rawLogs = (tab.logs as Array<Record<string, any>> | undefined) ?? [];
 			let logs = rawLogs;
@@ -241,7 +253,7 @@ export function registerSessionCallbacks(
 	// Set up callback for web server to fetch single session details
 	// Optional tabId param allows fetching logs for a specific tab (avoids race conditions)
 	server.setGetSessionDetailCallback((sessionId: string, tabId?: string) => {
-		const sessions = sessionsStore.get<StoredSession[]>('sessions', []);
+		const sessions = readLiveSessions();
 		const session = sessions.find((s) => s.id === sessionId);
 		if (!session) return null;
 

@@ -19,6 +19,7 @@ import { ShortcutKeys, type ShortcutChords } from '../ui/ShortcutHint';
 import { formatCount } from '../../../shared/formatters';
 import { IDEAL_END_STATE_MAX_LENGTH } from '../../../shared/directorNotesEndState';
 import { HeaderActionButton } from '../ui/HeaderActionButton';
+import { useSettingsStore } from '../../stores/settingsStore';
 
 export interface TabFocusHandle {
 	focus: () => void;
@@ -43,6 +44,7 @@ export const OverviewTab = forwardRef<TabFocusHandle, OverviewTabProps>(function
 	ref
 ) {
 	const containerRef = useRef<HTMLDivElement>(null);
+	const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures?.maestroCue === true);
 
 	useImperativeHandle(ref, () => ({
 		focus: () => containerRef.current?.focus(),
@@ -345,11 +347,12 @@ export const OverviewTab = forwardRef<TabFocusHandle, OverviewTabProps>(function
 							<code className={codeClass} style={{ backgroundColor: theme.colors.bgActivity }}>
 								cron
 							</code>
-							,{' '}
+							{maestroCueEnabled ? ', ' : ' or '}
 							<code className={codeClass} style={{ backgroundColor: theme.colors.bgActivity }}>
 								launchd
 							</code>
-							, or Maestro Cue to wake up to a fresh weekly report every Monday.{' '}
+							{maestroCueEnabled && ', or Maestro Cue'} to wake up to a fresh weekly report every
+							Monday.{' '}
 							<code className={codeClass} style={{ backgroundColor: theme.colors.bgActivity }}>
 								history
 							</code>{' '}

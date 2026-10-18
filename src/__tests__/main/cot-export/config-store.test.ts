@@ -48,18 +48,24 @@ const electronMock = vi.hoisted(() => {
 
 const sessionsMock = vi.hoisted(() => ({
 	sessions: [] as Array<Record<string, unknown>>,
+	/** The persisted Encore flags, read for which agents are live. */
+	encoreFeatures: {} as Record<string, boolean>,
 	/** Where the agent list and the settings lie. Null while the stores are not up. */
 	syncPath: null as string | null,
 }));
 
 vi.mock('electron', () => ({ safeStorage: electronMock.safeStorage, app: electronMock.app }));
-vi.mock('../../../main/stores/getters', () => ({
-	getSessionsStore: () => ({ get: () => sessionsMock.sessions }),
-	getSyncPath: (): string => {
-		if (sessionsMock.syncPath === null) throw new Error('Stores not initialized.');
-		return sessionsMock.syncPath;
-	},
-}));
+vi.mock('../../../main/stores/getters', async () => {
+	const { filterLiveAgents } = await import('../../../shared/agentVisibility');
+	return {
+		getSessionsStore: () => ({ get: () => sessionsMock.sessions }),
+		getLiveSessions: () => filterLiveAgents(sessionsMock.sessions, sessionsMock.encoreFeatures),
+		getSyncPath: (): string => {
+			if (sessionsMock.syncPath === null) throw new Error('Stores not initialized.');
+			return sessionsMock.syncPath;
+		},
+	};
+});
 vi.mock('../../../main/utils/logger', () => ({
 	logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
@@ -155,6 +161,7 @@ describe('cot-export/config-store', () => {
 		stores = [];
 		electronMock.state.userData = dataDir;
 		sessionsMock.sessions = [];
+		sessionsMock.encoreFeatures = {};
 		sessionsMock.syncPath = null;
 		__resetCotConfigStoreForTests();
 	});
@@ -1337,6 +1344,24 @@ describe('cot-export/config-store', () => {
 			expect(store.setAgentConfig(AGENT, { enabled: true, folder: logFolder('logs') }).ok).toBe(
 				true
 			);
+		});
+
+		it('ignores the folders of a dormant Pianola agent while its Encore flag is off', () => {
+			const pianolaCwd = path.join(root, 'pianola-cwd');
+			fs.mkdirSync(pianolaCwd);
+			sessionsMock.sessions = [
+				{ id: 'pianola', isPianola: true, cwd: pianolaCwd, projectRoot: pianolaCwd },
+			];
+			const store = getCotConfigStore();
+			const logs = path.join(pianolaCwd, 'logs');
+
+			// Flag off: the agent is dormant and claims nothing.
+			expect(store.setAgentConfig(AGENT, { enabled: true, folder: logs }).ok).toBe(true);
+
+			// Flag on: the same agent is live and its workspace is refused.
+			sessionsMock.encoreFeatures = { pianola: true };
+			store.setAgentConfig(AGENT, { enabled: false, folder: logs });
+			expect(store.setAgentConfig(AGENT, { enabled: true, folder: logs }).ok).toBe(false);
 		});
 
 		it('refuses a folder inside a directory an agent was granted, and inside where its worktrees go', () => {

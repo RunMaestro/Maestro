@@ -1357,6 +1357,20 @@ describe('director-notes IPC handlers', () => {
 			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([createMockEntry()]);
 		});
 
+		it("refuses before resolving a provider while Director's Notes is off", async () => {
+			mockGetSettingsStore.mockReturnValueOnce({
+				get: vi.fn((key: string) =>
+					key === 'encoreFeatures' ? { directorNotes: false } : undefined
+				),
+			});
+
+			const handler = handlers.get('director-notes:generateSynopsis');
+			await expect(
+				handler!({} as any, { lookbackDays: 7, provider: 'claude-code' })
+			).rejects.toThrow('DirectorNotesDisabled');
+			expect(mockAgentDetector.getAgent).not.toHaveBeenCalled();
+		});
+
 		it('should return error when agent is not available', async () => {
 			mockAgentDetector.getAgent.mockResolvedValue({ available: false });
 

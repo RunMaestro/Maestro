@@ -42,6 +42,13 @@ export const CONNECTIVITY_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: false,
 		category: 'notifications',
 	},
+	toastDurationBeforeOff: {
+		description:
+			'Toast duration in effect before toasts were last switched off from the bell popover or command palette; restored when they are switched back on.',
+		type: 'number',
+		default: 20,
+		category: 'internal',
+	},
 	notificationCenterLarge: {
 		description: 'Use a wider, taller inbox while keeping it within the window.',
 		type: 'boolean',

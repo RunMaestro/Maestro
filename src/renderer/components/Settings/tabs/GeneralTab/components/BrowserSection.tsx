@@ -41,7 +41,7 @@ export function BrowserSection({
 				icon={ExternalLink}
 				sectionLabel="Default Browser"
 				title="Use system browser for links"
-				description={`Controls the default browser for clicking links. Use ${formatMetaKeyName()}+Click on URLs to get a context menu and choose the specific browser.`}
+				description={`Controls the default browser for clicking links. ${formatMetaKeyName()}+Click a link to use the other browser for that one link, or right-click it to choose. A link written as maestro+https://... or system+https://... always opens in that browser.`}
 				checked={useSystemBrowser}
 				onChange={setUseSystemBrowser}
 				theme={theme}

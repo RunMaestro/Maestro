@@ -1,8 +1,8 @@
 /**
  * Tests for the Throughput Gauge's gear popover: the gear toggles it, every
- * segmented choice writes the matching settings patch (and persists it), Reset
- * peak reaches the store, and Escape or an outside click closes the popover
- * without hiding the gauge.
+ * segmented choice writes the matching settings patch (and persists it) and
+ * closes the popover, Reset peak reaches the store and closes it, and Escape or
+ * an outside click closes the popover without hiding the gauge.
  */
 import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -57,7 +57,7 @@ describe('ThroughputGaugeSettingsPopover', () => {
 		['style', 'sparkline', { style: 'sparkline' }],
 		['windowMs', '5000', { windowMs: 5000 }],
 		['windowMs', '60000', { windowMs: 60000 }],
-	])('choosing %s = %s writes that patch', (field, value, patch) => {
+	])('choosing %s = %s writes that patch and closes the popover', (field, value, patch) => {
 		openPopover();
 
 		fireEvent.click(screen.getByTestId(`throughput-gauge-setting-${field}-${value}`));
@@ -68,6 +68,8 @@ describe('ThroughputGaugeSettingsPopover', () => {
 			THROUGHPUT_GAUGE_SETTINGS_KEY,
 			expected
 		);
+		expect(screen.queryByTestId('throughput-gauge-settings')).toBeNull();
+		expect(useThroughputGaugeStore.getState().visible).toBe(true);
 	});
 
 	it('merges onto the current settings rather than the defaults', () => {
@@ -101,7 +103,7 @@ describe('ThroughputGaugeSettingsPopover', () => {
 		}
 	});
 
-	it('Reset peak calls resetPeak', () => {
+	it('Reset peak calls resetPeak and closes the popover', () => {
 		const resetPeak = vi.fn();
 		useThroughputGaugeStore.setState({ resetPeak });
 		openPopover();
@@ -109,6 +111,7 @@ describe('ThroughputGaugeSettingsPopover', () => {
 		fireEvent.click(screen.getByTestId('throughput-gauge-reset-peak'));
 
 		expect(resetPeak).toHaveBeenCalledTimes(1);
+		expect(screen.queryByTestId('throughput-gauge-settings')).toBeNull();
 	});
 
 	it('Escape closes the popover without hiding the gauge', () => {

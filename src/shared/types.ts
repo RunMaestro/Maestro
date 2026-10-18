@@ -292,6 +292,15 @@ export interface SessionInfo {
 	 * can be turned back on without retyping its value.
 	 */
 	customEnvVarsDisabled?: Record<string, string>;
+	/**
+	 * Secret env var NAMES this agent needs but whose values are never stored:
+	 * written by bundle import from the bundle's `env.required`. The CLI and
+	 * Cue resolve each one at launch from `$CREDENTIALS_DIRECTORY/<NAME>`,
+	 * `/run/secrets/<NAME>` or the environment (`src/shared/serverSecrets.ts`)
+	 * and hand it to this agent alone. The desktop carries the field unchanged
+	 * and never reads it; bundle export writes it back into `env.required`.
+	 */
+	requiredSecrets?: string[];
 	/** Prefixed to the first message of every new session (not shown in chat). */
 	newSessionMessage?: string;
 	/** Appended to every message sent to the agent (not shown in chat). */
@@ -416,6 +425,19 @@ export interface UsageStats {
 		cacheCreationInputTokens: number;
 		reasoningTokens: number;
 	};
+}
+
+/**
+ * Tokens one internal API call spent that no earlier event of its turn
+ * reported (`process:call-usage`). A live progress signal for tokens per
+ * second, never a usage report: the turn's `UsageStats` still counts the whole
+ * turn, these included. Only claude-code sends it today.
+ */
+export interface CallUsage {
+	inputTokens: number;
+	outputTokens: number;
+	cacheReadInputTokens: number;
+	cacheCreationInputTokens: number;
 }
 
 /**

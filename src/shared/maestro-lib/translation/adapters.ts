@@ -26,7 +26,8 @@ export interface ProjectedNativeRecord {
 export function projectConversation(
 	conversation: PortableConversation,
 	provider: 'claude-code' | 'codex',
-	sessionId: string
+	sessionId: string,
+	destinationVersion: string = TRANSLATION_PROVIDER_VERSIONS['claude-code'][0]
 ): ProjectedNativeRecord[] {
 	const projected: ProjectedNativeRecord[] = [];
 	let parentUuid: string | null = null;
@@ -176,7 +177,7 @@ export function projectConversation(
 				cwd: conversation.identity.projectRoot,
 				isSidechain: false,
 				userType: 'external',
-				version: '2.1.296',
+				version: destinationVersion,
 				timestamp: record.timestamp ?? new Date().toISOString(),
 				message: {
 					role: record.role,
@@ -204,18 +205,21 @@ async function stageClaude(
 ): Promise<TranslationTabMapping> {
 	const sessionId = generateUUID();
 	const file = path.join(
-		context.destination.accountRoot,
-		'projects',
+		context.destination.nativeSessionRoot ?? path.join(context.destination.accountRoot, 'projects'),
 		encodeClaudeProjectPath(context.destination.projectRoot),
 		`${sessionId}.jsonl`
 	);
 	const rows = projectConversation(
 		{
 			...conversation,
-			identity: { ...conversation.identity, projectRoot: context.destination.projectRoot },
+			identity: {
+				...conversation.identity,
+				projectRoot: context.destination.projectRoot,
+			},
 		},
 		'claude-code',
-		sessionId
+		sessionId,
+		context.destination.version
 	);
 	const bytes = rows.map((r) => JSON.stringify(r.item)).join('\n') + '\n';
 	const mapping: TranslationTabMapping = {
@@ -228,9 +232,15 @@ async function stageClaude(
 		),
 	};
 	await context.recordIntent(mapping);
-	await assertTranslationTarget(file, context.destination.accountRoot);
+	await assertTranslationTarget(
+		file,
+		context.destination.nativeSessionRoot ?? context.destination.accountRoot
+	);
 	await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
-	await assertTranslationTarget(file, context.destination.accountRoot);
+	await assertTranslationTarget(
+		file,
+		context.destination.nativeSessionRoot ?? context.destination.accountRoot
+	);
 	// Exclusive new file: a provider or another process can never lose an existing transcript.
 	const handle = await fs.open(file, 'wx', 0o600);
 	try {
@@ -252,6 +262,12 @@ async function stageCodex(
 ): Promise<TranslationTabMapping> {
 	if (!context.codex) throw new Error('Codex native import channel unavailable; no exec fallback');
 	const rows = projectConversation(conversation, 'codex', 'pending');
+	const items = rows.map((row) => {
+		const item = { ...row.item };
+		// Let Codex assign native IDs. Foreign IDs are rejected when the model resumes the thread.
+		delete item.id;
+		return item;
+	});
 	// Intent precedes thread creation. A lost response is an uncertain mutation, never blindly retried.
 	const intent: TranslationTabMapping = {
 		tabId: conversation.tabId,
@@ -282,14 +298,12 @@ async function stageCodex(
 		...intent,
 		destinationSessionId: sessionId,
 		artifacts: [{ path: started.thread.path, sha256: '', created: true, cleanup: 'retain' }],
-		lineage: Object.fromEntries(
-			rows.map((r) => [nativeRecordKey(context.destination, sessionId, r.id), r.origin])
-		),
+		lineage: {},
 	};
 	await context.recordIntent(mapping);
 	await context.codex.request('thread/inject_items', {
 		threadId: sessionId,
-		items: rows.map((r) => r.item),
+		items,
 	});
 	// Read persisted bytes, not a successful RPC response or a flattened UI projection.
 	const bytes = await fs.readFile(started.thread.path);
@@ -299,14 +313,22 @@ async function stageCodex(
 		sessionId,
 		bytes
 	);
-	const ids = new Set(readback.records.map((r) => r.nativeId));
-	if (rows.some((r) => !ids.has(r.id)))
+	const imported = rows.length
+		? readback.records
+				.filter((record) => (record.native as { type?: string }).type === 'response_item')
+				.slice(-rows.length)
+		: [];
+	if (imported.length !== rows.length)
 		throw new Error('Injected Codex records are absent from durable readback');
-	for (const row of rows) {
-		const record = readback.records.find((r) => r.nativeId === row.id)!;
-		const payload = (record.native as { payload?: unknown }).payload;
-		if (canonicalJson(payload) !== canonicalJson(row.item))
+	for (const [index, record] of imported.entries()) {
+		const payload = { ...(record.native as { payload?: Record<string, unknown> }).payload };
+		// Codex adds bookkeeping when persisting messages; the injected payload must otherwise match.
+		delete payload.internal_chat_message_metadata_passthrough;
+		delete payload.id;
+		if (canonicalJson(payload) !== canonicalJson(items[index]))
 			throw new Error('Codex changed an injected item during durable readback');
+		mapping.lineage[nativeRecordKey(context.destination, sessionId, record.nativeId)] =
+			rows[index].origin;
 	}
 	mapping.artifacts[0].sha256 = translationHash(bytes);
 	await context.recordIntent(mapping);

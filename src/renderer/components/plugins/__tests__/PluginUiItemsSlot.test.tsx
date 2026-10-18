@@ -7,6 +7,14 @@ import type {
 	UiItemContribution,
 	UiSurface,
 } from '../../../../shared/plugins/contributions';
+import { useSettingsStore } from '../../../stores/settingsStore';
+
+// Contributions are only read while the plugins Encore Feature is on.
+const encoreDefaults = useSettingsStore.getState().encoreFeatures;
+function setPluginsEnabled(plugins: boolean): void {
+	useSettingsStore.setState({ encoreFeatures: { ...encoreDefaults, plugins } });
+}
+beforeEach(() => setPluginsEnabled(true));
 
 const EMPTY: AggregatedContributions = {
 	themes: [],
@@ -151,12 +159,14 @@ describe('PluginUiItemsSlot', () => {
 		expect(screen.queryByText(`Spoof ${protectedSurface}`)).not.toBeInTheDocument();
 	});
 
-	it('renders no plugin UI while the plugins Encore flag is off', async () => {
-		pluginBridge.contributions.mockRejectedValue(new Error('PluginsDisabled'));
+	it('renders no plugin UI and asks main nothing while the plugins Encore flag is off', async () => {
+		setPluginsEnabled(false);
 
 		const { container } = render(<PluginUiItemsSlot surface="emptyState" />);
 
-		await waitFor(() => expect(pluginBridge.contributions).toHaveBeenCalled());
+		await Promise.resolve();
+		expect(pluginBridge.contributions).not.toHaveBeenCalled();
+		expect(pluginBridge.onChanged).not.toHaveBeenCalled();
 		expect(container.querySelector('[data-plugin-uiitems-slot]')).toBeNull();
 	});
 	it('does not leak an item into a non-matching surface', async () => {

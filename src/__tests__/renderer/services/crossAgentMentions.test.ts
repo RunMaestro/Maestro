@@ -19,6 +19,7 @@ import {
 	dispatchCrossAgentMentions,
 	dispatchCrossAgentMentionsForMessage,
 	previewMentionDispatch,
+	queuedMentionFields,
 	withMentionTurnNotes,
 	NO_MENTION_DISPATCH,
 	type CrossAgentMentionPlan,
@@ -115,6 +116,32 @@ describe('planCrossAgentMentions', () => {
 			routing: 'handoff',
 			suppressLocal: false,
 		});
+	});
+
+	it('lets an explicit routing override the wording, and remembers both', () => {
+		seed([sourceSession(), targetSession('session-backend', 'Backend')]);
+
+		const plan = planCrossAgentMentions(
+			'does this look right to @Backend?',
+			SOURCE_ID,
+			'consult-first'
+		);
+
+		expect(plan).toMatchObject({
+			routing: 'consult-first',
+			inferredRouting: 'parallel',
+			routingSource: 'explicit',
+			// The override decides suppressLocal too: the source agent waits.
+			suppressLocal: true,
+		});
+		// A leading mention can be opened back up to this agent.
+		expect(
+			planCrossAgentMentions('@Backend does this look right?', SOURCE_ID, 'parallel')
+		).toMatchObject({ routing: 'parallel', inferredRouting: 'only', suppressLocal: false });
+		// No override: the wording decides, and says so.
+		expect(
+			planCrossAgentMentions('does this look right to @Backend?', SOURCE_ID, null)
+		).toMatchObject({ routing: 'parallel', routingSource: 'wording' });
 	});
 
 	it('never resolves the mentioning agent itself', () => {
@@ -300,6 +327,22 @@ describe('previewMentionDispatch / withMentionTurnNotes', () => {
 	});
 });
 
+describe('queuedMentionFields', () => {
+	it('stamps the deferred consult, and the routing only when the user picked it', () => {
+		seed([sourceSession(), targetSession('session-backend', 'Backend')]);
+		const message = 'does this look right to @Backend?';
+
+		expect(queuedMentionFields(null)).toEqual({});
+		expect(queuedMentionFields(planCrossAgentMentions(message, SOURCE_ID))).toEqual({
+			crossAgentMention: true,
+		});
+		expect(queuedMentionFields(planCrossAgentMentions(message, SOURCE_ID, 'handoff'))).toEqual({
+			crossAgentMention: true,
+			mentionRouting: 'handoff',
+		});
+	});
+});
+
 describe('dispatchCrossAgentMentionsForMessage', () => {
 	it('re-resolves at dispatch time, so a deleted agent drops out', () => {
 		// The queue drain holds only the raw text. An agent the user deleted while
@@ -311,6 +354,25 @@ describe('dispatchCrossAgentMentionsForMessage', () => {
 		dispatchCrossAgentMentionsForMessage('ask @Backend to review', source, SOURCE_TAB);
 
 		expect(sendCrossAgentRequest).not.toHaveBeenCalled();
+	});
+
+	it("honors a queued item's picked routing over its wording", () => {
+		// "then send the results to" is a hand-off by wording, so without the
+		// override nobody would be consulted at dispatch.
+		const source = sourceSession();
+		seed([source, targetSession('session-backend', 'Backend')]);
+
+		const dispatch = dispatchCrossAgentMentionsForMessage(
+			'fix it, then send the results to @Backend',
+			source,
+			SOURCE_TAB,
+			undefined,
+			'parallel'
+		);
+
+		expect(sendCrossAgentRequest).toHaveBeenCalledTimes(1);
+		expect(dispatch.consultTargets).toHaveLength(1);
+		expect(dispatch.handoffTargets).toEqual([]);
 	});
 
 	it('consults an agent that still resolves', () => {

@@ -25,6 +25,10 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import { DatabaseSync } from 'node:sqlite';
 import { canLoadNodeSqlite, nodeSqliteBetterSqlite3Mock } from '../../helpers/nodeSqlite';
 
 vi.mock('better-sqlite3', () => nodeSqliteBetterSqlite3Mock());
@@ -42,6 +46,7 @@ import {
 	recordCueEvent,
 	updateCueEventStatus,
 	getCueEventsForHistory,
+	getRecentCueEvents,
 } from '../../../main/cue/cue-db';
 import {
 	getCueHistoryBuckets,
@@ -50,6 +55,7 @@ import {
 	getCueHistoryGroups,
 	getCueHistoryGroupRuns,
 } from '../../../main/cue/stats/cue-stats-query';
+import { buildCuePersistedOutput } from '../../../main/cue/cue-text-utils';
 import type { HistoryEntry } from '../../../shared/types';
 
 const AGENT_ID = 'agent-rc';
@@ -905,5 +911,215 @@ describe.skipIf(!canLoadNodeSqlite())('getCueHistoryGroupRuns (real SQLite)', ()
 		});
 
 		expect(getCueHistoryGroupRuns({ sessionId: AGENT_ID, groupKey: 'Nothing' })).toEqual([]);
+	});
+});
+
+/**
+ * The excerpt is derived by `buildCuePersistedOutput()` and then filtered on by
+ * `CUE_EVENT_WORTH_SHOWING_SQL`, so a run is only visible if the two agree that
+ * it said something. These seed the row through the real derivation rather
+ * than a hand-written excerpt, because the failure lives in the hand-off: an
+ * answer the derivation could not summarize was stored as if the run had been
+ * silent, and History dropped it.
+ */
+describe.skipIf(!canLoadNodeSqlite())(
+	'Cue runs whose output is hard to excerpt (real SQLite)',
+	() => {
+		beforeEach(() => {
+			vi.useFakeTimers({ toFake: ['Date'] });
+			vi.setSystemTime(BASE_MS);
+			closeCueDb();
+			initCueDb(undefined, ':memory:');
+		});
+
+		afterEach(() => {
+			closeCueDb();
+			vi.useRealTimers();
+		});
+
+		function seedFromStdout(id: string, stdout: string): void {
+			const { excerpt, fullOutput } = buildCuePersistedOutput({ stdout, stderr: '' });
+			seedRun({
+				id,
+				type: 'webhook.received',
+				subscriptionName: 'Release Lookup',
+				status: 'completed',
+				outputExcerpt: excerpt,
+				fullOutput,
+			});
+		}
+
+		it('shows a run that answered with only a fenced table', () => {
+			// The run seen live on 2026-10-14: a webhook answered with one table
+			// row inside a code fence, and its row landed with a NULL excerpt.
+			seedFromStdout('fenced-table', '```\n| billing-api | 2.7.0 | raza |\n```');
+
+			const [entry] = getCueHistoryEntries({ sessionId: AGENT_ID, sessionName: 'rc' });
+			expect(entry?.id).toBe('fenced-table');
+			expect(entry.summary).toBe('billing-api · 2.7.0 · raza');
+			expect(entry.fullResponse).toBe('```\n| billing-api | 2.7.0 | raza |\n```');
+
+			const groups = getCueHistoryGroups({ sessionId: AGENT_ID, sessionName: 'rc' });
+			expect(groups.map((group) => group.runCount)).toEqual([1]);
+			expect(getCueHistoryBuckets({ sessionId: AGENT_ID })).toEqual([
+				{ timestamp: minuteStart(BASE_MS), count: 1 },
+			]);
+		});
+
+		it('shows a run whose only sentence runs past the excerpt cap', () => {
+			seedFromStdout('run-on', `Checked ${'every service '.repeat(30)}and found no drift`);
+
+			expect(idsOf(getCueHistoryEntries({ sessionId: AGENT_ID }))).toEqual(['run-on']);
+		});
+
+		it('still hides a run that printed only whitespace', () => {
+			seedFromStdout('blank', '\n  \n');
+
+			expect(getCueHistoryEntries({ sessionId: AGENT_ID })).toEqual([]);
+		});
+	}
+);
+
+/**
+ * Rows written before the excerpt fix kept a NULL excerpt beside real output,
+ * and the fix only changes what NEW runs store. `initCueDb()` repairs them.
+ *
+ * These need a database that survives a close and a re-open, so they use a
+ * file rather than `:memory:`. A row seeded with a NULL excerpt beside visible
+ * output stands in for one the old build wrote.
+ */
+describe.skipIf(!canLoadNodeSqlite())('initCueDb excerpt backfill (real SQLite)', () => {
+	const FENCED_TABLE = '```\n| billing-api | 2.7.0 | raza |\n```';
+	let dir: string;
+	let dbPath: string;
+
+	beforeEach(() => {
+		vi.useFakeTimers({ toFake: ['Date'] });
+		vi.setSystemTime(BASE_MS);
+		closeCueDb();
+		dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cue-backfill-'));
+		dbPath = path.join(dir, 'cue.db');
+		initCueDb(undefined, dbPath);
+	});
+
+	afterEach(() => {
+		closeCueDb();
+		vi.useRealTimers();
+		fs.rmSync(dir, { recursive: true, force: true });
+	});
+
+	/** A finished run as the pre-fix build stored it: NULL excerpt, real output. */
+	function seedLegacyRun(
+		id: string,
+		fullOutput: string | null,
+		status: 'completed' | 'failed' = 'completed'
+	): void {
+		seedRun({ id, status, outputExcerpt: null, fullOutput });
+	}
+
+	/** Close and open the database again, which is when the backfill runs. */
+	function reopen(): void {
+		closeCueDb();
+		initCueDb(undefined, dbPath);
+	}
+
+	/** The stored excerpt, read without History's filter so NULL reads as null. */
+	const excerptOf = (id: string): string | null | undefined =>
+		getRecentCueEvents(0).find((event) => event.id === id)?.outputExcerpt;
+
+	it('surfaces a run hidden by the old derivation', () => {
+		seedLegacyRun('fenced-table', FENCED_TABLE);
+		expect(getCueHistoryEntries({ sessionId: AGENT_ID })).toEqual([]);
+
+		reopen();
+
+		const [entry] = getCueHistoryEntries({ sessionId: AGENT_ID, sessionName: 'rc' });
+		expect(entry?.id).toBe('fenced-table');
+		expect(entry.summary).toBe('billing-api · 2.7.0 · raza');
+	});
+
+	it('repairs a run-on answer too', () => {
+		seedLegacyRun('run-on', `Checked ${'every service '.repeat(30)}and found no drift`);
+
+		reopen();
+
+		expect(idsOf(getCueHistoryEntries({ sessionId: AGENT_ID }))).toEqual(['run-on']);
+	});
+
+	it('keeps NULL for runs that printed nothing visible', () => {
+		seedLegacyRun('blank', '\n  \n');
+		seedLegacyRun('silent', null);
+
+		reopen();
+
+		expect(getCueHistoryEntries({ sessionId: AGENT_ID })).toEqual([]);
+	});
+
+	it('gives a failed run its output as the summary instead of the trigger label', () => {
+		// Already visible (it failed), but its row read as the bare trigger
+		// label. A run failing that way today stores the flattened table.
+		seedLegacyRun('failed-table', FENCED_TABLE, 'failed');
+
+		reopen();
+
+		expect(excerptOf('failed-table')).toBe('billing-api · 2.7.0 · raza');
+	});
+
+	it('leaves an excerpt that was already stored alone', () => {
+		seedRun({
+			id: 'chatty',
+			status: 'completed',
+			outputExcerpt: 'Synced 4 notes.',
+			fullOutput: `Synced 4 notes.\n\n${FENCED_TABLE}`,
+		});
+
+		reopen();
+
+		expect(excerptOf('chatty')).toBe('Synced 4 notes.');
+	});
+
+	it('moves the History fingerprint so a cached activity graph is rebuilt', () => {
+		seedLegacyRun('fenced-table', FENCED_TABLE);
+		const before = getCueHistoryFingerprint(AGENT_ID);
+
+		reopen();
+
+		expect(getCueHistoryFingerprint(AGENT_ID)).not.toBe(before);
+	});
+
+	it('runs on every launch and changes nothing once there is nothing to repair', () => {
+		// No version marker: cue.db takes IF NOT EXISTS changes only, so the
+		// repair has to be safe to repeat rather than gated to run once.
+		seedLegacyRun('first', FENCED_TABLE);
+		reopen();
+		expect(excerptOf('first')).toBe('billing-api · 2.7.0 · raza');
+
+		seedLegacyRun('later', FENCED_TABLE);
+		seedLegacyRun('blank', '\n  \n');
+		reopen();
+		expect(excerptOf('later')).toBe('billing-api · 2.7.0 · raza');
+		expect(excerptOf('blank')).toBeNull();
+
+		reopen();
+		expect(excerptOf('first')).toBe('billing-api · 2.7.0 · raza');
+		expect(excerptOf('later')).toBe('billing-api · 2.7.0 · raza');
+		expect(excerptOf('blank')).toBeNull();
+	});
+
+	it('reads its work list from the partial index rather than scanning every row', () => {
+		// Running on every launch is only cheap because of this: a full scan
+		// would touch every stored full_output. The WHERE below is the backfill
+		// query's, which cue-db.ts shares with the index definition.
+		closeCueDb();
+		const raw = new DatabaseSync(dbPath);
+		const plan = raw
+			.prepare(
+				'EXPLAIN QUERY PLAN SELECT id, full_output FROM cue_events WHERE output_excerpt IS NULL AND full_output IS NOT NULL'
+			)
+			.all()
+			.map((row) => String((row as { detail: unknown }).detail));
+		raw.close();
+
+		expect(plan.join('\n')).toContain('USING INDEX idx_cue_events_unexcerpted');
 	});
 });

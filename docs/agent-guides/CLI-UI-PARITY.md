@@ -233,6 +233,28 @@ it returns the whole `DesktopTabEntry`, so a verb that needs the current value
 (`tab thinking cycle`) reads it from the same call that resolved the tab instead
 of taking a second round trip or trusting a value the caller guessed.
 
+## When the desktop app is absent
+
+A verb that reaches the desktop through the bridge cannot run without it, and an
+agent calling it has to be able to tell "the app is down" from "the command was
+rejected". Every app-dependent verb therefore reports a missing app as ONE
+outcome: message `Maestro desktop app is not running or not reachable`, JSON code
+`MAESTRO_NOT_RUNNING`, exit 3, in human and `--json` output alike.
+
+- **Writing a new verb:** put `exitIfMaestroNotRunning(error, { json })`
+  (`src/cli/services/session-command.ts`) first in the catch that wraps its
+  bridge call.
+- **Never classify the error by its wording.** `MaestroClient.connect()` throws
+  a typed `MaestroNotRunningError`, and catches that flattened it to a string are
+  how a dozen verbs used to exit 1 under five different messages.
+- **The table-driven `src/__tests__/cli/app-not-running.test.ts` covers every
+  existing verb.** Add a row for a new one.
+
+A verb that does NOT need the app is one an agent can run on a headless server.
+Which verbs those are, how the CLI picks its data directory there, and what
+a headless run records is in [CLI-HEADLESS.md](CLI-HEADLESS.md). No UI action
+changed with this: no row in Covered or Open gaps moved.
+
 ## Covered: Host media tools
 
 | Point-and-click action                 | CLI                                                                                             |
@@ -249,6 +271,7 @@ Notification center history uses the live desktop `notificationStore` over a req
 | Read / clear / activate notification history                                                                                                                                                                                                                                                                                                                     | `notify inbox list`, `read`, `read-all`, `clear`, `activate`, `link`                                                                                                                                                                                                                                                                                           |
 | Dismiss one / all visible notifications                                                                                                                                                                                                                                                                                                                          | `notify inbox dismiss [id]`                                                                                                                                                                                                                                                                                                                                    |
 | Expand / collapse full inbox details                                                                                                                                                                                                                                                                                                                             | `notify inbox detail <id>` / `collapse`                                                                                                                                                                                                                                                                                                                        |
+| In-App Toasts switch (bell popover, palette, Toggle In-App Toasts)                                                                                                                                                                                                                                                                                               | `settings set toastDuration -1` (off) / `settings set toastDuration <seconds>` (on)                                                                                                                                                                                                                                                                            |
 | Quick Chat window: hotkey, back to Maestro (Cmd+`), send, attach images (paste, drop, image button), new, keep, pin, thinking, tab picker, text size, agent, open in Maestro, open a message's tab (the pill), send a queued message to a new tab, thumbs-down a routed tab (resend in a new tab), recent chats (History button, recall one), stop, drag, resize | `quick-chat toggle\|show\|hide\|return\|send [--image <path...>]\|new\|keep\|pin\|thinking\|tab\|font\|agent\|reveal [message-id]\|new-tab [message-id]\|recall <chat>\|stop\|bounds`, read with `quick-chat status` (each message, its id, and the tab it went to) and `quick-chat history` (the recent chats) (or bare `quick-chat font`); `open quick-chat` |
 | Bookmark / unbookmark an agent (Cmd+Shift+B)                                                                                                                                                                                                                                                                                                                     | `bookmark` / `unbookmark`, or `update-agent --bookmark`                                                                                                                                                                                                                                                                                                        |
 | Create / rename / remove an agent                                                                                                                                                                                                                                                                                                                                | `create-agent`, `rename-agent`, `remove-agent`                                                                                                                                                                                                                                                                                                                 |
@@ -306,6 +329,11 @@ Notification center history uses the live desktop `notificationStore` over a req
 | Start / End Performance Profiling                                                                                                                                                                                                                                                                                                                                | `profiling start`, `profiling status`, `profiling stop -o <zip>`                                                                                                                                                                                                                                                                                               |
 | Cue dashboard: subscription on/off switch                                                                                                                                                                                                                                                                                                                        | `cue enable <sub>`, `cue disable <sub>` (any event type)                                                                                                                                                                                                                                                                                                       |
 | Cue dashboard: activity log                                                                                                                                                                                                                                                                                                                                      | `cue activity [-a <agent>] [-n <limit>]`                                                                                                                                                                                                                                                                                                                       |
+| Check a data dir is ready to run Cue unattended (CLI first; no UI surface yet)                                                                                                                                                                                                                                                                                   | `cue engine check [--data-dir <path>] [--json]`; `cue engine start --require-ready` refuses on the same report                                                                                                                                                                                                                                                 |
+| Cue modal, Bundles tab: export a pipeline or an agent, with Claude Code assets                                                                                                                                                                                                                                                                                   | `bundle export --pipeline <name>` / `bundle export --agent <name>` [`--no-claude-skills` `--no-claude-mcp` `--no-claude-memory`]                                                                                                                                                                                                                               |
+| Cue modal, Bundles tab: choose a bundle (contents and validation)                                                                                                                                                                                                                                                                                                | `bundle inspect <zip> [--json]`, `bundle validate <zip> [--check-env] [--json]`                                                                                                                                                                                                                                                                                |
+| Cue modal, Bundles tab: import (dry run, conflicts, Overwrite)                                                                                                                                                                                                                                                                                                   | `bundle import <zip> -w <key=path> [--dry-run] [--force] [--reject-shell-commands] [--json]`                                                                                                                                                                                                                                                                   |
+| Open the Bundles tab                                                                                                                                                                                                                                                                                                                                             | `open cue --tab bundles`                                                                                                                                                                                                                                                                                                                                       |
 | Auto Run panel: progress                                                                                                                                                                                                                                                                                                                                         | `auto-run-status -a <agent>`                                                                                                                                                                                                                                                                                                                                   |
 | Auto Run panel: Change folder                                                                                                                                                                                                                                                                                                                                    | `auto-run-folder <path> -a <agent>`                                                                                                                                                                                                                                                                                                                            |
 | Thought Stream: Steer Auto Run (send a note, cancel one, read replies)                                                                                                                                                                                                                                                                                           | `steer-auto-run send <note> -a <agent>`, `steer-auto-run list`, `steer-auto-run cancel <id>`                                                                                                                                                                                                                                                                   |
@@ -340,7 +368,9 @@ Notification center history uses the live desktop `notificationStore` over a req
 | Lite: connections / commands / dismiss / close        | `lite connections`, `lite commands`, `lite dismiss [--yes]`, `lite close --yes`                                    |
 
 `maestro-cli lite` addresses a **running Lite client**, not the full host's CLI
-server. It calls the same native dispatcher used by Lite's trusted connection UI
+server (the third case in [CLI-HEADLESS.md](CLI-HEADLESS.md#need-a-running-lite-client):
+it needs neither the desktop app nor a data directory, and without a client every
+subcommand exits 1 with `success: false`). It calls the same native dispatcher used by Lite's trusted connection UI
 and menu. Profile persistence, URL/SSH validation, TLS, host authentication,
 validated identity, and tunnel ownership remain native; the CLI implements none
 of those policies. The endpoint imports no full-mode process manager, stores,
@@ -348,10 +378,12 @@ agent detector, or web server.
 
 Discovery lives in `lite-control.json` inside Lite's isolated user-data directory.
 The transport is a per-boot authenticated Windows named pipe or Unix socket,
-not a network listener: remote host web content cannot access it. The shared
-platform path resolver uses the application's normal `maestro` data path plus
-`Lite`, or `$MAESTRO_USER_DATA/Lite` when a base-path override is supplied. Dev
-and packaged Lite use the same default policy. To select an isolated instance
+not a network listener: remote host web content cannot access it. The desktop
+writes it under `app.getPath('userData')/Lite`; the CLI finds the same directory
+through `resolveUserDataDir()` plus `Lite`, or `$MAESTRO_USER_DATA/Lite` when a
+base-path override is supplied. A dev checkout's desktop writes under its own
+`maestro` or `maestro-dev` directory, which a CLI started from a terminal cannot
+guess, so pass `--user-data` there. To select an isolated instance
 explicitly, launch `Maestro --lite --lite-user-data <directory>` and run
 `maestro-cli lite --user-data <directory> ...`. These flags name the **final**
 Lite directory, without appending another `Lite`. Relative CLI paths and `~`
@@ -461,6 +493,17 @@ deliberate design constraints, including protected host consent, are noted below
     These remain in the protected native host window as a deliberate human-consent
     design choice. Enabling a private listener requires the host owner's review;
     no CLI verbs expose these controls.
+15. **Pick an `@mention` routing explicitly** (the mode menu on the composer's
+    routing strip: Parallel, Consult first, Hand-off, Only). `dispatch` has no
+    `--routing` flag, so the override (`QueuedItem.mentionRouting`) is not
+    reachable over the WS bridge. Every mode IS reachable from the CLI through
+    the prompt's wording, which `inferMentionTiming()` reads on every path, so
+    this is a convenience gap, not a capability gap. Closing it means threading
+    the field through `send_command` / `enqueue_command` and `useRemoteHandlers`.
+16. **Cue readiness in the desktop.** `cue engine check` has no UI. The report
+    is a value (`checkCueReadiness()` in `src/main/cue/cue-readiness.ts`), so a
+    Cue modal panel could render its gaps directly; it is CLI first because it
+    exists for unattended servers, where nobody opens the desktop.
 
 ### Audit backlog (2026-09-27)
 

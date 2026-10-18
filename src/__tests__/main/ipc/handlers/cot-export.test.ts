@@ -102,6 +102,7 @@ vi.mock('../../../../main/stores/getters', async (importOriginal) => ({
 	...(await importOriginal<typeof import('../../../../main/stores/getters')>()),
 	// The app's store asks this for every agent's folders.
 	getSessionsStore: () => ({ get: () => sessionsMock.sessions }),
+	getLiveSessions: () => sessionsMock.sessions,
 }));
 vi.mock('../../../../main/utils/logger', () => ({
 	logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -534,7 +535,7 @@ describe('cot-export IPC handlers', () => {
 
 			expect(result).toEqual({
 				ok: false,
-				reason: 'The folder is inside an agent workspace, where that agent could read it.',
+				reason: `The folder is inside the workspace of Backend (${workspace}), where that agent could read it.`,
 			});
 			expect(await fromWindow<CotAgentConfig>(COT_EXPORT_CHANNELS.get, AGENT)).toEqual({
 				enabled: false,
@@ -632,7 +633,7 @@ describe('cot-export IPC handlers', () => {
 				)
 			).toEqual({
 				ok: false,
-				reason: 'The folder is inside an agent workspace, where that agent could read it.',
+				reason: `The folder is inside the workspace of Backend (${workspace}), where that agent could read it.`,
 			});
 
 			expect(await fromWindow<CotAgentConfig>(COT_EXPORT_CHANNELS.get, AGENT)).toEqual({

@@ -1285,7 +1285,7 @@ const DisabledNote = memo(function DisabledNote({ theme }: { theme: Theme }) {
 			</div>
 			<div className="text-xs" style={{ color: theme.colors.textDim, maxWidth: 420 }}>
 				Both <strong>Maestro Cue</strong> and <strong>Usage Dashboard</strong> Encore features must
-				be enabled to view Cue analytics. Open Settings → Encore Features to turn them on.
+				be enabled to view Cue analytics. Open Settings → Plugins to turn them on.
 			</div>
 		</div>
 	);

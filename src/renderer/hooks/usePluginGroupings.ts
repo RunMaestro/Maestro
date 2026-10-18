@@ -1,15 +1,21 @@
 import { useEffect, useState } from 'react';
 import { usePluginContributions } from './usePluginContributions';
+import { useSettingsStore } from '../stores/settingsStore';
 import type { VirtualGrouping } from '../utils/pluginGroupings';
 
 /** Merges declarative manifest groupings with live, presentation-only snapshots. */
 export function usePluginGroupings(): VirtualGrouping[] {
 	const { groupings } = usePluginContributions();
 	const [published, setPublished] = useState<VirtualGrouping[]>([]);
+	const pluginsEnabled = useSettingsStore((s) => s.encoreFeatures?.plugins === true);
 
 	useEffect(() => {
+		// No snapshot read and no subscription while the plugins feature is off.
 		const plugins = window.maestro?.plugins;
-		if (!plugins) return;
+		if (!pluginsEnabled || !plugins) {
+			setPublished((prev) => (prev.length === 0 ? prev : []));
+			return;
+		}
 		let cancelled = false;
 		const load = async (): Promise<void> => {
 			try {
@@ -25,7 +31,7 @@ export function usePluginGroupings(): VirtualGrouping[] {
 			cancelled = true;
 			unsubscribe();
 		};
-	}, []);
+	}, [pluginsEnabled]);
 
 	const snapshotsById = new Map(published.map((grouping) => [grouping.id, grouping]));
 	return groupings.map((grouping) => {

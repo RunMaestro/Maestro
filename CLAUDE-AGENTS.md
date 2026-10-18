@@ -4,20 +4,20 @@ Agent support documentation for the Maestro codebase. For the main guide, see [[
 
 ## Supported Agents
 
-| ID              | Name            | Status     | Notes                                                                                                                                              |
-| --------------- | --------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `claude-code`   | Claude Code     | **Active** | Primary agent, `--print --verbose --output-format stream-json`                                                                                     |
-| `codex`         | Codex           | **Active** | Full support, `--json`, YOLO mode default                                                                                                          |
-| `opencode`      | OpenCode        | **Active** | Multi-provider support (75+ LLMs), stub provider session storage                                                                                   |
-| `factory-droid` | Factory Droid   | **Active** | Factory's AI coding assistant, `-o stream-json`                                                                                                    |
-| `copilot-cli`   | Copilot-CLI     | **Beta**   | `-p/--prompt`, `--output-format json`, `--resume`, `@image` mentions, permission filters, reasoning stream, models.dev model picker                |
-| `grok`          | Grok CLI        | **Beta**   | `-p` headless, `--output-format streaming-json` (JSONL), `--resume`, `--permission-mode plan`, thought/text deltas, models_cache.json model picker |
-| `antigravity`   | Antigravity CLI | **Beta**   | `agy -p`, `--output-format stream-json`, `--conversation <id>`, `--model` / `--effort`, 30m `--print-timeout`                                      |
-| `qwen3-coder`   | Qwen3 Coder     | **Beta**   | Gemini CLI fork, stream-json headless interface, `--resume`                                                                                        |
-| `hermes`        | Hermes          | **Beta**   | Nous Research's coding agent                                                                                                                       |
-| `pi`            | Pi              | **Beta**   | Bring-your-own agent harness                                                                                                                       |
-| `omp`           | Oh My Pi        | **Beta**   | Multi-model coding agent; prompt must be a positional arg, never stdin                                                                             |
-| `terminal`      | Terminal        | Internal   | Hidden from UI, used for shell sessions                                                                                                            |
+| ID              | Name            | Status     | Notes                                                                                                                                                                                   |
+| --------------- | --------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `claude-code`   | Claude Code     | **Active** | Primary agent, `--print --verbose --output-format stream-json`                                                                                                                          |
+| `codex`         | Codex           | **Active** | Full support, `--json`, YOLO mode default                                                                                                                                               |
+| `opencode`      | OpenCode        | **Active** | Multi-provider support (75+ LLMs), stub provider session storage                                                                                                                        |
+| `factory-droid` | Factory Droid   | **Active** | Factory's AI coding assistant, `-o stream-json`                                                                                                                                         |
+| `copilot-cli`   | Copilot-CLI     | **Beta**   | `-p/--prompt`, `--output-format json`, `--resume`, `@image` mentions, permission filters, reasoning stream, models.dev model picker                                                     |
+| `grok`          | Grok CLI        | **Beta**   | `-p` headless, `--output-format streaming-json` (JSONL), `--resume`, `--permission-mode plan`, thought/text deltas, models_cache.json model picker                                      |
+| `antigravity`   | Antigravity CLI | **Beta**   | `agy -p`, `--output-format stream-json`, `--conversation <id>`, `--model` / `--effort`, 30m `--print-timeout`, thinking, exit codes, and History from its SQLite stores, images by path |
+| `qwen3-coder`   | Qwen3 Coder     | **Beta**   | Gemini CLI fork, stream-json headless interface, `--resume`                                                                                                                             |
+| `hermes`        | Hermes          | **Beta**   | Nous Research's coding agent                                                                                                                                                            |
+| `pi`            | Pi              | **Beta**   | Bring-your-own agent harness                                                                                                                                                            |
+| `omp`           | Oh My Pi        | **Beta**   | Multi-model coding agent; prompt must be a positional arg, never stdin                                                                                                                  |
+| `terminal`      | Terminal        | Internal   | Hidden from UI, used for shell sessions                                                                                                                                                 |
 
 ## Agent Capabilities
 
@@ -118,6 +118,7 @@ moderator dropdown does not filter on it, and offers any installed provider.
 - **Read-only:** `--sandbox read-only`
 - **YOLO Mode:** `--dangerously-bypass-approvals-and-sandbox` (enabled by default)
 - **Session Storage:** `~/.codex/sessions/YYYY/MM/DD/*.jsonl`
+- **Tool Display:** `exec --json` items `command_execution` (the `/bin/zsh -lc '...'` wrapper is unwrapped to the real command; a non-zero exit or `status: failed` is a failed badge), `file_change` (`apply_patch`, one line per file), `mcp_tool_call` (`mcp__server__tool`), `web_search`, and `todo_list` (`update_plan` checklist)
 
 ### OpenCode
 
@@ -147,7 +148,7 @@ moderator dropdown does not filter on it, and offers any installed provider.
 ### Grok CLI
 
 - **Binary:** `grok`
-- **JSON Output:** `--output-format streaming-json` (JSONL: `thought`, `text`, `end`, `error` events)
+- **JSON Output:** `--output-format streaming-json` (JSONL: `thought`, `text`, `tool_call`, `tool_call_update`, `end`, `error` events)
 - **Batch Mode:** `-p/--single <prompt>` (headless, no subcommand)
 - **Resume:** `--resume <session-id>` (session ID is a UUIDv7, emitted only on the final `end` event)
 - **Read-only:** `--permission-mode plan` (CLI-enforced)
@@ -156,11 +157,11 @@ moderator dropdown does not filter on it, and offers any installed provider.
 - **Session Storage:** `~/.grok/sessions/<percent-encoded-cwd>/<session-uuid>/` (local and SSH-remote)
 - **Model Discovery:** Reads `~/.grok/models_cache.json` (grok-4.5 at 500K context, grok-composer-2.5-fast at 200K), with a static fallback list
 - **Reasoning Effort:** `--reasoning-effort` with none, minimal, low, medium, high, xhigh, max (grok-4.5 rejects `none`)
+- **Tool Display:** `tool_call` / `tool_call_update` become tool badges. Output comes from the ACP `content` blocks (shell text, file contents, edit diffs), never the raw `rawOutput` object, and a non-zero `exit_code` marks the call failed even though grok reports `completed`
+- **Images:** The temp image path is named in the prompt (`imagePromptBuilder`) and grok opens it with `read_file`; there is no attachment flag
+- **Usage and Cost:** grok 1.x reports a `usage` line per model call and the turn's totals plus `total_cost_usd` on `end`; only `end` is reported (usage events are summed), with the last call as `absoluteUsage`. History reads `usage.json`
 - **Known Limitations:**
-  - **No tool events on stdout:** tool activity exists only in on-disk session files, so live tool display is unavailable
-  - **No usage or cost in the stream:** context usage and cost widgets stay empty
   - **Batch-only:** interactive PTY mode is not wired (same posture as Codex)
-  - **No image input**
 
 ## Adding New Agents
 
@@ -181,7 +182,7 @@ To add support for a new agent:
 13. (If the agent has an output parser) Add error patterns to `src/shared/agentErrorPatterns.ts` - required, not optional: `agent-completeness.test.ts` fails CI when a registered parser has no patterns. The bank is shared so the renderer wizard classifies through the same patterns; `src/main/parsers/error-patterns.ts` is the main-process face of it
 14. **Declare provider translation support or its explicit limits**: follow [Provider Translation Contract](PROVIDER-SUPPORT.md#provider-translation-contract) for native session import/export, memory discovery, skill/subagent projection, incremental sync, and directional/versioned validation. A History reader or resume flag alone does not qualify a provider for warning-free switching.
 
-Translation registration lives in `src/shared/maestro-lib/translation/adapters.ts` (`createTranslationRegistry`). Implement `TranslationAdapter.extract`/`stage`, declare each direction and version pair, and use `planTranslation`/`applyTranslation`/`recoverTranslation` through the shared host service. Both current Claude Code 2.1.296 ↔ Codex 0.162.1 directions remain unverified. Project knowledge and explicitly selected user resources are the scope; account-global imports and file-write-only certification are excluded. See the [implemented contract](PROVIDER-SUPPORT.md#implemented-entry-points-and-registration).
+Translation registration lives in `src/shared/maestro-lib/translation/adapters.ts` (`createTranslationRegistry`). Implement `TranslationAdapter.extract`/`stage`, declare each direction and version pair, and use `planTranslation`/`applyTranslation`/`recoverTranslation` through the shared host service. Claude Code 2.1.296/2.1.302 ↔ Codex 0.162.1/0.163.0 directions remain unverified. Project knowledge and explicitly selected user resources are the scope; account-global imports and file-write-only certification are excluded. See the [implemented contract](PROVIDER-SUPPORT.md#implemented-entry-points-and-registration).
 
 Keep picker hints and native registration on the renderer-safe declarations in `src/shared/maestro-lib/translation/support.ts`. Edit Agent marks declared destinations with a memory/history preview indicator, reads preflight on selection, and applies migration on Save Changes with activity status. The indicator does not bypass version checks or certify native resume.
 

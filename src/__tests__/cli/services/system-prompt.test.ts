@@ -53,7 +53,11 @@ describe('prepareMaestroSystemPromptCli', () => {
 		// nuke it, and we want a stable getConfigDirectory return value.
 		vi.mocked(isGitRepo).mockReturnValue(true);
 		vi.mocked(getGitBranch).mockReturnValue('main');
-		vi.mocked(readSettingValue).mockReturnValue('');
+		// Maestro Cue ships on and carries a section: switch it off by default so
+		// each test sees only the sections it is about.
+		vi.mocked(readSettingValue).mockImplementation((key: string) =>
+			key === 'encoreFeatures' ? { maestroCue: false } : ''
+		);
 		// Default: history file does NOT exist (fresh session)
 		vi.mocked(resolveSessionHistoryFilePath).mockReturnValue(undefined);
 		// Default: the app has not recorded MaestroRun as ready.
@@ -153,7 +157,9 @@ describe('prepareMaestroSystemPromptCli', () => {
 	it('tolerates a non-string conductor profile setting', async () => {
 		vi.mocked(getCliPrompt).mockResolvedValue('cond=[{{CONDUCTOR_PROFILE}}]');
 		// e.g. a malformed settings file with a non-string value
-		vi.mocked(readSettingValue).mockReturnValue({ accidentallyAnObject: true });
+		vi.mocked(readSettingValue).mockImplementation((key: string) =>
+			key === 'encoreFeatures' ? { maestroCue: false } : { accidentallyAnObject: true }
+		);
 
 		const result = await prepareMaestroSystemPromptCli(mockSession());
 
@@ -165,9 +171,10 @@ describe('prepareMaestroSystemPromptCli', () => {
 			'maestro-system-prompt': 'BASE {{AGENT_NAME}}',
 			'pianola-system': 'PIANOLA',
 			'computer-history-system': 'HISTORY at {{COMPUTER_HISTORY_DIR}}',
+			'cue-system': 'CUE for {{AGENT_NAME}}',
 		};
-		const settings = (encoreFeatures: unknown) => (key: string) =>
-			key === 'encoreFeatures' ? encoreFeatures : '';
+		const settings = (encoreFeatures: Record<string, unknown>) => (key: string) =>
+			key === 'encoreFeatures' ? { maestroCue: false, ...encoreFeatures } : '';
 
 		beforeEach(() => {
 			vi.mocked(getCliPrompt).mockImplementation(async (id: string) => {
@@ -176,16 +183,33 @@ describe('prepareMaestroSystemPromptCli', () => {
 			});
 		});
 
-		it('appends nothing extra while every section flag is off (default)', async () => {
+		it('appends nothing extra while every section flag is off', async () => {
 			const result = await prepareMaestroSystemPromptCli(mockSession({ name: 'A' }));
 			expect(result).toBe('BASE A');
 		});
 
+		it('appends the Maestro Cue section while Cue is on (its shipped default)', async () => {
+			vi.mocked(readSettingValue).mockImplementation((key: string) =>
+				key === 'encoreFeatures' ? {} : ''
+			);
+			const result = await prepareMaestroSystemPromptCli(mockSession({ name: 'A' }));
+			expect(result).toBe('BASE A\n\n---\n\nCUE for A');
+		});
+
 		it('appends the Pianola role section for the Pianola agent', async () => {
+			vi.mocked(readSettingValue).mockImplementation(settings({ pianola: true }));
 			const result = await prepareMaestroSystemPromptCli(
 				mockSession({ name: 'A', isPianola: true })
 			);
 			expect(result).toBe('BASE A\n\n---\n\nPIANOLA');
+		});
+
+		it('leaves the Pianola role section out while the pianola flag is off', async () => {
+			vi.mocked(readSettingValue).mockImplementation(settings({ pianola: false }));
+			const result = await prepareMaestroSystemPromptCli(
+				mockSession({ name: 'A', isPianola: true })
+			);
+			expect(result).toBe('BASE A');
 		});
 
 		it('appends the Computer History section with the local store path when enabled', async () => {

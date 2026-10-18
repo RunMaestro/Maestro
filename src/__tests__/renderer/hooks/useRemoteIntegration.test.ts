@@ -1228,6 +1228,36 @@ describe('useRemoteIntegration', () => {
 			expect(state.sessions[0].aiTabs.find((tab) => tab.id === hidden.id)?.hidden).toBe(true);
 		});
 
+		// The snapshot carries tab states only, and the Left Bar dot and the
+		// Thinking pill read the AGENT's. A phone drew a tab mid-turn under a
+		// green "Ready" agent until something else happened to set it.
+		it('derives the agent state from the tab states the snapshot carries', () => {
+			const tab = createMockTab({ id: 'tab-1', state: 'idle' });
+			const session = createMockSession({
+				id: 'session-1',
+				state: 'idle',
+				aiTabs: [tab],
+				activeTabId: tab.id,
+			});
+			const deps = createDeps({ sessions: [session], activeSessionId: 'session-1' });
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteSelectTabHandler?.('session-1', 'tab-1', [
+					{ ...tab, state: 'busy', thinkingStartTime: 1234 },
+				]);
+			});
+			let updated = useSessionStore.getState().sessions[0];
+			expect(updated.state).toBe('busy');
+			expect(updated.busySource).toBe('ai');
+
+			act(() => {
+				onRemoteSelectTabHandler?.('session-1', 'tab-1', [{ ...tab, state: 'idle' }]);
+			});
+			updated = useSessionStore.getState().sessions[0];
+			expect(updated.state).toBe('idle');
+		});
+
 		it('reconciles the complete desktop tab inventory without discarding local transcripts', () => {
 			const existingLogs: AITab['logs'] = [
 				{ id: 'kept-1', timestamp: 1, source: 'stdout', text: 'kept transcript' },

@@ -6,11 +6,30 @@
  * these reach every event type. The toggle writes the subscription's
  * `enabled` flag into its cue.yaml through the engine, exactly as the UI's
  * switch does.
+ *
+ * `activity` asks the running app first, since its in-memory log holds runs
+ * still in flight and their output. When the app is not running it reads
+ * `cue.db` itself, read-only, through the same mapping the app uses.
  */
 
 import { withMaestroClient } from '../services/maestro-client';
-import { errorFrameMessage, failCommand, resolveAgentOrFail } from '../services/session-command';
-import { exitCodeForError, exitWith } from '../exit-codes';
+import { MaestroNotRunningError } from '../services/maestro-not-running';
+import {
+	errorFrameMessage,
+	failCommand,
+	failFromError,
+	resolveAgentOrFail,
+} from '../services/session-command';
+import { applyDataDirOption } from '../services/data-dir-option';
+import { readSessions } from '../services/storage';
+import { SqliteUnavailableError } from '../utils/native-sqlite';
+import {
+	CUE_ACTIVITY_LOG_MAX,
+	cueEventRecordsToRunResults,
+	toCueActivityEntries,
+} from '../../main/cue/cue-activity-entries';
+import type { CueActivityEntry } from '../../main/web-server/types';
+import { readCueEngineLock } from '../../main/cue/cue-engine-lock';
 
 interface CueSubscriptionSummary {
 	id: string;
@@ -19,18 +38,6 @@ interface CueSubscriptionSummary {
 	sessionId: string;
 	sessionName: string;
 	enabled: boolean;
-}
-
-interface CueActivityEntry {
-	id: string;
-	subscriptionId: string;
-	subscriptionName: string;
-	eventType: string;
-	sessionId: string;
-	timestamp: number;
-	status: 'triggered' | 'running' | 'completed' | 'failed';
-	result?: string;
-	duration?: number;
 }
 
 interface ToggleOptions {
@@ -42,13 +49,8 @@ interface ActivityOptions {
 	agent?: string;
 	limit?: string;
 	json?: boolean;
-}
-
-function failFromError(error: unknown, json?: boolean): never {
-	const message = error instanceof Error ? error.message : String(error);
-	if (json) console.log(JSON.stringify({ success: false, error: message }));
-	else console.error(`Error: ${message}`);
-	return exitWith(exitCodeForError(error));
+	/** Explicit data directory; wins over MAESTRO_USER_DATA (see data-dir-option.ts). */
+	dataDir?: string;
 }
 
 /**
@@ -117,29 +119,96 @@ export function cueDisable(target: string, options: ToggleOptions): Promise<void
 	return setEnabled(target, false, options);
 }
 
+/**
+ * Activity from `cue.db`, for when the desktop app is not running: the same
+ * window of runs the app restores at start, through the same mapping, filter
+ * and limit, so `--json` is the same `CueActivityEntry[]` either way. Never
+ * `initCueDb()`: a headless engine may own the database, possibly as another
+ * user, and this read must not create, migrate or re-journal it.
+ */
+async function readActivityFromCueDb(
+	sessionId: string | undefined,
+	limit: number,
+	json?: boolean
+): Promise<CueActivityEntry[]> {
+	const { readRecentCueEventsReadOnly } = await import('../../main/cue/cue-db');
+	// A `running` row is a run in flight only while a live engine owns this
+	// data directory (the lock and cue.db both resolve from MAESTRO_USER_DATA,
+	// which --data-dir sets). Without one it is an orphan and reads as failed.
+	// The lock is read BEFORE the database, so "running" always rests on an
+	// engine that was live no later than the rows were read. Read the other
+	// way, an engine that drained and released the lock between the two reads
+	// would turn runs it had just finished into "failed", which is the
+	// misleading answer this exists to avoid. The remaining window (an engine
+	// killed between the reads) shows a run as running that was running a
+	// moment ago, and the next read reports it failed.
+	const engineLive = readCueEngineLock() !== null;
+	let read: ReturnType<typeof readRecentCueEventsReadOnly>;
+	try {
+		read = readRecentCueEventsReadOnly(CUE_ACTIVITY_LOG_MAX);
+	} catch (error) {
+		if (error instanceof SqliteUnavailableError) failCommand(error.message, json);
+		throw error;
+	}
+	if (!read.ok) {
+		failCommand(
+			`The desktop app is not running and Cue run history could not be read: ${read.reason}`,
+			json
+		);
+	}
+	const sessionNamesById = new Map(readSessions().map((s) => [s.id, s.name]));
+	const runs = cueEventRecordsToRunResults(read.records, sessionNamesById, {
+		keepRunning: engineLive,
+	});
+	return toCueActivityEntries(runs, { sessionId, limit });
+}
+
 /** `cue activity` - recent Cue runs, newest first. */
 export async function cueActivity(options: ActivityOptions): Promise<void> {
+	// First, so the agent lookup, the app's discovery file and cue.db all come
+	// from the one directory, as for the `cue engine` verbs.
+	applyDataDirOption(options.dataDir);
 	const sessionId = options.agent ? resolveAgentOrFail(options.agent, options.json) : undefined;
 	const limit = options.limit === undefined ? 20 : Number(options.limit);
 	if (!Number.isInteger(limit) || limit <= 0) {
 		failCommand(`--limit expects a positive integer, got "${options.limit}"`, options.json);
 	}
 
-	let reply: { entries?: CueActivityEntry[] } & Record<string, unknown>;
+	let reply: ({ entries?: CueActivityEntry[] } & Record<string, unknown>) | null;
 	try {
 		reply = await withMaestroClient((client) =>
-			client.sendCommand({ type: 'get_cue_activity', sessionId, limit }, 'cue_activity')
+			client.sendCommand<{ entries?: CueActivityEntry[] } & Record<string, unknown>>(
+				{ type: 'get_cue_activity', sessionId, limit },
+				'cue_activity'
+			)
 		);
 	} catch (error) {
-		failFromError(error, options.json);
+		// Only an absent app falls back. Any other failure (an old build, a
+		// timeout, a renderer that never answered) is reported as before
+		// rather than masked by figures from disk.
+		if (!(error instanceof MaestroNotRunningError)) failFromError(error, options.json);
+		reply = null;
 	}
-	const frameError = errorFrameMessage(reply);
-	if (frameError) failCommand(frameError, options.json);
 
-	const entries = reply.entries ?? [];
+	let entries: CueActivityEntry[];
+	if (reply) {
+		const frameError = errorFrameMessage(reply);
+		if (frameError) failCommand(frameError, options.json);
+		entries = reply.entries ?? [];
+	} else {
+		entries = await readActivityFromCueDb(sessionId, limit, options.json);
+	}
+	const fromDatabase = reply === null;
+
 	if (options.json) {
 		console.log(JSON.stringify(entries, null, 2));
 		return;
+	}
+	if (fromDatabase) {
+		// stderr, so stdout stays the same lines the app's answer prints.
+		console.error(
+			'Read from cue.db: the desktop app is not running, so run output is not included.'
+		);
 	}
 	if (entries.length === 0) {
 		console.log('No Cue activity.');
@@ -147,8 +216,13 @@ export async function cueActivity(options: ActivityOptions): Promise<void> {
 	}
 	for (const entry of entries) {
 		const when = new Date(entry.timestamp).toLocaleString();
+		// A run in flight has no duration yet: show how long it has run so far.
 		const took =
-			typeof entry.duration === 'number' ? `  ${(entry.duration / 1000).toFixed(1)}s` : '';
+			typeof entry.duration === 'number'
+				? `  ${(entry.duration / 1000).toFixed(1)}s`
+				: entry.status === 'running'
+					? `  ${(Math.max(0, Date.now() - entry.timestamp) / 1000).toFixed(1)}s so far`
+					: '';
 		console.log(
 			`${when}  ${entry.status.padEnd(9)}  ${entry.subscriptionName}  [${entry.eventType}]${took}`
 		);

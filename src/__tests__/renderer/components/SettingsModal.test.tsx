@@ -316,6 +316,8 @@ vi.mock('../../../renderer/hooks/settings/useSettings', () => ({
 		// Automatic tab naming
 		automaticTabNamingEnabled: true,
 		setAutomaticTabNamingEnabled: vi.fn(),
+		shortenLongTabNames: false,
+		setShortenLongTabNames: vi.fn(),
 		// Director's Notes settings
 		directorNotesSettings: {
 			provider: 'claude-code',

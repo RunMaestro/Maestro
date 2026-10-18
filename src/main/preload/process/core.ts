@@ -1,6 +1,6 @@
 import type { HeadlessAgentActivity } from '../../../shared/headlessAgentActivity';
 import { ipcRenderer } from 'electron';
-import type { UsageStats } from '../../../shared/types';
+import type { CallUsage, UsageStats } from '../../../shared/types';
 import type { ParsedQuestion } from '../../permission-relay/types';
 import type { SteeringResultFrame } from '../../../shared/chatSteering';
 
@@ -444,6 +444,17 @@ export function createProcessCoreApi() {
 				callback(sessionId, usageStats);
 			ipcRenderer.on('process:usage', handler);
 			return () => ipcRenderer.removeListener('process:usage', handler);
+		},
+
+		/**
+		 * Subscribe to one API call's new spend, sent mid-turn (claude-code only).
+		 * A live progress signal; the turn's `onUsage` still reports the whole turn.
+		 */
+		onCallUsage: (callback: (sessionId: string, usage: CallUsage) => void): (() => void) => {
+			const handler = (_: unknown, sessionId: string, usage: CallUsage) =>
+				callback(sessionId, usage);
+			ipcRenderer.on('process:call-usage', handler);
+			return () => ipcRenderer.removeListener('process:call-usage', handler);
 		},
 
 		/**

@@ -374,6 +374,18 @@ export interface GroupChatEngineOptions {
 }
 
 /**
+ * A steered message a turn has, until the turn says what it did with it. At
+ * module scope because the engine's inferred return type reaches it (through
+ * `steeringVerdict` and `unsettledSteersOnExit`), and declaration emit cannot
+ * name a type declared inside the function.
+ */
+interface SteeredMessage {
+	groupChatId: string;
+	text: string;
+	readOnly: boolean;
+}
+
+/**
  * Creates one group chat engine. Everything that used to be module state in the
  * desktop's router (pending participants, watchdogs, the moderator registry,
  * the delegation queue) is instance state here, so a test or a second host gets
@@ -892,13 +904,6 @@ export function createGroupChatEngine(options: GroupChatEngineOptions) {
 	// ==========================================================================
 	// Steering: a message into a round that is already running
 	// ==========================================================================
-
-	/** A steered message the turn has, until the turn says what it did with it. */
-	interface SteeredMessage {
-		groupChatId: string;
-		text: string;
-		readOnly: boolean;
-	}
 
 	/**
 	 * Delivered steers whose turn has not yet said what it did with them, by

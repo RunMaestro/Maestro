@@ -2,8 +2,8 @@ import type { TranslationDirection } from './types';
 
 /** Renderer-safe declarations shared by the native adapters and provider picker. */
 export const TRANSLATION_PROVIDER_VERSIONS = {
-	'claude-code': ['2.1.296'],
-	codex: ['0.162.1'],
+	'claude-code': ['2.1.296', '2.1.302'],
+	codex: ['0.162.1', '0.163.0'],
 } as const;
 
 export const TRANSLATION_DIRECTIONS: readonly TranslationDirection[] = [

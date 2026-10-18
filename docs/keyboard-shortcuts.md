@@ -659,7 +659,7 @@ Most shortcuts can be remapped to fit your workflow:
 4. Press your desired key combination
 5. The new binding is saved immediately
 
-Some actions ship with **no** key assigned and read **Not set** instead of a combination - the media player controls and Open Leaderboard are current examples. They are dimmed, but they work exactly like any other row: click and record. Maestro leaves them unbound rather than claiming chords for actions most people reach through Quick Actions.
+Some actions ship with **no** key assigned and read **Not set** instead of a combination - the media player controls, Open Leaderboard, and Toggle In-App Toasts are current examples. They are dimmed, but they work exactly like any other row: click and record. Maestro leaves them unbound rather than claiming chords for actions most people reach through Quick Actions.
 
 ![Shortcuts Settings](./screenshots/shortcuts-settings.png)
 

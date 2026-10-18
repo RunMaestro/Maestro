@@ -5,7 +5,8 @@
 // client interface owns the name `MaestroClient`; the CLI keeps its own names
 // through these aliases, so every command and test resolves unchanged.
 
-import { readSessions, resolveAgentId } from './storage';
+import { readLiveSessions, resolveAgentId } from './storage';
+import { DORMANT_PIANOLA_MESSAGE } from '../../shared/agentVisibility';
 
 export {
 	BridgeConnection as MaestroClient,
@@ -13,6 +14,12 @@ export {
 	UnsupportedCommandError,
 	CommandTimeoutError,
 } from '../../shared/maestro-lib/client/bridge-connection';
+export {
+	MAESTRO_NOT_RUNNING_CODE,
+	MAESTRO_NOT_RUNNING_MESSAGE,
+	MaestroNotRunningError,
+	type MaestroNotRunningReason,
+} from './maestro-not-running';
 
 /**
  * Resolve session ID from CLI options.
@@ -23,7 +30,7 @@ export function resolveSessionId(options: { session?: string }): string {
 		return options.session;
 	}
 
-	const sessions = readSessions();
+	const sessions = readLiveSessions();
 	if (sessions.length === 0) {
 		console.error('Error: No agents found. Create an agent in Maestro first.');
 		process.exit(1);
@@ -39,7 +46,7 @@ export function resolveSessionId(options: { session?: string }): string {
  *
  * Only the known `resolveAgentId` errors (ambiguous / not-found) get the
  * friendly stderr + exit(1) treatment. Anything else (e.g. corrupted store
- * read in `readSessions`) re-throws so it surfaces as a stack trace - per the
+ * read in `readLiveSessions`) re-throws so it surfaces as a stack trace - per the
  * codebase's "let exceptions bubble up" rule for unexpected failures.
  */
 export function resolveTargetSessionId(agent?: string): string {
@@ -49,7 +56,10 @@ export function resolveTargetSessionId(agent?: string): string {
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			const isExpected =
-				message.startsWith('Ambiguous agent ID') || message.startsWith('Agent not found:');
+				message.startsWith('Ambiguous agent ID') ||
+				message.startsWith('Ambiguous agent name') ||
+				message.startsWith('Agent not found:') ||
+				message === DORMANT_PIANOLA_MESSAGE;
 			if (!isExpected) {
 				throw error;
 			}

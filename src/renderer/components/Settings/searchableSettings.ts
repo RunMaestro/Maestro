@@ -68,6 +68,13 @@ export interface SearchableSetting {
 	 */
 	requiresEncore?: keyof EncoreFeatureFlags;
 	/**
+	 * Keywords that match only while the named Encore Feature is on, for an
+	 * always-present setting that also touches a feature (Prevent Sleep counts
+	 * scheduled Cue pipelines). A disabled feature's name must lead nowhere, so
+	 * the description stays feature-neutral and these carry the feature terms.
+	 */
+	encoreKeywords?: { [K in keyof EncoreFeatureFlags]?: string[] };
+	/**
 	 * The Plugins tile whose details pane renders this entry's anchor, when the
 	 * entry is that tile's own (it has no `requiresEncore`). A jump opens the
 	 * tile first: the anchor is not mounted while the grid shows, so without
@@ -104,6 +111,21 @@ export function encoreTileForSetting(settingId: string): keyof EncoreFeatureFlag
 	return entry.encoreTile ?? entry.requiresEncore;
 }
 
+/** The entry's `encoreKeywords` whose feature is on (all of them when no flags are given). */
+function activeEncoreKeywords(
+	setting: SearchableSetting,
+	encoreFeatures: Partial<EncoreFeatureFlags> | undefined
+): string[] {
+	if (!setting.encoreKeywords) return [];
+	const out: string[] = [];
+	for (const [flag, words] of Object.entries(setting.encoreKeywords)) {
+		if (!words) continue;
+		if (encoreFeatures && encoreFeatures[flag as keyof EncoreFeatureFlags] !== true) continue;
+		out.push(...words);
+	}
+	return out;
+}
+
 /**
  * Search settings by query string. Matches against label, description, tab label, and keywords.
  * Returns matching settings sorted by relevance (label match first, then description, then keywords).
@@ -128,7 +150,12 @@ export function searchSettings(
 			const label = setting.label.toLowerCase();
 			const desc = (setting.description || '').toLowerCase();
 			const tabLabel = setting.tabLabel.toLowerCase();
-			const keywords = (setting.keywords || []).join(' ').toLowerCase();
+			const keywords = [
+				...(setting.keywords || []),
+				...activeEncoreKeywords(setting, encoreFeatures),
+			]
+				.join(' ')
+				.toLowerCase();
 			const all = `${label} ${desc} ${tabLabel} ${keywords}`;
 
 			// Every search term must appear somewhere

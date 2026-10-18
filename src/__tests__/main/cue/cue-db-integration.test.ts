@@ -633,3 +633,129 @@ describe.skipIf(!canLoadBetterSqlite3())('Phase 15B - real SQLite smoke test', (
 		}
 	});
 });
+
+describe.skipIf(!canLoadBetterSqlite3())('real SQLite: status reads cue.db read-only', () => {
+	it('reads a live engine database without changing its schema, mode or files', async () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-cue-ro-'));
+		const dbPath = path.join(dir, 'cue.db');
+		const { default: Database } = await import('better-sqlite3');
+		const cueDb = await import('../../../main/cue/cue-db');
+		const schemaOf = () => {
+			const probe = new Database(dbPath, { readonly: true, fileMustExist: true });
+			try {
+				return probe.prepare('SELECT type, name, sql FROM sqlite_master ORDER BY name').all();
+			} finally {
+				probe.close();
+			}
+		};
+		try {
+			// The engine's handle stays open, as it is while an engine runs.
+			cueDb.initCueDb(undefined, dbPath);
+			cueDb.updateHeartbeat();
+			const schemaBefore = schemaOf();
+			const filesBefore = fs.readdirSync(dir).sort();
+			const modeBefore = fs.statSync(dbPath).mode;
+
+			const figures = cueDb.readCueDbStatusFigures(dbPath);
+
+			expect(figures.ok).toBe(true);
+			if (figures.ok) {
+				expect(figures.lastHeartbeatMs).toEqual(expect.any(Number));
+				expect(figures.totalEvents).toBe(0);
+			}
+			expect(schemaOf()).toEqual(schemaBefore);
+			expect(fs.readdirSync(dir).sort()).toEqual(filesBefore);
+			if (process.platform !== 'win32') expect(fs.statSync(dbPath).mode).toBe(modeBefore);
+		} finally {
+			cueDb.closeCueDb();
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
+
+describe.skipIf(!canLoadBetterSqlite3())(
+	'real SQLite: activity history reads cue.db read-only',
+	() => {
+		/**
+		 * Every file in `dir` with its bytes and mode, to prove nothing changed.
+		 * The `-shm` file is shared memory, not data: every WAL reader records its
+		 * read mark there, so its bytes are left out and only its presence counts.
+		 */
+		function snapshotDir(dir: string): Record<string, { bytes?: string; mode: number }> {
+			const out: Record<string, { bytes?: string; mode: number }> = {};
+			for (const name of fs.readdirSync(dir).sort()) {
+				const file = path.join(dir, name);
+				out[name] = {
+					...(name.endsWith('-shm') ? {} : { bytes: fs.readFileSync(file).toString('base64') }),
+					mode: fs.statSync(file).mode,
+				};
+			}
+			return out;
+		}
+
+		async function seed(dbPath: string) {
+			const cueDb = await import('../../../main/cue/cue-db');
+			cueDb.initCueDb(undefined, dbPath);
+			for (const [i, status] of ['completed', 'timeout', 'running'].entries()) {
+				cueDb.recordCueEvent({
+					id: `run-${i}`,
+					type: 'time.scheduled',
+					triggerName: 't',
+					sessionId: 'agent-1',
+					subscriptionName: `sub-${i}`,
+					status: 'running',
+				});
+				// created_at is Date.now(); keep the rows apart so the order is defined.
+				const until = Date.now() + 3;
+				while (Date.now() < until) {
+					/* spin */
+				}
+				if (status !== 'running') cueDb.updateCueEventStatus(`run-${i}`, status);
+			}
+			return cueDb;
+		}
+
+		it('reads beside an open engine handle without changing any file', async () => {
+			const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-cue-history-live-'));
+			const dbPath = path.join(dir, 'cue.db');
+			const cueDb = await seed(dbPath);
+			try {
+				// The engine's handle stays open, so -wal and -shm exist.
+				const before = snapshotDir(dir);
+
+				const result = cueDb.readRecentCueEventsReadOnly(1000, dbPath);
+
+				expect(result).toMatchObject({ ok: true, source: 'live' });
+				if (result.ok) expect(result.records.map((r) => r.id)).toEqual(['run-2', 'run-1', 'run-0']);
+				expect(snapshotDir(dir)).toEqual(before);
+			} finally {
+				cueDb.closeCueDb();
+				fs.rmSync(dir, { recursive: true, force: true });
+			}
+		});
+
+		it('reads a closed WAL database with no sidecars, creating and modifying nothing', async () => {
+			const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-cue-history-closed-'));
+			const dbPath = path.join(dir, 'cue.db');
+			const cueDb = await seed(dbPath);
+			cueDb.closeCueDb();
+			try {
+				// A clean close checkpoints and removes the sidecars: nothing has it open.
+				expect(fs.readdirSync(dir)).toEqual(['cue.db']);
+				const before = snapshotDir(dir);
+
+				const result = cueDb.readRecentCueEventsReadOnly(2, dbPath);
+
+				expect(result).toMatchObject({ ok: true, source: 'snapshot' });
+				if (result.ok) {
+					expect(result.records.map((r) => r.id)).toEqual(['run-2', 'run-1']);
+					expect(result.records.map((r) => r.status)).toEqual(['running', 'timeout']);
+				}
+				expect(snapshotDir(dir)).toEqual(before);
+				expect(cueDb.isCueDbReady()).toBe(false);
+			} finally {
+				fs.rmSync(dir, { recursive: true, force: true });
+			}
+		});
+	}
+);

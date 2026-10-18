@@ -94,6 +94,19 @@ describe('wireMultiWindowTelemetry', () => {
 		expect(db.recordWindowOpened).not.toHaveBeenCalled();
 	});
 
+	it('records nothing when the Usage & Stats Encore Feature is off', () => {
+		const db = makeStatsDb();
+		const settingsStore = {
+			get: vi.fn((key: string) => (key === 'encoreFeatures' ? { usageStats: false } : undefined)),
+		};
+		wireMultiWindowTelemetry(registry, { getStatsDb: () => db, settingsStore });
+
+		registry.create({ windowId: 'main', browserWindow: makeWindow(), isMain: true });
+		registry.create({ windowId: 'w2', browserWindow: makeWindow(), isMain: false });
+
+		expect(db.recordWindowOpened).not.toHaveBeenCalled();
+	});
+
 	it('records when statsCollectionEnabled is unset (defaults to enabled)', () => {
 		const db = makeStatsDb();
 		const settingsStore = { get: vi.fn(() => undefined) };

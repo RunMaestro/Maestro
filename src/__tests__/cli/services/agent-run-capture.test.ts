@@ -65,6 +65,61 @@ describe('settlementFromAgentResult', () => {
 	});
 });
 
+describe('usage on the settled run', () => {
+	const usageStats = {
+		inputTokens: 120,
+		outputTokens: 30,
+		cacheReadInputTokens: 0,
+		cacheCreationInputTokens: 5,
+		totalCostUsd: 0.0042,
+		contextWindow: 200000,
+	};
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	const input: CaptureCliRunInput = {
+		sessionId: 'session-123',
+		toolType: 'claude-code',
+		cwd: '/workspace/project',
+		source: 'cli:send',
+	};
+
+	// `send` writes no history entry, so the ledger is the only place a headless
+	// turn's token usage is persisted in the data dir.
+	it('records the provider usage on the settled run', async () => {
+		await captureCliRun(
+			input,
+			async () => ({ success: true, outcome: 'completed' as const, usageStats }),
+			settlementFromAgentResult
+		);
+		const settled = vi.mocked(upsertAgentRun).mock.calls[1][0] as AgentRun;
+		expect(settled.usage).toEqual(usageStats);
+		// The opening snapshot has no usage yet.
+		expect((vi.mocked(upsertAgentRun).mock.calls[0][0] as AgentRun).usage).toBeUndefined();
+	});
+
+	it('keeps the usage of an interrupted or failed turn', () => {
+		expect(
+			settlementFromAgentResult({ success: false, outcome: 'interrupted', usageStats }).usage
+		).toEqual(usageStats);
+		expect(
+			settlementFromAgentResult({ success: false, outcome: 'failed', usageStats }).usage
+		).toEqual(usageStats);
+	});
+
+	it('leaves usage absent rather than inventing a zero record', async () => {
+		await captureCliRun(
+			input,
+			async () => ({ success: true, outcome: 'completed' as const }),
+			settlementFromAgentResult
+		);
+		const settled = vi.mocked(upsertAgentRun).mock.calls[1][0] as AgentRun;
+		expect(settled).not.toHaveProperty('usage');
+	});
+});
+
 describe('captureCliRun', () => {
 	const sampleInput: CaptureCliRunInput = {
 		sessionId: 'session-123',

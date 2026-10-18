@@ -116,7 +116,11 @@ export async function prepareMaestroSystemPrompt(opts: {
 	// Claude Code chat into Maestro's orchestrator. The CLI path and the agent's
 	// own id are supplied to the spawn as env vars (see process.ts), so the
 	// prompt references them as shell variables, not template variables.
-	const roleSections = opts.session.isPianola ? [await loadPrompt(PROMPT_IDS.PIANOLA_SYSTEM)] : [];
+	// Only while the `pianola` flag is on: a dormant Pianola gets no manager role.
+	const roleSections =
+		opts.session.isPianola && encoreFeatures?.pianola === true
+			? [await loadPrompt(PROMPT_IDS.PIANOLA_SYSTEM)]
+			: [];
 
 	// Only asked when the feature is on, so every other spawn skips the round trip.
 	const maestroRunPath =

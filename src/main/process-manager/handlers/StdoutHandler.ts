@@ -703,6 +703,12 @@ export class StdoutHandler {
 		}
 
 		this.emitUsageIfPresent(sessionId, managedProcess, event, outputParser);
+		// Ahead of the thinking chunk the same event carries, which main holds
+		// back to coalesce: the gauge must know a source reports per-call usage
+		// before that source's text arrives, or it would count both.
+		if (event.callUsage) {
+			this.emitter.emit('call-usage', sessionId, event.callUsage);
+		}
 
 		// Extract session ID
 		const eventSessionId = outputParser.extractSessionId(event);
@@ -714,15 +720,25 @@ export class StdoutHandler {
 			this.emitter.emit('slash-commands', sessionId, slashCommands);
 		}
 
+		// Reasoning that rode in on another event (Antigravity reads a model step's
+		// thinking from its conversation store). Emitted first so it precedes the
+		// step's own text, and never added to streamedText.
+		if (event.reasoningText) {
+			this.emitter.emit('thinking-chunk', sessionId, event.reasoningText);
+		}
+
 		// Handle streaming text events (OpenCode, Codex reasoning, Grok thought/text)
 		if (event.type === 'text' && event.isPartial && event.text) {
 			// Thinking panel routing:
 			// - Copilot: never thinking-chunk (deltas accumulate in streamedText
 			//   and flush once at exit).
-			// - Grok / Codex / OpenCode / OMP: only isReasoning deltas → thinking-chunk.
-			//   These stream the final answer as partial `text` WITHOUT isReasoning;
-			//   dumping those into the thinking panel makes the wizard look finished
-			//   while tools still run (Grok emits no tool events on the stream).
+			// - Grok / Codex / OpenCode / OMP / Antigravity: only isReasoning deltas →
+			//   thinking-chunk. These stream the final answer as partial `text`
+			//   WITHOUT isReasoning; dumping those into the thinking panel makes the
+			//   wizard look finished while tools still run (Grok emits no tool events
+			//   on the stream), and in sticky mode left every agy answer printed twice.
+			//   Antigravity's real thinking arrives separately, as `reasoningText`
+			//   (emitted above).
 			// - Claude Code + Factory Droid: forward ALL partials. Claude's assistant
 			//   text arrives as partials with isReasoning undefined; that live preview
 			//   is exactly what drives the thinking display during a turn, and the
@@ -736,7 +752,8 @@ export class StdoutHandler {
 					toolType === 'grok' ||
 					toolType === 'codex' ||
 					toolType === 'opencode' ||
-					toolType === 'omp';
+					toolType === 'omp' ||
+					toolType === 'antigravity';
 				if (!requiresReasoningTag || event.isReasoning) {
 					this.emitter.emit('thinking-chunk', sessionId, event.text);
 				}
@@ -745,6 +762,10 @@ export class StdoutHandler {
 			// final response text. Only message content should be in streamedText.
 			if (!event.isReasoning) {
 				managedProcess.streamedText = (managedProcess.streamedText || '') + event.text;
+				if (managedProcess.toolType === 'grok') {
+					managedProcess.resultEmitted = true;
+					this.bufferManager.emitDataBuffered(sessionId, event.text);
+				}
 			}
 		}
 

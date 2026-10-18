@@ -102,11 +102,20 @@ describe('getSteerSupport', () => {
 		});
 	});
 
-	it('calls an SSH remote unsupported before checking the provider', () => {
-		const support = getSteerSupport(
-			workingSession({ sshRemoteId: 'remote-1', toolType: 'codex', codexTransport: 'app-server' })
-		);
+	it('calls an SSH Claude agent unsupported', () => {
+		const support = getSteerSupport(workingSession({ sshRemoteId: 'remote-1' }));
 		expect(support).toMatchObject({ kind: 'unsupported', reason: 'ssh-remote' });
+	});
+
+	it('supports an SSH Codex agent on app-server, and calls one on exec fixable', () => {
+		expect(
+			getSteerSupport(
+				workingSession({ sshRemoteId: 'remote-1', toolType: 'codex', codexTransport: 'app-server' })
+			)
+		).toEqual({ kind: 'supported' });
+		expect(
+			getSteerSupport(workingSession({ sshRemoteId: 'remote-1', toolType: 'codex' }))
+		).toMatchObject({ kind: 'fixable', reason: 'codex-exec' });
 	});
 });
 

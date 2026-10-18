@@ -917,6 +917,166 @@ describe('Tab Naming IPC Handlers', () => {
 			expect(result).toBe('Side-Scroller Game');
 		});
 
+		const LONG_TITLE_AGENTS = [
+			'claude-code',
+			'codex',
+			'grok',
+			'factory-droid',
+			'copilot-cli',
+		] as const;
+		it.each(
+			LONG_TITLE_AGENTS.flatMap((agentType) => [
+				[agentType, true, 'Donation Appeal Pages Japanese...'] as const,
+				[agentType, false, 'Donation Appeal Pages Japanese Translation Dates'] as const,
+			])
+		)(
+			'names a 48-character final title from %s (shortenLongTabNames: %s)',
+			async (agentType, shorten, expected) => {
+				const title = 'Donation Appeal Pages Japanese Translation Dates';
+				mockSettingsStore.get.mockImplementation((key: string, defaultValue?: unknown) => {
+					if (key === 'shortenLongTabNames') return shorten;
+					if (key === 'utilityAgentId' || key === 'utilityModelId') return defaultValue ?? null;
+					return defaultValue ?? {};
+				});
+				const listeners = new Map<string, (...args: any[]) => void>();
+				mockProcessManager.on.mockImplementation(
+					(event: string, callback: (...args: any[]) => void) => {
+						listeners.set(event, callback);
+					}
+				);
+				mockAgentDetector.getAgent.mockResolvedValue({ ...mockClaudeAgent, id: agentType });
+
+				const resultPromise = invokeHandler('tabNaming:generateTabName', {
+					userMessage: 'Translate the donation appeal pages and dates into Japanese',
+					agentType,
+					cwd: '/test/project',
+				});
+				await vi.waitFor(() => expect(mockProcessManager.spawn).toHaveBeenCalled());
+
+				const sessionId = 'tab-naming-mock-uuid-1234';
+				const streams = {
+					'claude-code': [{ type: 'result', result: title }],
+					codex: [{ type: 'item.completed', item: { type: 'agent_message', text: title } }],
+					grok: [
+						{ type: 'thought', data: 'Generate a short title' },
+						{ type: 'text', data: title.slice(0, 20) },
+						{ type: 'text', data: title.slice(20) },
+						{ type: 'end', stopReason: 'end_turn' },
+					],
+					'factory-droid': [
+						{ type: 'message', role: 'assistant', text: title },
+						{ type: 'completion' },
+					],
+					'copilot-cli': [
+						{ type: 'assistant.message_delta', data: { deltaContent: title } },
+						{ type: 'result' },
+					],
+				};
+				const raw = streams[agentType].map((event) => JSON.stringify(event)).join('\n') + '\n';
+				if (agentType !== 'claude-code') {
+					// ProcessManager emits the parsed title on data; raw-stdout retains its provenance.
+					listeners.get('raw-stdout')?.(sessionId, raw.slice(0, 20));
+					listeners.get('raw-stdout')?.(sessionId, raw.slice(20));
+					listeners.get('data')?.(sessionId, title);
+				} else {
+					listeners.get('data')?.(sessionId, raw);
+				}
+				listeners.get('exit')?.(sessionId, 0);
+
+				expect(title).toHaveLength(48);
+				expect(await resultPromise).toBe(expected);
+				expect(mockProcessManager.off).toHaveBeenCalledWith(
+					'raw-stdout',
+					listeners.get('raw-stdout')
+				);
+			}
+		);
+
+		it('cuts a final title past 80 characters even with shortening off', async () => {
+			const title =
+				'Translate Donation Appeal Pages And Every Event Date Into Japanese For The Autumn Campaign';
+			const listeners = new Map<string, (...args: any[]) => void>();
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					listeners.set(event, callback);
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Translate the donation appeal pages and dates into Japanese',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+			await vi.waitFor(() => expect(mockProcessManager.spawn).toHaveBeenCalled());
+
+			const sessionId = 'tab-naming-mock-uuid-1234';
+			listeners.get('data')?.(sessionId, JSON.stringify({ type: 'result', result: title }) + '\n');
+			listeners.get('exit')?.(sessionId, 0);
+
+			expect(title.length).toBeGreaterThan(80);
+			expect(await resultPromise).toBe(
+				'Translate Donation Appeal Pages And Every Event Date Into Japanese For The...'
+			);
+		});
+
+		it.each(['missing', 'cancelled'])(
+			'rejects a long Grok title with %s completion',
+			async (kind) => {
+				const title = 'Donation Appeal Pages Japanese Translation Dates';
+				const listeners = new Map<string, (...args: any[]) => void>();
+				mockProcessManager.on.mockImplementation(
+					(event: string, callback: (...args: any[]) => void) => {
+						listeners.set(event, callback);
+					}
+				);
+				mockAgentDetector.getAgent.mockResolvedValue({ ...mockClaudeAgent, id: 'grok' });
+				const resultPromise = invokeHandler('tabNaming:generateTabName', {
+					userMessage: 'Translate the donation appeal pages and dates into Japanese',
+					agentType: 'grok',
+					cwd: '/test/project',
+				});
+				await vi.waitFor(() => expect(mockProcessManager.spawn).toHaveBeenCalled());
+
+				const stream = [JSON.stringify({ type: 'text', data: title })];
+				if (kind === 'cancelled') {
+					stream.push(JSON.stringify({ type: 'end', stopReason: 'cancelled' }));
+				}
+				const sessionId = 'tab-naming-mock-uuid-1234';
+				listeners.get('raw-stdout')?.(sessionId, stream.join('\n') + '\n');
+				listeners.get('data')?.(sessionId, title);
+				listeners.get('exit')?.(sessionId, 0);
+				expect(await resultPromise).toBeNull();
+			}
+		);
+
+		it.each(['raw', 'partial', 'noise'])('does not shorten a long %s response', async (kind) => {
+			const title = 'Donation Appeal Pages Japanese Translation Dates';
+			const listeners = new Map<string, (...args: any[]) => void>();
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					listeners.set(event, callback);
+				}
+			);
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Translate the donation appeal pages and dates into Japanese',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+			await vi.waitFor(() => expect(mockProcessManager.spawn).toHaveBeenCalled());
+
+			const output =
+				kind === 'raw'
+					? title
+					: JSON.stringify(
+							kind === 'partial'
+								? { type: 'assistant', message: { content: [{ type: 'text', text: title }] } }
+								: { type: 'result', result: title + ' <invoke>' }
+						);
+			listeners.get('data')?.('tab-naming-mock-uuid-1234', output);
+			listeners.get('exit')?.('tab-naming-mock-uuid-1234', 0);
+			expect(await resultPromise).toBeNull();
+		});
+
 		it('extracts from streaming assistant text when no result event arrives (early extraction)', async () => {
 			// Early extraction resolves before the process exits, so only assistant
 			// (streaming) events are present - no terminating result line yet.
@@ -1895,6 +2055,49 @@ describe('Tab Naming IPC Handlers', () => {
 			expect(retryOverrides.sessionCustomEffort).toBeUndefined();
 			// Only the effort is dropped; the cheap MODEL is still wanted.
 			expect(retryOverrides.sessionCustomModel).toBe('haiku');
+
+			callbacks.data?.('tab-naming-mock-uuid-1234', 'Slack Formatting Fix');
+			callbacks.exit?.('tab-naming-mock-uuid-1234', 0);
+
+			expect(await resultPromise).toBe('Slack Formatting Fix');
+		});
+
+		it('retries when the refusal is only in the raw stderr (Copilot Auto model)', async () => {
+			const { applyAgentConfigOverrides } = await import('../../../../main/utils/agent-args');
+			const callbacks = captureListeners();
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Fix the Slack formatting',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+			});
+
+			// Copilot's parser reports a generic exit message and keeps the
+			// provider's own words only in `raw.stderr`.
+			callbacks['agent-error']?.('tab-naming-mock-uuid-1234', {
+				type: 'agent_crashed',
+				agentId: 'copilot-cli',
+				recoverable: true,
+				timestamp: 0,
+				message: 'Agent exited with code 1',
+				raw: {
+					exitCode: 1,
+					stderr:
+						'Error: Model "auto" does not support reasoning effort configuration (requested: "low").',
+				},
+			});
+			callbacks.exit?.('tab-naming-mock-uuid-1234', 1);
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalledTimes(2);
+			});
+			expect((applyAgentConfigOverrides as Mock).mock.calls[1][2].sessionCustomEffort).toBe(
+				undefined
+			);
 
 			callbacks.data?.('tab-naming-mock-uuid-1234', 'Slack Formatting Fix');
 			callbacks.exit?.('tab-naming-mock-uuid-1234', 0);

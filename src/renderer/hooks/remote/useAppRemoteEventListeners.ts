@@ -13,7 +13,7 @@ import { useEventListener } from '../utils/useEventListener';
 import { generateId } from '../../utils/ids';
 import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
-import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
+import { buildNewAgentRecord } from '../../../shared/newAgentRecord';
 import { asThinkingMode } from '../../../shared/types';
 import { resolveAutoRunDocumentNames } from '../../../shared/autoRunDocumentPaths';
 import {
@@ -32,7 +32,7 @@ import {
 	getTerminalTabDisplayName,
 	getTerminalSessionId,
 } from '../../utils/terminalTabHelpers';
-import type { Session, AITab, ToolType, Group, BatchRunConfig } from '../../types';
+import type { Session, ToolType, Group, BatchRunConfig } from '../../types';
 import type { BrowserTab } from '../../../shared/browserPage';
 import { logger } from '../../utils/logger';
 import { FILE_TREE_REFRESH_EVENT } from '../../utils/fileTreeRefresh';
@@ -54,6 +54,7 @@ import { spawnWorktreeAgentAndDispatch } from '../../utils/worktreeSpawn';
 import { resolveAutoRunDispatchTarget } from '../../services/autoRunDispatchTarget';
 import { notifyToast } from '../../stores/notificationStore';
 import { reserveGoalRunLaunch, releaseGoalRunLaunch, waitForGoalRunStart } from './goalRunLaunch';
+import { killAgentAiProcesses } from '../../services/process';
 import {
 	canCreateGroupInside,
 	canSetGroupParent,
@@ -1480,20 +1481,6 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 
 			const currentDefaults = useSettingsStore.getState();
 			const newId = generateId();
-			const initialTabId = generateId();
-			const initialTab: AITab = {
-				id: initialTabId,
-				agentSessionId: null,
-				name: null,
-				starred: false,
-				logs: [],
-				inputValue: '',
-				stagedImages: [],
-				createdAt: Date.now(),
-				state: 'idle',
-				saveToHistory: currentDefaults.defaultSaveToHistory,
-				showThinking: currentDefaults.defaultShowThinking,
-			};
 
 			// Probe git repo state for the cwd so the header badge shows the branch
 			// instead of "LOCAL". Mirrors the GUI's useSessionCrud flow. For SSH
@@ -1520,57 +1507,23 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			}
 
 			const newSession: Session = {
-				id: newId,
-				name,
+				...buildNewAgentRecord(
+					{
+						id: newId,
+						name,
+						toolType,
+						cwd,
+						groupId: groupId || undefined,
+						saveToHistory: currentDefaults.defaultSaveToHistory,
+						showThinking: currentDefaults.defaultShowThinking,
+					},
+					{ generateId }
+				),
 				toolType: toolType as ToolType,
-				state: 'idle',
-				createdAt: Date.now(),
-				cwd,
-				fullPath: cwd,
-				projectRoot: cwd,
 				isGitRepo,
 				...(gitBranches !== undefined && { gitBranches }),
 				...(gitTags !== undefined && { gitTags }),
 				...(gitRefsCacheTime !== undefined && { gitRefsCacheTime }),
-				aiLogs: [],
-				shellLogs: [
-					{
-						id: generateId(),
-						timestamp: Date.now(),
-						source: 'system',
-						text: 'Shell Session Ready.',
-					},
-				],
-				workLog: [],
-				contextUsage: 0,
-				inputMode: toolType === 'terminal' ? 'terminal' : 'ai',
-				aiPid: 0,
-				terminalPid: 0,
-				port: 3000 + Math.floor(Math.random() * 100),
-				isLive: false,
-				changedFiles: [],
-				fileTree: [],
-				fileExplorerExpanded: [],
-				fileExplorerScrollPos: 0,
-				fileTreeAutoRefreshInterval: 180,
-				shellCwd: cwd,
-				aiCommandHistory: [],
-				shellCommandHistory: [],
-				executionQueue: [],
-				activeTimeMs: 0,
-				aiTabs: [initialTab],
-				activeTabId: initialTabId,
-				closedTabHistory: [],
-				filePreviewTabs: [],
-				activeFileTabId: null,
-				browserTabs: [],
-				activeBrowserTabId: null,
-				terminalTabs: [],
-				activeTerminalTabId: null,
-				unifiedTabOrder: [{ type: 'ai' as const, id: initialTabId }],
-				unifiedClosedTabHistory: [],
-				groupId: groupId || undefined,
-				autoRunFolderPath: `${cwd}/${PLAYBOOKS_DIR}`,
 				// Apply optional config fields from CLI/web
 				...(config?.nudgeMessage && { nudgeMessage: config.nudgeMessage as string }),
 				...(config?.newSessionMessage && { newSessionMessage: config.newSessionMessage as string }),
@@ -1645,7 +1598,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 
 		// Kill processes
 		try {
-			await window.maestro.process.kill(`${sessionId}-ai`);
+			await killAgentAiProcesses(sessionId);
 		} catch {
 			/* ignore */
 		}

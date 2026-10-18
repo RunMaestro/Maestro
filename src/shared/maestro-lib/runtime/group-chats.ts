@@ -51,6 +51,7 @@ import { groupChatAutoRunSummary } from '../groupchat/autorun-summary';
 import { readLog } from '../groupchat/log';
 import { createGroupChatEngine, findSessionForParticipantName } from '../groupchat/router';
 import { toGroupChatSessionInfo, type MentionableSession } from '../groupchat/session-info';
+import { filterLiveAgents } from '../../agentVisibility';
 import { parseModeratorSessionId, parseParticipantSessionId } from '../groupchat/session-ids';
 import { createGroupChatStore, type GroupChat, type GroupChatStore } from '../groupchat/storage';
 import { turnEndOf } from '../groupchat/turn-end';
@@ -211,8 +212,11 @@ export function createRuntimeGroupChats(options: RuntimeGroupChatsOptions): Runt
 	};
 
 	const directory: GroupChatAgentDirectory = {
-		list: () =>
-			repository.listAgents().map((agent) =>
+		// Live agents only: a dormant Pianola (flag off) is never offered for @mention.
+		list: () => {
+			const settings = readSettingsStore(paths.settingsFile);
+			const encoreFeatures = settings.status === 'ok' ? settings.data.encoreFeatures : undefined;
+			return filterLiveAgents(repository.listAgents(), encoreFeatures).map((agent) =>
 				toGroupChatSessionInfo(agent as unknown as MentionableSession, {
 					sshRemoteName: (remoteId) =>
 						background.sshStore.getSshRemotes().find((remote) => remote.id === remoteId)?.name,
@@ -220,7 +224,8 @@ export function createRuntimeGroupChats(options: RuntimeGroupChatsOptions): Runt
 					// A group chat's own processes are not the agent's (GD20), so they never count.
 					isBusy: registry.isBusy(agent.id) || options.autoRun.holds(agent.id),
 				})
-			),
+			);
+		},
 		providerConfig: (providerId) => agentConfigs()[providerId] ?? {},
 		providerEnvVars: (providerId) =>
 			agentConfigs()[providerId]?.customEnvVars as Record<string, string> | undefined,

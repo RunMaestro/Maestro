@@ -8,6 +8,14 @@ import type {
 	PanelContribution,
 } from '../../../../shared/plugins/contributions';
 import { useUIStore } from '../../../stores/uiStore';
+import { useSettingsStore } from '../../../stores/settingsStore';
+
+// Contributions are only read while the plugins Encore Feature is on.
+const encoreDefaults = useSettingsStore.getState().encoreFeatures;
+function setPluginsEnabled(plugins: boolean): void {
+	useSettingsStore.setState({ encoreFeatures: { ...encoreDefaults, plugins } });
+}
+beforeEach(() => setPluginsEnabled(true));
 
 const theme = THEMES.dracula;
 
@@ -95,11 +103,11 @@ describe('PluginPanelSlot', () => {
 		expect(slot).not.toBeNull();
 	});
 
-	it('renders nothing when the plugins feature is off (contributions rejects)', async () => {
-		pluginBridge.contributions.mockRejectedValue(new Error('PluginsDisabled'));
+	it('renders nothing and asks main nothing when the plugins feature is off', async () => {
+		setPluginsEnabled(false);
 		const { container } = render(<PluginPanelSlot theme={theme} placement="left" />);
-		await waitFor(() => expect(pluginBridge.contributions).toHaveBeenCalled());
 		await Promise.resolve();
+		expect(pluginBridge.contributions).not.toHaveBeenCalled();
 		expect(container.querySelector('webview')).toBeNull();
 		expect(container.querySelector('[data-plugin-panel-slot]')).toBeNull();
 	});

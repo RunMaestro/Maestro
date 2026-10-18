@@ -7,7 +7,7 @@
  * secrets from every free-text field and re-applies the byte caps.
  */
 
-import { redactSecrets } from '../redactSecrets';
+import { SECRET_PLACEHOLDERS, redactSecrets } from '../redactSecrets';
 import { MAX_SNAPSHOT_BYTES, MAX_TEXT_BYTES } from './config';
 import { OBSERVED_EVENT_KINDS } from './types';
 import type {
@@ -214,6 +214,44 @@ export function truncateUtf8(text: string, maxBytes: number): { text: string; tr
 	return { text: text.slice(0, end), truncated: true };
 }
 
+/** Screen text carries SMS and email, so one-time codes are redacted too. */
+const SCREEN_REDACTION = { oneTimeCodes: true } as const;
+
+/**
+ * Labels of fields that take a one-time code. They are plain text fields
+ * (not secure), so the helper reads them like any other.
+ */
+const CODE_FIELD_LABEL =
+	/\b(?:code|otp|totp|passcode|pin|2fa|mfa|one[- ]time|verification|authenticat\w*)\b/i;
+
+/** Code fields that hold ordinary data, not a credential. */
+const NOT_A_CODE_FIELD =
+	/\b(?:zip|postal|post|area|country|promo|coupon|discount|source)\s*code\b/i;
+
+/**
+ * A value short and dense enough to be a code: 4-12 characters with a digit
+ * among them, or an upper-case pair like a device-login "WDJB-MJHT". A word
+ * typed into a "Search code" box has neither shape.
+ */
+const CODE_VALUE = /^(?:(?=.*\d)[A-Za-z0-9-]{4,12}|\d{3} \d{3}|[A-Z0-9]{3,6}-[A-Z0-9]{3,6})$/;
+
+/**
+ * True when a text commit is a code typed into a code field ("Enter the
+ * 6-digit code", a device-login "user code"). The value is useless as
+ * history and live for a minute, so it is never stored.
+ */
+export function isOneTimeCodeEntry(event: ObservedEvent): boolean {
+	const label = event.element?.label;
+	const text = event.text?.trim();
+	return (
+		!!label &&
+		!!text &&
+		CODE_FIELD_LABEL.test(label) &&
+		!NOT_A_CODE_FIELD.test(label) &&
+		CODE_VALUE.test(text)
+	);
+}
+
 /** Redact secrets in every free-text field and re-apply the byte caps. */
 export function redactObservedEvent(
 	event: ObservedEvent,
@@ -222,11 +260,24 @@ export function redactObservedEvent(
 	const out: ObservedEvent = { ...event };
 	if (event.window) {
 		out.window = { ...event.window };
-		if (out.window.title) out.window.title = redactSecrets(out.window.title).text;
+		if (out.window.title) {
+			out.window.title = redactSecrets(out.window.title, SCREEN_REDACTION).text;
+		}
 		if (out.window.url) out.window.url = redactUrl(out.window.url);
 	}
 	if (event.element?.label) {
-		out.element = { ...event.element, label: redactSecrets(event.element.label).text };
+		out.element = {
+			...event.element,
+			label: redactSecrets(event.element.label, SCREEN_REDACTION).text,
+		};
+	}
+	if (
+		typeof event.text === 'string' &&
+		(event.kind === 'text.committed' || event.kind === 'selection.changed') &&
+		isOneTimeCodeEntry(event)
+	) {
+		out.text = SECRET_PLACEHOLDERS.one_time_code;
+		return out;
 	}
 	if (typeof event.text === 'string') {
 		const cap =
@@ -238,7 +289,7 @@ export function redactObservedEvent(
 		// secret that straddles the cap whole for the patterns to see. Then cut
 		// to the cap (placeholders can change the length).
 		const pre = truncateUtf8(event.text, cap + REDACTION_SLACK_BYTES);
-		const cut = truncateUtf8(redactSecrets(pre.text).text, cap);
+		const cut = truncateUtf8(redactSecrets(pre.text, SCREEN_REDACTION).text, cap);
 		out.text = cut.text;
 		if (cut.truncated || pre.truncated) out.truncated = true;
 	}

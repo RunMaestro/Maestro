@@ -290,7 +290,7 @@ describe('a headless consult', () => {
 	}
 
 	it('gives the consulted agent its own system prompt', async () => {
-		const { ask } = await consults({ encoreFeatures: { concerto: true } });
+		const { ask } = await consults({ encoreFeatures: { concerto: true, pianola: true } });
 		const spawn = await ask({ targetAgentId: 'a2', question: 'Which branch?', fromAgentId: 'a1' });
 		expect(spawn.appendSystemPrompt).toBe(await ownSystemPrompt(SESSIONS()[1]));
 		// Beta is the Pianola manager, so its role section rides along, then the plugin section.

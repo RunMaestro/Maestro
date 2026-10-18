@@ -29,7 +29,7 @@
  * (`agentStore.processQueuedItem`) runs outside React.
  */
 
-import type { ConsultHoldTarget, Session } from '../types';
+import type { ConsultHoldTarget, QueuedItem, Session } from '../types';
 import { useSessionStore } from '../stores/sessionStore';
 import {
 	buildKnownMentionNameSet,
@@ -62,6 +62,15 @@ export interface CrossAgentMentionPlan {
 	 * user's wording.
 	 */
 	routing: MentionRouting;
+	/** What the wording alone says, whether or not the user picked a routing. */
+	inferredRouting: MentionRouting;
+	/**
+	 * `explicit` when the user picked the routing in the composer's routing menu
+	 * instead of leaving it to the wording. An explicit pick has to travel with a
+	 * queued message (`QueuedItem.mentionRouting`), because the drain re-plans
+	 * from the text and the text alone would route it the other way.
+	 */
+	routingSource: 'wording' | 'explicit';
 	/**
 	 * The source agent must not be sent to when this message dispatches. True for
 	 * a leading mention (`only`: the message is addressed at the consulted agents
@@ -120,10 +129,15 @@ export function withMentionTurnNotes(
  *
  * Returns `null` when the message mentions no other agent, so callers can treat
  * "no plan" and "nothing to do" as the same thing.
+ *
+ * `routingOverride` is a routing the user picked explicitly (the composer's
+ * routing menu, or one stamped on a queued item). It replaces what the wording
+ * says; `null` or omitted leaves the wording in charge.
  */
 export function planCrossAgentMentions(
 	message: string,
-	sourceSessionId: string
+	sourceSessionId: string,
+	routingOverride?: MentionRouting | null
 ): CrossAgentMentionPlan | null {
 	const { sessions, groups } = useSessionStore.getState();
 	const targetSessionIds = resolveMentionedTargetSessionIds(
@@ -138,13 +152,32 @@ export function planCrossAgentMentions(
 	// file-shaped agent name (`@RunMaestro.ai fix this`) suppresses the local
 	// send just like a bare `@Codex` does.
 	const knownMentionNames = buildKnownMentionNameSet(sessions, groups, sourceSessionId);
-	const routing: MentionRouting = messageStartsWithAgentMention(message, knownMentionNames)
+	const inferredRouting: MentionRouting = messageStartsWithAgentMention(message, knownMentionNames)
 		? 'only'
 		: inferMentionTiming(message, knownMentionNames);
+	const routing = routingOverride ?? inferredRouting;
 	return {
 		targetSessionIds,
 		routing,
+		inferredRouting,
+		routingSource: routingOverride ? 'explicit' : 'wording',
 		suppressLocal: routing === 'only' || routing === 'consult-first',
+	};
+}
+
+/**
+ * The `@mention` fields a queued message carries for `plan`: the deferred
+ * consult flag, plus the routing when the user picked it explicitly (the drain
+ * re-plans from the text, which would otherwise undo the pick). Empty when the
+ * message mentions nobody.
+ */
+export function queuedMentionFields(
+	plan: CrossAgentMentionPlan | null | undefined
+): Pick<QueuedItem, 'crossAgentMention' | 'mentionRouting'> {
+	if (!plan) return {};
+	return {
+		crossAgentMention: true,
+		...(plan.routingSource === 'explicit' && { mentionRouting: plan.routing }),
 	};
 }
 
@@ -222,9 +255,10 @@ export function dispatchCrossAgentMentionsForMessage(
 	message: string,
 	sourceSession: Session,
 	sourceTabId: string,
-	images?: string[]
+	images?: string[],
+	routingOverride?: MentionRouting
 ): CrossAgentMentionDispatch {
-	const plan = planCrossAgentMentions(message, sourceSession.id);
+	const plan = planCrossAgentMentions(message, sourceSession.id, routingOverride);
 	if (!plan) return NO_MENTION_DISPATCH;
 	return dispatchCrossAgentMentions(plan, message, sourceSession, sourceTabId, images);
 }

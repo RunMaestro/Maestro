@@ -195,10 +195,19 @@ export function isTurnFileNameOf(filePath: string, turnId: string): boolean {
 	return path.basename(filePath).endsWith(`-${idPrefix(turnId, 'noturn')}.jsonl`);
 }
 
+/** A folder an agent works in, with the agent's name so a refusal can say whose it is. */
+export interface AgentWorkspace {
+	path: string;
+	agentName: string;
+}
+
 /** What `validateAgentFolder` needs to know about the machine. */
 export interface AgentFolderContext {
-	/** Every folder a local agent works in, not only those of the agent being set up. */
-	agentDirs: string[];
+	/**
+	 * Every folder a local agent works in, not only those of the agent being
+	 * set up. A bare path is a workspace whose agent has no name to show.
+	 */
+	agentDirs: ReadonlyArray<string | AgentWorkspace>;
 	/** Maestro's user data directory. */
 	userDataPath: string;
 	/**
@@ -290,14 +299,25 @@ function rejectionFor(resolved: string, ctx: AgentFolderContext): string | null 
 			return 'The folder contains the Maestro data folder, so the log would lie right beside it.';
 		}
 	}
-	for (const dir of ctx.agentDirs) {
+	const home = ctx.homeDir ? foldCase(resolveRealPath(ctx.homeDir)) : null;
+	for (const entry of ctx.agentDirs) {
+		const dir = typeof entry === 'string' ? entry : entry.path;
 		if (!dir) continue;
 		const real = resolveRealPath(dir);
-		if (isSameOrInside(resolved, real)) {
-			return 'The folder is inside an agent workspace, where that agent could read it.';
+		const whose =
+			typeof entry === 'string' || !entry.agentName.trim()
+				? 'an agent workspace'
+				: `the workspace of ${entry.agentName.trim()} (${real})`;
+		// An agent that works in the home folder or at a drive root would fence
+		// off every folder a log can sensibly go in. Such a workspace is as
+		// broad as the home folder, so it is judged by the home rule above: only
+		// the folder itself is refused, not the folders inside it.
+		const tooBroad = path.parse(real).root === real || foldCase(real) === home;
+		if (!tooBroad && isSameOrInside(resolved, real)) {
+			return `The folder is inside ${whose}, where that agent could read it.`;
 		}
 		if (isSameOrInside(real, resolved)) {
-			return 'The folder contains an agent workspace, so the log would lie right beside it.';
+			return `The folder contains ${whose}, so the log would lie right beside it.`;
 		}
 	}
 	return null;
@@ -314,7 +334,8 @@ function describeFsError(action: string, error: unknown): string {
  *
  * It rejects a relative path, the root of a drive, the home folder itself,
  * any folder equal to or inside a folder ANY agent works in (an agent can
- * read another agent's workspace), any folder equal to or inside Maestro's
+ * read another agent's workspace; a workspace that is the home folder or a
+ * drive root fences off only itself), any folder equal to or inside Maestro's
  * data directory or the folder its agent list was moved to, and any folder
  * that contains one of those.
  *

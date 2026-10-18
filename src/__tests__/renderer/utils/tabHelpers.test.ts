@@ -79,6 +79,9 @@ import {
 	computeUnreadGroupIds,
 	computeQueuedTabIds,
 	settleTabThinkingState,
+	settleAgentStateFromTabs,
+	syncAgentStateToTabs,
+	markTabBusyFromOutput,
 	filterUnifiedTabOrderForUnread,
 	groupFocusFields,
 	isSessionIdLabel,
@@ -6790,5 +6793,183 @@ describe('settleTabThinkingState', () => {
 
 		expect(result.aiTabs[0].state).toBe('idle');
 		expect(result.state).toBe('error');
+	});
+});
+
+/**
+ * A terminal command or a CLI playbook takes over the agent-level state while
+ * it runs; ending it must hand the agent back to its AI tabs, not to idle.
+ */
+describe('settleAgentStateFromTabs', () => {
+	it('returns the agent to its running AI turn when a command ends', () => {
+		const session = createMockSession({
+			state: 'busy',
+			busySource: 'terminal',
+			aiTabs: [createMockTab({ id: 't1', state: 'busy' })],
+		});
+
+		const result = settleAgentStateFromTabs(session);
+
+		expect(result.state).toBe('busy');
+		expect(result.busySource).toBe('ai');
+	});
+
+	it('times the agent from its earliest running turn, not from the command', () => {
+		const session = createMockSession({
+			state: 'busy',
+			busySource: 'terminal',
+			thinkingStartTime: 9_000,
+			aiTabs: [
+				createMockTab({ id: 't1', state: 'busy', thinkingStartTime: 5_000 }),
+				createMockTab({ id: 't2', state: 'idle', thinkingStartTime: 1_000 }),
+			],
+			orphanedThinkingTabs: [
+				createMockTab({ id: 'closed', state: 'busy', thinkingStartTime: 3_000 }),
+			],
+		});
+
+		expect(settleAgentStateFromTabs(session).thinkingStartTime).toBe(3_000);
+	});
+
+	it('keeps the blocking error state', () => {
+		const session = createMockSession({
+			state: 'error',
+			busySource: 'terminal',
+			aiTabs: [createMockTab({ id: 't1', state: 'idle' })],
+		});
+
+		expect(settleAgentStateFromTabs(session).state).toBe('error');
+	});
+
+	// A tab closed mid-turn survives as an orphan so the pill keeps counting it.
+	it('counts a tab closed while its turn was still running', () => {
+		const session = createMockSession({
+			state: 'busy',
+			busySource: 'terminal',
+			aiTabs: [createMockTab({ id: 't1', state: 'idle' })],
+			orphanedThinkingTabs: [createMockTab({ id: 'closed', state: 'busy' })],
+		});
+
+		const result = settleAgentStateFromTabs(session);
+
+		expect(result.state).toBe('busy');
+		expect(result.busySource).toBe('ai');
+	});
+
+	it('goes idle when no AI tab is running', () => {
+		const session = createMockSession({
+			state: 'busy',
+			busySource: 'terminal',
+			thinkingStartTime: 1_000,
+			aiTabs: [createMockTab({ id: 't1', state: 'idle' })],
+		});
+
+		const result = settleAgentStateFromTabs(session);
+
+		expect(result.state).toBe('idle');
+		expect(result.busySource).toBeUndefined();
+		expect(result.thinkingStartTime).toBeUndefined();
+	});
+});
+
+/**
+ * A web-desktop browser learns tab states from the desktop's inventory, which
+ * carries no agent-level state; the dot and the Thinking pill read the agent's.
+ */
+describe('syncAgentStateToTabs', () => {
+	it('marks the agent busy when a synced tab is mid-turn', () => {
+		const session = createMockSession({
+			state: 'idle',
+			aiTabs: [createMockTab({ id: 't1', state: 'busy', thinkingStartTime: 5_000 })],
+		});
+
+		const result = syncAgentStateToTabs(session);
+
+		expect(result.state).toBe('busy');
+		expect(result.busySource).toBe('ai');
+		expect(result.thinkingStartTime).toBe(5_000);
+	});
+
+	it('idles an AI-busy agent once no tab is running', () => {
+		const session = createMockSession({
+			state: 'busy',
+			busySource: 'ai',
+			aiTabs: [createMockTab({ id: 't1', state: 'idle' })],
+		});
+
+		expect(syncAgentStateToTabs(session).state).toBe('idle');
+	});
+
+	it('returns the same session when nothing changes', () => {
+		const busy = createMockSession({
+			state: 'busy',
+			busySource: 'ai',
+			aiTabs: [createMockTab({ id: 't1', state: 'busy' })],
+		});
+		const idle = createMockSession({ state: 'idle', aiTabs: [createMockTab({ id: 't1' })] });
+
+		expect(syncAgentStateToTabs(busy)).toBe(busy);
+		expect(syncAgentStateToTabs(idle)).toBe(idle);
+	});
+
+	it('leaves the states the tabs do not decide alone', () => {
+		const idleTabs = [createMockTab({ id: 't1', state: 'idle' })];
+		const error = createMockSession({ state: 'error', aiTabs: idleTabs });
+		const shell = createMockSession({ state: 'busy', busySource: 'terminal', aiTabs: idleTabs });
+		const playbook = createMockSession({
+			state: 'busy',
+			aiTabs: idleTabs,
+			cliActivity: { playbookId: 'p', playbookName: 'P', startedAt: 1 },
+		});
+
+		expect(syncAgentStateToTabs(error)).toBe(error);
+		expect(syncAgentStateToTabs(shell)).toBe(shell);
+		expect(syncAgentStateToTabs(playbook)).toBe(playbook);
+	});
+});
+
+/**
+ * Output on a tab's own process key proves its turn is running, even when this
+ * client never saw it start (a turn another client dispatched, an auto-retry).
+ */
+describe('markTabBusyFromOutput', () => {
+	it('marks an idle tab and its agent busy', () => {
+		const session = createMockSession({
+			state: 'idle',
+			aiTabs: [createMockTab({ id: 't1', state: 'idle' }), createMockTab({ id: 't2' })],
+		});
+
+		const result = markTabBusyFromOutput(session, 't1');
+
+		expect(result.aiTabs[0].state).toBe('busy');
+		expect(result.aiTabs[0].thinkingStartTime).toBeDefined();
+		expect(result.aiTabs[1].state).toBe('idle');
+		expect(result.state).toBe('busy');
+		expect(result.busySource).toBe('ai');
+	});
+
+	it('returns the same session for a busy or unknown tab', () => {
+		const session = createMockSession({
+			state: 'busy',
+			busySource: 'ai',
+			aiTabs: [createMockTab({ id: 't1', state: 'busy' })],
+		});
+
+		expect(markTabBusyFromOutput(session, 't1')).toBe(session);
+		expect(markTabBusyFromOutput(session, 'gone')).toBe(session);
+	});
+
+	it('marks the tab but leaves an error or a running command in charge of the agent', () => {
+		const tabs = [createMockTab({ id: 't1', state: 'idle' })];
+		const error = markTabBusyFromOutput(createMockSession({ state: 'error', aiTabs: tabs }), 't1');
+		const shell = markTabBusyFromOutput(
+			createMockSession({ state: 'busy', busySource: 'terminal', aiTabs: tabs }),
+			't1'
+		);
+
+		expect(error.aiTabs[0].state).toBe('busy');
+		expect(error.state).toBe('error');
+		expect(shell.aiTabs[0].state).toBe('busy');
+		expect(shell.busySource).toBe('terminal');
 	});
 });

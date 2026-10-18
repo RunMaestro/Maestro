@@ -18,6 +18,7 @@ import type { PluginEventBusImpl } from '../plugins/plugin-event-bus';
 import type { SafeSendFn } from '../utils/safe-send';
 import type { WakaTimeManager } from '../wakatime-manager';
 import type { getSettingsStore } from '../stores';
+import { resolveEncoreFeatures } from '../../shared/encoreFeatureDefaults';
 import { setupProcessListeners } from '../process-listeners';
 import { setupWakaTimeListener } from '../process-listeners/wakatime-listener';
 import { setupCotExportListener } from '../process-listeners/cot-export-listener';
@@ -106,10 +107,7 @@ export function wireProcessListeners(deps: ProcessListenersWiringDependencies): 
 		},
 		logger,
 		getCueEngine: deps.getCueEngine,
-		isCueEnabled: () => {
-			const ef = deps.settingsStore.get('encoreFeatures', {}) as Record<string, boolean>;
-			return !!ef.maestroCue;
-		},
+		isCueEnabled: () => resolveEncoreFeatures(deps.settingsStore.get('encoreFeatures')).maestroCue,
 		getSshRemoteByName: (name: string) => {
 			const remotes = deps.settingsStore.get('sshRemotes', []);
 			return remotes.find((r) => r.name === name) ?? null;

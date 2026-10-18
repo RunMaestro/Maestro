@@ -15,6 +15,7 @@ import {
 	GitFork,
 	Activity,
 	Archive,
+	Package,
 	AlarmClock,
 	ListChecks,
 } from 'lucide-react';
@@ -34,7 +35,8 @@ export type CueModalTab =
 	| 'pipeline'
 	| 'pipeline-list'
 	| 'activity'
-	| 'backup';
+	| 'backup'
+	| 'bundles';
 
 const TABS: ReadonlyArray<{
 	id: CueModalTab;
@@ -47,6 +49,7 @@ const TABS: ReadonlyArray<{
 	{ id: 'pipeline-list', label: 'Pipeline List', icon: ListChecks },
 	{ id: 'activity', label: 'Activity Log', icon: Activity },
 	{ id: 'backup', label: 'Backup', icon: Archive },
+	{ id: 'bundles', label: 'Bundles', icon: Package },
 ];
 
 export interface CueModalHeaderProps {

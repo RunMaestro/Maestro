@@ -97,14 +97,14 @@ import type {
 	CotPastChain,
 } from '../../shared/cotExport/types';
 import { corruptStorePath, createStoreDeserializer } from '../stores/corrupt-store-recovery';
-import { getSessionsStore, getSyncPath } from '../stores/getters';
+import { getLiveSessions, getSessionsStore, getSyncPath } from '../stores/getters';
 import { createKeyringAnchor, noAnchor } from '../utils/keyring-anchor';
 import type { AnchorStore } from '../utils/keyring-anchor';
 import { logger } from '../utils/logger';
 import { obscuringSeal, safeStorageSeal } from '../utils/safe-storage-seal';
 import type { SealProvider } from '../utils/safe-storage-seal';
 import { countTurnFilesOnDay, isSameFolder, validateAgentFolder } from './layout';
-import type { AgentFolderContext } from './layout';
+import type { AgentFolderContext, AgentWorkspace } from './layout';
 
 // ============================================================================
 // Contract
@@ -1005,13 +1005,14 @@ export function setCotFailureListener(listener: CotFailureListener | null): void
  * directory, and its siblings are one `ls ..` away). An agent on an SSH remote
  * is left out: its paths are paths on another machine.
  */
-export function agentDirsOf(sessions: unknown): string[] {
-	const dirs: string[] = [];
+export function agentDirsOf(sessions: unknown): AgentWorkspace[] {
+	const dirs: AgentWorkspace[] = [];
 	if (!Array.isArray(sessions)) return dirs;
 	for (const session of sessions) {
 		if (!isRecord(session)) continue;
 		const ssh = session.sessionSshRemoteConfig;
 		if (isRecord(ssh) && ssh.enabled === true) continue;
+		const agentName = typeof session.name === 'string' ? session.name : '';
 		const granted = Array.isArray(session.additionalDirectories)
 			? session.additionalDirectories.map((dir) => (isRecord(dir) ? dir.path : undefined))
 			: [];
@@ -1026,7 +1027,7 @@ export function agentDirsOf(sessions: unknown): string[] {
 			session.worktreeParentPath,
 			...granted,
 		]) {
-			if (typeof dir === 'string' && dir.trim() !== '') dirs.push(dir);
+			if (typeof dir === 'string' && dir.trim() !== '') dirs.push({ path: dir, agentName });
 		}
 	}
 	return dirs;
@@ -1064,7 +1065,9 @@ export function getCotConfigStore(): CotConfigStore {
 			cwd: userDataPath,
 			seal: safeStorageSeal(safeStorage),
 			getFolderContext: () => ({
-				agentDirs: agentDirsOf(getSessionsStore().get('sessions', [])),
+				// Live agents only: a dormant Pianola (flag off) keeps its home-folder
+				// cwd in the store and must not claim folders it cannot use.
+				agentDirs: agentDirsOf(getLiveSessions()),
 				userDataPath,
 				syncPath: movedSyncPath(userDataPath),
 				homeDir: os.homedir(),
@@ -1072,6 +1075,8 @@ export function getCotConfigStore(): CotConfigStore {
 			// Read at each failure, so a listener set after this point is heard.
 			onError: (agentId, error) => _failureListener?.(agentId, error),
 			anchor: lateBoundAnchor,
+			// The FULL list on purpose: this asks whether the profile was reset,
+			// and a dormant agent's persisted record means it was not.
 			isFreshProfile: () => {
 				const sessions: unknown = getSessionsStore().get('sessions', []);
 				return !Array.isArray(sessions) || sessions.length === 0;

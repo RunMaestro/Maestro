@@ -34,6 +34,7 @@ import { formatCount, formatRelativeTime } from '../../../shared/formatters';
 import type { Theme } from '../../types';
 import { ipcErrorMessage } from '../../utils/ipcErrorMessage';
 import { isWebDesktop } from '../../utils/runtimeContext';
+import { ToggleSwitch } from '../ui/ToggleSwitch';
 
 interface AgentCotExportSectionProps {
 	theme: Theme;
@@ -265,22 +266,11 @@ function CotExportControls({
 				</p>
 			)}
 
-			<label
-				className={`mt-2 flex items-start gap-2 px-2 py-1.5 rounded transition-colors ${
-					toggleDisabled ? 'cursor-not-allowed' : 'cursor-pointer hover:bg-white/5'
-				}`}
+			<div
+				className="mt-2 flex items-center gap-3 px-2 py-1.5 rounded"
 				style={{ backgroundColor: colors.bgActivity }}
 			>
-				<input
-					type="checkbox"
-					checked={status?.enabled ?? false}
-					disabled={toggleDisabled}
-					onChange={(e) => void handleToggle(e.target.checked)}
-					className="mt-0.5 accent-current"
-					style={{ accentColor: colors.accent }}
-					aria-label="Keep an audit log for this agent"
-				/>
-				<div className="flex flex-col min-w-0">
+				<div className="flex flex-col flex-1 min-w-0">
 					<span
 						className="text-xs font-medium"
 						style={{ color: toggleDisabled ? colors.textDim : colors.textMain }}
@@ -292,7 +282,14 @@ function CotExportControls({
 						must be outside every agent's working directory.
 					</span>
 				</div>
-			</label>
+				<ToggleSwitch
+					checked={status?.enabled ?? false}
+					onChange={(next) => void handleToggle(next)}
+					theme={theme}
+					disabled={toggleDisabled}
+					ariaLabel="Keep an audit log for this agent"
+				/>
+			</div>
 
 			{!supportsReasoning && (
 				<p className="mt-2 text-xs" style={{ color: colors.textDim }}>

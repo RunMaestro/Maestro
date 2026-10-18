@@ -554,10 +554,12 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 
 				{/* Cost Tracker - styled as pill, hidden at narrow widths via CSS container query */}
 				{/* Hide when file preview tab is focused - cost tracking is only relevant for AI tabs */}
+				{/* Only once a cost was reported: a provider binary can report tokens and no
+				    cost (a grok-compatible custom binary), and "$0.00" there is a wrong answer. */}
 				{showSessionCostPill &&
 					activeSession.inputMode === 'ai' &&
 					!activeFileTabId &&
-					(activeTab?.agentSessionId || activeTab?.usageStats) &&
+					(activeTab?.usageStats?.totalCostUsd ?? 0) > 0 &&
 					hasCapability('supportsCostTracking') && (
 						<span className="header-cost-widget text-xs font-mono font-bold px-2 py-0.5 rounded-full border border-green-500/30 text-green-500 bg-green-500/10">
 							{formatCost(activeTab?.usageStats?.totalCostUsd ?? 0)}

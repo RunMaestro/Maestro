@@ -67,6 +67,7 @@ import { selectCanOpenMediaPlayer, useMediaPlaybackStore } from '../../stores/me
 import { buildActiveTabContextCommands } from './commands/contextCommands';
 import { buildDebugCommands } from './commands/debugCommands';
 import { buildFeatureCommands } from './commands/featureCommands';
+import { areToastsEnabled } from '../../../shared/toastDuration';
 import { buildGitWorktreeCommands } from './commands/gitWorktreeCommands';
 import {
 	buildGroupChatCommands,
@@ -240,6 +241,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const storeSetOutputSearchOpen = useUIStore((s) => s.setOutputSearchOpen);
 	const storeSetFileTreeFilterOpen = useFileExplorerStore((s) => s.setFileTreeFilterOpen);
 	const groupsPlusEnabled = useSettingsStore(selectGroupsPlusEnabled);
+	const toastsEnabled = useSettingsStore((s) => areToastsEnabled(s.toastDuration));
 	const audioFeedbackEnabled = useSettingsStore((s) => s.audioFeedbackEnabled);
 	const setAudioFeedbackEnabled = useSettingsStore((s) => s.setAudioFeedbackEnabled);
 	const idleNotificationEnabled = useSettingsStore((s) => s.idleNotificationEnabled);
@@ -270,6 +272,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const setGroupChatsExpanded = useSettingsStore((s) => s.setGroupChatsExpanded);
 	const isLeaderboardRegistered = useSettingsStore(selectIsLeaderboardRegistered);
 	const activeBatchSessionIds = useBatchStore(useShallow(selectActiveBatchSessionIds));
+	const batchRunStates = useBatchStore((s) => s.batchRunStates);
 	// Concerto's two surfaces are store-owned toggles, so read their live state
 	// here: the palette entries name what the keypress will actually do.
 	const concertoEnabled = useSettingsStore((s) => s.encoreFeatures.concerto === true);
@@ -617,6 +620,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				: undefined,
 			clearAllNotificationsShortcut: shortcuts.clearAllNotifications,
 			openNotificationCenterShortcut: shortcuts.openNotificationCenter,
+			toastsEnabled,
+			toggleInAppToastsShortcut: shortcuts.toggleInAppToasts,
 			toastPosition,
 			setToastPosition,
 			setQuickActionOpen,
@@ -944,7 +949,9 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			searchAllTabsShortcut: shortcuts.searchAllTabs,
 		}),
 		...buildGroupChatCommands({
-			sessions,
+			// The "2+ agents" rule counts only live agents: a dormant Pianola must
+			// not make New Group Chat appear.
+			sessions: switchableSessions,
 			groupChats,
 			activeGroupChatId,
 			onNewGroupChat,
@@ -1022,6 +1029,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		...buildAgentSwitcherCommands({
 			sessions: switchableSessions,
 			activeBatchSessionIds,
+			batchRunStates,
 			setActiveSessionId,
 			revealJumpTarget,
 			getSessionWindow,

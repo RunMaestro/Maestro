@@ -9,7 +9,9 @@
  * the JSONL `codex exec --json` writes. Rather than re-plumb that stack, this
  * converts app-server notifications back into the exact legacy exec shapes the
  * parser already handles: `thread.started`, `turn.started`, `item.started`,
- * `item.completed`, `turn.completed`, `turn.failed` and `error`. Same design as
+ * `item.completed`, `turn.completed`, `turn.failed` and `error`, plus one line
+ * of Maestro's own, `maestro.call_usage` (see `CODEX_CALL_USAGE_LINE_TYPE`).
+ * Same design as
  * `src/main/opencode-server/event-translator.ts` for OpenCode.
  *
  * The full mapping table, with the fixture line behind every row, is in
@@ -32,6 +34,7 @@
  * recorded fixtures. One instance per spawned turn.
  */
 
+import { CODEX_CALL_USAGE_LINE_TYPE } from '../../shared/maestro-lib/parsers/codex-output-parser';
 import type {
 	CodexAppServerItem,
 	CodexAppServerNotification,
@@ -98,6 +101,17 @@ function readTotals(
 		totals[field] = typeof value === 'number' && Number.isFinite(value) ? value : 0;
 	}
 	return totals;
+}
+
+function hasTokens(totals: UsageTotals): boolean {
+	return USAGE_FIELDS.some(([field]) => totals[field] > 0);
+}
+
+/** Totals in `codex exec` usage field names. */
+function execUsage(totals: UsageTotals): Record<string, number> {
+	const usage: Record<string, number> = {};
+	for (const [field, execField] of USAGE_FIELDS) usage[execField] = totals[field];
+	return usage;
 }
 
 function subtractTotals(total: UsageTotals, part: UsageTotals): UsageTotals {
@@ -231,14 +245,19 @@ export class CodexAppServerEventTranslator {
 					typeof params.turnId === 'string' ? params.turnId : undefined
 				);
 
-			case 'thread/tokenUsage/updated':
-				this.recordUsage(
-					typeof params.turnId === 'string' ? params.turnId : undefined,
+			case 'thread/tokenUsage/updated': {
+				const turnId = typeof params.turnId === 'string' ? params.turnId : undefined;
+				const growth = this.recordUsage(
+					turnId,
 					params.tokenUsage as
 						| { total?: CodexAppServerTokenBreakdown; last?: CodexAppServerTokenBreakdown }
 						| undefined
 				);
-				return [];
+				// Live reading for the active turn only: a resumed thread replays the
+				// previous turn's update, which is not new spend.
+				if (!growth || !turnId || turnId !== this._activeTurnId) return [];
+				return [{ type: CODEX_CALL_USAGE_LINE_TYPE, usage: execUsage(growth) }];
+			}
 
 			case 'turn/completed':
 				return this.turnCompleted(params.turn as CodexAppServerTurn | undefined);
@@ -356,22 +375,27 @@ export class CodexAppServerEventTranslator {
 	 *
 	 * Updates are keyed by turn id rather than matched against the active turn,
 	 * so one that lands before the turn id is known still counts.
+	 *
+	 * Returns what this update added to the turn: the growth past its previous
+	 * update, or for its first update the call it covers (`last`). Null when
+	 * that is unknown or nothing grew.
 	 */
 	private recordUsage(
 		turnId: string | undefined,
 		tokenUsage:
 			| { total?: CodexAppServerTokenBreakdown; last?: CodexAppServerTokenBreakdown }
 			| undefined
-	): void {
+	): UsageTotals | null {
 		const total = readTotals(tokenUsage?.total);
-		if (!total) return;
+		if (!total) return null;
 		const previousTotal = this.latestUsageTotal;
 		this.latestUsageTotal = total;
-		if (!turnId) return;
+		if (!turnId) return null;
 		const entry = this.usageByTurn.get(turnId);
 		if (entry) {
+			const growth = subtractTotals(total, entry.current);
 			entry.current = total;
-			return;
+			return hasTokens(growth) ? growth : null;
 		}
 		const last = readTotals(tokenUsage?.last);
 		this.usageByTurn.set(turnId, {
@@ -379,17 +403,18 @@ export class CodexAppServerEventTranslator {
 			current: total,
 			replayBaseline: previousTotal,
 		});
+		return last && hasTokens(last) ? last : null;
 	}
 
 	private turnUsage(turnId: string | null): Record<string, number> | null {
 		const entry = turnId ? this.usageByTurn.get(turnId) : undefined;
 		if (!entry) return null;
 		const baseline = entry.baseline ?? entry.replayBaseline;
-		const usage: Record<string, number> = {};
-		for (const [field, execField] of USAGE_FIELDS) {
-			usage[execField] = Math.max(0, entry.current[field] - (baseline?.[field] ?? 0));
+		const turn = {} as UsageTotals;
+		for (const [field] of USAGE_FIELDS) {
+			turn[field] = Math.max(0, entry.current[field] - (baseline?.[field] ?? 0));
 		}
-		return usage;
+		return execUsage(turn);
 	}
 
 	private turnCompleted(turn: CodexAppServerTurn | undefined): CodexExecLine[] {

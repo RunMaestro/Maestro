@@ -660,6 +660,23 @@ describe('agentStore', () => {
 			expect(mockKill).toHaveBeenCalledWith('session-1-ai');
 		});
 
+		// Turns run per tab, so the bare `-ai` id matched nothing and a hung turn
+		// survived the restart. Only the tab that failed is restarted.
+		it('kills the process of the tab that failed', async () => {
+			const session = createMockSession({
+				id: 'session-1',
+				state: 'error',
+				agentError: { type: 'agent_crashed', message: 'crash' } as any,
+				agentErrorTabId: 'tab-7',
+			});
+			useSessionStore.getState().setSessions([session]);
+
+			await useAgentStore.getState().restartAgentAfterError('session-1');
+
+			expect(mockKill).toHaveBeenCalledWith('session-1-ai-tab-7');
+			expect(mockKill).toHaveBeenCalledTimes(1);
+		});
+
 		it('does nothing if session not found', async () => {
 			await useAgentStore.getState().restartAgentAfterError('nonexistent');
 			expect(mockKill).not.toHaveBeenCalled();
@@ -1508,10 +1525,52 @@ describe('agentStore', () => {
 				'now ask @Backend to review',
 				expect.objectContaining({ id: 'session-1' }),
 				'tab-1',
+				undefined,
 				undefined
 			);
 			// The local turn still runs: a trailing mention does not suppress it.
 			expect(mockSpawn).toHaveBeenCalledTimes(1);
+		});
+
+		// The routing the user PICKED when queuing must reach the drain: it re-plans
+		// from the text, which on its own would route the other way.
+		it("passes a queued item's picked mention routing to the dispatch", async () => {
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'existing-conv-id',
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'idle',
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.getState().setSessions([session]);
+
+			const item = createQueuedItem({
+				tabId: 'tab-1',
+				text: 'fix it, then send the results to @Backend',
+				crossAgentMention: true,
+				mentionRouting: 'parallel',
+			});
+
+			await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
+
+			expect(dispatchCrossAgentMentionsForMessage).toHaveBeenCalledWith(
+				'fix it, then send the results to @Backend',
+				expect.objectContaining({ id: 'session-1' }),
+				'tab-1',
+				undefined,
+				'parallel'
+			);
 		});
 
 		// A mention-only item (the message was addressed at the other agent) fires

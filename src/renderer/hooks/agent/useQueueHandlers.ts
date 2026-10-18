@@ -136,10 +136,18 @@ export function useQueueHandlers({
 			// edit can move it: `@Codex do X` -> `do X, and @Codex too` must go back to
 			// spawning locally, and the reverse must stop spawning. Leaving
 			// `crossAgentOnly` behind silently discards half of what the user edited.
-			const mentionPlan = planCrossAgentMentions(patch.text, sessionId);
+			//
+			// A routing the user PICKED when queuing it survives the edit; the plan
+			// drops it only when the edit removes every mention.
+			const pickedRouting = useSessionStore
+				.getState()
+				.sessions.find((s) => s.id === sessionId)
+				?.executionQueue.find((item) => item.id === itemId)?.mentionRouting;
+			const mentionPlan = planCrossAgentMentions(patch.text, sessionId, pickedRouting);
 			const crossAgent = {
 				crossAgentMention: !!mentionPlan,
 				crossAgentOnly: mentionPlan?.suppressLocal ?? false,
+				mentionRouting: mentionPlan?.routingSource === 'explicit' ? mentionPlan.routing : undefined,
 			};
 			setSessions((prev) =>
 				prev.map((s) =>

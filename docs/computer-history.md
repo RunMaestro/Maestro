@@ -36,7 +36,7 @@ These apps are matched by app id and by display name, so a build with an unfamil
 - **Apps and domains you exclude**, or every app you did not include (see [Choosing which apps are recorded](#choosing-which-apps-are-recorded)).
 - **Screenshots.** There is no screen capture and no OCR.
 
-Before anything is written, text is scrubbed for secrets: API keys, AWS access keys, bearer tokens, card numbers, private keys, JWTs, and `password=...` style values are replaced with placeholders such as `[REDACTED_API_KEY]`. Credential-looking parameters in URLs (`access_token`, `code`, `sig`, and similar) are redacted too.
+Before anything is written, text is scrubbed for secrets: API keys, AWS access keys, bearer tokens, card numbers, private keys, JWTs, and `password=...` style values are replaced with placeholders such as `[REDACTED_API_KEY]`. Credential-looking parameters in URLs (`access_token`, `code`, `sig`, and similar) are redacted too. One-time codes become `[REDACTED_CODE]`, both a short code typed into a code field and "your verification code is 123456" style text in a message on screen.
 
 Nothing is uploaded. Maestro never sends Computer History anywhere. An agent you ask about it reads it like any other local file, and what it does with what it reads is up to that agent's provider, the same as for any file it opens.
 

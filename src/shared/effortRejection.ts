@@ -52,15 +52,26 @@ export interface EffortRejection {
  * an effort refusal would strip the effort from a turn that never had a problem
  * with it.
  *
- * This is the one wording observed in the field. A provider that phrases its
- * refusal differently is simply not recognized, and its turn fails the way it
- * did before; add its pattern here rather than at a call site.
+ * A provider that phrases its refusal differently is simply not recognized,
+ * and its turn fails the way it did before; add its pattern here rather than
+ * at a call site.
  */
 const UNSUPPORTED_VALUE_REGEX =
 	/Unsupported value:\s*\\?['"]([^'"\\]+)\\?['"]\s+is not supported with the\s+\\?['"]([^'"\\]+)\\?['"]\s+model/i;
 const EFFORT_PARAM_REGEX = /reasoning[._]effort/i;
 const SUPPORTED_VALUES_REGEX = /Supported values are:\s*([^.]+)\./i;
 const QUOTED_VALUE_REGEX = /\\?['"]([^'"\\]+)\\?['"]/g;
+
+/**
+ * Copilot CLI's wording, printed when the model takes no effort at all (its
+ * `auto` model routes per turn and has no effort knob):
+ *
+ *   Error: Model "auto" does not support reasoning effort configuration (requested: "low").
+ *
+ * It names no accepted values, because there are none.
+ */
+const NO_EFFORT_SUPPORT_REGEX =
+	/Model\s+\\?['"]([^'"\\]+)\\?['"]\s+does not support reasoning effort configuration\s*\(requested:\s*\\?['"]([^'"\\]+)\\?['"]\)/i;
 
 /**
  * The refusal described by `text`, or `null` when `text` is not one.
@@ -70,6 +81,10 @@ const QUOTED_VALUE_REGEX = /\\?['"]([^'"\\]+)\\?['"]/g;
  */
 export function parseEffortRejection(text: unknown): EffortRejection | null {
 	if (typeof text !== 'string' || text.length === 0) return null;
+
+	const noEffort = NO_EFFORT_SUPPORT_REGEX.exec(text);
+	if (noEffort) return { value: noEffort[2], model: noEffort[1], supported: [] };
+
 	if (!EFFORT_PARAM_REGEX.test(text)) return null;
 
 	const match = UNSUPPORTED_VALUE_REGEX.exec(text);
@@ -84,6 +99,30 @@ export function parseEffortRejection(text: unknown): EffortRejection | null {
 	}
 
 	return { value: match[1], model: match[2], supported };
+}
+
+/** The parts of an `AgentError` a refusal can be read from. */
+export interface AgentErrorText {
+	message?: string;
+	raw?: { stderr?: string; stdout?: string; errorLine?: string };
+}
+
+/**
+ * The refusal carried by an agent error, or `null` when it carries none.
+ *
+ * Reads the raw provider output as well as the message. A parser that maps an
+ * exit to a generic message ("Agent exited with code 1", as Copilot's does)
+ * keeps the provider's own words only in `raw`.
+ */
+export function parseAgentErrorEffortRejection(
+	error: AgentErrorText | null | undefined
+): EffortRejection | null {
+	if (!error) return null;
+	for (const text of [error.message, error.raw?.errorLine, error.raw?.stderr, error.raw?.stdout]) {
+		const rejection = parseEffortRejection(text);
+		if (rejection) return rejection;
+	}
+	return null;
 }
 
 const rejections = new Map<string, EffortRejection>();

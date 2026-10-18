@@ -115,6 +115,19 @@ export function getRetainedCodexUsageSnapshots(): Record<string, CodexUsageSnaps
 	return readPartitioned(Date.now()).retained;
 }
 
+/** Drop the snapshots stored under `keys` (no-op for keys with no snapshot). */
+export function forgetCodexUsageSnapshots(keys: Iterable<string>): void {
+	const drop = new Set(keys);
+	if (drop.size === 0) return;
+	const { retained } = readPartitioned(Date.now());
+	if (!Object.keys(retained).some((key) => drop.has(key))) return;
+	const next: Record<string, CodexUsageSnapshot> = {};
+	for (const [key, snapshot] of Object.entries(retained)) {
+		if (!drop.has(key)) next[key] = snapshot;
+	}
+	getStore().set('snapshots', next);
+}
+
 export function clearCodexUsageSnapshots(): void {
 	getStore().set('snapshots', {});
 }

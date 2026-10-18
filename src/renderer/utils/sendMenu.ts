@@ -56,13 +56,8 @@ export function getSteerSupport(
 	>
 ): SteerSupport {
 	const name = getAgentDisplayName(session.toolType);
-	if (isSessionRemote(session)) {
-		return {
-			kind: 'unsupported',
-			reason: 'ssh-remote',
-			detail: `This agent runs on an SSH remote. A turn on another host cannot be steered.`,
-		};
-	}
+	// Codex first: app-server steers over SSH too, so a remote Codex agent's gap is
+	// its transport, which has a fix.
 	if (session.toolType === 'codex') {
 		if (resolveCodexTransport(session) === 'app-server') return { kind: 'supported' };
 		return {
@@ -70,6 +65,13 @@ export function getSteerSupport(
 			reason: 'codex-exec',
 			detail:
 				'This Codex agent runs on the exec transport, which takes no input while a turn runs. Set Codex Transport to app server in the agent settings to steer it.',
+		};
+	}
+	if (isSessionRemote(session)) {
+		return {
+			kind: 'unsupported',
+			reason: 'ssh-remote',
+			detail: `This agent runs on an SSH remote. A turn on another host cannot be steered.`,
 		};
 	}
 	if (session.toolType === 'claude-code') {

@@ -452,6 +452,7 @@ export function useBatchRunner({
 					currentDocTasksCompleted: 0,
 					totalTasksAcrossAllDocs: initialTotalTasks,
 					completedTasksAcrossAllDocs: initialCheckedTasks,
+					initialCompletedTasks: initialCheckedTasks,
 					loopEnabled,
 					loopIteration: 0,
 					maxLoops,
@@ -1120,8 +1121,13 @@ export function useBatchRunner({
 								totalCost += usageStats.totalCostUsd || 0;
 							}
 
-							// Update Symphony contribution with real-time progress
-							if (session.symphonyMetadata?.isSymphonySession) {
+							// Update Symphony contribution with real-time progress (only while
+							// the Symphony Encore Feature is on - a disabled feature has no
+							// footprint, so no IPC either).
+							if (
+								session.symphonyMetadata?.isSymphonySession &&
+								useSettingsStore.getState().encoreFeatures?.symphony === true
+							) {
 								window.maestro.symphony
 									.updateStatus({
 										contributionId: session.symphonyMetadata.contributionId,

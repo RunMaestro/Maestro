@@ -201,7 +201,15 @@ function omittedDirectiveNode(text: string): PhrasingContent {
 	} as unknown as PhrasingContent;
 }
 
+/**
+ * Directives removed with no trace. A `cite` points at a web-search result id
+ * (`turn0view0`) that only the Codex app can resolve; it is metadata about the
+ * sentence it ends, so the sentence reads the same without it.
+ */
+const DROPPED_DIRECTIVES: ReadonlySet<string> = new Set(['cite']);
+
 function directiveNode(match: CodexDirectiveMatch): PhrasingContent {
+	if (DROPPED_DIRECTIVES.has(match.name)) return textNode('');
 	const omitted = OMITTED_DIRECTIVES.get(match.name);
 	if (omitted) return omittedDirectiveNode(omitted);
 

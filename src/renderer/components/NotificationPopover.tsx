@@ -1,12 +1,13 @@
 import { useRef, memo } from 'react';
 import { createPortal } from 'react-dom';
-import { Bell, Volume2, Coffee, type LucideIcon } from 'lucide-react';
+import { Bell, Volume2, Coffee, MessageSquare, type LucideIcon } from 'lucide-react';
 import type { Theme } from '../types';
 import { ToggleSwitch } from './ui/ToggleSwitch';
 import { useClickOutside } from '../hooks/ui/useClickOutside';
 import { useEventListener } from '../hooks/utils/useEventListener';
 import { useAnchoredMenuPosition } from '../hooks/ui/useAnchoredMenuPosition';
 import { useSettingsStore } from '../stores/settingsStore';
+import { areToastsEnabled } from '../../shared/toastDuration';
 
 interface NotificationPopoverProps {
 	theme: Theme;
@@ -15,7 +16,7 @@ interface NotificationPopoverProps {
 }
 
 /**
- * Popover for toggling notification types (OS, custom/audio, idle).
+ * Popover for toggling notification types (in-app toasts, OS, custom/audio, idle).
  * Stays open when toggling items; dismisses on click-outside or Escape.
  */
 export const NotificationPopover = memo(function NotificationPopover({
@@ -26,6 +27,8 @@ export const NotificationPopover = memo(function NotificationPopover({
 	const popoverRef = useRef<HTMLDivElement>(null);
 
 	// Settings store
+	const toastsEnabled = useSettingsStore((s) => areToastsEnabled(s.toastDuration));
+	const setToastsEnabled = useSettingsStore((s) => s.setToastsEnabled);
 	const osNotificationsEnabled = useSettingsStore((s) => s.osNotificationsEnabled);
 	const setOsNotificationsEnabled = useSettingsStore((s) => s.setOsNotificationsEnabled);
 	const audioFeedbackEnabled = useSettingsStore((s) => s.audioFeedbackEnabled);
@@ -80,6 +83,12 @@ export const NotificationPopover = memo(function NotificationPopover({
 		checked: boolean;
 		onChange: (value: boolean) => void;
 	}> = [
+		{
+			label: 'In-App Toasts',
+			icon: MessageSquare,
+			checked: toastsEnabled,
+			onChange: setToastsEnabled,
+		},
 		{
 			label: 'OS Notifications',
 			icon: Bell,

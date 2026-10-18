@@ -18,6 +18,8 @@ import { EscCloseButton } from '../ui/EscCloseButton';
 export interface ThemedSelectOption {
 	value: string;
 	label: string;
+	/** Optional badge or other content aligned to the right of the option label. */
+	rightContent?: React.ReactNode;
 }
 
 interface ThemedSelectProps {
@@ -25,6 +27,7 @@ interface ThemedSelectProps {
 	options: ThemedSelectOption[];
 	onChange: (value: string) => void;
 	theme: Theme;
+	disabled?: boolean;
 	style?: React.CSSProperties;
 	/** Optional CSS class for the trigger button */
 	className?: string;
@@ -43,6 +46,7 @@ export function ThemedSelect({
 	options,
 	onChange,
 	theme,
+	disabled = false,
 	style,
 	className,
 	'aria-label': ariaLabel,
@@ -72,7 +76,7 @@ export function ThemedSelect({
 		triggerRef.current?.focus();
 	}, []);
 
-	useClickOutside(containerRef, closeAndRefocus, open);
+	useClickOutside(containerRef, closeAndRefocus, open && !disabled);
 
 	// On open: reset query, seed active index, focus the right element.
 	// With a filter we focus the search input so typing narrows immediately;
@@ -177,8 +181,9 @@ export function ThemedSelect({
 				ref={triggerRef}
 				type="button"
 				id={id}
+				disabled={disabled}
 				aria-label={ariaLabel}
-				aria-expanded={open}
+				aria-expanded={open && !disabled}
 				aria-haspopup="listbox"
 				onClick={handleOpen}
 				className={`focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-1${className ? ` ${className}` : ''}`}
@@ -194,7 +199,8 @@ export function ThemedSelect({
 					padding: '4px 8px',
 					fontSize: 12,
 					outline: 'none',
-					cursor: 'pointer',
+					cursor: disabled ? 'not-allowed' : 'pointer',
+					opacity: disabled ? 0.5 : undefined,
 					textAlign: 'left',
 					gap: 4,
 				}}
@@ -213,7 +219,7 @@ export function ThemedSelect({
 				/>
 			</button>
 
-			{open && (
+			{open && !disabled && (
 				<div
 					ref={menuRef}
 					role="listbox"
@@ -298,7 +304,10 @@ export function ThemedSelect({
 									onClick={() => handleSelect(opt.value)}
 									onMouseEnter={() => setActiveIndex(i)}
 									style={{
-										display: 'block',
+										display: opt.rightContent ? 'flex' : 'block',
+										alignItems: 'center',
+										justifyContent: 'space-between',
+										gap: 8,
 										width: '100%',
 										padding: '6px 10px',
 										fontSize: 12,
@@ -311,7 +320,12 @@ export function ThemedSelect({
 										transition: 'background-color 0.1s',
 									}}
 								>
-									{opt.label}
+									<span>{opt.label}</span>
+									{/* The space keeps the badge a separate word in the option's
+									    accessible name ("Beta Carry Over", not "BetaCarry Over");
+									    a flex container does not render it. */}
+									{opt.rightContent ? ' ' : null}
+									{opt.rightContent}
 								</button>
 							))
 						)}

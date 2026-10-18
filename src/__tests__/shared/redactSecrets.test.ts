@@ -71,6 +71,44 @@ describe('redactSecrets - typed placeholders', () => {
 		expect(redactSecrets(sha, { hexBlobs: true }).text).toBe('commit [REDACTED_SECRET] landed');
 	});
 
+	it('redacts one-time codes only on request, and keeps exit and status codes', () => {
+		const otp = { oneTimeCodes: true };
+		expect(redactSecrets('Your verification code is 482913', otp).text).toBe(
+			'Your verification code is [REDACTED_CODE]'
+		);
+		expect(redactSecrets('Your Uber code: 4821. Never share it.', otp).text).toBe(
+			'Your Uber code: [REDACTED_CODE]. Never share it.'
+		);
+		expect(redactSecrets('482913 is your Instagram code', otp).text).toBe(
+			'[REDACTED_CODE] is your Instagram code'
+		);
+		expect(redactSecrets('Use G-482913 to verify', otp).text).toBe('Use [REDACTED_CODE] to verify');
+		expect(redactSecrets('Security code 482-913', otp).text).toBe('Security code [REDACTED_CODE]');
+		expect(redactSecrets('Your one-time password is 482913', otp).text).toBe(
+			'Your one-time password is [REDACTED_CODE]'
+		);
+		expect(redactSecrets('Your temporary PIN: 4829', otp).text).toBe(
+			'Your temporary PIN: [REDACTED_CODE]'
+		);
+		expect(redactSecrets('Your device code is WDJB-MJHT', otp).text).toBe(
+			'Your device code is [REDACTED_CODE]'
+		);
+		for (const clean of [
+			'process exited with exit code 1234',
+			'status code 4040',
+			'zip code 94110',
+			'Your status code is 4040',
+			'4040 is your status code',
+			'Your zip code is 94110',
+			'your code is well-known',
+		]) {
+			expect(redactSecrets(clean, otp).text).toBe(clean);
+		}
+		expect(redactSecrets('Your verification code is 482913').text).toBe(
+			'Your verification code is 482913'
+		);
+	});
+
 	it('leaves ordinary text untouched', () => {
 		const clean = 'Refactor the auth module; the sk-abcd label and token count are fine.';
 		expect(redactSecrets(clean)).toEqual({ text: clean, redacted: false });
@@ -122,6 +160,9 @@ describe('redactSecrets - adversarial input stays linear (ReDoS)', () => {
 		'repeated token=': 'token='.repeat(K / 6),
 		'hex-ish hyphen chain': 'ab-'.repeat(Math.floor(K / 3)),
 		'one long word': 'a'.repeat(K),
+		'your-word chain': 'your code '.repeat(K / 10),
+		'code with no digits': 'verification code '.repeat(K / 18),
+		'digits before is your': '1234 is your '.repeat(K / 13),
 	};
 
 	// A linear pass over 64 KB takes about 20 ms on a laptop and about 60 ms on
@@ -132,7 +173,7 @@ describe('redactSecrets - adversarial input stays linear (ReDoS)', () => {
 
 	it.each(Object.entries(adversarial))(`%s redacts in under ${BUDGET_MS} ms`, (_name, input) => {
 		const start = performance.now();
-		redactSecrets(input, { hexBlobs: true });
+		redactSecrets(input, { hexBlobs: true, oneTimeCodes: true });
 		expect(performance.now() - start).toBeLessThan(BUDGET_MS);
 	});
 });

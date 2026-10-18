@@ -168,6 +168,24 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		category: 'concerto',
 		encoreFlag: 'concerto',
 	},
+	// Maestro Cue (first-party plugin system-prompt section)
+	{
+		id: 'cue-system',
+		filename: 'cue-system.md',
+		description:
+			'Maestro Cue section appended to every agent system prompt while the feature is on: routing, scheduling, and duty lookup',
+		category: 'system',
+		encoreFlag: 'maestroCue',
+	},
+	// Concerto views and the designer workflow (include, read from concerto-system)
+	{
+		id: '_concerto',
+		filename: '_concerto.md',
+		description:
+			'Concerto guide: cadenza and movement commands, block specs, HTML mockups, and the designer workflow',
+		category: 'includes',
+		encoreFlag: 'concerto',
+	},
 	// MaestroRun (first-party plugin system-prompt section, macOS only)
 	{
 		id: 'maestro-run-system',
@@ -326,7 +344,7 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 	{
 		id: '_maestro-cli',
 		filename: '_maestro-cli.md',
-		description: 'Full `maestro-cli` reference covering settings, agents, playbooks, cue, and more',
+		description: 'Full `maestro-cli` reference covering settings, agents, playbooks, and more',
 		category: 'includes',
 	},
 	{
@@ -414,6 +432,8 @@ export const PROMPT_IDS = {
 	PIANOLA_SYSTEM: 'pianola-system',
 	// Computer History
 	COMPUTER_HISTORY_SYSTEM: 'computer-history-system',
+	// Maestro Cue
+	CUE_SYSTEM: 'cue-system',
 	// MaestroRun
 	MAESTRO_RUN_SYSTEM: 'maestro-run-system',
 	// Concerto

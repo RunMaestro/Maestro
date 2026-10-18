@@ -14,9 +14,7 @@ import { PtySpawner } from './spawners/PtySpawner';
 import { ChildProcessSpawner } from './spawners/ChildProcessSpawner';
 import { OpencodeServerSpawner } from './spawners/OpencodeServerSpawner';
 import { CodexAppServerSpawner } from './spawners/CodexAppServerSpawner';
-import { codexAppServerConfigBlocker } from '../codex-app-server/invocation';
-import { resolveCodexTransport } from '../../shared/codexTransport';
-import { DEFAULT_QUERY_SOURCE } from '../../shared/querySource';
+import { codexAppServerConfigBlocker, wantsCodexAppServer } from '../codex-app-server/invocation';
 import { DataBufferManager } from './handlers/DataBufferManager';
 import { pushResolvedOmpContextWindow } from './handlers/StdoutHandler';
 import { LocalCommandRunner } from './runners/LocalCommandRunner';
@@ -48,6 +46,13 @@ import { signalRemoteAgent, type RemoteSignalMode } from '../utils/ssh-remote-si
 export interface ProcessManagerOptions {
 	/** Maestro's version, reported to `codex app-server` as `clientInfo.version`. */
 	appVersion?: string;
+	/**
+	 * Live read of the `encoreFeatures.coworking` gate. While it is off, no spawn
+	 * carries the coworking session/socket env vars, so nothing in the agent can
+	 * find the bridge. Main always passes it; omitted keeps the injection, which
+	 * is what a bare `new ProcessManager()` in a test expects.
+	 */
+	isCoworkingEnabled?: () => boolean;
 }
 
 /**
@@ -68,6 +73,7 @@ export class ProcessManager extends EventEmitter {
 	private codexAppServerSpawner: CodexAppServerSpawner;
 	private localCommandRunner: LocalCommandRunner;
 	private sshCommandRunner: SshCommandRunner;
+	private readonly isCoworkingEnabled: () => boolean;
 
 	constructor(
 		/**
@@ -80,6 +86,7 @@ export class ProcessManager extends EventEmitter {
 		options: ProcessManagerOptions = {}
 	) {
 		super();
+		this.isCoworkingEnabled = options.isCoworkingEnabled ?? (() => true);
 		this.bufferManager = new DataBufferManager(this.processes, this);
 		this.ptySpawner = new PtySpawner(this.processes, this, this.bufferManager);
 		this.childProcessSpawner = new ChildProcessSpawner(this.processes, this, this.bufferManager);
@@ -270,7 +277,8 @@ export class ProcessManager extends EventEmitter {
 		// keyed by the bare Session.id from the renderer. Without this, the
 		// bridge handshake binds to a session id that never has records in the
 		// registry → `list_terminals` returns [] for the caller's own session.
-		// Terminals don't run MCP clients, so we skip them. Spawn-callers can
+		// Terminals don't run MCP clients, so we skip them, and nothing is
+		// injected while the coworking Encore flag is off. Spawn-callers can
 		// override by passing the var explicitly in customEnvVars.
 		//
 		// We ALSO inject the owning window's bridge socket path
@@ -283,7 +291,7 @@ export class ProcessManager extends EventEmitter {
 		// config socket is stale. Codex does not propagate env and falls back to the
 		// config socket (single-window).
 		const configWithCoworkingSession =
-			config.toolType === 'terminal'
+			config.toolType === 'terminal' || !this.isCoworkingEnabled()
 				? config
 				: {
 						...config,
@@ -356,23 +364,17 @@ export class ProcessManager extends EventEmitter {
 	/**
 	 * Route a Codex turn through `codex app-server` (steerable mid-turn) instead
 	 * of `codex exec --json`. Opt-in per agent (`codexTransport`), and only for an
-	 * INTERACTIVE turn: an Auto Run or Cue turn has nobody to steer it, so it
-	 * stays on the default transport rather than paying for an experimental one.
-	 * Origin is read from `querySource`, which every dispatcher claims at the
-	 * spawn site (absent means a human sent it, see `shared/querySource.ts`).
+	 * INTERACTIVE turn (`wantsCodexAppServer`, which the SSH spawn handler also
+	 * reads before it builds an app-server launch).
 	 *
-	 * The config-level exclusions (no prompt, images, SSH, a prompt already in
-	 * the args) are the spawner's own `codexAppServerConfigBlocker`, so routing
-	 * and the spawner cannot disagree about which turns app-server can carry.
-	 * The spawner still re-checks the args and falls back to exec for anything
-	 * it does not recognize.
+	 * The config-level exclusions (no prompt, images, an SSH turn with no
+	 * app-server launch, a prompt already in the args) are the spawner's own
+	 * `codexAppServerConfigBlocker`, so routing and the spawner cannot disagree
+	 * about which turns app-server can carry. The spawner still re-checks the
+	 * args and falls back to exec for anything it does not recognize.
 	 */
 	private shouldUseCodexAppServer(config: ProcessConfig): boolean {
-		return (
-			resolveCodexTransport(config) === 'app-server' &&
-			(config.querySource ?? DEFAULT_QUERY_SOURCE) === 'user' &&
-			codexAppServerConfigBlocker(config) === null
-		);
+		return wantsCodexAppServer(config) && codexAppServerConfigBlocker(config) === null;
 	}
 
 	/**

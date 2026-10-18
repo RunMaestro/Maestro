@@ -178,6 +178,13 @@ export const EDITOR_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: true,
 		category: 'editor',
 	},
+	shortenLongTabNames: {
+		description:
+			'Cut an auto-generated tab name longer than 40 characters at a word boundary. Off keeps the full name (up to 80 characters).',
+		type: 'boolean',
+		default: false,
+		category: 'editor',
+	},
 	newTabPlacement: {
 		description:
 			'Where new AI tabs are inserted in the tab bar. "end" appends to the rightmost spot; "after-current" inserts directly to the right of the active tab.',

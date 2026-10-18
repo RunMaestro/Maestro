@@ -11,6 +11,9 @@
  * - `onData` -> `recordReplyText`, NEVER `recordStreamedText`: for structured
  *   output providers this is the finished reply re-sent at turn end, after the
  *   usage report that already counted it. The engine's reply latch refuses it.
+ * - `onCallUsage` -> `recordCallUsage`: one API call's real spend as it lands
+ *   (claude-code). The live signal for a turn that is mostly tool calls, whose
+ *   text is too thin (or redacted) to estimate from.
  * - `onUsage` -> `recordUsage` with the agent's `toolType`, which decides
  *   whether cache reads sit inside `inputTokens`.
  * - `onExit` -> `forgetSource`, so per-turn state never accumulates.
@@ -76,6 +79,9 @@ export function useThroughputCapture(): void {
 			return parsed.type === 'regular' ? null : parsed.baseSessionId;
 		};
 
+		const providerOf = (agentId: string) =>
+			selectSessionById(agentId)(useSessionStore.getState())?.toolType;
+
 		const unsubscribers = [
 			processApi.onThinkingChunk?.((sessionId: string, content: string) => {
 				const agentId = agentTurnOf(sessionId);
@@ -87,11 +93,27 @@ export function useThroughputCapture(): void {
 				if (agentId === null) return;
 				throughputTracker.recordReplyText(sessionId, agentId, data, performance.now());
 			}),
+			processApi.onCallUsage?.((sessionId, usage) => {
+				const agentId = agentTurnOf(sessionId);
+				if (agentId === null) return;
+				throughputTracker.recordCallUsage(
+					sessionId,
+					agentId,
+					usage,
+					performance.now(),
+					providerOf(agentId)
+				);
+			}),
 			processApi.onUsage((sessionId, usageStats) => {
 				const agentId = agentTurnOf(sessionId);
 				if (agentId === null) return;
-				const provider = selectSessionById(agentId)(useSessionStore.getState())?.toolType;
-				throughputTracker.recordUsage(sessionId, agentId, usageStats, performance.now(), provider);
+				throughputTracker.recordUsage(
+					sessionId,
+					agentId,
+					usageStats,
+					performance.now(),
+					providerOf(agentId)
+				);
 			}),
 			processApi.onExit((sessionId: string) => {
 				// Not gated: forgetting a source this window never tracked is a no-op.

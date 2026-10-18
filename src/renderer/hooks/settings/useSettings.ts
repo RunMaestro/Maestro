@@ -429,6 +429,8 @@ export interface UseSettingsReturn {
 	// Automatic tab naming settings
 	automaticTabNamingEnabled: boolean;
 	setAutomaticTabNamingEnabled: (value: boolean) => void;
+	shortenLongTabNames: boolean;
+	setShortenLongTabNames: (value: boolean) => void;
 
 	// Utility agent settings (auxiliary tasks: tab naming, context grooming)
 	utilityAgentId: string | null;

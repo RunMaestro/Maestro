@@ -225,6 +225,26 @@ describe('POST /<token>/auth/login', () => {
 		}
 	});
 
+	it('answers 404 and mints no session while the Encore flag is off', async () => {
+		state.enabled = false;
+		state.login = {
+			ok: true,
+			user: { id: 'u1', username: 'ada', displayName: 'Ada' },
+			sessionId: 'sid-off',
+		};
+		const server = await makeServer();
+		const res = await server.inject({
+			method: 'POST',
+			url: `/${TOKEN}/auth/login`,
+			payload: { username: 'ada', password: 'hunter2hunter2' },
+		});
+
+		expect(res.statusCode).toBe(404);
+		expect(res.json()).toEqual({ ok: false, reason: 'web-login-disabled' });
+		expect(res.headers['set-cookie']).toBeUndefined();
+		await server.close();
+	});
+
 	it('survives a body that is not the expected shape', async () => {
 		// A hand-rolled client, or a probe. The store decides; this route must not
 		// throw on the way there.

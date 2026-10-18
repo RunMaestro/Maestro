@@ -200,16 +200,27 @@ export function buildCueRunSummary(
 }
 
 /**
- * Extract a short, sentence-aligned excerpt from a Cue run's stdout for use as
- * the History list-row body. Falls back to `undefined` when the output is
- * empty, only whitespace, or so structured that no clean sentence boundary
- * fits within the cap - the caller then substitutes the trigger-label summary.
+ * Extract a short excerpt from a Cue run's stdout for use as the History
+ * list-row body. Returns `undefined` ONLY when the run printed nothing visible
+ * (empty, whitespace, or ANSI codes alone): the persisted excerpt is the
+ * "did this run say anything" signal, and History hides a completed run whose
+ * excerpt is NULL (`CUE_EVENT_WORTH_SHOWING_SQL`). A run that answered with
+ * something hard to summarize must still get a body, or it vanishes as if it
+ * had been silent.
  *
  * Strips ANSI escape codes and markdown, collapses whitespace, then greedily
  * accumulates up to `maxSentences` complete sentences while staying within
  * `maxChars`. Sentence boundaries are detected as `.!?` followed by whitespace
  * and a capital letter or digit - good enough to avoid splitting on filenames
  * like `2026-05-13-AM.md` or numbers like `2.34M`.
+ *
+ * Two fallbacks keep visible output from collapsing to nothing:
+ * - Stripping markdown left no text. That happens when the answer is only a
+ *   table (bare, or wrapped in a fence, inline code or emphasis), which
+ *   stripMarkdown() drops on purpose, so it runs again with the table's cells
+ *   flattened into text instead. Anything else markup-only (an empty fence,
+ *   an image with no alt) falls back to the raw text.
+ * - Not even the first sentence fits the cap. The text is clipped instead.
  */
 export function extractCueOutputExcerpt(
 	stdout: string | undefined | null,
@@ -219,10 +230,14 @@ export function extractCueOutputExcerpt(
 	const maxChars = opts.maxChars ?? 240;
 	const maxSentences = opts.maxSentences ?? 2;
 
-	const collapsed = stripMarkdown(stripAnsiCodes(stdout)).replace(/\s+/g, ' ').trim();
-	if (!collapsed) return undefined;
+	const plain = stripAnsiCodes(stdout);
+	const text =
+		collapseWhitespace(stripMarkdown(plain)) ||
+		collapseWhitespace(stripMarkdown(plain, { tables: 'flatten' })) ||
+		collapseWhitespace(plain);
+	if (!text) return undefined;
 
-	const sentences = collapsed.split(/(?<=[.!?])\s+(?=[A-Z0-9])/);
+	const sentences = text.split(/(?<=[.!?])\s+(?=[A-Z0-9])/);
 
 	let result = '';
 	let count = 0;
@@ -236,5 +251,25 @@ export function extractCueOutputExcerpt(
 		count++;
 	}
 
-	return result || undefined;
+	return result || clipExcerpt(text, maxChars);
+}
+
+function collapseWhitespace(text: string): string {
+	return text.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Clip whitespace-collapsed `text` to at most `maxChars`, ellipsis included.
+ * Breaks on the last word boundary when that keeps at least half the budget;
+ * a single unbroken token (a URL, a hash) is cut mid-token instead, stepping
+ * back off a dangling high surrogate so an emoji is never split in half.
+ */
+function clipExcerpt(text: string, maxChars: number): string {
+	if (text.length <= maxChars) return text;
+	const wordEnd = text.lastIndexOf(' ', maxChars - 1);
+	const clipped =
+		wordEnd >= maxChars / 2
+			? text.slice(0, wordEnd)
+			: text.slice(0, maxChars - 1).replace(/[\uD800-\uDBFF]$/, '');
+	return `${clipped}…`;
 }

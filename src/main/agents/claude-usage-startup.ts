@@ -42,6 +42,7 @@ import Store from 'electron-store';
 
 import type { AgentDetector } from './detector';
 import type { AgentConfigsData, SessionsData } from '../stores/types';
+import { filterLiveAgents } from '../../shared/agentVisibility';
 import type { MaestroSettings } from '../ipc/handlers/persistence';
 import { logger } from '../utils/logger';
 import { isMaestroPBinaryPath } from './claudeSpawnCore';
@@ -322,7 +323,11 @@ export async function runStartupUsageSampling(deps: StartupUsageSamplingDeps): P
 		return;
 	}
 
-	const storedSessions = deps.sessionsStore.get('sessions', []) as Array<Record<string, unknown>>;
+	// Live agents only: a dormant Pianola (flag off) is never sampled for.
+	const storedSessions = filterLiveAgents(
+		deps.sessionsStore.get('sessions', []) as Array<Record<string, unknown>>,
+		deps.settingsStore.get('encoreFeatures')
+	);
 	const agentLevelCustomPath = getAgentLevelCustomPath(deps.agentConfigsStore);
 	const agentLevelIsMaestroP = isMaestroPBinaryPath(agentLevelCustomPath);
 	const eligibleClaudeSessions = storedSessions.filter((s) => {

@@ -4,6 +4,10 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { createMockSession } from '../helpers/mockSession';
+import { createMockAITab } from '../helpers/mockTab';
+import { extractNativeConversation } from '../../shared/maestro-lib/translation/native-records';
+import { execFileNoThrow } from '../../main/utils/execFile';
+import { execGitReadOnly } from '../../main/utils/remote-git';
 import { encodeClaudeProjectPath } from '../../shared/pathUtils';
 import { translationArtifact } from '../../shared/maestro-lib/translation/identity';
 import { getHistoryManager } from '../../main/history-manager';
@@ -39,6 +43,139 @@ vi.mock('../../shared/maestro-lib/translation/transaction', () => ({
 afterEach(() => vi.restoreAllMocks());
 
 describe('provider translation read scope', () => {
+	it('pins a profile shared projects directory while refusing nested transcript escapes', async () => {
+		const root = await fs.mkdtemp(path.join(os.tmpdir(), 'translation-profile-link-'));
+		try {
+			const accountRoot = path.join(root, 'profile');
+			const projectRoot = path.join(root, 'project');
+			const shared = path.join(root, 'shared-projects');
+			await fs.mkdir(accountRoot);
+			await fs.mkdir(projectRoot);
+			await fs.mkdir(shared);
+			await fs.symlink(shared, path.join(accountRoot, 'projects'), 'dir');
+			vi.mocked(execFileNoThrow).mockResolvedValue({ exitCode: 0, stdout: '2.1.302', stderr: '' });
+			vi.mocked(execGitReadOnly).mockResolvedValue({ exitCode: 1, stdout: '', stderr: '' });
+			const session = createMockSession({
+				cwd: projectRoot,
+				projectRoot,
+				customEnvVars: { CLAUDE_CONFIG_DIR: accountRoot },
+			});
+			const service = new ProviderTranslationService({
+				sessionsStore: { get: vi.fn(() => [session]) },
+				settingsStore: { get: vi.fn(() => ({})) },
+				agentConfigsStore: { get: vi.fn(() => ({})) },
+				getAgentDetector: () => ({ getAgent: async () => ({ path: '/mock/claude' }) }),
+				getProcessManager: () => ({ get: () => undefined }),
+			} as unknown as ProviderTranslationDependencies);
+			const identity = await (service as any).identity(session, 'claude-code', true);
+			expect(identity.accountRoot).toBe(await fs.realpath(accountRoot));
+			expect(identity.nativeSessionRoot).toBe(await fs.realpath(shared));
+			const directory = path.join(shared, encodeClaudeProjectPath(identity.projectRoot));
+			await fs.mkdir(directory);
+			const file = path.join(directory, 'native.jsonl');
+			await fs.writeFile(
+				file,
+				JSON.stringify({
+					type: 'user',
+					uuid: 'one',
+					message: { role: 'user', content: 'selected marker' },
+				})
+			);
+			expect(
+				(await (service as any).conversation(identity, 'tab', 'native')).records[0].blocks[0].text
+			).toBe('selected marker');
+			await fs.unlink(file);
+			await fs.writeFile(path.join(root, 'unselected.jsonl'), 'outside');
+			await fs.symlink(path.join(root, 'unselected.jsonl'), file);
+			await expect((service as any).conversation(identity, 'tab', 'native')).rejects.toThrow(
+				'escapes its selected root'
+			);
+			const journal = {
+				plan: {
+					agentId: session.id,
+					source: identity,
+					destination: { ...identity, provider: 'codex' },
+				},
+			} as unknown as TranslationJournal;
+			await fs.unlink(path.join(accountRoot, 'projects'));
+			const retargeted = path.join(root, 'different-projects');
+			await fs.mkdir(retargeted);
+			await fs.symlink(retargeted, path.join(accountRoot, 'projects'), 'dir');
+			await expect((service as any).host(journal).assertSourceUnchanged(journal)).rejects.toThrow(
+				'Source account, project root or provider version changed'
+			);
+		} finally {
+			await fs.rm(root, { recursive: true, force: true });
+		}
+	});
+	it.each([false, true])(
+		'counts projected context rather than archived diagnostics (oversized=%s)',
+		async (oversized) => {
+			const root = await fs.mkdtemp(path.join(os.tmpdir(), 'translation-capacity-'));
+			try {
+				const source = {
+					provider: 'claude-code' as const,
+					version: '2.1.302',
+					accountRoot: root,
+					projectRoot: root,
+				};
+				const session = createMockSession({
+					id: 'agent',
+					toolType: 'claude-code',
+					cwd: root,
+					projectRoot: root,
+					aiTabs: [createMockAITab({ id: 'tab', agentSessionId: 'native' })],
+				});
+				const conversation = extractNativeConversation(
+					source,
+					'tab',
+					'native',
+					Buffer.from(
+						[
+							{ type: 'api-request-blob', message: 'x'.repeat(1_000_000) },
+							{
+								type: 'user',
+								uuid: 'one',
+								message: {
+									role: 'user',
+									content: oversized ? 'x'.repeat(1_000_000) : 'small conversation',
+								},
+							},
+						]
+							.map((row) => JSON.stringify(row))
+							.join('\n')
+					)
+				);
+				vi.spyOn(TranslationArchive.prototype, 'checkpoint').mockResolvedValue(undefined);
+				vi.mocked(getHistoryManager).mockReturnValue({ getEntries: vi.fn(async () => []) } as any);
+				const service = new ProviderTranslationService({
+					sessionsStore: { get: vi.fn(() => [session]) },
+					getProcessManager: () => ({ get: () => undefined }),
+				} as unknown as ProviderTranslationDependencies);
+				vi.spyOn(service as any, 'identity').mockImplementation(
+					async (_session: unknown, provider: unknown) => ({
+						...source,
+						provider,
+						version: provider === 'codex' ? '0.163.0' : source.version,
+					})
+				);
+				vi.spyOn(service as any, 'conversation').mockResolvedValue(conversation);
+				const journal = await (service as any).prepare({
+					agentId: 'agent',
+					destination: 'codex',
+					action: 'plan',
+				});
+				expect(
+					journal.plan.limitations.some(
+						(item: { code: string }) => item.code === 'context-capacity'
+					)
+				).toBe(oversized);
+				expect(journal.plan.status).toBe(oversized ? 'blocked' : 'ready');
+			} finally {
+				await fs.rm(root, { recursive: true, force: true });
+			}
+		}
+	);
 	it.each(['file', 'parent'] as const)(
 		'refuses a native source %s link outside the selected account before reading its bytes',
 		async (link) => {
@@ -108,7 +245,9 @@ describe('provider translation read scope', () => {
 					sessionsStore: { get: vi.fn(() => [session]) },
 					getProcessManager: () => ({ get: () => undefined }),
 				} as unknown as ProviderTranslationDependencies);
-				vi.spyOn(service as any, 'identity').mockResolvedValue(source);
+				vi.spyOn(service as any, 'identity').mockImplementation(
+					async (_session: unknown, provider: unknown) => ({ ...source, provider })
+				);
 				const host = (service as any).host(journal);
 				await host.assertSourceUnchanged(journal);
 				const external = path.join(root, 'unselected.jsonl');

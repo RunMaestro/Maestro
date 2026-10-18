@@ -4,8 +4,10 @@
  * processes for the Process Monitor.
  *
  * Single responsibility: process spawning and lifecycle management.
- * Does NOT know about template variables, agent definitions, or SSH -
- * it receives a fully resolved SpawnSpec and executes it.
+ * Does NOT know about template variables, agent definitions, or how an SSH
+ * command is built - it receives a fully resolved SpawnSpec and executes it.
+ * Its one piece of SSH knowledge is the pid record a stdin-script SSH run
+ * writes, so Stop, the timeout and shutdown reach the remote agent.
  */
 
 import type { ChildProcess } from 'child_process';
@@ -30,6 +32,7 @@ import {
 	type StopHandle,
 } from '../../shared/maestro-lib/control/termination';
 import { startTurn, type TurnHandle } from '../../shared/maestro-lib/run/start-turn';
+import { isLaunchCancelled } from './cue-launch-cancel';
 import {
 	newRemotePidFilePath,
 	signalRemoteAgent,
@@ -106,6 +109,11 @@ export interface ProcessRunOptions {
 	 * throw - it fires on every chunk, and the callee debounces.
 	 */
 	onActivity?: () => void;
+	/**
+	 * Aborted when the run is stopped. Checked synchronously right before the
+	 * spawn: a stopped run never starts a process (see cue-launch-cancel.ts).
+	 */
+	signal?: AbortSignal;
 	/**
 	 * Receives the run's RAW stdout, byte for byte, once the child has settled
 	 * and just before the result is returned. The result's own `stdout` is the
@@ -439,6 +447,19 @@ export async function runProcess(
 		onActivity,
 		onRawStdout,
 	} = options;
+
+	// The last check before the spawn; nothing below awaits until the child
+	// is started and registered, so a stop cannot slip in between.
+	if (isLaunchCancelled(options.signal)) {
+		return {
+			stdout: '',
+			stderr: '',
+			exitCode: null,
+			status: 'stopped',
+			providerSessionId: null,
+			usage: null,
+		};
+	}
 
 	let stdout = '';
 	let stderr = '';

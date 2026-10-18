@@ -86,7 +86,8 @@ async function renderLoaded(
 	await waitFor(() => expect(screen.getByText('Choose Folder')).not.toBeDisabled());
 }
 
-const toggle = (): HTMLInputElement => screen.getByLabelText(TOGGLE_LABEL) as HTMLInputElement;
+const toggle = (): HTMLElement => screen.getByRole('switch', { name: TOGGLE_LABEL });
+const isOn = (): boolean => toggle().getAttribute('aria-checked') === 'true';
 
 describe('AgentCotExportSection', () => {
 	let selectFolder: ReturnType<typeof vi.fn>;
@@ -151,7 +152,7 @@ describe('AgentCotExportSection', () => {
 
 			expect(screen.getByTestId('cot-export-folder')).toHaveTextContent('No folder chosen');
 			expect(toggle()).toBeDisabled();
-			expect(toggle().checked).toBe(false);
+			expect(isOn()).toBe(false);
 		});
 
 		it('shows the stored folder as text that can be selected', async () => {
@@ -238,7 +239,7 @@ describe('AgentCotExportSection', () => {
 
 			fireEvent.click(toggle());
 
-			await waitFor(() => expect(toggle().checked).toBe(true));
+			await waitFor(() => expect(isOn()).toBe(true));
 			expect(api.set).toHaveBeenCalledWith(AGENT, { enabled: true, folder: FOLDER });
 		});
 
@@ -249,7 +250,7 @@ describe('AgentCotExportSection', () => {
 
 			fireEvent.click(toggle());
 
-			await waitFor(() => expect(toggle().checked).toBe(false));
+			await waitFor(() => expect(isOn()).toBe(false));
 			expect(api.set).toHaveBeenCalledWith(AGENT, { enabled: false, folder: FOLDER });
 		});
 
@@ -261,7 +262,7 @@ describe('AgentCotExportSection', () => {
 			fireEvent.click(toggle());
 
 			expect(await screen.findByText('Maestro cannot write to the folder.')).toBeInTheDocument();
-			expect(toggle().checked).toBe(false);
+			expect(isOn()).toBe(false);
 		});
 
 		it('keeps a rejected call inside the section', async () => {
@@ -276,7 +277,7 @@ describe('AgentCotExportSection', () => {
 			expect(await screen.findByTestId('cot-export-change-error')).toHaveTextContent(
 				'Not available'
 			);
-			expect(toggle().checked).toBe(false);
+			expect(isOn()).toBe(false);
 			expect(toggle()).not.toBeDisabled();
 		});
 
@@ -595,7 +596,7 @@ describe('AgentCotExportSection', () => {
 			api.verify.mockResolvedValue([verdictOf()]);
 			(window.maestro as any).cotExport = api;
 			const view = renderSection();
-			await waitFor(() => expect(toggle().checked).toBe(true));
+			await waitFor(() => expect(isOn()).toBe(true));
 			fireEvent.click(screen.getByText('Verify Log'));
 			await screen.findByTestId('cot-export-verification');
 
@@ -614,7 +615,7 @@ describe('AgentCotExportSection', () => {
 				expect(screen.getByTestId('cot-export-folder')).toHaveTextContent('No folder chosen')
 			);
 			expect(api.status).toHaveBeenLastCalledWith('agent-2');
-			expect(toggle().checked).toBe(false);
+			expect(isOn()).toBe(false);
 			expect(screen.queryByTestId('cot-export-verification')).not.toBeInTheDocument();
 		});
 	});

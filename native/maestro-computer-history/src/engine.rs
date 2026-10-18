@@ -123,8 +123,17 @@ fn cap(s: Option<String>, max: usize) -> Option<String> {
         .filter(|v| !v.trim().is_empty())
 }
 
+/// Whitespace or zero-width only. Rich-text editors report an empty field as
+/// a zero-width character (Discord's Slate editor reads "\u{feff}\n"), and
+/// `trim` keeps those, so a send there never looked like a clear.
 fn is_blank(s: &str) -> bool {
-    s.trim().is_empty()
+    s.chars().all(|c| {
+        c.is_whitespace()
+            || matches!(
+                c,
+                '\u{200b}' | '\u{200c}' | '\u{200d}' | '\u{2060}' | '\u{feff}'
+            )
+    })
 }
 
 /// True when a window title carries a private / incognito marker.
@@ -2374,6 +2383,41 @@ mod tests {
         assert!(
             engine.drain().is_empty(),
             "the empty field is not committed again"
+        );
+    }
+
+    #[test]
+    fn zero_width_empty_value_counts_as_cleared() {
+        // Discord's editor reads "\u{feff}\n" when empty.
+        let (mut engine, mut obs) = configured(ConfigureCommand::default());
+        activate(&mut engine, "com.hnc.Discord", 7, "general", 0);
+        engine.drain();
+        engine.handle_signal(
+            Signal::FocusChanged {
+                element: Some(field(1, "\u{feff}\n")),
+            },
+            at(0),
+        );
+        engine.handle_signal(
+            Signal::ValueChanged {
+                element: field(1, "ship it"),
+            },
+            at(100),
+        );
+        engine.handle_signal(
+            Signal::ValueChanged {
+                element: field(1, "\u{feff}\n"),
+            },
+            at(300),
+        );
+        let out = engine.drain();
+        assert_eq!(kinds(&out), vec![EventKind::TextCommitted]);
+        assert_eq!(out[0].reason, Some(TextCommitReason::Cleared));
+        assert_eq!(out[0].text.as_deref(), Some("ship it"));
+        engine.tick(&mut obs, at(5000));
+        assert!(
+            engine.drain().is_empty(),
+            "the zero-width value is never committed"
         );
     }
 

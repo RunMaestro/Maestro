@@ -11,7 +11,8 @@
  *
  * The setting is stored per agent as `codexTransport`, with `undefined` meaning
  * `exec`. It is a PREFERENCE, not a guarantee: the app-server spawner still
- * falls back to `exec` for turns it cannot carry (SSH, images, Auto Run, Cue).
+ * falls back to `exec` for turns it cannot carry (images, Auto Run, Cue). SSH
+ * agents run app-server on the remote host (`codex-app-server/ssh-launch.ts`).
  * See `docs/agent-guides/CODEX-APP-SERVER.md`.
  */
 

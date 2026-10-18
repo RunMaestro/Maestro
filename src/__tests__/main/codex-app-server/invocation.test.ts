@@ -3,7 +3,9 @@ import {
 	parseCodexAppServerInvocation,
 	codexAppServerConfigBlocker,
 	codexThreadPolicyMismatch,
+	wantsCodexAppServer,
 } from '../../../main/codex-app-server/invocation';
+import type { CodexAppServerSshLaunch } from '../../../main/codex-app-server/ssh-launch';
 import type { ProcessConfig } from '../../../main/process-manager/types';
 
 function config(args: string[], overrides: Partial<ProcessConfig> = {}): ProcessConfig {
@@ -144,7 +146,8 @@ describe('codexAppServerConfigBlocker', () => {
 	it.each([
 		[{ prompt: undefined }, 'no prompt'],
 		[{ images: ['data:x'] }, 'image prompt'],
-		[{ sshRemoteId: 'remote-1' }, 'SSH remote'],
+		[{ sshRemoteId: 'remote-1' }, 'SSH remote without an app-server launch'],
+		[{ sshStdinScript: 'exec codex exec' }, 'SSH remote without an app-server launch'],
 		[{ promptAlreadyInArgs: true }, 'prompt embedded in args'],
 	] as Array<[Partial<ProcessConfig>, string]>)('blocks %j', (overrides, reason) => {
 		expect(codexAppServerConfigBlocker(config(EXEC, overrides))).toBe(reason);
@@ -152,6 +155,61 @@ describe('codexAppServerConfigBlocker', () => {
 
 	it('allows a plain local text turn', () => {
 		expect(codexAppServerConfigBlocker(config(EXEC))).toBeNull();
+	});
+});
+
+describe('an SSH turn with an app-server launch', () => {
+	/** An SSH config as the spawn handler hands it over: ssh args, the local cwd, no prompt. */
+	const sshConfig = (launch: Partial<CodexAppServerSshLaunch> = {}) =>
+		config(['-o', 'BatchMode=yes', 'host', '/bin/bash', '--norc', '--noprofile', '-s'], {
+			cwd: '/Users/me',
+			prompt: undefined,
+			sshRemoteId: 'remote-1',
+			sshStdinScript: 'exec codex exec --json',
+			codexAppServerSsh: {
+				command: 'ssh',
+				args: ['host', '/bin/bash', '--norc', '--noprofile', '-s'],
+				stdinScript: 'exec codex app-server\n',
+				remoteCommandLine: 'codex app-server',
+				execArgs: [...EXEC, '--dangerously-bypass-approvals-and-sandbox', '-m', 'gpt-x'],
+				cwd: '/home/me/proj',
+				prompt: 'fix the bug',
+				...launch,
+			},
+		});
+
+	it('is carried, read from the planned exec turn and the remote cwd', () => {
+		expect(codexAppServerConfigBlocker(sshConfig())).toBeNull();
+		expect(parseCodexAppServerInvocation(sshConfig())).toEqual({
+			ok: true,
+			invocation: {
+				cwd: '/home/me/proj',
+				sandbox: 'danger-full-access',
+				model: 'gpt-x',
+				configArgs: [],
+			},
+		});
+	});
+
+	it('still needs a prompt and an exec arg list app-server can carry', () => {
+		expect(codexAppServerConfigBlocker(sshConfig({ prompt: '' }))).toBe('no prompt');
+		expect(parseCodexAppServerInvocation(sshConfig({ execArgs: [...EXEC, '--oss'] }))).toEqual({
+			ok: false,
+			reason: 'unsupported argument: --oss',
+		});
+	});
+});
+
+describe('wantsCodexAppServer', () => {
+	it('is true only for an opted-in Codex agent on a turn a person sent', () => {
+		const want = (overrides: Partial<ProcessConfig>) =>
+			wantsCodexAppServer({ toolType: 'codex', codexTransport: 'app-server', ...overrides });
+		expect(want({})).toBe(true);
+		expect(want({ querySource: 'user' })).toBe(true);
+		expect(want({ querySource: 'auto' })).toBe(false);
+		expect(want({ querySource: 'cue' })).toBe(false);
+		expect(want({ codexTransport: 'exec' })).toBe(false);
+		expect(want({ toolType: 'claude-code' })).toBe(false);
 	});
 });
 

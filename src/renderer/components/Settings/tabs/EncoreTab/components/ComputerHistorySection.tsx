@@ -18,7 +18,7 @@ import { ActionButton } from './ActionButton';
 import { CaptureRulesEditor } from '../../../../ComputerHistory/CaptureRulesEditor';
 import { useComputerHistoryStatus } from '../../../../../hooks/computerHistory/useComputerHistoryStatus';
 import { useEventListener } from '../../../../../hooks/utils/useEventListener';
-import { useSessionStore } from '../../../../../stores/sessionStore';
+import { useLiveSessions } from '../../../../../hooks/session/useLiveSessions';
 import { useModalStore } from '../../../../../stores/modalStore';
 import { notifyToast } from '../../../../../stores/notificationStore';
 import { formatSize } from '../../../../../../shared/formatters';
@@ -133,7 +133,8 @@ export function ComputerHistorySection({ theme }: ComputerHistorySectionProps) {
 	const [config, setConfig] = useState<ComputerHistoryConfig | null>(null);
 	const [retentionDraft, setRetentionDraft] = useState('');
 	const [maxGbDraft, setMaxGbDraft] = useState('');
-	const sessions = useSessionStore((s) => s.sessions);
+	// Live agents only: a dormant Pianola (flag off) cannot be the digest agent.
+	const sessions = useLiveSessions();
 	const digestAgents = useMemo(
 		() =>
 			sessions.filter((s) => s.toolType !== 'terminal').map((s) => ({ id: s.id, name: s.name })),

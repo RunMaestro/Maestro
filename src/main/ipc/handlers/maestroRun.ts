@@ -20,6 +20,16 @@ function requireService(): MaestroRunService {
 	return service;
 }
 
+/**
+ * Installing and granting act for the user who turned the feature on, so both
+ * refuse while MaestroRun is off - the same check the CLI's WS verbs make.
+ */
+function requireEnabledService(): MaestroRunService {
+	const service = requireService();
+	if (!service.status().enabled) throw new Error('MaestroRunDisabled');
+	return service;
+}
+
 function opts(operation: string) {
 	return { context: LOG_CONTEXT, operation };
 }
@@ -37,12 +47,12 @@ export function registerMaestroRunHandlers(): void {
 	);
 	ipcMain.handle(
 		'maestroRun:install',
-		withIpcErrorLogging(opts('install'), async () => requireService().install())
+		withIpcErrorLogging(opts('install'), async () => requireEnabledService().install())
 	);
 	ipcMain.handle(
 		'maestroRun:requestAccess',
 		withIpcErrorLogging(opts('requestAccess'), async (options?: { reveal?: boolean }) =>
-			requireService().requestAccess({ reveal: options?.reveal === true })
+			requireEnabledService().requestAccess({ reveal: options?.reveal === true })
 		)
 	);
 	// The launcher path while it is ready, else null. Re-inspects a stale

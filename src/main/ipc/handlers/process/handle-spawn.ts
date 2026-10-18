@@ -40,6 +40,11 @@ import { getActingUser } from '../../../web-server/auth/acting-user';
 import { noteTurnActor } from '../../../web-server/auth/turn-attribution';
 import { REGEX_AI_SUFFIX } from '../../../constants';
 import { addBreadcrumb, captureException } from '../../../utils/sentry';
+import {
+	DORMANT_PIANOLA_MESSAGE,
+	isAgentDormant,
+	isPianolaEnabled,
+} from '../../../../shared/agentVisibility';
 import { isWebContentsAvailable } from '../../../utils/safe-send';
 import {
 	buildAgentArgs,
@@ -50,6 +55,7 @@ import { requireProcessManager, requireDependency } from '../../../utils/ipcHand
 import { getPrompt } from '../../../prompt-manager';
 import { getWindowsShellForAgentExecution } from '../../../process-manager/utils/shellEscape';
 import { buildChildProcessEnv } from '../../../process-manager/utils/envBuilder';
+import { awaitSynopsisWriters } from '../../../process-manager/utils/synopsisWriterGate';
 import { probeClaudeSlashCommandsCached } from '../../../agents/claude-slash-command-probe';
 import { buildExpandedEnv } from '../../../../shared/pathUtils';
 import type { SshRemoteConfig } from '../../../../shared/types';
@@ -133,9 +139,16 @@ async function handleProcessSpawnImpl(
 	const migrationAgent = (
 		deps.sessionsStore.get('sessions', []) as Array<{
 			id: string;
+			isPianola?: boolean;
 			providerMigration?: import('../../../../shared/maestro-lib/translation/types').ProviderMigrationState;
 		}>
 	).find((s) => s.id === migrationAgentId);
+	// A dormant agent (Pianola with its Encore flag off) never runs: it stays in
+	// the store only so turning the feature back on restores it.
+	const encoreFeatures = settingsStore.get('encoreFeatures');
+	if (isAgentDormant(migrationAgent, encoreFeatures)) {
+		throw new Error(DORMANT_PIANOLA_MESSAGE);
+	}
 	if (config.toolType !== 'terminal' && migrationHoldsTurns(migrationAgent?.providerMigration)) {
 		throw new Error(
 			'Provider migration is pending; the next turn remains queued until migration settles'
@@ -347,9 +360,11 @@ async function handleProcessSpawnImpl(
 	// and tell it its own id (MAESTRO_AGENT_ID) so it never acts on itself.
 	// Injected into effectiveCustomEnvVars so it flows through both the local
 	// and SSH env-merge paths below.
-	const isPianolaSession = (
-		deps.sessionsStore.get('sessions', []) as Array<{ id?: string; isPianola?: boolean }>
-	).some((s) => s?.id === baseSessionId && s?.isPianola === true);
+	const isPianolaSession =
+		isPianolaEnabled(encoreFeatures) &&
+		(deps.sessionsStore.get('sessions', []) as Array<{ id?: string; isPianola?: boolean }>).some(
+			(s) => s?.id === baseSessionId && s?.isPianola === true
+		);
 	if (isPianolaSession) {
 		effectiveCustomEnvVars = {
 			...(effectiveCustomEnvVars || {}),
@@ -793,6 +808,7 @@ async function handleProcessSpawnImpl(
 		useShell,
 		shellToUse,
 		settingsStore,
+		codexTransport,
 	});
 	const sshStdinScript = sshWrap.sshStdinScript;
 	const sshRemoteCommand = sshWrap.sshRemoteCommand;
@@ -965,6 +981,22 @@ async function handleProcessSpawnImpl(
 		promptDelivery.via === 'stdin' && promptDelivery.format === 'stream-json';
 	const sendPromptViaStdinRaw = promptDelivery.via === 'stdin' && promptDelivery.format === 'raw';
 
+	// A background synopsis may still be writing the provider session this
+	// spawn resumes. Two writers on one session fail the turn on Codex and
+	// interleave the transcript on Claude, so wait it out (see the helper).
+	if (agentSessionId) {
+		const gate = await awaitSynopsisWriters(processManager, agentSessionId);
+		if (gate.waitedFor.length > 0) {
+			logger.info('Spawn waited for a synopsis writing the same provider session', LOG_CONTEXT, {
+				sessionId: config.sessionId,
+				agentSessionId,
+				waitedFor: gate.waitedFor,
+				killed: gate.killed,
+				elapsedMs: gate.elapsedMs,
+			});
+		}
+	}
+
 	const result = processManager.spawn({
 		...config,
 		command: commandToSpawn,
@@ -1006,6 +1038,8 @@ async function handleProcessSpawnImpl(
 		extraPathDirs: localAgentBinDir ? [localAgentBinDir] : undefined,
 		// Host-authoritative (see above): overrides whatever the caller sent.
 		codexTransport,
+		// SSH app-server launch, when this Codex turn wants app-server.
+		codexAppServerSsh: sshWrap.codexAppServerSsh,
 	});
 	if (!result.success && pluginRunToken) exitListener.current?.(config.sessionId);
 	if (result.success) proofCleanup.release = undefined;

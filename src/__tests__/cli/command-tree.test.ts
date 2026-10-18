@@ -34,7 +34,7 @@ beforeAll(async () => {
 	const log = vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
 		lines.push(args.map(String).join(' '));
 	});
-	process.argv = ['node', 'maestro-cli', 'reference', '--format', 'json'];
+	process.argv = ['node', 'maestro-cli', 'reference', '--format', 'json', '--all'];
 	try {
 		await import('../../cli/index');
 	} finally {

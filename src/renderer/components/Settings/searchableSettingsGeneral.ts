@@ -357,6 +357,25 @@ export const GENERAL_SETTINGS: SearchableSetting[] = [
 		],
 	},
 	{
+		id: 'general-shorten-tab-names',
+		tab: 'general',
+		tabLabel: 'General',
+		label: 'Shorten long tab names',
+		description:
+			'Cut an automatic tab name longer than 40 characters at a word boundary, or keep the full name',
+		keywords: [
+			'tab',
+			'name',
+			'naming',
+			'long',
+			'shorten',
+			'truncate',
+			'title',
+			'length',
+			'ellipsis',
+		],
+	},
+	{
 		id: 'general-utility-agent',
 		tab: 'general',
 		tabLabel: 'General',
@@ -407,19 +426,9 @@ export const GENERAL_SETTINGS: SearchableSetting[] = [
 		tabLabel: 'General',
 		label: 'Prevent Sleep While Working',
 		description:
-			'Keeps your computer awake when AI agents are busy, Auto Run is active, or Cue pipelines are scheduled',
-		keywords: [
-			'sleep',
-			'power',
-			'awake',
-			'prevent sleep',
-			'caffeine',
-			'battery',
-			'cue',
-			'pipeline',
-			'idle',
-			'wake',
-		],
+			'Keeps your computer awake when AI agents are busy, Auto Run is active, or automations are scheduled',
+		keywords: ['sleep', 'power', 'awake', 'prevent sleep', 'caffeine', 'battery', 'idle', 'wake'],
+		encoreKeywords: { maestroCue: ['cue', 'cue pipeline', 'pipeline'] },
 	},
 	{
 		id: 'general-display-sleep',

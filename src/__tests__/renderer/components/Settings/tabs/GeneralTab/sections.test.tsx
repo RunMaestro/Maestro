@@ -239,6 +239,7 @@ describe('GeneralTab section components', () => {
 
 	it('wires tab naming and placement controls', () => {
 		const setAutomaticTabNamingEnabled = vi.fn();
+		const setShortenLongTabNames = vi.fn();
 		const setNewTabPlacement = vi.fn();
 		const setNewBrowserTabPlacement = vi.fn();
 		const setNewTerminalPlacement = vi.fn();
@@ -249,6 +250,8 @@ describe('GeneralTab section components', () => {
 				theme={mockTheme}
 				automaticTabNamingEnabled={true}
 				setAutomaticTabNamingEnabled={setAutomaticTabNamingEnabled}
+				shortenLongTabNames={false}
+				setShortenLongTabNames={setShortenLongTabNames}
 				newTabPlacement="end"
 				setNewTabPlacement={setNewTabPlacement}
 				newBrowserTabPlacement="end"
@@ -264,6 +267,9 @@ describe('GeneralTab section components', () => {
 			screen.getByRole('switch', { name: 'Automatically name tabs based on first message' })
 		);
 		expect(setAutomaticTabNamingEnabled).toHaveBeenCalledWith(false);
+
+		fireEvent.click(screen.getByRole('switch', { name: 'Shorten long tab names' }));
+		expect(setShortenLongTabNames).toHaveBeenCalledWith(true);
 
 		const terminalSection = screen.getByText('New terminal placement').parentElement!;
 		fireEvent.click(within(terminalSection).getByRole('button', { name: 'After current tab' }));

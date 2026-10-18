@@ -458,6 +458,113 @@ describe('ClaudeOutputParser', () => {
 		});
 	});
 
+	describe('callUsage (per-call spend for the Throughput Gauge)', () => {
+		const row = (
+			id: string | undefined,
+			usage: Record<string, number>,
+			extra: Record<string, unknown> = {}
+		) =>
+			JSON.stringify({
+				type: 'assistant',
+				session_id: 'sess-calls',
+				message: {
+					...(id ? { id } : {}),
+					role: 'assistant',
+					content: [{ type: 'text', text: 'working' }],
+					usage,
+				},
+				...extra,
+			});
+		const callUsage = {
+			input_tokens: 2,
+			output_tokens: 1305,
+			cache_read_input_tokens: 164251,
+			cache_creation_input_tokens: 1072,
+		};
+
+		it('reports a call once, on its first row, however many rows repeat its usage', () => {
+			const p = new ClaudeOutputParser();
+
+			expect(p.parseJsonLine(row('msg-1', callUsage))?.callUsage).toEqual({
+				inputTokens: 2,
+				outputTokens: 1305,
+				cacheReadInputTokens: 164251,
+				cacheCreationInputTokens: 1072,
+			});
+			expect(p.parseJsonLine(row('msg-1', callUsage))?.callUsage).toBeUndefined();
+			expect(p.parseJsonLine(row('msg-1', callUsage))?.callUsage).toBeUndefined();
+		});
+
+		it('reports only the growth when a later row of the same call carries more', () => {
+			const p = new ClaudeOutputParser();
+
+			p.parseJsonLine(row('msg-1', { ...callUsage, output_tokens: 100 }));
+			expect(p.parseJsonLine(row('msg-1', callUsage))?.callUsage).toEqual({
+				inputTokens: 0,
+				outputTokens: 1205,
+				cacheReadInputTokens: 0,
+				cacheCreationInputTokens: 0,
+			});
+			// A smaller repeat neither goes negative nor lowers the mark.
+			expect(
+				p.parseJsonLine(row('msg-1', { ...callUsage, output_tokens: 50 }))?.callUsage
+			).toBeUndefined();
+			expect(p.parseJsonLine(row('msg-1', callUsage))?.callUsage).toBeUndefined();
+		});
+
+		it('reports each new call, subagent calls included', () => {
+			const p = new ClaudeOutputParser();
+
+			p.parseJsonLine(row('msg-1', callUsage));
+			expect(
+				p.parseJsonLine(row('msg-2', { input_tokens: 5, output_tokens: 40 }))?.callUsage
+			).toMatchObject({ inputTokens: 5, outputTokens: 40 });
+			expect(
+				p.parseJsonLine(
+					row(
+						'msg-sub',
+						{ input_tokens: 9, output_tokens: 70 },
+						{ parent_tool_use_id: 'toolu_task' }
+					)
+				)?.callUsage
+			).toMatchObject({ inputTokens: 9, outputTokens: 70 });
+		});
+
+		it('counts every row of a message with no id, which cannot be matched to its repeats', () => {
+			const p = new ClaudeOutputParser();
+
+			expect(p.parseJsonLine(row(undefined, callUsage))?.callUsage?.outputTokens).toBe(1305);
+			expect(p.parseJsonLine(row(undefined, callUsage))?.callUsage?.outputTokens).toBe(1305);
+		});
+
+		it('forgets the turn at the result, and leaves usage-less and all-zero rows unset', () => {
+			const p = new ClaudeOutputParser();
+
+			p.parseJsonLine(row('msg-1', callUsage));
+			p.parseJsonLine(
+				JSON.stringify({
+					type: 'result',
+					result: 'done',
+					session_id: 'sess-calls',
+					total_cost_usd: 0,
+				})
+			);
+			// A new turn starts from nothing, even for a reused id.
+			expect(p.parseJsonLine(row('msg-1', callUsage))?.callUsage?.outputTokens).toBe(1305);
+			expect(
+				p.parseJsonLine(
+					JSON.stringify({
+						type: 'assistant',
+						message: { id: 'msg-x', role: 'assistant', content: [{ type: 'text', text: 'hi' }] },
+					})
+				)?.callUsage
+			).toBeUndefined();
+			expect(
+				p.parseJsonLine(row('msg-z', { input_tokens: 0, output_tokens: 0 }))?.callUsage
+			).toBeUndefined();
+		});
+	});
+
 	describe('extractSlashCommands', () => {
 		it('should extract slash commands from init message', () => {
 			const event = parser.parseJsonLine(

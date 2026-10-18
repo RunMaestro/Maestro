@@ -42,6 +42,7 @@ import {
 	isPidAlive,
 	type CliServerInfo,
 } from '../discovery';
+import { resolveUserDataDir } from '../../paths/userDataDir';
 
 // Type assertions for mocked modules
 const mockFs = {
@@ -109,7 +110,7 @@ describe('cli-server-discovery', () => {
 					'/Users/testuser',
 					'Library',
 					'Application Support',
-					'maestro',
+					'Maestro',
 					'cli-server.json'
 				),
 				'utf-8'
@@ -126,7 +127,7 @@ describe('cli-server-discovery', () => {
 				readCliServerInfo();
 
 				expect(mockFs.readFileSync).toHaveBeenCalledWith(
-					path.join('C:\\Users\\testuser\\AppData\\Roaming', 'maestro', 'cli-server.json'),
+					path.join('C:\\Users\\testuser\\AppData\\Roaming', 'Maestro', 'cli-server.json'),
 					'utf-8'
 				);
 			} finally {
@@ -148,7 +149,7 @@ describe('cli-server-discovery', () => {
 				readCliServerInfo();
 
 				expect(mockFs.readFileSync).toHaveBeenCalledWith(
-					path.join('C:\\Users\\testuser', 'AppData', 'Roaming', 'maestro', 'cli-server.json'),
+					path.join('C:\\Users\\testuser', 'AppData', 'Roaming', 'Maestro', 'cli-server.json'),
 					'utf-8'
 				);
 			} finally {
@@ -170,7 +171,7 @@ describe('cli-server-discovery', () => {
 				readCliServerInfo();
 
 				expect(mockFs.readFileSync).toHaveBeenCalledWith(
-					path.join('/home/testuser/.custom-config', 'maestro', 'cli-server.json'),
+					path.join('/home/testuser/.custom-config', 'Maestro', 'cli-server.json'),
 					'utf-8'
 				);
 			} finally {
@@ -192,7 +193,7 @@ describe('cli-server-discovery', () => {
 				readCliServerInfo();
 
 				expect(mockFs.readFileSync).toHaveBeenCalledWith(
-					path.join('/home/testuser', '.config', 'maestro', 'cli-server.json'),
+					path.join('/home/testuser', '.config', 'Maestro', 'cli-server.json'),
 					'utf-8'
 				);
 			} finally {
@@ -201,6 +202,27 @@ describe('cli-server-discovery', () => {
 				} else {
 					process.env.XDG_CONFIG_HOME = originalXdg;
 				}
+			}
+		});
+
+		// The bug this module's resolver fix closes: from a user's own terminal on
+		// a case-sensitive Linux install the CLI read agents from ~/.config/Maestro
+		// but looked for the app in ~/.config/maestro, and reported a running app
+		// as not running. Both now come from resolveUserDataDir().
+		it('agrees with resolveUserDataDir() on a case-sensitive Linux install', () => {
+			mockOs.platform.mockReturnValue('linux');
+			mockOs.homedir.mockReturnValue('/home/testuser');
+			const originalXdg = process.env.XDG_CONFIG_HOME;
+			delete process.env.XDG_CONFIG_HOME;
+			try {
+				readCliServerInfo();
+				expect(mockFs.readFileSync).toHaveBeenCalledWith(
+					path.join(resolveUserDataDir(), 'cli-server.json'),
+					'utf-8'
+				);
+				expect(resolveUserDataDir()).toBe(path.join('/home/testuser', '.config', 'Maestro'));
+			} finally {
+				if (originalXdg !== undefined) process.env.XDG_CONFIG_HOME = originalXdg;
 			}
 		});
 
@@ -259,7 +281,7 @@ describe('cli-server-discovery', () => {
 		it('should write the file with correct content via atomic rename', () => {
 			writeCliServerInfo(sampleInfo);
 
-			const expectedDir = path.join('/Users/testuser', 'Library', 'Application Support', 'maestro');
+			const expectedDir = path.join('/Users/testuser', 'Library', 'Application Support', 'Maestro');
 			const expectedFile = path.join(expectedDir, 'cli-server.json');
 			const expectedTmp = expectedFile + '.tmp';
 
@@ -282,7 +304,7 @@ describe('cli-server-discovery', () => {
 					'/Users/testuser',
 					'Library',
 					'Application Support',
-					'maestro',
+					'Maestro',
 					'cli-server.json'
 				) + '.tmp';
 			expect(mockFs.chmodSync).toHaveBeenCalledWith(expectedTmp, 0o600);
@@ -310,7 +332,7 @@ describe('cli-server-discovery', () => {
 			writeCliServerInfo(sampleInfo);
 
 			expect(mockFs.mkdirSync).toHaveBeenCalledWith(
-				path.join('/Users/testuser', 'Library', 'Application Support', 'maestro'),
+				path.join('/Users/testuser', 'Library', 'Application Support', 'Maestro'),
 				{ recursive: true }
 			);
 		});
@@ -467,7 +489,7 @@ describe('cli-server-discovery', () => {
 				'/Users/testuser',
 				'Library',
 				'Application Support',
-				'maestro',
+				'Maestro',
 				'cli-server.json'
 			);
 			expect(mockFs.unlinkSync).toHaveBeenCalledWith(expectedFile);

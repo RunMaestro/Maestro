@@ -161,6 +161,29 @@ describe('Symphony IPC handlers', () => {
 	});
 
 	// ============================================================================
+	// Encore gate
+	// ============================================================================
+
+	describe('with Symphony switched off', () => {
+		beforeEach(() => {
+			vi.mocked(mockDeps.settingsStore.get).mockImplementation(((key: string) =>
+				key === 'encoreFeatures' ? { symphony: false } : []) as never);
+		});
+
+		it('refuses every symphony channel before it does any work', async () => {
+			const channels = [...handlers.keys()].filter((channel) => channel.startsWith('symphony:'));
+			expect(channels.length).toBeGreaterThan(10);
+			for (const channel of channels) {
+				const result = await handlers.get(channel)!({}, {});
+				expect(result).toEqual({ success: false, error: 'Error: SymphonyDisabled' });
+			}
+			expect(global.fetch).not.toHaveBeenCalled();
+			expect(execFileNoThrow).not.toHaveBeenCalled();
+			expect(fs.writeFile).not.toHaveBeenCalled();
+		});
+	});
+
+	// ============================================================================
 	// Validation Helper Tests
 	// ============================================================================
 

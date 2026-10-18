@@ -20,6 +20,7 @@ import type { ChildProcess } from 'child_process';
 vi.mock('../../../main/pianola/pianola-store-main', () => ({
 	readSupervisorTargets: vi.fn(() => []),
 	writeSupervisorTargets: vi.fn(),
+	removeSupervisorTarget: vi.fn(() => []),
 	supervisorFilePath: vi.fn(() => '/fake/maestro-pianola-supervisor.json'),
 }));
 vi.mock('../../../main/cue/cue-cli-executor', () => ({
@@ -44,10 +45,12 @@ vi.mock('../../../shared/platformDetection', () => ({
 import { PianolaSupervisor, type AutoWatchSession } from '../../../main/pianola/pianola-supervisor';
 import {
 	readSupervisorTargets,
+	removeSupervisorTarget,
 	writeSupervisorTargets,
 } from '../../../main/pianola/pianola-store-main';
 import { captureException } from '../../../main/utils/sentry';
 import * as fs from 'fs';
+import { PIANOLA_WATCH_RETIRED_EXIT_CODE } from '../../../shared/pianola/pianola-watcher';
 import type { PianolaSupervisedTarget } from '../../../shared/pianola/storage';
 
 // Mirror the (unexported) source constants so timing assertions stay in sync.
@@ -100,6 +103,7 @@ class FakeChild extends EventEmitter {
 }
 
 let spawned: FakeChild[];
+let spawnArgs: string[][];
 let pidSeq: number;
 let enabled: boolean;
 let sup: PianolaSupervisor;
@@ -109,7 +113,8 @@ function makeSupervisor(storedSessions?: AutoWatchSession[]): PianolaSupervisor 
 		getStoredSessions: storedSessions ? () => storedSessions : undefined,
 		isEnabled: () => enabled,
 		getPianolaAgentId: () => 'pianola-agent',
-		spawnChild: () => {
+		spawnChild: (_command, args) => {
+			spawnArgs.push([...args]);
 			const child = new FakeChild(++pidSeq);
 			spawned.push(child);
 			return child as unknown as ChildProcess;
@@ -134,6 +139,7 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	vi.setSystemTime(0);
 	spawned = [];
+	spawnArgs = [];
 	pidSeq = 0;
 	enabled = true;
 	vi.mocked(readSupervisorTargets).mockReturnValue([]);
@@ -311,6 +317,41 @@ describe('PianolaSupervisor spawn + exit lifecycle', () => {
 		// Reset to 0 on the stable run, then +1 for this fresh failure: 1, not 2.
 		expect(sup.getHealth()[0].restarts).toBe(1);
 		expect(sup.getHealth()[0].state).toBe('backing-off');
+	});
+});
+
+describe('PianolaSupervisor watch retirement', () => {
+	it('removes a watch target that exits with the retired code and never relaunches it', () => {
+		setTargets([watchTarget()]);
+		sup.reconcile();
+
+		spawned[0].exit(PIANOLA_WATCH_RETIRED_EXIT_CODE);
+
+		expect(removeSupervisorTarget).toHaveBeenCalledWith('w1');
+		expect(sup.getHealth()).toHaveLength(0);
+		// The store write is what keeps it gone; simulate the file now lacking it.
+		setTargets([]);
+		vi.advanceTimersByTime(BACKOFF_CAP_MS * 2);
+		expect(sup.relaunchStale()).toBe(0);
+		expect(spawned).toHaveLength(1);
+	});
+
+	it('treats the retired code from an orchestrate target as an ordinary failure', () => {
+		setTargets([orchestrateTarget()]);
+		sup.reconcile();
+
+		spawned[0].exit(PIANOLA_WATCH_RETIRED_EXIT_CODE);
+
+		expect(removeSupervisorTarget).not.toHaveBeenCalled();
+		expect(sup.getHealth()[0].state).toBe('backing-off');
+	});
+
+	it('passes a target idle timeout through to the watch command', () => {
+		setTargets([{ ...watchTarget(), idleHours: 2 }, watchTarget('w2')]);
+		sup.reconcile();
+
+		expect(spawnArgs[0]).toEqual(expect.arrayContaining(['--idle-hours', '2']));
+		expect(spawnArgs[1]).not.toContain('--idle-hours');
 	});
 });
 

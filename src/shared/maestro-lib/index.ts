@@ -7,6 +7,9 @@
  * Internal modules (bin/, test utilities) are not exported.
  */
 
+// The library's own version, separate from the app's (docs/maestro-lib.md, Version)
+export { MAESTRO_LIB_VERSION } from './version';
+
 // Paths and configuration
 export * from './paths/userDataDir';
 export * from './paths/resolve';
@@ -34,6 +37,7 @@ export * from './client/host-control';
 // Desktop bridge: find the running desktop (cli-server.json) and talk to it
 export * from './client/discovery';
 export * from './client/bridge-connection';
+export * from './client/not-running';
 
 // The client interface the TUI programs against, and its WebSocket implementation
 export * from './client/types';
@@ -55,7 +59,12 @@ export * from './store/tab-display';
 export { getAgentDisplayName, AGENT_AUTOSELECT_ORDER } from '../agentMetadata';
 
 export type { AgentError, SshRemoteConfig, ThinkingMode, ToolType, UsageStats } from '../types';
+export type { QuerySource } from '../querySource';
+export type { AgentCapabilitiesSnapshot } from '../agentCapabilities';
 export { asThinkingMode } from '../types';
+
+// Where Claude keeps auto memory for a project (the Memory Viewer, provider translation, Cue bundles)
+export { resolveClaudeMemoryPath } from './translation/memory';
 
 // Provider swap: park and restore provider-specific tab and agent state (PS-5)
 export * from './agents/providerSwap';

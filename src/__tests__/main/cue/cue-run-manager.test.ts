@@ -58,7 +58,11 @@ vi.mock('crypto', () => ({
 	randomUUID: vi.fn(() => `run-${++uuidCounter}`),
 }));
 
-import { updateCueEventStatus, safeUpdateCueEventStatus } from '../../../main/cue/cue-db';
+import {
+	updateCueEventStatus,
+	safeRecordCueEvent,
+	safeUpdateCueEventStatus,
+} from '../../../main/cue/cue-db';
 import {
 	createCueRunManager,
 	type CueRunManagerDeps,
@@ -1696,6 +1700,80 @@ describe('createCueRunManager', () => {
 			expect(persistence.remove).toHaveBeenCalledTimes(1);
 		});
 
+		it('retainQueue keeps what classify accepts, and drops, unpersists and records the rest', () => {
+			const persistence = makeMockPersistence();
+			const onLog = vi.fn();
+			const deps = createDeps({
+				onCueRun: vi.fn(() => new Promise(() => {})),
+				getSessionSettings: vi.fn(() => ({
+					...defaultSettings,
+					max_concurrent: 1,
+					queue_size: 5,
+				})),
+				queuePersistence: persistence,
+				onLog,
+			});
+			const manager = createCueRunManager(deps);
+			manager.execute('session-1', 'p1', createEvent(), 'running'); // dispatched
+			const webhook = createEvent({ type: 'webhook.received', payload: { path: 'deploy' } });
+			manager.execute('session-1', 'p2', webhook, 'kept'); // queued
+			manager.execute('session-1', 'p3', webhook, 'gone'); // queued
+			manager.execute('session-1', 'p4', createEvent(), 'beat'); // queued
+			const persistIdOf = (name: string) =>
+				persistence.persist.mock.calls.find(
+					(call) => (call[2] as { subscriptionName: string }).subscriptionName === name
+				)![1] as string;
+
+			const dropped = manager.retainQueue('session-1', (entry) =>
+				entry.subscriptionName === 'kept'
+					? null
+					: entry.subscriptionName === 'gone'
+						? 'subscription-missing'
+						: 'superseded'
+			);
+
+			expect(dropped).toBe(2);
+			expect(manager.getQueueStatus().get('session-1')).toBe(1);
+			expect(persistence.remove).toHaveBeenCalledTimes(2);
+			expect(persistence.remove).toHaveBeenCalledWith(persistIdOf('gone'));
+			expect(persistence.remove).toHaveBeenCalledWith(persistIdOf('beat'));
+			expect(persistence.remove).not.toHaveBeenCalledWith(persistIdOf('kept'));
+
+			// Each drop is a finalized row the activity log can explain.
+			const recorded = vi
+				.mocked(safeRecordCueEvent)
+				.mock.calls.map(([row]) => row)
+				.filter((row) => row.subscriptionName === 'gone');
+			expect(recorded).toHaveLength(1);
+			expect(recorded[0]).toMatchObject({ status: 'timeout', type: 'webhook.received' });
+			expect(JSON.parse(recorded[0].payload)).toMatchObject({
+				path: 'deploy',
+				droppedFromQueue: true,
+				reason: 'subscription-missing',
+			});
+
+			// One log line per reason, counted in the metrics as dropped events.
+			expect(onLog).toHaveBeenCalledWith(
+				'warn',
+				expect.stringContaining(
+					'Dropped 1 queued event(s) for "Test Session" on a cue.yaml reload'
+				),
+				{ type: 'queueDropped', sessionId: 'session-1', count: 1, reason: 'subscription-missing' }
+			);
+			expect(onLog).toHaveBeenCalledWith(
+				'cue',
+				expect.stringContaining('a heartbeat whose timing changed fires on load instead'),
+				{ type: 'queueDropped', sessionId: 'session-1', count: 1, reason: 'superseded' }
+			);
+		});
+
+		it('retainQueue on a session with nothing queued drops nothing and logs nothing', () => {
+			const onLog = vi.fn();
+			const manager = createCueRunManager(createDeps({ onLog }));
+			expect(manager.retainQueue('session-1', () => 'subscription-missing')).toBe(0);
+			expect(onLog).not.toHaveBeenCalled();
+		});
+
 		it('calls queuePersistence.clearAll on stopAll', () => {
 			const persistence = makeMockPersistence();
 			const deps = createDeps({
@@ -1841,6 +1919,273 @@ describe('createCueRunManager', () => {
 				expect.objectContaining({ subscriptionName: 'sub-incoming' })
 			);
 			expect(manager.getQueueStatus().size).toBe(0);
+		});
+	});
+
+	describe('drain gate', () => {
+		function persistenceSpy() {
+			return {
+				persist: vi.fn(),
+				remove: vi.fn(),
+				clearSession: vi.fn(),
+				clearAll: vi.fn(),
+				persistedIds: vi.fn(() => new Set<string>()),
+				restoreAll: vi.fn(() => new Map()),
+			};
+		}
+
+		it('queues and persists instead of starting, past queue_size, and never drains', async () => {
+			const queuePersistence = persistenceSpy();
+			const onCueRun = vi.fn(async () => makeResult());
+			const deps = createDeps({
+				onCueRun,
+				queuePersistence,
+				getSessionSettings: vi.fn(() => ({ ...defaultSettings, queue_size: 1 })),
+			});
+			const manager = createCueRunManager(deps);
+			manager.setDraining(true);
+			for (let i = 0; i < 3; i++) manager.execute('session-1', 'p', createEvent(), `sub-${i}`);
+			await vi.advanceTimersByTimeAsync(0);
+
+			expect(onCueRun).not.toHaveBeenCalled();
+			expect(manager.getQueueStatus().get('session-1')).toBe(3);
+			expect(queuePersistence.persist).toHaveBeenCalledTimes(3);
+			expect(deps.onLog).not.toHaveBeenCalledWith(
+				'warn',
+				expect.stringContaining('Queue overflow'),
+				expect.anything()
+			);
+		});
+
+		it('defers even with queue_size 0', () => {
+			const deps = createDeps({
+				getSessionSettings: vi.fn(() => ({ ...defaultSettings, queue_size: 0 })),
+			});
+			const manager = createCueRunManager(deps);
+			manager.setDraining(true);
+			manager.execute('session-1', 'p', createEvent(), 'sub');
+			expect(manager.getQueueStatus().get('session-1')).toBe(1);
+		});
+
+		it('stamps every queued entry on persistQueueForRestart', () => {
+			const queuePersistence = persistenceSpy();
+			const manager = createCueRunManager(createDeps({ queuePersistence }));
+			manager.setDraining(true);
+			manager.execute('session-1', 'p', createEvent(), 'a');
+			manager.execute('session-1', 'p', createEvent(), 'b');
+			queuePersistence.persist.mockClear();
+
+			expect(manager.persistQueueForRestart(1234)).toBe(2);
+			const stamped = queuePersistence.persist.mock.calls.map((call) => call[2]);
+			expect(stamped.map((e) => [e.subscriptionName, e.drainedAt])).toEqual([
+				['a', 1234],
+				['b', 1234],
+			]);
+		});
+
+		it('discardInMemory forgets the queue without deleting persisted rows; reset() deletes them', () => {
+			const queuePersistence = persistenceSpy();
+			const manager = createCueRunManager(createDeps({ queuePersistence }));
+			manager.setDraining(true);
+			manager.execute('session-1', 'p', createEvent(), 'a');
+			manager.discardInMemory();
+			expect(manager.getQueueStatus().size).toBe(0);
+			expect(queuePersistence.clearAll).not.toHaveBeenCalled();
+			expect(queuePersistence.remove).not.toHaveBeenCalled();
+			manager.reset();
+			expect(queuePersistence.clearAll).toHaveBeenCalledTimes(1);
+		});
+
+		it('whenIdle resolves after the last active run finishes and its successors are queued', async () => {
+			let finish: () => void = () => {};
+			const onRunCompleted = vi.fn();
+			const manager = createCueRunManager(
+				createDeps({
+					onCueRun: vi.fn(
+						() =>
+							new Promise<CueRunResult>((resolve) => {
+								finish = () => resolve(makeResult());
+							})
+					),
+					onRunCompleted,
+				})
+			);
+			manager.execute('session-1', 'p', createEvent(), 'a');
+			let idle = false;
+			void manager.whenIdle().then(() => {
+				idle = true;
+			});
+			await vi.advanceTimersByTimeAsync(0);
+			expect(idle).toBe(false);
+			finish();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(idle).toBe(true);
+			expect(onRunCompleted).toHaveBeenCalled();
+			await expect(manager.whenIdle()).resolves.toBeUndefined();
+		});
+
+		it('exemptFromQueueCap keeps a restored deferred entry past queue_size', () => {
+			const manager = createCueRunManager(
+				createDeps({
+					onCueRun: vi.fn(() => new Promise<CueRunResult>(() => {})),
+					getSessionSettings: vi.fn(() => ({ ...defaultSettings, queue_size: 1 })),
+				})
+			);
+			manager.execute('session-1', 'p', createEvent(), 'running');
+			for (let i = 0; i < 3; i++) {
+				manager.execute(
+					'session-1',
+					'p',
+					createEvent(),
+					`deferred-${i}`,
+					undefined,
+					1,
+					undefined,
+					undefined,
+					undefined,
+					Date.now(),
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					true
+				);
+			}
+			expect(manager.getQueueStatus().get('session-1')).toBe(3);
+		});
+	});
+
+	describe('cancelling a launch that has not spawned yet', () => {
+		/** onCueRun that awaits `gate` (an executor load, an SSH probe) and then
+		 *  honors the signal the way the real executors do before spawning. */
+		function gatedLaunch() {
+			const spawned: string[] = [];
+			const signals: Array<AbortSignal | undefined> = [];
+			const gates: Array<() => void> = [];
+			const onCueRun = vi.fn(async (request: Parameters<CueRunManagerDeps['onCueRun']>[0]) => {
+				signals.push(request.signal);
+				await new Promise<void>((resolve) => gates.push(resolve));
+				if (request.signal?.aborted) {
+					return makeResult({
+						runId: request.runId,
+						subscriptionName: request.subscriptionName,
+						status: 'stopped',
+						stdout: '',
+						exitCode: null,
+					});
+				}
+				spawned.push(request.subscriptionName);
+				return makeResult({ runId: request.runId, subscriptionName: request.subscriptionName });
+			});
+			const openGate = async () => {
+				gates.shift()!();
+				await vi.advanceTimersByTimeAsync(0);
+			};
+			return { onCueRun, spawned, signals, openGate };
+		}
+
+		it('hands every launch the run signal and aborts it on stop', async () => {
+			const launch = gatedLaunch();
+			const deps = createDeps({ onCueRun: launch.onCueRun });
+			const manager = createCueRunManager(deps);
+			manager.execute('session-1', 'prompt', createEvent(), 'test-sub');
+			expect(launch.signals[0]?.aborted).toBe(false);
+
+			manager.stopRun('run-1');
+			expect(launch.signals[0]?.aborted).toBe(true);
+			expect(manager.getUnsettledStoppedRunCount()).toBe(1);
+
+			await launch.openGate();
+			expect(launch.spawned).toEqual([]);
+			expect(manager.getUnsettledStoppedRunCount()).toBe(0);
+			// The row ends stopped (never the launch's own failed or completed),
+			// and the run does not chain.
+			expect(safeUpdateCueEventStatus).toHaveBeenLastCalledWith(
+				'run-1',
+				'stopped',
+				undefined,
+				expect.anything()
+			);
+			expect(deps.onRunCompleted).not.toHaveBeenCalled();
+			const finished = (deps.onLog as ReturnType<typeof vi.fn>).mock.calls
+				.map((call) => call[2] as { type?: string; status?: string } | undefined)
+				.filter((data) => data?.type === 'runFinished');
+			expect(finished.map((data) => data!.status)).toEqual(['stopped']);
+		});
+
+		it('a stop while the main phase is finishing never launches the output prompt', async () => {
+			let finishMain!: (result: CueRunResult) => void;
+			const onCueRun = vi.fn(
+				() =>
+					new Promise<CueRunResult>((resolve) => {
+						finishMain = resolve;
+					})
+			);
+			const manager = createCueRunManager(createDeps({ onCueRun }));
+			manager.execute('session-1', 'prompt', createEvent(), 'test-sub', 'output prompt');
+
+			manager.stopRun('run-1');
+			// The main process had already finished when the stop came in, so
+			// its launch answers completed anyway.
+			finishMain(makeResult({ runId: 'run-1', status: 'completed' }));
+			await vi.advanceTimersByTimeAsync(0);
+			expect(onCueRun).toHaveBeenCalledTimes(1);
+			expect(manager.getUnsettledStoppedRunCount()).toBe(0);
+		});
+
+		it('a stop during the output phase cancels that launch too', async () => {
+			const launch = gatedLaunch();
+			const deps = createDeps({ onCueRun: launch.onCueRun });
+			const manager = createCueRunManager(deps);
+			manager.execute('session-1', 'prompt', createEvent(), 'test-sub', 'output prompt');
+			await launch.openGate(); // main phase completes
+			expect(launch.onCueRun).toHaveBeenCalledTimes(2);
+			expect(launch.signals[1]?.aborted).toBe(false);
+
+			manager.stopRun('run-1');
+			expect(launch.signals[1]?.aborted).toBe(true);
+			await launch.openGate();
+			expect(launch.spawned).toEqual(['test-sub']);
+			expect(manager.getUnsettledStoppedRunCount()).toBe(0);
+			expect(updateCueEventStatus).toHaveBeenCalledWith(
+				'run-2',
+				'stopped',
+				undefined,
+				expect.anything()
+			);
+		});
+
+		it('stopAll and reset cancel pending launches as well', async () => {
+			const launch = gatedLaunch();
+			const manager = createCueRunManager(
+				createDeps({
+					onCueRun: launch.onCueRun,
+					getSessionSettings: vi.fn(() => ({ ...defaultSettings, max_concurrent: 2 })),
+				})
+			);
+			manager.execute('session-1', 'a', createEvent(), 'a');
+			manager.execute('session-1', 'b', createEvent(), 'b');
+			manager.stopAll();
+			manager.execute('session-1', 'c', createEvent(), 'c');
+			manager.reset();
+			expect(launch.signals.map((signal) => signal?.aborted)).toEqual([true, true, true]);
+			expect(manager.getUnsettledStoppedRunCount()).toBe(3);
+			await launch.openGate();
+			await launch.openGate();
+			await launch.openGate();
+			expect(launch.spawned).toEqual([]);
+			expect(manager.getUnsettledStoppedRunCount()).toBe(0);
+		});
+
+		it('whenIdle does not wait for a stopped launch', async () => {
+			const launch = gatedLaunch();
+			const manager = createCueRunManager(createDeps({ onCueRun: launch.onCueRun }));
+			manager.execute('session-1', 'prompt', createEvent(), 'test-sub');
+			manager.stopRun('run-1');
+			await expect(manager.whenIdle()).resolves.toBeUndefined();
+			await launch.openGate();
 		});
 	});
 });

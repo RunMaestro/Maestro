@@ -4,6 +4,7 @@ import { isMacOSPlatform } from '../../../../../utils/platformUtils';
 import type { Theme } from '../../../../../types';
 import { ToggleSwitch } from '../../../../ui/ToggleSwitch';
 import { SettingsSectionHeading } from '../../../SettingsSectionHeading';
+import { useSettingsStore } from '../../../../../stores/settingsStore';
 
 interface PowerSectionProps {
 	theme: Theme;
@@ -20,6 +21,7 @@ export function PowerSection({
 	preventDisplaySleepEnabled,
 	setPreventDisplaySleepEnabled,
 }: PowerSectionProps) {
+	const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures?.maestroCue === true);
 	return (
 		<div data-setting-id="general-power">
 			<SettingsSectionHeading icon={Battery}>Power</SettingsSectionHeading>
@@ -44,8 +46,9 @@ export function PowerSection({
 							Prevent sleep while working
 						</div>
 						<div className="text-xs opacity-70 mt-0.5">
-							Keeps your computer awake when AI agents are busy, Auto Run is active, or Cue
-							pipelines are scheduled
+							{maestroCueEnabled
+								? 'Keeps your computer awake when AI agents are busy, Auto Run is active, or Cue pipelines are scheduled'
+								: 'Keeps your computer awake when AI agents are busy or Auto Run is active'}
 						</div>
 					</div>
 					<ToggleSwitch

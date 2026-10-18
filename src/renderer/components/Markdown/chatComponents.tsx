@@ -22,6 +22,7 @@ import { createShikiCodeBlock } from './components/ShikiCodeBlock';
 import { AlertCallout } from './components/AlertCallout';
 import { FollowupChip } from './components/FollowupChip';
 import { CodexFileCitation } from './components/CodexFileCitation';
+import { CodexVisualizationFrame } from './components/CodexVisualizationFrame';
 import { CodeCommentCard } from './components/CodeCommentCard';
 import { GitActionCard, isGitDirectiveName } from './components/GitActionCard';
 import { alertTypeFromClassName } from './remarkAlert';
@@ -258,6 +259,23 @@ export function createChatMarkdownComponents(
 						pageNumber={directive.attributes.page_number}
 						theme={theme}
 						LinkComponent={ChatLink}
+					/>
+				);
+			}
+
+			// Codex's `visualize` reference names an HTML fragment the agent just
+			// wrote. It renders the way the Codex app renders it: wrapped in
+			// Codex's own visualize kit and run in an isolated sandboxed frame,
+			// with the file chip as the fallback (see CodexVisualizationFrame).
+			if (directive.name === 'visualize' && directive.attributes.path) {
+				return (
+					<CodexVisualizationFrame
+						path={directive.attributes.path}
+						title={directive.attributes.title}
+						mode={directive.attributes.mode}
+						theme={theme}
+						LinkComponent={ChatLink}
+						conversation={codexFollowup}
 					/>
 				);
 			}

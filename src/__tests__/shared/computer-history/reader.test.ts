@@ -125,6 +125,72 @@ describe('reader', () => {
 		expect(all.limited).toBe(false);
 	});
 
+	it('collapses drafts the next commit in the same field supersedes, across segments', async () => {
+		const field = { role: 'text_area' as const, label: 'Message #general' };
+		const commit = (seq: number, ts: number, text: string, reason: StoredEvent['reason']) =>
+			event(seq, ts, { text, reason, element: field });
+		const a = writeSegment(T0, [
+			commit(0, T0 + 1000, 'ship', 'idle'),
+			commit(1, T0 + 4000, 'ship it', 'blur'),
+			// A different field is never compared.
+			event(2, T0 + 5000, { text: 'ship it today', reason: 'idle' }),
+		]);
+		index(a, 3);
+		writeSegment(T0 + 900_000, [
+			commit(0, T0 + 900_100, 'ship it today', 'cleared'),
+			// A send is never a draft, even when the next message starts with it.
+			commit(1, T0 + 900_200, 'ship it today and tomorrow', 'idle'),
+		]);
+		const texts = (r: { events: StoredEvent[] }) => r.events.map((e) => e.text);
+
+		// The newest commit is more than DRAFT_SUPERSEDE_MS after 'ship it', so only 'ship' goes.
+		const all = await queryEvents(dir);
+		expect(texts(all)).toEqual([
+			'ship it',
+			'ship it today',
+			'ship it today',
+			'ship it today and tomorrow',
+		]);
+		expect(all.draftsCollapsed).toBe(1);
+
+		const limited = await queryEvents(dir, { limit: 2 });
+		expect(texts(limited)).toEqual(['ship it today', 'ship it today and tomorrow']);
+
+		const kept = await queryEvents(dir, { keepDrafts: true });
+		expect(kept.events).toHaveLength(5);
+		expect(kept.draftsCollapsed).toBe(0);
+	});
+
+	it('compares a draft with the next commit in its field, not the next search hit or window', async () => {
+		const at = (title: string) => ({ title });
+		const field = { role: 'text_area' as const, label: 'Message' };
+		const commit = (
+			seq: number,
+			ts: number,
+			text: string,
+			reason: StoredEvent['reason'],
+			title = 'general'
+		) => event(seq, ts, { text, reason, element: field, window: at(title) });
+		writeSegment(T0, [
+			commit(0, T0 + 1000, 'ship', 'idle'),
+			commit(1, T0 + 2000, 'cancel', 'cleared'),
+			commit(2, T0 + 3000, 'ship it', 'cleared'),
+			// Same label in another chat window: a separate field.
+			commit(3, T0 + 4000, 'hello', 'idle', 'random'),
+			commit(4, T0 + 5000, 'hello again', 'cleared', 'general'),
+			// No label and no title: no identity, never collapsed.
+			event(5, T0 + 6000, { text: 'yo', reason: 'idle', element: undefined }),
+			event(6, T0 + 7000, { text: 'yo there', reason: 'idle', element: undefined }),
+		]);
+		const grep = await queryEvents(dir, { grep: compileGrep('^ship') });
+		expect(grep.events.map((e) => e.text)).toEqual(['ship', 'ship it']);
+		expect(grep.draftsCollapsed).toBe(0);
+		const all = await queryEvents(dir);
+		expect(all.events.map((e) => e.text)).toContain('hello');
+		expect(all.events.map((e) => e.text)).toContain('yo');
+		expect(all.draftsCollapsed).toBe(0);
+	});
+
 	it('index: last line for a file wins; torn lines and foreign paths are skipped', () => {
 		const rel = 'segments/2026-10-03/1415Z.jsonl';
 		const text = [

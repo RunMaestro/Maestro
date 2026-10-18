@@ -1,3 +1,7 @@
+import {
+	autoRunProgressPercent,
+	type AutoRunProgressInput,
+} from '../../../../shared/autorunProgress';
 import type { Session } from '../../../types';
 import { sessionJumpShortcut } from '../../../utils/sessionJumpSlots';
 import { getTabDisplayName } from '../../../utils/tabHelpers';
@@ -8,6 +12,8 @@ import { makeAgentJumpAction, type GetSessionWindow } from './agentJumpAction';
 interface BuildAgentSwitcherCommandsArgs {
 	sessions: Session[];
 	activeBatchSessionIds: string[];
+	/** Live Auto Run state per agent, for the percent drawn inside the AUTO pill. */
+	batchRunStates?: Record<string, AutoRunProgressInput | undefined>;
 	setActiveSessionId: (id: string) => void;
 	revealJumpTarget: (session: Session) => void;
 	/** Multi-window: resolves an agent's owning window so cross-window picks focus
@@ -27,6 +33,7 @@ interface BuildAgentSwitcherCommandsArgs {
 export function buildAgentSwitcherCommands({
 	sessions,
 	activeBatchSessionIds,
+	batchRunStates,
 	setActiveSessionId,
 	revealJumpTarget,
 	getSessionWindow,
@@ -51,6 +58,15 @@ export function buildAgentSwitcherCommands({
 					queueCount: session.executionQueue?.length ?? 0,
 				}
 			: undefined;
+		const batchState = isInBatch ? batchRunStates?.[session.id] : undefined;
+		// Rounded the same way as the Auto Run card's Progress column, so the two
+		// surfaces never show different numbers for one run.
+		const autoRunProgress = batchState
+			? {
+					percent: Math.round(autoRunProgressPercent(batchState)),
+					goalMode: !!batchState.goalMode,
+				}
+			: undefined;
 		const jumpDigit = jumpSlots?.get(session.id);
 
 		return {
@@ -66,6 +82,7 @@ export function buildAgentSwitcherCommands({
 			subtext: undefined,
 			isRunningAgent,
 			isInBatch,
+			autoRunProgress,
 			runningInfo,
 			bookmarked: !!session.bookmarked,
 			agentSortKey: alphabetizeKey(session.name),

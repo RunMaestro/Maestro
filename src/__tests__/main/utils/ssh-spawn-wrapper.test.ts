@@ -117,6 +117,41 @@ describe('wrapSpawnWithSsh', () => {
 		});
 	});
 
+	describe('stdin-script launch', () => {
+		// Only a stdin-script launch can record the remote agent's pid, which is
+		// what lets Stop reach the agent and not only the local ssh client.
+		it('launches a small prompt through the stdin script when asked, prompt still in argv', async () => {
+			const result = await wrapSpawnWithSsh(
+				{ ...baseConfig, prompt: 'do the thing', launchViaStdinScript: true },
+				{ enabled: true, remoteId: 'jennifer-box' },
+				sshStore
+			);
+
+			expect(mockBuildSshCommand).not.toHaveBeenCalled();
+			expect(mockBuildSshCommandWithStdin).toHaveBeenCalledTimes(1);
+			const options = mockBuildSshCommandWithStdin.mock.calls[0][1] as {
+				args: string[];
+				stdinInput?: string;
+			};
+			expect(options.args).toContain('do the thing');
+			expect(options.stdinInput).toBeUndefined();
+			expect(result.sshStdinScript).toBe('#!/bin/bash');
+			expect(result.prompt).toBeUndefined();
+		});
+
+		it('keeps the inline command for a small prompt by default', async () => {
+			const result = await wrapSpawnWithSsh(
+				{ ...baseConfig, prompt: 'do the thing' },
+				{ enabled: true, remoteId: 'jennifer-box' },
+				sshStore
+			);
+
+			expect(mockBuildSshCommand).toHaveBeenCalledTimes(1);
+			expect(mockBuildSshCommandWithStdin).not.toHaveBeenCalled();
+			expect(result.sshStdinScript).toBeUndefined();
+		});
+	});
+
 	describe('unresolved remote', () => {
 		it('reports sshRemoteUsed: null rather than throwing', async () => {
 			// The wrapper itself degrades to local on purpose; the CONTRACT is that

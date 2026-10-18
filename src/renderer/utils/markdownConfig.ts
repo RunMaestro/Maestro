@@ -37,6 +37,7 @@ import { createMarkdownLink } from '../components/Markdown/components/MarkdownLi
 import { createPrismCodeBlock } from '../components/Markdown/components/PrismCodeBlock';
 import { InlineCode } from '../components/Markdown/components/InlineCode';
 import { CopyablePre } from '../components/CodeFence/CodeCopyButton';
+import { isWebUrl } from '../../shared/urlRoutingHint';
 
 // ============================================================================
 // Types
@@ -717,7 +718,7 @@ export function createWizardBubbleMarkdownComponents(theme: Theme): Partial<Comp
 					className: 'underline',
 					style: { color: theme.colors.accent },
 					onClick: (e: React.MouseEvent) => {
-						if (href && /^https?:\/\/|^mailto:/.test(href)) {
+						if (href && (isWebUrl(href) || /^mailto:/.test(href))) {
 							openUrl(href, { ctrlKey: e.metaKey || e.ctrlKey });
 						}
 					},
@@ -837,7 +838,7 @@ export function createReleaseNotesMarkdownComponents(theme: Theme): Partial<Comp
 					href,
 					onClick: (e: React.MouseEvent) => {
 						e.preventDefault();
-						if (href && /^https?:\/\/|^mailto:/.test(href)) {
+						if (href && (isWebUrl(href) || /^mailto:/.test(href))) {
 							openUrl(href, { ctrlKey: e.metaKey || e.ctrlKey });
 						}
 					},

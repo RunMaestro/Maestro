@@ -66,7 +66,7 @@ function mapStoredAiTabs(
 }
 
 /** Find an AI tab by id, whether it is open or parked in a snooze. */
-function findStoredAiTab(session: StoredSession, tabId: string): StoredAiTab | undefined {
+export function findStoredAiTab(session: StoredSession, tabId: string): StoredAiTab | undefined {
 	const open = (session.aiTabs as StoredAiTab[] | undefined)?.find((tab) => tab.id === tabId);
 	if (open) return open;
 	for (const entry of session.snoozedTabs ?? []) {

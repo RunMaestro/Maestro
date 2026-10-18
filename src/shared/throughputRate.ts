@@ -5,13 +5,22 @@
  * (pass a monotonic clock such as `performance.now()`), so the caller's timer
  * drives it and a test drives it by hand.
  *
- * Estimate, then correct. Streamed text is the only live signal, so it credits
- * OUTPUT at once from `estimateTokenCount()`. The provider's usage report is the
- * truth: it credits `max(0, real - estimate)`, where `estimate` is what text
- * credited for that source since its previous report, and zeroes the estimate.
- * No rate goes negative, and whenever the estimate undershoots (the usual case:
- * tool calls and redacted thinking never stream as text) the credited output
- * lands exactly on the reported count. An overshoot is not clawed back.
+ * Credit ahead, then correct. Two live signals credit tokens before the turn's
+ * usage report does:
+ *
+ * - Per-call usage (`recordCallUsage`), when the provider sends it (claude-code
+ *   reports every internal API call's spend as the call lands). Real counts, in
+ *   both directions, and the better signal: from a source's first call report
+ *   on, its text is not estimated at all, since the call already counted it.
+ * - Streamed text, which credits OUTPUT at once from `estimateTokenCount()`.
+ *   The only live signal for providers that report usage once per turn.
+ *
+ * The turn's usage report is the truth: it credits `max(0, real - ahead)` per
+ * direction, where `ahead` is what the live signals credited for that source
+ * since its previous report, and zeroes `ahead`. No rate goes negative, and
+ * whenever the live signals undershoot (tool calls and redacted thinking never
+ * stream as text) the credited total lands exactly on the reported count. An
+ * overshoot is not clawed back.
  *
  * INPUT comes only from usage reports: uncached input plus cache writes. Cache
  * READS are left out on purpose. They are re-reads of context the provider
@@ -19,6 +28,10 @@
  * would pin the needle on every turn. Codex and Copilot report reads INSIDE
  * `inputTokens` (`COMBINED_CONTEXT_AGENTS`), so for them the reads are
  * subtracted rather than skipped.
+ *
+ * Without per-call usage a turn that is mostly tool calls credits almost
+ * nothing until it ends, then its whole spend in one sample: a dead gauge with
+ * a spike. That is why per-call usage exists.
  *
  * Late text. Main sends a usage event the moment it parses one but coalesces
  * text (16ms for `process:data`, 50ms for thinking chunks), so the tail of a
@@ -110,7 +123,8 @@ export interface ThroughputTrackerOptions {
 export interface ThroughputTracker {
 	/**
 	 * Credit live streamed text (a thinking chunk) as estimated output. Refused
-	 * for `usageSettleMs` after the source's last usage report.
+	 * for `usageSettleMs` after the source's last usage report, and always once
+	 * the source sends call reports.
 	 */
 	recordStreamedText(sourceId: string, agentId: string, text: string, nowMs: number): void;
 	/**
@@ -121,11 +135,25 @@ export interface ThroughputTracker {
 	 */
 	recordReplyText(sourceId: string, agentId: string, text: string, nowMs: number): void;
 	/**
+	 * Credit one API call's new spend (`process.onCallUsage`) at once, input by
+	 * the same rule as `recordUsage`, and hold it against the source's next usage
+	 * report. From then until `forgetSource()` the source's text is refused: the
+	 * call reports carry its output.
+	 */
+	recordCallUsage(
+		sourceId: string,
+		agentId: string,
+		usage: ThroughputUsage,
+		nowMs: number,
+		provider?: AgentId
+	): void;
+	/**
 	 * Credit one usage report (a per-turn delta from `process.onUsage`): input as
-	 * uncached input plus cache writes, output as the real count minus the
-	 * source's outstanding estimate (never below zero), then zero that estimate.
-	 * `provider` is the agent's `toolType`; it decides whether cache reads sit
-	 * inside `inputTokens`. A `contextWindowCorrectionOnly` replay is ignored.
+	 * uncached input plus cache writes, each direction as the real count minus
+	 * what live signals credited ahead of it since the last report (never below
+	 * zero), then zero those. `provider` is the agent's `toolType`; it decides
+	 * whether cache reads sit inside `inputTokens`. A `contextWindowCorrectionOnly`
+	 * replay is ignored.
 	 */
 	recordUsage(
 		sourceId: string,
@@ -157,8 +185,12 @@ export interface ThroughputTracker {
 }
 
 interface SourceState {
-	/** Output credited by estimate since the last usage report. */
-	pendingEstimate: number;
+	/** Input credited by call reports since the last usage report. */
+	aheadIn: number;
+	/** Output credited by text estimates or call reports since the last usage report. */
+	aheadOut: number;
+	/** Set by the first call report; refuses text until forgotten. */
+	reportsCalls: boolean;
 	/** Set by the first usage report; refuses reply text until forgotten. */
 	reportedUsage: boolean;
 	/** Stamp of the last usage report. */
@@ -195,7 +227,13 @@ export function createThroughputTracker(options: ThroughputTrackerOptions = {}):
 			const oldest = sources.keys().next();
 			if (!oldest.done) sources.delete(oldest.value);
 		}
-		const created: SourceState = { pendingEstimate: 0, reportedUsage: false, usageAtMs: 0 };
+		const created: SourceState = {
+			aheadIn: 0,
+			aheadOut: 0,
+			reportsCalls: false,
+			reportedUsage: false,
+			usageAtMs: 0,
+		};
 		sources.set(sourceId, created);
 		return created;
 	}
@@ -205,13 +243,47 @@ export function createThroughputTracker(options: ThroughputTrackerOptions = {}):
 		if (tokens === 0) return;
 		const atMs = stamp(nowMs);
 		const state = sourceState(sourceId);
+		if (state.reportsCalls) return;
 		if (state.reportedUsage && atMs - state.usageAtMs < usageSettleMs) return;
-		state.pendingEstimate += tokens;
+		state.aheadOut += tokens;
 		samples.push({ atMs, inTokens: 0, outTokens: tokens, sourceId, agentId });
+	}
+
+	/** Input a usage payload counts: uncached input plus cache writes. */
+	function inputOf(usage: ThroughputUsage, provider: AgentId | undefined): number {
+		const input = tokenCount(usage.inputTokens);
+		const uncachedInput =
+			provider !== undefined && COMBINED_CONTEXT_AGENTS.has(provider)
+				? Math.max(0, input - tokenCount(usage.cacheReadInputTokens))
+				: input;
+		return uncachedInput + tokenCount(usage.cacheCreationInputTokens);
+	}
+
+	function pushSample(
+		atMs: number,
+		inTokens: number,
+		outTokens: number,
+		sourceId: string,
+		agentId: string
+	): void {
+		if (inTokens > 0 || outTokens > 0) {
+			samples.push({ atMs, inTokens, outTokens, sourceId, agentId });
+		}
 	}
 
 	return {
 		recordStreamedText: creditText,
+
+		recordCallUsage(sourceId, agentId, usage, nowMs, provider) {
+			const atMs = stamp(nowMs);
+			const state = sourceState(sourceId);
+			const inTokens = inputOf(usage, provider);
+			const outTokens = tokenCount(usage.outputTokens);
+			state.reportsCalls = true;
+			state.aheadIn += inTokens;
+			state.aheadOut += outTokens;
+			pushSample(atMs, inTokens, outTokens, sourceId, agentId);
+		},
 
 		recordReplyText(sourceId, agentId, text, nowMs) {
 			if (sources.get(sourceId)?.reportedUsage) return;
@@ -223,19 +295,13 @@ export function createThroughputTracker(options: ThroughputTrackerOptions = {}):
 			if (usage.contextWindowCorrectionOnly) return;
 			const atMs = stamp(nowMs);
 			const state = sourceState(sourceId);
-			const input = tokenCount(usage.inputTokens);
-			const uncachedInput =
-				provider !== undefined && COMBINED_CONTEXT_AGENTS.has(provider)
-					? Math.max(0, input - tokenCount(usage.cacheReadInputTokens))
-					: input;
-			const inTokens = uncachedInput + tokenCount(usage.cacheCreationInputTokens);
-			const outTokens = Math.max(0, tokenCount(usage.outputTokens) - state.pendingEstimate);
-			state.pendingEstimate = 0;
+			const inTokens = Math.max(0, inputOf(usage, provider) - state.aheadIn);
+			const outTokens = Math.max(0, tokenCount(usage.outputTokens) - state.aheadOut);
+			state.aheadIn = 0;
+			state.aheadOut = 0;
 			state.reportedUsage = true;
 			state.usageAtMs = atMs;
-			if (inTokens > 0 || outTokens > 0) {
-				samples.push({ atMs, inTokens, outTokens, sourceId, agentId });
-			}
+			pushSample(atMs, inTokens, outTokens, sourceId, agentId);
 		},
 
 		forgetSource(sourceId) {

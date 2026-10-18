@@ -139,6 +139,8 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				theme={theme}
 				automaticTabNamingEnabled={settings.automaticTabNamingEnabled}
 				setAutomaticTabNamingEnabled={settings.setAutomaticTabNamingEnabled}
+				shortenLongTabNames={settings.shortenLongTabNames}
+				setShortenLongTabNames={settings.setShortenLongTabNames}
 				newTabPlacement={settings.newTabPlacement}
 				setNewTabPlacement={settings.setNewTabPlacement}
 				newBrowserTabPlacement={settings.newBrowserTabPlacement}

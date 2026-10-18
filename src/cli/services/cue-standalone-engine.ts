@@ -50,7 +50,6 @@
  * fails with a reason that says so. It is never sent as a prompt.
  */
 
-import * as os from 'os';
 // Only TYPE imports from the main-process Cue graph at the top level. Every
 // VALUE import below is dynamic (see `loadExecutors()`), because this module
 // is reachable from `src/cli/commands/cue-engine.ts`, which `src/cli/index.ts`
@@ -66,12 +65,25 @@ import * as os from 'os';
 import type { CueEngine, CueEngineDeps } from '../../main/cue/cue-engine';
 import type { CueAutoRunLaunchParams } from '../../main/cue/cue-autorun-executor';
 import type { SshRemoteSettingsStore } from '../../main/utils/ssh-remote-resolver';
-import { getAgentDisplayName } from '../../shared/agentMetadata';
-import type { TemplateContext } from '../../shared/templateVariables';
+// The one static VALUE import from that graph, and safe: the router takes
+// every executor through its deps and imports them as types only, so it
+// pulls in nothing beyond `os` and agent metadata.
+import {
+	executeCueRunAction,
+	type CueRunActionDeps,
+	type CueRunSessionRecord,
+} from '../../main/cue/cue-run-router';
 import type { CueRunResult } from '../../shared/cue/contracts';
-import { resolveCueTurnSettings } from '../../shared/cue/turn-settings';
-import { describeTurnSettings } from '../../shared/autorunTurnSettings';
-import { readSessions, readSshRemotes, getAgentCustomPath, readAgentConfig } from './storage';
+import type { CueExternalNotification } from '../../main/cue/cue-notify-webhook';
+import { formatJsonLogLine } from '../../shared/jsonLogLine';
+import {
+	readLiveSessions,
+	readSessions,
+	readSshRemotes,
+	getAgentCustomPath,
+	readAgentConfig,
+	readSettings,
+} from './storage';
 import { prepareMaestroSystemPromptCli } from './system-prompt';
 
 /** Lazily import every executor module once, cached for the process lifetime - see the module doc above for why these are dynamic rather than top-level imports. */
@@ -89,9 +101,14 @@ function loadExecutorsUncached() {
 		import('../../main/cue/cue-cli-executor'),
 		import('../../main/cue/cue-notify-executor'),
 		import('../../main/cue/cue-auth-detector'),
+		// Every executor registers its children here; the drain counts and
+		// kills through it (see CueEngineDeps.countLiveCueProcesses).
+		import('../../main/cue/cue-process-lifecycle'),
 		import('../../main/cue/cue-autorun-executor'),
 		import('../../main/cue/cue-agent-binary'),
-	]).then(([, executor, shell, cli, notify, authDetector, autoRun, agentBinary]) => ({
+	]).then(([, executor, shell, cli, notify, authDetector, lifecycle, autoRun, agentBinary]) => ({
+		countLiveCueProcesses: () => lifecycle.getActiveProcessMap().size,
+		killAllCueProcessesNow: lifecycle.stopAllProcesses,
 		executeCuePrompt: executor.executeCuePrompt,
 		stopCueRun: executor.stopCueRun,
 		getActiveProcesses: executor.getActiveProcesses,
@@ -141,6 +158,39 @@ export function consoleCueLog(level: string, message: string): void {
 	}
 }
 
+/**
+ * `--log-format json`: one JSON object per line on stderr, through the same
+ * `formatJsonLogLine()` the main-process logger uses in its JSON mode, so the
+ * engine's lines and the shared modules' lines carry the same fields. Run
+ * identifiers (`runId`, `subscriptionName`, `pipelineId`, `sessionId`) are
+ * lifted out of the engine's structured payload; the payload itself is never
+ * copied (see `jsonLogLine.ts`).
+ */
+export function jsonCueLog(level: string, message: string, data?: unknown): void {
+	process.stderr.write(`${formatJsonLogLine({ level, message, context: 'Cue', data })}\n`);
+}
+
+/** `consoleCueLog`'s text, every level on stderr: for `start --json`, whose stdout is the result. */
+export function stderrCueLog(_level: string, message: string): void {
+	console.error(`[Cue] ${message}`);
+}
+
+/**
+ * The engine log sink for a `--log-format` value. JSON lines always go to
+ * stderr; text lines keep the info-on-stdout split a human at a terminal
+ * expects, unless `stderrOnly` (the command printed `--json`, so stdout is a
+ * contract and a log line there would break the parse).
+ */
+export function cueLogForFormat(
+	format: CueLogFormat | undefined,
+	options: { stderrOnly?: boolean } = {}
+): StandaloneCueLog {
+	if (format === 'json') return jsonCueLog;
+	return options.stderrOnly ? stderrCueLog : consoleCueLog;
+}
+
+export type CueLogFormat = 'text' | 'json';
+
 function sshStoreAdapter(): SshRemoteSettingsStore {
 	return { getSshRemotes: () => readSshRemotes() };
 }
@@ -170,264 +220,157 @@ function errorText(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
+type LoadedExecutors = Awaited<ReturnType<typeof loadExecutorsUncached>>;
+
 /**
- * Build the `onCueRun` dependency: dispatches a fired subscription to the
- * right executor (autorun / prompt / shell / cli / notify), exactly as
- * `src/main/index.ts`'s inline closure does, minus the three narrowings
- * documented above.
+ * The router's `onAutoRun` for a standalone runner: hand the launch to the
+ * host's runtime (`runAutoRun`), then keep the Cue run open until the Auto Run
+ * itself ends, so the run records how it went. The router has already refused
+ * a run with no documents; without a runtime the launch is refused with
+ * {@link AUTO_RUN_NEEDS_HOST}.
  */
-function buildOnCueRun(
+function buildOnAutoRun(
+	executors: LoadedExecutors,
 	onLog: StandaloneCueLog,
 	runAutoRun: StandaloneCueAutoRun | undefined,
 	autoRunStops: Map<string, AbortController>
-): CueEngineDeps['onCueRun'] {
-	return async ({
-		runId,
-		sessionId,
-		prompt,
-		subscriptionName,
-		event,
-		timeoutMs,
-		action,
-		command,
-		notify,
-		autoRun,
-		turnSettings,
-	}) => {
-		const {
-			executeCuePrompt,
-			executeCueShell,
-			executeCueCli,
-			executeCueNotify,
-			executeCueAutoRun,
-			resolveCueAgentBinary,
-		} = await loadExecutors();
-		const sessions = readSessions();
-		const storedSession = sessions.find((s) => s.id === sessionId);
-		if (!storedSession) {
-			throw new Error(`Cue target session not found: ${sessionId}`);
-		}
-
-		const projectRoot =
-			storedSession.projectRoot || storedSession.cwd || storedSession.fullPath || os.homedir();
-		const templateContext: TemplateContext = {
-			session: {
-				id: storedSession.id,
-				name: storedSession.name,
-				toolType: storedSession.toolType,
-				cwd: projectRoot,
-				projectRoot,
-				fullPath: storedSession.fullPath,
-				autoRunFolderPath: storedSession.autoRunFolderPath,
-			},
-		};
-		const sessionInfo = {
-			id: storedSession.id,
-			name: storedSession.name,
-			toolType: storedSession.toolType,
-			cwd: projectRoot,
-			projectRoot,
-			autoRunFolderPath: storedSession.autoRunFolderPath,
-		};
-
-		// Handled first, as on the desktop: an Auto Run spawns nothing here, and
-		// falling through would send its document list to the agent as a prompt.
-		if (action === 'autorun') {
-			const documents = autoRun?.documents ?? [];
-			// Why this run cannot start at all, or undefined. An empty document list
-			// is a queued run restored from a row that predates the stored payload.
-			const refusal =
-				documents.length === 0
-					? 'no documents on the run - the captured Auto Run payload did not survive the queue'
-					: runAutoRun
-						? undefined
-						: AUTO_RUN_NEEDS_HOST;
-			const stop = new AbortController();
-			autoRunStops.set(runId, stop);
-			try {
-				let ended: Promise<StandaloneCueAutoRunEnd> | undefined;
-				const launched = await executeCueAutoRun({
-					runId,
-					session: sessionInfo,
-					subscription: {
-						name: subscriptionName,
-						event: event.type,
-						enabled: true,
-						prompt,
-						action,
-						auto_run: autoRun,
-						agent_id: storedSession.id,
-					},
-					event,
-					autoRun: autoRun ?? { documents },
-					// The launcher contract is to answer, never to reject.
-					launch: async (params) => {
-						if (refusal || !runAutoRun) return { success: false, error: refusal };
-						try {
-							const answer = await runAutoRun(params, stop.signal);
-							if (!answer.started) return { success: false, error: answer.error };
-							ended = answer.ended;
-							return { success: true };
-						} catch (error) {
-							return { success: false, error: errorText(error) };
-						}
-					},
-					onLog,
-				});
-				if (launched.status !== 'completed' || !ended) return launched;
-
-				// The launch record becomes the run's own: it ends when the Auto Run does.
-				let end: StandaloneCueAutoRunEnd;
-				try {
-					end = await ended;
-				} catch (error) {
-					end = { ok: false, reason: errorText(error) };
-				}
-				const endedAt = new Date().toISOString();
-				const timing = {
-					endedAt,
-					durationMs: Date.parse(endedAt) - Date.parse(launched.startedAt),
-				};
-				if (end.ok) {
-					return { ...launched, ...timing, stdout: `Auto Run finished: ${documents.join(', ')}` };
-				}
-				onLog('error', `[CUE] Auto Run "${subscriptionName}" failed: ${end.reason}`);
-				return {
-					...launched,
-					...timing,
-					status: 'failed',
-					stdout: '',
-					stderr: `Auto Run failed: ${end.reason}`,
-					exitCode: 1,
-				};
-			} finally {
-				autoRunStops.delete(runId);
-			}
-		}
-
-		if (action === 'notify') {
-			const message = notify?.message?.trim() || prompt;
-			return executeCueNotify({
-				runId,
-				session: sessionInfo,
-				subscription: {
-					name: subscriptionName,
-					event: event.type,
-					enabled: true,
-					prompt,
-					action,
-					notify,
+): NonNullable<CueRunActionDeps['onAutoRun']> {
+	return async (params) => {
+		const documents = params.autoRun?.documents ?? [];
+		const stop = new AbortController();
+		autoRunStops.set(params.runId, stop);
+		try {
+			let ended: Promise<StandaloneCueAutoRunEnd> | undefined;
+			const launched = await executors.executeCueAutoRun({
+				...params,
+				autoRun: params.autoRun ?? { documents },
+				// The launcher contract is to answer, never to reject.
+				launch: async (launchParams) => {
+					if (!runAutoRun) return { success: false, error: AUTO_RUN_NEEDS_HOST };
+					try {
+						const answer = await runAutoRun(launchParams, stop.signal);
+						if (!answer.started) return { success: false, error: answer.error };
+						ended = answer.ended;
+						return { success: true };
+					} catch (error) {
+						return { success: false, error: errorText(error) };
+					}
 				},
-				event,
-				agentId: storedSession.id,
-				message,
-				sticky: notify?.sticky === true,
-				title: storedSession.name || getAgentDisplayName(storedSession.toolType),
-				// No window in a headless runner - executeCueNotify already
-				// degrades gracefully for this (see module doc, point 2).
-				mainWindow: null,
 				onLog,
 			});
-		}
+			if (launched.status !== 'completed' || !ended) return launched;
 
-		if (action === 'command') {
-			if (!command) {
-				throw new Error(
-					`Cue subscription "${subscriptionName}" has action='command' but no command payload`
-				);
+			// The launch record becomes the run's own: it ends when the Auto Run does.
+			let end: StandaloneCueAutoRunEnd;
+			try {
+				end = await ended;
+			} catch (error) {
+				end = { ok: false, reason: errorText(error) };
 			}
-			const subscription = {
-				name: subscriptionName,
-				event: event.type,
-				enabled: true,
-				prompt,
-				action,
-				command,
+			const endedAt = new Date().toISOString();
+			const timing = {
+				endedAt,
+				durationMs: Date.parse(endedAt) - Date.parse(launched.startedAt),
 			};
-			return command.mode === 'shell'
-				? executeCueShell({
-						runId,
-						session: sessionInfo,
-						subscription,
-						event,
-						shellCommand: command.shell,
-						projectRoot,
-						templateContext,
-						timeoutMs,
-						onLog,
-						sshRemoteConfig: storedSession.sessionSshRemoteConfig,
-						sshStore: sshStoreAdapter(),
-					})
-				: executeCueCli({
-						runId,
-						session: sessionInfo,
-						subscription,
-						event,
-						cli: command.cli,
-						templateContext,
-						timeoutMs,
-						onLog,
-					});
+			if (end.ok) {
+				return { ...launched, ...timing, stdout: `Auto Run finished: ${documents.join(', ')}` };
+			}
+			onLog('error', `[CUE] Auto Run "${params.subscription.name}" failed: ${end.reason}`);
+			return {
+				...launched,
+				...timing,
+				status: 'failed',
+				stdout: '',
+				stderr: `Auto Run failed: ${end.reason}`,
+				exitCode: 1,
+			};
+		} finally {
+			autoRunStops.delete(params.runId);
 		}
+	};
+}
 
-		// Same rule as the desktop host (src/main/index.ts): the subscription's
-		// tier / model / effort outranks the agent's own config for this run only,
-		// and one the provider cannot honor falls back to the agent's value with a
-		// warning, so a headless run never lands on a different model than asked.
-		const turn = resolveCueTurnSettings(
-			storedSession.toolType,
-			turnSettings,
-			storedSession.customModel,
-			storedSession.customEffort
-		);
-		const turnNote = describeTurnSettings(turn);
-		if (turnNote) {
-			onLog(
-				turn.warnings.length > 0 ? 'warn' : 'cue',
-				`[CUE] "${subscriptionName}" model: ${turnNote}`
-			);
-		}
+/**
+ * Build the `onCueRun` dependency: dispatches a fired subscription through the
+ * same router the desktop uses (`cue-run-router.ts`), minus the three
+ * narrowings documented above. Executors arrive from `loadExecutors()` so the
+ * router itself never imports them as values.
+ */
+/** Hand a notification to `--notify-webhook`'s sink; never lets it fail a run. */
+function forward(
+	sink: ((notification: CueExternalNotification) => void) | undefined,
+	notification: CueExternalNotification
+): void {
+	if (!sink) return;
+	try {
+		sink(notification);
+	} catch {
+		// Best effort by contract (see cue-notify-webhook.ts).
+	}
+}
 
-		// The agent's own binary first, then the provider's (module doc, point 1).
-		const customPath = await resolveCueAgentBinary({
-			sessionCustomPath: storedSession.customPath,
-			providerCustomPath: getAgentCustomPath(storedSession.toolType),
-			sshEnabled: storedSession.sessionSshRemoteConfig?.enabled === true,
-			// No detector here: past the two custom paths it is spawn()'s own PATH search.
-			getDetectedPath: async () => undefined,
-			onWarn: (message) => onLog('warn', `[CUE] "${subscriptionName}": ${message}`),
-		});
-
-		// The same Maestro system prompt a `maestro-cli send` turn on this agent carries.
-		const appendSystemPrompt = await prepareMaestroSystemPromptCli(storedSession);
-
-		const result = await executeCuePrompt({
-			runId,
-			session: sessionInfo,
-			subscription: { name: subscriptionName, event: event.type, enabled: true, prompt },
-			event,
-			promptPath: prompt,
-			toolType: storedSession.toolType,
-			projectRoot,
-			templateContext,
-			timeoutMs,
-			sshRemoteConfig: storedSession.sessionSshRemoteConfig,
-			customPath,
-			customArgs: storedSession.customArgs,
-			customEnvVars: storedSession.customEnvVars,
-			customModel: turn.model,
-			customEffort: turn.effort,
-			enableMaestroP: storedSession.enableMaestroP,
-			maestroPMode: storedSession.maestroPMode,
-			maestroPPath: storedSession.maestroPPath,
-			onLog,
+function buildOnCueRun(
+	onLog: StandaloneCueLog,
+	onExternalNotification: ((notification: CueExternalNotification) => void) | undefined,
+	runAutoRun: StandaloneCueAutoRun | undefined,
+	autoRunStops: Map<string, AbortController>
+): CueEngineDeps['onCueRun'] {
+	return async (params) => {
+		const executors = await loadExecutors();
+		const deps: CueRunActionDeps = {
+			executeCuePrompt: executors.executeCuePrompt,
+			executeCueShell: executors.executeCueShell,
+			executeCueCli: executors.executeCueCli,
+			stopCueRun: executors.stopCueRun,
+			findSession: (sessionId) =>
+				readSessions().find((s) => s.id === sessionId) as CueRunSessionRecord | undefined,
+			// Point 1 (module doc): the agent's own binary first, then the
+			// provider's, else spawn()'s own PATH search.
+			resolveAgentBinary: ({ session }) =>
+				executors.resolveCueAgentBinary({
+					sessionCustomPath: session.customPath,
+					providerCustomPath: getAgentCustomPath(session.toolType),
+					sshEnabled: session.sessionSshRemoteConfig?.enabled === true,
+					// No detector here: past the two custom paths it is spawn()'s own PATH search.
+					getDetectedPath: async () => undefined,
+					onWarn: (message) => onLog('warn', `[CUE] "${params.subscriptionName}": ${message}`),
+				}),
+			// The same Maestro system prompt a `maestro-cli send` turn on this agent carries.
+			getAppendSystemPrompt: async (sessionId) => {
+				const session = readSessions().find((s) => s.id === sessionId);
+				return session ? prepareMaestroSystemPromptCli(session) : undefined;
+			},
+			onAutoRun: buildOnAutoRun(executors, onLog, runAutoRun, autoRunStops),
 			sshStore: sshStoreAdapter(),
-			agentConfigValues: readAgentConfig(storedSession.toolType),
-			appendSystemPrompt,
-		});
-
-		await reportStandaloneAuthFailure(result, storedSession.toolType, onLog);
-		return result;
+			getAgentConfigValues: (toolType) => readAgentConfig(toolType),
+			onLog,
+			getConductorProfile: () =>
+				(readSettings() as { conductorProfile?: string }).conductorProfile || undefined,
+			// No window in a headless runner - executeCueNotify already
+			// degrades gracefully for this (see module doc, point 2).
+			onNotify: async (notifyParams) => {
+				const result = await executors.executeCueNotify({ ...notifyParams, mainWindow: null });
+				// The toast the desktop would show, for --notify-webhook.
+				forward(onExternalNotification, {
+					type: 'cue.notify',
+					agent: {
+						id: notifyParams.agentId,
+						name: notifyParams.session.name,
+						toolType: notifyParams.session.toolType,
+					},
+					subscription: notifyParams.subscription.name,
+					pipeline: notifyParams.subscription.pipeline_name ?? null,
+					runId: notifyParams.runId,
+					title: notifyParams.title,
+					message: notifyParams.message,
+					sticky: notifyParams.sticky === true,
+				});
+				return result;
+			},
+			reportAuthFailure: (result, toolType) =>
+				reportStandaloneAuthFailure(result, toolType, onLog, onExternalNotification),
+		};
+		return executeCueRunAction(deps, params);
 	};
 }
 
@@ -435,7 +378,8 @@ function buildOnCueRun(
 async function reportStandaloneAuthFailure(
 	result: CueRunResult,
 	toolType: string,
-	onLog: StandaloneCueLog
+	onLog: StandaloneCueLog,
+	onExternalNotification?: (notification: CueExternalNotification) => void
 ): Promise<void> {
 	let message: string | null = null;
 	try {
@@ -445,6 +389,17 @@ async function reportStandaloneAuthFailure(
 		return;
 	}
 	if (!message) return;
+	// `message` is the error bank's fixed classification, never run output.
+	forward(onExternalNotification, {
+		type: 'agent.auth_expired',
+		agent: { id: result.sessionId, name: result.sessionName, toolType },
+		subscription: result.subscriptionName,
+		pipeline: result.pipelineName ?? null,
+		runId: result.runId,
+		title: `${result.sessionName}: login expired`,
+		message,
+		sticky: true,
+	});
 	onLog(
 		'error',
 		`"${result.subscriptionName}" failed on expired ${toolType} credentials: ${message}. Re-authenticate this agent (e.g. its CLI's own login command) and the next run will pick up fresh credentials.`
@@ -453,6 +408,16 @@ async function reportStandaloneAuthFailure(
 
 export interface StandaloneCueEngineOptions {
 	onLog?: StandaloneCueLog;
+	/** See `CueEngineDeps.onLockLost`. */
+	onLockLost?: () => void;
+	/** See `CueEngineDeps.onDrainPhase`. */
+	onDrainPhase?: CueEngineDeps['onDrainPhase'];
+	/**
+	 * Told every `action: notify` run and every run that failed on an expired
+	 * agent login (`--notify-webhook`). Must not throw or block; it is called
+	 * inline with the run.
+	 */
+	onExternalNotification?: (notification: CueExternalNotification) => void;
 	/** How an `action: autorun` subscription runs. Absent means it cannot: the run fails and says why. */
 	runAutoRun?: StandaloneCueAutoRun;
 }
@@ -466,8 +431,13 @@ export function buildStandaloneCueEngineDeps(
 	// stopping it is aborting the signal its runner was handed.
 	const autoRunStops = new Map<string, AbortController>();
 	return {
-		getSessions: () => readSessions(),
-		onCueRun: buildOnCueRun(onLog, options.runAutoRun, autoRunStops),
+		getSessions: () => readLiveSessions(),
+		onCueRun: buildOnCueRun(
+			onLog,
+			options.onExternalNotification,
+			options.runAutoRun,
+			autoRunStops
+		),
 		onStopCueRun: (runId) => {
 			const autoRunStop = autoRunStops.get(runId);
 			if (autoRunStop) {
@@ -481,6 +451,12 @@ export function buildStandaloneCueEngineDeps(
 		},
 		onLog,
 		runnerMode: 'standalone',
+		...(options.onLockLost ? { onLockLost: options.onLockLost } : {}),
+		...(options.onDrainPhase ? { onDrainPhase: options.onDrainPhase } : {}),
+		// The drain's process accounting. Before the first run fires the
+		// executors are not loaded, so there is nothing alive to count or kill.
+		countLiveCueProcesses: () => settledExecutors?.countLiveCueProcesses() ?? 0,
+		killAllCueProcessesNow: () => settledExecutors?.killAllCueProcessesNow(),
 	};
 }
 
@@ -513,6 +489,8 @@ const CUE_PROCESS_EXIT_WAIT_MS = 10_000;
  * leaves it reparented and running, so a host that stops its runs waits here
  * before it lets go of the data directory. Resolves with the number still
  * alive after `timeoutMs`, which is 0 unless a child ignored SIGKILL's wait.
+ * (`maestro-cli cue engine start` does not need it: its drain counts the same
+ * registry through `countLiveCueProcesses`.)
  */
 export async function waitForStandaloneCueProcesses(
 	timeoutMs: number = CUE_PROCESS_EXIT_WAIT_MS

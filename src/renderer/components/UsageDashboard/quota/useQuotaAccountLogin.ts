@@ -14,7 +14,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { getModalActions, selectModalOpen, useModalStore } from '../../../stores/modalStore';
 import type { ReauthHost } from '../../../stores/modalStore';
-import { useSessionStore } from '../../../stores/sessionStore';
+import { getLiveSessionsSnapshot } from '../../../hooks/session/useLiveSessions';
 import { startAccountReauth } from '../../../stores/authOutageStore';
 import {
 	getAccountKeyHelpers,
@@ -106,7 +106,7 @@ export function useQuotaAccountLogin(
 					toolType,
 					accountKey,
 					homeDir,
-					useSessionStore.getState().sessions
+					getLiveSessionsSnapshot()
 				);
 				const { providerKey } = startAccountReauth(toolType);
 				pendingRef.current = true;

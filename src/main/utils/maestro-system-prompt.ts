@@ -28,6 +28,7 @@ import { getMaestroRunService } from '../maestro-run';
 import { resolveBundledCliPathSync } from '../maestro-cli-manager';
 import { execFileNoThrow } from './execFile';
 import { logger } from './logger';
+import { isPianolaEnabled } from '../../shared/agentVisibility';
 
 const LOG_CONTEXT = '[MaestroSystemPrompt]';
 
@@ -143,11 +144,13 @@ async function localMaestroRunPath(): Promise<string | undefined> {
 function loadPluginSections(
 	encoreFeatures: unknown,
 	isSsh: boolean,
-	maestroRunPath: string | undefined
+	maestroRunPath: string | undefined,
+	sectionsOnly = false
 ): string[] {
 	return systemPromptSectionsFor(encoreFeatures, {
 		isSsh,
 		readyFlags: maestroRunPath ? ['maestroRun'] : [],
+		sectionsOnly,
 	})
 		.map((ref) => loadPrompt(ref.promptId))
 		.filter((text): text is string => !!text && !!text.trim());
@@ -211,7 +214,12 @@ export async function buildMaestroSystemPromptForSession(
 		maestroCliPath: resolvedCliPath(),
 	};
 
-	const roleSections = record.isPianola ? [loadPrompt(PROMPT_IDS.PIANOLA_SYSTEM)] : [];
+	// The Pianola role only while its Encore flag is on: a dormant Pianola gets
+	// no manager instructions even if something manages to spawn it.
+	const roleSections =
+		record.isPianola && isPianolaEnabled(encoreFeatures)
+			? [loadPrompt(PROMPT_IDS.PIANOLA_SYSTEM)]
+			: [];
 
 	return assembleMaestroSystemPrompt({
 		template,
@@ -231,7 +239,7 @@ export function buildPluginSystemPromptSections(opts: { isSsh: boolean }): strin
 	const { encoreFeatures, conductorProfile } = readSettings();
 	// Synchronous by contract, so this reads the last inspection as it stands.
 	const maestroRunPath = opts.isSsh ? undefined : getMaestroRunService()?.readyBinaryPathCached();
-	const sections = loadPluginSections(encoreFeatures, opts.isSsh, maestroRunPath);
+	const sections = loadPluginSections(encoreFeatures, opts.isSsh, maestroRunPath, true);
 	if (sections.length === 0) return undefined;
 	const [first, ...rest] = sections;
 	return assembleMaestroSystemPrompt({

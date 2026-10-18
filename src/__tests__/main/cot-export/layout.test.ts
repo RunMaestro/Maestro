@@ -360,6 +360,47 @@ describe('validateAgentFolder', () => {
 		expect(result.ok).toBe(false);
 	});
 
+	it('names the agent whose workspace holds the folder', () => {
+		const named = {
+			agentDirs: [{ path: workspace, agentName: 'Pianola' }],
+			userDataPath: userData,
+			homeDir: home,
+		};
+		const inside = validateAgentFolder(path.join(workspace, 'logs'), named);
+		expect(inside.ok).toBe(false);
+		if (!inside.ok) {
+			expect(inside.reason).toBe(
+				`The folder is inside the workspace of Pianola (${workspace}), where that agent could read it.`
+			);
+		}
+		const around = validateAgentFolder(sandbox, {
+			...named,
+			userDataPath: path.join(path.dirname(sandbox), 'cot-layout-elsewhere', 'data'),
+		});
+		expect(around.ok).toBe(false);
+		if (!around.ok) expect(around.reason).toMatch(/contains the workspace of Pianola/);
+	});
+
+	it('lets a folder inside the home folder through when an agent works in the home folder', () => {
+		const homeAgent = {
+			agentDirs: [workspace, { path: home, agentName: 'Pianola' }],
+			userDataPath: userData,
+			homeDir: home,
+		};
+		const target = path.join(home, 'Pedsidian-Audit');
+		expect(validateAgentFolder(target, homeAgent)).toEqual({ ok: true, resolved: target });
+		// The home folder itself is still refused.
+		expect(validateAgentFolder(home, homeAgent).ok).toBe(false);
+		// A narrower workspace inside the home folder still fences off its own folders.
+		const project = path.join(home, 'project');
+		fs.mkdirSync(project);
+		const nested = validateAgentFolder(path.join(project, 'logs'), {
+			...homeAgent,
+			agentDirs: [...homeAgent.agentDirs, project],
+		});
+		expect(nested.ok).toBe(false);
+	});
+
 	it('does not treat a sibling with a shared name prefix as inside', () => {
 		const sibling = path.join(sandbox, 'workspace-logs');
 		const result = validateAgentFolder(sibling, context());

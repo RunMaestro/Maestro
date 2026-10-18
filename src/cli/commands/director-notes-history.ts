@@ -2,6 +2,9 @@
 // Displays unified history aggregated across all agents
 
 import { readSessions, readHistory, readSettings } from '../services/storage';
+import { isAgentDormant } from '../../shared/agentVisibility';
+import { resolveEncoreFeatures } from '../../shared/encoreFeatureDefaults';
+import { encoreDisabledMessage } from '../utils/encore-gate';
 import { formatError, formatDirectorNotesHistory } from '../output/formatter';
 import type { HistoryEntry, HistoryEntryType } from '../../shared/types';
 import { ALL_HISTORY_ENTRY_TYPES, isHistoryEntryType } from '../../shared/history';
@@ -33,11 +36,11 @@ function getDefaultLookbackDays(): number {
 	return dnSettings?.defaultLookbackDays ?? 7;
 }
 
+// Resolved against the shipped defaults: Director's Notes ships on, so an
+// install that never saved the flag has it on, not off.
 function checkEncoreFeatureEnabled(): void {
-	const settings = readSettings();
-	const encoreFeatures = settings.encoreFeatures as { directorNotes?: boolean } | undefined;
-	if (!encoreFeatures?.directorNotes) {
-		throw new Error("Director's Notes is not enabled. Enable it in Settings > Encore Features.");
+	if (!resolveEncoreFeatures(readSettings().encoreFeatures).directorNotes) {
+		throw new Error(encoreDisabledMessage('directorNotes'));
 	}
 }
 
@@ -59,10 +62,17 @@ export function directorNotesHistory(options: DirectorNotesHistoryOptions): void
 		const now = Date.now();
 		const cutoffTime = lookbackDays > 0 ? now - lookbackDays * 24 * 60 * 60 * 1000 : 0;
 
-		// Build session name map
+		// Build session name map. A dormant agent (Pianola with its Encore flag
+		// off) contributes nothing: its entries are dropped below.
 		const sessions = readSessions();
+		const encoreFeatures = readSettings().encoreFeatures;
+		const dormantIds = new Set<string>();
 		const sessionNameMap = new Map<string, string>();
 		for (const s of sessions) {
+			if (isAgentDormant(s, encoreFeatures)) {
+				dormantIds.add(s.id);
+				continue;
+			}
 			if (s.id && s.name) {
 				sessionNameMap.set(s.id, s.name);
 			}
@@ -82,6 +92,7 @@ export function directorNotesHistory(options: DirectorNotesHistoryOptions): void
 
 		for (const entry of entries) {
 			if (cutoffTime > 0 && entry.timestamp < cutoffTime) continue;
+			if (entry.sessionId && dormantIds.has(entry.sessionId)) continue;
 
 			// Track stats before type filter
 			if (entry.sessionId) agentsWithEntries.add(entry.sessionId);

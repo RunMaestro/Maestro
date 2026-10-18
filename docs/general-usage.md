@@ -764,6 +764,37 @@ Configure a command to run automatically every time a terminal tab's shell is st
 
 > **SSH agents**: when the agent is configured to run on a remote host, the terminal tab also runs on that host, and the startup command executes remotely (the working directory must be a path on the remote machine).
 
+## Opening Links
+
+Clicking a web link in the AI Terminal, a Command Terminal, a file preview, or a user message opens it in the browser chosen under **Settings -> General -> Default Browser**: an in-app Maestro browser tab, or your system browser.
+
+| Gesture                    | Result                                                           |
+| -------------------------- | ---------------------------------------------------------------- |
+| Click                      | Opens in the default browser                                     |
+| `Cmd+Click` / `Ctrl+Click` | Opens in the other browser, for this link only                   |
+| Right-click                | Menu: Copy Link, Open in Maestro Browser, Open in System Browser |
+
+### Routing Hints
+
+To make one link always open in a specific browser, whatever the setting and whatever key is held, put a hint in front of its `http://` or `https://`:
+
+| Written as                      | Always opens in                           |
+| ------------------------------- | ----------------------------------------- |
+| `maestro+http://localhost:5173` | A Maestro browser tab in the active agent |
+| `system+https://github.com`     | The system browser                        |
+
+Maestro removes the hint before it opens the page, so the server never sees it, and **Copy Link** copies the address without it. This is useful for a script that prints a local dev-server URL into a terminal tab, or for an agent that links a preview in chat:
+
+```bash
+echo "Preview: maestro+http://localhost:5173"
+```
+
+```markdown
+[dev server](maestro+http://localhost:5173)
+```
+
+Hints work in plain terminal output, in OSC 8 terminal hyperlinks, and in markdown links. In chat markdown, write a hinted URL as a link (`[label](maestro+https://...)`) or in angle brackets (`<maestro+https://...>`); a bare hinted URL in markdown is only partly linked. Only `http` and `https` may follow a hint: `maestro+file://...` or `system+ssh://...` opens nothing.
+
 ## Agent Management
 
 Agents are the core of Maestro - each agent represents an AI coding assistant running in its own workspace.
@@ -933,6 +964,7 @@ When you send your first message to a new tab, Maestro automatically generates a
 - Go to **Settings** (`Cmd+,` / `Ctrl+,`) → **General**
 - Toggle **Automatic Tab Naming** on or off
 - Default: Enabled
+- Toggle **Shorten long tab names** to cut a generated name longer than 40 characters at the last whole word (for example `Donation Appeal Pages Japanese...`). Default: off, which keeps the full name.
 
 **Wizard tabs:** a tab started with `/wizard` opens as `Wizard`, because it exists before anyone knows what you are planning. It renames itself to `wizard: <topic>` as soon as you say what you want (from the `/wizard <topic>` argument, or from your first message), and to the generated playbook folder once the wizard finishes. Rename it yourself at any point and Maestro leaves your name alone.
 

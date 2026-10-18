@@ -26,7 +26,7 @@ export function useQuickChatEngine(enabled: boolean, isMainWindow: boolean): voi
 			notifyToast({
 				color: 'orange',
 				title: 'Quick Chat hotkey unavailable',
-				message: `${formatShortcutKeys(keys)} is already in use by another app or Maestro hotkey. Pick a different one in Settings → Encore Features → Quick Chat.`,
+				message: `${formatShortcutKeys(keys)} is already in use by another app or Maestro hotkey. Pick a different one in Settings → Plugins → Quick Chat.`,
 				dismissible: true,
 			});
 		});

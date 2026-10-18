@@ -1054,13 +1054,14 @@ Interact with Maestro Cue automation
 
 ## `maestro-cli cue trigger <subscription-name>`
 
-Manually trigger a Cue subscription by name
+Manually trigger a Cue subscription by name (pipeline siblings with identical trigger settings fire too)
 
-| Option                   | Description                                       | Default |
-| ------------------------ | ------------------------------------------------- | ------- |
-| `-p, --prompt <text>`    | Override the subscription prompt with custom text | -       |
-| `--json`                 | Output as JSON (for scripting)                    | -       |
-| `--source-agent-id <id>` | Agent ID to pass as source context for write-back | -       |
+| Option                   | Description                                                                     | Default |
+| ------------------------ | ------------------------------------------------------------------------------- | ------- |
+| `-p, --prompt <text>`    | Override the subscription prompt with custom text                               | -       |
+| `--json`                 | Output as JSON (for scripting)                                                  | -       |
+| `--source-agent-id <id>` | Agent ID to pass as source context for write-back                               | -       |
+| `--data-dir <path>`      | Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist) | -       |
 
 ## `maestro-cli cue list`
 
@@ -1074,15 +1075,16 @@ List all Cue subscriptions across agents
 
 Show or set the model tier, exact model, and effort a Cue subscription runs at (no setting flag = show)
 
-| Option                     | Description                                               | Default |
-| -------------------------- | --------------------------------------------------------- | ------- |
-| `-a, --agent <id-or-name>` | Scope to one agent (required when the name exists on two) | -       |
-| `--tier <level>`           | Model tier: low, medium, high (mapped per provider)       | -       |
-| `--model <id>`             | Exact model id (instead of --tier)                        | -       |
-| `--effort <level>`         | Effort: low, medium, high (mapped per provider)           | -       |
-| `--clear-model`            | Remove the tier / model and use the agent's own model     | -       |
-| `--clear-effort`           | Remove the effort and use the agent's own effort          | -       |
-| `--json`                   | Output as JSON (for scripting)                            | -       |
+| Option                     | Description                                                                     | Default |
+| -------------------------- | ------------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id-or-name>` | Scope to one agent (required when the name exists on two)                       | -       |
+| `--tier <level>`           | Model tier: low, medium, high (mapped per provider)                             | -       |
+| `--model <id>`             | Exact model id (instead of --tier)                                              | -       |
+| `--effort <level>`         | Effort: low, medium, high (mapped per provider)                                 | -       |
+| `--clear-model`            | Remove the tier / model and use the agent's own model                           | -       |
+| `--clear-effort`           | Remove the effort and use the agent's own effort                                | -       |
+| `--json`                   | Output as JSON (for scripting)                                                  | -       |
+| `--data-dir <path>`        | Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist) | -       |
 
 ## `maestro-cli cue enable <subscription>`
 
@@ -1106,11 +1108,12 @@ Turn a Cue subscription off without deleting it
 
 Show recent Cue runs, newest first
 
-| Option             | Description                        | Default |
-| ------------------ | ---------------------------------- | ------- |
-| `-a, --agent <id>` | Only runs for this agent           | -       |
-| `-n, --limit <n>`  | How many runs to show (default 20) | -       |
-| `--json`           | Output as JSON (for scripting)     | -       |
+| Option              | Description                                                                                                         | Default |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id>`  | Only runs for this agent                                                                                            | -       |
+| `-n, --limit <n>`   | How many runs to show (default 20)                                                                                  | -       |
+| `--json`            | Output as JSON (for scripting)                                                                                      | -       |
+| `--data-dir <path>` | Data directory to read cue.db from when the app is not running (default: MAESTRO_USER_DATA or the platform default) | -       |
 
 ## `maestro-cli cue schedule`
 
@@ -1220,36 +1223,106 @@ Run Maestro Cue unattended (no desktop app) and control that runner
 
 ## `maestro-cli cue engine start`
 
-Start the Cue engine in this process and block until Ctrl+C / stopped
+Start the Cue engine in this process and block until Ctrl+C / stopped. Agents inherit the whole environment unless MAESTRO_SERVER_MODE=1 (set by the server unit and image), which passes only the server allowlist plus MAESTRO_SERVER_ENV_ALLOW and declared secrets
 
-| Option   | Description                                 | Default |
-| -------- | ------------------------------------------- | ------- |
-| `--json` | Print machine-readable start/failure status | -       |
+| Option                      | Description                                                                                                    | Default  |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------- | -------- |
+| `--json`                    | Print machine-readable start/failure status                                                                    | -        |
+| `--data-dir <path>`         | Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist)                                | -        |
+| `--log-format <format>`     | Log line format: text, or one JSON object per line on stderr                                                   | `"text"` |
+| `--require-ready`           | Refuse to start (exit 1, nothing armed) when the readiness check finds any gap; see "cue engine check"         | -        |
+| `--status-port <port>`      | Serve /healthz, /readyz and /status on 127.0.0.1 at this port (documented port: 7433). Off unless given        | -        |
+| `--drain-timeout <seconds>` | On SIGTERM/SIGINT, let runs in flight finish for this long before stopping them; a second signal stops at once | `90`     |
+| `--notify-webhook <url>`    | POST a JSON notice for every notify action and every expired agent login to this http(s) URL                   | -        |
+
+## `maestro-cli cue engine check`
+
+Check that every agent, secret, workspace, cue.yaml and tool the engine needs is present, and that there is something to run; list every gap (exit 1 when not ready)
+
+| Option              | Description                                                                     | Default |
+| ------------------- | ------------------------------------------------------------------------------- | ------- |
+| `--json`            | Output as JSON (for scripting)                                                  | -       |
+| `--data-dir <path>` | Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist) | -       |
 
 ## `maestro-cli cue engine stop`
 
 Stop a running standalone engine (refuses to signal a desktop-owned one)
 
-| Option           | Description                                            | Default |
-| ---------------- | ------------------------------------------------------ | ------- |
-| `--json`         | Output as JSON (for scripting)                         | -       |
-| `--wait-ms <ms>` | How long to wait for the lock to clear after signaling | -       |
+| Option              | Description                                                                     | Default |
+| ------------------- | ------------------------------------------------------------------------------- | ------- |
+| `--json`            | Output as JSON (for scripting)                                                  | -       |
+| `--data-dir <path>` | Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist) | -       |
+| `--wait-ms <ms>`    | How long to wait for the lock to clear after signaling                          | -       |
 
 ## `maestro-cli cue engine status`
 
 Report whether an engine is running and its last known heartbeat
 
-| Option   | Description                    | Default |
-| -------- | ------------------------------ | ------- |
-| `--json` | Output as JSON (for scripting) | -       |
+| Option              | Description                                                                     | Default |
+| ------------------- | ------------------------------------------------------------------------------- | ------- |
+| `--json`            | Output as JSON (for scripting)                                                  | -       |
+| `--data-dir <path>` | Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist) | -       |
 
 ## `maestro-cli cue engine inspect`
 
 List every agent with a readable .maestro/cue.yaml and its subscription counts
 
+| Option              | Description                                                                     | Default |
+| ------------------- | ------------------------------------------------------------------------------- | ------- |
+| `--json`            | Output as JSON (for scripting)                                                  | -       |
+| `--data-dir <path>` | Maestro data directory to use (overrides MAESTRO_USER_DATA; must already exist) | -       |
+
+## `maestro-cli bundle`
+
+Export, validate, inspect, and import portable Cue pipeline and agent bundles
+
+## `maestro-cli bundle export`
+
+Export one Cue pipeline or one agent to a deterministic bundle zip. Refuses, writing nothing, when an exported cue.yaml would fail bundle validate
+
+| Option                     | Description                                                                               | Default |
+| -------------------------- | ----------------------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id-or-name>` | Export this agent (exclusive with --pipeline)                                             | -       |
+| `-p, --pipeline <name>`    | Export this Cue pipeline (exclusive with --agent)                                         | -       |
+| `-o, --output <path>`      | Zip to write (default: ./&lt;name>.maestro-bundle.zip)                                    | -       |
+| `--allow-inline-secrets`   | Export subscriptions that hold a literal webhook.secret                                   | -       |
+| `--data-dir <path>`        | Read Maestro's data from this directory instead of the default                            | -       |
+| `--created-at <iso>`       | Record this ISO-8601 time as the bundle creation time                                     | -       |
+| `--no-claude-skills`       | Leave out Claude Code skills (.claude/skills)                                             | -       |
+| `--no-claude-mcp`          | Leave out .mcp.json (exported with secrets as $\{VAR\} references)                        | -       |
+| `--no-claude-memory`       | Leave out CLAUDE.md and Claude auto memory (exported with secret-looking tokens redacted) | -       |
+| `--json`                   | Output as JSON (for scripting)                                                            | -       |
+
+## `maestro-cli bundle validate <bundle>`
+
+Check a bundle zip: file hashes both ways, cue.yaml, references, secrets, and engine version
+
+| Option        | Description                                                                                                                                                        | Default |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------- |
+| `--check-env` | Also check that this machine supplies each required secret (systemd credential, /run/secrets file, or environment variable); missing or unusable ones are warnings | -       |
+| `--json`      | Output as JSON (for scripting)                                                                                                                                     | -       |
+
+## `maestro-cli bundle inspect <bundle>`
+
+Describe a bundle from its manifest and README without unpacking the rest
+
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli bundle import <bundle>`
+
+Import a bundle into the running app, or with it closed into a data directory, plus local workspace folders. Prints the plan, shell commands included, before the first write
+
+| Option                       | Description                                                                             | Default |
+| ---------------------------- | --------------------------------------------------------------------------------------- | ------- |
+| `-w, --workspace <key=path>` | Map a bundle workspace to its own local folder (repeatable, one per workspace)          | `[]`    |
+| `--agent-path <tool=path>`   | Set the binary a provider runs, e.g. claude-code=/usr/local/bin/claude (repeatable)     | `[]`    |
+| `--data-dir <path>`          | Import into this Maestro data directory instead of the default                          | -       |
+| `--dry-run`                  | Report everything the import would do, including conflicts; write nothing               | -       |
+| `--force`                    | Overwrite conflicting agents, subscriptions, playbooks, files, and paths                | -       |
+| `--reject-shell-commands`    | Refuse the import, before anything is written, if any subscription runs a shell command | -       |
+| `--json`                     | Output as JSON (for scripting): one document, after the import                          | -       |
 
 ## `maestro-cli director-notes`
 
@@ -1344,9 +1417,10 @@ Print a shell completion script (bash, zsh, or fish)
 
 Print the full command reference (Markdown, or --format json)
 
-| Option              | Description                         | Default |
-| ------------------- | ----------------------------------- | ------- |
-| `--format <format>` | Output format: md (default) or json | -       |
+| Option              | Description                                                   | Default |
+| ------------------- | ------------------------------------------------------------- | ------- |
+| `--format <format>` | Output format: md (default) or json                           | -       |
+| `--all`             | Include the commands of Encore Features that are switched off | -       |
 
 ## `maestro-cli create-agent <name>`
 
@@ -1924,11 +1998,11 @@ Set custom theme colors (key=value, e.g. accent=#ff0000) and/or re-base
 
 ## `maestro-cli encore`
 
-List and toggle experimental Encore features
+List and toggle the optional features on Settings > Plugins
 
 ## `maestro-cli encore list`
 
-List Encore features and whether each is enabled
+List the optional features and whether each is on
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
@@ -1936,7 +2010,7 @@ List Encore features and whether each is enabled
 
 ## `maestro-cli encore enable <feature>`
 
-Enable an Encore feature (directorNotes, usageStats, symphony, maestroCue, pianola, computerHistory, quickChat, maestroRun)
+Turn a feature on (any id from `encore list`, e.g. computerHistory or groups-plus)
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
@@ -1944,7 +2018,7 @@ Enable an Encore feature (directorNotes, usageStats, symphony, maestroCue, piano
 
 ## `maestro-cli encore disable <feature>`
 
-Disable an Encore feature
+Turn a feature off
 
 | Option   | Description                    | Default |
 | -------- | ------------------------------ | ------- |
@@ -1985,6 +2059,7 @@ Search recorded events (text, selections, snapshots, app and window changes)
 | `--kind <kind>`  | text \| selection \| snapshot \| app \| window (comma list or repeat) | `[]`    |
 | `--grep <regex>` | Case-insensitive regex over text, titles, URLs, and labels            | -       |
 | `--limit <n>`    | Most recent N matches (default 200)                                   | -       |
+| `--drafts`       | Keep text commits a later commit in the same field supersedes         | -       |
 | `--json`         | Output as JSON (for scripting)                                        | -       |
 
 ## `maestro-cli computer-history apps`
@@ -2106,13 +2181,14 @@ Pianola manager agent: watch tabs, auto-answer or escalate per your rules
 
 Watch a desktop tab and act on awaiting-input prompts per your rules
 
-| Option                 | Description                                                     | Default |
-| ---------------------- | --------------------------------------------------------------- | ------- |
-| `--agent <agent-id>`   | Agent id to dispatch answers to (defaults to the tab owner)     | -       |
-| `--interval <seconds>` | Polling interval in seconds (default 5)                         | -       |
-| `--dry-run`            | Classify and record decisions but never send a message          | -       |
-| `--once`               | Run a single iteration instead of looping                       | -       |
-| `--json`               | Reserved for scripting; affects the disabled-feature error only | -       |
+| Option                 | Description                                                                     | Default |
+| ---------------------- | ------------------------------------------------------------------------------- | ------- |
+| `--agent <agent-id>`   | Agent id to dispatch answers to (defaults to the tab owner)                     | -       |
+| `--interval <seconds>` | Polling interval in seconds (default 5)                                         | -       |
+| `--idle-hours <hours>` | Stop watching after this many hours with no tab activity (default 6, 0 = never) | -       |
+| `--dry-run`            | Classify and record decisions but never send a message                          | -       |
+| `--once`               | Run a single iteration instead of looping                                       | -       |
+| `--json`               | Reserved for scripting; affects the disabled-feature error only                 | -       |
 
 ## `maestro-cli pianola rules`
 
@@ -2232,11 +2308,12 @@ Register desktop-supervised watchers and orchestrations (survive crashes/restart
 
 Register a supervised tab watcher the desktop keeps alive
 
-| Option                 | Description                                | Default |
-| ---------------------- | ------------------------------------------ | ------- |
-| `--agent <agent-id>`   | Agent id to dispatch answers to (required) | -       |
-| `--interval <seconds>` | Polling interval in seconds (default 5)    | -       |
-| `--json`               | Output as JSON (for scripting)             | -       |
+| Option                 | Description                                                                          | Default |
+| ---------------------- | ------------------------------------------------------------------------------------ | ------- |
+| `--agent <agent-id>`   | Agent id to dispatch answers to (required)                                           | -       |
+| `--interval <seconds>` | Polling interval in seconds (default 5)                                              | -       |
+| `--idle-hours <hours>` | Retire the watcher after this many hours with no tab activity (default 6, 0 = never) | -       |
+| `--json`               | Output as JSON (for scripting)                                                       | -       |
 
 ## `maestro-cli pianola supervise orchestrate <planId>`
 

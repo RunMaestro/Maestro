@@ -21,6 +21,7 @@ import {
 	estimateTokenCount,
 	truncatePath,
 	truncateCommand,
+	truncateAtWordBoundary,
 	abbreviateGroupName,
 	isAbsolutePath,
 	getBasename,
@@ -616,6 +617,29 @@ describe('shared/formatters', () => {
 
 		it('should handle paths with two parts', () => {
 			expect(truncatePath('/parent/child', 50)).toBe('/parent/child');
+		});
+	});
+
+	// ==========================================================================
+	// truncateAtWordBoundary tests
+	// ==========================================================================
+	describe('truncateAtWordBoundary', () => {
+		it('returns text that already fits unchanged', () => {
+			expect(truncateAtWordBoundary('Short Title', 40)).toBe('Short Title');
+		});
+
+		it('cuts at the last space that fits, ellipsis included in the limit', () => {
+			const result = truncateAtWordBoundary(
+				'Donation Appeal Pages Japanese Translation Dates',
+				40,
+				'...'
+			);
+			expect(result).toBe('Donation Appeal Pages Japanese...');
+			expect(result.length).toBeLessThanOrEqual(40);
+		});
+
+		it('hard-cuts a string with no usable space', () => {
+			expect(truncateAtWordBoundary('a'.repeat(50), 10)).toBe('aaaaaaaaa…');
 		});
 	});
 

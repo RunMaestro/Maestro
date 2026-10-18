@@ -127,6 +127,7 @@ function resetStore() {
 		audioFeedbackCommand: 'say',
 		toastDuration: 20,
 		notificationCenterEnabled: false,
+		toastDurationBeforeOff: 20,
 		notificationCenterLarge: false,
 		notificationCenterDetails: false,
 		notificationCenterKeyboardNavigation: false,
@@ -169,6 +170,7 @@ function resetStore() {
 		sshRemoteIgnorePatterns: ['.git', '*cache*'],
 		sshRemoteHonorGitignore: true,
 		automaticTabNamingEnabled: true,
+		shortenLongTabNames: false,
 		fileTabAutoRefreshEnabled: false,
 		suppressWindowsWarning: false,
 		directorNotesSettings: { provider: 'claude-code', defaultLookbackDays: 7 },
@@ -324,6 +326,7 @@ describe('settingsStore', () => {
 			expect(state.sshRemoteIgnorePatterns).toEqual(['.git', '*cache*']);
 			expect(state.sshRemoteHonorGitignore).toBe(true);
 			expect(state.automaticTabNamingEnabled).toBe(true);
+			expect(state.shortenLongTabNames).toBe(false);
 			expect(state.fileTabAutoRefreshEnabled).toBe(false);
 			expect(state.suppressWindowsWarning).toBe(false);
 			expect(state.directorNotesSettings).toEqual({
@@ -703,6 +706,42 @@ describe('settingsStore', () => {
 				expect(useSettingsStore.getState().toastDuration).toBe(10);
 				expect(window.maestro.settings.set).toHaveBeenCalledWith('toastDuration', 10);
 			});
+
+			it('setToastDuration remembers the duration it switches off from', () => {
+				useSettingsStore.getState().setToastDuration(5);
+				useSettingsStore.getState().setToastDuration(-1);
+				expect(useSettingsStore.getState().toastDurationBeforeOff).toBe(5);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('toastDurationBeforeOff', 5);
+			});
+
+			it('setToastDuration keeps the remembered duration when already off', () => {
+				useSettingsStore.getState().setToastDuration(5);
+				useSettingsStore.getState().setToastDuration(-1);
+				useSettingsStore.getState().setToastDuration(-1);
+				expect(useSettingsStore.getState().toastDurationBeforeOff).toBe(5);
+			});
+
+			it('setToastsEnabled(false) turns toasts off', () => {
+				useSettingsStore.getState().setToastDuration(10);
+				useSettingsStore.getState().setToastsEnabled(false);
+				expect(useSettingsStore.getState().toastDuration).toBe(-1);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('toastDuration', -1);
+			});
+
+			it('setToastsEnabled(true) restores the previous duration, including Never', () => {
+				useSettingsStore.getState().setToastDuration(0);
+				useSettingsStore.getState().setToastsEnabled(false);
+				useSettingsStore.getState().setToastsEnabled(true);
+				expect(useSettingsStore.getState().toastDuration).toBe(0);
+			});
+
+			it('setToastsEnabled is a no-op when already in the requested state', () => {
+				useSettingsStore.getState().setToastDuration(30);
+				vi.mocked(window.maestro.settings.set).mockClear();
+				useSettingsStore.getState().setToastsEnabled(true);
+				expect(useSettingsStore.getState().toastDuration).toBe(30);
+				expect(window.maestro.settings.set).not.toHaveBeenCalled();
+			});
 		});
 
 		describe('Updates', () => {
@@ -951,6 +990,12 @@ describe('settingsStore', () => {
 					'automaticTabNamingEnabled',
 					false
 				);
+			});
+
+			it('setShortenLongTabNames updates state and persists', () => {
+				useSettingsStore.getState().setShortenLongTabNames(true);
+				expect(useSettingsStore.getState().shortenLongTabNames).toBe(true);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('shortenLongTabNames', true);
 			});
 
 			it('setFileTabAutoRefreshEnabled updates state and persists', () => {

@@ -28,7 +28,8 @@
 import {
 	describeEffortRejection,
 	noteEffortRejection,
-	parseEffortRejection,
+	parseAgentErrorEffortRejection,
+	type AgentErrorText,
 	type EffortRejection,
 } from '../../shared/effortRejection';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
@@ -46,9 +47,9 @@ const held = new Map<string, EffortRejection>();
  */
 export function observeEffortRejection(
 	processSessionId: string,
-	error: { message?: string; agentId?: string }
+	error: AgentErrorText & { agentId?: string }
 ): EffortRejection | null {
-	const rejection = parseEffortRejection(error.message);
+	const rejection = parseAgentErrorEffortRejection(error);
 	if (!rejection) return null;
 
 	if (error.agentId && noteEffortRejection(error.agentId, rejection)) {

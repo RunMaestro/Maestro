@@ -62,6 +62,29 @@ const sameSubagentLogs = (prev?: LogEntry[], next?: LogEntry[]): boolean => {
 	);
 };
 
+/**
+ * The clock in a transcript row's left gutter: the time for today, or the date
+ * over the time for any other day.
+ */
+function LogTimestamp({ timestamp }: { timestamp: number }): React.ReactElement {
+	const logDate = new Date(timestamp);
+	const time = logDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+	if (logDate.toDateString() === new Date().toDateString()) {
+		return <>{time}</>;
+	}
+	const year = logDate.getFullYear();
+	const month = String(logDate.getMonth() + 1).padStart(2, '0');
+	const day = String(logDate.getDate()).padStart(2, '0');
+	return (
+		<>
+			<div>
+				{year}-{month}-{day}
+			</div>
+			<div>{time}</div>
+		</>
+	);
+}
+
 export const LogItem = memo(
 	({
 		log,
@@ -394,7 +417,14 @@ export const LogItem = memo(
 					data-log-id={log.id}
 					style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 36px' }}
 				>
-					<div className="hidden sm:block w-20 shrink-0" />
+					{/* When the hand-off happened, in the same gutter and format as a message. */}
+					<div
+						className="hidden sm:block w-20 shrink-0 text-2xs sm:pt-1"
+						style={{ fontFamily, color: theme.colors.textDim, opacity: 0.6 }}
+						data-testid="agent-delegation-timestamp"
+					>
+						<LogTimestamp timestamp={log.timestamp} />
+					</div>
 					<div className="flex-1 min-w-0">
 						<AgentDelegationCard log={log} theme={theme} />
 					</div>
@@ -486,27 +516,7 @@ export const LogItem = memo(
 					className={`shrink-0 text-2xs sm:w-20 sm:pt-2 flex gap-1 sm:block ${isReversed ? 'text-right justify-end' : 'text-left'}`}
 					style={{ fontFamily, color: theme.colors.textDim, opacity: 0.6 }}
 				>
-					{(() => {
-						const logDate = new Date(log.timestamp);
-						const today = new Date();
-						const isToday = logDate.toDateString() === today.toDateString();
-						const time = logDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-						if (isToday) {
-							return time;
-						}
-						// Format: YYYY-MM-DD on first line, time on second
-						const year = logDate.getFullYear();
-						const month = String(logDate.getMonth() + 1).padStart(2, '0');
-						const day = String(logDate.getDate()).padStart(2, '0');
-						return (
-							<>
-								<div>
-									{year}-{month}-{day}
-								</div>
-								<div>{time}</div>
-							</>
-						);
-					})()}
+					<LogTimestamp timestamp={log.timestamp} />
 					{/*
 						Turn time, under the clock. Only ever on an agent reply: a user
 						message is instantaneous, so the same line under it would be

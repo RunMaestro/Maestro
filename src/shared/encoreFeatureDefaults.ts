@@ -58,3 +58,31 @@ export function resolveEncoreFeatures(raw: unknown): EncoreFeatureDefaults {
 	}
 	return resolved as EncoreFeatureDefaults;
 }
+
+/** The slice of a settings store an Encore gate reads. */
+export interface EncoreSettingsReader {
+	get(key: string): unknown;
+}
+
+/** Whether one Encore Feature is on, read live from a settings store. */
+export function isEncoreFeatureEnabled(
+	settingsStore: EncoreSettingsReader,
+	flag: keyof EncoreFeatureDefaults
+): boolean {
+	return resolveEncoreFeatures(settingsStore.get('encoreFeatures'))[flag];
+}
+
+/**
+ * Refuse a request for a switched-off feature: throws `new Error(code)`, the
+ * `PluginsDisabled` / `PianolaDisabled` convention, so the caller's IPC error
+ * wrapper reports it like any other refusal. A disabled feature must have no
+ * effect at all, so every write path of a gated feature calls this first,
+ * whoever the caller is (the UI, `maestro-cli`, a web client).
+ */
+export function requireEncoreFeature(
+	settingsStore: EncoreSettingsReader,
+	flag: keyof EncoreFeatureDefaults,
+	code: string
+): void {
+	if (!isEncoreFeatureEnabled(settingsStore, flag)) throw new Error(code);
+}

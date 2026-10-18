@@ -24,6 +24,7 @@ import type { CueGraphTarget } from '../CuePipelineEditor/CuePipelineEditor';
 import { pipelinesForSession } from '../CuePipelineEditor/utils/pipelineMembership';
 import { generateId } from '../../utils/ids';
 import { useSessionStore } from '../../stores/sessionStore';
+import { useLiveSessions } from '../../hooks/session/useLiveSessions';
 import { getModalActions, useModalStore, selectModalData } from '../../stores/modalStore';
 import { notifyToast } from '../../stores/notificationStore';
 import { captureException } from '../../utils/sentry';
@@ -37,6 +38,7 @@ import { ActivityLog } from './ActivityLog';
 import { PipelineListTab } from './PipelineListTab';
 import { ScheduledTasksTab } from './ScheduledTasksTab';
 import { BackupTab } from './BackupTab';
+import { BundlesTab } from './BundlesTab';
 import { ResizeHandles } from '../ui/ResizeHandles';
 
 // In-memory only - last tab the user was on. Reopening the modal lands here
@@ -77,7 +79,8 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 		refresh,
 	} = useCue();
 
-	const allSessions = useSessionStore((state) => state.sessions);
+	// Live agents only: a dormant Pianola (flag off) is neither listed nor schedulable.
+	const allSessions = useLiveSessions();
 	const groups = useSessionStore((state) => state.groups);
 	const setActiveSessionId = useSessionStore((state) => state.setActiveSessionId);
 
@@ -300,6 +303,7 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 		'pipeline-list',
 		'activity',
 		'backup',
+		'bundles',
 	]);
 	useEffect(() => {
 		const handleTabCycle = (e: KeyboardEvent) => {
@@ -440,6 +444,10 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 						) : activeTab === 'backup' ? (
 							<div className="flex-1 min-h-0 flex flex-col">
 								<BackupTab theme={theme} />
+							</div>
+						) : activeTab === 'bundles' ? (
+							<div className="flex-1 min-h-0 flex flex-col">
+								<BundlesTab theme={theme} pipelines={dashboardPipelines} onImported={handleRetry} />
 							</div>
 						) : (
 							<CuePipelineEditor

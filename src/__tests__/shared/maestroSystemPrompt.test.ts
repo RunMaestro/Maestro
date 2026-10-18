@@ -14,9 +14,14 @@ import {
 import {
 	FIRST_PARTY_PLUGIN_DEFINITIONS,
 	COMPUTER_HISTORY_FIRST_PARTY_PLUGIN,
+	MAESTRO_CUE_FIRST_PARTY_PLUGIN,
 	MAESTRO_RUN_FIRST_PARTY_PLUGIN,
 } from '../../shared/plugins/first-party';
 import type { TemplateContext } from '../../shared/templateVariables';
+
+// Maestro Cue ships on and carries a section; the cases about other plugins
+// switch it off so each asserts only the section it is about.
+const CUE_OFF = { maestroCue: false };
 
 const context: TemplateContext = {
 	session: { id: 'agent-1', name: 'Alice', toolType: 'claude-code', cwd: '/proj' },
@@ -25,7 +30,9 @@ const context: TemplateContext = {
 
 describe('systemPromptSectionsFor', () => {
 	it('returns the Computer History section when its flag is on (local agent)', () => {
-		expect(systemPromptSectionsFor({ computerHistory: true }, { isSsh: false })).toEqual([
+		expect(
+			systemPromptSectionsFor({ ...CUE_OFF, computerHistory: true }, { isSsh: false })
+		).toEqual([
 			{ pluginId: COMPUTER_HISTORY_FIRST_PARTY_PLUGIN.id, promptId: 'computer-history-system' },
 		]);
 	});
@@ -35,27 +42,54 @@ describe('systemPromptSectionsFor', () => {
 	it('carries the Concerto routing section only while Concerto is on, SSH included', () => {
 		const ids = (flags: unknown, isSsh: boolean) =>
 			systemPromptSectionsFor(flags, { isSsh }).map((ref) => ref.promptId);
-		expect(ids({ concerto: true }, false)).toEqual(['concerto-system']);
-		expect(ids({ concerto: true }, true)).toEqual(['concerto-system']);
-		expect(ids({ concerto: false }, false)).toEqual([]);
-		expect(ids({}, false)).toEqual([]);
+		expect(ids({ ...CUE_OFF, concerto: true }, false)).toEqual(['concerto-system']);
+		expect(ids({ ...CUE_OFF, concerto: true }, true)).toEqual(['concerto-system']);
+		expect(ids({ ...CUE_OFF, concerto: false }, false)).toEqual([]);
+		expect(ids(CUE_OFF, false)).toEqual([]);
+	});
+
+	// Scheduling and the "what are my duties?" lookup used to sit in the base
+	// prompt, so an agent with Cue off still answered in terms of Cue.
+	it('carries the Maestro Cue section only while Cue is on, SSH included', () => {
+		const ids = (flags: unknown, isSsh: boolean) =>
+			systemPromptSectionsFor(flags, { isSsh }).map((ref) => ref.promptId);
+		expect(ids({ maestroCue: true }, false)).toEqual(['cue-system']);
+		expect(ids({ maestroCue: true }, true)).toEqual(['cue-system']);
+		expect(ids(CUE_OFF, false)).toEqual([]);
+	});
+
+	// The Cue section is about an agent's own duties; a moderator has none.
+	it('leaves agent-only sections out of a sections-only spawn', () => {
+		const ids = (sectionsOnly: boolean) =>
+			systemPromptSectionsFor(
+				{ maestroCue: true, concerto: true },
+				{ isSsh: false, sectionsOnly }
+			).map((ref) => ref.promptId);
+		expect(ids(false)).toEqual(expect.arrayContaining(['cue-system', 'concerto-system']));
+		expect(ids(true)).toContain('concerto-system');
+		expect(ids(true)).not.toContain('cue-system');
 	});
 
 	it('returns nothing when the flag is off', () => {
-		expect(systemPromptSectionsFor({ computerHistory: false }, { isSsh: false })).toEqual([]);
+		expect(
+			systemPromptSectionsFor({ ...CUE_OFF, computerHistory: false }, { isSsh: false })
+		).toEqual([]);
 	});
 
-	it('falls back to defaults for missing keys and junk input (Computer History defaults off)', () => {
-		expect(systemPromptSectionsFor({}, { isSsh: false })).toEqual([]);
-		expect(systemPromptSectionsFor(undefined, { isSsh: false })).toEqual([]);
-		expect(systemPromptSectionsFor('nonsense', { isSsh: false })).toEqual([]);
+	it('falls back to defaults for missing keys and junk input (Cue on, Computer History off)', () => {
+		const defaults = [{ pluginId: MAESTRO_CUE_FIRST_PARTY_PLUGIN.id, promptId: 'cue-system' }];
+		expect(systemPromptSectionsFor({}, { isSsh: false })).toEqual(defaults);
+		expect(systemPromptSectionsFor(undefined, { isSsh: false })).toEqual(defaults);
+		expect(systemPromptSectionsFor('nonsense', { isSsh: false })).toEqual(defaults);
 		// A non-boolean value never turns a feature on.
-		expect(systemPromptSectionsFor({ computerHistory: 'yes' }, { isSsh: false })).toEqual([]);
+		expect(systemPromptSectionsFor({ computerHistory: 'yes' }, { isSsh: false })).toEqual(defaults);
 	});
 
 	it('skips localOnly sections for SSH agents', () => {
 		expect(COMPUTER_HISTORY_FIRST_PARTY_PLUGIN.systemPromptSection?.localOnly).toBe(true);
-		expect(systemPromptSectionsFor({ computerHistory: true }, { isSsh: true })).toEqual([]);
+		expect(systemPromptSectionsFor({ ...CUE_OFF, computerHistory: true }, { isSsh: true })).toEqual(
+			[]
+		);
 	});
 
 	it('only ever yields plugins that declare a section, in registry order', () => {
@@ -86,29 +120,42 @@ describe('systemPromptSectionsFor', () => {
 
 		it('is left out when the flag is on but the builder did not vouch for it', () => {
 			// Enabling the tile is not enough: the launcher is not installed or not granted yet.
-			expect(systemPromptSectionsFor({ maestroRun: true }, { isSsh: false })).toEqual([]);
+			expect(systemPromptSectionsFor({ ...CUE_OFF, maestroRun: true }, { isSsh: false })).toEqual(
+				[]
+			);
 			expect(
-				systemPromptSectionsFor({ maestroRun: true }, { isSsh: false, readyFlags: [] })
+				systemPromptSectionsFor({ ...CUE_OFF, maestroRun: true }, { isSsh: false, readyFlags: [] })
 			).toEqual([]);
 		});
 
 		it('is included once the builder names it ready', () => {
 			expect(
-				systemPromptSectionsFor({ maestroRun: true }, { isSsh: false, readyFlags: ['maestroRun'] })
+				systemPromptSectionsFor(
+					{ ...CUE_OFF, maestroRun: true },
+					{ isSsh: false, readyFlags: ['maestroRun'] }
+				)
 			).toEqual([section]);
 		});
 
 		it('stays out when ready but the flag is off, or the agent is on an SSH remote', () => {
 			expect(
-				systemPromptSectionsFor({ maestroRun: false }, { isSsh: false, readyFlags: ['maestroRun'] })
+				systemPromptSectionsFor(
+					{ ...CUE_OFF, maestroRun: false },
+					{ isSsh: false, readyFlags: ['maestroRun'] }
+				)
 			).toEqual([]);
 			expect(
-				systemPromptSectionsFor({ maestroRun: true }, { isSsh: true, readyFlags: ['maestroRun'] })
+				systemPromptSectionsFor(
+					{ ...CUE_OFF, maestroRun: true },
+					{ isSsh: true, readyFlags: ['maestroRun'] }
+				)
 			).toEqual([]);
 		});
 
 		it('does not gate a section that never asked for it', () => {
-			expect(systemPromptSectionsFor({ computerHistory: true }, { isSsh: false })).toHaveLength(1);
+			expect(
+				systemPromptSectionsFor({ ...CUE_OFF, computerHistory: true }, { isSsh: false })
+			).toHaveLength(1);
 		});
 	});
 });

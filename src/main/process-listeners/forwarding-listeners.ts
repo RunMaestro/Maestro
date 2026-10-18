@@ -5,6 +5,7 @@
 
 import type { ProcessManager } from '../process-manager';
 import type { ProcessListenerDependencies, ToolExecution } from './types';
+import type { CallUsage } from '../../shared/types';
 import type { SteeringResultFrame } from '../../shared/chatSteering';
 
 /** Coalesce thinking chunks for this long before flushing to the renderer. */
@@ -97,6 +98,13 @@ export function setupForwardingListeners(
 	});
 	processManager.on('exit', (sessionId: string) => {
 		flushThinking(sessionId);
+	});
+
+	// Per-call usage feeds only the Throughput Gauge's live reading. Sent at once,
+	// not coalesced like thinking chunks, so it reaches the renderer ahead of the
+	// text of the same call.
+	processManager.on('call-usage', (sessionId: string, usage: CallUsage) => {
+		safeSend('process:call-usage', sessionId, usage);
 	});
 
 	// Handle tool execution events (OpenCode, Codex)

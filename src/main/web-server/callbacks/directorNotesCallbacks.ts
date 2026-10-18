@@ -1,6 +1,8 @@
 import type { WebServer } from '../WebServer';
 import type { WebServerFactoryDependencies } from '../web-server-factory';
 import { getHistoryManager } from '../../history-manager';
+import { isEncoreFeatureEnabled } from '../../../shared/encoreFeatureDefaults';
+import { isAgentDormant } from '../../../shared/agentVisibility';
 
 export function registerDirectorNotesCallbacks(
 	server: WebServer,
@@ -10,6 +12,16 @@ export function registerDirectorNotesCallbacks(
 
 	server.setGenerateDirectorNotesSynopsisCallback(
 		async (lookbackDays: number, provider: string) => {
+			// Same refusal the desktop IPC handler makes: a switched-off feature
+			// spawns no synopsis agent, whoever asks.
+			if (!isEncoreFeatureEnabled(settingsStore, 'directorNotes')) {
+				return {
+					success: false,
+					synopsis: '',
+					error:
+						"Director's Notes is turned off. Run `maestro-cli encore enable directorNotes` first.",
+				};
+			}
 			const processManager = getProcessManager();
 			if (!processManager) {
 				return {
@@ -44,9 +56,17 @@ export function registerDirectorNotesCallbacks(
 			const storedSessions = sessionsStore.get('sessions', []) as Array<{
 				id: string;
 				name?: string;
+				isPianola?: boolean;
 			}>;
+			// A dormant agent (Pianola with its flag off) is left out of the synopsis.
+			const encoreFeatures = settingsStore.get('encoreFeatures');
+			const dormantIds = new Set<string>();
 			const sessionNameMap = new Map<string, string>();
 			for (const s of storedSessions) {
+				if (isAgentDormant(s, encoreFeatures)) {
+					if (s.id) dormantIds.add(s.id);
+					continue;
+				}
 				if (s.id && s.name) sessionNameMap.set(s.id, s.name);
 			}
 
@@ -70,6 +90,7 @@ export function registerDirectorNotesCallbacks(
 					return typeof dn.idealEndState === 'string' ? dn.idealEndState : '';
 				})(),
 				sharedHistoryFile: await prepareSharedHistoryForSynopsis(cutoffTime),
+				excludeSessionIds: dormantIds,
 			});
 
 			if (!prompt) {

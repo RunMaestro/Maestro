@@ -31,6 +31,7 @@ import { readAgentConfigsStore, readSettingsStore } from '../store/read-stores';
 import { historyFilePath } from '../store/read-history';
 import type { TurnAgent, TurnContext } from './assemble';
 import { locateProviderBinary } from './provider-binary';
+import { isPianolaEnabled } from '../../agentVisibility';
 import {
 	buildAgentSystemPrompt,
 	buildPluginSectionsSystemPrompt,
@@ -127,7 +128,8 @@ function readPluginSectionContext(
 	isSsh: boolean,
 	sources: SystemPromptSources,
 	settingsData: Record<string, unknown>,
-	loader: PromptLoader | undefined
+	loader: PromptLoader | undefined,
+	sectionsOnly = false
 ): SystemPromptContext & { prompts: { pluginSections: string[] }; now: Date } {
 	const maestroRunPath = isSsh
 		? undefined
@@ -137,6 +139,7 @@ function readPluginSectionContext(
 	const pluginSections = systemPromptSectionsFor(settingsData.encoreFeatures, {
 		isSsh,
 		readyFlags: maestroRunPath ? ['maestroRun'] : [],
+		sectionsOnly,
 	})
 		.map((ref) => loader?.get(ref.promptId))
 		.filter((text): text is string => !!text && !!text.trim());
@@ -183,7 +186,11 @@ async function readSystemPromptContext(
 		...shared,
 		prompts: {
 			maestroSystem: loader?.get(PROMPT_IDS.MAESTRO_SYSTEM_PROMPT),
-			pianolaSystem: agent.isPianola ? loader?.get(PROMPT_IDS.PIANOLA_SYSTEM) : undefined,
+			// Only while the `pianola` flag is on: a dormant Pianola gets no manager role.
+			pianolaSystem:
+				agent.isPianola && isPianolaEnabled(settingsData.encoreFeatures)
+					? loader?.get(PROMPT_IDS.PIANOLA_SYSTEM)
+					: undefined,
 			pluginSections: shared.prompts.pluginSections,
 		},
 		gitBranch,
@@ -223,7 +230,8 @@ export function loadPluginSectionsSystemPrompt(
 			opts.isSsh,
 			sources,
 			readSettingsData(sources.paths.settingsFile),
-			promptLoaderOf(sources)
+			promptLoaderOf(sources),
+			true
 		)
 	);
 }
@@ -339,6 +347,7 @@ export async function loadTurnContext(
 				copilotPreamble,
 			},
 			userDataDir: sources.paths.userDataDir,
+			pianolaEnabled: isPianolaEnabled(settingsData.encoreFeatures),
 			autoRunHoldsTree: false,
 			isWindowsHost: sources.isWindowsHost ?? process.platform === 'win32',
 		},

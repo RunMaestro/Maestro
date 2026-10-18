@@ -18,6 +18,7 @@ import {
 import { getCliPrompt } from './prompt-loader';
 import { getConfigDirectory, readSettingValue, resolveSessionHistoryFilePath } from './storage';
 import { getGitBranch, isGitRepo } from './git-utils';
+import { isPianolaEnabled } from '../../shared/agentVisibility';
 
 /** True for the known "no readable prompt file" failure from `getCliPrompt`. */
 function isPromptMissingError(err: unknown): err is Error {
@@ -90,7 +91,11 @@ export async function prepareMaestroSystemPromptCli(
 		typeof conductorProfileSetting === 'string' ? conductorProfileSetting : undefined;
 
 	// Same role and plugin sections the desktop appends (see spawnHelpers.ts).
-	const roleSections = session.isPianola ? [await loadSection(PROMPT_IDS.PIANOLA_SYSTEM)] : [];
+	// A dormant Pianola (flag off) gets no manager role.
+	const roleSections =
+		session.isPianola && isPianolaEnabled(readSettingValue('encoreFeatures'))
+			? [await loadSection(PROMPT_IDS.PIANOLA_SYSTEM)]
+			: [];
 	// The app owns the MaestroRun check and records its answer on disk; the CLI
 	// has no service to ask. An SSH agent is never told about a local launcher.
 	const maestroRunPath = isSsh ? undefined : readMaestroRunReadyPath(getConfigDirectory());

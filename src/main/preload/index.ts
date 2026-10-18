@@ -60,6 +60,7 @@ import { createAiCommandApi } from './aiCommand';
 import { createDirectorNotesApi } from './directorNotes';
 import { createCueApi } from './cue';
 import { createCueBackupApi } from './cueBackup';
+import { createCueBundleApi } from './cueBundle';
 import { createPianolaApi } from './pianola';
 import { createPluginsApi } from './plugins';
 import { createWakatimeApi } from './wakatime';
@@ -74,6 +75,7 @@ import { createWindowsApi } from './windows';
 import { createImagesApi } from './images';
 import { createCotExportApi } from './cotExport';
 import { createQuickChatApi } from './quickChat';
+import { createCodexVisualizationApi } from './codexVisualization';
 import { MAESTRO_CLI_PATH_ARG_PREFIX } from '../../shared/maestro-cli';
 
 /**
@@ -261,6 +263,9 @@ contextBridge.exposeInMainWorld('maestro', {
 	// Cue Backup API (Cue modal Backup tab - snapshot/restore cue.yaml + prompts)
 	cueBackup: createCueBackupApi(),
 
+	// Cue Bundle API (Cue modal Bundles tab - export / import pipelines and agents)
+	cueBundle: createCueBundleApi(),
+
 	// Pianola API (autonomous manager: rules + decision log)
 	pianola: createPianolaApi(),
 
@@ -295,6 +300,8 @@ contextBridge.exposeInMainWorld('maestro', {
 	cotExport: createCotExportApi(),
 	// Quick Chat API (hotkey-summoned floating chat window + its engine)
 	quickChat: createQuickChatApi(),
+	// Codex `visualize` content references rendered inline
+	codexVisualization: createCodexVisualizationApi(),
 });
 
 // Re-export factory functions for external consumers (e.g., tests)
@@ -383,6 +390,8 @@ export {
 	createCueApi,
 	// Cue Backup
 	createCueBackupApi,
+	// Cue Bundles
+	createCueBundleApi,
 	// Pianola
 	createPianolaApi,
 	// Plugins
@@ -409,6 +418,8 @@ export {
 	createCotExportApi,
 	// Quick Chat
 	createQuickChatApi,
+	// Codex visualizations
+	createCodexVisualizationApi,
 };
 
 // Re-export types for TypeScript consumers
@@ -701,3 +712,7 @@ export type {
 	// From cotExport
 	CotExportApi,
 } from './cotExport';
+export type {
+	// From codexVisualization
+	CodexVisualizationApi,
+} from './codexVisualization';

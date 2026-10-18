@@ -18,6 +18,7 @@ import { paginateEntries, resolveHistoryEntryLimit } from '../../../shared/histo
 import type { PaginatedResult, GraphBucket } from '../../../shared/history';
 import { getHistoryManager } from '../../history-manager';
 import { getSessionsStore, getSettingsStore } from '../../stores';
+import { isAgentDormant } from '../../../shared/agentVisibility';
 import {
 	withIpcErrorLogging,
 	requireDependency,
@@ -28,6 +29,7 @@ import { buildDirectorNotesSynopsisPrompt } from '../../utils/director-notes-pro
 import { resolveSynopsisProvider } from '../../utils/director-notes-provider';
 import type { SynopsisProviderChoice } from '../../../shared/directorNotesProvider';
 import { getPrompt } from '../../prompt-manager';
+import { requireEncoreFeature } from '../../../shared/encoreFeatureDefaults';
 import {
 	looksLikeStructuredOutput,
 	parseDirectorNotesNarrative,
@@ -209,7 +211,7 @@ async function loadUnifiedCorpus(
 	shared: SharedHistoryCollection,
 	cue: CueCorpusOptions = {}
 ): Promise<CorpusAgent[]> {
-	const sessionIds = await historyManager.listSessionsWithHistory();
+	const sessionIds = await listLiveSessionsWithHistory(historyManager);
 	// Parallel reads - independent files.
 	const sessionEntries = await Promise.all(sessionIds.map((sid) => historyManager.getEntries(sid)));
 
@@ -273,17 +275,49 @@ function countAgentsAndSessions(corpus: CorpusAgent[]): {
 }
 
 /**
- * Every session record in the store, loosely typed.
+ * Every stored session record that is not dormant, loosely typed.
  *
  * Both the display-name map and the Cue scope read the same list: an agent's
  * name and its directory live here and nowhere else, and a `cue_events` row
- * knows neither.
+ * knows neither. A dormant Pianola (flag off) is left out, so its runs never
+ * reach the notes.
  */
 function readSessionRecords(): Array<Record<string, unknown>> {
 	const stored = getSessionsStore().get('sessions', []) as unknown as Array<
 		Record<string, unknown>
 	>;
-	return stored.filter((s) => typeof s === 'object' && s !== null);
+	const encoreFeatures = getSettingsStore().get('encoreFeatures');
+	return stored.filter(
+		(s) => typeof s === 'object' && s !== null && !isAgentDormant(s, encoreFeatures)
+	);
+}
+
+/** Ids of agents that are stored but dormant (a Pianola whose flag is off). */
+function dormantAgentIds(): Set<string> {
+	const stored = getSessionsStore().get('sessions', []) as unknown as Array<
+		Record<string, unknown>
+	>;
+	const encoreFeatures = getSettingsStore().get('encoreFeatures');
+	const ids = new Set<string>();
+	for (const record of stored) {
+		if (!record || !isAgentDormant(record, encoreFeatures)) continue;
+		const id = sessionField(record, 'id');
+		if (id) ids.add(id);
+	}
+	return ids;
+}
+
+/**
+ * Every agent with a history file, minus dormant ones. A dormant agent's file
+ * is kept on disk (turning the flag back on restores it) but contributes
+ * nothing to Director's Notes while it sleeps.
+ */
+async function listLiveSessionsWithHistory(
+	historyManager: ReturnType<typeof getHistoryManager>
+): Promise<string[]> {
+	const sessionIds = await historyManager.listSessionsWithHistory();
+	const dormant = dormantAgentIds();
+	return dormant.size === 0 ? sessionIds : sessionIds.filter((sid) => !dormant.has(sid));
 }
 
 /**
@@ -743,7 +777,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 				// for is exactly the window the aggregate buckets.
 				const now = Date.now();
 				const cueSinceMs = lookbackMs !== null ? now - lookbackMs : undefined;
-				const sessionIds = await historyManager.listSessionsWithHistory();
+				const sessionIds = await listLiveSessionsWithHistory(historyManager);
 				const filePathsRaw = await Promise.all(
 					sessionIds.map((sid) => historyManager.getHistoryFilePath(sid))
 				);
@@ -1066,6 +1100,9 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 		withIpcErrorLogging(
 			handlerOpts('generateSynopsis'),
 			async (options: SynopsisOptions): Promise<SynopsisResult> => {
+				// Spawns a batch agent, so it is refused outright while Director's
+				// Notes is off (the CLI's WS path checks the same flag).
+				requireEncoreFeature(getSettingsStore(), 'directorNotes', 'DirectorNotesDisabled');
 				logger.info(
 					`Synopsis generation requested for ${options.lookbackDays} days via ${options.provider}`,
 					LOG_CONTEXT
@@ -1095,6 +1132,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 					basePrompt: getPrompt('director-notes'),
 					idealEndState: getConfiguredIdealEndState(),
 					sharedHistoryFile: await prepareSharedHistoryForSynopsis(cutoffTime),
+					excludeSessionIds: dormantAgentIds(),
 				});
 
 				if (!prompt) {

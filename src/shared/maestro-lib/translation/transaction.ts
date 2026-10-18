@@ -288,7 +288,7 @@ export async function verifyTranslationWrites(journal: TranslationJournal): Prom
 			write.path,
 			journal.resourceWrites.includes(write)
 				? journal.plan.destination.projectRoot
-				: journal.plan.destination.accountRoot
+				: (journal.plan.destination.nativeSessionRoot ?? journal.plan.destination.accountRoot)
 		);
 		if (write.deleted) {
 			try {
@@ -408,7 +408,7 @@ export async function recoverTranslation(
 					write.path,
 					journal.resourceWrites.includes(write)
 						? journal.plan.destination.projectRoot
-						: journal.plan.destination.accountRoot
+						: (journal.plan.destination.nativeSessionRoot ?? journal.plan.destination.accountRoot)
 				);
 				try {
 					await fs.lstat(write.path);

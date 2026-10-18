@@ -32,10 +32,28 @@ export interface SymphonyHandlerDependencies {
 	settingsStore: Store<MaestroSettings>;
 }
 
+/**
+ * The Symphony Encore gate, bound once by `registerSymphonyHandlers` to the
+ * settings store it was handed. Every `symphony:*` channel goes through
+ * `handlerOpts`, so this is the ONE check: while Symphony is off no handler
+ * fetches a registry, clones a repo, opens a PR, or writes contribution state,
+ * whoever calls it (the modal, Auto Run's completion hook, the web bridge).
+ */
+let isSymphonyEnabled: () => boolean = () => true;
+
+export function setSymphonyEnabledCheck(check: () => boolean): void {
+	isSymphonyEnabled = check;
+}
+
+function requireSymphony(): void {
+	if (!isSymphonyEnabled()) throw new Error('SymphonyDisabled');
+}
+
 export const handlerOpts = (operation: string, logSuccess = true): CreateHandlerOptions => ({
 	context: LOG_CONTEXT,
 	operation,
 	logSuccess,
+	precondition: requireSymphony,
 });
 
 /**

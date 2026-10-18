@@ -24,20 +24,20 @@ describe('useCueVisibilityWiring', () => {
 
 	it('seeds main process with current visibility state on mount', () => {
 		Object.defineProperty(document, 'hidden', { configurable: true, value: true });
-		renderHook(() => useCueVisibilityWiring());
+		renderHook(() => useCueVisibilityWiring(true));
 		expect(setActive).toHaveBeenCalledTimes(1);
 		expect(setActive).toHaveBeenCalledWith(false);
 	});
 
 	it('seeds with active=true when document is visible at mount', () => {
 		Object.defineProperty(document, 'hidden', { configurable: true, value: false });
-		renderHook(() => useCueVisibilityWiring());
+		renderHook(() => useCueVisibilityWiring(true));
 		expect(setActive).toHaveBeenCalledTimes(1);
 		expect(setActive).toHaveBeenCalledWith(true);
 	});
 
 	it('forwards visibilitychange events as setActive(!hidden)', () => {
-		renderHook(() => useCueVisibilityWiring());
+		renderHook(() => useCueVisibilityWiring(true));
 		expect(setActive).toHaveBeenCalledWith(true); // mount seed
 
 		// Hide the document and dispatch the event
@@ -52,7 +52,7 @@ describe('useCueVisibilityWiring', () => {
 	});
 
 	it('removes its visibilitychange listener on unmount', () => {
-		const { unmount } = renderHook(() => useCueVisibilityWiring());
+		const { unmount } = renderHook(() => useCueVisibilityWiring(true));
 		setActive.mockClear();
 		unmount();
 
@@ -65,7 +65,7 @@ describe('useCueVisibilityWiring', () => {
 		const original = window.maestro.cue;
 		(window.maestro as unknown as { cue: unknown }).cue = undefined;
 		try {
-			expect(() => renderHook(() => useCueVisibilityWiring())).not.toThrow();
+			expect(() => renderHook(() => useCueVisibilityWiring(true))).not.toThrow();
 		} finally {
 			(window.maestro as unknown as { cue: unknown }).cue = original;
 		}
@@ -73,8 +73,26 @@ describe('useCueVisibilityWiring', () => {
 
 	it('swallows IPC rejection without throwing', async () => {
 		setActive.mockRejectedValue(new Error('IPC error'));
-		expect(() => renderHook(() => useCueVisibilityWiring())).not.toThrow();
+		expect(() => renderHook(() => useCueVisibilityWiring(true))).not.toThrow();
 		// Wait a microtask for the catch handler.
 		await Promise.resolve();
+	});
+
+	it('sends nothing and listens to nothing while Cue is disabled', () => {
+		renderHook(() => useCueVisibilityWiring(false));
+		expect(setActive).not.toHaveBeenCalled();
+
+		Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+		document.dispatchEvent(new Event('visibilitychange'));
+		expect(setActive).not.toHaveBeenCalled();
+	});
+
+	it('seeds visibility when Cue is switched back on', () => {
+		const { rerender } = renderHook(({ enabled }) => useCueVisibilityWiring(enabled), {
+			initialProps: { enabled: false },
+		});
+		expect(setActive).not.toHaveBeenCalled();
+		rerender({ enabled: true });
+		expect(setActive).toHaveBeenCalledWith(true);
 	});
 });

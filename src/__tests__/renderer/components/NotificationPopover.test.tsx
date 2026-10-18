@@ -6,10 +6,11 @@
  */
 
 import { useRef, type RefObject } from 'react';
-import { render, fireEvent, waitFor } from '@testing-library/react';
+import { render, fireEvent, screen, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NotificationPopover } from '../../../renderer/components/NotificationPopover';
 import { mockTheme } from '../../helpers/mockTheme';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { spyOnListeners, expectAllListenersRemoved } from '../../helpers/listenerLeakAssertions';
 
 // useClickOutside also attaches listeners; stub it so we only measure the
@@ -127,5 +128,59 @@ describe('NotificationPopover', () => {
 		expect(top + 110).toBe(anchorBottom);
 		expect(top + 110).toBeLessThanOrEqual(window.innerHeight);
 		expect(parseFloat(popover.style.left)).toBe(900 - 8 - 220);
+	});
+
+	describe('In-App Toasts toggle', () => {
+		// The shared Harness attaches its anchor ref during the same render, so the
+		// popover sees a null ref and renders nothing. In the app the bell button
+		// is mounted before the popover opens, so mount against a live anchor.
+		let anchor: HTMLButtonElement;
+		const renderOpen = () =>
+			render(
+				<NotificationPopover
+					theme={mockTheme}
+					anchorRef={{ current: anchor } as RefObject<HTMLElement | null>}
+					onClose={onClose}
+				/>
+			);
+
+		beforeEach(() => {
+			anchor = document.createElement('button');
+			document.body.appendChild(anchor);
+		});
+
+		afterEach(() => {
+			anchor.remove();
+		});
+
+		it('reads as on while toasts have a duration', () => {
+			useSettingsStore.setState({ toastDuration: 20 });
+			renderOpen();
+			expect(screen.getByRole('switch', { name: 'In-App Toasts' })).toHaveAttribute(
+				'aria-checked',
+				'true'
+			);
+		});
+
+		it('reads as off while the duration is Off', () => {
+			useSettingsStore.setState({ toastDuration: -1 });
+			renderOpen();
+			expect(screen.getByRole('switch', { name: 'In-App Toasts' })).toHaveAttribute(
+				'aria-checked',
+				'false'
+			);
+		});
+
+		it('switches toasts off and back on at the previous duration', () => {
+			useSettingsStore.setState({ toastDuration: 5, toastDurationBeforeOff: 20 });
+			renderOpen();
+			const toggle = screen.getByRole('switch', { name: 'In-App Toasts' });
+			fireEvent.click(toggle);
+			expect(useSettingsStore.getState().toastDuration).toBe(-1);
+			fireEvent.click(toggle);
+			expect(useSettingsStore.getState().toastDuration).toBe(5);
+			// Toggling never closes the popover.
+			expect(onClose).not.toHaveBeenCalled();
+		});
 	});
 });

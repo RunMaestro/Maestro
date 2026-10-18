@@ -40,8 +40,10 @@ const LOG_CONTEXT = '[TokenUsageCache]';
  * (each content block repeats its response's usage), the same kind of fix.
  * v6 prices a session's subagent transcripts into it.
  * v7 carries per-call token speed buckets (`speed`).
+ * v8 reads Grok session totals from usage.json; every Grok session cached
+ * before that holds zeros under an unchanged fingerprint.
  */
-export const TOKEN_USAGE_CACHE_VERSION = 7;
+export const TOKEN_USAGE_CACHE_VERSION = 8;
 
 /** One cached session: the fingerprint it was derived at plus the derived breakdown. */
 interface CachedSession {

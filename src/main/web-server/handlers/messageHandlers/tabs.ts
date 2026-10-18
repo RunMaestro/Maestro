@@ -21,7 +21,10 @@ import {
 	resolveUiSurface,
 	resolveUiSurfaceTab,
 	surfaceTabIds,
+	uiSurfaceRefusal,
+	type UiSurfaceTab,
 } from '../../../../shared/uiSurfaces';
+import { resolveEncoreFeatures } from '../../../../shared/encoreFeatureDefaults';
 import { normalizeRenameTabResult } from '../../types';
 
 /**
@@ -1079,6 +1082,23 @@ export function handleOpenDocumentGraph(
 }
 
 /**
+ * The persisted Encore flags, resolved onto their defaults. Lazy so this module
+ * loads in tests that never initialize the settings store; with no store the
+ * defaults apply.
+ */
+function readEncoreFeatures(): ReturnType<typeof resolveEncoreFeatures> {
+	let raw: unknown;
+	try {
+		const { getSettingsStore } =
+			require('../../../stores/getters') as typeof import('../../../stores/getters');
+		raw = getSettingsStore().get('encoreFeatures');
+	} catch {
+		raw = undefined;
+	}
+	return resolveEncoreFeatures(raw);
+}
+
+/**
  * Handle open_modal message - open one of the app's modals / dashboards by
  * `UiSurface.id`, optionally on a specific tab. Both the surface and the tab
  * are validated here so the renderer only ever receives ids it can act on.
@@ -1111,8 +1131,10 @@ export function handleOpenModal(
 	}
 
 	let tabId: string | undefined;
+	let resolvedTab: UiSurfaceTab | null = null;
 	if (tabName !== undefined) {
 		const tab = resolveUiSurfaceTab(surface, tabName);
+		resolvedTab = tab;
 		if (!tab) {
 			const valid = surfaceTabIds(surface);
 			sendResult(
@@ -1124,6 +1146,16 @@ export function handleOpenModal(
 			return;
 		}
 		tabId = tab.id;
+	}
+
+	// A surface behind a switched-off Encore Feature does not exist for the user.
+	// Refuse here so the caller gets a clear error; the renderer refuses too, but
+	// silently (no toast advertising the disabled feature), and its answer never
+	// travels back over this one-way send.
+	const refusal = uiSurfaceRefusal(surface, resolvedTab, readEncoreFeatures());
+	if (refusal) {
+		sendResult(false, refusal);
+		return;
 	}
 
 	logger.info(

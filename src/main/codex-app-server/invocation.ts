@@ -14,9 +14,14 @@
  * grant outside full access, an image, a custom flag the user added) makes the
  * whole turn unsupported, so the spawner runs it on `codex exec` instead. Dropping the
  * arg silently would run a turn the user did not configure.
+ *
+ * On an SSH remote the config's own args are the ssh client's, so the exec turn
+ * is read from `config.codexAppServerSsh` instead (see `ssh-launch.ts`).
  */
 
 import type { ProcessConfig } from '../process-manager/types';
+import { resolveCodexTransport } from '../../shared/codexTransport';
+import { DEFAULT_QUERY_SOURCE } from '../../shared/querySource';
 
 /** `SandboxMode` on `thread/start` / `thread/resume`. */
 export type CodexAppServerSandbox = 'read-only' | 'workspace-write' | 'danger-full-access';
@@ -91,14 +96,46 @@ function readFlagValue(
 }
 
 /**
+ * Whether this turn should try app-server at all: a Codex agent that opted in,
+ * on a turn a person sent. An Auto Run or Cue turn has nobody to steer it, so it
+ * stays on exec. Origin is `querySource`, which every dispatcher claims at the
+ * spawn site (absent means a human sent it, see `shared/querySource.ts`).
+ */
+export function wantsCodexAppServer(
+	config: Pick<ProcessConfig, 'toolType' | 'codexTransport' | 'querySource'>
+): boolean {
+	return (
+		resolveCodexTransport(config) === 'app-server' &&
+		(config.querySource ?? DEFAULT_QUERY_SOURCE) === 'user'
+	);
+}
+
+/**
+ * The exec turn app-server would carry: its args, working directory and
+ * prompt. Locally that is the config itself. On an SSH remote the config holds
+ * the ssh client's args, the LOCAL cwd and no prompt (it rides the stdin
+ * script), so the planned turn comes from the SSH launch.
+ */
+function execTurnOf(config: ProcessConfig): { args: string[]; cwd: string; prompt?: string } {
+	const ssh = config.codexAppServerSsh;
+	return ssh
+		? { args: ssh.execArgs, cwd: ssh.cwd, prompt: ssh.prompt }
+		: { args: config.args, cwd: config.cwd, prompt: config.prompt };
+}
+
+/**
  * Why this spawn cannot run on app-server, or null when it can. Covers the
  * config-level exclusions; the args themselves are checked by
  * `parseCodexAppServerInvocation()`.
  */
 export function codexAppServerConfigBlocker(config: ProcessConfig): string | null {
-	if (!config.prompt) return 'no prompt';
+	if (!execTurnOf(config).prompt) return 'no prompt';
 	if (config.images && config.images.length > 0) return 'image prompt';
-	if (config.sshRemoteId || config.sshStdinScript) return 'SSH remote';
+	// An SSH turn runs on app-server only through the launch the spawn handler
+	// built for it; the exec wrapper's script cannot be repurposed.
+	if ((config.sshRemoteId || config.sshStdinScript) && !config.codexAppServerSsh) {
+		return 'SSH remote without an app-server launch';
+	}
 	if (config.promptAlreadyInArgs) return 'prompt embedded in args';
 	return null;
 }
@@ -108,9 +145,16 @@ export function parseCodexAppServerInvocation(
 ): CodexAppServerInvocationResult {
 	const blocker = codexAppServerConfigBlocker(config);
 	if (blocker) return { ok: false, reason: blocker };
+	const turn = execTurnOf(config);
+	return parseCodexExecArgs(turn.args, turn.cwd);
+}
 
-	const { args } = config;
-	const out: CodexAppServerInvocation = { cwd: config.cwd, configArgs: [] };
+/**
+ * Read a `codex exec` arg list into an app-server invocation. `cwd` is the
+ * thread's directory unless the args name one with `-C`.
+ */
+export function parseCodexExecArgs(args: string[], cwd: string): CodexAppServerInvocationResult {
+	const out: CodexAppServerInvocation = { cwd, configArgs: [] };
 	let sawExec = false;
 	let bypass = false;
 	let sandbox: CodexAppServerSandbox | undefined;

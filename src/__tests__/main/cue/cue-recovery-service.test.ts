@@ -286,6 +286,27 @@ describe('cue-recovery-service', () => {
 			});
 		});
 
+		it('logs a gap at engine start as downtime, not sleep, and reconciles the same way', () => {
+			const now = Date.now();
+			vi.spyOn(Date, 'now').mockReturnValue(now);
+			mockGetLastHeartbeat.mockReturnValue(now - 10 * 60_000);
+
+			const onLog = vi.fn();
+			const service = createCueRecoveryService({
+				onLog,
+				getSessions: () => new Map(),
+				onDispatch: vi.fn(),
+			});
+
+			service.detectSleepAndReconcile({ atEngineStart: true });
+
+			expect(onLog).toHaveBeenCalledWith(
+				'cue',
+				'[CUE] Engine was not running for 10m. Reconciling missed events.'
+			);
+			expect(onLog).not.toHaveBeenCalledWith('cue', expect.stringContaining('Sleep detected'));
+		});
+
 		it('survives errors thrown by getLastHeartbeat', () => {
 			mockGetLastHeartbeat.mockImplementation(() => {
 				throw new Error('db read failed');

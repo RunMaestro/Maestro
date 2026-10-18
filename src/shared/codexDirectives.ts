@@ -326,14 +326,16 @@ export function isKnownCodexDirective(name: string): name is KnownCodexDirective
 }
 
 export interface CodexDirectiveMatch extends CodexDirective {
-	/** Index of the first colon in `source`. */
+	/** Index of the first colon (or the opening U+E200 of a content reference). */
 	start: number;
-	/** Index just past the closing `}`, so `source.slice(start, end) === raw`. */
+	/** Index just past the closing `}` (or U+E201), so `source.slice(start, end) === raw`. */
 	end: number;
 }
 
 /**
  * Find every KNOWN directive in `source`, in order, with its offsets.
+ * Content references (the U+E200 grammar at the end of this file) are
+ * included, so a caller handles both wire formats through one list.
  *
  * Unknown names are skipped entirely rather than reported, so a caller can
  * replace each match blind. Offsets are string indices (UTF-16 code units), not
@@ -343,8 +345,26 @@ export function findCodexDirectives(
 	source: string,
 	options: ParseCodexDirectiveOptions = {}
 ): CodexDirectiveMatch[] {
+	if (!source) return [];
+	const references = findCodexContentReferences(source, options);
+	const directives = findColonDirectives(source, options);
+	if (references.length === 0) return directives;
+	// A reference's JSON payload is full of colons, so a colon directive found
+	// inside one is part of the payload, not a directive of its own.
+	const outside = directives.filter(
+		(directive) =>
+			!references.some(
+				(reference) => directive.start < reference.end && reference.start < directive.end
+			)
+	);
+	return [...outside, ...references].sort((a, b) => a.start - b.start);
+}
+
+function findColonDirectives(
+	source: string,
+	options: ParseCodexDirectiveOptions
+): CodexDirectiveMatch[] {
 	const matches: CodexDirectiveMatch[] = [];
-	if (!source) return matches;
 
 	let i = 0;
 	while (i < source.length) {
@@ -372,5 +392,97 @@ export function findCodexDirectives(
 		i = next;
 	}
 
+	return matches;
+}
+
+/**
+ * Content references: Codex's SECOND inline grammar.
+ *
+ * Newer Codex builds embed widgets as a private-use-delimited token instead of
+ * a colon directive:
+ *
+ *     U+E200 visualize U+E202 {"path":"/abs/chart.html","mode":"wide"} U+E201
+ *
+ * The delimiters are Unicode private-use characters, so a reader that does not
+ * know the grammar draws them as empty boxes around the raw JSON. The system
+ * prompt documents two names: `visualize` (an HTML fragment the agent wrote to
+ * disk, which the Codex app renders inline) and `cite` (a source pill pointing
+ * at a web-search result id, e.g. `turn0view0`).
+ *
+ * The same two rules as the colon grammar hold: a reference is single-line,
+ * and a malformed one returns nothing rather than a guess. A JSON payload
+ * yields its string fields as attributes; any other payload is kept whole as
+ * `ref`, which is the shape `cite` uses.
+ */
+export const KNOWN_CODEX_CONTENT_REFERENCES = ['visualize', 'cite'] as const;
+
+const KNOWN_CODEX_CONTENT_REFERENCE_SET: ReadonlySet<string> = new Set(
+	KNOWN_CODEX_CONTENT_REFERENCES
+);
+
+const REFERENCE_START = '\uE200';
+const REFERENCE_SEPARATOR = 0xe202;
+const REFERENCE_END = 0xe201;
+
+function parseReferencePayload(payload: string): Record<string, string> | null {
+	if (!payload.trimStart().startsWith('{')) return { ref: payload };
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(payload);
+	} catch {
+		return null;
+	}
+	if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+	const attributes: Record<string, string> = {};
+	for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+		if (typeof value === 'string') attributes[key] = value;
+	}
+	return attributes;
+}
+
+function parseContentReferenceAt(
+	source: string,
+	offset: number,
+	budget: number
+): CodexDirectiveMatch | null {
+	const limit = Math.min(source.length, offset + budget);
+	let i = offset + 1;
+	const nameStart = i;
+	if (i >= limit || !isNameStart(source.charCodeAt(i))) return null;
+	while (i < limit && isNameChar(source.charCodeAt(i))) i += 1;
+	const name = source.slice(nameStart, i);
+	if (i >= limit || source.charCodeAt(i) !== REFERENCE_SEPARATOR) return null;
+	const payloadStart = i + 1;
+	for (i = payloadStart; i < limit; i += 1) {
+		const code = source.charCodeAt(i);
+		if (code === LINE_FEED || code === CARRIAGE_RETURN) return null;
+		if (code === REFERENCE_END) break;
+	}
+	if (i >= limit) return null;
+	const attributes = parseReferencePayload(source.slice(payloadStart, i));
+	if (!attributes) return null;
+	const end = i + 1;
+	return { name, attributes, raw: source.slice(offset, end), start: offset, end };
+}
+
+/** Every KNOWN content reference in `source`, in order, with its offsets. */
+export function findCodexContentReferences(
+	source: string,
+	options: ParseCodexDirectiveOptions = {}
+): CodexDirectiveMatch[] {
+	const matches: CodexDirectiveMatch[] = [];
+	const budget = options.budget ?? DEFAULT_CODEX_DIRECTIVE_BUDGET;
+	if (!source || !(budget > 0)) return matches;
+
+	let i = source.indexOf(REFERENCE_START);
+	while (i >= 0) {
+		const match = parseContentReferenceAt(source, i, budget);
+		if (match && KNOWN_CODEX_CONTENT_REFERENCE_SET.has(match.name)) {
+			matches.push(match);
+			i = source.indexOf(REFERENCE_START, match.end);
+		} else {
+			i = source.indexOf(REFERENCE_START, i + 1);
+		}
+	}
 	return matches;
 }

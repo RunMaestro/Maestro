@@ -7,6 +7,7 @@ import { useTabStore } from '../stores/tabStore';
 import { useMessageGistStore } from '../stores/messageGistStore';
 import { useActiveSession } from '../hooks/session/useActiveSession';
 import { useSessionStore } from '../stores/sessionStore';
+import { filterLiveAgents } from '../../shared/agentVisibility';
 import { notifyToast } from '../stores/notificationStore';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { THEMES } from '../constants/themes';
@@ -309,7 +310,11 @@ function AppStandaloneModalsInner({
 	// returning user from a fresh install, and it is the only signal that needs
 	// no new persisted state. A returning user with every agent deleted gets the
 	// new-user copy, which offers the same two choices - harmless either way.
-	const hasAnySession = useSessionStore((s) => s.sessions.length > 0);
+	// Live agents only, like the empty state: a dormant Pianola does not count.
+	const pianolaEnabled = useSettingsStore((s) => s.encoreFeatures.pianola);
+	const hasAnySession = useSessionStore(
+		(s) => filterLiveAgents(s.sessions, { pianola: pianolaEnabled }).length > 0
+	);
 	// Merge plugin-contributed themes into the picker list through the shared
 	// contribution registry (built-in always wins an id collision). Identical to
 	// THEMES when the plugins Encore flag is off (no contributions).

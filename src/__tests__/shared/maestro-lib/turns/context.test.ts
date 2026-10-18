@@ -139,9 +139,18 @@ describe('loadTurnContext', () => {
 		expect(result.context.prompts.maestroSystem).toBeUndefined();
 	});
 
+	it('leaves a dormant Pianola (flag off) without its role or manager env', async () => {
+		write(path.join(prompts, 'pianola-system.md'), 'MANAGER');
+		const pianola = await load(makeAgent({ isPianola: true }));
+		if (!pianola.ok) throw new Error('expected a context');
+		expect(pianola.context.prompts.pianolaSystem).toBeUndefined();
+		expect(pianola.context.pianolaEnabled).toBe(false);
+	});
+
 	it('loads Pianola and the Copilot preamble only for the agents that use them', async () => {
 		write(path.join(prompts, 'pianola-system.md'), 'MANAGER');
 		write(path.join(prompts, 'copilot-preamble.md'), 'PREAMBLE');
+		write(paths.settingsFile, { encoreFeatures: { pianola: true } });
 		const plain = await load();
 		const pianola = await load(makeAgent({ isPianola: true }));
 		const copilot = await load(makeAgent({ toolType: 'copilot-cli' }));

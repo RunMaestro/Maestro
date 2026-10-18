@@ -30,12 +30,17 @@ import {
 import { getClaudeTokenMode } from '../../../shared/claudeTokenMode';
 import { cheapTurnSettings } from '../../../shared/modelTiers';
 import type { AgentError, ToolType } from '../../../shared/types';
-import { parseEffortRejection, type EffortRejection } from '../../../shared/effortRejection';
+import {
+	parseAgentErrorEffortRejection,
+	parseEffortRejection,
+	type EffortRejection,
+} from '../../../shared/effortRejection';
 import { getSshRemoteConfig, createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
 import { ensureRemoteMaestroPProbed } from '../../agents/probeRemoteMaestroP';
 import { buildSshCommand } from '../../utils/ssh-command-builder';
 import { getPrompt } from '../../prompt-manager';
 import { isWindows } from '../../../shared/platformDetection';
+import { truncateAtWordBoundary } from '../../../shared/formatters';
 import type { ProcessManager } from '../../process-manager';
 import type { AgentDetector } from '../../agents';
 import type { MaestroSettings } from './persistence';
@@ -444,10 +449,14 @@ export async function generateTabName(
 		// Requiring raw JSON here (as #1110 once did) rejected every name a
 		// TUI-mode agent generated, so its tabs were never auto-named.
 
+		// Read once per request so early and final extraction cap alike.
+		const shortenLongNames = settingsStore.get('shortenLongTabNames', false) === true;
+
 		// Create a promise that resolves when we get the tab name
 		if (signal?.aborted) return null;
 		return new Promise<string | null>((resolve) => {
 			let output = '';
+			let rawOutput = '';
 			let resolved = false;
 			let effortRejection: EffortRejection | null = null;
 
@@ -455,6 +464,7 @@ export async function generateTabName(
 				clearTimeout(timeoutId);
 				clearInterval(earlyExtractIntervalId);
 				processManager.off('data', onData);
+				processManager.off('raw-stdout', onRawStdout);
 				processManager.off('exit', onExit);
 				processManager.off('agent-error', onAgentError);
 				signal?.removeEventListener('abort', onAbort);
@@ -493,7 +503,10 @@ export async function generateTabName(
 			// without waiting for the full process to exit.
 			const earlyExtractIntervalId = setInterval(() => {
 				if (resolved || !output.trim()) return;
-				const earlyResult = extractTabNameFromOutput(effectiveAgentType, output);
+				const earlyResult = extractTabNameFromOutput(effectiveAgentType, output, {
+					rawOutput,
+					shortenLongNames,
+				});
 				if (earlyResult.name) {
 					resolveWith(earlyResult.name, 'resolved early from partial output');
 				}
@@ -504,13 +517,19 @@ export async function generateTabName(
 				if (dataSessionId !== sessionId) return;
 				output += data;
 			};
+			// The data event contains parsed text. Keep stdout so a final JSON
+			// response can be distinguished from an unstructured terminal line.
+			const onRawStdout = (dataSessionId: string, data: string) => {
+				if (dataSessionId !== sessionId) return;
+				rawOutput += data;
+			};
 
 			// A provider's refusal of the effort arrives as an agent error, not
 			// as output: the turn never ran, so `output` stays empty and the
 			// exit below would otherwise read as an anonymous failure.
 			const onAgentError = (errorSessionId: string, agentError: AgentError) => {
 				if (errorSessionId !== sessionId) return;
-				effortRejection = parseEffortRejection(agentError?.message) ?? effortRejection;
+				effortRejection = parseAgentErrorEffortRejection(agentError) ?? effortRejection;
 			};
 
 			// Listen for process exit
@@ -520,6 +539,7 @@ export async function generateTabName(
 				if (resolved) {
 					// Already resolved by early extraction, just clean up listeners
 					processManager.off('data', onData);
+					processManager.off('raw-stdout', onRawStdout);
 					processManager.off('exit', onExit);
 					processManager.off('agent-error', onAgentError);
 					return;
@@ -559,7 +579,10 @@ export async function generateTabName(
 					return;
 				}
 
-				const extraction = extractTabNameFromOutput(effectiveAgentType, output);
+				const extraction = extractTabNameFromOutput(effectiveAgentType, output, {
+					rawOutput,
+					shortenLongNames,
+				});
 				if (!extraction.name) {
 					logger.warn('Tab naming extraction failed', LOG_CONTEXT, {
 						sessionId,
@@ -574,6 +597,7 @@ export async function generateTabName(
 			const onAbort = () => resolveWith(null, 'cancelled');
 
 			processManager.on('data', onData);
+			processManager.on('raw-stdout', onRawStdout);
 			processManager.on('exit', onExit);
 			processManager.on('agent-error', onAgentError);
 			signal?.addEventListener('abort', onAbort, { once: true });
@@ -672,7 +696,7 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
  *      along with the other headless-only flags, so the model runs a real
  *      agentic turn and its raw terminal transcript leaks function-call markup
  *      like `<invoke name="...">` / `</parameter>` / `</invoke>`. That output
- *      isn't stream-json, so extractAgentResponseText() can't lift a clean
+ *      isn't stream-json, so extractAgentResponse() can't lift a clean
  *      result and we fall back to scraping the raw TUI buffer.
  *   2. Empty-turn placeholders. The TUI renders `(no content)` / `(no output)`
  *      for a turn with no text block.
@@ -724,11 +748,15 @@ interface TabNameExtractionResult {
  * maestro-p TUI emits plain terminal text), so the caller falls back to
  * running extractTabName over the raw output exactly as before.
  */
-function extractAgentResponseText(agentType: string, output: string): string | null {
+function extractAgentResponse(
+	agentType: string,
+	output: string
+): { text: string; isFinal: boolean } | null {
 	const parser = createOutputParser(agentType);
 	if (!parser) return null;
 
 	let sawJson = false;
+	let isFinal = false;
 	let resultText = '';
 	let assistantText = '';
 	for (const line of output.split('\n')) {
@@ -744,11 +772,12 @@ function extractAgentResponseText(agentType: string, output: string): string | n
 		if (!parsed || typeof parsed !== 'object') continue;
 		sawJson = true;
 		const event = parser.parseJsonObject(parsed);
-		if (!event?.text) continue;
-		if (event.type === 'result') {
-			// The final result carries the complete response; last one wins.
-			resultText = event.text;
-		} else if (event.type === 'text' && !event.isReasoning) {
+		if (!event) continue;
+		if (parser.isResultMessage(event)) {
+			// Completion can be a textless marker after streamed answer chunks.
+			isFinal = true;
+			if (event.text) resultText = event.text;
+		} else if (event.type === 'text' && !event.isReasoning && event.text) {
 			// Streaming assistant chunks - accumulate so early extraction can
 			// resolve before the terminating result event arrives. Reasoning
 			// deltas (grok `thought`, codex/copilot reasoning) are excluded:
@@ -761,7 +790,7 @@ function extractAgentResponseText(agentType: string, output: string): string | n
 
 	if (!sawJson) return null;
 	const text = (resultText || assistantText).trim();
-	return text.length > 0 ? text : null;
+	return text.length > 0 ? { text, isFinal } : null;
 }
 
 /**
@@ -769,17 +798,53 @@ function extractAgentResponseText(agentType: string, output: string): string | n
  * (stream-json) output via the agent's parser first and falling back to
  * plain-text extraction over the raw output.
  */
-function extractTabNameFromOutput(agentType: string, output: string): TabNameExtractionResult {
-	const responseText = extractAgentResponseText(agentType, output);
-	return extractTabName(responseText ?? output);
+function extractTabNameFromOutput(
+	agentType: string,
+	output: string,
+	{
+		rawOutput = '',
+		shortenLongNames = false,
+	}: { rawOutput?: string; shortenLongNames?: boolean } = {}
+): TabNameExtractionResult {
+	const response = extractAgentResponse(agentType, rawOutput || output);
+	return extractTabName(response?.text ?? output, {
+		isFinal: response?.isFinal ?? false,
+		shortenLongNames,
+	});
 }
+
+/**
+ * Longest line accepted as a name from output that is NOT a parser-confirmed
+ * final response (raw terminal text, unfinished streams). Anything longer is
+ * treated as prose, not a title.
+ */
+const TAB_NAME_RAW_MAX_LENGTH = 40;
+
+/**
+ * Length a final title is cut to when "Shorten long tab names" is on. The
+ * same value as the raw ceiling, so a shortened name looks like any other.
+ */
+const TAB_NAME_SHORT_MAX_LENGTH = 40;
+
+/**
+ * Length a final title is cut to when the setting is off. The tab strip shows
+ * the full name, so this is only a guard against a model answering with a
+ * sentence instead of a title.
+ */
+const TAB_NAME_FULL_MAX_LENGTH = 80;
 
 /**
  * Extract a clean tab name from agent output.
  * The output may contain ANSI codes, extra whitespace, or markdown formatting.
  * Returns a structured result with diagnostic reason for logging.
  */
-function extractTabName(output: string): TabNameExtractionResult {
+function extractTabName(
+	output: string,
+	{
+		isFinal = false,
+		shortenLongNames = false,
+	}: { isFinal?: boolean; shortenLongNames?: boolean } = {}
+): TabNameExtractionResult {
 	if (!output || !output.trim()) {
 		return { name: null, reason: 'empty_output' };
 	}
@@ -811,7 +876,7 @@ function extractTabName(output: string): TabNameExtractionResult {
 		// Filter out empty lines and lines that look like instructions/examples
 		return (
 			trimmed.length > 0 &&
-			trimmed.length <= 40 && // Tab names should be short
+			(isFinal || trimmed.length <= TAB_NAME_RAW_MAX_LENGTH) && // Only final responses may run long
 			!trimmed.toLowerCase().includes('example') &&
 			!trimmed.toLowerCase().includes('message:') &&
 			!trimmed.toLowerCase().includes('rules:') &&
@@ -836,10 +901,12 @@ function extractTabName(output: string): TabNameExtractionResult {
 	// Remove trailing punctuation (periods, colons, etc.)
 	tabName = tabName.replace(/[.:;,!?]+$/, '');
 
-	// Ensure reasonable length (max 40 chars for tab names)
-	if (tabName.length > 40) {
-		tabName = tabName.substring(0, 37) + '...';
-	}
+	// A long final title is kept whole unless the user asked for short names.
+	tabName = truncateAtWordBoundary(
+		tabName,
+		shortenLongNames ? TAB_NAME_SHORT_MAX_LENGTH : TAB_NAME_FULL_MAX_LENGTH,
+		'...'
+	);
 
 	// If the result is empty or too short, return null
 	if (tabName.length < 2) {

@@ -20,6 +20,8 @@ import {
 	UnsupportedCommandError,
 	CommandTimeoutError,
 } from '../services/maestro-client';
+import { ExitCode } from '../exit-codes';
+import { MaestroNotRunningError } from '../services/maestro-not-running';
 import type { GoalRunConfig } from '../../shared/goalDriven/types';
 
 interface GoalRunOptions {
@@ -107,13 +109,18 @@ function goalRunDeepLink(agentId: string, tabId?: string): string {
  * one shape and no path can silently fall back to a headless run - the whole
  * point of `--visible` is that the user can watch it.
  */
-function failVisibleLaunch(message: string, code: string, useJson: boolean): never {
+function failVisibleLaunch(
+	message: string,
+	code: string,
+	useJson: boolean,
+	exitCode: ExitCode = ExitCode.GeneralError
+): never {
 	if (useJson) {
 		emitError(message, code);
 	} else {
 		console.error(formatError(message));
 	}
-	process.exit(1);
+	process.exit(exitCode);
 }
 
 /**
@@ -187,6 +194,14 @@ async function runVisibleGoalRun(
 		// Fail closed. Never fall back to a headless run: the caller asked for a
 		// run they could watch, and a silent headless substitute is invisible in
 		// exactly the surface they were pointing at.
+		if (error instanceof MaestroNotRunningError) {
+			failVisibleLaunch(
+				`${error.message}. Start Maestro and retry, or drop --visible to run headlessly.`,
+				error.code,
+				useJson,
+				ExitCode.NotRunning
+			);
+		}
 		if (error instanceof UnsupportedCommandError) {
 			failVisibleLaunch(error.message, 'UNSUPPORTED_COMMAND', useJson);
 		}

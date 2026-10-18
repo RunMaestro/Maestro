@@ -283,6 +283,7 @@ export function batchReducer(state: BatchState, action: BatchAction): BatchState
 					currentDocTasksCompleted: 0,
 					totalTasksAcrossAllDocs: payload.totalTasksAcrossAllDocs,
 					completedTasksAcrossAllDocs: payload.completedTasksAcrossAllDocs ?? 0,
+					initialCompletedTasks: payload.completedTasksAcrossAllDocs ?? 0,
 					// Loop mode
 					loopEnabled: payload.loopEnabled,
 					loopIteration: 0,

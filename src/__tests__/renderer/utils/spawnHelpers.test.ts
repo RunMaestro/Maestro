@@ -132,7 +132,9 @@ describe('prepareMaestroSystemPrompt', () => {
 		const second = await prepareMaestroSystemPrompt({ session: baseSession });
 		expect(first).toBeDefined();
 		expect(second).toBeDefined();
-		expect((window as any).maestro.prompts.get).toHaveBeenCalledTimes(2);
+		// The base prompt each time, plus the Maestro Cue section (Cue ships on).
+		const ids = (window as any).maestro.prompts.get.mock.calls.map((call: unknown[]) => call[0]);
+		expect(ids.filter((id: string) => id === 'maestro-system-prompt')).toHaveLength(2);
 	});
 
 	describe('role and plugin sections (shared assembler)', () => {
@@ -171,10 +173,23 @@ describe('prepareMaestroSystemPrompt', () => {
 		});
 
 		it('appends the Pianola role section for the Pianola agent', async () => {
+			useSettingsStore.setState({
+				encoreFeatures: { ...(savedEncore as any), computerHistory: false, pianola: true },
+			});
 			const result = await prepareMaestroSystemPrompt({
 				session: { ...baseSession, isPianola: true },
 			});
 			expect(result).toBe('BASE\n\n---\n\nPIANOLA');
+		});
+
+		it('leaves the Pianola role section out while the pianola flag is off', async () => {
+			useSettingsStore.setState({
+				encoreFeatures: { ...(savedEncore as any), computerHistory: false, pianola: false },
+			});
+			const result = await prepareMaestroSystemPrompt({
+				session: { ...baseSession, isPianola: true },
+			});
+			expect(result).toBe('BASE');
 		});
 
 		it('appends the Computer History section with the local store path when enabled', async () => {

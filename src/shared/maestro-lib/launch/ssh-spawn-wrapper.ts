@@ -85,6 +85,15 @@ export interface SshSpawnWrapConfig {
 	 * explicitly here or every remote turn arrives looking hand-typed.
 	 */
 	querySource?: QuerySource;
+	/**
+	 * Launch through the stdin script even when the prompt is small enough to
+	 * ride the command line. Only a stdin-script launch can record the remote
+	 * agent's pid for a later Stop (see `withRemotePidRecord` in
+	 * `src/main/utils/ssh-remote-signal.ts`); an inline `ssh host 'cmd'` spawn
+	 * leaves Stop reaching only the local ssh client. The prompt still travels
+	 * as an argument, exactly as on the inline path.
+	 */
+	launchViaStdinScript?: boolean;
 }
 
 /**
@@ -221,6 +230,26 @@ export async function wrapSpawnWithSsh(
 	const sshArgs = config.prompt
 		? [...config.args, ...buildPromptArgv(config, config.prompt)]
 		: [...config.args];
+
+	if (config.launchViaStdinScript) {
+		const sshCommand = await buildSshCommandWithStdin(sshResult.config, {
+			command: remoteCommand,
+			args: sshArgs,
+			cwd: config.cwd,
+			env: withQuerySource(config.customEnvVars, config.querySource),
+		});
+
+		return {
+			command: sshCommand.command,
+			args: sshCommand.args,
+			cwd: os.homedir(),
+			customEnvVars: undefined,
+			prompt: undefined,
+			sshStdinScript: sshCommand.stdinScript,
+			sshRemoteCommand: sshCommand.remoteCommandLine,
+			sshRemoteUsed: sshResult.config,
+		};
+	}
 
 	const sshCommand = await buildSshCommand(sshResult.config, {
 		command: remoteCommand,

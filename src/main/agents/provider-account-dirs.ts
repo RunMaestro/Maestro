@@ -34,6 +34,7 @@ import { captureException } from '../utils/sentry';
 import { isInitialized } from '../stores/instances';
 import { getAgentConfigsStore, getSessionsStore, getSettingsStore } from '../stores/getters';
 import { isBlankEnvValue } from '../../shared/agentEnvironment';
+import { filterLiveAgents } from '../../shared/agentVisibility';
 import { resolveAgentAccountDir as resolveAccountDirForAgent } from '../../shared/agentAccountDir';
 import {
 	effectiveAgentCustomEnvVars,
@@ -69,10 +70,16 @@ export interface ProviderAccountDirsOptions {
 	agentLevelEnvVars?: Record<string, string>;
 }
 
-/** Stored agents, or an empty list before `initializeStores()` has run. */
+/**
+ * Live stored agents (a dormant Pianola is left out), or an empty list before
+ * `initializeStores()` has run.
+ */
 function readStoredSessions(): Array<Record<string, unknown>> {
 	if (!isInitialized()) return [];
-	return getSessionsStore().get('sessions', []) as Array<Record<string, unknown>>;
+	return filterLiveAgents(
+		getSessionsStore().get('sessions', []) as Array<Record<string, unknown>>,
+		getSettingsStore().get('encoreFeatures')
+	);
 }
 
 /** Provider-level `customEnvVars`, or none before `initializeStores()` has run. */

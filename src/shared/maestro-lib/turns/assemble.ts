@@ -119,6 +119,11 @@ export interface TurnContext {
 	/** The `maestro-cli.js` script agents should call (PA6). */
 	maestroCliPath?: string;
 	/**
+	 * The `pianola` Encore flag. Off (or absent): a Pianola agent is dormant and gets none of
+	 * the manager env (`MAESTRO_CLI_JS`, `MAESTRO_AGENT_ID`).
+	 */
+	pianolaEnabled?: boolean;
+	/**
 	 * `<userData>/computer-history` on this machine, which the Computer History section names.
 	 * Ignored for SSH.
 	 */
@@ -323,7 +328,7 @@ export function assembleTurn(
 	// What Maestro states about this spawn.
 	const maestroEnvVars: Record<string, string> = {
 		...buildCallerIdentityEnv(agent.id, tab.id),
-		...(agent.isPianola && context.maestroCliPath
+		...(agent.isPianola && context.pianolaEnabled === true && context.maestroCliPath
 			? { MAESTRO_CLI_JS: context.maestroCliPath, MAESTRO_AGENT_ID: agent.id }
 			: {}),
 		...(context.userDataDir ? { [USER_DATA_ENV_VAR]: context.userDataDir } : {}),

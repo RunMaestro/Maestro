@@ -49,7 +49,7 @@ import {
  * settings it was displaying, so clearing a picker back to "Default" has to
  * clear the stored field rather than leave the previous value behind.
  *
- * `crossAgent` is optional and carries the two `@mention` flags, re-derived by
+ * `crossAgent` is optional and carries the `@mention` fields, re-derived by
  * the caller from the EDITED text. It is a parameter rather than something this
  * function works out for itself because deriving it needs `planCrossAgentMentions`,
  * which reads the session store - a dependency a pure queue utility must not take
@@ -60,7 +60,9 @@ export function applyQueuedItemEdit(
 	queue: QueuedItem[],
 	itemId: string,
 	patch: QueuedItemEditPatch,
-	crossAgent?: { crossAgentMention: boolean; crossAgentOnly: boolean }
+	crossAgent?: Pick<QueuedItem, 'crossAgentOnly' | 'mentionRouting'> & {
+		crossAgentMention: boolean;
+	}
 ): QueuedItem[] {
 	return queue.map((item) =>
 		item.id === itemId
@@ -242,7 +244,8 @@ export function applyQueuedItemRelease(session: Session, tabId: string | undefin
  *
  * Three things happen together, and they only make sense together:
  *
- * 1. **The tab is released.** Dispatch marked it busy; nothing is running.
+ * 1. **The tab is released** - unless the failure was a collision (below).
+ *    Dispatch marked it busy; nothing is running.
  * 2. **The card is removed.** The user-visible entry is appended BEFORE the
  *    spawn, so a failed dispatch leaves a card for a prompt that was never
  *    delivered. Matching is by `queuedItemId`, not by text, so an identical
@@ -253,29 +256,30 @@ export function applyQueuedItemRelease(session: Session, tabId: string | undefin
  *    turn in the queue for the life of an outage, and a second copy would
  *    double-send the prompt when the outage cleared.
  *
- * `hold` decides whether the item comes back runnable. A spawn collision (the
- * tab's previous process has not exited yet) is transient and self-correcting,
- * so the item stays runnable and the next drain trigger sends it a moment
- * later (bounded by {@link noteSpawnCollision}, since an old process that never
- * releases its key would otherwise collide forever). Any OTHER failure would
- * fail again the same way on the next tick, so
- * the item comes back `paused`: still there, still editable, still one click
- * from Force Send, but not spinning the queue against a wall.
+ * `collision` is a spawn the main process refused because a process still
+ * owns the tab's key ("Agent process already running"). That is transient and
+ * self-correcting, so the item comes back runnable and the exit listener sends
+ * it once the old process is gone. The tab is NOT released: something IS
+ * it once the old process is gone, bounded by {@link noteSpawnCollision} since
+ * an old process that never releases its key would otherwise collide forever
+ * (the caller passes `collision: false` past the cap). The tab is NOT released:
+ * something IS running on it, and only the exit handler removes that process
+ * entry, so its exit always arrives to settle the tab. Releasing it painted a
+ * live turn as "Ready" and told the queue the tab was free - the same rule the
+ * composer path follows (`useInputProcessing`). Any OTHER failure would fail
+ * again the same way on the next tick, so the item comes back `paused`: still
+ * there, still editable, still one click from Force Send, but not spinning the
+ * queue against a wall.
  */
 export function applyQueuedItemDispatchFailure(
 	session: Session,
 	item: QueuedItem,
-	opts: { hold: boolean }
+	opts: { collision: boolean }
 ): Session {
-	const released = applyQueuedItemRelease(session, item.tabId);
-
-	const stripCard = <T extends { id: string; logs: LogEntry[] }>(tab: T): T =>
-		tab.logs.some((log) => log.queuedItemId === item.id)
-			? { ...tab, logs: tab.logs.filter((log) => log.queuedItemId !== item.id) }
-			: tab;
-
-	const aiTabs = released.aiTabs.map(stripCard);
-	const orphans = released.orphanedThinkingTabs?.map(stripCard);
+	const released = stripQueuedItemCard(
+		opts.collision ? session : applyQueuedItemRelease(session, item.tabId),
+		item.id
+	);
 
 	// A message that @mentions another agent placed a consult hold when it
 	// dispatched. Its turn never started, so that hold has nothing to finish -
@@ -283,16 +287,69 @@ export function applyQueuedItemDispatchFailure(
 	const queue = item.crossAgentMention
 		? dropConsultHold(released.executionQueue ?? [], item.tabId)
 		: (released.executionQueue ?? []);
-	const restored: QueuedItem = opts.hold ? { ...item, paused: true } : item;
+	const restored: QueuedItem = opts.collision ? item : { ...item, paused: true };
 	const executionQueue = queue.some((i) => i.id === item.id)
 		? queue.map((i) => (i.id === item.id ? restored : i))
 		: [restored, ...queue];
 
+	return { ...released, executionQueue };
+}
+
+/**
+ * A dequeued item `processQueuedItem` refused because the tab it names is gone.
+ *
+ * The dispatcher resolved that dead tabId onto the agent's ACTIVE tab (the
+ * fallback in `resolveQueuedItemTarget`) and marked THAT tab running, card
+ * included, before `processQueuedItem` declined to run it there. Release that
+ * tab (`ownerTabId`, see `queuedItemOwnerTabId`) and take its card back.
+ * Forcing only the agent idle left that tab pulsing forever over a message no
+ * model saw, and read "Ready" while another tab was still mid-turn. The caller
+ * passes `undefined` when a live turn owns the tab (a read-only or
+ * forced-parallel item can land beside one): then only the card goes. The item
+ * is not re-queued: it would resolve onto the same wrong tab again.
+ */
+export function applyQueuedItemAbort(
+	session: Session,
+	item: QueuedItem,
+	ownerTabId: string | undefined
+): Session {
+	return stripQueuedItemCard(
+		ownerTabId ? applyQueuedItemRelease(session, ownerTabId) : session,
+		item.id
+	);
+}
+
+/**
+ * The tab a dequeue marked running for `item`: the one holding its card, found
+ * by `queuedItemId` because the active tab can change between the dequeue and
+ * the dispatch. A command item writes no card, so it falls back to resolving
+ * the target again.
+ */
+export function queuedItemOwnerTabId(session: Session, item: QueuedItem): string | undefined {
+	const holdsCard = (tab: { logs: LogEntry[] }) =>
+		tab.logs.some((log) => log.queuedItemId === item.id);
+	return (
+		session.aiTabs.find(holdsCard)?.id ??
+		session.orphanedThinkingTabs?.find(holdsCard)?.id ??
+		resolveQueuedItemTarget(session, item)?.tabId
+	);
+}
+
+/**
+ * Remove the transcript card a dispatch wrote for `itemId`, wherever it landed.
+ * Matched by `queuedItemId`, never by text, so an identical message the user
+ * genuinely sent earlier is untouched.
+ */
+function stripQueuedItemCard(session: Session, itemId: string): Session {
+	const stripCard = <T extends { id: string; logs: LogEntry[] }>(tab: T): T =>
+		tab.logs.some((log) => log.queuedItemId === itemId)
+			? { ...tab, logs: tab.logs.filter((log) => log.queuedItemId !== itemId) }
+			: tab;
+	const orphans = session.orphanedThinkingTabs?.map(stripCard);
 	return {
-		...released,
-		aiTabs,
+		...session,
+		aiTabs: session.aiTabs.map(stripCard),
 		...(orphans && { orphanedThinkingTabs: orphans }),
-		executionQueue,
 	};
 }
 
@@ -468,6 +525,7 @@ export function mergeQueuedItemIntoPrevious(
 		text,
 		images: images.length > 0 ? images : undefined,
 		crossAgentMention: target.crossAgentMention || item.crossAgentMention || undefined,
+		mentionRouting: target.mentionRouting ?? item.mentionRouting,
 	};
 	return {
 		queue: queue.filter((i) => i.id !== itemId).map((i) => (i.id === target.id ? merged : i)),
@@ -755,19 +813,20 @@ export function getSteerEligibility(
 	if (!getQueueBusyContext(session, item).targetTabBusy) {
 		return { canSteer: false, blockedReason: 'tab-not-working' };
 	}
-	// The turn runs on another host: a Claude TUI there has no local socket, and an
-	// SSH Codex turn always runs on exec. Main would refuse every attempt, so the
-	// button would be a control that can only decline.
-	if (isSessionRemote(session)) return { canSteer: false, blockedReason: 'ssh-remote' };
 	if (session.toolType === 'codex') {
 		// A Codex turn is steerable only on the opt-in app-server transport, which
-		// accepts `turn/steer` while a turn runs. `codex exec` (the default) accepts
-		// nothing once the turn has started. An app-server agent can still run a
-		// given turn on exec (SSH, images); main answers that steer `refused` with
-		// `not-running`, so the routing is not re-derived here.
+		// accepts `turn/steer` while a turn runs, locally or over SSH (the protocol
+		// rides the ssh client's stdio). `codex exec` (the default) accepts nothing
+		// once the turn has started. An app-server agent can still run a given turn
+		// on exec (images, an unsupported arg); main answers that steer `refused`
+		// with `not-running`, so the routing is not re-derived here.
 		if (resolveCodexTransport(session) !== 'app-server') {
 			return { canSteer: false, blockedReason: 'codex-exec' };
 		}
+	} else if (isSessionRemote(session)) {
+		// A Claude TUI on another host has no local socket to type into. Main would
+		// refuse every attempt, so the button would be a control that can only decline.
+		return { canSteer: false, blockedReason: 'ssh-remote' };
 	} else if (session.toolType !== 'claude-code') {
 		return { canSteer: false, blockedReason: 'not-claude' };
 	} else if (session.claudeInteractive?.mode !== 'interactive') {
@@ -975,45 +1034,55 @@ export interface ReplayDispatchResult {
 
 /**
  * State transition for REPLAYING a turn that already failed: mark its target tab
- * busy and note in the transcript that the prompt went back out.
+ * busy and, when `noteText` is given, note in the transcript that the prompt
+ * went back out. The auto-retry passes no note: its outage card already shows
+ * every attempt, and a note per resend is the wall of frames that card replaced.
  *
  * Distinct from {@link applyQueuedItemDispatch} in two ways, both because the
  * item is not in the queue: nothing is dequeued, and no user bubble is appended
  * (the original send already wrote one - see {@link markTabRunningTurn}).
  *
  * Blocks rather than dispatching when:
- *  - the tab is gone (nothing to run on);
+ *  - the tab is gone (nothing to run on). The queue's fallback onto the ACTIVE
+ *    tab does not apply: `processQueuedItem` refuses an item whose own tab is
+ *    gone, so marking the active tab here left it busy with nothing behind it;
  *  - the tab is already mid-turn - a second spawn on one tab key makes the main
- *    process KILL the live one, so a replay must never race a running turn;
+ *    process KILL the live one, so a replay must never race a running turn.
+ *    `opts.targetBusyIsOurs` waives this when the caller itself marked the tab
+ *    busy for this same turn and no process holds it (a context compaction
+ *    keeps the tab busy across the summary, so the turn never reads idle);
  *  - the user has already re-sent this exact prompt, which is queued and will
  *    drain on its own.
  */
 export function applyReplayDispatch(
 	session: Session,
 	item: QueuedItem,
-	noteText: string
+	noteText?: string,
+	opts: { targetBusyIsOurs?: boolean } = {}
 ): ReplayDispatchResult {
 	const duplicate = findQueuedDuplicate(session, item);
 	if (duplicate) return { session, blocked: 'already-queued' };
 
 	const target = resolveQueuedItemTarget(session, item);
-	if (!target) return { session, blocked: 'no-target-tab' };
+	if (!target || (item.tabId && target.tabId !== item.tabId)) {
+		return { session, blocked: 'no-target-tab' };
+	}
 
 	const targetTab =
 		session.aiTabs.find((t) => t.id === target.tabId) ??
 		session.orphanedThinkingTabs?.find((t) => t.id === target.tabId);
-	if (targetTab?.state === 'busy') return { session, blocked: 'target-tab-busy' };
+	if (targetTab?.state === 'busy' && !opts.targetBusyIsOurs) {
+		return { session, blocked: 'target-tab-busy' };
+	}
 
-	const note: LogEntry = {
-		id: generateId(),
-		timestamp: Date.now(),
-		source: 'system',
-		text: noteText,
-	};
-	const running = applyResendRunning(session, item, (tab) => ({
-		...tab,
-		logs: [...tab.logs, note],
-	}));
+	const note: LogEntry | undefined = noteText
+		? { id: generateId(), timestamp: Date.now(), source: 'system', text: noteText }
+		: undefined;
+	const running = applyResendRunning(
+		session,
+		item,
+		note ? (tab) => ({ ...tab, logs: [...tab.logs, note] }) : undefined
+	);
 	return running ? { session: running } : { session, blocked: 'no-target-tab' };
 }
 

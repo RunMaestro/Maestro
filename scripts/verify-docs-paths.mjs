@@ -21,6 +21,7 @@ import { fileURLToPath } from 'node:url';
 
 export const INDEX_DOC = 'CLAUDE.md';
 export const CANON_DOC = 'docs/agent-guides/CANONICAL-UTILITIES.md';
+export const HEADLESS_DOC = 'docs/agent-guides/CLI-HEADLESS.md';
 export const INDEX_HEADING = '### Commonly-reimplemented functions';
 /** Room for a title, a handful of symbols, and two paths. Not for a paragraph. */
 export const MAX_INDEX_LINE = 320;
@@ -48,6 +49,9 @@ export function verifyDocs(root) {
 		[INDEX_DOC]: readFileSync(resolve(root, INDEX_DOC), 'utf8'),
 		[CANON_DOC]: readFileSync(resolve(root, CANON_DOC), 'utf8'),
 	};
+	if (existsSync(resolve(root, HEADLESS_DOC))) {
+		texts[HEADLESS_DOC] = readFileSync(resolve(root, HEADLESS_DOC), 'utf8');
+	}
 	const findings = [];
 
 	// --- PATH

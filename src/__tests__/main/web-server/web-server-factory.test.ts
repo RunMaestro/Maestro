@@ -1622,7 +1622,9 @@ describe('web-server/web-server-factory', () => {
 			expect(entry.subscriptionId).toBe('agent-1::LegacyPipe::LegacyPipe-chain-2');
 		});
 
-		it('filters by sessionId before applying limit', async () => {
+		it('filters by sessionId before applying limit, keeping the newest runs', async () => {
+			// The engine's log is oldest first; the view is newest first, and
+			// `limit` keeps the newest N (see toCueActivityEntries).
 			const getCueActivityLog = vi.fn().mockReturnValue([
 				{ ...sampleRun, runId: 'run-a', sessionId: 'agent-1' },
 				{ ...sampleRun, runId: 'run-b', sessionId: 'agent-2' },
@@ -1634,7 +1636,7 @@ describe('web-server/web-server-factory', () => {
 
 			const filtered = await callback('agent-1', 1);
 			expect(filtered).toHaveLength(1);
-			expect(filtered[0].id).toBe('run-a');
+			expect(filtered[0].id).toBe('run-c');
 		});
 
 		it('collapses timeout / stopped engine statuses into the web "failed" enum', async () => {
@@ -1651,7 +1653,7 @@ describe('web-server/web-server-factory', () => {
 			expect(entries.map((e: any) => e.status)).toEqual(['failed', 'failed', 'failed']);
 			// stderr should surface as `result` for non-completed runs so the
 			// dashboard can show why it failed without re-fetching stdout.
-			expect(entries[0].result).toBe('took too long');
+			expect(entries.find((e: any) => e.id === 'r1').result).toBe('took too long');
 		});
 
 		it('returns [] and warns when the dep is missing', async () => {

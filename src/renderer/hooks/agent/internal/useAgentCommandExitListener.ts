@@ -10,9 +10,10 @@
  */
 
 import { useEffect } from 'react';
-import type { LogEntry, SessionState } from '../../../types';
+import type { LogEntry } from '../../../types';
 import { useSessionStore } from '../../../stores/sessionStore';
 import { generateId } from '../../../utils/ids';
+import { settleAgentStateFromTabs } from '../../../utils/tabHelpers';
 import { useOwnedSideEffectGate } from './useOwnedSessionGate';
 
 export function useAgentCommandExitListener(): void {
@@ -30,32 +31,19 @@ export function useAgentCommandExitListener(): void {
 			setSessions((prev) =>
 				prev.map((s) => {
 					if (s.id !== actualSessionId) return s;
+					const settled = settleAgentStateFromTabs(s);
+					if (code === 0) return settled;
 
-					const anyAiTabBusy = s.aiTabs?.some((tab) => tab.state === 'busy') || false;
-
-					const newState = anyAiTabBusy ? ('busy' as SessionState) : ('idle' as SessionState);
-					const newBusySource = anyAiTabBusy ? ('ai' as const) : undefined;
-
-					if (code !== 0) {
-						const exitLog: LogEntry = {
-							id: generateId(),
-							timestamp: Date.now(),
-							source: 'system',
-							text: `Command exited with code ${code}`,
-						};
-						return {
-							...s,
-							state: newState,
-							busySource: newBusySource,
-							// TODO: Remove shellLogs once terminal tabs migration is complete
-							...(!s.terminalTabs?.length && { shellLogs: [...s.shellLogs, exitLog] }),
-						};
-					}
-
+					const exitLog: LogEntry = {
+						id: generateId(),
+						timestamp: Date.now(),
+						source: 'system',
+						text: `Command exited with code ${code}`,
+					};
 					return {
-						...s,
-						state: newState,
-						busySource: newBusySource,
+						...settled,
+						// TODO: Remove shellLogs once terminal tabs migration is complete
+						...(!s.terminalTabs?.length && { shellLogs: [...s.shellLogs, exitLog] }),
 					};
 				})
 			);

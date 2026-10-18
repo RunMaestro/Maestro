@@ -63,6 +63,7 @@ import { enqueuePromptForTab, removeQueuedItem, sendQueuedItemNow } from './queu
 import { reopenClosedConversation, routeQuickChatMessage } from './quickChatRouter';
 import { collectNamingPrompt, requestTabAutoName } from './tabAutoNaming';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
+import { isAgentDormant } from '../../shared/agentVisibility';
 
 /**
  * The name a tab Quick Chat creates carries when automatic tab naming is off.
@@ -168,9 +169,15 @@ function findSession(sessionId: string | null): Session | null {
 	return useSessionStore.getState().sessions.find((s) => s.id === sessionId) ?? null;
 }
 
-/** Terminal-only agents have no AI tab to chat in. */
+/**
+ * Terminal-only agents have no AI tab to chat in, and a dormant Pianola (flag
+ * off) cannot be chatted with at all.
+ */
 function canChat(session: Session): boolean {
-	return session.toolType !== 'terminal';
+	return (
+		session.toolType !== 'terminal' &&
+		!isAgentDormant(session, useSettingsStore.getState().encoreFeatures)
+	);
 }
 
 /**

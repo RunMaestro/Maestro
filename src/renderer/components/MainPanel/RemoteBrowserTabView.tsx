@@ -16,6 +16,7 @@ import type {
 	BrowserRelayViewport,
 } from '../../../shared/browserRelay';
 import { useSessionStore } from '../../stores/sessionStore';
+import { useSettingsStore } from '../../stores/settingsStore';
 import { resolveBrowserTabNavigationTarget } from '../../utils/browserTabPersistence';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { chunkBrowserRelayText } from '../../../shared/browserRelay';
@@ -57,6 +58,9 @@ export const RemoteBrowserTabView = forwardRef<BrowserTabViewHandle, RemoteBrows
 		const [findOpen, setFindOpen] = useState(false);
 		const [find, setFind] = useState('');
 		const [clearArmed, setClearArmed] = useState(false);
+		// Only coworking agents read browser tabs, so the visibility toggle exists
+		// only while that Encore Feature is on (same gate as BrowserTabView).
+		const coworkingEnabled = useSettingsStore((s) => s.encoreFeatures?.coworking === true);
 		const clearTimer = useRef<number>();
 
 		const enqueue = useCallback(<T,>(operation: (id: string) => Promise<T>): Promise<T> => {
@@ -394,15 +398,17 @@ export const RemoteBrowserTabView = forwardRef<BrowserTabViewHandle, RemoteBrows
 					>
 						External
 					</button>
-					<button
-						title={
-							tab.hiddenFromAgent ? 'Expose to coworking agents' : 'Hide from coworking agents'
-						}
-						aria-pressed={tab.hiddenFromAgent === true}
-						onClick={() => updateRef.current(tab.id, { hiddenFromAgent: !tab.hiddenFromAgent })}
-					>
-						{tab.hiddenFromAgent ? 'Hidden' : 'Visible'}
-					</button>
+					{coworkingEnabled && (
+						<button
+							title={
+								tab.hiddenFromAgent ? 'Expose to coworking agents' : 'Hide from coworking agents'
+							}
+							aria-pressed={tab.hiddenFromAgent === true}
+							onClick={() => updateRef.current(tab.id, { hiddenFromAgent: !tab.hiddenFromAgent })}
+						>
+							{tab.hiddenFromAgent ? 'Hidden' : 'Visible'}
+						</button>
+					)}
 					<button
 						title="Clear host browsing data (click twice)"
 						onClick={() => {

@@ -9,6 +9,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, waitFor, cleanup, act } from '@testing-library/react';
 import { usePluginKeybindings } from '../../../renderer/hooks/usePluginKeybindings';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type { AggregatedContributions } from '../../../shared/plugins/contributions';
 
 const EMPTY: AggregatedContributions = {
@@ -64,7 +65,13 @@ async function mountWithChords(keybindings = [OVERLAY_CHORD]) {
 	return view;
 }
 
+const setPluginsEnabled = (plugins: boolean) =>
+	useSettingsStore.setState({
+		encoreFeatures: { ...useSettingsStore.getState().encoreFeatures, plugins },
+	});
+
 beforeEach(() => {
+	setPluginsEnabled(true);
 	window.maestro.plugins = pluginBridge as unknown as typeof window.maestro.plugins;
 	pluginBridge.contributions.mockReset().mockResolvedValue(EMPTY);
 	pluginBridge.onChanged.mockClear();
@@ -247,6 +254,32 @@ describe('usePluginKeybindings - overlay summon chord', () => {
 
 		press({ key: 'F', altKey: true, shiftKey: true });
 
+		expect(pluginBridge.invokeCommand).not.toHaveBeenCalled();
+	});
+
+	it('installs no keydown listener when no chord is contributed', async () => {
+		const addSpy = vi.spyOn(window, 'addEventListener');
+		renderHook(() => usePluginKeybindings());
+		await waitFor(() => expect(pluginBridge.contributions).toHaveBeenCalled());
+		await act(async () => {});
+
+		expect(addSpy.mock.calls.some(([type]) => type === 'keydown')).toBe(false);
+		addSpy.mockRestore();
+	});
+
+	it('has no footprint while the plugins Encore Feature is off', async () => {
+		setPluginsEnabled(false);
+		pluginBridge.contributions.mockResolvedValue({ ...EMPTY, keybindings: [OVERLAY_CHORD] });
+		const addSpy = vi.spyOn(window, 'addEventListener');
+		renderHook(() => usePluginKeybindings());
+		await act(async () => {});
+
+		expect(pluginBridge.contributions).not.toHaveBeenCalled();
+		expect(pluginBridge.onChanged).not.toHaveBeenCalled();
+		expect(addSpy.mock.calls.some(([type]) => type === 'keydown')).toBe(false);
+		addSpy.mockRestore();
+
+		press({ key: 'F', altKey: true, shiftKey: true });
 		expect(pluginBridge.invokeCommand).not.toHaveBeenCalled();
 	});
 });

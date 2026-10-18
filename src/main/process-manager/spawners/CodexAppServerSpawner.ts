@@ -23,6 +23,12 @@
  * after `turn/start` is sent (the child dying, a timeout) leaves it unknown
  * whether the prompt is running, so it is reported rather than retried:
  * sending the prompt twice is worse than an error.
+ *
+ * On an SSH remote the child is the local ssh client of the launch the spawn
+ * handler built (`config.codexAppServerSsh`, see `ssh-launch.ts`). Its launch
+ * script goes down stdin first and the JSON-RPC lines follow it. The script
+ * records the remote pid, so every stop also signals the server on its host:
+ * signals to the local client never reach it.
  */
 
 import { EventEmitter } from 'events';
@@ -49,6 +55,13 @@ import {
 	stopProcess,
 	INTERACTIVE_STOP_GRACE_MS,
 } from '../../../shared/maestro-lib/control/termination';
+import {
+	newRemotePidFilePath,
+	signalRemoteAgent,
+	sshConnectionArgs,
+	withRemotePidRecord,
+	type RemoteSignalMode,
+} from '../../../shared/maestro-lib/control/ssh-remote-signal';
 import {
 	CodexAppServerEventTranslator,
 	type CodexExecLine,
@@ -260,18 +273,23 @@ class CodexAppServerTurn {
 			config.querySource ?? DEFAULT_QUERY_SOURCE
 		);
 
-		const shellPlan = planSpawnShell(command, ['app-server', ...invocation.configArgs], {
-			runInShell: config.runInShell,
-			shell: config.shell,
-		});
+		// SSH: the local ssh client, never through a shell (its stdin carries the
+		// launch script). Local: `codex app-server` with the turn's config args.
+		const ssh = config.codexAppServerSsh;
+		const spawnPlan = ssh
+			? { command: ssh.command, args: ssh.args, shell: undefined }
+			: planSpawnShell(command, ['app-server', ...invocation.configArgs], {
+					runInShell: config.runInShell,
+					shell: config.shell,
+				});
 
 		this.turn = startTurn(
 			{
-				command: shellPlan.command,
-				args: shellPlan.args,
+				command: spawnPlan.command,
+				args: spawnPlan.args,
 				cwd: config.cwd,
 				env,
-				shell: shellPlan.shell,
+				shell: spawnPlan.shell,
 			},
 			{
 				onLine: (line) => this.handleLine(line),
@@ -292,6 +310,8 @@ class CodexAppServerTurn {
 			}
 		);
 
+		if (ssh) this.sendSshLaunchScript(ssh);
+
 		managedProcess.pid = this.turn.pid ?? -1;
 		managedProcess.spawnGeneration = nextSpawnGeneration(sessionId);
 		this.ctx.processes.set(sessionId, managedProcess);
@@ -304,8 +324,43 @@ class CodexAppServerTurn {
 			pid: this.turn.pid,
 			resume: !!invocation.resumeId,
 			sandbox: invocation.sandbox ?? 'default',
+			sshRemoteId: ssh ? config.sshRemoteId : undefined,
 		});
 		return { pid: managedProcess.pid, success: true };
+	}
+
+	/**
+	 * Write the remote launch script ahead of any JSON-RPC line, prefixed with
+	 * the pid record a remote stop signals. Remote bash reads it up to the line
+	 * that `exec`s the server, which then reads the protocol from the same stdin.
+	 */
+	private sendSshLaunchScript(ssh: NonNullable<ProcessConfig['codexAppServerSsh']>): void {
+		const pidFile = sshConnectionArgs(ssh.args) ? newRemotePidFilePath() : undefined;
+		Object.assign(this.managedProcess, {
+			command: ssh.command,
+			args: ssh.args,
+			sshRemoteId: this.config.sshRemoteId,
+			sshRemoteHost: this.config.sshRemoteHost,
+			sshRemoteCommand: ssh.remoteCommandLine,
+			sshRemotePidFile: pidFile,
+		});
+		this.turn.child.stdin?.write(
+			pidFile ? withRemotePidRecord(ssh.stdinScript, pidFile) : ssh.stdinScript
+		);
+	}
+
+	/**
+	 * Signal the server on its SSH host. A no-op for a local turn, or an SSH turn
+	 * whose launch recorded no pid. Signals to the local ssh client never reach
+	 * the remote server, which would otherwise run on with nothing reading it.
+	 */
+	private signalRemote(mode: RemoteSignalMode): void {
+		const { sshRemotePidFile: pidFile, command, args } = this.managedProcess;
+		if (!pidFile || !command || !args) return;
+		signalRemoteAgent(
+			{ sshCommand: command, sshArgs: args, pidFile, sessionId: this.config.sessionId },
+			mode
+		);
 	}
 
 	// ── Protocol ─────────────────────────────────────────────────────────
@@ -357,7 +412,9 @@ class CodexAppServerTurn {
 		try {
 			turnResult = await request('turn/start', {
 				threadId: this.translator.threadId,
-				input: [{ type: 'text', text: config.prompt as string }],
+				input: [
+					{ type: 'text', text: (config.codexAppServerSsh?.prompt ?? config.prompt) as string },
+				],
 				...(invocation.effort ? { effort: invocation.effort } : {}),
 				...(invocation.summary ? { summary: invocation.summary } : {}),
 			});
@@ -532,6 +589,7 @@ class CodexAppServerTurn {
 		this.exitGraceTimer = setTimeout(() => {
 			this.exitGraceTimer = undefined;
 			if (!this.childRunning()) return;
+			this.signalRemote('terminate');
 			stopProcess(
 				{ child: this.turn.child },
 				{
@@ -560,6 +618,7 @@ class CodexAppServerTurn {
 		const sent = this.sendTurnInterrupt();
 		if (!sent && this.childRunning()) {
 			// Nothing to interrupt yet (setup, or `turn/start` unanswered): stop the child now.
+			this.signalRemote('terminate');
 			stopProcess(
 				{ child: this.turn.child },
 				{
@@ -582,6 +641,7 @@ class CodexAppServerTurn {
 			clearTimeout(this.exitGraceTimer);
 			this.exitGraceTimer = undefined;
 		}
+		this.signalRemote('terminate');
 		stopProcess(
 			{ child: this.turn.child },
 			{
@@ -670,6 +730,7 @@ class CodexAppServerTurn {
 		this.heldLines = [];
 		this.heldStderr = '';
 		if (this.childRunning()) {
+			this.signalRemote('terminate');
 			stopProcess(
 				{ child: this.turn.child },
 				{ from: 'terminate', graceMs: INTERACTIVE_STOP_GRACE_MS, sessionId, label: 'fallback' }

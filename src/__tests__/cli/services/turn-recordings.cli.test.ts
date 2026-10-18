@@ -262,6 +262,10 @@ async function replayThroughCli(recording: TurnRecording): Promise<AgentResult> 
 		recording.agentSessionIdBeforeStart,
 		{ signal: controller.signal }
 	);
+	// Wait for the spawn itself, not a fixed number of ticks: some agents load a
+	// module on demand first (Antigravity's step store), and output emitted
+	// before the spawn reaches no listener.
+	await vi.waitFor(() => expect(mockSpawn).toHaveBeenCalled());
 	await tick();
 
 	for (const chunk of recording.chunks) mockStdout.emit('data', Buffer.from(chunk));

@@ -3,7 +3,22 @@
 export const CONCERTO_HTML_SCHEME = 'maestro-concerto';
 export const CONCERTO_DESIGNER_CHANNEL = 'maestro-concerto-designer-v1';
 
-export type ConcertoHtmlSurface = 'movement' | 'cadenza';
+/**
+ * `visualization` is a Codex `visualize` content reference: an HTML fragment
+ * the agent wrote to disk, served in the same isolated frame as Concerto's own
+ * documents but under the CSP Codex's visualize skill was written against.
+ */
+export type ConcertoHtmlSurface = 'movement' | 'cadenza' | 'visualization';
+
+const CONCERTO_HTML_SURFACES: ReadonlySet<string> = new Set<ConcertoHtmlSurface>([
+	'movement',
+	'cadenza',
+	'visualization',
+]);
+
+export function isConcertoHtmlSurface(value: unknown): value is ConcertoHtmlSurface {
+	return typeof value === 'string' && CONCERTO_HTML_SURFACES.has(value);
+}
 
 export interface ConcertoHtmlTarget {
 	surface: ConcertoHtmlSurface;
@@ -99,7 +114,7 @@ export function parseConcertoHtmlUrl(value: string): ConcertoHtmlTarget | null {
 		if (url.protocol !== `${CONCERTO_HTML_SCHEME}:` || url.hostname !== 'render') return null;
 		const surface = url.searchParams.get('surface');
 		const id = url.searchParams.get('id');
-		if ((surface !== 'movement' && surface !== 'cadenza') || !id) return null;
+		if (!isConcertoHtmlSurface(surface) || !id) return null;
 		return { surface, id };
 	} catch {
 		return null;

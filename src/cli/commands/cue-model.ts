@@ -11,9 +11,11 @@
  *
  * The edit goes through `setSubscriptionTurnSettings`, shared with the desktop
  * app, and does not need the app running: the engine's YAML watcher picks the
- * change up.
+ * change up. `--data-dir` points it at a server's data directory, as on the
+ * other headless Cue verbs.
  */
-import { readSessions, resolveAgentId } from '../services/storage';
+import { readLiveSessions, resolveAgentId } from '../services/storage';
+import { applyDataDirOption, requireDataDirOrExit } from '../services/data-dir-option';
 import {
 	findSubscriptionsByName,
 	setSubscriptionTurnSettings,
@@ -37,6 +39,8 @@ export interface CueModelOptions {
 	clearModel?: boolean;
 	clearEffort?: boolean;
 	json?: boolean;
+	/** Explicit data directory; decides whose agent list (and so which cue.yaml) is read. */
+	dataDir?: string;
 }
 
 function errorOut(message: string, options: CueModelOptions, code: string): never {
@@ -78,7 +82,7 @@ function resolveSubscription(
 	options: CueModelOptions,
 	printWarnings = true
 ): SubscriptionMatch<SessionInfo> {
-	const sessions = readSessions();
+	const sessions = readLiveSessions();
 	const { matches: all, warnings } = findSubscriptionsByName(sessions, name);
 	if (printWarnings && !options.json) {
 		for (const warning of warnings) console.error(`Warning: ${warning}`);
@@ -167,6 +171,13 @@ function report(
 
 /** CLI entry point. */
 export async function cueModel(subscriptionName: string, options: CueModelOptions): Promise<void> {
+	// Before the first store read: the agent list, and through each agent's
+	// project root its cue.yaml, come from the data directory. Only an
+	// EXPLICIT path is checked for existence, the same as `cue trigger`.
+	if (options.dataDir !== undefined) {
+		applyDataDirOption(options.dataDir);
+		requireDataDirOrExit({ json: options.json });
+	}
 	const name = subscriptionName?.trim() ?? '';
 	if (name.length === 0) errorOut('a subscription name is required', options, 'MISSING_NAME');
 

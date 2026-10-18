@@ -22,7 +22,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { readSessions, resolveAgentId, getSyncDir } from '../services/storage';
+import { readLiveSessions, resolveAgentId, getSyncDir } from '../services/storage';
 import {
 	configureImageStore,
 	extFromMediaType,
@@ -104,7 +104,7 @@ function collectImages(opts: { agentId?: string; tabId?: string }): CollectedIma
 	const staged: CollectedImage[] = [];
 	const sent: CollectedImage[] = [];
 
-	for (const session of readSessions()) {
+	for (const session of readLiveSessions()) {
 		if (opts.agentId && session.id !== opts.agentId) continue;
 		const tabs = ((session as unknown as { aiTabs?: ImageBearingTab[] }).aiTabs ??
 			[]) as ImageBearingTab[];

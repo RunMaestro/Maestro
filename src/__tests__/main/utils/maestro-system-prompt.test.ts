@@ -121,9 +121,17 @@ describe('buildMaestroSystemPromptForSession', () => {
 	});
 
 	it('appends the Pianola role section for the Pianola agent', async () => {
+		settings.encoreFeatures = { pianola: true };
 		storedSessions = [agent({ isPianola: true })];
 		const result = await buildMaestroSystemPromptForSession('agent-1');
 		expect(result?.endsWith('\n\n---\n\nPIANOLA')).toBe(true);
+	});
+
+	it('leaves the Pianola role section out while the pianola flag is off', async () => {
+		settings.encoreFeatures = { pianola: false };
+		storedSessions = [agent({ isPianola: true })];
+		const result = await buildMaestroSystemPromptForSession('agent-1');
+		expect(result).not.toContain('PIANOLA');
 	});
 
 	it('appends enabled plugin sections, but not localOnly ones over SSH', async () => {

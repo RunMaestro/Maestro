@@ -9,6 +9,7 @@ import { formatError, formatSuccess } from '../output/formatter';
 import { AGENT_IDS } from '../../shared/agentIds';
 import { parseCliBool } from '../utils/parse';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
+import { exitIfMaestroNotRunning } from '../services/session-command';
 
 const VALID_TYPES: Set<string> = new Set(AGENT_IDS.filter((id) => id !== 'terminal'));
 
@@ -198,6 +199,7 @@ export async function createAgent(name: string, options: CreateAgentOptions): Pr
 			process.exit(1);
 		}
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		const msg = error instanceof Error ? error.message : String(error);
 		if (options.json) {
 			console.log(JSON.stringify({ success: false, error: msg }));

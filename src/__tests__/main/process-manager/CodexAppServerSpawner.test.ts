@@ -41,6 +41,16 @@ vi.mock('../../../shared/maestro-lib/control/termination', async (importOriginal
 	return { ...actual, stopProcess: (...args: unknown[]) => mockStopProcess(...(args as [])) };
 });
 
+const mockSignalRemoteAgent = vi.fn(() => true);
+vi.mock('../../../shared/maestro-lib/control/ssh-remote-signal', async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import('../../../shared/maestro-lib/control/ssh-remote-signal')>();
+	return {
+		...actual,
+		signalRemoteAgent: (...args: unknown[]) => mockSignalRemoteAgent(...(args as [])),
+	};
+});
+
 import {
 	CodexAppServerSpawner,
 	CODEX_APP_SERVER_EXIT_GRACE_MS,
@@ -106,6 +116,12 @@ class FakeAppServer extends EventEmitter {
 	written: ClientMessage[] = [];
 	/** Client lines the script did not expect. */
 	unexpected: ClientMessage[] = [];
+	/**
+	 * Non-JSON stdin lines: an SSH turn's launch script, which the remote bash
+	 * reads before it execs the server. `stdinOrder` records where they fell.
+	 */
+	scriptLines: string[] = [];
+	stdinOrder: Array<'script' | 'json'> = [];
 
 	constructor(private onClientMessage: (msg: ClientMessage, server: FakeAppServer) => void) {
 		super();
@@ -117,7 +133,11 @@ class FakeAppServer extends EventEmitter {
 				while (newline !== -1) {
 					const line = pending.slice(0, newline);
 					pending = pending.slice(newline + 1);
-					if (line.trim()) {
+					if (line.trim() && !line.trim().startsWith('{')) {
+						this.scriptLines.push(line);
+						this.stdinOrder.push('script');
+					} else if (line.trim()) {
+						this.stdinOrder.push('json');
 						const msg = JSON.parse(line) as ClientMessage;
 						this.written.push(msg);
 						this.onClientMessage(msg, this);
@@ -258,6 +278,7 @@ function createHarness(server: FakeAppServer | (() => FakeAppServer)) {
 beforeEach(() => {
 	mockSpawn.mockReset();
 	mockStopProcess.mockClear();
+	mockSignalRemoteAgent.mockClear();
 });
 
 // ── Tests ──────────────────────────────────────────────────────────────────
@@ -513,6 +534,131 @@ describe('CodexAppServerSpawner', () => {
 		h.spawner.spawn(h.config({ images: ['data:image/png;base64,AAAA'] }));
 
 		expect(h.fallbackToCli).toHaveBeenCalledTimes(2);
+		expect(mockSpawn).not.toHaveBeenCalled();
+	});
+});
+
+const SSH_ARGS = ['-o', 'BatchMode=yes', 'me@box', '/bin/bash', '--norc', '--noprofile', '-s'];
+
+/** An SSH config as the spawn handler hands it over, with its app-server launch. */
+function sshOverrides(launch: Partial<NonNullable<ProcessConfig['codexAppServerSsh']>> = {}) {
+	return {
+		command: '/usr/bin/ssh',
+		args: SSH_ARGS,
+		cwd: '/Users/me',
+		prompt: undefined,
+		sshRemoteId: 'remote-1',
+		sshRemoteHost: 'box',
+		sshStdinScript: 'exec codex exec --json\nReply with the word OK',
+		codexAppServerSsh: {
+			command: '/usr/bin/ssh',
+			args: SSH_ARGS,
+			stdinScript: "cd '/home/me/proj' || exit 1\nexec codex app-server\n",
+			remoteCommandLine: 'codex app-server',
+			execArgs: ['exec', '--json', '--dangerously-bypass-approvals-and-sandbox'],
+			cwd: '/home/me/proj',
+			prompt: 'Reply with the word OK',
+			...launch,
+		},
+	} satisfies Partial<ProcessConfig>;
+}
+
+describe('CodexAppServerSpawner on an SSH remote', () => {
+	it('runs the ssh client, writes the launch script before any protocol line, and plans from the launch', async () => {
+		const fixture = loadFixture('plain-turn');
+		const driver = fixtureDriver(fixture);
+		const server = new FakeAppServer(driver.onClientMessage);
+		const h = createHarness(server);
+
+		h.spawner.spawn(h.config(sshOverrides()));
+		const managed = h.processes.get(h.sessionId)!;
+
+		expect(await h.exited).toBe(0);
+		expect(h.fallbackToCli).not.toHaveBeenCalled();
+		expect(server.unexpected).toEqual([]);
+
+		// The local ssh client, never through a shell, in the local cwd.
+		const [command, args, options] = mockSpawn.mock.calls[0];
+		expect(command).toBe('/usr/bin/ssh');
+		expect(args).toEqual(SSH_ARGS);
+		expect(options.cwd).toBe('/Users/me');
+
+		// Script (with the pid record) first, then only protocol lines.
+		const firstJson = server.stdinOrder.indexOf('json');
+		expect(firstJson).toBeGreaterThan(0);
+		expect(server.stdinOrder.slice(firstJson)).not.toContain('script');
+		expect(server.scriptLines.at(-1)).toBe('exec codex app-server');
+		expect(server.scriptLines.join('\n')).toContain(managed.sshRemotePidFile);
+		expect(managed.sshRemotePidFile).toMatch(/^\/tmp\/maestro-agent-.+\.pid$/);
+		expect(managed).toMatchObject({
+			command: '/usr/bin/ssh',
+			args: SSH_ARGS,
+			sshRemoteId: 'remote-1',
+			sshRemoteCommand: 'codex app-server',
+		});
+
+		// The thread runs in the REMOTE cwd, with the prompt from the launch.
+		expect(server.sent('thread/start')[0].params).toMatchObject({ cwd: '/home/me/proj' });
+		expect(server.sent('turn/start')[0].params).toMatchObject({
+			input: [{ type: 'text', text: 'Reply with the word OK' }],
+		});
+		expect(h.data.join('')).toContain(finalAgentMessage(fixture));
+		// Closing stdin ended the server: nothing to signal on the host.
+		expect(mockSignalRemoteAgent).not.toHaveBeenCalled();
+	});
+
+	it('kill() signals the server on its host as well as the local client', async () => {
+		const driver = fixtureDriver(loadFixture('interrupted-turn'));
+		const server = new FakeAppServer(driver.onClientMessage);
+		const h = createHarness(server);
+
+		h.spawner.spawn(h.config(sshOverrides()));
+		await vi.waitFor(() => expect(driver.waitingFor()).toBe('turn/interrupt'));
+		const managed = h.processes.get(h.sessionId)!;
+
+		managed.sdkController!.kill({ sync: true });
+
+		expect(mockSignalRemoteAgent).toHaveBeenCalledWith(
+			{
+				sshCommand: '/usr/bin/ssh',
+				sshArgs: SSH_ARGS,
+				pidFile: managed.sshRemotePidFile,
+				sessionId: h.sessionId,
+			},
+			'terminate'
+		);
+		expect(mockStopProcess).toHaveBeenCalledWith(
+			{ child: server },
+			expect.objectContaining({ from: 'terminate' })
+		);
+	});
+
+	it('falls back to the exec wrapper, signalling the abandoned server, when setup fails', async () => {
+		const server = new FakeAppServer((msg, s) => {
+			if (msg.method === 'initialize') {
+				s.send({ id: msg.id, error: { code: -32601, message: 'unknown subcommand' } });
+			}
+		});
+		const h = createHarness(server);
+		const config = h.config(sshOverrides());
+
+		h.spawner.spawn(config);
+		await vi.waitFor(() => expect(h.fallbackToCli).toHaveBeenCalledWith(config));
+
+		expect(mockSignalRemoteAgent).toHaveBeenCalledWith(
+			expect.objectContaining({ sshArgs: SSH_ARGS }),
+			'terminate'
+		);
+		expect(h.errors).toEqual([]);
+	});
+
+	it('hands an SSH turn with no app-server launch straight to exec', () => {
+		const h = createHarness(new FakeAppServer(() => {}));
+		const { codexAppServerSsh: _launch, ...noLaunch } = sshOverrides();
+
+		h.spawner.spawn(h.config(noLaunch));
+
+		expect(h.fallbackToCli).toHaveBeenCalledTimes(1);
 		expect(mockSpawn).not.toHaveBeenCalled();
 	});
 });

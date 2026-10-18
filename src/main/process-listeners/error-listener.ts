@@ -8,7 +8,7 @@ import type { AgentError } from '../../shared/types';
 import type { ProcessListenerDependencies } from './types';
 import type { DataListenerHandle } from './data-listener';
 import { capabilitySnapshots } from '../agents/capability-snapshot';
-import { noteEffortRejection, parseEffortRejection } from '../../shared/effortRejection';
+import { noteEffortRejection, parseAgentErrorEffortRejection } from '../../shared/effortRejection';
 import { isLadderEffortValue } from '../../shared/modelTiers';
 import { captureMessage } from '../utils/sentry';
 
@@ -64,7 +64,7 @@ export function setupErrorListener(
 		flushPendingData(sessionId);
 		safeSend('agent:error', sessionId, agentError);
 
-		const effortRejection = parseEffortRejection(agentError.message);
+		const effortRejection = parseAgentErrorEffortRejection(agentError);
 		if (
 			effortRejection &&
 			agentError.agentId &&

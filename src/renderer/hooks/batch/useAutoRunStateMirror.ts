@@ -58,6 +58,7 @@ export function buildMirroredBatchState(
 		currentTaskIndex: incoming.currentTaskIndex,
 		totalTasksAcrossAllDocs: incoming.totalTasksAcrossAllDocs ?? 0,
 		completedTasksAcrossAllDocs: incoming.completedTasksAcrossAllDocs ?? 0,
+		initialCompletedTasks: incoming.initialCompletedTasks ?? base.initialCompletedTasks,
 
 		loopEnabled: incoming.loopEnabled ?? false,
 		loopIteration: incoming.loopIteration ?? 0,

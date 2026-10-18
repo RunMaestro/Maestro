@@ -11,6 +11,7 @@
 
 import { withMaestroClient, resolveSessionId } from '../services/maestro-client';
 import { resolveAgentId } from '../services/storage';
+import { exitIfMaestroNotRunning } from '../services/session-command';
 
 interface ReadTerminalOptions {
 	agent?: string;
@@ -106,6 +107,7 @@ export async function readTerminal(options: ReadTerminalOptions): Promise<void> 
 		// Plain text by default - the buffer is already text, and agents grep it.
 		if (content !== '') console.log(content);
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		fail(error instanceof Error ? error.message : String(error));
 	}
 }

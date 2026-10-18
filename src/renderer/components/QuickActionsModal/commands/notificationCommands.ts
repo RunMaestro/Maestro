@@ -1,5 +1,6 @@
 import type { QuickAction } from '../types';
 import type { ToastPosition } from '../../../../shared/toastPosition';
+import { toggleInAppToasts } from '../../../services/inAppToasts';
 import {
 	TOAST_POSITIONS,
 	TOAST_POSITION_LABELS,
@@ -16,6 +17,9 @@ interface BuildNotificationCommandsArgs {
 	openNotificationCenter?: () => void;
 	clearAllNotificationsShortcut?: QuickAction['shortcut'];
 	openNotificationCenterShortcut?: QuickAction['shortcut'];
+	/** Whether in-app floating toasts render (toast duration is not "Off"). */
+	toastsEnabled: boolean;
+	toggleInAppToastsShortcut?: QuickAction['shortcut'];
 	/** Corner the toast stack is pinned to right now. */
 	toastPosition: ToastPosition;
 	setToastPosition: (value: ToastPosition) => void;
@@ -43,6 +47,8 @@ export function buildNotificationCommands({
 	openNotificationCenter,
 	clearAllNotificationsShortcut,
 	openNotificationCenterShortcut,
+	toastsEnabled,
+	toggleInAppToastsShortcut,
 	toastPosition,
 	setToastPosition,
 	setQuickActionOpen,
@@ -78,6 +84,22 @@ export function buildNotificationCommands({
 					},
 				]
 			: []),
+		{
+			id: 'toggle-in-app-toasts',
+			label: toastsEnabled ? 'Turn Off In-App Toasts' : 'Turn On In-App Toasts',
+			shortcut: toggleInAppToastsShortcut,
+			// With the Notification Center off nothing records a hidden toast, so do
+			// not promise the inbox keeps them.
+			subtext: toastsEnabled
+				? openNotificationCenter
+					? 'Hide floating toasts; notifications still collect in the notification center'
+					: 'Hide floating toasts'
+				: 'Show floating toasts again at your previous duration',
+			action: () => {
+				setQuickActionOpen(false);
+				toggleInAppToasts();
+			},
+		},
 		// One command per corner, all four always listed so a search for any corner
 		// name finds it. The current corner stays in the list (marked in the
 		// subtext) rather than vanishing, which would read as a missing option.

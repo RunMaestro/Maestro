@@ -22,6 +22,14 @@ vi.mock('../../../../main/stats/token-usage/token-usage-accessor', () => ({
 	getTokenUsageAggregate: mockGetTokenUsageAggregate,
 }));
 
+// The stored Encore flags; unset resolves to the defaults (Usage & Stats on).
+const flags = vi.hoisted(() => ({ encoreFeatures: undefined as object | undefined }));
+vi.mock('../../../../main/stores', () => ({
+	getSettingsStore: () => ({
+		get: (key: string) => (key === 'encoreFeatures' ? flags.encoreFeatures : undefined),
+	}),
+}));
+
 import { WebSocketMessageHandler } from '../../../../main/web-server/handlers/messageHandlers';
 import type { WebClient } from '../../../../main/web-server/handlers/messageHandlers';
 
@@ -48,6 +56,7 @@ describe('get_token_usage handler', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		flags.encoreFeatures = undefined;
 		handler = new WebSocketMessageHandler();
 		client = createMockClient();
 		mockGetTokenUsageAggregate.mockResolvedValue({ totals: { sessionCount: 3 } });
@@ -81,6 +90,16 @@ describe('get_token_usage handler', () => {
 
 		expect(mockGetTokenUsageAggregate).not.toHaveBeenCalled();
 		expect(lastResponse(client).type).toBe('error');
+	});
+
+	it('refuses without reading transcripts while Usage & Stats is off', async () => {
+		flags.encoreFeatures = { usageStats: false };
+		handler.handleMessage(client, { type: 'get_token_usage', range: 'week', requestId: 'r9' });
+		await flush();
+
+		expect(mockGetTokenUsageAggregate).not.toHaveBeenCalled();
+		expect(lastResponse(client)).toMatchObject({ type: 'error', requestId: 'r9' });
+		expect(lastResponse(client).message).toContain('Usage & Stats is turned off');
 	});
 
 	it('reports an accessor failure as an error', async () => {

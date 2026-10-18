@@ -169,8 +169,17 @@ export interface FirstPartyPluginDefinition {
 	 * vouch that the feature's setup is complete (see `readyFlags` on
 	 * `systemPromptSectionsFor`). Agents are told about a tool only once it
 	 * works, never the moment a tile is switched on.
+	 *
+	 * `agentOnly` sections speak to an agent about its own workspace and duties,
+	 * so a sections-only spawn with no agent behind it (the Group Chat moderator
+	 * and its synthesis turn) leaves them out.
 	 */
-	systemPromptSection?: { promptId: string; localOnly?: boolean; requiresReady?: boolean };
+	systemPromptSection?: {
+		promptId: string;
+		localOnly?: boolean;
+		requiresReady?: boolean;
+		agentOnly?: boolean;
+	};
 }
 
 /** Whether a first-party feature exists on `platform` (`process.platform`). */
@@ -877,6 +886,10 @@ export const MAESTRO_CUE_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 				'Cue engine runtime: file watchers, GitHub pollers, schedule timers, and the recovery heartbeat. Stops fully on disable.',
 		},
 	],
+	// Scheduling, triggers, and the duty lookup reach agents only while Cue is
+	// on. In the base prompt they told every agent to inspect Cue, so one with
+	// Cue off still answered "what do you do?" in terms of a switched-off feature.
+	systemPromptSection: { promptId: 'cue-system', agentOnly: true },
 };
 
 /** Broker capabilities Concerto actually touches. The feature lets an agent

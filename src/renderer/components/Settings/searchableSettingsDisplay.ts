@@ -427,7 +427,7 @@ export const DISPLAY_SETTINGS: SearchableSetting[] = [
 		tabLabel: 'Display',
 		label: 'Left Side Panel',
 		description:
-			'Configure the left side bar: group member counts, collapsed pills per row, location pills, git change indicator, Cue indicator, worktree badges, branch names, providers, and full vs abbreviated group labels on bookmarked agents',
+			'Configure the left side bar: group member counts, collapsed pills per row, location pills, git change indicator, worktree badges, branch names, providers, and full vs abbreviated group labels on bookmarked agents',
 		keywords: [
 			'left',
 			'side',
@@ -459,7 +459,6 @@ export const DISPLAY_SETTINGS: SearchableSetting[] = [
 			'change',
 			'changes',
 			'dirty',
-			'cue',
 			'indicator',
 			'terminal',
 			'startup',
@@ -492,6 +491,7 @@ export const DISPLAY_SETTINGS: SearchableSetting[] = [
 			'hide pill',
 			'group pill',
 		],
+		encoreKeywords: { maestroCue: ['cue', 'cue indicator'] },
 	},
 	{
 		id: 'display-modal-layout',

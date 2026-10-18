@@ -42,6 +42,7 @@ import type { DelegationDay, DelegationTotals } from '../../../shared/delegation
 import { getTimeRangeStart } from '../../stats/utils';
 import type { TokenUsageAggregate, TokenUsageQuery } from '../../../shared/tokenUsage';
 import { getTokenUsageAggregate } from '../../stats/token-usage/token-usage-accessor';
+import { resolveEncoreFeatures } from '../../../shared/encoreFeatureDefaults';
 
 const LOG_CONTEXT = '[Stats]';
 
@@ -373,8 +374,9 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 
 				// Same gate as the Cue stats handler: the dashboard only shows Cue
 				// data when both flags are on.
-				const ef = (settingsStore?.get('encoreFeatures') ?? {}) as Record<string, unknown>;
-				const cueEnabled = ef.usageStats === true && ef.maestroCue === true;
+				// No settings store means the flags cannot be read: leave Cue out.
+				const ef = resolveEncoreFeatures(settingsStore?.get('encoreFeatures'));
+				const cueEnabled = !!settingsStore && ef.usageStats && ef.maestroCue;
 				const cueEvents = cueEnabled ? getRecentCueEvents(sinceMs) : null;
 				if (!cueEnabled) {
 					notes.push('Cue runs are not included because Maestro Cue is off.');

@@ -5,7 +5,9 @@
  * The provider's binary is the fake agent, handed in as `command`, so planning
  * is tested against real provider definitions without any provider installed.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 // Pinned so the same shape is asserted on every runner, with one Windows case:
@@ -21,6 +23,8 @@ import {
 	type SessionTurnRequest,
 } from '../../../../shared/maestro-lib/run/session';
 import { QUERY_SOURCE_ENV_VAR } from '../../../../shared/querySource';
+// The desktop spawners' own import path: the shim must escape with that code.
+import { escapeCmdArg } from '../../../../main/process-manager/utils/shellEscape';
 import { FAKE_AGENT_PATH } from './fakeAgent';
 
 const CWD = path.resolve(__dirname);
@@ -184,5 +188,100 @@ describe('planSessionTurn', () => {
 			reason: 'not-installed',
 			error: `OpenCode was not found at ${missing}`,
 		});
+	});
+});
+
+describe('planSessionTurn on Windows with an npm .cmd shim', () => {
+	// Everything cmd.exe would otherwise eat or rewrite.
+	const HOSTILE_PROMPT = 'say "hi" & echo 50% | more ^ done\nsecond line\r\nthird';
+
+	let dir: string;
+	let shim: string;
+	let exe: string;
+
+	beforeAll(() => {
+		// A directory with a space, like C:\Users\First Last\AppData\Roaming\npm.
+		dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro lib shim '));
+		shim = path.join(dir, 'agent.cmd');
+		exe = path.join(dir, 'agent.exe');
+		fs.writeFileSync(shim, '@echo off\r\n', { mode: 0o755 });
+		fs.writeFileSync(exe, '', { mode: 0o755 });
+	});
+
+	afterAll(() => {
+		fs.rmSync(dir, { recursive: true, force: true });
+	});
+
+	beforeEach(() => {
+		mocks.isWindows.mockReturnValue(true);
+	});
+
+	it('runs the shim through cmd.exe, quoted, with every argument escaped and the prompt on stdin', async () => {
+		const { spec } = await plan({ agentId: 'claude-code', command: shim, prompt: HOSTILE_PROMPT });
+
+		mocks.isWindows.mockReturnValue(false);
+		const { spec: posix } = await plan({
+			agentId: 'claude-code',
+			command: shim,
+			prompt: HOSTILE_PROMPT,
+		});
+		// The same arguments, less the prompt the POSIX plan put on the command line.
+		expect(posix.args.slice(-2)).toEqual(['--', HOSTILE_PROMPT]);
+		const unescaped = posix.args.slice(0, -2);
+
+		expect(spec.shell).toBe(true);
+		expect(spec.command).toBe(`"${shim}"`);
+		expect(spec.args).toEqual(unescaped.map(escapeCmdArg));
+		expect(spec.stdin).toBe(HOSTILE_PROMPT);
+		expect(spec.args.join(' ')).not.toContain('second line');
+	});
+
+	it('escapes an argument the shim gets on its command line', async () => {
+		// Antigravity reads no prompt from stdin, so its prompt stays in argv.
+		const { spec } = await plan({ agentId: 'antigravity', command: shim, prompt: 'fix the bug' });
+
+		expect(spec.shell).toBe(true);
+		expect(spec.stdin).toBeUndefined();
+		expect(spec.args).toContain('"fix the bug"');
+		expect(spec.args).not.toContain('fix the bug');
+	});
+
+	it.each([
+		['a line break', 'first\nsecond', 'line break'],
+		['a percent sign', 'use 50% less', '%'],
+		['a caret', 'x ^ y', '^'],
+	])(
+		'refuses a command-line prompt with %s rather than pass it altered',
+		async (_label, prompt, named) => {
+			const planned = await planSessionTurn(
+				request({ agentId: 'antigravity', command: shim, prompt })
+			);
+
+			expect(planned.ok).toBe(false);
+			if (planned.ok) return;
+			expect(planned.reason).toBe('windows-shell');
+			expect(planned.error).toContain('the prompt');
+			expect(planned.error).toContain(named);
+		}
+	);
+
+	it('starts an .exe with a path directly, unescaped', async () => {
+		const { spec } = await plan({ agentId: 'claude-code', command: exe });
+
+		expect(spec.shell).toBeUndefined();
+		expect(spec.command).toBe(exe);
+		expect(spec.args.slice(-2)).toEqual(['--', 'fix the bug']);
+		expect(spec.stdin).toBeUndefined();
+	});
+
+	it('leaves the shim alone on a host that is not Windows', async () => {
+		mocks.isWindows.mockReturnValue(false);
+
+		const { spec } = await plan({ agentId: 'claude-code', command: shim, prompt: HOSTILE_PROMPT });
+
+		expect(spec.shell).toBeUndefined();
+		expect(spec.command).toBe(shim);
+		expect(spec.args.slice(-2)).toEqual(['--', HOSTILE_PROMPT]);
+		expect(spec.stdin).toBeUndefined();
 	});
 });

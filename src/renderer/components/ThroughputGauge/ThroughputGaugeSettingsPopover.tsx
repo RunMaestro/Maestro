@@ -5,6 +5,8 @@
  * so the user can retune the gauge without leaving it. The rows come from
  * `THROUGHPUT_GAUGE_SETTING_CONTROLS`, the same list the Encore tile and the CLI
  * read, and every change is validated by `applyThroughputGaugeSettingsPatch`.
+ * A choice (or Reset peak) closes the popover: it covers the gauge it tunes, so
+ * the result is only visible once it is gone.
  *
  * Portaled to the body because the card clips its own overflow. It grows away
  * from the screen edge the card sits nearest: the card opens parked
@@ -79,7 +81,14 @@ export const ThroughputGaugeSettingsPopover = memo(function ThroughputGaugeSetti
 		const option = control.options.find((o) => String(o.value) === raw);
 		if (!option) return;
 		const result = applyThroughputGaugeSettingsPatch(settings, { [control.field]: option.value });
-		if (result.ok) setSettings(result.settings);
+		if (!result.ok) return;
+		setSettings(result.settings);
+		onClose();
+	};
+
+	const handleResetPeak = () => {
+		resetPeak();
+		onClose();
 	};
 
 	const handleKeyDown = useCallback(
@@ -155,7 +164,7 @@ export const ThroughputGaugeSettingsPopover = memo(function ThroughputGaugeSetti
 
 			<button
 				type="button"
-				onClick={resetPeak}
+				onClick={handleResetPeak}
 				className="w-full flex items-center justify-center gap-1.5 px-2 py-1 rounded border text-xs hover:opacity-80"
 				style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 				data-testid="throughput-gauge-reset-peak"

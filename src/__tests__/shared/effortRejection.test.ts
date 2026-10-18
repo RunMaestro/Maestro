@@ -3,6 +3,7 @@ import {
 	describeEffortRejection,
 	getEffortRejection,
 	noteEffortRejection,
+	parseAgentErrorEffortRejection,
 	parseEffortRejection,
 	resetEffortRejections,
 } from '../../shared/effortRejection';
@@ -77,6 +78,42 @@ describe('parseEffortRejection', () => {
 			model: 'gpt-6-astra',
 			supported: [],
 		});
+	});
+
+	it("reads Copilot CLI's refusal for a model with no effort knob", () => {
+		// Verbatim from issue #1840: Copilot on its `auto` model.
+		const text =
+			'Error: Model "auto" does not support reasoning effort configuration (requested: "low").';
+		expect(parseEffortRejection(text)).toEqual({ value: 'low', model: 'auto', supported: [] });
+	});
+});
+
+describe('parseAgentErrorEffortRejection', () => {
+	const COPILOT_STDERR =
+		'Error: Model "auto" does not support reasoning effort configuration (requested: "low").';
+
+	it('reads the message first', () => {
+		expect(parseAgentErrorEffortRejection({ message: AGENT_ERROR_MESSAGE })?.value).toBe('minimal');
+	});
+
+	it('falls back to the raw stderr when the message is generic', () => {
+		expect(
+			parseAgentErrorEffortRejection({
+				message: 'Agent exited with code 1',
+				raw: { stderr: COPILOT_STDERR },
+			})
+		).toEqual({ value: 'low', model: 'auto', supported: [] });
+	});
+
+	it('returns null when no part carries a refusal', () => {
+		expect(
+			parseAgentErrorEffortRejection({
+				message: 'Agent exited with code 1',
+				raw: { stderr: 'rate limited', stdout: '' },
+			})
+		).toBeNull();
+		expect(parseAgentErrorEffortRejection(undefined)).toBeNull();
+		expect(parseAgentErrorEffortRejection(null)).toBeNull();
 	});
 });
 

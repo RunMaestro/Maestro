@@ -74,6 +74,7 @@ vi.mock('../../../main/stores/getters', async (importOriginal) => ({
 	...(await importOriginal<typeof import('../../../main/stores/getters')>()),
 	// The app's store asks this for every agent's folders.
 	getSessionsStore: () => mocks.sessionsStore,
+	getLiveSessions: () => mocks.sessionsStore?.get('sessions', []) ?? [],
 }));
 vi.mock('node-pty', () => ({ spawn: vi.fn() }));
 vi.mock('child_process', async (importOriginal) => {

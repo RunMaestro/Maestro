@@ -11,7 +11,7 @@
  * @see https://github.com/anthropics/claude-code
  */
 
-import type { ToolType, AgentError } from '../../types';
+import type { ToolType, AgentError, CallUsage } from '../../types';
 import type { AgentOutputParser, ParsedEvent } from './agent-output-parser';
 import { aggregateModelUsage, type ModelStats } from './usage-aggregator';
 import {
@@ -108,6 +108,13 @@ interface ClaudeRawMessage {
 const MAX_TOOL_NAME_ENTRIES = 500;
 
 /**
+ * Upper bound on the per-message usage remembered for `callUsage` deltas. A
+ * turn is hundreds of calls at most; the bound only stops a turn that never
+ * delivers its `result` from growing the map forever.
+ */
+const MAX_CALL_USAGE_ENTRIES = 500;
+
+/**
  * Maximum tool_result output length forwarded over IPC. Tool output can be
  * megabytes (a full file read); the badge only shows a preview.
  */
@@ -194,6 +201,14 @@ export class ClaudeOutputParser implements AgentOutputParser {
 	 * It also tracks auto-compaction correctly, which no accumulated figure can.
 	 */
 	private lastCallOccupancy: OccupancySnapshot | undefined = undefined;
+
+	/**
+	 * Usage each `assistant` message of the current turn has already reported
+	 * through `callUsage`, keyed by message id. Every row of a message repeats
+	 * that message's usage (and stream-json repeats whole messages), so only the
+	 * growth past this is new spend. Cleared at the `result` message.
+	 */
+	private readonly callUsageSeen = new Map<string, CallUsage>();
 
 	/**
 	 * Text of the current main-transcript assistant message, kept until a tool
@@ -318,6 +333,7 @@ export class ClaudeOutputParser implements AgentOutputParser {
 			// The result message ends the turn, so the next turn starts without a
 			// snapshot rather than inheriting this one.
 			this.lastCallOccupancy = undefined;
+			this.callUsageSeen.clear();
 
 			return event;
 		}
@@ -335,6 +351,7 @@ export class ClaudeOutputParser implements AgentOutputParser {
 			// This ensures extended thinking (Claude 3.7+, Claude 4+) content streams properly
 			// When thinking blocks are present, emit them as partial content for thinking-chunk events
 			const contentToEmit = thinkingText || text;
+			const callUsage = this.newCallUsage(msg);
 
 			return {
 				type: 'text',
@@ -344,6 +361,7 @@ export class ClaudeOutputParser implements AgentOutputParser {
 				isReasoning: thinkingText.length > 0 || undefined,
 				toolUseBlocks: toolUseBlocks.length > 0 ? toolUseBlocks : undefined,
 				parentToolUseId: normalizeParentToolUseId(msg),
+				...(callUsage ? { callUsage } : {}),
 				raw: msg,
 			};
 		}
@@ -659,6 +677,42 @@ export class ClaudeOutputParser implements AgentOutputParser {
 			cacheCreationInputTokens: usage.cache_creation_input_tokens || 0,
 			reasoningTokens: 0,
 		};
+	}
+
+	/**
+	 * The part of an `assistant` message's per-call usage that no earlier row of
+	 * the same message reported, or undefined when there is none. Subagent calls
+	 * count: they are real spend, unlike for occupancy. A message with no id
+	 * cannot be matched to its repeats, so each of its rows counts in full.
+	 */
+	private newCallUsage(msg: ClaudeRawMessage): CallUsage | undefined {
+		const usage = msg.message?.usage;
+		if (!usage) {
+			return undefined;
+		}
+		const reported: CallUsage = {
+			inputTokens: usage.input_tokens || 0,
+			outputTokens: usage.output_tokens || 0,
+			cacheReadInputTokens: usage.cache_read_input_tokens || 0,
+			cacheCreationInputTokens: usage.cache_creation_input_tokens || 0,
+		};
+		const id = msg.message?.id;
+		const seen = id ? this.callUsageSeen.get(id) : undefined;
+		const keys = Object.keys(reported) as Array<keyof CallUsage>;
+		const delta = {} as CallUsage;
+		const high = {} as CallUsage;
+		for (const key of keys) {
+			delta[key] = Math.max(0, reported[key] - (seen?.[key] ?? 0));
+			high[key] = Math.max(reported[key], seen?.[key] ?? 0);
+		}
+		if (id) {
+			if (!seen && this.callUsageSeen.size >= MAX_CALL_USAGE_ENTRIES) {
+				const oldest = this.callUsageSeen.keys().next();
+				if (!oldest.done) this.callUsageSeen.delete(oldest.value);
+			}
+			this.callUsageSeen.set(id, high);
+		}
+		return keys.some((key) => delta[key] > 0) ? delta : undefined;
 	}
 
 	/**

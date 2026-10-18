@@ -4,13 +4,16 @@
  *
  * Fetches the aggregated contributions over IPC on mount and re-fetches whenever
  * the plugin registry changes (install/uninstall/enable/disable). When the
- * `plugins` Encore flag is off the IPC rejects with 'PluginsDisabled'; that is
- * treated as "feature off" and the hook returns empty buckets, so consumers can
- * call it unconditionally and merge nothing when plugins are disabled.
+ * `plugins` Encore flag is off the hook makes no IPC call and holds no
+ * subscription: it returns empty buckets, so consumers can call it
+ * unconditionally and merge nothing when plugins are disabled. Switching the
+ * flag on re-runs the read. (Main also rejects the IPC with 'PluginsDisabled';
+ * that is treated as feature-off too.)
  */
 
 import { useState, useEffect } from 'react';
 import type { AggregatedContributions } from '../../shared/plugins/contributions';
+import { useSettingsStore } from '../stores/settingsStore';
 
 const EMPTY: AggregatedContributions = {
 	themes: [],
@@ -34,12 +37,13 @@ export function usePluginContributions(): AggregatedContributions & { isLoading:
 	const [contributions, setContributions] = useState<
 		AggregatedContributions & { isLoading: boolean }
 	>({ ...EMPTY, isLoading: true });
+	const pluginsEnabled = useSettingsStore((s) => s.encoreFeatures?.plugins === true);
 
 	useEffect(() => {
 		// The plugins API is absent in the web build (and before the preload bridge
 		// is ready); treat that exactly like feature-off and stay on empty buckets.
 		const plugins = window.maestro?.plugins;
-		if (!plugins) {
+		if (!pluginsEnabled || !plugins) {
 			setContributions({ ...EMPTY, isLoading: false });
 			return;
 		}
@@ -82,7 +86,7 @@ export function usePluginContributions(): AggregatedContributions & { isLoading:
 			requestGeneration++;
 			unsubscribe();
 		};
-	}, []);
+	}, [pluginsEnabled]);
 
 	return contributions;
 }

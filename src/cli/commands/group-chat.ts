@@ -10,6 +10,7 @@ import * as fs from 'fs';
 import { withMaestroClient, type MaestroClient } from '../services/maestro-client';
 import { resolveAgentId } from '../services/storage';
 import type { RemoteGroupChatState } from '../../shared/groupChatRemote';
+import { exitIfMaestroNotRunning } from '../services/session-command';
 import { QUEUE_STEER_ROUND_TRIP_TIMEOUT_MS } from '../../shared/chatSteering';
 import type { GroupChatSteerResult } from '../../shared/groupChatSteering';
 
@@ -149,6 +150,7 @@ export async function groupChatStart(name: string, options: StartOptions): Promi
 			console.log(`  ID: ${reply.chatId}`);
 		}
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		fail(error instanceof Error ? error.message : String(error), options.json);
 	}
 }
@@ -183,6 +185,7 @@ export async function groupChatSend(
 		if (options.json) console.log(JSON.stringify({ success: true, chatId }));
 		else console.log(`Sent to group chat ${chatId}`);
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		fail(error instanceof Error ? error.message : String(error), options.json);
 	}
 }
@@ -288,6 +291,7 @@ export async function groupChatStatus(chatRef: string, options: StatusOptions): 
 			console.log(`\n--- ${m.participantName}  ${when}\n${m.content}`);
 		}
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		fail(error instanceof Error ? error.message : String(error), options.json);
 	}
 }
@@ -313,6 +317,7 @@ export async function groupChatList(options: ListOptions): Promise<void> {
 			);
 		}
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		fail(error instanceof Error ? error.message : String(error), options.json);
 	}
 }
@@ -336,6 +341,7 @@ export async function groupChatStop(chatRef: string, options: JsonOption): Promi
 		if (options.json) console.log(JSON.stringify({ success: true, chatId }));
 		else console.log(`Stopped group chat ${chatId}`);
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		fail(error instanceof Error ? error.message : String(error), options.json);
 	}
 }

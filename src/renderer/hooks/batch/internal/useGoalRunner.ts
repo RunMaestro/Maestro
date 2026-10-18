@@ -35,6 +35,7 @@ import { gitService } from '../../../services/git';
 import { logger } from '../../../utils/logger';
 import { notifyToast } from '../../../stores/notificationStore';
 import { useSessionStore, selectSessionById } from '../../../stores/sessionStore';
+import { useBatchStore } from '../../../stores/batchStore';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { extractGoalSynopsis } from '../../../../shared/maestro-lib/autorun/synopsis';
 import type { BatchAction } from '../batchReducer';
@@ -535,8 +536,9 @@ export function useGoalRunner({
 
 				// Limit pause: if this iteration's spawn hit a token/API/credit or rate
 				// limit, do NOT consume the iteration. The agent-error listener has
-				// already stamped the session into the paused state (agentError +
-				// agentErrorPaused); here we mirror the spec-driven runner by awaiting an
+				// already parked the batch on the error (`batchRunStates[id].error`; a
+				// `-batch-` failure is kept off the session's own `agentError` so it
+				// cannot block the chat tab); here we mirror the spec-driven runner by awaiting an
 				// unblock signal on the shared errorResolution promise. On resume we retry
 				// the SAME iteration with the same prompt. Restart durability is out of
 				// scope (Phase 4): the loop is still alive in memory, it just parks here.
@@ -550,9 +552,11 @@ export function useGoalRunner({
 					// spawn's failure. Bounded so a genuine non-limit failure still falls
 					// through quickly to regular failure handling.
 					const readLimitError = () => {
-						const paused = selectSessionById(sessionId)(useSessionStore.getState());
-						const err = paused?.agentError;
-						return err && isLimitError(err) && err.timestamp >= iterationStart ? err : undefined;
+						const batchErr = useBatchStore.getState().batchRunStates[sessionId]?.error;
+						const sessionErr = selectSessionById(sessionId)(useSessionStore.getState())?.agentError;
+						return [batchErr, sessionErr].find(
+							(err) => err && isLimitError(err) && err.timestamp >= iterationStart
+						);
 					};
 					let pausedError = readLimitError();
 					for (let attempt = 0; !pausedError && attempt < 5; attempt++) {

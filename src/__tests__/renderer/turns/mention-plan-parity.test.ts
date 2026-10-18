@@ -56,7 +56,15 @@ describe('mention planning parity', () => {
 					routing: library.routing,
 					suppressLocal: library.suppressLocal,
 				}
-			).toEqual(desktop);
+			).toEqual(
+				// The fields both planners share. `inferredRouting` / `routingSource`
+				// describe the composer's routing override, a desktop-only concept.
+				desktop && {
+					targetSessionIds: desktop.targetSessionIds,
+					routing: desktop.routing,
+					suppressLocal: desktop.suppressLocal,
+				}
+			);
 		});
 	}
 

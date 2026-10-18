@@ -200,7 +200,19 @@ export const svgSanitizeSchema: Schema = {
 	// `fill="url(#grad)"` targets and same-document anchors working.
 	protocols: {
 		...defaultSchema.protocols,
-		href: [...(defaultSchema.protocols?.href ?? []), 'maestro', 'maestro-file', 'file', 'tel', '#'],
+		href: [
+			...(defaultSchema.protocols?.href ?? []),
+			'maestro',
+			'maestro-file',
+			'file',
+			'tel',
+			'#',
+			// Per-link browser routing hints (src/shared/urlRoutingHint.ts).
+			'maestro+http',
+			'maestro+https',
+			'system+http',
+			'system+https',
+		],
 		src: [...(defaultSchema.protocols?.src ?? []), 'maestro', 'maestro-file', 'file'],
 		xlinkHref: ['http', 'https', '#'],
 	},

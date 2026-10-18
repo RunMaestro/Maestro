@@ -44,10 +44,13 @@ export interface SystemPromptSectionRef {
  * names the features whose setup it has confirmed is complete. Leaving the list
  * out drops every such section, so a builder that cannot tell never advertises
  * a tool that may not work.
+ *
+ * `sectionsOnly` marks a spawn with no Maestro agent behind it (the Group Chat
+ * moderator): `agentOnly` sections are dropped for it.
  */
 export function systemPromptSectionsFor(
 	encoreFeatures: unknown,
-	opts: { isSsh: boolean; readyFlags?: readonly FirstPartyEncoreFlag[] }
+	opts: { isSsh: boolean; readyFlags?: readonly FirstPartyEncoreFlag[]; sectionsOnly?: boolean }
 ): SystemPromptSectionRef[] {
 	const flags = resolveEncoreFeatures(encoreFeatures);
 	const refs: SystemPromptSectionRef[] = [];
@@ -56,6 +59,7 @@ export function systemPromptSectionsFor(
 		if (!section) continue;
 		if (!flags[def.encoreFlag]) continue;
 		if (section.localOnly && opts.isSsh) continue;
+		if (section.agentOnly && opts.sectionsOnly) continue;
 		if (section.requiresReady && !opts.readyFlags?.includes(def.encoreFlag)) continue;
 		refs.push({ pluginId: def.id, promptId: section.promptId });
 	}

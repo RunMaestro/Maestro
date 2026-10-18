@@ -12,7 +12,9 @@
  *
  * Tool names vary per provider (Claude Code `Read`/`Bash`/`Edit`, OpenCode
  * lowercase `read`/`bash`, Codex `shell`/`apply_patch`/`update_plan`, Copilot
- * `write_to_file`, MCP `mcp__server__tool`), so matching is done on a normalized
+ * `write_to_file`, Grok `run_terminal_command`/`search_replace`, Antigravity
+ * `run_command`/`view_file` with PascalCase keys, MCP `mcp__server__tool`), so
+ * matching is done on a normalized
  * name and every unknown tool still gets a usable "Used <name>" line rather than
  * being dropped.
  */
@@ -127,10 +129,17 @@ export function describeToolActivity(toolName: string, input: unknown): ToolActi
 		'path',
 		'file',
 		'target_file',
+		// Antigravity spells its parameters in PascalCase.
+		'AbsolutePath',
+		'TargetFile',
+		'DirectoryPath',
+		'SearchPath',
+		'SearchDirectory',
 	]);
-	const command = commandString(record.command ?? record.cmd ?? record.script) ?? rawInput;
-	const pattern = firstString(record, ['pattern', 'regex', 'query', 'search']);
-	const url = firstString(record, ['url', 'uri']);
+	const command =
+		commandString(record.command ?? record.cmd ?? record.script ?? record.CommandLine) ?? rawInput;
+	const pattern = firstString(record, ['pattern', 'regex', 'query', 'search', 'Query', 'Pattern']);
+	const url = firstString(record, ['url', 'uri', 'Url']);
 
 	const shorten = (value: string | undefined, isPath: boolean): string => {
 		if (!value) return '';
@@ -165,6 +174,9 @@ export function describeToolActivity(toolName: string, input: unknown): ToolActi
 		case 'applypatch':
 		case 'patch':
 		case 'editfile':
+		case 'searchreplace':
+		case 'replacefilecontent':
+		case 'multireplacefilecontent':
 			// Codex sends apply_patch as one raw diff string with no path field;
 			// fall back to the patch body so the line is not left bare.
 			return {
@@ -184,6 +196,7 @@ export function describeToolActivity(toolName: string, input: unknown): ToolActi
 		case 'runcommand':
 		case 'terminal':
 		case 'runterminalcmd':
+		case 'runterminalcommand':
 			return { verb: 'Ran', target: shorten(command, false), targetIsCode: true };
 
 		case 'bashoutput':
@@ -204,6 +217,7 @@ export function describeToolActivity(toolName: string, input: unknown): ToolActi
 		case 'find':
 		case 'fileglob':
 		case 'globfilesearch':
+		case 'findbyname':
 			return {
 				verb: 'Looked for files matching',
 				target: shorten(pattern, false),

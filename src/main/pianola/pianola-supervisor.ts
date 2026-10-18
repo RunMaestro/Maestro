@@ -28,9 +28,11 @@ import {
 } from '../../shared/maestro-lib/control/termination';
 import {
 	readSupervisorTargets,
+	removeSupervisorTarget,
 	writeSupervisorTargets,
 	supervisorFilePath,
 } from './pianola-store-main';
+import { PIANOLA_WATCH_RETIRED_EXIT_CODE } from '../../shared/pianola/pianola-watcher';
 import type { PianolaSupervisedTarget, PianolaSupervisedKind } from '../../shared/pianola/storage';
 import { generateUUID } from '../../shared/uuid';
 
@@ -406,7 +408,7 @@ export class PianolaSupervisor {
 	private buildArgs(target: PianolaSupervisedTarget): string[] | null {
 		if (target.kind === 'watch') {
 			if (!target.tabId || !target.agentId) return null;
-			return [
+			const args = [
 				'pianola',
 				'watch',
 				target.tabId,
@@ -415,6 +417,8 @@ export class PianolaSupervisor {
 				'--interval',
 				String(target.intervalSeconds ?? 5),
 			];
+			if (target.idleHours !== undefined) args.push('--idle-hours', String(target.idleHours));
+			return args;
 		}
 		if (!target.planId) return null;
 		return [
@@ -514,6 +518,13 @@ export class PianolaSupervisor {
 			if (entry.startedAt && Date.now() - entry.startedAt >= STABLE_RUN_MS) {
 				entry.restarts = 0;
 			}
+			// A watcher retired itself (tab gone, or idle past its timeout): drop the
+			// target from the store so it is neither restarted nor relaunched on the
+			// next app start.
+			if (code === PIANOLA_WATCH_RETIRED_EXIT_CODE && entry.target.kind === 'watch') {
+				this.retireTarget(entry);
+				return;
+			}
 			// Clean exit (code 0): success. An orchestrate run finishing its plan is
 			// expected; do not restart.
 			if (code === 0) {
@@ -557,6 +568,21 @@ export class PianolaSupervisor {
 			}
 			this.spawn(target);
 		}, delay);
+	}
+
+	/** Forget a watch target that retired itself and remove it from the store. */
+	private retireTarget(entry: SupervisedChild): void {
+		entry.state = 'stopped';
+		this.children.delete(entry.target.id);
+		logger.info(`Supervised watch ${entry.target.id} retired; removing target`, LOG_CONTEXT);
+		try {
+			removeSupervisorTarget(entry.target.id);
+		} catch (error) {
+			void captureException(error, {
+				operation: 'pianola:supervisor:retire',
+				id: entry.target.id,
+			});
+		}
 	}
 
 	/** Append child output to the bounded ring buffer. */

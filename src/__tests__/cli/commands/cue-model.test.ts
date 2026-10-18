@@ -16,6 +16,7 @@ const mockReadSessions = vi.fn();
 
 vi.mock('../../../cli/services/storage', () => ({
 	readSessions: () => mockReadSessions(),
+	readLiveSessions: () => mockReadSessions(),
 	// Exact id or exact name is all these tests need from the real resolver.
 	resolveAgentId: (input: string) => {
 		const sessions = mockReadSessions() as Array<{ id: string; name: string }>;
@@ -229,5 +230,50 @@ describe('cue model', () => {
 		} finally {
 			fs.rmSync(otherRoot, { recursive: true, force: true });
 		}
+	});
+
+	describe('--data-dir', () => {
+		const priorDataDir = process.env.MAESTRO_USER_DATA;
+		afterEach(() => {
+			if (priorDataDir === undefined) delete process.env.MAESTRO_USER_DATA;
+			else process.env.MAESTRO_USER_DATA = priorDataDir;
+		});
+
+		it('reads the agent list from the given directory, over an inherited MAESTRO_USER_DATA', async () => {
+			// A server's agent list, and through each agent's project root its
+			// cue.yaml, comes from the data directory. The flag must be applied
+			// before the first store read, or the edit lands in the wrong agent set.
+			const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cue-model-data-'));
+			try {
+				process.env.MAESTRO_USER_DATA = path.join(os.tmpdir(), 'inherited-elsewhere');
+				let seenDataDir: string | undefined;
+				mockReadSessions.mockImplementation(() => {
+					seenDataDir = process.env.MAESTRO_USER_DATA;
+					return [session({ projectRoot })];
+				});
+				writeCueYaml(projectRoot, [review]);
+
+				await cueModel('review', { tier: 'high', dataDir, json: true });
+
+				expect(seenDataDir).toBe(path.resolve(dataDir));
+				expect(readSub(projectRoot, 'review')).toMatchObject({ tier: 'high' });
+			} finally {
+				fs.rmSync(dataDir, { recursive: true, force: true });
+			}
+		});
+
+		it('refuses a directory that does not exist and never creates it or reads agents', async () => {
+			const missing = path.join(projectRoot, 'no-such-data-dir');
+			writeCueYaml(projectRoot, [review]);
+
+			await expect(
+				cueModel('review', { tier: 'high', dataDir: missing, json: true })
+			).rejects.toThrow('process.exit(1)');
+
+			expect(jsonOutput()).toMatchObject({ success: false, code: 'DATA_DIR_NOT_FOUND' });
+			expect(mockReadSessions).not.toHaveBeenCalled();
+			expect(fs.existsSync(missing)).toBe(false);
+			expect(readSub(projectRoot, 'review')).not.toHaveProperty('tier');
+		});
 	});
 });

@@ -18,6 +18,7 @@ import { useSettingsStore } from '../stores/settingsStore';
 import type { GroupChatQueueState } from '../../shared/group-chat-types';
 import { useSessionStore } from '../stores/sessionStore';
 import { mentionSessionEquality } from '../stores/sessionEquality';
+import { filterLiveAgents } from '../../shared/agentVisibility';
 import { ArrowUp, Bell, ImageIcon, Eye, Keyboard, PenLine } from 'lucide-react';
 import type {
 	Theme,
@@ -198,10 +199,16 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 	}, [draftFlushRef, flushDraft]);
 
 	// Narrow mention-shaped sessions so streaming logs do not rebuild @mentions.
-	const sessions = useStoreWithEqualityFn(
+	const storedSessions = useStoreWithEqualityFn(
 		useSessionStore,
 		(s) => s.sessions,
 		mentionSessionEquality
+	);
+	// Live agents only: a dormant Pianola (flag off) is never offered for @mention.
+	const pianolaEnabled = useSettingsStore((s) => s.encoreFeatures.pianola);
+	const sessions = useMemo(
+		() => filterLiveAgents(storedSessions, { pianola: pianolaEnabled }),
+		[storedSessions, pianolaEnabled]
 	);
 
 	// Unified `@` mention picker, locked to the Agents category (Group Chat has

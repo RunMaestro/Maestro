@@ -9,6 +9,7 @@ import {
 	projectConversation,
 	createTranslationRegistry,
 	codexTranslationAdapter,
+	claudeTranslationAdapter,
 } from '../../../shared/maestro-lib/translation/adapters';
 import {
 	importSelectedCodexResources,
@@ -31,6 +32,14 @@ describe('destination native projections', () => {
 	it('uses the picker declarations for native direction and version registration', () => {
 		const registry = createTranslationRegistry();
 		for (const direction of TRANSLATION_DIRECTIONS) {
+			for (const sourceVersion of direction.sourceVersions)
+				for (const destinationVersion of direction.destinationVersions)
+					expect(
+						registry.direction(
+							{ ...identity, provider: direction.source, version: sourceVersion },
+							{ ...identity, provider: direction.destination, version: destinationVersion }
+						)
+					).toEqual(direction);
 			expect(
 				registry.direction(
 					{ ...identity, provider: direction.source, version: direction.sourceVersions[0] },
@@ -48,6 +57,99 @@ describe('destination native projections', () => {
 		expect(getDeclaredTranslationDirection('claude-code', 'opencode')).toBeUndefined();
 		expect(getDeclaredTranslationDirection('codex', 'codex')).toBeUndefined();
 		expect(getDeclaredTranslationDirection('unknown-provider', 'codex')).toBeUndefined();
+	});
+	it.each([false, true])(
+		'uses provider-assigned IDs and checks persisted content (changed=%s)',
+		async (changed) => {
+			const root = await fs.mkdtemp(path.join(os.tmpdir(), 'translation-native-ids-'));
+			try {
+				const file = path.join(root, 'native.jsonl');
+				const conversation = extractNativeConversation(
+					{ ...identity, version: '2.1.302' },
+					'tab',
+					'source',
+					Buffer.from(
+						JSON.stringify({
+							type: 'user',
+							uuid: 'one',
+							message: { role: 'user', content: 'remember marker' },
+						})
+					)
+				);
+				const request = vi.fn(async (method, params) => {
+					if (method === 'thread/start') return { thread: { id: 'native', path: file } };
+					expect(params.items[0]).not.toHaveProperty('id');
+					await fs.writeFile(
+						file,
+						params.items
+							.map((item: Record<string, unknown>, i: number) =>
+								JSON.stringify({
+									type: 'response_item',
+									payload: {
+										...item,
+										id: `msg_native_${i}`,
+										...(changed && { content: [{ type: 'input_text', text: 'changed' }] }),
+										internal_chat_message_metadata_passthrough: { turn_id: 'native-turn' },
+									},
+								})
+							)
+							.join('\n')
+					);
+					return {};
+				});
+				const staged = codexTranslationAdapter.stage(conversation, {
+					operationId: 'operation',
+					destination: { ...identity, provider: 'codex', version: '0.163.0', accountRoot: root },
+					codex: { request: request as TranslationRpc['request'], onNotification: () => () => {} },
+					recordIntent: async () => {},
+				});
+				if (changed) await expect(staged).rejects.toThrow('changed an injected item');
+				else {
+					const mapping = await staged;
+					expect(Object.keys(mapping.lineage).map((key) => JSON.parse(key).eventId)).toEqual([
+						'msg_native_0',
+					]);
+					expect(Object.values(mapping.lineage)).toEqual([conversation.records[0].origin]);
+				}
+			} finally {
+				await fs.rm(root, { recursive: true, force: true });
+			}
+		}
+	);
+	it('writes Claude history into the selected shared projects root with the destination version', async () => {
+		const root = await fs.mkdtemp(path.join(os.tmpdir(), 'translation-shared-projects-'));
+		try {
+			const nativeSessionRoot = path.join(root, 'shared-projects');
+			await fs.mkdir(nativeSessionRoot);
+			const conversation = extractNativeConversation(
+				identity,
+				'tab',
+				'source',
+				Buffer.from(
+					JSON.stringify({
+						type: 'user',
+						uuid: 'one',
+						message: { role: 'user', content: 'marker' },
+					})
+				)
+			);
+			const mapping = await claudeTranslationAdapter.stage(conversation, {
+				operationId: 'operation',
+				destination: {
+					...identity,
+					version: '2.1.302',
+					accountRoot: path.join(root, 'profile'),
+					nativeSessionRoot,
+				},
+				recordIntent: async () => {},
+			});
+			expect(mapping.artifacts[0].path.startsWith(nativeSessionRoot + path.sep)).toBe(true);
+			expect(
+				JSON.parse((await fs.readFile(mapping.artifacts[0].path, 'utf8')).trim()).version
+			).toBe('2.1.302');
+		} finally {
+			await fs.rm(root, { recursive: true, force: true });
+		}
 	});
 	it('refuses a Codex rollout parent symlink before injecting history', async () => {
 		const root = await fs.mkdtemp(path.join(os.tmpdir(), 'translation-codex-target-'));
@@ -221,6 +323,7 @@ describe('destination native projections', () => {
 		expect(rows[0].item.parentUuid).toBeNull();
 		expect(rows[1].item.parentUuid).toBe(rows[0].id);
 		expect(rows.every((r) => r.item.sessionId === 'new-native')).toBe(true);
+		expect(rows.every((r) => r.item.version === '2.1.296')).toBe(true);
 		expect(createTranslationRegistry().get('opencode')).toBeUndefined();
 	});
 	it('refuses broad imports before sending RPC', async () => {

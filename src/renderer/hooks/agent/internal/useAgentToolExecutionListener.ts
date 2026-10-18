@@ -18,6 +18,7 @@
 import { useEffect } from 'react';
 import { useSessionStore } from '../../../stores/sessionStore';
 import { noteRetryProgress } from '../../../stores/retryStore';
+import { noteLiveTabOutput } from './helpers/liveTabOutput';
 import { REGEX_AI_TAB } from '../../../utils/sessionIdParser';
 import { useOwnedSideEffectGate } from './useOwnedSessionGate';
 import type { LogEntry } from '../../../types';
@@ -49,8 +50,10 @@ export function useAgentToolExecutionListener(): void {
 
 				if (!getSessions().some((s) => s.id === actualSessionId)) return;
 
-				// A tool call proves an auto-retry resend got through (see noteRetryProgress).
+				// A tool call proves an auto-retry resend got through (see noteRetryProgress),
+				// and that the turn is running, whoever started it.
 				noteRetryProgress(actualSessionId, tabId);
+				noteLiveTabOutput(actualSessionId, tabId);
 
 				const logId = toolEvent.toolCallId
 					? `tool-${toolEvent.toolCallId}`

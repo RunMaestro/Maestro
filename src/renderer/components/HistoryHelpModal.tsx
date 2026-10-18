@@ -180,9 +180,15 @@ export const HistoryHelpModal = memo(function HistoryHelpModal({
 					</div>
 					<div className="text-sm space-y-3 pl-7" style={{ color: theme.colors.textDim }}>
 						<p>
-							<span style={{ color: theme.colors.warning }}>AUTO</span>,{' '}
-							<span style={{ color: AGENT_COLOR }}>AGENT</span>, and{' '}
-							<span style={{ color: CUE_COLOR }}>CUE</span> entries show a status indicator:
+							<span style={{ color: theme.colors.warning }}>AUTO</span>
+							{maestroCueEnabled ? ', ' : ' and '}
+							<span style={{ color: AGENT_COLOR }}>AGENT</span>
+							{maestroCueEnabled && (
+								<>
+									, and <span style={{ color: CUE_COLOR }}>CUE</span>
+								</>
+							)}{' '}
+							entries show a status indicator:
 						</p>
 						<div className="flex items-center gap-4">
 							<div className="flex items-center gap-2">

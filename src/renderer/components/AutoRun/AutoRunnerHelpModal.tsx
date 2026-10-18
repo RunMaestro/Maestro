@@ -783,8 +783,10 @@ export function AutoRunnerHelpModal({ theme, onClose, zIndex = 50 }: AutoRunnerH
 							the panel.
 						</p>
 						<p>
-							When the run genuinely must wait on a person, use a HITL (human-in-the-loop) gate
-							marker on its own line, above the tasks that depend on the human:
+							Auto Runs are meant to run unattended, so human steps belong in the Manual Follow-Up
+							section below by default. Only when the run must stop and wait on a person at a
+							specific point, use a HITL (human-in-the-loop) gate marker on its own line, above the
+							tasks that depend on the human:
 						</p>
 						<div
 							className="font-mono text-xs p-2 rounded border"

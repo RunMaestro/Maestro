@@ -17,6 +17,7 @@ import { reopenDesktopTabIfNeeded } from '../../services/desktopTabClose';
 import { requestEditLastQueuedMessage } from '../../services/editQueuedMessage';
 import { requestOpenStagedImagesOrganizer } from '../../services/stagedImagesOrganizer';
 import { toggleAllUnreadFilters } from '../../services/unreadFilters';
+import { toggleInAppToasts } from '../../services/inAppToasts';
 import { requestSidebarReveal } from '../../utils/sidebarReveal';
 import { getGitShortcutActions } from '../../services/gitShortcutActions';
 import { useNotificationStore } from '../../stores/notificationStore';
@@ -769,6 +770,10 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				useNotificationStore.getState().setNotificationCenterOpen(true);
 				trackShortcut('openNotificationCenter');
+			} else if (ctx.isShortcut(e, 'toggleInAppToasts')) {
+				e.preventDefault();
+				toggleInAppToasts();
+				trackShortcut('toggleInAppToasts');
 			} else if (ctx.isShortcut(e, 'clearAllNotifications')) {
 				e.preventDefault();
 				useNotificationStore.getState().clearToasts();

@@ -11,6 +11,7 @@ import { selectModalOpen, useModalStore } from '../../../renderer/stores/modalSt
 import { useFeedbackDraftStore } from '../../../renderer/stores/feedbackDraftStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useThroughputGaugeStore } from '../../../renderer/stores/throughputGaugeStore';
+import { useNotificationStore } from '../../../renderer/stores/notificationStore';
 
 describe('openUiSurface - feedback', () => {
 	beforeEach(() => {
@@ -70,9 +71,33 @@ describe('openUiSurface - throughput-gauge', () => {
 		expect(useThroughputGaugeStore.getState().visible).toBe(true);
 	});
 
-	it('refuses while the Encore Feature is off', () => {
+	it('refuses while the Encore Feature is off, reporting to the caller only', () => {
 		setGaugeFlag(false);
-		expect(openUiSurface('throughput-gauge').ok).toBe(false);
+		const toastsBefore = useNotificationStore.getState().toasts.length;
+		const result = openUiSurface('throughput-gauge');
+		expect(result.ok).toBe(false);
+		expect(result.error).toContain('Settings → Plugins');
 		expect(useThroughputGaugeStore.getState().visible).toBe(false);
+		// No in-app toast advertising the disabled feature.
+		expect(useNotificationStore.getState().toasts.length).toBe(toastsBefore);
+	});
+});
+
+describe('openUiSurface - Encore-gated tabs', () => {
+	const initialEncore = useSettingsStore.getState().encoreFeatures;
+
+	afterEach(() => {
+		useSettingsStore.setState({ encoreFeatures: initialEncore });
+		useModalStore.getState().closeModal('usageDashboard');
+	});
+
+	it("refuses the Usage Dashboard's Cue tab while Cue is off", () => {
+		useSettingsStore.setState((s) => ({
+			encoreFeatures: { ...s.encoreFeatures, usageStats: true, maestroCue: false },
+		}));
+		const result = openUiSurface('usage-dashboard', 'cue');
+		expect(result.ok).toBe(false);
+		expect(result.error).toContain('Cue');
+		expect(selectModalOpen('usageDashboard')(useModalStore.getState())).toBe(false);
 	});
 });

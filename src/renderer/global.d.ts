@@ -114,6 +114,7 @@ type DirectoryEntry = import('../shared/types').DirectoryEntry;
 type ShellInfo = import('../shared/types').ShellInfo;
 
 type UsageStats = import('../shared/types').UsageStats;
+type CallUsage = import('../shared/types').CallUsage;
 
 type HistoryEntryType = import('../shared/types').HistoryEntryType;
 
@@ -1198,6 +1199,7 @@ interface MaestroAPI {
 		onStderr: (callback: (sessionId: string, data: string) => void) => () => void;
 		onCommandExit: (callback: (sessionId: string, code: number) => void) => () => void;
 		onUsage: (callback: (sessionId: string, usageStats: UsageStats) => void) => () => void;
+		onCallUsage: (callback: (sessionId: string, usage: CallUsage) => void) => () => void;
 		onAgentError: (
 			callback: (
 				sessionId: string,
@@ -4817,6 +4819,9 @@ interface MaestroAPI {
 		delete: (filePath: string) => Promise<void>;
 	};
 
+	// Cue Bundle API (export / import a pipeline or an agent as a portable zip)
+	cueBundle: import('../main/preload/cueBundle').CueBundleApi;
+
 	// Pianola API (autonomous manager: rules + decision log)
 	// All channels reject with 'PianolaDisabled' when the Encore flag is off.
 	pianola: {
@@ -5187,6 +5192,15 @@ interface MaestroAPI {
 	};
 	/** Quick Chat: the floating chat window and the engine that runs it. */
 	quickChat: QuickChatApi;
+	/**
+	 * Codex `visualize` content references. `load` builds the isolated document
+	 * for one fragment and returns the id/revision to frame it by.
+	 */
+	codexVisualization: {
+		load: (
+			request: import('../shared/codexVisualization').CodexVisualizationLoadRequest
+		) => Promise<import('../shared/codexVisualization').CodexVisualizationLoadResult>;
+	};
 }
 
 declare global {

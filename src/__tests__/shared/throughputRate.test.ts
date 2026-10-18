@@ -3,7 +3,8 @@
  *
  * The engine's failures are silent: a wrong reconciliation rule double counts
  * or drives a rate negative, and the needle just reads wrong. These cases pin
- * the estimate-then-correct rule, the late-text gates that stop the coalesced
+ * the credit-ahead-then-correct rule (text estimates and per-call usage), the
+ * late-text gates that stop the coalesced
  * tail of a turn from counting twice, the cache-read exclusion, scope
  * isolation, and the rolling window's edges.
  */
@@ -115,6 +116,98 @@ describe('throughputRate', () => {
 			tracker.recordUsage('s1', 'a1', { outputTokens: 25 }, 5000);
 			// 50 + 25 total, not corrected against the first turn's estimate.
 			expect(tracker.rates(5000, 10000).out).toBeCloseTo(perSecond(75, 10000));
+		});
+	});
+
+	describe('per-call usage', () => {
+		it('credits each call at once, in both directions, by the input rule', () => {
+			tracker.recordCallUsage(
+				's1',
+				'a1',
+				{
+					inputTokens: 2,
+					cacheCreationInputTokens: 1000,
+					cacheReadInputTokens: 160000,
+					outputTokens: 300,
+				},
+				1000,
+				'claude-code'
+			);
+			const rates = tracker.rates(1000, 10000);
+			expect(rates.in).toBeCloseTo(perSecond(1002, 10000));
+			expect(rates.out).toBeCloseTo(perSecond(300, 10000));
+		});
+
+		it('subtracts cache reads for providers that report them inside inputTokens', () => {
+			tracker.recordCallUsage(
+				's1',
+				'a1',
+				{ inputTokens: 1000, cacheReadInputTokens: 800, outputTokens: 50 },
+				1000,
+				'codex'
+			);
+			expect(tracker.rates(1000, 10000).in).toBeCloseTo(perSecond(200, 10000));
+		});
+
+		it('nets the calls out of the turn report, so the turn total is counted once', () => {
+			tracker.recordCallUsage(
+				's1',
+				'a1',
+				{ inputTokens: 2, cacheCreationInputTokens: 500, outputTokens: 100 },
+				1000
+			);
+			tracker.recordCallUsage(
+				's1',
+				'a1',
+				{ inputTokens: 3, cacheCreationInputTokens: 700, outputTokens: 200 },
+				2000
+			);
+			tracker.recordUsage(
+				's1',
+				'a1',
+				{ inputTokens: 5, cacheCreationInputTokens: 1300, outputTokens: 350 },
+				3000
+			);
+			const rates = tracker.rates(3000, 10000);
+			// Calls covered 1205 in and 300 out; the report adds only what they missed.
+			expect(rates.in).toBeCloseTo(perSecond(1305, 10000));
+			expect(rates.out).toBeCloseTo(perSecond(350, 10000));
+			expect(tracker.sampleCount()).toBe(3);
+		});
+
+		it('credits zero, never negative, when the calls already cover the report', () => {
+			tracker.recordCallUsage('s1', 'a1', { inputTokens: 400, outputTokens: 300 }, 1000);
+			tracker.recordUsage('s1', 'a1', { inputTokens: 100, outputTokens: 200 }, 2000);
+			const rates = tracker.rates(2000, 10000);
+			expect(rates.in).toBeCloseTo(perSecond(400, 10000));
+			expect(rates.out).toBeCloseTo(perSecond(300, 10000));
+			expect(tracker.sampleCount()).toBe(1);
+		});
+
+		it('refuses text from a source that sends call reports, which already count it', () => {
+			tracker.recordCallUsage('s1', 'a1', { outputTokens: 40 }, 1000);
+			tracker.recordStreamedText('s1', 'a1', textOf(40), 1050);
+			tracker.recordReplyText('s1', 'a1', textOf(40), 1100);
+			expect(tracker.rates(1100, 10000).out).toBeCloseTo(perSecond(40, 10000));
+			// Another source without call reports still estimates from text.
+			tracker.recordStreamedText('s2', 'a1', textOf(10), 1100);
+			expect(tracker.rates(1100, 10000).out).toBeCloseTo(perSecond(50, 10000));
+		});
+
+		it('starts each turn clean after the report', () => {
+			tracker.recordCallUsage('s1', 'a1', { inputTokens: 100, outputTokens: 50 }, 1000);
+			tracker.recordUsage('s1', 'a1', { inputTokens: 100, outputTokens: 50 }, 2000);
+			tracker.recordCallUsage('s1', 'a1', { inputTokens: 30, outputTokens: 20 }, 3000);
+			tracker.recordUsage('s1', 'a1', { inputTokens: 80, outputTokens: 20 }, 4000);
+			const rates = tracker.rates(4000, 10000);
+			// Second turn: 30 by call + 50 by report, not netted against the first turn.
+			expect(rates.in).toBeCloseTo(perSecond(180, 10000));
+			expect(rates.out).toBeCloseTo(perSecond(70, 10000));
+		});
+
+		it('ignores an all-zero call report', () => {
+			tracker.recordCallUsage('s1', 'a1', { inputTokens: 0, outputTokens: 0 }, 1000);
+			expect(tracker.sampleCount()).toBe(0);
 		});
 	});
 

@@ -572,6 +572,27 @@ export function truncateText(text: string, maxLength: number = 24): string {
 }
 
 /**
+ * Truncate prose to a maximum length, cutting at the last space that fits so a
+ * word is never split. Falls back to a hard cut when the text has no usable
+ * space. The ellipsis counts toward `maxLength`.
+ *
+ * @param text - The text to truncate
+ * @param maxLength - Maximum length of the returned string
+ * @param ellipsis - Marker appended when the text is cut (default: `…`)
+ * @returns Truncated string (e.g., "Donation Appeal Pages Japanese...")
+ */
+export function truncateAtWordBoundary(
+	text: string,
+	maxLength: number,
+	ellipsis: string = '…'
+): string {
+	if (text.length <= maxLength) return text;
+	const limit = Math.max(1, maxLength - ellipsis.length);
+	const boundary = text.lastIndexOf(' ', limit);
+	return text.substring(0, boundary > 0 ? boundary : limit).trimEnd() + ellipsis;
+}
+
+/**
  * Estimate token count from an array of log entries.
  * Uses the same ~4 characters per token heuristic as estimateTokenCount.
  *

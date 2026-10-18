@@ -26,6 +26,7 @@ import {
 	getSshRemoteById,
 } from '../stores/getters';
 import { isInitialized } from '../stores/instances';
+import { filterLiveAgents } from '../../shared/agentVisibility';
 import { logger } from '../utils/logger';
 import { resolveAgentBillingCredential } from '../../shared/providerProfiles';
 import {
@@ -125,7 +126,11 @@ async function checkCandidate(
 }
 
 function readAgentSources(): FeedbackAccountSource[] {
-	const sessions = getSessionsStore().get('sessions', []) ?? [];
+	// Live agents only: a dormant Pianola (flag off) names no account.
+	const sessions = filterLiveAgents(
+		getSessionsStore().get('sessions', []) ?? [],
+		getSettingsStore().get('encoreFeatures')
+	);
 	return sessions.map((session) => {
 		const ssh = session.sessionSshRemoteConfig;
 		const remoteId = ssh?.enabled && typeof ssh.remoteId === 'string' ? ssh.remoteId : null;

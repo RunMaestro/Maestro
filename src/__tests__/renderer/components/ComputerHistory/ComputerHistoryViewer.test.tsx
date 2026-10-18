@@ -56,6 +56,7 @@ function makeApi() {
 			],
 			limited: false,
 			segmentsScanned: 1,
+			draftsCollapsed: 0,
 		})),
 		digests: vi.fn(async () => []),
 		getConfig: vi.fn(async () => defaultComputerHistoryConfig()),

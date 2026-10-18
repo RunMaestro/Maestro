@@ -51,6 +51,21 @@ describe('Forwarding Listeners', () => {
 		expect(mockProcessManager.on).toHaveBeenCalledWith('query-complete', expect.any(Function));
 		expect(mockProcessManager.on).toHaveBeenCalledWith('exit', expect.any(Function));
 		expect(mockProcessManager.on).toHaveBeenCalledWith('steering-verdict', expect.any(Function));
+		expect(mockProcessManager.on).toHaveBeenCalledWith('call-usage', expect.any(Function));
+	});
+
+	it('should forward call-usage to renderer at once, without the thinking coalesce window', () => {
+		setupForwardingListeners(mockProcessManager, mockDeps);
+
+		const usage = {
+			inputTokens: 2,
+			outputTokens: 300,
+			cacheReadInputTokens: 160000,
+			cacheCreationInputTokens: 1000,
+		};
+		eventHandlers.get('call-usage')?.('sess-1-ai-tab-1', usage);
+
+		expect(mockSafeSend).toHaveBeenCalledWith('process:call-usage', 'sess-1-ai-tab-1', usage);
 	});
 
 	it('should forward steering verdicts to renderer', () => {

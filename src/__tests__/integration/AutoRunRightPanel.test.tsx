@@ -1407,7 +1407,7 @@ describe('Auto Run + RightPanel Integration', () => {
 
 			// Should show progress even when on files tab
 			expect(screen.getByText('Auto Run Active')).toBeInTheDocument();
-			expect(screen.getByText('2 of 5 tasks completed')).toBeInTheDocument();
+			expect(screen.getByTestId('autorun-stat-progress-sub')).toHaveTextContent('2 / 5 tasks');
 		});
 
 		it('switching to autorun tab during batch run shows locked editor', async () => {

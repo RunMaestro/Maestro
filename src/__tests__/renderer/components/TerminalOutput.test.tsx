@@ -751,6 +751,46 @@ describe('TerminalOutput', () => {
 		});
 	});
 
+	describe('agent delegation pills', () => {
+		const renderDelegation = (timestamp: number) => {
+			const logs = [
+				createLogEntry({
+					text: 'Asked Worker: check the build',
+					source: 'system',
+					timestamp,
+					delegation: {
+						kind: 'ask',
+						toSessionId: 'worker',
+						toAgentName: 'Worker',
+						toToolType: 'claude-code',
+						subject: 'check the build',
+					},
+				}),
+			];
+			const tabs = [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }];
+			const session = createDefaultSession({ tabs, aiTabs: tabs, activeTabId: 'tab-1' } as never);
+			return render(<TerminalOutput {...createDefaultProps({ session })} />);
+		};
+
+		it('shows when a hand-off happened today in the timestamp gutter', () => {
+			const at = new Date();
+			at.setHours(9, 5, 0, 0);
+			renderDelegation(at.getTime());
+
+			const gutter = screen.getByTestId('agent-delegation-timestamp');
+			expect(gutter).toHaveTextContent(
+				at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+			);
+			expect(screen.getByTestId('agent-delegation-card')).toBeInTheDocument();
+		});
+
+		it('adds the date for a hand-off from another day', () => {
+			renderDelegation(new Date(2024, 0, 15, 14, 30).getTime());
+
+			expect(screen.getByTestId('agent-delegation-timestamp')).toHaveTextContent('2024-01-15');
+		});
+	});
+
 	describe('cross-tab search jump anchors', () => {
 		it('tags every rendered row with its entry id', () => {
 			const logs: LogEntry[] = [

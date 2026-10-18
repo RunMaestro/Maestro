@@ -21,6 +21,14 @@ import type {
 } from '../../../../shared/plugins/contributions';
 import { useUIStore } from '../../../stores/uiStore';
 import { useModalStore } from '../../../stores/modalStore';
+import { useSettingsStore } from '../../../stores/settingsStore';
+
+// Contributions are only read while the plugins Encore Feature is on.
+const encoreDefaults = useSettingsStore.getState().encoreFeatures;
+function setPluginsEnabled(plugins: boolean): void {
+	useSettingsStore.setState({ encoreFeatures: { ...encoreDefaults, plugins } });
+}
+beforeEach(() => setPluginsEnabled(true));
 
 const theme = THEMES.dracula;
 

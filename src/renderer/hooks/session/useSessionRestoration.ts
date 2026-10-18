@@ -19,6 +19,8 @@ import type { Session, SessionState, ToolType, LogEntry } from '../../types';
 import { isLimitError } from '../../../shared/types';
 import { updateSessionWith, useSessionStore } from '../../stores/sessionStore';
 import { useGroupChatStore } from '../../stores/groupChatStore';
+import { useSettingsStore } from '../../stores/settingsStore';
+import { isAgentDormant } from '../../../shared/agentVisibility';
 import { gitService } from '../../services/git';
 import { generateId } from '../../utils/ids';
 import { isEphemeralBrowserTab, rehydrateBrowserTab } from '../../utils/browserTabPersistence';
@@ -598,6 +600,12 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				undefined;
 
 			const isRemoteSession = !!sshRemoteId;
+			// A dormant Pianola (flag off) runs no git in its folder: it keeps the
+			// persisted values until the flag comes back on.
+			const isDormant = isAgentDormant(
+				correctedSession,
+				useSettingsStore.getState().encoreFeatures
+			);
 
 			// For local sessions, fetch git info with a timeout to prevent
 			// slow/unreachable filesystems from blocking the splash screen.
@@ -607,7 +615,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 			let gitTags = correctedSession.gitTags;
 			let gitRefsCacheTime = correctedSession.gitRefsCacheTime;
 
-			if (!isRemoteSession) {
+			if (!isRemoteSession && !isDormant) {
 				const GIT_TIMEOUT_MS = 5000;
 				// NOTE: On timeout, the inner git operations continue running in the
 				// background until the OS/filesystem eventually resolves/rejects them.
@@ -893,7 +901,10 @@ export function useSessionRestoration(): SessionRestorationReturn {
 
 					// Background tasks: agent validation + SSH git info.
 					// These run after splash hides so they never block startup.
+					const { encoreFeatures } = useSettingsStore.getState();
 					for (const session of restoredSessions) {
+						// A dormant Pianola (flag off) is neither validated nor polled.
+						if (isAgentDormant(session, encoreFeatures)) continue;
 						const sshRemoteId =
 							session.sshRemoteId ||
 							(session.sessionSshRemoteConfig?.enabled

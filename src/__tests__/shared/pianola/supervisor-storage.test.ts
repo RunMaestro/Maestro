@@ -130,6 +130,13 @@ describe('validatePianolaSupervisedTarget', () => {
 		).toBeNull();
 	});
 
+	it('keeps a non-negative idleHours and drops a negative or non-numeric one', () => {
+		expect(validatePianolaSupervisedTarget(validWatch({ idleHours: 0 }))?.idleHours).toBe(0);
+		expect(validatePianolaSupervisedTarget(validWatch({ idleHours: 2.5 }))?.idleHours).toBe(2.5);
+		expect(validatePianolaSupervisedTarget(validWatch({ idleHours: -1 }))).toBeNull();
+		expect(validatePianolaSupervisedTarget(validWatch({ idleHours: '6' }))).toBeNull();
+	});
+
 	it('returns null when an optional field is present but the wrong type', () => {
 		expect(validatePianolaSupervisedTarget(validWatch({ intervalSeconds: '5' }))).toBeNull();
 		expect(validatePianolaSupervisedTarget(validOrchestrate({ planId: 123 }))).toBeNull();

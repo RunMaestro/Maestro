@@ -25,6 +25,7 @@ vi.mock('../../../cli/services/storage', () => ({
 	readSshRemotes: () => [],
 	getAgentCustomPath: () => undefined,
 	readAgentConfig: () => ({}),
+	readSettings: () => ({}),
 }));
 vi.mock('../../../cli/services/system-prompt', () => ({
 	prepareMaestroSystemPromptCli: async () => undefined,

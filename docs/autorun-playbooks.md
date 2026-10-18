@@ -641,7 +641,7 @@ In the desktop app the run **pauses** there, surfaces the reason (and the option
 
 A headless CLI run has no human to wait for, so `maestro run-playbook` reports the gate as a `document_gated` event naming the reason and the line, then moves to the next document. The marker means the same thing on both surfaces; only the response differs.
 
-A gate is the right answer whenever the blocker is a person. Reaching for the halt marker instead throws away every remaining task in every remaining document because one task needed a signature.
+Use a gate sparingly. Auto Runs are meant to run unattended, so human work (review, sign-off, a visual check, a real API key) belongs in a trailing **Manual Follow-Up (not executed by Auto Run)** section by default, where it never stops the run. A gate earns its place only when you want the run to stop at that point, or the next tasks cannot execute at all without something only you can supply. Reaching for the halt marker instead is worse still: it throws away every remaining task in every remaining document because one task needed a signature.
 
 ## Stalled Documents
 
@@ -676,7 +676,7 @@ Halting should be **rare**. Agents are told to reserve it for the case where con
 
 | Situation                                                              | Right mechanism                                        |
 | ---------------------------------------------------------------------- | ------------------------------------------------------ |
-| A task needs a person                                                  | HITL gate - pauses until you click Done, Resume        |
+| A task needs a person                                                  | Manual Follow-Up bullet; a HITL gate only to stop here |
 | A task the agent cannot do                                             | Leave it unchecked; the stall guard skips the document |
 | One task failed, others are independent                                | Nothing; the run continues                             |
 | Everything downstream is now invalid, or continuing would cause damage | Halt                                                   |

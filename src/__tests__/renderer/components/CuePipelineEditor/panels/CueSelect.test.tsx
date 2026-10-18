@@ -39,6 +39,40 @@ describe('CueSelect', () => {
 		expect(screen.getByText('Beta')).toBeInTheDocument();
 	});
 
+	it('keeps option badges out of the trigger and preserves keyboard selection', () => {
+		render(
+			<CueSelect
+				value="a"
+				options={[
+					{ value: 'a', label: 'Alpha' },
+					{ value: 'b', label: 'Beta', rightContent: <span>Carry Over</span> },
+				]}
+				onChange={onChange}
+				theme={theme}
+			/>
+		);
+		fireEvent.click(screen.getByRole('button', { name: 'Alpha' }));
+		expect(screen.getByRole('option', { name: 'Beta Carry Over' })).toHaveStyle({
+			justifyContent: 'space-between',
+		});
+		fireEvent.keyDown(screen.getByRole('listbox'), { key: 'ArrowDown' });
+		fireEvent.keyDown(screen.getByRole('listbox'), { key: 'Enter' });
+		expect(onChange).toHaveBeenCalledWith('b');
+		expect(screen.queryByText('Carry Over')).not.toBeInTheDocument();
+	});
+
+	it('disables the trigger and hides an open menu while disabled', () => {
+		const { rerender } = render(
+			<CueSelect value="a" options={options} onChange={onChange} theme={theme} />
+		);
+		fireEvent.click(screen.getByRole('button', { name: 'Alpha' }));
+		expect(screen.getByRole('listbox')).toBeInTheDocument();
+		rerender(<CueSelect value="a" options={options} onChange={onChange} theme={theme} disabled />);
+		expect(screen.getByRole('button', { name: 'Alpha' })).toBeDisabled();
+		expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+		expect(onChange).not.toHaveBeenCalled();
+	});
+
 	it('opens dropdown on click and shows all options', () => {
 		render(<CueSelect value="a" options={options} onChange={onChange} theme={theme} />);
 		const trigger = screen.getByText('Alpha').closest('button')!;

@@ -26,7 +26,7 @@
  * ```
  */
 
-import type { ToolType, AgentError } from '../../types';
+import type { ToolType, AgentError, CallUsage } from '../../types';
 import { isValidAgentId } from '../../agentIds';
 import type { ClaudeCostState } from '../../claudeCostTracker';
 
@@ -150,6 +150,18 @@ export interface ParsedEvent {
 	};
 
 	/**
+	 * Tokens one internal API call spent that no earlier event of this turn
+	 * reported, for a live tokens-per-second reading. Set by the claude-code
+	 * parser on `assistant` messages, whose `message.usage` is the usage of ONE
+	 * call and repeats on every row of that call, so this is the DELTA against
+	 * what earlier rows of the same message already carried (zero for a repeat,
+	 * which then leaves the field unset). Never a replacement for `usage`: the
+	 * turn's usage event still reports the turn, and the Throughput Gauge
+	 * subtracts these from it.
+	 */
+	callUsage?: CallUsage;
+
+	/**
 	 * Available slash commands (for 'init' type)
 	 * Array of command strings (e.g., ['/help', '/compact', '/clear'])
 	 */
@@ -174,6 +186,16 @@ export interface ParsedEvent {
 	 * where reasoning and answer deltas share the same event type.
 	 */
 	isReasoning?: boolean;
+
+	/**
+	 * Reasoning that arrived alongside this event rather than as its own line.
+	 * StdoutHandler emits it as a thinking chunk BEFORE handling the event, so
+	 * it reads in order. Antigravity uses it: its stream carries thinking only as
+	 * a token count, and the text is read from its conversation store when a
+	 * model step first appears - on a line that is already a text delta or a
+	 * usage tick.
+	 */
+	reasoningText?: string;
 
 	/**
 	 * Tool use blocks extracted from the message (for agents with mixed content)

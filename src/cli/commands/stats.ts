@@ -21,6 +21,7 @@ import {
 import type { PromptCadence } from '../../shared/promptCadence';
 import type { TokenUsageAggregate } from '../../shared/tokenUsage';
 import type { TokenSpeedStats } from '../../shared/tokenSpeed';
+import { exitIfMaestroNotRunning } from '../services/session-command';
 
 const VALID_RANGES = ['day', 'week', 'month', 'quarter', 'year', 'all'] as const;
 type StatsRange = (typeof VALID_RANGES)[number];
@@ -91,6 +92,7 @@ export async function stats(options: StatsOptions): Promise<void> {
 
 		printAggregationSummary(range, result.data);
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json, stderrJson: true });
 		handleCommandError(error, options.json);
 	}
 }
@@ -206,6 +208,7 @@ export async function statsQuery(sql: string, options: StatsQueryOptions): Promi
 
 		printRowsTable(result);
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json, stderrJson: true });
 		handleCommandError(error, options.json);
 	}
 }

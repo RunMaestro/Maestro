@@ -168,11 +168,35 @@ describe('ProcessManager Codex transport routing', () => {
 		expect(onSpawn).toHaveBeenCalledWith(config);
 	});
 
-	it('keeps an SSH turn on exec', () => {
+	it('keeps an SSH turn with no app-server launch on exec', () => {
 		pm.spawn(codexTurn({ sshRemoteId: 'remote-1' }));
 
 		expect(captured.child).toHaveLength(1);
 		expect(captured.appServer).toHaveLength(0);
+	});
+
+	it('routes an SSH turn that carries an app-server launch to app-server', () => {
+		pm.spawn(
+			codexTurn({
+				command: 'ssh',
+				args: ['host', '/bin/bash', '--norc', '--noprofile', '-s'],
+				prompt: undefined,
+				sshRemoteId: 'remote-1',
+				sshStdinScript: 'exec codex exec --json',
+				codexAppServerSsh: {
+					command: 'ssh',
+					args: ['host', '/bin/bash', '--norc', '--noprofile', '-s'],
+					stdinScript: 'exec codex app-server\n',
+					remoteCommandLine: 'codex app-server',
+					execArgs: ['exec', '--json', '--dangerously-bypass-approvals-and-sandbox'],
+					cwd: '/home/me/proj',
+					prompt: 'fix the bug',
+				},
+			})
+		);
+
+		expect(captured.appServer).toHaveLength(1);
+		expect(captured.child).toHaveLength(0);
 	});
 
 	it('keeps an image turn on exec', () => {

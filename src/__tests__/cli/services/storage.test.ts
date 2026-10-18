@@ -37,6 +37,7 @@ vi.mock('os', () => ({
 
 import {
 	readSessions,
+	readLiveSessions,
 	readGroups,
 	readHistory,
 	readSettings,
@@ -640,6 +641,33 @@ describe('storage service', () => {
 			);
 
 			expect(() => resolveAgentId('\u{1F94B}')).toThrow('Agent not found');
+		});
+
+		describe('a dormant Pianola agent', () => {
+			const stores = (encoreFeatures: Record<string, boolean>) =>
+				vi.mocked(fs.readFileSync).mockImplementation(((file: fs.PathOrFileDescriptor) =>
+					String(file).includes('maestro-settings')
+						? JSON.stringify({ encoreFeatures })
+						: JSON.stringify({
+								sessions: [
+									mockSession({ id: 'pianola-1', name: 'Pianola', isPianola: true }),
+									mockSession({ id: 'worker-1', name: 'Worker' }),
+								],
+							})) as never);
+
+			it('never resolves while the pianola flag is off, and says why', () => {
+				stores({ pianola: false });
+				expect(() => resolveAgentId('Pianola')).toThrow('Pianola is turned off');
+				expect(() => resolveAgentId('pianola-1')).toThrow('Pianola is turned off');
+				expect(readLiveSessions().map((s) => s.id)).toEqual(['worker-1']);
+				expect(getSessionById('pianola-1')).toBeUndefined();
+			});
+
+			it('resolves normally once the flag is on', () => {
+				stores({ pianola: true });
+				expect(resolveAgentId('Pianola')).toBe('pianola-1');
+				expect(getSessionById('pianola-1')?.id).toBe('pianola-1');
+			});
 		});
 
 		it('should throw with match list when ambiguous', () => {

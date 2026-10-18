@@ -1429,7 +1429,7 @@ describe('SessionList', () => {
 			];
 			useSessionStore.setState({ sessions, groups: [persistedGroup] });
 			useSettingsStore.setState({
-				encoreFeatures: { ...DEFAULT_ENCORE_FEATURES, groupsPlus: false },
+				encoreFeatures: { ...DEFAULT_ENCORE_FEATURES, groupsPlus: false, plugins: true },
 			});
 
 			render(<SessionList {...createDefaultProps({ sortedSessions: sessions })} />);
@@ -1490,6 +1490,9 @@ describe('SessionList', () => {
 				createMockSession({ id: 'unassigned', name: 'Unassigned Agent' }),
 			];
 			useSessionStore.setState({ sessions });
+			useSettingsStore.setState({
+				encoreFeatures: { ...DEFAULT_ENCORE_FEATURES, plugins: true },
+			});
 
 			render(<SessionList {...createDefaultProps({ sortedSessions: sessions })} />);
 
@@ -4255,7 +4258,7 @@ describe('SessionList', () => {
 			});
 
 			// Mock Cue status to return session with subscriptions
-			(window.maestro as Record<string, unknown>).cue = {
+			const cueMock = {
 				getStatus: vi.fn().mockResolvedValue([
 					{
 						sessionId: 's1',
@@ -4269,6 +4272,7 @@ describe('SessionList', () => {
 				getActivityLog: vi.fn().mockResolvedValue([]),
 				onActivityUpdate: vi.fn().mockReturnValue(() => {}),
 			};
+			(window.maestro as Record<string, unknown>).cue = cueMock;
 
 			const props = createDefaultProps({ sortedSessions: [session] });
 			render(<SessionList {...props} />);
@@ -4278,6 +4282,9 @@ describe('SessionList', () => {
 			});
 
 			expect(screen.queryByTestId('icon-zap')).not.toBeInTheDocument();
+			// A disabled feature has no footprint: no status poll, no subscription.
+			expect(cueMock.getStatus).not.toHaveBeenCalled();
+			expect(cueMock.onActivityUpdate).not.toHaveBeenCalled();
 		});
 
 		it('hides Zap icon when the user disables the Cue indicator setting', async () => {

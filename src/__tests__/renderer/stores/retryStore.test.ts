@@ -28,9 +28,11 @@ import {
 	registerDispatchDepsProvider,
 	noteDirectDispatch,
 	replayAfterAuth,
+	stopRetriesForAgent,
 	useRetryStore,
 } from '../../../renderer/stores/retryStore';
-import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useSessionStore, updateSessionWith } from '../../../renderer/stores/sessionStore';
+import { settleTabThinkingState } from '../../../renderer/utils/tabHelpers';
 import { useNotificationStore } from '../../../renderer/stores/notificationStore';
 import { useAgentStore, type ProcessQueuedItemDeps } from '../../../renderer/stores/agentStore';
 import { availabilityDelayMs, RESET_TIME_BUFFER_MS } from '../../../shared/retryClassification';
@@ -48,6 +50,9 @@ const deps: ProcessQueuedItemDeps = {
 } as unknown as ProcessQueuedItemDeps;
 
 let processQueuedItem: ReturnType<typeof vi.fn>;
+
+/** A retry resend passes its deps plus the Stop check `fireRetry` adds. */
+const withCancelCheck = (d: object) => ({ ...d, isCancelled: expect.any(Function) });
 
 /** Build an AgentError-shaped object with sensible recoverable defaults. */
 function err(partial: Partial<AgentError> & { message: string }): AgentError {
@@ -193,7 +198,7 @@ describe('firing the retry', () => {
 		expect(processQueuedItem).toHaveBeenCalledWith(
 			's8',
 			expect.objectContaining({ id: 'item-1', tabId: 't1' }),
-			deps
+			withCancelCheck(deps)
 		);
 		// Flipped to in-flight before dispatch; stays there until the exit listener settles it.
 		expect(getRetryEntry('s8', 't1')?.status).toBe('in-flight');
@@ -310,6 +315,102 @@ describe('firing the retry', () => {
 		expect(processQueuedItem).not.toHaveBeenCalled();
 	});
 
+	// The failed attempt's exit idles the tab, and `processQueuedItem` leaves the
+	// busy transition to its callers. Skipping it made every auto-retry a ghost
+	// turn: a live process under a green "Ready" dot with no Thinking pill, for
+	// as long as the resend ran.
+	it('marks the tab and the agent busy before the resend spawns', () => {
+		setupSession('s9e', 't1');
+		seedSnapshot('s9e', 't1');
+		scheduleRetryForError('s9e', 't1', overload());
+		const logsBefore = useSessionStore.getState().sessions[0].aiTabs[0].logs.length;
+		let stateAtSpawn: string | undefined;
+		processQueuedItem.mockImplementationOnce(async () => {
+			stateAtSpawn = useSessionStore.getState().sessions[0].aiTabs[0].state;
+			return true;
+		});
+
+		retryNow('s9e', 't1');
+
+		expect(stateAtSpawn).toBe('busy');
+		const session = useSessionStore.getState().sessions[0];
+		expect(session.aiTabs[0].state).toBe('busy');
+		expect(session.state).toBe('busy');
+		expect(session.busySource).toBe('ai');
+		// No second bubble and no per-attempt note: the outage card owns that.
+		expect(session.aiTabs[0].logs).toHaveLength(logsBefore);
+	});
+
+	it('does not resend onto a tab that is still mid-turn, and tries again shortly', () => {
+		setupSession('s9f', 't1');
+		seedSnapshot('s9f', 't1');
+		scheduleRetryForError('s9f', 't1', overload());
+		updateSessionWith('s9f', (s) => ({
+			...s,
+			aiTabs: s.aiTabs.map((t) => ({ ...t, state: 'busy' as const })),
+		}));
+
+		retryNow('s9f', 't1');
+
+		// A second spawn on a live tab key is refused by main; not dispatching at
+		// all is the same answer without the round trip.
+		expect(processQueuedItem).not.toHaveBeenCalled();
+		const entry = getRetryEntry('s9f', 't1')!;
+		expect(entry.status).toBe('scheduled');
+		expect(entry.nextRetryAt).toBe(Date.now() + 10 * 1000);
+		expect(entry.attempt).toBe(0);
+		expect(useSessionStore.getState().sessions[0].executionQueue.map((i) => i.id)).toEqual([
+			'item-1',
+		]);
+	});
+
+	// The queue resolves a dead tabId onto the ACTIVE tab, but a replay has to go
+	// back to the conversation it came from or nowhere.
+	it('does not mark another tab running when the retried tab is gone', () => {
+		setupTabs('s9g', ['t1', 't2']);
+		seedSnapshot('s9g', 't1');
+		scheduleRetryForError('s9g', 't1', overload());
+		const outageId = getRetryEntry('s9g', 't1')!.outageId;
+		updateSessionWith('s9g', (s) => ({
+			...s,
+			aiTabs: s.aiTabs.filter((t) => t.id !== 't1'),
+			activeTabId: 't2',
+		}));
+
+		retryNow('s9g', 't1');
+
+		expect(processQueuedItem).not.toHaveBeenCalled();
+		const session = useSessionStore.getState().sessions[0];
+		expect(session.aiTabs[0].state).toBe('idle');
+		expect(session.state).toBe('idle');
+		expect(getRetryEntry('s9g', 't1')).toBeUndefined();
+		expect(getOutage(outageId)?.status).toBe('stopped');
+	});
+
+	it('lets a copy the user re-sent during the countdown replace the resend', () => {
+		setupSession('s9h', 't1');
+		seedSnapshot('s9h', 't1');
+		scheduleRetryForError('s9h', 't1', overload());
+		const outageId = getRetryEntry('s9h', 't1')!.outageId;
+		updateSessionWith('s9h', (s) => ({
+			...s,
+			executionQueue: [
+				...s.executionQueue,
+				{ id: 'user-copy', timestamp: 2, tabId: 't1', type: 'message', text: 'hi' },
+			],
+		}));
+
+		retryNow('s9h', 't1');
+
+		// One ask, one turn: the queued copy drains once the outage releases the queue.
+		expect(processQueuedItem).not.toHaveBeenCalled();
+		expect(getRetryEntry('s9h', 't1')).toBeUndefined();
+		expect(getOutage(outageId)?.status).toBe('stopped');
+		expect(useSessionStore.getState().sessions[0].executionQueue.map((i) => i.id)).toEqual([
+			'user-copy',
+		]);
+	});
+
 	// `startProviderWatch` has always refused to fire an in-flight entry ("a
 	// resend is already on its way"). `retryNow` did not, and the card's Try Now
 	// button survives an early fire because nothing moves `nextRetryAt` - so
@@ -421,7 +522,7 @@ describe('firing the retry', () => {
 				text: 'hi',
 				turnSettings: { model: 'fable', effort: 'low' },
 			}),
-			deps
+			withCancelCheck(deps)
 		);
 	});
 
@@ -438,7 +539,7 @@ describe('firing the retry', () => {
 		expect(processQueuedItem).toHaveBeenCalledWith(
 			's11',
 			expect.objectContaining({ turnSettings: { model: 'sonnet', effort: 'medium' } }),
-			deps
+			withCancelCheck(deps)
 		);
 	});
 });
@@ -481,20 +582,75 @@ describe('cancel and settle transitions', () => {
 	// An in-flight resend is a REAL running process - the exit listener owns its
 	// busy state, so cancelling must not idle a tab that is still working.
 	it('cancelRetry leaves an in-flight resend busy', () => {
-		setupSession('s10c', 't1', {
-			state: 'busy',
-			busySource: 'ai',
-			aiTabs: [createMockAITab({ id: 't1', state: 'busy' })],
-		});
+		// Idle when the retry fires, as the failed attempt's exit leaves it; the
+		// resend itself marks the tab running.
+		setupSession('s10c', 't1');
 		seedSnapshot('s10c', 't1');
 		scheduleRetryForError('s10c', 't1', overload());
 		retryNow('s10c', 't1'); // → in-flight
+		expect(useSessionStore.getState().sessions[0].aiTabs[0].state).toBe('busy');
 
 		cancelRetry('s10c', 't1');
 
 		const session = useSessionStore.getState().sessions[0];
 		expect(session.aiTabs[0].state).toBe('busy');
 		expect(session.state).toBe('busy');
+	});
+
+	// Stop can land while the resend loads the agent and system prompt, before
+	// any process exists to interrupt. The spawn checks for it last.
+	it('tells a resend still being prepared that Stop ended it, and toasts nothing', async () => {
+		setupSession('stopMid', 't1');
+		seedSnapshot('stopMid', 't1');
+		scheduleRetryForError('stopMid', 't1', overload());
+		let cancelledAtSpawn: boolean | undefined;
+		processQueuedItem.mockImplementationOnce(async (_sid, _item, d: ProcessQueuedItemDeps) => {
+			expect(d.isCancelled?.()).toBe(false);
+			stopRetriesForAgent('stopMid');
+			cancelledAtSpawn = d.isCancelled?.();
+			return false;
+		});
+		const toastsBefore = useNotificationStore.getState().toasts.length;
+
+		retryNow('stopMid', 't1');
+		await vi.advanceTimersByTimeAsync(0);
+
+		expect(cancelledAtSpawn).toBe(true);
+		expect(useNotificationStore.getState().toasts).toHaveLength(toastsBefore);
+		// The prompt had already left the queue, so Stop had nothing to hold.
+		// It comes back paused, exactly once.
+		const [session] = useSessionStore.getState().sessions;
+		expect(session.executionQueue.map((i) => [i.id, i.paused])).toEqual([['item-1', true]]);
+	});
+
+	it("stopRetriesForAgent ends only that agent's outages and raises no error", () => {
+		useSessionStore.setState({
+			sessions: [
+				createMockSession({ id: 'stopA', aiTabs: [createMockAITab({ id: 't1' })] }),
+				createMockSession({ id: 'stopB', aiTabs: [createMockAITab({ id: 't1' })] }),
+			],
+		} as any);
+		seedSnapshot('stopA', 't1');
+		seedSnapshot('stopB', 't1');
+		scheduleRetryForError('stopA', 't1', overload());
+		scheduleRetryForError('stopB', 't1', overload());
+		const outageA = getRetryEntry('stopA', 't1')!.outageId;
+
+		stopRetriesForAgent('stopA');
+
+		expect(getRetryEntry('stopA', 't1')).toBeUndefined();
+		expect(getOutage(outageA)?.status).toBe('stopped');
+		expect(getRetryEntry('stopB', 't1')?.status).toBe('scheduled');
+		const [a, b] = useSessionStore.getState().sessions;
+		// The parked prompt is held, not released into Stop's own queue drain.
+		expect(a.executionQueue.map((i) => [i.id, i.paused])).toEqual([['item-1', true]]);
+		expect(b.executionQueue[0].paused).toBeFalsy();
+		expect(a.state).not.toBe('error');
+
+		// And the timer that would have resent it is gone.
+		vi.advanceTimersByTime(availabilityDelayMs(0));
+		expect(processQueuedItem).toHaveBeenCalledTimes(1);
+		expect(processQueuedItem.mock.calls[0][0]).toBe('stopB');
 	});
 
 	it('clearRetryIfSettled clears an in-flight entry (clean completion)', () => {
@@ -1441,7 +1597,8 @@ describe('token-exhaustion outage - spin, not sleep', () => {
 	/**
 	 * Run the outage forward, refusing every probe, and report how many resends
 	 * were actually attempted. Mirrors the live loop: the agent-error listener
-	 * reschedules on each failure, which is what advances `attempt`.
+	 * reschedules on each failure, which is what advances `attempt`, and the
+	 * refused probe's process then exits, which idles its tab.
 	 */
 	async function spinRefusing(error: AgentError, forMs: number): Promise<number> {
 		const step = 5 * 1000;
@@ -1452,6 +1609,7 @@ describe('token-exhaustion outage - spin, not sleep', () => {
 			// while the quota is still out.
 			for (let i = before; i < processQueuedItem.mock.calls.length; i++) {
 				scheduleRetryForError('s1', 't1', error);
+				updateSessionWith('s1', (s) => settleTabThinkingState(s, 't1'));
 			}
 		}
 		return processQueuedItem.mock.calls.length;
@@ -1614,7 +1772,7 @@ describe('noteDirectDispatch', () => {
 		expect(item.images).toEqual(directItem.images);
 		// The consult already went out with the original send.
 		expect(item.crossAgentMention).toBeUndefined();
-		expect(replayDeps).toBe(providerDeps);
+		expect(replayDeps).toEqual(withCancelCheck(providerDeps));
 	});
 
 	it('records nothing when no provider is registered, rather than a snapshot with no deps', () => {

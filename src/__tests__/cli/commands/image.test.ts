@@ -21,11 +21,16 @@ vi.mock('../../../cli/services/file-tree-refresh', () => ({
 	nudgeFileTreeForPaths: vi.fn().mockResolvedValue([]),
 }));
 
-vi.mock('../../../cli/services/storage', () => ({
-	resolveAgentId: vi.fn((id: string) => id),
-	readSessions: vi.fn().mockReturnValue([]),
-	getSyncDir: vi.fn(),
-}));
+vi.mock('../../../cli/services/storage', () => {
+	const readSessions = vi.fn().mockReturnValue([]);
+	return {
+		resolveAgentId: vi.fn((id: string) => id),
+		readSessions,
+		// The live list is the stored list here: no fixture holds a dormant agent.
+		readLiveSessions: (...args: unknown[]) => readSessions(...args),
+		getSyncDir: vi.fn(),
+	};
+});
 
 import { imageList, imageSave } from '../../../cli/commands/image';
 import { readSessions, getSyncDir, resolveAgentId } from '../../../cli/services/storage';

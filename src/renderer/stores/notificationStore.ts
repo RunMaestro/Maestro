@@ -18,6 +18,7 @@ import { create } from 'zustand';
 import { logger } from '../utils/logger';
 import { isWebDesktop } from '../utils/runtimeContext';
 import type { ToastClickAction } from '../../shared/toastClickAction';
+import { areToastsEnabled } from '../../shared/toastDuration';
 import { safeLocalStorage, safeStorageGet } from '../utils/safeLocalStorage';
 import { generateId } from '../utils/ids';
 import { useSessionStore } from './sessionStore';
@@ -438,7 +439,7 @@ export function notifyToast(toast: NotifyToastInput): string {
 	const { config } = store;
 
 	const id = `toast-${generateId()}`;
-	const toastsDisabled = config.defaultDuration === -1;
+	const toastsDisabled = !areToastsEnabled(config.defaultDuration);
 
 	const color = resolveToastColor(toast);
 	// Legacy `type` field - derive from color for callers that still read it.

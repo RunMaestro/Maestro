@@ -19,6 +19,7 @@ import { encoreList, encoreSet } from '../../../cli/commands/encore';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import { readSettingValue } from '../../../cli/services/storage';
 import { formatError } from '../../../cli/output/formatter';
+import { ENCORE_FEATURE_DEFAULTS } from '../../../shared/encoreFeatureDefaults';
 
 function mockSend(result: Record<string, unknown>) {
 	let captured: Record<string, unknown> = {};
@@ -68,21 +69,24 @@ describe('encore commands', () => {
 		vi.mocked(readSettingValue).mockReturnValue(undefined);
 		encoreList({ json: true });
 		const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
-		// rc's CLI also exposes Pianola and Computer History, which have not
-		// graduated and ship off, Quick Chat, which ships on, and Throughput Gauge,
-		// which ships off. MaestroRun is
-		// macOS only, so it is covered by its own platform tests below.
+		// Every flag the app knows, at its shipped default. MaestroRun is macOS
+		// only, so it is covered by its own platform tests below.
 		const { maestroRun: _maestroRun, ...everywhere } = parsed.features;
-		expect(everywhere).toEqual({
-			directorNotes: true,
-			usageStats: true,
-			symphony: true,
-			maestroCue: true,
-			pianola: false,
-			computerHistory: false,
-			quickChat: true,
-			throughputGauge: false,
-		});
+		const { maestroRun: _default, ...defaults } = ENCORE_FEATURE_DEFAULTS;
+		expect(everywhere).toEqual(defaults);
+	});
+
+	it('lists and toggles every flag, not a hand-kept subset', async () => {
+		vi.mocked(readSettingValue).mockReturnValue(undefined);
+		encoreList({ json: true });
+		const listed = Object.keys(JSON.parse(consoleSpy.mock.calls[0][0]).features);
+		for (const key of ['concerto', 'groupsPlus', 'webLogin', 'coworking', 'opencodeServer']) {
+			expect(listed).toContain(key);
+		}
+
+		const getPayload = mockSend({ success: true });
+		await encoreSet('groups-plus', true, {});
+		expect((getPayload().value as Record<string, boolean>).groupsPlus).toBe(true);
 	});
 
 	describe('a macOS-only feature (MaestroRun)', () => {

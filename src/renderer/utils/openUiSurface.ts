@@ -15,7 +15,7 @@ import { useUIStore } from '../stores/uiStore';
 import { useFeedbackDraftStore } from '../stores/feedbackDraftStore';
 import { useThroughputGaugeStore } from '../stores/throughputGaugeStore';
 import { notifyToast, useNotificationStore } from '../stores/notificationStore';
-import { resolveUiSurface, resolveUiSurfaceTab } from '../../shared/uiSurfaces';
+import { resolveUiSurface, resolveUiSurfaceTab, uiSurfaceRefusal } from '../../shared/uiSurfaces';
 import { isWebDesktop } from './runtimeContext';
 import type { SettingsTab, UsageDashboardViewMode } from '../types';
 
@@ -28,9 +28,12 @@ export interface OpenUiSurfaceResult {
 /**
  * Open `surfaceId`, optionally deep-linking to `tabId`.
  *
- * Refuses (with a toast) when the surface is behind an Encore Feature the user
- * has turned off: silently opening nothing would look like the CLI lied, and
- * silently enabling the feature would change a setting the user never touched.
+ * Refuses when the surface (or the requested tab) is behind an Encore Feature
+ * the user has turned off. The refusal goes back to the caller only - no toast:
+ * a disabled feature has no footprint, and a toast naming it would advertise it
+ * to the person who switched it off. Silently enabling the feature would change
+ * a setting the user never touched. (`maestro-cli open` gets the same refusal
+ * from the main process, which checks before the renderer is asked.)
  */
 export function openUiSurface(surfaceId: string, tabId?: string): OpenUiSurfaceResult {
 	const surface = resolveUiSurface(surfaceId);
@@ -39,14 +42,8 @@ export function openUiSurface(surfaceId: string, tabId?: string): OpenUiSurfaceR
 	const tab = tabId ? resolveUiSurfaceTab(surface, tabId) : null;
 	if (tabId && !tab) return { ok: false, error: `Unknown tab "${tabId}" for ${surface.label}` };
 
-	if (surface.encore) {
-		const enabled = useSettingsStore.getState().encoreFeatures[surface.encore];
-		if (!enabled) {
-			const message = `${surface.label} is an Encore Feature and is currently off. Turn it on in Settings → General → Encore Features.`;
-			notifyToast({ color: 'yellow', title: `${surface.label} is disabled`, message });
-			return { ok: false, error: message };
-		}
-	}
+	const refusal = uiSurfaceRefusal(surface, tab, useSettingsStore.getState().encoreFeatures);
+	if (refusal) return { ok: false, error: refusal };
 
 	const actions = getModalActions();
 

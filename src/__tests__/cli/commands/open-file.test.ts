@@ -33,6 +33,7 @@ const mockSession = {
 vi.mock('../../../cli/services/storage', () => ({
 	getSessionById: vi.fn(() => mockSession),
 	readSessions: vi.fn(() => [mockSession]),
+	readLiveSessions: vi.fn(() => [mockSession]),
 	getSessionHistoryMtimeMs: vi.fn(() => 0),
 }));
 

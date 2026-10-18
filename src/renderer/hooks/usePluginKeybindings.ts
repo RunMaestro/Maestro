@@ -25,13 +25,15 @@
  *     app win on a real conflict;
  *   - only `preventDefault()` once a plugin chord actually matches.
  *
- * Self-contained (no props) so App mounts it with a single call. When the
- * plugins Encore flag is off the contributions read yields empty buckets, so the
- * listener simply matches nothing.
+ * Self-contained (no props) so App mounts it with a single call. The listener
+ * is installed only while there is at least one contributed chord: when the
+ * plugins Encore flag is off the contributions read yields empty buckets, so no
+ * listener exists at all.
  */
 
 import { useEffect, useRef } from 'react';
 import { usePluginContributions } from './usePluginContributions';
+import { useEventListener } from './utils/useEventListener';
 import type { KeybindingContribution } from '../../shared/plugins/contributions';
 
 /** A keybinding chord reduced to matchable modifier flags + main key. */
@@ -144,8 +146,8 @@ function isReservedEditingChord(e: KeyboardEvent): boolean {
 export function usePluginKeybindings(): void {
 	const { keybindings } = usePluginContributions();
 
-	// Hold the current parsed chords in a ref so the listener (bound once) always
-	// sees the latest set without re-installing on every contributions refresh.
+	// Hold the current parsed chords in a ref so the listener always sees the
+	// latest set without re-installing on every contributions refresh.
 	const chordsRef = useRef<ParsedChord[]>([]);
 	useEffect(() => {
 		chordsRef.current = keybindings
@@ -153,11 +155,11 @@ export function usePluginKeybindings(): void {
 			.filter((chord): chord is ParsedChord => chord !== null);
 	}, [keybindings]);
 
-	useEffect(() => {
-		const plugins = window.maestro?.plugins;
-		if (!plugins) return;
-
-		const onKeyDown = (e: KeyboardEvent): void => {
+	const plugins = window.maestro?.plugins;
+	useEventListener(
+		'keydown',
+		(event) => {
+			const e = event as KeyboardEvent;
 			// An app shortcut that ran first already claimed this event.
 			if (e.defaultPrevented) return;
 			// Never hijack typing: while a text surface has focus only chords that
@@ -181,12 +183,10 @@ export function usePluginKeybindings(): void {
 			for (const chord of chordsRef.current) {
 				if (!matches(e, chord)) continue;
 				e.preventDefault();
-				void plugins.invokeCommand(`${chord.pluginId}/${chord.command}`).catch(() => undefined);
+				void plugins?.invokeCommand(`${chord.pluginId}/${chord.command}`).catch(() => undefined);
 				return;
 			}
-		};
-
-		window.addEventListener('keydown', onKeyDown);
-		return () => window.removeEventListener('keydown', onKeyDown);
-	}, []);
+		},
+		{ enabled: !!plugins && keybindings.length > 0 }
+	);
 }

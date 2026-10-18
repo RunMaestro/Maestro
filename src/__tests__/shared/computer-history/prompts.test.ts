@@ -57,24 +57,27 @@ describe('Computer History prompts', () => {
 		expect(guide).toContain('{{REF:_desktop-instrumentation}}');
 	});
 
-	it('the on-demand includes route an agent to it, gated and never self-enabled', () => {
-		const read = (file: string) => fs.readFileSync(path.join(PROMPTS_DIR, file), 'utf-8');
-		const cli = read('_maestro-cli.md');
-		expect(cli).toContain('**computer-history**');
-		expect(cli).toContain('prompts get _computer-history');
+	// A switched-off feature leaves no trace in what every agent reads: the
+	// always-on includes say nothing about Computer History, and the routing
+	// lives in the section (on only with the flag) and its gated guide.
+	it('lives only in the gated section and guide, never in the always-on includes', () => {
+		const read = (file: string) =>
+			fs.readFileSync(path.join(PROMPTS_DIR, file), 'utf-8').replace(/\r\n/g, '\n');
+		for (const file of [
+			'maestro-system-prompt.md',
+			'_maestro-cli.md',
+			'_interface-primitives.md',
+			'_documentation-index.md',
+			'_toc.md',
+		]) {
+			expect(read(file).toLowerCase(), file).not.toContain('computer-history');
+			expect(read(file).toLowerCase(), file).not.toContain('computer history');
+		}
 
-		const routing = read('_interface-primitives.md')
-			.split('\n')
-			.find((line) => line.includes('encoreFeatures.computerHistory'));
-		expect(routing).toBeDefined();
-		expect(routing).toContain('computer-history status');
-		expect(routing).toContain('prompts get _computer-history');
-		expect(routing).toMatch(/only when the user explicitly asks/);
-		// Switching the feature off stops recording; it does not hide saved history.
-		expect(routing).toMatch(/saved earlier is still readable/);
-		expect(routing).toMatch(/untrusted/i);
-
-		expect(read('_documentation-index.md')).toContain(
+		const section = read('computer-history-system.md');
+		expect(section).toContain('{{REF:_computer-history}}');
+		expect(section).toMatch(/Use it when the user refers to something they did or saw/);
+		expect(read('_computer-history.md')).toContain(
 			'https://docs.runmaestro.ai/computer-history.md'
 		);
 	});

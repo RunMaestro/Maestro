@@ -1,8 +1,16 @@
 import '@testing-library/jest-dom';
 import { act, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest';
 import type { AggregatedContributions } from '../../shared/plugins/contributions';
 import { usePluginContributions } from './usePluginContributions';
+import { useSettingsStore } from '../stores/settingsStore';
+
+// Contributions are only read while the plugins Encore Feature is on.
+const encoreDefaults = useSettingsStore.getState().encoreFeatures;
+function setPluginsEnabled(plugins: boolean): void {
+	useSettingsStore.setState({ encoreFeatures: { ...encoreDefaults, plugins } });
+}
+beforeEach(() => setPluginsEnabled(true));
 
 const EMPTY: AggregatedContributions = {
 	themes: [],

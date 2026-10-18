@@ -36,9 +36,9 @@ The `MAESTRO_SESSION_RESUMED` variable is automatically set to `1` when resuming
 
 ## Switching Providers with Memory and Session Carry
 
-Memory and session conversion is available as a preview between **Claude Code 2.1.296** and **Codex 0.162.1**, in both directions. Native resume and repeated round-trip continuity remain unverified. Other provider/version combinations have no supported converter and are blocked by preflight.
+Memory and session conversion is available as a preview between **Claude Code 2.1.296/2.1.302** and **Codex 0.162.1/0.163.0**, in both directions. Live checks on Claude Code 2.1.302 and Codex 0.163.0 verified native conversation recall in both directions, including a message added after switching, and access to carried project resource definitions. Both adapters remain unverified overall: skill execution, subagent invocation, arbitrary tool/image payloads, and repeated incremental synchronization are not certified. Other provider/version combinations have no supported converter and are blocked by preflight.
 
-In **Edit Agent**, destinations with a converter from the agent's current provider are marked **→ Memory + history (preview)** in the provider list. The marker identifies a declared adapter; Maestro still checks the installed versions and conversation contents before allowing the switch.
+In **Edit Agent → Provider**, destinations with a converter from the agent's current provider have a **Carry Over** pill at the right of the provider list. The hint below the selector uses the same pill. It identifies a declared adapter; Maestro still checks the installed versions and conversation contents before allowing the switch.
 
 Select the destination to read the conversion plan, review and accept any listed limitations, then click **Save Changes**. Translation runs as part of saving. It carries project memory and session history while preserving tabs, drafts, queued messages and file previews. Additional user-level resources, such as skills, must be selected explicitly; account-global knowledge is excluded.
 

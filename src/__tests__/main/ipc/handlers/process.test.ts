@@ -344,7 +344,7 @@ describe('process IPC handlers', () => {
 			interrupt: vi.fn(),
 			kill: vi.fn(),
 			resize: vi.fn(),
-			getAll: vi.fn(),
+			getAll: vi.fn().mockReturnValue([]),
 			get: vi.fn(),
 			runCommand: vi.fn(),
 			spawnTerminalTab: vi.fn(),
@@ -510,6 +510,39 @@ describe('process IPC handlers', () => {
 				})
 			);
 			expect(result).toEqual({ pid: 12345, success: true });
+		});
+
+		describe('dormant Pianola agent', () => {
+			const spawnPianola = () =>
+				handlers.get('process:spawn')!({} as any, {
+					sessionId: 'pianola-1-ai-tab1',
+					toolType: 'claude-code',
+					cwd: '/home/user',
+					command: 'claude',
+					args: ['--print'],
+				});
+
+			beforeEach(() => {
+				mockAgentDetector.getAgent.mockResolvedValue({ id: 'claude-code', requiresPty: false });
+				mockProcessManager.spawn.mockReturnValue({ pid: 4242, success: true });
+				mockSessionsStore.get.mockImplementation((key: string, defaultValue: unknown) =>
+					key === 'sessions' ? [{ id: 'pianola-1', isPianola: true }] : defaultValue
+				);
+			});
+
+			it('refuses to spawn while the pianola flag is off', async () => {
+				await expect(spawnPianola()).rejects.toThrow(/Pianola is turned off/);
+				expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+			});
+
+			it('spawns with the manager env once the flag is on', async () => {
+				mockSettingsStore.get.mockImplementation((key: string, defaultValue: unknown) =>
+					key === 'encoreFeatures' ? { pianola: true } : defaultValue
+				);
+				await spawnPianola();
+				const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+				expect(spawnCall.customEnvVars?.MAESTRO_AGENT_ID).toBe('pianola-1');
+			});
 		});
 
 		it('should return pid on successful spawn', async () => {

@@ -35,6 +35,13 @@ const service = {
 vi.mock('../../../../main/computer-history', () => ({
 	getComputerHistoryService: () => service,
 }));
+// The stored Encore flags the handler reads; Computer History defaults off.
+const flags = vi.hoisted(() => ({ encoreFeatures: { computerHistory: true } as object }));
+vi.mock('../../../../main/stores', () => ({
+	getSettingsStore: () => ({
+		get: (key: string) => (key === 'encoreFeatures' ? flags.encoreFeatures : undefined),
+	}),
+}));
 
 import { WebSocketMessageHandler } from '../../../../main/web-server/handlers/messageHandlers';
 import { setBridgeGuardContextProvider } from '../../../../main/web-server/handlers/bridgePathGuard';
@@ -61,6 +68,7 @@ describe('computer_history_command handler', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		flags.encoreFeatures = { computerHistory: true };
 		handler = new WebSocketMessageHandler();
 		handler.setCallbacks({} as never);
 	});
@@ -126,6 +134,43 @@ describe('computer_history_command handler', () => {
 			status: { state: 'recording' },
 		});
 		expect(await send({ action: 'bogus' })).toMatchObject({ success: false });
+	});
+
+	it('refuses recorder writes while the feature is off, but serves status and clear', async () => {
+		flags.encoreFeatures = { computerHistory: false };
+		const cli = client(true);
+		const send = async (payload: Record<string, unknown>) => {
+			handler.handleMessage(cli, {
+				type: 'computer_history_command',
+				requestId: 'off',
+				...payload,
+			} as never);
+			await flush();
+			return lastResponse(cli);
+		};
+		for (const payload of [
+			{ action: 'pause' },
+			{ action: 'resume' },
+			{ action: 'rules-add', match: 'app', value: 'Notes' },
+			{ action: 'rules-remove', id: 'r1' },
+			{ action: 'enable-accessibility' },
+			{ action: 'config-set', patch: { snapshots: true } },
+		]) {
+			expect(await send(payload)).toMatchObject({
+				success: false,
+				error: expect.stringContaining('Computer History is turned off'),
+				requestId: 'off',
+			});
+		}
+		expect(service.pause).not.toHaveBeenCalled();
+		expect(service.resume).not.toHaveBeenCalled();
+		expect(service.addRule).not.toHaveBeenCalled();
+		expect(service.removeRule).not.toHaveBeenCalled();
+		expect(service.requestAccessibility).not.toHaveBeenCalled();
+		expect(service.setConfig).not.toHaveBeenCalled();
+		expect(await send({ action: 'status' })).toMatchObject({ success: true });
+		expect(await send({ action: 'clear', all: true })).toMatchObject({ success: true });
+		expect(service.clear).toHaveBeenCalledWith({ all: true });
 	});
 
 	it('reports a service error as a failed result, not a dropped reply', async () => {

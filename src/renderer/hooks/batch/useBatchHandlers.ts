@@ -488,11 +488,18 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 			}
 
 			// Symphony auto-finalization: when auto-run completes for a Symphony
-			// contribution, automatically push code and mark the PR as ready.
-			if (!info.wasStopped && session?.symphonyMetadata?.isSymphonySession) {
+			// contribution, automatically push code and mark the PR as ready. Skipped
+			// entirely (no IPC, no toast) while the Symphony Encore Feature is off.
+			if (
+				!info.wasStopped &&
+				session?.symphonyMetadata?.isSymphonySession &&
+				useSettingsStore.getState().encoreFeatures?.symphony === true
+			) {
 				const contributionId = session.symphonyMetadata.contributionId;
 				// Delay slightly to let the final task's git operations settle
 				setTimeout(async () => {
+					// The flag may have been switched off during the settle delay.
+					if (useSettingsStore.getState().encoreFeatures?.symphony !== true) return;
 					try {
 						const result = await window.maestro.symphony.complete({
 							contributionId,

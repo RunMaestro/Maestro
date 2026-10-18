@@ -293,6 +293,33 @@ describe('Process Core Preload API', () => {
 		});
 	});
 
+	describe('onCallUsage', () => {
+		it('should register event listener for process:call-usage and unsubscribe it', () => {
+			const callback = vi.fn();
+			let registeredHandler: (event: unknown, sessionId: string, usage: unknown) => void;
+
+			mockOn.mockImplementation((channel: string, handler: typeof registeredHandler) => {
+				if (channel === 'process:call-usage') {
+					registeredHandler = handler;
+				}
+			});
+
+			const cleanup = api.onCallUsage(callback);
+
+			const usage = {
+				inputTokens: 2,
+				outputTokens: 300,
+				cacheReadInputTokens: 160000,
+				cacheCreationInputTokens: 1000,
+			};
+			registeredHandler!({}, 'session-123', usage);
+
+			expect(callback).toHaveBeenCalledWith('session-123', usage);
+			cleanup();
+			expect(mockRemoveListener).toHaveBeenCalledWith('process:call-usage', registeredHandler!);
+		});
+	});
+
 	describe('onAgentError', () => {
 		it('should register event listener for agent:error', () => {
 			const callback = vi.fn();

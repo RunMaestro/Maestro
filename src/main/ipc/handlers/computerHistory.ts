@@ -14,6 +14,8 @@ import { ipcMain } from 'electron';
 import { withIpcErrorLogging } from '../../utils/ipcHandler';
 import { getComputerHistoryService } from '../../computer-history';
 import type { ComputerHistoryService } from '../../computer-history';
+import { getSettingsStore } from '../../stores';
+import { requireEncoreFeature } from '../../../shared/encoreFeatureDefaults';
 import { compileGrep } from '../../../shared/computer-history/reader';
 import type { ComputerHistoryConfigPatch } from '../../../shared/computer-history/config';
 import type { DigestKind } from '../../../shared/computer-history/paths';
@@ -51,6 +53,17 @@ function opts(operation: string) {
 	return { context: LOG_CONTEXT, operation };
 }
 
+/**
+ * Writes that drive or reconfigure the recorder refuse while Computer History
+ * is off (the CLI's WS verbs check the same flag). Status, reads, and `clear`
+ * stay open: deleting what was recorded is always the user's right, and the
+ * tile's settings body only renders once the feature is on.
+ */
+function requireEnabledService(): ComputerHistoryService {
+	requireEncoreFeature(getSettingsStore(), 'computerHistory', 'ComputerHistoryDisabled');
+	return requireService();
+}
+
 export function registerComputerHistoryHandlers(): void {
 	ipcMain.handle(
 		'computerHistory:status',
@@ -63,18 +76,18 @@ export function registerComputerHistoryHandlers(): void {
 	ipcMain.handle(
 		'computerHistory:setConfig',
 		withIpcErrorLogging(opts('setConfig'), async (patch: ComputerHistoryConfigPatch) =>
-			requireService().setConfig(patch ?? {})
+			requireEnabledService().setConfig(patch ?? {})
 		)
 	);
 	ipcMain.handle(
 		'computerHistory:pause',
 		withIpcErrorLogging(opts('pause'), async (forMs?: number | null) =>
-			requireService().pause(forMs)
+			requireEnabledService().pause(forMs)
 		)
 	);
 	ipcMain.handle(
 		'computerHistory:resume',
-		withIpcErrorLogging(opts('resume'), async () => requireService().resume())
+		withIpcErrorLogging(opts('resume'), async () => requireEnabledService().resume())
 	);
 	ipcMain.handle(
 		'computerHistory:listRules',
@@ -85,13 +98,13 @@ export function registerComputerHistoryHandlers(): void {
 		withIpcErrorLogging(
 			opts('addRule'),
 			async (match: CaptureRuleMatch, value: string, action?: CaptureRuleAction) =>
-				requireService().addRule(match, value, action ?? 'ignore')
+				requireEnabledService().addRule(match, value, action ?? 'ignore')
 		)
 	);
 	ipcMain.handle(
 		'computerHistory:removeRule',
 		withIpcErrorLogging(opts('removeRule'), async (idOrValue: string, action?: CaptureRuleAction) =>
-			requireService().removeRule(idOrValue, action)
+			requireEnabledService().removeRule(idOrValue, action)
 		)
 	);
 	ipcMain.handle(
@@ -103,7 +116,7 @@ export function registerComputerHistoryHandlers(): void {
 	ipcMain.handle(
 		'computerHistory:requestAccessibility',
 		withIpcErrorLogging(opts('requestAccessibility'), async () =>
-			requireService().requestAccessibility()
+			requireEnabledService().requestAccessibility()
 		)
 	);
 	ipcMain.handle(

@@ -33,7 +33,10 @@ import { AGENT_IDS } from '../shared/agentIds';
 import { canonicalJson } from '../shared/canonicalJson';
 import { isPathAtOrUnderRoot } from '../shared/worktreePaths';
 import { createKeyedWriteQueue } from '../shared/keyedWriteQueue';
-import { createTranslationRegistry } from '../shared/maestro-lib/translation/adapters';
+import {
+	createTranslationRegistry,
+	projectConversation,
+} from '../shared/maestro-lib/translation/adapters';
 import {
 	TranslationArchive,
 	type TranslationJournal,
@@ -141,6 +144,15 @@ export class ProviderTranslationService {
 			if (probe.exitCode === 0) version = /\d+\.\d+\.\d+/.exec(probe.stdout)?.[0] ?? '';
 		}
 		const projectRoot = await fs.realpath(session.projectRoot || session.cwd);
+		let nativeSessionRoot: string | undefined;
+		if (provider === 'claude-code') {
+			nativeSessionRoot = path.join(root, 'projects');
+			try {
+				nativeSessionRoot = await fs.realpath(nativeSessionRoot);
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+			}
+		}
 		const memoryProjectRoot = await resolveMemoryRepositoryRoot(projectRoot, async (cwd) => {
 			const result = await execGitReadOnly(['rev-parse', '--git-common-dir'], cwd);
 			return result.exitCode === 0 ? result.stdout : undefined;
@@ -157,6 +169,7 @@ export class ProviderTranslationService {
 			provider,
 			version,
 			accountRoot: root,
+			...(nativeSessionRoot && { nativeSessionRoot }),
 			projectRoot,
 			memoryProjectRoot,
 			userResourceRoots,
@@ -197,14 +210,13 @@ export class ProviderTranslationService {
 		const file =
 			identity.provider === 'claude-code'
 				? path.join(
-						identity.accountRoot,
-						'projects',
+						identity.nativeSessionRoot ?? path.join(identity.accountRoot, 'projects'),
 						encodeClaudeProjectPath(identity.projectRoot),
 						`${sessionId}.jsonl`
 					)
 				: await new CodexSessionStorage().findSessionFile(sessionId, identity.accountRoot);
 		if (!file) throw new Error(`Selected native session missing for tab ${tabId}`);
-		await assertTranslationTarget(file, identity.accountRoot);
+		await assertTranslationTarget(file, identity.nativeSessionRoot ?? identity.accountRoot);
 		const stat = await fs.stat(file);
 		const bytes = await fs.readFile(file);
 		const after = await fs.stat(file);
@@ -527,7 +539,13 @@ export class ProviderTranslationService {
 			capabilitySnapshots.get(destination.provider)
 		);
 		for (const conversation of conversations) {
-			if (estimateTokenCount(canonicalJson(conversation.records.map((r) => r.blocks))) > capacity)
+			const projected =
+				destination.provider === 'codex' || destination.provider === 'claude-code'
+					? projectConversation(conversation, destination.provider, 'capacity-preview').map(
+							(row) => row.item
+						)
+					: [];
+			if (estimateTokenCount(canonicalJson(projected)) > capacity)
 				limitations.push({
 					code: 'context-capacity',
 					severity: 'block',
@@ -583,6 +601,14 @@ export class ProviderTranslationService {
 				const actual = await this.identity(session, session.toolType, true, operation.checkpoint);
 				if (canonicalJson(actual) !== canonicalJson(operation.plan.source))
 					throw new Error('Source account, project root or provider version changed');
+				const destination = await this.identity(
+					session,
+					operation.plan.destination.provider,
+					false,
+					operation.checkpoint
+				);
+				if (canonicalJson(destination) !== canonicalJson(operation.plan.destination))
+					throw new Error('Destination account, project root or provider version changed');
 				if (session.providerTranslationKnowledgeDirectory)
 					await assertTranslationTarget(
 						session.providerTranslationKnowledgeDirectory,
@@ -616,11 +642,14 @@ export class ProviderTranslationService {
 							].find((root) =>
 								isPathAtOrUnderRoot(
 									path.resolve(artifact.sourcePath).replace(/\\/g, '/'),
-									path.resolve(root.accountRoot).replace(/\\/g, '/')
+									path.resolve(root.nativeSessionRoot ?? root.accountRoot).replace(/\\/g, '/')
 								)
 							);
 							if (!identity) throw new Error('Native source is outside selected provider accounts');
-							await assertTranslationTarget(artifact.sourcePath, identity.accountRoot);
+							await assertTranslationTarget(
+								artifact.sourcePath,
+								identity.nativeSessionRoot ?? identity.accountRoot
+							);
 							if (translationHash(await fs.readFile(artifact.sourcePath)) !== artifact.sha256)
 								throw new Error('Native source changed since preflight');
 						}

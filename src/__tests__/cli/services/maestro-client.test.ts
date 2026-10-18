@@ -43,9 +43,11 @@ vi.mock('../../../shared/maestro-lib/client/discovery', () => ({
 	isCliServerRunning: vi.fn(),
 }));
 
-vi.mock('../../../cli/services/storage', () => ({
-	readSessions: vi.fn(),
-}));
+vi.mock('../../../cli/services/storage', () => {
+	const readSessions = vi.fn();
+	// The live list is the stored list here: no fixture holds a dormant agent.
+	return { readSessions, readLiveSessions: (...args: unknown[]) => readSessions(...args) };
+});
 
 import {
 	MaestroClient,

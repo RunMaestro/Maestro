@@ -19,6 +19,8 @@ export interface UiSurfaceTab {
 	id: string;
 	/** Label as it reads in the app. */
 	label: string;
+	/** Encore Feature that must be on for this tab to exist. */
+	encore?: UiSurfaceEncoreFlag;
 }
 
 /** Encore Feature flag that must be on for a surface to exist. */
@@ -62,6 +64,7 @@ export const CUE_MODAL_TABS: UiSurfaceTab[] = [
 	{ id: 'pipeline-list', label: 'Pipeline List' },
 	{ id: 'activity', label: 'Activity Log' },
 	{ id: 'backup', label: 'Backup' },
+	{ id: 'bundles', label: 'Bundles' },
 ];
 
 export const UI_SURFACES: UiSurface[] = [
@@ -128,7 +131,7 @@ export const UI_SURFACES: UiSurface[] = [
 			{ id: 'agents', label: 'Agents' },
 			{ id: 'activity', label: 'Activity' },
 			{ id: 'autorun', label: 'Auto Run' },
-			{ id: 'cue', label: 'Cue' },
+			{ id: 'cue', label: 'Cue', encore: 'maestroCue' },
 			{ id: 'shortcuts', label: 'Shortcuts' },
 		],
 		shortcutId: 'usageDashboard',
@@ -342,6 +345,27 @@ export function resolveUiSurfaceTab(surface: UiSurface, tab: string): UiSurfaceT
 			(entry) => entry.id.toLowerCase() === needle || entry.label.toLowerCase() === needle
 		) ?? null
 	);
+}
+
+/**
+ * Why a surface (or one of its tabs) cannot open right now, or `null` when it
+ * can. A surface or tab behind a switched-off Encore Feature does not exist for
+ * the user, so opening it is refused - never silently, never by flipping the
+ * setting. The message goes back to the caller only: an in-app toast would
+ * advertise the disabled feature to someone who turned it off.
+ */
+export function uiSurfaceRefusal(
+	surface: UiSurface,
+	tab: UiSurfaceTab | null | undefined,
+	encoreFeatures: Partial<Record<UiSurfaceEncoreFlag, boolean>>
+): string | null {
+	if (surface.encore && encoreFeatures[surface.encore] !== true) {
+		return `${surface.label} is turned off. Turn it on in Settings → Plugins.`;
+	}
+	if (tab?.encore && encoreFeatures[tab.encore] !== true) {
+		return `The ${tab.label} tab of ${surface.label} is turned off. Turn it on in Settings → Plugins.`;
+	}
+	return null;
 }
 
 /**

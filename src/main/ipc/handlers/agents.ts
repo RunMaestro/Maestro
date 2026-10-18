@@ -54,6 +54,7 @@ import {
 	resolveCodexHomeKey,
 } from '../../stores/codexUsageStore';
 import { pruneMissingQuotaAccounts } from '../../stores/quotaAccountsStore';
+import { filterLiveAgents } from '../../../shared/agentVisibility';
 import type { UsageSnapshot } from '../../agents/claude-mode-selector';
 import type { CodexUsageSnapshot } from '../../stores/codexUsageStore';
 import {
@@ -1624,7 +1625,11 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 			handlerOpts('getKnownAuthDirs', CONFIG_LOG_CONTEXT),
 			async (): Promise<KnownAuthDirs> => {
 				const allConfigs = agentConfigsStore.get('configs', {});
-				const sessions = sessionsStore?.get('sessions', []) ?? [];
+				// Live agents only: a dormant Pianola (flag off) contributes nothing.
+				const sessions = filterLiveAgents(
+					sessionsStore?.get('sessions', []) ?? [],
+					settingsStore?.get('encoreFeatures')
+				);
 				return {
 					claudeConfigDirs: collectKnownAuthPaths(
 						getCustomEnvVars(allConfigs['claude-code']),
@@ -1655,7 +1660,11 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 			handlerOpts('getKnownEnvVarKeys', CONFIG_LOG_CONTEXT),
 			async (): Promise<KnownEnvVarKeys> => {
 				const allConfigs = agentConfigsStore.get('configs', {});
-				const sessions = sessionsStore?.get('sessions', []) ?? [];
+				// Live agents only: a dormant Pianola (flag off) contributes nothing.
+				const sessions = filterLiveAgents(
+					sessionsStore?.get('sessions', []) ?? [],
+					settingsStore?.get('encoreFeatures')
+				);
 
 				const byProvider = new Map<string, Set<string>>();
 				const remember = (toolType: unknown, source: Record<string, unknown>) => {
@@ -2131,6 +2140,7 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 							sessionsStore,
 							agentConfigsStore,
 							agentDetector,
+							settingsStore,
 						}).catch((error) => {
 							logger.warn('Post-reset Codex usage re-sample failed', LOG_CONTEXT, { error });
 						});
@@ -2179,6 +2189,7 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 					sessionsStore,
 					agentConfigsStore,
 					agentDetector,
+					settingsStore,
 				});
 
 				const refreshed = Object.keys(getAllCodexUsageSnapshots()).length;

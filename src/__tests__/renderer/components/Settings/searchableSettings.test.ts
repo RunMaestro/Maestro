@@ -144,6 +144,22 @@ describe('searchableSettings', () => {
 			);
 		});
 
+		// An always-present setting that also touches a feature names it only
+		// through encoreKeywords, so the feature's name leads nowhere while off.
+		it('matches encoreKeywords only while their feature is on', () => {
+			const off = searchSettings('cue', [], { maestroCue: false }).map((s) => s.id);
+			expect(off).not.toContain('general-power');
+			expect(off).not.toContain('display-left-side-panel');
+
+			const on = searchSettings('cue', [], { maestroCue: true }).map((s) => s.id);
+			expect(on).toEqual(expect.arrayContaining(['general-power', 'display-left-side-panel']));
+
+			// The setting itself stays findable by its own terms either way.
+			expect(searchSettings('prevent sleep', [], { maestroCue: false }).map((s) => s.id)).toContain(
+				'general-power'
+			);
+		});
+
 		it('hides the Throughput Gauge display settings while the gauge is off, but keeps its tile', () => {
 			const off = searchSettings('throughput gauge', [], { throughputGauge: false }).map(
 				(s) => s.id

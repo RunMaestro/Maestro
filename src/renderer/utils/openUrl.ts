@@ -8,6 +8,10 @@
  *
  * Only http/https URLs are eligible for the Maestro browser tab. mailto: and
  * other protocols always fall through to the system browser.
+ *
+ * A routing hint (`maestro+https://...`, `system+https://...`, see
+ * `src/shared/urlRoutingHint.ts`) overrides both the setting and the modifier
+ * key for that one link. This function is the single place that decides.
  */
 
 import type { BrowserTab } from '../../shared/browserPage';
@@ -17,15 +21,28 @@ import { activateBrowserTab, createBrowserTab } from '../hooks/tabs/internal/bro
 import { notifyCenterFlash } from '../stores/centerFlashStore';
 import { isWebDesktop } from './runtimeContext';
 import { isHostLocalPreviewUrl } from '../../shared/hostLocalPreview';
+import { parseUrlRoutingHint } from '../../shared/urlRoutingHint';
 
 /**
  * Open a URL, respecting the user's default browser setting.
  *
- * @param url        The URL to open (http, https, or mailto)
+ * @param url        The URL to open (http, https, mailto, or a hinted http(s) URL)
  * @param options.ctrlKey  Whether Ctrl (or Meta on macOS for this purpose) was
- *                         held - inverts the default browser choice
+ *                         held - inverts the default browser choice. Ignored
+ *                         for a hinted URL.
  */
 export function openUrl(url: string, options?: { ctrlKey?: boolean }): void {
+	// A routing hint decides on its own, before anything else. An invalid hint
+	// (`maestro+file:`, `system+ssh:`) opens nothing: falling through would hand
+	// the whole string to shell.openExternal.
+	const hinted = parseUrlRoutingHint(url);
+	if (hinted.kind === 'invalid') return;
+	if (hinted.kind === 'hinted') {
+		if (hinted.hint === 'maestro') openInMaestroBrowser(hinted.url);
+		else openInSystemBrowser(hinted.url);
+		return;
+	}
+
 	// Never send a host localhost URL to a browser executing on the client.
 	if (isWebDesktop() && isHostLocalPreviewUrl(url)) {
 		openInMaestroBrowser(url);
@@ -60,20 +77,33 @@ export function openUrl(url: string, options?: { ctrlKey?: boolean }): void {
 }
 
 /**
+ * The URL an explicit destination (context menu, hint) should load: a valid
+ * hint is stripped, an invalid one yields null so nothing opens.
+ */
+function explicitTarget(url: string): string | null {
+	const parsed = parseUrlRoutingHint(url);
+	return parsed.kind === 'invalid' ? null : parsed.url;
+}
+
+/**
  * Open a URL directly in the system browser, bypassing settings.
  */
 export function openInSystemBrowser(url: string): void {
-	if (isWebDesktop() && isHostLocalPreviewUrl(url)) {
-		openInMaestroBrowser(url);
+	const target = explicitTarget(url);
+	if (!target) return;
+	if (isWebDesktop() && isHostLocalPreviewUrl(target)) {
+		openInMaestroBrowser(target);
 		return;
 	}
-	window.maestro.shell.openExternal(url);
+	window.maestro.shell.openExternal(target);
 }
 
 /**
  * Open a URL in a Maestro browser tab within the current active agent.
  */
-export function openInMaestroBrowser(url: string): void {
+export function openInMaestroBrowser(rawUrl: string): void {
+	const url = explicitTarget(rawUrl);
+	if (!url) return;
 	const session = selectActiveSession(useSessionStore.getState());
 	if (!session) {
 		if (isWebDesktop() && isHostLocalPreviewUrl(url)) {

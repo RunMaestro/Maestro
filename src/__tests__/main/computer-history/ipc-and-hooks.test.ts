@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const h = vi.hoisted(() => ({
 	handlers: new Map<string, (...args: unknown[]) => unknown>(),
 	service: null as Record<string, ReturnType<typeof vi.fn>> | null,
+	encoreFeatures: { computerHistory: true } as Record<string, boolean>,
 }));
 
 vi.mock('electron', () => ({
@@ -18,6 +19,11 @@ vi.mock('../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
 vi.mock('../../../main/computer-history', () => ({
 	getComputerHistoryService: () => h.service,
 }));
+vi.mock('../../../main/stores', () => ({
+	getSettingsStore: () => ({
+		get: (key: string) => (key === 'encoreFeatures' ? h.encoreFeatures : undefined),
+	}),
+}));
 
 import { registerComputerHistoryHandlers } from '../../../main/ipc/handlers/computerHistory';
 import { createComputerHistorySupervisorHooks } from '../../../main/computer-history/first-party';
@@ -25,10 +31,16 @@ import { handleBridgeInvoke } from '../../../main/web-server/handlers/bridgeHand
 
 beforeEach(() => {
 	h.handlers.clear();
+	h.encoreFeatures = { computerHistory: true };
 	h.service = {
 		status: vi.fn(() => ({ state: 'recording' })),
 		pause: vi.fn(async () => ({ state: 'paused' })),
-		query: vi.fn(async () => ({ events: [], limited: false, segmentsScanned: 0 })),
+		query: vi.fn(async () => ({
+			events: [],
+			limited: false,
+			segmentsScanned: 0,
+			draftsCollapsed: 0,
+		})),
 		addRule: vi.fn(async () => ({ id: 'r' })),
 		removeRule: vi.fn(async () => null),
 		activity: vi.fn(async () => ({ buckets: [], apps: [], totalEvents: 0 })),
@@ -69,6 +81,31 @@ describe('computerHistory IPC', () => {
 		expect(opts.grep).toBeInstanceOf(RegExp);
 		expect(opts.grep.test('an inv( here')).toBe(true);
 		expect(opts.limit).toBe(5);
+	});
+
+	it('refuses recorder writes while the feature is off, but keeps status and clear', async () => {
+		h.encoreFeatures = { computerHistory: false };
+		h.service!.clear = vi.fn(async () => ({ deletedSegments: 0, freedBytes: 0 }));
+		const refused: Array<[string, unknown[]]> = [
+			['computerHistory:pause', [null]],
+			['computerHistory:resume', []],
+			['computerHistory:setConfig', [{ snapshots: true }]],
+			['computerHistory:addRule', ['app', 'com.x']],
+			['computerHistory:removeRule', ['com.x']],
+			['computerHistory:requestAccessibility', []],
+		];
+		for (const [channel, args] of refused) {
+			await expect(h.handlers.get(channel)!({}, ...args)).rejects.toThrow(
+				'ComputerHistoryDisabled'
+			);
+		}
+		expect(h.service!.pause).not.toHaveBeenCalled();
+		expect(h.service!.addRule).not.toHaveBeenCalled();
+		await expect(h.handlers.get('computerHistory:status')!({})).resolves.toEqual({
+			state: 'recording',
+		});
+		await h.handlers.get('computerHistory:clear')!({}, { all: true });
+		expect(h.service!.clear).toHaveBeenCalledWith({ all: true });
 	});
 
 	it('passes ranges to activity and sanitizes the digest kind', async () => {

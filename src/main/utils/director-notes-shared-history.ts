@@ -38,6 +38,7 @@ import { app } from 'electron';
 import { logger } from './logger';
 import { captureException } from './sentry';
 import { getSessionsStore, getSettingsStore } from '../stores';
+import { filterLiveAgents } from '../../shared/agentVisibility';
 import { getSshRemoteById } from '../stores/getters';
 import {
 	hasLocalSharedHistory,
@@ -190,7 +191,11 @@ export function sharedEntryAgentName(entry: HistoryEntry): string {
  * SSH'd INTO this machine writes its mirror.
  */
 function collectScopes(): SharedHistoryScope[] {
-	const storedSessions = getSessionsStore().get('sessions', []);
+	// Live agents only: a dormant Pianola (flag off) contributes no location.
+	const storedSessions = filterLiveAgents(
+		getSessionsStore().get('sessions', []),
+		getSettingsStore().get('encoreFeatures')
+	);
 	const scopes = new Map<string, SharedHistoryScope>();
 
 	for (const session of storedSessions) {

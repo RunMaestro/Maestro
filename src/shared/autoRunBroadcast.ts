@@ -82,6 +82,8 @@ export interface AutoRunBroadcastState {
 	loopEnabled?: boolean;
 	/** How many times the run has looped (0 = first pass) */
 	loopIteration?: number;
+	/** Checked tasks the documents held when the run started, for the ETA's pace */
+	initialCompletedTasks?: number;
 }
 
 /**

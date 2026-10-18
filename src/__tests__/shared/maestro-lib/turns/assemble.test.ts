@@ -451,12 +451,21 @@ describe('the launch request (PA2, PA8, PA9)', () => {
 	it('gives the Pianola manager the CLI script and its own id', () => {
 		const { launch } = assemble({
 			agent: { isPianola: true },
-			context: { maestroCliPath: '/opt/maestro-cli.js' },
+			context: { maestroCliPath: '/opt/maestro-cli.js', pianolaEnabled: true },
 		});
 		expect(launch.maestroEnvVars).toMatchObject({
 			MAESTRO_CLI_JS: '/opt/maestro-cli.js',
 			MAESTRO_AGENT_ID: 'agent-1',
 		});
+	});
+
+	it('gives a dormant Pianola (flag off) none of the manager env', () => {
+		const { launch } = assemble({
+			agent: { isPianola: true },
+			context: { maestroCliPath: '/opt/maestro-cli.js', pianolaEnabled: false },
+		});
+		expect(launch.maestroEnvVars).not.toHaveProperty('MAESTRO_CLI_JS');
+		expect(launch.maestroEnvVars).not.toHaveProperty('MAESTRO_AGENT_ID');
 	});
 
 	it('layers environment: global settings, provider config, the agent own vars', () => {

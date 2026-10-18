@@ -678,10 +678,16 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	// the returned plan means the source agent is not sent to now: the message
 	// leads with an `@agent` mention (only the mentioned agents answer) or asks
 	// for the consult FIRST (the source agent answers once the replies are in).
-	// A trailing mention otherwise runs in parallel or hands off the answer.
+	// A trailing mention otherwise runs in parallel or hands off the answer -
+	// unless the user picked the routing in the composer's routing menu, which
+	// wins over the wording.
 	const handleCrossAgentMentionPlan = useCallback(
 		(message: string, sourceSession: Session): CrossAgentMentionPlan | null =>
-			planCrossAgentMentions(message, sourceSession.id),
+			planCrossAgentMentions(
+				message,
+				sourceSession.id,
+				useComposerInputStore.getState().mentionRoutingOverride
+			),
 		[]
 	);
 

@@ -53,6 +53,7 @@ describe('shared cwd Cue health', () => {
 			onLog,
 			dispatchSubscription: dispatch,
 			clearQueue: vi.fn(),
+			retainQueue: vi.fn(() => 0),
 			clearFanInState: vi.fn(),
 		});
 	});

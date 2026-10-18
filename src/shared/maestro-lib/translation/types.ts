@@ -4,6 +4,8 @@ export interface TranslationIdentity {
 	provider: ToolType;
 	version: string;
 	accountRoot: string;
+	/** Canonical Claude projects directory selected with the account, including shared profile links. */
+	nativeSessionRoot?: string;
 	projectRoot: string;
 	/** Repository identity for default project memory; session cwd remains projectRoot. */
 	memoryProjectRoot?: string;

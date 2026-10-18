@@ -8,7 +8,10 @@ import {
 	type CodexTranslatedRequestMethod,
 } from '../../../main/codex-app-server/event-translator';
 import type { CodexAppServerMessage } from '../../../main/codex-app-server/protocol';
-import { CodexOutputParser } from '../../../main/parsers/codex-output-parser';
+import {
+	CodexOutputParser,
+	CODEX_CALL_USAGE_LINE_TYPE,
+} from '../../../main/parsers/codex-output-parser';
 
 const FIXTURES = join(__dirname, '..', '..', 'fixtures', 'codex-app-server');
 
@@ -30,13 +33,15 @@ const TRANSLATED_RESPONSES = new Set<string>(['thread/start', 'thread/resume', '
  * Replay a fixture the way the spawner will: notifications go to `translate()`,
  * successful responses to the requests whose result the translator needs go to
  * `translateResponse()`, and server requests are left for the spawner to answer.
+ * `lines` are the `codex exec` lines; Maestro's own live usage lines are kept
+ * apart in `callUsage`, so a sequence assertion reads as the exec stream.
  */
 function replay(name: string, edit: (fixture: FixtureLine[]) => FixtureLine[] = (f) => f) {
 	const translator = new CodexAppServerEventTranslator();
 	const userMessages: CodexAppServerUserMessage[] = [];
 	translator.onUserMessage((message) => userMessages.push(message));
 	const methodsById = new Map<number | string, string>();
-	const lines: CodexExecLine[] = [];
+	const all: CodexExecLine[] = [];
 	const fixture = edit(loadFixture(name));
 
 	for (const { dir, msg } of fixture) {
@@ -45,18 +50,48 @@ function replay(name: string, edit: (fixture: FixtureLine[]) => FixtureLine[] = 
 			continue;
 		}
 		if (msg.method && msg.id === undefined) {
-			lines.push(...translator.translate({ ...msg, method: msg.method, id: undefined }));
+			all.push(...translator.translate({ ...msg, method: msg.method, id: undefined }));
 		} else if (msg.id !== undefined && !msg.method && msg.result !== undefined) {
 			const method = methodsById.get(msg.id);
 			if (method && TRANSLATED_RESPONSES.has(method)) {
-				lines.push(
+				all.push(
 					...translator.translateResponse(method as CodexTranslatedRequestMethod, msg.result)
 				);
 			}
 		}
 	}
-	return { translator, lines, userMessages, fixture };
+	const lines = all.filter((line) => line.type !== CODEX_CALL_USAGE_LINE_TYPE);
+	const callUsage = all.filter((line) => line.type === CODEX_CALL_USAGE_LINE_TYPE);
+	return { translator, lines, callUsage, userMessages, fixture };
 }
+
+/** Field-by-field sum of the `usage` objects on a set of lines. */
+function sumUsage(lines: CodexExecLine[]): Record<string, number> {
+	const sum: Record<string, number> = {};
+	for (const line of lines) {
+		for (const [field, value] of Object.entries(line.usage as Record<string, number>)) {
+			sum[field] = (sum[field] ?? 0) + value;
+		}
+	}
+	return sum;
+}
+
+/** The turn id the fixture's `turn/started` names. */
+function activeTurnOf(fixture: FixtureLine[]): string | undefined {
+	const started = fixture.find(({ dir, msg }) => dir === 'recv' && msg.method === 'turn/started');
+	return (started?.msg.params as { turn?: { id?: string } } | undefined)?.turn?.id;
+}
+
+const FIXTURE_NAMES = [
+	'plain-turn',
+	'tool-turn',
+	'steered-turn',
+	'late-steer',
+	'resumed-turn',
+	'interrupted-turn',
+	'read-only-turn',
+	'approval-request',
+];
 
 /** `type` plus the item's type and status, the shape a fixture's sequence is asserted on. */
 function signature(line: CodexExecLine): string {
@@ -282,6 +317,132 @@ describe('CodexAppServerEventTranslator', () => {
 				exit_code: null,
 				status: 'failed',
 			});
+		});
+	});
+
+	describe('live call usage (maestro.call_usage)', () => {
+		it.each(FIXTURE_NAMES)(
+			'%s: one line per update of the active turn, summing to the turn usage',
+			(name) => {
+				const { lines, callUsage, fixture } = replay(name);
+				const turnId = activeTurnOf(fixture);
+				const turnUpdates = fixture.filter(
+					({ dir, msg }) =>
+						dir === 'recv' &&
+						msg.method === 'thread/tokenUsage/updated' &&
+						(msg.params as { turnId?: string }).turnId === turnId
+				);
+				expect(callUsage).toHaveLength(turnUpdates.length);
+				expect(sumUsage(callUsage)).toEqual(lines.at(-1)!.usage);
+			}
+		);
+
+		it('reports the growth since the previous update, not the thread total', () => {
+			const translator = new CodexAppServerEventTranslator();
+			translator.translateResponse('thread/start', { thread: { id: 'thread-1' } });
+			translator.translate({ method: 'turn/started', params: { turn: { id: 'turn-1' } } });
+			const update = (total: Record<string, number>, last?: Record<string, number>) =>
+				translator.translate({
+					method: 'thread/tokenUsage/updated',
+					params: {
+						threadId: 'thread-1',
+						turnId: 'turn-1',
+						tokenUsage: { total, ...(last ? { last } : {}) },
+					},
+				});
+			expect(
+				update(
+					{ inputTokens: 1100, outputTokens: 40, reasoningOutputTokens: 10 },
+					{ inputTokens: 100, outputTokens: 40, reasoningOutputTokens: 10 }
+				)
+			).toEqual([
+				{
+					type: CODEX_CALL_USAGE_LINE_TYPE,
+					usage: {
+						input_tokens: 100,
+						cached_input_tokens: 0,
+						output_tokens: 40,
+						reasoning_output_tokens: 10,
+					},
+				},
+			]);
+			expect(update({ inputTokens: 1300, cachedInputTokens: 150, outputTokens: 90 })).toEqual([
+				{
+					type: CODEX_CALL_USAGE_LINE_TYPE,
+					usage: {
+						input_tokens: 200,
+						cached_input_tokens: 150,
+						output_tokens: 50,
+						reasoning_output_tokens: 0,
+					},
+				},
+			]);
+			// A repeat of the same total spent nothing new.
+			expect(update({ inputTokens: 1300, cachedInputTokens: 150, outputTokens: 90 })).toEqual([]);
+		});
+
+		it('sends nothing for an update outside the active turn', () => {
+			const translator = new CodexAppServerEventTranslator();
+			translator.translateResponse('thread/start', { thread: { id: 'thread-1' } });
+			const update = (turnId: string, total: number, last: number) =>
+				translator.translate({
+					method: 'thread/tokenUsage/updated',
+					params: {
+						threadId: 'thread-1',
+						turnId,
+						tokenUsage: { total: { inputTokens: total }, last: { inputTokens: last } },
+					},
+				});
+			// The previous turn's total, replayed on resume, and an update ahead of the turn id.
+			expect(update('turn-0', 100, 100)).toEqual([]);
+			expect(update('turn-1', 120, 20)).toEqual([]);
+			translator.translateResponse('turn/start', { turn: { id: 'turn-1' } });
+			expect(update('turn-1', 150, 30)).toEqual([
+				expect.objectContaining({ usage: expect.objectContaining({ input_tokens: 30 }) }),
+			]);
+		});
+
+		it('sends nothing for a first update that carries no `last`', () => {
+			const translator = new CodexAppServerEventTranslator();
+			translator.translateResponse('thread/start', { thread: { id: 'thread-1' } });
+			translator.translate({ method: 'turn/started', params: { turn: { id: 'turn-1' } } });
+			const update = (inputTokens: number) =>
+				translator.translate({
+					method: 'thread/tokenUsage/updated',
+					params: {
+						threadId: 'thread-1',
+						turnId: 'turn-1',
+						tokenUsage: { total: { inputTokens } },
+					},
+				});
+			expect(update(130)).toEqual([]);
+			expect(update(175)).toEqual([
+				expect.objectContaining({ usage: expect.objectContaining({ input_tokens: 45 }) }),
+			]);
+		});
+
+		it('parses into callUsage, output counted with reasoning as the turn usage counts it', () => {
+			const event = new CodexOutputParser().parseJsonLine(
+				JSON.stringify({
+					type: CODEX_CALL_USAGE_LINE_TYPE,
+					usage: {
+						input_tokens: 200,
+						cached_input_tokens: 150,
+						output_tokens: 50,
+						reasoning_output_tokens: 7,
+					},
+				})
+			);
+			expect(event).toMatchObject({
+				type: 'system',
+				callUsage: {
+					inputTokens: 200,
+					outputTokens: 57,
+					cacheReadInputTokens: 150,
+					cacheCreationInputTokens: 0,
+				},
+			});
+			expect(event?.usage).toBeUndefined();
 		});
 	});
 

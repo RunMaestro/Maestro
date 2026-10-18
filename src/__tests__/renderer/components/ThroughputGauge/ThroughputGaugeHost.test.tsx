@@ -41,7 +41,7 @@ import {
 	DEFAULT_THROUGHPUT_GAUGE_SETTINGS,
 	type ThroughputGaugeSettings,
 } from '../../../../shared/throughputGauge';
-import type { UsageStats } from '../../../../shared/types';
+import type { CallUsage, UsageStats } from '../../../../shared/types';
 import { installLocalStorageMock } from '../../../helpers/mockLocalStorage';
 import { createMockSession } from '../../../helpers/mockSession';
 import { mockTheme } from '../../../helpers/mockTheme';
@@ -51,6 +51,7 @@ const AI_TAB_ID = 'agent-1-ai-tab-1';
 
 type DataHandler = (sessionId: string, data: string) => void;
 type UsageHandler = (sessionId: string, usage: UsageStats) => void;
+type CallUsageHandler = (sessionId: string, usage: CallUsage) => void;
 type ExitHandler = (sessionId: string, code: number) => void;
 
 /** The `process.*` subscriptions the host makes, each returning its own unsubscribe spy. */
@@ -59,6 +60,7 @@ function makeProcessListeners() {
 		onData: vi.fn(),
 		onThinkingChunk: vi.fn(),
 		onUsage: vi.fn(),
+		onCallUsage: vi.fn(),
 		onExit: vi.fn(),
 	};
 	return {
@@ -66,6 +68,7 @@ function makeProcessListeners() {
 		onData: vi.fn((_handler: DataHandler) => unsubscribes.onData),
 		onThinkingChunk: vi.fn((_handler: DataHandler) => unsubscribes.onThinkingChunk),
 		onUsage: vi.fn((_handler: UsageHandler) => unsubscribes.onUsage),
+		onCallUsage: vi.fn((_handler: CallUsageHandler) => unsubscribes.onCallUsage),
 		onExit: vi.fn((_handler: ExitHandler) => unsubscribes.onExit),
 	};
 }
@@ -103,6 +106,7 @@ describe('ThroughputGaugeHost', () => {
 		onData: processApi.onData,
 		onThinkingChunk: processApi.onThinkingChunk,
 		onUsage: processApi.onUsage,
+		onCallUsage: processApi.onCallUsage,
 		onExit: processApi.onExit,
 	};
 
@@ -114,6 +118,7 @@ describe('ThroughputGaugeHost', () => {
 			onData: listeners.onData,
 			onThinkingChunk: listeners.onThinkingChunk,
 			onUsage: listeners.onUsage,
+			onCallUsage: listeners.onCallUsage,
 			onExit: listeners.onExit,
 		});
 		throughputTracker.clear();
@@ -148,6 +153,7 @@ describe('ThroughputGaugeHost', () => {
 		expect(listeners.onData).not.toHaveBeenCalled();
 		expect(listeners.onThinkingChunk).not.toHaveBeenCalled();
 		expect(listeners.onUsage).not.toHaveBeenCalled();
+		expect(listeners.onCallUsage).not.toHaveBeenCalled();
 		expect(listeners.onExit).not.toHaveBeenCalled();
 	});
 
@@ -160,6 +166,7 @@ describe('ThroughputGaugeHost', () => {
 		expect(listeners.onData).toHaveBeenCalledTimes(1);
 		expect(listeners.onThinkingChunk).toHaveBeenCalledTimes(1);
 		expect(listeners.onUsage).toHaveBeenCalledTimes(1);
+		expect(listeners.onCallUsage).toHaveBeenCalledTimes(1);
 		expect(listeners.onExit).toHaveBeenCalledTimes(1);
 		expect(screen.getByTestId('floating-throughput-gauge')).toBeInTheDocument();
 		expect(useThroughputGaugeStore.getState().visible).toBe(true);
@@ -221,6 +228,7 @@ describe('ThroughputGaugeHost', () => {
 		expect(listeners.unsubscribes.onData).toHaveBeenCalledTimes(1);
 		expect(listeners.unsubscribes.onThinkingChunk).toHaveBeenCalledTimes(1);
 		expect(listeners.unsubscribes.onUsage).toHaveBeenCalledTimes(1);
+		expect(listeners.unsubscribes.onCallUsage).toHaveBeenCalledTimes(1);
 		expect(listeners.unsubscribes.onExit).toHaveBeenCalledTimes(1);
 		expect(vi.getTimerCount()).toBe(0);
 		// Regression: the peak and the trace used to survive, so turning the
@@ -253,6 +261,37 @@ describe('ThroughputGaugeHost', () => {
 		expect(peak.combined).toBe(rates.combined);
 		expect(history.combined[history.combined.length - 1]).toBe(rates.combined);
 		expect(screen.getByTestId('throughput-gauge-reading').textContent).not.toBe('0');
+	});
+
+	it('per-call usage moves the rate mid-turn, and the turn report adds only what it missed', () => {
+		vi.useFakeTimers();
+		setFlag(true);
+		render(<ThroughputGaugeHost theme={mockTheme} />);
+		const onCallUsage = listeners.onCallUsage.mock.calls[0][0];
+		const onThinkingChunk = listeners.onThinkingChunk.mock.calls[0][0];
+		const onUsage = listeners.onUsage.mock.calls[0][0];
+		const call = (inputTokens: number, outputTokens: number): CallUsage => ({
+			inputTokens,
+			outputTokens,
+			cacheReadInputTokens: 150000,
+			cacheCreationInputTokens: 0,
+		});
+
+		act(() => {
+			onCallUsage(AI_TAB_ID, call(600, 200));
+			// The same call's text, which the call report already counted.
+			onThinkingChunk(AI_TAB_ID, 'x'.repeat(800));
+			vi.advanceTimersByTime(THROUGHPUT_PUBLISH_MS);
+		});
+		// 800 tokens over the default 10s window, cache reads left out.
+		expect(useThroughputGaugeStore.getState().rates.combined).toBeCloseTo(80);
+
+		act(() => {
+			onUsage(AI_TAB_ID, usage({ inputTokens: 1000, outputTokens: 300 }));
+			vi.advanceTimersByTime(THROUGHPUT_PUBLISH_MS);
+		});
+		// The turn's 1300, counted once.
+		expect(useThroughputGaugeStore.getState().rates.combined).toBeCloseTo(130);
 	});
 
 	it('with scope active, output from another agent does not move the rate', () => {

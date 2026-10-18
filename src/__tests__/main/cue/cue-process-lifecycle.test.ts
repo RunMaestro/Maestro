@@ -269,6 +269,19 @@ describe('cue-process-lifecycle', () => {
 	});
 
 	describe('runProcess', () => {
+		it('neither spawns nor registers a process for a run already stopped', async () => {
+			const controller = new AbortController();
+			controller.abort();
+			const result = await runProcess(
+				'stopped-run',
+				createSpec(),
+				createOptions({ signal: controller.signal })
+			);
+			expect(mockSpawn).not.toHaveBeenCalled();
+			expect(getActiveProcessMap().has('stopped-run')).toBe(false);
+			expect(result).toMatchObject({ status: 'stopped', exitCode: null, stdout: '', stderr: '' });
+		});
+
 		it('spawns process with correct command, args, and cwd', async () => {
 			const spec = createSpec();
 			const resultPromise = runProcess('run-1', spec, createOptions());
@@ -414,6 +427,72 @@ describe('cue-process-lifecycle', () => {
 					{ sshCommand: '/usr/bin/ssh', sshArgs, pidFile, sessionId: 'run-ssh' },
 					'terminate'
 				);
+
+				mockChild.emit('close', 143);
+				await resultPromise;
+			});
+
+			it('terminates the remote agent when the run times out', async () => {
+				const sshArgs = ['u@h', '/bin/bash', '--norc', '--noprofile', '-s'];
+				const spec = createSpec({ command: '/usr/bin/ssh', args: sshArgs });
+				const resultPromise = runProcess(
+					'run-ssh-timeout',
+					spec,
+					createOptions({
+						sshRemoteEnabled: true,
+						sshStdinScript: 'exec claude\n',
+						timeoutMs: 5000,
+					})
+				);
+				await vi.advanceTimersByTimeAsync(0);
+				const pidFile = getActiveProcessMap().get('run-ssh-timeout')?.sshRemotePidFile;
+				expect(mockSignalRemoteAgent).not.toHaveBeenCalled();
+
+				await vi.advanceTimersByTimeAsync(5000);
+				expect(mockSignalRemoteAgent).toHaveBeenCalledWith(
+					{ sshCommand: '/usr/bin/ssh', sshArgs, pidFile, sessionId: 'run-ssh-timeout' },
+					'terminate'
+				);
+
+				mockChild.emit('close', null);
+				expect((await resultPromise).status).toBe('timeout');
+			});
+
+			it('terminates the remote agent on shutdown', async () => {
+				const sshArgs = ['u@h', '/bin/bash', '--norc', '--noprofile', '-s'];
+				const spec = createSpec({ command: '/usr/bin/ssh', args: sshArgs });
+				const resultPromise = runProcess(
+					'run-ssh-shutdown',
+					spec,
+					createOptions({ sshRemoteEnabled: true, sshStdinScript: 'exec claude\n' })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+				const pidFile = getActiveProcessMap().get('run-ssh-shutdown')?.sshRemotePidFile;
+
+				stopAllProcesses();
+				expect(mockSignalRemoteAgent).toHaveBeenCalledWith(
+					{ sshCommand: '/usr/bin/ssh', sshArgs, pidFile, sessionId: 'run-ssh-shutdown' },
+					'terminate'
+				);
+
+				mockChild.emit('close', 143);
+				await resultPromise;
+			});
+
+			// The pid record only fits a script piped to `bash -s`; any other spawn
+			// keeps its stdin byte for byte and has nothing remote to signal.
+			it('records no remote pid for a spawn that is not a stdin-script ssh', async () => {
+				const resultPromise = runProcess(
+					'run-local',
+					createSpec(),
+					createOptions({ sshRemoteEnabled: true, sshStdinScript: 'exec claude\n' })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+
+				expect(getActiveProcessMap().get('run-local')?.sshRemotePidFile).toBeUndefined();
+				expect(mockChild.stdin.write.mock.calls[0][0]).toBe('exec claude\n');
+				stopProcess('run-local');
+				expect(mockSignalRemoteAgent).not.toHaveBeenCalled();
 
 				mockChild.emit('close', 143);
 				await resultPromise;

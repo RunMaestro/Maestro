@@ -9,6 +9,7 @@ import { logger } from '../utils/logger';
 import { PerformanceMetrics } from '../../shared/performance-metrics';
 import type { StatsTimeRange } from '../../shared/stats-types';
 import { toLocalYmd } from '../../shared/localDay';
+import { isEncoreFeatureEnabled } from '../../shared/encoreFeatureDefaults';
 
 export const LOG_CONTEXT = '[StatsDB]';
 
@@ -56,11 +57,12 @@ export interface StatsSettingsStore {
  * Whether usage-statistics collection is enabled. This is the single
  * telemetry/analytics gate for every stats writer (IPC handlers and the
  * main-process multi-window telemetry): nothing is recorded when the user has
- * turned `statsCollectionEnabled` off. Defaults to enabled when the setting is
- * unset or no store is provided.
+ * turned the Usage & Stats Encore Feature off, or `statsCollectionEnabled` off.
+ * Defaults to enabled when the settings are unset or no store is provided.
  */
 export function isStatsCollectionEnabled(settingsStore?: StatsSettingsStore): boolean {
 	if (!settingsStore) return true; // Default to enabled if no settings store
+	if (!isEncoreFeatureEnabled(settingsStore, 'usageStats')) return false;
 	// Default to true if not explicitly set to false
 	return settingsStore.get('statsCollectionEnabled') !== false;
 }

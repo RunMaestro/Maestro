@@ -21,7 +21,8 @@ console.log('Building CLI bundle...');
 execFileSync('node', [join(rootDir, 'scripts/build-cli.mjs')], { stdio: 'inherit' });
 
 console.log('Generating command reference...');
-const markdown = execFileSync('node', [cliBundle, 'reference'], {
+// `--all`: the docs cover every verb, whatever Encore Features this machine has on.
+const markdown = execFileSync('node', [cliBundle, 'reference', '--all'], {
 	encoding: 'utf8',
 	maxBuffer: 16 * 1024 * 1024,
 });

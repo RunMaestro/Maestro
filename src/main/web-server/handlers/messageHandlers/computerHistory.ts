@@ -15,10 +15,16 @@
 
 import { logger } from '../../../utils/logger';
 import { getComputerHistoryService } from '../../../computer-history';
+import { getSettingsStore } from '../../../stores';
+import { isEncoreFeatureEnabled } from '../../../../shared/encoreFeatureDefaults';
 import { LOG_CONTEXT } from './shared';
 import type { ComputerHistoryCommandAction } from '../../../../shared/computer-history/status';
 import type { ComputerHistoryConfigPatch } from '../../../../shared/computer-history/config';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
+
+/** Actions that work while the feature is off: reading status and deleting
+ *  what was recorded. Everything else drives or reconfigures the recorder. */
+const ALLOWED_WHILE_OFF: ReadonlySet<ComputerHistoryCommandAction> = new Set(['status', 'clear']);
 
 const ACTIONS: ReadonlySet<ComputerHistoryCommandAction> = new Set([
 	'status',
@@ -67,6 +73,18 @@ export async function handleComputerHistoryCommand(
 	const service = getComputerHistoryService();
 	if (!service) {
 		reply({ success: false, error: 'Computer History is not available in this session' });
+		return;
+	}
+
+	if (
+		!ALLOWED_WHILE_OFF.has(action) &&
+		!isEncoreFeatureEnabled(getSettingsStore(), 'computerHistory')
+	) {
+		reply({
+			success: false,
+			error:
+				'Computer History is turned off. Run `maestro-cli encore enable computerHistory` first.',
+		});
 		return;
 	}
 
