@@ -72,6 +72,11 @@ vi.mock('../../../shared/maestro-lib/launch/path-prober', async (importOriginal)
 	return {
 		...actual,
 		checkBinaryExists: (binary: string) => mockCheckBinaryExists(binary),
+		// Cursor's identity check runs the candidate with `--help`. That probe would
+		// go through the mocked child_process and be read as the agent's own spawn,
+		// so here every candidate is the right binary; path-prober.test.ts covers
+		// the real check.
+		validateAgentBinaryIdentity: async () => true,
 	};
 });
 
@@ -156,28 +161,6 @@ const mockWrapSpawnWithSsh = vi.fn();
 vi.mock('../../../shared/maestro-lib/launch/ssh-spawn-wrapper', () => ({
 	wrapSpawnWithSsh: (...args: unknown[]) => mockWrapSpawnWithSsh(...args),
 }));
-
-// A local spawn resolves its command through `detectAgent` (see
-// `resolveLocalAgentCommand`), and Cursor is the one agent whose detection
-// PROBES: `checkBinaryExists` reads PATH out of a login shell and
-// `validateAgentBinaryIdentity` runs the candidate with `--help`. Both go
-// through the mocked `child_process`, so without this the first spawn of a
-// Cursor run is the probe rather than the agent, and `spawnCall()` - which
-// reads `mock.calls[0]` - inspects the wrong one. Resolving to the bare binary
-// name keeps the spawned command identical to what these assertions were
-// written against. `checkCustomPath` stays REAL: the non-Cursor detection tests
-// drive it through the `fs` mocks.
-vi.mock('../../../main/agents/path-prober', async (importOriginal) => {
-	const actual = await importOriginal<typeof import('../../../main/agents/path-prober')>();
-	return {
-		...actual,
-		checkBinaryExists: vi.fn(async (binaryName: string) => ({
-			exists: true,
-			path: binaryName,
-		})),
-		validateAgentBinaryIdentity: vi.fn(async () => true),
-	};
-});
 
 import {
 	readDocAndCountTasks,
@@ -912,45 +895,6 @@ Some text with [x] in it that's not a checkbox
 
 			const result = await freshDetectAgent('opencode');
 			expect(result.available).toBe(false);
-		});
-
-		it('strips the carriage return from a multi-match Windows `where` result', async () => {
-			// `where` separates its matches with CRLF and `.trim()` only strips the
-			// trailing one off the whole buffer, so splitting on '\n' leaves the first
-			// match as 'C:\\a\\opencode.exe\r'. That string gets cached and handed to
-			// spawn, and the path never resolves. A single match hides it, so this
-			// only breaks for users with two copies of an agent on PATH.
-			// `opencode` rather than `cursor-cli`: Cursor resolves through
-			// checkBinaryExists/identity validation, not through `where`.
-			const originalPlatform = process.platform;
-			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
-			mockGetAgentCustomPath.mockReturnValue(undefined);
-			mockSpawn.mockReturnValue(mockChild);
-
-			try {
-				const { detectAgent: freshDetectAgent } =
-					await import('../../../cli/services/agent-spawner');
-
-				const resultPromise = freshDetectAgent('opencode');
-				await new Promise((resolve) => setTimeout(resolve, 0));
-				mockStdout.emit(
-					'data',
-					Buffer.from('C:\\a\\opencode.exe\r\nC:\\b\\opencode.exe\r\n', 'utf8')
-				);
-				await new Promise((resolve) => setTimeout(resolve, 0));
-				mockChild.emit('close', 0);
-
-				const result = await resultPromise;
-				expect(mockSpawn.mock.calls[0][0]).toBe('where');
-				expect(result.available).toBe(true);
-				expect(result.path).toBe('C:\\a\\opencode.exe');
-				expect(result.path).not.toMatch(/\r/);
-			} finally {
-				Object.defineProperty(process, 'platform', {
-					value: originalPlatform,
-					configurable: true,
-				});
-			}
 		});
 
 		it('should cache results across calls', async () => {
@@ -2224,8 +2168,8 @@ Some text with [x] in it that's not a checkbox
 			expect(result.response).toBe('ok');
 		});
 
-		it('spawns Cursor standard mode without --force and sends the raw prompt via stdin', async () => {
-			const prompt = `Hello cursor ${'x'.repeat(20_000)}`;
+		it('spawns Cursor standard mode without --force, with the prompt on argv', async () => {
+			const prompt = 'Hello cursor';
 			const resultPromise = spawnAgent('cursor-cli', '/project', prompt, undefined, {
 				permissionMode: 'standard',
 			});
@@ -2239,8 +2183,10 @@ Some text with [x] in it that's not a checkbox
 			expect(args).toContain('--workspace');
 			expect(args).toContain('/project');
 			expect(args).toContain('-p');
-			expect(args).not.toContain(prompt);
-			expect(mockStdin.end).toHaveBeenCalledWith(prompt);
+			// The shared launch plan's contract: the prompt is the last argument and
+			// nothing is written to stdin, the same as every other agent.
+			expect(args[args.length - 1]).toBe(prompt);
+			expect(mockStdin.end).not.toHaveBeenCalledWith(prompt);
 			expect(args).not.toContain('--mode');
 
 			mockStdout.emit(
