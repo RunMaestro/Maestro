@@ -27,7 +27,7 @@ Both halves are needed for any message the board sends, including one you type o
 Leaving that section unapproved still gives you a working board. You get cards, columns, dragging, descriptions, comments and the jump-to-tab click; you do not get messaging or plans.
 
 <Warning>
-Messaging an agent also requires a signature Maestro trusts. A plugin you installed from a folder, or signed with your own throwaway key, resolves as untrusted, and the host refuses high-power act verbs for anything short of trusted. The board is fully usable in that state, but it is read-only with respect to your agents: sends and plan requests fail with the host's own message. The plugin README's trust section spells out the whole ladder.
+A plugin only runs at all if its signature resolves as **trusted**. A folder you installed yourself is unsigned, and a copy you signed with your own throwaway key is untrusted until you add that key, so in either state Maestro lists the plugin and lets you enable it but never starts its code: the board opens empty rather than read-only. Getting a trusted state locally takes two steps outside this page: sign the installed copy with `maestro-cli plugin sign`, then add the public key it prints to the `pluginTrustedKeys` array in Maestro's `maestro-settings.json` and restart. The plugin README's trust section spells out the whole ladder, the signing commands, and what a bundled first-party install would require instead.
 </Warning>
 
 ## Opening the board

@@ -339,7 +339,7 @@ For a message (`agents.dispatch`) or a History read (`transcripts.read`) to actu
 
 ### What the board does when any of it is not true
 
-- **Steps 1 and 2 (disabled, unsigned, tampered, untrusted):** there is nothing for the board to show, because its code never runs or every act verb fails before a card is drawn. Maestro's Plugins settings surface the signature and trust state directly.
+- **Steps 1 and 2 (disabled, unsigned, tampered, untrusted):** there is nothing for the board to show, because its code never runs. Maestro's Plugins settings surface the signature and trust state directly. See [Signing, packing, and what a bundled auto-install requires](#signing-packing-and-what-a-bundled-auto-install-requires) for how a copy reaches `trusted` and why a folder install does not.
 - **Step 3 or step 4 (capability not granted, or no unattended consent):** the board could never dispatch to any session, so every card renders "Not connected" and the detail pane's access gate permanently replaces the History excerpt and composer. Allow Access itself keeps failing with the host's own text until it is fixed in Settings, which is outside this plugin's reach.
 - **Step 5 (session not created by, or approved for, this plugin):** the ordinary, expected state for a card you have not said yes to. See [The access model](#the-access-model).
 - **A grant revoked after the fact:** the next dispatch or History read for that session is denied with the same "is not granted to this plugin" message the initial path uses. The board recognizes that specific denial, drops the session from its own in-memory set, clears cached History, and the card returns to the ungranted state, rather than showing a generic error.
@@ -347,6 +347,40 @@ For a message (`agents.dispatch`) or a History read (`transcripts.read`) to actu
 - **Step 6, the rate cap:** refused with the host's `rate limit: ...` / `concurrency limit: ...` text, shown the same way. The composer additionally limits itself to one in-flight send per card and one in-flight access request per session, so a double Enter cannot itself trip a host cap.
 
 In every denial above, the text on the card is the host's own message, read out of the rejected call rather than guessed, so what you see names exactly what is missing.
+
+### Signing, packing, and what a bundled auto-install requires
+
+A `trusted` signature is step 2 of the ladder, and it is also the only thing that makes this plugin's code run at all: `isRunnable()` in `src/main/plugins/plugin-manager.ts` requires `signature.status === 'trusted'`, so an unsigned or untrusted copy is still discovered, listed and enable-able, and its three ways in still appear, but its sandbox never starts. Every button in `panel.html` reaches `main.js` through `maestro:invokeCommand`, and `invokeCommand()` returns false with no sandbox behind it, so the board opens with nothing driving it. That is not a read-only board, it is an inert one.
+
+Sign and pack a **copy**, never the checked-in folder. `plugin sign` writes `signature.json` into the directory it signs, and `--gen-key --key-out` writes a private key wherever you point it; neither belongs in the repository:
+
+```bash
+npm run build:cli
+PKG_TMP="$(mktemp -d)" && cp -R examples/plugins/maestro-kanban "$PKG_TMP/"
+node dist/cli/maestro-cli.js plugin sign "$PKG_TMP/maestro-kanban" \
+  --gen-key --key-out "$PKG_TMP/dev-key.pem"
+node dist/cli/maestro-cli.js plugin validate "$PKG_TMP/maestro-kanban"
+node dist/cli/maestro-cli.js plugin pack "$PKG_TMP/maestro-kanban" \
+  --out "$PKG_TMP/maestro-kanban.tgz"
+```
+
+`sign` hashes the four source files and writes an ed25519 signature over that exact set. `signature.json` itself, and any `*.pem` or `*.key`, are excluded from both signing and packing by the shared policy in `src/shared/plugins/signing.ts`, so a key that ends up inside the plugin folder is never signed into the manifest and never lands in the archive. `validate` then reports `Signature: untrusted` for a throwaway key, which is the expected and correct result: the signature verifies, the signer is simply not a key this build trusts. Pass the public half back with `--trusted-key <base64>` and the same command reports `trusted`, which is how you confirm the signature is good rather than merely present. `pack` writes five files, the four sources plus `signature.json`, because the host verifier needs it to check the bytes after install.
+
+To run a locally signed copy in a real build you also have to make its key trusted, and there is no Settings control for that: add the base64 public key `sign` printed to the `pluginTrustedKeys` array in `<userData>/maestro-settings.json`, then restart. `npm run plugin:dev` copies a folder and does nothing else, so a dev-data install on its own leaves the plugin untrusted and therefore not running.
+
+#### What `bundled-plugins.ts` requires to auto-install this plugin
+
+`seedBundledPlugins()` in `src/main/plugins/bundled-plugins.ts` copies bundled first-party plugins into the user's plugins directory at startup. For this plugin to be one of them, all of the following has to hold. Any one of them failing makes the seeder skip the plugin and log why:
+
+1. **The folder sits at a bundled root.** `bundledPluginsRoot()` looks for `<resources>/plugins` in a packaged app, then `examples/plugins` in a dev checkout. A packaged build only has the first if the build config copies the folder there, and `package.json`'s `extraResources` has no `plugins` entry today, so nothing is bundled yet and this plugin ships as a manual install.
+2. **The folder name equals the manifest id** (`maestro-kanban`), and is a safe folder name. A signed bundle whose directory disagrees with its declared id is skipped, so it can never be seeded into a different plugin's directory.
+3. **`plugin.json` parses and validates.** An absent or malformed manifest reads as "not a plugin dir" and is passed over.
+4. **`verifyPluginSignature()` returns exactly `trusted`.** That means `signature.json` is present, its file set matches the directory byte for byte with nothing added, removed or altered, the ed25519 signature over that set verifies, and the signer's public key is in `resolveTrustedKeys()`: the baked publisher anchor `MAESTRO_PUBLISHER_KEYS` in `src/shared/plugins/publisher-keys.ts`, plus any `pluginTrustedKeys` the user added. `unsigned`, `invalid` and `untrusted` are all skipped. That trust gate is the whole point: it is what stops a bundled plugin from arriving auto-installed but unrunnable.
+5. **There is something to install.** The seeder writes when the plugin is absent, when the bundled version is semver-newer than the installed one, or when the installed copy is not itself trusted, so a manual unsigned install of the same id is replaced rather than left in place. Symlinks are never copied, and the swap is staged with a backup so a failed copy cannot destroy a working install.
+
+The private half of the publisher key is a release secret (`MAESTRO_PLUGIN_SIGNING_KEY`) held by no individual, so only a maintainer-tagged release run can produce a signature that anchor trusts. Nothing in this plugin, and nothing in the commands above, changes the anchor.
+
+Seeding is not the last gate either. The `plugins` Encore flag still has to be on for discovery to see the seeded copy, and the enable toggle plus the consent window still apply exactly as they do for a manual install.
 
 ## What this plugin does not, and cannot, do
 
