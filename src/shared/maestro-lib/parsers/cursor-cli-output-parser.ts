@@ -325,6 +325,15 @@ export class CursorCliOutputParser implements AgentOutputParser {
 		return event.type === 'result';
 	}
 
+	/**
+	 * A failed `result` envelope is parsed as `type: 'error'` so the CLI batch path
+	 * never records its text as the answer (see isResultMessage). It still ends the
+	 * turn, so the desktop flushes the text streamed before it.
+	 */
+	isFailedResultMessage(event: ParsedEvent): boolean {
+		return event.type === 'error' && (event.raw as CursorRawMessage | undefined)?.type === 'result';
+	}
+
 	extractSessionId(event: ParsedEvent): string | null {
 		if (typeof event.sessionId === 'string' && event.sessionId) {
 			return event.sessionId;

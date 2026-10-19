@@ -550,7 +550,10 @@ export class StdoutHandler {
 					managedProcess,
 					agentError,
 					{
-						flushStreamedText: !!errorLineEvent && outputParser.isResultMessage(errorLineEvent),
+						flushStreamedText:
+							!!errorLineEvent &&
+							(outputParser.isResultMessage(errorLineEvent) ||
+								outputParser.isFailedResultMessage?.(errorLineEvent) === true),
 					}
 				);
 				if (errorLineEvent) {

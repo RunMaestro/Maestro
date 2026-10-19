@@ -3385,6 +3385,87 @@ describe('StdoutHandler - single JSON parse per line', () => {
 			expect(bufferManager.emitDataBuffered).toHaveBeenCalledOnce();
 			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(sessionId, 'READY', proc);
 		});
+
+		// The mid-stream twin of ExitHandler's "emits an unterminated Cursor error
+		// result ... after the partial text". Cursor parses a failed result as an
+		// `error` event, which isResultMessage rejects, so without
+		// isFailedResultMessage the streamed text was dropped here and kept there.
+		it('flushes the streamed text ahead of a failed result that arrives mid-stream', () => {
+			const parser = new CursorCliOutputParser();
+			const { handler, emitter, sessionId, proc, bufferManager } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'cursor-cli',
+				outputParser: parser,
+			});
+			const order: string[] = [];
+			bufferManager.emitDataBuffered.mockImplementation((_sid: string, data: string) =>
+				order.push(`data:${data}`)
+			);
+			emitter.on('agent-error', () => order.push('agent-error'));
+
+			sendJsonLine(handler, sessionId, {
+				type: 'assistant',
+				message: { role: 'assistant', content: [{ type: 'text', text: 'I found the bug ' }] },
+				session_id: 's1',
+				timestamp_ms: 1,
+			});
+			sendJsonLine(handler, sessionId, {
+				type: 'assistant',
+				message: { role: 'assistant', content: [{ type: 'text', text: 'in auth.ts' }] },
+				session_id: 's1',
+				timestamp_ms: 2,
+			});
+			sendJsonLine(handler, sessionId, {
+				type: 'result',
+				is_error: true,
+				result: 'Rate limit',
+				session_id: 's1',
+			});
+
+			expect(order).toEqual(['data:I found the bug in auth.ts', 'agent-error']);
+			expect(proc.resultEmitted).toBe(true);
+			expect(proc.errorEmitted).toBe(true);
+		});
+
+		it('keeps assistant text that arrives after Stop out of streamedText', () => {
+			const { handler, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'cursor-cli',
+				outputParser: new CursorCliOutputParser(),
+				interrupted: true,
+				streamedText: 'before stop',
+			});
+
+			sendJsonLine(handler, sessionId, {
+				type: 'assistant',
+				message: { role: 'assistant', content: [{ type: 'text', text: ' after stop' }] },
+				session_id: 's1',
+				timestamp_ms: 1,
+			});
+
+			expect(proc.streamedText).toBe('before stop');
+		});
+
+		it('emits no result for a result that arrives after Stop', () => {
+			const { handler, sessionId, proc, bufferManager } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'cursor-cli',
+				outputParser: new CursorCliOutputParser(),
+				interrupted: true,
+				streamedText: 'before stop',
+			});
+
+			sendJsonLine(handler, sessionId, {
+				type: 'result',
+				subtype: 'success',
+				is_error: false,
+				result: 'finished anyway',
+				session_id: 's1',
+			});
+
+			expect(bufferManager.emitDataBuffered).not.toHaveBeenCalled();
+			expect(proc.resultEmitted).toBe(false);
+		});
 	});
 
 	describe('SSH auth_expired login guidance by agentId', () => {

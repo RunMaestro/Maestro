@@ -244,6 +244,29 @@ describe('CursorCliOutputParser', () => {
 		expect(event && parser.isResultMessage(event)).toBe(false);
 	});
 
+	it('marks a failed result as a failed result message, and nothing else', () => {
+		const parser = new CursorCliOutputParser();
+		const failed = parser.parseJsonObject({
+			type: 'result',
+			is_error: true,
+			result: 'Rate limit',
+			session_id: 'sess-err',
+		});
+		const succeeded = parser.parseJsonObject({
+			type: 'result',
+			subtype: 'success',
+			is_error: false,
+			result: 'OK',
+			session_id: 'sess-ok',
+		});
+
+		expect(failed && parser.isFailedResultMessage(failed)).toBe(true);
+		expect(succeeded && parser.isFailedResultMessage(succeeded)).toBe(false);
+		expect(
+			parser.isFailedResultMessage({ type: 'error', text: 'boom', raw: { type: 'error' } })
+		).toBe(false);
+	});
+
 	it('detects agent crash from non-zero exit', () => {
 		const parser = new CursorCliOutputParser();
 
