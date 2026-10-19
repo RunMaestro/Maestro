@@ -47,6 +47,10 @@ export const USAGE = `Usage: node scripts/install-dev-plugin.mjs <id> --dest <di
  * platform rule changes.
  */
 export function devUserDataDir(env = process.env, platform = os.platform(), home = os.homedir()) {
+	// `MAESTRO_USER_DATA` wins, exactly as it does in `plugin-store-main.ts`: that
+	// override is how a dev run is pointed at a throwaway data dir, and the
+	// installer has to land in the directory the app will actually read.
+	if (env.MAESTRO_USER_DATA) return resolve(env.MAESTRO_USER_DATA);
 	const root =
 		platform === 'darwin'
 			? join(home, 'Library', 'Application Support')
@@ -56,12 +60,17 @@ export function devUserDataDir(env = process.env, platform = os.platform(), home
 	return join(root, 'maestro-dev');
 }
 
-/** Guards the id against escaping the destination directory it is joined into. */
+/** Guards the id against escaping the destination directory it is joined into,
+ * or naming the directory itself. `".."` is caught by the substring check, but
+ * `"."` is not: it needs its own rejection, because `join(root, '.')` is `root`,
+ * so a `.` id made the script delete the whole destination plugins directory and
+ * then copy every example plugin into it. */
 function isSafePluginId(id) {
 	return (
 		typeof id === 'string' &&
 		id.length > 0 &&
 		id.trim() === id &&
+		id !== '.' &&
 		!id.includes('/') &&
 		!id.includes('\\') &&
 		!id.includes('..')
@@ -120,6 +129,13 @@ export function installPlugin({ id, destRoot, srcRoot = join(rootDir, 'examples'
 		throw new Error(`${src} is not a directory`);
 	}
 	const dest = join(destRoot, id);
+	// Never delete the source. `rmSync` below is unconditional, so a destRoot that
+	// resolves to the source's own parent (`--dest examples/plugins`) would wipe
+	// the plugin out of the checkout and then copy nothing back. Compared on the
+	// real paths so a symlinked or `..`-laden destRoot cannot sneak past.
+	if (realpathSync(src) === (existsSync(dest) ? realpathSync(dest) : resolve(dest))) {
+		throw new Error(`destination ${dest} is the plugin source; refusing to delete it`);
+	}
 	rmSync(dest, { recursive: true, force: true });
 	mkdirSync(destRoot, { recursive: true });
 	cpSync(src, dest, {

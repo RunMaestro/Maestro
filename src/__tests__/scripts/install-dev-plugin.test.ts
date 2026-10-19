@@ -69,6 +69,15 @@ describe('install-dev-plugin', () => {
 			expect(parseArgs(['a/b', '--dev-data']).error).toMatch(/not a safe plugin id/);
 		});
 
+		it('errors on "." and "..", which NAME the destination rather than escaping it', () => {
+			// `join(destRoot, '.')` is `destRoot` itself, so a "." id made the script
+			// delete the whole plugins directory and then copy every example plugin
+			// into it. ".." is caught by the substring rule; "." needed its own.
+			expect(parseArgs(['.', '--dest', '/tmp/x']).error).toMatch(/not a safe plugin id/);
+			expect(parseArgs(['..', '--dest', '/tmp/x']).error).toMatch(/not a safe plugin id/);
+			expect(parseArgs(['.', '--dev-data']).error).toMatch(/not a safe plugin id/);
+		});
+
 		it('errors when both --dest and --dev-data are given', () => {
 			expect(parseArgs([PLUGIN_ID, '--dest', '/tmp/x', '--dev-data']).error).toMatch(
 				/cannot both be given/
@@ -105,6 +114,30 @@ describe('install-dev-plugin', () => {
 		it('honors XDG_CONFIG_HOME on linux', () => {
 			expect(devUserDataDir({ XDG_CONFIG_HOME: '/custom/config' }, 'linux', '/home/test')).toBe(
 				path.join('/custom/config', 'maestro-dev')
+			);
+		});
+
+		it('honors MAESTRO_USER_DATA over the platform default, on every platform', () => {
+			// `plugin-store-main.ts` resolves this override first, so the installer
+			// has to agree: pointed at a throwaway data dir, a dev run reads plugins
+			// from THERE, and installing into the platform default would be invisible.
+			// No `maestro-dev` suffix: the override names the data dir itself.
+			for (const platform of ['darwin', 'linux', 'win32'] as const) {
+				expect(
+					devUserDataDir({ MAESTRO_USER_DATA: '/explicit/data' }, platform, '/home/test')
+				).toBe(path.resolve('/explicit/data'));
+			}
+			// It beats XDG_CONFIG_HOME too, rather than the two racing.
+			expect(
+				devUserDataDir(
+					{ MAESTRO_USER_DATA: '/explicit/data', XDG_CONFIG_HOME: '/custom/config' },
+					'linux',
+					'/home/test'
+				)
+			).toBe(path.resolve('/explicit/data'));
+			// An empty value is not a value: fall through to the default.
+			expect(devUserDataDir({ MAESTRO_USER_DATA: '' }, 'linux', '/home/test')).toBe(
+				path.join('/home/test', '.config', 'maestro-dev')
 			);
 		});
 	});
@@ -157,6 +190,50 @@ describe('install-dev-plugin', () => {
 			expect(() =>
 				installPlugin({ id: 'no-such-plugin', destRoot: path.join(sandbox, 'dest') })
 			).toThrow(/no plugin source at/);
+		});
+
+		it('refuses a destination that IS the source, instead of deleting it', () => {
+			// `rmSync(dest)` runs before the copy, so a destRoot pointing at the
+			// source's own parent would wipe the plugin out of the checkout and copy
+			// nothing back. Proven on a throwaway source tree, never the real one.
+			const srcRoot = path.join(sandbox, 'src');
+			const fakeSrc = path.join(srcRoot, 'fake-plugin');
+			mkdirSync(fakeSrc, { recursive: true });
+			writeFileSync(path.join(fakeSrc, 'plugin.json'), '{"id":"fake-plugin"}');
+
+			expect(() => installPlugin({ id: 'fake-plugin', destRoot: srcRoot, srcRoot })).toThrow(
+				/is the plugin source; refusing to delete it/
+			);
+			// The source survived intact.
+			expect(readFileSync(path.join(fakeSrc, 'plugin.json'), 'utf-8')).toBe('{"id":"fake-plugin"}');
+
+			// The same holds when the destination reaches the source by a `..` hop or
+			// a symlink, which a plain string compare would miss.
+			const viaDots = path.join(srcRoot, 'nested', '..');
+			expect(() => installPlugin({ id: 'fake-plugin', destRoot: viaDots, srcRoot })).toThrow(
+				/is the plugin source; refusing to delete it/
+			);
+			const linkedRoot = path.join(sandbox, 'linked-src');
+			symlinkSync(srcRoot, linkedRoot);
+			expect(() => installPlugin({ id: 'fake-plugin', destRoot: linkedRoot, srcRoot })).toThrow(
+				/is the plugin source; refusing to delete it/
+			);
+			expect(existsSync(path.join(fakeSrc, 'plugin.json'))).toBe(true);
+		});
+
+		it('still installs normally when the destination merely sits beside the source', () => {
+			// The guard must not over-reach: a sibling directory is a valid target.
+			const srcRoot = path.join(sandbox, 'src');
+			const fakeSrc = path.join(srcRoot, 'fake-plugin');
+			mkdirSync(fakeSrc, { recursive: true });
+			writeFileSync(path.join(fakeSrc, 'plugin.json'), '{}');
+			const dest = installPlugin({
+				id: 'fake-plugin',
+				destRoot: path.join(sandbox, 'elsewhere'),
+				srcRoot,
+			});
+			expect(existsSync(path.join(dest, 'plugin.json'))).toBe(true);
+			expect(existsSync(path.join(fakeSrc, 'plugin.json'))).toBe(true);
 		});
 	});
 
