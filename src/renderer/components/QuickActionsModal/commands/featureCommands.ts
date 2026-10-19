@@ -3,7 +3,14 @@ import type { ActiveTabInfo, QuickAction } from '../types';
 import { editClipboardImage } from '../../ImageAnnotator/editClipboardImage';
 import { requestEditLastQueuedMessage } from '../../../services/editQueuedMessage';
 import { requestSteerSend } from '../../../services/chatSteering';
+import {
+	keyboardModeToggleShadow,
+	nextKeyboardMode,
+	switchKeyboardMode,
+} from '../../../services/keyboardMode';
 import { useGroupChatStore } from '../../../stores/groupChatStore';
+import { FIXED_SHORTCUTS } from '../../../constants/shortcuts';
+import { KEYBOARD_MODE_LABELS, type KeyboardMode } from '../../../../shared/shortcut-types';
 
 interface BuildFeatureCommandsArgs {
 	activeSession: Session | undefined;
@@ -54,6 +61,8 @@ interface BuildFeatureCommandsArgs {
 	setIdleNotificationEnabled: (enabled: boolean) => void;
 	showStarredSessionsSection: boolean;
 	setShowStarredSessionsSection: (enabled: boolean) => void;
+	/** Which keyboard binding set is live, so the entry can name the other one. */
+	keyboardMode: KeyboardMode;
 	shortcuts: {
 		usageDashboard?: QuickAction['shortcut'];
 		agentSessions?: QuickAction['shortcut'];
@@ -118,6 +127,7 @@ export function buildFeatureCommands({
 	setIdleNotificationEnabled,
 	showStarredSessionsSection,
 	setShowStarredSessionsSection,
+	keyboardMode,
 	shortcuts,
 }: BuildFeatureCommandsArgs): QuickAction[] {
 	const commands: QuickAction[] = [
@@ -169,6 +179,19 @@ export function buildFeatureCommands({
 					setSuccessFlashNotification,
 					newState ? 'Idle Notifications: ON' : 'Idle Notifications: OFF'
 				);
+				setQuickActionOpen(false);
+			},
+		},
+		{
+			id: 'toggleKeyboardMode',
+			label: `Switch to ${KEYBOARD_MODE_LABELS[nextKeyboardMode(keyboardMode)]} Keyboard Mode`,
+			subtext: `Keyboard mode: ${KEYBOARD_MODE_LABELS[keyboardMode]}. Only one mode's bindings are live, and each keeps its own customizations.`,
+			// The chord is hidden when another action's own binding has taken it:
+			// the handler stands down in that case, so a badge here would promise a
+			// key that does nothing. Settings > Shortcuts names the action instead.
+			shortcut: keyboardModeToggleShadow() ? undefined : FIXED_SHORTCUTS.toggleKeyboardMode,
+			action: () => {
+				switchKeyboardMode();
 				setQuickActionOpen(false);
 			},
 		},

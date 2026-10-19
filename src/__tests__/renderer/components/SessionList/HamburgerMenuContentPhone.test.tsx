@@ -62,6 +62,7 @@ describe('HamburgerMenuContent on a phone', () => {
 		renderMenu();
 		expect(screen.getByText('Keyboard Shortcuts')).toBeInTheDocument();
 		expect(screen.getByText('Introductory Tour')).toBeInTheDocument();
+		expect(screen.getByText(/Keyboard Mode:/)).toBeInTheDocument();
 	});
 
 	it('drops Keyboard Shortcuts and the tour on a phone, keeping everything else', () => {
@@ -69,6 +70,8 @@ describe('HamburgerMenuContent on a phone', () => {
 		renderMenu();
 		expect(screen.queryByText('Keyboard Shortcuts')).not.toBeInTheDocument();
 		expect(screen.queryByText('Introductory Tour')).not.toBeInTheDocument();
+		// Same reason as the shortcut list: there is no keyboard to put in a mode.
+		expect(screen.queryByText(/Keyboard Mode:/)).not.toBeInTheDocument();
 		expect(screen.getByText('New Agent')).toBeInTheDocument();
 		expect(screen.getByText('Command Palette')).toBeInTheDocument();
 		expect(screen.getByText('Settings')).toBeInTheDocument();

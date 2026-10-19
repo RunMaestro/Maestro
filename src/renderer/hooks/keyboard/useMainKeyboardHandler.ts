@@ -18,6 +18,7 @@ import { requestEditLastQueuedMessage } from '../../services/editQueuedMessage';
 import { requestOpenStagedImagesOrganizer } from '../../services/stagedImagesOrganizer';
 import { toggleAllUnreadFilters } from '../../services/unreadFilters';
 import { toggleInAppToasts } from '../../services/inAppToasts';
+import { keyboardModeToggleShadow, switchKeyboardMode } from '../../services/keyboardMode';
 import { requestSidebarReveal } from '../../utils/sidebarReveal';
 import { getGitShortcutActions } from '../../services/gitShortcutActions';
 import { useNotificationStore } from '../../stores/notificationStore';
@@ -35,6 +36,8 @@ import { OUTPUT_SEARCH_INPUT_SELECTOR } from '../ui/useOutputSearchLayer';
 import { tileNewTabInSession } from '../../services/tileNewTabAction';
 import type { TileableTabKind } from '../tabs/tileNewTab';
 import { isMacOSKeyboard } from '../../utils/platformUtils';
+import { eventMatchesShortcutKeys } from '../../utils/shortcutMatch';
+import { FIXED_SHORTCUTS } from '../../constants/shortcuts';
 import { editClipboardImage } from '../../components/ImageAnnotator/editClipboardImage';
 import { FORCED_PARALLEL_SEND_EVENT } from '../input/useInputKeyDown';
 import { requestSteerSend } from '../../services/chatSteering';
@@ -744,6 +747,23 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				ctx.setShortcutsHelpOpen(true);
 				trackShortcut('help');
+			} else if (
+				eventMatchesShortcutKeys(e, FIXED_SHORTCUTS.toggleKeyboardMode.keys) &&
+				!keyboardModeToggleShadow()
+			) {
+				// The keyboard route back out of the mode you switched into. Matched by
+				// its FIXED chord rather than through ctx.isShortcut, because it is not
+				// in the configurable map at all: it has to be the same chord in every
+				// mode, or a mode could rebind its own exit key.
+				//
+				// The shadow check is what makes the user's own binding win. When the
+				// live set gives Opt+Cmd+V to another action, this branch stands down
+				// and the event falls through to that action's own branch; Settings >
+				// Shortcuts names the action that took it, so the chord is explained
+				// rather than silently dead.
+				e.preventDefault();
+				switchKeyboardMode();
+				trackShortcut('toggleKeyboardMode');
 			} else if (ctx.isShortcut(e, 'settings')) {
 				e.preventDefault();
 				ctx.setSettingsModalOpen(true);

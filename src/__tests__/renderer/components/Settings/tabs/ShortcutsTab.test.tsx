@@ -49,6 +49,12 @@ const mockTabShortcuts: Record<string, Shortcut> = {
 let mockMode: KeyboardMode = 'default';
 let mockInheritedIds: string[] = [];
 let mockDisplaced: string[] = [];
+/**
+ * Extra rows a single test needs on top of the four fixtures, merged into the
+ * general map the hook hands back. Used for the action that has taken the
+ * mode-toggle chord, which only means anything when some row holds it.
+ */
+let mockExtraShortcuts: Record<string, Shortcut> = {};
 
 vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 	useSettings: () => ({
@@ -60,7 +66,7 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 vi.mock('../../../../../renderer/hooks/settings/useActiveShortcuts', () => ({
 	useActiveShortcuts: () => ({
 		keyboardMode: mockMode,
-		shortcuts: mockShortcuts,
+		shortcuts: { ...mockShortcuts, ...mockExtraShortcuts },
 		setShortcuts: mockSetShortcuts,
 		tabShortcuts: mockTabShortcuts,
 		setTabShortcuts: mockSetTabShortcuts,
@@ -83,6 +89,7 @@ function resetModeFixtures() {
 	mockMode = 'default';
 	mockInheritedIds = [];
 	mockDisplaced = [];
+	mockExtraShortcuts = {};
 }
 
 describe('ShortcutsTab', () => {
@@ -768,6 +775,31 @@ describe('ShortcutsTab keyboard mode', () => {
 		await renderTab();
 
 		expect(screen.queryByTestId('shortcut-inherited-close-session')).not.toBeInTheDocument();
+	});
+
+	it('names the action that has taken the mode-toggle chord', async () => {
+		// Opt+Cmd+V switches modes from the keyboard, but the handler stands down
+		// when the chord is already bound, so this screen is the only place that
+		// can explain why the documented key does nothing - and the only place
+		// the user can act on it.
+		mockExtraShortcuts = {
+			'old-concerto': {
+				id: 'old-concerto',
+				label: 'Toggle Concerto',
+				keys: ['Alt', 'Meta', 'v'],
+			},
+		};
+		await renderTab();
+
+		expect(screen.getByTestId('shortcuts-mode-toggle-shadowed')).toHaveTextContent(
+			'Toggle Concerto'
+		);
+	});
+
+	it('says nothing about the mode-toggle chord while it is free', async () => {
+		await renderTab();
+
+		expect(screen.queryByTestId('shortcuts-mode-toggle-shadowed')).not.toBeInTheDocument();
 	});
 
 	it('refuses a chord that fires an existing binding through the Meta/Ctrl collapse', async () => {

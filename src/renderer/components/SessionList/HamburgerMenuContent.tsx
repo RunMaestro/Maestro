@@ -21,6 +21,8 @@ import {
 	LogOut,
 	MessageCircle,
 	Gauge,
+	ToggleLeft,
+	ToggleRight,
 } from 'lucide-react';
 import type { Theme } from '../../types';
 import { ShortcutHint } from '../ui/ShortcutHint';
@@ -34,6 +36,13 @@ import { isWebDesktop } from '../../utils/runtimeContext';
 import { canOpenComputerHistory } from '../../utils/computerHistoryAvailability';
 import { currentWebLoginUser, signOutWebLogin } from '../../services/webLoginSession';
 import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
+import {
+	KEYBOARD_MODE_TOGGLE_KEYS,
+	keyboardModeToggleShadow,
+	nextKeyboardMode,
+	switchKeyboardMode,
+} from '../../services/keyboardMode';
+import { KEYBOARD_MODE_LABELS } from '../../../shared/shortcut-types';
 
 /** Stable fallback so the selector never hands React a fresh array. */
 const NO_QUICK_CHAT_HOTKEY: string[] = [];
@@ -56,6 +65,7 @@ export function HamburgerMenuContent({
 	const shortcuts = useSettingsStore((s) => s.shortcuts);
 	const encoreFeatures = useSettingsStore((s) => s.encoreFeatures);
 	const notificationCenterEnabled = useSettingsStore((s) => s.notificationCenterEnabled);
+	const keyboardMode = useSettingsStore((s) => s.keyboardMode);
 	const quickChatHotkey =
 		useSettingsStore((s) => s.quickChatSettings?.hotkey) ?? NO_QUICK_CHAT_HOTKEY;
 	// A phone has no keyboard and no room for a guided tour's anchored
@@ -204,6 +214,38 @@ export function HamburgerMenuContent({
 						</div>
 					</div>
 					<ShortcutHint theme={theme} keys={shortcuts.help?.keys ?? []} />
+				</button>
+			)}
+			{/* The mode every chord in the app belongs to, switchable without
+			    opening Settings. Row absent on a phone for the same reason the
+			    shortcut list above it is: there is no keyboard to put in a mode.
+			    The chord badge is dropped when another action's binding has taken
+			    Opt+Cmd+V, since the toggle handler stands down in that case. */}
+			{!phone && (
+				<button
+					onClick={() => {
+						switchKeyboardMode();
+						setMenuOpen(false);
+					}}
+					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
+				>
+					{keyboardMode === 'default' ? (
+						<ToggleLeft className="w-5 h-5" style={{ color: theme.colors.accent }} />
+					) : (
+						<ToggleRight className="w-5 h-5" style={{ color: theme.colors.accent }} />
+					)}
+					<div className="flex-1">
+						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+							Keyboard Mode: {KEYBOARD_MODE_LABELS[keyboardMode]}
+						</div>
+						<div className="text-xs" style={{ color: theme.colors.textDim }}>
+							Switch to {KEYBOARD_MODE_LABELS[nextKeyboardMode(keyboardMode)]} mode
+						</div>
+					</div>
+					<ShortcutHint
+						theme={theme}
+						keys={keyboardModeToggleShadow() ? [] : KEYBOARD_MODE_TOGGLE_KEYS}
+					/>
 				</button>
 			)}
 			<button

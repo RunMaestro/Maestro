@@ -517,6 +517,27 @@ export const FIXED_SHORTCUTS: Record<string, Shortcut> = {
 		label: 'Decrease Font Size',
 		keys: ['Meta', '-'],
 	},
+	// Switching keyboard modes. FIXED rather than configurable, and deliberately
+	// so: this is the way back OUT of the mode you just switched into, so it has
+	// to be the SAME chord in every mode. A rebindable toggle could be rebound
+	// by the mode it switches to - or displaced by one of that mode's own chords
+	// - and the user would be stuck in a binding set whose exit key no longer
+	// exists. For the same reason it is excluded from `DEFAULT_SHORTCUTS`,
+	// `TAB_SHORTCUTS`, and both Vim override tables.
+	//
+	// Opt+Cmd+V (Ctrl+Alt+V on Windows and Linux) is free in the shipped set and
+	// is not reserved: `RESERVED_SHORTCUT_COMBOS` owns plain Cmd+V (the Edit
+	// menu's paste) and Opt+Shift+Cmd+V (paste and match style), neither of
+	// which collides with it. It IS an OLD default of `toggleConcerto`
+	// (`SHORTCUT_DEFAULT_REMAPS`), so an install that never migrated, or a user
+	// who bound it themselves, may already have it - their binding wins, the
+	// toggle handler stands down, and Settings -> Shortcuts names the action
+	// that took it.
+	toggleKeyboardMode: {
+		id: 'toggleKeyboardMode',
+		label: 'Switch Keyboard Mode (Default / Vim)',
+		keys: ['Alt', 'Meta', 'v'],
+	},
 };
 
 // Tab navigation shortcuts (AI mode only)

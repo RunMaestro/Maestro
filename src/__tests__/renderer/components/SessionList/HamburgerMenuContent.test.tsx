@@ -60,3 +60,43 @@ describe('HamburgerMenuContent - Throughput Gauge', () => {
 		expect(useThroughputGaugeStore.getState().visible).toBe(false);
 	});
 });
+
+/**
+ * The keyboard-mode row. The mouse route that does not require opening
+ * Settings, and the one place in the menu that names which binding set every
+ * other chord badge on this menu belongs to.
+ */
+describe('HamburgerMenuContent - keyboard mode', () => {
+	afterEach(() => {
+		useSettingsStore.setState({ keyboardMode: 'default' });
+	});
+
+	it('names the live mode and the one a click would switch to', () => {
+		useSettingsStore.setState({ keyboardMode: 'default' });
+		renderMenu();
+
+		const row = screen.getByRole('button', { name: /Keyboard Mode/ });
+		expect(row).toHaveTextContent('Keyboard Mode: Default');
+		expect(row).toHaveTextContent('Switch to Vim mode');
+	});
+
+	it('switches the mode and closes the menu', () => {
+		useSettingsStore.setState({ keyboardMode: 'default' });
+		const closeMenu = vi.fn();
+		renderMenu(closeMenu);
+
+		fireEvent.click(screen.getByRole('button', { name: /Keyboard Mode/ }));
+
+		expect(useSettingsStore.getState().keyboardMode).toBe('vim');
+		expect(closeMenu).toHaveBeenCalledWith(false);
+	});
+
+	it('reads the mode it is actually in', () => {
+		useSettingsStore.setState({ keyboardMode: 'vim' });
+		renderMenu();
+
+		expect(screen.getByRole('button', { name: /Keyboard Mode/ })).toHaveTextContent(
+			'Keyboard Mode: Vim'
+		);
+	});
+});

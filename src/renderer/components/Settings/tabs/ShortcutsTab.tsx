@@ -23,6 +23,7 @@ import {
 	shortcutKeysEqual,
 	findReservedShortcutCombo,
 } from '../../../../shared/shortcutKeys';
+import { findKeyboardModeToggleShadow } from '../../../services/keyboardMode';
 import { ShortcutFilterButton } from '../../ui/ShortcutFilterButton';
 import { GhostIconButton } from '../../ui/GhostIconButton';
 import { MiniBadge } from '../../ui/MiniBadge';
@@ -76,6 +77,14 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 
 	const modeLabel = KEYBOARD_MODE_LABELS[keyboardMode];
 	const otherModeLabel = KEYBOARD_MODE_LABELS[keyboardMode === 'default' ? 'vim' : 'default'];
+
+	// Opt+Cmd+V switches modes from the keyboard, but a user who has that chord
+	// bound to an action of their own keeps it - the handler stands down rather
+	// than stealing it. This screen is the only place that can say so, and it is
+	// also the place the user can act on it, so name the action that took the
+	// chord instead of leaving a documented key that quietly does nothing.
+	// Asked of the maps this tab is SHOWING, which is the mode being edited.
+	const toggleShadowedBy = findKeyboardModeToggleShadow(shortcuts, tabShortcuts);
 
 	// A pending reset belongs to the mode it was armed in. Switching modes with
 	// the confirmation half-done would otherwise fire the second click at the
@@ -379,6 +388,17 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 						? `Click again to restore the shipped ${modeLabel} mode bindings. Your ${otherModeLabel} mode customizations are kept.`
 						: `Only one mode is active at a time, and each keeps its own customizations. ${KEYBOARD_MODE_LABELS.vim} mode keeps every default chord it does not replace.`}
 				</p>
+				{toggleShadowedBy && (
+					<p
+						className="text-xs mt-1"
+						style={{ color: theme.colors.warning }}
+						data-testid="shortcuts-mode-toggle-shadowed"
+					>
+						{formatShortcutKeys(FIXED_SHORTCUTS.toggleKeyboardMode.keys)} normally switches modes
+						from the keyboard, but you have it bound to &quot;{toggleShadowedBy.label}&quot;, which
+						wins. Use this toggle, the command palette, or the menu.
+					</p>
+				)}
 			</div>
 			<div className="flex items-stretch gap-2 mb-3">
 				<input

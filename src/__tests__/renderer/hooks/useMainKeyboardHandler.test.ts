@@ -2,6 +2,7 @@ import { renderHook, act } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { useMainKeyboardHandler } from '../../../renderer/hooks';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS } from '../../../renderer/constants/shortcuts';
 import { FONT_ZOOM_MAX, FONT_ZOOM_MIN } from '../../../shared/typography';
 import { useModalStore } from '../../../renderer/stores/modalStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
@@ -5114,5 +5115,106 @@ describe('useMainKeyboardHandler - steerSend', () => {
 
 	it('does nothing while a group chat is on screen', () => {
 		expect(press({ activeGroupChatId: 'group-chat-1' })).toBe(0);
+	});
+});
+
+/**
+ * Opt+Cmd+V switches the live keyboard mode, and it is the SAME chord in both
+ * modes on purpose: it is the way back out of the mode you just switched into,
+ * so a mode that could rebind it would be a trap. It is not in the
+ * configurable map at all, so the handler matches its FIXED chord rather than
+ * going through `ctx.isShortcut`.
+ */
+describe('useMainKeyboardHandler - toggleKeyboardMode', () => {
+	const pressToggle = () =>
+		act(() => {
+			window.dispatchEvent(
+				new KeyboardEvent('keydown', {
+					// macOS rewrites Opt+Cmd+V's `key`, which is why the matcher falls
+					// back to `code` whenever Alt is held.
+					key: '√',
+					code: 'KeyV',
+					altKey: true,
+					metaKey: true,
+					bubbles: true,
+				})
+			);
+		});
+
+	beforeEach(() => {
+		useSettingsStore.setState({
+			keyboardMode: 'default',
+			shortcuts: DEFAULT_SHORTCUTS,
+			tabShortcuts: TAB_SHORTCUTS,
+			vimShortcuts: {},
+			vimTabShortcuts: {},
+		});
+	});
+
+	afterEach(() => {
+		useSettingsStore.setState({ keyboardMode: 'default' });
+	});
+
+	it('switches the mode and counts the action id', () => {
+		const recordShortcutUsage = vi.fn().mockReturnValue({ newLevel: null });
+		const { result } = renderHook(() => useMainKeyboardHandler());
+		result.current.keyboardHandlerRef.current = createMockContext({ recordShortcutUsage });
+
+		pressToggle();
+
+		expect(useSettingsStore.getState().keyboardMode).toBe('vim');
+		expect(recordShortcutUsage).toHaveBeenCalledWith('toggleKeyboardMode');
+	});
+
+	it('switches back on the same chord, so a mode is never a trap', () => {
+		const { result } = renderHook(() => useMainKeyboardHandler());
+		result.current.keyboardHandlerRef.current = createMockContext({
+			recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+		});
+
+		pressToggle();
+		expect(useSettingsStore.getState().keyboardMode).toBe('vim');
+		pressToggle();
+		expect(useSettingsStore.getState().keyboardMode).toBe('default');
+	});
+
+	it('stands down when the user already has that chord bound to an action', () => {
+		// The user's binding wins. Stealing the chord would kill a key they have
+		// used for months with no indication of where it went; Settings >
+		// Shortcuts names the action that holds it instead.
+		useSettingsStore.setState({
+			shortcuts: {
+				...DEFAULT_SHORTCUTS,
+				newInstance: { id: 'newInstance', label: 'New Agent', keys: ['Alt', 'Meta', 'v'] },
+			},
+		});
+		const recordShortcutUsage = vi.fn().mockReturnValue({ newLevel: null });
+		const { result } = renderHook(() => useMainKeyboardHandler());
+		result.current.keyboardHandlerRef.current = createMockContext({ recordShortcutUsage });
+
+		pressToggle();
+
+		expect(useSettingsStore.getState().keyboardMode).toBe('default');
+		expect(recordShortcutUsage).not.toHaveBeenCalledWith('toggleKeyboardMode');
+	});
+
+	it('stands down for a chord the live mode binds, not just the default one', () => {
+		// Vim mode's effective set is what is being matched while Vim mode is
+		// live, so a Vim override on the chord shadows the toggle just as a
+		// default-mode binding does.
+		useSettingsStore.setState({
+			keyboardMode: 'vim',
+			vimShortcuts: {
+				newInstance: { id: 'newInstance', label: 'New Agent', keys: ['Alt', 'Meta', 'v'] },
+			},
+		});
+		const { result } = renderHook(() => useMainKeyboardHandler());
+		result.current.keyboardHandlerRef.current = createMockContext({
+			recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+		});
+
+		pressToggle();
+
+		expect(useSettingsStore.getState().keyboardMode).toBe('vim');
 	});
 });

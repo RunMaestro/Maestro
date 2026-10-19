@@ -250,6 +250,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const setBionifyReadingMode = useSettingsStore((s) => s.setBionifyReadingMode);
 	const showStarredSessionsSection = useSettingsStore((s) => s.showStarredSessionsSection);
 	const setShowStarredSessionsSection = useSettingsStore((s) => s.setShowStarredSessionsSection);
+	const keyboardMode = useSettingsStore((s) => s.keyboardMode);
 	const enterToSendAI = useSettingsStore((s) => s.enterToSendAI);
 	// Agents the Left Bar does not render must not be jump targets either. Pianola
 	// persists in the session store once its Encore flag is off, and the palette's
@@ -834,6 +835,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			setIdleNotificationEnabled,
 			showStarredSessionsSection,
 			setShowStarredSessionsSection,
+			keyboardMode,
 			shortcuts: {
 				usageDashboard: shortcuts.usageDashboard,
 				agentSessions: shortcuts.agentSessions,
