@@ -21,6 +21,10 @@ const PARTIAL_ASSISTANT_LINE =
 const FINAL_ASSISTANT_FLUSH_LINE =
 	'{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"READY"}]},"session_id":"160dac18-6ea0-43dd-8c25-5e82a2dc787d"}';
 
+// Printed by a logged-out `agent --list-models`; `-p` turns pass the same auth gate.
+const AUTHENTICATION_REQUIRED_MESSAGE =
+	"Authentication required. Run 'agent login', pass --api-key/--auth-token, or set CURSOR_API_KEY/CURSOR_AUTH_TOKEN.";
+
 describe('CursorCliOutputParser', () => {
 	it('parses init events with session_id', () => {
 		const parser = new CursorCliOutputParser();
@@ -199,6 +203,22 @@ describe('CursorCliOutputParser', () => {
 				agentId: 'cursor-cli',
 			})
 		);
+	});
+
+	it('detects the "Authentication required" message as an auth error on every path', () => {
+		const parser = new CursorCliOutputParser();
+		const expected = expect.objectContaining({ type: 'auth_expired', agentId: 'cursor-cli' });
+
+		expect(parser.detectErrorFromExit(1, AUTHENTICATION_REQUIRED_MESSAGE, '')).toEqual(expected);
+		expect(parser.detectErrorFromLine(AUTHENTICATION_REQUIRED_MESSAGE)).toEqual(expected);
+		expect(
+			parser.detectErrorFromParsed({
+				type: 'result',
+				is_error: true,
+				result: AUTHENTICATION_REQUIRED_MESSAGE,
+				session_id: 's1',
+			})
+		).toEqual(expected);
 	});
 
 	it('treats thinking completed events as system (not text)', () => {

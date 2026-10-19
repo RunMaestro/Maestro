@@ -245,6 +245,15 @@ describe('error-patterns', () => {
 				matchErrorPattern(CURSOR_CLI_ERROR_PATTERNS, 'Build artifact 429 was written successfully')
 			).toBeNull();
 		});
+
+		it('matches the logged-out "Authentication required" message as a sign-in error', () => {
+			const result = matchErrorPattern(
+				CURSOR_CLI_ERROR_PATTERNS,
+				"Authentication required. Run 'agent login', pass --api-key/--auth-token, or set CURSOR_API_KEY/CURSOR_AUTH_TOKEN."
+			);
+			expect(result?.type).toBe('auth_expired');
+			expect(result?.message).toBe('Not authenticated with Cursor. Sign in again to continue.');
+		});
 	});
 
 	describe('CODEX_ERROR_PATTERNS', () => {

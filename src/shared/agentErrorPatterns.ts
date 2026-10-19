@@ -1622,7 +1622,8 @@ const ANTIGRAVITY_ERROR_PATTERNS: AgentErrorPatterns = {
 const CURSOR_CLI_ERROR_PATTERNS: AgentErrorPatterns = {
 	auth_expired: [
 		{
-			pattern: /not (?:logged in|authenticated)|authentication failed|please run.*agent login/i,
+			pattern:
+				/not (?:logged in|authenticated)|authentication (?:failed|required)|please run.*agent login/i,
 			message: 'Not authenticated with Cursor. Sign in again to continue.',
 			recoverable: true,
 		},
