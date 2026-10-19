@@ -513,14 +513,15 @@ write UI copy or docs that claim otherwise.
 
 Current support:
 
-| Agent           | Flag                              | Grant means               |
-| --------------- | --------------------------------- | ------------------------- |
-| `claude-code`   | `--add-dir <dir>` (repeatable)    | Tool access (read+write)  |
-| `codex`         | `--add-dir <dir>` (repeatable)    | Writable sandbox root     |
-| `copilot-cli`   | `--add-dir <dir>` (repeatable)    | Allowed list (read+write) |
-| `opencode`      | none (`--dir` only moves the cwd) | Prompt-only               |
-| `factory-droid` | unverified                        | Prompt-only               |
-| `gemini-cli`    | unverified                        | Prompt-only               |
+| Agent           | Flag                              | Grant means                 |
+| --------------- | --------------------------------- | --------------------------- |
+| `claude-code`   | `--add-dir <dir>` (repeatable)    | Tool access (read+write)    |
+| `codex`         | `--add-dir <dir>` (repeatable)    | Writable sandbox root       |
+| `copilot-cli`   | `--add-dir <dir>` (repeatable)    | Allowed list (read+write)   |
+| `cursor-cli`    | `--add-dir <dir>` (repeatable)    | Workspace root (read+write) |
+| `opencode`      | none (`--dir` only moves the cwd) | Prompt-only                 |
+| `factory-droid` | unverified                        | Prompt-only                 |
+| `gemini-cli`    | unverified                        | Prompt-only                 |
 
 Emit the flag **once per directory** (`repeatDirFlag`) rather than as a single
 variadic list. A variadic option swallows the positional that follows it, and the
@@ -1378,7 +1379,7 @@ mirror: the mirror copies one file, and a WAL store's newest steps can still sit
 | Item            | Value                                                                                                    |
 | --------------- | -------------------------------------------------------------------------------------------------------- |
 | Binary          | `agent`; the native Windows installer also provides `cursor-agent.cmd`                                   |
-| Batch Mode      | `-p` / `--print` with `--trust` and `--force`                                                            |
+| Batch Mode      | `-p` / `--print` with `--trust`; full access adds `--force`                                              |
 | JSON Output     | `--output-format stream-json --stream-partial-output` (JSONL init/thinking/assistant/tool/result events) |
 | Resume          | `--resume <chatId>`; verified continuation preserves the session ID                                      |
 | Read-Only       | `--mode plan` (Plan-Mode in UI)                                                                          |
@@ -1405,12 +1406,14 @@ mirror: the mirror copies one file, and a WAL store's newest steps can still sit
 **Example invocations:**
 
 ```bash
-# Batch mode (full access)
-agent --workspace /path/to/project --trust --force --output-format stream-json --stream-partial-output -p "prompt"
+# Batch mode
+agent --workspace /path/to/project --trust --output-format stream-json --stream-partial-output -p "prompt"
 
 # Resume a session
-agent --workspace /path/to/project --trust --force --output-format stream-json --stream-partial-output --resume <session-id> -p "continue"
+agent --workspace /path/to/project --trust --output-format stream-json --stream-partial-output --resume <session-id> -p "continue"
 
 # Read-only plan mode
 agent --workspace /path/to/project --trust --output-format stream-json --stream-partial-output --mode plan -p "prompt"
 ```
+
+Full-access mode appends `--force` to the first two; read-only mode never carries it.
