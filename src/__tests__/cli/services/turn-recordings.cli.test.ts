@@ -68,6 +68,13 @@ vi.mock('../../../cli/services/storage', () => ({
 	readSshRemotes: vi.fn(() => []),
 }));
 
+// Cursor's identity check runs `<path> --help`. Failing it on the fake path above
+// falls back to a PATH lookup whose login-shell probe consumes the fake child.
+vi.mock('../../../shared/maestro-lib/launch/path-prober', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../shared/maestro-lib/launch/path-prober')>()),
+	validateAgentBinaryIdentity: vi.fn(async () => true),
+}));
+
 import { spawnAgent, type AgentResult } from '../../../cli/services/agent-spawner';
 import { RECORDINGS, type TurnRecording } from '../../main/process-manager/recordings/fixtures';
 import {
