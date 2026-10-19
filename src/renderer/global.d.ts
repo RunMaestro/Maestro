@@ -243,6 +243,7 @@ import type { WindowCommandRequest, WindowCommandResult } from '../shared/window
 import type { WebUserPublic } from '../shared/webLogin';
 import type { ComputerHistoryApi } from '../main/preload/computerHistory';
 import type { MaestroRunApi } from '../main/preload/maestroRun';
+import type { JourneyApi } from '../main/preload/journey';
 
 interface MaestroAPI {
 	// Context merging API (for session context transfer and grooming)
@@ -4536,6 +4537,10 @@ interface MaestroAPI {
 		// armed dispatch callback that would otherwise time out an hour later.
 		notifyAiTabClosed: (agentId: string, tabId: string) => void;
 	};
+
+	// User Journey API (per-agent log of user actions inside Maestro). Record
+	// through recordJourney() in src/renderer/services/userJourney.ts.
+	journey: JourneyApi;
 
 	// AI Command API (plain-English request -> one shell command line)
 	aiCommand: {

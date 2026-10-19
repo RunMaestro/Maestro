@@ -58,6 +58,7 @@ const READ_ONLY_CHANNELS = new Set([
 	'groupChat:load',
 	'history:reload',
 	'images:resolve',
+	'journey:path',
 	'memory:orphans',
 	'pianola:supervisor-list',
 	'feedback:drafts:list',
@@ -71,7 +72,9 @@ const READ_ONLY_CHANNELS = new Set([
 
 function isSubmissionChannel(channel: string): boolean {
 	// Diagnostics are not user work and must never create submission alerts.
-	if (channel === 'logger:log') return false;
+	// Nor is the User Journey log, which records in the background on every
+	// file open and page load.
+	if (channel === 'logger:log' || channel === 'journey:append') return false;
 	const operation = channel.slice(channel.indexOf(':') + 1);
 	return (
 		!READ_ONLY_CHANNELS.has(channel) &&

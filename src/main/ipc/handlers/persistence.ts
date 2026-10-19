@@ -23,6 +23,7 @@ import {
 import { isWebContentsAvailable } from '../../utils/safe-send';
 import { broadcastBridgeEvent } from '../../web-server/handlers/bridgeHandlers';
 import { forgetAgentActors } from '../../web-server/auth/turn-attribution';
+import { deleteJourney } from '../../user-journey-manager';
 import { getThemeById } from '../../themes';
 import { WebServer } from '../../web-server';
 import {
@@ -878,6 +879,9 @@ export function registerPersistenceHandlers(
 				// A closed agent can never produce another turn, so drop whatever the
 				// spawn path noted about who was driving its tabs.
 				for (const id of removedIds) forgetAgentActors(id);
+				// The User Journey log belongs to the agent; it goes with it.
+				// Fire-and-forget: deleteJourney reports its own failures.
+				for (const id of removedIds) void deleteJourney(id);
 				const updatedSessions = sessionsToPersist.filter(
 					(session) =>
 						touchedIds.has(session.id) &&

@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { prepareMaestroSystemPrompt } from '../../../renderer/utils/spawnHelpers';
+import {
+	loadJourneyPromptContext,
+	prepareMaestroSystemPrompt,
+} from '../../../renderer/utils/spawnHelpers';
+import { JOURNEY_RECENT_MAX_ENTRIES } from '../../../shared/userJourney';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 
 vi.mock('../../../renderer/utils/templateVariables', () => ({
@@ -40,6 +44,10 @@ describe('prepareMaestroSystemPrompt', () => {
 			},
 			history: {
 				getFilePath: vi.fn().mockResolvedValue('/mock/history/path.jsonl'),
+			},
+			journey: {
+				getPath: vi.fn().mockResolvedValue('/mock/journey/session-1.jsonl'),
+				read: vi.fn().mockResolvedValue([]),
 			},
 		};
 	});
@@ -115,6 +123,15 @@ describe('prepareMaestroSystemPrompt', () => {
 			session: { ...baseSession, sessionSshRemoteConfig: { enabled: true } },
 		});
 		expect((window as any).maestro.history.getFilePath).not.toHaveBeenCalled();
+	});
+
+	it('reads the journey path and the recent entries for non-SSH sessions', async () => {
+		await prepareMaestroSystemPrompt({ session: baseSession });
+		expect((window as any).maestro.journey.getPath).toHaveBeenCalledWith('session-1');
+		expect((window as any).maestro.journey.read).toHaveBeenCalledWith(
+			'session-1',
+			expect.objectContaining({ tail: JOURNEY_RECENT_MAX_ENTRIES, since: expect.any(Number) })
+		);
 	});
 
 	it('handles history file path errors gracefully', async () => {
@@ -277,6 +294,52 @@ describe('prepareMaestroSystemPrompt', () => {
 			const result = await prepareMaestroSystemPrompt({ session: baseSession });
 			expect(result).toBe('BASE');
 			prompts['computer-history-system'] = 'HISTORY {{COMPUTER_HISTORY_DIR}}';
+		});
+	});
+});
+
+describe('loadJourneyPromptContext', () => {
+	const entry = { ts: 1, agentId: 'a1', kind: 'file.open', target: '/p/a.ts' };
+
+	beforeEach(() => {
+		(window as any).maestro = {
+			...(window as any).maestro,
+			journey: {
+				getPath: vi.fn().mockResolvedValue('/mock/journey/a1.jsonl'),
+				read: vi.fn().mockResolvedValue([entry]),
+			},
+		};
+	});
+
+	it('returns the path and the entries for a local agent', async () => {
+		await expect(loadJourneyPromptContext('a1', false)).resolves.toEqual({
+			journeyFilePath: '/mock/journey/a1.jsonl',
+			journeyEntries: [entry],
+		});
+	});
+
+	it('skips the local-only path for an SSH agent but keeps its entries', async () => {
+		await expect(loadJourneyPromptContext('a1', true)).resolves.toEqual({
+			journeyFilePath: undefined,
+			journeyEntries: [entry],
+		});
+		expect((window as any).maestro.journey.getPath).not.toHaveBeenCalled();
+	});
+
+	it('leaves a value unset when its lookup fails', async () => {
+		(window as any).maestro.journey.getPath.mockRejectedValueOnce(new Error('no path'));
+		(window as any).maestro.journey.read.mockRejectedValueOnce(new Error('no read'));
+		await expect(loadJourneyPromptContext('a1', false)).resolves.toEqual({
+			journeyFilePath: undefined,
+			journeyEntries: undefined,
+		});
+	});
+
+	it('tolerates a missing journey bridge', async () => {
+		(window as any).maestro = { ...(window as any).maestro, journey: undefined };
+		await expect(loadJourneyPromptContext('a1', false)).resolves.toEqual({
+			journeyFilePath: undefined,
+			journeyEntries: undefined,
 		});
 	});
 });

@@ -1,5 +1,10 @@
 import { useCallback } from 'react';
-import { updateBrowserTab, updateSessionWith, useSessionStore } from '../../../stores/sessionStore';
+import {
+	selectActiveSession,
+	updateBrowserTab,
+	updateSessionWith,
+	useSessionStore,
+} from '../../../stores/sessionStore';
 
 import {
 	closeBrowserTab as closeBrowserTabHelper,
@@ -18,6 +23,26 @@ import {
 import { isWebDesktop } from '../../../utils/runtimeContext';
 import { notifyCenterFlash } from '../../../stores/centerFlashStore';
 import type { BrowserTab, BrowserTabCreationOptions } from '../../../../shared/browserPage';
+import { sanitizeJourneyUrl } from '../../../../shared/userJourney';
+import { recordJourney } from '../../../services/userJourney';
+
+/**
+ * Record that the user opened a browser tab. A private (ephemeral) tab leaves
+ * no journey, and a title that only repeats the URL is dropped.
+ */
+function recordBrowserOpen(
+	agentId: string,
+	tab: Pick<BrowserTab, 'id' | 'url' | 'ephemeral'>,
+	title?: string
+) {
+	if (tab.ephemeral) return;
+	recordJourney(agentId, {
+		kind: 'browser.open',
+		target: sanitizeJourneyUrl(tab.url),
+		tabId: tab.id,
+		...(title && title !== tab.url ? { title } : {}),
+	});
+}
 
 export function useBrowserTabHandlers(): BrowserTabHandlersReturn {
 	const openBrowserTab = useCallback(
@@ -38,6 +63,7 @@ export function useBrowserTabHandlers(): BrowserTabHandlersReturn {
 					.then((tab) => {
 						updateSessionWith(activeSessionId, (session) => activateBrowserTab(session, tab));
 						focus(tab.id);
+						recordBrowserOpen(activeSessionId, tab, options.title);
 					})
 					.catch((error) =>
 						notifyCenterFlash({
@@ -58,7 +84,14 @@ export function useBrowserTabHandlers(): BrowserTabHandlersReturn {
 				id = tab.id;
 				return activateBrowserTab(session, tab);
 			});
-			if (id) focus(id);
+			if (id) {
+				focus(id);
+				recordBrowserOpen(
+					activeSessionId,
+					{ id, url, ephemeral: options.ephemeral },
+					options.title
+				);
+			}
 		},
 		[]
 	);
@@ -110,7 +143,18 @@ export function useBrowserTabHandlers(): BrowserTabHandlersReturn {
 
 	const handleCloseBrowserTab = useCallback(
 		(tabId: string) => {
+			const session = selectActiveSession(useSessionStore.getState());
+			const closingTab = session?.browserTabs?.find((tab) => tab.id === tabId);
 			forceCloseBrowserTab(tabId);
+			// `closingTab` was found in the active session, so the helper just closed it.
+			if (session && closingTab && !closingTab.ephemeral) {
+				recordJourney(session.id, {
+					kind: 'browser.close',
+					target: sanitizeJourneyUrl(closingTab.url),
+					tabId,
+					dwellMs: Math.max(0, Date.now() - closingTab.createdAt),
+				});
+			}
 		},
 		[forceCloseBrowserTab]
 	);

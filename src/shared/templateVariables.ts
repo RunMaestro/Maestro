@@ -2,6 +2,7 @@ import { buildSessionDeepLink, buildGroupDeepLink } from './deep-link-urls';
 import { formatAdditionalDirectoriesForPrompt } from './additionalDirectories';
 import type { AdditionalDirectory } from './types';
 import { resolveEncoreFeatures, type EncoreFeatureDefaults } from './encoreFeatureDefaults';
+import { formatRecentJourney, type UserJourneyEntry } from './userJourney';
 
 /**
  * Template Variable System for Auto Run and Custom AI Commands
@@ -18,6 +19,8 @@ import { resolveEncoreFeatures, type EncoreFeatureDefaults } from './encoreFeatu
  *   {{AGENT_GROUP}}       - Agent's group name (if grouped)
  *   {{AGENT_SESSION_ID}}  - Agent session ID (for conversation continuity)
  *   {{AGENT_HISTORY_PATH}} - Path to agent's history JSON file (for task recall)
+ *   {{AGENT_JOURNEY_PATH}} - Path to agent's User Journey JSONL file (what the user did in Maestro)
+ *   {{USER_JOURNEY_RECENT}} - The user's last 15 journey entries from the past 2 hours, one line each ("No recent activity." when none)
  *   {{TAB_ID}}            - This conversation's AI tab ID (for CLI targeting; empty on headless spawns)
  *   {{TAB_NAME}}          - Custom tab name (alias: SESSION_NAME)
  *   {{TOOL_TYPE}}         - Agent type (claude-code, codex, opencode, factory-droid)
@@ -217,6 +220,17 @@ export interface TemplateContext {
 	// History file path for task recall
 	historyFilePath?: string;
 	/**
+	 * The agent's User Journey file, for {{AGENT_JOURNEY_PATH}}. Builders leave
+	 * it unset for SSH-remote agents, whose shell cannot reach that path.
+	 */
+	journeyFilePath?: string;
+	/**
+	 * The agent's recent User Journey entries, oldest first, for
+	 * {{USER_JOURNEY_RECENT}}. Builders read them with
+	 * `recentJourneyReadOptions()`; substitution applies the window again.
+	 */
+	journeyEntries?: readonly UserJourneyEntry[];
+	/**
 	 * `<userData>/computer-history` on the Maestro machine, for the Computer
 	 * History system-prompt section. Builders leave it unset for SSH-remote
 	 * agents, whose shell cannot reach that path.
@@ -342,6 +356,11 @@ export const TEMPLATE_VARIABLES = [
 		encoreFlag: 'maestroRun',
 	},
 	{ variable: '{{AGENT_HISTORY_PATH}}', description: 'History file path (task recall)' },
+	{ variable: '{{AGENT_JOURNEY_PATH}}', description: 'User Journey file path (user actions)' },
+	{
+		variable: '{{USER_JOURNEY_RECENT}}',
+		description: "User's recent actions in Maestro (last 2 hours)",
+	},
 	{ variable: '{{AGENT_NAME}}', description: 'Agent name' },
 	{ variable: '{{AGENT_PATH}}', description: 'Agent home directory path' },
 	{ variable: '{{AGENT_SESSION_ID}}', description: 'Agent session ID' },
@@ -581,6 +600,8 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		goalExitCriteria,
 		predecessorHandoff,
 		historyFilePath,
+		journeyFilePath,
+		journeyEntries,
 		computerHistoryDir,
 		maestroRunPath,
 		conductorProfile,
@@ -599,6 +620,10 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		AGENT_GROUP: groupName || '',
 		AGENT_SESSION_ID: session.agentSessionId || '',
 		AGENT_HISTORY_PATH: historyFilePath || '',
+		AGENT_JOURNEY_PATH: journeyFilePath || '',
+		USER_JOURNEY_RECENT: formatRecentJourney(journeyEntries ?? [], now.getTime(), {
+			cwd: session.cwd,
+		}),
 		COMPUTER_HISTORY_DIR: computerHistoryDir || '',
 		MAESTRO_RUN_PATH: maestroRunPath || '',
 		// The AI tab this spawn belongs to. Empty for headless spawns (CLI send,

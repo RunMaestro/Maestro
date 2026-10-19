@@ -16,7 +16,14 @@ import {
 	systemPromptSectionsFor,
 } from '../../shared/maestroSystemPrompt';
 import { getCliPrompt } from './prompt-loader';
-import { getConfigDirectory, readSettingValue, resolveSessionHistoryFilePath } from './storage';
+import { recentJourneyReadOptions } from '../../shared/userJourney';
+import {
+	getConfigDirectory,
+	getJourneyFilePath,
+	readJourney,
+	readSettingValue,
+	resolveSessionHistoryFilePath,
+} from './storage';
 import { getGitBranch, isGitRepo } from './git-utils';
 import { isPianolaEnabled } from '../../shared/agentVisibility';
 
@@ -85,6 +92,10 @@ export async function prepareMaestroSystemPromptCli(
 	// The Computer History store is local for the same reason.
 	const isSsh = !!session.sessionSshRemoteConfig?.enabled;
 	const historyFilePath = isSsh ? undefined : resolveSessionHistoryFilePath(session.id);
+	// The journey is recorded on this machine wherever the agent runs, so an SSH
+	// agent still gets its recent entries; only the file path is local-only.
+	const journeyFilePath = isSsh ? undefined : getJourneyFilePath(session.id);
+	const journeyEntries = readJourney(session.id, recentJourneyReadOptions(Date.now()));
 
 	const conductorProfileSetting = readSettingValue('conductorProfile');
 	const conductorProfile =
@@ -124,6 +135,8 @@ export async function prepareMaestroSystemPromptCli(
 			gitBranch,
 			groupId: session.groupId,
 			historyFilePath,
+			journeyFilePath,
+			journeyEntries,
 			conductorProfile,
 			computerHistoryDir: isSsh ? undefined : computerHistoryDir(getConfigDirectory()),
 			maestroRunPath,

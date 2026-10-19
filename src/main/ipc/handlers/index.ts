@@ -85,6 +85,7 @@ import { registerMaestroCliHandlers } from './maestro-cli';
 import { registerPromptsHandlers } from './prompts';
 import { registerMemoryHandlers } from './memory';
 import { registerTabsHandlers } from './tabs';
+import { registerJourneyHandlers } from './journey';
 import { registerContextTimelineHandlers } from './context-timeline';
 import { registerAgentRunHandlers } from './agent-run';
 import {
@@ -175,6 +176,7 @@ export { registerMaestroCliHandlers };
 export { registerPromptsHandlers };
 export { registerMemoryHandlers };
 export { registerTabsHandlers };
+export { registerJourneyHandlers };
 export { registerContextTimelineHandlers };
 export { registerAgentRunHandlers };
 export { registerWindowsHandlers };

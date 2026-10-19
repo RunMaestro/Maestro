@@ -12,6 +12,7 @@
 import { assembleMaestroSystemPrompt } from '../../maestroSystemPrompt';
 import { prependNewSessionMessageOnFirstTurn } from '../../newSessionMessage';
 import type { TemplateSessionInfo } from '../../templateVariables';
+import type { UserJourneyEntry } from '../../userJourney';
 
 /** The rule between two layers of a prompt. */
 export const PROMPT_LAYER_SEPARATOR = '\n\n---\n\n';
@@ -166,6 +167,13 @@ export interface SystemPromptContext {
 	gitBranch?: string;
 	/** The agent's history file, when it exists and the agent runs on this machine. */
 	historyFilePath?: string;
+	/** The agent's User Journey file, for `{{AGENT_JOURNEY_PATH}}`. Ignored for SSH. */
+	journeyFilePath?: string;
+	/**
+	 * The agent's recent User Journey entries, for `{{USER_JOURNEY_RECENT}}`. Kept for SSH: the
+	 * journey is recorded on this machine wherever the agent runs.
+	 */
+	journeyEntries?: readonly UserJourneyEntry[];
 	conductorProfile?: string;
 	/** The `maestro-cli.js` script `{{MAESTRO_CLI_PATH}}` names. Absent: the host's default. */
 	maestroCliPath?: string;
@@ -183,8 +191,9 @@ export interface SystemPromptContext {
  * order and the separator, so this cannot drift from the desktop's three builders. Undefined
  * when the template did not load: the turn goes without a system prompt, as on the desktop.
  *
- * Everything read from this machine (branch, history file, Computer History store, MaestroRun
- * launcher) is left out for an SSH agent, whose shell cannot reach it.
+ * Everything read from this machine (branch, history and journey files, Computer History store,
+ * MaestroRun launcher) is left out for an SSH agent, whose shell cannot reach it. The recent
+ * journey entries stay: they describe what the user did, not a path.
  */
 export function buildAgentSystemPrompt(
 	agent: SystemPromptAgent,
@@ -202,6 +211,8 @@ export function buildAgentSystemPrompt(
 			groupId: agent.groupId,
 			activeTabId,
 			historyFilePath: isSsh ? undefined : context.historyFilePath,
+			journeyFilePath: isSsh ? undefined : context.journeyFilePath,
+			journeyEntries: context.journeyEntries,
 			conductorProfile: context.conductorProfile,
 			computerHistoryDir: isSsh ? undefined : context.computerHistoryDir,
 			maestroRunPath: isSsh ? undefined : context.maestroRunPath,
@@ -220,7 +231,10 @@ export function buildAgentSystemPrompt(
  * nothing at all.
  */
 export function buildPluginSectionsSystemPrompt(
-	context: Omit<SystemPromptContext, 'gitBranch' | 'historyFilePath'>
+	context: Omit<
+		SystemPromptContext,
+		'gitBranch' | 'historyFilePath' | 'journeyFilePath' | 'journeyEntries'
+	>
 ): string | undefined {
 	const sections = (context.prompts.pluginSections ?? []).filter((text) => !!text.trim());
 	if (sections.length === 0) return undefined;

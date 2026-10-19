@@ -5,6 +5,7 @@ import {
 	assembleMaestroSystemPrompt,
 	systemPromptSectionsFor,
 } from '../../shared/maestroSystemPrompt';
+import { recentJourneyReadOptions, type UserJourneyEntry } from '../../shared/userJourney';
 
 /**
  * `<userData>/computer-history`, fetched from main once per renderer lifetime
@@ -56,10 +57,41 @@ async function loadPrompt(id: string): Promise<string | undefined> {
 }
 
 /**
+ * The journey inputs of a system prompt ({{AGENT_JOURNEY_PATH}} and
+ * {{USER_JOURNEY_RECENT}}), shared by the spawn and the Maestro Prompts
+ * preview. The journey is recorded on this machine wherever the agent runs, so
+ * an SSH agent still gets its recent entries; only the file path is local-only. A failed lookup leaves that value
+ * unset (the section then reads "No recent activity.").
+ */
+export async function loadJourneyPromptContext(
+	agentId: string,
+	isSsh: boolean
+): Promise<{ journeyFilePath?: string; journeyEntries?: UserJourneyEntry[] }> {
+	let journeyFilePath: string | undefined;
+	let journeyEntries: UserJourneyEntry[] | undefined;
+	if (!isSsh) {
+		try {
+			journeyFilePath = (await window.maestro.journey.getPath(agentId)) || undefined;
+		} catch {
+			// Ignore journey errors
+		}
+	}
+	try {
+		journeyEntries = await window.maestro.journey.read(
+			agentId,
+			recentJourneyReadOptions(Date.now())
+		);
+	} catch {
+		// Ignore journey errors
+	}
+	return { journeyFilePath, journeyEntries };
+}
+
+/**
  * Prepare the Maestro system prompt for an agent spawn.
  *
- * Loads the prompt template, resolves git branch, history file path,
- * and conductor profile, then hands everything to the shared assembler
+ * Loads the prompt template, resolves git branch, history and journey file
+ * paths, the recent User Journey, and conductor profile, then hands everything to the shared assembler
  * (`src/shared/maestroSystemPrompt.ts`), which also appends the Pianola role
  * section and every enabled first-party plugin section.
  *
@@ -109,6 +141,11 @@ export async function prepareMaestroSystemPrompt(opts: {
 		}
 	}
 
+	const { journeyFilePath, journeyEntries } = await loadJourneyPromptContext(
+		opts.session.id,
+		isSsh
+	);
+
 	const { conductorProfile, encoreFeatures } = useSettingsStore.getState();
 
 	// The pinned Pianola manager agent gets its manager instructions appended on
@@ -141,6 +178,8 @@ export async function prepareMaestroSystemPrompt(opts: {
 			groupId: opts.session.groupId,
 			activeTabId: opts.activeTabId,
 			historyFilePath,
+			journeyFilePath,
+			journeyEntries,
 			conductorProfile,
 			computerHistoryDir,
 			maestroRunPath,

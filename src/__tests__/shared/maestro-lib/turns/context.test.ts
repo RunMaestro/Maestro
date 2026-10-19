@@ -14,6 +14,7 @@ import {
 } from '../../../../shared/maestro-lib/turns/context';
 import { assembleTurn } from '../../../../shared/maestro-lib/turns/assemble';
 import { historyFilePath } from '../../../../shared/maestro-lib/store/read-history';
+import { journeyFilePath } from '../../../../shared/maestro-lib/store/read-journey';
 import { makeAgent, makeTab } from './fixtures';
 
 let dir: string;
@@ -189,6 +190,27 @@ describe('loadTurnContext', () => {
 		if (!without.ok || !withFile.ok) throw new Error('expected contexts');
 		expect(without.context.historyFilePath).toBeUndefined();
 		expect(withFile.context.historyFilePath).toBe(historyFilePath(paths.historyDir, 'agent-1'));
+	});
+
+	it('names the journey file and reads the recent entries against the given clock', async () => {
+		const now = new Date(2026, 0, 1).getTime();
+		const recent = { ts: now - 60_000, agentId: 'agent-1', kind: 'file.open', target: '/p/a.ts' };
+		const stale = { ...recent, ts: now - 3 * 60 * 60 * 1000 };
+		write(journeyFilePath(dir, 'agent-1'), `${JSON.stringify(stale)}\n${JSON.stringify(recent)}\n`);
+		const result = await load();
+		if (!result.ok) throw new Error(result.message);
+		expect(result.context.journeyFilePath).toBe(journeyFilePath(dir, 'agent-1'));
+		expect(result.context.journeyEntries).toEqual([recent]);
+
+		const ssh = await load(
+			makeAgent({ sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' } }),
+			{
+				probeBinary: found('/never'),
+			}
+		);
+		if (!ssh.ok) throw new Error(ssh.message);
+		expect(ssh.context.journeyFilePath).toBeUndefined();
+		expect(ssh.context.journeyEntries).toEqual([recent]);
 	});
 
 	it('states the data dir, the CLI script and the clock it was given', async () => {

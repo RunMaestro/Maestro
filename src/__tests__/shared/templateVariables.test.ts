@@ -13,6 +13,7 @@ import {
 	TemplateContext,
 	TemplateSessionInfo,
 } from '../../shared/templateVariables';
+import { formatTimestamp } from '../../shared/formatters';
 
 // Helper to create a minimal session for testing
 function createTestSession(overrides: Partial<TemplateSessionInfo> = {}): TemplateSessionInfo {
@@ -71,6 +72,8 @@ describe('TEMPLATE_VARIABLES constant', () => {
 		expect(variables).toContain('{{AGENT_GROUP}}');
 		expect(variables).toContain('{{AGENT_SESSION_ID}}');
 		expect(variables).toContain('{{AGENT_HISTORY_PATH}}');
+		expect(variables).toContain('{{AGENT_JOURNEY_PATH}}');
+		expect(variables).toContain('{{USER_JOURNEY_RECENT}}');
 		expect(variables).toContain('{{COMPUTER_HISTORY_DIR}}');
 		expect(variables).toContain('{{MAESTRO_RUN_PATH}}');
 		expect(variables).toContain('{{TAB_ID}}');
@@ -275,6 +278,48 @@ describe('substituteTemplateVariables', () => {
 			});
 			const result = substituteTemplateVariables('History: {{AGENT_HISTORY_PATH}}', context);
 			expect(result).toBe('History: ');
+		});
+
+		it('should replace {{AGENT_JOURNEY_PATH}} with journeyFilePath, and with nothing when unset', () => {
+			const file = '/Users/test/.config/Maestro/journey/session-123.jsonl';
+			expect(
+				substituteTemplateVariables(
+					'Journey: {{AGENT_JOURNEY_PATH}}',
+					createTestContext({ journeyFilePath: file })
+				)
+			).toBe(`Journey: ${file}`);
+			expect(
+				substituteTemplateVariables('Journey: {{AGENT_JOURNEY_PATH}}', createTestContext({}))
+			).toBe('Journey: ');
+		});
+
+		it('should render {{USER_JOURNEY_RECENT}} from journeyEntries, relative to the cwd', () => {
+			const now = new Date(2026, 9, 18, 14, 30);
+			const ts = new Date(2026, 9, 18, 14, 2).getTime();
+			const context = createTestContext({
+				now,
+				session: createTestSession({ cwd: '/repo' }),
+				journeyEntries: [
+					{
+						ts,
+						agentId: 'session-123',
+						kind: 'file.save',
+						target: '/repo/src/a.ts',
+						linesAdded: 2,
+					},
+					{ ts, agentId: 'session-123', kind: 'browser.navigate', target: 'https://example.com/x' },
+				],
+			});
+			const time = formatTimestamp(ts, 'time');
+			expect(substituteTemplateVariables('{{USER_JOURNEY_RECENT}}', context)).toBe(
+				`- ${time} saved src/a.ts (+2/-0)\n- ${time} browsed example.com/x`
+			);
+		});
+
+		it('should render {{USER_JOURNEY_RECENT}} as "No recent activity." with no entries', () => {
+			expect(substituteTemplateVariables('{{USER_JOURNEY_RECENT}}', createTestContext({}))).toBe(
+				'No recent activity.'
+			);
 		});
 
 		it('should replace {{MAESTRO_RUN_PATH}} with maestroRunPath, and with nothing when unset', () => {

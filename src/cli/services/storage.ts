@@ -21,6 +21,8 @@ import {
 	normalizeHistoryEntries,
 } from '../../shared/history';
 import { resolveSyncDir } from '../../shared/syncPath';
+import type { ReadJourneyOptions, UserJourneyEntry } from '../../shared/userJourney';
+import { journeyFilePath, readJourneyFile } from '../../shared/maestro-lib/store/read-journey';
 import {
 	DORMANT_PIANOLA_MESSAGE,
 	filterLiveAgents,
@@ -317,6 +319,29 @@ export function readHistoryPaginated(options?: {
 	const { projectPath, sessionId, pagination } = options || {};
 	const entries = readHistory(projectPath, sessionId);
 	return paginateEntries(entries, pagination);
+}
+
+// ============================================================================
+// User Journey
+// ============================================================================
+
+/**
+ * Absolute path of an agent's User Journey file. Lives in the config directory
+ * (never the sync directory), next to `history/`, matching
+ * `getJourneyFilePath()` in `src/main/user-journey-manager.ts`.
+ */
+export function getJourneyFilePath(agentId: string): string {
+	return journeyFilePath(getConfigDir(), agentId);
+}
+
+/**
+ * An agent's User Journey, oldest first, inside retention and the entry cap,
+ * with the same filters the desktop's `journey:read` applies. Read-only: the
+ * desktop app owns every write and prune. A missing or unreadable file reads
+ * as no entries.
+ */
+export function readJourney(agentId: string, options: ReadJourneyOptions = {}): UserJourneyEntry[] {
+	return readJourneyFile(getJourneyFilePath(agentId), options);
 }
 
 /**

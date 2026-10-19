@@ -20,6 +20,7 @@ import { useSettingsStore } from '../../../stores/settingsStore';
 import { useMediaPlaybackStore } from '../../../stores/mediaPlaybackStore';
 import { useUIStore } from '../../../stores/uiStore';
 import { getOpenedMediaKind } from '../../../utils/mediaItems';
+import { recordJourney } from '../../../services/userJourney';
 import {
 	buildReplacementNavigationHistory,
 	createUntitledFileTab,
@@ -94,9 +95,15 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 				}
 			}
 
+			// The tab that now shows `file.path`, when this open put it in front of
+			// the user. Set inside the updater, recorded after it: re-opening the file
+			// already on screen (a content refresh, the second half of a remote load)
+			// is not a new open, and a background open is not the user's action.
+			let openedTabId: string | null = null;
 			updateSessionWith(activeSessionId, (s) => {
 				const existingTab = s.filePreviewTabs.find((tab) => tab.path === file.path);
 				if (existingTab) {
+					if (activate && s.activeFileTabId !== existingTab.id) openedTabId = existingTab.id;
 					const updatedTabs = s.filePreviewTabs.map((tab) =>
 						tab.id === existingTab.id
 							? {
@@ -152,6 +159,7 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 
 				if (!openInNewTab && s.activeFileTabId) {
 					const currentTabId = s.activeFileTabId;
+					if (activate) openedTabId = currentTabId;
 					const currentTab = s.filePreviewTabs.find((tab) => tab.id === currentTabId);
 					const { extension, nameWithoutExtension } = getFileNameParts(file.name);
 
@@ -175,6 +183,7 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 							searchQuery: '',
 							editMode: false,
 							editContent: undefined,
+							openedAt: Date.now(),
 							lastModified: file.lastModified ?? Date.now(),
 							sshRemoteId: file.sshRemoteId,
 							isLoading: file.isLoading ?? false,
@@ -194,7 +203,9 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 				}
 
 				const newTabId = generateId();
+				if (activate) openedTabId = newTabId;
 				const { extension, nameWithoutExtension } = getFileNameParts(file.name);
+				const now = Date.now();
 				const newFileTab: FilePreviewTab = {
 					id: newTabId,
 					path: file.path,
@@ -205,8 +216,9 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 					searchQuery: '',
 					editMode: false,
 					editContent: undefined,
-					createdAt: Date.now(),
-					lastModified: file.lastModified ?? Date.now(),
+					createdAt: now,
+					openedAt: now,
+					lastModified: file.lastModified ?? now,
 					sshRemoteId: file.sshRemoteId,
 					isLoading: file.isLoading ?? false,
 					loadRequestId: file.isLoading ? file.loadRequestId : undefined,
@@ -225,6 +237,13 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 					...(activate ? fileTabFocusFields(newTabId) : {}),
 				};
 			});
+			if (openedTabId) {
+				recordJourney(activeSessionId, {
+					kind: 'file.open',
+					target: file.path,
+					tabId: openedTabId,
+				});
+			}
 		},
 		[]
 	);
@@ -243,6 +262,16 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 			const result = closeFileTabHelper(s, tabId);
 			return result ? result.session : s;
 		});
+		// `closingTab` was found in this session, so the helper just closed it. An
+		// untitled tab has no path and so nothing to record.
+		if (closingTab?.path) {
+			recordJourney(activeSessionId, {
+				kind: 'file.close',
+				target: closingTab.path,
+				tabId,
+				dwellMs: Math.max(0, Date.now() - (closingTab.openedAt ?? closingTab.createdAt)),
+			});
+		}
 	}, []);
 
 	const handleCloseFileTab = useCallback(

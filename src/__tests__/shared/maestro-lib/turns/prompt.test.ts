@@ -222,6 +222,22 @@ describe('buildAgentSystemPrompt', () => {
 		);
 	});
 
+	it('fills the journey path and the recent journey, keeping only the entries for SSH', () => {
+		const now = new Date(2031, 0, 2, 12, 0);
+		const context = {
+			prompts: { maestroSystem: '[{{AGENT_JOURNEY_PATH}}] {{USER_JOURNEY_RECENT}}' },
+			journeyFilePath: '/j/a-1.jsonl',
+			journeyEntries: [
+				{ ts: now.getTime() - 1000, agentId: 'a-1', kind: 'file.delete' as const, target: '/x.ts' },
+			],
+			now,
+		};
+		expect(buildAgentSystemPrompt(agent, undefined, context)).toMatch(
+			/^\[\/j\/a-1\.jsonl\] - .+ deleted \/x\.ts$/
+		);
+		expect(buildAgentSystemPrompt(ssh, undefined, context)).toMatch(/^\[\] - .+ deleted \/x\.ts$/);
+	});
+
 	it('leaves out what is read from this machine for an SSH agent', () => {
 		const out = buildAgentSystemPrompt(ssh, undefined, {
 			prompts: {

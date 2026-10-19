@@ -29,6 +29,8 @@ import { getAgentCapabilities } from '../providers/capabilities';
 import { getAgentDefinition, type AgentConfig } from '../providers/definitions';
 import { readAgentConfigsStore, readSettingsStore } from '../store/read-stores';
 import { historyFilePath } from '../store/read-history';
+import { journeyFilePath, readJourneyFile } from '../store/read-journey';
+import { recentJourneyReadOptions } from '../../userJourney';
 import type { TurnAgent, TurnContext } from './assemble';
 import { locateProviderBinary } from './provider-binary';
 import { isPianolaEnabled } from '../../agentVisibility';
@@ -182,6 +184,15 @@ async function readSystemPromptContext(
 	}
 
 	const shared = readPluginSectionContext(sshEnabled, sources, settingsData, loader);
+	// The journey is recorded on this machine wherever the agent runs, so an SSH agent still gets
+	// its recent entries; only the file path is local-only.
+	const journeyFile = journeyFilePath(sources.paths.userDataDir, agent.id);
+	const journeyNow = shared.now.getTime();
+	const journeyEntries = readJourneyFile(
+		journeyFile,
+		recentJourneyReadOptions(journeyNow),
+		journeyNow
+	);
 	return {
 		...shared,
 		prompts: {
@@ -195,6 +206,8 @@ async function readSystemPromptContext(
 		},
 		gitBranch,
 		historyFilePath: historyPath,
+		journeyFilePath: sshEnabled ? undefined : journeyFile,
+		journeyEntries,
 	};
 }
 

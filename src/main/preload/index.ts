@@ -56,6 +56,7 @@ import { createAgentsApi } from './agents';
 import { createSymphonyApi } from './symphony';
 import { createTabNamingApi } from './tabNaming';
 import { createTabsApi } from './tabs';
+import { createJourneyApi } from './journey';
 import { createAiCommandApi } from './aiCommand';
 import { createDirectorNotesApi } from './directorNotes';
 import { createCueApi } from './cue';
@@ -251,6 +252,8 @@ contextBridge.exposeInMainWorld('maestro', {
 
 	// Tab lifecycle API (renderer -> main tab-close notification)
 	tabs: createTabsApi(),
+	// User Journey API (per-agent log of user actions inside Maestro)
+	journey: createJourneyApi(),
 	// AI Command API (plain-English request -> one shell command line)
 	aiCommand: createAiCommandApi(),
 
@@ -404,6 +407,8 @@ export {
 	createPromptsApi,
 	// Memory Viewer
 	createMemoryApi,
+	// User Journey
+	createJourneyApi,
 	// AgentRun
 	createAgentRunApi,
 	// Coworking
@@ -632,6 +637,11 @@ export type {
 	// From tabs
 	TabsApi,
 } from './tabs';
+export type {
+	// From journey
+	JourneyApi,
+	JourneyReadOptions,
+} from './journey';
 export type {
 	// From aiCommand
 	AiCommandApi,

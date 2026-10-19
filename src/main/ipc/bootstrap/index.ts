@@ -59,6 +59,7 @@ import {
 	registerPromptsHandlers,
 	registerMemoryHandlers,
 	registerTabsHandlers,
+	registerJourneyHandlers,
 	registerContextTimelineHandlers,
 	registerPianolaHandlers,
 	registerPluginsHandlers,
@@ -346,6 +347,10 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 
 	// Register tab lifecycle handlers (renderer -> main tab-close notification)
 	registerTabsHandlers();
+
+	// User Journey: per-agent log of what the user did inside Maestro (files
+	// opened, saved, browsed). See src/main/user-journey-manager.ts.
+	registerJourneyHandlers();
 
 	// Register Context Timeline capture handlers (per-agent turn history backfill).
 	// The renderer calls these on every panel open and timeline clear, so leaving

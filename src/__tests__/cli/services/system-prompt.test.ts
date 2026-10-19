@@ -16,6 +16,8 @@ vi.mock('../../../cli/services/prompt-loader', () => ({
 
 vi.mock('../../../cli/services/storage', () => ({
 	getConfigDirectory: vi.fn(() => '/mock/config'),
+	getJourneyFilePath: vi.fn((id: string) => `/mock/config/journey/${id}.jsonl`),
+	readJourney: vi.fn(() => []),
 	readSettingValue: vi.fn(),
 	resolveSessionHistoryFilePath: vi.fn(),
 }));
@@ -31,7 +33,12 @@ vi.mock('../../../cli/services/git-utils', () => ({
 
 import { prepareMaestroSystemPromptCli } from '../../../cli/services/system-prompt';
 import { getCliPrompt } from '../../../cli/services/prompt-loader';
-import { readSettingValue, resolveSessionHistoryFilePath } from '../../../cli/services/storage';
+import {
+	readJourney,
+	readSettingValue,
+	resolveSessionHistoryFilePath,
+} from '../../../cli/services/storage';
+import { JOURNEY_RECENT_MAX_ENTRIES, type UserJourneyEntry } from '../../../shared/userJourney';
 import { getGitBranch, isGitRepo } from '../../../cli/services/git-utils';
 import { readMaestroRunReadyPath } from '../../../shared/maestro-run/state-file';
 
@@ -62,6 +69,40 @@ describe('prepareMaestroSystemPromptCli', () => {
 		vi.mocked(resolveSessionHistoryFilePath).mockReturnValue(undefined);
 		// Default: the app has not recorded MaestroRun as ready.
 		vi.mocked(readMaestroRunReadyPath).mockReturnValue(undefined);
+		vi.mocked(readJourney).mockReturnValue([]);
+	});
+
+	it('fills the journey path and "No recent activity." when the journey is empty', async () => {
+		vi.mocked(getCliPrompt).mockResolvedValue(
+			'journey=[{{AGENT_JOURNEY_PATH}}] recent=[{{USER_JOURNEY_RECENT}}]'
+		);
+
+		const result = await prepareMaestroSystemPromptCli(mockSession({ id: 'sess-1' }));
+
+		expect(result).toBe('journey=[/mock/config/journey/sess-1.jsonl] recent=[No recent activity.]');
+		expect(readJourney).toHaveBeenCalledWith(
+			'sess-1',
+			expect.objectContaining({ tail: JOURNEY_RECENT_MAX_ENTRIES, since: expect.any(Number) })
+		);
+	});
+
+	it('renders recent journey entries, and drops only the path for SSH sessions', async () => {
+		vi.mocked(getCliPrompt).mockResolvedValue(
+			'journey=[{{AGENT_JOURNEY_PATH}}] recent=[{{USER_JOURNEY_RECENT}}]'
+		);
+		const entry: UserJourneyEntry = {
+			ts: Date.now(),
+			agentId: 'sess-1',
+			kind: 'file.save',
+			target: '/path/to/project/src/a.ts',
+		};
+		vi.mocked(readJourney).mockReturnValue([entry]);
+
+		const result = await prepareMaestroSystemPromptCli(
+			mockSession({ id: 'sess-1', sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' } })
+		);
+
+		expect(result).toMatch(/^journey=\[\] recent=\[- .+ saved src\/a\.ts\]$/);
 	});
 
 	it('substitutes agent identity, branch, and conductor profile into the template', async () => {

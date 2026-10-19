@@ -32,6 +32,12 @@ vi.mock('../../../main/history-manager', () => ({
 	})),
 }));
 
+let journeyEntries: Array<Record<string, any>> = [];
+vi.mock('../../../main/user-journey-manager', () => ({
+	getJourneyFilePath: vi.fn((id: string) => `/data/journey/${id}.jsonl`),
+	readJourney: vi.fn(async () => journeyEntries),
+}));
+
 vi.mock('../../../main/utils/execFile', () => ({
 	execFileNoThrow: vi.fn(async () => ({ exitCode: 0, stdout: 'feature/x\n', stderr: '' })),
 }));
@@ -66,6 +72,8 @@ import {
 	buildPluginSystemPromptSections,
 } from '../../../main/utils/maestro-system-prompt';
 import { execFileNoThrow } from '../../../main/utils/execFile';
+import { readJourney } from '../../../main/user-journey-manager';
+import { JOURNEY_RECENT_MAX_ENTRIES } from '../../../shared/userJourney';
 import { logger } from '../../../main/utils/logger';
 
 const agent = (overrides: Record<string, any> = {}) => ({
@@ -88,6 +96,7 @@ describe('buildMaestroSystemPromptForSession', () => {
 		prompts['computer-history-system'] = 'HISTORY {{COMPUTER_HISTORY_DIR}}';
 		storedSessions = [agent()];
 		settings = { conductorProfile: 'me' };
+		journeyEntries = [];
 	});
 
 	it('builds the base prompt for a stored agent by id', async () => {
@@ -118,6 +127,33 @@ describe('buildMaestroSystemPromptForSession', () => {
 		const result = await buildMaestroSystemPromptForSession('agent-1');
 		expect(result).toBe('Alice|||me|');
 		expect(execFileNoThrow).not.toHaveBeenCalled();
+	});
+
+	it('fills the journey path and the recent journey', async () => {
+		prompts['maestro-system-prompt'] = '{{AGENT_JOURNEY_PATH}}|{{USER_JOURNEY_RECENT}}';
+		journeyEntries = [
+			{ ts: Date.now(), agentId: 'agent-1', kind: 'file.open', target: '/proj/src/a.ts' },
+		];
+		const result = await buildMaestroSystemPromptForSession('agent-1');
+		expect(result).toMatch(/^\/data\/journey\/agent-1\.jsonl\|- .+ opened src\/a\.ts$/);
+		expect(readJourney).toHaveBeenCalledWith(
+			'agent-1',
+			expect.objectContaining({ tail: JOURNEY_RECENT_MAX_ENTRIES, since: expect.any(Number) })
+		);
+	});
+
+	it('reads "No recent activity." with no journey, and keeps the entries but not the path over SSH', async () => {
+		prompts['maestro-system-prompt'] = '{{AGENT_JOURNEY_PATH}}|{{USER_JOURNEY_RECENT}}';
+		expect(await buildMaestroSystemPromptForSession('agent-1')).toBe(
+			'/data/journey/agent-1.jsonl|No recent activity.'
+		);
+		storedSessions = [agent({ sessionSshRemoteConfig: { enabled: true, remoteId: 'r1' } })];
+		journeyEntries = [
+			{ ts: Date.now(), agentId: 'agent-1', kind: 'file.save', target: '/proj/src/a.ts' },
+		];
+		expect(await buildMaestroSystemPromptForSession('agent-1')).toMatch(
+			/^\|- .+ saved src\/a\.ts$/
+		);
 	});
 
 	it('appends the Pianola role section for the Pianola agent', async () => {

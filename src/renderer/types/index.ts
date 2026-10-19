@@ -965,6 +965,10 @@ export interface FilePreviewTab {
 	editMode: boolean; // Whether tab was in edit mode
 	editContent: string | undefined; // Unsaved edit content (undefined if no pending changes)
 	createdAt: number; // Timestamp for ordering
+	// When the tab started showing its current path (ms). Differs from createdAt
+	// once an open replaces the file in this tab. The User Journey dwell time on
+	// close counts from here; tabs that predate it fall back to createdAt.
+	openedAt?: number;
 	lastModified: number; // Timestamp (ms) when file was last modified on disk (for refresh detection)
 	// SSH remote support
 	sshRemoteId?: string; // SSH remote ID for re-fetching content if needed

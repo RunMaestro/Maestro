@@ -682,6 +682,18 @@ Print conversation history for a desktop tab
 | `--tail <n>`          | Only return the last N messages (applied after --since)              | -       |
 | `--json`              | Output as JSON (for scripting); default is a formatted transcript    | -       |
 
+## `maestro-cli journey`
+
+Show what the user did in Maestro: files opened/saved/renamed, pages browsed
+
+| Option                | Description                                                           | Default |
+| --------------------- | --------------------------------------------------------------------- | ------- |
+| `-a, --agent <id>`    | Agent ID or name (default: every agent)                               | -       |
+| `--since <timestamp>` | Only entries at or after this time (ISO-8601 or epoch ms/sec)         | -       |
+| `--tail <n>`          | Only the newest N entries per agent (applied after the other filters) | -       |
+| `--kind <kinds>`      | Comma list of kinds, e.g. file.save,browser.navigate                  | -       |
+| `--json`              | Output as JSON (for scripting)                                        | -       |
+
 ## `maestro-cli group-chat`
 
 Start, message, and inspect group chats in the desktop app

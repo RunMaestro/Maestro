@@ -41,6 +41,7 @@ import {
 	throughputGaugeToggle,
 } from './commands/throughput-gauge';
 import { sessionList, sessionShow } from './commands/session';
+import { journey } from './commands/journey';
 import { listSessions } from './commands/list-sessions';
 import { openFile } from './commands/open-file';
 import { imageList, imageSave } from './commands/image';
@@ -845,6 +846,18 @@ session
 	.option('--tail <n>', 'Only return the last N messages (applied after --since)')
 	.option('--json', 'Output as JSON (for scripting); default is a formatted transcript')
 	.action(sessionShow);
+
+// User Journey - what the USER did inside Maestro (files opened, saved, renamed,
+// pages browsed), per agent. Read-only, straight off disk; the desktop records it.
+program
+	.command('journey')
+	.description('Show what the user did in Maestro: files opened/saved/renamed, pages browsed')
+	.option('-a, --agent <id>', 'Agent ID or name (default: every agent)')
+	.option('--since <timestamp>', 'Only entries at or after this time (ISO-8601 or epoch ms/sec)')
+	.option('--tail <n>', 'Only the newest N entries per agent (applied after the other filters)')
+	.option('--kind <kinds>', 'Comma list of kinds, e.g. file.save,browser.navigate')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(journey);
 
 // Group chat commands - start and drive multi-agent group chats in the desktop app.
 // `start` is how a script hands a job to a moderator (the release commands use it);
