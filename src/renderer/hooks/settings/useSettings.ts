@@ -29,7 +29,7 @@ import type {
 	DirectorNotesSettings,
 	EncoreFeatureFlags,
 } from '../../types';
-import type { KeyboardMode } from '../../../shared/shortcut-types';
+import type { KeyboardMode, ShortcutOverride } from '../../../shared/shortcut-types';
 import type { FileExplorerIconTheme } from '../../utils/fileExplorerIcons/shared';
 import type { ToastWidth } from '../../../shared/toastWidth';
 import type { ToastPosition } from '../../../shared/toastPosition';
@@ -249,6 +249,10 @@ export interface UseSettingsReturn {
 	setTabShortcuts: (value: Record<string, Shortcut>) => void;
 	keyboardMode: KeyboardMode;
 	setKeyboardMode: (value: KeyboardMode) => void;
+	vimShortcuts: Record<string, ShortcutOverride>;
+	setVimShortcuts: (value: Record<string, ShortcutOverride>) => void;
+	vimTabShortcuts: Record<string, ShortcutOverride>;
+	setVimTabShortcuts: (value: Record<string, ShortcutOverride>) => void;
 
 	// Custom AI Commands
 	customAICommands: CustomAICommand[];

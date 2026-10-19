@@ -232,6 +232,20 @@ export const EDITOR_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: {},
 		category: 'editor',
 	},
+	vimShortcuts: {
+		description:
+			'Vim-mode shortcut overrides. Object mapping shortcut IDs to key combos, and SPARSE: an ID appears only when Vim mode binds it differently from default mode, and every other action keeps its default chord. Only read while keyboardMode is "vim", and never written while it is "default".',
+		type: 'object',
+		default: {},
+		category: 'editor',
+	},
+	vimTabShortcuts: {
+		description:
+			'Vim-mode overrides for the tab shortcuts. Same sparse shape and the same rules as vimShortcuts.',
+		type: 'object',
+		default: {},
+		category: 'editor',
+	},
 	customAICommands: {
 		description: 'User-defined slash commands available in AI chat (e.g., /commit).',
 		type: 'array',

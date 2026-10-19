@@ -53,6 +53,13 @@ export interface BootstrapSettings {
 export interface MaestroSettings {
 	activeThemeId: string;
 	shortcuts: Record<string, any>;
+	/**
+	 * Vim mode's shortcut overrides, one bucket per matcher. Sparse: an action
+	 * appears only when Vim mode binds it differently. Independent of
+	 * `shortcuts` - neither mode's bucket is ever written by the other.
+	 */
+	vimShortcuts: Record<string, any>;
+	vimTabShortcuts: Record<string, any>;
 	/** Which keyboard binding set is live. One mode is active at a time. */
 	keyboardMode: KeyboardMode;
 	fontSize: number;

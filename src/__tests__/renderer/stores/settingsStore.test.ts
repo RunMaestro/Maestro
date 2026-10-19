@@ -27,6 +27,7 @@ import {
 	TAB_SHORTCUTS,
 	FIXED_SHORTCUTS,
 } from '../../../renderer/constants/shortcuts';
+import { VIM_SHORTCUTS, VIM_TAB_SHORTCUTS } from '../../../renderer/constants/vimShortcuts';
 import {
 	KEYBOARD_MASTERY_LEVELS,
 	collectBoundShortcuts,
@@ -142,6 +143,8 @@ function resetStore() {
 		shortcuts: DEFAULT_SHORTCUTS,
 		tabShortcuts: TAB_SHORTCUTS,
 		keyboardMode: 'default',
+		vimShortcuts: VIM_SHORTCUTS,
+		vimTabShortcuts: VIM_TAB_SHORTCUTS,
 		customAICommands: DEFAULT_AI_COMMANDS,
 		totalActiveTimeMs: 0,
 		autoRunStats: DEFAULT_AUTO_RUN_STATS,
@@ -301,6 +304,15 @@ describe('settingsStore', () => {
 			// the CLI and `maestro-cli settings` reader.
 			expect(state.keyboardMode).toBe('default');
 			expect(SETTINGS_METADATA.keyboardMode.default).toBe('default');
+			// The Vim buckets start as the SHIPPED override tables, not empty, so
+			// a user who switches to Vim mode without customizing anything gets
+			// the bundled Vim chords. The metadata default is `{}` because that
+			// is what is on DISK for a fresh install: the shipped table is code,
+			// and only a user edit ever writes a key.
+			expect(state.vimShortcuts).toEqual(VIM_SHORTCUTS);
+			expect(state.vimTabShortcuts).toEqual(VIM_TAB_SHORTCUTS);
+			expect(SETTINGS_METADATA.vimShortcuts.default).toEqual({});
+			expect(SETTINGS_METADATA.vimTabShortcuts.default).toEqual({});
 			expect(state.customAICommands).toEqual(DEFAULT_AI_COMMANDS);
 			expect(state.totalActiveTimeMs).toBe(0);
 			expect(state.autoRunStats).toEqual(DEFAULT_AUTO_RUN_STATS);
@@ -824,6 +836,87 @@ describe('settingsStore', () => {
 				expect(
 					vi.mocked(window.maestro.settings.set).mock.calls.filter(([k]) => k === 'tabShortcuts')
 				).toEqual([]);
+			});
+
+			it('setVimShortcuts updates state and persists to its own key', () => {
+				const overrides = {
+					toggleSidebar: { id: 'toggleSidebar', label: 'Toggle Sidebar', keys: ['Ctrl', 'n'] },
+				};
+				useSettingsStore.getState().setVimShortcuts(overrides);
+				expect(useSettingsStore.getState().vimShortcuts).toEqual(overrides);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('vimShortcuts', overrides);
+			});
+
+			it('setVimTabShortcuts updates state and persists to its own key', () => {
+				const overrides = {
+					...VIM_TAB_SHORTCUTS,
+					nextTab: { id: 'nextTab', label: 'Next Tab', keys: ['Ctrl', 'l'] },
+				};
+				useSettingsStore.getState().setVimTabShortcuts(overrides);
+				expect(useSettingsStore.getState().vimTabShortcuts).toEqual(overrides);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('vimTabShortcuts', overrides);
+			});
+
+			it('writing a Vim bucket never touches a default bucket, or the reverse', () => {
+				// The four buckets are INDEPENDENT. This is the invariant that makes
+				// "customize a chord in one mode, switch, switch back, and find it
+				// where you left it" true, and the only way to break it is for a
+				// setter to reach across, so each setter is checked for silence on
+				// the other three keys.
+				const vim = {
+					toggleSidebar: { id: 'toggleSidebar', label: 'Toggle Sidebar', keys: ['Ctrl', 'n'] },
+				};
+				const base = {
+					...DEFAULT_SHORTCUTS,
+					toggleSidebar: { ...DEFAULT_SHORTCUTS.toggleSidebar, keys: ['Meta', 'b'] },
+				};
+
+				useSettingsStore.getState().setVimShortcuts(vim);
+				expect(useSettingsStore.getState().shortcuts).toEqual(DEFAULT_SHORTCUTS);
+				expect(useSettingsStore.getState().tabShortcuts).toEqual(TAB_SHORTCUTS);
+				expect(useSettingsStore.getState().vimTabShortcuts).toEqual(VIM_TAB_SHORTCUTS);
+				expect(
+					vi
+						.mocked(window.maestro.settings.set)
+						.mock.calls.filter(([k]) =>
+							['shortcuts', 'tabShortcuts', 'vimTabShortcuts'].includes(k as string)
+						)
+				).toEqual([]);
+
+				vi.mocked(window.maestro.settings.set).mockClear();
+
+				useSettingsStore.getState().setShortcuts(base);
+				expect(useSettingsStore.getState().vimShortcuts).toEqual(vim);
+				expect(useSettingsStore.getState().vimTabShortcuts).toEqual(VIM_TAB_SHORTCUTS);
+				expect(
+					vi
+						.mocked(window.maestro.settings.set)
+						.mock.calls.filter(([k]) =>
+							['vimShortcuts', 'vimTabShortcuts', 'tabShortcuts'].includes(k as string)
+						)
+				).toEqual([]);
+			});
+
+			it("switching modes back and forth keeps both modes' customizations", () => {
+				// The round trip the whole phase exists for, at the store level: a
+				// chord recorded in default mode and a different chord recorded for
+				// the same action in Vim mode coexist, and neither switch disturbs
+				// either one.
+				const base = {
+					...DEFAULT_SHORTCUTS,
+					toggleSidebar: { ...DEFAULT_SHORTCUTS.toggleSidebar, keys: ['Meta', 'b'] },
+				};
+				const vim = {
+					toggleSidebar: { id: 'toggleSidebar', label: 'Toggle Sidebar', keys: ['Ctrl', 'n'] },
+				};
+				useSettingsStore.getState().setShortcuts(base);
+				useSettingsStore.getState().setKeyboardMode('vim');
+				useSettingsStore.getState().setVimShortcuts(vim);
+				useSettingsStore.getState().setKeyboardMode('default');
+				useSettingsStore.getState().setKeyboardMode('vim');
+
+				expect(useSettingsStore.getState().shortcuts.toggleSidebar.keys).toEqual(['Meta', 'b']);
+				expect(useSettingsStore.getState().vimShortcuts.toggleSidebar.keys).toEqual(['Ctrl', 'n']);
 			});
 
 			it('setCustomAICommands updates state and persists', () => {
@@ -3012,6 +3105,165 @@ describe('settingsStore', () => {
 				.mocked(window.maestro.settings.set)
 				.mock.calls.find(([k]) => k === 'tabShortcuts')?.[1] as Record<string, { keys: string[] }>;
 			expect(persisted.closeAllTabs.keys).toEqual(['Meta', 'Shift', 'w']);
+		});
+
+		it('restores a persisted Vim override and keeps the shipped ones alongside it', async () => {
+			// The override bucket merges with its shipped table exactly as the
+			// default buckets merge with theirs, so a Vim chord added in a later
+			// build reaches a user who already has the bucket persisted.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				vimTabShortcuts: {
+					nextTab: { id: 'nextTab', label: 'Next Tab', keys: ['Ctrl', 'l'] },
+				},
+			});
+
+			await loadAllSettings();
+
+			const bucket = useSettingsStore.getState().vimTabShortcuts;
+			expect(bucket.nextTab.keys).toEqual(['Ctrl', 'l']);
+			expect(bucket.prevTab).toEqual(VIM_TAB_SHORTCUTS.prevTab);
+		});
+
+		it('keeps a saved override for an id the sparse shipped table does not mention', async () => {
+			// THE regression this bucket's merge exists to prevent. The shipped
+			// override tables are sparse, so merging over them the way the default
+			// buckets do (iterate the table, take the saved keys) would keep only
+			// the handful of ids the table happens to name and silently discard
+			// every chord the user recorded for anything else. An override id that
+			// is genuinely retired is filtered later, by the resolver, which
+			// ignores an id no base map declares.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				vimShortcuts: {
+					toggleSidebar: { id: 'toggleSidebar', label: 'Toggle Sidebar', keys: ['Ctrl', 'n'] },
+				},
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().vimShortcuts.toggleSidebar.keys).toEqual(['Ctrl', 'n']);
+		});
+
+		it('repairs a macOS Alt character in a Vim override and writes it back to its own key', async () => {
+			// The Alt-character repair is reused rather than re-implemented, so an
+			// override recorded as Opt+J on a Mac (which types the character "∆")
+			// is fixed in the override bucket too, and the write-back goes to
+			// `vimShortcuts`, never to `shortcuts`.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				vimShortcuts: {
+					jumpToBottom: { id: 'jumpToBottom', label: 'Jump to Bottom', keys: ['Alt', '\u2206'] },
+				},
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().vimShortcuts.jumpToBottom.keys).toEqual(['Alt', 'j']);
+			const calls = vi.mocked(window.maestro.settings.set).mock.calls;
+			const persisted = calls.find(([k]) => k === 'vimShortcuts')?.[1] as Record<
+				string,
+				{ keys: string[] }
+			>;
+			expect(persisted.jumpToBottom.keys).toEqual(['Alt', 'j']);
+			expect(calls.filter(([k]) => k === 'shortcuts')).toEqual([]);
+		});
+
+		it('strips a reserved chord from a Vim override back to inherit, not to unbound', async () => {
+			// Cmd+Q is swallowed by the app menu, so the binding is dead wherever
+			// it is persisted and the strip has to cover the override buckets too.
+			// Where it lands differs from a base bucket on purpose: a sparse
+			// override table has no entry to fall back to, so `keys: []` here
+			// would leave the action unbound in Vim mode, which is exactly the
+			// silent-unbinding this phase forbids. Dropping `keys` instead means
+			// "inherit the default-mode chord", so the action stays reachable.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				vimShortcuts: {
+					toggleSidebar: { id: 'toggleSidebar', label: 'Toggle Sidebar', keys: ['Meta', 'q'] },
+				},
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().vimShortcuts.toggleSidebar.keys).toBeUndefined();
+			const persisted = vi
+				.mocked(window.maestro.settings.set)
+				.mock.calls.find(([k]) => k === 'vimShortcuts')?.[1] as Record<string, { keys?: string[] }>;
+			expect(persisted.toggleSidebar.keys).toBeUndefined();
+		});
+
+		it('strips a reserved chord from a Vim override back to the shipped Vim chord when there is one', async () => {
+			// When the shipped table DOES name the id, the free shipped chord is
+			// the better fallback: it is what the mode is supposed to bind, and
+			// taking it keeps the action on a real chord rather than on inherit.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				vimTabShortcuts: {
+					prevTab: { id: 'prevTab', label: 'Previous Tab', keys: ['Meta', 'h'] },
+				},
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().vimTabShortcuts.prevTab.keys).toEqual(['Ctrl', 'PageUp']);
+		});
+
+		it('leaves a Vim override with no keys alone and writes nothing', async () => {
+			// An override entry with no `keys` already says "inherit the
+			// default-mode chord". There is no chord to repair, and rewriting it
+			// as `[]` would turn inherit into unbound. Writing anything back here
+			// is also the start of the settings-watcher ping-pong: the other
+			// window reloads, re-migrates, and writes again.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				vimTabShortcuts: {
+					prevTab: { id: 'prevTab', label: 'Previous Tab' },
+					nextTab: { id: 'nextTab', label: 'Next Tab', keys: ['Ctrl', 'PageDown'] },
+				},
+			});
+
+			await loadAllSettings();
+
+			const bucket = useSettingsStore.getState().vimTabShortcuts;
+			expect(bucket.prevTab.keys).toBeUndefined();
+			expect(bucket.nextTab.keys).toEqual(['Ctrl', 'PageDown']);
+			expect(
+				vi.mocked(window.maestro.settings.set).mock.calls.filter(([k]) => k === 'vimTabShortcuts')
+			).toEqual([]);
+		});
+
+		it('does not apply the default-mode remaps to a Vim override', async () => {
+			// SHORTCUT_DEFAULT_REMAPS reads "this used to be the DEFAULT-mode
+			// default, move it to the current one". A Vim override on the same
+			// chord is a deliberate choice for a different mode, so running the
+			// remaps over it would move a binding the user set, and default mode's
+			// history would be rewriting Vim mode's bindings. The same chord in
+			// `shortcuts` IS remapped, which is what pins the gate rather than the
+			// absence of the rule.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				shortcuts: {
+					moveToGroup: { id: 'moveToGroup', label: 'Move to Group', keys: ['Meta', 'Shift', 'm'] },
+				},
+				vimShortcuts: {
+					moveToGroup: { id: 'moveToGroup', label: 'Move to Group', keys: ['Meta', 'Shift', 'm'] },
+				},
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().shortcuts.moveToGroup.keys).toEqual(['Alt', 'Meta', 'm']);
+			expect(useSettingsStore.getState().vimShortcuts.moveToGroup.keys).toEqual([
+				'Meta',
+				'Shift',
+				'm',
+			]);
+			expect(
+				vi.mocked(window.maestro.settings.set).mock.calls.filter(([k]) => k === 'vimShortcuts')
+			).toEqual([]);
+		});
+
+		it('keeps the shipped Vim tables when nothing is persisted', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().vimShortcuts).toEqual(VIM_SHORTCUTS);
+			expect(useSettingsStore.getState().vimTabShortcuts).toEqual(VIM_TAB_SHORTCUTS);
 		});
 
 		it('restores a persisted vim keyboard mode', async () => {
