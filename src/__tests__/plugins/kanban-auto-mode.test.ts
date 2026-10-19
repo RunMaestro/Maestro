@@ -390,7 +390,7 @@ describe('maestro-kanban Phase 07 run loop and execution guardrails', () => {
 			const { maestro, commandHandlers } = projectStub();
 			await plugin.activate(maestro);
 			await createConductor(commandHandlers);
-			await askConductor(commandHandlers);
+			const planId = await askConductor(commandHandlers);
 
 			expect(plugin.planRunSnapshot(PROJECT_PATH)!.status).toBe('running');
 			await vi.advanceTimersByTimeAsync(plugin.PLAN_RUN_TIMEOUT_MS + 1000);
@@ -399,9 +399,11 @@ describe('maestro-kanban Phase 07 run loop and execution guardrails', () => {
 			expect(run.status).toBe('failed');
 			expect(run.result!.ok).toBe(false);
 			expect(run.result!.error).toContain('did not finish this plan within the time');
-			// A timeout never touches the plan file at all.
+			// A timeout never touches the plan file at all. Asserted against THIS
+			// run's real plan id: a hardcoded placeholder id passes whether or not
+			// the timeout reads anything, since no call could ever name it.
 			expect(maestro.fs.read).not.toHaveBeenCalledWith(
-				expect.stringContaining(plugin.planFilePath(PROJECT_PATH, 'plan-anything'))
+				expect.stringContaining(plugin.planFilePath(PROJECT_PATH, planId))
 			);
 		});
 	});

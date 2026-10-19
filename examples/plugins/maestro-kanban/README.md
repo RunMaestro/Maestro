@@ -27,7 +27,7 @@ Where a card sits is remembered per board in the plugin's own storage, not re-de
 
 ## Columns and the board files
 
-Columns are yours. They live in two plain YAML files under `~/.maestro/`, and the plugin reads and writes nothing else on the filesystem.
+Columns are yours. They live in two plain YAML files under `~/.maestro/`. Those two, plus the conductor scratch folder and the archive file described later in this document, are the only four locations the plugin reads or writes.
 
 | File                                   | What it defines                                                          |
 | -------------------------------------- | ------------------------------------------------------------------------ |

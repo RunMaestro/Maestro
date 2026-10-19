@@ -1553,7 +1553,10 @@ export type AgentSendProgressEvent =
 export interface MaestroAgentsApi {
 	list(): Promise<unknown>;
 	get(agentId: string): Promise<unknown>;
-	dispatch(agentId: string, prompt: string, opts?: unknown): Promise<unknown>;
+	/** `tabId` is the only supported option: it must name an existing, visible AI
+	 * tab on `agentId`, and the host validates it. Omit it to use whichever AI
+	 * tab that agent already had active. */
+	dispatch(agentId: string, prompt: string, opts?: { tabId?: string }): Promise<unknown>;
 	/** Isolated cheap naming turn; never creates or resumes a provider conversation. */
 	generateTitle(agentId: string, firstMessage: string): Promise<string | null>;
 	/** Fresh provider session unless sessionId is supplied; never a desktop tab id. */
@@ -1650,6 +1653,12 @@ export interface MaestroSessionsApi {
 	 * its AI tab. Omit `tabId` to keep whichever AI tab that session already had
 	 * active. Navigation only - it neither reads nor modifies the session. */
 	focus(sessionId: string, tabId?: string): Promise<void>;
+	/** Ask the USER to add one existing session to this plugin's host-held grant
+	 * set (host API 1.26.0). Raises a one-time, host-drawn confirmation the plugin
+	 * cannot style, pre-answer, or suppress; it defaults to Don't Allow. Approved
+	 * means dispatch and History reads to that session now pass. Callable only by
+	 * a plugin whose manifest declares the `granted-sessions` scope. */
+	requestAccess(sessionId: string): Promise<{ granted: boolean }>;
 }
 
 /** Read PROJECTED, consented, audited session content (`transcripts:read`) or

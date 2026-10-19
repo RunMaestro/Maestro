@@ -36,8 +36,14 @@
 			"capability": "ui:contribute",
 			"reason": "Put one \"Kanban Board\" launcher button in the Left Bar's action row, so the board is reachable without remembering its keybinding. Runs the same open command the palette does and nothing else."
 		},
-		{ "capability": "storage:read", "reason": "Remember where a card was placed." },
-		{ "capability": "storage:write", "reason": "Remember where a card was placed." },
+		{
+			"capability": "storage:read",
+			"reason": "Read the board's own memory: card placements and positions, card descriptions and comment threads, board and plan settings (including the halt switch and auto mode), conductor ids and configuration, the activity feed, and which boards have archives."
+		},
+		{
+			"capability": "storage:write",
+			"reason": "Save the board's own memory: card placements and positions, card descriptions and comment threads, board and plan settings (including the halt switch and auto mode), conductor ids and configuration, the activity feed, and which boards have archives."
+		},
 		{
 			"capability": "notifications:toast",
 			"reason": "Surface failures, such as a trimmed or failed board update."
