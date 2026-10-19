@@ -254,6 +254,17 @@ describe('error-patterns', () => {
 			expect(result?.type).toBe('auth_expired');
 			expect(result?.message).toBe('Not authenticated with Cursor. Sign in again to continue.');
 		});
+
+		it('explains the Free-plan named-model error ahead of the generic model entry', () => {
+			const result = matchErrorPattern(
+				CURSOR_CLI_ERROR_PATTERNS,
+				'ActionRequiredError: Named models unavailable Free plans can only use Auto. Switch to Auto or upgrad'
+			);
+			expect(result?.type).toBe('agent_crashed');
+			expect(result?.message).toBe(
+				"Cursor's Free plan only allows the Auto model. Set this agent's model to auto, or upgrade your Cursor plan."
+			);
+		});
 	});
 
 	describe('CODEX_ERROR_PATTERNS', () => {

@@ -25,6 +25,11 @@ const FINAL_ASSISTANT_FLUSH_LINE =
 const AUTHENTICATION_REQUIRED_MESSAGE =
 	"Authentication required. Run 'agent login', pass --api-key/--auth-token, or set CURSOR_API_KEY/CURSOR_AUTH_TOKEN.";
 
+// Stderr of a Free-plan turn on a named default model, seen live on Cursor
+// 2026.10.16-e3cb207. Maestro's log cut it at 100 characters, so it ends mid-word.
+const FREE_PLAN_NAMED_MODEL_LINE =
+	'ActionRequiredError: Named models unavailable Free plans can only use Auto. Switch to Auto or upgrad';
+
 describe('CursorCliOutputParser', () => {
 	it('parses init events with session_id', () => {
 		const parser = new CursorCliOutputParser();
@@ -218,6 +223,22 @@ describe('CursorCliOutputParser', () => {
 				result: AUTHENTICATION_REQUIRED_MESSAGE,
 				session_id: 's1',
 			})
+		).toEqual(expected);
+	});
+
+	it('explains the Free-plan named-model error instead of reporting a crash', () => {
+		const parser = new CursorCliOutputParser();
+		const expected = expect.objectContaining({
+			type: 'agent_crashed',
+			message:
+				"Cursor's Free plan only allows the Auto model. Set this agent's model to auto, or upgrade your Cursor plan.",
+		});
+
+		expect(parser.detectErrorFromExit(1, FREE_PLAN_NAMED_MODEL_LINE, '')).toEqual(expected);
+		expect(parser.detectErrorFromLine(FREE_PLAN_NAMED_MODEL_LINE)).toEqual(expected);
+		// The second half alone still matches when stderr splits the line across chunks.
+		expect(
+			parser.detectErrorFromLine('Free plans can only use Auto. Switch to Auto or upgrade')
 		).toEqual(expected);
 	});
 

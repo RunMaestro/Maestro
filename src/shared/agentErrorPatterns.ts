@@ -1668,6 +1668,12 @@ const CURSOR_CLI_ERROR_PATTERNS: AgentErrorPatterns = {
 
 	agent_crashed: [
 		{
+			pattern: /named models unavailable|can only use auto/i,
+			message:
+				"Cursor's Free plan only allows the Auto model. Set this agent's model to auto, or upgrade your Cursor plan.",
+			recoverable: true,
+		},
+		{
 			pattern: /unknown model|invalid model|model.*not found|couldn'?t set model/i,
 			message: 'The selected model is not available on this Cursor account.',
 			recoverable: true,
