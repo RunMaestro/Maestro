@@ -45,7 +45,8 @@ export interface TurnRecording {
 		| 'omp'
 		| 'pi'
 		| 'qwen3-coder'
-		| 'antigravity';
+		| 'antigravity'
+		| 'cursor-cli';
 	/** Raw stdout chunks, in arrival order. */
 	chunks: string[];
 	/** The `close` event's exit code; null when the process died on a signal. */

@@ -1261,8 +1261,12 @@ describe('ExitHandler', () => {
 			);
 			emitter.on(
 				'exit',
-				(_sid: string, _code: number, _signal: unknown, settlement?: { answerCaptured?: boolean }) =>
-					settlements.push(settlement)
+				(
+					_sid: string,
+					_code: number,
+					_signal: unknown,
+					settlement?: { answerCaptured?: boolean }
+				) => settlements.push(settlement)
 			);
 
 			await exitHandler.handleExit('test-session', 0);
