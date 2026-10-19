@@ -639,6 +639,38 @@ toggle in the Help panel, and it is remembered between visits.
 it to disk as a PNG. The shot is the graph area exactly as it is painted, so
 frame it first.
 
+## Keyboard Modes
+
+Maestro ships two keyboard binding sets, and **exactly one is live at a time**:
+
+- **Default** - the bindings on this page. This is what ships.
+- **Vim** - Vim-native chords for the actions Vim has an opinion about, layered over Default.
+
+The two sets are never active together, which is what lets a Vim chord reuse a combination that Default mode gives to a different action.
+
+**Switching modes:** use the toggle at the top of **Settings** (`Cmd+,` / `Ctrl+,`) → **Shortcuts** tab. The same switch is in Quick Actions (`Cmd+K`, "Switch to Vim Keyboard Mode"), in the Left Bar menu, and on `Opt+Cmd+V` (`Alt+Ctrl+V` on Windows and Linux). That chord is deliberately the same in both modes, so you can always get back from the keyboard. If you have bound `Opt+Cmd+V` to an action of your own, your binding wins and the chord stops switching modes; the Shortcuts tab says so and names the action that took it. Every switch is confirmed with a toast naming the mode that is now live, because every chord in the app may have just changed under you.
+
+What the two modes do and do not share:
+
+- **Each mode keeps its own customizations.** Rebind a chord in one mode, switch away, switch back, and your chord is still there. Neither set is ever written by the other.
+- **Each mode has its own reset.** **Reset to defaults**, beside the toggle, restores the shipped bindings for the mode you are looking at and leaves the other mode's customizations untouched.
+- **Vim mode keeps every default chord it does not replace.** Vim's table is a short list of overrides, not a second full keymap, so no action becomes unreachable by switching modes. A row whose chord comes from the default set is tagged **Default** in the Shortcuts tab.
+- **When a Vim chord replaces a combination another action used, that action gets its own Vim chord.** Within one mode a combination fires exactly one action, so the displaced action cannot keep the chord it inherits in Default mode. It is listed at the top of the Shortcuts tab under **Needs a Vim binding** until you record one, and the toast on switching names it. No shipped Vim binding displaces anything today.
+- **Fixed shortcuts are shared.** `Esc` to close a modal, `Cmd+F` to open a find bar, and the other non-rebindable keys behave the same in both modes.
+
+### Vim Mode Bindings
+
+Every action not listed here keeps its Default-mode chord.
+
+| Action       | macOS           | Windows/Linux   |
+| ------------ | --------------- | --------------- |
+| Previous Tab | `Ctrl+PageUp`   | `Ctrl+PageUp`   |
+| Next Tab     | `Ctrl+PageDown` | `Ctrl+PageDown` |
+
+These two replace `Cmd+Shift+[` / `Cmd+Shift+]` from [Tab Management](#tab-management-shortcuts). No other binding uses `PageUp` or `PageDown`, so they displace nothing. The table grows in later releases.
+
+Vim chords are written with `Ctrl` so macOS shows the Vim-native `⌃` rather than `⌘`. Maestro treats `Ctrl` and `Cmd` as one modifier when it matches a keypress, so on a Mac `Cmd+PageUp` walks to the previous tab as well.
+
 ## Customizing Shortcuts
 
 Most shortcuts can be remapped to fit your workflow:
@@ -665,11 +697,27 @@ Some actions ship with **no** key assigned and read **Not set** instead of a com
 
 ### Combinations Maestro Will Not Take
 
-`Cmd+Shift+Arrow` (`Ctrl+Shift+Arrow` on Windows and Linux) belongs to the operating system inside a text field: it extends your selection to the top, bottom, start of the line, or end of the line. Maestro refuses to bind these, because a Maestro binding on one of them wins everywhere in the app, so you would lose select-to-end in every input and get an agent jump instead - which looks exactly like a broken text box.
+Two families of combination are reserved in both keyboard modes, because something outside Maestro's window already owns them.
 
-The recorder refuses these with an explanation. If you had one of them bound in an earlier version, Maestro clears it on the next launch and puts that action back on its default combination, so the action keeps working. You'll find it under its default binding in the Shortcuts tab.
+**Text-field selection.** `Cmd+Shift+Arrow` (`Ctrl+Shift+Arrow` on Windows and Linux) belongs to the operating system inside a text field: it extends your selection to the top, bottom, start of the line, or end of the line. Maestro refuses to bind these, because a Maestro binding on one of them wins everywhere in the app, so you would lose select-to-end in every input and get an agent jump instead - which looks exactly like a broken text box.
 
-**Resetting shortcuts:** There's currently no "reset to default" button - if you need to restore defaults, you can find the original bindings in this documentation or delete the shortcuts from your settings file.
+**Application menu.** macOS registers the combinations below on the menu bar, and a menu accelerator is swallowed before Maestro's window ever sees the keypress. A binding on one of them would simply never fire, which reads as a dead shortcut. One binding table serves every platform, so a combination the Mac menu owns is reserved everywhere: the alternative is a shortcut that works on Windows and is silently dead on a Mac.
+
+| macOS             | Windows/Linux      | What owns it                      |
+| ----------------- | ------------------ | --------------------------------- |
+| `Cmd+H`           | `Ctrl+H`           | Hide Maestro (app menu)           |
+| `Opt+Cmd+H`       | `Alt+Ctrl+H`       | Hide Others (app menu)            |
+| `Cmd+Q`           | `Ctrl+Q`           | Quit Maestro (app menu)           |
+| `Cmd+M`           | `Ctrl+M`           | Minimize Window (app menu)        |
+| `Cmd+X`           | `Ctrl+X`           | Cut (Edit menu)                   |
+| `Cmd+C`           | `Ctrl+C`           | Copy (Edit menu)                  |
+| `Cmd+V`           | `Ctrl+V`           | Paste (Edit menu)                 |
+| `Cmd+A`           | `Ctrl+A`           | Select All (Edit menu)            |
+| `Opt+Cmd+Shift+V` | `Alt+Ctrl+Shift+V` | Paste and Match Style (Edit menu) |
+
+The recorder refuses every combination in both families with an explanation. If you had one of them bound in an earlier version, Maestro clears it on the next launch and puts that action back on its default combination, so the action keeps working. You'll find it under its default binding in the Shortcuts tab.
+
+**Resetting shortcuts:** **Reset to defaults** sits at the top of the **Shortcuts** tab, beside the keyboard mode toggle. It asks for a second click, then restores the shipped bindings for the mode you are looking at. The other mode's customizations are kept - see [Keyboard Modes](#keyboard-modes).
 
 ### Changed Default Bindings
 
