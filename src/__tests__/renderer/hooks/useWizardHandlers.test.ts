@@ -2277,10 +2277,13 @@ describe('useWizardHandlers', () => {
 			expect(newSession.customPath).toBe('/opt/cursor/agent');
 			expect(newSession.customArgs).toBe('--header "X-Test: one"');
 			expect(newSession.customEnvVars).toEqual({ CURSOR_API_KEY: 'key' });
-			expect(newSession.customModel).toBe('gpt-5.3-codex');
-			expect(newSession.customEffort).toBe('high');
-			expect(newSession.customProviderPath).toBe('/providers/cursor');
-			expect(newSession.customContextWindow).toBe(300000);
+			// The config panel saves every edit to the agent's own config, so the
+			// session follows it instead of pinning a copy of whatever the config
+			// said when the panel was opened.
+			expect(newSession.customModel).toBeUndefined();
+			expect(newSession.customEffort).toBeUndefined();
+			expect(newSession.customProviderPath).toBeUndefined();
+			expect(newSession.customContextWindow).toBeUndefined();
 
 			// Should have been set as active
 			expect(useSessionStore.getState().activeSessionId).toBe(newSession.id);
