@@ -1,23 +1,50 @@
 /**
  * ShortcutsTab - Keyboard shortcuts settings tab
  *
- * Displays configurable shortcuts with recording, filtering, and
- * grouping (General vs AI Tab). Self-sources shortcut settings
- * from useSettings().
+ * Displays configurable shortcuts with recording, filtering, and grouping
+ * (General vs AI Tab) for ONE keyboard mode at a time. The toggle at the top is
+ * the primary way to switch modes.
+ *
+ * Everything below the toggle reads and writes through `useActiveShortcuts()`,
+ * never `useSettings().shortcuts`. Pairing a bucket with a mode by hand is
+ * silent in both directions: the list would show default-mode chords while Vim
+ * mode matched other ones, and a recording would edit the set the user is not
+ * looking at. `encoreFeatures` and the mode setter still come from
+ * `useSettings()`.
  */
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Keyboard, MessageSquare, X } from 'lucide-react';
-import { useSettings } from '../../../hooks';
+import { AlertTriangle, Keyboard, MessageSquare, RotateCcw, X } from 'lucide-react';
+import { useActiveShortcuts, useSettings } from '../../../hooks';
 import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
 import { buildKeysFromEvent } from '../../../utils/shortcutRecorder';
-import { shortcutKeysEqual, findReservedShortcutCombo } from '../../../../shared/shortcutKeys';
+import {
+	shortcutKeysCollide,
+	shortcutKeysEqual,
+	findReservedShortcutCombo,
+} from '../../../../shared/shortcutKeys';
 import { ShortcutFilterButton } from '../../ui/ShortcutFilterButton';
 import { GhostIconButton } from '../../ui/GhostIconButton';
+import { MiniBadge } from '../../ui/MiniBadge';
+import { SegmentedControl, type SegmentedOption } from '../../ui/SegmentedControl';
 import { FIXED_SHORTCUTS } from '../../../constants/shortcuts';
 import { availableShortcuts } from '../../../utils/encoreShortcuts';
 import { SettingsSectionHeading } from '../SettingsSectionHeading';
+import {
+	KEYBOARD_MODES,
+	KEYBOARD_MODE_LABELS,
+	type KeyboardMode,
+} from '../../../../shared/shortcut-types';
 import type { Theme, Shortcut } from '../../../types';
+
+/**
+ * The toggle's segments, in the order `KEYBOARD_MODES` pins. Derived from that
+ * list rather than written out, so a mode added there cannot be left out of the
+ * only control that switches modes with a mouse.
+ */
+const KEYBOARD_MODE_OPTIONS: ReadonlyArray<SegmentedOption<KeyboardMode>> = KEYBOARD_MODES.map(
+	(value) => ({ value, label: KEYBOARD_MODE_LABELS[value] })
+);
 
 export interface ShortcutsTabProps {
 	theme: Theme;
@@ -26,7 +53,17 @@ export interface ShortcutsTabProps {
 }
 
 export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: ShortcutsTabProps) {
-	const { shortcuts, setShortcuts, tabShortcuts, setTabShortcuts, encoreFeatures } = useSettings();
+	const { encoreFeatures, setKeyboardMode } = useSettings();
+	const {
+		keyboardMode,
+		shortcuts,
+		setShortcuts,
+		tabShortcuts,
+		setTabShortcuts,
+		resetToDefaults,
+		isInherited,
+		displaced,
+	} = useActiveShortcuts();
 
 	const [recordingId, setRecordingId] = useState<string | null>(null);
 	const [shortcutsFilter, setShortcutsFilter] = useState('');
@@ -34,7 +71,33 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 	const [filterShortcutKeys, setFilterShortcutKeys] = useState<string[]>([]);
 	const [showUnassignedOnly, setShowUnassignedOnly] = useState(false);
 	const [conflictMessage, setConflictMessage] = useState<string | null>(null);
+	const [resetPending, setResetPending] = useState(false);
 	const shortcutsFilterRef = useRef<HTMLInputElement>(null);
+
+	const modeLabel = KEYBOARD_MODE_LABELS[keyboardMode];
+	const otherModeLabel = KEYBOARD_MODE_LABELS[keyboardMode === 'default' ? 'vim' : 'default'];
+
+	// A pending reset belongs to the mode it was armed in. Switching modes with
+	// the confirmation half-done would otherwise fire the second click at the
+	// other mode's bucket, which is the one thing this screen promises never to
+	// touch.
+	const changeMode = (next: KeyboardMode) => {
+		setResetPending(false);
+		setConflictMessage(null);
+		setRecordingId(null);
+		setKeyboardMode(next);
+	};
+
+	const handleReset = () => {
+		if (!resetPending) {
+			setResetPending(true);
+			return;
+		}
+		setResetPending(false);
+		setConflictMessage(null);
+		setRecordingId(null);
+		resetToDefaults();
+	};
 
 	// Notify parent of recording state changes (for escape handler coordination)
 	useEffect(() => {
@@ -121,11 +184,19 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 		// Reject rather than auto-steal. Taking the chord would leave the other
 		// action dead with no indication, and the user would find out weeks later
 		// when a key they have used for months stops working.
+		//
+		// Scoped to the mode being edited: `shortcuts` / `tabShortcuts` are this
+		// mode's EFFECTIVE set, and FIXED_SHORTCUTS is shared by every mode. The
+		// other mode is deliberately NOT scanned, because the two sets are never
+		// live together, so a chord default mode gives to another action is free
+		// here. Compared with `shortcutKeysCollide` rather than an equality
+		// check: Ctrl+O and Cmd+O are one keypress to the matcher, so an equality
+		// check would hand out a chord that fires an action already bound.
 		const conflict = [
 			...Object.values(shortcuts),
 			...Object.values(tabShortcuts),
 			...Object.values(FIXED_SHORTCUTS),
-		].find((sc) => sc.id !== actionId && shortcutKeysEqual(sc.keys, keys));
+		].find((sc) => sc.id !== actionId && shortcutKeysCollide(sc.keys, keys));
 
 		if (conflict) {
 			// Name the LABEL, not the id: the user picked this action from a list of
@@ -165,9 +236,22 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 	});
 	const filteredCount = filteredShortcuts.length;
 
+	// Actions this mode's own chords took the keypress of. They are unbound until
+	// the user records something here, so they lead the list instead of sitting
+	// in place among the hundred rows below - an action the user cannot see is
+	// unreachable is indistinguishable from a bug. MOVED rather than copied, so
+	// the same action never appears twice in one list. Empty in default mode,
+	// which is the set every other mode inherits from and so displaces nothing.
+	const displacedIds = new Set(displaced);
+
 	// Group shortcuts by category
-	const generalShortcuts = filteredShortcuts.filter((sc) => !sc.isTabShortcut);
-	const tabShortcutsFiltered = filteredShortcuts.filter((sc) => sc.isTabShortcut);
+	const needsBinding = filteredShortcuts.filter((sc) => displacedIds.has(sc.id));
+	const generalShortcuts = filteredShortcuts.filter(
+		(sc) => !sc.isTabShortcut && !displacedIds.has(sc.id)
+	);
+	const tabShortcutsFiltered = filteredShortcuts.filter(
+		(sc) => sc.isTabShortcut && !displacedIds.has(sc.id)
+	);
 
 	const renderShortcutItem = (sc: Shortcut & { isTabShortcut: boolean }) => (
 		<div
@@ -175,8 +259,25 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 			className="flex items-center justify-between p-3 rounded border"
 			style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
 		>
-			<span className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
-				{sc.label}
+			<span className="flex items-center gap-2 min-w-0">
+				<span className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+					{sc.label}
+				</span>
+				{isInherited(sc.id) && !displacedIds.has(sc.id) && (
+					// The chord on this row comes from the default set, not from this
+					// mode. Without the tag, an inherited chord and one this mode
+					// chose look identical, and the user cannot tell what "Reset to
+					// defaults" is about to change. A displaced row is deliberately
+					// exempt: it has no override either, but its chord is gone rather
+					// than inherited, and it already says so by reading "Not set".
+					<MiniBadge
+						label="Default"
+						theme={theme}
+						color={theme.colors.textDim}
+						title={`Inherited from the default set. ${modeLabel} mode does not replace this one.`}
+						testId={`shortcut-inherited-${sc.id}`}
+					/>
+				)}
 			</span>
 			<div className="flex items-center gap-1">
 				<button
@@ -243,6 +344,42 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 					Note: Most functionality is unavailable until you've created your first agent.
 				</p>
 			)}
+			<div data-setting-id="shortcuts-keyboard-mode" className="mb-3">
+				<div className="flex items-center gap-2 flex-wrap">
+					<SegmentedControl
+						value={keyboardMode}
+						onChange={changeMode}
+						options={KEYBOARD_MODE_OPTIONS}
+						theme={theme}
+						ariaLabel="Keyboard mode"
+						testId="shortcuts-keyboard-mode"
+					/>
+					{/* Restoring the shipped bindings throws away deliberate work, so it
+					    asks for a second click. Inline rather than a modal: the mistake
+					    only costs this mode's customizations, and the other mode's are
+					    untouched either way. */}
+					<button
+						type="button"
+						onClick={handleReset}
+						onBlur={() => setResetPending(false)}
+						title={`Restore the shipped ${modeLabel} mode bindings`}
+						data-testid="shortcuts-reset-defaults"
+						className="flex items-center gap-1.5 px-2 py-1 rounded border text-xs transition-colors hover:bg-white/5"
+						style={{
+							borderColor: resetPending ? theme.colors.warning : theme.colors.border,
+							color: resetPending ? theme.colors.warning : theme.colors.textDim,
+						}}
+					>
+						<RotateCcw className="w-3 h-3" />
+						{resetPending ? `Reset ${modeLabel} mode?` : 'Reset to defaults'}
+					</button>
+				</div>
+				<p className="text-xs mt-1.5" style={{ color: theme.colors.textDim }}>
+					{resetPending
+						? `Click again to restore the shipped ${modeLabel} mode bindings. Your ${otherModeLabel} mode customizations are kept.`
+						: `Only one mode is active at a time, and each keeps its own customizations. ${KEYBOARD_MODE_LABELS.vim} mode keeps every default chord it does not replace.`}
+				</p>
+			</div>
 			<div className="flex items-stretch gap-2 mb-3">
 				<input
 					ref={shortcutsFilterRef}
@@ -321,6 +458,20 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 				from the main interface to view the full list of keyboard shortcuts.
 			</p>
 			<div className="space-y-5 flex-1 overflow-y-auto pr-2 scrollbar-thin">
+				{/* Actions this mode's chords displaced, which have no binding until
+				    the user records one here. */}
+				{needsBinding.length > 0 && (
+					<div>
+						<SettingsSectionHeading
+							icon={AlertTriangle}
+							description={`${modeLabel} mode gives these actions' chords to something else, so they are unbound until you record a ${modeLabel} chord for them.`}
+						>
+							Needs a {modeLabel} binding
+						</SettingsSectionHeading>
+						<div className="space-y-2">{needsBinding.map(renderShortcutItem)}</div>
+					</div>
+				)}
+
 				{/* General Shortcuts Section */}
 				{generalShortcuts.length > 0 && (
 					<div>

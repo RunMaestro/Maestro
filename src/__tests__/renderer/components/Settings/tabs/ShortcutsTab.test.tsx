@@ -8,6 +8,14 @@
  * - Recording new shortcuts
  * - Canceling recording with Escape
  * - Recording change callback
+ * - The keyboard mode toggle, the per-mode reset, inherited rows, and the
+ *   displaced actions that need a binding in the active mode
+ *
+ * The tab reads its bindings from `useActiveShortcuts()`, which is mocked here
+ * so the list is the four fixtures below rather than the whole shipped set.
+ * `mockMode` / `mockInheritedIds` / `mockDisplaced` stand in for what that hook
+ * computes from the live mode; they are reset in `afterEach` so a mode a test
+ * switches to cannot leak into the next one.
  */
 
 import React from 'react';
@@ -15,6 +23,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { ShortcutsTab } from '../../../../../renderer/components/Settings/tabs/ShortcutsTab';
 import type { Shortcut } from '../../../../../renderer/types';
+import type { KeyboardMode } from '../../../../../shared/shortcut-types';
 
 import { mockTheme } from '../../../../helpers/mockTheme';
 // Mock formatShortcutKeys
@@ -24,6 +33,8 @@ vi.mock('../../../../../renderer/utils/shortcutFormatter', () => ({
 
 const mockSetShortcuts = vi.fn();
 const mockSetTabShortcuts = vi.fn();
+const mockSetKeyboardMode = vi.fn();
+const mockResetToDefaults = vi.fn();
 
 const mockShortcuts: Record<string, Shortcut> = {
 	'new-session': { id: 'new-session', label: 'New Session', keys: ['Meta', 'n'] },
@@ -35,14 +46,44 @@ const mockTabShortcuts: Record<string, Shortcut> = {
 	'tab-send': { id: 'tab-send', label: 'Send Message', keys: ['Enter'] },
 };
 
+let mockMode: KeyboardMode = 'default';
+let mockInheritedIds: string[] = [];
+let mockDisplaced: string[] = [];
+
 vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 	useSettings: () => ({
+		encoreFeatures: undefined,
+		setKeyboardMode: mockSetKeyboardMode,
+	}),
+}));
+
+vi.mock('../../../../../renderer/hooks/settings/useActiveShortcuts', () => ({
+	useActiveShortcuts: () => ({
+		keyboardMode: mockMode,
 		shortcuts: mockShortcuts,
 		setShortcuts: mockSetShortcuts,
 		tabShortcuts: mockTabShortcuts,
 		setTabShortcuts: mockSetTabShortcuts,
+		resetToDefaults: mockResetToDefaults,
+		isInherited: (id: string) => mockInheritedIds.includes(id),
+		displaced: mockDisplaced,
 	}),
 }));
+
+/** Render and let the mount-time filter autofocus timer run. */
+async function renderTab(props: Partial<React.ComponentProps<typeof ShortcutsTab>> = {}) {
+	const result = render(<ShortcutsTab theme={mockTheme} {...props} />);
+	await act(async () => {
+		await vi.advanceTimersByTimeAsync(100);
+	});
+	return result;
+}
+
+function resetModeFixtures() {
+	mockMode = 'default';
+	mockInheritedIds = [];
+	mockDisplaced = [];
+}
 
 describe('ShortcutsTab', () => {
 	beforeEach(() => {
@@ -52,6 +93,7 @@ describe('ShortcutsTab', () => {
 	afterEach(() => {
 		vi.useRealTimers();
 		vi.clearAllMocks();
+		resetModeFixtures();
 	});
 
 	it('should display shortcuts list', async () => {
@@ -607,5 +649,205 @@ describe('ShortcutsTab unbound shortcuts', () => {
 			...mockShortcuts,
 			'tile-ai': { ...mockShortcuts['tile-ai'], keys: ['Meta', 'Shift', 'y'] },
 		});
+	});
+});
+
+/**
+ * Keyboard mode: the toggle at the top of the tab, the per-mode reset, and the
+ * "Default" tag on a row whose chord this mode does not replace.
+ *
+ * Exactly one mode is live, so the toggle is the only thing on this screen that
+ * changes which set every row below it belongs to - and the reset beside it
+ * must only ever touch the live mode's bucket.
+ */
+describe('ShortcutsTab keyboard mode', () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+		vi.clearAllMocks();
+		resetModeFixtures();
+	});
+
+	it('offers both modes with the live one selected', async () => {
+		await renderTab();
+
+		expect(screen.getByTestId('shortcuts-keyboard-mode-default')).toHaveAttribute(
+			'aria-checked',
+			'true'
+		);
+		expect(screen.getByTestId('shortcuts-keyboard-mode-vim')).toHaveAttribute(
+			'aria-checked',
+			'false'
+		);
+	});
+
+	it('switches the mode from the toggle', async () => {
+		await renderTab();
+
+		fireEvent.click(screen.getByTestId('shortcuts-keyboard-mode-vim'));
+
+		expect(mockSetKeyboardMode).toHaveBeenCalledWith('vim');
+	});
+
+	it('shows the live mode as selected after a switch', async () => {
+		mockMode = 'vim';
+		await renderTab();
+
+		expect(screen.getByTestId('shortcuts-keyboard-mode-vim')).toHaveAttribute(
+			'aria-checked',
+			'true'
+		);
+	});
+
+	it('explains that one mode is live and that Vim inherits the rest', async () => {
+		await renderTab();
+
+		expect(screen.getByText(/Only one mode is active at a time/)).toBeInTheDocument();
+		expect(screen.getByText(/keeps every default chord it does not replace/)).toBeInTheDocument();
+	});
+
+	it('wraps the toggle in the searchable setting id', async () => {
+		const { container } = await renderTab();
+
+		expect(container.querySelector('[data-setting-id="shortcuts-keyboard-mode"]')).not.toBeNull();
+	});
+
+	it('asks for a second click before resetting', async () => {
+		await renderTab();
+
+		const reset = screen.getByTestId('shortcuts-reset-defaults');
+		fireEvent.click(reset);
+
+		expect(mockResetToDefaults).not.toHaveBeenCalled();
+		expect(reset).toHaveTextContent('Reset Default mode?');
+
+		fireEvent.click(reset);
+
+		expect(mockResetToDefaults).toHaveBeenCalledTimes(1);
+	});
+
+	it('names the mode the reset restores and the one it leaves alone', async () => {
+		mockMode = 'vim';
+		await renderTab();
+
+		fireEvent.click(screen.getByTestId('shortcuts-reset-defaults'));
+
+		expect(screen.getByTestId('shortcuts-reset-defaults')).toHaveTextContent('Reset Vim mode?');
+		expect(
+			screen.getByText(/shipped Vim mode bindings. Your Default mode customizations are kept/)
+		).toBeInTheDocument();
+	});
+
+	it('disarms a pending reset when the mode changes under it', async () => {
+		await renderTab();
+
+		const reset = screen.getByTestId('shortcuts-reset-defaults');
+		fireEvent.click(reset);
+		expect(reset).toHaveTextContent('Reset Default mode?');
+
+		fireEvent.click(screen.getByTestId('shortcuts-keyboard-mode-vim'));
+
+		// The second click would otherwise land on the mode the user just left.
+		expect(reset).toHaveTextContent('Reset to defaults');
+		expect(mockResetToDefaults).not.toHaveBeenCalled();
+	});
+
+	it('tags a row whose chord this mode does not replace', async () => {
+		mockMode = 'vim';
+		mockInheritedIds = ['close-session'];
+		await renderTab();
+
+		expect(screen.getByTestId('shortcut-inherited-close-session')).toHaveTextContent('Default');
+		expect(screen.queryByTestId('shortcut-inherited-new-session')).not.toBeInTheDocument();
+	});
+
+	it('tags nothing in default mode, which is the set every mode inherits', async () => {
+		await renderTab();
+
+		expect(screen.queryByTestId('shortcut-inherited-close-session')).not.toBeInTheDocument();
+	});
+
+	it('refuses a chord that fires an existing binding through the Meta/Ctrl collapse', async () => {
+		await renderTab();
+
+		const button = screen.getByText('Meta+w');
+		fireEvent.click(button);
+		fireEvent.keyDown(button, { key: 'n', ctrlKey: true });
+
+		// Ctrl+N is not EQUAL to New Session's Meta+N, but it is the same
+		// keypress to the matcher, so an equality check would have handed out a
+		// chord that already fires another action.
+		expect(mockSetShortcuts).not.toHaveBeenCalled();
+		expect(screen.getByText(/already used by "New Session"/)).toBeInTheDocument();
+	});
+});
+
+/**
+ * Displaced actions: a mode override took the chord this action inherited, so
+ * it is unbound until the user records one here. The tab must ask for that
+ * chord rather than leaving the action silently unreachable.
+ */
+describe('ShortcutsTab displaced actions', () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+		mockMode = 'vim';
+		mockDisplaced = ['toggle-mode'];
+		// A displaced action has no override of its own, and the resolver hands
+		// the tab an empty chord for it.
+		mockInheritedIds = ['toggle-mode'];
+		mockShortcuts['toggle-mode'] = { id: 'toggle-mode', label: 'Toggle Mode', keys: [] };
+	});
+
+	afterEach(() => {
+		mockShortcuts['toggle-mode'] = {
+			id: 'toggle-mode',
+			label: 'Toggle Mode',
+			keys: ['Meta', 'j'],
+		};
+		vi.useRealTimers();
+		vi.clearAllMocks();
+		resetModeFixtures();
+	});
+
+	it('leads the list with the actions that need a binding in this mode', async () => {
+		await renderTab();
+
+		expect(screen.getByText('Needs a Vim binding')).toBeInTheDocument();
+		// Moved, not copied: two rows for one action would show two different
+		// chords for it.
+		expect(screen.getAllByText('Toggle Mode')).toHaveLength(1);
+	});
+
+	it('does not tag a displaced row as inherited', async () => {
+		await renderTab();
+
+		// It has no override either, but its chord is gone rather than inherited,
+		// and the row already says so by reading "Not set".
+		expect(screen.queryByTestId('shortcut-inherited-toggle-mode')).not.toBeInTheDocument();
+		expect(screen.getByText('Not set')).toBeInTheDocument();
+	});
+
+	it('records a chord for a displaced action into the active mode', async () => {
+		await renderTab();
+
+		const button = screen.getByText('Not set');
+		fireEvent.click(button);
+		fireEvent.keyDown(button, { key: 'p', ctrlKey: true });
+
+		expect(mockSetShortcuts).toHaveBeenCalledWith({
+			...mockShortcuts,
+			'toggle-mode': { ...mockShortcuts['toggle-mode'], keys: ['Ctrl', 'p'] },
+		});
+	});
+
+	it('shows no such section when nothing is displaced', async () => {
+		mockDisplaced = [];
+		await renderTab();
+
+		expect(screen.queryByText('Needs a Vim binding')).not.toBeInTheDocument();
+		expect(screen.getAllByText('Toggle Mode')).toHaveLength(1);
 	});
 });

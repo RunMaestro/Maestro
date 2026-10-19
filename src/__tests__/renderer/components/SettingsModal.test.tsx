@@ -119,6 +119,7 @@ const mockSetCustomThemeColors = vi.fn();
 const mockSetCustomThemeBaseId = vi.fn();
 const mockSetShortcuts = vi.fn();
 const mockSetTabShortcuts = vi.fn();
+const mockResetShortcutsToDefaults = vi.fn();
 const mockSetFontFamily = vi.fn();
 const mockSetFontSize = vi.fn();
 const mockSetSurfaceFontFamily = vi.fn();
@@ -152,6 +153,16 @@ const mockSetDirectorNotesSettings = vi.fn();
 
 // Mock useSettings hook (now self-sources all settings previously passed as props)
 let mockUseSettingsOverrides: Record<string, any> = {};
+
+// The shortcut rows the Shortcuts tab renders. Shared by the two mocks below so
+// they cannot drift: `useSettings` still carries them for everything else that
+// reads the buckets, and the tab itself reads them through
+// `useActiveShortcuts()`.
+const MOCK_SHORTCUTS: Record<string, Shortcut> = {
+	'new-session': { id: 'new-session', label: 'New Session', keys: ['Meta', 'n'] },
+	'close-session': { id: 'close-session', label: 'Close Session', keys: ['Meta', 'w'] },
+	'toggle-mode': { id: 'toggle-mode', label: 'Toggle Mode', keys: ['Meta', 'j'] },
+};
 vi.mock('../../../renderer/hooks/settings/useSettings', () => ({
 	useSettings: () => ({
 		// Theme settings
@@ -178,14 +189,12 @@ vi.mock('../../../renderer/hooks/settings/useSettings', () => ({
 		themeGloss: 'off',
 		setThemeGloss: vi.fn(),
 		// Shortcut settings
-		shortcuts: {
-			'new-session': { id: 'new-session', label: 'New Session', keys: ['Meta', 'n'] },
-			'close-session': { id: 'close-session', label: 'Close Session', keys: ['Meta', 'w'] },
-			'toggle-mode': { id: 'toggle-mode', label: 'Toggle Mode', keys: ['Meta', 'j'] },
-		},
+		shortcuts: MOCK_SHORTCUTS,
 		setShortcuts: mockSetShortcuts,
 		tabShortcuts: {},
 		setTabShortcuts: mockSetTabShortcuts,
+		keyboardMode: 'default',
+		setKeyboardMode: vi.fn(),
 		// Display settings
 		fontFamily: 'Menlo',
 		setFontFamily: mockSetFontFamily,
@@ -363,6 +372,23 @@ vi.mock('../../../renderer/hooks/settings/useSettings', () => ({
 		},
 		setFilePreviewToolbarButtonVisibility: vi.fn(),
 		...mockUseSettingsOverrides,
+	}),
+}));
+
+// The Shortcuts tab takes its bindings from the mode-aware door rather than
+// from the buckets, so default mode is mocked here with the same fixtures. A
+// test that overrides `shortcuts` / `tabShortcuts` still drives the tab, which
+// is what the XSS and unicode label cases rely on.
+vi.mock('../../../renderer/hooks/settings/useActiveShortcuts', () => ({
+	useActiveShortcuts: () => ({
+		keyboardMode: 'default',
+		shortcuts: mockUseSettingsOverrides.shortcuts ?? MOCK_SHORTCUTS,
+		setShortcuts: mockSetShortcuts,
+		tabShortcuts: mockUseSettingsOverrides.tabShortcuts ?? {},
+		setTabShortcuts: mockSetTabShortcuts,
+		resetToDefaults: mockResetShortcutsToDefaults,
+		isInherited: () => false,
+		displaced: [],
 	}),
 }));
 

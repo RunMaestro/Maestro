@@ -30,6 +30,25 @@ export const SHORTCUTS_SETTINGS: SearchableSetting[] = [
 			'modal',
 		],
 	},
+	{
+		id: 'shortcuts-keyboard-mode',
+		tab: 'shortcuts',
+		tabLabel: 'Shortcuts',
+		label: 'Keyboard Mode',
+		description:
+			'Switch between the Default and Vim key sets. Only one is active at a time, each keeps its own customizations and its own reset, and Vim mode keeps every default chord it does not replace',
+		keywords: [
+			'keyboard mode',
+			'vim',
+			'vim mode',
+			'default',
+			'modal editing',
+			'reset to defaults',
+			'reset shortcuts',
+			'switch',
+			'toggle',
+		],
+	},
 ];
 
 // ---------------------------------------------------------------------------

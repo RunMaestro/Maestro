@@ -51,6 +51,19 @@ export type KeyboardMode = 'default' | 'vim';
 export const KEYBOARD_MODES: readonly KeyboardMode[] = ['default', 'vim'];
 
 /**
+ * The one spelling of each mode's name in user-facing copy.
+ *
+ * Every surface that switches modes says the mode's name (the Settings toggle,
+ * the Quick Actions entry, the menu item, the toast that confirms the switch),
+ * and a `Record` keyed by the union is what makes a new mode a compile error in
+ * each of them rather than a mode that renders as its raw id in one place.
+ */
+export const KEYBOARD_MODE_LABELS: Record<KeyboardMode, string> = {
+	default: 'Default',
+	vim: 'Vim',
+};
+
+/**
  * Narrow an unknown value to a {@link KeyboardMode}, or `undefined` if it is
  * not one.
  *

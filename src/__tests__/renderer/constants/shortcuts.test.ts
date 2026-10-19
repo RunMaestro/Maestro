@@ -26,7 +26,11 @@ import {
 	TAB_SHORTCUTS,
 } from '../../../renderer/constants/shortcuts';
 import { VIM_SHORTCUTS, VIM_TAB_SHORTCUTS } from '../../../renderer/constants/vimShortcuts';
-import { KEYBOARD_MODES, asKeyboardMode } from '../../../shared/shortcut-types';
+import {
+	KEYBOARD_MODES,
+	KEYBOARD_MODE_LABELS,
+	asKeyboardMode,
+} from '../../../shared/shortcut-types';
 import type { Shortcut, ShortcutOverride } from '../../../shared/shortcut-types';
 import { findReservedShortcutCombo, shortcutKeysCollide } from '../../../shared/shortcutKeys';
 
@@ -394,6 +398,16 @@ describe('keyboard modes', () => {
 		for (const mode of KEYBOARD_MODES) expect(asKeyboardMode(mode)).toBe(mode);
 		for (const value of ['Vim', 'VIM', 'emacs', '', ' vim', null, undefined, 0, {}, ['vim']]) {
 			expect(asKeyboardMode(value)).toBeUndefined();
+		}
+	});
+
+	it('names every mode for the surfaces that switch modes', () => {
+		// The toggle, the Quick Actions entry, the menu item and the switch toast
+		// all say the mode's name. A mode with no label here renders as its raw
+		// id in whichever of them forgot to handle it.
+		expect(KEYBOARD_MODE_LABELS).toEqual({ default: 'Default', vim: 'Vim' });
+		for (const mode of KEYBOARD_MODES) {
+			expect(KEYBOARD_MODE_LABELS[mode]).toBeTruthy();
 		}
 	});
 });
