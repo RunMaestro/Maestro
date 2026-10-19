@@ -23,6 +23,7 @@ import { MediaPlaybackHost } from './MediaPlayback';
 import { ThroughputGaugeHost } from './ThroughputGauge';
 import { ThoughtStreamPanel } from './ThoughtStreamPanel';
 import { ContextTimelinePanel } from './ContextTimelinePanel';
+import { SequencePrefixIndicator } from './SequencePrefixIndicator';
 import { PermissionPrompt } from './PermissionPrompt';
 import { CadenzaLayer } from './Cadenza';
 import { ConcertoStageModal } from './Concerto/ConcertoStageModal';
@@ -294,6 +295,13 @@ export function AppShell({
 
 			<ToastContainer theme={theme} onSessionClick={onToastSessionClick} />
 			<CenterFlash theme={theme} />
+			{/* --- KEY SEQUENCE PREFIX (single, app-wide) ---
+			    Shows the keys captured so far while the user is partway through a
+			    sequence (`g` of `g g`). Renders nothing the rest of the time. Lives
+			    here rather than in the composer's pill stack because a sequence is
+			    typeable in a group chat and on the empty state too. See
+			    SequencePrefixIndicator. */}
+			<SequencePrefixIndicator theme={theme} />
 			{/* --- IMAGE CONTEXT MENU (single, app-wide) ---
 			    One delegated listener gives every image and diagram on screen a
 			    right-click Copy / Save. Surfaces wire up nothing. See

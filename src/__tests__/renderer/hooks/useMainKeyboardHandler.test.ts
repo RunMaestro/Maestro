@@ -16,6 +16,10 @@ import {
 	clearDesktopAiTabSelections,
 	consumeDesktopAiTabSelection,
 } from '../../../renderer/utils/desktopTabSelectionSync';
+import {
+	clearSequencePrefix,
+	useSequencePrefixStore,
+} from '../../../renderer/stores/sequencePrefixStore';
 
 // Cmd+Shift+J delegates to the shared tile action. Mocked so the test asserts the
 // wiring rather than re-running the layout transform (covered in tileNewTab.test).
@@ -5478,5 +5482,137 @@ describe('useMainKeyboardHandler - key sequences', () => {
 			'g'
 		);
 		expect(setLeftSidebarOpen).not.toHaveBeenCalled();
+	});
+
+	// --- What the prefix indicator is told ---
+	//
+	// The matcher is pure and lives in the effect's closure, so the chip reads a
+	// store the handler publishes to. These assert the publish, not the chip
+	// (SequencePrefixIndicator.test.tsx owns that).
+	describe('published prefix', () => {
+		const publishedPrefix = () => useSequencePrefixStore.getState().prefix;
+
+		beforeEach(() => {
+			clearSequencePrefix();
+		});
+
+		afterEach(() => {
+			clearSequencePrefix();
+		});
+
+		it('publishes a captured step and clears it on the match', () => {
+			mountHandler(sidebarSequenceContext({ setLeftSidebarOpen: vi.fn() }));
+
+			press('g');
+			expect(publishedPrefix()).toEqual([['g']]);
+
+			press('s');
+			expect(publishedPrefix()).toEqual([]);
+		});
+
+		it('clears the published prefix when a wrong key aborts the run', () => {
+			mountHandler(sidebarSequenceContext({ setLeftSidebarOpen: vi.fn() }));
+
+			press('g');
+			// Asserted live first, or the test passes for a chip that was never
+			// shown at all.
+			expect(publishedPrefix()).toEqual([['g']]);
+
+			press('x');
+			expect(publishedPrefix()).toEqual([]);
+		});
+
+		it('clears the published prefix on Escape', () => {
+			mountHandler(sidebarSequenceContext({ setLeftSidebarOpen: vi.fn() }));
+
+			press('g');
+			expect(publishedPrefix()).toEqual([['g']]);
+
+			press('Escape');
+			expect(publishedPrefix()).toEqual([]);
+		});
+
+		it('clears the published prefix when the window loses focus', () => {
+			mountHandler(sidebarSequenceContext({ setLeftSidebarOpen: vi.fn() }));
+
+			press('g');
+			expect(publishedPrefix()).toEqual([['g']]);
+
+			act(() => {
+				window.dispatchEvent(new Event('blur'));
+			});
+
+			expect(publishedPrefix()).toEqual([]);
+		});
+
+		it('clears the published prefix when focus moves into a text field', () => {
+			// The gate closes, so the run ends - and the chip has to go with it,
+			// or it sits over a composer the user is now typing in.
+			mountHandler(sidebarSequenceContext({ setLeftSidebarOpen: vi.fn() }));
+
+			press('g');
+			expect(publishedPrefix()).toEqual([['g']]);
+
+			const textarea = document.createElement('textarea');
+			document.body.appendChild(textarea);
+			textarea.focus();
+			press('s');
+
+			expect(publishedPrefix()).toEqual([]);
+		});
+
+		it('leaves the published prefix alone through a modifier-only keydown', () => {
+			// Shift fires its own keydown before the character it shifts, so a
+			// capital mid-sequence must not blank the chip for a frame.
+			mountHandler(
+				sidebarSequenceContext({
+					setLeftSidebarOpen: vi.fn(),
+					sequenceBindings: [{ id: 'toggleSidebar', sequence: [['g'], ['Shift', 's']] }],
+				})
+			);
+
+			press('g');
+			const before = publishedPrefix();
+
+			press('Shift', { shiftKey: true });
+			// Same identity, not merely equal: an unchanged run must not re-render
+			// the chip or restart its expiry clock.
+			expect(publishedPrefix()).toBe(before);
+		});
+
+		it('publishes each step of a three-step run', () => {
+			mountHandler(
+				sidebarSequenceContext({
+					setLeftSidebarOpen: vi.fn(),
+					sequenceBindings: [{ id: 'toggleSidebar', sequence: [['g'], ['g'], ['s']] }],
+				})
+			);
+
+			press('g');
+			expect(publishedPrefix()).toEqual([['g']]);
+
+			press('g');
+			expect(publishedPrefix()).toEqual([['g'], ['g']]);
+
+			press('s');
+			expect(publishedPrefix()).toEqual([]);
+		});
+
+		it('publishes nothing for a context that carries no sequence bindings', () => {
+			// The whole block is skipped there, which is every default-mode user
+			// today. Nothing can be live, so nothing is published.
+			mountHandler(
+				createMockContext({
+					sessions: [{ id: 'session-1' }],
+					leftSidebarOpen: true,
+					setLeftSidebarOpen: vi.fn(),
+					recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+				})
+			);
+
+			press('g');
+
+			expect(publishedPrefix()).toEqual([]);
+		});
 	});
 });

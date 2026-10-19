@@ -38,6 +38,7 @@ import type { TileableTabKind } from '../tabs/tileNewTab';
 import { isMacOSKeyboard } from '../../utils/platformUtils';
 import { eventMatchesShortcutKeys } from '../../utils/shortcutMatch';
 import { createSequenceMatcher, type SequenceBinding } from '../../utils/shortcutSequence';
+import { publishSequencePrefix } from '../../stores/sequencePrefixStore';
 import { isNormalMode } from '../../utils/messageScrollNavigation';
 import { FIXED_SHORTCUTS } from '../../constants/shortcuts';
 import { editClipboardImage } from '../../components/ImageAnnotator/editClipboardImage';
@@ -189,6 +190,22 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 		// rebuilt when bindings change: `feed` takes the live binding list per
 		// call, so a settings write cannot discard a half-typed prefix.
 		const sequenceMatcher = createSequenceMatcher();
+
+		/**
+		 * Tell the prefix indicator what the matcher is holding.
+		 *
+		 * The matcher's own answer is published verbatim, so the chip cannot
+		 * disagree with it: a match, an aborted run, Escape and an expired prefix
+		 * all leave `prefix()` empty, which is how the chip learns to disappear,
+		 * and a modifier-only keydown leaves it unchanged, which is how a capital
+		 * mid-sequence does not make the chip flicker. The one case the matcher
+		 * cannot report is the timeout, because it expires lazily on read; the
+		 * indicator owns a timer for that.
+		 *
+		 * Safe to call on every keydown: `prefix()` is identity-stable while the
+		 * run is unchanged and the store skips a write that changes nothing.
+		 */
+		const publishPrefix = () => publishSequencePrefix(sequenceMatcher.prefix());
 
 		const handleKeyDown = (e: KeyboardEvent) => {
 			const target = e.target;
@@ -723,6 +740,10 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			if (sequenceBindings.length > 0) {
 				if (isNormalMode(e) && !ctx.hasOpenLayers()) {
 					const sequenceResult = sequenceMatcher.feed(e, sequenceBindings);
+					// Before the branches, so every outcome repaints the chip from
+					// one place: a captured step shows it, a match or an abort hides
+					// it, and a modifier-only key leaves it exactly as it was.
+					publishPrefix();
 					if (sequenceResult.outcome === 'consumed-prefix') {
 						// The keypress belongs to the run in progress. Letting it
 						// also reach the ladder would fire an action mid-sequence.
@@ -744,6 +765,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					// a prefix that outlived either would complete against a
 					// keystroke they no longer connect to it.
 					sequenceMatcher.reset();
+					publishPrefix();
 				}
 			}
 
@@ -1885,10 +1907,13 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 		};
 		// A half-typed sequence does not survive the window losing focus: the keys
 		// that would finish it are going somewhere else now. The lazy timeout
-		// would expire it a second later anyway, but the prefix indicator reads
-		// `prefix()` and would otherwise sit on screen over a window that no
-		// longer has the keyboard.
-		const handleBlur = () => sequenceMatcher.reset();
+		// would expire it a second later anyway, but the prefix indicator is a
+		// painted thing and would otherwise sit on screen over a window that no
+		// longer has the keyboard, so the chip is taken down with the run.
+		const handleBlur = () => {
+			sequenceMatcher.reset();
+			publishPrefix();
+		};
 
 		window.addEventListener('keydown', handleKeyDown);
 		window.addEventListener('blur', handleBlur);
