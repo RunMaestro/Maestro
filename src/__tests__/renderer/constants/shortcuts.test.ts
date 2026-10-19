@@ -31,8 +31,14 @@ import {
 	KEYBOARD_MODE_LABELS,
 	asKeyboardMode,
 } from '../../../shared/shortcut-types';
-import type { Shortcut, ShortcutOverride } from '../../../shared/shortcut-types';
-import { findReservedShortcutCombo, shortcutKeysCollide } from '../../../shared/shortcutKeys';
+import type { KeyboardMode, Shortcut, ShortcutOverride } from '../../../shared/shortcut-types';
+import {
+	findReservedShortcutCombo,
+	shortcutKeysCollide,
+	shortcutKeysEqual,
+} from '../../../shared/shortcutKeys';
+import { resolveEffectiveShortcuts } from '../../../shared/effectiveShortcuts';
+import type { ShortcutBaseMaps, ShortcutOverrideMaps } from '../../../shared/effectiveShortcuts';
 
 const RENDERER_ROOT = join(__dirname, '../../../renderer');
 
@@ -270,6 +276,41 @@ describe('keyboard shortcut registry wiring', () => {
 });
 
 /**
+ * Chords that more than one action may legitimately claim, each with the gate
+ * that keeps them apart. Add to this ONLY with the reason written down.
+ *
+ * Read by two blocks below. The shipped-defaults guard matches a group by its
+ * `chord`, because that is the chord default mode gives the group. The per-mode
+ * guard matches on `ids` alone: the gate that keeps a group apart is its scope,
+ * not the chord it happens to sit on, so a mode that moves the group to another
+ * chord keeps the exemption and a group that gains a member loses it.
+ */
+const INTENTIONALLY_SHARED: { chord: string; ids: string[]; why: string }[] = [
+	{
+		chord: 'Meta+f',
+		ids: [
+			'filterFiles',
+			'filterSessions',
+			'filterHistory',
+			'searchLogs',
+			'searchOutput',
+			'searchDirectorNotes',
+		],
+		why: "Each is scoped to the surface that has focus (Files tab, Left Panel, History tab, System Log viewer, Main Window, Director's Notes). Only one of those surfaces is focused at a time.",
+	},
+	{
+		chord: 'Meta+e',
+		ids: ['toggleMarkdownMode', 'renameAgentSession'],
+		why: 'The Sessions Browser is a modal layer that blocks lower layers, and its own handler consumes the key before the app-level one runs. With the browser closed there is no session row to rename; with it open there is no markdown pane to flip.',
+	},
+	{
+		chord: 'Meta+Shift+k',
+		ids: ['clearTerminal', 'toggleShowThinking'],
+		why: 'Mutually exclusive by input mode: clearTerminal is gated on inputMode === "terminal" (useMainKeyboardHandler), toggleShowThinking is a tab shortcut reached only in AI mode.',
+	},
+];
+
+/**
  * Duplicate-binding guard for the shipped defaults.
  *
  * Two actions in the SAME scope answering to one chord means one of them loses,
@@ -280,40 +321,11 @@ describe('keyboard shortcut registry wiring', () => {
  *
  * Scope is real and this test has to respect it, or it fails on correct design:
  * several actions deliberately share a chord because they can never be live at
- * the same moment. Each such group is listed below WITH the reason it is safe.
- * Anything not on that list is a bug - which is the point. A future action that
+ * the same moment. Each such group is listed in `INTENTIONALLY_SHARED` above
+ * WITH the reason it is safe. Anything not on that list is a bug - which is the point. A future action that
  * takes an already-used chord fails here rather than in a bug report.
  */
 describe('DEFAULT_SHORTCUTS / TAB_SHORTCUTS / FIXED_SHORTCUTS duplicate bindings', () => {
-	/**
-	 * Chords that more than one action may legitimately claim, each with the
-	 * gate that keeps them apart. Add to this ONLY with the reason written down.
-	 */
-	const INTENTIONALLY_SHARED: { chord: string; ids: string[]; why: string }[] = [
-		{
-			chord: 'Meta+f',
-			ids: [
-				'filterFiles',
-				'filterSessions',
-				'filterHistory',
-				'searchLogs',
-				'searchOutput',
-				'searchDirectorNotes',
-			],
-			why: "Each is scoped to the surface that has focus (Files tab, Left Panel, History tab, System Log viewer, Main Window, Director's Notes). Only one of those surfaces is focused at a time.",
-		},
-		{
-			chord: 'Meta+e',
-			ids: ['toggleMarkdownMode', 'renameAgentSession'],
-			why: 'The Sessions Browser is a modal layer that blocks lower layers, and its own handler consumes the key before the app-level one runs. With the browser closed there is no session row to rename; with it open there is no markdown pane to flip.',
-		},
-		{
-			chord: 'Meta+Shift+k',
-			ids: ['clearTerminal', 'toggleShowThinking'],
-			why: 'Mutually exclusive by input mode: clearTerminal is gated on inputMode === "terminal" (useMainKeyboardHandler), toggleShowThinking is a tab shortcut reached only in AI mode.',
-		},
-	];
-
 	const normalize = (keys: string[]): string => [...keys].sort().join('+');
 
 	it('ships no unexplained duplicate binding', () => {
@@ -431,8 +443,9 @@ describe('keyboard modes', () => {
  *    held) rather than the shared matcher. Vim chords say `'Ctrl'` only, because
  *    the matcher collapses Ctrl and Cmd into one modifier anyway.
  *
- * The per-mode reachability and one-chord-one-action tests, computed over each
- * mode's resolved effective set, extend this block once the resolver exists.
+ * The reachability and one-chord-one-action rules cannot be read off these
+ * tables, because both depend on what a mode INHERITS. They live in the
+ * per-mode block below, computed over each mode's resolved effective set.
  */
 describe('Vim override tables', () => {
 	const VIM_TABLES: [string, Record<string, ShortcutOverride>][] = [
@@ -535,6 +548,167 @@ describe('Vim override tables', () => {
 		}
 
 		expect(collisions).toEqual([]);
+	});
+});
+
+/**
+ * Per-mode structural guard, computed over the EFFECTIVE binding set of each
+ * mode rather than over the tables.
+ *
+ * The rules here are the ones a table alone cannot answer, because each one
+ * depends on what a mode INHERITS. A mode's effective set is its override bucket
+ * plus the default chord for every action the bucket does not mention, so an
+ * override can take a chord some OTHER action inherits, and that action then
+ * holds nothing in this mode. Reading `VIM_SHORTCUTS` on its own shows a
+ * perfectly good chord and says nothing about the action it just unbound.
+ *
+ * `FIXED_SHORTCUTS` is part of every mode's set: it is not rebindable and no
+ * override bucket may name it, so both modes are matched against it as it
+ * ships and a mode chord that lands on one of its chords is a real collision.
+ *
+ * Every test but one runs over `KEYBOARD_MODES`, so a third mode is covered the
+ * day it is added, and later phases filling the Vim tables keep them honest: a
+ * new override that displaces an action fails here instead of reading as a dead
+ * key in the mode it was added for.
+ */
+describe('effective binding set, per keyboard mode', () => {
+	const BASE: ShortcutBaseMaps = {
+		shortcuts: DEFAULT_SHORTCUTS as Record<string, Shortcut>,
+		tabShortcuts: TAB_SHORTCUTS as Record<string, Shortcut>,
+	};
+
+	/**
+	 * Each mode's override bucket, so adding a mode is one row here.
+	 *
+	 * Default mode's is empty on purpose, and that is not a stand-in for the real
+	 * thing: default mode IS the base tables, which is why
+	 * `selectActiveShortcuts` hands back the bucket itself without resolving.
+	 * `resolveEffectiveShortcuts` returns those same maps by identity when the
+	 * overrides are empty, so running both modes through one builder measures
+	 * exactly what the live mode is matched against.
+	 */
+	const OVERRIDES: Record<KeyboardMode, ShortcutOverrideMaps> = {
+		default: { vimShortcuts: {}, vimTabShortcuts: {} },
+		vim: { vimShortcuts: VIM_SHORTCUTS, vimTabShortcuts: VIM_TAB_SHORTCUTS },
+	};
+
+	/** Every action a mode can fire, with the chord it fires on in that mode. */
+	function effectiveActions(mode: KeyboardMode): Shortcut[] {
+		const resolved = resolveEffectiveShortcuts(BASE, OVERRIDES[mode]);
+		return [
+			...Object.values(resolved.shortcuts),
+			...Object.values(resolved.tabShortcuts),
+			...Object.values(FIXED_SHORTCUTS),
+		];
+	}
+
+	/**
+	 * Actions that ship with no chord at all, derived from the constants rather
+	 * than listed by hand so a new unassigned action needs no edit here.
+	 *
+	 * `keys: []` is the registered-but-unassigned convention: the action is in
+	 * Settings > Shortcuts and the command palette, waiting for a chord the user
+	 * picks (`openLeaderboard`, the four media player controls, the git actions).
+	 * These are the ONLY actions a mode may leave unbound.
+	 */
+	const SHIPS_UNASSIGNED = [
+		...Object.values(BASE.shortcuts),
+		...Object.values(BASE.tabShortcuts),
+		...Object.values(FIXED_SHORTCUTS),
+	]
+		.filter((sc) => sc.keys.length === 0)
+		.map((sc) => sc.id);
+
+	/** The ids a mode is allowed to leave unbound: ships unassigned, and this mode does not bind it. */
+	function expectedUnbound(mode: KeyboardMode): string[] {
+		const { vimShortcuts, vimTabShortcuts } = OVERRIDES[mode];
+		return SHIPS_UNASSIGNED.filter(
+			(id) => !vimShortcuts[id]?.keys?.length && !vimTabShortcuts[id]?.keys?.length
+		).sort();
+	}
+
+	it.each(KEYBOARD_MODES)('%s mode carries every action the tables declare', (mode) => {
+		// Sanity check: a resolver that dropped a map would make the tests below
+		// pass vacuously, and inheritance means the list is exact - a mode adds and
+		// removes no action, it only ever changes chords.
+		expect(
+			effectiveActions(mode)
+				.map((sc) => sc.id)
+				.sort()
+		).toEqual(
+			[
+				...Object.keys(BASE.shortcuts),
+				...Object.keys(BASE.tabShortcuts),
+				...Object.keys(FIXED_SHORTCUTS),
+			].sort()
+		);
+	});
+
+	it('gives the shipped Vim overrides the chord they ask for', () => {
+		// `prevTab` / `nextTab` are declared in DEFAULT_SHORTCUTS but overridden in
+		// VIM_TAB_SHORTCUTS, the crossing the resolver has to handle. If it only
+		// matched the tab bucket against TAB_SHORTCUTS these two would resolve to
+		// their default chords and Vim's tab walk would silently not exist.
+		const byId = new Map(effectiveActions('vim').map((sc) => [sc.id, sc.keys]));
+		const wrong = [...Object.values(VIM_SHORTCUTS), ...Object.values(VIM_TAB_SHORTCUTS)]
+			.filter((override) => !shortcutKeysEqual(byId.get(override.id) ?? [], override.keys ?? []))
+			.map(
+				(override) =>
+					`${override.id}: ${byId.get(override.id)?.join('+')} !== ${override.keys?.join('+')}`
+			);
+
+		expect(wrong).toEqual([]);
+	});
+
+	it.each(KEYBOARD_MODES)('%s mode leaves no action unreachable', (mode) => {
+		// The failure this catches: an override takes a chord another action
+		// inherits, the resolver reports that action in `displaced` and unbinds it,
+		// and nothing in the UI explains why a key that worked yesterday is dead.
+		// The fix is always to give the displaced action its own chord in the
+		// mode's table, never to drop the override.
+		const unbound = effectiveActions(mode)
+			.filter((sc) => sc.keys.length === 0)
+			.map((sc) => sc.id)
+			.sort();
+		const displaced = resolveEffectiveShortcuts(BASE, OVERRIDES[mode]).displaced;
+
+		expect(displaced, `${mode} mode overrides take a chord these actions inherit`).toEqual([]);
+		// Equality, not a subset: an action that GAINS a chord in this mode drops
+		// out of the expectation too, so the list stays exact as later phases bind
+		// the actions that ship unassigned.
+		expect(unbound, `unbound in ${mode} mode but not shipped unassigned`).toEqual(
+			expectedUnbound(mode)
+		);
+	});
+
+	it.each(KEYBOARD_MODES)('%s mode gives one chord to one action', (mode) => {
+		// Compared with `shortcutKeysCollide`, not key equality: Ctrl and Cmd are
+		// ONE modifier to `eventMatchesShortcutKeys`, so a Vim chord spelled
+		// `['Ctrl', 'o']` fights a default spelled `['Meta', 'o']` at runtime while
+		// reading as a different chord on the page.
+		const groups: { keys: string[]; ids: string[] }[] = [];
+		for (const sc of effectiveActions(mode)) {
+			// An unassigned action claims no keypress and cannot collide.
+			if (sc.keys.length === 0) continue;
+			const group = groups.find((g) => shortcutKeysCollide(g.keys, sc.keys));
+			if (group) group.ids.push(sc.id);
+			else groups.push({ keys: sc.keys, ids: [sc.id] });
+		}
+
+		const unexplained = groups
+			.filter((g) => g.ids.length > 1)
+			.filter((g) => {
+				// The allowlist must match EXACTLY, in every mode: a group gaining a
+				// member is a new decision about scope and has to be made on purpose.
+				const ids = [...g.ids].sort().join(',');
+				return !INTENTIONALLY_SHARED.some((shared) => [...shared.ids].sort().join(',') === ids);
+			})
+			.map((g) => `${g.keys.join('+')} is claimed by: ${g.ids.join(', ')}`);
+
+		expect(
+			unexplained,
+			`Two actions on one keypress in ${mode} mode: the earlier branch in useMainKeyboardHandler wins and the other silently never fires.`
+		).toEqual([]);
 	});
 });
 
