@@ -325,6 +325,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 
 #### Keyboard and shortcuts
 
+- **Which bindings the live keyboard mode matches:** `resolveEffectiveShortcuts()`, `overridesWithEdits()` in `src/shared/effectiveShortcuts.ts`; `selectActiveShortcuts()` and siblings in `src/renderer/stores/settingsShortcutsSlice.ts`; `useActiveShortcuts()` in `src/renderer/hooks/settings/useActiveShortcuts.ts`
 - **Modifier-key display text:** `formatKey()`, `formatShortcutKeys()`, `formatMetaKey()`, `formatMetaKeyName()`, `formatAltKeyName()` in `src/renderer/utils/shortcutFormatter.ts`; outside the renderer `formatShortcutKeysFor()` in `src/shared/shortcutKeys.ts`
 - **Advertising a shortcut next to the control that fires it:** `<ShortcutHint>`, `<ShortcutKeys>`, `shortcutText()`, `shortcutSuffix(keys)` in `src/renderer/components/ui/ShortcutHint.tsx` (also the tab overlay-menu badge)
 - **Keyboard-shortcut hint / kbd pill:** `<Keycap>` and `<KeycapHint>` in `src/renderer/components/ui/Keycap.tsx`

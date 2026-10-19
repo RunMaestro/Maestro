@@ -33,6 +33,7 @@ import { updateSessionWith } from '../../stores/sessionStore';
 import { useBrowserTabMounting } from '../../hooks/browser/useBrowserTabMounting';
 import { useUIStore } from '../../stores/uiStore';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { selectActiveShortcuts } from '../../stores/settingsShortcutsSlice';
 import { useSurfaceTypography } from '../../hooks/ui/useSurfaceTypography';
 import { useToastAvoidZone } from '../../hooks/ui/useToastAvoidZone';
 import { useTabStore } from '../../stores/tabStore';
@@ -492,7 +493,11 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 	const enterToSendAI = useSettingsStore((s) => s.enterToSendAI);
 	const chatRawTextMode = useSettingsStore((s) => s.chatRawTextMode);
 	const userMessageAlignment = useSettingsStore((s) => s.userMessageAlignment);
-	const shortcuts = useSettingsStore((s) => s.shortcuts);
+	// The LIVE mode's effective map. The file preview MATCHES against this prop
+	// (Copy File Path, the TOC toggle, fuzzy search) as well as labelling its
+	// header buttons with it, so reading the settings bucket would both fire the
+	// wrong chords and advertise them.
+	const shortcuts = useSettingsStore(selectActiveShortcuts);
 	const maxOutputLines = useSettingsStore((s) => s.maxOutputLines);
 	// Self-sourced from uiStore
 	const activeFocus = useUIStore((s) => s.activeFocus);

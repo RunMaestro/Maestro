@@ -42,6 +42,7 @@ import {
 	useBatchedSessionUpdates,
 	// Settings
 	useSettings,
+	useActiveShortcuts,
 	useDebouncedPersistence,
 	// Session management
 	useActivityTracker,
@@ -561,9 +562,16 @@ function MaestroConsoleInner() {
 	}, [encoreFeatures.concerto]);
 
 	// --- KEYBOARD SHORTCUT HELPERS ---
+	// Matched against the LIVE keyboard mode's EFFECTIVE set, never the
+	// `shortcuts` / `tabShortcuts` buckets directly. In a non-default mode those
+	// are different maps, and matching the bucket would fire chords the user
+	// cannot see in Settings while the ones they can see did nothing. The maps
+	// are identity-stable across unrelated settings changes, so this costs no
+	// extra renders.
+	const { shortcuts: activeShortcuts, tabShortcuts: activeTabShortcuts } = useActiveShortcuts();
 	const { isShortcut, isTabShortcut, isPaneShortcut } = useKeyboardShortcutHelpers({
-		shortcuts,
-		tabShortcuts,
+		shortcuts: activeShortcuts,
+		tabShortcuts: activeTabShortcuts,
 	});
 
 	// --- SESSION STATE (migrated from useSession() to direct useSessionStore selectors) ---

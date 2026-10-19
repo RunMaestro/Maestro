@@ -7,3 +7,5 @@
 
 export { useSettings } from './useSettings';
 export type { UseSettingsReturn } from './useSettings';
+export { useActiveShortcuts } from './useActiveShortcuts';
+export type { UseActiveShortcutsReturn } from './useActiveShortcuts';

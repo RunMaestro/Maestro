@@ -6,9 +6,9 @@ import { eventMatchesShortcutKeys } from '../../utils/shortcutMatch';
  * Dependencies for useKeyboardShortcutHelpers hook
  */
 export interface UseKeyboardShortcutHelpersDeps {
-	/** User-configurable global shortcuts (from useSettings) */
+	/** User-configurable global shortcuts (from useActiveShortcuts) */
 	shortcuts: Record<string, Shortcut>;
-	/** User-configurable tab shortcuts (from useSettings) */
+	/** User-configurable tab shortcuts (from useActiveShortcuts) */
 	tabShortcuts: Record<string, Shortcut>;
 }
 
@@ -35,6 +35,13 @@ export interface UseKeyboardShortcutHelpersReturn {
  * Provides pure utility functions for matching keyboard events against
  * configured shortcuts. Handles modifier keys (Meta/Ctrl, Shift, Alt),
  * special key mappings, and macOS-specific Alt key character production.
+ *
+ * MODE AWARENESS LIVES IN THE CALLER. The two maps handed in are the LIVE
+ * keyboard mode's EFFECTIVE set, resolved by `useActiveShortcuts()`, not the
+ * `shortcuts` / `tabShortcuts` settings buckets. This hook knows nothing about
+ * modes and must not: it is also used by surfaces that match a single chord
+ * (`QueuedItemEditModal`), and a mode check in here would have to be repeated
+ * in every one of them. Pass the resolved maps and the lookup stays a lookup.
  *
  * @param deps - Hook dependencies containing the shortcuts configuration
  * @returns Functions for matching keyboard events to shortcuts

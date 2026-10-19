@@ -10,6 +10,7 @@ import { notifyCenterFlash } from '../stores/centerFlashStore';
 import { captureException } from '../utils/sentry';
 import { displayImageSrc } from '../utils/sessionImageSrc';
 import { useSettingsStore } from '../stores/settingsStore';
+import { selectActiveShortcuts, selectActiveTabShortcuts } from '../stores/settingsShortcutsSlice';
 import { selectActiveSession, selectSessionById, useSessionStore } from '../stores/sessionStore';
 import { useKeyboardShortcutHelpers } from '../hooks/keyboard';
 import { useResizableTextarea } from '../hooks/ui/useResizableTextarea';
@@ -80,8 +81,10 @@ export function QueuedItemEditModal({
 	// Modal root stops keydown propagation to the window-level global handler, so
 	// this fires only while the modal is focused and never triggers background
 	// state behind it. In-carousel keys (Cmd+E etc.) are owned by LightboxModal.
-	const shortcuts = useSettingsStore((s) => s.shortcuts);
-	const tabShortcuts = useSettingsStore((s) => s.tabShortcuts);
+	// Effective maps for the LIVE keyboard mode, not the settings buckets: in a
+	// non-default mode Cmd+Y can belong to another action.
+	const shortcuts = useSettingsStore(selectActiveShortcuts);
+	const tabShortcuts = useSettingsStore(selectActiveTabShortcuts);
 	const { isShortcut } = useKeyboardShortcutHelpers({ shortcuts, tabShortcuts });
 
 	const resize = useResizableTextarea({

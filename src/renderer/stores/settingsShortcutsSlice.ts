@@ -9,6 +9,8 @@
 
 import type { StateCreator } from 'zustand';
 import { shortcutKeysEqual, findReservedShortcutCombo } from '../../shared/shortcutKeys';
+import { resolveEffectiveShortcuts } from '../../shared/effectiveShortcuts';
+import type { EffectiveShortcuts } from '../../shared/effectiveShortcuts';
 import { asKeyboardMode } from '../../shared/shortcut-types';
 import type { KeyboardMode, ShortcutOverride } from '../../shared/shortcut-types';
 import type { Shortcut } from '../types';
@@ -91,6 +93,70 @@ export const createShortcutsSlice: StateCreator<SettingsStore, [], [], Shortcuts
 		window.maestro.settings.set('vimTabShortcuts', value);
 	},
 });
+
+/**
+ * One resolution, cached on the identity of the four inputs it reads.
+ *
+ * Every selector below is re-run by zustand on EVERY settings change, whatever
+ * changed - a font size, a theme, a panel width. Resolving afresh each time
+ * would hand back a new `shortcuts` object on each of those, and `useSyncExternalStore`
+ * compares with `Object.is`, so every keyboard consumer in the app would
+ * re-render on an unrelated setting. One entry is enough: the store holds one
+ * live value set at a time, so a miss means the buckets really did change.
+ */
+let resolvedCache: {
+	shortcuts: Record<string, Shortcut>;
+	tabShortcuts: Record<string, Shortcut>;
+	vimShortcuts: Record<string, ShortcutOverride>;
+	vimTabShortcuts: Record<string, ShortcutOverride>;
+	result: EffectiveShortcuts;
+} | null = null;
+
+function resolvedVimSet(state: ShortcutsState): EffectiveShortcuts {
+	const { shortcuts, tabShortcuts, vimShortcuts, vimTabShortcuts } = state;
+	if (
+		resolvedCache &&
+		resolvedCache.shortcuts === shortcuts &&
+		resolvedCache.tabShortcuts === tabShortcuts &&
+		resolvedCache.vimShortcuts === vimShortcuts &&
+		resolvedCache.vimTabShortcuts === vimTabShortcuts
+	) {
+		return resolvedCache.result;
+	}
+	const result = resolveEffectiveShortcuts(
+		{ shortcuts, tabShortcuts },
+		{ vimShortcuts, vimTabShortcuts }
+	);
+	resolvedCache = { shortcuts, tabShortcuts, vimShortcuts, vimTabShortcuts, result };
+	return result;
+}
+
+/**
+ * The general-shortcut map the LIVE mode is matched against.
+ *
+ * Default mode returns the bucket itself, unchanged and identical to what every
+ * caller read before keyboard modes existed. Vim mode returns the resolved map.
+ */
+export function selectActiveShortcuts(state: ShortcutsState): Record<string, Shortcut> {
+	return state.keyboardMode === 'vim' ? resolvedVimSet(state).shortcuts : state.shortcuts;
+}
+
+/** The tab-shortcut map the LIVE mode is matched against. See `selectActiveShortcuts`. */
+export function selectActiveTabShortcuts(state: ShortcutsState): Record<string, Shortcut> {
+	return state.keyboardMode === 'vim' ? resolvedVimSet(state).tabShortcuts : state.tabShortcuts;
+}
+
+/**
+ * Actions whose inherited chord a Vim override takes, so they are unbound in
+ * Vim mode until the user records one.
+ *
+ * Reports Vim mode's displacement WHATEVER mode is live, unlike the two
+ * selectors above: the mode toggle has to be able to name these at the moment
+ * it switches, which is read while default mode is still the live one.
+ */
+export function selectVimDisplacedActions(state: ShortcutsState): string[] {
+	return resolvedVimSet(state).displaced;
+}
 
 /** macOS Alt+key special character to normal key mapping for shortcut migration */
 const MAC_ALT_CHAR_MAP: Record<string, string> = {

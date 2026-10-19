@@ -20,6 +20,7 @@ import { useInputContext } from '../../contexts/InputContext';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { useUIStore } from '../../stores/uiStore';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { selectActiveShortcuts } from '../../stores/settingsShortcutsSlice';
 import { filterSlashCommands } from '../../utils/search';
 import { logger } from '../../utils/logger';
 import { trackShortcutUsage } from '../../utils/shortcutTracking';
@@ -534,7 +535,7 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 			// the Enter guard, so a rebind to any other key still works here.
 			if (
 				activeSession?.inputMode === 'ai' &&
-				eventMatchesShortcutKeys(e, settings.shortcuts.steerSend?.keys)
+				eventMatchesShortcutKeys(e, selectActiveShortcuts(settings).steerSend?.keys)
 			) {
 				// Mid-composition the keystroke belongs to the IME, which confirms a
 				// candidate with Enter. Return without acting: steering the
@@ -551,7 +552,7 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 				// Note: This check is inside the `e.key === 'Enter'` guard, so the shortcut's
 				// main key must be Enter. Non-Enter shortcuts are not supported by design.
 				if (settings.forcedParallelExecution && activeSession?.inputMode === 'ai') {
-					const fpShortcut = settings.shortcuts.forcedParallelSend;
+					const fpShortcut = selectActiveShortcuts(settings).forcedParallelSend;
 					if (fpShortcut && eventMatchesShortcutKeys(e, fpShortcut.keys)) {
 						e.preventDefault();
 						runForcedParallelSend();
