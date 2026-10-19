@@ -2177,7 +2177,21 @@ app
 			pluginId: string
 		): Promise<PluginSessionMetadata> => {
 			const now = Date.now();
-			const sessionId = typeof params.id === 'string' ? params.id : crypto.randomUUID();
+			// A plugin-supplied id must name a session that does NOT exist yet.
+			// Checked BEFORE any store write, and before the field resolver runs.
+			// Without it, `sessions.create({ id })` naming a live agent appended a
+			// SECOND record under the same id and then fell through to
+			// `grantSession(..., 'created')` below, which handed a session-granting
+			// plugin dispatch and History reach over an agent it never created and
+			// the user never approved. `create` is for new sessions; changing an
+			// existing one is `sessions.update`, which is scope-checked.
+			const requestedId = typeof params.id === 'string' ? params.id : undefined;
+			if (requestedId !== undefined && pluginSessionsRaw().some((s) => s.id === requestedId)) {
+				throw new Error(
+					`a session with id "${requestedId}" already exists (sessions.create never adopts an existing session)`
+				);
+			}
+			const sessionId = requestedId ?? crypto.randomUUID();
 			const tabId = crypto.randomUUID();
 			// Throws (before any store write) on a directory outside the plugin's
 			// grant set, a cwd inside userData, or a malformed override.
@@ -2239,17 +2253,18 @@ app
 			};
 			const previousSessions = pluginSessionsRaw();
 			setPluginSessionsRaw([...previousSessions, session]);
-			if (!previousSessions.some((existing) => existing.id === sessionId)) {
-				try {
-					pianolaSupervisor?.autoWatchNewSessions(
-						[session],
-						[...previousSessions, session] as AutoWatchSession[],
-						store.get('pianolaAutoWatchNewAgents', false) === true
-					);
-				} catch (error) {
-					logger.error('Could not register new Pianola watch', '[Pianola]', error);
-					void captureException(error, { operation: 'pianola:autoWatchPluginSession' });
-				}
+			// Unconditional: the id was proven absent above, so this session is
+			// always new. (It used to be guarded by a duplicate-id check, which the
+			// early rejection now makes unreachable.)
+			try {
+				pianolaSupervisor?.autoWatchNewSessions(
+					[session],
+					[...previousSessions, session] as AutoWatchSession[],
+					store.get('pianolaAutoWatchNewAgents', false) === true
+				);
+			} catch (error) {
+				logger.error('Could not register new Pianola watch', '[Pianola]', error);
+				void captureException(error, { operation: 'pianola:autoWatchPluginSession' });
 			}
 			sessionsStore.set('activeSessionId', sessionId);
 			// A session-granting plugin owns what it just created: it may message and

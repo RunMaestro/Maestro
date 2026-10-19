@@ -424,6 +424,28 @@ describe('production session-grant wiring (host-held per-session access)', () =>
 		);
 	});
 
+	it('refuses a plugin-supplied id that already exists, BEFORE the created-grant', () => {
+		// `sessions.create` takes the id from the plugin's own params. Without this
+		// rejection, naming a LIVE agent appended a second record under its id and
+		// then fell through to `grantSession(..., 'created')`, handing the plugin
+		// dispatch and History reach over an agent it never created and the user
+		// never approved - the exact thing the grant set exists to prevent.
+		// Pinned on the source because the escalation is an ORDERING property: the
+		// check is worthless if it lands after the store write or the grant.
+		const rejection = source.indexOf('sessions.create never adopts an existing session');
+		expect(rejection).toBeGreaterThan(-1);
+		// It throws, rather than quietly generating a fresh id (which would make a
+		// create silently target a different agent than the plugin asked for).
+		expect(source).toMatch(
+			/if \(requestedId !== undefined && pluginSessionsRaw\(\)\.some\(\(s\) => s\.id === requestedId\)\) \{\s*throw new Error\(/
+		);
+		// ...and it precedes both the store write and the grant.
+		const storeWrite = source.indexOf('setPluginSessionsRaw([...previousSessions, session])');
+		const grant = source.indexOf("grantSession(pluginId, sessionId, 'created')");
+		expect(storeWrite).toBeGreaterThan(rejection);
+		expect(grant).toBeGreaterThan(rejection);
+	});
+
 	it("the host-owned confirmation defaults to Don't Allow and grants only on Allow", async () => {
 		// Extract the PRODUCTION confirmation and run it, rather than regexing its
 		// text: this proves the default button, the Escape path, and the
