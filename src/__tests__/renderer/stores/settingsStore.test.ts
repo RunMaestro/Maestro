@@ -141,6 +141,7 @@ function resetStore() {
 		logViewerSelectedLevels: ['debug', 'info', 'warn', 'error', 'toast'],
 		shortcuts: DEFAULT_SHORTCUTS,
 		tabShortcuts: TAB_SHORTCUTS,
+		keyboardMode: 'default',
 		customAICommands: DEFAULT_AI_COMMANDS,
 		totalActiveTimeMs: 0,
 		autoRunStats: DEFAULT_AUTO_RUN_STATS,
@@ -296,6 +297,10 @@ describe('settingsStore', () => {
 			expect(state.logViewerSelectedLevels).toEqual(['debug', 'info', 'warn', 'error', 'toast']);
 			expect(state.shortcuts).toEqual(DEFAULT_SHORTCUTS);
 			expect(state.tabShortcuts).toEqual(TAB_SHORTCUTS);
+			// Default mode is what ships, and it is also what the metadata promises
+			// the CLI and `maestro-cli settings` reader.
+			expect(state.keyboardMode).toBe('default');
+			expect(SETTINGS_METADATA.keyboardMode.default).toBe('default');
 			expect(state.customAICommands).toEqual(DEFAULT_AI_COMMANDS);
 			expect(state.totalActiveTimeMs).toBe(0);
 			expect(state.autoRunStats).toEqual(DEFAULT_AUTO_RUN_STATS);
@@ -792,6 +797,33 @@ describe('settingsStore', () => {
 				useSettingsStore.getState().setTabShortcuts(newTabShortcuts);
 				expect(useSettingsStore.getState().tabShortcuts).toEqual(newTabShortcuts);
 				expect(window.maestro.settings.set).toHaveBeenCalledWith('tabShortcuts', newTabShortcuts);
+			});
+
+			it('setKeyboardMode updates state and persists', () => {
+				useSettingsStore.getState().setKeyboardMode('vim');
+				expect(useSettingsStore.getState().keyboardMode).toBe('vim');
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('keyboardMode', 'vim');
+
+				useSettingsStore.getState().setKeyboardMode('default');
+				expect(useSettingsStore.getState().keyboardMode).toBe('default');
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('keyboardMode', 'default');
+			});
+
+			it('switching mode leaves both shortcut buckets alone', () => {
+				// The mode field says which bucket is LIVE and nothing more. If a
+				// switch ever rewrote a binding, a user who flipped to Vim and back
+				// would lose the chords they recorded in default mode.
+				const customized = {
+					...DEFAULT_SHORTCUTS,
+					toggleSidebar: { ...DEFAULT_SHORTCUTS.toggleSidebar, keys: ['Meta', 'b'] },
+				};
+				useSettingsStore.getState().setShortcuts(customized);
+				useSettingsStore.getState().setKeyboardMode('vim');
+				expect(useSettingsStore.getState().shortcuts).toEqual(customized);
+				expect(useSettingsStore.getState().tabShortcuts).toEqual(TAB_SHORTCUTS);
+				expect(
+					vi.mocked(window.maestro.settings.set).mock.calls.filter(([k]) => k === 'tabShortcuts')
+				).toEqual([]);
 			});
 
 			it('setCustomAICommands updates state and persists', () => {
@@ -2981,6 +3013,49 @@ describe('settingsStore', () => {
 				.mock.calls.find(([k]) => k === 'tabShortcuts')?.[1] as Record<string, { keys: string[] }>;
 			expect(persisted.closeAllTabs.keys).toEqual(['Meta', 'Shift', 'w']);
 		});
+
+		it('restores a persisted vim keyboard mode', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({ keyboardMode: 'vim' });
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().keyboardMode).toBe('vim');
+		});
+
+		it('keeps the default keyboard mode when nothing is persisted', async () => {
+			// An absent key leaves the field at the shipped default. Hydration only
+			// patches what it finds, so a fresh install reads as default mode
+			// without a settings write ever having happened.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().keyboardMode).toBe('default');
+		});
+
+		it.each([['emacs'], [''], [null], [7], [{ mode: 'vim' }], [['vim']]])(
+			'falls back to the default keyboard mode for the persisted value %s',
+			async (persisted) => {
+				// The value is on disk, so it can be hand-edited or written by a
+				// build that spelled the modes differently. Anything unrecognized has
+				// to read as 'default': every consumer treats "not default" as "match
+				// an override table", and there is no table for a mode that does not
+				// exist.
+				useSettingsStore.setState({ keyboardMode: 'vim' });
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					keyboardMode: persisted,
+				});
+
+				await expect(loadAllSettings()).resolves.not.toThrow();
+
+				expect(useSettingsStore.getState().keyboardMode).toBe('default');
+				// Nothing is written back: hydration corrects the live value, and a
+				// persist here would race the other window doing the same.
+				expect(
+					vi.mocked(window.maestro.settings.set).mock.calls.filter(([k]) => k === 'keyboardMode')
+				).toEqual([]);
+			}
+		);
 
 		it('moves New Group Chat off Opt+Cmd+C and hands the combo to Concerto', async () => {
 			// Without this remap the two COLLIDE: anyone who has ever opened the

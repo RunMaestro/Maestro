@@ -44,6 +44,29 @@ export interface Shortcut {
 export type KeyboardMode = 'default' | 'vim';
 
 /**
+ * Every keyboard mode, in the order the Settings toggle offers them. One list
+ * so the toggle, the persisted setting, and the CLI cannot disagree about which
+ * modes exist.
+ */
+export const KEYBOARD_MODES: readonly KeyboardMode[] = ['default', 'vim'];
+
+/**
+ * Narrow an unknown value to a {@link KeyboardMode}, or `undefined` if it is
+ * not one.
+ *
+ * Everything that arrives from outside the renderer's own state has to come
+ * through here rather than being cast: the setting is on disk, so it can be
+ * hand-edited, written by an older build, or mangled by settings sync, and a
+ * cast would put an unknown string into the mode field where every consumer
+ * reads it as "not default" and matches an override table that does not exist.
+ * Callers that need a value no matter what fall back to `'default'`, which is
+ * the mode that ships.
+ */
+export function asKeyboardMode(value: unknown): KeyboardMode | undefined {
+	return KEYBOARD_MODES.includes(value as KeyboardMode) ? (value as KeyboardMode) : undefined;
+}
+
+/**
  * One action's binding in a non-default keyboard mode.
  *
  * Override tables are SPARSE: an action appears only when the mode binds it

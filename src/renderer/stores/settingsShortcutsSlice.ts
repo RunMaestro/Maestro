@@ -9,6 +9,8 @@
 
 import type { StateCreator } from 'zustand';
 import { shortcutKeysEqual, findReservedShortcutCombo } from '../../shared/shortcutKeys';
+import { asKeyboardMode } from '../../shared/shortcut-types';
+import type { KeyboardMode } from '../../shared/shortcut-types';
 import type { Shortcut } from '../types';
 import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS } from '../constants/shortcuts';
 import type { SettingsStore } from './settingsStore';
@@ -16,11 +18,23 @@ import type { SettingsStore } from './settingsStore';
 export interface ShortcutsState {
 	shortcuts: Record<string, Shortcut>;
 	tabShortcuts: Record<string, Shortcut>;
+	/**
+	 * Which binding set is live. Exactly ONE mode is active at a time: the two
+	 * key sets are never matched together, which is what lets a non-default mode
+	 * reuse a chord default mode gives to another action.
+	 *
+	 * This field says which bucket is live, nothing more. Switching it never
+	 * rewrites a binding - each mode keeps its own customizations in its own
+	 * bucket - so a user can switch back and forth and find both sets exactly as
+	 * they left them.
+	 */
+	keyboardMode: KeyboardMode;
 }
 
 export interface ShortcutsActions {
 	setShortcuts: (value: Record<string, Shortcut>) => void;
 	setTabShortcuts: (value: Record<string, Shortcut>) => void;
+	setKeyboardMode: (value: KeyboardMode) => void;
 }
 
 export type ShortcutsSlice = ShortcutsState & ShortcutsActions;
@@ -28,6 +42,7 @@ export type ShortcutsSlice = ShortcutsState & ShortcutsActions;
 export const createShortcutsSlice: StateCreator<SettingsStore, [], [], ShortcutsSlice> = (set) => ({
 	shortcuts: DEFAULT_SHORTCUTS,
 	tabShortcuts: TAB_SHORTCUTS,
+	keyboardMode: 'default',
 
 	setShortcuts: (value) => {
 		set({ shortcuts: value });
@@ -37,6 +52,11 @@ export const createShortcutsSlice: StateCreator<SettingsStore, [], [], Shortcuts
 	setTabShortcuts: (value) => {
 		set({ tabShortcuts: value });
 		window.maestro.settings.set('tabShortcuts', value);
+	},
+
+	setKeyboardMode: (value) => {
+		set({ keyboardMode: value });
+		window.maestro.settings.set('keyboardMode', value);
 	},
 });
 
@@ -287,5 +307,14 @@ export function hydrateShortcutsSettings(
 		if (result.needsMigration) {
 			window.maestro.settings.set('tabShortcuts', result.migratedRaw);
 		}
+	}
+
+	// Anything that is not one of the two known modes lands on 'default' rather
+	// than being written through. The value is on disk, so it can predate a mode
+	// being renamed, or arrive from a hand-edited settings file, and an
+	// unrecognized string would read as "not default" everywhere downstream and
+	// match an override table that does not exist.
+	if (allSettings['keyboardMode'] !== undefined) {
+		patch.keyboardMode = asKeyboardMode(allSettings['keyboardMode']) ?? 'default';
 	}
 }

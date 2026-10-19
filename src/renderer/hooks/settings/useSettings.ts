@@ -29,6 +29,7 @@ import type {
 	DirectorNotesSettings,
 	EncoreFeatureFlags,
 } from '../../types';
+import type { KeyboardMode } from '../../../shared/shortcut-types';
 import type { FileExplorerIconTheme } from '../../utils/fileExplorerIcons/shared';
 import type { ToastWidth } from '../../../shared/toastWidth';
 import type { ToastPosition } from '../../../shared/toastPosition';
@@ -246,6 +247,8 @@ export interface UseSettingsReturn {
 	setShortcuts: (value: Record<string, Shortcut>) => void;
 	tabShortcuts: Record<string, Shortcut>;
 	setTabShortcuts: (value: Record<string, Shortcut>) => void;
+	keyboardMode: KeyboardMode;
+	setKeyboardMode: (value: KeyboardMode) => void;
 
 	// Custom AI Commands
 	customAICommands: CustomAICommand[];

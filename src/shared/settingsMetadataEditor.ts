@@ -213,6 +213,13 @@ export const EDITOR_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: 'after-current',
 		category: 'editor',
 	},
+	keyboardMode: {
+		description:
+			'Which keyboard binding set is live: "default" for Maestro\'s own chords, "vim" for the Vim-flavored set. Exactly one mode is active at a time, and each mode keeps its own customizations.',
+		type: 'string',
+		default: 'default',
+		category: 'editor',
+	},
 	shortcuts: {
 		description: 'Custom keyboard shortcut bindings. Object mapping shortcut IDs to key combos.',
 		type: 'object',

@@ -26,6 +26,7 @@ import {
 	TAB_SHORTCUTS,
 } from '../../../renderer/constants/shortcuts';
 import { VIM_SHORTCUTS, VIM_TAB_SHORTCUTS } from '../../../renderer/constants/vimShortcuts';
+import { KEYBOARD_MODES, asKeyboardMode } from '../../../shared/shortcut-types';
 import type { Shortcut, ShortcutOverride } from '../../../shared/shortcut-types';
 import { findReservedShortcutCombo, shortcutKeysCollide } from '../../../shared/shortcutKeys';
 
@@ -379,6 +380,21 @@ describe('shipped bindings avoid reserved chords', () => {
 			.map(({ sc, reserved }) => `${sc.id} (${sc.keys.join('+')}): ${reserved?.reason}`);
 
 		expect(offenders).toEqual([]);
+	});
+});
+
+describe('keyboard modes', () => {
+	it('lists default first, which is the mode that ships', () => {
+		// The Settings toggle renders this list in order, so flipping it would
+		// put Vim in the first slot and read as the active mode at a glance.
+		expect(KEYBOARD_MODES).toEqual(['default', 'vim']);
+	});
+
+	it('narrows only the two known modes', () => {
+		for (const mode of KEYBOARD_MODES) expect(asKeyboardMode(mode)).toBe(mode);
+		for (const value of ['Vim', 'VIM', 'emacs', '', ' vim', null, undefined, 0, {}, ['vim']]) {
+			expect(asKeyboardMode(value)).toBeUndefined();
+		}
 	});
 });
 

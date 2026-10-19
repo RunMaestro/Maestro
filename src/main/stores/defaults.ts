@@ -80,6 +80,7 @@ export function resolveConfiguredShell(store: ShellSettingsReader): string {
 export const SETTINGS_DEFAULTS: MaestroSettings = {
 	activeThemeId: 'dracula',
 	shortcuts: {},
+	keyboardMode: 'default',
 	fontSize: 14,
 	fontFamily: MAESTRO_FONT_STACK,
 	terminalFontFamily: '',

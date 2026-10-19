@@ -10,6 +10,7 @@ import type { AgentCapabilitiesSnapshotMap } from '../../shared/agentCapabilitie
 import type { MultiWindowState } from '../../shared/window-types';
 import type { QuickChatSettings, QuickChatWindowBounds } from '../../shared/quickChat';
 import type { ThroughputGaugeSettings } from '../../shared/throughputGauge';
+import type { KeyboardMode } from '../../shared/shortcut-types';
 
 // ============================================================================
 // Stored Session Type (minimal interface for main process storage)
@@ -52,6 +53,8 @@ export interface BootstrapSettings {
 export interface MaestroSettings {
 	activeThemeId: string;
 	shortcuts: Record<string, any>;
+	/** Which keyboard binding set is live. One mode is active at a time. */
+	keyboardMode: KeyboardMode;
 	fontSize: number;
 	fontFamily: string;
 	terminalFontFamily: string;

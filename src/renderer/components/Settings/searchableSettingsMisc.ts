@@ -14,8 +14,21 @@ export const SHORTCUTS_SETTINGS: SearchableSetting[] = [
 		tab: 'shortcuts',
 		tabLabel: 'Shortcuts',
 		label: 'Keyboard Shortcuts',
-		description: 'Configure keyboard shortcuts for general and AI tab actions',
-		keywords: ['keyboard', 'shortcut', 'hotkey', 'keybind', 'binding', 'key'],
+		description:
+			'Configure keyboard shortcuts for general and AI tab actions, and pick the keyboard mode (default or Vim) the bindings come from',
+		keywords: [
+			'keyboard',
+			'shortcut',
+			'hotkey',
+			'keybind',
+			'binding',
+			'key',
+			'vim',
+			'mode',
+			'keyboard mode',
+			'vim mode',
+			'modal',
+		],
 	},
 ];
 
