@@ -1628,8 +1628,14 @@ describe('group-chat-router', () => {
 
 		/**
 		 * Drives the queued-delegation poll loop forward under fake timers until
-		 * `done()` reports the handoff landed. Each pass advances one poll interval
-		 * and then flushes the microtasks the delivery chain resolves on.
+		 * `done()` reports true or the passes run out. Each pass advances one poll
+		 * interval and then flushes the microtasks the delivery chain resolves on.
+		 *
+		 * Only for checking that something has NOT happened yet. The poll loop and
+		 * the delivery do real I/O the fake clock does not wait for, so a fixed
+		 * number of passes is a hidden time budget that a slow CI runner can run
+		 * out of. To wait for a delivery, use `vi.waitFor`, which checks on real
+		 * time.
 		 */
 		async function runPollsUntil(done: () => boolean, passes = 10): Promise<void> {
 			for (let i = 0; i < passes && !done(); i++) {
@@ -1685,8 +1691,16 @@ describe('group-chat-router', () => {
 				expect(participantSpawnsFor(chat.id)).toHaveLength(0);
 
 				busy = false;
-				await runPollsUntil(() => participantSpawnsFor(chat.id).length > 0);
-				expect(participantSpawnsFor(chat.id)).toHaveLength(1);
+				// Wait on real time until the spawn lands. The poll reads the chat from
+				// disk and the delivery does more real I/O before it spawns, so a fixed
+				// number of fake-timer passes is a hidden time budget that a slow CI
+				// runner can run out of. vi.waitFor advances the fake clock by its
+				// interval on every check, so the next poll still fires; 10 seconds of
+				// checks is about 10 seconds of fake time, well inside the 15 minute
+				// wait budget, so a give-up cannot stand in for the delivery.
+				await vi.waitFor(() => expect(participantSpawnsFor(chat.id)).toHaveLength(1), {
+					timeout: 10_000,
+				});
 
 				clearPendingParticipants(chat.id);
 			} finally {
@@ -1886,8 +1900,10 @@ describe('group-chat-router', () => {
 				expect(emitAutoRunTriggered).not.toHaveBeenCalled();
 
 				busy = false;
-				await runPollsUntil(() => emitAutoRunTriggered.mock.calls.length > 0);
-				expect(emitAutoRunTriggered).toHaveBeenCalledTimes(1);
+				// Real-time wait, for the same reason as the participant delivery above.
+				await vi.waitFor(() => expect(emitAutoRunTriggered).toHaveBeenCalledTimes(1), {
+					timeout: 10_000,
+				});
 
 				clearPendingParticipants(chat.id);
 			} finally {
