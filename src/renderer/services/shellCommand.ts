@@ -26,6 +26,7 @@ import { generateId } from '../utils/ids';
 import { updateAiTab, updateSessionWith } from '../stores/sessionStore';
 import { SHELL_COMMAND_PREFIX } from '../utils/shellCommandInput';
 import { requestTranscriptScrollToBottom } from './transcriptScroll';
+import { sendShownTabIntent } from './tabWindowIntentSender';
 import { logger } from '../utils/logger';
 
 /** How many entries the composer's recall history keeps. */
@@ -92,6 +93,8 @@ function patchOutputEntry(
  * Returns true when a kill was actually dispatched.
  */
 export async function cancelShellCommand(logId: string): Promise<boolean> {
+	// In a tab window the run belongs to the owner window, which started it.
+	if (sendShownTabIntent('cancelShellCommand', { logId })) return true;
 	const run = activeRuns.get(logId);
 	if (!run) return false;
 	run.markCancelled();

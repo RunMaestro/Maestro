@@ -32,6 +32,8 @@ import {
 	type PermissionDecision,
 } from '../../permission-relay';
 import { releaseConcertoHtmlDocument, restoreConcertoHtmlDocument } from '../../concerto-html';
+import { findTabWindowHoldingAiTab } from '../../tab-window-service';
+import type { WindowRegistry } from '../../window-registry';
 
 const LOG_CONTEXT = '[ProcessManager]';
 
@@ -90,6 +92,12 @@ export interface ProcessHandlerDependencies {
 	 * can omit it cleanly.
 	 */
 	interactiveReplayController?: InteractiveReplayController<ProcessSpawnConfig>;
+	/**
+	 * The window registry, read per permission request: a request whose tab
+	 * is popped out into a tab window is prompted there (Tab Windows). Omit it
+	 * and every request goes to the main window.
+	 */
+	getWindowRegistry?: () => WindowRegistry | null;
 }
 
 /**
@@ -116,8 +124,16 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 	} = deps;
 
 	// Wire the Claude Code permission relay: surface requests to the renderer
-	// and clean up per-spawn bindings when a process exits.
-	initPermissionRelay(getMainWindow, getProcessManager());
+	// (the tab window when the request's tab is popped out into one) and clean
+	// up per-spawn bindings when a process exits.
+	initPermissionRelay(getMainWindow, getProcessManager(), {
+		resolveTabWindow: (request) => {
+			const registry = deps.getWindowRegistry?.();
+			return registry
+				? findTabWindowHoldingAiTab(registry, request.tabId, request.sessionId)
+				: null;
+		},
+	});
 
 	// Manual renderer closes are ownership events, not remote Movement/Cadenza
 	// mutations. Release their isolated documents explicitly so closed mockups do

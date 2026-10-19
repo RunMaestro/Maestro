@@ -104,6 +104,11 @@ export function resolvePending(requestId: string, decision: PermissionDecision):
 	return true;
 }
 
+/** Whether a request still waits for a decision (not answered, timed out, or cleaned up). */
+export function isPendingRequest(requestId: string): boolean {
+	return pending.has(requestId);
+}
+
 /** Test/inspection helper: current counts. */
 export function relayRegistryStats(): { bindings: number; pending: number } {
 	return { bindings: bindings.size, pending: pending.size };

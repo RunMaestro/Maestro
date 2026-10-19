@@ -17,6 +17,22 @@ import type {
 	WindowState,
 } from '../../shared/window-types';
 import type { WindowCommandRequest, WindowCommandResult } from '../../shared/windowCommands';
+import {
+	TAB_WINDOW_CHANNELS,
+	type TabWindowDockResult,
+	type TabWindowFocusResult,
+	type TabWindowInfo,
+	type TabWindowIntent,
+	type TabWindowPopOutOptions,
+	type TabWindowPopOutResult,
+	type TabWindowReorderResult,
+	type TabWindowSessionPatch,
+	type TabWindowTabRef,
+} from '../../shared/tabWindowTypes';
+import type {
+	TabWindowCommandRequest,
+	TabWindowCommandResult,
+} from '../../shared/tabWindowCommands';
 
 export type { WindowBounds };
 
@@ -190,3 +206,132 @@ export function createWindowsApi() {
  * TypeScript type for the windows API.
  */
 export type WindowsApi = ReturnType<typeof createWindowsApi>;
+
+/**
+ * Creates the `window.maestro.tabWindows` API (Tab Windows), mirroring the
+ * handlers in `src/main/ipc/handlers/tab-windows.ts`. The two relay methods
+ * are fire-and-forget: main forwards a patch to the agent's tab window and an
+ * intent to the agent's CURRENT owner window, and drops either one when the
+ * sender has no right to speak for the agent.
+ */
+export function createTabWindowsApi() {
+	return {
+		/**
+		 * Pop a tab out into its agent's tab window, opening the window if the
+		 * agent has none (one per agent). The window is raised unless `background`.
+		 */
+		popOut: (
+			agentId: string,
+			tabRef: TabWindowTabRef,
+			options?: TabWindowPopOutOptions
+		): Promise<TabWindowPopOutResult> =>
+			ipcRenderer.invoke(TAB_WINDOW_CHANNELS.popOut, agentId, tabRef, options),
+
+		/** Return a popped tab to its owner window's strip. */
+		dock: (agentId: string, tabRef: TabWindowTabRef): Promise<TabWindowDockResult> =>
+			ipcRenderer.invoke(TAB_WINDOW_CHANNELS.dock, agentId, tabRef),
+
+		/** Show a popped tab in its tab window and raise that window. */
+		focus: (agentId: string, tabRef: TabWindowTabRef): Promise<TabWindowFocusResult> =>
+			ipcRenderer.invoke(TAB_WINDOW_CHANNELS.focus, agentId, tabRef),
+
+		/**
+		 * Put the agent's tab window strip in this order. `tabRefs` must name
+		 * exactly the tabs the window holds; each keeps its dock slot.
+		 */
+		reorder: (agentId: string, tabRefs: TabWindowTabRef[]): Promise<TabWindowReorderResult> =>
+			ipcRenderer.invoke(TAB_WINDOW_CHANNELS.reorder, agentId, tabRefs),
+
+		/** Every tab window and its tabs. */
+		list: (): Promise<TabWindowInfo[]> => ipcRenderer.invoke(TAB_WINDOW_CHANNELS.list),
+
+		/** The calling tab window's own record; null in any other window. */
+		getState: (): Promise<TabWindowInfo | null> => ipcRenderer.invoke(TAB_WINDOW_CHANNELS.getState),
+
+		/** Owner window: publish a patch to the agent's tab window. */
+		sendSessionPatch: (patch: TabWindowSessionPatch): void => {
+			ipcRenderer.send(TAB_WINDOW_CHANNELS.sessionPatch, patch);
+		},
+
+		/** Tab window: subscribe to the patches its owner publishes. */
+		onSessionPatch: (callback: (patch: TabWindowSessionPatch) => void): (() => void) => {
+			const handler = (_event: unknown, patch: TabWindowSessionPatch) => callback(patch);
+			ipcRenderer.on(TAB_WINDOW_CHANNELS.sessionPatch, handler);
+			return () => ipcRenderer.removeListener(TAB_WINDOW_CHANNELS.sessionPatch, handler);
+		},
+
+		/** Tab window: ask the owner window to run an action. */
+		sendIntent: (intent: TabWindowIntent): void => {
+			ipcRenderer.send(TAB_WINDOW_CHANNELS.intent, intent);
+		},
+
+		/** Owner window: subscribe to the intents its agents' tab windows send. */
+		onIntent: (callback: (intent: TabWindowIntent) => void): (() => void) => {
+			const handler = (_event: unknown, intent: TabWindowIntent) => callback(intent);
+			ipcRenderer.on(TAB_WINDOW_CHANNELS.intent, handler);
+			return () => ipcRenderer.removeListener(TAB_WINDOW_CHANNELS.intent, handler);
+		},
+
+		/**
+		 * Terminal handoff (D5, `src/main/terminal-handoff.ts`): this window gives
+		 * up its view of a PTY. Main starts holding the PTY's output and answers
+		 * through {@link onTerminalReleaseBegun}, in order with `process:data`.
+		 */
+		beginTerminalRelease: (processId: string): void => {
+			ipcRenderer.send(TAB_WINDOW_CHANNELS.terminalRelease, processId);
+		},
+
+		/** The answer to {@link beginTerminalRelease}. */
+		onTerminalReleaseBegun: (callback: (processId: string) => void): (() => void) => {
+			const handler = (_event: unknown, processId: string) => callback(processId);
+			ipcRenderer.on(TAB_WINDOW_CHANNELS.terminalReleaseBegun, handler);
+			return () => ipcRenderer.removeListener(TAB_WINDOW_CHANNELS.terminalReleaseBegun, handler);
+		},
+
+		/** The scrollback of a view this window gave up, for the next view to replay. */
+		commitTerminalRelease: (processId: string, text: string): void => {
+			ipcRenderer.send(TAB_WINDOW_CHANNELS.terminalCommit, processId, text);
+		},
+
+		/** This window mounts a view of a PTY: ask for the scrollback to replay. */
+		claimTerminalReplay: (processId: string): void => {
+			ipcRenderer.send(TAB_WINDOW_CHANNELS.terminalClaim, processId);
+		},
+
+		/** The answer to {@link claimTerminalReplay}: the replay, or null for none. */
+		onTerminalReplay: (
+			callback: (processId: string, text: string | null) => void
+		): (() => void) => {
+			const handler = (_event: unknown, processId: string, text: string | null) =>
+				callback(processId, text);
+			ipcRenderer.on(TAB_WINDOW_CHANNELS.terminalReplay, handler);
+			return () => ipcRenderer.removeListener(TAB_WINDOW_CHANNELS.terminalReplay, handler);
+		},
+
+		/**
+		 * Owner window: subscribe to a remote `tab pop-out` / `tab dock`
+		 * (`maestro-cli`). Main sends it to the agent's owner window. A round
+		 * trip: the caller is told the window and tabs, or why nothing moved.
+		 */
+		onRemoteCommand: (
+			callback: (request: TabWindowCommandRequest, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (
+				_event: unknown,
+				request: TabWindowCommandRequest,
+				responseChannel: string
+			) => callback(request, responseChannel);
+			ipcRenderer.on('remote:tabWindowCommand', handler);
+			return () => ipcRenderer.removeListener('remote:tabWindowCommand', handler);
+		},
+
+		sendRemoteCommandResponse: (responseChannel: string, result: TabWindowCommandResult): void => {
+			ipcRenderer.send(responseChannel, result);
+		},
+	};
+}
+
+/**
+ * TypeScript type for the tab windows API.
+ */
+export type TabWindowsApi = ReturnType<typeof createTabWindowsApi>;

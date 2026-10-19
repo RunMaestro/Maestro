@@ -1,6 +1,6 @@
 /**
- * window-mode.js tags <html> as the Quick Chat or HUD window before the first
- * paint, so the static loading splash in index.html never shows inside them.
+ * window-mode.js tags <html> as the Quick Chat, HUD, or tab window before the
+ * first paint, so the static loading splash in index.html never shows inside them.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { readFileSync } from 'fs';
@@ -16,7 +16,7 @@ function runWithSearch(search: string): DOMTokenList {
 }
 
 afterEach(() => {
-	document.documentElement.classList.remove('quick-chat-window', 'cadenza-hud');
+	document.documentElement.classList.remove('quick-chat-window', 'cadenza-hud', 'tab-window');
 	window.history.replaceState(null, '', '/');
 });
 
@@ -29,18 +29,27 @@ describe('window-mode.js', () => {
 		expect(runWithSearch('?cadenzaHud').contains('cadenza-hud')).toBe(true);
 	});
 
+	it('tags a tab window', () => {
+		expect(runWithSearch('?tabWindow=tw-1').contains('tab-window')).toBe(true);
+	});
+
+	it('does not tag a tab window that carries no id', () => {
+		expect(runWithSearch('?tabWindow=').contains('tab-window')).toBe(false);
+	});
+
 	it('leaves the app window alone', () => {
 		const classes = runWithSearch('');
 		expect(classes.contains('quick-chat-window')).toBe(false);
 		expect(classes.contains('cadenza-hud')).toBe(false);
+		expect(classes.contains('tab-window')).toBe(false);
 	});
 
-	it('loads in <head> and index.html hides the splash for both modes', () => {
+	it('loads in <head> and index.html hides the splash for every reduced mode', () => {
 		const html = repoFile('src/renderer/index.html').replace(/<!--[\s\S]*?-->/g, '');
 		const head = html.slice(0, html.indexOf('</head>'));
 		expect(head).toContain('<script src="./window-mode.js"></script>');
 		expect(head).toMatch(
-			/html\.quick-chat-window #initial-splash,\s*html\.cadenza-hud #initial-splash\s*\{\s*display: none;/
+			/html\.quick-chat-window #initial-splash,\s*html\.cadenza-hud #initial-splash,\s*html\.tab-window #initial-splash\s*\{\s*display: none;/
 		);
 	});
 });

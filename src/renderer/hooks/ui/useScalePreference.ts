@@ -12,6 +12,9 @@
  *   - A missing or hostile Storage (private mode, storage-blocked renderer,
  *     jsdom under test) must cost the user their persistence, not their pane.
  *
+ * Every window of the app shares the storage, so a change made in one window
+ * (a tab window's file preview, say) shows in the others as it happens.
+ *
  * The multiplier is applied by the caller to whatever base size its surface
  * uses, so `1` always means "the surface's own size".
  */
@@ -19,6 +22,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { clampScale, stepScale, type ScaleRange } from '../../../shared/scaleRange';
 import { safeStorageGet, safeStorageSet } from '../../utils/safeLocalStorage';
+import { useEventListener } from '../utils/useEventListener';
 
 // The arithmetic is shared with the main process (see shared/scaleRange.ts).
 export { clampScale, type ScaleRange };
@@ -76,6 +80,13 @@ export function useScalePreference(
 	const resetScale = useCallback(() => {
 		setScale(() => persist(bounds.initial));
 	}, [persist, bounds]);
+
+	// Another window changed it (the `storage` event never fires in the writer).
+	useEventListener('storage', (event) => {
+		const { key, newValue } = event as StorageEvent;
+		if (key !== storageKey) return;
+		setScale(newValue === null ? bounds.initial : clampScale(Number(newValue), bounds));
+	});
 
 	return {
 		scale,

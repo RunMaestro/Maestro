@@ -3,9 +3,11 @@ export {
 	initPermissionRelay,
 	preparePermissionRelayArgs,
 	resolvePermissionResponse,
+	reroutePermissionRequests,
 	cleanupSessionRelay,
 	PERMISSION_REQUEST_CHANNEL,
 } from './integration';
+export type { PermissionRelayRouting } from './integration';
 export { permissionRelayServer } from './PermissionRelayServer';
 export { parseQuestionRequest } from './question-request';
 export type {

@@ -22,16 +22,12 @@ import {
 } from '../../../../shared/agentMetadata';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { shortcutSuffix } from '../../ui/ShortcutHint';
-import { updateSessionWith } from '../../../stores/sessionStore';
 import { captureException } from '../../../utils/sentry';
 import { isCoarsePointer } from '../../../utils/touch';
 import { useViewportBreakpoint } from '../../../hooks/ui';
 import { usePhoneLayout } from '../../../hooks/ui/useViewportBreakpoint';
-import {
-	nextPermissionMode,
-	permissionModeFields,
-	setShowThinkingFields,
-} from '../../../utils/tabHelpers';
+import { nextPermissionMode } from '../../../utils/tabHelpers';
+import { setAiTabPermissionMode, setAiTabShowThinking } from '../../../services/aiTabActions';
 import { addStagedImageIfUnique } from '../utils/stagedImages';
 import { formatTerminalCwd } from '../utils/terminalPath';
 import { ComposerOptionsSheet } from './ComposerOptionsSheet';
@@ -82,6 +78,13 @@ interface ToolbarControlsProps {
 	 * the column beside the composer.
 	 */
 	processInput?: () => void;
+	/**
+	 * Set the tab's permission mode. Defaults to writing this window's store; a
+	 * tab window passes its intent instead, because the owner writes the tab.
+	 */
+	onPermissionModeChange?: (mode: 'full' | 'standard' | 'readonly') => void;
+	/** Set the tab's thinking mode (the phone sheet). Same default and override rule. */
+	onThinkingModeChange?: (mode: ThinkingMode) => void;
 }
 
 export const ToolbarControls = memo(function ToolbarControls({
@@ -119,6 +122,8 @@ export const ToolbarControls = memo(function ToolbarControls({
 	setEffortMenuOpen,
 	effortMenuRef,
 	processInput,
+	onPermissionModeChange,
+	onThinkingModeChange,
 }: ToolbarControlsProps) {
 	const isAiMode = session.inputMode === 'ai';
 	const { isNarrow: isNarrowViewport } = useViewportBreakpoint();
@@ -242,33 +247,31 @@ export const ToolbarControls = memo(function ToolbarControls({
 	);
 
 	// The sheet NAMES a mode rather than stepping to the next one, so both
-	// writes go through the shared field patches instead of a second inline copy
-	// of "keep readOnlyMode and permissionMode in lockstep" / "clear the
-	// thinking logs when the mode goes off".
+	// writes go through the shared explicit-target actions instead of a second
+	// inline copy of "keep readOnlyMode and permissionMode in lockstep" / "clear
+	// the thinking logs when the mode goes off".
 	const handlePermissionModeChange = useCallback(
 		(mode: 'full' | 'standard' | 'readonly') => {
+			if (onPermissionModeChange) {
+				onPermissionModeChange(mode);
+				return;
+			}
 			if (!activeTabId) return;
-			updateSessionWith(session.id, (s) => ({
-				...s,
-				aiTabs: s.aiTabs.map((t) =>
-					t.id === activeTabId ? { ...t, ...permissionModeFields(mode) } : t
-				),
-			}));
+			setAiTabPermissionMode({ sessionId: session.id, tabId: activeTabId }, mode);
 		},
-		[session.id, activeTabId]
+		[session.id, activeTabId, onPermissionModeChange]
 	);
 
 	const handleThinkingModeChange = useCallback(
 		(mode: ThinkingMode) => {
+			if (onThinkingModeChange) {
+				onThinkingModeChange(mode);
+				return;
+			}
 			if (!activeTabId) return;
-			updateSessionWith(session.id, (s) => ({
-				...s,
-				aiTabs: s.aiTabs.map((t) =>
-					t.id === activeTabId ? { ...t, ...setShowThinkingFields(t, mode) } : t
-				),
-			}));
+			setAiTabShowThinking({ sessionId: session.id, tabId: activeTabId }, mode);
 		},
-		[session.id, activeTabId]
+		[session.id, activeTabId, onThinkingModeChange]
 	);
 
 	// Phone: the row holds only what a thumb reaches for mid-sentence - attach an

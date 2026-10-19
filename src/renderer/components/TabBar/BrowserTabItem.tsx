@@ -22,6 +22,7 @@ import { getBrowserTabLabel } from '../../utils/browserTabPersistence';
 import { getTabKindColor } from './tabBarUtils';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { ShortcutHint, shortcutSuffix } from '../ui/ShortcutHint';
+import { TabWindowMenuItem } from './TabWindowMenuItem';
 
 export interface BrowserTabItemProps {
 	tab: BrowserTab;
@@ -42,6 +43,8 @@ export interface BrowserTabItemProps {
 	registerRef?: (el: HTMLDivElement | null) => void;
 	/** Park this tab until a chosen moment. Omitted when snoozing is unavailable. */
 	onSnooze?: (tabId: string) => void;
+	/** Move this tab to its tab window, or dock it from one (TW-11). Omit to hide the item. */
+	onTabWindowMove?: (tabId: string) => void;
 	onMoveToFirst?: (tabId: string) => void;
 	onMoveToLast?: (tabId: string) => void;
 	isFirstTab?: boolean;
@@ -85,6 +88,7 @@ export const BrowserTabItem = memo(function BrowserTabItem({
 	isDragOver,
 	registerRef,
 	onSnooze,
+	onTabWindowMove,
 	onMoveToFirst,
 	onMoveToLast,
 	isFirstTab,
@@ -209,6 +213,17 @@ export const BrowserTabItem = memo(function BrowserTabItem({
 			setOverlayOpen(false);
 		},
 		[onSnooze, tab.id, setOverlayOpen]
+	);
+
+	// Tab Windows (TW-11): pop out from an app window, dock from a tab window.
+	// The overlay closes first: the tab is about to leave this strip.
+	const handleTabWindowClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			setOverlayOpen(false);
+			onTabWindowMove?.(tab.id);
+		},
+		[onTabWindowMove, tab.id, setOverlayOpen]
 	);
 
 	const handleMoveToFirstClick = useCallback(
@@ -498,6 +513,8 @@ export const BrowserTabItem = memo(function BrowserTabItem({
 								)}
 							</button>
 						)}
+
+						{onTabWindowMove && <TabWindowMenuItem theme={theme} onClick={handleTabWindowClick} />}
 
 						{(onMoveToFirst || onMoveToLast) && (
 							<>

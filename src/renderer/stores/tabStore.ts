@@ -82,6 +82,7 @@ import {
 } from '../utils/snoozeHelpers';
 import { runSnoozeWakePrompt } from '../services/snoozeWakePrompt';
 import { reopenDesktopTabIfNeeded } from '../services/desktopTabClose';
+import { setAiTabEffort, setAiTabModel } from '../services/aiTabActions';
 import { logger } from '../utils/logger';
 
 /**
@@ -727,12 +728,14 @@ export const useTabStore = create<TabStore>()((set) => ({
 		updateAiTab(tabId, { showThinking: nextThinkingMode(tab.showThinking) });
 	},
 
+	// The shared explicit-target actions, on the active agent. A tab window's
+	// owner sets a popped tab's model and effort with the same ones.
 	setTabModel: (tabId, model) => {
-		updateAiTab(tabId, { customModel: model || undefined });
+		setAiTabModel({ sessionId: useSessionStore.getState().activeSessionId, tabId }, model);
 	},
 
 	setTabEffort: (tabId, effort) => {
-		updateAiTab(tabId, { customEffort: effort || undefined });
+		setAiTabEffort({ sessionId: useSessionStore.getState().activeSessionId, tabId }, effort);
 	},
 
 	setAiTabScrollTop: (tabId, scrollTop) => {

@@ -8,6 +8,8 @@
  *    (no WindowProvider) path.
  *  - A representative end-to-end filter: `useAgentDataListener` drops events for
  *    agents this window does not own, and processes events for agents it owns.
+ *  - Tab windows (Tab Windows D1 / D2): both gates deny every agent, before and
+ *    after their effect commits, so no one-shot side effect runs there.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -20,8 +22,10 @@ vi.mock('../../../../../renderer/contexts/WindowContext', () => ({
 	useWindowContextOptional: () => (mockOwnsSession ? { ownsSession: mockOwnsSession } : null),
 }));
 let mockIsWebDesktop = false;
+let mockIsTabWindow = false;
 vi.mock('../../../../../renderer/utils/runtimeContext', () => ({
 	isWebDesktop: () => mockIsWebDesktop,
+	isTabWindow: () => mockIsTabWindow,
 }));
 
 import {
@@ -57,6 +61,7 @@ describe('agentIdFromProcessSessionId', () => {
 describe('useOwnedSessionGate', () => {
 	beforeEach(() => {
 		mockOwnsSession = undefined;
+		mockIsTabWindow = false;
 	});
 
 	it('permits everything when there is no WindowProvider (null-safe)', () => {
@@ -98,6 +103,7 @@ describe('useOwnedSideEffectGate', () => {
 	beforeEach(() => {
 		mockOwnsSession = undefined;
 		mockIsWebDesktop = false;
+		mockIsTabWindow = false;
 	});
 
 	it('follows the ownership gate in the Electron renderer', () => {
@@ -130,6 +136,54 @@ describe('useOwnedSideEffectGate', () => {
 	});
 });
 
+describe('gates in a tab window', () => {
+	// Every raw id shape a `process:*` event can carry, one-shot runs included.
+	const RAW_IDS = [
+		'agent-1',
+		'agent-1-ai-tab-1',
+		'agent-1-terminal',
+		'agent-1-batch-1700000000000',
+		'agent-1-synopsis-1700000000000',
+	];
+
+	beforeEach(() => {
+		mockIsWebDesktop = false;
+		mockIsTabWindow = true;
+		mockOwnsSession = undefined;
+	});
+
+	it.each([
+		['useOwnedSessionGate', useOwnedSessionGate],
+		['useOwnedSideEffectGate', useOwnedSideEffectGate],
+	])('%s denies every agent with no WindowProvider (the tab window case)', (_name, useGate) => {
+		const { result } = renderHook(() => useGate());
+		for (const id of RAW_IDS) expect(result.current.current?.(id)).toBe(false);
+	});
+
+	it.each([
+		['useOwnedSessionGate', useOwnedSessionGate],
+		['useOwnedSideEffectGate', useOwnedSideEffectGate],
+	])('%s denies even when an ownership predicate would permit', (_name, useGate) => {
+		mockOwnsSession = () => true;
+		const { result } = renderHook(() => useGate());
+		for (const id of RAW_IDS) expect(result.current.current?.(id)).toBe(false);
+	});
+
+	it.each([
+		['useOwnedSessionGate', useOwnedSessionGate],
+		['useOwnedSideEffectGate', useOwnedSideEffectGate],
+	])('%s denies before its effect commits', (_name, useGate) => {
+		// Read the ref inside the first render: the value the very first event sees.
+		let first: boolean | undefined;
+		renderHook(() => {
+			const gate = useGate();
+			first ??= gate.current?.('agent-1-ai-tab-1');
+			return gate;
+		});
+		expect(first).toBe(false);
+	});
+});
+
 describe('useAgentDataListener window scoping', () => {
 	let handler: ((sessionId: string, data: string) => void) | undefined;
 
@@ -137,6 +191,7 @@ describe('useAgentDataListener window scoping', () => {
 		vi.clearAllMocks();
 		handler = undefined;
 		mockIsWebDesktop = false;
+		mockIsTabWindow = false;
 		mockOwnsSession = (id) => id === 'sess-1';
 		useSessionStore.setState({ sessions: [], activeSessionId: '', initialLoadComplete: false });
 		window.maestro.process.onData = vi.fn((callback) => {

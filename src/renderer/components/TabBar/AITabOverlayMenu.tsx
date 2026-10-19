@@ -22,6 +22,7 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { hasThinkingEntries } from '../../utils/contextExtractor';
 import type { CopyContextOptions } from '../../hooks/tabs/useTabExportHandlers';
 import { ShortcutHint } from '../ui/ShortcutHint';
+import { TabWindowMenuItem } from './TabWindowMenuItem';
 
 export interface AITabOverlayMenuProps {
 	tab: AITab;
@@ -39,6 +40,7 @@ export interface AITabOverlayMenuProps {
 	onMarkUnreadClick: (e: React.MouseEvent) => void;
 	onExportHtmlClick: (e: React.MouseEvent) => void;
 	onSnoozeClick: (e: React.MouseEvent) => void;
+	onTabWindowMoveClick: (e: React.MouseEvent) => void;
 	onCopyContextClick: (e: React.MouseEvent) => void;
 	onCopyContextWithReasoningClick: (e: React.MouseEvent) => void;
 	onSummarizeAndContinueClick: (e: React.MouseEvent) => void;
@@ -58,6 +60,7 @@ export interface AITabOverlayMenuProps {
 	onCopyContext?: (tabId: string, options?: CopyContextOptions) => void;
 	onExportHtml?: (tabId: string) => void;
 	onSnooze?: (tabId: string) => void;
+	onTabWindowMove?: (tabId: string) => void;
 	onPublishGist?: (tabId: string) => void;
 	onMoveToFirst?: (tabId: string) => void;
 	onMoveToLast?: (tabId: string) => void;
@@ -85,6 +88,7 @@ export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 	onMarkUnreadClick,
 	onExportHtmlClick,
 	onSnoozeClick,
+	onTabWindowMoveClick,
 	onCopyContextClick,
 	onCopyContextWithReasoningClick,
 	onSummarizeAndContinueClick,
@@ -103,6 +107,7 @@ export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 	onCopyContext,
 	onExportHtml,
 	onSnooze,
+	onTabWindowMove,
 	onPublishGist,
 	onMoveToFirst,
 	onMoveToLast,
@@ -247,6 +252,8 @@ export const AITabOverlayMenu = memo(function AITabOverlayMenu({
 						)}
 					</button>
 				)}
+
+				{onTabWindowMove && <TabWindowMenuItem theme={theme} onClick={onTabWindowMoveClick} />}
 
 				{/* Context Management Section - divider and grouped options */}
 				{(tab.agentSessionId || (tab.logs?.length ?? 0) >= 1) &&

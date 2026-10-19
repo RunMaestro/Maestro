@@ -28,6 +28,8 @@ const FOCUSING_TODAY: BackgroundCapableVerb[] = [
 	'open-terminal',
 	'open-browser',
 	'tab-new',
+	// Raises the tab window, as every UI entry point to a pop-out does.
+	'tab-pop-out',
 	'dispatch',
 	'create-agent',
 	'create-worktree',

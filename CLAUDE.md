@@ -46,6 +46,7 @@ None of these load automatically. Read the one that matches the task before you 
 | Prompt template or SpecKit/OpenSpec                | [PROMPTS-SPECS.md](docs/agent-guides/PROMPTS-SPECS.md)           |
 | Cue pipeline feature                               | [CUE-PIPELINE.md](docs/agent-guides/CUE-PIPELINE.md)             |
 | App lifecycle, updater, or power mgmt              | [MAIN-LIFECYCLE.md](docs/agent-guides/MAIN-LIFECYCLE.md)         |
+| Tab window, pop-out, or dock                       | [TAB-WINDOWS.md](docs/agent-guides/TAB-WINDOWS.md)               |
 | Plugin, sandbox capability, or contribution        | [PLUGIN-DEVELOPMENT.md](docs/agent-guides/PLUGIN-DEVELOPMENT.md) |
 | React context, renderer type, or Symphony runner   | [REMAINING-SYSTEMS.md](docs/agent-guides/REMAINING-SYSTEMS.md)   |
 | Release step, tag, bump, or announcement           | [RELEASE-RUNBOOK.md](docs/agent-guides/RELEASE-RUNBOOK.md)       |
@@ -118,7 +119,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Proving a sealed file is the newest one (rollback and deletion):** `createKeyringAnchor(service, account)`, `AnchorStore`, `keyringAnchor()`, `noAnchor()` in `src/main/utils/keyring-anchor.ts`
 - **Writing a Claude session's origin record:** `setClaudeSessionOrigin()`, `mergeClaudeSessionOrigin()` in `src/main/storage/claude-session-origins.ts`
 - **Serializing async work on one entity:** `createKeyedWriteQueue()` in `src/shared/keyedWriteQueue.ts` (main imports it via `src/main/utils/atomic-json-store.ts`)
-- **Capping stored tool output:** `compactToolOutput()`, `compactSessionToolOutputs()` in `src/shared/toolOutput.ts`
+- **Capping stored tool output:** `compactToolOutput()`, `compactSessionToolOutputs()`, `compactLogToolOutputs()` in `src/shared/toolOutput.ts`
 - **Merging browser-deferred conversations:** `projectWebSession()`, `readDeferredContent()`, `mergeDeferredSessionContent()` in `src/main/stores/deferred-session-content.ts`, over `mergeDeferredItems()` in `src/shared/deferredSessionContent.ts`
 - **HTTP request from the main process:** `fetchWithTimeout()`, `isFetchTimeoutError()` in `src/main/utils/fetchWithTimeout.ts` (never a bare `fetch()`)
 - **A git query the UI polls in the background:** `execGitReadOnly()`, `isGitTimeout()`, `READ_ONLY_GIT_TIMEOUT_MS` in `src/main/utils/remote-git.ts`
@@ -193,7 +194,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Moving an agent to another directory:** `withWorkingDirectory()`, `workingDirectoryChangeBlocker()`, `isSameDirectory()` in `src/renderer/utils/agentWorkingDirectory.ts`
 - **Per-agent git actions:** `useGitAgentActions(session)` in `src/renderer/hooks/git/useGitAgentActions.ts`
 - **Whether a PR is being opened right now:** `usePRCreationActive()`, `startPRCreation()` in `src/renderer/stores/prCreationStore.ts`
-- **Taking the user to an agent:** `jumpToAgent()`, `revealAgentInSidebar()`, `openAgentSettings()` in `src/renderer/services/agentNavigation.ts`
+- **Taking the user to an agent:** `jumpToAgent()`, `revealAgentInSidebar()`, `openAgentSettings()` in `src/renderer/services/agentNavigation.ts`; a tab popped out into a tab window via `focusTabWindowIfPoppedOut()` in `src/renderer/services/tabWindowNavigation.ts`
 - **Whether an agent is drawn in the Left Bar:** `sessionMatchesFilter()`, `passesUnreadFilter()`, `passesHiddenGroupFilter()` in `src/renderer/utils/sidebarMembership.ts`; attention via `sessionNeedsAttention()` in `src/renderer/utils/sessionAttention.ts`
 - **Listing agents in the Left Bar's order:** `leftBarAgentOrder()`, `orderLeftBarGroups()` in `src/renderer/utils/leftBarOrder.ts`
 - **Whether an agent is answering a consult right now:** `useSessionIsBeingConsulted(sessionId)`, `useConsultedSessionIds()` in `src/renderer/stores/crossAgentInFlightStore.ts`
@@ -202,14 +203,14 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Naming an agent from its folder (vs naming the project):** `projectNameFromPath()`, `defaultAgentNameForPath()` in `src/renderer/components/Wizard/shared/projectIdentity.ts`
 - **Recording wizard usage:** `beginWizardRun()`, `recordWizardDocuments()` in `src/renderer/services/wizardStats.ts`
 - **Leaving inline wizard mode:** `flattenWizardIntoTab(tab, { summary? })` in `src/renderer/utils/tabHelpers/index.ts`
-- **What the Thinking pill lists:** `buildThinkingItems()` in `src/renderer/utils/thinkingItems.ts` (read through `useThinkingItems()`); `useBackgroundAutoRuns()` in `src/renderer/hooks/batch/useBackgroundAutoRuns.ts`
+- **What the Thinking pill lists:** `buildThinkingItems()`, `buildTabWindowThinkingItems()` in `src/renderer/utils/thinkingItems.ts` (read through `useThinkingItems()`); `useBackgroundAutoRuns()` in `src/renderer/hooks/batch/useBackgroundAutoRuns.ts`
 
 #### Tabs
 
 - **Making a tab the visible one:** `aiTabFocusFields()`, `fileTabFocusFields()`, `browserTabFocusFields()`, `terminalTabFocusFields()` in `src/renderer/utils/tabHelpers/focusFields.ts` (never hand-roll the literal)
 - **Any CLI verb that can move the Maestro view:** `resolveBackgroundFlag()` (CLI) / `readBackgroundField()` (handler) in `src/shared/focusPlacement.ts` (never `message.background !== false`)
 - **Which tab a tab-scoped action targets:** `resolveActiveTabRef(session)`, `resolveTabRefRenameValue()`, `resolveTabRefTitle()` in `src/renderer/utils/panelLayout.ts`
-- **Whether an AI tab is drawn in the tab strip:** `isAiTabHidden(tab)`, `visibleAiTabs(tabs)`, `hasUnreadVisibleTab(tabs)` in `src/renderer/utils/unifiedTabOrderUtils.ts` (never `aiTabs.length` or `aiTabs.some((t) => t.hasUnread)`)
+- **Whether an AI tab is drawn in the tab strip:** `isAiTabHidden(tab)`, `visibleAiTabs(tabs)`, `hasUnreadVisibleTab(tabs)`, `ownerVisibleAiTabs()`, `withoutPoppedOutTabs()`, `filterPoppedOutRefs()` in `src/renderer/utils/unifiedTabOrderUtils.ts` (never `aiTabs.length` or `aiTabs.some((t) => t.hasUnread)`)
 - **What an unnamed tab is called:** `getTabDisplayName(tab)`, `isSessionIdLabel()` in `src/renderer/utils/tabHelpers`, over `formatSessionId(agentSessionId)`
 - **Where a closed tab's name still exists:** `HistoryEntry.sessionName` only; pass it as the third argument of `handleResumeSession`
 - **Reading a past conversation back into a tab:** `loadResumableSession()` in `src/renderer/services/resumableSession.ts`
@@ -228,6 +229,11 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **How big a tab's conversation is and how long it ran:** `computeTabConversationStats()`, `formatConversationDuration()` in `src/shared/tabConversationStats.ts`
 - **What a snooze opener was handed:** `resolveSnoozeTarget(session, id)` in `src/renderer/utils/snoozeHelpers.ts`
 - **Parking, waking, dismissing, or rescheduling ONE snooze:** `snoozeTabWithMirror()`, `wakeSnoozeNow()`, `dismissSnoozeNow()`, `rescheduleSnoozeNow()` in `src/renderer/services/snoozeActions.ts`
+- **Changing one AI tab's settings by agent and tab:** `setAiTabModel()`, `setAiTabEffort()`, `setAiTabPermissionMode()`, `setAiTabStarred()`, `markAiTabUnread()` and siblings in `src/renderer/services/aiTabActions.ts`
+- **Closing a tab with the confirm its chip uses:** `closeAiTabWithConfirm()`, `closeFileTabWithConfirm()`, `closeTerminalTabWithConfirm()` in `src/renderer/services/tabCloseConfirm.ts`
+- **A tab window action that writes the agent:** `sendTabWindowIntent()`, `sendShownTabIntent()` in `src/renderer/services/tabWindowIntentSender.ts`; owner side `dispatchTabWindowIntent()` in `src/renderer/services/tabWindowIntents.ts`
+- **Popping a tab out into a tab window, or docking it:** `popOutTab()`, `dockTab()`, `popOutTabFromUi()`, `resolvePopOutTarget()`, `canUseTabWindows()` in `src/renderer/services/tabWindowActions.ts`
+- **Whether a tab is popped out into a tab window:** `isTabPoppedOut()`, `usePoppedOutTabKeys()`, `getTabWindowTabRefs()` in `src/renderer/stores/tabWindowStore.ts`; strip filters `ownerVisibleAiTabs()`, `withoutPoppedOutTabs()` in `src/renderer/utils/unifiedTabOrderUtils.ts`
 
 #### Composer, queue, and transcript
 

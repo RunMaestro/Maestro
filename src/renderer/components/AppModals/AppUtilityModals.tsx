@@ -798,6 +798,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 			{tabSwitcherOpen && activeSession?.aiTabs && (
 				<TabSwitcherModal
 					theme={theme}
+					sessionId={activeSession.id}
 					tabs={activeSession.aiTabs}
 					fileTabs={activeSession.filePreviewTabs}
 					terminalTabs={activeSession.terminalTabs}
@@ -823,6 +824,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 			{crossTabSearchOpen && activeSession?.aiTabs && (
 				<CrossTabSearchModal
 					theme={theme}
+					sessionId={activeSession.id}
 					tabs={activeSession.aiTabs}
 					activeTabId={activeSession.activeTabId}
 					shortcut={shortcuts.searchAllTabs}

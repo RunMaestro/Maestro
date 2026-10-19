@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { buildThinkingItems } from '../../../renderer/utils/thinkingItems';
+import {
+	buildTabWindowThinkingItems,
+	buildThinkingItems,
+} from '../../../renderer/utils/thinkingItems';
 import { createMockSession } from '../../helpers/mockSession';
 import { createMockAITab } from '../../helpers/mockTab';
 
@@ -151,5 +154,51 @@ describe('buildThinkingItems', () => {
 			const ownsSession = () => false;
 			expect(buildThinkingItems(sessions, ownsSession)).toEqual([]);
 		});
+	});
+});
+
+describe('buildTabWindowThinkingItems', () => {
+	// The tab window holds a2 and a3; the owner keeps a1. Its copy of a1 is frozen
+	// at the last snapshot (Tab Windows, D2), so the busy state it shows can be stale.
+	const STRIP = [
+		{ type: 'ai' as const, id: 'a2' },
+		{ type: 'ai' as const, id: 'a3' },
+	];
+	const agent = (tabs: { a1?: 'busy' | 'idle'; a2?: 'busy' | 'idle'; a3?: 'busy' | 'idle' }) =>
+		createMockSession({
+			id: 'agent',
+			state: 'busy',
+			busySource: 'ai',
+			aiTabs: [
+				createMockAITab({ id: 'a1', state: tabs.a1 ?? 'idle' }),
+				createMockAITab({ id: 'a2', state: tabs.a2 ?? 'idle' }),
+				createMockAITab({ id: 'a3', state: tabs.a3 ?? 'idle' }),
+			],
+		});
+
+	it('lists the busy tabs of the strip', () => {
+		const items = buildTabWindowThinkingItems(agent({ a2: 'busy', a3: 'busy' }), STRIP);
+		expect(items.map((item) => item.tab?.id)).toEqual(['a2', 'a3']);
+		expect(items.every((item) => item.session.id === 'agent')).toBe(true);
+	});
+
+	it('never lists a tab outside the strip, whose state here is frozen', () => {
+		const items = buildTabWindowThinkingItems(agent({ a1: 'busy', a2: 'busy' }), STRIP);
+		expect(items.map((item) => item.tab?.id)).toEqual(['a2']);
+	});
+
+	it('shows nothing when only a tab outside the strip is busy (no legacy item)', () => {
+		expect(buildTabWindowThinkingItems(agent({ a1: 'busy' }), STRIP)).toEqual([]);
+	});
+
+	it('lists a closed tab that is still thinking: that state is live here', () => {
+		const orphan = createMockAITab({ id: 'closed', state: 'busy' });
+		const session = { ...agent({}), state: 'idle' as const, orphanedThinkingTabs: [orphan] };
+		const items = buildTabWindowThinkingItems(session, STRIP);
+		expect(items.map((item) => item.tab)).toEqual([orphan]);
+	});
+
+	it('shows nothing while the agent is idle', () => {
+		expect(buildTabWindowThinkingItems({ ...agent({}), state: 'idle' }, STRIP)).toEqual([]);
 	});
 });

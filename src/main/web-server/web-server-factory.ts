@@ -15,6 +15,7 @@ import type { SettingsStoreInterface as SettingsStore } from '../stores/types';
 import type { DebugPackageDependencies } from '../debug-package';
 import type { CueGraphSession, CueRunResult } from '../../shared/cue/contracts';
 import type { CadenzaPayload } from '../../shared/cadenza-types';
+import type { TabWindowInfo } from '../../shared/tabWindowTypes';
 import { registerSessionCallbacks } from './callbacks/sessionCallbacks';
 import { registerThemeCallbacks } from './callbacks/themeCallbacks';
 import { registerNotificationCallbacks } from './callbacks/notificationCallbacks';
@@ -30,6 +31,7 @@ import { registerAutoRunConfigCallbacks } from './callbacks/autoRunConfigCallbac
 import { registerSessionCrudCallbacks } from './callbacks/sessionCrudCallbacks';
 import { registerGroupCrudCallbacks } from './callbacks/groupCrudCallbacks';
 import { registerWindowCommandCallbacks } from './callbacks/windowCommandCallbacks';
+import { registerTabWindowCommandCallbacks } from './callbacks/tabWindowCommandCallbacks';
 import { registerThroughputGaugeCallbacks } from './callbacks/throughputGaugeCallbacks';
 import { registerGitCallbacks } from './callbacks/gitCallbacks';
 import { registerGroupChatCallbacks } from './callbacks/groupChatCallbacks';
@@ -67,6 +69,8 @@ export interface WebServerFactoryDependencies {
 	getMainWindow: () => BrowserWindow | null;
 	/** Resolve the Electron window that currently owns a session. */
 	getWindowForSession?: (sessionId: string) => BrowserWindow | null;
+	/** Every tab window, from the window registry (`maestro-cli tab windows`). */
+	getTabWindows?: () => TabWindowInfo[];
 	/**
 	 * Deliver a cadenza payload to the desktop HUD window - the transparent,
 	 * always-on-top overlay that floats cadenza views over other apps (created
@@ -199,6 +203,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 		registerSessionCrudCallbacks(server, deps);
 		registerGroupCrudCallbacks(server, deps);
 		registerWindowCommandCallbacks(server, deps);
+		registerTabWindowCommandCallbacks(server, deps);
 		registerThroughputGaugeCallbacks(server, deps);
 
 		registerGitCallbacks(server, deps);

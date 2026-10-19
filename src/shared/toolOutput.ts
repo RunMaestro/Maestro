@@ -81,6 +81,16 @@ function compactLogs(value: unknown): CompactedValue<unknown> {
 	return { value: count > 0 ? logs : value, count };
 }
 
+/**
+ * Compact the tool results in one transcript without changing the input. The
+ * same array comes back when nothing needed capping, and only the capped
+ * entries are new objects, so identity comparisons keep working.
+ */
+export function compactLogToolOutputs<T>(logs: T[]): { logs: T[]; compacted: number } {
+	const result = compactLogs(logs);
+	return { logs: result.value as T[], compacted: result.count };
+}
+
 function compactTab(value: unknown): CompactedValue<unknown> {
 	if (!value || typeof value !== 'object') return { value, count: 0 };
 	const tab = value as Record<string, unknown>;

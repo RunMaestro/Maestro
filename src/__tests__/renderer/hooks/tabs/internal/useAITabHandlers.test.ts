@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAITabHandlers } from '../../../../../renderer/hooks/tabs/internal/useAITabHandlers';
 import { useNotificationStore } from '../../../../../renderer/stores/notificationStore';
 import { useModalStore } from '../../../../../renderer/stores/modalStore';
+import { useTabWindowStore } from '../../../../../renderer/stores/tabWindowStore';
 import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';
 import { getLiveDraft, setLiveDraft } from '../../../../../renderer/utils/liveDraftStore';
 import {
@@ -353,6 +354,35 @@ describe('useAITabHandlers', () => {
 		expect(ids).toContain('consult');
 		expect(ids).not.toContain('ai-1');
 		expect(ids).not.toContain('ai-2');
+	});
+
+	// A tab popped out into a tab window is not in this window's strip (D4), so a
+	// close-all in the owner leaves it running in its own window.
+	it('leaves a tab popped out into a tab window alive when closing all tabs', () => {
+		setupSession({
+			aiTabs: [createMockAITab({ id: 'ai-1' }), createMockAITab({ id: 'popped' })],
+			activeTabId: 'ai-1',
+		});
+		useTabWindowStore.getState().setWindows([
+			{
+				windowId: 'tw-1',
+				agentId: getSession().id,
+				tabRefs: [{ type: 'ai', id: 'popped' }],
+				activeTabRef: null,
+			},
+		]);
+
+		const { result } = renderHook(() => useAITabHandlers());
+		act(() => {
+			result.current.handleCloseAllTabs();
+		});
+
+		const ids = getSession().aiTabs.map((tab) => tab.id);
+		expect(ids).toContain('popped');
+		expect(ids).not.toContain('ai-1');
+		// The owner still gets a tab of its own to type into.
+		expect(getSession().activeTabId).not.toBe('popped');
+		useTabWindowStore.setState({ windows: [], poppedByAgent: {} });
 	});
 
 	// The draft prompt guards tabs the user can still get back to. A draft parked on

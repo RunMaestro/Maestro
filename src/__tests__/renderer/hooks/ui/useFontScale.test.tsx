@@ -57,6 +57,23 @@ describe('useFontScale', () => {
 		expect(result.current.canDecrease).toBe(true);
 	});
 
+	it('follows a change another window of the app made (a tab window, say)', () => {
+		const { result } = renderHook(() => useFontScale(KEY));
+		const fromOtherWindow = (key: string, newValue: string | null) =>
+			act(() => {
+				window.dispatchEvent(new StorageEvent('storage', { key, newValue }));
+			});
+
+		fromOtherWindow(KEY, '1.3');
+		expect(result.current.fontScale).toBe(1.3);
+		fromOtherWindow('other.fontScale', '0.8');
+		expect(result.current.fontScale).toBe(1.3);
+		fromOtherWindow(KEY, '9');
+		expect(result.current.fontScale).toBe(FONT_SCALE_MAX);
+		fromOtherWindow(KEY, null);
+		expect(result.current.fontScale).toBe(1);
+	});
+
 	it('steps up and persists a clean number', () => {
 		const { result } = renderHook(() => useFontScale(KEY));
 

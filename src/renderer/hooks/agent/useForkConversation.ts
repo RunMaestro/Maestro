@@ -10,20 +10,27 @@ import { notifyToast } from '../../stores/notificationStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { captureException } from '../../utils/sentry';
 import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
+import type { AiTabTarget } from '../../services/aiTabActions';
 
 /**
  * Fork conversation at a log id into a new AI tab.
+ *
+ * Forks from the active agent's active tab, or from `target` when given: a tab
+ * window's owner forks a popped tab, which is never its active tab (Tab
+ * Windows). The new tab opens in the owner either way.
  *
  * PERF: Reads sessions / activeSessionId via getState() at click time so App
  * does not need a reactive `sessions` subscription for this handler.
  */
 export function useForkConversation() {
-	return useCallback((logId: string) => {
+	return useCallback((logId: string, target?: AiTabTarget) => {
 		const { sessions, activeSessionId, setSessions } = useSessionStore.getState();
-		const session = sessions.find((s) => s.id === activeSessionId);
+		const session = sessions.find((s) => s.id === (target?.sessionId ?? activeSessionId));
 		if (!session) return;
 
-		const sourceTab = getActiveTab(session);
+		const sourceTab = target
+			? session.aiTabs.find((tab) => tab.id === target.tabId)
+			: getActiveTab(session);
 		if (!sourceTab) return;
 
 		// 1. Resolve the raw log index from the log ID.

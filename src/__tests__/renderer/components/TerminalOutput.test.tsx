@@ -74,7 +74,10 @@ vi.mock('../../../renderer/contexts/LayerStackContext', () => ({
 	}),
 }));
 
-vi.mock('../../../renderer/utils/tabHelpers', () => ({
+// Partial: the rest of the module stays real, because modules this file loads
+// read other exports at import time (the tab navigators in tabNavigationShortcuts).
+vi.mock('../../../renderer/utils/tabHelpers', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/utils/tabHelpers')>()),
 	getActiveTab: (session: Session) =>
 		session.tabs?.find((t) => t.id === session.activeTabId) || session.tabs?.[0],
 }));

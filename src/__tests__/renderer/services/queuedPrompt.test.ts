@@ -17,9 +17,11 @@ vi.mock('../../../renderer/services/crossAgentMentions', () => ({
 
 import {
 	buildQueuedMessageItem,
+	editQueuedItem,
 	enqueuePromptForTab,
 	mergeQueuedItemIntoAbove,
 	removeQueuedItem,
+	reorderQueuedItems,
 	sendQueuedItemNow,
 	setQueuedItemPaused,
 	toggleQueuedItemPaused,
@@ -321,6 +323,100 @@ describe('mergeQueuedItemIntoAbove', () => {
 		expect(mergeQueuedItemIntoAbove('session-1', only.id)).toBeNull();
 		expect(currentQueue()).toHaveLength(1);
 		expect(mergeQueuedItemIntoAbove('missing-session', only.id)).toBeNull();
+	});
+});
+
+describe('editQueuedItem', () => {
+	it("rewrites the item's text, images, and turn settings wholesale", () => {
+		seed({
+			executionQueue: [
+				{
+					id: 'q1',
+					timestamp: 1,
+					tabId: 'a',
+					type: 'message',
+					text: 'old',
+					images: ['old.png'],
+					turnSettings: { model: 'opus', effort: 'high' },
+				},
+			],
+		});
+
+		expect(
+			editQueuedItem('session-1', 'q1', {
+				text: 'new',
+				images: [],
+				turnSettings: { model: 'sonnet' },
+			})
+		).toBe(true);
+
+		expect(currentQueue()[0]).toMatchObject({
+			id: 'q1',
+			text: 'new',
+			images: [],
+			turnSettings: { model: 'sonnet' },
+		});
+		expect(currentQueue()[0].turnSettings?.effort).toBeUndefined();
+	});
+
+	it('reports an item that already left the queue, and writes nothing', () => {
+		const session = seed();
+		expect(editQueuedItem('session-1', 'gone', { text: 'x', images: [], turnSettings: {} })).toBe(
+			false
+		);
+		expect(useSessionStore.getState().sessions[0]).toBe(session);
+	});
+
+	it('plans the consult again from the edited text, passing the routing the user picked', () => {
+		planCrossAgentMentions.mockReset();
+		planCrossAgentMentions.mockReturnValue({
+			suppressLocal: true,
+			routingSource: 'explicit',
+			routing: 'only',
+		});
+		seed({
+			executionQueue: [
+				{
+					id: 'q1',
+					timestamp: 1,
+					tabId: 'a',
+					type: 'message',
+					text: 'do it',
+					mentionRouting: 'only',
+				},
+			],
+		});
+
+		editQueuedItem('session-1', 'q1', { text: '@Backend do it', images: [], turnSettings: {} });
+
+		expect(planCrossAgentMentions).toHaveBeenCalledWith('@Backend do it', 'session-1', 'only');
+		expect(currentQueue()[0]).toMatchObject({
+			crossAgentMention: true,
+			crossAgentOnly: true,
+			mentionRouting: 'only',
+		});
+
+		// An edit that drops every mention drops the consult and the picked routing.
+		planCrossAgentMentions.mockReturnValue(null);
+		editQueuedItem('session-1', 'q1', { text: 'do it yourself', images: [], turnSettings: {} });
+		expect(currentQueue()[0]).toMatchObject({ crossAgentMention: false, crossAgentOnly: false });
+		expect(currentQueue()[0].mentionRouting).toBeUndefined();
+	});
+});
+
+describe('reorderQueuedItems', () => {
+	it("moves within one tab's items and leaves other tabs' items in place", () => {
+		seed({
+			executionQueue: [
+				{ id: 'a1', timestamp: 1, tabId: 'a', type: 'message', text: 'a1' },
+				{ id: 'b1', timestamp: 2, tabId: 'b', type: 'message', text: 'b1' },
+				{ id: 'a2', timestamp: 3, tabId: 'a', type: 'message', text: 'a2' },
+			],
+		});
+
+		reorderQueuedItems('session-1', 1, 0, 'a');
+
+		expect(currentQueue().map((i) => i.id)).toEqual(['a2', 'b1', 'a1']);
 	});
 });
 

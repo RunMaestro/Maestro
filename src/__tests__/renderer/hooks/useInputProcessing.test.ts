@@ -3081,12 +3081,14 @@ describe('useInputProcessing', () => {
 				await result.current.processInput();
 			});
 
-			// The mentions resolved against the message, source session, and its active tab...
+			// The mentions resolved against the message, source session, and its active tab,
+			// with no routing handed in (this window's composer holds the user's pick)...
 			expect(onPlanCrossAgentMentions).toHaveBeenCalledTimes(1);
 			expect(onPlanCrossAgentMentions).toHaveBeenCalledWith(
 				'@Backend does this look right?',
 				session,
-				session.activeTabId
+				session.activeTabId,
+				undefined
 			);
 			// ...and the consult fired: there is no local turn for it to wait behind.
 			expect(onDispatchCrossAgentMentions).toHaveBeenCalledTimes(1);
@@ -3576,6 +3578,266 @@ describe('useInputProcessing', () => {
 			);
 
 			cancelRetry(session.id, tab.id);
+		});
+	});
+
+	// Tab Windows (D2): a tab window's owner runs every send from that window
+	// through this same path, aimed at the popped tab - never at this window's
+	// active tab, and never touching this window's own composer.
+	describe('a send from a tab window', () => {
+		/** The owner shows `home`; `popped` lives in a tab window. */
+		function twoTabSession(overrides: Partial<Session> = {}): Session {
+			return createMockSession({
+				aiTabs: [
+					createMockTab({ id: 'home' }),
+					createMockTab({
+						id: 'popped',
+						agentSessionId: 'claude-1',
+						readOnlyMode: true,
+						customModel: 'opus',
+					}),
+				],
+				activeTabId: 'home',
+				...overrides,
+			});
+		}
+
+		function render(session: Session, overrides: Parameters<typeof createDeps>[0] = {}) {
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				// This window's own draft, which the send must leave alone.
+				inputValue: 'a draft typed in this window',
+				stagedImages: ['this-window-image'],
+				...overrides,
+			});
+			return renderHook(() => useInputProcessing(deps));
+		}
+
+		const composerSend = (text: string, extra: Record<string, unknown> = {}) => ({
+			sessionId: 'session-1',
+			tabId: 'popped',
+			images: ['tab-window-image'],
+			fromTabWindow: { composer: { commandMode: 'off' as const } },
+			...extra,
+		});
+
+		it("dispatches to the popped tab with that tab's own settings, leaving this composer alone", async () => {
+			const session = twoTabSession();
+			const { result } = render(session);
+
+			await act(async () => {
+				await result.current.processInput(
+					'from the tab window',
+					composerSend('from the tab window')
+				);
+			});
+
+			// Codified at send from the popped tab: its model, its read-only flag.
+			expect(window.maestro.process.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					sessionId: 'session-1-ai-popped',
+					prompt: expect.stringContaining('from the tab window'),
+					images: ['tab-window-image'],
+					readOnlyMode: true,
+					sessionCustomModel: 'opus',
+					agentSessionId: 'claude-1',
+				})
+			);
+			const [updated] = mockSetSessions.mock.calls.at(-1)![0]([session]);
+			const popped = updated.aiTabs.find((t: AITab) => t.id === 'popped');
+			const home = updated.aiTabs.find((t: AITab) => t.id === 'home');
+			expect(popped.logs.at(-1)).toMatchObject({
+				source: 'user',
+				text: 'from the tab window',
+				readOnly: true,
+			});
+			expect(popped.state).toBe('busy');
+			expect(home.logs).toEqual([]);
+
+			expect(mockSetInputValue).not.toHaveBeenCalled();
+			expect(mockSetStagedImages).not.toHaveBeenCalled();
+			expect(mockSyncAiInputToSession).not.toHaveBeenCalled();
+		});
+
+		it("sends to the AI tab even while this window shows the agent's terminal", async () => {
+			const session = twoTabSession({ inputMode: 'terminal' });
+			const { result } = render(session);
+
+			await act(async () => {
+				await result.current.processInput('still a message', composerSend('still a message'));
+			});
+
+			expect(window.maestro.process.runCommand).not.toHaveBeenCalled();
+			expect(window.maestro.process.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({ sessionId: 'session-1-ai-popped' })
+			);
+		});
+
+		it('plans @mentions with the routing the user picked in the tab window', async () => {
+			const onPlanCrossAgentMentions = vi.fn().mockReturnValue(null);
+			const session = twoTabSession();
+			const { result } = render(session, { onPlanCrossAgentMentions });
+
+			await act(async () => {
+				await result.current.processInput(
+					'ask @Backend too',
+					composerSend('ask @Backend too', {
+						fromTabWindow: { composer: { commandMode: 'off', mentionRoutingOverride: 'parallel' } },
+					})
+				);
+			});
+
+			expect(onPlanCrossAgentMentions).toHaveBeenCalledWith(
+				'ask @Backend too',
+				session,
+				'popped',
+				'parallel'
+			);
+		});
+
+		it('hands "no routing picked" to the planner as null, not as this window\'s pick', async () => {
+			const onPlanCrossAgentMentions = vi.fn().mockReturnValue(null);
+			const session = twoTabSession();
+			const { result } = render(session, { onPlanCrossAgentMentions });
+
+			await act(async () => {
+				await result.current.processInput('ask @Backend', composerSend('ask @Backend'));
+			});
+
+			expect(onPlanCrossAgentMentions).toHaveBeenCalledWith(
+				'ask @Backend',
+				session,
+				'popped',
+				null
+			);
+		});
+
+		it('plans nothing for a replay, as a replay in this window does', async () => {
+			const onPlanCrossAgentMentions = vi.fn().mockReturnValue(null);
+			const session = twoTabSession();
+			const { result } = render(session, { onPlanCrossAgentMentions });
+
+			await act(async () => {
+				await result.current.processInput('replay @Backend', {
+					sessionId: session.id,
+					tabId: 'popped',
+					images: [],
+					fromTabWindow: {},
+				});
+			});
+
+			expect(onPlanCrossAgentMentions).not.toHaveBeenCalled();
+			expect(window.maestro.process.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({ sessionId: 'session-1-ai-popped' })
+			);
+			expect(mockSetInputValue).not.toHaveBeenCalled();
+		});
+
+		it('runs a command line on the popped tab, not on the active one', async () => {
+			const session = twoTabSession();
+			const { result } = render(session);
+
+			await act(async () => {
+				await result.current.processInput(
+					'git status',
+					composerSend('git status', { fromTabWindow: { composer: { commandMode: 'shell' } } })
+				);
+			});
+
+			expect(vi.mocked(dispatchShellCommand).mock.calls[0][0]).toMatchObject({
+				command: 'git status',
+				tabId: 'popped',
+			});
+			expect(mockSetInputValue).not.toHaveBeenCalled();
+			expect(mockSyncAiInputToSession).not.toHaveBeenCalled();
+		});
+
+		it('queues behind the popped tab running turn, with its read-only flag and model', async () => {
+			// A read-only tab queues only behind its own turn, as a local send does.
+			const session = twoTabSession({ state: 'busy' });
+			session.aiTabs[1].state = 'busy';
+			const { result } = render(session);
+
+			await act(async () => {
+				await result.current.processInput('after that', composerSend('after that'));
+			});
+
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			const [updated] = mockSetSessions.mock.calls.at(-1)![0]([session]);
+			expect(updated.executionQueue).toEqual([
+				expect.objectContaining({
+					tabId: 'popped',
+					text: 'after that',
+					images: ['tab-window-image'],
+					readOnlyMode: true,
+					turnSettings: expect.objectContaining({ model: 'opus' }),
+				}),
+			]);
+		});
+
+		it.each(['/history', '/wizard plan the launch', '/skills'])(
+			"refuses %s, which works on this window's active tab",
+			async (text) => {
+				const onWizardCommand = vi.fn();
+				const onSkillsCommand = vi.fn().mockResolvedValue(undefined);
+				const session = twoTabSession();
+				const { result } = render(session, { onWizardCommand, onSkillsCommand });
+
+				await act(async () => {
+					await result.current.processInput(text, composerSend(text));
+				});
+
+				expect(mockOnHistoryCommand).not.toHaveBeenCalled();
+				expect(onWizardCommand).not.toHaveBeenCalled();
+				expect(onSkillsCommand).not.toHaveBeenCalled();
+				expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+				expect(mockSetSessions).not.toHaveBeenCalled();
+			}
+		);
+
+		it('refuses a tab whose inline wizard is active (the wizard runs in the app window)', async () => {
+			const onWizardSendMessage = vi.fn().mockResolvedValue(undefined);
+			const session = twoTabSession();
+			session.aiTabs[1].wizardState = { isActive: true } as AITab['wizardState'];
+			const { result } = render(session, { onWizardSendMessage, isWizardActive: false });
+
+			await act(async () => {
+				await result.current.processInput('next', composerSend('next'));
+			});
+
+			expect(onWizardSendMessage).not.toHaveBeenCalled();
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+		});
+
+		it("never routes into this window's wizard, even while this window's tab runs one", async () => {
+			const onWizardSendMessage = vi.fn().mockResolvedValue(undefined);
+			const session = twoTabSession();
+			const { result } = render(session, { onWizardSendMessage, isWizardActive: true });
+
+			await act(async () => {
+				await result.current.processInput('for the popped tab', composerSend('for the popped tab'));
+			});
+
+			expect(onWizardSendMessage).not.toHaveBeenCalled();
+			expect(window.maestro.process.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({ sessionId: 'session-1-ai-popped' })
+			);
+		});
+
+		it('refuses AI command mode: the proposal belongs to the composer that asked', async () => {
+			const session = twoTabSession();
+			const { result } = render(session);
+
+			await act(async () => {
+				await result.current.processInput(
+					'list big files',
+					composerSend('list big files', { fromTabWindow: { composer: { commandMode: 'ai' } } })
+				);
+			});
+
+			expect(requestAiCommand).not.toHaveBeenCalled();
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
 		});
 	});
 });

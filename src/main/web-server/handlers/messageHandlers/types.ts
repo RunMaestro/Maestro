@@ -51,6 +51,7 @@ import type {
 	SnoozeCommandCallback,
 	AutoRunSteeringCommandCallback,
 	WindowCommandCallback,
+	TabWindowCommandCallback,
 	ThroughputGaugeCommandCallback,
 	OpenFileTabOptions,
 } from '../../types';
@@ -158,6 +159,8 @@ export interface MessageHandlerCallbacks {
 	autoRunSteeringCommand: AutoRunSteeringCommandCallback;
 	/** `maestro-cli window` - list windows, move an agent or a group between them. */
 	windowCommand: WindowCommandCallback;
+	/** `maestro-cli tab pop-out / dock / windows` - Tab Windows (TW-12). */
+	tabWindowCommand: TabWindowCommandCallback;
 	/** `maestro-cli throughput-gauge` - show, hide, toggle, set, reset-peak, status. */
 	throughputGaugeCommand: ThroughputGaugeCommandCallback;
 	reorderTab: (sessionId: string, fromIndex: number, toIndex: number) => Promise<boolean>;

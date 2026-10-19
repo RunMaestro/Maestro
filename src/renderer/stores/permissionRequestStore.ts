@@ -52,6 +52,12 @@ interface PermissionRequestState {
 	respond: (requestId: string, decision: PermissionDecision) => void;
 	/** Drop all requests for a session (e.g. when its process exits). */
 	clearSession: (sessionId: string) => void;
+	/**
+	 * Drop requests WITHOUT answering them, because another window prompts for
+	 * them now: a tab window forgets the requests of a tab that docked, which
+	 * main re-delivers to the window that shows the tab (Tab Windows).
+	 */
+	forget: (predicate: (request: PermissionRequestUI) => boolean) => void;
 }
 
 /**
@@ -92,6 +98,11 @@ export const usePermissionRequestStore = create<PermissionRequestState>((set) =>
 				}
 			}
 			return { queue: state.queue.filter((r) => r.sessionId !== sessionId) };
+		}),
+	forget: (predicate) =>
+		set((state) => {
+			const queue = state.queue.filter((r) => !predicate(r));
+			return queue.length === state.queue.length ? state : { queue };
 		}),
 }));
 

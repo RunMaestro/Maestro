@@ -9,7 +9,7 @@
  * before this module existed.
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
 	jumpToAgent,
 	revealAgentInSidebar,
@@ -20,7 +20,14 @@ import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useFileExplorerStore } from '../../../renderer/stores/fileExplorerStore';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
-import { createMockSession, createMockAITab } from '../../helpers';
+import {
+	clearTabWindowStore,
+	createMockAITab,
+	createMockFileTab,
+	createMockSession,
+	installTabWindowsApi,
+	popOutTabsInStore,
+} from '../../helpers';
 import { getSidebarRevealToken } from '../../../renderer/utils/sidebarReveal';
 import type { Session } from '../../../renderer/types';
 
@@ -121,6 +128,81 @@ describe('jumpToAgent', () => {
 
 		// Still switches to the AI view, just without moving the active tab.
 		expect(useSessionStore.getState().sessions[0].activeTabId).toBe(original);
+	});
+
+	it('lands on a file, terminal, or browser tab named by tabRef', () => {
+		seed({
+			aiTabs: [createMockAITab({ id: 'tab-a' })],
+			filePreviewTabs: [createMockFileTab({ id: 'file-1' })],
+			terminalTabs: [{ id: 'term-1' }] as never,
+			browserTabs: [{ id: 'web-1' }] as never,
+			activeTerminalTabId: null,
+			activeBrowserTabId: null,
+		});
+		const current = () => useSessionStore.getState().sessions[0];
+
+		jumpToAgent(SESSION_ID, { tabRef: { type: 'file', id: 'file-1' } });
+		expect(current().activeFileTabId).toBe('file-1');
+
+		jumpToAgent(SESSION_ID, { tabRef: { type: 'terminal', id: 'term-1' } });
+		expect(current().activeTerminalTabId).toBe('term-1');
+		expect(current().inputMode).toBe('terminal');
+
+		jumpToAgent(SESSION_ID, { tabRef: { type: 'browser', id: 'web-1' } });
+		expect(current().activeBrowserTabId).toBe('web-1');
+		expect(current().inputMode).toBe('ai');
+
+		// A ref of the wrong kind, or a closed tab, falls back to the AI view.
+		jumpToAgent(SESSION_ID, { tabRef: { type: 'browser', id: 'file-1' } });
+		expect(current().activeBrowserTabId).toBeNull();
+		expect(current().activeFileTabId).toBeNull();
+	});
+
+	describe('a tab popped out into a tab window (D4)', () => {
+		let tabWindows: ReturnType<typeof installTabWindowsApi>;
+
+		beforeEach(() => {
+			tabWindows = installTabWindowsApi();
+		});
+
+		afterEach(() => {
+			tabWindows.restore();
+			clearTabWindowStore();
+		});
+
+		it('focuses the tab window for a popped AI tab id and leaves the owner view alone', () => {
+			const session = seed({ aiTabs: [createMockAITab({ id: 'tab-a' })] });
+			popOutTabsInStore(SESSION_ID, [{ type: 'ai', id: 'tab-a' }]);
+
+			expect(jumpToAgent(SESSION_ID, { tabId: 'tab-a' })).toBe(true);
+
+			expect(tabWindows.focus).toHaveBeenCalledWith(SESSION_ID, { type: 'ai', id: 'tab-a' });
+			const state = useSessionStore.getState();
+			expect(state.activeSessionId).toBe('other-agent');
+			expect(state.sessions[0]).toBe(session);
+			expect(useGroupChatStore.getState().activeGroupChatId).toBe('chat-1');
+		});
+
+		it('focuses the tab window for a popped file, terminal, or browser ref', () => {
+			seed({ terminalTabs: [{ id: 'term-1' }] as never });
+			popOutTabsInStore(SESSION_ID, [{ type: 'terminal', id: 'term-1' }]);
+
+			expect(jumpToAgent(SESSION_ID, { tabRef: { type: 'terminal', id: 'term-1' } })).toBe(true);
+
+			expect(tabWindows.focus).toHaveBeenCalledWith(SESSION_ID, { type: 'terminal', id: 'term-1' });
+			expect(useSessionStore.getState().activeSessionId).toBe('other-agent');
+		});
+
+		it('jumps as usual when the named tab is not popped out', () => {
+			seed({ aiTabs: [createMockAITab({ id: 'tab-a' }), createMockAITab({ id: 'tab-b' })] });
+			popOutTabsInStore(SESSION_ID, [{ type: 'ai', id: 'tab-b' }]);
+
+			jumpToAgent(SESSION_ID, { tabId: 'tab-a' });
+
+			expect(tabWindows.focus).not.toHaveBeenCalled();
+			expect(useSessionStore.getState().activeSessionId).toBe(SESSION_ID);
+			expect(useSessionStore.getState().sessions[0].activeTabId).toBe('tab-a');
+		});
 	});
 
 	it('reveals the agent it just selected', () => {

@@ -19,6 +19,7 @@ import type { MultiWindowState, WindowState } from '../shared/window-types';
 import type { WindowState as WindowStateStoreData, SessionsData } from './stores/types';
 import type { RegisteredWindow, WindowRegistry } from './window-registry';
 import { logger } from './utils/logger';
+import { isSingleTabRef, tabRefKey, type SingleTabRef } from '../shared/unifiedTabRef';
 
 const LOG_CONTEXT = 'WindowState';
 
@@ -43,7 +44,7 @@ export const WINDOW_STATE_SAVE_DEBOUNCE_MS = 400;
 export function registeredWindowToWindowState(entry: RegisteredWindow): WindowState {
 	const { browserWindow } = entry;
 	const bounds = browserWindow.getBounds();
-	return {
+	const state: WindowState = {
 		id: entry.id,
 		x: bounds.x,
 		y: bounds.y,
@@ -57,6 +58,16 @@ export function registeredWindowToWindowState(entry: RegisteredWindow): WindowSt
 		rightPanelCollapsed: entry.rightPanelCollapsed,
 		name: entry.name,
 	};
+	// A tab window also records which agent's tabs it holds (TW-10).
+	if (entry.kind === 'tab') {
+		state.kind = 'tab';
+		state.agentId = entry.agentId;
+		state.tabRefs = (entry.tabRefs ?? []).map((ref) => ({ type: ref.type, id: ref.id }));
+		state.activeTabRef = entry.activeTabRef
+			? { type: entry.activeTabRef.type, id: entry.activeTabRef.id }
+			: null;
+	}
+	return state;
 }
 
 /**
@@ -66,12 +77,15 @@ export function registeredWindowToWindowState(entry: RegisteredWindow): WindowSt
  * primary window's id becomes `primaryWindowId`; if no window is flagged primary
  * (should not happen) the first window stands in so restoration always has a
  * resolvable primary pointer.
+ *
+ * Tab windows go into `tabWindows` (TW-10). A tab window with no tab left is
+ * on its way to closing, so it is not saved.
  */
 export function buildMultiWindowState(registry: WindowRegistry): MultiWindowState {
 	const windows: WindowState[] = [];
 	let primaryWindowId = '';
-	// Only persist session-owning app windows; feature windows like the cadenza
-	// HUD must not be snapshotted and replayed as a normal window on restart.
+	// Only persist session-owning app windows here; feature windows like the
+	// cadenza HUD must not be snapshotted and replayed as a normal window on restart.
 	for (const entry of registry.getAppWindows()) {
 		if (entry.browserWindow.isDestroyed()) continue;
 		windows.push(registeredWindowToWindowState(entry));
@@ -80,7 +94,12 @@ export function buildMultiWindowState(registry: WindowRegistry): MultiWindowStat
 	if (!primaryWindowId && windows.length > 0) {
 		primaryWindowId = windows[0].id;
 	}
-	return { windows, primaryWindowId };
+	const tabWindows: WindowState[] = [];
+	for (const entry of registry.getTabWindows()) {
+		if (entry.browserWindow.isDestroyed() || (entry.tabRefs?.length ?? 0) === 0) continue;
+		tabWindows.push(registeredWindowToWindowState(entry));
+	}
+	return { windows, primaryWindowId, tabWindows };
 }
 
 /**
@@ -133,6 +152,32 @@ export function saveWindowState(
 }
 
 /**
+ * Save the layout on the registry changes that fire no window move or resize,
+ * so they survive even an abrupt exit:
+ *
+ * - A window rename or a panel-collapse toggle. {@link saveWindowState}
+ *   snapshots the whole live registry, so the affected window's id is enough.
+ * - A tab window's tabs changing (pop out, dock, active tab), TW-10. This one
+ *   snapshots without the per-window guard: a tab window destroyed without
+ *   'close' docks its tabs after it is destroyed, and that last change must
+ *   still drop it from the saved layout.
+ *
+ * Returns the unsubscribe function.
+ */
+export function wireWindowStateSaveOnChange(
+	store: Store<WindowStateStoreData>,
+	registry: WindowRegistry
+): () => void {
+	return registry.onChange((change) => {
+		if ((change.type === 'name-changed' || change.type === 'panel-changed') && change.windowId) {
+			saveWindowState(store, registry, change.windowId);
+		} else if (change.type === 'tab-window-changed') {
+			saveAllWindowStates(store, registry);
+		}
+	});
+}
+
+/**
  * Read the agent (session) IDs that currently exist from the sessions store.
  *
  * Both the startup restore (which prunes each saved window's owned agents
@@ -151,6 +196,46 @@ export function readExistingAgentIds(sessionsStore: Pick<Store<SessionsData>, 'g
 		if (typeof session?.id === 'string') ids.push(session.id);
 	}
 	return ids;
+}
+
+/**
+ * Read which tabs each agent has in the sessions store, keyed by agent id, as
+ * {@link tabRefKey} strings. The tab window restore uses it to drop the record
+ * of a deleted agent and the refs of tabs that are gone (TW-10).
+ *
+ * Hidden consult AI tabs are left out: they never pop out (TW-14). The store
+ * holds what the renderer saved, and the renderer can still drop a saved tab
+ * while it loads (a terminal tab with no startup command), so a ref found here
+ * can still be missing in the owner window; the owner docks those itself.
+ * Like {@link readExistingAgentIds}, this runs at startup and never throws.
+ */
+export function readExistingAgentTabs(
+	sessionsStore: Pick<Store<SessionsData>, 'get'>
+): Map<string, Set<string>> {
+	const sessions = sessionsStore.get('sessions', []) as unknown;
+	const tabsByAgent = new Map<string, Set<string>>();
+	if (!Array.isArray(sessions)) return tabsByAgent;
+	const tabArrays: Array<[SingleTabRef['type'], string]> = [
+		['ai', 'aiTabs'],
+		['file', 'filePreviewTabs'],
+		['terminal', 'terminalTabs'],
+		['browser', 'browserTabs'],
+	];
+	for (const session of sessions as Array<Record<string, unknown> | null>) {
+		if (typeof session?.id !== 'string') continue;
+		const keys = new Set<string>();
+		for (const [type, field] of tabArrays) {
+			const tabs = session[field];
+			if (!Array.isArray(tabs)) continue;
+			for (const tab of tabs as Array<{ id?: unknown; hidden?: unknown } | null>) {
+				if (typeof tab?.id !== 'string') continue;
+				if (type === 'ai' && tab.hidden === true) continue;
+				keys.add(tabRefKey({ type, id: tab.id }));
+			}
+		}
+		tabsByAgent.set(session.id, keys);
+	}
+	return tabsByAgent;
 }
 
 /**
@@ -199,6 +284,62 @@ export function planWindowRestore(
 	for (const window of state.windows) {
 		if (window.id === primary.id) continue;
 		specs.push({ isPrimary: false, sessionIds: pruneSessions(window.sessionIds), bounds: window });
+	}
+	return specs;
+}
+
+/** One tab window to recreate on startup, after the app windows exist (TW-10). */
+export interface TabWindowRestoreSpec {
+	agentId: string;
+	/** The surviving tabs, in strip order. Never empty. */
+	tabRefs: SingleTabRef[];
+	/** The saved active tab when it survived, else null (the first tab shows). */
+	activeTabRef: SingleTabRef | null;
+	/** Saved bounds and id. The window manager clamps them onto a present display. */
+	bounds: WindowState;
+}
+
+/**
+ * Plan the tab windows to recreate from a persisted {@link MultiWindowState}.
+ *
+ * `existingTabs` is {@link readExistingAgentTabs}: an agent missing from it no
+ * longer exists, so its record is dropped; a ref missing from its set is a tab
+ * that is gone, so the ref is dropped. A record left with no tab is dropped. A
+ * second record for an agent already planned is dropped too (TW-4).
+ */
+export function planTabWindowRestore(
+	state: MultiWindowState | undefined,
+	existingTabs: ReadonlyMap<string, ReadonlySet<string>>
+): TabWindowRestoreSpec[] {
+	const records = state?.tabWindows;
+	if (!Array.isArray(records)) return [];
+
+	const specs: TabWindowRestoreSpec[] = [];
+	const plannedAgents = new Set<string>();
+	for (const record of records) {
+		const agentId = record?.agentId;
+		if (typeof agentId !== 'string' || plannedAgents.has(agentId)) continue;
+		const agentTabs = existingTabs.get(agentId);
+		if (!agentTabs) continue;
+
+		const tabRefs: SingleTabRef[] = [];
+		const kept = new Set<string>();
+		for (const ref of Array.isArray(record.tabRefs) ? record.tabRefs : []) {
+			if (!isSingleTabRef(ref)) continue;
+			const key = tabRefKey(ref);
+			if (kept.has(key) || !agentTabs.has(key)) continue;
+			kept.add(key);
+			tabRefs.push({ type: ref.type, id: ref.id });
+		}
+		if (tabRefs.length === 0) continue;
+
+		const savedActive = record.activeTabRef;
+		const activeTabRef =
+			isSingleTabRef(savedActive) && kept.has(tabRefKey(savedActive))
+				? { type: savedActive.type, id: savedActive.id }
+				: null;
+		plannedAgents.add(agentId);
+		specs.push({ agentId, tabRefs, activeTabRef, bounds: record });
 	}
 	return specs;
 }

@@ -99,6 +99,8 @@ const mockWindowInstance = {
 	maximize: vi.fn(),
 	setFullScreen: vi.fn(),
 	setMinimumSize: vi.fn(),
+	close: vi.fn(),
+	showInactive: vi.fn(),
 	isMaximized: vi.fn().mockReturnValue(false),
 	isFullScreen: vi.fn().mockReturnValue(false),
 	isMinimized: vi.fn().mockReturnValue(false),
@@ -127,6 +129,8 @@ class MockBrowserWindow {
 	maximize = mockWindowInstance.maximize;
 	setFullScreen = mockWindowInstance.setFullScreen;
 	setMinimumSize = mockWindowInstance.setMinimumSize;
+	close = mockWindowInstance.close;
+	showInactive = mockWindowInstance.showInactive;
 	isMaximized = mockWindowInstance.isMaximized;
 	isFullScreen = mockWindowInstance.isFullScreen;
 	isMinimized = mockWindowInstance.isMinimized;
@@ -150,13 +154,16 @@ const mockHandle = vi.fn();
 // the rect most overlaps, falling back to the first (primary) display.
 type MockWorkAreaRect = { x: number; y: number; width: number; height: number };
 const { mockScreen } = vi.hoisted(() => {
-	const DEFAULT_DISPLAY = { workArea: { x: 0, y: 0, width: 1920, height: 1080 } };
+	const DEFAULT_DISPLAY = { id: 1, workArea: { x: 0, y: 0, width: 1920, height: 1080 } };
+	const DEFAULT_CURSOR = { x: 960, y: 540 };
 	const state: {
-		displays: Array<{ workArea: MockWorkAreaRect }>;
+		displays: Array<{ id?: number; workArea: MockWorkAreaRect }>;
 		metricsListeners: Array<() => void>;
+		cursor: { x: number; y: number };
 	} = {
 		displays: [DEFAULT_DISPLAY],
 		metricsListeners: [],
+		cursor: DEFAULT_CURSOR,
 	};
 	const intersectionArea = (a: MockWorkAreaRect, b: MockWorkAreaRect): number => {
 		const ix = Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x));
@@ -167,9 +174,17 @@ const { mockScreen } = vi.hoisted(() => {
 		mockScreen: {
 			state,
 			reset: () => {
-				state.displays = [{ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }];
+				state.displays = [{ id: 1, workArea: { x: 0, y: 0, width: 1920, height: 1080 } }];
 				state.metricsListeners = [];
+				state.cursor = { ...DEFAULT_CURSOR };
 			},
+			getCursorScreenPoint: () => state.cursor,
+			// The display whose work area holds the point, else the primary.
+			getDisplayNearestPoint: (point: { x: number; y: number }) =>
+				state.displays.find(
+					({ workArea: a }) =>
+						point.x >= a.x && point.x < a.x + a.width && point.y >= a.y && point.y < a.y + a.height
+				) ?? state.displays[0],
 			getAllDisplays: () => state.displays,
 			getPrimaryDisplay: () => state.displays[0],
 			getDisplayMatching: (rect: MockWorkAreaRect) => {
@@ -223,6 +238,9 @@ vi.mock('electron', () => ({
 		getAllDisplays: () => mockScreen.getAllDisplays(),
 		getPrimaryDisplay: () => mockScreen.getPrimaryDisplay(),
 		getDisplayMatching: (rect: MockWorkAreaRect) => mockScreen.getDisplayMatching(rect),
+		getCursorScreenPoint: () => mockScreen.getCursorScreenPoint(),
+		getDisplayNearestPoint: (point: { x: number; y: number }) =>
+			mockScreen.getDisplayNearestPoint(point),
 		on: (event: string, handler: () => void) => mockScreen.on(event, handler),
 		removeListener: (event: string, handler: () => void) =>
 			mockScreen.removeListener(event, handler),
@@ -2757,6 +2775,325 @@ describe('app-lifecycle/window-manager', () => {
 			windowManager.createSecondaryWindow(['agent-1']);
 
 			expect(mockInitAutoUpdater).not.toHaveBeenCalled();
+		});
+	});
+
+	// Tab Windows: the `tab` kind factory, run against the REAL registry so the
+	// one-window-per-agent rule and the dock-on-close path are exercised end to end.
+	describe('createTabWindow', () => {
+		type Deps = WindowManagerDependencies;
+		const AI_TAB = { type: 'ai' as const, id: 'tab-a' };
+		const FILE_TAB = { type: 'file' as const, id: 'tab-b' };
+
+		async function setup(
+			options: {
+				ownerBounds?: { x: number; y: number; width: number; height: number };
+				isQuitting?: boolean;
+				withRegistry?: boolean;
+			} = {}
+		) {
+			const { WindowRegistry } = await import('../../../main/window-registry');
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+			const registry = new WindowRegistry();
+			const owner = {
+				isDestroyed: () => false,
+				getBounds: () => options.ownerBounds ?? { x: 0, y: 0, width: 900, height: 800 },
+			};
+			registry.create({
+				windowId: 'main',
+				browserWindow: owner as never,
+				sessionIds: ['agent-1'],
+				isMain: true,
+			});
+			const changes: Array<{ type: string; windowId?: string; agentId?: string }> = [];
+			registry.onChange((change) => changes.push(change));
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Deps['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererProductionUrl: 'app://app/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+				getIsQuitting: () => options.isQuitting ?? false,
+				...(options.withRegistry === false ? {} : { windowRegistry: registry }),
+			});
+			return { registry, windowManager, changes };
+		}
+
+		function fireClosed() {
+			for (const handler of [...windowClosedHandlers]) handler();
+		}
+
+		it('loads ?tabWindow=<id> and registers a tab window that owns no agent', async () => {
+			const { registry, windowManager } = await setup();
+
+			windowManager.createTabWindow({ agentId: 'agent-1', tabRefs: [AI_TAB, FILE_TAB] });
+
+			const tabWindow = registry.getTabWindowForAgent('agent-1');
+			expect(tabWindow).toMatchObject({
+				kind: 'tab',
+				isMain: false,
+				sessionIds: [],
+				agentId: 'agent-1',
+				tabRefs: [AI_TAB, FILE_TAB],
+				activeTabRef: AI_TAB,
+			});
+			const loadedUrl = mockWindowInstance.loadURL.mock.calls.at(-1)?.[0] as string;
+			expect(loadedUrl).toBe(`app://app/index.html?tabWindow=${tabWindow!.id}`);
+			expect(loadedUrl).not.toContain('windowId=');
+			// The owner keeps the agent (Tab Windows D1).
+			expect(registry.getWindowForSession('agent-1')).toBe('main');
+		});
+
+		it('builds an ordinary window through the shared hardened factory (TW-1)', async () => {
+			const { windowManager } = await setup();
+
+			windowManager.createTabWindow({ agentId: 'agent-1', tabRefs: [AI_TAB] });
+
+			expect(lastBrowserWindowOptions).not.toHaveProperty('alwaysOnTop');
+			expect(lastBrowserWindowOptions).not.toHaveProperty('frame');
+			expect(lastBrowserWindowOptions).not.toHaveProperty('show');
+			expect(lastBrowserWindowOptions?.webPreferences).toMatchObject({
+				contextIsolation: true,
+				sandbox: true,
+				webviewTag: true,
+			});
+			expect(mockWindowInstance.showInactive).not.toHaveBeenCalled();
+			expect(mockInitAutoUpdater).not.toHaveBeenCalled();
+		});
+
+		it('opens at 900x700 with the smaller tab window minimum', async () => {
+			const { windowManager } = await setup();
+
+			windowManager.createTabWindow({ agentId: 'agent-1', tabRefs: [AI_TAB] });
+
+			expect(lastBrowserWindowOptions).toMatchObject({
+				width: 900,
+				height: 700,
+				minWidth: 480,
+				minHeight: 360,
+			});
+			// The live re-clamp keeps the tab window minimum, not the app's 1000x600.
+			expect(mockWindowInstance.setMinimumSize).toHaveBeenLastCalledWith(480, 360);
+		});
+
+		it('opens to the right of the owner window when it fits', async () => {
+			const { windowManager } = await setup({
+				ownerBounds: { x: 0, y: 0, width: 900, height: 800 },
+			});
+
+			windowManager.createTabWindow({ agentId: 'agent-1', tabRefs: [AI_TAB] });
+
+			expect(lastBrowserWindowOptions).toMatchObject({ x: 916, y: 0 });
+		});
+
+		it('opens to the left of the owner window when the right side has no room', async () => {
+			const { windowManager } = await setup({
+				ownerBounds: { x: 1000, y: 50, width: 900, height: 800 },
+			});
+
+			windowManager.createTabWindow({ agentId: 'agent-1', tabRefs: [AI_TAB] });
+
+			expect(lastBrowserWindowOptions).toMatchObject({ x: 84, y: 50 });
+		});
+
+		it('pins to the work area right edge when neither side has room', async () => {
+			const { windowManager } = await setup({
+				ownerBounds: { x: 100, y: 600, width: 1200, height: 400 },
+			});
+
+			windowManager.createTabWindow({ agentId: 'agent-1', tabRefs: [AI_TAB] });
+
+			// y is pulled up so the whole 700-high window stays in the 1080 work area.
+			expect(lastBrowserWindowOptions).toMatchObject({ x: 1020, y: 380 });
+		});
+
+		it('centers on the display under the cursor when it is not the owner display', async () => {
+			mockScreen.state.displays = [
+				{ id: 1, workArea: { x: 0, y: 0, width: 1920, height: 1080 } },
+				{ id: 2, workArea: { x: 1920, y: 0, width: 1920, height: 1080 } },
+			];
+			mockScreen.state.cursor = { x: 2500, y: 300 };
+			const { windowManager } = await setup();
+
+			windowManager.createTabWindow({ agentId: 'agent-1', tabRefs: [AI_TAB] });
+
+			expect(lastBrowserWindowOptions).toMatchObject({ x: 2430, y: 190 });
+		});
+
+		it('restores saved bounds and id as given', async () => {
+			mockScreen.state.displays = [
+				{ id: 1, workArea: { x: 0, y: 0, width: 1920, height: 1080 } },
+				{ id: 2, workArea: { x: 1920, y: 0, width: 1920, height: 1080 } },
+			];
+			const { registry, windowManager } = await setup();
+
+			windowManager.createTabWindow({
+				agentId: 'agent-1',
+				tabRefs: [AI_TAB, FILE_TAB],
+				activeTabRef: FILE_TAB,
+				bounds: { id: 'saved-tab-window', x: 2000, y: 100, width: 700, height: 500 },
+			});
+
+			expect(lastBrowserWindowOptions).toMatchObject({ x: 2000, y: 100, width: 700, height: 500 });
+			expect(registry.get('saved-tab-window')).toMatchObject({
+				agentId: 'agent-1',
+				activeTabRef: FILE_TAB,
+			});
+		});
+
+		it('clamps a restored tab window onto the primary display when its monitor is gone (TW-10)', async () => {
+			// Only the primary display exists (beforeEach reset); the saved bounds
+			// name a since-removed monitor to the right.
+			const { registry, windowManager } = await setup();
+
+			windowManager.createTabWindow({
+				agentId: 'agent-1',
+				tabRefs: [AI_TAB],
+				bounds: { id: 'saved-tab-window', x: 2000, y: 100, width: 800, height: 600 },
+			});
+
+			// Centered on the primary 1920x1080 work area for an 800x600 window.
+			expect(lastBrowserWindowOptions).toMatchObject({ x: 560, y: 240, width: 800, height: 600 });
+			expect(registry.get('saved-tab-window')?.agentId).toBe('agent-1');
+		});
+
+		it('shows a background tab window without focusing it', async () => {
+			const { windowManager } = await setup();
+
+			windowManager.createTabWindow({ agentId: 'agent-1', tabRefs: [AI_TAB], background: true });
+
+			expect(lastBrowserWindowOptions).toMatchObject({ show: false });
+			expect(mockWindowInstance.showInactive).toHaveBeenCalledTimes(1);
+		});
+
+		it('refuses a second tab window for the same agent before building one (TW-4)', async () => {
+			const { registry, windowManager } = await setup();
+			windowManager.createTabWindow({ agentId: 'agent-1', tabRefs: [AI_TAB] });
+			lastBrowserWindowOptions = null;
+
+			expect(() =>
+				windowManager.createTabWindow({ agentId: 'agent-1', tabRefs: [FILE_TAB] })
+			).toThrow(/already has a tab window/);
+			expect(lastBrowserWindowOptions).toBeNull();
+			expect(registry.getTabWindows()).toHaveLength(1);
+		});
+
+		it('gives each agent its own tab window (TW-5)', async () => {
+			const { registry, windowManager } = await setup();
+
+			windowManager.createTabWindow({ agentId: 'agent-1', tabRefs: [AI_TAB] });
+			windowManager.createTabWindow({ agentId: 'agent-2', tabRefs: [FILE_TAB] });
+
+			expect(registry.getTabWindows().map((w) => w.agentId)).toEqual(['agent-1', 'agent-2']);
+		});
+
+		it('refuses an empty tab list and a missing registry', async () => {
+			const { windowManager } = await setup();
+			expect(() => windowManager.createTabWindow({ agentId: 'agent-1', tabRefs: [] })).toThrow(
+				/at least one tab/
+			);
+
+			const { windowManager: noRegistry } = await setup({ withRegistry: false });
+			expect(() => noRegistry.createTabWindow({ agentId: 'agent-1', tabRefs: [AI_TAB] })).toThrow(
+				/window registry/
+			);
+		});
+
+		it('docks every tab on close, then drops the window from the registry (TW-9)', async () => {
+			const { registry, windowManager, changes } = await setup();
+			windowManager.createTabWindow({ agentId: 'agent-1', tabRefs: [AI_TAB, FILE_TAB] });
+			const windowId = registry.getTabWindowForAgent('agent-1')!.id;
+			changes.length = 0;
+
+			windowCloseHandler!();
+
+			expect(registry.get(windowId)?.tabRefs).toEqual([]);
+			expect(changes).toEqual([
+				{ type: 'tab-window-changed', windowId, agentId: 'agent-1' },
+				{ type: 'tab-window-changed', windowId, agentId: 'agent-1' },
+			]);
+			// Docking during close never asks the closing window to close again.
+			expect(mockWindowInstance.close).not.toHaveBeenCalled();
+
+			fireClosed();
+
+			expect(registry.get(windowId)).toBeUndefined();
+			expect(changes.at(-1)).toEqual({ type: 'removed', windowId });
+			// The agent may pop a tab out again.
+			expect(registry.getTabWindowForAgent('agent-1')).toBeUndefined();
+		});
+
+		it('announces the move of a docked terminal view, so the owner waits for its replay (D5)', async () => {
+			const { registry, windowManager } = await setup();
+			const { terminalHandoff } = await import('../../../main/terminal-handoff');
+			const TERMINAL_TAB = { type: 'terminal' as const, id: 'term-1' };
+			windowManager.createTabWindow({ agentId: 'agent-1', tabRefs: [AI_TAB, TERMINAL_TAB] });
+			expect(registry.getTabWindowForAgent('agent-1')).toBeDefined();
+
+			windowCloseHandler!();
+
+			expect(terminalHandoff.has('agent-1-terminal-term-1')).toBe(true);
+			expect(terminalHandoff.has('agent-1-terminal-tab-a')).toBe(false);
+			terminalHandoff.clear();
+		});
+
+		it('docks on closed when close never fired (destroy)', async () => {
+			const { registry, windowManager, changes } = await setup();
+			windowManager.createTabWindow({ agentId: 'agent-1', tabRefs: [AI_TAB] });
+			const windowId = registry.getTabWindowForAgent('agent-1')!.id;
+			changes.length = 0;
+
+			fireClosed();
+
+			expect(changes).toEqual([
+				{ type: 'tab-window-changed', windowId, agentId: 'agent-1' },
+				{ type: 'removed', windowId },
+			]);
+		});
+
+		it('keeps the tabs in the registry while the app quits, so a restart restores them', async () => {
+			const { registry, windowManager } = await setup({ isQuitting: true });
+			windowManager.createTabWindow({ agentId: 'agent-1', tabRefs: [AI_TAB, FILE_TAB] });
+			const windowId = registry.getTabWindowForAgent('agent-1')!.id;
+
+			windowCloseHandler!();
+			fireClosed();
+
+			expect(registry.get(windowId)?.tabRefs).toEqual([AI_TAB, FILE_TAB]);
+		});
+
+		it('closes itself when the last tab leaves', async () => {
+			const { registry, windowManager } = await setup();
+			windowManager.createTabWindow({ agentId: 'agent-1', tabRefs: [AI_TAB, FILE_TAB] });
+			const windowId = registry.getTabWindowForAgent('agent-1')!.id;
+
+			registry.removeTabFromTabWindow(windowId, AI_TAB);
+			expect(mockWindowInstance.close).not.toHaveBeenCalled();
+
+			registry.removeTabFromTabWindow(windowId, FILE_TAB);
+			expect(mockWindowInstance.close).toHaveBeenCalledTimes(1);
+		});
+
+		it('ignores tab changes of other tab windows and stops listening once closed', async () => {
+			const { registry, windowManager } = await setup();
+			windowManager.createTabWindow({ agentId: 'agent-1', tabRefs: [AI_TAB] });
+			const windowId = registry.getTabWindowForAgent('agent-1')!.id;
+			const other = registry.create({
+				browserWindow: { isDestroyed: () => false } as never,
+				kind: 'tab',
+				agentId: 'agent-2',
+				tabRefs: [FILE_TAB],
+			});
+
+			registry.removeTabFromTabWindow(other, FILE_TAB);
+			expect(mockWindowInstance.close).not.toHaveBeenCalled();
+
+			fireClosed();
+			expect(registry.get(windowId)).toBeUndefined();
+			registry.emit('change', { type: 'tab-window-changed', windowId });
+			expect(mockWindowInstance.close).not.toHaveBeenCalled();
 		});
 	});
 

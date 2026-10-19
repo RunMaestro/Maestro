@@ -22,6 +22,17 @@ const { mockTileNewTabInSession } = vi.hoisted(() => ({ mockTileNewTabInSession:
 vi.mock('../../../renderer/services/tileNewTabAction', () => ({
 	tileNewTabInSession: (...args: unknown[]) => mockTileNewTabInSession(...args),
 }));
+// Opt+Cmd+O delegates to the Tab Windows service. Mocked so the test asserts the
+// wiring; the target and refusal rules are covered in tabWindowActions.test.
+const { mockPopOutTabFromUi, mockResolvePopOutTarget } = vi.hoisted(() => ({
+	mockPopOutTabFromUi: vi.fn(),
+	mockResolvePopOutTarget: vi.fn(),
+}));
+vi.mock('../../../renderer/services/tabWindowActions', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/services/tabWindowActions')>()),
+	popOutTabFromUi: (...args: unknown[]) => mockPopOutTabFromUi(...args),
+	resolvePopOutTarget: (...args: unknown[]) => mockResolvePopOutTarget(...args),
+}));
 import { publishGitShortcutActions } from '../../../renderer/services/gitShortcutActions';
 import { getSidebarRevealToken } from '../../../renderer/utils/sidebarReveal';
 
@@ -5114,5 +5125,61 @@ describe('useMainKeyboardHandler - steerSend', () => {
 
 	it('does nothing while a group chat is on screen', () => {
 		expect(press({ activeGroupChatId: 'group-chat-1' })).toBe(0);
+	});
+});
+
+describe('useMainKeyboardHandler - moveTabToTabWindow', () => {
+	const session = { id: 'agent-1', name: 'Agent', aiTabs: [], activeTabId: 'a1', inputMode: 'ai' };
+	const pressChord = () =>
+		act(() => {
+			window.dispatchEvent(
+				new KeyboardEvent('keydown', {
+					key: 'ø',
+					code: 'KeyO',
+					altKey: true,
+					metaKey: true,
+					bubbles: true,
+				})
+			);
+		});
+	const mount = (overrides: Record<string, unknown> = {}) => {
+		const { result } = renderHook(() => useMainKeyboardHandler());
+		result.current.keyboardHandlerRef.current = createMockContext({
+			activeSession: session,
+			isShortcut: (_e: KeyboardEvent, id: string) => id === 'moveTabToTabWindow',
+			recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			...overrides,
+		});
+	};
+
+	beforeEach(() => {
+		mockPopOutTabFromUi.mockReset();
+		mockResolvePopOutTarget.mockReset();
+		useSessionStore.setState({ sessions: [], activeSessionId: '' });
+	});
+
+	it('pops the shown tab out through the service', () => {
+		mockResolvePopOutTarget.mockReturnValue({ type: 'file', id: 'f1' });
+		mount();
+		pressChord();
+		expect(mockResolvePopOutTarget).toHaveBeenCalledWith(
+			expect.objectContaining({ id: 'agent-1' })
+		);
+		expect(mockPopOutTabFromUi).toHaveBeenCalledWith('agent-1', { type: 'file', id: 'f1' });
+	});
+
+	it('does nothing when the shown tab cannot pop out (web-desktop, hidden consult tab)', () => {
+		mockResolvePopOutTarget.mockReturnValue(null);
+		mount();
+		pressChord();
+		expect(mockPopOutTabFromUi).not.toHaveBeenCalled();
+	});
+
+	it('does nothing while a group chat owns the view', () => {
+		mockResolvePopOutTarget.mockReturnValue({ type: 'ai', id: 'a1' });
+		mount({ activeGroupChatId: 'room-1' });
+		pressChord();
+		expect(mockResolvePopOutTarget).not.toHaveBeenCalled();
+		expect(mockPopOutTabFromUi).not.toHaveBeenCalled();
 	});
 });

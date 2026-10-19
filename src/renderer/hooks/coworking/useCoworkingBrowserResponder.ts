@@ -33,6 +33,7 @@ import {
 	backgroundBrowserKey,
 } from '../../stores/coworkingBackgroundBrowserStore';
 import { useCoworkingBrowserKeepAliveStore } from '../../stores/coworkingBrowserKeepAliveStore';
+import { isTabPoppedOut } from '../../stores/tabWindowStore';
 import { createBrowserTab } from '../tabs/internal/browserTabHelpers';
 import { closeBrowserTab } from '../../utils/tabHelpers';
 import { insertAfterActiveInUnifiedTabOrder } from '../../utils/unifiedTabOrderUtils';
@@ -384,6 +385,20 @@ export async function resolveAndRun(
 				content: 'Browser tab not found in your session (it may have been closed).',
 			};
 		}
+	}
+
+	// A popped-out tab's webview lives in its tab window, out of reach of this
+	// window's handles (Tab Windows, D5). Closing it is a store update and still
+	// works. Checked before the approval, so the user is never asked for nothing.
+	if (
+		op.kind !== 'newTab' &&
+		op.kind !== 'closeTab' &&
+		isTabPoppedOut(sessionId, { type: 'browser', id: tabUuid })
+	) {
+		return {
+			ok: false,
+			content: 'Browser tab is popped out into its tab window. Dock it to read or drive it.',
+		};
 	}
 
 	// Per-call approval for state-changing ops, BEFORE any focus change, mount,

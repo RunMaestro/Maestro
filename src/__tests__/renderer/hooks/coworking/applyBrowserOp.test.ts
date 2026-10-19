@@ -13,6 +13,7 @@ import {
 	useCoworkingBrowserKeepAliveStore,
 	activePinnedTabIds,
 } from '../../../../renderer/stores/coworkingBrowserKeepAliveStore';
+import { clearTabWindowStore, popOutTabsInStore } from '../../../helpers/tabWindows';
 
 vi.mock('../../../../renderer/stores/sessionStore', () => ({
 	useSessionStore: { getState: vi.fn(() => ({})) },
@@ -472,6 +473,37 @@ describe('resolveAndRun', () => {
 			{ kind: 'reload' },
 			{ agentId: 'claude-code', sessionId: 'sess-A', forceConfirm: false }
 		);
+	});
+
+	it('refuses a tab popped out into its tab window before asking for approval or pinning it', async () => {
+		popOutTabsInStore('sess-A', [{ type: 'browser', id: 'u-1' }]);
+		try {
+			vi.mocked(selectActiveSession).mockReturnValue(fakeActive('sess-A', null));
+			const reload = vi.fn();
+			const handle = makeHandle({ getTabId: () => 'u-1', reload });
+			const requestApproval = vi.fn(async () => true);
+			const resolveBackground = vi.fn(async () => handle);
+			const res = await resolveAndRun(
+				{ current: new Map([['u-1', handle]]) },
+				'u-1',
+				'sess-A',
+				{ kind: 'reload' },
+				requestApproval,
+				resolveBackground
+			);
+			expect(res).toEqual({
+				ok: false,
+				content: 'Browser tab is popped out into its tab window. Dock it to read or drive it.',
+			});
+			expect(requestApproval).not.toHaveBeenCalled();
+			expect(reload).not.toHaveBeenCalled();
+			expect(resolveBackground).not.toHaveBeenCalled();
+			expect(activePinnedTabIds(useCoworkingBrowserKeepAliveStore.getState().pins)).not.toContain(
+				'u-1'
+			);
+		} finally {
+			clearTabWindowStore();
+		}
 	});
 });
 

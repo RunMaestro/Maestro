@@ -5,9 +5,13 @@ import { usePhoneLayout } from '../../../../../renderer/hooks/ui/useViewportBrea
 import { createInputAreaSession, inputAreaTheme } from '../_fixtures';
 import { restorePointer, setCoarsePointer } from '../../../../helpers/mockPointer';
 
-const mockUpdateSessionWith = vi.fn();
-vi.mock('../../../../../renderer/stores/sessionStore', () => ({
-	updateSessionWith: (...args: unknown[]) => mockUpdateSessionWith(...args),
+// The permission and thinking writes are the shared explicit-target actions
+// (a tab window's owner runs the same ones on a popped tab).
+const mockSetAiTabPermissionMode = vi.fn();
+const mockSetAiTabShowThinking = vi.fn();
+vi.mock('../../../../../renderer/services/aiTabActions', () => ({
+	setAiTabPermissionMode: (...args: unknown[]) => mockSetAiTabPermissionMode(...args),
+	setAiTabShowThinking: (...args: unknown[]) => mockSetAiTabShowThinking(...args),
 }));
 
 vi.mock('../../../../../renderer/hooks/ui/useViewportBreakpoint', async (importOriginal) => ({
@@ -22,7 +26,8 @@ describe('ToolbarControls', () => {
 	afterEach(() => {
 		vi.restoreAllMocks();
 		restorePointer();
-		mockUpdateSessionWith.mockClear();
+		mockSetAiTabPermissionMode.mockClear();
+		mockSetAiTabShowThinking.mockClear();
 		mockedUsePhoneLayout.mockReturnValue(false);
 	});
 
@@ -108,12 +113,22 @@ describe('ToolbarControls', () => {
 		expect(onToggleTabShowThinking).toHaveBeenCalled();
 		expect(setEnterToSend).toHaveBeenCalledWith(false);
 
-		expect(mockUpdateSessionWith).toHaveBeenCalledWith(session.id, expect.any(Function));
-		const updater = mockUpdateSessionWith.mock.calls[0][1];
-		const updatedSession = updater(session);
-		const updatedTab = updatedSession.aiTabs.find((t: { id: string }) => t.id === 'tab-1');
-		expect(updatedTab.permissionMode).toBe('standard');
-		expect(updatedTab.readOnlyMode).toBe(false);
+		expect(mockSetAiTabPermissionMode).toHaveBeenCalledWith(
+			{ sessionId: session.id, tabId: 'tab-1' },
+			'standard'
+		);
+	});
+
+	it('hands a permission or thinking change to the override when one is passed', () => {
+		// A tab window passes its intent senders: the owner writes the tab.
+		const onPermissionModeChange = vi.fn();
+		const onThinkingModeChange = vi.fn();
+		renderToolbar({ onPermissionModeChange, onThinkingModeChange });
+
+		fireEvent.click(screen.getByTitle(/^Full Access/));
+
+		expect(onPermissionModeChange).toHaveBeenCalledWith('standard');
+		expect(mockSetAiTabPermissionMode).not.toHaveBeenCalled();
 	});
 
 	it('hides AI-only controls in terminal mode', () => {
@@ -189,10 +204,10 @@ describe('ToolbarControls', () => {
 			// 'readonly' proves the sheet names a mode rather than stepping.
 			fireEvent.click(screen.getByRole('button', { name: /Read Only|Plan/ }));
 
-			const updater = mockUpdateSessionWith.mock.calls.at(-1)![1];
-			const updatedTab = updater(session).aiTabs.find((t: { id: string }) => t.id === 'tab-1');
-			expect(updatedTab.permissionMode).toBe('readonly');
-			expect(updatedTab.readOnlyMode).toBe(true);
+			expect(mockSetAiTabPermissionMode).toHaveBeenLastCalledWith(
+				{ sessionId: session.id, tabId: 'tab-1' },
+				'readonly'
+			);
 		});
 
 		it('writes a thinking mode picked in the sheet', () => {
@@ -203,9 +218,22 @@ describe('ToolbarControls', () => {
 			fireEvent.click(screen.getByTestId('composer-options-thinking'));
 			fireEvent.click(screen.getByRole('button', { name: 'Sticky' }));
 
-			const updater = mockUpdateSessionWith.mock.calls.at(-1)![1];
-			const updatedTab = updater(session).aiTabs.find((t: { id: string }) => t.id === 'tab-1');
-			expect(updatedTab.showThinking).toBe('sticky');
+			expect(mockSetAiTabShowThinking).toHaveBeenLastCalledWith(
+				{ sessionId: session.id, tabId: 'tab-1' },
+				'sticky'
+			);
+		});
+
+		it('hands a thinking mode picked in the sheet to the override when one is passed', () => {
+			const onThinkingModeChange = vi.fn();
+			renderPhoneToolbar({ onThinkingModeChange });
+
+			fireEvent.click(screen.getByTestId('composer-options-button'));
+			fireEvent.click(screen.getByTestId('composer-options-thinking'));
+			fireEvent.click(screen.getByRole('button', { name: 'Sticky' }));
+
+			expect(onThinkingModeChange).toHaveBeenCalledWith('sticky');
+			expect(mockSetAiTabShowThinking).not.toHaveBeenCalled();
 		});
 
 		it('renders exactly one image file input', () => {

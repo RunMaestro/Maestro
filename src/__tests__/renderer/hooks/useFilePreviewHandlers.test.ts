@@ -175,6 +175,46 @@ describe('useFilePreviewHandlers', () => {
 		);
 	});
 
+	it('handleFilePreviewSave reports a landed save, in place or at a new path', async () => {
+		const onSaved = vi.fn();
+		const { result } = renderHook(() =>
+			useFilePreviewHandlers({
+				activeSession: makeSession(),
+				activeFileTabId: 'file-1',
+				activeFileTab: makeFileTab(),
+				onFileTabSaved: onSaved,
+			})
+		);
+
+		await act(async () => {
+			await result.current.handleFilePreviewSave('/test/project/src/test.ts', 'v2');
+		});
+		expect(onSaved).toHaveBeenLastCalledWith('file-1', {
+			path: '/test/project/src/test.ts',
+			moved: false,
+		});
+
+		// Gone on disk: the user picks a new place, and the save says it moved.
+		mockStat.mockResolvedValueOnce(null);
+		mockSaveFile.mockResolvedValueOnce('/test/project/src/moved.ts');
+		await act(async () => {
+			await result.current.handleFilePreviewSave('/test/project/src/test.ts', 'v3');
+		});
+		expect(onSaved).toHaveBeenLastCalledWith('file-1', {
+			path: '/test/project/src/moved.ts',
+			moved: true,
+		});
+
+		// A cancelled save never landed.
+		onSaved.mockClear();
+		mockStat.mockResolvedValueOnce(null);
+		mockSaveFile.mockResolvedValueOnce(null);
+		await act(async () => {
+			await result.current.handleFilePreviewSave('/test/project/src/test.ts', 'v4');
+		});
+		expect(onSaved).not.toHaveBeenCalled();
+	});
+
 	it('handleFilePreviewSave passes sshRemoteId for SSH-backed previews', async () => {
 		const { result } = renderHook(() =>
 			useFilePreviewHandlers({

@@ -1,5 +1,6 @@
 import { dispatchToastClickAction } from '../../services/toastClickActions';
 import { jumpToAgent } from '../../services/agentNavigation';
+import { findSessionTabRef, focusTabWindowIfPoppedOut } from '../../services/tabWindowNavigation';
 import { startNotificationHistorySync } from '../../stores/notificationStore';
 import { performNotificationInboxAction } from '../../services/notificationInbox';
 import { useEffect, useRef } from 'react';
@@ -31,9 +32,11 @@ import {
 } from '../../services/queuedPrompt';
 import { runCrossAgentAsk } from '../../services/crossAgentAsk';
 import { runRemoteSnoozeCommand } from '../../services/snoozeActions';
+import { runRemoteTabWindowCommand } from '../../services/tabWindowActions';
 import { runRemoteThroughputGaugeCommand } from '../../services/throughputGaugeCommands';
 import { runRemoteSteeringCommand } from '../../services/autoRunSteering';
 import type { SnoozeCommandResult } from '../../../shared/snoozeCommands';
+import type { TabWindowCommandResult } from '../../../shared/tabWindowCommands';
 import type { ThroughputGaugeCommandResult } from '../../../shared/throughputGaugeCommands';
 import type { SteeringCommandResult } from '../../../shared/autoRunSteeringCommands';
 import { recordAgentDelegation } from '../../services/agentDelegation';
@@ -433,6 +436,10 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						undefined,
 						sessionId
 					);
+				} else if (tabId && focusTabWindowIfPoppedOut(sessionId, { type: 'ai', id: tabId })) {
+					// `dispatch --focus --tab <id>` into a tab popped out into a tab
+					// window: show it there, not in the owner (Tab Windows, D4).
+					logger.info('[useRemoteIntegration] Focused the tab window of:', undefined, tabId);
 				} else {
 					setActiveSessionId(sessionId);
 					logger.info('[useRemoteIntegration] Switched active session to:', undefined, sessionId);
@@ -549,6 +556,14 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				// Check if session exists
 				const session = sessionsRef.current.find((s) => s.id === sessionId);
 				if (!session) {
+					return;
+				}
+
+				// `focus-agent --tab <id>` naming a tab popped out into a tab window
+				// shows it there and leaves the owner view alone (Tab Windows, D4).
+				// The id carries no type, so look it up in all four tab arrays.
+				const tabRef = tabId ? findSessionTabRef(session, tabId) : null;
+				if (focusTabWindowIfPoppedOut(sessionId, tabRef)) {
 					return;
 				}
 
@@ -1112,6 +1127,24 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			}
 		);
 
+		// Handle a remote `tab pop-out` / `tab dock` (`maestro-cli`). Main sends it
+		// to the agent's owner window, which answers through the same service the
+		// chip menu, Cmd+K, and the shortcut call. No tab windows API (the
+		// web-desktop build) means no subscription: main never routes there.
+		const unsubscribeTabWindowCommand = window.maestro.tabWindows?.onRemoteCommand(
+			(request, responseChannel) => {
+				const reply = (result: TabWindowCommandResult) =>
+					window.maestro.tabWindows.sendRemoteCommandResponse(responseChannel, result);
+				runRemoteTabWindowCommand(request).then(reply, (error: unknown) => {
+					logger.error('[useRemoteIntegration] Tab window command failed', undefined, error);
+					reply({
+						success: false,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				});
+			}
+		);
+
 		// Handle remote reorder tab from web interface
 		const unsubscribeReorderTab = window.maestro.process.onRemoteReorderTab(
 			(sessionId: string, fromIndex: number, toIndex: number) => {
@@ -1193,7 +1226,11 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					// dispatch --focus opt-in via `background`. A held send (Queue Held,
 					// `dispatch --queue --held`) never dispatches now: it waits paused.
 					if (session.state !== 'busy' && !held) {
-						if (!background) {
+						// A popped-out target is focused in its tab window (D4).
+						if (
+							!background &&
+							!focusTabWindowIfPoppedOut(sessionId, { type: 'ai', id: resolvedTabId })
+						) {
 							setActiveSessionId(sessionId);
 						}
 						window.dispatchEvent(
@@ -1403,6 +1440,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			unsubscribeRenameTab();
 			unsubscribeStarTab();
 			unsubscribeSnoozeCommand();
+			unsubscribeTabWindowCommand?.();
 			unsubscribeReorderTab();
 			unsubscribeToggleBookmark();
 			unsubscribeEnqueueCommand();

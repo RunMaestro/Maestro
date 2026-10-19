@@ -12,16 +12,18 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mockInvoke = vi.fn();
 const mockOn = vi.fn();
 const mockRemoveListener = vi.fn();
+const mockSend = vi.fn();
 
 vi.mock('electron', () => ({
 	ipcRenderer: {
 		invoke: (...args: unknown[]) => mockInvoke(...args),
+		send: (...args: unknown[]) => mockSend(...args),
 		on: (...args: unknown[]) => mockOn(...args),
 		removeListener: (...args: unknown[]) => mockRemoveListener(...args),
 	},
 }));
 
-import { createWindowsApi } from '../../../main/preload/windows';
+import { createTabWindowsApi, createWindowsApi } from '../../../main/preload/windows';
 
 describe('Windows Preload API', () => {
 	let api: ReturnType<typeof createWindowsApi>;
@@ -225,5 +227,87 @@ describe('Windows Preload API', () => {
 
 			expect(mockRemoveListener).toHaveBeenCalledWith('windows:sessionMoved', handler);
 		});
+	});
+});
+
+describe('Tab Windows Preload API', () => {
+	let api: ReturnType<typeof createTabWindowsApi>;
+	const tabRef = { type: 'ai' as const, id: 't1' };
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		api = createTabWindowsApi();
+	});
+
+	it('popOut forwards the agent, the tab, and the options', async () => {
+		mockInvoke.mockResolvedValue({ poppedOut: true, windowId: 'tw', created: true });
+
+		const result = await api.popOut('a', tabRef, { background: true });
+
+		expect(mockInvoke).toHaveBeenCalledWith('tabWindows:popOut', 'a', tabRef, {
+			background: true,
+		});
+		expect(result).toEqual({ poppedOut: true, windowId: 'tw', created: true });
+	});
+
+	it('dock, focus, list, and getState forward to their channels', async () => {
+		mockInvoke.mockResolvedValue(null);
+		await api.dock('a', tabRef);
+		await api.focus('a', tabRef);
+		await api.list();
+		await api.getState();
+		expect(mockInvoke).toHaveBeenCalledWith('tabWindows:dock', 'a', tabRef);
+		expect(mockInvoke).toHaveBeenCalledWith('tabWindows:focus', 'a', tabRef);
+		expect(mockInvoke).toHaveBeenCalledWith('tabWindows:list');
+		expect(mockInvoke).toHaveBeenCalledWith('tabWindows:getState');
+	});
+
+	it('sendSessionPatch and sendIntent are fire-and-forget sends', () => {
+		const patch = {
+			form: 'snapshot' as const,
+			agentId: 'a',
+			seq: 0,
+			tabRefs: [tabRef],
+			session: { id: 'a' },
+		};
+		const intent = { kind: 'closeTab' as const, agentId: 'a', tabRef };
+		api.sendSessionPatch(patch);
+		api.sendIntent(intent);
+		expect(mockSend).toHaveBeenCalledWith('tabWindow:sessionPatch', patch);
+		expect(mockSend).toHaveBeenCalledWith('tabWindow:intent', intent);
+		expect(mockInvoke).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		['onSessionPatch', 'tabWindow:sessionPatch'],
+		['onIntent', 'tabWindow:intent'],
+	] as const)('%s subscribes to %s and unsubscribes', (method, channel) => {
+		const callback = vi.fn();
+		const unsubscribe = api[method](callback);
+
+		const handler = mockOn.mock.calls.find(([name]) => name === channel)?.[1];
+		handler({}, { payload: 1 });
+		expect(callback).toHaveBeenCalledWith({ payload: 1 });
+
+		unsubscribe();
+		expect(mockRemoveListener).toHaveBeenCalledWith(channel, handler);
+	});
+
+	it('onRemoteCommand hands over the request and its response channel, and the answer goes back on it', () => {
+		const callback = vi.fn();
+		const unsubscribe = api.onRemoteCommand(callback);
+
+		const handler = mockOn.mock.calls.find(([name]) => name === 'remote:tabWindowCommand')?.[1];
+		const request = { action: 'pop-out' as const, sessionId: 'a', tabId: 't1' };
+		handler({}, request, 'remote:tabWindowCommand:response:1');
+		expect(callback).toHaveBeenCalledWith(request, 'remote:tabWindowCommand:response:1');
+
+		api.sendRemoteCommandResponse('remote:tabWindowCommand:response:1', { success: true });
+		expect(mockSend).toHaveBeenCalledWith('remote:tabWindowCommand:response:1', {
+			success: true,
+		});
+
+		unsubscribe();
+		expect(mockRemoveListener).toHaveBeenCalledWith('remote:tabWindowCommand', handler);
 	});
 });

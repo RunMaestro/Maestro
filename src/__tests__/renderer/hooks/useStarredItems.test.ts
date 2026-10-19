@@ -23,6 +23,11 @@ import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import type { Session } from '../../../renderer/types';
+import {
+	clearTabWindowStore,
+	installTabWindowsApi,
+	popOutTabsInStore,
+} from '../../helpers/tabWindows';
 
 // ============================================================================
 // Helpers
@@ -230,6 +235,36 @@ describe('useStarredItems', () => {
 		expect(useSessionStore.getState().activeSessionId).toBe('s1');
 		expect(session?.activeTabId).toBe('t1');
 		expect(session?.inputMode).toBe('ai');
+	});
+
+	it('activateStarredItem focuses the tab window of a popped starred tab (D4)', async () => {
+		const tabWindows = installTabWindowsApi();
+		useSessionStore.setState({
+			activeSessionId: 'other',
+			sessions: [
+				makeSession({
+					id: 's1',
+					aiTabs: [{ id: 't1', starred: true, agentSessionId: 'asid-1', name: 'Tab One' }] as never,
+				}),
+			],
+		} as never);
+		popOutTabsInStore('s1', [{ type: 'ai', id: 't1' }]);
+		try {
+			const { result } = renderHook(() => useStarredItems({}));
+			const row = result.current.starredItems[0];
+			const before = useSessionStore.getState().sessions[0];
+
+			await act(async () => {
+				await result.current.activateStarredItem(row);
+			});
+
+			expect(tabWindows.focus).toHaveBeenCalledWith('s1', { type: 'ai', id: 't1' });
+			expect(useSessionStore.getState().activeSessionId).toBe('other');
+			expect(useSessionStore.getState().sessions[0]).toBe(before);
+		} finally {
+			tabWindows.restore();
+			clearTabWindowStore();
+		}
 	});
 
 	it('activateStarredItem focuses the PANE of a starred tab that is tiled into a group', async () => {

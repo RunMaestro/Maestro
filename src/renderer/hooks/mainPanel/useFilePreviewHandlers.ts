@@ -19,6 +19,19 @@ interface UseFilePreviewHandlersParams {
 	onFileTabScrollPositionChange?: (tabId: string, scrollTop: number) => void;
 	onFileTabSearchQueryChange?: (tabId: string, searchQuery: string) => void;
 	onReloadFileTab?: (tabId: string) => void;
+	/**
+	 * Called after a save landed on disk, once the tab holds what was written.
+	 * `moved` is true when the file went to a new path (an untitled save, or a
+	 * redirect after the file moved or vanished); the Files panel has been asked
+	 * to refresh. A tab window uses it to tell the tab's owner (Tab Windows, D5).
+	 */
+	onFileTabSaved?: (tabId: string, saved: FileTabSaveResult) => void;
+}
+
+/** What a successful save did, as `onFileTabSaved` reports it. */
+export interface FileTabSaveResult {
+	path: string;
+	moved: boolean;
 }
 
 /**
@@ -37,6 +50,7 @@ export function useFilePreviewHandlers({
 	onFileTabScrollPositionChange,
 	onFileTabSearchQueryChange,
 	onReloadFileTab,
+	onFileTabSaved,
 }: UseFilePreviewHandlersParams) {
 	// Memoized props for FilePreview to prevent re-renders that cause image flickering
 	// The file object must be stable - recreating it on each render causes the <img> to remount
@@ -157,6 +171,7 @@ export function useFilePreviewHandlers({
 				} else {
 					onFileTabEditContentChange?.(activeFileTabId, undefined, content, savedMtime);
 				}
+				onFileTabSaved?.(activeFileTabId, { path: savePath, moved: savePath !== path });
 			}
 			return true;
 		},
@@ -165,6 +180,7 @@ export function useFilePreviewHandlers({
 			activeSession?.id,
 			activeSession?.fullPath,
 			onFileTabEditContentChange,
+			onFileTabSaved,
 			filePreviewSshRemoteId,
 		]
 	);

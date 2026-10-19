@@ -17,8 +17,10 @@ import { createMockSession } from '../../../../helpers/mockSession';
 import { createMockAITab } from '../../../../helpers/mockTab';
 
 let mockIsWebDesktop = false;
+let mockIsTabWindow = false;
 vi.mock('../../../../../renderer/utils/runtimeContext', () => ({
 	isWebDesktop: () => mockIsWebDesktop,
+	isTabWindow: () => mockIsTabWindow,
 }));
 
 let handler: ((sessionId: string, code: number) => Promise<void>) | undefined;
@@ -68,6 +70,7 @@ beforeEach(() => {
 	useNotificationStore.getState().setHistoryEnabled(true);
 	handler = undefined;
 	mockIsWebDesktop = false;
+	mockIsTabWindow = false;
 	useRetryStore.setState({ retries: {}, outages: {} } as any);
 	useSessionStore.setState({
 		sessions: [],
@@ -290,6 +293,70 @@ describe('useAgentExitListener', () => {
 
 			expect(spawn).not.toHaveBeenCalled();
 			expect(addHistory).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('in a tab window', () => {
+		// Tab Windows D1 / D2: a tab window is a view of an agent another window
+		// owns. It neither renders the exit (the owner's patch does) nor runs a
+		// single one-shot effect: no History entry, synopsis, stats row, or queue
+		// dequeue.
+		beforeEach(() => {
+			mockIsTabWindow = true;
+		});
+
+		it('ignores the exit entirely: no state change, History, synopsis, stats, or dequeue', async () => {
+			const tabA = createMockAITab({
+				id: 'tab-A',
+				state: 'busy',
+				thinkingStartTime: 0,
+				agentSessionId: 'asid-1',
+				logs: [
+					{ id: 'l-user', timestamp: 1, source: 'user', text: 'do work' },
+					{ id: 'l-tool', timestamp: 2, source: 'tool', text: 'Edit(file.ts)' },
+					{ id: 'l-out', timestamp: 3, source: 'stdout', text: 'done' },
+				] as any,
+			});
+			const tabB = createMockAITab({ id: 'tab-B', state: 'idle' });
+			const itemB = {
+				id: 'item-B',
+				timestamp: 1,
+				tabId: 'tab-B',
+				type: 'message' as const,
+				text: 'BRAVO',
+				readOnlyMode: true,
+			};
+			const session = createMockSession({
+				id: 'sess-1',
+				aiTabs: [tabA, tabB],
+				activeTabId: 'tab-A',
+				state: 'busy',
+				busySource: 'ai',
+				thinkingStartTime: 1000,
+				executionQueue: [itemB] as any,
+			});
+			useSessionStore.setState({ sessions: [session] } as any);
+
+			const spawn = vi.fn();
+			const addHistory = vi.fn();
+			const processQueuedItem = vi.fn().mockResolvedValue(undefined);
+			const deps = makeDeps();
+			deps.spawnBackgroundSynopsisRef.current = spawn as any;
+			deps.addHistoryEntryRef.current = addHistory as any;
+			deps.processQueuedItemRef.current = processQueuedItem as any;
+
+			renderHook(() => useAgentExitListener(deps));
+			await act(async () => {
+				await handler!('sess-1-ai-tab-A', 0);
+				await new Promise((r) => setTimeout(r, 0));
+			});
+
+			expect(useSessionStore.getState().sessions[0]).toBe(session);
+			expect(spawn).not.toHaveBeenCalled();
+			expect(addHistory).not.toHaveBeenCalled();
+			expect(processQueuedItem).not.toHaveBeenCalled();
+			expect((window as any).maestro.stats.recordQuery).not.toHaveBeenCalled();
+			expect(mockProcess.getActiveProcesses).not.toHaveBeenCalled();
 		});
 	});
 

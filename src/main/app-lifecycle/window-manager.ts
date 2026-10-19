@@ -7,7 +7,7 @@
  * hardening, permission handling, crash detection, and off-screen placement
  * guarding are identical for all of them. Registry registration and the
  * auto-updater (primary-only) are wired by the `createWindow` /
- * `createSecondaryWindow` callers around that factory.
+ * `createSecondaryWindow` / `createTabWindow` callers around that factory.
  */
 
 import { BrowserWindow, screen } from 'electron';
@@ -27,10 +27,29 @@ import { attachMainWindowNavigationGuards } from './main-window-navigation';
 import { attachSpellCheckContextMenu } from './spell-check-menu';
 import { attachWindowCrashHandlers } from './window-crash-handlers';
 import { registerDevAutoUpdaterStubs } from './dev-auto-updater-stubs';
-import { resolveVisibleWindowPosition, resolveWindowSizeConstraints } from './window-position';
+import {
+	resolveTabWindowPlacement,
+	resolveVisibleWindowPosition,
+	resolveWindowSizeConstraints,
+	TAB_WINDOW_DEFAULT_HEIGHT,
+	TAB_WINDOW_DEFAULT_WIDTH,
+	TAB_WINDOW_MIN_HEIGHT,
+	TAB_WINDOW_MIN_WIDTH,
+	type MinWindowSize,
+} from './window-position';
 import { resolveLinuxWindowIconPath } from './app-icon';
 import { resolveBundledCliPathSync } from '../maestro-cli-manager';
 import { MAESTRO_CLI_PATH_ARG_PREFIX } from '../../shared/maestro-cli';
+import { TAB_WINDOW_QUERY_PARAM, type TabWindowTabRef } from '../../shared/tabWindowTypes';
+import { expectTerminalHandoff } from '../terminal-handoff';
+
+/** Which renderer a window boots: the primary app, a secondary app, or a tab window. */
+type WindowEntryMode = 'main' | 'secondary' | 'tab';
+
+const TAB_WINDOW_MIN_SIZE: MinWindowSize = {
+	width: TAB_WINDOW_MIN_WIDTH,
+	height: TAB_WINDOW_MIN_HEIGHT,
+};
 
 /** Bounds/state used to size and position a window at creation time. */
 interface WindowCreationBounds {
@@ -106,6 +125,29 @@ export interface WindowManager {
 		sessionIds: string[],
 		bounds?: Partial<SharedWindowState>
 	) => BrowserWindow;
+	/**
+	 * Create the tab window for `agentId` holding `tabRefs` (at least one), and
+	 * register it as `kind: 'tab'` (Tab Windows). The renderer URL carries
+	 * `?tabWindow=<id>`. Throws when no registry is wired, when `tabRefs` is
+	 * empty, or when the agent already has a tab window (TW-4): look it up with
+	 * `getTabWindowForAgent` and add the tab to it instead.
+	 *
+	 * With no `bounds` the window opens at about 900x700 beside the agent's owner
+	 * window, or centered on the cursor's display when that is another display.
+	 * A restore passes the saved `bounds`. `background` shows it without taking
+	 * focus.
+	 *
+	 * Closing the window docks its tabs (TW-9): their refs leave the registry,
+	 * which broadcasts `tab-window-changed`, so the owner shows them again. When
+	 * the last tab leaves, the window closes itself.
+	 */
+	createTabWindow: (options: {
+		agentId: string;
+		tabRefs: TabWindowTabRef[];
+		activeTabRef?: TabWindowTabRef | null;
+		bounds?: Partial<SharedWindowState>;
+		background?: boolean;
+	}) => BrowserWindow;
 }
 
 /**
@@ -134,14 +176,15 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 
 	/**
 	 * Builds the renderer URL for a window. Secondary windows get a
-	 * `?windowId=<id>` query so the renderer can self-identify; the primary
-	 * loads the bare URL unchanged.
+	 * `?windowId=<id>` query and tab windows a `?tabWindow=<id>` query so the
+	 * renderer can self-identify; the primary loads the bare URL unchanged.
 	 */
-	const buildEntryUrl = (windowId: string, isMain: boolean): string => {
+	const buildEntryUrl = (windowId: string, mode: WindowEntryMode): string => {
 		const base = isDevelopment ? devServerUrl : rendererProductionUrl;
-		if (isMain) return base;
+		if (mode === 'main') return base;
 		const separator = base.includes('?') ? '&' : '?';
-		return `${base}${separator}windowId=${encodeURIComponent(windowId)}`;
+		const param = mode === 'tab' ? TAB_WINDOW_QUERY_PARAM : 'windowId';
+		return `${base}${separator}${param}=${encodeURIComponent(windowId)}`;
 	};
 
 	/**
@@ -150,14 +193,22 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 	 * navigation guards, permission handling, crash detection, and off-screen
 	 * placement guarding are identical. Registry registration and the
 	 * auto-updater (primary-only) are wired by the callers below.
+	 *
+	 * `mode` defaults to `main` / `secondary` from `isMain`. `minSize` replaces
+	 * the app window minimum (a tab window is smaller). `background` shows the
+	 * window without focusing it.
 	 */
 	const createBrowserWindow = (options: {
 		windowId: string;
 		sessionIds: string[];
 		bounds?: WindowCreationBounds;
 		isMain: boolean;
+		mode?: WindowEntryMode;
+		minSize?: MinWindowSize;
+		background?: boolean;
 	}): BrowserWindow => {
-		const { windowId, bounds, isMain } = options;
+		const { windowId, bounds, isMain, minSize, background } = options;
+		const mode: WindowEntryMode = options.mode ?? (isMain ? 'main' : 'secondary');
 
 		// Restore saved window state, discarding off-screen coordinates so the
 		// window can never spawn invisible (saved while minimized -> -32000 on
@@ -168,12 +219,15 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 		// the window fits (and can be maximized) on small or heavily-scaled
 		// screens, where a fixed 1000x600 minimum can exceed the work area and make
 		// native maximize silently no-op. See resolveWindowSizeConstraints.
-		const { width, height, minWidth, minHeight } = resolveWindowSizeConstraints({
-			x: bounds?.x,
-			y: bounds?.y,
-			width: rawWidth,
-			height: rawHeight,
-		});
+		const { width, height, minWidth, minHeight } = resolveWindowSizeConstraints(
+			{
+				x: bounds?.x,
+				y: bounds?.y,
+				width: rawWidth,
+				height: rawHeight,
+			},
+			minSize
+		);
 		const position = resolveVisibleWindowPosition({ x: bounds?.x, y: bounds?.y, width, height });
 		const linuxWindowIcon = resolveLinuxWindowIconPath();
 
@@ -190,6 +244,7 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 			...(linuxWindowIcon ? { icon: linuxWindowIcon } : {}),
 			...(useNativeTitleBar ? {} : { titleBarStyle: 'hiddenInset' as const }),
 			...(autoHideMenuBar ? { autoHideMenuBar: true } : {}),
+			...(background ? { show: false } : {}),
 			webPreferences: {
 				preload: preloadPath,
 				additionalArguments: preloadAdditionalArguments,
@@ -201,6 +256,9 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 				webviewTag: true,
 			},
 		});
+
+		// A background window is built hidden and shown without taking focus.
+		if (background) browserWindow.showInactive();
 
 		// Restore maximized/fullscreen state after window is created
 		if (bounds?.isFullScreen) {
@@ -225,7 +283,8 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 		const reclampMinimumSize = () => {
 			if (browserWindow.isDestroyed()) return;
 			const { minWidth: nextMinWidth, minHeight: nextMinHeight } = resolveWindowSizeConstraints(
-				browserWindow.getBounds()
+				browserWindow.getBounds(),
+				minSize
 			);
 			if (nextMinWidth === lastAppliedMinWidth && nextMinHeight === lastAppliedMinHeight) return;
 			lastAppliedMinWidth = nextMinWidth;
@@ -262,6 +321,7 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 			fullScreen: bounds?.isFullScreen ?? false,
 			mode: isDevelopment ? 'development' : 'production',
 			isMain,
+			entry: mode,
 		});
 
 		// Save window state before closing. Only the primary window backs the
@@ -329,7 +389,7 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 		}
 
 		// Load the app
-		const entryUrl = buildEntryUrl(windowId, isMain);
+		const entryUrl = buildEntryUrl(windowId, mode);
 		if (isDevelopment) {
 			// Install React DevTools extension in development mode. The extension
 			// installs into the shared session, so doing it once for the primary
@@ -496,7 +556,95 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 
 			return browserWindow;
 		},
+
+		createTabWindow: ({ agentId, tabRefs, activeTabRef, bounds, background }): BrowserWindow => {
+			if (!windowRegistry) throw new Error('A tab window needs the window registry');
+			if (tabRefs.length === 0) throw new Error('A tab window needs at least one tab');
+			// Refuse BEFORE building a BrowserWindow, so a second window for the
+			// same agent never flashes open (TW-4). The registry checks it again.
+			if (windowRegistry.getTabWindowForAgent(agentId)) {
+				throw new Error(`Agent ${agentId} already has a tab window`);
+			}
+
+			const windowId = bounds?.id ?? generateUUID();
+			const browserWindow = createBrowserWindow({
+				windowId,
+				sessionIds: [],
+				bounds: bounds ?? placeNewTabWindow(windowRegistry, agentId),
+				isMain: false,
+				mode: 'tab',
+				minSize: TAB_WINDOW_MIN_SIZE,
+				background,
+			});
+
+			windowRegistry.create({
+				windowId,
+				browserWindow,
+				kind: 'tab',
+				agentId,
+				tabRefs,
+				activeTabRef,
+			});
+
+			// Docking takes every tab out of the registry entry, one change each.
+			// `closing` stops the auto close below from closing a window that is
+			// already on its way out.
+			let closing = false;
+			const dockAllTabs = () => {
+				const entry = windowRegistry.get(windowId);
+				for (const ref of [...(entry?.tabRefs ?? [])]) {
+					// A terminal's scrollback comes from this window's unload (D5).
+					if (windowRegistry.removeTabFromTabWindow(windowId, ref)) {
+						expectTerminalHandoff(agentId, ref);
+					}
+				}
+			};
+
+			// The last tab left (docked or closed): close the window.
+			const unsubscribe = windowRegistry.onChange((change) => {
+				if (closing || change.type !== 'tab-window-changed' || change.windowId !== windowId) {
+					return;
+				}
+				if ((windowRegistry.get(windowId)?.tabRefs?.length ?? 0) > 0) return;
+				if (!browserWindow.isDestroyed()) browserWindow.close();
+			});
+
+			// Closing a tab window docks its tabs (TW-9), never closes them. While
+			// the app quits, keep them in the entry so the final window-state
+			// snapshot saves them and the restart brings them back (TW-10).
+			browserWindow.on('close', () => {
+				closing = true;
+				if (!getIsQuitting?.()) dockAllTabs();
+			});
+			browserWindow.on('closed', () => {
+				closing = true;
+				unsubscribe();
+				if (getIsQuitting?.()) return;
+				// `destroy()` skips 'close', so dock here as well (a no-op after it).
+				dockAllTabs();
+				windowRegistry.remove(windowId);
+			});
+
+			return browserWindow;
+		},
 	};
+}
+
+/**
+ * Bounds for a new tab window: the default size, beside the agent's owner
+ * window (the primary when no window owns it), or centered on the cursor's
+ * display when that is another display.
+ */
+function placeNewTabWindow(registry: WindowRegistry, agentId: string): WindowCreationBounds {
+	const owner = registry.getOwnerWindowForAgent(agentId);
+	const ownerBounds =
+		owner && !owner.browserWindow.isDestroyed() ? owner.browserWindow.getBounds() : undefined;
+	return resolveTabWindowPlacement({
+		ownerBounds,
+		cursor: screen.getCursorScreenPoint(),
+		width: TAB_WINDOW_DEFAULT_WIDTH,
+		height: TAB_WINDOW_DEFAULT_HEIGHT,
+	});
 }
 
 /**

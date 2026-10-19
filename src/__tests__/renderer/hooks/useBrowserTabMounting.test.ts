@@ -8,6 +8,7 @@ import {
 } from '../../../renderer/stores/coworkingBrowserKeepAliveStore';
 import type { Session } from '../../../renderer/types';
 import type { BrowserTab } from '../../../shared/browserPage';
+import { clearTabWindowStore, popOutTabsInStore } from '../../helpers/tabWindows';
 
 function makeBrowserTab(id: string): BrowserTab {
 	return {
@@ -296,5 +297,54 @@ describe('useBrowserTabMounting keep-alive pins (agent-driven tabs)', () => {
 			keepAlive().clear();
 			vi.useRealTimers();
 		}
+	});
+
+	describe('Tab Windows (D5)', () => {
+		afterEach(() => {
+			clearTabWindowStore();
+			keepAlive().clear();
+		});
+
+		it('never mounts a tab popped out into its tab window, whatever the policy', () => {
+			setPolicy('all');
+			popOutTabsInStore('session-1', [{ type: 'browser', id: 'b' }]);
+			const session = makeSession({
+				browserTabs: [makeBrowserTab('a'), makeBrowserTab('b'), makeBrowserTab('c')],
+				activeBrowserTabId: 'a',
+			});
+			const { result } = renderHook(() => useBrowserTabMounting(session));
+			expect(result.current).toEqual(['a', 'c']);
+
+			// A coworking pin does not bring it back either.
+			act(() => {
+				keepAlive().pin('b');
+			});
+			expect(result.current).toEqual(['a', 'c']);
+		});
+
+		it('mounts it again when it docks', () => {
+			setPolicy('all');
+			popOutTabsInStore('session-1', [{ type: 'browser', id: 'b' }]);
+			const session = makeSession({
+				browserTabs: [makeBrowserTab('a'), makeBrowserTab('b')],
+				activeBrowserTabId: 'a',
+			});
+			const { result } = renderHook(() => useBrowserTabMounting(session));
+			expect(result.current).toEqual(['a']);
+
+			act(() => clearTabWindowStore());
+			expect(result.current).toEqual(['a', 'b']);
+		});
+
+		it('ignores a popped tab of another agent', () => {
+			setPolicy('all');
+			popOutTabsInStore('session-2', [{ type: 'browser', id: 'b' }]);
+			const session = makeSession({
+				browserTabs: [makeBrowserTab('a'), makeBrowserTab('b')],
+				activeBrowserTabId: 'a',
+			});
+			const { result } = renderHook(() => useBrowserTabMounting(session));
+			expect(result.current).toEqual(['a', 'b']);
+		});
 	});
 });

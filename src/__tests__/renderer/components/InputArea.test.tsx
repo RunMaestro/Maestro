@@ -27,15 +27,14 @@ function seedAiCommand(sessionId: string, tabId: string, command?: string) {
 // Mock scrollIntoView since jsdom doesn't support it
 Element.prototype.scrollIntoView = vi.fn();
 
-const mockUpdateSessionWith = vi.fn();
-vi.mock('../../../renderer/stores/sessionStore', async (importActual) => {
-	// Preserve real exports (e.g. useSessionStore, which child components like
-	// InputTextarea subscribe to) and override only updateSessionWith so the
-	// permission-mode toggle assertions can observe it.
-	const actual = await importActual<typeof import('../../../renderer/stores/sessionStore')>();
+// The permission-mode pill writes through the shared explicit-target action (a
+// tab window's owner runs the same one); observe it there.
+const mockSetAiTabPermissionMode = vi.fn();
+vi.mock('../../../renderer/services/aiTabActions', async (importActual) => {
+	const actual = await importActual<typeof import('../../../renderer/services/aiTabActions')>();
 	return {
 		...actual,
-		updateSessionWith: (...args: unknown[]) => mockUpdateSessionWith(...args),
+		setAiTabPermissionMode: (...args: unknown[]) => mockSetAiTabPermissionMode(...args),
 	};
 });
 
@@ -253,7 +252,7 @@ describe('InputArea', () => {
 
 	afterEach(() => {
 		vi.restoreAllMocks();
-		mockUpdateSessionWith.mockClear();
+		mockSetAiTabPermissionMode.mockClear();
 	});
 
 	describe('Basic Rendering', () => {
@@ -732,12 +731,10 @@ describe('InputArea', () => {
 			expect(toggle).not.toBeDisabled();
 
 			fireEvent.click(toggle);
-			expect(mockUpdateSessionWith).toHaveBeenCalled();
-			const updater = mockUpdateSessionWith.mock.calls[0][1];
-			const updatedSession = updater(session);
-			const updatedTab = updatedSession.aiTabs.find((t: { id: string }) => t.id === 'tab-1');
-			expect(updatedTab.permissionMode).toBe('standard');
-			expect(updatedTab.readOnlyMode).toBe(false);
+			expect(mockSetAiTabPermissionMode).toHaveBeenCalledWith(
+				{ sessionId: session.id, tabId: 'tab-1' },
+				'standard'
+			);
 		});
 
 		it('shows the standard tooltip when AutoRun is active', () => {
@@ -1911,12 +1908,10 @@ describe('InputArea', () => {
 
 			fireEvent.click(screen.getByTitle(/Full Access/));
 
-			expect(mockUpdateSessionWith).toHaveBeenCalled();
-			const updater = mockUpdateSessionWith.mock.calls[0][1];
-			const updatedSession = updater(session);
-			const updatedTab = updatedSession.aiTabs.find((t: { id: string }) => t.id === 'tab-1');
-			expect(updatedTab.permissionMode).toBe('standard');
-			expect(updatedTab.readOnlyMode).toBe(false);
+			expect(mockSetAiTabPermissionMode).toHaveBeenCalledWith(
+				{ sessionId: session.id, tabId: 'tab-1' },
+				'standard'
+			);
 		});
 
 		it('calls onToggleTabSaveToHistory when clicking history toggle', () => {

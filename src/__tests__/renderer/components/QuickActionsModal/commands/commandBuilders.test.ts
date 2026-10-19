@@ -28,6 +28,7 @@ import { buildSupportCommands } from '../../../../../renderer/components/QuickAc
 import { createGroupFromTabRefs } from '../../../../../renderer/utils/panelLayout';
 import { createMockAITab } from '../../../../helpers/mockTab';
 import { useModalStore } from '../../../../../renderer/stores/modalStore';
+import { useTabWindowStore } from '../../../../../renderer/stores/tabWindowStore';
 
 const noop = () => {};
 const setSessions = vi.fn();
@@ -890,6 +891,47 @@ describe('agent-switch window scoping', () => {
 		}).find((a) => a.id === 'closeAllTabs');
 
 		expect(command?.subtext).toBe('Close all 2 tabs');
+	});
+
+	// A tab popped out into a tab window survives a close-all in the owner too.
+	it('leaves tabs popped out into a tab window out of the Close All Tabs count', () => {
+		useTabWindowStore.getState().setWindows([
+			{
+				windowId: 'tw-1',
+				agentId: 's1',
+				tabRefs: [{ type: 'ai', id: 'tab-2' }],
+				activeTabRef: null,
+			},
+		]);
+		const session = createMockSession({
+			id: 's1',
+			aiTabs: [
+				createMockAITab({ id: 'tab-1' }),
+				createMockAITab({ id: 'tab-2' }),
+				createMockAITab({ id: 'tab-3' }),
+			],
+			activeTabId: 'tab-1',
+		});
+
+		const command = buildTabCommands({
+			activeSession: session,
+			isAiMode: true,
+			activeTabInfo: {
+				isTerminalMode: false,
+				hasActiveTab: true,
+				activeUnifiedIndex: 0,
+				unifiedTabCount: 2,
+				activeTabType: 'ai',
+			},
+			enterToSendAI: true,
+			onCloseAllTabs: vi.fn(),
+			setQuickActionOpen: vi.fn(),
+			shortcuts: {},
+			toggleInputMode: vi.fn(),
+		}).find((a) => a.id === 'closeAllTabs');
+
+		expect(command?.subtext).toBe('Close all 2 tabs');
+		useTabWindowStore.setState({ windows: [], poppedByAgent: {} });
 	});
 
 	// An agent whose only other tabs are hidden consults has one closable tab, so

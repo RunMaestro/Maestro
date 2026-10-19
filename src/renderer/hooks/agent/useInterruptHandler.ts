@@ -55,9 +55,29 @@ export interface UseInterruptHandlerDeps {
 // Return type
 // ============================================================================
 
+/** Who Stop is for. */
+export interface InterruptTarget {
+	/** The agent to stop. */
+	sessionId: string;
+	/**
+	 * The AI tab the user pressed Stop on: its process is the primary target and
+	 * its transcript gets the "Canceled by user" line. Defaults to the agent's
+	 * active tab. Stop still idles every busy tab of the agent either way.
+	 */
+	tabId?: string;
+	/** Which processes Stop is for. Defaults to the agent's own input mode. */
+	mode?: 'ai' | 'terminal';
+}
+
 export interface UseInterruptHandlerReturn {
 	/** Interrupt the active session's running process */
 	handleInterrupt: () => Promise<void>;
+	/**
+	 * The same Stop for an explicit agent and tab. A tab window's owner stops a
+	 * popped tab with it: that tab is never the owner's active tab, and the
+	 * owner may show the agent in terminal mode meanwhile (Tab Windows).
+	 */
+	interruptAgent: (target: InterruptTarget) => Promise<void>;
 }
 
 // ============================================================================
@@ -126,16 +146,21 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 	depsRef.current = deps;
 
 	// ========================================================================
-	// handleInterrupt - interrupt the active process
+	// interruptAgent - interrupt an agent's running processes
 	// ========================================================================
-	const handleInterrupt = useCallback(async () => {
-		const activeSession = selectActiveSession(useSessionStore.getState());
+	const interruptAgent = useCallback(async (target: InterruptTarget) => {
+		const activeSession = selectSessionById(target.sessionId)(useSessionStore.getState());
 		if (!activeSession) return;
 
 		const { sessionsRef, cancelPendingSynopsis, processQueuedItem } = depsRef.current;
 
-		const currentMode = activeSession.inputMode;
-		const activeTab = getActiveTab(activeSession);
+		const currentMode = target.mode ?? activeSession.inputMode;
+		// The tab Stop was pressed on, when named and still there; else the agent's
+		// active tab, as for the app window's own Stop.
+		const resolveStopTab = (s: Session) =>
+			(target.tabId ? s.aiTabs.find((tab) => tab.id === target.tabId) : undefined) ??
+			getActiveTab(s);
+		const activeTab = resolveStopTab(activeSession);
 		const targetSessionId =
 			currentMode === 'ai'
 				? `${activeSession.id}-ai-${activeTab?.id || 'default'}`
@@ -309,7 +334,7 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 
 				// No queued items, just go to idle and add canceled log to the active tab
 				// Also clear any thinking/tool logs since the process was interrupted
-				const activeTabForCancel = getActiveTab(s);
+				const activeTabForCancel = resolveStopTab(s);
 				const updatedAiTabsForIdle = s.aiTabs.map((tab) => {
 					if (tab.id === activeTabForCancel?.id || tab.state === 'busy') {
 						const logsWithoutThinkingOrTools = tab.logs.filter(
@@ -408,7 +433,7 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 						// Add kill log to the appropriate place and clear thinking/tool logs
 						const updatedSession = { ...s };
 						if (currentMode === 'ai') {
-							const tab = getActiveTab(s);
+							const tab = resolveStopTab(s);
 							if (tab) {
 								updatedSession.aiTabs = s.aiTabs.map((t) => {
 									if (t.id === tab.id) {
@@ -554,7 +579,7 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 					};
 					updateSessionWith(activeSession.id, (s) => {
 						if (currentMode === 'ai') {
-							const activeTabForError = getActiveTab(s);
+							const activeTabForError = resolveStopTab(s);
 							return {
 								...s,
 								state: 'idle',
@@ -593,5 +618,14 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 		}
 	}, []);
 
-	return { handleInterrupt };
+	// ========================================================================
+	// handleInterrupt - interrupt the active agent (its active tab, its mode)
+	// ========================================================================
+	const handleInterrupt = useCallback(async () => {
+		const activeSession = selectActiveSession(useSessionStore.getState());
+		if (!activeSession) return;
+		await interruptAgent({ sessionId: activeSession.id });
+	}, [interruptAgent]);
+
+	return { handleInterrupt, interruptAgent };
 }

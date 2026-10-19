@@ -5,6 +5,8 @@
 
 import type { AITab, Session, UnifiedTabRef } from '../types';
 import { useSettingsStore } from '../stores/settingsStore';
+import { getPoppedOutTabKeys } from '../stores/tabWindowStore';
+import { tabRefKey, type SingleTabType } from '../../shared/unifiedTabRef';
 
 /**
  * Whether an AI tab is hidden from the tab strip and from tab-cycling shortcuts.
@@ -73,9 +75,65 @@ export function getNavigableUnifiedTabOrder(
 	session: Session,
 	order: UnifiedTabRef[]
 ): UnifiedTabRef[] {
+	// A tab popped out into a tab window has no chip in the owner either (D4).
+	const shown = filterPoppedOutRefs(session.id, order);
 	const hiddenAiIds = new Set((session.aiTabs || []).filter(isAiTabHidden).map((tab) => tab.id));
-	if (hiddenAiIds.size === 0) return order;
-	return order.filter((ref) => !(ref.type === 'ai' && hiddenAiIds.has(ref.id)));
+	if (hiddenAiIds.size === 0) return shown;
+	return shown.filter((ref) => !(ref.type === 'ai' && hiddenAiIds.has(ref.id)));
+}
+
+/**
+ * Drop the tabs of one kind that are popped out into a tab window (Tab Windows,
+ * D4), for a surface that enumerates an agent's tabs in the owner window: the
+ * tab switcher, cross-tab search, a tab count in copy.
+ *
+ * Reads the popped set from the store, so a memo over `tabs` must also depend on
+ * `usePoppedOutTabKeys(agentId)`. Returns the input by reference when nothing is
+ * dropped (the common case), since callers memoize on identity.
+ */
+export function withoutPoppedOutTabs<T extends { id: string }>(
+	agentId: string | null | undefined,
+	type: SingleTabType,
+	tabs: T[]
+): T[] {
+	if (!agentId || tabs.length === 0) return tabs;
+	const popped = getPoppedOutTabKeys(agentId);
+	if (popped.size === 0) return tabs;
+	const isPopped = (tab: T) => popped.has(tabRefKey({ type, id: tab.id }));
+	return tabs.some(isPopped) ? tabs.filter((tab) => !isPopped(tab)) : tabs;
+}
+
+/**
+ * The AI tabs the owner window's strip draws for an agent: {@link visibleAiTabs}
+ * minus the tabs popped out into its tab window. The owner-window form of
+ * `visibleAiTabs`, for every list and count the owner offers.
+ *
+ * Same memo rule and by-reference return as {@link withoutPoppedOutTabs}.
+ */
+export function ownerVisibleAiTabs(
+	agentId: string | null | undefined,
+	tabs: AITab[] | undefined
+): AITab[] {
+	return withoutPoppedOutTabs(agentId, 'ai', visibleAiTabs(tabs));
+}
+
+/**
+ * Drop the refs of tabs popped out into a tab window (Tab Windows, D4).
+ *
+ * The stored order keeps a popped tab's ref, because that ref is what puts the
+ * tab back in its slot on dock (TW-8). The owner window must not draw it or
+ * land on it, so every list the owner picks a tab from is narrowed here, the
+ * same way {@link getNavigableUnifiedTabOrder} narrows hidden consult tabs.
+ * Group refs always survive: a whole tiled group is never popped out (D6).
+ *
+ * Returns the input by reference when nothing is dropped (the common case),
+ * since callers memoize on identity.
+ */
+export function filterPoppedOutRefs<T extends UnifiedTabRef>(agentId: string, order: T[]): T[] {
+	const popped = getPoppedOutTabKeys(agentId);
+	if (popped.size === 0 || order.length === 0) return order;
+	const isPopped = (ref: T) => ref.type !== 'group' && popped.has(tabRefKey(ref));
+	return order.some(isPopped) ? order.filter((ref) => !isPopped(ref)) : order;
 }
 
 /**

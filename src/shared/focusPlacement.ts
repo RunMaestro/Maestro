@@ -73,6 +73,12 @@ export const CLI_BACKGROUND_DEFAULTS = {
 	/** maestro-cli tab new [--prompt] - focuses today. */
 	'tab-new': false,
 	/**
+	 * maestro-cli tab pop-out - raises the agent's tab window and shows the tab,
+	 * as the chip menu item, Cmd+K, and the shortcut do. `--background` adds the
+	 * tab to the tab window's strip without raising it.
+	 */
+	'tab-pop-out': false,
+	/**
 	 * maestro-cli dispatch --new-tab - the one verb that is ALREADY background by
 	 * default, with `--focus` to opt out. Leaving it alone is the same
 	 * no-default-changes rule as everything else here, not an exception to it.

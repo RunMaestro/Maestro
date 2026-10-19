@@ -12,6 +12,9 @@
  * exactly ONE tab type by precedence (terminal > file > browser > ai), which is
  * why every focus here goes through the `*TabFocusFields` helpers rather than
  * setting an active-tab id by hand - see `utils/tabFocusFields.ts`.
+ *
+ * A kind that names a tab popped out into a tab window shows it there instead
+ * and leaves the owner window's view alone (`focusTabWindowIfPoppedOut`, D4).
  */
 
 import type { ToastClickAction } from '../../shared/toastClickAction';
@@ -22,6 +25,7 @@ import { resolveTerminalTab } from '../utils/terminalTabHelpers';
 import { browserTabFocusFields, terminalTabFocusFields } from '../utils/tabFocusFields';
 import { openUrl } from '../utils/openUrl';
 import { logger } from '../utils/logger';
+import { focusTabWindowIfPoppedOut } from './tabWindowNavigation';
 
 export interface ToastClickActionHandlers {
 	/**
@@ -66,6 +70,12 @@ export function dispatchToastClickAction(
 ): boolean {
 	switch (action.kind) {
 		case 'jump-session': {
+			if (
+				action.tabId &&
+				focusTabWindowIfPoppedOut(action.sessionId, { type: 'ai', id: action.tabId })
+			) {
+				return true;
+			}
 			if (!handlers.onSessionClick) return false;
 			const jumped = handlers.onSessionClick(action.sessionId, action.tabId);
 			if (jumped === false) return false;
@@ -116,6 +126,11 @@ export function dispatchToastClickAction(
 				}
 				return false;
 			}
+			if (
+				focusTabWindowIfPoppedOut(resolved.session.id, { type: 'terminal', id: resolved.tab.id })
+			) {
+				return true;
+			}
 			switchToSession(resolved.session.id);
 			updateSessionWith(resolved.session.id, (s) => ({
 				...s,
@@ -135,6 +150,9 @@ export function dispatchToastClickAction(
 				? (session.browserTabs || []).find((t) => t.id === action.tabId)
 				: undefined;
 			if (existing) {
+				if (focusTabWindowIfPoppedOut(session.id, { type: 'browser', id: existing.id })) {
+					return true;
+				}
 				switchToSession(session.id);
 				updateSessionWith(session.id, (s) => ({ ...s, ...browserTabFocusFields(existing.id) }));
 				return true;

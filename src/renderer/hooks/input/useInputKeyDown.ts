@@ -28,7 +28,13 @@ import {
 	previousComposerCommandMode,
 	type ComposerCommandMode,
 } from '../../utils/shellCommandInput';
-import { aiCommandKey, getAiCommandEntry, useAiCommandStore } from '../../stores/aiCommandStore';
+import {
+	aiCommandKey,
+	getAiCommandEntry,
+	useAiCommandStore,
+	type AiCommandEntry,
+} from '../../stores/aiCommandStore';
+import type { Session } from '../../types';
 import { acceptAiCommand, dismissAiCommand } from '../../services/aiCommand';
 import { eventMatchesShortcutKeys } from '../../utils/shortcutMatch';
 import { useEventListener } from '../utils/useEventListener';
@@ -51,6 +57,11 @@ export const FORCED_PARALLEL_SEND_EVENT = 'maestro:forcedParallelSend';
  * as {@link FORCED_PARALLEL_SEND_EVENT}, because the composer owns the draft.
  */
 export const HOLD_SEND_EVENT = 'maestro:holdSend';
+
+/** Steer in this window: the default of {@link InputKeyDownDeps.steerNewest}. Module scope keeps it stable. */
+function steerNewestHere(sessionId: string, tabId: string): void {
+	void steerNewestQueuedMessage(sessionId, tabId);
+}
 
 // ============================================================================
 // Dependencies interface
@@ -93,6 +104,18 @@ export interface InputKeyDownDeps {
 	inputRef: React.RefObject<HTMLTextAreaElement | null>;
 	/** Ref to the terminal output container */
 	terminalOutputRef: React.RefObject<HTMLDivElement | null>;
+	/**
+	 * Run an AI command proposal the user accepted (Y, or Enter on Run).
+	 * Defaults to running it here; a tab window sends it to its owner window,
+	 * which runs every command for the agent (Tab Windows, D1).
+	 */
+	acceptAiCommand?: (session: Session, entry: AiCommandEntry) => void;
+	/**
+	 * Steer the tab's newest queued message (Steer with an empty draft).
+	 * Defaults to steering here; a tab window asks its owner window, which holds
+	 * the queue.
+	 */
+	steerNewest?: (sessionId: string, tabId: string) => void;
 }
 
 // ============================================================================
@@ -121,6 +144,8 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 		setCommandMode,
 		inputRef,
 		terminalOutputRef,
+		acceptAiCommand: runAcceptedAiCommand = acceptAiCommand,
+		steerNewest = steerNewestHere,
 	} = deps;
 
 	// --- InputContext state (completion dropdowns) ---
@@ -209,11 +234,11 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 			activeSession.aiTabs?.find((tab) => tab.id === activeSession.activeTabId)?.stagedImages
 				?.length ?? 0;
 		if (getInputValue().trim().length === 0 && stagedImageCount === 0) {
-			void steerNewestQueuedMessage(activeSession.id, activeSession.activeTabId);
+			steerNewest(activeSession.id, activeSession.activeTabId);
 			return;
 		}
 		processInput(undefined, { steer: true });
-	}, [getInputValue, processInput]);
+	}, [getInputValue, processInput, steerNewest]);
 
 	useEventListener(STEER_SEND_EVENT, runSteerSend);
 
@@ -305,7 +330,7 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 					}
 					if (e.key === 'y' || e.key === 'Y') {
 						e.preventDefault();
-						acceptAiCommand(activeSession, aiCommandEntry);
+						runAcceptedAiCommand(activeSession, aiCommandEntry);
 						return;
 					}
 					if (e.key === 'n' || e.key === 'N') {
@@ -316,7 +341,7 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 					if (e.key === 'Enter') {
 						e.preventDefault();
 						if (aiCommandEntry.choice === 'run') {
-							acceptAiCommand(activeSession, aiCommandEntry);
+							runAcceptedAiCommand(activeSession, aiCommandEntry);
 						} else {
 							decline();
 						}
@@ -612,6 +637,7 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 			setCommandMode,
 			inputRef,
 			terminalOutputRef,
+			runAcceptedAiCommand,
 			// InputContext values
 			commandHistoryOpen,
 			tabCompletionOpen,

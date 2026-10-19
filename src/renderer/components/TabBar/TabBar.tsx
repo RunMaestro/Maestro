@@ -1,7 +1,9 @@
 import React, { useState, useRef, useCallback, useEffect, memo, useMemo } from 'react';
 import { Bell } from 'lucide-react';
 import type { AITab, UnifiedTabRef } from '../../types';
-import { hasDraft, hasUnreadVisibleTab, visibleAiTabs } from '../../utils/tabHelpers';
+import { hasDraft, hasUnreadVisibleTab, ownerVisibleAiTabs } from '../../utils/tabHelpers';
+import { isAiTabHidden } from '../../utils/unifiedTabOrderUtils';
+import { usePoppedOutTabKeys } from '../../stores/tabWindowStore';
 import { updateSessionWith } from '../../stores/sessionStore';
 import { promotePaneToStandalone } from '../../utils/panelLayout';
 import {
@@ -59,6 +61,7 @@ function TabBarInner({
 	onCopyContext,
 	onExportHtml,
 	onSnooze,
+	onTabWindowMove,
 	onPublishGist,
 	ghCliAvailable,
 	showUnreadOnly: showUnreadOnlyProp,
@@ -162,6 +165,29 @@ function TabBarInner({
 	// doesn't own. Outside a WindowProvider (isolation tests) or without a
 	// sessionId, this resolves to true - single-window behaviour is unchanged.
 	const ownsActiveAgent = useWindowOwnsSession(sessionId);
+	// Tabs popped out into a tab window have no chip here (D4). Memo dependency
+	// for the filters below: a pop-out changes this set, not `tabs`.
+	const poppedOutTabKeys = usePoppedOutTabKeys(sessionId);
+
+	// Tab Windows (TW-11): one stable callback per chip kind, so the chip menus
+	// carry the tab's own type. A hidden consult tab never gets the item (TW-14);
+	// the strip does not draw one today, and the guard keeps it that way.
+	const handleAiTabWindowMove = useCallback(
+		(id: string) => onTabWindowMove?.({ type: 'ai', id }),
+		[onTabWindowMove]
+	);
+	const handleFileTabWindowMove = useCallback(
+		(id: string) => onTabWindowMove?.({ type: 'file', id }),
+		[onTabWindowMove]
+	);
+	const handleTerminalTabWindowMove = useCallback(
+		(id: string) => onTabWindowMove?.({ type: 'terminal', id }),
+		[onTabWindowMove]
+	);
+	const handleBrowserTabWindowMove = useCallback(
+		(id: string) => onTabWindowMove?.({ type: 'browser', id }),
+		[onTabWindowMove]
+	);
 
 	// Scroll active tab into view
 	useEffect(() => {
@@ -245,9 +271,10 @@ function TabBarInner({
 	const displayedTabs = useMemo(() => {
 		// Window doesn't own this agent: render an empty tab strip (scoped window).
 		if (!ownsActiveAgent) return [];
-		// Hidden consult tabs never get a chip, in either filter state. The unified
-		// path drops them in buildUnifiedTabs; this legacy path has to drop them itself.
-		const visible = visibleAiTabs(tabs);
+		// Hidden consult tabs and popped-out tabs never get a chip, in either filter
+		// state. The unified path drops them in buildUnifiedTabs; this legacy path
+		// has to drop them itself.
+		const visible = ownerVisibleAiTabs(sessionId, tabs);
 		return showUnreadOnly
 			? visible.filter(
 					(t) =>
@@ -269,6 +296,8 @@ function TabBarInner({
 		stuckTabIds,
 		ownsActiveAgent,
 		queuedTabIds,
+		sessionId,
+		poppedOutTabKeys,
 	]);
 
 	const displayedUnifiedTabs = useMemo(() => {
@@ -650,6 +679,7 @@ function TabBarInner({
 		onCopyContext: onCopyContext && (tab.logs?.length ?? 0) >= 1 ? onCopyContext : undefined,
 		onExportHtml: onExportHtml || undefined,
 		onSnooze: onSnooze || undefined,
+		onTabWindowMove: onTabWindowMove && !isAiTabHidden(tab) ? handleAiTabWindowMove : undefined,
 		onPublishGist:
 			onPublishGist && ghCliAvailable && (tab.logs?.length ?? 0) >= 1 ? onPublishGist : undefined,
 		onMoveToFirst:
@@ -726,7 +756,7 @@ function TabBarInner({
 					}
 				>
 					<Bell className="w-4 h-4" />
-					{hasUnreadVisibleTab(tabs) && (
+					{hasUnreadVisibleTab(ownerVisibleAiTabs(sessionId, tabs)) && (
 						<div
 							className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full"
 							style={{ backgroundColor: theme.colors.error }}
@@ -831,6 +861,7 @@ function TabBarInner({
 										registerRef={(el) => registerTabRef(fileTab.id, el)}
 										onRename={onFileTabRename}
 										onSnooze={onSnooze || undefined}
+										onTabWindowMove={onTabWindowMove ? handleFileTabWindowMove : undefined}
 										onPublishGist={ghCliAvailable ? onPublishFileGist : undefined}
 										onMoveToFirst={
 											!isFirstTab && onUnifiedTabReorder ? handleMoveToFirst : undefined
@@ -872,6 +903,7 @@ function TabBarInner({
 										isDragOver={dragOverTabId === terminalTab.id}
 										registerRef={(el) => registerTabRef(terminalTab.id, el)}
 										onSnooze={onSnooze || undefined}
+										onTabWindowMove={onTabWindowMove ? handleTerminalTabWindowMove : undefined}
 										onMoveToFirst={
 											!isFirstTab && onUnifiedTabReorder ? handleMoveToFirst : undefined
 										}
@@ -912,6 +944,7 @@ function TabBarInner({
 										isDragOver={dragOverTabId === browserTab.id}
 										registerRef={(el) => registerTabRef(browserTab.id, el)}
 										onSnooze={onSnooze || undefined}
+										onTabWindowMove={onTabWindowMove ? handleBrowserTabWindowMove : undefined}
 										onMoveToFirst={
 											!isFirstTab && onUnifiedTabReorder ? handleMoveToFirst : undefined
 										}
@@ -1009,18 +1042,20 @@ function TabBarInner({
 			<PluginUiItemsSlot surface="tabBar" className="shrink-0 self-center mb-1" />
 
 			{/* New tab button + popover */}
-			<NewTabPopover
-				theme={theme}
-				onNewTab={onNewTab}
-				onNewFileTab={onNewFileTab}
-				onNewBrowserTab={onNewBrowserTab}
-				onNewTerminalTab={onNewTerminalTab}
-				newTabKeys={tabShortcuts.newTab?.keys ?? ['Meta', 't']}
-				fileTabKeys={tabShortcuts.newFileTab?.keys ?? ['Alt', 'n']}
-				browserTabKeys={tabShortcuts.newBrowserTab?.keys ?? ['Meta', 'b']}
-				terminalKeys={shortcuts.toggleMode?.keys ?? ['Meta', 'j']}
-				isOverflowing={isOverflowing}
-			/>
+			{onNewTab && (
+				<NewTabPopover
+					theme={theme}
+					onNewTab={onNewTab}
+					onNewFileTab={onNewFileTab}
+					onNewBrowserTab={onNewBrowserTab}
+					onNewTerminalTab={onNewTerminalTab}
+					newTabKeys={tabShortcuts.newTab?.keys ?? ['Meta', 't']}
+					fileTabKeys={tabShortcuts.newFileTab?.keys ?? ['Alt', 'n']}
+					browserTabKeys={tabShortcuts.newBrowserTab?.keys ?? ['Meta', 'b']}
+					terminalKeys={shortcuts.toggleMode?.keys ?? ['Meta', 'j']}
+					isOverflowing={isOverflowing}
+				/>
+			)}
 		</div>
 	);
 }

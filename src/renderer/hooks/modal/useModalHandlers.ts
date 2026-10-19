@@ -37,6 +37,7 @@ import { CONDUCTOR_BADGES } from '../../constants/conductorBadges';
 import { gitService } from '../../services/git';
 import { cueService } from '../../services/cue';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
+import { closeLightbox, openLightbox } from '../../services/lightbox';
 import { useGitDetail } from '../../contexts/GitStatusContext';
 
 // ---------------------------------------------------------------------------
@@ -589,28 +590,16 @@ export function useModalHandlers(
 	// Group J: Lightbox Handlers
 	// ====================================================================
 
+	// The lightbox open and close are shared with a tab window's modal host
+	// (services/lightbox.ts).
 	const handleSetLightboxImage = useCallback(
-		(image: string | null, contextImages?: string[], source: 'staged' | 'history' = 'history') => {
-			const { activeGroupChatId } = useGroupChatStore.getState();
-			const actions = getModalActions();
-			// setLightboxImage opens the modal - must be called first so that
-			// subsequent updateModalData calls (isGroupChat, allowDelete) find an active modal.
-			actions.setLightboxImage(image);
-			actions.setLightboxIsGroupChat(activeGroupChatId !== null);
-			actions.setLightboxAllowDelete(source === 'staged');
-			actions.setLightboxImages(contextImages || []);
-			actions.setLightboxSource(source);
-		},
+		(image: string | null, contextImages?: string[], source: 'staged' | 'history' = 'history') =>
+			openLightbox(image, contextImages, source),
 		[]
 	);
 
 	const handleCloseLightbox = useCallback(() => {
-		const actions = getModalActions();
-		actions.setLightboxImage(null);
-		actions.setLightboxImages([]);
-		actions.setLightboxSource('history');
-		actions.setLightboxIsGroupChat(false);
-		actions.setLightboxAllowDelete(false);
+		closeLightbox();
 		setTimeout(() => inputRef.current?.focus(), 0);
 	}, [inputRef]);
 

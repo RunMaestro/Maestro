@@ -16,10 +16,9 @@ import type { QueuedItem, QueuedItemEditPatch } from '../../types';
 import { aiTabFocusFields } from '../../utils/tabHelpers';
 import { steerQueuedItem } from '../../services/chatSteering';
 import type { QueueSteerResult } from '../../../shared/chatSteering';
-import { applyQueuedItemEdit } from '../../utils/executionQueue';
 import { useSessionStore } from '../../stores/sessionStore';
-import { planCrossAgentMentions } from '../../services/crossAgentMentions';
 import {
+	editQueuedItem,
 	mergeQueuedItemIntoAbove,
 	sendQueuedItemNow,
 	toggleQueuedItemPaused,
@@ -125,40 +124,11 @@ export function useQueueHandlers({
 		toggleQueuedItemPaused(sessionId, itemId);
 	}, []);
 
+	// One edit rule for every queued edit (this browser, the inline cards, a tab
+	// window): `editQueuedItem` also plans the consult again from the edited text.
 	const handleEditQueueItem = useCallback(
 		(sessionId: string, itemId: string, patch: QueuedItemEditPatch) => {
-			// Re-resolve the pending consult against the EDITED text: the user may
-			// have added or removed an `@agent` mention, and the item's stale flag
-			// would otherwise consult the wrong agent (or nobody) when it dispatches.
-			//
-			// BOTH flags have to be re-derived, not just `crossAgentMention`. Whether
-			// this agent answers at all is decided by where the mention sits, and the
-			// edit can move it: `@Codex do X` -> `do X, and @Codex too` must go back to
-			// spawning locally, and the reverse must stop spawning. Leaving
-			// `crossAgentOnly` behind silently discards half of what the user edited.
-			//
-			// A routing the user PICKED when queuing it survives the edit; the plan
-			// drops it only when the edit removes every mention.
-			const pickedRouting = useSessionStore
-				.getState()
-				.sessions.find((s) => s.id === sessionId)
-				?.executionQueue.find((item) => item.id === itemId)?.mentionRouting;
-			const mentionPlan = planCrossAgentMentions(patch.text, sessionId, pickedRouting);
-			const crossAgent = {
-				crossAgentMention: !!mentionPlan,
-				crossAgentOnly: mentionPlan?.suppressLocal ?? false,
-				mentionRouting: mentionPlan?.routingSource === 'explicit' ? mentionPlan.routing : undefined,
-			};
-			setSessions((prev) =>
-				prev.map((s) =>
-					s.id === sessionId
-						? {
-								...s,
-								executionQueue: applyQueuedItemEdit(s.executionQueue, itemId, patch, crossAgent),
-							}
-						: s
-				)
-			);
+			editQueuedItem(sessionId, itemId, patch);
 		},
 		[]
 	);

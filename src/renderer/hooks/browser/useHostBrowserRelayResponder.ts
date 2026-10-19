@@ -9,6 +9,7 @@ import { DEFAULT_BROWSER_TAB_URL } from '../../utils/browserTabPersistence';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { ensureInUnifiedTabOrder } from '../../utils/tabHelpers';
 import { prepareSessionForPersistence } from '../utils/useDebouncedPersistence';
+import { isTabPoppedOut } from '../../stores/tabWindowStore';
 
 /** The trusted owning renderer authorizes tabs and resolves their live native guest, if mounted. */
 export function useHostBrowserRelayResponder(): void {
@@ -29,6 +30,11 @@ export function useHostBrowserRelayResponder(): void {
 				const tab = session?.browserTabs?.find((candidate) => candidate.id === request.tabId);
 				if (!tab?.partition)
 					throw new Error('Browser tab does not exist in the requested host session');
+				// A popped-out tab's webview lives in its tab window, which hosts no
+				// relay (Tab Windows, D5). Opening an offscreen page for it here would
+				// also turn the owner's view into a streamed one when it docks.
+				if (isTabPoppedOut(request.sessionId, { type: 'browser', id: tab.id }))
+					throw new Error('Browser tab is popped out into its tab window. Dock it to drive it.');
 				// Resolve the actual DOM guest instead of a persisted/stale webContents id.
 				const native = Array.from(
 					document.querySelectorAll('webview[data-maestro-browser-tab]')

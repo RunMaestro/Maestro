@@ -17,7 +17,8 @@ import {
 	resolveGaugeTokenStats,
 } from '../utils/contextUsage';
 import { getExtensionColor } from '../utils/extensionColors';
-import { getTabDisplayName, visibleAiTabs } from '../utils/tabHelpers';
+import { getTabDisplayName, ownerVisibleAiTabs, withoutPoppedOutTabs } from '../utils/tabHelpers';
+import { usePoppedOutTabKeys } from '../stores/tabWindowStore';
 import { useWizardActiveTabs } from '../contexts/InlineWizardContext';
 import { isWizardTab } from '../utils/wizardActivity';
 import { WizardIndicator } from './SessionList/WizardIndicator';
@@ -53,6 +54,11 @@ type ListItem =
 
 interface TabSwitcherModalProps {
 	theme: Theme;
+	/**
+	 * The agent whose tabs these are. Its tabs popped out into a tab window are
+	 * left out of "Open Tabs" (Tab Windows, D4).
+	 */
+	sessionId?: string;
 	tabs: AITab[];
 	/** File preview tabs to include in "Open Tabs" view */
 	fileTabs?: FilePreviewTab[];
@@ -324,10 +330,11 @@ const EMPTY_BROWSER_TABS: BrowserTab[] = [];
  */
 export function TabSwitcherModal({
 	theme,
+	sessionId,
 	tabs: allTabs,
-	fileTabs = EMPTY_FILE_TABS,
-	terminalTabs = EMPTY_TERMINAL_TABS,
-	browserTabs = EMPTY_BROWSER_TABS,
+	fileTabs: allFileTabs = EMPTY_FILE_TABS,
+	terminalTabs: allTerminalTabs = EMPTY_TERMINAL_TABS,
+	browserTabs: allBrowserTabs = EMPTY_BROWSER_TABS,
 	activeTabId,
 	activeFileTabId,
 	activeTerminalTabId,
@@ -348,7 +355,26 @@ export function TabSwitcherModal({
 	// only when the user opens one from a response bubble. Listing one here offers a
 	// row with nothing to click back from, and syncing its generated `↩ Name` to the
 	// named-session store would invent a session name the user never chose.
-	const tabs = useMemo(() => visibleAiTabs(allTabs), [allTabs]);
+	// A tab popped out into a tab window is listed by that window, not this one
+	// (Tab Windows, D4); the popped set is a memo dependency because a pop-out
+	// does not change the tab arrays.
+	const poppedOutTabKeys = usePoppedOutTabKeys(sessionId);
+	const tabs = useMemo(
+		() => ownerVisibleAiTabs(sessionId, allTabs),
+		[sessionId, allTabs, poppedOutTabKeys]
+	);
+	const fileTabs = useMemo(
+		() => withoutPoppedOutTabs(sessionId, 'file', allFileTabs),
+		[sessionId, allFileTabs, poppedOutTabKeys]
+	);
+	const terminalTabs = useMemo(
+		() => withoutPoppedOutTabs(sessionId, 'terminal', allTerminalTabs),
+		[sessionId, allTerminalTabs, poppedOutTabKeys]
+	);
+	const browserTabs = useMemo(
+		() => withoutPoppedOutTabs(sessionId, 'browser', allBrowserTabs),
+		[sessionId, allBrowserTabs, poppedOutTabKeys]
+	);
 
 	// A tab running `/wizard` looks like any other row here, and its wizard is the one
 	// thing about it the user can't see from the tab strip once the strip overflows.

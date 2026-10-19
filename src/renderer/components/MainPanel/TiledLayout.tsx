@@ -50,7 +50,10 @@ import { buildSessionDeepLink } from '../../../shared/deep-link-urls';
 import { useSurfaceFontFamily } from '../../hooks/ui/useSurfaceTypography';
 import { useThrottledCallback } from '../../hooks/utils/useThrottle';
 import { useTabStore } from '../../stores/tabStore';
-import { useFilePreviewHandlers } from '../../hooks/mainPanel/useFilePreviewHandlers';
+import {
+	useFilePreviewHandlers,
+	type FileTabSaveResult,
+} from '../../hooks/mainPanel/useFilePreviewHandlers';
 import { outputSearchKeyFor } from '../../utils/outputSearch';
 import type { FileNode } from '../../types/fileTree';
 import type {
@@ -176,11 +179,14 @@ export interface PaneFileActions {
 	onFileTabEditContentChange?: (
 		tabId: string,
 		editContent: string | undefined,
-		savedContent?: string
+		savedContent?: string,
+		savedMtime?: number
 	) => void;
 	onFileTabScrollPositionChange?: (tabId: string, scrollTop: number) => void;
 	onFileTabSearchQueryChange?: (tabId: string, searchQuery: string) => void;
 	onReloadFileTab?: (tabId: string) => void;
+	/** A save landed on disk (`useFilePreviewHandlers`); a tab window tells the owner. */
+	onFileTabSaved?: (tabId: string, saved: FileTabSaveResult) => void;
 	/** Breadcrumb history jump, addressed by tab id so a pane drives its own. */
 	onFileTabNavigateToIndex?: (index: number, tabId?: string) => void;
 	fileTree?: FileNode[];
@@ -268,7 +274,14 @@ export interface TiledLayoutProps {
  * underlying AI/file tab was closed while still in the layout). The layout
  * self-heals on the next edit; this keeps the pane from rendering blank.
  */
-function PaneMissingTab({ theme }: { theme: Theme }) {
+export function PaneMissingTab({
+	theme,
+	message = 'This tab is no longer available',
+}: {
+	theme: Theme;
+	/** Override the notice (a tab window uses it for a tab it cannot show yet). */
+	message?: string;
+}) {
 	return (
 		<div
 			className="flex-1 flex items-center justify-center select-none"
@@ -281,7 +294,7 @@ function PaneMissingTab({ theme }: { theme: Theme }) {
 					border: `1px solid ${theme.colors.border}`,
 				}}
 			>
-				This tab is no longer available
+				{message}
 			</div>
 		</div>
 	);
@@ -298,8 +311,11 @@ function PaneMissingTab({ theme }: { theme: Theme }) {
  *
  * Reads its own tab reactively so edit-mode / content / scroll changes re-render just
  * this pane.
+ *
+ * Exported because a tab window (Tab Windows, TW-2) renders its active file tab
+ * with this same view instead of a fork.
  */
-function TiledFilePane({
+export function TiledFilePane({
 	fileTabId,
 	session,
 	theme,
@@ -344,6 +360,7 @@ function TiledFilePane({
 		onFileTabScrollPositionChange: actions?.onFileTabScrollPositionChange,
 		onFileTabSearchQueryChange: actions?.onFileTabSearchQueryChange,
 		onReloadFileTab: actions?.onReloadFileTab,
+		onFileTabSaved: actions?.onFileTabSaved,
 	});
 
 	// Breadcrumb history, derived from THIS tab (the single view derives the same
@@ -429,8 +446,12 @@ function TiledFilePane({
  *     pane, so a background pane would write its offset onto the focused pane's tab.
  *     They drive the tab-id-keyed store actions instead - the same ones the
  *     single-view handlers now delegate to.
+ *
+ * Exported because a tab window (Tab Windows, TW-2) renders its active AI tab
+ * with this same view; its `actions` bundle is how that window's intents reach
+ * the transcript controls (phase 5).
  */
-function TiledAiPane({
+export function TiledAiPane({
 	aiTabId,
 	session,
 	theme,

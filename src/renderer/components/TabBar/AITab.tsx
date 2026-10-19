@@ -64,6 +64,8 @@ export interface AITabProps {
 	/** Stable callback - receives tabId */
 	onExportHtml?: (tabId: string) => void;
 	onSnooze?: (tabId: string) => void;
+	/** Move this tab to its tab window, or dock it from one (TW-11). Omit to hide the item. */
+	onTabWindowMove?: (tabId: string) => void;
 	/** Stable callback - receives tabId */
 	onPublishGist?: (tabId: string) => void;
 	/** Stable callback - receives tabId */
@@ -128,6 +130,7 @@ export const AITab = memo(function AITab({
 	onCopyContext,
 	onExportHtml,
 	onSnooze,
+	onTabWindowMove,
 	onPublishGist,
 	onMoveToFirst,
 	onMoveToLast,
@@ -336,6 +339,17 @@ export const AITab = memo(function AITab({
 			onSnooze?.(tabId);
 		},
 		[onSnooze, tabId, setOverlayOpen]
+	);
+
+	// Tab Windows (TW-11): pop out from an app window, dock from a tab window.
+	// The overlay closes first: the tab is about to leave this strip.
+	const handleTabWindowClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			setOverlayOpen(false);
+			onTabWindowMove?.(tabId);
+		},
+		[onTabWindowMove, tabId, setOverlayOpen]
 	);
 
 	const handlePublishGistClick = useCallback(
@@ -656,6 +670,7 @@ export const AITab = memo(function AITab({
 					onMarkUnreadClick={handleMarkUnreadClick}
 					onExportHtmlClick={handleExportHtmlClick}
 					onSnoozeClick={handleSnoozeClick}
+					onTabWindowMoveClick={handleTabWindowClick}
 					onCopyContextClick={handleCopyContextClick}
 					onCopyContextWithReasoningClick={handleCopyContextWithReasoningClick}
 					onSummarizeAndContinueClick={handleSummarizeAndContinueClick}
@@ -674,6 +689,7 @@ export const AITab = memo(function AITab({
 					onCopyContext={onCopyContext}
 					onExportHtml={onExportHtml}
 					onSnooze={onSnooze}
+					onTabWindowMove={onTabWindowMove}
 					onPublishGist={onPublishGist}
 					onMoveToFirst={onMoveToFirst}
 					onMoveToLast={onMoveToLast}

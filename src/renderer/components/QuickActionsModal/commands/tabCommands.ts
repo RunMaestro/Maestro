@@ -3,8 +3,15 @@ import type { ActiveTabInfo, QuickAction } from '../types';
 import { formatMetaKey } from '../../../utils/shortcutFormatter';
 import { resolveSnoozeTarget } from '../../../utils/snoozeHelpers';
 import { useModalStore } from '../../../stores/modalStore';
-import { resolveModelEffortTabId } from '../../../utils/panelLayout';
-import { visibleAiTabs } from '../../../utils/tabHelpers';
+import { resolveModelEffortTabId, resolveTabRefTitle } from '../../../utils/panelLayout';
+import { ownerVisibleAiTabs } from '../../../utils/tabHelpers';
+import {
+	canUseTabWindows,
+	dockTabFromUi,
+	popOutTabFromUi,
+	resolvePopOutTarget,
+} from '../../../services/tabWindowActions';
+import { getTabWindowTabRefs } from '../../../stores/tabWindowStore';
 
 interface BuildNewTabCommandsArgs {
 	activeSession: Session | undefined;
@@ -53,6 +60,7 @@ interface BuildTabCommandsArgs {
 		focusActiveTab?: QuickAction['shortcut'];
 		clearTerminal?: QuickAction['shortcut'];
 		openModelEffort?: QuickAction['shortcut'];
+		moveTabToTabWindow?: QuickAction['shortcut'];
 	};
 	tabShortcuts?: Record<string, QuickAction['shortcut']>;
 	toggleInputMode: () => void;
@@ -264,9 +272,10 @@ export function buildTabCommands({
 		});
 	}
 
-	// Count only what the strip draws: hidden consult tabs survive a close-all, so
-	// including them would name a number the user can neither see nor close.
-	const closableTabCount = visibleAiTabs(activeSession?.aiTabs).length;
+	// Count only what the strip draws: hidden consult tabs and tabs popped out into
+	// a tab window survive a close-all, so including them would name a number the
+	// user can neither see nor close.
+	const closableTabCount = ownerVisibleAiTabs(activeSession?.id, activeSession?.aiTabs).length;
 	if (isAiMode && closableTabCount > 0 && onCloseAllTabs) {
 		commands.push({
 			id: 'closeAllTabs',
@@ -371,6 +380,38 @@ export function buildTabCommands({
 				action: () => {
 					setQuickActionOpen(false);
 					useModalStore.getState().openModal('snoozeTab', snoozeTarget);
+				},
+			});
+		}
+	}
+
+	// Tab Windows (TW-11). Pop the shown tab (or focused pane) out, and dock any
+	// tab of this agent that is out. The palette lives in the app window only,
+	// so "Dock Tab" names each popped tab rather than acting on a shown one.
+	// Both stay hidden in web-desktop, and while a group chat owns the view
+	// (same reason as the model and effort entry above).
+	if (activeSession && !activeGroupChatId && canUseTabWindows()) {
+		const popOutTarget = resolvePopOutTarget(activeSession);
+		if (popOutTarget) {
+			commands.push({
+				id: 'moveTabToTabWindow',
+				label: 'Move Tab to Tab Window',
+				subtext: 'Open this tab in its own window',
+				shortcut: shortcuts.moveTabToTabWindow,
+				action: () => {
+					setQuickActionOpen(false);
+					void popOutTabFromUi(activeSession.id, popOutTarget);
+				},
+			});
+		}
+		for (const ref of getTabWindowTabRefs(activeSession.id)) {
+			commands.push({
+				id: `dockTab:${ref.type}:${ref.id}`,
+				label: `Dock Tab: ${resolveTabRefTitle(activeSession, ref)}`,
+				subtext: 'Return this tab from its tab window to the main window',
+				action: () => {
+					setQuickActionOpen(false);
+					void dockTabFromUi(activeSession.id, ref);
 				},
 			});
 		}

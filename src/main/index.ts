@@ -222,11 +222,18 @@ import {
 } from './app-lifecycle';
 // Multi-window registry (single source of truth for window<->session ownership)
 import { WindowRegistry } from './window-registry';
+import { listTabWindows } from './tab-window-service';
 import { createQuickChatController, closeQuickChatWindow } from './quick-chat';
 // Multi-window startup restore: turn the persisted MultiWindowState back into
 // window-creation specs (pruning agents that no longer exist).
-import { planWindowRestore, pickFocusWindowSpec } from './window-state-persistence';
-import type { WindowState as SharedWindowState } from '../shared/window-types';
+import {
+	planTabWindowRestore,
+	planWindowRestore,
+	pickFocusWindowSpec,
+	readExistingAgentIds,
+	readExistingAgentTabs,
+} from './window-state-persistence';
+import type { MultiWindowState, WindowState as SharedWindowState } from '../shared/window-types';
 import { setupAgentRunCapture } from './agent-run/setup-capture-listener';
 import { setAgentRunSink } from './agent-run/broadcast';
 import { startAgentRunStoreWatcher } from './agent-run/store-watcher';
@@ -765,6 +772,7 @@ const createWebServer = createWebServerFactory({
 	getDebugPackageDeps: () => debugPackageDeps,
 	getMainWindow: () => mainWindow,
 	getWindowForSession: resolveWindowForSession,
+	getTabWindows: () => listTabWindows(windowRegistry),
 	deliverCadenza,
 	getProcessManager: () => processManager,
 	// Cue writes refuse while Maestro Cue is off (the IPC handlers do the same),
@@ -851,19 +859,21 @@ function createWindow(options?: { sessionIds?: string[]; bounds?: Partial<Shared
  * `MultiWindowState`, and a pre-migration store has none at all) it falls back
  * to a single primary window using the legacy single-window bounds - identical
  * to the previous startup behavior.
+ *
+ * Tab windows (TW-10) come back last, once their owners exist; see
+ * {@link restoreTabWindows}.
  */
 function restoreWindows() {
 	// The set of agents that still exist, so a window never tries to restore a
 	// tab strip for an agent the user has since deleted.
-	const existingAgentIds = new Set<string>();
-	for (const session of sessionsStore.get('sessions', []) as Array<{ id?: unknown }>) {
-		if (typeof session?.id === 'string') existingAgentIds.add(session.id);
-	}
+	const existingAgentIds = new Set(readExistingAgentIds(sessionsStore));
+	const savedState = windowStateStore.get('multiWindow');
 
-	const specs = planWindowRestore(windowStateStore.get('multiWindow'), existingAgentIds);
+	const specs = planWindowRestore(savedState, existingAgentIds);
 	if (specs.length === 0) {
 		// No saved multi-window layout - single primary window (backward compatible).
 		createWindow();
+		restoreTabWindows(savedState);
 		return;
 	}
 
@@ -888,9 +898,39 @@ function restoreWindows() {
 		}
 	}
 
+	restoreTabWindows(savedState);
+
 	const focusWindow = focusSpec ? created[specs.indexOf(focusSpec)] : undefined;
 	if (focusWindow && !focusWindow.isDestroyed()) {
 		focusWindow.focus();
+	}
+}
+
+/**
+ * Reopen the tab windows open at the last quit (TW-10): same agent, same tabs,
+ * same bounds. Records of deleted agents and refs of tabs the sessions store no
+ * longer holds are dropped; the owner window docks any other ref it cannot find
+ * once it loads. Saved bounds are clamped onto a present display by the window
+ * manager. Each opens in the background so the focused app window keeps focus.
+ * One failure never stops startup or the other tab windows.
+ */
+function restoreTabWindows(savedState: MultiWindowState | undefined) {
+	const tabSpecs = planTabWindowRestore(savedState, readExistingAgentTabs(sessionsStore));
+	if (tabSpecs.length === 0) return;
+	logger.info(`Restoring ${tabSpecs.length} tab window(s)`, 'Startup');
+	for (const spec of tabSpecs) {
+		try {
+			windowManager.createTabWindow({
+				agentId: spec.agentId,
+				tabRefs: spec.tabRefs,
+				activeTabRef: spec.activeTabRef,
+				bounds: spec.bounds,
+				background: true,
+			});
+		} catch (error) {
+			logger.error(`Failed to restore the tab window of agent ${spec.agentId}`, 'Startup', error);
+			void captureException(error, { operation: 'tabWindows.restore' });
+		}
 	}
 }
 

@@ -1,7 +1,15 @@
 import type React from 'react';
 import type { TabCompletionFilter, TabCompletionSuggestion } from '../../hooks';
 import type { MentionPickerItem, MentionCategory } from '../../hooks/input/useMentionPicker';
-import type { BatchRunState, Shortcut, Session, Theme, ThinkingMode } from '../../types';
+import type {
+	BatchRunState,
+	Shortcut,
+	Session,
+	Theme,
+	ThinkingItem,
+	ThinkingMode,
+} from '../../types';
+import type { AiCommandEntry } from '../../stores/aiCommandStore';
 import type {
 	GroomingProgress,
 	MergeResult,
@@ -122,4 +130,19 @@ export interface InputAreaProps {
 	availableEfforts?: string[];
 	onModelChange?: (model: string) => void;
 	onEffortChange?: (effort: string) => void;
+	/**
+	 * The thinking pill's rows. Omit to read them from the store (an app
+	 * window). A tab window passes its own: its copy of the agent's other tabs is
+	 * frozen at the last snapshot, so only the tabs it streams are live.
+	 */
+	thinkingItems?: ThinkingItem[];
+	/**
+	 * Run the AI command proposal the user accepted. Defaults to running it here
+	 * (`acceptAiCommand`); a tab window sends it to its owner instead.
+	 */
+	onAcceptAiCommand?: (entry: AiCommandEntry) => void;
+	/** Set the tab's permission mode; defaults to writing this window's store. */
+	onPermissionModeChange?: (mode: 'full' | 'standard' | 'readonly') => void;
+	/** Set the tab's thinking mode (the phone sheet); defaults to writing this window's store. */
+	onThinkingModeChange?: (mode: ThinkingMode) => void;
 }

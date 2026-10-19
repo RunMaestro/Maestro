@@ -31,6 +31,7 @@ import type {
 	SnoozeCommandCallback,
 	AutoRunSteeringCommandCallback,
 	WindowCommandCallback,
+	TabWindowCommandCallback,
 	ThroughputGaugeCommandCallback,
 	ReorderTabCallback,
 	ToggleBookmarkCallback,
@@ -177,6 +178,10 @@ import type {
 } from '../../../shared/autoRunSteeringCommands';
 import type { WindowCommandRequest, WindowCommandResult } from '../../../shared/windowCommands';
 import type {
+	TabWindowCommandRequest,
+	TabWindowCommandResult,
+} from '../../../shared/tabWindowCommands';
+import type {
 	ThroughputGaugeCommandRequest,
 	ThroughputGaugeCommandResult,
 } from '../../../shared/throughputGaugeCommands';
@@ -216,6 +221,7 @@ export interface WebServerCallbacks {
 	snoozeCommand: SnoozeCommandCallback | null;
 	autoRunSteeringCommand: AutoRunSteeringCommandCallback | null;
 	windowCommand: WindowCommandCallback | null;
+	tabWindowCommand: TabWindowCommandCallback | null;
 	throughputGaugeCommand: ThroughputGaugeCommandCallback | null;
 	reorderTab: ReorderTabCallback | null;
 	toggleBookmark: ToggleBookmarkCallback | null;
@@ -333,6 +339,7 @@ export class CallbackRegistry {
 		snoozeCommand: null,
 		autoRunSteeringCommand: null,
 		windowCommand: null,
+		tabWindowCommand: null,
 		throughputGaugeCommand: null,
 		reorderTab: null,
 		toggleBookmark: null,
@@ -545,6 +552,13 @@ export class CallbackRegistry {
 			return { success: false, error: 'Window commands are not configured' };
 		}
 		return this.callbacks.windowCommand(request);
+	}
+
+	async tabWindowCommand(request: TabWindowCommandRequest): Promise<TabWindowCommandResult> {
+		if (!this.callbacks.tabWindowCommand) {
+			return { success: false, error: 'Tab windows are not configured' };
+		}
+		return this.callbacks.tabWindowCommand(request);
 	}
 
 	async throughputGaugeCommand(
@@ -1317,6 +1331,10 @@ export class CallbackRegistry {
 
 	setWindowCommandCallback(callback: WindowCommandCallback): void {
 		this.callbacks.windowCommand = callback;
+	}
+
+	setTabWindowCommandCallback(callback: TabWindowCommandCallback): void {
+		this.callbacks.tabWindowCommand = callback;
 	}
 
 	setThroughputGaugeCommandCallback(callback: ThroughputGaugeCommandCallback): void {

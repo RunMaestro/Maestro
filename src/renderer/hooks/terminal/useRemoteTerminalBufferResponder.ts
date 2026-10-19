@@ -18,6 +18,7 @@ import { useEffect } from 'react';
 import type { MutableRefObject } from 'react';
 import type { TerminalViewHandle } from '../../components/TerminalView';
 import { useSessionStore } from '../../stores/sessionStore';
+import { isTabPoppedOut } from '../../stores/tabWindowStore';
 import { resolveTerminalTab, getTerminalTabDisplayName } from '../../utils/terminalTabHelpers';
 import { captureException } from '../../utils/sentry';
 
@@ -87,6 +88,17 @@ export function useRemoteTerminalBufferResponder(
 			const index = (owner.terminalTabs || []).findIndex((t) => t.id === tab.id);
 			const tabName = getTerminalTabDisplayName(tab, index);
 			const meta = { tabId: tab.id, tabName, cwd: tab.cwd || owner.cwd || '', state: tab.state };
+
+			// A popped-out terminal is shown by its tab window, which holds the only
+			// mounted xterm (Tab Windows, D5). This window has no buffer to read, and
+			// an empty read would claim the command printed nothing.
+			if (isTabPoppedOut(owner.id, { type: 'terminal', id: tab.id })) {
+				ack(false, {
+					...meta,
+					error: `Terminal "${tabName}" is popped out into its tab window. Dock it to read it.`,
+				});
+				return;
+			}
 
 			const view = terminalViewRefs.current.get(owner.id);
 			if (!view) {

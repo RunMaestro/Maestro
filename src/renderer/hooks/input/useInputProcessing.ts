@@ -59,6 +59,8 @@ import { requestWebBridgeReconcile } from '../../services/webBridgeReconcile';
 import { steerQueuedItemOrExplain } from '../../services/chatSteering';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { notifyToast } from '../../stores/notificationStore';
+import { tabWindowSendRefusal } from '../../utils/tabWindowSend';
+import type { MentionRouting } from '../../../shared/crossAgentContext';
 
 let cachedImageOnlyPrompt: string = '';
 let inputProcessingPromptsLoaded = false;
@@ -198,7 +200,12 @@ export interface UseInputProcessingDeps {
 	onPlanCrossAgentMentions?: (
 		message: string,
 		sourceSession: Session,
-		sourceTabId: string
+		sourceTabId: string,
+		/**
+		 * The routing a composer in another window picked (`remoteComposer`);
+		 * undefined reads this window's own composer.
+		 */
+		routingOverride?: MentionRouting | null
 	) => CrossAgentMentionPlan | null;
 	/**
 	 * Fire the consults for a plan. Called only when this message is dispatching
@@ -244,7 +251,29 @@ export type ProcessInputOptions = {
 	sessionId?: string;
 	/** Prefer this AI tab over the session's current activeTabId. */
 	tabId?: string;
+	/**
+	 * The send comes from a tab window, whose owner runs every send (Tab
+	 * Windows, D2). Pass `sessionId` and `tabId` with it. It goes to that AI
+	 * tab even while this window shows the agent's terminal, and this window's
+	 * own composer is neither read nor cleared: the text is `overrideInputValue`
+	 * and the images are `images`. What only the app window can do is refused
+	 * (see `tabWindowSendRefusal`).
+	 *
+	 * `composer` is set when the user submitted it from the tab window's
+	 * composer (not a replay): it is then a user's submit like one from this
+	 * window's composer, planned for `@mentions` with the routing picked there
+	 * and guarded against a repeat.
+	 */
+	fromTabWindow?: { composer?: RemoteComposerInput };
 };
+
+/** What a tab window's composer sends besides its text and images. */
+export interface RemoteComposerInput {
+	/** The composer's rung of the bang ladder: a message, or a shell command line. */
+	commandMode: ComposerCommandMode;
+	/** The `@mention` routing the user picked in that composer, if any. */
+	mentionRoutingOverride?: MentionRouting | null;
+}
 
 export interface UseInputProcessingReturn {
 	/** Process the current input (send message or execute command) */
@@ -354,16 +383,22 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					}
 				: undefined;
 
+			// A tab window hands its whole message in: this window's composer is not
+			// the source, so it is never read or cleared. `remote` is set for a
+			// submit from the tab window's composer (not a replay).
+			const fromTabWindow = options?.fromTabWindow;
+			const remote = fromTabWindow?.composer;
+
 			// `let` because command mode's escape (`\!foo`) is unwrapped in place
 			// below once we know we're in AI mode.
-			const inputValueAtSubmit = overrideInputValue ?? getInputValue();
+			const inputValueAtSubmit = overrideInputValue ?? (fromTabWindow ? '' : getInputValue());
 			let effectiveInputValue = inputValueAtSubmit;
 			// When the caller passes explicit images (e.g. Force Send button replaying a
 			// queued item), use those instead of the active tab's stagedImages. This avoids
 			// the stale-closure race when the caller does setStagedImages() right before
 			// invoking processInput(), and prevents wiping the user's in-progress draft.
-			const effectiveImages = options?.images ?? stagedImages;
-			const usingOverrideImages = options?.images !== undefined;
+			const effectiveImages = options?.images ?? (fromTabWindow ? [] : stagedImages);
+			const usingOverrideImages = options?.images !== undefined || !!fromTabWindow;
 			if (options?.forceParallel) {
 				logger.info('[ForcedParallel] processInput called:', undefined, {
 					hasActiveSession: !!activeSession,
@@ -379,6 +414,32 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				return;
 			}
 
+			// A tab window always sends to an AI tab, even while this window shows
+			// the agent's terminal. What it may not do is refused here as well as in
+			// the tab window (see tabWindowSendRefusal): the wizard and the built-ins
+			// below work on this window's active tab, and an AI command proposal
+			// belongs to the composer that asked for it.
+			const sendMode = fromTabWindow ? 'ai' : activeSession.inputMode;
+			if (fromTabWindow) {
+				const refusal =
+					remote?.commandMode === 'ai'
+						? 'AI command mode is answered in the window that asked'
+						: tabWindowSendRefusal(
+								resolveTargetTab(activeSession),
+								effectiveInputValue,
+								remote?.commandMode ?? 'off',
+								activeSession.toolType
+							);
+				if (refusal) {
+					logger.warn('[processInput] Refused a send from another window', undefined, {
+						sessionId: activeSession.id,
+						tabId: targetTabId,
+						refusal,
+					});
+					return;
+				}
+			}
+
 			// Handle command mode: the composer is in `!` mode, so the draft is a
 			// shell command rather than a message. Checked before everything else
 			// because the agent is bypassed entirely - no queueing, no busy state,
@@ -389,9 +450,12 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			// Gated on the composer's mode flag, NOT on a leading `!` in the text:
 			// the bang is consumed on entry, so by here the draft is the bare
 			// command (and may legitimately contain bangs of its own).
-			const composerMode: ComposerCommandMode =
-				activeSession.inputMode === 'ai' ? isCommandMode() : 'off';
-			if (composerMode !== 'off' && !isWizardActive) {
+			const composerMode: ComposerCommandMode = fromTabWindow
+				? (remote?.commandMode ?? 'off')
+				: activeSession.inputMode === 'ai'
+					? isCommandMode()
+					: 'off';
+			if (composerMode !== 'off' && (fromTabWindow || !isWizardActive)) {
 				const commandText = effectiveInputValue.trim();
 				if (!commandText) {
 					// Empty command line: nothing to run or ask for, and it must not fall
@@ -400,16 +464,18 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					return;
 				}
 
-				const targetTab = getActiveTab(activeSession);
+				const targetTab = resolveTargetTab(activeSession);
 				if (!targetTab) {
 					logger.error('[processInput] Command mode: no active tab to render output into');
 					return;
 				}
 
-				setInputValue('');
-				setSlashCommandOpen(false);
-				syncAiInputToSession('');
-				if (inputRef.current) inputRef.current.style.height = 'auto';
+				if (!fromTabWindow) {
+					setInputValue('');
+					setSlashCommandOpen(false);
+					syncAiInputToSession('');
+					if (inputRef.current) inputRef.current.style.height = 'auto';
+				}
 
 				if (composerMode === 'ai') {
 					// AI command mode: nothing runs yet. Ask for a command line and let
@@ -438,7 +504,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				return;
 			}
 
-			if (activeSession.inputMode === 'ai') {
+			if (sendMode === 'ai') {
 				// Not command mode, so unwrap the escape: `\!foo` was the user asking
 				// for a literal `!foo` message. AI mode only - in the shell, `\!` is
 				// the shell's own escape and must survive untouched.
@@ -449,7 +515,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			// Note: slash commands are queued like regular messages when agent is busy
 			if (effectiveInputValue.trim().startsWith('/')) {
 				const commandText = effectiveInputValue.trim();
-				const isTerminalMode = activeSession.inputMode === 'terminal';
+				const isTerminalMode = sendMode === 'terminal';
 
 				// Handle built-in /history command (only in AI mode)
 				// This is intercepted here because it requires Maestro to handle the synopsis generation
@@ -530,10 +596,12 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							: undefined);
 					if (matchingCustomCommand) {
 						// Execute the custom AI command by sending its prompt
-						setInputValue('');
-						setSlashCommandOpen(false);
-						syncAiInputToSession('', syncTarget); // We're in AI mode here (isTerminalMode === false)
-						if (inputRef.current) inputRef.current.style.height = 'auto';
+						if (!fromTabWindow) {
+							setInputValue('');
+							setSlashCommandOpen(false);
+							syncAiInputToSession('', syncTarget); // We're in AI mode here (isTerminalMode === false)
+							if (inputRef.current) inputRef.current.style.height = 'auto';
+						}
 
 						// Substitute template variables and send to the AI agent
 						(async () => {
@@ -667,12 +735,14 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				}
 			}
 
-			const currentMode = activeSession.inputMode;
+			const currentMode = sendMode;
 
 			// A submit straight from the composer (Enter, the send button), as
 			// opposed to a replay, Force Send, or recovery that hands its own text
-			// in. Only these read the draft, so only these can read it twice.
-			const isComposerSubmit = overrideInputValue === undefined;
+			// in. Only these read the draft, so only these can read it twice. A tab
+			// window composer's submit is one too, but its draft is not ours to take.
+			const isComposerSubmit = (overrideInputValue === undefined && !fromTabWindow) || !!remote;
+			const readsLocalComposer = overrideInputValue === undefined && !fromTabWindow;
 			const inFlightKey = `${activeSession.id}:${targetTabId ?? ''}`;
 			const submitted = { text: effectiveInputValue, images: effectiveImages };
 			const isRepeatOfInFlight = (composerSubmitsInFlight.get(inFlightKey) ?? []).some(
@@ -693,6 +763,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			// unsubmitted input into a local-only host queue item.
 			let composerTaken = false;
 			const clearComposer = () => {
+				if (fromTabWindow) return;
 				setInputValue('');
 				if (!usingOverrideImages) setStagedImages([]);
 				syncAiInputToSession('', syncTarget);
@@ -714,7 +785,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					clearComposer();
 					return;
 				}
-				if (!isWebDesktop() || currentMode !== 'ai' || !isComposerSubmit) return;
+				if (!isWebDesktop() || currentMode !== 'ai' || !readsLocalComposer) return;
 				// Switching owners flushes the original draft. Clear only the submitted
 				// fields there, without cancelling or stamping the new owner's composer.
 				updateSessionWith(activeSession.id, (session) => ({
@@ -742,7 +813,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					composerSubmitsInFlight.set(inFlightKey, [...inFlight, submitted]);
 				}
 				try {
-					if (isComposerSubmit && !isWebDesktop()) {
+					if (readsLocalComposer && !isWebDesktop()) {
 						clearComposer();
 						composerTaken = true;
 					}
@@ -774,7 +845,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 
 			// Handle wizard mode - route messages to wizard sendMessage instead of normal AI processing
 			// This allows the wizard to have its own conversation without affecting the regular AI queue
-			if (currentMode === 'ai' && isWizardActive && onWizardSendMessage) {
+			if (!fromTabWindow && currentMode === 'ai' && isWizardActive && onWizardSendMessage) {
 				// Don't allow slash commands in wizard mode (except /wizard which ends/restarts it)
 				if (
 					effectiveInputValue.trim().startsWith('/') &&
@@ -845,13 +916,18 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			// yet. A queued message carries the intent as `crossAgentMention` and is
 			// consulted at dequeue time instead (agentStore.processQueuedItem).
 			//
-			// Gated on `overrideInputValue === undefined` so it resolves exactly once,
-			// on a real input-box submit - not on queued replays / force-sends, which
-			// pass an override value.
+			// Gated on a composer submit so it resolves exactly once, on a real
+			// input-box submit (this window's, or a tab window composer's) - not on
+			// queued replays / force-sends, which pass an override value.
 			const mentionSourceTabId = resolveTargetTab(activeSession)?.id || activeSession.activeTabId;
 			const crossAgentMentionPlan =
-				currentMode === 'ai' && overrideInputValue === undefined && onPlanCrossAgentMentions
-					? onPlanCrossAgentMentions(effectiveInputValue, activeSession, mentionSourceTabId)
+				currentMode === 'ai' && isComposerSubmit && onPlanCrossAgentMentions
+					? onPlanCrossAgentMentions(
+							effectiveInputValue,
+							activeSession,
+							mentionSourceTabId,
+							remote ? (remote.mentionRoutingOverride ?? null) : undefined
+						)
 					: null;
 
 			if (crossAgentMentionPlan) {
@@ -1793,19 +1869,20 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						source: 'system',
 						text: `Error: Failed to write to process - ${(error as Error).message}`,
 					};
-					// Settle the active tab and add the error log; another tab mid-turn
+					// Settle the target tab and add the error log; another tab mid-turn
 					// keeps the agent busy.
-					updateSessionWith(resolvedSessionId, (s) =>
-						settleTabThinkingState(
+					updateSessionWith(resolvedSessionId, (s) => {
+						const errorTabId = targetTabId ?? s.activeTabId;
+						return settleTabThinkingState(
 							{
 								...s,
 								aiTabs: s.aiTabs.map((tab) =>
-									tab.id === s.activeTabId ? { ...tab, logs: [...tab.logs, errorLog] } : tab
+									tab.id === errorTabId ? { ...tab, logs: [...tab.logs, errorLog] } : tab
 								),
 							},
-							s.activeTabId
-						)
-					);
+							errorTabId
+						);
+					});
 				});
 			}
 		},

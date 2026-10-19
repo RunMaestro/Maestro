@@ -9,7 +9,8 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { EscCloseButton } from './ui/EscCloseButton';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { formatRelativeTime } from '../utils/formatters';
-import { visibleAiTabs } from '../utils/tabHelpers';
+import { ownerVisibleAiTabs } from '../utils/tabHelpers';
+import { usePoppedOutTabKeys } from '../stores/tabWindowStore';
 import { usePhoneLayout } from '../hooks/ui/useViewportBreakpoint';
 import {
 	searchTabsMessages,
@@ -27,6 +28,8 @@ export interface CrossTabSearchJumpTarget {
 
 interface CrossTabSearchModalProps {
 	theme: Theme;
+	/** The agent whose tabs these are; its popped-out tabs are not searched here. */
+	sessionId?: string;
 	/** AI tabs of the active agent - the entire search corpus. */
 	tabs: AITab[];
 	/** Highlighted so the user can tell "this hit is in the tab I'm already on". */
@@ -102,6 +105,7 @@ const Snippet = memo(function Snippet({
  */
 export function CrossTabSearchModal({
 	theme,
+	sessionId,
 	tabs: allTabs,
 	activeTabId,
 	shortcut,
@@ -110,8 +114,13 @@ export function CrossTabSearchModal({
 }: CrossTabSearchModalProps) {
 	// The corpus is the tabs the strip draws. A hidden consult tab holds a
 	// conversation the user never opened, so a hit inside one would jump them to a
-	// chipless transcript they can't get back from.
-	const tabs = useMemo(() => visibleAiTabs(allTabs), [allTabs]);
+	// chipless transcript they can't get back from. A tab popped out into a tab
+	// window has no chip here either (Tab Windows, D4).
+	const poppedOutTabKeys = usePoppedOutTabKeys(sessionId);
+	const tabs = useMemo(
+		() => ownerVisibleAiTabs(sessionId, allTabs),
+		[sessionId, allTabs, poppedOutTabKeys]
+	);
 
 	const [query, setQuery] = useState('');
 	const [regexMode, setRegexMode] = useState(false);

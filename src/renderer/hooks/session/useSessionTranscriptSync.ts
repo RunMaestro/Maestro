@@ -12,6 +12,7 @@ import {
 import { mergeSessionPersistenceChanges } from '../../../shared/sessionPersistenceMerge';
 import { getRepairedUnifiedTabOrder } from '../../utils/tabHelpers';
 import { isAiTabHidden } from '../../utils/unifiedTabOrderUtils';
+import { isTabViewedInTabWindow } from '../../stores/tabWindowStore';
 
 const runtimeFields = [
 	'state',
@@ -117,10 +118,13 @@ export function useSessionTranscriptSync(whenSessionsLoaded: () => Promise<void>
 												row.source === 'stdout' &&
 												tab.logs.find((previous) => previous.id === row.id)?.text !== row.text
 										);
+									// A tab popped out into a tab window is never this window's
+									// active tab (D4); its tab window reports when it is watched.
 									const unread =
-										tab.id !== session.activeTabId ||
-										session.id !== useSessionStore.getState().activeSessionId ||
-										tab.isAtBottom === false;
+										(tab.id !== session.activeTabId ||
+											session.id !== useSessionStore.getState().activeSessionId ||
+											tab.isAtBottom === false) &&
+										!isTabViewedInTabWindow(session.id, tab.id);
 									const hasUnread =
 										newOutput && (!unread || !isAiTabHidden(tab)) ? unread : tab.hasUnread;
 									return { ...applyRuntime(tab, patch), logs, hasUnread };

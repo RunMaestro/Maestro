@@ -1,10 +1,11 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import { useAgentDataListener } from '../../../../../renderer/hooks/agent/internal/useAgentDataListener';
 import { useSessionStore } from '../../../../../renderer/stores/sessionStore';
 import { createMockSession } from '../../../../helpers/mockSession';
 import { createMockAITab } from '../../../../helpers/mockTab';
 import { useRetryStore } from '../../../../../renderer/stores/retryStore';
+import { useTabWindowStore } from '../../../../../renderer/stores/tabWindowStore';
 import type { BatchedUpdater } from '../../../../../renderer/hooks/agent/internal/types';
 
 let handler: ((sessionId: string, data: string) => void) | undefined;
@@ -187,5 +188,70 @@ describe('useAgentDataListener', () => {
 		expect(batched.appendLog).toHaveBeenCalledWith('sess-1', 'tab-1', true, 'Here is the answer.');
 
 		useRetryStore.setState({ retries: {}, outages: {} });
+	});
+
+	// Tab Windows: a popped tab is never this window's active tab (D4), so the
+	// unread rule asks its tab window whether the user is watching it.
+	describe('a tab popped out into a tab window', () => {
+		function seedPopped() {
+			const session = createMockSession({
+				id: 'sess-1',
+				aiTabs: [createMockAITab({ id: 'home' }), createMockAITab({ id: 'popped' })],
+				activeTabId: 'home',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'sess-1' } as any);
+			useTabWindowStore.getState().setWindows([
+				{
+					windowId: 'tw-1',
+					agentId: 'sess-1',
+					tabRefs: [{ type: 'ai', id: 'popped' }],
+					activeTabRef: { type: 'ai', id: 'popped' },
+				},
+			]);
+		}
+
+		afterEach(() => {
+			useTabWindowStore.getState().setWindows([]);
+			useTabWindowStore.setState({ viewedTabs: new Set() });
+		});
+
+		it('stays read while its tab window reports the user watching it', () => {
+			seedPopped();
+			useTabWindowStore.getState().setTabViewed('sess-1', 'popped', true);
+			const batched = makeBatched();
+			renderHook(() =>
+				useAgentDataListener({ batchedUpdater: batched, activeHiddenToolRef: makeRef() })
+			);
+
+			handler!('sess-1-ai-popped', 'streaming\n');
+
+			expect(batched.markUnread).toHaveBeenCalledWith('sess-1', 'popped', false);
+		});
+
+		it('turns unread when nobody watches it (its window hidden, or scrolled up)', () => {
+			seedPopped();
+			const batched = makeBatched();
+			renderHook(() =>
+				useAgentDataListener({ batchedUpdater: batched, activeHiddenToolRef: makeRef() })
+			);
+
+			handler!('sess-1-ai-popped', 'streaming\n');
+
+			expect(batched.markUnread).toHaveBeenCalledWith('sess-1', 'popped', true);
+		});
+
+		it('stops counting as watched the moment it docks', () => {
+			seedPopped();
+			useTabWindowStore.getState().setTabViewed('sess-1', 'popped', true);
+			useTabWindowStore.getState().setWindows([]);
+			const batched = makeBatched();
+			renderHook(() =>
+				useAgentDataListener({ batchedUpdater: batched, activeHiddenToolRef: makeRef() })
+			);
+
+			handler!('sess-1-ai-popped', 'streaming\n');
+
+			expect(batched.markUnread).toHaveBeenCalledWith('sess-1', 'popped', true);
+		});
 	});
 });

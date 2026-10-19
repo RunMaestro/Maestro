@@ -69,10 +69,12 @@ import {
 	registerWindowsHandlers,
 	wireWindowRegistryBroadcast,
 	wireEmptySecondaryWindowAutoClose,
+	registerTabWindowsHandlers,
+	wireTabWindowPermissionRerouting,
 	setupLoggerEventForwarding,
 } from '../handlers';
 import { wireMultiWindowTelemetry } from '../../stats';
-import { saveWindowState } from '../../window-state-persistence';
+import { wireWindowStateSaveOnChange } from '../../window-state-persistence';
 import { startCoworkingService } from '../../coworking/coworking-lifecycle';
 import { isEncoreFeatureEnabled } from '../../../shared/encoreFeatureDefaults';
 import { initializeOutputParsers } from '../../parsers';
@@ -226,6 +228,8 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		safeSend: deps.safeSend,
 		sessionsStore: deps.sessionsStore,
 		interactiveReplayController: deps.getInteractiveReplayController() ?? undefined,
+		// A permission prompt for a popped-out tab goes to its tab window.
+		getWindowRegistry: () => deps.windowRegistry,
 		getCueProcesses: () => {
 			// Always query the executor's active process map - processes may still be
 			// running even if the engine has been disabled (in-flight runs complete
@@ -423,20 +427,22 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// cross-window badges). The registry is a module-scope instance, so pass it
 	// directly rather than through the handlers' lazy getter.
 	wireWindowRegistryBroadcast(deps.windowRegistry);
+	// Tab Windows: pop out, dock, list, and the owner <-> tab window relay.
+	registerTabWindowsHandlers({
+		getWindowRegistry: () => deps.windowRegistry,
+		getWindowManager: () => deps.windowManager,
+		sessionsStore: deps.sessionsStore,
+	});
+	// A permission prompt waiting in a tab window whose tab docks (or whose
+	// window closes) moves to the window that shows the tab now.
+	wireTabWindowPermissionRerouting(deps.windowRegistry);
 	// Close a secondary window as soon as its last agent moves out - an empty
 	// secondary shell can surface nothing (every agent is owned by some window),
 	// so the agent-level move flow tidies it up automatically.
 	wireEmptySecondaryWindowAutoClose(deps.windowRegistry);
-	// Persist a window rename or a panel-collapse toggle as soon as it happens
-	// (rather than only on quit), so both survive even an abrupt exit. A panel
-	// toggle fires no window move/resize, so without this its saved value would go
-	// stale. saveWindowState snapshots the whole live registry, so passing the
-	// affected window's id is enough.
-	deps.windowRegistry.onChange((change) => {
-		if ((change.type === 'name-changed' || change.type === 'panel-changed') && change.windowId) {
-			saveWindowState(deps.windowStateStore, deps.windowRegistry, change.windowId);
-		}
-	});
+	// Persist a window rename, a panel-collapse toggle, or a tab window's tabs
+	// changing as soon as it happens (rather than only on quit).
+	wireWindowStateSaveOnChange(deps.windowStateStore, deps.windowRegistry);
 
 	// Record aggregate multi-window usage telemetry (secondary windows opened +
 	// peak concurrent windows) as windows open. Gated on the user's

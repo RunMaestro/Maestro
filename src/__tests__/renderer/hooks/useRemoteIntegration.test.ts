@@ -31,6 +31,11 @@ import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useQueueProcessing } from '../../../renderer/hooks/agent/useQueueProcessing';
 import { buildUnifiedTabs } from '../../../renderer/utils/tabHelpers';
 import { captureException } from '../../../renderer/utils/sentry';
+import {
+	clearTabWindowStore,
+	installTabWindowsApi,
+	popOutTabsInStore,
+} from '../../helpers/tabWindows';
 
 // The planner's verdict is the seam under test: a queued CLI prompt must carry
 // it as the same flags a composer-queued message does.
@@ -1119,6 +1124,167 @@ describe('useRemoteIntegration', () => {
 			});
 
 			expect(useSessionStore.getState().sessions[0]).toBe(session);
+		});
+	});
+
+	describe('a tab popped out into a tab window (Tab Windows, D4)', () => {
+		let tabWindows: ReturnType<typeof installTabWindowsApi>;
+
+		beforeEach(() => {
+			tabWindows = installTabWindowsApi();
+		});
+
+		afterEach(() => {
+			tabWindows.restore();
+			clearTabWindowStore();
+		});
+
+		it('maestro-cli tab pop-out runs the pop-out service and answers on the response channel', async () => {
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [createMockTab(), createMockTab({ id: 'tab-2' })],
+			});
+			const deps = createDeps({ sessions: [session] });
+			renderHook(() => useRemoteIntegration(deps));
+
+			const result = await tabWindows.emitRemoteCommand({
+				action: 'pop-out',
+				sessionId: 'session-1',
+				tabId: 'tab-2',
+				background: true,
+			});
+
+			expect(tabWindows.popOut).toHaveBeenCalledWith(
+				'session-1',
+				{ type: 'ai', id: 'tab-2' },
+				{ background: true }
+			);
+			expect(result).toMatchObject({
+				success: true,
+				agentId: 'session-1',
+				tabRef: { type: 'ai', id: 'tab-2' },
+				windowId: 'tw-1',
+			});
+		});
+
+		it('maestro-cli tab dock answers a refusal on the response channel', async () => {
+			tabWindows.dock.mockResolvedValue({ docked: false, error: 'The agent has no tab window' });
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [createMockTab(), createMockTab({ id: 'tab-2' })],
+			});
+			const deps = createDeps({ sessions: [session] });
+			renderHook(() => useRemoteIntegration(deps));
+
+			const result = await tabWindows.emitRemoteCommand({
+				action: 'dock',
+				sessionId: 'session-1',
+				tabId: 'tab-2',
+			});
+
+			expect(result).toEqual({ success: false, error: 'The agent has no tab window' });
+		});
+
+		it('focus-agent --tab focuses the tab window and leaves the owner view alone', () => {
+			const tab = createMockTab({ id: 'tab-2' });
+			const session = createMockSession({ id: 'session-1', aiTabs: [createMockTab(), tab] });
+			const deps = createDeps({ sessions: [session], activeSessionId: 'other' });
+			popOutTabsInStore('session-1', [{ type: 'ai', id: 'tab-2' }]);
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteSelectSessionHandler?.('session-1', 'tab-2');
+			});
+
+			expect(tabWindows.focus).toHaveBeenCalledWith('session-1', { type: 'ai', id: 'tab-2' });
+			expect(deps.setActiveSessionId).not.toHaveBeenCalled();
+			expect(useSessionStore.getState().sessions[0]).toBe(session);
+		});
+
+		it('focus-agent --tab redirects a popped non-AI tab too', () => {
+			const session = createMockSession({
+				id: 'session-1',
+				browserTabs: [{ id: 'browser-1' }] as never,
+			});
+			const deps = createDeps({ sessions: [session] });
+			popOutTabsInStore('session-1', [{ type: 'browser', id: 'browser-1' }]);
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteSelectSessionHandler?.('session-1', 'browser-1');
+			});
+
+			expect(tabWindows.focus).toHaveBeenCalledWith('session-1', {
+				type: 'browser',
+				id: 'browser-1',
+			});
+			expect(deps.setActiveSessionId).not.toHaveBeenCalled();
+		});
+
+		it('dispatch --focus --tab focuses the tab window instead of switching agents', () => {
+			const tab = createMockTab({ id: 'tab-2' });
+			const session = createMockSession({
+				id: 'session-1',
+				state: 'idle',
+				aiTabs: [createMockTab(), tab],
+			});
+			const deps = createDeps({ sessions: [session], activeSessionId: 'other' });
+			popOutTabsInStore('session-1', [{ type: 'ai', id: 'tab-2' }]);
+			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteCommandHandler?.('session-1', 'go', 'ai', 'tab-2');
+			});
+
+			expect(tabWindows.focus).toHaveBeenCalledWith('session-1', { type: 'ai', id: 'tab-2' });
+			expect(deps.setActiveSessionId).not.toHaveBeenCalled();
+			// The prompt is still delivered to the popped tab.
+			expect(dispatchEventSpy).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'maestro:remoteCommand',
+					detail: expect.objectContaining({ sessionId: 'session-1', tabId: 'tab-2' }),
+				})
+			);
+			dispatchEventSpy.mockRestore();
+		});
+
+		it('a background dispatch --tab into a popped tab focuses nothing', () => {
+			const tab = createMockTab({ id: 'tab-2' });
+			const session = createMockSession({ id: 'session-1', state: 'idle', aiTabs: [tab] });
+			const deps = createDeps({ sessions: [session] });
+			popOutTabsInStore('session-1', [{ type: 'ai', id: 'tab-2' }]);
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteCommandHandler?.('session-1', 'go', 'ai', 'tab-2', undefined, undefined, true);
+			});
+
+			expect(tabWindows.focus).not.toHaveBeenCalled();
+			expect(deps.setActiveSessionId).not.toHaveBeenCalled();
+		});
+
+		it('dispatch --queue --focus --tab to an idle popped tab focuses the tab window', () => {
+			const tab = createMockTab({ id: 'tab-2' });
+			const session = createMockSession({
+				id: 'session-1',
+				state: 'idle',
+				aiTabs: [createMockTab(), tab],
+			});
+			const deps = createDeps({ sessions: [session], activeSessionId: 'other' });
+			popOutTabsInStore('session-1', [{ type: 'ai', id: 'tab-2' }]);
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteEnqueueCommandHandler?.('session-1', 'Run now', 'chan-tw', 'ai', 'tab-2');
+			});
+
+			expect(tabWindows.focus).toHaveBeenCalledWith('session-1', { type: 'ai', id: 'tab-2' });
+			expect(deps.setActiveSessionId).not.toHaveBeenCalled();
+			expect(mockProcess.sendRemoteEnqueueCommandResponse).toHaveBeenCalledWith(
+				'chan-tw',
+				expect.objectContaining({ success: true, tabId: 'tab-2', queued: false })
+			);
 		});
 	});
 

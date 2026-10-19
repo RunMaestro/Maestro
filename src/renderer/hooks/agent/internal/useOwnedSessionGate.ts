@@ -20,12 +20,18 @@
  * everything, so single-window behaviour is unchanged. The web-desktop build
  * mounts a `WindowProvider` but its `ownsSession` is a permit-all by design
  * (a browser client mirrors every agent - see `WindowContext`).
+ *
+ * A tab window (`isTabWindow()`) is the exception to null-safe: it mounts no
+ * `WindowProvider`, yet BOTH gates deny every agent there, from the first
+ * event on. The tab window is a view of an agent another window owns; the
+ * owner's patches are its only state (Tab Windows D1 / D2). Terminal output,
+ * which a tab window does render itself (D5), does not pass through these gates.
  */
 
 import { useEffect, useRef, type RefObject } from 'react';
 import { useWindowContextOptional } from '../../../contexts/WindowContext';
 import { parseSessionId } from '../../../utils/sessionIdParser';
-import { isWebDesktop } from '../../../utils/runtimeContext';
+import { isTabWindow, isWebDesktop } from '../../../utils/runtimeContext';
 
 /** Suffix the PTY/command terminal appends to a raw process session id. */
 const TERMINAL_SUFFIX = '-terminal';
@@ -61,11 +67,13 @@ export function useOwnedSessionGate(): OwnedSessionGate {
 	const ctx = useWindowContextOptional();
 	const ownsSession = ctx?.ownsSession;
 	// Default permits everything so the very first events (before the effect
-	// below commits) and the no-WindowProvider case are never dropped.
-	const gateRef = useRef<(rawSessionId: string) => boolean>(() => true);
+	// below commits) and the no-WindowProvider case are never dropped. A tab
+	// window denies from the first event: it owns no agent.
+	const gateRef = useRef<(rawSessionId: string) => boolean>(() => !isTabWindow());
 
 	useEffect(() => {
 		gateRef.current = (rawSessionId: string) => {
+			if (isTabWindow()) return false;
 			// No window scoping in play (isolation tests): permit all.
 			if (!ownsSession) return true;
 			return ownsSession(agentIdFromProcessSessionId(rawSessionId));
@@ -90,11 +98,14 @@ export function useOwnedSessionGate(): OwnedSessionGate {
  * renderer (primary or the secondary window that owns the agent) is the single
  * owner of those effects; on macOS closing every window also kills every
  * managed process, so there is no state in which a browser is the only client
- * left with a running agent to record.
+ * left with a running agent to record. A tab window denies too: it is never
+ * an owner, so it never runs these effects (Tab Windows D1).
  */
 export function useOwnedSideEffectGate(): OwnedSessionGate {
 	const ownedGate = useOwnedSessionGate();
-	const gateRef = useRef<(rawSessionId: string) => boolean>(() => !isWebDesktop());
+	const gateRef = useRef<(rawSessionId: string) => boolean>(
+		() => !isWebDesktop() && !isTabWindow()
+	);
 
 	useEffect(() => {
 		gateRef.current = (rawSessionId: string) =>

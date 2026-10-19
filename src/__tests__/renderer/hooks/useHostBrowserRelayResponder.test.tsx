@@ -3,6 +3,7 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { useHostBrowserRelayResponder } from '../../../renderer/hooks/browser/useHostBrowserRelayResponder';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { createMockSession } from '../../helpers/mockSession';
+import { clearTabWindowStore, popOutTabsInStore } from '../../helpers/tabWindows';
 import type { BrowserRelayRequest } from '../../../shared/browserRelay';
 
 vi.mock('../../../renderer/utils/runtimeContext', () => ({ isWebDesktop: () => false }));
@@ -55,6 +56,7 @@ beforeEach(() => {
 	};
 });
 afterEach(() => {
+	clearTabWindowStore();
 	window.maestro.browserSession = originalApi;
 	document.querySelectorAll('webview').forEach((element) => element.remove());
 });
@@ -87,5 +89,20 @@ describe('native browser relay resolution', () => {
 				expect.objectContaining({ ok: true, webContentsId: undefined })
 			)
 		);
+	});
+
+	it('refuses a tab popped out into its tab window, and reserves no offscreen page for it', async () => {
+		respond.mockImplementation(() => {});
+		popOutTabsInStore(target.sessionId, [{ type: 'browser', id: target.tabId }]);
+		renderHook(() => useHostBrowserRelayResponder());
+		act(() => request(target));
+		await waitFor(() =>
+			expect(respond).toHaveBeenCalledWith(target.requestId, {
+				ok: false,
+				error: 'Browser tab is popped out into its tab window. Dock it to drive it.',
+			})
+		);
+		// Docking must reopen a native webview, never a streamed page.
+		expect(useSessionStore.getState().sessions[0].browserTabs?.[0].remotePage).toBeUndefined();
 	});
 });

@@ -225,13 +225,25 @@ export function sanitizeBrowserTabForPersistence(tab: BrowserTab, sessionId: str
 			: DEFAULT_BROWSER_TAB_URL;
 	const title = getBrowserTabTitle(url, tab.title);
 
-	return {
+	// Guest contents are recreated after restart, so persist clean runtime state.
+	return withoutGuestState({
 		...tab,
 		url,
 		title,
 		partition: getSafeBrowserTabPartition(tab.partition, sessionId),
 		favicon: tab.favicon ?? null,
-		// Guest contents are recreated after restart, so persist clean runtime state.
+	});
+}
+
+/**
+ * A browser tab as a new `<webview>` first sees it: no back or forward history,
+ * not loading, no guest id, and a native view rather than a streamed page. For
+ * a tab whose guest is gone or not yet created: after a restart, and when a
+ * tab moves between windows (Tab Windows, D5), since a guest cannot move.
+ */
+export function withoutGuestState(tab: BrowserTab): BrowserTab {
+	return {
+		...tab,
 		canGoBack: false,
 		canGoForward: false,
 		isLoading: false,

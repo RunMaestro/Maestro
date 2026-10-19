@@ -30,30 +30,25 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AITab, Session } from '../../types';
-import { selectSessionById, updateSessionWith, useSessionStore } from '../../stores/sessionStore';
 import { logger } from '../../utils/logger';
+import { isTabWindow } from '../../utils/runtimeContext';
 import {
-	TRANSCRIPT_RESUME_READ_LIMIT,
-	selectOlderEntries,
-	stripSynopsisTurns,
-	transcriptMessagesToLogEntries,
-	type TranscriptMessage,
-} from '../../utils/transcriptMessages';
+	TRANSCRIPT_BACKFILL_PAGE,
+	backfillTranscriptPage,
+} from '../../services/transcriptBackfill';
 import { resolveSessionProjectPath } from '../../components/AgentSessionsBrowser/utils/sessionProjectPath';
 
-/** Provider messages pulled in per "load earlier" step. */
-export const TRANSCRIPT_BACKFILL_PAGE = 250;
+// The page logic lives in services/transcriptBackfill.ts, shared with a tab
+// window's owner (which loads a popped tab's history for it).
+export { TRANSCRIPT_BACKFILL_PAGE };
 
 /**
- * How many times one `loadEarlier()` will widen its window while the reads keep
- * coming back entirely inside the visible transcript. Each step costs a full
- * transcript read, so this is a backstop against a pathological ratio of
- * tool-only messages, not the expected path: seeding from
- * `TRANSCRIPT_RESUME_READ_LIMIT` means the common case resolves on the first
- * read. Hitting the cap is not an error - the user simply gets the next page on
- * their next scroll instead.
+ * How long a tab window waits before asking its owner for another page. The
+ * owner runs one load per tab at a time and the next patch carries the page;
+ * this only keeps a user parked at the top from sending a request per scroll
+ * event.
  */
-const MAX_WIDEN_STEPS_PER_LOAD = 8;
+export const TAB_WINDOW_BACKFILL_REQUEST_INTERVAL_MS = 1500;
 
 export interface UseTranscriptBackfillOptions {
 	/**
@@ -119,9 +114,27 @@ export function useTranscriptBackfill(
 		setError(null);
 	}, [tabId, agentSessionId]);
 
+	// When this tab window last asked its owner for a page.
+	const lastOwnerRequestRef = useRef(0);
+
 	const loadEarlier = useCallback(() => {
 		if (inFlightRef.current || reachedStart) return;
 		if (!tabId || !agentSessionId || !projectRoot) return;
+		// A tab window's transcript is its owner's, kept in step by patches that
+		// splice it at an index (Tab Windows, D2). A page prepended here would
+		// shift every later splice, so the owner loads it (the
+		// `loadEarlierTranscript` intent) and the next patch carries it.
+		if (isTabWindow()) {
+			const now = Date.now();
+			if (now - lastOwnerRequestRef.current < TAB_WINDOW_BACKFILL_REQUEST_INTERVAL_MS) return;
+			lastOwnerRequestRef.current = now;
+			window.maestro?.tabWindows?.sendIntent({
+				kind: 'loadEarlierTranscript',
+				agentId: sessionId,
+				tabRef: { type: 'ai', id: tabId },
+			});
+			return;
+		}
 
 		inFlightRef.current = true;
 		setIsLoading(true);
@@ -132,59 +145,18 @@ export function useTranscriptBackfill(
 
 		void (async () => {
 			try {
-				const tab = selectSessionById(sessionId)(useSessionStore.getState())?.aiTabs?.find(
-					(t) => t.id === tabId
+				const result = await backfillTranscriptPage(
+					{ sessionId, tabId, agentSessionId, toolType, projectRoot, sshRemoteId },
+					windowRef.current,
+					{
+						isStale,
+						onWindow: (readWindow) => {
+							windowRef.current = readWindow;
+						},
+						onPrepend: (count) => onPrependRef.current?.(count),
+					}
 				);
-				const visible = tab?.logs ?? [];
-
-				for (let step = 0; step < MAX_WIDEN_STEPS_PER_LOAD; step++) {
-					// Seed the first window from the depth the resume path actually read,
-					// not from `visible.length` - see the note in the file header on why
-					// the entry count is only a lower bound on the messages it covers.
-					const nextWindow =
-						(windowRef.current ?? Math.max(visible.length, TRANSCRIPT_RESUME_READ_LIMIT)) +
-						TRANSCRIPT_BACKFILL_PAGE;
-
-					const result = await window.maestro.agentSessions.read(
-						toolType || 'claude-code',
-						projectRoot,
-						agentSessionId,
-						{ offset: 0, limit: nextWindow },
-						sshRemoteId
-					);
-					// The tab may have changed while that read was outstanding. Anything
-					// below this point would write into whatever tab is on screen NOW.
-					if (isStale()) return;
-					windowRef.current = nextWindow;
-
-					const loaded = transcriptMessagesToLogEntries(
-						stripSynopsisTurns((result.messages ?? []) as TranscriptMessage[])
-					);
-					const older = selectOlderEntries(loaded, visible);
-
-					if (older.length > 0) {
-						// Prepend onto the tab's CURRENT logs, not the snapshot above: the
-						// agent may have streamed new entries onto the tail during the read.
-						updateSessionWith(sessionId, (s) => ({
-							...s,
-							aiTabs: s.aiTabs?.map((t) =>
-								t.id === tabId ? { ...t, logs: [...older, ...t.logs] } : t
-							),
-						}));
-						onPrependRef.current?.(older.length);
-					}
-
-					// `hasMore` is false once the window spans the whole file, so there is
-					// nothing left to reach even when this page did prepend entries.
-					if (!result.hasMore) {
-						setReachedStart(true);
-						return;
-					}
-					// Made progress: stop here and let the next scroll ask for more.
-					if (older.length > 0) return;
-					// Otherwise the window is still inside the visible transcript. Widen
-					// again rather than handing back a "load" that changed nothing.
-				}
+				if (result?.reachedStart) setReachedStart(true);
 			} catch (e) {
 				if (isStale()) return;
 				logger.warn('[useTranscriptBackfill] Failed to load earlier messages', undefined, e);

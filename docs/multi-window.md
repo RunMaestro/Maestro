@@ -6,7 +6,7 @@ icon: window-restore
 
 Maestro can run across multiple windows so you can spread agents over more than one monitor or simply give a long-running agent its own dedicated space. Every window shares the same Left Bar agent list, but each agent is "owned" by exactly one window at a time. Maestro keeps that ownership consistent for you - an agent is never lost, duplicated, or stranded in a window you closed.
 
-Moving windows is an agent-level action: a whole agent (with all of its AI, terminal, browser, and file tabs) moves together as one unit, and you can move an entire group of agents in one step. Individual tabs are never split across windows.
+Moving windows is an agent-level action: a whole agent (with all of its AI, terminal, browser, and file tabs) moves together as one unit, and you can move an entire group of agents in one step. To put a single tab on another screen instead, pop it out into a [tab window](#tab-windows).
 
 ## Creating a New Window
 
@@ -83,6 +83,67 @@ No agent is ever left without a window. The reclaimed agents reappear in the mai
 <Warning>
 The **main window cannot be closed** while other windows are open - closing the main window quits Maestro. Close your secondary windows first if you only mean to tidy up.
 </Warning>
+
+## Tab Windows
+
+A tab window holds one or more tabs of a single agent and nothing else. Use it to keep a conversation, a terminal, a file, or a web page on another monitor while the agent stays in its own window.
+
+A tab window is an ordinary window: resize it, move it to any display, and put other windows in front of it. It has no Left Bar and no Right Bar, only a slim header with the agent's name, a tab strip, and the shown tab. Its title is the agent's name followed by **- Tab Window** (for example **Marketing - Tab Window**) and follows a rename of the agent.
+
+### One Tab Window per Agent
+
+Each agent has at most one tab window. Pop out a second tab of the same agent and it joins that agent's tab window. Tabs of different agents never share a tab window; each agent gets its own.
+
+A popped-out tab leaves the tab strip of the window that holds the agent. The agent still runs there: a conversation streams, queues, and stops in the tab window exactly as it does in the main window, and History, notifications, and stats are recorded as usual.
+
+### Popping a Tab Out
+
+Pick the tab, then use any of these:
+
+- **Tab menu** - Hover the tab to open its menu and choose **Move to Tab Window**. Every tab kind has it: AI, terminal, file, and browser.
+- **Shortcut** - Press `Opt+Cmd+O` (`Alt+Ctrl+O` on Windows and Linux) to pop out the tab you are looking at.
+- **Quick Actions** - Open Quick Actions (`Cmd+K`) and run **Move Tab to Tab Window**.
+
+A tab inside a tiled group leaves the group first and then pops out on its own. Popping out a whole group is not supported.
+
+Inside a tab window, switch tabs as you do anywhere else: click a tab, press `Cmd+Shift+[` / `Cmd+Shift+]`, or press `Cmd+1` through `Cmd+9`. `Cmd+W` closes the shown tab for real, the same as closing it in the main window.
+
+### Docking a Tab
+
+Docking returns a tab to the window that holds its agent, at the position it had before you popped it out. To dock:
+
+- Click **Dock** in the tab window's header to dock the shown tab.
+- Choose **Dock to Main Window** from a tab's menu in the tab window.
+- Press `Opt+Cmd+O` in the tab window to dock the shown tab.
+- In the main window, open Quick Actions (`Cmd+K`) and run **Dock Tab:** followed by the tab's name.
+- Close the tab window. All of its tabs dock. Closing a tab window never closes a tab or loses a conversation.
+
+When the last tab leaves a tab window, the window closes.
+
+### After a Restart
+
+Tab windows come back when you restart Maestro: the same agent, the same tabs, the same size, and the same display. If that display is no longer connected, the window opens on a screen you can see. A tab that no longer exists (for example, a terminal tab with no startup command) is docked instead.
+
+### What Changes for Each Tab Kind
+
+- **AI tabs** work fully: the transcript, the composer and its draft, the queue, Stop, the thinking pill, model, effort, and thinking controls, and permission prompts.
+- **Terminal tabs** keep running the same shell. The scrollback moves with the tab as plain text (no colors). A full-screen program such as `vim` redraws on its next resize.
+- **File tabs** keep unsaved edits. Saving from the tab window writes the file as usual.
+- **Browser tabs** reopen the page at its current address, with the same cookies and logins.
+
+<Warning>
+A browser tab loses its back and forward history each time it moves, both when it pops out and when it docks. A web page cannot move between windows, so Maestro opens the tab's current address in a new page.
+</Warning>
+
+A few actions still happen in the main window. **Fork** and **Compact** create their new tab there, and the inline wizard, `/history`, `/wizard`, and `/skills` ask you to dock the tab first. While a terminal or browser tab is popped out, agents cannot read that terminal or drive that page; dock it first.
+
+### Tab Windows from the CLI
+
+`maestro-cli tab pop-out <tab-id>` pops a tab out (add `--background` to leave the new window behind the one you are using), `maestro-cli tab dock <tab-id>` docks it, and `maestro-cli tab windows` lists every tab window with its agent and tabs. See the [CLI guide](/cli) for details.
+
+<Note>
+Tab windows exist only in the desktop app. Maestro in a web browser does not offer them, because a browser page cannot open windows of its own.
+</Note>
 
 ## Multiple Displays
 

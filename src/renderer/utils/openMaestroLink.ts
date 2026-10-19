@@ -11,6 +11,7 @@
 
 import { parseMaestroDeepLink } from '../../shared/deep-link-urls';
 import type { ParsedDeepLink } from '../../shared/types';
+import { sendShownTabIntent } from '../services/tabWindowIntentSender';
 
 export const MAESTRO_LINK_EVENT = 'maestro:in-app-deep-link';
 
@@ -21,6 +22,9 @@ export const MAESTRO_LINK_EVENT = 'maestro:in-app-deep-link';
 export function openMaestroLink(url: string): boolean {
 	const parsed = parseMaestroDeepLink(url);
 	if (!parsed) return false;
+	// A tab window has no navigation of its own: its owner opens the link and
+	// raises itself (Tab Windows, the `navigate` intent).
+	if (sendShownTabIntent('navigate', { deepLink: url })) return true;
 	window.dispatchEvent(new CustomEvent<ParsedDeepLink>(MAESTRO_LINK_EVENT, { detail: parsed }));
 	return true;
 }

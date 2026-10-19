@@ -20,15 +20,17 @@
  * an IPC listener) run outside React.
  */
 
-import type { AITab, QueuedItem, Session } from '../types';
+import type { AITab, QueuedItem, QueuedItemEditPatch, Session } from '../types';
 import { useSessionStore, updateSessionWith } from '../stores/sessionStore';
 import { useAgentStore } from '../stores/agentStore';
 import { getDispatchDeps } from '../stores/retryStore';
 import { getActiveTab, getTabDisplayName } from '../utils/tabHelpers';
 import {
 	applyQueuedItemDispatch,
+	applyQueuedItemEdit,
 	getQueueBusyContext,
 	mergeQueuedItemIntoPrevious,
+	reorderQueueItem,
 } from '../utils/executionQueue';
 import { captureQueuedTurnSettings } from '../utils/providerTabSessions';
 import { planCrossAgentMentions } from './crossAgentMentions';
@@ -245,6 +247,67 @@ export function mergeQueuedItemIntoAbove(sessionId: string, itemId: string): str
 		return { ...s, executionQueue: result.queue };
 	});
 	return targetId;
+}
+
+/**
+ * Rewrite one queued item's text, images, and turn settings: the edit modal of
+ * a queued card and of the Execution Queue browser. The patch is written
+ * wholesale (`applyQueuedItemEdit`), and the pending consult is planned again
+ * from the EDITED text.
+ *
+ * BOTH mention flags are derived again, not just `crossAgentMention`. Whether
+ * this agent answers at all is decided by where the mention sits, and the edit
+ * can move it: `@Codex do X` -> `do X, and @Codex too` must go back to spawning
+ * locally, and the reverse must stop spawning. Keeping the old `crossAgentOnly`
+ * would silently discard half of what the user edited. A routing the user
+ * PICKED when queuing it survives the edit; the plan drops it only when the
+ * edit removes every mention.
+ *
+ * @returns Whether the item was still in the queue to edit.
+ */
+export function editQueuedItem(
+	sessionId: string,
+	itemId: string,
+	patch: QueuedItemEditPatch
+): boolean {
+	const queued = useSessionStore
+		.getState()
+		.sessions.find((s) => s.id === sessionId)
+		?.executionQueue?.find((item) => item.id === itemId);
+	if (!queued) return false;
+	const mentionPlan = planCrossAgentMentions(patch.text, sessionId, queued.mentionRouting);
+	const crossAgent = {
+		crossAgentMention: !!mentionPlan,
+		crossAgentOnly: mentionPlan?.suppressLocal ?? false,
+		mentionRouting: mentionPlan?.routingSource === 'explicit' ? mentionPlan.routing : undefined,
+	};
+	let found = false;
+	updateSessionWith(sessionId, (s) => {
+		if (!s.executionQueue?.some((i) => i.id === itemId)) return s;
+		found = true;
+		return {
+			...s,
+			executionQueue: applyQueuedItemEdit(s.executionQueue, itemId, patch, crossAgent),
+		};
+	});
+	return found;
+}
+
+/**
+ * Move a queued item within one tab's inline list: the queued cards' drag. The
+ * indices count THAT tab's items (the list shows one tab), and every other
+ * tab's items keep their places in the queue (`reorderQueueItem`).
+ */
+export function reorderQueuedItems(
+	sessionId: string,
+	fromIndex: number,
+	toIndex: number,
+	tabId?: string
+): void {
+	updateSessionWith(sessionId, (s) => ({
+		...s,
+		executionQueue: reorderQueueItem(s.executionQueue, fromIndex, toIndex, tabId),
+	}));
 }
 
 /** Runs one dequeued item. The default goes through `agentStore.processQueuedItem`. */

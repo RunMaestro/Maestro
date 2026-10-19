@@ -182,6 +182,9 @@ import {
 	tabEffort,
 	tabEnterToSend,
 	tabShow,
+	tabPopOut,
+	tabDock,
+	tabWindows,
 } from './commands/tab';
 import { setBookmark } from './commands/bookmark';
 import { setTheme } from './commands/set-theme';
@@ -2114,6 +2117,30 @@ tabTargetOptions(tab.command('enter-to-send <tab-id> <bool>'))
 tabTargetOptions(tab.command('move <tab-id> <position>'))
 	.description('Move a tab to a position in its agent\'s tab bar (0-based, or "first"/"last")')
 	.action((tabId, position, options) => tabMove(tabId, position, options));
+
+// Tab Windows: a tab of any kind (AI, file, terminal, browser) in its own OS
+// window, one window per agent. <tab-id> is exact or a unique prefix.
+tab
+	.command('pop-out <tab-id>')
+	.description("Pop a tab out into its agent's tab window (opens the window if needed)")
+	.option('-a, --agent <id>', 'Agent that owns the tab (resolved from the tab id when omitted)')
+	.option('--background', 'Add the tab to the tab window without raising it')
+	.option('--focus', 'Raise the tab window and show the tab (default)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((tabId, options) => tabPopOut(tabId, options));
+
+tab
+	.command('dock <tab-id>')
+	.description('Return a popped-out tab to its main window (closes an emptied tab window)')
+	.option('-a, --agent <id>', 'Agent that owns the tab (resolved from the tab id when omitted)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((tabId, options) => tabDock(tabId, options));
+
+tab
+	.command('windows')
+	.description('List the open tab windows with their agent and tabs')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => tabWindows(options));
 
 // Create SSH remote command - add a new SSH remote configuration
 program

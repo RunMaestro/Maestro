@@ -1,4 +1,11 @@
-import type { AITab, FilePreviewHistoryEntry, FilePreviewTab, UnifiedTab } from '../../../types';
+import type {
+	AITab,
+	FilePreviewHistoryEntry,
+	FilePreviewTab,
+	UnifiedTab,
+	UnifiedTabRef,
+} from '../../../types';
+import type { AiTabTarget } from '../../../services/aiTabActions';
 import type { BrowserTab } from '../../../../shared/browserPage';
 import type { MediaOpenMode } from '../../../../shared/mediaTypes';
 
@@ -35,7 +42,11 @@ export interface TabDerivedState {
 }
 
 export interface AITabHandlersReturn {
-	performTabClose: (tabId: string) => void;
+	/**
+	 * Close an AI tab with no confirm. `sessionId` names its agent when that is
+	 * not the active one (a tab window's owner closing a popped tab).
+	 */
+	performTabClose: (tabId: string, sessionId?: string) => void;
 	handleNewAgentSession: () => void;
 	handleTabSelect: (tabId: string) => void;
 	handleTabClose: (tabId: string) => void;
@@ -105,12 +116,23 @@ export interface UnifiedTabHandlersReturn {
 	handleCloseTabsLeft: (pivotTabId?: string) => void;
 	handleCloseTabsRight: (pivotTabId?: string) => void;
 	handleCloseCurrentTab: () => CloseCurrentTabResult;
+	/**
+	 * Close exactly these tabs of `sessionId`, with no confirm and no filter:
+	 * the caller already picked and confirmed them. A tab window's owner closes
+	 * the tabs the tab window chose this way (its "Close Others / Left / Right"
+	 * and its chip close of a file, terminal, or browser tab).
+	 */
+	closeTabRefs: (sessionId: string, refs: UnifiedTabRef[]) => void;
 }
 
 export interface ScrollLogHandlersReturn {
 	handleScrollPositionChange: (scrollTop: number) => void;
 	handleAtBottomChange: (isAtBottom: boolean) => void;
-	handleDeleteLog: (logId: string) => number | null;
+	/**
+	 * Delete a message (and its answer) from the active tab, or from `target`
+	 * when given (a tab window's owner deleting from a popped tab).
+	 */
+	handleDeleteLog: (logId: string, target?: AiTabTarget) => number | null;
 }
 
 export interface TabHandlersReturn

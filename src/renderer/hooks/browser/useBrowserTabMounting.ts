@@ -5,6 +5,8 @@ import {
 	useCoworkingBrowserKeepAliveStore,
 	activePinnedTabIds,
 } from '../../stores/coworkingBrowserKeepAliveStore';
+import { usePoppedOutTabKeys } from '../../stores/tabWindowStore';
+import { tabRefKey } from '../../../shared/unifiedTabRef';
 
 /**
  * Decides which of the active agent's browser tabs stay mounted.
@@ -25,6 +27,11 @@ import {
  * agent's browser tabs; cross-agent keep-alive would grow memory unbounded and
  * is intentionally out of scope.
  *
+ * A tab popped out into its tab window is never mounted here, whatever the
+ * policy: a `<webview>` cannot move between windows, so the tab window opens
+ * its own (Tab Windows, D5), and two guests would both write the tab's URL,
+ * title, and guest id. Docking it mounts it again at its latest URL.
+ *
  * @returns Ordered list of browser tab ids to mount (stable in live-tab order so
  *   React never reorders the underlying webview DOM nodes).
  */
@@ -38,9 +45,15 @@ export function useBrowserTabMounting(activeSession: Session | null): string[] {
 
 	const sessionId = activeSession?.id ?? null;
 	const activeBrowserTabId = activeSession?.activeBrowserTabId ?? null;
+	const poppedOutTabKeys = usePoppedOutTabKeys(sessionId);
 	// Stable key over the live browser tab ids (order-preserving) so memoization
 	// doesn't churn when the session object is recreated without tab changes.
-	const liveIdsKey = activeSession?.browserTabs?.map((t) => t.id).join(',') ?? '';
+	// A popped-out tab is not live here: its tab window shows it.
+	const liveIdsKey =
+		activeSession?.browserTabs
+			?.filter((t) => !poppedOutTabKeys.has(tabRefKey({ type: 'browser', id: t.id })))
+			.map((t) => t.id)
+			.join(',') ?? '';
 
 	// Browser tabs tiled into the active group MUST stay mounted regardless of the
 	// keep-alive policy: while a group is active, `activeBrowserTabId` points at no

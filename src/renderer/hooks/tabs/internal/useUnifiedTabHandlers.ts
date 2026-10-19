@@ -1,11 +1,13 @@
 import { useCallback } from 'react';
 import { useInlineWizardContext } from '../../../contexts/InlineWizardContext';
 import { selectActiveSession, useSessionStore } from '../../../stores/sessionStore';
-import type { Session } from '../../../types';
+import type { Session, UnifiedTabRef } from '../../../types';
 import { clearLiveDraft } from '../../../utils/liveDraftStore';
 import { logger } from '../../../utils/logger';
 import { isWebDesktop } from '../../../utils/runtimeContext';
 import { requestDesktopTabCloses } from '../../../services/desktopTabClose';
+import { sessionHasTab } from '../../../services/tabWindowNavigation';
+import { isSingleTabRef } from '../../../../shared/unifiedTabRef';
 import {
 	closeBrowserTab as closeBrowserTabHelper,
 	hasActiveWizard,
@@ -56,12 +58,16 @@ export function useUnifiedTabHandlers({
 		);
 	}, []);
 
+	// `sessionId` names the agent when it is not the active one (a tab window's
+	// owner closing the tabs its tab window chose).
 	const closeRefs = useCallback(
 		(
 			getRefs: (session: Session) => ReturnType<typeof getRefsExceptActive>,
-			wizardWarningLabel: 'close-others' | 'close-left' | 'close-right'
+			wizardWarningLabel: 'close-others' | 'close-left' | 'close-right' | 'tab-window',
+			sessionId?: string
 		) => {
-			const { sessions, setSessions, activeSessionId } = useSessionStore.getState();
+			const { sessions, setSessions } = useSessionStore.getState();
+			const activeSessionId = sessionId ?? useSessionStore.getState().activeSessionId;
 			const session = sessions.find((s) => s.id === activeSessionId);
 			if (!session) return;
 
@@ -146,6 +152,20 @@ export function useUnifiedTabHandlers({
 			closeRefs(
 				(session) => excludePreservedRefs(session, getRefsRightOfActive(session, pivotTabId)),
 				'close-right'
+			);
+		},
+		[closeRefs]
+	);
+
+	// The refs arrive picked and confirmed. Never `excludePreservedRefs` here: it
+	// drops popped-out refs, and a tab window's refs are all popped out. Only the
+	// tabs the agent still holds close.
+	const closeTabRefs = useCallback(
+		(sessionId: string, refs: UnifiedTabRef[]) => {
+			closeRefs(
+				(session) => refs.filter((ref) => isSingleTabRef(ref) && sessionHasTab(session, ref)),
+				'tab-window',
+				sessionId
 			);
 		},
 		[closeRefs]
@@ -251,5 +271,6 @@ export function useUnifiedTabHandlers({
 		handleCloseTabsLeft,
 		handleCloseTabsRight,
 		handleCloseCurrentTab,
+		closeTabRefs,
 	};
 }

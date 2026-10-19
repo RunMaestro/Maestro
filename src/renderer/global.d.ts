@@ -228,6 +228,7 @@ import type { FirstPartyBridgeState } from '../main/plugins/first-party-bridge';
 import type { FirstPartyEncoreFlag } from '../shared/plugins/first-party';
 import type { AgentRunApi } from '../main/preload/agentRun';
 import type { QuickChatApi } from '../main/preload/quickChat';
+import type { TabWindowsApi } from '../main/preload/windows';
 import type { BrowserOp } from '../shared/coworkingBrowser';
 import type { HistoryEntry } from '../shared/types';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../shared/snoozeCommands';
@@ -5146,11 +5147,18 @@ interface MaestroAPI {
 		// Subscribe to session-ownership move broadcasts; returns an unsubscribe fn.
 		onSessionMoved: (
 			callback: (payload: {
-				type: 'session-moved' | 'sessions-changed' | 'name-changed' | 'removed';
+				type:
+					| 'session-moved'
+					| 'sessions-changed'
+					| 'name-changed'
+					| 'removed'
+					| 'tab-window-changed';
 				windowId?: string;
 				sessionId?: string;
 				fromWindowId?: string;
 				toWindowId?: string;
+				// `tab-window-changed` only: the agent whose tab window changed.
+				agentId?: string;
 			}) => void
 		) => () => void;
 		// Toggle a target window's tab-bar drop-zone highlight during tab drag-out.
@@ -5190,6 +5198,13 @@ interface MaestroAPI {
 		validateFolder: (agentId: string, folder: string) => Promise<CotFolderValidation>;
 		verify: (agentId: string) => Promise<CotChainVerifyResult[]>;
 	};
+	/**
+	 * Tab Windows: pop a tab out into its agent's own OS window, dock it back,
+	 * and relay session patches (owner to tab window) and intents (tab window to
+	 * owner). Desktop only. Mirrors `createTabWindowsApi` in
+	 * `src/main/preload/windows.ts`.
+	 */
+	tabWindows: TabWindowsApi;
 	/** Quick Chat: the floating chat window and the engine that runs it. */
 	quickChat: QuickChatApi;
 	/**

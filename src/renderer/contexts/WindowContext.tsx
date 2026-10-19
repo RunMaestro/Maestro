@@ -288,8 +288,11 @@ export function WindowProvider({ children }: { children: ReactNode }) {
 	// a direct subscription with cleanup is the simplest reliable wiring. Any
 	// ownership change can shift this window's cross-window badges, so we always
 	// re-hydrate (the full registry read) instead of diffing the payload.
+	// `tab-window-changed` is the exception: a tab moving in or out of a tab
+	// window changes no ownership and no app window, so it is not re-read here.
 	useEffect(() => {
-		const unsubscribe = window.maestro.windows.onSessionMoved(() => {
+		const unsubscribe = window.maestro.windows.onSessionMoved((payload) => {
+			if (payload?.type === 'tab-window-changed') return;
 			void hydrate();
 		});
 		return unsubscribe;

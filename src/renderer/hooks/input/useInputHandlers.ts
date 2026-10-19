@@ -20,7 +20,7 @@
  */
 
 import { useCallback, useEffect, useRef, useMemo } from 'react';
-import type { Session, Group, BatchRunState, QueuedItem, CustomAICommand } from '../../types';
+import type { Session, BatchRunState, QueuedItem, CustomAICommand } from '../../types';
 import {
 	useSessionStore,
 	selectActiveSession,
@@ -28,7 +28,6 @@ import {
 	updateAiTab,
 } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
-import { filterSessionsVisibleInSidebar } from '../../utils/sessionVisibility';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useUIStore } from '../../stores/uiStore';
 import { useFileExplorerStore } from '../../stores/fileExplorerStore';
@@ -39,13 +38,12 @@ import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { notifyToast } from '../../stores/notificationStore';
 import { uploadPathlessFile } from '../../utils/osFileDrop';
 import { useComposerInputStore } from '../../stores/composerInputStore';
-import { useDebouncedValue } from '../utils';
 import { useInputSync } from './useInputSync';
-import { useTabCompletion } from './useTabCompletion';
 import type { TabCompletionSuggestion } from './useTabCompletion';
-import { useAtMentionCompletion } from './useAtMentionCompletion';
-import { useMentionPicker, type MentionPickerItem, type MentionCategory } from './useMentionPicker';
-import { useInputProcessing } from './useInputProcessing';
+import type { MentionPickerItem, MentionCategory } from './useMentionPicker';
+import { useComposerCompletions } from './useComposerCompletions';
+import { useInputProcessing, type ProcessInputOptions } from './useInputProcessing';
+import type { MentionRouting } from '../../../shared/crossAgentContext';
 import { useInputKeyDown } from './useInputKeyDown';
 import {
 	useCrossAgentDispatch,
@@ -56,10 +54,11 @@ import {
 	dispatchCrossAgentMentions,
 	type CrossAgentMentionPlan,
 } from '../../services/crossAgentMentions';
-import { formatFileMention, stripMentionQuotes } from '../../../shared/mentionPatterns';
+import { formatFileMention } from '../../../shared/mentionPatterns';
 import { IMAGE_EXTENSIONS } from '../../utils/fileExplorerIcons/shared';
 import { screenshotReferenceLabel } from '../../utils/stagedImageOrder';
 import { STAGED_IMAGE_MIME } from '../../components/InputArea/components/stagedImageDrag';
+import { pasteTrimmedText } from '../../components/InputArea/utils/pasteText';
 import {
 	normalizeComposerCommandMode,
 	type ComposerCommandMode,
@@ -74,10 +73,6 @@ function isImagePath(path: string): boolean {
 	return ext ? IMAGE_EXTENSIONS.has(ext) : false;
 }
 
-// Stable empty references so the gated sessions/groups selectors return the same
-// value on every render while the `@` picker is closed - no re-render churn.
-const EMPTY_SESSIONS: Session[] = [];
-const EMPTY_GROUPS: Group[] = [];
 const EMPTY_STAGED_IMAGES: string[] = [];
 
 /**
@@ -173,17 +168,9 @@ export interface UseInputHandlersReturn {
 	/** Set staged images for the current message */
 	setStagedImages: (images: string[] | ((prev: string[]) => string[])) => void;
 	/** Process and send the current input */
-	processInput: (
-		text?: string,
-		options?: { forceParallel?: boolean; images?: string[]; sessionId?: string; tabId?: string }
-	) => void;
+	processInput: (text?: string, options?: ProcessInputOptions) => void;
 	/** Ref to latest processInput for use in memoized callbacks */
-	processInputRef: React.MutableRefObject<
-		(
-			text?: string,
-			options?: { forceParallel?: boolean; images?: string[]; sessionId?: string; tabId?: string }
-		) => void
-	>;
+	processInputRef: React.MutableRefObject<(text?: string, options?: ProcessInputOptions) => void>;
 	/** Keyboard event handler for the input textarea */
 	handleInputKeyDown: (e: React.KeyboardEvent) => void;
 	/** Capture the agent/tab that owns the composer when the input gains focus */
@@ -283,28 +270,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	const conductorProfile = useSettingsStore((s) => s.conductorProfile);
 
 	// --- InputContext state (completion dropdowns) ---
-	const {
-		tabCompletionOpen,
-		tabCompletionFilter,
-		atMentionOpen,
-		atMentionFilter,
-		atMentionCategory,
-		setSlashCommandOpen,
-	} = useInputContext();
-
-	// All agents + groups feed the Agents scope of the unified `@` picker. Gate
-	// the subscription on atMentionOpen so streaming flushes from any agent don't
-	// recompute mention suggestions while the picker is closed (mirrors the
-	// fileSuggestions gate below). Stable empty refs avoid re-render churn.
-	const allSessions = useSessionStore((s) => (atMentionOpen ? s.sessions : EMPTY_SESSIONS));
-	// Mentionable agents follow the Left Bar: the Pianola agent outlives its
-	// Encore flag in the session store and is not offered while the flag is off.
-	const pianolaEnabled = useSettingsStore((s) => s.encoreFeatures?.pianola);
-	const sessions = useMemo(
-		() => filterSessionsVisibleInSidebar(allSessions, { pianolaEnabled }),
-		[allSessions, pianolaEnabled]
-	);
-	const groups = useSessionStore((s) => (atMentionOpen ? s.groups : EMPTY_GROUPS));
+	const { setSlashCommandOpen } = useInputContext();
 
 	// --- Derived values ---
 	// The tab the composer is currently drafting FOR, which is not the same
@@ -451,9 +417,9 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		});
 	}, [activeTabIdForInput, adoptAiDraft, queueAiDraftFlush]);
 
-	// Tab / @mention completion: no-arg form subscribes only to non-streaming fields
-	const { getSuggestions: getTabCompletionSuggestions } = useTabCompletion();
-	const { getSuggestions: getAtMentionSuggestions } = useAtMentionCompletion();
+	// Tab completion and the `@` picker (shared with a tab window's composer).
+	const { tabCompletionSuggestions, getTabCompletionSuggestions, atMentionItems, atMentionCounts } =
+		useComposerCompletions(activeSessionId, activeSessionInputMode);
 
 	// ====================================================================
 	// Tab/Session switching effects
@@ -565,81 +531,6 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		}
 	}, [activeSessionId]);
 
-	// ====================================================================
-	// Completion suggestions (memoized)
-	// ====================================================================
-
-	// Gated store subscription: returns '' (a stable primitive) unless the
-	// tab-completion dropdown is open, so zustand's Object.is bail-out means
-	// normal typing does NOT re-render this hook. Only while the dropdown is
-	// open do we track the live text to refresh suggestions.
-	//
-	// Reads the AI draft in AI mode: completion also serves command mode, where
-	// the shell draft lives in `aiValue`, not `terminalValue`.
-	const tabCompletionInput = useComposerInputStore((s) => {
-		if (!tabCompletionOpen) return '';
-		return activeSessionInputMode === 'terminal' ? s.terminalValue : s.aiValue;
-	});
-	// Same gating trick for the mode flag: a stable `false` unless the dropdown
-	// is open, so toggling command mode doesn't re-render this hook either. Only
-	// the 'shell' rung completes - AI command mode's draft is prose.
-	const tabCompletionCommandMode = useComposerInputStore((s) =>
-		tabCompletionOpen ? s.aiCommandMode === 'shell' : false
-	);
-	const debouncedInputForTabCompletion = useDebouncedValue(tabCompletionInput, 50);
-	const tabCompletionSuggestions = useMemo(() => {
-		if (!tabCompletionOpen || !activeSessionId) return [];
-		const isTerminal = activeSessionInputMode === 'terminal';
-		// AI mode only gets completions in command mode; an ordinary message has
-		// nothing shell-shaped to complete against.
-		if (!isTerminal && !tabCompletionCommandMode) return [];
-		return getTabCompletionSuggestions(
-			debouncedInputForTabCompletion,
-			tabCompletionFilter,
-			!isTerminal
-		);
-	}, [
-		tabCompletionOpen,
-		activeSessionId,
-		activeSessionInputMode,
-		tabCompletionCommandMode,
-		debouncedInputForTabCompletion,
-		tabCompletionFilter,
-		getTabCompletionSuggestions,
-	]);
-
-	// The stored filter is raw (it carries the opening quote while the user types a
-	// quoted `@"path with spaces"` mention); the fuzzy file search wants it bare.
-	const debouncedAtMentionFilter = useDebouncedValue(
-		atMentionOpen ? stripMentionQuotes(atMentionFilter) : '',
-		100
-	);
-	// File/directory suggestions (raw) - only computed while the picker is open in
-	// AI mode. These feed the Files/Directories scopes of the unified picker.
-	const fileSuggestions = useMemo(() => {
-		if (!atMentionOpen || !activeSessionId || activeSessionInputMode !== 'ai') {
-			return [];
-		}
-		return getAtMentionSuggestions(debouncedAtMentionFilter);
-	}, [
-		atMentionOpen,
-		activeSessionId,
-		activeSessionInputMode,
-		debouncedAtMentionFilter,
-		getAtMentionSuggestions,
-	]);
-
-	// Unified picker: composes file/dir suggestions with agents/groups into one
-	// ranked, category-aware list. Single source of truth for the dropdown.
-	const { items: atMentionItems, counts: atMentionCounts } = useMentionPicker({
-		filter: debouncedAtMentionFilter,
-		category: atMentionCategory,
-		sessions,
-		groups,
-		currentSessionId: activeSessionId,
-		fileSuggestions,
-	});
-
 	// Sync file tree selection to match tab completion suggestion
 	const syncFileTreeToTabCompletion = useCallback(
 		(suggestion: TabCompletionSuggestion | undefined) => {
@@ -681,12 +572,21 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	// A trailing mention otherwise runs in parallel or hands off the answer -
 	// unless the user picked the routing in the composer's routing menu, which
 	// wins over the wording.
+	// A send from a tab window's composer brings the routing picked THERE
+	// (`routingOverride`); only a send from this window's composer reads ours.
 	const handleCrossAgentMentionPlan = useCallback(
-		(message: string, sourceSession: Session): CrossAgentMentionPlan | null =>
+		(
+			message: string,
+			sourceSession: Session,
+			_sourceTabId: string,
+			routingOverride?: MentionRouting | null
+		): CrossAgentMentionPlan | null =>
 			planCrossAgentMentions(
 				message,
 				sourceSession.id,
-				useComposerInputStore.getState().mentionRoutingOverride
+				routingOverride !== undefined
+					? routingOverride
+					: useComposerInputStore.getState().mentionRoutingOverride
 			),
 		[]
 	);
@@ -722,12 +622,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	});
 
 	// processInputRef - maintained for access in memoized callbacks without stale closures
-	const processInputRef = useRef<
-		(
-			text?: string,
-			options?: { forceParallel?: boolean; images?: string[]; sessionId?: string; tabId?: string }
-		) => void
-	>(() => {});
+	const processInputRef = useRef<(text?: string, options?: ProcessInputOptions) => void>(() => {});
 	useEffect(() => {
 		processInputRef.current = processInput;
 	}, [processInput]);
@@ -838,22 +733,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 
 			// Handle text paste with whitespace trimming
 			if (!hasImage && !isGroupChatActive) {
-				const text = e.clipboardData.getData('text/plain');
-				if (text) {
-					const trimmedText = text.trim();
-					if (trimmedText !== text) {
-						e.preventDefault();
-						const target = e.target as HTMLTextAreaElement;
-						const start = target.selectionStart ?? 0;
-						const end = target.selectionEnd ?? 0;
-						const currentValue = target.value;
-						const newValue = currentValue.slice(0, start) + trimmedText + currentValue.slice(end);
-						setInputValue(newValue);
-						requestAnimationFrame(() => {
-							target.selectionStart = target.selectionEnd = start + trimmedText.length;
-						});
-					}
-				}
+				pasteTrimmedText(e, setInputValue);
 				return;
 			}
 

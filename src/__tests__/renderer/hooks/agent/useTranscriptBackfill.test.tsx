@@ -10,7 +10,17 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
-import { useTranscriptBackfill } from '../../../../renderer/hooks/agent/useTranscriptBackfill';
+
+const runtime = vi.hoisted(() => ({ tabWindow: false }));
+vi.mock('../../../../renderer/utils/runtimeContext', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../renderer/utils/runtimeContext')>()),
+	isTabWindow: () => runtime.tabWindow,
+}));
+
+import {
+	TAB_WINDOW_BACKFILL_REQUEST_INTERVAL_MS,
+	useTranscriptBackfill,
+} from '../../../../renderer/hooks/agent/useTranscriptBackfill';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import { createMockSession } from '../../../helpers/mockSession';
 import type { AITab, Session } from '../../../../renderer/types';
@@ -72,6 +82,7 @@ function storedLogs(): string[] {
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	runtime.tabWindow = false;
 	useSessionStore.setState({
 		sessions: [],
 		groups: [],
@@ -311,5 +322,55 @@ describe('useTranscriptBackfill', () => {
 		expect(storedLogs()).toEqual([]);
 		// hasMore was false on that stale page, but it belonged to the old tab.
 		expect(result.current.reachedStart).toBe(false);
+	});
+
+	it('reads and prepends nothing in a tab window, whose transcript the owner splices (D2)', () => {
+		runtime.tabWindow = true;
+		const session = seedStore(makeTab({ logs: [] }));
+		read.mockResolvedValue(page(4, 4));
+		const onPrepend = vi.fn();
+
+		const { result } = renderHook(() =>
+			useTranscriptBackfill(session, useSessionStore.getState().sessions[0].aiTabs![0], {
+				onPrepend,
+			})
+		);
+		act(() => result.current.loadEarlier());
+
+		expect(read).not.toHaveBeenCalled();
+		expect(result.current.isLoading).toBe(false);
+		expect(onPrepend).not.toHaveBeenCalled();
+		expect(storedLogs()).toEqual([]);
+	});
+
+	it('asks the owner for the page from a tab window, once per interval (loadEarlierTranscript)', () => {
+		runtime.tabWindow = true;
+		vi.useFakeTimers();
+		const sendIntent = vi.fn();
+		(window as any).maestro.tabWindows = { sendIntent };
+		try {
+			const session = seedStore(makeTab({ logs: [] }));
+			const { result } = renderHook(() =>
+				useTranscriptBackfill(session, useSessionStore.getState().sessions[0].aiTabs![0])
+			);
+
+			act(() => result.current.loadEarlier());
+			// A user parked at the top fires scroll events: one request goes out.
+			act(() => result.current.loadEarlier());
+			expect(sendIntent).toHaveBeenCalledTimes(1);
+			expect(sendIntent).toHaveBeenCalledWith({
+				kind: 'loadEarlierTranscript',
+				agentId: 'sess-1',
+				tabRef: { type: 'ai', id: 'tab-1' },
+			});
+
+			vi.advanceTimersByTime(TAB_WINDOW_BACKFILL_REQUEST_INTERVAL_MS);
+			act(() => result.current.loadEarlier());
+			expect(sendIntent).toHaveBeenCalledTimes(2);
+			expect(read).not.toHaveBeenCalled();
+		} finally {
+			delete (window as any).maestro.tabWindows;
+			vi.useRealTimers();
+		}
 	});
 });

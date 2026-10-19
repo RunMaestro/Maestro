@@ -30,6 +30,7 @@ import {
 	type DataListenerHandle,
 } from '../../../main/process-listeners/data-listener';
 import { setupErrorListener } from '../../../main/process-listeners/error-listener';
+import { terminalHandoff } from '../../../main/terminal-handoff';
 import type { AgentError } from '../../../shared/types';
 
 const SESSION_ID = 'session-1-shell-run1';
@@ -198,5 +199,36 @@ describe('setupDataListener - output ahead of an agent error', () => {
 		processManager.emit('agent-error', AI_SESSION_ID, authError);
 
 		expect(channels(safeSend)).toEqual(['agent:error']);
+	});
+});
+
+describe('setupDataListener - Tab Windows terminal handoff (D5)', () => {
+	// A terminal tab whose view is moving between windows has its output held in
+	// main, at the moment it is sent, so the next view's replay is exact.
+	const PTY = 'agent-1-terminal-term-1';
+
+	afterEach(() => {
+		terminalHandoff.clear();
+	});
+
+	it('holds the output it sends while a release is open', () => {
+		terminalHandoff.begin(PTY);
+		processManager.emit('data', PTY, 'a');
+		processManager.emit('data', PTY, 'b');
+		vi.advanceTimersByTime(16);
+		terminalHandoff.commit(PTY, 'scrollback ');
+
+		const reply = vi.fn();
+		terminalHandoff.claim(PTY, reply);
+
+		expect(safeSend).toHaveBeenCalledWith('process:data', PTY, 'ab');
+		expect(reply).toHaveBeenCalledWith('scrollback ab');
+	});
+
+	it('holds nothing for a PTY with no handoff', () => {
+		processManager.emit('data', PTY, 'a');
+		vi.advanceTimersByTime(16);
+
+		expect(terminalHandoff.has(PTY)).toBe(false);
 	});
 });

@@ -13,9 +13,10 @@ import type { EventEmitter } from 'events';
 import * as fs from 'fs';
 import { logger } from '../utils/logger';
 import { permissionRelayServer } from './PermissionRelayServer';
-import { registerSpawn, resolvePending } from './registry';
+import { isPendingRequest, registerSpawn, resolvePending } from './registry';
+import { createPermissionRequestRouter, type PermissionRequestRouter } from './request-router';
 import { buildRelayArgs, resolveBridgeScriptPath } from './spawn-args';
-import type { PermissionDecision } from './types';
+import type { PermissionDecision, PermissionRequest } from './types';
 
 const LOG_CONTEXT = '[PermissionRelay]';
 
@@ -27,46 +28,56 @@ const sessionCleanups = new Map<string, () => void>();
 
 let initialized = false;
 
+/** Which window prompts for each request; set by {@link initPermissionRelay}. */
+let router: PermissionRequestRouter | null = null;
+
+/** Optional routing for {@link initPermissionRelay}. */
+export interface PermissionRelayRouting {
+	/**
+	 * The tab window holding the request's tab when that tab is popped out
+	 * (Tab Windows), else null. Such a request is prompted there, not in the
+	 * main window.
+	 */
+	resolveTabWindow?: (request: PermissionRequest) => BrowserWindow | null;
+}
+
 /**
  * Wire the relay into Electron. Idempotent. `getMainWindow` supplies the
- * window to forward requests to; `processManager` is the EventEmitter whose
- * `exit` event (sessionId, code) triggers per-spawn cleanup.
+ * window to forward requests to, unless `routing` names the tab window that
+ * shows the request's tab; `processManager` is the EventEmitter whose `exit`
+ * event (sessionId, code) triggers per-spawn cleanup.
  */
 export function initPermissionRelay(
 	getMainWindow: () => BrowserWindow | null,
-	processManager: EventEmitter | null
+	processManager: EventEmitter | null,
+	routing: PermissionRelayRouting = {}
 ): void {
 	if (initialized) {
 		return;
 	}
 	initialized = true;
 
+	router = createPermissionRequestRouter({
+		getMainWindow,
+		resolveTabWindow: routing.resolveTabWindow,
+		isPending: isPendingRequest,
+		send: (win, request) => win.webContents.send(PERMISSION_REQUEST_CHANNEL, request),
+	});
+
 	permissionRelayServer.setOnRequest((request) => {
-		const win = getMainWindow();
-		if (!win || win.isDestroyed() || win.webContents.isDestroyed()) {
-			// No window to prompt: deny so the agent gets a clear answer instead
-			// of hanging until the timeout.
-			resolvePending(request.requestId, {
-				behavior: 'deny',
-				message: 'Maestro window unavailable to prompt for permission.',
-			});
-			return;
-		}
-		try {
-			win.webContents.send(PERMISSION_REQUEST_CHANNEL, request);
-		} catch (e) {
-			// The destroyed-window guard above covers the realistic case; this
-			// catches a rare teardown race between the check and the send. Deny so
-			// the awaiting bridge call unblocks instead of waiting on the timeout.
-			logger.warn('Failed to deliver permission request to renderer; denying', LOG_CONTEXT, {
-				requestId: request.requestId,
-				error: e instanceof Error ? e.message : String(e),
-			});
-			resolvePending(request.requestId, {
-				behavior: 'deny',
-				message: 'Failed to deliver permission request to the Maestro window.',
-			});
-		}
+		const delivery = router!.deliver(request);
+		if (delivery.delivered) return;
+		// No window to prompt, or a teardown race between the window check and
+		// the send: deny so the agent gets a clear answer instead of hanging
+		// until the timeout.
+		logger.warn('Failed to deliver permission request to renderer; denying', LOG_CONTEXT, {
+			requestId: request.requestId,
+			reason: delivery.reason,
+		});
+		resolvePending(request.requestId, {
+			behavior: 'deny',
+			message: 'Maestro window unavailable to prompt for permission.',
+		});
 	});
 
 	// Best-effort per-spawn cleanup on process exit. Not fatal if the emitter
@@ -84,7 +95,31 @@ export function resolvePermissionResponse(
 	requestId: string,
 	decision: PermissionDecision
 ): boolean {
+	router?.settle(requestId);
 	return resolvePending(requestId, decision);
+}
+
+/**
+ * Re-deliver the requests waiting in a tab window that no longer shows their
+ * tab (it docked, or the window closed) to the window that shows it now.
+ * Call it on every `tab-window-changed`. One that no window can take is
+ * denied, so the agent is not left waiting out the timeout.
+ */
+export function reroutePermissionRequests(): void {
+	if (!router) return;
+	const { moved, failed } = router.reroute();
+	for (const requestId of failed) {
+		resolvePending(requestId, {
+			behavior: 'deny',
+			message: 'Maestro window unavailable to prompt for permission.',
+		});
+	}
+	if (moved.length > 0 || failed.length > 0) {
+		logger.debug('Re-routed permission requests after a tab window change', LOG_CONTEXT, {
+			moved: moved.length,
+			denied: failed.length,
+		});
+	}
 }
 
 /** Clean up a spawn's relay binding (on process exit or re-spawn). */

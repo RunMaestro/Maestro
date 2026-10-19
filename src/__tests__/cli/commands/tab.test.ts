@@ -29,6 +29,9 @@ import {
 	tabEffort,
 	tabEnterToSend,
 	tabShow,
+	tabPopOut,
+	tabDock,
+	tabWindows,
 } from '../../../cli/commands/tab';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import { resolveAgentId, readActiveAgentId } from '../../../cli/services/storage';
@@ -330,5 +333,138 @@ describe('tab commands', () => {
 		const printed = JSON.parse(consoleSpy.mock.calls.at(-1)?.[0] as string);
 		expect(printed.tab.tabId).toBe('tab-bbbb');
 		expect(printed.tab.model).toBe('opus');
+	});
+
+	describe('tab windows verbs (Tab Windows, TW-12)', () => {
+		const popped = {
+			success: true,
+			agentId: 'agent-1',
+			tabRef: { type: 'terminal', id: 'term-1' },
+			windowId: 'tw-1',
+			created: true,
+			tabRefs: [
+				{ type: 'ai', id: 'tab-aaaa' },
+				{ type: 'terminal', id: 'term-1' },
+			],
+		};
+
+		it('tab pop-out sends one tab_window_command, foreground by default, with no agent lookup', async () => {
+			const getPayload = mockTab(popped);
+			await tabPopOut('term-1', {});
+			expect(getPayload()).toEqual({
+				type: 'tab_window_command',
+				action: 'pop-out',
+				tabId: 'term-1',
+				sessionId: undefined,
+				background: false,
+			});
+			expect(resolveAgentId).not.toHaveBeenCalled();
+			expect(consoleSpy).toHaveBeenCalledWith(
+				'Success: Popped terminal tab term-1 out into tab window tw-1 (new window)'
+			);
+			expect(consoleSpy).toHaveBeenCalledWith('  Tabs: ai:tab-aaaa, terminal:term-1');
+		});
+
+		it('tab pop-out --background --agent resolves the agent and puts background on the wire', async () => {
+			const getPayload = mockTab(popped);
+			await tabPopOut('term-1', { agent: 'agent-1', background: true, json: true });
+			expect(resolveAgentId).toHaveBeenCalledWith('agent-1');
+			expect(getPayload()).toMatchObject({ sessionId: 'agent-1', background: true });
+			const printed = JSON.parse(consoleSpy.mock.calls.at(-1)?.[0] as string);
+			expect(printed).toEqual({
+				success: true,
+				agentId: 'agent-1',
+				tabRef: { type: 'terminal', id: 'term-1' },
+				windowId: 'tw-1',
+				created: true,
+				background: true,
+				tabRefs: popped.tabRefs,
+			});
+		});
+
+		it('tab pop-out --focus wins over --background', async () => {
+			const getPayload = mockTab(popped);
+			await tabPopOut('term-1', { background: true, focus: true });
+			expect(getPayload().background).toBe(false);
+		});
+
+		it('tab pop-out reports a refusal and exits non-zero', async () => {
+			mockTab({ success: false, error: 'A hidden consult tab cannot be popped out' });
+			await expect(tabPopOut('consult', {})).rejects.toThrow('__exit__');
+			expect(formatError).toHaveBeenCalledWith('A hidden consult tab cannot be popped out');
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+
+		it('tab pop-out reports an app too old to know the message', async () => {
+			mockTab({ type: 'error', message: 'Unknown message type: tab_window_command' });
+			await expect(tabPopOut('tab-aaaa', {})).rejects.toThrow('__exit__');
+			expect(formatError).toHaveBeenCalledWith(expect.stringContaining('Unknown message type'));
+		});
+
+		it('tab dock says when the tab window closed', async () => {
+			const getPayload = mockTab({
+				success: true,
+				agentId: 'agent-1',
+				tabRef: { type: 'ai', id: 'tab-aaaa' },
+				windowId: 'tw-1',
+				tabRefs: [],
+			});
+			await tabDock('tab-aaaa', {});
+			expect(getPayload()).toEqual({
+				type: 'tab_window_command',
+				action: 'dock',
+				tabId: 'tab-aaaa',
+				sessionId: undefined,
+			});
+			expect(consoleSpy).toHaveBeenCalledWith(
+				'Success: Docked ai tab tab-aaaa back to its main window (tab window tw-1 closed)'
+			);
+		});
+
+		it('tab dock --json lists the tabs left in the tab window', async () => {
+			mockTab({
+				success: true,
+				agentId: 'agent-1',
+				tabRef: { type: 'ai', id: 'tab-aaaa' },
+				windowId: 'tw-1',
+				tabRefs: [{ type: 'file', id: 'f1' }],
+			});
+			await tabDock('tab-aaaa', { json: true });
+			const printed = JSON.parse(consoleSpy.mock.calls.at(-1)?.[0] as string);
+			expect(printed).toMatchObject({
+				success: true,
+				windowClosed: false,
+				tabRefs: [{ type: 'file', id: 'f1' }],
+			});
+		});
+
+		it('tab windows prints each window with its agent and marks the shown tab', async () => {
+			const getPayload = mockTab({
+				success: true,
+				windows: [
+					{
+						windowId: 'tw-1',
+						agentId: 'agent-1',
+						agentName: 'Backend',
+						tabRefs: [
+							{ type: 'ai', id: 'tab-aaaa' },
+							{ type: 'browser', id: 'b1' },
+						],
+						activeTabRef: { type: 'browser', id: 'b1' },
+					},
+				],
+			});
+			await tabWindows({});
+			expect(getPayload()).toEqual({ type: 'tab_window_command', action: 'list' });
+			expect(consoleSpy).toHaveBeenCalledWith('Backend  (agent-1)  tab window tw-1');
+			expect(consoleSpy).toHaveBeenCalledWith('  ai       tab-aaaa');
+			expect(consoleSpy).toHaveBeenCalledWith('  browser  b1  (shown)');
+		});
+
+		it('tab windows says so when none are open', async () => {
+			mockTab({ success: true, windows: [] });
+			await tabWindows({});
+			expect(consoleSpy).toHaveBeenCalledWith('No tab windows open');
+		});
 	});
 });

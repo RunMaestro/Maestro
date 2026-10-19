@@ -10,27 +10,41 @@ import {
 } from '../../../stores/sessionStore';
 import { clearLiveDraft } from '../../../utils/liveDraftStore';
 import { logger } from '../../../utils/logger';
-import { persistTabStarred, snapshotClosedTabTranscript } from '../../../utils/starredSessions';
+import { snapshotClosedTabTranscript } from '../../../utils/starredSessions';
 import { isWebDesktop } from '../../../utils/runtimeContext';
 import { requestDesktopTabClose, requestDesktopTabCloses } from '../../../services/desktopTabClose';
 import { noteDesktopAiTabSelection } from '../../../utils/desktopTabSelectionSync';
+import { closeAiTabWithConfirm } from '../../../services/tabCloseConfirm';
+import {
+	cycleAiTabShowThinking,
+	markAiTabUnread,
+	setAiTabStarred,
+	toggleAiTabEnterToSend,
+	toggleAiTabReadOnlyMode,
+	toggleAiTabSaveToHistory,
+	type AiTabTarget,
+} from '../../../services/aiTabActions';
 import {
 	addAiTabToUnifiedHistory,
 	aiTabFocusFields,
 	closeTab,
 	createTab,
-	cycleShowThinkingFields,
 	getActiveTab,
 	getInitialRenameValue,
 	hasActiveWizard,
-	hasDraft,
-	hasWizardInteraction,
 	restoreOrphanedTab,
 	setActiveTab,
-	toggleReadOnlyModeFields,
-	visibleAiTabs,
+	ownerVisibleAiTabs,
+	hasDraft,
 } from '../../../utils/tabHelpers';
 import type { AITabHandlersReturn } from './types';
+
+/** The active agent's active AI tab, as an action target. */
+function activeAiTabTarget(): AiTabTarget | null {
+	const session = selectActiveSession(useSessionStore.getState());
+	const tab = session ? getActiveTab(session) : undefined;
+	return session && tab ? { sessionId: session.id, tabId: tab.id } : null;
+}
 
 /** Manage AI tabs, delegating browser inventory changes to the owning desktop. */
 export function useAITabHandlers(
@@ -125,9 +139,11 @@ export function useAITabHandlers(
 		}
 	}, []);
 
+	// `sessionId` names the agent when it is not the active one: a tab window's
+	// owner closes a popped tab, which is never its active tab (Tab Windows).
 	const performTabClose = useCallback(
-		(tabId: string) => {
-			const { activeSessionId } = useSessionStore.getState();
+		(tabId: string, sessionId?: string) => {
+			const activeSessionId = sessionId ?? useSessionStore.getState().activeSessionId;
 			const sessionBeforeClose = useSessionStore
 				.getState()
 				.sessions.find((s) => s.id === activeSessionId);
@@ -172,22 +188,7 @@ export function useAITabHandlers(
 		(tabId: string) => {
 			const session = selectActiveSession(useSessionStore.getState());
 			const tab = session?.aiTabs.find((t) => t.id === tabId);
-
-			if (tab && hasWizardInteraction(tab)) {
-				useModalStore.getState().openModal('confirm', {
-					message: 'Close this wizard? Your progress will be lost and cannot be restored.',
-					onConfirm: () => performTabClose(tabId),
-				});
-			} else if (tab && hasActiveWizard(tab)) {
-				performTabClose(tabId);
-			} else if (tab && hasDraft(tab)) {
-				useModalStore.getState().openModal('confirm', {
-					message: 'This tab has an unsent draft. Are you sure you want to close it?',
-					onConfirm: () => performTabClose(tabId),
-				});
-			} else {
-				performTabClose(tabId);
-			}
+			closeAiTabWithConfirm(tab, () => performTabClose(tabId));
 		},
 		[performTabClose]
 	);
@@ -196,27 +197,28 @@ export function useAITabHandlers(
 
 	// "Close all" means every tab the user can see. Hidden consult tabs (unopened
 	// cross-agent @mentions) have no chip, so closing one here would silently
-	// destroy a transcript and its resume id the user was never shown.
+	// destroy a transcript and its resume id the user was never shown. Tabs popped
+	// out into a tab window are not in this window's strip either (D4).
 	const performCloseAllTabs = useCallback(() => {
 		const { activeSessionId, sessions } = useSessionStore.getState();
 		const activeSession = sessions.find((s) => s.id === activeSessionId);
 		if (isWebDesktop()) {
 			void requestDesktopTabCloses(
 				activeSessionId,
-				visibleAiTabs(activeSession?.aiTabs).map((tab) => tab.id),
+				ownerVisibleAiTabs(activeSessionId, activeSession?.aiTabs).map((tab) => tab.id),
 				endInlineWizard
 			);
 			return;
 		}
-		visibleAiTabs(activeSession?.aiTabs).forEach((t) => clearLiveDraft(t.id));
+		ownerVisibleAiTabs(activeSessionId, activeSession?.aiTabs).forEach((t) => clearLiveDraft(t.id));
 
-		const wizardTabIds = visibleAiTabs(activeSession?.aiTabs)
+		const wizardTabIds = ownerVisibleAiTabs(activeSessionId, activeSession?.aiTabs)
 			.filter((t) => hasActiveWizard(t))
 			.map((t) => t.id);
 
 		updateSessionWith(activeSessionId, (s) => {
 			let updatedSession = s;
-			const tabIds = visibleAiTabs(s.aiTabs).map((t) => t.id);
+			const tabIds = ownerVisibleAiTabs(s.id, s.aiTabs).map((t) => t.id);
 			for (const tabId of tabIds) {
 				const tab = updatedSession.aiTabs.find((t) => t.id === tabId);
 				// Filter state is irrelevant: no tab survives to be selected.
@@ -241,7 +243,7 @@ export function useAITabHandlers(
 		const session = selectActiveSession(useSessionStore.getState());
 		if (!session) return;
 
-		const hasAnyDraft = visibleAiTabs(session.aiTabs).some((tab) => hasDraft(tab));
+		const hasAnyDraft = ownerVisibleAiTabs(session.id, session.aiTabs).some((tab) => hasDraft(tab));
 		if (hasAnyDraft) {
 			useModalStore.getState().openModal('confirm', {
 				message: 'Some tabs have unsent drafts. Are you sure you want to close all tabs?',
@@ -301,64 +303,38 @@ export function useAITabHandlers(
 		[]
 	);
 
+	// The per-tab marks and settings below are the shared explicit-target actions
+	// (services/aiTabActions.ts), run here on the active agent. A tab window's
+	// owner runs the same ones on the tab its intent names.
 	const handleTabStar = useCallback((tabId: string, starred: boolean) => {
 		const session = selectActiveSession(useSessionStore.getState());
 		if (!session) return;
-		const tabToStar = session.aiTabs.find((t) => t.id === tabId);
-		if (!tabToStar?.agentSessionId) return;
-
-		persistTabStarred(session, tabToStar, starred);
-		updateAiTab(session.id, tabId, (t) => ({ ...t, starred }));
+		setAiTabStarred({ sessionId: session.id, tabId }, starred);
 	}, []);
 
 	const handleTabMarkUnread = useCallback((tabId: string) => {
 		const { activeSessionId } = useSessionStore.getState();
-		updateAiTab(activeSessionId, tabId, (t) => ({ ...t, hasUnread: true }));
+		markAiTabUnread({ sessionId: activeSessionId, tabId });
 	}, []);
 
 	const handleToggleTabReadOnlyMode = useCallback(() => {
-		const session = selectActiveSession(useSessionStore.getState());
-		if (!session) return;
-		const currentActiveTab = getActiveTab(session);
-		if (!currentActiveTab) return;
-		updateAiTab(session.id, currentActiveTab.id, (tab) => ({
-			...tab,
-			...toggleReadOnlyModeFields(tab),
-		}));
+		const target = activeAiTabTarget();
+		if (target) toggleAiTabReadOnlyMode(target);
 	}, []);
 
 	const handleToggleTabSaveToHistory = useCallback(() => {
-		const session = selectActiveSession(useSessionStore.getState());
-		if (!session) return;
-		const currentActiveTab = getActiveTab(session);
-		if (!currentActiveTab) return;
-		updateAiTab(session.id, currentActiveTab.id, (tab) => ({
-			...tab,
-			saveToHistory: !tab.saveToHistory,
-		}));
+		const target = activeAiTabTarget();
+		if (target) toggleAiTabSaveToHistory(target);
 	}, []);
 
 	const handleToggleTabShowThinking = useCallback(() => {
-		const session = selectActiveSession(useSessionStore.getState());
-		if (!session) return;
-		const currentActiveTab = getActiveTab(session);
-		if (!currentActiveTab) return;
-		updateAiTab(session.id, currentActiveTab.id, (tab) => ({
-			...tab,
-			...cycleShowThinkingFields(tab),
-		}));
+		const target = activeAiTabTarget();
+		if (target) cycleAiTabShowThinking(target);
 	}, []);
 
 	const handleToggleTabEnterToSend = useCallback(() => {
-		const session = selectActiveSession(useSessionStore.getState());
-		if (!session) return;
-		const currentActiveTab = getActiveTab(session);
-		if (!currentActiveTab) return;
-		const globalDefault = useSettingsStore.getState().enterToSendAI;
-		updateAiTab(session.id, currentActiveTab.id, (tab) => ({
-			...tab,
-			enterToSend: !(tab.enterToSend ?? globalDefault),
-		}));
+		const target = activeAiTabTarget();
+		if (target) toggleAiTabEnterToSend(target);
 	}, []);
 
 	return {

@@ -12,6 +12,7 @@ import {
 	getWizardTabIds,
 } from '../../../../../renderer/hooks/tabs/internal/unifiedCloseHelpers';
 import { setLiveDraft } from '../../../../../renderer/utils/liveDraftStore';
+import { useTabWindowStore } from '../../../../../renderer/stores/tabWindowStore';
 import {
 	createMockAITab,
 	createMockBrowserTab,
@@ -25,6 +26,7 @@ import {
 describe('unifiedCloseHelpers', () => {
 	beforeEach(() => {
 		resetTabHandlerStores();
+		useTabWindowStore.setState({ windows: [], poppedByAgent: {} });
 	});
 
 	it('resolves the active unified ref using terminal only when terminal mode is active', () => {
@@ -204,6 +206,32 @@ describe('unifiedCloseHelpers', () => {
 			{ type: 'ai' as const, id: 'ai-1' },
 			{ type: 'ai' as const, id: 'ai-2' },
 			{ type: 'ai' as const, id: 'consult' },
+		];
+
+		expect(excludePreservedRefs(getSession(), refs)).toEqual([{ type: 'ai', id: 'ai-1' }]);
+	});
+
+	it('preserves tabs popped out into a tab window exactly as it preserves hidden ones', () => {
+		const ai1 = createMockAITab({ id: 'ai-1' });
+		const ai2 = createMockAITab({ id: 'ai-2' });
+		const fileTab = createMockFileTab({ id: 'file-1' });
+		setupSession({ aiTabs: [ai1, ai2], filePreviewTabs: [fileTab] });
+		useTabWindowStore.getState().setWindows([
+			{
+				windowId: 'tw-1',
+				agentId: getSession().id,
+				tabRefs: [
+					{ type: 'ai', id: 'ai-2' },
+					{ type: 'file', id: 'file-1' },
+				],
+				activeTabRef: null,
+			},
+		]);
+
+		const refs = [
+			{ type: 'ai' as const, id: 'ai-1' },
+			{ type: 'ai' as const, id: 'ai-2' },
+			{ type: 'file' as const, id: 'file-1' },
 		];
 
 		expect(excludePreservedRefs(getSession(), refs)).toEqual([{ type: 'ai', id: 'ai-1' }]);

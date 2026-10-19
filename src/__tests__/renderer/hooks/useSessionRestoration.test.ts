@@ -12,6 +12,7 @@ const runtime = vi.hoisted(() => ({ web: false }));
 vi.mock('../../../renderer/utils/runtimeContext', () => ({
 	isWebDesktop: () => runtime.web,
 	isElectronDesktop: () => !runtime.web,
+	isTabWindow: () => false,
 }));
 
 // Mock gitService before any imports that use it

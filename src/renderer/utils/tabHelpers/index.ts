@@ -26,14 +26,19 @@ import { generateId } from '../ids';
 import { getAutoRunFolderPath } from '../existingDocsDetector';
 import { createTerminalTab, nextTerminalCoworkingId } from '../terminalTabHelpers';
 import {
+	filterPoppedOutRefs,
 	findActiveUnifiedTabIndex,
 	getNavigableUnifiedTabOrder,
 	hasUnreadVisibleTab,
 	insertAfterActiveInUnifiedTabOrder,
 	isAiTabHidden,
+	ownerVisibleAiTabs,
 	visibleAiTabs,
+	withoutPoppedOutTabs,
 } from '../unifiedTabOrderUtils';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { getPoppedOutTabKeys, isTabPoppedOut } from '../../stores/tabWindowStore';
+import { tabRefKey, type SingleTabRef } from '../../../shared/unifiedTabRef';
 import { useUIStore } from '../../stores/uiStore';
 import { isWindowsPlatform } from '../platformUtils';
 import { DEFAULT_BROWSER_TAB_URL, getBrowserTabTitle } from '../browserTabPersistence';
@@ -60,7 +65,15 @@ import {
 // Both live in unifiedTabOrderUtils so terminalTabHelpers can reach them without a
 // circular import; re-exported here because tabHelpers is where callers look for
 // tab visibility rules.
-export { getNavigableUnifiedTabOrder, hasUnreadVisibleTab, isAiTabHidden, visibleAiTabs };
+export {
+	filterPoppedOutRefs,
+	getNavigableUnifiedTabOrder,
+	hasUnreadVisibleTab,
+	isAiTabHidden,
+	ownerVisibleAiTabs,
+	visibleAiTabs,
+	withoutPoppedOutTabs,
+};
 export {
 	aiTabFocusFields,
 	fileTabFocusFields,
@@ -176,9 +189,97 @@ export function buildUnifiedTabs(session: Session): UnifiedTab[] {
 	// the ref from unifiedTabOrder, but the tab still lives in aiTabs/filePreviewTabs/
 	// etc., so the orphan fallback above would otherwise re-surface it. One filter at
 	// the end covers both entry paths. No groups -> no allocation, no filtering.
+	// A tab popped out into a tab window leaves the owner strip the same way (D4):
+	// it keeps its ref (the dock slot, TW-8), so this end filter also keeps the
+	// orphan fallback from re-surfacing it.
 	const memberKeys = collectGroupMemberTabKeys(session);
-	if (memberKeys.size === 0) return result;
-	return result.filter((t) => !memberKeys.has(`${t.type}:${t.id}`));
+	const poppedKeys = getPoppedOutTabKeys(session.id);
+	if (memberKeys.size === 0 && poppedKeys.size === 0) return result;
+	return result.filter((t) => {
+		if (t.type === 'group') return true;
+		const key = `${t.type}:${t.id}`;
+		return !memberKeys.has(key) && !poppedKeys.has(key);
+	});
+}
+
+/**
+ * The strip of a tab window (Tab Windows, TW-2): the tabs its registry record
+ * holds, in the tab window's own order, resolved against the agent's session.
+ *
+ * The tab window's counterpart of {@link buildUnifiedTabs}. It reads no store:
+ * the owner-side filters (tiled members, popped-out tabs) do not apply here,
+ * because a popped tab is never tiled (D6) and every tab in this strip IS a
+ * popped tab. A ref whose tab the session no longer holds is skipped, and so is
+ * a hidden consult tab, which can never be popped out (TW-14).
+ */
+export function buildTabWindowUnifiedTabs(
+	session: Session | null | undefined,
+	tabRefs: readonly SingleTabRef[]
+): UnifiedTab[] {
+	if (!session || tabRefs.length === 0) return [];
+	const result: UnifiedTab[] = [];
+	for (const ref of tabRefs) {
+		const tab = resolveSingleTab(session, ref);
+		if (tab) result.push(tab);
+	}
+	return result;
+}
+
+/**
+ * The agent narrowed to a tab window's strip (Tab Windows, TW-6): only the
+ * tabs {@link buildTabWindowUnifiedTabs} draws, with `unifiedTabOrder` set to
+ * the tab window's own order and no tiled groups.
+ *
+ * This is how a tab window reuses the unified tab math instead of a copy of
+ * it: `navigateToNextUnifiedTab` (and the rest of the keyboard navigators),
+ * `moveUnifiedTabToTarget`, and the bulk-close ref pickers all read
+ * `unifiedTabOrder` and the tab arrays, so on this session they walk the tab
+ * window's chips and nothing else. The result is for that math only; it is
+ * never stored and never sent anywhere.
+ */
+export function buildTabWindowStripSession(
+	session: Session,
+	tabRefs: readonly SingleTabRef[]
+): Session {
+	const strip = buildTabWindowUnifiedTabs(session, tabRefs);
+	const keys = new Set(strip.map((tab) => tabRefKey(tab)));
+	const inStrip =
+		(type: SingleTabRef['type']) =>
+		(tab: { id: string }): boolean =>
+			keys.has(tabRefKey({ type, id: tab.id }));
+	return {
+		...session,
+		aiTabs: (session.aiTabs ?? []).filter(inStrip('ai')),
+		filePreviewTabs: (session.filePreviewTabs ?? []).filter(inStrip('file')),
+		browserTabs: (session.browserTabs ?? []).filter(inStrip('browser')),
+		terminalTabs: (session.terminalTabs ?? []).filter(inStrip('terminal')),
+		unifiedTabOrder: strip.map((tab) => ({ type: tab.type, id: tab.id })),
+		// A popped tab is never tiled (D6), and a tab window has no groups.
+		tabGroups: [],
+		activeGroupId: null,
+	};
+}
+
+/** One tab of the session as a unified tab, or null when it is gone or hidden. */
+function resolveSingleTab(session: Session, ref: SingleTabRef): UnifiedTab | null {
+	switch (ref.type) {
+		case 'ai': {
+			const tab = session.aiTabs?.find((t) => t.id === ref.id);
+			return tab && !isAiTabHidden(tab) ? { type: 'ai', id: tab.id, data: tab } : null;
+		}
+		case 'file': {
+			const tab = session.filePreviewTabs?.find((t) => t.id === ref.id);
+			return tab ? { type: 'file', id: tab.id, data: tab } : null;
+		}
+		case 'browser': {
+			const tab = session.browserTabs?.find((t) => t.id === ref.id);
+			return tab ? { type: 'browser', id: tab.id, data: tab } : null;
+		}
+		case 'terminal': {
+			const tab = session.terminalTabs?.find((t) => t.id === ref.id);
+			return tab ? { type: 'terminal', id: tab.id, data: tab } : null;
+		}
+	}
 }
 
 /**
@@ -560,6 +661,22 @@ export function hasWizardInteraction(tab: AITab): boolean {
 }
 
 /**
+ * What closing an AI tab must ask first, or null when it closes at once: a
+ * wizard the user has talked to loses its progress, and a draft is unsent
+ * work. A wizard nobody has used yet closes without asking, even with a draft.
+ * Shared by every surface that closes a tab with a confirm (the app window's
+ * chip close and a tab window's), so they cannot disagree on when to ask.
+ */
+export function aiTabCloseConfirmMessage(tab: AITab): string | null {
+	if (hasWizardInteraction(tab)) {
+		return 'Close this wizard? Your progress will be lost and cannot be restored.';
+	}
+	if (hasActiveWizard(tab)) return null;
+	if (hasDraft(tab)) return 'This tab has an unsent draft. Are you sure you want to close it?';
+	return null;
+}
+
+/**
  * Collect the ids of AI tabs that have at least one queued execution item waiting
  * in the execution queue (a message or command targeting that tab). A tab with
  * pending queued work needs attention, so it must survive the unread filter and stay
@@ -776,10 +893,11 @@ export function getNavigableTabs(session: Session, showUnreadOnly = false): AITa
 		return [];
 	}
 
-	// Hidden tabs aren't in the strip, so no shortcut may land on one. The common
-	// case is no hidden tabs at all: keep returning `session.aiTabs` by reference
-	// then, since callers memoize on its identity.
-	const visible = visibleAiTabs(session.aiTabs);
+	// Hidden tabs aren't in the strip, so no shortcut may land on one, and neither
+	// may a tab popped out into a tab window (D4). The common case is neither: keep
+	// returning `session.aiTabs` by reference then, since callers memoize on its
+	// identity.
+	const visible = ownerVisibleAiTabs(session.id, session.aiTabs);
 
 	if (showUnreadOnly) {
 		const showStarred = useSettingsStore.getState().showStarredInUnreadFilter;
@@ -816,9 +934,15 @@ export function getActiveTab(session: Session): AITab | undefined {
 	// Fallback when activeTabId doesn't match any tab (tab deletion, data
 	// corruption, or a deliberately blank id). Prefer a tab the strip draws a chip
 	// for: falling onto a hidden consult tab paints a conversation the user never
-	// opened, with nothing in the strip to click back from. Only when every tab is
-	// hidden does the first one still win, so callers keep getting a tab at all.
-	return session.aiTabs.find((tab) => !isAiTabHidden(tab)) ?? session.aiTabs[0];
+	// opened, with nothing in the strip to click back from. A tab popped out into a
+	// tab window is never a fallback either (D4): it shows in its own window. Only
+	// when every tab is hidden does the first one still win, so callers keep
+	// getting a tab at all.
+	return (
+		ownerVisibleAiTabs(session.id, session.aiTabs)[0] ??
+		session.aiTabs.find((tab) => !isAiTabHidden(tab)) ??
+		session.aiTabs[0]
+	);
 }
 
 /**
@@ -1224,13 +1348,167 @@ function resolveUnreadFilterState(explicit?: boolean): boolean {
  * visible survives it - the caller then falls back to unfiltered order math.
  */
 function resolveUnreadFilterFallbackRef(session: Session, tabId: string): UnifiedTabRef | null {
-	const visibleOrder = filterUnifiedTabOrderForUnread(session, getRepairedUnifiedTabOrder(session));
-	const closedIndex = visibleOrder.findIndex((ref) => ref.type === 'ai' && ref.id === tabId);
-	if (closedIndex === -1) return null;
-	const remaining = visibleOrder.filter((_, i) => i !== closedIndex);
+	const visibleOrder = filterPoppedOutRefs(
+		session.id,
+		filterUnifiedTabOrderForUnread(session, getRepairedUnifiedTabOrder(session))
+	);
+	return leftNeighborRef(visibleOrder, { type: 'ai', id: tabId });
+}
+
+/**
+ * The tab that takes over when `target` leaves the strip: the ref to its left,
+ * or the new first ref when it was first. Null when `target` is not in `order`
+ * or nothing else is.
+ *
+ * The one neighbor rule for an AI tab close (`closeTab`) and for a tab popped
+ * out of the owner (`repickPoppedOutActiveTab`), so both hand the user the same
+ * tab. `order` must already be narrowed to the refs the strip draws.
+ */
+export function leftNeighborRef(
+	order: UnifiedTabRef[],
+	target: UnifiedTabRef
+): UnifiedTabRef | null {
+	const index = order.findIndex((ref) => ref.type === target.type && ref.id === target.id);
+	if (index === -1) return null;
+	const remaining = order.filter((_, i) => i !== index);
 	if (remaining.length === 0) return null;
-	const fallbackIndex = Math.min(Math.max(0, closedIndex - 1), remaining.length - 1);
-	return remaining[fallbackIndex];
+	return remaining[Math.min(Math.max(0, index - 1), remaining.length - 1)];
+}
+
+/**
+ * The empty AI tab an agent gets when nothing it could show survives: the last
+ * AI tab closed (`closeTab`), or every tab popped out of the owner
+ * (`repickPoppedOutActiveTab`).
+ */
+function buildReplacementAiTab(): AITab {
+	return {
+		id: generateId(),
+		agentSessionId: null,
+		name: null,
+		starred: false,
+		logs: [],
+		inputValue: '',
+		stagedImages: [],
+		createdAt: Date.now(),
+		state: 'idle',
+	};
+}
+
+/** File, terminal, and browser tabs this window draws a chip for (D4). */
+function countOwnerVisibleNonAiTabs(session: Session): number {
+	return (
+		withoutPoppedOutTabs(session.id, 'file', session.filePreviewTabs ?? []).length +
+		withoutPoppedOutTabs(session.id, 'terminal', session.terminalTabs ?? []).length +
+		withoutPoppedOutTabs(session.id, 'browser', session.browserTabs ?? []).length
+	);
+}
+
+/**
+ * The session patch that makes `ref` the visible tab, for a ref of any kind (a
+ * tiled group lands on the group). Used by the popped-out re-pick and by
+ * dock-back, which shows the tab that just returned (Tab Windows, D4).
+ */
+export function focusFieldsForRef(session: Session, ref: UnifiedTabRef): Partial<Session> {
+	switch (ref.type) {
+		case 'file':
+			return fileTabFocusFields(ref.id);
+		case 'browser':
+			return { ...browserTabFocusFields(ref.id), activeGroupId: null };
+		case 'terminal':
+			return terminalTabFocusFields(ref.id);
+		case 'group': {
+			const group = session.tabGroups?.find((g) => g.id === ref.id);
+			return group ? groupFocusFields(group) : {};
+		}
+		case 'ai':
+		default:
+			return aiTabFocusFields(ref.id);
+	}
+}
+
+/**
+ * Keep the owner window off tabs that are popped out into a tab window (Tab
+ * Windows, D4). The invariant: no active pointer (`activeTabId`,
+ * `activeFileTabId`, `activeTerminalTabId`, `activeBrowserTabId`) names a popped
+ * tab.
+ *
+ * When the tab on screen is popped, the owner moves to the left neighbor of its
+ * slot with the same rule `closeTab` uses ({@link leftNeighborRef}), or to a
+ * fresh AI tab when nothing it could show survives. A remembered pointer that is
+ * not on screen (the AI tab behind a file tab, the terminal behind AI mode) is
+ * moved to another visible tab of its kind, or cleared.
+ *
+ * The popped tab keeps its `unifiedTabOrder` ref, so docking it puts it back in
+ * its slot (TW-8). Returns `session` by reference when nothing names a popped
+ * tab, which is every agent with no tab window.
+ */
+export function repickPoppedOutActiveTab(session: Session): Session {
+	if (!session || getPoppedOutTabKeys(session.id).size === 0) return session;
+	const popped = (type: UnifiedTabRef['type'], id: string | null | undefined): boolean =>
+		!!id && isTabPoppedOut(session.id, { type, id });
+
+	let next = session;
+	const onScreen = resolveOnScreenTabRef(session);
+	if (onScreen && popped(onScreen.type, onScreen.id)) {
+		// The neighbor walk needs the popped tab's own slot, so narrow the stored
+		// order to what the strip draws PLUS that one ref.
+		const order = getRepairedUnifiedTabOrder(session);
+		const shownKeys = new Set(getNavigableUnifiedTabOrder(session, order).map(tabRefKey));
+		const onScreenKey = tabRefKey(onScreen);
+		const slotOrder = order.filter((ref) => {
+			const key = tabRefKey(ref);
+			return key === onScreenKey || shownKeys.has(key);
+		});
+		const neighbor = leftNeighborRef(slotOrder, onScreen);
+		if (neighbor) {
+			next = { ...next, ...focusFieldsForRef(next, neighbor) };
+		} else {
+			const fresh = buildReplacementAiTab();
+			next = {
+				...next,
+				aiTabs: [...(next.aiTabs || []), fresh],
+				unifiedTabOrder: [...(next.unifiedTabOrder || []), { type: 'ai', id: fresh.id }],
+				...aiTabFocusFields(fresh.id),
+			};
+		}
+	}
+
+	// Remembered pointers that are not on screen. The AI one moves to its left
+	// neighbor among the AI tabs the strip draws (closeTab's aiTabs fallback), so
+	// switching back to AI mode lands next to where the user was.
+	const rememberedAiId = next.activeTabId;
+	if (popped('ai', rememberedAiId)) {
+		const aiRefs = (next.aiTabs || [])
+			.filter((tab) => tab.id === rememberedAiId || (!isAiTabHidden(tab) && !popped('ai', tab.id)))
+			.map((tab): UnifiedTabRef => ({ type: 'ai', id: tab.id }));
+		const aiNeighbor = leftNeighborRef(aiRefs, { type: 'ai', id: rememberedAiId });
+		next = { ...next, activeTabId: aiNeighbor?.id ?? '' };
+	}
+	if (popped('terminal', next.activeTerminalTabId)) {
+		const terminal = withoutPoppedOutTabs(next.id, 'terminal', next.terminalTabs ?? [])[0];
+		next = { ...next, activeTerminalTabId: terminal?.id ?? null };
+	}
+	if (popped('file', next.activeFileTabId)) next = { ...next, activeFileTabId: null };
+	if (popped('browser', next.activeBrowserTabId)) next = { ...next, activeBrowserTabId: null };
+	return next;
+}
+
+/**
+ * The tab the panel paints, by the render precedence `resolveSingleViewTabRef`
+ * documents (terminal in terminal mode > file > browser > AI), with a tiled group
+ * standing in for its members. Reads `activeTabId` raw rather than through
+ * `getActiveTab`, whose fallback would hide the very pointer being checked.
+ */
+function resolveOnScreenTabRef(session: Session): UnifiedTabRef | null {
+	if (session.activeGroupId && session.tabGroups?.some((g) => g.id === session.activeGroupId)) {
+		return { type: 'group', id: session.activeGroupId };
+	}
+	if (session.inputMode === 'terminal' && session.activeTerminalTabId) {
+		return { type: 'terminal', id: session.activeTerminalTabId };
+	}
+	if (session.activeFileTabId) return { type: 'file', id: session.activeFileTabId };
+	if (session.activeBrowserTabId) return { type: 'browser', id: session.activeBrowserTabId };
+	return session.activeTabId ? { type: 'ai', id: session.activeTabId } : null;
 }
 
 /**
@@ -1315,13 +1593,15 @@ export function closeTab(
 	// AI tabs the strip still draws a chip for. A hidden consult tab is a data
 	// container with no chip, so it can neither keep the agent company nor be
 	// switched to: counting one as a survivor leaves an empty strip with some
-	// unrelated conversation rendered under it and no way back.
-	const visibleUpdatedTabs = updatedTabs.filter((tab) => !isAiTabHidden(tab));
+	// unrelated conversation rendered under it and no way back. A tab popped out
+	// into a tab window has no chip in this window either (D4).
+	const visibleUpdatedTabs = ownerVisibleAiTabs(session.id, updatedTabs);
 	// Where the closed tab sat among the tabs the user could see, so "the tab to
 	// the left" means the chip to its left rather than an array slot that counts
 	// hidden tabs nobody was looking at.
+	const ownerVisibleIds = new Set(ownerVisibleAiTabs(session.id, session.aiTabs).map((t) => t.id));
 	const visibleTabIndex = session.aiTabs
-		.filter((tab) => !isAiTabHidden(tab) || tab.id === tabId)
+		.filter((tab) => ownerVisibleIds.has(tab.id) || tab.id === tabId)
 		.findIndex((tab) => tab.id === tabId);
 
 	// Tabs of other kinds that survive this close. Closing the last AI tab only
@@ -1329,11 +1609,9 @@ export function closeTab(
 	// tabs at all, so a brand new agent still always has a chat to type into.
 	// Once the user has opened terminal/file/browser tabs, the agent is allowed to
 	// sit at zero AI tabs instead of keeping a dead one around - the "+" menu is
-	// still on screen to open whatever they want next.
-	const otherTabCount =
-		(session.filePreviewTabs?.length ?? 0) +
-		(session.terminalTabs?.length ?? 0) +
-		(session.browserTabs?.length ?? 0);
+	// still on screen to open whatever they want next. Only tabs this window draws
+	// count: tabs popped out into a tab window cannot keep the owner company.
+	const otherTabCount = countOwnerVisibleNonAiTabs(session);
 
 	let newActiveTabId = session.activeTabId;
 	// Fallback unified tab ref when the closed tab was active - may be terminal or file
@@ -1341,17 +1619,7 @@ export function closeTab(
 	let createdFreshTab = false;
 	let freshTabId = '';
 	if (visibleUpdatedTabs.length === 0 && otherTabCount === 0) {
-		const freshTab: AITab = {
-			id: generateId(),
-			agentSessionId: null,
-			name: null,
-			starred: false,
-			logs: [],
-			inputValue: '',
-			stagedImages: [],
-			createdAt: Date.now(),
-			state: 'idle',
-		};
+		const freshTab = buildReplacementAiTab();
 		// Hidden consult tabs survive alongside the replacement - they are the
 		// user's data, and revealing one later is still their call.
 		updatedTabs = [...updatedTabs, freshTab];
@@ -1381,16 +1649,8 @@ export function closeTab(
 				session,
 				getRepairedUnifiedTabOrder(session)
 			);
-			const closedUnifiedIndex = unifiedOrder.findIndex(
-				(ref) => ref.type === 'ai' && ref.id === tabId
-			);
-			const remainingUnified = unifiedOrder.filter(
-				(ref) => !(ref.type === 'ai' && ref.id === tabId)
-			);
-			if (closedUnifiedIndex !== -1 && remainingUnified.length > 0) {
-				const fallbackIndex = Math.max(0, closedUnifiedIndex - 1);
-				fallbackRef = remainingUnified[Math.min(fallbackIndex, remainingUnified.length - 1)];
-			} else if (visibleUpdatedTabs.length > 0) {
+			fallbackRef = leftNeighborRef(unifiedOrder, { type: 'ai', id: tabId });
+			if (!fallbackRef && visibleUpdatedTabs.length > 0) {
 				// unifiedTabOrder out of sync - fall back to aiTabs position, counted
 				// over the tabs that actually have a chip.
 				const newIndex = Math.max(0, visibleTabIndex - 1);

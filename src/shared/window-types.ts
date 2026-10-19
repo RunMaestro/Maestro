@@ -11,6 +11,8 @@
  * closing it quits the app, secondary windows do not.
  */
 
+import type { SingleTabRef } from './unifiedTabRef';
+
 /**
  * Persisted state for a single window: its on-screen bounds, maximize/fullscreen
  * flags, which agents (sessions) it owns, which one is active, and the collapsed
@@ -39,6 +41,19 @@ export interface WindowState {
 	 * relaunch.
 	 */
 	name?: string;
+	/**
+	 * Which kind of window this record restores. Absent on app windows (every
+	 * record saved before Tab Windows); `'tab'` on the records in
+	 * {@link MultiWindowState.tabWindows}. Tab records keep `sessionIds` empty
+	 * and both panel flags false: a tab window owns no agent and has no side bars.
+	 */
+	kind?: 'app' | 'tab';
+	/** `tab` kind only: the agent whose tabs the window holds (TW-4, TW-5). */
+	agentId?: string;
+	/** `tab` kind only: the popped tabs, in the tab window's strip order. */
+	tabRefs?: SingleTabRef[];
+	/** `tab` kind only: the tab shown when the window was saved. */
+	activeTabRef?: SingleTabRef | null;
 }
 
 /**
@@ -112,10 +127,16 @@ export function formatWindowTitle(windowNumber: number): string {
 /**
  * Top-level persisted multi-window state: every known window plus a pointer to
  * the primary window. Exactly one of `windows` has `id === primaryWindowId`.
+ *
+ * `windows` holds app windows only. Tab windows (TW-10) are saved apart in
+ * `tabWindows`, so the primary pointer rule holds and a build that predates
+ * Tab Windows ignores them instead of replaying them as empty app windows.
  */
 export interface MultiWindowState {
 	windows: WindowState[];
 	primaryWindowId: string;
+	/** Open tab windows (`kind: 'tab'`), restored after the app windows exist. */
+	tabWindows?: WindowState[];
 }
 
 /**
@@ -144,11 +165,13 @@ export interface WindowInfo {
  * the fields are advisory context rather than a strict diff to apply.
  */
 export interface WindowSessionMovedPayload {
-	type: 'session-moved' | 'sessions-changed' | 'name-changed' | 'removed';
+	type: 'session-moved' | 'sessions-changed' | 'name-changed' | 'removed' | 'tab-window-changed';
 	windowId?: string;
 	sessionId?: string;
 	fromWindowId?: string;
 	toWindowId?: string;
+	/** `tab-window-changed` only: the agent whose tab window changed (Tab Windows). */
+	agentId?: string;
 }
 
 /**

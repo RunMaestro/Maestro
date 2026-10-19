@@ -13,10 +13,14 @@
  * lives in another window - otherwise a window's pill would surface another
  * window's running/AutoRun agent. Omit it (single-window app / web / isolation
  * tests, where there is no WindowProvider) to include every session unchanged.
+ *
+ * A tab window (Tab Windows) holds one agent, live only in part: it uses
+ * `buildTabWindowThinkingItems` instead.
  */
 
 import type { Session, ThinkingItem } from '../types';
-import { getBusyTabs } from './tabHelpers';
+import type { SingleTabRef } from '../../shared/unifiedTabRef';
+import { buildTabWindowStripSession, getBusyTabs } from './tabHelpers';
 
 /**
  * Build the flat list of thinking items that drives the ThinkingStatusPill.
@@ -61,4 +65,27 @@ export function buildThinkingItems(
 		}
 	}
 	return items;
+}
+
+/**
+ * The thinking items of a tab window (Tab Windows, D2): the busy tabs of its
+ * strip, plus the agent's closed tabs that are still thinking.
+ *
+ * The tab window's copy of its agent is live only for the session-level fields
+ * (closed tabs included) and the tabs popped into it. Every other tab is frozen
+ * at the last snapshot, so its busy state can be stale either way, and it is
+ * left out. So is the legacy item (the agent is busy, no tab carries it): here
+ * it would mostly mean that a tab this window does not stream is busy, which
+ * the header's status dot already shows.
+ *
+ * @param session The agent as the tab window holds it.
+ * @param tabRefs This window's tabs (its registry record).
+ */
+export function buildTabWindowThinkingItems(
+	session: Session,
+	tabRefs: readonly SingleTabRef[]
+): ThinkingItem[] {
+	return buildThinkingItems([buildTabWindowStripSession(session, tabRefs)]).filter(
+		(item) => item.tab !== null
+	);
 }

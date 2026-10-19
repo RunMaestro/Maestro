@@ -1,7 +1,6 @@
 import { useCallback } from 'react';
 import {
 	selectActiveSession,
-	updateFileTab,
 	updateSessionWith,
 	useSessionStore,
 } from '../../../stores/sessionStore';
@@ -14,10 +13,18 @@ import {
 import { fileTabFocusFields } from '../../../utils/tabFocusFields';
 import { generateId } from '../../../utils/ids';
 import { insertAfterActiveInUnifiedTabOrder } from '../../../utils/unifiedTabOrderUtils';
-import { logger } from '../../../utils/logger';
-import { useModalStore } from '../../../stores/modalStore';
-import { useSettingsStore } from '../../../stores/settingsStore';
+import { closeFileTabWithConfirm } from '../../../services/tabCloseConfirm';
 import { useMediaPlaybackStore } from '../../../stores/mediaPlaybackStore';
+import {
+	fileTabNavigationIndex,
+	navigateFileTabToIndex,
+	refreshFileTabIfChanged,
+	reloadFileTab,
+	setFileTabEditContent,
+	setFileTabEditMode,
+	setFileTabScrollTop,
+	setFileTabSearchQuery,
+} from '../../../services/fileTabActions';
 import { useUIStore } from '../../../stores/uiStore';
 import { getOpenedMediaKind } from '../../../utils/mediaItems';
 import {
@@ -254,34 +261,17 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 			}
 
 			const tabToClose = currentSession.filePreviewTabs.find((tab) => tab.id === tabId);
-			if (!tabToClose) {
-				forceCloseFileTab(tabId);
-				return;
-			}
-
-			if (tabToClose.editContent !== undefined) {
-				useModalStore.getState().openModal('confirm', {
-					message: `"${tabToClose.name}${tabToClose.extension}" has unsaved changes. Are you sure you want to close it?`,
-					onConfirm: () => {
-						forceCloseFileTab(tabId);
-					},
-				});
-			} else {
-				forceCloseFileTab(tabId);
-			}
+			closeFileTabWithConfirm(tabToClose, () => forceCloseFileTab(tabId));
 		},
 		[forceCloseFileTab]
 	);
 
+	// The file tab actions take their agent explicitly (`services/fileTabActions`,
+	// shared with tab windows); this window's own preview aims them at the active agent.
 	const handleFileTabEditModeChange = useCallback((tabId: string, editMode: boolean) => {
-		const { activeSessionId } = useSessionStore.getState();
-		updateFileTab(activeSessionId, tabId, (tab) => ({ ...tab, editMode }));
+		setFileTabEditMode(useSessionStore.getState().activeSessionId, tabId, editMode);
 	}, []);
 
-	// `savedMtime` travels with `savedContent`: the tab's lastModified must track
-	// the mtime of the bytes it is holding. Leave it out on a save and the tab
-	// keeps its pre-save timestamp, so the next mount of FilePreview compares the
-	// disk against a stale value and raises a false "File changed on disk".
 	const handleFileTabEditContentChange = useCallback(
 		(
 			tabId: string,
@@ -289,66 +279,27 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 			savedContent?: string,
 			savedMtime?: number
 		) => {
-			const { activeSessionId } = useSessionStore.getState();
-			updateFileTab(activeSessionId, tabId, (tab) =>
-				savedContent !== undefined
-					? {
-							...tab,
-							editContent,
-							content: savedContent,
-							lastModified: savedMtime ?? tab.lastModified,
-						}
-					: { ...tab, editContent }
+			setFileTabEditContent(
+				useSessionStore.getState().activeSessionId,
+				tabId,
+				editContent,
+				savedContent,
+				savedMtime
 			);
 		},
 		[]
 	);
 
 	const handleFileTabScrollPositionChange = useCallback((tabId: string, scrollTop: number) => {
-		const { activeSessionId } = useSessionStore.getState();
-		updateFileTab(activeSessionId, tabId, (tab) => {
-			let updatedHistory = tab.navigationHistory;
-			if (updatedHistory && updatedHistory.length > 0) {
-				const currentIndex = tab.navigationIndex ?? updatedHistory.length - 1;
-				if (currentIndex >= 0 && currentIndex < updatedHistory.length) {
-					updatedHistory = updatedHistory.map((entry, idx) =>
-						idx === currentIndex ? { ...entry, scrollTop } : entry
-					);
-				}
-			}
-			return { ...tab, scrollTop, navigationHistory: updatedHistory };
-		});
+		setFileTabScrollTop(useSessionStore.getState().activeSessionId, tabId, scrollTop);
 	}, []);
 
 	const handleFileTabSearchQueryChange = useCallback((tabId: string, searchQuery: string) => {
-		const { activeSessionId } = useSessionStore.getState();
-		updateFileTab(activeSessionId, tabId, (tab) => ({ ...tab, searchQuery }));
+		setFileTabSearchQuery(useSessionStore.getState().activeSessionId, tabId, searchQuery);
 	}, []);
 
 	const handleReloadFileTab = useCallback(async (tabId: string) => {
-		const currentSession = selectActiveSession(useSessionStore.getState());
-		if (!currentSession) return;
-
-		const fileTab = currentSession.filePreviewTabs.find((tab) => tab.id === tabId);
-		if (!fileTab) return;
-
-		try {
-			const [content, stat] = await Promise.all([
-				window.maestro.fs.readFile(fileTab.path, fileTab.sshRemoteId),
-				window.maestro.fs.stat(fileTab.path, fileTab.sshRemoteId),
-			]);
-			if (content === null) return;
-			const newMtime = stat?.modifiedAt ? new Date(stat.modifiedAt).getTime() : Date.now();
-
-			updateFileTab(useSessionStore.getState().activeSessionId, tabId, (tab) => ({
-				...tab,
-				content,
-				lastModified: newMtime,
-				editContent: undefined,
-			}));
-		} catch (error) {
-			logger.debug('[handleReloadFileTab] Failed to reload:', undefined, error);
-		}
+		await reloadFileTab(useSessionStore.getState().activeSessionId, tabId);
 	}, []);
 
 	const handleSelectFileTab = useCallback(async (tabId: string) => {
@@ -368,27 +319,7 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 			activeGroupId: null,
 		}));
 
-		const { fileTabAutoRefreshEnabled } = useSettingsStore.getState();
-		if (fileTabAutoRefreshEnabled && !fileTab.editContent) {
-			try {
-				const stat = await window.maestro.fs.stat(fileTab.path, fileTab.sshRemoteId);
-				if (!stat || !stat.modifiedAt) return;
-
-				const currentMtime = new Date(stat.modifiedAt).getTime();
-
-				if (currentMtime > fileTab.lastModified) {
-					const content = await window.maestro.fs.readFile(fileTab.path, fileTab.sshRemoteId);
-					if (content === null) return;
-					updateFileTab(useSessionStore.getState().activeSessionId, tabId, (tab) => ({
-						...tab,
-						content,
-						lastModified: currentMtime,
-					}));
-				}
-			} catch (error) {
-				logger.debug('[handleSelectFileTab] Auto-refresh failed:', undefined, error);
-			}
-		}
+		await refreshFileTabIfChanged(currentSession.id, tabId);
 	}, []);
 
 	const handleNewFileTab = useCallback(() => {
@@ -446,39 +377,15 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 		const currentSession = selectActiveSession(useSessionStore.getState());
 		const targetTabId = tabId ?? currentSession?.activeFileTabId;
 		if (!currentSession || !targetTabId) return;
-
-		const currentTab = currentSession.filePreviewTabs.find((tab) => tab.id === targetTabId);
-		if (!currentTab) return;
-
-		const history = currentTab.navigationHistory ?? [];
-		if (index < 0 || index >= history.length) return;
-		const historyEntry = history[index];
-
-		try {
-			const content = await window.maestro.fs.readFile(historyEntry.path, currentTab.sshRemoteId);
-			if (content === null) return;
-
-			updateFileTab(currentSession.id, currentTab.id, (tab) => ({
-				...tab,
-				path: historyEntry.path,
-				name: historyEntry.name,
-				content,
-				scrollTop: historyEntry.scrollTop ?? 0,
-				navigationIndex: index,
-			}));
-		} catch (error) {
-			logger.error('Failed to navigate file tab history:', undefined, error);
-		}
+		await navigateFileTabToIndex(currentSession.id, targetTabId, index);
 	}, []);
 
 	/** Current position in a file tab's history, or -1 when it has none. */
 	const currentNavIndex = (tabId?: string): number => {
 		const currentSession = selectActiveSession(useSessionStore.getState());
 		const targetTabId = tabId ?? currentSession?.activeFileTabId;
-		const tab = currentSession?.filePreviewTabs.find((t) => t.id === targetTabId);
-		if (!tab) return -1;
-		const history = tab.navigationHistory ?? [];
-		return tab.navigationIndex ?? history.length - 1;
+		if (!currentSession || !targetTabId) return -1;
+		return fileTabNavigationIndex(currentSession.id, targetTabId);
 	};
 
 	const handleFileTabNavigateBack = useCallback(

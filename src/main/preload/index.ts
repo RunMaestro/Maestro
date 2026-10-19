@@ -71,7 +71,7 @@ import { createContextTimelineApi } from './contextTimeline';
 import { createAgentRunApi } from './agentRun';
 import { createCoworkingApi } from './coworking';
 import { createBrowserSessionApi } from './browserSession';
-import { createWindowsApi } from './windows';
+import { createWindowsApi, createTabWindowsApi } from './windows';
 import { createImagesApi } from './images';
 import { createCotExportApi } from './cotExport';
 import { createQuickChatApi } from './quickChat';
@@ -292,6 +292,8 @@ contextBridge.exposeInMainWorld('maestro', {
 
 	// Multi-window API (window.maestro.windows.* - enumerate/create/move windows)
 	windows: createWindowsApi(),
+	// Tab Windows API (window.maestro.tabWindows.* - pop out, dock, relay)
+	tabWindows: createTabWindowsApi(),
 
 	// Session Images API (resolve maestro-image:// refs back to data URLs)
 	images: createImagesApi(),
@@ -412,6 +414,7 @@ export {
 	createBrowserSessionApi,
 	// Multi-window
 	createWindowsApi,
+	createTabWindowsApi,
 	// Session Images
 	createImagesApi,
 	// Chain of thought export
@@ -702,6 +705,7 @@ export type {
 export type {
 	// From windows
 	WindowsApi,
+	TabWindowsApi,
 	WindowBounds,
 } from './windows';
 export type {

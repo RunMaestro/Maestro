@@ -1098,14 +1098,114 @@ describe('useInterruptHandler', () => {
 	});
 
 	// ========================================================================
+	// An explicit target (Tab Windows: the owner stops a popped tab)
+	// ========================================================================
+	describe('interruptAgent with an explicit target', () => {
+		/** The active agent shows `other`; `sess-tw` has a popped tab `popped`. */
+		function seedTwoAgents(inputMode: 'ai' | 'terminal' = 'ai') {
+			const popped = createTab({
+				id: 'popped',
+				state: 'busy',
+				logs: [
+					{ id: 'u', timestamp: 1, source: 'user', text: 'go' },
+					{ id: 't', timestamp: 2, source: 'thinking', text: 'hmm' },
+				],
+			});
+			const home = createTab({ id: 'home', state: 'idle' });
+			const target = createSession({
+				id: 'sess-tw',
+				state: 'busy',
+				inputMode,
+				aiTabs: [home, popped],
+				activeTabId: 'home',
+			});
+			const other = createSession({ id: 'other', aiTabs: [createTab({ id: 'o-1' })] });
+			useSessionStore.setState({ sessions: [target, other], activeSessionId: 'other' });
+			return target;
+		}
+
+		it('stops the named agent, with the named tab as the primary target', async () => {
+			const session = seedTwoAgents();
+			const deps = createDeps({ sessionsRef: { current: [session] } });
+			const { result } = renderHook(() => useInterruptHandler(deps));
+
+			await act(async () => {
+				await result.current.interruptAgent({ sessionId: 'sess-tw', tabId: 'popped', mode: 'ai' });
+			});
+
+			expect(mockMaestro.process.interrupt.mock.calls[0][0]).toBe('sess-tw-ai-popped');
+			expect(deps.cancelPendingSynopsis).toHaveBeenCalledWith('sess-tw');
+			expect(mockMaestro.crossAgent.cancel).toHaveBeenCalledWith('sess-tw');
+			// The active agent is untouched.
+			expect(mockMaestro.process.interrupt).not.toHaveBeenCalledWith('other-ai-o-1');
+		});
+
+		it('writes "Canceled by user" on the named tab, not on the agent active tab', async () => {
+			seedTwoAgents();
+			const { result } = renderHook(() => useInterruptHandler(createDeps()));
+
+			await act(async () => {
+				await result.current.interruptAgent({ sessionId: 'sess-tw', tabId: 'popped', mode: 'ai' });
+			});
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-tw')!;
+			const popped = updated.aiTabs.find((t) => t.id === 'popped')!;
+			const home = updated.aiTabs.find((t) => t.id === 'home')!;
+			expect(popped.state).toBe('idle');
+			expect(popped.logs.map((l) => l.text)).toEqual(['go', 'Canceled by user']);
+			expect(home.logs).toEqual([]);
+			expect(updated.state).toBe('idle');
+		});
+
+		it("stops the AI tab even while the agent's own view is its terminal", async () => {
+			seedTwoAgents('terminal');
+			const { result } = renderHook(() => useInterruptHandler(createDeps()));
+
+			await act(async () => {
+				await result.current.interruptAgent({ sessionId: 'sess-tw', tabId: 'popped', mode: 'ai' });
+			});
+
+			expect(mockMaestro.process.interrupt.mock.calls[0][0]).toBe('sess-tw-ai-popped');
+			expect(mockMaestro.process.interrupt).not.toHaveBeenCalledWith('sess-tw-terminal');
+		});
+
+		it('handleInterrupt is the same Stop on the active agent and its active tab', async () => {
+			const tab = createTab({ id: 'tab-a', state: 'busy' });
+			const session = createSession({
+				id: 'sess-a',
+				state: 'busy',
+				aiTabs: [tab],
+				activeTabId: 'tab-a',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'sess-a' });
+			const { result } = renderHook(() => useInterruptHandler(createDeps()));
+
+			await act(async () => {
+				await result.current.handleInterrupt();
+			});
+
+			expect(mockMaestro.process.interrupt).toHaveBeenCalledWith('sess-a-ai-tab-a');
+		});
+
+		it('does nothing for an agent that is gone', async () => {
+			const { result } = renderHook(() => useInterruptHandler(createDeps()));
+			await act(async () => {
+				await result.current.interruptAgent({ sessionId: 'nope', tabId: 'x' });
+			});
+			expect(mockMaestro.process.interrupt).not.toHaveBeenCalled();
+		});
+	});
+
+	// ========================================================================
 	// Return type
 	// ========================================================================
 	describe('return type', () => {
-		it('returns handleInterrupt function', () => {
+		it('returns handleInterrupt and interruptAgent', () => {
 			const deps = createDeps();
 			const { result } = renderHook(() => useInterruptHandler(deps));
 
 			expect(typeof result.current.handleInterrupt).toBe('function');
+			expect(typeof result.current.interruptAgent).toBe('function');
 		});
 	});
 });

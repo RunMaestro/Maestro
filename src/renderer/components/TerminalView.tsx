@@ -8,7 +8,7 @@ import {
 	useState,
 	useMemo,
 } from 'react';
-import { XTerminal, XTerminalHandle } from './XTerminal';
+import { XTerminal, XTerminalHandle, type XTerminalHandoff } from './XTerminal';
 import { TerminalSearchBar } from './TerminalSearchBar';
 import { TerminalTouchBar } from './TerminalTouchBar';
 import {
@@ -20,6 +20,8 @@ import {
 } from '../utils/terminalTabHelpers';
 import { useSessionStore } from '../stores/sessionStore';
 import { useTabStore } from '../stores/tabStore';
+import { isTabPoppedOut, usePoppedOutTabKeys } from '../stores/tabWindowStore';
+import { tabRefKey } from '../../shared/unifiedTabRef';
 import { spawnPtyForTab as spawnPty } from '../services/terminalSpawn';
 import { notifyToast } from '../stores/notificationStore';
 import { isCoarsePointer } from '../utils/touch';
@@ -81,6 +83,19 @@ interface TerminalViewProps {
 	/** Send the highlighted terminal selection to another agent. Tab ID is supplied so the
 	 *  handler can derive a display name (e.g. "Terminal 2") for the target agent modal. */
 	onSendSelectionToAgent?: (tabId: string, text: string) => void;
+	/**
+	 * Tab window (Tab Windows, D5): show PTYs the owner window runs. The owner
+	 * spawns them and handles their exit (D1), so this view never spawns, never
+	 * closes a tab, and writes no "Starting terminal..." line. It only writes an
+	 * exit notice.
+	 */
+	attachOnly?: boolean;
+	/**
+	 * Asked as a tab's terminal unmounts: is the tab moving to another window?
+	 * Then its scrollback is handed over to the next view (Tab Windows, D5). By
+	 * default, whether the tab is popped out of this (owner) window.
+	 */
+	releaseTabOnUnmount?: (tabId: string) => boolean;
 }
 
 // ============================================================================
@@ -103,6 +118,8 @@ export const TerminalView = memo(
 			onSendSelectionToAgent,
 			paneRects,
 			onPaneMouseDown,
+			attachOnly = false,
+			releaseTabOnUnmount,
 		},
 		ref
 	) {
@@ -144,6 +161,34 @@ export const TerminalView = memo(
 		);
 
 		const closeTerminalTab = useTabStore((s) => s.closeTerminalTab);
+
+		// Tab Windows (D5). A popped-out tab is shown by its tab window, which
+		// mounts its own view of the same PTY. This window drops its view (so it
+		// never writes that PTY's output, and its hidden xterm never pushes a size
+		// to the shared PTY) and keeps the process. Empty in a tab window.
+		const poppedKeys = usePoppedOutTabKeys(session.id);
+		const isPopped = useCallback(
+			(tabId: string) => poppedKeys.has(tabRefKey({ type: 'terminal', id: tabId })),
+			[poppedKeys]
+		);
+		const releaseTabOnUnmountRef = useRef(releaseTabOnUnmount);
+		releaseTabOnUnmountRef.current = releaseTabOnUnmount;
+		// One handoff binding per tab, so XTerminal reads the latest decision at unmount.
+		const handoffsRef = useRef<Map<string, XTerminalHandoff>>(new Map());
+		const getHandoff = (tabId: string): XTerminalHandoff => {
+			let handoff = handoffsRef.current.get(tabId);
+			if (!handoff) {
+				handoff = {
+					releaseOnUnmount: () =>
+						releaseTabOnUnmountRef.current
+							? releaseTabOnUnmountRef.current(tabId)
+							: isTabPoppedOut(session.id, { type: 'terminal', id: tabId }),
+					releaseOnUnload: attachOnly,
+				};
+				handoffsRef.current.set(tabId, handoff);
+			}
+			return handoff;
+		};
 
 		// Batch spawn-failure toasts: coalesce rapid failures (e.g. session restore
 		// triggers many tabs at once) into a single toast with a count.
@@ -313,16 +358,32 @@ export const TerminalView = memo(
 		//
 		// Initialization is independent of PID availability (ConPTY can report 0).
 		// The host also deduplicates attachments across renderer clients.
+		//
+		// A popped-out tab is on screen in its tab window, which never spawns (D1),
+		// so the owner spawns it here. The tab window's view pushes its own size.
 		useEffect(() => {
+			if (attachOnly) return;
 			const terminalTabs = session.terminalTabs || [];
 			for (const tab of terminalTabs) {
 				if (tab.ptyInitialized || tab.pid !== 0 || tab.state === 'exited') continue;
-				const onScreen = tab.id === activeTab?.id || paneRects?.has(tab.id) === true;
+				const onScreen =
+					tab.id === activeTab?.id || paneRects?.has(tab.id) === true || isPopped(tab.id);
 				if (onScreen || tab.startupCommand) {
 					spawnPtyForTab(tab);
 				}
 			}
-		}, [session.terminalTabs, activeTab?.id, paneRects, spawnPtyForTab]);
+		}, [attachOnly, session.terminalTabs, activeTab?.id, paneRects, isPopped, spawnPtyForTab]);
+
+		// Tab window: the owner spawns, so a view here may mount before its PTY
+		// exists and lose its first size push (process:resize answers false for an
+		// unknown id). Push it again whenever a PTY appears or changes.
+		const ptySignature = attachOnly
+			? (session.terminalTabs || []).map((tab) => `${tab.id}:${tab.pid}:${tab.state}`).join('|')
+			: '';
+		useEffect(() => {
+			if (!attachOnly) return;
+			for (const handle of terminalRefs.current.values()) handle.syncSize();
+		}, [attachOnly, ptySignature]);
 
 		// Focus and repaint the active terminal when the active tab changes.
 		// The refresh() call is necessary because switching tabs uses CSS visibility: hidden
@@ -366,6 +427,8 @@ export const TerminalView = memo(
 
 		// Subscribe to PTY exit events for terminal tabs in this session
 		useEffect(() => {
+			// The owner records the exit (D1); a tab window sees it in the patched tab state.
+			if (attachOnly) return;
 			const cleanup = window.maestro.process.onExit(
 				(exitSessionId: string, code: number, signal?: number) => {
 					const parsed = parseTerminalSessionId(exitSessionId);
@@ -375,7 +438,7 @@ export const TerminalView = memo(
 				}
 			);
 			return cleanup;
-		}, [session.id]);
+		}, [attachOnly, session.id]);
 
 		// Handle a terminal's PTY exiting. A tab is auto-closed ONLY when its shell
 		// exited of its own accord (the user typed `exit` / Ctrl-D) - that's a scratch
@@ -403,6 +466,19 @@ export const TerminalView = memo(
 			const isRemoteSession = !!(session.sessionSshRemoteConfig?.enabled || session.sshRemoteId);
 			for (const tab of terminalTabs) {
 				const prev = prevTabStatesRef.current.get(tab.id);
+				if (attachOnly) {
+					// The owner decides keep or close and toasts (D1). A kept tab stays
+					// here as an exited husk; say so. `ptyInitialized` is the owner's
+					// per-window field, so it is not read here.
+					if (prev !== undefined && prev !== 'exited' && tab.state === 'exited') {
+						const code = tab.exitCode != null ? ` (code ${tab.exitCode})` : '';
+						terminalRefs.current
+							.get(tab.id)
+							?.write(`\r\n\x1b[2m[process exited${code}]\x1b[0m\r\n`);
+					}
+					prevTabStatesRef.current.set(tab.id, tab.state);
+					continue;
+				}
 				if (
 					prev !== undefined &&
 					prev !== 'exited' &&
@@ -452,6 +528,7 @@ export const TerminalView = memo(
 				prevTabStatesRef.current.set(tab.id, tab.state);
 			}
 		}, [
+			attachOnly,
 			session.terminalTabs,
 			session.sessionSshRemoteConfig,
 			session.sshRemoteId,
@@ -459,7 +536,7 @@ export const TerminalView = memo(
 			notifySpawnFailure,
 		]);
 
-		const terminalTabs = session.terminalTabs || [];
+		const terminalTabs = (session.terminalTabs || []).filter((tab) => !isPopped(tab.id));
 
 		if (terminalTabs.length === 0) {
 			return (
@@ -561,6 +638,7 @@ export const TerminalView = memo(
 											terminalRefs.current.set(tab.id, handle);
 											// Write loading indicator once per idle cycle - guard prevents duplicate writes on re-renders
 											if (
+												!attachOnly &&
 												tab.pid === 0 &&
 												!tab.ptyInitialized &&
 												tab.state === 'idle' &&
@@ -578,6 +656,7 @@ export const TerminalView = memo(
 										}
 									}}
 									sessionId={terminalSessionId}
+									handoff={getHandoff(tab.id)}
 									theme={theme}
 									fontFamily={fontFamily}
 									fontSize={fontSize}

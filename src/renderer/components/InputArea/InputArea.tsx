@@ -153,12 +153,18 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		availableEfforts = [],
 		onModelChange,
 		onEffortChange,
+		thinkingItems: thinkingItemsOverride,
+		onAcceptAiCommand,
+		onPermissionModeChange,
+		onThinkingModeChange,
 	} = props;
 
 	// Self-source thinking items with a narrow store equality so App/MainPanel
-	// are not re-rendered on every streaming log flush.
+	// are not re-rendered on every streaming log flush. A tab window passes its
+	// own (only the tabs it streams are live there).
 	const ownsSession = useWindowContextOptional()?.ownsSession;
-	const thinkingItems = useThinkingItems(ownsSession);
+	const storeThinkingItems = useThinkingItems(ownsSession);
+	const thinkingItems = thinkingItemsOverride ?? storeThinkingItems;
 
 	const spellCheckEnabled = useSettingsStore((state) => state.spellCheck);
 	const openAnnotator = useImageAnnotatorStore((state) => state.openAnnotator);
@@ -683,7 +689,11 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 							<AiCommandProposal
 								theme={theme}
 								entry={aiCommandEntry}
-								onAccept={() => acceptAiCommand(session, aiCommandEntry)}
+								onAccept={() =>
+									onAcceptAiCommand
+										? onAcceptAiCommand(aiCommandEntry)
+										: acceptAiCommand(session, aiCommandEntry)
+								}
 								onDismiss={() => {
 									// Hand the request back so the user can refine it, and put the
 									// caret where they can: declining is nearly always "that is not
@@ -750,6 +760,8 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 							setEffortMenuOpen={setEffortMenuOpen}
 							effortMenuRef={effortMenuRef}
 							processInput={processInput}
+							onPermissionModeChange={onPermissionModeChange}
+							onThinkingModeChange={onThinkingModeChange}
 						/>
 					</div>
 					{/* Context Warning Sash - AI mode only, appears below input when context usage is high */}

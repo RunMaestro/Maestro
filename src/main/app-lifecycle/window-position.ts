@@ -12,6 +12,27 @@ export const DESIGN_MIN_WINDOW_WIDTH = 1000;
 export const DESIGN_MIN_WINDOW_HEIGHT = 600;
 
 /**
+ * Tab window sizing (Tab Windows TW-1). A tab window shows one agent's tabs and
+ * no side bars, so it opens smaller than an app window and may shrink well
+ * below the app's design minimum.
+ */
+export const TAB_WINDOW_DEFAULT_WIDTH = 900;
+export const TAB_WINDOW_DEFAULT_HEIGHT = 700;
+export const TAB_WINDOW_MIN_WIDTH = 480;
+export const TAB_WINDOW_MIN_HEIGHT = 360;
+
+/** Space left between an owner window and a tab window opened beside it. */
+const TAB_WINDOW_GAP = 16;
+
+/** A minimum window size, in DIPs. */
+export type MinWindowSize = { width: number; height: number };
+
+const DESIGN_MIN_WINDOW_SIZE: MinWindowSize = {
+	width: DESIGN_MIN_WINDOW_WIDTH,
+	height: DESIGN_MIN_WINDOW_HEIGHT,
+};
+
+/**
  * Resolves the size and minimum-size constraints for a window, clamped to the
  * work area of the display it will occupy.
  *
@@ -30,13 +51,19 @@ export const DESIGN_MIN_WINDOW_HEIGHT = 600;
  * oversized. They are only ever clamped down, never enlarged: a smaller saved
  * size is preserved, and the resolved `minWidth`/`minHeight` (which Electron
  * enforces when the window realizes) supplies the floor, exactly as before.
+ *
+ * `designMin` is the floor on a display large enough to hold it; it defaults to
+ * the app window minimum. A tab window passes its own smaller minimum.
  */
-export function resolveWindowSizeConstraints(state: {
-	x?: number;
-	y?: number;
-	width: number;
-	height: number;
-}): { width: number; height: number; minWidth: number; minHeight: number } {
+export function resolveWindowSizeConstraints(
+	state: {
+		x?: number;
+		y?: number;
+		width: number;
+		height: number;
+	},
+	designMin: MinWindowSize = DESIGN_MIN_WINDOW_SIZE
+): { width: number; height: number; minWidth: number; minHeight: number } {
 	// Match the display the window will actually occupy (same rule the position
 	// resolver uses) so a window on a small secondary monitor is clamped to that
 	// monitor, not the primary. With no saved position, Electron places the
@@ -51,8 +78,8 @@ export function resolveWindowSizeConstraints(state: {
 				}).workArea
 			: screen.getPrimaryDisplay().workArea;
 
-	const minWidth = Math.min(DESIGN_MIN_WINDOW_WIDTH, workArea.width);
-	const minHeight = Math.min(DESIGN_MIN_WINDOW_HEIGHT, workArea.height);
+	const minWidth = Math.min(designMin.width, workArea.width);
+	const minHeight = Math.min(designMin.height, workArea.height);
 	const width = Math.min(state.width, workArea.width);
 	const height = Math.min(state.height, workArea.height);
 	return { width, height, minWidth, minHeight };
@@ -127,4 +154,48 @@ export function resolveVisibleWindowPosition(state: {
 	// Off-screen (minimized sentinel or removed monitor): bring the window back
 	// onto the primary display so it can never spawn invisible.
 	return centerWithinWorkArea(screen.getPrimaryDisplay().workArea, bounds.width, bounds.height);
+}
+
+/**
+ * Resolves where a NEW tab window opens (Tab Windows TW-1). A restored tab
+ * window uses its saved bounds instead.
+ *
+ * - The cursor is on another display than the owner window (or there is no
+ *   owner): center the window on the cursor's display, so a pop-out lands on the
+ *   monitor the user is working on.
+ * - Same display: open beside the owner, to its right when that fits, else to
+ *   its left, else flush with the work area's right edge (over the owner).
+ *
+ * The size is clamped down to the target work area, and the top edge is kept
+ * inside it so the title bar is always reachable.
+ */
+export function resolveTabWindowPlacement(state: {
+	ownerBounds?: DisplayWorkArea;
+	cursor?: { x: number; y: number };
+	width: number;
+	height: number;
+}): { x: number; y: number; width: number; height: number } {
+	const { ownerBounds, cursor } = state;
+	const ownerDisplay = ownerBounds ? screen.getDisplayMatching(ownerBounds) : undefined;
+	const cursorDisplay = cursor ? screen.getDisplayNearestPoint(cursor) : undefined;
+
+	if (!ownerBounds || !ownerDisplay || (cursorDisplay && cursorDisplay.id !== ownerDisplay.id)) {
+		const workArea = (cursorDisplay ?? screen.getPrimaryDisplay()).workArea;
+		const width = Math.min(state.width, workArea.width);
+		const height = Math.min(state.height, workArea.height);
+		return { ...centerWithinWorkArea(workArea, width, height), width, height };
+	}
+
+	const workArea = ownerDisplay.workArea;
+	const width = Math.min(state.width, workArea.width);
+	const height = Math.min(state.height, workArea.height);
+	const workRight = workArea.x + workArea.width;
+	const rightOfOwner = ownerBounds.x + ownerBounds.width + TAB_WINDOW_GAP;
+	const leftOfOwner = ownerBounds.x - TAB_WINDOW_GAP - width;
+	let x: number;
+	if (rightOfOwner + width <= workRight) x = rightOfOwner;
+	else if (leftOfOwner >= workArea.x) x = leftOfOwner;
+	else x = workRight - width;
+	const y = Math.min(Math.max(ownerBounds.y, workArea.y), workArea.y + workArea.height - height);
+	return { x: Math.round(x), y: Math.round(y), width, height };
 }

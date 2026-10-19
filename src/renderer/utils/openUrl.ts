@@ -22,6 +22,7 @@ import { notifyCenterFlash } from '../stores/centerFlashStore';
 import { isWebDesktop } from './runtimeContext';
 import { isHostLocalPreviewUrl } from '../../shared/hostLocalPreview';
 import { parseUrlRoutingHint } from '../../shared/urlRoutingHint';
+import { sendShownTabIntent } from '../services/tabWindowIntentSender';
 
 /**
  * Open a URL, respecting the user's default browser setting.
@@ -104,6 +105,9 @@ export function openInSystemBrowser(url: string): void {
 export function openInMaestroBrowser(rawUrl: string): void {
 	const url = explicitTarget(rawUrl);
 	if (!url) return;
+	// A browser tab is the agent's, and only its owner window writes the agent
+	// (Tab Windows, D1): the owner opens it and raises itself.
+	if (sendShownTabIntent('openUrlInMaestro', { url })) return;
 	const session = selectActiveSession(useSessionStore.getState());
 	if (!session) {
 		if (isWebDesktop() && isHostLocalPreviewUrl(url)) {

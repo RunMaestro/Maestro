@@ -12,7 +12,12 @@ import { useSidebarNavStore } from '../../../renderer/stores/sidebarNavStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
-import { createMockSession } from '../../helpers';
+import {
+	clearTabWindowStore,
+	createMockSession,
+	installTabWindowsApi,
+	popOutTabsInStore,
+} from '../../helpers';
 import type { StarredItem } from '../../../renderer/hooks/session/useStarredItems';
 
 const SESSION_ID = 'session-1';
@@ -63,6 +68,24 @@ describe('sidebarNavStore', () => {
 			expect(session?.activeTabId).toBe(TAB_ID);
 			expect(session?.activeFileTabId).toBeNull();
 			expect(session?.inputMode).toBe('ai');
+		});
+
+		it('focuses the tab window of a popped starred tab and leaves the owner alone (D4)', async () => {
+			const tabWindows = installTabWindowsApi();
+			popOutTabsInStore(SESSION_ID, [{ type: 'ai', id: TAB_ID }]);
+			useGroupChatStore.setState({ activeGroupChatId: 'chat-1' });
+			const before = useSessionStore.getState().sessions[0];
+			try {
+				await useSidebarNavStore.getState().activateStarredItem(openItem);
+
+				expect(tabWindows.focus).toHaveBeenCalledWith(SESSION_ID, { type: 'ai', id: TAB_ID });
+				expect(useSessionStore.getState().activeSessionId).toBe('');
+				expect(useSessionStore.getState().sessions[0]).toBe(before);
+				expect(useGroupChatStore.getState().activeGroupChatId).toBe('chat-1');
+			} finally {
+				tabWindows.restore();
+				clearTabWindowStore();
+			}
 		});
 
 		it('closes the left drawer on a narrow viewport', async () => {

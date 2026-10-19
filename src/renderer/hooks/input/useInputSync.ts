@@ -32,8 +32,11 @@ interface AiDraftPayload {
  * typing pause (not per keystroke), and it means no flush point is load
  * bearing any more - blur, submit and tab-switch just make the write happen
  * sooner.
+ *
+ * A tab window's composer writes its draft back to the owner window on the
+ * same delay (`useTabWindowDraft`).
  */
-const DRAFT_FLUSH_DELAY_MS = 300;
+export const DRAFT_FLUSH_DELAY_MS = 300;
 
 /**
  * Dependencies required by the useInputSync hook

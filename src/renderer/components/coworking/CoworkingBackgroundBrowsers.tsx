@@ -15,6 +15,8 @@ import { useCoworkingBackgroundBrowserStore } from '../../stores/coworkingBackgr
 import { useSessionStore, updateSessionWith, selectActiveSession } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { normalizeBrowserTabUpdates } from '../../hooks/tabs/internal/browserTabHelpers';
+import { useTabWindowStore } from '../../stores/tabWindowStore';
+import { tabRefKey } from '../../../shared/unifiedTabRef';
 
 export function CoworkingBackgroundBrowsers({ theme }: { theme: Theme }) {
 	const mounts = useCoworkingBackgroundBrowserStore((s) => s.mounts);
@@ -30,6 +32,9 @@ export function CoworkingBackgroundBrowsers({ theme }: { theme: Theme }) {
 	// The active agent's browser tabs are mounted by MainPanelContent, so exclude
 	// them here: two hidden webviews for the same tab would race on nav events.
 	const activeSessionId = useSessionStore((s) => selectActiveSession(s)?.id ?? null);
+	// A tab popped out into its tab window has that window's webview (Tab
+	// Windows, D5): a hidden one here would race it the same way.
+	const poppedByAgent = useTabWindowStore((s) => s.poppedByAgent);
 
 	const handleBackgroundTabUpdate = useCallback(
 		(sessionId: string, tabId: string, updates: Partial<BrowserTab>) => {
@@ -61,7 +66,11 @@ export function CoworkingBackgroundBrowsers({ theme }: { theme: Theme }) {
 		);
 	}, [enabled, sessions, pruneMounts]);
 
-	const visibleMounts = mounts.filter((m) => m.sessionId !== activeSessionId);
+	const visibleMounts = mounts.filter(
+		(m) =>
+			m.sessionId !== activeSessionId &&
+			!poppedByAgent[m.sessionId]?.has(tabRefKey({ type: 'browser', id: m.tabUuid }))
+	);
 	if (!enabled || visibleMounts.length === 0) return null;
 
 	return (

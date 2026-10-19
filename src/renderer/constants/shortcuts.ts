@@ -166,6 +166,14 @@ export const DEFAULT_SHORTCUTS = {
 		keys: ['Meta', 'Shift', 'y'],
 	},
 	toggleTabStar: { id: 'toggleTabStar', label: 'Toggle Tab Star', keys: ['Meta', 'Shift', 's'] },
+	// Tab Windows (TW-11). In a tab window the same chord docks the shown tab
+	// back (`useTabWindowKeyboard`), which is why the chip menu shows it beside
+	// both "Move to Tab Window" and "Dock to Main Window".
+	moveTabToTabWindow: {
+		id: 'moveTabToTabWindow',
+		label: 'Move Tab to Tab Window',
+		keys: ['Alt', 'Meta', 'o'],
+	},
 	openPromptComposer: {
 		id: 'openPromptComposer',
 		label: 'Open Prompt Composer',

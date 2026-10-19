@@ -3,6 +3,7 @@ import { useStoreWithEqualityFn } from 'zustand/traditional';
 import type { Session } from '../../../types';
 import { selectActiveSession, useSessionStore } from '../../../stores/sessionStore';
 import { activeSessionChromeEquality } from '../../../stores/sessionEquality';
+import { usePoppedOutTabKeys } from '../../../stores/tabWindowStore';
 import { buildUnifiedTabs, getActiveTab } from '../../../utils/tabHelpers';
 import type { TabDerivedState } from './types';
 
@@ -73,5 +74,8 @@ export function useTabDerivedState(): TabDerivedState {
 		activeSessionChromeEquality
 	);
 
-	return useMemo(() => getTabDerivedState(activeSession), [activeSession]);
+	// A pop-out drops a chip without changing the session (Tab Windows, D4).
+	const poppedOutTabKeys = usePoppedOutTabKeys(activeSession?.id);
+
+	return useMemo(() => getTabDerivedState(activeSession), [activeSession, poppedOutTabKeys]);
 }

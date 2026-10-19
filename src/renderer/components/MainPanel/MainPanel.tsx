@@ -16,6 +16,7 @@ import {
 import { useUIStore } from '../../stores/uiStore';
 import { useSessionStore, selectActiveSession, updateSessionWith } from '../../stores/sessionStore';
 import { useTabStore } from '../../stores/tabStore';
+import { usePoppedOutTabKeys } from '../../stores/tabWindowStore';
 import { getTabDerivedState } from '../../hooks/tabs/useTabHandlers';
 import {
 	breakApartGroup,
@@ -57,6 +58,8 @@ import { useHostBrowserRelayResponder } from '../../hooks/browser/useHostBrowser
 import { useWindowOwnsSession } from '../../contexts/WindowContext';
 import type { PaneFileActions, PaneTabActions } from './TiledLayout';
 import type { Theme, UnifiedTabRef } from '../../types';
+import type { TabWindowTabRef } from '../../../shared/tabWindowTypes';
+import { canUseTabWindows, popOutTabFromUi } from '../../services/tabWindowActions';
 import type { MainPanelHandle, MainPanelProps } from './types';
 
 /**
@@ -346,7 +349,10 @@ export const MainPanel = React.memo(
 
 		// PERF: Tab strip / file-nav paint derived here from the full session this
 		// panel already subscribes to - not from App chrome equality (which would
-		// wake MaestroConsoleInner on every busy/tab-state flip).
+		// wake MaestroConsoleInner on every busy/tab-state flip). The popped set is a
+		// dependency: popping out a tab drops its chip without changing
+		// `activeSession` (Tab Windows, D4).
+		const poppedOutTabKeys = usePoppedOutTabKeys(activeSession?.id);
 		const {
 			activeTab: derivedActiveTab,
 			unifiedTabs,
@@ -356,7 +362,7 @@ export const MainPanel = React.memo(
 			fileTabCanGoBack,
 			fileTabCanGoForward,
 			activeFileTabNavIndex,
-		} = useMemo(() => getTabDerivedState(activeSession), [activeSession]);
+		} = useMemo(() => getTabDerivedState(activeSession), [activeSession, poppedOutTabKeys]);
 		const activeFileTabId = activeSession?.activeFileTabId ?? null;
 		const activeBrowserTabId = activeSession?.activeBrowserTabId ?? null;
 		const fileGistUrls = useTabStore((s) => s.fileGistUrls);
@@ -534,6 +540,14 @@ export const MainPanel = React.memo(
 			if (!target) return;
 			useModalStore.getState().openModal('snoozeTab', target);
 		}, []);
+
+		// Tab Windows (TW-11): the chip menu's "Move to Tab Window". Absent in
+		// web-desktop (TW-13), so the item is hidden there.
+		const handleMoveToTabWindow = useCallback((ref: TabWindowTabRef) => {
+			const session = selectActiveSession(useSessionStore.getState());
+			if (session) void popOutTabFromUi(session.id, ref);
+		}, []);
+		const tabWindowsAvailable = canUseTabWindows();
 
 		// Expose methods to parent via ref
 		// Holds the latest terminal/browser buffer-action handlers. The imperative
@@ -1270,6 +1284,7 @@ export const MainPanel = React.memo(
 									onCopyContext={onCopyContext}
 									onExportHtml={onExportHtml}
 									onSnooze={handleOpenSnooze}
+									onTabWindowMove={tabWindowsAvailable ? handleMoveToTabWindow : undefined}
 									onPublishGist={props.onPublishTabGist}
 									ghCliAvailable={props.ghCliAvailable}
 									showUnreadOnly={showUnreadOnly}

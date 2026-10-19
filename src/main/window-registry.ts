@@ -4,15 +4,19 @@ import { EventEmitter } from 'events';
 import type { BrowserWindow } from 'electron';
 import { isPointInWindowBounds, type WindowPanelState } from '../shared/window-types';
 import { generateUUID } from '../shared/uuid';
+import { isSameTabRef } from '../shared/unifiedTabRef';
+import type { TabWindowInfo, TabWindowTabRef } from '../shared/tabWindowTypes';
 
 /**
  * The kind of a registered window. `app` windows own agents (sessions) and take
  * part in all the multi-window machinery (session moves, persistence, the "Move
  * to Window" menu, telemetry). Special kinds like `cadenza-hud` are host-owned
  * feature windows that own no sessions (the cadenza HUD, the Quick Chat window);
- * the multi-window consumers skip them.
+ * the multi-window consumers skip them. A `tab` window holds tabs popped out of
+ * ONE agent's app window (Tab Windows). It never owns that agent: the agent's
+ * owner stays the app window that holds it in `sessionIds` (Tab Windows D1).
  */
-export type WindowKind = 'app' | 'cadenza-hud' | 'quick-chat';
+export type WindowKind = 'app' | 'cadenza-hud' | 'quick-chat' | 'tab';
 
 /**
  * A single window tracked by the registry. `sessionIds` are agent IDs (what
@@ -36,6 +40,16 @@ export interface RegisteredWindow {
 	rightPanelCollapsed: boolean;
 	/** User-assigned window name; undefined for the default generic label. */
 	name?: string;
+	/**
+	 * `tab` kind only: the one agent whose tabs this window holds (TW-4, TW-5).
+	 * Kept apart from `sessionIds`, which stays empty, so a tab window is never
+	 * mistaken for the agent's owner.
+	 */
+	agentId?: string;
+	/** `tab` kind only: the popped tabs, in the tab window's strip order. */
+	tabRefs?: TabWindowTabRef[];
+	/** `tab` kind only: the tab shown, or null while the window holds no tab. */
+	activeTabRef?: TabWindowTabRef | null;
 }
 
 /** The kinds of mutations the registry emits a change signal for. */
@@ -45,7 +59,8 @@ export type WindowRegistryChangeType =
 	| 'sessions-changed'
 	| 'session-moved'
 	| 'name-changed'
-	| 'panel-changed';
+	| 'panel-changed'
+	| 'tab-window-changed';
 
 /**
  * Payload describing a registry mutation. Persistence (the window-state store)
@@ -58,6 +73,35 @@ export interface WindowRegistryChange {
 	sessionId?: string;
 	fromWindowId?: string;
 	toWindowId?: string;
+	/** `tab-window-changed` only: the agent whose tab window changed. */
+	agentId?: string;
+}
+
+/** True when `entry` is a tab window (and so carries the tab fields). */
+function isTabWindowEntry(
+	entry: RegisteredWindow | undefined
+): entry is RegisteredWindow & { agentId: string; tabRefs: TabWindowTabRef[] } {
+	return entry?.kind === 'tab' && typeof entry.agentId === 'string' && Array.isArray(entry.tabRefs);
+}
+
+/** The registry view of a tab window, or null for any other kind. */
+export function toTabWindowInfo(entry: RegisteredWindow): TabWindowInfo | null {
+	if (!isTabWindowEntry(entry)) return null;
+	return {
+		windowId: entry.id,
+		agentId: entry.agentId,
+		tabRefs: entry.tabRefs.map((ref) => ({ ...ref })),
+		activeTabRef: entry.activeTabRef ? { ...entry.activeTabRef } : null,
+	};
+}
+
+/** `refs` with later duplicates of the same tab dropped, order kept. */
+function dedupeTabRefs(refs: readonly TabWindowTabRef[]): TabWindowTabRef[] {
+	const out: TabWindowTabRef[] = [];
+	for (const ref of refs) {
+		if (!out.some((kept) => isSameTabRef(kept, ref))) out.push({ type: ref.type, id: ref.id });
+	}
+	return out;
 }
 
 /** A single move request awaiting application in {@link WindowRegistry.moveSession}. */
@@ -97,6 +141,12 @@ export class WindowRegistry extends EventEmitter {
 	 * Register a window. The `BrowserWindow` itself is built by
 	 * `window-manager.ts`; the registry only tracks it. Generates an ID with
 	 * {@link generateUUID} when one is not supplied. Returns the window ID.
+	 *
+	 * A `tab` window needs `agentId` and may carry its first `tabRefs` and
+	 * `activeTabRef` (a restore passes all three). It never owns sessions, so
+	 * `sessionIds` and `isMain` are ignored for it. Throws when `agentId` is
+	 * missing or the agent already has a tab window (TW-4): the caller looks one
+	 * up with {@link getTabWindowForAgent} first and adds the tab to it.
 	 */
 	create(options: {
 		windowId?: string;
@@ -107,21 +157,43 @@ export class WindowRegistry extends EventEmitter {
 		name?: string;
 		leftPanelCollapsed?: boolean;
 		rightPanelCollapsed?: boolean;
+		agentId?: string;
+		tabRefs?: TabWindowTabRef[];
+		activeTabRef?: TabWindowTabRef | null;
 	}): string {
 		const id = options.windowId ?? generateUUID();
-		this.windows.set(id, {
+		const kind = options.kind ?? 'app';
+		const entry: RegisteredWindow = {
 			id,
 			browserWindow: options.browserWindow,
-			sessionIds: [...(options.sessionIds ?? [])],
-			isMain: options.isMain ?? false,
-			kind: options.kind ?? 'app',
+			sessionIds: kind === 'tab' ? [] : [...(options.sessionIds ?? [])],
+			isMain: kind === 'tab' ? false : (options.isMain ?? false),
+			kind,
 			// Default to expanded for a fresh window; a restore passes the saved
 			// per-window collapse state so panels come back as the user left them.
 			leftPanelCollapsed: options.leftPanelCollapsed ?? false,
 			rightPanelCollapsed: options.rightPanelCollapsed ?? false,
 			name: options.name,
-		});
+		};
+		if (kind === 'tab') {
+			const { agentId } = options;
+			if (!agentId) throw new Error('A tab window needs an agentId');
+			if (this.getTabWindowForAgent(agentId)) {
+				throw new Error(`Agent ${agentId} already has a tab window`);
+			}
+			const tabRefs = dedupeTabRefs(options.tabRefs ?? []);
+			const requested = options.activeTabRef;
+			entry.agentId = agentId;
+			entry.tabRefs = tabRefs;
+			entry.activeTabRef =
+				(requested && tabRefs.find((ref) => isSameTabRef(ref, requested))) ?? tabRefs[0] ?? null;
+		}
+		this.windows.set(id, entry);
 		this.emitChange({ type: 'created', windowId: id });
+		// `created` never reaches a renderer. A new tab window already holds its
+		// first tabs, so the owner must hear it as a tab window change, or it keeps
+		// the tab in its strip and never starts the patch stream.
+		if (isTabWindowEntry(entry) && entry.tabRefs.length > 0) this.emitTabWindowChange(entry);
 		return id;
 	}
 
@@ -152,6 +224,111 @@ export class WindowRegistry extends EventEmitter {
 		return undefined;
 	}
 
+	/** Every tab window, in insertion order. */
+	getTabWindows(): RegisteredWindow[] {
+		return [...this.windows.values()].filter((w) => w.kind === 'tab');
+	}
+
+	/** The agent's one tab window (TW-4), if it has one. */
+	getTabWindowForAgent(agentId: string): RegisteredWindow | undefined {
+		for (const entry of this.windows.values()) {
+			if (isTabWindowEntry(entry) && entry.agentId === agentId) return entry;
+		}
+		return undefined;
+	}
+
+	/**
+	 * Add one of `agentId`'s tabs to the tab window `windowId`, at the end of its
+	 * strip. Refuses (returns false, emits nothing) when the window is not a tab
+	 * window or belongs to another agent (TW-5). A tab already in the window is
+	 * not added twice. `activate` (default true) makes it the shown tab. Emits
+	 * `tab-window-changed` when anything changed.
+	 */
+	addTabToTabWindow(
+		windowId: string,
+		agentId: string,
+		tabRef: TabWindowTabRef,
+		{ activate = true }: { activate?: boolean } = {}
+	): boolean {
+		const entry = this.windows.get(windowId);
+		if (!isTabWindowEntry(entry) || entry.agentId !== agentId) return false;
+		let existing = entry.tabRefs.find((ref) => isSameTabRef(ref, tabRef));
+		let changed = false;
+		if (!existing) {
+			existing = { type: tabRef.type, id: tabRef.id };
+			entry.tabRefs.push(existing);
+			changed = true;
+		}
+		if ((activate || !entry.activeTabRef) && entry.activeTabRef !== existing) {
+			entry.activeTabRef = existing;
+			changed = true;
+		}
+		if (changed) this.emitTabWindowChange(entry);
+		return true;
+	}
+
+	/**
+	 * Take a tab out of the tab window `windowId` (dock, close, or a tab that no
+	 * longer exists). When it was the shown tab, the tab now at its index is
+	 * shown, else the one before it, else none. Returns false (emits nothing)
+	 * when the window is not a tab window or does not hold the tab. The window
+	 * itself stays registered; closing an emptied tab window is the window
+	 * manager's job.
+	 */
+	removeTabFromTabWindow(windowId: string, tabRef: TabWindowTabRef): boolean {
+		const entry = this.windows.get(windowId);
+		if (!isTabWindowEntry(entry)) return false;
+		const index = entry.tabRefs.findIndex((ref) => isSameTabRef(ref, tabRef));
+		if (index === -1) return false;
+		const [removed] = entry.tabRefs.splice(index, 1);
+		if (entry.activeTabRef === removed) {
+			entry.activeTabRef = entry.tabRefs[index] ?? entry.tabRefs[index - 1] ?? null;
+		}
+		this.emitTabWindowChange(entry);
+		return true;
+	}
+
+	/**
+	 * Show `tabRef` in the tab window `windowId`. Returns false when the window is
+	 * not a tab window or does not hold the tab. Emits `tab-window-changed` only
+	 * when the shown tab actually changed.
+	 */
+	setTabWindowActiveTab(windowId: string, tabRef: TabWindowTabRef): boolean {
+		const entry = this.windows.get(windowId);
+		if (!isTabWindowEntry(entry)) return false;
+		const target = entry.tabRefs.find((ref) => isSameTabRef(ref, tabRef));
+		if (!target) return false;
+		if (entry.activeTabRef !== target) {
+			entry.activeTabRef = target;
+			this.emitTabWindowChange(entry);
+		}
+		return true;
+	}
+
+	/**
+	 * Put the strip of the tab window `windowId` in the order `tabRefs` names.
+	 * Only the tab window's own order changes: each tab keeps its dock slot in
+	 * the agent's `unifiedTabOrder` (TW-8). Refuses (returns false, emits
+	 * nothing) when the window is not a tab window or `tabRefs` is not exactly
+	 * the tabs it holds: a reorder never adds or drops a tab. Emits
+	 * `tab-window-changed` only when the order actually changed.
+	 */
+	setTabWindowTabOrder(windowId: string, tabRefs: readonly TabWindowTabRef[]): boolean {
+		const entry = this.windows.get(windowId);
+		if (!isTabWindowEntry(entry)) return false;
+		if (tabRefs.length !== entry.tabRefs.length) return false;
+		const ordered: TabWindowTabRef[] = [];
+		for (const ref of tabRefs) {
+			const held = entry.tabRefs.find((candidate) => isSameTabRef(candidate, ref));
+			if (!held || ordered.includes(held)) return false;
+			ordered.push(held);
+		}
+		if (ordered.every((ref, index) => ref === entry.tabRefs[index])) return true;
+		entry.tabRefs = ordered;
+		this.emitTabWindowChange(entry);
+		return true;
+	}
+
 	/** The primary (`isMain`) window, if one is registered. */
 	getPrimary(): RegisteredWindow | undefined {
 		for (const entry of this.windows.values()) {
@@ -175,10 +352,22 @@ export class WindowRegistry extends EventEmitter {
 		return null;
 	}
 
+	/**
+	 * The app window that owns `agentId` right now: the window holding it in
+	 * `sessionIds`, else the primary (whose catch-all shows every agent no other
+	 * window claims). Read fresh on every Tab Windows relay message, so an agent
+	 * moved with Move to Window keeps working (D7).
+	 */
+	getOwnerWindowForAgent(agentId: string): RegisteredWindow | undefined {
+		const ownerId = this.getWindowForSession(agentId);
+		return (ownerId ? this.windows.get(ownerId) : undefined) ?? this.getPrimary();
+	}
+
 	/** Replace the full set of sessions owned by a window. No-op if unknown. */
 	setSessionsForWindow(windowId: string, sessionIds: string[]): void {
 		const entry = this.windows.get(windowId);
-		if (!entry) return;
+		// Only app windows own agents (Tab Windows D1).
+		if (!entry || entry.kind !== 'app') return;
 		entry.sessionIds = [...sessionIds];
 		this.emitChange({ type: 'sessions-changed', windowId });
 	}
@@ -193,10 +382,11 @@ export class WindowRegistry extends EventEmitter {
 	 * else would). `panel-changed` is deliberately NOT forwarded by
 	 * `wireWindowRegistryBroadcast` - panel collapse is window-local UI that other
 	 * windows' renderers must not react to (that would fight their own state).
+	 * Only app windows have side panels; any other kind is a no-op.
 	 */
 	setPanelState(windowId: string, panel: Partial<WindowPanelState>): void {
 		const entry = this.windows.get(windowId);
-		if (!entry) return;
+		if (!entry || entry.kind !== 'app') return;
 		let changed = false;
 		if (
 			panel.leftPanelCollapsed !== undefined &&
@@ -219,11 +409,12 @@ export class WindowRegistry extends EventEmitter {
 	 * Set (or clear) a window's user-assigned name. Pass an empty/whitespace name
 	 * to clear it back to the default generic label. Emits `name-changed` so the
 	 * broadcast forwards it to every renderer (their Left Bar / palette labels
-	 * refresh) and the persistence layer saves the new name. No-op if unknown.
+	 * refresh) and the persistence layer saves the new name. No-op if unknown or
+	 * not an app window (a tab window is titled after its agent, TW-3).
 	 */
 	setName(windowId: string, name: string): void {
 		const entry = this.windows.get(windowId);
-		if (!entry) return;
+		if (!entry || entry.kind !== 'app') return;
 		const trimmed = name.trim();
 		const next = trimmed.length > 0 ? trimmed : undefined;
 		if (entry.name === next) return;
@@ -235,7 +426,8 @@ export class WindowRegistry extends EventEmitter {
 	 * Move a session into another window. Enqueues the move and drains the queue
 	 * synchronously (see {@link moveQueue}); the queue exists only to serialize
 	 * moves so a re-entrant move from a `session-moved` listener cannot mutate the
-	 * ownership map mid-update. No-op if either named window is unknown.
+	 * ownership map mid-update. No-op if either named window is unknown, or the
+	 * destination is not an app window.
 	 *
 	 * Each applied move enforces the single-ownership invariant: the session is
 	 * stripped from EVERY window before being appended to the destination. This
@@ -267,7 +459,8 @@ export class WindowRegistry extends EventEmitter {
 	private applyMove({ sessionId, fromWindowId, toWindowId }: QueuedMove): void {
 		const from = this.windows.get(fromWindowId);
 		const to = this.windows.get(toWindowId);
-		if (!from || !to) return;
+		// Only an app window can become an agent's owner (Tab Windows D1).
+		if (!from || !to || to.kind !== 'app') return;
 		// Single-ownership invariant: drop the session from every window first, so a
 		// stale fromWindowId can never leave it owned by two windows.
 		this.stripSessionFromAllWindows(sessionId);
@@ -301,13 +494,14 @@ export class WindowRegistry extends EventEmitter {
 	 *
 	 * Enforces the single-ownership invariant (the session is stripped from every
 	 * other window first), so a duplicate registration can never leave the agent
-	 * owned twice. No-op - and emits nothing - when the window is unknown or it is
-	 * already the session's sole owner. Otherwise emits `sessions-changed` so
+	 * owned twice. No-op - and emits nothing - when the window is unknown, is not
+	 * an app window, or is already the session's sole owner. Otherwise emits `sessions-changed` so
 	 * persistence and the other windows' renderers pick up the new ownership.
 	 */
 	registerSession(windowId: string, sessionId: string): void {
 		const target = this.windows.get(windowId);
-		if (!target) return;
+		// Only an app window can claim an agent (Tab Windows D1).
+		if (!target || target.kind !== 'app') return;
 		const ownedElsewhere = this.getAll().some(
 			(entry) => entry.id !== windowId && entry.sessionIds.includes(sessionId)
 		);
@@ -367,6 +561,10 @@ export class WindowRegistry extends EventEmitter {
 	onChange(listener: (change: WindowRegistryChange) => void): () => void {
 		this.on('change', listener);
 		return () => this.off('change', listener);
+	}
+
+	private emitTabWindowChange(entry: RegisteredWindow & { agentId: string }): void {
+		this.emitChange({ type: 'tab-window-changed', windowId: entry.id, agentId: entry.agentId });
 	}
 
 	private emitChange(change: WindowRegistryChange): void {

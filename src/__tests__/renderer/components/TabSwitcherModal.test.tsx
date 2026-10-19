@@ -16,6 +16,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { logger } from '../../../renderer/utils/logger';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { TabSwitcherModal } from '../../../renderer/components/TabSwitcherModal';
+import { useTabWindowStore } from '../../../renderer/stores/tabWindowStore';
+import { createMockFileTab } from '../../helpers/mockTab';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import type { Theme, AITab } from '../../../renderer/types';
@@ -1879,6 +1881,50 @@ describe('TabSwitcherModal', () => {
 			});
 
 			consoleSpy.mockRestore();
+		});
+	});
+
+	describe('tabs popped out into a tab window', () => {
+		afterEach(() => {
+			useTabWindowStore.setState({ windows: [], poppedByAgent: {} });
+		});
+
+		it('leaves popped tabs of every kind out of the Open Tabs list and count', () => {
+			const kept = createTestTab({ name: 'Kept Tab' });
+			const popped = createTestTab({ name: 'Popped Tab' });
+			useTabWindowStore.getState().setWindows([
+				{
+					windowId: 'tw-1',
+					agentId: 'agent-1',
+					tabRefs: [
+						{ type: 'ai', id: popped.id },
+						{ type: 'file', id: 'file-popped' },
+					],
+					activeTabRef: null,
+				},
+			]);
+
+			renderWithLayerStack(
+				<TabSwitcherModal
+					theme={theme}
+					sessionId="agent-1"
+					tabs={[kept, popped]}
+					fileTabs={[
+						createMockFileTab({ id: 'file-kept', name: 'kept-file' }),
+						createMockFileTab({ id: 'file-popped', name: 'popped-file' }),
+					]}
+					activeTabId={kept.id}
+					projectRoot="/test"
+					onTabSelect={vi.fn()}
+					onNamedSessionSelect={vi.fn()}
+					onClose={vi.fn()}
+				/>
+			);
+
+			expect(screen.getByText('Open Tabs (2)')).toBeInTheDocument();
+			expect(screen.getByText('Kept Tab')).toBeInTheDocument();
+			expect(screen.queryByText('Popped Tab')).not.toBeInTheDocument();
+			expect(screen.queryByText(/popped-file/)).not.toBeInTheDocument();
 		});
 	});
 

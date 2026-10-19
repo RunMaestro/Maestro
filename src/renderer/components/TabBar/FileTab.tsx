@@ -23,6 +23,7 @@ import { TabOverlayPortal } from './TabOverlayPortal';
 import { getTabKindColor } from './tabBarUtils';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { ShortcutHint, shortcutSuffix } from '../ui/ShortcutHint';
+import { TabWindowMenuItem } from './TabWindowMenuItem';
 import { useTabStore } from '../../stores/tabStore';
 import { isGistPublishableFile } from '../FilePreview/filePreviewUtils';
 
@@ -53,6 +54,8 @@ export interface FileTabProps {
 	/** Stable callback - receives tabId */
 	/** Park this tab until a chosen moment. Omitted when snoozing is unavailable. */
 	onSnooze?: (tabId: string) => void;
+	/** Move this tab to its tab window, or dock it from one (TW-11). Omit to hide the item. */
+	onTabWindowMove?: (tabId: string) => void;
 	onMoveToFirst?: (tabId: string) => void;
 	/** Stable callback - receives tabId */
 	onMoveToLast?: (tabId: string) => void;
@@ -113,6 +116,7 @@ export const FileTab = memo(function FileTab({
 	registerRef,
 	onRename,
 	onSnooze,
+	onTabWindowMove,
 	onMoveToFirst,
 	onMoveToLast,
 	isFirstTab,
@@ -243,6 +247,17 @@ export const FileTab = memo(function FileTab({
 			setOverlayOpen(false);
 		},
 		[onSnooze, tab.id, setOverlayOpen]
+	);
+
+	// Tab Windows (TW-11): pop out from an app window, dock from a tab window.
+	// The overlay closes first: the tab is about to leave this strip.
+	const handleTabWindowClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			setOverlayOpen(false);
+			onTabWindowMove?.(tab.id);
+		},
+		[onTabWindowMove, tab.id, setOverlayOpen]
 	);
 
 	const handleMoveToFirstClick = useCallback(
@@ -601,6 +616,8 @@ export const FileTab = memo(function FileTab({
 								)}
 							</button>
 						)}
+
+						{onTabWindowMove && <TabWindowMenuItem theme={theme} onClick={handleTabWindowClick} />}
 
 						{/* Tab Move Actions Section - divider and move options */}
 						{(onMoveToFirst || onMoveToLast) && (

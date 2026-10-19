@@ -12,6 +12,9 @@ import {
 } from './testUtils';
 import { createGroupFromTabRefs } from '../../../../../renderer/utils/panelLayout';
 import type { PanelLayoutNode, TabGroup, UnifiedTabRef } from '../../../../../renderer/types';
+import { useSessionStore } from '../../../../../renderer/stores/sessionStore';
+import { useTabWindowStore } from '../../../../../renderer/stores/tabWindowStore';
+import { createMockSession } from '../../../../helpers/mockSession';
 
 /** Find the leaf id whose tab ref matches, so a test can focus a specific pane. */
 function leafIdForTab(group: TabGroup, ref: UnifiedTabRef): string {
@@ -361,5 +364,55 @@ describe('useUnifiedTabHandlers', () => {
 		});
 
 		expect(getSession().aiTabs.map((t) => t.id)).toEqual(['ai-1', 'ai-2']);
+	});
+
+	// Tab Windows: the owner closes the tabs a tab window picked and confirmed.
+	describe('closeTabRefs', () => {
+		it("closes exactly the named refs of the named agent, popped out or not, and stops a terminal's PTY", () => {
+			setupSession({
+				aiTabs: [
+					createMockAITab({ id: 'ai-1' }),
+					createMockAITab({ id: 'ai-2', inputValue: 'draft' }),
+				],
+				filePreviewTabs: [createMockFileTab({ id: 'file-1' })],
+				terminalTabs: [createMockTerminalTab({ id: 'term-1' })],
+				activeTabId: 'ai-1',
+			});
+			// Popped out: the strip-facing closes would leave these alone.
+			useTabWindowStore.getState().setWindows([
+				{
+					windowId: 'tw-1',
+					agentId: 'test-session',
+					tabRefs: [
+						{ type: 'ai', id: 'ai-2' },
+						{ type: 'file', id: 'file-1' },
+						{ type: 'terminal', id: 'term-1' },
+					],
+					activeTabRef: { type: 'ai', id: 'ai-2' },
+				},
+			]);
+			// Another agent is the active one, as in the owner of a tab window.
+			useSessionStore.setState((state) => ({
+				sessions: [...state.sessions, createMockSession({ id: 'other' })],
+				activeSessionId: 'other',
+			}));
+			const { result } = renderHook(() => useUnifiedTabHandlers({ handleCloseFileTab: vi.fn() }));
+
+			act(() => {
+				result.current.closeTabRefs('test-session', [
+					{ type: 'ai', id: 'ai-2' },
+					{ type: 'file', id: 'file-1' },
+					{ type: 'terminal', id: 'term-1' },
+					{ type: 'ai', id: 'gone' },
+				]);
+			});
+
+			const session = useSessionStore.getState().sessions.find((s) => s.id === 'test-session')!;
+			expect(session.aiTabs.map((t) => t.id)).toEqual(['ai-1']);
+			expect(session.filePreviewTabs).toEqual([]);
+			expect(session.terminalTabs).toEqual([]);
+			expect(window.maestro.process.kill).toHaveBeenCalledWith('test-session-terminal-term-1');
+			useTabWindowStore.getState().setWindows([]);
+		});
 	});
 });

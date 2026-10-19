@@ -14,6 +14,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { TerminalView } from '../../../renderer/components/TerminalView';
 import type { Session, TerminalTab } from '../../../renderer/types';
 import type { Theme } from '../../../renderer/types';
+import { clearTabWindowStore, popOutTabsInStore } from '../../helpers/tabWindows';
 
 // ---------------------------------------------------------------------------
 // Mock XTerminal - the real component requires canvas/WebGL which jsdom lacks.
@@ -937,7 +938,7 @@ describe('TerminalView - touch key bar (coarse pointer)', () => {
 	});
 });
 
-describe('TerminalView — PTY window size', () => {
+describe('TerminalView - PTY window size', () => {
 	// The PTY is born 80x24 unless the spawn says otherwise. Anything that asks the
 	// kernel for the window size - nano, vim, less, top - then paints into that box
 	// however large the pane is, while ordinary command output still fills it,
@@ -983,5 +984,140 @@ describe('TerminalView — PTY window size', () => {
 		});
 
 		expect(mockSyncSize).toHaveBeenCalled();
+	});
+});
+
+describe('TerminalView - Tab Windows terminal handoff (D5)', () => {
+	// A popped-out terminal tab is shown by its tab window, which mounts its own
+	// view of the same PTY. The owner drops its view (so it never writes that
+	// PTY's output) but keeps the process, and still spawns it (D1). The tab
+	// window's view attaches only: no spawn, no exit handling, no close.
+
+	afterEach(() => {
+		clearTabWindowStore();
+	});
+
+	const handoffOf = (tabId: string) =>
+		xtermPropsBySessionId.get(`session-1-terminal-${tabId}`)?.handoff as
+			| { releaseOnUnmount: () => boolean; releaseOnUnload?: boolean }
+			| undefined;
+
+	it('owner: drops the view of a popped-out tab and keeps the others', () => {
+		popOutTabsInStore('session-1', [{ type: 'terminal', id: 'tab-2' }]);
+		const session = makeSession([makeTab({ id: 'tab-1' }), makeTab({ id: 'tab-2' })]);
+
+		render(<TerminalView {...defaultProps} session={session} isVisible={true} />);
+
+		expect(xtermPropsBySessionId.has('session-1-terminal-tab-1')).toBe(true);
+		expect(xtermPropsBySessionId.has('session-1-terminal-tab-2')).toBe(false);
+	});
+
+	it('owner: hands the scrollback over as a tab is popped out, and only then', () => {
+		const session = makeSession([makeTab({ id: 'tab-1' }), makeTab({ id: 'tab-2' })]);
+		render(<TerminalView {...defaultProps} session={session} isVisible={true} />);
+		const handoff = handoffOf('tab-2');
+		expect(handoff?.releaseOnUnmount()).toBe(false);
+		expect(handoff?.releaseOnUnload).toBe(false);
+
+		act(() => popOutTabsInStore('session-1', [{ type: 'terminal', id: 'tab-2' }]));
+
+		// Read at unmount: the view is going because the tab moved.
+		expect(handoff?.releaseOnUnmount()).toBe(true);
+		expect(handoffOf('tab-1')?.releaseOnUnmount()).toBe(false);
+	});
+
+	it('owner: still spawns a popped-out tab that has no PTY yet', async () => {
+		popOutTabsInStore('session-1', [{ type: 'terminal', id: 'popped' }]);
+		const shown = makeTab({ id: 'shown', pid: 1234 });
+		const popped = makeTab({ id: 'popped', pid: 0, state: 'idle' });
+
+		await act(async () => {
+			render(
+				<TerminalView
+					{...defaultProps}
+					session={makeSession([shown, popped], 'shown')}
+					isVisible={true}
+				/>
+			);
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		});
+
+		expect(maestro().process.spawnTerminalTab).toHaveBeenCalledWith(
+			expect.objectContaining({ sessionId: 'session-1-terminal-popped' })
+		);
+	});
+
+	it('tab window: attaches without spawning, closing, or a loading line', async () => {
+		vi.useFakeTimers();
+		const tab = makeTab({ id: 'tab-1', pid: 0, state: 'idle', createdAt: Date.now() - 5000 });
+		const onExit = vi.fn(() => () => {});
+		maestro().process.onExit = onExit;
+
+		const { rerender } = render(
+			<TerminalView {...defaultProps} session={makeSession([tab])} isVisible={true} attachOnly />
+		);
+		act(() => {
+			vi.advanceTimersByTime(100);
+		});
+		expect(maestro().process.spawnTerminalTab).not.toHaveBeenCalled();
+		expect(onExit).not.toHaveBeenCalled();
+		expect(mockWrite).not.toHaveBeenCalledWith(expect.stringContaining('Starting terminal'));
+
+		// The owner patches in the exit: say so, but leave keep-or-close to the owner.
+		const exited = makeTab({ ...tab, pid: 1234, state: 'exited', exitCode: 0 });
+		act(() => {
+			rerender(
+				<TerminalView
+					{...defaultProps}
+					session={makeSession([exited])}
+					isVisible={true}
+					attachOnly
+				/>
+			);
+			vi.advanceTimersByTime(10);
+		});
+		expect(mockWrite).toHaveBeenCalledWith(expect.stringContaining('[process exited (code 0)]'));
+		expect(mockCloseTerminalTab).not.toHaveBeenCalled();
+		expect(mockNotifyToast).not.toHaveBeenCalled();
+		vi.useRealTimers();
+	});
+
+	it('tab window: pushes its size again once the owner spawns the PTY', () => {
+		const tab = makeTab({ id: 'tab-1', pid: 0, state: 'idle' });
+		const { rerender } = render(
+			<TerminalView {...defaultProps} session={makeSession([tab])} isVisible={true} attachOnly />
+		);
+		mockSyncSize.mockClear();
+
+		act(() => {
+			rerender(
+				<TerminalView
+					{...defaultProps}
+					session={makeSession([makeTab({ ...tab, pid: 4321 })])}
+					isVisible={true}
+					attachOnly
+				/>
+			);
+		});
+
+		expect(mockSyncSize).toHaveBeenCalled();
+	});
+
+	it('tab window: releases by its own rule, and on unload', () => {
+		const releaseTabOnUnmount = vi.fn(() => true);
+		render(
+			<TerminalView
+				{...defaultProps}
+				session={makeSession([makeTab({ id: 'tab-1' })])}
+				isVisible={true}
+				attachOnly
+				releaseTabOnUnmount={releaseTabOnUnmount}
+			/>
+		);
+		const handoff = handoffOf('tab-1');
+
+		expect(handoff?.releaseOnUnmount()).toBe(true);
+		expect(releaseTabOnUnmount).toHaveBeenCalledWith('tab-1');
+		expect(handoff?.releaseOnUnload).toBe(true);
 	});
 });

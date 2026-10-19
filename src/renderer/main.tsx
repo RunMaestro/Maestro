@@ -7,12 +7,14 @@ import { shouldDropSentryEvent } from '../shared/sentryFilters';
 import MaestroConsole from './App';
 import { CadenzaHudRoot } from './cadenzaHud';
 import { QuickChatRoot } from './quickChat/QuickChatRoot';
+import { TabWindowRoot } from './components/TabWindow/TabWindowRoot';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { LayerStackProvider } from './contexts/LayerStackContext';
 // ToastProvider removed - notification state now managed by notificationStore (Zustand)
 // ModalProvider removed - modal state now managed by modalStore (Zustand)
 import { WizardProvider } from './components/Wizard';
 import { logger } from './utils/logger';
+import { getTabWindowId } from './utils/runtimeContext';
 import './index.css';
 
 // Initialize Sentry for renderer process
@@ -116,8 +118,24 @@ const isCadenzaHud = new URLSearchParams(window.location.search).has('cadenzaHud
 // `?quickChat`. Renders only the chat view; the conversation runs in the app
 // window that owns the agent.
 const isQuickChat = new URLSearchParams(window.location.search).has('quickChat');
+// Tab window mode: an ordinary OS window holding one agent's popped-out tabs,
+// loaded with `?tabWindow=<windowId>`. Renders the tab strip and tab content
+// only; the agent's owner app window stays its single writer (Tab Windows D1).
+const tabWindowId = getTabWindowId();
 
-if (isQuickChat) {
+if (tabWindowId) {
+	document.documentElement.classList.add('tab-window');
+	document.body.classList.add('tab-window');
+	// The full App hides the static splash on ready, and it never mounts here.
+	document.getElementById('initial-splash')?.remove();
+	ReactDOM.createRoot(document.getElementById('root')!).render(
+		<React.StrictMode>
+			<ErrorBoundary>
+				<TabWindowRoot windowId={tabWindowId} />
+			</ErrorBoundary>
+		</React.StrictMode>
+	);
+} else if (isQuickChat) {
 	document.documentElement.classList.add('quick-chat-window');
 	document.body.classList.add('quick-chat-window');
 	document.getElementById('initial-splash')?.remove();

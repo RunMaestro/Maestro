@@ -17,13 +17,20 @@
  */
 
 import type { Session } from '../types';
+import type { SingleTabRef } from '../../shared/unifiedTabRef';
 import { useSessionStore } from '../stores/sessionStore';
 import { useUIStore } from '../stores/uiStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { useGroupChatStore } from '../stores/groupChatStore';
 import { useModalStore } from '../stores/modalStore';
-import { aiTabFocusFields } from '../utils/tabFocusFields';
+import {
+	aiTabFocusFields,
+	browserTabFocusFields,
+	fileTabFocusFields,
+	terminalTabFocusFields,
+} from '../utils/tabFocusFields';
 import { requestSidebarReveal } from '../utils/sidebarReveal';
+import { focusTabWindowIfPoppedOut, sessionHasTab } from './tabWindowNavigation';
 
 /**
  * Make sure a jumped-to agent is actually visible in the Left Bar, without
@@ -61,11 +68,33 @@ export function revealAgentInSidebar(session: Session): void {
 export interface JumpToAgentOptions {
 	/** AI tab to land on. Ignored when the agent no longer has that tab. */
 	tabId?: string;
+	/**
+	 * Tab of any kind to land on; wins over `tabId`. Ignored when the agent no
+	 * longer has that tab.
+	 */
+	tabRef?: SingleTabRef;
+}
+
+/** The focus patch that shows `ref`, or the plain AI view when it is gone. */
+function jumpFocusFields(session: Session, ref: SingleTabRef | undefined): Partial<Session> {
+	if (!ref || !sessionHasTab(session, ref)) return aiTabFocusFields();
+	switch (ref.type) {
+		case 'ai':
+			return aiTabFocusFields(ref.id);
+		case 'file':
+			return fileTabFocusFields(ref.id);
+		case 'terminal':
+			return terminalTabFocusFields(ref.id);
+		case 'browser':
+			return browserTabFocusFields(ref.id);
+	}
 }
 
 /**
- * Bring an agent on screen: dismiss whatever is covering it, select it, force
- * the AI view, and reveal it in the Left Bar.
+ * Bring an agent on screen: dismiss whatever is covering it, select it, show
+ * the requested tab (else the AI view), and reveal it in the Left Bar. A tab
+ * that is popped out into a tab window is shown there instead, and the owner
+ * window's view does not move (Tab Windows, D4).
  *
  * @returns `false` when the agent no longer exists, so the caller can say so
  * instead of leaving the user on an unchanged screen.
@@ -74,6 +103,10 @@ export function jumpToAgent(sessionId: string, options: JumpToAgentOptions = {})
 	const { sessions, setActiveSessionId, setSessions } = useSessionStore.getState();
 	const session = sessions.find((s) => s.id === sessionId);
 	if (!session) return false;
+
+	const targetRef: SingleTabRef | undefined =
+		options.tabRef ?? (options.tabId ? { type: 'ai', id: options.tabId } : undefined);
+	if (focusTabWindowIfPoppedOut(sessionId, targetRef)) return true;
 
 	const fileExplorer = useFileExplorerStore.getState();
 	if (fileExplorer.isGraphViewOpen) {
@@ -90,15 +123,11 @@ export function jumpToAgent(sessionId: string, options: JumpToAgentOptions = {})
 	// permanent column.
 	useUIStore.getState().closeLeftSidebarForNavigation();
 
-	// Clear file / terminal / browser active-tab state so the jump shows the AI
-	// terminal even when the agent was last viewed on another tab type.
+	// The focus helpers clear the other tab types' active state, so the jump
+	// shows the requested tab (or the AI view) even when the agent was last
+	// viewed on another tab type.
 	setSessions((prev) =>
-		prev.map((s) => {
-			if (s.id !== sessionId) return s;
-			const targetTabId =
-				options.tabId && s.aiTabs?.some((t) => t.id === options.tabId) ? options.tabId : undefined;
-			return { ...s, ...aiTabFocusFields(targetTabId) };
-		})
+		prev.map((s) => (s.id === sessionId ? { ...s, ...jumpFocusFields(s, targetRef) } : s))
 	);
 
 	revealAgentInSidebar(session);

@@ -86,10 +86,12 @@
 				pointer-events: none;
 			}
 
-			/* Quick Chat and the cadenza HUD (tagged by window-mode.js) never show
-			   the splash, and stay transparent until index.css loads. */
+			/* Quick Chat, the cadenza HUD, and a tab window (tagged by
+			   window-mode.js) never show the splash. The first two also stay
+			   transparent until index.css loads; a tab window is opaque. */
 			html.quick-chat-window #initial-splash,
-			html.cadenza-hud #initial-splash {
+			html.cadenza-hud #initial-splash,
+			html.tab-window #initial-splash {
 				display: none;
 			}
 			html.quick-chat-window body,

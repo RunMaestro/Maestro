@@ -1019,17 +1019,10 @@ export interface TerminalTab {
 	startupCommandCwd?: string;
 }
 
-/**
- * Reference to any tab in the unified tab system.
- * Used for unified tab ordering across different tab types.
- *
- * The `'group'` kind lets a tiled TabGroup appear as a single entry in the tab
- * strip. Unlike the other kinds (which point at a tab in aiTabs/filePreviewTabs/
- * terminalTabs/browserTabs), a group ref's `id` points at a TabGroup in
- * `Session.tabGroups`; the group's own layout still references the underlying
- * tabs by leaf. See PanelLayoutNode below.
- */
-export type UnifiedTabRef = { type: 'ai' | 'file' | 'terminal' | 'browser' | 'group'; id: string };
+// Reference to any tab in the unified tab system. Defined in shared/ so the
+// main process (tab window registry) can use it; see that module for docs.
+import type { UnifiedTabRef } from '../../shared/unifiedTabRef';
+export type { UnifiedTabRef };
 
 /**
  * Unified tab entry for rendering in TabBar.

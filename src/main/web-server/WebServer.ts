@@ -113,6 +113,7 @@ import type {
 	SnoozeCommandCallback,
 	AutoRunSteeringCommandCallback,
 	WindowCommandCallback,
+	TabWindowCommandCallback,
 	ThroughputGaugeCommandCallback,
 	ReorderTabCallback,
 	ToggleBookmarkCallback,
@@ -222,6 +223,7 @@ import type {
 import type { SnoozeCommandRequest } from '../../shared/snoozeCommands';
 import type { SteeringCommandRequest } from '../../shared/autoRunSteeringCommands';
 import type { WindowCommandRequest } from '../../shared/windowCommands';
+import type { TabWindowCommandRequest } from '../../shared/tabWindowCommands';
 import type { ThroughputGaugeCommandRequest } from '../../shared/throughputGaugeCommands';
 
 // Logger context for all web server logs
@@ -625,6 +627,10 @@ export class WebServer {
 
 	setWindowCommandCallback(callback: WindowCommandCallback): void {
 		this.callbackRegistry.setWindowCommandCallback(callback);
+	}
+
+	setTabWindowCommandCallback(callback: TabWindowCommandCallback): void {
+		this.callbackRegistry.setTabWindowCommandCallback(callback);
 	}
 
 	setThroughputGaugeCommandCallback(callback: ThroughputGaugeCommandCallback): void {
@@ -1344,6 +1350,8 @@ export class WebServer {
 				this.callbackRegistry.autoRunSteeringCommand(request),
 			windowCommand: async (request: WindowCommandRequest) =>
 				this.callbackRegistry.windowCommand(request),
+			tabWindowCommand: async (request: TabWindowCommandRequest) =>
+				this.callbackRegistry.tabWindowCommand(request),
 			throughputGaugeCommand: async (request: ThroughputGaugeCommandRequest) =>
 				this.callbackRegistry.throughputGaugeCommand(request),
 			reorderTab: async (sessionId: string, fromIndex: number, toIndex: number) =>

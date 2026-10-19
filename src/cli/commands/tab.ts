@@ -13,9 +13,15 @@
 // enter-to-send, save-to-history) are the CLI half of the composer chips: one
 // tab's state, written through the allowlisted + flushed config path so a
 // script can set a value and read it straight back with "tab show".
+//
+// The Tab Windows verbs (pop-out, dock, windows) ride one tab_window_command
+// message and take a tab id of ANY kind (AI, file, terminal, browser), exact or
+// a unique prefix. The owner window runs them through the same service as the
+// chip menu, Cmd+K, and Opt+Cmd+O.
 
 import {
 	sendSimpleCommand,
+	errorFrameMessage,
 	reportResult,
 	failCommand,
 	resolveAgentOrFail,
@@ -29,6 +35,8 @@ import { formatSuccess } from '../output/formatter';
 import { nextThinkingMode, type ThinkingMode } from '../../shared/types';
 import type { DesktopTabEntry } from '../../shared/desktopTabs';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
+import type { TabWindowCommandResult, TabWindowSummary } from '../../shared/tabWindowCommands';
+import type { TabWindowTabRef } from '../../shared/tabWindowTypes';
 
 interface TabNewOptions {
 	agent: string;
@@ -456,4 +464,133 @@ export async function tabShow(tabId: string, options: TabMutateOptions): Promise
 	row('Enter to send', inherited(entry.enterToSend));
 	row('Starred', String(entry.starred));
 	row('Unread', String(entry.hasUnread ?? false));
+}
+
+// ============================================================================
+// Tab Windows (pop-out, dock, windows)
+// ============================================================================
+
+interface TabWindowVerbOptions {
+	/** The agent that owns the tab; resolved from the tab id when omitted. */
+	agent?: string;
+	background?: boolean;
+	focus?: boolean;
+	json?: boolean;
+}
+
+/** `ai:<id>, terminal:<id>` - a tab window's strip on one line. */
+function formatTabRefs(refs: TabWindowTabRef[]): string {
+	return refs.length === 0 ? '(none)' : refs.map((ref) => `${ref.type}:${ref.id}`).join(', ');
+}
+
+async function sendTabWindowCommand(
+	payload: Record<string, unknown>,
+	json?: boolean
+): Promise<TabWindowCommandResult> {
+	try {
+		const result = await sendSimpleCommand<TabWindowCommandResult>(
+			{ type: 'tab_window_command', ...payload },
+			'tab_window_command_result'
+		);
+		const frameError = errorFrameMessage(result);
+		if (frameError) return failCommand(frameError, json);
+		if (!result.success) return failCommand(result.error || 'Tab window command failed', json);
+		return result;
+	} catch (error) {
+		exitIfMaestroNotRunning(error, { json });
+		return failCommand(error instanceof Error ? error.message : String(error), json);
+	}
+}
+
+/**
+ * Pop a tab out into its agent's tab window, opening the window when the agent
+ * has none (one per agent). Raises the window unless `--background`.
+ */
+export async function tabPopOut(tabId: string, options: TabWindowVerbOptions): Promise<void> {
+	const sessionId = options.agent ? resolveAgentOrFail(options.agent, options.json) : undefined;
+	const background = resolveBackgroundFlag(options, 'tab-pop-out');
+	const result = await sendTabWindowCommand(
+		{ action: 'pop-out', tabId, sessionId, background },
+		options.json
+	);
+	if (options.json) {
+		console.log(
+			JSON.stringify({
+				success: true,
+				agentId: result.agentId,
+				tabRef: result.tabRef,
+				windowId: result.windowId,
+				created: result.created === true,
+				background,
+				tabRefs: result.tabRefs ?? null,
+			})
+		);
+		return;
+	}
+	const ref = result.tabRef;
+	const notes = [result.created ? 'new window' : null, background ? 'background' : null].filter(
+		Boolean
+	);
+	console.log(
+		formatSuccess(
+			`Popped ${ref ? `${ref.type} tab ${ref.id}` : `tab ${tabId}`} out into tab window ${result.windowId}${notes.length ? ` (${notes.join(', ')})` : ''}`
+		)
+	);
+	if (result.tabRefs) console.log(`  Tabs: ${formatTabRefs(result.tabRefs)}`);
+}
+
+/**
+ * Return a popped tab to its agent's main window strip, at the slot it left.
+ * The tab window closes when that was its last tab.
+ */
+export async function tabDock(tabId: string, options: TabWindowVerbOptions): Promise<void> {
+	const sessionId = options.agent ? resolveAgentOrFail(options.agent, options.json) : undefined;
+	const result = await sendTabWindowCommand({ action: 'dock', tabId, sessionId }, options.json);
+	const closed = result.tabRefs?.length === 0;
+	if (options.json) {
+		console.log(
+			JSON.stringify({
+				success: true,
+				agentId: result.agentId,
+				tabRef: result.tabRef,
+				windowId: result.windowId,
+				windowClosed: closed,
+				tabRefs: result.tabRefs ?? null,
+			})
+		);
+		return;
+	}
+	const ref = result.tabRef;
+	console.log(
+		formatSuccess(
+			`Docked ${ref ? `${ref.type} tab ${ref.id}` : `tab ${tabId}`} back to its main window${closed ? ` (tab window ${result.windowId} closed)` : ''}`
+		)
+	);
+	if (result.tabRefs && !closed) {
+		console.log(`  Left in tab window ${result.windowId}: ${formatTabRefs(result.tabRefs)}`);
+	}
+}
+
+/** List every tab window with its agent and its tabs (the read half of pop-out and dock). */
+export async function tabWindows(options: { json?: boolean }): Promise<void> {
+	const result = await sendTabWindowCommand({ action: 'list' }, options.json);
+	const windows: TabWindowSummary[] = result.windows ?? [];
+	if (options.json) {
+		console.log(JSON.stringify({ success: true, windows }, null, 2));
+		return;
+	}
+	if (windows.length === 0) {
+		console.log('No tab windows open');
+		return;
+	}
+	for (const win of windows) {
+		console.log(
+			`${win.agentName ?? '(unknown agent)'}  (${win.agentId})  tab window ${win.windowId}`
+		);
+		for (const ref of win.tabRefs) {
+			const shown =
+				win.activeTabRef?.type === ref.type && win.activeTabRef.id === ref.id ? '  (shown)' : '';
+			console.log(`  ${ref.type.padEnd(9)}${ref.id}${shown}`);
+		}
+	}
 }

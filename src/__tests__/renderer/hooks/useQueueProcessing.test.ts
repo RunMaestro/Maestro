@@ -36,7 +36,10 @@ import { renderHook, act, cleanup } from '@testing-library/react';
 // ============================================================================
 
 const mockAgentStoreProcessQueuedItem = vi.fn();
-vi.mock('../../../renderer/utils/runtimeContext', () => ({ isWebDesktop: vi.fn(() => false) }));
+vi.mock('../../../renderer/utils/runtimeContext', () => ({
+	isWebDesktop: vi.fn(() => false),
+	isTabWindow: () => false,
+}));
 
 const mockLoggerError = vi.fn();
 

@@ -15,6 +15,8 @@
  * running the Electron binary directly.
  */
 
+import { TAB_WINDOW_QUERY_PARAM } from '../../shared/tabWindowTypes';
+
 let cached: boolean | null = null;
 
 /**
@@ -60,4 +62,39 @@ export function isWebDesktop(): boolean {
  * like `if (isElectronDesktop()) { ... }`. */
 export function isElectronDesktop(): boolean {
 	return !isWebDesktop();
+}
+
+let cachedTabWindowId: string | null | undefined;
+
+/**
+ * The registry id of the tab window this renderer is, or null in every other
+ * window. A tab window is an OS window the main process loads with
+ * `?tabWindow=<windowId>` to hold one agent's popped-out tabs (Tab Windows,
+ * `docs/agent-guides/TAB-WINDOWS.md`). This is the ONE place that query is
+ * parsed; read window identity through this or {@link isTabWindow}.
+ *
+ * Never true in the web-desktop build: a browser client has no OS windows
+ * (TW-13). An empty value is not an id, so it is not a tab window either.
+ * Memoized like {@link isWebDesktop}: the answer is fixed for a page load.
+ */
+export function getTabWindowId(): string | null {
+	if (cachedTabWindowId !== undefined) return cachedTabWindowId;
+	cachedTabWindowId = readTabWindowId();
+	return cachedTabWindowId;
+}
+
+function readTabWindowId(): string | null {
+	if (typeof window === 'undefined' || isWebDesktop()) return null;
+	try {
+		const id = new URLSearchParams(window.location.search).get(TAB_WINDOW_QUERY_PARAM);
+		return id ? id : null;
+	} catch {
+		/* sandboxed window.location accessors can throw */
+		return null;
+	}
+}
+
+/** True when this renderer is a tab window. See {@link getTabWindowId}. */
+export function isTabWindow(): boolean {
+	return getTabWindowId() !== null;
 }

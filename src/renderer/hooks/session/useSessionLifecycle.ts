@@ -29,13 +29,9 @@ import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useModalStore } from '../../stores/modalStore';
 import { notifyToast } from '../../stores/notificationStore';
 import { getActiveTab } from '../../utils/tabHelpers';
-import { collectNamingPrompt, requestTabAutoName } from '../../services/tabAutoNaming';
-import {
-	renameTerminalTab as renameTerminalTabHelper,
-	getTerminalSessionId,
-} from '../../utils/terminalTabHelpers';
-import { useTabStore } from '../../stores/tabStore';
-import { collectLeafTabRefs, generateGroupName, resolveTabRefTitle } from '../../utils/panelLayout';
+import { requestManualTabAutoName } from '../../services/tabAutoNaming';
+import { renameTabInSession } from '../../services/tabRename';
+import { getTerminalSessionId } from '../../utils/terminalTabHelpers';
 import { resolveActiveNavTab } from './useNavigationHistory';
 import type { NavHistoryEntry } from './useNavigationHistory';
 import { captureException } from '../../utils/sentry';
@@ -290,142 +286,13 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 		[flushSessionPersistence]
 	);
 
+	// The rename itself is the shared explicit-target service (a tab window's
+	// owner renames a popped tab with the same function).
 	const handleRenameTab = useCallback(
 		(newName: string) => {
 			const activeSession = selectActiveSession(useSessionStore.getState());
 			if (!activeSession || !renameTabId) return;
-
-			// If this is a tiled tab group, rename the group. Resolve the auto-name
-			// fallback from the group's first pane title (matching the chip rename), so
-			// clearing the field never leaves an unnamed group.
-			const group = activeSession.tabGroups?.find((g) => g.id === renameTabId);
-			if (group) {
-				const firstRef = collectLeafTabRefs(group.layout)[0];
-				const fallback = firstRef
-					? generateGroupName(resolveTabRefTitle(activeSession, firstRef))
-					: group.name || 'Group';
-				useTabStore.getState().renameGroup(renameTabId, newName, fallback);
-				return;
-			}
-
-			// If this is a terminal tab, delegate to terminal tab rename helper
-			if (activeSession.terminalTabs?.some((t) => t.id === renameTabId)) {
-				updateSessionWith(activeSession.id, (s) =>
-					renameTerminalTabHelper(s, renameTabId, newName)
-				);
-				return;
-			}
-
-			// If this is a file preview tab, set a user-assigned name that locks the
-			// displayed label. An empty value clears it, falling back to the filename
-			// (and the ambiguity-disambiguated label) again.
-			if (activeSession.filePreviewTabs?.some((t) => t.id === renameTabId)) {
-				const nextCustomName = newName.trim() || undefined;
-				updateSessionWith(activeSession.id, (s) => {
-					return {
-						...s,
-						filePreviewTabs: (s.filePreviewTabs || []).map((t) =>
-							t.id === renameTabId ? { ...t, customName: nextCustomName } : t
-						),
-					};
-				});
-				return;
-			}
-
-			// If this is a browser tab, set a user-assigned name that locks the
-			// displayed label. An empty value clears it, letting the website set the
-			// tab title again. We never touch `title` so the live page title stays
-			// tracked underneath and reappears once the custom name is cleared.
-			if (activeSession.browserTabs?.some((t) => t.id === renameTabId)) {
-				const nextCustomTitle = newName.trim() || undefined;
-				updateSessionWith(activeSession.id, (s) => {
-					return {
-						...s,
-						browserTabs: (s.browserTabs || []).map((t) =>
-							t.id === renameTabId ? { ...t, customTitle: nextCustomTitle } : t
-						),
-					};
-				});
-				return;
-			}
-
-			updateSessionWith(activeSession.id, (s) => {
-				// Find the tab to get its agentSessionId for persistence
-				const tab = s.aiTabs.find((t) => t.id === renameTabId);
-				const oldName = tab?.name;
-
-				window.maestro.logger.log(
-					'info',
-					`Tab renamed: "${oldName || '(auto)'}" → "${newName || '(cleared)'}"`,
-					'TabNaming',
-					{
-						tabId: renameTabId,
-						sessionId: activeSession.id,
-						agentSessionId: tab?.agentSessionId,
-						oldName,
-						newName: newName || null,
-					}
-				);
-
-				if (tab?.agentSessionId) {
-					// Persist name to agent session metadata (async, fire and forget)
-					// Use projectRoot (not cwd) for consistent session storage access
-					const agentId = s.toolType || 'claude-code';
-					if (agentId === 'claude-code') {
-						window.maestro.claude
-							.updateSessionName(s.projectRoot, tab.agentSessionId, newName || '')
-							.catch((err) => {
-								captureException(err, {
-									extra: {
-										tabId: renameTabId,
-										agentSessionId: tab.agentSessionId,
-										operation: 'persist-tab-name-claude',
-									},
-								});
-							});
-					} else {
-						window.maestro.agentSessions
-							.setSessionName(agentId, s.projectRoot, tab.agentSessionId, newName || null)
-							.catch((err) => {
-								captureException(err, {
-									extra: {
-										tabId: renameTabId,
-										agentSessionId: tab.agentSessionId,
-										agentType: agentId,
-										operation: 'persist-tab-name-agent',
-									},
-								});
-							});
-					}
-					// Also update past history entries with this agentSessionId
-					window.maestro.history
-						.updateSessionName(tab.agentSessionId, newName || '')
-						.catch((err) => {
-							captureException(err, {
-								extra: {
-									agentSessionId: tab.agentSessionId,
-									operation: 'update-history-session-name',
-								},
-							});
-						});
-				} else {
-					window.maestro.logger.log(
-						'info',
-						'Tab renamed (no agentSessionId, skipping persistence)',
-						'TabNaming',
-						{
-							tabId: renameTabId,
-						}
-					);
-				}
-				return {
-					...s,
-					aiTabs: s.aiTabs.map((t) =>
-						// Clear isGeneratingName to cancel any in-progress automatic naming
-						t.id === renameTabId ? { ...t, name: newName || null, isGeneratingName: false } : t
-					),
-				};
-			});
+			renameTabInSession(activeSession.id, renameTabId, newName);
 		},
 		[renameTabId]
 	);
@@ -434,27 +301,12 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 		const activeSession = selectActiveSession(useSessionStore.getState());
 		if (!activeSession || !renameTabId) return;
 
-		const tab = activeSession.aiTabs.find((t) => t.id === renameTabId);
-		if (!tab || !tab.logs.length) return;
-
-		const prompt = collectNamingPrompt(
-			tab.logs.filter((entry) => entry.source === 'user').map((entry) => entry.text)
-		);
-		if (!prompt) return;
-
-		// Close the modal immediately
-		useModalStore.getState().closeModal('renameTab');
-
 		// The user pressed "Auto" - honor it even with automatic naming switched off,
-		// and overwrite whatever the tab is called now.
-		requestTabAutoName({
-			session: activeSession,
-			tabId: renameTabId,
-			prompt,
-			canApply: () => true,
-			force: true,
-			label: 'manual',
-		});
+		// and overwrite whatever the tab is called now. Close the modal once naming
+		// has started; with nothing to name from, it stays open.
+		if (requestManualTabAutoName(activeSession.id, renameTabId)) {
+			useModalStore.getState().closeModal('renameTab');
+		}
 	}, [renameTabId]);
 
 	const performDeleteSession = useCallback(

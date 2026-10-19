@@ -96,7 +96,7 @@ function isBridgeEvent(event: Electron.IpcMainInvokeEvent | undefined): boolean 
  * collapse would silently rewrite a desktop window's persisted state. Reads
  * answering for the primary are defensible; writes landing on it are not.
  */
-function resolveCallingWindow(
+export function resolveCallingWindow(
 	event: Electron.IpcMainInvokeEvent,
 	registry: WindowRegistry,
 	{ allowBridge = false }: { allowBridge?: boolean } = {}
@@ -133,6 +133,11 @@ function resolveCallingWindow(
  * because cross-window badges + the window list depend on the full registry;
  * each renderer re-reads it and decides what changed for it.
  *
+ * `tab-window-changed` (a tab popped out, docked, or shown in a tab window) is
+ * forwarded on purpose, with its `agentId`: the owner window hides or shows
+ * the tab, and the tab window redraws its strip. It is the one change type
+ * that also reaches tab windows; every other type stays with app windows.
+ *
  * Returns an unsubscribe function so callers (and tests) can tear the
  * subscription down.
  */
@@ -142,7 +147,8 @@ export function wireWindowRegistryBroadcast(registry: WindowRegistry): () => voi
 			change.type !== 'session-moved' &&
 			change.type !== 'sessions-changed' &&
 			change.type !== 'name-changed' &&
-			change.type !== 'removed'
+			change.type !== 'removed' &&
+			change.type !== 'tab-window-changed'
 		) {
 			return;
 		}
@@ -153,7 +159,12 @@ export function wireWindowRegistryBroadcast(registry: WindowRegistry): () => voi
 			fromWindowId: change.fromWindowId,
 			toWindowId: change.toWindowId,
 		};
-		for (const entry of registry.getAppWindows()) {
+		const recipients = registry.getAppWindows();
+		if (change.type === 'tab-window-changed') {
+			payload.agentId = change.agentId;
+			recipients.push(...registry.getTabWindows());
+		}
+		for (const entry of recipients) {
 			const { browserWindow } = entry;
 			if (browserWindow.isDestroyed()) continue;
 			const { webContents } = browserWindow;
@@ -274,6 +285,10 @@ export function registerWindowsHandlers(deps: WindowsHandlerDependencies): void 
 				if (!registry.get(fromWindowId) || !registry.get(toWindowId)) {
 					return { moved: false, error: 'Unknown source or destination window' };
 				}
+				// Only an app window can own an agent (Tab Windows D1).
+				if (registry.get(toWindowId)?.kind !== 'app') {
+					return { moved: false, error: 'Destination window cannot own agents' };
+				}
 				registry.moveSession(sessionId, fromWindowId, toWindowId);
 				return { moved: true };
 			}
@@ -358,7 +373,8 @@ export function registerWindowsHandlers(deps: WindowsHandlerDependencies): void 
 		(event: Electron.IpcMainInvokeEvent, sessionId: string): { registered: boolean } => {
 			const registry = requireDependency(getWindowRegistry, 'Window registry');
 			const entry = resolveCallingWindow(event, registry);
-			if (!entry) return { registered: false };
+			// A tab window (or any feature window) never claims an agent (Tab Windows D1).
+			if (!entry || entry.kind !== 'app') return { registered: false };
 			registry.registerSession(entry.id, sessionId);
 			return { registered: true };
 		}
@@ -389,7 +405,7 @@ export function registerWindowsHandlers(deps: WindowsHandlerDependencies): void 
 			{ context: LOG_CONTEXT, operation: 'setName' },
 			async (windowId: string, name: string): Promise<{ renamed: boolean }> => {
 				const registry = requireDependency(getWindowRegistry, 'Window registry');
-				if (!registry.get(windowId)) return { renamed: false };
+				if (registry.get(windowId)?.kind !== 'app') return { renamed: false };
 				registry.setName(windowId, name);
 				return { renamed: true };
 			}

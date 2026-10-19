@@ -1,5 +1,34 @@
 import { describe, expect, it } from 'vitest';
-import { mergeSessionPersistenceChanges } from '../../shared/sessionPersistenceMerge';
+import {
+	isClientSessionField,
+	mergeSessionPersistenceChanges,
+} from '../../shared/sessionPersistenceMerge';
+
+describe('isClientSessionField', () => {
+	it('names the fields each window keeps for itself, on the session and on a tab', () => {
+		for (const field of [
+			'activeTabId',
+			'activeFileTabId',
+			'activeBrowserTabId',
+			'activeTerminalTabId',
+			'activeGroupId',
+			'inputMode',
+			'inputValue',
+			'commandMode',
+			'stagedImages',
+			'terminalDraftInput',
+			'ptyInitialized',
+		]) {
+			expect(isClientSessionField(field)).toBe(true);
+		}
+	});
+
+	it('rejects shared fields and inherited object keys', () => {
+		for (const field of ['state', 'logs', 'name', 'executionQueue', 'constructor', 'toString']) {
+			expect(isClientSessionField(field)).toBe(false);
+		}
+	});
+});
 
 describe('observed session changes', () => {
 	it('accepts tab and queue drag order and new-tab insertion without stealing host group focus', () => {

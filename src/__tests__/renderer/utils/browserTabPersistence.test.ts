@@ -13,6 +13,7 @@ import {
 	sanitizeBrowserTabForPersistence,
 	resolveBrowserTabNavigationTarget,
 	toWebviewSrc,
+	withoutGuestState,
 } from '../../../renderer/utils/browserTabPersistence';
 import type { BrowserTab } from '../../../shared/browserPage';
 
@@ -278,6 +279,34 @@ describe('browserTabPersistence', () => {
 					isEphemeralBrowserTab({ ...baseTab, partition: 'persist:maestro-browser-session-s' })
 				).toBe(false);
 				expect(isEphemeralBrowserTab(baseTab)).toBe(false);
+			});
+		});
+	});
+
+	describe('withoutGuestState', () => {
+		it('drops what a guest reported and keeps the page, partition, and flags', () => {
+			const tab: BrowserTab = {
+				id: 'b1',
+				url: 'https://example.com/a',
+				title: 'A',
+				createdAt: 1,
+				partition: 'maestro-ephemeral-s-a1b2c3d4',
+				ephemeral: true,
+				hiddenFromAgent: true,
+				favicon: 'https://example.com/favicon.ico',
+				canGoBack: true,
+				canGoForward: true,
+				isLoading: true,
+				webContentsId: 12,
+				remotePage: true,
+			};
+			expect(withoutGuestState(tab)).toEqual({
+				...tab,
+				canGoBack: false,
+				canGoForward: false,
+				isLoading: false,
+				webContentsId: undefined,
+				remotePage: undefined,
 			});
 		});
 	});

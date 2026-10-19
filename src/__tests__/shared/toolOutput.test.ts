@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	MAX_PERSISTED_TOOL_OUTPUT_CHARS,
+	compactLogToolOutputs,
 	compactSessionToolOutputs,
 	compactToolOutput,
 } from '../../shared/toolOutput';
@@ -49,5 +50,26 @@ describe('tool output compaction', () => {
 			'[tool output truncated'
 		);
 		expect(session.aiTabs[0].logs[0].metadata.toolState.output).toBe(output);
+	});
+
+	it('caps one transcript and keeps the identity of everything it did not cap', () => {
+		const small = { id: 'a', metadata: { toolState: { output: 'ok' } } };
+		const text = { id: 'b', text: 'plain' };
+		const logs = [small, text];
+		expect(compactLogToolOutputs(logs)).toEqual({ logs, compacted: 0 });
+		expect(compactLogToolOutputs(logs).logs).toBe(logs);
+
+		const big = {
+			id: 'c',
+			metadata: { toolState: { output: 'x'.repeat(MAX_PERSISTED_TOOL_OUTPUT_CHARS + 1) } },
+		};
+		const result = compactLogToolOutputs([small, big, text]);
+		expect(result.compacted).toBe(1);
+		expect(result.logs[0]).toBe(small);
+		expect(result.logs[2]).toBe(text);
+		expect((result.logs[1] as typeof big).metadata.toolState.output).toHaveLength(
+			MAX_PERSISTED_TOOL_OUTPUT_CHARS
+		);
+		expect(big.metadata.toolState.output).toHaveLength(MAX_PERSISTED_TOOL_OUTPUT_CHARS + 1);
 	});
 });

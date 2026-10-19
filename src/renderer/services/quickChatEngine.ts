@@ -56,7 +56,7 @@ import {
 	setShowThinkingFields,
 } from '../utils/tabHelpers';
 import { aiTabFocusFields } from '../utils/tabFocusFields';
-import { isAiTabHidden, visibleAiTabs } from '../utils/unifiedTabOrderUtils';
+import { isAiTabHidden, ownerVisibleAiTabs } from '../utils/unifiedTabOrderUtils';
 import { nextRunnableQueueItem, spawnCollisionCooldownMs } from '../utils/executionQueue';
 import { leftBarAgentOrder } from '../utils/leftBarOrder';
 import { generateId } from '../utils/ids';
@@ -569,7 +569,8 @@ function applyPersistence(session: Session, tab: AITab, persistent: boolean): st
 		});
 		return null;
 	}
-	const fallback = visibleAiTabs(session.aiTabs).find((t) => t.id !== tab.id);
+	// Never hand the owner a tab popped out into a tab window (Tab Windows, D4).
+	const fallback = ownerVisibleAiTabs(session.id, session.aiTabs).find((t) => t.id !== tab.id);
 	if (session.activeTabId === tab.id && !fallback) {
 		return "This is the agent's only open tab, so it cannot be hidden";
 	}

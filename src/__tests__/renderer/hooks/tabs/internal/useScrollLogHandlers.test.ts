@@ -187,4 +187,41 @@ describe('useScrollLogHandlers', () => {
 		expect(getSession().shellLogs.map((log) => log.id)).toEqual(['s1']);
 		expect(getSession().shellCommandHistory).toEqual([]);
 	});
+
+	it('deletes from a named AI tab that is not the active one, even with the terminal shown (Tab Windows)', () => {
+		setupSession({
+			aiTabs: [
+				createMockAITab({ id: 'ai-1' }),
+				createMockAITab({
+					id: 'popped',
+					logs: [
+						{ id: 'u1', source: 'user', text: 'first', timestamp: 1 },
+						{ id: 'a1', source: 'stdout', text: 'answer', timestamp: 2 },
+						{ id: 'u2', source: 'user', text: 'second', timestamp: 3 },
+					] as any,
+				}),
+			],
+			activeTabId: 'ai-1',
+			inputMode: 'terminal',
+			aiCommandHistory: ['first', 'second'],
+		});
+		const { result } = renderHook(() => useScrollLogHandlers());
+
+		act(() => {
+			result.current.handleDeleteLog('u1', { sessionId: 'test-session', tabId: 'popped' });
+		});
+
+		const popped = getSession().aiTabs.find((t) => t.id === 'popped')!;
+		expect(popped.logs.map((log) => log.id)).toEqual(['u2']);
+		expect(getSession().aiCommandHistory).toEqual(['second']);
+		expect(getSession().shellLogs).toEqual([]);
+	});
+
+	it('deletes nothing for a named tab that is gone', () => {
+		setupSession({ aiTabs: [createMockAITab({ id: 'ai-1' })] });
+		const { result } = renderHook(() => useScrollLogHandlers());
+		expect(
+			result.current.handleDeleteLog('u1', { sessionId: 'test-session', tabId: 'gone' })
+		).toBeNull();
+	});
 });

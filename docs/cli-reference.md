@@ -1736,6 +1736,34 @@ Move a tab to a position in its agent's tab bar (0-based, or "first"/"last")
 | `-a, --agent <id>` | Whose active tab, when &lt;tab-id> is "active" | -       |
 | `--json`           | Output as JSON (for scripting)                 | -       |
 
+## `maestro-cli tab pop-out <tab-id>`
+
+Pop a tab out into its agent's tab window (opens the window if needed)
+
+| Option             | Description                                                     | Default |
+| ------------------ | --------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent that owns the tab (resolved from the tab id when omitted) | -       |
+| `--background`     | Add the tab to the tab window without raising it                | -       |
+| `--focus`          | Raise the tab window and show the tab (default)                 | -       |
+| `--json`           | Output as JSON (for scripting)                                  | -       |
+
+## `maestro-cli tab dock <tab-id>`
+
+Return a popped-out tab to its main window (closes an emptied tab window)
+
+| Option             | Description                                                     | Default |
+| ------------------ | --------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent that owns the tab (resolved from the tab id when omitted) | -       |
+| `--json`           | Output as JSON (for scripting)                                  | -       |
+
+## `maestro-cli tab windows`
+
+List the open tab windows with their agent and tabs
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
 ## `maestro-cli create-ssh-remote <name>`
 
 Create a new SSH remote configuration

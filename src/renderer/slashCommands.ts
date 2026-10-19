@@ -31,3 +31,63 @@ export const slashCommands: SlashCommand[] = [
 		agentTypes: ['claude-code'],
 	},
 ];
+
+/** A command the composer's `/` picker offers. */
+export interface SlashCommandOption {
+	command: string;
+	description: string;
+	terminalOnly?: boolean;
+	aiOnly?: boolean;
+	prompt?: string;
+}
+
+/** A user-defined or bundled command that sends its prompt. */
+interface PromptCommandSource {
+	command: string;
+	description: string;
+	prompt?: string;
+}
+
+/**
+ * Everything the composer's `/` picker offers, in picker order: the built-ins
+ * for this agent type, the user's custom AI commands, the bundled methodology
+ * commands (Spec Kit, OpenSpec, BMAD), then the agent's own commands. Pass
+ * `agentCommands` only when the agent supports slash commands. A tab window
+ * leaves out the built-ins that run on the app window's active tab
+ * (`excludeBuiltIns`).
+ */
+export function buildSlashCommandList(sources: {
+	toolType?: ToolType;
+	customAICommands: PromptCommandSource[];
+	speckitCommands?: PromptCommandSource[];
+	openspecCommands?: PromptCommandSource[];
+	bmadCommands?: PromptCommandSource[];
+	agentCommands?: Array<{ command: string; description: string }>;
+	excludeBuiltIns?: readonly string[];
+}): SlashCommandOption[] {
+	const asAiCommand = (cmd: PromptCommandSource): SlashCommandOption => ({
+		command: cmd.command,
+		description: cmd.description,
+		aiOnly: true,
+		prompt: cmd.prompt,
+	});
+	// Filter built-in slash commands by agent type (if specified)
+	const builtIns = slashCommands.filter(
+		(cmd) =>
+			(!cmd.agentTypes || (sources.toolType && cmd.agentTypes.includes(sources.toolType))) &&
+			!sources.excludeBuiltIns?.includes(cmd.command)
+	);
+	return [
+		...builtIns,
+		...sources.customAICommands.map(asAiCommand),
+		...(sources.speckitCommands ?? []).map(asAiCommand),
+		...(sources.openspecCommands ?? []).map(asAiCommand),
+		...(sources.bmadCommands ?? []).map(asAiCommand),
+		// Agent commands are only available in AI mode
+		...(sources.agentCommands ?? []).map((cmd) => ({
+			command: cmd.command,
+			description: cmd.description,
+			aiOnly: true,
+		})),
+	];
+}

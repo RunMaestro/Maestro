@@ -15,6 +15,10 @@ import type {
 } from '../../shared/autoRunSteeringCommands';
 import type { WindowCommandRequest, WindowCommandResult } from '../../shared/windowCommands';
 import type {
+	TabWindowCommandRequest,
+	TabWindowCommandResult,
+} from '../../shared/tabWindowCommands';
+import type {
 	ThroughputGaugeCommandRequest,
 	ThroughputGaugeCommandResult,
 } from '../../shared/throughputGaugeCommands';
@@ -430,6 +434,15 @@ export type AutoRunSteeringCommandCallback = (
  * methods the Left Bar menus call. Resolves rather than rejects on a miss.
  */
 export type WindowCommandCallback = (request: WindowCommandRequest) => Promise<WindowCommandResult>;
+/**
+ * `maestro-cli tab pop-out`, `tab dock`, and `tab windows` (Tab Windows,
+ * TW-12). Main resolves the owning agent and answers `list` from the window
+ * registry; the agent's owner window answers `pop-out` and `dock` through the
+ * same service the UI calls. Resolves rather than rejects on a miss.
+ */
+export type TabWindowCommandCallback = (
+	request: TabWindowCommandRequest
+) => Promise<TabWindowCommandResult>;
 /**
  * `maestro-cli throughput-gauge` - show, hide, configure, or read the gauge.
  * Answered by the primary window, which owns the live rates. Resolves rather

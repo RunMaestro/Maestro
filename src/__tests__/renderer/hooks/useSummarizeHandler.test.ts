@@ -320,6 +320,50 @@ describe('handleSummarizeAndContinue (Tier 3E)', () => {
 		);
 	});
 
+	it('compacts the named tab of an explicit agent that is not active, whatever its view mode (a tab window owner)', async () => {
+		const popped = createMockTab({ id: 'popped', name: 'Popped' });
+		const owner = createMockSession({
+			id: 'owner',
+			name: 'Owner',
+			inputMode: 'terminal',
+			aiTabs: [createMockTab(), popped],
+			activeTabId: 'tab-1',
+		});
+		const other = createMockSession({ id: 'other', name: 'Other' });
+		useSessionStore.setState({ sessions: [owner, other], activeSessionId: other.id });
+		const { result } = renderHook(() => useSummarizeAndContinue());
+
+		await act(async () => {
+			result.current.handleSummarizeAndContinue('popped', 'owner');
+			await vi.waitFor(() => {
+				expect(notifyToast).toHaveBeenCalledWith(expect.objectContaining({ type: 'success' }));
+			});
+		});
+
+		expect(contextSummarizationService.summarizeContext).toHaveBeenCalledWith(
+			expect.objectContaining({ sourceSessionId: 'owner', sourceTabId: 'popped' }),
+			expect.any(Array),
+			expect.any(Function)
+		);
+		const sessions = useSessionStore.getState().sessions;
+		const ownerAfter = sessions.find((s) => s.id === 'owner')!;
+		expect(ownerAfter.aiTabs.map((t) => t.id)).toEqual(['tab-1', 'popped', 'new-tab-1']);
+		expect(sessions.find((s) => s.id === 'other')!.aiTabs).toHaveLength(1);
+	});
+
+	it('ignores an explicit agent that is gone', async () => {
+		const session = createMockSession();
+		seedActiveSession(session);
+		const { result } = renderHook(() => useSummarizeAndContinue());
+
+		await act(async () => {
+			result.current.handleSummarizeAndContinue('tab-1', 'gone');
+		});
+
+		expect(contextSummarizationService.summarizeContext).not.toHaveBeenCalled();
+		expect(notifyToast).not.toHaveBeenCalled();
+	});
+
 	it('shows error toast when summarization fails', async () => {
 		const session = createMockSession();
 		useSessionStore.setState({

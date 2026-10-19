@@ -7,7 +7,8 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { BrowserWindow } from 'electron';
-import { WindowRegistry, type WindowRegistryChange } from '../window-registry';
+import { WindowRegistry, toTabWindowInfo, type WindowRegistryChange } from '../window-registry';
+import type { TabWindowTabRef } from '../../shared/tabWindowTypes';
 
 /** A fake BrowserWindow exposing only what the registry touches. */
 function makeWindow(
@@ -119,6 +120,47 @@ describe('WindowRegistry', () => {
 		it('returns null when no window owns the session', () => {
 			registry.create({ windowId: 'w1', sessionIds: ['s1'], browserWindow: makeWindow() });
 			expect(registry.getWindowForSession('ghost')).toBeNull();
+		});
+	});
+
+	describe('getOwnerWindowForAgent', () => {
+		it('returns the app window that owns the agent', () => {
+			registry.create({ windowId: 'main', isMain: true, browserWindow: makeWindow() });
+			registry.create({ windowId: 'w2', sessionIds: ['s1'], browserWindow: makeWindow() });
+			expect(registry.getOwnerWindowForAgent('s1')?.id).toBe('w2');
+		});
+
+		it('falls back to the primary for an agent no window claims', () => {
+			registry.create({ windowId: 'main', isMain: true, browserWindow: makeWindow() });
+			expect(registry.getOwnerWindowForAgent('unclaimed')?.id).toBe('main');
+		});
+
+		it('never answers with the agent tab window', () => {
+			registry.create({ windowId: 'main', isMain: true, browserWindow: makeWindow() });
+			registry.create({
+				windowId: 'tw',
+				kind: 'tab',
+				agentId: 's1',
+				tabRefs: [{ type: 'ai', id: 't1' }],
+				browserWindow: makeWindow(),
+			});
+			expect(registry.getOwnerWindowForAgent('s1')?.id).toBe('main');
+		});
+
+		it('follows a Move to Window', () => {
+			registry.create({
+				windowId: 'main',
+				isMain: true,
+				sessionIds: ['s1'],
+				browserWindow: makeWindow(),
+			});
+			registry.create({ windowId: 'w2', browserWindow: makeWindow() });
+			registry.moveSession('s1', 'main', 'w2');
+			expect(registry.getOwnerWindowForAgent('s1')?.id).toBe('w2');
+		});
+
+		it('returns undefined with no owner and no primary', () => {
+			expect(registry.getOwnerWindowForAgent('s1')).toBeUndefined();
 		});
 	});
 
@@ -510,6 +552,330 @@ describe('WindowRegistry', () => {
 				browserWindow: makeWindow({ x: 0, y: 0, width: 500, height: 500 }, true),
 			});
 			expect(registry.findWindowAtPoint(100, 100)).toBeNull();
+		});
+	});
+
+	describe('tab windows', () => {
+		const ai1 = { type: 'ai' as const, id: 'tab-1' };
+		const ai2 = { type: 'ai' as const, id: 'tab-2' };
+		const term = { type: 'terminal' as const, id: 'term-1' };
+
+		function createTabWindow(agentId = 'agent-a', tabRefs: TabWindowTabRef[] = [ai1]): string {
+			return registry.create({ kind: 'tab', browserWindow: makeWindow(), agentId, tabRefs });
+		}
+
+		it('stores the agent and ordered tab refs, and never owns sessions', () => {
+			const id = registry.create({
+				kind: 'tab',
+				browserWindow: makeWindow(),
+				agentId: 'agent-a',
+				tabRefs: [ai1, term, { ...ai1 }],
+				// Ignored for a tab window: it is never an owner nor the primary.
+				sessionIds: ['agent-a'],
+				isMain: true,
+			});
+			const entry = registry.get(id);
+			expect(entry?.kind).toBe('tab');
+			expect(entry?.agentId).toBe('agent-a');
+			expect(entry?.tabRefs).toEqual([ai1, term]);
+			expect(entry?.activeTabRef).toEqual(ai1);
+			expect(entry?.sessionIds).toEqual([]);
+			expect(entry?.isMain).toBe(false);
+			expect(registry.getWindowForSession('agent-a')).toBeNull();
+			expect(registry.getPrimary()).toBeUndefined();
+		});
+
+		it('honors a restored active tab, and falls back to the first when it is absent', () => {
+			const restored = registry.create({
+				kind: 'tab',
+				browserWindow: makeWindow(),
+				agentId: 'agent-a',
+				tabRefs: [ai1, term],
+				activeTabRef: term,
+			});
+			expect(registry.get(restored)?.activeTabRef).toEqual(term);
+
+			const stale = registry.create({
+				kind: 'tab',
+				browserWindow: makeWindow(),
+				agentId: 'agent-b',
+				tabRefs: [ai2],
+				activeTabRef: ai1,
+			});
+			expect(registry.get(stale)?.activeTabRef).toEqual(ai2);
+		});
+
+		it('announces a new tab window with tabs as a tab window change, so the owner hides them', () => {
+			const changes: WindowRegistryChange[] = [];
+			registry.onChange((c) => changes.push(c));
+
+			const id = createTabWindow('agent-a', [ai1]);
+			const empty = createTabWindow('agent-b', []);
+			registry.create({ windowId: 'app', browserWindow: makeWindow() });
+
+			expect(changes).toEqual([
+				{ type: 'created', windowId: id },
+				{ type: 'tab-window-changed', windowId: id, agentId: 'agent-a' },
+				{ type: 'created', windowId: empty },
+				{ type: 'created', windowId: 'app' },
+			]);
+		});
+
+		it('refuses a tab window without an agent', () => {
+			expect(() => registry.create({ kind: 'tab', browserWindow: makeWindow() })).toThrow(
+				/agentId/
+			);
+		});
+
+		it('refuses a second tab window for the same agent (TW-4)', () => {
+			createTabWindow('agent-a');
+			expect(() => createTabWindow('agent-a', [ai2])).toThrow(/already has a tab window/);
+			expect(registry.getTabWindows()).toHaveLength(1);
+		});
+
+		it('looks a tab window up by agent, and lists only tab windows', () => {
+			registry.create({ windowId: 'app', browserWindow: makeWindow(), isMain: true });
+			const a = createTabWindow('agent-a');
+			const b = createTabWindow('agent-b', [ai2]);
+
+			expect(registry.getTabWindowForAgent('agent-a')?.id).toBe(a);
+			expect(registry.getTabWindowForAgent('agent-b')?.id).toBe(b);
+			expect(registry.getTabWindowForAgent('agent-c')).toBeUndefined();
+			expect(registry.getTabWindows().map((w) => w.id)).toEqual([a, b]);
+		});
+
+		it('is excluded from getAppWindows, like the other feature kinds', () => {
+			registry.create({ windowId: 'app', browserWindow: makeWindow(), isMain: true });
+			createTabWindow();
+			registry.create({ kind: 'cadenza-hud', browserWindow: makeWindow() });
+
+			expect(registry.getAppWindows().map((w) => w.id)).toEqual(['app']);
+		});
+
+		it('toTabWindowInfo reports a tab window and nothing else', () => {
+			const id = createTabWindow('agent-a', [ai1, term]);
+			registry.create({ windowId: 'app', browserWindow: makeWindow() });
+
+			const info = toTabWindowInfo(registry.get(id)!);
+			expect(info).toEqual({
+				windowId: id,
+				agentId: 'agent-a',
+				tabRefs: [ai1, term],
+				activeTabRef: ai1,
+			});
+			// A copy: mutating the view never reaches the registry.
+			info!.tabRefs.pop();
+			expect(registry.get(id)?.tabRefs).toHaveLength(2);
+			expect(toTabWindowInfo(registry.get('app')!)).toBeNull();
+		});
+
+		describe('addTabToTabWindow', () => {
+			it('appends the tab and makes it the shown tab by default', () => {
+				const id = createTabWindow();
+				const changes: WindowRegistryChange[] = [];
+				registry.onChange((c) => changes.push(c));
+
+				expect(registry.addTabToTabWindow(id, 'agent-a', term)).toBe(true);
+
+				expect(registry.get(id)?.tabRefs).toEqual([ai1, term]);
+				expect(registry.get(id)?.activeTabRef).toEqual(term);
+				expect(changes).toEqual([{ type: 'tab-window-changed', windowId: id, agentId: 'agent-a' }]);
+			});
+
+			it('keeps the shown tab when activate is false', () => {
+				const id = createTabWindow();
+				registry.addTabToTabWindow(id, 'agent-a', term, { activate: false });
+				expect(registry.get(id)?.activeTabRef).toEqual(ai1);
+			});
+
+			it('shows the added tab when the window held none, even with activate false', () => {
+				const id = createTabWindow('agent-a', []);
+				expect(registry.get(id)?.activeTabRef).toBeNull();
+				registry.addTabToTabWindow(id, 'agent-a', term, { activate: false });
+				expect(registry.get(id)?.activeTabRef).toEqual(term);
+			});
+
+			it('never adds a tab twice, and stays silent when nothing changed', () => {
+				const id = createTabWindow();
+				const listener = vi.fn();
+				registry.onChange(listener);
+
+				expect(registry.addTabToTabWindow(id, 'agent-a', { ...ai1 })).toBe(true);
+
+				expect(registry.get(id)?.tabRefs).toEqual([ai1]);
+				expect(listener).not.toHaveBeenCalled();
+			});
+
+			it("refuses another agent's tab (TW-5)", () => {
+				const id = createTabWindow('agent-a');
+				const listener = vi.fn();
+				registry.onChange(listener);
+
+				expect(registry.addTabToTabWindow(id, 'agent-b', ai2)).toBe(false);
+
+				expect(registry.get(id)?.tabRefs).toEqual([ai1]);
+				expect(listener).not.toHaveBeenCalled();
+			});
+
+			it('refuses a window that is not a tab window', () => {
+				registry.create({ windowId: 'app', browserWindow: makeWindow() });
+				expect(registry.addTabToTabWindow('app', 'agent-a', ai1)).toBe(false);
+				expect(registry.addTabToTabWindow('missing', 'agent-a', ai1)).toBe(false);
+				expect(registry.get('app')?.tabRefs).toBeUndefined();
+			});
+		});
+
+		describe('removeTabFromTabWindow', () => {
+			it('removes the tab and emits tab-window-changed', () => {
+				const id = createTabWindow('agent-a', [ai1, term]);
+				const changes: WindowRegistryChange[] = [];
+				registry.onChange((c) => changes.push(c));
+
+				expect(registry.removeTabFromTabWindow(id, term)).toBe(true);
+
+				expect(registry.get(id)?.tabRefs).toEqual([ai1]);
+				expect(registry.get(id)?.activeTabRef).toEqual(ai1);
+				expect(changes).toEqual([{ type: 'tab-window-changed', windowId: id, agentId: 'agent-a' }]);
+			});
+
+			it('shows the tab that took the removed tab index, else the one before it', () => {
+				const id = createTabWindow('agent-a', [ai1, ai2, term]);
+				registry.setTabWindowActiveTab(id, ai2);
+
+				registry.removeTabFromTabWindow(id, ai2);
+				expect(registry.get(id)?.activeTabRef).toEqual(term);
+
+				registry.removeTabFromTabWindow(id, term);
+				expect(registry.get(id)?.activeTabRef).toEqual(ai1);
+			});
+
+			it('leaves an emptied window registered with no shown tab', () => {
+				const id = createTabWindow();
+				registry.removeTabFromTabWindow(id, ai1);
+				expect(registry.get(id)?.tabRefs).toEqual([]);
+				expect(registry.get(id)?.activeTabRef).toBeNull();
+				// Still the agent's tab window until the window manager closes it.
+				expect(registry.getTabWindowForAgent('agent-a')?.id).toBe(id);
+			});
+
+			it('returns false for a tab the window does not hold, or a non-tab window', () => {
+				const id = createTabWindow();
+				registry.create({ windowId: 'app', browserWindow: makeWindow() });
+				const listener = vi.fn();
+				registry.onChange(listener);
+
+				expect(registry.removeTabFromTabWindow(id, term)).toBe(false);
+				expect(registry.removeTabFromTabWindow('app', ai1)).toBe(false);
+				expect(listener).not.toHaveBeenCalled();
+			});
+		});
+
+		describe('setTabWindowActiveTab', () => {
+			it('shows a held tab and emits once', () => {
+				const id = createTabWindow('agent-a', [ai1, term]);
+				const listener = vi.fn();
+				registry.onChange(listener);
+
+				expect(registry.setTabWindowActiveTab(id, { ...term })).toBe(true);
+				expect(registry.setTabWindowActiveTab(id, term)).toBe(true);
+
+				expect(registry.get(id)?.activeTabRef).toEqual(term);
+				expect(listener).toHaveBeenCalledTimes(1);
+			});
+
+			it('refuses a tab the window does not hold', () => {
+				const id = createTabWindow();
+				expect(registry.setTabWindowActiveTab(id, term)).toBe(false);
+				expect(registry.get(id)?.activeTabRef).toEqual(ai1);
+			});
+		});
+
+		describe('setTabWindowTabOrder', () => {
+			it('puts the strip in the given order, keeps the shown tab, and emits once', () => {
+				const id = createTabWindow('agent-a', [ai1, ai2, term]);
+				registry.setTabWindowActiveTab(id, ai2);
+				const changes: WindowRegistryChange[] = [];
+				registry.onChange((c) => changes.push(c));
+
+				expect(registry.setTabWindowTabOrder(id, [term, { ...ai1 }, ai2])).toBe(true);
+
+				expect(registry.get(id)?.tabRefs).toEqual([term, ai1, ai2]);
+				expect(registry.get(id)?.activeTabRef).toEqual(ai2);
+				expect(changes).toEqual([{ type: 'tab-window-changed', windowId: id, agentId: 'agent-a' }]);
+			});
+
+			it('emits nothing for the order it already has', () => {
+				const id = createTabWindow('agent-a', [ai1, term]);
+				const listener = vi.fn();
+				registry.onChange(listener);
+
+				expect(registry.setTabWindowTabOrder(id, [ai1, term])).toBe(true);
+				expect(listener).not.toHaveBeenCalled();
+			});
+
+			it('refuses an order that adds, drops, or repeats a tab, and a window that is not a tab window', () => {
+				const id = createTabWindow('agent-a', [ai1, term]);
+				registry.create({ windowId: 'app', browserWindow: makeWindow() });
+				const listener = vi.fn();
+				registry.onChange(listener);
+
+				expect(registry.setTabWindowTabOrder(id, [ai1])).toBe(false);
+				expect(registry.setTabWindowTabOrder(id, [ai1, ai2])).toBe(false);
+				expect(registry.setTabWindowTabOrder(id, [ai1, ai1])).toBe(false);
+				expect(registry.setTabWindowTabOrder('app', [ai1])).toBe(false);
+
+				expect(registry.get(id)?.tabRefs).toEqual([ai1, term]);
+				expect(listener).not.toHaveBeenCalled();
+			});
+		});
+
+		describe('never becomes an owner (D1)', () => {
+			it('registerSession into a tab window is a silent no-op', () => {
+				const primary = registry.create({
+					browserWindow: makeWindow(),
+					sessionIds: ['agent-a'],
+					isMain: true,
+				});
+				const id = createTabWindow();
+				const listener = vi.fn();
+				registry.onChange(listener);
+
+				registry.registerSession(id, 'agent-a');
+
+				expect(registry.getWindowForSession('agent-a')).toBe(primary);
+				expect(registry.get(id)?.sessionIds).toEqual([]);
+				expect(listener).not.toHaveBeenCalled();
+			});
+
+			it('moveSession into a tab window leaves the agent with its owner', () => {
+				const primary = registry.create({
+					browserWindow: makeWindow(),
+					sessionIds: ['agent-a'],
+					isMain: true,
+				});
+				const id = createTabWindow();
+
+				registry.moveSession('agent-a', primary, id);
+
+				expect(registry.getWindowForSession('agent-a')).toBe(primary);
+				expect(registry.get(id)?.sessionIds).toEqual([]);
+			});
+
+			it('setSessionsForWindow, setName, and setPanelState ignore a tab window', () => {
+				const id = createTabWindow();
+				const listener = vi.fn();
+				registry.onChange(listener);
+
+				registry.setSessionsForWindow(id, ['agent-a']);
+				registry.setName(id, 'Renamed');
+				registry.setPanelState(id, { leftPanelCollapsed: true });
+
+				const entry = registry.get(id);
+				expect(entry?.sessionIds).toEqual([]);
+				expect(entry?.name).toBeUndefined();
+				expect(entry?.leftPanelCollapsed).toBe(false);
+				expect(listener).not.toHaveBeenCalled();
+			});
 		});
 	});
 

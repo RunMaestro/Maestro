@@ -26,6 +26,7 @@ import {
 } from '../../utils/starredSessions';
 import { captureException } from '../../utils/sentry';
 import { filterSessionsVisibleInSidebar } from '../../utils/sessionVisibility';
+import { focusTabWindowIfPoppedOut } from '../../services/tabWindowNavigation';
 
 // ============================================================================
 // Types
@@ -228,6 +229,14 @@ export function useStarredItems(deps: UseStarredItemsDeps): UseStarredItemsRetur
 
 	const activateStarredItem = useCallback(
 		async (item: StarredItem) => {
+			// A starred tab popped out into a tab window is shown there; the owner
+			// window's view does not move (Tab Windows, D4).
+			if (
+				item.kind === 'open' &&
+				focusTabWindowIfPoppedOut(item.parentSessionId, { type: 'ai', id: item.tabId })
+			) {
+				return;
+			}
 			// Dismiss any active group chat first. App gates the group chat view on a
 			// truthy activeGroupChatId and renders it on top of the session view, so
 			// setting activeSessionId alone leaves the group chat covering everything

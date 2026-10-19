@@ -14,6 +14,7 @@ import {
 	collectNamingPrompt,
 	isWizardTabAutoNameable,
 	requestTabAutoName,
+	requestManualTabAutoName,
 	requestTabAutoNameForMessage,
 	requestWizardTabAutoName,
 	WIZARD_TAB_NAME_PREFIX,
@@ -325,5 +326,49 @@ describe('requestTabAutoNameForMessage', () => {
 			requestTabAutoNameForMessage(session, tab.id, 'rewrite the ingest pipeline')
 		).not.toThrow();
 		expect(useSessionStore.getState().sessions[0].aiTabs[0].isGeneratingName).toBe(false);
+	});
+});
+
+describe('requestManualTabAutoName', () => {
+	function seedNamed(): void {
+		seedStore(
+			createMockSession({
+				id: 'agent-1',
+				aiTabs: [
+					createMockAITab({
+						id: 'popped',
+						name: 'Old Name',
+						logs: [
+							{ id: 'u1', timestamp: 1, source: 'user', text: 'build the ingest pipeline' },
+							{ id: 'a1', timestamp: 2, source: 'stdout', text: 'ok' },
+						],
+					}),
+					createMockAITab({ id: 'empty', logs: [] }),
+				],
+				activeTabId: 'empty',
+			})
+		);
+	}
+
+	it('names the tab from everything the user sent in it, replacing its name, even with auto naming off', async () => {
+		seedNamed();
+		useSettingsStore.setState({ automaticTabNamingEnabled: false } as never);
+
+		expect(requestManualTabAutoName('agent-1', 'popped')).toBe(true);
+		await flush();
+
+		expect(generateTabName).toHaveBeenCalledWith(
+			expect.objectContaining({ userMessage: expect.stringContaining('build the ingest pipeline') })
+		);
+		const tab = useSessionStore.getState().sessions[0].aiTabs.find((t) => t.id === 'popped')!;
+		expect(tab.name).toBe('Ingest Pipeline');
+	});
+
+	it('names nothing for a tab with no message, or a tab or agent that is gone', () => {
+		seedNamed();
+		expect(requestManualTabAutoName('agent-1', 'empty')).toBe(false);
+		expect(requestManualTabAutoName('agent-1', 'closed')).toBe(false);
+		expect(requestManualTabAutoName('gone', 'popped')).toBe(false);
+		expect(generateTabName).not.toHaveBeenCalled();
 	});
 });

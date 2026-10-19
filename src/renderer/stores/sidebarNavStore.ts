@@ -14,6 +14,7 @@ import { useGroupChatStore } from './groupChatStore';
 import { useSessionStore, updateSessionWith } from './sessionStore';
 import { useUIStore } from './uiStore';
 import { notifyStarredSessionsChanged } from '../utils/starredSessions';
+import { focusTabWindowIfPoppedOut } from '../services/tabWindowNavigation';
 
 export type JumpToStarredSessionFn = (
 	agentId: string,
@@ -78,6 +79,14 @@ export const useSidebarNavStore = create<SidebarNavStore>()((set, get) => ({
 		}),
 
 	activateStarredItem: async (item) => {
+		// A starred tab popped out into a tab window is shown there; the owner
+		// window's view does not move (Tab Windows, D4).
+		if (
+			item.kind === 'open' &&
+			focusTabWindowIfPoppedOut(item.parentSessionId, { type: 'ai', id: item.tabId })
+		) {
+			return;
+		}
 		// Same activation path as useStarredItems so cycle/nav can call
 		// getState().activateStarredItem without holding a React callback.
 		useGroupChatStore.getState().setActiveGroupChatId(null);

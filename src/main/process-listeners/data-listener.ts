@@ -5,6 +5,7 @@
 
 import type { ProcessManager } from '../process-manager';
 import { GROUP_CHAT_PREFIX, type ProcessListenerDependencies } from './types';
+import { terminalHandoff } from '../terminal-handoff';
 
 /**
  * Maximum buffer size per session (10MB).
@@ -102,6 +103,9 @@ export function setupDataListener(
 		const content = entry.content;
 		dataBuffers.delete(sessionId);
 		if (content) {
+			// A terminal tab whose view is between windows keeps this output for the
+			// next view (Tab Windows, D5). Same moment as the send, so the cut is exact.
+			terminalHandoff.noteData(sessionId, content);
 			safeSend('process:data', sessionId, content);
 		}
 	};

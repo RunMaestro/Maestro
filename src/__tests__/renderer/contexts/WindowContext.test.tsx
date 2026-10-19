@@ -877,6 +877,23 @@ describe('WindowContext', () => {
 			await waitFor(() => expect(result.current.sessionIds).toEqual(['a', 'b']));
 		});
 
+		it('does not re-hydrate on a tab-window-changed broadcast (no ownership change)', async () => {
+			setUrl('/?windowId=win-1');
+			vi.mocked(windows().getState).mockResolvedValue(makeState({ id: 'win-1' }));
+
+			renderHook(() => useWindowContext(), { wrapper });
+			await waitFor(() => expect(windows().onSessionMoved).toHaveBeenCalled());
+			await waitFor(() => expect(windows().getState).toHaveBeenCalled());
+			const reads = vi.mocked(windows().getState).mock.calls.length;
+
+			const handler = vi.mocked(windows().onSessionMoved).mock.calls[0][0];
+			await act(async () => {
+				handler({ type: 'tab-window-changed', windowId: 'tw-1', agentId: 'a' });
+			});
+
+			expect(windows().getState).toHaveBeenCalledTimes(reads);
+		});
+
 		it('subscribes on mount and unsubscribes on unmount', async () => {
 			const unsubscribe = vi.fn();
 			vi.mocked(windows().onSessionMoved).mockReturnValue(unsubscribe);

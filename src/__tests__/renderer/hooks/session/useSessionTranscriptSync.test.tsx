@@ -16,7 +16,10 @@ import { useAgentThinkingListener } from '../../../../renderer/hooks/agent/inter
 import { OmpOutputParser } from '../../../../main/parsers/omp-output-parser';
 
 let web = false;
-vi.mock('../../../../renderer/utils/runtimeContext', () => ({ isWebDesktop: () => web }));
+vi.mock('../../../../renderer/utils/runtimeContext', () => ({
+	isWebDesktop: () => web,
+	isTabWindow: () => false,
+}));
 const ready = async () => {};
 let receive: (patch: SessionTranscriptPatch<LogEntry>) => void;
 let data: (sessionId: string, data: string) => void;

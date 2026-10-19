@@ -23,6 +23,7 @@ import { useTabStore } from '../../stores/tabStore';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import { captureException } from '../../utils/sentry';
 import { ShortcutHint, shortcutSuffix } from '../ui/ShortcutHint';
+import { TabWindowMenuItem } from './TabWindowMenuItem';
 
 /**
  * Props for the TerminalTabItem component.
@@ -46,6 +47,8 @@ export interface TerminalTabItemProps {
 	registerRef?: (el: HTMLDivElement | null) => void;
 	/** Park this tab until a chosen moment. Omitted when snoozing is unavailable. */
 	onSnooze?: (tabId: string) => void;
+	/** Move this tab to its tab window, or dock it from one (TW-11). Omit to hide the item. */
+	onTabWindowMove?: (tabId: string) => void;
 	onMoveToFirst?: (tabId: string) => void;
 	onMoveToLast?: (tabId: string) => void;
 	isFirstTab?: boolean;
@@ -87,6 +90,7 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 	isDragOver,
 	registerRef,
 	onSnooze,
+	onTabWindowMove,
 	onMoveToFirst,
 	onMoveToLast,
 	isFirstTab,
@@ -205,6 +209,17 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 			setOverlayOpen(false);
 		},
 		[onSnooze, tab.id, setOverlayOpen]
+	);
+
+	// Tab Windows (TW-11): pop out from an app window, dock from a tab window.
+	// The overlay closes first: the tab is about to leave this strip.
+	const handleTabWindowClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			setOverlayOpen(false);
+			onTabWindowMove?.(tab.id);
+		},
+		[onTabWindowMove, tab.id, setOverlayOpen]
 	);
 
 	const handleMoveToFirstClick = useCallback(
@@ -531,6 +546,8 @@ export const TerminalTabItem = memo(function TerminalTabItem({
 								)}
 							</button>
 						)}
+
+						{onTabWindowMove && <TabWindowMenuItem theme={theme} onClick={handleTabWindowClick} />}
 
 						{/* Move to First/Last */}
 						{(onMoveToFirst || onMoveToLast) && (

@@ -56,6 +56,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setSnoozeCommandCallback = vi.fn();
 			setAutoRunSteeringCommandCallback = vi.fn();
 			setWindowCommandCallback = vi.fn();
+			setTabWindowCommandCallback = vi.fn();
 			setThroughputGaugeCommandCallback = vi.fn();
 			setReorderTabCallback = vi.fn();
 			setToggleBookmarkCallback = vi.fn();

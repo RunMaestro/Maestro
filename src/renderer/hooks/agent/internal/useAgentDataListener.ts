@@ -24,6 +24,7 @@ import { logger } from '../../../utils/logger';
 import { removeHiddenProgressLog } from './helpers/exitTabCleanup';
 import { removeMatchingAgentErrorLog } from './helpers/agentErrorLogMatch';
 import { isAwaitingContextCompaction } from '../../../stores/retryStore';
+import { isTabViewedInTabWindow } from '../../../stores/tabWindowStore';
 import { useOwnedSideEffectGate } from './useOwnedSessionGate';
 import type { SessionState } from '../../../types';
 import type { BatchedUpdater, ToolProgressState } from './types';
@@ -162,7 +163,11 @@ export function useAgentDataListener(deps: UseAgentDataListenerDeps): void {
 				const isTargetTabActive = targetTab.id === session.activeTabId;
 				const isThisSessionActive = session.id === getActiveSessionId();
 				const isUserAtBottom = targetTab.isAtBottom !== false;
-				const shouldMarkUnread = !isTargetTabActive || !isThisSessionActive || !isUserAtBottom;
+				// A tab popped out into a tab window is never this window's active tab
+				// (Tab Windows, D4); the tab window reports when the user watches it.
+				const shouldMarkUnread =
+					(!isTargetTabActive || !isThisSessionActive || !isUserAtBottom) &&
+					!isTabViewedInTabWindow(session.id, targetTab.id);
 				deps.batchedUpdater.markUnread(actualSessionId, targetTabId, shouldMarkUnread);
 			}
 		});

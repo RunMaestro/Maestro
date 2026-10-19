@@ -4,17 +4,28 @@ import { useTabStore } from '../../../stores/tabStore';
 import type { Session } from '../../../types';
 import { getActiveTab } from '../../../utils/tabHelpers';
 import { logger } from '../../../utils/logger';
+import type { AiTabTarget } from '../../../services/aiTabActions';
 import { deleteShellCommandLog } from './deleteShellCommandLog';
 import type { ScrollLogHandlersReturn } from './types';
 
 export function useScrollLogHandlers(): ScrollLogHandlersReturn {
-	const handleDeleteLog = useCallback((logId: string): number | null => {
+	// `target` names an AI tab that is not the active one (a tab window's owner
+	// deleting from a popped tab). Without it, the active agent's view decides:
+	// its active AI tab in AI mode, its shell log otherwise.
+	const handleDeleteLog = useCallback((logId: string, target?: AiTabTarget): number | null => {
 		const { setSessions } = useSessionStore.getState();
-		const currentSession = selectActiveSession(useSessionStore.getState());
+		const currentSession = target
+			? useSessionStore.getState().sessions.find((s) => s.id === target.sessionId)
+			: selectActiveSession(useSessionStore.getState());
 		if (!currentSession) return null;
 
-		const isAIMode = currentSession.inputMode === 'ai';
-		const currentActiveTab = isAIMode ? getActiveTab(currentSession) : null;
+		const isAIMode = target ? true : currentSession.inputMode === 'ai';
+		const currentActiveTab = !isAIMode
+			? null
+			: target
+				? currentSession.aiTabs.find((tab) => tab.id === target.tabId)
+				: getActiveTab(currentSession);
+		if (target && !currentActiveTab) return null;
 		const logs = isAIMode ? currentActiveTab?.logs || [] : currentSession.shellLogs;
 
 		const logIndex = logs.findIndex((log) => log.id === logId);

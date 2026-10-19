@@ -253,6 +253,20 @@ describe('Windows IPC Handlers', () => {
 
 			expect(result).toHaveLength(1);
 		});
+
+		it('excludes tab windows - never a Move to Window target or numbered window', async () => {
+			registry.create({ browserWindow: makeFakeWindow(), sessionIds: ['a'], isMain: true });
+			registry.create({
+				browserWindow: makeFakeWindow(),
+				kind: 'tab',
+				agentId: 'a',
+				tabRefs: [{ type: 'ai', id: 'tab-1' }],
+			});
+
+			const result = (await handlers.get('windows:list')!({})) as unknown[];
+
+			expect(result).toHaveLength(1);
+		});
 	});
 
 	describe('windows:getForSession', () => {
@@ -311,6 +325,30 @@ describe('Windows IPC Handlers', () => {
 
 			expect(result.moved).toBe(false);
 			expect(result.error).toBeDefined();
+		});
+
+		it('refuses a tab window as the destination (it never owns an agent)', async () => {
+			const from = registry.create({
+				browserWindow: makeFakeWindow(),
+				sessionIds: ['agent-1'],
+				isMain: true,
+			});
+			const tabWindow = registry.create({
+				browserWindow: makeFakeWindow(),
+				kind: 'tab',
+				agentId: 'agent-1',
+			});
+
+			const result = (await handlers.get('windows:moveSession')!(
+				{},
+				'agent-1',
+				from,
+				tabWindow
+			)) as { moved: boolean; error?: string };
+
+			expect(result.moved).toBe(false);
+			expect(result.error).toBeDefined();
+			expect(registry.getWindowForSession('agent-1')).toBe(from);
 		});
 	});
 
@@ -492,6 +530,24 @@ describe('Windows IPC Handlers', () => {
 			expect(registry.getWindowForSession('agent-new')).toBeNull();
 		});
 
+		it('refuses a tab window caller, so it can never claim its agent', async () => {
+			const tabWin = makeFakeWindow();
+			const primary = registry.create({
+				browserWindow: makeFakeWindow(),
+				sessionIds: ['agent-a'],
+				isMain: true,
+			});
+			registry.create({ browserWindow: tabWin, kind: 'tab', agentId: 'agent-a' });
+
+			const result = (await handlers.get('windows:registerSession')!(
+				makeEvent(tabWin),
+				'agent-a'
+			)) as { registered: boolean };
+
+			expect(result.registered).toBe(false);
+			expect(registry.getWindowForSession('agent-a')).toBe(primary);
+		});
+
 		// The bridge opt-in is READS ONLY. This handler documents that a window only
 		// ever claims an agent into itself; with two windows open, honoring a web
 		// client here would claim it into a window the remote user never chose.
@@ -559,6 +615,19 @@ describe('Windows IPC Handlers', () => {
 				renamed: boolean;
 			};
 			expect(result.renamed).toBe(false);
+		});
+
+		it('returns { renamed: false } for a tab window (titled after its agent)', async () => {
+			const id = registry.create({
+				browserWindow: makeFakeWindow(),
+				kind: 'tab',
+				agentId: 'agent-a',
+			});
+			const result = (await handlers.get('windows:setName')!({}, id, 'X')) as {
+				renamed: boolean;
+			};
+			expect(result.renamed).toBe(false);
+			expect(registry.get(id)?.name).toBeUndefined();
 		});
 
 		// Same rule as registerSession: a remote panel collapse must not rewrite a
@@ -775,6 +844,51 @@ describe('Windows IPC Handlers', () => {
 			expect(sendOf(win)).not.toHaveBeenCalled();
 		});
 
+		it('broadcasts tab-window-changed to app windows AND tab windows, with the agent id', () => {
+			const primaryWin = makeFakeWindow();
+			const tabWin = makeFakeWindow();
+			registry.create({ browserWindow: primaryWin, sessionIds: ['a'], isMain: true });
+			const tabWindowId = registry.create({
+				browserWindow: tabWin,
+				kind: 'tab',
+				agentId: 'a',
+				tabRefs: [{ type: 'ai', id: 't1' }],
+			});
+
+			wireWindowRegistryBroadcast(registry);
+			registry.addTabToTabWindow(tabWindowId, 'a', { type: 'file', id: 'f1' });
+
+			const payload = {
+				type: 'tab-window-changed',
+				windowId: tabWindowId,
+				agentId: 'a',
+				sessionId: undefined,
+				fromWindowId: undefined,
+				toWindowId: undefined,
+			};
+			expect(sendOf(primaryWin)).toHaveBeenCalledWith('windows:sessionMoved', payload);
+			expect(sendOf(tabWin)).toHaveBeenCalledWith('windows:sessionMoved', payload);
+		});
+
+		it('keeps every other change type away from tab windows', () => {
+			const primaryWin = makeFakeWindow();
+			const tabWin = makeFakeWindow();
+			const primary = registry.create({ browserWindow: primaryWin, sessionIds: [], isMain: true });
+			registry.create({
+				browserWindow: tabWin,
+				kind: 'tab',
+				agentId: 'a',
+				tabRefs: [{ type: 'ai', id: 't1' }],
+			});
+
+			wireWindowRegistryBroadcast(registry);
+			registry.setName(primary, 'Deploy Watch');
+			registry.setSessionsForWindow(primary, ['a']);
+
+			expect(sendOf(primaryWin)).toHaveBeenCalledTimes(2);
+			expect(sendOf(tabWin)).not.toHaveBeenCalled();
+		});
+
 		it('skips destroyed windows and destroyed webContents', () => {
 			const live = makeFakeWindow();
 			const destroyedWin = makeFakeWindow({ isDestroyed: vi.fn(() => true) });
@@ -855,6 +969,32 @@ describe('Windows IPC Handlers', () => {
 			registry.moveSession('agent-1', secondary, primary);
 
 			expect(hudWin.close).not.toHaveBeenCalled();
+		});
+
+		it('never auto-closes a tab window, though it owns no agents', () => {
+			const tabWin = makeFakeWindow();
+			const primary = registry.create({
+				browserWindow: makeFakeWindow(),
+				sessionIds: [],
+				isMain: true,
+			});
+			const secondary = registry.create({
+				browserWindow: makeFakeWindow(),
+				sessionIds: ['agent-1'],
+				isMain: false,
+			});
+			registry.create({
+				browserWindow: tabWin,
+				kind: 'tab',
+				agentId: 'agent-1',
+				tabRefs: [{ type: 'ai', id: 'tab-1' }],
+			});
+
+			wireEmptySecondaryWindowAutoClose(registry);
+			// Moving the agent to another app window must leave its tab window open (D7).
+			registry.moveSession('agent-1', secondary, primary);
+
+			expect(tabWin.close).not.toHaveBeenCalled();
 		});
 
 		it('leaves a secondary that still owns agents open', () => {

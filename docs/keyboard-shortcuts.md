@@ -194,6 +194,7 @@ If you scroll the tab strip away while the tab header still holds focus, the nex
 | Find in Browser Tab       | `Cmd+F`                 | `Ctrl+F`                  |
 | Focus Active Tab          | `Opt+Cmd+Up`            | `Alt+Ctrl+Up`             |
 | Snooze Tab                | `Opt+Cmd+S`             | `Alt+Ctrl+S`              |
+| Move Tab to Tab Window    | `Opt+Cmd+O`             | `Alt+Ctrl+O`              |
 | Change Model and Effort   | `Opt+Cmd+.`             | `Alt+Ctrl+.`              |
 | Show Snoozed Tabs         | unassigned by default   | unassigned by default     |
 | Move Tab to First         | `Cmd+Opt+[`             | `Ctrl+Alt+[`              |
@@ -214,6 +215,8 @@ If you scroll the tab strip away while the tab header still holds focus, the nex
 In a group chat there are no AI tabs, so `Cmd+Shift+[` / `Cmd+Shift+]` walk the
 Right Bar instead, switching between the Participants and History panels. The Right
 Bar opens if it was closed.
+
+**Move Tab to Tab Window** pops the current tab out into its agent's [tab window](./multi-window#tab-windows). Inside a tab window the same shortcut docks the shown tab back. The previous/next tab, `Cmd+1` through `Cmd+0`, and `Cmd+W` shortcuts also work inside a tab window, on its own tabs.
 
 **Focus Active Tab** presses twice: the first press centers and focuses the current tab header, the second walks backward through unread and draft tabs. See [Walking Unread and Draft Tabs](#walking-unread-and-draft-tabs).
 

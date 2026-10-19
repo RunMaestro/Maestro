@@ -48,8 +48,14 @@ export interface UseSummarizeAndContinueResult {
 	getTabSummarizeState: (tabId: string) => TabSummarizeState | null;
 	/** Check if any tab is currently summarizing */
 	isAnySummarizing: boolean;
-	/** Start the summarization process for a specific tab */
-	startSummarize: (sourceTabId: string) => Promise<{
+	/**
+	 * Start the summarization process for a specific tab of the active agent,
+	 * or of `sessionId` when given.
+	 */
+	startSummarize: (
+		sourceTabId: string,
+		sessionId?: string
+	) => Promise<{
 		newTabId: string;
 		updatedSession: Session;
 		systemLogEntry: LogEntry;
@@ -64,8 +70,21 @@ export interface UseSummarizeAndContinueResult {
 	canSummarize: (contextUsage: number, logs?: LogEntry[]) => boolean;
 	/** Get the minimum context usage percentage required for summarization */
 	minContextUsagePercent: number;
-	/** High-level handler: validates, summarizes, updates session, shows toast (Tier 3E) */
-	handleSummarizeAndContinue: (tabId?: string) => void;
+	/**
+	 * High-level handler: validates, summarizes, updates session, shows toast
+	 * (Tier 3E). Acts on the active agent, or on `sessionId` when given: a tab
+	 * window's owner compacts a popped tab, which is never its active tab. The
+	 * new tab opens in the owner either way.
+	 */
+	handleSummarizeAndContinue: (tabId?: string, sessionId?: string) => void;
+}
+
+/** The agent to compact: `sessionId` when given, else the active agent. */
+function resolveSummarizeSession(sessionId?: string): Session | null {
+	const state = useSessionStore.getState();
+	return sessionId
+		? (state.sessions.find((s) => s.id === sessionId) ?? null)
+		: selectActiveSession(state);
 }
 
 /**
@@ -160,9 +179,10 @@ export function useSummarizeAndContinue(): UseSummarizeAndContinueResult {
 	 */
 	const startSummarize = useCallback(
 		async (
-			sourceTabId: string
+			sourceTabId: string,
+			sessionId?: string
 		): Promise<{ newTabId: string; updatedSession: Session; systemLogEntry: LogEntry } | null> => {
-			const session = selectActiveSession(useSessionStore.getState());
+			const session = resolveSummarizeSession(sessionId);
 			if (!session) {
 				return null;
 			}
@@ -346,9 +366,11 @@ export function useSummarizeAndContinue(): UseSummarizeAndContinueResult {
 	 * shows toast notification. Extracted from App.tsx wrapper (Tier 3E).
 	 */
 	const handleSummarizeAndContinue = useCallback(
-		(tabId?: string) => {
-			const session = selectActiveSession(useSessionStore.getState());
-			if (!session || session.inputMode !== 'ai') return;
+		(tabId?: string, sessionId?: string) => {
+			const session = resolveSummarizeSession(sessionId);
+			// An explicit agent is compacting a named AI tab, whatever mode the
+			// agent's own view is in; the active agent's view must be on its AI tabs.
+			if (!session || (!sessionId && session.inputMode !== 'ai')) return;
 
 			const targetTabId = tabId || session.activeTabId;
 			const targetTab = session.aiTabs.find((t) => t.id === targetTabId);
@@ -369,7 +391,7 @@ export function useSummarizeAndContinue(): UseSummarizeAndContinueResult {
 			const sourceSessionName = session.name;
 			const { setSessions } = useSessionStore.getState();
 
-			startSummarize(targetTabId)
+			startSummarize(targetTabId, sourceSessionId)
 				.then((result) => {
 					if (result) {
 						// Apply only deterministic deltas to the live session (avoid stale snapshot spread)

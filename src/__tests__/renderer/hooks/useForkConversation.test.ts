@@ -42,6 +42,7 @@ vi.mock('../../../renderer/utils/spawnHelpers', () => ({
 
 import { useForkConversation } from '../../../renderer/hooks/agent/useForkConversation';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import type { AiTabTarget } from '../../../renderer/services/aiTabActions';
 
 // ============================================================================
 // Helpers
@@ -90,7 +91,7 @@ function mountHook(initialSessions: Session[], activeSessionId: string | null) {
 	const { result } = renderHook(() => useForkConversation());
 
 	return {
-		fork: (logId: string) => act(() => result.current(logId)),
+		fork: (logId: string, target?: AiTabTarget) => act(() => result.current(logId, target)),
 		getSessions: () => useSessionStore.getState().sessions,
 		setSessions,
 	};
@@ -302,6 +303,52 @@ describe('useForkConversation', () => {
 
 			expect(setSessions).not.toHaveBeenCalled();
 			expect(getSessions()[0].aiTabs).toHaveLength(1);
+			expect((window as any).maestro.process.spawn).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('explicit target (a tab window owner forks a popped tab)', () => {
+		it('forks the named tab of the named agent, never the active one', async () => {
+			const popped = buildSourceTab({
+				id: 'popped-tab',
+				name: 'Popped',
+				logs: [{ id: 'log-p', timestamp: 1, source: 'user', text: 'popped question' }],
+			});
+			const home = buildSourceTab({ id: 'home-tab', name: 'Home' });
+			const owner = buildSession({
+				aiTabs: [popped, home],
+				activeTabId: home.id,
+				unifiedTabOrder: [
+					{ type: 'ai', id: popped.id },
+					{ type: 'ai', id: home.id },
+				],
+			});
+			const other = buildSession({ id: 'session-B', name: 'Agent Two' });
+			const { fork, getSessions } = mountHook([owner, other], other.id);
+
+			fork('log-p', { sessionId: owner.id, tabId: popped.id });
+
+			const after = getSessions().find((s) => s.id === owner.id)!;
+			expect(after.aiTabs.map((t) => t.id).slice(0, 1)).toEqual([popped.id]);
+			const newTab = after.aiTabs[1];
+			expect(newTab.name).toBe('Forked: Popped');
+			expect(after.aiTabs[2].id).toBe(home.id);
+			expect(getSessions().find((s) => s.id === other.id)!.aiTabs).toHaveLength(1);
+			await waitFor(() => {
+				expect((window as any).maestro.process.spawn).toHaveBeenCalledTimes(1);
+			});
+			const spawnArgs = (window as any).maestro.process.spawn.mock.calls[0][0];
+			expect(spawnArgs.sessionId).toBe(`${owner.id}-ai-${newTab.id}`);
+			expect(spawnArgs.prompt).toContain('popped question');
+		});
+
+		it('no-ops for a tab that is gone', () => {
+			const session = buildSession();
+			const { fork, setSessions } = mountHook([session], session.id);
+
+			fork('log-2', { sessionId: session.id, tabId: 'closed-tab' });
+
+			expect(setSessions).not.toHaveBeenCalled();
 			expect((window as any).maestro.process.spawn).not.toHaveBeenCalled();
 		});
 	});

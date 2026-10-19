@@ -14,6 +14,11 @@ import { useFileExplorerStore } from '../../../renderer/stores/fileExplorerStore
 import { createMockSession } from '../../helpers/mockSession';
 import type { Session, TerminalTab } from '../../../renderer/types';
 import type { BrowserTab } from '../../../shared/browserPage';
+import {
+	clearTabWindowStore,
+	installTabWindowsApi,
+	popOutTabsInStore,
+} from '../../helpers/tabWindows';
 
 function terminalTab(overrides: Partial<TerminalTab> = {}): TerminalTab {
 	return {
@@ -217,6 +222,82 @@ describe('dispatchToastClickAction', () => {
 		expect(globalThis.window.maestro.shell.openExternal).toHaveBeenCalledWith(
 			'https://example.com/logs'
 		);
+	});
+
+	describe('a tab popped out into a tab window (Tab Windows, D4)', () => {
+		let tabWindows: ReturnType<typeof installTabWindowsApi>;
+
+		beforeEach(() => {
+			tabWindows = installTabWindowsApi();
+		});
+
+		afterEach(() => {
+			tabWindows.restore();
+			clearTabWindowStore();
+		});
+
+		it('jump-session focuses the tab window instead of calling the App handler', () => {
+			const onSessionClick = vi.fn();
+			popOutTabsInStore('s1', [{ type: 'ai', id: 't1' }]);
+
+			expect(
+				dispatchToastClickAction(
+					{ kind: 'jump-session', sessionId: 's1', tabId: 't1' },
+					{ onSessionClick }
+				)
+			).toBe(true);
+
+			expect(tabWindows.focus).toHaveBeenCalledWith('s1', { type: 'ai', id: 't1' });
+			expect(onSessionClick).not.toHaveBeenCalled();
+		});
+
+		it('jump-session without a tab, or to a docked tab, still uses the App handler', () => {
+			const onSessionClick = vi.fn();
+			popOutTabsInStore('s1', [{ type: 'ai', id: 't1' }]);
+
+			dispatchToastClickAction({ kind: 'jump-session', sessionId: 's1' }, { onSessionClick });
+			dispatchToastClickAction(
+				{ kind: 'jump-session', sessionId: 's1', tabId: 't2' },
+				{ onSessionClick }
+			);
+
+			expect(onSessionClick).toHaveBeenCalledTimes(2);
+			expect(tabWindows.focus).not.toHaveBeenCalled();
+		});
+
+		it('open-terminal focuses the tab window of a popped terminal tab', () => {
+			const session = createMockSession({
+				id: 's1',
+				terminalTabs: [terminalTab({ id: 'term-1', name: 'Dev server' })],
+			});
+			seedSessions([session]);
+			popOutTabsInStore('s1', [{ type: 'terminal', id: 'term-1' }]);
+
+			expect(
+				dispatchToastClickAction({ kind: 'open-terminal', sessionId: 's1', tabRef: 'Dev server' })
+			).toBe(true);
+
+			expect(tabWindows.focus).toHaveBeenCalledWith('s1', { type: 'terminal', id: 'term-1' });
+			expect(useSessionStore.getState().activeSessionId).toBe('');
+			expect(currentSession('s1')).toBe(session);
+		});
+
+		it('open-browser focuses the tab window of a popped browser tab', () => {
+			const session = createMockSession({
+				id: 's1',
+				browserTabs: [browserTab({ id: 'browser-1' })],
+			});
+			seedSessions([session]);
+			popOutTabsInStore('s1', [{ type: 'browser', id: 'browser-1' }]);
+
+			expect(
+				dispatchToastClickAction({ kind: 'open-browser', sessionId: 's1', tabId: 'browser-1' })
+			).toBe(true);
+
+			expect(tabWindows.focus).toHaveBeenCalledWith('s1', { type: 'browser', id: 'browser-1' });
+			expect(useSessionStore.getState().activeSessionId).toBe('');
+			expect(currentSession('s1')).toBe(session);
+		});
 	});
 
 	it('closes the Document Graph overlay before landing on a tab', () => {

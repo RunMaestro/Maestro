@@ -27,6 +27,7 @@ import {
 } from './tabHelpers';
 import { getTerminalTabDisplayName } from './terminalTabHelpers';
 import { getBrowserTabLabel } from './browserTabPersistence';
+import { tabRefKey } from '../../shared/unifiedTabRef';
 
 /**
  * Minimum fractional size a pane may shrink to during a resize. Splits normalize
@@ -974,14 +975,9 @@ export function focusPaneInSession(session: Session, groupId: string, leafId: st
 	return aiId ? { ...withFocus, activeTabId: aiId, inputMode: 'ai' } : withFocus;
 }
 
-/**
- * Stable key for a tab ref (used to dedupe / match refs by value in a Set, and
- * to key the per-pane geometry map the tiled layout publishes for keep-alive
- * overlay repositioning - e.g. `terminal:<id>` / `browser:<id>`).
- */
-export function tabRefKey(ref: UnifiedTabRef): string {
-	return `${ref.type}:${ref.id}`;
-}
+// `tabRefKey` lives in `src/shared/unifiedTabRef.ts` (main needs it for tab
+// window restore); re-exported here so renderer imports keep working.
+export { tabRefKey };
 
 /**
  * Split a `tabRefKey`-keyed PaneRects map (as published by TiledLayout) into

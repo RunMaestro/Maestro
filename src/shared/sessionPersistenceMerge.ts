@@ -17,6 +17,18 @@ const clientFields: Record<string, true> = {
 	terminalDraftInput: true,
 	ptyInitialized: true,
 };
+
+/**
+ * True for a field each client window keeps for itself, on the session or on
+ * a tab: the active-tab pointers, the input mode, the composer and terminal
+ * drafts, and PTY attachment. A flush from one window never overwrites another
+ * window's value, and an owner window never patches a tab window's
+ * (`src/shared/tabWindowPatch.ts`).
+ */
+export function isClientSessionField(field: string): boolean {
+	return Object.prototype.hasOwnProperty.call(clientFields, field);
+}
+
 const liveFields: Record<string, true> = {
 	state: true,
 	busySource: true,

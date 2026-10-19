@@ -18,6 +18,7 @@ import { CueIndicator } from './SessionList/CueIndicator';
 import { StartupCommandIndicator } from './SessionList/StartupCommandIndicator';
 import { WizardIndicator } from './SessionList/WizardIndicator';
 import { WindowBadge } from './SessionList/WindowBadge';
+import { AgentStatusDot } from './ui/AgentStatusDot';
 import { AutoRunErrorBadge } from './SessionList/AutoRunErrorBadge';
 import { PluginUiItemsSlot } from './plugins/PluginUiItemsSlot';
 import { useSettingsStore } from '../stores/settingsStore';
@@ -129,6 +130,48 @@ export function getEnhancedStatusColor(
 		default:
 			return { color: theme.colors.textDim, animate: false, label: 'Unknown' };
 	}
+}
+
+/** What {@link AgentStatusDot} draws for an agent. */
+export interface AgentStatusIndicator {
+	color: string;
+	animate: boolean;
+	label: string;
+	/** Claude agent with no provider session yet, and nothing else working: an outline. */
+	hollow: boolean;
+}
+
+/**
+ * The Left Bar's status dot for one agent: {@link getEnhancedStatusColor} fed
+ * from the stores that know about work `session.state` cannot see (an outage
+ * auto-retry, a cross-agent consult, a headless turn), plus the hollow signal.
+ * Every surface that draws an agent's status dot reads it here, so the dot
+ * never disagrees with the Left Bar.
+ */
+export function useAgentStatusIndicator(
+	session: Session,
+	theme: Theme,
+	isInBatch: boolean
+): AgentStatusIndicator {
+	const colorBlindMode = useSettingsStore((s) => s.colorBlindMode);
+	// A stuck Agent Resilience outage overrides to pulsing orange (needs attention).
+	const hasActiveOutage = useSessionHasActiveOutage(session.id);
+	// A cross-agent consult is invisible to `session.state` by design, so the dot
+	// asks the in-flight store directly.
+	const isBeingConsulted = useSessionIsBeingConsulted(session.id);
+	const hasHeadlessActivity = useHasHeadlessActivity(session.id);
+	const status = getEnhancedStatusColor(
+		session,
+		theme,
+		isInBatch,
+		colorBlindMode,
+		hasActiveOutage,
+		isBeingConsulted,
+		hasHeadlessActivity
+	);
+	const hollow =
+		!isInBatch && !isBeingConsulted && !hasHeadlessActivity && hasNoClaudeProviderSession(session);
+	return { ...status, hollow };
 }
 
 /**
@@ -250,7 +293,6 @@ export const SessionItem = memo(function SessionItem({
 	const showGroupLabelInBookmarks = useSettingsStore((s) => s.showGroupLabelInBookmarks);
 	const showFullGroupLabelInBookmarks = useSettingsStore((s) => s.showFullGroupLabelInBookmarks);
 	const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures.maestroCue);
-	const colorBlindMode = useSettingsStore((s) => s.colorBlindMode);
 	// Phone: the row is the name and the status dot. The provider line, location
 	// pills, git count, bookmark toggle, and the Cue / startup-command glyphs all
 	// come off - on a 390px drawer they crowded the name down to a few characters,
@@ -296,10 +338,7 @@ export const SessionItem = memo(function SessionItem({
 		!phone;
 	const showGitLocalBadge = showLocationPills && variant !== 'bookmark';
 
-	// Status indicator: enhanced color/animation/label, plus hollow signal for
-	// Claude Code agents that haven't bound to a provider session yet. A stuck
-	// Agent Resilience outage overrides to pulsing orange (needs attention).
-	const hasActiveOutage = useSessionHasActiveOutage(session.id);
+	const statusInfo = useAgentStatusIndicator(session, theme, isInBatch);
 	// Auto Run stopped on an error. Read straight from the stores rather than
 	// threaded down as props: SessionList renders this row from two call sites
 	// and neither knows about auto-resume. `isInBatch` above cannot stand in -
@@ -308,21 +347,6 @@ export const SessionItem = memo(function SessionItem({
 		(s) => s.batchRunStates[session.id]?.errorPaused === true
 	);
 	const autoResumeEntry = useAutoResumeEntry(session.id);
-	// A cross-agent consult is invisible to `session.state` by design, so the dot
-	// asks the in-flight store directly.
-	const isBeingConsulted = useSessionIsBeingConsulted(session.id);
-	const hasHeadlessActivity = useHasHeadlessActivity(session.id);
-	const statusInfo = getEnhancedStatusColor(
-		session,
-		theme,
-		isInBatch,
-		colorBlindMode,
-		hasActiveOutage,
-		isBeingConsulted,
-		hasHeadlessActivity
-	);
-	const isDisconnected =
-		!isInBatch && !isBeingConsulted && !hasHeadlessActivity && hasNoClaudeProviderSession(session);
 
 	// Determine container styling based on variant
 	const getContainerClassName = () => {
@@ -697,36 +721,19 @@ export const SessionItem = memo(function SessionItem({
 					))}
 
 				{/* AI Status Indicator with Unread Badge */}
-				<div className="relative w-2 h-2 ml-auto">
-					{/* Pulse ring: only renders for animated states, sits behind the dot */}
-					{statusInfo.animate && (
-						<span
-							className="absolute inset-0 rounded-full animate-ping"
-							style={{ backgroundColor: statusInfo.color, opacity: 0.3 }}
-							aria-hidden="true"
-						/>
-					)}
-					{/* Core status dot: filled by default, hollow when Claude has no provider session.
-					    Busy CLI activity overrides the generic "Thinking" tooltip with the playbook name. */}
-					<div
-						className="relative w-2 h-2 rounded-full"
-						style={
-							isDisconnected
-								? {
-										border: `1.5px solid ${theme.colors.textDim}`,
-										backgroundColor: 'transparent',
-									}
-								: {
-										backgroundColor: statusInfo.color,
-										boxShadow: statusInfo.animate ? `0 0 6px ${statusInfo.color}60` : undefined,
-									}
-						}
-						title={
-							session.state === 'busy' && session.cliActivity && !isInBatch
-								? `CLI: Running playbook "${session.cliActivity.playbookName}"`
-								: statusInfo.label
-						}
-					/>
+				{/* Busy CLI activity overrides the generic "Thinking" tooltip with the playbook name. */}
+				<AgentStatusDot
+					theme={theme}
+					color={statusInfo.color}
+					animate={statusInfo.animate}
+					hollow={statusInfo.hollow}
+					title={
+						session.state === 'busy' && session.cliActivity && !isInBatch
+							? `CLI: Running playbook "${session.cliActivity.playbookName}"`
+							: statusInfo.label
+					}
+					className="ml-auto"
+				>
 					{/* Unread Notification Badge */}
 					{!isActive && hasUnreadVisibleTab(session.aiTabs) && (
 						<div
@@ -735,7 +742,7 @@ export const SessionItem = memo(function SessionItem({
 							title="Unread messages"
 						/>
 					)}
-				</div>
+				</AgentStatusDot>
 			</div>
 		</LongPressable>
 	);

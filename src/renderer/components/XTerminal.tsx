@@ -18,6 +18,12 @@ import { safeClipboardWrite } from '../utils/clipboard';
 import { toControlChar } from '../utils/terminalKeys';
 import { isTapGesture, type TouchPoint } from '../utils/touch';
 import { readLogicalLine } from '../utils/terminalBuffer';
+import {
+	claimTerminalReplay,
+	registerTerminalViewForUnload,
+	releaseTerminalView,
+	type TerminalViewCapture,
+} from '../services/terminalHandoff';
 import { parseOsc52 } from '../utils/terminalClipboard';
 import { copyTextWithFlash } from '../utils/inlineCodeCopy';
 import { logger } from '../utils/logger';
@@ -226,9 +232,41 @@ export function activateTerminalLink(
 	openUrl(text, { ctrlKey: event.ctrlKey || event.metaKey });
 }
 
+/**
+ * The scrollback and the screen as plain lines joined with `\n`, each right
+ * trimmed, without the empty rows xterm pads the viewport with. No colors. The
+ * alternate screen while a TUI runs.
+ */
+function readBufferText(term: Terminal): string {
+	const buffer = term.buffer.active;
+	const lines: string[] = [];
+	for (let i = 0; i < buffer.length; i++) {
+		const line = buffer.getLine(i);
+		if (line) lines.push(line.translateToString(true));
+	}
+	// Drop trailing empty lines (xterm pads the viewport even when idle)
+	while (lines.length > 0 && lines[lines.length - 1] === '') {
+		lines.pop();
+	}
+	return lines.join('\n');
+}
+
 // ============================================================================
 // Types
 // ============================================================================
+
+/**
+ * Tab Windows terminal handoff (D5, `services/terminalHandoff.ts`). With it,
+ * the view replays what the previous view of the same PTY handed over before
+ * it writes live output, and hands its own scrollback over when the tab moves
+ * to another window.
+ */
+export interface XTerminalHandoff {
+	/** Asked as the view unmounts: is the tab moving to another window? */
+	releaseOnUnmount: () => boolean;
+	/** Hand the scrollback over when the window unloads (a closing tab window docks its tabs). */
+	releaseOnUnload?: boolean;
+}
 
 export interface XTerminalHandle {
 	write(data: string): void;
@@ -276,6 +314,12 @@ export interface XTerminalProps {
 		isActive: () => boolean;
 		onConsume: () => void;
 	};
+	/**
+	 * Tab Windows terminal handoff. Read when the view mounts and unmounts, so
+	 * its identity may change freely. Omit for a terminal that never moves
+	 * between windows (a login terminal).
+	 */
+	handoff?: XTerminalHandoff;
 }
 
 // ============================================================================
@@ -295,6 +339,7 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 		onCopySelection,
 		onSendSelectionToAgent,
 		stickyCtrl,
+		handoff,
 	},
 	ref
 ) {
@@ -360,6 +405,31 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 	// once per sessionId) always sees the latest armed state without re-subscribing.
 	const stickyCtrlRef = useRef(stickyCtrl);
 	stickyCtrlRef.current = stickyCtrl;
+	const handoffRef = useRef(handoff);
+	handoffRef.current = handoff;
+	const sessionIdRef = useRef(sessionId);
+	sessionIdRef.current = sessionId;
+	// PTY output handed to xterm that it has not parsed yet. xterm parses writes
+	// on a timer, so its buffer lags `write()`; a handoff carries these too.
+	const unparsedWritesRef = useRef<string[]>([]);
+	// Write PTY output, tracked until xterm has parsed it.
+	const writeOutput = useCallback((data: string) => {
+		const term = terminalRef.current;
+		if (!term) return;
+		const unparsed = unparsedWritesRef.current;
+		unparsed.push(data);
+		term.write(data, () => {
+			unparsed.shift();
+		});
+	}, []);
+	// What this view hands over: its buffer and the output not parsed into it yet.
+	const captureView = useCallback((): TerminalViewCapture => {
+		const term = terminalRef.current;
+		return {
+			buffer: term ? readBufferText(term) : '',
+			unparsed: [...unparsedWritesRef.current],
+		};
+	}, []);
 
 	// Expose handle to parent
 	useImperativeHandle(
@@ -395,18 +465,7 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 			},
 			getBuffer(): string {
 				const term = terminalRef.current;
-				if (!term) return '';
-				const buffer = term.buffer.active;
-				const lines: string[] = [];
-				for (let i = 0; i < buffer.length; i++) {
-					const line = buffer.getLine(i);
-					if (line) lines.push(line.translateToString(true));
-				}
-				// Drop trailing empty lines (xterm pads the viewport even when idle)
-				while (lines.length > 0 && lines[lines.length - 1] === '') {
-					lines.pop();
-				}
-				return lines.join('\n');
+				return term ? readBufferText(term) : '';
 			},
 			resize() {
 				fitAddonRef.current?.fit();
@@ -854,6 +913,11 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 		resizeObserverRef.current = resizeObserver;
 
 		return () => {
+			// The tab is moving to another window: hand the scrollback over while the
+			// xterm still holds it (Tab Windows, D5).
+			if (handoffRef.current?.releaseOnUnmount()) {
+				releaseTerminalView(sessionIdRef.current, captureView());
+			}
 			termElement.removeEventListener('contextmenu', handleContextMenu);
 			termElement.removeEventListener('touchstart', handleTouchStart);
 			termElement.removeEventListener('touchend', handleTouchEnd);
@@ -875,15 +939,39 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 		};
 	}, []); // Mount once - other effects handle dynamic prop changes
 
-	// IPC: receive data from PTY → write to terminal
+	// IPC: receive data from PTY → write to terminal.
+	//
+	// With a handoff, live output waits until main answers the replay claim. The
+	// answer comes on the same IPC channel as the output, so every chunk that
+	// arrived before it is already inside the replay: write the replay and drop
+	// them. With nothing to replay, write them as they came.
 	useEffect(() => {
+		let held: string[] | null = handoffRef.current ? [] : null;
 		const cleanup = window.maestro.process.onData((sid: string, data: string) => {
-			if (sid === sessionId && terminalRef.current) {
-				terminalRef.current.write(data);
-			}
+			if (sid !== sessionId) return;
+			if (held) held.push(data);
+			else writeOutput(data);
 		});
-		return cleanup;
-	}, [sessionId]);
+		const cancelClaim = handoffRef.current
+			? claimTerminalReplay(sessionId, (replay) => {
+					const queued = held ?? [];
+					held = null;
+					if (replay !== null) writeOutput(replay);
+					else for (const data of queued) writeOutput(data);
+				})
+			: null;
+		return () => {
+			cleanup();
+			cancelClaim?.();
+		};
+	}, [sessionId, writeOutput]);
+
+	// A tab window closing docks its tabs without unmounting anything here.
+	const releaseOnUnload = handoff?.releaseOnUnload === true;
+	useEffect(() => {
+		if (!releaseOnUnload) return;
+		return registerTerminalViewForUnload(sessionId, captureView);
+	}, [releaseOnUnload, sessionId, captureView]);
 
 	// IPC: send terminal input → PTY
 	useEffect(() => {

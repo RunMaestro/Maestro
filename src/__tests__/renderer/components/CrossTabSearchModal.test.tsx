@@ -10,6 +10,7 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { CrossTabSearchModal } from '../../../renderer/components/CrossTabSearchModal';
+import { useTabWindowStore } from '../../../renderer/stores/tabWindowStore';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import { MOUNT_FOCUS_DELAY_MS } from '../../../renderer/hooks/utils/useFocusAfterRender';
 import { mockTheme } from '../../helpers/mockTheme';
@@ -219,5 +220,24 @@ describe('CrossTabSearchModal', () => {
 		expect(screen.getByText('Auth work')).toBeInTheDocument();
 		expect(screen.queryByText('Consult')).not.toBeInTheDocument();
 		expect(screen.getByText('Searching 2 open tabs')).toBeInTheDocument();
+	});
+
+	// A tab popped out into a tab window is searched from that window, not here.
+	it('keeps tabs popped out into a tab window out of the corpus', () => {
+		useTabWindowStore.getState().setWindows([
+			{
+				windowId: 'tw-1',
+				agentId: 'agent-1',
+				tabRefs: [{ type: 'ai', id: 'tab-b' }],
+				activeTabRef: null,
+			},
+		]);
+		renderModal({ sessionId: 'agent-1' });
+		typeQuery('login');
+
+		expect(screen.getByText('Auth work')).toBeInTheDocument();
+		expect(screen.queryByText('Billing work')).not.toBeInTheDocument();
+		expect(screen.getByText('Searching 1 open tabs')).toBeInTheDocument();
+		act(() => useTabWindowStore.setState({ windows: [], poppedByAgent: {} }));
 	});
 });

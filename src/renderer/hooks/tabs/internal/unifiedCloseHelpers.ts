@@ -3,6 +3,7 @@ import {
 	addAiTabToUnifiedHistory,
 	closeBrowserTab,
 	closeTab,
+	filterPoppedOutRefs,
 	getRepairedUnifiedTabOrder,
 	hasActiveWizard,
 	hasDraft,
@@ -121,11 +122,16 @@ export function excludeHiddenAiRefs(session: Session, refs: UnifiedTabRef[]): Un
 
 /**
  * Every preservation rule a bulk close (close-others / close-left / close-right)
- * must honor: keep unsent drafts, and keep tabs the strip never drew. One entry
- * point so the three bulk paths cannot drift on what survives.
+ * must honor: keep unsent drafts, and keep tabs the strip never drew - hidden
+ * consult tabs, and tabs popped out into a tab window (Tab Windows, D4), whose
+ * refs the stored order keeps as their dock slot. One entry point so the three
+ * bulk paths cannot drift on what survives.
  */
 export function excludePreservedRefs(session: Session, refs: UnifiedTabRef[]): UnifiedTabRef[] {
-	return excludeHiddenAiRefs(session, excludeDraftRefs(session, refs));
+	return filterPoppedOutRefs(
+		session.id,
+		excludeHiddenAiRefs(session, excludeDraftRefs(session, refs))
+	);
 }
 
 export function applyUnifiedTabClosures(session: Session, refsToClose: UnifiedTabRef[]): Session {

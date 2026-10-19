@@ -290,6 +290,36 @@ export function requestTabAutoNameForMessage(
 }
 
 /**
+ * The rename modal's "Auto" button: name the tab from everything the user has
+ * sent in it, even with automatic naming switched off, and replace whatever it
+ * is called now. Returns false, and names nothing, when the tab is gone or has
+ * no message to name it from.
+ *
+ * Takes the agent explicitly: the app window's modal names the active agent's
+ * tab, and a tab window's owner names a popped tab (the `autoNameTab` intent).
+ */
+export function requestManualTabAutoName(sessionId: string, tabId: string): boolean {
+	const session = selectSessionById(sessionId)(useSessionStore.getState());
+	const tab = session?.aiTabs.find((t) => t.id === tabId);
+	if (!session || !tab || !tab.logs.length) return false;
+
+	const prompt = collectNamingPrompt(
+		tab.logs.filter((entry) => entry.source === 'user').map((entry) => entry.text)
+	);
+	if (!prompt) return false;
+
+	requestTabAutoName({
+		session,
+		tabId,
+		prompt,
+		canApply: () => true,
+		force: true,
+		label: 'manual',
+	});
+	return true;
+}
+
+/**
  * Name a wizard tab from the first thing the user tells it, as `wizard: <name>`.
  *
  * The wizard opens on a placeholder name because the tab exists before anyone
