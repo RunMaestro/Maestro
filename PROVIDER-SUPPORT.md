@@ -1376,6 +1376,8 @@ mirror: the mirror copies one file, and a WAL store's newest steps can still sit
 
 **Status:** Beta (marked via `BETA_AGENTS` in `src/shared/agentMetadata.ts`). Facts below verified against Cursor CLI `2026.07.16-899851b`, live stream output, and the official CLI reference.
 
+Re-checked live on Cursor CLI `2026.10.16-e3cb207` during the PR's round-2 review: detection, headless turns through the CLI and desktop spawn paths, plan mode, and resume.
+
 | Item            | Value                                                                                                    |
 | --------------- | -------------------------------------------------------------------------------------------------------- |
 | Binary          | `agent`; the native Windows installer also provides `cursor-agent.cmd`                                   |
@@ -1388,7 +1390,7 @@ mirror: the mirror copies one file, and a WAL store's newest steps can still sit
 | Images          | Saved image paths are prepended to the prompt, per Cursor's official headless guidance                   |
 | Session Storage | Deferred (`~/.cursor/chats/` SQLite `store.db` not wired)                                                |
 | Context Window  | 200K conservative default; varies by model and parameterized models may advertise larger contexts        |
-| Model Selection | `--model`; dynamic discovery from `agent --list-models` / `agent models`                                 |
+| Model Selection | `--model`; dynamic discovery from `agent --list-models` / `agent models`; Free plans accept only `auto`  |
 | Tool Events     | `tool_call` started/completed events mapped to Maestro tool execution state, correlated by `call_id`     |
 
 **Implementation files:**
