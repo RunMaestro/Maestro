@@ -335,8 +335,9 @@ export function buildExpandedPath(customPaths?: string[]): string {
 			// User local programs
 			path.join(localAppData, 'Programs'),
 			path.join(localAppData, 'Microsoft', 'WindowsApps'),
-			// Cursor Agent CLI native installer
+			// Cursor Agent CLI native installer (same dirs as the path-prober's env)
 			path.join(localAppData, 'cursor-agent'),
+			path.join(localAppData, 'cursor-agent', 'versions'),
 			// Python/pip user installs
 			path.join(appData, 'Python', 'Scripts'),
 			path.join(localAppData, 'Programs', 'Python', 'Python312', 'Scripts'),

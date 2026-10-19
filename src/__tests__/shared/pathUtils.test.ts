@@ -327,11 +327,13 @@ describe('buildExpandedPath', () => {
 			expect(result).toMatch(/Git/i);
 		});
 
-		it('should include the native Cursor CLI installer directory', () => {
+		it('should include the native Cursor CLI installer directories', () => {
 			process.env.PATH = 'C:\\Windows\\System32';
 			const result = buildExpandedPath();
 
-			expect(result).toMatch(/AppData[\/\\]Local[\/\\]cursor-agent/i);
+			// Both dirs the path-prober puts on the agent's env, so the two lists agree.
+			expect(result).toMatch(/AppData[\/\\]Local[\/\\]cursor-agent(?=[;:]|$)/i);
+			expect(result).toMatch(/AppData[\/\\]Local[\/\\]cursor-agent[\/\\]versions/i);
 		});
 
 		it('should include .NET SDK paths', () => {
