@@ -23,6 +23,40 @@ export interface Shortcut {
 	 */
 	keys: string[];
 	/**
+	 * A KEY SEQUENCE that also fires this action: one entry per step, each step
+	 * in the same shape as {@link keys}. `[['g'], ['g']]` is `g g`;
+	 * `[['Shift', 'g']]` is a one-step `G`.
+	 *
+	 * A sequence is an ADDITIONAL trigger, never a replacement. An action may
+	 * have a chord, a sequence, or both, and when it has both, BOTH fire. The
+	 * two are matched by different code on different terms: `keys` goes through
+	 * `eventMatchesShortcutKeys` on every keydown, while a sequence goes through
+	 * the matcher in `src/renderer/utils/shortcutSequence.ts` and only when
+	 * focus is not in a text field and no modal layer is open.
+	 *
+	 * Why a separate optional field rather than widening `keys` to
+	 * `string[] | string[][]`: `keys` is read directly by ~190 call sites across
+	 * the CLI (`maestro-cli open` prints the hotkey), display formatting
+	 * (`formatShortcutKeysFor`), the Settings filtering and search, the
+	 * recorder, and conflict detection (`shortcutKeysCollide`,
+	 * `findReservedShortcutCombo`). Every one of them would become a compile
+	 * error, and the ones that merely pass the array through would have to learn
+	 * about a shape they have no use for. A new field leaves all of them
+	 * correct and untouched, and the surfaces that DO care opt in.
+	 *
+	 * Bare keys - no Meta, Ctrl, or Alt - are only ever bound through
+	 * `sequence`, even when the binding is a single step. That is not a style
+	 * rule, it is the focus gate: a `keys` binding fires regardless of where
+	 * focus sits, so a bare `j` in `keys` would type nothing and scroll the
+	 * agent list while the user was writing a prompt. A `sequence` binding is
+	 * gated on normal mode, so the same `j` stays out of the way of every text
+	 * field.
+	 *
+	 * Undefined (not `[]`) is the normal state: almost no action has a sequence,
+	 * so the field is absent rather than carrying an empty array everywhere.
+	 */
+	sequence?: string[][];
+	/**
 	 * Multi-window: when true, the shortcut acts only on the current window's
 	 * agents (its scope is the window, not the whole app). Agent cycling and the
 	 * Command-K / agent switcher are window-scoped - picking an agent that is open
@@ -98,6 +132,18 @@ export function asKeyboardMode(value: unknown): KeyboardMode | undefined {
  * the same thing. It can still arrive from persisted settings, where it means
  * the user cleared the binding in this mode, and the hydration path keeps it.
  *
+ * `sequence` is the same three states for the key sequence (see
+ * {@link Shortcut.sequence}), and it is resolved INDEPENDENTLY of `keys`:
+ *
+ *  - omitted: inherit the default-mode sequence for this action
+ *  - a sequence: replace the default-mode sequence in this mode
+ *  - `sequence: []`: the user cleared the sequence in this mode
+ *
+ * Independently, because the two triggers are separate. Giving a Vim action a
+ * `g g` sequence must not take away the chord it already answers to, and
+ * re-binding its chord must not take away its sequence. An override that sets
+ * only one field leaves the other inherited.
+ *
  * `label` is carried so an override reads on its own, but it is informational:
  * the merge takes the label from the default tables, and a structural test
  * asserts the two agree.
@@ -106,4 +152,5 @@ export interface ShortcutOverride {
 	id: string;
 	label: string;
 	keys?: string[];
+	sequence?: string[][];
 }

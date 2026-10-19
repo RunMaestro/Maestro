@@ -301,7 +301,7 @@ const SHORTCUT_DEFAULT_REMAPS: Record<string, { fromKeys: string[][]; toKeys: st
  * override buckets reuse the Alt-character repair, the reserved-chord strip, and
  * the merge with the shipped table instead of growing a second copy of each.
  */
-type MigratableShortcut = { keys?: string[] };
+type MigratableShortcut = { keys?: string[]; sequence?: string[][] };
 
 /**
  * Which kind of table is being migrated.
@@ -326,6 +326,27 @@ type ShortcutTableKind = 'base' | 'override';
  */
 function withKeys<T extends MigratableShortcut>(entry: T, keys: string[] | undefined): T {
 	return { ...entry, keys } as T;
+}
+
+/**
+ * The default entry's metadata, carrying the SAVED entry's bindings - BOTH of
+ * them.
+ *
+ * The merge takes the label from the shipped table so a renamed action reads
+ * correctly, and the bindings from disk so a customization survives. There are
+ * two bindings now, a chord and a key sequence, and both have to come across
+ * under the same rule: a saved entry is authoritative about a binding whenever
+ * the ENTRY exists, even when the field itself is absent, because on an
+ * override bucket an absent field is the spelling for "inherit the
+ * default-mode binding".
+ *
+ * Taking the chord from disk and the sequence from the table would be the worst
+ * of both: a sequence the user recorded in this mode is dropped on the next
+ * load, and one they cleared comes back. `withKeys` alone cannot do this,
+ * because here the spread base is the DEFAULT entry rather than the saved one.
+ */
+function withBindings<T extends MigratableShortcut>(defaults: T, saved: T): T {
+	return { ...defaults, keys: saved.keys, sequence: saved.sequence } as T;
 }
 
 /**
@@ -444,13 +465,13 @@ function migrateShortcuts<T extends MigratableShortcut>(
 			merged[id] = { ...savedShortcut };
 			continue;
 		}
-		// A saved entry is authoritative about `keys` whenever it EXISTS, even
-		// when the field is absent. On an override bucket that absence is the
-		// spelling for "inherit the default-mode chord", so reading the table's
-		// chord here would overrule the user. On a base bucket `keys` is never
-		// absent, which makes this the same rule as before.
+		// A saved entry is authoritative about its BINDINGS whenever it EXISTS,
+		// even when a field is absent. On an override bucket that absence is
+		// the spelling for "inherit the default-mode binding", so reading the
+		// table's chord here would overrule the user. On a base bucket `keys`
+		// is never absent, which makes this the same rule as before.
 		merged[id] = savedShortcut
-			? withKeys(defaultShortcut, savedShortcut.keys)
+			? withBindings(defaultShortcut, savedShortcut)
 			: { ...defaultShortcut };
 	}
 

@@ -371,6 +371,75 @@ describe('keyboard mode', () => {
 			expect(vimSet.toggleSidebar.keys).toEqual(FREE_CHORD_A);
 			expect(vimSet.toggleRightPanel.keys).toEqual(FREE_CHORD_B);
 		});
+
+		it('carries a persisted key sequence across a reload, beside the chord', async () => {
+			// The two triggers persist in one entry, and the merge with the
+			// shipped table rebuilds that entry from the table's metadata. A
+			// merge that only carried `keys` across would drop the sequence on
+			// every load, which no amount of in-memory testing would show.
+			//
+			// Written straight into the settings file rather than recorded: the
+			// recorder learns sequences later in this phase, and the hydration
+			// has to be right before anything can produce one.
+			//
+			// The ids are chosen so the merge actually RUNS over them. An id the
+			// shipped table does not declare takes the "override-only id" branch,
+			// which copies the saved entry wholesale and would hide a merge that
+			// drops the field - and `VIM_SHORTCUTS` is empty in this phase, so
+			// every general-bucket id is such an id. `prevTab` is in
+			// `VIM_TAB_SHORTCUTS`, and the base tables declare everything.
+			const file = {
+				shortcuts: {
+					toggleSidebar: {
+						id: 'toggleSidebar',
+						label: DEFAULT_SHORTCUTS.toggleSidebar.label,
+						keys: FREE_CHORD_A,
+						sequence: [['g'], ['s']],
+					},
+				},
+				vimTabShortcuts: {
+					prevTab: {
+						id: 'prevTab',
+						label: VIM_TAB_SHORTCUTS.prevTab.label,
+						keys: VIM_PREV_TAB_CHORD,
+						sequence: [['g'], ['h']],
+					},
+					// An entry that speaks only to the sequence leaves the chord
+					// inherited, so both halves of "independent" are covered.
+					nextTab: {
+						id: 'nextTab',
+						label: VIM_TAB_SHORTCUTS.nextTab.label,
+						sequence: [['g'], ['l']],
+					},
+				},
+			};
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue(file);
+
+			await act(async () => {
+				await loadAllSettings();
+			});
+
+			const state = useSettingsStore.getState();
+			expect(state.shortcuts.toggleSidebar.sequence).toEqual([['g'], ['s']]);
+			expect(state.vimTabShortcuts.prevTab.sequence).toEqual([['g'], ['h']]);
+			expect(state.vimTabShortcuts.nextTab.sequence).toEqual([['g'], ['l']]);
+
+			const vimSet = selectActiveShortcuts({ ...state, keyboardMode: 'vim' });
+			expect(vimSet.prevTab.sequence).toEqual([['g'], ['h']]);
+			expect(vimSet.prevTab.keys).toEqual(VIM_PREV_TAB_CHORD);
+			// Sequence only: the chord is still the inherited default one.
+			expect(vimSet.nextTab.sequence).toEqual([['g'], ['l']]);
+			expect(vimSet.nextTab.keys).toEqual(DEFAULT_SHORTCUTS.nextTab.keys);
+			// A base-table sequence is live in BOTH modes, since Vim mode
+			// inherits the whole entry when it overrides nothing.
+			expect(vimSet.toggleSidebar.sequence).toEqual([['g'], ['s']]);
+			const defaultSet = selectActiveShortcuts({ ...state, keyboardMode: 'default' });
+			expect(defaultSet.toggleSidebar.sequence).toEqual([['g'], ['s']]);
+			expect(defaultSet.toggleSidebar.keys).toEqual(FREE_CHORD_A);
+			// And the Vim-only sequences stay out of default mode.
+			expect(defaultSet.prevTab.sequence).toBeUndefined();
+			expect(defaultSet.nextTab.sequence).toBeUndefined();
+		});
 	});
 
 	describe('per-mode reset', () => {

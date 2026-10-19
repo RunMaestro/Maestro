@@ -12,6 +12,12 @@
  * that is unreachable in one mode is indistinguishable from a bug. So the base
  * map is the floor, and an override only ever REPLACES.
  *
+ * An action carries up to TWO triggers, a chord (`keys`) and a key sequence
+ * (`sequence`), and the two inherit and override independently. Both fire, so
+ * resolving them together would mean a mode could not add a sequence to an
+ * action without restating the chord it already has - and the restated chord
+ * would then be frozen at that day's default.
+ *
  * Why the displacement list rather than letting the collision stand: within a
  * mode, one chord must fire one action. When an override takes a chord some
  * other action inherits, both would answer the same keypress, and which one won
@@ -45,9 +51,12 @@ export interface EffectiveShortcuts {
 	shortcuts: Record<string, Shortcut>;
 	tabShortcuts: Record<string, Shortcut>;
 	/**
-	 * Actions whose inherited chord was taken by an override, in base-map
+	 * Actions whose inherited CHORD was taken by an override, in base-map
 	 * declaration order (`shortcuts` first, then `tabShortcuts`). Each one is
 	 * unbound in the resolved maps and needs a chord of its own in this mode.
+	 *
+	 * Chords only. A `sequence` override never displaces, for the reasons in
+	 * `resolveMap`.
 	 */
 	displaced: string[];
 }
@@ -56,7 +65,13 @@ export interface EffectiveShortcuts {
 const NO_DISPLACED: string[] = [];
 
 /**
- * The chord an override assigns, by action id, across BOTH override buckets.
+ * One override FIELD's value, by action id, across BOTH override buckets.
+ *
+ * Parameterized by a reader rather than written twice because `keys` and
+ * `sequence` resolve on identical terms - same bucket preference, same
+ * "omitted means inherit", same "empty means cleared in this mode" - and only
+ * differ in which field is read. Two copies would drift, and the half that
+ * drifted would be the one with no shipped data behind it yet.
  *
  * The bucket an override is written in says which MATCHER reads it, not which
  * base map declares the action: `isTabShortcut` reads
@@ -78,23 +93,30 @@ const NO_DISPLACED: string[] = [];
  * Iterating the BASE maps rather than the buckets also implements the last of
  * the four states a persisted entry can be in: an id no base map declares is a
  * retired action the hydration deliberately kept, and it is never reached. The
- * state before it, an entry with no `keys`, means "inherit the default-mode
- * chord" and is skipped here so the fallback bucket still gets its say.
+ * state before it, an entry with no value for the field, means "inherit the
+ * default-mode binding" and is skipped here so the fallback bucket still gets
+ * its say.
+ *
+ * The two fields are read in SEPARATE passes, which is what makes them
+ * independent: an override that spells out a `sequence` and omits `keys`
+ * contributes to the sequence map and is invisible to the chord map, so the
+ * action keeps the chord it inherits.
  */
-function collectOverrideKeys(
+function collectOverrideField<T>(
 	base: ShortcutBaseMaps,
-	overrides: ShortcutOverrideMaps
-): Map<string, string[]> {
-	const byId = new Map<string, string[]>();
+	overrides: ShortcutOverrideMaps,
+	read: (entry: ShortcutOverride | undefined) => T | undefined
+): Map<string, T> {
+	const byId = new Map<string, T>();
 	const take = (
 		id: string,
 		preferred: Record<string, ShortcutOverride>,
 		fallback: Record<string, ShortcutOverride>
 	) => {
-		// `keys: []` is present, and truthy, so an explicit clear in the
-		// preferred bucket beats a chord in the fallback one.
-		const keys = preferred[id]?.keys ?? fallback[id]?.keys;
-		if (keys) byId.set(id, keys);
+		// An empty array is present, and truthy, so an explicit clear in the
+		// preferred bucket beats a binding in the fallback one.
+		const value = read(preferred[id]) ?? read(fallback[id]);
+		if (value) byId.set(id, value);
 	};
 	for (const id of Object.keys(base.shortcuts)) {
 		take(id, overrides.vimShortcuts, overrides.vimTabShortcuts);
@@ -119,7 +141,8 @@ export function resolveEffectiveShortcuts(
 	base: ShortcutBaseMaps,
 	overrides: ShortcutOverrideMaps
 ): EffectiveShortcuts {
-	const overrideKeys = collectOverrideKeys(base, overrides);
+	const overrideKeys = collectOverrideField(base, overrides, (entry) => entry?.keys);
+	const overrideSequences = collectOverrideField(base, overrides, (entry) => entry?.sequence);
 
 	// Only a real chord can take a keypress from another action. An override of
 	// `keys: []` is the user clearing the binding in this mode, and an empty
@@ -133,29 +156,46 @@ export function resolveEffectiveShortcuts(
 		const out: Record<string, Shortcut> = {};
 		let changed = false;
 		for (const [id, shortcut] of Object.entries(map)) {
+			let next = shortcut;
+
 			// `undefined` rather than falsy: an override of `keys: []` is the
 			// user clearing the binding in this mode, and it has to win over
 			// the inherited chord like any other override.
-			const override = overrideKeys.get(id);
-			if (override !== undefined) {
+			const keysOverride = overrideKeys.get(id);
+			if (keysOverride !== undefined) {
 				// An override applies to every base map that declares the action.
 				// No id lives in two base maps today; if one ever does, writing
 				// the chord to one of them would leave the other matcher firing
 				// the default-mode chord in this mode.
-				out[id] = { ...shortcut, keys: override };
-				changed = true;
-				continue;
-			}
-			if (winningChords.some((chord) => shortcutKeysCollide(chord, shortcut.keys))) {
-				out[id] = { ...shortcut, keys: [] };
-				changed = true;
+				next = { ...next, keys: keysOverride };
+			} else if (winningChords.some((chord) => shortcutKeysCollide(chord, shortcut.keys))) {
+				next = { ...next, keys: [] };
 				if (!seen.has(id)) {
 					seen.add(id);
 					displaced.push(id);
 				}
-				continue;
 			}
-			out[id] = shortcut;
+
+			// Applied SEPARATELY from the chord, and after it, so the two
+			// triggers never take each other away: an action given a `g g`
+			// sequence in this mode keeps whichever chord the branch above left
+			// it with, and an action given a chord keeps its inherited
+			// sequence. The one case that is deliberately NOT symmetric is
+			// displacement - a sequence does not unbind another action's
+			// sequence. Sequence conflicts are a PREFIX relation rather than an
+			// equality (`g` fights `g g`), so they need the step-by-step
+			// comparison in `shortcutSequencesCollide`, and the shipped tables
+			// are checked for them structurally at build time instead of being
+			// silently unbound at runtime. There is also nothing to displace in
+			// practice: bare-key sequences only make sense in a mode that gates
+			// on normal mode, so the default buckets carry none.
+			const sequenceOverride = overrideSequences.get(id);
+			if (sequenceOverride !== undefined) {
+				next = { ...next, sequence: sequenceOverride };
+			}
+
+			if (next !== shortcut) changed = true;
+			out[id] = next;
 		}
 		return changed ? out : map;
 	};
@@ -203,8 +243,24 @@ export function overridesWithEdits(
 		// Order-independent: the recorder emits a canonical order, but a chord
 		// read back in another order is the same chord and must not be written.
 		if (shown && shortcutKeysEqual(shown.keys, shortcut.keys)) continue;
+		// This row's OWN sequence override survives a chord edit. The row is
+		// rewritten rather than patched, so omitting the field here would
+		// silently unbind the sequence the user recorded in this mode.
+		//
+		// Read from `current`, the override bucket, and never from `next`: the
+		// map handed in is the EFFECTIVE one, where the sequence may be
+		// inherited from the default tables. Copying an inherited sequence into
+		// the bucket would promote it to an explicit override and freeze it at
+		// that day's default, the same trap this function exists to avoid for
+		// chords.
+		const sequence = current[id]?.sequence;
 		edited ??= { ...current };
-		edited[id] = { id, label: shortcut.label, keys: [...shortcut.keys] };
+		edited[id] = {
+			id,
+			label: shortcut.label,
+			keys: [...shortcut.keys],
+			...(sequence ? { sequence: sequence.map((step) => [...step]) } : {}),
+		};
 	}
 	return edited ?? current;
 }
@@ -217,6 +273,12 @@ export function overridesWithEdits(
  * "inherit", so it reads as inherited rather than as a customization. An entry
  * with `keys: []` is NOT inherited - the user cleared the binding in this mode,
  * which is a choice the UI has to show as one.
+ *
+ * Scoped to the CHORD, deliberately: callers use it to decide whether the
+ * recorded chord on a row is this mode's own or the inherited one. It is not a
+ * whole-row "is this row customized" test, so an action whose only override is
+ * a `sequence` still reads as inheriting its chord, which is exactly what it
+ * does.
  */
 export function isOverrideInherited(id: string, overrides: ShortcutOverrideMaps): boolean {
 	return !overrides.vimShortcuts[id]?.keys && !overrides.vimTabShortcuts[id]?.keys;
