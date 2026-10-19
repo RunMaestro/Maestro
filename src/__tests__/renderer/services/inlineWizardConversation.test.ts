@@ -18,6 +18,7 @@ const mockMaestro = {
 		onExit: vi.fn(() => vi.fn()),
 		onThinkingChunk: vi.fn(() => vi.fn()),
 		onToolExecution: vi.fn(() => vi.fn()),
+		onAgentError: vi.fn(() => vi.fn()),
 	},
 };
 
@@ -487,6 +488,40 @@ describe('inlineWizardConversation', () => {
 					}),
 				})
 			);
+		});
+
+		// Cursor's stderr never reaches onData, so the buffer is empty when the turn
+		// fails. The error main classified arrives on agent-error, ahead of the exit.
+		it('should show the error the main process reported when a turn fails with no output', async () => {
+			const freePlanMessage =
+				"Cursor's Free plan only allows the Auto model. Set this agent's model to auto, or upgrade your Cursor plan.";
+			mockMaestro.agents.get.mockResolvedValue({
+				id: 'cursor-cli',
+				available: true,
+				command: 'agent',
+				args: [],
+			});
+			mockMaestro.process.spawn.mockResolvedValue(undefined);
+
+			const session = await startInlineWizardConversation({
+				agentType: 'cursor-cli',
+				directoryPath: '/test/project',
+				projectName: 'Test Project',
+				mode: 'ask',
+			});
+			const messagePromise = sendWizardMessage(session, 'Hello', []);
+			await vi.waitFor(() => expect(mockMaestro.process.spawn).toHaveBeenCalled());
+
+			const agentErrorCallback = mockMaestro.process.onAgentError.mock.calls[0][0] as (
+				sessionId: string,
+				error: { type: string; message: string }
+			) => void;
+			agentErrorCallback(session.sessionId, { type: 'agent_crashed', message: freePlanMessage });
+			mockMaestro.process.onExit.mock.calls[0][0](session.sessionId, 1);
+
+			const result = await messagePromise;
+			expect(result.success).toBe(false);
+			expect(result.error).toContain(freePlanMessage);
 		});
 	});
 

@@ -97,6 +97,17 @@ function recoveryHintFor(type: AgentErrorType, agentType: ToolType): string {
 	return `Run "${command}"${followUp} to sign in again, then start the wizard over.`;
 }
 
+/** Title, recovery hint and retry rule for one classified error. */
+function toWizardError(type: AgentErrorType, message: string, agentType: ToolType): WizardError {
+	return {
+		type,
+		title: ERROR_TITLES[type] ?? ERROR_TITLES.unknown,
+		message,
+		recoveryHint: recoveryHintFor(type, agentType),
+		canRetry: RETRYABLE_TYPES.has(type),
+	};
+}
+
 /**
  * Detect provider errors in agent output.
  *
@@ -112,12 +123,65 @@ export function detectWizardError(output: string, agentType: ToolType): WizardEr
 	const match = matchErrorPattern(getErrorPatterns(agentType), output, { minLength: 0 });
 	if (!match) return null;
 
+	return toWizardError(match.type, match.message, agentType);
+}
+
+/** The fields of a main-process `agent-error` that the wizard reads. */
+export interface ReportedAgentError {
+	type: string;
+	message: string;
+}
+
+/**
+ * Present an error the main process already classified (the `agent-error` event) the
+ * same way as one found in the output: same title, recovery hint and retry rule.
+ *
+ * The type arrives over IPC as a plain string, so anything outside the taxonomy
+ * (an own key of `ERROR_TITLES`, which rules out `toString` and friends) is
+ * presented as `unknown` rather than trusted.
+ */
+export function wizardErrorFromAgentError(
+	error: ReportedAgentError,
+	agentType: ToolType
+): WizardError {
+	const type: AgentErrorType = Object.prototype.hasOwnProperty.call(ERROR_TITLES, error.type)
+		? (error.type as AgentErrorType)
+		: 'unknown';
+	return toWizardError(type, error.message, agentType);
+}
+
+/** The `agent-error` events captured for one wizard spawn. */
+export interface AgentErrorCapture {
+	/** The last error main reported for the spawn, if any. Still readable after `cleanup`. */
+	latest: () => ReportedAgentError | undefined;
+	/** Stop listening. Safe to call more than once. */
+	cleanup: () => void;
+}
+
+/**
+ * Keep the latest `agent-error` the main process reports for one wizard spawn. Main
+ * sends it before `process:exit`, so the exit handler can read it with `latest()`.
+ *
+ * The wizard's output buffer only sees `process:data`. A stream-json agent whose
+ * failure arrives on stderr or as an error event leaves that buffer empty, and
+ * without this the wizard can only say "Agent exited with code 1".
+ */
+export function captureAgentError(sessionId: string): AgentErrorCapture {
+	let latest: ReportedAgentError | undefined;
+	// Optional call: test mocks of `window.maestro.process` may not stub it.
+	let unsubscribe: (() => void) | undefined = window.maestro.process.onAgentError?.(
+		(receivedSessionId, error) => {
+			if (receivedSessionId === sessionId && error?.message) {
+				latest = { type: error.type, message: error.message };
+			}
+		}
+	);
 	return {
-		type: match.type,
-		title: ERROR_TITLES[match.type] ?? ERROR_TITLES.unknown,
-		message: match.message,
-		recoveryHint: recoveryHintFor(match.type, agentType),
-		canRetry: RETRYABLE_TYPES.has(match.type),
+		latest: () => latest,
+		cleanup: () => {
+			unsubscribe?.();
+			unsubscribe = undefined;
+		},
 	};
 }
 

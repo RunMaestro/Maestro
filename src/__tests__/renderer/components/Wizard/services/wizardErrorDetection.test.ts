@@ -10,12 +10,19 @@
  * the agent actually in use.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
 	detectWizardError,
 	formatWizardError,
 	createGenericErrorMessage,
+	wizardErrorFromAgentError,
+	captureAgentError,
 } from '../../../../../renderer/components/Wizard/services/wizardErrorDetection';
+
+// The two messages Cursor's bank produces (src/shared/agentErrorPatterns.ts).
+const CURSOR_AUTH_MESSAGE = 'Not authenticated with Cursor. Sign in again to continue.';
+const CURSOR_FREE_PLAN_MESSAGE =
+	"Cursor's Free plan only allows the Auto model. Set this agent's model to auto, or upgrade your Cursor plan.";
 
 describe('detectWizardError', () => {
 	it('returns null for empty output and for ordinary output', () => {
@@ -96,5 +103,96 @@ describe('createGenericErrorMessage', () => {
 
 	it('names the exit code when there is nothing else to say', () => {
 		expect(createGenericErrorMessage('', 3)).toContain('3');
+	});
+});
+
+describe('wizardErrorFromAgentError', () => {
+	it('presents an expired Cursor login with the sign-in hint and no retry', () => {
+		const error = wizardErrorFromAgentError(
+			{ type: 'auth_expired', message: CURSOR_AUTH_MESSAGE },
+			'cursor-cli'
+		);
+		expect(error).toMatchObject({
+			type: 'auth_expired',
+			title: 'Authentication Required',
+			message: CURSOR_AUTH_MESSAGE,
+			canRetry: false,
+		});
+		expect(error.recoveryHint).toContain('agent login');
+	});
+
+	it("presents Cursor's Free-plan refusal as a retryable agent error", () => {
+		const error = wizardErrorFromAgentError(
+			{ type: 'agent_crashed', message: CURSOR_FREE_PLAN_MESSAGE },
+			'cursor-cli'
+		);
+		expect(error).toMatchObject({
+			type: 'agent_crashed',
+			title: 'Agent Error',
+			message: CURSOR_FREE_PLAN_MESSAGE,
+			canRetry: true,
+		});
+	});
+
+	// The type crosses IPC as a plain string; only the taxonomy's own keys count.
+	it('treats a type outside the taxonomy as unknown', () => {
+		expect(wizardErrorFromAgentError({ type: 'not_a_type', message: 'x' }, 'cursor-cli').type).toBe(
+			'unknown'
+		);
+		expect(wizardErrorFromAgentError({ type: 'toString', message: 'x' }, 'cursor-cli').type).toBe(
+			'unknown'
+		);
+	});
+});
+
+describe('captureAgentError', () => {
+	type AgentErrorCallback = (sessionId: string, error: { type: string; message: string }) => void;
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	function stubOnAgentError() {
+		let callback: AgentErrorCallback | undefined;
+		const unsubscribe = vi.fn();
+		const onAgentError = vi.fn((cb: AgentErrorCallback) => {
+			callback = cb;
+			return unsubscribe;
+		});
+		vi.stubGlobal('window', { maestro: { process: { onAgentError } } });
+		return {
+			emit: (sid: string, type: string, message: string) => callback?.(sid, { type, message }),
+			unsubscribe,
+		};
+	}
+
+	it('keeps the latest error for its own session and ignores other sessions', () => {
+		const { emit } = stubOnAgentError();
+		const capture = captureAgentError('wizard-1');
+
+		emit('wizard-2', 'rate_limited', 'someone else');
+		expect(capture.latest()).toBeUndefined();
+
+		emit('wizard-1', 'rate_limited', 'first');
+		emit('wizard-1', 'auth_expired', CURSOR_AUTH_MESSAGE);
+		expect(capture.latest()).toEqual({ type: 'auth_expired', message: CURSOR_AUTH_MESSAGE });
+	});
+
+	it('unsubscribes on cleanup and still answers latest() afterwards', () => {
+		const { emit, unsubscribe } = stubOnAgentError();
+		const capture = captureAgentError('wizard-1');
+		emit('wizard-1', 'auth_expired', CURSOR_AUTH_MESSAGE);
+
+		capture.cleanup();
+		capture.cleanup();
+		expect(unsubscribe).toHaveBeenCalledTimes(1);
+		expect(capture.latest()?.type).toBe('auth_expired');
+	});
+
+	it('works against a process mock that has no onAgentError', () => {
+		vi.stubGlobal('window', { maestro: { process: {} } });
+		const capture = captureAgentError('wizard-1');
+		expect(capture.latest()).toBeUndefined();
+		expect(() => capture.cleanup()).not.toThrow();
 	});
 });

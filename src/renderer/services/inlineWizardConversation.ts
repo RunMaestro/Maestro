@@ -18,6 +18,12 @@ import {
 	parseStructuredOutput,
 	getConfidenceColor,
 } from '../components/Wizard/services/wizardPrompts';
+import {
+	captureAgentError,
+	formatWizardError,
+	wizardErrorFromAgentError,
+	type AgentErrorCapture,
+} from '../components/Wizard/services/wizardErrorDetection';
 
 let cachedWizardInlineIteratePrompt: string | null = null;
 let cachedWizardInlineNewPrompt: string | null = null;
@@ -702,6 +708,7 @@ export async function sendWizardMessage(
 			let outputBuffer = '';
 			let dataListenerCleanup: (() => void) | undefined;
 			let exitListenerCleanup: (() => void) | undefined;
+			let agentErrorCapture: AgentErrorCapture | undefined;
 
 			// Activity-based timeout: resets whenever the agent produces output.
 			// This prevents false timeouts on complex prompts where the agent is
@@ -756,6 +763,8 @@ export async function sendWizardMessage(
 					exitListenerCleanup();
 					exitListenerCleanup = undefined;
 				}
+				// Unsubscribe only: the exit handler reads `latest()` after this runs.
+				agentErrorCapture?.cleanup();
 				if (thinkingListenerCleanup) {
 					thinkingListenerCleanup();
 					thinkingListenerCleanup = undefined;
@@ -776,6 +785,7 @@ export async function sendWizardMessage(
 					}
 				}
 			);
+			agentErrorCapture = captureAgentError(session.sessionId);
 
 			// Set up thinking chunk listener - uses the dedicated event from process-manager
 			// This receives parsed thinking content (isPartial text) that's already extracted
@@ -853,9 +863,14 @@ export async function sendWizardMessage(
 								agentSessionId: agentSessionId || undefined,
 							});
 						} else {
+							// The error main classified for this spawn, when there is one (stderr
+							// and error events never reach the output buffer).
+							const reported = agentErrorCapture?.latest();
 							resolve({
 								success: false,
-								error: `Agent exited with code ${code}`,
+								error: reported
+									? formatWizardError(wizardErrorFromAgentError(reported, session.agentType))
+									: `Agent exited with code ${code}`,
 								rawOutput: outputBuffer,
 								agentSessionId: agentSessionId || undefined,
 							});

@@ -21,6 +21,9 @@ import {
 import {
 	detectWizardError,
 	createGenericErrorMessage,
+	captureAgentError,
+	wizardErrorFromAgentError,
+	type AgentErrorCapture,
 	type WizardError,
 } from './wizardErrorDetection';
 import { wizardDebugLogger } from './phaseGenerator';
@@ -132,6 +135,8 @@ interface ConversationSession {
 	dataListenerCleanup?: () => void;
 	/** Cleanup function for exit listener */
 	exitListenerCleanup?: () => void;
+	/** The `agent-error` main reports for this spawn, read when the turn fails */
+	agentErrorCapture?: AgentErrorCapture;
 	/** Cleanup function for thinking chunk listener */
 	thinkingListenerCleanup?: () => void;
 	/** Cleanup function for tool execution listener */
@@ -463,6 +468,7 @@ class ConversationManager {
 					}
 				}
 			);
+			this.session!.agentErrorCapture = captureAgentError(this.session!.sessionId);
 
 			// Set up thinking chunk listener - uses the dedicated event from process-manager
 			// This receives parsed thinking content (isPartial text) that's already extracted
@@ -557,6 +563,9 @@ class ConversationManager {
 							} else {
 								// Try to parse the output as a structured response
 								const parsedResponse = this.parseAgentOutput();
+								// Nothing matched in the output, but main may still have classified
+								// the failure (stderr, an error event). It outranks the generic message.
+								const reported = this.session?.agentErrorCapture?.latest();
 								if (
 									parsedResponse.parseSuccess &&
 									(parsedResponse.structured || parsedResponse.rawText)
@@ -576,6 +585,20 @@ class ConversationManager {
 										success: true,
 										response: parsedResponse,
 										rawOutput,
+									});
+								} else if (reported && this.session) {
+									const reportedError = wizardErrorFromAgentError(reported, this.session.agentType);
+									wizardDebugLogger.log('exit', `Agent reported an error (code ${code})`, {
+										sessionId,
+										exitCode: code,
+										errorType: reportedError.type,
+										errorMessage: reportedError.message,
+									});
+									resolve({
+										success: false,
+										error: `${reportedError.title}: ${reportedError.message}`,
+										rawOutput,
+										detectedError: reportedError,
 									});
 								} else {
 									// No specific error detected, create generic message
@@ -951,6 +974,8 @@ class ConversationManager {
 			this.session.exitListenerCleanup();
 			this.session.exitListenerCleanup = undefined;
 		}
+		// Unsubscribe only: the exit handler reads `latest()` after this runs.
+		this.session?.agentErrorCapture?.cleanup();
 		if (this.session?.thinkingListenerCleanup) {
 			this.session.thinkingListenerCleanup();
 			this.session.thinkingListenerCleanup = undefined;
