@@ -1,6 +1,6 @@
 /**
  * E2E smoke test for cursor-cli through the CLI spawner path.
- * Run: RUN_INTEGRATION_TESTS=true bunx vitest run --config vitest.e2e.config.ts CursorCliSpawner
+ * Run: RUN_INTEGRATION_TESTS=true npx vitest run --config vitest.e2e.config.ts CursorCliSpawner
  */
 
 import { describe, it, expect, beforeAll } from 'vitest';

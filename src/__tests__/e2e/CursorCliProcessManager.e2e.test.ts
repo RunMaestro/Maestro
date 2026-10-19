@@ -1,6 +1,6 @@
 /**
  * E2E smoke test for cursor-cli through ProcessManager (desktop spawn path).
- * Run: RUN_INTEGRATION_TESTS=true bunx vitest run --config vitest.e2e.config.ts CursorCliProcessManager
+ * Run: RUN_INTEGRATION_TESTS=true npx vitest run --config vitest.e2e.config.ts CursorCliProcessManager
  */
 
 import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';

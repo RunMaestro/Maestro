@@ -648,6 +648,7 @@ class ConversationManager {
 					command: commandToUse,
 					args: argsForSpawn,
 					prompt: prompt,
+					// Cursor's planning turn runs in plan mode; main adds `--mode plan` from its definition.
 					readOnlyMode: this.session!.agentType === 'cursor-cli',
 					// When true, the main process will send the prompt via stdin instead of
 					// passing it as a command-line argument. This avoids Windows command
