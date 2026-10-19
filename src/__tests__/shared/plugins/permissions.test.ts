@@ -599,11 +599,48 @@ describe('services:call exact provider/service allowlists', () => {
 describe('granted-sessions scope keyword (host-held per-session grants)', () => {
 	const keyword = { scope: GRANTED_SESSIONS_SCOPE } as const;
 
-	it.each(['agents:dispatch', 'transcripts:read'] as const)('parses for %s', (capability) => {
-		const parsed = parsePermissions([{ capability, ...keyword, reason: 'why' }]);
+	it('parses for agents:dispatch, which is where the set is stored', () => {
+		const parsed = parsePermissions([{ capability: 'agents:dispatch', ...keyword, reason: 'why' }]);
 		expect(parsed.errors).toEqual([]);
-		expect(parsed.requests).toEqual([{ capability, scope: GRANTED_SESSIONS_SCOPE, reason: 'why' }]);
-		expect(capabilitySupportsSessionGrants(capability)).toBe(true);
+		expect(parsed.requests).toEqual([
+			{ capability: 'agents:dispatch', scope: GRANTED_SESSIONS_SCOPE, reason: 'why' },
+		]);
+		expect(capabilitySupportsSessionGrants('agents:dispatch')).toBe(true);
+	});
+
+	it('parses for transcripts:read ONLY alongside the dispatch keyword', () => {
+		// Both: the shipping kanban combination.
+		const both = parsePermissions([
+			{ capability: 'agents:dispatch', ...keyword, reason: 'send' },
+			{ capability: 'transcripts:read', ...keyword, reason: 'read' },
+		]);
+		expect(both.errors).toEqual([]);
+		expect(both.requests).toHaveLength(2);
+		expect(capabilitySupportsSessionGrants('transcripts:read')).toBe(true);
+
+		// Alone: rejected. The grant set IS the `agents:dispatch` allowlist scope,
+		// so without the keyword there it would govern reads with a set that cannot
+		// exist - and with an ordinary dispatch allowlist it would quietly promote
+		// the user's own Settings-managed dispatch targets into the read set.
+		const alone = parsePermissions([{ capability: 'transcripts:read', ...keyword }]);
+		expect(alone.errors).toEqual([
+			expect.stringMatching(/only take the "granted-sessions" scope when "agents:dispatch"/),
+		]);
+
+		// An ordinary dispatch scope does not satisfy the requirement either.
+		const ordinaryDispatch = parsePermissions([
+			{ capability: 'agents:dispatch', scope: 'sess-1' },
+			{ capability: 'transcripts:read', ...keyword },
+		]);
+		expect(ordinaryDispatch.errors).toHaveLength(1);
+		expect(ordinaryDispatch.errors[0]).toMatch(/when "agents:dispatch" declares it too/);
+
+		// A path-scoped transcripts:read is unaffected by the rule.
+		const pathScoped = parsePermissions([
+			{ capability: 'agents:dispatch', scope: 'sess-1' },
+			{ capability: 'transcripts:read', scope: '/projects/app' },
+		]);
+		expect(pathScoped.errors).toEqual([]);
 	});
 
 	it('trims the keyword to its exact form and keeps a malformed reason loud', () => {

@@ -26,16 +26,19 @@
  * Because the set lives in the dispatch grant, a plugin must hold a consented
  * `agents:dispatch` grant for a grant set to exist at all; `grantSession`
  * returns false when it does not (the user must approve the capability at the
- * consent window first). `transcripts:read` reads the same set.
+ * consent window first). `transcripts:read` reads the same set, and the
+ * manifest parser requires the keyword on `agents:dispatch` whenever
+ * `transcripts:read` declares it, so the set it reads always exists.
  *
- * `usesSessionGrants` reads the MANIFEST, not the ledger, because the host
- * rewrites the grant's scope to real session ids as it grants them - the
- * keyword only survives in the manifest request.
+ * `usesSessionGrants` prefers the MANIFEST, because the host rewrites the
+ * grant's scope to real session ids as it grants them and the keyword only
+ * survives in the manifest request. It falls back to the ledger so a manifest
+ * refresh cannot switch the mode off underneath a still-draining sandbox; see
+ * the method for why that window mattered.
  */
 
 import {
 	GRANTED_SESSIONS_SCOPE,
-	capabilitySupportsSessionGrants,
 	isSessionGrantScope,
 	parseAllowlistScope,
 	type PermissionGrant,
@@ -82,15 +85,40 @@ export interface PluginSessionGrantsDeps {
 export class PluginSessionGrants {
 	constructor(private readonly deps: PluginSessionGrantsDeps) {}
 
-	/** Does this plugin's manifest request the `granted-sessions` keyword for a
-	 * capability that supports it? True => the host's grant set governs its
-	 * dispatch and History reach, replacing the ordinary scope match. */
+	/** Is this plugin in session-grant mode? True => the host's grant set governs
+	 * its dispatch and History reach, replacing the ordinary scope match.
+	 *
+	 * The question is asked of `agents:dispatch` SPECIFICALLY, not of any
+	 * session-grant-capable capability, because that is the one capability whose
+	 * allowlist scope stores the set (`GRANT_SET_CAPABILITY`). A keyword on
+	 * `transcripts:read` alone used to turn the mode on with no set behind it:
+	 * either `grantSession` failed on every call (no dispatch grant to carry the
+	 * members) or, worse, `grantedSessions` returned the user's own
+	 * Settings-managed dispatch allowlist as the transcript-read set and
+	 * `sessions.create` appended to that user-owned list. `parsePermissions` now
+	 * rejects that manifest outright, and this check is the matching runtime half.
+	 */
 	usesSessionGrants(pluginId: string): boolean {
 		const requested = this.deps.getRequestedPermissions(pluginId) ?? [];
-		return requested.some(
-			(request) =>
-				capabilitySupportsSessionGrants(request.capability) && isSessionGrantScope(request.scope)
+		const manifestUses = requested.some(
+			(request) => request.capability === GRANT_SET_CAPABILITY && isSessionGrantScope(request.scope)
 		);
+		if (manifestUses) return true;
+		// Fail-closed fallback, for the window where the two layers could disagree.
+		// The broker relaxes `transcripts:read`'s path match on the LEDGER carrying
+		// a keyword scope, while the handler enforces `isSessionGranted` on the
+		// MANIFEST requesting one. A manifest refresh that drops the keyword while
+		// the old sandbox is still draining made the manifest side false and the
+		// ledger side true, so neither check applied and the plugin could read
+		// transcripts outside its grant set. Reading the ledger here keeps both
+		// sides keyed on the same fact. Once members are granted the host rewrites
+		// the scope to real ids, which is no longer a keyword scope - and by then
+		// the broker stops relaxing too, so the pair still agrees.
+		return this.deps.authStore
+			.readGrants(pluginId)
+			.some(
+				(grant) => grant.capability === GRANT_SET_CAPABILITY && isSessionGrantScope(grant.scope)
+			);
 	}
 
 	/**

@@ -164,6 +164,63 @@ describe('the grant set itself', () => {
 		expect(usesSessionGrants(PLUGIN)).toBe(true);
 	});
 
+	it('is NOT session-grant mode when only transcripts:read carries the keyword', () => {
+		// The set is stored as the `agents:dispatch` allowlist scope, so a keyword on
+		// `transcripts:read` alone names a set that cannot exist. Taking that as
+		// "session-grant mode" had two bad endings: with no dispatch grant every
+		// grantSession failed and the keyword covered nothing, and with an ORDINARY
+		// dispatch allowlist the user's Settings-managed dispatch targets became the
+		// transcript-read set that sessions.create then appended to. Here the plugin
+		// holds exactly that ordinary allowlist (`sess-1`), so a true answer would
+		// leak it as a grant set.
+		const store = newStore();
+		const transcriptsOnly: PermissionRequest[] = [
+			{ capability: 'agents:dispatch', scope: 'sess-1' },
+			{ capability: 'transcripts:read', scope: GRANTED_SESSIONS_SCOPE },
+		];
+		store.mint(PLUGIN, grantsFromRequests(transcriptsOnly, 1), IDENTITY);
+		configurePluginSessionGrants({
+			authStore: store,
+			getRequestedPermissions: () => transcriptsOnly,
+			sessionExists: (sessionId) => SESSIONS.some((s) => s.id === sessionId),
+		});
+		expect(usesSessionGrants(PLUGIN)).toBe(false);
+		// The user's own dispatch allow list is never reported as a grant set...
+		expect(grantedSessions(PLUGIN)).toEqual([]);
+		expect(isSessionGranted(PLUGIN, 'sess-1')).toBe(false);
+		// ...and nothing can be appended to it through the grant path.
+		expect(grantSession(PLUGIN, 'sess-2', 'created')).toBe(false);
+		expect(store.readGrants(PLUGIN).find((g) => g.capability === 'agents:dispatch')?.scope).toBe(
+			'sess-1'
+		);
+	});
+
+	it('falls back to the LEDGER when a manifest refresh drops the keyword mid-shutdown', () => {
+		// The broker relaxes `transcripts:read`'s path match on the LEDGER carrying a
+		// keyword scope, while the handler enforces `isSessionGranted` on the
+		// MANIFEST requesting one. A refresh that drops the keyword while the old
+		// sandbox is still draining made the manifest side false and the ledger side
+		// true, so NEITHER check applied. The ledger fallback keeps both sides on the
+		// same fact.
+		const store = newStore();
+		store.mint(PLUGIN, grantsFromRequests(sessionGrantRequests, 1), IDENTITY);
+		let manifest: readonly PermissionRequest[] | undefined = sessionGrantRequests;
+		configurePluginSessionGrants({
+			authStore: store,
+			getRequestedPermissions: () => manifest,
+			sessionExists: (sessionId) => SESSIONS.some((s) => s.id === sessionId),
+		});
+		expect(usesSessionGrants(PLUGIN)).toBe(true);
+
+		// The refreshed manifest no longer asks for the keyword, but the consented
+		// ledger grant still carries it: stay in session-grant mode.
+		manifest = [{ capability: 'transcripts:read', scope: '/projects/app' }];
+		expect(usesSessionGrants(PLUGIN)).toBe(true);
+		// A manifest gone entirely (the record is being torn down) is the same.
+		manifest = undefined;
+		expect(usesSessionGrants(PLUGIN)).toBe(true);
+	});
+
 	it('starts empty: a consented keyword grant covers no session', () => {
 		installGrants(newStore(), SESSIONS);
 		expect(grantedSessions(PLUGIN)).toEqual([]);

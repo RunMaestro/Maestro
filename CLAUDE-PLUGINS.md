@@ -184,9 +184,9 @@ Channels (all gated on `encoreFeatures.plugins`):
 - **Consent (`plugins:set-grants`).** The user approves a SUBSET of the plugin's REQUESTED permissions. The handler intersects approved capabilities with the manifest's requests, so an over-broad grant can never be smuggled in via the renderer, and only known capabilities survive. `plugins:revoke-grants` calls `forgetGrants`.
 - **Host-managed dispatch allow list (`plugins:set-agent-allowlist`, issue #1250).** `agents:dispatch` uses an allowlist scope naming the exact agent ids a plugin may target. The manifest declares the CAPABILITY; the USER owns the SCOPE. This channel is registered in `index.ts` (gated on the trusted main renderer + Encore flag, NOT this module, like `plugins:request-consent`) and re-mints the grant's scope through `AuthorizationStore.setAllowlistScope` - the same sealed-ledger path as consent/revoke, so the epoch bump, anti-rollback, tombstones, and session-only fallback are all preserved. It edits ONLY the scope of an ALREADY-CONSENTED capability: it never adds a capability, never touches the `unattended` flag, and never changes identity (the plugin's files are unchanged, so `verify()` still matches), so adding an agent needs no plugin re-pack/re-sign. The plugin can never reach it (a different principal), and submitted ids are intersected with live sessions and filtered through `isValidAllowlistMember`. Edited from Settings -> Plugins (the `AgentDispatchAllowlist` editor in a plugin's Permissions tab). A denied `agents.dispatch` (an out-of-date allow list) also raises a throttled operator toast, so it no longer fails invisibly.
 
-- **Host-enforced session grants (`scope: "granted-sessions"`, host API 1.26.0, `plugin-session-grants.ts`).** The manifest parser requires `agents:dispatch` to name exact agent ids and `transcripts:read` to name a project path - neither of which a plugin author can know. The `granted-sessions` keyword (`GRANTED_SESSIONS_SCOPE` in `permissions.ts`, accepted for exactly those two capabilities and rejected with a specific message everywhere else) hands the member set to the HOST instead: the plugin may dispatch to, and read the History of, only sessions it created through `sessions.create` (source `created`) or that the user approved through `sessions.requestAccess` (source `user-approved`). It is an EXPLICIT scope, never an unscoped grant: a freshly consented keyword grant has no members and covers nothing, because `parseAllowlistScope` drops the keyword and `isPermitted` refuses to match it as a path. The consent window renders it as "only agents this plugin creates, or that you approve when asked" rather than the raw keyword.
+- **Host-enforced session grants (`scope: "granted-sessions"`, host API 1.26.0, `plugin-session-grants.ts`).** The manifest parser requires `agents:dispatch` to name exact agent ids and `transcripts:read` to name a project path - neither of which a plugin author can know. The `granted-sessions` keyword (`GRANTED_SESSIONS_SCOPE` in `permissions.ts`, accepted for exactly those two capabilities and rejected with a specific message everywhere else) hands the member set to the HOST instead: the plugin may dispatch to, and read the History of, only sessions it created through `sessions.create` (source `created`) or that the user approved through `sessions.requestAccess` (source `user-approved`). It is an EXPLICIT scope, never an unscoped grant: a freshly consented keyword grant has no members and covers nothing, because `parseAllowlistScope` drops the keyword and `isPermitted` refuses to match it as a path. The consent window renders it as "only agents this plugin creates, or that you approve when asked" rather than the raw keyword. The keyword on `transcripts:read` REQUIRES it on `agents:dispatch` too (a cross-entry rule at the end of `parsePermissions`): the set is stored as the dispatch allowlist scope, so a lone `transcripts:read` keyword either covered nothing or, with an ordinary dispatch allowlist, silently promoted the user's own Settings-managed dispatch targets into the transcript-read set that `sessions.create` then appended to.
 
-  There is no new storage: the set IS the `agents:dispatch` grant's allowlist scope, written through the same `setAllowlistScope` path the Settings editor uses, so it is sealed, epoch-bumped, persisted across restarts, broker-checked on every dispatch, removable in Settings (a removed session is denied on the very NEXT dispatch and History read, because grants are re-read per call), and dropped when the capability is revoked. `usesSessionGrants` reads the MANIFEST, not the ledger, because granting rewrites the scope to real session ids. Only an existing session id is ever granted, never an agent name, and every grant and revoke is audited with its source.
+  There is no new storage: the set IS the `agents:dispatch` grant's allowlist scope, written through the same `setAllowlistScope` path the Settings editor uses, so it is sealed, epoch-bumped, persisted across restarts, broker-checked on every dispatch, removable in Settings (a removed session is denied on the very NEXT dispatch and History read, because grants are re-read per call), and dropped when the capability is revoked. `usesSessionGrants` asks whether `agents:dispatch` SPECIFICALLY carries the keyword, preferring the MANIFEST because granting rewrites the scope to real session ids, and falling back to the ledger so a manifest refresh cannot switch session-grant mode off under a still-draining sandbox (the broker relaxes the `transcripts:read` path match on the ledger, so keying the handler's check only on the manifest left a window where neither side enforced the set). Only an existing session id is ever granted, never an agent name, and every grant and revoke is audited with its source.
 
   **Tab targeting (`opts.tabId`).** `agents.dispatch` takes an optional closed `opts` whose ONLY member is `tabId`, mirroring how `process.spawn` closes its own. The handler resolves it through the existing `tabsList` dependency AFTER every authorization gate (so the error can never be an existence oracle for tabs of a session the plugin cannot dispatch to) and requires a VISIBLE AI tab of the session named by `agentId` - `projectSessionTabMetadata` already drops hidden consult tabs, and an unknown id, a tab of another session, a terminal/file tab, or an unexpected opts key throws with nothing sent. Because the handler can only prove tab ownership against an exact session id, `tabId` is incompatible with addressing by agent NAME (the sink resolves a name later). It NARROWS and never widens: the broker's scope target stays `agentId` (see `scopeTargetFor`), and a session-grant plugin still needs that session granted. The sink threads it into `dispatchPromptToSession`, which passes it as the `remote:executeCommand` argument after `inputMode`; omitted, the renderer uses the session's own active tab exactly as before.
 
@@ -236,31 +236,30 @@ paths and admits the home-relative manifest path scope `~/.maestro/<name>`
 `1.26.0` also adds host-enforced per-session grants (`scope: "granted-sessions"`)
 and widens the session fields a plugin may set - `additionalDirectories`
 (granted project roots only, read-only), `customModel`, `customEffort`, a `~` in
-a create `cwd`, and `supportsAdditionalDirectories` on every `agents.list` entry
-
-- all on the existing `sessions:create` / `sessions:write` / `agents:read`
-  capabilities. See "Plugin-set session fields" below.
-  `1.25.0` added resumable `agents.send`, invocation-scoped
-  public progress, verified plugin-tool caller context, and isolated `agents.generateTitle`.
-  All sends and title generation require exact-agent Dispatch, unattended consent,
-  trusted signatures, risk and action guards. See [the Relay contract](docs/relay-host-contract.md).
-  `1.24.0` added host-mediated plugin services.
-  `1.23.0` added independent plugin settings cards.
-  `1.17.0` added `media:tools` with the exact
-  `discord-voice` scope, opaque media jobs and fixed native profiles. STT remains
-  in the plugin; tools and models are not bundled. (`1.15.0` is taken by the
-  Board + Profiles work on this fork, so it is skipped here.)
-  Earlier: `1.16.0` added the metadata-only `session.activated` event topic, the
-  `sessions.focus` method plus its narrow `sessions:focus` capability, and the
-  `ui.openPanel` / `ui.closePanel` / `ui.togglePanel` methods plus the optional
-  panel manifest field `size?: 'default' | 'full'`. `1.14.0` added the `tool.executed` event topic and the
-  `ui.panelPost` host-to-panel push method; `1.13.0` added the
-  host-mediated `PluginUiSurface` registry and trusted-chrome guard; `1.12.0`
-  added the `net:connect` capability and the `net.connect` / `net.send` /
-  `net.close` methods; `1.11.0` added `groupings` + `ui:grouping`; `1.10.0` added
-  `iconPacks`; `1.9.0` added `hostViews`, `ui:hostView`, and the
-  `ui.hostViewUpdate` / `ui.hostViewRemove` methods. Plugins declare the
-  `maestro.minHostApi` matching the lowest version whose surface they use.
+a create `cwd`, and `supportsAdditionalDirectories` on every `agents.list` entry,
+all on the existing `sessions:create` / `sessions:write` / `agents:read`
+capabilities. See "Plugin-set session fields" above.
+`1.25.0` added resumable `agents.send`, invocation-scoped
+public progress, verified plugin-tool caller context, and isolated `agents.generateTitle`.
+All sends and title generation require exact-agent Dispatch, unattended consent,
+trusted signatures, risk and action guards. See [the Relay contract](docs/relay-host-contract.md).
+`1.24.0` added host-mediated plugin services.
+`1.23.0` added independent plugin settings cards.
+`1.17.0` added `media:tools` with the exact
+`discord-voice` scope, opaque media jobs and fixed native profiles. STT remains
+in the plugin; tools and models are not bundled. (`1.15.0` is taken by the
+Board + Profiles work on this fork, so it is skipped here.)
+Earlier: `1.16.0` added the metadata-only `session.activated` event topic, the
+`sessions.focus` method plus its narrow `sessions:focus` capability, and the
+`ui.openPanel` / `ui.closePanel` / `ui.togglePanel` methods plus the optional
+panel manifest field `size?: 'default' | 'full'`. `1.14.0` added the `tool.executed` event topic and the
+`ui.panelPost` host-to-panel push method; `1.13.0` added the
+host-mediated `PluginUiSurface` registry and trusted-chrome guard; `1.12.0`
+added the `net:connect` capability and the `net.connect` / `net.send` /
+`net.close` methods; `1.11.0` added `groupings` + `ui:grouping`; `1.10.0` added
+`iconPacks`; `1.9.0` added `hostViews`, `ui:hostView`, and the
+`ui.hostViewUpdate` / `ui.hostViewRemove` methods. Plugins declare the
+`maestro.minHostApi` matching the lowest version whose surface they use.
 
 ## Key invariants and gotchas (read before editing)
 

@@ -470,6 +470,23 @@ export function parsePermissions(
 			...(typeof reason === 'string' && reason.trim() !== '' ? { reason: reason.trim() } : {}),
 		});
 	}
+	// Cross-entry rule, so it runs after every request is collected: the grant set
+	// is stored as the `agents:dispatch` allowlist scope and nowhere else, so the
+	// keyword on `transcripts:read` ALONE asks the host to govern reads with a set
+	// that cannot exist. Left accepted, it failed two ways: with no dispatch grant
+	// every `grantSession` call failed and the keyword covered nothing, and with an
+	// ordinary dispatch allowlist the user's own Settings-managed dispatch targets
+	// became the transcript-read set that `sessions.create` then appended to.
+	// Rejecting the manifest is the honest answer: the author must declare the
+	// keyword on both, or scope `transcripts:read` to a real project path.
+	const keywordRequestedOn = (target: PluginCapability): boolean =>
+		out.requests.some((r) => r.capability === target && isSessionGrantScope(r.scope));
+	if (keywordRequestedOn('transcripts:read') && !keywordRequestedOn('agents:dispatch')) {
+		out.errors.push(
+			`capability "transcripts:read" may only take the "${GRANTED_SESSIONS_SCOPE}" scope when ` +
+				`"agents:dispatch" declares it too (the grant set is stored as the dispatch allowlist)`
+		);
+	}
 	return out;
 }
 

@@ -441,7 +441,9 @@ Declare one entry per scope per capability (a plugin may declare the same capabi
 
 ### Host-enforced session grants: `scope: "granted-sessions"` (host API 1.26.0+)
 
-A plugin author cannot know a session id at authoring time, but `agents:dispatch` requires its scope to name exact agent ids and `transcripts:read` requires a project path. The `granted-sessions` keyword solves that honestly: declare it as the scope on `agents:dispatch`, `transcripts:read`, or both, and the HOST decides the member set.
+A plugin author cannot know a session id at authoring time, but `agents:dispatch` requires its scope to name exact agent ids and `transcripts:read` requires a project path. The `granted-sessions` keyword solves that honestly: declare it as the scope on `agents:dispatch`, optionally on `transcripts:read` as well, and the HOST decides the member set.
+
+**`agents:dispatch` must carry the keyword whenever `transcripts:read` does.** The member set is physically stored as the `agents:dispatch` grant's allowlist scope, so the keyword on `transcripts:read` by itself names a set that cannot exist, and the manifest is rejected with that reason. If you want host-governed transcript reads, declare the keyword on both; if you only want transcript reads, scope `transcripts:read` to a real project path instead.
 
 ```json
 { "capability": "agents:dispatch", "scope": "granted-sessions", "reason": "..." }
