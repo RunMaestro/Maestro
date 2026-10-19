@@ -42,6 +42,7 @@ import { PluginEventBusImpl } from '../../../main/plugins/plugin-event-bus';
 import {
 	GRANTED_SESSIONS_SCOPE,
 	grantsFromRequests,
+	hasSessionGrantScope,
 	parsePermissions,
 	type PermissionRequest,
 } from '../../../shared/plugins/permissions';
@@ -164,15 +165,14 @@ describe('the grant set itself', () => {
 		expect(usesSessionGrants(PLUGIN)).toBe(true);
 	});
 
-	it('is NOT session-grant mode when only transcripts:read carries the keyword', () => {
+	it('never lets a transcripts-only keyword MUTATE the user-managed dispatch list', () => {
 		// The set is stored as the `agents:dispatch` allowlist scope, so a keyword on
-		// `transcripts:read` alone names a set that cannot exist. Taking that as
-		// "session-grant mode" had two bad endings: with no dispatch grant every
-		// grantSession failed and the keyword covered nothing, and with an ORDINARY
-		// dispatch allowlist the user's Settings-managed dispatch targets became the
-		// transcript-read set that sessions.create then appended to. Here the plugin
-		// holds exactly that ordinary allowlist (`sess-1`), so a true answer would
-		// leak it as a grant set.
+		// `transcripts:read` alone has no host-held set behind it. The harm to block
+		// is the WRITE: this plugin's dispatch scope is an ordinary, user-managed
+		// allow list (`sess-1`), and `grantSession` appending to it would hand the
+		// user's own Settings-managed dispatch targets over to the plugin as if the
+		// host had granted them. Enforcement mode is a separate question, covered by
+		// the next test.
 		const store = newStore();
 		const transcriptsOnly: PermissionRequest[] = [
 			{ capability: 'agents:dispatch', scope: 'sess-1' },
@@ -184,15 +184,50 @@ describe('the grant set itself', () => {
 			getRequestedPermissions: () => transcriptsOnly,
 			sessionExists: (sessionId) => SESSIONS.some((s) => s.id === sessionId),
 		});
-		expect(usesSessionGrants(PLUGIN)).toBe(false);
-		// The user's own dispatch allow list is never reported as a grant set...
-		expect(grantedSessions(PLUGIN)).toEqual([]);
-		expect(isSessionGranted(PLUGIN, 'sess-1')).toBe(false);
-		// ...and nothing can be appended to it through the grant path.
 		expect(grantSession(PLUGIN, 'sess-2', 'created')).toBe(false);
+		// The user's list is byte-for-byte what it was: no member appended.
 		expect(store.readGrants(PLUGIN).find((g) => g.capability === 'agents:dispatch')?.scope).toBe(
 			'sess-1'
 		);
+		expect(isSessionGranted(PLUGIN, 'sess-2')).toBe(false);
+		// `parsePermissions` rejects this manifest outright now, so the state is only
+		// reachable as a legacy consented grant; the gate holds either way.
+		expect(parsePermissions(transcriptsOnly).errors).toHaveLength(1);
+	});
+
+	it('stays in ENFORCEMENT mode wherever the broker relaxes, including after the first grant', () => {
+		// The broker relaxes a path-scoped verb when THAT verb's own ledger grant
+		// carries the keyword (`hasSessionGrantScope` is per-capability) and leaves
+		// the set check to the handler, which asks `usesSessionGrants`. Any state
+		// where the broker relaxes and this answers false is a hole: neither layer
+		// checks the set. `grantSession` rewrites ONLY the dispatch scope, so the
+		// `transcripts:read` keyword survives every grant - which is exactly the
+		// state a dispatch-only check would have missed.
+		const store = newStore();
+		const sessions = [...SESSIONS];
+		installGrants(store, sessions);
+		expect(grantSession(PLUGIN, 'sess-1', 'created')).toBe(true);
+
+		const grants = store.readGrants(PLUGIN);
+		expect(grants.find((g) => g.capability === 'agents:dispatch')?.scope).toBe('sess-1');
+		// Still a keyword, because granting never touched it...
+		expect(grants.find((g) => g.capability === 'transcripts:read')?.scope).toBe(
+			GRANTED_SESSIONS_SCOPE
+		);
+		expect(hasSessionGrantScope(grants, 'transcripts:read')).toBe(true);
+
+		// ...so with the manifest keyword gone (a refresh mid-drain), enforcement
+		// must stay ON, and the set must still be exactly what was granted.
+		configurePluginSessionGrants({
+			authStore: store,
+			getRequestedPermissions: () => [{ capability: 'transcripts:read', scope: '/projects/app' }],
+			sessionExists: (sessionId) => sessions.some((s) => s.id === sessionId),
+		});
+		expect(usesSessionGrants(PLUGIN)).toBe(true);
+		expect(grantedSessions(PLUGIN)).toEqual(['sess-1']);
+		expect(isSessionGranted(PLUGIN, 'sess-1')).toBe(true);
+		// The ungranted session is still denied, which is the whole point.
+		expect(isSessionGranted(PLUGIN, 'sess-2')).toBe(false);
 	});
 
 	it('falls back to the LEDGER when a manifest refresh drops the keyword mid-shutdown', () => {

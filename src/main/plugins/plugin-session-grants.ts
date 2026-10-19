@@ -30,15 +30,25 @@
  * manifest parser requires the keyword on `agents:dispatch` whenever
  * `transcripts:read` declares it, so the set it reads always exists.
  *
- * `usesSessionGrants` prefers the MANIFEST, because the host rewrites the
- * grant's scope to real session ids as it grants them and the keyword only
- * survives in the manifest request. It falls back to the ledger so a manifest
- * refresh cannot switch the mode off underneath a still-draining sandbox; see
- * the method for why that window mattered.
+ * Two predicates, deliberately not one:
+ *  - `usesSessionGrants` gates ENFORCEMENT (does the handler check the set?) and
+ *    is broad: the manifest's `agents:dispatch` keyword, or ANY session-grant
+ *    ledger grant carrying the keyword. It mirrors what the broker relaxes, so
+ *    no state exists where the broker drops its scope match and the handler
+ *    declines to check the set.
+ *  - `holdsGrantSetKeyword` gates MUTATION (may the host ADD a member?) and is
+ *    strict: the keyword must be on `agents:dispatch`, because that grant's
+ *    allowlist scope IS the storage. This is what keeps `grantSession` away from
+ *    an ordinary, user-managed dispatch allow list.
+ * Both prefer the MANIFEST, because the host rewrites the grant's scope to real
+ * session ids as it grants them and the keyword only survives in the request,
+ * and both fall back to the ledger so a manifest refresh cannot change the
+ * answer underneath a still-draining sandbox.
  */
 
 import {
 	GRANTED_SESSIONS_SCOPE,
+	capabilitySupportsSessionGrants,
 	isSessionGrantScope,
 	parseAllowlistScope,
 	type PermissionGrant,
@@ -99,21 +109,59 @@ export class PluginSessionGrants {
 	 * rejects that manifest outright, and this check is the matching runtime half.
 	 */
 	usesSessionGrants(pluginId: string): boolean {
+		if (this.holdsGrantSetKeyword(pluginId)) return true;
+		// Fail-closed fallback, because the broker and this predicate are two halves
+		// of one check and must never disagree. The broker relaxes a path-scoped
+		// verb's scope match when THAT verb's own LEDGER grant carries the keyword
+		// (`hasSessionGrantScope` is per-capability), and leaves enforcement to the
+		// handler, which asks this. Any state where the broker relaxes and this
+		// answers false is a hole: neither layer checks the set, and the plugin
+		// reads any session's transcripts.
+		//
+		// Two such states exist, which is why this is deliberately broader than
+		// `holdsGrantSetKeyword`:
+		//  - a manifest refresh that drops the keyword while the old sandbox is
+		//    still draining (the manifest says no, the ledger still says yes);
+		//  - any moment after the first grant, since `grantSession` rewrites only
+		//    the `agents:dispatch` scope to real ids and never touches the
+		//    `transcripts:read` grant, so that one keeps its keyword forever.
+		// So mirror the broker exactly: ANY session-grant-capable ledger grant
+		// carrying the keyword puts this plugin in enforcement mode.
+		return this.deps.authStore
+			.readGrants(pluginId)
+			.some(
+				(grant) =>
+					capabilitySupportsSessionGrants(grant.capability) && isSessionGrantScope(grant.scope)
+			);
+	}
+
+	/**
+	 * May the HOST hold a grant set for this plugin at all - that is, is the
+	 * keyword on `agents:dispatch`, the one capability whose allowlist scope
+	 * stores the members?
+	 *
+	 * Kept separate from `usesSessionGrants` because the two answer different
+	 * questions and must not be merged. `usesSessionGrants` gates ENFORCEMENT and
+	 * is broad on purpose (see above); this gates MUTATION and is strict. Widening
+	 * the mutation gate the same way would let a plugin holding the keyword on
+	 * `transcripts:read` over an ORDINARY dispatch allowlist have `grantSession`
+	 * append to that list, which is the user's own Settings-managed set of dispatch
+	 * targets and not a host-held grant set at all.
+	 *
+	 * The manifest is preferred for the same reason as above (granting rewrites the
+	 * ledger scope to real ids, so the keyword only survives in the request), with
+	 * the ledger as the same fail-closed fallback.
+	 */
+	private holdsGrantSetKeyword(pluginId: string): boolean {
 		const requested = this.deps.getRequestedPermissions(pluginId) ?? [];
-		const manifestUses = requested.some(
-			(request) => request.capability === GRANT_SET_CAPABILITY && isSessionGrantScope(request.scope)
-		);
-		if (manifestUses) return true;
-		// Fail-closed fallback, for the window where the two layers could disagree.
-		// The broker relaxes `transcripts:read`'s path match on the LEDGER carrying
-		// a keyword scope, while the handler enforces `isSessionGranted` on the
-		// MANIFEST requesting one. A manifest refresh that drops the keyword while
-		// the old sandbox is still draining made the manifest side false and the
-		// ledger side true, so neither check applied and the plugin could read
-		// transcripts outside its grant set. Reading the ledger here keeps both
-		// sides keyed on the same fact. Once members are granted the host rewrites
-		// the scope to real ids, which is no longer a keyword scope - and by then
-		// the broker stops relaxing too, so the pair still agrees.
+		if (
+			requested.some(
+				(request) =>
+					request.capability === GRANT_SET_CAPABILITY && isSessionGrantScope(request.scope)
+			)
+		) {
+			return true;
+		}
 		return this.deps.authStore
 			.readGrants(pluginId)
 			.some(
@@ -154,7 +202,12 @@ export class PluginSessionGrants {
 	 * no-op that reports success without a second ledger write or audit line.
 	 */
 	grantSession(pluginId: string, sessionId: string, source: SessionGrantSource): boolean {
-		if (!this.usesSessionGrants(pluginId)) return false;
+		// The STRICT gate, not `usesSessionGrants`: adding a member writes the
+		// `agents:dispatch` allowlist scope, so the keyword has to be on that
+		// capability. A plugin in enforcement mode only because its
+		// `transcripts:read` grant carries the keyword has no host-held set, and
+		// appending here would edit the user's own dispatch allow list.
+		if (!this.holdsGrantSetKeyword(pluginId)) return false;
 		// Only an existing SESSION ID, never an agent name: a name is ambiguous and
 		// `dispatchPromptToSession` would resolve it at call time, which is exactly
 		// the indirection a grant set exists to remove.
