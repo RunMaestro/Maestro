@@ -25,8 +25,9 @@ import {
 	FIXED_SHORTCUTS,
 	TAB_SHORTCUTS,
 } from '../../../renderer/constants/shortcuts';
-import type { Shortcut } from '../../../shared/shortcut-types';
-import { findReservedShortcutCombo } from '../../../shared/shortcutKeys';
+import { VIM_SHORTCUTS, VIM_TAB_SHORTCUTS } from '../../../renderer/constants/vimShortcuts';
+import type { Shortcut, ShortcutOverride } from '../../../shared/shortcut-types';
+import { findReservedShortcutCombo, shortcutKeysCollide } from '../../../shared/shortcutKeys';
 
 const RENDERER_ROOT = join(__dirname, '../../../renderer');
 
@@ -378,6 +379,132 @@ describe('shipped bindings avoid reserved chords', () => {
 			.map(({ sc, reserved }) => `${sc.id} (${sc.keys.join('+')}): ${reserved?.reason}`);
 
 		expect(offenders).toEqual([]);
+	});
+});
+
+/**
+ * Structural guard for the Vim override tables.
+ *
+ * These are the invariants that hold on the SHIPPED constants alone, before any
+ * resolver or persisted state is involved, so they fail at the table rather
+ * than three layers downstream where the symptom is a dead key:
+ *
+ *  - An override id that is not a real action id binds nothing at all. The
+ *    resolver ignores an override whose id is absent from the base tables, so a
+ *    typo here is silent.
+ *  - A mismatched label would show the user two different names for one action
+ *    depending on the mode.
+ *  - A `FIXED_SHORTCUTS` id is shared by both modes and is not rebindable, so an
+ *    override on one describes a binding that can never take effect.
+ *  - A chord holding both a Ctrl-family key and `Meta` is the pane-tiling
+ *    spelling, matched by `isPaneShortcut` (which requires both physical keys
+ *    held) rather than the shared matcher. Vim chords say `'Ctrl'` only, because
+ *    the matcher collapses Ctrl and Cmd into one modifier anyway.
+ *
+ * The per-mode reachability and one-chord-one-action tests, computed over each
+ * mode's resolved effective set, extend this block once the resolver exists.
+ */
+describe('Vim override tables', () => {
+	const VIM_TABLES: [string, Record<string, ShortcutOverride>][] = [
+		['VIM_SHORTCUTS', VIM_SHORTCUTS],
+		['VIM_TAB_SHORTCUTS', VIM_TAB_SHORTCUTS],
+	];
+
+	// An override id may be declared in EITHER base table: `isTabShortcut` reads
+	// `tabShortcuts[id] || shortcuts[id]`, so a tab action can live in
+	// DEFAULT_SHORTCUTS (`prevTab` and `nextTab` do).
+	const BASE_ACTIONS: Record<string, Shortcut> = {
+		...(DEFAULT_SHORTCUTS as Record<string, Shortcut>),
+		...(TAB_SHORTCUTS as Record<string, Shortcut>),
+	};
+
+	it.each(VIM_TABLES)('%s keys its entries by their own id', (_name, table) => {
+		const mismatched = Object.entries(table)
+			.filter(([key, override]) => key !== override.id)
+			.map(([key, override]) => `${key} -> ${override.id}`);
+
+		expect(mismatched).toEqual([]);
+	});
+
+	it.each(VIM_TABLES)('%s overrides only real actions, with the same label', (_name, table) => {
+		const offenders = Object.values(table)
+			.filter((override) => BASE_ACTIONS[override.id]?.label !== override.label)
+			.map((override) =>
+				BASE_ACTIONS[override.id]
+					? `${override.id}: label "${override.label}" !== "${BASE_ACTIONS[override.id].label}"`
+					: `${override.id}: not an action in DEFAULT_SHORTCUTS or TAB_SHORTCUTS`
+			);
+
+		expect(offenders).toEqual([]);
+	});
+
+	it.each(VIM_TABLES)('%s overrides no FIXED_SHORTCUTS id', (_name, table) => {
+		const offenders = Object.keys(table).filter((id) => id in FIXED_SHORTCUTS);
+
+		expect(offenders).toEqual([]);
+	});
+
+	it.each(VIM_TABLES)('%s ships no empty chord', (_name, table) => {
+		const offenders = Object.values(table)
+			.filter((override) => override.keys !== undefined && override.keys.length === 0)
+			.map((override) => override.id);
+
+		expect(offenders).toEqual([]);
+	});
+
+	it.each(VIM_TABLES)('%s never combines a Ctrl-family key with Meta', (_name, table) => {
+		const offenders = Object.values(table)
+			.filter((override) => {
+				const lower = (override.keys ?? []).map((k) => k.toLowerCase());
+				return lower.includes('meta') && (lower.includes('ctrl') || lower.includes('control'));
+			})
+			.map((override) => `${override.id} (${override.keys?.join('+')})`);
+
+		expect(offenders).toEqual([]);
+	});
+
+	it.each(VIM_TABLES)('%s ships no chord the OS or the app menu owns', (_name, table) => {
+		const offenders = Object.values(table)
+			.map((override) => ({ override, reserved: findReservedShortcutCombo(override.keys) }))
+			.filter(({ reserved }) => reserved !== null)
+			.map(
+				({ override, reserved }) =>
+					`${override.id} (${override.keys?.join('+')}): ${reserved?.reason}`
+			);
+
+		expect(offenders).toEqual([]);
+	});
+
+	/**
+	 * The Vim-native tab walk takes `Ctrl+PageUp` / `Ctrl+PageDown`, and this is
+	 * the resolver-free half of "the shipped Vim tables displace nothing": no
+	 * shipped default binding fires on either chord, so no action loses its
+	 * inherited chord when Vim mode comes on.
+	 */
+	it('shipped Vim chords collide with no shipped default binding', () => {
+		const vimChords = VIM_TABLES.flatMap(([, table]) =>
+			Object.values(table).map((override) => ({ id: override.id, keys: override.keys ?? [] }))
+		);
+		const defaults: [string, Record<string, Shortcut>][] = [
+			['DEFAULT_SHORTCUTS', DEFAULT_SHORTCUTS],
+			['TAB_SHORTCUTS', TAB_SHORTCUTS],
+			['FIXED_SHORTCUTS', FIXED_SHORTCUTS],
+		];
+
+		const collisions: string[] = [];
+		for (const vim of vimChords) {
+			for (const [tableName, table] of defaults) {
+				for (const sc of Object.values(table)) {
+					// An action keeping its own chord in Vim mode is not a collision.
+					if (sc.id === vim.id) continue;
+					if (shortcutKeysCollide(sc.keys, vim.keys)) {
+						collisions.push(`${vim.id} (${vim.keys.join('+')}) vs ${tableName}.${sc.id}`);
+					}
+				}
+			}
+		}
+
+		expect(collisions).toEqual([]);
 	});
 });
 

@@ -32,3 +32,42 @@ export interface Shortcut {
 	 */
 	windowScoped?: boolean;
 }
+
+/**
+ * Which keyboard binding set is live.
+ *
+ * Exactly ONE mode is active at a time. The two sets are never both live, which
+ * is what lets Vim mode reuse a chord that default mode gives to a different
+ * action: no keypress can ever reach two actions, because only one table is
+ * being matched against.
+ */
+export type KeyboardMode = 'default' | 'vim';
+
+/**
+ * One action's binding in a non-default keyboard mode.
+ *
+ * Override tables are SPARSE: an action appears only when the mode binds it
+ * differently from default mode. Every other action inherits its default chord,
+ * so switching modes never silently unbinds anything.
+ *
+ * `keys` is optional here, unlike on `Shortcut`, and the distinction carries
+ * meaning in the persisted buckets:
+ *
+ *  - omitted: inherit the default-mode chord for this action
+ *  - a chord: replace the default-mode chord in this mode
+ *
+ * `keys: []` is NOT a state the shipped tables use. On `Shortcut` an empty array
+ * means "registered but unassigned", but an override already has a way to say
+ * "no opinion" (omit the field), so an empty array would be a second spelling of
+ * the same thing. It can still arrive from persisted settings, where it means
+ * the user cleared the binding in this mode, and the hydration path keeps it.
+ *
+ * `label` is carried so an override reads on its own, but it is informational:
+ * the merge takes the label from the default tables, and a structural test
+ * asserts the two agree.
+ */
+export interface ShortcutOverride {
+	id: string;
+	label: string;
+	keys?: string[];
+}
