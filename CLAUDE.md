@@ -326,6 +326,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 #### Keyboard and shortcuts
 
 - **Which bindings the live keyboard mode matches:** `resolveEffectiveShortcuts()`, `overridesWithEdits()` in `src/shared/effectiveShortcuts.ts`; `selectActiveShortcuts()` and siblings in `src/renderer/stores/settingsShortcutsSlice.ts`; `useActiveShortcuts()` in `src/renderer/hooks/settings/useActiveShortcuts.ts`
+- **Matching a key sequence (`g g`, `g t`):** `createSequenceMatcher()`, `SEQUENCE_TIMEOUT_MS` in `src/renderer/utils/shortcutSequence.ts`; each step compares with `eventMatchesShortcutKeys()` in `src/renderer/utils/shortcutMatch.ts` (never a second copy of the chord rules)
 - **Switching the live keyboard mode:** `switchKeyboardMode(mode?)`, `nextKeyboardMode()`, `findKeyboardModeToggleShadow()`, `keyboardModeToggleShadow()`, `KEYBOARD_MODE_TOGGLE_KEYS` in `src/renderer/services/keyboardMode.ts` (never `setKeyboardMode` from a surface)
 - **Modifier-key display text:** `formatKey()`, `formatShortcutKeys()`, `formatMetaKey()`, `formatMetaKeyName()`, `formatAltKeyName()` in `src/renderer/utils/shortcutFormatter.ts`; outside the renderer `formatShortcutKeysFor()` in `src/shared/shortcutKeys.ts`
 - **Advertising a shortcut next to the control that fires it:** `<ShortcutHint>`, `<ShortcutKeys>`, `shortcutText()`, `shortcutSuffix(keys)` in `src/renderer/components/ui/ShortcutHint.tsx` (also the tab overlay-menu badge)
