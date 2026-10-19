@@ -102,17 +102,32 @@ export function shortcutKeysEqual(a: readonly string[], b: readonly string[]): b
 }
 
 /**
- * Chords the OS owns inside a text field, which Maestro must never bind.
+ * Chords Maestro must never bind, because something outside the renderer
+ * already owns them.
  *
- * `Cmd/Ctrl+Shift+Arrow` extends a text selection to the top or bottom of the
- * field (and to the start or end of the line horizontally). A Maestro binding
- * on one of these wins over the native behavior everywhere, including in the
- * composer, so the user loses select-to-end in every input in the app and gets
- * an agent-navigation jump instead. There is no way to tell that apart from a
- * broken text box.
+ * Two families live here:
+ *
+ *  - Text-field chords. `Cmd/Ctrl+Shift+Arrow` extends a text selection to the
+ *    top or bottom of the field (and to the start or end of the line
+ *    horizontally). A Maestro binding on one of these wins over the native
+ *    behavior everywhere, including in the composer, so the user loses
+ *    select-to-end in every input in the app and gets an agent-navigation jump
+ *    instead. There is no way to tell that apart from a broken text box.
+ *  - App-menu chords. The macOS application menu built in `src/main/app-menu.ts`
+ *    registers these as roles (`hide`, `hideOthers`, `minimize`, the custom Quit
+ *    item, and the Edit menu's cut / copy / paste / paste-and-match-style /
+ *    select-all). A registered NSMenu accelerator is swallowed before the
+ *    renderer ever sees the keydown, so a Maestro binding on one of them simply
+ *    never fires and reads to the user as a dead shortcut.
+ *
+ * One binding table serves every platform, so a chord owned on macOS is
+ * reserved everywhere: the alternative is a chord that works on Windows and is
+ * silently dead on a Mac, which is worse than not offering it at all.
  *
  * `Meta` here covers `Ctrl` too - `eventMatchesShortcutKeys` treats them as one
- * modifier, so a single entry reserves the chord on every platform.
+ * modifier, so a single entry reserves the chord on every platform. A chord
+ * that also holds `Control` alongside `Meta` (the pane-tiling family) is a
+ * DIFFERENT chord and is not reserved by the plain-`Meta` entry below.
  */
 export const RESERVED_SHORTCUT_COMBOS: readonly { keys: string[]; reason: string }[] = [
 	{ keys: ['Meta', 'Shift', 'ArrowUp'], reason: 'extends the text selection to the top' },
@@ -125,15 +140,32 @@ export const RESERVED_SHORTCUT_COMBOS: readonly { keys: string[]; reason: string
 		keys: ['Meta', 'Shift', 'ArrowRight'],
 		reason: 'extends the text selection to the end of the line',
 	},
+	{ keys: ['Meta', 'h'], reason: 'the app menu hides Maestro' },
+	{ keys: ['Alt', 'Meta', 'h'], reason: 'the app menu hides every other app' },
+	{ keys: ['Meta', 'q'], reason: 'the app menu quits Maestro' },
+	{ keys: ['Meta', 'm'], reason: 'the app menu minimizes the window' },
+	{ keys: ['Meta', 'x'], reason: 'the Edit menu cuts the selection' },
+	{ keys: ['Meta', 'c'], reason: 'the Edit menu copies the selection' },
+	{ keys: ['Meta', 'v'], reason: 'the Edit menu pastes' },
+	{ keys: ['Meta', 'a'], reason: 'the Edit menu selects all' },
+	{
+		keys: ['Alt', 'Meta', 'Shift', 'v'],
+		reason: 'the Edit menu pastes and matches style',
+	},
 ];
 
 /**
- * A chord reduced for reserved-combo comparison: Meta and Ctrl collapse to one
- * modifier, matching how `eventMatchesShortcutKeys` reads a real event. Without
- * the collapse, the Windows recording (`Ctrl+Shift+Down`) would slip past a
- * table written in terms of `Meta`.
+ * A chord reduced to a canonical string for comparison: Meta and Ctrl collapse
+ * to one modifier, matching how `eventMatchesShortcutKeys` reads a real event.
+ * Without the collapse, the Windows recording (`Ctrl+Shift+Down`) would slip
+ * past a table written in terms of `Meta`.
+ *
+ * Repeated modifiers are NOT deduplicated. `['Control', 'Meta', 'w']` canonicalizes
+ * to `meta+meta+w` and `['Meta', 'w']` to `meta+w`, which is what keeps the
+ * pane-tiling family (matched by `isPaneShortcut`, which requires both physical
+ * keys held) distinct from the plain Meta chords.
  */
-function canonicalReservedKeys(keys: readonly string[]): string {
+function canonicalChordKeys(keys: readonly string[]): string {
 	return [...keys]
 		.map((k) => {
 			const lower = k.toLowerCase();
@@ -141,6 +173,28 @@ function canonicalReservedKeys(keys: readonly string[]): string {
 		})
 		.sort()
 		.join('+');
+}
+
+/**
+ * Whether two chords fire on the same keypress.
+ *
+ * This is the comparison a per-mode collision check needs, and it is stricter
+ * than `shortcutKeysEqual`: the two chords do not have to be spelled the same
+ * way, only to be indistinguishable to `eventMatchesShortcutKeys`. `['Ctrl', 'o']`
+ * and `['Meta', 'o']` are one binding at runtime (Cmd on macOS, Ctrl elsewhere),
+ * so a check built on key equality reports them as free and lets two actions
+ * claim the same keypress.
+ *
+ * An empty chord is "registered but unassigned" and collides with nothing,
+ * including another empty chord - several shipped actions ship unbound on
+ * purpose and must not be read as fighting each other.
+ */
+export function shortcutKeysCollide(
+	a: readonly string[] | undefined,
+	b: readonly string[] | undefined
+): boolean {
+	if (!a?.length || !b?.length) return false;
+	return canonicalChordKeys(a) === canonicalChordKeys(b);
 }
 
 /**
@@ -155,6 +209,5 @@ export function findReservedShortcutCombo(
 	keys: readonly string[] | undefined
 ): { keys: string[]; reason: string } | null {
 	if (!keys?.length) return null;
-	const canonical = canonicalReservedKeys(keys);
-	return RESERVED_SHORTCUT_COMBOS.find((c) => canonicalReservedKeys(c.keys) === canonical) ?? null;
+	return RESERVED_SHORTCUT_COMBOS.find((c) => shortcutKeysCollide(c.keys, keys)) ?? null;
 }

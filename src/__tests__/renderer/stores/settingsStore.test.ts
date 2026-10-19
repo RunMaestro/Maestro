@@ -2927,6 +2927,34 @@ describe('settingsStore', () => {
 			]);
 		});
 
+		it('strips a persisted Ctrl+H binding, which the app menu swallows as Hide', async () => {
+			// Cmd+H is registered as the `hide` role in src/main/app-menu.ts, so the
+			// accelerator never reaches the renderer and the binding is dead. `Ctrl`
+			// is the Windows spelling of the same chord - the matcher collapses the
+			// two modifiers - so the guard has to strip it on every platform.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				shortcuts: {
+					nextUnreadTab: {
+						id: 'nextUnreadTab',
+						label: 'Next Unread / Draft Tab',
+						keys: ['Ctrl', 'h'],
+					},
+				},
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().shortcuts.nextUnreadTab.keys).toEqual([
+				'Alt',
+				'Meta',
+				'ArrowDown',
+			]);
+			const persisted = vi
+				.mocked(window.maestro.settings.set)
+				.mock.calls.find(([k]) => k === 'shortcuts')?.[1] as Record<string, { keys: string[] }>;
+			expect(persisted.nextUnreadTab.keys).toEqual(['Alt', 'Meta', 'ArrowDown']);
+		});
+
 		it('strips a reserved chord from tabShortcuts too, which is a separate persist key', async () => {
 			// tabShortcuts runs the same migration through a second call site with
 			// its own defaults table and its own settings key. A guard applied to

@@ -26,6 +26,7 @@ import {
 	TAB_SHORTCUTS,
 } from '../../../renderer/constants/shortcuts';
 import type { Shortcut } from '../../../shared/shortcut-types';
+import { findReservedShortcutCombo } from '../../../shared/shortcutKeys';
 
 const RENDERER_ROOT = join(__dirname, '../../../renderer');
 
@@ -349,6 +350,34 @@ describe('DEFAULT_SHORTCUTS / TAB_SHORTCUTS / FIXED_SHORTCUTS duplicate bindings
 		);
 		// A stale allowlist entry is how an exemption outlives the reason for it.
 		expect(missing).toEqual([]);
+	});
+});
+
+/**
+ * The shipped tables must not contain a chord `RESERVED_SHORTCUT_COMBOS` owns.
+ *
+ * `migrateShortcuts` strips a reserved binding on load and falls back to the
+ * action's bundled default - but only when that default is itself free, and
+ * otherwise leaves the action UNBOUND. So a reserved chord shipped as a default
+ * does not just fail to fire: it silently unbinds the action for every user who
+ * never customized it, on the quietest possible path. Adding an entry to
+ * `RESERVED_SHORTCUT_COMBOS` without checking the tables first is exactly how
+ * that happens, which is what this test is here to stop.
+ */
+describe('shipped bindings avoid reserved chords', () => {
+	const TABLES: [string, Record<string, Shortcut>][] = [
+		['DEFAULT_SHORTCUTS', DEFAULT_SHORTCUTS],
+		['TAB_SHORTCUTS', TAB_SHORTCUTS],
+		['FIXED_SHORTCUTS', FIXED_SHORTCUTS],
+	];
+
+	it.each(TABLES)('%s ships no binding the OS or the app menu owns', (_name, table) => {
+		const offenders = Object.values(table)
+			.map((sc) => ({ sc, reserved: findReservedShortcutCombo(sc.keys) }))
+			.filter(({ reserved }) => reserved !== null)
+			.map(({ sc, reserved }) => `${sc.id} (${sc.keys.join('+')}): ${reserved?.reason}`);
+
+		expect(offenders).toEqual([]);
 	});
 });
 

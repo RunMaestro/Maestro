@@ -13,6 +13,7 @@ import {
 	formatKeyFor,
 	formatShortcutKeysFor,
 	findReservedShortcutCombo,
+	shortcutKeysCollide,
 } from '../../shared/shortcutKeys';
 
 describe('formatKeyFor', () => {
@@ -87,5 +88,70 @@ describe('findReservedShortcutCombo', () => {
 	it('returns null for an unbound action rather than treating [] as a chord', () => {
 		expect(findReservedShortcutCombo([])).toBeNull();
 		expect(findReservedShortcutCombo(undefined)).toBeNull();
+	});
+
+	it('flags the macOS app-menu chords, which never reach the renderer', () => {
+		// These are registered as menu roles in src/main/app-menu.ts, so the
+		// accelerator is swallowed before the keydown arrives. A Maestro binding
+		// on one of them reads to the user as a dead shortcut.
+		expect(findReservedShortcutCombo(['Meta', 'h'])?.reason).toContain('hides Maestro');
+		expect(findReservedShortcutCombo(['Alt', 'Meta', 'h'])?.reason).toContain('every other app');
+		expect(findReservedShortcutCombo(['Meta', 'q'])?.reason).toContain('quits');
+		expect(findReservedShortcutCombo(['Meta', 'm'])?.reason).toContain('minimizes');
+		expect(findReservedShortcutCombo(['Meta', 'x'])?.reason).toContain('cuts');
+		expect(findReservedShortcutCombo(['Meta', 'c'])?.reason).toContain('copies');
+		expect(findReservedShortcutCombo(['Meta', 'v'])?.reason).toContain('pastes');
+		expect(findReservedShortcutCombo(['Meta', 'a'])?.reason).toContain('selects all');
+		expect(findReservedShortcutCombo(['Alt', 'Meta', 'Shift', 'v'])?.reason).toContain(
+			'matches style'
+		);
+	});
+
+	it('leaves the chords the app menu deliberately does not register', () => {
+		// app-menu.ts omits undo / redo and role: 'close' on purpose, and the
+		// custom Quit item swallows only Cmd+Q, so Opt+Q stays free for Cue.
+		expect(findReservedShortcutCombo(['Meta', 'z'])).toBeNull();
+		expect(findReservedShortcutCombo(['Meta', 'w'])).toBeNull();
+		expect(findReservedShortcutCombo(['Alt', 'q'])).toBeNull();
+	});
+
+	it('leaves Ctrl+Cmd+H free - holding both modifiers is a different chord', () => {
+		// computerHistory ships on ['Control', 'Meta', 'h'] precisely because
+		// Opt+Cmd+H is the macOS Hide Others chord.
+		expect(findReservedShortcutCombo(['Control', 'Meta', 'h'])).toBeNull();
+	});
+});
+
+describe('shortcutKeysCollide', () => {
+	it('collides Ctrl and Meta spellings, which are one modifier at runtime', () => {
+		expect(shortcutKeysCollide(['Ctrl', 'o'], ['Meta', 'o'])).toBe(true);
+		expect(shortcutKeysCollide(['Command', 'o'], ['Control', 'o'])).toBe(true);
+	});
+
+	it('ignores key order', () => {
+		expect(shortcutKeysCollide(['Meta', 'Shift', 'k'], ['k', 'Shift', 'Meta'])).toBe(true);
+	});
+
+	it('does not collide chords that differ by a modifier', () => {
+		expect(shortcutKeysCollide(['Alt', 'Meta', 'v'], ['Meta', 'v'])).toBe(false);
+	});
+
+	it('keeps a Ctrl+Meta pane chord distinct from the plain Meta chord', () => {
+		// The collapse maps both names onto "meta" but does NOT deduplicate, so
+		// holding both physical keys stays a different chord. isPaneShortcut
+		// matches that family separately.
+		expect(shortcutKeysCollide(['Control', 'Meta', 'w'], ['Meta', 'w'])).toBe(false);
+	});
+
+	it('does not collide different main keys under the same modifiers', () => {
+		expect(shortcutKeysCollide(['Meta', 'o'], ['Meta', 'p'])).toBe(false);
+	});
+
+	it('treats an unassigned binding as colliding with nothing, including itself', () => {
+		// `keys: []` is "registered but unassigned"; several shipped actions sit
+		// there on purpose and must not be reported as fighting each other.
+		expect(shortcutKeysCollide([], [])).toBe(false);
+		expect(shortcutKeysCollide([], ['Meta', 'o'])).toBe(false);
+		expect(shortcutKeysCollide(undefined, ['Meta', 'o'])).toBe(false);
 	});
 });
