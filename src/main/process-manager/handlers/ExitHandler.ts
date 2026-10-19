@@ -93,6 +93,9 @@ export class ExitHandler {
 				'ProcessManager',
 				{ sessionId, code }
 			);
+			// Its pending output would otherwise flush on the 50ms timer into the
+			// re-spawned session's turn.
+			this.bufferManager.discardDataBuffer(managedProcess);
 			return;
 		}
 

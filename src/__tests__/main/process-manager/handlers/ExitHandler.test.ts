@@ -618,6 +618,33 @@ describe('ExitHandler', () => {
 			expect(dataEvents).not.toContain('Tab Name');
 		});
 
+		// This test and the next pin the split the exit flush makes: a parser that
+		// THROWS on the trailing line choked, so the line is surfaced raw; one that
+		// returns null declined it cleanly, so it is noise, as it would be mid-stream.
+		it('should emit raw line as data when JSON parsing fails', async () => {
+			const invalidJson = 'not valid json at all';
+			const mockParser = createMockOutputParser({
+				parseJsonLine: vi.fn(() => {
+					throw new Error('JSON parse error');
+				}) as unknown as AgentOutputParser['parseJsonLine'],
+			});
+
+			const proc = createMockProcess({
+				isStreamJsonMode: true,
+				isBatchMode: true,
+				jsonBuffer: invalidJson,
+				outputParser: mockParser,
+			});
+			processes.set('test-session', proc);
+
+			const dataEvents: string[] = [];
+			emitter.on('data', (_sid: string, data: string) => dataEvents.push(data));
+
+			await exitHandler.handleExit('test-session', 0);
+
+			expect(dataEvents).toEqual([invalidJson]);
+		});
+
 		it('suppresses an invalid final JSONL record just like newline-delimited parser noise', async () => {
 			const invalidJson = 'not valid json at all';
 			const mockParser = createMockOutputParser();
@@ -1312,21 +1339,32 @@ describe('ExitHandler', () => {
 			expect(exitEvents).toEqual([{ sessionId: 'unknown-session', code: 1 }]);
 		});
 
+		// rc flushed the superseded process's tail here. This branch drops it on
+		// purpose: it belongs to a turn that is over, not to the re-spawned session.
 		it('should not emit stale output or delete a newer process registered under the same sessionId', async () => {
-			const exitingProcess = createMockProcess({ pid: 11111, dataBuffer: 'old tail' });
-			const replacementProcess = createMockProcess({ pid: 22222, dataBuffer: 'new output' });
-			processes.set('test-session', replacementProcess);
-			const dataEvents: string[] = [];
-			const exitEvents: number[] = [];
-			emitter.on('data', (_sid: string, data: string) => dataEvents.push(data));
-			emitter.on('exit', (_sid: string, code: number) => exitEvents.push(code));
+			vi.useFakeTimers();
+			try {
+				const exitingProcess = createMockProcess({ pid: 11111 });
+				const replacementProcess = createMockProcess({ pid: 22222, dataBuffer: 'new output' });
+				processes.set('test-session', replacementProcess);
+				const dataEvents: string[] = [];
+				const exitEvents: number[] = [];
+				emitter.on('data', (_sid: string, data: string) => dataEvents.push(data));
+				emitter.on('exit', (_sid: string, code: number) => exitEvents.push(code));
+				// Arms the exiting process's own 50ms flush timer.
+				bufferManager.emitDataBuffered('test-session', 'old tail', exitingProcess);
 
-			await exitHandler.handleExit('test-session', 0, exitingProcess);
+				await exitHandler.handleExit('test-session', 0, exitingProcess);
+				await vi.advanceTimersByTimeAsync(50);
 
-			expect(processes.get('test-session')).toBe(replacementProcess);
-			expect(replacementProcess.dataBuffer).toBe('new output');
-			expect(dataEvents).toEqual([]);
-			expect(exitEvents).toEqual([]);
+				expect(processes.get('test-session')).toBe(replacementProcess);
+				expect(replacementProcess.dataBuffer).toBe('new output');
+				expect(dataEvents).toEqual([]);
+				expect(exitEvents).toEqual([]);
+				expect(exitingProcess.dataBufferTimeout).toBeUndefined();
+			} finally {
+				vi.useRealTimers();
+			}
 		});
 	});
 
