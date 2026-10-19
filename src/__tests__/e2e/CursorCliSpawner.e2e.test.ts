@@ -11,6 +11,8 @@ import type { AgentConfig } from '../../main/agents/definitions';
 
 const SKIP_E2E = process.env.RUN_INTEGRATION_TESTS !== 'true';
 const TIMEOUT = 120_000;
+// Two live turns in a row, and one turn alone has taken 65-80 s.
+const RESUME_TIMEOUT = 300_000;
 
 async function isAgentAvailable(): Promise<boolean> {
 	return (await detectAgent('cursor-cli')).available;
@@ -72,7 +74,9 @@ describe.skipIf(SKIP_E2E)('CursorCliSpawner E2E', () => {
 			const first = await spawnAgent(
 				'cursor-cli',
 				process.cwd(),
-				'Reply with exactly: CURSOR_RESUME_FIRST'
+				'Reply with exactly: CURSOR_RESUME_FIRST',
+				undefined,
+				{ customModel: 'auto' }
 			);
 			expect(first.success).toBe(true);
 			expect(first.agentSessionId).toBeTruthy();
@@ -81,12 +85,13 @@ describe.skipIf(SKIP_E2E)('CursorCliSpawner E2E', () => {
 				'cursor-cli',
 				process.cwd(),
 				'Reply with exactly: CURSOR_RESUME_OK',
-				first.agentSessionId
+				first.agentSessionId,
+				{ customModel: 'auto' }
 			);
 			expect(resumed.success).toBe(true);
 			expect(resumed.response).toContain('CURSOR_RESUME_OK');
 			expect(resumed.agentSessionId).toBe(first.agentSessionId);
 		},
-		TIMEOUT
+		RESUME_TIMEOUT
 	);
 });

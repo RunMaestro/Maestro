@@ -40,6 +40,7 @@ function buildBatchArgs(
 		prompt,
 		cwd: process.cwd(),
 		readOnlyMode: options.readOnlyMode,
+		modelId: 'auto',
 		yoloMode: options.yoloMode,
 	});
 }
