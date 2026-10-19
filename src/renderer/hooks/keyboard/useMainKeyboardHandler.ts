@@ -37,6 +37,8 @@ import { tileNewTabInSession } from '../../services/tileNewTabAction';
 import type { TileableTabKind } from '../tabs/tileNewTab';
 import { isMacOSKeyboard } from '../../utils/platformUtils';
 import { eventMatchesShortcutKeys } from '../../utils/shortcutMatch';
+import { createSequenceMatcher, type SequenceBinding } from '../../utils/shortcutSequence';
+import { isNormalMode } from '../../utils/messageScrollNavigation';
 import { FIXED_SHORTCUTS } from '../../constants/shortcuts';
 import { editClipboardImage } from '../../components/ImageAnnotator/editClipboardImage';
 import { FORCED_PARALLEL_SEND_EVENT } from '../input/useInputKeyDown';
@@ -109,7 +111,45 @@ const TILE_SHORTCUTS: ReadonlyArray<{ shortcutId: string; kind: TileableTabKind 
 	{ shortcutId: 'tileFileBelow', kind: 'file' },
 ];
 
+/**
+ * Stable empty list, for a context that carries no sequence bindings.
+ *
+ * `KeyboardHandlerContext` is `any`, so nothing type-checks that a caller sets
+ * the field: App does, and the hand-built contexts in the test suite do not.
+ */
+const NO_SEQUENCE_BINDINGS: readonly SequenceBinding[] = [];
+
 export type KeyboardHandlerContext = any;
+
+/**
+ * A view of the keyboard context whose shortcut matchers answer about ONE
+ * action id instead of about the event's keys.
+ *
+ * This is what lets the sequence layer dispatch without a table of its own. The
+ * chord ladder below is driven entirely by `isShortcut` / `isTabShortcut` /
+ * `isPaneShortcut`, so forcing those three to agree on the matched id runs that
+ * action's EXISTING branch, with that branch's own guards intact. A second
+ * action-id-to-handler map would be the alternative, and it would drift: an
+ * action added to the ladder in Phase 03 would work from its chord and
+ * silently do nothing from its sequence.
+ *
+ * All three matchers are forced together because they are not cleanly
+ * separable - `isTabShortcut` already falls back to the general map - and the
+ * two id spaces are disjoint, so there is no id a sequence could legitimately
+ * match in one and not the other.
+ *
+ * The copy is shallow and made only on a match, which is rare, and nothing in
+ * the handler writes through `ctx`, so no later reader can tell the difference.
+ */
+function withForcedAction(ctx: KeyboardHandlerContext, actionId: string): KeyboardHandlerContext {
+	const matchesForcedAction = (_e: KeyboardEvent, id: string) => id === actionId;
+	return {
+		...ctx,
+		isShortcut: matchesForcedAction,
+		isTabShortcut: matchesForcedAction,
+		isPaneShortcut: matchesForcedAction,
+	};
+}
 
 /**
  * Return type for useMainKeyboardHandler hook
@@ -145,6 +185,11 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 
 	// Main keyboard handler effect
 	useEffect(() => {
+		// One sequence matcher for the life of the listener. Deliberately NOT
+		// rebuilt when bindings change: `feed` takes the live binding list per
+		// call, so a settings write cannot discard a half-typed prefix.
+		const sequenceMatcher = createSequenceMatcher();
+
 		const handleKeyDown = (e: KeyboardEvent) => {
 			const target = e.target;
 			const activeElement = document.activeElement;
@@ -167,7 +212,10 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			// Read all values from ref - this allows the handler to stay attached while still
 			// accessing current state values. Active Session is resolved at event time from
 			// the store so App does not need to push a live Session object onto this ref.
-			const ctx = keyboardHandlerRef.current;
+			// Reassignable: a matched key sequence swaps in a view of this same
+			// context whose matchers answer about the matched action (see
+			// `withForcedAction` and the sequence block below).
+			let ctx = keyboardHandlerRef.current;
 			if (!ctx) return;
 			const activeSession = selectActiveSession(useSessionStore.getState());
 
@@ -531,18 +579,26 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			// Escape in main area focuses terminal output
 			if (ctx.handleEscapeInMain(e)) return;
 
-			// Which "Tile New ... Below" command this event matches, if any. Resolved
-			// once here rather than as four more links in the else-if chain below.
-			// isPaneShortcut, not isShortcut: the family lives on Ctrl+Cmd and the
-			// general matcher treats Ctrl and Cmd as the same modifier, so it would
-			// report a match on a bare Cmd+T.
-			const matchedTile = TILE_SHORTCUTS.find((t) => ctx.isPaneShortcut(e, t.shortcutId)) ?? null;
-
 			// Helper to track shortcut usage for keyboard mastery gamification
 			// AND for the daily-usage time series shown on the Usage Dashboard.
 			// Mastery is short-circuited on second+ firings of the same shortcut
 			// (it's a unique-set), but the daily counter increments every time.
+			//
+			// Usage is recorded PER ACTION, never per mode, per chord, or per
+			// sequence. The same action fired from a Vim sequence and from its
+			// default-mode chord is one entry in the mastery set, which is what
+			// makes the count mean "you know this action" rather than "you know
+			// this keystroke". Every new keyboard path must call this with the
+			// action id (sequences do so below; Deck mode will in Phase 05).
+			//
+			// `reported` makes one keypress one usage: the sequence layer records
+			// the action it matched before the ladder runs, and the branch that
+			// then fires records the same id. Mastery is a set and would not
+			// notice, but the daily counter would count that keypress twice.
+			const reported = new Set<string>();
 			const trackShortcut = (shortcutId: string) => {
+				if (reported.has(shortcutId)) return;
+				reported.add(shortcutId);
 				if (ctx.recordShortcutUsage) {
 					const result = ctx.recordShortcutUsage(shortcutId);
 					if (result.newLevel !== null && ctx.onKeyboardMasteryLevelUp) {
@@ -637,6 +693,70 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				trackShortcut('paneCycleNext');
 				return;
 			}
+
+			// --- Key sequences (`g g`, `g t`) ---
+			//
+			// Placed BEFORE the chord ladder and AFTER every early return above
+			// it, both deliberately. Before, because a sequence step is a bare
+			// key and the ladder would otherwise get first refusal on it. After,
+			// because the paths above already own bare keys for better reasons:
+			// terminal focus recovery forwards them to the shell, the layer guard
+			// hands them to whatever modal is open, the sidebar / Enter / Escape
+			// navigation handlers claim theirs, and the Cmd+R block only ever
+			// calls preventDefault. Group chat handling is not above this point -
+			// it lives inside the ladder - so a matched sequence reaches it the
+			// same way its chord does.
+			//
+			// Both halves of normal mode are checked here. `isNormalMode` owns the
+			// focus half (nothing that accepts typed text holds the keystroke) and
+			// `hasOpenLayers` owns the modal half, which is React context rather
+			// than DOM and so cannot live in the predicate.
+			//
+			// Skipped entirely when the live mode binds no sequence at all, which
+			// is every default-mode user who has not recorded one. This is the
+			// hottest path in the app, and `isNormalMode` costs two `closest()`
+			// walks; with no bindings `feed` can only answer 'no-match' and no
+			// prefix can be live to reset, so the skip changes nothing but the
+			// cost.
+			const sequenceBindings: readonly SequenceBinding[] =
+				ctx.sequenceBindings ?? NO_SEQUENCE_BINDINGS;
+			if (sequenceBindings.length > 0) {
+				if (isNormalMode(e) && !ctx.hasOpenLayers()) {
+					const sequenceResult = sequenceMatcher.feed(e, sequenceBindings);
+					if (sequenceResult.outcome === 'consumed-prefix') {
+						// The keypress belongs to the run in progress. Letting it
+						// also reach the ladder would fire an action mid-sequence.
+						e.preventDefault();
+						return;
+					}
+					if (sequenceResult.outcome === 'matched') {
+						// Swallowed for the same reason its prefix was: the key
+						// completed a sequence, so it is not also a key in its own
+						// right.
+						e.preventDefault();
+						trackShortcut(sequenceResult.actionId);
+						ctx = withForcedAction(ctx, sequenceResult.actionId);
+					}
+					// 'no-match' falls through untouched, to be matched as a chord.
+				} else {
+					// A keypress that could not be a sequence step ends the run:
+					// the user has clicked into a text field or opened a modal, and
+					// a prefix that outlived either would complete against a
+					// keystroke they no longer connect to it.
+					sequenceMatcher.reset();
+				}
+			}
+
+			// Which "Tile New ... Below" command this event matches, if any. Resolved
+			// once here rather than as four more links in the else-if chain below.
+			// isPaneShortcut, not isShortcut: the family lives on Ctrl+Cmd and the
+			// general matcher treats Ctrl and Cmd as the same modifier, so it would
+			// report a match on a bare Cmd+T.
+			//
+			// Resolved AFTER the sequence block, so it sees the forced matcher on a
+			// match like every other ladder branch does. Computed earlier it would
+			// have been the one branch a sequence could never reach.
+			const matchedTile = TILE_SHORTCUTS.find((t) => ctx.isPaneShortcut(e, t.shortcutId)) ?? null;
 
 			// General shortcuts
 			// Only allow collapsing left sidebar when there are sessions (prevent collapse on empty state)
@@ -1763,8 +1883,19 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				}
 			}
 		};
+		// A half-typed sequence does not survive the window losing focus: the keys
+		// that would finish it are going somewhere else now. The lazy timeout
+		// would expire it a second later anyway, but the prefix indicator reads
+		// `prefix()` and would otherwise sit on screen over a window that no
+		// longer has the keyboard.
+		const handleBlur = () => sequenceMatcher.reset();
+
 		window.addEventListener('keydown', handleKeyDown);
-		return () => window.removeEventListener('keydown', handleKeyDown);
+		window.addEventListener('blur', handleBlur);
+		return () => {
+			window.removeEventListener('keydown', handleKeyDown);
+			window.removeEventListener('blur', handleBlur);
+		};
 	}, []); // Empty dependencies - handler reads from ref
 
 	// Browser tab shortcut forwarding: the main process intercepts shortcuts

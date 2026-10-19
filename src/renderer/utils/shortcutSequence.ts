@@ -73,6 +73,7 @@
  * `buildKeysFromEvent` for native events.
  */
 
+import type { Shortcut } from '../../shared/shortcut-types';
 import { eventMatchesShortcutKeys, type ShortcutKeyEvent } from './shortcutMatch';
 
 /**
@@ -96,6 +97,48 @@ export const SEQUENCE_TIMEOUT_MS = 1000;
 export interface SequenceBinding {
 	id: string;
 	sequence?: string[][];
+}
+
+/**
+ * Flatten binding maps into the list {@link SequenceMatcher.feed} wants.
+ *
+ * The maps handed in are the LIVE keyboard mode's EFFECTIVE set, the same pair
+ * `isShortcut` and `isTabShortcut` are given, so a sequence is only ever
+ * matched against the bindings the user can actually see in Settings. Reading
+ * the raw `shortcuts` / `vimShortcuts` buckets instead would match sequences
+ * from the mode that is not live.
+ *
+ * Entries are keyed by their MAP KEY rather than by `shortcut.id`, because the
+ * key is what the handler dispatches with: the matched id goes back into
+ * `isShortcut(e, id)` to pick the branch that runs. The two agree today and a
+ * structural test says so, but only one of them is the dispatch address.
+ *
+ * Several maps rather than one because the general and tab maps are separate
+ * and a sequence can be bound in either. The id spaces are disjoint, so the
+ * order only matters for a duplicate that should not exist; the first map wins,
+ * which is the same tie-break `feed` applies to two identical sequences.
+ *
+ * Returns a fresh array, so a caller that feeds it on every keydown should
+ * memoize on the maps' identity (they are identity-stable across unrelated
+ * settings changes).
+ */
+export function collectSequenceBindings(
+	...maps: ReadonlyArray<Record<string, Shortcut>>
+): SequenceBinding[] {
+	const bindings: SequenceBinding[] = [];
+	const seen = new Set<string>();
+	for (const map of maps) {
+		for (const [id, shortcut] of Object.entries(map)) {
+			// `sequence: []` is a binding the user cleared in this mode, which
+			// is a different thing from an absent one and matches nothing either
+			// way.
+			if (!shortcut.sequence?.length) continue;
+			if (seen.has(id)) continue;
+			seen.add(id);
+			bindings.push({ id, sequence: shortcut.sequence });
+		}
+	}
+	return bindings;
 }
 
 /**

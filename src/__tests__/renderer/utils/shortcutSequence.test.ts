@@ -21,10 +21,12 @@
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
+	collectSequenceBindings,
 	createSequenceMatcher,
 	SEQUENCE_TIMEOUT_MS,
 	type SequenceBinding,
 } from '../../../renderer/utils/shortcutSequence';
+import type { Shortcut } from '../../../shared/shortcut-types';
 import type { ShortcutKeyEvent } from '../../../renderer/utils/shortcutMatch';
 
 /** A keydown with no modifiers unless the test asks for one. */
@@ -353,5 +355,76 @@ describe('createSequenceMatcher', () => {
 
 			expect(bindings[0].sequence?.[0]).toEqual(['g']);
 		});
+	});
+});
+
+/**
+ * Turning the live mode's effective maps into the list `feed` wants.
+ *
+ * Small, but it is the join between the resolver and the matcher, and both of
+ * the things it can get wrong are silent: a dropped entry is a sequence that
+ * never fires, and the wrong id is an action that fires the wrong branch.
+ */
+describe('collectSequenceBindings', () => {
+	const entry = (id: string, extra: Partial<Shortcut> = {}): Shortcut => ({
+		id,
+		label: id,
+		keys: [],
+		...extra,
+	});
+
+	it('keeps only the actions that carry a sequence', () => {
+		const bindings = collectSequenceBindings({
+			goTop: entry('goTop', { sequence: [['g'], ['g']] }),
+			chordOnly: entry('chordOnly', { keys: ['Meta', 'k'] }),
+			unassigned: entry('unassigned'),
+		});
+
+		expect(bindings).toEqual([{ id: 'goTop', sequence: [['g'], ['g']] }]);
+	});
+
+	it('skips a sequence the user cleared in this mode', () => {
+		// `sequence: []` is present and deliberate, and matches nothing.
+		expect(collectSequenceBindings({ goTop: entry('goTop', { sequence: [] }) })).toEqual([]);
+	});
+
+	it('reads across every map it is given', () => {
+		const general = { toggleZenMode: entry('toggleZenMode', { sequence: [['z']] }) };
+		const tabs = { nextTab: entry('nextTab', { sequence: [['g'], ['t']] }) };
+
+		expect(collectSequenceBindings(general, tabs).map((b) => b.id)).toEqual([
+			'toggleZenMode',
+			'nextTab',
+		]);
+	});
+
+	it('keys by the MAP KEY, which is the dispatch address', () => {
+		// The id the handler gets back goes straight into `isShortcut(e, id)`,
+		// and the key is what that reads. A disagreeing `id` field would send the
+		// match to a branch that does not exist.
+		const bindings = collectSequenceBindings({
+			nextTab: entry('stale-id', { sequence: [['g'], ['t']] }),
+		});
+
+		expect(bindings[0].id).toBe('nextTab');
+	});
+
+	it('takes the first map that binds an id', () => {
+		const first = { nextTab: entry('nextTab', { sequence: [['g'], ['t']] }) };
+		const second = { nextTab: entry('nextTab', { sequence: [['l']] }) };
+
+		expect(collectSequenceBindings(first, second)).toEqual([
+			{ id: 'nextTab', sequence: [['g'], ['t']] },
+		]);
+	});
+
+	it('produces a list the matcher can match against', () => {
+		const matcher = createSequenceMatcher();
+		const bindings = collectSequenceBindings({
+			goTop: entry('goTop', { sequence: [['g'], ['g']] }),
+		});
+
+		expect(matcher.feed(press('g'), bindings).outcome).toBe('consumed-prefix');
+		expect(matcher.feed(press('g'), bindings)).toEqual({ outcome: 'matched', actionId: 'goTop' });
 	});
 });

@@ -5218,3 +5218,265 @@ describe('useMainKeyboardHandler - toggleKeyboardMode', () => {
 		expect(useSettingsStore.getState().keyboardMode).toBe('vim');
 	});
 });
+
+/**
+ * Key sequences reaching the ladder.
+ *
+ * The matcher itself is covered in `shortcutSequence.test.ts`; what is proven
+ * here is the WIRING: that a completed sequence runs the action's existing
+ * chord branch, that a prefix is swallowed rather than also fired as a chord,
+ * that the two halves of the normal-mode gate both block, and that the early
+ * returns above the ladder still win the keypress.
+ */
+describe('useMainKeyboardHandler - key sequences', () => {
+	let unmountHandler: (() => void) | null = null;
+	let originalMaestro: unknown;
+
+	/** Mount the hook and give it a context, unmounted again after the test. */
+	function mountHandler(ctx: Record<string, unknown>) {
+		const { result, unmount } = renderHook(() => useMainKeyboardHandler());
+		unmountHandler = unmount;
+		result.current.keyboardHandlerRef.current = ctx;
+		return result;
+	}
+
+	/** Press a bare key, the shape every sequence step arrives in. */
+	function press(key: string, init: KeyboardEventInit = {}) {
+		const event = new KeyboardEvent('keydown', {
+			key,
+			bubbles: true,
+			cancelable: true,
+			...init,
+		});
+		const preventDefault = vi.spyOn(event, 'preventDefault');
+		act(() => {
+			window.dispatchEvent(event);
+		});
+		return preventDefault;
+	}
+
+	beforeEach(() => {
+		originalMaestro = (window as any).maestro;
+		(window as any).maestro = {
+			...(((window as any).maestro ?? {}) as Record<string, unknown>),
+			process: { write: vi.fn() },
+		};
+	});
+
+	afterEach(() => {
+		// Each test's listener has to go, or the next test's keypresses also
+		// reach this one's context and fire its mocks.
+		unmountHandler?.();
+		unmountHandler = null;
+		(window as any).maestro = originalMaestro;
+		document.body.innerHTML = '';
+	});
+
+	/** A context whose `toggleSidebar` is reachable only through `g s`. */
+	function sidebarSequenceContext(overrides: Record<string, unknown> = {}) {
+		return createMockContext({
+			sessions: [{ id: 'session-1' }],
+			activeSessionId: 'session-1',
+			leftSidebarOpen: true,
+			sequenceBindings: [{ id: 'toggleSidebar', sequence: [['g'], ['s']] }],
+			recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			...overrides,
+		});
+	}
+
+	it('runs the matched action through its existing chord branch', () => {
+		// The point of the forced-matcher dispatch: nothing about toggleSidebar
+		// was taught to sequences, and `isShortcut` here answers false for
+		// everything, yet the branch runs.
+		const setLeftSidebarOpen = vi.fn();
+		const recordShortcutUsage = vi.fn().mockReturnValue({ newLevel: null });
+		mountHandler(sidebarSequenceContext({ setLeftSidebarOpen, recordShortcutUsage }));
+
+		press('g');
+		expect(setLeftSidebarOpen).not.toHaveBeenCalled();
+
+		press('s');
+		expect(setLeftSidebarOpen).toHaveBeenCalledTimes(1);
+		expect(recordShortcutUsage).toHaveBeenCalledWith('toggleSidebar');
+	});
+
+	it('counts the action id exactly once, not once per reporting path', () => {
+		// The sequence layer records the match and the branch records it again.
+		// Mastery is a set and would not notice; the daily counter would.
+		const recordShortcutUsage = vi.fn().mockReturnValue({ newLevel: null });
+		mountHandler(sidebarSequenceContext({ setLeftSidebarOpen: vi.fn(), recordShortcutUsage }));
+
+		press('g');
+		press('s');
+
+		expect(recordShortcutUsage).toHaveBeenCalledTimes(1);
+	});
+
+	it('swallows a prefix key so it is not also matched as a chord', () => {
+		const setLeftSidebarOpen = vi.fn();
+		mountHandler(sidebarSequenceContext({ setLeftSidebarOpen }));
+
+		expect(press('g')).toHaveBeenCalled();
+		expect(setLeftSidebarOpen).not.toHaveBeenCalled();
+	});
+
+	it('aborts cleanly on a wrong second key, and the next run still works', () => {
+		const setLeftSidebarOpen = vi.fn();
+		mountHandler(sidebarSequenceContext({ setLeftSidebarOpen }));
+
+		press('g');
+		press('x');
+		expect(setLeftSidebarOpen).not.toHaveBeenCalled();
+
+		press('g');
+		press('s');
+		expect(setLeftSidebarOpen).toHaveBeenCalledTimes(1);
+	});
+
+	it('leaves a chord untouched, and a chord never becomes a sequence step', () => {
+		const setQuickActionOpen = vi.fn();
+		const setLeftSidebarOpen = vi.fn();
+		mountHandler(
+			sidebarSequenceContext({
+				setLeftSidebarOpen,
+				setQuickActionOpen,
+				sequenceBindings: [{ id: 'toggleSidebar', sequence: [['s'], ['s']] }],
+				isShortcut: (e: KeyboardEvent, actionId: string) =>
+					actionId === 'quickAction' && e.metaKey && e.key === 's',
+			})
+		);
+
+		press('s', { metaKey: true });
+		expect(setQuickActionOpen).toHaveBeenCalled();
+
+		// Cmd+S did not start the `s s` prefix, so the bare `s` after it is a
+		// first step rather than a completion.
+		press('s');
+		expect(setLeftSidebarOpen).not.toHaveBeenCalled();
+	});
+
+	it('does not fire while focus sits in a text field', () => {
+		const setLeftSidebarOpen = vi.fn();
+		mountHandler(sidebarSequenceContext({ setLeftSidebarOpen }));
+
+		const textarea = document.createElement('textarea');
+		document.body.appendChild(textarea);
+		textarea.focus();
+
+		press('g');
+		press('s');
+
+		expect(setLeftSidebarOpen).not.toHaveBeenCalled();
+	});
+
+	it('drops a live prefix when focus moves into a text field', () => {
+		const setLeftSidebarOpen = vi.fn();
+		mountHandler(sidebarSequenceContext({ setLeftSidebarOpen }));
+
+		press('g');
+
+		const textarea = document.createElement('textarea');
+		document.body.appendChild(textarea);
+		textarea.focus();
+		press('s');
+		expect(setLeftSidebarOpen).not.toHaveBeenCalled();
+
+		// Back out of the field: the half-typed `g` must not still be waiting.
+		textarea.blur();
+		press('s');
+		expect(setLeftSidebarOpen).not.toHaveBeenCalled();
+	});
+
+	it('does not fire while a layer is open', () => {
+		const setLeftSidebarOpen = vi.fn();
+		mountHandler(
+			sidebarSequenceContext({
+				setLeftSidebarOpen,
+				hasOpenLayers: () => true,
+				hasOpenModal: () => false,
+			})
+		);
+
+		press('g');
+		press('s');
+
+		expect(setLeftSidebarOpen).not.toHaveBeenCalled();
+	});
+
+	it('leaves Escape to the layer stack even with a live prefix', () => {
+		mountHandler(sidebarSequenceContext({ setLeftSidebarOpen: vi.fn() }));
+
+		press('g');
+
+		expect(press('Escape')).not.toHaveBeenCalled();
+	});
+
+	it('dispatches a tab action bound to a sequence', () => {
+		// `nextTab` is matched with isTabShortcut rather than isShortcut, so the
+		// forced matcher has to answer for both.
+		const navigateToNextUnifiedTab = vi.fn().mockReturnValue(null);
+		const recordShortcutUsage = vi.fn().mockReturnValue({ newLevel: null });
+		mountHandler(
+			createMockContext({
+				activeSession: { id: 'session-1' },
+				activeSessionId: 'session-1',
+				setSessions: vi.fn((updater: (prev: unknown[]) => unknown) =>
+					updater([{ id: 'session-1' }])
+				),
+				navigateToNextUnifiedTab,
+				showUnreadOnly: false,
+				sequenceBindings: [{ id: 'nextTab', sequence: [['g'], ['t']] }],
+				recordShortcutUsage,
+			})
+		);
+
+		press('g');
+		press('t');
+
+		expect(navigateToNextUnifiedTab).toHaveBeenCalled();
+		expect(recordShortcutUsage).toHaveBeenCalledWith('nextTab');
+	});
+
+	it('is inert for a context that carries no sequence bindings', () => {
+		// Every pre-sequence caller, including most of this file's own contexts.
+		const setLeftSidebarOpen = vi.fn();
+		mountHandler(
+			createMockContext({
+				sessions: [{ id: 'session-1' }],
+				leftSidebarOpen: true,
+				setLeftSidebarOpen,
+				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			})
+		);
+
+		expect(press('g')).not.toHaveBeenCalled();
+		expect(setLeftSidebarOpen).not.toHaveBeenCalled();
+	});
+
+	it('yields to terminal focus recovery, which owns bare keys first', () => {
+		// The sequence block sits BELOW this early return on purpose: in terminal
+		// mode a bare key is the user typing at a shell.
+		const setLeftSidebarOpen = vi.fn();
+		mountHandler(
+			sidebarSequenceContext({
+				setLeftSidebarOpen,
+				activeSession: {
+					id: 'session-1',
+					inputMode: 'terminal',
+					activeTerminalTabId: 'term-1',
+				},
+				mainPanelRef: { current: { focusActiveTerminal: vi.fn() } },
+				setSessions: vi.fn(),
+			})
+		);
+
+		press('g');
+		press('s');
+
+		expect((window as any).maestro.process.write).toHaveBeenCalledWith(
+			'session-1-terminal-term-1',
+			'g'
+		);
+		expect(setLeftSidebarOpen).not.toHaveBeenCalled();
+	});
+});
