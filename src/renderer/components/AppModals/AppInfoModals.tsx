@@ -4,7 +4,6 @@ import type {
 	Session,
 	Group,
 	GroupChat,
-	Shortcut,
 	KeyboardMasteryStats,
 	AutoRunStats,
 	MaestroUsageStats,

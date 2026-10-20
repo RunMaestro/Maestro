@@ -3,7 +3,7 @@ import { X, Award, CheckCircle, Trophy, ExternalLink, Settings } from 'lucide-re
 import { GhostIconButton } from './ui/GhostIconButton';
 import { ShortcutFilterButton } from './ui/ShortcutFilterButton';
 import { ShortcutKeys } from './ui/ShortcutHint';
-import type { Theme, Shortcut, KeyboardMasteryStats } from '../types';
+import type { Theme, KeyboardMasteryStats } from '../types';
 import { fuzzyMatch } from '../utils/search';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { DOUBLE_PRESS_ACCESS, FIXED_SHORTCUTS } from '../constants/shortcuts';
@@ -319,7 +319,6 @@ export function ShortcutsHelpModal({
 		>
 			<div className="space-y-2 flex-1 min-h-0 overflow-y-auto scrollbar-thin scrollbar-track-transparent -mr-6 pr-6 -my-2">
 				{filteredShortcuts.map((sc, i) => {
-					const isBound = sc.keys.length > 0;
 					const isUsed = usedShortcutIds.has(sc.id);
 					// Resolve the effective binding for this action in the active mode
 					const resolved = resolveShortcutKeys(sc.id, {
