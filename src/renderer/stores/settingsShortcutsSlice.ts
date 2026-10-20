@@ -498,6 +498,32 @@ function withBindings<T extends MigratableShortcut>(defaults: T, saved: T): T {
 }
 
 /**
+ * The saved `keys` value if it can be used as a chord, otherwise `undefined`.
+ *
+ * `keys` is read straight off disk, so it can hold any JSON value: a
+ * hand-edited settings file, a half-written sync, an older schema that spelled
+ * a chord as a string. Everything downstream assumes an array of strings -
+ * `migrateShortcuts` calls `.map` on it, `findReservedShortcutCombo`
+ * lowercases each member, and `shortcutKeysCollide` spreads it - so a string, a
+ * number, or an array with a `null` in it throws.
+ *
+ * The throw is the part that matters. `hydrateShortcutsSettings` runs inside
+ * `loadAllSettings`, whose `catch` abandons the ENTIRE patch, so one unusable
+ * chord silently reverts every other setting in the file: theme, font size,
+ * panel widths, the lot. Dropping the value instead costs that one binding and
+ * nothing else.
+ *
+ * Not written back: the repair is deterministic and idempotent, so leaving the
+ * bad value on disk costs one `Array.isArray` per load, while persisting it
+ * would notify every other window to reload for a setting the user never
+ * touched.
+ */
+function usableChordKeys(keys: unknown): string[] | undefined {
+	if (!Array.isArray(keys)) return undefined;
+	return keys.every((key) => typeof key === 'string') ? (keys as string[]) : undefined;
+}
+
+/**
  * Migrate shortcuts: fix macOS Alt+key special characters, apply one-time
  * default remaps, and merge with current defaults. Returns the merged shortcuts
  * (for store state), the raw migrated map (for persistence write-back), and
@@ -526,12 +552,22 @@ function migrateShortcuts<T extends MigratableShortcut>(
 	for (const [id, shortcut] of Object.entries(saved)) {
 		// An override entry with no `keys` says "inherit the default-mode
 		// chord". There is no chord to repair, and inventing an empty array
-		// here would rewrite that as "unbound in this mode".
-		if (!shortcut.keys) {
-			migrated[id] = { ...shortcut };
+		// here would rewrite that as "unbound in this mode". An entry whose
+		// `keys` is not a usable chord is treated the same way, for the reasons
+		// in `usableChordKeys`.
+		const savedKeys = usableChordKeys(shortcut.keys);
+		if (!savedKeys) {
+			migrated[id] = withKeys(
+				shortcut,
+				// A base entry has to end up with a chord: its `keys` is read
+				// unguarded everywhere downstream, and the shipped default is
+				// the fallback that leaves the action working. An override drops
+				// the field instead, which is the spelling for "inherit".
+				kind === 'base' ? (defaults[id]?.keys ?? []) : undefined
+			);
 			continue;
 		}
-		const migratedKeys = shortcut.keys.map((key) => {
+		const migratedKeys = savedKeys.map((key) => {
 			if (MAC_ALT_CHAR_MAP[key]) {
 				needsMigration = true;
 				return MAC_ALT_CHAR_MAP[key];
