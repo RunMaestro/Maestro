@@ -38,6 +38,7 @@ import {
 	TAB_SHORTCUTS,
 } from '../../../renderer/constants/shortcuts';
 import { VIM_SHORTCUTS, VIM_TAB_SHORTCUTS } from '../../../renderer/constants/vimShortcuts';
+import { DECK_MODE_LEADER_ID } from '../../../renderer/constants/deckMode';
 import {
 	findReservedShortcutCombo,
 	shortcutKeysCollide,
@@ -475,5 +476,61 @@ describe('the h / j / k / l family', () => {
 		);
 
 		expect(duplicated).toEqual([]);
+	});
+});
+
+/**
+ * Deck mode's leader, the one part of Deck mode that is a binding.
+ *
+ * The rows the leader arms are live for a single keystroke and are matched
+ * against `DECK_MODE_KEYS` alone, so they claim no keypress and answer to none
+ * of the guards above - `constants/shortcuts.test.ts` owns their structure.
+ * The leader is the opposite: an ordinary entry in `DEFAULT_SHORTCUTS` with a
+ * chord in this file, so every test in this file already covers it as one more
+ * member of the effective set. What those tests cannot say is that it is the
+ * DECK leader, that it kept the chord this phase chose, and that the chord is
+ * free rather than merely uncollided-with today.
+ */
+describe("Deck mode's leader chord", () => {
+	const leader = vimById.get(DECK_MODE_LEADER_ID);
+
+	it('binds Ctrl+; in Vim mode and nothing in default mode', () => {
+		// Both halves matter. Unbound in default mode is the promise that adding
+		// Deck mode changes no default-mode keypress; bound in Vim mode is what
+		// makes it reachable at all, since a leader with no chord arms nothing.
+		expect(defaultById.get(DECK_MODE_LEADER_ID)?.keys, 'bound in default mode').toEqual([]);
+		expect(
+			shortcutKeysEqual(leader?.keys ?? [], ['Ctrl', ';']),
+			`the Deck leader is on ${spell(leader?.keys)}`
+		).toBe(true);
+	});
+
+	it('arms from a text field, which means a chord and not a sequence', () => {
+		// The whole reason Deck mode exists: a `sequence` only fires in normal
+		// mode (focus outside a text field, no layer open), which is exactly where
+		// the bare keys it arms were ALREADY reachable. A leader bound to one
+		// would arm the mode only in the state that does not need it.
+		expect(isBareChord(leader?.keys ?? []), `${spell(leader?.keys)} is a bare key`).toBe(false);
+		expect(leader?.sequence ?? []).toEqual([]);
+	});
+
+	it('takes a key no other chord in either mode spells', () => {
+		// Stronger than the collision block above, which only asks whether two
+		// chords fire on one keypress. `;` is untouched in BOTH modes, so the
+		// leader displaces nothing and a user switching modes loses nothing -
+		// which is why no displacement row was needed for it.
+		const spellsSemicolon = (sc: Shortcut) =>
+			sc.id !== DECK_MODE_LEADER_ID && sc.keys.some((key) => key === ';');
+		expect(VIM_ACTIONS.filter(spellsSemicolon).map((sc) => sc.id)).toEqual([]);
+		expect(DEFAULT_ACTIONS.filter(spellsSemicolon).map((sc) => sc.id)).toEqual([]);
+	});
+
+	it('is not a chord the OS or the app menu swallows', () => {
+		// `Ctrl` collapses to `Meta`, so this chord IS Cmd+; at runtime. The Edit
+		// menu Maestro builds has no spelling submenu, so nothing registers that
+		// accelerator - but a chord that reads free and never reaches the renderer
+		// is the one failure a user cannot diagnose, so it is asserted rather
+		// than reasoned about.
+		expect(findReservedShortcutCombo(leader?.keys ?? [])).toBeNull();
 	});
 });

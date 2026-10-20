@@ -1069,4 +1069,30 @@ describe('Deck mode key table', () => {
 		expect(DECK_MODE_LEADER_ID).toBe('deckMode');
 		expect(FIXED_SHORTCUTS[DECK_MODE_LEADER_ID]).toBeUndefined();
 	});
+
+	it('registers the leader in DEFAULT_SHORTCUTS, unassigned', () => {
+		// Registering it is what puts it in Settings -> Shortcuts, the help sheet
+		// and Cmd+K, and what makes it rebindable in either mode. Unassigned is
+		// what keeps default mode behaving exactly as it did: an action with no
+		// chord claims no keypress, so shipping the leader costs a default-mode
+		// user nothing. The chord lives in the Vim table, which
+		// `vimShortcuts.test.ts` pins.
+		const leader = (DEFAULT_SHORTCUTS as Record<string, Shortcut>)[DECK_MODE_LEADER_ID];
+		expect(leader, 'the Deck leader is not registered in DEFAULT_SHORTCUTS').toBeDefined();
+		expect(leader.id).toBe(DECK_MODE_LEADER_ID);
+		expect(leader.keys, 'the leader must ship unbound in default mode').toEqual([]);
+		// No sequence either. A sequence is gated on normal mode (focus outside a
+		// text field), and arming Deck mode from inside the composer is the one
+		// thing the mode exists for, so a sequence trigger would be dead weight
+		// exactly where the leader is needed.
+		expect(leader.sequence).toBeUndefined();
+	});
+
+	it('keeps the leader out of the firing rows it arms', () => {
+		// The leader is a chord the global matcher sees; the rows are bare keys
+		// live for one keystroke. A row carrying the leader's own id would mean
+		// arming the mode twice and firing nothing.
+		expect(DECK_MODE_KEYS.some((row) => row.id === DECK_MODE_LEADER_ID)).toBe(false);
+		expect(findDeckModeAction(';')).toBeUndefined();
+	});
 });

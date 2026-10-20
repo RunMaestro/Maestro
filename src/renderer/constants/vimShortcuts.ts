@@ -88,9 +88,10 @@ import type { ShortcutOverride } from '../../shared/shortcut-types';
  * these tables touch, and the per-mode collision guard matches that group by
  * its ids rather than its chord precisely so moving it together stays legal.
  *
- * Nothing else is displaced. `Ctrl+Alt+O`, `Ctrl+Alt+Shift+,` / `.`, and the
- * `Ctrl+Shift+PageUp` / `PageDown` pair are free in the shipped default set,
- * and the actions the region family takes chords FROM are the only five above.
+ * Nothing else is displaced. `Ctrl+Alt+O`, `Ctrl+Alt+Shift+,` / `.`, `Ctrl+;`
+ * (Deck mode's leader) and the `Ctrl+Shift+PageUp` / `PageDown` pair are free in
+ * the shipped default set, and the actions the region family takes chords FROM
+ * are the only five above.
  *
  * ## The audit of this set, and the one thing it found
  *
@@ -182,8 +183,9 @@ import type { ShortcutOverride } from '../../shared/shortcut-types';
 /**
  * Overrides for the actions in `DEFAULT_SHORTCUTS`.
  *
- * Three groups: the region family Vim mode exists to provide, the resize pair
- * and zen toggle beside it, and the four actions the region family displaced.
+ * Four groups: the region family Vim mode exists to provide, the resize pair
+ * and zen toggle beside it, Deck mode's leader, and the four actions the region
+ * family displaced.
  */
 export const VIM_SHORTCUTS: Record<string, ShortcutOverride> = {
 	// Region focus, Vim's `<C-w>h/j/k/l`. The chord is Ctrl+Shift rather than
@@ -240,6 +242,26 @@ export const VIM_SHORTCUTS: Record<string, ShortcutOverride> = {
 		label: 'Toggle Zen Mode',
 		keys: ['Ctrl', 'Alt', 'o'],
 		sequence: [['z']],
+	},
+
+	// Deck mode's leader, the tmux prefix. One chord arms a one-shot mode, the
+	// next bare key fires an action and the mode ends; the table of those keys is
+	// `constants/deckMode.ts`, and only this leader is a binding (see the entry
+	// in `shortcuts.ts` for why the armed keys are not).
+	//
+	// `Ctrl+;` for three reasons. The semicolon is Vim's own repeat-the-motion
+	// key, so it is a key a Vim user's right hand already lives on, and it is
+	// unshifted, which the leader has to be when the mode it arms is reached
+	// from inside the composer. It displaces NOTHING: no shipped table in either
+	// mode binds `;` in any chord, and `findReservedShortcutCombo` is null for it
+	// (the Edit menu Maestro builds has no spelling submenu, so the Cmd+;
+	// spelling this collapses to under rule 4 is not an app-menu accelerator).
+	// And it keeps rule 6's shape: the leader is a CHORD, which is what lets it
+	// fire from a focused text field, where a sequence cannot.
+	deckMode: {
+		id: 'deckMode',
+		label: 'Deck Mode (Leader Key)',
+		keys: ['Ctrl', ';'],
 	},
 
 	// Displaced by the region family above, each moved to the same letter with

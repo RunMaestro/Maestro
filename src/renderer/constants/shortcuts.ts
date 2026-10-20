@@ -144,6 +144,26 @@ export const DEFAULT_SHORTCUTS = {
 	growRegion: { id: 'growRegion', label: 'Grow Region', keys: [] },
 	shrinkRegion: { id: 'shrinkRegion', label: 'Shrink Region', keys: [] },
 
+	// Deck mode's LEADER, tmux's prefix key. Pressing it arms a one-shot mode in
+	// which the next single bare key fires an action and the mode ends. The table
+	// of those keys is `constants/deckMode.ts`; this entry is the chord that arms
+	// it, and the hint bar reads this entry's LIVE binding for its title, so a
+	// user who rebinds the leader sees the chord they actually press.
+	//
+	// Only the leader is a shortcut. The keys it arms are live for one keystroke
+	// between the leader and the next event, so they claim no keypress, cannot
+	// fight anything, and are deliberately not registered here or merged into any
+	// mode's effective set. This row is the only part of Deck mode the global
+	// matcher, the collision guards, and `findReservedShortcutCombo` ever see.
+	//
+	// Ships UNASSIGNED, for the same reason as the region family above and one
+	// more. A leader is only worth a default chord to someone who wants the
+	// bare-key vocabulary behind it, and in default mode there is no such
+	// vocabulary: every action the Deck table fires already answers to a chord of
+	// its own there. Vim mode binds it, where the bare keys are the whole point
+	// and the composer is exactly where they were previously out of reach.
+	deckMode: { id: 'deckMode', label: 'Deck Mode (Leader Key)', keys: [] },
+
 	viewGitDiff: { id: 'viewGitDiff', label: 'Git: View Diff', keys: ['Meta', 'Shift', 'd'] },
 	viewGitLog: { id: 'viewGitLog', label: 'Git: View Log', keys: ['Meta', 'Shift', 'g'] },
 	// The rest of the branch-pill menu. All four ship UNBOUND: they act on the
