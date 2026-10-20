@@ -1139,6 +1139,16 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				ctx.setSettingsTab?.('theme');
 				ctx.setSettingsModalOpen(true);
 				trackShortcut('openThemeSettings');
+			} else if (ctx.isShortcut(e, 'stopTurn')) {
+				// Registered unbound (see DEFAULT_SHORTCUTS.stopTurn: every chord that
+				// reads as Ctrl+C is reserved), so this fires only for a user who bound
+				// one. Routed through the SAME agent-level interrupt the red Stop pill
+				// calls, which also ends the other busy tabs and the cross-agent
+				// consults this turn fanned out - a narrower kill here would stop the
+				// visible process and leave the rest streaming.
+				e.preventDefault();
+				ctx.handleInterrupt?.();
+				trackShortcut('stopTurn');
 			} else if (ctx.isShortcut(e, 'showSnoozeList')) {
 				// Registered unbound since Part 3 and never wired, so binding a key to
 				// it did nothing. Same route the tab strip and the palette already use.

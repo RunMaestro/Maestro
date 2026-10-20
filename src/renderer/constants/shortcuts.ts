@@ -120,10 +120,20 @@ export const DEFAULT_SHORTCUTS = {
 	},
 	focusInput: { id: 'focusInput', label: 'Toggle Input/Output Focus', keys: ['Meta', '.'] },
 	focusSidebar: { id: 'focusSidebar', label: 'Focus Left Panel', keys: ['Meta', 'Shift', 'a'] },
+	// Unbound by default, and it cannot ship on `Ctrl+C`: the matcher folds Ctrl
+	// into Meta, so that chord IS `Cmd+C` and `RESERVED_SHORTCUT_COMBOS` holds it
+	// for the Edit menu's Copy. A reserved default is worse than none - on load
+	// `migrateShortcuts` strips the reserved binding and falls back to the
+	// bundled default only when that default is itself free, so a reserved
+	// default leaves the action unbound anyway, silently and for everyone.
+	// `Ctrl+C` is not lost either way: inside a Command Terminal tab xterm still
+	// sends it to the running process (see `XTerminal`'s custom key handler),
+	// which is a different thing from ending an AI turn. The red Stop pill is the
+	// route that always exists; this entry is what lets a user add a chord.
 	stopTurn: {
 		id: 'stopTurn',
 		label: 'Stop Turn',
-		keys: ['Control', 'c'],
+		keys: [],
 	},
 
 	// Region focus and region resize. Maestro's window is three regions in a row -

@@ -335,6 +335,49 @@ describe('useMainKeyboardHandler', () => {
 		});
 	});
 
+	/**
+	 * Stop Turn ships UNBOUND (`DEFAULT_SHORTCUTS.stopTurn`), because every chord
+	 * that reads as Ctrl+C is reserved for the Edit menu's Copy. So the ladder
+	 * branch exists purely for a chord the user recorded, and nothing but a test
+	 * like this one would notice it going missing - the pill keeps working either
+	 * way, and a default-mode keypress can never reach the branch.
+	 */
+	describe('Stop Turn', () => {
+		it('runs the agent-level interrupt the Stop pill uses, at whatever key it is bound to', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			const handleInterrupt = vi.fn();
+			const recordShortcutUsage = vi.fn().mockReturnValue({ newLevel: null });
+			result.current.keyboardHandlerRef.current = createMockContext({
+				// Stands in for a user who recorded Ctrl+Alt+Period in Settings.
+				isShortcut: (e: KeyboardEvent, actionId: string) =>
+					actionId === 'stopTurn' && e.ctrlKey && e.altKey && e.key === '.',
+				activeSession: { id: 'session-1', inputMode: 'ai' },
+				handleInterrupt,
+				recordShortcutUsage,
+			});
+
+			const event = new KeyboardEvent('keydown', {
+				key: '.',
+				ctrlKey: true,
+				altKey: true,
+				bubbles: true,
+				cancelable: true,
+			});
+			const preventDefault = vi.spyOn(event, 'preventDefault');
+
+			act(() => {
+				window.dispatchEvent(event);
+			});
+
+			expect(handleInterrupt).toHaveBeenCalledOnce();
+			expect(preventDefault).toHaveBeenCalled();
+			// Mastery counts it like any other action, which is the whole reason it
+			// is a registered action rather than a hard-coded key.
+			expect(recordShortcutUsage).toHaveBeenCalledWith('stopTurn');
+		});
+	});
+
 	describe('refresh files, git, history', () => {
 		it('runs the same refresh handler the palette entry uses', () => {
 			const { result } = renderHook(() => useMainKeyboardHandler());

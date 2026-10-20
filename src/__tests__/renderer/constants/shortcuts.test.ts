@@ -378,6 +378,38 @@ describe('shipped bindings avoid reserved chords', () => {
 
 		expect(offenders).toEqual([]);
 	});
+
+	/**
+	 * Stop Turn is the case that proves the rule, so it gets its own test.
+	 *
+	 * It shipped on `['Control', 'c']` - the obvious chord, since that is how you
+	 * interrupt anything in a terminal - and it was wrong twice over. The matcher
+	 * folds Ctrl into Meta, so the binding IS `Cmd+C` and would have shadowed
+	 * Copy; and because the reserved default has no free fallback,
+	 * `migrateShortcuts` would have left the action unbound on load for everyone,
+	 * which is the quiet half. It ships unbound instead, wired in the ladder so a
+	 * chord a user DOES record actually stops the turn.
+	 *
+	 * Asserting on both modes because the Vim bucket inherits this chord: a
+	 * `Ctrl+C` re-added in either table is the same shadowed Copy.
+	 */
+	it.each(KEYBOARD_MODES)('leaves every chord that reads as Ctrl+C free in %s mode', (mode) => {
+		const claimants = effectiveActionsForMode(mode)
+			.filter((sc) => shortcutKeysCollide(sc.keys, ['Control', 'c']))
+			.map((sc) => `${sc.id} (${sc.keys.join('+')})`);
+
+		expect(
+			claimants,
+			'A chord holding Ctrl or Cmd plus C shadows the Edit menu Copy, and migrateShortcuts strips it on load.'
+		).toEqual([]);
+	});
+
+	it('registers Stop Turn unbound rather than on a chord it cannot keep', () => {
+		expect(DEFAULT_SHORTCUTS.stopTurn.keys).toEqual([]);
+		// The entry still has to EXIST: unbound is what lets Settings -> Shortcuts
+		// offer the row, and the ladder branch is what makes the recorded chord fire.
+		expect(DEFAULT_SHORTCUTS.stopTurn.label).toBe('Stop Turn');
+	});
 });
 
 describe('keyboard modes', () => {

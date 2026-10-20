@@ -88,6 +88,7 @@ The two system-wide hotkeys cannot share a combo. If you set one to the other's 
 | Edit Image from Clipboard            | `Opt+Cmd+E`             | `Alt+Ctrl+E`              |
 | Forced Parallel Send                 | `Cmd+Shift+Enter`       | `Ctrl+Shift+Enter`        |
 | Steer Running Turn                   | `Opt+Cmd+Enter`         | `Alt+Ctrl+Enter`          |
+| Stop Turn                            | unassigned by default   | unassigned by default     |
 | Cycle Focus Areas                    | `Tab`                   | `Tab`                     |
 | Cycle Focus Backwards                | `Shift+Tab`             | `Shift+Tab`               |
 
@@ -97,6 +98,25 @@ replace each other rather than stacking, and their hotkeys stay live while one
 of them is up. Press `Opt+Cmd+U` from Director's Notes to land on the Usage
 Dashboard, then `Cmd+Shift+O` to go straight back. This holds for a rebound
 surface too, so a chord you chose yourself behaves the same as the default.
+
+### Stop Turn
+
+**Stop Turn** ends the active agent's turn the way the red **Stop** pill does:
+the agent's own process, every other busy tab it owns, and any cross-agent
+consults the turn fanned out. The pill is always on screen while a turn runs, so
+this row exists for anyone who would rather not reach for it.
+
+It is **unassigned by default**, and the obvious combination is the one it cannot
+have. Maestro matches `Ctrl` and `Cmd` as one modifier, so a `Ctrl+C` binding
+**is** `Cmd+C`, which the Edit menu owns and Maestro
+[reserves](#combinations-maestro-will-not-take) - it would shadow Copy on
+Windows and Linux and never fire at all on macOS. Bind it to a free combination
+in **Settings** > **Shortcuts** (`Cmd+Shift+;` and `Cmd+Shift+'` are both free as
+shipped), or reach Stop from the pill.
+
+`Ctrl+C` inside a **Command Terminal** tab is unrelated and still works: there it
+goes to the command running in that shell, which is the terminal's own interrupt
+and not this action.
 
 ### Region Focus, Resize, and Zen Mode
 

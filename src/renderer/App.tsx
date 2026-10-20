@@ -2852,6 +2852,10 @@ function MaestroConsoleInner() {
 		},
 		summarizeAndContinue: handleSummarizeAndContinue,
 
+		// Agent-level interrupt, for a user who bound the (unbound by default)
+		// Stop Turn action. The same callback the red Stop pill runs.
+		handleInterrupt,
+
 		// Keyboard mastery gamification
 		recordShortcutUsage,
 		onKeyboardMasteryLevelUp,
