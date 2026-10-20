@@ -22,17 +22,15 @@ import {
 } from '../../../renderer/stores/mediaPlaybackStore';
 import type { FileExplorerIconTheme } from '../../../renderer/utils/fileExplorerIcons/shared';
 import { FILE_EXPLORER_ICON_THEMES } from '../../../renderer/utils/fileExplorerIcons/shared';
-import {
-	DEFAULT_SHORTCUTS,
-	TAB_SHORTCUTS,
-	FIXED_SHORTCUTS,
-} from '../../../renderer/constants/shortcuts';
+import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS } from '../../../renderer/constants/shortcuts';
 import { VIM_SHORTCUTS, VIM_TAB_SHORTCUTS } from '../../../renderer/constants/vimShortcuts';
 import {
 	KEYBOARD_MASTERY_LEVELS,
-	collectBoundShortcuts,
+	countUsedBoundShortcuts,
 } from '../../../renderer/constants/keyboardMastery';
-import { availableShortcuts } from '../../../renderer/utils/encoreShortcuts';
+import { selectMasteryBoundShortcuts } from '../../../renderer/stores/settingsShortcutsSlice';
+import type { Shortcut } from '../../../renderer/types';
+import type { KeyboardMode, ShortcutOverride } from '../../../shared/shortcut-types';
 import { DEFAULT_CUSTOM_THEME_COLORS } from '../../../renderer/constants/themes';
 import { TYPOGRAPHY_PRESETS } from '../../../shared/typographyPresets';
 import * as runtimeContext from '../../../renderer/utils/runtimeContext';
@@ -1970,18 +1968,18 @@ describe('settingsStore', () => {
 			]);
 		});
 
-		// The denominator is the shortcuts that actually have a chord bound, so the
-		// ids used here have to be real ones - made-up ids count for nothing.
-		// It also leaves out the chord of an Encore Feature that is switched off:
+		// The denominator is the shortcuts that actually have a binding, so the
+		// ids used here have to be real ones - made-up ids count for nothing. It
+		// also leaves out the chord of an Encore Feature that is switched off:
 		// the keyboard handler refuses it, so it can never be fired either.
-		const boundShortcutIds = () => {
-			const encoreFeatures = useSettingsStore.getState().encoreFeatures;
-			return collectBoundShortcuts(
-				availableShortcuts(DEFAULT_SHORTCUTS, encoreFeatures),
-				TAB_SHORTCUTS,
-				availableShortcuts(FIXED_SHORTCUTS, encoreFeatures)
-			).map((s) => s.id);
-		};
+		//
+		// Read through the PRODUCTION selector rather than rebuilt from the
+		// shipped tables, so these tests cannot drift from the figure the app
+		// shows. It spans both keyboard modes, which is why a hand-built
+		// default-mode total would start lying the moment a mode binds an action
+		// the other one leaves unassigned.
+		const masteryBound = () => selectMasteryBoundShortcuts(useSettingsStore.getState());
+		const boundShortcutIds = () => masteryBound().map((s) => s.id);
 
 		it('recordShortcutUsage detects level-up', () => {
 			const bound = boundShortcutIds();
@@ -2004,7 +2002,7 @@ describe('settingsStore', () => {
 			expect(useSettingsStore.getState().keyboardMasteryStats.currentLevel).toBe(1);
 		});
 
-		it('recordShortcutUsage ignores ids that have no chord bound', () => {
+		it('recordShortcutUsage ignores ids that have no binding at all', () => {
 			const bound = boundShortcutIds();
 			const needed = Math.ceil(bound.length * 0.25);
 
@@ -2018,7 +2016,12 @@ describe('settingsStore', () => {
 
 			// An unbound action can never be fired, so recording one must not move
 			// the level - otherwise the numerator outruns its own denominator.
-			const unbound = Object.values(DEFAULT_SHORTCUTS).find((s) => s.keys.length === 0);
+			//
+			// Unbound in BOTH modes, which is what the denominator asks: an
+			// action default mode leaves unassigned is still reachable if Vim
+			// mode binds it, and then recording it SHOULD count.
+			const inTheTotal = new Set(bound);
+			const unbound = Object.values(DEFAULT_SHORTCUTS).find((s) => !inTheTotal.has(s.id));
 			expect(unbound).toBeDefined();
 			const result = useSettingsStore.getState().recordShortcutUsage(unbound!.id);
 
@@ -2041,6 +2044,310 @@ describe('settingsStore', () => {
 			// Unbound shortcuts used to sit in the denominator, which made the top
 			// level unreachable no matter how many chords the user learned.
 			expect(result.newLevel).toBe(KEYBOARD_MASTERY_LEVELS.length - 1);
+		});
+
+		/**
+		 * Mastery is ONE count across keyboard modes.
+		 *
+		 * `usedShortcuts` is a set of ACTION ids with no mode, no chord and no
+		 * sequence in it, so the denominator has to span modes to match: a
+		 * per-mode total would move the percentage the moment the user switched
+		 * modes, and an action learned in one mode would read as unlearned in
+		 * the other. Every property below is a consequence of that one rule,
+		 * and the two halves it has to hold for are the numerator (what firing
+		 * an action records) and the denominator (`selectMasteryBoundShortcuts`).
+		 *
+		 * The binding tables are replaced with synthetic ones so the counts are
+		 * about the ids each test declares rather than about whatever
+		 * `DEFAULT_SHORTCUTS` happens to bind today. `FIXED_SHORTCUTS` is shared
+		 * by both modes and is always in the denominator, so the assertions
+		 * either filter it back out by id prefix or compare before and after.
+		 */
+		describe('one count across keyboard modes', () => {
+			const ID_PREFIX = 'mastery-';
+
+			const action = (id: string, keys: string[], sequence?: string[][]): Shortcut =>
+				({
+					id,
+					label: id,
+					keys,
+					category: 'general',
+					...(sequence ? { sequence } : {}),
+				}) as Shortcut;
+
+			const override = (
+				id: string,
+				fields: { keys?: string[]; sequence?: string[][] }
+			): ShortcutOverride => ({ id, label: id, ...fields });
+
+			/**
+			 * 20 actions, each on a chord of its own, bound identically in both
+			 * modes. Distinct chords on purpose: a Vim override that collides
+			 * with another action's inherited chord DISPLACES it, which would
+			 * quietly change the total a test is measuring.
+			 */
+			const twentyActions = (): Record<string, Shortcut> =>
+				Object.fromEntries(
+					'abcdefghijklmnopqrst'.split('').map((letter, i) => {
+						const id = `${ID_PREFIX}${i}`;
+						return [id, action(id, ['Alt', 'Meta', letter])];
+					})
+				);
+
+			/**
+			 * The same 20 actions, split down the middle: the first 10 are bound
+			 * in default mode and cleared in Vim mode, the last 10 are
+			 * unassigned in default mode and bound in Vim mode by a bare-key
+			 * SEQUENCE, which is the binding a mode gated on normal mode exists
+			 * to carry.
+			 *
+			 * The split is what makes "one count across modes" observable: with
+			 * every action bound in both modes a per-mode denominator would
+			 * produce the same figure and prove nothing.
+			 */
+			const splitActions = (): {
+				shortcuts: Record<string, Shortcut>;
+				vimShortcuts: Record<string, ShortcutOverride>;
+				defaultOnly: string[];
+				vimOnly: string[];
+			} => {
+				const shortcuts = twentyActions();
+				const vimShortcuts: Record<string, ShortcutOverride> = {};
+				const defaultOnly: string[] = [];
+				const vimOnly: string[] = [];
+				for (let i = 0; i < 20; i++) {
+					const id = `${ID_PREFIX}${i}`;
+					if (i < 10) {
+						vimShortcuts[id] = override(id, { keys: [] });
+						defaultOnly.push(id);
+					} else {
+						shortcuts[id] = action(id, []);
+						vimShortcuts[id] = override(id, { sequence: [['g'], [String(i - 10)]] });
+						vimOnly.push(id);
+					}
+				}
+				return { shortcuts, vimShortcuts, defaultOnly, vimOnly };
+			};
+
+			/** Seed both modes' buckets, with default mode live. */
+			const seed = (
+				shortcuts: Record<string, Shortcut>,
+				vimShortcuts: Record<string, ShortcutOverride> = {}
+			) =>
+				useSettingsStore.setState({
+					shortcuts,
+					tabShortcuts: {},
+					vimShortcuts,
+					vimTabShortcuts: {},
+					keyboardMode: 'default',
+				});
+
+			const switchMode = (mode: KeyboardMode) => useSettingsStore.getState().setKeyboardMode(mode);
+
+			/** The ids this test declared, out of the live denominator. */
+			const syntheticIds = () =>
+				masteryBound()
+					.map((s) => s.id)
+					.filter((id) => id.startsWith(ID_PREFIX))
+					.sort();
+
+			const used = () => useSettingsStore.getState().keyboardMasteryStats.usedShortcuts;
+			const mastered = () => countUsedBoundShortcuts(masteryBound(), used());
+			/** The figure the app renders, computed exactly as `recordShortcutUsage` does. */
+			const percentage = () => {
+				const bound = masteryBound();
+				return bound.length > 0 ? (countUsedBoundShortcuts(bound, used()) / bound.length) * 100 : 0;
+			};
+			const record = (id: string) => useSettingsStore.getState().recordShortcutUsage(id);
+
+			it('counts 10 actions in default mode and 10 more in Vim mode as 20', () => {
+				const { shortcuts, vimShortcuts, defaultOnly, vimOnly } = splitActions();
+				seed(shortcuts, vimShortcuts);
+				const idsBefore = syntheticIds();
+				const totalBefore = masteryBound().length;
+				expect(idsBefore).toHaveLength(20);
+
+				for (const id of defaultOnly) record(id);
+				expect(mastered()).toBe(10);
+
+				// The switch itself changes nothing: not the total, not the id
+				// set, not the list of actions already learned.
+				const usedBefore = used();
+				switchMode('vim');
+				expect(masteryBound().length).toBe(totalBefore);
+				expect(syntheticIds()).toEqual(idsBefore);
+				expect(used()).toEqual(usedBefore);
+				expect(mastered()).toBe(10);
+
+				for (const id of vimOnly) record(id);
+				expect(used()).toHaveLength(20);
+				expect(mastered()).toBe(20);
+
+				// And back, because the figure is not a property of the mode:
+				// the 10 learned in Vim mode are mastered in default mode too,
+				// even though default mode leaves them unassigned.
+				switchMode('default');
+				expect(mastered()).toBe(20);
+				expect(used()).toHaveLength(20);
+			});
+
+			it('counts the same action used in both modes once', () => {
+				seed(twentyActions());
+
+				record(`${ID_PREFIX}0`);
+				switchMode('vim');
+				const second = record(`${ID_PREFIX}0`);
+
+				expect(second.newLevel).toBeNull();
+				expect(used()).toEqual([`${ID_PREFIX}0`]);
+				expect(mastered()).toBe(1);
+			});
+
+			it('counts an action fired through a customized chord as that action', () => {
+				seed(twentyActions());
+				record(`${ID_PREFIX}3`);
+				expect(used()).toEqual([`${ID_PREFIX}3`]);
+				expect(mastered()).toBe(1);
+
+				// Re-binding is not a new action. Usage is keyed by id, so the
+				// action stays mastered on its new chord and does not count twice.
+				useSettingsStore.setState({
+					shortcuts: {
+						...twentyActions(),
+						[`${ID_PREFIX}3`]: action(`${ID_PREFIX}3`, ['Control', 'Shift', 'z']),
+					},
+				});
+				record(`${ID_PREFIX}3`);
+				expect(used()).toEqual([`${ID_PREFIX}3`]);
+				expect(mastered()).toBe(1);
+
+				// Same again for a chord that only exists in the other mode.
+				useSettingsStore.setState({
+					vimShortcuts: {
+						[`${ID_PREFIX}3`]: override(`${ID_PREFIX}3`, { keys: ['Control', 'Shift', 'y'] }),
+					},
+				});
+				switchMode('vim');
+				record(`${ID_PREFIX}3`);
+				expect(used()).toEqual([`${ID_PREFIX}3`]);
+				expect(mastered()).toBe(1);
+			});
+
+			it('counts an action fired through a key sequence as that action', () => {
+				// No chord at all: `g g` is the only way to fire it, which makes
+				// it as reachable as any chord and so part of the total.
+				const sequenceOnly = `${ID_PREFIX}sequence`;
+				seed({
+					...twentyActions(),
+					[sequenceOnly]: action(sequenceOnly, [], [['g'], ['g']]),
+				});
+				expect(syntheticIds()).toContain(sequenceOnly);
+
+				const before = mastered();
+				record(sequenceOnly);
+
+				// The action ID is what is recorded, never the keys that fired it.
+				expect(used()).toEqual([sequenceOnly]);
+				expect(mastered()).toBe(before + 1);
+			});
+
+			it('takes the denominator from the union of the two modes', () => {
+				const inBoth = `${ID_PREFIX}both`;
+				const defaultOnly = `${ID_PREFIX}default-only`;
+				const vimOnly = `${ID_PREFIX}vim-only`;
+				const neither = `${ID_PREFIX}neither`;
+
+				seed(
+					{
+						[inBoth]: action(inBoth, ['Alt', 'Meta', 'a']),
+						[defaultOnly]: action(defaultOnly, ['Alt', 'Meta', 'b']),
+						[vimOnly]: action(vimOnly, []),
+						[neither]: action(neither, []),
+					},
+					{
+						// Cleared in Vim mode, still bound in default mode.
+						[defaultOnly]: override(defaultOnly, { keys: [] }),
+						// Bound in Vim mode only, and by a SEQUENCE: a bare-key
+						// binding is the whole reason a mode can reach an action
+						// default mode leaves unassigned.
+						[vimOnly]: override(vimOnly, { sequence: [['g'], ['t']] }),
+					}
+				);
+
+				// All three, once each - and the action neither mode binds is
+				// left out, because counting a chord that cannot be pressed
+				// holds the user below 100% forever.
+				const expected = [inBoth, defaultOnly, vimOnly].sort();
+				expect(syntheticIds()).toEqual(expected);
+				switchMode('vim');
+				expect(syntheticIds()).toEqual(expected);
+			});
+
+			it('represents an id bound in both modes with the LIVE mode entry', () => {
+				const inBoth = `${ID_PREFIX}both`;
+				seed(
+					{ [inBoth]: action(inBoth, ['Alt', 'Meta', 'a']) },
+					{ [inBoth]: override(inBoth, { keys: ['Control', 'Shift', 'a'] }) }
+				);
+				const entry = () => masteryBound().find((s) => s.id === inBoth);
+
+				// Membership does not depend on the live mode, but the entry
+				// does: the Usage Dashboard lists the ones the user has not
+				// fired yet, and it has to show the chord they would press now.
+				expect(entry()?.keys).toEqual(['Alt', 'Meta', 'a']);
+				switchMode('vim');
+				expect(entry()?.keys).toEqual(['Control', 'Shift', 'a']);
+			});
+
+			it('hands back the same array until a binding really changes', () => {
+				seed(twentyActions());
+				const first = masteryBound();
+				expect(masteryBound()).toBe(first);
+
+				// The selector runs on EVERY settings change, so an uncached
+				// result would re-render every mastery surface on a font size.
+				useSettingsStore.getState().setFontSize(17);
+				expect(masteryBound()).toBe(first);
+
+				useSettingsStore.setState({ shortcuts: twentyActions() });
+				expect(masteryBound()).not.toBe(first);
+			});
+
+			it('tops out at 100% in either mode, never above it', () => {
+				const neither = `${ID_PREFIX}neither`;
+				seed(
+					{ ...twentyActions(), [neither]: action(neither, []) },
+					// Unbound in Vim mode, so the two modes disagree about this
+					// one and the union has to keep it.
+					{ [`${ID_PREFIX}0`]: override(`${ID_PREFIX}0`, { keys: [] }) }
+				);
+
+				// Everything in the total except one, plus ids that are in NO
+				// total: an action neither mode binds, and a retired id still
+				// sitting in the persisted list from an older build.
+				const bound = boundShortcutIds();
+				useSettingsStore.setState({
+					keyboardMasteryStats: {
+						...DEFAULT_KEYBOARD_MASTERY_STATS,
+						usedShortcuts: [neither, `${ID_PREFIX}retired`, ...bound.slice(0, -1)],
+						currentLevel: 3,
+					},
+				});
+
+				expect(record(bound[bound.length - 1]).newLevel).toBe(KEYBOARD_MASTERY_LEVELS.length - 1);
+				expect(percentage()).toBe(100);
+
+				switchMode('vim');
+				expect(percentage()).toBe(100);
+
+				// A further id that is in no total cannot push it over, and the
+				// level cannot climb past the top one.
+				record(`${ID_PREFIX}also-retired`);
+				expect(percentage()).toBe(100);
+				expect(useSettingsStore.getState().keyboardMasteryStats.currentLevel).toBe(
+					KEYBOARD_MASTERY_LEVELS.length - 1
+				);
+			});
 		});
 
 		it('acknowledgeKeyboardMasteryLevel updates level', () => {
