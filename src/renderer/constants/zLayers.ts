@@ -14,11 +14,16 @@
  *   TOAST         - notifications, visible over modals so async results aren't lost
  *   QUICK_ACTIONS - the command palette owns the screen while it is open,
  *                   including over a stack of toasts
+ *   DECK_HINT_BAR - the armed Deck mode's key table; above the palette because
+ *                   the leader can be armed over ANY open layer, and the one
+ *                   place a user must not be armed and blind is the one where
+ *                   something is already covering the screen
  *   CENTER_FLASH  - momentary "I did the thing" ack; always the top-most pixel
  */
 export const Z_LAYERS = {
 	CONFETTI: 99998,
 	TOAST: 100000,
 	QUICK_ACTIONS: 100001,
-	CENTER_FLASH: 100002,
+	DECK_HINT_BAR: 100002,
+	CENTER_FLASH: 100003,
 } as const;
