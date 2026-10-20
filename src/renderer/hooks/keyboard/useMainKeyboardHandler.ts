@@ -20,6 +20,8 @@ import { requestOpenStagedImagesOrganizer } from '../../services/stagedImagesOrg
 import { toggleAllUnreadFilters } from '../../services/unreadFilters';
 import { toggleInAppToasts } from '../../services/inAppToasts';
 import { keyboardModeToggleShadow, switchKeyboardMode } from '../../services/keyboardMode';
+import { focusRegionDirection, focusRegionVertical } from '../../services/regionFocus';
+import { growFocusedRegion, shrinkFocusedRegion } from '../../services/regionResize';
 import { requestSidebarReveal } from '../../utils/sidebarReveal';
 import { getGitShortcutActions } from '../../services/gitShortcutActions';
 import { useNotificationStore } from '../../stores/notificationStore';
@@ -791,6 +793,15 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			} else if (ctx.isShortcut(e, 'toggleRightPanel')) {
 				ctx.setRightPanelOpen((p: boolean) => !p);
 				trackShortcut('toggleRightPanel');
+			} else if (ctx.isShortcut(e, 'toggleZenMode')) {
+				// Zen composes the two toggles above, so it sits beside them. It writes
+				// the store action rather than ctx.setLeftSidebarOpen / setRightPanelOpen
+				// because the whole point of the action is that entry takes ONE snapshot
+				// of all three visibility booleans and exit spreads it back: three
+				// independent setter calls from here could not restore the Left Bar's
+				// tri-state, and would reopen a Right Bar the user had already closed.
+				useUIStore.getState().toggleZenMode();
+				trackShortcut('toggleZenMode');
 			} else if (ctx.isShortcut(e, 'newInstance')) {
 				e.preventDefault();
 				// Cmd+N goes directly to manual agent creation, bypassing the choice modal
@@ -1103,6 +1114,49 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				ctx.setActiveFocus('sidebar');
 				setTimeout(() => ctx.sidebarContainerRef?.current?.focus(), 0);
 				trackShortcut('focusSidebar');
+			} else if (ctx.isShortcut(e, 'focusRegionLeft')) {
+				// The six region actions generalize focusSidebar above, so they sit
+				// directly after it. Each one is a single call into the service that owns
+				// the behavior - reveal-before-focus, the clamp at both ends, and the
+				// per-region vertical axis all live in regionFocus.ts, which the command
+				// palette rows call too, so a key and a palette row cannot drift apart.
+				e.preventDefault();
+				focusRegionDirection('left');
+				trackShortcut('focusRegionLeft');
+			} else if (ctx.isShortcut(e, 'focusRegionRight')) {
+				e.preventDefault();
+				focusRegionDirection('right');
+				trackShortcut('focusRegionRight');
+			} else if (ctx.isShortcut(e, 'focusRegionUp')) {
+				// Inside a bar, `focusRegionVertical` moves the list selection by
+				// dispatching a bare ArrowUp/ArrowDown at the panel, and that synthetic
+				// event bubbles back to this same window listener. Binding this action to
+				// a bare arrow key therefore has it match its own echo. The guard is the
+				// service's own re-entrancy check rather than an `e.isTrusted` test here:
+				// XTerminal's passthrough and the webview's forwarded input both reach
+				// this handler as UNTRUSTED synthetic events, so trust says nothing about
+				// whether a press was real.
+				e.preventDefault();
+				focusRegionVertical('up');
+				trackShortcut('focusRegionUp');
+			} else if (ctx.isShortcut(e, 'focusRegionDown')) {
+				e.preventDefault();
+				focusRegionVertical('down');
+				trackShortcut('focusRegionDown');
+			} else if (ctx.isShortcut(e, 'growRegion')) {
+				// Zero-arg wrappers, not resizeFocusedRegion(STEP), so the key and the
+				// palette row cannot end up stepping by different amounts. Which region
+				// moves is the service's call: focus in the Main Window steps the Right
+				// Bar INVERTED, because the Main Window is the flex child with no width
+				// of its own and can only grow by taking the step back from a bar. See
+				// src/renderer/services/regionResize.ts for that reasoning in full.
+				e.preventDefault();
+				growFocusedRegion();
+				trackShortcut('growRegion');
+			} else if (ctx.isShortcut(e, 'shrinkRegion')) {
+				e.preventDefault();
+				shrinkFocusedRegion();
+				trackShortcut('shrinkRegion');
 			} else if (ctx.isShortcut(e, 'focusActiveTab')) {
 				e.preventDefault();
 				// First press parks focus on the active tab header. A second press has

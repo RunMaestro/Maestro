@@ -105,6 +105,14 @@ const FOCUS_RETRY_TIMEOUT_MS = 500;
  */
 let cancelPendingFocus: (() => void) | null = null;
 
+/**
+ * True only for the synchronous instant `focusRegionVertical` spends inside its
+ * bar arrow dispatch, so the action cannot be re-entered by the event it just
+ * sent. See the comment at the top of that function for why this is not an
+ * `e.isTrusted` check in the keyboard handler.
+ */
+let dispatchingListArrow = false;
+
 /** Abandon any in-flight region focus. Exported for tests and teardown. */
 export function cancelRegionFocus(): void {
 	cancelPendingFocus?.();
@@ -236,6 +244,20 @@ export function focusRegionDirection(direction: 'left' | 'right'): void {
  * selection in either bar.
  */
 export function focusRegionVertical(direction: 'up' | 'down'): void {
+	// Re-entrancy guard for the bar arrow dispatch at the bottom of this
+	// function. That event bubbles to the window, where `useMainKeyboardHandler`
+	// is listening - so a user who binds `focusRegionUp` to a bare ArrowUp has
+	// this action match its own echo, and without the guard it would recurse
+	// until the stack ran out. The flag works because `dispatchEvent` is
+	// synchronous: the echo arrives inside the try block, never after it.
+	//
+	// The guard lives here rather than as an `e.isTrusted` check in the keyboard
+	// handler because trust does not answer the question. XTerminal's passthrough
+	// and the browser webview's forwarded input both re-dispatch REAL presses to
+	// the window as synthetic events, so an untrusted keydown is routinely a key
+	// the user actually pressed.
+	if (dispatchingListArrow) return;
+
 	const region = focusedRegion();
 
 	if (region === 'mainWindow') {
@@ -264,7 +286,12 @@ export function focusRegionVertical(direction: 'up' | 'down'): void {
 	const panel = document.querySelector<HTMLElement>(selector);
 	if (!panel) return;
 	const key = direction === 'up' ? 'ArrowUp' : 'ArrowDown';
-	panel.dispatchEvent(
-		new KeyboardEvent('keydown', { key, code: key, bubbles: true, cancelable: true })
-	);
+	dispatchingListArrow = true;
+	try {
+		panel.dispatchEvent(
+			new KeyboardEvent('keydown', { key, code: key, bubbles: true, cancelable: true })
+		);
+	} finally {
+		dispatchingListArrow = false;
+	}
 }

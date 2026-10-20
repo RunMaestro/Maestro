@@ -311,6 +311,44 @@ describe('regionFocus', () => {
 			expect(seen[0].target).toBe(rightBar);
 		});
 
+		it('ignores the echo of its own arrow instead of recursing', () => {
+			// The arrow it sends bubbles to the window, which is where
+			// useMainKeyboardHandler listens. A user who binds focusRegionUp to a
+			// bare ArrowUp therefore has the action match its own dispatch; without
+			// the re-entrancy guard that is an unbounded recursion, not a no-op.
+			// This listener stands in for that binding.
+			const { leftBar } = mountRegions();
+			useUIStore.getState().setActiveFocus('sidebar');
+			const seen: KeyboardEvent[] = [];
+			const listener = (e: Event) => {
+				seen.push(e as KeyboardEvent);
+				focusRegionVertical('up');
+			};
+			window.addEventListener('keydown', listener);
+
+			try {
+				expect(() => focusRegionVertical('up')).not.toThrow();
+			} finally {
+				window.removeEventListener('keydown', listener);
+			}
+
+			expect(seen).toHaveLength(1);
+			expect(seen[0].target).toBe(leftBar);
+
+			// And the guard is released afterwards: it covers one synchronous
+			// dispatch, not the rest of the session.
+			const later: KeyboardEvent[] = [];
+			const recorder = (e: Event) => later.push(e as KeyboardEvent);
+			window.addEventListener('keydown', recorder);
+			try {
+				focusRegionVertical('down');
+			} finally {
+				window.removeEventListener('keydown', recorder);
+			}
+			expect(later).toHaveLength(1);
+			expect(later[0].key).toBe('ArrowDown');
+		});
+
 		it('is a no-op when the focused bar is not mounted', () => {
 			useUIStore.getState().setActiveFocus('sidebar');
 			const listener = vi.fn();

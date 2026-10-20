@@ -729,6 +729,16 @@ describe('every registered action has a handler', () => {
 		'clearAllNotifications',
 		'toggleInAppToasts',
 		'openThemeSettings',
+		// Phase 03's region/zen family. Registered unassigned so Settings ->
+		// Shortcuts and Cmd+K can reach them and Vim mode can bind them; these rows
+		// are what pin that binding a key to one actually does something.
+		'focusRegionLeft',
+		'focusRegionRight',
+		'focusRegionUp',
+		'focusRegionDown',
+		'growRegion',
+		'shrinkRegion',
+		'toggleZenMode',
 	];
 
 	it('registers each unbound id with empty keys', () => {

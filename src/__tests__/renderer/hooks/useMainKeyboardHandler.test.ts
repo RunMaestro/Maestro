@@ -27,6 +27,30 @@ const { mockTileNewTabInSession } = vi.hoisted(() => ({ mockTileNewTabInSession:
 vi.mock('../../../renderer/services/tileNewTabAction', () => ({
 	tileNewTabInSession: (...args: unknown[]) => mockTileNewTabInSession(...args),
 }));
+
+// The region actions delegate wholesale to two services, which own their own
+// suites (regionFocus.test.ts, regionResize.test.ts). Spied rather than run so
+// these tests assert the WIRING - which branch calls which function with which
+// direction - instead of re-testing reveal-before-focus and the width clamps.
+// Only the four delegating exports are replaced; the rest of each module stays
+// real, so anything else that imports them is unaffected.
+const { mockFocusRegionDirection, mockFocusRegionVertical, mockGrowRegion, mockShrinkRegion } =
+	vi.hoisted(() => ({
+		mockFocusRegionDirection: vi.fn(),
+		mockFocusRegionVertical: vi.fn(),
+		mockGrowRegion: vi.fn(),
+		mockShrinkRegion: vi.fn(),
+	}));
+vi.mock('../../../renderer/services/regionFocus', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/services/regionFocus')>()),
+	focusRegionDirection: (...args: unknown[]) => mockFocusRegionDirection(...args),
+	focusRegionVertical: (...args: unknown[]) => mockFocusRegionVertical(...args),
+}));
+vi.mock('../../../renderer/services/regionResize', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/services/regionResize')>()),
+	growFocusedRegion: () => mockGrowRegion(),
+	shrinkFocusedRegion: () => mockShrinkRegion(),
+}));
 import { publishGitShortcutActions } from '../../../renderer/services/gitShortcutActions';
 import { getSidebarRevealToken } from '../../../renderer/utils/sidebarReveal';
 
@@ -4718,6 +4742,159 @@ describe('useMainKeyboardHandler', () => {
 			});
 
 			expect(useUIStore.getState().outputSearchByKey[SEARCH_KEY]?.open).toBeFalsy();
+		});
+	});
+
+	/**
+	 * The region/zen family ships UNASSIGNED, so `isShortcut` is the only thing
+	 * that can route a press to one. These pin that each id reaches its action and
+	 * reports itself to keyboard mastery: an action registered in the table but
+	 * never dispatched is the `showSnoozeList` shape - visible in the overlay,
+	 * bindable in Settings, and dead on the keypress.
+	 */
+	describe('region focus, region resize, and zen mode', () => {
+		/** A chord shape; the real binding is whatever the user or Vim mode sets. */
+		const press = () =>
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'ArrowLeft',
+						code: 'ArrowLeft',
+						ctrlKey: true,
+						altKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+		/**
+		 * One mount, rebindable. A second `renderHook` in the same test would add a
+		 * second window listener without removing the first, so one dispatch would
+		 * run the ladder twice - which for a TOGGLE like zen means the press appears
+		 * to do nothing at all.
+		 */
+		function mountHandler() {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			const recordShortcutUsage = vi.fn().mockReturnValue({ newLevel: null });
+			const bind = (actionId: string) => {
+				result.current.keyboardHandlerRef.current = createMockContext({
+					isShortcut: (_e: KeyboardEvent, id: string) => id === actionId,
+					recordShortcutUsage,
+				});
+			};
+			return { bind, recordShortcutUsage };
+		}
+
+		function pressFor(actionId: string) {
+			const { bind, recordShortcutUsage } = mountHandler();
+			bind(actionId);
+			press();
+			return recordShortcutUsage;
+		}
+
+		beforeEach(() => {
+			mockFocusRegionDirection.mockClear();
+			mockFocusRegionVertical.mockClear();
+			mockGrowRegion.mockClear();
+			mockShrinkRegion.mockClear();
+			useUIStore.setState({
+				leftSidebarOpen: true,
+				leftSidebarHidden: false,
+				rightPanelOpen: true,
+				zenMode: false,
+				preZenLayout: null,
+			});
+		});
+
+		it.each([
+			['focusRegionLeft', 'left'],
+			['focusRegionRight', 'right'],
+		])('%s crosses one region %s', (actionId, direction) => {
+			const recordShortcutUsage = pressFor(actionId);
+			expect(mockFocusRegionDirection).toHaveBeenCalledWith(direction);
+			expect(recordShortcutUsage).toHaveBeenCalledWith(actionId);
+		});
+
+		it.each([
+			['focusRegionUp', 'up'],
+			['focusRegionDown', 'down'],
+		])('%s moves %s inside the focused region', (actionId, direction) => {
+			const recordShortcutUsage = pressFor(actionId);
+			expect(mockFocusRegionVertical).toHaveBeenCalledWith(direction);
+			expect(recordShortcutUsage).toHaveBeenCalledWith(actionId);
+		});
+
+		it('growRegion and shrinkRegion step through the zero-arg wrappers', () => {
+			// Zero-arg on purpose: the step size lives in the service, so the key and
+			// the Quick Actions row cannot end up resizing by different amounts.
+			const { bind, recordShortcutUsage } = mountHandler();
+
+			bind('growRegion');
+			press();
+			expect(mockGrowRegion).toHaveBeenCalledTimes(1);
+			expect(mockShrinkRegion).not.toHaveBeenCalled();
+			expect(recordShortcutUsage).toHaveBeenCalledWith('growRegion');
+
+			bind('shrinkRegion');
+			press();
+			expect(mockShrinkRegion).toHaveBeenCalledTimes(1);
+			expect(mockGrowRegion).toHaveBeenCalledTimes(1);
+			expect(recordShortcutUsage).toHaveBeenCalledWith('shrinkRegion');
+		});
+
+		it('the direction keys claim their keypress', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'focusRegionUp',
+				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			});
+
+			const event = new KeyboardEvent('keydown', {
+				key: 'ArrowUp',
+				code: 'ArrowUp',
+				ctrlKey: true,
+				bubbles: true,
+				cancelable: true,
+			});
+			const preventDefault = vi.spyOn(event, 'preventDefault');
+
+			act(() => {
+				window.dispatchEvent(event);
+			});
+
+			expect(preventDefault).toHaveBeenCalled();
+		});
+
+		it('toggleZenMode hides both bars and restores them on a second press', () => {
+			// Goes through the store action rather than the two visibility setters so
+			// one press is one snapshot-taking transaction.
+			const { bind, recordShortcutUsage } = mountHandler();
+			bind('toggleZenMode');
+
+			press();
+			expect(useUIStore.getState().zenMode).toBe(true);
+			expect(useUIStore.getState().leftSidebarHidden).toBe(true);
+			expect(useUIStore.getState().rightPanelOpen).toBe(false);
+			expect(recordShortcutUsage).toHaveBeenCalledWith('toggleZenMode');
+
+			press();
+			expect(useUIStore.getState().zenMode).toBe(false);
+			expect(useUIStore.getState().leftSidebarOpen).toBe(true);
+			expect(useUIStore.getState().leftSidebarHidden).toBe(false);
+			expect(useUIStore.getState().rightPanelOpen).toBe(true);
+		});
+
+		it('leaving zen does not reopen a Right Bar the user had already closed', () => {
+			useUIStore.setState({ rightPanelOpen: false });
+			const { bind } = mountHandler();
+			bind('toggleZenMode');
+
+			press();
+			expect(useUIStore.getState().zenMode).toBe(true);
+			press();
+
+			expect(useUIStore.getState().rightPanelOpen).toBe(false);
+			expect(useUIStore.getState().leftSidebarOpen).toBe(true);
 		});
 	});
 });
