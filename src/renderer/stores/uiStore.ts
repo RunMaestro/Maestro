@@ -46,12 +46,37 @@ export interface PendingLogJump {
 	logId: string;
 }
 
+/**
+ * The exact visibility of both bars at the moment zen mode was entered, so
+ * leaving restores what the user had rather than what zen assumes they had.
+ *
+ * All THREE flags, not two: the Left Bar is a tri-state, so a user who was
+ * sitting in the collapsed status-dot strip (`!hidden && !open`) has to land
+ * back in the strip and not in the full panel.
+ */
+export interface ZenLayoutSnapshot {
+	leftSidebarOpen: boolean;
+	leftSidebarHidden: boolean;
+	rightPanelOpen: boolean;
+}
+
 export interface UIStoreState {
 	// Sidebar - tri-state via two booleans: !hidden && open = full panel,
 	// !hidden && !open = collapsed status-dot strip, hidden = no panel at all.
 	leftSidebarOpen: boolean;
 	leftSidebarHidden: boolean;
 	rightPanelOpen: boolean;
+
+	// Zen mode: both bars put away so the Main Window has the whole window.
+	// Transient (not persisted) - zen is a posture for the next few minutes of
+	// reading, not a layout someone should find themselves still in after a
+	// restart with no memory of how they got there.
+	zenMode: boolean;
+	/**
+	 * What the bars looked like before zen, restored verbatim on the way out.
+	 * null whenever `zenMode` is false. See {@link ZenLayoutSnapshot}.
+	 */
+	preZenLayout: ZenLayoutSnapshot | null;
 
 	// Focus
 	activeFocus: FocusArea;
@@ -213,6 +238,26 @@ export interface UIStoreActions {
 	cycleLeftSidebar: () => void;
 	setRightPanelOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
 	toggleRightPanel: () => void;
+	/**
+	 * Put both bars away and give the whole window to the Main Window; press
+	 * again to put them back exactly as they were. Returns whether zen is now ON.
+	 *
+	 * The restore reads a SNAPSHOT taken on entry rather than assuming both bars
+	 * were open: someone who already works with the Right Bar closed must not
+	 * find it open after a round trip through zen, and someone parked in the
+	 * Left Bar's collapsed strip must land back in the strip.
+	 *
+	 * Nothing is destroyed on either leg. This writes three visibility booleans
+	 * and nothing else - no tab is closed, no transcript dropped, no panel state
+	 * reset - so the way out is as cheap as the way in.
+	 *
+	 * Entering fires a center flash naming the way out, because zen removes the
+	 * two bars the user would otherwise click to undo it, and the action ships
+	 * unassigned: without the flash, a user who reached it from the palette has
+	 * no visible route back. See {@link setZenExitChordResolver} for how the
+	 * chord half of that message is resolved.
+	 */
+	toggleZenMode: () => boolean;
 	/**
 	 * Narrow viewports: the left drawer covers the main panel, so activating
 	 * anything listed in it - an agent row, a group chat, a starred session - is
@@ -416,11 +461,53 @@ function persistHiddenPluginPanels(value: string[]): void {
 	window.maestro?.settings?.set('hiddenPluginPanels', value);
 }
 
+/**
+ * What zen mode's flash says when no chord is bound to `toggleZenMode`, which
+ * is how it ships. Names the palette by the label the action carries in
+ * `DEFAULT_SHORTCUTS`, so searching Quick Actions for the words in the flash
+ * finds the entry that turns it back off.
+ */
+const ZEN_EXIT_HINT_UNBOUND = 'To exit, run Toggle Zen Mode again from Quick Actions';
+
+/**
+ * Resolves the chord currently bound to `toggleZenMode`, formatted for display,
+ * or null when the action is unbound in the live keyboard mode.
+ */
+export type ZenExitChordResolver = () => string | null;
+
+let resolveZenExitChord: ZenExitChordResolver = () => null;
+
+/**
+ * Teach this store how to name the chord that leaves zen mode.
+ *
+ * A seam rather than an import because the bindings live in settingsStore, and
+ * settingsStore already imports THIS module. Importing it back would make the
+ * single most widely imported store in the renderer drag the whole settings
+ * module graph into every test and every bundle chunk that touches a sidebar
+ * flag, to resolve one hint string. The resolver is installed once from
+ * settingsStore, which is where the live binding map already is.
+ *
+ * The default answers null, so an uninstalled resolver degrades to naming Quick
+ * Actions - true for every user who has not bound a chord, and the shipped
+ * state of the action either way.
+ */
+export function setZenExitChordResolver(resolver: ZenExitChordResolver): void {
+	resolveZenExitChord = resolver;
+}
+
+/** The flash detail line for entering zen: the chord out, or the palette route. */
+function zenExitHint(): string {
+	const chord = resolveZenExitChord();
+	return chord ? `Press ${chord} to exit` : ZEN_EXIT_HINT_UNBOUND;
+}
+
 export const useUIStore = create<UIStore>()((set) => ({
 	// --- State ---
 	leftSidebarOpen: true,
 	leftSidebarHidden: false,
 	rightPanelOpen: true,
+	zenMode: false,
+	preZenLayout: null,
 	activeFocus: 'main',
 	activeRightTab: 'files',
 	zoomedPaneId: null,
@@ -468,6 +555,38 @@ export const useUIStore = create<UIStore>()((set) => ({
 		}),
 	setRightPanelOpen: (v) => set((s) => ({ rightPanelOpen: resolve(v, s.rightPanelOpen) })),
 	toggleRightPanel: () => set((s) => ({ rightPanelOpen: !s.rightPanelOpen })),
+	toggleZenMode: () => {
+		let entered = false;
+		set((s) => {
+			if (s.zenMode) {
+				// Leaving: replay the snapshot. Spread LAST so it wins over nothing
+				// and reads as "these three fields go back to what they were". A
+				// missing snapshot (only reachable if something set `zenMode` behind
+				// this action's back) leaves the bars exactly where they are rather
+				// than guessing a layout the user never had.
+				return { zenMode: false, preZenLayout: null, ...(s.preZenLayout ?? {}) };
+			}
+			entered = true;
+			return {
+				zenMode: true,
+				preZenLayout: {
+					leftSidebarOpen: s.leftSidebarOpen,
+					leftSidebarHidden: s.leftSidebarHidden,
+					rightPanelOpen: s.rightPanelOpen,
+				},
+				// `hidden`, not merely `!open`: the collapsed Left Bar is still a
+				// 64px strip of status dots, and zen is the state where the Main
+				// Window has the window.
+				leftSidebarOpen: false,
+				leftSidebarHidden: true,
+				rightPanelOpen: false,
+			};
+		});
+		// Outside the updater: `set` can be called more than once for one commit,
+		// and a flash fired from inside it would be a side effect in a reducer.
+		if (entered) notifyCenterFlash({ message: 'Zen Mode', detail: zenExitHint() });
+		return entered;
+	},
 	closeLeftSidebarForNavigation: () =>
 		set((s) => (s.leftSidebarOpen && isNarrowViewportNow() ? { leftSidebarOpen: false } : s)),
 	closeRightPanelForNavigation: () =>

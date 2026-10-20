@@ -17,6 +17,7 @@
 import { create } from 'zustand';
 import type { BrowserConfirmPolicy } from '../../shared/coworkingBrowser';
 import { isWindowsPlatform } from '../utils/platformUtils';
+import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { isWebDesktop } from '../utils/runtimeContext';
 import type {
 	CustomAICommand,
@@ -70,7 +71,7 @@ import {
 import { sanitizeMediaItems, sanitizeMediaTimes } from '../utils/mediaItems';
 import { sanitizeMediaFloat } from '../utils/mediaFloatGeometry';
 import { logger } from '../utils/logger';
-import { useUIStore } from './uiStore';
+import { setZenExitChordResolver, useUIStore } from './uiStore';
 import {
 	useSnoozeHistoryStore,
 	sanitizeSnoozeHistory,
@@ -103,6 +104,7 @@ import type { ShortcutsState, ShortcutsActions } from './settingsShortcutsSlice'
 import {
 	createShortcutsSlice,
 	hydrateShortcutsSettings,
+	selectActiveShortcuts,
 	selectMasteryBoundShortcuts,
 } from './settingsShortcutsSlice';
 import type { ThemeState, ThemeActions } from './settingsThemeSlice';
@@ -1997,6 +1999,17 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 			return null;
 		},
 	};
+});
+
+// uiStore's zen-mode flash names the chord that leaves zen mode, and that
+// binding lives here. Installed from this side rather than imported from
+// uiStore, because uiStore is the single most widely imported store in the
+// renderer and this module already imports IT - see setZenExitChordResolver.
+// Read through `selectActiveShortcuts` so Vim mode's chord is named while Vim
+// mode is live, and formatted the way every other chord in the UI is drawn.
+setZenExitChordResolver(() => {
+	const keys = selectActiveShortcuts(useSettingsStore.getState()).toggleZenMode?.keys;
+	return keys && keys.length > 0 ? formatShortcutKeys(keys) : null;
 });
 
 // ============================================================================

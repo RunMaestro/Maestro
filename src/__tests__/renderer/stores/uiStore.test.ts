@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { useUIStore } from '../../../renderer/stores/uiStore';
+import { setZenExitChordResolver, useUIStore } from '../../../renderer/stores/uiStore';
+import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
 import { resetStore } from '../../helpers';
 
 describe('uiStore', () => {
@@ -189,6 +190,191 @@ describe('uiStore', () => {
 				expect(useUIStore.getState().rightPanelOpen).toBe(false);
 				expect(useUIStore.getState().leftSidebarOpen).toBe(true);
 			});
+		});
+	});
+
+	describe('zen mode', () => {
+		const setBars = (
+			leftSidebarOpen: boolean,
+			leftSidebarHidden: boolean,
+			rightPanelOpen: boolean
+		) => {
+			useUIStore.setState({ leftSidebarOpen, leftSidebarHidden, rightPanelOpen });
+		};
+
+		const bars = () => {
+			const s = useUIStore.getState();
+			return {
+				leftSidebarOpen: s.leftSidebarOpen,
+				leftSidebarHidden: s.leftSidebarHidden,
+				rightPanelOpen: s.rightPanelOpen,
+			};
+		};
+
+		beforeEach(() => {
+			setZenExitChordResolver(() => null);
+			useCenterFlashStore.getState().setActive(null);
+		});
+
+		afterEach(() => {
+			setZenExitChordResolver(() => null);
+		});
+
+		it('ships off, with nothing parked', () => {
+			expect(useUIStore.getState().zenMode).toBe(false);
+			expect(useUIStore.getState().preZenLayout).toBeNull();
+		});
+
+		it('entering puts BOTH bars away and reports that zen is now on', () => {
+			expect(useUIStore.getState().toggleZenMode()).toBe(true);
+
+			expect(useUIStore.getState().zenMode).toBe(true);
+			expect(bars()).toEqual({
+				// `hidden`, not merely closed: the collapsed Left Bar is still a
+				// 64px strip, which is not "the Main Window has the window".
+				leftSidebarOpen: false,
+				leftSidebarHidden: true,
+				rightPanelOpen: false,
+			});
+		});
+
+		it('leaving restores both bars and reports that zen is now off', () => {
+			useUIStore.getState().toggleZenMode();
+			expect(useUIStore.getState().toggleZenMode()).toBe(false);
+
+			expect(useUIStore.getState().zenMode).toBe(false);
+			expect(bars()).toEqual({
+				leftSidebarOpen: true,
+				leftSidebarHidden: false,
+				rightPanelOpen: true,
+			});
+		});
+
+		it('leaving does NOT open a Right Bar the user already had closed', () => {
+			setBars(true, false, false);
+
+			useUIStore.getState().toggleZenMode();
+			useUIStore.getState().toggleZenMode();
+
+			expect(bars()).toEqual({
+				leftSidebarOpen: true,
+				leftSidebarHidden: false,
+				rightPanelOpen: false,
+			});
+		});
+
+		it('leaving returns a collapsed Left Bar to the strip, not to the full panel', () => {
+			// The tri-state's middle rung: !hidden && !open is the status-dot strip.
+			setBars(false, false, true);
+
+			useUIStore.getState().toggleZenMode();
+			useUIStore.getState().toggleZenMode();
+
+			expect(bars()).toEqual({
+				leftSidebarOpen: false,
+				leftSidebarHidden: false,
+				rightPanelOpen: true,
+			});
+		});
+
+		it('leaving returns an already-hidden Left Bar to hidden', () => {
+			setBars(false, true, true);
+
+			useUIStore.getState().toggleZenMode();
+			useUIStore.getState().toggleZenMode();
+
+			expect(bars()).toEqual({
+				leftSidebarOpen: false,
+				leftSidebarHidden: true,
+				rightPanelOpen: true,
+			});
+		});
+
+		it('survives repeated round trips without drifting', () => {
+			setBars(true, false, false);
+			const before = bars();
+
+			for (let i = 0; i < 3; i++) {
+				useUIStore.getState().toggleZenMode();
+				useUIStore.getState().toggleZenMode();
+			}
+
+			expect(bars()).toEqual(before);
+			expect(useUIStore.getState().zenMode).toBe(false);
+		});
+
+		it('clears the parked snapshot on the way out', () => {
+			useUIStore.getState().toggleZenMode();
+			expect(useUIStore.getState().preZenLayout).toEqual({
+				leftSidebarOpen: true,
+				leftSidebarHidden: false,
+				rightPanelOpen: true,
+			});
+
+			useUIStore.getState().toggleZenMode();
+			expect(useUIStore.getState().preZenLayout).toBeNull();
+		});
+
+		it('destroys no tab, transcript, or panel state on either leg', () => {
+			// Everything a zen round trip must leave alone: the active right tab,
+			// the per-tab find bars, a pending transcript jump, and the tab ids
+			// the filter/terminal toggles park.
+			useUIStore.getState().setActiveRightTab('history');
+			useUIStore.getState().setOutputSearchQuery('agent-1::tab-1', 'needle');
+			useUIStore.getState().setPendingLogJump({
+				sessionId: 'agent-1',
+				tabId: 'tab-1',
+				logId: 'log-9',
+			});
+			useUIStore.getState().setPreFilterActiveTabId('tab-7');
+			useUIStore.getState().setPreTerminalFileTabId('file-3');
+			useUIStore.getState().requestTabFocus({ type: 'browser', id: 'b-1' });
+			useUIStore.getState().setZoomedPaneId('leaf-2');
+
+			const untouched = () => {
+				const s = useUIStore.getState();
+				return {
+					activeRightTab: s.activeRightTab,
+					outputSearchByKey: s.outputSearchByKey,
+					pendingLogJump: s.pendingLogJump,
+					preFilterActiveTabId: s.preFilterActiveTabId,
+					preTerminalFileTabId: s.preTerminalFileTabId,
+					focusRequest: s.focusRequest,
+					zoomedPaneId: s.zoomedPaneId,
+				};
+			};
+			const before = untouched();
+
+			useUIStore.getState().toggleZenMode();
+			expect(untouched()).toEqual(before);
+
+			useUIStore.getState().toggleZenMode();
+			expect(untouched()).toEqual(before);
+		});
+
+		it('flashes the Quick Actions route when no chord is bound', () => {
+			useUIStore.getState().toggleZenMode();
+
+			const active = useCenterFlashStore.getState().active;
+			expect(active?.message).toBe('Zen Mode');
+			expect(active?.detail).toBe('To exit, run Toggle Zen Mode again from Quick Actions');
+		});
+
+		it('flashes the bound chord when one is bound', () => {
+			setZenExitChordResolver(() => '⌘ ⇧ Z');
+
+			useUIStore.getState().toggleZenMode();
+
+			expect(useCenterFlashStore.getState().active?.detail).toBe('Press ⌘ ⇧ Z to exit');
+		});
+
+		it('flashes on the way IN only - leaving is self-evident', () => {
+			useUIStore.getState().toggleZenMode();
+			useCenterFlashStore.getState().setActive(null);
+
+			useUIStore.getState().toggleZenMode();
+
+			expect(useCenterFlashStore.getState().active).toBeNull();
 		});
 	});
 

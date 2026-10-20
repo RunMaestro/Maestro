@@ -15,6 +15,8 @@ import { SETTINGS_METADATA } from '../../../shared/settingsMetadata';
 import { MAESTRO_FONT_STACK } from '../../../shared/fontStack';
 import { DEFAULT_CUE_HISTORY_RETENTION_DAYS } from '../../../shared/cue/retention';
 import { useUIStore } from '../../../renderer/stores/uiStore';
+import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
+import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 import { useNotificationStore } from '../../../renderer/stores/notificationStore';
 import {
 	selectShowNowPlayingIndicator,
@@ -915,6 +917,61 @@ describe('settingsStore', () => {
 
 				expect(useSettingsStore.getState().shortcuts.toggleSidebar.keys).toEqual(['Meta', 'b']);
 				expect(useSettingsStore.getState().vimShortcuts.toggleSidebar.keys).toEqual(['Ctrl', 'n']);
+			});
+
+			// uiStore's zen flash has to name the way out of zen mode, and the
+			// binding lives here. This store installs the resolver that answers
+			// it (see setZenExitChordResolver) - these cover the seam end to end,
+			// because a resolver that stopped being installed would degrade
+			// silently to the Quick Actions wording.
+			describe('zen exit chord resolver (installed into uiStore)', () => {
+				// uiStore is not reset between these, and a toggle out of zen does
+				// not flash - so without this, the second case would read the first
+				// one's flash and pass on a stale string.
+				beforeEach(() => {
+					useUIStore.setState({ zenMode: false, preZenLayout: null });
+					useCenterFlashStore.getState().setActive(null);
+				});
+
+				it('names the chord bound in the live mode', () => {
+					useSettingsStore.getState().setShortcuts({
+						...DEFAULT_SHORTCUTS,
+						toggleZenMode: { ...DEFAULT_SHORTCUTS.toggleZenMode, keys: ['Meta', 'Shift', 'z'] },
+					});
+
+					useUIStore.getState().toggleZenMode();
+
+					expect(useCenterFlashStore.getState().active?.detail).toBe(
+						`Press ${formatShortcutKeys(['Meta', 'Shift', 'z'])} to exit`
+					);
+				});
+
+				it('follows the live keyboard mode rather than the default bucket', () => {
+					useSettingsStore.getState().setShortcuts({
+						...DEFAULT_SHORTCUTS,
+						toggleZenMode: { ...DEFAULT_SHORTCUTS.toggleZenMode, keys: ['Meta', 'Shift', 'z'] },
+					});
+					useSettingsStore.getState().setKeyboardMode('vim');
+					useSettingsStore.getState().setVimShortcuts({
+						...VIM_SHORTCUTS,
+						toggleZenMode: { id: 'toggleZenMode', keys: ['Ctrl', 'w'] },
+					});
+
+					useUIStore.getState().toggleZenMode();
+
+					expect(useCenterFlashStore.getState().active?.detail).toBe(
+						`Press ${formatShortcutKeys(['Ctrl', 'w'])} to exit`
+					);
+				});
+
+				it('falls back to the Quick Actions route while the action is unbound', () => {
+					// How it ships: `toggleZenMode` has `keys: []` in DEFAULT_SHORTCUTS.
+					useUIStore.getState().toggleZenMode();
+
+					expect(useCenterFlashStore.getState().active?.detail).toBe(
+						'To exit, run Toggle Zen Mode again from Quick Actions'
+					);
+				});
 			});
 
 			it('setCustomAICommands updates state and persists', () => {

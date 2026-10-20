@@ -506,6 +506,16 @@ deliberate design constraints, including protected host consent, are noted below
     is a value (`checkCueReadiness()` in `src/main/cue/cue-readiness.ts`), so a
     Cue modal panel could render its gaps directly; it is CLI first because it
     exists for unattended servers, where nobody opens the desktop.
+17. **Window chrome visibility: Left Bar, Right Bar, and Zen Mode.** Toggle
+    Left Panel, Toggle Right Panel, and Toggle Zen Mode (which puts both away
+    and restores them) all live in `uiStore` with no WS message and no verb
+    behind them; the region focus and resize actions beside them are in the
+    same position. Pure presentation of the window an agent is not looking at,
+    which is why it sits here rather than higher: nothing an agent does depends
+    on whether a bar is drawn. Closing it means one renderer round trip for the
+    whole family (the stores are transient and never reach main), at which
+    point the natural shape is `layout zen|left|right [on|off]` reading back
+    the three visibility booleans.
 
 ### Audit backlog (2026-09-27)
 
