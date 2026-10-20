@@ -36,6 +36,7 @@ import {
 	findReservedShortcutCombo,
 	shortcutKeysCollide,
 	shortcutKeysEqual,
+	shortcutSequencesEqual,
 } from '../../../shared/shortcutKeys';
 import { resolveEffectiveShortcuts } from '../../../shared/effectiveShortcuts';
 import type { ShortcutBaseMaps, ShortcutOverrideMaps } from '../../../shared/effectiveShortcuts';
@@ -519,35 +520,58 @@ describe('Vim override tables', () => {
 	});
 
 	/**
-	 * The Vim-native tab walk takes `Ctrl+PageUp` / `Ctrl+PageDown`, and this is
-	 * the resolver-free half of "the shipped Vim tables displace nothing": no
-	 * shipped default binding fires on either chord, so no action loses its
-	 * inherited chord when Vim mode comes on.
+	 * The resolver-free half of rule 3, "a displaced action always gets an
+	 * explicit Vim chord".
+	 *
+	 * A Vim chord taking a chord some default action holds is ALLOWED and is the
+	 * point of the override bucket (one mode is live at a time). What is not
+	 * allowed is taking it and leaving the other action to inherit nothing: the
+	 * override wins, so that action is unbound in Vim mode unless this file gives
+	 * it a chord of its own. The region family does exactly that to the five
+	 * Cmd+Shift+H/J/K/L actions, and each one appears in a Vim table with its own
+	 * Ctrl+Alt+Shift chord.
+	 *
+	 * `FIXED_SHORTCUTS` is the exception with no escape hatch: it is shared by
+	 * both modes and no override bucket may name it (the test above pins that),
+	 * so a Vim chord landing on one of its chords can never be resolved and is
+	 * always a bug.
+	 *
+	 * This is the table-level check. The resolved-set version, which also covers
+	 * a collision between two Vim chords, is `displaced` being empty in the
+	 * per-mode block below.
 	 */
-	it('shipped Vim chords collide with no shipped default binding', () => {
+	it('gives every action a shipped Vim chord displaces a Vim chord of its own', () => {
 		const vimChords = VIM_TABLES.flatMap(([, table]) =>
 			Object.values(table).map((override) => ({ id: override.id, keys: override.keys ?? [] }))
 		);
+		// An id with a chord in EITHER bucket is resolved; `collectOverrideField`
+		// reads both, preferring the one mirroring the base map that declares it.
+		const rebound = new Set(vimChords.filter((vim) => vim.keys.length > 0).map((vim) => vim.id));
 		const defaults: [string, Record<string, Shortcut>][] = [
 			['DEFAULT_SHORTCUTS', DEFAULT_SHORTCUTS],
 			['TAB_SHORTCUTS', TAB_SHORTCUTS],
 			['FIXED_SHORTCUTS', FIXED_SHORTCUTS],
 		];
 
-		const collisions: string[] = [];
+		const unresolved: string[] = [];
 		for (const vim of vimChords) {
 			for (const [tableName, table] of defaults) {
 				for (const sc of Object.values(table)) {
-					// An action keeping its own chord in Vim mode is not a collision.
+					// An action keeping its own chord in Vim mode displaces nothing.
 					if (sc.id === vim.id) continue;
-					if (shortcutKeysCollide(sc.keys, vim.keys)) {
-						collisions.push(`${vim.id} (${vim.keys.join('+')}) vs ${tableName}.${sc.id}`);
-					}
+					if (!shortcutKeysCollide(sc.keys, vim.keys)) continue;
+					// Resolved: the displaced action is rebound in a Vim table. A
+					// FIXED_SHORTCUTS id never can be, so it is reported either way.
+					if (tableName !== 'FIXED_SHORTCUTS' && rebound.has(sc.id)) continue;
+					unresolved.push(`${vim.id} (${vim.keys.join('+')}) vs ${tableName}.${sc.id}`);
 				}
 			}
 		}
 
-		expect(collisions).toEqual([]);
+		expect(
+			unresolved,
+			'These Vim chords take a chord another action holds in default mode and leave it unbound in Vim mode. Give the displaced action its own Vim chord and record it in the displacement table in vimShortcuts.ts.'
+		).toEqual([]);
 	});
 });
 
@@ -651,11 +675,45 @@ describe('effective binding set, per keyboard mode', () => {
 		// their default chords and Vim's tab walk would silently not exist.
 		const byId = new Map(effectiveActions('vim').map((sc) => [sc.id, sc.keys]));
 		const wrong = [...Object.values(VIM_SHORTCUTS), ...Object.values(VIM_TAB_SHORTCUTS)]
+			// An override that omits `keys` is the explicit spelling of "inherit the
+			// default-mode chord" (`goToTab1` and `goToLastTab` add a `g g` / `G`
+			// sequence and keep Cmd+1 / Cmd+0), so there is no chord to check. Only
+			// an override that ASKS for a chord has to get it.
+			.filter((override) => override.keys !== undefined)
 			.filter((override) => !shortcutKeysEqual(byId.get(override.id) ?? [], override.keys ?? []))
 			.map(
 				(override) =>
 					`${override.id}: ${byId.get(override.id)?.join('+')} !== ${override.keys?.join('+')}`
 			);
+
+		expect(wrong).toEqual([]);
+	});
+
+	it('gives the shipped Vim overrides the sequence they ask for, and leaves the chord alone', () => {
+		// The two triggers resolve INDEPENDENTLY, and this is the half with no
+		// shipped data behind it until now: an override spelling only a `sequence`
+		// must gain that sequence AND keep the chord it inherits. Resolving them
+		// together would make `g g` silently unbind Cmd+1.
+		const resolved = resolveEffectiveShortcuts(BASE, OVERRIDES.vim);
+		const byId = new Map(
+			[...Object.values(resolved.shortcuts), ...Object.values(resolved.tabShortcuts)].map((sc) => [
+				sc.id,
+				sc,
+			])
+		);
+
+		const wrong: string[] = [];
+		for (const override of [...Object.values(VIM_SHORTCUTS), ...Object.values(VIM_TAB_SHORTCUTS)]) {
+			if (override.sequence === undefined) continue;
+			const effective = byId.get(override.id);
+			if (!shortcutSequencesEqual(effective?.sequence, override.sequence)) {
+				wrong.push(`${override.id}: sequence not applied`);
+			}
+			// Sequence-only overrides keep the inherited chord rather than losing it.
+			if (override.keys === undefined && !effective?.keys.length) {
+				wrong.push(`${override.id}: a sequence override took away the inherited chord`);
+			}
+		}
 
 		expect(wrong).toEqual([]);
 	});

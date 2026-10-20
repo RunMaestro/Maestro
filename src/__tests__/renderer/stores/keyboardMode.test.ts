@@ -185,9 +185,25 @@ describe('keyboard mode', () => {
 			expect(resolved).not.toBe(state.shortcuts);
 			expect(resolved.prevTab.keys).toEqual(VIM_TAB_SHORTCUTS.prevTab.keys);
 			expect(resolved.nextTab.keys).toEqual(VIM_TAB_SHORTCUTS.nextTab.keys);
-			// Nothing in TAB_SHORTCUTS is overridden or displaced by the shipped
-			// Vim tables, so that map comes back untouched.
-			expect(selectActiveTabShortcuts(state)).toBe(state.tabShortcuts);
+
+			// The tab map is resolved too: the Vim tables override ids declared in
+			// TAB_SHORTCUTS (the tab move pair, and `toggleShowThinking`, which the
+			// region family displaced off Cmd+Shift+K).
+			const resolvedTabs = selectActiveTabShortcuts(state);
+			expect(resolvedTabs).not.toBe(state.tabShortcuts);
+			expect(resolvedTabs.moveTabLeft.keys).toEqual(VIM_TAB_SHORTCUTS.moveTabLeft.keys);
+			expect(resolvedTabs.moveTabRight.keys).toEqual(VIM_TAB_SHORTCUTS.moveTabRight.keys);
+			expect(resolvedTabs.toggleShowThinking.keys).toEqual(
+				VIM_TAB_SHORTCUTS.toggleShowThinking.keys
+			);
+			// A sequence override leaves the inherited chord alone, so `goToTab1`
+			// answers to `g g` AND keeps Cmd+1.
+			expect(resolvedTabs.goToTab1.sequence).toEqual(VIM_TAB_SHORTCUTS.goToTab1.sequence);
+			expect(resolvedTabs.goToTab1.keys).toEqual(state.tabShortcuts.goToTab1.keys);
+			// Identity is preserved per entry: an action no Vim override mentions
+			// comes back as the same object, so consumers memoizing on it do not
+			// re-render on a mode switch.
+			expect(resolvedTabs.newTab).toBe(state.tabShortcuts.newTab);
 		});
 
 		it('returns the same object across calls, and across an unrelated settings change', () => {
