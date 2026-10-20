@@ -66,6 +66,7 @@ The two system-wide hotkeys cannot share a combo. If you set one to the other's 
 | Focus Region Down             | unassigned by default   | unassigned by default     |
 | Grow Region                   | unassigned by default   | unassigned by default     |
 | Shrink Region                 | unassigned by default   | unassigned by default     |
+| Deck Mode (Leader Key)        | unassigned by default   | unassigned by default     |
 | Show Shortcuts Help           | `Cmd+/`                 | `Ctrl+/`                  |
 | Open Settings                 | `Cmd+,`                 | `Ctrl+,`                  |
 | Open Agent Settings           | `Opt+Cmd+,`             | `Alt+Ctrl+,`              |
@@ -729,26 +730,27 @@ Every action not listed here keeps its Default-mode chord. Each row gives the
 chord, which fires wherever focus sits, and the **normal-mode key** where Vim
 has one - the bare keys, typed with no modifier.
 
-| Action               | macOS                 | Windows/Linux         | Normal-mode key |
-| -------------------- | --------------------- | --------------------- | --------------- |
-| Focus Region Left    | `Ctrl+Shift+H`        | `Ctrl+Shift+H`        | `h`             |
-| Focus Region Down    | `Ctrl+Shift+J`        | `Ctrl+Shift+J`        | `j`             |
-| Focus Region Up      | `Ctrl+Shift+K`        | `Ctrl+Shift+K`        | `k`             |
-| Focus Region Right   | `Ctrl+Shift+L`        | `Ctrl+Shift+L`        | `l`             |
-| Shrink Region        | `Ctrl+Opt+Shift+,`    | `Ctrl+Alt+Shift+,`    | -               |
-| Grow Region          | `Ctrl+Opt+Shift+.`    | `Ctrl+Alt+Shift+.`    | -               |
-| Toggle Zen Mode      | `Ctrl+Opt+O`          | `Ctrl+Alt+O`          | `z`             |
-| Previous Tab         | `Ctrl+PageUp`         | `Ctrl+PageUp`         | `g T`           |
-| Next Tab             | `Ctrl+PageDown`       | `Ctrl+PageDown`       | `g t`           |
-| Move Tab Left        | `Ctrl+Shift+PageUp`   | `Ctrl+Shift+PageUp`   | `< <`           |
-| Move Tab Right       | `Ctrl+Shift+PageDown` | `Ctrl+Shift+PageDown` | `> >`           |
-| Go to Tab 1          | `Cmd+1`               | `Ctrl+1`              | `g g`           |
-| Go to Last Tab       | `Cmd+0`               | `Ctrl+0`              | `G`             |
-| Go to History Tab    | `Ctrl+Opt+Shift+H`    | `Ctrl+Alt+Shift+H`    | -               |
-| Jump to Bottom       | `Ctrl+Opt+Shift+J`    | `Ctrl+Alt+Shift+J`    | -               |
-| Clear Terminal       | `Ctrl+Opt+Shift+K`    | `Ctrl+Alt+Shift+K`    | -               |
-| Toggle Show Thinking | `Ctrl+Opt+Shift+K`    | `Ctrl+Alt+Shift+K`    | -               |
-| View Agent Sessions  | `Ctrl+Opt+Shift+L`    | `Ctrl+Alt+Shift+L`    | -               |
+| Action                 | macOS                 | Windows/Linux         | Normal-mode key |
+| ---------------------- | --------------------- | --------------------- | --------------- |
+| Focus Region Left      | `Ctrl+Shift+H`        | `Ctrl+Shift+H`        | `h`             |
+| Focus Region Down      | `Ctrl+Shift+J`        | `Ctrl+Shift+J`        | `j`             |
+| Focus Region Up        | `Ctrl+Shift+K`        | `Ctrl+Shift+K`        | `k`             |
+| Focus Region Right     | `Ctrl+Shift+L`        | `Ctrl+Shift+L`        | `l`             |
+| Shrink Region          | `Ctrl+Opt+Shift+,`    | `Ctrl+Alt+Shift+,`    | -               |
+| Grow Region            | `Ctrl+Opt+Shift+.`    | `Ctrl+Alt+Shift+.`    | -               |
+| Toggle Zen Mode        | `Ctrl+Opt+O`          | `Ctrl+Alt+O`          | `z`             |
+| Deck Mode (Leader Key) | `Ctrl+;`              | `Ctrl+;`              | -               |
+| Previous Tab           | `Ctrl+PageUp`         | `Ctrl+PageUp`         | `g T`           |
+| Next Tab               | `Ctrl+PageDown`       | `Ctrl+PageDown`       | `g t`           |
+| Move Tab Left          | `Ctrl+Shift+PageUp`   | `Ctrl+Shift+PageUp`   | `< <`           |
+| Move Tab Right         | `Ctrl+Shift+PageDown` | `Ctrl+Shift+PageDown` | `> >`           |
+| Go to Tab 1            | `Cmd+1`               | `Ctrl+1`              | `g g`           |
+| Go to Last Tab         | `Cmd+0`               | `Ctrl+0`              | `G`             |
+| Go to History Tab      | `Ctrl+Opt+Shift+H`    | `Ctrl+Alt+Shift+H`    | -               |
+| Jump to Bottom         | `Ctrl+Opt+Shift+J`    | `Ctrl+Alt+Shift+J`    | -               |
+| Clear Terminal         | `Ctrl+Opt+Shift+K`    | `Ctrl+Alt+Shift+K`    | -               |
+| Toggle Show Thinking   | `Ctrl+Opt+Shift+K`    | `Ctrl+Alt+Shift+K`    | -               |
+| View Agent Sessions    | `Ctrl+Opt+Shift+L`    | `Ctrl+Alt+Shift+L`    | -               |
 
 `h` / `j` / `k` / `l` are Vim's `<C-w>` window family, and **Shrink Region** and
 **Grow Region** are its `<C-w><` and `<C-w>>` - `Shift` plus `,` is `<`, and
@@ -770,6 +772,11 @@ nothing and simply never fire. `Ctrl+Opt+H` is out for the same reason - it is
 **Go to Tab 1** and **Go to Last Tab** add only a normal-mode key and keep the
 `Cmd+1` / `Cmd+0` they have in Default mode, which is the chord the rest of the
 `Go to Tab` family answers to.
+
+**Deck Mode (Leader Key)** displaces nothing either: no shipped chord in either
+mode uses `;`. It is also the only row here that fires no action of its own - it
+arms the one-shot mode described in [Deck Mode](#deck-mode) below, and the key
+you press next is what acts.
 
 Vim chords are written with `Ctrl` so macOS shows the Vim-native `⌃` rather than
 `⌘`. Because `Ctrl` and `Cmd` are one modifier when Maestro matches a keypress,
@@ -844,6 +851,94 @@ Maestro sends the keypress back to the shell rather than matching it, so
 shell instead of the app. The `Cmd` spelling of the same binding works there
 (`Cmd+Shift+H` still focuses the Left Bar), as do the normal-mode keys and every
 chord holding `Opt`.
+
+### Deck Mode
+
+Deck mode is tmux's prefix key. One chord - the **leader** - arms a one-shot
+mode; the next single bare key fires an action, and the mode ends. Nothing is
+held down, nothing stays armed, and the whole interaction is two keystrokes.
+
+The leader is a chord, so it fires wherever focus sits, **including inside the
+composer**. That is the point of the mode. The bare letters above are
+[normal-mode keys](#normal-mode-keys), which go dead the moment you are typing a
+prompt - which is where you spend most of your time. Press the leader first and
+the bare key that follows is matched against the Deck table alone, so it fires
+the action and never reaches the field.
+
+**The leader:**
+
+| Action                 | Default mode | Vim mode (all platforms) |
+| ---------------------- | ------------ | ------------------------ |
+| Deck Mode (Leader Key) | Not set      | `Ctrl+;`                 |
+
+It is an ordinary rebindable action, listed in **Settings** (`Cmd+,` / `Ctrl+,`)
+-> **Shortcuts** as **Deck Mode (Leader Key)** in both modes, so record a chord
+in Default mode and the whole table below works there too. On a Mac `Cmd+;`
+fires it as well, because Maestro matches `Ctrl` and `Cmd` as one modifier.
+Quick Actions has it too, as **Arm Deck Mode (Leader Key)** (`Cmd+K`, search
+"deck" or "leader"), which arms the mode with no chord at all - in Default mode,
+where the leader ships unassigned, that is the only route in until you bind one.
+
+**The keys, once armed:**
+
+| Key     | Action             |
+| ------- | ------------------ |
+| `h`     | Focus Region Left  |
+| `j`     | Focus Region Down  |
+| `k`     | Focus Region Up    |
+| `l`     | Focus Region Right |
+| `t`     | New Tab            |
+| `x`     | Close Tab          |
+| `z`     | Toggle Zen Mode    |
+| `1`-`9` | Go to Tab 1-9      |
+| `Space` | Quick Actions      |
+| `Esc`   | Cancel             |
+
+Each key fires the **same action its chord fires** - Deck `h` is the same
+**Focus Region Left** as `Ctrl+Shift+H`, Deck `3` the same **Go to Tab 3** as
+`Cmd+3`. So the Deck keys are not shortcuts of their own: they have no rows in
+Settings, they cannot be rebound one at a time, they collide with nothing (a
+bare `x` is live for exactly one keystroke), and firing an action through one
+counts once toward [Keyboard Mastery](#keyboard-mastery) however you reached it.
+A stray `Shift` is forgiven - `Shift+H` fires `h`.
+
+You never have to remember the table. **The moment the mode arms, a hint bar
+appears at the top of the window listing every key above with the action it
+fires**, read from the live table rather than a written-out copy. It is also in
+the shortcuts sheet (`Cmd+/`), in a **Deck Mode (Leader Key)** section you can
+read at your own pace. This is the one thing a terminal multiplexer cannot do:
+tmux arms its prefix silently and expects you to have memorized it.
+
+**How the mode ends.** It lasts one keystroke, whichever one that is:
+
+- **A key in the table** fires its action.
+- **`Esc`** cancels and fires nothing. While armed, `Esc` cancels the mode and
+  nothing else: an open dialog stays open, and a second `Esc` closes it. One
+  mistyped chord should not cost you the dialog as well.
+- **Any other bare key** cancels the mode and is swallowed - it is not typed
+  into the field you were in, and it does not fall through to its normal
+  binding. A leader that sometimes passed the key along would leave you
+  guessing whether it had taken effect.
+- **A chord** (anything holding `Cmd`, `Ctrl`, `Opt`, or `Alt`) is not a Deck
+  key at all. The mode gets out of the way and the chord fires as itself.
+  Pressing the leader again lands here and re-arms, which is how a second press
+  restarts the clock.
+- **One second** goes by with no follow-up key, the same window a multi-key run
+  like `g t` gets. Leaving the window or switching keyboard mode also disarms
+  it.
+
+Deck mode arms over an open modal, and the hint bar is drawn above it, so there
+is no state where you are armed and cannot see the table.
+
+**The keys a tmux user will reach for and not find.** `v` and `s` (split a pane)
+are deliberately absent: the Main Window shows one surface at a time, and the
+closest thing - the [pane shortcuts](#pane-shortcuts-tiled-tabs) - tiles tabs
+you already have rather than splitting the current one, so both keys are left
+free in case Maestro ever grows a real split. There is no `0`, because `Cmd+0`
+is **Go to Last Tab** rather than a tenth tab and a bare `0` beside nine
+positional digits would read as "tab zero". `n` / `p` are out because a one-shot
+mode ends after one key, so walking three tabs would mean three leader chords -
+`g t` / `g T` and `Ctrl+PageUp` / `PageDown` already do that in one hand.
 
 ## Customizing Shortcuts
 
