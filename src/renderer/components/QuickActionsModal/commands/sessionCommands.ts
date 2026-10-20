@@ -57,6 +57,10 @@ export function buildSessionJumpCommands({
 			id: `jump-${session.id}`,
 			label,
 			shortcut: jumpDigit ? sessionJumpShortcut(jumpDigit) : undefined,
+			// Drawn literally: the slot's own digit. All ten rows share the one
+			// `jumpToSession` action, so asking the resolver for that id would
+			// print the family's range spelling (`Opt+Cmd+1-0`) on every row.
+			shortcutKeys: jumpDigit ? sessionJumpShortcut(jumpDigit).keys : undefined,
 			action: makeAgentJumpAction({
 				session,
 				setActiveSessionId,

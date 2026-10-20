@@ -351,7 +351,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Advertising a shortcut next to the control that fires it:** `<ShortcutHint>`, `<ShortcutKeys>`, `shortcutText()`, `shortcutSuffix(keys)` in `src/renderer/components/ui/ShortcutHint.tsx` (also the tab overlay-menu badge)
 - **Keyboard-shortcut hint / kbd pill:** `<Keycap>` and `<KeycapHint>` in `src/renderer/components/ui/Keycap.tsx`
 - **A system-wide (OS-level) hotkey:** `setNamedGlobalHotkey(id, keys, onPress)`, `keysToAccelerator(keys)` in `src/main/global-hotkey-manager.ts`
-- **Whether two chords fire on the same keypress:** `shortcutKeysCollide(a, b)` in `src/shared/shortcutKeys.ts` (every conflict check), beside `shortcutKeysEqual()` / `normalizeShortcutKeys()` (the DIFF, literal about spelling)
+- **Whether two chords fire on the same keypress:** `shortcutKeysCollide(a, b)` and `SHIFT_REWRITTEN_KEYS` in `src/shared/shortcutKeys.ts` (every conflict check), beside `shortcutKeysEqual()` / `normalizeShortcutKeys()` (the DIFF, literal about spelling)
 - **Whether a chord may be bound at all:** `findReservedShortcutCombo(keys)` in `src/shared/shortcutKeys.ts`
 - **Whether a keystroke belongs to a text field (guard before `preventDefault`):** `isTextInputTarget()`, `isTextEntryTarget()` in `src/renderer/utils/messageScrollNavigation.ts`; `isEditingTextTarget()`, `isEditingTextFocused()` in `src/renderer/utils/editableTarget.ts`
 - **Whether a keystroke is free for a binding to claim (normal mode):** `isNormalMode(event, doc?)` beside `isTextEntryTarget()` in `src/renderer/utils/messageScrollNavigation.ts` (the caller adds `hasOpenLayers()`)

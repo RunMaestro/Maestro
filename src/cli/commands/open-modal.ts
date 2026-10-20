@@ -12,6 +12,7 @@ import { withMaestroClient } from '../services/maestro-client';
 import { isMacOS } from '../../shared/platformDetection';
 import { formatShortcutKeysFor } from '../../shared/shortcutKeys';
 import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS } from '../../renderer/constants/shortcuts';
+import { VIM_SHORTCUTS, VIM_TAB_SHORTCUTS } from '../../renderer/constants/vimShortcuts';
 import {
 	resolveShortcutKeys,
 	type ShortcutDisplayMaps,
@@ -83,11 +84,30 @@ function activeShortcutMaps(): ShortcutDisplayMaps {
 	// Only the live mode's override buckets apply. Default mode is the set every
 	// other mode inherits FROM, so it resolves against empty overrides and comes
 	// back with the base maps unchanged.
+	//
+	// Shipped Vim overrides UNDER the persisted ones, for the same reason the
+	// base maps above merge rather than replace: switching to Vim mode persists
+	// `keyboardMode` alone, so the Vim buckets are normally absent, and an id
+	// the user has never recorded is absent even once they exist. Passing the
+	// persisted bucket alone would make both of those read as "Vim overrides
+	// nothing", and every hint would print the default-mode chord for an action
+	// Vim mode actually rebinds. `hydrateShortcutsSettings` merges over the
+	// union of shipped and saved ids for exactly this reason, and a saved entry
+	// still wins per id - including an entry with no `keys`, which is the
+	// spelling for "inherit the default-mode chord".
 	const vim = asKeyboardMode(settings.keyboardMode) === 'vim';
 	const overrides: ShortcutOverrideMaps = {
-		vimShortcuts: vim ? ((settings.vimShortcuts as Record<string, ShortcutOverride>) ?? {}) : {},
+		vimShortcuts: vim
+			? {
+					...VIM_SHORTCUTS,
+					...((settings.vimShortcuts as Record<string, ShortcutOverride>) ?? {}),
+				}
+			: {},
 		vimTabShortcuts: vim
-			? ((settings.vimTabShortcuts as Record<string, ShortcutOverride>) ?? {})
+			? {
+					...VIM_TAB_SHORTCUTS,
+					...((settings.vimTabShortcuts as Record<string, ShortcutOverride>) ?? {}),
+				}
 			: {},
 	};
 

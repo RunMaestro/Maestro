@@ -15,13 +15,28 @@ import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { mockTheme } from '../../helpers/mockTheme';
 import { Z_LAYERS } from '../../../renderer/constants/zLayers';
 
-// Mock useShortcutKeys to return empty binding, so the component falls back to
-// the shortcut passed in. This avoids the need to set up the entire settings store.
+// `useShortcutKeys` is what every row reads its chord from. This used to
+// return a flat "unbound" so the rows fell back to the shortcut record passed
+// in as a prop; the rows no longer do that (a statically-built DEFAULT-mode
+// record would re-advertise a chord the live mode has cleared or displaced), so
+// the resolver has to answer here instead.
+//
+// It answers out of the SAME `shortcuts` map the test hands the component,
+// which is what the real resolver does with the live settings: both sides of
+// the app agree on one source. `createDefaultProps` keeps the registry in step,
+// so a test that overrides a chord gets that chord back here too, with no
+// settings store to stand up.
+const resolvedShortcuts = vi.hoisted(() => ({
+	current: {} as Record<string, { keys?: string[]; sequence?: string[][] }>,
+}));
+
 vi.mock('../../../renderer/hooks/keyboard/useShortcutKeys', () => ({
-	useShortcutKeys: (actionId?: string) => ({
-		keys: [],
-		sequence: undefined,
-	}),
+	useShortcutKeys: (actionId?: string) => {
+		const entry = actionId ? resolvedShortcuts.current[actionId] : undefined;
+		const keys = entry?.keys ?? [];
+		const sequence = entry?.sequence?.length ? entry.sequence : undefined;
+		return { keys, sequence };
+	},
 }));
 
 /**
@@ -209,6 +224,21 @@ const createDefaultProps = (
 	...overrides,
 });
 
+/**
+ * Build the props AND point the mocked resolver at the same `shortcuts` map.
+ *
+ * Every test reaches the component through this, so the registry cannot drift
+ * from the props: a test overriding one chord sees that chord on the row.
+ */
+const createProps = (overrides: Partial<React.ComponentProps<typeof QuickActionsModal>> = {}) => {
+	const props = createDefaultProps(overrides);
+	resolvedShortcuts.current = (props.shortcuts ?? {}) as Record<
+		string,
+		{ keys?: string[]; sequence?: string[][] }
+	>;
+	return props;
+};
+
 describe('QuickActionsModal', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -243,7 +273,7 @@ describe('QuickActionsModal', () => {
 
 	describe('Basic rendering', () => {
 		it('renders with dialog role and aria attributes', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			const dialog = screen.getByRole('dialog');
@@ -253,7 +283,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('renders search input with correct placeholder', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			const input = screen.getByPlaceholderText('Type a command or jump to agent...');
@@ -261,21 +291,21 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('renders search icon', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			expect(screen.getByTestId('search-icon')).toBeInTheDocument();
 		});
 
 		it('renders ESC badge', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			expect(screen.getByText('ESC')).toBeInTheDocument();
 		});
 
 		it('auto-focuses input on mount', async () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			await waitFor(
@@ -290,28 +320,28 @@ describe('QuickActionsModal', () => {
 
 	describe('Main actions list', () => {
 		it('renders jump to session action', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			expect(screen.getByText('Jump to: Test Session')).toBeInTheDocument();
 		});
 
 		it('renders Create New Agent action', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			expect(screen.getByText('Create New Agent')).toBeInTheDocument();
 		});
 
 		it('renders Rename Agent action when session exists', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			expect(screen.getByText('Rename Agent: Test Session')).toBeInTheDocument();
 		});
 
 		it('does not render Rename Agent when no active session', () => {
-			const props = createDefaultProps({
+			const props = createProps({
 				activeSessionId: '',
 				sessions: [],
 			});
@@ -321,7 +351,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('renders Toggle Sidebar action with shortcut', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			expect(screen.getByText('Toggle Sidebar')).toBeInTheDocument();
@@ -329,7 +359,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('renders Next Unread Tab action with shortcut', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			expect(screen.getByText('Next Unread / Draft Tab')).toBeInTheDocument();
@@ -339,7 +369,7 @@ describe('QuickActionsModal', () => {
 		it('renders Previous Unread Tab with the chord that actually reaches it', () => {
 			// previousUnreadTab ships unbound, so the entry borrows the Focus
 			// Active Tab chord - a second press of it is what fires this action.
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			expect(screen.getByText('Previous Unread / Draft Tab')).toBeInTheDocument();
@@ -347,7 +377,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('names the state the Unread Only entry puts you in, not the one you are in', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			const { unmount } = render(<QuickActionsModal {...props} />);
 			expect(screen.getByText('Unread Only: On')).toBeInTheDocument();
 			unmount();
@@ -359,7 +389,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('drives both unread filters from the Unread Only entry', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Unread Only: On'));
@@ -370,7 +400,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('renders Navigate Back / Forward actions with shortcuts when handlers provided', () => {
-			const props = createDefaultProps({
+			const props = createProps({
 				onNavBack: vi.fn(),
 				onNavForward: vi.fn(),
 			});
@@ -383,7 +413,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('omits Navigate Back / Forward actions when handlers are absent', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			expect(screen.queryByText('Navigate Back')).not.toBeInTheDocument();
@@ -391,21 +421,21 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('renders Settings action', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			expect(screen.getByText('Settings')).toBeInTheDocument();
 		});
 
 		it('renders About Maestro action', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			expect(screen.getByText('About Maestro')).toBeInTheDocument();
 		});
 
 		it('renders subtext for session state', () => {
-			const props = createDefaultProps({
+			const props = createProps({
 				sessions: [createMockSession({ state: 'busy' })],
 			});
 			render(<QuickActionsModal {...props} />);
@@ -414,14 +444,14 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('does not render Clear All Bookmarks when no sessions are bookmarked', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			expect(screen.queryByText('Clear All Bookmarks')).not.toBeInTheDocument();
 		});
 
 		it('renders Clear All Bookmarks when at least one session is bookmarked', () => {
-			const props = createDefaultProps({
+			const props = createProps({
 				sessions: [createMockSession({ bookmarked: true })],
 			});
 			render(<QuickActionsModal {...props} />);
@@ -432,7 +462,7 @@ describe('QuickActionsModal', () => {
 
 	describe('Session actions', () => {
 		it('handles Jump to session action', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Jump to: Test Session'));
@@ -444,7 +474,7 @@ describe('QuickActionsModal', () => {
 		it('auto-expands collapsed group when jumping to non-bookmarked session in group', () => {
 			const session = createMockSession({ groupId: 'group-1' });
 			const group = createMockGroup({ collapsed: true });
-			const props = createDefaultProps({
+			const props = createProps({
 				sessions: [session],
 				groups: [group],
 			});
@@ -462,7 +492,7 @@ describe('QuickActionsModal', () => {
 
 				const session = createMockSession({ groupId: 'group-1', bookmarked: true });
 				const group = createMockGroup({ collapsed: true });
-				const props = createDefaultProps({ sessions: [session], groups: [group] });
+				const props = createProps({ sessions: [session], groups: [group] });
 				useSessionStore.setState({ sessions: [session], groups: [group] } as never);
 				render(<QuickActionsModal {...props} />);
 
@@ -479,7 +509,7 @@ describe('QuickActionsModal', () => {
 
 				const session = createMockSession({ groupId: 'group-1', bookmarked: true });
 				const group = createMockGroup({ collapsed: false });
-				const props = createDefaultProps({ sessions: [session], groups: [group] });
+				const props = createProps({ sessions: [session], groups: [group] });
 				useSessionStore.setState({ sessions: [session], groups: [group] } as never);
 				render(<QuickActionsModal {...props} />);
 
@@ -495,7 +525,7 @@ describe('QuickActionsModal', () => {
 
 				const session = createMockSession({ groupId: 'group-1', bookmarked: true });
 				const group = createMockGroup({ collapsed: true });
-				const props = createDefaultProps({ sessions: [session], groups: [group] });
+				const props = createProps({ sessions: [session], groups: [group] });
 				useSessionStore.setState({ sessions: [session], groups: [group] } as never);
 				render(<QuickActionsModal {...props} />);
 
@@ -515,7 +545,7 @@ describe('QuickActionsModal', () => {
 			it('shows the chord on jump rows for agents in the first ten Left Bar slots', () => {
 				const first = createMockSession({ id: 'session-1', name: 'First' });
 				const second = createMockSession({ id: 'session-2', name: 'Second' });
-				const props = createDefaultProps({
+				const props = createProps({
 					sessions: [first, second],
 					visibleSessions: [second, first],
 				});
@@ -530,7 +560,7 @@ describe('QuickActionsModal', () => {
 				const sessions = Array.from({ length: 11 }, (_, i) =>
 					createMockSession({ id: `session-${i + 1}`, name: `Agent ${i + 1}` })
 				);
-				const props = createDefaultProps({ sessions, visibleSessions: sessions });
+				const props = createProps({ sessions, visibleSessions: sessions });
 				render(<QuickActionsModal {...props} />);
 
 				expect(rowFor('Jump to: Agent 10').textContent).toContain(chord('0'));
@@ -541,7 +571,7 @@ describe('QuickActionsModal', () => {
 
 			it('shows the chord in the agent switcher', () => {
 				const session = createMockSession({ id: 'session-1', name: 'Solo' });
-				const props = createDefaultProps({
+				const props = createProps({
 					sessions: [session],
 					visibleSessions: [session],
 					initialMode: 'agents',
@@ -553,7 +583,7 @@ describe('QuickActionsModal', () => {
 
 			it('shows no chord for an agent the Left Bar is not drawing', () => {
 				const session = createMockSession({ id: 'session-1', name: 'Hidden' });
-				const props = createDefaultProps({ sessions: [session], visibleSessions: [] });
+				const props = createProps({ sessions: [session], visibleSessions: [] });
 				render(<QuickActionsModal {...props} />);
 
 				expect(rowFor('Jump to: Hidden').textContent).not.toContain(chord('1'));
@@ -561,7 +591,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('handles Create New Agent action', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Create New Agent'));
@@ -571,7 +601,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('handles Rename Agent action', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Rename Agent: Test Session'));
@@ -582,7 +612,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('handles Remove Agent action', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Remove Agent: Test Session'));
@@ -593,7 +623,7 @@ describe('QuickActionsModal', () => {
 
 	describe('Toggle actions', () => {
 		it('handles Toggle Sidebar action', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Toggle Sidebar'));
@@ -602,7 +632,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('handles Toggle Right Panel action', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Toggle Right Panel'));
@@ -612,7 +642,7 @@ describe('QuickActionsModal', () => {
 
 		it('handles Navigate Back action', () => {
 			const onNavBack = vi.fn();
-			const props = createDefaultProps({ onNavBack });
+			const props = createProps({ onNavBack });
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Navigate Back'));
@@ -623,7 +653,7 @@ describe('QuickActionsModal', () => {
 
 		it('handles Navigate Forward action', () => {
 			const onNavForward = vi.fn();
-			const props = createDefaultProps({ onNavForward });
+			const props = createProps({ onNavForward });
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Navigate Forward'));
@@ -633,7 +663,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('handles Switch AI/Shell Mode action', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Switch AI/Shell Mode'));
@@ -644,7 +674,7 @@ describe('QuickActionsModal', () => {
 		it('toggles Bionify Emphasis globally', async () => {
 			const { useSettingsStore } = await import('../../../renderer/stores/settingsStore');
 			useSettingsStore.setState({ bionifyReadingMode: false });
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Turn On Bionify Emphasis'));
@@ -658,7 +688,7 @@ describe('QuickActionsModal', () => {
 
 	describe('Settings and help actions', () => {
 		it('handles Settings action', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Settings'));
@@ -668,7 +698,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('handles Change Theme action', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Change Theme'));
@@ -679,7 +709,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('handles View Shortcuts action', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('View Shortcuts'));
@@ -689,7 +719,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('handles View System Logs action', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('View System Logs'));
@@ -699,7 +729,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('handles View System Processes action', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('View System Processes'));
@@ -709,7 +739,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('handles About Maestro action', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('About Maestro'));
@@ -721,7 +751,7 @@ describe('QuickActionsModal', () => {
 
 	describe('Right panel navigation', () => {
 		it('handles Go to Files Tab action', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Go to Files Tab'));
@@ -732,7 +762,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('handles Go to History Tab action', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Go to History Tab'));
@@ -743,7 +773,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('handles Go to Auto Run Tab action', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Go to Auto Run Tab'));
@@ -756,7 +786,7 @@ describe('QuickActionsModal', () => {
 
 	describe('Search actions', () => {
 		it('renders all four search actions', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			expect(screen.getByText('Search: Agents')).toBeInTheDocument();
@@ -767,7 +797,7 @@ describe('QuickActionsModal', () => {
 
 		it('handles Search: Agents action', async () => {
 			vi.useFakeTimers();
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Search: Agents'));
@@ -785,7 +815,7 @@ describe('QuickActionsModal', () => {
 
 		it('handles Search: Messages (This Tab) action', async () => {
 			vi.useFakeTimers();
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Search: Messages (This Tab)'));
@@ -801,7 +831,7 @@ describe('QuickActionsModal', () => {
 
 		it('handles Search: Files action', async () => {
 			vi.useFakeTimers();
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Search: Files'));
@@ -819,7 +849,7 @@ describe('QuickActionsModal', () => {
 
 		it('handles Search: History action', async () => {
 			vi.useFakeTimers();
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Search: History'));
@@ -836,7 +866,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('search actions appear when filtering for "search"', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			const input = screen.getByPlaceholderText('Type a command or jump to agent...');
@@ -851,7 +881,7 @@ describe('QuickActionsModal', () => {
 
 	describe('Git actions', () => {
 		it('renders git actions for git repo', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			expect(screen.getByText('Git: View Diff')).toBeInTheDocument();
@@ -860,7 +890,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('does not render git actions for non-git repo', () => {
-			const props = createDefaultProps({
+			const props = createProps({
 				sessions: [createMockSession({ isGitRepo: false })],
 			});
 			render(<QuickActionsModal {...props} />);
@@ -871,7 +901,7 @@ describe('QuickActionsModal', () => {
 
 		it('handles View Git Diff action', async () => {
 			const { gitService } = await import('../../../renderer/services/git');
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Git: View Diff'));
@@ -890,7 +920,7 @@ describe('QuickActionsModal', () => {
 			const session = createMockSession({
 				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-remote-456' },
 			});
-			const props = createDefaultProps({ sessions: [session] });
+			const props = createProps({ sessions: [session] });
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Git: View Diff'));
@@ -906,7 +936,7 @@ describe('QuickActionsModal', () => {
 
 		it('handles View Git Diff with undefined SSH remote ID when session has no SSH remote config', async () => {
 			const { gitService } = await import('../../../renderer/services/git');
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Git: View Diff'));
@@ -921,7 +951,7 @@ describe('QuickActionsModal', () => {
 			const session = createMockSession({
 				sessionSshRemoteConfig: { enabled: false, remoteId: 'ssh-remote-456' },
 			});
-			const props = createDefaultProps({ sessions: [session] });
+			const props = createProps({ sessions: [session] });
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Git: View Diff'));
@@ -933,7 +963,7 @@ describe('QuickActionsModal', () => {
 
 		it('handles View Git Diff with shell cwd when in terminal mode', async () => {
 			const { gitService } = await import('../../../renderer/services/git');
-			const props = createDefaultProps({
+			const props = createProps({
 				sessions: [createMockSession({ inputMode: 'terminal', shellCwd: '/different/path' })],
 			});
 			render(<QuickActionsModal {...props} />);
@@ -946,7 +976,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('handles View Git Log action', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Git: View Log'));
@@ -956,7 +986,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('offers the full git action set, matching the pill and right-click menus', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			expect(screen.getByText('Git: View Log')).toBeInTheDocument();
@@ -968,7 +998,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('handles Git Pull action', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Git: Pull'));
@@ -978,7 +1008,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('handles Git Push action', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Git: Push'));
@@ -988,7 +1018,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('handles Change Branch action', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Git: Change Branch'));
@@ -998,7 +1028,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('handles Configure Worktrees action', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Git: Configure Worktrees'));
@@ -1009,7 +1039,7 @@ describe('QuickActionsModal', () => {
 
 		it('handles Open Repository in Browser action', async () => {
 			const { gitService } = await import('../../../renderer/services/git');
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Git: Open Repository in Browser'));
@@ -1026,7 +1056,7 @@ describe('QuickActionsModal', () => {
 
 	describe('Agent sessions action', () => {
 		it('handles View Agent Sessions action', () => {
-			const props = createDefaultProps({
+			const props = createProps({
 				hasActiveSessionCapability: (capability: string) => capability === 'supportsSessionStorage',
 			});
 			render(<QuickActionsModal {...props} />);
@@ -1041,7 +1071,7 @@ describe('QuickActionsModal', () => {
 
 	describe('DevTools action', () => {
 		it('handles Toggle JavaScript Console action', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Toggle JavaScript Console'));
@@ -1053,7 +1083,7 @@ describe('QuickActionsModal', () => {
 
 	describe('Search filtering', () => {
 		it('filters actions by search term', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			const input = screen.getByPlaceholderText('Type a command or jump to agent...');
@@ -1064,7 +1094,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('shows no actions found message when no matches', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			const input = screen.getByPlaceholderText('Type a command or jump to agent...');
@@ -1074,7 +1104,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('is case insensitive', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			const input = screen.getByPlaceholderText('Type a command or jump to agent...');
@@ -1084,7 +1114,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('resets selected index when search changes', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			const input = screen.getByPlaceholderText('Type a command or jump to agent...');
@@ -1105,14 +1135,14 @@ describe('QuickActionsModal', () => {
 
 	describe('Debug commands', () => {
 		it('hides debug commands by default', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			expect(screen.queryByText(/Debug:/)).not.toBeInTheDocument();
 		});
 
 		it('shows debug commands when searching for "debug"', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			const input = screen.getByPlaceholderText('Type a command or jump to agent...');
@@ -1124,7 +1154,7 @@ describe('QuickActionsModal', () => {
 
 		it('handles Debug: Reset Busy State action', () => {
 			const consoleSpy = vi.spyOn(logger, 'info').mockImplementation(() => {});
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			const input = screen.getByPlaceholderText('Type a command or jump to agent...');
@@ -1140,7 +1170,7 @@ describe('QuickActionsModal', () => {
 
 		it('handles Debug: Reset Current Session action', () => {
 			const consoleSpy = vi.spyOn(logger, 'info').mockImplementation(() => {});
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			const input = screen.getByPlaceholderText('Type a command or jump to agent...');
@@ -1159,7 +1189,7 @@ describe('QuickActionsModal', () => {
 
 		it('handles Debug: Log Session State action', () => {
 			const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			const input = screen.getByPlaceholderText('Type a command or jump to agent...');
@@ -1174,7 +1204,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('shows Debug: Playground when setPlaygroundOpen is provided', () => {
-			const props = createDefaultProps({
+			const props = createProps({
 				setPlaygroundOpen: vi.fn(),
 			});
 			render(<QuickActionsModal {...props} />);
@@ -1187,7 +1217,7 @@ describe('QuickActionsModal', () => {
 
 		it('handles Debug: Playground action', () => {
 			const setPlaygroundOpen = vi.fn();
-			const props = createDefaultProps({ setPlaygroundOpen });
+			const props = createProps({ setPlaygroundOpen });
 			render(<QuickActionsModal {...props} />);
 
 			const input = screen.getByPlaceholderText('Type a command or jump to agent...');
@@ -1200,7 +1230,7 @@ describe('QuickActionsModal', () => {
 
 		it('handles Debug: View Application Stats action', () => {
 			const setDebugApplicationStatsOpen = vi.fn();
-			const props = createDefaultProps({ setDebugApplicationStatsOpen });
+			const props = createProps({ setDebugApplicationStatsOpen });
 			render(<QuickActionsModal {...props} />);
 
 			const input = screen.getByPlaceholderText('Type a command or jump to agent...');
@@ -1213,7 +1243,7 @@ describe('QuickActionsModal', () => {
 
 		it('shows Debug: Release Next Queued Item when queue has items', () => {
 			const onDebugReleaseQueuedItem = vi.fn();
-			const props = createDefaultProps({
+			const props = createProps({
 				onDebugReleaseQueuedItem,
 				sessions: [createMockSession({ executionQueue: [{ id: '1' }] as any })],
 			});
@@ -1228,7 +1258,7 @@ describe('QuickActionsModal', () => {
 
 	describe('Keyboard navigation', () => {
 		it('handles ArrowDown to move selection', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			const input = screen.getByPlaceholderText('Type a command or jump to agent...');
@@ -1240,7 +1270,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('handles ArrowUp to move selection', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			const input = screen.getByPlaceholderText('Type a command or jump to agent...');
@@ -1257,7 +1287,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('wraps to the last item when arrowing up from the first', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			const input = screen.getByPlaceholderText('Type a command or jump to agent...');
@@ -1272,7 +1302,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('wraps to the first item when arrowing down from the last', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			const input = screen.getByPlaceholderText('Type a command or jump to agent...');
@@ -1286,7 +1316,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('handles Enter to execute selected action', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			// Filter to single action
@@ -1300,7 +1330,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('handles Cmd+1 through Cmd+9 and Cmd+0 hotkeys', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			const input = screen.getByPlaceholderText('Type a command or jump to agent...');
@@ -1314,7 +1344,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('handles Cmd+0 for 10th item', () => {
-			const props = createDefaultProps({
+			const props = createProps({
 				sessions: Array(15)
 					.fill(null)
 					.map((_, i) => createMockSession({ id: `session-${i}`, name: `Session ${i}` })),
@@ -1333,7 +1363,7 @@ describe('QuickActionsModal', () => {
 
 	describe('Move to group mode', () => {
 		it('switches to move-to-group mode', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Move to Group...'));
@@ -1344,7 +1374,7 @@ describe('QuickActionsModal', () => {
 
 		it('shows groups in move-to-group mode', () => {
 			const group = createMockGroup({ name: 'My Group', emoji: '🚀' });
-			const props = createDefaultProps({ groups: [group] });
+			const props = createProps({ groups: [group] });
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Move to Group...'));
@@ -1353,7 +1383,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('shows create new group option in move mode', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Move to Group...'));
@@ -1362,7 +1392,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('handles back to main menu', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Move to Group...'));
@@ -1373,7 +1403,7 @@ describe('QuickActionsModal', () => {
 
 		it('handles move to group action', () => {
 			const group = createMockGroup();
-			const props = createDefaultProps({ groups: [group] });
+			const props = createProps({ groups: [group] });
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Move to Group...'));
@@ -1384,7 +1414,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('handles move to no group', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Move to Group...'));
@@ -1395,7 +1425,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('changes placeholder when in move-to-group mode', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Move to Group...'));
@@ -1404,7 +1434,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('clears search when entering move-to-group mode', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			// Enter some text in main mode
@@ -1424,7 +1454,7 @@ describe('QuickActionsModal', () => {
 		it('renders Rename Group action when session is in a group', () => {
 			const session = createMockSession({ groupId: 'group-1' });
 			const group = createMockGroup();
-			const props = createDefaultProps({
+			const props = createProps({
 				sessions: [session],
 				groups: [group],
 			});
@@ -1434,7 +1464,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('does not render Rename Group when session has no group', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			expect(screen.queryByText('Rename Group')).not.toBeInTheDocument();
@@ -1443,7 +1473,7 @@ describe('QuickActionsModal', () => {
 		it('handles Rename Group action', () => {
 			const session = createMockSession({ groupId: 'group-1' });
 			const group = createMockGroup();
-			const props = createDefaultProps({
+			const props = createProps({
 				sessions: [session],
 				groups: [group],
 			});
@@ -1461,7 +1491,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('handles Create New Group action', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Create New Group'));
@@ -1473,14 +1503,14 @@ describe('QuickActionsModal', () => {
 
 	describe('Initial mode', () => {
 		it('starts in main mode by default', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			expect(screen.getByPlaceholderText('Type a command or jump to agent...')).toBeInTheDocument();
 		});
 
 		it('starts in move-to-group mode when initialMode is set', () => {
-			const props = createDefaultProps({ initialMode: 'move-to-group' });
+			const props = createProps({ initialMode: 'move-to-group' });
 			render(<QuickActionsModal {...props} />);
 
 			// When initialMode is 'move-to-group' the "Back to main menu" action is
@@ -1494,7 +1524,7 @@ describe('QuickActionsModal', () => {
 	describe('Tab-related actions (AI mode)', () => {
 		it('shows Tab Switcher when in AI mode with handler', () => {
 			const onOpenTabSwitcher = vi.fn();
-			const props = createDefaultProps({
+			const props = createProps({
 				isAiMode: true,
 				onOpenTabSwitcher,
 				tabShortcuts: { tabSwitcher: { id: 'tabSwitcher', keys: ['Cmd', 'K'], enabled: true } },
@@ -1506,7 +1536,7 @@ describe('QuickActionsModal', () => {
 
 		it('handles Tab Switcher action', () => {
 			const onOpenTabSwitcher = vi.fn();
-			const props = createDefaultProps({
+			const props = createProps({
 				isAiMode: true,
 				onOpenTabSwitcher,
 			});
@@ -1520,7 +1550,7 @@ describe('QuickActionsModal', () => {
 
 		it('shows Rename Tab when in AI mode with handler', () => {
 			const onRenameTab = vi.fn();
-			const props = createDefaultProps({
+			const props = createProps({
 				isAiMode: true,
 				onRenameTab,
 			});
@@ -1531,7 +1561,7 @@ describe('QuickActionsModal', () => {
 
 		it('handles Rename Tab action', () => {
 			const onRenameTab = vi.fn();
-			const props = createDefaultProps({
+			const props = createProps({
 				isAiMode: true,
 				onRenameTab,
 			});
@@ -1545,7 +1575,7 @@ describe('QuickActionsModal', () => {
 
 		it('shows Toggle Read-Only Mode when in AI mode with handler', () => {
 			const onToggleReadOnlyMode = vi.fn();
-			const props = createDefaultProps({
+			const props = createProps({
 				isAiMode: true,
 				onToggleReadOnlyMode,
 			});
@@ -1556,7 +1586,7 @@ describe('QuickActionsModal', () => {
 
 		it('handles Toggle Read-Only Mode action', () => {
 			const onToggleReadOnlyMode = vi.fn();
-			const props = createDefaultProps({
+			const props = createProps({
 				isAiMode: true,
 				onToggleReadOnlyMode,
 			});
@@ -1569,7 +1599,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('hides AI-only tab actions when not in AI mode, but keeps Tab Switcher available', () => {
-			const props = createDefaultProps({
+			const props = createProps({
 				isAiMode: false,
 				onOpenTabSwitcher: vi.fn(),
 				onRenameTab: vi.fn(),
@@ -1589,7 +1619,7 @@ describe('QuickActionsModal', () => {
 	describe('Markdown toggle (AI mode)', () => {
 		it('shows edit mode subtext when in edit mode', () => {
 			const onToggleMarkdownEditMode = vi.fn();
-			const props = createDefaultProps({
+			const props = createProps({
 				isAiMode: true,
 				markdownEditMode: true,
 				onToggleMarkdownEditMode,
@@ -1602,7 +1632,7 @@ describe('QuickActionsModal', () => {
 
 		it('shows preview mode subtext when in preview mode', () => {
 			const onToggleMarkdownEditMode = vi.fn();
-			const props = createDefaultProps({
+			const props = createProps({
 				isAiMode: true,
 				markdownEditMode: false,
 				onToggleMarkdownEditMode,
@@ -1615,7 +1645,7 @@ describe('QuickActionsModal', () => {
 
 		it('handles markdown toggle action', () => {
 			const onToggleMarkdownEditMode = vi.fn();
-			const props = createDefaultProps({
+			const props = createProps({
 				isAiMode: true,
 				onToggleMarkdownEditMode,
 			});
@@ -1631,7 +1661,7 @@ describe('QuickActionsModal', () => {
 	describe('Refresh git file state', () => {
 		it('shows Refresh Files action when handler is provided', () => {
 			const onRefreshGitFileState = vi.fn();
-			const props = createDefaultProps({ onRefreshGitFileState });
+			const props = createProps({ onRefreshGitFileState });
 			render(<QuickActionsModal {...props} />);
 
 			expect(screen.getByText('Refresh Files, Git, History')).toBeInTheDocument();
@@ -1641,7 +1671,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('displays the Refresh Files shortcut when one is bound', () => {
-			const props = createDefaultProps({
+			const props = createProps({
 				onRefreshGitFileState: vi.fn(),
 				shortcuts: {
 					...mockShortcuts,
@@ -1659,7 +1689,7 @@ describe('QuickActionsModal', () => {
 
 		it('handles Refresh Files action', async () => {
 			const onRefreshGitFileState = vi.fn().mockResolvedValue(undefined);
-			const props = createDefaultProps({ onRefreshGitFileState });
+			const props = createProps({ onRefreshGitFileState });
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Refresh Files, Git, History'));
@@ -1673,7 +1703,7 @@ describe('QuickActionsModal', () => {
 
 	describe('Number badges', () => {
 		it('displays number badges 1-9 and 0 for visible items', () => {
-			const props = createDefaultProps({
+			const props = createProps({
 				sessions: Array(15)
 					.fill(null)
 					.map((_, i) => createMockSession({ id: `session-${i}`, name: `Session ${i}` })),
@@ -1692,7 +1722,7 @@ describe('QuickActionsModal', () => {
 			const scrollIntoViewMock = vi.fn();
 			Element.prototype.scrollIntoView = scrollIntoViewMock;
 
-			const props = createDefaultProps({
+			const props = createProps({
 				sessions: Array(20)
 					.fill(null)
 					.map((_, i) => createMockSession({ id: `session-${i}`, name: `Session ${i}` })),
@@ -1719,7 +1749,7 @@ describe('QuickActionsModal', () => {
 				createMockSession({ id: 'session-2', name: 'Session Two' }),
 				createMockSession({ id: 'session-3', name: 'Session Three' }),
 			];
-			const props = createDefaultProps({ sessions });
+			const props = createProps({ sessions });
 			render(<QuickActionsModal {...props} />);
 
 			expect(screen.getByText('Jump to: Session One')).toBeInTheDocument();
@@ -1730,7 +1760,7 @@ describe('QuickActionsModal', () => {
 
 	describe('Styling', () => {
 		it('applies theme colors to selected item', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			const buttons = getActionRows();
@@ -1738,7 +1768,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('applies different background to non-selected items', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			const buttons = getActionRows();
@@ -1747,7 +1777,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('applies theme colors to modal container', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			const dialog = screen.getByRole('dialog');
@@ -1757,7 +1787,7 @@ describe('QuickActionsModal', () => {
 
 	describe('Edge cases', () => {
 		it('handles empty sessions array', () => {
-			const props = createDefaultProps({ sessions: [], activeSessionId: '' });
+			const props = createProps({ sessions: [], activeSessionId: '' });
 			render(<QuickActionsModal {...props} />);
 
 			// Should still show non-session-dependent actions
@@ -1766,7 +1796,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('handles special characters in session name', () => {
-			const props = createDefaultProps({
+			const props = createProps({
 				sessions: [createMockSession({ name: '<script>alert("xss")</script>' })],
 			});
 			render(<QuickActionsModal {...props} />);
@@ -1775,7 +1805,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('handles unicode in session name', () => {
-			const props = createDefaultProps({
+			const props = createProps({
 				sessions: [createMockSession({ name: '🚀 Unicode 日本語' })],
 			});
 			render(<QuickActionsModal {...props} />);
@@ -1789,7 +1819,7 @@ describe('QuickActionsModal', () => {
 			useCenterFlashStore.getState().setActive(null);
 			refreshGitStatusMock.mockClear();
 
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Git: View Diff'));
@@ -1807,7 +1837,7 @@ describe('QuickActionsModal', () => {
 			const { gitService } = await import('../../../renderer/services/git');
 			vi.mocked(gitService.getRemoteBrowserUrl).mockResolvedValueOnce(null);
 
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Git: Open Repository in Browser'));
@@ -1828,7 +1858,7 @@ describe('QuickActionsModal', () => {
 			const consoleSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 			vi.mocked(gitService.getRemoteBrowserUrl).mockRejectedValueOnce(new Error('Network error'));
 
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Git: Open Repository in Browser'));
@@ -1851,7 +1881,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('sorts actions alphabetically', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			// Read labels off the dedicated attribute rather than parsing textContent:
@@ -1875,7 +1905,7 @@ describe('QuickActionsModal', () => {
 	describe("Director's Notes action", () => {
 		it("shows Director's Notes command when onOpenDirectorNotes is provided", () => {
 			const onOpenDirectorNotes = vi.fn();
-			const props = createDefaultProps({
+			const props = createProps({
 				onOpenDirectorNotes,
 				shortcuts: {
 					...mockShortcuts,
@@ -1892,7 +1922,7 @@ describe('QuickActionsModal', () => {
 
 		it("handles Director's Notes action - calls onOpenDirectorNotes and closes modal", () => {
 			const onOpenDirectorNotes = vi.fn();
-			const props = createDefaultProps({ onOpenDirectorNotes });
+			const props = createProps({ onOpenDirectorNotes });
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText("Director's Notes"));
@@ -1902,7 +1932,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it("does not show Director's Notes when onOpenDirectorNotes is not provided", () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			expect(screen.queryByText("Director's Notes")).not.toBeInTheDocument();
@@ -1910,7 +1940,7 @@ describe('QuickActionsModal', () => {
 
 		it("Director's Notes appears when searching for 'director'", () => {
 			const onOpenDirectorNotes = vi.fn();
-			const props = createDefaultProps({ onOpenDirectorNotes });
+			const props = createProps({ onOpenDirectorNotes });
 			render(<QuickActionsModal {...props} />);
 
 			const input = screen.getByPlaceholderText('Type a command or jump to agent...');
@@ -1921,7 +1951,7 @@ describe('QuickActionsModal', () => {
 
 		it("displays shortcut keys for Director's Notes when shortcut is configured", () => {
 			const onOpenDirectorNotes = vi.fn();
-			const props = createDefaultProps({
+			const props = createProps({
 				onOpenDirectorNotes,
 				shortcuts: {
 					...mockShortcuts,
@@ -1937,7 +1967,7 @@ describe('QuickActionsModal', () => {
 	describe('Send to agent action', () => {
 		it('shows Context: Send to Agent action when capability is supported and callback provided', () => {
 			const onOpenSendToAgent = vi.fn();
-			const props = createDefaultProps({
+			const props = createProps({
 				hasActiveSessionCapability: (capability: string) => capability === 'supportsContextMerge',
 				onOpenSendToAgent,
 			});
@@ -1948,7 +1978,7 @@ describe('QuickActionsModal', () => {
 
 		it('handles Context: Send to Agent action', () => {
 			const onOpenSendToAgent = vi.fn();
-			const props = createDefaultProps({
+			const props = createProps({
 				hasActiveSessionCapability: (capability: string) => capability === 'supportsContextMerge',
 				onOpenSendToAgent,
 			});
@@ -1962,7 +1992,7 @@ describe('QuickActionsModal', () => {
 
 		it('does not show Context: Send to Agent when capability is not supported', () => {
 			const onOpenSendToAgent = vi.fn();
-			const props = createDefaultProps({
+			const props = createProps({
 				hasActiveSessionCapability: () => false,
 				onOpenSendToAgent,
 			});
@@ -1972,7 +2002,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('does not show Context: Send to Agent when callback is not provided', () => {
-			const props = createDefaultProps({
+			const props = createProps({
 				hasActiveSessionCapability: (capability: string) => capability === 'supportsContextMerge',
 				// onOpenSendToAgent not provided
 			});
@@ -1985,7 +2015,7 @@ describe('QuickActionsModal', () => {
 	describe('Create Worktree action', () => {
 		it('shows Create Worktree action for git repo sessions with callback', () => {
 			const onQuickCreateWorktree = vi.fn();
-			const props = createDefaultProps({
+			const props = createProps({
 				sessions: [createMockSession({ isGitRepo: true })],
 				onQuickCreateWorktree,
 			});
@@ -1997,7 +2027,7 @@ describe('QuickActionsModal', () => {
 		it('calls onQuickCreateWorktree with active session and closes modal', () => {
 			const onQuickCreateWorktree = vi.fn();
 			const session = createMockSession({ isGitRepo: true });
-			const props = createDefaultProps({
+			const props = createProps({
 				sessions: [session],
 				onQuickCreateWorktree,
 			});
@@ -2023,7 +2053,7 @@ describe('QuickActionsModal', () => {
 				parentSessionId: 'parent-1',
 				worktreeBranch: 'feature-1',
 			});
-			const props = createDefaultProps({
+			const props = createProps({
 				sessions: [parentSession, childSession],
 				activeSessionId: 'child-1',
 				onQuickCreateWorktree,
@@ -2038,7 +2068,7 @@ describe('QuickActionsModal', () => {
 
 		it('does not show Create Worktree when session is not a git repo', () => {
 			const onQuickCreateWorktree = vi.fn();
-			const props = createDefaultProps({
+			const props = createProps({
 				sessions: [createMockSession({ isGitRepo: false })],
 				onQuickCreateWorktree,
 			});
@@ -2048,7 +2078,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('does not show Create Worktree when callback is not provided', () => {
-			const props = createDefaultProps({
+			const props = createProps({
 				sessions: [createMockSession({ isGitRepo: true })],
 			});
 			render(<QuickActionsModal {...props} />);
@@ -2060,7 +2090,7 @@ describe('QuickActionsModal', () => {
 	describe('Configure Maestro Cue action', () => {
 		it('shows Configure Maestro Cue command with agent name when onConfigureCue is provided', () => {
 			const onConfigureCue = vi.fn();
-			const props = createDefaultProps({ onConfigureCue });
+			const props = createProps({ onConfigureCue });
 			render(<QuickActionsModal {...props} />);
 
 			expect(screen.getByText('Configure Maestro Cue: Test Session')).toBeInTheDocument();
@@ -2069,7 +2099,7 @@ describe('QuickActionsModal', () => {
 
 		it('handles Configure Maestro Cue action - calls onConfigureCue with active session and closes modal', () => {
 			const onConfigureCue = vi.fn();
-			const props = createDefaultProps({ onConfigureCue });
+			const props = createProps({ onConfigureCue });
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Configure Maestro Cue: Test Session'));
@@ -2081,7 +2111,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('does not show Configure Maestro Cue when onConfigureCue is not provided', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			expect(screen.queryByText(/Configure Maestro Cue/)).not.toBeInTheDocument();
@@ -2089,7 +2119,7 @@ describe('QuickActionsModal', () => {
 
 		it('Configure Maestro Cue appears when searching for "cue"', () => {
 			const onConfigureCue = vi.fn();
-			const props = createDefaultProps({ onConfigureCue });
+			const props = createProps({ onConfigureCue });
 			render(<QuickActionsModal {...props} />);
 
 			const input = screen.getByPlaceholderText('Type a command or jump to agent...');
@@ -2101,7 +2131,7 @@ describe('QuickActionsModal', () => {
 
 	describe('Maestro Cue action', () => {
 		it('displays the openCue shortcut keys on the Maestro Cue command', () => {
-			const props = createDefaultProps({
+			const props = createProps({
 				onOpenMaestroCue: vi.fn(),
 				shortcuts: {
 					...mockShortcuts,
@@ -2117,7 +2147,7 @@ describe('QuickActionsModal', () => {
 
 	describe('Execution Queue action', () => {
 		it('displays the executionQueue shortcut keys on the View Execution Queue command', () => {
-			const props = createDefaultProps({
+			const props = createProps({
 				onOpenQueueBrowser: vi.fn(),
 				shortcuts: {
 					...mockShortcuts,
@@ -2133,14 +2163,14 @@ describe('QuickActionsModal', () => {
 
 	describe('Agent switcher mode (Cmd+O)', () => {
 		it('shows agent-specific placeholder when initialMode is agents', () => {
-			const props = createDefaultProps({ initialMode: 'agents' });
+			const props = createProps({ initialMode: 'agents' });
 			render(<QuickActionsModal {...props} />);
 
 			expect(screen.getByPlaceholderText('Jump to agent...')).toBeInTheDocument();
 		});
 
 		it('shows Switch Agent aria-label when in agents mode', () => {
-			const props = createDefaultProps({ initialMode: 'agents' });
+			const props = createProps({ initialMode: 'agents' });
 			render(<QuickActionsModal {...props} />);
 
 			const dialog = screen.getByRole('dialog');
@@ -2148,7 +2178,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('shows only raw agent names in agents mode', () => {
-			const props = createDefaultProps({
+			const props = createProps({
 				initialMode: 'agents',
 				sessions: [
 					createMockSession({ id: 'session-1', name: 'Agent Alpha' }),
@@ -2176,7 +2206,7 @@ describe('QuickActionsModal', () => {
 			useSettingsStore.setState({
 				encoreFeatures: { ...useSettingsStore.getState().encoreFeatures, pianola: false },
 			} as never);
-			const props = createDefaultProps({
+			const props = createProps({
 				initialMode: 'agents',
 				sessions: [
 					createMockSession({ id: 'session-1', name: 'Agent Alpha' }),
@@ -2194,7 +2224,7 @@ describe('QuickActionsModal', () => {
 			useSettingsStore.setState({
 				encoreFeatures: { ...useSettingsStore.getState().encoreFeatures, pianola: true },
 			} as never);
-			const props = createDefaultProps({
+			const props = createProps({
 				initialMode: 'agents',
 				sessions: [
 					createMockSession({ id: 'session-1', name: 'Agent Alpha' }),
@@ -2211,7 +2241,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('filters agents by search text in agents mode', () => {
-			const props = createDefaultProps({
+			const props = createProps({
 				initialMode: 'agents',
 				sessions: [
 					createMockSession({ id: 'session-1', name: 'Agent Alpha' }),
@@ -2228,7 +2258,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('closes modal and switches agent on selection in agents mode', () => {
-			const props = createDefaultProps({ initialMode: 'agents' });
+			const props = createProps({ initialMode: 'agents' });
 			render(<QuickActionsModal {...props} />);
 
 			fireEvent.click(screen.getByText('Test Session'));
@@ -2238,7 +2268,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('sorts agents alphabetically and excludes idle group chats', () => {
-			const props = createDefaultProps({
+			const props = createProps({
 				initialMode: 'agents',
 				sessions: [
 					createMockSession({ id: 'session-1', name: 'Zulu' }),
@@ -2266,7 +2296,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('lists a running group chat in the LIVE bucket', () => {
-			const props = createDefaultProps({
+			const props = createProps({
 				initialMode: 'agents',
 				sessions: [createMockSession({ id: 'session-1', name: 'Alpha', state: 'idle' })],
 				groupChats: [
@@ -2296,7 +2326,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('buckets running agents above idle ones, alphabetical within each bucket', () => {
-			const props = createDefaultProps({
+			const props = createProps({
 				initialMode: 'agents',
 				sessions: [
 					createMockSession({ id: 'session-1', name: 'Zulu', state: 'idle' }),
@@ -2322,7 +2352,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('renders LIVE and IDLE section headers in agents mode when both buckets exist', () => {
-			const props = createDefaultProps({
+			const props = createProps({
 				initialMode: 'agents',
 				sessions: [
 					createMockSession({ id: 'session-1', name: 'Alpha', state: 'idle' }),
@@ -2339,7 +2369,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('suppresses both headers when all agents are idle (single bucket)', () => {
-			const props = createDefaultProps({
+			const props = createProps({
 				initialMode: 'agents',
 				sessions: [
 					createMockSession({ id: 'session-1', name: 'Alpha', state: 'idle' }),
@@ -2356,7 +2386,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('suppresses both headers when all agents are running (single bucket)', () => {
-			const props = createDefaultProps({
+			const props = createProps({
 				initialMode: 'agents',
 				sessions: [
 					createMockSession({ id: 'session-1', name: 'Alpha', state: 'busy' }),
@@ -2373,7 +2403,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('does not render LIVE/IDLE headers in main mode', () => {
-			const props = createDefaultProps({
+			const props = createProps({
 				sessions: [
 					createMockSession({ id: 'session-1', name: 'Alpha', state: 'idle' }),
 					createMockSession({ id: 'session-2', name: 'Bravo', state: 'busy' }),
@@ -2393,7 +2423,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('dismisses modal when clicking the backdrop', () => {
-			const props = createDefaultProps({ initialMode: 'agents' });
+			const props = createProps({ initialMode: 'agents' });
 			render(<QuickActionsModal {...props} />);
 
 			const dialog = screen.getByRole('dialog');
@@ -2406,7 +2436,7 @@ describe('QuickActionsModal', () => {
 
 		it('shows elapsed time, busy tab name, and queue count for running agents', () => {
 			const startedAt = Date.now() - 65_000; // 1m 5s ago
-			const props = createDefaultProps({
+			const props = createProps({
 				initialMode: 'agents',
 				sessions: [
 					createMockSession({
@@ -2459,7 +2489,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('omits queue count when there are no queued items', () => {
-			const props = createDefaultProps({
+			const props = createProps({
 				initialMode: 'agents',
 				sessions: [
 					createMockSession({
@@ -2477,7 +2507,7 @@ describe('QuickActionsModal', () => {
 		});
 
 		it('alphabetizes by skipping leading emojis', () => {
-			const props = createDefaultProps({
+			const props = createProps({
 				initialMode: 'agents',
 				sessions: [
 					createMockSession({ id: 's1', name: 'Charlie' }),
@@ -2510,7 +2540,7 @@ describe('QuickActionsModal', () => {
 			});
 			const onMoveTabToFirst = vi.fn();
 			const onMoveTabToLast = vi.fn();
-			const props = createDefaultProps({
+			const props = createProps({
 				sessions: [session],
 				onMoveTabToFirst,
 				onMoveTabToLast,
@@ -2533,7 +2563,7 @@ describe('QuickActionsModal', () => {
 			});
 			const onMoveTabToFirst = vi.fn();
 			const onMoveTabToLast = vi.fn();
-			const props = createDefaultProps({
+			const props = createProps({
 				sessions: [session],
 				onMoveTabToFirst,
 				onMoveTabToLast,
@@ -2548,7 +2578,7 @@ describe('QuickActionsModal', () => {
 
 	describe('Layering', () => {
 		it('renders the backdrop above the toast layer so notifications cannot cover the palette', () => {
-			const props = createDefaultProps();
+			const props = createProps();
 			render(<QuickActionsModal {...props} />);
 
 			const backdrop = screen.getByRole('dialog').parentElement as HTMLElement;

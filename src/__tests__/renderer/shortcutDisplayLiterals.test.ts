@@ -245,8 +245,15 @@ describe('shortcut display literals regression guard', () => {
 	const violations = scanForLiterals();
 
 	it('should find test targets (sanity check)', () => {
-		// If the regex or file walk breaks, this test would pass vacuously.
-		expect(violations.length + ALLOWLIST.length).toBeGreaterThan(0);
+		// Asserted on the WALK, not on the findings. `ALLOWLIST` is a non-empty
+		// constant, so the old `violations.length + ALLOWLIST.length > 0` could
+		// never fail: if `RENDERER_COMPONENTS_ROOT` moved or `walk` started
+		// returning nothing, both tests in this file would have gone green over
+		// zero scanned files, which is the one failure the guard exists to catch.
+		//
+		// The floor is far below the ~1300 files the tree actually holds, so it
+		// survives ordinary deletions and only trips on a broken root or walk.
+		expect(walk(RENDERER_COMPONENTS_ROOT).length).toBeGreaterThan(100);
 	});
 
 	it('should not have any hard-coded chord literals outside the allowlist', () => {

@@ -284,7 +284,7 @@ export function HamburgerMenuContent({
 							{zenMode ? 'Bring both side bars back' : 'Hide both side bars'}
 						</div>
 					</div>
-					<ShortcutHint theme={theme} keys={shortcuts.toggleZenMode?.keys ?? []} />
+					<ShortcutHint theme={theme} actionId="toggleZenMode" />
 				</button>
 			)}
 			<button

@@ -267,11 +267,22 @@ export function overridesWithEdits(
 		// An omitted field there reads as "inherit", which would hand the old
 		// sequence back.
 		const sequence = sequenceEdited ? (shortcut.sequence ?? []) : current[id]?.sequence;
+		// The chord follows the same rule, for the same reason. `next` is the
+		// EFFECTIVE map, so on a sequence-only edit `shortcut.keys` is whatever
+		// the row is currently SHOWING - which, for an action this mode does not
+		// rebind, is the chord inherited from the default tables. Writing it
+		// unconditionally promoted that inherited chord to an explicit override
+		// and froze it at the value it had the day the sequence was recorded:
+		// changing the default-mode chord afterwards no longer reached this
+		// mode. An untouched chord is therefore carried across from `current`,
+		// and omitted entirely when the bucket has none, which is the spelling
+		// for "inherit".
+		const keys = chordEdited ? shortcut.keys : current[id]?.keys;
 		edited ??= { ...current };
 		edited[id] = {
 			id,
 			label: shortcut.label,
-			keys: [...shortcut.keys],
+			...(keys ? { keys: [...keys] } : {}),
 			...(sequence ? { sequence: sequence.map((step) => [...step]) } : {}),
 		};
 	}

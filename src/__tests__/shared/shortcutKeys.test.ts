@@ -149,6 +149,19 @@ describe('shortcutKeysCollide', () => {
 		expect(shortcutKeysCollide(['Meta', 'o'], ['Meta', 'p'])).toBe(false);
 	});
 
+	it('collides a Shift-rewritten chord with the unshifted key a table names', () => {
+		// Same rule as the sequence check below: the matcher accepts `<` for a
+		// binding spelled `,`, so a recording that captured the produced
+		// character must not read as free against a table spelling it the other
+		// way.
+		expect(shortcutKeysCollide(['Meta', '<'], ['Meta', ','])).toBe(true);
+		expect(shortcutKeysCollide(['Meta', 'Shift', '{'], ['Meta', 'Shift', '['])).toBe(true);
+		expect(shortcutKeysCollide(['Meta', '!'], ['Meta', '1'])).toBe(true);
+		// Not every Shift-rewritten character is folded: the matcher does not
+		// accept `_` for `-`, so reading them as one would refuse a free chord.
+		expect(shortcutKeysCollide(['Meta', '_'], ['Meta', '-'])).toBe(false);
+	});
+
 	it('treats an unassigned binding as colliding with nothing, including itself', () => {
 		// `keys: []` is "registered but unassigned"; several shipped actions sit
 		// there on purpose and must not be reported as fighting each other.
@@ -227,6 +240,28 @@ describe('shortcutSequencesCollide', () => {
 		// the comparison is the same one `shortcutKeysCollide` uses, so a
 		// hand-written binding is read the way the matcher would read it.
 		expect(shortcutSequencesCollide([['Ctrl', 'o']], [['Meta', 'o']])).toBe(true);
+	});
+
+	it('collides a Shift-rewritten step with the unshifted key a table names', () => {
+		// The shipped Vim `moveTabLeft` sequence is `[['Shift', ','], ['Shift',
+		// ',']]`, while recording that same press captures the character it
+		// produces, `['Shift', '<']`. `eventMatchesShortcutKeys` fires on
+		// either, so they are one binding at runtime: reading them as different
+		// here accepted the recording and left one of the two actions
+		// permanently unreachable.
+		expect(
+			shortcutSequencesCollide(
+				[
+					['Shift', '<'],
+					['Shift', '<'],
+				],
+				[
+					['Shift', ','],
+					['Shift', ','],
+				]
+			)
+		).toBe(true);
+		expect(shortcutSequencesCollide([['Shift', '>']], [['Shift', '.']])).toBe(true);
 	});
 
 	it('treats an unassigned sequence as colliding with nothing', () => {

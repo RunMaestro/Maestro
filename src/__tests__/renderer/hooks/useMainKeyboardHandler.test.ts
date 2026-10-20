@@ -6057,10 +6057,12 @@ describe('useMainKeyboardHandler - the in-field escape (jk)', () => {
 		expect(document.activeElement).toBe(field);
 	});
 
-	it('works with a modal open, because the block sits above the layer guard', () => {
+	it('works with a modal open, served by the capture-phase route', () => {
 		// The Settings filter, a rename field and the search box are all inside
-		// a layer. The guard returns early for every bare key, so an escape
-		// placed below it would be dead in most of the app's text fields.
+		// a layer, and `Modal` stops every keydown at React's root - so the
+		// window BUBBLE listener is never called for a key typed in one. A
+		// capture-phase listener runs ahead of that stop and owns the gesture
+		// there. Without it `jk` was dead in most of the app's text fields.
 		mountHandler(vimContext({ hasOpenLayers: () => true }));
 		const field = mountComposer('abc');
 
@@ -6068,6 +6070,30 @@ describe('useMainKeyboardHandler - the in-field escape (jk)', () => {
 		typeInField(field, 'k');
 
 		expect(field.value).toBe('abc');
+		expect(document.activeElement).not.toBe(field);
+	});
+
+	it('feeds the matcher once per keystroke, not once per listener', () => {
+		// The capture and bubble routes share one matcher, so exactly one of
+		// them may feed a given keystroke. An event dispatched at `window`
+		// reaches both, and when both fed it the second call read the repeated
+		// `j` as a failed step and threw the prefix away - leaving the gesture
+		// dead in precisely the layer case the capture route was added for.
+		// Asserted on a run SPLIT across the guard's two sides being impossible:
+		// with layers open the whole run is the capture route's.
+		mountHandler(vimContext({ hasOpenLayers: () => true }));
+		const field = mountComposer('');
+
+		// A `j` that is never completed stays in the field, so the prefix is
+		// held rather than swallowed.
+		const first = typeInField(field, 'j');
+		expect(first.defaultPrevented).toBe(false);
+		expect(field.value).toBe('j');
+
+		// The completing `k` retracts the `j` and leaves the field.
+		const second = typeInField(field, 'k');
+		expect(second.defaultPrevented).toBe(true);
+		expect(field.value).toBe('');
 		expect(document.activeElement).not.toBe(field);
 	});
 

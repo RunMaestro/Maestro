@@ -537,9 +537,58 @@ describe('overridesWithEdits', () => {
 		});
 
 		expect(result.openSettings.sequence).toEqual([['g'], ['s']]);
-		// And the chord the row already had comes across with it, because the
-		// override row is written whole.
-		expect(result.openSettings.keys).toEqual(['Meta', ',']);
+		// The chord is NOT carried across. `before` is the effective map, so the
+		// chord shown on the row is the one inherited from the default tables;
+		// writing it here would promote it to an explicit override and freeze it
+		// at that day's value, so changing the default-mode chord afterwards
+		// would no longer reach this mode. Omitting `keys` is the spelling for
+		// "inherit", which is what the row is actually doing.
+		expect(result.openSettings.keys).toBeUndefined();
+		expect(isOverrideInherited('openSettings', { vimShortcuts: result, vimTabShortcuts: {} })).toBe(
+			true
+		);
+	});
+
+	it("keeps THIS mode's own chord when only the sequence changes", () => {
+		// The mirror of the case above: once the bucket holds a real chord for
+		// the row, that chord is the user's own choice in this mode and a
+		// sequence recording must not drop it.
+		const current = { openSettings: ov('openSettings', 'Open Settings', ['Ctrl', 'g']) };
+		const shown: Record<string, Shortcut> = {
+			...before,
+			openSettings: sc('openSettings', 'Open Settings', ['Ctrl', 'g']),
+		};
+		const result = overridesWithEdits(current, shown, {
+			...shown,
+			openSettings: { ...shown.openSettings, sequence: [['g'], ['s']] },
+		});
+
+		expect(result.openSettings.keys).toEqual(['Ctrl', 'g']);
+		expect(result.openSettings.sequence).toEqual([['g'], ['s']]);
+		expect(isOverrideInherited('openSettings', { vimShortcuts: result, vimTabShortcuts: {} })).toBe(
+			false
+		);
+	});
+
+	it('leaves a displaced Vim action displaced when only its sequence changes', () => {
+		// The case the review named: a row Vim mode displaces with its own
+		// chord, given a sequence. Both triggers have to survive, and the row
+		// must stay this mode's own rather than reverting to inherited.
+		const current = { prevTab: ov('prevTab', 'Previous Tab', ['Ctrl', 'PageUp']) };
+		const shown: Record<string, Shortcut> = {
+			...before,
+			prevTab: sc('prevTab', 'Previous Tab', ['Ctrl', 'PageUp']),
+		};
+		const result = overridesWithEdits(current, shown, {
+			...shown,
+			prevTab: { ...shown.prevTab, sequence: [['g'], ['T']] },
+		});
+
+		expect(result.prevTab.keys).toEqual(['Ctrl', 'PageUp']);
+		expect(result.prevTab.sequence).toEqual([['g'], ['T']]);
+		expect(isOverrideInherited('prevTab', { vimShortcuts: result, vimTabShortcuts: {} })).toBe(
+			false
+		);
 	});
 
 	it('does not write a sequence recorded in another key order', () => {

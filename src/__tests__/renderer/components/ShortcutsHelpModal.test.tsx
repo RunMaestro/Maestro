@@ -124,11 +124,14 @@ describe('ShortcutsHelpModal', () => {
 			);
 
 			const dialog = screen.getByRole('dialog');
-			const closeButton = dialog.querySelector('[aria-label="Close"]') as HTMLElement;
-			if (closeButton) {
-				fireEvent.click(closeButton);
-				expect(mockOnClose).toHaveBeenCalledTimes(1);
-			}
+			const closeButton = dialog.querySelector('[aria-label="Close"]');
+			// Asserted, not guarded. Inside `if (closeButton)` the expectation
+			// below never ran when the control was missing, so losing the close
+			// button entirely would have left this test green.
+			expect(closeButton).not.toBeNull();
+
+			fireEvent.click(closeButton as HTMLElement);
+			expect(mockOnClose).toHaveBeenCalledTimes(1);
 		});
 	});
 
@@ -143,8 +146,13 @@ describe('ShortcutsHelpModal', () => {
 			const searchInput = screen.getByPlaceholderText('Search shortcuts...');
 			fireEvent.change(searchInput, { target: { value: 'New' } });
 
-			// After filtering, the input should still be present and the search should work
-			expect(searchInput).toBeInTheDocument();
+			// Asserted on the ROWS, not on the input still existing. The mocked
+			// hook returns four fixed shortcuts, so filtering has a verifiable
+			// outcome: the match stays and the non-matches go. Checking only that
+			// the box is still on screen let broken filtering pass.
+			expect(screen.getByText('New Session')).toBeInTheDocument();
+			expect(screen.queryByText('Close Session')).not.toBeInTheDocument();
+			expect(screen.queryByText('Search Files')).not.toBeInTheDocument();
 		});
 
 		it('clears search when input is emptied', () => {
@@ -175,7 +183,10 @@ describe('ShortcutsHelpModal', () => {
 			const searchInput = screen.getByPlaceholderText('Search shortcuts...');
 			fireEvent.change(searchInput, { target: { value: 'NEW' } });
 
-			expect(searchInput).toBeInTheDocument();
+			// The point of the test is that an upper-case query finds a
+			// mixed-case label, so it has to assert the row, not the input.
+			expect(screen.getByText('New Session')).toBeInTheDocument();
+			expect(screen.queryByText('Close Session')).not.toBeInTheDocument();
 		});
 	});
 

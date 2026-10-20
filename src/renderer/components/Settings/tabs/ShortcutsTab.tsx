@@ -16,7 +16,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { AlertTriangle, Keyboard, MessageSquare, RotateCcw, X } from 'lucide-react';
 import { useActiveShortcuts, useSettings } from '../../../hooks';
-import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
+import { formatShortcutKeys, formatShortcutSequence } from '../../../utils/shortcutFormatter';
 import { buildKeysFromEvent, recordSequenceStep } from '../../../utils/shortcutRecorder';
 import {
 	shortcutKeysCollide,
@@ -54,19 +54,6 @@ import type { Theme, Shortcut } from '../../../types';
 const KEYBOARD_MODE_OPTIONS: ReadonlyArray<SegmentedOption<KeyboardMode>> = KEYBOARD_MODES.map(
 	(value) => ({ value, label: KEYBOARD_MODE_LABELS[value] })
 );
-
-/**
- * A key sequence as text: each step formatted as the chord it is, joined by a
- * space (`g g`, `G t`).
- *
- * `formatShortcutKeys` stays the single authority on how one step is spelled,
- * so a step reads the same here as it does anywhere else in the app and picks
- * up the platform's key symbols for free. The join is the only thing a sequence
- * adds, and a space is what says "then" rather than "together".
- */
-function formatSequenceSteps(sequence: readonly string[][]): string {
-	return sequence.map((step) => formatShortcutKeys([...step])).join(' ');
-}
 
 export interface ShortcutsTabProps {
 	theme: Theme;
@@ -326,7 +313,7 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 			// prefix conflict the two are different keys, so naming only the one
 			// just pressed would read as a mistake the user could not see.
 			setConflictMessage(
-				`${formatSequenceSteps(sequence)} overlaps the key sequence for "${conflict.label}" (${formatSequenceSteps(conflict.sequence ?? [])}) - one is a prefix of the other, so only the shorter one could ever fire. Pick another sequence, or clear that one first.`
+				`${formatShortcutSequence(sequence, ' ')} overlaps the key sequence for "${conflict.label}" (${formatShortcutSequence(conflict.sequence ?? [], ' ')}) - one is a prefix of the other, so only the shorter one could ever fire. Pick another sequence, or clear that one first.`
 			);
 			stopRecording();
 			return;
@@ -526,10 +513,10 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 							// listening": the run ends when the user says so, so the button
 							// has to show that it is mid-capture.
 							sequenceSteps.length
-							? `${formatSequenceSteps(sequenceSteps)} ...`
+							? `${formatShortcutSequence(sequenceSteps)} ...`
 							: 'Recording...'
 						: sc.sequence?.length
-							? formatSequenceSteps(sc.sequence)
+							? formatShortcutSequence(sc.sequence)
 							: // Not "Not set", which the chord button on this row already
 								// says: an empty sequence slot is an invitation, and two
 								// identical labels on one row read as a duplicate.

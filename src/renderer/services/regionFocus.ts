@@ -174,6 +174,34 @@ export function focusedRegion(): MaestroRegion {
 }
 
 /**
+ * The transcript to reach, scoped to the focused PANE when the Main Window is
+ * showing a tiled group.
+ *
+ * A bare `.terminal-output` lookup is document-ordered, so in a group holding
+ * several AI panes it always answered with the FIRST transcript on screen -
+ * "focus region up" from the second or third pane jumped the user into a
+ * different conversation than the one they were working in. The pane boxes
+ * carry `data-pane-leaf-id` (TiledLayout) and `group.focusedPaneId` is the same
+ * source of truth the pane border and `focusPane` read, so scoping to it lands
+ * in the pane the user is actually in.
+ *
+ * Resolved from the session store for the same reason the downward path is:
+ * both halves of this axis then agree on which pane they are moving inside.
+ * Untiled, there is one transcript and the selector is unchanged. A focused
+ * pane that holds no transcript (a file or browser pane) yields a selector that
+ * matches nothing, which is the honest answer - there is no conversation above
+ * that pane's input to go to.
+ */
+function transcriptSelector(): string {
+	const session = selectActiveSession(useSessionStore.getState());
+	if (!session?.activeGroupId) return TRANSCRIPT_SELECTOR;
+	const group = (session.tabGroups ?? []).find((g) => g.id === session.activeGroupId);
+	const paneId = group?.focusedPaneId;
+	if (!paneId) return TRANSCRIPT_SELECTOR;
+	return `[data-pane-leaf-id="${paneId}"] ${TRANSCRIPT_SELECTOR}`;
+}
+
+/**
  * Put the caret in the Main Window's real input - the chat composer, or the
  * shell / address bar / editor when the active tab is not a conversation.
  *
@@ -264,7 +292,7 @@ export function focusRegionVertical(direction: 'up' | 'down'): void {
 		// The transcript sits above the composer, so up reaches the conversation
 		// and down reaches the place you type. Same pair `focusInput` toggles.
 		if (direction === 'up') {
-			focusWhenReady(TRANSCRIPT_SELECTOR);
+			focusWhenReady(transcriptSelector());
 			return;
 		}
 		focusMainWindowInput();

@@ -40,7 +40,11 @@ import { tileNewTabInSession } from '../../services/tileNewTabAction';
 import type { TileableTabKind } from '../tabs/tileNewTab';
 import { isMacOSKeyboard } from '../../utils/platformUtils';
 import { eventMatchesShortcutKeys } from '../../utils/shortcutMatch';
-import { createSequenceMatcher, type SequenceBinding } from '../../utils/shortcutSequence';
+import {
+	createSequenceMatcher,
+	MODIFIER_ONLY_KEYS,
+	type SequenceBinding,
+} from '../../utils/shortcutSequence';
 import { publishSequencePrefix } from '../../stores/sequencePrefixStore';
 import { isNormalMode } from '../../utils/messageScrollNavigation';
 import {
@@ -232,6 +236,49 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 		};
 
 		/**
+		 * The `jk` gesture, fed one keydown. True when the keystroke was consumed
+		 * (the field was left), false when it was a captured step, a near miss, or
+		 * nothing to do with the gesture.
+		 *
+		 * A closure function because it is reached from TWO listeners: see the
+		 * capture-phase route in this same effect for why one is not enough.
+		 * Both share this matcher and `insertEscapeField`, which is what keeps a
+		 * run from surviving a change of field no matter which route fed it.
+		 */
+		const runInsertEscape = (
+			e: KeyboardEvent,
+			insertEscape: InsertEscapeBinding | null
+		): boolean => {
+			if (!insertEscape) return false;
+			const field = insertEscapeTarget(e.target);
+			// Focus moved mid-run (a click into another input, a modal autofocusing
+			// its first field): the run ended with it.
+			if (field !== insertEscapeField) endInsertEscapeRun();
+			if (!field) return false;
+			const escapeResult = insertEscapeMatcher.feed(e, insertEscape.bindings);
+			if (escapeResult.outcome === 'consumed-prefix') {
+				// Deliberately NOT prevented. The `j` is a character the user typed
+				// and it belongs in the field; if no `k` follows, nothing was ever
+				// taken away from them.
+				insertEscapeField = field;
+				return false;
+			}
+			if (escapeResult.outcome === 'matched') {
+				insertEscapeField = null;
+				if (applyInsertEscape(field, insertEscape.inserted)) {
+					e.preventDefault();
+					return true;
+				}
+				// The prefix is not where it was expected to be, so this was never
+				// an escape. Let the key be the character it is - a near miss costs
+				// the user nothing.
+				return false;
+			}
+			insertEscapeField = null;
+			return false;
+		};
+
+		/**
 		 * Tell the prefix indicator what the matcher is holding.
 		 *
 		 * The matcher's own answer is published verbatim, so the chip cannot
@@ -363,7 +410,17 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			// already been matched against the Deck table, and those guards read raw
 			// keys, so each one below is skipped while `deckAction` is set.
 			let deckAction: string | null = null;
-			if (deckModeArmedNow()) {
+			// A modifier's OWN keydown is invisible to the armed mode, exactly as it
+			// is to the sequence matcher. `Shift+H` sends a bare `Shift` keydown
+			// before the letter: it carries none of the meta/ctrl/alt flags, so it
+			// reached the miss branch below, disarmed the mode, and swallowed
+			// itself - which took away the forgiving capital-letter behaviour the
+			// Deck table promises and left the letter to land in the composer
+			// instead. `Alt` alone had the mirror problem: its own keydown sets
+			// `altKey`, so it read as a deliberate chord and disarmed. Skipping the
+			// whole block leaves the mode armed and the event untouched, which is
+			// what a key the user has not finished pressing deserves.
+			if (deckModeArmedNow() && !MODIFIER_ONLY_KEYS.has(e.key)) {
 				const { disarmDeckMode } = useUIStore.getState();
 				if (isDeckModeCancelKey(e.key)) {
 					// THE ONE PLACE THE LAYER STACK YIELDS. Escape normally closes the
@@ -543,34 +600,18 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			// behavior configured by a string setting, not a bindable action, so
 			// recording it would put an id in the mastery set that no table
 			// declares and no row could ever explain.
-			const insertEscape: InsertEscapeBinding | null = deckAction
-				? null
-				: (ctx.insertEscape ?? null);
-			if (insertEscape) {
-				const field = insertEscapeTarget(target);
-				// Focus moved mid-run (a click into another input, a modal
-				// autofocusing its first field): the run ended with it.
-				if (field !== insertEscapeField) endInsertEscapeRun();
-				if (field) {
-					const escapeResult = insertEscapeMatcher.feed(e, insertEscape.bindings);
-					if (escapeResult.outcome === 'consumed-prefix') {
-						// Deliberately NOT prevented. The `j` is a character the user
-						// typed and it belongs in the field; if no `k` follows,
-						// nothing was ever taken away from them.
-						insertEscapeField = field;
-					} else if (escapeResult.outcome === 'matched') {
-						insertEscapeField = null;
-						if (applyInsertEscape(field, insertEscape.inserted)) {
-							e.preventDefault();
-							return;
-						}
-						// The prefix is not where it was expected to be, so this was
-						// never an escape. Fall through and let the key be the
-						// character it is - a near miss costs the user nothing.
-					} else {
-						insertEscapeField = null;
-					}
-				}
+			// Runs for every text field OUTSIDE a layer; a field inside one is
+			// served by the capture-phase route, which is the only route the
+			// event reaches there at all. The layer check is what keeps the two
+			// EXCLUSIVE, and it is not optional: an event dispatched at `window`
+			// reaches a capture and a bubble listener alike, so without it one
+			// keystroke was fed to the matcher twice and the second feed read the
+			// repeat as a failed step and threw the prefix away.
+			if (
+				!ctx.hasOpenLayers() &&
+				runInsertEscape(e, deckAction ? null : (ctx.insertEscape ?? null))
+			) {
+				return;
 			}
 
 			// When layers (modals/overlays) are open, we need nuanced shortcut handling:
@@ -856,6 +897,77 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				return;
 			}
 
+			// --- Key sequences (`g g`, `g t`) ---
+			//
+			// Placed BEFORE every branch that can dispatch an action, and AFTER
+			// every early return above it, both deliberately. Before, because a
+			// sequence step is a bare key and those branches would otherwise get
+			// first refusal on it, and because a match dispatches by FORCING the
+			// three matchers and falling through to the action's own branch - so
+			// any branch sitting above this point is one a sequence can never
+			// reach. That is not hypothetical: the tiling family below (pane
+			// focus, split, close, zoom, rebalance, cycle) used to run first, so
+			// a sequence bound to one of them was swallowed here, recorded as
+			// used, and then had no branch left to run.
+			//
+			// After, because the paths above already own bare keys for better
+			// reasons: terminal focus recovery forwards them to the shell, the
+			// layer guard hands them to whatever modal is open, the sidebar /
+			// Enter / Escape navigation handlers claim theirs, and the Cmd+R
+			// block only ever calls preventDefault. Group chat handling is not
+			// above this point - it lives inside the ladder - so a matched
+			// sequence reaches it the same way its chord does.
+			//
+			// Both halves of normal mode are checked here. `isNormalMode` owns the
+			// focus half (nothing that accepts typed text holds the keystroke) and
+			// `hasOpenLayers` owns the modal half, which is React context rather
+			// than DOM and so cannot live in the predicate.
+			//
+			// Skipped entirely when the live mode binds no sequence at all, which
+			// is every default-mode user who has not recorded one. This is the
+			// hottest path in the app, and `isNormalMode` costs two `closest()`
+			// walks; with no bindings `feed` can only answer 'no-match' and no
+			// prefix can be live to reset, so the skip changes nothing but the
+			// cost.
+			//
+			// Skipped entirely for a forced Deck action, which is why Deck mode
+			// "composes with" the sequence matcher rather than competing with it:
+			// the leader already reset any live prefix, and feeding the Deck key
+			// here would let it start or finish a run it was never aimed at.
+			const sequenceBindings: readonly SequenceBinding[] =
+				ctx.sequenceBindings ?? NO_SEQUENCE_BINDINGS;
+			if (!deckAction && sequenceBindings.length > 0) {
+				if (isNormalMode(e) && !ctx.hasOpenLayers()) {
+					const sequenceResult = sequenceMatcher.feed(e, sequenceBindings);
+					// Before the branches, so every outcome repaints the chip from
+					// one place: a captured step shows it, a match or an abort hides
+					// it, and a modifier-only key leaves it exactly as it was.
+					publishPrefix();
+					if (sequenceResult.outcome === 'consumed-prefix') {
+						// The keypress belongs to the run in progress. Letting it
+						// also reach the ladder would fire an action mid-sequence.
+						e.preventDefault();
+						return;
+					}
+					if (sequenceResult.outcome === 'matched') {
+						// Swallowed for the same reason its prefix was: the key
+						// completed a sequence, so it is not also a key in its own
+						// right.
+						e.preventDefault();
+						trackShortcut(sequenceResult.actionId);
+						ctx = withForcedAction(ctx, sequenceResult.actionId);
+					}
+					// 'no-match' falls through untouched, to be matched as a chord.
+				} else {
+					// A keypress that could not be a sequence step ends the run:
+					// the user has clicked into a text field or opened a modal, and
+					// a prefix that outlived either would complete against a
+					// keystroke they no longer connect to it.
+					sequenceMatcher.reset();
+					publishPrefix();
+				}
+			}
+
 			// Tab tiling (split panes): the Ctrl+Cmd pane family is matched with a
 			// dedicated matcher (isPaneShortcut requires BOTH Ctrl and Cmd) so it never
 			// collides with the plain-Cmd shortcuts below (Cmd+W, Cmd+=, Cmd+D pieces).
@@ -919,69 +1031,6 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				ctx.tilingShortcuts.cyclePane('next');
 				trackShortcut('paneCycleNext');
 				return;
-			}
-
-			// --- Key sequences (`g g`, `g t`) ---
-			//
-			// Placed BEFORE the chord ladder and AFTER every early return above
-			// it, both deliberately. Before, because a sequence step is a bare
-			// key and the ladder would otherwise get first refusal on it. After,
-			// because the paths above already own bare keys for better reasons:
-			// terminal focus recovery forwards them to the shell, the layer guard
-			// hands them to whatever modal is open, the sidebar / Enter / Escape
-			// navigation handlers claim theirs, and the Cmd+R block only ever
-			// calls preventDefault. Group chat handling is not above this point -
-			// it lives inside the ladder - so a matched sequence reaches it the
-			// same way its chord does.
-			//
-			// Both halves of normal mode are checked here. `isNormalMode` owns the
-			// focus half (nothing that accepts typed text holds the keystroke) and
-			// `hasOpenLayers` owns the modal half, which is React context rather
-			// than DOM and so cannot live in the predicate.
-			//
-			// Skipped entirely when the live mode binds no sequence at all, which
-			// is every default-mode user who has not recorded one. This is the
-			// hottest path in the app, and `isNormalMode` costs two `closest()`
-			// walks; with no bindings `feed` can only answer 'no-match' and no
-			// prefix can be live to reset, so the skip changes nothing but the
-			// cost.
-			//
-			// Skipped entirely for a forced Deck action, which is why Deck mode
-			// "composes with" the sequence matcher rather than competing with it:
-			// the leader already reset any live prefix, and feeding the Deck key
-			// here would let it start or finish a run it was never aimed at.
-			const sequenceBindings: readonly SequenceBinding[] =
-				ctx.sequenceBindings ?? NO_SEQUENCE_BINDINGS;
-			if (!deckAction && sequenceBindings.length > 0) {
-				if (isNormalMode(e) && !ctx.hasOpenLayers()) {
-					const sequenceResult = sequenceMatcher.feed(e, sequenceBindings);
-					// Before the branches, so every outcome repaints the chip from
-					// one place: a captured step shows it, a match or an abort hides
-					// it, and a modifier-only key leaves it exactly as it was.
-					publishPrefix();
-					if (sequenceResult.outcome === 'consumed-prefix') {
-						// The keypress belongs to the run in progress. Letting it
-						// also reach the ladder would fire an action mid-sequence.
-						e.preventDefault();
-						return;
-					}
-					if (sequenceResult.outcome === 'matched') {
-						// Swallowed for the same reason its prefix was: the key
-						// completed a sequence, so it is not also a key in its own
-						// right.
-						e.preventDefault();
-						trackShortcut(sequenceResult.actionId);
-						ctx = withForcedAction(ctx, sequenceResult.actionId);
-					}
-					// 'no-match' falls through untouched, to be matched as a chord.
-				} else {
-					// A keypress that could not be a sequence step ends the run:
-					// the user has clicked into a text field or opened a modal, and
-					// a prefix that outlived either would complete against a
-					// keystroke they no longer connect to it.
-					sequenceMatcher.reset();
-					publishPrefix();
-				}
 			}
 
 			// Which "Tile New ... Below" command this event matches, if any. Resolved
@@ -2250,9 +2299,48 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			useUIStore.getState().disarmDeckMode();
 		});
 
+		/**
+		 * `jk` inside an open layer, where the main listener never runs.
+		 *
+		 * `Modal` puts `onKeyDown={(e) => e.stopPropagation()}` on its root, so a
+		 * keystroke typed in a modal's own text field - the Settings filter, the
+		 * shortcuts search box, a rename field - stops at React's root container
+		 * and never bubbles to `window`. The main handler runs the gesture above
+		 * its layer guard, which reads as though it would survive an open modal,
+		 * but that placement cannot help on its own: the event is gone before the
+		 * listener is called at all. CAPTURE phase runs window-first, which is
+		 * the one place ahead of the modal's stop.
+		 *
+		 * Scoped as tightly as the bug: it runs ONLY while a layer is open (the
+		 * exact case the bubble route cannot serve) and ONLY the `jk` gesture, so
+		 * no ordinary background shortcut becomes reachable from inside a modal,
+		 * and the no-layer path keeps its existing ordering untouched. The two
+		 * routes are mutually exclusive per keystroke, and both feed the one
+		 * matcher, so a run cannot be half-held in each.
+		 *
+		 * Deck mode is NOT extended here. Arming it needs the leader chord, which
+		 * the same stop swallows, so an armed Deck mode cannot exist inside a
+		 * modal to begin with - and its table fires tab and layout actions that
+		 * have no business running underneath an open dialog. Checked anyway, so
+		 * the gesture stands down rather than eating a Deck key if arming ever
+		 * becomes reachable.
+		 *
+		 * `stopPropagation` on a consumed keystroke: the gesture blurs the field,
+		 * so letting the same `k` continue to the field's own handlers would hand
+		 * them a key the user spent on leaving.
+		 */
+		const handleKeyDownCapture = (e: KeyboardEvent) => {
+			const ctx = keyboardHandlerRef.current;
+			if (!ctx?.hasOpenLayers?.()) return;
+			if (deckModeArmedNow()) return;
+			if (runInsertEscape(e, ctx.insertEscape ?? null)) e.stopPropagation();
+		};
+
+		window.addEventListener('keydown', handleKeyDownCapture, { capture: true });
 		window.addEventListener('keydown', handleKeyDown);
 		window.addEventListener('blur', handleBlur);
 		return () => {
+			window.removeEventListener('keydown', handleKeyDownCapture, { capture: true });
 			window.removeEventListener('keydown', handleKeyDown);
 			window.removeEventListener('blur', handleBlur);
 			unsubscribeKeyboardMode();

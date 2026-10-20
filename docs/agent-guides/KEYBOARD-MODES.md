@@ -284,6 +284,18 @@ chord/sequence passes).
 the same binding at runtime and both physical keys fire it. One binding table
 therefore serves every platform.
 
+It folds a second pair the same way: a Shift-rewritten character and the
+unshifted key a binding names. Shift+`,` produces `<`, so the shipped Vim
+`moveTabLeft` sequence spells a step `['Shift', ',']` while RECORDING that same
+press captures `['Shift', '<']` - and the matcher fires on either. The fold
+lives in `SHIFT_REWRITTEN_KEYS` (`src/shared/shortcutKeys.ts`) and both the
+matcher and the collision checks read that one table, because a chord the two
+disagree about is one the recorder reports as free and the matcher then answers
+for two actions at once, leaving whichever resolves second unreachable. The
+table deliberately holds only the pairs the matcher accepts: `_`, `+`, `:`, `"`,
+`?`, `|` and `~` are Shift-rewritten too, and folding them would refuse a
+binding that is genuinely available.
+
 Every comparison that asks "do these two chords fire on the same keypress" has
 to model that collapse, and `shortcutKeysCollide` in
 `src/shared/shortcutKeys.ts` is the one that does. It is stricter than

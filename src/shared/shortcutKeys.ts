@@ -185,10 +185,49 @@ export const RESERVED_SHORTCUT_COMBOS: readonly { keys: string[]; reason: string
 ];
 
 /**
+ * Shift-rewritten characters, mapped to the key a BINDING names.
+ *
+ * Shift+`,` produces `<`, so a user recording that press gets `['Shift', '<']`
+ * while the shipped table spells the same press `['Shift', ',']`.
+ * `eventMatchesShortcutKeys` fires on either, which makes them one binding at
+ * runtime - so every comparison in this file has to read them as one too, or a
+ * collision check reports two actions fighting over one keypress as free and
+ * leaves whichever the matcher resolves second permanently unreachable.
+ *
+ * Exported so the matcher reads the SAME table it is modelling here. A second
+ * copy is what let the two drift in the first place.
+ *
+ * This is deliberately only the set the matcher aliases. `_`, `+`, `:`, `"`,
+ * `?`, `|` and `~` are Shift-rewritten too, but the matcher does NOT accept
+ * them for their unshifted key, so folding them together here would refuse a
+ * binding that is genuinely free.
+ */
+export const SHIFT_REWRITTEN_KEYS: Readonly<Record<string, string>> = {
+	'{': '[',
+	'}': ']',
+	'<': ',',
+	'>': '.',
+	'!': '1',
+	'@': '2',
+	'#': '3',
+	$: '4',
+	'%': '5',
+	'^': '6',
+	'&': '7',
+	'*': '8',
+	'(': '9',
+	')': '0',
+};
+
+/**
  * A chord reduced to a canonical string for comparison: Meta and Ctrl collapse
  * to one modifier, matching how `eventMatchesShortcutKeys` reads a real event.
  * Without the collapse, the Windows recording (`Ctrl+Shift+Down`) would slip
  * past a table written in terms of `Meta`.
+ *
+ * A Shift-rewritten character collapses onto the key a binding names, for the
+ * reason on `SHIFT_REWRITTEN_KEYS`: `['Shift', '<']` and `['Shift', ',']` are
+ * one keypress to the matcher, so they are one chord here.
  *
  * Repeated modifiers are NOT deduplicated. `['Control', 'Meta', 'w']` canonicalizes
  * to `meta+meta+w` and `['Meta', 'w']` to `meta+w`, which is what keeps the
@@ -199,7 +238,8 @@ function canonicalChordKeys(keys: readonly string[]): string {
 	return [...keys]
 		.map((k) => {
 			const lower = k.toLowerCase();
-			return lower === 'ctrl' || lower === 'control' || lower === 'command' ? 'meta' : lower;
+			if (lower === 'ctrl' || lower === 'control' || lower === 'command') return 'meta';
+			return SHIFT_REWRITTEN_KEYS[lower] ?? lower;
 		})
 		.sort()
 		.join('+');

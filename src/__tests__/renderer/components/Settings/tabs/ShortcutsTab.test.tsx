@@ -29,10 +29,20 @@ import type { Shortcut } from '../../../../../renderer/types';
 import type { KeyboardMode } from '../../../../../shared/shortcut-types';
 
 import { mockTheme } from '../../../../helpers/mockTheme';
-// Mock formatShortcutKeys
-vi.mock('../../../../../renderer/utils/shortcutFormatter', () => ({
-	formatShortcutKeys: vi.fn((keys: string[]) => keys.join('+')),
-}));
+// Chords are stubbed to a readable `a+b` so a row's chord assertions do not
+// depend on the platform's key glyphs. SEQUENCES keep the real
+// `formatShortcutSequence`: its per-step rules are the behavior under test (a
+// bare `g` stays lowercase where the chord formatter would print `G`, and
+// `Shift+g` folds to `G`), so stubbing it would assert nothing about the thing
+// this tab is required to use.
+vi.mock('../../../../../renderer/utils/shortcutFormatter', async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import('../../../../../renderer/utils/shortcutFormatter')>();
+	return {
+		...actual,
+		formatShortcutKeys: vi.fn((keys: string[]) => keys.join('+')),
+	};
+});
 
 const mockSetShortcuts = vi.fn();
 const mockSetTabShortcuts = vi.fn();
