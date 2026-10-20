@@ -10,7 +10,7 @@ import { DOUBLE_PRESS_ACCESS, FIXED_SHORTCUTS } from '../constants/shortcuts';
 import { DECK_MODE_CANCEL, DECK_MODE_LEADER_ID } from '../constants/deckMode';
 import { DeckModeKeyList } from './DeckModeKeyList';
 import { SEQUENCE_TIMEOUT_MS } from '../utils/shortcutSequence';
-import { formatShortcutKeys } from '../utils/shortcutFormatter';
+import { formatShortcutKeys, formatShortcutSequence } from '../utils/shortcutFormatter';
 import { shortcutKeysEqual } from '../../shared/shortcutKeys';
 import { Modal } from './ui/Modal';
 import {
@@ -23,11 +23,11 @@ import { availableShortcuts } from '../utils/encoreShortcuts';
 import { useSettingsStore } from '../stores/settingsStore';
 import { selectMasteryBoundShortcuts } from '../stores/settingsShortcutsSlice';
 import { buildMaestroUrl } from '../utils/buildMaestroUrl';
+import { useActiveShortcuts } from '../hooks/settings/useActiveShortcuts';
+import { resolveShortcutKeys } from '../utils/shortcutResolve';
 
 interface ShortcutsHelpModalProps {
 	theme: Theme;
-	shortcuts: Record<string, Shortcut>;
-	tabShortcuts: Record<string, Shortcut>;
 	onClose: () => void;
 	hasNoAgents?: boolean;
 	keyboardMasteryStats?: KeyboardMasteryStats;
@@ -40,8 +40,6 @@ interface ShortcutsHelpModalProps {
 
 export function ShortcutsHelpModal({
 	theme,
-	shortcuts,
-	tabShortcuts,
 	onClose,
 	hasNoAgents,
 	keyboardMasteryStats,
@@ -64,6 +62,9 @@ export function ShortcutsHelpModal({
 		}
 		return true;
 	}, []);
+
+	// Get the effective shortcuts for the active keyboard mode.
+	const { keyboardMode, shortcuts, tabShortcuts } = useActiveShortcuts();
 
 	// Combine all shortcuts for display and mastery tracking. A switched-off
 	// Encore Feature's chord cannot fire, so it is neither listed nor counted.
@@ -151,6 +152,12 @@ export function ShortcutsHelpModal({
 		.sort((a, b) => a.label.localeCompare(b.label));
 	const filteredCount = filteredShortcuts.length;
 
+	// Handle keyboard mode switching
+	const handleModeSwitch = useCallback(() => {
+		const state = useSettingsStore.getState();
+		state.setKeyboardMode(keyboardMode === 'vim' ? 'default' : 'vim');
+	}, [keyboardMode]);
+
 	// Custom header with title, badge, mastery progress, search input, and close button
 	const customHeader = (
 		<div className="p-4 border-b" style={{ borderColor: theme.colors.border }}>
@@ -163,12 +170,31 @@ export function ShortcutsHelpModal({
 						className="text-xs px-2 py-2 rounded"
 						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
 					>
+						{keyboardMode === 'vim' ? 'Vim Mode' : 'Default Mode'}
+					</span>
+					<span
+						className="text-xs px-2 py-2 rounded"
+						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
+					>
 						{searchQuery || filterShortcutKeys.length > 0
 							? `${filteredCount} / ${totalShortcuts}`
 							: totalShortcuts}
 					</span>
 				</div>
 				<div className="flex items-center gap-1">
+					{/* Button to switch keyboard modes */}
+					<button
+						onClick={handleModeSwitch}
+						className="text-xs px-2 py-1.5 rounded border transition-colors hover:opacity-80"
+						style={{
+							borderColor: theme.colors.border,
+							color: theme.colors.textDim,
+							backgroundColor: theme.colors.bgActivity,
+						}}
+						title={`Switch to ${keyboardMode === 'vim' ? 'Default' : 'Vim'} mode`}
+					>
+						{keyboardMode === 'vim' ? 'Default Mode' : 'Vim Mode'}
+					</button>
 					{/* The footer already tells the user shortcuts are "customized from
 					    Settings -> Shortcuts"; until now that sentence named a
 					    destination it could not reach. */}
@@ -295,6 +321,15 @@ export function ShortcutsHelpModal({
 				{filteredShortcuts.map((sc, i) => {
 					const isBound = sc.keys.length > 0;
 					const isUsed = usedShortcutIds.has(sc.id);
+					// Resolve the effective binding for this action in the active mode
+					const resolved = resolveShortcutKeys(sc.id, {
+						shortcuts,
+						tabShortcuts,
+						fixedShortcuts: FIXED_SHORTCUTS,
+					});
+					const hasChord = resolved.keys.length > 0;
+					const hasSequence = !!resolved.sequence;
+					const formattedSequence = formatShortcutSequence(resolved.sequence);
 					return (
 						<div key={i} className="flex justify-between items-center text-sm gap-4">
 							<div className="flex items-center gap-1.5 min-w-0 flex-1">
@@ -302,7 +337,7 @@ export function ShortcutsHelpModal({
 									<span className="flex-shrink-0 w-4 h-4 flex items-center justify-center">
 										{isUsed ? (
 											<CheckCircle className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
-										) : isBound ? (
+										) : hasChord || hasSequence ? (
 											<span
 												className="w-3 h-3 rounded-full border"
 												style={{ borderColor: theme.colors.border }}
@@ -326,7 +361,7 @@ export function ShortcutsHelpModal({
 									</span>
 								)}
 							</div>
-							{sc.keys.length === 0 && doublePressHint(sc.id) ? (
+							{!hasChord && !hasSequence && doublePressHint(sc.id) ? (
 								<span
 									className="text-xs flex-shrink-0 flex items-center gap-1"
 									style={{ color: theme.colors.textDim }}
@@ -334,8 +369,16 @@ export function ShortcutsHelpModal({
 									<ShortcutKeys theme={theme} keys={doublePressHint(sc.id)!} size="md" />
 									<span className="italic">twice</span>
 								</span>
-							) : sc.keys.length > 0 ? (
-								<ShortcutKeys theme={theme} keys={sc.keys} size="md" />
+							) : hasChord || hasSequence ? (
+								<span
+									className="text-xs flex-shrink-0 flex items-center gap-2"
+									style={{ color: theme.colors.textDim }}
+								>
+									{hasChord && <ShortcutKeys theme={theme} keys={resolved.keys} size="md" />}
+									{hasSequence && (
+										<span style={{ color: theme.colors.textDim }}>{formattedSequence}</span>
+									)}
+								</span>
 							) : (
 								<span
 									className="text-xs italic flex-shrink-0"
@@ -377,16 +420,23 @@ export function ShortcutsHelpModal({
 								<span className="text-xs font-semibold" style={{ color: theme.colors.textMain }}>
 									{deckLeader.label}
 								</span>
-								{deckLeader.keys.length > 0 ? (
-									<ShortcutKeys theme={theme} keys={deckLeader.keys} size="md" />
-								) : (
-									<span
-										className="text-xs italic flex-shrink-0"
-										style={{ color: theme.colors.textDim }}
-									>
-										Unassigned
-									</span>
-								)}
+								{(() => {
+									const deckLeaderResolved = resolveShortcutKeys(DECK_MODE_LEADER_ID, {
+										shortcuts,
+										tabShortcuts,
+										fixedShortcuts: FIXED_SHORTCUTS,
+									});
+									return deckLeaderResolved.keys.length > 0 ? (
+										<ShortcutKeys theme={theme} keys={deckLeaderResolved.keys} size="md" />
+									) : (
+										<span
+											className="text-xs italic flex-shrink-0"
+											style={{ color: theme.colors.textDim }}
+										>
+											Unassigned
+										</span>
+									);
+								})()}
 							</div>
 							{/* The timeout is quoted from the constant the mode actually
 							    expires on, the same way Settings -> Shortcuts quotes it for
