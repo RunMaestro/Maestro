@@ -20,6 +20,7 @@ import { DEFAULT_VIM_INSERT_ESCAPE_SEQUENCE } from '../utils/vimInsertEscape';
 import { collectBoundShortcutsAcrossModes } from '../constants/keyboardMastery';
 import { availableShortcuts } from '../utils/encoreShortcuts';
 import type { SettingsStore } from './settingsStore';
+import { useUIStore } from './uiStore';
 
 export interface ShortcutsState {
 	shortcuts: Record<string, Shortcut>;
@@ -101,6 +102,15 @@ export const createShortcutsSlice: StateCreator<SettingsStore, [], [], Shortcuts
 	setKeyboardMode: (value) => {
 		set({ keyboardMode: value });
 		window.maestro.settings.set('keyboardMode', value);
+		// Every chord in the app may have just changed, including the Deck leader
+		// itself, so an armed Deck mode no longer describes a decision the user
+		// made in the set that is now live: the key they press next would be
+		// matched against a table they armed from the other mode. Disarming here
+		// rather than in a mode-watching effect catches all four routes at once
+		// (the chord, the palette, the hamburger menu, and the Settings toggle,
+		// which goes straight to this setter without passing through
+		// `switchKeyboardMode`).
+		useUIStore.getState().disarmDeckMode();
 	},
 
 	setVimShortcuts: (value) => {

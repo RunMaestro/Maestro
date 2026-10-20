@@ -14,6 +14,7 @@ import { create } from 'zustand';
 import type { FocusArea, RightPanelTab, UnifiedTabRef, UsageDashboardViewMode } from '../types';
 import { notifyCenterFlash } from './centerFlashStore';
 import { isNarrowViewportNow } from '../hooks/ui/useViewportBreakpoint';
+import { SEQUENCE_TIMEOUT_MS } from '../utils/shortcutSequence';
 
 /**
  * Keyboard-selection cursor for the two Left Bar sections that are NOT plain
@@ -77,6 +78,38 @@ export interface UIStoreState {
 	 * null whenever `zenMode` is false. See {@link ZenLayoutSnapshot}.
 	 */
 	preZenLayout: ZenLayoutSnapshot | null;
+
+	/**
+	 * DECK MODE: whether the leader chord has armed the one-shot mode.
+	 *
+	 * True only between the leader chord and the next keystroke. While it is
+	 * true, a single bare key is matched against `DECK_MODE_KEYS` alone (see
+	 * `constants/deckMode.ts`), fires that action, and the mode ends - so this
+	 * flag is the one thing that decides whether the next `j` moves the focus
+	 * ring or gets typed into the composer. It is also what the hint bar's
+	 * visibility is keyed on.
+	 *
+	 * Transient by nature rather than by policy: nothing may observe it for
+	 * longer than {@link SEQUENCE_TIMEOUT_MS}, so there is nothing here to
+	 * persist and no startup state to hydrate.
+	 */
+	deckModeArmed: boolean;
+	/**
+	 * `Date.now()` at the moment the leader armed the mode, or 0 when disarmed.
+	 *
+	 * The timeout is LAZY, exactly as the sequence matcher's is: this timestamp
+	 * is compared against the clock when the armed state is next READ
+	 * ({@link deckModeArmedNow}) rather than expired by a `setTimeout`. No timer
+	 * means the store owns no DOM globals, has nothing to cancel, and cannot
+	 * fire a callback into a torn-down renderer - and the answer is correct
+	 * whenever it is asked, which is the only moment that matters for a mode
+	 * whose entire job is to interpret one keypress.
+	 *
+	 * A caller that PAINTS the armed state (the hint bar) needs a repaint when
+	 * the window lapses with no keypress at all, so it owns its own timer, the
+	 * same division of labour as `SequencePrefixIndicator` and the prefix chip.
+	 */
+	deckModeArmedAt: number;
 
 	// Focus
 	activeFocus: FocusArea;
@@ -286,6 +319,31 @@ export interface UIStoreActions {
 	 * can never change for it.
 	 */
 	closeRightPanelForNavigation: () => void;
+
+	/**
+	 * Arm Deck mode: the leader chord was pressed, so the NEXT bare key belongs
+	 * to the Deck table rather than to whatever has focus.
+	 *
+	 * Re-arming while already armed is legal and restarts the clock. The leader
+	 * is a chord, so pressing it again is a deliberate "I meant it" rather than
+	 * a stray key, and refreshing the window is kinder than either ignoring it
+	 * or treating it as the miss that disarms.
+	 *
+	 * Arming also installs a window-blur guard, removed again by
+	 * {@link UIStoreActions.disarmDeckMode}. See `armDeckMode` in the store body
+	 * for why that guard lives here and not in a component.
+	 */
+	armDeckMode: () => void;
+	/**
+	 * End Deck mode, from any of the five routes that end it: a key matched and
+	 * fired, a key missed, Escape, the timeout lapsing, the window losing focus,
+	 * or `keyboardMode` changing under it.
+	 *
+	 * Idempotent, and a no-op disarm returns the SAME state object so the hint
+	 * bar does not re-render on the Escape presses that were only ever meant for
+	 * the layer stack.
+	 */
+	disarmDeckMode: () => void;
 
 	// Focus
 	setActiveFocus: (focus: FocusArea | ((prev: FocusArea) => FocusArea)) => void;
@@ -501,6 +559,81 @@ function zenExitHint(): string {
 	return chord ? `Press ${chord} to exit` : ZEN_EXIT_HINT_UNBOUND;
 }
 
+/**
+ * Whether an armed-at timestamp has aged out of the Deck window.
+ *
+ * Pure, and exported so the hint bar can set its own hide timer off the same
+ * arithmetic the handler disarms on, rather than re-deriving the deadline.
+ * `armedAt` of 0 (never armed) reads as expired, which is the honest answer and
+ * keeps callers from needing a second null check.
+ */
+export function deckModeExpired(armedAt: number, now: number = Date.now()): boolean {
+	return armedAt === 0 || now - armedAt > SEQUENCE_TIMEOUT_MS;
+}
+
+/**
+ * Is Deck mode armed RIGHT NOW, with the timeout applied?
+ *
+ * This is the question the keyboard handler asks before it matches a key
+ * against the Deck table, and it is deliberately not the raw `deckModeArmed`
+ * flag: an armed mode nobody followed up on has to stop swallowing keys on its
+ * own, whether or not anything was painting it. An expired window is disarmed
+ * here as a side effect, so the state the hint bar reads agrees with the answer
+ * the handler acted on.
+ *
+ * Reuses `SEQUENCE_TIMEOUT_MS` rather than inventing a Deck-specific figure:
+ * both are "how long does a half-finished keyboard idea stay live", and the
+ * constraints are identical (long enough to reach the second key without
+ * hurrying, short enough that a forgotten prefix cannot swallow a keypress the
+ * user has stopped connecting to it). One number also means one thing for the
+ * user to learn and Settings has one figure to quote.
+ */
+export function deckModeArmedNow(): boolean {
+	const { deckModeArmed, deckModeArmedAt, disarmDeckMode } = useUIStore.getState();
+	if (!deckModeArmed) return false;
+	if (!deckModeExpired(deckModeArmedAt)) return true;
+	disarmDeckMode();
+	return false;
+}
+
+/**
+ * Deck mode's window-blur guard, installed only while the mode is armed.
+ *
+ * An armed mode that survives the user switching apps is a trap: the keystroke
+ * that lands when they come back was meant for whatever they were doing, and
+ * firing `closeTab` off it is both surprising and destructive. The lazy timeout
+ * would have expired the window a second later anyway, but a second is long
+ * enough to Cmd+Tab away and back.
+ *
+ * It lives in the store rather than in a `useEffect` because the guard must not
+ * depend on anything being mounted. The hint bar is the only component that
+ * renders for Deck mode and it renders only WHILE armed, so an effect there
+ * would be installed and torn down on exactly the state it is meant to police -
+ * and any later caller that arms the mode without the bar on screen would have
+ * no guard at all.
+ *
+ * Installed on arm and removed on disarm, so the listener's lifetime is exactly
+ * the armed state's: nothing is attached in the 99.9% of a session when Deck
+ * mode is idle, and there is no permanent listener to leak.
+ */
+let deckBlurGuardInstalled = false;
+
+function handleDeckModeWindowBlur(): void {
+	useUIStore.getState().disarmDeckMode();
+}
+
+function installDeckBlurGuard(): void {
+	if (deckBlurGuardInstalled || typeof window === 'undefined') return;
+	window.addEventListener('blur', handleDeckModeWindowBlur);
+	deckBlurGuardInstalled = true;
+}
+
+function removeDeckBlurGuard(): void {
+	if (!deckBlurGuardInstalled || typeof window === 'undefined') return;
+	window.removeEventListener('blur', handleDeckModeWindowBlur);
+	deckBlurGuardInstalled = false;
+}
+
 export const useUIStore = create<UIStore>()((set) => ({
 	// --- State ---
 	leftSidebarOpen: true,
@@ -508,6 +641,8 @@ export const useUIStore = create<UIStore>()((set) => ({
 	rightPanelOpen: true,
 	zenMode: false,
 	preZenLayout: null,
+	deckModeArmed: false,
+	deckModeArmedAt: 0,
 	activeFocus: 'main',
 	activeRightTab: 'files',
 	zoomedPaneId: null,
@@ -591,6 +726,20 @@ export const useUIStore = create<UIStore>()((set) => ({
 		set((s) => (s.leftSidebarOpen && isNarrowViewportNow() ? { leftSidebarOpen: false } : s)),
 	closeRightPanelForNavigation: () =>
 		set((s) => (s.rightPanelOpen && isNarrowViewportNow() ? { rightPanelOpen: false } : s)),
+
+	armDeckMode: () => {
+		// Outside the updater, for the same reason zen's flash is: attaching a
+		// listener is a side effect, and zustand may call an updater more than
+		// once for one commit. The install is idempotent regardless.
+		installDeckBlurGuard();
+		set({ deckModeArmed: true, deckModeArmedAt: Date.now() });
+	},
+	disarmDeckMode: () => {
+		removeDeckBlurGuard();
+		set((s) =>
+			s.deckModeArmed || s.deckModeArmedAt !== 0 ? { deckModeArmed: false, deckModeArmedAt: 0 } : s
+		);
+	},
 
 	setActiveFocus: (v) => set((s) => ({ activeFocus: resolve(v, s.activeFocus) })),
 	setActiveRightTab: (v) => set((s) => ({ activeRightTab: resolve(v, s.activeRightTab) })),
