@@ -328,6 +328,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 #### Keyboard and shortcuts
 
 - **Which bindings the live keyboard mode matches:** `resolveEffectiveShortcuts()`, `overridesWithEdits()` in `src/shared/effectiveShortcuts.ts`; `selectActiveShortcuts()` and siblings in `src/renderer/stores/settingsShortcutsSlice.ts`; `useActiveShortcuts()` in `src/renderer/hooks/settings/useActiveShortcuts.ts`
+- **The chord and sequence to DISPLAY for an action:** `useShortcutKeys(actionId)` in `src/renderer/hooks/keyboard/useShortcutKeys.ts`; non-hook `resolveShortcutKeys(actionId, maps)`, `UNBOUND_SHORTCUT` in `src/renderer/utils/shortcutResolve.ts` (never a hard-coded chord)
 - **Matching a key sequence (`g g`, `g t`):** `createSequenceMatcher()`, `collectSequenceBindings()`, `SEQUENCE_TIMEOUT_MS` in `src/renderer/utils/shortcutSequence.ts`; each step compares with `eventMatchesShortcutKeys()` in `src/renderer/utils/shortcutMatch.ts` (never a second copy of the chord rules)
 - **Arming and ending Deck mode (the leader chord's one-shot state):** `armDeckMode()`, `disarmDeckMode()`, `deckModeArmedNow()`, `deckModeExpired()` in `src/renderer/stores/uiStore.ts`, over the table in `src/renderer/constants/deckMode.ts` (never the raw `deckModeArmed` flag)
 - **Showing a key sequence in progress:** `<SequencePrefixIndicator>` in `src/renderer/components/SequencePrefixIndicator.tsx`, fed by `publishSequencePrefix()` / `clearSequencePrefix()` / `useSequencePrefixStore` in `src/renderer/stores/sequencePrefixStore.ts` (one app-wide chip; never a second copy of the prefix)
@@ -338,6 +339,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Resizing the focused region from the keyboard:** `resizeFocusedRegion(delta)`, `growFocusedRegion()`, `shrinkFocusedRegion()`, `REGION_RESIZE_STEP_PX` in `src/renderer/services/regionResize.ts` (writes through settingsStore's clamping setters; never a second clamp)
 - **Hiding both bars at once (zen mode):** `toggleZenMode()` in `src/renderer/stores/uiStore.ts`, over `zenMode` / `preZenLayout` and `setZenExitChordResolver()` (restores a snapshot, never an assumed layout)
 - **Modifier-key display text:** `formatKey()`, `formatShortcutKeys()`, `formatMetaKey()`, `formatMetaKeyName()`, `formatAltKeyName()` in `src/renderer/utils/shortcutFormatter.ts`; outside the renderer `formatShortcutKeysFor()` in `src/shared/shortcutKeys.ts`
+- **Printing a key sequence (`g g`, `G`):** `formatShortcutSequence()` in `src/renderer/utils/shortcutFormatter.ts` (never `formatShortcutKeys`, which joins with `+` and uppercases a step)
 - **Advertising a shortcut next to the control that fires it:** `<ShortcutHint>`, `<ShortcutKeys>`, `shortcutText()`, `shortcutSuffix(keys)` in `src/renderer/components/ui/ShortcutHint.tsx` (also the tab overlay-menu badge)
 - **Keyboard-shortcut hint / kbd pill:** `<Keycap>` and `<KeycapHint>` in `src/renderer/components/ui/Keycap.tsx`
 - **A system-wide (OS-level) hotkey:** `setNamedGlobalHotkey(id, keys, onPress)`, `keysToAccelerator(keys)` in `src/main/global-hotkey-manager.ts`

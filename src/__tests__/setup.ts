@@ -106,12 +106,35 @@ const mockFormatKey = (key: string): string => {
 	if (key.length === 1) return key.toUpperCase();
 	return key;
 };
+const mockFormatShortcutKeys = (keys: string[], separator?: string): string =>
+	keys.map(mockFormatKey).join(separator ?? '+');
+// A sequence step keeps the case it was bound in (`g` is not `G`), and
+// Shift+letter folds into the capital. Mirrors formatSequenceStep; the real
+// behavior is pinned in shortcutFormatter.test.ts, which unmocks this module.
+const mockFormatSequenceStep = (step: string[]): string => {
+	if (step.length === 1 && step[0].length === 1) return step[0];
+	if (step.length === 2) {
+		const shiftIndex = step.indexOf('Shift');
+		const other = shiftIndex === -1 ? undefined : step[1 - shiftIndex];
+		if (other?.length === 1 && other.toUpperCase() !== other.toLowerCase()) {
+			return other.toUpperCase();
+		}
+	}
+	return mockFormatShortcutKeys(step);
+};
 vi.mock('../renderer/utils/shortcutFormatter', () => ({
 	formatKey: vi.fn((key: string) => mockFormatKey(key)),
-	formatShortcutKeys: vi.fn((keys: string[], separator?: string) => {
-		const sep = separator ?? '+';
-		return keys.map(mockFormatKey).join(sep);
-	}),
+	formatShortcutKeys: vi.fn((keys: string[], separator?: string) =>
+		mockFormatShortcutKeys(keys, separator)
+	),
+	formatShortcutSequence: vi.fn((sequence?: string[][], separator?: string) =>
+		!sequence?.length
+			? ''
+			: sequence
+					.filter((step) => step.length > 0)
+					.map(mockFormatSequenceStep)
+					.join(separator ?? ' ')
+	),
 	formatMetaKey: vi.fn(() => 'Ctrl'),
 	formatMetaKeyName: vi.fn(() => 'Ctrl'),
 	formatAltKeyName: vi.fn(() => 'Alt'),
