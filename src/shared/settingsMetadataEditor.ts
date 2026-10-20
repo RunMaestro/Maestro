@@ -220,6 +220,13 @@ export const EDITOR_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: 'default',
 		category: 'editor',
 	},
+	vimInsertEscapeSequence: {
+		description:
+			'The characters that leave a text field in Vim mode, typed in quick succession within one second: "jk" by default. The leading characters are retracted from the field and it is blurred, which returns the keyboard to normal mode. Empty switches the behavior off, as does any value shorter than two characters or containing whitespace. Read only while keyboardMode is "vim", and never applied inside a CodeMirror editor or a terminal.',
+		type: 'string',
+		default: 'jk',
+		category: 'editor',
+	},
 	shortcuts: {
 		description: 'Custom keyboard shortcut bindings. Object mapping shortcut IDs to key combos.',
 		type: 'object',

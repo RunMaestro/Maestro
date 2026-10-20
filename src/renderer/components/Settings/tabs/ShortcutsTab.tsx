@@ -25,6 +25,12 @@ import {
 	findReservedShortcutCombo,
 } from '../../../../shared/shortcutKeys';
 import { findKeyboardModeToggleShadow } from '../../../services/keyboardMode';
+import { SEQUENCE_TIMEOUT_MS } from '../../../utils/shortcutSequence';
+import {
+	DEFAULT_VIM_INSERT_ESCAPE_SEQUENCE,
+	MIN_INSERT_ESCAPE_LENGTH,
+	parseInsertEscapeSequence,
+} from '../../../utils/vimInsertEscape';
 import { ShortcutFilterButton } from '../../ui/ShortcutFilterButton';
 import { GhostIconButton } from '../../ui/GhostIconButton';
 import { MiniBadge } from '../../ui/MiniBadge';
@@ -68,7 +74,8 @@ export interface ShortcutsTabProps {
 }
 
 export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: ShortcutsTabProps) {
-	const { encoreFeatures, setKeyboardMode } = useSettings();
+	const { encoreFeatures, setKeyboardMode, vimInsertEscapeSequence, setVimInsertEscapeSequence } =
+		useSettings();
 	const {
 		keyboardMode,
 		shortcuts,
@@ -106,6 +113,12 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 
 	const modeLabel = KEYBOARD_MODE_LABELS[keyboardMode];
 	const otherModeLabel = KEYBOARD_MODE_LABELS[keyboardMode === 'default' ? 'vim' : 'default'];
+
+	// The in-field escape is stored as typed, so the screen is the only place
+	// that can say whether what is stored will actually fire. Parsed with the
+	// same function the keydown handler uses, so "off" here means off there.
+	const insertEscape = parseInsertEscapeSequence(vimInsertEscapeSequence);
+	const insertEscapeRejected = !insertEscape && vimInsertEscapeSequence.trim().length > 0;
 
 	// Opt+Cmd+V switches modes from the keyboard, but a user who has that chord
 	// bound to an action of their own keeps it - the handler stands down rather
@@ -588,6 +601,52 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 						{formatShortcutKeys(FIXED_SHORTCUTS.toggleKeyboardMode.keys)} normally switches modes
 						from the keyboard, but you have it bound to &quot;{toggleShadowedBy.label}&quot;, which
 						wins. Use this toggle, the command palette, or the menu.
+					</p>
+				)}
+			</div>
+			{/* The in-field escape sits directly under the mode toggle because it is
+			    the one keyboard behavior on this screen that has no row in the
+			    tables below: it fires INSIDE a text field, which is where every
+			    binding in those tables deliberately stands down. Rendered in both
+			    modes rather than only in Vim mode, so a search that jumps here
+			    lands on a control instead of on nothing; the hint says which mode
+			    reads it. */}
+			<div data-setting-id="shortcuts-vim-insert-escape" className="mb-3">
+				<label
+					htmlFor="shortcuts-vim-insert-escape-input"
+					className="block text-xs mb-1"
+					style={{ color: theme.colors.textMain }}
+				>
+					Insert Mode Escape
+				</label>
+				<input
+					id="shortcuts-vim-insert-escape-input"
+					type="text"
+					value={vimInsertEscapeSequence}
+					onChange={(e) => setVimInsertEscapeSequence(e.target.value)}
+					placeholder={DEFAULT_VIM_INSERT_ESCAPE_SEQUENCE}
+					spellCheck={false}
+					autoComplete="off"
+					// Short on purpose: it is a two-key gesture, not a phrase, and
+					// every character after the first has to be typed inside the
+					// timeout.
+					maxLength={8}
+					data-testid="shortcuts-vim-insert-escape-input"
+					className="w-24 px-2 py-1 rounded border bg-transparent outline-none text-sm font-mono"
+					style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+				/>
+				<p className="text-xs mt-1.5" style={{ color: theme.colors.textDim }}>
+					{`Typed inside a text field in ${KEYBOARD_MODE_LABELS.vim} mode, within ${SEQUENCE_TIMEOUT_MS / 1000}s, this takes its own characters back out and blurs the field - so the normal-mode keys work again. Leave it empty to switch it off. It never applies in the file editor or a terminal, and Escape is unaffected: that always closes whatever is open first.`}
+				</p>
+				{insertEscapeRejected && (
+					<p
+						className="text-xs mt-1"
+						style={{ color: theme.colors.warning }}
+						data-testid="shortcuts-vim-insert-escape-off"
+					>
+						&quot;{vimInsertEscapeSequence}&quot; is not usable, so the escape is off. It needs at
+						least {MIN_INSERT_ESCAPE_LENGTH} characters and no spaces: a single key would be
+						swallowed everywhere, including in this field.
 					</p>
 				)}
 			</div>

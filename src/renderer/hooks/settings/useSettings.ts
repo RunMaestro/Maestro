@@ -253,6 +253,8 @@ export interface UseSettingsReturn {
 	setVimShortcuts: (value: Record<string, ShortcutOverride>) => void;
 	vimTabShortcuts: Record<string, ShortcutOverride>;
 	setVimTabShortcuts: (value: Record<string, ShortcutOverride>) => void;
+	vimInsertEscapeSequence: string;
+	setVimInsertEscapeSequence: (value: string) => void;
 
 	// Custom AI Commands
 	customAICommands: CustomAICommand[];

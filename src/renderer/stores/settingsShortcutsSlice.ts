@@ -16,6 +16,7 @@ import type { KeyboardMode, ShortcutOverride } from '../../shared/shortcut-types
 import type { EncoreFeatureFlags, Shortcut } from '../types';
 import { DEFAULT_SHORTCUTS, FIXED_SHORTCUTS, TAB_SHORTCUTS } from '../constants/shortcuts';
 import { VIM_SHORTCUTS, VIM_TAB_SHORTCUTS } from '../constants/vimShortcuts';
+import { DEFAULT_VIM_INSERT_ESCAPE_SEQUENCE } from '../utils/vimInsertEscape';
 import { collectBoundShortcutsAcrossModes } from '../constants/keyboardMastery';
 import { availableShortcuts } from '../utils/encoreShortcuts';
 import type { SettingsStore } from './settingsStore';
@@ -51,6 +52,21 @@ export interface ShortcutsState {
 	vimShortcuts: Record<string, ShortcutOverride>;
 	/** Vim mode's overrides for the tab actions. See `vimShortcuts`. */
 	vimTabShortcuts: Record<string, ShortcutOverride>;
+	/**
+	 * The characters that leave a text field in Vim mode (`jk`), or `''` for
+	 * off.
+	 *
+	 * A STRING rather than a `Shortcut`, because it is not a bindable action: it
+	 * has no row in Settings > Shortcuts, nothing records it, and it fires
+	 * INSIDE a text field, which is the one place the sequence matcher's
+	 * bindings deliberately never reach. `parseInsertEscapeSequence` turns it
+	 * into the one-binding list the handler feeds, and reads any unusable value
+	 * (too short, whitespace) as off.
+	 *
+	 * Lives in this slice because it is a keyboard-mode setting and is only read
+	 * while `keyboardMode` is 'vim'.
+	 */
+	vimInsertEscapeSequence: string;
 }
 
 export interface ShortcutsActions {
@@ -59,6 +75,7 @@ export interface ShortcutsActions {
 	setKeyboardMode: (value: KeyboardMode) => void;
 	setVimShortcuts: (value: Record<string, ShortcutOverride>) => void;
 	setVimTabShortcuts: (value: Record<string, ShortcutOverride>) => void;
+	setVimInsertEscapeSequence: (value: string) => void;
 }
 
 export type ShortcutsSlice = ShortcutsState & ShortcutsActions;
@@ -69,6 +86,7 @@ export const createShortcutsSlice: StateCreator<SettingsStore, [], [], Shortcuts
 	keyboardMode: 'default',
 	vimShortcuts: VIM_SHORTCUTS,
 	vimTabShortcuts: VIM_TAB_SHORTCUTS,
+	vimInsertEscapeSequence: DEFAULT_VIM_INSERT_ESCAPE_SEQUENCE,
 
 	setShortcuts: (value) => {
 		set({ shortcuts: value });
@@ -93,6 +111,15 @@ export const createShortcutsSlice: StateCreator<SettingsStore, [], [], Shortcuts
 	setVimTabShortcuts: (value) => {
 		set({ vimTabShortcuts: value });
 		window.maestro.settings.set('vimTabShortcuts', value);
+	},
+
+	setVimInsertEscapeSequence: (value) => {
+		// Stored exactly as typed, including a value the parser will read as off.
+		// Normalizing here would fight the user mid-edit: clearing the field to
+		// retype it momentarily leaves one character, and rewriting that to ''
+		// would delete what they were halfway through typing.
+		set({ vimInsertEscapeSequence: value });
+		window.maestro.settings.set('vimInsertEscapeSequence', value);
 	},
 });
 
@@ -635,6 +662,14 @@ export function hydrateShortcutsSettings(
 		if (result.needsMigration) {
 			window.maestro.settings.set('vimShortcuts', result.migratedRaw);
 		}
+	}
+
+	// Stored as typed, and read as off when it cannot work (see
+	// `parseInsertEscapeSequence`). Anything that is not a string is dropped
+	// rather than coerced: `String(123)` would be a working escape sequence
+	// nobody asked for.
+	if (typeof allSettings['vimInsertEscapeSequence'] === 'string') {
+		patch.vimInsertEscapeSequence = allSettings['vimInsertEscapeSequence'];
 	}
 
 	if (allSettings['vimTabShortcuts'] !== undefined) {

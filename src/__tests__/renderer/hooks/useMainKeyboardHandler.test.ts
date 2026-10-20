@@ -20,6 +20,8 @@ import {
 	clearSequencePrefix,
 	useSequencePrefixStore,
 } from '../../../renderer/stores/sequencePrefixStore';
+import { SEQUENCE_TIMEOUT_MS } from '../../../renderer/utils/shortcutSequence';
+import { parseInsertEscapeSequence } from '../../../renderer/utils/vimInsertEscape';
 
 // Cmd+Shift+J delegates to the shared tile action. Mocked so the test asserts the
 // wiring rather than re-running the layout transform (covered in tileNewTab.test).
@@ -5871,5 +5873,182 @@ describe('useMainKeyboardHandler - key sequences', () => {
 
 			expect(publishedPrefix()).toEqual([]);
 		});
+	});
+});
+
+/**
+ * `jk`, the in-field escape, wired into the real keydown listener.
+ *
+ * The unit-level rules live in `vimInsertEscape.test.ts`. What these cover is
+ * the WIRING, which has two properties the unit tests cannot see:
+ *
+ *  - The block sits ABOVE the layer guard, so the escape works in the text
+ *    fields a modal is made of. Below it, every bare key returns early while
+ *    anything is open and `jk` would be dead in the Settings filter, a rename
+ *    field, and the search box - which is most of the text fields in the app.
+ *  - It is gated entirely on `ctx.insertEscape`, which App leaves null in
+ *    default mode. A default-mode user's `j` must reach the field untouched.
+ */
+describe('useMainKeyboardHandler - the in-field escape (jk)', () => {
+	let unmountHandler: (() => void) | null = null;
+
+	function mountHandler(ctx: Record<string, unknown>) {
+		const { result, unmount } = renderHook(() => useMainKeyboardHandler());
+		unmountHandler = unmount;
+		result.current.keyboardHandlerRef.current = ctx;
+		return result;
+	}
+
+	/**
+	 * Press a bare key AND apply the browser's default action, which jsdom does
+	 * not: a dispatched KeyboardEvent never inserts a character. Without the
+	 * second half there would be no `j` in the field for the escape to retract,
+	 * so the test would pass against an implementation that retracts nothing.
+	 */
+	function type(field: HTMLTextAreaElement | HTMLInputElement, key: string) {
+		const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+		act(() => {
+			window.dispatchEvent(event);
+		});
+		if (!event.defaultPrevented && key.length === 1) {
+			const caret = field.selectionStart ?? field.value.length;
+			field.value = field.value.slice(0, caret) + key + field.value.slice(caret);
+			field.setSelectionRange(caret + 1, caret + 1);
+		}
+		return event;
+	}
+
+	/** A focused textarea in the document, standing in for the composer. */
+	function composer(value = ''): HTMLTextAreaElement {
+		const field = document.createElement('textarea');
+		field.value = value;
+		document.body.appendChild(field);
+		field.focus();
+		field.setSelectionRange(value.length, value.length);
+		return field;
+	}
+
+	function vimContext(overrides: Record<string, unknown> = {}) {
+		return createMockContext({
+			sessions: [{ id: 'session-1' }],
+			activeSessionId: 'session-1',
+			activeSession: { id: 'session-1', name: 'Test', inputMode: 'ai' },
+			insertEscape: parseInsertEscapeSequence('jk'),
+			recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			...overrides,
+		});
+	}
+
+	afterEach(() => {
+		unmountHandler?.();
+		unmountHandler = null;
+		document.body.innerHTML = '';
+		vi.useRealTimers();
+	});
+
+	it('blurs the composer and leaves no stray j', () => {
+		mountHandler(vimContext());
+		const field = composer('ship it ');
+
+		type(field, 'j');
+		// The `j` is in the field while the run is live: nothing is held back on
+		// the chance that a `k` follows.
+		expect(field.value).toBe('ship it j');
+
+		const event = type(field, 'k');
+
+		expect(field.value).toBe('ship it ');
+		expect(event.defaultPrevented).toBe(true);
+		expect(document.activeElement).not.toBe(field);
+	});
+
+	it('leaves both characters when the j is followed by anything else', () => {
+		mountHandler(vimContext());
+		const field = composer('');
+
+		type(field, 'j');
+		type(field, 'a');
+
+		expect(field.value).toBe('ja');
+		expect(document.activeElement).toBe(field);
+	});
+
+	it('leaves the j alone when the k arrives after the timeout', () => {
+		vi.useFakeTimers();
+		mountHandler(vimContext());
+		const field = composer('');
+
+		type(field, 'j');
+		vi.advanceTimersByTime(SEQUENCE_TIMEOUT_MS + 1);
+		type(field, 'k');
+
+		expect(field.value).toBe('jk');
+		expect(document.activeElement).toBe(field);
+	});
+
+	it('does nothing in default mode, where ctx.insertEscape is null', () => {
+		mountHandler(vimContext({ insertEscape: null }));
+		const field = composer('');
+
+		type(field, 'j');
+		type(field, 'k');
+
+		expect(field.value).toBe('jk');
+		expect(document.activeElement).toBe(field);
+	});
+
+	it('works with a modal open, because the block sits above the layer guard', () => {
+		// The Settings filter, a rename field and the search box are all inside
+		// a layer. The guard returns early for every bare key, so an escape
+		// placed below it would be dead in most of the app's text fields.
+		mountHandler(vimContext({ hasOpenLayers: () => true }));
+		const field = composer('abc');
+
+		type(field, 'j');
+		type(field, 'k');
+
+		expect(field.value).toBe('abc');
+		expect(document.activeElement).not.toBe(field);
+	});
+
+	it('leaves a terminal alone, so jk reaches vim running in the shell', () => {
+		mountHandler(vimContext());
+		const terminal = document.createElement('div');
+		terminal.className = 'xterm';
+		const helper = document.createElement('textarea');
+		helper.className = 'xterm-helper-textarea';
+		terminal.appendChild(helper);
+		document.body.appendChild(terminal);
+		helper.focus();
+
+		type(helper, 'j');
+		type(helper, 'k');
+
+		expect(helper.value).toBe('jk');
+		expect(document.activeElement).toBe(helper);
+	});
+
+	it('does not finish a run in a field the j was never typed into', () => {
+		mountHandler(vimContext());
+		const first = composer('');
+		type(first, 'j');
+
+		const second = composer('');
+		type(second, 'k');
+
+		expect(first.value).toBe('j');
+		expect(second.value).toBe('k');
+		expect(document.activeElement).toBe(second);
+	});
+
+	it('records no shortcut usage, because the escape is not a bindable action', () => {
+		const recordShortcutUsage = vi.fn().mockReturnValue({ newLevel: null });
+		mountHandler(vimContext({ recordShortcutUsage }));
+		const field = composer('');
+
+		type(field, 'j');
+		type(field, 'k');
+
+		expect(recordShortcutUsage).not.toHaveBeenCalled();
 	});
 });

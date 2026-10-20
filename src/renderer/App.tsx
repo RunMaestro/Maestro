@@ -14,6 +14,7 @@ import { isCoarsePointer } from './utils/touch';
 import { useEdgeSwipeHandlers } from './hooks/utils/useEdgeSwipeHandlers';
 import { useEventListener } from './hooks/utils/useEventListener';
 import { collectSequenceBindings } from './utils/shortcutSequence';
+import { parseInsertEscapeSequence } from './utils/vimInsertEscape';
 import { slashCommands } from './slashCommands';
 import { AppModals } from './components/AppModals';
 import { AppStandaloneModals } from './components/AppStandaloneModals';
@@ -584,6 +585,18 @@ function MaestroConsoleInner() {
 	const sequenceBindings = useMemo(
 		() => collectSequenceBindings(activeShortcuts, activeTabShortcuts),
 		[activeShortcuts, activeTabShortcuts]
+	);
+	// `jk`, Vim mode's way out of a text field. Null in default mode and null
+	// when the setting is off or unusable, which is the whole gate: the keydown
+	// handler does nothing at all when this is null, so the feature cannot cost
+	// a default-mode user a keystroke. Parsed here rather than per keydown
+	// because the result holds the matcher's binding array, and a fresh array
+	// every keypress would be an allocation on the hottest path in the app.
+	const keyboardMode = useSettingsStore((s) => s.keyboardMode);
+	const vimInsertEscapeSequence = useSettingsStore((s) => s.vimInsertEscapeSequence);
+	const insertEscape = useMemo(
+		() => (keyboardMode === 'vim' ? parseInsertEscapeSequence(vimInsertEscapeSequence) : null),
+		[keyboardMode, vimInsertEscapeSequence]
 	);
 
 	// --- SESSION STATE (migrated from useSession() to direct useSessionStore selectors) ---
@@ -2789,6 +2802,9 @@ function MaestroConsoleInner() {
 		// The live mode's key sequences, read by the sequence matcher in
 		// useMainKeyboardHandler before it runs the chord ladder.
 		sequenceBindings,
+		// The in-field escape (`jk`), read by the same handler above the layer
+		// guard. Null unless Vim mode is live and the setting parses.
+		insertEscape,
 		tilingShortcuts,
 		handleNavBack,
 		handleNavForward,

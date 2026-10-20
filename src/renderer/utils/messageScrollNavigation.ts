@@ -89,8 +89,15 @@ export function isTextInputTarget(target: EventTarget | null): boolean {
  * This is the same `.xterm` test `useMainKeyboardHandler` already runs inline
  * for terminal focus recovery. Keeping one spelling of it here is what lets
  * every caller ask the question once.
+ *
+ * Exported for `vimInsertEscape.ts`, which needs the INVERSE question: a plain
+ * `<input>` or `<textarea>` that `jk` may blur, as opposed to the helper
+ * textarea xterm types through or the contenteditable CodeMirror owns. A second
+ * spelling of the selector there would drift the moment a third such surface
+ * appeared, and the failure would be silent: `jk` would start blurring a
+ * document mid-edit.
  */
-const TEXT_ENTRY_SURFACE_SELECTOR = '.cm-editor, .xterm';
+export const TEXT_ENTRY_SURFACE_SELECTOR = '.cm-editor, .xterm';
 
 /** `<input>` types that swallow typed characters. Everything else (range,
  *  color, checkbox, radio, button) reacts to keys but never accepts text. */

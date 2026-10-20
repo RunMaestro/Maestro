@@ -520,6 +520,33 @@ describe('Vim override tables', () => {
 	});
 
 	/**
+	 * Escape never changes meaning, in either mode.
+	 *
+	 * The layer stack has first claim on it: `LayerStackProvider` listens in the
+	 * CAPTURE phase and calls `stopPropagation()`, so the topmost open layer
+	 * closes before the main keydown listener (BUBBLE phase) is reached at all.
+	 * A Vim binding on Escape would therefore be one of two bugs, both silent -
+	 * dead while anything is open, or stealing the keypress that closes it. The
+	 * in-field escape is `jk` precisely so that it never touches this.
+	 *
+	 * Checked on both triggers, because `SequenceMatcher.feed` short-circuits on
+	 * Escape before it ever looks at a step: a sequence step spelling Escape
+	 * would be unmatchable rather than merely wrong.
+	 */
+	it.each(VIM_TABLES)('%s binds Escape in no chord and no sequence step', (_name, table) => {
+		const namesEscape = (keys: readonly string[] | undefined) =>
+			(keys ?? []).some((key) => key.toLowerCase() === 'escape' || key.toLowerCase() === 'esc');
+		const offenders = Object.values(table)
+			.filter(
+				(override) =>
+					namesEscape(override.keys) || (override.sequence ?? []).some((step) => namesEscape(step))
+			)
+			.map((override) => override.id);
+
+		expect(offenders).toEqual([]);
+	});
+
+	/**
 	 * The resolver-free half of rule 3, "a displaced action always gets an
 	 * explicit Vim chord".
 	 *

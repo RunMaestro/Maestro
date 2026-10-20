@@ -62,6 +62,12 @@ export interface MaestroSettings {
 	vimTabShortcuts: Record<string, any>;
 	/** Which keyboard binding set is live. One mode is active at a time. */
 	keyboardMode: KeyboardMode;
+	/**
+	 * The characters that leave a text field in Vim mode, typed in quick
+	 * succession: `jk` by default, `''` to switch the behavior off. Read only
+	 * while `keyboardMode` is "vim".
+	 */
+	vimInsertEscapeSequence: string;
 	fontSize: number;
 	fontFamily: string;
 	terminalFontFamily: string;

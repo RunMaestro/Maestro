@@ -188,6 +188,8 @@ vi.mock('../../../renderer/hooks/settings/useSettings', () => ({
 		setCustomThemeBaseId: mockSetCustomThemeBaseId,
 		themeGloss: 'off',
 		setThemeGloss: vi.fn(),
+		vimInsertEscapeSequence: 'jk',
+		setVimInsertEscapeSequence: vi.fn(),
 		// Shortcut settings
 		shortcuts: MOCK_SHORTCUTS,
 		setShortcuts: mockSetShortcuts,

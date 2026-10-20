@@ -313,6 +313,10 @@ describe('settingsStore', () => {
 			expect(state.vimTabShortcuts).toEqual(VIM_TAB_SHORTCUTS);
 			expect(SETTINGS_METADATA.vimShortcuts.default).toEqual({});
 			expect(SETTINGS_METADATA.vimTabShortcuts.default).toEqual({});
+			// The in-field escape ships on, but only Vim mode reads it, so a
+			// default-mode user never sees it fire.
+			expect(state.vimInsertEscapeSequence).toBe('jk');
+			expect(SETTINGS_METADATA.vimInsertEscapeSequence.default).toBe('jk');
 			expect(state.customAICommands).toEqual(DEFAULT_AI_COMMANDS);
 			expect(state.totalActiveTimeMs).toBe(0);
 			expect(state.autoRunStats).toEqual(DEFAULT_AUTO_RUN_STATS);

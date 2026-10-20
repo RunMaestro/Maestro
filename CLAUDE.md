@@ -341,6 +341,8 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Whether a chord may be bound at all:** `findReservedShortcutCombo(keys)` in `src/shared/shortcutKeys.ts`
 - **Whether a keystroke belongs to a text field (guard before `preventDefault`):** `isTextInputTarget()`, `isTextEntryTarget()` in `src/renderer/utils/messageScrollNavigation.ts`; `isEditingTextTarget()`, `isEditingTextFocused()` in `src/renderer/utils/editableTarget.ts`
 - **Whether a keystroke is free for a binding to claim (normal mode):** `isNormalMode(event, doc?)` beside `isTextEntryTarget()` in `src/renderer/utils/messageScrollNavigation.ts` (the caller adds `hasOpenLayers()`)
+- **Leaving a text field from the keyboard (Vim's `jk`):** `parseInsertEscapeSequence()`, `insertEscapeTarget()`, `applyInsertEscape()` in `src/renderer/utils/vimInsertEscape.ts`
+
 - **Hiding a switched-off Encore Feature's shortcut, menu item, or setting:** `availableShortcuts()`, `isShortcutAvailable()`, `SHORTCUT_ENCORE_FLAGS` in `src/renderer/utils/encoreShortcuts.ts`; `requiresEncore` on `SearchableSetting`; `encoreFlag` on a `MenuCommand` in `src/main/app-menu.ts`
 - **Hiding a switched-off Encore Feature's prompts and template variables:** `isPromptAvailable()` in `src/shared/promptDefinitions.ts`; `availableTemplateVariables()` in `src/shared/templateVariables.ts`, read through `useAvailableTemplateVariables()` in `src/renderer/hooks/input/useAvailableTemplateVariables.ts`
 - **How much of the keyboard the user has mastered:** `selectMasteryBoundShortcuts()` in `src/renderer/stores/settingsShortcutsSlice.ts`; `collectBoundShortcutsAcrossModes()`, `countUsedBoundShortcuts()` in `src/renderer/constants/keyboardMastery.ts`

@@ -162,6 +162,51 @@ describe('keyboard mode', () => {
 		);
 	});
 
+	describe('the in-field escape setting', () => {
+		it('ships as jk and persists what the user typed, verbatim', () => {
+			expect(useSettingsStore.getState().vimInsertEscapeSequence).toBe('jk');
+
+			useSettingsStore.getState().setVimInsertEscapeSequence('kj');
+
+			expect(useSettingsStore.getState().vimInsertEscapeSequence).toBe('kj');
+			expect(window.maestro.settings.set).toHaveBeenCalledWith('vimInsertEscapeSequence', 'kj');
+		});
+
+		it('keeps an empty value, which is how the escape is switched off', () => {
+			// Not normalized back to the default: clearing the field to retype it
+			// passes through '' and through one character, and rewriting either
+			// would delete what the user was halfway through typing.
+			useSettingsStore.getState().setVimInsertEscapeSequence('');
+
+			expect(useSettingsStore.getState().vimInsertEscapeSequence).toBe('');
+		});
+
+		it('restores a persisted value', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				vimInsertEscapeSequence: 'kj',
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().vimInsertEscapeSequence).toBe('kj');
+		});
+
+		it.each([[null], [3], [{ keys: 'jk' }], [['j', 'k']]])(
+			'ignores the persisted non-string %s and keeps the shipped value',
+			async (persisted) => {
+				// Coercing would be worse than dropping: `String(3)` is a working
+				// escape sequence nobody asked for.
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					vimInsertEscapeSequence: persisted,
+				});
+
+				await expect(loadAllSettings()).resolves.not.toThrow();
+
+				expect(useSettingsStore.getState().vimInsertEscapeSequence).toBe('jk');
+			}
+		);
+	});
+
 	describe('the live mode selectors', () => {
 		it('returns the default buckets themselves in default mode', () => {
 			// Identity, not equality: default mode IS the base, so every

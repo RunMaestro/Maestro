@@ -58,11 +58,17 @@ let mockDisplaced: string[] = [];
  * mode-toggle chord, which only means anything when some row holds it.
  */
 let mockExtraShortcuts: Record<string, Shortcut> = {};
+// The in-field escape (`jk`). A `let` rather than a literal because the field
+// renders a warning for a value the parser reads as off, and a test sets one.
+let mockInsertEscapeSequence = 'jk';
+const mockSetInsertEscapeSequence = vi.fn();
 
 vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 	useSettings: () => ({
 		encoreFeatures: undefined,
 		setKeyboardMode: mockSetKeyboardMode,
+		vimInsertEscapeSequence: mockInsertEscapeSequence,
+		setVimInsertEscapeSequence: mockSetInsertEscapeSequence,
 	}),
 }));
 
@@ -93,6 +99,7 @@ function resetModeFixtures() {
 	mockInheritedIds = [];
 	mockDisplaced = [];
 	mockExtraShortcuts = {};
+	mockInsertEscapeSequence = 'jk';
 }
 
 describe('ShortcutsTab', () => {
@@ -825,6 +832,60 @@ describe('ShortcutsTab keyboard mode', () => {
  * it is unbound until the user records one here. The tab must ask for that
  * chord rather than leaving the action silently unreachable.
  */
+describe('ShortcutsTab in-field escape', () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+		vi.clearAllMocks();
+		resetModeFixtures();
+	});
+
+	it('shows the stored sequence and saves an edit', async () => {
+		await renderTab();
+
+		const input = screen.getByTestId('shortcuts-vim-insert-escape-input');
+		expect(input).toHaveValue('jk');
+
+		fireEvent.change(input, { target: { value: 'kj' } });
+
+		expect(mockSetInsertEscapeSequence).toHaveBeenCalledWith('kj');
+	});
+
+	it('renders in default mode too, so a search can land on it', async () => {
+		// The setting is only READ in Vim mode, but hiding the control would
+		// mean a settings search that jumps here finds nothing at all.
+		mockMode = 'default';
+		await renderTab();
+
+		expect(screen.getByTestId('shortcuts-vim-insert-escape-input')).toBeInTheDocument();
+	});
+
+	it('says nothing extra while the stored value is usable', async () => {
+		await renderTab();
+
+		expect(screen.queryByTestId('shortcuts-vim-insert-escape-off')).not.toBeInTheDocument();
+	});
+
+	it('warns that a one-character value is off, not honored', async () => {
+		// The screen is the only place that can say so: the setter stores what
+		// the user typed, so nothing else distinguishes "saved" from "live".
+		mockInsertEscapeSequence = 'j';
+		await renderTab();
+
+		expect(screen.getByTestId('shortcuts-vim-insert-escape-off')).toBeInTheDocument();
+	});
+
+	it('does not warn about an empty value, which is the documented off switch', async () => {
+		mockInsertEscapeSequence = '';
+		await renderTab();
+
+		expect(screen.queryByTestId('shortcuts-vim-insert-escape-off')).not.toBeInTheDocument();
+	});
+});
+
 describe('ShortcutsTab displaced actions', () => {
 	beforeEach(() => {
 		vi.useFakeTimers();

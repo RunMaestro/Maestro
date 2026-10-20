@@ -43,6 +43,12 @@ import { eventMatchesShortcutKeys } from '../../utils/shortcutMatch';
 import { createSequenceMatcher, type SequenceBinding } from '../../utils/shortcutSequence';
 import { publishSequencePrefix } from '../../stores/sequencePrefixStore';
 import { isNormalMode } from '../../utils/messageScrollNavigation';
+import {
+	applyInsertEscape,
+	insertEscapeTarget,
+	type InsertEscapeBinding,
+	type InsertEscapeField,
+} from '../../utils/vimInsertEscape';
 import { FIXED_SHORTCUTS } from '../../constants/shortcuts';
 import { editClipboardImage } from '../../components/ImageAnnotator/editClipboardImage';
 import { FORCED_PARALLEL_SEND_EVENT } from '../input/useInputKeyDown';
@@ -194,6 +200,32 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 		// call, so a settings write cannot discard a half-typed prefix.
 		const sequenceMatcher = createSequenceMatcher();
 
+		// A SECOND matcher, for the in-field escape (`jk`). Separate from the one
+		// above rather than a binding inside it, because the two run under
+		// opposite gates and want opposite things from a captured step: a
+		// normal-mode sequence fires only when NO text field has focus and
+		// swallows every step, while `jk` fires only when one does and must let
+		// its first step through as a typed character. One matcher holding both
+		// would also let a `g` typed in the composer survive into a normal-mode
+		// run, since the prefix buffer is a single piece of state.
+		const insertEscapeMatcher = createSequenceMatcher();
+		/**
+		 * The field a half-typed insert escape belongs to, or null.
+		 *
+		 * An escape is only an escape in the field it was started in: without
+		 * this, a `j` typed in the composer and a `k` typed after clicking into
+		 * the Settings filter would blur a field that never saw the `j`, and the
+		 * retraction would find the wrong character before the caret. Cleared on
+		 * every outcome except a captured step, so the reference outlives the
+		 * keystroke by at most one keypress.
+		 */
+		let insertEscapeField: InsertEscapeField | null = null;
+		const endInsertEscapeRun = () => {
+			if (!insertEscapeField) return;
+			insertEscapeMatcher.reset();
+			insertEscapeField = null;
+		};
+
 		/**
 		 * Tell the prefix indicator what the matcher is holding.
 		 *
@@ -341,6 +373,54 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					}
 				}
 				return;
+			}
+
+			// --- `jk` to leave a text field (Vim mode's insert-mode escape) ---
+			//
+			// Placed here, ABOVE the layer guard, on purpose. That guard returns
+			// early for every bare key while a modal is open, so a block below it
+			// would make `jk` dead in exactly the text fields a modal is made of -
+			// the Settings filter, a rename field, the search box. It is below the
+			// two terminal blocks for the opposite reason: those own the keyboard
+			// when xterm has it, and `insertEscapeTarget` excludes `.xterm`
+			// anyway, so a `jk` typed into `vim` in a Maestro terminal reaches the
+			// shell and nothing else.
+			//
+			// `ctx.insertEscape` is null unless Vim mode is live AND the setting
+			// parses, so default-mode users pay one property read for this.
+			//
+			// No `trackShortcut` call: keyboard mastery counts ACTIONS, and every
+			// id it knows is declared in `DEFAULT_SHORTCUTS` or `TAB_SHORTCUTS`
+			// with a row in Settings > Shortcuts. The insert escape is a text-field
+			// behavior configured by a string setting, not a bindable action, so
+			// recording it would put an id in the mastery set that no table
+			// declares and no row could ever explain.
+			const insertEscape: InsertEscapeBinding | null = ctx.insertEscape ?? null;
+			if (insertEscape) {
+				const field = insertEscapeTarget(target);
+				// Focus moved mid-run (a click into another input, a modal
+				// autofocusing its first field): the run ended with it.
+				if (field !== insertEscapeField) endInsertEscapeRun();
+				if (field) {
+					const escapeResult = insertEscapeMatcher.feed(e, insertEscape.bindings);
+					if (escapeResult.outcome === 'consumed-prefix') {
+						// Deliberately NOT prevented. The `j` is a character the user
+						// typed and it belongs in the field; if no `k` follows,
+						// nothing was ever taken away from them.
+						insertEscapeField = field;
+					} else if (escapeResult.outcome === 'matched') {
+						insertEscapeField = null;
+						if (applyInsertEscape(field, insertEscape.inserted)) {
+							e.preventDefault();
+							return;
+						}
+						// The prefix is not where it was expected to be, so this was
+						// never an escape. Fall through and let the key be the
+						// character it is - a near miss costs the user nothing.
+					} else {
+						insertEscapeField = null;
+					}
+				}
 			}
 
 			// When layers (modals/overlays) are open, we need nuanced shortcut handling:
@@ -1994,6 +2074,11 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 		const handleBlur = () => {
 			sequenceMatcher.reset();
 			publishPrefix();
+			// The in-field escape goes with it, and for a second reason: the run
+			// holds a reference to the field it started in, and the window losing
+			// focus is the clearest signal that the keys finishing it are going
+			// somewhere else.
+			endInsertEscapeRun();
 		};
 
 		window.addEventListener('keydown', handleKeyDown);

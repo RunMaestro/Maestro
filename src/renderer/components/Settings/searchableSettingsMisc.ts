@@ -49,6 +49,28 @@ export const SHORTCUTS_SETTINGS: SearchableSetting[] = [
 			'toggle',
 		],
 	},
+	{
+		id: 'shortcuts-vim-insert-escape',
+		tab: 'shortcuts',
+		tabLabel: 'Shortcuts',
+		label: 'Insert Mode Escape',
+		description:
+			'The characters that leave a text field in Vim mode ("jk" by default), typed in quick succession. They are taken back out of the field and it is blurred, so the normal-mode keys work again. Empty switches it off, and it never applies in the file editor or a terminal',
+		keywords: [
+			'jk',
+			'insert mode',
+			'escape',
+			'esc',
+			'vim',
+			'vim mode',
+			'blur',
+			'text field',
+			'composer',
+			'normal mode',
+			'leave input',
+			'exit insert',
+		],
+	},
 ];
 
 // ---------------------------------------------------------------------------
