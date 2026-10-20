@@ -720,31 +720,130 @@ What the two modes do and do not share:
 - **Each mode keeps its own customizations.** Rebind a chord in one mode, switch away, switch back, and your chord is still there. Neither set is ever written by the other.
 - **Each mode has its own reset.** **Reset to defaults**, beside the toggle, restores the shipped bindings for the mode you are looking at and leaves the other mode's customizations untouched.
 - **Vim mode keeps every default chord it does not replace.** Vim's table is a short list of overrides, not a second full keymap, so no action becomes unreachable by switching modes. A row whose chord comes from the default set is tagged **Default** in the Shortcuts tab.
-- **When a Vim chord replaces a combination another action used, that action gets its own Vim chord.** Within one mode a combination fires exactly one action, so the displaced action cannot keep the chord it inherits in Default mode. It is listed at the top of the Shortcuts tab under **Needs a Vim binding** until you record one, and the toast on switching names it. No shipped Vim binding displaces anything today.
+- **When a Vim chord replaces a combination another action used, that action gets its own Vim chord.** Within one mode a combination fires exactly one action, so the displaced action cannot keep the chord it inherits in Default mode. It is listed at the top of the Shortcuts tab under **Needs a Vim binding** until you record one, and the toast on switching names it. The shipped Vim bindings displace five actions, and all five are given a Vim chord of their own - see [Moved in Vim Mode](#moved-in-vim-mode).
 - **Fixed shortcuts are shared.** `Esc` to close a modal, `Cmd+F` to open a find bar, and the other non-rebindable keys behave the same in both modes.
 
 ### Vim Mode Bindings
 
-Every action not listed here keeps its Default-mode chord.
+Every action not listed here keeps its Default-mode chord. Each row gives the
+chord, which fires wherever focus sits, and the **normal-mode key** where Vim
+has one - the bare keys, typed with no modifier.
 
-| Action       | macOS           | Windows/Linux   |
-| ------------ | --------------- | --------------- |
-| Previous Tab | `Ctrl+PageUp`   | `Ctrl+PageUp`   |
-| Next Tab     | `Ctrl+PageDown` | `Ctrl+PageDown` |
+| Action               | macOS                 | Windows/Linux         | Normal-mode key |
+| -------------------- | --------------------- | --------------------- | --------------- |
+| Focus Region Left    | `Ctrl+Shift+H`        | `Ctrl+Shift+H`        | `h`             |
+| Focus Region Down    | `Ctrl+Shift+J`        | `Ctrl+Shift+J`        | `j`             |
+| Focus Region Up      | `Ctrl+Shift+K`        | `Ctrl+Shift+K`        | `k`             |
+| Focus Region Right   | `Ctrl+Shift+L`        | `Ctrl+Shift+L`        | `l`             |
+| Shrink Region        | `Ctrl+Opt+Shift+,`    | `Ctrl+Alt+Shift+,`    | -               |
+| Grow Region          | `Ctrl+Opt+Shift+.`    | `Ctrl+Alt+Shift+.`    | -               |
+| Toggle Zen Mode      | `Ctrl+Opt+O`          | `Ctrl+Alt+O`          | `z`             |
+| Previous Tab         | `Ctrl+PageUp`         | `Ctrl+PageUp`         | `g T`           |
+| Next Tab             | `Ctrl+PageDown`       | `Ctrl+PageDown`       | `g t`           |
+| Move Tab Left        | `Ctrl+Shift+PageUp`   | `Ctrl+Shift+PageUp`   | `< <`           |
+| Move Tab Right       | `Ctrl+Shift+PageDown` | `Ctrl+Shift+PageDown` | `> >`           |
+| Go to Tab 1          | `Cmd+1`               | `Ctrl+1`              | `g g`           |
+| Go to Last Tab       | `Cmd+0`               | `Ctrl+0`              | `G`             |
+| Go to History Tab    | `Ctrl+Opt+Shift+H`    | `Ctrl+Alt+Shift+H`    | -               |
+| Jump to Bottom       | `Ctrl+Opt+Shift+J`    | `Ctrl+Alt+Shift+J`    | -               |
+| Clear Terminal       | `Ctrl+Opt+Shift+K`    | `Ctrl+Alt+Shift+K`    | -               |
+| Toggle Show Thinking | `Ctrl+Opt+Shift+K`    | `Ctrl+Alt+Shift+K`    | -               |
+| View Agent Sessions  | `Ctrl+Opt+Shift+L`    | `Ctrl+Alt+Shift+L`    | -               |
 
-These two replace `Cmd+Shift+[` / `Cmd+Shift+]` from [Tab Management](#tab-management-shortcuts). No other binding uses `PageUp` or `PageDown`, so they displace nothing. The table grows in later releases.
+`h` / `j` / `k` / `l` are Vim's `<C-w>` window family, and **Shrink Region** and
+**Grow Region** are its `<C-w><` and `<C-w>>` - `Shift` plus `,` is `<`, and
+`Shift` plus `.` is `>`. The Shortcuts tab spells a shifted key out, so those two
+read there as `Ctrl+Opt+Shift+,` rather than as `<`, and `< <` appears as
+`Shift+,` twice.
 
-The nine region, zen, and move-tab actions this page marks **unassigned by
-default** - Focus Region Left / Right / Up / Down, [Grow Region, Shrink Region,
-and Toggle Zen Mode](#region-focus-resize-and-zen-mode), plus [Move Tab Left and
-Move Tab Right](#tab-management-shortcuts) - are the ones that table reaches for
-first. They are actions Vim has a strong opinion about (its window and tab
-commands) and default mode leaves free, so giving them Vim chords displaces
-nothing. Until they appear in the table above they are unassigned in both modes:
-run them from Quick Actions (`Cmd+K`), or bind them yourself in **Settings** ->
-**Shortcuts**, where a chord you record applies to the mode you are looking at.
+The region family is `Ctrl+Shift` rather than the `Ctrl+H` / `Ctrl+J` / `Ctrl+K`
+/ `Ctrl+L` a tiling keymap would use, because Maestro matches `Ctrl` and `Cmd` as
+one modifier: `Ctrl+H` **is** `Cmd+H`, which the macOS app menu owns and
+[reserves](#combinations-maestro-will-not-take). The binding would conflict with
+nothing and simply never fire. `Ctrl+Opt+H` is out for the same reason - it is
+`Opt+Cmd+H`, Hide Others - which is why the moved actions below take
+`Ctrl+Opt+Shift` instead.
 
-Vim chords are written with `Ctrl` so macOS shows the Vim-native `⌃` rather than `⌘`. Maestro treats `Ctrl` and `Cmd` as one modifier when it matches a keypress, so on a Mac `Cmd+PageUp` walks to the previous tab as well.
+**Previous Tab** and **Next Tab** replace `Cmd+Shift+[` / `Cmd+Shift+]` from
+[Tab Management](#tab-management-shortcuts). No shipped binding uses `PageUp` or
+`PageDown`, so those two and the **Move Tab** pair beside them displace nothing.
+**Go to Tab 1** and **Go to Last Tab** add only a normal-mode key and keep the
+`Cmd+1` / `Cmd+0` they have in Default mode, which is the chord the rest of the
+`Go to Tab` family answers to.
+
+Vim chords are written with `Ctrl` so macOS shows the Vim-native `⌃` rather than
+`⌘`. Because `Ctrl` and `Cmd` are one modifier when Maestro matches a keypress,
+on a Mac either physical key fires them: `Cmd+PageUp` walks to the previous tab
+as well, and `Cmd+Shift+H` focuses the Left Bar.
+
+#### Normal-Mode Keys
+
+A bare key is a binding only in **normal mode**, which means both of these at
+once:
+
+- **Focus is outside every text field.** Not the composer, not a search or
+  rename box, not the file editor, not a terminal. Otherwise `j` is the letter
+  `j`, which is the only thing it can be while you are writing a prompt.
+- **Nothing is open over the window.** No modal, dialog, dropdown, or find bar.
+  A key that reached past an open dialog would act on the window behind it.
+
+Fail either one and the key types normally or does nothing; the chord in the
+table still works, which is why every normal-mode key has one. Multi-key runs
+(`g t`, `< <`) give you **one second** between keys, and the keys already typed
+show in a small indicator until the run completes or expires.
+
+#### Leaving a Text Field: `jk`
+
+Vim's own way out of insert mode is `Esc`, and Maestro cannot give it that
+meaning: `Esc` closes the topmost dialog first, and in the composer it already
+blurs to the transcript. So Vim mode adds **`jk`**, typed quickly inside a text
+field: the `j` is taken back out and the field is blurred, which puts you back in
+normal mode where `h` / `j` / `k` / `l` work again.
+
+- The `j` is let through and **retracted** when the `k` lands, so a `j` you meant
+  as a letter is never delayed. `ja`, or a `k` more than a second later, leaves
+  everything you typed exactly where it is.
+- It applies to ordinary text boxes and the composer only - never in the file
+  editor or a terminal, where `jk` belongs to whatever you are running there.
+- `Esc` is untouched in both modes.
+
+**To change it or switch it off:** **Settings** (`Cmd+,` / `Ctrl+,`) ->
+**Shortcuts** -> **Insert Mode Escape**, the field under the keyboard mode
+toggle. Clear it to empty and the behavior is off. Anything shorter than two
+characters, or with a space in it, is also off rather than honored - a
+one-character escape would swallow that letter in every text field in the app,
+including the one you would use to undo it - and the field says so when the value
+cannot work. The same setting is reachable from the CLI as
+`maestro-cli settings set vimInsertEscapeSequence ""`.
+
+#### Moved in Vim Mode
+
+Five actions have their Default-mode combination taken by a Vim binding, so each
+gets an explicit Vim chord of its own - the same letter with `Opt` added, so the
+Vim chord is guessable from the one you already know. Nothing becomes
+unreachable by switching modes.
+
+| Action               | Default chord | Vim chord                               |
+| -------------------- | ------------- | --------------------------------------- |
+| Go to History Tab    | `Cmd+Shift+H` | `Ctrl+Opt+Shift+H` (`Ctrl+Alt+Shift+H`) |
+| Jump to Bottom       | `Cmd+Shift+J` | `Ctrl+Opt+Shift+J` (`Ctrl+Alt+Shift+J`) |
+| Clear Terminal       | `Cmd+Shift+K` | `Ctrl+Opt+Shift+K` (`Ctrl+Alt+Shift+K`) |
+| Toggle Show Thinking | `Cmd+Shift+K` | `Ctrl+Opt+Shift+K` (`Ctrl+Alt+Shift+K`) |
+| View Agent Sessions  | `Cmd+Shift+L` | `Ctrl+Opt+Shift+L` (`Ctrl+Alt+Shift+L`) |
+
+The Windows and Linux spelling is in parentheses. **Clear Terminal** and **Toggle
+Show Thinking** share a combination in Default mode on purpose - one is reached
+in the Command Terminal, the other in an AI tab - and they move together, so they
+still share one in Vim mode. Switch back to Default mode and all five are on
+their original chords, untouched.
+
+**One state where the region chords do not fire.** In the Command Terminal, with
+the terminal's input mode active but focus adrift from the terminal itself,
+Maestro sends the keypress back to the shell rather than matching it, so
+`Ctrl+Shift+H` / `J` / `K` / `L` and `Ctrl+Shift+PageUp` / `PageDown` reach your
+shell instead of the app. The `Cmd` spelling of the same binding works there
+(`Cmd+Shift+H` still focuses the Left Bar), as do the normal-mode keys and every
+chord holding `Opt`.
 
 ## Customizing Shortcuts
 
