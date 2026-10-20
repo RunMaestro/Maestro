@@ -3,6 +3,8 @@ import type { BrowserRelayTarget, BrowserRelayViewport, BrowserRelayAction } fro
 export interface BrowserTab {
 	id: string;
 	url: string;
+	/** Runtime-only navigation request, consumed by the browser presentation. */
+	requestedUrl?: string;
 	title: string;
 	customTitle?: string;
 	createdAt: number;

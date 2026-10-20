@@ -61,6 +61,34 @@ describe('BrowserTabView', () => {
 		return screen.getByTestId('browser-tab-host').querySelector('webview') as MockWebview;
 	}
 
+	it('consumes an explicit navigation request without replaying it on observed URL changes', () => {
+		const onUpdateTab = vi.fn();
+		const tab = { ...mockTab };
+		const { container, rerender } = render(
+			<BrowserTabView tab={tab} theme={mockTheme} onUpdateTab={onUpdateTab} />
+		);
+		const webview = container.querySelector('webview') as HTMLElement & { src: string };
+		rerender(
+			<BrowserTabView
+				tab={{ ...tab, requestedUrl: 'https://docs.runmaestro.ai/cue' }}
+				theme={mockTheme}
+				onUpdateTab={onUpdateTab}
+			/>
+		);
+		expect(webview.src).toBe('https://docs.runmaestro.ai/cue');
+		expect(onUpdateTab).toHaveBeenCalledWith(tab.id, { requestedUrl: undefined });
+		webview.src = 'https://docs.runmaestro.ai/redirected';
+		rerender(
+			<BrowserTabView
+				tab={{ ...tab, url: webview.src }}
+				theme={mockTheme}
+				onUpdateTab={onUpdateTab}
+			/>
+		);
+		expect(webview.src).toBe('https://docs.runmaestro.ai/redirected');
+		expect(onUpdateTab).toHaveBeenCalledTimes(1);
+	});
+
 	it('keeps a native webview for local tabs without starting a frame stream', () => {
 		render(<BrowserTabView tab={mockTab} theme={mockTheme} onUpdateTab={vi.fn()} />);
 		expect(getWebview().tagName.toLowerCase()).toBe('webview');
