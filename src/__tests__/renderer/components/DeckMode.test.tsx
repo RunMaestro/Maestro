@@ -1,21 +1,39 @@
 /**
- * Deck mode's user-visible surface: the hint bar.
+ * Deck mode's surfaces, and the two places its layers meet.
  *
  * Deck mode is a one-shot leader mode (arm with a chord, the next bare key
- * fires an action, the mode ends). The state machine itself is covered in
- * `stores/uiStore.test.ts`, and the keypress wiring in
- * `hooks/useMainKeyboardHandler.test.ts`. What is proven HERE is the half the
- * user actually sees: that arming puts the whole key table on screen, that it
- * is read from the table rather than from a hand-maintained copy, that it
- * names the chord the live keyboard mode actually binds, and that it takes
- * itself down on the window the handler disarms on.
+ * fires an action, the mode ends). Its state machine is covered in
+ * `stores/uiStore.test.ts` - the lazy timeout, the window-blur guard, and the
+ * disarm on a keyboard-mode switch - and its keypress wiring in
+ * `hooks/useMainKeyboardHandler.test.ts`, where the leader, every firing key,
+ * a miss, and a chord pressed while armed each get a case.
  *
- * The bar is the one thing Maestro has that tmux does not, so "does it show
- * the right keys" is a behavioural requirement, not a styling detail.
+ * Three things are proven HERE, each of them needing more than one unit in the
+ * same tree:
+ *
+ *  - The hint bar: that arming puts the whole key table on screen, read from
+ *    the table rather than from a hand-maintained copy, that it names the chord
+ *    the live keyboard mode actually binds, and that it takes itself down on
+ *    the window the handler disarms on. The bar is the one thing Maestro has
+ *    that tmux does not, so "does it show the right keys" is a behavioural
+ *    requirement, not a styling detail.
+ *  - The two routes that need no leader chord (the palette entry and the help
+ *    sheet's section), which is all default mode ships.
+ *  - Escape over an open modal, and what keyboard mastery records across the
+ *    two routes to one action. Both are cross-layer claims, and the suite at
+ *    the bottom says why neither single-layer file can make them.
  */
 
 import { act, cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+	useActiveShortcuts,
+	useKeyboardShortcutHelpers,
+	useMainKeyboardHandler,
+} from '../../../renderer/hooks';
+import { useModalLayer } from '../../../renderer/hooks/ui/useModalLayer';
+import { MODAL_PRIORITIES } from '../../../renderer/constants/modalPriorities';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { DeckModeHintBar } from '../../../renderer/components/DeckModeHintBar';
 import { ShortcutsHelpModal } from '../../../renderer/components/ShortcutsHelpModal';
 import { buildFeatureCommands } from '../../../renderer/components/QuickActionsModal/commands/featureCommands';
@@ -36,6 +54,17 @@ import type { Shortcut } from '../../../renderer/types';
 import { SEQUENCE_TIMEOUT_MS } from '../../../renderer/utils/shortcutSequence';
 import { getShortcutKeys, queryAllShortcutKeys } from '../../helpers/shortcutKeys';
 import { mockTheme } from '../../helpers/mockTheme';
+
+// `focusRegionLeft` delegates wholesale to a service with its own suite
+// (regionFocus.test.ts). Spied rather than run, so the mastery cases at the
+// bottom of this file assert that the Deck route and the chord route reach the
+// SAME action rather than re-testing reveal-before-focus and the clamps. Only
+// the one delegating export is replaced; the rest of the module stays real.
+const { mockFocusRegionDirection } = vi.hoisted(() => ({ mockFocusRegionDirection: vi.fn() }));
+vi.mock('../../../renderer/services/regionFocus', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/services/regionFocus')>()),
+	focusRegionDirection: (...args: unknown[]) => mockFocusRegionDirection(...args),
+}));
 
 const bar = () => screen.queryByTestId('deck-mode-hint-bar');
 
@@ -579,6 +608,294 @@ describe('Deck mode without the leader chord', () => {
 		it('stands down when the host lists no leader', () => {
 			renderSheet({});
 			expect(section()).not.toBeInTheDocument();
+		});
+	});
+});
+
+/**
+ * The two claims neither single-layer suite can make on its own.
+ *
+ * `contexts/LayerStackContext.test.tsx` proves the capture-phase listener
+ * declines while the mode is armed, but against a MOCKED layer stack and with
+ * no keyboard handler mounted, so it cannot show the modal surviving. The
+ * handler suite proves Escape disarms, but with no layer stack at all, so it
+ * cannot show the modal surviving either. Only both halves live in one tree
+ * proves the thing the user is promised: one mistyped leader costs them one
+ * keystroke, not their open modal as well.
+ *
+ * Mastery is the same shape. The handler suite asserts on a mocked
+ * `recordShortcutUsage` and so can only see which ids were OFFERED. Whether
+ * `focusRegionLeft` fired from Deck `h` and `focusRegionLeft` fired from
+ * Ctrl+Shift+H land as one entry or two is the store's answer, and it is the
+ * whole reason a Deck row carries the action's own id instead of one of its
+ * own.
+ */
+describe('Deck mode where its layers meet', () => {
+	/**
+	 * Everything the handler must find on its context to run without throwing.
+	 *
+	 * Wired even for the branches a given case asserts did NOT run: a branch
+	 * that fires with a missing collaborator throws inside the dispatched
+	 * listener, and jsdom reports that as an uncaught exception rather than a
+	 * failure - so the test would pass while the action it was policing had in
+	 * fact fired and crashed.
+	 */
+	function keyboardContext(overrides: Record<string, unknown> = {}) {
+		return {
+			hasOpenLayers: () => false,
+			hasOpenModal: () => false,
+			editingSessionId: null,
+			editingGroupId: null,
+			activeGroupChatId: null,
+			activeSessionId: 'session-1',
+			sessions: [],
+			handleSidebarNavigation: vi.fn().mockReturnValue(false),
+			handleEnterToActivate: vi.fn().mockReturnValue(false),
+			handleTabNavigation: vi.fn().mockReturnValue(false),
+			handleEscapeInMain: vi.fn().mockReturnValue(false),
+			handleNewTab: vi.fn(),
+			setActiveFocus: vi.fn(),
+			setQuickActionOpen: vi.fn(),
+			mainPanelRef: { current: { clearActiveTerminal: vi.fn() } },
+			...overrides,
+		};
+	}
+
+	/**
+	 * The real handler, with App.tsx's own render-time matcher assembly.
+	 *
+	 * The matchers are built from the LIVE tables rather than forced, because
+	 * the claim being made is end-to-end: switching to Vim mode is the whole
+	 * setup, and `Ctrl+;` then has to arm a mode nothing else was told about.
+	 */
+	function KeyboardHost({ ctx }: { ctx: Record<string, unknown> }): null {
+		const { keyboardHandlerRef } = useMainKeyboardHandler();
+		const { shortcuts, tabShortcuts } = useActiveShortcuts();
+		const { isShortcut, isTabShortcut, isPaneShortcut } = useKeyboardShortcutHelpers({
+			shortcuts,
+			tabShortcuts,
+		});
+		// Assigned in the render body, which is App.tsx's arrangement too: the
+		// handler reads this ref at EVENT time, so there is no stale-closure
+		// window to miss and no effect ordering for a first keypress to fall into.
+		keyboardHandlerRef.current = {
+			...ctx,
+			isShortcut,
+			isTabShortcut,
+			isPaneShortcut,
+		} as never;
+		return null;
+	}
+
+	/** A modal registered the way every modal in the app registers one. */
+	function OpenModal({ onEscape }: { onEscape: () => void }): JSX.Element {
+		useModalLayer(MODAL_PRIORITIES.SETTINGS, 'Test Modal', onEscape);
+		return <div data-testid="open-modal" />;
+	}
+
+	/**
+	 * Press a key the way a real one travels: capture DOWN from the window to
+	 * the target, then bubble back up.
+	 *
+	 * Dispatched at `document.body` rather than at `window`, which matters here
+	 * and nowhere else in this file. An event dispatched AT the window puts both
+	 * listeners in the target phase, where they fire in registration order and
+	 * the capture flag is ignored - so a pass would depend on which component
+	 * mounted first. Through the body, `LayerStackProvider`'s capture listener is
+	 * genuinely ahead of the handler's bubble listener, which is the ordering the
+	 * yield exists to survive.
+	 */
+	function press(key: string, init: KeyboardEventInit = {}) {
+		const event = new KeyboardEvent('keydown', {
+			key,
+			bubbles: true,
+			cancelable: true,
+			...init,
+		});
+		act(() => {
+			document.body.dispatchEvent(event);
+		});
+		return event;
+	}
+
+	/** The leader exactly as a keyboard sends it in Vim mode: Ctrl+; */
+	const pressLeader = () => press(';', { ctrlKey: true });
+
+	beforeEach(() => {
+		mockFocusRegionDirection.mockClear();
+		setKeyboardMode('vim');
+		// An AI-mode session, so the terminal blocks above the ladder stay out of
+		// the way. Resolved from the store at event time, not from the context.
+		useSessionStore.setState({
+			sessions: [{ id: 'session-1', name: 'Test', inputMode: 'ai' }] as never,
+			activeSessionId: 'session-1',
+		});
+		useUIStore.getState().disarmDeckMode();
+	});
+
+	afterEach(() => {
+		useUIStore.getState().disarmDeckMode();
+		useSessionStore.setState({ sessions: [], activeSessionId: '' });
+		setKeyboardMode('default');
+	});
+
+	describe('Escape while armed', () => {
+		it('cancels the mode and leaves the open modal open', () => {
+			const onModalEscape = vi.fn();
+			const ctx = keyboardContext({ hasOpenLayers: () => true, hasOpenModal: () => true });
+			render(
+				<LayerStackProvider>
+					<KeyboardHost ctx={ctx} />
+					<OpenModal onEscape={onModalEscape} />
+				</LayerStackProvider>
+			);
+
+			// Arming is allowed over an open layer: the Deck block sits above the
+			// handler's layer guard precisely so the leader still works there.
+			pressLeader();
+			expect(useUIStore.getState().deckModeArmed).toBe(true);
+
+			const event = press('Escape');
+
+			expect(useUIStore.getState().deckModeArmed).toBe(false);
+			// The whole point. One mistyped leader costs one keystroke, not the
+			// modal the user had open behind it.
+			expect(onModalEscape).not.toHaveBeenCalled();
+			expect(screen.getByTestId('open-modal')).toBeInTheDocument();
+			// Swallowed by the handler rather than by the layer stack, which is what
+			// the capture-phase yield made possible.
+			expect(event.defaultPrevented).toBe(true);
+		});
+
+		it('hands Escape back to the modal on the very next press', () => {
+			const onModalEscape = vi.fn();
+			const ctx = keyboardContext({ hasOpenLayers: () => true, hasOpenModal: () => true });
+			render(
+				<LayerStackProvider>
+					<KeyboardHost ctx={ctx} />
+					<OpenModal onEscape={onModalEscape} />
+				</LayerStackProvider>
+			);
+
+			pressLeader();
+			press('Escape');
+			press('Escape');
+
+			// The yield is scoped to the armed keystroke. A mode that kept Escape
+			// after cancelling would leave the modal unclosable.
+			expect(onModalEscape).toHaveBeenCalledTimes(1);
+		});
+
+		it('leaves the modal alone for the mode it never armed', () => {
+			// Default mode ships the leader unbound, so the same two keystrokes
+			// there are an unmatched `Ctrl+;` and an ordinary Escape - and the
+			// modal closes on the first press, not the second.
+			setKeyboardMode('default');
+			const onModalEscape = vi.fn();
+			const ctx = keyboardContext({ hasOpenLayers: () => true, hasOpenModal: () => true });
+			render(
+				<LayerStackProvider>
+					<KeyboardHost ctx={ctx} />
+					<OpenModal onEscape={onModalEscape} />
+				</LayerStackProvider>
+			);
+
+			pressLeader();
+			expect(useUIStore.getState().deckModeArmed).toBe(false);
+
+			press('Escape');
+
+			expect(onModalEscape).toHaveBeenCalledTimes(1);
+		});
+	});
+
+	describe('what keyboard mastery records', () => {
+		/** The REAL store action, which is the thing under test here. */
+		function masteryContext(overrides: Record<string, unknown> = {}) {
+			return keyboardContext({
+				recordShortcutUsage: (id: string) => useSettingsStore.getState().recordShortcutUsage(id),
+				...overrides,
+			});
+		}
+
+		/** The action ids the mastery set has collected, in order. */
+		const used = () => useSettingsStore.getState().keyboardMasteryStats.usedShortcuts;
+
+		beforeEach(() => {
+			act(() => {
+				useSettingsStore.setState({
+					keyboardMasteryStats: {
+						usedShortcuts: [],
+						currentLevel: 0,
+						lastLevelUpTimestamp: 0,
+						lastAcknowledgedLevel: 0,
+					},
+				});
+			});
+		});
+
+		it('records the leader, which is an action with a row of its own', () => {
+			render(<KeyboardHost ctx={masteryContext()} />);
+
+			pressLeader();
+
+			expect(used()).toEqual([DECK_MODE_LEADER_ID]);
+		});
+
+		// The reason a Deck row carries the action's own id rather than one of its
+		// own: mastery is meant to mean "you know this action", not "you know this
+		// keystroke", so learning a second route to an action you already have
+		// must not move the number.
+		it('counts one action however it was fired, not one per route', () => {
+			render(<KeyboardHost ctx={masteryContext()} />);
+
+			// Route one: the Deck key, from the leader.
+			pressLeader();
+			press('h');
+			expect(mockFocusRegionDirection).toHaveBeenCalledWith('left');
+			expect(used()).toEqual([DECK_MODE_LEADER_ID, 'focusRegionLeft']);
+
+			// Route two: the chord Vim mode binds to the same action.
+			press('h', { ctrlKey: true, shiftKey: true });
+
+			expect(mockFocusRegionDirection).toHaveBeenCalledTimes(2);
+			expect(used().filter((id) => id === 'focusRegionLeft')).toHaveLength(1);
+			expect(used()).toEqual([DECK_MODE_LEADER_ID, 'focusRegionLeft']);
+		});
+
+		// The order a user would actually learn them in is the other way round, so
+		// run it that way too: the chord first, then the Deck route they discover
+		// later. Neither route may add a second entry.
+		it('counts one action with the chord learned first', () => {
+			render(<KeyboardHost ctx={masteryContext()} />);
+
+			press('h', { ctrlKey: true, shiftKey: true });
+			expect(used()).toEqual(['focusRegionLeft']);
+
+			pressLeader();
+			press('h');
+
+			expect(used()).toEqual(['focusRegionLeft', DECK_MODE_LEADER_ID]);
+		});
+
+		// No `deckH`, no `deck.focusRegionLeft`, nothing the mastery denominator
+		// has never heard of: every id in the set has to be an action with a row
+		// in Settings > Shortcuts, or the percentage is measured against a
+		// different population than it is reported for.
+		it('puts no Deck-specific id into the set', () => {
+			render(<KeyboardHost ctx={masteryContext()} />);
+
+			pressLeader();
+			press('h');
+			pressLeader();
+			press('q'); // a miss, which fires nothing and so records nothing
+			pressLeader();
+			press('Escape'); // cancel, which is the mode's behaviour, not an action
+
+			for (const id of used()) {
+				expect(DEFAULT_SHORTCUTS[id] ?? TAB_SHORTCUTS[id]).toBeDefined();
+			}
+			expect(used()).toEqual([DECK_MODE_LEADER_ID, 'focusRegionLeft']);
 		});
 	});
 });
