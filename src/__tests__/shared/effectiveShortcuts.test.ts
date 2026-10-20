@@ -527,6 +527,98 @@ describe('overridesWithEdits', () => {
 		expect(result.openSettings.sequence).toBeUndefined();
 	});
 
+	it('writes an override for a row whose SEQUENCE is the only thing that changed', () => {
+		// The diff used to read `keys` alone, so recording a sequence in a
+		// non-default mode wrote nothing at all and the next read inherited the
+		// old sequence straight back.
+		const result = overridesWithEdits({}, before, {
+			...before,
+			openSettings: { ...before.openSettings, sequence: [['g'], ['s']] },
+		});
+
+		expect(result.openSettings.sequence).toEqual([['g'], ['s']]);
+		// And the chord the row already had comes across with it, because the
+		// override row is written whole.
+		expect(result.openSettings.keys).toEqual(['Meta', ',']);
+	});
+
+	it('does not write a sequence recorded in another key order', () => {
+		const current = { openSettings: seqOv('openSettings', 'Open Settings', [['Shift', 'g']]) };
+		const shown: Record<string, Shortcut> = {
+			...before,
+			openSettings: { ...before.openSettings, sequence: [['Shift', 'g']] },
+		};
+		const next = {
+			...shown,
+			openSettings: { ...shown.openSettings, sequence: [['g', 'Shift']] },
+		};
+		expect(overridesWithEdits(current, shown, next)).toBe(current);
+	});
+
+	it('writes a cleared sequence as an explicit empty one', () => {
+		// In an override bucket an absent `sequence` means "inherit the
+		// default-mode one", so a clear has to be spelled out or it hands the
+		// sequence back on the next read.
+		const shown: Record<string, Shortcut> = {
+			...before,
+			openSettings: { ...before.openSettings, sequence: [['g'], ['s']] },
+		};
+		const result = overridesWithEdits({}, shown, {
+			...shown,
+			openSettings: { ...shown.openSettings, sequence: [] },
+		});
+
+		expect(result.openSettings.sequence).toEqual([]);
+	});
+
+	it('writes an explicit empty sequence when the edited row drops the field', () => {
+		const shown: Record<string, Shortcut> = {
+			...before,
+			openSettings: { ...before.openSettings, sequence: [['g'], ['s']] },
+		};
+		const result = overridesWithEdits({}, shown, {
+			...shown,
+			openSettings: sc('openSettings', 'Open Settings', ['Meta', ',']),
+		});
+
+		expect(result.openSettings.sequence).toEqual([]);
+	});
+
+	it('does not write a clear on a row that had no sequence anyway', () => {
+		const current: Record<string, ShortcutOverride> = {};
+		const next = {
+			...before,
+			openSettings: { ...before.openSettings, sequence: [] },
+		};
+		expect(overridesWithEdits(current, before, next)).toBe(current);
+	});
+
+	it('replaces the bucket sequence rather than keeping the old one', () => {
+		const current = { openSettings: seqOv('openSettings', 'Open Settings', [['g'], ['s']]) };
+		const shown: Record<string, Shortcut> = {
+			...before,
+			openSettings: { ...before.openSettings, sequence: [['g'], ['s']] },
+		};
+		const result = overridesWithEdits({ ...current }, shown, {
+			...shown,
+			openSettings: { ...shown.openSettings, sequence: [['g'], ['t']] },
+		});
+
+		expect(result.openSettings.sequence).toEqual([['g'], ['t']]);
+	});
+
+	it('copies the edited sequence rather than aliasing the steps it was handed', () => {
+		const sequence = [['g'], ['s']];
+		const result = overridesWithEdits({}, before, {
+			...before,
+			openSettings: { ...before.openSettings, sequence },
+		});
+		sequence.push(['x']);
+		sequence[0].push('Shift');
+
+		expect(result.openSettings.sequence).toEqual([['g'], ['s']]);
+	});
+
 	it('copies the chord rather than aliasing the array it was handed', () => {
 		const keys = ['Ctrl', 'g'];
 		const result = overridesWithEdits({}, before, {

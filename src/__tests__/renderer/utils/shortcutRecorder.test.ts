@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import type React from 'react';
-import { buildEventFromKeys, buildKeysFromEvent } from '../../../renderer/utils/shortcutRecorder';
+import {
+	buildEventFromKeys,
+	buildKeysFromEvent,
+	recordSequenceStep,
+} from '../../../renderer/utils/shortcutRecorder';
 
 function mkEvent(
 	overrides: Partial<{
@@ -129,5 +133,126 @@ describe('buildEventFromKeys', () => {
 		expect(e.bubbles).toBe(true);
 		expect(e.cancelable).toBe(true);
 		expect(e.type).toBe('keydown');
+	});
+});
+
+describe('recordSequenceStep', () => {
+	it('captures a first step', () => {
+		const result = recordSequenceStep(mkEvent({ key: 'g', code: 'KeyG' }), []);
+		expect(result).toEqual({ outcome: 'step', steps: [['g']] });
+	});
+
+	it('captures successive steps, which is the whole point of a sequence', () => {
+		const first = recordSequenceStep(mkEvent({ key: 'g', code: 'KeyG' }), []);
+		expect(first.outcome).toBe('step');
+		const second = recordSequenceStep(
+			mkEvent({ key: 't', code: 'KeyT' }),
+			first.outcome === 'step' ? first.steps : []
+		);
+		expect(second).toEqual({ outcome: 'step', steps: [['g'], ['t']] });
+	});
+
+	it('records Shift as part of the step, so G is a one-step sequence', () => {
+		const result = recordSequenceStep(mkEvent({ key: 'G', code: 'KeyG', shiftKey: true }), []);
+		expect(result).toEqual({ outcome: 'step', steps: [['Shift', 'G']] });
+	});
+
+	it('keeps recording through a modifier-only keydown without capturing it', () => {
+		// Shift fires its own keydown before the character it shifts. Treating
+		// that as a step would make `g G` impossible to record.
+		const result = recordSequenceStep(mkEvent({ key: 'Shift', shiftKey: true }), [['g']]);
+		expect(result).toEqual({ outcome: 'waiting' });
+	});
+
+	it('ignores CapsLock and AltGraph, which buildKeysFromEvent would record', () => {
+		// The two keys the modifier-only gate is actually load bearing for:
+		// `buildKeysFromEvent` only refuses Meta, Control, Alt and Shift, so
+		// without the gate a CapsLock press would become a step no keypress can
+		// ever satisfy.
+		expect(recordSequenceStep(mkEvent({ key: 'CapsLock' }), [['g']])).toEqual({
+			outcome: 'waiting',
+		});
+		expect(recordSequenceStep(mkEvent({ key: 'AltGraph' }), [])).toEqual({ outcome: 'waiting' });
+	});
+
+	it('cancels on Escape', () => {
+		expect(recordSequenceStep(mkEvent({ key: 'Escape' }), [['g']])).toEqual({
+			outcome: 'cancelled',
+		});
+	});
+
+	it('confirms the captured run on Enter', () => {
+		expect(recordSequenceStep(mkEvent({ key: 'Enter' }), [['g'], ['t']])).toEqual({
+			outcome: 'confirmed',
+			sequence: [['g'], ['t']],
+		});
+	});
+
+	it('cancels rather than clearing when Enter arrives with nothing captured', () => {
+		// The confirm key must not unbind a sequence the user never touched.
+		expect(recordSequenceStep(mkEvent({ key: 'Enter' }), [])).toEqual({ outcome: 'cancelled' });
+	});
+
+	it('undoes the last step on Backspace', () => {
+		expect(recordSequenceStep(mkEvent({ key: 'Backspace' }), [['g'], ['t']])).toEqual({
+			outcome: 'step',
+			steps: [['g']],
+		});
+	});
+
+	it('clears the binding when there is nothing left to undo', () => {
+		expect(recordSequenceStep(mkEvent({ key: 'Backspace' }), [])).toEqual({ outcome: 'cleared' });
+		expect(recordSequenceStep(mkEvent({ key: 'Delete' }), [])).toEqual({ outcome: 'cleared' });
+	});
+
+	it('refuses a step carrying Meta, Ctrl, or Alt, and names the chord', () => {
+		// The matcher clears a live run on any such event, so a step holding one
+		// could never fire. The recorder is the only place to say why.
+		expect(recordSequenceStep(mkEvent({ key: 'k', code: 'KeyK', metaKey: true }), [])).toEqual({
+			outcome: 'rejected',
+			keys: ['Meta', 'k'],
+		});
+		expect(recordSequenceStep(mkEvent({ key: 'j', code: 'KeyJ', ctrlKey: true }), [['g']])).toEqual(
+			{ outcome: 'rejected', keys: ['Ctrl', 'j'] }
+		);
+		expect(recordSequenceStep(mkEvent({ key: 'π', code: 'KeyP', altKey: true }), [])).toEqual({
+			outcome: 'rejected',
+			keys: ['Alt', 'p'],
+		});
+	});
+
+	it('refuses a modified Enter or Backspace rather than reading it as a control', () => {
+		expect(recordSequenceStep(mkEvent({ key: 'Enter', metaKey: true }), [['g']])).toEqual({
+			outcome: 'rejected',
+			keys: ['Meta', 'Enter'],
+		});
+		expect(recordSequenceStep(mkEvent({ key: 'Backspace', metaKey: true }), [])).toEqual({
+			outcome: 'rejected',
+			keys: ['Meta', 'Backspace'],
+		});
+	});
+
+	it('keeps recording when a modifier is held down on its own', () => {
+		// `Meta` with metaKey set is the user reaching for a chord, not a chord.
+		expect(recordSequenceStep(mkEvent({ key: 'Meta', metaKey: true }), [['g']])).toEqual({
+			outcome: 'waiting',
+		});
+	});
+
+	it('does not alias or mutate the steps it was handed', () => {
+		const steps = [['g']];
+		const result = recordSequenceStep(mkEvent({ key: 't', code: 'KeyT' }), steps);
+		expect(steps).toEqual([['g']]);
+		if (result.outcome !== 'step') throw new Error('expected a step');
+		result.steps[0].push('Shift');
+		expect(steps[0]).toEqual(['g']);
+	});
+
+	it('copies the confirmed sequence out of the captured steps', () => {
+		const steps = [['g'], ['t']];
+		const result = recordSequenceStep(mkEvent({ key: 'Enter' }), steps);
+		if (result.outcome !== 'confirmed') throw new Error('expected a confirmation');
+		result.sequence.push(['x']);
+		expect(steps).toEqual([['g'], ['t']]);
 	});
 });

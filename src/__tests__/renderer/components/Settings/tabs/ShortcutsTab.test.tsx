@@ -10,6 +10,9 @@
  * - Recording change callback
  * - The keyboard mode toggle, the per-mode reset, inherited rows, and the
  *   displaced actions that need a binding in the active mode
+ * - Recording a key SEQUENCE, the second trigger a row can carry, including the
+ *   prefix conflict check that is the only place an unreachable sequence can be
+ *   reported
  *
  * The tab reads its bindings from `useActiveShortcuts()`, which is mocked here
  * so the list is the four fixtures below rather than the whole shipped set.
@@ -881,5 +884,271 @@ describe('ShortcutsTab displaced actions', () => {
 
 		expect(screen.queryByText('Needs a Vim binding')).not.toBeInTheDocument();
 		expect(screen.getAllByText('Toggle Mode')).toHaveLength(1);
+	});
+});
+
+/**
+ * Key sequences: the second trigger on every row.
+ *
+ * A chord recording ends on its first keypress, so the interesting cases here
+ * are the ones a chord does not have - a run captured over several keys and
+ * ended by the user, and a conflict that is a PREFIX relation rather than an
+ * equality. The matcher resolves ambiguity short, so `g` bound beside `g g`
+ * leaves `g g` permanently unreachable, and nothing at runtime can report that.
+ */
+describe('ShortcutsTab key sequences', () => {
+	/** The sequence control on a row, found by its accessible name. */
+	function sequenceButton(label: string) {
+		return screen.getByRole('button', { name: `Record a key sequence for ${label}` });
+	}
+
+	/** Type one key at the sequence button, as the capture handler sees it. */
+	function pressSequenceKey(label: string, init: Record<string, unknown>) {
+		fireEvent.keyDown(sequenceButton(label), {
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+			...init,
+		});
+	}
+
+	beforeEach(() => {
+		vi.useFakeTimers();
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+		vi.clearAllMocks();
+		resetModeFixtures();
+	});
+
+	it('offers an empty sequence slot on every row', async () => {
+		await renderTab();
+
+		// Labelled as an invitation rather than "Not set", which the chord
+		// button on the same row already says.
+		expect(sequenceButton('New Session')).toHaveTextContent('Add sequence');
+	});
+
+	it('shows the sequence a row already has', async () => {
+		mockExtraShortcuts = {
+			'go-top': { id: 'go-top', label: 'Go To Top', keys: [], sequence: [['g'], ['g']] },
+		};
+		await renderTab();
+
+		expect(sequenceButton('Go To Top')).toHaveTextContent('g g');
+	});
+
+	it('records a two-step sequence and saves it on Enter', async () => {
+		await renderTab();
+
+		fireEvent.click(sequenceButton('New Session'));
+		// The instructions only exist while a run is live, because a sequence is
+		// the one recording that does not end by itself.
+		expect(screen.getByTestId('shortcuts-sequence-hint')).toBeInTheDocument();
+
+		pressSequenceKey('New Session', { key: 'g', code: 'KeyG' });
+		expect(sequenceButton('New Session')).toHaveTextContent('g ...');
+		pressSequenceKey('New Session', { key: 't', code: 'KeyT' });
+		expect(sequenceButton('New Session')).toHaveTextContent('g t ...');
+
+		expect(mockSetShortcuts).not.toHaveBeenCalled();
+		pressSequenceKey('New Session', { key: 'Enter' });
+
+		expect(mockSetShortcuts).toHaveBeenCalledWith({
+			...mockShortcuts,
+			'new-session': { ...mockShortcuts['new-session'], sequence: [['g'], ['t']] },
+		});
+		expect(screen.queryByTestId('shortcuts-sequence-hint')).not.toBeInTheDocument();
+	});
+
+	it('leaves the row chord alone when a sequence is recorded', async () => {
+		await renderTab();
+
+		fireEvent.click(sequenceButton('New Session'));
+		pressSequenceKey('New Session', { key: 'g', code: 'KeyG' });
+		pressSequenceKey('New Session', { key: 'Enter' });
+
+		const written = mockSetShortcuts.mock.calls[0][0]['new-session'];
+		expect(written.keys).toEqual(['Meta', 'n']);
+	});
+
+	it('undoes a mistyped step on Backspace', async () => {
+		await renderTab();
+
+		fireEvent.click(sequenceButton('New Session'));
+		pressSequenceKey('New Session', { key: 'g', code: 'KeyG' });
+		pressSequenceKey('New Session', { key: 'x', code: 'KeyX' });
+		expect(sequenceButton('New Session')).toHaveTextContent('g x ...');
+
+		pressSequenceKey('New Session', { key: 'Backspace' });
+		expect(sequenceButton('New Session')).toHaveTextContent('g ...');
+
+		pressSequenceKey('New Session', { key: 't', code: 'KeyT' });
+		pressSequenceKey('New Session', { key: 'Enter' });
+
+		expect(mockSetShortcuts.mock.calls[0][0]['new-session'].sequence).toEqual([['g'], ['t']]);
+	});
+
+	it('cancels a run on Escape without saving', async () => {
+		await renderTab();
+
+		fireEvent.click(sequenceButton('New Session'));
+		pressSequenceKey('New Session', { key: 'g', code: 'KeyG' });
+		expect(sequenceButton('New Session')).toHaveTextContent('g ...');
+
+		pressSequenceKey('New Session', { key: 'Escape' });
+
+		expect(mockSetShortcuts).not.toHaveBeenCalled();
+		expect(sequenceButton('New Session')).toHaveTextContent('Add sequence');
+	});
+
+	it('refuses a chord as a step and says where it belongs', async () => {
+		await renderTab();
+
+		fireEvent.click(sequenceButton('New Session'));
+		pressSequenceKey('New Session', { key: 'k', code: 'KeyK', metaKey: true });
+
+		expect(screen.getByRole('alert')).toHaveTextContent(
+			'Meta+k cannot be a step in a key sequence'
+		);
+		expect(mockSetShortcuts).not.toHaveBeenCalled();
+	});
+
+	it('refuses a sequence that another action already answers to', async () => {
+		mockExtraShortcuts = {
+			'go-top': { id: 'go-top', label: 'Go To Top', keys: [], sequence: [['g'], ['g']] },
+		};
+		await renderTab();
+
+		fireEvent.click(sequenceButton('New Session'));
+		pressSequenceKey('New Session', { key: 'g', code: 'KeyG' });
+		pressSequenceKey('New Session', { key: 'g', code: 'KeyG' });
+		pressSequenceKey('New Session', { key: 'Enter' });
+
+		// The LABEL, and both sequences, because the two are not the same keys.
+		expect(screen.getByRole('alert')).toHaveTextContent('"Go To Top"');
+		expect(mockSetShortcuts).not.toHaveBeenCalled();
+	});
+
+	it("refuses a sequence that is a PREFIX of another action's", async () => {
+		// `g` fires immediately, so `g g` would never complete. A conflict check
+		// built on equality would wave this through.
+		mockExtraShortcuts = {
+			'go-top': { id: 'go-top', label: 'Go To Top', keys: [], sequence: [['g'], ['g']] },
+		};
+		await renderTab();
+
+		fireEvent.click(sequenceButton('New Session'));
+		pressSequenceKey('New Session', { key: 'g', code: 'KeyG' });
+		pressSequenceKey('New Session', { key: 'Enter' });
+
+		expect(screen.getByRole('alert')).toHaveTextContent('one is a prefix of the other');
+		expect(mockSetShortcuts).not.toHaveBeenCalled();
+	});
+
+	it('accepts a sequence that only shares a first step', async () => {
+		mockExtraShortcuts = {
+			'go-top': { id: 'go-top', label: 'Go To Top', keys: [], sequence: [['g'], ['g']] },
+		};
+		await renderTab();
+
+		fireEvent.click(sequenceButton('New Session'));
+		pressSequenceKey('New Session', { key: 'g', code: 'KeyG' });
+		pressSequenceKey('New Session', { key: 't', code: 'KeyT' });
+		pressSequenceKey('New Session', { key: 'Enter' });
+
+		expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+		expect(mockSetShortcuts.mock.calls[0][0]['new-session'].sequence).toEqual([['g'], ['t']]);
+	});
+
+	it('does not report a row as fighting its own sequence', async () => {
+		mockExtraShortcuts = {
+			'go-top': { id: 'go-top', label: 'Go To Top', keys: [], sequence: [['g'], ['g']] },
+		};
+		await renderTab();
+
+		fireEvent.click(sequenceButton('Go To Top'));
+		pressSequenceKey('Go To Top', { key: 'g', code: 'KeyG' });
+		pressSequenceKey('Go To Top', { key: 'g', code: 'KeyG' });
+		pressSequenceKey('Go To Top', { key: 'Enter' });
+
+		expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+		expect(mockSetShortcuts).toHaveBeenCalled();
+	});
+
+	it('writes a tab row through setTabShortcuts', async () => {
+		await renderTab();
+
+		fireEvent.click(sequenceButton('Send Message'));
+		pressSequenceKey('Send Message', { key: 'g', code: 'KeyG' });
+		pressSequenceKey('Send Message', { key: 'm', code: 'KeyM' });
+		pressSequenceKey('Send Message', { key: 'Enter' });
+
+		expect(mockSetTabShortcuts).toHaveBeenCalledWith({
+			...mockTabShortcuts,
+			'tab-send': { ...mockTabShortcuts['tab-send'], sequence: [['g'], ['m']] },
+		});
+		expect(mockSetShortcuts).not.toHaveBeenCalled();
+	});
+
+	it('clears a sequence as an explicit empty one', async () => {
+		// Omitting the field in an override bucket means "inherit", so the clear
+		// has to be spelled out or it comes back on the next read.
+		mockExtraShortcuts = {
+			'go-top': { id: 'go-top', label: 'Go To Top', keys: [], sequence: [['g'], ['g']] },
+		};
+		await renderTab();
+
+		fireEvent.click(screen.getByRole('button', { name: 'Clear Go To Top key sequence' }));
+
+		expect(mockSetShortcuts).toHaveBeenCalledWith({
+			...mockShortcuts,
+			...mockExtraShortcuts,
+			'go-top': { ...mockExtraShortcuts['go-top'], sequence: [] },
+		});
+	});
+
+	it('offers no clear button on a row with no sequence', async () => {
+		await renderTab();
+
+		expect(
+			screen.queryByRole('button', { name: 'Clear New Session key sequence' })
+		).not.toBeInTheDocument();
+	});
+
+	it("reports a live sequence run as recording, so Escape is not the modal's", async () => {
+		const onRecordingChange = vi.fn();
+		await renderTab({ onRecordingChange });
+		onRecordingChange.mockClear();
+
+		fireEvent.click(sequenceButton('New Session'));
+		expect(onRecordingChange).toHaveBeenCalledWith(true);
+
+		onRecordingChange.mockClear();
+		pressSequenceKey('New Session', { key: 'Escape' });
+		expect(onRecordingChange).toHaveBeenCalledWith(false);
+	});
+
+	it('ends a sequence run when the chord button on the same row is clicked', async () => {
+		await renderTab();
+
+		fireEvent.click(sequenceButton('New Session'));
+		pressSequenceKey('New Session', { key: 'g', code: 'KeyG' });
+
+		fireEvent.click(screen.getByText('Meta+n'));
+
+		expect(screen.getByText('Press keys...')).toBeInTheDocument();
+		expect(sequenceButton('New Session')).toHaveTextContent('Add sequence');
+	});
+
+	it('ends a sequence run when the mode changes under it', async () => {
+		await renderTab();
+
+		fireEvent.click(sequenceButton('New Session'));
+		pressSequenceKey('New Session', { key: 'g', code: 'KeyG' });
+		fireEvent.click(screen.getByTestId('shortcuts-keyboard-mode-vim'));
+
+		expect(screen.queryByTestId('shortcuts-sequence-hint')).not.toBeInTheDocument();
+		expect(mockSetShortcuts).not.toHaveBeenCalled();
 	});
 });

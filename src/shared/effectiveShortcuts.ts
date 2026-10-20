@@ -32,7 +32,7 @@
  */
 
 import type { Shortcut, ShortcutOverride } from './shortcut-types';
-import { shortcutKeysCollide, shortcutKeysEqual } from './shortcutKeys';
+import { shortcutKeysCollide, shortcutKeysEqual, shortcutSequencesEqual } from './shortcutKeys';
 
 /** The default-mode buckets a mode inherits from. */
 export interface ShortcutBaseMaps {
@@ -225,7 +225,7 @@ export function resolveEffectiveShortcuts(
  *
  * `current` is ONE bucket, the one that mirrors the base map the edited rows
  * are declared in - the general bucket for a `shortcuts` edit, the tab bucket
- * for a `tabShortcuts` edit. `collectOverrideKeys` prefers that same bucket
+ * for a `tabShortcuts` edit. `collectOverrideField` prefers that same bucket
  * when it reads the chord back, so the two sides agree on where an id's
  * override lives and a shipped entry in the other bucket cannot shadow it.
  *
@@ -242,18 +242,31 @@ export function overridesWithEdits(
 		const shown = before[id];
 		// Order-independent: the recorder emits a canonical order, but a chord
 		// read back in another order is the same chord and must not be written.
-		if (shown && shortcutKeysEqual(shown.keys, shortcut.keys)) continue;
-		// This row's OWN sequence override survives a chord edit. The row is
-		// rewritten rather than patched, so omitting the field here would
-		// silently unbind the sequence the user recorded in this mode.
+		const chordEdited = !shown || !shortcutKeysEqual(shown.keys, shortcut.keys);
+		// An action's two triggers are recorded separately, so the row that
+		// changed can be one whose chord is untouched. Diffing `keys` alone (the
+		// only binding there was when this function was written) made recording
+		// a SEQUENCE in a non-default mode a silent no-op: nothing differed, no
+		// override was written, and the next read inherited the old sequence
+		// straight back over the new one.
+		const sequenceEdited = !shown || !shortcutSequencesEqual(shown.sequence, shortcut.sequence);
+		if (!chordEdited && !sequenceEdited) continue;
+		// An edited sequence is written from `next`; an untouched one is carried
+		// across from `current`, the override bucket, and never from `next`.
 		//
-		// Read from `current`, the override bucket, and never from `next`: the
-		// map handed in is the EFFECTIVE one, where the sequence may be
-		// inherited from the default tables. Copying an inherited sequence into
-		// the bucket would promote it to an explicit override and freeze it at
-		// that day's default, the same trap this function exists to avoid for
-		// chords.
-		const sequence = current[id]?.sequence;
+		// The row is rewritten rather than patched, so omitting the field would
+		// silently unbind the sequence the user recorded in this mode. But the
+		// map handed in is the EFFECTIVE one, where an untouched sequence may be
+		// inherited from the default tables, and copying that into the bucket
+		// would promote it to an explicit override and freeze it at that day's
+		// default - the same trap this function exists to avoid for chords.
+		//
+		// `?? []` is the clear: once the sequence is known to have changed, an
+		// absent one in `next` means the row no longer has the sequence it was
+		// shown, and only an explicit empty array says so in an override bucket.
+		// An omitted field there reads as "inherit", which would hand the old
+		// sequence back.
+		const sequence = sequenceEdited ? (shortcut.sequence ?? []) : current[id]?.sequence;
 		edited ??= { ...current };
 		edited[id] = {
 			id,

@@ -201,8 +201,20 @@ const NO_PREFIX: readonly string[][] = [];
  * one that matters: it arrives with no other modifier flag set, so without this
  * it would read as a failed step and kill the prefix of any sequence containing
  * a capital. CapsLock and AltGraph are here for the same reason.
+ *
+ * Exported for `recordSequenceStep` in `shortcutRecorder.ts`, which has to
+ * ignore exactly these keys while capturing: a key the matcher treats as
+ * invisible must not become a recorded step, or the binding would hold a step
+ * no keypress can ever satisfy.
  */
-const MODIFIER_ONLY_KEYS = new Set(['Shift', 'Meta', 'Control', 'Alt', 'AltGraph', 'CapsLock']);
+export const MODIFIER_ONLY_KEYS = new Set([
+	'Shift',
+	'Meta',
+	'Control',
+	'Alt',
+	'AltGraph',
+	'CapsLock',
+]);
 
 /**
  * Create a sequence matcher.

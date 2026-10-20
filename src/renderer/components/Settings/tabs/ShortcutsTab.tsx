@@ -17,10 +17,11 @@ import React, { useState, useRef, useEffect } from 'react';
 import { AlertTriangle, Keyboard, MessageSquare, RotateCcw, X } from 'lucide-react';
 import { useActiveShortcuts, useSettings } from '../../../hooks';
 import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
-import { buildKeysFromEvent } from '../../../utils/shortcutRecorder';
+import { buildKeysFromEvent, recordSequenceStep } from '../../../utils/shortcutRecorder';
 import {
 	shortcutKeysCollide,
 	shortcutKeysEqual,
+	shortcutSequencesCollide,
 	findReservedShortcutCombo,
 } from '../../../../shared/shortcutKeys';
 import { findKeyboardModeToggleShadow } from '../../../services/keyboardMode';
@@ -47,6 +48,19 @@ const KEYBOARD_MODE_OPTIONS: ReadonlyArray<SegmentedOption<KeyboardMode>> = KEYB
 	(value) => ({ value, label: KEYBOARD_MODE_LABELS[value] })
 );
 
+/**
+ * A key sequence as text: each step formatted as the chord it is, joined by a
+ * space (`g g`, `G t`).
+ *
+ * `formatShortcutKeys` stays the single authority on how one step is spelled,
+ * so a step reads the same here as it does anywhere else in the app and picks
+ * up the platform's key symbols for free. The join is the only thing a sequence
+ * adds, and a space is what says "then" rather than "together".
+ */
+function formatSequenceSteps(sequence: readonly string[][]): string {
+	return sequence.map((step) => formatShortcutKeys([...step])).join(' ');
+}
+
 export interface ShortcutsTabProps {
 	theme: Theme;
 	hasNoAgents?: boolean;
@@ -67,6 +81,11 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 	} = useActiveShortcuts();
 
 	const [recordingId, setRecordingId] = useState<string | null>(null);
+	// Sequence recording is a RUN rather than a single keypress, so the steps
+	// captured so far live here: the row has to draw them as they arrive, and
+	// `recordSequenceStep` is pure and holds nothing of its own.
+	const [recordingSequenceId, setRecordingSequenceId] = useState<string | null>(null);
+	const [sequenceSteps, setSequenceSteps] = useState<string[][]>([]);
 	const [shortcutsFilter, setShortcutsFilter] = useState('');
 	const [recordingFilterShortcut, setRecordingFilterShortcut] = useState(false);
 	const [filterShortcutKeys, setFilterShortcutKeys] = useState<string[]>([]);
@@ -74,6 +93,16 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 	const [conflictMessage, setConflictMessage] = useState<string | null>(null);
 	const [resetPending, setResetPending] = useState(false);
 	const shortcutsFilterRef = useRef<HTMLInputElement>(null);
+
+	// Both recorders off, and any half-captured run thrown away. One function
+	// because a row can only be recording one of its two triggers, and because
+	// everything that ends recording (a mode switch, a reset, a save, a refusal)
+	// has to end BOTH or the other control is left listening invisibly.
+	const stopRecording = () => {
+		setRecordingId(null);
+		setRecordingSequenceId(null);
+		setSequenceSteps([]);
+	};
 
 	const modeLabel = KEYBOARD_MODE_LABELS[keyboardMode];
 	const otherModeLabel = KEYBOARD_MODE_LABELS[keyboardMode === 'default' ? 'vim' : 'default'];
@@ -93,7 +122,7 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 	const changeMode = (next: KeyboardMode) => {
 		setResetPending(false);
 		setConflictMessage(null);
-		setRecordingId(null);
+		stopRecording();
 		setKeyboardMode(next);
 	};
 
@@ -104,14 +133,16 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 		}
 		setResetPending(false);
 		setConflictMessage(null);
-		setRecordingId(null);
+		stopRecording();
 		resetToDefaults();
 	};
 
-	// Notify parent of recording state changes (for escape handler coordination)
+	// Notify parent of recording state changes (for escape handler coordination).
+	// A sequence recording counts: Escape ends the run, and the modal closing out
+	// from under it instead would lose the steps with no way to see why.
 	useEffect(() => {
-		onRecordingChange?.(!!recordingId || recordingFilterShortcut);
-	}, [recordingId, recordingFilterShortcut, onRecordingChange]);
+		onRecordingChange?.(!!recordingId || !!recordingSequenceId || recordingFilterShortcut);
+	}, [recordingId, recordingSequenceId, recordingFilterShortcut, onRecordingChange]);
 
 	// Auto-focus filter input on mount
 	useEffect(() => {
@@ -221,6 +252,107 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 		setRecordingId(null);
 	};
 
+	const saveSequence = (actionId: string, isTabShortcut: boolean, sequence: string[][]) => {
+		if (isTabShortcut) {
+			setTabShortcuts({
+				...tabShortcuts,
+				[actionId]: { ...tabShortcuts[actionId], sequence },
+			});
+		} else {
+			setShortcuts({
+				...shortcuts,
+				[actionId]: { ...shortcuts[actionId], sequence },
+			});
+		}
+	};
+
+	// An empty step list is the stored form of "no sequence in this mode", the
+	// same shape `keys: []` carries for a chord. Written rather than omitted: in
+	// a mode's override bucket an absent `sequence` means "inherit the
+	// default-mode one", so clearing by omission would hand the sequence back on
+	// the next read.
+	const clearSequence = (actionId: string, isTabShortcut: boolean) => {
+		setConflictMessage(null);
+		saveSequence(actionId, isTabShortcut, []);
+		stopRecording();
+	};
+
+	const startSequenceRecording = (actionId: string) => {
+		setConflictMessage(null);
+		setRecordingId(null);
+		setRecordingSequenceId(actionId);
+		setSequenceSteps([]);
+	};
+
+	const confirmSequence = (actionId: string, isTabShortcut: boolean, sequence: string[][]) => {
+		// Refuse a sequence that cannot both exist and fire. A sequence conflict
+		// is a PREFIX relation, not an equality: the matcher resolves ambiguity
+		// short, so `g` bound beside `g g` leaves `g g` permanently unreachable
+		// rather than producing a race. Nothing at runtime can report that, so
+		// this is the only place it can be caught.
+		//
+		// Scoped exactly as the chord check above is: this mode's effective pair
+		// plus the shared FIXED_SHORTCUTS, and never the other mode, whose
+		// bindings are never live at the same time as these. Chords are not
+		// scanned, and cannot collide - a step carries no Meta, Ctrl, or Alt.
+		const conflict = [
+			...Object.values(shortcuts),
+			...Object.values(tabShortcuts),
+			...Object.values(FIXED_SHORTCUTS),
+		].find((sc) => sc.id !== actionId && shortcutSequencesCollide(sc.sequence, sequence));
+
+		if (conflict) {
+			// The LABEL, like the chord message, and BOTH sequences: with a
+			// prefix conflict the two are different keys, so naming only the one
+			// just pressed would read as a mistake the user could not see.
+			setConflictMessage(
+				`${formatSequenceSteps(sequence)} overlaps the key sequence for "${conflict.label}" (${formatSequenceSteps(conflict.sequence ?? [])}) - one is a prefix of the other, so only the shorter one could ever fire. Pick another sequence, or clear that one first.`
+			);
+			stopRecording();
+			return;
+		}
+		setConflictMessage(null);
+		saveSequence(actionId, isTabShortcut, sequence);
+		stopRecording();
+	};
+
+	const handleRecordSequence = (
+		e: React.KeyboardEvent,
+		actionId: string,
+		isTabShortcut: boolean = false
+	) => {
+		e.preventDefault();
+		e.stopPropagation();
+
+		const result = recordSequenceStep(e, sequenceSteps);
+		switch (result.outcome) {
+			case 'waiting':
+				return;
+			case 'step':
+				setSequenceSteps(result.steps);
+				return;
+			case 'cancelled':
+				stopRecording();
+				return;
+			case 'cleared':
+				clearSequence(actionId, isTabShortcut);
+				return;
+			case 'rejected':
+				// A step can never carry Meta, Ctrl, or Alt: the matcher clears
+				// the run on such an event, which is what leaves every chord in
+				// the app working. Point at the control that DOES take it rather
+				// than only refusing.
+				setConflictMessage(
+					`${formatShortcutKeys(result.keys)} cannot be a step in a key sequence. Sequence steps are bare keys (Shift is fine) - record it as a shortcut instead.`
+				);
+				stopRecording();
+				return;
+			case 'confirmed':
+				confirmSequence(actionId, isTabShortcut, result.sequence);
+				return;
+		}
+	};
+
 	// A switched-off Encore Feature's shortcut is not offered for rebinding. The
 	// conflict check above still scans the full map, so its chord cannot be
 	// handed to another action and collide when the feature comes back.
@@ -291,6 +423,10 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 			<div className="flex items-center gap-1">
 				<button
 					onClick={(e) => {
+						// One row records one trigger at a time, so claiming the chord
+						// ends any sequence run in progress.
+						setRecordingSequenceId(null);
+						setSequenceSteps([]);
 						setRecordingId(sc.id);
 						e.currentTarget.focus();
 					}}
@@ -334,6 +470,61 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 				) : (
 					// Hold the slot so the key buttons stay in one column whether or
 					// not a row has anything to clear.
+					<span className="w-[22px]" aria-hidden />
+				)}
+				{/* The second trigger. A sequence gets its own control rather than
+				    sharing the chord button, because an action can carry both and both
+				    fire, and because they are matched on different terms: a chord fires
+				    wherever focus is, a sequence only outside a text field. */}
+				<button
+					onClick={(e) => {
+						startSequenceRecording(sc.id);
+						e.currentTarget.focus();
+					}}
+					onKeyDownCapture={(e) => {
+						if (recordingSequenceId === sc.id) {
+							handleRecordSequence(e, sc.id, sc.isTabShortcut);
+						}
+					}}
+					aria-label={`Record a key sequence for ${sc.label}`}
+					title={`Key sequence for ${sc.label}. Fires only when focus is not in a text field.`}
+					className={`px-3 py-1.5 rounded border text-xs font-mono min-w-[80px] text-center transition-colors ${recordingSequenceId === sc.id ? 'ring-2' : ''}`}
+					style={
+						{
+							borderColor:
+								recordingSequenceId === sc.id ? theme.colors.accent : theme.colors.border,
+							backgroundColor:
+								recordingSequenceId === sc.id ? theme.colors.accentDim : theme.colors.bgActivity,
+							color: recordingSequenceId === sc.id ? theme.colors.accent : theme.colors.textDim,
+							opacity: recordingSequenceId !== sc.id && !sc.sequence?.length ? 0.6 : 1,
+							'--tw-ring-color': theme.colors.accent,
+						} as React.CSSProperties
+					}
+				>
+					{recordingSequenceId === sc.id
+						? // The steps so far, with a trailing ellipsis for "still
+							// listening": the run ends when the user says so, so the button
+							// has to show that it is mid-capture.
+							sequenceSteps.length
+							? `${formatSequenceSteps(sequenceSteps)} ...`
+							: 'Recording...'
+						: sc.sequence?.length
+							? formatSequenceSteps(sc.sequence)
+							: // Not "Not set", which the chord button on this row already
+								// says: an empty sequence slot is an invitation, and two
+								// identical labels on one row read as a duplicate.
+								'Add sequence'}
+				</button>
+				{sc.sequence?.length && recordingSequenceId !== sc.id ? (
+					<GhostIconButton
+						onClick={() => clearSequence(sc.id, sc.isTabShortcut)}
+						ariaLabel={`Clear ${sc.label} key sequence`}
+						title="Clear key sequence"
+						color={theme.colors.textDim}
+					>
+						<X className="w-3.5 h-3.5" />
+					</GhostIconButton>
+				) : (
 					<span className="w-[22px]" aria-hidden />
 				)}
 			</div>
@@ -465,6 +656,19 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 					}}
 				>
 					{conflictMessage}
+				</p>
+			)}
+			{/* A chord recording needs no instructions: it ends on the first key. A
+			    sequence does not end by itself, so the keys that finish it, undo a
+			    step, and back out have to be on screen while it is running. */}
+			{recordingSequenceId && (
+				<p
+					className="text-xs mb-3 px-2 py-1.5 rounded"
+					style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
+					data-testid="shortcuts-sequence-hint"
+				>
+					Press the keys in order, then Enter to save. Backspace undoes the last key, Escape
+					cancels. A sequence fires only when focus is not in a text field.
 				</p>
 			)}
 			<p className="text-xs mb-3" style={{ color: theme.colors.textDim }}>

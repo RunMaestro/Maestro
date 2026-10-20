@@ -14,6 +14,8 @@ import {
 	formatShortcutKeysFor,
 	findReservedShortcutCombo,
 	shortcutKeysCollide,
+	shortcutSequencesCollide,
+	shortcutSequencesEqual,
 } from '../../shared/shortcutKeys';
 
 describe('formatKeyFor', () => {
@@ -153,5 +155,92 @@ describe('shortcutKeysCollide', () => {
 		expect(shortcutKeysCollide([], [])).toBe(false);
 		expect(shortcutKeysCollide([], ['Meta', 'o'])).toBe(false);
 		expect(shortcutKeysCollide(undefined, ['Meta', 'o'])).toBe(false);
+	});
+});
+
+describe('shortcutSequencesEqual', () => {
+	it('is true for the same run of steps', () => {
+		expect(shortcutSequencesEqual([['g'], ['g']], [['g'], ['g']])).toBe(true);
+	});
+
+	it('treats step ORDER as the sequence', () => {
+		// `g t` and `t g` are different runs, unlike the keys inside one step.
+		expect(shortcutSequencesEqual([['g'], ['t']], [['t'], ['g']])).toBe(false);
+	});
+
+	it('ignores key order WITHIN a step, which is a chord', () => {
+		expect(shortcutSequencesEqual([['Shift', 'g']], [['g', 'Shift']])).toBe(true);
+	});
+
+	it('is false for a sequence that is only a prefix of the other', () => {
+		// A prefix is a different binding (and an unusable one - see
+		// shortcutSequencesCollide), never an equal one.
+		expect(shortcutSequencesEqual([['g']], [['g'], ['g']])).toBe(false);
+	});
+
+	it('treats a missing sequence and an empty one as the same no-sequence', () => {
+		// Both mean "this action has no sequence" in an EFFECTIVE map, which is
+		// what this comparison is asked about. The inherit-versus-cleared
+		// distinction they carry in an override bucket is the resolver's.
+		expect(shortcutSequencesEqual(undefined, [])).toBe(true);
+		expect(shortcutSequencesEqual(undefined, undefined)).toBe(true);
+		expect(shortcutSequencesEqual([], [])).toBe(true);
+		expect(shortcutSequencesEqual(undefined, [['g']])).toBe(false);
+		expect(shortcutSequencesEqual([], [['g']])).toBe(false);
+	});
+});
+
+describe('shortcutSequencesCollide', () => {
+	it('collides two identical sequences', () => {
+		expect(shortcutSequencesCollide([['g'], ['g']], [['g'], ['g']])).toBe(true);
+	});
+
+	it('collides a sequence with one that PREFIXES it, both ways round', () => {
+		// The matcher resolves ambiguity short, so `g` fires immediately and
+		// `g g` can never complete. That is a conflict, not a race.
+		expect(shortcutSequencesCollide([['g']], [['g'], ['g']])).toBe(true);
+		expect(shortcutSequencesCollide([['g'], ['g']], [['g']])).toBe(true);
+		expect(shortcutSequencesCollide([['g'], ['g']], [['g'], ['g'], ['g']])).toBe(true);
+	});
+
+	it('does not collide sequences that diverge at a later step', () => {
+		expect(shortcutSequencesCollide([['g'], ['t']], [['g'], ['g']])).toBe(false);
+		expect(shortcutSequencesCollide([['g'], ['g'], ['t']], [['g'], ['g'], ['g']])).toBe(false);
+	});
+
+	it('does not collide sequences that diverge at the first step', () => {
+		expect(shortcutSequencesCollide([['t'], ['g']], [['g'], ['g']])).toBe(false);
+	});
+
+	it('ignores key order within a step', () => {
+		expect(shortcutSequencesCollide([['Shift', 'g']], [['g', 'Shift']])).toBe(true);
+	});
+
+	it('distinguishes a shifted step from its bare one', () => {
+		// `G` and `g` are different keys, and the matcher compares Shift
+		// exactly, so they are different first steps.
+		expect(shortcutSequencesCollide([['Shift', 'g']], [['g']])).toBe(false);
+	});
+
+	it('collapses Ctrl and Meta inside a step, as the chord check does', () => {
+		// A recorded step never carries either (the recorder refuses them), but
+		// the comparison is the same one `shortcutKeysCollide` uses, so a
+		// hand-written binding is read the way the matcher would read it.
+		expect(shortcutSequencesCollide([['Ctrl', 'o']], [['Meta', 'o']])).toBe(true);
+	});
+
+	it('treats an unassigned sequence as colliding with nothing', () => {
+		expect(shortcutSequencesCollide([], [])).toBe(false);
+		expect(shortcutSequencesCollide([], [['g']])).toBe(false);
+		expect(shortcutSequencesCollide(undefined, [['g']])).toBe(false);
+		expect(shortcutSequencesCollide([['g']], undefined)).toBe(false);
+	});
+
+	it('treats a sequence with an EMPTY step as dead rather than taken', () => {
+		// `eventMatchesShortcutKeys` never matches an empty chord, so such a run
+		// can never advance past that step. Reporting it as a conflict would
+		// refuse a sequence that is in fact free.
+		expect(shortcutSequencesCollide([[]], [[]])).toBe(false);
+		expect(shortcutSequencesCollide([['g'], []], [['g'], ['g']])).toBe(false);
 	});
 });

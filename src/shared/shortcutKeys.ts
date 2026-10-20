@@ -102,6 +102,36 @@ export function shortcutKeysEqual(a: readonly string[], b: readonly string[]): b
 }
 
 /**
+ * Whether two key SEQUENCES are the same run of keypresses.
+ *
+ * Two comparisons, not one, because the two levels of a sequence mean
+ * different things. Step ORDER is the sequence: `g t` and `t g` are different
+ * runs, so the steps compare in order. Within a step the keys are a chord, so
+ * they compare through {@link shortcutKeysEqual} and their order is an
+ * artifact of how the recorder read them.
+ *
+ * A missing sequence and an EMPTY one are equal here, because this answers
+ * about an EFFECTIVE binding, where both mean "this action has no sequence".
+ * The distinction they carry in an override bucket (absent means inherit the
+ * default-mode binding, `[]` means cleared in this mode) is
+ * `resolveEffectiveShortcuts`'s business, and the one caller that writes
+ * overrides translates a cleared effective binding into an explicit `[]`
+ * itself.
+ *
+ * This is NOT a conflict check. A sequence that is a PREFIX of another is a
+ * different binding and compares unequal here, while still being unusable
+ * beside it - see {@link shortcutSequencesCollide}.
+ */
+export function shortcutSequencesEqual(
+	a: readonly string[][] | undefined,
+	b: readonly string[][] | undefined
+): boolean {
+	if (!a?.length || !b?.length) return !a?.length && !b?.length;
+	if (a.length !== b.length) return false;
+	return a.every((step, i) => shortcutKeysEqual(step, b[i]));
+}
+
+/**
  * Chords Maestro must never bind, because something outside the renderer
  * already owns them.
  *
@@ -195,6 +225,50 @@ export function shortcutKeysCollide(
 ): boolean {
 	if (!a?.length || !b?.length) return false;
 	return canonicalChordKeys(a) === canonicalChordKeys(b);
+}
+
+/**
+ * Whether two key sequences fight over the same run of keypresses.
+ *
+ * A sequence conflict is a PREFIX relation, not an equality, which is the one
+ * thing that makes this different from every other check in this file. The
+ * matcher resolves ambiguity SHORT: a step that both completes one sequence and
+ * continues a longer one fires the completion immediately, because waiting out
+ * the timeout to see whether more keys arrive would make the shorter action feel
+ * broken for a full second on every press. So binding `g` beside `g g` does not
+ * produce a race, it produces a sequence that can never fire, and the only place
+ * that can be reported is the point where it is recorded.
+ *
+ * Steps compare one by one over the SHARED length, with the same Meta/Ctrl
+ * collapse `shortcutKeysCollide` applies, so `g g` collides with `g`, with
+ * `g g` and with `g g g`, and not with `g t`.
+ *
+ * A chord never reaches this function, and the shapes are different so it
+ * cannot: a sequence step carries no Meta, Ctrl, or Alt (the matcher clears the
+ * run on any event that does), and a chord in `keys` always carries one, because
+ * bare keys are bound through `sequence` precisely so they can be gated on
+ * normal mode. The one way to break that is to record a bare chord by hand, and
+ * the result is not a conflict but a split: in normal mode the sequence layer
+ * runs first and the sequence wins, while the chord still fires inside every
+ * text field, where the sequence gate is closed.
+ *
+ * An empty sequence is "registered but unassigned" and collides with nothing,
+ * including another empty one, matching `shortcutKeysCollide`. A sequence
+ * carrying an EMPTY STEP is dead rather than free - `eventMatchesShortcutKeys`
+ * never matches an empty chord, so the run can never advance past it - and
+ * reporting it as a conflict would refuse a sequence that is in fact available.
+ */
+export function shortcutSequencesCollide(
+	a: readonly string[][] | undefined,
+	b: readonly string[][] | undefined
+): boolean {
+	if (!a?.length || !b?.length) return false;
+	const shared = Math.min(a.length, b.length);
+	for (let i = 0; i < shared; i++) {
+		if (!a[i]?.length || !b[i]?.length) return false;
+		if (canonicalChordKeys(a[i]) !== canonicalChordKeys(b[i])) return false;
+	}
+	return true;
 }
 
 /**
