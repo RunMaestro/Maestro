@@ -15,6 +15,8 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 import { render, act } from '@testing-library/react';
+import { EditorView } from '@codemirror/view';
+import { undoDepth, isolateHistory } from '@codemirror/commands';
 import { mockTheme } from '../../../helpers/mockTheme';
 
 // CM6 builds a MutationObserver / ResizeObserver / IntersectionObserver inside
@@ -55,18 +57,29 @@ import type { MarkdownEditorHandle } from '../../../../renderer/components/FileP
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { LayerStackProvider } from '../../../../renderer/contexts/LayerStackContext';
 import { useModalLayer } from '../../../../renderer/hooks/ui/useModalLayer';
+import {
+	collectSequenceBindings,
+	createSequenceMatcher,
+} from '../../../../renderer/utils/shortcutSequence';
+import { isNormalMode } from '../../../../renderer/utils/messageScrollNavigation';
+import { effectiveShortcutsForMode } from '../../../helpers/shortcutModes';
 
 /**
- * Mount the editor. `vimMode` writes the app-wide keyboard-mode setting the
- * editor reads, which is the only switch Vim keys hang off.
+ * Mount the editor. `vimMode` writes the app-wide keyboard-mode setting, and
+ * `vimEditorEnabled` the editor's own opt-out; Vim keys are the AND of the two
+ * and hang off nothing else. The opt-out defaults on, as it ships.
  */
 function mountEditor(opts: {
 	vimMode: boolean;
+	vimEditorEnabled?: boolean;
 	doc?: string;
 	onChange?: (value: string) => void;
 	onKeyDown?: (event: KeyboardEvent) => boolean | void;
 }) {
-	useSettingsStore.setState({ keyboardMode: opts.vimMode ? 'vim' : 'default' });
+	useSettingsStore.setState({
+		keyboardMode: opts.vimMode ? 'vim' : 'default',
+		vimEditorEnabled: opts.vimEditorEnabled ?? true,
+	});
 	const ref = { current: null } as React.MutableRefObject<MarkdownEditorHandle | null>;
 	const result = render(
 		<MarkdownEditor
@@ -94,6 +107,26 @@ function contentDom(container: HTMLElement): HTMLElement {
 	return el as HTMLElement;
 }
 
+/** The live CM6 view behind the rendered editor. */
+function viewOf(container: HTMLElement): EditorView {
+	const host = container.querySelector('.cm-editor');
+	const view = host instanceof HTMLElement ? EditorView.findFromDOM(host) : null;
+	if (!view) throw new Error('CM6 view did not mount');
+	return view;
+}
+
+/**
+ * How many edits the history field can still undo.
+ *
+ * Read off the live `EditorState` rather than inferred by pressing `u`,
+ * because the two answers differ in exactly the case worth testing: a rebuilt
+ * state has a depth of 0 but its own reconfigure transaction sitting on top,
+ * so one `u` still "does something".
+ */
+function undoDepthOf(container: HTMLElement): number {
+	return undoDepth(viewOf(container).state);
+}
+
 /** A keydown on the editor's content element, the way a focused user types. */
 function press(
 	container: HTMLElement,
@@ -113,7 +146,7 @@ function press(
 }
 
 beforeEach(() => {
-	useSettingsStore.setState({ keyboardMode: 'default' });
+	useSettingsStore.setState({ keyboardMode: 'default', vimEditorEnabled: true });
 });
 
 describe('MarkdownEditor - Vim gating', () => {
@@ -170,6 +203,62 @@ describe('MarkdownEditor - Vim gating', () => {
 		press(container, 'a', { ctrlKey: true });
 
 		expect(docText(container)).toBe('6');
+	});
+});
+
+/**
+ * The second switch, at the surface rather than at the hook.
+ *
+ * `useVimKeysActive` is unit tested over all four combinations in
+ * `markdownEditorVimKeys.test.ts`; what those cannot say is that the editor
+ * actually reads the AND. A surface that took `keyboardMode` directly - the
+ * obvious shape, and the one the gate replaced - passes every hook test in
+ * that file while shipping Vim keys to a user who switched them off.
+ */
+describe('MarkdownEditor - the editor opt-out', () => {
+	it('leaves Vim out in Vim mode when the editor opt-out is off', () => {
+		const { container } = mountEditor({ vimMode: true, vimEditorEnabled: false });
+
+		expect(container.querySelector('.cm-vimMode')).toBeNull();
+		// And the keys stay literal, which is the thing the user turned the
+		// switch off to get back.
+		press(container, 'x');
+		expect(docText(container)).toBe('hello world');
+	});
+
+	it('needs both switches on, and takes the mode as the outer one', () => {
+		// Spelled as the truth table rather than as three more prose tests: the
+		// claim IS the table, and an OR (or a surface reading one setting) shows
+		// up here as a row that disagrees instead of as a missing test.
+		const rows: Array<{ vimMode: boolean; vimEditorEnabled: boolean; vim: boolean }> = [
+			{ vimMode: false, vimEditorEnabled: false, vim: false },
+			{ vimMode: false, vimEditorEnabled: true, vim: false },
+			{ vimMode: true, vimEditorEnabled: false, vim: false },
+			{ vimMode: true, vimEditorEnabled: true, vim: true },
+		];
+
+		for (const row of rows) {
+			const { container, unmount } = mountEditor({
+				vimMode: row.vimMode,
+				vimEditorEnabled: row.vimEditorEnabled,
+			});
+			try {
+				expect({ ...row, vim: container.querySelector('.cm-vimMode') !== null }).toEqual(row);
+			} finally {
+				unmount();
+			}
+		}
+	});
+
+	it('is inert in default keyboard mode, whichever way it is set', () => {
+		// The opt-out only qualifies Vim mode. Leaving it off is not a second
+		// way to get Vim keys, which is why the gate is an AND: an OR would hand
+		// a default-mode user Vim editing with no control on screen explaining it.
+		const { container } = mountEditor({ vimMode: false, vimEditorEnabled: true });
+
+		expect(container.querySelector('.cm-vimMode')).toBeNull();
+		press(container, 'x');
+		expect(docText(container)).toBe('hello world');
 	});
 });
 
@@ -291,6 +380,69 @@ describe('MarkdownEditor - switching keyboard mode in place', () => {
 		expect(container.querySelector('.cm-vimMode')).toBeNull();
 		press(container, 'x');
 		expect(docText(container)).toBe('hello world');
+	});
+
+	it('carries the undo stack across the switch rather than just one entry', () => {
+		const { container } = mountEditor({ vimMode: false, doc: 'hello' });
+
+		act(() => {
+			// Two SEPARATE history entries. `isolateHistory` is what makes them
+			// two: CM6 groups edits made within 500ms of each other, so the
+			// handle's `replaceRange` twice in a row is one entry and could not
+			// tell a carried stack from a stack with one thing left on it.
+			for (const text of ['X', 'Y']) {
+				viewOf(container).dispatch({
+					changes: { from: 0, to: 0, insert: text },
+					annotations: isolateHistory.of('full'),
+				});
+			}
+		});
+		expect(undoDepthOf(container)).toBe(2);
+
+		act(() => {
+			useSettingsStore.setState({ keyboardMode: 'vim' });
+		});
+
+		// The DEPTH, not just "undo does something". A rebuilt state would read
+		// 0 here while the previous test still passed, because the Vim
+		// compartment's own reconfigure transaction is itself undoable - so
+		// pressing `u` once after a rebuild would quietly undo the switch and
+		// leave the document looking correct.
+		expect(undoDepthOf(container)).toBe(2);
+		expect(docText(container)).toBe('YXhello');
+	});
+
+	it('keeps the document, caret and undo stack when the opt-out is flipped', () => {
+		const { container, ref } = mountEditor({ vimMode: true, doc: 'alpha\nbeta\ngamma' });
+		const editorBefore = container.querySelector('.cm-editor');
+
+		act(() => {
+			ref.current!.replaceRange(0, 0, 'X');
+			ref.current!.setSelection(8, 8);
+		});
+
+		act(() => {
+			useSettingsStore.setState({ vimEditorEnabled: false });
+		});
+
+		// Same reconfigure, same guarantees. The opt-out routes through the one
+		// gate in `useVimKeysCompartment` instead of adding a second switch, so
+		// a user turning editor Vim off mid-document keeps everything a mode
+		// switch keeps - and gets the plain editor back in the same breath.
+		expect(container.querySelector('.cm-editor')).toBe(editorBefore);
+		expect(container.querySelector('.cm-vimMode')).toBeNull();
+		expect(docText(container)).toBe('Xalpha\nbeta\ngamma');
+		expect(ref.current!.getCaret()).toBe(8);
+		expect(undoDepthOf(container)).toBe(1);
+
+		act(() => {
+			useSettingsStore.setState({ vimEditorEnabled: true });
+		});
+
+		expect(container.querySelector('.cm-editor')).toBe(editorBefore);
+		expect(container.querySelector('.cm-vimMode')).not.toBeNull();
+		expect(ref.current!.getCaret()).toBe(8);
+		expect(undoDepthOf(container)).toBe(1);
 	});
 });
 
@@ -634,5 +786,115 @@ describe('MarkdownEditor - Cmd+F and the editor search', () => {
 		// Vim claimed the key, so `/` never reaches the surface handler that
 		// would have opened the host search bar on a bare slash.
 		expect(event.defaultPrevented).toBe(true);
+	});
+});
+
+/**
+ * Bare normal-mode letters, which Vim mode binds on BOTH sides.
+ *
+ * `g g` is Go to Tab 1 in Maestro's Vim set and "go to the first line" in the
+ * editor's, and a user who types it in a document means the second one. Two
+ * independent things keep that true, and this is the only place both are
+ * exercised against the real sequence machinery:
+ *
+ *  1. Vim handles the keys on the content element and stops them there, so
+ *     they never reach the window listener at all.
+ *  2. Even when they do reach it - default keyboard mode, where there is no
+ *     Vim to swallow them - `isNormalMode` counts anything inside `.cm-editor`
+ *     as text entry and closes the sequence gate.
+ *
+ * `markdownEditorVimCollisions.test.ts` asks the predicate directly; what it
+ * cannot show is that a real editor satisfies it and that the matcher really
+ * declines. The listener below is `useMainKeyboardHandler`'s sequence block,
+ * copied down to the gate it checks (`isNormalMode(e) && !hasOpenLayers()`),
+ * over the real Vim-mode bindings - no modal is open in any of these, so the
+ * layer half is a constant `false`.
+ */
+describe('MarkdownEditor - normal-mode sequences against Maestro', () => {
+	const VIM_SEQUENCE_BINDINGS = (() => {
+		const resolved = effectiveShortcutsForMode('vim');
+		return collectSequenceBindings(resolved.shortcuts, resolved.tabShortcuts);
+	})();
+
+	/** Maestro's sequence listener, as the keyboard handler installs it. */
+	function watchSequences(): { fired: string[]; stop: () => void } {
+		const fired: string[] = [];
+		const matcher = createSequenceMatcher();
+		const listener = (e: Event) => {
+			const event = e as KeyboardEvent;
+			if (!isNormalMode(event)) {
+				matcher.reset();
+				return;
+			}
+			const result = matcher.feed(event, VIM_SEQUENCE_BINDINGS);
+			if (result.outcome === 'matched') fired.push(result.actionId);
+		};
+		window.addEventListener('keydown', listener);
+		return { fired, stop: () => window.removeEventListener('keydown', listener) };
+	}
+
+	it('binds `g g` to Go to Tab 1 outside the editor', () => {
+		const outside = document.createElement('button');
+		document.body.appendChild(outside);
+		const watch = watchSequences();
+
+		try {
+			// The positive control, and the reason the two tests below mean
+			// anything: the same listener over the same bindings DOES fire the
+			// action, so an empty `fired` in the editor is the editor and not a
+			// harness that never worked.
+			outside.focus();
+			for (const key of ['g', 'g']) {
+				outside.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+			}
+
+			expect(watch.fired).toEqual(['goToTab1']);
+		} finally {
+			watch.stop();
+			outside.remove();
+		}
+	});
+
+	it('leaves `g g` to the document while the editor has focus', () => {
+		const { container, ref } = mountEditor({ vimMode: true, doc: 'alpha\nbeta\ngamma' });
+		const watch = watchSequences();
+
+		try {
+			contentDom(container).focus();
+			act(() => {
+				ref.current!.setSelection(12, 12);
+			});
+
+			press(container, 'g');
+			press(container, 'g');
+
+			// No tab switch, and the caret is at the top of the DOCUMENT: Vim's
+			// own `gg` ran. Swapping tabs out from under someone mid-edit because
+			// they pressed a motion is the worst outcome on this list.
+			expect(watch.fired).toEqual([]);
+			expect(ref.current!.getCaret()).toBe(0);
+		} finally {
+			watch.stop();
+		}
+	});
+
+	it('still declines `g g` in default mode, where nothing swallows it', () => {
+		const { container } = mountEditor({ vimMode: false });
+		const watch = watchSequences();
+
+		try {
+			contentDom(container).focus();
+
+			// With no Vim installed these reach the window listener, so this is
+			// the half that tests the GATE rather than the swallow. Phase 02 put
+			// `.cm-editor` in `TEXT_ENTRY_SURFACE_SELECTOR` for exactly this: a
+			// letter typed into a document is a letter, in either keyboard mode.
+			press(container, 'g');
+			press(container, 'g');
+
+			expect(watch.fired).toEqual([]);
+		} finally {
+			watch.stop();
+		}
 	});
 });
