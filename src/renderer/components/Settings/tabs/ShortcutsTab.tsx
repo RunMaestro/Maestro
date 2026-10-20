@@ -35,6 +35,7 @@ import { ShortcutFilterButton } from '../../ui/ShortcutFilterButton';
 import { GhostIconButton } from '../../ui/GhostIconButton';
 import { MiniBadge } from '../../ui/MiniBadge';
 import { SegmentedControl, type SegmentedOption } from '../../ui/SegmentedControl';
+import { ToggleSwitch } from '../../ui/ToggleSwitch';
 import { FIXED_SHORTCUTS } from '../../../constants/shortcuts';
 import { availableShortcuts } from '../../../utils/encoreShortcuts';
 import { SettingsSectionHeading } from '../SettingsSectionHeading';
@@ -74,8 +75,14 @@ export interface ShortcutsTabProps {
 }
 
 export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: ShortcutsTabProps) {
-	const { encoreFeatures, setKeyboardMode, vimInsertEscapeSequence, setVimInsertEscapeSequence } =
-		useSettings();
+	const {
+		encoreFeatures,
+		setKeyboardMode,
+		vimInsertEscapeSequence,
+		setVimInsertEscapeSequence,
+		vimEditorEnabled,
+		setVimEditorEnabled,
+	} = useSettings();
 	const {
 		keyboardMode,
 		shortcuts,
@@ -604,13 +611,45 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 					</p>
 				)}
 			</div>
-			{/* The in-field escape sits directly under the mode toggle because it is
-			    the one keyboard behavior on this screen that has no row in the
-			    tables below: it fires INSIDE a text field, which is where every
-			    binding in those tables deliberately stands down. Rendered in both
-			    modes rather than only in Vim mode, so a search that jumps here
-			    lands on a control instead of on nothing; the hint says which mode
-			    reads it. */}
+			{/* Vim editing in the markdown editor is a second switch in front of the
+			    mode, not a third mode, so it sits directly under the toggle it
+			    qualifies. It is a whole half of what Vim mode means - the shortcut
+			    tables below are the other half - and this is the only control on
+			    this screen that can turn one off without the other.
+
+			    Rendered in both modes, like the escape below it, so a search that
+			    jumps here lands on a control instead of on nothing; the hint says
+			    which mode reads it. Disabled rather than hidden in default mode:
+			    hiding it would make the search result a dead end, and greying the
+			    live control is how the screen says "this is real, just not yet". */}
+			<div data-setting-id="shortcuts-vim-editor" className="mb-3">
+				<div className="flex items-center justify-between gap-3">
+					<div className="text-xs" style={{ color: theme.colors.textMain }}>
+						{`${KEYBOARD_MODE_LABELS.vim} Keys In The Markdown Editor`}
+					</div>
+					<ToggleSwitch
+						checked={vimEditorEnabled}
+						onChange={setVimEditorEnabled}
+						theme={theme}
+						disabled={keyboardMode !== 'vim'}
+						ariaLabel={`${KEYBOARD_MODE_LABELS.vim} keys in the markdown editor`}
+						title={
+							keyboardMode === 'vim'
+								? undefined
+								: `Only has an effect in ${KEYBOARD_MODE_LABELS.vim} mode`
+						}
+					/>
+				</div>
+				<p className="text-xs mt-1.5" style={{ color: theme.colors.textDim }}>
+					{`Real Vim editing in the markdown editor - operators, motions, counts, and registers, so ciw and dd and 3dw all work. Only read in ${KEYBOARD_MODE_LABELS.vim} mode. Switch it off to keep ${KEYBOARD_MODE_LABELS.vim} navigation everywhere else and type in the editor with the ordinary keys; nothing in the tables below changes either way.`}
+				</p>
+			</div>
+			{/* The in-field escape is the other keyboard behavior on this screen
+			    with no row in the tables below: it fires INSIDE a text field,
+			    which is where every binding in those tables deliberately stands
+			    down. Rendered in both modes rather than only in Vim mode, so a
+			    search that jumps here lands on a control instead of on nothing;
+			    the hint says which mode reads it. */}
 			<div data-setting-id="shortcuts-vim-insert-escape" className="mb-3">
 				<label
 					htmlFor="shortcuts-vim-insert-escape-input"

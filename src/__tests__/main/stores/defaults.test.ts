@@ -151,6 +151,20 @@ describe('stores/defaults', () => {
 			}
 		});
 
+		it('agrees with the metadata on every keyboard-mode setting', () => {
+			// Three files state each of these defaults (here, the metadata, and
+			// the renderer slice) and only this check makes them one value. A
+			// disagreement is invisible until a user who never touched the
+			// setting gets one answer from the CLI and another from the app.
+			for (const key of ['keyboardMode', 'vimInsertEscapeSequence', 'vimEditorEnabled'] as const) {
+				expect(SETTINGS_METADATA[key]).toBeDefined();
+				expect(SETTINGS_METADATA[key].default).toEqual(SETTINGS_DEFAULTS[key]);
+			}
+			// Spelled out as well as compared, so renaming both sides in lockstep
+			// to the wrong value still fails.
+			expect(SETTINGS_DEFAULTS.vimEditorEnabled).toBe(true);
+		});
+
 		it('should have correct default fontSize', () => {
 			expect(SETTINGS_DEFAULTS.fontSize).toBe(14);
 		});

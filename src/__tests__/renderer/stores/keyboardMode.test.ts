@@ -207,6 +207,83 @@ describe('keyboard mode', () => {
 		);
 	});
 
+	describe('the editor Vim setting', () => {
+		it('ships on, because a user who asked for Vim mode asked for Vim editing', () => {
+			expect(useSettingsStore.getState().vimEditorEnabled).toBe(true);
+		});
+
+		it('persists the switch', () => {
+			useSettingsStore.getState().setVimEditorEnabled(false);
+
+			expect(useSettingsStore.getState().vimEditorEnabled).toBe(false);
+			expect(window.maestro.settings.set).toHaveBeenCalledWith('vimEditorEnabled', false);
+		});
+
+		it('restores a persisted off', async () => {
+			// The whole point of the setting is to be turned off, so OFF is the
+			// value that has to survive a restart. A hydration that only ever
+			// wrote `true` would look fine on a fresh install and lose the one
+			// choice anybody makes here.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({ vimEditorEnabled: false });
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().vimEditorEnabled).toBe(false);
+		});
+
+		it.each([[null], ['false'], ['true'], [0], [1], [{}]])(
+			'drops the persisted non-boolean %s instead of coercing it',
+			async (persisted) => {
+				// Seeded OFF, which is the only seeding that can tell dropping
+				// from coercing. Left at the shipped `true`, `!!'false'` is also
+				// `true` and a truthiness check would look correct; from `false`,
+				// every one of these values flips the user's choice back on.
+				useSettingsStore.setState({ vimEditorEnabled: false });
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					vimEditorEnabled: persisted,
+				});
+
+				await expect(loadAllSettings()).resolves.not.toThrow();
+
+				expect(useSettingsStore.getState().vimEditorEnabled).toBe(false);
+			}
+		);
+
+		it('keeps the shipped value when nothing is persisted', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().vimEditorEnabled).toBe(true);
+		});
+
+		it('is independent of the mode in both directions', () => {
+			// Switching it off is not switching Vim mode off, and switching modes
+			// does not reach for it. Two settings, read together only by the
+			// editor's own gate (`useVimKeysActive`).
+			switchMode('vim');
+			useSettingsStore.getState().setVimEditorEnabled(false);
+
+			expect(useSettingsStore.getState().keyboardMode).toBe('vim');
+
+			switchMode('default');
+			switchMode('vim');
+
+			expect(useSettingsStore.getState().vimEditorEnabled).toBe(false);
+		});
+
+		it('leaves the shortcut tables alone', () => {
+			// It gates a CodeMirror extension, not a binding, so it has no row in
+			// Settings > Shortcuts and must not move one either.
+			switchMode('vim');
+			const before = selectActiveShortcuts(useSettingsStore.getState());
+
+			useSettingsStore.getState().setVimEditorEnabled(false);
+
+			expect(selectActiveShortcuts(useSettingsStore.getState())).toBe(before);
+		});
+	});
+
 	describe('the live mode selectors', () => {
 		it('returns the default buckets themselves in default mode', () => {
 			// Identity, not equality: default mode IS the base, so every

@@ -68,6 +68,26 @@ export interface ShortcutsState {
 	 * while `keyboardMode` is 'vim'.
 	 */
 	vimInsertEscapeSequence: string;
+	/**
+	 * Whether the markdown editor runs real Vim keys (operators, motions,
+	 * counts, registers) while Vim mode is live.
+	 *
+	 * A SECOND switch in front of `keyboardMode`, not a third mode: it is only
+	 * read while `keyboardMode` is 'vim', and switching it off changes nothing
+	 * about Vim navigation, the shortcut tables, or the in-field escape - the
+	 * markdown editor simply gets its plain CodeMirror keymap back. That is the
+	 * escape hatch for the user who wants Vim chords around the app but types
+	 * prose in the editor, and for anyone the editor's own Ctrl chords get in
+	 * the way of.
+	 *
+	 * Defaults ON, because a user who asked for Vim mode asked for Vim editing;
+	 * this exists to be turned off, not to be found.
+	 *
+	 * Lives in this slice for the same reason `vimInsertEscapeSequence` does: it
+	 * is a keyboard-mode setting with no row in Settings > Shortcuts' tables,
+	 * because it gates an editor extension rather than binding an action.
+	 */
+	vimEditorEnabled: boolean;
 }
 
 export interface ShortcutsActions {
@@ -77,6 +97,7 @@ export interface ShortcutsActions {
 	setVimShortcuts: (value: Record<string, ShortcutOverride>) => void;
 	setVimTabShortcuts: (value: Record<string, ShortcutOverride>) => void;
 	setVimInsertEscapeSequence: (value: string) => void;
+	setVimEditorEnabled: (value: boolean) => void;
 }
 
 export type ShortcutsSlice = ShortcutsState & ShortcutsActions;
@@ -88,6 +109,7 @@ export const createShortcutsSlice: StateCreator<SettingsStore, [], [], Shortcuts
 	vimShortcuts: VIM_SHORTCUTS,
 	vimTabShortcuts: VIM_TAB_SHORTCUTS,
 	vimInsertEscapeSequence: DEFAULT_VIM_INSERT_ESCAPE_SEQUENCE,
+	vimEditorEnabled: true,
 
 	setShortcuts: (value) => {
 		set({ shortcuts: value });
@@ -130,6 +152,11 @@ export const createShortcutsSlice: StateCreator<SettingsStore, [], [], Shortcuts
 		// would delete what they were halfway through typing.
 		set({ vimInsertEscapeSequence: value });
 		window.maestro.settings.set('vimInsertEscapeSequence', value);
+	},
+
+	setVimEditorEnabled: (value) => {
+		set({ vimEditorEnabled: value });
+		window.maestro.settings.set('vimEditorEnabled', value);
 	},
 });
 
@@ -680,6 +707,13 @@ export function hydrateShortcutsSettings(
 	// nobody asked for.
 	if (typeof allSettings['vimInsertEscapeSequence'] === 'string') {
 		patch.vimInsertEscapeSequence = allSettings['vimInsertEscapeSequence'];
+	}
+
+	// Booleans only. A truthy string from a hand-edited settings file would read
+	// as "on" under `!!`, and the one value a user is likely to write there by
+	// hand is `"false"`, which is exactly the case that would invert.
+	if (typeof allSettings['vimEditorEnabled'] === 'boolean') {
+		patch.vimEditorEnabled = allSettings['vimEditorEnabled'];
 	}
 
 	if (allSettings['vimTabShortcuts'] !== undefined) {

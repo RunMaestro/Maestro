@@ -227,6 +227,13 @@ export const EDITOR_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: 'jk',
 		category: 'editor',
 	},
+	vimEditorEnabled: {
+		description:
+			'Whether the markdown editor uses real Vim keys (operators, motions, counts, registers) while keyboardMode is "vim". Off leaves Vim navigation and the in-field escape sequence alone and gives the editor back its plain CodeMirror keymap, which is the escape hatch for a user who wants Vim chords around the app but not inside the editor. Read only while keyboardMode is "vim".',
+		type: 'boolean',
+		default: true,
+		category: 'editor',
+	},
 	shortcuts: {
 		description: 'Custom keyboard shortcut bindings. Object mapping shortcut IDs to key combos.',
 		type: 'object',

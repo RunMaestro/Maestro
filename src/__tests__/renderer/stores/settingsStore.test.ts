@@ -317,6 +317,10 @@ describe('settingsStore', () => {
 			// default-mode user never sees it fire.
 			expect(state.vimInsertEscapeSequence).toBe('jk');
 			expect(SETTINGS_METADATA.vimInsertEscapeSequence.default).toBe('jk');
+			// Editor-level Vim ships on for the same reason, and is only read in
+			// Vim mode: it exists to be switched off, not to be found.
+			expect(state.vimEditorEnabled).toBe(true);
+			expect(SETTINGS_METADATA.vimEditorEnabled.default).toBe(true);
 			expect(state.customAICommands).toEqual(DEFAULT_AI_COMMANDS);
 			expect(state.totalActiveTimeMs).toBe(0);
 			expect(state.autoRunStats).toEqual(DEFAULT_AUTO_RUN_STATS);

@@ -84,6 +84,7 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	vimTabShortcuts: {},
 	keyboardMode: 'default',
 	vimInsertEscapeSequence: 'jk',
+	vimEditorEnabled: true,
 	fontSize: 14,
 	fontFamily: MAESTRO_FONT_STACK,
 	terminalFontFamily: '',

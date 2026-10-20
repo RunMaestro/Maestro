@@ -68,6 +68,13 @@ export interface MaestroSettings {
 	 * while `keyboardMode` is "vim".
 	 */
 	vimInsertEscapeSequence: string;
+	/**
+	 * Whether the markdown editor runs real Vim keys while `keyboardMode` is
+	 * "vim". Read only in that mode, and independent of it: switching this off
+	 * keeps Vim navigation and the in-field escape, and gives the editor back
+	 * its plain CodeMirror keymap.
+	 */
+	vimEditorEnabled: boolean;
 	fontSize: number;
 	fontFamily: string;
 	terminalFontFamily: string;

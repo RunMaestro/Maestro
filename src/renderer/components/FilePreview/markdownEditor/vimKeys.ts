@@ -11,10 +11,13 @@ import { useSettingsStore } from '../../../stores/settingsStore';
  * pieces of knowledge that a second CodeMirror surface would otherwise have to
  * rediscover, and each one was a bug before it was written down:
  *
- *   1. WHICH setting decides. Vim editing follows the app-wide `keyboardMode`,
- *      not a per-surface prop. A surface that reads a prop instead ends up with
- *      Vim keys in the file preview and not in the memory viewer, for no reason
- *      a user could explain.
+ *   1. WHICH settings decide. Vim editing follows the app-wide `keyboardMode`
+ *      AND the `vimEditorEnabled` opt-out, never a per-surface prop. A surface
+ *      that reads a prop instead ends up with Vim keys in the file preview and
+ *      not in the memory viewer, for no reason a user could explain. The two
+ *      settings are ANDed in `useVimKeysActive` and nowhere else; everything
+ *      downstream, including the two predicates in rule 4, reads the live DOM
+ *      instead, so switching either one off takes the whole gate with it.
  *   2. WHERE the extension sits. `vim()` claims keys through a plain
  *      `eventHandlers.keydown` at DEFAULT precedence, while `keymap.of([...])`
  *      runs its bindings through `Prec.default(...)`. Two extensions at the same
@@ -49,9 +52,16 @@ export function vimKeysExtension(active: boolean): Extension {
 	return active ? vim() : [];
 }
 
-/** Whether editor-level Vim keys are live right now, per the app-wide setting. */
+/**
+ * Whether editor-level Vim keys are live right now.
+ *
+ * TWO settings, and both have to say yes. `keyboardMode` is the app-wide mode
+ * (rule 1 above); `vimEditorEnabled` is the editor's own opt-out, which only
+ * means anything inside Vim mode and defaults on. The AND lives here, once, so
+ * no surface has to learn that the second switch exists.
+ */
 export function useVimKeysActive(): boolean {
-	return useSettingsStore((s) => s.keyboardMode === 'vim');
+	return useSettingsStore((s) => s.keyboardMode === 'vim' && s.vimEditorEnabled);
 }
 
 export interface VimKeysCompartment {

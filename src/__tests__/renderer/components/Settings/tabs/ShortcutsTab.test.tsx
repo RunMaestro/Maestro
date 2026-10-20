@@ -62,6 +62,9 @@ let mockExtraShortcuts: Record<string, Shortcut> = {};
 // renders a warning for a value the parser reads as off, and a test sets one.
 let mockInsertEscapeSequence = 'jk';
 const mockSetInsertEscapeSequence = vi.fn();
+// Editor-level Vim. Ships on, so the off case is the one a test has to set.
+let mockVimEditorEnabled = true;
+const mockSetVimEditorEnabled = vi.fn();
 
 vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 	useSettings: () => ({
@@ -69,6 +72,8 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		setKeyboardMode: mockSetKeyboardMode,
 		vimInsertEscapeSequence: mockInsertEscapeSequence,
 		setVimInsertEscapeSequence: mockSetInsertEscapeSequence,
+		vimEditorEnabled: mockVimEditorEnabled,
+		setVimEditorEnabled: mockSetVimEditorEnabled,
 	}),
 }));
 
@@ -100,6 +105,7 @@ function resetModeFixtures() {
 	mockDisplaced = [];
 	mockExtraShortcuts = {};
 	mockInsertEscapeSequence = 'jk';
+	mockVimEditorEnabled = true;
 }
 
 describe('ShortcutsTab', () => {
@@ -883,6 +889,118 @@ describe('ShortcutsTab in-field escape', () => {
 		await renderTab();
 
 		expect(screen.queryByTestId('shortcuts-vim-insert-escape-off')).not.toBeInTheDocument();
+	});
+});
+
+/**
+ * Editor-level Vim: the second switch in front of the mode, which turns Vim
+ * keys off INSIDE the markdown editor without touching Vim navigation or any
+ * binding in the tables. The tab is the only surface that offers it, so what is
+ * only observable here is that it is offered, that it is offered in both modes,
+ * and that it is inert in the mode that does not read it.
+ */
+describe('ShortcutsTab editor Vim toggle', () => {
+	const TOGGLE_LABEL = 'Vim keys in the markdown editor';
+
+	beforeEach(() => {
+		vi.useFakeTimers();
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+		vi.clearAllMocks();
+		resetModeFixtures();
+	});
+
+	it('reflects the stored value and saves the switch', async () => {
+		mockMode = 'vim';
+		await renderTab();
+
+		const toggle = screen.getByRole('switch', { name: TOGGLE_LABEL });
+		expect(toggle).toHaveAttribute('aria-checked', 'true');
+
+		fireEvent.click(toggle);
+
+		expect(mockSetVimEditorEnabled).toHaveBeenCalledWith(false);
+	});
+
+	it('shows off as off, so the control is not a one-way door', async () => {
+		mockMode = 'vim';
+		mockVimEditorEnabled = false;
+		await renderTab();
+
+		const toggle = screen.getByRole('switch', { name: TOGGLE_LABEL });
+		expect(toggle).toHaveAttribute('aria-checked', 'false');
+
+		fireEvent.click(toggle);
+
+		expect(mockSetVimEditorEnabled).toHaveBeenCalledWith(true);
+	});
+
+	it('renders in default mode too, so a search can land on it', async () => {
+		// Same reason as the in-field escape above: the setting is only READ in
+		// Vim mode, but a settings search that jumps to a hidden control finds
+		// nothing at all and reads as a broken result.
+		mockMode = 'default';
+		await renderTab();
+
+		expect(screen.getByRole('switch', { name: TOGGLE_LABEL })).toBeInTheDocument();
+	});
+
+	it('is disabled in default mode, where nothing reads it', async () => {
+		// Greyed rather than hidden: the screen says "this is real, just not
+		// yet", and a click cannot write a value that would silently do nothing.
+		mockMode = 'default';
+		await renderTab();
+
+		const toggle = screen.getByRole('switch', { name: TOGGLE_LABEL });
+		expect(toggle).toBeDisabled();
+
+		fireEvent.click(toggle);
+
+		expect(mockSetVimEditorEnabled).not.toHaveBeenCalled();
+	});
+
+	it('is live in Vim mode', async () => {
+		mockMode = 'vim';
+		await renderTab();
+
+		expect(screen.getByRole('switch', { name: TOGGLE_LABEL })).not.toBeDisabled();
+	});
+
+	it('sits under the mode toggle and above the in-field escape', async () => {
+		// Order is the only thing on this screen that says the editor switch
+		// QUALIFIES the mode rather than being a third mode of its own.
+		mockMode = 'vim';
+		const { container } = await renderTab();
+
+		const ids = [...container.querySelectorAll('[data-setting-id]')].map((el) =>
+			el.getAttribute('data-setting-id')
+		);
+
+		expect(ids.indexOf('shortcuts-keyboard-mode')).toBeLessThan(
+			ids.indexOf('shortcuts-vim-editor')
+		);
+		expect(ids.indexOf('shortcuts-vim-editor')).toBeLessThan(
+			ids.indexOf('shortcuts-vim-insert-escape')
+		);
+	});
+
+	it('sits outside the bindable list, because it binds nothing', async () => {
+		// It gates a CodeMirror extension, not an action. Inside the scrolling
+		// list it would read as a row whose chord can be recorded, and recording
+		// one would write a binding nothing matches.
+		mockMode = 'vim';
+		const { container } = await renderTab();
+
+		const toggle = screen.getByRole('switch', { name: TOGGLE_LABEL });
+		const bindableList = container.querySelector('.overflow-y-auto');
+
+		expect(bindableList).not.toBeNull();
+		expect(bindableList?.contains(toggle)).toBe(false);
+		expect(toggle.closest('[data-setting-id]')?.getAttribute('data-setting-id')).toBe(
+			'shortcuts-vim-editor'
+		);
 	});
 });
 

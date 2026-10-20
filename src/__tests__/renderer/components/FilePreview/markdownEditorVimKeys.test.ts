@@ -32,7 +32,9 @@ function fakeViewRef() {
 }
 
 beforeEach(() => {
-	useSettingsStore.setState({ keyboardMode: 'default' });
+	// Both halves of the gate, every test: `vimEditorEnabled` ships ON, so a
+	// test that switches it off would otherwise leak into the next one.
+	useSettingsStore.setState({ keyboardMode: 'default', vimEditorEnabled: true });
 });
 
 describe('vimKeysExtension', () => {
@@ -80,6 +82,42 @@ describe('useVimKeysActive', () => {
 		act(() => {
 			useSettingsStore.setState({ keyboardMode: 'vim' });
 		});
+		expect(result.current).toBe(true);
+	});
+
+	it('is false in Vim mode when the editor opt-out is off', () => {
+		// `vimEditorEnabled` is the second switch: Vim mode everywhere else,
+		// ordinary keys in the editor. This is the whole setting.
+		useSettingsStore.setState({ keyboardMode: 'vim', vimEditorEnabled: false });
+		const { result } = renderHook(() => useVimKeysActive());
+		expect(result.current).toBe(false);
+	});
+
+	it('stays false in default mode whatever the opt-out says', () => {
+		// The opt-out is only READ in Vim mode, so it can never switch editor
+		// Vim ON. An OR here would give a default-mode user Vim keys in the
+		// editor and no control that explains them.
+		useSettingsStore.setState({ keyboardMode: 'default', vimEditorEnabled: true });
+		const { result } = renderHook(() => useVimKeysActive());
+		expect(result.current).toBe(false);
+	});
+
+	it('follows a live switch of the opt-out, without touching the mode', () => {
+		useSettingsStore.setState({ keyboardMode: 'vim', vimEditorEnabled: true });
+		const { result } = renderHook(() => useVimKeysActive());
+		expect(result.current).toBe(true);
+
+		act(() => {
+			useSettingsStore.setState({ vimEditorEnabled: false });
+		});
+
+		expect(result.current).toBe(false);
+		expect(useSettingsStore.getState().keyboardMode).toBe('vim');
+
+		act(() => {
+			useSettingsStore.setState({ vimEditorEnabled: true });
+		});
+
 		expect(result.current).toBe(true);
 	});
 });
@@ -139,6 +177,39 @@ describe('useVimKeysCompartment', () => {
 			useSettingsStore.setState({ keyboardMode: 'default' });
 		});
 		expect(dispatch).toHaveBeenCalledTimes(2);
+	});
+
+	it('reconfigures exactly once per opt-out switch, inside Vim mode', () => {
+		// The opt-out goes through the same compartment as the mode, so a user
+		// turning editor Vim off mid-document keeps their caret, scroll, and
+		// undo history exactly as a mode switch does.
+		useSettingsStore.setState({ keyboardMode: 'vim' });
+		const { dispatch, ref } = fakeViewRef();
+		renderHook(() => useVimKeysCompartment(ref));
+		expect(dispatch).not.toHaveBeenCalled();
+
+		act(() => {
+			useSettingsStore.setState({ vimEditorEnabled: false });
+		});
+		expect(dispatch).toHaveBeenCalledTimes(1);
+
+		act(() => {
+			useSettingsStore.setState({ vimEditorEnabled: true });
+		});
+		expect(dispatch).toHaveBeenCalledTimes(2);
+	});
+
+	it('does not reconfigure for an opt-out switch in default mode', () => {
+		// Nothing changed: the gate was already off and stays off, so the view
+		// must not be touched for a setting this mode does not read.
+		const { dispatch, ref } = fakeViewRef();
+		renderHook(() => useVimKeysCompartment(ref));
+
+		act(() => {
+			useSettingsStore.setState({ vimEditorEnabled: false });
+		});
+
+		expect(dispatch).not.toHaveBeenCalled();
 	});
 
 	it('dispatches an effect that swaps its own compartment to Vim', () => {

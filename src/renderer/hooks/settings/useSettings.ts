@@ -255,6 +255,8 @@ export interface UseSettingsReturn {
 	setVimTabShortcuts: (value: Record<string, ShortcutOverride>) => void;
 	vimInsertEscapeSequence: string;
 	setVimInsertEscapeSequence: (value: string) => void;
+	vimEditorEnabled: boolean;
+	setVimEditorEnabled: (value: boolean) => void;
 
 	// Custom AI Commands
 	customAICommands: CustomAICommand[];
