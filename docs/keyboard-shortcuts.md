@@ -44,6 +44,7 @@ The two system-wide hotkeys cannot share a combo. If you set one to the other's 
 | Agent Switcher                | `Cmd+O`                 | `Ctrl+O`                  |
 | Toggle Left Panel             | `Opt+Cmd+Left`          | `Alt+Ctrl+Left`           |
 | Toggle Right Panel            | `Opt+Cmd+Right`         | `Alt+Ctrl+Right`          |
+| Toggle Zen Mode               | unassigned by default   | unassigned by default     |
 | New Agent                     | `Cmd+N`                 | `Ctrl+N`                  |
 | New Agent Wizard              | `Cmd+Shift+N`           | `Ctrl+Shift+N`            |
 | New Group Chat                | `Opt+Cmd+G`             | `Alt+Ctrl+G`              |
@@ -59,6 +60,12 @@ The two system-wide hotkeys cannot share a combo. If you set one to the other's 
 | New Terminal Tab              | `Cmd+J`                 | `Ctrl+J`                  |
 | Toggle Input/Output Focus     | `Cmd+.`                 | `Ctrl+.`                  |
 | Focus Left Panel              | `Cmd+Shift+A`           | `Ctrl+Shift+A`            |
+| Focus Region Left             | unassigned by default   | unassigned by default     |
+| Focus Region Right            | unassigned by default   | unassigned by default     |
+| Focus Region Up               | unassigned by default   | unassigned by default     |
+| Focus Region Down             | unassigned by default   | unassigned by default     |
+| Grow Region                   | unassigned by default   | unassigned by default     |
+| Shrink Region                 | unassigned by default   | unassigned by default     |
 | Show Shortcuts Help           | `Cmd+/`                 | `Ctrl+/`                  |
 | Open Settings                 | `Cmd+,`                 | `Ctrl+,`                  |
 | Open Agent Settings           | `Opt+Cmd+,`             | `Alt+Ctrl+,`              |
@@ -89,6 +96,52 @@ replace each other rather than stacking, and their hotkeys stay live while one
 of them is up. Press `Opt+Cmd+U` from Director's Notes to land on the Usage
 Dashboard, then `Cmd+Shift+O` to go straight back. This holds for a rebound
 surface too, so a chord you chose yourself behaves the same as the default.
+
+### Region Focus, Resize, and Zen Mode
+
+Maestro's window is three regions in a row: the **Left Bar**, the **Main
+Window**, and the **Right Bar**. Seven rows in the table above drive them from
+the keyboard - the six **Focus Region** / **Grow Region** / **Shrink Region**
+actions and **Toggle Zen Mode** - and all seven are **unassigned by default**.
+Default mode already spends `Cmd+Shift+A` and `Cmd+.` on the two single-region
+focus actions, so Maestro does not claim seven more chords for a navigation
+style not everyone wants. All of them are in Quick Actions (`Cmd+K`) today -
+type `region` for the six region actions, `zen` for the toggle - and in
+**Settings** -> **Shortcuts**, where you can record a chord of your own.
+[Vim mode](#keyboard-modes) binds the whole family in its own table.
+
+**Focus Region Left** and **Focus Region Right** cross between regions in screen
+order, and stop at the ends rather than wrapping: pressing "focus left" with the
+Left Bar already focused does nothing, because there is nothing further left.
+Focusing a region that is not on screen reveals it first, through the same
+visibility the `Opt+Cmd+Left` / `Opt+Cmd+Right` toggles control, so "go to the
+Right Bar" opens it on the way.
+
+**Focus Region Up** and **Focus Region Down** stay inside the focused region and
+move along its vertical axis, which is a different thing in each one. In the
+Main Window, up reaches the transcript and down puts the caret where you type -
+the composer, or the shell prompt, address bar, or editor when the active tab is
+not a conversation. In either bar, they move that bar's list selection, exactly
+as a bare `Up` / `Down` there does.
+
+**Grow Region** and **Shrink Region** move the focused region's edge 32px per
+press, writing through the same stored width the bars' drag handles commit, so
+a press and a drag move the same edge and the result is clamped to the range
+that bar allows. With a bar focused, that bar's width moves. With the Main
+Window focused, the Right Bar's edge moves the other way, so **Grow Region**
+always makes the region you are looking at bigger. Unlike region focus, a
+resize never reveals a bar that is off screen: a hidden or collapsed bar has no
+width to move, and the press does nothing rather than opening something you
+closed.
+
+**Toggle Zen Mode** puts both bars away and gives the whole window to the Main
+Window; press it again and both come back exactly as they were, including a
+Right Bar that was already closed beforehand. Nothing is reset on the way in or
+out - tabs, transcripts, and the widths above are untouched. Because zen hides
+the chrome you would otherwise click to leave it, entering flashes the way back:
+the chord you bound to it, or "run Toggle Zen Mode again from Quick Actions"
+while it is unassigned. It is on the Left Bar menu too, below the keyboard mode
+row.
 
 ## Panel Shortcuts
 
@@ -198,6 +251,8 @@ If you scroll the tab strip away while the tab header still holds focus, the nex
 | Show Snoozed Tabs         | unassigned by default   | unassigned by default     |
 | Move Tab to First         | `Cmd+Opt+[`             | `Ctrl+Alt+[`              |
 | Move Tab to Last          | `Cmd+Opt+]`             | `Ctrl+Alt+]`              |
+| Move Tab Left             | unassigned by default   | unassigned by default     |
+| Move Tab Right            | unassigned by default   | unassigned by default     |
 | Close Tab                 | `Cmd+W`                 | `Ctrl+W`                  |
 | Close All Tabs            | `Cmd+Shift+W`           | `Ctrl+Shift+W`            |
 | Close Other Tabs          | `Opt+Cmd+W`             | `Alt+Ctrl+W`              |
@@ -216,6 +271,16 @@ Right Bar instead, switching between the Participants and History panels. The Ri
 Bar opens if it was closed.
 
 **Focus Active Tab** presses twice: the first press centers and focuses the current tab header, the second walks backward through unread and draft tabs. See [Walking Unread and Draft Tabs](#walking-unread-and-draft-tabs).
+
+**Move Tab Left** and **Move Tab Right** nudge the active tab one slot along the
+strip, where **Move Tab to First** and **Move Tab to Last** throw it to an edge.
+Both are **unassigned by default** - the two edge chords above already cover the
+common case - and both are in Quick Actions (`Cmd+K`) and in **Settings** ->
+**Shortcuts**, ready for a chord of your own; [Vim mode](#keyboard-modes) binds
+the pair in its own table. A press stops at the end you are moving toward
+instead of wrapping, and it counts only the tabs you can see, so a tab moves
+past the neighbor on screen rather than into a slot held by a tab the strip is
+not drawing.
 
 ### Tab Switcher
 
@@ -668,6 +733,16 @@ Every action not listed here keeps its Default-mode chord.
 | Next Tab     | `Ctrl+PageDown` | `Ctrl+PageDown` |
 
 These two replace `Cmd+Shift+[` / `Cmd+Shift+]` from [Tab Management](#tab-management-shortcuts). No other binding uses `PageUp` or `PageDown`, so they displace nothing. The table grows in later releases.
+
+The nine region, zen, and move-tab actions this page marks **unassigned by
+default** - Focus Region Left / Right / Up / Down, [Grow Region, Shrink Region,
+and Toggle Zen Mode](#region-focus-resize-and-zen-mode), plus [Move Tab Left and
+Move Tab Right](#tab-management-shortcuts) - are the ones that table reaches for
+first. They are actions Vim has a strong opinion about (its window and tab
+commands) and default mode leaves free, so giving them Vim chords displaces
+nothing. Until they appear in the table above they are unassigned in both modes:
+run them from Quick Actions (`Cmd+K`), or bind them yourself in **Settings** ->
+**Shortcuts**, where a chord you record applies to the mode you are looking at.
 
 Vim chords are written with `Ctrl` so macOS shows the Vim-native `⌃` rather than `⌘`. Maestro treats `Ctrl` and `Cmd` as one modifier when it matches a keypress, so on a Mac `Cmd+PageUp` walks to the previous tab as well.
 
