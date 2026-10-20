@@ -32,7 +32,7 @@ import { resolveSnoozeTarget } from '../../utils/snoozeHelpers';
 import { selectActiveSession, useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { FONT_ZOOM_DEFAULT, FONT_ZOOM_STEP, clampFontZoom } from '../../../shared/typography';
-import { useUIStore } from '../../stores/uiStore';
+import { deckModeArmedNow, useUIStore } from '../../stores/uiStore';
 import { groupChatOutputSearchKey, isActiveOutputSearchOpen } from '../../utils/outputSearch';
 import { toggleGroupChatRightTab } from '../../utils/groupChatRightTab';
 import { OUTPUT_SEARCH_INPUT_SELECTOR } from '../ui/useOutputSearchLayer';
@@ -50,6 +50,11 @@ import {
 	type InsertEscapeField,
 } from '../../utils/vimInsertEscape';
 import { FIXED_SHORTCUTS } from '../../constants/shortcuts';
+import {
+	DECK_MODE_LEADER_ID,
+	findDeckModeAction,
+	isDeckModeCancelKey,
+} from '../../constants/deckMode';
 import { editClipboardImage } from '../../components/ImageAnnotator/editClipboardImage';
 import { FORCED_PARALLEL_SEND_EVENT } from '../input/useInputKeyDown';
 import { requestSteerSend } from '../../services/chatSteering';
@@ -271,6 +276,125 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			if (!ctx) return;
 			const activeSession = selectActiveSession(useSessionStore.getState());
 
+			// Helper to track shortcut usage for keyboard mastery gamification
+			// AND for the daily-usage time series shown on the Usage Dashboard.
+			// Mastery is short-circuited on second+ firings of the same shortcut
+			// (it's a unique-set), but the daily counter increments every time.
+			//
+			// Usage is recorded PER ACTION, never per mode, per chord, per
+			// sequence, or per Deck key. The same action fired from a Vim
+			// sequence, from Deck mode, and from its default-mode chord is one
+			// entry in the mastery set, which is what makes the count mean "you
+			// know this action" rather than "you know this keystroke". Every new
+			// keyboard path must call this with the action id (the Deck block
+			// below and the sequence layer further down both do).
+			//
+			// Defined up here, above every guard, because the Deck block is the
+			// first thing in the chain and records the action it fires. Nothing
+			// about the closure cares where it sits: it reads `ctx` at CALL time,
+			// so a later `withForcedAction` swap is invisible to it (the copy
+			// carries the same `recordShortcutUsage`).
+			//
+			// `reported` makes one keypress one usage: the Deck and sequence
+			// layers record the action they matched before the ladder runs, and
+			// the branch that then fires records the same id. Mastery is a set and
+			// would not notice, but the daily counter would count that keypress
+			// twice.
+			const reported = new Set<string>();
+			const trackShortcut = (shortcutId: string) => {
+				if (reported.has(shortcutId)) return;
+				reported.add(shortcutId);
+				if (ctx.recordShortcutUsage) {
+					const result = ctx.recordShortcutUsage(shortcutId);
+					if (result.newLevel !== null && ctx.onKeyboardMasteryLevelUp) {
+						ctx.onKeyboardMasteryLevelUp(result.newLevel);
+					}
+				}
+				// Fire-and-forget. A failed IPC must never block a shortcut from
+				// taking effect; the daily counter is best-effort telemetry.
+				void window.maestro?.stats?.recordShortcutUsage?.(Date.now());
+			};
+
+			// --- Deck mode: the leader chord and the one key that follows it ---
+			//
+			// First in the chain, above the terminal blocks, the in-field escape
+			// and the layer guard, because an armed Deck mode owns the NEXT
+			// keystroke outright and every path below claims bare keys for its own
+			// good reasons: terminal focus recovery forwards them to the shell,
+			// `jk` reads a `j` as a prefix step, the layer guard hands them to
+			// whatever modal is open, and sidebar navigation claims a bare Space.
+			// Deck mode is the one keyboard route that is meant to fire from a
+			// focused composer and over an open surface, so it has to be asked
+			// before any of them.
+			//
+			// `deckModeArmedNow()`, never the raw `deckModeArmed` flag: the window
+			// expires lazily (no timer), so the store helper is the only thing that
+			// answers "is the mode live" correctly, and it disarms an expired one on
+			// the way out.
+			//
+			// On a hit the action is dispatched the same way a matched sequence is -
+			// by forcing the three matchers onto the action id and falling through
+			// to that action's EXISTING ladder branch, with that branch's own guards
+			// intact. A second action-id-to-handler map here would drift the first
+			// time a branch grew a guard. What a forced Deck action does NOT do is
+			// re-enter the guards between here and the ladder: the keystroke has
+			// already been matched against the Deck table, and those guards read raw
+			// keys, so each one below is skipped while `deckAction` is set.
+			let deckAction: string | null = null;
+			if (deckModeArmedNow()) {
+				const { disarmDeckMode } = useUIStore.getState();
+				if (isDeckModeCancelKey(e.key)) {
+					// THE ONE PLACE THE LAYER STACK YIELDS. Escape normally closes the
+					// topmost layer from LayerStackProvider's capture-phase listener,
+					// which runs before this one and stops propagation; that listener
+					// asks `deckModeArmedNow()` first and declines while the mode is
+					// armed, which is what lets the keypress reach here. An armed
+					// leader is what the user is cancelling, and taking their modal
+					// away in the same keystroke would charge them twice for one
+					// mistyped chord. Escape fires nothing and is tracked against
+					// nothing: cancelling is the mode's own behaviour, not an action
+					// (see DECK_MODE_CANCEL).
+					e.preventDefault();
+					disarmDeckMode();
+					return;
+				}
+				if (e.metaKey || e.ctrlKey || e.altKey) {
+					// A chord while armed is not a Deck key at all. The user changed
+					// their mind and pressed something they meant for the app, so the
+					// mode gets out of the way: disarm, do NOT swallow the event, and
+					// let it be matched as the chord it is. Pressing the leader again
+					// lands here and then re-arms below, which is how a second press
+					// restarts the clock.
+					disarmDeckMode();
+				} else {
+					const row = findDeckModeAction(e.key);
+					// Swallowed and disarmed on BOTH outcomes, before the branch. A
+					// one-shot mode must not leak the key into the composer it was
+					// armed from, and a miss deliberately does not fall through to the
+					// normal binding ladder: a leader that sometimes passed the key
+					// along would leave the user guessing whether it had taken effect.
+					e.preventDefault();
+					disarmDeckMode();
+					if (!row) return;
+					trackShortcut(row.id);
+					ctx = withForcedAction(ctx, row.id);
+					deckAction = row.id;
+				}
+			}
+			if (deckAction === null && ctx.isShortcut(e, DECK_MODE_LEADER_ID)) {
+				e.preventDefault();
+				useUIStore.getState().armDeckMode();
+				trackShortcut(DECK_MODE_LEADER_ID);
+				// Both half-finished keyboard ideas are abandoned with it. The leader
+				// is a deliberate fresh start, and a live `g` prefix or an in-field
+				// `j` that outlived it would complete against a key the user aimed at
+				// the Deck table.
+				sequenceMatcher.reset();
+				publishPrefix();
+				endInsertEscapeRun();
+				return;
+			}
+
 			// Terminal focus recovery: if a key event reaches this window handler while in
 			// terminal mode, xterm's textarea likely lost focus. Recover early (before any
 			// global shortcut/navigation logic) so arrow keys and editor escape paths still
@@ -387,7 +511,11 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			// shell and nothing else.
 			//
 			// `ctx.insertEscape` is null unless Vim mode is live AND the setting
-			// parses, so default-mode users pay one property read for this.
+			// parses, so default-mode users pay one property read for this. A
+			// forced Deck action nulls it outright: a Deck `j` is a region move the
+			// user asked for by name, not the first half of an escape, and feeding
+			// it to this matcher would leave a prefix waiting to eat the next real
+			// `k` they typed.
 			//
 			// No `trackShortcut` call: keyboard mastery counts ACTIONS, and every
 			// id it knows is declared in `DEFAULT_SHORTCUTS` or `TAB_SHORTCUTS`
@@ -395,7 +523,9 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			// behavior configured by a string setting, not a bindable action, so
 			// recording it would put an id in the mastery set that no table
 			// declares and no row could ever explain.
-			const insertEscape: InsertEscapeBinding | null = ctx.insertEscape ?? null;
+			const insertEscape: InsertEscapeBinding | null = deckAction
+				? null
+				: (ctx.insertEscape ?? null);
 			if (insertEscape) {
 				const field = insertEscapeTarget(target);
 				// Focus moved mid-run (a click into another input, a modal
@@ -434,7 +564,10 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			// OVERLAYS (FilePreview, LogViewer): Allow Cmd+Shift+[] for tab cycling
 			//   - App.tsx handles this with modified behavior (cycle tabs not sessions)
 
-			if (ctx.hasOpenLayers()) {
+			// `!deckAction`: a Deck key reached its table through the leader, which
+			// is the user naming one action out of a list they are being shown, so
+			// it is not a stray keypress for this guard to adjudicate.
+			if (!deckAction && ctx.hasOpenLayers()) {
 				// Allow Tab for accessibility navigation within modals
 				if (e.key === 'Tab') return;
 
@@ -662,53 +795,27 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			}
 
 			// Skip all keyboard handling when editing a session or group name in the sidebar
-			if (ctx.editingSessionId || ctx.editingGroupId) {
+			if (!deckAction && (ctx.editingSessionId || ctx.editingGroupId)) {
 				return;
 			}
 
-			// Keyboard navigation handlers from useKeyboardNavigation hook
-			// Sidebar navigation with arrow keys (works when sidebar has focus)
-			if (ctx.handleSidebarNavigation(e)) return;
+			// Keyboard navigation handlers from useKeyboardNavigation hook.
+			// Skipped for a forced Deck action: these read raw keys rather than
+			// bindings, and `handleSidebarNavigation` claims a bare Space outright,
+			// which is the Deck key for Quick Actions.
+			if (!deckAction) {
+				// Sidebar navigation with arrow keys (works when sidebar has focus)
+				if (ctx.handleSidebarNavigation(e)) return;
 
-			// Enter to load selected session from sidebar
-			if (ctx.handleEnterToActivate(e)) return;
+				// Enter to load selected session from sidebar
+				if (ctx.handleEnterToActivate(e)) return;
 
-			// Tab navigation between panels
-			if (ctx.handleTabNavigation(e)) return;
+				// Tab navigation between panels
+				if (ctx.handleTabNavigation(e)) return;
 
-			// Escape in main area focuses terminal output
-			if (ctx.handleEscapeInMain(e)) return;
-
-			// Helper to track shortcut usage for keyboard mastery gamification
-			// AND for the daily-usage time series shown on the Usage Dashboard.
-			// Mastery is short-circuited on second+ firings of the same shortcut
-			// (it's a unique-set), but the daily counter increments every time.
-			//
-			// Usage is recorded PER ACTION, never per mode, per chord, or per
-			// sequence. The same action fired from a Vim sequence and from its
-			// default-mode chord is one entry in the mastery set, which is what
-			// makes the count mean "you know this action" rather than "you know
-			// this keystroke". Every new keyboard path must call this with the
-			// action id (sequences do so below; Deck mode will in Phase 05).
-			//
-			// `reported` makes one keypress one usage: the sequence layer records
-			// the action it matched before the ladder runs, and the branch that
-			// then fires records the same id. Mastery is a set and would not
-			// notice, but the daily counter would count that keypress twice.
-			const reported = new Set<string>();
-			const trackShortcut = (shortcutId: string) => {
-				if (reported.has(shortcutId)) return;
-				reported.add(shortcutId);
-				if (ctx.recordShortcutUsage) {
-					const result = ctx.recordShortcutUsage(shortcutId);
-					if (result.newLevel !== null && ctx.onKeyboardMasteryLevelUp) {
-						ctx.onKeyboardMasteryLevelUp(result.newLevel);
-					}
-				}
-				// Fire-and-forget. A failed IPC must never block a shortcut from
-				// taking effect; the daily counter is best-effort telemetry.
-				void window.maestro?.stats?.recordShortcutUsage?.(Date.now());
-			};
+				// Escape in main area focuses terminal output
+				if (ctx.handleEscapeInMain(e)) return;
+			}
 
 			// Cmd+F while the output find bar is already open: bring focus back to its
 			// input from anywhere in the MAIN chat, instead of no-opping. Do NOT steal
@@ -818,9 +925,14 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			// walks; with no bindings `feed` can only answer 'no-match' and no
 			// prefix can be live to reset, so the skip changes nothing but the
 			// cost.
+			//
+			// Skipped entirely for a forced Deck action, which is why Deck mode
+			// "composes with" the sequence matcher rather than competing with it:
+			// the leader already reset any live prefix, and feeding the Deck key
+			// here would let it start or finish a run it was never aimed at.
 			const sequenceBindings: readonly SequenceBinding[] =
 				ctx.sequenceBindings ?? NO_SEQUENCE_BINDINGS;
-			if (sequenceBindings.length > 0) {
+			if (!deckAction && sequenceBindings.length > 0) {
 				if (isNormalMode(e) && !ctx.hasOpenLayers()) {
 					const sequenceResult = sequenceMatcher.feed(e, sequenceBindings);
 					// Before the branches, so every outcome repaints the chip from

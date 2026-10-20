@@ -778,6 +778,12 @@ describe('every registered action has a handler', () => {
 		'growRegion',
 		'shrinkRegion',
 		'toggleZenMode',
+		// Phase 05's leader. Unassigned in default mode because every action it
+		// arms already has a chord there, so the leader would cost a key and buy
+		// nothing; Vim mode binds it to Ctrl+;. The handler row below is what
+		// pins that a default-mode user who binds it in Settings gets a working
+		// leader rather than a dead chord.
+		'deckMode',
 	];
 
 	it('registers each unbound id with empty keys', () => {
@@ -787,13 +793,40 @@ describe('every registered action has a handler', () => {
 		}
 	});
 
+	/**
+	 * Ids the handler reaches through an imported CONSTANT instead of a string
+	 * literal, mapped to the symbol it spells instead.
+	 *
+	 * `deckMode` is the only one so far, and deliberately: three places need the
+	 * leader's id for three purposes (the handler matches it, `trackShortcut`
+	 * records it, the hint bar looks up its live chord), so `deckMode.ts`
+	 * exports it as `DECK_MODE_LEADER_ID` rather than having each spell the
+	 * string. Searching for the literal would push the handler back to a fourth
+	 * copy of it to satisfy a test.
+	 */
+	const DISPATCHED_BY_CONSTANT: Record<string, string> = {
+		deckMode: 'DECK_MODE_LEADER_ID',
+	};
+
 	it('handles each unbound id somewhere in the keyboard handler', () => {
 		const handler = readFileSync(
 			join(RENDERER_ROOT, 'hooks/keyboard/useMainKeyboardHandler.ts'),
 			'utf-8'
 		);
-		const unhandled = UNBOUND_IDS.filter((id) => !handler.includes(`'${id}'`));
+		const unhandled = UNBOUND_IDS.filter(
+			(id) =>
+				!handler.includes(`'${id}'`) &&
+				!(DISPATCHED_BY_CONSTANT[id] && handler.includes(DISPATCHED_BY_CONSTANT[id]))
+		);
 		expect(unhandled, 'registered but never dispatched').toEqual([]);
+	});
+
+	it('resolves each by-constant alias to the id it claims to spell', () => {
+		// Without this the map above would be a way to silence the check: a typo
+		// in the alias, or an alias pointing at the wrong action, would read as
+		// "handled". The constants file is the authority on what the symbol means.
+		expect(DECK_MODE_LEADER_ID).toBe('deckMode');
+		expect(Object.keys(DISPATCHED_BY_CONSTANT)).toEqual(['deckMode']);
 	});
 });
 
