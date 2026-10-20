@@ -1,6 +1,8 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from 'react';
 import { EditorState, EditorSelection, Compartment, type Extension } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
+import { vim } from '@replit/codemirror-vim';
+import { useSettingsStore } from '../../../stores/settingsStore';
 import { buildEditorTheme } from '../giantPreview/themeAdapter';
 import { loadLanguageExtension, hasLanguageSupport } from '../giantPreview/languageLoader';
 import { buildEditorExtensions } from './extensions';
@@ -28,8 +30,12 @@ import type { MarkdownEditorHandle, MarkdownEditorProps } from './types';
  *     so the cursor / scroll / undo history are preserved during external
  *     reformatting (e.g. autosave write-through, undo via the host).
  *   - Toggle-able extensions (wrap, line numbers, spellcheck, theme,
- *     language) are wrapped in CM6 `Compartment`s so we can `reconfigure`
- *     in place instead of remounting.
+ *     language, Vim keys) are wrapped in CM6 `Compartment`s so we can
+ *     `reconfigure` in place instead of remounting.
+ *
+ * Vim keys come from `@replit/codemirror-vim`, gated on the app-wide
+ * `keyboardMode` setting. The real thing, not a motion subset: `ciw`, `dd`,
+ * counts, registers, and the whole operator-pending grammar.
  *
  * Imperative handle (see `./types`) is the only abstraction the host uses;
  * the underlying CM6 view is intentionally not exposed.
@@ -86,6 +92,12 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 		const hostRef = useRef<HTMLDivElement | null>(null);
 		const viewRef = useRef<EditorView | null>(null);
 
+		// Vim editing is an app-wide keyboard setting, not a per-surface choice,
+		// so it is read here instead of threaded through as a prop: every surface
+		// that renders this editor (File Preview, Auto Run, the memory viewer,
+		// the Maestro Prompts tab) follows the setting without passing anything.
+		const vimKeysActive = useSettingsStore((s) => s.keyboardMode === 'vim');
+
 		// Refs to the latest callbacks so the long-lived CM6 view always sees
 		// fresh closures without us reconfiguring on every prop change.
 		const onChangeRef = useRef(onChange);
@@ -111,6 +123,12 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 		// confusing in devtools.
 		const applyingExternalRef = useRef(false);
 
+		// Which way the Vim compartment was last configured. Seeded with the value
+		// the mount effect below uses, so the reconfigure effect skips its no-op
+		// first run instead of tearing down and rebuilding the Vim plugin the
+		// mount just installed.
+		const vimAppliedRef = useRef(vimKeysActive);
+
 		// Compartments let us swap individual extension subtrees without
 		// rebuilding the whole state. One per prop that can change at runtime.
 		const compartments = useMemo(
@@ -118,6 +136,7 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 				theme: new Compartment(),
 				language: new Compartment(),
 				base: new Compartment(),
+				vim: new Compartment(),
 			}),
 			[]
 		);
@@ -148,6 +167,16 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 			const state = EditorState.create({
 				doc: value,
 				extensions: [
+					// Vim FIRST. Its keydown handler and the base compartment's
+					// `keymap.of([...defaultKeymap])` both sit at default precedence,
+					// so the earlier entry is offered the key first - exactly what the
+					// package's README asks for ("make sure vim is included before
+					// other keymaps"), and the reason the default keymap still serves
+					// insert mode behind it. The host's own keydown hook rides at
+					// `Prec.highest` inside the base compartment, which outranks array
+					// order, so Cmd+S / Cmd+E / the template autocomplete keep winning
+					// while Vim is active.
+					compartments.vim.of(vimKeysActive ? vim() : []),
 					compartments.base.of(baseExt),
 					compartments.theme.of(buildEditorTheme(theme, fontScale, fontFamily, baseFontPx)),
 					compartments.language.of([]),
@@ -246,6 +275,21 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 			});
 			view.dispatch({ effects: compartments.base.reconfigure(baseExt) });
 		}, [wrap, showLineNumbers, spellCheck, readOnly, placeholder, compartments.base]);
+
+		// Keyboard-mode switch → swap the Vim subtree in place. Reconfiguring the
+		// compartment keeps the SAME `EditorState`, so the document, the cursor,
+		// the scroll offset, and the undo history (which lives in the untouched
+		// base compartment) all survive. Recreating the view instead would throw
+		// away all four because the user flipped a setting.
+		useEffect(() => {
+			const view = viewRef.current;
+			if (!view) return;
+			if (vimAppliedRef.current === vimKeysActive) return;
+			vimAppliedRef.current = vimKeysActive;
+			view.dispatch({
+				effects: compartments.vim.reconfigure(vimKeysActive ? vim() : []),
+			});
+		}, [vimKeysActive, compartments.vim]);
 
 		useImperativeHandle(
 			ref,
