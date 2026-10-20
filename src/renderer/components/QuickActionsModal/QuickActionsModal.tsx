@@ -643,6 +643,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			onGoToPreviousUnread,
 			onNavBack,
 			onNavForward,
+			toggleZenMode: () => useUIStore.getState().toggleZenMode(),
 			shortcuts: {
 				newInstance: shortcuts.newInstance,
 				openWizard: shortcuts.openWizard,
@@ -655,6 +656,16 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				killInstance: shortcuts.killInstance,
 				navBack: shortcuts.navBack,
 				navForward: shortcuts.navForward,
+				// All seven ship with `keys: []`, so these badges stay empty until the
+				// user binds a chord in Settings > Shortcuts or switches to Vim mode -
+				// QuickActionRow drops the pill entirely while `keys` is empty.
+				focusRegionLeft: shortcuts.focusRegionLeft,
+				focusRegionRight: shortcuts.focusRegionRight,
+				focusRegionUp: shortcuts.focusRegionUp,
+				focusRegionDown: shortcuts.focusRegionDown,
+				growRegion: shortcuts.growRegion,
+				shrinkRegion: shortcuts.shrinkRegion,
+				toggleZenMode: shortcuts.toggleZenMode,
 			},
 		}),
 		...buildNewTabCommands({

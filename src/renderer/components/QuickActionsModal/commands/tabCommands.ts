@@ -4,7 +4,8 @@ import { formatMetaKey } from '../../../utils/shortcutFormatter';
 import { resolveSnoozeTarget } from '../../../utils/snoozeHelpers';
 import { useModalStore } from '../../../stores/modalStore';
 import { resolveModelEffortTabId } from '../../../utils/panelLayout';
-import { visibleAiTabs } from '../../../utils/tabHelpers';
+import { moveActiveUnifiedTabByOne, visibleAiTabs } from '../../../utils/tabHelpers';
+import { updateSessionWith } from '../../../stores/sessionStore';
 
 interface BuildNewTabCommandsArgs {
 	activeSession: Session | undefined;
@@ -414,6 +415,57 @@ export function buildTabCommands({
 				setQuickActionOpen(false);
 			},
 		});
+	}
+
+	// Nudge the active tab one VISIBLE slot, the single-step siblings of the two
+	// edge entries above.
+	//
+	// Two things are deliberately not done the way the edge entries do them:
+	//
+	//   1. The guard asks the helper instead of comparing indices. `moveActive
+	//      UnifiedTabByOne` returns the session BY REFERENCE when there is nothing
+	//      to swap with, so `moved !== activeSession` is an exact "is there a
+	//      visible neighbor that way" test. `activeUnifiedIndex` and
+	//      `unifiedTabCount` come off the RAW `unifiedTabOrder`, which counts tab
+	//      refs that are not drawn in the strip (a snoozed AI tab, a consult ref),
+	//      so an index comparison would offer a row that does nothing for an
+	//      active tab sitting last among the visible tabs with hidden refs behind
+	//      it.
+	//   2. The move goes through `updateSessionWith` here rather than a threaded
+	//      `onMoveTab*` callback. There is no React state involved - the whole
+	//      action is one canonical pure helper applied to one agent in the session
+	//      store - so a callback would be five layers of prop plumbing (App ->
+	//      AppModals -> AppUtilityModals -> QuickActionsModal -> here) carrying a
+	//      single store write. Same shape as the `useModalStore.getState()` calls
+	//      elsewhere in this file.
+	if (hasActiveTab && activeSession) {
+		const session = activeSession;
+		const canMove = (direction: 'left' | 'right'): boolean =>
+			moveActiveUnifiedTabByOne(session, direction) !== session;
+		const moveByOne = (direction: 'left' | 'right'): void => {
+			updateSessionWith(session.id, (current) => moveActiveUnifiedTabByOne(current, direction));
+			setQuickActionOpen(false);
+		};
+
+		if (canMove('left')) {
+			commands.push({
+				id: 'moveTabLeft',
+				label: 'Move Tab Left',
+				subtext: 'Swap the active tab with the visible tab on its left',
+				shortcut: tabShortcuts?.moveTabLeft,
+				action: () => moveByOne('left'),
+			});
+		}
+
+		if (canMove('right')) {
+			commands.push({
+				id: 'moveTabRight',
+				label: 'Move Tab Right',
+				subtext: 'Swap the active tab with the visible tab on its right',
+				shortcut: tabShortcuts?.moveTabRight,
+				action: () => moveByOne('right'),
+			});
+		}
 	}
 
 	if (activeSession && isTerminalMode && onClearActiveTerminal) {

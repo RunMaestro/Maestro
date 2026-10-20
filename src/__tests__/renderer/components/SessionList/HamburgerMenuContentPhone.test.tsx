@@ -4,7 +4,8 @@
  * A phone has no keyboard and no room for a guided tour's anchored callouts,
  * so the two entries that exist only for those are not offered there, and
  * every chord badge beside the remaining rows carries `data-shortcut-hint` so
- * the phone stylesheet can retire them together.
+ * the phone stylesheet can retire them together. Zen mode is dropped there for
+ * a different reason, covered below.
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -76,6 +77,21 @@ describe('HamburgerMenuContent on a phone', () => {
 		expect(screen.getByText('Command Palette')).toBeInTheDocument();
 		expect(screen.getByText('Settings')).toBeInTheDocument();
 		expect(screen.getByText('Usage Dashboard')).toBeInTheDocument();
+	});
+
+	it('drops zen mode on a phone, where there is no space for it to reclaim', () => {
+		// Both bars are already overlay drawers on a phone, so zen has nothing to
+		// give the Main Window - and hiding the Left Bar outright takes the
+		// edge-swipe drawer with it (`[data-panel='left'][data-hidden='true']` is
+		// display: none at every breakpoint) until zen is left again.
+		mockedUsePhoneLayout.mockReturnValue(false);
+		const desktop = renderMenu();
+		expect(screen.getByText('Toggle Zen Mode')).toBeInTheDocument();
+		desktop.unmount();
+
+		mockedUsePhoneLayout.mockReturnValue(true);
+		renderMenu();
+		expect(screen.queryByText('Toggle Zen Mode')).not.toBeInTheDocument();
 	});
 
 	it('tags every chord badge so the phone stylesheet can hide them', () => {
