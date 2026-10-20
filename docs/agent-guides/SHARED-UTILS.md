@@ -537,19 +537,21 @@ multi-GB recording never crosses IPC or lands in the renderer heap.
 | `isMediaStreamUrl(value)`                 | `(string \| null \| undefined) => boolean` | Cheap check for "is this `fs:readFile` result a stream URL".                                         |
 | `MEDIA_PLAYBACK_RATES`                    | `readonly number[]`                        | Speed ladder shown in the transport.                                                                 |
 | `normalizePlaybackRate(value)`            | `(unknown) => number`                      | Clamp a persisted/CLI-supplied rate to 0.25-4, falling back to 1.                                    |
+| `mediaItemId(sessionId, path)`            | `(string, string) => string`               | Queue identity. Same agent + path re-uses the entry, so re-opening resumes.                          |
+| `sanitizeMediaItems(value)`               | `(unknown) => MediaItem[]`                 | Coerce a persisted queue off disk, dropping anything malformed. Main reads it at launch too.         |
 
 ### Media Items (`src/renderer/utils/mediaItems.ts` - Renderer)
 
-| Function                                | Signature                                                    | Purpose                                                                     |
-| --------------------------------------- | ------------------------------------------------------------ | --------------------------------------------------------------------------- |
-| `getOpenedMediaKind(name, content)`     | `(string, string) => MediaKind \| null`                      | The one predicate for "is this opened file playable media".                 |
-| `mediaItemId(sessionId, path)`          | `(string, string) => string`                                 | Queue identity. Same agent + path re-uses the entry, so re-opening resumes. |
-| `stepMediaItem(items, activeId, steps)` | `(MediaItem[], string \| null, number) => MediaItem \| null` | Prev/next target. Open order, no wrapping; null at the ends.                |
-| `pushMediaHistory(history, item, max)`  | `(MediaItem[], MediaItem, number) => MediaItem[]`            | Recently played, newest first, deduped and capped.                          |
-| `trimMediaQueue(items, limit, keepId)`  | `(MediaItem[], number, string \| null) => MediaItem[]`       | Caps the persisted queue, oldest first, never dropping the loaded item.     |
-| `sanitizeMediaItems(value)`             | `(unknown) => MediaItem[]`                                   | Coerce a persisted queue off disk, dropping anything malformed.             |
-| `sanitizeMediaTimes(value, knownIds)`   | `(unknown, Set<string>) => Record<string, number>`           | Same for the seconds maps (positions, durations); drops unqueued IDs.       |
-| `formatMediaTime(seconds)`              | `(number \| undefined) => string`                            | Clock time for a fractional media second; `--:--` when unknown.             |
+`mediaItemId` and `sanitizeMediaItems` live in `src/shared/mediaTypes.ts` (table above); this module re-exports them.
+
+| Function                                | Signature                                                    | Purpose                                                                 |
+| --------------------------------------- | ------------------------------------------------------------ | ----------------------------------------------------------------------- |
+| `getOpenedMediaKind(name, content)`     | `(string, string) => MediaKind \| null`                      | The one predicate for "is this opened file playable media".             |
+| `stepMediaItem(items, activeId, steps)` | `(MediaItem[], string \| null, number) => MediaItem \| null` | Prev/next target. Open order, no wrapping; null at the ends.            |
+| `pushMediaHistory(history, item, max)`  | `(MediaItem[], MediaItem, number) => MediaItem[]`            | Recently played, newest first, deduped and capped.                      |
+| `trimMediaQueue(items, limit, keepId)`  | `(MediaItem[], number, string \| null) => MediaItem[]`       | Caps the persisted queue, oldest first, never dropping the loaded item. |
+| `sanitizeMediaTimes(value, knownIds)`   | `(unknown, Set<string>) => Record<string, number>`           | Same for the seconds maps (positions, durations); drops unqueued IDs.   |
+| `formatMediaTime(seconds)`              | `(number \| undefined) => string`                            | Clock time for a fractional media second; `--:--` when unknown.         |
 
 `openFileUrl(href, onFileClick)` in `src/renderer/utils/openFileUrl.ts` is the one
 handler for a `file://` link clicked in markdown. The file-link plugins emit

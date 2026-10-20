@@ -35,6 +35,7 @@ import { formatConsultedAgentNames } from '../../../services/crossAgentConsultHo
 import { useAnchoredMenuPosition } from '../../../hooks/ui/useAnchoredMenuPosition';
 import { useClickOutside } from '../../../hooks/ui/useClickOutside';
 import { useFocusOnMount } from '../../../hooks/utils/useFocusAfterRender';
+import { elevatedSurfaceStyle } from '../../../utils/elevatedSurface';
 import { EscCloseButton } from '../../ui/EscCloseButton';
 import { MiniBadge } from '../../ui/MiniBadge';
 import { MENTION_ROUTING_COPY, MENTION_ROUTING_ORDER } from './mentionRoutingCopy';
@@ -310,14 +311,13 @@ function RoutingPopover({
 			onKeyDown={handleKeyDown}
 			data-testid={testId}
 			// Above the composer's own overlays, below modals.
-			className="fixed z-[100] w-80 py-1 rounded shadow-xl border overflow-y-auto select-none outline-none"
+			className="fixed z-[100] w-80 py-1 rounded overflow-y-auto select-none outline-none"
 			style={{
 				left,
 				top,
 				maxHeight,
 				opacity: ready ? 1 : 0,
-				backgroundColor: theme.colors.bgActivity,
-				borderColor: theme.colors.border,
+				...elevatedSurfaceStyle(theme),
 			}}
 		>
 			{title && (

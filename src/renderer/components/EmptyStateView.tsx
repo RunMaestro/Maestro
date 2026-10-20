@@ -21,6 +21,7 @@ import { WelcomeContent } from './WelcomeContent';
 import { buildMaestroUrl } from '../utils/buildMaestroUrl';
 import { openUrl } from '../utils/openUrl';
 import { PluginUiItemsSlot } from './plugins/PluginUiItemsSlot';
+import { elevatedSurfaceStyle } from '../utils/elevatedSurface';
 
 interface EmptyStateViewProps {
 	theme: Theme;
@@ -93,10 +94,9 @@ export function EmptyStateView({
 					{/* Menu Overlay */}
 					{menuOpen && (
 						<div
-							className="absolute top-full right-0 mt-2 w-72 rounded-lg shadow-2xl z-50 overflow-hidden"
+							className="absolute top-full right-0 mt-2 w-72 rounded-lg z-50 overflow-hidden"
 							style={{
-								backgroundColor: theme.colors.bgSidebar,
-								border: `1px solid ${theme.colors.border}`,
+								...elevatedSurfaceStyle(theme),
 							}}
 						>
 							<div className="p-1">

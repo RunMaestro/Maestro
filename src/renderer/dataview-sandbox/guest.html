@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<!--
+			The DataviewJS sandbox guest page (D4). scripts/build-preload.mjs inlines the guest runtime at the
+			marker below and writes dist/main/dataview-guest.html. Main serves that file inside the isolated
+			<webview> and adds the Content-Security-Policy as a header and a meta tag. Colors come from the
+			host's --maestro-* theme variables, with fallbacks until the host sets them.
+		-->
+		<style>
+			:root {
+				color-scheme: light dark;
+			}
+			html,
+			body {
+				margin: 0;
+				padding: 0;
+				background: transparent;
+				color: var(--maestro-text-main, CanvasText);
+				font-family:
+					-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+				font-size: 14px;
+				line-height: 1.5;
+			}
+			/* flow-root keeps child margins inside the block, so its height is the frame's height. */
+			.dataview-block {
+				display: flow-root;
+				overflow-x: auto;
+			}
+			a {
+				color: var(--maestro-accent, LinkText);
+				cursor: pointer;
+				text-decoration: none;
+			}
+			a:hover {
+				text-decoration: underline;
+			}
+			a.is-unresolved {
+				opacity: 0.7;
+			}
+			table.dataview {
+				border-collapse: collapse;
+				margin: 0.5em 0;
+			}
+			table.dataview th,
+			table.dataview td {
+				border: 1px solid var(--maestro-border, GrayText);
+				padding: 4px 8px;
+				text-align: left;
+				vertical-align: top;
+			}
+			table.dataview th {
+				font-weight: 600;
+			}
+			.dataview.small-text {
+				margin-left: 0.5em;
+				color: var(--maestro-text-dim, GrayText);
+				font-size: 0.8em;
+				font-weight: normal;
+			}
+			pre.dataview-error {
+				margin: 0.5em 0;
+				padding: 8px 10px;
+				border-left: 3px solid var(--maestro-error, #d14);
+				white-space: pre-wrap;
+				word-break: break-word;
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+				font-size: 0.9em;
+			}
+			.dataview-error-box,
+			.dataview-warning {
+				margin: 0.5em 0;
+				color: var(--maestro-text-dim, GrayText);
+			}
+			.dataview-error-message {
+				margin: 0;
+			}
+			ul.contains-task-list {
+				padding-left: 1.2em;
+				list-style: none;
+			}
+			li.task-list-item > input[type='checkbox'] {
+				margin: 0 0.4em 0 -1.2em;
+				vertical-align: middle;
+			}
+			li.task-list-item.is-checked {
+				color: var(--maestro-text-dim, GrayText);
+			}
+			code,
+			pre {
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+		</style>
+	</head>
+	<body>
+		<div id="dataview-root"></div>
+		<!-- @dataview-guest-runtime -->
+	</body>
+</html>

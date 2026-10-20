@@ -49,6 +49,63 @@ const VIDEO_MIME_TYPES: Record<string, string> = {
 
 export type MediaKind = 'audio' | 'video';
 
+/** One entry in the play queue. */
+export interface MediaItem {
+	/** Stable per agent + path, so re-opening the same file resumes it. */
+	id: string;
+	path: string;
+	/** Filename including the extension, shown in the player's title bar. */
+	name: string;
+	/** Agent the file was opened from, so the player can say where it came from. */
+	sessionId: string;
+	sessionName: string;
+	kind: MediaKind;
+}
+
+/**
+ * Identity of a media item.
+ *
+ * Keyed on agent + path rather than a generated ID so re-opening the same file
+ * lands on the same queue entry and picks up its remembered position, instead
+ * of stacking duplicates that all start from zero.
+ */
+export function mediaItemId(sessionId: string, path: string): string {
+	return `${sessionId}::${path}`;
+}
+
+/**
+ * Coerce a persisted queue back into media items, dropping anything malformed.
+ *
+ * Entries are read straight off disk and handed to a media element, so a
+ * hand-edited or half-written settings file must not be able to put a
+ * non-string path into the player.
+ */
+export function sanitizeMediaItems(value: unknown): MediaItem[] {
+	if (!Array.isArray(value)) return [];
+	const seen = new Set<string>();
+	const items: MediaItem[] = [];
+	for (const entry of value) {
+		if (typeof entry !== 'object' || entry === null) continue;
+		const { path, name, sessionId, sessionName, kind } = entry as Record<string, unknown>;
+		if (typeof path !== 'string' || !path) continue;
+		if (typeof name !== 'string' || !name) continue;
+		if (typeof sessionId !== 'string' || !sessionId) continue;
+		if (kind !== 'audio' && kind !== 'video') continue;
+		const id = mediaItemId(sessionId, path);
+		if (seen.has(id)) continue;
+		seen.add(id);
+		items.push({
+			id,
+			path,
+			name,
+			sessionId,
+			sessionName: typeof sessionName === 'string' ? sessionName : '',
+			kind,
+		});
+	}
+	return items;
+}
+
 /**
  * What opening a playable audio/video file should do.
  *

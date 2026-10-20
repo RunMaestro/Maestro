@@ -1,9 +1,11 @@
 import React from 'react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { AutoRun } from '../../../../renderer/components/AutoRun';
 import { LayerStackProvider } from '../../../../renderer/contexts/LayerStackContext';
 import { mockTheme } from '../../../helpers/mockTheme';
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
+import { Link, toWireValue } from '../../../../shared/dataview';
 
 /**
  * The Auto Run preview through the REAL markdown pipeline.
@@ -293,5 +295,84 @@ describe('Auto Run preview file links', () => {
 
 		expect(container.querySelector('a')).toBeNull();
 		expect(container.textContent).toContain('[[Nothing/Here]]');
+	});
+});
+
+describe('Auto Run preview Dataview blocks', () => {
+	const DATAVIEW_DOC = '# Doc\n\n- [ ] own task\n\n```dataview\nLIST FROM "Notes"\n```\n';
+	let documentCounter = 0;
+
+	const setDataviewEnabled = (enabled: boolean) =>
+		useSettingsStore.setState((state) => ({
+			encoreFeatures: { ...state.encoreFeatures, dataview: enabled },
+		}));
+
+	/** A list result of links, answered for every query (paths relative to the folder root). */
+	const answerWithLinks = (paths: string[]) =>
+		vi.fn().mockResolvedValue({
+			root: '/test/folder',
+			sshRemoteId: null,
+			revision: 1,
+			path: 'doc.md',
+			result: {
+				kind: 'list',
+				items: paths.map((p) => toWireValue(Link.file(p))),
+				idMeaning: { type: 'path' },
+				warnings: [],
+			},
+		});
+
+	beforeEach(() => {
+		(window as any).maestro.dataview = {
+			query: vi.fn(() => new Promise(() => {})),
+			queryInline: vi.fn(() => new Promise(() => {})),
+			onChanged: vi.fn(() => () => {}),
+		};
+		setDataviewEnabled(true);
+	});
+
+	afterEach(() => setDataviewEnabled(false));
+
+	// A distinct document per test keeps the module-level result cache from leaking.
+	const nextDocument = () => `dataview-${++documentCounter}`;
+
+	it('runs the block against the document on screen and its agent', () => {
+		const selectedFile = nextDocument();
+		const { container } = renderPreview(DATAVIEW_DOC, { selectedFile });
+
+		expect(container.querySelector('[data-dataview-block]')).toBeTruthy();
+		expect((window as any).maestro.dataview.query).toHaveBeenCalledWith({
+			filePath: `/test/folder/${selectedFile}.md`,
+			source: 'LIST FROM "Notes"',
+			agentId: 'session-1',
+		});
+	});
+
+	it('renders the fence as code while the Encore Feature is off', () => {
+		setDataviewEnabled(false);
+		const { container } = renderPreview(DATAVIEW_DOC, { selectedFile: nextDocument() });
+
+		expect(container.querySelector('[data-dataview-block]')).toBeNull();
+		expect(container.textContent).toContain('LIST FROM "Notes"');
+		expect((window as any).maestro.dataview.query).not.toHaveBeenCalled();
+	});
+
+	it('selects a playbook in the folder and opens anything else as a project file', async () => {
+		(window as any).maestro.dataview.query = answerWithLinks(['Other.md', 'img/chart.png']);
+		const onSelectDocument = vi.fn();
+		const onOpenProjectFile = vi.fn();
+		renderPreview(DATAVIEW_DOC, {
+			selectedFile: nextDocument(),
+			onSelectDocument,
+			onOpenProjectFile,
+		});
+
+		fireEvent.click(await screen.findByText('Other'));
+		expect(onSelectDocument).toHaveBeenCalledWith('Other');
+
+		fireEvent.click(screen.getByText('chart.png'));
+		expect(onOpenProjectFile).toHaveBeenCalledWith('/test/folder/img/chart.png', {
+			openInNewTab: false,
+		});
 	});
 });

@@ -40,6 +40,7 @@ import {
 } from '../ui/KeyValueRows';
 import { validateSshOption } from '../../../shared/sshOptions';
 import { useSaveShortcut } from '../../hooks';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 /**
  * SSH config host entry from ~/.ssh/config
@@ -611,10 +612,9 @@ export function SshRemoteModal({
 							</button>
 							{showSshConfigDropdown && (
 								<div
-									className="absolute top-full left-0 right-0 mt-1 rounded border shadow-lg z-10 outline-none"
+									className="absolute top-full left-0 right-0 mt-1 rounded z-10 outline-none"
 									style={{
-										backgroundColor: theme.colors.bgMain,
-										borderColor: theme.colors.border,
+										...elevatedSurfaceStyle(theme),
 									}}
 									onKeyDown={handleDropdownKeyDown}
 									role="listbox"

@@ -27,6 +27,7 @@ import { notifyToast } from '../stores/notificationStore';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { useClickOutside } from '../hooks/ui/useClickOutside';
+import { elevatedSurfaceStyle } from '../utils/elevatedSurface';
 
 const GITHUB_LOGO_URL = 'https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png';
 
@@ -733,10 +734,9 @@ export function AchievementShareButton({
 
 			{shareMenuOpen && (
 				<div
-					className="absolute right-0 top-full mt-1 p-1.5 rounded-lg shadow-xl z-50"
+					className="absolute right-0 top-full mt-1 p-1.5 rounded-lg z-50"
 					style={{
-						backgroundColor: theme.colors.bgSidebar,
-						border: `1px solid ${theme.colors.border}`,
+						...elevatedSurfaceStyle(theme),
 					}}
 				>
 					<button

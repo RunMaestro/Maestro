@@ -968,6 +968,65 @@ export function formatDirectorNotesHistory(
 	return lines.join('\n');
 }
 
+// Plain-text tables
+
+/** The narrowest a column shrinks to when a table is capped to the terminal width. */
+const MIN_TABLE_COLUMN_WIDTH = 5;
+
+export interface TextTableOptions {
+	/**
+	 * Cap each line at this many characters (usually `process.stdout.columns`). The widest columns
+	 * shrink first and their cells are truncated with an ellipsis; no column goes below
+	 * {@link MIN_TABLE_COLUMN_WIDTH}, so a very narrow terminal can still wrap. Uncapped when omitted.
+	 */
+	maxWidth?: number;
+}
+
+/** The largest per-column cap at which every column fits `budget`, never below the minimum. */
+function capColumnWidths(widths: number[], budget: number): number[] {
+	const total = (cap: number) => widths.reduce((sum, width) => sum + Math.min(width, cap), 0);
+	if (total(Infinity) <= budget) return widths;
+	let low = MIN_TABLE_COLUMN_WIDTH;
+	let high = Math.max(low, ...widths);
+	while (low < high) {
+		const mid = Math.ceil((low + high) / 2);
+		if (total(mid) <= budget) low = mid;
+		else high = mid - 1;
+	}
+	return widths.map((width) => Math.min(width, low));
+}
+
+/**
+ * Lay `rows` out under `headers` as plain-text columns: each column as wide as its widest cell, two
+ * spaces between columns, the last column unpadded and trailing spaces trimmed. Newlines and tabs in a
+ * cell become spaces so a row stays on one line.
+ */
+export function formatTextTable(
+	headers: string[],
+	rows: string[][],
+	options: TextTableOptions = {}
+): string {
+	const clean = (cell: string) => cell.replace(/[\r\n\t]+/g, ' ');
+	const lines = [headers, ...rows].map((row) => headers.map((_, i) => clean(row[i] ?? '')));
+	const natural = headers.map((_, i) => Math.max(...lines.map((line) => line[i].length)));
+	const gaps = 2 * Math.max(0, headers.length - 1);
+	const widths =
+		options.maxWidth === undefined
+			? natural
+			: capColumnWidths(natural, Math.max(0, options.maxWidth - gaps));
+	return lines
+		.map((line) =>
+			line
+				.map((cell, i) => {
+					const text = truncate(cell, widths[i]);
+					return i === line.length - 1 ? text : text.padEnd(widths[i]);
+				})
+				.join('  ')
+				.trimEnd()
+		)
+		.join('\n');
+}
+
 // Error formatting
 export function formatError(message: string): string {
 	return `${c('red', '✗')} ${c('red', 'Error:')} ${message}`;

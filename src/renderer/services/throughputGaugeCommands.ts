@@ -21,19 +21,36 @@ import {
 import { applyThroughputGaugeSettingsPatch } from '../../shared/throughputGauge';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useThroughputGaugeStore } from '../stores/throughputGaugeStore';
+import { floatingWidgetsAvailable } from '../utils/floatingWidgetMode';
 
-/** The gauge as it stands right now, read from the live stores. */
-export function readThroughputGaugeStatus(): ThroughputGaugeStatus {
+/**
+ * The gauge as it stands right now, read from the live stores. `window` asks
+ * the main process for the floating window's bounds, so the read is async; it
+ * is null in the browser build (an in-app card) and whenever the gauge is off
+ * or hidden.
+ */
+export async function readThroughputGaugeStatus(): Promise<ThroughputGaugeStatus> {
 	const { encoreFeatures, throughputGaugeSettings } = useSettingsStore.getState();
 	const { visible, rates, peak } = useThroughputGaugeStore.getState();
+	const enabled = encoreFeatures?.throughputGauge === true;
+	const windowBounds =
+		enabled && visible && floatingWidgetsAvailable() ? await readGaugeWindowBounds() : null;
 	return {
-		enabled: encoreFeatures?.throughputGauge === true,
+		enabled,
 		visible,
 		settings: { ...throughputGaugeSettings },
 		rates: { ...rates },
 		peak: { ...peak },
 		windowMs: throughputGaugeSettings.windowMs,
+		window: windowBounds,
 	};
+}
+
+async function readGaugeWindowBounds(): Promise<ThroughputGaugeStatus['window']> {
+	const bounds = await window.maestro.floatingWidgets.getBounds('throughput-gauge');
+	if (!bounds) return null;
+	const { x, y, width, height } = bounds;
+	return { x, y, width, height };
 }
 
 /**
@@ -50,7 +67,7 @@ export function readThroughputGaugeStatus(): ThroughputGaugeStatus {
 export async function runRemoteThroughputGaugeCommand(
 	request: ThroughputGaugeCommandRequest
 ): Promise<ThroughputGaugeCommandResult> {
-	const status = readThroughputGaugeStatus();
+	const status = await readThroughputGaugeStatus();
 	if (request.action === 'status') return { success: true, status };
 	if (!status.enabled) return { success: false, error: THROUGHPUT_GAUGE_DISABLED_ERROR };
 
@@ -82,5 +99,5 @@ export async function runRemoteThroughputGaugeCommand(
 			break;
 		}
 	}
-	return { success: true, status: readThroughputGaugeStatus() };
+	return { success: true, status: await readThroughputGaugeStatus() };
 }

@@ -82,6 +82,18 @@ describe('wireMultiWindowTelemetry', () => {
 		expect(db.recordWindowOpened).toHaveBeenNthCalledWith(2, expect.any(Number), 3);
 	});
 
+	it('ignores feature windows: a floating widget is neither recorded nor counted', () => {
+		const db = makeStatsDb();
+		wireMultiWindowTelemetry(registry, { getStatsDb: () => db });
+
+		registry.create({ windowId: 'main', browserWindow: makeWindow(), isMain: true });
+		registry.create({ windowId: 'gauge', browserWindow: makeWindow(), kind: 'floating-widget' });
+		registry.create({ windowId: 'w2', browserWindow: makeWindow(), isMain: false });
+
+		expect(db.recordWindowOpened).toHaveBeenCalledTimes(1);
+		expect(db.recordWindowOpened).toHaveBeenCalledWith(expect.any(Number), 2);
+	});
+
 	it('records nothing when statsCollectionEnabled is false', () => {
 		const db = makeStatsDb();
 		const settingsStore = { get: vi.fn(() => false) };

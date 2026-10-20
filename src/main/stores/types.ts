@@ -9,6 +9,7 @@ import type { SshRemoteConfig, Group } from '../../shared/types';
 import type { AgentCapabilitiesSnapshotMap } from '../../shared/agentCapabilities';
 import type { MultiWindowState } from '../../shared/window-types';
 import type { QuickChatSettings, QuickChatWindowBounds } from '../../shared/quickChat';
+import type { FloatingWidgetBounds, FloatingWidgetId } from '../../shared/floatingWidgets';
 import type { ThroughputGaugeSettings } from '../../shared/throughputGauge';
 import type { KeyboardMode } from '../../shared/shortcut-types';
 
@@ -236,6 +237,8 @@ export interface WindowState {
 	multiWindow?: MultiWindowState;
 	/** Where the user left the Quick Chat window (see `QuickChatWindowBounds`). */
 	quickChat?: QuickChatWindowBounds;
+	/** Where the user left each floating widget window (see `FloatingWidgetBounds`). */
+	floatingWidgets?: Partial<Record<FloatingWidgetId, FloatingWidgetBounds>>;
 }
 
 // ============================================================================

@@ -5,6 +5,7 @@ import { GhostIconButton } from '../../ui/GhostIconButton';
 import { buildMaestroUrl } from '../../../utils/buildMaestroUrl';
 import { openUrl } from '../../../utils/openUrl';
 import type { MarketplaceHeaderProps } from '../types';
+import { elevatedSurfaceStyle } from '../../../utils/elevatedSurface';
 
 export const MarketplaceHeader = forwardRef<HTMLButtonElement, MarketplaceHeaderProps>(
 	function MarketplaceHeader(
@@ -47,10 +48,9 @@ export const MarketplaceHeader = forwardRef<HTMLButtonElement, MarketplaceHeader
 						</button>
 						{showHelp && (
 							<div
-								className="absolute top-full left-0 mt-2 w-96 p-4 rounded-lg shadow-xl z-50"
+								className="absolute top-full left-0 mt-2 w-96 p-4 rounded-lg z-50"
 								style={{
-									backgroundColor: theme.colors.bgSidebar,
-									border: `1px solid ${theme.colors.border}`,
+									...elevatedSurfaceStyle(theme),
 								}}
 							>
 								<h3 className="text-sm font-semibold mb-2" style={{ color: theme.colors.textMain }}>

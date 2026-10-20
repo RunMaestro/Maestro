@@ -1,3 +1,5 @@
+import { FIRST_PARTY_PLUGINS } from './plugins/first-party';
+
 /**
  * Default Encore Feature flags - the one copy.
  *
@@ -27,6 +29,7 @@ export const ENCORE_FEATURE_DEFAULTS = {
 	quickChat: true,
 	maestroRun: false,
 	throughputGauge: false,
+	dataview: false,
 } as const satisfies Readonly<Record<string, boolean>>;
 
 /** The flag shape these defaults describe, derived so the two cannot drift. */
@@ -85,4 +88,23 @@ export function requireEncoreFeature(
 	code: string
 ): void {
 	if (!isEncoreFeatureEnabled(settingsStore, flag)) throw new Error(code);
+}
+
+/** The name the Plugins tab shows for a feature. */
+export function encoreFeatureName(flag: keyof EncoreFeatureDefaults): string {
+	return flag === 'plugins' ? 'Community Plugins' : FIRST_PARTY_PLUGINS[flag].name;
+}
+
+/** `computerHistory` -> `computer-history`, a spelling `maestro-cli encore enable` accepts. */
+export function encoreFeatureCliName(flag: keyof EncoreFeatureDefaults): string {
+	return flag.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
+}
+
+/**
+ * What a request for a switched-off feature says, in every process: the CLI's
+ * gated verbs and a main-process service that refuses with readable text
+ * rather than a `XDisabled` code.
+ */
+export function encoreDisabledMessage(flag: keyof EncoreFeatureDefaults): string {
+	return `${encoreFeatureName(flag)} is turned off. Turn it on in Settings > Plugins, or run: maestro-cli encore enable ${encoreFeatureCliName(flag)}`;
 }

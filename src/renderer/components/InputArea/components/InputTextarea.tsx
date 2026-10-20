@@ -1,26 +1,16 @@
-import React, {
-	memo,
-	useCallback,
-	useEffect,
-	useLayoutEffect,
-	useMemo,
-	useRef,
-	useState,
-} from 'react';
+import React, { memo, useMemo } from 'react';
 import type { Session, Group, Theme } from '../../../types';
 import { getProviderDisplayName } from '../../../utils/sessionValidation';
 import { useSettingsStore } from '../../../stores/settingsStore';
-import { tokenizeMentions } from '../../../../shared/mentionPatterns';
-import { getMentionChipColors } from '../../MentionChip';
-import {
-	resolveAgentMention,
-	resolveFileMentionIconColor,
-} from '../../../utils/mentionChipResolve';
 import { useSessionStore } from '../../../stores/sessionStore';
 import { buildKnownMentionNameSet } from '../../../hooks/input/useAgentMentionCompletion';
 import { KEYSTROKE_TEXTAREA_MAX_HEIGHT } from '../../../utils/textareaSizing';
-import { useEventListener } from '../../../hooks/utils/useEventListener';
 import { useFixedPitchFont } from '../../../hooks/ui/useFixedPitchFont';
+import {
+	MENTION_OVERLAY_TYPOGRAPHY,
+	MentionChipOverlay,
+	useMentionChipOverlay,
+} from '../../MentionChipOverlay';
 
 interface InputTextareaProps {
 	session: Session;
@@ -53,26 +43,12 @@ interface InputTextareaProps {
 }
 
 /**
- * Typography the native textarea and the decorative overlay MUST share
- * exactly, or the mention highlights drift away from the caret. Pulled into one
- * constant so the two layers can never disagree (font size / line height /
- * family / letter spacing). Padding is kept in sync separately: the textarea
- * uses `pt-3 pl-3 pr-3 pb-1` classes; the overlay mirrors them as
- * `0.75rem 0.75rem 0.25rem 0.75rem` below. The 12px top + 4px bottom padding is
+ * Overlay padding. Must stay identical to the textarea's `pt-3 pr-3 pb-1 pl-3`,
+ * or the chip overlay drifts off the caret. The 12px top + 4px bottom padding is
  * deliberate: it leaves exactly 160px of text inside the 176px cap, i.e. 8 whole
  * 20px rows, so bottom-snapping can never leave a partially sliced row.
  */
-const SHARED_TYPOGRAPHY: React.CSSProperties = {
-	fontSize: '0.875rem',
-	lineHeight: '1.25rem',
-	fontFamily: 'inherit',
-	letterSpacing: 'normal',
-	// Must be shared: Chrome does not auto-apply break-word to a <textarea>, so a
-	// long unbroken token (e.g. `@src/a/really/long/path.ts`) would wrap in the
-	// decorative overlay but overflow-scroll in the textarea, drifting the chips
-	// off the caret. Keeping it here syncs both layers.
-	wordBreak: 'break-word',
-};
+const OVERLAY_PADDING = '0.75rem 0.75rem 0.25rem 0.75rem';
 
 // Stable empty references so the gated sessions/groups selectors return the same
 // value on every render while the composer has no `@` - no re-render churn from
@@ -138,14 +114,9 @@ export const InputTextarea = memo(function InputTextarea({
 	handlePaste,
 	handleDrop,
 }: InputTextareaProps) {
-	const colorBlindMode = useSettingsStore((state) => state.colorBlindMode);
-
 	// The chip overlay is an AI-mode enhancement. In terminal mode (shell
 	// commands) the textarea behaves exactly as before: opaque text, no overlay.
 	const overlayEnabled = !isTerminalMode;
-
-	const overlayRef = useRef<HTMLDivElement>(null);
-	const [hasSelection, setHasSelection] = useState(false);
 
 	// The mentionable agent/group roster (from this agent's vantage point).
 	// A bare `@word` only lights up when it names a known agent/group; unknown
@@ -166,106 +137,13 @@ export const InputTextarea = memo(function InputTextarea({
 		[hasMentionCandidate, sessions, groups, session.id]
 	);
 
-	// Tokenize the raw input into text / file / agent segments. Same source of
-	// truth as the picker + dispatch scanner, so the overlay can never disagree
-	// about what counts as a mention.
-	const segments = useMemo(
-		() => (overlayEnabled ? tokenizeMentions(inputValue, knownMentionNames) : []),
-		[overlayEnabled, inputValue, knownMentionNames]
-	);
-	const overlayRendered = overlayEnabled && segments.some((segment) => segment.kind !== 'text');
-	const overlayVisible = overlayRendered && !hasSelection;
-
-	const updateSelectionState = (target: HTMLTextAreaElement) => {
-		const nextHasSelection = target.selectionStart !== target.selectionEnd;
-		setHasSelection((current) => (current === nextHasSelection ? current : nextHasSelection));
-	};
-
-	// `hasSelection` is only ever cleared by an event fired ON the focused
-	// textarea, so it would stay stuck `true` whenever the overlay stops
-	// listening while a range is selected: switching to terminal mode, or
-	// deleting the last mention out of the draft. The chip would then come back
-	// invisible on the next render. Clear the flag whenever the decorative layer
-	// is not rendered (blur is handled on the textarea's own onBlur).
-	useEffect(() => {
-		if (!overlayRendered) setHasSelection(false);
-	}, [overlayRendered]);
-
-	// React's textarea onSelect fires on mouseup, after a drag selection has
-	// already become visible. Track the document selectionchange event so the
-	// decorative layer disappears during the drag itself.
-	useEventListener(
-		'selectionchange',
-		() => {
-			const textarea = inputRef.current;
-			if (!textarea || document.activeElement !== textarea) return;
-			updateSelectionState(textarea);
-		},
-		{
-			target: typeof document !== 'undefined' ? document : null,
-			enabled: overlayRendered,
-		}
-	);
-
-	// Keep the decorative overlay pinned to the textarea's scroll position so the
-	// mention highlights track the text as the input grows past one line.
-	const syncOverlayScroll = useCallback((target: HTMLTextAreaElement) => {
-		const el = overlayRef.current;
-		if (!el) return;
-		el.scrollTop = target.scrollTop;
-		el.scrollLeft = target.scrollLeft;
-	}, []);
-
-	// Re-sync AFTER the taller overlay has been committed. A keystroke that wraps a
-	// new line makes the browser natively scroll the textarea BEFORE React commits
-	// the grown overlay content, so the `onScroll` sync assigns a scrollTop the
-	// overlay cannot reach yet and the browser clamps it one row short - leaving the
-	// glyphs above the caret and the newest line clipped, with no later event to
-	// repair it. Running the copy in a layout effect keyed on the rendered segments
-	// means the overlay already has its full scrollHeight, so the same scrollTop now
-	// lands unclamped. `onScroll` still owns user-driven scrolling.
-	useLayoutEffect(() => {
-		if (!overlayEnabled) return;
-		const textarea = inputRef.current;
-		if (!textarea || !overlayRef.current) return;
-		syncOverlayScroll(textarea);
-	}, [segments, overlayEnabled, inputRef, syncOverlayScroll]);
-
-	// Chip palette shared with the sent-transcript pill (same fill + border), so
-	// the mention reads as the same object whether the user is typing it or reading
-	// it back in a bubble.
-	const chipColors = useMemo(() => getMentionChipColors(theme), [theme]);
-
-	// Style for a single mention chip in the LIVE overlay. The overlay sits behind
-	// the native <textarea>, so it draws only the chip background and border while
-	// the textarea remains the sole source of visible glyphs, caret, and selection.
-	// The decoration must add ZERO inline advance or it drifts off the native text
-	// (measured >200px on a long path). Two tricks keep it width-exact:
-	//   1. The border is drawn with `inset box-shadow`, never `border`/`outline`,
-	//      because box-shadow does not participate in layout.
-	//   2. The horizontal padding is cancelled by an equal negative margin, so the
-	//      fill/rounding read as a padded chip while the glyph run advances exactly
-	//      as unstyled text.
-	// The bleed is kept SMALLER than the transcript pill's 6px (px-1.5) on purpose:
-	// because it adds zero advance, the fill overhangs into the single space that
-	// follows the token, and a 6px overhang swallowed nearly all of a ~8px
-	// monospace space - leaving the chip visually glued to the next word. 3px keeps
-	// a padded look while exposing most of the trailing space as real breathing room
-	// (the transcript pill has no caret to track, so it uses full real padding).
-	// The type color (file-extension / agent color that the sent pill puts on its
-	// icon) becomes a 2px inset accent stripe on the left, so files vs agents still
-	// read differently without an icon glyph (an icon WOULD change the advance).
-	// box-decoration-break keeps the fill/border intact if a long mention wraps.
-	const mentionChipStyle = (typeColor: string): React.CSSProperties => ({
-		backgroundColor: chipColors.bg,
-		color: 'transparent',
-		borderRadius: '6px',
-		padding: '0 3px',
-		margin: '0 -3px',
-		boxShadow: `inset 0 0 0 1px ${chipColors.border}, inset 2px 0 0 ${typeColor}`,
-		boxDecorationBreak: 'clone',
-		WebkitBoxDecorationBreak: 'clone',
+	const mentionOverlay = useMentionChipOverlay({
+		inputRef,
+		value: inputValue,
+		enabled: overlayEnabled,
+		knownMentionNames,
 	});
+	const { overlayRendered } = mentionOverlay;
 
 	// Command mode borrows the terminal composer's `$` affordance so the switch
 	// is visible before you hit Enter. AI command mode deliberately does not: its
@@ -291,62 +169,20 @@ export const InputTextarea = memo(function InputTextarea({
 					$
 				</span>
 			)}
-			{overlayRendered && (
-				<div
-					ref={overlayRef}
-					aria-hidden="true"
-					className="maestro-input-text-overlay pointer-events-none absolute inset-0 overflow-hidden"
-					style={{
-						// wordBreak comes from SHARED_TYPOGRAPHY so it stays in sync with
-						// the textarea; only overlay-specific props are set here.
-						...SHARED_TYPOGRAPHY,
-						// Track the textarea's command-mode font override exactly. The
-						// overlay is enabled for everything but terminal mode, so a command
-						// -mode draft containing an `@mention` puts this decoration under
-						// monospace glyphs - measured on a different font, every chip lands
-						// off the word it belongs to.
-						fontFamily: showShellPrefix ? shellFontFamily : undefined,
-						zIndex: 0,
-						whiteSpace: 'pre-wrap',
-						// Must stay identical to the textarea's `pt-3 pr-3 pb-1 pl-3`, or the
-						// chip overlay drifts off the caret (see SHARED_TYPOGRAPHY).
-						padding: '0.75rem 0.75rem 0.25rem 0.75rem',
-						// The overlay paints decoration only. Keeping every glyph transparent
-						// prevents doubled text during typing and selection.
-						color: 'transparent',
-						visibility: overlayVisible ? 'visible' : 'hidden',
-					}}
-				>
-					{segments.map((seg, i) => {
-						if (seg.kind === 'text') {
-							return <span key={i}>{seg.value}</span>;
-						}
-						// Render the mention as a width-EXACT chip behind the raw token
-						// (`@path` / `@name`). It keeps the sent pill's fill + border + a
-						// type-color accent, but NOT its icon or truncated label: those change
-						// the glyph advance and drift from the native caret (see mentionChipStyle).
-						// The compact icon+truncation pill still renders in the sent transcript
-						// (RenderedMentionChip), where there is no caret to keep aligned.
-						const typeColor =
-							seg.kind === 'file'
-								? resolveFileMentionIconColor(seg.extension, theme, colorBlindMode)
-								: resolveAgentMention(seg.name, theme).color;
-						return (
-							<span key={i} style={mentionChipStyle(typeColor)}>
-								{seg.value}
-							</span>
-						);
-					})}
-					{inputValue.endsWith('\n') && (
-						<span data-testid="maestro-input-overlay-trailing-line">{'\u200b'}</span>
-					)}
-				</div>
-			)}
+			<MentionChipOverlay
+				overlay={mentionOverlay}
+				theme={theme}
+				padding={OVERLAY_PADDING}
+				// Track the textarea's command-mode font override exactly. The overlay
+				// is enabled for everything but terminal mode, so a command-mode draft
+				// containing an `@mention` puts this decoration under monospace glyphs.
+				fontFamily={showShellPrefix ? shellFontFamily : undefined}
+			/>
 			<textarea
 				ref={inputRef}
 				className={`relative flex-1 bg-transparent text-sm outline-none ${showShellPrefix ? 'pl-1.5' : 'pl-3'} pt-3 pr-3 pb-1 resize-none min-h-[3.5rem] scrollbar-thin`}
 				style={{
-					...SHARED_TYPOGRAPHY,
+					...MENTION_OVERLAY_TYPOGRAPHY,
 					// Native text is always visible. The overlay underneath contributes only
 					// the mention chip decoration, never a second copy of the glyphs.
 					color: theme.colors.textMain,
@@ -357,7 +193,7 @@ export const InputTextarea = memo(function InputTextarea({
 					// Sit above the decorative overlay so the caret + native selection win.
 					zIndex: overlayRendered ? 1 : undefined,
 					// Shell text is a grid, so command mode overrides the composer font
-					// with a measured fixed-pitch stack. Set after SHARED_TYPOGRAPHY so it
+					// with a measured fixed-pitch stack. Set after MENTION_OVERLAY_TYPOGRAPHY so it
 					// wins, and left undefined in agent mode so the shared value stands.
 					fontFamily: showShellPrefix ? shellFontFamily : undefined,
 				}}
@@ -379,18 +215,15 @@ export const InputTextarea = memo(function InputTextarea({
 				spellCheck={spellCheckEnabled}
 				onFocus={onInputFocus}
 				onBlur={() => {
-					// Chromium stops painting the selection once the textarea loses focus,
-					// so the decoration has to come back with it. Without this the chip
-					// stays hidden until the user clicks back in and collapses the caret.
-					setHasSelection(false);
+					mentionOverlay.onBlur();
 					onInputBlur?.();
 				}}
 				onChange={(e) => {
-					updateSelectionState(e.currentTarget);
+					mentionOverlay.onSelectionChange(e.currentTarget);
 					onChange(e);
 				}}
-				onSelect={(e) => updateSelectionState(e.currentTarget)}
-				onScroll={overlayRendered ? (e) => syncOverlayScroll(e.currentTarget) : undefined}
+				onSelect={(e) => mentionOverlay.onSelectionChange(e.currentTarget)}
+				onScroll={mentionOverlay.onScroll}
 				onKeyDown={handleInputKeyDown}
 				onPaste={handlePaste}
 				onDrop={(e) => {

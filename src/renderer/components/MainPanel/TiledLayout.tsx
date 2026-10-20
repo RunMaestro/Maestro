@@ -62,6 +62,7 @@ import type {
 	Theme,
 	UnifiedTabRef,
 } from '../../types';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 /**
  * Action handlers a tiled pane's dropdown can invoke, bundled into one prop so a
@@ -382,6 +383,7 @@ function TiledFilePane({
 					htmlRenderMode={fileTab.htmlRenderMode}
 					onHtmlRenderModeChange={(value) => store.setFileTabHtmlRenderMode(fileTabId, value)}
 					sshRemoteId={filePreviewSshRemoteId}
+					sessionId={session.id}
 					// File/wiki links inside the document, resolved against the same tree
 					// and proximity cwd the single view uses.
 					fileTree={actions?.fileTree}
@@ -780,12 +782,11 @@ function PaneActionsMenu({
 						{/* Click-away backdrop: any click outside the menu closes it. */}
 						<div className="fixed inset-0 z-[99]" onClick={close} onContextMenu={close} />
 						<div
-							className="fixed z-[100] shadow-xl overflow-hidden whitespace-nowrap"
+							className="fixed z-[100] overflow-hidden whitespace-nowrap"
 							style={{
 								top: pos.top,
 								left: pos.left,
-								backgroundColor: theme.colors.bgSidebar,
-								border: `1px solid ${theme.colors.border}`,
+								...elevatedSurfaceStyle(theme),
 								borderRadius: '8px',
 								minWidth: '12.5rem',
 							}}

@@ -60,6 +60,7 @@ function renderPreview(options: {
 	content: string;
 	onFileClick?: FileClickHandler;
 	onExternalLinkClick?: ExternalClickHandler;
+	fenceRenderers?: React.ComponentProps<typeof MarkdownPreviewFast>['fenceRenderers'];
 }) {
 	const containerRef = { current: null } as React.MutableRefObject<HTMLDivElement | null>;
 	const result = render(
@@ -69,6 +70,7 @@ function renderPreview(options: {
 			markdownContainerRef={containerRef}
 			onFileClick={options.onFileClick}
 			onExternalLinkClick={options.onExternalLinkClick}
+			fenceRenderers={options.fenceRenderers}
 		/>
 	);
 	return { ...result, containerRef };
@@ -267,6 +269,27 @@ describe('MarkdownPreviewFast', () => {
 
 		it('handles empty content without throwing', () => {
 			expect(() => renderPreview({ content: '' })).not.toThrow();
+		});
+
+		it('renders a top-level fence through its React renderer inside the block wrapper', () => {
+			const FenceRenderer = ({ code }: { code: string }) => (
+				<div data-testid="fence-renderer">{code}</div>
+			);
+			const { container } = renderPreview({
+				content: '# Notes\n\n```dataview\nLIST\n```\n\n```js\nx\n```',
+				fenceRenderers: { dataview: FenceRenderer },
+			});
+			const rendered = screen.getByTestId('fence-renderer');
+			expect(rendered.textContent).toBe('LIST');
+			const wrapper = rendered.closest('.markdown-fast-block');
+			expect(wrapper?.getAttribute('data-block-index')).toBe('1');
+			// Other fences keep the HTML path.
+			expect(container.querySelector('pre code.language-js')).toBeTruthy();
+		});
+
+		it('renders a dataview fence as HTML code without fence renderers', () => {
+			const { container } = renderPreview({ content: '```dataview\nLIST\n```' });
+			expect(container.querySelector('pre code.language-dataview')?.textContent).toContain('LIST');
 		});
 
 		it('emits id attributes on rendered heading blocks', () => {

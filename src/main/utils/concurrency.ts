@@ -71,3 +71,12 @@ export async function mapWithConcurrency<T, R>(
 	await Promise.all(workers);
 	return results;
 }
+
+/**
+ * Yield to the event loop once. Long synchronous work in the main process (a
+ * parse loop, a scan over many stores) calls this between batches so IPC and
+ * timers get a turn and the app stays responsive.
+ */
+export function yieldToEventLoop(): Promise<void> {
+	return new Promise((resolve) => setImmediate(resolve));
+}

@@ -25,6 +25,10 @@ describe('ENCORE_FEATURE_DEFAULTS', () => {
 	it('ships the Throughput Gauge off', () => {
 		expect(ENCORE_FEATURE_DEFAULTS.throughputGauge).toBe(false);
 	});
+
+	it('ships Dataview off', () => {
+		expect(ENCORE_FEATURE_DEFAULTS.dataview).toBe(false);
+	});
 });
 
 describe('resolveEncoreFeatures', () => {

@@ -45,7 +45,7 @@ import { useEffect } from 'react';
 import { GROUP_CHAT_PREFIX } from '../../../shared/maestro-lib/groupchat/session-ids';
 import {
 	createThroughputTracker,
-	type ThroughputRates,
+	ZERO_THROUGHPUT_RATES,
 	type ThroughputSample,
 } from '../../../shared/throughputRate';
 import { useOwnedSessionGate } from '../../hooks/agent/internal/useOwnedSessionGate';
@@ -56,8 +56,6 @@ import { parseSessionId } from '../../utils/sessionIdParser';
 
 /** How often the gauge reads the engine and publishes to the store. */
 export const THROUGHPUT_PUBLISH_MS = 250;
-
-const ZERO_RATES: ThroughputRates = { in: 0, out: 0, combined: 0 };
 
 /**
  * The one engine instance. Module-level so the hook's effect can re-subscribe
@@ -153,7 +151,7 @@ export function useThroughputCapture(): void {
 			// showing the rate, the peak, or the sparkline trace it had when it left.
 			const gauge = useThroughputGaugeStore.getState();
 			gauge.restartReadings();
-			gauge.publish(ZERO_RATES);
+			gauge.publish(ZERO_THROUGHPUT_RATES);
 		};
 	}, [ownedGate]);
 }

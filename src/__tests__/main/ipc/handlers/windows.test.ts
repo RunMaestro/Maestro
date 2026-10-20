@@ -53,7 +53,10 @@ import {
 	wireWindowRegistryBroadcast,
 	wireEmptySecondaryWindowAutoClose,
 } from '../../../../main/ipc/handlers/windows';
-import { WindowRegistry } from '../../../../main/window-registry';
+import { WindowRegistry, type WindowKind } from '../../../../main/window-registry';
+
+/** Every non-`app` window kind: none may be listed or auto-closed as an app window. */
+const FEATURE_WINDOW_KINDS: WindowKind[] = ['cadenza-hud', 'quick-chat', 'floating-widget'];
 
 /** Build a cast-mock BrowserWindow with the surface the handlers touch. */
 function makeFakeWindow(overrides: Partial<Record<string, unknown>> = {}): BrowserWindow {
@@ -240,19 +243,22 @@ describe('Windows IPC Handlers', () => {
 			expect(result[0].activeSessionId).toBeNull();
 		});
 
-		it('excludes feature windows (cadenza-hud kind) - not offered in "Move to Window"', async () => {
-			registry.create({ browserWindow: makeFakeWindow(), sessionIds: ['a'], isMain: true });
-			registry.create({
-				browserWindow: makeFakeWindow(),
-				kind: 'cadenza-hud',
-				sessionIds: [],
-				isMain: false,
-			});
+		it.each(FEATURE_WINDOW_KINDS)(
+			'excludes feature windows (%s kind) - not offered in "Move to Window"',
+			async (kind) => {
+				registry.create({ browserWindow: makeFakeWindow(), sessionIds: ['a'], isMain: true });
+				registry.create({
+					browserWindow: makeFakeWindow(),
+					kind,
+					sessionIds: [],
+					isMain: false,
+				});
 
-			const result = (await handlers.get('windows:list')!({})) as unknown[];
+				const result = (await handlers.get('windows:list')!({})) as unknown[];
 
-			expect(result).toHaveLength(1);
-		});
+				expect(result).toHaveLength(1);
+			}
+		);
 	});
 
 	describe('windows:getForSession', () => {
@@ -830,32 +836,35 @@ describe('Windows IPC Handlers', () => {
 			expect(primaryWin.close).not.toHaveBeenCalled();
 		});
 
-		it('never auto-closes a cadenza-hud feature window, though it owns no agents', () => {
-			const hudWin = makeFakeWindow();
-			const primary = registry.create({
-				browserWindow: makeFakeWindow(),
-				sessionIds: [],
-				isMain: true,
-			});
-			const secondary = registry.create({
-				browserWindow: makeFakeWindow(),
-				sessionIds: ['agent-1'],
-				isMain: false,
-			});
-			registry.create({
-				browserWindow: hudWin,
-				kind: 'cadenza-hud',
-				sessionIds: [],
-				isMain: false,
-			});
+		it.each(FEATURE_WINDOW_KINDS)(
+			'never auto-closes a %s feature window, though it owns no agents',
+			(kind) => {
+				const featureWin = makeFakeWindow();
+				const primary = registry.create({
+					browserWindow: makeFakeWindow(),
+					sessionIds: [],
+					isMain: true,
+				});
+				const secondary = registry.create({
+					browserWindow: makeFakeWindow(),
+					sessionIds: ['agent-1'],
+					isMain: false,
+				});
+				registry.create({
+					browserWindow: featureWin,
+					kind,
+					sessionIds: [],
+					isMain: false,
+				});
 
-			wireEmptySecondaryWindowAutoClose(registry);
-			// A session move fires the auto-close pass; the HUD owns zero sessions but
-			// must be skipped (pre-guard, it would be closed as an empty window).
-			registry.moveSession('agent-1', secondary, primary);
+				wireEmptySecondaryWindowAutoClose(registry);
+				// A session move fires the auto-close pass; the feature window owns zero
+				// sessions but must be skipped (pre-guard, it would be closed as an empty window).
+				registry.moveSession('agent-1', secondary, primary);
 
-			expect(hudWin.close).not.toHaveBeenCalled();
-		});
+				expect(featureWin.close).not.toHaveBeenCalled();
+			}
+		);
 
 		it('leaves a secondary that still owns agents open', () => {
 			const secondaryWin = makeFakeWindow();

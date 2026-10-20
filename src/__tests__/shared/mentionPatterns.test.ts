@@ -130,6 +130,25 @@ describe('tokenizeMentions', () => {
 		]);
 	});
 
+	it('captures a known name carrying punctuation the bare shape stops at (@🚧-acappella+)', () => {
+		const known = new Set(['🚧-acappella+', 'r&d', '🚧-acappella']);
+		expect(tokenizeMentions('@🚧-acappella+ take care of it', known)).toEqual([
+			{ kind: 'agent', value: '@🚧-acappella+', name: '🚧-acappella+' },
+			{ kind: 'text', value: ' take care of it' },
+		]);
+		expect(tokenizeMentions('ask @R&D, then @🚧-acappella.', known)).toEqual([
+			{ kind: 'text', value: 'ask ' },
+			{ kind: 'agent', value: '@R&D', name: 'R&D' },
+			{ kind: 'text', value: ', then ' },
+			{ kind: 'agent', value: '@🚧-acappella', name: '🚧-acappella' },
+			{ kind: 'text', value: '.' },
+		]);
+	});
+
+	it('never extends a roster match into a longer word (@r&dx is not @r&d)', () => {
+		expect(tokenizeMentions('@r&dx', new Set(['r&d']))).toEqual([{ kind: 'text', value: '@r&dx' }]);
+	});
+
 	it('tokenizes accented and CJK agent names', () => {
 		expect(tokenizeMentions('ask @café-Bot and @日本語-agent', KNOWN)).toEqual([
 			{ kind: 'text', value: 'ask ' },

@@ -41,6 +41,7 @@ import {
 	registerWebLoginHandlers,
 	registerComputerHistoryHandlers,
 	registerMaestroRunHandlers,
+	registerDataviewHandlers,
 	registerLeaderboardHandlers,
 	registerNotificationsHandlers,
 	registerNotificationHistoryHandlers,
@@ -130,6 +131,10 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// MaestroRun - install, grant walkthrough, and the readiness that gates its
 	// system-prompt section. See src/main/ipc/handlers/maestroRun.ts.
 	registerMaestroRunHandlers();
+
+	// Dataview - DQL queries, index status and rebuild, and the `dataview:changed`
+	// push to every window. See src/main/ipc/handlers/dataview.ts.
+	registerDataviewHandlers({ safeSend: deps.safeSend });
 
 	// Git operations - extracted to src/main/ipc/handlers/git.ts
 	registerGitHandlers({

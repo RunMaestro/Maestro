@@ -1083,6 +1083,51 @@ describe('createMarkdownComponents task checkboxes', () => {
 	});
 });
 
+// `renderInlineCode` lets a surface take over chosen inline code spans (Dataview's
+// `= expr`) without touching block code or any surface that omits the option.
+describe('createMarkdownComponents renderInlineCode', () => {
+	const renderInline = (
+		markdown: string,
+		renderInlineCode?: (code: string, fallback: React.ReactElement) => React.ReactNode | null
+	) =>
+		render(
+			React.createElement(
+				ReactMarkdown,
+				{
+					remarkPlugins: REMARK_GFM_PLUGINS,
+					components: createMarkdownComponents({ theme: mockTheme, renderInlineCode }),
+				} as any,
+				markdown
+			)
+		);
+
+	it('replaces a span the renderer claims and keeps the rest as code', () => {
+		const renderInlineCode = vi.fn((code: string) =>
+			code.startsWith('=') ? React.createElement('span', { 'data-claimed': '' }, code) : null
+		);
+		const { container } = renderInline('A `= this.file.name` and `plain`.', renderInlineCode);
+
+		expect(renderInlineCode).toHaveBeenCalledWith('= this.file.name', expect.anything());
+		expect(container.querySelector('[data-claimed]')?.textContent).toBe('= this.file.name');
+		expect(container.querySelector('code')?.textContent).toBe('plain');
+	});
+
+	it('hands the renderer the default code element as the fallback', () => {
+		const { container } = renderInline('`= x`', (_code, fallback) =>
+			React.createElement('em', null, fallback)
+		);
+
+		expect(container.querySelector('em > code')?.textContent).toBe('= x');
+	});
+
+	it('never sees fenced code', () => {
+		const renderInlineCode = vi.fn(() => null);
+		renderInline('```\n= not inline\n```\n', renderInlineCode);
+
+		expect(renderInlineCode).not.toHaveBeenCalled();
+	});
+});
+
 // ---------------------------------------------------------------------------
 // data-source-line passthrough
 //

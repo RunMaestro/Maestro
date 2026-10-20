@@ -2,7 +2,7 @@
 import { randomUUID } from 'node:crypto';
 import semver from 'semver';
 import { createIdleWatchdog, type IdleWatchdog } from '../utils/idle-watchdog';
-import { serializedJsonByteLength } from '../../shared/plugins/contributions';
+import { serializedJsonByteLength } from '../../shared/jsonUtils';
 import {
 	SERVICE_LIMITS,
 	SERVICE_ERROR_CODES,

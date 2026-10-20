@@ -73,6 +73,15 @@ export interface ThroughputRates {
 	combined: number;
 }
 
+/** Recent readings per metric, oldest first (the gauge's sparkline). */
+export type ThroughputHistory = Readonly<Record<ThroughputMetric, readonly number[]>>;
+
+/** No throughput yet: every rate at zero. */
+export const ZERO_THROUGHPUT_RATES: ThroughputRates = { in: 0, out: 0, combined: 0 };
+
+/** No readings yet: every history buffer empty. */
+export const EMPTY_THROUGHPUT_HISTORY: ThroughputHistory = { in: [], out: [], combined: [] };
+
 /** Rolling-average windows the gauge offers. */
 export const THROUGHPUT_WINDOWS_MS = [5000, 10000, 30000, 60000] as const;
 

@@ -27,6 +27,7 @@ import { collectPreviewableFiles } from '../utils/pathHelpers';
 import { isWebDesktop } from '../../../utils/runtimeContext';
 import type { Theme } from '../../../types';
 import type { ContextMenuState } from '../types';
+import { elevatedSurfaceStyle } from '../../../utils/elevatedSurface';
 
 interface FileTreeContextMenuProps {
 	theme: Theme;
@@ -163,10 +164,9 @@ export function FileTreeContextMenu({
 	return createPortal(
 		<div
 			ref={contextMenuRef}
-			className="fixed z-[10000] rounded-lg shadow-xl border whitespace-nowrap"
+			className="fixed z-[10000] rounded-lg whitespace-nowrap"
 			style={{
-				backgroundColor: theme.colors.bgSidebar,
-				borderColor: theme.colors.border,
+				...elevatedSurfaceStyle(theme),
 				minWidth: '180px',
 				top: contextMenuPos.top,
 				left: contextMenuPos.left,

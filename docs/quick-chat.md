@@ -69,7 +69,7 @@ When Maestro picks the wrong tab, click the thumbs-down beside the pill. A reply
 
 ### When the tab is busy
 
-A tab answers one message at a time. When a message goes to a tab that is in the middle of a reply (a follow-up sent before the last answer finished, or a first message routed to a busy tab), it waits in the agent's queue and shows **Queued** under it. It runs when that tab is free.
+A tab answers one message at a time. When Maestro finds a tab for a message, it skips the agent's tabs that are in the middle of a reply, so a message that matches a busy tab starts a new tab instead of waiting behind it. The chat's own tab is the exception. A follow-up sent before the last answer finished, or a message you sent to a busy tab yourself, waits in the agent's queue and shows **Queued** under it. It runs when that tab is free.
 
 If you would rather not wait, click **Send to a new tab** next to **Queued**. The message leaves the queue and runs in a new tab now, and the chat moves with it: your next message goes to that new tab. The same thing from the command line is `maestro-cli quick-chat new-tab`.
 

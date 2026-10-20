@@ -45,11 +45,11 @@ import {
 	isHostViewBlocks,
 	MAX_HOST_VIEW_BLOCKS_BYTES,
 	MAX_PANEL_POST_BYTES,
-	serializedJsonByteLength,
 	type HostViewBlocks,
 	type HostViewContribution,
 	type PanelContribution,
 } from '../../shared/plugins/contributions';
+import { serializedJsonByteLength } from '../../shared/jsonUtils';
 import type { HistoryEntry } from '../../shared/types';
 import { isHistoryEntryType } from '../../shared/history';
 

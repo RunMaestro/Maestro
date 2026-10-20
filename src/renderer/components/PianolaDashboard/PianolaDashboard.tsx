@@ -34,6 +34,7 @@ import {
 } from './usePianolaDashboardData';
 import { usePianolaSupervisor, type PianolaSupervisorState } from './usePianolaSupervisor';
 import type { PianolaSupervisedState } from '../../../main/pianola/pianola-supervisor';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 interface PianolaDashboardProps {
 	theme: Theme;
@@ -291,13 +292,12 @@ function WatchedSection({
 						onClick={() => setPickerOpen(false)}
 					/>
 					<div
-						className="absolute right-0 mt-1 z-50 rounded shadow-lg overflow-y-auto scrollbar-thin whitespace-nowrap normal-case py-1"
+						className="absolute right-0 mt-1 z-50 rounded overflow-y-auto scrollbar-thin whitespace-nowrap normal-case py-1"
 						style={{
 							minWidth: '12rem',
 							maxWidth: '20rem',
 							maxHeight: '15rem',
-							backgroundColor: theme.colors.bgSidebar,
-							border: `1px solid ${theme.colors.border}`,
+							...elevatedSurfaceStyle(theme),
 						}}
 					>
 						{watchable.map((a) => (

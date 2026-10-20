@@ -8,6 +8,12 @@ The Throughput Gauge is a small floating instrument that shows the tokens per se
 
 The gauge is an [Encore Feature](/encore-features), off by default. It ships as the first-party **Throughput Gauge** plugin.
 
+## Where it floats
+
+In the desktop app, the gauge is its own desktop-level window. It floats over every app, on every Space (full-screen apps included), and across monitors, so it stays in view when Maestro is minimized or behind another window. It appears without taking focus, so whatever you are typing keeps the keyboard. Drag it anywhere and resize it from its edges; it remembers where you leave it and comes back there, moved onto a connected display if that monitor is gone.
+
+In a browser attached through [Remote Control](/remote-control), the gauge is a card that floats inside the Maestro page instead.
+
 ## Turning it on
 
 Open **Settings -> Encore**, find **Throughput Gauge**, and enable it. Or, from a shell:
@@ -25,9 +31,9 @@ The gauge pops up as soon as you turn it on. Turning it off removes the gauge an
 | Hotkey          | `Opt+Cmd+Shift+T` / `Alt+Ctrl+Shift+T` toggles the gauge                                     |
 | Command palette | `Cmd+K` / `Ctrl+K`, then "Show Throughput Gauge" (or "Hide Throughput Gauge" while it is up) |
 | Hamburger menu  | **Throughput Gauge** in the Left Bar menu                                                    |
-| Close control   | The X on the card, or Escape while the card has focus                                        |
+| Close control   | The X on the gauge, or Escape while the gauge has focus                                      |
 
-Closing the card hides it. Capture keeps running while it is hidden, so the peak and the averages are current when you bring it back.
+Closing the gauge hides it. Capture keeps running while it is hidden, so the peak and the averages are current when you bring it back.
 
 ## Settings
 
@@ -74,14 +80,14 @@ Tokens read count new input and cache writes. **Cache reads are left out on purp
 
 Every verb answers with the gauge's status, so a script can check what it just did.
 
-| Command                                                    | What it does                                          |
-| ---------------------------------------------------------- | ----------------------------------------------------- |
-| `maestro-cli throughput-gauge show`                        | Show the card                                         |
-| `maestro-cli throughput-gauge hide`                        | Hide the card (capture keeps running)                 |
-| `maestro-cli throughput-gauge toggle`                      | Show or hide, whichever is the opposite of now        |
-| `maestro-cli throughput-gauge set --style lcd --window 30` | Change one or more settings. `--window` is in seconds |
-| `maestro-cli throughput-gauge reset-peak`                  | Start the peak mark again from the current reading    |
-| `maestro-cli throughput-gauge status --json`               | Read the live rate, peak, settings, and visibility    |
+| Command                                                    | What it does                                                        |
+| ---------------------------------------------------------- | ------------------------------------------------------------------- |
+| `maestro-cli throughput-gauge show`                        | Show the gauge                                                      |
+| `maestro-cli throughput-gauge hide`                        | Hide the gauge (capture keeps running)                              |
+| `maestro-cli throughput-gauge toggle`                      | Show or hide, whichever is the opposite of now                      |
+| `maestro-cli throughput-gauge set --style lcd --window 30` | Change one or more settings. `--window` is in seconds               |
+| `maestro-cli throughput-gauge reset-peak`                  | Start the peak mark again from the current reading                  |
+| `maestro-cli throughput-gauge status --json`               | Read the live rate, peak, settings, visibility, and window position |
 
 Example `status --json` output, with illustrative values:
 
@@ -98,11 +104,12 @@ Example `status --json` output, with illustrative values:
 	},
 	"rates": { "in": 412, "out": 96, "combined": 508 },
 	"peak": { "in": 1830, "out": 240, "combined": 2010 },
-	"windowMs": 10000
+	"windowMs": 10000,
+	"window": { "x": 100, "y": 120, "width": 360, "height": 180 }
 }
 ```
 
-`rates` and `peak` are in tokens per second. `combined` is always `in + out`.
+`rates` and `peak` are in tokens per second. `combined` is always `in + out`. `window` is the floating window's position and size on screen. It is `null` while the gauge is hidden, in a browser, and for a moment right after `show`, before the window exists.
 
 ## Related
 

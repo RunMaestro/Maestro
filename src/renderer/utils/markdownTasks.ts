@@ -46,3 +46,17 @@ export const toggleTaskCheckboxAtLine = (
 
 	return { content: lines.join('\n'), checked: !wasChecked };
 };
+
+/**
+ * The text after the task marker on 1-based `line`, trimmed, or null when that
+ * line holds no toggleable task. A caller toggling a task it learned about from
+ * an index compares this with the text it expects, so an edit that shifted the
+ * lines since then never ticks a different task.
+ */
+export const taskTextAtLine = (content: string, line: number): string | null => {
+	if (!Number.isInteger(line) || line < 1) return null;
+	const target = content.split('\n')[line - 1];
+	if (target === undefined) return null;
+	const match = TASK_MARKER_REGEX.exec(target);
+	return match ? target.slice(match[0].length).trim() : null;
+};

@@ -21,6 +21,7 @@ import { createWebApi, createWebserverApi, createLiveApi } from './web';
 import { createWebLoginApi } from './webLogin';
 import { createComputerHistoryApi } from './computerHistory';
 import { createMaestroRunApi } from './maestroRun';
+import { createDataviewApi } from './dataview';
 import {
 	createDialogApi,
 	createFontsApi,
@@ -75,6 +76,7 @@ import { createWindowsApi } from './windows';
 import { createImagesApi } from './images';
 import { createCotExportApi } from './cotExport';
 import { createQuickChatApi } from './quickChat';
+import { createFloatingWidgetsApi } from './floatingWidgets';
 import { createCodexVisualizationApi } from './codexVisualization';
 import { MAESTRO_CLI_PATH_ARG_PREFIX } from '../../shared/maestro-cli';
 
@@ -136,6 +138,9 @@ contextBridge.exposeInMainWorld('maestro', {
 
 	// MaestroRun API (macOS launcher install + Full Disk Access walkthrough)
 	maestroRun: createMaestroRunApi(),
+
+	// Dataview API (DQL queries, index status and rebuild, change push)
+	dataview: createDataviewApi(),
 
 	// Agent API
 	agents: createAgentsApi(),
@@ -300,6 +305,8 @@ contextBridge.exposeInMainWorld('maestro', {
 	cotExport: createCotExportApi(),
 	// Quick Chat API (hotkey-summoned floating chat window + its engine)
 	quickChat: createQuickChatApi(),
+	// Floating widgets (desktop-level widget windows + their state relay)
+	floatingWidgets: createFloatingWidgetsApi(),
 	// Codex `visualize` content references rendered inline
 	codexVisualization: createCodexVisualizationApi(),
 });
@@ -322,6 +329,8 @@ export {
 	// Computer History
 	createComputerHistoryApi,
 	createMaestroRunApi,
+	// Dataview
+	createDataviewApi,
 	// System utilities
 	createDialogApi,
 	createFontsApi,
@@ -418,6 +427,8 @@ export {
 	createCotExportApi,
 	// Quick Chat
 	createQuickChatApi,
+	// Floating widgets
+	createFloatingWidgetsApi,
 	// Codex visualizations
 	createCodexVisualizationApi,
 };

@@ -6,6 +6,7 @@ import { parseJq, evaluateJq, JqError } from '../utils/jqFilter';
 import type { JqExpr } from '../utils/jqFilter';
 import { useDebouncedValue } from '../hooks/utils/useThrottle';
 import { safeClipboardWrite } from '../utils/clipboard';
+import { PREVIEW_SCROLLER_ATTR } from './FilePreview/filePreviewUtils';
 
 /**
  * Typography note: this viewer sets no font-family and sizes everything in
@@ -349,8 +350,10 @@ const JsonlTable = memo(({ lines, columns, theme, onRowClick, expandedLine }: Js
 
 	return (
 		<div style={{ padding: '16px' }}>
+			{/* Sized to the table, not clipped to it: the content area above is
+			    the scroller, so the border has to grow with a wide table. */}
 			<div
-				className="overflow-x-auto rounded"
+				className="w-max min-w-full rounded"
 				style={{ border: `1px solid ${theme.colors.border}` }}
 			>
 				<table
@@ -703,7 +706,7 @@ export function JsonlViewer({
 	}, []);
 
 	return (
-		<div className="flex flex-col h-full">
+		<div className="flex flex-col flex-1 min-h-0">
 			{/* Toolbar */}
 			<div
 				className="flex-shrink-0 flex items-center gap-3 px-4 py-1.5"
@@ -774,8 +777,13 @@ export function JsonlViewer({
 				</div>
 			)}
 
-			{/* Content area */}
-			<div className="flex-1 overflow-auto scrollbar-thin">
+			{/* Content area. It scrolls on both axes, so the table header (sticky
+			    top) pins here instead of to a horizontal-only wrapper that never
+			    scrolls vertically. */}
+			<div
+				className="flex-1 min-h-0 overflow-auto scrollbar-thin"
+				{...{ [PREVIEW_SCROLLER_ATTR]: true }}
+			>
 				{displayLines.length === 0 ? (
 					<div
 						className="flex items-center justify-center h-32 text-sm"

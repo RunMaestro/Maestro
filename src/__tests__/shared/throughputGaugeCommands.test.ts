@@ -3,6 +3,7 @@ import {
 	isThroughputGaugeAction,
 	normalizeThroughputGaugeCommandResult,
 	parseThroughputGaugeCommandRequest,
+	normalizeThroughputGaugeWindowBounds,
 	THROUGHPUT_GAUGE_ACTIONS,
 	type ThroughputGaugeStatus,
 } from '../../shared/throughputGaugeCommands';
@@ -15,6 +16,7 @@ const STATUS: ThroughputGaugeStatus = {
 	rates: { in: 10, out: 20, combined: 30 },
 	peak: { in: 40, out: 50, combined: 90 },
 	windowMs: 10000,
+	window: { x: 100, y: 120, width: 360, height: 180 },
 };
 
 describe('isThroughputGaugeAction', () => {
@@ -101,10 +103,45 @@ describe('normalizeThroughputGaugeCommandResult', () => {
 		});
 	});
 
+	it('turns a missing or damaged window rectangle into null', () => {
+		const { window: _omitted, ...olderBuild } = STATUS;
+		expect(
+			normalizeThroughputGaugeCommandResult({ success: true, status: olderBuild }).status?.window
+		).toBeNull();
+		for (const bad of [
+			'100,120',
+			{ x: 100, y: 120, width: 360 },
+			{ x: 100, y: 120, width: 360, height: Number.NaN },
+			{ x: '100', y: 120, width: 360, height: 180 },
+		]) {
+			expect(
+				normalizeThroughputGaugeCommandResult({ success: true, status: { ...STATUS, window: bad } })
+					.status?.window
+			).toBeNull();
+		}
+	});
+
 	it('keeps the renderer error text', () => {
 		expect(normalizeThroughputGaugeCommandResult({ success: false, error: 'off' })).toEqual({
 			success: false,
 			error: 'off',
 		});
+	});
+});
+
+describe('normalizeThroughputGaugeWindowBounds', () => {
+	it('keeps only the four rectangle fields', () => {
+		expect(
+			normalizeThroughputGaugeWindowBounds({ x: -40, y: 0, width: 360, height: 180, extra: 1 })
+		).toEqual({ x: -40, y: 0, width: 360, height: 180 });
+	});
+
+	it('answers null for anything that is not a rectangle', () => {
+		expect(normalizeThroughputGaugeWindowBounds(null)).toBeNull();
+		expect(normalizeThroughputGaugeWindowBounds(undefined)).toBeNull();
+		expect(normalizeThroughputGaugeWindowBounds({ x: 1, y: 2 })).toBeNull();
+		expect(
+			normalizeThroughputGaugeWindowBounds({ x: 1, y: 2, width: Infinity, height: 3 })
+		).toBeNull();
 	});
 });

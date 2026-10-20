@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { toggleTaskCheckboxAtLine } from '../../../renderer/utils/markdownTasks';
+import { taskTextAtLine, toggleTaskCheckboxAtLine } from '../../../renderer/utils/markdownTasks';
 
 describe('toggleTaskCheckboxAtLine', () => {
 	it('checks an open task and reports the new state', () => {
@@ -43,5 +43,22 @@ describe('toggleTaskCheckboxAtLine', () => {
 		expect(toggleTaskCheckboxAtLine('- [ ] only line', 2)).toBeNull();
 		expect(toggleTaskCheckboxAtLine('- [ ] only line', 0)).toBeNull();
 		expect(toggleTaskCheckboxAtLine('- [ ] only line', 1.5)).toBeNull();
+	});
+});
+
+describe('taskTextAtLine', () => {
+	it('returns the trimmed text after the task marker', () => {
+		const doc = '# Plan\n- [ ] write it  \n1. [x] ship it\r\n';
+		expect(taskTextAtLine(doc, 2)).toBe('write it');
+		expect(taskTextAtLine(doc, 3)).toBe('ship it');
+	});
+
+	it('returns null for a line without a toggleable task', () => {
+		const doc = '# Plan\n- plain item\n- [/] in progress';
+		expect(taskTextAtLine(doc, 1)).toBeNull();
+		expect(taskTextAtLine(doc, 2)).toBeNull();
+		expect(taskTextAtLine(doc, 3)).toBeNull();
+		expect(taskTextAtLine(doc, 9)).toBeNull();
+		expect(taskTextAtLine(doc, 0)).toBeNull();
 	});
 });

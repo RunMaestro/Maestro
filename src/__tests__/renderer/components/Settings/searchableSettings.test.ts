@@ -180,6 +180,22 @@ describe('searchableSettings', () => {
 			);
 		});
 
+		it('hides the DataviewJS settings while Dataview is off, but keeps its tile', () => {
+			const off = searchSettings('dataview', [], { dataview: false }).map((s) => s.id);
+			expect(off).toContain('encore-dataview');
+			expect(off).not.toContain('encore-dataview-js');
+			expect(off).not.toContain('encore-dataview-trusted-roots');
+
+			const on = searchSettings('dataview', [], { dataview: true }).map((s) => s.id);
+			expect(on).toEqual(
+				expect.arrayContaining([
+					'encore-dataview',
+					'encore-dataview-js',
+					'encore-dataview-trusted-roots',
+				])
+			);
+		});
+
 		it('never gates an Encore tile entry on its own flag', () => {
 			const tiles = ALL_SEARCHABLE_SETTINGS.filter(
 				(s) => s.tab === 'encore' && s.requiresEncore && !s.jumpToId
@@ -200,6 +216,7 @@ describe('searchableSettings', () => {
 				'encore-maestro-run',
 				'encore-quick-chat',
 				'encore-throughput-gauge',
+				'encore-dataview',
 				'encore-plugins',
 			]);
 			for (const entry of tiles) expect(tileIds.has(entry.id), entry.id).toBe(false);
@@ -227,6 +244,7 @@ describe('searchableSettings', () => {
 				'encore-maestro-run',
 				'encore-quick-chat',
 				'encore-throughput-gauge',
+				'encore-dataview',
 			];
 			for (const id of withBodies) expect(encoreTileForSetting(id), id).toBeDefined();
 		});
@@ -370,6 +388,10 @@ describe('searchableSettings', () => {
 			['sparkline', 'encore-throughput-gauge-display'],
 			['rate window', 'encore-throughput-gauge-display'],
 			['reset peak', 'encore-throughput-gauge-display'],
+			['dataview', 'encore-dataview'],
+			['obsidian', 'encore-dataview'],
+			['dataviewjs', 'encore-dataview-js'],
+			['trusted vaults', 'encore-dataview-trusted-roots'],
 
 			// Prompts tab
 			['wizard prompt', 'prompts-editor'],

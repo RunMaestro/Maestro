@@ -16,6 +16,7 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { ChevronDown } from 'lucide-react';
 import type { Theme } from '../../../types';
 import type { GeneratedDocument } from '../WizardContext';
+import { elevatedSurfaceStyle } from '../../../utils/elevatedSurface';
 
 export interface DocumentSelectorProps {
 	/** List of generated documents */
@@ -143,10 +144,9 @@ export function DocumentSelector({
 
 			{isOpen && (
 				<div
-					className="absolute top-full left-0 right-0 mt-1 rounded shadow-lg overflow-hidden z-50"
+					className="absolute top-full left-0 right-0 mt-1 rounded overflow-hidden z-50"
 					style={{
-						backgroundColor: theme.colors.bgSidebar,
-						border: `1px solid ${theme.colors.border}`,
+						...elevatedSurfaceStyle(theme),
 						maxHeight: '300px',
 						overflowY: 'auto',
 					}}

@@ -15,6 +15,7 @@ import React from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import type { Theme } from '../../types';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 interface HamburgerDropdownProps {
 	theme: Theme;
@@ -35,11 +36,10 @@ export function HamburgerDropdown({
 	if (!isPhone) {
 		return (
 			<div
-				className="absolute top-full left-0 -mt-px w-[22rem] max-h-[calc(100vh-120px)] rounded-lg shadow-2xl z-[100] overflow-y-auto scrollbar-thin"
+				className="absolute top-full left-0 -mt-px w-[22rem] max-h-[calc(100vh-120px)] rounded-lg z-[100] overflow-y-auto scrollbar-thin"
 				data-tour={dataTour}
 				style={{
-					backgroundColor: theme.colors.bgSidebar,
-					border: `1px solid ${theme.colors.border}`,
+					...elevatedSurfaceStyle(theme),
 				}}
 			>
 				{children}

@@ -36,6 +36,7 @@ import { safeClipboardWrite } from '../../utils/clipboard';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import type { WindowMoveTarget } from '../../utils/windowTargets';
 import { PluginUiItemsSlot } from '../plugins/PluginUiItemsSlot';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 interface SessionContextMenuProps {
 	x: number;
@@ -173,15 +174,14 @@ function ContextMenuFlyout({
 			data-testid="session-context-flyout"
 			// Above the z-50 context menu it hangs off: portaled to body, it no
 			// longer inherits that menu's stacking position.
-			className="fixed z-[60] py-1 rounded-md shadow-xl border whitespace-nowrap"
+			className="fixed z-[60] py-1 rounded-md whitespace-nowrap"
 			style={{
 				left,
 				top,
 				maxHeight,
 				overflowY: 'auto',
 				opacity: ready ? 1 : 0,
-				backgroundColor: theme.colors.bgSidebar,
-				borderColor: theme.colors.border,
+				...elevatedSurfaceStyle(theme),
 				minWidth: '8.75rem',
 			}}
 			onMouseEnter={onKeepOpen}
@@ -308,7 +308,7 @@ export function SessionContextMenu({
 		<div
 			ref={menuRef}
 			data-testid="session-context-menu"
-			className="fixed z-50 py-1 rounded-md shadow-xl border whitespace-nowrap"
+			className="fixed z-50 py-1 rounded-md whitespace-nowrap"
 			style={{
 				left,
 				top,
@@ -318,8 +318,7 @@ export function SessionContextMenu({
 				maxHeight,
 				overflowY: 'auto',
 				opacity: ready ? 1 : 0,
-				backgroundColor: theme.colors.bgSidebar,
-				borderColor: theme.colors.border,
+				...elevatedSurfaceStyle(theme),
 				minWidth: '10rem',
 			}}
 		>

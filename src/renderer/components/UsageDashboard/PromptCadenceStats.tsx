@@ -42,6 +42,7 @@ import { chunkIntoEqualGroups, computeAxisLabelIndices, PHONE_AXIS_LABELS } from
 import { formatHourShort } from './tasksByHourUtils';
 import { parseYmd } from './delegationTrendUtils';
 import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 interface PromptCadenceStatsProps {
 	cadence: PromptCadence;
@@ -349,15 +350,14 @@ export const PromptCadenceStats = memo(function PromptCadenceStats({
 					<div className="relative">
 						{hoveredBucket && (
 							<div
-								className="absolute z-10 px-3 py-2 rounded text-xs whitespace-nowrap pointer-events-none shadow-lg"
+								className="absolute z-10 px-3 py-2 rounded text-xs whitespace-nowrap pointer-events-none"
 								style={{
 									left: `${((hovered! + 0.5) / buckets.length) * 100}%`,
 									bottom: '100%',
 									transform: 'translateX(-50%)',
 									marginBottom: '8px',
-									backgroundColor: theme.colors.bgActivity,
+									...elevatedSurfaceStyle(theme),
 									color: theme.colors.textMain,
-									border: `1px solid ${theme.colors.border}`,
 								}}
 							>
 								<div className="font-medium mb-1">{bucketLabel(hoveredBucket)}</div>

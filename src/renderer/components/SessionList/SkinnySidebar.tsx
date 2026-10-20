@@ -15,6 +15,7 @@ import { hasUnreadVisibleTab } from '../../utils/tabHelpers';
 import { useConsultedSessionIds } from '../../stores/crossAgentInFlightStore';
 import { buildAgentInitials } from '../../../shared/agentInitials';
 import { readableTextOn, transparentize } from '../../../shared/colorContrast';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 /**
  * How much of the status color the initials badge is filled with. The active
@@ -197,12 +198,11 @@ export const SkinnySidebar = memo(function SkinnySidebar({
 
 						{/* Hover Tooltip for Skinny Mode */}
 						<div
-							className="fixed rounded px-3 py-2 z-[100] opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity shadow-xl"
+							className="fixed rounded px-3 py-2 z-[100] opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity"
 							style={{
 								minWidth: '240px',
 								left: '80px',
-								backgroundColor: theme.colors.bgSidebar,
-								border: `1px solid ${theme.colors.border}`,
+								...elevatedSurfaceStyle(theme),
 							}}
 						>
 							<SessionTooltipContent

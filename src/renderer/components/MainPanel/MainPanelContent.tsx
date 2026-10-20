@@ -918,6 +918,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 							onOpenInGraph={onOpenInGraph}
 							onOpenInBrowser={onOpenInBrowser}
 							sshRemoteId={filePreviewSshRemoteId}
+							sessionId={activeSession.id}
 							// Pass external edit content for persistence across tab switches
 							externalEditContent={activeFileTab.editContent}
 							onEditContentChange={handleFilePreviewEditContentChange}

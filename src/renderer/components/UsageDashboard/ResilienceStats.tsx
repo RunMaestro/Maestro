@@ -19,6 +19,7 @@ import type { StatsTimeRange, ResilienceEvent } from '../../../shared/stats-type
 import { formatDurationHuman as formatDuration, formatNumber } from '../../../shared/formatters';
 import { MetricCard } from './MetricCard';
 import { useDashboardResource } from './useDashboardResource';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 interface ResilienceStatsProps {
 	/** Current time range for filtering */
@@ -191,15 +192,14 @@ export const ResilienceStats = memo(function ResilienceStats({
 				<div className="relative">
 					{hovered && (hovered.recovered > 0 || hovered.stopped > 0) && (
 						<div
-							className="absolute z-10 px-3 py-2 rounded text-xs whitespace-nowrap pointer-events-none shadow-lg"
+							className="absolute z-10 px-3 py-2 rounded text-xs whitespace-nowrap pointer-events-none"
 							style={{
 								left: `${((hoveredDay! + 0.5) / days.length) * 100}%`,
 								bottom: '100%',
 								transform: 'translateX(-50%)',
 								marginBottom: '8px',
-								backgroundColor: theme.colors.bgActivity,
+								...elevatedSurfaceStyle(theme),
 								color: theme.colors.textMain,
-								border: `1px solid ${theme.colors.border}`,
 							}}
 						>
 							<div className="font-medium mb-1">{hovered.label}</div>

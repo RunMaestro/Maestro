@@ -25,6 +25,7 @@ export default tseslint.config(
 			'src/web/public/**', // Service worker and static assets
 			'src/renderer/public/**', // Static browser scripts (splash, devtools)
 			'.cue-migration-backup-*/**', // Git-ignored migration backup snapshots
+			'src/shared/dataview/vendor/**', // Vendored Dataview source; upstream style, see docs/agent-guides/DATAVIEW.md
 		],
 	},
 
@@ -130,6 +131,27 @@ export default tseslint.config(
 		plugins: { 'shared-boundary': sharedBoundaryPlugin },
 		rules: {
 			'shared-boundary/no-shared-to-main-imports': 'error',
+		},
+	},
+
+	// Dataview boundary: src/shared/dataview/index.ts is the one import site for the
+	// vendored Dataview core. Only src/shared/dataview/** may reach into vendor/.
+	{
+		files: ['src/**/*.ts', 'src/**/*.tsx'],
+		ignores: ['src/shared/dataview/**'],
+		rules: {
+			'no-restricted-imports': [
+				'error',
+				{
+					patterns: [
+						{
+							regex: 'dataview/vendor(/|$)',
+							message:
+								"Import Dataview from 'src/shared/dataview' (index.ts), never from its vendor/ folder. See docs/agent-guides/DATAVIEW.md.",
+						},
+					],
+				},
+			],
 		},
 	}
 );

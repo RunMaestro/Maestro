@@ -1856,6 +1856,10 @@ export interface EncoreFeatureFlags {
 	// agents. Off by default. Optional so older fixtures and persisted settings
 	// remain valid.
 	throughputGauge?: boolean;
+	// Dataview - render Obsidian Dataview queries in File Preview and the Auto
+	// Run preview. Off by default. Optional so older fixtures and persisted
+	// settings remain valid.
+	dataview?: boolean;
 }
 
 // Director's Notes settings for synopsis generation

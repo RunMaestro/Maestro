@@ -51,3 +51,10 @@ how the process ended) and ignores the arguments it was started with, so it
 can take the place of any provider's binary. The run layer's tests and the
 headless program's test start it as a real process. Its header comment lists
 the environment variables that drive it.
+
+## `dataview-vault/`
+
+The shared Obsidian-style vault the Dataview tests run against. Its own
+`README.md` maps each note to the requirement it covers, lists the expected
+results of the spec's two motivating queries, and explains why every note
+carries a frontmatter `created` date.

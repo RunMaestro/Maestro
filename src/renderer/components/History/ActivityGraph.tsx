@@ -6,6 +6,7 @@ import { useContextMenuPosition } from '../../hooks/ui/useContextMenuPosition';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { COLORBLIND_STATUS_COLORS } from '../../constants/colorblindPalettes';
 import type { GraphBucket } from '../../../shared/history';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 /**
  * A `GraphBucket` as received/computed by the renderer, where `agent` may be
@@ -315,12 +316,11 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 			{contextMenu && (
 				<div
 					ref={contextMenuRef}
-					className="fixed z-50 py-1 rounded border shadow-lg"
+					className="fixed z-50 py-1 rounded"
 					style={{
 						left: contextMenuLeft,
 						top: contextMenuTop,
-						backgroundColor: theme.colors.bgSidebar,
-						borderColor: theme.colors.border,
+						...elevatedSurfaceStyle(theme),
 						minWidth: '120px',
 						opacity: contextMenuReady ? 1 : 0,
 					}}
@@ -357,8 +357,7 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 				<div
 					className="absolute top-full mt-1 px-2 py-1.5 rounded text-2xs font-mono whitespace-nowrap z-20 pointer-events-none"
 					style={{
-						backgroundColor: theme.colors.bgSidebar,
-						border: `1px solid ${theme.colors.border}`,
+						...elevatedSurfaceStyle(theme),
 						color: theme.colors.textMain,
 						left: `${(hoveredIndex / (bucketCount - 1)) * 100}%`,
 						transform:

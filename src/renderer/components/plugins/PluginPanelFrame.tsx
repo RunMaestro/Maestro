@@ -47,14 +47,7 @@ import {
 import { notifyToast } from '../../stores/notificationStore';
 import { captureException } from '../../utils/sentry';
 import { useEventListener } from '../../hooks/utils/useEventListener';
-
-// webview.send throws when the guest webContents is not attached yet (a push can
-// land before the panel finishes loading) or is tearing down - both are expected
-// races for a best-effort UI data frame. Anything else is unexpected.
-function isDetachedWebviewError(error: unknown): boolean {
-	const message = error instanceof Error ? error.message : String(error);
-	return /destroyed|disposed|detached|not attached|must be attached/i.test(message);
-}
+import { isDetachedWebviewError } from '../../utils/webviewErrors';
 
 interface PluginPanelFrameProps {
 	theme: Theme;

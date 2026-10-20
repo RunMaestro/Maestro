@@ -74,6 +74,7 @@ import { joinPath } from '../../shared/formatters';
 import { logger } from '../utils/logger';
 import { notifyCenterFlash } from '../stores/centerFlashStore';
 import { ResizeHandles } from './ui/ResizeHandles';
+import { elevatedSurfaceStyle } from '../utils/elevatedSurface';
 
 // Re-export for external consumers
 export { DEFAULT_BATCH_PROMPT, validateAgentPromptHasTaskReference } from '../hooks';
@@ -881,10 +882,9 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 										{/* Dropdown Menu */}
 										{showPlaybookDropdown && (
 											<div
-												className="absolute top-full left-0 mt-1 min-w-64 max-w-[calc(700px-48px)] w-max rounded-lg border shadow-lg z-10 overflow-hidden"
+												className="absolute top-full left-0 mt-1 min-w-64 max-w-[calc(700px-48px)] w-max rounded-lg z-10 overflow-hidden"
 												style={{
-													backgroundColor: theme.colors.bgSidebar,
-													borderColor: theme.colors.border,
+													...elevatedSurfaceStyle(theme),
 												}}
 											>
 												<div className="max-h-48 overflow-y-auto">

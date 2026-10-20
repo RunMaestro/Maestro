@@ -35,13 +35,17 @@
  * is not a boundary against a signed-in client that sets out to get around it.
  */
 
-import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { resolveEncoreFeatures } from '../../../shared/encoreFeatureDefaults';
 import { COMPUTER_HISTORY_DIR_NAME } from '../../../shared/computer-history/paths';
 import { cliServerInfoPath } from '../../../shared/cli-server-discovery';
+import {
+	foldPathCase,
+	isPathWithin,
+	realpathThroughAncestor,
+} from '../../utils/real-path-containment';
 
 export interface BridgeGuardContext {
 	/** Electron userData, or null when it cannot be resolved (tests, headless). */
@@ -100,31 +104,6 @@ const MAX_PATH_CHARS = 32767;
  */
 const STRICT_SCAN_CHANNEL_RE = /^fs:/;
 
-function caseFold(p: string, platform: NodeJS.Platform): string {
-	return platform === 'darwin' || platform === 'win32' ? p.toLowerCase() : p;
-}
-
-/**
- * Resolve symlinks through the nearest existing ancestor, so a not-yet-created
- * file under a symlinked directory still resolves to where it would land.
- */
-function realpathLoose(p: string): string {
-	let current = p;
-	const rest: string[] = [];
-	for (let i = 0; i < 64; i++) {
-		try {
-			const real = fs.realpathSync.native(current);
-			return rest.length > 0 ? path.join(real, ...rest.reverse()) : real;
-		} catch {
-			const parent = path.dirname(current);
-			if (parent === current) return p;
-			rest.push(path.basename(current));
-			current = parent;
-		}
-	}
-	return p;
-}
-
 /** Turn an argument string into an absolute path the way a handler would. */
 function toPath(value: string): string | null {
 	let v = value.trim();
@@ -141,12 +120,6 @@ function toPath(value: string): string | null {
 	if (v === '~' || v.startsWith('~/') || v.startsWith('~\\'))
 		v = path.join(os.homedir(), v.slice(1));
 	return path.resolve(v);
-}
-
-function isInside(child: string, parent: string): boolean {
-	if (child === parent) return true;
-	const rel = path.relative(parent, child);
-	return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
 }
 
 /**
@@ -194,7 +167,7 @@ export function findProtectedPathArg(
 		files.push(path.join(ctx.userDataDir, 'cli-server.json'));
 	}
 	for (const f of [...files]) files.push(`${f}.tmp`);
-	const fold = (p: string) => caseFold(realpathLoose(path.resolve(p)), ctx.platform);
+	const fold = (p: string) => foldPathCase(realpathThroughAncestor(path.resolve(p)), ctx.platform);
 	const protectedRoots = roots.map((r) => ({ raw: r, folded: fold(r) }));
 	const protectedFiles = files.map((f) => ({ raw: f, folded: fold(f) }));
 	const destructive = TREE_CHANNEL_RE.test(channel);
@@ -207,16 +180,16 @@ export function findProtectedPathArg(
 	for (const s of strings) {
 		const resolved = toPath(s);
 		if (!resolved) continue;
-		const candidate = caseFold(realpathLoose(resolved), ctx.platform);
+		const candidate = foldPathCase(realpathThroughAncestor(resolved), ctx.platform);
 		for (const root of protectedRoots) {
-			if (isInside(candidate, root.folded)) return { argument: s, protectedPath: root.raw };
-			if (destructive && isInside(root.folded, candidate)) {
+			if (isPathWithin(candidate, root.folded)) return { argument: s, protectedPath: root.raw };
+			if (destructive && isPathWithin(root.folded, candidate)) {
 				return { argument: s, protectedPath: root.raw };
 			}
 		}
 		for (const file of protectedFiles) {
 			if (candidate === file.folded) return { argument: s, protectedPath: file.raw };
-			if (destructive && isInside(file.folded, candidate)) {
+			if (destructive && isPathWithin(file.folded, candidate)) {
 				return { argument: s, protectedPath: file.raw };
 			}
 		}

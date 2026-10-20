@@ -30,7 +30,9 @@
  *     and memoized in a `WeakMap` keyed by the session OBJECT. The renderer and
  *     every main-process mutator update sessions immutably, so a changed
  *     session arrives as a fresh reference (cache miss) while untouched ones
- *     keep theirs (cache hit). The serialize cost becomes proportional to what
+ *     keep theirs (cache hit). What is cached is the session's UTF-8 BYTES, and
+ *     the file goes out as those chunks, so the document is never joined into
+ *     one string or re-encoded. The serialize cost becomes proportional to what
  *     actually changed rather than to the whole file.
  *   - **Async, coalesced write.** Writes are batched behind a short timer and
  *     go out as an async atomic write (temp file + rename), off the UI thread.
@@ -51,7 +53,10 @@ import type Store from 'electron-store';
 
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
-import { serializeWithMemoizedArray } from '../../shared/memoizedJsonSerialize';
+import {
+	encodeWithMemoizedArray,
+	serializeWithMemoizedArray,
+} from '../../shared/memoizedJsonSerialize';
 
 // Re-exported for existing importers; the implementation lives in shared/ so
 // the CLI's agent-run store can use the same memo.
@@ -66,7 +71,7 @@ function tempPathFor(filePath: string): string {
 }
 
 /**
- * Write `content` to `filePath` atomically: write a sibling temp file, then
+ * Write `chunks` to `filePath` atomically: write a sibling temp file, then
  * rename over the target. A crash mid-write leaves the previous document intact
  * rather than a truncated, unparseable store file. Mirrors
  * `writeCueYamlAtomicSync`; kept local so this module owns no dependency conf
@@ -74,12 +79,15 @@ function tempPathFor(filePath: string): string {
  */
 async function writeFileAtomic(
 	filePath: string,
-	content: string,
+	chunks: Uint8Array[],
 	shouldCommit: () => boolean
 ): Promise<boolean> {
 	const tmpPath = tempPathFor(filePath);
 	try {
-		await fsp.writeFile(tmpPath, content, 'utf-8');
+		// An iterable of byte chunks goes out one write at a time on the thread
+		// pool. A string here would be UTF-8 encoded in full, synchronously, on
+		// this thread before the async write even began.
+		await fsp.writeFile(tmpPath, chunks);
 		if (!shouldCommit()) {
 			await fsp.unlink(tmpPath).catch(() => {
 				// Stale temp cleanup must not turn a newer durable write into failure.
@@ -102,10 +110,11 @@ async function writeFileAtomic(
 }
 
 /** Synchronous counterpart of {@link writeFileAtomic}, for the quit path. */
-function writeFileAtomicSync(filePath: string, content: string): void {
+function writeFileAtomicSync(filePath: string, chunks: Uint8Array[]): void {
 	const tmpPath = tempPathFor(filePath);
 	try {
-		fs.writeFileSync(tmpPath, content, 'utf-8');
+		// One copy on the way out is fine on the quit path; nothing is waiting.
+		fs.writeFileSync(tmpPath, Buffer.concat(chunks));
 		fs.renameSync(tmpPath, filePath);
 	} catch (err) {
 		try {
@@ -209,9 +218,13 @@ export function deferStoreWrites<T extends Record<string, any>>(
 		resolveTimer?.();
 	}
 
-	/** Serialize the current document. Throws only on a genuinely broken value. */
-	function serialize(): string {
-		return serializeWithMemoizedArray(document, memoKey);
+	/**
+	 * Serialize the current document to UTF-8 chunks. Throws only on a genuinely
+	 * broken value. Bytes rather than a string: on a large store the full-string
+	 * join and its UTF-8 encode were the bulk of every flush's main-thread time.
+	 */
+	function serialize(): Uint8Array[] {
+		return encodeWithMemoizedArray(document, memoKey);
 	}
 
 	/** Log a failed write and schedule a retry when the errno may recover. */
@@ -242,7 +255,7 @@ export function deferStoreWrites<T extends Record<string, any>>(
 		const drain = (async () => {
 			while (durableRevision < documentRevision) {
 				const snapshotRevision = documentRevision;
-				let data: string;
+				let data: Uint8Array[];
 				try {
 					data = serialize();
 				} catch (err) {

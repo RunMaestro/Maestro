@@ -135,6 +135,11 @@ import { groupChatEmitters } from '../../../main/ipc/handlers/groupChat';
 import { getPrompt } from '../../../main/prompt-manager';
 import * as platformDetection from '../../../shared/platformDetection';
 
+// Captured at import, before any test installs fake timers, so a wait on it
+// still runs on the real clock while vi.useFakeTimers() is active.
+const realSetTimeout = globalThis.setTimeout;
+const realSleep = (ms: number) => new Promise<void>((resolve) => realSetTimeout(resolve, ms));
+
 describe('group-chat-router', () => {
 	let mockProcessManager: IProcessManager;
 	let mockAgentDetector: AgentDetector;
@@ -1628,13 +1633,20 @@ describe('group-chat-router', () => {
 
 		/**
 		 * Drives the queued-delegation poll loop forward under fake timers until
-		 * `done()` reports the handoff landed. Each pass advances one poll interval
-		 * and then flushes the microtasks the delivery chain resolves on.
+		 * `done()` reports the handoff landed. Each pass advances one poll interval,
+		 * then sleeps briefly on the REAL clock: every poll tick reads the chat from
+		 * disk and the delivery writes the log before it spawns, and that I/O only
+		 * completes on real event-loop turns. Flushing microtasks alone burned the
+		 * whole pass budget in a few milliseconds on a slow CI runner, before the
+		 * I/O finished, which is what made these tests flaky. A pass that misses
+		 * the I/O is not lost: the next one fires the timer the poller registers
+		 * late. 100 passes is 500s of fake time, inside the 15 minute wait budget,
+		 * so a give-up can never stand in for a delivery.
 		 */
-		async function runPollsUntil(done: () => boolean, passes = 10): Promise<void> {
+		async function runPollsUntil(done: () => boolean, passes = 100): Promise<void> {
 			for (let i = 0; i < passes && !done(); i++) {
 				await vi.advanceTimersByTimeAsync(5000);
-				await vi.advanceTimersByTimeAsync(0);
+				await realSleep(20);
 			}
 		}
 
@@ -1757,17 +1769,10 @@ describe('group-chat-router', () => {
 				// rather than sit out the rest of the wait budget.
 				await updateGroupChat(chat.id, { requireIdleParticipants: false });
 
-				// Wait on real time until the spawn lands. The release path writes its
-				// "No longer waiting" line to the log file before it spawns, and that
-				// write is real I/O: a fixed number of fake-timer passes is a hidden time
-				// budget, and on a slow CI runner it ran out before the write finished.
-				// vi.waitFor advances the fake clock by its interval on every check, so
-				// the next poll still fires; 10 seconds of checks is about 10 seconds of
-				// fake time, well inside the 15 minute wait budget, so a give-up cannot
-				// stand in for the release.
-				await vi.waitFor(() => expect(participantSpawnsFor(chat.id)).toHaveLength(1), {
-					timeout: 10_000,
-				});
+				// The release path writes its "No longer waiting" line to the log file
+				// before it spawns; runPollsUntil gives that real I/O time to land.
+				await runPollsUntil(() => participantSpawnsFor(chat.id).length > 0);
+				expect(participantSpawnsFor(chat.id)).toHaveLength(1);
 
 				const messages = await readLog(chat.logPath);
 				expect(

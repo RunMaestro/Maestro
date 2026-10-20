@@ -57,6 +57,12 @@ import { useToastAvoidZone } from '../hooks/ui/useToastAvoidZone';
 import { KEYSTROKE_TEXTAREA_MAX_HEIGHT } from '../utils/textareaSizing';
 import type { SteerEligibility } from '../utils/executionQueue';
 import { groupChatSteerBlockedReason } from '../../shared/groupChatSteering';
+import { buildKnownMentionNameSet } from '../hooks/input/useAgentMentionCompletion';
+import {
+	MENTION_OVERLAY_TYPOGRAPHY,
+	MentionChipOverlay,
+	useMentionChipOverlay,
+} from './MentionChipOverlay';
 
 /** Maximum image file size in bytes (10MB) */
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
@@ -69,6 +75,9 @@ const ALLOWED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp
  * `@` picker's `fileSuggestions` input is always this stable empty array.
  */
 const NO_FILE_SUGGESTIONS: AtMentionSuggestion[] = [];
+
+/** Mention overlay padding; must mirror the textarea's `pl-3 pt-3 pr-3` exactly. */
+const OVERLAY_PADDING = '0.75rem 0.75rem 0 0.75rem';
 
 interface GroupChatInputProps {
 	theme: Theme;
@@ -223,6 +232,21 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 		currentSessionId: undefined,
 		fileSuggestions: NO_FILE_SUGGESTIONS,
 	});
+	// Live `@mention` pills, the same decoration the AI composer draws. Built
+	// from the same roster the picker offers, so a name chips exactly when the
+	// picker could have inserted it.
+	const hasMentionCandidate = message.includes('@');
+	const knownMentionNames = useMemo(
+		() => (hasMentionCandidate ? buildKnownMentionNameSet(sessions, groups, undefined) : undefined),
+		[hasMentionCandidate, sessions, groups]
+	);
+	const mentionOverlay = useMentionChipOverlay({
+		inputRef,
+		value: message,
+		enabled: true,
+		knownMentionNames,
+	});
+
 	const atMentionItemRefs = useScrollIntoView<HTMLButtonElement>(
 		atMentionOpen,
 		selectedAtMentionIndex,
@@ -689,12 +713,21 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 						backgroundColor: readOnlyMode ? `${theme.colors.warning}15` : theme.colors.bgMain,
 					}}
 				>
-					<div className="flex items-start">
+					<div className="relative flex items-start">
+						<MentionChipOverlay overlay={mentionOverlay} theme={theme} padding={OVERLAY_PADDING} />
 						<textarea
 							ref={inputRef}
 							value={message}
-							onChange={handleChange}
-							onBlur={flushDraft}
+							onChange={(e) => {
+								mentionOverlay.onSelectionChange(e.currentTarget);
+								handleChange(e);
+							}}
+							onSelect={(e) => mentionOverlay.onSelectionChange(e.currentTarget)}
+							onScroll={mentionOverlay.onScroll}
+							onBlur={() => {
+								mentionOverlay.onBlur();
+								flushDraft();
+							}}
 							onKeyDown={handleKeyDown}
 							onPaste={handlePasteWrapped}
 							onDrop={handleDropWrapped}
@@ -704,10 +737,15 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 							}
 							spellCheck={spellCheckEnabled}
 							rows={1}
-							className="flex-1 bg-transparent text-sm outline-none pl-3 pt-3 pr-3 resize-none min-h-[2.5rem] scrollbar-thin"
+							className="relative flex-1 bg-transparent text-sm outline-none pl-3 pt-3 pr-3 resize-none min-h-[2.5rem] scrollbar-thin"
 							style={{
+								// Shared with the mention overlay so the pills sit exactly under
+								// their tokens.
+								...MENTION_OVERLAY_TYPOGRAPHY,
 								color: theme.colors.textMain,
 								maxHeight: '11rem',
+								// Above the decorative overlay so the caret + native selection win.
+								zIndex: mentionOverlay.overlayRendered ? 1 : undefined,
 							}}
 						/>
 					</div>

@@ -1,6 +1,7 @@
 import { forwardRef } from 'react';
 import type { Theme } from '../types';
 import type { AutocompleteState } from '../hooks';
+import { elevatedSurfaceStyle } from '../utils/elevatedSurface';
 
 interface TemplateAutocompleteDropdownProps {
 	theme: Theme;
@@ -23,12 +24,11 @@ export const TemplateAutocompleteDropdown = forwardRef<
 	return (
 		<div
 			ref={ref}
-			className="absolute z-50 rounded-lg border shadow-xl overflow-hidden"
+			className="absolute z-50 rounded-lg overflow-hidden"
 			style={{
 				top: state.position.top,
 				left: state.position.left,
-				backgroundColor: theme.colors.bgSidebar,
-				borderColor: theme.colors.border,
+				...elevatedSurfaceStyle(theme),
 				minWidth: '17.5rem',
 				maxWidth: '23.75rem',
 				maxHeight: '15rem',

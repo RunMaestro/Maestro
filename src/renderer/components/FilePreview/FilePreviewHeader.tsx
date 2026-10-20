@@ -34,6 +34,7 @@ import { formatTokenCount } from '../../utils/tokenCounter';
 import { PreviewTierChip } from './PreviewTierChip';
 import { FilePreviewActionsSheet } from './FilePreviewActionsSheet';
 import type { FilePreviewHeaderAction, FilePreviewHeaderStat } from './FilePreviewActionsSheet';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 interface FilePreviewHeaderProps {
 	file: { name: string; content: string; path: string };
@@ -562,10 +563,9 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 								{/* Back history popup */}
 								{showBackPopup && backHistory && backHistory.length > 0 && (
 									<div
-										className="absolute right-0 top-full py-1 rounded shadow-lg z-50 min-w-[200px] max-w-[300px] max-h-[300px] overflow-y-auto"
+										className="absolute right-0 top-full py-1 rounded z-50 min-w-[200px] max-w-[300px] max-h-[300px] overflow-y-auto"
 										style={{
-											backgroundColor: theme.colors.bgSidebar,
-											border: `1px solid ${theme.colors.border}`,
+											...elevatedSurfaceStyle(theme),
 										}}
 									>
 										{backHistory
@@ -619,10 +619,9 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 								{/* Forward history popup */}
 								{showForwardPopup && forwardHistory && forwardHistory.length > 0 && (
 									<div
-										className="absolute right-0 top-full py-1 rounded shadow-lg z-50 min-w-[200px] max-w-[300px] max-h-[300px] overflow-y-auto"
+										className="absolute right-0 top-full py-1 rounded z-50 min-w-[200px] max-w-[300px] max-h-[300px] overflow-y-auto"
 										style={{
-											backgroundColor: theme.colors.bgSidebar,
-											border: `1px solid ${theme.colors.border}`,
+											...elevatedSurfaceStyle(theme),
 										}}
 									>
 										{forwardHistory.map((item, idx) => {

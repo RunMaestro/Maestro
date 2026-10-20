@@ -152,6 +152,20 @@ export const FEATURES_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: 2,
 		category: 'advanced',
 	},
+	dataviewJsEnabled: {
+		description:
+			'Run `dataviewjs` blocks and inline `$=` spans in File Preview (Dataview Encore Feature). DataviewJS runs code from your notes, in an isolated sandbox, and only in vault roots you trust.',
+		type: 'boolean',
+		default: false,
+		category: 'advanced',
+	},
+	dataviewJsTrustedRoots: {
+		description:
+			'Vault roots (absolute paths) whose DataviewJS scripts run without asking. Manage with `maestro-cli dataview trust` and `untrust`.',
+		type: 'array',
+		default: [],
+		category: 'advanced',
+	},
 
 	// --- System ---
 	installationId: {

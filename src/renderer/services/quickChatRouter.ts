@@ -114,11 +114,22 @@ async function readClosedConversations(session: Session): Promise<ClosedConversa
 	return conversations;
 }
 
-/** Tabs a message may be routed to: what the tab strip shows, plus this chat's own. */
+/**
+ * Tabs a message may be routed to: what the tab strip shows, plus this chat's own.
+ *
+ * A tab mid-reply is left out unless it is this chat's: a message routed there
+ * would wait behind a turn the user is not following. Its conversation is still
+ * live, so it is not offered as a closed one either, and a close match starts a
+ * new tab. The chat's own busy tab stays in, because a follow-up waits for its
+ * own thread rather than losing the context.
+ */
 function routableTabs(session: Session, context: RouteContext): AITab[] {
+	const isChats = (tab: AITab) =>
+		tab.id === context.currentTabId || context.ownedTabIds.has(tab.id);
 	return session.aiTabs.filter(
 		(tab) =>
 			(!isAiTabHidden(tab) || context.ownedTabIds.has(tab.id)) &&
+			(tab.state !== 'busy' || isChats(tab)) &&
 			// An inline wizard is its own guided exchange, not a conversation to join.
 			!tab.wizardState?.isActive
 	);

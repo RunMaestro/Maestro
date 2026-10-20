@@ -876,23 +876,6 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 								<X className="w-3 h-3" style={{ color: theme.colors.textDim }} />
 							</button>
 						)}
-						{canSteer && (
-							// The way to steer without giving up a filter. Keeping the
-							// press from blurring the input matters: an empty box would
-							// swap back to the buttons between mousedown and mouseup,
-							// and the click would land on nothing.
-							<button
-								type="button"
-								onMouseDown={(e) => e.preventDefault()}
-								onClick={() => setBarMode('steer')}
-								className="p-0.5 rounded hover:bg-white/10 transition-colors shrink-0"
-								title={steerButtonTitle}
-								aria-label="Steer the Auto Run"
-								data-testid="thought-stream-steer-switch"
-							>
-								<Compass className="w-3.5 h-3.5" style={{ color: theme.colors.warning }} />
-							</button>
-						)}
 					</div>
 				)}
 			</div>

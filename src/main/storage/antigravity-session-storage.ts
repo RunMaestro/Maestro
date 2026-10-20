@@ -32,6 +32,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { logger } from '../utils/logger';
+import { yieldToEventLoop } from '../utils/concurrency';
 import type {
 	AgentSessionInfo,
 	SessionMessage,
@@ -334,7 +335,7 @@ export class AntigravitySessionStorage extends BaseSessionStorage {
 		if (cached && cached.steps === row.step_count) return cached.cwd ? [cached.cwd] : [];
 		// The scan is synchronous SQLite on the main process: yield between stores
 		// so a first listing over hundreds of them never blocks IPC for its whole run.
-		await new Promise((resolve) => setImmediate(resolve));
+		await yieldToEventLoop();
 		const cwd = firstCommandCwd(row.conversation_id);
 		this.scannedCwd.set(row.conversation_id, { steps: row.step_count, cwd });
 		return cwd ? [cwd] : [];
@@ -392,7 +393,7 @@ export class AntigravitySessionStorage extends BaseSessionStorage {
 				const { row, workspace, sizeBytes } = ref as (typeof refs)[number];
 				// Each read is synchronous SQLite on the main process: yield first, so a
 				// cold listing over hundreds of stores never blocks IPC for its whole run.
-				await new Promise((resolve) => setImmediate(resolve));
+				await yieldToEventLoop();
 				const parsed = readConversation(row.conversation_id);
 				if (!parsed || parsed.messages.length === 0) return null;
 				const indexedMs = Date.parse(row.last_modified_time) || 0;

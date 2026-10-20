@@ -46,6 +46,18 @@ describe('resolveMentionedTargetSessionIds', () => {
 		).toEqual(['sub']);
 	});
 
+	it('resolves an agent whose name ends in punctuation (the @🚧-acappella+ regression)', () => {
+		const sessions = [agent('acap', '🚧 acappella+'), agent('other', 'Other')];
+		expect(
+			resolveMentionedTargetSessionIds(
+				'@🚧-acappella+ take care of the above please',
+				sessions,
+				[],
+				'cur'
+			)
+		).toEqual(['acap']);
+	});
+
 	it('resolves accented and CJK agent names', () => {
 		const sessions = [agent('c', 'Café Bot'), agent('j', '日本語 Agent')];
 		expect(

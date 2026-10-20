@@ -38,6 +38,7 @@ const STATUS: ThroughputGaugeStatus = {
 	rates: { in: 40, out: 142, combined: 182 },
 	peak: { in: 100, out: 540, combined: 640 },
 	windowMs: 10000,
+	window: null,
 };
 
 /** Every message the command sent, in order. */
@@ -97,6 +98,17 @@ describe('maestro-cli throughput-gauge', () => {
 		await throughputGaugeStatus({});
 		expect(logSpy).toHaveBeenCalledWith(
 			'Visible, Combined over 10s, all agents: 182 tok/s (peak 640)'
+		);
+	});
+
+	it('names the floating window when the desktop reports one', async () => {
+		stubDesktop({
+			success: true,
+			status: { ...STATUS, window: { x: 100, y: 120, width: 360, height: 180 } },
+		});
+		await throughputGaugeStatus({});
+		expect(logSpy).toHaveBeenCalledWith(
+			'Visible, Combined over 10s, all agents: 182 tok/s (peak 640). Window 360x180 at 100,120'
 		);
 	});
 

@@ -73,6 +73,36 @@ export interface ThroughputGaugeStatus {
 	peak: ThroughputRates;
 	/** Rolling-average window the rates are taken over (`settings.windowMs`). */
 	windowMs: number;
+	/**
+	 * Where the gauge's own desktop window sits on screen, in screen pixels.
+	 * Null when there is no such window: the gauge is hidden, the client is the
+	 * web-desktop build (the gauge is an in-app card there), or the window has
+	 * not been created yet.
+	 */
+	window: ThroughputGaugeWindowBounds | null;
+}
+
+/** The floating gauge window's on-screen rectangle. */
+export interface ThroughputGaugeWindowBounds {
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+}
+
+/**
+ * Narrow a reported window rectangle to {@link ThroughputGaugeWindowBounds}, or
+ * null. An older desktop build never sends the field, and a damaged one must
+ * not reach the CLI as `NaN x NaN`.
+ */
+export function normalizeThroughputGaugeWindowBounds(
+	raw: unknown
+): ThroughputGaugeWindowBounds | null {
+	if (!raw || typeof raw !== 'object') return null;
+	const { x, y, width, height } = raw as Record<string, unknown>;
+	const values = [x, y, width, height];
+	if (!values.every((v) => typeof v === 'number' && Number.isFinite(v))) return null;
+	return { x: x as number, y: y as number, width: width as number, height: height as number };
 }
 
 /** What the renderer answers a Throughput Gauge command with. */
@@ -105,7 +135,13 @@ export function normalizeThroughputGaugeCommandResult(raw: unknown): ThroughputG
 	if (!candidate.status || typeof candidate.status !== 'object') {
 		return { success: false, error: 'Throughput Gauge response carried no status' };
 	}
-	return { success: true, status: candidate.status };
+	return {
+		success: true,
+		status: {
+			...candidate.status,
+			window: normalizeThroughputGaugeWindowBounds(candidate.status.window),
+		},
+	};
 }
 
 /**
