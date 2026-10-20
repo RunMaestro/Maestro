@@ -27,6 +27,15 @@ import {
 } from '../../../renderer/constants/shortcuts';
 import { VIM_SHORTCUTS, VIM_TAB_SHORTCUTS } from '../../../renderer/constants/vimShortcuts';
 import {
+	DECK_MODE_CANCEL_ID,
+	DECK_MODE_HINT_ROWS,
+	DECK_MODE_KEYS,
+	DECK_MODE_LEADER_ID,
+	deckModeKeyName,
+	findDeckModeAction,
+	isDeckModeCancelKey,
+} from '../../../renderer/constants/deckMode';
+import {
 	KEYBOARD_MODES,
 	KEYBOARD_MODE_LABELS,
 	asKeyboardMode,
@@ -938,5 +947,126 @@ describe('shortcut labels carry their family keyword', () => {
 		// one entry that started this whole change unguarded.
 		expect(palette).toContain("'Git: Create Pull Request'");
 		expect(palette).toContain('`Git: Create Pull Request (${gitActions.branch})`');
+	});
+});
+
+/**
+ * DECK MODE's key table.
+ *
+ * `src/renderer/constants/deckMode.ts` imports nothing but the shared types, on
+ * purpose: it is data the hint bar renders during a keydown, so it must not pull
+ * a store or a service into its import graph, and it cannot self-check its own
+ * action ids without creating a cycle. This is where that check lives instead.
+ *
+ * The invariant that matters is the id. A Deck row's `id` IS the action id it
+ * fires, which is what makes `focusRegionLeft` through Deck `h` and
+ * `focusRegionLeft` through its chord count as ONE used action for keyboard
+ * mastery. A typo or a renamed action would leave a row that fires nothing and
+ * a hint bar that advertises it, with no runtime error anywhere.
+ */
+describe('Deck mode key table', () => {
+	const ACTION_TABLES: Record<string, Record<string, Shortcut>> = {
+		DEFAULT_SHORTCUTS: DEFAULT_SHORTCUTS as Record<string, Shortcut>,
+		TAB_SHORTCUTS: TAB_SHORTCUTS as Record<string, Shortcut>,
+	};
+
+	function declaredAction(id: string): Shortcut | undefined {
+		for (const table of Object.values(ACTION_TABLES)) {
+			if (table[id]) return table[id];
+		}
+		return undefined;
+	}
+
+	it('names a real action, with the identical label, for every key', () => {
+		const problems = DECK_MODE_KEYS.flatMap((row) => {
+			const action = declaredAction(row.id);
+			if (!action) {
+				return [`${row.id} (Deck key ${row.keys.join('')}) is in neither base table`];
+			}
+			return action.label === row.label
+				? []
+				: [
+						`${row.id} is labelled "${row.label}" in the Deck table but "${action.label}" in its base table`,
+					];
+		});
+
+		expect(
+			problems,
+			"A Deck row's id must be the action id it fires and its label must be that action's label, so the hint bar, Settings -> Shortcuts, and the mastery count all say the same thing about one action."
+		).toEqual([]);
+	});
+
+	it('is not a FIXED_SHORTCUTS id', () => {
+		// A fixed shortcut is not rebindable and is not merged into the maps
+		// `isShortcut` resolves against, so an action reachable only there has no
+		// handler a Deck key could reach.
+		const fixed = DECK_MODE_KEYS.filter((row) => FIXED_SHORTCUTS[row.id]).map((row) => row.id);
+		expect(fixed, 'Deck rows pointing at FIXED_SHORTCUTS ids').toEqual([]);
+	});
+
+	it('gives each key to exactly one action, and each action one key', () => {
+		const keys = DECK_MODE_KEYS.map((row) => row.keys.join('+'));
+		const ids = DECK_MODE_KEYS.map((row) => row.id);
+		expect(new Set(keys).size, `duplicate Deck keys in ${keys.join(', ')}`).toBe(keys.length);
+		expect(new Set(ids).size, `duplicate Deck action ids in ${ids.join(', ')}`).toBe(ids.length);
+	});
+
+	it('binds a single BARE key per row', () => {
+		// The leader is the chord. Once armed, the next keystroke is a lone key by
+		// definition, so a modifier in a row would describe a binding the armed
+		// matcher can never produce.
+		const modifiers = ['Meta', 'Ctrl', 'Control', 'Alt', 'Shift'];
+		const bad = DECK_MODE_KEYS.filter(
+			(row) => row.keys.length !== 1 || modifiers.includes(row.keys[0])
+		).map((row) => `${row.id}: ${row.keys.join('+')}`);
+		expect(bad, 'Deck rows that are not a single bare key').toEqual([]);
+	});
+
+	it('leaves the multiplexer split keys free', () => {
+		// `v` and `s` split a pane in every terminal multiplexer, and Maestro has
+		// no split to fire. They stay unbound so a real split action can take the
+		// key a tmux user already expects. See the deckMode.ts header.
+		const taken = DECK_MODE_KEYS.filter((row) => row.keys[0] === 'v' || row.keys[0] === 's');
+		expect(taken.map((row) => `${row.keys[0]} -> ${row.id}`)).toEqual([]);
+	});
+
+	it('keeps the cancel row out of the firing rows', () => {
+		// Escape fires nothing, so it must be unreachable through the lookup that
+		// feeds `trackShortcut` and the action dispatch.
+		expect(DECK_MODE_KEYS.some((row) => row.id === DECK_MODE_CANCEL_ID)).toBe(false);
+		expect(declaredAction(DECK_MODE_CANCEL_ID)).toBeUndefined();
+		expect(findDeckModeAction('Escape')).toBeUndefined();
+		expect(isDeckModeCancelKey('Escape')).toBe(true);
+	});
+
+	it('draws the firing rows then cancel, in table order', () => {
+		expect(DECK_MODE_HINT_ROWS.map((row) => row.id)).toEqual([
+			...DECK_MODE_KEYS.map((row) => row.id),
+			DECK_MODE_CANCEL_ID,
+		]);
+	});
+
+	it('resolves a keypress to its row, space and a stray Shift included', () => {
+		expect(findDeckModeAction('h')?.id).toBe('focusRegionLeft');
+		// Shift reports the capital, and the table has no capital rows for it to
+		// select between, so `H` is still `h` rather than a miss that disarms.
+		expect(findDeckModeAction('H')?.id).toBe('focusRegionLeft');
+		expect(findDeckModeAction('7')?.id).toBe('goToTab7');
+		// `event.key` for the space bar is a single space, never the word.
+		expect(findDeckModeAction(' ')?.id).toBe('quickAction');
+		expect(deckModeKeyName(' ')).toBe('Space');
+		expect(findDeckModeAction('Space')?.id).toBe('quickAction');
+		expect(findDeckModeAction('q')).toBeUndefined();
+	});
+
+	it('spells the leader id, and keeps it out of FIXED_SHORTCUTS', () => {
+		// The leader is an ordinary rebindable action, so it must not be a fixed
+		// shortcut: those are not merged into the maps `isShortcut` resolves
+		// against and cannot be rebound in either mode. Its registration in
+		// DEFAULT_SHORTCUTS is asserted by the per-mode checks above once the entry
+		// lands, which is what makes the leader - unlike the Deck rows - answer to
+		// the collision and reserved-chord guards.
+		expect(DECK_MODE_LEADER_ID).toBe('deckMode');
+		expect(FIXED_SHORTCUTS[DECK_MODE_LEADER_ID]).toBeUndefined();
 	});
 });
