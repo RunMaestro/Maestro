@@ -107,6 +107,17 @@ const MISSING_PALETTE_ENTRY = new Set<string>([
 	'goToTab8',
 	'goToTab9',
 	'goToLastTab',
+	// Region focus, region resize, and the zen toggle. Registered in this phase
+	// with `keys: []`; their palette entries land later in the same phase, in
+	// navigationCommands / rightPanelCommands. Remove these seven rows in that
+	// change rather than leaving them here.
+	'focusRegionLeft',
+	'focusRegionRight',
+	'focusRegionUp',
+	'focusRegionDown',
+	'growRegion',
+	'shrinkRegion',
+	'toggleZenMode',
 ]);
 
 function walk(dir: string, files: string[] = []): string[] {

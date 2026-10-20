@@ -39,6 +39,16 @@ export const DEFAULT_SHORTCUTS = {
 		label: 'Toggle Right Panel',
 		keys: ['Alt', 'Meta', 'ArrowRight'],
 	},
+	// Zen mode: hide BOTH bars and give the whole window to the Main Window, then
+	// restore exactly the visibility each bar had before on a second press. It is
+	// the stand-in for a tiling window manager's "zoom the focused pane", built on
+	// the same two setters the toggles above write to - nothing is destroyed or
+	// reset on the way in or out.
+	//
+	// Ships UNASSIGNED: the two toggles above already reach the same state in two
+	// keypresses, so a third default chord next to them is not worth claiming for
+	// everyone. Reachable from Cmd+K and the hamburger menu; Vim mode binds it.
+	toggleZenMode: { id: 'toggleZenMode', label: 'Toggle Zen Mode', keys: [] },
 	cyclePrev: { id: 'cyclePrev', label: 'Previous Agent', keys: ['Meta', '['], windowScoped: true },
 	cycleNext: { id: 'cycleNext', label: 'Next Agent', keys: ['Meta', ']'], windowScoped: true },
 	navBack: { id: 'navBack', label: 'Navigate Back', keys: ['Meta', 'Shift', ','] },
@@ -110,6 +120,30 @@ export const DEFAULT_SHORTCUTS = {
 	},
 	focusInput: { id: 'focusInput', label: 'Toggle Input/Output Focus', keys: ['Meta', '.'] },
 	focusSidebar: { id: 'focusSidebar', label: 'Focus Left Panel', keys: ['Meta', 'Shift', 'a'] },
+
+	// Region focus and region resize. Maestro's window is three regions in a row -
+	// the Left Bar, the Main Window, the Right Bar - and these are the actions a
+	// tiling-window-manager keymap's direction keys point at: left/right crosses
+	// between regions and clamps at both ends, up/down moves along the focused
+	// region's own vertical axis (transcript / composer in the Main Window, the
+	// list selection in either bar). See src/renderer/services/regionFocus.ts.
+	//
+	// All six ship UNASSIGNED. Default mode already spends Cmd+Shift+A and Cmd+.
+	// on the two single-region focus actions above, and six more default chords
+	// for a navigation style most users do not want is not a cost to impose on
+	// everyone. Listing them here is what puts them in Settings -> Shortcuts, the
+	// help sheet, and Cmd+K; Vim mode binds them in its own table.
+	//
+	// Labels mirror the `paneFocus*` family ('Focus Pane Left') on purpose: same
+	// shape of action, so the two families read as siblings in the sorted list and
+	// searching "focus" finds both.
+	focusRegionLeft: { id: 'focusRegionLeft', label: 'Focus Region Left', keys: [] },
+	focusRegionRight: { id: 'focusRegionRight', label: 'Focus Region Right', keys: [] },
+	focusRegionUp: { id: 'focusRegionUp', label: 'Focus Region Up', keys: [] },
+	focusRegionDown: { id: 'focusRegionDown', label: 'Focus Region Down', keys: [] },
+	growRegion: { id: 'growRegion', label: 'Grow Region', keys: [] },
+	shrinkRegion: { id: 'shrinkRegion', label: 'Shrink Region', keys: [] },
+
 	viewGitDiff: { id: 'viewGitDiff', label: 'Git: View Diff', keys: ['Meta', 'Shift', 'd'] },
 	viewGitLog: { id: 'viewGitLog', label: 'Git: View Log', keys: ['Meta', 'Shift', 'g'] },
 	// The rest of the branch-pill menu. All four ship UNBOUND: they act on the
