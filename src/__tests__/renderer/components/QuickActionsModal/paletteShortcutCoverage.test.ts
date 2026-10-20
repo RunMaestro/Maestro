@@ -74,10 +74,6 @@ const MISSING_PALETTE_ENTRY = new Set<string>([
 	'openImageOrganizer',
 	// Type size.
 	'fontSizeReset',
-	// Deck mode's leader. The entry that arms it needs the uiStore slice the
-	// arming action lives on, which lands with the handler wiring; until then the
-	// leader is reachable by its Vim chord and from Settings -> Shortcuts.
-	'deckMode',
 	// Media transport.
 	'mediaPlayPause',
 	'mediaNext',

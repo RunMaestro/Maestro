@@ -516,6 +516,16 @@ deliberate design constraints, including protected host consent, are noted below
     whole family (the stores are transient and never reach main), at which
     point the natural shape is `layout zen|left|right [on|off]` reading back
     the three visibility booleans.
+18. **Arm Deck mode** (the leader chord in Vim mode, and the "Arm Deck Mode
+    (Leader Key)" palette entry). Deliberately not offered, and this one is a
+    gap on paper only: arming is a promise about the user's NEXT KEYSTROKE, so
+    a CLI verb would hand a remote caller the human's next keypress and then
+    swallow it, which is worse than useless. Every action Deck mode can fire is
+    reachable on its own (`tab new`, `tab close`, and `tab show <tab-id>` for
+    what the digits do), so an agent that wants the third tab asks for that tab
+    rather than for a mode that is waiting for a finger. The region focus and
+    zen keys the letters fire are entry 17 above, where they already sit.
+    Nothing to close here.
 
 ### Audit backlog (2026-09-27)
 

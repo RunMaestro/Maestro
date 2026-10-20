@@ -7,6 +7,9 @@ import type { Theme, Shortcut, KeyboardMasteryStats } from '../types';
 import { fuzzyMatch } from '../utils/search';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { DOUBLE_PRESS_ACCESS, FIXED_SHORTCUTS } from '../constants/shortcuts';
+import { DECK_MODE_CANCEL, DECK_MODE_LEADER_ID } from '../constants/deckMode';
+import { DeckModeKeyList } from './DeckModeKeyList';
+import { SEQUENCE_TIMEOUT_MS } from '../utils/shortcutSequence';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { shortcutKeysEqual } from '../../shared/shortcutKeys';
 import { Modal } from './ui/Modal';
@@ -120,6 +123,14 @@ export function ShortcutsHelpModal({
 		return KEYBOARD_MASTERY_LEVELS.find((l) => l.threshold > masteryPercentage);
 	}, [masteryPercentage]);
 	const usedShortcutIds = new Set(keyboardMasteryStats?.usedShortcuts ?? []);
+
+	// Deck mode's leader, read from the same live record this sheet LISTS rather
+	// than from the shipped table: the leader is an ordinary rebindable entry,
+	// Vim mode ships a chord where default mode ships none, and `availableShortcuts`
+	// has already dropped anything a switched-off Encore Feature owns. Absent
+	// means there is no leader to document, so the whole section stands down
+	// instead of quoting a chord this host never handed us.
+	const deckLeader = allShortcuts[DECK_MODE_LEADER_ID];
 
 	// Shared "Window" badge styling, reused by the per-shortcut tag and the
 	// footer note so the two stay visually identical.
@@ -343,11 +354,61 @@ export function ShortcutsHelpModal({
 							: 'No shortcuts found'}
 					</div>
 				)}
-				{/* Window scope + detach docs, then the read-more link */}
+				{/* Deck mode, window scope + detach docs, then the read-more link */}
 				<div
 					className="mt-4 pt-3 border-t space-y-2.5"
 					style={{ borderColor: theme.colors.border }}
 				>
+					{/* DECK MODE gets a section of its own rather than rows in the list
+					    above, because its keys are not shortcuts: a bare `x` is live only
+					    for the one keystroke after the leader, so it claims no keypress,
+					    cannot collide with anything, and would be a lie as a row in a list
+					    of global chords. The actions it fires are already up there under
+					    their own chords; what is documented here is the second route to
+					    them.
+
+					    Unfiltered, like the prose below it: the search narrows the LIST,
+					    and this is reference material about a mode rather than an answer
+					    to "what is bound to this key". A user who searches "deck" finds
+					    the leader's own row above, and this is what explains it. */}
+					{deckLeader && (
+						<div className="space-y-1.5" data-testid="shortcuts-help-deck-mode">
+							<div className="flex items-center justify-between gap-4">
+								<span className="text-xs font-semibold" style={{ color: theme.colors.textMain }}>
+									{deckLeader.label}
+								</span>
+								{deckLeader.keys.length > 0 ? (
+									<ShortcutKeys theme={theme} keys={deckLeader.keys} size="md" />
+								) : (
+									<span
+										className="text-xs italic flex-shrink-0"
+										style={{ color: theme.colors.textDim }}
+									>
+										Unassigned
+									</span>
+								)}
+							</div>
+							{/* The timeout is quoted from the constant the mode actually
+							    expires on, the same way Settings -> Shortcuts quotes it for
+							    key sequences, so the two figures cannot drift. The cancel key
+							    is spelled from the table rather than typed here, and as its
+							    raw name rather than the formatter's glyph: prose reads better
+							    with the word, and the cap in the table below already shows
+							    the platform's own face for it. */}
+							<p className="text-xs" style={{ color: theme.colors.textDim }}>
+								The leader arms a one-shot mode: the next single key below fires its action and the
+								mode ends. The leader is a chord, so it works from inside the composer, which is
+								where the bare keys are otherwise out of reach. {DECK_MODE_CANCEL.keys[0]} cancels,
+								and the mode lapses on its own after {SEQUENCE_TIMEOUT_MS / 1000}s. Search
+								&ldquo;Deck Mode&rdquo; in Quick Actions to arm it without a chord.
+							</p>
+							{/* The same component the on-screen hint bar draws, over the same
+							    table: a hand-written list here would drift the first time a
+							    Deck key moved, and the user would be reading a key that no
+							    longer fires. */}
+							<DeckModeKeyList theme={theme} size="md" />
+						</div>
+					)}
 					<div className="space-y-1.5 text-xs" style={{ color: theme.colors.textDim }}>
 						<p>
 							Shortcuts tagged{' '}

@@ -3,7 +3,7 @@ import type { QuickAction } from '../types';
 import { areUnreadFiltersActive, toggleAllUnreadFilters } from '../../../services/unreadFilters';
 import { focusRegionDirection, focusRegionVertical } from '../../../services/regionFocus';
 import { growFocusedRegion, shrinkFocusedRegion } from '../../../services/regionResize';
-import { MOUNT_FOCUS_DELAY_MS } from '../../../hooks/utils/useFocusAfterRender';
+import { afterPaletteCloses } from '../utils/afterPaletteCloses';
 
 interface BuildNavigationCommandsArgs {
 	activeSession: Session | undefined;
@@ -53,21 +53,6 @@ interface BuildNavigationCommandsArgs {
 		shrinkRegion?: QuickAction['shortcut'];
 		toggleZenMode?: QuickAction['shortcut'];
 	};
-}
-
-/**
- * Work that has to wait for the palette to be gone, run after the close.
- *
- * Both halves of region focus need the modal layer dismantled first: the
- * palette re-asserts focus on its own input after every render it survives
- * (`useFocusAfterRender` with no dependency array), and the up/down axis
- * dispatches a bare arrow key, which `useMainKeyboardHandler` drops while any
- * layer is open. {@link MOUNT_FOCUS_DELAY_MS} is the same 50ms
- * `buildSearchCommands` waits before opening its filter inputs, and its doc
- * comment describes exactly this race.
- */
-function afterPaletteCloses(run: () => void): void {
-	setTimeout(run, MOUNT_FOCUS_DELAY_MS);
 }
 
 export function buildNavigationCommands({

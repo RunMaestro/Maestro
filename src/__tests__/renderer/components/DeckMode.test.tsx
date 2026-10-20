@@ -14,9 +14,13 @@
  * the right keys" is a behavioural requirement, not a styling detail.
  */
 
-import { act, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DeckModeHintBar } from '../../../renderer/components/DeckModeHintBar';
+import { ShortcutsHelpModal } from '../../../renderer/components/ShortcutsHelpModal';
+import { buildFeatureCommands } from '../../../renderer/components/QuickActionsModal/commands/featureCommands';
+import { filterAndSortQuickActions } from '../../../renderer/components/QuickActionsModal/utils/quickActionSorting';
+import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import {
 	DECK_MODE_CANCEL,
 	DECK_MODE_HINT_ROWS,
@@ -27,7 +31,8 @@ import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS } from '../../../renderer/constants/sh
 import { VIM_SHORTCUTS, VIM_TAB_SHORTCUTS } from '../../../renderer/constants/vimShortcuts';
 import { Z_LAYERS } from '../../../renderer/constants/zLayers';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
-import { useUIStore } from '../../../renderer/stores/uiStore';
+import { deckModeExpired, useUIStore } from '../../../renderer/stores/uiStore';
+import type { Shortcut } from '../../../renderer/types';
 import { SEQUENCE_TIMEOUT_MS } from '../../../renderer/utils/shortcutSequence';
 import { getShortcutKeys, queryAllShortcutKeys } from '../../helpers/shortcutKeys';
 import { mockTheme } from '../../helpers/mockTheme';
@@ -370,6 +375,210 @@ describe('DeckModeHintBar', () => {
 			// nothing threw trying to render into an unmounted tree. The store's
 			// own lazy check is what ends the mode when no bar is mounted.
 			expect(useUIStore.getState().deckModeArmed).toBe(true);
+		});
+	});
+});
+
+/**
+ * The two routes that do not need the leader chord.
+ *
+ * The leader ships UNASSIGNED in default mode, so without these two surfaces
+ * Deck mode would exist for Vim mode alone and be invisible to everyone else.
+ * The palette entry is the way in; the help sheet's section is where the table
+ * can be read at leisure, which is also where the hint bar's one-sentence
+ * announcement sends a screen reader user.
+ */
+describe('Deck mode without the leader chord', () => {
+	describe('the Quick Actions entry that arms it', () => {
+		const setQuickActionOpen = vi.fn();
+
+		/** The feature commands, with only the argument this entry reads. */
+		function build(deckMode?: (typeof DEFAULT_SHORTCUTS)[string]) {
+			return buildFeatureCommands({
+				activeSession: undefined,
+				setQuickActionOpen,
+				setSuccessFlashNotification: vi.fn(),
+				setAgentSessionsOpen: vi.fn(),
+				setActiveAgentSessionId: vi.fn(),
+				bionifyReadingMode: false,
+				setBionifyReadingMode: vi.fn(),
+				audioFeedbackEnabled: false,
+				setAudioFeedbackEnabled: vi.fn(),
+				idleNotificationEnabled: false,
+				setIdleNotificationEnabled: vi.fn(),
+				showStarredSessionsSection: true,
+				setShowStarredSessionsSection: vi.fn(),
+				keyboardMode: 'default',
+				shortcuts: { deckMode },
+			});
+		}
+
+		function deckRow(deckMode?: (typeof DEFAULT_SHORTCUTS)[string]) {
+			const found = build(deckMode).find((command) => command.id === DECK_MODE_LEADER_ID);
+			if (!found) throw new Error('no palette entry for Deck mode');
+			return found;
+		}
+
+		beforeEach(() => {
+			vi.clearAllMocks();
+		});
+
+		// Global, like the keyboard-mode switch beside it: arming is about what the
+		// NEXT keystroke means, not about what currently has focus, so it is
+		// offered on a brand new install with nothing open.
+		it('is offered with no agent and no active tab', () => {
+			expect(build().map((command) => command.id)).toContain(DECK_MODE_LEADER_ID);
+		});
+
+		// The palette filters on the LABEL alone (a substring match, see
+		// `filterAndSortQuickActions`), so the words a user would type have to be
+		// in it. "Leader" is the one they reach for having read about tmux.
+		it.each(['deck', 'Deck Mode', 'leader'])('is findable by searching %p', (search) => {
+			const matches = filterAndSortQuickActions(build(), search, 'main');
+			expect(matches.map((command) => command.id)).toContain(DECK_MODE_LEADER_ID);
+		});
+
+		it('is named the way the shortcut table names the leader', () => {
+			// Not the identical string - the palette row is an ACTION ("Arm ...") -
+			// but it has to carry the leader's own wording, or the palette and
+			// Settings > Shortcuts read as two different features.
+			expect(deckRow().label).toContain(DEFAULT_SHORTCUTS[DECK_MODE_LEADER_ID].label);
+		});
+
+		it('wears the live leader chord, and no badge while it is unbound', () => {
+			const vimLeader = VIM_SHORTCUTS[DECK_MODE_LEADER_ID];
+			expect(deckRow(vimLeader).shortcut).toBe(vimLeader);
+			// Default mode ships it unassigned; QuickActionRow draws no pill for an
+			// empty `keys`, which is the honest answer for a row whose whole point
+			// is that it needs no chord.
+			expect(deckRow(DEFAULT_SHORTCUTS[DECK_MODE_LEADER_ID]).shortcut?.keys).toEqual([]);
+		});
+
+		// The keys live on screen the moment the mode arms. A second, hand-written
+		// list in this subtext would drift the first time a Deck key moved.
+		it('counts the keys from the table instead of listing them', () => {
+			const subtext = deckRow().subtext ?? '';
+			expect(subtext).toContain(String(DECK_MODE_KEYS.length));
+			expect(subtext).toContain(DECK_MODE_CANCEL.keys[0]);
+			for (const row of DECK_MODE_KEYS) {
+				expect(subtext).not.toContain(`\`${row.keys[0]}\``);
+			}
+		});
+
+		describe('arming', () => {
+			beforeEach(() => {
+				vi.useFakeTimers();
+			});
+
+			afterEach(() => {
+				vi.useRealTimers();
+				useUIStore.getState().disarmDeckMode();
+			});
+
+			// THE REASON THIS IS DEFERRED. A number hotkey (Cmd+3) is not stopped
+			// from propagating, so it reaches the window handler AFTER this action
+			// has run - and an armed mode reads a chord as "the user meant something
+			// else" and disarms. Arming synchronously would let the keystroke that
+			// asked for the mode cancel it.
+			it('waits for the palette to be gone before arming', () => {
+				deckRow().action();
+
+				expect(setQuickActionOpen).toHaveBeenCalledWith(false);
+				expect(useUIStore.getState().deckModeArmed).toBe(false);
+
+				act(() => {
+					vi.runAllTimers();
+				});
+				expect(useUIStore.getState().deckModeArmed).toBe(true);
+			});
+
+			// The one-shot window is short, so it must start when the user can
+			// actually spend it rather than while the palette still has focus.
+			it('starts the clock at the arm, not at the click', () => {
+				deckRow().action();
+				act(() => {
+					vi.runAllTimers();
+				});
+
+				expect(deckModeExpired(useUIStore.getState().deckModeArmedAt, Date.now())).toBe(false);
+			});
+		});
+	});
+
+	describe('the help sheet section', () => {
+		const section = () => screen.queryByTestId('shortcuts-help-deck-mode');
+
+		function renderSheet(shortcuts: Record<string, Shortcut> = DEFAULT_SHORTCUTS) {
+			return render(
+				<LayerStackProvider>
+					<ShortcutsHelpModal
+						theme={mockTheme}
+						shortcuts={shortcuts}
+						tabShortcuts={TAB_SHORTCUTS}
+						onClose={vi.fn()}
+					/>
+				</LayerStackProvider>
+			);
+		}
+
+		afterEach(() => {
+			cleanup();
+		});
+
+		it("draws one row per Deck key, in the table's order", () => {
+			renderSheet();
+
+			const rows = section()!.querySelectorAll('[data-deck-row]');
+			expect(Array.from(rows).map((row) => row.getAttribute('data-deck-row'))).toEqual(
+				DECK_MODE_HINT_ROWS.map((row) => row.id)
+			);
+			for (const row of DECK_MODE_HINT_ROWS) {
+				const drawn = section()!.querySelector(`[data-deck-row="${row.id}"]`);
+				expect(queryAllShortcutKeys(row.keys, drawn!)).toHaveLength(1);
+				expect(drawn).toHaveTextContent(row.label);
+			}
+		});
+
+		it('names the leader and the way out of the mode', () => {
+			renderSheet();
+
+			expect(section()).toHaveTextContent(DEFAULT_SHORTCUTS[DECK_MODE_LEADER_ID].label);
+			expect(section()).toHaveTextContent(`${DECK_MODE_CANCEL.keys[0]} cancels`);
+			// Quoted from the constant the mode expires on, so the figure here and
+			// the behaviour cannot drift.
+			expect(section()).toHaveTextContent(`${SEQUENCE_TIMEOUT_MS / 1000}s`);
+			// The route that needs no chord at all, which is the only route in
+			// default mode.
+			expect(section()).toHaveTextContent('Quick Actions');
+		});
+
+		it('shows the bound leader chord, and says Unassigned while it is not', () => {
+			renderSheet();
+			expect(section()).toHaveTextContent('Unassigned');
+
+			cleanup();
+			renderSheet(VIM_SHORTCUTS as Record<string, Shortcut>);
+			expect(
+				getShortcutKeys(VIM_SHORTCUTS[DECK_MODE_LEADER_ID].keys!, section()!)
+			).toBeInTheDocument();
+		});
+
+		// The hint bar hides its table from the accessibility tree because a live
+		// region would read eighteen rows aloud over a mode that lives for a
+		// second. This is the surface that announcement points at, so here the
+		// table has to be readable.
+		it('keeps the table in the accessibility tree, unlike the hint bar', () => {
+			renderSheet();
+
+			const row = section()!.querySelector('[data-deck-row]');
+			expect(row!.closest('[aria-hidden="true"]')).toBeNull();
+		});
+
+		// A host that hands the sheet no leader entry has no Deck mode to
+		// document; quoting a chord it never passed would be an invention.
+		it('stands down when the host lists no leader', () => {
+			renderSheet({});
+			expect(section()).not.toBeInTheDocument();
 		});
 	});
 });

@@ -848,6 +848,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			setShowStarredSessionsSection,
 			keyboardMode,
 			shortcuts: {
+				deckMode: shortcuts.deckMode,
 				usageDashboard: shortcuts.usageDashboard,
 				agentSessions: shortcuts.agentSessions,
 				openMemoryViewer: shortcuts.openMemoryViewer,

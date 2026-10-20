@@ -9,6 +9,9 @@ import {
 	switchKeyboardMode,
 } from '../../../services/keyboardMode';
 import { useGroupChatStore } from '../../../stores/groupChatStore';
+import { useUIStore } from '../../../stores/uiStore';
+import { afterPaletteCloses } from '../utils/afterPaletteCloses';
+import { DECK_MODE_CANCEL, DECK_MODE_KEYS } from '../../../constants/deckMode';
 import { FIXED_SHORTCUTS } from '../../../constants/shortcuts';
 import { KEYBOARD_MODE_LABELS, type KeyboardMode } from '../../../../shared/shortcut-types';
 
@@ -64,6 +67,7 @@ interface BuildFeatureCommandsArgs {
 	/** Which keyboard binding set is live, so the entry can name the other one. */
 	keyboardMode: KeyboardMode;
 	shortcuts: {
+		deckMode?: QuickAction['shortcut'];
 		usageDashboard?: QuickAction['shortcut'];
 		agentSessions?: QuickAction['shortcut'];
 		openMemoryViewer?: QuickAction['shortcut'];
@@ -193,6 +197,38 @@ export function buildFeatureCommands({
 			action: () => {
 				switchKeyboardMode();
 				setQuickActionOpen(false);
+			},
+		},
+		{
+			// DECK MODE's only non-keyboard route in, and in default mode its only
+			// route at all: the leader ships unassigned there (see its entry in the
+			// default shortcut table), so without this the mode would exist for Vim
+			// mode alone. Offered in every context, like the mode switch above,
+			// because arming is about what the NEXT keystroke means rather than
+			// about what currently has focus.
+			id: 'deckMode',
+			// Carries the leader's own wording, so searching "deck" or "leader"
+			// finds it and the palette agrees with Settings > Shortcuts about what
+			// this action is called. "Arm" is the verb because that is all it does:
+			// the keystroke after it is what fires something.
+			label: 'Arm Deck Mode (Leader Key)',
+			// Counted from the table rather than listing the keys. A hand-written
+			// list here would drift the first time a Deck key moves, and the user
+			// would be reading a key that no longer fires - the table is on screen
+			// the moment the mode arms, which is where the keys belong.
+			subtext: `The next single key fires one of ${DECK_MODE_KEYS.length} actions, even from the composer. ${DECK_MODE_CANCEL.keys[0]} cancels.`,
+			shortcut: shortcuts.deckMode,
+			action: () => {
+				setQuickActionOpen(false);
+				// Armed AFTER the palette is gone, not inside the keystroke that
+				// picked this row. A number hotkey (Cmd+3) reaches the window
+				// handler after this action returns, and an already-armed mode
+				// treats a chord as "the user meant something else" and disarms -
+				// so arming synchronously would cancel the mode with the very
+				// keypress that asked for it. The deferral also starts the one-shot
+				// window when the user can actually use it rather than while the
+				// palette still has focus. See `afterPaletteCloses`.
+				afterPaletteCloses(() => useUIStore.getState().armDeckMode());
 			},
 		},
 		{

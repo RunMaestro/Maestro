@@ -8,6 +8,8 @@
  * so the moment the leader arms, every key it enables is on screen with the
  * action it fires, read from `DECK_MODE_HINT_ROWS` rather than from a second,
  * hand-maintained copy. Add a Deck key to that array and it appears here.
+ * The rows themselves are drawn by {@link DeckModeKeyList}, shared with the
+ * help sheet's Deck Mode section so the two surfaces cannot drift apart.
  *
  * Each row draws its label verbatim from the row, and every Deck row's label
  * is the canonical label of the action it fires, so the bar, Settings >
@@ -51,8 +53,9 @@
  */
 
 import { memo, useEffect } from 'react';
-import { ShortcutHint, ShortcutKeys, shortcutSuffix } from './ui/ShortcutHint';
-import { DECK_MODE_CANCEL, DECK_MODE_HINT_ROWS, DECK_MODE_LEADER_ID } from '../constants/deckMode';
+import { DeckModeKeyList } from './DeckModeKeyList';
+import { ShortcutHint, shortcutSuffix } from './ui/ShortcutHint';
+import { DECK_MODE_CANCEL, DECK_MODE_LEADER_ID } from '../constants/deckMode';
 import { DEFAULT_SHORTCUTS } from '../constants/shortcuts';
 import { Z_LAYERS } from '../constants/zLayers';
 import { selectActiveShortcuts } from '../stores/settingsShortcutsSlice';
@@ -164,20 +167,10 @@ export const DeckModeHintBar = memo(function DeckModeHintBar({
 				<ShortcutHint theme={theme} keys={leaderKeys} />
 			</div>
 
-			<div className="flex flex-wrap gap-x-3 gap-y-1.5" aria-hidden="true">
-				{DECK_MODE_HINT_ROWS.map((row) => (
-					<span
-						key={row.id}
-						data-deck-row={row.id}
-						className="inline-flex items-center gap-1.5 whitespace-nowrap"
-					>
-						<ShortcutKeys theme={theme} keys={row.keys} />
-						<span className="text-2xs leading-none" style={{ color: theme.colors.textDim }}>
-							{row.label}
-						</span>
-					</span>
-				))}
-			</div>
+			{/* The table itself, drawn by the one component that draws it anywhere
+			    (the help sheet's Deck Mode section is the other caller), and
+			    hidden from the accessibility tree for the reason above. */}
+			<DeckModeKeyList theme={theme} ariaHidden />
 		</div>
 	);
 });
