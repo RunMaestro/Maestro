@@ -758,6 +758,59 @@ describe('every registered action has a handler', () => {
 	});
 });
 
+/**
+ * Phase 03's nine actions - four region focus, two region resize, zen, and the
+ * two tab nudges - all ship REGISTERED BUT UNASSIGNED. That is the whole
+ * reason the phase could promise default mode behaves exactly as it did
+ * before: an action with no chord claims no keypress, so the only routes to it
+ * are Settings > Shortcuts, Quick Actions, and (from Phase 04) Vim mode.
+ *
+ * The per-mode reachability check above DERIVES its exemption list from
+ * `keys.length === 0` on these same tables, which is what keeps that list
+ * maintenance-free. The flip side is that its default-mode leg cannot notice
+ * one of these actions quietly GAINING a chord: the id leaves both sides of
+ * the equality at once and the assertion still passes. Naming the family here
+ * is what turns the promise into something a later change has to argue with.
+ *
+ * `moveTabLeft` / `moveTabRight` live in `TAB_SHORTCUTS`, so the `UNBOUND_IDS`
+ * block above - which reads `DEFAULT_SHORTCUTS` - cannot hold them. These rows
+ * are their only `keys: []` pin.
+ */
+describe("Phase 03's region, resize, zen, and tab-nudge actions ship unassigned", () => {
+	const REGION_AND_ZEN_IDS = [
+		'focusRegionLeft',
+		'focusRegionRight',
+		'focusRegionUp',
+		'focusRegionDown',
+		'growRegion',
+		'shrinkRegion',
+		'toggleZenMode',
+	];
+	const TAB_NUDGE_IDS = ['moveTabLeft', 'moveTabRight'];
+
+	it('registers all nine with no chord, in the table each one belongs to', () => {
+		const problems: string[] = [];
+		const check = (id: string, table: Record<string, Shortcut>, tableName: string) => {
+			const shortcut = table[id];
+			if (!shortcut) problems.push(`${id} is missing from ${tableName}`);
+			else if (shortcut.keys.length)
+				problems.push(`${id} ships bound to ${shortcut.keys.join('+')}`);
+		};
+
+		for (const id of REGION_AND_ZEN_IDS) {
+			check(id, DEFAULT_SHORTCUTS as Record<string, Shortcut>, 'DEFAULT_SHORTCUTS');
+		}
+		for (const id of TAB_NUDGE_IDS) {
+			check(id, TAB_SHORTCUTS as Record<string, Shortcut>, 'TAB_SHORTCUTS');
+		}
+
+		expect(
+			problems,
+			'A default chord for one of these changes what a default-mode keypress does, which Phase 03 promised not to do - and it is also what makes the action exempt from the per-mode reachability check above. Bind it in the Vim tables instead, or change this list on purpose.'
+		).toEqual([]);
+	});
+});
+
 describe('App keyboard context wiring', () => {
 	it('supplies every ctx method invoked by useMainKeyboardHandler', () => {
 		const handler = readFileSync(
