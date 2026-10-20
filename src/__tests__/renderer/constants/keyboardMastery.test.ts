@@ -175,4 +175,38 @@ describe('countUsedBoundShortcuts', () => {
 		expect(countUsedBoundShortcuts(crossMode, used)).toBe(crossMode.length);
 		expect((countUsedBoundShortcuts(crossMode, used) / crossMode.length) * 100).toBe(100);
 	});
+
+	it('switching keyboard mode changes the displayed chord of an unused action but not the count', () => {
+		// Default mode and Vim mode each bind the same action differently, but both
+		// count it toward mastery. The cross-mode denominator stays constant, and a
+		// surface showing "unused shortcuts" displays the chord from the live mode.
+		const defaultMode = {
+			history: shortcut('history', ['Meta', 'Shift', 'H']),
+		};
+		const vimMode = {
+			history: shortcut('history', ['Ctrl', 'Alt', 'Shift', 'H']),
+		};
+
+		// In default mode, history shows Meta+Shift+H as its chord
+		const boundInDefault = collectBoundShortcutsAcrossModes(defaultMode, vimMode);
+		expect(boundInDefault).toHaveLength(1);
+		expect(boundInDefault[0].id).toBe('history');
+		expect(boundInDefault[0].keys).toEqual(['Meta', 'Shift', 'H']);
+		const defaultCount = boundInDefault.length;
+		const defaultUsed = countUsedBoundShortcuts(boundInDefault, []);
+
+		// In vim mode, the same action is in the denominator but shows Ctrl+Alt+Shift+H
+		const boundInVim = collectBoundShortcutsAcrossModes(vimMode, defaultMode);
+		expect(boundInVim).toHaveLength(1);
+		expect(boundInVim[0].id).toBe('history');
+		expect(boundInVim[0].keys).toEqual(['Ctrl', 'Alt', 'Shift', 'H']);
+		const vimCount = boundInVim.length;
+		const vimUsed = countUsedBoundShortcuts(boundInVim, []);
+
+		// The counts (denominator and numerator) must stay the same when switching modes
+		expect(vimCount).toBe(defaultCount);
+		expect(vimUsed).toBe(defaultUsed);
+		// The displayed chord must change with the mode
+		expect(boundInVim[0].keys).not.toEqual(boundInDefault[0].keys);
+	});
 });
