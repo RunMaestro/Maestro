@@ -39,7 +39,13 @@ import {
 	shortcutSequencesEqual,
 } from '../../../shared/shortcutKeys';
 import { resolveEffectiveShortcuts } from '../../../shared/effectiveShortcuts';
-import type { ShortcutBaseMaps, ShortcutOverrideMaps } from '../../../shared/effectiveShortcuts';
+import {
+	INTENTIONALLY_SHARED,
+	MODE_OVERRIDES,
+	SHORTCUT_BASE_MAPS,
+	effectiveActionsForMode,
+	isIntentionallySharedByIds,
+} from '../../helpers/shortcutModes';
 
 const RENDERER_ROOT = join(__dirname, '../../../renderer');
 
@@ -275,41 +281,6 @@ describe('keyboard shortcut registry wiring', () => {
 		).toEqual([]);
 	});
 });
-
-/**
- * Chords that more than one action may legitimately claim, each with the gate
- * that keeps them apart. Add to this ONLY with the reason written down.
- *
- * Read by two blocks below. The shipped-defaults guard matches a group by its
- * `chord`, because that is the chord default mode gives the group. The per-mode
- * guard matches on `ids` alone: the gate that keeps a group apart is its scope,
- * not the chord it happens to sit on, so a mode that moves the group to another
- * chord keeps the exemption and a group that gains a member loses it.
- */
-const INTENTIONALLY_SHARED: { chord: string; ids: string[]; why: string }[] = [
-	{
-		chord: 'Meta+f',
-		ids: [
-			'filterFiles',
-			'filterSessions',
-			'filterHistory',
-			'searchLogs',
-			'searchOutput',
-			'searchDirectorNotes',
-		],
-		why: "Each is scoped to the surface that has focus (Files tab, Left Panel, History tab, System Log viewer, Main Window, Director's Notes). Only one of those surfaces is focused at a time.",
-	},
-	{
-		chord: 'Meta+e',
-		ids: ['toggleMarkdownMode', 'renameAgentSession'],
-		why: 'The Sessions Browser is a modal layer that blocks lower layers, and its own handler consumes the key before the app-level one runs. With the browser closed there is no session row to rename; with it open there is no markdown pane to flip.',
-	},
-	{
-		chord: 'Meta+Shift+k',
-		ids: ['clearTerminal', 'toggleShowThinking'],
-		why: 'Mutually exclusive by input mode: clearTerminal is gated on inputMode === "terminal" (useMainKeyboardHandler), toggleShowThinking is a tab shortcut reached only in AI mode.',
-	},
-];
 
 /**
  * Duplicate-binding guard for the shipped defaults.
@@ -623,35 +594,12 @@ describe('Vim override tables', () => {
  * key in the mode it was added for.
  */
 describe('effective binding set, per keyboard mode', () => {
-	const BASE: ShortcutBaseMaps = {
-		shortcuts: DEFAULT_SHORTCUTS as Record<string, Shortcut>,
-		tabShortcuts: TAB_SHORTCUTS as Record<string, Shortcut>,
-	};
-
-	/**
-	 * Each mode's override bucket, so adding a mode is one row here.
-	 *
-	 * Default mode's is empty on purpose, and that is not a stand-in for the real
-	 * thing: default mode IS the base tables, which is why
-	 * `selectActiveShortcuts` hands back the bucket itself without resolving.
-	 * `resolveEffectiveShortcuts` returns those same maps by identity when the
-	 * overrides are empty, so running both modes through one builder measures
-	 * exactly what the live mode is matched against.
-	 */
-	const OVERRIDES: Record<KeyboardMode, ShortcutOverrideMaps> = {
-		default: { vimShortcuts: {}, vimTabShortcuts: {} },
-		vim: { vimShortcuts: VIM_SHORTCUTS, vimTabShortcuts: VIM_TAB_SHORTCUTS },
-	};
-
-	/** Every action a mode can fire, with the chord it fires on in that mode. */
-	function effectiveActions(mode: KeyboardMode): Shortcut[] {
-		const resolved = resolveEffectiveShortcuts(BASE, OVERRIDES[mode]);
-		return [
-			...Object.values(resolved.shortcuts),
-			...Object.values(resolved.tabShortcuts),
-			...Object.values(FIXED_SHORTCUTS),
-		];
-	}
+	// The base maps, each mode's override bucket, and the assembly of the two are
+	// shared with `vimShortcuts.test.ts`, which runs the Vim-only guards over the
+	// same set. See `src/__tests__/helpers/shortcutModes.ts`.
+	const BASE = SHORTCUT_BASE_MAPS;
+	const OVERRIDES = MODE_OVERRIDES;
+	const effectiveActions = effectiveActionsForMode;
 
 	/**
 	 * Actions that ship with no chord at all, derived from the constants rather
@@ -782,12 +730,9 @@ describe('effective binding set, per keyboard mode', () => {
 
 		const unexplained = groups
 			.filter((g) => g.ids.length > 1)
-			.filter((g) => {
-				// The allowlist must match EXACTLY, in every mode: a group gaining a
-				// member is a new decision about scope and has to be made on purpose.
-				const ids = [...g.ids].sort().join(',');
-				return !INTENTIONALLY_SHARED.some((shared) => [...shared.ids].sort().join(',') === ids);
-			})
+			// The allowlist must match EXACTLY, in every mode: a group gaining a
+			// member is a new decision about scope and has to be made on purpose.
+			.filter((g) => !isIntentionallySharedByIds(g.ids))
 			.map((g) => `${g.keys.join('+')} is claimed by: ${g.ids.join(', ')}`);
 
 		expect(
