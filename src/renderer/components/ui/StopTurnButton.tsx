@@ -12,6 +12,8 @@
  * this agent is not, so the thinking pill is absent).
  */
 
+import { useShortcutKeys } from '../../hooks/keyboard';
+import { shortcutSuffix } from './ShortcutHint';
 import type { Theme } from '../../types';
 
 interface StopTurnButtonProps {
@@ -22,18 +24,17 @@ interface StopTurnButtonProps {
 	title?: string;
 }
 
-export function StopTurnButton({
-	theme,
-	onClick,
-	title = 'Stop this turn (Ctrl+C)',
-}: StopTurnButtonProps): JSX.Element {
+export function StopTurnButton({ theme, onClick, title }: StopTurnButtonProps): JSX.Element {
+	const shortcut = useShortcutKeys('stopTurn');
+	const resolvedTitle = title ?? `Stop this turn${shortcutSuffix(shortcut.keys)}`;
+
 	return (
 		<button
 			type="button"
 			onClick={onClick}
 			className="flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium transition-colors hover:opacity-80"
 			style={{ backgroundColor: theme.colors.error, color: 'white' }}
-			title={title}
+			title={resolvedTitle}
 		>
 			{/* Filled square: the universal transport "stop", and the one glyph that
 			    cannot be read as "pause" or "close". */}

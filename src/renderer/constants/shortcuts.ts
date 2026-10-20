@@ -120,6 +120,11 @@ export const DEFAULT_SHORTCUTS = {
 	},
 	focusInput: { id: 'focusInput', label: 'Toggle Input/Output Focus', keys: ['Meta', '.'] },
 	focusSidebar: { id: 'focusSidebar', label: 'Focus Left Panel', keys: ['Meta', 'Shift', 'a'] },
+	stopTurn: {
+		id: 'stopTurn',
+		label: 'Stop Turn',
+		keys: ['Control', 'c'],
+	},
 
 	// Region focus and region resize. Maestro's window is three regions in a row -
 	// the Left Bar, the Main Window, the Right Bar - and these are the actions a
