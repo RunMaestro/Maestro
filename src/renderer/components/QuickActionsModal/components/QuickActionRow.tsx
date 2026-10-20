@@ -3,6 +3,8 @@ import { useState } from 'react';
 import { Bot } from 'lucide-react';
 import type { Theme } from '../../../types';
 import { ShortcutKeys } from '../../ui/ShortcutHint';
+import { formatShortcutSequence } from '../../../utils/shortcutFormatter';
+import { useShortcutKeys } from '../../../hooks/keyboard/useShortcutKeys';
 import { getStatusColor } from '../../../utils/theme';
 import type { QuickAction } from '../types';
 import { RunningAgentSubtext } from './RunningAgentSubtext';
@@ -29,6 +31,12 @@ export function QuickActionRow({
 	onClick,
 }: QuickActionRowProps) {
 	const [isHovered, setIsHovered] = useState(false);
+	const resolved = useShortcutKeys(action.shortcut?.id);
+	// Fall back to the shortcut passed in if resolver returns unbound (e.g., in tests).
+	// In the real app, all shortcuts are registered and the resolver will find them.
+	const keys = resolved.keys && resolved.keys.length > 0 ? resolved.keys : action.shortcut?.keys;
+	const sequence =
+		resolved.keys && resolved.keys.length > 0 ? resolved.sequence : action.shortcut?.sequence;
 	return (
 		<button
 			ref={isSelected ? selectedItemRef : null}
@@ -89,9 +97,20 @@ export function QuickActionRow({
 			</div>
 			{/* Length check, not just presence: an action can ship UNBOUND and still
 			    be handed its shortcut record, and an empty chip would draw a blank
-			    box where a chord belongs. */}
-			{action.shortcut?.keys?.length ? (
-				<ShortcutKeys theme={theme} keys={action.shortcut.keys} onAccent={isSelected} />
+			    box where a chord belongs. Route through the resolver to show the active
+			    mode's chord and sequence. */}
+			{keys?.length ? (
+				<span className="inline-flex items-center gap-1.5 whitespace-nowrap shrink-0">
+					<ShortcutKeys theme={theme} keys={keys} onAccent={isSelected} />
+					{sequence && (
+						<>
+							<span className="text-2xs" style={{ color: theme.colors.textDim }}>
+								or
+							</span>
+							<span className="text-2xs font-mono">{formatShortcutSequence(sequence)}</span>
+						</>
+					)}
+				</span>
 			) : null}
 		</button>
 	);

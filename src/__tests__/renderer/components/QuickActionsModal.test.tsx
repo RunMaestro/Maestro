@@ -15,6 +15,15 @@ import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { mockTheme } from '../../helpers/mockTheme';
 import { Z_LAYERS } from '../../../renderer/constants/zLayers';
 
+// Mock useShortcutKeys to return empty binding, so the component falls back to
+// the shortcut passed in. This avoids the need to set up the entire settings store.
+vi.mock('../../../renderer/hooks/keyboard/useShortcutKeys', () => ({
+	useShortcutKeys: (actionId?: string) => ({
+		keys: [],
+		sequence: undefined,
+	}),
+}));
+
 /**
  * The action rows, in render order. Scoped to `[data-action-label]` rather than
  * `getAllByRole('button')` because the header also renders buttons (the ESC

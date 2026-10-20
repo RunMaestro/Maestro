@@ -4,6 +4,16 @@ import { QuickActionRow } from '../../../../../renderer/components/QuickActionsM
 import { mockTheme } from '../../../../helpers/mockTheme';
 import { getShortcutKeys } from '../../../../helpers/shortcutKeys';
 
+// Mock useShortcutKeys to return the shortcut's keys directly from the action.
+// In real usage, it resolves through the active keyboard mode, but in tests
+// we want to display whatever shortcut is passed to the component.
+vi.mock('../../../../../renderer/hooks/keyboard/useShortcutKeys', () => ({
+	useShortcutKeys: (actionId?: string) => ({
+		keys: [],
+		sequence: undefined,
+	}),
+}));
+
 describe('QuickActionRow', () => {
 	it('renders label, subtext, number badge, shortcut, and calls action click handler', () => {
 		const onClick = vi.fn();
