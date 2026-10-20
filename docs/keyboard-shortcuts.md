@@ -503,6 +503,67 @@ they never fire while you are typing, so the find bar and the markdown editor
 keep those keys. The same steps are available from the zoom pill that rests in
 the top-right corner of the preview.
 
+### Vim Keys in the Markdown Editor
+
+`Cmd+E` opens a markdown file for editing, and in **Vim** mode that editor is a
+real Vim: operators, motions, counts, and registers all work, so `ciw`, `dd`,
+`3dw`, `yy`, and `p` do there what they do in Vim. It takes both switches being
+on - the keyboard mode set to Vim, and **Vim Keys In The Markdown Editor**
+directly under the mode toggle in **Settings** (`Cmd+,` / `Ctrl+,`) ->
+**Shortcuts**, which ships on. Switch that toggle off to keep
+[Vim navigation](#vim-mode-bindings) everywhere else and type in the editor with
+the ordinary keys; in **Default** mode the editor is never Vim either way. This
+is every markdown editor in the app, not just this one: the File Preview, the
+Auto Run document editor, the Memories viewer (`Cmd+Shift+M`), and the Maestro
+Prompts tab in Settings.
+
+**The `Ctrl` chords the editor keeps.** Vim binds a row of `Ctrl` combinations
+Maestro also uses, and while the editor has focus in normal or visual mode the
+editor wins them. Nothing is lost: Maestro matches `Ctrl` and `Cmd` as one
+modifier while Vim reads the physical `Ctrl` key, so each action still fires
+from inside the editor on its `Cmd` spelling. `Cmd+W` closes the tab; `Ctrl+W`
+is Vim's. `Cmd+F` still opens Maestro's find bar from inside the editor, and
+Vim's own search is `/`, so the two never open on the same key.
+
+| `Ctrl` chord | In the editor             | Maestro action that stands down          |
+| ------------ | ------------------------- | ---------------------------------------- |
+| `Ctrl+[`     | Same as `Esc`             | Previous Agent                           |
+| `Ctrl+B`     | Back one page             | New Browser Tab                          |
+| `Ctrl+E`     | Scroll one line down      | Toggle Edit/Preview                      |
+| `Ctrl+F`     | Forward one page          | Open Search, and the other `Cmd+F` boxes |
+| `Ctrl+N`     | Down one line             | New Agent                                |
+| `Ctrl+O`     | Back in the jump list     | Switch Agent                             |
+| `Ctrl+P`     | Up one line               | Copy File Path                           |
+| `Ctrl+R`     | Redo                      | Toggle Read-Only Mode                    |
+| `Ctrl+U`     | Half a page up            | Filter Unread Tabs                       |
+| `Ctrl+W`     | The `<C-w>` prefix, inert | Close Tab                                |
+| `Ctrl+Y`     | Scroll one line up        | Open Image Carousel                      |
+
+Two of Vim's chords reach less far than the rest. `Ctrl+W` is Vim's in normal
+and insert mode only, so in visual mode it still closes the tab, and `Ctrl+T` is
+Vim's in insert mode only (indent the line), so in normal mode it still opens a
+new tab. Insert mode is the one place a Maestro chord wins outright, because you
+are typing: physical `Ctrl+S` saves and `Ctrl+E` returns to the preview, exactly
+as their `Cmd` spellings do. The rest stay Vim's there too, so `Ctrl+W` deletes
+the word behind the caret, `Ctrl+U` deletes to the start of the line, `Ctrl+R`
+pastes a register, and `Ctrl+T` / `Ctrl+D` indent and un-indent. Vim's remaining
+`Ctrl` keys fire no Maestro action in Vim mode at all, so nothing stands down
+for them: `Ctrl+A` / `Ctrl+X` (increment and decrement the number under the
+caret), `Ctrl+V` and `Ctrl+Q` (blockwise visual), `Ctrl+D` (half a page down),
+`Ctrl+I` (forward in the jump list), and `Ctrl+C` (another `Esc`).
+
+**How `Esc` behaves.** In insert or visual mode, and while a Vim `:` or `/`
+command line is open, `Esc` is the editor's: it ends the mode or closes the
+command line, and nothing else on screen reacts to it. In normal mode it means
+what it means everywhere else - it closes whatever is open over the window, and
+in a File Preview tab it leaves edit mode for the rendered document. So from
+insert mode it is two presses to get out: one back to normal mode, one to leave
+the editor. In Default mode, and with the editor toggle off, the first `Esc`
+leaves edit mode the way it always has. The `jk` escape is deliberately not
+bound here (see [Leaving a Text Field](#leaving-a-text-field-jk)) - in the
+editor `Esc` is Vim's own way out, and `jk` would be swallowing a `j` you meant
+to type.
+
 ### CSV Row Detail
 
 Available while previewing a `.csv` or `.tsv` file. See
