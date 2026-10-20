@@ -92,6 +92,86 @@ import type { ShortcutOverride } from '../../shared/shortcut-types';
  * `Ctrl+Shift+PageUp` / `PageDown` pair are free in the shipped default set,
  * and the actions the region family takes chords FROM are the only five above.
  *
+ * ## The audit of this set, and the one thing it found
+ *
+ * Four invariants, each computed over the RESOLVED Vim effective set rather
+ * than over this file. Reading the tables alone cannot answer any of them: the
+ * set a keypress is matched against is this bucket merged onto the default
+ * tables plus `FIXED_SHORTCUTS`, so a chord that looks free here can be one an
+ * inherited action already holds. Default mode is NOT part of the comparison -
+ * one mode is live at a time, so a chord default mode gives to another action
+ * is free for the taking (rule 1), and only the displacement column above has
+ * to answer for it.
+ *
+ *  1. **No reserved chord.** `findReservedShortcutCombo` is null for every
+ *     chord this file declares and for every chord the mode resolves to.
+ *  2. **One chord, one action.** Three groups share a chord under
+ *     `shortcutKeysCollide`, and all three are the `INTENTIONALLY_SHARED`
+ *     groups default mode already ships on purpose: `Meta+F`, `Meta+E`, and
+ *     `clearTerminal` / `toggleShowThinking`, which this file moves TOGETHER
+ *     onto `Ctrl+Alt+Shift+K` so the group keeps its context gate.
+ *  3. **Nothing is left unreachable.** `resolveEffectiveShortcuts().displaced`
+ *     is empty, every action with a default chord still has one in Vim mode,
+ *     and every sequence-bound action carries a chord too (rule 6).
+ *  4. **No sequence shadows another.** `shortcutSequencesCollide` is false for
+ *     all 55 pairs of the eleven sequences. The near misses are deliberate and
+ *     all of them turn on Shift being part of a step: `g T` beside `g t`, and
+ *     `G` beside `g g`.
+ *
+ * Two checks beyond those four, because each helper above is a STRING compare
+ * over canonicalized keys and `eventMatchesShortcutKeys` is not. It aliases
+ * Shift-rewritten punctuation (a binding on `,` accepts `<`), aliases shifted
+ * digits, and falls back to `e.code` whenever Alt is held, so two chords that
+ * canonicalize differently can still answer one keypress:
+ *
+ *  - **Replayed at the event level.** Every spelling a real keyboard can send
+ *    for a chord (both physical modifiers for the collapsed one, the shifted
+ *    character, the capital) matched against every other chord in the set. The
+ *    only pair touching a chord in this file is the allowlisted
+ *    `clearTerminal` / `toggleShowThinking` group. Every other pair is the
+ *    pre-existing pane-tiling family, which `isPaneShortcut` separates by
+ *    requiring both physical keys held rather than by its chord.
+ *  - **Each chord still fires its own action.** Every chord matches every
+ *    event spelling of itself, which is the half that is easy to lose. The
+ *    resize pair is spelled `,` / `.` and arrives as neither: Shift alone makes
+ *    it `<` / `>`, and holding Alt rewrites the character again. The same goes
+ *    for all eight Alt-carrying chords here (`⌥⇧H` is not `H`), so each of them
+ *    reaches its action through the `e.code` fallback rather than `event.key`.
+ *
+ * ### Finding: the Ctrl+Shift chords are shadowed in terminal input mode
+ *
+ * `useMainKeyboardHandler`'s terminal focus recovery runs before any shortcut
+ * matching when `inputMode === 'terminal'` and the keydown reached the window
+ * instead of xterm (no layer open, no group chat, focus outside a text field).
+ * It treats anything without Meta or Alt as the terminal's, so pressed with the
+ * PHYSICAL Ctrl key in that state:
+ *
+ *  - `Ctrl+Shift+H/J/K/L` refocuses the terminal and writes the control
+ *    character to the shell (`⌃⇧H` sends `\b`). The region focus never fires.
+ *  - `Ctrl+Shift+PageUp` / `PageDown` and Phase 01's `Ctrl+PageUp` /
+ *    `PageDown` refocus the terminal and are swallowed (`isNavigationKey`,
+ *    where xterm is authoritative). The tab walk and nudge never fire.
+ *  - `Ctrl+Alt+Shift+H/J/K/L`, `Ctrl+Alt+Shift+,` / `.` and `Ctrl+Alt+O` are
+ *    unaffected: the recovery path preserves anything holding Alt.
+ *
+ * AI input mode is unaffected, and so is a focused xterm, which consumes its
+ * own keys before the window handler is reached. The shadow is only in the
+ * in-between state the recovery branch exists for: terminal input mode with
+ * focus adrift. Even there the Cmd spelling of the same binding fires, because
+ * Ctrl and Cmd are one modifier (rule 4), so `Cmd+Shift+H` IS `focusRegionLeft`
+ * in this mode.
+ *
+ * No chord moved, for two reasons. There is no table-level spelling that keeps
+ * the family on `h/j/k/l` AND is immune: immunity means carrying Alt, and
+ * `Ctrl+Alt+H` is reserved (it collapses to Opt+Cmd+H, the Hide Others item),
+ * so the family would have to split three-one across two shapes, which is
+ * worse than one shadowed app state. And the shadow is not a binding conflict:
+ * it is one property of terminal focus recovery, shared by every non-Meta,
+ * non-Alt key in that state, so the only real fix is in that branch (teach it
+ * the live mode's chords, the way it already carves out Ctrl+Shift+` for the
+ * new-terminal-tab shortcut) and it changes what reaches a shell, which is not
+ * this file's call to make.
+ *
  * Every id here must already exist in `DEFAULT_SHORTCUTS` or `TAB_SHORTCUTS`
  * with the IDENTICAL label, and no id may be a `FIXED_SHORTCUTS` id: a fixed
  * shortcut is shared by both modes and is not rebindable, so overriding one
