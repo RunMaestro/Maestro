@@ -26,6 +26,7 @@ import {
 	SEQUENCE_TIMEOUT_MS,
 	type SequenceBinding,
 } from '../../../renderer/utils/shortcutSequence';
+import { shortcutSequencesCollide } from '../../../shared/shortcutKeys';
 import type { Shortcut } from '../../../shared/shortcut-types';
 import type { ShortcutKeyEvent } from '../../../renderer/utils/shortcutMatch';
 
@@ -355,6 +356,74 @@ describe('createSequenceMatcher', () => {
 
 			expect(bindings[0].sequence?.[0]).toEqual(['g']);
 		});
+	});
+});
+
+/**
+ * Prefix conflict detection, and the matcher behavior that justifies it.
+ *
+ * `shortcutSequencesCollide` is unit tested beside its siblings in
+ * `src/__tests__/shared/shortcutKeys.test.ts`. What those tests cannot say is
+ * WHY a prefix relation counts as a conflict at all, because the reason lives
+ * here: the matcher resolves ambiguity SHORT, so the longer member of a prefix
+ * pair is not racy, it is unreachable. The two files have to agree or the guard
+ * is wrong in one direction or the other - refusing pairs that would have
+ * worked, or accepting pairs where one binding silently never fires.
+ *
+ * So each case below asserts the verdict AND walks the keys through the
+ * matcher. If someone changed `feed` to wait out the timeout before firing a
+ * completion, the refusals would become unnecessary and these fail; if someone
+ * narrowed the collide check to equality, `g` would be accepted beside `g g`
+ * and the walk-through shows `g g` is then dead.
+ */
+describe('prefix conflicts', () => {
+	it('refuses `g` beside `g g`, because `g g` could never fire', () => {
+		expect(shortcutSequencesCollide([['g']], [['g'], ['g']])).toBe(true);
+
+		const bindings = [seq('bare', [['g']]), seq('goTop', [['g'], ['g']])];
+		const matcher = createSequenceMatcher();
+
+		// The first `g` completes the one-step binding immediately, so the
+		// second one starts a new run rather than finishing `g g`.
+		expect(matcher.feed(press('g'), bindings)).toEqual({ outcome: 'matched', actionId: 'bare' });
+		expect(matcher.feed(press('g'), bindings)).toEqual({ outcome: 'matched', actionId: 'bare' });
+	});
+
+	it('refuses `g g g` beside `g g`, because the third step is unreachable', () => {
+		expect(shortcutSequencesCollide([['g'], ['g'], ['g']], [['g'], ['g']])).toBe(true);
+
+		const bindings = [seq('goTop', [['g'], ['g']]), seq('deep', [['g'], ['g'], ['g']])];
+		const matcher = createSequenceMatcher();
+
+		expect(matcher.feed(press('g'), bindings).outcome).toBe('consumed-prefix');
+		expect(matcher.feed(press('g'), bindings)).toEqual({
+			outcome: 'matched',
+			actionId: 'goTop',
+		});
+		// The run ended at the second step, so a third `g` is the start of
+		// another `g g` and never the last step of `g g g`.
+		expect(matcher.feed(press('g'), bindings)).toEqual({
+			outcome: 'consumed-prefix',
+			prefix: [['g']],
+		});
+	});
+
+	it('accepts `g t` beside `g g`, and both stay reachable', () => {
+		expect(shortcutSequencesCollide([['g'], ['t']], [['g'], ['g']])).toBe(false);
+
+		const matcher = createSequenceMatcher();
+
+		matcher.feed(press('g'), BINDINGS);
+		expect(matcher.feed(press('g'), BINDINGS)).toEqual({ outcome: 'matched', actionId: 'goTop' });
+		matcher.feed(press('g'), BINDINGS);
+		expect(matcher.feed(press('t'), BINDINGS)).toEqual({ outcome: 'matched', actionId: 'goTab' });
+	});
+
+	it('refuses the pair whichever way round it is recorded', () => {
+		// The recorder compares the sequence just typed against every existing
+		// one, so the new binding can be either the shorter or the longer side.
+		expect(shortcutSequencesCollide([['g'], ['g']], [['g']])).toBe(true);
+		expect(shortcutSequencesCollide([['g'], ['g']], [['g'], ['g'], ['g']])).toBe(true);
 	});
 });
 
