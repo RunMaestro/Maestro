@@ -80,6 +80,47 @@ const SHARED_TYPOGRAPHY: React.CSSProperties = {
 const EMPTY_SESSIONS: Session[] = [];
 const EMPTY_GROUPS: Group[] = [];
 
+/**
+ * The chat composer's text field: a plain `<textarea>`, and deliberately so.
+ *
+ * ## No Vim editing here, on purpose
+ *
+ * Vim mode gives the markdown editor the real thing - `@replit/codemirror-vim`
+ * over a CodeMirror 6 document, with operators, counts, registers, and the
+ * operator-pending grammar (see `FilePreview/markdownEditor/vimKeys.ts`). This
+ * surface gets none of it, and that is a decision rather than an oversight:
+ *
+ *  - There is no engine to attach it to. That package is a CodeMirror
+ *    extension; this is a native textarea. Modal editing here would mean
+ *    reimplementing motions and operators over `selectionStart` by hand - a
+ *    known tarpit, and a second Vim whose bugs would not be the package's to
+ *    fix.
+ *  - What the composer is FOR argues against it anyway. It holds a sentence
+ *    the user is writing to an agent, not a document they are editing, and a
+ *    normal mode in front of prose means a pending operator can silently eat
+ *    the next thing they type.
+ *
+ * So the composer keeps exactly one Vim affordance, the one that costs nothing:
+ * the `jk` escape (`utils/vimInsertEscape.ts`), which BLURS the field rather
+ * than entering a normal mode. Everything else about this textarea behaves
+ * identically in both keyboard modes - autosize, the `@` and slash pickers, Tab
+ * completion, the `!` command-mode ladder, and Escape blurring to the
+ * transcript.
+ *
+ * ## Why that needs no composer-specific code
+ *
+ * Every carve-out the Vim editor asked for resolves through `.cm-editor`, which
+ * this subtree never renders, so each one declines here on its own:
+ * `vimEditorOwnsEscape` (Escape still reaches the layer stack and this field's
+ * own blur path), `vimEditorOwnsCtrlChord` (Ctrl+W still closes the tab from
+ * the composer), and `TEXT_ENTRY_SURFACE_SELECTOR` (which subtracts the editor
+ * and terminal surfaces, so `jk` is allowed to act here and must not there).
+ * `isTextEntryTarget` does still count this textarea, which is what keeps
+ * Vim-mode sequences like `g g` and `h` from firing while the user types.
+ *
+ * The Cue YAML editor (`CueYamlEditor/YamlTextEditor.tsx`) is also a textarea
+ * and is left out for the same reason: nothing for the extension to attach to.
+ */
 export const InputTextarea = memo(function InputTextarea({
 	session,
 	theme,
