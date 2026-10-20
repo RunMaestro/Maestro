@@ -39,6 +39,10 @@ vi.mock('../../../renderer/stores/feedbackDraftStore', () => ({
 vi.mock('../../../renderer/stores/uiStore', () => ({
 	useUIStore: (selector: (s: { setLeftSidebarOpen: () => void }) => unknown) =>
 		selector({ setLeftSidebarOpen: vi.fn() }),
+	// Not used by this modal, but `settingsStore` calls it at MODULE scope to
+	// publish the chord that leaves zen mode, and this suite reaches that module
+	// through `openUrl`. A mock without it fails the whole file at import.
+	setZenExitChordResolver: vi.fn(),
 }));
 
 vi.mock('../../../renderer/components/ui/Modal', () => ({
