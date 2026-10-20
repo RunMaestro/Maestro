@@ -12,7 +12,6 @@ import { withMaestroClient } from '../services/maestro-client';
 import { isMacOS } from '../../shared/platformDetection';
 import { formatShortcutKeysFor } from '../../shared/shortcutKeys';
 import { DEFAULT_SHORTCUTS, FIXED_SHORTCUTS } from '../../renderer/constants/shortcuts';
-import type { Shortcut } from '../../shared/shortcut-types';
 import {
 	UI_SURFACES,
 	describeSurfaceAccess,
@@ -23,6 +22,8 @@ import {
 } from '../../shared/uiSurfaces';
 import { exitIfMaestroNotRunning } from '../services/session-command';
 import { readEncoreFlags, requireEncore } from '../utils/encore-gate';
+import { readSettings } from '../services/storage';
+import { resolveEffectiveShortcuts } from '../../shared/effectiveShortcuts';
 
 interface OpenModalOptions {
 	tab?: string;
@@ -33,12 +34,37 @@ interface OpenModalOptions {
 /** Formatted hotkey for a surface, or `undefined` when it has none. */
 function shortcutFor(surface: UiSurface): string | undefined {
 	if (!surface.shortcutId) return undefined;
-	// `shortcutId` is a plain string off the surface table, while
-	// DEFAULT_SHORTCUTS is a literal object (its keys are the source of
-	// `ShortcutId`). Widen only at this dynamic lookup rather than annotating the
-	// constant, which would collapse ShortcutId to `string` everywhere.
-	const byId = DEFAULT_SHORTCUTS as Record<string, Shortcut | undefined>;
-	const shortcut = byId[surface.shortcutId] ?? FIXED_SHORTCUTS[surface.shortcutId];
+
+	// Read persisted settings and resolve through the active keyboard mode
+	const settings = readSettings();
+	const keyboardMode = (settings.keyboardMode ?? 'default') as string;
+
+	// Build the base maps from DEFAULT_SHORTCUTS and FIXED_SHORTCUTS
+	const base = {
+		shortcuts: DEFAULT_SHORTCUTS,
+		tabShortcuts: {}, // FIXED_SHORTCUTS are merged here
+	};
+
+	// Merge FIXED_SHORTCUTS into tabShortcuts for the effective resolution
+	Object.assign(base.tabShortcuts, FIXED_SHORTCUTS);
+
+	// Get override maps from settings
+	const vimShortcuts = (settings.vimShortcuts as Record<string, any>) ?? {};
+	const vimTabShortcuts = (settings.vimTabShortcuts as Record<string, any>) ?? {};
+
+	// Select the appropriate override maps based on keyboard mode
+	const overrides =
+		keyboardMode === 'vim'
+			? { vimShortcuts, vimTabShortcuts }
+			: { vimShortcuts: {}, vimTabShortcuts: {} };
+
+	// Resolve the effective shortcuts for the active mode
+	const effective = resolveEffectiveShortcuts(base, overrides);
+
+	// Look up the action in the effective maps
+	const shortcut =
+		effective.shortcuts[surface.shortcutId] ?? effective.tabShortcuts[surface.shortcutId];
+
 	// An action can be registered with no default binding, in which case there is
 	// no hotkey to print - same answer as a surface that names no shortcut at all.
 	if (!shortcut?.keys?.length) return undefined;
