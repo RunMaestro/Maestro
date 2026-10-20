@@ -21,11 +21,9 @@ import { Keyboard, Trophy, Sparkles } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { ShortcutUsageDay, StatsTimeRange } from '../../../shared/stats-types';
 import { useSettingsStore } from '../../stores/settingsStore';
-import { FIXED_SHORTCUTS } from '../../constants/shortcuts';
-import { availableShortcuts } from '../../utils/encoreShortcuts';
+import { selectMasteryBoundShortcuts } from '../../stores/settingsShortcutsSlice';
 import {
 	KEYBOARD_MASTERY_LEVELS,
-	collectBoundShortcuts,
 	countUsedBoundShortcuts,
 	getLevelForPercentage,
 } from '../../constants/keyboardMastery';
@@ -279,9 +277,6 @@ const NO_DAYS: ShortcutUsageDay[] = [];
 
 export const KeyboardStats = memo(function KeyboardStats({ timeRange, theme }: KeyboardStatsProps) {
 	const masteryStats = useSettingsStore((s) => s.keyboardMasteryStats);
-	const shortcuts = useSettingsStore((s) => s.shortcuts);
-	const tabShortcuts = useSettingsStore((s) => s.tabShortcuts);
-	const encoreFeatures = useSettingsStore((s) => s.encoreFeatures);
 
 	// Cached across opens and refreshed on stats:updated, so the chart reflects
 	// firings while the modal is open without blanking between refreshes.
@@ -303,15 +298,12 @@ export const KeyboardStats = memo(function KeyboardStats({ timeRange, theme }: K
 	// does not exist, so listing one as "unused" is busywork and counting one in
 	// the denominator holds the mastery ring below 100% forever. The same goes
 	// for the chord of an Encore Feature that is switched off.
-	const boundShortcuts = useMemo(
-		() =>
-			collectBoundShortcuts(
-				availableShortcuts(shortcuts, encoreFeatures),
-				tabShortcuts,
-				availableShortcuts(FIXED_SHORTCUTS, encoreFeatures)
-			),
-		[shortcuts, tabShortcuts, encoreFeatures]
-	);
+	//
+	// Spans keyboard modes, and the selector is the only door to that total: an
+	// action is one action however it is fired, so switching modes must not move
+	// the ring. The live mode's entry represents each id, so the chords listed
+	// under "Unused Shortcuts" are the ones the user would press right now.
+	const boundShortcuts = useSettingsStore(selectMasteryBoundShortcuts);
 
 	const totalShortcuts = boundShortcuts.length;
 	const usedSet = useMemo(() => new Set(masteryStats.usedShortcuts), [masteryStats.usedShortcuts]);

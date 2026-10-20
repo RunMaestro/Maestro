@@ -12,6 +12,7 @@ import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext
 import type { Theme, Shortcut, KeyboardMasteryStats } from '../../../renderer/types';
 
 import { createMockTheme } from '../../helpers/mockTheme';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 
 // Create mock shortcuts for testing
 const createMockShortcuts = (): Record<string, Shortcut> => ({
@@ -542,7 +543,11 @@ describe('ShortcutsHelpModal', () => {
 		});
 
 		it('shows correct mastery count', () => {
-			const masteryStats = createMockMasteryStats(['new-session', 'close-session']);
+			// Real action ids, because the mastery figure is read from the store's
+			// cross-mode binding set rather than from the shortcuts this modal is
+			// handed to LIST. An id nothing binds counts for nothing, which is the
+			// "binding is gone" case below.
+			const masteryStats = createMockMasteryStats(['toggleSidebar', 'toggleRightPanel']);
 
 			render(
 				<TestWrapper>
@@ -782,6 +787,14 @@ describe('ShortcutsHelpModal', () => {
 		// mastery denominator (which would pin the bar below 100% forever) and it
 		// must not be drawn as something the user can go press.
 		describe('unbound shortcuts', () => {
+			// The mastery denominator is the store's, so a test that edits it puts
+			// the shipped table back rather than leaking an extra action into every
+			// later count.
+			const shippedShortcuts = useSettingsStore.getState().shortcuts;
+			afterEach(() => {
+				useSettingsStore.setState({ shortcuts: shippedShortcuts });
+			});
+
 			const withUnbound = (): Record<string, Shortcut> => ({
 				...mockShortcuts,
 				'no-chord': {
@@ -816,13 +829,53 @@ describe('ShortcutsHelpModal', () => {
 			};
 
 			it('keeps an unbound shortcut out of the mastery denominator', () => {
-				const { unmount } = renderModal(mockShortcuts, createMockMasteryStats(['new-session']));
+				// Driven through the STORE, which is where the denominator comes
+				// from: an action added to the props this modal lists is not in
+				// the total either way, so adding one there would assert nothing.
+				const baseShortcuts = useSettingsStore.getState().shortcuts;
+				const { unmount } = renderModal(mockShortcuts, createMockMasteryStats(['toggleSidebar']));
 				const [, boundTotal] = masteryCounts();
 				unmount();
 
-				renderModal(withUnbound(), createMockMasteryStats(['new-session']));
+				useSettingsStore.setState({
+					shortcuts: {
+						...baseShortcuts,
+						'no-chord': {
+							id: 'no-chord',
+							label: 'No Chord Action',
+							keys: [],
+							category: 'general',
+						} as Shortcut,
+					},
+				});
+				renderModal(withUnbound(), createMockMasteryStats(['toggleSidebar']));
 
 				expect(masteryCounts()[1]).toBe(boundTotal);
+			});
+
+			it('counts an action bound only by a key sequence', () => {
+				const baseShortcuts = useSettingsStore.getState().shortcuts;
+				const { unmount } = renderModal(mockShortcuts, createMockMasteryStats(['toggleSidebar']));
+				const [, boundTotal] = masteryCounts();
+				unmount();
+
+				// No chord, but `g g` fires it, so it is as reachable as any chord
+				// and belongs in the total.
+				useSettingsStore.setState({
+					shortcuts: {
+						...baseShortcuts,
+						'sequence-only': {
+							id: 'sequence-only',
+							label: 'Sequence Only Action',
+							keys: [],
+							sequence: [['g'], ['g']],
+							category: 'general',
+						} as Shortcut,
+					},
+				});
+				renderModal(mockShortcuts, createMockMasteryStats(['toggleSidebar']));
+
+				expect(masteryCounts()[1]).toBe(boundTotal + 1);
 			});
 
 			it('marks the unbound shortcut Unassigned instead of drawing an empty chord', () => {
@@ -896,7 +949,7 @@ describe('ShortcutsHelpModal', () => {
 			it('never counts a used id whose binding is gone', () => {
 				renderModal(
 					withUnbound(),
-					createMockMasteryStats(['new-session', 'no-chord', 'retired-shortcut'])
+					createMockMasteryStats(['toggleSidebar', 'no-chord', 'retired-shortcut'])
 				);
 
 				const [used, total] = masteryCounts();

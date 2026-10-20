@@ -13,9 +13,11 @@ import { resolveEffectiveShortcuts } from '../../shared/effectiveShortcuts';
 import type { EffectiveShortcuts } from '../../shared/effectiveShortcuts';
 import { asKeyboardMode } from '../../shared/shortcut-types';
 import type { KeyboardMode, ShortcutOverride } from '../../shared/shortcut-types';
-import type { Shortcut } from '../types';
-import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS } from '../constants/shortcuts';
+import type { EncoreFeatureFlags, Shortcut } from '../types';
+import { DEFAULT_SHORTCUTS, FIXED_SHORTCUTS, TAB_SHORTCUTS } from '../constants/shortcuts';
 import { VIM_SHORTCUTS, VIM_TAB_SHORTCUTS } from '../constants/vimShortcuts';
+import { collectBoundShortcutsAcrossModes } from '../constants/keyboardMastery';
+import { availableShortcuts } from '../utils/encoreShortcuts';
 import type { SettingsStore } from './settingsStore';
 
 export interface ShortcutsState {
@@ -156,6 +158,88 @@ export function selectActiveTabShortcuts(state: ShortcutsState): Record<string, 
  */
 export function selectVimDisplacedActions(state: ShortcutsState): string[] {
 	return resolvedVimSet(state).displaced;
+}
+
+/**
+ * The state {@link selectMasteryBoundShortcuts} reads: the binding buckets plus
+ * the Encore flags, which decide whether a feature's shortcut exists at all.
+ */
+export interface MasteryShortcutsState extends ShortcutsState {
+	encoreFeatures: EncoreFeatureFlags;
+}
+
+/**
+ * One entry, on the identity of every input, for the same reason
+ * `resolvedCache` above has one: this selector runs on EVERY settings change,
+ * and it builds a fresh array, so an uncached result would hand
+ * `useSyncExternalStore` a new value each time and re-render every mastery
+ * surface on an unrelated setting.
+ */
+let masteryCache: {
+	shortcuts: Record<string, Shortcut>;
+	tabShortcuts: Record<string, Shortcut>;
+	vimShortcuts: Record<string, ShortcutOverride>;
+	vimTabShortcuts: Record<string, ShortcutOverride>;
+	keyboardMode: KeyboardMode;
+	encoreFeatures: EncoreFeatureFlags;
+	result: Shortcut[];
+} | null = null;
+
+/**
+ * The keyboard-mastery DENOMINATOR: every action the user could fire in ANY
+ * mode, counted once.
+ *
+ * Mastery is one figure across modes. The numerator has always been keyed by
+ * action id, so the denominator has to be too: a per-mode total would move the
+ * percentage the moment the user switched modes, and an action learned in one
+ * mode would read as unlearned in the other. Which mode is LIVE therefore does
+ * not change the set - it only decides which mode's entry represents an id,
+ * so a surface that also renders these shows the binding the user would press
+ * right now.
+ *
+ * Unlike the two matching selectors above, this one resolves the Vim set even
+ * in default mode. That is the point: the total has to include an action Vim
+ * mode binds and default mode leaves unbound.
+ *
+ * A switched-off Encore Feature's shortcut is excluded in both modes. The
+ * keyboard handler refuses it, so it can never be fired, and counting it would
+ * hold the user below 100% forever. `FIXED_SHORTCUTS` is shared by both modes
+ * and is not rebindable, so it contributes the same ids whichever one is live.
+ */
+export function selectMasteryBoundShortcuts(state: MasteryShortcutsState): Shortcut[] {
+	const { shortcuts, tabShortcuts, vimShortcuts, vimTabShortcuts, keyboardMode, encoreFeatures } =
+		state;
+	if (
+		masteryCache &&
+		masteryCache.shortcuts === shortcuts &&
+		masteryCache.tabShortcuts === tabShortcuts &&
+		masteryCache.vimShortcuts === vimShortcuts &&
+		masteryCache.vimTabShortcuts === vimTabShortcuts &&
+		masteryCache.keyboardMode === keyboardMode &&
+		masteryCache.encoreFeatures === encoreFeatures
+	) {
+		return masteryCache.result;
+	}
+
+	const available = (map: Record<string, Shortcut>) => availableShortcuts(map, encoreFeatures);
+	const fixed = available(FIXED_SHORTCUTS);
+	const vim = resolvedVimSet(state);
+	const defaultMode = [available(shortcuts), available(tabShortcuts), fixed];
+	const vimMode = [available(vim.shortcuts), available(vim.tabShortcuts), fixed];
+	const live = keyboardMode === 'vim' ? vimMode : defaultMode;
+	const other = keyboardMode === 'vim' ? defaultMode : vimMode;
+
+	const result = collectBoundShortcutsAcrossModes(...live, ...other);
+	masteryCache = {
+		shortcuts,
+		tabShortcuts,
+		vimShortcuts,
+		vimTabShortcuts,
+		keyboardMode,
+		encoreFeatures,
+		result,
+	};
+	return result;
 }
 
 /** macOS Alt+key special character to normal key mapping for shortcut migration */

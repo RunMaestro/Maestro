@@ -12,13 +12,13 @@ import { shortcutKeysEqual } from '../../shared/shortcutKeys';
 import { Modal } from './ui/Modal';
 import {
 	KEYBOARD_MASTERY_LEVELS,
-	collectBoundShortcuts,
 	countUsedBoundShortcuts,
 	getLevelForPercentage,
 } from '../constants/keyboardMastery';
 import { openUrl } from '../utils/openUrl';
 import { availableShortcuts } from '../utils/encoreShortcuts';
 import { useSettingsStore } from '../stores/settingsStore';
+import { selectMasteryBoundShortcuts } from '../stores/settingsShortcutsSlice';
 import { buildMaestroUrl } from '../utils/buildMaestroUrl';
 
 interface ShortcutsHelpModalProps {
@@ -99,7 +99,13 @@ export function ShortcutsHelpModal({
 	// above (the user should still know the action exists and can give it a
 	// chord), but they cannot be fired, so counting them would pin the bar below
 	// 100% no matter how much of the keyboard the user learns.
-	const boundShortcuts = useMemo(() => collectBoundShortcuts(allShortcuts), [allShortcuts]);
+	//
+	// Read from the store rather than from the props this modal LISTS, because
+	// the figure spans keyboard modes while the list is the live mode's. One
+	// mastery number means "actions you know", so it must not move when the user
+	// switches modes, and the ring here has to agree with the one on the Usage
+	// Dashboard and the figure sent to the leaderboard.
+	const boundShortcuts = useSettingsStore(selectMasteryBoundShortcuts);
 	const masteryTotal = boundShortcuts.length;
 	const usedShortcutsCount = countUsedBoundShortcuts(
 		boundShortcuts,

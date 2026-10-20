@@ -35,14 +35,9 @@ import {
 	LEADERBOARD_DRIFT_TOLERANCE_MS,
 } from '../services/leaderboard';
 import { formatDurationCompact } from '../../shared/duration';
-import {
-	KEYBOARD_MASTERY_LEVELS,
-	collectBoundShortcuts,
-	countUsedBoundShortcuts,
-} from '../constants/keyboardMastery';
-import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS, FIXED_SHORTCUTS } from '../constants/shortcuts';
-import { availableShortcuts } from '../utils/encoreShortcuts';
+import { KEYBOARD_MASTERY_LEVELS, countUsedBoundShortcuts } from '../constants/keyboardMastery';
 import { useSettingsStore } from '../stores/settingsStore';
+import { selectMasteryBoundShortcuts } from '../stores/settingsShortcutsSlice';
 import { generateId } from '../utils/ids';
 import { buildMaestroUrl } from '../utils/buildMaestroUrl';
 import { openUrl } from '../utils/openUrl';
@@ -206,15 +201,12 @@ export function LeaderboardRegistrationModal({
 	const keyboardMasteryTitle =
 		KEYBOARD_MASTERY_LEVELS[keyboardMasteryStats.currentLevel]?.name || 'Beginner';
 	// Same denominator the mastery ring and the help modal use: shortcuts with no
-	// chord bound are excluded, so the figure reported to the leaderboard can
-	// actually reach 100%. The chords of a switched-off Encore Feature are
-	// excluded for the same reason: the keyboard handler refuses them.
-	const encoreFeatures = useSettingsStore((s) => s.encoreFeatures);
-	const boundShortcuts = collectBoundShortcuts(
-		availableShortcuts(DEFAULT_SHORTCUTS, encoreFeatures),
-		TAB_SHORTCUTS,
-		availableShortcuts(FIXED_SHORTCUTS, encoreFeatures)
-	);
+	// chord and no sequence bound are excluded, so the figure reported to the
+	// leaderboard can actually reach 100%. The chords of a switched-off Encore
+	// Feature are excluded for the same reason: the keyboard handler refuses
+	// them. It spans both keyboard modes, so the number a user submits does not
+	// depend on which mode they happened to be in.
+	const boundShortcuts = useSettingsStore(selectMasteryBoundShortcuts);
 	const keyboardKeysUnlocked = countUsedBoundShortcuts(
 		boundShortcuts,
 		keyboardMasteryStats.usedShortcuts
