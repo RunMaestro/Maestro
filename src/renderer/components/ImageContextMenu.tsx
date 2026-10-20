@@ -27,6 +27,7 @@ import { notifyCenterFlash } from '../stores/centerFlashStore';
 import { notifyToast } from '../stores/notificationStore';
 import { getBasename } from '../../shared/formatters';
 import { openZoomViewer, ZOOM_VIEWER_ATTR } from './ZoomViewer/zoomViewerStore';
+import { elevatedSurfaceStyle } from '../utils/elevatedSurface';
 
 export interface ImageContextMenuState {
 	x: number;
@@ -111,7 +112,7 @@ export function ImageContextMenu({
 	return createPortal(
 		<div
 			ref={menuRef}
-			className="fixed z-[10000] py-1 rounded-md shadow-xl border whitespace-nowrap"
+			className="fixed z-[10000] py-1 rounded-md whitespace-nowrap"
 			style={{
 				left,
 				top,
@@ -121,8 +122,7 @@ export function ImageContextMenu({
 				maxHeight,
 				overflowY: 'auto',
 				opacity: ready ? 1 : 0,
-				backgroundColor: theme.colors.bgSidebar,
-				borderColor: theme.colors.border,
+				...elevatedSurfaceStyle(theme),
 				minWidth: '12.5rem',
 			}}
 			onMouseDown={(e) => e.stopPropagation()}

@@ -194,6 +194,26 @@ export function canScaleFontForView(view: FontScaleTargetView): boolean {
 	);
 }
 
+// ─── Scroll Container ─────────────────────────────────────────────────────────
+
+/**
+ * Marks the element that scrolls a view which owns its own scroller.
+ *
+ * Most views scroll inside the preview's padded content column. The CSV and
+ * JSONL tables cannot: a sticky header pins to its nearest scrolling ancestor,
+ * so the table has to sit directly in the element that scrolls it on BOTH
+ * axes. Those views fill the column and scroll themselves, and tag that
+ * scroller with this attribute so keyboard scrolling, scroll restore, and the
+ * stats-bar collapse follow it.
+ */
+export const PREVIEW_SCROLLER_ATTR = 'data-preview-scroller';
+
+/** The element that actually scrolls the preview: a view's own tagged scroller, else the content column. */
+export function resolvePreviewScroller(content: HTMLElement | null): HTMLElement | null {
+	if (!content) return null;
+	return content.querySelector<HTMLElement>(`[${PREVIEW_SCROLLER_ATTR}]`) ?? content;
+}
+
 // ─── Language Detection ───────────────────────────────────────────────────────
 
 /** Map filename extension to syntax highlighting language code */

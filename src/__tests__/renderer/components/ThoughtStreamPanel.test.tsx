@@ -755,20 +755,15 @@ describe('ThoughtStreamPanel steering', () => {
 			expect(searchButton()).toBeInTheDocument();
 		});
 
-		it('can steer from inside a search without giving up the filter', () => {
+		it('the search box offers no steer control of its own', () => {
 			runFor(SID);
 			open();
 
 			fireEvent.click(searchButton()!);
-			fireEvent.change(screen.getByPlaceholderText(SEARCH), { target: { value: 'endpoints' } });
-			fireEvent.click(screen.getByTestId('thought-stream-steer-switch'));
 
-			const box = screen.getByPlaceholderText(/Steer the Auto Run/);
-			fireEvent.change(box, { target: { value: 'use the v3 endpoint' } });
-			fireEvent.keyDown(box, { key: 'Enter' });
-
-			expect(useAutoRunSteeringStore.getState().notes[SID]).toHaveLength(1);
-			expect(screen.getByPlaceholderText(SEARCH)).toHaveValue('endpoints');
+			expect(screen.getByPlaceholderText(SEARCH)).toBeInTheDocument();
+			expect(screen.queryByLabelText('Steer the Auto Run')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('thought-stream-steer-toggle')).not.toBeInTheDocument();
 		});
 
 		it('keeps a note draft across an Escape', () => {

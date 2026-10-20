@@ -1318,6 +1318,42 @@ Do NOT add a new hard-coded five-digit z-index. If a surface needs to sit above 
 
 ---
 
+## Floating Widget Windows
+
+A floating widget is a small piece of Maestro in its own frameless, always-on-top desktop window, like Quick Chat. It floats over every app, on every Space and monitor, and stays up while the Maestro window is minimized or behind something else. The Throughput Gauge and the media player are the two today; A Cappella's voice widget is next. Design and history: `Plans/floating-widgets.md`.
+
+### When to use it
+
+Use a floating widget for a glanceable readout or a small control set the user wants while working in OTHER apps (a meter, a transport, a voice indicator). Do not use one for something the user goes to and works in: that is a modal or a tab (see "Every Surface Needs Three Ways In"). A Z-layer overlay (`Z_LAYERS`, above) is enough when the surface only has to beat a modal inside the Maestro window.
+
+### Adding a widget
+
+1. **Id and spec** in `src/shared/floatingWidgets.ts`: add the id to `FLOATING_WIDGET_IDS`, an entry in `FLOATING_WIDGET_SPECS` (`defaultSize`, `minSize`, `authority`), and the widget's state and command types with an `is...Command()` guard. Every relay handler validates the id with `isFloatingWidgetId()` and every authority validates a command with its guard, so a new widget needs both.
+2. **Pick the authority**, the ONE window that owns the live state and takes the commands:
+   - `app`: the primary app window, when the state is produced there (the gauge's rate engine).
+   - `widget`: the widget's own window, when it owns something that cannot be copied (the media player's media element). A command to a `widget` authority creates its window hidden and is held until the window reports ready.
+
+   Add the matching branch to `getAuthorityWindow` in `src/main/index.ts`. The controller itself comes from the `FLOATING_WIDGET_IDS.map(...)` there (`createFloatingWidgetWindow()` in `src/main/floating-widgets/floating-widget-window.ts`); pass `isEnabled` when the widget belongs to an Encore Feature.
+
+3. **Sync the state** with the helpers in `src/renderer/utils/windowStoreMirror.ts`:
+   - Authority: `publishStoreState(id, store, select)` publishes a plain-JSON selection now and on every change (shallow-compared, at most one publish per 100ms), and `onWidgetCommand(id, handler)` answers commands.
+   - Replica: `mirrorStoreState(id, store, apply)` seeds from the latest published state and applies each snapshot. It never publishes back.
+   - Either side acts through `sendWidgetCommand(id, command)`. When a replica's callers already use store actions (the media player), forward them through ONE wrapper over the action list (`installMediaPlaybackReplica()` in `src/renderer/stores/mediaPlaybackReplica.ts`), never per-action code. IDs and timestamps are made by the authority only, and only the authority writes persisted state.
+4. **The body** goes in `src/renderer/floatingWidget/`: a component that draws inside `<FloatingWidgetFrame>` (title strip as the OS drag region, X control, Escape closes), registered in `WIDGET_BODIES` in `FloatingWidgetRoot.tsx`. Share the drawing with the in-app card (the gauge's `ThroughputGaugeBody`) rather than forking it. A replica body's X sends a command (the gauge's `hide`), so the authority's latch and the window never disagree.
+5. **Branch the host on `floatingWidgetsAvailable()`** (`src/renderer/utils/floatingWidgetMode.ts`): true drives the window (`window.maestro.floatingWidgets.show/hide` from the authority's visible state) and renders no in-app card; false renders the in-app card exactly as before. The browser build (`isWebDesktop()`) cannot open windows, so the in-app card is the fallback and must keep working. `ThroughputGaugeHost` and `MediaPlaybackHost` are the two references.
+6. **CLI parity:** the existing verbs must still reach the widget through the store (the window follows the store, not the other way round). A status read reports the window bounds through `floatingWidgets.getBounds(id)` (`throughput-gauge status` does).
+
+### Rules
+
+- **Never take focus.** The window appears with `showInactive()`; the user is typing somewhere else. Do not call `focus()` on a widget window.
+- **One authority per widget.** State flows authority to replicas, commands flow replicas to authority. A replica that publishes, or two windows that each own part of the state, echo updates between windows.
+- **Encore zero footprint.** A widget of a switched-off Encore Feature has no window, no publisher, no listener and no timer: pass `isEnabled` to the controller, close it from the `encoreFeatures` change handler in `src/main/index.ts`, and mount the renderer driver only while the flag is on.
+- **Plain JSON only.** State and commands cross IPC by structured clone; no functions, class instances, or DOM objects.
+- **Bounds are main's job.** The controller persists each widget's bounds in the window-state store (`floatingWidgets[id]`), clamps them to a connected display, and never saves a size below `minSize`. Do not persist widget geometry from the renderer.
+- **No web bridge.** `floatingWidgets:*` stays out of the web bridge allow list (`bridgeDenyList.ts`); the browser build never opens a widget window.
+
+---
+
 ## Center Flash System (rapid temporary notifications)
 
 **Center Flash** is the canonical mechanism for momentary, center-screen acknowledgements of user-initiated actions. It is intentionally distinct from the Toast system - they are **not** interchangeable. Use the decision table below; do not hand-roll a new flash component.

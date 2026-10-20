@@ -24,6 +24,7 @@ import path from 'path';
 import type Store from 'electron-store';
 
 import { deferStoreWrites, serializeWithMemoizedArray } from '../../../main/stores/deferred-writes';
+import { encodeWithMemoizedArray } from '../../../shared/memoizedJsonSerialize';
 
 vi.mock('../../../main/utils/logger', () => ({
 	logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
@@ -33,31 +34,41 @@ vi.mock('../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
 /** How conf itself serializes a store document. */
 const confSerialize = (value: unknown): string => JSON.stringify(value, undefined, '\t');
 
-describe('serializeWithMemoizedArray', () => {
-	const cases: Array<[string, unknown]> = [
-		['empty document', {}],
-		['empty sessions array', { sessions: [] }],
-		['one session', { sessions: [{ id: 'a', name: 'Agent A' }] }],
-		['sessions plus sibling keys', { sessions: [{ id: 'a' }, { id: 'b' }], activeSessionId: 'a' }],
-		[
-			'deeply nested session',
-			{
-				sessions: [
-					{
-						id: 'a',
-						aiTabs: [{ id: 't1', logs: [{ type: 'stdout', content: 'line\twith\ttabs' }] }],
-						nested: { deep: { deeper: [1, 2, { three: true }] } },
-					},
-				],
-				activeSessionId: 'a',
-			},
-		],
-		['sibling key before sessions', { activeSessionId: 'a', sessions: [{ id: 'a' }] }],
-		['null and primitive elements', { sessions: [null, 1, 'two', true] }],
-		['unicode and escapes', { sessions: [{ id: 'a', name: 'quote " backslash \\ \n newline' }] }],
-		['nested empty array and object', { sessions: [{ id: 'a', tabs: [], meta: {} }] }],
-	];
+const cases: Array<[string, unknown]> = [
+	['empty document', {}],
+	['empty sessions array', { sessions: [] }],
+	['one session', { sessions: [{ id: 'a', name: 'Agent A' }] }],
+	['sessions plus sibling keys', { sessions: [{ id: 'a' }, { id: 'b' }], activeSessionId: 'a' }],
+	[
+		'deeply nested session',
+		{
+			sessions: [
+				{
+					id: 'a',
+					aiTabs: [{ id: 't1', logs: [{ type: 'stdout', content: 'line\twith\ttabs' }] }],
+					nested: { deep: { deeper: [1, 2, { three: true }] } },
+				},
+			],
+			activeSessionId: 'a',
+		},
+	],
+	['sibling key before sessions', { activeSessionId: 'a', sessions: [{ id: 'a' }] }],
+	['null and primitive elements', { sessions: [null, 1, 'two', true] }],
+	['unicode and escapes', { sessions: [{ id: 'a', name: 'quote " backslash \\ \n newline' }] }],
+	['nested empty array and object', { sessions: [{ id: 'a', tabs: [], meta: {} }] }],
+	[
+		'multi-byte text across elements',
+		{
+			sessions: [
+				{ id: 'a', name: '🎭 Virtual' },
+				{ id: 'b', name: '日本語 ünï' },
+			],
+			note: '✓',
+		},
+	],
+];
 
+describe('serializeWithMemoizedArray', () => {
 	it.each(cases)('matches conf byte for byte: %s', (_label, value) => {
 		expect(serializeWithMemoizedArray(value, 'sessions')).toBe(confSerialize(value));
 	});
@@ -121,6 +132,46 @@ describe('serializeWithMemoizedArray', () => {
 
 		expect(miss).toBe(confSerialize(doc));
 		expect(hit).toBe(confSerialize(doc));
+	});
+});
+
+describe('encodeWithMemoizedArray', () => {
+	const concat = (chunks: Uint8Array[]): string => Buffer.concat(chunks).toString('utf-8');
+
+	it.each(cases)('matches conf byte for byte: %s', (_label, value) => {
+		const chunks = encodeWithMemoizedArray(value, 'sessions');
+		expect(Buffer.concat(chunks).equals(Buffer.from(confSerialize(value), 'utf-8'))).toBe(true);
+	});
+
+	it('falls back to one plain chunk when the memo key is not an array', () => {
+		const doc = { sessions: { notAnArray: true }, other: 1 };
+		const chunks = encodeWithMemoizedArray(doc, 'sessions');
+		expect(chunks).toHaveLength(1);
+		expect(concat(chunks)).toBe(confSerialize(doc));
+	});
+
+	it('reuses the same bytes when a session object keeps its identity', () => {
+		// The whole point: an unchanged session costs no stringify and no UTF-8
+		// encode. Mutating in place after the first pass proves the second pass
+		// served the memo rather than re-reading the object.
+		const session: Record<string, unknown> = { id: 'a', name: 'before' };
+		const first = encodeWithMemoizedArray({ sessions: [session] }, 'sessions');
+		session.name = 'after';
+		const second = encodeWithMemoizedArray({ sessions: [session] }, 'sessions');
+
+		// Chunk 1 is the element itself (chunk 0 is the text before it).
+		expect(second[1]).toBe(first[1]);
+		expect(concat(second)).toContain('before');
+		expect(concat(encodeWithMemoizedArray({ sessions: [{ ...session }] }, 'sessions'))).toContain(
+			'after'
+		);
+	});
+
+	it('emits about one chunk per element plus the text between them', () => {
+		const doc = { sessions: [{ id: 'a' }, { id: 'b' }, { id: 'c' }], activeSessionId: 'a' };
+		// Separators and sibling keys merge into the text chunks around each
+		// element, so the count tracks the element count, not every separator.
+		expect(encodeWithMemoizedArray(doc, 'sessions')).toHaveLength(2 * doc.sessions.length + 1);
 	});
 });
 
@@ -225,6 +276,25 @@ describe('deferStoreWrites', () => {
 		} finally {
 			vi.useRealTimers();
 		}
+	});
+
+	it('hands the async write byte chunks, never a string to encode on this thread', async () => {
+		// fs.writeFile UTF-8 encodes a string argument in full, synchronously,
+		// before its async write begins. On a 72 MB sessions file that encode was
+		// the largest main-process stall in a field trace.
+		const store = makeStore({ sessions: [] });
+		const writer = deferStoreWrites(store, 'sessions');
+		const writeFile = vi.spyOn(fsp, 'writeFile');
+
+		writer.store.set('sessions', [{ id: 'a', name: '🎭' }]);
+		await writer.flushAsync();
+
+		const data = writeFile.mock.calls[0][1];
+		expect(typeof data).not.toBe('string');
+		expect(Array.isArray(data)).toBe(true);
+		expect(fs.readFileSync(filePath, 'utf-8')).toBe(
+			confSerialize({ sessions: [{ id: 'a', name: '🎭' }] })
+		);
 	});
 
 	it('serializes overlapping flushes so the newest snapshot lands last', async () => {

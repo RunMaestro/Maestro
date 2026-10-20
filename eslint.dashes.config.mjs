@@ -2,7 +2,7 @@
 //
 // A second, deliberately tiny ESLint pass that runs ONLY the em/en-dash rule,
 // over the directories the main config puts in its global `ignores` block:
-// `src/__tests__/**` and `scripts/**`.
+// `src/__tests__/**`, `scripts/**`, and `src/shared/dataview/vendor/**`.
 //
 // Why a separate config rather than widening eslint.config.mjs: a flat-config
 // object whose only key is `ignores` is a GLOBAL ignore, and no later config
@@ -31,6 +31,8 @@ export default tseslint.config({
 		'scripts/**/*.mjs',
 		'scripts/**/*.js',
 		'scripts/**/*.cjs',
+		// Vendored Dataview source is in the main config's ignores; the dash rule still covers it.
+		'src/shared/dataview/vendor/**/*.ts',
 	],
 	languageOptions: {
 		parser: tseslint.parser,

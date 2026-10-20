@@ -3,6 +3,7 @@ import { ChevronDown } from 'lucide-react';
 import type { MarketplacePlaybook } from '../../../../shared/marketplace-types';
 import type { Theme } from '../../../types';
 import { useEventListener } from '../../../hooks/utils/useEventListener';
+import { elevatedSurfaceStyle } from '../../../utils/elevatedSurface';
 
 export interface DocumentSelectorProps {
 	theme: Theme;
@@ -62,10 +63,9 @@ export function DocumentSelector({
 
 				{showDocDropdown && (
 					<div
-						className="absolute top-full left-0 right-0 mt-1 rounded shadow-lg z-10 overflow-hidden max-h-64 overflow-y-auto"
+						className="absolute top-full left-0 right-0 mt-1 rounded z-10 overflow-hidden max-h-64 overflow-y-auto"
 						style={{
-							backgroundColor: theme.colors.bgSidebar,
-							border: `1px solid ${theme.colors.border}`,
+							...elevatedSurfaceStyle(theme),
 						}}
 					>
 						<button

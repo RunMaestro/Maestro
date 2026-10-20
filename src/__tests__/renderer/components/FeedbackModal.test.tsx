@@ -154,6 +154,12 @@ describe('FeedbackModal draft resume', () => {
 		mockState.saveDraft.mockResolvedValue('saved-id');
 	});
 
+	it('has no separate Minimize button (X already parks a draft)', () => {
+		renderModal();
+		expect(screen.queryByLabelText('Minimize feedback')).toBeNull();
+		expect(screen.getByLabelText('Close modal')).toBeTruthy();
+	});
+
 	it('reopening the already-active draft is a no-op (no remount, no save, no resume)', async () => {
 		mockState.drafts = [makeDraft('draft-1'), makeDraft('draft-2')];
 		mockState.activeDraftId = 'draft-1';

@@ -27,6 +27,7 @@ import {
 	formatSessions,
 	formatSshRemotes,
 	formatDirectorNotesHistory,
+	formatTextTable,
 	type GroupDisplay,
 	type AgentDisplay,
 	type PlaybookDisplay,
@@ -1465,6 +1466,46 @@ describe('formatter', () => {
 		it('should show remote ID', () => {
 			const result = formatSshRemotes([baseRemote]);
 			expect(result).toContain('remote-abc-123');
+		});
+	});
+
+	describe('formatTextTable', () => {
+		const headers = ['NAME', 'ROLE', 'NOTE'];
+		const rows = [
+			['Rami Example', 'Engineer', 'first'],
+			['Dana', 'Designer and long-time collaborator', 'second'],
+		];
+
+		it('pads each column to its widest cell and leaves the last column unpadded', () => {
+			expect(formatTextTable(headers, rows)).toBe(
+				[
+					'NAME          ROLE                                 NOTE',
+					'Rami Example  Engineer                             first',
+					'Dana          Designer and long-time collaborator  second',
+				].join('\n')
+			);
+		});
+
+		it('shrinks the widest columns with an ellipsis to fit maxWidth', () => {
+			const table = formatTextTable(headers, rows, { maxWidth: 40 });
+			const lines = table.split('\n');
+			for (const line of lines) expect(line.length).toBeLessThanOrEqual(40);
+			expect(lines[2]).toContain('…');
+			expect(lines[1].startsWith('Rami Example')).toBe(true);
+		});
+
+		it('leaves a table that fits alone, and never shrinks a column below the minimum', () => {
+			expect(formatTextTable(headers, rows, { maxWidth: 200 })).toBe(
+				formatTextTable(headers, rows)
+			);
+			const narrow = formatTextTable(['A', 'B'], [['abcdefghij', 'klmnopqrst']], { maxWidth: 4 });
+			expect(narrow.split('\n')[1]).toBe('abcd…  klmn…');
+		});
+
+		it('keeps a row on one line and fills missing cells', () => {
+			expect(formatTextTable(['A', 'B'], [['one\ntwo', 'x\ty'], ['z']])).toBe(
+				['A        B', 'one two  x y', 'z'].join('\n')
+			);
 		});
 	});
 });

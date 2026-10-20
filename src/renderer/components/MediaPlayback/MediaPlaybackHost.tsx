@@ -1,10 +1,15 @@
-import { memo, useCallback, useEffect, useState } from 'react';
+import { memo, useEffect, useState } from 'react';
 
-import { MediaViewer } from '../FilePreview/MediaViewer';
+import { ActiveMediaPlayer } from './ActiveMediaPlayer';
 import { FloatingMediaPlayer } from './FloatingMediaPlayer';
-import { stepMediaItem } from '../../utils/mediaItems';
 import { useEventListener } from '../../hooks/utils/useEventListener';
-import { flushMediaQueuePersist, useMediaPlaybackStore } from '../../stores/mediaPlaybackStore';
+import {
+	flushMediaQueuePersist,
+	selectActiveMediaItem,
+	useMediaPlaybackStore,
+} from '../../stores/mediaPlaybackStore';
+import { installMediaPlaybackReplica } from '../../stores/mediaPlaybackReplica';
+import { floatingWidgetsAvailable } from '../../utils/floatingWidgetMode';
 import type { Theme } from '../../types';
 
 interface MediaPlaybackHostProps {
@@ -26,24 +31,32 @@ interface MediaPlaybackHostProps {
  * structurally impossible instead of a rule to enforce. Which file it holds
  * follows the user: opening one activates it, the transport's prev/next step
  * through the queue in open order, and the history menu jumps by recency.
+ *
+ * In the desktop app (`floatingWidgetsAvailable()`) that one element lives in
+ * the media widget window (`floatingWidget/MediaPlayerWidget.tsx`), and this
+ * window's store becomes its replica: this host installs the replica and draws
+ * nothing. The widget window mounts `FloatingWidgetRoot`, never this host, so
+ * the element cannot appear twice. The browser build keeps the element here.
  */
 export const MediaPlaybackHost = memo(function MediaPlaybackHost({
 	theme,
 }: MediaPlaybackHostProps) {
-	const items = useMediaPlaybackStore((s) => s.items);
-	const activeItemId = useMediaPlaybackStore((s) => s.activeItemId);
+	// Constant for the life of the window, so the branch never swaps trees.
+	if (floatingWidgetsAvailable()) return <MediaPlaybackReplica />;
+	return <InAppMediaPlayer theme={theme} />;
+});
+
+/** Forwards this window's media commands to the widget window. Draws nothing. */
+function MediaPlaybackReplica() {
+	useEffect(() => installMediaPlaybackReplica(), []);
+	return null;
+}
+
+/** The browser build's player: the element inside the in-app floating frame. */
+function InAppMediaPlayer({ theme }: MediaPlaybackHostProps) {
+	const active = useMediaPlaybackStore(selectActiveMediaItem);
 	const dismissed = useMediaPlaybackStore((s) => s.dismissed);
-	const pendingAutoplay = useMediaPlaybackStore((s) => s.pendingAutoplay);
-	const toggleRequest = useMediaPlaybackStore((s) => s.toggleRequest);
-	const resumeTimes = useMediaPlaybackStore((s) => s.resumeTimes);
-	const setActiveItem = useMediaPlaybackStore((s) => s.setActiveItem);
-	const setPlaying = useMediaPlaybackStore((s) => s.setPlaying);
-	const consumeAutoplay = useMediaPlaybackStore((s) => s.consumeAutoplay);
-	const rememberTime = useMediaPlaybackStore((s) => s.rememberTime);
-	const advanceAfterEnded = useMediaPlaybackStore((s) => s.advanceAfterEnded);
 	const aspects = useMediaPlaybackStore((s) => s.aspects);
-	const rememberAspect = useMediaPlaybackStore((s) => s.rememberAspect);
-	const rememberDuration = useMediaPlaybackStore((s) => s.rememberDuration);
 
 	// One measurement for the whole app: the transport is the same strip whatever
 	// is loaded, so re-measuring per file would only re-report the same number.
@@ -53,76 +66,7 @@ export const MediaPlaybackHost = memo(function MediaPlaybackHost({
 	// last position (or the last thing queued). Flush before it goes away.
 	useEventListener('beforeunload', flushMediaQueuePersist);
 
-	const active = activeItemId ? items.find((item) => item.id === activeItemId) : undefined;
-
-	const navigate = useCallback(
-		(steps: number) => {
-			const target = stepMediaItem(items, activeItemId, steps);
-			// Navigating with the transport means "play this now", matching what the
-			// buttons look like they do.
-			if (target) setActiveItem(target.id, { autoplay: true });
-		},
-		[items, activeItemId, setActiveItem]
-	);
-
-	const handleTimeUpdate = useCallback(
-		(seconds: number) => {
-			if (activeItemId) rememberTime(activeItemId, seconds);
-		},
-		[activeItemId, rememberTime]
-	);
-
-	const handleAspectChange = useCallback(
-		(aspect: number) => {
-			if (activeItemId) rememberAspect(activeItemId, aspect);
-		},
-		[activeItemId, rememberAspect]
-	);
-
-	const handleDurationKnown = useCallback(
-		(seconds: number) => {
-			if (activeItemId) rememberDuration(activeItemId, seconds);
-		},
-		[activeItemId, rememberDuration]
-	);
-
-	// Hand the one-shot back to the store once the player has it. In an effect,
-	// not inline: a set during render is a React violation.
-	useEffect(() => {
-		if (pendingAutoplay) consumeAutoplay();
-	}, [pendingAutoplay, consumeAutoplay]);
-
 	if (!active) return null;
-
-	const player = (
-		<MediaViewer
-			// Keyed on the item so switching files gets a fresh element rather than a
-			// reused one carrying the previous file's state.
-			key={active.id}
-			kind={active.kind}
-			name={active.name}
-			path={active.path}
-			autoplay={active.id === activeItemId && pendingAutoplay}
-			resumeTime={resumeTimes[active.id] ?? 0}
-			compact
-			onTimeUpdate={handleTimeUpdate}
-			onPlayingChange={setPlaying}
-			// A finished file hands off to the next queued one, which is what makes
-			// "queue an mp4 behind this mp3" mean anything.
-			onEnded={advanceAfterEnded}
-			// The frame sizes itself to the file, so it needs the file's own shape
-			// and the true height of the controls under it.
-			onAspectChange={handleAspectChange}
-			// Only the loaded file is ever mounted, so this is the one chance to
-			// learn how long it is for the queue and history lists.
-			onDurationKnown={handleDurationKnown}
-			onTransportHeightChange={setTransportHeight}
-			onPrev={stepMediaItem(items, activeItemId, -1) ? () => navigate(-1) : undefined}
-			onNext={stepMediaItem(items, activeItemId, 1) ? () => navigate(1) : undefined}
-			toggleRequest={toggleRequest}
-			theme={theme}
-		/>
-	);
 
 	// ONE render path, minimized or not. Branching here - a bare wrapper div when
 	// minimized, the frame otherwise - put the media element at a different
@@ -140,7 +84,7 @@ export const MediaPlaybackHost = memo(function MediaPlaybackHost({
 			hidden={dismissed}
 			theme={theme}
 		>
-			{player}
+			<ActiveMediaPlayer item={active} onTransportHeightChange={setTransportHeight} theme={theme} />
 		</FloatingMediaPlayer>
 	);
-});
+}

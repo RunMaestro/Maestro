@@ -8,6 +8,7 @@ import { createMockSession as baseCreateMockSession } from '../../helpers/mockSe
 
 import { mockTheme } from '../../helpers/mockTheme';
 import { spyOnListeners, expectAllListenersRemoved } from '../../helpers/listenerLeakAssertions';
+import { getElevatedSurfaceColors } from '../../../renderer/utils/elevatedSurface';
 // Mock lucide-react
 vi.mock('lucide-react', () => ({
 	ChevronRight: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
@@ -1599,7 +1600,7 @@ describe('FileExplorerPanel', () => {
 	});
 
 	describe('Theme Styling', () => {
-		it('applies bgSidebar to overlay background', async () => {
+		it('applies the elevated fill to overlay background', async () => {
 			render(<FileExplorerPanel {...defaultProps} />);
 			const refreshButton = screen.getByTitle('Refresh file tree');
 
@@ -1609,7 +1610,9 @@ describe('FileExplorerPanel', () => {
 			});
 
 			const overlay = screen.getByText('Auto-refresh').closest('.fixed');
-			expect(overlay).toHaveStyle({ backgroundColor: mockTheme.colors.bgSidebar });
+			expect(overlay).toHaveStyle({
+				backgroundColor: getElevatedSurfaceColors(mockTheme.colors).background,
+			});
 		});
 
 		it('applies border color to overlay', async () => {
@@ -1622,7 +1625,9 @@ describe('FileExplorerPanel', () => {
 			});
 
 			const overlay = screen.getByText('Auto-refresh').closest('.fixed');
-			expect(overlay).toHaveStyle({ borderColor: mockTheme.colors.border });
+			expect(overlay).toHaveStyle({
+				borderColor: getElevatedSurfaceColors(mockTheme.colors).border,
+			});
 		});
 
 		it('applies bgActivity to overlay header', async () => {

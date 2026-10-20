@@ -18,6 +18,8 @@ export interface BuildBlocksOptions {
 		projectRoot?: string;
 		homeDir?: string;
 	};
+	/** Fence languages rendered as React items (see `TokensToBlocksOptions`). */
+	reactFenceLanguages?: ReadonlySet<string>;
 }
 
 /**
@@ -46,7 +48,12 @@ export function buildBlocks(source: string, options: BuildBlocksOptions = {}): M
 		applyFileLinks(md, tokens, options.fileLinks);
 	}
 	const lineOffsets = buildLineOffsets(body);
-	const bodyBlocks = tokensToBlocks(md, tokens, { lineOffsets });
+	const bodyBlocks = tokensToBlocks(md, tokens, {
+		lineOffsets,
+		reactFenceLanguages: options.reactFenceLanguages,
+	});
+	// Fence lines are body-relative; the frontmatter's lines come first in the file.
+	const frontmatterLineCount = countNewlines(source, frontmatterByteLength);
 
 	const all: MarkdownBlock[] = [];
 	let id = 0;
@@ -67,7 +74,19 @@ export function buildBlocks(source: string, options: BuildBlocksOptions = {}): M
 			block.sourceStart !== undefined ? block.sourceStart + frontmatterByteLength : undefined;
 		const sourceEnd =
 			block.sourceEnd !== undefined ? block.sourceEnd + frontmatterByteLength : undefined;
-		all.push({ ...block, id: id++, sourceStart, sourceEnd });
+		const fence = block.fence
+			? { ...block.fence, line: block.fence.line + frontmatterLineCount }
+			: undefined;
+		all.push({ ...block, id: id++, sourceStart, sourceEnd, ...(fence ? { fence } : null) });
 	}
 	return all;
+}
+
+/** Newlines in the first `end` characters of `text`. */
+function countNewlines(text: string, end: number): number {
+	let count = 0;
+	for (let i = 0; i < end; i++) {
+		if (text.charCodeAt(i) === 10) count++;
+	}
+	return count;
 }

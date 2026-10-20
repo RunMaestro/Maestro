@@ -50,6 +50,7 @@ export const MarkdownPreviewFast = forwardRef<MarkdownPreviewFastHandle, Markdow
 			projectRoot,
 			onFileClick,
 			onExternalLinkClick,
+			fenceRenderers,
 		},
 		ref
 	) {
@@ -155,13 +156,21 @@ export const MarkdownPreviewFast = forwardRef<MarkdownPreviewFastHandle, Markdow
 			[fileTreeIndices, cwd, homeDir, projectRoot]
 		);
 
+		// Fence languages that render as React items (Dataview), as a set the
+		// pipeline matches against each top-level fence's first info word.
+		const reactFenceLanguages = useMemo(
+			() => (fenceRenderers ? new Set(Object.keys(fenceRenderers)) : undefined),
+			[fenceRenderers]
+		);
+
 		// Parse pipeline. Defers large parses so the first frame paints a skeleton
 		// rather than blocking input.
 		useEffect(() => {
 			let cancelled = false;
+			const buildOptions = { fileLinks: fileLinksOptions, reactFenceLanguages };
 
 			if (content.length < SYNC_PARSE_BYTES) {
-				const parsed = buildBlocks(content, { fileLinks: fileLinksOptions });
+				const parsed = buildBlocks(content, buildOptions);
 				if (!cancelled) setBlocks(parsed);
 				return () => {
 					cancelled = true;
@@ -171,7 +180,7 @@ export const MarkdownPreviewFast = forwardRef<MarkdownPreviewFastHandle, Markdow
 			setBlocks([]);
 			const handle = setTimeout(() => {
 				if (cancelled) return;
-				const parsed = buildBlocks(content, { fileLinks: fileLinksOptions });
+				const parsed = buildBlocks(content, buildOptions);
 				if (!cancelled) setBlocks(parsed);
 			}, 0);
 
@@ -179,20 +188,41 @@ export const MarkdownPreviewFast = forwardRef<MarkdownPreviewFastHandle, Markdow
 				cancelled = true;
 				clearTimeout(handle);
 			};
-		}, [content, fileLinksOptions]);
+		}, [content, fileLinksOptions, reactFenceLanguages]);
 
 		// Sanitize lazily per-block so blocks the user never scrolls to don't pay
 		// the cost. `data-block-index` lets the imperative scrollToMatch helper
 		// locate the matched block in the (sparse) Virtuoso-rendered DOM.
-		const renderBlock = useCallback((index: number, block: MarkdownBlock) => {
-			return (
-				<div
-					className={FAST_BLOCK_CLASS}
-					data-block-index={index}
-					dangerouslySetInnerHTML={{ __html: sanitizeBlock(block.html) }}
-				/>
-			);
-		}, []);
+		// A tagged fence renders through its React component instead, inside the
+		// same wrapper, so scroll-to-match and the TOC still find it. Its data
+		// (the note, the agent) arrives through context, not props, and its result
+		// is cached outside the item, so Virtuoso's unmount and remount repaints it
+		// at once.
+		const renderBlock = useCallback(
+			(index: number, block: MarkdownBlock) => {
+				const FenceRenderer =
+					block.fence &&
+					fenceRenderers &&
+					Object.prototype.hasOwnProperty.call(fenceRenderers, block.fence.language)
+						? fenceRenderers[block.fence.language]
+						: undefined;
+				if (block.fence && FenceRenderer) {
+					return (
+						<div className={FAST_BLOCK_CLASS} data-block-index={index}>
+							<FenceRenderer code={block.fence.content} theme={theme} />
+						</div>
+					);
+				}
+				return (
+					<div
+						className={FAST_BLOCK_CLASS}
+						data-block-index={index}
+						dangerouslySetInnerHTML={{ __html: sanitizeBlock(block.html) }}
+					/>
+				);
+			},
+			[fenceRenderers, theme]
+		);
 
 		// Single delegated click handler at the scroll container. React listeners
 		// do not reach into innerHTML, so all markdown links route through here.

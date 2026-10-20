@@ -23,6 +23,7 @@ import { isMacOS } from '../../shared/platformDetection';
 import { flushTranscriptMirrorsSync } from '../storage/starred-transcript-mirror';
 import { flushPendingSessionWritesSync } from '../stores';
 import { flushCotConfigStoreSync } from '../cot-export/config-store';
+import { shutdownDataviewService } from '../dataview/dataview-service';
 
 /**
  * Safety timeout for quit confirmation from the renderer.
@@ -376,6 +377,10 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 
 		// Stop history manager watcher
 		getHistoryManager().stopWatching();
+
+		// Stop every Dataview watcher, poller, and idle timer. Fire-and-forget: a cache write cut off by
+		// the force-exit is safe to lose, since the next open reconciles the vault against the disk.
+		void shutdownDataviewService();
 
 		// Flush every open starred tab's transcript to Maestro's own mirror. Done
 		// synchronously (not fire-and-forget) because the process is SIGKILLed

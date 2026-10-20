@@ -7,6 +7,7 @@ import { SessionTooltipContent } from './SessionTooltipContent';
 import { CornerDot } from '../ui/CornerDot';
 import { hasUnreadVisibleTab } from '../../utils/tabHelpers';
 import { useConsultedSessionIds } from '../../stores/crossAgentInFlightStore';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 interface CollapsedSessionPillProps {
 	session: Session;
@@ -153,13 +154,12 @@ export const CollapsedSessionPill = memo(function CollapsedSessionPill({
 					>
 						{hasUnreadTabs && isLast && <CornerDot color={theme.colors.error} placement="right" />}
 						<div
-							className="fixed rounded px-3 py-2 z-[100] opacity-0 group-hover/segment:opacity-100 pointer-events-none transition-opacity shadow-xl"
+							className="fixed rounded px-3 py-2 z-[100] opacity-0 group-hover/segment:opacity-100 pointer-events-none transition-opacity"
 							style={{
 								minWidth: '240px',
 								left: `${leftSidebarWidth + 8}px`,
 								top: tooltipPosition ? `${tooltipPosition.y}px` : undefined,
-								backgroundColor: theme.colors.bgSidebar,
-								border: `1px solid ${theme.colors.border}`,
+								...elevatedSurfaceStyle(theme),
 							}}
 						>
 							<SessionTooltipContent

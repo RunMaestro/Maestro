@@ -35,6 +35,7 @@ import { MetricCard } from './SummaryCards';
 import { buildShortcutsSummary } from './footerSummary';
 import { usePublishFooterSummary } from './useFooterSummary';
 import { useDashboardResource } from './useDashboardResource';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 interface KeyboardStatsProps {
 	timeRange: StatsTimeRange;
@@ -242,10 +243,8 @@ function DailyBarChart({ series, theme }: DailyBarChartProps) {
 								<div
 									className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 rounded text-xs whitespace-nowrap z-10"
 									style={{
-										backgroundColor: theme.colors.bgActivity,
+										...elevatedSurfaceStyle(theme),
 										color: theme.colors.textMain,
-										border: `1px solid ${theme.colors.border}`,
-										boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
 									}}
 								>
 									<div style={{ fontWeight: 600 }}>{entry.date}</div>

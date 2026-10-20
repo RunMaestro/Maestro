@@ -343,6 +343,7 @@ jobs:
       # copies dist/native/<platform>-${arch}/ into resources/native/.
       # macOS packages x64 and arm64 separately below, so it needs both.
       - name: Build Computer History helper
+        if: matrix.platform != 'win'
         shell: bash
         env:
           PLATFORM: ${{ matrix.platform }}
@@ -356,12 +357,24 @@ jobs:
             dist/native/darwin-arm64/maestro-computer-history --version
           else
             node scripts/build-maestro-computer-history.mjs --arch "$ARCH"
-            case "$PLATFORM" in
-              win) BIN=dist/native/win32-x64/maestro-computer-history.exe ;;
-              *) BIN="dist/native/linux-$ARCH/maestro-computer-history" ;;
-            esac
-            "$BIN" --version
+            "dist/native/linux-$ARCH/maestro-computer-history" --version
           fi
+
+      # Windows builds the helper in PowerShell, not Git Bash. Git Bash puts
+      # Git's usr/bin first on PATH, and its coreutils `link` shadowed MSVC's
+      # link.exe, so cargo failed to link (v1.1.0-RC). The PATH filter keeps that
+      # `link` out even if the runner image ever adds usr/bin to the machine PATH.
+      - name: Build Computer History helper (Windows)
+        if: matrix.platform == 'win'
+        shell: pwsh
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -notmatch '\\Git\\usr\\bin\\?$' }) -join ';'
+          node scripts/build-maestro-computer-history.mjs --arch $env:ARCH
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & dist/native/win32-x64/maestro-computer-history.exe --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # List release directory before packaging for debugging
       - name: Create release directory

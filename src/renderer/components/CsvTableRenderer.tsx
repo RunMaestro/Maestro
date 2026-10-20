@@ -4,6 +4,7 @@ import type { Theme } from '../types';
 import { highlightMatches } from '../utils/highlightMatches';
 import { CsvRowDetailModal } from './CsvRowDetailModal';
 import { isCoarsePointer } from '../utils/touch';
+import { PREVIEW_SCROLLER_ATTR } from './FilePreview/filePreviewUtils';
 
 /**
  * Typography note: this viewer sets no font-family and sizes everything in
@@ -229,10 +230,10 @@ export function CsvTableRenderer({
 	}
 
 	return (
-		<div className="csv-table-renderer" style={{ padding: '16px' }}>
+		<div className="csv-table-renderer flex flex-col flex-1 min-h-0" style={{ padding: '16px' }}>
 			{isTruncated && (
 				<div
-					className="px-4 py-2 mb-3 flex items-center gap-2 text-sm rounded"
+					className="shrink-0 px-4 py-2 mb-3 flex items-center gap-2 text-sm rounded"
 					style={{
 						backgroundColor: theme.colors.warning + '20',
 						border: `1px solid ${theme.colors.warning}40`,
@@ -243,8 +244,13 @@ export function CsvTableRenderer({
 					{query ? ' matching' : ''} rows
 				</div>
 			)}
+			{/* The table scrolls itself on both axes: a sticky header pins to its
+			    nearest scrolling ancestor, and a horizontal-only wrapper would be that
+			    ancestor while never scrolling vertically, so the header would scroll
+			    away with the rows. */}
 			<div
-				className="overflow-x-auto rounded"
+				className="min-h-0 overflow-auto rounded scrollbar-thin"
+				{...{ [PREVIEW_SCROLLER_ATTR]: true }}
 				style={{ border: `1px solid ${theme.colors.border}` }}
 			>
 				<table

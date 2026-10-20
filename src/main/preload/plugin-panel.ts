@@ -27,11 +27,7 @@
  */
 
 import { ipcRenderer } from 'electron';
-import {
-	isPanelThemeColor,
-	PANEL_THEME_CHANNEL,
-	PANEL_THEME_COLOR_TOKENS,
-} from '../../shared/plugins/panel-theme';
+import { applyPanelThemePayload, PANEL_THEME_CHANNEL } from '../../shared/plugins/panel-theme';
 
 /** Minimal DOM surface (tsconfig.main has no DOM lib). */
 interface PanelMessageEvent {
@@ -84,25 +80,5 @@ ipcRenderer.on('maestro:panelData', (_event, data: unknown) => {
 
 /** Apply only host-approved CSS color slots; invalid updates clear stale values. */
 ipcRenderer.on(PANEL_THEME_CHANNEL, (_event, data: unknown) => {
-	if (typeof data !== 'object' || data === null) return;
-	const payload = data as Record<string, unknown>;
-	if (payload.colorScheme !== 'light' && payload.colorScheme !== 'dark') return;
-	if (typeof payload.colors !== 'object' || payload.colors === null) return;
-	const colors = payload.colors as Record<string, unknown>;
-	const style = document.documentElement.style;
-	for (const token of Object.keys(PANEL_THEME_COLOR_TOKENS)) {
-		const value = Object.prototype.hasOwnProperty.call(colors, token) ? colors[token] : null;
-		if (isPanelThemeColor(value)) {
-			style.setProperty(token, value);
-		} else {
-			style.removeProperty(token);
-		}
-	}
-	const background = colors['--maestro-bg-main'];
-	if (isPanelThemeColor(background)) {
-		style.setProperty('background-color', background);
-	} else {
-		style.removeProperty('background-color');
-	}
-	style.setProperty('color-scheme', payload.colorScheme);
+	applyPanelThemePayload(document.documentElement.style, data);
 });

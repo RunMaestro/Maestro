@@ -1,4 +1,4 @@
-import { startTransition, useCallback } from 'react';
+import { startTransition, useCallback, useRef } from 'react';
 import type React from 'react';
 import {
 	KEYSTROKE_TEXTAREA_MAX_HEIGHT,
@@ -57,6 +57,10 @@ export function useInputAreaTextChange({
 	setSelectedAtMentionIndex,
 	setAtMentionCategory,
 }: UseInputAreaTextChangeArgs): (e: React.ChangeEvent<HTMLTextAreaElement>) => void {
+	// The textarea the pending keystroke frame will measure. Kept current on
+	// every keystroke so the one frame a burst shares sizes the latest element.
+	const keystrokeTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+
 	return useCallback(
 		(e) => {
 			let value = e.target.value;
@@ -130,17 +134,25 @@ export function useInputAreaTextChange({
 			// Claim the resize for this keystroke so the autosize effect (which fires
 			// synchronously during commit) doesn't also reflow. Deferred to a rAF to
 			// coalesce rapid keystrokes into one resize per frame, off the input-latency
-			// critical path.
-			const textarea = e.target;
-			keystrokeResizeScheduledRef.current = true;
-			requestAnimationFrame(() => {
-				resizeTextareaToContent(textarea, KEYSTROKE_TEXTAREA_MAX_HEIGHT);
-				// resizeTextareaToContent resets scrollTop (via height:'auto'), so the
-				// keystroke path must re-scroll to the caret or newly typed text past the
-				// max height stays hidden until the user adds line breaks (issue #1169).
-				scrollTextareaToCaretEnd(textarea);
-				keystrokeResizeScheduledRef.current = false;
-			});
+			// critical path. A frame already pending covers this keystroke too: each
+			// resize forces a layout (height:'auto' then scrollHeight), so one rAF per
+			// keystroke would reflow once per key in a burst instead of once per frame.
+			keystrokeTextareaRef.current = e.target;
+			if (!keystrokeResizeScheduledRef.current) {
+				keystrokeResizeScheduledRef.current = true;
+				requestAnimationFrame(() => {
+					// Release the claim first so a throw below cannot leave the autosize
+					// effect disabled for good.
+					keystrokeResizeScheduledRef.current = false;
+					const textarea = keystrokeTextareaRef.current;
+					if (!textarea) return;
+					resizeTextareaToContent(textarea, KEYSTROKE_TEXTAREA_MAX_HEIGHT);
+					// resizeTextareaToContent resets scrollTop (via height:'auto'), so the
+					// keystroke path must re-scroll to the caret or newly typed text past the
+					// max height stays hidden until the user adds line breaks (issue #1169).
+					scrollTextareaToCaretEnd(textarea);
+				});
+			}
 		},
 		[
 			isTerminalMode,

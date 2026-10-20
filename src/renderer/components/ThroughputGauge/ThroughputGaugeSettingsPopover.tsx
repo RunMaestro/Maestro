@@ -34,6 +34,7 @@ import {
 	type AnchoredMenuPlacement,
 } from '../../hooks/ui/useAnchoredMenuPosition';
 import { useFocusOnMount } from '../../hooks/utils/useFocusAfterRender';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 import { useEventListener } from '../../hooks/utils/useEventListener';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useThroughputGaugeStore } from '../../stores/throughputGaugeStore';
@@ -55,17 +56,24 @@ interface ThroughputGaugeSettingsPopoverProps {
 	/** The gear button. Clicks on it count as inside, so it can toggle the popover. */
 	anchorRef: RefObject<HTMLElement | null>;
 	onClose: () => void;
+	/**
+	 * Reset peak. Defaults to this window's gauge store; the desktop widget
+	 * window passes a command to the primary window, which owns the readings.
+	 */
+	onResetPeak?: () => void;
 }
 
 export const ThroughputGaugeSettingsPopover = memo(function ThroughputGaugeSettingsPopover({
 	theme,
 	anchorRef,
 	onClose,
+	onResetPeak,
 }: ThroughputGaugeSettingsPopoverProps) {
 	const menuRef = useRef<HTMLDivElement>(null);
 	const settings = useSettingsStore((s) => s.throughputGaugeSettings);
 	const setSettings = useSettingsStore((s) => s.setThroughputGaugeSettings);
-	const resetPeak = useThroughputGaugeStore((s) => s.resetPeak);
+	const storeResetPeak = useThroughputGaugeStore((s) => s.resetPeak);
+	const resetPeak = onResetPeak ?? storeResetPeak;
 
 	// Decided once, at open: flipping while open would jump the menu under the cursor.
 	const [placement] = useState(() => placementFor(anchorRef.current));
@@ -121,14 +129,13 @@ export const ThroughputGaugeSettingsPopover = memo(function ThroughputGaugeSetti
 			tabIndex={-1}
 			onKeyDown={handleKeyDown}
 			// Above the card (60), far below modals so it never covers an overlay.
-			className="fixed z-[100] w-64 p-2 rounded shadow-xl border overflow-y-auto select-none outline-none space-y-2"
+			className="fixed z-[100] w-64 p-2 rounded overflow-y-auto select-none outline-none space-y-2"
 			style={{
 				left,
 				top,
 				maxHeight,
 				opacity: ready ? 1 : 0,
-				backgroundColor: theme.colors.bgActivity,
-				borderColor: theme.colors.border,
+				...elevatedSurfaceStyle(theme),
 			}}
 		>
 			<div className="flex items-center gap-2 pl-1">

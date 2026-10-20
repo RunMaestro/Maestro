@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { THEMES } from '../../../renderer/constants/themes';
 import {
+	applyPanelThemePayload,
 	buildPanelThemePayload,
 	PANEL_THEME_COLOR_TOKENS,
 } from '../../../shared/plugins/panel-theme';
@@ -62,5 +63,58 @@ describe('panel theme snapshot', () => {
 		} finally {
 			vi.unstubAllGlobals();
 		}
+	});
+});
+
+describe('applyPanelThemePayload', () => {
+	function styleTarget() {
+		const values = new Map<string, string>();
+		return {
+			values,
+			setProperty: (name: string, value: string) => values.set(name, value),
+			removeProperty: (name: string) => values.delete(name),
+		};
+	}
+
+	it('writes every checked token, the root background, and the color scheme', () => {
+		const style = styleTarget();
+		applyPanelThemePayload(style, {
+			colorScheme: 'dark',
+			colors: { '--maestro-bg-main': '#101010', '--maestro-accent': '#ff00ff' },
+		});
+		expect(style.values.get('--maestro-bg-main')).toBe('#101010');
+		expect(style.values.get('--maestro-accent')).toBe('#ff00ff');
+		expect(style.values.get('background-color')).toBe('#101010');
+		expect(style.values.get('color-scheme')).toBe('dark');
+	});
+
+	it('clears a token a later payload leaves out or spells badly, and ignores unknown tokens', () => {
+		const style = styleTarget();
+		applyPanelThemePayload(style, {
+			colorScheme: 'dark',
+			colors: { '--maestro-bg-main': '#101010', '--maestro-accent': '#ff00ff' },
+		});
+		applyPanelThemePayload(style, {
+			colorScheme: 'light',
+			colors: { '--maestro-accent': 'red; background: url(x)', '--maestro-evil': 'red' },
+		});
+		expect(style.values.has('--maestro-bg-main')).toBe(false);
+		expect(style.values.has('--maestro-accent')).toBe(false);
+		expect(style.values.has('background-color')).toBe(false);
+		expect(style.values.has('--maestro-evil')).toBe(false);
+		expect(style.values.get('color-scheme')).toBe('light');
+	});
+
+	it('changes nothing for a payload that is not a theme payload', () => {
+		const style = styleTarget();
+		for (const payload of [
+			null,
+			'dark',
+			{ colorScheme: 'vibe', colors: {} },
+			{ colorScheme: 'dark', colors: null },
+		]) {
+			applyPanelThemePayload(style, payload);
+		}
+		expect(style.values.size).toBe(0);
 	});
 });

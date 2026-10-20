@@ -5,6 +5,7 @@ import type { Theme } from '../../../types';
 import { buildMaestroUrl } from '../../../utils/buildMaestroUrl';
 import { openUrl } from '../../../utils/openUrl';
 import { formatCacheAge } from '../helpers/formatters';
+import { elevatedSurfaceStyle } from '../../../utils/elevatedSurface';
 
 export interface SymphonyHeaderProps {
 	theme: Theme;
@@ -76,10 +77,9 @@ export const SymphonyHeader = forwardRef<HTMLButtonElement, SymphonyHeaderProps>
 						{showHelp && (
 							<div
 								id={helpPopoverId}
-								className="absolute top-full left-0 mt-2 w-80 p-4 rounded-lg shadow-xl z-50"
+								className="absolute top-full left-0 mt-2 w-80 p-4 rounded-lg z-50"
 								style={{
-									backgroundColor: theme.colors.bgSidebar,
-									border: `1px solid ${theme.colors.border}`,
+									...elevatedSurfaceStyle(theme),
 								}}
 							>
 								<h3 className="text-sm font-semibold mb-2" style={{ color: theme.colors.textMain }}>

@@ -53,6 +53,11 @@ import {
 	markDesktopOnlyChannel,
 } from '../../../../main/ipc/desktop-only-channels';
 import { setBridgeGuardContextProvider } from '../../../../main/web-server/handlers/bridgePathGuard';
+import {
+	isRemoteEventAllowed,
+	isRemoteMethodAllowed,
+	isRemoteSettingWritable,
+} from '../../../../main/web-server/handlers/bridgeDenyList';
 
 function makeClient(user?: { id: string; username: string; displayName: string }) {
 	return {
@@ -615,5 +620,59 @@ describe('handleBridgeInvoke desktop-only channels', () => {
 		expect(broadcastToAll).not.toHaveBeenCalled();
 
 		uninstallWebContentsBridgeHook();
+	});
+});
+
+/**
+ * Dataview DQL runs in the browser build too (DV-14): its four channels and the change push are on the
+ * remote allowlist, while the DataviewJS settings stay out of a browser's reach.
+ */
+describe('Dataview over the bridge', () => {
+	it('answers dataview:query', async () => {
+		const answer = { root: '/vault', revision: 1, result: { kind: 'list', items: [] } };
+		const handler = vi.fn(async () => answer);
+		invokeHandlers.set('dataview:query', handler);
+		const send = vi.fn();
+		await handleBridgeInvoke(
+			makeClient(),
+			{
+				type: 'bridge.invoke',
+				requestId: 21,
+				channel: 'dataview:query',
+				args: [{ filePath: '/vault/A.md', source: 'LIST', agentId: 'a' }],
+			},
+			send
+		);
+		expect(handler).toHaveBeenCalledOnce();
+		expect(send.mock.calls[0][1]).toMatchObject({ requestId: 21, ok: true, result: answer });
+	});
+
+	it('allows every Dataview request channel and the change push', () => {
+		for (const operation of ['query', 'queryInline', 'status', 'rebuild']) {
+			expect(isRemoteMethodAllowed(`dataview:${operation}`)).toBe(true);
+		}
+		expect(isRemoteEventAllowed('dataview:changed')).toBe(true);
+	});
+
+	it('fans dataview:changed out to bridge clients', () => {
+		const broadcastToAll = vi.fn();
+		installWebContentsBridgeHook({
+			broadcastToAll,
+		} as unknown as Parameters<typeof installWebContentsBridgeHook>[0]);
+
+		const event = { root: '/vault', sshRemoteId: null, revision: 2, changedPaths: ['A.md'] };
+		broadcastBridgeEvent('dataview:changed', [event]);
+		expect(broadcastToAll.mock.calls[0][0]).toMatchObject({
+			type: 'bridge.event',
+			channel: 'dataview:changed',
+			args: [event],
+		});
+
+		uninstallWebContentsBridgeHook();
+	});
+
+	it('refuses browser writes to the DataviewJS settings', () => {
+		expect(isRemoteSettingWritable('dataviewJsEnabled')).toBe(false);
+		expect(isRemoteSettingWritable('dataviewJsTrustedRoots')).toBe(false);
 	});
 });

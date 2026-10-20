@@ -7,6 +7,7 @@ import {
 	ComputerHistorySection,
 	MaestroRunSection,
 	CueSettingsSection,
+	DataviewSection,
 	DirectorNotesSection,
 	QuickChatSection,
 	SymphonyRegistrySection,
@@ -109,6 +110,7 @@ export function EncoreTab({ theme, isOpen, tileRequest }: EncoreTabProps) {
 				setThroughputGaugeSettings={settings.setThroughputGaugeSettings}
 			/>
 		),
+		dataview: <DataviewSection theme={theme} />,
 	};
 
 	return (

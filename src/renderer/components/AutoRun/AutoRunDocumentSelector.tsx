@@ -26,6 +26,7 @@ import { useResizableDropdownHeight } from '../../hooks/ui/useResizableDropdownH
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { ResizeHandles } from '../ui/ResizeHandles';
 import { aggregateFolderTaskCounts } from './documentTaskAggregation';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 // Module-level cache so the user's expand/collapse choices survive the dropdown
 // closing/reopening and the component remounting (e.g. switching agents) until
@@ -516,10 +517,9 @@ export const AutoRunDocumentSelector = forwardRef<
 						<div
 							ref={dropdownHeight.panelRef}
 							data-testid="autorun-document-dropdown"
-							className="absolute top-full left-0 mt-1 rounded shadow-lg overflow-hidden z-50 flex flex-col"
+							className="absolute top-full left-0 mt-1 rounded overflow-hidden z-50 flex flex-col"
 							style={{
-								backgroundColor: theme.colors.bgSidebar,
-								border: `1px solid ${theme.colors.border}`,
+								...elevatedSurfaceStyle(theme),
 								maxHeight: `${dropdownHeight.maxHeight}px`,
 								minWidth: '100%',
 								width: 'calc(100% + 120px)', // Extend under the +, refresh, and folder buttons

@@ -36,6 +36,13 @@ describe('GroupContextMenu', () => {
 		expect(screen.getByText('Rename Group...')).toBeTruthy();
 	});
 
+	it('lists New Agent in Group first, above Rename', () => {
+		setup();
+		const labels = screen.getAllByRole('button').map((b) => b.textContent?.trim());
+		expect(labels[0]).toBe('New Agent in Group...');
+		expect(labels[1]).toBe('Rename Group...');
+	});
+
 	it('honors deleteLabel override and fires onDelete', () => {
 		const props = setup({ memberCount: 3, deleteLabel: 'Delete Group' });
 		fireEvent.click(screen.getByText('Delete Group'));

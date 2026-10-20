@@ -6,6 +6,7 @@ import { ConfirmModal } from './ConfirmModal';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { isValidCssColor } from '../../shared/cssColor';
+import { elevatedSurfaceStyle } from '../utils/elevatedSurface';
 
 interface CustomThemeBuilderProps {
 	theme: Theme; // Current active theme for styling the builder
@@ -494,10 +495,9 @@ export function CustomThemeBuilder({
 
 							{showBaseSelector && (
 								<div
-									className="absolute top-full left-0 right-0 mt-1 rounded-lg border shadow-lg z-10 max-h-48 overflow-y-auto"
+									className="absolute top-full left-0 right-0 mt-1 rounded-lg z-10 max-h-48 overflow-y-auto"
 									style={{
-										backgroundColor: theme.colors.bgSidebar,
-										borderColor: theme.colors.border,
+										...elevatedSurfaceStyle(theme),
 									}}
 								>
 									{baseThemes.map((t) => (

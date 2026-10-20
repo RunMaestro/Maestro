@@ -256,6 +256,48 @@ describe('FeedbackChatView', () => {
 		);
 	});
 
+	it('keeps the account picker usable while a turn is running', async () => {
+		const OTHER = account({
+			key: 'claude-code::/home/me/.claude-home',
+			label: 'Claude Code - home',
+			env: { CLAUDE_CONFIG_DIR: '/home/me/.claude-home' },
+		});
+		window.maestro.feedback.checkGhAuth.mockResolvedValue({ authenticated: true });
+		window.maestro.feedback.listAccounts.mockResolvedValue({
+			accounts: [WORK, OTHER],
+			lastWorkingKey: null,
+		});
+		window.maestro.agents.get.mockResolvedValue({
+			id: 'claude-code',
+			available: true,
+			command: 'claude',
+			args: [],
+		});
+		// The turn never exits, so the chat stays mid-turn for the whole test.
+		window.maestro.process.spawn.mockResolvedValue({ pid: 1, success: true });
+
+		render(
+			<FeedbackChatView
+				theme={theme}
+				sessions={sessions}
+				onCancel={vi.fn()}
+				onSubmitSuccess={vi.fn()}
+			/>
+		);
+
+		const input = await screen.findByPlaceholderText('Describe your issue or idea...');
+		fireEvent.change(input, { target: { value: 'The player gets stuck' } });
+		await act(async () => {
+			fireEvent.keyDown(input, { key: 'Enter' });
+		});
+		await waitFor(() => expect(window.maestro.process.spawn).toHaveBeenCalled());
+
+		const picker = screen.getByTestId('feedback-account-picker') as HTMLSelectElement;
+		expect(picker.disabled).toBe(false);
+		fireEvent.change(picker, { target: { value: OTHER.key } });
+		expect(picker.value).toBe(OTHER.key);
+	});
+
 	it('shows loading spinner during GH auth check', () => {
 		window.maestro.feedback.checkGhAuth.mockReturnValue(new Promise(() => {})); // Never resolves
 

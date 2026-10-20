@@ -14,9 +14,13 @@ export function normalizeWorktreePath(path: string, posix = false): string {
 	return normalized.replace(/\/+$/, '');
 }
 
-/** Compare POSIX worktree prefixes without matching similarly named siblings. */
+/**
+ * Compare POSIX worktree prefixes without matching similarly named siblings.
+ * A root that already ends in `/` (`/`, or `C:/` after Windows normalization)
+ * is used as the prefix as is.
+ */
 export function isPathAtOrUnderRoot(path: string, root: string): boolean {
 	const candidate = normalizeWorktreePath(path, true);
 	const base = normalizeWorktreePath(root, true);
-	return candidate === base || candidate.startsWith(base === '/' ? '/' : `${base}/`);
+	return candidate === base || candidate.startsWith(base.endsWith('/') ? base : `${base}/`);
 }

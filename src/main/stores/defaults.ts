@@ -161,6 +161,9 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	// Coworking: opt-in background webview host for cross-session browser access + LRU cap
 	coworkingBackgroundBrowsers: false,
 	coworkingBackgroundBrowsersLimit: 2,
+	// Dataview: DataviewJS is off until switched on, and no vault root is trusted
+	dataviewJsEnabled: false,
+	dataviewJsTrustedRoots: [],
 	// Auto-resume agents that paused on a token/API/credit limit
 	autoResumeOnLimit: true,
 	autoResumeCheckIntervalHours: 2,

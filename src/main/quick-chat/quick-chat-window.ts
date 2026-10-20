@@ -38,7 +38,11 @@ import {
 	FONT_SCALE_RANGE,
 	stepScale,
 } from '../../shared/scaleRange';
-import { resolveVisibleWindowPosition } from '../app-lifecycle/window-position';
+import {
+	positiveNumber,
+	resolveSavedWindowRect,
+	sanitizeSavedBounds,
+} from '../floating-widgets/window-bounds';
 import { debounce, type DebouncedFunction } from '../utils/debounce';
 import { logger } from '../utils/logger';
 import type { WindowRegistry } from '../window-registry';
@@ -114,19 +118,15 @@ export function isQuickChatWindowVisible(): boolean {
 	return !!win && (win.isVisible() || revealPending);
 }
 
-/** A positive finite number, or undefined: a hand-edited store must not size the window to NaN. */
-function positive(value: unknown): number | undefined {
-	return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
-}
-
 function loadSaved(deps: QuickChatWindowDeps): QuickChatWindowBounds {
 	if (saved) return saved;
 	const raw = deps.boundsStore.get() ?? {};
+	const { x, y, width } = sanitizeSavedBounds(raw);
 	saved = {
-		x: typeof raw.x === 'number' && Number.isFinite(raw.x) ? raw.x : undefined,
-		y: typeof raw.y === 'number' && Number.isFinite(raw.y) ? raw.y : undefined,
-		width: positive(raw.width),
-		expandedHeight: positive(raw.expandedHeight),
+		x,
+		y,
+		width,
+		expandedHeight: positiveNumber(raw.expandedHeight),
 		pinned: typeof raw.pinned === 'boolean' ? raw.pinned : undefined,
 		fontScale:
 			typeof raw.fontScale === 'number' && Number.isFinite(raw.fontScale)
@@ -170,23 +170,8 @@ function defaultBounds(height: number): Electron.Rectangle {
  */
 function boundsFor(next: QuickChatLayout): Electron.Rectangle {
 	const height = heightFor(next);
-	if (!userPlaced || saved?.x === undefined || saved?.y === undefined) {
-		return defaultBounds(height);
-	}
-	const width = widthNow();
-	const position = resolveVisibleWindowPosition({ x: saved.x, y: saved.y, width, height });
-	const area = screen.getDisplayMatching({
-		x: position.x ?? saved.x,
-		y: position.y ?? saved.y,
-		width,
-		height,
-	}).workArea;
-	return {
-		x: Math.round(position.x ?? saved.x),
-		y: Math.round(position.y ?? saved.y),
-		width: Math.min(width, area.width),
-		height: Math.min(height, area.height),
-	};
+	if (!userPlaced) return defaultBounds(height);
+	return resolveSavedWindowRect(saved, { width: widthNow(), height }) ?? defaultBounds(height);
 }
 
 /**

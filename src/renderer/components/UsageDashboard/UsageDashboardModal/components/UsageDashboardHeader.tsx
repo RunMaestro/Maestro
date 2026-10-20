@@ -6,6 +6,7 @@ import { usePhoneLayout } from '../../../../hooks/ui/useViewportBreakpoint';
 import { AchievementShareButton } from '../../../AchievementShareButton';
 import { TIME_RANGE_OPTIONS } from '../constants';
 import type { UsageDashboardModalProps } from '../types';
+import { elevatedSurfaceStyle } from '../../../../utils/elevatedSurface';
 
 const EXPORT_OPTIONS: { format: UsageExportFormat; label: string; detail: string }[] = [
 	{ format: 'json', label: 'JSON', detail: 'Every table and the dashboard totals, one file' },
@@ -171,10 +172,9 @@ export function UsageDashboardHeader({
 					{exportMenuOpen && (
 						<div
 							role="menu"
-							className="absolute right-0 top-full mt-1 p-1.5 rounded-lg shadow-xl z-50"
+							className="absolute right-0 top-full mt-1 p-1.5 rounded-lg z-50"
 							style={{
-								backgroundColor: theme.colors.bgSidebar,
-								border: `1px solid ${theme.colors.border}`,
+								...elevatedSurfaceStyle(theme),
 							}}
 						>
 							{EXPORT_OPTIONS.map((option) => (

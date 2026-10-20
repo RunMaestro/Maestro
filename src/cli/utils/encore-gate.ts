@@ -10,10 +10,12 @@
 
 import type { Command } from 'commander';
 import {
+	encoreDisabledMessage,
+	encoreFeatureCliName,
+	encoreFeatureName,
 	resolveEncoreFeatures,
 	type EncoreFeatureDefaults,
 } from '../../shared/encoreFeatureDefaults';
-import { FIRST_PARTY_PLUGINS } from '../../shared/plugins/first-party';
 import { readSettingValue } from '../services/storage';
 import { applyDataDirOption } from '../services/data-dir-option';
 
@@ -42,20 +44,9 @@ export function readEncoreFlagsForHelp(): EncoreFeatureDefaults {
 	}
 }
 
-/** The name the Plugins tab shows for a feature. */
-export function encoreFeatureName(flag: EncoreFlag): string {
-	return flag === 'plugins' ? 'Community Plugins' : FIRST_PARTY_PLUGINS[flag].name;
-}
-
-/** `computerHistory` -> `computer-history`, a spelling `encore enable` accepts. */
-export function encoreFeatureCliName(flag: EncoreFlag): string {
-	return flag.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
-}
-
-/** What a gated verb says while its feature is off. */
-export function encoreDisabledMessage(flag: EncoreFlag): string {
-	return `${encoreFeatureName(flag)} is turned off. Turn it on in Settings > Plugins, or run: maestro-cli encore enable ${encoreFeatureCliName(flag)}`;
-}
+// The names and the turned-off message live in the shared module, so a
+// main-process service refuses with the same text a gated verb prints.
+export { encoreDisabledMessage, encoreFeatureCliName, encoreFeatureName };
 
 /** `computerHistory` -> `COMPUTER_HISTORY_DISABLED`, the `--json` error code. */
 export function encoreDisabledCode(flag: EncoreFlag): string {

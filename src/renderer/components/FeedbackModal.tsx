@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Minimize2, Trash2, X, History, ArrowLeft, PencilLine } from 'lucide-react';
+import { Trash2, X, History, ArrowLeft, PencilLine } from 'lucide-react';
 import type { Session, Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal } from './ui/Modal';
@@ -354,14 +354,8 @@ export function FeedbackModal({ theme, sessions, onClose, onSwitchToSession }: F
 										)}
 									</span>
 								</GhostIconButton>
-								<GhostIconButton
-									onClick={handleMinimize}
-									ariaLabel="Minimize feedback"
-									color={theme.colors.textDim}
-									title="Minimize (keeps your draft)"
-								>
-									<Minimize2 className="w-4 h-4" />
-								</GhostIconButton>
+								{/* No separate Minimize button: with a draft, X already parks the
+								    conversation exactly like Minimize did (handleCloseRequest). */}
 								<GhostIconButton
 									onClick={handleCloseRequest}
 									ariaLabel="Close modal"

@@ -47,6 +47,12 @@ import { createKeyedWriteQueue } from '../utils/atomic-json-store';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { verifyPluginSignature } from './plugin-signature';
+import type { AuthorizationStore } from './authorization-ledger';
+import {
+	RETIRED_AGENT_FLOW_ID,
+	inspectRetiredAgentFlow,
+	archiveRetiredAgentFlow,
+} from './agent-flow-retirement';
 import {
 	extractPluginArchive,
 	isPackedPluginArchivePath,
@@ -778,16 +784,50 @@ export class PluginManager {
 			// event subscriptions - so uninstall leaves nothing behind (invariant #8).
 			await this.stopAndDrain(id);
 			fs.rmSync(resolved, { recursive: true, force: true });
-			forgetPlugin(id);
-			forgetGrants(id);
-			this.deps.purgePluginData?.(id);
-			this.pluginFingerprints.delete(id);
-			this.waitingForServiceDependencies.delete(id);
-			this.registry = removeRecord(this.registry, id);
-			this.syncPluginWatchers();
-			this.deps.onChange?.(this.registry);
+			this.purgeUninstalledPlugin(id);
 			return { success: true };
 		});
+	}
+
+	/** Host-only startup migration, before discovery. Unlike user uninstall this
+	 * also completes cleanup when #1740's old package was already removed.
+	 * Authorization uses the normal tombstone/freshness contract, never raw storage.
+	 * Errors reject; a later run retries even after the package was archived. */
+	retireBundledAgentFlow(
+		authorization: Pick<AuthorizationStore, 'uninstall'>
+	): Promise<{ recoveryPath?: string; preserved?: string }> {
+		const id = RETIRED_AGENT_FLOW_ID;
+		return this.mutatePlugin(id, async () => {
+			if (!this.deps.isEnabled()) return {};
+			let inspection = inspectRetiredAgentFlow();
+			if (inspection.kind === 'preserved') return { preserved: inspection.reason };
+			await this.stopAndDrain(id);
+			if (!this.deps.isEnabled()) return {};
+			// Recheck after the asynchronous drain: a changed copy must be preserved.
+			inspection = inspectRetiredAgentFlow();
+			if (inspection.kind === 'preserved') return { preserved: inspection.reason };
+			// Inspection, revocation and archive are synchronous from here on.
+			// A failed archive/purge must not restart a cached enabled record when
+			// mutatePlugin releases its barrier. The next refresh verifies the tombstone.
+			this.registry = setEnabled(this.registry, id, false);
+			// Revoke before moving/purging: cleanup failure must never retain access.
+			authorization.uninstall(id);
+			const recoveryPath =
+				inspection.kind === 'bundle' ? archiveRetiredAgentFlow(inspection.path) : undefined;
+			this.purgeUninstalledPlugin(id);
+			return { recoveryPath };
+		});
+	}
+
+	private purgeUninstalledPlugin(id: string): void {
+		forgetPlugin(id);
+		forgetGrants(id);
+		this.deps.purgePluginData?.(id);
+		this.pluginFingerprints.delete(id);
+		this.waitingForServiceDependencies.delete(id);
+		this.registry = removeRecord(this.registry, id);
+		this.syncPluginWatchers();
+		this.deps.onChange?.(this.registry);
 	}
 
 	/** Serialize file mutations and suppress all automatic starts until queued work is complete. */

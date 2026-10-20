@@ -12,9 +12,9 @@
  * and when the custom title strip appears, so the card stays on screen and out
  * from under the strip's OS drag region.
  *
- * The body draws the chosen style (`GAUGE_STYLE_COMPONENTS`): one gauge for the
- * chosen metric, or In, Out, and Combined side by side on ONE shared scale so
- * the three read against each other at a glance.
+ * The body is `ThroughputGaugeBody`, shared with the desktop widget window: one
+ * gauge for the chosen metric, or In, Out, and Combined side by side on ONE
+ * shared scale so the three read against each other at a glance.
  *
  * Two ways out: the X in the title strip, and Escape while focus is inside the
  * card. The card is focusable but out of the tab order and never takes focus on
@@ -35,13 +35,6 @@ import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerE
 import { Gauge, GripVertical, Settings, X } from 'lucide-react';
 
 import {
-	THROUGHPUT_METRICS,
-	throughputOptionLabel,
-	throughputScopeCaption,
-} from '../../../shared/throughputGauge';
-import type { ThroughputMetric } from '../../../shared/throughputRate';
-import { niceGaugeMax } from './gaugeScale';
-import {
 	fitGaugeRect,
 	gaugeLiftsToasts,
 	GAUGE_DEFAULT_SIZE,
@@ -50,7 +43,7 @@ import {
 	type GaugeRect,
 	type GaugeViewport,
 } from './gaugeGeometry';
-import { GAUGE_STYLE_COMPONENTS } from './styles';
+import { ThroughputGaugeBody } from './ThroughputGaugeBody';
 import { ThroughputGaugeSettingsPopover } from './ThroughputGaugeSettingsPopover';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import { shortcutSuffix } from '../ui/ShortcutHint';
@@ -68,11 +61,6 @@ import type { Theme } from '../../types';
 
 /** Same layer as the media player: above the panels, below modals and toasts. */
 const FLOAT_Z_INDEX = 60;
-
-/** The "All three" layout's gauges, left to right. */
-export const ALL_LAYOUT_METRICS: readonly ThroughputMetric[] = ['in', 'out', 'combined'];
-
-const metricLabel = (metric: ThroughputMetric) => throughputOptionLabel(THROUGHPUT_METRICS, metric);
 
 interface FloatingThroughputGaugeProps {
 	theme: Theme;
@@ -252,60 +240,6 @@ export const FloatingThroughputGauge = memo(function FloatingThroughputGauge({
 		[avoidToastsRef, liftsToasts]
 	);
 
-	const StyleComponent = GAUGE_STYLE_COMPONENTS[style];
-	const scopeCaption = throughputScopeCaption(scope, activeAgentName);
-
-	let body;
-	if (layout === 'all') {
-		// One scale for all three, from the largest reading and peak among them.
-		const max = niceGaugeMax(
-			Math.max(...ALL_LAYOUT_METRICS.map((m) => rates[m])),
-			Math.max(...ALL_LAYOUT_METRICS.map((m) => peak[m]))
-		);
-		body = (
-			<>
-				<div className="flex-1 min-h-0 grid grid-cols-3 gap-2">
-					{ALL_LAYOUT_METRICS.map((m) => (
-						<div key={m} className="min-w-0 min-h-0" data-testid={`throughput-gauge-${m}`}>
-							<StyleComponent
-								theme={theme}
-								value={rates[m]}
-								peak={peak[m]}
-								max={max}
-								label={metricLabel(m)}
-								history={history[m]}
-								compact
-							/>
-						</div>
-					))}
-				</div>
-				<div
-					className="shrink-0 truncate text-2xs leading-tight text-center"
-					style={{ color: theme.colors.textDim }}
-					title={scopeCaption}
-					data-testid="throughput-gauge-scope-caption"
-				>
-					{scopeCaption}
-				</div>
-			</>
-		);
-	} else {
-		body = (
-			<div className="flex-1 min-h-0">
-				<StyleComponent
-					theme={theme}
-					value={rates[metric]}
-					peak={peak[metric]}
-					max={niceGaugeMax(rates[metric], peak[metric])}
-					label={metricLabel(metric)}
-					caption={scopeCaption}
-					history={history[metric]}
-					compact={false}
-				/>
-			</div>
-		);
-	}
-
 	return (
 		<div
 			ref={setFrame}
@@ -381,7 +315,19 @@ export const FloatingThroughputGauge = memo(function FloatingThroughputGauge({
 				</GhostIconButton>
 			</div>
 
-			<div className="flex-1 min-h-0 flex flex-col px-2 pt-1 pb-1.5">{body}</div>
+			<div className="flex-1 min-h-0 flex flex-col px-2 pt-1 pb-1.5">
+				<ThroughputGaugeBody
+					theme={theme}
+					metric={metric}
+					scope={scope}
+					layout={layout}
+					style={style}
+					rates={rates}
+					peak={peak}
+					history={history}
+					activeAgentName={activeAgentName}
+				/>
+			</div>
 
 			<ModalResizeGrip
 				theme={theme}

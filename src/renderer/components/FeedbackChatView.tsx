@@ -1874,10 +1874,15 @@ export function FeedbackChatView({
 							<select
 								value={activeAccountKey ?? ''}
 								onChange={(e) => selectAccount(e.target.value)}
-								disabled={isLoading || step === 'submitting'}
+								// Stays live while a turn runs: sendTurn snapshots the account
+								// before it spawns, so a pick here applies from the next turn.
+								// Disabling it mid-turn left a pointer cursor on a control that
+								// ignored every click.
+								disabled={step === 'submitting'}
+								title={isLoading ? 'Applies from the next message' : undefined}
 								data-testid="feedback-account-picker"
 								aria-label="Account the feedback chat runs as"
-								className="min-w-0 max-w-[60%] px-1.5 py-0.5 rounded border bg-transparent outline-none cursor-pointer disabled:opacity-60"
+								className="min-w-0 max-w-[60%] px-1.5 py-0.5 rounded border bg-transparent outline-none cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"
 								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 							>
 								{accounts.map((account) => (

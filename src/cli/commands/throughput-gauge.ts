@@ -81,15 +81,20 @@ async function sendGauge(
 
 /**
  * One line a human reads: `Visible, Combined over 10s, all agents: 182 tok/s
- * (peak 640)`. The scope is named generically ("active agent") because the CLI
- * does not know which agent is active in the window.
+ * (peak 640). Window 360x180 at 100,120`. The scope is named generically
+ * ("active agent") because the CLI does not know which agent is active in the
+ * window. The window clause appears only when the gauge has its own desktop
+ * window on screen.
  */
 export function describeThroughputGaugeStatus(status: ThroughputGaugeStatus): string {
 	if (!status.enabled) return THROUGHPUT_GAUGE_DISABLED_ERROR;
 	const { metric, scope } = status.settings;
 	const metricLabel = throughputOptionLabel(THROUGHPUT_METRICS, metric);
 	const scopeLabel = throughputOptionLabel(THROUGHPUT_SCOPES, scope).toLowerCase();
-	return `${status.visible ? 'Visible' : 'Hidden'}, ${metricLabel} over ${throughputWindowLabel(status.windowMs)}, ${scopeLabel}: ${formatGaugeRate(status.rates[metric])} ${GAUGE_UNIT} (peak ${formatGaugeRate(status.peak[metric])})`;
+	const reading = `${status.visible ? 'Visible' : 'Hidden'}, ${metricLabel} over ${throughputWindowLabel(status.windowMs)}, ${scopeLabel}: ${formatGaugeRate(status.rates[metric])} ${GAUGE_UNIT} (peak ${formatGaugeRate(status.peak[metric])})`;
+	const bounds = status.window;
+	if (!bounds) return reading;
+	return `${reading}. Window ${bounds.width}x${bounds.height} at ${bounds.x},${bounds.y}`;
 }
 
 function report(status: ThroughputGaugeStatus, options: ThroughputGaugeOptions, write: boolean) {

@@ -164,6 +164,30 @@ describe('SendMenuPopover', () => {
 		expect(help.compareDocumentPosition(hint) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 	});
 
+	it('draws hotkeys as one accent cap per key', () => {
+		seed();
+		renderMenu();
+		const hint = row('steer').parentElement!.querySelector('[data-shortcut-hint]')!;
+		expect(hint.querySelectorAll('kbd').length).toBeGreaterThan(1);
+	});
+
+	it('puts a dead row reason below the hotkey line so it wraps under the hotkey', () => {
+		seed();
+		const force = vi.fn();
+		window.addEventListener(FORCED_PARALLEL_SEND_EVENT, force);
+		renderMenu();
+		const button = row('force');
+		const reasonId = button.getAttribute('aria-describedby')!;
+		const reason = document.getElementById(reasonId)!;
+		expect(reason.textContent).toBeTruthy();
+		// Not inside the line that holds the hotkey: it spans the full row.
+		expect(button.parentElement!.contains(reason)).toBe(false);
+		expect(button.parentElement!.parentElement!.contains(reason)).toBe(true);
+		fireEvent.click(reason);
+		expect(force).not.toHaveBeenCalled();
+		window.removeEventListener(FORCED_PARALLEL_SEND_EVENT, force);
+	});
+
 	it('turns the menu off from its own toggle', () => {
 		seed();
 		renderMenu();

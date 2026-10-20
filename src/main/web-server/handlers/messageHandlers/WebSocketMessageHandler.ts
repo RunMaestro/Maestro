@@ -112,6 +112,7 @@ import {
 import { handleSnoozeCommand } from './snooze';
 import { handleComputerHistoryCommand } from './computerHistory';
 import { handleMaestroRunCommand } from './maestroRun';
+import { handleDataviewCommand } from './dataview';
 import { handleAutoRunSteeringCommand } from './autoRunSteering';
 import { handleWindowCommand } from './windows';
 import { handleThroughputGaugeCommand } from './throughputGauge';
@@ -337,6 +338,10 @@ export class WebSocketMessageHandler {
 
 			case 'maestro_run_command':
 				void handleMaestroRunCommand(this.ctx, client, message);
+				break;
+
+			case 'dataview_command':
+				void handleDataviewCommand(this.ctx, client, message);
 				break;
 
 			case 'auto_run_steering_command':

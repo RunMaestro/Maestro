@@ -478,6 +478,12 @@ export interface UseSettingsReturn {
 	coworkingBackgroundBrowsersLimit: number;
 	setCoworkingBackgroundBrowsersLimit: (value: number) => void;
 
+	// Dataview: DataviewJS switch and the trusted vault roots (D3)
+	dataviewJsEnabled: boolean;
+	setDataviewJsEnabled: (value: boolean) => void;
+	dataviewJsTrustedRoots: string[];
+	setDataviewJsTrustedRoots: (value: string[]) => void;
+
 	// Forced Parallel Execution
 	forcedParallelExecution: boolean;
 	setForcedParallelExecution: (value: boolean) => void;

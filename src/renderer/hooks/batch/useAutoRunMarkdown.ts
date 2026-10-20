@@ -26,6 +26,18 @@ import { openUrl } from '../../utils/openUrl';
 import { countMarkdownTasks } from './batchUtils';
 import { logger } from '../../utils/logger';
 import { useStableCallback } from '../utils/useStableCallback';
+import {
+	dataviewInlineCodeRenderer,
+	useDataviewEnabled,
+	withDataviewLanguageRenderers,
+	type LanguageRenderers,
+} from '../../components/Markdown/components/dataviewSurface';
+
+// Module-level so both component maps share one identity per Dataview state.
+const MERMAID_RENDERERS: LanguageRenderers = {
+	mermaid: ({ code, theme: t }) => React.createElement(MermaidRenderer, { chart: code, theme: t }),
+};
+const MERMAID_AND_DATAVIEW_RENDERERS = withDataviewLanguageRenderers(MERMAID_RENDERERS, true);
 
 export interface UseAutoRunMarkdownParams {
 	theme: Theme;
@@ -249,15 +261,18 @@ export function useAutoRunMarkdown({
 	// read-only, which is how a locked document stays locked.
 	const taskToggle = onTaskToggle ? stableTaskToggle : undefined;
 
+	// Dataview (D7): `dataview` fences and `= expr` spans render only while the
+	// Encore Feature is on; AutoRun supplies the document scope through context.
+	const dataviewEnabled = useDataviewEnabled();
+	const languageRenderers = dataviewEnabled ? MERMAID_AND_DATAVIEW_RENDERERS : MERMAID_RENDERERS;
+
 	// 9. Base markdown components - stable unless theme, folderPath, or callbacks change
 	// Separated from search highlighting to prevent rebuilds on every search state change
 	const baseMarkdownComponents = useMemo(() => {
 		const components = createMarkdownComponents({
 			theme,
-			customLanguageRenderers: {
-				mermaid: ({ code, theme: t }) =>
-					React.createElement(MermaidRenderer, { chart: code, theme: t }),
-			},
+			customLanguageRenderers: languageRenderers,
+			renderInlineCode: dataviewInlineCodeRenderer(theme, dataviewEnabled),
 			// Handle internal file links (wiki-style [[links]])
 			onFileClick: handleFileClick,
 			// Open external links in system browser
@@ -295,6 +310,8 @@ export function useAutoRunMarkdown({
 		bionifyIntensity,
 		bionifyAlgorithm,
 		taskToggle,
+		languageRenderers,
+		dataviewEnabled,
 	]);
 
 	// 10. Search-highlighted components - only used in preview mode with active search
@@ -307,10 +324,8 @@ export function useAutoRunMarkdown({
 
 		const components = createMarkdownComponents({
 			theme,
-			customLanguageRenderers: {
-				mermaid: ({ code, theme: t }) =>
-					React.createElement(MermaidRenderer, { chart: code, theme: t }),
-			},
+			customLanguageRenderers: languageRenderers,
+			renderInlineCode: dataviewInlineCodeRenderer(theme, dataviewEnabled),
 			onFileClick: handleFileClick,
 			onExternalLinkClick: (href, opts) => openUrl(href, opts),
 			containerRef: previewRef,
@@ -349,6 +364,8 @@ export function useAutoRunMarkdown({
 		currentMatchIndex,
 		handleMatchRendered,
 		taskToggle,
+		languageRenderers,
+		dataviewEnabled,
 	]);
 
 	// 11. Use search-highlighted components when available, otherwise use base components

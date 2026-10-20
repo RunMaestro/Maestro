@@ -121,6 +121,7 @@ import { buildFileTreeFromPaths } from '../../utils/fileTree';
 import { countMarkdownTasks } from '../FilePreview/filePreviewUtils';
 import { logger } from '../../utils/logger';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 /** Debounce delay for graph rebuilds when settings change (ms) */
 const GRAPH_REBUILD_DEBOUNCE_DELAY = 300;
@@ -1830,10 +1831,9 @@ export function DocumentGraphView({
 
 							{showLayoutDropdown && (
 								<div
-									className="absolute top-full left-0 mt-2 py-1 rounded-lg shadow-lg z-50"
+									className="absolute top-full left-0 mt-2 py-1 rounded-lg z-50"
 									style={{
-										backgroundColor: theme.colors.bgActivity,
-										border: `1px solid ${theme.colors.border}`,
+										...elevatedSurfaceStyle(theme),
 										minWidth: 200,
 									}}
 								>
@@ -1897,10 +1897,9 @@ export function DocumentGraphView({
 
 							{showDepthSlider && (
 								<div
-									className="absolute top-full right-0 mt-2 p-3 rounded-lg shadow-lg z-[60]"
+									className="absolute top-full right-0 mt-2 p-3 rounded-lg z-[60]"
 									style={{
-										backgroundColor: theme.colors.bgActivity,
-										border: `1px solid ${theme.colors.border}`,
+										...elevatedSurfaceStyle(theme),
 										minWidth: 200,
 									}}
 								>
@@ -1972,10 +1971,9 @@ export function DocumentGraphView({
 
 							{showPreviewSlider && (
 								<div
-									className="absolute top-full right-0 mt-2 p-3 rounded-lg shadow-lg z-[60]"
+									className="absolute top-full right-0 mt-2 p-3 rounded-lg z-[60]"
 									style={{
-										backgroundColor: theme.colors.bgActivity,
-										border: `1px solid ${theme.colors.border}`,
+										...elevatedSurfaceStyle(theme),
 										minWidth: 220,
 									}}
 								>

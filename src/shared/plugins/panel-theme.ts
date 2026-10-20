@@ -42,6 +42,41 @@ export function isPanelThemeColor(value: unknown): value is string {
 	return css?.supports ? css.supports('color', value) : isValidCssColor(value);
 }
 
+/** The root style an isolated guest's preload writes the theme to (`document.documentElement.style`). */
+export interface PanelThemeStyleTarget {
+	setProperty(name: string, value: string): void;
+	removeProperty(name: string): void;
+}
+
+/**
+ * Apply a theme payload a host sent into an isolated guest (plugin panels, the DataviewJS sandbox). Runs in
+ * the guest preload's isolated world, so page scripts never see a bridge. Only the fixed color tokens are
+ * written, each checked; a token the payload leaves out or spells badly is cleared, so a stale color never
+ * lingers. A payload that is not a theme payload changes nothing.
+ */
+export function applyPanelThemePayload(style: PanelThemeStyleTarget, data: unknown): void {
+	if (typeof data !== 'object' || data === null) return;
+	const payload = data as Record<string, unknown>;
+	if (payload.colorScheme !== 'light' && payload.colorScheme !== 'dark') return;
+	if (typeof payload.colors !== 'object' || payload.colors === null) return;
+	const colors = payload.colors as Record<string, unknown>;
+	for (const token of Object.keys(PANEL_THEME_COLOR_TOKENS)) {
+		const value = Object.prototype.hasOwnProperty.call(colors, token) ? colors[token] : null;
+		if (isPanelThemeColor(value)) {
+			style.setProperty(token, value);
+		} else {
+			style.removeProperty(token);
+		}
+	}
+	const background = colors['--maestro-bg-main'];
+	if (isPanelThemeColor(background)) {
+		style.setProperty('background-color', background);
+	} else {
+		style.removeProperty('background-color');
+	}
+	style.setProperty('color-scheme', payload.colorScheme);
+}
+
 /** Builds a data-only snapshot from the active theme, never from stored plugin settings. */
 export function buildPanelThemePayload(theme: Theme): PanelThemePayload {
 	const colors: Record<string, string> = {};

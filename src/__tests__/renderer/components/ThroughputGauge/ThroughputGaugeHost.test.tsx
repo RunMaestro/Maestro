@@ -5,9 +5,10 @@
  * needle, the capture loop honors the scope, window, and metric settings and
  * the window's agent ownership, and the card's position and size persist on
  * drag or resize end, come back on remount, and are pulled into a smaller
- * window.
+ * window. Those run with `window.maestro.floatingWidgets` absent (the browser
+ * build); the desktop-window cases at the end install a fake one.
  */
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Window ownership. Unset permits every agent (no WindowProvider, like the
@@ -44,6 +45,7 @@ import {
 import type { CallUsage, UsageStats } from '../../../../shared/types';
 import { installLocalStorageMock } from '../../../helpers/mockLocalStorage';
 import { createMockSession } from '../../../helpers/mockSession';
+import { PUBLISH_INTERVAL_MS } from '../../../../renderer/utils/windowStoreMirror';
 import { mockTheme } from '../../../helpers/mockTheme';
 
 const ZERO = { in: 0, out: 0, combined: 0 };
@@ -753,6 +755,181 @@ describe('ThroughputGaugeHost', () => {
 
 			expect(card()).toBeInTheDocument();
 			expect(document.activeElement).toBe(composer);
+		});
+	});
+
+	describe('desktop window mode', () => {
+		type CommandHandler = (command: unknown) => void;
+		const maestro = window.maestro as unknown as Record<string, unknown>;
+		const originalFloatingWidgets = maestro.floatingWidgets;
+		let commandHandlers: Set<CommandHandler>;
+		let api: {
+			show: ReturnType<typeof vi.fn>;
+			hide: ReturnType<typeof vi.fn>;
+			publishState: ReturnType<typeof vi.fn>;
+			onCommand: ReturnType<typeof vi.fn>;
+		};
+
+		/** Send a command to the gauge as its widget window would. */
+		function sendCommand(command: unknown) {
+			act(() => commandHandlers.forEach((handler) => handler(command)));
+		}
+
+		function lastPublished() {
+			const calls = api.publishState.mock.calls;
+			expect(calls.length).toBeGreaterThan(0);
+			const [id, state] = calls[calls.length - 1];
+			expect(id).toBe('throughput-gauge');
+			return state;
+		}
+
+		beforeEach(() => {
+			commandHandlers = new Set();
+			api = {
+				show: vi.fn(async () => true),
+				hide: vi.fn(async () => false),
+				publishState: vi.fn(),
+				onCommand: vi.fn((id: string, handler: CommandHandler) => {
+					expect(id).toBe('throughput-gauge');
+					commandHandlers.add(handler);
+					return () => commandHandlers.delete(handler);
+				}),
+			};
+			maestro.floatingWidgets = api;
+		});
+
+		afterEach(() => {
+			// Unmount while the fake API is still installed: the host hides its
+			// window on unmount, and RTL's own cleanup runs after this hook.
+			cleanup();
+			maestro.floatingWidgets = originalFloatingWidgets;
+		});
+
+		it('draws no in-app card but keeps capturing', () => {
+			setFlag(true);
+			const { container } = render(<ThroughputGaugeHost theme={mockTheme} />);
+
+			expect(container).toBeEmptyDOMElement();
+			expect(screen.queryByTestId('floating-throughput-gauge')).toBeNull();
+			expect(listeners.onData).toHaveBeenCalledTimes(1);
+		});
+
+		it('does nothing at all while the flag is off', () => {
+			render(<ThroughputGaugeHost theme={mockTheme} />);
+
+			expect(api.show).not.toHaveBeenCalled();
+			expect(api.hide).not.toHaveBeenCalled();
+			expect(api.publishState).not.toHaveBeenCalled();
+			expect(api.onCommand).not.toHaveBeenCalled();
+		});
+
+		it('publishes the readings, and the active agent name for the active scope', () => {
+			vi.useFakeTimers();
+			setGaugeSettings({ scope: 'active' });
+			setFlag(true);
+			render(<ThroughputGaugeHost theme={mockTheme} />);
+
+			expect(lastPublished()).toEqual({
+				rates: ZERO,
+				peak: ZERO,
+				history: { in: [], out: [], combined: [] },
+				activeAgentName: 'Backend',
+			});
+
+			const onUsage = listeners.onUsage.mock.calls[0][0];
+			act(() => {
+				onUsage(AI_TAB_ID, usage({ inputTokens: 1000, outputTokens: 300 }));
+				vi.advanceTimersByTime(THROUGHPUT_PUBLISH_MS + PUBLISH_INTERVAL_MS);
+			});
+			const { rates, peak, history } = useThroughputGaugeStore.getState();
+			expect(rates.combined).toBeGreaterThan(0);
+			expect(lastPublished()).toEqual({ rates, peak, history, activeAgentName: 'Backend' });
+
+			act(() => useSessionStore.setState({ activeSessionId: 'agent-2' }));
+			expect((lastPublished() as { activeAgentName: string }).activeAgentName).toBe('Frontend');
+		});
+
+		it('publishes no agent name for the all-agents scope', () => {
+			setFlag(true);
+			render(<ThroughputGaugeHost theme={mockTheme} />);
+
+			expect((lastPublished() as { activeAgentName: unknown }).activeAgentName).toBeNull();
+		});
+
+		it('shows and hides the window with the visible latch', () => {
+			setFlag(true);
+			render(<ThroughputGaugeHost theme={mockTheme} />);
+			expect(api.show).toHaveBeenCalledWith('throughput-gauge');
+
+			act(() => useThroughputGaugeStore.getState().hide());
+			expect(api.hide).toHaveBeenCalledWith('throughput-gauge');
+
+			api.show.mockClear();
+			act(() => useThroughputGaugeStore.getState().show());
+			expect(api.show).toHaveBeenCalledWith('throughput-gauge');
+		});
+
+		it('keeps a closed window closed at launch, and opens it on a mid-session flip', () => {
+			useThroughputGaugeStore.setState({ visible: false });
+			setFlag(true);
+			const first = render(<ThroughputGaugeHost theme={mockTheme} />);
+			expect(api.show).not.toHaveBeenCalled();
+			expect(api.hide).toHaveBeenCalledWith('throughput-gauge');
+			first.unmount();
+
+			setFlag(false);
+			api.hide.mockClear();
+			render(<ThroughputGaugeHost theme={mockTheme} />);
+			act(() => setFlag(true));
+			expect(api.show).toHaveBeenCalledWith('throughput-gauge');
+		});
+
+		it('the hide command goes through the store latch', () => {
+			setFlag(true);
+			render(<ThroughputGaugeHost theme={mockTheme} />);
+
+			sendCommand({ type: 'hide' });
+
+			expect(useThroughputGaugeStore.getState().visible).toBe(false);
+			expect(storage.get(THROUGHPUT_GAUGE_VISIBLE_KEY)).toBe('false');
+			expect(api.hide).toHaveBeenCalledWith('throughput-gauge');
+		});
+
+		it('the reset-peak command restarts the peak from the current reading', () => {
+			setFlag(true);
+			render(<ThroughputGaugeHost theme={mockTheme} />);
+			const rates = { in: 5, out: 3, combined: 8 };
+			act(() =>
+				useThroughputGaugeStore.setState({ rates, peak: { in: 50, out: 30, combined: 80 } })
+			);
+
+			sendCommand({ type: 'reset-peak' });
+
+			expect(useThroughputGaugeStore.getState().peak).toEqual(rates);
+		});
+
+		it('ignores a command it does not know', () => {
+			setFlag(true);
+			render(<ThroughputGaugeHost theme={mockTheme} />);
+
+			sendCommand({ type: 'explode' });
+			sendCommand('hide');
+
+			expect(useThroughputGaugeStore.getState().visible).toBe(true);
+		});
+
+		it('turning the flag off hides the window and drops the command listener', () => {
+			setFlag(true);
+			render(<ThroughputGaugeHost theme={mockTheme} />);
+			expect(commandHandlers.size).toBe(1);
+			api.hide.mockClear();
+
+			act(() => setFlag(false));
+
+			expect(api.hide).toHaveBeenCalledWith('throughput-gauge');
+			expect(commandHandlers.size).toBe(0);
+			// The user's latch is untouched: the window comes back if the feature does.
+			expect(useThroughputGaugeStore.getState().visible).toBe(true);
 		});
 	});
 });

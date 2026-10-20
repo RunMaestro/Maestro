@@ -13,6 +13,19 @@ import {
 	isPluginPanelSession,
 	type PluginPanelGuestContents,
 } from '../plugins/plugin-panel-host';
+import {
+	DATAVIEW_GUEST_PARTITION_PREFIX,
+	isAllowedDataviewGuestAttachment,
+} from '../../shared/dataview/sandboxHost';
+import {
+	DATAVIEW_GUEST_PRELOAD_FILE,
+	attachDataviewGuestSecurity,
+	hardenDataviewGuestSession,
+	hardenDataviewGuestWebPreferences,
+	isDataviewGuestSession,
+	isDataviewJsServing,
+	type DataviewGuestContents,
+} from '../dataview/guest-host';
 
 // `file:` is allowed so users can open local HTML they just generated
 // (Plotly dashboards, etc.) inside Maestro instead of bouncing to the system
@@ -119,6 +132,82 @@ function attachBrowserTabGuestSecurity(guestContents: BrowserTabGuestContents): 
 		denyBrowserTabNavigation('will-redirect', event, url);
 	});
 }
+/** The guest surface {@link forwardGuestShortcuts} uses (structural). */
+interface ShortcutForwardingGuest {
+	on(
+		event: 'before-input-event',
+		handler: (
+			event: { preventDefault: () => void },
+			input: {
+				meta: boolean;
+				control: boolean;
+				alt: boolean;
+				shift: boolean;
+				type: string;
+				key: string;
+				code: string;
+			}
+		) => void
+	): void;
+	paste(): void;
+}
+
+/**
+ * Forward app shortcuts from a focused `<webview>` guest to its window. When a webview has focus, keyboard
+ * events stay in its guest process and never reach the renderer's keydown handler, so main intercepts them
+ * here, BEFORE Chromium's built-in handlers consume them (some keys, Cmd+L among them, never reach page
+ * scripts at all), and sends them to the renderer as `browser-tab:shortcutKey`. Standard text editing (select
+ * all, copy, cut, undo, redo) stays with the page. `before-input-event` fires only for real input, so page
+ * scripts can never forge a forwarded shortcut.
+ *
+ * `privilegedPaste` drives Cmd/Ctrl+V through `guest.paste()`; without it the keystroke stays with the page.
+ */
+export function forwardGuestShortcuts(
+	guest: ShortcutForwardingGuest,
+	resolveOwner: () => BrowserWindow,
+	options: { privilegedPaste: boolean }
+): void {
+	guest.on('before-input-event', (event, input) => {
+		if (!input.meta && !input.control && !input.alt) return;
+		if (input.type !== 'keyDown') return;
+		// Pressing Cmd alone fires a keyDown for "Meta" before the V of Cmd+V.
+		// Forwarding it made the renderer blur the webview, so the V landed
+		// outside the page and paste did nothing in any browser-tab field.
+		if (BARE_MODIFIER_KEYS.has(input.key)) return;
+		const k = input.key.toLowerCase();
+		// Cmd/Ctrl+V: drive paste through the trusted guest webContents API.
+		// Chromium's native paste needs the `clipboard-read` permission, which
+		// the permission handler denies to webviews as a security boundary, so
+		// native paste silently fails inside browser-tab form fields (issue
+		// #1063). guest.paste() is a privileged Electron call that bypasses
+		// that web-facing permission, mirroring the right-click Paste menu
+		// item (issue #1065).
+		const isPaste = (input.meta || input.control) && !input.alt && !input.shift && k === 'v';
+		if (isPaste) {
+			if (!options.privilegedPaste) return;
+			event.preventDefault();
+			guest.paste();
+			return;
+		}
+		// Let the remaining standard text-editing shortcuts pass through to
+		// the page. `f` is intentionally NOT in this list: Cmd+F must reach
+		// the renderer so the in-page find bar can open.
+		const isTextEditing =
+			(input.meta || input.control) && !input.alt && !input.shift && 'acxz'.includes(k);
+		const isRedo = (input.meta || input.control) && !input.alt && input.shift && k === 'z';
+		if (isTextEditing || isRedo) return;
+		event.preventDefault();
+		resolveOwner().webContents.send('browser-tab:shortcutKey', {
+			key: input.key,
+			code: input.code,
+			meta: input.meta,
+			control: input.control,
+			alt: input.alt,
+			shift: input.shift,
+		});
+	});
+}
+
 /** Apply the same browser policy to canonical offscreen pages and browser guests. */
 export function attachBrowserPageSecurity(
 	guestContents: Electron.WebContents,
@@ -141,44 +230,7 @@ export function attachBrowserPageSecurity(
 	// Intercept app shortcuts BEFORE Chromium's built-in handlers consume them.
 	// Some keys (e.g. Cmd+L for address bar focus) are handled by Chromium
 	// internally and never reach the injected JS listener below.
-	guest.on('before-input-event', (event, input) => {
-		if (!input.meta && !input.control && !input.alt) return;
-		if (input.type !== 'keyDown') return;
-		// Pressing Cmd alone fires a keyDown for "Meta" before the V of Cmd+V.
-		// Forwarding it made the renderer blur the webview, so the V landed
-		// outside the page and paste did nothing in any browser-tab field.
-		if (BARE_MODIFIER_KEYS.has(input.key)) return;
-		const k = input.key.toLowerCase();
-		// Cmd/Ctrl+V: drive paste through the trusted guest webContents API.
-		// Chromium's native paste needs the `clipboard-read` permission, which
-		// the permission handler denies to webviews as a security boundary, so
-		// native paste silently fails inside browser-tab form fields (issue
-		// #1063). guest.paste() is a privileged Electron call that bypasses
-		// that web-facing permission, mirroring the right-click Paste menu
-		// item (issue #1065).
-		const isPaste = (input.meta || input.control) && !input.alt && !input.shift && k === 'v';
-		if (isPaste) {
-			event.preventDefault();
-			guest.paste();
-			return;
-		}
-		// Let the remaining standard text-editing shortcuts pass through to
-		// the page. `f` is intentionally NOT in this list: Cmd+F must reach
-		// the renderer so the in-page find bar can open.
-		const isTextEditing =
-			(input.meta || input.control) && !input.alt && !input.shift && 'acxz'.includes(k);
-		const isRedo = (input.meta || input.control) && !input.alt && input.shift && k === 'z';
-		if (isTextEditing || isRedo) return;
-		event.preventDefault();
-		resolveOwner().webContents.send('browser-tab:shortcutKey', {
-			key: input.key,
-			code: input.code,
-			meta: input.meta,
-			control: input.control,
-			alt: input.alt,
-			shift: input.shift,
-		});
-	});
+	forwardGuestShortcuts(guest, resolveOwner, { privilegedPaste: true });
 
 	// Capture-phase listener: intercepts app shortcuts BEFORE the page
 	// can handle them.  We preventDefault+stopPropagation so the page
@@ -366,22 +418,47 @@ function attachBrowserTabContextMenu(
 }
 
 /**
- * Restrict renderer-created webviews to the two sanctioned surfaces:
- * browser tabs (persist:maestro-browser-session-*) and plugin panels
- * (plugin:<id>, hardened by the plugin panel host). Anything else is
- * blocked before the guest exists.
+ * Restrict renderer-created webviews to the three sanctioned surfaces:
+ * browser tabs (persist:maestro-browser-session-*), plugin panels
+ * (plugin:<id>, hardened by the plugin panel host), and DataviewJS guests
+ * (dataview-guest:<hash>, hardened by the Dataview guest host). Anything else
+ * is blocked before the guest exists.
  */
 export function attachGuestWebviewSecurity(
 	browserWindow: BrowserWindow,
 	preloadPath: string
 ): void {
-	// The plugin-panel preload lives next to the main preload bundle
-	// (dist/main/plugin-panel-preload.js, built by scripts/build-preload.mjs).
-	const pluginPanelPreloadPath = path.join(path.dirname(preloadPath), 'plugin-panel-preload.js');
+	// The guest preloads and the Dataview guest document live next to the main
+	// preload bundle (dist/main, built by scripts/build-preload.mjs).
+	const distDir = path.dirname(preloadPath);
+	const pluginPanelPreloadPath = path.join(distDir, 'plugin-panel-preload.js');
+	const dataviewGuestPreloadPath = path.join(distDir, DATAVIEW_GUEST_PRELOAD_FILE);
 
 	browserWindow.webContents.on('will-attach-webview', (event, webPreferences, params) => {
 		const src = typeof params.src === 'string' ? params.src : '';
 		const partition = typeof webPreferences.partition === 'string' ? webPreferences.partition : '';
+
+		if (partition.startsWith(DATAVIEW_GUEST_PARTITION_PREFIX)) {
+			// DataviewJS guest (D4): exactly the guest document on a guest
+			// partition, and only while DataviewJS is on. Web prefs are forced
+			// (no Node, isolation, sandbox, bridge-only preload), and the
+			// per-root session gets its document handler plus egress and
+			// permission denial.
+			if (!isAllowedDataviewGuestAttachment(partition, src) || !isDataviewJsServing()) {
+				event.preventDefault();
+				logger.warn(`Blocked Dataview guest attachment: ${src || '<empty src>'}`, 'Window', {
+					src,
+					partition,
+				});
+				return;
+			}
+			hardenDataviewGuestWebPreferences(
+				webPreferences as Record<string, unknown>,
+				dataviewGuestPreloadPath
+			);
+			hardenDataviewGuestSession(partition, { documentDir: distDir });
+			return;
+		}
 
 		if (isPluginPanelPartition(partition)) {
 			// Per-plugin isolated surface: partition and document must belong
@@ -423,6 +500,16 @@ export function attachGuestWebviewSecurity(
 		const panelGuest = guestContents as unknown as PluginPanelGuestContents;
 		if (isPluginPanelSession(panelGuest.session)) {
 			attachPluginPanelGuestSecurity(panelGuest);
+			return;
+		}
+
+		// DataviewJS guests get the same lockdown, muted audio, and app shortcuts
+		// forwarded out of a focused guest (real key presses only, seen in main
+		// before the page). No JS injection, console bridge, or privileged paste.
+		const dataviewGuest = guestContents as unknown as DataviewGuestContents;
+		if (isDataviewGuestSession(dataviewGuest.session)) {
+			attachDataviewGuestSecurity(dataviewGuest);
+			forwardGuestShortcuts(guestContents, () => browserWindow, { privilegedPaste: false });
 			return;
 		}
 

@@ -14,6 +14,7 @@ import { ChevronDown, Search } from 'lucide-react';
 import type { Theme } from '../../types';
 import { useClickOutside } from '../../hooks/ui';
 import { EscCloseButton } from '../ui/EscCloseButton';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 export interface ThemedSelectOption {
 	value: string;
@@ -232,10 +233,8 @@ export function ThemedSelect({
 						right: 0,
 						...(dropUp ? { bottom: '100%', marginBottom: 4 } : { top: '100%', marginTop: 4 }),
 						zIndex: 10000,
-						backgroundColor: theme.colors.bgSidebar,
-						border: `1px solid ${theme.colors.border}`,
+						...elevatedSurfaceStyle(theme),
 						borderRadius: 6,
-						boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
 						overflow: 'hidden',
 						maxHeight: 240,
 						display: 'flex',

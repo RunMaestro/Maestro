@@ -129,6 +129,15 @@ import { notificationInbox } from './commands/notification-inbox';
 import { profilingStart, profilingStop, profilingStatus } from './commands/profiling';
 import { quickChat } from './commands/quick-chat';
 import { maestroRun } from './commands/maestro-run';
+import {
+	dataviewEval,
+	dataviewIndexRebuild,
+	dataviewTrust,
+	dataviewTrusted,
+	dataviewUntrust,
+	dataviewIndexStatus,
+	dataviewQuery,
+} from './commands/dataview';
 import { cadenzaOpen, cadenzaUpdate, cadenzaClose } from './commands/cadenza';
 import {
 	movementBegin,
@@ -2945,6 +2954,72 @@ maestroRunCmd
 	.option('--reveal', 'Also show MaestroRun.app in Finder, for dragging into the list')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((options) => maestroRun('grant', options));
+
+// Dataview commands - run the Dataview queries of a note the way File Preview
+// renders them. Every verb reaches the running app's DataviewService, the same
+// one the preview queries. Hidden and refused while the Dataview Encore Feature
+// is off.
+const dataviewCmd = encoreCommand(program, 'dataview', 'dataview', encoreFlags).description(
+	"Dataview: run a note's Dataview queries, manage the vault index, and choose the vaults DataviewJS trusts"
+);
+
+dataviewCmd
+	.command('query <file>')
+	.description(
+		"Run a note's dataview blocks with `this` bound to the note (DataviewJS blocks are desktop-only)"
+	)
+	.option(
+		'--block <n>',
+		'Run only the n-th dataview block (1-based; dataviewjs fences not counted)'
+	)
+	.option('--agent <id>', 'Agent the note belongs to (default: the agent whose folder holds it)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, options) => dataviewQuery(file, options));
+
+dataviewCmd
+	.command('eval <file> <dql>')
+	.description(
+		'Run an ad-hoc DQL query with `this` bound to the note; start with = for an inline expression'
+	)
+	.option('--agent <id>', 'Agent the note belongs to (default: the agent whose folder holds it)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((file, dql, options) => dataviewEval(file, dql, options));
+
+const dataviewIndexCmd = dataviewCmd
+	.command('index')
+	.description('Inspect or rebuild the Dataview index of a vault');
+
+dataviewIndexCmd
+	.command('status [root]')
+	.description('Show the open vault indexes, or one vault root (pages, revision, watcher, cache)')
+	.option('--agent <id>', 'Agent whose SSH remote holds the root (default: a local root)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((root, options) => dataviewIndexStatus(root, options));
+
+dataviewIndexCmd
+	.command('rebuild <root>')
+	.description("Drop a vault root's index cache and index it again from scratch")
+	.option('--agent <id>', 'Agent whose SSH remote holds the root (default: a local root)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((root, options) => dataviewIndexRebuild(root, options));
+
+dataviewCmd
+	.command('trust <root>')
+	.description('Trust a vault root: its DataviewJS blocks run in the sandbox without asking')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((root, options) => dataviewTrust(root, options));
+
+dataviewCmd
+	.command('untrust <root>')
+	.description('Stop trusting a vault root: its DataviewJS blocks ask before they run')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((root, options) => dataviewUntrust(root, options));
+
+dataviewCmd
+	.command('trusted')
+	.description('List the vault roots whose DataviewJS blocks run without asking')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((options) => dataviewTrusted(options));
 
 // Quick Chat commands - the hotkey-summoned floating chat window. Each verb is
 // the same action as the matching button in the window.

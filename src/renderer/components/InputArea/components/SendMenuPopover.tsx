@@ -11,10 +11,11 @@ import {
 } from 'lucide-react';
 import type { Theme } from '../../../types';
 import { ToggleSwitch } from '../../ui/ToggleSwitch';
-import { Keycap } from '../../ui/Keycap';
+import { ShortcutKeys } from '../../ui/ShortcutHint';
 import { useClickOutside } from '../../../hooks/ui/useClickOutside';
 import { useEventListener } from '../../../hooks/utils/useEventListener';
 import { useFocusOnMount } from '../../../hooks/utils/useFocusAfterRender';
+import { elevatedSurfaceStyle } from '../../../utils/elevatedSurface';
 import { useActiveSession } from '../../../hooks/session/useActiveSession';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { useComposerInputStore, selectAiComposerValue } from '../../../stores/composerInputStore';
@@ -23,7 +24,6 @@ import { FORCED_PARALLEL_SEND_EVENT, HOLD_SEND_EVENT } from '../../../hooks/inpu
 import { requestSteerSend } from '../../../services/chatSteering';
 import { openAgentSettings } from '../../../services/agentNavigation';
 import { openUrl } from '../../../utils/openUrl';
-import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
 import {
 	buildSendMenuModel,
 	CODEX_TRANSPORT_DOCS_URL,
@@ -168,8 +168,7 @@ export const SendMenuPopover = memo(function SendMenuPopover({
 		right: window.innerWidth - anchorRect.left + 8,
 		width: 300,
 		zIndex: 9999,
-		backgroundColor: theme.colors.bgMain,
-		borderColor: theme.colors.border,
+		...elevatedSurfaceStyle(theme),
 		color: theme.colors.textMain,
 	};
 
@@ -178,7 +177,7 @@ export const SendMenuPopover = memo(function SendMenuPopover({
 			ref={popoverRef}
 			role="menu"
 			aria-label="Send options"
-			className="rounded-lg border shadow-lg p-1.5 select-none"
+			className="rounded-lg p-1.5 select-none"
 			style={style}
 			tabIndex={-1}
 			data-testid="send-menu-popover"
@@ -201,32 +200,33 @@ export const SendMenuPopover = memo(function SendMenuPopover({
 				return (
 					<div key={row.action}>
 						<div
-							className={`flex items-start gap-1.5 pr-2 rounded-md transition-colors ${
+							className={`rounded-md transition-colors ${
 								live ? 'hover:bg-white/5 focus-within:bg-white/5' : ''
 							}`}
 							style={{
 								backgroundColor: isDefault ? `${theme.colors.accent}26` : undefined,
 							}}
 						>
-							<button
-								ref={index === 0 ? firstRowRef : undefined}
-								type="button"
-								role="menuitem"
-								data-send-menu-row={row.action}
-								aria-disabled={!row.enabled}
-								onClick={() => run(row)}
-								className={`flex-1 min-w-0 flex items-start gap-2.5 pl-2 py-1.5 text-left outline-none ${
-									live ? 'cursor-pointer' : 'cursor-default'
-								}`}
-								title={row.reason}
-							>
-								<Icon
-									className="w-3.5 h-3.5 mt-0.5 flex-shrink-0"
-									style={{ color: row.enabled ? theme.colors.textMain : theme.colors.textDim }}
-								/>
-								<span className="flex-1 min-w-0">
+							<div className="flex items-center gap-1.5 pr-2">
+								<button
+									ref={index === 0 ? firstRowRef : undefined}
+									type="button"
+									role="menuitem"
+									data-send-menu-row={row.action}
+									aria-disabled={!row.enabled}
+									aria-describedby={row.reason ? `send-menu-reason-${row.action}` : undefined}
+									onClick={() => run(row)}
+									className={`flex-1 min-w-0 flex items-center gap-2.5 pl-2 py-1.5 text-left outline-none ${
+										live ? 'cursor-pointer' : 'cursor-default'
+									}`}
+									title={row.reason}
+								>
+									<Icon
+										className="w-3.5 h-3.5 flex-shrink-0"
+										style={{ color: row.enabled ? theme.colors.textMain : theme.colors.textDim }}
+									/>
 									<span
-										className="block text-xs"
+										className="text-xs"
 										style={{
 											color: row.enabled ? theme.colors.textMain : theme.colors.textDim,
 											opacity: row.enabled ? 1 : 0.6,
@@ -234,42 +234,47 @@ export const SendMenuPopover = memo(function SendMenuPopover({
 									>
 										{label}
 									</span>
-									{row.reason && (
-										<span
-											className="block text-xs-plus leading-snug mt-0.5"
-											style={{ color: theme.colors.textDim }}
-										>
-											{row.reason}
-										</span>
-									)}
-								</span>
-							</button>
-							{/* The ? sits left of the hotkey, outside the row button so it
-							    never runs the row. */}
-							{row.action === 'steer' && (
-								<button
-									type="button"
-									onClick={() => setHelpOpen((open) => !open)}
-									className="mt-1.5 p-0.5 rounded-full flex-shrink-0"
-									style={{ color: helpOpen ? theme.colors.accent : theme.colors.textDim }}
-									title="How steering works on this agent"
-									aria-label="How steering works on this agent"
-									aria-expanded={helpOpen}
-								>
-									<HelpCircle className="w-3.5 h-3.5" />
 								</button>
-							)}
-							{keys && keys.length > 0 && (
-								<span
-									data-shortcut-hint
-									aria-hidden
-									className={`flex-shrink-0 mt-1 ${live ? 'cursor-pointer' : 'cursor-default'}`}
+								{/* The ? sits left of the hotkey, outside the row button so it
+								    never runs the row. */}
+								{row.action === 'steer' && (
+									<button
+										type="button"
+										onClick={() => setHelpOpen((open) => !open)}
+										className="p-0.5 rounded-full flex-shrink-0"
+										style={{ color: helpOpen ? theme.colors.accent : theme.colors.textDim }}
+										title="How steering works on this agent"
+										aria-label="How steering works on this agent"
+										aria-expanded={helpOpen}
+									>
+										<HelpCircle className="w-3.5 h-3.5" />
+									</button>
+								)}
+								{keys && keys.length > 0 && (
+									<span
+										aria-hidden
+										className={`flex-shrink-0 ${live ? 'cursor-pointer' : 'cursor-default'}`}
+										style={{ opacity: row.enabled ? 1 : 0.45 }}
+										onClick={() => run(row)}
+									>
+										<ShortcutKeys theme={theme} keys={keys} />
+									</span>
+								)}
+							</div>
+							{/* The reason sits below the label line, not beside it, so it
+							    spans the full row and wraps under the hotkey. Indented to the
+							    label: pl-2 + the icon + gap-2.5. */}
+							{row.reason && (
+								<div
+									id={`send-menu-reason-${row.action}`}
+									className={`pl-8 pr-2 pb-1.5 -mt-0.5 text-xs-plus leading-snug ${
+										live ? 'cursor-pointer' : 'cursor-default'
+									}`}
+									style={{ color: theme.colors.textDim }}
 									onClick={() => run(row)}
 								>
-									<Keycap theme={theme} style={{ opacity: row.enabled ? 1 : 0.45 }}>
-										{formatShortcutKeys(keys)}
-									</Keycap>
-								</span>
+									{row.reason}
+								</div>
 							)}
 						</div>
 						{row.action === 'steer' && helpOpen && (

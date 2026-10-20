@@ -41,6 +41,7 @@ import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { SegmentedControl } from './ui/SegmentedControl';
 import { toastAccentColor, ToastIcon } from './Toast';
+import { elevatedSurfaceStyle } from '../utils/elevatedSurface';
 
 type NotificationFilter = 'unread' | 'all';
 
@@ -258,7 +259,7 @@ function NotificationCenterPopover({ theme, anchorRef, onClose }: NotificationCe
 	return createPortal(
 		<div
 			ref={menuRef}
-			className="fixed z-[100] flex flex-col rounded-lg shadow-xl overflow-hidden select-none"
+			className="fixed z-[100] flex flex-col rounded-lg overflow-hidden select-none"
 			tabIndex={keyboardNavigation ? -1 : undefined}
 			onKeyDown={onEntryKeyDown}
 			style={{
@@ -266,8 +267,7 @@ function NotificationCenterPopover({ theme, anchorRef, onClose }: NotificationCe
 				left,
 				top,
 				opacity: ready ? 1 : 0,
-				backgroundColor: theme.colors.bgSidebar,
-				border: `1px solid ${theme.colors.border}`,
+				...elevatedSurfaceStyle(theme),
 			}}
 			role="dialog"
 			aria-label="Notifications"

@@ -4,7 +4,7 @@
  * `set` must acknowledge only after the settings write has landed, and a write
  * while the Encore Feature is off must answer with the enable hint.
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
 import {
 	readThroughputGaugeStatus,
@@ -51,7 +51,7 @@ describe('runRemoteThroughputGaugeCommand', () => {
 	] as const)('%s calls the store action the UI calls', async (action, storeAction) => {
 		const result = await runRemoteThroughputGaugeCommand({ action });
 		expect(actions[storeAction]).toHaveBeenCalledTimes(1);
-		expect(result).toEqual({ success: true, status: readThroughputGaugeStatus() });
+		expect(result).toEqual({ success: true, status: await readThroughputGaugeStatus() });
 	});
 
 	it('status answers the live reading', async () => {
@@ -64,6 +64,7 @@ describe('runRemoteThroughputGaugeCommand', () => {
 				rates: RATES,
 				peak: PEAK,
 				windowMs: DEFAULT_THROUGHPUT_GAUGE_SETTINGS.windowMs,
+				window: null,
 			},
 		});
 	});
@@ -137,5 +138,48 @@ describe('runRemoteThroughputGaugeCommand', () => {
 		const result = await runRemoteThroughputGaugeCommand({ action: 'status' });
 		expect(result.success).toBe(true);
 		expect(result.status?.enabled).toBe(false);
+	});
+});
+
+describe('readThroughputGaugeStatus window bounds', () => {
+	const maestro = window.maestro as unknown as Record<string, unknown>;
+	const originalFloatingWidgets = maestro.floatingWidgets;
+	let getBounds: ReturnType<typeof vi.fn>;
+
+	beforeEach(() => {
+		installLocalStorageMock();
+		useThroughputGaugeStore.setState({ visible: true, rates: RATES, peak: PEAK });
+		setEnabled(true);
+		getBounds = vi.fn(async () => ({ x: 100, y: 120, width: 360, height: 180 }));
+		maestro.floatingWidgets = { getBounds };
+	});
+
+	afterEach(() => {
+		maestro.floatingWidgets = originalFloatingWidgets;
+	});
+
+	it('reports the floating window while the gauge is visible', async () => {
+		const status = await readThroughputGaugeStatus();
+		expect(getBounds).toHaveBeenCalledWith('throughput-gauge');
+		expect(status.window).toEqual({ x: 100, y: 120, width: 360, height: 180 });
+	});
+
+	it('is null when the window does not exist yet', async () => {
+		getBounds.mockResolvedValue(null);
+		expect((await readThroughputGaugeStatus()).window).toBeNull();
+	});
+
+	it('does not ask for bounds while the gauge is hidden or off', async () => {
+		useThroughputGaugeStore.setState({ visible: false });
+		expect((await readThroughputGaugeStatus()).window).toBeNull();
+		useThroughputGaugeStore.setState({ visible: true });
+		setEnabled(false);
+		expect((await readThroughputGaugeStatus()).window).toBeNull();
+		expect(getBounds).not.toHaveBeenCalled();
+	});
+
+	it('is null in the browser build, which has no floating window', async () => {
+		maestro.floatingWidgets = undefined;
+		expect((await readThroughputGaugeStatus()).window).toBeNull();
 	});
 });

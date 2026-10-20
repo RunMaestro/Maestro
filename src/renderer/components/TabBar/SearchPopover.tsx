@@ -5,6 +5,7 @@ import { ShortcutHint } from '../ui/ShortcutHint';
 import type { Theme } from '../../types';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 interface SearchPopoverProps {
 	theme: Theme;
@@ -187,12 +188,11 @@ export const SearchPopover = memo(function SearchPopover({
 					<div
 						ref={popoverRef}
 						tabIndex={0}
-						className="fixed z-50 rounded-lg shadow-xl overflow-hidden outline-none"
+						className="fixed z-50 rounded-lg overflow-hidden outline-none"
 						style={{
 							top: popoverPos.top,
 							left: popoverPos.left,
-							backgroundColor: theme.colors.bgSidebar,
-							border: `1px solid ${theme.colors.border}`,
+							...elevatedSurfaceStyle(theme),
 							minWidth: 220,
 						}}
 						onKeyDown={(e) => {

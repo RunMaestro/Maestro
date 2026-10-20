@@ -37,6 +37,7 @@ import {
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useEventListener } from '../../hooks/utils/useEventListener';
 import { useAnchoredMenuPosition } from '../../hooks/ui/useAnchoredMenuPosition';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 interface MediaViewerProps {
 	/** Whether to mount an <audio> or a <video> element. */
@@ -141,13 +142,12 @@ const PlaybackRateMenu = memo(function PlaybackRateMenu({
 			data-testid="playback-rate-menu"
 			// Above the floating player (60) and its docked frame (5), far below
 			// modals (9999) so it can never cover an overlay.
-			className="fixed z-[100] py-1 rounded shadow-xl border max-h-64 overflow-y-auto select-none"
+			className="fixed z-[100] py-1 rounded max-h-64 overflow-y-auto select-none"
 			style={{
 				left,
 				top,
 				opacity: ready ? 1 : 0,
-				backgroundColor: theme.colors.bgActivity,
-				borderColor: theme.colors.border,
+				...elevatedSurfaceStyle(theme),
 			}}
 		>
 			{MEDIA_PLAYBACK_RATES.map((option) => (

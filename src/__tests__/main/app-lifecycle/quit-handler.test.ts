@@ -89,6 +89,12 @@ vi.mock('../../../main/cot-export/config-store', () => ({
 	flushCotConfigStoreSync: (...args: unknown[]) => mockFlushDeviceState(...args),
 }));
 
+// Dataview indexes hold chokidar watchers and remote pollers; the quit path disposes them.
+const mockShutdownDataview = vi.fn().mockResolvedValue(undefined);
+vi.mock('../../../main/dataview/dataview-service', () => ({
+	shutdownDataviewService: (...args: unknown[]) => mockShutdownDataview(...args),
+}));
+
 // Platform is controllable per-test: the update-install hard-exit only applies
 // on macOS (Squirrel.Mac/ShipIt), while Windows/Linux keep the graceful path.
 let mockIsMacOS = true;
@@ -461,6 +467,18 @@ describe('app-lifecycle/quit-handler', () => {
 			const killOrder = mockProcessManager.killAll.mock.invocationCallOrder[0];
 			expect(firstFlush).toBeLessThan(killOrder);
 			expect(secondFlush).toBeGreaterThan(killOrder);
+		});
+
+		it('disposes the Dataview indexes during cleanup', async () => {
+			const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
+
+			const quitHandler = createQuitHandler(deps as Parameters<typeof createQuitHandler>[0]);
+			quitHandler.setup();
+			quitHandler.confirmQuit();
+
+			beforeQuitHandler!({ preventDefault: vi.fn() });
+
+			expect(mockShutdownDataview).toHaveBeenCalledTimes(1);
 		});
 
 		it('finishes cleanup when the device-state write fails', async () => {

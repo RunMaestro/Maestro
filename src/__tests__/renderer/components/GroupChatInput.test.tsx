@@ -221,6 +221,39 @@ describe('GroupChatInput', () => {
 		});
 	});
 
+	describe('@mention pills', () => {
+		const overlayOf = (container: HTMLElement) =>
+			container.querySelector('.maestro-input-text-overlay') as HTMLDivElement | null;
+
+		it('draws a pill behind a known agent mention, as the AI composer does', () => {
+			const sessions = [createMockSession('session-1', 'Maestro', 'claude-code')];
+			const { container } = render(<GroupChatInput {...createDefaultProps({ sessions })} />);
+
+			const textarea = screen.getByPlaceholderText(/Type a message/i) as HTMLTextAreaElement;
+			typeInTextarea(textarea, 'ask @Maestro about it');
+
+			const overlay = overlayOf(container);
+			expect(overlay).not.toBeNull();
+			const chip = Array.from(overlay!.querySelectorAll('span')).find(
+				(span) => span.textContent === '@Maestro'
+			);
+			expect(chip).toBeDefined();
+			expect(chip!.style.borderRadius).toBe('6px');
+		});
+
+		it('draws no pill for an unknown @word or a draft without mentions', () => {
+			const sessions = [createMockSession('session-1', 'Maestro', 'claude-code')];
+			const { container } = render(<GroupChatInput {...createDefaultProps({ sessions })} />);
+
+			const textarea = screen.getByPlaceholderText(/Type a message/i) as HTMLTextAreaElement;
+			typeInTextarea(textarea, 'ping @nobody here');
+			expect(overlayOf(container)).toBeNull();
+
+			typeInTextarea(textarea, 'plain text');
+			expect(overlayOf(container)).toBeNull();
+		});
+	});
+
 	describe('@mention autocomplete', () => {
 		it('shows mention dropdown when typing @', () => {
 			const sessions = [

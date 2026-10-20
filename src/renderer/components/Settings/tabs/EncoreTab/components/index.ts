@@ -1,5 +1,6 @@
 export { ComputerHistorySection } from './ComputerHistorySection';
 export { CueSettingsSection } from './CueSettingsSection';
+export { DataviewSection } from './DataviewSection';
 export { DirectorNotesSection } from './DirectorNotesSection';
 export { MaestroRunSection } from './MaestroRunSection';
 export { QuickChatSection } from './QuickChatSection';

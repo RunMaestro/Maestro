@@ -114,6 +114,31 @@ describe('routeQuickChatMessage', () => {
 		).toEqual({ kind: 'open', tabId: 'consult' });
 	});
 
+	it('leaves out a busy tab, except the chat own, and never reopens its conversation', async () => {
+		history([entry('s-amazon', 'Tracked the amazon package refund')]);
+		const busy = tab('amazon', {
+			state: 'busy',
+			agentSessionId: 's-amazon',
+			logs: [said('amazon package refund policy')],
+		});
+		const session = agentWith([buildTab(), busy]);
+		expect(await routeQuickChatMessage(session, 'amazon package refund', noChat)).toEqual({
+			kind: 'new',
+		});
+		expect(
+			await routeQuickChatMessage(session, 'amazon package refund', {
+				currentTabId: 'amazon',
+				ownedTabIds: new Set(),
+			})
+		).toEqual({ kind: 'open', tabId: 'amazon' });
+		expect(
+			await routeQuickChatMessage(session, 'amazon package refund', {
+				currentTabId: null,
+				ownedTabIds: new Set(['amazon']),
+			})
+		).toEqual({ kind: 'open', tabId: 'amazon' });
+	});
+
 	it('leaves out a tab running an inline wizard', async () => {
 		const wizard = tab('wizard', {
 			logs: [said('amazon package refund policy')],

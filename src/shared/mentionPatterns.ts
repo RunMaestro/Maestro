@@ -70,6 +70,10 @@ export const AGENT_MENTION_PATTERN_SOURCE = `@[${NAME_CHAR}]+`;
 // eslint-disable-next-line no-misleading-character-class
 const AGENT_NAME_RE = new RegExp(`^[${NAME_CHAR}]+$`, 'u');
 
+/** One name character, for the boundary check after a roster-matched name. */
+// eslint-disable-next-line no-misleading-character-class
+const NAME_CHAR_RE = new RegExp(`^[${NAME_CHAR}]$`, 'u');
+
 /**
  * Quote characters that, sitting immediately before an `@`, deliberately escape
  * the mention: `"@codex"`, `'@codex'`, and `` `@codex` `` are the user opting OUT
@@ -226,6 +230,8 @@ export interface MentionSpan {
  * - The roster wins the file/agent split: a body that names a known agent/group
  *   is an agent mention even when path-like. Absent the roster, a path-like body
  *   (`/` or a dotted extension) is a file.
+ * - The roster also wins the token's END: a known name carrying punctuation the
+ *   bare shape stops at (`@🚧-acappella+`) is captured whole, longest name first.
  */
 export function scanMentionSpans(
 	text: string,
@@ -257,8 +263,20 @@ export function scanMentionSpans(
 		// trailing-punctuation trim would eat that very quote). The body is the text
 		// BETWEEN the quotes, so `path`/roster lookups never see the delimiters.
 		const quote = mentionQuoteChar(match[0].slice(1));
-		const value = quote ? match[0] : match[0].replace(TRAILING_PUNCTUATION, '');
-		const body = quote ? value.slice(2, -1) : value.slice(1);
+		let value = quote ? match[0] : match[0].replace(TRAILING_PUNCTUATION, '');
+		let body = quote ? value.slice(2, -1) : value.slice(1);
+
+		// A name can carry punctuation the bare shape stops at (`🚧 acappella+` ->
+		// `@🚧-acappella+`, `R&D`, `C#`). When a known name starts at this `@` and
+		// runs past the shape match, the roster decides where the token ends.
+		if (!quote && knownMentionNames) {
+			const rosterLength = longestKnownNameAt(text, start + 1, body.length, knownMentionNames);
+			if (rosterLength > 0) {
+				value = text.slice(start, start + 1 + rosterLength);
+				body = value.slice(1);
+				scanner.lastIndex = start + value.length;
+			}
+		}
 		if (!body) continue;
 
 		// The roster is authoritative: a body that names a known agent/group is an
@@ -277,6 +295,29 @@ export function scanMentionSpans(
 	}
 
 	return spans;
+}
+
+/**
+ * The UTF-16 length of the longest known name that starts at `bodyStart`
+ * (case-insensitive), is longer than `minLength`, and ends at a name boundary
+ * (so `@codex-old` never yields a `codex` token). 0 when none qualifies.
+ */
+function longestKnownNameAt(
+	text: string,
+	bodyStart: number,
+	minLength: number,
+	knownMentionNames: ReadonlySet<string>
+): number {
+	let best = 0;
+	for (const name of knownMentionNames) {
+		if (name.length <= Math.max(minLength, best)) continue;
+		const end = bodyStart + name.length;
+		if (text.slice(bodyStart, end).toLowerCase() !== name) continue;
+		const next = text.codePointAt(end);
+		if (next !== undefined && NAME_CHAR_RE.test(String.fromCodePoint(next))) continue;
+		best = name.length;
+	}
+	return best;
 }
 
 /**

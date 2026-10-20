@@ -100,6 +100,13 @@ export interface MarkdownComponentsOptions {
 	 * option to keep the read-only checkboxes react-markdown emits by default.
 	 */
 	onTaskToggle?: (sourceLine: number) => Promise<boolean>;
+	/**
+	 * Takes over chosen inline code spans (Dataview's `` `= expr` ``). Called with
+	 * the span's raw text, read from the hast node so search-highlight marks never
+	 * leak in, and the default `InlineCode` element; return null to keep the
+	 * default. Omit it everywhere a span should stay plain code.
+	 */
+	renderInlineCode?: (code: string, fallback: React.ReactElement) => React.ReactNode | null;
 }
 
 /**
@@ -386,6 +393,14 @@ export function applyReadableTextTransforms(
 	});
 }
 
+/** The text content of a hast node (its text descendants, in order). */
+function hastText(node: unknown): string {
+	if (!node || typeof node !== 'object') return '';
+	const { type, value, children } = node as { type?: string; value?: unknown; children?: unknown };
+	if (type === 'text' && typeof value === 'string') return value;
+	return Array.isArray(children) ? children.map(hastText).join('') : '';
+}
+
 export function createMarkdownComponents(options: MarkdownComponentsOptions): Partial<Components> {
 	const {
 		theme,
@@ -401,6 +416,7 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 		bionifyIntensity,
 		bionifyAlgorithm,
 		onTaskToggle,
+		renderInlineCode,
 	} = options;
 
 	// Reset match counter at start of each render
@@ -476,8 +492,15 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 		// language renderers like mermaid + theme-aware syntax highlighting).
 		pre: createPrismCodeBlock({ theme, customLanguageRenderers, codeBlockStyle }),
 		// Inline code only - block code is handled by the pre component above.
-		code: ({ node: _node, className, children, style, ...props }: any) =>
-			React.createElement(InlineCode, { className, style, passthrough: props, children }),
+		code: ({ node, className, children, style, ...props }: any) => {
+			const fallback = React.createElement(InlineCode, {
+				className,
+				style,
+				passthrough: props,
+				children,
+			});
+			return renderInlineCode ? (renderInlineCode(hastText(node), fallback) ?? fallback) : fallback;
+		},
 	};
 
 	// Custom image renderer if provided

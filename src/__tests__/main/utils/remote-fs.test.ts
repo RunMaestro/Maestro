@@ -1,11 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { spawnSync } from 'child_process';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import {
 	readDirRemote,
 	readFileRemote,
+	readFileInRootRemote,
 	readBinaryFileRemoteAsBase64,
 	readBinaryFileBlockRemoteAsBase64,
 	readFileTailRemote,
 	statRemote,
+	findAncestorWithDirRemote,
+	listFilesWithStatsRemote,
 	directorySizeRemote,
 	writeFileRemote,
 	existsRemote,
@@ -1021,6 +1028,134 @@ describe('remote-fs', () => {
 		});
 	});
 
+	describe('findAncestorWithDirRemote', () => {
+		it('returns the ancestor the remote loop printed', async () => {
+			const deps = createMockDeps({ stdout: '/home/u/vault', stderr: '', exitCode: 0 });
+
+			const result = await findAncestorWithDirRemote(
+				'/home/u/vault/notes',
+				'.obsidian',
+				baseConfig,
+				deps
+			);
+
+			expect(result).toEqual({ success: true, data: '/home/u/vault' });
+		});
+
+		it('walks every ancestor in ONE ssh command', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+
+			await findAncestorWithDirRemote('/home/u/vault/notes', '.obsidian', baseConfig, deps);
+
+			expect(deps.execSsh).toHaveBeenCalledTimes(1);
+			const remoteCommand = (deps.execSsh as ReturnType<typeof vi.fn>).mock.calls[0][1].at(-1);
+			expect(remoteCommand).toContain(`d='/home/u/vault/notes'`);
+			expect(remoteCommand).toContain(`m='.obsidian'`);
+			expect(remoteCommand).toContain('[ -d "$d/$m" ]');
+			expect(remoteCommand).toContain('dirname "$d"');
+		});
+
+		it('returns null when no ancestor has the marker', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+
+			const result = await findAncestorWithDirRemote('/srv/notes', '.obsidian', baseConfig, deps);
+
+			expect(result).toEqual({ success: true, data: null });
+		});
+
+		it('keeps a trailing space in the printed path', async () => {
+			const deps = createMockDeps({ stdout: '/srv/vault \n', stderr: '', exitCode: 0 });
+
+			const result = await findAncestorWithDirRemote(
+				'/srv/vault /a',
+				'.obsidian',
+				baseConfig,
+				deps
+			);
+
+			expect(result.data).toBe('/srv/vault ');
+		});
+
+		it('reports a failed command', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: 'Permission denied', exitCode: 1 });
+
+			const result = await findAncestorWithDirRemote('/srv/notes', '.obsidian', baseConfig, deps);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toBe('Permission denied');
+		});
+	});
+
+	describe('listFilesWithStatsRemote', () => {
+		it('parses size, mtime, birth time, and change time per file, keeping spaces in paths', async () => {
+			const deps = createMockDeps({
+				stdout:
+					'120 1700000000 1690000000 1700000100 ./People/Pedram Amini.md\n' +
+					'5 1700000001 0 1700000200 ./data/people.csv\r\n' +
+					'9 1700000002 - 1700000300 ./No Birth.md\n' +
+					'garbage line\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const result = await listFilesWithStatsRemote('/srv/vault', ['.*'], baseConfig, deps);
+
+			expect(result).toEqual({
+				success: true,
+				data: [
+					{
+						path: 'People/Pedram Amini.md',
+						size: 120,
+						mtime: 1700000000000,
+						birthtime: 1690000000000,
+						ctime: 1700000100000,
+					},
+					{
+						path: 'data/people.csv',
+						size: 5,
+						mtime: 1700000001000,
+						birthtime: 0,
+						ctime: 1700000200000,
+					},
+					{
+						path: 'No Birth.md',
+						size: 9,
+						mtime: 1700000002000,
+						birthtime: 0,
+						ctime: 1700000300000,
+					},
+				],
+			});
+		});
+
+		it('lists and stats the whole tree in ONE ssh command, GNU first then BSD', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+
+			await listFilesWithStatsRemote('/srv/my vault', ['.*', 'node_modules'], baseConfig, deps);
+
+			expect(deps.execSsh).toHaveBeenCalledTimes(1);
+			const remoteCommand = (deps.execSsh as ReturnType<typeof vi.fn>).mock.calls[0][1].at(-1);
+			expect(remoteCommand).toContain(`cd '/srv/my vault'`);
+			expect(remoteCommand).toContain(
+				`\\( -name '.*' -o -name 'node_modules' \\) -prune -o -type f`
+			);
+			expect(remoteCommand).toContain(`f='%s %Y %W %Z %n'`);
+			expect(remoteCommand).toContain(`f='%z %m %B %c %N'`);
+			expect(remoteCommand).toContain('-exec stat -L "$o" "$f" {} +');
+		});
+
+		it('reports a root that cannot be entered', async () => {
+			const deps = createMockDeps({ stdout: '__CD_ERROR__\n', stderr: '', exitCode: 0 });
+
+			const result = await listFilesWithStatsRemote('/missing', [], baseConfig, deps);
+
+			expect(result).toEqual({
+				success: false,
+				error: 'Directory not found or not accessible: /missing',
+			});
+		});
+	});
+
 	describe('directorySizeRemote', () => {
 		it('parses du -sb output (GNU)', async () => {
 			const deps = createMockDeps({
@@ -1638,6 +1773,136 @@ describe('remote-fs', () => {
 
 			expect(await deleteManyRemote([], baseConfig, true, deps)).toEqual([]);
 			expect(deps.execSsh).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('readFileInRootRemote', () => {
+		const ROOT = '/home/u/vault';
+
+		it('runs ONE remote script that resolves the root and the file with realpath before reading', async () => {
+			const deps = createMockDeps({ stdout: 'view();\n', stderr: '', exitCode: 0 });
+
+			const result = await readFileInRootRemote(ROOT, 'views/x/view.js', 1024, baseConfig, deps);
+
+			expect(result).toEqual({ success: true, data: 'view();\n' });
+			expect(deps.execSsh).toHaveBeenCalledTimes(1);
+			const command = (deps.execSsh as ReturnType<typeof vi.fn>).mock.calls[0][1].at(-1) as string;
+			expect(command).toContain(`realpath '${ROOT}'`);
+			expect(command).toContain(`realpath '${ROOT}/views/x/view.js'`);
+			// The containment check runs on the REAL paths, before the read, which reads the resolved file.
+			expect(command).toContain('case "$f" in "$r"/*)');
+			expect(command.indexOf('case "$f"')).toBeLessThan(command.indexOf('cat "$f"'));
+			expect(command).toContain('[ "$s" -le 1024 ]');
+		});
+
+		it('quotes a path holding shell syntax so it can never run', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+
+			await readFileInRootRemote(ROOT, "a'$(touch pwned)`id`.md", 1024, baseConfig, deps);
+
+			const command = (deps.execSsh as ReturnType<typeof vi.fn>).mock.calls[0][1].at(-1) as string;
+			expect(command).toContain(`'${ROOT}/a'\\''$(touch pwned)\`id\`.md'`);
+		});
+
+		it('answers null for a path with no regular file behind it', async () => {
+			const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 3 });
+
+			expect(await readFileInRootRemote(ROOT, 'gone.md', 1024, baseConfig, deps)).toEqual({
+				success: true,
+				data: null,
+			});
+		});
+
+		it('refuses a path whose real path leaves the root, a file over the cap, and a remote without realpath', async () => {
+			const outside = await readFileInRootRemote(
+				ROOT,
+				'escape.md',
+				1024,
+				baseConfig,
+				createMockDeps({ stdout: '', stderr: '', exitCode: 4 })
+			);
+			expect(outside.success).toBe(false);
+			expect(outside.error).toContain('outside');
+
+			const tooLarge = await readFileInRootRemote(
+				ROOT,
+				'big.csv',
+				1024,
+				baseConfig,
+				createMockDeps({ stdout: '', stderr: '', exitCode: 5 })
+			);
+			expect(tooLarge.success).toBe(false);
+			expect(tooLarge.error).toContain('1024 bytes');
+
+			const noRealpath = await readFileInRootRemote(
+				ROOT,
+				'a.md',
+				1024,
+				baseConfig,
+				createMockDeps({ stdout: '', stderr: '', exitCode: 6 })
+			);
+			expect(noRealpath.success).toBe(false);
+			expect(noRealpath.error).toContain('realpath');
+
+			const excluded = await readFileInRootRemote(
+				ROOT,
+				'settings/app.json',
+				1024,
+				baseConfig,
+				createMockDeps({ stdout: '', stderr: '', exitCode: 7 })
+			);
+			expect(excluded.success).toBe(false);
+			expect(excluded.error).toContain('hidden folder or node_modules');
+		});
+
+		it.skipIf(process.platform === 'win32')(
+			'refuses, under a real shell, a symlink out of the root or into a dot folder or node_modules',
+			async () => {
+				const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'remote-in-root-')));
+				try {
+					const root = path.join(base, 'vault');
+					fs.mkdirSync(path.join(root, '.obsidian'), { recursive: true });
+					fs.mkdirSync(path.join(root, 'node_modules'));
+					fs.writeFileSync(path.join(root, 'a.md'), 'inside');
+					fs.writeFileSync(path.join(root, '.obsidian', 'app.json'), 'token');
+					fs.writeFileSync(path.join(root, 'node_modules', 'x.js'), 'module');
+					fs.writeFileSync(path.join(base, 'secret.md'), 'secret');
+					fs.symlinkSync(path.join(root, 'a.md'), path.join(root, 'alias.md'));
+					fs.symlinkSync(path.join(base, 'secret.md'), path.join(root, 'escape.md'));
+					fs.symlinkSync(path.join(root, '.obsidian'), path.join(root, 'settings'));
+					fs.symlinkSync(path.join(root, 'node_modules'), path.join(root, 'mods'));
+
+					// The generated script, run by the local shell as the remote would run it.
+					const run = async (relPath: string) => {
+						const deps = createMockDeps({ stdout: '', stderr: '', exitCode: 0 });
+						await readFileInRootRemote(root, relPath, 1024, baseConfig, deps);
+						const command = (deps.execSsh as ReturnType<typeof vi.fn>).mock.calls[0][1].at(
+							-1
+						) as string;
+						const result = spawnSync('sh', ['-c', command], { encoding: 'utf8' });
+						return { status: result.status, stdout: result.stdout };
+					};
+
+					expect(await run('a.md')).toEqual({ status: 0, stdout: 'inside' });
+					expect(await run('alias.md')).toEqual({ status: 0, stdout: 'inside' });
+					expect(await run('escape.md')).toEqual({ status: 4, stdout: '' });
+					expect(await run('settings/app.json')).toEqual({ status: 7, stdout: '' });
+					expect(await run('mods/x.js')).toEqual({ status: 7, stdout: '' });
+				} finally {
+					fs.rmSync(base, { recursive: true, force: true });
+				}
+			}
+		);
+
+		it('reports any other failure with the remote error text', async () => {
+			const result = await readFileInRootRemote(
+				ROOT,
+				'a.md',
+				1024,
+				baseConfig,
+				createMockDeps({ stdout: '', stderr: 'cat: a.md: Permission denied', exitCode: 1 })
+			);
+			expect(result).toEqual({ success: false, error: 'cat: a.md: Permission denied' });
 		});
 	});
 });

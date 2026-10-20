@@ -3,6 +3,7 @@ import type React from 'react';
 import { Gauge, Sparkles } from 'lucide-react';
 import type { Theme } from '../../../types';
 import { ShortcutHint, shortcutSuffix } from '../../ui/ShortcutHint';
+import { elevatedSurfaceStyle } from '../../../utils/elevatedSurface';
 
 interface ModelEffortPillsProps {
 	isVisible: boolean;
@@ -77,10 +78,9 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 					</button>
 					{modelMenuOpen && (
 						<div
-							className="absolute bottom-full left-0 mb-1 rounded border shadow-lg z-50"
+							className="absolute bottom-full left-0 mb-1 rounded z-50"
 							style={{
-								backgroundColor: theme.colors.bgMain,
-								borderColor: theme.colors.border,
+								...elevatedSurfaceStyle(theme),
 							}}
 						>
 							<ShortcutHint theme={theme} keys={shortcutKeys ?? []} label="Try:" variant="row" />
@@ -179,10 +179,9 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 					</button>
 					{effortMenuOpen && (
 						<div
-							className="absolute bottom-full left-0 mb-1 rounded border shadow-lg z-50"
+							className="absolute bottom-full left-0 mb-1 rounded z-50"
 							style={{
-								backgroundColor: theme.colors.bgMain,
-								borderColor: theme.colors.border,
+								...elevatedSurfaceStyle(theme),
 							}}
 						>
 							<ShortcutHint theme={theme} keys={shortcutKeys ?? []} label="Try:" variant="row" />
