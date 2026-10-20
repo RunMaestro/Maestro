@@ -131,7 +131,16 @@ export const createShortcutsSlice: StateCreator<SettingsStore, [], [], Shortcuts
 		// rather than in a mode-watching effect catches all four routes at once
 		// (the chord, the palette, the hamburger menu, and the Settings toggle,
 		// which goes straight to this setter without passing through
-		// `switchKeyboardMode`).
+		// `switchKeyboardMode`), and it does not depend on anything being
+		// mounted - the same reason Deck's blur guard lives in `uiStore`.
+		//
+		// It is NOT the only owner, and must not be treated as one. A mode change
+		// arriving from OUTSIDE this window (`maestro-cli settings set`, a hand
+		// edit, a peer window's write) lands through `loadAllSettings`, which
+		// applies one `setState` patch and never calls a setter - so it cannot
+		// reach this line. `useMainKeyboardHandler` subscribes to `keyboardMode`
+		// for that route, and abandons the sequence and insert-escape runs there
+		// too, since those live in its closure and no setter can reach them.
 		useUIStore.getState().disarmDeckMode();
 	},
 

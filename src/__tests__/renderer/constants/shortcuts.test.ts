@@ -18,8 +18,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { readFileSync, readdirSync, statSync } from 'fs';
-import { join } from 'path';
+import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
+import { dirname, join, relative, resolve } from 'path';
 import {
 	DEFAULT_SHORTCUTS,
 	FIXED_SHORTCUTS,
@@ -1127,5 +1127,157 @@ describe('Deck mode key table', () => {
 		// arming the mode twice and firing nothing.
 		expect(DECK_MODE_KEYS.some((row) => row.id === DECK_MODE_LEADER_ID)).toBe(false);
 		expect(findDeckModeAction(';')).toBeUndefined();
+	});
+});
+
+/**
+ * THE CLI READS THESE TABLES, so their import graph is part of their contract.
+ *
+ * `maestro-cli open <surface>` prints the hotkey for a surface it can open, and
+ * it resolves it from the same tables and the same resolver the renderer uses -
+ * that is what stops the CLI's answer and the app's answer from drifting. The
+ * price is that nothing on that path may reach a store, a component, a React
+ * hook, or the DOM: `maestro-cli` runs under plain node with no `window`, and
+ * an import of `../types` (which pulls in renderer-only, DOM-dependent modules)
+ * breaks `npm run build:cli` rather than failing a test. Each of the five entry
+ * files below says so in its own header comment; this is where the claim is
+ * checked.
+ *
+ * The walk is TRANSITIVE, because that is where this goes wrong. Every one of
+ * the five is obviously clean on its own line of imports, and would stay
+ * obviously clean while a module two hops down grew a `useSettingsStore`.
+ *
+ * `npm run lint` (which type-checks `tsconfig.cli.json`) and `npm run build:cli`
+ * are the other half of this and catch it at the point of breakage; this catches
+ * it at the point of the EDIT, and names which hop introduced it.
+ */
+describe('the shortcut tables the CLI reads', () => {
+	const SRC_ROOT = join(__dirname, '../../..');
+
+	/** The five modules `src/cli/commands/open-modal.ts` resolves a chord through. */
+	const CLI_ENTRY_POINTS = [
+		'renderer/constants/shortcuts.ts',
+		'renderer/constants/vimShortcuts.ts',
+		'renderer/constants/deckMode.ts',
+		'shared/effectiveShortcuts.ts',
+		'renderer/utils/shortcutResolve.ts',
+	];
+
+	/**
+	 * Source with comments and string literals removed, leaving identifiers.
+	 *
+	 * Both halves are needed, and each was a false positive first. Every module
+	 * on this path explains at length WHY it may not touch the DOM, so the
+	 * explanation reads as the violation; and `RESERVED_SHORTCUT_COMBOS` carries
+	 * human-readable reasons like "the app menu minimizes the window", which is
+	 * prose about a window rather than a reference to one.
+	 *
+	 * Crude on purpose: it does not understand a quote inside a comment or a
+	 * comment marker inside a string. The only question asked of the result is
+	 * whether a forbidden IDENTIFIER survives, and over-stripping can only turn
+	 * a real hit into a miss that `npm run build:cli` then catches.
+	 */
+	function identifiersOnly(src: string): string {
+		return src
+			.replace(/\/\*[\s\S]*?\*\//g, ' ')
+			.replace(/\/\/[^\n]*/g, ' ')
+			.replace(/'(?:[^'\\\n]|\\.)*'/g, "''")
+			.replace(/"(?:[^"\\\n]|\\.)*"/g, '""')
+			.replace(/`(?:[^`\\]|\\.)*`/g, '``');
+	}
+
+	/**
+	 * Every module reachable from `entries` by relative import, as
+	 * `src/`-relative paths, with the hop that pulled each one in.
+	 *
+	 * Resolution mirrors what the bundler does for a relative specifier: the
+	 * `.ts` file, then `.tsx`, then the directory's `index.ts`. A specifier that
+	 * resolves to none of those is reported rather than skipped, so a typo
+	 * cannot look like a clean graph.
+	 */
+	function importGraph(entries: string[]): { modules: Map<string, string>; unresolved: string[] } {
+		const modules = new Map<string, string>([...entries.map((e) => [e, '(entry point)'] as const)]);
+		const unresolved: string[] = [];
+		const queue = [...entries];
+		while (queue.length > 0) {
+			const rel = queue.shift() as string;
+			const src = readFileSync(join(SRC_ROOT, rel), 'utf8');
+			for (const match of src.matchAll(/\bfrom\s+'(\.[^']*)'/g)) {
+				const spec = match[1];
+				const candidates = [`${spec}.ts`, `${spec}.tsx`, `${spec}/index.ts`];
+				const found = candidates
+					.map((candidate) => relative(SRC_ROOT, resolve(dirname(join(SRC_ROOT, rel)), candidate)))
+					.find((candidate) => existsSync(join(SRC_ROOT, candidate)));
+				if (!found) {
+					unresolved.push(`${rel} -> ${spec}`);
+					continue;
+				}
+				if (modules.has(found)) continue;
+				modules.set(found, rel);
+				queue.push(found);
+			}
+		}
+		return { modules, unresolved };
+	}
+
+	const { modules, unresolved } = importGraph(CLI_ENTRY_POINTS);
+
+	it('resolves every relative import, so the walk below is complete', () => {
+		expect(unresolved, 'unresolvable relative imports on the CLI shortcut path').toEqual([]);
+		// A graph that collapsed to the entry points alone would pass every
+		// assertion below without having walked anything.
+		expect(modules.size).toBeGreaterThan(CLI_ENTRY_POINTS.length);
+	});
+
+	it('reaches no store, component, hook, context or service', () => {
+		// Directories, not symbols: the point is that the CLI path stays inside
+		// pure tables, pure helpers, and shared types. `renderer/constants` and
+		// the one named `renderer/utils` module are in because they are tables
+		// and a pure lookup; the rest of `renderer/utils` is not, because plenty
+		// of it reaches `window`.
+		const ALLOWED = [
+			/^shared\//,
+			/^renderer\/constants\//,
+			/^renderer\/utils\/shortcutResolve\.ts$/,
+		];
+		const offenders = [...modules]
+			.filter(([file]) => !ALLOWED.some((allowed) => allowed.test(file)))
+			.map(([file, via]) => `${file} (pulled in by ${via})`);
+
+		expect(
+			offenders,
+			'maestro-cli resolves a surface hotkey through these modules under plain node. A store, component, hook, or service on this path breaks `npm run build:cli`.'
+		).toEqual([]);
+	});
+
+	it('names no DOM or Electron global anywhere on the path', () => {
+		// `window` and `document` do not exist in the CLI process, and
+		// `electron` is not installed there. A top-level reference is a crash on
+		// import; one inside a function is a crash the first time a chord is
+		// printed, which is worse because it looks like a chord bug.
+		//
+		// Comments and string literals are stripped first - see
+		// `identifiersOnly` for the two false positives that cost.
+		const FORBIDDEN = /\b(?:window|document|navigator|localStorage|electron)\b/;
+		const offenders = [...modules.keys()]
+			.filter((file) => FORBIDDEN.test(identifiersOnly(readFileSync(join(SRC_ROOT, file), 'utf8'))))
+			.sort();
+
+		expect(offenders, 'DOM or Electron globals on the CLI shortcut path').toEqual([]);
+	});
+
+	it('imports no npm package at all on this path', () => {
+		// Not a style rule: a bare specifier is how `react`, `zustand` and
+		// `electron` get in, and all three are either absent or pointless in the
+		// CLI process. The five entry points reach only each other and
+		// `src/shared/`, so the honest assertion is zero.
+		const offenders: string[] = [];
+		for (const file of modules.keys()) {
+			const src = readFileSync(join(SRC_ROOT, file), 'utf8');
+			for (const match of src.matchAll(/\bfrom\s+'([^.'][^']*)'/g)) {
+				offenders.push(`${file} -> ${match[1]}`);
+			}
+		}
+		expect(offenders, 'package imports on the CLI shortcut path').toEqual([]);
 	});
 });

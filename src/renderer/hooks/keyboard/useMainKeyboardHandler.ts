@@ -247,6 +247,28 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 		 */
 		const publishPrefix = () => publishSequencePrefix(sequenceMatcher.prefix());
 
+		/**
+		 * Abandon both half-typed runs, and take the chip down with them.
+		 *
+		 * Three callers, for three readings of the same event: the Deck leader
+		 * (a deliberate fresh start), the window losing focus (the keys that
+		 * would finish the run are going elsewhere), and a keyboard-mode switch
+		 * (the bindings the run was started against are no longer the live ones).
+		 * One helper rather than the triple written out at each, because the
+		 * third was added by forgetting the first two existed - a run left alive
+		 * across a mode switch completes against the NEW mode's bindings, so a
+		 * `g` typed in default mode fired Vim's `g t`.
+		 */
+		const abandonPendingRuns = () => {
+			sequenceMatcher.reset();
+			publishPrefix();
+			// The in-field escape goes with it, and for a second reason: the run
+			// holds a reference to the field it started in, so a reference that
+			// outlives the reason the run ended would retract a character from a
+			// field the user has moved on from.
+			endInsertEscapeRun();
+		};
+
 		const handleKeyDown = (e: KeyboardEvent) => {
 			const target = e.target;
 			const activeElement = document.activeElement;
@@ -389,9 +411,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				// is a deliberate fresh start, and a live `g` prefix or an in-field
 				// `j` that outlived it would complete against a key the user aimed at
 				// the Deck table.
-				sequenceMatcher.reset();
-				publishPrefix();
-				endInsertEscapeRun();
+				abandonPendingRuns();
 				return;
 			}
 
@@ -2183,21 +2203,49 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 		// would expire it a second later anyway, but the prefix indicator is a
 		// painted thing and would otherwise sit on screen over a window that no
 		// longer has the keyboard, so the chip is taken down with the run.
+		//
+		// Deck mode's own blur guard is installed by `armDeckMode` and lives in
+		// the store, because it must not depend on anything being mounted; see
+		// `installDeckBlurGuard`. So there is nothing to disarm here.
 		const handleBlur = () => {
-			sequenceMatcher.reset();
-			publishPrefix();
-			// The in-field escape goes with it, and for a second reason: the run
-			// holds a reference to the field it started in, and the window losing
-			// focus is the clearest signal that the keys finishing it are going
-			// somewhere else.
-			endInsertEscapeRun();
+			abandonPendingRuns();
 		};
+
+		/**
+		 * A keyboard-mode switch abandons every half-finished keyboard idea.
+		 *
+		 * Subscribed to the STORE rather than hung off the toggle chord, because
+		 * the chord is one of five routes into a switch and the only one that
+		 * passes through this handler. The palette, the hamburger menu, the
+		 * Settings toggle (which calls `setKeyboardMode` directly, bypassing
+		 * `switchKeyboardMode`), and an external settings-file change all land
+		 * here and nowhere else.
+		 *
+		 * The two matchers live in this closure, so nothing outside can reach
+		 * them, and they are the pieces that are stale in the strong sense:
+		 * `feed` takes the LIVE binding list per call, so a `g` captured under
+		 * default mode would complete against Vim mode's `g t`.
+		 *
+		 * Deck mode is disarmed here as WELL as in `setKeyboardMode`, and that is
+		 * not a redundancy to collapse. The setter covers the four in-app routes
+		 * without depending on anything being mounted; it cannot cover the fifth,
+		 * because an external settings change applies one `setState` patch and
+		 * calls no setter. This subscription is the only thing that sees that
+		 * route, and a second window following a mode change is exactly where an
+		 * armed window would otherwise outlive the mode it was armed in.
+		 */
+		const unsubscribeKeyboardMode = useSettingsStore.subscribe((state, previous) => {
+			if (state.keyboardMode === previous.keyboardMode) return;
+			abandonPendingRuns();
+			useUIStore.getState().disarmDeckMode();
+		});
 
 		window.addEventListener('keydown', handleKeyDown);
 		window.addEventListener('blur', handleBlur);
 		return () => {
 			window.removeEventListener('keydown', handleKeyDown);
 			window.removeEventListener('blur', handleBlur);
+			unsubscribeKeyboardMode();
 		};
 	}, []); // Empty dependencies - handler reads from ref
 

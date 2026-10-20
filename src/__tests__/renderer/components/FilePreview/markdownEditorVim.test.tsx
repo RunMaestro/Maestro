@@ -444,6 +444,93 @@ describe('MarkdownEditor - switching keyboard mode in place', () => {
 		expect(ref.current!.getCaret()).toBe(8);
 		expect(undoDepthOf(container)).toBe(1);
 	});
+
+	/**
+	 * RAPID toggling, which is a different question from one toggle.
+	 *
+	 * `useVimKeysCompartment` keeps an `appliedRef` of which way it last
+	 * configured the compartment and skips a reconfigure that would be a no-op,
+	 * so what has to hold is that the ref and the compartment never disagree.
+	 * The ways they could: two writes inside one React commit (the effect runs
+	 * once, for the LAST value), a switch that lands while Vim is mid-command,
+	 * and a switch while the plugin is holding UI of its own open.
+	 *
+	 * These are regression tests rather than the record of a bug: the mechanism
+	 * already handles all three, and it handles them because the compartment is
+	 * reconfigured from the live setting rather than toggled relative to
+	 * whatever came before. That is exactly the property a later "optimization"
+	 * would break, with no single-switch test noticing.
+	 */
+	it('ends on the live mode after several switches in a row', () => {
+		const { container } = mountEditor({ vimMode: false, doc: 'hello' });
+		const editorBefore = container.querySelector('.cm-editor');
+
+		for (const keyboardMode of ['vim', 'default', 'vim', 'default', 'vim'] as const) {
+			act(() => {
+				useSettingsStore.setState({ keyboardMode });
+			});
+		}
+
+		expect(container.querySelector('.cm-editor')).toBe(editorBefore);
+		expect(container.querySelector('.cm-vimMode')).not.toBeNull();
+		// Live, not merely classed: the class is written by an extension that
+		// could outlive the plugin it advertises.
+		press(container, 'x');
+		expect(docText(container)).toBe('ello');
+	});
+
+	it('ends on the live mode when several switches land in one commit', () => {
+		// Three writes, one effect run. The effect sees only the last value, so a
+		// reconfigure derived from the PREVIOUS one would land on the wrong side.
+		const { container } = mountEditor({ vimMode: false, doc: 'hello' });
+
+		act(() => {
+			useSettingsStore.setState({ keyboardMode: 'vim' });
+			useSettingsStore.setState({ keyboardMode: 'default' });
+			useSettingsStore.setState({ keyboardMode: 'vim' });
+		});
+
+		expect(container.querySelector('.cm-vimMode')).not.toBeNull();
+		press(container, 'x');
+		expect(docText(container)).toBe('ello');
+	});
+
+	it('returns a round trip to a clean normal mode, not the insert mode it left', () => {
+		// Switching away mid-insert and back must not restore the half-finished
+		// Vim state. The plugin's state goes with the extension, so coming back
+		// starts in normal mode - which is what makes the next `x` a delete
+		// rather than a typed character.
+		const { container } = mountEditor({ vimMode: true, doc: 'hello' });
+		press(container, 'i');
+
+		act(() => {
+			useSettingsStore.setState({ keyboardMode: 'default' });
+		});
+		expect(container.querySelector('.cm-vimMode')).toBeNull();
+
+		act(() => {
+			useSettingsStore.setState({ keyboardMode: 'vim' });
+		});
+
+		press(container, 'x');
+		expect(docText(container)).toBe('ello');
+	});
+
+	it('tears the Vim command line down with the plugin', () => {
+		// `:` opens a real panel with an `<input>` of its own, and that input has
+		// a claim on Escape (see `vimEditorOwnsEscape`). A panel left behind by a
+		// switch would be a focusable field belonging to a plugin that is gone.
+		const { container } = mountEditor({ vimMode: true, doc: 'hello' });
+		press(container, ':', { shiftKey: true });
+		expect(container.querySelectorAll('.cm-vim-panel')).toHaveLength(1);
+
+		act(() => {
+			useSettingsStore.setState({ keyboardMode: 'default' });
+		});
+
+		expect(container.querySelectorAll('.cm-vim-panel')).toHaveLength(0);
+		expect(vimEditorAt(contentDom(container))).toBeNull();
+	});
 });
 
 /**

@@ -11,7 +11,12 @@
 import { withMaestroClient } from '../services/maestro-client';
 import { isMacOS } from '../../shared/platformDetection';
 import { formatShortcutKeysFor } from '../../shared/shortcutKeys';
-import { DEFAULT_SHORTCUTS, FIXED_SHORTCUTS } from '../../renderer/constants/shortcuts';
+import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS } from '../../renderer/constants/shortcuts';
+import {
+	resolveShortcutKeys,
+	type ShortcutDisplayMaps,
+} from '../../renderer/utils/shortcutResolve';
+import { asKeyboardMode, type Shortcut, type ShortcutOverride } from '../../shared/shortcut-types';
 import {
 	UI_SURFACES,
 	describeSurfaceAccess,
@@ -23,7 +28,11 @@ import {
 import { exitIfMaestroNotRunning } from '../services/session-command';
 import { readEncoreFlags, requireEncore } from '../utils/encore-gate';
 import { readSettings } from '../services/storage';
-import { resolveEffectiveShortcuts } from '../../shared/effectiveShortcuts';
+import {
+	resolveEffectiveShortcuts,
+	type ShortcutBaseMaps,
+	type ShortcutOverrideMaps,
+} from '../../shared/effectiveShortcuts';
 
 interface OpenModalOptions {
 	tab?: string;
@@ -31,44 +40,75 @@ interface OpenModalOptions {
 	json?: boolean;
 }
 
-/** Formatted hotkey for a surface, or `undefined` when it has none. */
-function shortcutFor(surface: UiSurface): string | undefined {
-	if (!surface.shortcutId) return undefined;
-
-	// Read persisted settings and resolve through the active keyboard mode
+/**
+ * The maps the live keyboard mode is matched against, built from persisted
+ * settings exactly the way the renderer builds them.
+ *
+ * Four things this has to get right, and each was wrong before it was written
+ * down here:
+ *
+ *  1. The user's OWN bindings are the base. The renderer resolves against
+ *     `state.shortcuts` / `state.tabShortcuts`, which are the persisted buckets
+ *     merged over the shipped tables. Resolving against the shipped tables alone
+ *     printed the chord Maestro ships for an action the user had rebound.
+ *  2. `TAB_SHORTCUTS` is a base map, not an afterthought. Every surface's
+ *     `shortcutId` happens to live in `DEFAULT_SHORTCUTS` today, so leaving it
+ *     out cost nothing yet - which is exactly how it would stay broken until
+ *     someone moved one.
+ *  3. `FIXED_SHORTCUTS` is NOT a base map. It is the table no mode overrides
+ *     and no user rebinds, and `resolveShortcutKeys` reads it separately.
+ *     Feeding it in as `tabShortcuts` put it inside the inheritance and
+ *     displacement rules, so a Vim override could have taken a fixed chord.
+ *  4. One settings read. `printSurfaceList` asks for a chord once per surface
+ *     and the JSON path asks twice, so reading the file inside the per-surface
+ *     lookup meant a parse of `maestro-settings.json` per row.
+ */
+function activeShortcutMaps(): ShortcutDisplayMaps {
 	const settings = readSettings();
-	const keyboardMode = (settings.keyboardMode ?? 'default') as string;
 
-	// Build the base maps from DEFAULT_SHORTCUTS and FIXED_SHORTCUTS
-	const base = {
-		shortcuts: DEFAULT_SHORTCUTS,
-		tabShortcuts: {}, // FIXED_SHORTCUTS are merged here
+	// Persisted over shipped, per bucket - the same merge `hydrateShortcutsSettings`
+	// performs in the renderer. An id the persisted bucket does not mention keeps
+	// its shipped chord; a retired id it still carries is simply never asked for.
+	const base: ShortcutBaseMaps = {
+		shortcuts: {
+			...DEFAULT_SHORTCUTS,
+			...((settings.shortcuts as Record<string, Shortcut>) ?? {}),
+		},
+		tabShortcuts: {
+			...TAB_SHORTCUTS,
+			...((settings.tabShortcuts as Record<string, Shortcut>) ?? {}),
+		},
 	};
 
-	// Merge FIXED_SHORTCUTS into tabShortcuts for the effective resolution
-	Object.assign(base.tabShortcuts, FIXED_SHORTCUTS);
+	// Only the live mode's override buckets apply. Default mode is the set every
+	// other mode inherits FROM, so it resolves against empty overrides and comes
+	// back with the base maps unchanged.
+	const vim = asKeyboardMode(settings.keyboardMode) === 'vim';
+	const overrides: ShortcutOverrideMaps = {
+		vimShortcuts: vim ? ((settings.vimShortcuts as Record<string, ShortcutOverride>) ?? {}) : {},
+		vimTabShortcuts: vim
+			? ((settings.vimTabShortcuts as Record<string, ShortcutOverride>) ?? {})
+			: {},
+	};
 
-	// Get override maps from settings
-	const vimShortcuts = (settings.vimShortcuts as Record<string, any>) ?? {};
-	const vimTabShortcuts = (settings.vimTabShortcuts as Record<string, any>) ?? {};
+	return resolveEffectiveShortcuts(base, overrides);
+}
 
-	// Select the appropriate override maps based on keyboard mode
-	const overrides =
-		keyboardMode === 'vim'
-			? { vimShortcuts, vimTabShortcuts }
-			: { vimShortcuts: {}, vimTabShortcuts: {} };
-
-	// Resolve the effective shortcuts for the active mode
-	const effective = resolveEffectiveShortcuts(base, overrides);
-
-	// Look up the action in the effective maps
-	const shortcut =
-		effective.shortcuts[surface.shortcutId] ?? effective.tabShortcuts[surface.shortcutId];
-
-	// An action can be registered with no default binding, in which case there is
-	// no hotkey to print - same answer as a surface that names no shortcut at all.
-	if (!shortcut?.keys?.length) return undefined;
-	return formatShortcutKeysFor(shortcut.keys, isMacOS(), '+');
+/**
+ * Formatted hotkey for a surface, or `undefined` when it has none.
+ *
+ * `maps` is passed in so a list of surfaces reads settings once; omitted, it
+ * resolves them for this one lookup.
+ */
+function shortcutFor(surface: UiSurface, maps: ShortcutDisplayMaps): string | undefined {
+	// The canonical display resolver, not a hand-rolled lookup: it applies the
+	// fixed-then-tab-then-global fallback order that `isTabShortcut` matches on,
+	// so the chord the CLI prints is the one that actually fires. An action can
+	// be registered with no binding, in which case there is no hotkey to print -
+	// the same answer as a surface that names no shortcut at all.
+	const resolved = resolveShortcutKeys(surface.shortcutId, maps);
+	if (resolved.keys.length === 0) return undefined;
+	return formatShortcutKeysFor(resolved.keys, isMacOS(), '+');
 }
 
 /**
@@ -85,6 +125,7 @@ function availableSurfaces(): UiSurface[] {
 
 function printSurfaceList(options: OpenModalOptions): void {
 	const surfaces = availableSurfaces();
+	const maps = activeShortcutMaps();
 	if (options.json) {
 		console.log(
 			JSON.stringify(
@@ -94,7 +135,7 @@ function printSurfaceList(options: OpenModalOptions): void {
 					aliases: surface.aliases ?? [],
 					description: surface.description,
 					tabs: surfaceTabIds(surface),
-					shortcut: shortcutFor(surface) ?? '',
+					shortcut: shortcutFor(surface, maps) ?? '',
 					command_palette: surface.commandPalette ?? '',
 					encore: surface.encore ?? '',
 				}))
@@ -104,7 +145,7 @@ function printSurfaceList(options: OpenModalOptions): void {
 	}
 	const width = Math.max(...surfaces.map((surface) => surface.id.length));
 	for (const surface of surfaces) {
-		const shortcut = shortcutFor(surface);
+		const shortcut = shortcutFor(surface, maps);
 		const tabs = surfaceTabIds(surface);
 		const extras = [
 			shortcut ? `key: ${shortcut}` : null,
@@ -170,7 +211,8 @@ export async function openModal(
 			fail(result.error || `Failed to open ${surface.label}`, options);
 		}
 
-		const hint = describeSurfaceAccess(surface, shortcutFor(surface));
+		const shortcut = shortcutFor(surface, activeShortcutMaps());
+		const hint = describeSurfaceAccess(surface, shortcut);
 		if (options.json) {
 			console.log(
 				JSON.stringify({
@@ -178,7 +220,7 @@ export async function openModal(
 					surface: surface.id,
 					label: surface.label,
 					tab: tabId ?? '',
-					shortcut: shortcutFor(surface) ?? '',
+					shortcut: shortcut ?? '',
 					command_palette: surface.commandPalette ?? '',
 					click: surface.click ?? '',
 					hint,
