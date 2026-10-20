@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { Session, AITab } from '../../types';
 import {
 	cycleShowThinkingFields,
+	moveActiveUnifiedTabByOne,
 	moveActiveUnifiedTabToEdge,
 	toggleReadOnlyModeFields,
 } from '../../utils/tabHelpers';
@@ -1801,6 +1802,32 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						return prev.map((s: Session) => (s.id === current.id ? updated : s));
 					});
 					trackShortcut('moveTabToEnd');
+				}
+				// Move the active tab one VISIBLE position. Ships unassigned, so this
+				// only fires once the user binds a chord (or switches to a mode that
+				// does). Clamps at both ends rather than wrapping - see
+				// moveActiveUnifiedTabByOne.
+				if (ctx.isTabShortcut(e, 'moveTabLeft')) {
+					e.preventDefault();
+					ctx.setSessions((prev: Session[]) => {
+						const current = prev.find((s: Session) => s.id === activeSession.id);
+						if (!current) return prev;
+						const updated = moveActiveUnifiedTabByOne(current, 'left');
+						if (updated === current) return prev;
+						return prev.map((s: Session) => (s.id === current.id ? updated : s));
+					});
+					trackShortcut('moveTabLeft');
+				}
+				if (ctx.isTabShortcut(e, 'moveTabRight')) {
+					e.preventDefault();
+					ctx.setSessions((prev: Session[]) => {
+						const current = prev.find((s: Session) => s.id === activeSession.id);
+						if (!current) return prev;
+						const updated = moveActiveUnifiedTabByOne(current, 'right');
+						if (updated === current) return prev;
+						return prev.map((s: Session) => (s.id === current.id ? updated : s));
+					});
+					trackShortcut('moveTabRight');
 				}
 				// Cmd+1-9, Cmd+0 - Jump to tab by index in unified order.
 				// In unread-only mode, index into the filtered/visible tabs so Cmd+N matches

@@ -1729,7 +1729,7 @@ Per-tab send key: true = Enter, false = Cmd+Enter, "inherit" = global setting
 
 ## `maestro-cli tab move <tab-id> <position>`
 
-Move a tab to a position in its agent's tab bar (0-based, or "first"/"last")
+Move a tab in its agent's tab bar: 0-based index, "first"/"last", or "left"/"right" by one
 
 | Option             | Description                                    | Default |
 | ------------------ | ---------------------------------------------- | ------- |
@@ -2623,7 +2623,7 @@ Show the window state, the agent, the mode, and the current conversation
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
-## `maestro-cli quick-chat send [message...]`
+## `maestro-cli quick-chat send [message]`
 
 Send a message in the current Quick Chat (starts a chat if none is open); --image attaches images
 

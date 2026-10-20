@@ -107,6 +107,12 @@ const MISSING_PALETTE_ENTRY = new Set<string>([
 	'goToTab8',
 	'goToTab9',
 	'goToLastTab',
+	// Move the active tab one position. Registered in this phase with `keys: []`;
+	// their palette entries land later in the same phase, in buildTabCommands
+	// beside the move-to-first / move-to-last entries. Remove these two rows in
+	// that change rather than leaving them here.
+	'moveTabLeft',
+	'moveTabRight',
 	// Region focus, region resize, and the zen toggle. Registered in this phase
 	// with `keys: []`; their palette entries land later in the same phase, in
 	// navigationCommands / rightPanelCommands. Remove these seven rows in that

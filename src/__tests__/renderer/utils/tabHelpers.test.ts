@@ -63,6 +63,7 @@ import {
 	revealAiTab,
 	ensureInUnifiedTabOrder,
 	getRepairedUnifiedTabOrder,
+	moveActiveUnifiedTabByOne,
 	moveActiveUnifiedTabToEdge,
 	moveUnifiedTabToTarget,
 	toggleReadOnlyModeFields,
@@ -6440,6 +6441,159 @@ describe('tabHelpers', () => {
 				activeTabId: 'a1',
 			});
 			expect(moveActiveUnifiedTabToEdge(session, 'end')).toBe(session);
+		});
+	});
+
+	describe('moveActiveUnifiedTabByOne', () => {
+		// Same mixed-kind strip as moveActiveUnifiedTabToEdge above:
+		// ai(a1) -> terminal(t1) -> file(f1) -> browser(b1).
+		function mixedSession(overrides: Record<string, unknown> = {}) {
+			return createMockSession({
+				aiTabs: [createMockTab({ id: 'a1' })],
+				terminalTabs: [
+					{ id: 't1', name: null, shellType: 'zsh', pid: 0, cwd: '', createdAt: 1, state: 'idle' },
+				],
+				filePreviewTabs: [createMockFileTab({ id: 'f1', path: '/tmp/f1' })],
+				browserTabs: [createMockBrowserTab({ id: 'b1' })],
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'a1' },
+					{ type: 'terminal', id: 't1' },
+					{ type: 'file', id: 'f1' },
+					{ type: 'browser', id: 'b1' },
+				],
+				activeTabId: 'a1',
+				activeTerminalTabId: null,
+				activeFileTabId: null,
+				activeBrowserTabId: null,
+				...overrides,
+			});
+		}
+
+		it('moves the active tab one position right', () => {
+			const session = mixedSession({ activeFileTabId: 'f1', activeTabId: '' });
+			const result = moveActiveUnifiedTabByOne(session, 'right');
+			expect(result.unifiedTabOrder.map((r) => r.id)).toEqual(['a1', 't1', 'b1', 'f1']);
+		});
+
+		it('moves the active tab one position left', () => {
+			const session = mixedSession({ activeFileTabId: 'f1', activeTabId: '' });
+			const result = moveActiveUnifiedTabByOne(session, 'left');
+			expect(result.unifiedTabOrder.map((r) => r.id)).toEqual(['a1', 'f1', 't1', 'b1']);
+		});
+
+		it('moves one position at a time, not to the edge', () => {
+			const session = mixedSession({ activeBrowserTabId: 'b1', activeTabId: '' });
+			const once = moveActiveUnifiedTabByOne(session, 'left');
+			expect(once.unifiedTabOrder.map((r) => r.id)).toEqual(['a1', 't1', 'b1', 'f1']);
+			const twice = moveActiveUnifiedTabByOne(once, 'left');
+			expect(twice.unifiedTabOrder.map((r) => r.id)).toEqual(['a1', 'b1', 't1', 'f1']);
+		});
+
+		it('is a no-op (same reference) for the first tab pressed left - it does not wrap', () => {
+			const session = mixedSession(); // a1 is active and already first
+			expect(moveActiveUnifiedTabByOne(session, 'left')).toBe(session);
+		});
+
+		it('is a no-op (same reference) for the last tab pressed right - it does not wrap', () => {
+			const session = mixedSession({ activeBrowserTabId: 'b1', activeTabId: '' });
+			expect(moveActiveUnifiedTabByOne(session, 'right')).toBe(session);
+		});
+
+		it('is a no-op when there are fewer than two tabs', () => {
+			const session = createMockSession({
+				aiTabs: [createMockTab({ id: 'a1' })],
+				unifiedTabOrder: [{ type: 'ai', id: 'a1' }],
+				activeTabId: 'a1',
+			});
+			expect(moveActiveUnifiedTabByOne(session, 'right')).toBe(session);
+			expect(moveActiveUnifiedTabByOne(session, 'left')).toBe(session);
+		});
+
+		it('is a no-op when no active tab is present in the order', () => {
+			const session = mixedSession({ activeTabId: 'gone' });
+			expect(moveActiveUnifiedTabByOne(session, 'right')).toBe(session);
+		});
+
+		it('steps PAST a hidden AI tab, which has no chip in the strip', () => {
+			// h1 is an unopened cross-agent consult: its ref stays in the order so
+			// revealing it restores this spot, but buildUnifiedTabs draws nothing for
+			// it. One press has to land a1 on the far side of h1, or the tab appears
+			// not to have moved.
+			const session = createMockSession({
+				aiTabs: [
+					createMockTab({ id: 'a1' }),
+					createMockTab({ id: 'h1', hidden: true }),
+					createMockTab({ id: 'a2' }),
+				],
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'a1' },
+					{ type: 'ai', id: 'h1' },
+					{ type: 'ai', id: 'a2' },
+				],
+				activeTabId: 'a1',
+			});
+			const right = moveActiveUnifiedTabByOne(session, 'right');
+			expect(right.unifiedTabOrder.map((r) => r.id)).toEqual(['h1', 'a2', 'a1']);
+			// And back again from the other side.
+			const back = moveActiveUnifiedTabByOne(right, 'left');
+			expect(back.unifiedTabOrder.map((r) => r.id)).toEqual(['h1', 'a1', 'a2']);
+		});
+
+		it('treats the last VISIBLE tab as the end even when hidden refs follow it', () => {
+			const session = createMockSession({
+				aiTabs: [
+					createMockTab({ id: 'a1' }),
+					createMockTab({ id: 'a2' }),
+					createMockTab({ id: 'h1', hidden: true }),
+				],
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'a1' },
+					{ type: 'ai', id: 'a2' },
+					{ type: 'ai', id: 'h1' },
+				],
+				activeTabId: 'a2',
+			});
+			expect(moveActiveUnifiedTabByOne(session, 'right')).toBe(session);
+		});
+
+		it('reorders only - no active-tab field and no activeGroupId changes', () => {
+			const session = mixedSession({ activeFileTabId: 'f1', activeTabId: 'a1' });
+			const result = moveActiveUnifiedTabByOne(session, 'right');
+			expect(result).not.toBe(session);
+			expect(result.activeTabId).toBe(session.activeTabId);
+			expect(result.activeTerminalTabId).toBe(session.activeTerminalTabId);
+			expect(result.activeFileTabId).toBe(session.activeFileTabId);
+			expect(result.activeBrowserTabId).toBe(session.activeBrowserTabId);
+			expect(result.activeGroupId).toBe(session.activeGroupId);
+			// unifiedTabOrder is the ONLY key that differs.
+			const changed = (Object.keys(result) as (keyof typeof result)[]).filter(
+				(key) => result[key] !== session[key]
+			);
+			expect(changed).toEqual(['unifiedTabOrder']);
+		});
+
+		it('moves an active tab GROUP as one unit', () => {
+			const session = mixedSession({
+				activeTabId: '',
+				activeGroupId: 'g1',
+				tabGroups: [
+					{
+						id: 'g1',
+						name: 'Group',
+						layout: { kind: 'leaf', id: 'l1', tab: { type: 'ai', id: 'a1' } },
+						focusedPaneId: 'l1',
+						createdAt: 1,
+					},
+				],
+				unifiedTabOrder: [
+					{ type: 'terminal', id: 't1' },
+					{ type: 'group', id: 'g1' },
+					{ type: 'file', id: 'f1' },
+					{ type: 'browser', id: 'b1' },
+				],
+			});
+			const result = moveActiveUnifiedTabByOne(session, 'right');
+			expect(result.unifiedTabOrder.map((r) => r.id)).toEqual(['t1', 'f1', 'g1', 'b1']);
 		});
 	});
 

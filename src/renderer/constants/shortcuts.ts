@@ -615,6 +615,21 @@ export const TAB_SHORTCUTS = {
 		label: 'Move Tab to Last',
 		keys: ['Meta', 'Alt', ']'],
 	},
+	// Nudge the active tab one visible slot instead of throwing it to an edge.
+	// Registered unassigned (`keys: []`), the convention the git actions and the
+	// media controls already use: the action is in Settings > Shortcuts and the
+	// command palette waiting for a chord the user picks, so shipping it displaces
+	// nothing in the default set. Vim mode binds the pair in a later phase.
+	moveTabLeft: {
+		id: 'moveTabLeft',
+		label: 'Move Tab Left',
+		keys: [],
+	},
+	moveTabRight: {
+		id: 'moveTabRight',
+		label: 'Move Tab Right',
+		keys: [],
+	},
 	toggleReadOnlyMode: {
 		id: 'toggleReadOnlyMode',
 		label: 'Toggle Read-Only Mode',

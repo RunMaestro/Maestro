@@ -820,9 +820,10 @@ maestro-cli tab model <tab-id> opus             # "inherit" clears the override
 maestro-cli tab effort <tab-id> high            # "inherit" clears the override
 maestro-cli tab enter-to-send <tab-id> false    # "inherit" = global setting
 
-# Move a tab in the tab bar (0-based index, or "first" / "last")
+# Move a tab in the tab bar (0-based index, "first" / "last", or one step)
 maestro-cli tab move <tab-id> first
 maestro-cli tab move <tab-id> 2
+maestro-cli tab move <tab-id> right             # one step; clamps, never wraps
 
 # Pin an agent to the Bookmarks section at the top of the Left Bar
 maestro-cli bookmark <agent-id>

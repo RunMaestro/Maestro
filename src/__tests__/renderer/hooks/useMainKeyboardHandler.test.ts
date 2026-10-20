@@ -1946,6 +1946,86 @@ describe('useMainKeyboardHandler', () => {
 			});
 		});
 
+		describe('moveTabLeft / moveTabRight', () => {
+			// Both ship unassigned, so the chord here is arbitrary: `isTabShortcut` is
+			// what decides which action a keypress is, exactly as it would once a user
+			// binds one in Settings > Shortcuts.
+			function reorderSession() {
+				return {
+					id: 'session-1',
+					aiTabs: [
+						{ id: 'ai-tab-1', name: 'AI Tab 1', logs: [] },
+						{ id: 'ai-tab-2', name: 'AI Tab 2', logs: [] },
+					],
+					activeTabId: 'ai-tab-1',
+					filePreviewTabs: [],
+					browserTabs: [],
+					terminalTabs: [],
+					activeFileTabId: null,
+					activeBrowserTabId: null,
+					activeTerminalTabId: null,
+					unifiedTabOrder: [
+						{ type: 'ai', id: 'ai-tab-1' },
+						{ type: 'ai', id: 'ai-tab-2' },
+					],
+					unifiedClosedTabHistory: [],
+					inputMode: 'ai',
+				};
+			}
+
+			function pressFor(actionId: string, session: Record<string, unknown>) {
+				const { result } = renderHook(() => useMainKeyboardHandler());
+				let next: Record<string, unknown>[] | null = null;
+				const setSessions = vi.fn((updater: unknown) => {
+					if (typeof updater === 'function') {
+						next = (updater as (prev: unknown[]) => Record<string, unknown>[])([session]);
+					}
+				});
+
+				result.current.keyboardHandlerRef.current = createUnifiedTabContext({
+					isTabShortcut: (_e: KeyboardEvent, id: string) => id === actionId,
+					setSessions,
+					activeSession: session,
+				});
+
+				act(() => {
+					window.dispatchEvent(
+						new KeyboardEvent('keydown', { key: 'ArrowRight', metaKey: true, bubbles: true })
+					);
+				});
+
+				return { setSessions, next };
+			}
+
+			it('moveTabRight nudges the active tab one position later', () => {
+				const { next } = pressFor('moveTabRight', reorderSession());
+				expect(next?.[0].unifiedTabOrder).toEqual([
+					{ type: 'ai', id: 'ai-tab-2' },
+					{ type: 'ai', id: 'ai-tab-1' },
+				]);
+				// The reorder is all it does: the active tab stays active.
+				expect(next?.[0].activeTabId).toBe('ai-tab-1');
+			});
+
+			it('moveTabLeft nudges the active tab one position earlier', () => {
+				const session = { ...reorderSession(), activeTabId: 'ai-tab-2' };
+				const { next } = pressFor('moveTabLeft', session);
+				expect(next?.[0].unifiedTabOrder).toEqual([
+					{ type: 'ai', id: 'ai-tab-2' },
+					{ type: 'ai', id: 'ai-tab-1' },
+				]);
+			});
+
+			it('leaves the session list untouched when the move is clamped', () => {
+				// ai-tab-1 is already first, so pressing left is a no-op and the
+				// handler must hand the PREVIOUS array back rather than a new one -
+				// otherwise every clamped press re-renders every agent.
+				const session = reorderSession();
+				const { next } = pressFor('moveTabLeft', session);
+				expect(next?.[0]).toBe(session);
+			});
+		});
+
 		describe('Cmd+Shift+T (reopen closed tab)', () => {
 			it('should reopen from unified closed tab history', () => {
 				const { result } = renderHook(() => useMainKeyboardHandler());

@@ -162,6 +162,12 @@ export async function tabStar(
  * the live tab list rather than trusted from the caller: the CLI's own view of
  * tab order would go stale the moment the user dragged a tab themselves.
  * Positions are 0-based; `last` (or any index past the end) moves to the end.
+ *
+ * `left` / `right` are the relative form, the CLI path for the Move Tab Left /
+ * Move Tab Right actions. They are resolved against the same live index, and
+ * they CLAMP rather than wrap, matching `moveActiveUnifiedTabByOne` in the
+ * renderer: nudging the first tab left is a reported no-op, not a jump to the
+ * far end.
  */
 export async function tabMove(
 	tabId: string,
@@ -196,11 +202,15 @@ export async function tabMove(
 		toIndex = tabCount - 1;
 	} else if (raw === 'first' || raw === 'start') {
 		toIndex = 0;
+	} else if (raw === 'left' || raw === 'prev') {
+		toIndex = Math.max(fromIndex - 1, 0);
+	} else if (raw === 'right' || raw === 'next') {
+		toIndex = Math.min(fromIndex + 1, tabCount - 1);
 	} else {
 		const parsed = Number(raw);
 		if (!Number.isInteger(parsed) || parsed < 0) {
 			return failCommand(
-				`Invalid position "${position}". Use a 0-based index, "first", or "last".`,
+				`Invalid position "${position}". Use a 0-based index, "first", "last", "left", or "right".`,
 				options.json
 			);
 		}
