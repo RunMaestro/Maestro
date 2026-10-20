@@ -5,17 +5,30 @@ import { MainPanelHeader } from '../../../../renderer/components/MainPanel/MainP
 import { useModalStore } from '../../../../renderer/stores/modalStore';
 import { useMediaPlaybackStore } from '../../../../renderer/stores/mediaPlaybackStore';
 import type { Session, Theme, AITab } from '../../../../renderer/types';
+import { VIM_SHORTCUTS, VIM_TAB_SHORTCUTS } from '../../../../renderer/constants/vimShortcuts';
 
 import { mockTheme } from '../../../helpers/mockTheme';
 // Mock stores
 vi.mock('../../../../renderer/stores/settingsStore', () => ({
 	useSettingsStore: vi.fn((selector) =>
 		selector({
+			keyboardMode: 'default',
 			shortcuts: {
 				agentSessions: { keys: ['Meta', 'Shift', 'l'] },
 				toggleRightPanel: { keys: ['Meta', 'b'] },
 				quickAction: { keys: ['Meta', 'k'] },
 			},
+			// All FIVE keyboard-mode fields, even though this file only ever
+			// exercises default mode. Every chord the header draws goes through
+			// <ShortcutHint> -> useShortcutKeys -> useActiveShortcuts, and that
+			// hook reads `selectVimDisplacedActions` in BOTH modes on purpose (the
+			// mode toggle has to be able to name what Vim mode would displace while
+			// default mode is still live). That selector resolves the override
+			// buckets unconditionally, so a mock missing them does not merely lose
+			// Vim coverage - it throws inside the render.
+			tabShortcuts: {},
+			vimShortcuts: VIM_SHORTCUTS,
+			vimTabShortcuts: VIM_TAB_SHORTCUTS,
 			showAgentName: true,
 			showSessionIdPill: true,
 			showSessionCostPill: true,

@@ -537,15 +537,30 @@ describe('Deck mode without the leader chord', () => {
 	describe('the help sheet section', () => {
 		const section = () => screen.queryByTestId('shortcuts-help-deck-mode');
 
-		function renderSheet(shortcuts: Record<string, Shortcut> = DEFAULT_SHORTCUTS) {
+		beforeEach(() => {
+			// The sheet takes NO shortcut props: it reads the live mode's effective
+			// maps off the settings store through `useActiveShortcuts`, so that one
+			// surface cannot list default-mode chords while Vim mode is the mode
+			// the keypresses are matched against. A case that wants another binding
+			// set therefore has to move the STORE - handing this component a map
+			// would render the shipped defaults and assert nothing.
+			setKeyboardMode('default');
+		});
+
+		/**
+		 * Render the sheet against a store state.
+		 *
+		 * `patch` is applied over the shipped default-mode baseline the
+		 * `beforeEach` above installs, so a case names only what it changes.
+		 */
+		function renderSheet(patch?: {
+			keyboardMode?: 'default' | 'vim';
+			shortcuts?: Record<string, Shortcut>;
+		}) {
+			if (patch) act(() => useSettingsStore.setState(patch));
 			return render(
 				<LayerStackProvider>
-					<ShortcutsHelpModal
-						theme={mockTheme}
-						shortcuts={shortcuts}
-						tabShortcuts={TAB_SHORTCUTS}
-						onClose={vi.fn()}
-					/>
+					<ShortcutsHelpModal theme={mockTheme} onClose={vi.fn()} />
 				</LayerStackProvider>
 			);
 		}
@@ -586,7 +601,10 @@ describe('Deck mode without the leader chord', () => {
 			expect(section()).toHaveTextContent('Unassigned');
 
 			cleanup();
-			renderSheet(VIM_SHORTCUTS as Record<string, Shortcut>);
+			// Vim mode is the only shipped mode that binds the leader, and the
+			// chord comes from the live mode rather than from a prop, so switching
+			// the mode is what has to put it on screen.
+			renderSheet({ keyboardMode: 'vim' });
 			expect(
 				getShortcutKeys(VIM_SHORTCUTS[DECK_MODE_LEADER_ID].keys!, section()!)
 			).toBeInTheDocument();
@@ -603,10 +621,11 @@ describe('Deck mode without the leader chord', () => {
 			expect(row!.closest('[aria-hidden="true"]')).toBeNull();
 		});
 
-		// A host that hands the sheet no leader entry has no Deck mode to
-		// document; quoting a chord it never passed would be an invention.
-		it('stands down when the host lists no leader', () => {
-			renderSheet({});
+		// A binding set with no leader entry has no Deck mode to document, which
+		// is what a switched-off Encore Feature or a trimmed-down map looks like
+		// from in here; documenting a mode nothing can arm would be an invention.
+		it('stands down when the live map lists no leader', () => {
+			renderSheet({ shortcuts: {} });
 			expect(section()).not.toBeInTheDocument();
 		});
 	});

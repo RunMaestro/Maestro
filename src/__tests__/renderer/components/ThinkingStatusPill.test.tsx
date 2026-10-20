@@ -22,6 +22,8 @@ import { createMockAITab as createBaseMockAITab } from '../../helpers/mockTab';
 import { createMockSession } from '../../helpers/mockSession';
 import { useBatchStore } from '../../../renderer/stores/batchStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 
 import { mockTheme } from '../../helpers/mockTheme';
 // Mock theme for tests
@@ -490,9 +492,42 @@ describe('ThinkingStatusPill', () => {
 			render(
 				<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} onInterrupt={() => {}} />
 			);
-			const stop = screen.getByTitle('Stop this turn (Ctrl+C)');
+			// Bare, with no parenthetical: `stopTurn` ships UNBOUND (every chord
+			// that reads as Ctrl+C is reserved for the Edit menu's Copy), and a
+			// tooltip that quoted a chord nothing fires would be worse than none.
+			const stop = screen.getByTitle('Stop this turn');
 			expect(stop).toBeInTheDocument();
-			expect(stop).not.toHaveAttribute('title', expect.stringContaining('Claude'));
+			expect(stop.getAttribute('title')).not.toContain('Claude');
+		});
+
+		// Not the same claim as the bare title above: a user who records a chord
+		// for Stop Turn has to see it here, which is the whole reason the button
+		// resolves the binding through `useShortcutKeys` instead of printing a
+		// string. Spelled with `formatShortcutKeys` so the assertion follows the
+		// platform's own glyphs rather than this machine's.
+		it('quotes the chord once Stop Turn is bound', () => {
+			const shipped = useSettingsStore.getState().shortcuts;
+			try {
+				act(() => {
+					useSettingsStore.setState({
+						keyboardMode: 'default',
+						shortcuts: {
+							...shipped,
+							stopTurn: { ...shipped.stopTurn, keys: ['Meta', 'Alt', 'Backspace'] },
+						},
+					});
+				});
+				const item = createThinkingItem();
+				render(
+					<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} onInterrupt={() => {}} />
+				);
+				const expected = `Stop this turn (${formatShortcutKeys(['Meta', 'Alt', 'Backspace'])})`;
+				expect(screen.getByTitle(expected)).toBeInTheDocument();
+			} finally {
+				act(() => {
+					useSettingsStore.setState({ shortcuts: shipped });
+				});
+			}
 		});
 	});
 
