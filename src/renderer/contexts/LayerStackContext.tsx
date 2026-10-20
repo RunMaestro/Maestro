@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useMemo, ReactNode } from 
 import { useLayerStack as useLayerStackHook, type LayerStackAPI } from '../hooks/ui/useLayerStack';
 import { useLayerSwipeDismiss } from '../hooks/ui/useLayerSwipeDismiss';
 import { deckModeArmedNow } from '../stores/uiStore';
+import { vimEditorOwnsEscape } from '../components/FilePreview/markdownEditor/vimKeys';
 
 // Create context with null as default (will throw if used outside provider)
 const LayerStackContext = createContext<LayerStackAPI | null>(null);
@@ -46,6 +47,17 @@ export function LayerStackProvider({ children }: LayerStackProviderProps) {
 				// Only reached on Escape, and only asks the question then, so the
 				// hottest keyboard path pays nothing for it.
 				if (deckModeArmedNow()) return;
+
+				// The second thing Escape belongs to before the layer stack. In
+				// Vim mode the markdown editor's insert and visual modes END on
+				// Escape, and this listener is the reason the editor could never
+				// see that press: capture on `window` runs ahead of everything
+				// inside it, including Vim's own keydown handler. Declining here
+				// (no preventDefault, no stopPropagation) hands the key to Vim,
+				// which stops it itself once it has acted. Normal mode is NOT
+				// declined - Escape there only clears a pending count, so the
+				// user's modal keeps closing. See `vimEditorOwnsEscape`.
+				if (vimEditorOwnsEscape(e)) return;
 
 				const stack = layerStackRef.current;
 				const topLayer = stack.getTopLayer();

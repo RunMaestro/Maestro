@@ -46,9 +46,15 @@ vi.mock('../../../../renderer/components/FilePreview/giantPreview/languageLoader
 	hasLanguageSupport: () => false,
 }));
 
-import { MarkdownEditor } from '../../../../renderer/components/FilePreview/markdownEditor';
+import {
+	MarkdownEditor,
+	vimEditorAt,
+	vimEditorOwnsEscape,
+} from '../../../../renderer/components/FilePreview/markdownEditor';
 import type { MarkdownEditorHandle } from '../../../../renderer/components/FilePreview/markdownEditor';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
+import { LayerStackProvider } from '../../../../renderer/contexts/LayerStackContext';
+import { useModalLayer } from '../../../../renderer/hooks/ui/useModalLayer';
 
 /**
  * Mount the editor. `vimMode` writes the app-wide keyboard-mode setting the
@@ -285,5 +291,348 @@ describe('MarkdownEditor - switching keyboard mode in place', () => {
 		expect(container.querySelector('.cm-vimMode')).toBeNull();
 		press(container, 'x');
 		expect(docText(container)).toBe('hello world');
+	});
+});
+
+/**
+ * The collisions between CodeMirror Vim and Maestro's keyboard layer, resolved.
+ *
+ * The decisions themselves, and the table of every Ctrl chord the package
+ * registers, live beside `vimEditorOwnsCtrlChord` in `markdownEditor/vimKeys`;
+ * the audit of that table against the Vim-mode binding set is in
+ * `markdownEditorVimCollisions.test.ts`. What is under test here is the
+ * mechanism: which handler actually receives the key.
+ *
+ * Two mechanisms, and they are not alike. A chord Vim handles is swallowed on
+ * the content element with `stopPropagation`, so Maestro's window-level
+ * handler never sees it - nothing had to be written for that, only proven. A
+ * chord a HOST hook claims at `Prec.highest` runs ahead of Vim, which is the
+ * one place that needed a gate.
+ */
+describe('MarkdownEditor - Vim against Maestro keyboard layer', () => {
+	/** Keys that reached `window`, where `useMainKeyboardHandler` listens. */
+	function watchWindow(): { keys: () => string[]; stop: () => void } {
+		const seen: string[] = [];
+		const listener = (e: Event) => {
+			const k = e as KeyboardEvent;
+			seen.push(`${k.ctrlKey ? 'Ctrl+' : ''}${k.metaKey ? 'Meta+' : ''}${k.key}`);
+		};
+		window.addEventListener('keydown', listener);
+		return { keys: () => seen, stop: () => window.removeEventListener('keydown', listener) };
+	}
+
+	it('swallows Ctrl+W before it can close the tab', () => {
+		const { container } = mountEditor({ vimMode: true });
+		const win = watchWindow();
+
+		try {
+			// `<C-w>` is Vim's window prefix. The package registers it in normal
+			// mode as an inert placeholder, which still counts as handled - so the
+			// keypress ends on the content element and `closeTab` (Cmd/Ctrl+W, and
+			// the matcher treats those as one binding) never fires. Losing the
+			// document because the user reached for `<C-w>` is the single worst
+			// outcome on this list.
+			const event = press(container, 'w', { ctrlKey: true });
+
+			expect(event.defaultPrevented).toBe(true);
+			expect(win.keys()).toEqual([]);
+		} finally {
+			win.stop();
+		}
+	});
+
+	it('leaves the Cmd spelling of the same chord to Maestro', () => {
+		const { container } = mountEditor({ vimMode: true });
+		const win = watchWindow();
+
+		try {
+			// This is what makes "the editor wins" cost nothing. Vim reads the
+			// PHYSICAL `event.ctrlKey`, so Cmd+W is not a Vim key at all and
+			// still reaches the window handler that closes the tab. Every chord
+			// in the table keeps a working Cmd spelling for the same reason.
+			const event = press(container, 'w', { metaKey: true });
+
+			expect(event.defaultPrevented).toBe(false);
+			expect(win.keys()).toEqual(['Meta+w']);
+		} finally {
+			win.stop();
+		}
+	});
+
+	it('swallows Ctrl+O before it can move focus to another agent', () => {
+		const { container } = mountEditor({ vimMode: true });
+		const win = watchWindow();
+
+		try {
+			// `<C-o>` walks the jump list back. In Maestro it is `agentSwitcher`,
+			// which replaces the whole workspace - so a Vim user navigating their
+			// own document would find themselves looking at a different agent.
+			const event = press(container, 'o', { ctrlKey: true });
+
+			expect(event.defaultPrevented).toBe(true);
+			expect(win.keys()).toEqual([]);
+		} finally {
+			win.stop();
+		}
+	});
+
+	it('swallows the redo and visual-block chords too', () => {
+		const { container } = mountEditor({ vimMode: true, doc: 'a\nb\nc\nd' });
+		const win = watchWindow();
+
+		try {
+			// `<C-r>` (redo, which Maestro gives to `toggleReadOnlyMode`) and
+			// `<C-v>` (blockwise visual mode, free in Vim mode) - two more rows of
+			// the table, same mechanism.
+			//
+			// The scroll and vertical-motion chords are deliberately NOT here.
+			// `<C-e>`, `<C-u>`, `<C-d>` and `<C-n>` all resolve through a measured
+			// line box, and jsdom has no layout engine, so they throw out of the
+			// package rather than completing - a jsdom limit with nothing to say
+			// about the collision. `<C-e>`'s gate is covered below, where the
+			// readout is the host hook rather than Vim.
+			expect(press(container, 'r', { ctrlKey: true }).defaultPrevented).toBe(true);
+			expect(press(container, 'v', { ctrlKey: true }).defaultPrevented).toBe(true);
+			expect(win.keys()).toEqual([]);
+		} finally {
+			win.stop();
+		}
+	});
+
+	it('keeps a Ctrl chord Vim owns away from the host hook', () => {
+		const onKeyDown = vi.fn(() => true);
+		const { container } = mountEditor({ vimMode: true, onKeyDown });
+
+		// `<C-e>` scrolls one line down. FilePreview and Auto Run both match the
+		// edit/preview toggle with `e.metaKey || e.ctrlKey` from a hook at
+		// `Prec.highest`, which runs AHEAD of Vim, so without the gate in
+		// `buildEditorExtensions` the physical Ctrl+E flipped the pane out of
+		// edit mode. Drop that gate and this is the test that fails.
+		press(container, 'e', { ctrlKey: true });
+		expect(onKeyDown).not.toHaveBeenCalled();
+
+		// Cmd+E is untouched: the toggle still works, from inside the editor,
+		// in Vim mode.
+		press(container, 'e', { metaKey: true });
+		expect(onKeyDown).toHaveBeenCalledTimes(1);
+		expect(onKeyDown.mock.calls[0][0].metaKey).toBe(true);
+	});
+
+	it('still hands the host every chord Vim does not bind', () => {
+		const onKeyDown = vi.fn(() => true);
+		const { container } = mountEditor({ vimMode: true, onKeyDown });
+
+		// The gate is a table lookup, not "decline all Ctrl". `<C-s>` and `<C-z>`
+		// are not Vim bindings (Vim undoes with `u` and redoes with `<C-r>`), so
+		// Ctrl+S must still save and Auto Run's Ctrl+Z must still undo.
+		press(container, 's', { ctrlKey: true });
+		press(container, 'z', { ctrlKey: true });
+
+		expect(onKeyDown).toHaveBeenCalledTimes(2);
+		expect(onKeyDown.mock.calls.map((c) => c[0].key)).toEqual(['s', 'z']);
+	});
+
+	it('asks nothing of the gate in default keyboard mode', () => {
+		const onKeyDown = vi.fn(() => true);
+		const { container } = mountEditor({ vimMode: false, onKeyDown });
+		const win = watchWindow();
+
+		try {
+			// `vimEditorOwnsCtrlChord` answers from `getCM(view)`, which is null
+			// unless the Vim plugin installed itself, so a user who never turned
+			// Vim mode on sees exactly today's behavior on every chord above.
+			press(container, 'w', { ctrlKey: true });
+			press(container, 'e', { ctrlKey: true });
+
+			expect(onKeyDown).toHaveBeenCalledTimes(2);
+		} finally {
+			win.stop();
+		}
+	});
+});
+
+/**
+ * Escape, which is the collision with a real decision behind it rather than a
+ * mechanism: it means "leave insert mode" to CodeMirror and "close the topmost
+ * layer" to Maestro, and the layer stack hears it first.
+ */
+describe('MarkdownEditor - Escape between Vim and the layer stack', () => {
+	it("is the editor's while Vim is in insert mode", () => {
+		const onKeyDown = vi.fn(() => false);
+		const { container } = mountEditor({ vimMode: true, onKeyDown });
+
+		press(container, 'i');
+		expect(vimEditorAt(contentDom(container))?.mode).toBe('insert');
+
+		const event = press(container, 'Escape');
+
+		// Vim ended insert mode and stopped the key itself, which is what the
+		// layer stack declining is for.
+		expect(vimEditorOwnsEscape({ target: contentDom(container) })).toBe(false);
+		expect(vimEditorAt(contentDom(container))?.mode).toBe('normal');
+		expect(event.defaultPrevented).toBe(true);
+	});
+
+	it("is Maestro's while Vim is in normal mode", () => {
+		const { container } = mountEditor({ vimMode: true });
+		const content = contentDom(container);
+
+		// Escape in normal mode only clears a pending count or operator, and the
+		// package explicitly declines it ("we're already in normal mode, let
+		// <Esc> be handled normally"). Claiming it would strand the user in a
+		// modal whose Escape had quietly stopped working.
+		expect(vimEditorOwnsEscape({ target: content })).toBe(false);
+		expect(press(container, 'Escape').defaultPrevented).toBe(false);
+	});
+
+	it("is the editor's while a visual selection is up", () => {
+		const { container, ref } = mountEditor({ vimMode: true, doc: 'alpha beta' });
+
+		act(() => {
+			ref.current!.setSelection(0, 0);
+		});
+		press(container, 'v');
+		expect(vimEditorAt(contentDom(container))?.mode).toBe('visual');
+		expect(vimEditorOwnsEscape({ target: contentDom(container) })).toBe(true);
+
+		press(container, 'Escape');
+		expect(vimEditorAt(contentDom(container))?.mode).toBe('normal');
+	});
+
+	it("is the editor's while a Vim `/` command line is open", () => {
+		const { container } = mountEditor({ vimMode: true });
+
+		press(container, '/');
+
+		// The command line is an `<input>` in the editor's panel with its own
+		// bubble-phase Escape handler, so it has the same claim insert mode does
+		// - and the same problem, since the layer stack runs in capture on
+		// `window` and would close the pane out from under a half-typed search.
+		const input = container.querySelector('.cm-panels input');
+		expect(input).not.toBeNull();
+		expect(vimEditorAt(contentDom(container))?.dialogOpen).toBe(true);
+		expect(vimEditorOwnsEscape({ target: input })).toBe(true);
+	});
+
+	it('answers for a focused editor when the event came from the window', () => {
+		const { container } = mountEditor({ vimMode: true });
+		contentDom(container).focus();
+		press(container, 'i');
+
+		// `LayerStackProvider` listens on `window`, where the target is whatever
+		// has focus - but the Vim command line moves focus into its own input
+		// while the keydown that opened it still came from the content element.
+		// So both are consulted, and an event with no useful target falls back
+		// to `document.activeElement`.
+		expect(vimEditorOwnsEscape()).toBe(true);
+		expect(vimEditorOwnsEscape({ target: document.body })).toBe(true);
+	});
+
+	it('answers false for an editor with no Vim on it', () => {
+		const { container } = mountEditor({ vimMode: false });
+		contentDom(container).focus();
+
+		expect(vimEditorAt(contentDom(container))).toBeNull();
+		expect(vimEditorOwnsEscape({ target: contentDom(container) })).toBe(false);
+	});
+});
+
+/**
+ * The same split, end to end through the real `LayerStackProvider`: a modal is
+ * open, the caret is in the editor, and Escape has to reach exactly one of them.
+ */
+describe('MarkdownEditor - Escape with a layer registered', () => {
+	function LayerHost({ onEscape }: { onEscape: () => void }) {
+		useModalLayer(100, 'Test Layer', onEscape);
+		return null;
+	}
+
+	function mountWithLayer(vimMode: boolean) {
+		useSettingsStore.setState({ keyboardMode: vimMode ? 'vim' : 'default' });
+		const onEscape = vi.fn();
+		const result = render(
+			<LayerStackProvider>
+				<LayerHost onEscape={onEscape} />
+				<MarkdownEditor value="hello world" onChange={() => {}} language="text" theme={mockTheme} />
+			</LayerStackProvider>
+		);
+		return { ...result, onEscape };
+	}
+
+	async function escape(container: HTMLElement) {
+		const event = new KeyboardEvent('keydown', {
+			key: 'Escape',
+			bubbles: true,
+			cancelable: true,
+		});
+		await act(async () => {
+			contentDom(container).dispatchEvent(event);
+		});
+		return event;
+	}
+
+	it('leaves the modal open when Escape ends insert mode', async () => {
+		const { container, onEscape } = mountWithLayer(true);
+		press(container, 'i');
+
+		const event = await escape(container);
+
+		// The layer stack declined, Vim acted. Remove the `vimEditorOwnsEscape`
+		// guard from `LayerStackContext` and the user loses both: the modal
+		// closes AND they are still in insert mode.
+		expect(onEscape).not.toHaveBeenCalled();
+		expect(vimEditorAt(contentDom(container))?.mode).toBe('normal');
+		expect(event.defaultPrevented).toBe(true);
+	});
+
+	it('closes the modal when Escape is pressed in normal mode', async () => {
+		const { container, onEscape } = mountWithLayer(true);
+		expect(vimEditorAt(contentDom(container))?.mode).toBe('normal');
+
+		await escape(container);
+
+		expect(onEscape).toHaveBeenCalledTimes(1);
+	});
+
+	it('closes the modal in default keyboard mode', async () => {
+		const { container, onEscape } = mountWithLayer(false);
+
+		await escape(container);
+
+		expect(onEscape).toHaveBeenCalledTimes(1);
+	});
+});
+
+/**
+ * One find bar, one key. Maestro's `Cmd+F` (`filterFiles` and its five
+ * surface-scoped siblings in `FIXED_SHORTCUTS`) and the editor's own search are
+ * reached by different keys on purpose, and `buildEditorExtensions` omits CM6's
+ * `searchKeymap` entirely, so there is no third claimant.
+ */
+describe('MarkdownEditor - Cmd+F and the editor search', () => {
+	it('hands Cmd+F to the host and opens nothing in the editor', () => {
+		const onKeyDown = vi.fn(() => true);
+		const { container } = mountEditor({ vimMode: true, onKeyDown });
+
+		press(container, 'f', { metaKey: true });
+
+		expect(onKeyDown).toHaveBeenCalledTimes(1);
+		expect(onKeyDown.mock.calls[0][0].key).toBe('f');
+		// No CM6 search panel and no Vim command line: the host's find bar is
+		// the only thing that opened.
+		expect(container.querySelector('.cm-panels input')).toBeNull();
+		expect(vimEditorAt(contentDom(container))?.dialogOpen).toBe(false);
+	});
+
+	it('opens the Vim command line on `/` and leaves the host bar shut', () => {
+		const onKeyDown = vi.fn(() => false);
+		const { container } = mountEditor({ vimMode: true, onKeyDown });
+
+		const event = press(container, '/');
+
+		expect(container.querySelector('.cm-panels input')).not.toBeNull();
+		// Vim claimed the key, so `/` never reaches the surface handler that
+		// would have opened the host search bar on a bare slash.
+		expect(event.defaultPrevented).toBe(true);
 	});
 });
