@@ -3,6 +3,7 @@ import { Search } from 'lucide-react';
 import type { Theme } from '../../types';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { buildKeysFromEvent } from '../../utils/shortcutRecorder';
+import { useShortcutKeys } from '../../hooks/keyboard/useShortcutKeys';
 
 export interface ShortcutFilterButtonProps {
 	theme: Theme;
@@ -10,6 +11,8 @@ export interface ShortcutFilterButtonProps {
 	onKeysChange: (keys: string[]) => void;
 	recording: boolean;
 	onRecordingChange: (recording: boolean) => void;
+	/** Action id to display the current mode's binding. When provided, shows the active mode's chord. */
+	actionId?: string;
 }
 
 export function ShortcutFilterButton({
@@ -18,9 +21,12 @@ export function ShortcutFilterButton({
 	onKeysChange,
 	recording,
 	onRecordingChange,
+	actionId,
 }: ShortcutFilterButtonProps) {
 	const buttonRef = React.useRef<HTMLButtonElement>(null);
-	const active = recording || keys.length > 0;
+	const resolved = useShortcutKeys(actionId);
+	const displayKeys = actionId && resolved.keys.length > 0 ? resolved.keys : keys;
+	const active = recording || displayKeys.length > 0;
 
 	// Recording is STICKY: a captured combo updates the filter but keeps the
 	// button live, so the user can rapid-fire one key after another to explore
@@ -46,7 +52,7 @@ export function ShortcutFilterButton({
 		<button
 			ref={buttonRef}
 			onClick={() => {
-				if (keys.length > 0) {
+				if (displayKeys.length > 0) {
 					onKeysChange([]);
 					onRecordingChange(false);
 				} else {
@@ -71,10 +77,10 @@ export function ShortcutFilterButton({
 				} as React.CSSProperties
 			}
 		>
-			{recording && keys.length === 0 ? (
+			{recording && displayKeys.length === 0 ? (
 				'Press keys...'
-			) : keys.length > 0 ? (
-				formatShortcutKeys(keys)
+			) : displayKeys.length > 0 ? (
+				formatShortcutKeys(displayKeys)
 			) : (
 				<span className="flex items-center gap-1">
 					<Search className="w-3 h-3" />

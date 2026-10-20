@@ -32,7 +32,8 @@
 
 import { Fragment } from 'react';
 import type { Theme } from '../../types';
-import { formatShortcutKeys } from '../../utils/shortcutFormatter';
+import { formatShortcutKeys, formatShortcutSequence } from '../../utils/shortcutFormatter';
+import { useShortcutKeys } from '../../hooks/keyboard/useShortcutKeys';
 
 /**
  * One chord (`['Meta', 'k']`), or several chords that do the same thing
@@ -150,7 +151,9 @@ export function ShortcutKeys({
 export interface ShortcutHintProps {
 	theme: Theme;
 	/** Chord to display, e.g. `['Meta', 'Shift', 'r']`. Empty renders nothing. */
-	keys: string[];
+	keys?: string[];
+	/** Action id to resolve the binding from the active mode. Overrides `keys` when both are provided. */
+	actionId?: string;
 	/** Optional text before the chord, e.g. `"Try:"`. */
 	label?: string;
 	/** `chip` for an inline key-cap, `row` for a pinned dropdown header. */
@@ -161,16 +164,28 @@ export interface ShortcutHintProps {
 
 export function ShortcutHint({
 	theme,
-	keys,
+	keys: keysFromProps,
+	actionId,
 	label,
 	variant = 'chip',
 	className = '',
 }: ShortcutHintProps) {
+	const resolved = useShortcutKeys(actionId);
+	const keys = actionId ? resolved.keys : keysFromProps;
+	const sequence = actionId ? resolved.sequence : undefined;
+
 	if (!keys || keys.length === 0) return null;
 
 	const labelText = label ? (
 		<span className="text-2xs" style={{ color: theme.colors.textDim }}>
 			{label}{' '}
+		</span>
+	) : null;
+
+	const sequenceText = sequence ? (
+		<span className="text-2xs" style={{ color: theme.colors.textDim }}>
+			{' '}
+			or{' '}
 		</span>
 	) : null;
 
@@ -186,6 +201,8 @@ export function ShortcutHint({
 			>
 				{labelText}
 				<ShortcutKeys theme={theme} keys={keys} />
+				{sequenceText}
+				{sequence && <span className="text-2xs font-mono">{formatShortcutSequence(sequence)}</span>}
 			</div>
 		);
 	}
@@ -199,6 +216,8 @@ export function ShortcutHint({
 		>
 			{labelText}
 			<ShortcutKeys theme={theme} keys={keys} />
+			{sequenceText}
+			{sequence && <span className="text-2xs font-mono">{formatShortcutSequence(sequence)}</span>}
 		</span>
 	);
 }
@@ -219,6 +238,9 @@ export function shortcutText(shortcut: string | ShortcutChords | undefined): str
  * Tooltip-safe suffix for a `title=` attribute, e.g. `" (⇧⌘R)"`. Returns an
  * empty string when the action is unbound so callers can concatenate blindly:
  * `title={`Close tab${shortcutSuffix(keys)}`}`.
+ *
+ * For callers that need the active mode's binding, use `useShortcutKeys(actionId)`
+ * to resolve first, then pass the resolved `keys` to this function.
  */
 export function shortcutSuffix(keys?: string[]): string {
 	if (!keys || keys.length === 0) return '';
