@@ -180,7 +180,15 @@ export function buildAssignmentOptionGroups(
 			option(
 				current.type === 'local' && current.modelId === listing.entry.id
 					? current
-					: { type: 'local', modelId: listing.entry.id },
+					: {
+							type: 'local',
+							modelId: listing.entry.id,
+							...(current.type === 'local' &&
+							current.language &&
+							listing.entry.speechToText?.languages.includes(current.language)
+								? { language: current.language }
+								: {}),
+						},
 				listing.entry.displayName
 			)
 		);
