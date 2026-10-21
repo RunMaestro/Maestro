@@ -202,6 +202,7 @@ function tokenizerFor(pieces: string[], options: Partial<WhisperEngineOptions> =
 						{ content: '<|startoftranscript|>', id: 50258 },
 						{ content: '<|endoftext|>', id: 50257 },
 						{ content: '<|notimestamps|>', id: 50363 },
+						{ content: '<|startofprev|>', id: 50361 },
 						{ content: '<|transcribe|>', id: 50359 },
 						{ content: '<|de|>', id: 50261 },
 						{ content: '<|en|>', id: 50259 },
@@ -247,6 +248,50 @@ describe('WhisperEngine', () => {
 			encode.mockRestore();
 		}
 	});
+	it.each([
+		['whisper-base', WHISPER_BASE_GEOMETRY],
+		['whisper-small', { layers: 12, heads: 12, headDim: 64 }],
+	] as const)(
+		'preserves name hints with both languages through the %s factory',
+		async (modelId, geometry) => {
+			const encode = vi.spyOn(WhisperTokenizer.prototype, 'encode').mockReturnValue([33, 34]);
+			try {
+				for (const [language, languageToken] of [
+					['de', 50261],
+					['en', 50259],
+				] as const) {
+					vi.mocked(readFile).mockResolvedValue(
+						tokenizerFor([' hello', ' unused', ' other', ' there'], {
+							specialTokens: WHISPER_MULTILINGUAL_SPECIAL_TOKENS,
+						})
+					);
+					const model = await resolveInstalledSpeechToTextModel(modelId, 'dictation');
+					const engine = await model.createEngine();
+					const fake = fakeOnnx([0, 3, 50257], [], geometry);
+					await engine.load(fake.module);
+					try {
+						await expect(
+							engine.transcribe(AUDIO, { language, vocabulary: ['🏢 Pedro Sidián'] })
+						).resolves.toBe('hello there');
+						expect(fake.calls[0].inputIds).toEqual([
+							generation.prev_sot_token_id,
+							33,
+							34,
+							50258,
+							languageToken,
+							50359,
+							50363,
+						]);
+						expect(encode).toHaveBeenLastCalledWith(' Pedro Sidián');
+					} finally {
+						await engine.unload();
+					}
+				}
+			} finally {
+				encode.mockRestore();
+			}
+		}
+	);
 	it.each([
 		['whisper-base-en', WHISPER_BASE_GEOMETRY, 'en', [50257, 50362], 50256],
 		['whisper-base', WHISPER_BASE_GEOMETRY, 'de', [50258, 50261, 50359, 50363], 50257],
@@ -433,6 +478,24 @@ describe('WhisperEngine', () => {
 		expect(WHISPER_MULTILINGUAL_SPECIAL_TOKENS.beginSuppressTokens).toEqual(
 			generation.begin_suppress_tokens
 		);
+		expect(WHISPER_MULTILINGUAL_SPECIAL_TOKENS.startOfPrevious).toBe(generation.prev_sot_token_id);
+	});
+
+	it('rejects mismatched multilingual vocabulary-context tokens before opening graphs', async () => {
+		const definition = JSON.parse(
+			tokenizerFor([' hello'], { specialTokens: WHISPER_MULTILINGUAL_SPECIAL_TOKENS })
+		);
+		definition.added_tokens.find(
+			(token: { content: string }) => token.content === '<|startofprev|>'
+		).id = 50360;
+		const fake = fakeOnnx([0]);
+		const create = vi.spyOn(fake.module.InferenceSession, 'create');
+		const engine = engineFor([' hello'], {
+			specialTokens: WHISPER_MULTILINGUAL_SPECIAL_TOKENS,
+			tokenizerJson: JSON.stringify(definition),
+		});
+		await expect(engine.load(fake.module)).rejects.toMatchObject({ code: 'generation-failed' });
+		expect(create).not.toHaveBeenCalled();
 	});
 
 	it('honors the pinned multilingual suppression rules at the transcription boundary', async () => {

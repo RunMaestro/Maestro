@@ -53,6 +53,7 @@ export const WHISPER_MULTILINGUAL_SPECIAL_TOKENS: WhisperSpecialTokens = Object.
 	startOfTranscript: 50258,
 	endOfText: 50257,
 	noTimestamps: 50363,
+	startOfPrevious: 50361,
 	transcribe: 50359,
 	languages: Object.freeze({ de: 50261, en: 50259 }),
 	// generation_config.json@1846881b6b3a3024392c1eea3ad983695bc23925.
@@ -137,6 +138,9 @@ export class WhisperTokenizer {
 				'<|endoftext|>': special.endOfText,
 				'<|notimestamps|>': special.noTimestamps,
 				'<|transcribe|>': special.transcribe,
+				...(special.startOfPrevious === undefined
+					? {}
+					: { '<|startofprev|>': special.startOfPrevious }),
 				...Object.fromEntries(
 					Object.entries(special.languages).map(([language, id]) => [`<|${language}|>`, id])
 				),

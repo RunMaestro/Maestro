@@ -62,11 +62,11 @@ standalone inference plugin nor an agent/Brain/TTS router is required.
 
 ## Permission and lifecycle
 
-A trusted signed code plugin declares:
+A trusted signed code plugin using the core clip methods declares API 1.27.0 or later:
 
 ```json
 {
-	"maestro": { "minHostApi": "1.17.0" },
+	"maestro": { "minHostApi": "1.27.0" },
 	"permissions": [
 		{
 			"capability": "media:tools",
@@ -81,6 +81,8 @@ The broker requires exact allowlist membership in `discord-voice`; unscoped and
 wildcard grants deny. No additional `net:fetch`, `fs:read`, `fs:write` or
 `process:spawn` grant is needed for this API. Existing Relay permissions for text
 and Discord gateway/replies remain separate.
+Existing plugins using only the legacy `media.run` interface can retain their
+1.17.0 minimum; this does not make the new core methods available on older hosts.
 
 All operations re-read grants and signature; a job polls them every 250 ms as an
 additional revocation backstop without generating synthetic RPC audit decisions.
@@ -107,15 +109,17 @@ The canonical types are `src/shared/plugins/media-tools.ts`, vendored into
 `@maestro/plugin-sdk`; the package has runtime and compile-time drift checks.
 Every sandbox SDK method returns a promise.
 
-| Method                               | Input                                                       | Result                                                                |
-| ------------------------------------ | ----------------------------------------------------------- | --------------------------------------------------------------------- |
-| `media.status()`                     | none                                                        | `{profiles, models, missing}`; only available model IDs, no paths     |
-| `media.open()`                       | none                                                        | `{jobId}`; host synchronously reserves an opaque ID without media I/O |
-| `media.download(jobId, url)`         | exact Discord CDN attachment URL                            | `{audioId, bytes}`; actual streamed byte count                        |
-| `media.probe(jobId, audioId)`        | own source or decoded handle                                | `{container, durationSeconds, streams}`                               |
-| `media.decode(jobId, audioId)`       | own Ogg handle                                              | `{audioId, durationSeconds}`; mono 16 kHz PCM WAV                     |
-| `media.run(jobId, audioId, options)` | decoded handle, `{profile:'whisper-cli', model, language?}` | `{json}`; original Whisper JSON                                       |
-| `media.close(jobId)`                 | own job ID                                                  | void after abort, process exit and cleanup; idempotent                |
+| Method                                      | Input                                                                     | Result                                                                                     |
+| ------------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `media.status()`                            | none                                                                      | `{profiles, models, missing}`; only available model IDs, no paths                          |
+| `media.transcriptionStatus()`               | none                                                                      | `{state, taskId, modelId, languages, language, reason}` for the local Dictation assignment |
+| `media.open()`                              | none                                                                      | `{jobId}`; host synchronously reserves an opaque ID without media I/O                      |
+| `media.download(jobId, url)`                | exact Discord CDN attachment URL                                          | `{audioId, bytes}`; actual streamed byte count                                             |
+| `media.probe(jobId, audioId)`               | own source or decoded handle                                              | `{container, durationSeconds, streams}`                                                    |
+| `media.decode(jobId, audioId)`              | own Ogg handle                                                            | `{audioId, durationSeconds}`; mono 16 kHz PCM WAV                                          |
+| `media.transcribe(jobId, audioId, options)` | decoded own handle, `{language?: 'de' \| 'en'}` matching the host setting | `{text, language, durationSeconds, modelId, translated:false}`                             |
+| `media.run(jobId, audioId, options)`        | decoded handle, `{profile:'whisper-cli', model, language?}`               | `{json}`; original Whisper JSON                                                            |
+| `media.close(jobId)`                        | own job ID                                                                | void after abort, process exit and cleanup; idempotent                                     |
 
 Handles are bound to the authenticated plugin and job and never expose a path.
 If Relay cancels while awaiting `open`, its adapter must close the eventual ID.
@@ -137,12 +141,14 @@ mono/16 kHz/pcm_s16le output. Both container duration and decoded duration must
 be positive and at most 120 seconds. A bounded 121-second decode catches forged
 short container metadata; an overlong recording is rejected, not silently cut.
 
-Run selects only the fixed `whisper-cli` profile. The host builds every argv:
+Legacy `media.run` selects only the fixed `whisper-cli` profile. The host builds every argv:
 `-m <approved-model> -l <language> -f <own-wav> -oj -of <own-result> -np -nt -t 4 -ng`.
 It uses no shell, stdin, inherited environment, caller-specified executable,
 argv, cwd, output path, initial prompt, translation flag or network URL.
 Language defaults to `auto` and accepts `auto` or lowercase two/three-letter
 language codes. Plugins may explicitly select `de` or another supported language.
+These language/model rules apply only to legacy `media.run`; core `media.transcribe`
+uses the configured local Dictation model and explicit German/English setting, never `auto`.
 Unsupported Whisper codes fail safely at execution. Model IDs are the
 multilingual `tiny`, `base`, `small`, `medium`, `large-v1`, `large-v2`, `large-v3`,
 `large-v3-turbo`; `.en`/arbitrary paths are rejected. A filename is not proof of
@@ -181,16 +187,23 @@ New jobs can open but fail `MediaBusy` before media I/O if disk capacity is full
 SDK errors carry stable `error.code` (additive RPC `errorCode`) and code-only text:
 `MediaInvalid`, `MediaDenied`, `MediaUnavailable`, `MediaTooLarge`, `MediaTooLong`,
 `MediaTimeout`, `MediaCancelled`, `MediaBusy`, `MediaProcessFailed`,
-`MediaOutputTooLarge`. Never present raw network/process errors, URLs, recordings,
+`MediaOutputTooLarge`, `MediaLanguageUnsupported`. Never present raw network/process errors, URLs, recordings,
 transcripts, private filesystem paths or tokens in diagnostics.
 
 ## Runtime prerequisites
 
-**Before using transcription:** on the computer running Maestro, you must have a
+**Core `media.transcribe`:** the computer running Maestro needs `ffprobe`, `ffmpeg`
+and a ready local Dictation assignment in Models / System One, including its installed
+model and runtime. This path uses the shared STT pool; it needs neither a separate
+`whisper-cli` nor a GGML model directory. The selected assignment language must be
+supported by that model. `media.transcriptionStatus()` projects these prerequisites.
+
+**Legacy `media.run` only:** on the computer running Maestro, you must have a
 working local whisper.cpp `whisper-cli`, `ffmpeg` and `ffprobe`, plus at least one
 supported, readable multilingual `ggml-<model-id>.bin` model file (for example,
 `ggml-base.bin`). Maestro does not bundle, download or automatically install these
-binaries or models; you must provide them yourself.
+binaries or models; you must provide them yourself. The remaining directory,
+environment and `media.status()` diagnostics below describe this legacy path.
 
 The host resolves existing `ffprobe`, `ffmpeg` and `whisper-cli` using the canonical
 binary discovery at call time. Optional **host-owned** absolute executable overrides
@@ -227,7 +240,8 @@ If status lists only `base`, Relay must select `base`; selecting `small` require
 available `ggml-small.bin`. A ready host profile does not mean every model is available.
 This setting downloads or installs nothing.
 
-End-to-end voice still needs the Relay production adapter, permitted/signed plugin
-identity, model-directory configuration, a valid multilingual model and a voice
-message in an authorized bound thread. A source/unit/native smoke check does not
-prove live Discord delivery.
+End-to-end core voice still needs the Relay production adapter, permitted/signed plugin
+identity, a ready local Dictation assignment with its model/runtime and media tools,
+and a voice message in an authorized bound thread. A legacy `media.run` adapter
+additionally needs the legacy model directory and model selection described above.
+A source/unit/native smoke check does not prove live Discord delivery.
