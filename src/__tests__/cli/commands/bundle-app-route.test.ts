@@ -120,6 +120,8 @@ describe('bundle export through the running app', () => {
 					agent: 'Reviewer',
 					outputPath: output,
 					claudeAssets: { skills: true, mcp: true, memory: false },
+					includeCue: true,
+					includeLocal: false,
 				}),
 			},
 			'cue_bundle_export_result',
@@ -196,6 +198,7 @@ describe('bundle import through the running app', () => {
 					workspaces: { web: path.resolve('./web') },
 					force: undefined,
 					refuseShellCommands: undefined,
+					useLocal: true,
 					dryRun: undefined,
 				},
 			},
@@ -227,6 +230,20 @@ describe('bundle import through the running app', () => {
 		expect(printedBeforeWrite[0]).toContain('web / cleanup: rm -rf build');
 		expect(stdout()).toContain('Imported pipeline "Nightly" into the running Maestro app');
 		expect(stdout()).not.toContain('The bundle changed after the preview');
+	});
+
+	it('passes --no-local through, so an exact copy imports like a portable bundle', async () => {
+		sendCommand.mockResolvedValue({
+			type: 'cue_bundle_import_result',
+			outcome: { ok: true, applied: false, plan: plan() },
+		});
+		await bundleImport('0.18.6', bundlePath(), {
+			workspace: ['web=/w'],
+			dryRun: true,
+			local: false,
+			json: true,
+		});
+		expect(sendCommand.mock.calls[0][0].request).toMatchObject({ useLocal: false });
 	});
 
 	it('marks JSON output as going through the app', async () => {

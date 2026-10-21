@@ -7,7 +7,7 @@
  */
 
 import { ipcRenderer } from 'electron';
-import type { SessionInfo } from '../../shared/types';
+import type { CueBundleAgentChange } from '../../shared/cue-bundle-types';
 import type {
 	CueBundleExportOutcome,
 	CueBundleExportRequest,
@@ -16,11 +16,7 @@ import type {
 	CueBundleInspectOutcome,
 } from '../cue-bundle-service';
 
-/** Agents an import adds (`created`) and replaces by id (`updated`). */
-export interface CueBundleAgentChange {
-	created: SessionInfo[];
-	updated: SessionInfo[];
-}
+export type { CueBundleAgentChange };
 
 export function createCueBundleApi() {
 	return {

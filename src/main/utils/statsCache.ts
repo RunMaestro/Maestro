@@ -15,6 +15,7 @@ import { createHash } from 'crypto';
 import { logger } from './logger';
 import { encodeClaudeProjectPath } from '../../shared/pathUtils';
 import { captureException } from './sentry';
+import { atomicWriteFile } from './atomic-json-store';
 
 // Re-export so existing consumers don't need import changes
 export { encodeClaudeProjectPath };
@@ -62,6 +63,12 @@ export interface PerProjectSessionStats {
 	 * If the file reappears, this flag is set back to false and the session is re-parsed.
 	 */
 	archived?: boolean;
+	/**
+	 * `STATS_CACHE_VERSION` this entry's numbers were derived under. Absent means
+	 * the cache file's own `version`. Per entry so an upgrade can be saved part
+	 * way and resumed - see `isDerivationStale`.
+	 */
+	derivedVersion?: number;
 }
 
 /** A token total by kind, as the session browser's hover breakdown shows it. */
@@ -95,6 +102,8 @@ export interface SessionStatsCache {
 	lastUpdated: number;
 	/** Cache version - bump to invalidate old caches */
 	version: number;
+	/** Present while a derivation upgrade is part way done - see `DerivationUpgrade`. */
+	upgrade?: DerivationUpgrade;
 }
 
 /**
@@ -195,7 +204,7 @@ export async function saveStatsCache(
 		const cachePath = getStatsCachePath(projectPath, scope);
 		const cacheDir = path.dirname(cachePath);
 		await fs.mkdir(cacheDir, { recursive: true });
-		await fs.writeFile(cachePath, JSON.stringify(cache), 'utf-8');
+		await atomicWriteFile(cachePath, JSON.stringify(cache));
 	} catch (error) {
 		void captureException(error);
 		logger.warn('Failed to save stats cache', 'ClaudeSessions', { projectPath, error });
@@ -230,6 +239,11 @@ export interface CachedSessionStats {
 	 * Archived sessions are preserved in cache so lifetime costs survive file cleanup.
 	 */
 	archived?: boolean;
+	/**
+	 * `GLOBAL_STATS_CACHE_VERSION` this entry was derived under. Absent means the
+	 * cache file's own `version`. Claude entries only; see `isDerivationStale`.
+	 */
+	derivedVersion?: number;
 }
 
 /**
@@ -248,6 +262,8 @@ export interface GlobalStatsCache {
 	lastUpdated: number;
 	/** Cache version - bump to invalidate old caches */
 	version: number;
+	/** Present while a Claude derivation upgrade is part way done - see `DerivationUpgrade`. */
+	upgrade?: DerivationUpgrade;
 }
 
 /**
@@ -307,7 +323,7 @@ export async function saveGlobalStatsCache(cache: GlobalStatsCache): Promise<voi
 		const cachePath = getGlobalStatsCachePath();
 		const cacheDir = path.dirname(cachePath);
 		await fs.mkdir(cacheDir, { recursive: true });
-		await fs.writeFile(cachePath, JSON.stringify(cache), 'utf-8');
+		await atomicWriteFile(cachePath, JSON.stringify(cache));
 	} catch (error) {
 		void captureException(error);
 		logger.warn('Failed to save global stats cache', 'ClaudeSessions', { error });
@@ -344,18 +360,94 @@ export function rescaleArchivedEntries<T extends { archived?: boolean }>(
 	fields: readonly NumericKeys<T>[],
 	fractional: readonly NumericKeys<T>[] = []
 ): void {
+	const baseline: DerivationUpgradeBaseline = {};
+	for (const [key, entry] of Object.entries(entries)) {
+		const previous = before[key];
+		if (entry.archived || !previous || previous === entry) continue;
+		accumulateUpgradeBaseline(baseline, previous, entry, fields);
+	}
+	scaleArchivedByBaseline(Object.values(entries), baseline, fields, fractional);
+}
+
+// ============================================================================
+// Resumable Derivation Upgrades
+// ============================================================================
+
+/** Per field: the old-derivation and new-derivation sums over re-parsed live sessions. */
+export type DerivationUpgradeBaseline = Record<string, { oldSum: number; newSum: number }>;
+
+/**
+ * A derivation upgrade that has not finished yet, saved inside the cache file.
+ *
+ * `rescaleArchivedEntries` needs the before/after of every re-parsed live
+ * session, and an upgrade of gigabytes of history can be killed long before it
+ * ends (that is exactly what a user does with an app that looks frozen). So the
+ * sums ride along in the checkpoint, each live entry is stamped with the version
+ * it was derived under, and the next run re-parses only what is still stale.
+ * The archived sessions are rescaled once, when nothing live is stale.
+ */
+export interface DerivationUpgrade {
+	toVersion: number;
+	baseline: DerivationUpgradeBaseline;
+}
+
+/**
+ * Whether an entry's numbers predate `currentVersion`. An entry without its own
+ * stamp was derived under the cache file's version.
+ */
+export function isDerivationStale(
+	entry: { derivedVersion?: number },
+	cacheVersion: number,
+	currentVersion: number
+): boolean {
+	return (entry.derivedVersion ?? cacheVersion) < currentVersion;
+}
+
+/** Add one re-parsed session's old and new numbers to the running sums. */
+export function accumulateUpgradeBaseline<T>(
+	baseline: DerivationUpgradeBaseline,
+	previous: T,
+	next: T,
+	fields: readonly NumericKeys<T>[]
+): void {
 	for (const field of fields) {
-		let oldSum = 0;
-		let newSum = 0;
-		for (const [key, entry] of Object.entries(entries)) {
-			const previous = before[key];
-			if (entry.archived || !previous || previous === entry) continue;
-			oldSum += (previous[field] as number | undefined) ?? 0;
-			newSum += (entry[field] as number | undefined) ?? 0;
-		}
-		if (oldSum <= 0) continue;
-		const ratio = newSum / oldSum;
-		for (const entry of Object.values(entries)) {
+		const sums = (baseline[field as string] ??= { oldSum: 0, newSum: 0 });
+		sums.oldSum += (previous[field] as number | undefined) ?? 0;
+		sums.newSum += (next[field] as number | undefined) ?? 0;
+	}
+}
+
+/**
+ * Scale every archived entry still derived before `currentVersion` by the
+ * baseline's ratios, then stamp it so it is never scaled twice.
+ */
+export function finishDerivationUpgrade<T extends { archived?: boolean; derivedVersion?: number }>(
+	entries: Record<string, T>,
+	cacheVersion: number,
+	currentVersion: number,
+	baseline: DerivationUpgradeBaseline,
+	fields: readonly NumericKeys<T>[],
+	fractional: readonly NumericKeys<T>[] = []
+): void {
+	const stale = Object.values(entries).filter(
+		(entry) => entry.archived && isDerivationStale(entry, cacheVersion, currentVersion)
+	);
+	scaleArchivedByBaseline(stale, baseline, fields, fractional);
+	for (const entry of stale) entry.derivedVersion = currentVersion;
+}
+
+function scaleArchivedByBaseline<T extends { archived?: boolean }>(
+	entries: readonly T[],
+	baseline: DerivationUpgradeBaseline,
+	fields: readonly NumericKeys<T>[],
+	fractional: readonly NumericKeys<T>[]
+): void {
+	for (const field of fields) {
+		const sums = baseline[field as string];
+		// A field with no re-parsed baseline is left unscaled rather than guessed.
+		if (!sums || sums.oldSum <= 0) continue;
+		const ratio = sums.newSum / sums.oldSum;
+		for (const entry of entries) {
 			const value = entry[field] as number | undefined;
 			if (!entry.archived || typeof value !== 'number') continue;
 			const scaled = value * ratio;

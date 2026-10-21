@@ -82,23 +82,26 @@ describe('EditAgentModal', () => {
 	let onSave: ReturnType<typeof vi.fn>;
 
 	beforeEach(() => {
-		vi.mocked(requestProviderTranslation).mockResolvedValue({
-			success: true,
-			plan: {
-				id: 'plan',
-				status: 'ready',
-				tabs: [],
-				counts: { records: 0, artifacts: 0, bytes: 0 },
-				verification: 'unverified',
-				limitations: [
-					{
-						code: 'unverified-native-resume',
-						message: 'Native resume remains unverified',
-						severity: 'warning',
-					},
-				],
-			} as any,
-		});
+		// Clear the call log too, or "not called" assertions see earlier tests' plans.
+		vi.mocked(requestProviderTranslation)
+			.mockClear()
+			.mockResolvedValue({
+				success: true,
+				plan: {
+					id: 'plan',
+					status: 'ready',
+					tabs: [],
+					counts: { records: 0, artifacts: 0, bytes: 0 },
+					verification: 'unverified',
+					limitations: [
+						{
+							code: 'unverified-native-resume',
+							message: 'Native resume remains unverified',
+							severity: 'warning',
+						},
+					],
+				} as any,
+			});
 		theme = createTheme();
 		onClose = vi.fn();
 		onSave = vi.fn();
@@ -471,6 +474,16 @@ describe('EditAgentModal', () => {
 		);
 		expect(providerSelect).toHaveTextContent('Codex');
 
+		// A plain switch is the default: nothing is converted.
+		await waitFor(() => {
+			expect(
+				screen.getByText(
+					/Tabs, transcripts, drafts, queue and file previews are kept\. Each tab starts a new Codex conversation; switching back to Claude Code resumes/
+				)
+			).toBeInTheDocument();
+		});
+		expect(requestProviderTranslation).not.toHaveBeenCalled();
+		fireEvent.click(screen.getByLabelText('Convert memory and session history'));
 		await waitFor(() => {
 			expect(
 				screen.getByText(/Tabs, transcripts, drafts, queue and file previews are preserved/)
@@ -545,7 +558,7 @@ describe('EditAgentModal', () => {
 		).toBeInTheDocument();
 	});
 
-	it('clears the reading indicator and disables save if preflight rejects', async () => {
+	it('clears the reading indicator and saves plainly if preflight rejects', async () => {
 		vi.mocked(requestProviderTranslation).mockRejectedValueOnce(new Error('Cannot read history'));
 		render(
 			<EditAgentModal
@@ -559,10 +572,19 @@ describe('EditAgentModal', () => {
 		);
 		fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
 		fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
+		fireEvent.click(screen.getByLabelText('Convert memory and session history'));
 		expect(screen.getByRole('status')).toHaveTextContent('Reading memory and session history...');
 		expect(await screen.findByRole('alert')).toHaveTextContent('Cannot read history');
 		expect(screen.queryByText('Reading memory and session history...')).not.toBeInTheDocument();
-		expect(screen.getByText('Save Changes').closest('button')).toBeDisabled();
+		// A failed conversion never blocks saving: the notice says the save is a plain switch.
+		expect(
+			screen.getByText(
+				'The conversion cannot run, so saving switches providers without converting.'
+			)
+		).toBeInTheDocument();
+		fireEvent.click(screen.getByText('Save Changes'));
+		await waitFor(() => expect(onSave).toHaveBeenCalled());
+		expect(onSave.mock.calls[0].slice(23)).toEqual([]);
 	});
 
 	it('shows translation activity and locks the provider picker until save completes', async () => {
@@ -586,8 +608,8 @@ describe('EditAgentModal', () => {
 		const picker = screen.getByRole('button', { name: 'Agent Provider' });
 		fireEvent.click(picker);
 		fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
+		fireEvent.click(screen.getByLabelText('Convert memory and session history'));
 		await screen.findByText('Native resume remains unverified');
-		fireEvent.click(screen.getByLabelText('Accept the listed conversion limitations'));
 		fireEvent.click(screen.getByText('Save Changes'));
 		expect(screen.getByRole('status')).toHaveTextContent(
 			'Translating memory and session history...'
@@ -633,8 +655,8 @@ describe('EditAgentModal', () => {
 			);
 			fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
 			fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
+			fireEvent.click(screen.getByLabelText('Convert memory and session history'));
 			await screen.findByText('Review conversion');
-			fireEvent.click(screen.getByLabelText('Accept the listed conversion limitations'));
 			fireEvent.click(screen.getByText('Save Changes'));
 			expect(screen.getByRole('status')).toHaveTextContent(
 				'Waiting for the current turn to finish...'
@@ -664,7 +686,7 @@ describe('EditAgentModal', () => {
 		}
 	});
 
-	it('blocks an unverified conversion until its listed limitations are accepted', async () => {
+	it('shows conversion limitations as a notice and saves with them accepted', async () => {
 		render(
 			<EditAgentModal
 				isOpen={true}
@@ -677,10 +699,131 @@ describe('EditAgentModal', () => {
 		);
 		fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
 		fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
+		fireEvent.click(screen.getByLabelText('Convert memory and session history'));
 		expect(await screen.findByText('Native resume remains unverified')).toBeInTheDocument();
-		expect(screen.getByText('Save Changes').closest('button')).toBeDisabled();
-		fireEvent.click(screen.getByLabelText('Accept the listed conversion limitations'));
-		expect(screen.getByText('Save Changes').closest('button')).not.toBeDisabled();
+		expect(
+			screen.queryByLabelText('Accept the listed conversion limitations')
+		).not.toBeInTheDocument();
+		const save = screen.getByText('Save Changes').closest('button')!;
+		expect(save).not.toBeDisabled();
+		fireEvent.click(save);
+		await waitFor(() => expect(onSave).toHaveBeenCalled());
+		const args = onSave.mock.calls[0];
+		// acceptTranslationLimitations, resources, plan id, convert flag
+		expect(args.slice(23)).toEqual([true, [], 'plan', true]);
+	});
+
+	it('switches provider without converting by default', async () => {
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={createSession()}
+				existingSessions={[]}
+			/>
+		);
+		fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
+		fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
+		expect(screen.getByLabelText('Convert memory and session history')).not.toBeChecked();
+		const save = screen.getByText('Save Changes').closest('button')!;
+		await waitFor(() => expect(save).not.toBeDisabled());
+		fireEvent.click(save);
+		await waitFor(() => expect(onSave).toHaveBeenCalled());
+		expect(requestProviderTranslation).not.toHaveBeenCalled();
+		const args = onSave.mock.calls[0];
+		expect(args[2]).toBe('codex');
+		// No conversion arguments: the save does a plain switch.
+		expect(args.slice(23)).toEqual([]);
+	});
+
+	it('offers no conversion for a provider pair without an adapter, and still saves', async () => {
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={createSession()}
+				existingSessions={[]}
+			/>
+		);
+		fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
+		fireEvent.click(screen.getByRole('option', { name: 'OpenCode' }));
+		expect(screen.queryByLabelText('Convert memory and session history')).not.toBeInTheDocument();
+		const save = screen.getByText('Save Changes').closest('button')!;
+		await waitFor(() => expect(save).not.toBeDisabled());
+		fireEvent.click(save);
+		await waitFor(() => expect(onSave).toHaveBeenCalled());
+		expect(onSave.mock.calls[0][2]).toBe('opencode');
+		expect(requestProviderTranslation).not.toHaveBeenCalled();
+	});
+
+	it('saves a plain switch when an opted-in conversion is blocked', async () => {
+		vi.mocked(requestProviderTranslation).mockResolvedValue({
+			success: true,
+			plan: {
+				id: 'plan',
+				status: 'blocked',
+				tabs: [],
+				counts: { records: 0, artifacts: 0, bytes: 0 },
+				limitations: [
+					{ code: 'unsupported-version', message: 'Codex is too old', severity: 'block' },
+				],
+			} as any,
+		});
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={createSession()}
+				existingSessions={[]}
+			/>
+		);
+		fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
+		fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
+		fireEvent.click(screen.getByLabelText('Convert memory and session history'));
+		expect(await screen.findByText('Codex is too old')).toBeInTheDocument();
+		const save = screen.getByText('Save Changes').closest('button')!;
+		expect(save).not.toBeDisabled();
+		expect(screen.getByText(/The conversion cannot run/)).toBeInTheDocument();
+		fireEvent.click(save);
+		await waitFor(() => expect(onSave).toHaveBeenCalled());
+		const args = onSave.mock.calls[0];
+		expect(args[2]).toBe('codex');
+		expect(args.slice(23)).toEqual([]);
+		await waitFor(() => expect(onClose).toHaveBeenCalled());
+	});
+
+	it('seeds the form with what the incoming provider parked, so a switch back keeps it', async () => {
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={createSession({
+					providerOverrides: {
+						codex: { customPath: '/opt/codex', customArgs: '--search' },
+					},
+				})}
+				existingSessions={[]}
+			/>
+		);
+		fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
+		fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
+		const save = screen.getByText('Save Changes').closest('button')!;
+		await waitFor(() => expect(save).not.toBeDisabled());
+		fireEvent.click(save);
+		await waitFor(() => expect(onSave).toHaveBeenCalled());
+		const args = onSave.mock.calls[0];
+		// Codex's parked binary and arguments, not Claude's live ones or blanks.
+		expect(args[5]).toBe('/opt/codex');
+		expect(args[6]).toBe('--search');
+		expect(args[7]).toBeUndefined();
 	});
 
 	// Effort is per-session (like model), but the panel used to render it straight

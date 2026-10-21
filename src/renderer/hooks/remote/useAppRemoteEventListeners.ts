@@ -1,4 +1,7 @@
-import { requestProviderTranslation } from '../../services/providerTranslation';
+import {
+	requestProviderTranslation,
+	switchProviderWithoutConversion,
+} from '../../services/providerTranslation';
 /**
  * useAppRemoteEventListeners.ts
  *
@@ -1745,6 +1748,26 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			typeof patchObj.toolType === 'string' ? (patchObj.toolType as ToolType) : undefined;
 		const migrationAction =
 			typeof patchObj.migrationAction === 'string' ? patchObj.migrationAction : undefined;
+		if (migrationAction === 'switch') {
+			// Edit Agent's default: change the provider without converting memory
+			// or session history. Flushed before the ack so a follow-up read sees it.
+			try {
+				if (!requestedToolType) throw new Error('Switching provider requires a destination');
+				const notices = switchProviderWithoutConversion(sessionId, requestedToolType);
+				const switched = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+				if (switched) await window.maestro.sessions.setMany([switched as any], []);
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: true,
+					notices,
+				});
+			} catch (error) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: error instanceof Error ? error.message : String(error),
+				});
+			}
+			return;
+		}
 		if (requestedToolType || migrationAction) {
 			const action = migrationAction ?? 'apply';
 			if (!['plan', 'apply', 'status', 'recover', 'rollback'].includes(action)) {

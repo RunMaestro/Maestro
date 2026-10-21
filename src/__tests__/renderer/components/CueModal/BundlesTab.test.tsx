@@ -1,6 +1,6 @@
 /**
- * The Cue modal's Bundles tab: export a pipeline or an agent, and import a
- * bundle through inspect, folder mapping, the dry run and the import.
+ * The Cue modal's Bundles tab: export a pipeline, and import a bundle
+ * through inspect, folder mapping, the dry run and the import.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -115,22 +115,21 @@ describe('export', () => {
 		expect(screen.getByText('GITHUB_TOKEN')).toBeInTheDocument();
 	});
 
-	it('exports an agent without the assets switched off, and lists no terminals', async () => {
-		vi.mocked(window.maestro.dialog.saveFile).mockResolvedValue('/tmp/reviewer.zip');
+	it('exports a pipeline without the assets switched off, and leaves agents to the Left Bar', async () => {
+		vi.mocked(window.maestro.dialog.saveFile).mockResolvedValue('/tmp/nightly.zip');
 		renderTab();
 
-		fireEvent.click(screen.getByRole('radio', { name: 'Agent' }));
-		const select = screen.getByRole('combobox', { name: 'Agent to export' });
-		expect([...(select as HTMLSelectElement).options].map((o) => o.textContent)).toEqual([
-			'Reviewer',
-		]);
+		expect(screen.queryByRole('radio', { name: 'Agent' })).toBeNull();
+		expect(
+			screen.getByText('To export one agent, right-click it in the Left Bar.')
+		).toBeInTheDocument();
 		fireEvent.click(screen.getByRole('checkbox', { name: /Memory/ }));
 		fireEvent.click(screen.getByRole('button', { name: /Export…/ }));
 
 		await waitFor(() =>
 			expect(api().export).toHaveBeenCalledWith({
-				agentId: 'a1',
-				outputPath: '/tmp/reviewer.zip',
+				pipeline: 'Nightly',
+				outputPath: '/tmp/nightly.zip',
 				claudeAssets: { skills: true, mcp: true, memory: false },
 			})
 		);

@@ -120,6 +120,9 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Deferred main-process store persistence:** `deferStoreWrites()` in `src/main/stores/deferred-writes.ts`, `flushPendingSessionWrites()` in `src/main/stores/instances.ts`
 - **Rewriting a large `{ key: [...] }` JSON store file:** `serializeWithMemoizedArray(data, memoKey)`, `encodeWithMemoizedArray(data, memoKey)` in `src/shared/memoizedJsonSerialize.ts`
 - **Recovering from a store file that is not JSON:** `createStoreDeserializer()`, `corruptStorePath()` in `src/main/stores/corrupt-store-recovery.ts` (never `clearInvalidConfig`)
+- **Parsing a session transcript in the main process:** `runTranscriptParse(task)` in `src/main/transcript-parse/transcript-parse-pool.ts`, task bodies in `transcript-parse-tasks.ts`
+- **A cache derivation upgrade that survives being killed:** `isDerivationStale()`, `accumulateUpgradeBaseline()`, `finishDerivationUpgrade()` in `src/main/utils/statsCache.ts`; `createCacheCheckpointer()` in `src/main/utils/cache-checkpointer.ts`
+- **Showing the progress of a long scan:** `withStatsIndexing()` in `src/main/stats/stats-indexing.ts`, `summarizeStatsIndexing()` in `src/shared/statsIndexing.ts`, drawn by `<StatsIndexingHost>`
 - **Sealing a file with the key the OS holds for the app:** `safeStorageSeal(safeStorage)`, `obscuringSeal()`, `SealProvider`, `SafeStorageLike` in `src/main/utils/safe-storage-seal.ts`
 - **Proving a sealed file is the newest one (rollback and deletion):** `createKeyringAnchor(service, account)`, `AnchorStore`, `keyringAnchor()`, `noAnchor()` in `src/main/utils/keyring-anchor.ts`
 - **Writing a Claude session's origin record:** `setClaudeSessionOrigin()`, `mergeClaudeSessionOrigin()` in `src/main/storage/claude-session-origins.ts`
@@ -154,6 +157,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **A path handed to a REMOTE shell (`cd`, `ls`, `stat` over SSH):** `shellEscapeRemotePath()` in `src/main/utils/shell-escape.ts` (`shellEscape()` stops `~` from expanding)
 - **SSH connection options (`ssh -o`):** `resolveSshOptions()`, `buildSshOptionArgs()`, `validateSshOption()` in `src/shared/sshOptions.ts`
 - **Building or delivering the Maestro system prompt:** `assembleMaestroSystemPrompt()` in `src/shared/maestroSystemPrompt.ts`; `applySystemPromptDelivery()` in `src/main/utils/system-prompt-delivery.ts`; `buildMaestroSystemPromptForSession()` in `src/main/utils/maestro-system-prompt.ts`
+- **Expanding `{{INCLUDE:name}}` in a prompt:** `resolvePromptIncludes()`, `findPromptIncludeNames()` in `src/shared/promptIncludes.ts`
 - **The system-prompt envelope for a provider with no `--append-system-prompt`:** `embedSystemPromptInPrompt()`, `stripEmbeddedSystemPrompt()`, `hasEmbeddedSystemPrompt()` in `src/shared/embeddedSystemPrompt.ts` (a wire format; never template it inline)
 - **Who asked for this turn (interactive vs automation):** `QUERY_SOURCE_ENV_VAR`, `QuerySource`, `DEFAULT_QUERY_SOURCE` in `src/shared/querySource.ts` (`MAESTRO_QUERY_SOURCE`)
 - **Prefixing an agent's New Session Message:** `prependNewSessionMessageOnFirstTurn()`, `prependNewSessionMessage()` in `src/shared/newSessionMessage.ts`
@@ -225,6 +229,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Naming a tab from the user's message:** `requestTabAutoName()`, `collectNamingPrompt()`, `requestWizardTabAutoName()` in `src/renderer/services/tabAutoNaming.ts`
 - **Closing a tab while the unread filter is on:** `closeTab()`'s third argument is an OVERRIDE; omit it and `src/renderer/utils/tabHelpers/index.ts` reads `uiStore.showUnreadOnly`
 - **Ending a turn with no process exit:** `settleTabThinkingState(session, tabId)` in `src/renderer/utils/tabHelpers/index.ts`
+- **Never leaving an agent with an empty tab strip:** `ensureAgentHasVisibleTab()`, `agentHasVisibleTab()`, `createBlankAiTab()` in `src/renderer/utils/unifiedTabOrderUtils.ts`
 - **Handing the agent back when a shell command or a CLI playbook ends:** `settleAgentStateFromTabs(session)` in `src/renderer/utils/tabHelpers` (never gate on `aiPid`, which per-tab agents leave at 0 or -1)
 - **Agent state from tab states another client reported:** `syncAgentStateToTabs(session)` in `src/renderer/utils/tabHelpers` (the web-desktop inventory sync)
 - **A tab's own process produced output:** `markTabBusyFromOutput(session, tabId)` in `src/renderer/utils/tabHelpers`, via `noteLiveTabOutput()` in `src/renderer/hooks/agent/internal/helpers/liveTabOutput.ts` (check the tab first; write only when it is not already busy)
@@ -241,6 +246,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 
 - **Command mode (`!`) is STATE, not a text prefix, and it is a LADDER:** the mode is STATE, never a leading `!`: `composerInputStore.aiCommandMode` (`'off' | 'shell' | 'ai'`), read through `isShellCommandMode()`, `isAiCommandMode()`, `normalizeComposerCommandMode()` in `src/renderer/utils/shellCommandInput.ts`
 - **Run a shell command from the chat:** `dispatchShellCommand()`, `runShellCommand()`, `cancelShellCommand()`, `resolveCommandCwd()` in `src/renderer/services/shellCommand.ts`
+- **Running a shell code fence from an agent's reply:** `requestCodeFenceCommand()` / `CODE_FENCE_COMMAND_EVENT` in `src/renderer/services/codeFenceCommand.ts`, `isRunnableShellLanguage()` / `commandFromShellFence()` in `src/renderer/utils/shellCommandInput.ts`, drawn by `<CodeRunButton>`
 - **Ask the model for a shell command (AI command mode):** `requestAiCommand()`, `acceptAiCommand()`, `dismissAiCommand()` in `src/renderer/services/aiCommand.ts`; prompt in `src/prompts/ai-command.md`
 - **Shell tab completion:** `useTabCompletion()` in `src/renderer/hooks/input/useTabCompletion.ts` (terminal composer and command mode)
 - **Revealing output the user asked for, past a paused auto-scroll:** `requestTranscriptScrollToBottom(sessionId, tabId)` in `src/renderer/services/transcriptScroll.ts`
@@ -298,6 +304,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Whether two subscriptions are the same visual trigger:** `triggerGroupKey(sub)` in `src/shared/cue/trigger-group-key.ts`
 - **How big a pipeline is on the canvas:** `pipelineCardBounds()`, `nodeFootprintWidth()`, `estimateNodeWidth()` in `src/renderer/components/CuePipelineEditor/utils/nodeFootprint.ts`
 - **Which pipelines belong to an agent:** `pipelinesForSession()`, `pipelineInvolvesSession()`, `pipelineNamesDeclaredBySession()` in `src/renderer/components/CuePipelineEditor/utils/pipelineMembership.ts`
+- **Where a pipeline is drawn (its one home agent):** `resolvePipelineHomes()` in `src/renderer/components/CuePipelineEditor/utils/pipelineMembership.ts`; cluster box geometry `agentClusterBounds()` in `nodeFootprint.ts`
 - **What a group chat does with a message it cannot send yet:** pure rules in `src/shared/groupChatQueueModel.ts`, driven by `src/main/group-chat/group-chat-queue.ts` (the queue is owned by MAIN; the renderer holds a mirror)
 - **How much work happened in a group chat:** `computeGroupChatActivity(entries)` in `src/shared/groupChatActivity.ts` (never the first-to-last message span)
 - **Bucketing Director's Notes bullets:** `bucketNarrativeItems()`, `shouldRenderBuckets()`, `buildNarrativeGroupLookup()` in `src/shared/directorNotesGrouping.ts`
@@ -394,7 +401,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 
 #### Markdown, text, and fonts
 
-- **Render markdown:** `<Markdown preset="chat | document | wizard-bubble | release-notes">` from `src/renderer/components/Markdown/`; document map `createMarkdownComponents()` in `src/renderer/utils/markdownConfig.ts`
+- **Render markdown:** `<Markdown preset="chat | document | release-notes">` from `src/renderer/components/Markdown/`; document map `createMarkdownComponents()` in `src/renderer/utils/markdownConfig.ts`
 - **Markdown to plain text (list rows, previews):** `stripMarkdown()`, `flattenMarkdownTables()` in `src/shared/markdown.ts`
 - **Clickable task checkboxes in rendered markdown:** `toggleTaskCheckboxAtLine()` in `src/renderer/utils/markdownTasks.ts`, `rehypeSourceLine` in `src/renderer/components/Markdown/rehypeSourceLine.ts`, `onTaskToggle` on `createMarkdownComponents()`
 - **A pane that reads and edits a markdown document:** the File Preview stack, never a bare `<textarea>`: `<Markdown preset="document">` to read, `<MarkdownEditor>` from `src/renderer/components/FilePreview/markdownEditor` to write (`MemoryViewer` is the reference)

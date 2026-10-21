@@ -111,6 +111,7 @@ export interface AppUtilityModalsProps {
 	onCloseOtherTabs?: (pivotTabId?: string) => void;
 	onCloseTabsLeft?: (pivotTabId?: string) => void;
 	onCloseTabsRight?: (pivotTabId?: string) => void;
+	onCloseTabGroup?: (groupId: string) => void;
 	setPlaygroundOpen?: (open: boolean) => void;
 	onRefreshGitFileState: () => Promise<void>;
 	onDebugReleaseQueuedItem: () => void;
@@ -383,6 +384,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	onCloseOtherTabs,
 	onCloseTabsLeft,
 	onCloseTabsRight,
+	onCloseTabGroup,
 	setPlaygroundOpen,
 	onRefreshGitFileState,
 	onDebugReleaseQueuedItem,
@@ -633,6 +635,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					onCloseOtherTabs={onCloseOtherTabs}
 					onCloseTabsLeft={onCloseTabsLeft}
 					onCloseTabsRight={onCloseTabsRight}
+					onCloseTabGroup={onCloseTabGroup}
 					setPlaygroundOpen={setPlaygroundOpen}
 					onRefreshGitFileState={onRefreshGitFileState}
 					onDebugReleaseQueuedItem={onDebugReleaseQueuedItem}

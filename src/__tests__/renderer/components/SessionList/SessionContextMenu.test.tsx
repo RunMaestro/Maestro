@@ -105,6 +105,19 @@ describe('SessionContextMenu', () => {
 		mockGetFileCount.mockReturnValue(5);
 	});
 
+	it('offers Export Agent only when a handler is given, and fires it', () => {
+		const onExport = vi.fn();
+		const props = renderMenu({ onExport });
+		fireEvent.click(screen.getByText('Export Agent...'));
+		expect(onExport).toHaveBeenCalledTimes(1);
+		expect(props.onDismiss).toHaveBeenCalled();
+	});
+
+	it('hides Export Agent without a handler', () => {
+		renderMenu();
+		expect(screen.queryByText('Export Agent...')).not.toBeInTheDocument();
+	});
+
 	it('renders the git actions for a git agent', () => {
 		renderMenu();
 		expect(screen.getByTestId('session-context-git-log')).toBeInTheDocument();

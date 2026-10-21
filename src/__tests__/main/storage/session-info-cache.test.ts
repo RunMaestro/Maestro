@@ -29,6 +29,10 @@ import {
 	SESSION_INFO_CACHE_VERSION,
 } from '../../../main/storage/session-info-cache';
 import type { AgentSessionInfo } from '../../../main/agents/session-storage';
+import {
+	getStatsIndexingState,
+	resetStatsIndexingForTest,
+} from '../../../main/stats/stats-indexing';
 
 const SCOPE = '/projects/-Users-me-thing';
 
@@ -126,6 +130,65 @@ describe('SessionInfoCache', () => {
 		const parse = vi.fn(async () => info('a'));
 		await restarted.resolve(SCOPE, refs, parse);
 		expect(parse).toHaveBeenCalledTimes(1);
+	});
+
+	it('reports its misses as indexing progress, and ends the job when done', async () => {
+		resetStatsIndexingForTest();
+		const refs = [
+			{ key: '/a.jsonl', fingerprint: fileFingerprint(100, 1000), sizeBytes: 100 },
+			{ key: '/b.jsonl', fingerprint: fileFingerprint(300, 2000), sizeBytes: 300 },
+		];
+		const seen: unknown[] = [];
+		await cache.resolve(SCOPE, refs, async (ref) => {
+			seen.push(getStatsIndexingState().jobs[0]);
+			return info(path.basename(ref.key, '.jsonl'));
+		});
+
+		expect(seen[0]).toMatchObject({
+			id: 'session-index',
+			reason: 'index',
+			totalFiles: 2,
+			totalBytes: 400,
+		});
+		expect(getStatsIndexingState().jobs).toEqual([]);
+	});
+
+	it('labels a re-parse after a version bump as an upgrade', async () => {
+		const refs = [{ key: '/a.jsonl', fingerprint: fileFingerprint(100, 1000) }];
+		await cache.resolve(SCOPE, refs, async () => info('a'));
+		const dir = path.join(baseDir, 'session-info', 'claude-code');
+		const [file] = await fsp.readdir(dir);
+		const stored = JSON.parse(await fsp.readFile(path.join(dir, file), 'utf-8'));
+		stored.version = SESSION_INFO_CACHE_VERSION - 1;
+		await fsp.writeFile(path.join(dir, file), JSON.stringify(stored), 'utf-8');
+
+		resetStatsIndexingForTest();
+		const restarted = new SessionInfoCache('claude-code', baseDir);
+		let reason: string | undefined;
+		await restarted.resolve(SCOPE, refs, async () => {
+			reason = getStatsIndexingState().jobs[0]?.reason;
+			return info('a');
+		});
+		expect(reason).toBe('upgrade');
+	});
+
+	it('ends its progress job when a parse throws', async () => {
+		const refs = [
+			{ key: '/a.jsonl', fingerprint: fileFingerprint(100, 1000) },
+			{ key: '/b.jsonl', fingerprint: fileFingerprint(200, 2000) },
+		];
+		await expect(
+			cache.resolve(
+				SCOPE,
+				refs,
+				async (ref) => {
+					if (ref.key === '/b.jsonl') throw new Error('boom');
+					return info('a');
+				},
+				{ concurrency: 1 }
+			)
+		).rejects.toThrow('boom');
+		expect(getStatsIndexingState().jobs).toEqual([]);
 	});
 
 	it('prunes entries for files that disappeared, but only when asked', async () => {

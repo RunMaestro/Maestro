@@ -26,6 +26,9 @@ import { generateId } from '../ids';
 import { getAutoRunFolderPath } from '../existingDocsDetector';
 import { createTerminalTab, nextTerminalCoworkingId } from '../terminalTabHelpers';
 import {
+	agentHasVisibleTab,
+	createBlankAiTab,
+	ensureAgentHasVisibleTab,
 	findActiveUnifiedTabIndex,
 	getNavigableUnifiedTabOrder,
 	hasUnreadVisibleTab,
@@ -60,7 +63,15 @@ import {
 // Both live in unifiedTabOrderUtils so terminalTabHelpers can reach them without a
 // circular import; re-exported here because tabHelpers is where callers look for
 // tab visibility rules.
-export { getNavigableUnifiedTabOrder, hasUnreadVisibleTab, isAiTabHidden, visibleAiTabs };
+export {
+	agentHasVisibleTab,
+	createBlankAiTab,
+	ensureAgentHasVisibleTab,
+	getNavigableUnifiedTabOrder,
+	hasUnreadVisibleTab,
+	isAiTabHidden,
+	visibleAiTabs,
+};
 export {
 	aiTabFocusFields,
 	fileTabFocusFields,
@@ -1435,17 +1446,7 @@ export function closeTab(
 	let createdFreshTab = false;
 	let freshTabId = '';
 	if (visibleUpdatedTabs.length === 0 && otherTabCount === 0) {
-		const freshTab: AITab = {
-			id: generateId(),
-			agentSessionId: null,
-			name: null,
-			starred: false,
-			logs: [],
-			inputValue: '',
-			stagedImages: [],
-			createdAt: Date.now(),
-			state: 'idle',
-		};
+		const freshTab = createBlankAiTab();
 		// Hidden consult tabs survive alongside the replacement - they are the
 		// user's data, and revealing one later is still their call.
 		updatedTabs = [...updatedTabs, freshTab];
@@ -1812,6 +1813,8 @@ export interface CloseFileTabResult {
 /**
  * Close a file preview tab and add it to the unified closed tab history.
  * When the closed tab was active, selects the next tab in unifiedTabOrder.
+ * Closing the agent's last visible tab lands on a fresh AI chat
+ * (see ensureAgentHasVisibleTab).
  *
  * @param session - The Maestro session containing the file tab
  * @param tabId - The ID of the file tab to close
@@ -1931,7 +1934,8 @@ export function closeFileTab(session: Session, tabId: string): CloseFileTabResul
 				newInputMode = 'ai';
 			}
 		} else {
-			// No tabs left - shouldn't happen as AI tabs should always exist
+			// Nothing left in the strip: ensureAgentHasVisibleTab below mints the
+			// blank AI chat and focuses it.
 			newActiveFileTabId = null;
 			newActiveBrowserTabId = null;
 			newActiveTerminalTabId = null;
@@ -1947,7 +1951,7 @@ export function closeFileTab(session: Session, tabId: string): CloseFileTabResul
 
 	return {
 		closedTabEntry,
-		session: {
+		session: ensureAgentHasVisibleTab({
 			...session,
 			filePreviewTabs: updatedFilePreviewTabs,
 			unifiedTabOrder: updatedUnifiedTabOrder,
@@ -1957,7 +1961,7 @@ export function closeFileTab(session: Session, tabId: string): CloseFileTabResul
 			activeTabId: newActiveTabId,
 			inputMode: newInputMode,
 			unifiedClosedTabHistory: updatedUnifiedHistory,
-		},
+		}),
 	};
 }
 
@@ -2038,7 +2042,7 @@ export function closeBrowserTab(session: Session, tabId: string): CloseBrowserTa
 
 	return {
 		closedTabEntry,
-		session: {
+		session: ensureAgentHasVisibleTab({
 			...session,
 			browserTabs: updatedBrowserTabs,
 			unifiedTabOrder: updatedUnifiedTabOrder,
@@ -2048,7 +2052,7 @@ export function closeBrowserTab(session: Session, tabId: string): CloseBrowserTa
 			activeTerminalTabId: nextActiveTerminalTabId,
 			inputMode: nextInputMode,
 			unifiedClosedTabHistory: updatedUnifiedHistory,
-		},
+		}),
 	};
 }
 

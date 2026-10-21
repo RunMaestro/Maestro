@@ -83,6 +83,56 @@ export function translationSessionTabs(session: TranslatableSession): Translatio
 	return [...new Map(tabs.filter(Boolean).map((t) => [t.id, t])).values()];
 }
 
+/** The places an agent keeps AI tabs: open, orphaned mid-turn, closed, and snoozed. */
+export interface AiTabContainers {
+	aiTabs?: any[];
+	orphanedThinkingTabs?: any[];
+	closedTabHistory?: Array<{ tab?: any }>;
+	unifiedClosedTabHistory?: Array<{ type: string; tab?: any }>;
+	snoozedTabs?: Array<{ type: string; tab?: any; members?: any[] }>;
+}
+
+/**
+ * Map every AI tab an agent holds, wherever it lives. Returns only the
+ * containers the agent has, so spreading the result over the agent replaces
+ * them and leaves every other field alone. An entry without a tab is kept as is.
+ */
+export function mapAgentAiTabs<S extends AiTabContainers>(
+	session: S,
+	map: (tab: any) => any
+): Partial<Pick<S, keyof AiTabContainers>> {
+	return {
+		...(session.aiTabs && { aiTabs: session.aiTabs.map(map) }),
+		...(session.orphanedThinkingTabs && {
+			orphanedThinkingTabs: session.orphanedThinkingTabs.map(map),
+		}),
+		...(session.closedTabHistory && {
+			closedTabHistory: session.closedTabHistory.map((c) =>
+				c.tab ? { ...c, tab: map(c.tab) } : c
+			),
+		}),
+		...(session.unifiedClosedTabHistory && {
+			unifiedClosedTabHistory: session.unifiedClosedTabHistory.map((c) =>
+				c.type === 'ai' && c.tab ? { ...c, tab: map(c.tab) } : c
+			),
+		}),
+		...(session.snoozedTabs && {
+			snoozedTabs: session.snoozedTabs.map((c) =>
+				c.type === 'ai' && c.tab
+					? { ...c, tab: map(c.tab) }
+					: c.type === 'group'
+						? {
+								...c,
+								members: c.members?.map((t) =>
+									t.type === 'ai' && t.tab ? { ...t, tab: map(t.tab) } : t
+								),
+							}
+						: c
+			),
+		}),
+	} as Partial<Pick<S, keyof AiTabContainers>>;
+}
+
 export function commitTranslationSession<T extends TranslatableSession>(
 	session: T,
 	destination: ToolType,
@@ -145,32 +195,7 @@ export function commitTranslationSession<T extends TranslatableSession>(
 				session.providerTranslationQueuedOrigins?.[item.id] ?? sourceProvider,
 			])
 		),
-		aiTabs: session.aiTabs.map(translate),
-		...(session.orphanedThinkingTabs && {
-			orphanedThinkingTabs: session.orphanedThinkingTabs.map(translate),
-		}),
-		...(session.closedTabHistory && {
-			closedTabHistory: session.closedTabHistory.map((c) => ({ ...c, tab: translate(c.tab) })),
-		}),
-		...(session.unifiedClosedTabHistory && {
-			unifiedClosedTabHistory: session.unifiedClosedTabHistory.map((c) =>
-				c.type === 'ai' ? { ...c, tab: translate(c.tab) } : c
-			),
-		}),
-		...(session.snoozedTabs && {
-			snoozedTabs: session.snoozedTabs.map((c) =>
-				c.type === 'ai'
-					? { ...c, tab: translate(c.tab) }
-					: c.type === 'group'
-						? {
-								...c,
-								members: c.members?.map((t) =>
-									t.type === 'ai' ? { ...t, tab: translate(t.tab) } : t
-								),
-							}
-						: c
-			),
-		}),
+		...mapAgentAiTabs(session, translate),
 		providerMigration: { operationId, destination, state: 'committed', verification: 'unverified' },
 		providerTranslationKnowledgeDirectory: knowledgeDirectory,
 		providerTranslationHistoryMappings: [...historyMappings.values()],

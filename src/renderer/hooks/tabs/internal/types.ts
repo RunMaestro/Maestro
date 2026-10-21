@@ -104,6 +104,8 @@ export interface UnifiedTabHandlersReturn {
 	handleCloseOtherTabs: (pivotTabId?: string) => void;
 	handleCloseTabsLeft: (pivotTabId?: string) => void;
 	handleCloseTabsRight: (pivotTabId?: string) => void;
+	/** Close every tab in a tiled group (confirmed by the caller). */
+	handleCloseTabGroup: (groupId: string) => void;
 	handleCloseCurrentTab: () => CloseCurrentTabResult;
 }
 

@@ -138,6 +138,11 @@ export interface TabBarProps {
 	 * chip gates this behind a confirmation dialog before invoking the handler.
 	 */
 	onGroupBreakApart?: (groupId: string) => void;
+	/**
+	 * Close every tab in a tab group. The chip gates this behind a confirmation
+	 * dialog (Enter confirms) before invoking the handler.
+	 */
+	onGroupClose?: (groupId: string) => void;
 
 	// === Accessibility ===
 	/** Whether colorblind-friendly colors should be used for extension badges */

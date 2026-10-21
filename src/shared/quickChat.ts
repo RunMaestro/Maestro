@@ -141,6 +141,11 @@ export interface QuickChatRoute {
 	tabOpen: boolean;
 	/** When the running reply started (ms epoch), for the elapsed counter. */
 	since: number | null;
+	/**
+	 * On a queued message: whether it can be steered into the reply already
+	 * running in its tab (see getSteerEligibility), rather than wait for it.
+	 */
+	canSteer?: boolean;
 }
 
 /** One line saying where a message went, for `maestro-cli quick-chat status`. */
@@ -151,7 +156,7 @@ export function describeQuickChatRoute(route: QuickChatRoute): string {
 	const tab = `${how} "${route.tabName ?? route.tabId}"`;
 	switch (route.status) {
 		case 'queued':
-			return `queued for ${tab}`;
+			return `queued for ${tab}${route.canSteer ? ', can steer' : ''}`;
 		case 'running':
 			return `running in ${tab}`;
 		case 'cancelled':
@@ -291,6 +296,13 @@ export type QuickChatCommand =
 	 * latest queued message.
 	 */
 	| { type: 'moveToNewTab'; messageId?: string }
+	/**
+	 * Hand a QUEUED message to the reply already running in its tab, so the
+	 * agent can change course now instead of answering it afterwards. Same steer
+	 * as the queue card's Steer button. `messageId` defaults to the latest
+	 * steerable message.
+	 */
+	| { type: 'steer'; messageId?: string }
 	/**
 	 * Bring back a chat from the recent chats list: its agent, its tab (reopened
 	 * when it was closed), and its thread. The chat in progress ends as `new` ends it.

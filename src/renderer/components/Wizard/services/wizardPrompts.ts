@@ -370,10 +370,11 @@ function createFallbackResponse(rawText: string): ParsedResponse {
 		ready = false;
 	}
 
-	// Use the raw text as the message, cleaning up any JSON artifacts
+	// Use the raw text as the message, cleaning up any JSON artifacts. Only a
+	// fence wrapping the WHOLE reply is an artifact: fences inside it are
+	// content (a ```mermaid mockup, a code sample) and must survive to render.
 	let message = rawText
-		.replace(/```(?:json)?/g, '')
-		.replace(/```/g, '')
+		.replace(/^```(?:json)?\s*([\s\S]*?)\s*```$/, '$1')
 		.replace(/^\s*\{[\s\S]*?\}\s*$/g, '') // Remove complete JSON blocks
 		.trim();
 

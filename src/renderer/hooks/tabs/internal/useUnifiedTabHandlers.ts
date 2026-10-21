@@ -18,10 +18,12 @@ import { getTerminalSessionId } from '../../../utils/terminalTabHelpers';
 import type { CloseCurrentTabResult, UnifiedTabHandlersReturn } from './types';
 import {
 	applyUnifiedTabClosures,
+	closeTabGroup,
 	excludePreservedRefs,
 	getRefsExceptActive,
 	getRefsLeftOfActive,
 	getRefsRightOfActive,
+	getTabGroupMemberRefs,
 	getTerminalTabIds,
 	getWizardTabIds,
 } from './unifiedCloseHelpers';
@@ -59,7 +61,11 @@ export function useUnifiedTabHandlers({
 	const closeRefs = useCallback(
 		(
 			getRefs: (session: Session) => ReturnType<typeof getRefsExceptActive>,
-			wizardWarningLabel: 'close-others' | 'close-left' | 'close-right'
+			wizardWarningLabel: 'close-others' | 'close-left' | 'close-right' | 'close-group',
+			applyClosures: (
+				session: Session,
+				refs: ReturnType<typeof getRefsExceptActive>
+			) => Session = applyUnifiedTabClosures
 		) => {
 			const { sessions, setSessions, activeSessionId } = useSessionStore.getState();
 			const session = sessions.find((s) => s.id === activeSessionId);
@@ -84,7 +90,7 @@ export function useUnifiedTabHandlers({
 			setSessions((prev: Session[]) =>
 				prev.map((s) => {
 					if (s.id !== activeSessionId) return s;
-					return applyUnifiedTabClosures(s, refsToClose);
+					return applyClosures(s, refsToClose);
 				})
 			);
 
@@ -146,6 +152,20 @@ export function useUnifiedTabHandlers({
 			closeRefs(
 				(session) => excludePreservedRefs(session, getRefsRightOfActive(session, pivotTabId)),
 				'close-right'
+			);
+		},
+		[closeRefs]
+	);
+
+	// Close every tab in a tiled group (the group chip's "Close group", confirmed
+	// upstream). Unlike the bulk closes above nothing is preserved: the user named
+	// this group and confirmed, so drafts in its panes go with it.
+	const handleCloseTabGroup = useCallback(
+		(groupId: string) => {
+			closeRefs(
+				(session) => getTabGroupMemberRefs(session, groupId),
+				'close-group',
+				(session, refs) => closeTabGroup(session, groupId, refs)
 			);
 		},
 		[closeRefs]
@@ -250,6 +270,7 @@ export function useUnifiedTabHandlers({
 		handleCloseOtherTabs,
 		handleCloseTabsLeft,
 		handleCloseTabsRight,
+		handleCloseTabGroup,
 		handleCloseCurrentTab,
 	};
 }

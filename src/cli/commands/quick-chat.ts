@@ -58,6 +58,7 @@ export type QuickChatAction =
 	| 'reveal'
 	| 'stop'
 	| 'new-tab'
+	| 'steer'
 	| 'history'
 	| 'recall'
 	| 'bounds';
@@ -186,7 +187,7 @@ function printStatus(status: QuickChatStatus): void {
 			error: 'Error',
 		}[message.role];
 		// A message the user sent names where it went, and its id is what
-		// `reveal <id>` and `new-tab <id>` take.
+		// `reveal <id>`, `new-tab <id>` and `steer <id>` take.
 		const route = message.route
 			? ` [${message.id}] (${describeQuickChatRoute(message.route)})`
 			: '';
@@ -234,7 +235,7 @@ export async function quickChat(
 		}
 		message[action === 'keep' ? 'persistent' : 'pinned'] = on;
 	}
-	if ((action === 'reveal' || action === 'new-tab') && args.messageId) {
+	if ((action === 'reveal' || action === 'new-tab' || action === 'steer') && args.messageId) {
 		message.messageId = args.messageId;
 	}
 	if (action === 'recall') {
@@ -322,6 +323,7 @@ export async function quickChat(
 				action === 'pin' ||
 				action === 'send' ||
 				action === 'new-tab' ||
+				action === 'steer' ||
 				action === 'recall') &&
 			result.status
 		) {

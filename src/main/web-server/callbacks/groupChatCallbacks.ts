@@ -173,6 +173,45 @@ export function registerGroupChatCallbacks(
 		});
 	});
 
+	// Archive or restore a group chat - uses IPC request-response pattern, so
+	// the renderer's store (the Left Bar list) changes with the file on disk.
+	server.setArchiveGroupChatCallback(async (chatId: string, archived: boolean) => {
+		const mainWindow = getMainWindow();
+		if (!mainWindow) {
+			logger.warn('mainWindow is null for archiveGroupChat', 'WebServer');
+			return false;
+		}
+
+		return new Promise((resolve) => {
+			const responseChannel = `remote:archiveGroupChat:response:${randomUUID()}`;
+			let resolved = false;
+
+			const handleResponse = (_event: Electron.IpcMainEvent, result: any) => {
+				if (resolved) return;
+				resolved = true;
+				clearTimeout(timeoutId);
+				resolve(result ?? false);
+			};
+
+			ipcMain.once(responseChannel, handleResponse);
+			if (!isWebContentsAvailable(mainWindow)) {
+				logger.warn('webContents is not available for archiveGroupChat', 'WebServer');
+				ipcMain.removeListener(responseChannel, handleResponse);
+				resolve(false);
+				return;
+			}
+			mainWindow.webContents.send('remote:archiveGroupChat', chatId, archived, responseChannel);
+
+			const timeoutId = setTimeout(() => {
+				if (resolved) return;
+				resolved = true;
+				ipcMain.removeListener(responseChannel, handleResponse);
+				logger.warn(`archiveGroupChat callback timed out for chat ${chatId}`, 'WebServer');
+				resolve(false);
+			}, 10000);
+		});
+	});
+
 	// Send message to group chat - uses IPC request-response pattern
 	server.setSendGroupChatMessageCallback(async (chatId: string, message: string) => {
 		const mainWindow = getMainWindow();

@@ -19,6 +19,8 @@ import type { AgentNodeDataProps } from '../nodes/AgentNode';
 import type { CommandNodeDataProps } from '../nodes/CommandNode';
 import type { ErrorNodeDataProps } from '../nodes/ErrorNode';
 import type { PipelineGroupNodeDataProps } from '../nodes/PipelineGroupNode';
+import type { AgentClusterNodeDataProps } from '../nodes/AgentClusterNode';
+import type { PipelineHome } from './pipelineMembership';
 import type { PipelineEdgeData } from '../edges/PipelineEdge';
 // Node summaries live in shared/ so the pipeline LIST view describes a trigger
 // or command exactly the way the graph node labels it.
@@ -30,7 +32,10 @@ import {
 	NODE_BG_WIDTH,
 	NODE_BG_HEIGHT,
 	PIPELINE_GROUP_PADDING,
+	agentClusterBounds,
+	cardBoundsOverlap,
 	pipelineCardBounds,
+	type PipelineCardBounds,
 } from './nodeFootprint';
 
 // ─── Pipeline Y-offset (for "All Pipelines" view) ──────────────────────────
@@ -123,36 +128,16 @@ export function resolvePipelineOffset(
 /** Visual breathing room when sliding a dropped pipeline to clear an overlap. */
 const PIPELINE_OVERLAP_GAP = 16;
 
-interface PipelineBBox {
-	minX: number;
-	minY: number;
-	maxX: number;
-	maxY: number;
-}
-
 /**
- * Computes the All-Pipelines-view bounding box for a single pipeline at a
- * given offset. Returns null for empty pipelines (no nodes ⇒ no box).
- *
- * Box dimensions come from `pipelineCardBounds`, the same measurement the
- * translucent group card is rendered at, so a drop that looks clear is clear.
+ * The All-Pipelines-view card for a single pipeline at a given offset - the
+ * same measurement the translucent group card is rendered at, so a drop that
+ * looks clear is clear. Null for empty pipelines (no nodes, no box).
  */
 function pipelineBoundingBox(
 	pipeline: CuePipelineState['pipelines'][number],
 	offset: { x: number; y: number }
-): PipelineBBox | null {
-	const card = pipelineCardBounds(pipeline.nodes, { offset });
-	if (!card) return null;
-	return {
-		minX: card.x,
-		minY: card.y,
-		maxX: card.x + card.width,
-		maxY: card.y + card.height,
-	};
-}
-
-function rectsOverlap(a: PipelineBBox, b: PipelineBBox): boolean {
-	return a.minX < b.maxX && a.maxX > b.minX && a.minY < b.maxY && a.maxY > b.minY;
+): PipelineCardBounds | null {
+	return pipelineCardBounds(pipeline.nodes, { offset });
 }
 
 /**
@@ -176,7 +161,7 @@ export function resolveNonOverlappingPipelineOffset(
 ): { x: number; y: number } {
 	const otherBoxes = others
 		.map((o) => pipelineBoundingBox(o.pipeline, o.offset))
-		.filter((b): b is PipelineBBox => b !== null);
+		.filter((b): b is PipelineCardBounds => b !== null);
 	if (otherBoxes.length === 0) return desiredOffset;
 
 	let offset = { ...desiredOffset };
@@ -184,7 +169,7 @@ export function resolveNonOverlappingPipelineOffset(
 	for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
 		const movedBox = pipelineBoundingBox(pipeline, offset);
 		if (!movedBox) return offset;
-		const overlapping = otherBoxes.filter((b) => rectsOverlap(movedBox, b));
+		const overlapping = otherBoxes.filter((b) => cardBoundsOverlap(movedBox, b));
 		if (overlapping.length === 0) return offset;
 
 		// Min push along each cardinal axis to clear ALL currently-overlapping boxes.
@@ -193,10 +178,10 @@ export function resolveNonOverlappingPipelineOffset(
 		let pushDown = 0;
 		let pushUp = 0;
 		for (const ob of overlapping) {
-			pushRight = Math.max(pushRight, ob.maxX - movedBox.minX + PIPELINE_OVERLAP_GAP);
-			pushLeft = Math.max(pushLeft, movedBox.maxX - ob.minX + PIPELINE_OVERLAP_GAP);
-			pushDown = Math.max(pushDown, ob.maxY - movedBox.minY + PIPELINE_OVERLAP_GAP);
-			pushUp = Math.max(pushUp, movedBox.maxY - ob.minY + PIPELINE_OVERLAP_GAP);
+			pushRight = Math.max(pushRight, ob.x + ob.width - movedBox.x + PIPELINE_OVERLAP_GAP);
+			pushLeft = Math.max(pushLeft, movedBox.x + movedBox.width - ob.x + PIPELINE_OVERLAP_GAP);
+			pushDown = Math.max(pushDown, ob.y + ob.height - movedBox.y + PIPELINE_OVERLAP_GAP);
+			pushUp = Math.max(pushUp, movedBox.y + movedBox.height - ob.y + PIPELINE_OVERLAP_GAP);
 		}
 		const candidates = [
 			{ dx: pushRight, dy: 0 },
@@ -210,6 +195,66 @@ export function resolveNonOverlappingPipelineOffset(
 		offset = { x: offset.x + best.dx, y: offset.y + best.dy };
 	}
 	return offset;
+}
+
+/**
+ * One labeled box per home agent, drawn behind that agent's pipeline cards.
+ * The box is derived from where the cards ARE, not stored, so it follows a
+ * drag and needs no state of its own. A cluster whose cards have been pulled
+ * apart (a card dragged into another agent's area, or a layout saved before
+ * clustering existed) would draw a box across someone else's cards, which
+ * reads as those cards belonging to it - so such a cluster draws nothing
+ * until Arrange regroups it.
+ */
+function agentClusterNodes(
+	cards: { pipeline: CuePipelineState['pipelines'][number]; card: PipelineCardBounds }[],
+	pipelineHomes: ReadonlyMap<string, PipelineHome>,
+	theme?: Theme
+): Node[] {
+	const clusters = new Map<string, { home: PipelineHome; cards: PipelineCardBounds[] }>();
+	for (const { pipeline, card } of cards) {
+		const home = pipelineHomes.get(pipeline.id);
+		if (!home) continue;
+		const cluster = clusters.get(home.sessionId) ?? { home, cards: [] };
+		cluster.cards.push(card);
+		clusters.set(home.sessionId, cluster);
+	}
+
+	const result: Node[] = [];
+	for (const [sessionId, cluster] of clusters) {
+		const box = agentClusterBounds(cluster.cards);
+		if (!box) continue;
+		const intrudes = cards.some(
+			({ pipeline, card }) =>
+				pipelineHomes.get(pipeline.id)?.sessionId !== sessionId && cardBoundsOverlap(box, card)
+		);
+		if (intrudes) continue;
+		const data: AgentClusterNodeDataProps = {
+			agentName: cluster.home.sessionName,
+			pipelineCount: cluster.cards.length,
+			width: box.width,
+			height: box.height,
+			theme,
+		};
+		result.push({
+			id: `agent-cluster:${sessionId}`,
+			type: 'agent-cluster',
+			position: { x: box.x, y: box.y },
+			data,
+			// Pure backdrop: never grabbed, selected, focused or deleted, and
+			// transparent to the pointer so a drag on it pans the canvas or picks
+			// up the pipeline card above it.
+			selectable: false,
+			draggable: false,
+			focusable: false,
+			deletable: false,
+			style: { pointerEvents: 'none' },
+			// Below the pipeline cards in both interaction modes (they sit at -1
+			// in hand mode and 5 in pointer mode).
+			zIndex: -2,
+		});
+	}
+	return result;
 }
 
 // ─── Node conversion ─────────────────────────────────────────────────────────
@@ -258,7 +303,10 @@ export function convertToReactFlowNodes(
 	/** When true, the canvas is in pan (hand) mode. Pipeline group nodes opt
 	 *  out of dragging so a left-drag on the group's empty area pans the
 	 *  canvas instead of moving the whole pipeline. */
-	isHandMode?: boolean
+	isHandMode?: boolean,
+	/** Home agent per pipeline (`resolvePipelineHomes`). In All Pipelines view
+	 *  each agent's cards get a labeled box drawn around them. */
+	pipelineHomes?: ReadonlyMap<string, PipelineHome>
 ): Node[] {
 	const nodes: Node[] = [];
 
@@ -272,6 +320,8 @@ export function convertToReactFlowNodes(
 	// FIRST so they render under content nodes; zIndex -1 belt-and-braces
 	// in case ReactFlow decides to bump a selected node's stacking order.
 	if (selectedPipelineId === null) {
+		const cards: { pipeline: CuePipelineState['pipelines'][number]; card: PipelineCardBounds }[] =
+			[];
 		for (const pipeline of pipelines) {
 			if (pipeline.nodes.length === 0) continue;
 			const offset = resolvePipelineOffset(pipeline, pipelineYOffsets);
@@ -280,7 +330,12 @@ export function convertToReactFlowNodes(
 			// 320, and a card measured as if it were 320 draws its own contents
 			// outside itself.
 			const card = pipelineCardBounds(pipeline.nodes, { offset });
-			if (!card) continue;
+			if (card) cards.push({ pipeline, card });
+		}
+
+		if (pipelineHomes) nodes.push(...agentClusterNodes(cards, pipelineHomes, theme));
+
+		for (const { pipeline, card } of cards) {
 			const groupData: PipelineGroupNodeDataProps = {
 				pipelineName: pipeline.name,
 				color: pipeline.color,

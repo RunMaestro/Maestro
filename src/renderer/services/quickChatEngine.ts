@@ -57,7 +57,13 @@ import {
 } from '../utils/tabHelpers';
 import { aiTabFocusFields } from '../utils/tabFocusFields';
 import { isAiTabHidden, visibleAiTabs } from '../utils/unifiedTabOrderUtils';
-import { nextRunnableQueueItem, spawnCollisionCooldownMs } from '../utils/executionQueue';
+import {
+	describeSteerBlocked,
+	getSteerEligibility,
+	nextRunnableQueueItem,
+	spawnCollisionCooldownMs,
+} from '../utils/executionQueue';
+import { steerQueuedItem } from './chatSteering';
 import { leftBarAgentOrder } from '../utils/leftBarOrder';
 import { generateId } from '../utils/ids';
 import { downscaleImageDataUrl } from '../utils/imageData';
@@ -367,6 +373,16 @@ function setTab(choice: QuickChatTabChoice): string | null {
  * Remembers what it read on the turn (`started`, `tabName`, `reply`), so the
  * thread stays whole after a tab is closed.
  */
+/**
+ * Whether a queued turn can be steered into the reply running in its tab. The
+ * same rule as the queue card's Steer button: commands are prompt templates
+ * Maestro expands, not text to type, so they wait.
+ */
+function canSteerTurn(session: Session, turn: Turn): boolean {
+	const item = session.executionQueue.find((i) => i.id === turn.queuedItemId);
+	return !!item && item.type !== 'command' && getSteerEligibility(session, item).canSteer;
+}
+
 function turnView(
 	session: Session | null,
 	turn: Turn
@@ -402,7 +418,7 @@ function turnView(
 					route: route('running', tab, tab && session ? tabBusySince(session, tab) : null),
 					reply: [],
 				}
-			: { route: route('queued', tab), reply: [] };
+			: { route: { ...route('queued', tab), canSteer: canSteerTurn(session, turn) }, reply: [] };
 	}
 	if (!session || !tab) return { route: route('done'), reply: turn.reply };
 
@@ -1032,6 +1048,50 @@ async function moveToNewTab(messageId: string | undefined): Promise<string | nul
 	return error;
 }
 
+/**
+ * Steer a queued message into the reply running in its tab: the queue card's
+ * Steer, so it never loses the message or sends it twice (see
+ * steerQueuedItem). Without `messageId`, the latest steerable message goes.
+ */
+async function steer(messageId: string | undefined): Promise<string | null> {
+	const session = findSession(chat.sessionId);
+	const turn = messageId
+		? chat.turns.find((t) => t.id === messageId)
+		: session
+			? [...chat.turns].reverse().find((t) => turnView(session, t).route.canSteer)
+			: undefined;
+	if (!session || !turn) {
+		return messageId ? 'That message is not in this chat' : 'No queued message can be steered';
+	}
+	const route = turnView(session, turn).route;
+	if (route.status !== 'queued' || !turn.queuedItemId) {
+		return 'That message is not waiting in the queue';
+	}
+	if (!route.canSteer) {
+		const item = session.executionQueue.find((i) => i.id === turn.queuedItemId);
+		return item?.type === 'command'
+			? 'A command cannot be steered. It runs when the current reply ends.'
+			: describeSteerBlocked(item && getSteerEligibility(session, item).blockedReason);
+	}
+
+	const result = await steerQueuedItem(session.id, turn.queuedItemId);
+	switch (result.outcome) {
+		case 'delivered':
+		case 'settled':
+			return null;
+		case 'not-steerable':
+			return describeSteerBlocked(result.blockedReason);
+		case 'not-found':
+			return 'That message is no longer in the queue';
+		case 'refused':
+			return `${result.detail ?? 'The agent could not take the message right now.'} It stays queued.`;
+		case 'unconfirmed':
+			return 'The agent may or may not have the message, so it is paused rather than sent twice.';
+		case 'unavailable':
+			return 'This client cannot steer a running turn';
+	}
+}
+
 /** Open a turn's tab in the main window. Keeps the chat if the tab was hidden. */
 function reveal(messageId: string | undefined): string | null {
 	const session = findSession(chat.sessionId);
@@ -1291,6 +1351,9 @@ export async function runQuickChatCommand(
 		case 'moveToNewTab':
 			error = await moveToNewTab(command.messageId);
 			break;
+		case 'steer':
+			error = await steer(command.messageId);
+			break;
 		case 'recall':
 			error = await recall(command.chatId);
 			break;
@@ -1341,7 +1404,9 @@ function snapshotKey(snapshot: QuickChatSnapshot): string {
 		snapshot.messages
 			.map((m) => {
 				const r = m.route;
-				const route = r ? `${r.status}:${r.tabId}:${r.tabName}:${r.tabOpen}:${r.since}` : '';
+				const route = r
+					? `${r.status}:${r.tabId}:${r.tabName}:${r.tabOpen}:${r.since}:${r.canSteer ?? ''}`
+					: '';
 				return `${m.id}:${m.role}:${m.text.length}:${m.images?.length ?? 0}:${route}`;
 			})
 			.join(','),

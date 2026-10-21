@@ -132,3 +132,22 @@ export async function stopGroupChatWork(chatId: string): Promise<void> {
 	}
 	await window.maestro.groupChat.stopAll(chatId);
 }
+
+/**
+ * Archive (or restore) a group chat. Main stops the moderator and every
+ * participant before it flips the flag, so an archived chat holds no live
+ * process; the store update is what moves the chat out of the Left Bar's
+ * active list without a restart. Shared by the Left Bar menu and
+ * `maestro-cli group-chat archive`, so both leave the same state behind.
+ */
+export async function archiveGroupChat(chatId: string, archived: boolean): Promise<void> {
+	if (archived) {
+		for (const sessionId of getAutoRunSessionsForGroupChat(chatId)) {
+			useBatchStore.getState().dispatchBatch({ type: 'COMPLETE_BATCH', sessionId });
+		}
+	}
+	const updated = await window.maestro.groupChat.archive(chatId, archived);
+	useGroupChatStore
+		.getState()
+		.setGroupChats((prev) => prev.map((c) => (c.id === chatId ? updated : c)));
+}

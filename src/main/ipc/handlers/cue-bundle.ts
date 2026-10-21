@@ -19,6 +19,7 @@ import { getProductionDataPath, getSettingsStore } from '../../stores/getters';
 import { filterLiveAgents } from '../../../shared/agentVisibility';
 import type { SessionsData } from '../../stores/types';
 import type { SessionInfo } from '../../../shared/types';
+import type { CueBundleAgentChange } from '../../../shared/cue-bundle-types';
 import {
 	exportBundleFromApp,
 	importBundleIntoApp,
@@ -62,7 +63,7 @@ export function getCueBundleAppContext(): CueBundleAppContext | null {
 /** Ask the renderer to add and update agents, and wait for it to confirm. */
 function applyAgentsInRenderer(
 	getMainWindow: () => BrowserWindow | null,
-	change: { created: SessionInfo[]; updated: SessionInfo[] }
+	change: CueBundleAgentChange
 ): Promise<void> {
 	if (change.created.length === 0 && change.updated.length === 0) return Promise.resolve();
 	const mainWindow = getMainWindow();

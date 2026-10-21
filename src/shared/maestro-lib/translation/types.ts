@@ -217,6 +217,8 @@ export interface TranslationReport {
 	plan?: TranslationPlan;
 	result?: TranslationResult;
 	error?: string;
+	/** A plain switch (no conversion): state that could not be parked, one line each. */
+	notices?: string[];
 }
 
 export class TranslationSourceBusyError extends Error {

@@ -6,7 +6,8 @@ import Store from 'electron-store';
 import { logger } from '../../utils/logger';
 import { createIpcHandler, createHandler, CreateHandlerOptions } from '../../utils/ipcHandler';
 import { resolveDirentType } from '../../utils/dirent-utils';
-import { WINDOWS_LOCKED_SYSTEM_FILES, ignoreDotfilesUnder } from '../../utils/watcher-ignore';
+import { WINDOWS_LOCKED_SYSTEM_FILES, ignoreUnderRoot } from '../../utils/watcher-ignore';
+import { LOCAL_IGNORE_DEFAULTS } from '../../../shared/globUtils';
 import { SshRemoteConfig, PlaybookStatus } from '../../../shared/types';
 import { MaestroSettings } from './persistence';
 import { createSafeSend } from '../../utils/safe-send';
@@ -154,6 +155,19 @@ async function resolveLocalEntryType(
 	return { isDirectory, isFile, isSymlink };
 }
 
+/**
+ * Folder names an Auto Run scan and watcher never descend into: the same
+ * dependency and cache trees the Files panel skips. Nothing in them is a
+ * playbook, and an Auto Run folder that holds a project checkout would
+ * otherwise walk and watch every `node_modules` entry on the main thread.
+ */
+const AUTO_RUN_SKIPPED_DIR_NAMES = new Set(LOCAL_IGNORE_DEFAULTS.map((name) => name.toLowerCase()));
+
+/** Whether a local scan skips this directory entry: dotfiles and the trees above. */
+function isSkippedAutoRunEntry(name: string): boolean {
+	return name.startsWith('.') || AUTO_RUN_SKIPPED_DIR_NAMES.has(name.toLowerCase());
+}
+
 async function scanDirectory(
 	dirPath: string,
 	relativePath: string = '',
@@ -175,7 +189,7 @@ async function scanDirectory(
 	// Broken symlinks are skipped (they can't contribute .md files).
 	const resolvedEntries = await Promise.all(
 		entries
-			.filter((entry) => !entry.name.startsWith('.'))
+			.filter((entry) => !isSkippedAutoRunEntry(entry.name))
 			.map(async (entry) => ({
 				entry,
 				...(await resolveLocalEntryType(dirPath, entry)),
@@ -299,8 +313,9 @@ async function scanDirectoryRemote(
 		{
 			maxDepth: REMOTE_SCAN_MAX_DEPTH,
 			// `find -name '.*' -prune` drops dot-directories and dot-files in one
-			// clause, matching the local scan's `startsWith('.')` filter.
-			ignorePatterns: ['.*'],
+			// clause; the dependency trees ride the same prune. Together they match
+			// the local scan's `isSkippedAutoRunEntry`.
+			ignorePatterns: ['.*', ...LOCAL_IGNORE_DEFAULTS],
 		},
 		sshRemote
 	);
@@ -365,8 +380,8 @@ async function checkForMarkdownFiles(
 	const entries = await fs.readdir(dirPath, { withFileTypes: true });
 
 	for (const entry of entries) {
-		// Skip hidden files/folders
-		if (entry.name.startsWith('.')) {
+		// Skip hidden files/folders and dependency trees
+		if (isSkippedAutoRunEntry(entry.name)) {
 			continue;
 		}
 
@@ -1041,7 +1056,13 @@ export function registerAutorunHandlers(
 					// Start watching the folder recursively using chokidar (cross-platform)
 					const watcher = chokidar.watch(folderPath, {
 						ignored: [
-							ignoreDotfilesUnder(folderPath), // Ignore dotfiles below the root, not above it
+							// Below the root only (it usually sits inside `.maestro`): dotfiles,
+							// dependency trees, and any file that is not `.md`, which the
+							// handlers below would discard anyway. See ignoreUnderRoot.
+							ignoreUnderRoot(folderPath, {
+								skipDirNames: LOCAL_IGNORE_DEFAULTS,
+								onlyFileExtensions: ['.md'],
+							}),
 							WINDOWS_LOCKED_SYSTEM_FILES,
 						],
 						persistent: true,

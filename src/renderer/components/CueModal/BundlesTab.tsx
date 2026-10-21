@@ -1,16 +1,18 @@
 /**
  * BundlesTab - Cue modal "Bundles" tab.
  *
- * Export a pipeline or an agent to a portable zip, and import one into this
- * app. The same operations are `maestro-cli bundle export|import`, which go
+ * Export a pipeline to a portable zip, and import any bundle into this app.
+ * The same operations are `maestro-cli bundle export|import`, which go
  * through this app while it runs (see `src/main/cue-bundle-service.ts`).
+ * One agent is exported and imported from the Left Bar's right-click menus.
  */
 
 import { useMemo } from 'react';
+import { PackagePlus } from 'lucide-react';
 import type { Theme } from '../../types';
-import { useLiveSessions } from '../../hooks/session/useLiveSessions';
 import { BundleExportSection } from './bundles/BundleExportSection';
-import { BundleImportSection } from './bundles/BundleImportSection';
+import { BundleImportPanel } from '../Bundles/BundleImportPanel';
+import { BundleSection } from '../Bundles/bundleUi';
 
 export interface BundlesTabProps {
 	theme: Theme;
@@ -20,16 +22,6 @@ export interface BundlesTabProps {
 }
 
 export function BundlesTab({ theme, pipelines, onImported }: BundlesTabProps) {
-	// Live agents only: a dormant Pianola (flag off) is never bundled.
-	const sessions = useLiveSessions();
-	const agents = useMemo(
-		() =>
-			sessions
-				.filter((s) => s.toolType !== 'terminal')
-				.map((s) => ({ id: s.id, name: s.name, toolType: s.toolType }))
-				.sort((a, b) => a.name.localeCompare(b.name)),
-		[sessions]
-	);
 	const sortedPipelines = useMemo(
 		() =>
 			[...pipelines]
@@ -40,8 +32,10 @@ export function BundlesTab({ theme, pipelines, onImported }: BundlesTabProps) {
 
 	return (
 		<div className="flex-1 overflow-auto px-5 py-4 space-y-4">
-			<BundleExportSection theme={theme} pipelines={sortedPipelines} agents={agents} />
-			<BundleImportSection theme={theme} onImported={onImported} />
+			<BundleExportSection theme={theme} pipelines={sortedPipelines} />
+			<BundleSection theme={theme} title="Import" icon={PackagePlus}>
+				<BundleImportPanel theme={theme} onImported={() => onImported?.()} />
+			</BundleSection>
 		</div>
 	);
 }

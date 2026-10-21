@@ -1,33 +1,39 @@
 /**
- * BundleImportSection - Cue modal Bundles tab, import half.
+ * BundleImportPanel - import a bundle into the running app.
  *
  * Choose a bundle, see what it holds, map each of its workspaces to a local
  * folder, review the dry run (agents, files, conflicts, secrets, shell
- * commands), then import into the running app. Same importer as
- * `maestro-cli bundle import`; agents land in the Left Bar through the
- * renderer (`useCueBundleAgentSync`).
+ * commands), then import. Same importer as `maestro-cli bundle import`;
+ * agents land in the Left Bar through the renderer (`useCueBundleAgentSync`).
+ *
+ * Shown by the Cue modal's Bundles tab and by the Left Bar's Import Agent
+ * modal, which passes the group the agents go in. An exact copy (an export
+ * with "Exact copy" on) restores its machine settings and suggests the
+ * folders it came from, unless the user turns that off.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { FileArchive, FolderOpen, Loader2, PackagePlus } from 'lucide-react';
-import type { Theme } from '../../../types';
-import type { CueBundleManifest } from '../../../../shared/cue-bundle-types';
-import type {
-	CueBundleFailure,
-	CueBundleInspectOutcome,
-} from '../../../../main/cue-bundle-service';
-import type { CueBundleImportPlan } from '../../../../main/cue/bundle/cue-bundle-importer';
-import { cueBundleService } from '../../../services/cueBundle';
-import { notifyToast } from '../../../stores/notificationStore';
-import { captureException } from '../../../utils/sentry';
-import { BundleNotice, BundleSection, ChipList } from './bundleUi';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { FileArchive, FolderOpen, PackagePlus } from 'lucide-react';
+import type { Theme } from '../../types';
+import type { CueBundleManifest } from '../../../shared/cue-bundle-types';
+import type { CueBundleFailure, CueBundleInspectOutcome } from '../../../main/cue-bundle-service';
+import type { CueBundleImportPlan } from '../../../main/cue/bundle/cue-bundle-importer';
+import { cueBundleService } from '../../services/cueBundle';
+import { notifyToast } from '../../stores/notificationStore';
+import { captureException } from '../../utils/sentry';
+import { Spinner } from '../ui/Spinner';
+import { BundleNotice, BundleOption, ChipList } from './bundleUi';
 
 type Inspection = Extract<CueBundleInspectOutcome, { ok: true }>;
 
-export interface BundleImportSectionProps {
+export interface BundleImportPanelProps {
 	theme: Theme;
-	/** Called after an import lands, so the modal can refresh its pipelines. */
-	onImported?: () => void;
+	/** Called after an import lands, with what it did. */
+	onImported?: (plan: CueBundleImportPlan) => void;
+	/** Left Bar group the created agents go in. */
+	groupId?: string;
+	/** Open the file chooser as soon as the panel mounts. */
+	chooseOnMount?: boolean;
 }
 
 function asFailure(error: unknown, code: string): CueBundleFailure {
@@ -55,9 +61,15 @@ function claudeSummary(manifest: CueBundleManifest): string[] {
 	return lines;
 }
 
-export function BundleImportSection({ theme, onImported }: BundleImportSectionProps) {
+export function BundleImportPanel({
+	theme,
+	onImported,
+	groupId,
+	chooseOnMount = false,
+}: BundleImportPanelProps) {
 	const [inspection, setInspection] = useState<Inspection | null>(null);
 	const [folders, setFolders] = useState<Record<string, string>>({});
+	const [useLocal, setUseLocal] = useState(true);
 	const [plan, setPlan] = useState<CueBundleImportPlan | null>(null);
 	const [failure, setFailure] = useState<CueBundleFailure | null>(null);
 	const [force, setForce] = useState(false);
@@ -65,9 +77,29 @@ export function BundleImportSection({ theme, onImported }: BundleImportSectionPr
 	const [imported, setImported] = useState<CueBundleImportPlan | null>(null);
 
 	const manifest = inspection?.manifest;
+	const isExactCopy = !!manifest?.local;
+	/** The folders an exact copy came from that exist here, suggested until the user picks another. */
+	const suggested = useMemo(() => {
+		const out: Record<string, string> = {};
+		if (!useLocal) return out;
+		for (const [key, folder] of Object.entries(inspection?.localWorkspaces ?? {})) {
+			if (folder.exists) out[key] = folder.path;
+		}
+		return out;
+	}, [inspection, useLocal]);
+	const effectiveFolders = useMemo(() => ({ ...suggested, ...folders }), [suggested, folders]);
 	const allMapped = useMemo(
-		() => !!manifest && manifest.workspaces.every((ws) => !!folders[ws.key]),
-		[manifest, folders]
+		() => !!manifest && manifest.workspaces.every((ws) => !!effectiveFolders[ws.key]),
+		[manifest, effectiveFolders]
+	);
+
+	/** Fields every plan and import request carries beyond the folders. */
+	const requestExtras = useMemo(
+		() => ({
+			...(groupId ? { groupId } : {}),
+			...(isExactCopy ? { useLocal } : {}),
+		}),
+		[groupId, isExactCopy, useLocal]
 	);
 
 	const reset = () => {
@@ -83,18 +115,26 @@ export function BundleImportSection({ theme, onImported }: BundleImportSectionPr
 		reset();
 		setInspection(null);
 		setFolders({});
+		setUseLocal(true);
 		setBusy('inspect');
 		try {
 			const outcome = await cueBundleService.inspect(bundlePath);
 			if (outcome.ok) setInspection(outcome);
 			else setFailure(outcome);
 		} catch (error) {
-			captureException(error, { extra: { context: 'BundleImportSection.inspect' } });
+			captureException(error, { extra: { context: 'BundleImportPanel.inspect' } });
 			setFailure(asFailure(error, 'BUNDLE_UNREADABLE'));
 		} finally {
 			setBusy(null);
 		}
 	}, []);
+
+	const choseOnMount = useRef(false);
+	useEffect(() => {
+		if (!chooseOnMount || choseOnMount.current) return;
+		choseOnMount.current = true;
+		void handleChoose();
+	}, [chooseOnMount, handleChoose]);
 
 	const handlePickFolder = useCallback(async (key: string) => {
 		const folder = await window.maestro.dialog.selectFolder();
@@ -113,7 +153,7 @@ export function BundleImportSection({ theme, onImported }: BundleImportSectionPr
 		// Approval to overwrite covers the conflicts the user saw, not a new plan's.
 		setForce(false);
 		cueBundleService
-			.plan({ bundlePath: inspection.bundlePath, workspaces: folders })
+			.plan({ bundlePath: inspection.bundlePath, workspaces: effectiveFolders, ...requestExtras })
 			.then((outcome) => {
 				if (cancelled) return;
 				if (outcome.ok) setPlan(outcome.plan);
@@ -121,7 +161,7 @@ export function BundleImportSection({ theme, onImported }: BundleImportSectionPr
 			})
 			.catch((error) => {
 				if (cancelled) return;
-				captureException(error, { extra: { context: 'BundleImportSection.plan' } });
+				captureException(error, { extra: { context: 'BundleImportPanel.plan' } });
 				setFailure(asFailure(error, 'WRITE_FAILED'));
 			})
 			.finally(() => {
@@ -130,7 +170,7 @@ export function BundleImportSection({ theme, onImported }: BundleImportSectionPr
 		return () => {
 			cancelled = true;
 		};
-	}, [inspection, allMapped, folders]);
+	}, [inspection, allMapped, effectiveFolders, requestExtras]);
 
 	const handleImport = useCallback(async () => {
 		if (!inspection) return;
@@ -139,8 +179,9 @@ export function BundleImportSection({ theme, onImported }: BundleImportSectionPr
 		try {
 			const outcome = await cueBundleService.import({
 				bundlePath: inspection.bundlePath,
-				workspaces: folders,
+				workspaces: effectiveFolders,
 				force,
+				...requestExtras,
 			});
 			if (!outcome.ok) {
 				setFailure(outcome);
@@ -153,21 +194,21 @@ export function BundleImportSection({ theme, onImported }: BundleImportSectionPr
 				title: 'Bundle imported',
 				message: `${outcome.plan.bundle.name}: ${count(outcome.plan.agents.length, 'agent')}`,
 			});
-			onImported?.();
+			onImported?.(outcome.plan);
 		} catch (error) {
-			captureException(error, { extra: { context: 'BundleImportSection.import' } });
+			captureException(error, { extra: { context: 'BundleImportPanel.import' } });
 			setFailure(asFailure(error, 'WRITE_FAILED'));
 		} finally {
 			setBusy(null);
 		}
-	}, [inspection, folders, force, onImported]);
+	}, [inspection, effectiveFolders, force, requestExtras, onImported]);
 
 	const conflicts = plan?.conflicts ?? [];
 	const canImport =
 		!!plan && !busy && inspection?.valid === true && (conflicts.length === 0 || force);
 
 	return (
-		<BundleSection theme={theme} title="Import" icon={PackagePlus}>
+		<div className="space-y-3">
 			<div className="flex items-center gap-3">
 				<button
 					onClick={handleChoose}
@@ -175,11 +216,7 @@ export function BundleImportSection({ theme, onImported }: BundleImportSectionPr
 					className="flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium border transition-colors disabled:opacity-50"
 					style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 				>
-					{busy === 'inspect' ? (
-						<Loader2 className="w-4 h-4 animate-spin" />
-					) : (
-						<FileArchive className="w-4 h-4" />
-					)}
+					{busy === 'inspect' ? <Spinner size={16} /> : <FileArchive className="w-4 h-4" />}
 					Choose Bundle…
 				</button>
 				{inspection && (
@@ -226,6 +263,23 @@ export function BundleImportSection({ theme, onImported }: BundleImportSectionPr
 				</BundleNotice>
 			)}
 
+			{isExactCopy && inspection?.valid && (
+				<BundleNotice theme={theme} tone="warning" title="Exact copy">
+					<div className="text-xs">
+						Holds secret values, binary paths, SSH settings and the folders its agents lived in.
+						Restore them only from a bundle you exported yourself.
+					</div>
+					<BundleOption
+						theme={theme}
+						label="Restore machine settings"
+						hint="env values, binaries, SSH, other providers' settings, folders"
+						checked={useLocal}
+						onChange={setUseLocal}
+						disabled={busy === 'import'}
+					/>
+				</BundleNotice>
+			)}
+
 			{manifest && inspection?.valid && (
 				<div className="space-y-2">
 					<div className="text-xs" style={{ color: theme.colors.textDim }}>
@@ -244,13 +298,15 @@ export function BundleImportSection({ theme, onImported }: BundleImportSectionPr
 								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 							>
 								<FolderOpen className="w-3.5 h-3.5" />
-								{folders[ws.key] ? 'Change…' : 'Choose…'}
+								{effectiveFolders[ws.key] ? 'Change…' : 'Choose…'}
 							</button>
 							<span
 								className="text-xs font-mono truncate select-text"
-								style={{ color: folders[ws.key] ? theme.colors.textMain : theme.colors.textDim }}
+								style={{
+									color: effectiveFolders[ws.key] ? theme.colors.textMain : theme.colors.textDim,
+								}}
 							>
-								{folders[ws.key] ??
+								{effectiveFolders[ws.key] ??
 									(ws.source?.gitRemote ? `clone ${ws.source.gitRemote}` : 'not chosen')}
 							</span>
 						</div>
@@ -260,7 +316,7 @@ export function BundleImportSection({ theme, onImported }: BundleImportSectionPr
 
 			{busy === 'plan' && (
 				<div className="flex items-center gap-2 text-xs" style={{ color: theme.colors.textDim }}>
-					<Loader2 className="w-3.5 h-3.5 animate-spin" />
+					<Spinner size={14} />
 					Checking what the import would do…
 				</div>
 			)}
@@ -289,8 +345,10 @@ export function BundleImportSection({ theme, onImported }: BundleImportSectionPr
 
 			{imported && (
 				<BundleNotice theme={theme} tone="success" title={`Imported ${imported.bundle.name}`}>
-					{count(imported.agents.length, 'agent')} added or updated. Their Cue subscriptions are
-					active now.
+					{count(imported.agents.length, 'agent')} added or updated.
+					{imported.cueConfigs.some((c) => c.added.length > 0 || c.replaced.length > 0)
+						? ' Their Cue subscriptions are active now.'
+						: ''}
 				</BundleNotice>
 			)}
 
@@ -302,16 +360,12 @@ export function BundleImportSection({ theme, onImported }: BundleImportSectionPr
 						className="flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors disabled:opacity-50"
 						style={{ backgroundColor: theme.colors.accent, color: theme.colors.bgMain }}
 					>
-						{busy === 'import' ? (
-							<Loader2 className="w-4 h-4 animate-spin" />
-						) : (
-							<PackagePlus className="w-4 h-4" />
-						)}
+						{busy === 'import' ? <Spinner size={16} /> : <PackagePlus className="w-4 h-4" />}
 						{busy === 'import' ? 'Importing…' : 'Import'}
 					</button>
 				</div>
 			)}
-		</BundleSection>
+		</div>
 	);
 }
 
@@ -321,6 +375,9 @@ function PlanSummary({ theme, plan }: { theme: Theme; plan: CueBundleImportPlan 
 	const unsetSecrets = plan.secrets.filter((s) => !s.set);
 	const added = plan.cueConfigs.flatMap((c) => c.added);
 	const replaced = plan.cueConfigs.flatMap((c) => c.replaced);
+	const binaries = plan.local?.applied
+		? plan.local.agents.flatMap((a) => a.binaries.map((b) => `${a.agentName}: ${b}`))
+		: [];
 
 	return (
 		<div className="space-y-2 text-sm select-text" style={{ color: theme.colors.textMain }}>
@@ -343,6 +400,18 @@ function PlanSummary({ theme, plan }: { theme: Theme; plan: CueBundleImportPlan 
 				)}
 				{plan.pipeline && <li>Pipeline layout: {plan.pipeline.name}</li>}
 			</ul>
+
+			{binaries.length > 0 && (
+				<BundleNotice theme={theme} tone="warning" title="Runs these binaries">
+					<ul className="text-xs font-mono space-y-0.5">
+						{binaries.map((b) => (
+							<li key={b} className="break-all">
+								{b}
+							</li>
+						))}
+					</ul>
+				</BundleNotice>
+			)}
 
 			{plan.shellCommands.length > 0 && (
 				<BundleNotice theme={theme} tone="warning" title="Runs shell commands on this machine">

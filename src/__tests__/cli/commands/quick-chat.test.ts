@@ -229,6 +229,19 @@ describe('quickChat routing verbs', () => {
 		);
 	});
 
+	it('steer hands the named message, or the latest steerable one, to the running reply', async () => {
+		await quickChat('steer', { messageId: 'm7' }, {});
+		expect(sendCommand).toHaveBeenLastCalledWith(
+			{ type: 'quick_chat', action: 'steer', messageId: 'm7' },
+			'quick_chat_result'
+		);
+		await quickChat('steer', {}, {});
+		expect(sendCommand).toHaveBeenLastCalledWith(
+			{ type: 'quick_chat', action: 'steer' },
+			'quick_chat_result'
+		);
+	});
+
 	it('reveal opens the tab a message went to', async () => {
 		await quickChat('reveal', { messageId: 'm7' }, {});
 		expect(sendCommand).toHaveBeenLastCalledWith(

@@ -5,8 +5,8 @@
  * provider swap.
  *
  * Parking and turn attribution come from `maestro-lib/agents/providerSwap.ts`.
- * Desktop provider changes use the native translation flow; the headless
- * runtime parks provider state without translating native conversations.
+ * A provider change parks provider state without translating native
+ * conversations, unless the user opts into the native translation flow.
  * Re-exports keep existing renderer import sites on the shared helpers.
  */
 

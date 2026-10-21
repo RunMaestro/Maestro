@@ -21,7 +21,6 @@ vi.mock('react-markdown', () => ({
 
 vi.mock('../../../../../../renderer/utils/markdownConfig', () => ({
 	REMARK_GFM_PLUGINS: [],
-	createWizardBubbleMarkdownComponents: () => ({}),
 }));
 
 const assistantMessage: WizardMessage = {

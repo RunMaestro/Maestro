@@ -58,6 +58,29 @@ describe('QuickActions command builders', () => {
 		});
 		expect(management.map((a) => a.id)).toContain('toggleBookmark');
 		expect(management.map((a) => a.id)).toContain('clearAllBookmarks');
+
+		// Export opens the Export Agent modal on the active agent; Import uses its group.
+		management.find((a) => a.id === 'exportAgent')!.action();
+		expect(useModalStore.getState().getData('agentExport')).toEqual({ sessionId: 's1' });
+		management.find((a) => a.id === 'importAgent')!.action();
+		expect(useModalStore.getState().isOpen('agentImport')).toBe(true);
+	});
+
+	it('offers no Export Agent for a terminal agent', () => {
+		const terminal = createMockSession({ id: 't1', name: 'Shell', toolType: 'terminal' });
+		const management = buildSessionManagementCommands({
+			activeSession: terminal,
+			activeSessionId: 't1',
+			sessions: [terminal],
+			setSessions,
+			setQuickActionOpen: close,
+			setRenameInstanceModalOpen: vi.fn(),
+			setRenameInstanceValue: vi.fn(),
+			deleteSession: vi.fn(),
+			openClearBookmarksConfirm: vi.fn(),
+		});
+		expect(management.map((a) => a.id)).not.toContain('exportAgent');
+		expect(management.map((a) => a.id)).toContain('importAgent');
 	});
 
 	it('builds agent panel, move-to-group, switcher, and group-chat commands', () => {
@@ -697,6 +720,43 @@ describe('QuickActions command builders', () => {
 				setQuickActionOpen: close,
 			}).map((a) => a.id);
 			expect(ids).toEqual(['renameTabGroup', 'breakApartTabGroup']);
+		});
+
+		it('emits Close Tab Group when a close handler is wired, gated by a confirm', () => {
+			const { session, group } = groupSession('match');
+			const onCloseTabGroup = vi.fn();
+			const closeCommand = buildTabGroupCommands({
+				activeSession: session,
+				setQuickActionOpen: close,
+				onCloseTabGroup,
+			}).find((a) => a.id === 'closeTabGroup');
+			expect(closeCommand?.subtext).toBe('Close "My Group" and the 2 tabs in it');
+
+			closeCommand?.action();
+			expect(onCloseTabGroup).not.toHaveBeenCalled();
+			const confirm = useModalStore.getState().modals.get('confirm')?.data as {
+				onConfirm: () => void;
+				destructive?: boolean;
+			};
+			expect(confirm.destructive).toBe(true);
+			confirm.onConfirm();
+			expect(onCloseTabGroup).toHaveBeenCalledWith(group.id);
+			useModalStore.getState().closeModal('confirm');
+		});
+
+		it('shows the live Rename Tab Group binding on the rename entry', () => {
+			const { session } = groupSession('match');
+			const shortcut = {
+				id: 'renameTabGroup',
+				label: 'Rename Tab Group',
+				keys: ['Meta', 'Alt', 'g'],
+			};
+			const rename = buildTabGroupCommands({
+				activeSession: session,
+				setQuickActionOpen: close,
+				renameTabGroupShortcut: shortcut,
+			}).find((a) => a.id === 'renameTabGroup');
+			expect(rename?.shortcut).toBe(shortcut);
 		});
 	});
 });

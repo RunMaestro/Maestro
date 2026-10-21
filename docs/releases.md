@@ -16,93 +16,71 @@ Maestro can update itself automatically! This feature was introduced in **v0.8.7
 
 ## v1.0.x - Full Orchestra
 
-**Latest: v1.0.1** | Released January 1, 1
+**Latest: v1.0.1** | Released October 20, 2026
 
 # 1.0.1 Highlights
 
-💬 **@mentions now follow your wording.** "Check with @Kensho first" asks Kensho before your agent starts and hands it the reply. "Then send the results to @Kensho" lets your agent finish and forwards its final answer as a hand-off. Anything else runs both side by side, as before. A bar above the composer shows which way the message will go before you send it. Hand-offs can now write in the receiving agent's own workspace by default, with a separate Hand-offs switch under Settings > General > Cross-Agent Mentions.
+🔔 **A notification center keeps every toast.** A bell in the header shows how many notifications you have not read and opens the full history, newest first, with Unread and All filters, Mark all as read, and Clear all. Clicking an entry does what its toast would have done. The history keeps 200 entries, survives a restart, and is shared by every open window. An In-App Toasts switch in the bell popover (also in the command palette, with a bindable shortcut) silences pop-ups in one click while the bell keeps collecting, and `maestro-cli notify inbox` lists, opens, and clears it.
 
-🪟 **Move a whole group to another window.** Right-click a group header and choose Move Group to Window to send every agent in it (subgroups and worktrees included) to a new window or an existing one. A group split across windows gets gathered back together, and it arrives as a group instead of a flat list. `Cmd+K` and `maestro-cli window move-group` do the same.
+💬 **@mentions now follow your wording.** "Check with @Kensho first" asks Kensho before your agent starts and hands it the reply. "Then send the results to @Kensho" lets your agent finish and forwards its final answer as a hand-off. Anything else runs both side by side, as before. A bar above the composer shows which way the message will go before you send it, and hand-offs can write in the receiving agent's own workspace by default, with their own switch under Settings > General > Cross-Agent Mentions.
 
-⚡ **Each Cue subscription can pick its own model and effort.** Set a tier (low, medium, high) or an exact model, plus an effort level, and that run uses them without touching the agent's own settings. The Pipeline Graph has Model and Effort selectors on agent nodes, the Scheduled Tasks form has the same selectors, and `maestro-cli cue schedule` takes `--tier`, `--model`, and `--effort`. `maestro-cli cue model` shows or changes the choice on any existing subscription and warns when the agent's provider cannot honor it.
+💰 **Claude Code costs are correct again.** Each turn used to be recorded with the session's running total, so a session's cost and tokens grew far faster than what you actually spent. Every turn now records its own cost. Totals read from Claude's session files count each response once instead of once per block (about 1.5x too high), subagent spend counts toward its session, and the context gauge on 1M-token windows shows how full the context really is instead of the sum of every call the turn made.
 
-💰 **Claude Code costs are correct again.** Each turn used to be recorded with the session's running total, so a session's cost and tokens grew far faster than what you actually spent. Every turn now records its own cost. The context gauge on 1M-token windows also shows how full the context really is, instead of the sum of every call the turn made. Totals read from Claude's own session files are fixed too: each response is counted once instead of once per block (about 1.5x too high), subagent spend now counts toward its session, and Agent Sessions message counts no longer run more than twice the real number.
+📈 **The Usage Dashboard shows how fast your models run and how often you prompt them.** Overview has average and peak tokens per second, and the Tokens tab charts speed over time, per provider, per model, and by hour of day (Claude Code and Codex). The Activity tab gains a Prompts section with daily averages, your current and longest streak, peak hour, and time between prompts, counting only what you typed. The dashboard also reopens instantly with the last numbers and refreshes them in place, and `maestro-cli stats-tokens` prints the same speed figures.
 
-🛑 **Stop actually stops an agent on an SSH remote.** Stopping an SSH agent used to end only the local connection while the agent kept working on the remote host, sometimes for most of an hour. Stop and kill now reach the agent itself, and a stopped SSH tab with a queued message no longer sits on "Thinking..." forever. A turn you stop is never treated as a failure that needs recovering from.
-
-🔔 **A notification center keeps every toast.** A bell in the header shows how many notifications you have not read and opens the full history, newest first, with Unread and All filters, Mark all as read, and Clear all. Clicking an entry does what its toast would have done. The history keeps 200 entries, survives a restart, and is shared by every open window. Set the toast duration to Off and nothing pops up at all, while the bell still collects everything. A larger panel, expandable details, and full keyboard navigation are opt-in under Settings > Notifications, and `maestro-cli notify inbox` lists, opens, and clears it. An In-App Toasts switch in the bell popover (also in the command palette, with a bindable shortcut) silences pop-ups in one click, and turning it back on restores the duration you had before.
-
-📈 **The Usage Dashboard shows how fast your models run and how often you prompt them.** Overview has average and peak tokens per second for input, output, and total, and the Tokens tab charts speed over time, per provider, per model, and by hour of day, with sortable tables (Claude Code and Codex). The Activity tab has a new Prompts section: daily averages, busiest and quietest days, your current and longest streak, peak hour, time between prompts, and charts by day, hour, and weekday. Auto Run tasks are left out, so it counts only what you typed. `maestro-cli stats` and the new `maestro-cli stats-tokens` print the same numbers, and the CSV export includes token speed.
-
-🧪 **Codex visualizations render inline in the chat**, the way the Codex app shows them. When a Codex agent draws a chart or interactive widget with its visualize plugin, it appears live in the transcript instead of as boxed glyphs around raw JSON. Links inside it open only when you click, and a follow-up it suggests drops into the composer for you to send. Agents on an SSH remote get a link to the file instead.
-
-🔗 **Choose per link where it opens.** Write a link as `maestro+https://...` and it always opens in a Maestro browser tab, or `system+https://...` and it always opens in your system browser, whatever the Default Browser setting says. Handy for a script that prints a local dev-server URL into a terminal, or an agent linking a preview in chat. `Cmd+Click` in a terminal tab now opens a link in the other browser too, which used to be unreachable on macOS.
+⚡ **Each Cue subscription can pick its own model and effort.** Set a tier (low, medium, high) or an exact model, plus an effort level, and that run uses them without touching the agent's own settings. Agent nodes in the Pipeline Graph and the Scheduled Tasks form both have Model and Effort selectors, `maestro-cli cue schedule` takes `--tier`, `--model`, and `--effort`, and `maestro-cli cue model` changes any existing subscription and warns when the provider cannot honor the choice.
 
 ## Also in 1.0.1
 
-- 🎬 **The floating media player streams from a URL.** `maestro-cli open-file https://...` plays an MP4 or audio file straight from the web, with seeking.
-- 🩺 **Feedback reads Maestro's own state** when it opens, so it can describe what it sees (busy, errored, or limit-paused agents and recent errors) instead of asking. A Submit now button files the issue at any point, and you can paste a screenshot straight into the input.
+- 🪟 **Move a whole group to another window.** Right-click a group header and choose Move Group to Window, subgroups and worktrees included. `Cmd+K` and `maestro-cli window move-group` do the same.
+- 🛑 **Stop actually stops an agent on an SSH remote**, instead of ending only the local connection while the agent kept working on the host. A stopped SSH tab with a queued message no longer sits on "Thinking..." forever.
+- 🧪 **Codex visualizations render inline in the chat**, the way the Codex app shows them, instead of as boxed glyphs around raw JSON.
+- 🔗 **Choose per link where it opens**: `maestro+https://...` always opens a Maestro browser tab, `system+https://...` always opens your system browser. `Cmd+Click` in a terminal tab now opens a link in the other browser too.
+- 📊 **The Auto Run card shows percent done, elapsed time, and an ETA**, and the AUTO pill in the jump-to-agent list fills as the run progresses.
+- 🗨️ **A steering note now shows the agent's reply** under it in the Thought Stream, and steering is a labelled Steer Auto Run button. `maestro-cli steer-auto-run` sends, lists, and cancels notes.
+- ⏯️ **An Auto Run paused by a usage limit now really resumes on its own** once the limit clears.
+- 🔐 **An expired login no longer burns your queued messages.** The agent shows the error, the queue holds, and the re-login prompt opens.
 - 🔑 **Log in to a logged-out Claude or Codex account from the Usage Dashboard**, even one no agent uses right now.
-- 🧠 **Codex's Reasoning Effort setting now takes effect** (it was silently ignored before), Thinking shows Codex's reasoning again, and a new setting picks how detailed those reasoning summaries are.
-- 🔁 **An auto-retry shows as a running turn**, so the tab, the Thinking pill, and the transcript all agree, and a failed attempt during an outage no longer raises a green completion toast.
-- ⚠️ **A failed turn keeps its error card.** The last bit of output before the error used to wipe it, so the turn looked finished.
-- 📏 **A full context window is reported as a full context window**, instead of a vague "invalid_request" error.
-- 🧾 **Slash-command prompts collapse to their first line** in the chat. Click the header to read the whole thing.
-- 🏷️ **Tabs that receive messages from `maestro-cli`, the web interface, or the queue get auto-named** like any other tab.
-- 🐢 **Background git checks no longer pile up on slow folders** like iCloud Drive, which could leave agents there unresponsive.
-- 🔒 **An agent whose SSH remote was deleted or disabled refuses to run** instead of quietly running on your machine.
-- 🤖 **AI command mode works for agents on an SSH remote.**
-- ✂️ **Cancelling a merge or Send to Agent stops the work behind it**, instead of letting it run to the end.
-- 🎭 **Claude Code on the Max-plan token source** now reports cost, subagent activity, and the real model, and a long-running tool call is no longer killed after five minutes. Long prompts sent while Claude is busy now arrive whole, instead of being cut short or marked as pasted text.
-- 🧷 **Cue runs an agent with its own custom binary path**, the same one its tabs use.
-- 📜 **History keeps 10,000 entries per agent by default**, its help shows your real limit, and Director's Notes reads all the way up to it.
-- 📂 **The Auto Run document list stays put** when you switch to an agent in the middle of a run.
-- 🏆 **The Standing Ovation card keeps its exit on screen** at any window size, and its share image waits for your stats instead of showing dashes.
-- 🧮 **Lifetime stats load several times faster**, so the About screen and share image fill in sooner.
-- 🔥 **Two open windows no longer bounce shortcut settings back and forth**, which could pin the CPU.
-- ⏹️ **You can close the profiling capture window mid-save**; it finishes in the background and leaves a toast to the result.
-- 🧭 **The provider picker says when nothing was detected** instead of showing a Show All switch that seemed to do nothing.
-- 🎯 **Delegation pills show the full agent name**, wrapping to two lines instead of cutting it off.
-- 📊 **Usage Dashboard bar charts size their name column to the real labels.**
-- 🐧 **Linux windows and the taskbar show the Maestro icon.**
-- 🔤 **The collapsed Left Bar labels each agent with two-letter initials** tinted with its status color, instead of a row of identical dots you had to hover to tell apart. Turn it off under Settings > Display > Left Side Panel.
-- 🪫 **Cheap turns on Codex agents work again.** Tab naming, synopses, context summaries, and low-effort Auto Run or Cue runs asked Codex for an effort level it no longer accepts, so they failed without a word. Maestro now uses Codex's real lowest level, and if a provider ever refuses an effort level Maestro picked, the turn runs again without it and a toast says what happened.
+- 🧠 **Codex's Reasoning Effort setting now takes effect**, Thinking shows Codex's reasoning again, and a new setting picks how detailed those summaries are.
+- 🪫 **Cheap turns on Codex work again.** Tab naming, synopses, and low-effort runs asked for an effort level Codex no longer accepts. If a provider ever refuses an effort level, the turn now reruns without it and a toast says so.
 - 📂 **Codex agents with a writable Additional Directory keep working past the first turn**, instead of failing every follow-up with "exited with code 2".
-- 📨 **The New Session Message reaches every new conversation**, including messages from the queue, `maestro-cli dispatch` and `send`, the web interface, and every Cue run. Before, only a message typed in the composer carried it.
-- 🧵 **A finished reply lands above the next queued message**, instead of under it, so the transcript no longer reads as if the running turn were already done.
-- ♻️ **Resuming a conversation whose tab is hidden brings the tab back** and focuses it.
-- 🖼️ **The annotator leaves the crop tool once a crop is applied**, so the crop no longer looks like it did not take. Undo re-opens the crop selection so you can adjust and try again.
-- 📋 **Playbooks saved with `maestro-cli auto-run --save-as` actually run.** They used to report "No unchecked tasks", and a document outside the Auto Run folder is now refused by name.
-- 🎼 **`maestro-cli encore group-chat` no longer toggles Maestro Symphony.** Group Chat is not an Encore Feature; use `maestro-symphony` for Symphony.
-- 🧩 **Copilot CLI installed through WinGet is detected on Windows.**
-- 🗨️ **A steering note now shows the agent's reply.** The task that took the note puts its one-line synopsis under it in the Thought Stream, and it opens to the full response. Notes stay visible after the run ends, so the answer to the last one is not lost. Steering is now a labelled Steer Auto Run button instead of a dim icon in the header.
-- 🎛️ **`maestro-cli steer-auto-run` sends, lists, and cancels steering notes**, so an agent watching an Auto Run can correct it without stopping it.
-- 🔐 **An expired login no longer burns your queued messages.** The failed turn used to read as a normal reply, so the queue fed every waiting message into the dead login. Now the agent shows the error, the queue holds, and the re-login prompt opens.
-- 📋 **"Copy" inside terminal programs actually copies.** Claude Code's login screen said the URL was copied while the clipboard never changed. The login terminal also has a right-click copy menu now.
-- 📊 **The Usage Dashboard agent detail shows tokens and cost for the selected range**, instead of the agent's lifetime total beside 30-day numbers. The lifetime total has its own labelled line.
-- 🛰️ **SSH agents with Sync History mirror each entry to their own remote**, instead of the host of whichever agent was on screen when the turn finished.
-- 📁 **A folder link in the chat opens that folder in the Files panel**, expanded and selected, instead of silently doing nothing. `maestro-cli open-file <folder>` does the same.
-- 🎨 **Mermaid labels stay readable on colors the diagram picks itself.** A flowchart that colors its own boxes no longer leaves pale text on a pale fill.
-- 🖍️ **Pick an annotator color with 1-8.** Each swatch shows its number, and the key recolors the selected label or shape, or sets the tool's color.
-- 🗂️ **Agent Sessions shows the sessions of the agent's own Claude account**, instead of always reading the default one, so every listed session can actually be resumed. The token total now includes cached tokens (it used to show about 1% of what was billed), with a breakdown on hover.
-- 🖥️ **An agent set to Claude's TUI mode uses it for everything**: Auto Run, the Cue assistant, AI command mode, summarize and continue, group chat summaries, and both wizards used to fall back to API billing.
-- ✅ **The provider's "you've hit your limit" message leaves the transcript once the limit clears**, so the last thing in the tab no longer says the quota is still gone.
-- 😴 **Waking your computer no longer raises a sticky Cue heartbeat toast for every agent.** The missed beat still recovers on its own.
-- ⚡ **The Usage Dashboard opens instantly.** Reopening it shows the last numbers for each time range at once and refreshes them in place, instead of loading from scratch every time.
-- 🧑‍⚖️ **The group chat moderator spells out what it refers to.** When it asks you to decide on something only a participant or a file showed, the question, options, and its recommendation are in its own message.
-- ⏯️ **An Auto Run paused by a usage limit resumes on its own** once the limit clears, instead of waiting for you to click Resume.
-- 🧙 **Resume Where I Left Off in the wizard opens the wizard**, instead of showing the resume prompt again in a loop.
-- 📄 **Auto Run on an SSH agent lists the documents of a flat playbook folder**, which used to show up empty in the Auto Run panel and in Add Docs.
-- 🕐 **Ask and hand-off pills show the time they went out**, so a run of consults reads in order.
-- 🏷️ **Tab naming works on Copilot CLI's Auto model**, which refused the effort level and left the tab unnamed. Tabs on providers that end a reply with an empty completion event get named too.
-- ✂️ **Shorten long tab names** under Settings > General > Tab Behavior cuts a generated name over 40 characters at the last whole word. Default off, which keeps the full name.
-- 🧵 **A message sent right after a turn no longer collides with its background synopsis.** Codex used to fail it with "thread already has an active writer", and Claude could mix both into one conversation file.
-- ⌨️ **AI command mode suggests commands that do not stop to ask for a password or a [y/N]**, since command mode cannot answer them and the command would hang until cancelled.
-- 🎹 **Pianola watchers retire themselves** when their tab is gone or idle for 6 hours (change it with `--idle-hours`), instead of polling forever and each respawning a process on every launch. A snoozed tab still counts as there.
-- 📊 **The Auto Run card shows percent done, elapsed time, and an ETA.** A stat strip at the top reads Progress (percent and tasks done), Elapsed (active time and average per task), and Remaining (projected time and a done-by clock). Tasks already checked before the run started no longer make the pace look faster than it is.
-- 🤖 **The AUTO pill in the jump-to-agent list fills as the run progresses** and shows the percent, matching the Auto Run card.
-- 🤝 **Turning off "only free agents" in a group chat releases delegations already waiting** on a busy agent, instead of leaving them parked for up to 15 minutes under the old setting.
-- 👻 **Codex agents on an SSH remote no longer add a phantom "needs login" account** to the Usage Dashboard. Rows earlier builds stored for them are cleaned up.
+- 🖥️ **Claude's TUI mode is honored everywhere**: Auto Run, the Cue assistant, AI command mode, summaries, and both wizards no longer fall back to API billing. It also reports cost, subagents, and the real model, and long prompts sent while Claude is busy arrive whole.
+- 🗂️ **Agent Sessions shows the sessions of the agent's own Claude account**, so every listed session can be resumed, and its token total includes cached tokens.
+- 🧮 **The Usage Dashboard agent detail shows tokens and cost for the selected range**, with the lifetime total on its own line.
+- 📨 **The New Session Message reaches every new conversation**, including the queue, `maestro-cli dispatch` and `send`, the web interface, and Cue runs.
+- 🏷️ **More tabs get auto-named**: ones fed by `maestro-cli`, the web interface, or the queue, and ones on Copilot CLI's Auto model. A new Tab Behavior setting shortens generated names over 40 characters.
+- 🧵 **A finished reply lands above the next queued message**, and a message sent right after a turn no longer collides with its background synopsis.
+- 🩺 **Feedback reads Maestro's own state** to describe what it sees, files the issue with Submit now at any point, and takes pasted screenshots.
+- 🎬 **The floating media player streams from a URL**: `maestro-cli open-file https://...` plays an MP4 or audio file, with seeking.
+- 📁 **A folder link in the chat opens that folder in the Files panel**, expanded and selected.
+- 🧾 **Slash-command prompts collapse to their first line** in the chat. Click the header to read the whole thing.
+- 🔤 **The collapsed Left Bar labels each agent with two-letter initials** tinted with its status color.
+- 🔁 **An auto-retry shows as a running turn**, a failed attempt no longer raises a green completion toast, and rate-limit and quota banners clear once work resumes.
+- ⚠️ **A failed turn keeps its error card**, and a full context window is reported as one instead of a vague "invalid_request".
+- 🔒 **An agent whose SSH remote was deleted or disabled refuses to run** instead of quietly running on your machine.
+- 🌲 **SSH worktree agents match the remote's git registry**, and changing a parent's SSH remote no longer adds a duplicate of every worktree.
+- 📄 **Auto Run on an SSH agent lists the documents of a flat folder** again, in the panel and in Add Docs.
+- 🤖 **AI command mode works for agents on an SSH remote**, and suggests only commands that never stop to ask for a password or a [y/N].
+- 🛰️ **SSH agents with Sync History mirror each entry to their own remote.**
+- 👻 **Codex agents on an SSH remote no longer add a phantom "needs login" account** to the Usage Dashboard.
+- 💾 **`maestro-cli` follows a custom Storage Location**, so it sees agents created after the move instead of answering "Agent not found".
+- 📋 **Playbooks saved with `maestro-cli auto-run --save-as` actually run**, instead of reporting "No unchecked tasks".
+- 🐢 **Background git checks no longer pile up on slow folders** like iCloud Drive.
+- 🔥 **Two open windows no longer bounce shortcut settings back and forth**, which could pin the CPU.
+- 📜 **History keeps 10,000 entries per agent by default**, and Director's Notes reads all the way up to it.
+- 🧑‍⚖️ **The group chat moderator spells out what it refers to** when it asks you to decide, and turning off "only free agents" releases delegations already waiting.
+- ✂️ **Cancelling a merge or Send to Agent stops the work behind it.**
+- 🎨 **Mermaid labels stay readable on colors the diagram picks itself.**
+- 🖍️ **Pick an annotator color with 1-8**, and the crop tool closes once a crop is applied.
+- 📌 **CSV and JSONL previews keep their header row pinned** while the rows scroll.
+- 🪄 **Menus, dropdowns, and hover cards stand out from the surface behind them** on every theme.
+- 🎹 **Pianola watchers retire themselves** when their tab is gone or idle for 6 hours.
+- 😴 **Waking your computer no longer raises a Cue heartbeat toast for every agent.**
+- 🔎 **The SSH Hosts list sorts A-Z and has a filter**, and New Agent in Group leads the group right-click menu.
+- ♻️ **Resuming a conversation whose tab is hidden brings the tab back.**
+- 🕐 **Ask and hand-off pills show the time they went out**, and delegation pills show the full agent name.
+- 🧙 **Resume Where I Left Off in the wizard opens the wizard** instead of looping on the prompt.
+- 🧩 **Copilot CLI installed through WinGet is detected on Windows**, and Linux windows show the Maestro icon.
 
 ### Previous Releases in this Series
 
@@ -589,7 +567,6 @@ Plus the pre-release ALPHA...
 - **v0.1.5** (November 27, 2025)
 - **v0.1.4** (November 27, 2025)
 - **v0.1.3** (November 27, 2025)
-- **v0.1.2** (November 27, 2025)
 
 ---
 

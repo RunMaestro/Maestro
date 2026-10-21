@@ -6,6 +6,7 @@ import {
 	useKeyboardShortcutHelpers,
 	useMainKeyboardHandler,
 } from '../../../renderer/hooks';
+import type { Shortcut } from '../../../renderer/types';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS } from '../../../renderer/constants/shortcuts';
 import { VIM_SHORTCUTS, VIM_TAB_SHORTCUTS } from '../../../renderer/constants/vimShortcuts';
@@ -18,6 +19,8 @@ import { useNotificationStore } from '../../../renderer/stores/notificationStore
 import { groupChatOutputSearchKey } from '../../../renderer/utils/outputSearch';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { STEER_SEND_EVENT } from '../../../renderer/services/chatSteering';
+import { OPEN_STAGED_IMAGES_ORGANIZER_EVENT } from '../../../renderer/services/stagedImagesOrganizer';
+import { FORCED_PARALLEL_SEND_EVENT } from '../../../renderer/hooks/input/useInputKeyDown';
 import {
 	clearDesktopAiTabSelections,
 	consumeDesktopAiTabSelection,
@@ -3026,6 +3029,52 @@ describe('useMainKeyboardHandler', () => {
 						},
 					],
 				},
+				setRenameTabId: vi.fn(),
+				setRenameTabInitialName: vi.fn(),
+				setRenameTabModalOpen: mockSetRenameTabModalOpen,
+			});
+
+			pressRenameShortcut();
+
+			expect(mockSetRenameTabModalOpen).not.toHaveBeenCalled();
+		});
+
+		it('renameTabGroup renames the active group itself, not its focused pane', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			const mockSetRenameTabId = vi.fn();
+			const mockSetRenameTabInitialName = vi.fn();
+			const mockSetRenameTabModalOpen = vi.fn();
+
+			result.current.keyboardHandlerRef.current = createTiledGroupRenameContext({
+				isTabShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'renameTabGroup',
+				setRenameTabId: mockSetRenameTabId,
+				setRenameTabInitialName: mockSetRenameTabInitialName,
+				setRenameTabModalOpen: mockSetRenameTabModalOpen,
+			});
+
+			pressRenameShortcut();
+
+			expect(mockSetRenameTabId).toHaveBeenCalledWith('group-1');
+			expect(mockSetRenameTabInitialName).toHaveBeenCalledWith('Group: Terminal 1');
+			expect(mockSetRenameTabModalOpen).toHaveBeenCalledWith(true);
+		});
+
+		it('renameTabGroup does nothing when no tab group is active', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			const mockSetRenameTabModalOpen = vi.fn();
+
+			result.current.keyboardHandlerRef.current = createTiledGroupRenameContext({
+				activeSession: {
+					id: 'session-1',
+					inputMode: 'ai',
+					aiTabs: [{ id: 'ai-tab-1', name: 'AI Tab 1', logs: [] }],
+					activeTabId: 'ai-tab-1',
+					terminalTabs: [],
+					tabGroups: [],
+				},
+				isTabShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'renameTabGroup',
 				setRenameTabId: vi.fn(),
 				setRenameTabInitialName: vi.fn(),
 				setRenameTabModalOpen: mockSetRenameTabModalOpen,
@@ -7073,6 +7122,311 @@ describe('useMainKeyboardHandler - Deck mode', () => {
 			pressKey('t');
 			expect(ctx.navigateToNextUnifiedTab).toHaveBeenCalledTimes(1);
 			expect(ctx.handleNewTab).toHaveBeenCalledTimes(1);
+		});
+	});
+});
+
+describe('group chat chords that must act on the room', () => {
+	const ROOM_ID = 'room-keys';
+	const aiTab = { id: 'ai-tab-1', name: 'Tab 1', logs: [], readOnlyMode: false };
+	const hiddenSession = {
+		id: 'agent-1',
+		name: 'Agent',
+		inputMode: 'ai',
+		aiTabs: [aiTab],
+		activeTabId: 'ai-tab-1',
+	};
+
+	// Real binding lookup over the shipped maps, with per-test rebinding, so the
+	// handler is exercised against the same matcher App gives it.
+	function matchers(rebound: Record<string, string[]> = {}) {
+		const shortcuts: Record<string, Shortcut> = { ...DEFAULT_SHORTCUTS };
+		const tabShortcuts: Record<string, Shortcut> = { ...TAB_SHORTCUTS };
+		for (const [id, keys] of Object.entries(rebound)) {
+			const target = id in tabShortcuts ? tabShortcuts : shortcuts;
+			target[id] = { ...target[id], keys };
+		}
+		const { result } = renderHook(() => useKeyboardShortcutHelpers({ shortcuts, tabShortcuts }));
+		return { isShortcut: result.current.isShortcut, isTabShortcut: result.current.isTabShortcut };
+	}
+
+	function mountRoom(overrides: Record<string, unknown> = {}) {
+		const { result } = renderHook(() => useMainKeyboardHandler());
+		const setSessions = vi.fn();
+		const handleSetLightboxImage = vi.fn();
+		result.current.keyboardHandlerRef.current = createMockContext({
+			activeSession: hiddenSession,
+			activeGroupChatId: ROOM_ID,
+			setSessions,
+			handleSetLightboxImage,
+			mainPanelRef: { current: { reloadBrowserTab: vi.fn() } },
+			...matchers(),
+			...overrides,
+		});
+		return { setSessions, handleSetLightboxImage };
+	}
+
+	function press(init: KeyboardEventInit) {
+		const event = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init });
+		act(() => {
+			window.dispatchEvent(event);
+		});
+		return event;
+	}
+
+	beforeEach(() => {
+		useGroupChatStore.setState({ groupChatReadOnlyMode: false });
+	});
+
+	it('toggles the room read-only flag on the default chord and leaves the AI tab alone', () => {
+		const { setSessions } = mountRoom();
+
+		const event = press({ key: 'r', code: 'KeyR', metaKey: true });
+
+		expect(event.defaultPrevented).toBe(true);
+		expect(useGroupChatStore.getState().groupChatReadOnlyMode).toBe(true);
+		expect(setSessions).not.toHaveBeenCalled();
+
+		press({ key: 'r', code: 'KeyR', metaKey: true });
+		expect(useGroupChatStore.getState().groupChatReadOnlyMode).toBe(false);
+	});
+
+	it('follows a rebound read-only chord and ignores the old one', () => {
+		const { setSessions } = mountRoom(matchers({ toggleReadOnlyMode: ['Alt', 'Meta', 'x'] }));
+
+		press({ key: 'r', code: 'KeyR', metaKey: true });
+		expect(useGroupChatStore.getState().groupChatReadOnlyMode).toBe(false);
+
+		press({ key: 'x', code: 'KeyX', metaKey: true, altKey: true });
+		expect(useGroupChatStore.getState().groupChatReadOnlyMode).toBe(true);
+		expect(setSessions).not.toHaveBeenCalled();
+	});
+
+	it('opens the room staged images on the default carousel chord', () => {
+		const images = ['data:image/png;base64,a', 'data:image/png;base64,b'];
+		const { handleSetLightboxImage } = mountRoom({
+			groupChatStagedImages: images,
+			stagedImages: ['data:image/png;base64,ai'],
+		});
+
+		press({ key: 'y', code: 'KeyY', metaKey: true });
+
+		expect(handleSetLightboxImage).toHaveBeenCalledTimes(1);
+		expect(handleSetLightboxImage).toHaveBeenCalledWith(images[0], images, 'staged');
+	});
+
+	it('opens the room staged images on a rebound carousel chord only', () => {
+		const images = ['data:image/png;base64,a'];
+		const { handleSetLightboxImage } = mountRoom({
+			groupChatStagedImages: images,
+			...matchers({ openImageCarousel: ['Alt', 'Meta', 'o'] }),
+		});
+
+		press({ key: 'y', code: 'KeyY', metaKey: true });
+		expect(handleSetLightboxImage).not.toHaveBeenCalled();
+
+		press({ key: 'o', code: 'KeyO', metaKey: true, altKey: true });
+		expect(handleSetLightboxImage).toHaveBeenCalledWith(images[0], images, 'staged');
+	});
+
+	describe('focus input toggle', () => {
+		const CHORD = { key: '.', code: 'Period', metaKey: true };
+		const terminalSession = { ...hiddenSession, inputMode: 'terminal' };
+		let roomInput: HTMLTextAreaElement;
+		let aiInput: HTMLTextAreaElement;
+		let aiOutput: HTMLDivElement;
+
+		beforeEach(() => {
+			vi.useFakeTimers();
+			roomInput = document.createElement('textarea');
+			aiInput = document.createElement('textarea');
+			aiOutput = document.createElement('div');
+			aiOutput.tabIndex = 0;
+			document.body.append(roomInput, aiInput, aiOutput);
+		});
+
+		afterEach(() => {
+			vi.useRealTimers();
+			roomInput.remove();
+			aiInput.remove();
+			aiOutput.remove();
+		});
+
+		function mountFocusRoom(overrides: Record<string, unknown> = {}) {
+			const roomMessages = { scrollToMessage: vi.fn(), focus: vi.fn() };
+			const focusActiveTerminal = vi.fn();
+			mountRoom({
+				activeSession: terminalSession,
+				groupChatInputRef: { current: roomInput },
+				groupChatMessagesRef: { current: roomMessages },
+				inputRef: { current: aiInput },
+				terminalOutputRef: { current: aiOutput },
+				mainPanelRef: { current: { focusActiveTerminal } },
+				...overrides,
+			});
+			return { roomMessages, focusActiveTerminal };
+		}
+
+		it('moves from the room composer to the room transcript, even with a terminal-mode agent underneath', () => {
+			const { roomMessages, focusActiveTerminal } = mountFocusRoom();
+			roomInput.focus();
+
+			press(CHORD);
+			vi.runAllTimers();
+
+			expect(document.activeElement).not.toBe(roomInput);
+			expect(roomMessages.focus).toHaveBeenCalledTimes(1);
+			expect(focusActiveTerminal).not.toHaveBeenCalled();
+			expect(document.activeElement).not.toBe(aiOutput);
+		});
+
+		it('moves from elsewhere in the room to the room composer, not the hidden xterm', () => {
+			const { roomMessages, focusActiveTerminal } = mountFocusRoom();
+
+			press(CHORD);
+			vi.runAllTimers();
+
+			expect(document.activeElement).toBe(roomInput);
+			expect(roomMessages.focus).not.toHaveBeenCalled();
+			expect(focusActiveTerminal).not.toHaveBeenCalled();
+		});
+
+		it('keeps the AI composer and transcript pair in regular chat', () => {
+			mountFocusRoom({ activeGroupChatId: null, activeSession: hiddenSession });
+
+			press(CHORD);
+			vi.runAllTimers();
+			expect(document.activeElement).toBe(aiInput);
+
+			press(CHORD);
+			vi.runAllTimers();
+			expect(document.activeElement).toBe(aiOutput);
+		});
+
+		it('keeps focusing the xterm for a terminal-mode agent in regular chat', () => {
+			const { focusActiveTerminal } = mountFocusRoom({ activeGroupChatId: null });
+
+			press(CHORD);
+
+			expect(focusActiveTerminal).toHaveBeenCalledTimes(1);
+		});
+	});
+
+	describe('forced parallel send', () => {
+		const CHORD = { key: 'Enter', code: 'Enter', metaKey: true, shiftKey: true };
+		let forcedSends: ReturnType<typeof vi.fn>;
+		let previousSetting: boolean;
+
+		beforeEach(() => {
+			previousSetting = useSettingsStore.getState().forcedParallelExecution;
+			useSettingsStore.setState({ forcedParallelExecution: true });
+			forcedSends = vi.fn();
+			window.addEventListener(FORCED_PARALLEL_SEND_EVENT, forcedSends);
+		});
+
+		afterEach(() => {
+			window.removeEventListener(FORCED_PARALLEL_SEND_EVENT, forcedSends);
+			useSettingsStore.setState({ forcedParallelExecution: previousSetting });
+		});
+
+		it('does not reach the hidden agent while a room is open', () => {
+			mountRoom();
+
+			const event = press(CHORD);
+
+			expect(forcedSends).not.toHaveBeenCalled();
+			expect(event.defaultPrevented).toBe(false);
+		});
+
+		it('still fires from outside the composer in regular chat', () => {
+			mountRoom({ activeGroupChatId: null, inputRef: { current: null } });
+
+			const event = press(CHORD);
+
+			expect(forcedSends).toHaveBeenCalledTimes(1);
+			expect(event.defaultPrevented).toBe(true);
+		});
+	});
+
+	describe('image organizer', () => {
+		const ROOM_IMAGES = ['data:image/png;base64,a', 'data:image/png;base64,b'];
+		const AI_IMAGES = ['data:image/png;base64,c', 'data:image/png;base64,d'];
+		const DEFAULT_CHORD = { key: 'Y', code: 'KeyY', metaKey: true, shiftKey: true };
+		let organizerRequests: ReturnType<typeof vi.fn>;
+
+		beforeEach(() => {
+			organizerRequests = vi.fn();
+			window.addEventListener(OPEN_STAGED_IMAGES_ORGANIZER_EVENT, organizerRequests);
+		});
+
+		afterEach(() => {
+			window.removeEventListener(OPEN_STAGED_IMAGES_ORGANIZER_EVENT, organizerRequests);
+		});
+
+		it('opens the organizer for 2+ room images even when the AI tab holds none', () => {
+			const recordShortcutUsage = vi.fn().mockReturnValue({ newLevel: null });
+			mountRoom({ groupChatStagedImages: ROOM_IMAGES, stagedImages: [], recordShortcutUsage });
+
+			const event = press(DEFAULT_CHORD);
+
+			expect(event.defaultPrevented).toBe(true);
+			expect(organizerRequests).toHaveBeenCalledTimes(1);
+			expect(recordShortcutUsage).toHaveBeenCalledWith('openImageOrganizer');
+		});
+
+		it('is an untracked no-op with fewer than 2 room images, whatever the AI tab holds', () => {
+			const recordShortcutUsage = vi.fn().mockReturnValue({ newLevel: null });
+			mountRoom({
+				groupChatStagedImages: [ROOM_IMAGES[0]],
+				stagedImages: AI_IMAGES,
+				recordShortcutUsage,
+			});
+
+			press(DEFAULT_CHORD);
+
+			expect(organizerRequests).not.toHaveBeenCalled();
+			expect(recordShortcutUsage).not.toHaveBeenCalled();
+		});
+
+		it('follows a rebound organizer chord in a room', () => {
+			mountRoom({
+				groupChatStagedImages: ROOM_IMAGES,
+				...matchers({ openImageOrganizer: ['Alt', 'Meta', 'k'] }),
+			});
+
+			press(DEFAULT_CHORD);
+			expect(organizerRequests).not.toHaveBeenCalled();
+
+			press({ key: 'k', code: 'KeyK', metaKey: true, altKey: true });
+			expect(organizerRequests).toHaveBeenCalledTimes(1);
+		});
+
+		it('still reads the AI composer images in regular chat', () => {
+			const recordShortcutUsage = vi.fn().mockReturnValue({ newLevel: null });
+			mountRoom({
+				activeGroupChatId: null,
+				stagedImages: AI_IMAGES,
+				groupChatStagedImages: [],
+				recordShortcutUsage,
+			});
+
+			press(DEFAULT_CHORD);
+			expect(organizerRequests).toHaveBeenCalledTimes(1);
+			expect(recordShortcutUsage).toHaveBeenCalledWith('openImageOrganizer');
+		});
+
+		it('is an untracked no-op in regular chat with fewer than 2 AI images', () => {
+			const recordShortcutUsage = vi.fn().mockReturnValue({ newLevel: null });
+			mountRoom({
+				activeGroupChatId: null,
+				stagedImages: [AI_IMAGES[0]],
+				groupChatStagedImages: ROOM_IMAGES,
+				recordShortcutUsage,
+			});
+
+			press(DEFAULT_CHORD);
+			expect(organizerRequests).not.toHaveBeenCalled();
+			expect(recordShortcutUsage).not.toHaveBeenCalled();
 		});
 	});
 });

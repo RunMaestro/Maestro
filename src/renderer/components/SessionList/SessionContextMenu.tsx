@@ -24,6 +24,7 @@ import {
 	Plus,
 	Pencil,
 	Check,
+	PackageOpen,
 } from 'lucide-react';
 import type { Group, Session, Theme } from '../../types';
 import { useAnchoredMenuPosition, useClickOutside, useContextMenuPosition } from '../../hooks';
@@ -48,6 +49,8 @@ interface SessionContextMenuProps {
 	onRename: () => void;
 	onEdit: () => void;
 	onDuplicate: () => void;
+	/** Export this agent to a bundle. Omitted for agents that cannot be exported. */
+	onExport?: () => void;
 	onToggleBookmark: () => void;
 	onMoveToGroup: (groupId: string) => void;
 	onDelete: () => void;
@@ -205,6 +208,7 @@ export function SessionContextMenu({
 	onRename,
 	onEdit,
 	onDuplicate,
+	onExport,
 	onToggleBookmark,
 	onMoveToGroup,
 	onDelete,
@@ -374,6 +378,21 @@ export function SessionContextMenu({
 				>
 					<Copy className="w-3.5 h-3.5" />
 					Duplicate...
+				</button>
+			)}
+
+			{onExport && (
+				<button
+					type="button"
+					onClick={() => {
+						onExport();
+						onDismiss();
+					}}
+					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+					style={{ color: theme.colors.textMain }}
+				>
+					<PackageOpen className="w-3.5 h-3.5" />
+					Export Agent...
 				</button>
 			)}
 

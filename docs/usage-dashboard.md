@@ -292,6 +292,16 @@ Older builds also subtracted time the window was hidden, which on macOS includes
 
 The dashboard keeps the last result for each time range. When you close it and open it again, the last numbers show at once and refresh in place. A small indicator shows when newer data arrives.
 
+## Upgrading Usage Data
+
+When an update changes how Maestro counts tokens or cost, the first time you open the dashboard, About, or the Agent Sessions browser, Maestro reads your session history again, once. With a lot of history this can take a few minutes. A window shows the progress: how many transcripts are done, how much data is left, and the time remaining.
+
+- Click **Continue in background** (or press <kbd>Esc</kbd>) to shrink it to a card in the bottom-right corner. Click the card to see the details again, or **X** to hide it until the next scan.
+- The app stays responsive while this runs. The reading happens in the background, not on the window's thread.
+- Progress is saved as it goes. If you quit partway, the next launch continues where it stopped.
+- Run **Show Usage Data Scan Progress** from the command palette to bring the window back.
+- From a terminal, `maestro-cli stats-indexing` prints the same progress. Add `--wait` to block until it finishes.
+
 ## Time Range Filtering
 
 Use the time range dropdown in the top-right corner to filter all dashboard data:

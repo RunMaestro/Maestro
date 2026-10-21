@@ -2,7 +2,7 @@
  * Stats domain WebSocket message handlers.
  *
  * Extracted from WebSocketMessageHandler.ts. Handles: get_usage_dashboard,
- * get_stats_aggregation, get_token_usage, stats_query, get_achievements,
+ * get_stats_aggregation, get_token_usage, get_stats_indexing, stats_query, get_achievements,
  * generate_director_notes_synopsis.
  */
 
@@ -13,6 +13,7 @@ import { tokenUsageQueryForRange } from '../../../../shared/tokenUsage';
 import { getTokenUsageAggregate } from '../../../stats/token-usage/token-usage-accessor';
 import { getSettingsStore } from '../../../stores';
 import { isEncoreFeatureEnabled } from '../../../../shared/encoreFeatureDefaults';
+import { getStatsIndexingState } from '../../../stats/stats-indexing';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
 
 /**
@@ -138,6 +139,24 @@ export function handleGetTokenUsage(
 				`Failed to get token usage: ${error instanceof Error ? error.message : String(error)}`
 			);
 		});
+}
+
+/**
+ * Handle get_stats_indexing message - the progress of the long transcript
+ * scans behind the usage caches (`maestro-cli stats-indexing`). State lives in
+ * the main process, so this answers with no renderer round trip.
+ */
+export function handleGetStatsIndexing(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	ctx.send(client, {
+		type: 'stats_indexing',
+		data: getStatsIndexingState(),
+		requestId: message.requestId,
+		timestamp: Date.now(),
+	});
 }
 
 /**

@@ -665,7 +665,9 @@ describe('resolveAndRun session-scoped ops (newTab / closeTab)', () => {
 		);
 		expect(res.ok).toBe(true);
 		expect(sessions[0].browserTabs).toHaveLength(0);
-		expect(sessions[0].unifiedTabOrder).toHaveLength(0);
+		// It was the agent's only tab, so the agent lands on a blank AI chat.
+		expect(sessions[0].unifiedTabOrder).toEqual([{ type: 'ai', id: expect.any(String) }]);
+		expect(sessions[0].aiTabs).toHaveLength(1);
 	});
 
 	it('closeTab on a tab missing from the session fails closed at the boundary', async () => {

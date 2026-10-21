@@ -10,7 +10,8 @@
  *   the top-level text only, so a block that arrives through an include keeps its
  *   refs. The path serves the bundled file, never a customization.
  * - `{{INCLUDE:name}}` inlines another prompt, customization-aware, to a depth of 3
- *   with a cycle check.
+ *   with a cycle check, through `resolvePromptIncludes()` (`src/shared/promptIncludes.ts`),
+ *   which the CLI loader also uses.
  *
  * A prompt the user edited wins over the bundled file when `isModified` is true. The
  * customizations file is re-read on every `get`, so an edit made in the desktop applies
@@ -20,15 +21,14 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { CORE_PROMPTS } from '../../promptDefinitions';
+import { resolvePromptIncludes } from '../../promptIncludes';
 import { logger } from '../host';
 import { parseStoreJson } from '../store/corrupt-store';
 import { PROMPT_CUSTOMIZATIONS_FILE } from '../settings/snapshot';
 
 const LOG_CONTEXT = '[PromptLoader]';
 
-const INCLUDE_PATTERN = /\{\{INCLUDE:([a-zA-Z0-9_-]+)\}\}/g;
 const REF_PATTERN = /\{\{REF:([a-zA-Z0-9_-]+)\}\}/g;
-const MAX_INCLUDE_DEPTH = 3;
 
 /** What directive resolution needs from its host. */
 export interface PromptDirectiveHost {
@@ -60,33 +60,6 @@ function resolveRefs(content: string, host: PromptDirectiveHost): string {
 	});
 }
 
-function resolveIncludes(
-	content: string,
-	host: PromptDirectiveHost,
-	visited: Set<string>,
-	depth: number
-): string {
-	if (depth >= MAX_INCLUDE_DEPTH) return content;
-	if (!content.includes('{{INCLUDE:')) return content;
-
-	return content.replace(INCLUDE_PATTERN, (match, name: string) => {
-		if (visited.has(name)) {
-			host.warn?.(`Circular include detected: ${name} (visited: ${[...visited].join(' -> ')})`);
-			return match;
-		}
-
-		const resolved = host.readPrompt(name);
-		if (resolved === null) {
-			host.warn?.(`Include not found: ${name}`);
-			return match;
-		}
-
-		const nextVisited = new Set(visited);
-		nextVisited.add(name);
-		return resolveIncludes(resolved, host, nextVisited, depth + 1);
-	});
-}
-
 /**
  * Resolve a prompt's directives: refs first, then includes. `id` seeds the cycle
  * check so a prompt cannot include itself.
@@ -96,7 +69,13 @@ export function resolvePromptDirectives(
 	content: string,
 	host: PromptDirectiveHost
 ): string {
-	return resolveIncludes(resolveRefs(content, host), host, new Set([id]), 0);
+	return resolvePromptIncludes(resolveRefs(content, host), {
+		load: (name) => host.readPrompt(name),
+		rootId: id,
+		onMissing: (name) => host.warn?.(`Include not found: ${name}`),
+		onCycle: (name, chain) =>
+			host.warn?.(`Circular include detected: ${name} (visited: ${chain.join(' -> ')})`),
+	});
 }
 
 /**

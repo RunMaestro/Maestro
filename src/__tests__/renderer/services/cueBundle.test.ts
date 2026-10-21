@@ -160,6 +160,35 @@ describe('applyImportedAgents', () => {
 		expect(created.requiredSecrets).toEqual(['API_TOKEN']);
 	});
 
+	it("leaves an existing agent's machine settings alone unless the import is an exact copy", async () => {
+		const withMachine = {
+			...existing,
+			customPath: '/usr/local/bin/codex',
+			bookmarked: true,
+		} as Session;
+		const record = {
+			id: 'e1',
+			name: 'Old name',
+			toolType: 'codex',
+			cwd: '/old',
+			customPath: '/opt/codex',
+		} as unknown as SessionInfo;
+
+		useSessionStore.setState({ sessions: [withMachine] });
+		await applyImportedAgents({ created: [], updated: [record] });
+		expect(useSessionStore.getState().sessions[0]).toMatchObject({
+			customPath: '/usr/local/bin/codex',
+			bookmarked: true,
+		});
+
+		useSessionStore.setState({ sessions: [withMachine] });
+		await applyImportedAgents({ created: [], updated: [record], exact: true });
+		const restored = useSessionStore.getState().sessions[0];
+		expect(restored.customPath).toBe('/opt/codex');
+		// Absent from the copy: cleared, as the agent that was exported had none.
+		expect(restored.bookmarked).toBeUndefined();
+	});
+
 	it('does not add an agent twice', async () => {
 		await applyImportedAgents({
 			created: [{ id: 'e1', name: 'Dup', toolType: 'codex', cwd: '/x' } as SessionInfo],

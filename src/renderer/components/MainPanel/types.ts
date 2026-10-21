@@ -198,6 +198,8 @@ export interface MainPanelProps {
 	onCloseOtherTabs?: (pivotTabId?: string) => void;
 	onCloseTabsLeft?: (pivotTabId?: string) => void;
 	onCloseTabsRight?: (pivotTabId?: string) => void;
+	/** Close every tab in a tiled group (the group chip confirms first) */
+	onCloseTabGroup?: (groupId: string) => void;
 
 	// Unified tab system (Phase 4) - file preview tabs integrated with AI tabs
 	unifiedTabs?: UnifiedTab[];

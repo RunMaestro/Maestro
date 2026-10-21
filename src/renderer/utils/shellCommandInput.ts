@@ -144,3 +144,55 @@ export function stripShellCommandEscape(raw: string): string {
 	if (!rest.startsWith(SHELL_COMMAND_ESCAPE)) return raw;
 	return leadingWhitespace + rest.slice(1);
 }
+
+/**
+ * Fence languages whose body is a command line, after the fence tag has been
+ * resolved (or picked by the user in the language picker). Includes both the
+ * tags agents write (`bash`, `sh`, `zsh`, `console`) and Shiki's canonical ids
+ * for them (`shellscript`, `shellsession`), since `CodeFence` hands over
+ * whichever it resolved to.
+ *
+ * Deliberately excludes `fish`, `powershell` and `bat`: command mode runs the
+ * user's default shell, so a fence in a different shell's dialect would run
+ * under the wrong interpreter.
+ */
+const RUNNABLE_FENCE_LANGUAGES = new Set([
+	'bash',
+	'sh',
+	'shell',
+	'shellscript',
+	'zsh',
+	'console',
+	'shellsession',
+	'terminal',
+]);
+
+/** Whether a code fence in this language can be run as a command-mode command. */
+export function isRunnableShellLanguage(language: string | null | undefined): boolean {
+	return !!language && RUNNABLE_FENCE_LANGUAGES.has(language.toLowerCase());
+}
+
+/** A transcript-style prompt: `$ ` at the start of a line. */
+const SHELL_PROMPT_LINE = /^\s*\$\s+/;
+
+/**
+ * Turn a shell code fence's body into the command line to run.
+ *
+ * A fence written as a session transcript (`$ npm test` followed by its output)
+ * runs only its prompt lines, with the `$ ` stripped, so the sample output is
+ * never executed. Any other fence runs as written: line continuations,
+ * comments and multi-line scripts all reach the shell intact.
+ *
+ * Returns an empty string when there is nothing to run.
+ */
+export function commandFromShellFence(code: string): string {
+	const lines = code.split('\n');
+	if (lines.some((line) => SHELL_PROMPT_LINE.test(line))) {
+		return lines
+			.filter((line) => SHELL_PROMPT_LINE.test(line))
+			.map((line) => line.replace(SHELL_PROMPT_LINE, ''))
+			.join('\n')
+			.trim();
+	}
+	return code.trim();
+}

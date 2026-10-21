@@ -16,9 +16,11 @@ import * as crypto from 'crypto';
 import * as yaml from 'js-yaml';
 import { compareVersions } from '../../../shared/pathUtils';
 import {
+	CUE_BUNDLE_LOCAL_PATH,
 	CUE_BUNDLE_MANIFEST_PATH,
 	CUE_BUNDLE_VERSION,
 	type CueBundleAgentSettings,
+	type CueBundleLocalData,
 	type CueBundleManifest,
 } from '../../../shared/cue-bundle-types';
 import { isUnsafeZipEntryName, readZipArchive } from '../../utils/zip-archive';
@@ -105,6 +107,26 @@ function asStringList(value: unknown): string[] {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
+ * Parse an exact copy's `local.json`, or undefined when it is not the shape
+ * {@link CueBundleLocalData} describes. Only the containers are checked here;
+ * the importer checks each field it applies.
+ */
+export function parseCueBundleLocalData(bytes: Buffer): CueBundleLocalData | undefined {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(bytes.toString('utf-8'));
+	} catch {
+		return undefined;
+	}
+	if (!isRecord(parsed) || !isRecord(parsed.workspaces) || !isRecord(parsed.agents)) {
+		return undefined;
+	}
+	if (!Object.values(parsed.workspaces).every((v) => typeof v === 'string')) return undefined;
+	if (!Object.values(parsed.agents).every(isRecord)) return undefined;
+	return parsed as unknown as CueBundleLocalData;
 }
 
 /** A bundle zip's entries, read once and shared by the validator and the importer. */
@@ -327,6 +349,26 @@ export function validateCueBundleArchive(
 					'secret-not-declared',
 					`Agent "${String(agent.name)}" requires ${key}, which is not in requirements.secrets`,
 					agent.settings
+				);
+			}
+		}
+	}
+
+	// ─── Exact copy ──────────────────────────────────────────────────────────
+	if (manifest.local !== undefined) {
+		if (manifest.local !== CUE_BUNDLE_LOCAL_PATH) {
+			error(
+				'manifest-invalid',
+				`manifest.local must be "${CUE_BUNDLE_LOCAL_PATH}"`,
+				CUE_BUNDLE_MANIFEST_PATH
+			);
+		} else if (requireEntry(manifest.local, 'file-missing', 'The exact copy data')) {
+			const local = parseCueBundleLocalData(entries.get(manifest.local)!);
+			if (!local) {
+				error(
+					'local-invalid',
+					'local.json must hold a workspaces and an agents object',
+					manifest.local
 				);
 			}
 		}

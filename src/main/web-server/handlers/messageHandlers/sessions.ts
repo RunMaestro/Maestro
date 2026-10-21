@@ -436,9 +436,14 @@ export function handleProviderTranslation(
 	}
 	if (
 		typeof patch.migrationAction !== 'string' ||
-		!['plan', 'apply', 'status', 'recover', 'rollback'].includes(patch.migrationAction)
+		!['plan', 'apply', 'status', 'recover', 'rollback', 'switch'].includes(patch.migrationAction)
 	) {
 		ctx.sendError(client, 'Invalid provider translation action');
+		return;
+	}
+	// `switch` changes the provider WITHOUT converting, so it needs a destination.
+	if (patch.migrationAction === 'switch' && patch.toolType === undefined) {
+		ctx.sendError(client, 'Switching provider requires a destination provider');
 		return;
 	}
 	if (

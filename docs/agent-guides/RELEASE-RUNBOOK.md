@@ -3,7 +3,9 @@
 How the agents cut a Maestro release with no one watching. The conductor starts it
 with `/maestro-release-main`, `/maestro-release-rc`, or `/maestro-release-all`.
 Each command runs `node scripts/release.mjs kickoff --scope <scope>`,
-which opens a group chat whose moderator follows this document.
+which opens a group chat whose moderator follows this document, and schedules a
+Cue task (`release-finish-<chat id prefix>`, every 20 minutes) on the calling
+agent that runs `finish` until the release has shipped.
 
 The process was worked out live during the v0.17.5 / v0.18.6-RC release on
 2026-09-24. Every rule below exists because something went wrong that night or
@@ -22,6 +24,11 @@ the fix, and an advisory published before the announcement).
   conductor only when a step fails in a way this runbook does not cover, or when
   a decision comes up that nobody has made before. "Are these notes OK?" is not
   such a decision.
+- **The moderator's read-only mode is not a gate.** A group chat moderator
+  always runs read-only (plan mode); that is why it delegates. Participants have
+  full write access, so tag, bump, and announce are routed the moment the step
+  before passes. On 2026-10-20 a moderator held v1.0.1 for an hour waiting for
+  someone to turn plan mode off and say "go".
 - **Stop on failure.** A failed build, a missing file, or a failing check stops
   everything downstream. Report the run URL and the failing step.
 - **Keep turns short.** Agent turns end at 30 minutes. Never poll CI to the
@@ -37,21 +44,22 @@ the fix, and an advisory published before the announcement).
 | Moderator     | The group chat moderator              | Sequencing, the dedup check, the final report |
 | Stable owner  | The agent on the `main` checkout      | `main` notes, tag, verify, bump               |
 | RC owner      | The agent on the `rc` worktree        | `rc` notes, tag, verify, bump                 |
-| Announcements | The agent on `RunMaestro.ai`          | Discord #announcements and subscriber email   |
+| Announcements | The agent on `RunMaestro.ai`          | Discord, subscriber email, release art, X     |
 
 ## The mechanics, one command each
 
 All from the Maestro repo root (`node scripts/release.mjs <cmd>`):
 
-| Command                                               | What it does                                                                                                                                                |
-| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `preflight --scope main\|rc\|all`                     | Read-only: version, tag, draft, previous two releases per channel, checks, whether rc lacks main commits                                                    |
-| `draft --tag vX --show`                               | Print the draft (or published release) for a tag, with its id and URL                                                                                       |
-| `draft --tag vX --title "vX \| Title" --notes-file f` | Write the notes into the draft. `--create` makes the draft if none exists. Never hand-edit an `untagged-...` URL                                            |
-| `tag --branch main\|rc [--wait-min 15]`               | Refuses unless the version is untagged, exactly one draft with notes exists, rc contains main, and every check passed. Then pushes the tag, which publishes |
-| `watch --tag vX [--max-min 20]`                       | Follows the release run, cancels duplicate runs, then runs `verify`                                                                                         |
-| `verify --tag vX [--repair]`                          | One published release, prerelease flag, "latest", all 16 files by name, sizes, `latest-mac.yml` version, one Full Changelog line, tag commit                |
-| `bump --branch main\|rc`                              | After a release ships: next patch version, committed and pushed without touching any working tree                                                           |
+| Command                                               | What it does                                                                                                                                                                                                                                                            |
+| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `preflight --scope main\|rc\|all`                     | Read-only: version, tag, draft, previous two releases per channel, checks, whether rc lacks main commits                                                                                                                                                                |
+| `draft --tag vX --show`                               | Print the draft (or published release) for a tag, with its id and URL                                                                                                                                                                                                   |
+| `draft --tag vX --title "vX \| Title" --notes-file f` | Write the notes into the draft. `--create` makes the draft if none exists. Never hand-edit an `untagged-...` URL                                                                                                                                                        |
+| `tag --branch main\|rc [--wait-min 15]`               | Refuses unless the version is untagged, exactly one draft with notes exists, rc contains main, and every check passed. Then pushes the tag, which publishes                                                                                                             |
+| `watch --tag vX [--max-min 20]`                       | Follows the release run, cancels duplicate runs, then runs `verify`                                                                                                                                                                                                     |
+| `verify --tag vX [--repair]`                          | One published release, prerelease flag, "latest", all 16 files by name, sizes, `latest-mac.yml` version, one Full Changelog line, tag commit                                                                                                                            |
+| `bump --branch main\|rc`                              | After a release ships: next patch version, committed and pushed without touching any working tree                                                                                                                                                                       |
+| `finish [--chat <id>] [--wait-min n]`                 | The supervisor. Done means every tag published and verified, every branch bumped past it, and a live tweet URL in a moderator message. Then it archives the chat and cancels its schedule. An idle chat with work left gets a message naming what is missing (exit `3`) |
 
 Exit codes: `0` done, `1` a check failed, `2` precondition not met (nothing
 changed), `3` still running (run it again later).
@@ -169,20 +177,43 @@ Start only after every release in scope verifies.
 5. **Report the Resend contact count every time.** The plan allows 5,000
    contacts. At 4,500 or more, say so in a `> [!WARNING]` so the conductor can
    reconsider the plan before a broadcast gets refused.
-6. Commit the template and Discord draft to RunMaestro.ai.
+6. **Art: one new painting per release.** Generate it in the Artlist AI Toolkit
+   the way the site's art is made (the RunMaestro.ai agent's
+   `maestro-art-source-artlist` memory): a fresh session from
+   `https://toolkit.artlist.io/new?mode=image`, Nano Banana 2, 16:9 at 2K, royal
+   purple velvet, the house style suffix. The scene is drawn from the headline
+   features, and every version in scope is lettered in gold where it can be read
+   (`1.0.3` and `1.1.4 RC` on banners, for example). List `art/artlist/release-*`
+   first and pick a different subject than the last release. Make up to three
+   takes and reject any that misspells a version. Archive every take as
+   `art/artlist/release-<versions>-<subject>-v<n>.png`, and export the pick as a
+   2048px JPEG, `release-<versions>-<subject>-share.jpg`.
+7. **X: the last announcement out.** One post as @RunMaestroAI with the share
+   JPEG: `node scripts/x-post.mjs --text-file <f> --image <share.jpg>`, with
+   `--dry-run` first. At most 280 weighted characters (a URL counts 23). Name each
+   version, lead with the headline feature, and link the release page (both pages
+   for `all`, if they fit). The notes style rules apply: one emoji per item, no
+   em or en dashes, and no line from the previous release post (read the last <!-- doc-refs-ignore -->
+   `scripts/announce-drafts/*-x.md`). Report the tweet URL.
+8. Commit the template, the Discord draft, the art, and the X text
+   (`scripts/announce-drafts/<versions>-x.md`) to RunMaestro.ai.
 
 ## Phase 4: Report (moderator)
 
-One message to the conductor, ending with a BLUF:
+One message to the conductor, ending with a BLUF. The tweet URL in it is what
+`finish` reads to confirm the announcement went out, so write it in full
+(`https://x.com/RunMaestroAI/status/<id>`):
 
-| Item                          | Evidence                        |
-| ----------------------------- | ------------------------------- |
-| Each release                  | Release URL, run URL, verify ✅ |
-| Each bump                     | New tip SHA, CI status          |
-| Discord                       | Message ID                      |
-| Email                         | Broadcast ID, recipients        |
-| Resend contacts               | Count (warn at 4,500)           |
-| Anything that needed recovery | What happened, what fixed it    |
+| Item                          | Evidence                         |
+| ----------------------------- | -------------------------------- |
+| Each release                  | Release URL, run URL, verify ✅  |
+| Each bump                     | New tip SHA, CI status           |
+| Discord                       | Message ID                       |
+| Email                         | Broadcast ID, recipients         |
+| Resend contacts               | Count (warn at 4,500)            |
+| Release art                   | Share JPEG path, Artlist session |
+| X                             | Tweet URL                        |
+| Anything that needed recovery | What happened, what fixed it     |
 
 ## Recovery
 
@@ -195,3 +226,5 @@ One message to the conductor, ending with a BLUF:
 | Two release runs for one tag                        | `watch` cancels the twin; nothing to do                                                                                              |
 | An agent's turn hit the 30-minute limit             | Ask it to check state first (`preflight`, `watch`, `verify` are all safe to repeat) and not redo work that landed                    |
 | Resend refuses the broadcast                        | Stop. Report the error; the broadcast stays a draft and can be sent later without rebuilding                                         |
+| Artlist hangs or every Interceptor verb goes stale  | Retry once in a fresh `INTERCEPTOR_GROUP`. A second failure: post nothing to X, report the session URL. The conductor decides        |
+| `x-post.mjs` refuses (wrong account, no compose)    | Nothing was posted. Report the error; the post can go out later from the committed text and the share JPEG                           |

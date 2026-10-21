@@ -71,6 +71,14 @@ export const MODAL_PRIORITIES = {
 	/** Playbook name input modal - appears on top of BatchRunner */
 	PLAYBOOK_NAME: 940,
 
+	/**
+	 * Usage-data scan progress (a version upgrade re-reading session history).
+	 * The scan is started by opening the Usage Dashboard, About, or the Agent
+	 * Sessions browser, so it must land above all of them; it stays below the
+	 * confirmations, which ask about something the user is doing right now.
+	 */
+	STATS_INDEXING: 930,
+
 	/** Rename instance modal */
 	RENAME_INSTANCE: 900,
 
@@ -98,6 +106,12 @@ export const MODAL_PRIORITIES = {
 
 	/** Rename group modal */
 	RENAME_GROUP: 850,
+
+	/** Export Agent modal (Left Bar right-click on an agent) */
+	AGENT_EXPORT: 830,
+
+	/** Import Agent modal (Left Bar right-click on a group) */
+	AGENT_IMPORT: 829,
 
 	/** Create new group modal */
 	CREATE_GROUP: 800,
@@ -334,6 +348,13 @@ export const MODAL_PRIORITIES = {
 	 *  the Cue modal. Sits just above CUE_MODAL and below every Cue sub-modal.
 	 *  461 is taken by PIANOLA_RULE_EDITOR, so this sits at 462. */
 	CUE_SCHEDULED_TASK_FILTER: 462,
+
+	/** The Pipeline Graph's pipeline / agent picker, while its menu is open.
+	 *  Same reasoning as CUE_SCHEDULED_TASK_FILTER: the menu holds a filter box,
+	 *  and only a layer above CUE_MODAL can keep Escape from closing the whole
+	 *  Cue modal. No Cue sub-modal can be open while this menu is, so the free
+	 *  slot above them is safe. */
+	CUE_PIPELINE_SELECTOR: 467,
 
 	/** Maestro Cue dashboard modal */
 	CUE_MODAL: 460,

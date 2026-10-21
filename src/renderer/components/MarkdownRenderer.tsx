@@ -77,6 +77,12 @@ interface MarkdownRendererProps {
 	 */
 	codexFollowup?: { sessionId: string; tabId: string };
 	/**
+	 * Which conversation a shell code fence's Run button belongs to. Set only
+	 * where an agent's own reply is drawn in a live AI tab; without it shell
+	 * fences render with just their copy button.
+	 */
+	commandRun?: { sessionId: string; tabId: string };
+	/**
 	 * Extra rehype plugins appended after the standard stack. Used to add
 	 * `rehype-slug` on surfaces that need heading anchors for a table of
 	 * contents (Director's Notes Plain mode).

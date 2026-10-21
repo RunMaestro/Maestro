@@ -93,6 +93,26 @@ export function createGroupChatRemoteApi() {
 		},
 
 		/**
+		 * Subscribe to remote archive/unarchive group chat (maestro-cli group-chat archive)
+		 * Uses request-response pattern with a unique responseChannel
+		 */
+		onRemoteArchiveGroupChat: (
+			callback: (chatId: string, archived: boolean, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, chatId: string, archived: boolean, responseChannel: string) =>
+				callback(chatId, archived, responseChannel);
+			ipcRenderer.on('remote:archiveGroupChat', handler);
+			return () => ipcRenderer.removeListener('remote:archiveGroupChat', handler);
+		},
+
+		/**
+		 * Send response for remote archive group chat
+		 */
+		sendRemoteArchiveGroupChatResponse: (responseChannel: string, success: boolean): void => {
+			ipcRenderer.send(responseChannel, success);
+		},
+
+		/**
 		 * Subscribe to remote send group chat message from web interface
 		 * Uses request-response pattern with a unique responseChannel
 		 */

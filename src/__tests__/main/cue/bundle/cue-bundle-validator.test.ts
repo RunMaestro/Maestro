@@ -277,6 +277,23 @@ describe('validateCueBundle', () => {
 		expect(without.secrets).toBeUndefined();
 	});
 
+	it("checks an exact copy's local.json: its name, presence and shape", async () => {
+		const local = (content: string, name = 'local.json') =>
+			validate({
+				files: (files) => files.set('local.json', content),
+				manifest: (manifest) => {
+					manifest.local = name;
+				},
+			});
+
+		expect((await local(JSON.stringify({ workspaces: {}, agents: {} }))).valid).toBe(true);
+		expect(codes((await local('[]')).errors)).toEqual(['local-invalid']);
+		expect(
+			codes((await local(JSON.stringify({ workspaces: { a: 1 }, agents: {} }))).errors)
+		).toEqual(['local-invalid']);
+		expect(codes((await local('{}', 'other.json')).errors)).toEqual(['manifest-invalid']);
+	});
+
 	it('reports a missing manifest as an error and throws on a non-zip', async () => {
 		const noManifest = path.join(tmp, 'no-manifest.zip');
 		fs.writeFileSync(noManifest, zipSync({ 'README.md': strToU8('# hi') }));

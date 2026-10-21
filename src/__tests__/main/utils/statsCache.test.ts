@@ -23,6 +23,10 @@ import {
 	loadStatsCache,
 	rescaleArchivedEntries,
 	statsCacheScope,
+	isDerivationStale,
+	accumulateUpgradeBaseline,
+	finishDerivationUpgrade,
+	type DerivationUpgradeBaseline,
 } from '../../../main/utils/statsCache';
 
 // Mock electron app module
@@ -700,5 +704,68 @@ describe('statsCacheScope', () => {
 		expect(
 			await statsCacheScope('/home/.claude-work/projects/-p', '/home/.claude/projects/-p')
 		).toBe('/home/.claude-work/projects/-p');
+	});
+});
+
+describe('resumable derivation upgrades', () => {
+	interface Entry {
+		costUsd: number;
+		tokens: number;
+		archived?: boolean;
+		derivedVersion?: number;
+	}
+
+	it('judges staleness per entry, falling back to the cache file version', () => {
+		expect(isDerivationStale({}, 5, 6)).toBe(true);
+		expect(isDerivationStale({}, 6, 6)).toBe(false);
+		// An entry upgraded by an earlier, killed run inside a v5 file.
+		expect(isDerivationStale({ derivedVersion: 6 }, 5, 6)).toBe(false);
+		expect(isDerivationStale({ derivedVersion: 5 }, 6, 7)).toBe(true);
+	});
+
+	it('accumulates the before/after sums across calls', () => {
+		const baseline: DerivationUpgradeBaseline = {};
+		accumulateUpgradeBaseline<Entry>(
+			baseline,
+			{ costUsd: 4, tokens: 10 },
+			{ costUsd: 2, tokens: 5 },
+			['costUsd', 'tokens']
+		);
+		accumulateUpgradeBaseline<Entry>(
+			baseline,
+			{ costUsd: 6, tokens: 10 },
+			{ costUsd: 3, tokens: 5 },
+			['costUsd', 'tokens']
+		);
+		expect(baseline).toEqual({
+			costUsd: { oldSum: 10, newSum: 5 },
+			tokens: { oldSum: 20, newSum: 10 },
+		});
+	});
+
+	it('scales only the archived entries still on the old derivation, then stamps them', () => {
+		const entries: Record<string, Entry> = {
+			live: { costUsd: 3, tokens: 5, derivedVersion: 6 },
+			gone: { costUsd: 12, tokens: 40, archived: true },
+			// Rescaled by an earlier finish; must not be scaled twice.
+			goneEarlier: { costUsd: 7, tokens: 7, archived: true, derivedVersion: 6 },
+		};
+		finishDerivationUpgrade(
+			entries,
+			5,
+			6,
+			{ costUsd: { oldSum: 10, newSum: 5 }, tokens: { oldSum: 20, newSum: 10 } },
+			['costUsd', 'tokens'],
+			['costUsd']
+		);
+		expect(entries.gone).toEqual({ costUsd: 6, tokens: 20, archived: true, derivedVersion: 6 });
+		expect(entries.goneEarlier.costUsd).toBe(7);
+		expect(entries.live.costUsd).toBe(3);
+	});
+
+	it('leaves a field with no baseline unscaled but still stamps the entry', () => {
+		const entries: Record<string, Entry> = { gone: { costUsd: 12, tokens: 40, archived: true } };
+		finishDerivationUpgrade(entries, 5, 6, {}, ['costUsd', 'tokens']);
+		expect(entries.gone).toEqual({ costUsd: 12, tokens: 40, archived: true, derivedVersion: 6 });
 	});
 });

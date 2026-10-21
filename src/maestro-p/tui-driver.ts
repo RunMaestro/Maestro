@@ -1076,7 +1076,10 @@ export class TuiDriver extends EventEmitter {
 		return this.screenCapture;
 	}
 
-	async quit(): Promise<void> {
+	// `discardTypedInput`: the caller knows the typed prompt was never submitted.
+	// `/quit` would append to it in the editor and the Enter would send
+	// "<prompt>/quit" to the model, so the TUI is terminated instead.
+	async quit(options: { discardTypedInput?: boolean } = {}): Promise<void> {
 		if (!this.ptyProcess || this.exited) return;
 		// An injection still typing must stop BEFORE `/quit` is typed, or the two
 		// share one composer and claude receives "<half a steer>/quit" as a message.
@@ -1103,7 +1106,8 @@ export class TuiDriver extends EventEmitter {
 		// purpose: a false positive costs a graceful `/quit` we were abandoning the
 		// turn without anyway, while a false negative approves a filesystem write, a
 		// command, or a push.
-		let skipQuit = this.dialogBlockingQuit();
+		let skipQuit =
+			this.dialogBlockingQuit() || (options.discardTypedInput === true && this.inputTyped);
 		if (!skipQuit && this.unsubmittedInjection !== null) {
 			// An injection was cut off (by this shutdown, or refused before its Enter)
 			// and its text is still in the composer, where `/quit` would be appended to

@@ -1,4 +1,7 @@
-import { requestProviderTranslation } from '../../services/providerTranslation';
+import {
+	requestProviderTranslation,
+	switchProviderWithoutConversion,
+} from '../../services/providerTranslation';
 /**
  * useSessionLifecycle - extracted from App.tsx (Phase 2H)
  *
@@ -104,7 +107,9 @@ export interface SessionLifecycleReturn {
 		codexTransport?: CodexTransport,
 		acceptTranslationLimitations?: boolean,
 		selectedUserResources?: string[],
-		migrationPlanId?: string
+		migrationPlanId?: string,
+		/** On a provider change: convert memory and session history (opt-in) or switch plainly. */
+		convertProviderHistory?: boolean
 	) => void | Promise<void>;
 	/** Rename the currently-selected tab (persists to agent session storage + history) */
 	handleRenameTab: (newName: string) => void;
@@ -200,10 +205,21 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			codexTransport?: CodexTransport,
 			acceptTranslationLimitations?: boolean,
 			selectedUserResources?: string[],
-			migrationPlanId?: string
+			migrationPlanId?: string,
+			/** On a provider change: convert memory and session history (opt-in) or switch plainly. */
+			convertProviderHistory?: boolean
 		) => {
 			const before = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
-			if (toolType && before && toolType !== before.toolType) {
+			const switchingProvider = !!toolType && !!before && toolType !== before.toolType;
+			const converting = switchingProvider && convertProviderHistory === true;
+			if (switchingProvider && !converting) {
+				// The overrides passed in were seeded from what the new provider had
+				// parked, so applying them below keeps that provider's configuration.
+				const notices = switchProviderWithoutConversion(sessionId, toolType!);
+				for (const message of notices)
+					notifyToast({ color: 'yellow', title: 'Queued message settings cleared', message });
+			}
+			if (converting) {
 				if (customPath || customArgs || Object.keys(customEnvVars ?? {}).length)
 					throw new Error(
 						'Save provider migration separately from binary, arguments or account environment edits'
@@ -250,7 +266,9 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 					additionalDirectories,
 					customPath,
 					customArgs,
-					customEnvVars: toolType
+					// A conversion leaves the host-resolved account variables on the
+					// agent, so the form's edits merge over them rather than replace them.
+					customEnvVars: converting
 						? { ...(s.customEnvVars ?? {}), ...(customEnvVars ?? {}) }
 						: customEnvVars,
 					customEnvVarsDisabled,

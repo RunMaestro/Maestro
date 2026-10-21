@@ -12,7 +12,11 @@
 
 import type { Session } from '../types';
 import type { SessionInfo, ToolType } from '../../shared/types';
-import { CUE_BUNDLE_AGENT_FIELDS } from '../../shared/cue-bundle-types';
+import {
+	CUE_BUNDLE_AGENT_FIELDS,
+	CUE_BUNDLE_LOCAL_AGENT_FIELDS,
+	type CueBundleAgentChange,
+} from '../../shared/cue-bundle-types';
 import type {
 	CueBundleExportOutcome,
 	CueBundleExportRequest,
@@ -58,12 +62,16 @@ export const cueBundleService = {
  * them, present or not: the importer sets them all, and one it cleared (a
  * bundle that declares no secrets, say) is `undefined`. Electron IPC keeps
  * such a key, but a JSON transport drops it, and a missing key must still
- * clear the field rather than leave the stale value behind.
+ * clear the field rather than leave the stale value behind. An exact copy
+ * also sets the machine-bound fields; any other import leaves them alone.
  */
-function bundleFieldsOf(record: SessionInfo): Partial<Session> {
+function bundleFieldsOf(record: SessionInfo, exact: boolean): Partial<Session> {
 	const source = record as unknown as Record<string, unknown>;
 	const out: Record<string, unknown> = {};
-	for (const field of CUE_BUNDLE_AGENT_FIELDS) out[field] = source[field];
+	const fields = exact
+		? [...CUE_BUNDLE_AGENT_FIELDS, ...CUE_BUNDLE_LOCAL_AGENT_FIELDS]
+		: CUE_BUNDLE_AGENT_FIELDS;
+	for (const field of fields) out[field] = source[field];
 	return out as Partial<Session>;
 }
 
@@ -128,11 +136,10 @@ async function withGitState(record: SessionInfo): Promise<Session> {
  * Either way the agents are left as they were, and main rolls the import's
  * files back.
  */
-export async function applyImportedAgents(change: {
-	created: SessionInfo[];
-	updated: SessionInfo[];
-}): Promise<void> {
-	const updates = new Map(change.updated.map((record) => [record.id, bundleFieldsOf(record)]));
+export async function applyImportedAgents(change: CueBundleAgentChange): Promise<void> {
+	const updates = new Map(
+		change.updated.map((record) => [record.id, bundleFieldsOf(record, change.exact === true)])
+	);
 	const current = new Map(useSessionStore.getState().sessions.map((s) => [s.id, s]));
 	for (const [id, fields] of updates) {
 		const session = current.get(id);

@@ -1426,6 +1426,7 @@ export type StartGroupChatCallback = (
 ) => Promise<StartGroupChatResult | null>;
 export type GetGroupChatStateCallback = (chatId: string) => Promise<GroupChatState | null>;
 export type StopGroupChatCallback = (chatId: string) => Promise<boolean>;
+export type ArchiveGroupChatCallback = (chatId: string, archived: boolean) => Promise<boolean>;
 export type SendGroupChatMessageCallback = (chatId: string, message: string) => Promise<boolean>;
 /** What to steer into a chat's running round: a queued message by id, or new text. */
 export interface SteerGroupChatRequest {

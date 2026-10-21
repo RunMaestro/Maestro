@@ -1,7 +1,8 @@
 import type React from 'react';
 import { getAgentDisplayName, getAgentLoginCommand } from '../../../../shared/agentMetadata';
 import { startManualReauth } from '../../../stores/authOutageStore';
-import { getModalActions } from '../../../stores/modalStore';
+import { getModalActions, useModalStore } from '../../../stores/modalStore';
+import { canExportAgent } from '../../../utils/agentBundles';
 import type { Session } from '../../../types';
 import { sessionJumpShortcut } from '../../../utils/sessionJumpSlots';
 import type { QuickAction } from '../types';
@@ -134,6 +135,28 @@ export function buildSessionManagementCommands({
 			},
 		});
 	}
+
+	if (activeSession && canExportAgent(activeSession)) {
+		commands.push({
+			id: 'exportAgent',
+			label: `Export Agent: ${activeSession.name}`,
+			subtext: 'Save its settings, playbooks and assets to a bundle',
+			action: () => {
+				setQuickActionOpen(false);
+				useModalStore.getState().openModal('agentExport', { sessionId: activeSession.id });
+			},
+		});
+	}
+
+	commands.push({
+		id: 'importAgent',
+		label: 'Import Agent...',
+		subtext: activeSession?.groupId ? "Into the active agent's group" : 'Add agents from a bundle',
+		action: () => {
+			setQuickActionOpen(false);
+			useModalStore.getState().openModal('agentImport', { groupId: activeSession?.groupId });
+		},
+	});
 
 	if (sessions.some((session) => session.bookmarked)) {
 		commands.push({

@@ -3431,6 +3431,54 @@ describe('tabHelpers', () => {
 			expect(result).not.toBeNull();
 			expect(result!.session.activeFileTabId).toBe('file-1');
 		});
+
+		it('lands on a fresh AI chat when the last visible tab closes', () => {
+			const fileTab = createMockFileTab({ id: 'file-1' });
+			const session = createMockSession({
+				aiTabs: [],
+				activeTabId: '',
+				filePreviewTabs: [fileTab],
+				activeFileTabId: 'file-1',
+				unifiedTabOrder: [{ type: 'file', id: 'file-1' }],
+			});
+
+			const result = closeFileTab(session, 'file-1');
+
+			const next = result!.session;
+			expect(next.filePreviewTabs).toHaveLength(0);
+			expect(next.aiTabs).toHaveLength(1);
+			const fresh = next.aiTabs[0];
+			expect(fresh.logs).toEqual([]);
+			expect(fresh.agentSessionId).toBeNull();
+			expect(next.activeTabId).toBe(fresh.id);
+			expect(next.activeFileTabId).toBeNull();
+			expect(next.inputMode).toBe('ai');
+			expect(next.unifiedTabOrder).toEqual([{ type: 'ai', id: fresh.id }]);
+		});
+
+		it('does not let a hidden consult tab stand in for the last visible tab', () => {
+			const consult = createMockTab({ id: 'consult-1', hidden: true });
+			const fileTab = createMockFileTab({ id: 'file-1' });
+			const session = createMockSession({
+				aiTabs: [consult],
+				activeTabId: '',
+				filePreviewTabs: [fileTab],
+				activeFileTabId: 'file-1',
+				unifiedTabOrder: [
+					{ type: 'ai', id: 'consult-1' },
+					{ type: 'file', id: 'file-1' },
+				],
+			});
+
+			const next = closeFileTab(session, 'file-1')!.session;
+
+			// The consult survives untouched; a new visible chat is what gets focus.
+			expect(next.aiTabs.map((t) => t.id)).toContain('consult-1');
+			expect(next.aiTabs).toHaveLength(2);
+			const fresh = next.aiTabs.find((t) => t.id !== 'consult-1')!;
+			expect(fresh.hidden).toBeFalsy();
+			expect(next.activeTabId).toBe(fresh.id);
+		});
 	});
 
 	// addAiTabToUnifiedHistory tests
@@ -6058,6 +6106,24 @@ describe('tabHelpers', () => {
 			expect(result?.session.browserTabs).toHaveLength(0);
 			expect(result?.session.activeBrowserTabId).toBeNull();
 			expect(result?.session.activeTabId).toBe('ai-1');
+		});
+
+		it('lands on a fresh AI chat when the last browser tab closes', () => {
+			const browserTab = createMockBrowserTab({ id: 'browser-1' });
+			const session = createMockSession({
+				aiTabs: [],
+				activeTabId: '',
+				browserTabs: [browserTab as any],
+				activeBrowserTabId: 'browser-1',
+				unifiedTabOrder: [{ type: 'browser', id: 'browser-1' }],
+			});
+
+			const next = closeBrowserTab(session, 'browser-1')!.session;
+			expect(next.browserTabs).toHaveLength(0);
+			expect(next.aiTabs).toHaveLength(1);
+			expect(next.activeTabId).toBe(next.aiTabs[0].id);
+			expect(next.activeBrowserTabId).toBeNull();
+			expect(next.inputMode).toBe('ai');
 		});
 
 		it('clears an active browser tab when selecting an AI tab', () => {

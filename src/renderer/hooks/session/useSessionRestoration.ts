@@ -27,7 +27,7 @@ import { isEphemeralBrowserTab, rehydrateBrowserTab } from '../../utils/browserT
 import { applyLiveAiTurns } from '../../utils/liveTurnReattach';
 import { fetchLiveAiTurns } from '../../services/process';
 import { useOwnedSessionGate } from '../agent/internal/useOwnedSessionGate';
-import { getRepairedUnifiedTabOrder } from '../../utils/tabHelpers';
+import { ensureAgentHasVisibleTab, getRepairedUnifiedTabOrder } from '../../utils/tabHelpers';
 import {
 	collectLeafTabRefs,
 	normalizeTabGroups,
@@ -799,42 +799,46 @@ export function useSessionRestoration(): SessionRestorationReturn {
 			// lands in the store: prune leaves whose tab no longer exists, collapse
 			// resulting single-child splits, dissolve sub-two-pane groups (promoting
 			// survivors), and clear a stale activeGroupId. A session with no groups
-			// round-trips untouched.
-			return normalizeTabGroups({
-				...restoredSession,
-				aiPid: 0,
-				terminalPid: 0,
-				state: isLimitPause ? ('error' as SessionState) : ('idle' as SessionState),
-				busySource: undefined,
-				thinkingStartTime: undefined,
-				currentCycleTokens: undefined,
-				currentCycleBytes: undefined,
-				statusMessage: undefined,
-				isGitRepo,
-				gitBranches,
-				gitTags,
-				gitRefsCacheTime,
-				isLive: false,
-				liveUrl: undefined,
-				aiLogs: [],
-				aiTabs: resetAiTabs,
-				shellLogs: correctedSession.shellLogs,
-				// A cold desktop start kills every consult process, so a turn still
-				// waiting on one would hold its tab forever: release it with an
-				// "interrupted" reply. A web-desktop reload is different - main kept
-				// running and the consult with it, so the hold settles normally.
-				executionQueue: isWebDesktop()
-					? correctedSession.executionQueue || []
-					: interruptConsultHolds(correctedSession.executionQueue || []),
-				activeTimeMs: correctedSession.activeTimeMs || 0,
-				// Keep a limit pause live so auto-resume re-attaches; clear anything else.
-				// `agentErrorTabId` rides through the spread above (persistence only keeps
-				// it for limit pauses, so it's already undefined for everything else).
-				agentError: isLimitPause ? correctedSession.agentError : undefined,
-				agentErrorPaused: isLimitPause ? true : false,
-				closedTabHistory: [],
-				unifiedTabOrder: repairedUnifiedTabOrder,
-			});
+			// round-trips untouched. An agent saved with only hidden consult tabs (an
+			// older build let the last file/terminal/browser close strand it there)
+			// comes back with a blank AI chat instead of a chipless conversation.
+			return ensureAgentHasVisibleTab(
+				normalizeTabGroups({
+					...restoredSession,
+					aiPid: 0,
+					terminalPid: 0,
+					state: isLimitPause ? ('error' as SessionState) : ('idle' as SessionState),
+					busySource: undefined,
+					thinkingStartTime: undefined,
+					currentCycleTokens: undefined,
+					currentCycleBytes: undefined,
+					statusMessage: undefined,
+					isGitRepo,
+					gitBranches,
+					gitTags,
+					gitRefsCacheTime,
+					isLive: false,
+					liveUrl: undefined,
+					aiLogs: [],
+					aiTabs: resetAiTabs,
+					shellLogs: correctedSession.shellLogs,
+					// A cold desktop start kills every consult process, so a turn still
+					// waiting on one would hold its tab forever: release it with an
+					// "interrupted" reply. A web-desktop reload is different - main kept
+					// running and the consult with it, so the hold settles normally.
+					executionQueue: isWebDesktop()
+						? correctedSession.executionQueue || []
+						: interruptConsultHolds(correctedSession.executionQueue || []),
+					activeTimeMs: correctedSession.activeTimeMs || 0,
+					// Keep a limit pause live so auto-resume re-attaches; clear anything else.
+					// `agentErrorTabId` rides through the spread above (persistence only keeps
+					// it for limit pauses, so it's already undefined for everything else).
+					agentError: isLimitPause ? correctedSession.agentError : undefined,
+					agentErrorPaused: isLimitPause ? true : false,
+					closedTabHistory: [],
+					unifiedTabOrder: repairedUnifiedTabOrder,
+				})
+			);
 		} catch (error) {
 			logger.error(`Error restoring session ${session.id}:`, undefined, error);
 			return {

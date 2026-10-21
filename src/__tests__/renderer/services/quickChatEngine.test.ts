@@ -37,6 +37,7 @@ import {
 	noteSpawnCollision,
 	resetSpawnCollisionsForTest,
 } from '../../../renderer/utils/executionQueue';
+import { resetPendingSteersForTests } from '../../../renderer/services/chatSteering';
 import type { AITab, LogEntry, Session } from '../../../renderer/types';
 
 vi.mock('../../../renderer/services/agentNavigation', () => ({ jumpToAgent: vi.fn() }));
@@ -624,6 +625,97 @@ describe('move to a new tab', () => {
 		expect(result.ok).toBe(false);
 		// Refusing opens no tab: the agent keeps only its own.
 		expect(session('b').aiTabs).toHaveLength(1);
+	});
+});
+
+describe('steer a queued message into the running reply', () => {
+	/** Agent b on the interactive token source, where a running turn takes input. */
+	function makeSteerable() {
+		useSessionStore.setState({
+			sessions: useSessionStore.getState().sessions.map((s) =>
+				s.id === 'b'
+					? {
+							...s,
+							claudeInteractive: { mode: 'interactive' as const, modeReason: 'auto' as const },
+						}
+					: s
+			),
+		});
+	}
+
+	async function queueBehindBusyMain() {
+		vi.mocked(routeQuickChatMessage).mockResolvedValue({ kind: 'open', tabId: 'b-main' });
+		patchTab('b', 'b-main', () => ({ state: 'busy' }));
+		return send('actually, use the other file');
+	}
+
+	let steer: ReturnType<typeof vi.fn>;
+	beforeEach(() => {
+		resetPendingSteersForTests();
+		steer = vi.fn().mockResolvedValue({ type: 'steering', id: 'steer-1', verdict: 'delivered' });
+		(window.maestro.process as { steer?: unknown }).steer = steer;
+	});
+
+	it('offers Steer on a queued message only when the running reply can take input', async () => {
+		const { message } = await queueBehindBusyMain();
+		// API token source: the turn takes nothing until it ends.
+		expect(message.route).toMatchObject({ status: 'queued', canSteer: false });
+		makeSteerable();
+		expect(sent()[0].route).toMatchObject({ status: 'queued', canSteer: true });
+	});
+
+	it('hands the message to the running turn and takes it out of the queue', async () => {
+		makeSteerable();
+		const { message } = await queueBehindBusyMain();
+		const result = await runQuickChatCommand({ type: 'steer', messageId: message.id });
+
+		expect(result.ok).toBe(true);
+		expect(steer).toHaveBeenCalledWith('b-ai-b-main', 'actually, use the other file');
+		expect(session('b').executionQueue).toEqual([]);
+		// Its bubble is in the tab now, so the reply in progress is its turn.
+		expect(sent(result.snapshot.messages)[0].route).toMatchObject({
+			status: 'running',
+			tabId: 'b-main',
+		});
+	});
+
+	it('defaults to the latest steerable message', async () => {
+		makeSteerable();
+		await queueBehindBusyMain();
+		expect((await runQuickChatCommand({ type: 'steer' })).ok).toBe(true);
+		expect(steer).toHaveBeenCalledTimes(1);
+	});
+
+	it('refuses a message the running turn cannot take, and leaves it queued', async () => {
+		const { message } = await queueBehindBusyMain();
+		const result = await runQuickChatCommand({ type: 'steer', messageId: message.id });
+
+		expect(result.ok).toBe(false);
+		expect(steer).not.toHaveBeenCalled();
+		expect(session('b').executionQueue).toHaveLength(1);
+	});
+
+	it('keeps the message queued when the agent refuses the steer', async () => {
+		makeSteerable();
+		steer.mockResolvedValue({
+			type: 'steering',
+			id: '',
+			verdict: 'refused',
+			detail: 'The editor is busy.',
+		});
+		const { message } = await queueBehindBusyMain();
+		const result = await runQuickChatCommand({ type: 'steer', messageId: message.id });
+
+		expect(result).toMatchObject({ ok: false, error: 'The editor is busy. It stays queued.' });
+		expect(session('b').executionQueue).toHaveLength(1);
+		expect(sent(result.snapshot.messages)[0].route).toMatchObject({ status: 'queued' });
+	});
+
+	it('refuses a message that is not waiting in the queue', async () => {
+		makeSteerable();
+		const { message } = await send('hello');
+		expect((await runQuickChatCommand({ type: 'steer', messageId: message.id })).ok).toBe(false);
+		expect(steer).not.toHaveBeenCalled();
 	});
 });
 

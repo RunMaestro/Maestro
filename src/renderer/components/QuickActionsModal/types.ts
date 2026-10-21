@@ -201,6 +201,8 @@ export interface QuickActionsModalProps {
 	onCloseOtherTabs?: () => void;
 	onCloseTabsLeft?: () => void;
 	onCloseTabsRight?: () => void;
+	/** Close every tab in a tiled group (confirmed by the command first) */
+	onCloseTabGroup?: (groupId: string) => void;
 	onCloseCurrentTab?: () => void;
 	onMoveTabToFirst?: () => void;
 	onMoveTabToLast?: () => void;

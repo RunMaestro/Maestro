@@ -54,6 +54,7 @@ describe('dedicated provider translation transport', () => {
 		{ migrationAction: 'apply', acceptTranslationLimitations: 'true' },
 		{ migrationAction: 'status', migrationPlanId: ' ' },
 		{ migrationAction: 'plan', selectedUserResources: [false] },
+		{ migrationAction: 'switch' },
 	])('rejects unsupported action/options before forwarding (%j)', (configPatch) => {
 		handleProviderTranslation(ctx, client, {
 			type: 'provider_translation',
@@ -62,6 +63,17 @@ describe('dedicated provider translation transport', () => {
 		} as WebClientMessage);
 		expect(ctx.sendError).toHaveBeenCalled();
 		expect(updateSessionConfig).not.toHaveBeenCalled();
+	});
+
+	it('forwards a plain switch (no conversion) with its destination', () => {
+		const configPatch = { toolType: 'codex', migrationAction: 'switch' };
+		handleProviderTranslation(ctx, client, {
+			type: 'provider_translation',
+			sessionId: 'source-agent',
+			configPatch,
+		} as WebClientMessage);
+		expect(ctx.sendError).not.toHaveBeenCalled();
+		expect(updateSessionConfig).toHaveBeenCalledWith('source-agent', configPatch);
 	});
 
 	it('inspects an existing operation without a destination or provider change', async () => {

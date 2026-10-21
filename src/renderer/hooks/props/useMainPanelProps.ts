@@ -186,6 +186,7 @@ export interface UseMainPanelPropsDeps {
 	handleCloseOtherTabs: () => void;
 	handleCloseTabsLeft: () => void;
 	handleCloseTabsRight: () => void;
+	handleCloseTabGroup: (groupId: string) => void;
 
 	// Unified tab system handlers (Phase 4) - paint state is self-sourced in MainPanel
 	handleFileTabSelect: (tabId: string) => void;
@@ -425,6 +426,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			onCloseOtherTabs: deps.handleCloseOtherTabs,
 			onCloseTabsLeft: deps.handleCloseTabsLeft,
 			onCloseTabsRight: deps.handleCloseTabsRight,
+			onCloseTabGroup: deps.handleCloseTabGroup,
 			// Unified tab system handlers (Phase 4) - paint self-sourced in MainPanel
 			onFileTabSelect: deps.handleFileTabSelect,
 			onFileTabClose: deps.handleFileTabClose,
@@ -681,6 +683,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.handleCloseOtherTabs,
 			deps.handleCloseTabsLeft,
 			deps.handleCloseTabsRight,
+			deps.handleCloseTabGroup,
 			deps.handleFileTabSelect,
 			deps.handleFileTabClose,
 			deps.handleFileTabRename,

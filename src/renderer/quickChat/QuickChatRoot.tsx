@@ -265,11 +265,13 @@ function MessageView({
 	theme,
 	onOpenTab,
 	onMoveToNewTab,
+	onSteer,
 }: {
 	message: QuickChatMessage;
 	theme: Theme;
 	onOpenTab: (messageId: string) => void;
 	onMoveToNewTab: (messageId: string) => void;
+	onSteer: (messageId: string) => void;
 }) {
 	if (message.role === 'user') {
 		return (
@@ -317,6 +319,7 @@ function MessageView({
 						theme={theme}
 						onOpenTab={() => onOpenTab(message.id)}
 						onMoveToNewTab={() => onMoveToNewTab(message.id)}
+						onSteer={() => onSteer(message.id)}
 					/>
 				)}
 			</div>
@@ -535,6 +538,10 @@ function QuickChatWindow() {
 	);
 	const moveMessageToNewTab = useCallback(
 		(messageId: string) => void run({ type: 'moveToNewTab', messageId }),
+		[run]
+	);
+	const steerMessage = useCallback(
+		(messageId: string) => void run({ type: 'steer', messageId }),
 		[run]
 	);
 
@@ -1121,6 +1128,7 @@ function QuickChatWindow() {
 									theme={theme}
 									onOpenTab={openMessageTab}
 									onMoveToNewTab={moveMessageToNewTab}
+									onSteer={steerMessage}
 								/>
 								{turn?.status === 'running' && (
 									<QuickChatWorkingLine since={turn.since} theme={theme} />

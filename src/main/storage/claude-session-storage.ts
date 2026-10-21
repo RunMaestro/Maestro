@@ -19,16 +19,15 @@ import Store from 'electron-store';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { isExpectedSessionReadError } from '../utils/session-read-errors';
-import { CLAUDE_SESSION_PARSE_LIMITS } from '../constants';
-import {
-	computeClaudeUsageWithSubagents,
-	readClaudeSubagentTranscripts,
-} from '../../shared/claudeSessionUsage';
-import { claudeModelUsage } from '../../shared/modelUsage';
 import { encodeClaudeProjectPath } from '../utils/statsCache';
 import { readFileRemote, listDirWithStatsRemote } from '../utils/remote-fs';
 import { mapWithConcurrency, REMOTE_SESSION_READ_CONCURRENCY } from '../utils/concurrency';
 import { getSessionInfoCache, fileFingerprint, type SessionFileRef } from './session-info-cache';
+import { runTranscriptParse } from '../transcript-parse/transcript-parse-pool';
+import {
+	extractClaudeTextFromContent,
+	parseClaudeSessionInfo,
+} from '../transcript-parse/transcript-parse-tasks';
 import type {
 	AgentSessionInfo,
 	PaginatedSessionsResult,
@@ -48,8 +47,6 @@ import type {
 import { BaseSessionStorage } from './base-session-storage';
 import { setClaudeSessionOrigin } from './claude-session-origins';
 import type { SearchableMessage } from './base-session-storage';
-import { countClaudeTranscriptMessages } from '../../shared/claudeTranscriptMessages';
-import { computeClaudeTokenSpeed } from '../../shared/tokenSpeed';
 import { getProviderAccountDirs } from '../agents/provider-account-dirs';
 export type { ClaudeSessionOriginsData } from '../stores/types';
 
@@ -87,25 +84,8 @@ function stripImagePlaceholderLines(text: string): string {
 }
 
 /**
- * Extract semantic text from message content.
- * Skips images, tool_use, and tool_result - only returns actual text content.
- */
-function extractTextFromContent(content: unknown): string {
-	if (typeof content === 'string') {
-		return content;
-	}
-	if (Array.isArray(content)) {
-		const textParts = content
-			.filter((part: { type?: string }) => part.type === 'text')
-			.map((part: { type?: string; text?: string }) => part.text || '')
-			.filter((text: string) => text.trim());
-		return textParts.join(' ');
-	}
-	return '';
-}
-
-/**
- * Parse session content and extract metadata
+ * Parse session content and extract metadata. Used for content already in hand
+ * (an SSH read); a LOCAL file goes through the worker pool in `parseSessionFile`.
  */
 function parseSessionContent(
 	content: string,
@@ -115,103 +95,7 @@ function parseSessionContent(
 	subagentContents: readonly string[] = []
 ): AgentSessionInfo | null {
 	try {
-		const lines = content.split('\n').filter((l) => l.trim());
-
-		let firstAssistantMessage = '';
-		let firstUserMessage = '';
-		let timestamp = new Date(stats.mtimeMs).toISOString();
-
-		const messageCount = countClaudeTranscriptMessages(content);
-
-		// Extract first meaningful message content
-		// Prefer first assistant response as preview (more meaningful than system context)
-		// Fall back to first user message if no assistant response exists
-		for (
-			let i = 0;
-			i < Math.min(lines.length, CLAUDE_SESSION_PARSE_LIMITS.FIRST_MESSAGE_SCAN_LINES);
-			i++
-		) {
-			try {
-				const entry = JSON.parse(lines[i]);
-				// Capture first user message as fallback
-				if (!firstUserMessage && entry.type === 'user' && entry.message?.content) {
-					const textContent = extractTextFromContent(entry.message.content);
-					if (textContent.trim()) {
-						firstUserMessage = textContent;
-						timestamp = entry.timestamp || timestamp;
-					}
-				}
-				// Capture first assistant message as preferred preview
-				if (!firstAssistantMessage && entry.type === 'assistant' && entry.message?.content) {
-					const textContent = extractTextFromContent(entry.message.content);
-					if (textContent.trim()) {
-						firstAssistantMessage = textContent;
-						// Once we have assistant message, we can stop scanning
-						break;
-					}
-				}
-			} catch {
-				// Skip malformed lines
-			}
-		}
-
-		// Use assistant response as preview if available, otherwise fall back to user message
-		const previewMessage = firstAssistantMessage || firstUserMessage;
-
-		// Per-model token + cost extraction (a session may mix models).
-		const {
-			inputTokens: totalInputTokens,
-			outputTokens: totalOutputTokens,
-			cacheReadTokens: totalCacheReadTokens,
-			cacheCreationTokens: totalCacheCreationTokens,
-			costUsd,
-			byModel,
-		} = computeClaudeUsageWithSubagents(content, subagentContents);
-
-		// Extract last timestamp for duration
-		let lastTimestamp = timestamp;
-		for (
-			let i = lines.length - 1;
-			i >= Math.max(0, lines.length - CLAUDE_SESSION_PARSE_LIMITS.LAST_TIMESTAMP_SCAN_LINES);
-			i--
-		) {
-			try {
-				const entry = JSON.parse(lines[i]);
-				if (entry.timestamp) {
-					lastTimestamp = entry.timestamp;
-					break;
-				}
-			} catch {
-				// Skip malformed lines
-			}
-		}
-
-		const startTime = new Date(timestamp).getTime();
-		const endTime = new Date(lastTimestamp).getTime();
-		const durationSeconds = Math.max(0, Math.floor((endTime - startTime) / 1000));
-
-		return {
-			sessionId,
-			projectPath,
-			timestamp,
-			modifiedAt: new Date(stats.mtimeMs).toISOString(),
-			firstMessage: previewMessage.slice(
-				0,
-				CLAUDE_SESSION_PARSE_LIMITS.FIRST_MESSAGE_PREVIEW_LENGTH
-			),
-			messageCount,
-			sizeBytes: stats.size,
-			costUsd,
-			inputTokens: totalInputTokens,
-			outputTokens: totalOutputTokens,
-			cacheReadTokens: totalCacheReadTokens,
-			cacheCreationTokens: totalCacheCreationTokens,
-			byModel: claudeModelUsage(byModel),
-			// Timed per transcript: a subagent's first call must not be timed
-			// from the parent's last line.
-			speed: computeClaudeTokenSpeed([content, ...subagentContents]),
-			durationSeconds,
-		};
+		return parseClaudeSessionInfo(content, sessionId, projectPath, stats, subagentContents);
 	} catch (error) {
 		logger.error(`Error parsing session content for session: ${sessionId}`, LOG_CONTEXT, error);
 		captureException(error, { operation: 'claudeStorage:parseSession', sessionId });
@@ -236,14 +120,16 @@ async function parseSessionFile(
 			return null;
 		}
 
-		const content = await fs.readFile(filePath, 'utf-8');
-		return parseSessionContent(
-			content,
+		// Read and parsed on the worker pool: a transcript can run to hundreds of
+		// MB, and parsing it here would block the main thread.
+		return await runTranscriptParse({
+			kind: 'claude-session-info',
+			filePath,
 			sessionId,
 			projectPath,
-			stats,
-			await readClaudeSubagentTranscripts(filePath)
-		);
+			sizeBytes: stats.size,
+			mtimeMs: stats.mtimeMs,
+		});
 	} catch (error) {
 		if (error instanceof RangeError) {
 			logger.warn('Session file too large to parse', LOG_CONTEXT, { filePath });
@@ -501,6 +387,7 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 		const refs: SessionFileRef[] = files.map((file) => ({
 			key: file.filePath,
 			fingerprint: fileFingerprint(file.sizeBytes, file.mtimeMs),
+			sizeBytes: file.sizeBytes,
 		}));
 
 		const sessions = await getSessionInfoCache(this.agentId).resolve(
@@ -907,7 +794,7 @@ export class ClaudeSessionStorage extends BaseSessionStorage {
 			try {
 				if (!entry) continue;
 				if (entry.type === 'user' || entry.type === 'assistant') {
-					const textContent = extractTextFromContent(entry.message?.content);
+					const textContent = extractClaudeTextFromContent(entry.message?.content);
 					if (textContent.trim()) {
 						searchableMessages.push({
 							role: entry.type as 'user' | 'assistant',

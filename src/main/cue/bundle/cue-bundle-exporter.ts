@@ -40,6 +40,8 @@ import {
 import { isSecretEnvKey } from '../../../shared/agentEnvironment';
 import {
 	CUE_BUNDLE_LAYOUT_PATH,
+	CUE_BUNDLE_LOCAL_AGENT_FIELDS,
+	CUE_BUNDLE_LOCAL_PATH,
 	CUE_BUNDLE_MANIFEST_PATH,
 	CUE_BUNDLE_MIN_ENGINE_VERSION,
 	CUE_BUNDLE_README_PATH,
@@ -49,6 +51,8 @@ import {
 	type CueBundleClaudeAssetSelection,
 	type CueBundleFileEntry,
 	type CueBundleKind,
+	type CueBundleLocalAgent,
+	type CueBundleLocalData,
 	type CueBundleManifest,
 	type CueBundleRequirements,
 	type CueBundleWorkspace,
@@ -98,6 +102,19 @@ export interface CueBundleExportOptions {
 	sessions?: SessionInfo[];
 	/** Folder of `maestro-agent-configs.json`, when it is not the data directory. */
 	agentConfigsDir?: string;
+	/**
+	 * Agent exports only: carry the agent's Cue subscriptions. Defaults to on;
+	 * off when Cue is disabled, so the bundle holds no cue.yaml at all.
+	 */
+	includeCue?: boolean;
+	/**
+	 * Make an EXACT COPY: also write `local.json` with the agents' secret
+	 * values, binary paths, SSH settings, other providers' settings and the
+	 * folders they lived in, so an import on this machine restores them as
+	 * they were. The bundle then names local paths and holds secrets: it is a
+	 * backup, not something to share.
+	 */
+	includeLocal?: boolean;
 }
 
 export interface CueBundleExportResult {
@@ -569,7 +586,9 @@ function buildAgentSettings(
 	root: string,
 	autoRun: CueBundleAgentSettings['autoRun'],
 	builder: BundleBuilder,
-	mcpSecrets: readonly string[]
+	mcpSecrets: readonly string[],
+	/** An exact copy carries what the portable settings leave out; skip the "set it again" warnings. */
+	exact: boolean
 ): CueBundleAgentSettings {
 	const settings: CueBundleAgentSettings = {
 		id: session.id,
@@ -580,7 +599,7 @@ function buildAgentSettings(
 	if (session.cwd) {
 		const cwd = path.resolve(session.cwd);
 		if (isWithin(root, cwd)) settings.cwd = toPosix(path.relative(root, cwd));
-		else
+		else if (!exact)
 			builder.warnings.add(
 				`Agent "${session.name}" works outside its project root; its working directory was not exported.`
 			);
@@ -596,6 +615,24 @@ function buildAgentSettings(
 	if (session.nudgeMessage) settings.nudgeMessage = session.nudgeMessage;
 	if (typeof session.enableMaestroP === 'boolean') settings.enableMaestroP = session.enableMaestroP;
 	if (session.maestroPMode) settings.maestroPMode = session.maestroPMode;
+	const record = session as SessionInfo & {
+		contextWindowSource?: 'user-edited';
+		fileTreeAutoRefreshInterval?: number;
+		documentGraphLayout?: string;
+	};
+	if (record.contextWindowSource) settings.contextWindowSource = record.contextWindowSource;
+	for (const flag of [
+		'retryOnAvailabilityErrors',
+		'retryOnTokenExhaustion',
+		'codexAutoResetOnExhaustion',
+	] as const) {
+		if (typeof session[flag] === 'boolean') settings[flag] = session[flag];
+	}
+	if (session.codexTransport) settings.codexTransport = session.codexTransport;
+	if (typeof record.fileTreeAutoRefreshInterval === 'number') {
+		settings.fileTreeAutoRefreshInterval = record.fileTreeAutoRefreshInterval;
+	}
+	if (record.documentGraphLayout) settings.documentGraphLayout = record.documentGraphLayout;
 
 	// The effective env is the agent's own record OR the provider's, never a
 	// merge (`effectiveAgentCustomEnvVars`). Parked vars live in a separate
@@ -629,12 +666,12 @@ function buildAgentSettings(
 		if (!required.includes(name) && !(name in values)) required.push(name);
 	}
 	required.sort();
-	if (secretByValue.length > 0) {
+	if (secretByValue.length > 0 && !exact) {
 		builder.warnings.add(
 			`Agent "${session.name}" sets ${secretByValue.join(', ')} to a value that looks like a credential; ${secretByValue.length === 1 ? 'it was' : 'they were'} exported by name only. Set ${secretByValue.length === 1 ? 'it' : 'them'} again after import.`
 		);
 	}
-	if (machineSpecific.length > 0) {
+	if (machineSpecific.length > 0 && !exact) {
 		builder.warnings.add(
 			`Agent "${session.name}" sets ${machineSpecific.join(', ')} to a local path; set ${machineSpecific.length === 1 ? 'it' : 'them'} again after import.`
 		);
@@ -647,6 +684,27 @@ function buildAgentSettings(
 		};
 	}
 	return settings;
+}
+
+/**
+ * An exact copy's machine-bound fields for one agent (`local.json`): the
+ * {@link CUE_BUNDLE_LOCAL_AGENT_FIELDS} it has, verbatim, plus its working
+ * directory and Auto Run folder when either sat outside the project root,
+ * where the portable settings cannot name them.
+ */
+function buildLocalAgent(session: SessionInfo, root: string): CueBundleLocalAgent {
+	const record = session as unknown as Record<string, unknown>;
+	const local: CueBundleLocalAgent = {};
+	for (const field of CUE_BUNDLE_LOCAL_AGENT_FIELDS) {
+		if (record[field] !== undefined) local[field] = record[field];
+	}
+	if (session.cwd && !isWithin(root, path.resolve(session.cwd))) {
+		local.cwd = path.resolve(session.cwd);
+	}
+	if (session.autoRunFolderPath && !isWithin(root, path.resolve(session.autoRunFolderPath))) {
+		local.autoRunFolderPath = path.resolve(session.autoRunFolderPath);
+	}
+	return local;
 }
 
 /** Every `.md` under a folder, as folder-relative POSIX paths, sorted. */
@@ -726,7 +784,14 @@ function buildReadme(manifest: Omit<CueBundleManifest, 'files'>): string {
 		`- Secrets: ${manifest.requirements.secrets.length ? manifest.requirements.secrets.map((s) => `\`${s}\``).join(', ') : 'none'}`,
 		'',
 	];
-	if (manifest.requirements.secrets.length > 0) {
+	if (manifest.local) {
+		lines.push(
+			'## Exact copy',
+			'',
+			`This bundle also holds \`${manifest.local}\`: secret values, binary paths and the folders the agents lived in on the machine that exported it. It is a backup for that machine. Do not share it.`,
+			''
+		);
+	} else if (manifest.requirements.secrets.length > 0) {
 		lines.push(
 			'Secret values are never included. Set each secret above as an environment variable on the machine that imports this bundle.',
 			''
@@ -830,6 +895,11 @@ export async function exportCueBundle(
 	const sessionById = new Map(sessions.map((s) => [s.id, s]));
 	const builder = new BundleBuilder();
 	const createdAt = resolveCreatedAt(options);
+	const includeCue = options.includeCue !== false;
+	const exact = options.includeLocal === true;
+	if (options.pipeline && !includeCue) {
+		throw new Error('A pipeline export always carries its Cue subscriptions');
+	}
 
 	let kind: CueBundleKind;
 	let bundleName: string;
@@ -873,21 +943,29 @@ export async function exportCueBundle(
 		bundleName = agent.name;
 		agentIds.add(agent.id);
 		const root = agentRoot(agent);
-		const doc = readCueDocument(root);
-		const unownedTarget = resolveUnownedTarget(doc, root, sessions, rawSubscriptions(doc), builder);
-		const subs = rawSubscriptions(doc).filter((s) =>
-			typeof s.agent_id === 'string' && s.agent_id
-				? s.agent_id === agent.id
-				: unownedTarget === agent.id
-		);
-		if (doc) configByRoot.set(root, { subs, settings: doc.settings });
-		const foreign = sortedUnique(referencedAgentIds(subs, sessions, unownedTarget)).filter(
-			(id) => id !== agent.id
-		);
-		if (foreign.length > 0) {
-			builder.warnings.add(
-				`Subscriptions reference other agents that are not in this bundle: ${foreign.map((id) => sessionById.get(id)?.name ?? id).join(', ')}.`
+		const doc = includeCue ? readCueDocument(root) : undefined;
+		if (doc) {
+			const unownedTarget = resolveUnownedTarget(
+				doc,
+				root,
+				sessions,
+				rawSubscriptions(doc),
+				builder
 			);
+			const subs = rawSubscriptions(doc).filter((s) =>
+				typeof s.agent_id === 'string' && s.agent_id
+					? s.agent_id === agent.id
+					: unownedTarget === agent.id
+			);
+			configByRoot.set(root, { subs, settings: doc.settings });
+			const foreign = sortedUnique(referencedAgentIds(subs, sessions, unownedTarget)).filter(
+				(id) => id !== agent.id
+			);
+			if (foreign.length > 0) {
+				builder.warnings.add(
+					`Subscriptions reference other agents that are not in this bundle: ${foreign.map((id) => sessionById.get(id)?.name ?? id).join(', ')}.`
+				);
+			}
 		}
 	}
 
@@ -1022,7 +1100,7 @@ export async function exportCueBundle(
 	for (const session of includedAgents) {
 		const root = agentRoot(session);
 		const wsKey = keyByRoot.get(root)!;
-		if (session.sessionSshRemoteConfig?.enabled) {
+		if (session.sessionSshRemoteConfig?.enabled && !exact) {
 			builder.warnings.add(
 				`Agent "${session.name}" runs over SSH on the exporting machine; its remote configuration was not exported.`
 			);
@@ -1077,7 +1155,8 @@ export async function exportCueBundle(
 			root,
 			autoRun,
 			builder,
-			session.toolType === 'claude-code' ? (mcpSecretsByKey.get(wsKey) ?? []) : []
+			session.toolType === 'claude-code' ? (mcpSecretsByKey.get(wsKey) ?? []) : [],
+			exact
 		);
 		for (const key of settings.env?.required ?? []) secrets.add(key);
 		const settingsPath = `agents/${session.id}.json`;
@@ -1101,6 +1180,17 @@ export async function exportCueBundle(
 		addGenerated(CUE_BUNDLE_LAYOUT_PATH, JSON.stringify(pipeline, null, '\t') + '\n');
 	}
 
+	// The one file allowed to name local paths, so it is added outside
+	// `generated` and the path guard below never scans it.
+	if (exact) {
+		const local: CueBundleLocalData = { workspaces: {}, agents: {} };
+		for (const ws of byKey) local.workspaces[ws.key] = ws.root;
+		for (const session of includedAgents) {
+			local.agents[session.id] = buildLocalAgent(session, agentRoot(session));
+		}
+		builder.addJson(CUE_BUNDLE_LOCAL_PATH, local);
+	}
+
 	const tools = new Set<string>();
 	if ([...events].some((e) => e.startsWith('github.'))) tools.add('gh');
 	if (manifestWorkspaces.some((w) => w.source?.gitRemote)) tools.add('git');
@@ -1121,6 +1211,7 @@ export async function exportCueBundle(
 		agents: manifestAgents,
 		requirements,
 		...(warnings.length ? { warnings } : {}),
+		...(exact ? { local: CUE_BUNDLE_LOCAL_PATH } : {}),
 		...(createdAt ? { createdAt } : {}),
 	};
 	addGenerated(CUE_BUNDLE_README_PATH, buildReadme(head));

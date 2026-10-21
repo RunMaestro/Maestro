@@ -2,6 +2,7 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, fireEvent, waitFor } from '@testing-library/react';
 import { Markdown } from '../../../../renderer/components/Markdown/Markdown';
+import { WizardMarkdown } from '../../../../renderer/components/Wizard/shared/WizardMarkdown';
 import { mockTheme } from '../../../helpers/mockTheme';
 
 // Mock Shiki + highlight.js so CodeFence's async highlighting doesn't hit the
@@ -217,13 +218,32 @@ describe('Markdown presets', () => {
 		});
 	});
 
-	describe('wizard-bubble preset', () => {
-		it('applies the tailwind bubble paragraph classes', () => {
-			const { container } = render(
-				<Markdown preset="wizard-bubble" content="hello" theme={mockTheme} />
+	// Both wizard conversations render agent replies through WizardMarkdown. It
+	// must show what chat shows, or a requested mockup arrives as raw source.
+	describe('WizardMarkdown', () => {
+		it('renders mermaid fences as a diagram', () => {
+			const { container, getByTestId } = render(
+				<WizardMarkdown content={'```mermaid\ngraph TD; A-->B;\n```'} theme={mockTheme} />
 			);
-			const p = container.querySelector('p')!;
-			expect(p.className).toContain('mb-2');
+			expect(container.querySelector('.mermaid-code-block')).toBeInTheDocument();
+			expect(getByTestId('mermaid-diagram')).toHaveTextContent('graph TD; A-->B;');
+		});
+
+		it('renders an inline SVG mockup', () => {
+			const { container } = render(
+				<WizardMarkdown
+					content={'<svg width="40" height="20"><rect width="40" height="20" fill="red"/></svg>'}
+					theme={mockTheme}
+				/>
+			);
+			expect(container.querySelector('svg rect')).toBeInTheDocument();
+		});
+
+		it('renders a local image reference as an image, not text', () => {
+			const { container } = render(
+				<WizardMarkdown content={'![mockup](/tmp/mockup.png)'} theme={mockTheme} />
+			);
+			expect(container.textContent).not.toContain('![mockup]');
 		});
 	});
 
@@ -232,7 +252,7 @@ describe('Markdown presets', () => {
 
 		beforeEach(() => mockSafeClipboardWrite.mockClear());
 
-		it.each(['chat', 'document', 'release-notes', 'wizard-bubble'] as const)(
+		it.each(['chat', 'document', 'release-notes'] as const)(
 			'%s preset copies the fence content to the clipboard',
 			async (preset) => {
 				const { getByTestId } = render(
