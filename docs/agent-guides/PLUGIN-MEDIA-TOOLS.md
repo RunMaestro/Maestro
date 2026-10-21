@@ -28,10 +28,13 @@ plugin-selected model, or second model-root setting. `dictation-local` is the se
 A Cappella live recognizer using the same assignment and pool; existing explicit Parakeet
 and Whisper English provider IDs/settings remain compatible. Nothing enables a live session.
 
-The multilingual `whisper-base` catalog entry is deliberately **pending** until real German
-and English audio/runtime acceptance. Token/prompt tests do not qualify recognition. Its
-pinned ONNX graphs and tokenizer cannot be replaced by a `.ggml` file. The UI must preserve
-this unavailability rather than describe it as German-ready.
+The multilingual `whisper-base` catalog entry supports explicit German/English transcription
+following the bounded native qualification documented in `docs/architecture/local-models.md`.
+Optional `whisper-small` uses the same assignment and pool with its own graph geometry;
+it is not selected or downloaded automatically. Those small-corpus measurements do not
+establish general recognition accuracy, live Discord delivery or packaged-installation
+behavior. Token/prompt tests alone do not qualify recognition. The pinned ONNX graphs and
+tokenizer cannot be replaced by a `.ggml` file; missing or incompatible assets remain unavailable.
 
 `panels[].hostSettings: ['dictation']` adds a host-rendered link to the existing
 Models / System One assignment section. The panel cannot choose arbitrary settings targets.
