@@ -171,14 +171,31 @@ export class SpeechToTextPool {
 			return {
 				modelId,
 				maxSamples: resident.maxSamples,
-				transcribe: (audio, options) => {
+				transcribe: (audio, options = {}) => {
+					const decodeOptions = { ...options };
+					if (
+						decodeOptions.language &&
+						!getLocalModel(modelId)?.speechToText?.languages.includes(decodeOptions.language)
+					) {
+						return Promise.reject(
+							new LocalModelError('The model does not support this transcription language.', {
+								code: 'model-unsupported',
+								recovery: 'Choose a compatible Dictation model and language.',
+								consumerId,
+							})
+						);
+					}
 					// Checked when the decode is ASKED for, not when it runs: a decode
 					// requested just before `release()` is still owed its answer, and the
 					// release queues behind it.
 					if (released) return Promise.reject(gone());
 					return this.queue.enqueue(modelId, () => {
 						if (this.resident.get(modelId) !== resident) throw gone();
-						return resident.engine.transcribe(audio, options);
+						throwIfLocalModelCancelled(decodeOptions.signal, consumerId);
+						return resident.engine.transcribe(audio, decodeOptions).then((text) => {
+							throwIfLocalModelCancelled(decodeOptions.signal, consumerId);
+							return text;
+						});
 					});
 				},
 				release: () => {
@@ -286,9 +303,7 @@ export function __setSpeechToTextPool(pool: SpeechToTextPool | null): void {
 // One-shot transcription
 // ---------------------------------------------------------------------------
 
-export interface TranscribeSpeechOptions extends SpeechToTextDecodeOptions {
-	signal?: AbortSignal;
-}
+export interface TranscribeSpeechOptions extends SpeechToTextDecodeOptions {}
 
 export interface SpeechTranscription {
 	/** The transcript, with what a recogniser invents for silence removed. */
@@ -335,7 +350,11 @@ export async function transcribeSpeech(
 	const raw =
 		source.type === 'endpoint'
 			? await transcribeOnEndpoint(source, samples, options)
-			: await transcribeOnLocalModel(source.modelId, samples, options);
+			: await transcribeOnLocalModel(source.modelId, samples, {
+					...options,
+					language: options.language ?? source.language,
+				});
+	throwIfLocalModelCancelled(options.signal, CONSUMER_ID);
 	const text = sanitizeTranscript(raw);
 	logger.info(
 		`Speech-to-text: ${audioMs} ms of audio transcribed in ${Date.now() - startedAt} ms, ${text.length} chars${raw.trim() && !text ? ' (dropped as non-speech)' : ''}`,

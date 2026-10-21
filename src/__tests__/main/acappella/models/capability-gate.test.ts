@@ -581,6 +581,22 @@ describe('capability-gate', () => {
 			});
 		}
 
+		it('refuses an endpoint for the local Dictation recogniser before it is probed', async () => {
+			const readiness = await resolveVoiceReadiness({
+				settings: { ...ALL_LOCAL, stt: 'dictation-local' },
+				readModelStatus: statusReader(),
+				readTaskReadiness: taskReadiness({
+					state: 'ready',
+					assignment: { type: 'endpoint', endpointId: 'cloud', model: 'paid' },
+				}),
+			});
+			expect(readiness.slots.find((slot) => slot.slot === 'stt')).toMatchObject({
+				providerId: 'dictation-local',
+				satisfied: false,
+				detail: 'This recogniser requires a local Dictation assignment.',
+			});
+		});
+
 		it('is ready when the assigned source is, and names the model it runs', async () => {
 			const readiness = await resolveVoiceReadiness({
 				settings: LOCAL_BRAIN,

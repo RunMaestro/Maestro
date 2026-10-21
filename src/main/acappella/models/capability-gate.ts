@@ -389,7 +389,14 @@ async function resolveSlot(
 	}
 
 	if (requirement.kind === 'local-models-task') {
-		return resolveAssignedSource(slot, providerId, requirement.taskId, options, readModelStatus);
+		return resolveAssignedSource(
+			slot,
+			providerId,
+			requirement.taskId,
+			options,
+			readModelStatus,
+			requirement.localOnly
+		);
 	}
 
 	if (requirement.kind === 'system-voice') {
@@ -516,6 +523,8 @@ const TASK_REASON_TO_SLOT_REASON: Record<LocalModelTaskUnreadyReason, VoiceSlotU
 		'endpoint-key-missing': 'api-key-missing',
 		'model-unknown': 'provider-unreachable',
 		'model-wrong-kind': 'provider-unreachable',
+		'model-language-unsupported': 'provider-unreachable',
+		'model-pending': 'provider-unreachable',
 		'endpoint-unknown': 'provider-unreachable',
 		'endpoint-disabled': 'provider-unreachable',
 		'endpoint-unsupported': 'provider-unreachable',
@@ -541,7 +550,8 @@ async function resolveAssignedSource(
 	providerId: string,
 	taskId: LocalModelTaskId,
 	options: ResolveVoiceReadinessOptions,
-	readModelStatus: (modelId: string) => Promise<ModelStatus>
+	readModelStatus: (modelId: string) => Promise<ModelStatus>,
+	localOnly = false
 ): Promise<VoiceSlotReadiness> {
 	const label = SLOT_LABELS[slot];
 	const readRuntimeFailure = options.readRuntimeFailure;
@@ -550,6 +560,7 @@ async function resolveAssignedSource(
 		((id: LocalModelTaskId) =>
 			resolveTaskReadiness(id, {
 				readModelStatus,
+				localOnly,
 				...(readRuntimeFailure
 					? { readRuntimeFailure: async (runtimeId) => readRuntimeFailure(runtimeId) }
 					: {}),
@@ -558,6 +569,15 @@ async function resolveAssignedSource(
 	const requiredModelId =
 		readiness.assignment.type === 'local' ? readiness.assignment.modelId : undefined;
 
+	if (localOnly && readiness.assignment.type !== 'local')
+		return {
+			slot,
+			providerId,
+			satisfied: false,
+			reason: 'provider-unreachable',
+			detail: 'This recogniser requires a local Dictation assignment.',
+			suggestedAction: 'Choose a local Dictation model in Settings > Models > System One.',
+		};
 	if (readiness.state === 'ready') {
 		return { slot, providerId, satisfied: true, ...(requiredModelId ? { requiredModelId } : {}) };
 	}

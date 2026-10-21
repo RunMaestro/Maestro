@@ -3,6 +3,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { PluginMediaTools, resolveMediaRuntime } from '../../../main/plugins/plugin-media-tools';
+import { encodeWav } from '../../../shared/audio/pcm';
 import { MEDIA_LIMITS } from '../../../shared/plugins/media-tools';
 import { PluginServiceHost } from '../../../main/plugins/plugin-service-host';
 import {
@@ -18,6 +19,11 @@ import {
 import type { PermissionGrant } from '../../../shared/plugins/permissions';
 import { logger } from '../../../main/utils/logger';
 
+const core = vi.hoisted(() => ({ resolve: vi.fn(), transcribe: vi.fn() }));
+vi.mock('../../../main/local-models/dictation', () => ({
+	resolveLocalClipTranscriber: core.resolve,
+}));
+
 const native = vi.hoisted(() => ({ execFile: vi.fn(), paths: vi.fn() }));
 vi.mock('node:child_process', () => ({ execFile: native.execFile }));
 vi.mock('../../../main/agents/path-prober', () => ({ findAllBinaryPaths: native.paths }));
@@ -29,6 +35,7 @@ const url = 'https://cdn.discordapp.com/attachments/123/456/voice.ogg?ex=SIGNED'
 let root: string;
 let tools: PluginMediaTools;
 let grant: boolean;
+let codecsAvailable: boolean;
 let children: { kill: ReturnType<typeof vi.fn> }[];
 let hold: boolean;
 let probeDuration: number;
@@ -39,8 +46,17 @@ let diagnostics: Error | null;
 let grants: PermissionGrant[];
 
 beforeEach(async () => {
+	core.transcribe.mockResolvedValue({ text: 'synthetic fixture', audioMs: 1000 });
+	core.resolve.mockResolvedValue({
+		modelId: 'whisper-base',
+		language: 'de',
+		languages: ['de', 'en'],
+		reason: null,
+		transcribe: core.transcribe,
+	});
 	root = await fs.mkdtemp(path.join(os.tmpdir(), 'maestro-media-test-'));
 	grant = true;
+	codecsAvailable = true;
 	hold = false;
 	probeDuration = 1;
 	decodedDuration = 1;
@@ -67,11 +83,13 @@ beforeEach(async () => {
 				throw new Error('denied secret');
 		},
 		resolveRuntime: async () => ({
-			binaries: {
-				ffprobe: '/approved/ffprobe',
-				ffmpeg: '/approved/ffmpeg',
-				'whisper-cli': '/approved/whisper-cli',
-			},
+			binaries: codecsAvailable
+				? {
+						ffprobe: '/approved/ffprobe',
+						ffmpeg: '/approved/ffmpeg',
+						'whisper-cli': '/approved/whisper-cli',
+					}
+				: {},
 			models: { base: '/approved/models/ggml-base.bin' },
 		}),
 	});
@@ -97,7 +115,8 @@ beforeEach(async () => {
 			if (hold) return child;
 			void (async () => {
 				await Promise.resolve();
-				if (binary.endsWith('ffmpeg')) await fs.writeFile(args.at(-1)!, Buffer.alloc(100));
+				if (binary.endsWith('ffmpeg'))
+					await fs.writeFile(args.at(-1)!, Buffer.from(encodeWav(new Int16Array(16000), 16000)));
 				if (binary.endsWith('whisper-cli'))
 					await fs.writeFile(args[args.indexOf('-of') + 1] + '.json', whisperJson);
 				const wav = args.includes('wav');
@@ -142,6 +161,151 @@ async function download(jobId: string): Promise<string> {
 }
 
 describe('media tools boundary', () => {
+	it('includes decoding tools in clip readiness without requiring legacy whisper-cli models', async () => {
+		codecsAvailable = false;
+		await expect(tools.call('p', 'media.transcriptionStatus', {})).resolves.toMatchObject({
+			state: 'unavailable',
+			reason: 'ffprobe-unavailable',
+			language: 'de',
+		});
+		expect(core.transcribe).not.toHaveBeenCalled();
+	});
+
+	it('uses the host Dictation language when omitted and never silently overrides it', async () => {
+		const jobId = await open();
+		const audioId = await download(jobId);
+		const decoded = (await tools.call('p', 'media.decode', { jobId, audioId })) as {
+			audioId: string;
+		};
+		await expect(
+			tools.call('p', 'media.transcribe', { jobId, audioId: decoded.audioId, options: {} })
+		).resolves.toMatchObject({ language: 'de' });
+		await tools.call('p', 'media.close', { jobId });
+		const second = await open();
+		const another = await download(second);
+		const pcm = (await tools.call('p', 'media.decode', { jobId: second, audioId: another })) as {
+			audioId: string;
+		};
+		await expect(
+			tools.call('p', 'media.transcribe', {
+				jobId: second,
+				audioId: pcm.audioId,
+				options: { language: 'en' },
+			})
+		).rejects.toMatchObject({ code: 'MediaLanguageUnsupported' });
+	});
+
+	it.each(['whisper-base', 'whisper-small'])(
+		'transcribes an owned decoded clip through the host core without running whisper-cli (%s)',
+		async (modelId) => {
+			core.resolve.mockResolvedValue({
+				modelId,
+				language: 'de',
+				languages: ['de', 'en'],
+				reason: null,
+				transcribe: core.transcribe,
+			});
+			const jobId = await open();
+			const audioId = await download(jobId);
+			const decoded = (await tools.call('p', 'media.decode', { jobId, audioId })) as {
+				audioId: string;
+			};
+			await expect(tools.call('p', 'media.transcriptionStatus', {})).resolves.toMatchObject({
+				state: 'ready',
+				taskId: 'dictation',
+				modelId,
+				languages: ['de', 'en'],
+				reason: null,
+			});
+			await expect(
+				tools.call('p', 'media.transcribe', {
+					jobId,
+					audioId: decoded.audioId,
+					options: { language: 'de' },
+				})
+			).resolves.toEqual({
+				text: 'synthetic fixture',
+				language: 'de',
+				durationSeconds: 1,
+				modelId,
+				translated: false,
+			});
+			expect(core.transcribe).toHaveBeenCalledWith(expect.any(Float32Array), 16000, {
+				language: 'de',
+				signal: expect.any(AbortSignal),
+			});
+			expect(native.execFile.mock.calls.some(([binary]) => binary.endsWith('whisper-cli'))).toBe(
+				false
+			);
+			await tools.call('p', 'media.close', { jobId });
+		}
+	);
+
+	it.each(['whisper-base', 'whisper-small'])(
+		'aborts and drains native core completion before close resolves, discarding late text (%s)',
+		async (modelId) => {
+			core.resolve.mockResolvedValue({
+				modelId,
+				language: 'de',
+				languages: ['de', 'en'],
+				reason: null,
+				transcribe: core.transcribe,
+			});
+			let finish!: (value: { text: string; audioMs: number }) => void;
+			core.transcribe.mockReturnValueOnce(
+				new Promise((resolve) => {
+					finish = resolve;
+				})
+			);
+			const jobId = await open();
+			const audioId = await download(jobId);
+			const decoded = (await tools.call('p', 'media.decode', { jobId, audioId })) as {
+				audioId: string;
+			};
+			const run = tools.call('p', 'media.transcribe', {
+				jobId,
+				audioId: decoded.audioId,
+				options: { language: 'de' },
+			});
+			const rejected = expect(run).rejects.toMatchObject({ code: 'MediaCancelled' });
+			await vi.waitFor(() => expect(core.transcribe).toHaveBeenCalled());
+			let closed = false;
+			const closing = tools.call('p', 'media.close', { jobId }).then(() => {
+				closed = true;
+			});
+			await Promise.resolve();
+			expect(core.transcribe.mock.calls[0][2].signal.aborted).toBe(true);
+			expect(closed).toBe(false);
+			finish({ text: 'late synthetic result', audioMs: 1000 });
+			await closing;
+			await rejected;
+			expect(await fs.readdir(root)).toEqual([]);
+		}
+	);
+
+	it('reports English-only capability and refuses German before decoding in core', async () => {
+		core.resolve.mockResolvedValue({
+			modelId: 'whisper-base-en',
+			language: 'en',
+			languages: ['en'],
+			reason: null,
+			transcribe: core.transcribe,
+		});
+		const jobId = await open();
+		const audioId = await download(jobId);
+		const decoded = (await tools.call('p', 'media.decode', { jobId, audioId })) as {
+			audioId: string;
+		};
+		await expect(
+			tools.call('p', 'media.transcribe', {
+				jobId,
+				audioId: decoded.audioId,
+				options: { language: 'de' },
+			})
+		).rejects.toMatchObject({ code: 'MediaLanguageUnsupported' });
+		expect(core.transcribe).not.toHaveBeenCalled();
+	});
+
 	it('requires an exact grant, rejects broad/network/spawn substitutes, and supports release after revoke', async () => {
 		for (const caps of [
 			[],

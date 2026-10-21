@@ -72,6 +72,7 @@ interface ModelDraftBase {
 	pending?: string;
 	/** A model the user added from Hugging Face. See `LocalModelEntry.userAdded`. */
 	userAdded?: boolean;
+	speechToText?: { languages: string[] };
 }
 
 /** What only a text model declares: its roles, size, context, and attention shape. */
@@ -308,6 +309,13 @@ export function defineModel(draft: LocalModelDraft): LocalModelEntry {
 		...(draft.userAdded ? { userAdded: true as const } : {}),
 		...(draft.kind === 'text-gen' ? freezeTextGenSpec(draft, bytes) : {}),
 		...freezeRunSpec(draft),
+		...(draft.speechToText
+			? {
+					speechToText: Object.freeze({
+						languages: Object.freeze([...draft.speechToText.languages]),
+					}),
+				}
+			: {}),
 	});
 }
 
@@ -317,6 +325,8 @@ export function defineModel(draft: LocalModelDraft): LocalModelEntry {
 
 export const PARAKEET_TDT_V2_ID = 'parakeet-tdt-0.6b-v2';
 export const WHISPER_BASE_EN_ID = 'whisper-base-en';
+export const WHISPER_BASE_ID = 'whisper-base';
+export const WHISPER_SMALL_ID = 'whisper-small';
 export const KOKORO_82M_ID = 'kokoro-82m';
 export const OPENWAKEWORD_BASE_ID = 'openwakeword-base';
 export const HEY_JARVIS_WAKE_ID = 'openwakeword-hey-jarvis';
@@ -350,6 +360,7 @@ export const LOCAL_MODEL_CATALOG: readonly LocalModelEntry[] = Object.freeze([
 		displayName: 'Parakeet TDT 0.6B (English)',
 		kind: 'stt',
 		runtime: 'onnx',
+		speechToText: { languages: ['en'] },
 		// NVIDIA's Parakeet TDT 0.6B v2, exported to ONNX by the onnx-asr project.
 		// The local default: it gets agent names, casing, and punctuation right
 		// where Whisper Base does not, and decodes a few seconds of speech in
@@ -394,6 +405,7 @@ export const LOCAL_MODEL_CATALOG: readonly LocalModelEntry[] = Object.freeze([
 		displayName: 'Whisper Base (English)',
 		kind: 'stt',
 		runtime: 'onnx',
+		speechToText: { languages: ['en'] },
 		// The ONNX export, not the ggml one. Local speech-to-text runs on ONNX
 		// Runtime - the same runtime text-to-speech and the wake word already need -
 		// because the whisper.cpp binding publishes no prebuilt binary on any
@@ -426,6 +438,83 @@ export const LOCAL_MODEL_CATALOG: readonly LocalModelEntry[] = Object.freeze([
 				path: 'tokenizer.json',
 				sha256: '5eb60cec1e77aeeb6869a2bb5a8e01a84c3fe5d072d75369343021fe6f5310d0',
 				bytes: 2405679,
+			},
+		],
+	}),
+	defineModel({
+		id: WHISPER_BASE_ID,
+		displayName: 'Whisper Base (German / English)',
+		kind: 'stt',
+		runtime: 'onnx',
+		speechToText: { languages: ['de', 'en'] },
+		source: {
+			repo: 'onnx-community/whisper-base',
+			revision: '1846881b6b3a3024392c1eea3ad983695bc23925',
+		},
+		// Weights derive from OpenAI Whisper (MIT). The pinned ONNX exporter
+		// README names that base model but declares no separate export license.
+		license: {
+			spdx: 'MIT',
+			url: 'https://github.com/openai/whisper/blob/86098128c0b4f24f0e2aa2994de830614b474227/LICENSE',
+		},
+		description:
+			'Multilingual ONNX checkpoint, using explicit German or English transcription. Runs locally through the shared speech-to-text pool; never translates.',
+		// Real pinned de/en graphs, full-prefix decoder parity and the shared clip
+		// path were qualified; see architecture/local-models.md. No auto-selection.
+		goodAt: 'Explicit German and English transcription; review short phrases and unfamiliar terms.',
+		files: [
+			{
+				path: 'onnx/encoder_model.onnx',
+				bytes: 82468078,
+				sha256: 'a9f3b752833b49e880dec91ee5b6d936112be7c3ea07c221024ba493439f46fe',
+			},
+			{
+				path: 'onnx/decoder_model_merged_q4.onnx',
+				bytes: 123602419,
+				sha256: '09f83b71ceedc97dab1d90b914715dc532a646a147abda11d83c64867b7c319c',
+			},
+			{
+				path: 'tokenizer.json',
+				bytes: 2480466,
+				sha256: '27fc476bfe7f17299480be2273fc0608e4d5a99aba2ab5dec5374b4482d1a566',
+			},
+		],
+	}),
+	defineModel({
+		id: WHISPER_SMALL_ID,
+		displayName: 'Whisper Small (German / English)',
+		kind: 'stt',
+		runtime: 'onnx',
+		speechToText: { languages: ['de', 'en'] },
+		source: {
+			repo: 'onnx-community/whisper-small',
+			revision: '36050c46d777d46dc4b5f43f6d90574fc38f8732',
+		},
+		// Like Base, these weights derive from OpenAI Whisper (MIT); the pinned
+		// exporter README declares no separate license for its ONNX export.
+		license: {
+			spdx: 'MIT',
+			url: 'https://github.com/openai/whisper/blob/86098128c0b4f24f0e2aa2994de830614b474227/LICENSE',
+		},
+		description:
+			'Optional larger multilingual checkpoint for explicit German or English transcription. Uses more memory and can take longer than Base; never translates.',
+		goodAt:
+			'An alternative for German and English dictation; limited comparative evidence, so review the transcript.',
+		files: [
+			{
+				path: 'onnx/encoder_model.onnx',
+				bytes: 352825870,
+				sha256: 'b37cd6625dc36f9178ec7539a1876b9680ea26a910097e092be39dc766320c7b',
+			},
+			{
+				path: 'onnx/decoder_model_merged_q4.onnx',
+				bytes: 233149327,
+				sha256: '795c61b344576719c2b249cc9911c78b4cc552c8c6a5407be21a3380a0791b13',
+			},
+			{
+				path: 'tokenizer.json',
+				bytes: 2480466,
+				sha256: '27fc476bfe7f17299480be2273fc0608e4d5a99aba2ab5dec5374b4482d1a566',
 			},
 		],
 	}),

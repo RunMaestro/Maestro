@@ -206,6 +206,33 @@ describe('LocalModelsAssignmentsSection', () => {
 		expect(optionLabels('Prompt-injection screen')).toEqual(['Off']);
 	});
 
+	it('persists the Dictation language in the existing assignment and preserves it on remount', async () => {
+		useSettingsStore.setState({
+			localModelAssignments: {
+				dictation: { type: 'local', modelId: 'whisper-base', language: 'en' },
+			},
+		});
+		const view = render(<Section />);
+		const row = screen.getByTestId('local-models-task-dictation');
+		fireEvent.click(within(row).getByRole('button', { name: 'Deutsch' }));
+		expect(useSettingsStore.getState().localModelAssignments.dictation).toEqual({
+			type: 'local',
+			modelId: 'whisper-base',
+			language: 'de',
+		});
+		expect(window.maestro.settings.set).toHaveBeenCalledWith('localModelAssignments', {
+			dictation: { type: 'local', modelId: 'whisper-base', language: 'de' },
+		});
+		view.unmount();
+		render(<Section />);
+		expect(screen.getByLabelText('Dictation')).toHaveValue('local:whisper-base?language=de');
+		expect(
+			within(screen.getByTestId('local-models-task-dictation')).getByRole('button', {
+				name: 'Deutsch',
+			})
+		).toBeEnabled();
+	});
+
 	it('saves a pick through the shared assignment writer', async () => {
 		render(<Section />);
 		await waitFor(() => expect(optionLabels('Semantic search')).toContain(bgeName));

@@ -21,7 +21,8 @@
 import semver from 'semver';
 
 /**
- * The host API version this Maestro build implements. 1.25.0 adds resumable
+ * The host API version this Maestro build implements. 1.27.0 adds local-only
+ * Dictation clip transcription on the authenticated media broker. 1.25.0 adds resumable
  * agents.send with public progress, verified plugin-tool caller identity, and
  * isolated agents.generateTitle. 1.24.0 added host-mediated services.
  * 1.23.0 adds independent
@@ -57,7 +58,7 @@ import semver from 'semver';
  * `ui:contribute` / `ui:panel` / `ui:render-unsafe` UI capabilities; 1.3.0
  * added `tools` + `keybindings`; 1.2.0 added `transcripts:read`.
  */
-export const HOST_API_VERSION = '1.25.0';
+export const HOST_API_VERSION = '1.27.0';
 
 /** Result of checking a plugin's declared host-API requirement. */
 export interface HostApiCompatibility {

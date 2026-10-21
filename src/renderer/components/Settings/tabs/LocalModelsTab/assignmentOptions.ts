@@ -177,7 +177,12 @@ export function buildAssignmentOptionGroups(
 	const localOptions = (localFirst ? recommendedFirst(task, installed) : installed)
 		.filter((listing) => isLocalModelOfferedForTask(task.id, listing.entry.id))
 		.map((listing) =>
-			option({ type: 'local', modelId: listing.entry.id }, listing.entry.displayName)
+			option(
+				current.type === 'local' && current.modelId === listing.entry.id
+					? current
+					: { type: 'local', modelId: listing.entry.id },
+				listing.entry.displayName
+			)
 		);
 	if (localOptions.length > 0) {
 		groups.push({ label: LOCAL_MODELS_GROUP_LABEL, options: localOptions });

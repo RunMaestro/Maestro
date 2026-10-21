@@ -241,4 +241,6 @@ export interface LocalModelEntry {
 	readonly embedding?: LocalEmbeddingSpec;
 	/** How to run the model. Present exactly when `kind` is `classifier`. */
 	readonly classifier?: LocalClassifierSpec;
+	/** Explicit transcription languages implemented by this build; no translation or implicit auto. */
+	readonly speechToText?: { readonly languages: readonly string[] };
 }

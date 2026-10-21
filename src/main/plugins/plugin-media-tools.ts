@@ -1,4 +1,4 @@
-/** Host media boundary: no STT routing, arbitrary argv, file reads, or raw binary RPC. */
+/** Host media boundary: owned clips only, fixed profiles and the local Dictation core. */
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import * as fs from 'node:fs/promises';
@@ -6,6 +6,9 @@ import { constants } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { findAllBinaryPaths } from '../agents/path-prober';
+import { int16ToFloat32 } from '../../shared/audio/pcm';
+import { resolveLocalClipTranscriber } from '../local-models/dictation';
+import { readPcmWavFile } from '../utils/wav-file';
 import { fetchWithTimeout } from '../utils/fetchWithTimeout';
 import { createIdleWatchdog, type IdleWatchdog } from '../utils/idle-watchdog';
 import { logger } from '../utils/logger';
@@ -169,6 +172,8 @@ export class PluginMediaTools {
 			const p = raw as Record<string, unknown>;
 			const schemas: Record<string, readonly string[]> = {
 				'media.status': [],
+				'media.transcriptionStatus': [],
+				'media.transcribe': ['jobId', 'audioId', 'options'],
 				'media.open': [],
 				'media.close': ['jobId'],
 				'media.download': ['jobId', 'url'],
@@ -179,6 +184,29 @@ export class PluginMediaTools {
 			const keys = schemas[method];
 			if (!keys || Object.keys(p).some((k) => !keys.includes(k)))
 				throw new MediaError('MediaInvalid');
+			if (method === 'media.transcriptionStatus') {
+				const snapshot = await resolveLocalClipTranscriber();
+				const runtime = snapshot.reason
+					? null
+					: await (this.deps.resolveRuntime ?? resolveMediaRuntime)();
+				const reason =
+					snapshot.reason ??
+					(!runtime?.binaries.ffprobe
+						? 'ffprobe-unavailable'
+						: !runtime.binaries.ffmpeg
+							? 'ffmpeg-unavailable'
+							: null);
+				this.authorize(pluginId);
+				return {
+					state: reason ? 'unavailable' : 'ready',
+					taskId: 'dictation',
+					modelId: snapshot.modelId,
+					languages: [...snapshot.languages],
+					language:
+						snapshot.modelId && ['de', 'en'].includes(snapshot.language) ? snapshot.language : null,
+					reason,
+				};
+			}
 			if (method === 'media.status') {
 				const status = await this.status();
 				this.authorize(pluginId);
@@ -461,6 +489,54 @@ export class PluginMediaTools {
 		if (typeof p.audioId !== 'string') throw new MediaError('MediaInvalid');
 		const audio = job.audio.get(p.audioId);
 		if (!audio) throw new MediaError('MediaInvalid');
+		if (method === 'media.transcribe') {
+			if (audio.kind !== 'wav' || !audio.probe || job.ran) throw new MediaError('MediaInvalid');
+			const options = p.options;
+			if (!options || typeof options !== 'object' || Array.isArray(options))
+				throw new MediaError('MediaInvalid');
+			const fields = options as Record<string, unknown>;
+			if (
+				Object.keys(fields).some((key) => key !== 'language') ||
+				(fields.language !== undefined && !['de', 'en'].includes(fields.language as string))
+			)
+				throw new MediaError('MediaInvalid');
+			job.ran = true;
+			// Snapshot once, before reading audio; a later settings change never
+			// silently moves an in-flight clip to a different model or endpoint.
+			const snapshot = await this.awaitLookup(job, resolveLocalClipTranscriber());
+			if (snapshot.reason || !snapshot.modelId) throw new MediaError('MediaUnavailable');
+			const language = fields.language ?? snapshot.language;
+			if (
+				!['de', 'en'].includes(language as string) ||
+				language !== snapshot.language ||
+				!snapshot.languages.includes(language as string)
+			)
+				throw new MediaError('MediaLanguageUnsupported');
+			const wav = await readPcmWavFile(audio.file, {
+				maxBytes: MEDIA_LIMITS.maxPcmBytes,
+				purpose: 'a media clip',
+				reader: 'Dictation',
+			});
+			this.check(job);
+			if (wav.sampleRate !== 16000 || wav.pcm.length > 16000 * MEDIA_LIMITS.maxDurationSeconds)
+				throw new MediaError('MediaInvalid');
+			// Await actual core completion, including cancellation. close() drains
+			// this operation before removing its files; no native work is detached.
+			const result = await snapshot.transcribe(int16ToFloat32(wav.pcm), wav.sampleRate, {
+				language: language as string,
+				signal: job.controller.signal,
+			});
+			this.check(job);
+			if (typeof result.text !== 'string' || result.text.length > MEDIA_LIMITS.maxTranscriptChars)
+				throw new MediaError('MediaOutputTooLarge');
+			return {
+				text: result.text,
+				language,
+				durationSeconds: result.audioMs / 1000,
+				modelId: snapshot.modelId,
+				translated: false,
+			};
+		}
 		const runtime = await this.awaitLookup(
 			job,
 			(this.deps.resolveRuntime ?? resolveMediaRuntime)()

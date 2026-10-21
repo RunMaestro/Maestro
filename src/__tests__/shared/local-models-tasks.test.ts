@@ -878,3 +878,27 @@ describe('models a task does not offer', () => {
 		).toBeNull();
 	});
 });
+
+describe('Dictation language persistence', () => {
+	const german = { type: 'local', modelId: 'whisper-base', language: 'de' } as const;
+	it('preserves the explicit language through settings parsing and CLI round trips', () => {
+		expect(parseLocalModelAssignments({ dictation: german })).toEqual({ dictation: german });
+		expect(parseLocalModelAssignmentSpec(formatLocalModelAssignmentSpec(german))).toEqual(german);
+		expect(isSameLocalModelAssignment(german, { ...german, language: 'en' })).toBe(false);
+	});
+	it('accepts German and English only on a compatible catalog model', () => {
+		expect(localModelAssignmentProblem('dictation', german)).toBeNull();
+		expect(localModelAssignmentProblem('dictation', { ...german, language: 'en' })).toBeNull();
+		expect(
+			localModelAssignmentProblem('dictation', { ...german, modelId: 'whisper-base-en' })
+		).toMatch(/language/i);
+		expect(localModelAssignmentProblem('dictation', { ...german, language: 'auto' })).toMatch(
+			/language/i
+		);
+	});
+	it('keeps an unsupported saved language visible instead of silently reverting to English', () => {
+		const future = { ...german, language: 'xx' };
+		expect(parseLocalModelAssignment('dictation', future)).toEqual(future);
+		expect(localModelAssignmentProblem('dictation', future)).toMatch(/language/i);
+	});
+});

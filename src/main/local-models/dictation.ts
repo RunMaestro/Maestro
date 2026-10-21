@@ -42,6 +42,11 @@ import type {
 	DictationStartResult,
 } from '../../shared/local-models/dictation';
 import { resolveTaskReadiness } from './task-readiness';
+import { getLocalModel } from '../../shared/local-models/model-catalog';
+import { resolveLocalModelAssignment } from '../../shared/local-models/tasks';
+import { readLocalModelAssignments } from './sources';
+import { transcribeSpeech, type SpeechTranscription } from './speech-to-text';
+import { LocalModelError } from './errors';
 import { runSpeechToTextTask, type SpeechToTextTaskResult } from './task-router';
 import { normalizeSpeechVocabulary } from '../../shared/acappella/speech-vocabulary';
 import { correctSpeechVocabulary } from './speech-vocabulary';
@@ -343,4 +348,60 @@ export function __resetDictation(): void {
 	active = null;
 	transcribing.clear();
 	interruptionListeners.clear();
+}
+
+/** A local-only, immutable Dictation snapshot for an already recorded clip. */
+export interface LocalClipTranscriber {
+	readonly modelId: string | null;
+	readonly languages: readonly string[];
+	readonly language: string;
+	readonly reason: string | null;
+	transcribe(
+		audio: Float32Array,
+		sampleRate: number,
+		options: { language: string; signal?: AbortSignal }
+	): Promise<SpeechTranscription>;
+}
+
+/**
+ * Capture model/settings before asynchronous work. Never probes an endpoint,
+ * opens a microphone, creates a voice session, or substitutes another model.
+ * Both file consumers and the live Dictation recogniser use this core assignment.
+ */
+export async function resolveLocalClipTranscriber(): Promise<LocalClipTranscriber> {
+	const assignment = resolveLocalModelAssignment(readLocalModelAssignments(), 'dictation');
+	const source = assignment.type === 'local' ? Object.freeze({ ...assignment }) : null;
+	const entry = source ? getLocalModel(source.modelId) : undefined;
+	const languages = Object.freeze([...(entry?.speechToText?.languages ?? [])]);
+	const reason = !source
+		? assignment.type === 'off'
+			? 'off'
+			: 'local-required'
+		: ((await resolveTaskReadiness('dictation', { assignments: { dictation: source } })).reason ??
+			null);
+	return Object.freeze({
+		modelId: source?.modelId ?? null,
+		language: source?.language ?? 'en',
+		languages,
+		reason,
+		async transcribe(
+			audio: Float32Array,
+			sampleRate: number,
+			options: { language: string; signal?: AbortSignal }
+		) {
+			if (
+				!source ||
+				reason ||
+				options.language !== (source.language ?? 'en') ||
+				!languages.includes(options.language)
+			) {
+				throw new LocalModelError('The local Dictation source cannot transcribe this language.', {
+					code: 'model-unsupported',
+					recovery: 'Choose a ready, compatible local Dictation assignment.',
+					consumerId: 'local-models:dictation-clip',
+				});
+			}
+			return transcribeSpeech(source, audio, sampleRate, options);
+		},
+	});
 }

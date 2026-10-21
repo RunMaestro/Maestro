@@ -73,6 +73,7 @@ import {
 	SYSTEM_TTS_PROVIDER_ID,
 	VOICE_STUDIO_TTS_PROVIDER_ID,
 	WHISPER_STT_PROVIDER_ID,
+	DICTATION_STT_PROVIDER_ID,
 } from '../../../shared/acappella/provider-catalog';
 import type {
 	BrainProvider,
@@ -111,6 +112,7 @@ import {
 } from '../../../shared/acappella/voice-studio';
 import { ParakeetSttProvider } from './local/parakeet-stt';
 import { WhisperSttProvider } from './local/whisper-stt';
+import { DictationSttProvider } from './local/dictation-stt';
 import { MockBrainProvider, MockSttProvider, MockTtsProvider } from './mock';
 import type { MockProviderOptions } from './mock';
 import { createRealtimePipeline } from './realtime/realtime-session';
@@ -375,6 +377,14 @@ registerVoiceProvider({
 	label: 'Parakeet (local)',
 	tier: 'local',
 	create: () => new ParakeetSttProvider(),
+});
+
+registerVoiceProvider({
+	role: 'stt',
+	id: DICTATION_STT_PROVIDER_ID,
+	label: 'Local Models Dictation',
+	tier: 'local',
+	create: () => new DictationSttProvider(),
 });
 
 registerVoiceProvider({

@@ -1,8 +1,48 @@
-# Bounded plugin media tools (host API 1.17.0)
+# Bounded plugin media tools (host API 1.27.0)
 
-The host supplies media isolation and fixed native tool profiles. Relay owns admission, queueing,
-STT orchestration, model/language selection, Whisper JSON interpretation and
-transcript validation. No Whisper model or native media binary ships in Maestro.
+The host supplies media isolation, fixed decoding profiles, and local-only Dictation
+transcription through the same Local Models catalog, settings and STT pool A Cappella uses.
+Relay owns attachment admission, queueing and transcript handling. No model or native media
+binary ships in Maestro. The legacy `media.run` interface remains for installed plugins;
+new consumers use the core clip interface, without another Whisper installation.
+
+## Core Dictation clips (1.27.0 / SDK 0.21.0)
+
+`media.transcriptionStatus()` returns `{state, taskId:'dictation', modelId, languages,
+language, reason}`. `language` is the selected host language, not a guess. Readiness
+includes the local Dictation assignment, its installed model/runtime, and ffprobe/ffmpeg.
+It never loads a model, probes a configured endpoint, records audio, or opens A Cappella.
+An endpoint assignment is unavailable (`local-required`), even if that endpoint is reachable.
+
+The flow is `open → download → decode → transcribe(jobId, decoded.audioId, {}) → close`.
+Decode already probes and normalizes the owned Ogg/Opus attachment to mono 16 kHz PCM WAV.
+`transcribe` takes that decoded handle, never an arbitrary path or the download handle.
+Its result is `{text, language, durationSeconds, modelId, translated:false}`; text is limited
+to `MEDIA_LIMITS.maxTranscriptChars`. An empty string means no recognized speech.
+
+The host snapshots `localModelAssignments.dictation` once per clip. An omitted language
+uses that snapshot's selected language (old unset English settings remain English).
+An explicit `options.language` (`de` or `en`) must match it; otherwise
+`MediaLanguageUnsupported` is returned. There is no `auto`, translation, cloud fallback,
+plugin-selected model, or second model-root setting. `dictation-local` is the selectable
+A Cappella live recognizer using the same assignment and pool; existing explicit Parakeet
+and Whisper English provider IDs/settings remain compatible. Nothing enables a live session.
+
+The multilingual `whisper-base` catalog entry is deliberately **pending** until real German
+and English audio/runtime acceptance. Token/prompt tests do not qualify recognition. Its
+pinned ONNX graphs and tokenizer cannot be replaced by a `.ggml` file. The UI must preserve
+this unavailability rather than describe it as German-ready.
+
+`panels[].hostSettings: ['dictation']` adds a host-rendered link to the existing
+Models / System One assignment section. The panel cannot choose arbitrary settings targets.
+
+All existing exact grants, authorization rechecks, job ceilings, total deadline, cancellation
+slots and cleanup rules apply. `close` aborts, awaits the actual queued/core decode, and only
+then removes owned files. ONNX cancellation is cooperative between native operations; one
+native operation already in flight must finish before drain resolves. No late transcript is
+published after cancellation/revocation. Shared STT graphs request two intra-op threads,
+one inter-op thread and sequential execution; this bounds requested native parallelism,
+not measured end-to-end CPU usage.
 
 ## Why these primitives
 
@@ -14,8 +54,8 @@ lifetime/result contract. Broad network, filesystem and process grants are unnec
 `ui.runCommand` is a renderer palette invocation with a boolean acknowledgement.
 It is not an authenticated plugin service RPC with a typed result, cancellation
 or resource ownership. `invokeTool` is host-to-plugin, not an SDK plugin-to-plugin
-service. A future separate transcription plugin needs a separately designed broker
-contract; the MVP keeps the small STT module in Relay.
+service. The core Dictation clip contract above is the shared recognition path. Neither a
+standalone inference plugin nor an agent/Brain/TTS router is required.
 
 ## Permission and lifecycle
 
@@ -55,7 +95,7 @@ bypass the close-rate budget; a new cancellation for the other owned job still c
 
 Two jobs per plugin and four globally bound memory, native concurrency and disk
 use. One operation may run per job. Every job has one download, one decode and one
-Whisper invocation; repeated probes reuse its two audio handles. Open/status/run
+recognition invocation; repeated probes reuse its two audio handles. Open/status/run and the new transcription status/transcribe methods
 also use the existing ActionGuard, with a fixed audit target and no URLs/paths.
 
 ## SDK operations

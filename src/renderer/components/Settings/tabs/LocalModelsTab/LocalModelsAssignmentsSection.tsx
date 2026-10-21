@@ -30,6 +30,8 @@
  */
 
 import { useCallback, useMemo, useState } from 'react';
+import { getLocalModel } from '../../../../../shared/local-models/model-catalog';
+import { ToggleButtonGroup } from '../../../ToggleButtonGroup';
 import { AlertTriangle, Download, Loader2, Power, RefreshCw } from 'lucide-react';
 
 import {
@@ -321,6 +323,20 @@ function TaskAssignmentRow({
 					</select>
 				</div>
 			</div>
+			{task.needs === 'stt' && assignment.type === 'local' && (
+				<div className="space-y-1">
+					<div className="text-xs opacity-70">Transcription language (never translation)</div>
+					<ToggleButtonGroup
+						theme={theme}
+						options={[...(getLocalModel(assignment.modelId)?.speechToText?.languages ?? [])]}
+						labels={{ de: 'Deutsch', en: 'English' }}
+						value={assignment.language ?? 'en'}
+						onChange={(language) =>
+							onChoose(formatLocalModelAssignmentSpec({ ...assignment, language }))
+						}
+					/>
+				</div>
+			)}
 			{problem && (
 				<p className="text-xs select-text" style={{ color: theme.colors.error }}>
 					{problem}

@@ -182,7 +182,7 @@ export interface PanelContribution {
 	/** Chrome size for `modal` panels. Defaults to `default`. */
 	size: PanelSize;
 	/** Host-owned destinations only; never grants settings read/write access. */
-	hostSettings?: 'media'[];
+	hostSettings?: ('media' | 'dictation')[];
 }
 
 /**
@@ -1451,7 +1451,7 @@ function parsePanel(pluginId: string, raw: unknown, errors: string[]): PanelCont
 	if (
 		raw.hostSettings !== undefined &&
 		(!Array.isArray(raw.hostSettings) ||
-			raw.hostSettings.some((v) => v !== 'media') ||
+			raw.hostSettings.some((v) => v !== 'media' && v !== 'dictation') ||
 			placement !== 'settings')
 	) {
 		errors.push(`[${pluginId}] panel "${localId}" has invalid hostSettings`);
@@ -1468,7 +1468,7 @@ function parsePanel(pluginId: string, raw: unknown, errors: string[]): PanelCont
 		size,
 		...(raw.hostSettings === undefined
 			? {}
-			: { hostSettings: [...new Set(raw.hostSettings as 'media'[])] }),
+			: { hostSettings: [...new Set(raw.hostSettings as ('media' | 'dictation')[])] }),
 	};
 }
 

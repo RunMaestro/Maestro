@@ -4291,3 +4291,90 @@ and the capture script were deleted after the run.
 - [[model-manager]] - download, verification, and disk rules, and voice's capability gate.
 - [[packaging-notes]] - why each runtime is fetched rather than bundled.
 - [[system-overview]] - where the voice consumer plugs these models in.
+
+## Explicit transcription language and clip consumers
+
+`localModelAssignments.dictation` may carry a `language` beside its local `modelId`.
+Old records without one retain English. The CLI spelling preserves it as
+`local:<modelId>?language=de`; the task's existing settings writer/parser is the persistence
+authority. A saved unsupported language stays visible as unavailable, never silently replaced.
+Catalog `speechToText.languages` describes the explicit languages this build implements;
+it does not claim automatic language detection or measured accuracy.
+
+`resolveLocalClipTranscriber` in `dictation.ts` captures a local-only assignment before
+asynchronous readiness checks. Plugin file clips and the A Cappella `dictation-local`
+recognizer share it and the existing `SpeechToTextPool`. A live recognizer holds its snapshot
+for that session; each file clip captures a new one. Neither entry downloads models or falls
+back to an endpoint. Decoder language/signal options belong to a single queued decode,
+never mutable state on the shared engine. Pool release and media close drain in-flight work.
+
+Whisper multilingual uses the pinned checkpoint's tokenizer control IDs and a prompt for
+transcription in the selected language, never the translation token. Opening a mismatched
+tokenizer is refused before graph loading. Generation applies the pinned `suppress_tokens` on
+all steps and `begin_suppress_tokens` only on the first token after the entire prefix. The
+English-only checkpoint keeps its existing token rules and numbering.
+
+### Multilingual Base qualification and limits (2026-10-18)
+
+The `whisper-base` entry is qualified for **explicit de/en transcription**, not auto language
+selection, translation or unrestricted accuracy. It uses the existing CPU ONNX pool, encoder,
+merged-q4 decoder and byte tokenizer; neither clips nor live recognition create a second engine.
+Model, runtime, language and task remain explicit user choices. Removing its pending marker does
+not download files, select an assignment, enable voice or grant plugin permissions.
+
+Evidence at checkpoint `onnx-community/whisper-base@1846881b6b3a3024392c1eea3ad983695bc23925`
+and ONNX Runtime 1.30.0: real graphs ran on independently referenced public de/en samples.
+Four natural German clips had 3/24 aggregate word errors (one short clip 2/3); the synthetic
+German sentence had 11/23, and the English sentence 0/29. These are small-corpus measurements,
+not a required accuracy threshold. The short failed German clip does not preserve the reference noun and verb literally;
+semantic reliability is not established, so users must review output, especially short phrases
+and unfamiliar terms. Perfect
+recognition is not a prerequisite for explicit language support, and these results do not
+establish accuracy across speakers, dialects, noise or long recordings.
+
+A scratch full-prefix decoder, recomputing without the production KV cache on the **same** ONNX
+graphs and features, produces identical tokens/text on all six samples. The installed independent
+Hugging Face tokenizer agrees. Applying the pinned suppression lists also leaves these samples
+unchanged: the missing filters were a real contract defect, but did not cause these measured
+word errors. The remaining errors are limitations of this checkpoint/frontend/greedy pipeline;
+this comparison does not isolate weight quantization from the frontend or prove parity with
+another complete Whisper implementation. No second model variant was downloaded.
+
+The actual clip broker and shared pool were exercised with de/en files and cooperative native
+abort/drain. They do not hard-preempt ONNX, and fatal native crashes and hard deadlines remain
+unqualified. Isolated source qualification is distinct from final packaged-byte/installation
+verification. Evidence and pins live in the task's `.maestro/acappella-relay-20261017/` receipts;
+raw transcripts are not committed.
+
+Weights derive from OpenAI Whisper's [MIT license](https://github.com/openai/whisper/blob/86098128c0b4f24f0e2aa2994de830614b474227/LICENSE)
+(SHA-256 `b5d65a59060e68c4ff940e1eddfa6f94b2d68fdf58ed7f4dd57721c997e35e9d`). The
+[pinned exporter README](https://huggingface.co/onnx-community/whisper-base/blob/1846881b6b3a3024392c1eea3ad983695bc23925/README.md)
+identifies `openai/whisper-base` as its base and declares no separate export license; the catalog
+attributes upstream weights and does not invent an exporter license. The original generation configuration
+behind the formatted decoder test fixture has SHA-256
+`61070cf8de25b1e9256e8e102ded49d8d24a8369ed36ef84fdf21549e68125a0`;
+fixture JSON values are identical while formatting differs.
+
+### Optional multilingual Small (2026-10-20)
+
+`whisper-small` is an optional catalog choice using the same `WhisperEngine`, pool and
+local Dictation snapshot as Base. Its pinned exporter revision is
+`onnx-community/whisper-small@36050c46d777d46dc4b5f43f6d90574fc38f8732`:
+FP32 encoder, merged-q4 decoder and the multilingual tokenizer, 588,455,663 bytes total.
+The factory explicitly supplies 12 decoder layers, 12 heads and 64 dimensions per head;
+Base and Base.en retain their existing geometry and token rules. Small uses explicit
+German or English transcription and the same multilingual suppression rules as Base.
+It is absent from default voice model sets; catalog availability changes no assignment.
+
+Completed comparative qualification reproduced nine Small transcripts through the existing
+engine. Four independently referenced natural German clips (24 words) had Base 3 errors
+and Small 1; synthetic English had 0/29 for both. This small sample provides no general
+accuracy guarantee. Original user audio remains unscored. The same-code graph comparison
+measured median Base 6.01 s versus Small 17.56 s. A fresh Small engine run measured 6.05 s,
+but had no fresh paired Base run; it does not establish a new relative speed claim.
+
+Factory regressions cover all cache layers, transcription tokens, suppression, repetition,
+audio-proportional token budget and cooperative cancellation of cached work. Pool, Dictation
+snapshot and owned media-close tests cover both Base and Small. No beam search, cloud
+fallback, new speech plugin or default activation is introduced. Qualification assets are
+reused only from task-local staging, never assigned or copied into the live profile.

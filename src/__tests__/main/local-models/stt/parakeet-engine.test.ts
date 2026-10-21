@@ -15,7 +15,7 @@
  *     D-th value from offset `t`, not a contiguous slice.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 
 import {
 	ParakeetEngine,
@@ -159,6 +159,26 @@ describe('detokenizeParakeet', () => {
 });
 
 describe('ParakeetEngine', () => {
+	it('bounds all native sessions and rejects cancellation before inference', async () => {
+		const fake = fakeOnnx(1, []);
+		const create = vi.spyOn(fake.module.InferenceSession, 'create');
+		const recogniser = engine();
+		await recogniser.load(fake.module);
+		expect(create).toHaveBeenCalledTimes(3);
+		for (const call of create.mock.calls)
+			expect(call[1]).toEqual({
+				intraOpNumThreads: 2,
+				interOpNumThreads: 1,
+				executionMode: 'sequential',
+			});
+		const abort = new AbortController();
+		abort.abort();
+		await expect(
+			recogniser.transcribe(new Float32Array(16000), { signal: abort.signal })
+		).rejects.toMatchObject({ code: 'cancelled' });
+		expect(fake.calls).toHaveLength(0);
+	});
+
 	it('decodes tokens, follows the duration head, and gathers channel-major frames', async () => {
 		const fake = fakeOnnx(4, [
 			{ token: 1, duration: 0 }, // "open", stay on frame 0

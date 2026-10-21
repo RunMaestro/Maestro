@@ -26,6 +26,12 @@ export interface WhisperSpecialTokens {
 	readonly noTimestamps: number;
 	/** `<|startofprev|>` introduces vocabulary context before the transcript. */
 	readonly startOfPrevious?: number;
+	/** Multilingual checkpoints need an explicit language and transcription task. */
+	readonly transcribe?: number;
+	readonly languages?: Readonly<Record<string, number>>;
+	/** Pinned generation rules: global exclusions and first generated token only. */
+	readonly suppressTokens?: readonly number[];
+	readonly beginSuppressTokens?: readonly number[];
 }
 
 /**
@@ -40,6 +46,25 @@ export const WHISPER_EN_SPECIAL_TOKENS: WhisperSpecialTokens = Object.freeze({
 	endOfText: 50256,
 	noTimestamps: 50362,
 	startOfPrevious: 50360,
+});
+
+/** Pinned multilingual Base checkpoint's generation_config.json; transcription only. */
+export const WHISPER_MULTILINGUAL_SPECIAL_TOKENS: WhisperSpecialTokens = Object.freeze({
+	startOfTranscript: 50258,
+	endOfText: 50257,
+	noTimestamps: 50363,
+	transcribe: 50359,
+	languages: Object.freeze({ de: 50261, en: 50259 }),
+	// generation_config.json@1846881b6b3a3024392c1eea3ad983695bc23925.
+	beginSuppressTokens: Object.freeze([220, 50257]),
+	suppressTokens: Object.freeze([
+		1, 2, 7, 8, 9, 10, 14, 25, 26, 27, 28, 29, 31, 58, 59, 60, 61, 62, 63, 90, 91, 92, 93, 359, 503,
+		522, 542, 873, 893, 902, 918, 922, 931, 1350, 1853, 1982, 2460, 2627, 3246, 3253, 3268, 3536,
+		3846, 3961, 4183, 4667, 6585, 6647, 7273, 9061, 9383, 10428, 10929, 11938, 12033, 12331, 12562,
+		13793, 14157, 14635, 15265, 15618, 16553, 16604, 18362, 18956, 20075, 21675, 22520, 26130,
+		26161, 26435, 28279, 29464, 31650, 32302, 32470, 36865, 42863, 47425, 49870, 50254, 50258,
+		50358, 50359, 50360, 50361, 50362,
+	]),
 });
 
 /**
@@ -76,6 +101,7 @@ const BYTE_DECODER = buildByteDecoder();
 /** The slice of a HuggingFace `tokenizer.json` this needs. */
 interface TokenizerFile {
 	model?: { vocab?: Record<string, number> };
+	added_tokens?: { content: string; id: number }[];
 }
 
 /**
@@ -97,11 +123,28 @@ export class WhisperTokenizer {
 	}
 
 	/** Parse a `tokenizer.json` payload. Throws when it carries no vocabulary. */
-	static fromJson(raw: string): WhisperTokenizer {
+	static fromJson(raw: string, special?: WhisperSpecialTokens): WhisperTokenizer {
 		const parsed = JSON.parse(raw) as TokenizerFile;
 		const vocab = parsed.model?.vocab;
 		if (!vocab || typeof vocab !== 'object') {
 			throw new Error('WhisperTokenizer: tokenizer.json has no model.vocab');
+		}
+		if (special?.languages) {
+			const controls = new Map(Object.entries(vocab));
+			for (const token of parsed.added_tokens ?? []) controls.set(token.content, token.id);
+			const expected: Record<string, number | undefined> = {
+				'<|startoftranscript|>': special.startOfTranscript,
+				'<|endoftext|>': special.endOfText,
+				'<|notimestamps|>': special.noTimestamps,
+				'<|transcribe|>': special.transcribe,
+				...Object.fromEntries(
+					Object.entries(special.languages).map(([language, id]) => [`<|${language}|>`, id])
+				),
+			};
+			for (const [token, id] of Object.entries(expected)) {
+				if (id === undefined || controls.get(token) !== id)
+					throw new Error('Whisper checkpoint control-token mismatch');
+			}
 		}
 		const tokens: string[] = [];
 		for (const [token, id] of Object.entries(vocab)) {
