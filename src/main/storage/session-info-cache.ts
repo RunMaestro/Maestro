@@ -37,6 +37,8 @@ import { captureException } from '../utils/sentry';
 import { isExpectedSessionReadError } from '../utils/session-read-errors';
 import { atomicWriteFile, createKeyedWriteQueue } from '../utils/atomic-json-store';
 import { mapWithConcurrency, LOCAL_SESSION_READ_CONCURRENCY } from '../utils/concurrency';
+import { createCacheCheckpointer } from '../utils/cache-checkpointer';
+import { withStatsIndexing } from '../stats/stats-indexing';
 import type { AgentSessionInfo } from '../agents/session-storage';
 
 const LOG_CONTEXT = '[SessionInfoCache]';
@@ -58,6 +60,8 @@ export interface SessionFileRef {
 	key: string;
 	/** Cheap change signal from {@link fileFingerprint}. */
 	fingerprint: string;
+	/** File size, when known. Only feeds the indexing progress bar. */
+	sizeBytes?: number;
 }
 
 interface CachedSessionInfo {
@@ -108,6 +112,12 @@ export class SessionInfoCache {
 	private readonly loading = new Map<string, Promise<Map<string, CachedSessionInfo>>>();
 	/** Serializes writes per scope file so two resolves can't clobber each other. */
 	private readonly writes = createKeyedWriteQueue();
+	/**
+	 * Scopes whose file was written by an older `SESSION_INFO_CACHE_VERSION`, so
+	 * their next parse is an upgrade rather than a first index. Cleared once the
+	 * scope is saved under the current version.
+	 */
+	private readonly upgradingScopes = new Set<string>();
 
 	constructor(agentId: string, baseDir?: string) {
 		this.agentId = agentId;
@@ -141,6 +151,8 @@ export class SessionInfoCache {
 					for (const [key, entry] of Object.entries(parsed.entries)) {
 						entries.set(key, entry);
 					}
+				} else if (parsed.version < SESSION_INFO_CACHE_VERSION) {
+					this.upgradingScopes.add(scopeKey);
 				}
 			} catch (error) {
 				// A missing file is the expected cold-start case; a corrupt one just
@@ -179,6 +191,7 @@ export class SessionInfoCache {
 		try {
 			await fsp.mkdir(this.dir, { recursive: true });
 			await atomicWriteFile(this.filePathFor(scopeKey), JSON.stringify(payload));
+			this.upgradingScopes.delete(scopeKey);
 		} catch (error) {
 			logger.warn(`Failed to write cache for scope ${scopeKey}`, LOG_CONTEXT, { error });
 			void captureException(error, { operation: 'sessionInfoCache:write', scopeKey });
@@ -219,18 +232,43 @@ export class SessionInfoCache {
 		let dirty = false;
 
 		if (misses.length > 0) {
-			const parsed = await mapWithConcurrency(
-				misses,
-				options?.concurrency ?? LOCAL_SESSION_READ_CONCURRENCY,
-				({ ref }) => parse(ref)
+			// Every miss is entered into the scope as soon as it parses, and the
+			// scope is checkpointed while the rest run, so a large first index (or
+			// a version upgrade) killed part way resumes instead of starting over.
+			// The final write below still runs for whatever the last checkpoint missed.
+			const checkpoint = createCacheCheckpointer(() =>
+				this.writes.enqueue(scopeKey, () => this.persistScope(scopeKey))
 			);
-			parsed.forEach((info, i) => {
-				const { ref, index } = misses[i];
-				if (!info) return;
-				entries.set(ref.key, { fingerprint: ref.fingerprint, info });
-				resolved[index] = info;
-				dirty = true;
-			});
+			await withStatsIndexing(
+				{
+					id: 'session-index',
+					label: 'Session list and token usage',
+					reason: this.upgradingScopes.has(scopeKey) ? 'upgrade' : 'index',
+				},
+				async (progress) => {
+					progress.addWork(
+						misses.length,
+						misses.reduce((sum, { ref }) => sum + (ref.sizeBytes ?? 0), 0)
+					);
+					await mapWithConcurrency(
+						misses,
+						options?.concurrency ?? LOCAL_SESSION_READ_CONCURRENCY,
+						async ({ ref, index }) => {
+							try {
+								const info = await parse(ref);
+								if (!info) return;
+								entries.set(ref.key, { fingerprint: ref.fingerprint, info });
+								resolved[index] = info;
+								dirty = true;
+							} finally {
+								progress.advance(1, ref.sizeBytes ?? 0);
+								if (dirty) checkpoint.maybe();
+							}
+						}
+					);
+				}
+			);
+			await checkpoint.settle();
 		}
 
 		if (options?.prune) {

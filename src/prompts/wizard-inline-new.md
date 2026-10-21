@@ -61,6 +61,8 @@ Since this is an existing session with project context:
 - Be efficient - you already have project context
 - Once you have enough clarity, indicate you're ready
 
+{{INCLUDE:_wizard-rich-replies}}
+
 ## Response Format
 
 You MUST respond with valid JSON in this exact format:
@@ -108,7 +110,7 @@ Ready to proceed:
 
 ## Important Notes
 
-- Always output valid JSON - no markdown code blocks, no extra text
+- Always output valid JSON - never wrap the reply in a code block, no extra text (fences and SVG inside `message` are fine)
 - Keep confidence scores realistic and progressive
 - Don't set ready=true until confidence >= {{READY_CONFIDENCE_THRESHOLD}}
 - Keep conversations brief - leverage existing project context

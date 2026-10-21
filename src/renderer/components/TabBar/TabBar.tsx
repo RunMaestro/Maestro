@@ -100,6 +100,7 @@ function TabBarInner({
 	onGroupRename,
 	onGroupSetEmoji,
 	onGroupBreakApart,
+	onGroupClose,
 	colorBlindMode,
 	sshRemote,
 	leadingSlot,
@@ -945,6 +946,7 @@ function TabBarInner({
 										onRename={onGroupRename}
 										onSetEmoji={onGroupSetEmoji}
 										onBreakApart={onGroupBreakApart}
+										onClose={onGroupClose}
 										// Same handler the tab items use: the modal it opens resolves the
 										// id's kind for itself, so a group needs no separate entry point.
 										onSnooze={onSnooze || undefined}

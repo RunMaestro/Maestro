@@ -3,7 +3,7 @@
  *
  * Extracted from WebSocketMessageHandler.ts. Handles: get_group_chats,
  * start_group_chat, get_group_chat_state, send_group_chat_message,
- * steer_group_chat, stop_group_chat.
+ * steer_group_chat, stop_group_chat, archive_group_chat.
  */
 
 import type { StartGroupChatOptions } from '../../types';
@@ -265,6 +265,48 @@ export function handleStopGroupChat(
 		})
 		.catch((error) => {
 			ctx.sendError(client, `Failed to stop group chat: ${error.message}`, {
+				requestId: message.requestId,
+			});
+		});
+}
+
+/**
+ * Handle archive_group_chat message - archive (or with archived: false,
+ * restore) a group chat. Archiving also stops its moderator and participants.
+ */
+export function handleArchiveGroupChat(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const chatId = message.chatId as string;
+
+	if (!chatId) {
+		ctx.sendError(client, 'Missing chatId', { requestId: message.requestId });
+		return;
+	}
+
+	if (!ctx.callbacks.archiveGroupChat) {
+		ctx.sendError(client, 'Group chat not configured', { requestId: message.requestId });
+		return;
+	}
+
+	// Opt-in to restoring: only a literal false unarchives.
+	const archived = message.archived !== false;
+
+	ctx.callbacks
+		.archiveGroupChat(chatId, archived)
+		.then((success) => {
+			ctx.send(client, {
+				type: 'archive_group_chat_result',
+				success,
+				chatId,
+				archived,
+				requestId: message.requestId,
+			});
+		})
+		.catch((error) => {
+			ctx.sendError(client, `Failed to archive group chat: ${error.message}`, {
 				requestId: message.requestId,
 			});
 		});

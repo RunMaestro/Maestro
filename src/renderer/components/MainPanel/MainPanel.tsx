@@ -323,6 +323,7 @@ export const MainPanel = React.memo(
 			onCloseOtherTabs,
 			onCloseTabsLeft,
 			onCloseTabsRight,
+			onCloseTabGroup,
 			// Unified tab system: paint state is derived below from self-sourced session
 			onFileTabSelect,
 			onFileTabClose,
@@ -1325,6 +1326,7 @@ export const MainPanel = React.memo(
 									onGroupRename={handleGroupRename}
 									onGroupSetEmoji={setGroupEmojiAction}
 									onGroupBreakApart={handleGroupBreakApart}
+									onGroupClose={onCloseTabGroup}
 									// Accessibility
 									colorBlindMode={colorBlindMode}
 									// Hide local-only OS actions (Reveal in Finder) when the agent runs over SSH

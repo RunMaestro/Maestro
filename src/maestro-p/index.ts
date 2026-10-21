@@ -31,6 +31,7 @@ import { JsonlTailer, type ParseErrorPayload } from './jsonl-tailer';
 import { isSlashCommandPrompt, localCommandOutput } from './local-command-row';
 import { extractExitPlanText } from './plan-mode';
 import { checkPromptEcho, isPromptEchoVerifiable, promptEchoText } from './prompt-echo';
+import { isPreTurnRow } from './turn-start';
 import { collectAssistantText, ReplyText } from './reply-text';
 import {
 	discoverSessionId,
@@ -705,11 +706,18 @@ async function runMode(args: ParsedArgs): Promise<never> {
 
 		// A Stop answers at once: the caller asked for the turn to end now, and
 		// the spend of an abandoned turn is not worth holding the result for.
+		// A prompt claude never started on is still parked in its editor, and
+		// typing `/quit` there submits "<prompt>/quit" as a real turn into the
+		// session. The next turn to resume it then reads that row as its own
+		// echo and fails with prompt_truncated. So a turn that never started
+		// is ended without typing anything (see TuiDriver.quit).
+		const quitOptions = { discardTypedInput: !firstEntrySeen };
+
 		if (options.stopped) {
 			stopTailers();
 			emitFinalResult();
 			void driver
-				.quit()
+				.quit(quitOptions)
 				.catch(() => {
 					/* already gone; nothing to escalate against */
 				})
@@ -722,7 +730,7 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		// record of what the session spent. Drain the tailers once it has gone so
 		// the row is read, then report.
 		void driver
-			.quit()
+			.quit(quitOptions)
 			.catch(() => {
 				/* already gone; nothing to escalate against */
 			})
@@ -978,8 +986,9 @@ async function runMode(args: ParsedArgs): Promise<never> {
 		}
 		// Any transcript line means claude started the turn - cancel the
 		// first-byte timer before the init-gating buffer logic so a pre-init
-		// entry still counts as "first byte".
-		markFirstEntrySeen();
+		// entry still counts as "first byte". A SessionStart hook row does not:
+		// claude writes it at boot, before it reads the prompt (see turn-start.ts).
+		if (!isPreTurnRow(entry)) markFirstEntrySeen();
 		if (!initEmitted) {
 			if (entry && typeof entry === 'object') {
 				checkPromptEchoRow(entry as Record<string, unknown>);

@@ -89,6 +89,9 @@ export interface CodexFollowupTargetState {
  * landing in it is the requested outcome rather than a downgrade worth a notice.
  * Its `tabId` is the tab on SCREEN rather than the one the chip named, because
  * that is the only composer being drawn.
+ *
+ * A shell code fence's Run button (`codeFenceCommand.ts`) rides this resolver
+ * too: an agent-authored command line has exactly the same targeting problem.
  */
 export function resolveCodexFollowup(
 	request: CodexFollowupRequest | undefined,

@@ -228,6 +228,7 @@ describe('importBundleIntoApp', () => {
 		expect(ctx.applyAgents).toHaveBeenCalledWith({
 			created: [expect.objectContaining({ id: AGENT_ID, name: 'Planner', projectRoot: dst })],
 			updated: [],
+			exact: false,
 		});
 		expect(fs.readFileSync(path.join(dst, '.maestro/cue.yaml'), 'utf-8')).toContain('hourly');
 	});
@@ -252,6 +253,7 @@ describe('importBundleIntoApp', () => {
 		expect(ctx.applyAgents).toHaveBeenLastCalledWith({
 			created: [],
 			updated: [expect.objectContaining({ id: AGENT_ID })],
+			exact: false,
 		});
 	});
 

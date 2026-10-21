@@ -617,6 +617,42 @@ describe('autorun IPC handlers', () => {
 			expect(result.success).toBe(true);
 			expect(result.files).toEqual(['visible']);
 		});
+
+		it('never descends into dependency trees', async () => {
+			// An Auto Run folder holding a project checkout used to walk every
+			// node_modules entry, and list its READMEs as playbooks.
+			vi.mocked(fs.stat).mockResolvedValue({
+				isDirectory: () => true,
+				isFile: () => false,
+			} as any);
+			vi.mocked(fs.readdir).mockResolvedValue([
+				{
+					name: 'node_modules',
+					isDirectory: () => true,
+					isFile: () => false,
+					isSymbolicLink: () => false,
+				},
+				{
+					name: '__pycache__',
+					isDirectory: () => true,
+					isFile: () => false,
+					isSymbolicLink: () => false,
+				},
+				{
+					name: 'plan.md',
+					isDirectory: () => false,
+					isFile: () => true,
+					isSymbolicLink: () => false,
+				},
+			] as any);
+
+			const handler = handlers.get('autorun:listDocs');
+			const result = await handler!({} as any, '/test/folder');
+
+			expect(result.files).toEqual(['plan']);
+			// Only the root was read: neither skipped tree was opened.
+			expect(vi.mocked(fs.readdir)).toHaveBeenCalledTimes(1);
+		});
 	});
 
 	describe('autorun:listDocs SSH', () => {
@@ -641,7 +677,7 @@ describe('autorun IPC handlers', () => {
 			expect(mockReadDirRemote).not.toHaveBeenCalled();
 			expect(mockListTreeRemote).toHaveBeenCalledWith(
 				'/remote/folder',
-				expect.objectContaining({ ignorePatterns: ['.*'] }),
+				expect.objectContaining({ ignorePatterns: ['.*', 'node_modules', '__pycache__'] }),
 				sampleSshRemote
 			);
 		});
@@ -1298,6 +1334,30 @@ describe('autorun IPC handlers', () => {
 
 			expect(result.success).toBe(true);
 			expect(chokidar.default.watch).toHaveBeenCalledWith('/test/folder', expect.any(Object));
+		});
+
+		it('watches only what it reports: no dependency trees, no non-markdown files', async () => {
+			vi.mocked(fs.stat).mockResolvedValue({ isDirectory: () => true } as any);
+			const chokidar = await import('chokidar');
+			vi.mocked(chokidar.default.watch).mockClear();
+
+			const handler = handlers.get('autorun:watchFolder');
+			// rc leases each watch to the requesting window, so the event needs a sender.
+			await handler!({ sender: { id: 1 } } as any, '/repo/.maestro/playbooks');
+
+			const options = vi.mocked(chokidar.default.watch).mock.calls[0][1] as {
+				ignored: Array<RegExp | ((p: string, stats?: { isFile(): boolean }) => boolean)>;
+			};
+			const matcher = options.ignored.find((m) => typeof m === 'function') as (
+				p: string,
+				stats?: { isFile(): boolean }
+			) => boolean;
+			const file = { isFile: () => true };
+			expect(matcher('/repo/.maestro/playbooks/plan.md', file)).toBe(false);
+			expect(matcher('/repo/.maestro/playbooks/app/node_modules')).toBe(true);
+			expect(matcher('/repo/.maestro/playbooks/app/src/index.ts', file)).toBe(true);
+			// A directory is still walked, so a document deeper down is still seen.
+			expect(matcher('/repo/.maestro/playbooks/app/src')).toBe(false);
 		});
 
 		it('should create folder if it does not exist', async () => {

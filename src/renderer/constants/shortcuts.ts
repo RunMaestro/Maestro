@@ -550,6 +550,9 @@ export const TAB_SHORTCUTS = {
 		keys: ['Meta', 'Shift', 't'],
 	},
 	renameTab: { id: 'renameTab', label: 'Rename Tab', keys: ['Meta', 'Shift', 'r'] },
+	// Unbound by default: Rename Tab already reaches a tiled pane, and the group
+	// itself is renamed from its chip or the command palette.
+	renameTabGroup: { id: 'renameTabGroup', label: 'Rename Tab Group', keys: [] },
 	moveTabToStart: {
 		id: 'moveTabToStart',
 		label: 'Move Tab to First',

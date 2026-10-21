@@ -1504,6 +1504,20 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						trackShortcut('renameTab');
 					}
 				}
+				if (ctx.isTabShortcut(e, 'renameTabGroup')) {
+					e.preventDefault();
+					// Targets the GROUP, not its focused pane. Rename commits route through
+					// handleRenameTab, which recognizes a group id and renames the group.
+					const group = activeSession.activeGroupId
+						? activeSession.tabGroups?.find((g) => g.id === activeSession.activeGroupId)
+						: undefined;
+					if (group) {
+						ctx.setRenameTabId(group.id);
+						ctx.setRenameTabInitialName(group.name);
+						ctx.setRenameTabModalOpen(true);
+						trackShortcut('renameTabGroup');
+					}
+				}
 				// AI-tab-specific metadata toggles (read-only, save-to-history,
 				// show-thinking). These only make sense when an AI chat tab is the
 				// active tab. inputMode alone is insufficient: file and browser tabs

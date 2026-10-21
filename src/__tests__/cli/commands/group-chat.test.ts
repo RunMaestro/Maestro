@@ -26,6 +26,7 @@ import {
 	groupChatSteer,
 	groupChatStatus,
 	groupChatStop,
+	groupChatArchive,
 	resolveChatRef,
 } from '../../../cli/commands/group-chat';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
@@ -420,6 +421,50 @@ describe('group-chat commands', () => {
 
 			expect(sent[1]).toEqual({ type: 'stop_group_chat', chatId: 'abc123' });
 			expect(logSpy).toHaveBeenCalledWith('Stopped group chat abc123');
+		});
+	});
+
+	describe('archive', () => {
+		it('archives the resolved chat', async () => {
+			const { sent } = mockBridge({
+				get_group_chats: { type: 'group_chats_list', chats: [chat('abc123', 'Release')] },
+				archive_group_chat: { type: 'archive_group_chat_result', success: true },
+			});
+
+			await groupChatArchive('Release', {});
+
+			expect(sent[1]).toEqual({ type: 'archive_group_chat', chatId: 'abc123', archived: true });
+			expect(logSpy).toHaveBeenCalledWith('Archived group chat abc123');
+		});
+
+		it('restores an archived chat by ID with --restore', async () => {
+			const { sent } = mockBridge({
+				get_group_chats: {
+					type: 'group_chats_list',
+					chats: [chat('abc123', 'Release', { archived: true })],
+				},
+				archive_group_chat: { type: 'archive_group_chat_result', success: true },
+			});
+
+			await groupChatArchive('abc123', { restore: true, json: true });
+
+			expect(sent[1]).toEqual({ type: 'archive_group_chat', chatId: 'abc123', archived: false });
+			expect(JSON.parse(logSpy.mock.calls[0][0])).toEqual({
+				success: true,
+				chatId: 'abc123',
+				archived: false,
+			});
+		});
+
+		it('exits 1 when the app could not archive the chat', async () => {
+			mockBridge({
+				get_group_chats: { type: 'group_chats_list', chats: [chat('abc123', 'Release')] },
+				archive_group_chat: { type: 'archive_group_chat_result', success: false },
+			});
+
+			await expect(groupChatArchive('Release', {})).rejects.toThrow('process.exit');
+			expect(errorSpy).toHaveBeenCalledWith('Error: Failed to archive group chat');
+			expect(exitSpy).toHaveBeenCalledWith(1);
 		});
 	});
 });

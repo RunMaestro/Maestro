@@ -64,6 +64,8 @@ function toEngineCommand(message: WebClientMessage): QuickChatCommand | { error:
 			return { type: 'stop' };
 		case 'new-tab':
 			return { type: 'moveToNewTab', ...messageIdOf(message) };
+		case 'steer':
+			return { type: 'steer', ...messageIdOf(message) };
 		default:
 			return null;
 	}

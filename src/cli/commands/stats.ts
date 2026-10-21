@@ -3,6 +3,7 @@
 //   maestro-cli stats [--range <r>] [--json]   -> aggregated dashboard metrics
 //   maestro-cli stats-query "<sql>" [--json]    -> arbitrary read-only SQL
 //   maestro-cli stats-tokens [--range <r>] [--json] -> Tokens tab: totals + speed
+//   maestro-cli stats-indexing [--wait] [--json] -> progress of a usage-data scan
 //
 // Both route through the running desktop app over the existing WebSocket
 // bridge; the app owns the open stats database and runs the query/aggregation
@@ -13,11 +14,19 @@ import { formatError } from '../output/formatter';
 import {
 	formatCalendarDay,
 	formatCost,
+	formatCount,
 	formatDurationHuman,
 	formatHourOfDay,
+	formatSize,
 	formatTokensCompact,
 	formatTokensPerSecond,
 } from '../../shared/formatters';
+import {
+	statsIndexingTitle,
+	summarizeStatsIndexing,
+	type StatsIndexingState,
+	type StatsIndexingSummary,
+} from '../../shared/statsIndexing';
 import type { PromptCadence } from '../../shared/promptCadence';
 import type { TokenUsageAggregate } from '../../shared/tokenUsage';
 import type { TokenSpeedStats } from '../../shared/tokenSpeed';
@@ -173,6 +182,78 @@ function printTokenUsageSummary(range: string, data: TokenUsageAggregate): void 
 	lines.push('');
 	lines.push('Run with --json for every breakdown, the hour-of-day split, and the timelines.');
 	console.log(lines.join('\n'));
+}
+
+interface StatsIndexingOptions {
+	json?: boolean;
+	wait?: boolean;
+	timeout?: string;
+}
+
+interface StatsIndexingResponse {
+	type: string;
+	data: StatsIndexingState;
+	error?: string;
+}
+
+/** How often `--wait` re-reads the state. */
+const STATS_INDEXING_POLL_MS = 1000;
+
+/**
+ * `maestro-cli stats-indexing` - how far the app's usage-data scan has got: a
+ * one-time re-read of session history after an upgrade, or a first index. The
+ * read half of the progress modal; `--wait` blocks until nothing is scanning,
+ * so an agent can wait for accurate totals before reading them.
+ */
+export async function statsIndexing(options: StatsIndexingOptions): Promise<void> {
+	const timeoutMs = options.timeout !== undefined ? Number(options.timeout) * 1000 : undefined;
+	if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs <= 0)) {
+		handleCommandError(new Error(`Invalid --timeout "${options.timeout}"`), options.json);
+	}
+
+	try {
+		const summary = await withMaestroClient(async (client) => {
+			const read = async () => {
+				const response = await client.sendCommand<StatsIndexingResponse>(
+					{ type: 'get_stats_indexing' },
+					'stats_indexing'
+				);
+				return summarizeStatsIndexing(response.data, Date.now());
+			};
+
+			let current = await read();
+			const startedAt = Date.now();
+			while (options.wait && current) {
+				if (timeoutMs !== undefined && Date.now() - startedAt >= timeoutMs) break;
+				if (!options.json) console.log(describeIndexing(current));
+				await new Promise((resolve) => setTimeout(resolve, STATS_INDEXING_POLL_MS));
+				current = await read();
+			}
+			return current;
+		});
+
+		if (options.json) {
+			console.log(JSON.stringify({ running: summary !== null, summary }, null, 2));
+		} else {
+			console.log(summary ? describeIndexing(summary) : 'No usage data scan is running.');
+		}
+		// A --wait that timed out is not a success: the totals are still moving.
+		if (options.wait && summary) process.exit(1);
+	} catch (error) {
+		handleCommandError(error, options.json);
+	}
+}
+
+function describeIndexing(summary: StatsIndexingSummary): string {
+	const percent = Math.round(summary.fraction * 100);
+	const files = `${formatCount(summary.doneFiles)} of ${formatCount(summary.totalFiles)} transcripts`;
+	const bytes =
+		summary.totalBytes > 0
+			? `, ${formatSize(summary.doneBytes)} of ${formatSize(summary.totalBytes)}`
+			: '';
+	const eta =
+		summary.etaMs !== undefined ? `, about ${formatDurationHuman(summary.etaMs)} left` : '';
+	return `${statsIndexingTitle(summary.reason)}: ${percent}% (${files}${bytes})${eta} - ${summary.labels.join(', ')}`;
 }
 
 /**

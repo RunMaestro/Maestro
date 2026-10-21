@@ -1,6 +1,7 @@
 import { requestProviderTranslation } from '../../../renderer/services/providerTranslation';
 import { commitTranslationSession } from '../../../shared/maestro-lib/translation/session';
-vi.mock('../../../renderer/services/providerTranslation', () => ({
+vi.mock('../../../renderer/services/providerTranslation', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/services/providerTranslation')>()),
 	requestProviderTranslation: vi.fn(),
 }));
 /**
@@ -413,6 +414,83 @@ describe('useSessionLifecycle', () => {
 			expect(updated.projectRoot).toBe('/projects/myapp');
 		});
 
+		/** Save a provider change with the opt-in conversion (the last positional argument). */
+		const saveConverting = (
+			save: ReturnType<typeof useSessionLifecycle>['handleSaveEditAgent'],
+			sessionId: string,
+			name: string,
+			toolType: Session['toolType']
+		) =>
+			(save as (...args: unknown[]) => void | Promise<void>)(
+				sessionId,
+				name,
+				toolType,
+				...Array(23).fill(undefined),
+				true
+			);
+
+		it('switches without converting by default and parks every tab session', async () => {
+			const open = createMockAITab({ id: 'open-tab', agentSessionId: 'claude-open' });
+			const closed = createMockAITab({ id: 'closed-tab', agentSessionId: 'claude-closed' });
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code',
+				aiTabs: [open],
+				closedTabHistory: [{ tab: closed, index: 0, closedAt: 1 }] as any,
+				customPath: '/opt/claude',
+				providerOverrides: { codex: { customPath: '/opt/codex' } },
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+			await act(async () => {
+				await result.current.handleSaveEditAgent(
+					session.id,
+					'My Agent',
+					'codex',
+					undefined,
+					undefined,
+					'/opt/codex'
+				);
+			});
+			expect(requestProviderTranslation).not.toHaveBeenCalled();
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.toolType).toBe('codex');
+			expect(updated.customPath).toBe('/opt/codex');
+			expect(updated.providerOverrides?.['claude-code']).toMatchObject({
+				customPath: '/opt/claude',
+			});
+			expect(updated.providerOverrides?.codex).toBeUndefined();
+			expect(updated.aiTabs[0]).toMatchObject({
+				id: 'open-tab',
+				agentSessionId: null,
+				providerSessions: { 'claude-code': { agentSessionId: 'claude-open' } },
+			});
+			// A closed tab is parked too, so reopening it never resumes a Claude ID on Codex.
+			expect(updated.closedTabHistory?.[0].tab).toMatchObject({
+				agentSessionId: null,
+				providerSessions: { 'claude-code': { agentSessionId: 'claude-closed' } },
+			});
+		});
+
+		it('refuses a plain switch while a conversion holds the agent', async () => {
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code',
+				providerMigration: {
+					operationId: 'op',
+					destination: 'codex',
+					state: 'deferred',
+					verification: 'unverified',
+				},
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+			await expect(
+				result.current.handleSaveEditAgent(session.id, 'My Agent', 'codex')
+			).rejects.toThrow('conversion is in progress');
+			expect(useSessionStore.getState().sessions[0]).toBe(session);
+		});
+
 		it('keeps the source and every tab intact when the shared migration refuses', async () => {
 			const session = createMockSession({
 				id: 'session-1',
@@ -426,7 +504,7 @@ describe('useSessionLifecycle', () => {
 			});
 			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
 			await expect(
-				result.current.handleSaveEditAgent(session.id, 'My Agent', 'codex')
+				saveConverting(result.current.handleSaveEditAgent, session.id, 'My Agent', 'codex')
 			).rejects.toThrow('missing attachment');
 			expect(useSessionStore.getState().sessions[0]).toBe(session);
 			expect(requestProviderTranslation).toHaveBeenCalledWith(
@@ -467,7 +545,12 @@ describe('useSessionLifecycle', () => {
 			});
 			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
 			await act(async () => {
-				await result.current.handleSaveEditAgent(session.id, 'Changed Name', 'codex');
+				await saveConverting(
+					result.current.handleSaveEditAgent,
+					session.id,
+					'Changed Name',
+					'codex'
+				);
 			});
 			const updated = useSessionStore.getState().sessions[0];
 			expect(updated).toMatchObject({

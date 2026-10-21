@@ -12,16 +12,17 @@
 // Cue config reader stay out of every other command's startup path.
 
 import { assertUserDataDirExists, resolveUserDataDir } from '../../shared/userDataDir';
-import { resolveAgentId } from '../services/storage';
+import { resolveAgentId, resolveGroupId } from '../services/storage';
 import { readSessionsStoreFile } from '../../main/stores/sessions-store-file';
 import { resolveCliPath } from '../utils/parse';
 import { ExitCode } from '../exit-codes';
 import { isCliServerRunning } from '../../shared/cli-server-discovery';
 import { withMaestroClient } from '../services/maestro-client';
 import { formatSize } from '../../shared/formatters';
-import type {
-	CueBundleClaudeAssetSelection,
-	CueBundleManifest,
+import {
+	bundleFileName,
+	type CueBundleClaudeAssetSelection,
+	type CueBundleManifest,
 } from '../../shared/cue-bundle-types';
 import type {
 	CueBundleExportOutcome,
@@ -52,6 +53,10 @@ export interface BundleExportOptions {
 	claudeMcp?: boolean;
 	/** `--no-claude-memory` sets false. */
 	claudeMemory?: boolean;
+	/** `--no-cue` sets false: leave the agent's Cue subscriptions out. */
+	cue?: boolean;
+	/** `--exact`: also carry secret values, binary paths and local folders. */
+	exact?: boolean;
 	json?: boolean;
 }
 
@@ -110,21 +115,15 @@ function fail(
 	process.exit(code);
 }
 
-function defaultOutputName(name: string): string {
-	const slug =
-		name
-			.toLowerCase()
-			.replace(/[^a-z0-9]+/g, '-')
-			.replace(/^-+|-+$/g, '') || 'bundle';
-	return `${slug}.maestro-bundle.zip`;
-}
-
 export async function bundleExport(
 	cliVersion: string,
 	options: BundleExportOptions
 ): Promise<void> {
 	if (!!options.agent === !!options.pipeline) {
 		fail('Pass exactly one of --agent or --pipeline', options, ExitCode.InvalidUsage);
+	}
+	if (options.pipeline && options.cue === false) {
+		fail('--no-cue applies to --agent exports only', options, ExitCode.InvalidUsage);
 	}
 
 	try {
@@ -170,8 +169,7 @@ export async function bundleExport(
 		}
 
 		const outputPath = resolveCliPath(
-			options.output ??
-				defaultOutputName(options.pipeline ?? agentName ?? options.agent ?? 'bundle')
+			options.output ?? bundleFileName(options.pipeline ?? agentName ?? options.agent ?? 'bundle')
 		);
 
 		let result: { outputPath: string; size: number; sha256: string; manifest: CueBundleManifest };
@@ -183,6 +181,8 @@ export async function bundleExport(
 				allowInlineSecrets: options.allowInlineSecrets,
 				createdAt: options.createdAt,
 				claudeAssets: claudeAssetSelection(options),
+				includeCue: options.cue !== false,
+				includeLocal: options.exact === true,
 			};
 			const outcome = await viaApp<CueBundleExportOutcome>('cue_bundle_export', request);
 			if (!outcome.ok) {
@@ -199,6 +199,8 @@ export async function bundleExport(
 					allowInlineSecrets: options.allowInlineSecrets,
 					createdAt: options.createdAt,
 					claudeAssets: claudeAssetSelection(options),
+					includeCue: options.cue !== false,
+					includeLocal: options.exact === true,
 					producerVersion: cliVersion,
 				});
 			} catch (error) {
@@ -233,7 +235,9 @@ export async function bundleExport(
 			`  ${manifest.agents.length} agent${manifest.agents.length === 1 ? '' : 's'}, ${manifest.workspaces.length} workspace${manifest.workspaces.length === 1 ? '' : 's'}, ${manifest.files.length} file${manifest.files.length === 1 ? '' : 's'}`,
 			`  sha256 ${result.sha256}`,
 		];
-		if (manifest.requirements.secrets.length > 0) {
+		if (manifest.local) {
+			lines.push('  Exact copy: holds secret values and local paths. Keep it private.');
+		} else if (manifest.requirements.secrets.length > 0) {
 			lines.push(`  Secrets to set on import: ${manifest.requirements.secrets.join(', ')}`);
 		}
 		for (const warning of manifest.warnings ?? []) {
@@ -259,6 +263,7 @@ const SECRET_SOURCE_LABEL = {
 	credentials: 'systemd credential',
 	'run-secrets': '/run/secrets',
 	env: 'env',
+	bundle: 'exact copy',
 } as const;
 
 function formatSecretCheck(check: CueBundleSecretCheck): string {
@@ -406,6 +411,10 @@ export interface BundleImportOptions {
 	dryRun?: boolean;
 	force?: boolean;
 	rejectShellCommands?: boolean;
+	/** Left Bar group (id or unique id prefix) the created agents go in. */
+	group?: string;
+	/** `--no-local` sets false: ignore an exact copy's machine data. */
+	local?: boolean;
 	json?: boolean;
 }
 
@@ -502,6 +511,20 @@ function formatImportPlan(
 		);
 	}
 
+	if (plan.local) {
+		if (!plan.local.applied) {
+			lines.push('', 'Exact copy: machine settings ignored (--no-local).');
+		} else {
+			lines.push('', 'Exact copy: restores machine settings.');
+			for (const [key, folder] of Object.entries(plan.local.workspaces)) {
+				lines.push(`  Workspace ${key}: ${folder} (where it was exported from)`);
+			}
+			for (const agent of plan.local.agents) {
+				lines.push(`  ${agent.agentName}: ${agent.fields.join(', ') || 'nothing to set'}`);
+				for (const binary of agent.binaries) lines.push(`    runs ${binary}`);
+			}
+		}
+	}
 	if (plan.shellCommands.length > 0) {
 		lines.push(
 			'',
@@ -615,6 +638,21 @@ export async function bundleImport(
 		);
 	}
 	const dataDir = options.dataDir ? resolveCliPath(options.dataDir) : resolveUserDataDir();
+	let groupId: string | undefined;
+	if (options.group) {
+		try {
+			// Another data directory's groups are not this one's: take the id as given.
+			groupId = options.dataDir ? options.group : resolveGroupId(options.group);
+		} catch (error) {
+			fail(
+				error instanceof Error ? error.message : String(error),
+				options,
+				ExitCode.InvalidUsage,
+				'INVALID_OPTIONS'
+			);
+		}
+	}
+	const useLocal = options.local !== false;
 
 	if (shouldGoThroughApp(options)) {
 		if (Object.keys(agentPaths).length > 0) {
@@ -630,6 +668,8 @@ export async function bundleImport(
 			workspaces,
 			force: options.force,
 			refuseShellCommands: options.rejectShellCommands,
+			useLocal,
+			...(groupId ? { groupId } : {}),
 			dryRun: options.dryRun,
 		};
 		const send = async (req: CueBundleImportRequest) => {
@@ -710,6 +750,8 @@ export async function bundleImport(
 			dryRun: options.dryRun,
 			force: options.force,
 			refuseShellCommands: options.rejectShellCommands,
+			useLocal,
+			groupId,
 			// The plan, shell commands included, goes out before the first write.
 			// The write applies this same plan; it is not planned again.
 			onBeforeWrite: options.json

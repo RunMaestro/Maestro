@@ -43,6 +43,25 @@ describe('GroupContextMenu', () => {
 		expect(labels[1]).toBe('Rename Group...');
 	});
 
+	it('lists Import Agent right below New Agent in Group, and fires it', () => {
+		const onImportAgent = vi.fn();
+		const props = setup({ onImportAgent });
+		const labels = screen.getAllByRole('button').map((b) => b.textContent?.trim());
+		expect(labels.slice(0, 3)).toEqual([
+			'New Agent in Group...',
+			'Import Agent...',
+			'Rename Group...',
+		]);
+		fireEvent.click(screen.getByText('Import Agent...'));
+		expect(onImportAgent).toHaveBeenCalledTimes(1);
+		expect(props.onDismiss).toHaveBeenCalled();
+	});
+
+	it('omits Import Agent when no handler is given', () => {
+		setup();
+		expect(screen.queryByText('Import Agent...')).toBeNull();
+	});
+
 	it('honors deleteLabel override and fires onDelete', () => {
 		const props = setup({ memberCount: 3, deleteLabel: 'Delete Group' });
 		fireEvent.click(screen.getByText('Delete Group'));

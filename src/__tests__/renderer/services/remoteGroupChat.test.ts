@@ -17,6 +17,7 @@ vi.mock('../../../renderer/utils/groupChatAutoRunRegistry', () => ({
 }));
 
 import {
+	archiveGroupChat,
 	getRemoteGroupChatState,
 	listRemoteGroupChats,
 	sendRemoteGroupChatMessage,
@@ -47,6 +48,7 @@ const mockGroupChat = {
 	getQueue: vi.fn(),
 	sendToModerator: vi.fn(),
 	stopAll: vi.fn(),
+	archive: vi.fn(),
 };
 
 function seedAgents(names: Array<[id: string, name: string, toolType?: string]>) {
@@ -67,6 +69,10 @@ beforeEach(() => {
 	mockGroupChat.getQueue.mockResolvedValue({ items: [], paused: false });
 	mockGroupChat.sendToModerator.mockResolvedValue(undefined);
 	mockGroupChat.stopAll.mockResolvedValue(undefined);
+	mockGroupChat.archive.mockImplementation(async (_id: string, archived: boolean) => ({
+		...createdChat,
+		archived,
+	}));
 	(window.maestro as any).groupChat = { ...(window.maestro as any).groupChat, ...mockGroupChat };
 
 	useGroupChatStore.setState({
@@ -217,5 +223,31 @@ describe('stopGroupChatWork', () => {
 			sessionId: 'agent-with-batch',
 		});
 		expect(mockGroupChat.stopAll).toHaveBeenCalledWith('gc-new');
+	});
+});
+
+describe('archiveGroupChat', () => {
+	it("ends the chat's Auto Run batches, archives it in main, and updates the Left Bar list", async () => {
+		useGroupChatStore.setState({ groupChats: [createdChat] } as never);
+		const dispatchBatch = vi.spyOn(useBatchStore.getState(), 'dispatchBatch');
+
+		await archiveGroupChat('gc-new', true);
+
+		expect(dispatchBatch).toHaveBeenCalledWith({
+			type: 'COMPLETE_BATCH',
+			sessionId: 'agent-with-batch',
+		});
+		expect(mockGroupChat.archive).toHaveBeenCalledWith('gc-new', true);
+		expect(useGroupChatStore.getState().groupChats[0]).toMatchObject({ archived: true });
+	});
+
+	it('restores a chat without touching any Auto Run batch', async () => {
+		useGroupChatStore.setState({ groupChats: [{ ...createdChat, archived: true }] } as never);
+		const dispatchBatch = vi.spyOn(useBatchStore.getState(), 'dispatchBatch');
+
+		await archiveGroupChat('gc-new', false);
+
+		expect(dispatchBatch).not.toHaveBeenCalled();
+		expect(useGroupChatStore.getState().groupChats[0]).toMatchObject({ archived: false });
 	});
 });

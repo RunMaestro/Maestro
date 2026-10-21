@@ -47,6 +47,10 @@ interface ListOptions extends JsonOption {
 	all?: boolean;
 }
 
+interface ArchiveOptions extends JsonOption {
+	restore?: boolean;
+}
+
 type BridgeReply = { type: string; success?: boolean; error?: string; message?: string };
 
 function fail(error: string, json?: boolean): never {
@@ -342,6 +346,32 @@ export async function groupChatStop(chatRef: string, options: JsonOption): Promi
 		else console.log(`Stopped group chat ${chatId}`);
 	} catch (error) {
 		exitIfMaestroNotRunning(error, { json: options.json });
+		fail(error instanceof Error ? error.message : String(error), options.json);
+	}
+}
+
+export async function groupChatArchive(chatRef: string, options: ArchiveOptions): Promise<void> {
+	const archived = !options.restore;
+	try {
+		const { chatId, reply } = await withMaestroClient(async (client) => {
+			const id = resolveChatRef(chatRef, await listChats(client));
+			const res = await client.sendCommand<BridgeReply>(
+				{ type: 'archive_group_chat', chatId: id, archived },
+				'archive_group_chat_result'
+			);
+			return { chatId: id, reply: res };
+		});
+		const error =
+			bridgeError(reply) ??
+			(reply.success ? undefined : `Failed to ${archived ? 'archive' : 'restore'} group chat`);
+		if (error) {
+			if (options.json) console.log(JSON.stringify({ success: false, error, chatId }));
+			else console.error(`Error: ${error}`);
+			process.exit(1);
+		}
+		if (options.json) console.log(JSON.stringify({ success: true, chatId, archived }));
+		else console.log(`${archived ? 'Archived' : 'Restored'} group chat ${chatId}`);
+	} catch (error) {
 		fail(error instanceof Error ? error.message : String(error), options.json);
 	}
 }

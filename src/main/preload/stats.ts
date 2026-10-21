@@ -32,6 +32,8 @@ import type { TokenUsageQuery, TokenUsageAggregate } from '../../shared/tokenUsa
 export type { TokenUsageQuery, TokenUsageAggregate } from '../../shared/tokenUsage';
 import type { DelegationDay, DelegationTotals } from '../../shared/delegation';
 export type { DelegationDay, DelegationTotals } from '../../shared/delegation';
+import type { StatsIndexingState } from '../../shared/statsIndexing';
+export type { StatsIndexingState } from '../../shared/statsIndexing';
 
 /**
  * Session lifecycle event for recording session creation.
@@ -147,6 +149,18 @@ export function createStatsApi() {
 			format: UsageExportFormat,
 			filePath: string
 		): Promise<UsageExportResult> => ipcRenderer.invoke('stats:export', range, format, filePath),
+
+		// Progress of the long transcript scans behind the usage caches (a version
+		// upgrade or a first index). `getIndexingState` reads it once; the
+		// subscription follows it.
+		getIndexingState: (): Promise<StatsIndexingState> =>
+			ipcRenderer.invoke('stats:get-indexing-state'),
+		onIndexingUpdate: (callback: (state: StatsIndexingState) => void) => {
+			const handler = (_event: Electron.IpcRendererEvent, state: StatsIndexingState) =>
+				callback(state);
+			ipcRenderer.on('stats:indexingUpdate', handler);
+			return () => ipcRenderer.removeListener('stats:indexingUpdate', handler);
+		},
 
 		// Subscribe to stats updates (for real-time dashboard refresh)
 		onStatsUpdate: (callback: () => void) => {

@@ -20,10 +20,15 @@
  * keep only an Error's message.
  */
 
+import * as fs from 'fs';
 import * as path from 'path';
 import { resolveAgentId } from '../cli/services/storage';
 import type { SessionInfo } from '../shared/types';
-import type { CueBundleClaudeAssetSelection, CueBundleManifest } from '../shared/cue-bundle-types';
+import type {
+	CueBundleAgentChange,
+	CueBundleClaudeAssetSelection,
+	CueBundleManifest,
+} from '../shared/cue-bundle-types';
 import { CUE_BUNDLE_README_PATH } from '../shared/cue-bundle-types';
 import { CueBundleExportInvalidError, exportCueBundle } from './cue/bundle/cue-bundle-exporter';
 import {
@@ -34,6 +39,7 @@ import {
 	type CueBundleImportPlan,
 } from './cue/bundle/cue-bundle-importer';
 import {
+	parseCueBundleLocalData,
 	readCueBundleArchive,
 	validateCueBundleArchive,
 	type CueBundleValidationIssue,
@@ -52,7 +58,7 @@ export interface CueBundleAppContext {
 	/** Write pending agent changes to disk before an export reads them. */
 	flushSessions?(): void;
 	/** Add and update agents in the app (the renderer owns them). */
-	applyAgents(change: { created: SessionInfo[]; updated: SessionInfo[] }): Promise<void>;
+	applyAgents(change: CueBundleAgentChange): Promise<void>;
 }
 
 /** A refusal, as data. */
@@ -76,6 +82,10 @@ export interface CueBundleExportRequest {
 	/** Absolute path of the zip to write. */
 	outputPath: string;
 	claudeAssets?: CueBundleClaudeAssetSelection;
+	/** Agent exports: carry the agent's Cue subscriptions. Defaults to on. */
+	includeCue?: boolean;
+	/** Write an exact copy: secret values, binary paths and local folders included. */
+	includeLocal?: boolean;
 	allowInlineSecrets?: boolean;
 	/** Pin `manifest.createdAt` (ISO-8601). */
 	createdAt?: string;
@@ -95,6 +105,12 @@ export type CueBundleInspectOutcome =
 			valid: boolean;
 			errors: CueBundleValidationIssue[];
 			warnings: CueBundleValidationIssue[];
+			/**
+			 * An exact copy's folders, workspace key -> where it was exported
+			 * from, and whether that folder exists here. Lets an importer
+			 * suggest them instead of asking.
+			 */
+			localWorkspaces?: Record<string, { path: string; exists: boolean }>;
 	  }
 	| CueBundleFailure;
 
@@ -105,6 +121,10 @@ export interface CueBundleImportRequest {
 	workspaces: Record<string, string>;
 	force?: boolean;
 	refuseShellCommands?: boolean;
+	/** Apply an exact copy's machine data. Defaults to on. */
+	useLocal?: boolean;
+	/** Left Bar group the created agents go in. */
+	groupId?: string;
 	/** Plan only. */
 	dryRun?: boolean;
 }
@@ -156,6 +176,8 @@ export async function exportBundleFromApp(
 			agentId,
 			outputPath: request.outputPath,
 			claudeAssets: request.claudeAssets,
+			includeCue: request.includeCue,
+			includeLocal: request.includeLocal,
 			allowInlineSecrets: request.allowInlineSecrets,
 			createdAt: request.createdAt,
 			producerVersion: ctx.version,
@@ -177,6 +199,23 @@ export function inspectBundle(bundlePath: string, runningVersion: string): CueBu
 		// Only a manifest the validator could read: a raw one with the wrong
 		// shape (`{}`, say) would break whatever displays it.
 		const manifest = result.manifest;
+		const local =
+			result.valid && manifest?.local
+				? parseCueBundleLocalData(archive.entries.get(manifest.local)!)
+				: undefined;
+		const localWorkspaces = local
+			? Object.fromEntries(
+					Object.entries(local.workspaces).map(([key, folder]) => [
+						key,
+						{
+							path: folder,
+							exists:
+								path.isAbsolute(folder) &&
+								fs.statSync(folder, { throwIfNoEntry: false })?.isDirectory() === true,
+						},
+					])
+				)
+			: undefined;
 		return {
 			ok: true,
 			bundlePath,
@@ -185,6 +224,7 @@ export function inspectBundle(bundlePath: string, runningVersion: string): CueBu
 			valid: result.valid,
 			errors: result.errors,
 			warnings: result.warnings,
+			...(localWorkspaces ? { localWorkspaces } : {}),
 		};
 	} catch (error) {
 		return failure(error, 'BUNDLE_UNREADABLE');
@@ -202,6 +242,8 @@ function importOptions(
 		runningVersion: ctx.version,
 		force: request.force,
 		refuseShellCommands: request.refuseShellCommands,
+		useLocal: request.useLocal,
+		groupId: request.groupId,
 		host: {
 			sessions: ctx.getSessions(),
 			applyAgents: (change) => ctx.applyAgents(change),

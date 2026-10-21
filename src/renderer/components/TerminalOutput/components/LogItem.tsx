@@ -15,7 +15,7 @@ import {
 	GitFork,
 } from 'lucide-react';
 import type { LogItemProps } from '../types';
-import type { LogEntry } from '../../../types';
+import type { LogEntry, Session } from '../../../types';
 import {
 	processLogTextHelper,
 	filterTextByLinesHelper,
@@ -32,6 +32,9 @@ import { displayImageSrc } from '../../../utils/sessionImageSrc';
 import { RetryStatusCard } from '../../RetryStatusCard';
 import { SnoozeReturnCard } from '../../SnoozeReturnCard';
 import { AgentDelegationCard } from '../../AgentDelegationCard';
+import { DispatchCallbackCard } from '../../DispatchCallbackCard';
+import { parseDispatchCallbackPrompt } from '../../../../shared/dispatchCallbackCard';
+import { useSessionStore } from '../../../stores/sessionStore';
 import { ContextCompactionCard } from '../../ContextCompactionCard';
 import { ShellCommandCard } from '../../ShellCommandCard';
 import { getTokenSourcePill } from '../../../../shared/claudeTokenModeLabel';
@@ -274,6 +277,13 @@ export const LogItem = memo(
 			codexDirectivesForBody && codexFollowupTabId
 				? { sessionId, tabId: codexFollowupTabId }
 				: undefined;
+		// A shell fence's Run button follows the same "agent's own output in a live
+		// tab" rule, but for every provider: a command an agent offers is an offer
+		// whoever the agent is. A fence in a user message stays copy-only.
+		const commandRun =
+			codexDirectivesLiveForSource(log.source) && codexFollowupTabId
+				? { sessionId, tabId: codexFollowupTabId }
+				: undefined;
 
 		const isUserMessage = log.source === 'user';
 		const isReversed = isUserMessage
@@ -427,6 +437,42 @@ export const LogItem = memo(
 					</div>
 					<div className="flex-1 min-w-0">
 						<AgentDelegationCard log={log} theme={theme} />
+					</div>
+				</div>
+			);
+		}
+
+		// A dispatch this agent sent has finished and woken it. The wake arrives
+		// as the raw `[Maestro dispatch callback]` prompt (it must stay a real
+		// turn the agent reads); here we parse that known text back into a clean
+		// result card for the human. Non-default (`--callback-prompt`) bodies do
+		// not parse and fall through to plain text.
+		const dispatchCallback =
+			log.source === 'user' ? parseDispatchCallbackPrompt(log.text ?? '') : null;
+		if (dispatchCallback) {
+			const targetToolType = useSessionStore
+				.getState()
+				.sessions.find((s: Session) => s.id === dispatchCallback.targetAgentId)?.toolType;
+			return (
+				<div
+					ref={logItemRef}
+					className="flex gap-4 px-3 sm:px-6 py-1.5"
+					data-log-index={index}
+					data-log-id={log.id}
+					style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 36px' }}
+				>
+					<div
+						className="hidden sm:block w-20 shrink-0 text-2xs sm:pt-1"
+						style={{ fontFamily, color: theme.colors.textDim, opacity: 0.6 }}
+					>
+						<LogTimestamp timestamp={log.timestamp} />
+					</div>
+					<div className="flex-1 min-w-0">
+						<DispatchCallbackCard
+							parsed={dispatchCallback}
+							theme={theme}
+							targetToolType={targetToolType}
+						/>
 					</div>
 				</div>
 			);
@@ -865,6 +911,7 @@ export const LogItem = memo(
 											chatMath
 											codexDirectives={codexDirectivesForBody}
 											codexFollowup={codexFollowup}
+											commandRun={commandRun}
 										/>
 									) : (
 										displayText
@@ -935,6 +982,7 @@ export const LogItem = memo(
 											chatMath
 											codexDirectives={codexDirectivesForBody}
 											codexFollowup={codexFollowup}
+											commandRun={commandRun}
 										/>
 									) : (
 										<div>{filteredText}</div>
@@ -992,6 +1040,7 @@ export const LogItem = memo(
 										chatMath
 										codexDirectives={codexDirectivesForBody}
 										codexFollowup={codexFollowup}
+										commandRun={commandRun}
 									/>
 								) : (
 									// Raw markdown source mode (show original text with markdown syntax visible)

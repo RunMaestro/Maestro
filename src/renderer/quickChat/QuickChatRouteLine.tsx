@@ -5,7 +5,8 @@
  * is the line under a message that says where it went: "Searching tabs" while a
  * tab is being chosen, then a pill naming the tab. The pill is the way to that
  * tab in the main window. A message whose tab is mid-reply shows that it is
- * queued, with the way out: send it to a new tab instead of waiting. A message
+ * queued, with the ways out: steer it into the reply already running (when the
+ * agent can take it mid-turn), or send it to a new tab instead of waiting. A message
  * that went to a tab the user disagrees with has a thumbs-down beside the pill,
  * which sends it to a new tab instead.
  *
@@ -14,7 +15,7 @@
  */
 
 import { useEffect, useState } from 'react';
-import { Clock, History, MessagesSquare, Plus, ThumbsDown } from 'lucide-react';
+import { Clock, History, MessagesSquare, Navigation, Plus, ThumbsDown } from 'lucide-react';
 import { formatDurationHuman } from '../../shared/duration';
 import type { QuickChatRoute, QuickChatRouteOrigin } from '../../shared/quickChat';
 import { HoverTooltip } from '../components/ui/HoverTooltip';
@@ -92,6 +93,8 @@ interface QuickChatRouteLineProps {
 	 * sent again when it already ran in the tab it went to.
 	 */
 	onMoveToNewTab: () => void;
+	/** Hand a queued message to the reply already running in its tab. */
+	onSteer: () => void;
 }
 
 export function QuickChatRouteLine({
@@ -99,6 +102,7 @@ export function QuickChatRouteLine({
 	theme,
 	onOpenTab,
 	onMoveToNewTab,
+	onSteer,
 }: QuickChatRouteLineProps) {
 	const c = theme.colors;
 	const lineClass = 'flex justify-end items-center gap-2 min-w-0 text-[0.85em]';
@@ -142,6 +146,29 @@ export function QuickChatRouteLine({
 							Send to a new tab
 						</button>
 					</Explained>
+					{route.canSteer && (
+						<Explained
+							theme={theme}
+							label="Steer"
+							hint="Send this into the reply running now, so the agent can change course mid-task."
+						>
+							<button
+								type="button"
+								onClick={onSteer}
+								aria-label="Steer this message into the running reply"
+								className="shrink-0 inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-medium transition-opacity hover:opacity-80"
+								style={{
+									...NO_DRAG_REGION,
+									color: c.accent,
+									backgroundColor: c.accent + '33',
+								}}
+								data-testid="quick-chat-route-steer"
+							>
+								<Navigation className="w-3.5 h-3.5" />
+								Steer
+							</button>
+						</Explained>
+					)}
 					<Explained
 						theme={theme}
 						label="Queued"

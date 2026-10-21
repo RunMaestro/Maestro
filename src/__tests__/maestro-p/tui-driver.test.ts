@@ -1267,6 +1267,31 @@ describe('TuiDriver', () => {
 			expect(mockPtyProcess.kill).toHaveBeenCalledWith('SIGTERM');
 		});
 
+		it('terminates instead of typing /quit onto a prompt that was never submitted', async () => {
+			const driver = await makeDriver();
+			feed('❯ \n');
+			const sending = driver.send('summarize the session');
+			await vi.advanceTimersByTimeAsync(PROMPT_SETTLE_QUIET_MS);
+			await sending;
+			mockPtyProcess.write.mockClear();
+			const promise = driver.quit({ discardTypedInput: true });
+			// "/quit\r" would land after the parked prompt and submit both.
+			await vi.advanceTimersByTimeAsync(QUIT_GRACE_MS);
+			await promise;
+			expect(mockPtyProcess.write).not.toHaveBeenCalledWith('/quit\r');
+			expect(mockPtyProcess.kill).toHaveBeenCalledWith('SIGTERM');
+		});
+
+		it('still types /quit when nothing was typed, even if asked to discard', async () => {
+			const driver = await makeDriver();
+			const promise = driver.quit({ discardTypedInput: true });
+			await vi.advanceTimersByTimeAsync(0);
+			expect(mockPtyProcess.write).toHaveBeenCalledWith('/quit\r');
+			triggerExit(0);
+			await promise;
+			expect(mockPtyProcess.kill).not.toHaveBeenCalled();
+		});
+
 		it('is a no-op when called before start()', async () => {
 			const driver = new TuiDriver({ binPath: 'claude', args: [], cwd: '/tmp', env: {} });
 			await driver.quit();

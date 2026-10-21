@@ -391,6 +391,7 @@ export interface MessageHandlerCallbacks {
 	) => Promise<StartGroupChatResult | null>;
 	getGroupChatState: (chatId: string) => Promise<GroupChatState | null>;
 	stopGroupChat: (chatId: string) => Promise<boolean>;
+	archiveGroupChat: (chatId: string, archived: boolean) => Promise<boolean>;
 	sendGroupChatMessage: (chatId: string, message: string) => Promise<boolean>;
 	steerGroupChat?: (
 		chatId: string,

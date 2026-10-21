@@ -28,6 +28,10 @@ import { GitActionCard, isGitDirectiveName } from './components/GitActionCard';
 import { alertTypeFromClassName } from './remarkAlert';
 import { readCodexDirectiveProps } from './remarkCodexDirectives';
 import { requestCodexFollowup } from '../../services/codexFollowup';
+import {
+	requestCodeFenceCommand,
+	type CodeFenceCommandTarget,
+} from '../../services/codeFenceCommand';
 
 export interface ChatMarkdownComponentsOptions {
 	theme: Theme;
@@ -54,6 +58,12 @@ export interface ChatMarkdownComponentsOptions {
 	 * label, with no control to press.
 	 */
 	codexFollowup?: { sessionId: string; tabId: string };
+	/**
+	 * Which conversation a shell fence's Run button belongs to. Present only
+	 * where an agent's own reply is drawn in a live tab, for any provider. Absent
+	 * leaves shell fences with just their copy button.
+	 */
+	commandRun?: CodeFenceCommandTarget;
 }
 
 export function createChatMarkdownComponents(
@@ -71,6 +81,7 @@ export function createChatMarkdownComponents(
 		onLinkContextMenu,
 		onFileContextMenu,
 		codexFollowup,
+		commandRun,
 	} = options;
 
 	const withReadableTransforms = (children: React.ReactNode) =>
@@ -93,7 +104,13 @@ export function createChatMarkdownComponents(
 		onFileContextMenu,
 		behavior: { directExternal: true },
 	});
-	const ChatCodeBlock = createShikiCodeBlock(theme, onCopy);
+	const ChatCodeBlock = createShikiCodeBlock(
+		theme,
+		onCopy,
+		commandRun
+			? (command, mode) => requestCodeFenceCommand({ ...commandRun, command, mode })
+			: undefined
+	);
 
 	return {
 		a: ChatLink,

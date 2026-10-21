@@ -28,6 +28,7 @@ import { WizardIndicator } from '../SessionList/WizardIndicator';
 import { hasDraft } from '../../utils/tabHelpers';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useModalStore } from '../../stores/modalStore';
+import { requestBreakApartTabGroup } from '../../services/tabGroupConfirm';
 import { useUIStore } from '../../stores/uiStore';
 import { updateSessionWith, useSessionStore } from '../../stores/sessionStore';
 import {
@@ -708,18 +709,13 @@ function PaneActionsMenu({
 			e.stopPropagation();
 			close();
 			const groupId = group.id;
-			useModalStore.getState().openModal('confirm', {
-				title: 'Break apart group?',
-				message: `Break apart "${group.name}"? Its panes return to the tab bar as individual tabs. The tabs are not closed, and you can tile them again later.`,
-				destructive: false,
-				onConfirm: () => {
-					// The whole group is going away; drop any zoom so it doesn't linger.
-					useUIStore.getState().setZoomedPaneId(null);
-					updateSessionWith(session.id, (s) => breakApartGroup(s, groupId));
-				},
+			requestBreakApartTabGroup(group, () => {
+				// The whole group is going away; drop any zoom so it doesn't linger.
+				useUIStore.getState().setZoomedPaneId(null);
+				updateSessionWith(session.id, (s) => breakApartGroup(s, groupId));
 			});
 		},
-		[close, group.id, group.name, session.id]
+		[close, group, session.id]
 	);
 
 	const handleCopyDeepLink = React.useCallback(

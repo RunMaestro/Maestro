@@ -5,11 +5,12 @@ import {
 	translationSessionTabs,
 	migrationHoldsTurns,
 } from '../../shared/maestro-lib/translation/session';
+import { switchAgentProvider } from '../../shared/maestro-lib/agents/providerSwap';
 import type {
 	TranslationReport,
 	TranslationRequest,
 } from '../../shared/maestro-lib/translation/types';
-import type { Session } from '../types';
+import type { Session, ToolType } from '../types';
 
 const pending = new Map<string, Promise<TranslationReport>>();
 
@@ -171,6 +172,33 @@ export async function requestProviderTranslation(
 	} catch (error) {
 		return { success: false, error: error instanceof Error ? error.message : String(error) };
 	}
+}
+
+/**
+ * Switch an agent's provider WITHOUT converting memory or session history.
+ *
+ * Every tab keeps its transcript. Each tab's provider session is parked under
+ * the old provider (switching back resumes it) and its next turn starts a fresh
+ * conversation on the new one. Agent-level overrides are parked the same way.
+ * Refused while a conversion is in flight for the agent, since that operation
+ * owns the provider fields until it settles.
+ *
+ * Returns one line per piece of state that could not be parked.
+ */
+export function switchProviderWithoutConversion(agentId: string, destination: ToolType): string[] {
+	const session = useSessionStore.getState().sessions.find((s) => s.id === agentId);
+	if (!session) throw new Error('Agent not found');
+	if (pending.has(agentId) || migrationHoldsTurns(session.providerMigration))
+		throw new Error('A provider conversion is in progress for this agent. Wait for it to finish.');
+	if (session.toolType === destination) return [];
+	let notices: string[] = [];
+	updateSessionWith(agentId, (s) => {
+		const { agent, unparked } = switchAgentProvider(s, destination);
+		notices = unparked.map((item) => item.message);
+		// A settled conversion record describes a provider move this switch replaces.
+		return { ...agent, providerMigration: undefined };
+	});
+	return notices;
 }
 
 /** Persisted deferrals survive reload; newly discovered warnings still require review. */

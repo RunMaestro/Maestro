@@ -8,17 +8,42 @@ A bundle is a zip that carries one Cue pipeline (its subscriptions, prompt files
 
 ## In the app
 
-Open **Maestro Cue** and go to the **Bundles** tab.
+**Export an agent.** Right-click it in the Left Bar and choose **Export Agent...** (or **Export Agent** in the command palette). One export, with options:
 
-**Export.** Choose **Pipeline** or **Agent**, pick one, choose which Claude Code assets to include, then **Export…** and pick where to save the zip. The result lists the secrets the importing machine has to set. A pipeline or agent whose exported cue.yaml breaks a config rule `bundle validate` checks (a missing field, a name with `:`, a heartbeat under a minute, a `command.mode: cli` subscription) is not exported: the tab lists every problem, with its workspace and subscription, and no file is written.
+- **Cue subscriptions**, the ones the agent runs, with their prompt files. Shown only while Maestro Cue is on; with Cue off they stay out.
+- **Claude Code assets** (skills, MCP servers, memory), for a Claude Code agent.
+- **Exact copy**, for restoring the agent on this machine. See [Exact copies](#exact-copies).
 
-**Import.**
+The agent's provider, model, effort, context window, working directory, environment variables, messages, resilience settings, playbooks and Auto Run documents are always included.
 
-1. **Choose Bundle…** The tab shows what the bundle holds (agents, Claude Code assets, tools it needs) and checks it. A bundle that fails the check says why and goes no further.
-2. Pick a folder for each workspace. This is usually a clone of the project; the tab shows the git remote the bundle came from.
-3. Maestro does a dry run and lists what the import will do: agents added or updated, files written, subscriptions added, shell commands the bundle runs, and secrets not set on this machine.
+**Import an agent.** Right-click a group and choose **Import Agent...**, right under **New Agent in Group...** (or **Import Agent** in the command palette, which uses the active agent's group). New agents land in that group.
+
+**Export a pipeline.** Open **Maestro Cue** and go to the **Bundles** tab. Pick a pipeline, choose which Claude Code assets to include, then **Export…**.
+
+A pipeline or agent whose exported cue.yaml breaks a config rule `bundle validate` checks (a missing field, a name with `:`, a heartbeat under a minute, a `command.mode: cli` subscription) is not exported: the dialog lists every problem, with its workspace and subscription, and no file is written.
+
+**Import** works the same from the Import Agent dialog and the Bundles tab:
+
+1. **Choose Bundle…** The dialog shows what the bundle holds (agents, Claude Code assets, tools it needs) and checks it. A bundle that fails the check says why and goes no further.
+2. Pick a folder for each workspace. This is usually a clone of the project; the dialog shows the git remote the bundle came from. An exact copy fills in the folders it came from.
+3. Maestro does a dry run and lists what the import will do: agents added or updated, files written, subscriptions added, shell commands the bundle runs, binaries an exact copy sets, and secrets not set on this machine.
 4. If anything conflicts (an agent that already exists, a file or MCP server that differs), the import waits until you tick **Overwrite them with the bundle's version**.
 5. **Import.** The agents appear in the Left Bar and their subscriptions start right away.
+
+## Exact copies
+
+A normal bundle is safe to share: it carries no secret values and no paths from your machine. That also means an agent you export, delete and import again is not quite the same agent: its secrets come back as names to set, and its binary paths, SSH settings and folders are gone.
+
+Tick **Exact copy** (or pass `--exact`) to also write `local.json` into the bundle, holding:
+
+- the agent's own environment variables with their values, secrets included, and the ones switched off;
+- its binary paths (agent, provider and maestro-p), SSH remote settings, additional directories, worktree settings and bookmark;
+- the settings it keeps for every other provider it has used;
+- the folders its workspaces were in, and its working directory and Auto Run folder when they sit outside the project.
+
+Importing an exact copy restores all of it, uses the original folders when they still exist, and puts Auto Run documents back where they were. The dry run lists every binary the copy sets before anything is written. Untick **Restore machine settings** (or pass `--no-local`) to import it like a normal bundle.
+
+An exact copy holds secrets and local paths. Use it as a backup for this machine and do not share it.
 
 ## From the command line
 
@@ -27,9 +52,13 @@ maestro-cli bundle export --pipeline "Nightly Review" --output nightly.maestro-b
 maestro-cli bundle inspect nightly.maestro-bundle.zip
 maestro-cli bundle import nightly.maestro-bundle.zip --workspace web=~/code/web --dry-run
 maestro-cli bundle import nightly.maestro-bundle.zip --workspace web=~/code/web
+
+# Back up one agent exactly, then restore it into a group
+maestro-cli bundle export --agent "Reviewer" --exact --output reviewer.maestro-bundle.zip
+maestro-cli bundle import reviewer.maestro-bundle.zip --group <group-id>
 ```
 
-While Maestro is running, `bundle export` and `bundle import` go through the app and do exactly what the Bundles tab does. With the app closed, or with `--data-dir`, they work on the data directory directly, which is how a server is provisioned. See the [CLI reference](./cli-reference) for every flag.
+While Maestro is running, `bundle export` and `bundle import` go through the app and do exactly what the Export Agent and Import Agent dialogs and the Bundles tab do. With the app closed, or with `--data-dir`, they work on the data directory directly, which is how a server is provisioned. See the [CLI reference](./cli-reference) for every flag.
 
 ## Agents that share a workspace
 
@@ -41,7 +70,7 @@ When several agents work in one workspace, only its owner runs the subscriptions
 
 ## Claude Code assets
 
-For each workspace a Claude Code agent works in, an export can include its Claude Code setup. All three are on by default; turn them off in the tab or with `--no-claude-skills`, `--no-claude-mcp` and `--no-claude-memory`.
+For each workspace a Claude Code agent works in, an export can include its Claude Code setup. All three are on by default; turn them off in the export dialog or with `--no-claude-skills`, `--no-claude-mcp` and `--no-claude-memory`.
 
 | Asset       | What travels                                                                                                                                    | How secrets are kept out                                                                                                                                                                                                                                                                            |
 | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -62,6 +91,8 @@ Every secret `${VAR}` an exported `.mcp.json` uses is listed with the bundle's s
 
 ## What never travels
 
+Unless the bundle is an [exact copy](#exact-copies):
+
 - **Secret values.** An agent's environment variables that look secret travel by name only, and a subscription with a literal `webhook.secret` refuses to export unless you allow it.
 - **Absolute paths.** Folders become workspace keys and relative paths.
 - **SSH remote settings.** An agent that runs over SSH is exported without them, with a warning.
@@ -74,7 +105,7 @@ Every secret `${VAR}` an exported `.mcp.json` uses is listed with the bundle's s
 
 A bundle can run shell commands (subscriptions with `action: command`), and Cue runs agents with full permissions. Import bundles you trust.
 
-- The Bundles tab's dry run lists every shell command before you press **Import**.
+- The import dialog's dry run lists every shell command before you press **Import**.
 - `maestro-cli bundle import` prints the whole plan, shell commands included, before it writes anything, then writes exactly that plan and confirms with one line. Through the running app it gets the plan from a dry run first. No prompt is shown, so the command still works unattended.
 - `--dry-run` prints the plan and writes nothing.
 - `--json` prints one document after the import. To review the shell commands before anything is written, run `--dry-run --json` first.

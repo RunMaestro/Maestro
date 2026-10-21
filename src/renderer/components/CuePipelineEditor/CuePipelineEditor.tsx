@@ -17,7 +17,16 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ReactFlowProvider, useReactFlow, useStore, type Node, type Edge } from 'reactflow';
 import type { Theme } from '../../types';
 import type { CueGraphSession } from '../../../shared/cue-pipeline-types';
-import { convertToReactFlowNodes, convertToReactFlowEdges } from './utils/pipelineGraph';
+import {
+	convertToReactFlowNodes,
+	convertToReactFlowEdges,
+	computePipelineYOffsets,
+} from './utils/pipelineGraph';
+import {
+	pipelineAgentScopes,
+	resolvePipelineHomes,
+	type PipelineAgentScope,
+} from './utils/pipelineMembership';
 import { usePipelineState } from '../../hooks/cue/usePipelineState';
 import type { SessionInfo, ActiveRunInfo } from '../../hooks/cue/usePipelineState';
 import { usePipelineSelection } from '../../hooks/cue/usePipelineSelection';
@@ -43,16 +52,12 @@ export { validatePipelines, DEFAULT_TRIGGER_LABELS } from '../../hooks/cue/usePi
 export type { SessionInfo, ActiveRunInfo } from '../../hooks/cue/usePipelineState';
 
 /**
- * Restricts the All Pipelines view to one agent's pipelines. Set when the user
- * clicks "View in Graph" on an agent that owns several - selecting just one of
- * them would be arbitrary, and showing every pipeline on the machine answers a
- * question nobody asked.
+ * Restricts the All Pipelines view to one agent's pipelines. Set by the graph's
+ * Agents picker, or when the user clicks "View in Graph" on an agent that owns
+ * several - selecting just one of them would be arbitrary, and showing every
+ * pipeline on the machine answers a question nobody asked.
  */
-export interface CueGraphScope {
-	sessionId: string;
-	sessionName: string;
-	pipelineIds: string[];
-}
+export type CueGraphScope = PipelineAgentScope;
 
 /** Navigation token produced by "View in Graph". */
 export interface CueGraphTarget {
@@ -173,8 +178,9 @@ function CuePipelineEditorInner({
 		pipelineState: stateHook.pipelineState,
 	});
 
-	// Agent scope for the All Pipelines view (see CueGraphScope). Cleared by any
-	// manual pipeline selection - the user has navigated somewhere else.
+	// Agent scope for the All Pipelines view (see CueGraphScope). Survives a
+	// drill-down into one of its own pipelines, so the toolbar can lead back to
+	// it; cleared by choosing All Pipelines or a pipeline outside the scope.
 	const [graphScope, setGraphScope] = useState<CueGraphScope | null>(null);
 
 	// When opened via "View in Graph", apply the resolved target once the
@@ -253,6 +259,21 @@ function CuePipelineEditorInner({
 		handleConfigureNode,
 	} = selectionHook;
 
+	// ─── Agent clusters ────────────────────────────────────────────────────
+	// Every pipeline is filed under ONE home agent. All Pipelines draws a
+	// labeled box per agent and Arrange packs each agent's cards together, so
+	// an agent filter is a view of one region of a map that stays consistent.
+	const pipelineHomes = useMemo(
+		() => resolvePipelineHomes(pipelineState.pipelines, graphSessions),
+		[pipelineState.pipelines, graphSessions]
+	);
+
+	// Agents the graph can be narrowed to, for the selector's Agents section.
+	const agentScopes = useMemo(
+		() => pipelineAgentScopes(sessions, pipelineState.pipelines, graphSessions),
+		[sessions, pipelineState.pipelines, graphSessions]
+	);
+
 	// ─── Agent scope (All Pipelines view only) ─────────────────────────────
 	// The scope narrows what the CANVAS renders; it never touches canonical
 	// state. Selecting a single pipeline supersedes it, and every mutation is
@@ -268,26 +289,70 @@ function CuePipelineEditorInner({
 		return live.size > 0 ? live : null;
 	}, [graphScope, pipelineState.pipelines, pipelineState.selectedPipelineId]);
 
-	const visiblePipelines = useMemo(
+	// A scoped view packs ITS pipelines afresh, with the same clustered packing
+	// All Pipelines uses, so the agent's pipelines sit together in the same
+	// order instead of floating at their All Pipelines coordinates with holes
+	// where the filtered-out pipelines were. The packed offsets exist only on
+	// these display copies: nothing scoped is ever written back to canonical
+	// state, so a filtered view cannot move anything in All Pipelines.
+	const visiblePipelines = useMemo(() => {
+		if (!scopedPipelineIds) return pipelineState.pipelines;
+		const subset = pipelineState.pipelines.filter((p) => scopedPipelineIds.has(p.id));
+		// Read order from the FULL board's auto-stack, so never-dragged
+		// pipelines sort exactly as they do in All Pipelines.
+		const offsets = arrangePipelineGroups(
+			subset,
+			computePipelineYOffsets(pipelineState.pipelines, null),
+			undefined,
+			pipelineHomes
+		);
+		return subset.map((p) => {
+			const viewOffset = offsets.get(p.id);
+			return viewOffset ? { ...p, viewOffset } : p;
+		});
+	}, [pipelineState.pipelines, scopedPipelineIds, pipelineHomes]);
+
+	// The scope as DRAWN: only the pipelines that still exist. The toolbar names
+	// and counts this, so its label always matches the canvas.
+	const activeScope = useMemo<PipelineAgentScope | null>(
 		() =>
-			scopedPipelineIds
-				? pipelineState.pipelines.filter((p) => scopedPipelineIds.has(p.id))
-				: pipelineState.pipelines,
-		[pipelineState.pipelines, scopedPipelineIds]
+			graphScope && scopedPipelineIds
+				? { ...graphScope, pipelineIds: [...scopedPipelineIds] }
+				: null,
+		[graphScope, scopedPipelineIds]
 	);
 
-	const activeScope = scopedPipelineIds ? graphScope : null;
+	// The scope a single-pipeline view was drilled into from, if any: what the
+	// toolbar's back crumb returns to.
+	const selectedId = pipelineState.selectedPipelineId;
+	const parentScope =
+		graphScope && selectedId !== null && graphScope.pipelineIds.includes(selectedId)
+			? graphScope
+			: null;
 
-	// Any manual navigation drops the scope - the user asked for somewhere else.
+	// Opening one of the scope's own pipelines keeps the scope as a breadcrumb;
+	// anywhere else (All Pipelines, a pipeline outside it) drops it.
 	const handleSelectPipeline = useCallback(
 		(id: string | null) => {
-			setGraphScope(null);
+			setGraphScope((scope) =>
+				scope && id !== null && scope.pipelineIds.includes(id) ? scope : null
+			);
 			selectPipeline(id);
 		},
 		[selectPipeline]
 	);
 
+	const handleSelectAgentScope = useCallback(
+		(scope: CueGraphScope) => {
+			setGraphScope(scope);
+			selectPipeline(null);
+		},
+		[selectPipeline]
+	);
+
 	const handleClearScope = useCallback(() => setGraphScope(null), []);
+
+	const handleReturnToScope = useCallback(() => selectPipeline(null), [selectPipeline]);
 
 	// Wrap the manual-trigger handler so the click produces immediate UI feedback:
 	// mark the owning pipeline as optimistically triggered so the trigger
@@ -379,9 +444,16 @@ function CuePipelineEditorInner({
 				},
 				theme,
 				stableYOffsets,
-				interactionMode === 'hand'
+				// A scoped view is laid out on the fly and never saved, so its
+				// cards must not be draggable: a drag would commit an offset
+				// computed for the filtered view into the All Pipelines layout.
+				// Treating it like the pan tool keeps the cards inert.
+				interactionMode === 'hand' || activeScope !== null,
+				pipelineHomes
 			),
 		[
+			activeScope,
+			pipelineHomes,
 			visiblePipelines,
 			pipelineState.selectedPipelineId,
 			handleConfigureNodeGuarded,
@@ -414,6 +486,10 @@ function CuePipelineEditorInner({
 	// from a background recompute is what lets the dirty-freeze below hold the
 	// arrangement still WITHOUT stranding nodes when the user switches views.
 	const lastSyncedSelectedIdRef = useRef(pipelineState.selectedPipelineId);
+	// Same for the agent scope: narrowing All Pipelines to an agent (or
+	// widening it back) re-packs the visible cards, which is navigation too.
+	const activeScopeId = activeScope?.sessionId ?? null;
+	const lastSyncedScopeIdRef = useRef(activeScopeId);
 	// Snapshot of the LAST computedNodes positions (by id). In the CLEAN state,
 	// when neither the pipelines reference nor the selection changed, the resync
 	// compares each fresh computed position against this snapshot to adopt genuine
@@ -432,9 +508,12 @@ function CuePipelineEditorInner({
 	const forceAdoptComputedRef = useRef(false);
 	useEffect(() => {
 		const pipelinesChanged = lastSyncedPipelinesRef.current !== visiblePipelines;
-		const selectionChanged = lastSyncedSelectedIdRef.current !== pipelineState.selectedPipelineId;
+		const selectionChanged =
+			lastSyncedSelectedIdRef.current !== pipelineState.selectedPipelineId ||
+			lastSyncedScopeIdRef.current !== activeScopeId;
 		lastSyncedPipelinesRef.current = visiblePipelines;
 		lastSyncedSelectedIdRef.current = pipelineState.selectedPipelineId;
+		lastSyncedScopeIdRef.current = activeScopeId;
 		// Capture the PREVIOUS computed positions before overwriting the ref, so
 		// the state updater (which runs during reconciliation, after this effect
 		// body) closes over the right snapshot.
@@ -491,7 +570,7 @@ function CuePipelineEditorInner({
 			});
 		});
 		lastComputedPosRef.current = new Map(computedNodes.map((n) => [n.id, n.position]));
-	}, [computedNodes, visiblePipelines, pipelineState.selectedPipelineId, isDirty]);
+	}, [computedNodes, visiblePipelines, pipelineState.selectedPipelineId, activeScopeId, isDirty]);
 
 	const nodes = displayNodes;
 
@@ -531,6 +610,9 @@ function CuePipelineEditorInner({
 		const measuredWidths = new Map<string, number>();
 		for (const n of reactFlowInstance.getNodes()) {
 			if (typeof n.width !== 'number' || n.width <= 0) continue;
+			// A cluster box is keyed by session id, not a canonical node id, and
+			// its width is derived from the cards rather than measured content.
+			if (n.type === 'agent-cluster') continue;
 			const sep = n.id.indexOf(':');
 			measuredWidths.set(sep === -1 ? n.id : n.id.slice(sep + 1), n.width);
 		}
@@ -544,11 +626,12 @@ function CuePipelineEditorInner({
 			setPipelineState((prev) => {
 				if (prev.selectedPipelineId === null) {
 					// All-Pipelines view: no edges between cards to cross, so both
-					// modes just pack the group cards into a tidy grid.
+					// modes just pack the group cards, one cluster per home agent.
 					const offsets = arrangePipelineGroups(
 						prev.pipelines,
 						stableYOffsetsRef.current,
-						measuredWidths
+						measuredWidths,
+						resolvePipelineHomes(prev.pipelines, graphSessions)
 					);
 					if (offsets.size === 0) return prev;
 					// Explicit re-layout that actually moves something: let the next
@@ -599,6 +682,7 @@ function CuePipelineEditorInner({
 			reactFlowInstance,
 			containerRef,
 			snapshotMeasuredWidths,
+			graphSessions,
 		]
 	);
 
@@ -661,7 +745,12 @@ function CuePipelineEditorInner({
 			rect && rect.width > 0 && rect.height > 0
 				? { width: rect.width, height: rect.height }
 				: { width: window.innerWidth, height: window.innerHeight };
-		const healed = beautifyPipelineLayouts(basePipelines, viewport, snapshotMeasuredWidths());
+		const healed = beautifyPipelineLayouts(
+			basePipelines,
+			viewport,
+			snapshotMeasuredWidths(),
+			resolvePipelineHomes(basePipelines, graphSessions)
+		);
 		const baseJson = JSON.stringify(basePipelines);
 		const healedJson = JSON.stringify(healed);
 		if (healedJson === baseJson) return;
@@ -683,6 +772,7 @@ function CuePipelineEditorInner({
 		persistLayout,
 		savedStateRef,
 		snapshotMeasuredWidths,
+		graphSessions,
 	]);
 
 	// ─── Collision guard: two nodes may never be drawn on top of each other ──
@@ -750,7 +840,7 @@ function CuePipelineEditorInner({
 	const arrangeConfirmMessage = useMemo(() => {
 		if (isAllPipelinesView) {
 			const count = pipelineState.pipelines.filter((p) => p.nodes.length > 0).length;
-			return `This will reposition all ${count} pipeline${count === 1 ? '' : 's'} into a tidy grid. Your current placement is preserved as ordering, just aligned. You can undo with Discard before saving.`;
+			return `This will group all ${count} pipeline${count === 1 ? '' : 's'} by the agent that owns them and pack each group into a tidy grid. Your current placement is preserved as ordering, just aligned. You can undo with Discard before saving.`;
 		}
 		const name = pipelineState.pipelines.find(
 			(p) => p.id === pipelineState.selectedPipelineId
@@ -857,9 +947,12 @@ function CuePipelineEditorInner({
 				pipelines={pipelineState.pipelines}
 				selectedPipelineId={pipelineState.selectedPipelineId}
 				selectPipeline={handleSelectPipeline}
-				scopeLabel={activeScope?.sessionName ?? null}
-				scopePipelineCount={visiblePipelines.length}
+				agentScopes={agentScopes}
+				activeScope={activeScope}
+				onSelectAgentScope={handleSelectAgentScope}
 				onClearScope={handleClearScope}
+				parentScope={parentScope}
+				onReturnToScope={handleReturnToScope}
 				createPipeline={createPipeline}
 				deletePipeline={deletePipeline}
 				renamePipeline={renamePipeline}
@@ -899,8 +992,12 @@ function CuePipelineEditorInner({
 				pipelineCount={pipelineState.pipelines.length}
 				createPipeline={createPipeline}
 				selectedPipelineId={pipelineState.selectedPipelineId}
-				pipelines={pipelineState.pipelines}
-				selectPipeline={selectPipeline}
+				// The legend lists what is drawn: a scoped view names only its own
+				// pipelines. Config panels read this too, but they only render in
+				// a single-pipeline view, where no scope applies and this is the
+				// full canonical list.
+				pipelines={visiblePipelines}
+				selectPipeline={handleSelectPipeline}
 				selectedNode={selectedNode}
 				selectedEdge={selectedEdge}
 				selectedNodeHasOutgoingEdge={selectedNodeHasOutgoingEdge}
@@ -929,7 +1026,9 @@ function CuePipelineEditorInner({
 				isLocked={isLocked}
 				setIsLocked={setIsLocked}
 				onTidy={() => setArrangeConfirmMode('tidy')}
-				onArrange={() => setArrangeConfirmMode('untangle')}
+				// A scoped view is packed on the fly and never saved, so there is
+				// nothing for Arrange to do there.
+				onArrange={activeScope ? undefined : () => setArrangeConfirmMode('untangle')}
 			/>
 
 			{arrangeConfirmMode !== null && (

@@ -684,6 +684,41 @@ describe('restoreSession - Corruption recovery', () => {
 		expect(restored!.state).not.toBe('error');
 	});
 
+	// An older build let closing the last file/terminal/browser tab strand an
+	// agent holding only a hidden consult tab: no chip, and the consult rendered.
+	it('heals an agent left with only a hidden consult tab', async () => {
+		const session = createMockSession({
+			aiTabs: [
+				{
+					id: 'consult-1',
+					agentSessionId: null,
+					name: null,
+					starred: false,
+					logs: [],
+					inputValue: '',
+					stagedImages: [],
+					createdAt: 0,
+					state: 'idle',
+					hidden: true,
+				},
+			],
+			activeTabId: '',
+			unifiedTabOrder: [{ type: 'ai', id: 'consult-1' }],
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.aiTabs).toHaveLength(2);
+		const fresh = restored!.aiTabs.find((t) => t.id !== 'consult-1')!;
+		expect(fresh.hidden).toBeFalsy();
+		expect(restored!.activeTabId).toBe(fresh.id);
+		expect(restored!.state).not.toBe('error');
+	});
+
 	it('sets up unifiedTabOrder for recovered session', async () => {
 		const session = createMockSession({ aiTabs: [], activeTabId: null });
 		const { result } = renderHook(() => useSessionRestoration());

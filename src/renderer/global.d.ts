@@ -847,6 +847,10 @@ interface MaestroAPI {
 			callback: (chatId: string, responseChannel: string) => void
 		) => () => void;
 		sendRemoteStopGroupChatResponse: (responseChannel: string, success: boolean) => void;
+		onRemoteArchiveGroupChat: (
+			callback: (chatId: string, archived: boolean, responseChannel: string) => void
+		) => () => void;
+		sendRemoteArchiveGroupChatResponse: (responseChannel: string, success: boolean) => void;
 		onRemoteSendGroupChatMessage: (
 			callback: (chatId: string, message: string, responseChannel: string) => void
 		) => () => void;
@@ -4001,6 +4005,11 @@ interface MaestroAPI {
 			query?: import('../shared/tokenUsage').TokenUsageQuery,
 			force?: boolean
 		) => Promise<import('../shared/tokenUsage').TokenUsageAggregate>;
+		// Progress of the long transcript scans behind the usage caches
+		getIndexingState: () => Promise<import('../shared/statsIndexing').StatsIndexingState>;
+		onIndexingUpdate: (
+			callback: (state: import('../shared/statsIndexing').StatsIndexingState) => void
+		) => () => void;
 		// Get aggregated stats for dashboard display
 		getAggregation: (
 			range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'

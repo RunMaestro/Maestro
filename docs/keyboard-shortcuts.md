@@ -208,6 +208,7 @@ If you scroll the tab strip away while the tab header still holds focus, the nex
 | Next Tab                  | `Cmd+Shift+]`           | `Ctrl+Shift+]`            |
 | Tab Switcher              | `Opt+Cmd+T`             | `Alt+Ctrl+T`              |
 | Rename Tab                | `Cmd+Shift+R`           | `Ctrl+Shift+R`            |
+| Rename Tab Group          | unassigned by default   | unassigned by default     |
 | Go to Tab 1-9             | `Cmd+1` through `Cmd+9` | `Ctrl+1` through `Ctrl+9` |
 | Go to Last Tab            | `Cmd+0`                 | `Ctrl+0`                  |
 

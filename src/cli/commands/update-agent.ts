@@ -33,6 +33,7 @@ interface UpdateAgentOptions {
 	sshCwd?: string;
 	syncHistoryToRemote?: string;
 	provider?: string;
+	convert?: boolean;
 	force?: boolean;
 	dryRun?: boolean;
 	acceptTranslationLimitations?: boolean;
@@ -249,6 +250,16 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 	}
 	if (options.dryRun && providerType === undefined)
 		emitError('--dry-run requires --provider.', options);
+	// Converting memory and session history is opt-in, as in Edit Agent. Every
+	// translation option only means something for a conversion, so it implies one.
+	const converting =
+		options.convert === true ||
+		options.dryRun === true ||
+		options.acceptTranslationLimitations === true ||
+		options.force === true ||
+		options.migration !== undefined ||
+		options.migrationPlan !== undefined ||
+		(options.translationResource?.length ?? 0) > 0;
 	if (
 		options.migration &&
 		!['plan', 'apply', 'status', 'recover', 'rollback'].includes(options.migration)
@@ -390,6 +401,45 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 					throw new Error(result.error || 'Failed to update agent config');
 				}
 				applied.config = configPatch;
+			}
+
+			if (providerType !== undefined && !converting) {
+				const result = await client.sendCommand<{
+					success: boolean;
+					error?: string;
+					notices?: string[];
+				}>(
+					{
+						type: 'provider_translation',
+						sessionId,
+						configPatch: { toolType: providerType, migrationAction: 'switch' },
+					},
+					'provider_translation_result'
+				);
+				const bridgeError = errorFrameMessage(result);
+				if (bridgeError)
+					throw new Error(
+						`${bridgeError}. Switching without conversion requires a matching desktop build.`
+					);
+				if (!result.success) throw new Error(result.error || 'Failed to switch provider');
+				if (options.json)
+					console.log(
+						JSON.stringify({
+							success: true,
+							agentId: sessionId,
+							provider: providerType,
+							converted: false,
+							notices: result.notices ?? [],
+						})
+					);
+				else {
+					console.log(formatSuccess(`Switched agent ${sessionId} to ${providerType}`));
+					console.log(
+						'  Memory and session history were not converted (pass --convert to opt in).'
+					);
+					for (const notice of result.notices ?? []) console.log(`  ${notice}`);
+				}
+				return;
 			}
 
 			if (providerType !== undefined || options.migration !== undefined) {

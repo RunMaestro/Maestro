@@ -50,7 +50,7 @@ interface TestAgent extends ProviderSwitchAgent {
 	executionQueue: TestQueuedItem[];
 	activeTabId: string;
 	unifiedTabOrder: Array<{ type: string; id: string }>;
-	closedTabHistory: Array<{ id: string }>;
+	closedTabHistory: Array<{ id: string; tab?: TestTab }>;
 	nudgeMessage?: string;
 	newSessionMessage?: string;
 	retryOnAvailabilityErrors?: boolean;
@@ -323,6 +323,37 @@ describe('switchAgentProvider', () => {
 		});
 	}
 
+	it('parks closed, snoozed, and inventoried tabs too, so reopening one never resumes the old provider', () => {
+		const agent = makeAgent('claude-code', {
+			closedTabHistory: [
+				{ id: 'closed-1', tab: makeTab({ id: 'closed', agentSessionId: 'claude-closed' }) },
+			],
+			snoozedTabs: [
+				{ type: 'ai', tab: makeTab({ id: 'snoozed', agentSessionId: 'claude-snoozed' }) },
+			],
+			providerTranslationTabInventory: [{ id: 'gone', agentSessionId: 'claude-gone' }],
+		});
+
+		const { agent: switched } = switchAgentProvider(agent, 'codex');
+
+		const closed = switched.closedTabHistory[0].tab!;
+		const snoozed = switched.snoozedTabs![0].tab;
+		const inventoried = switched.providerTranslationTabInventory![0];
+		for (const [tab, id] of [
+			[closed, 'claude-closed'],
+			[snoozed, 'claude-snoozed'],
+			[inventoried, 'claude-gone'],
+		] as const) {
+			expect(tab.agentSessionId).toBeNull();
+			expect(tab.providerSessions?.['claude-code']?.agentSessionId).toBe(id);
+		}
+		// And back again restores them.
+		const { agent: back } = switchAgentProvider(switched, 'claude-code');
+		expect(back.closedTabHistory[0].tab!.agentSessionId).toBe('claude-closed');
+		expect(back.snoozedTabs![0].tab.agentSessionId).toBe('claude-snoozed');
+		expect(back.providerTranslationTabInventory![0].agentSessionId).toBe('claude-gone');
+	});
+
 	it('switch A to B to A restores every tab provider session and every override byte for byte', () => {
 		const original = claudeAgent();
 		const originalJson = JSON.stringify(original);
@@ -490,7 +521,8 @@ describe('switchAgentProvider', () => {
 		// Tab structure, order, focus, and closed-tab history all survive.
 		expect(switched.activeTabId).toBe('tab-2');
 		expect(switched.unifiedTabOrder).toBe(original.unifiedTabOrder);
-		expect(switched.closedTabHistory).toBe(original.closedTabHistory);
+		// A new array (closed tabs are parked too), with the same entries.
+		expect(switched.closedTabHistory).toStrictEqual(original.closedTabHistory);
 		expect(switched.aiTabs).toHaveLength(3);
 	});
 

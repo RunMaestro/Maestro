@@ -19,11 +19,21 @@
  *                                          Claude Code skills, .mcp.json, CLAUDE.md
  * autorun/<agentId>/<filename>.md          Auto Run documents outside the workspace
  * claude-memory/<key>/<name>.md            Claude Code auto memory for a workspace
+ * local.json                               machine data, exact copies only (see below)
  * ```
+ *
+ * An EXACT COPY (`includeLocal`) also carries `local.json`
+ * ({@link CueBundleLocalData}): secret values, binary paths and the folders
+ * the agents lived in, so an agent exported, deleted and imported on the same
+ * machine comes back as it was. It is the one file allowed to name local
+ * paths, and an importer applies it only when asked.
  *
  * Keep this module runtime-agnostic: it is read by the exporter (main and
  * CLI), and later by an importer and any renderer surface that previews one.
  */
+
+import type { CodexTransport } from './codexTransport';
+import type { SessionInfo } from './types';
 
 /** Bump only on a breaking change to the archive layout or this manifest. */
 export const CUE_BUNDLE_VERSION = 1;
@@ -51,6 +61,9 @@ export const CUE_BUNDLE_LAYOUT_PATH = 'layout/pipeline.json';
  * under `workspaces/`.
  */
 export const CUE_BUNDLE_CLAUDE_MEMORY_DIR = 'claude-memory';
+
+/** Archive path of an exact copy's machine data ({@link CueBundleLocalData}). */
+export const CUE_BUNDLE_LOCAL_PATH = 'local.json';
 
 /** What a bundle captures: one visual pipeline, or one agent. */
 export type CueBundleKind = 'maestro-pipeline' | 'maestro-agent';
@@ -118,6 +131,56 @@ export interface CueBundleClaudeAssetSelection {
 	memory?: boolean;
 }
 
+/**
+ * Agent record fields only an exact copy carries, in `local.json`: each can
+ * hold a secret value or a path on the exporting machine. Applied verbatim,
+ * absent ones included (an absent field clears the importing agent's).
+ */
+export const CUE_BUNDLE_LOCAL_AGENT_FIELDS = [
+	// The agent's own record, verbatim: secrets and paths included, and absent
+	// when it used the provider's variables instead.
+	'customEnvVars',
+	'customEnvVarsDisabled',
+	'customPath',
+	'customProviderPath',
+	'maestroPPath',
+	'sessionSshRemoteConfig',
+	'additionalDirectories',
+	'worktreeConfig',
+	// Every other provider's parked settings (paths and env included).
+	'providerOverrides',
+	'bookmarked',
+] as const;
+
+export type CueBundleLocalAgentField = (typeof CUE_BUNDLE_LOCAL_AGENT_FIELDS)[number];
+
+/** One agent's entry in `local.json`. */
+export type CueBundleLocalAgent = Partial<Record<CueBundleLocalAgentField, unknown>> & {
+	/** Absolute working directory, kept when it sat outside the project root. */
+	cwd?: string;
+	/** Absolute Auto Run folder, kept when it sat outside the project root. */
+	autoRunFolderPath?: string;
+};
+
+/** Contents of `local.json`: what ties an exact copy to the machine it came from. */
+export interface CueBundleLocalData {
+	/** Workspace key -> the absolute folder it was on the exporting machine. */
+	workspaces: Record<string, string>;
+	/** Agent id -> its machine-bound fields. Every exported agent has an entry. */
+	agents: Record<string, CueBundleLocalAgent>;
+}
+
+/** Agents an import adds and replaces, handed to the program that owns them. */
+export interface CueBundleAgentChange {
+	created: SessionInfo[];
+	updated: SessionInfo[];
+	/**
+	 * The import applied an exact copy: an updated agent takes the
+	 * {@link CUE_BUNDLE_LOCAL_AGENT_FIELDS} too, absent ones clearing its own.
+	 */
+	exact?: boolean;
+}
+
 /** One agent the bundle carries settings for. */
 export interface CueBundleAgent {
 	/** The agent's id on the exporting machine. Subscriptions reference it. */
@@ -162,6 +225,16 @@ export interface CueBundleAgentSettings {
 	nudgeMessage?: string;
 	enableMaestroP?: boolean;
 	maestroPMode?: 'interactive' | 'dynamic';
+	/** Provenance of `customContextWindow`. */
+	contextWindowSource?: 'user-edited';
+	retryOnAvailabilityErrors?: boolean;
+	retryOnTokenExhaustion?: boolean;
+	codexAutoResetOnExhaustion?: boolean;
+	codexTransport?: CodexTransport;
+	/** File tree auto-refresh interval in seconds (0 = off). */
+	fileTreeAutoRefreshInterval?: number;
+	/** Document Graph layout preference. */
+	documentGraphLayout?: string;
 	env?: {
 		/** Non-secret variables, exported with their values. */
 		values?: Record<string, string>;
@@ -198,6 +271,11 @@ export interface CueBundleManifest {
 	/** Things the importer should tell the user (SSH agents, dangling references). */
 	warnings?: string[];
 	/**
+	 * Archive path of `local.json`, set only on an exact copy. Its presence
+	 * means the bundle holds secret values and local paths: not for sharing.
+	 */
+	local?: string;
+	/**
 	 * ISO-8601 export time. Omitted unless the caller pins one (`--created-at`
 	 * or `SOURCE_DATE_EPOCH`), so two exports of the same data are identical.
 	 */
@@ -224,8 +302,25 @@ export const CUE_BUNDLE_AGENT_FIELDS = [
 	'nudgeMessage',
 	'enableMaestroP',
 	'maestroPMode',
+	'contextWindowSource',
+	'retryOnAvailabilityErrors',
+	'retryOnTokenExhaustion',
+	'codexAutoResetOnExhaustion',
+	'codexTransport',
+	'fileTreeAutoRefreshInterval',
+	'documentGraphLayout',
 	'customEnvVars',
 	// Set to exactly the names the bundle's agent declares, and cleared when it
 	// declares none, on the desktop path as on the file path.
 	'requiredSecrets',
 ] as const;
+
+/** Default file name for a bundle of `name`: `nightly-review.maestro-bundle.zip`. */
+export function bundleFileName(name: string): string {
+	const slug =
+		name
+			.toLowerCase()
+			.replace(/[^a-z0-9]+/g, '-')
+			.replace(/^-+|-+$/g, '') || 'bundle';
+	return `${slug}.maestro-bundle.zip`;
+}

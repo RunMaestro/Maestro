@@ -2835,6 +2835,52 @@ describe('useMainKeyboardHandler', () => {
 
 			expect(mockSetRenameTabModalOpen).not.toHaveBeenCalled();
 		});
+
+		it('renameTabGroup renames the active group itself, not its focused pane', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			const mockSetRenameTabId = vi.fn();
+			const mockSetRenameTabInitialName = vi.fn();
+			const mockSetRenameTabModalOpen = vi.fn();
+
+			result.current.keyboardHandlerRef.current = createTiledGroupRenameContext({
+				isTabShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'renameTabGroup',
+				setRenameTabId: mockSetRenameTabId,
+				setRenameTabInitialName: mockSetRenameTabInitialName,
+				setRenameTabModalOpen: mockSetRenameTabModalOpen,
+			});
+
+			pressRenameShortcut();
+
+			expect(mockSetRenameTabId).toHaveBeenCalledWith('group-1');
+			expect(mockSetRenameTabInitialName).toHaveBeenCalledWith('Group: Terminal 1');
+			expect(mockSetRenameTabModalOpen).toHaveBeenCalledWith(true);
+		});
+
+		it('renameTabGroup does nothing when no tab group is active', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			const mockSetRenameTabModalOpen = vi.fn();
+
+			result.current.keyboardHandlerRef.current = createTiledGroupRenameContext({
+				activeSession: {
+					id: 'session-1',
+					inputMode: 'ai',
+					aiTabs: [{ id: 'ai-tab-1', name: 'AI Tab 1', logs: [] }],
+					activeTabId: 'ai-tab-1',
+					terminalTabs: [],
+					tabGroups: [],
+				},
+				isTabShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'renameTabGroup',
+				setRenameTabId: vi.fn(),
+				setRenameTabInitialName: vi.fn(),
+				setRenameTabModalOpen: mockSetRenameTabModalOpen,
+			});
+
+			pressRenameShortcut();
+
+			expect(mockSetRenameTabModalOpen).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('Cmd+E markdown toggle (toggleMarkdownMode)', () => {

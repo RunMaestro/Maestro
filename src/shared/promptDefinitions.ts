@@ -390,6 +390,19 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		description: 'Wizard-only file restrictions (writes limited to Auto Run folder)',
 		category: 'includes',
 	},
+	{
+		id: '_rich-chat-rendering',
+		filename: '_rich-chat-rendering.md',
+		description:
+			'What the chat renderer draws (Mermaid, inline SVG, images, KaTeX, callouts) and what it strips',
+		category: 'includes',
+	},
+	{
+		id: '_wizard-rich-replies',
+		filename: '_wizard-rich-replies.md',
+		description: 'Tells a wizard to draw mockups and diagrams inside its JSON `message`',
+		category: 'includes',
+	},
 ];
 
 /**
