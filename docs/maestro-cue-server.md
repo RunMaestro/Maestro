@@ -119,7 +119,7 @@ The image runs as the `maestro` user under `tini`, with git and the GitHub CLI. 
 
 Use named volumes (`maestro-home` and `maestro-work` below). They outlive the container, so logins and imported agents survive a rebuild of the image.
 
-`packaging/server/compose.yaml` has the same setup for Docker Compose. Put `maestro.env` beside it and run `docker compose up -d --build` from that folder once the steps below are done. It gives the container and the volumes the names this page uses (`maestro-cue`, `maestro-home` and `maestro-work`), so the `docker run`, `docker exec` and `docker stop` commands here work on a Compose stack as written.
+`packaging/server/compose.yaml` has the same setup for Docker Compose. Put `maestro.env` beside it and run `docker compose up -d --build` from that folder once the steps below are done. It gives the container and the volumes the names this page uses (`maestro-cue`, `maestro-home` and `maestro-work`), so the `docker run`, `docker exec` and `docker stop` commands here work on a Compose stack as written. The exception is file secrets: a plain `docker run` does not see the files Compose mounts in `/run/secrets`, so a command that needs them (the readiness check, an on-demand run) is also given as `docker compose run`.
 
 Compose reads `AGENT_CLIS` from your shell or from a `.env` file beside `compose.yaml` (not from `maestro.env`, which goes to the container), and builds Claude Code alone when it is unset:
 
@@ -327,11 +327,16 @@ docker run --rm -v maestro-home:/var/lib/maestro maestro-cue list agents
 # VM, with the service's env file loaded
 sudo -H -u maestro sh -c 'set -a; . /etc/maestro/maestro.env; set +a; exec maestro-cli cue engine check'
 
-# Container
-docker run --rm --env-file maestro.env \
+# Container started with docker run
+docker run --rm --ulimit core=0 --env-file maestro.env \
   -v maestro-home:/var/lib/maestro -v maestro-work:/srv/maestro \
   maestro-cue cue engine check
+
+# Compose, from the folder with compose.yaml
+docker compose run --rm maestro-cue cue engine check
 ```
+
+- **Secrets in Compose files.** `docker compose run` starts a one-off container with the service's `env_file`, volumes, secrets and `ulimits`, so the check sees the secrets mounted in `/run/secrets` as the engine does. It publishes no ports and gets a name of its own, so it also runs while the engine is up. A plain `docker run` on a Compose install sees none of those files and reports them as missing.
 
 - **Secrets in credential files.** On a VM, `LoadCredential=` files are visible to the service alone, so a check from a shell reports them as missing. The service runs the same check when it starts (`--require-ready`) and logs every gap it still finds. To run the check with the service's credentials before you start it, use `systemd-run` with the unit's user, env file and one `LoadCredential=` per drop-in line:
 
@@ -432,6 +437,12 @@ With no engine container running, use `docker run --rm` instead:
 docker run --rm --ulimit core=0 --env-file maestro.env \
   -v maestro-home:/var/lib/maestro -v maestro-work:/srv/maestro \
   maestro-cue send <agent> "Reply with the word OK" --read-only
+```
+
+On a Compose install with file secrets, run it from the compose folder so the agent gets them:
+
+```bash
+docker compose run --rm maestro-cue send <agent> "Reply with the word OK" --read-only
 ```
 
 How an on-demand run differs from an engine run:
