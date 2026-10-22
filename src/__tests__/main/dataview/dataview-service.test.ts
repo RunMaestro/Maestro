@@ -965,9 +965,13 @@ describe('DataviewJS trust (D3, DV-12, D8)', () => {
 		options: Partial<ConstructorParameters<typeof DataviewService>[0]> = {}
 	) {
 		return new DataviewService({
-			resolveRoot: async (_filePath: string, agent: { agentCwd: string }) => {
+			// A trailing separator, as a caller may hand one over; a remote root is POSIX on every host.
+			resolveRoot: async (
+				_filePath: string,
+				agent: { agentCwd: string; sshRemoteId?: string | null }
+			) => {
 				resolved++;
-				return `${agent.agentCwd}${path.sep}`;
+				return `${agent.agentCwd}${agent.sshRemoteId ? path.posix.sep : path.sep}`;
 			},
 			resolveAgent: (agentId) =>
 				agentId === 'remote'

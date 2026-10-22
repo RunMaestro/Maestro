@@ -341,13 +341,8 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// Register Core Prompts handlers (no dependencies needed)
 	registerPromptsHandlers();
 
-	// Register project Memory handlers (Claude Code per-project memory viewer)
-	registerMemoryHandlers({
-		sessionsStore: deps.sessionsStore,
-		settingsStore: deps.settingsStore,
-		agentConfigsStore: deps.agentConfigsStore,
-		getAgentDetector: deps.getAgentDetector,
-	});
+	// Register agent Memory handlers (Claude Code per project, Codex per account)
+	registerMemoryHandlers();
 
 	// Register tab lifecycle handlers (renderer -> main tab-close notification)
 	registerTabsHandlers();

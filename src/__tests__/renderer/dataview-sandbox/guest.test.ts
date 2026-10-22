@@ -89,10 +89,13 @@ interface Harness {
 	evaluate(sources: string[], options?: { thisPath?: string }): Promise<SandboxEvalResultMessage[]>;
 }
 
-/** A guest and a fake host over the fixture vault snapshot. */
-function createHarness(): Harness {
+/**
+ * A guest and a fake host over the fixture vault snapshot. `readText` stands in for the host's file
+ * read, so a test can serve the bytes another checkout would have (CRLF on Windows).
+ */
+function createHarness(readText: (relPath: string) => string = fixtureText): Harness {
 	const snapshot: SandboxIndexSnapshot = fixtureSnapshot();
-	const hostIndex = PageIndex.fromSnapshot(snapshot, async (relPath) => fixtureText(relPath));
+	const hostIndex = PageIndex.fromSnapshot(snapshot, async (relPath) => readText(relPath));
 	const root = document.createElement('div');
 	document.body.append(root);
 	const sent: SandboxGuestMessage[] = [];
@@ -105,7 +108,7 @@ function createHarness(): Harness {
 				guest.receive({ type: 'query.dql.result', requestId: message.requestId, result })
 			);
 		} else if (message.type === 'io.load') {
-			const text = snapshot.files.includes(message.path) ? fixtureText(message.path) : null;
+			const text = snapshot.files.includes(message.path) ? readText(message.path) : null;
 			void guest.receive({ type: 'io.load.result', requestId: message.requestId, text });
 		}
 	};
@@ -337,7 +340,7 @@ describe('the dv object', () => {
 				"const rows = await dv.io.csv('data/people.csv');",
 				"dv.table(['Name', 'Company'], rows.map((r) => [r.name, r.company]));",
 				"const text = await dv.io.load('data/people.csv');",
-				"globalThis.__captured = { first: text.split('\\n')[0], outside: await dv.io.load('../outside.md'), hidden: await dv.io.load('.obsidian/app.json'), normalized: dv.io.normalize('people.csv', 'data/x.md') };",
+				"globalThis.__captured = { first: text.split(/\\r?\\n/)[0], outside: await dv.io.load('../outside.md'), hidden: await dv.io.load('.obsidian/app.json'), normalized: dv.io.normalize('people.csv', 'data/x.md') };",
 			].join('\n'),
 			{ thisPath: 'Scripts/JS Demo.md' }
 		);
@@ -368,6 +371,29 @@ describe('the dv object', () => {
 			'views/sample/view.css',
 			'views/sample/view.js',
 		]);
+	});
+
+	it('reads a CRLF file (a Windows checkout) as clean rows, and dv.io.load returns it unchanged', async () => {
+		harness.root.remove();
+		harness = createHarness((relPath) => fixtureText(relPath).replace(/\r?\n/g, '\r\n'));
+		const { block, outcome } = await harness.run(
+			[
+				"const rows = await dv.io.csv('data/people.csv');",
+				"dv.table(['Name', 'Company'], rows.map((r) => [r.name, r.company]));",
+				"globalThis.__captured = await dv.io.load('data/people.csv');",
+			].join('\n')
+		);
+		expect(outcome).toMatchObject({ type: 'render.done' });
+		expect(
+			Array.from(block.querySelectorAll('tbody tr'), (row) => texts(row.querySelectorAll('td')))
+		).toEqual([
+			['Rami Example', 'Example Corp'],
+			['Dana Sample', 'Sample Labs'],
+		]);
+		// Upstream's dv.io.load is the raw file text; only the CSV parser drops the line endings.
+		expect(harness.realm.__captured).toBe(
+			'name,company\r\nRami Example,Example Corp\r\nDana Sample,Sample Labs\r\n'
+		);
 	});
 
 	it('fails the run when a render call gets bad rows, even when the script does not await it', async () => {

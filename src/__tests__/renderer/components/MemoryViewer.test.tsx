@@ -87,6 +87,25 @@ interface MemoryFile {
 /** In-memory stand-in for the project's memory directory. */
 let files: MemoryFile[] = [];
 
+/** Claude's store: one flat directory per project, linked through MEMORY.md. */
+const CLAUDE_LAYOUT = { scope: 'project', nested: false, newEntryDir: '', tracksLinks: true };
+/** Codex's store: one nested directory per account; people add ad-hoc notes. */
+const CODEX_LAYOUT = {
+	scope: 'account',
+	nested: true,
+	newEntryDir: 'extensions/ad_hoc/notes',
+	tracksLinks: false,
+};
+let layout: Record<string, unknown> = CLAUDE_LAYOUT;
+/** Files the main process reports as `protected` (the index, generated files). */
+let protectedNames = new Set(['MEMORY.md']);
+
+/** What every memory call for the default Claude agent is addressed to. */
+const CLAUDE_TARGET = expect.objectContaining({
+	projectPath: '/test/project',
+	toolType: 'claude-code',
+});
+
 const memoryApi = {
 	list: vi.fn(async () => ({
 		success: true,
@@ -97,6 +116,7 @@ const memoryApi = {
 			size: f.body.length,
 			createdAt: '2026-01-01T00:00:00.000Z',
 			modifiedAt: '2026-01-01T00:00:00.000Z',
+			...(protectedNames.has(f.name) ? { protected: true } : {}),
 		})),
 		stats: {
 			fileCount: files.length,
@@ -104,13 +124,14 @@ const memoryApi = {
 			lastModifiedAt: '2026-01-01T00:00:00.000Z',
 			totalBytes: files.reduce((n, f) => n + f.body.length, 0),
 		},
+		layout,
 	})),
-	read: vi.fn(async (_project: string, name: string) => ({
+	read: vi.fn(async (_target: unknown, name: string) => ({
 		success: true,
 		content: files.find((f) => f.name === name)?.body ?? '',
 	})),
 	// Mirrors searchMemoryEntries: name OR body, first matching line as snippet.
-	search: vi.fn(async (_project: string, query: string) => {
+	search: vi.fn(async (_target: unknown, query: string) => {
 		const needle = query.toLowerCase();
 		return {
 			success: true,
@@ -129,7 +150,7 @@ const memoryApi = {
 	// The viewer asks for orphans on every list change; omitting it here leaves
 	// an unhandled rejection behind every test in this file.
 	orphans: vi.fn(async () => ({ success: true, orphans: [], brokenLinks: [] })),
-	delete: vi.fn(async (_project: string, name: string) => {
+	delete: vi.fn(async (_target: unknown, name: string) => {
 		files = files.filter((f) => f.name !== name);
 		return { success: true };
 	}),
@@ -138,11 +159,14 @@ const memoryApi = {
 	getPath: vi.fn(async () => ({ success: true, path: '/memory' })),
 };
 
-function renderViewer(onClose = vi.fn()) {
+function renderViewer(
+	onClose = vi.fn(),
+	sessionOverrides: Parameters<typeof createMockSession>[0] = {}
+) {
 	const session = createMockSession({
-		id: 'memory-agent',
 		projectRoot: '/test/project',
 		toolType: 'claude-code',
+		...sessionOverrides,
 	});
 	const utils = render(
 		<MemoryViewer theme={mockTheme} activeSession={session} onClose={onClose} />
@@ -161,6 +185,8 @@ describe('MemoryViewer', () => {
 		vi.clearAllMocks();
 		installLocalStorageMock();
 		registeredOnEscape = undefined;
+		layout = CLAUDE_LAYOUT;
+		protectedNames = new Set(['MEMORY.md']);
 		files = [
 			{ name: 'MEMORY.md', body: '# Memory index' },
 			{ name: 'project_worktrees.md', body: 'Worktrees have no node_modules.' },
@@ -204,18 +230,12 @@ describe('MemoryViewer', () => {
 	it('moves the editor to the top hit when the filter hides the current file', async () => {
 		renderViewer();
 		// Opens on MEMORY.md, which does not match.
-		await waitFor(() =>
-			expect(memoryApi.read).toHaveBeenCalledWith('/test/project', 'MEMORY.md', 'memory-agent')
-		);
+		await waitFor(() => expect(memoryApi.read).toHaveBeenCalledWith(CLAUDE_TARGET, 'MEMORY.md'));
 
 		await typeFilter('Worktrees');
 
 		await waitFor(() =>
-			expect(memoryApi.read).toHaveBeenCalledWith(
-				'/test/project',
-				'project_worktrees.md',
-				'memory-agent'
-			)
+			expect(memoryApi.read).toHaveBeenCalledWith(CLAUDE_TARGET, 'project_worktrees.md')
 		);
 	});
 
@@ -249,11 +269,7 @@ describe('MemoryViewer', () => {
 		});
 
 		await waitFor(() =>
-			expect(memoryApi.read).toHaveBeenCalledWith(
-				'/test/project',
-				'project_worktrees.md',
-				'memory-agent'
-			)
+			expect(memoryApi.read).toHaveBeenCalledWith(CLAUDE_TARGET, 'project_worktrees.md')
 		);
 	});
 
@@ -597,7 +613,7 @@ describe('MemoryViewer', () => {
 		await confirmLastModal();
 
 		await waitFor(() => expect(listRowNames()).toEqual(['MEMORY.md', 'user_role.md']));
-		expect(memoryApi.read).toHaveBeenCalledWith('/test/project', 'user_role.md', 'memory-agent');
+		expect(memoryApi.read).toHaveBeenCalledWith(CLAUDE_TARGET, 'user_role.md');
 	});
 
 	it('falls back to the previous memory when the last one is deleted', async () => {
@@ -608,11 +624,7 @@ describe('MemoryViewer', () => {
 		await confirmLastModal();
 
 		await waitFor(() => expect(listRowNames()).toEqual(['MEMORY.md', 'project_worktrees.md']));
-		expect(memoryApi.read).toHaveBeenCalledWith(
-			'/test/project',
-			'project_worktrees.md',
-			'memory-agent'
-		);
+		expect(memoryApi.read).toHaveBeenCalledWith(CLAUDE_TARGET, 'project_worktrees.md');
 	});
 
 	it('refuses to delete the MEMORY.md index', async () => {
@@ -622,7 +634,7 @@ describe('MemoryViewer', () => {
 		await fireDelete('MEMORY.md');
 
 		expect(mockOpenModal).not.toHaveBeenCalled();
-		expect(await screen.findByText(/MEMORY.md is the index/)).toBeInTheDocument();
+		expect(await screen.findByText(/MEMORY.md is managed by the agent/)).toBeInTheDocument();
 	});
 
 	describe('edit / preview mode', () => {
@@ -730,6 +742,105 @@ describe('MemoryViewer', () => {
 			// The view switch acts on the pane rather than the list, so it sits
 			// apart from the three that narrow it.
 			expect(before(graph, screen.getByTestId('memory-view-mode'))).toBe(true);
+		});
+	});
+
+	it("addresses every call to the agent's own account, not just its provider", async () => {
+		// The agent id is what lets main resolve CLAUDE_CONFIG_DIR / CODEX_HOME;
+		// without it a second-account agent is shown the default account's store.
+		renderViewer();
+		await waitFor(() => expect(listRowNames()).toHaveLength(3));
+		expect(memoryApi.list).toHaveBeenCalledWith({
+			projectPath: '/test/project',
+			toolType: 'claude-code',
+			agentId: 'session-1',
+		});
+	});
+
+	describe('Codex (account-wide, nested store)', () => {
+		const rollouts = Array.from({ length: 25 }, (_, i) => ({
+			name: `rollout_summaries/2026-10-${String(i + 1).padStart(2, '0')}-run.md`,
+			body: `Rollout ${i + 1}`,
+		}));
+
+		beforeEach(() => {
+			layout = CODEX_LAYOUT;
+			protectedNames = new Set(['MEMORY.md', 'memory_summary.md']);
+			files = [
+				{ name: 'MEMORY.md', body: '# Task Group: widgets' },
+				{ name: 'memory_summary.md', body: '## User Profile' },
+				{ name: 'extensions/ad_hoc/notes/prefers-tabs.md', body: 'Prefers tabs.' },
+				{ name: 'skills/release/SKILL.md', body: 'Release steps.' },
+				...rollouts,
+			];
+		});
+
+		const renderCodex = () => renderViewer(vi.fn(), { toolType: 'codex' });
+
+		it('says the store is shared by every project rather than naming one', async () => {
+			renderCodex();
+			expect(
+				await screen.findByText(/Memories \(shared by every project on this account\)/)
+			).toBeInTheDocument();
+		});
+
+		it('groups entries by directory, core first, then the user notes', async () => {
+			renderCodex();
+			await waitFor(() => expect(listRowNames()).toContain('skills/release/SKILL.md'));
+			const headers = Array.from(document.querySelectorAll('.dual-pane-category-header')).map(
+				(el) => el.textContent ?? ''
+			);
+			expect(headers[0]).toContain('Core');
+			expect(headers[1]).toContain('Your notes');
+			// Rows drop the prefix their group header already states.
+			expect(screen.getByText('prefers-tabs.md')).toBeInTheDocument();
+		});
+
+		it('starts a large generated group collapsed so it does not bury the rest', async () => {
+			renderCodex();
+			await waitFor(() => expect(listRowNames()).toContain('skills/release/SKILL.md'));
+			expect(listRowNames().some((n) => n.startsWith('rollout_summaries/'))).toBe(false);
+		});
+
+		it('expands every group while a filter is active', async () => {
+			renderCodex();
+			await waitFor(() => expect(listRowNames()).toContain('skills/release/SKILL.md'));
+			await typeFilter('Rollout 3');
+			await waitFor(() => expect(listRowNames()).toContain('rollout_summaries/2026-10-03-run.md'));
+		});
+
+		it('creates a new memory as an ad-hoc note Codex folds in', async () => {
+			renderCodex();
+			await waitFor(() => expect(listRowNames()).toContain('skills/release/SKILL.md'));
+
+			const { fireEvent, act } = await import('@testing-library/react');
+			await act(async () => {
+				fireEvent.click(screen.getByTitle('Create a new memory file'));
+			});
+			const input = await screen.findByDisplayValue('new-note.md');
+			await act(async () => {
+				fireEvent.keyDown(input, { key: 'Enter' });
+			});
+
+			await waitFor(() =>
+				expect(memoryApi.create).toHaveBeenCalledWith(
+					expect.objectContaining({ toolType: 'codex' }),
+					'extensions/ad_hoc/notes/new-note.md',
+					expect.stringContaining('# Note title')
+				)
+			);
+		});
+
+		it('refuses to delete a file Codex regenerates', async () => {
+			renderCodex();
+			await waitFor(() => expect(listRowNames()).toContain('memory_summary.md'));
+
+			await fireDelete('memory_summary.md');
+
+			expect(mockOpenModal).not.toHaveBeenCalled();
+			expect(
+				await screen.findByText(/memory_summary.md is managed by the agent/)
+			).toBeInTheDocument();
 		});
 	});
 });

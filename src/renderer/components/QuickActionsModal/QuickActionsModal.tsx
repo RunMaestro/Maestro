@@ -88,6 +88,7 @@ import {
 	buildSessionJumpCommands,
 	buildSessionManagementCommands,
 } from './commands/sessionCommands';
+import { buildStarredSessionCommands } from './commands/starredSessionCommands';
 import { buildSupportCommands } from './commands/supportCommands';
 import { buildNewTabCommands, buildTabCommands } from './commands/tabCommands';
 import { buildTabGroupCommands } from './commands/tabGroupCommands';
@@ -570,6 +571,12 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		jumpSlots,
 	});
 
+	// Starred Sessions: the Left Bar's list (open tabs + closed starred sessions),
+	// published to sidebarNavStore and activated exactly like clicking the row.
+	const starredItems = useSidebarNavStore((s) => s.starredItems);
+	const activateStarredItem = useSidebarNavStore((s) => s.activateStarredItem);
+	const starredActions = buildStarredSessionCommands({ starredItems, activateStarredItem });
+
 	const groupChatActions = buildGroupChatJumpCommands({
 		groupChats,
 		onOpenGroupChat,
@@ -578,6 +585,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 
 	const mainActions: QuickAction[] = [
 		...sessionActions,
+		...starredActions,
 		...groupChatActions,
 		...buildMediaPlayerCommands({
 			canOpenMediaPlayer,

@@ -1,44 +1,59 @@
 /**
- * Memory Manager - read/write project memory files.
+ * Memory Manager - read/write a provider's persistent memory files.
  *
- * Claude Code stores per-project persistent memory at:
- *   ~/.claude/projects/<encoded-path>/memory/
- *     ├── MEMORY.md                 (index, one line per entry)
- *     └── <name>.md                 (individual entries w/ YAML frontmatter)
+ * Two providers keep a memory store Maestro can browse, and they lay it out
+ * differently, so every operation here runs against a `MemoryLayout` rather
+ * than a hard-coded path:
  *
- * where <encoded-path> is the project's absolute path with every
- * non-alphanumeric character replaced by '-' (see encodeClaudeProjectPath).
+ *   Claude Code - one store PER PROJECT, flat:
+ *     <CLAUDE_CONFIG_DIR>/projects/<encoded-path>/memory/
+ *       ├── MEMORY.md                 (index, one line per entry)
+ *       └── <name>.md                 (individual entries w/ YAML frontmatter)
+ *     where <encoded-path> is the project's absolute path with every
+ *     non-alphanumeric character replaced by '-' (see resolveClaudeMemoryPath).
  *
- * This module exposes list / read / write / create / delete / stats
- * operations over that directory. It is used by the Memory Viewer UI.
+ *   Codex - one store PER ACCOUNT, nested, written by Codex's own consolidation:
+ *     <CODEX_HOME>/memories/
+ *       ├── MEMORY.md, memory_summary.md, raw_memories.md   (generated)
+ *       ├── rollout_summaries/*.md                           (one per session)
+ *       ├── skills/<name>/*.md
+ *       └── extensions/<name>/...                            (ad_hoc notes, ...)
+ *     A person adds to it through `extensions/ad_hoc/notes/`, which Codex folds
+ *     into the generated files on its next pass, so that is where a new memory
+ *     is created.
+ *
+ * Which account dir a store lives under is resolved by the caller (see
+ * `memory-location.ts`); this module is pure filesystem work over the layout.
  */
 
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import * as os from 'os';
 import {
 	resolveClaudeMemoryPath,
 	analyzeMemoryLinks,
 } from '../shared/maestro-lib/translation/memory';
+import {
+	MEMORY_INDEX_FILE,
+	type MemoryEntry,
+	type MemoryLayoutInfo,
+	type MemorySearchMatch,
+	type MemoryStats,
+} from '../shared/agentMemory';
 
-export interface MemoryEntry {
-	name: string; // filename, e.g. "MEMORY.md" or "user_role.md"
-	size: number; // bytes
-	createdAt: string; // ISO8601
-	modifiedAt: string; // ISO8601
-}
+export type { MemoryEntry, MemoryStats, MemorySearchMatch, MemoryLayoutInfo };
+export { MEMORY_INDEX_FILE };
 
-export interface MemoryStats {
-	fileCount: number;
-	firstCreatedAt: string | null;
-	lastModifiedAt: string | null;
-	totalBytes: number;
-}
-
-export interface MemorySearchMatch {
-	name: string; // filename of the matching entry
-	matchedName: boolean; // the query matched the filename itself
-	snippet?: string; // first matching body line, trimmed and capped
+/**
+ * Where a provider keeps its memory and how the viewer may treat it.
+ *
+ * `tracksLinks` is false for Codex: its index names rollout files in plain
+ * prose, so a link check there would report every file as unlinked.
+ */
+export interface MemoryLayout extends MemoryLayoutInfo {
+	/** Absolute path of the memory root. */
+	directoryPath: string;
+	/** Whether the viewer may delete this entry. */
+	isProtected: (name: string) => boolean;
 }
 
 export interface MemoryListResult {
@@ -46,6 +61,7 @@ export interface MemoryListResult {
 	exists: boolean;
 	entries: MemoryEntry[];
 	stats: MemoryStats;
+	layout: MemoryLayoutInfo;
 }
 
 /**
@@ -67,42 +83,106 @@ export interface OrphanMemoryReport {
 	brokenLinks: { source: string; target: string }[];
 }
 
+/** Files Codex regenerates on every consolidation pass. */
+const CODEX_GENERATED_FILES = new Set([MEMORY_INDEX_FILE, 'memory_summary.md', 'raw_memories.md']);
+
 /** Longest body excerpt a search match carries back to the list row. */
 const SNIPPET_MAX_CHARS = 120;
 
-/** Resolve the memory directory path for a given project. */
-export function getMemoryDirectoryPath(
-	projectPath: string,
-	agentId: string = 'claude-code',
-	homeDir?: string,
-	directoryOverride?: string
-): string {
-	if (directoryOverride) return directoryOverride;
-	if (agentId !== 'claude-code') {
-		throw new Error(`Memory viewer is not supported for agent "${agentId}"`);
+/**
+ * The memory layout for a provider, given the account dir its agent runs under
+ * (`CLAUDE_CONFIG_DIR` / `CODEX_HOME`, already resolved).
+ */
+export function memoryLayoutFor(
+	toolType: string,
+	options: { projectPath: string; accountDir: string }
+): MemoryLayout {
+	switch (toolType) {
+		case 'claude-code':
+			return {
+				directoryPath: resolveClaudeMemoryPath(options.projectPath, options.accountDir),
+				scope: 'project',
+				nested: false,
+				newEntryDir: '',
+				tracksLinks: true,
+				isProtected: (name) => name === MEMORY_INDEX_FILE,
+			};
+		case 'codex':
+			return {
+				directoryPath: path.join(options.accountDir, 'memories'),
+				scope: 'account',
+				nested: true,
+				newEntryDir: 'extensions/ad_hoc/notes',
+				tracksLinks: false,
+				// An extension's instructions.md is what tells Codex how to read
+				// that extension, so deleting it silently disables the extension.
+				isProtected: (name) =>
+					CODEX_GENERATED_FILES.has(name) || /^extensions\/[^/]+\/instructions\.md$/.test(name),
+			};
+		default:
+			throw new Error(`Memory viewer is not supported for agent "${toolType}"`);
 	}
-	return resolveClaudeMemoryPath(projectPath, path.join(homeDir ?? os.homedir(), '.claude'));
 }
 
-function assertSafeFilename(filename: string): void {
-	if (!filename || filename.includes('/') || filename.includes('\\') || filename.includes('..')) {
+function layoutInfo(layout: MemoryLayout): MemoryLayoutInfo {
+	return {
+		scope: layout.scope,
+		nested: layout.nested,
+		newEntryDir: layout.newEntryDir,
+		tracksLinks: layout.tracksLinks,
+	};
+}
+
+/**
+ * Resolve an entry name to an absolute path inside the memory root, refusing
+ * anything that could reach outside it. A nested layout accepts `/`-separated
+ * segments; no layout accepts `..`, a backslash, an empty segment, or a dot
+ * segment (`.git` lives in the Codex root and is not a memory).
+ */
+function resolveEntryPath(layout: MemoryLayout, filename: string): string {
+	const segments = filename.split('/');
+	const unsafe =
+		!filename ||
+		filename.includes('\\') ||
+		(!layout.nested && segments.length > 1) ||
+		segments.some((s) => !s || s.startsWith('.'));
+	if (unsafe) {
 		throw new Error(`Unsafe memory filename: ${filename}`);
 	}
 	if (!filename.toLowerCase().endsWith('.md')) {
 		throw new Error(`Memory filenames must end with .md: ${filename}`);
 	}
+	return path.join(layout.directoryPath, ...segments);
 }
 
-export async function listMemoryEntries(
-	projectPath: string,
-	agentId: string = 'claude-code',
-	homeDir?: string,
-	directoryOverride?: string
-): Promise<MemoryListResult> {
-	const directoryPath = getMemoryDirectoryPath(projectPath, agentId, homeDir, directoryOverride);
+/** Every `.md` file under the root, as `/`-separated relative names. */
+async function collectMarkdownNames(layout: MemoryLayout): Promise<string[]> {
+	const names: string[] = [];
+	const walk = async (relDir: string): Promise<void> => {
+		const dirents = await fs.readdir(path.join(layout.directoryPath, ...relDir.split('/')), {
+			withFileTypes: true,
+		});
+		for (const dirent of dirents) {
+			// Dot entries are tooling (`.git`, `.DS_Store`), never memories.
+			if (dirent.name.startsWith('.')) continue;
+			const rel = relDir ? `${relDir}/${dirent.name}` : dirent.name;
+			if (dirent.isDirectory()) {
+				// Symlinked directories are not followed: they are how a loop gets in.
+				if (layout.nested) await walk(rel);
+			} else if (dirent.name.toLowerCase().endsWith('.md')) {
+				names.push(rel);
+			}
+		}
+	};
+	await walk('');
+	return names;
+}
+
+export async function listMemoryEntries(layout: MemoryLayout): Promise<MemoryListResult> {
+	const { directoryPath } = layout;
 	let names: string[];
 	try {
-		names = await fs.readdir(directoryPath);
+		names = await collectMarkdownNames(layout);
 	} catch (err: unknown) {
 		if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
 			return {
@@ -110,21 +190,20 @@ export async function listMemoryEntries(
 				exists: false,
 				entries: [],
 				stats: { fileCount: 0, firstCreatedAt: null, lastModifiedAt: null, totalBytes: 0 },
+				layout: layoutInfo(layout),
 			};
 		}
 		throw err;
 	}
-
-	const mdNames = names.filter((n) => n.toLowerCase().endsWith('.md'));
 
 	const entries: MemoryEntry[] = [];
 	let firstCreatedMs: number | null = null;
 	let lastModifiedMs: number | null = null;
 	let totalBytes = 0;
 
-	for (const name of mdNames) {
+	for (const name of names) {
 		try {
-			const stat = await fs.stat(path.join(directoryPath, name));
+			const stat = await fs.stat(resolveEntryPath(layout, name));
 			// birthtime is not reliable on Linux; fall back to mtime.
 			const created = stat.birthtimeMs && stat.birthtimeMs > 0 ? stat.birthtimeMs : stat.mtimeMs;
 			const modified = stat.mtimeMs;
@@ -133,6 +212,7 @@ export async function listMemoryEntries(
 				size: stat.size,
 				createdAt: new Date(created).toISOString(),
 				modifiedAt: new Date(modified).toISOString(),
+				...(layout.isProtected(name) ? { protected: true } : {}),
 			});
 			totalBytes += stat.size;
 			if (firstCreatedMs === null || created < firstCreatedMs) firstCreatedMs = created;
@@ -144,8 +224,8 @@ export async function listMemoryEntries(
 
 	// Sort: MEMORY.md pinned first, others alphabetical.
 	entries.sort((a, b) => {
-		const aIsIndex = a.name === 'MEMORY.md';
-		const bIsIndex = b.name === 'MEMORY.md';
+		const aIsIndex = a.name === MEMORY_INDEX_FILE;
+		const bIsIndex = b.name === MEMORY_INDEX_FILE;
 		if (aIsIndex && !bIsIndex) return -1;
 		if (!aIsIndex && bIsIndex) return 1;
 		return a.name.localeCompare(b.name);
@@ -161,33 +241,22 @@ export async function listMemoryEntries(
 			lastModifiedAt: lastModifiedMs !== null ? new Date(lastModifiedMs).toISOString() : null,
 			totalBytes,
 		},
+		layout: layoutInfo(layout),
 	};
 }
 
-export async function readMemoryEntry(
-	projectPath: string,
-	filename: string,
-	agentId: string = 'claude-code',
-	homeDir?: string,
-	directoryOverride?: string
-): Promise<string> {
-	assertSafeFilename(filename);
-	const dir = getMemoryDirectoryPath(projectPath, agentId, homeDir, directoryOverride);
-	return fs.readFile(path.join(dir, filename), 'utf8');
+export async function readMemoryEntry(layout: MemoryLayout, filename: string): Promise<string> {
+	return fs.readFile(resolveEntryPath(layout, filename), 'utf8');
 }
 
 export async function writeMemoryEntry(
-	projectPath: string,
+	layout: MemoryLayout,
 	filename: string,
-	content: string,
-	agentId: string = 'claude-code',
-	homeDir?: string,
-	directoryOverride?: string
+	content: string
 ): Promise<void> {
-	assertSafeFilename(filename);
-	const dir = getMemoryDirectoryPath(projectPath, agentId, homeDir, directoryOverride);
-	await fs.mkdir(dir, { recursive: true });
-	await fs.writeFile(path.join(dir, filename), content, 'utf8');
+	const full = resolveEntryPath(layout, filename);
+	await fs.mkdir(path.dirname(full), { recursive: true });
+	await fs.writeFile(full, content, 'utf8');
 }
 
 /**
@@ -195,17 +264,12 @@ export async function writeMemoryEntry(
  * Fails if the file already exists.
  */
 export async function createMemoryEntry(
-	projectPath: string,
+	layout: MemoryLayout,
 	filename: string,
-	content: string,
-	agentId: string = 'claude-code',
-	homeDir?: string,
-	directoryOverride?: string
+	content: string
 ): Promise<void> {
-	assertSafeFilename(filename);
-	const dir = getMemoryDirectoryPath(projectPath, agentId, homeDir, directoryOverride);
-	await fs.mkdir(dir, { recursive: true });
-	const full = path.join(dir, filename);
+	const full = resolveEntryPath(layout, filename);
+	await fs.mkdir(path.dirname(full), { recursive: true });
 	try {
 		// wx flag: fail if exists.
 		const handle = await fs.open(full, 'wx');
@@ -222,20 +286,13 @@ export async function createMemoryEntry(
 	}
 }
 
-export async function deleteMemoryEntry(
-	projectPath: string,
-	filename: string,
-	agentId: string = 'claude-code',
-	homeDir?: string,
-	directoryOverride?: string
-): Promise<void> {
-	assertSafeFilename(filename);
-	// MEMORY.md is the index and should not be casually deleted.
-	if (filename === 'MEMORY.md') {
-		throw new Error('MEMORY.md is the index and cannot be deleted from the viewer');
+export async function deleteMemoryEntry(layout: MemoryLayout, filename: string): Promise<void> {
+	const full = resolveEntryPath(layout, filename);
+	// The index, and files the provider regenerates, should not be casually deleted.
+	if (layout.isProtected(filename)) {
+		throw new Error(`${filename} is managed by the agent and cannot be deleted from the viewer`);
 	}
-	const dir = getMemoryDirectoryPath(projectPath, agentId, homeDir, directoryOverride);
-	await fs.unlink(path.join(dir, filename));
+	await fs.unlink(full);
 }
 
 /**
@@ -250,24 +307,20 @@ export async function deleteMemoryEntry(
  * An empty/whitespace query returns every entry (no filter applied).
  */
 export async function searchMemoryEntries(
-	projectPath: string,
-	query: string,
-	agentId: string = 'claude-code',
-	homeDir?: string,
-	directoryOverride?: string
+	layout: MemoryLayout,
+	query: string
 ): Promise<MemorySearchMatch[]> {
-	const { entries } = await listMemoryEntries(projectPath, agentId, homeDir, directoryOverride);
+	const { entries } = await listMemoryEntries(layout);
 	const needle = query.trim().toLowerCase();
 	if (!needle) return entries.map((e) => ({ name: e.name, matchedName: false }));
 
-	const dir = getMemoryDirectoryPath(projectPath, agentId, homeDir, directoryOverride);
 	const matches: MemorySearchMatch[] = [];
 
 	for (const entry of entries) {
 		const matchedName = entry.name.toLowerCase().includes(needle);
 		let snippet: string | undefined;
 		try {
-			const content = await fs.readFile(path.join(dir, entry.name), 'utf8');
+			const content = await fs.readFile(resolveEntryPath(layout, entry.name), 'utf8');
 			const line = content
 				.split('\n')
 				.find((l) => l.toLowerCase().includes(needle))
@@ -300,21 +353,17 @@ export async function searchMemoryEntries(
  * pointing nowhere.
  *
  * MEMORY.md is never an orphan - it is the index, so nothing is expected to
- * point at it.
+ * point at it. A layout that does not link its entries (`tracksLinks: false`)
+ * reports nothing, since every entry would read as unlinked.
  */
-export async function findOrphanMemories(
-	projectPath: string,
-	agentId: string = 'claude-code',
-	homeDir?: string,
-	directoryOverride?: string
-): Promise<OrphanMemoryReport> {
-	const { entries } = await listMemoryEntries(projectPath, agentId, homeDir, directoryOverride);
-	const dir = getMemoryDirectoryPath(projectPath, agentId, homeDir, directoryOverride);
+export async function findOrphanMemories(layout: MemoryLayout): Promise<OrphanMemoryReport> {
+	if (!layout.tracksLinks) return { orphans: [], brokenLinks: [] };
+	const { entries } = await listMemoryEntries(layout);
 	const contents = new Map<string, string>();
 	for (const entry of entries) {
 		let content = '';
 		try {
-			content = await fs.readFile(path.join(dir, entry.name), 'utf8');
+			content = await fs.readFile(resolveEntryPath(layout, entry.name), 'utf8');
 		} catch {
 			/* Retain unreadable files as link targets. */
 		}
@@ -324,7 +373,7 @@ export async function findOrphanMemories(
 
 	const orphans = entries
 		.map((e) => e.name)
-		.filter((name) => name !== 'MEMORY.md' && !referenced.has(name));
+		.filter((name) => name !== MEMORY_INDEX_FILE && !referenced.has(name));
 
 	return { orphans, brokenLinks };
 }

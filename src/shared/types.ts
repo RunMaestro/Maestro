@@ -154,8 +154,10 @@ export interface AgentCapabilities {
 	supportsAppendSystemPrompt: boolean;
 
 	/**
-	 * Agent maintains a per-project persistent memory store on disk that Maestro
-	 * can browse and edit. Claude Code does this at ~/.claude/projects/<path>/memory/.
+	 * Agent maintains a persistent memory store on disk that Maestro can browse
+	 * and edit in the Memory Viewer. Claude Code keeps one per project
+	 * (`~/.claude/projects/<path>/memory/`), Codex one per account
+	 * (`$CODEX_HOME/memories/`). Layouts live in `src/main/memory-manager.ts`.
 	 */
 	supportsProjectMemory: boolean;
 

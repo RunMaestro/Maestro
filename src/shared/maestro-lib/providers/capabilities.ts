@@ -62,7 +62,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		usesJsonLineOutput: false, // Uses stream-json, not JSONL
 		usesCombinedContextWindow: false, // Claude has separate input/output limits
 		supportsAppendSystemPrompt: true, // --append-system-prompt flag
-		supportsProjectMemory: true, // ~/.claude/projects/<path>/memory/
+		supportsProjectMemory: true, // $CLAUDE_CONFIG_DIR/projects/<path>/memory/
 		supportsAdditionalDirectories: true, // --add-dir <directories...> (verified against the installed CLI)
 	},
 
@@ -136,7 +136,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		usesJsonLineOutput: true, // Uses JSONL output format
 		usesCombinedContextWindow: true, // OpenAI models use combined context window
 		supportsAppendSystemPrompt: false,
-		supportsProjectMemory: false,
+		supportsProjectMemory: true, // $CODEX_HOME/memories/ (account-wide, written by Codex memories)
 		supportsAdditionalDirectories: true, // --add-dir <DIR>, repeatable. Codex scopes it to WRITABLE roots.
 		imageResumeMode: 'prompt-embed', // codex exec resume doesn't support -i; embed file paths in prompt text
 	},

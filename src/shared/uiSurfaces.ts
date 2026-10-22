@@ -220,7 +220,8 @@ export const UI_SURFACES: UiSurface[] = [
 		label: 'Memory Viewer',
 		aliases: ['memory'],
 		modal: 'memoryViewer',
-		description: "The active agent's CLAUDE.md / AGENTS.md memory files.",
+		description:
+			"The active agent's persistent memory files (Claude Code per project, Codex per account).",
 		shortcutId: 'openMemoryViewer',
 		commandPalette: 'Memory',
 	},
