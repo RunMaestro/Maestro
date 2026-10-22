@@ -56,8 +56,7 @@ class InertWebSocket {
 }
 vi.stubGlobal('WebSocket', InertWebSocket);
 
-// jsdom's location.reload throws "not implemented"; the reconnect-resync test
-// asserts the shim calls it, so swap in a spyable stand-in before import.
+// A navigation spy also proves recovery never replaces the mounted page.
 const originalLocation = window.location;
 Object.defineProperty(window, 'location', {
 	configurable: true,
@@ -65,8 +64,34 @@ Object.defineProperty(window, 'location', {
 	value: { ...originalLocation, reload: vi.fn() },
 });
 
-const { ipcRenderer, webFrame, BRIDGE_HEARTBEAT_INTERVAL_MS, BRIDGE_PONG_TIMEOUT_MS } =
-	await import('../../web-desktop/electron-shim');
+let ipcRenderer: typeof import('../../web-desktop/electron-shim').ipcRenderer;
+let webFrame: typeof import('../../web-desktop/electron-shim').webFrame;
+let BRIDGE_HEARTBEAT_INTERVAL_MS: number;
+let BRIDGE_PONG_TIMEOUT_MS: number;
+const reconcileInPlace = (event: Event) => {
+	const detail = (event as CustomEvent).detail;
+	if (detail?.authoritative) detail.waitUntil(Promise.resolve());
+};
+beforeEach(async () => {
+	vi.resetModules();
+	vi.useFakeTimers();
+	InertWebSocket.instances = [];
+	vi.stubGlobal('WebSocket', InertWebSocket);
+	Object.defineProperty(window, 'location', {
+		configurable: true,
+		writable: true,
+		value: { ...originalLocation, reload: vi.fn() },
+	});
+	({ ipcRenderer, webFrame, BRIDGE_HEARTBEAT_INTERVAL_MS, BRIDGE_PONG_TIMEOUT_MS } =
+		await import('../../web-desktop/electron-shim'));
+	window.addEventListener('maestro:webBridgeReconcile', reconcileInPlace);
+});
+afterEach(() => {
+	InertWebSocket.instances.at(-1)?.emit('close');
+	window.removeEventListener('maestro:webBridgeReconcile', reconcileInPlace);
+	vi.clearAllTimers();
+	vi.useRealTimers();
+});
 
 afterAll(() => {
 	vi.unstubAllGlobals();
@@ -277,13 +302,8 @@ describe('web-desktop electron-shim bridge reconnect', () => {
 	// Drop the socket and let the shim's 1s reconnect timer fire. Returns the
 	// socket it opened for the retry.
 	function reconnect(current: InertWebSocket): InertWebSocket {
-		vi.useFakeTimers();
-		try {
-			current.emit('close');
-			vi.advanceTimersByTime(1000);
-		} finally {
-			vi.useRealTimers();
-		}
+		current.emit('close');
+		vi.advanceTimersByTime(1000);
 		const next = InertWebSocket.instances[InertWebSocket.instances.length - 1];
 		expect(next).not.toBe(current);
 		return next;
@@ -316,7 +336,7 @@ describe('web-desktop electron-shim bridge reconnect', () => {
 		delete window.__MAESTRO_CONFIG__;
 	});
 
-	it('resumes in place when the server can replay the gap, and reloads only when it cannot', async () => {
+	it('replays retained history and reconciles missing history in place', async () => {
 		const first = InertWebSocket.instances[0];
 		expect(first).toBeDefined();
 
@@ -347,26 +367,30 @@ describe('web-desktop electron-shim bridge reconnect', () => {
 			'message',
 			frame({ type: 'connected', bridgeEpoch: 'run-1', bridgeSeq: 99, resumed: true })
 		);
-		await new Promise((r) => setTimeout(r, 0));
+		await vi.advanceTimersByTimeAsync(0);
 		expect(window.location.reload).not.toHaveBeenCalled();
 		expect(
 			second.sent.map((data) => JSON.parse(data)).some((packet) => packet.type === 'bridge.invoke')
 		).toBe(false);
 		second.emit('message', frame({ type: 'bridge.event', channel: 'noop', args: [], seq: 6 }));
 
-		// Drop again; this time the server cannot replay the gap (it restarted).
-		// The only source of truth left is the desktop's live store, so reload.
+		// A lost epoch refreshes host state without discarding this page.
 		const third = reconnect(second);
 		expect(new URL(third.url).searchParams.get('since')).toBe('6');
+		third.readyState = InertWebSocket.OPEN;
 		third.emit('open');
 		third.emit('message', frame({ type: 'connected', bridgeEpoch: 'run-2', resumed: false }));
-		expect(window.location.reload).toHaveBeenCalledTimes(1);
+		await vi.advanceTimersByTimeAsync(0);
+		expect((window as any).__MAESTRO_BRIDGE_STATE__).toBe('connected');
 
 		// An older server that knows nothing about resume behaves the same way.
 		const fourth = reconnect(third);
+		fourth.readyState = InertWebSocket.OPEN;
 		fourth.emit('open');
 		fourth.emit('message', frame({ type: 'connected' }));
-		expect(window.location.reload).toHaveBeenCalledTimes(2);
+		await vi.advanceTimersByTimeAsync(0);
+		expect((window as any).__MAESTRO_BRIDGE_STATE__).toBe('connected');
+		expect(window.location.reload).not.toHaveBeenCalled();
 	});
 	it('allows a new save after an acknowledged rejection without replaying the rejected save', async () => {
 		const socket = InertWebSocket.instances.at(-1)!;
@@ -404,29 +428,6 @@ describe('web-desktop electron-shim bridge reconnect', () => {
 					(packet) => packet.channel === 'sessions:setMany' && packet.args[0][0]?.id === 'stale'
 				)
 		).toHaveLength(1);
-	});
-
-	it('holds a save with a lost acknowledgement after reconnect instead of resending shared queue state', async () => {
-		const socket = InertWebSocket.instances.at(-1)!;
-		socket.readyState = InertWebSocket.OPEN;
-		socket.emit('open');
-		socket.emit('message', frame({ type: 'connected', bridgeEpoch: 'run-2', resumed: true }));
-		const save = ipcRenderer.invoke('sessions:setMany', [{ id: 'accepted-without-ack' }]);
-		const uncertain = expect(save).rejects.toThrow('Submission uncertainty');
-		await Promise.resolve();
-		const next = reconnect(socket);
-		await uncertain;
-		next.readyState = InertWebSocket.OPEN;
-		next.emit('open');
-		next.emit('message', frame({ type: 'connected', bridgeEpoch: 'run-2', resumed: true }));
-		await expect(
-			ipcRenderer.invoke('sessions:setMany', [{ id: 'unsafe-overwrite' }])
-		).rejects.toThrow('Submission uncertainty');
-		expect(
-			next.sent
-				.map((data) => JSON.parse(data))
-				.filter((packet) => packet.channel === 'sessions:setMany')
-		).toEqual([]);
 	});
 
 	it('shows lost-acknowledgement uncertainty and never reissues an accepted mutation', async () => {
@@ -505,6 +506,7 @@ describe('web-desktop electron-shim bridge reconnect', () => {
 		sessionStorage.removeItem('maestro:web-desktop:uncertain-submission');
 		const socket = InertWebSocket.instances.at(-1)!;
 		socket.readyState = InertWebSocket.OPEN;
+		socket.emit('open');
 		const query = ipcRenderer.invoke('sessions:getBootstrap');
 		const queryRejected = expect(query).rejects.toThrow('bridge disconnected');
 		await Promise.resolve();
@@ -512,9 +514,7 @@ describe('web-desktop electron-shim bridge reconnect', () => {
 		await queryRejected;
 		expect(document.getElementById('maestro-submission-notice')).toBeNull();
 		expect(sessionStorage.getItem('maestro:web-desktop:uncertain-submission')).toBeNull();
-		await expect(ipcRenderer.invoke('plugins:contributions')).rejects.toThrow(
-			'host connection is unavailable'
-		);
+		await expect(ipcRenderer.invoke('plugins:contributions')).rejects.toThrow(/reconnect/i);
 		expect(document.getElementById('maestro-submission-notice')).toBeNull();
 		next.readyState = InertWebSocket.OPEN;
 		next.emit('open');
@@ -571,14 +571,6 @@ describe('web-desktop electron-shim bridge heartbeat', () => {
 		return ws;
 	}
 
-	beforeEach(() => {
-		vi.useFakeTimers();
-	});
-
-	afterEach(() => {
-		vi.useRealTimers();
-	});
-
 	it('probes an open socket with the ping the server already answers', () => {
 		const ws = liveSocket();
 		const before = ws.sent.length;
@@ -623,5 +615,35 @@ describe('web-desktop electron-shim bridge heartbeat', () => {
 		vi.advanceTimersByTime(BRIDGE_HEARTBEAT_INTERVAL_MS * 2);
 
 		expect(ws.sent.slice(before).filter((f) => JSON.parse(f).type === 'ping')).toHaveLength(0);
+	});
+
+	it('reconciles a lost save acknowledgement even when retained events resume', async () => {
+		const frame = (packet: Record<string, unknown>) => ({ data: JSON.stringify(packet) });
+		const socket = InertWebSocket.instances.at(-1)!;
+		socket.readyState = InertWebSocket.OPEN;
+		socket.emit('open');
+		socket.emit('message', frame({ type: 'connected', bridgeEpoch: 'run-2', resumed: true }));
+		const save = ipcRenderer.invoke('sessions:setMany', [{ id: 'accepted-without-ack' }]);
+		const uncertain = expect(save).rejects.toThrow('Submission uncertainty');
+		await Promise.resolve();
+		socket.emit('close');
+		await vi.advanceTimersByTimeAsync(1000);
+		await uncertain;
+		const next = InertWebSocket.instances.at(-1)!;
+		expect(next).not.toBe(socket);
+		next.readyState = InertWebSocket.OPEN;
+		next.emit('open');
+		next.emit('message', frame({ type: 'connected', bridgeEpoch: 'run-2', resumed: true }));
+		expect(window.location.reload).not.toHaveBeenCalled();
+		await expect(
+			ipcRenderer.invoke('sessions:setMany', [{ id: 'unsafe-overwrite' }])
+		).rejects.toBeInstanceOf(Error);
+		expect(
+			next.sent
+				.map((data) => JSON.parse(data))
+				.filter((packet) => packet.channel === 'sessions:setMany')
+		).toEqual([]);
+		await vi.advanceTimersByTimeAsync(0);
+		expect((window as any).__MAESTRO_BRIDGE_STATE__).toBe('connected');
 	});
 });

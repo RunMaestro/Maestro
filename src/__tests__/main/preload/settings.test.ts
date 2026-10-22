@@ -136,18 +136,6 @@ describe('Settings Preload API', () => {
 				expect(result).toEqual(groups);
 			});
 		});
-
-		describe('setAll', () => {
-			it('should invoke groups:setAll with groups array and return result', async () => {
-				const groups = [{ id: '1', name: 'Group 1' }];
-				mockInvoke.mockResolvedValue(true);
-
-				const result = await api.setAll(groups);
-
-				expect(mockInvoke).toHaveBeenCalledWith('groups:setAll', groups);
-				expect(result).toBe(true);
-			});
-		});
 	});
 
 	describe('createAgentErrorApi', () => {

@@ -82,6 +82,75 @@ beforeEach(() => {
 });
 
 describe('handleBridgeInvoke', () => {
+	it('allows remote conversation close/reopen and prompt context without transferring run ownership', async () => {
+		const tabs = new Set(['keep', 'close']);
+		let ownerClaims = 0;
+		invokeHandlers.set(
+			'web:requestCloseTab',
+			(_event, agentId, tabId) => agentId === 'agent' && tabs.delete(String(tabId))
+		);
+		invokeHandlers.set('web:requestReopenTab', (_event, agentId, tabId) => {
+			if (agentId !== 'agent') return null;
+			tabs.add(String(tabId));
+			return { tabId };
+		});
+		invokeHandlers.set('prompts:getSystemPromptPaths', () => ({
+			success: true,
+			computerHistoryDir: '/host/computer-history',
+		}));
+		invokeHandlers.set('web:takeOrphanedAutoRuns', () => {
+			ownerClaims++;
+			return [];
+		});
+		const client = makeClient();
+		const send = vi.fn();
+		await handleBridgeInvoke(
+			client,
+			{
+				type: 'bridge.invoke',
+				requestId: 1,
+				channel: 'web:requestCloseTab',
+				args: ['agent', 'close'],
+			},
+			send
+		);
+		expect(tabs).toEqual(new Set(['keep']));
+		expect(send.mock.calls.at(-1)?.[1]).toMatchObject({ ok: true, result: true });
+		await handleBridgeInvoke(
+			client,
+			{
+				type: 'bridge.invoke',
+				requestId: 2,
+				channel: 'web:requestReopenTab',
+				args: ['agent', 'close'],
+			},
+			send
+		);
+		expect(tabs).toEqual(new Set(['keep', 'close']));
+		expect(send.mock.calls.at(-1)?.[1]).toMatchObject({ ok: true, result: { tabId: 'close' } });
+		await handleBridgeInvoke(
+			client,
+			{ type: 'bridge.invoke', requestId: 3, channel: 'prompts:getSystemPromptPaths', args: [] },
+			send
+		);
+		expect(send.mock.calls.at(-1)?.[1]).toMatchObject({
+			ok: true,
+			result: { computerHistoryDir: '/host/computer-history' },
+		});
+		await handleBridgeInvoke(
+			client,
+			{
+				type: 'bridge.invoke',
+				requestId: 4,
+				channel: 'web:takeOrphanedAutoRuns',
+				args: ['remote'],
+			},
+			send
+		);
+		expect(send.mock.calls.at(-1)?.[1]).toMatchObject({ ok: false });
+		expect(ownerClaims).toBe(0);
+	});
+
 	it('rejects empty/non-string channel without touching ipcMain', async () => {
 		const send = vi.fn();
 		const client = makeClient();

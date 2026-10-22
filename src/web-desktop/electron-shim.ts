@@ -17,7 +17,10 @@ import { captureException } from './sentry-shim';
 // Also a side-effect import: the module declares `window.__MAESTRO_CONFIG__`
 // once for every bundle that reads it. See the note in that file about the two
 // rival shapes this replaced.
-import { WEB_BRIDGE_RECONCILE_EVENT } from '../shared/webClientConfig';
+import {
+	WEB_BRIDGE_RECONCILE_EVENT,
+	type WebBridgeReconcileDetail,
+} from '../shared/webClientConfig';
 import { WEB_LOGIN_PATHS, WEB_LOGIN_WS_CLOSE_CODE } from '../shared/webLogin';
 import { selectHostFolder, selectHostSaveFile } from './remote-file-dialog';
 import {
@@ -113,7 +116,7 @@ function setConnectionState(
 	window.dispatchEvent(new CustomEvent('maestro:bridge-state', { detail: { state } }));
 }
 
-type Listener = (event: { senderFrame: null }, ...args: unknown[]) => void;
+type Listener = (event: { senderFrame: null }, ...args: unknown[]) => unknown;
 
 /**
  * How often the client probes the socket with the server's `ping` message.
@@ -133,10 +136,24 @@ export const BRIDGE_HEARTBEAT_INTERVAL_MS = 15000;
  */
 export const BRIDGE_PONG_TIMEOUT_MS = 8000;
 
+const BRIDGE_READ_TIMEOUT_MS = 30_000;
+const BRIDGE_MUTATION_TIMEOUT_MS = 120_000;
+function isPersistenceChannel(channel: string): boolean {
+	return (
+		channel === 'sessions:setMany' || channel === 'sessions:setAll' || channel === 'groups:setAll'
+	);
+}
+function requestTimeoutMs(channel: string): number {
+	// Repository transfers and recursive filesystem reads legitimately outlast ordinary UI requests.
+	if (channel.startsWith('git:') || channel === 'fs:directorySize') return 600_000;
+	return isSubmissionChannel(channel) ? BRIDGE_MUTATION_TIMEOUT_MS : BRIDGE_READ_TIMEOUT_MS;
+}
+
 interface PendingInvoke {
 	resolve: (value: unknown) => void;
 	reject: (reason: unknown) => void;
 	channel: string;
+	timer: ReturnType<typeof setTimeout>;
 }
 
 interface BridgeConfig {
@@ -189,35 +206,26 @@ class BridgeClient {
 	private nextRequestId = 1;
 	private connected = false;
 	private uncertainPersistence = false;
+	private invalidState = false;
+	private recoveryController: AbortController | undefined;
+	private recoveryTimer: ReturnType<typeof setTimeout> | undefined;
+	private recoveryEvents: Array<{ channel: string; args: unknown[] }> = [];
+	private recoveryEventBytes = 0;
 	// True once any connection has been established, so a later open is known
 	// to be a RE-connect. Mobile browsers suspend the socket on every app switch
 	// and screen lock, which makes reconnecting the common case.
 	private hadOpenConnection = false;
 	// Resume bookkeeping. Every frame the server broadcasts carries a `seq`; on
 	// reconnect the client reports the last one it saw and the server run it
-	// came from. The server replays what was missed if it still has it, and
-	// only when it cannot is the page reloaded - the bridge has no other way to
-	// recover pushes it never received, and the renderer's in-memory state
-	// (transcripts, busy pills, tabs) would otherwise stay stale for good.
+	// came from. A missing replay requires in-place authoritative reconciliation.
 	private lastSeq = 0;
 	private epoch: string | undefined;
 	private resumePending = false;
-	// Liveness. A suspended mobile socket does NOT reliably fire `close`: iOS
-	// freezes the connection on app switch and screen lock, and the tab can come
-	// back with `readyState === OPEN` on a socket whose peer is long gone. Every
-	// invoke then parks in `pending` forever - no resolve, no reject, no error -
-	// so the caller's button silently does nothing. That is one root cause behind
-	// every "I pressed it and nothing happened" report on the phone, not a
-	// property of any one channel, so it is fixed HERE rather than per caller.
-	//
-	// The probe is the server's existing `ping` -> `pong`. A missed reply means
-	// the socket is dead however healthy `readyState` claims to be, and closing
-	// it routes recovery through the ONE path that already knows how to do it:
-	// `close` rejects every pending invoke and schedules the resuming reconnect.
+	// Heartbeats detect dead peers, but renderer suspension is not a peer failure.
 	private heartbeatTimer: ReturnType<typeof setInterval> | undefined;
 	private pongDeadline: ReturnType<typeof setTimeout> | undefined;
 
-	constructor(config: BridgeConfig) {
+	constructor(private readonly config: BridgeConfig) {
 		this.ready = new Promise((r) => (this.resolveReady = r));
 		setConnectionState('connecting');
 		try {
@@ -241,60 +249,45 @@ class BridgeClient {
 		return u.toString();
 	}
 
-	private markReady(): void {
+	private markReady(reconciled = false): void {
+		this.invalidState = false;
+		this.uncertainPersistence = false;
 		this.connected = true;
 		setConnectionState('connected');
 		this.resolveReady();
-		window.dispatchEvent(new Event(WEB_BRIDGE_RECONCILE_EVENT));
+		if (!reconciled) window.dispatchEvent(new Event(WEB_BRIDGE_RECONCILE_EVENT));
 	}
 
 	private connect(url: string): void {
+		let socket: WebSocket;
 		try {
-			this.ws = new WebSocket(this.hadOpenConnection ? this.resumeUrl(url) : url);
-		} catch (err) {
-			// SyntaxError on a malformed URL or SECURITY_ERR from a blocked
-			// port can throw synchronously. Without scheduling the same retry
-			// the close path uses, this.ready would never resolve and every
-			// subsequent invoke() would hang on `await this.ready`.
-			console.error('[bridge] WebSocket construction failed - retrying in 1s', err);
+			socket = new WebSocket(this.hadOpenConnection ? this.resumeUrl(url) : url);
+			this.ws = socket;
+		} catch (error) {
+			console.error('[bridge] WebSocket construction failed - retrying in 1s', error);
 			setTimeout(() => this.connect(url), 1000);
 			return;
 		}
-		this.ws.addEventListener('open', () => {
-			// Probe from the moment the socket is up, on a first connect and a
-			// reconnect alike - a resumed socket can be suspended again a second
-			// later, and it is the one the user is about to press a button on.
+		socket.addEventListener('open', () => {
+			if (this.ws !== socket) return;
 			this.startHeartbeat();
 			if (this.hadOpenConnection) {
-				// Reconnected after a drop. Whether we can carry on is decided by
-				// the `connected` frame the server sends first (see below).
 				this.resumePending = true;
 				return;
 			}
 			this.hadOpenConnection = true;
 			this.markReady();
 		});
-		this.ws.addEventListener('message', (ev: MessageEvent) => {
-			// Bytes arrived, so the peer is alive - clear any probe deadline before
-			// parsing. Deliberately ANY frame rather than only `pong`: a busy socket
-			// streaming agent output is obviously healthy, and making liveness
-			// depend on one message type would close a working connection whenever
-			// a `pong` lost a race with a burst of transcript frames.
+		socket.addEventListener('message', (ev: MessageEvent) => {
+			if (this.ws !== socket) return;
 			this.notePong();
-			let msg: { type?: string; [k: string]: unknown };
+			let msg: { type?: string; [key: string]: unknown };
 			try {
 				msg = JSON.parse(typeof ev.data === 'string' ? ev.data : String(ev.data));
-			} catch (err) {
-				const raw = typeof ev.data === 'string' ? ev.data : String(ev.data);
-				const preview = raw.length > 200 ? `${raw.slice(0, 200)}…` : raw;
-				captureException(err, {
-					extra: {
-						component: 'BridgeClient',
-						action: 'message.parse',
-						preview,
-					},
-				});
-				this.ws?.close(1003, 'invalid bridge frame');
+			} catch (error) {
+				captureException(error, { extra: { component: 'BridgeClient', action: 'message.parse' } });
+				this.disconnect(socket, 1003);
+				socket.close(1003, 'invalid bridge frame');
 				return;
 			}
 			if (typeof msg.seq === 'number') {
@@ -303,26 +296,15 @@ class BridgeClient {
 			}
 			if (msg.type === 'connected') {
 				if (typeof msg.bridgeEpoch === 'string') this.epoch = msg.bridgeEpoch;
-				// A fresh connection's baseline is the server's counter at the moment
-				// it accepted us: nothing broadcast before that is ours to replay.
-				// On a resumed connection the replayed frames carry their own seq,
-				// so lastSeq stays where the gap actually starts.
-				if (msg.resumed !== true && typeof msg.bridgeSeq === 'number') {
-					this.lastSeq = msg.bridgeSeq;
-				}
+				if (msg.resumed !== true && typeof msg.bridgeSeq === 'number') this.lastSeq = msg.bridgeSeq;
 				if (!this.resumePending) return;
 				this.resumePending = false;
-				if (msg.resumed === true) {
-					// Every frame missed during the gap follows on this socket, so the
-					// renderer converges as if the connection had never dropped.
+				if (msg.resumed === true && !this.uncertainPersistence && !this.invalidState) {
 					this.markReady();
-					return;
+				} else {
+					this.invalidState = true;
+					this.recoverState();
 				}
-				// Lost epoch/history requires a fresh authoritative bootstrap, not
-				// mutation replay. Client-local drafts and uncertainty survive reload.
-				this.connected = false;
-				setConnectionState('reconnecting');
-				window.location.reload();
 				return;
 			}
 			if (msg.type === 'bridge.response') {
@@ -330,6 +312,7 @@ class BridgeClient {
 				const pending = this.pending.get(requestId);
 				if (!pending) return;
 				this.pending.delete(requestId);
+				clearTimeout(pending.timer);
 				if (msg.ok) pending.resolve(msg.result);
 				else {
 					const error = String(msg.error ?? 'bridge error');
@@ -355,81 +338,150 @@ class BridgeClient {
 				typeof msg.sessionId === 'string' &&
 				typeof msg.activeTabId === 'string'
 			) {
-				// A tabs_changed packet is an INVENTORY snapshot, never a navigation
-				// request. Which agent and which tab a browser client is looking at is
-				// that client's own choice (see activeSessionPersistence), so the
-				// desktop's `active_session_changed` packet is deliberately NOT routed
-				// and the snapshot's `activeTabChanged` flag is deliberately dropped:
-				// with several operators connected, the desktop user switching agents
-				// used to yank every phone along with it.
+				// Inventory is shared, navigation is client-local.
 				channel = 'remote:selectTab';
 				args = [msg.sessionId, msg.activeTabId, Array.isArray(msg.aiTabs) ? msg.aiTabs : undefined];
 			} else if (msg.type === 'autorun_state' && typeof msg.sessionId === 'string') {
-				// Auto Run is renderer-owned in-memory state, so it never crosses the
-				// bridge as a `bridge.event` the way `process:*` does - the owning
-				// client hands it to main, which fans it out as this packet. Route it
-				// into a channel so `useAutoRunStateMirror` can render the run. The
-				// server also replays the current state for every active run when a
-				// client connects (wsRoute), so a browser tab opened mid-run catches
-				// up rather than waiting for the next progress tick.
 				channel = 'remote:autoRunStateMirror';
 				args = [msg.sessionId, msg.state ?? null];
 			}
-			if (channel) {
-				const set = this.listeners.get(channel);
-				if (!set || set.size === 0) {
-					if (channel === 'remote:autoRunStateMirror') {
-						this.pendingAutoRunFrames.set(args[0] as string, args[1]);
-					}
+			if (!channel) return;
+			if (this.invalidState) {
+				// Snapshot first, then events that arrived while it was being read.
+				this.recoveryEventBytes += String(ev.data).length * 2;
+				if (this.recoveryEventBytes > 8 * 1024 * 1024) {
+					this.invalidateState('recovery event backlog exceeded');
 					return;
 				}
-				const fakeEvent = { senderFrame: null };
-				for (const cb of set) {
-					this.notifyListener(channel, cb, fakeEvent, args);
-				}
-			}
-		});
-		this.ws.addEventListener('close', (ev?: CloseEvent) => {
-			this.connected = false;
-			setConnectionState(ev?.code === WEB_LOGIN_WS_CLOSE_CODE ? 'disconnected' : 'reconnecting');
-			for (const pending of this.pending.values()) {
-				const submission = isSubmissionChannel(pending.channel);
-				const message = submission
-					? 'Submission uncertainty: connection lost before acknowledgement of ' +
-						pending.channel +
-						'. The host may have accepted it. Check host state before submitting again; it was not automatically retried.'
-					: 'connection lost before response to ' + pending.channel;
-				if (submission) showSubmissionNotice(message);
-				if (pending.channel === 'sessions:setMany' || pending.channel === 'sessions:setAll')
-					this.uncertainPersistence = true;
-				pending.reject(new Error('bridge disconnected: ' + message));
-			}
-			this.pending.clear();
-			// The server refused this socket because Web Login is on and the
-			// browser holds no valid session. Reconnecting cannot fix that - it
-			// would spin against the wall once a second forever, with the page
-			// looking merely slow - so go and get a session instead. This is also
-			// the path a REVOKED account takes: the server closes live sockets with
-			// the same code when an account is deleted, disabled, or has its
-			// password reset.
-			if (ev?.code === WEB_LOGIN_WS_CLOSE_CODE) {
-				this.stopHeartbeat();
-				const token = currentToken();
-				console.warn('[bridge] login required - going to the login page');
-				window.location.href = `/${token}/${WEB_LOGIN_PATHS.page}`;
+				this.recoveryEvents.push({ channel, args });
 				return;
 			}
-			console.warn('[bridge] WebSocket closed - reconnecting in 1s');
-			// Stop probing a socket that is gone; `open` restarts it. Without this
-			// the interval outlives every socket it was started for and a long
-			// session accumulates one probe loop per reconnect.
-			this.stopHeartbeat();
-			if (this.hadOpenConnection) this.ready = new Promise((r) => (this.resolveReady = r));
-			setTimeout(() => this.connect(url), 1000);
+			this.dispatchEvent(channel, args);
 		});
-		this.ws.addEventListener('error', (err: Event) => {
-			console.error('[bridge] WebSocket error', err);
+		socket.addEventListener('close', (event: CloseEvent) => this.disconnect(socket, event?.code));
+		socket.addEventListener('error', () => {
+			if (this.ws === socket) console.warn('[bridge] WebSocket transport error');
 		});
+	}
+
+	private rejectPending(reason: string): void {
+		for (const pending of this.pending.values()) {
+			clearTimeout(pending.timer);
+			const submission = isSubmissionChannel(pending.channel);
+			const message = submission
+				? 'Submission uncertainty: ' +
+					reason +
+					' before acknowledgement of ' +
+					pending.channel +
+					'. The host may have accepted it. Check host state before submitting again; it was not automatically retried.'
+				: reason + ' before response to ' + pending.channel;
+			if (submission) showSubmissionNotice(message);
+			if (isPersistenceChannel(pending.channel)) this.uncertainPersistence = true;
+			pending.reject(new Error('bridge disconnected: ' + message));
+		}
+		this.pending.clear();
+	}
+
+	private disconnect(socket: WebSocket, code?: number): void {
+		if (this.ws !== socket) return;
+		// Retire locally. A dead peer can leave close() hanging for many seconds;
+		// neither that handshake nor late events may hold the next socket hostage.
+		this.ws = null;
+		this.connected = false;
+		this.resumePending = false;
+		this.recoveryController?.abort();
+		this.recoveryEvents = [];
+		this.recoveryEventBytes = 0;
+		clearTimeout(this.recoveryTimer);
+		this.stopHeartbeat();
+		this.rejectPending('connection lost');
+		if (this.hadOpenConnection)
+			this.ready = new Promise((resolve) => (this.resolveReady = resolve));
+		if (code === WEB_LOGIN_WS_CLOSE_CODE) {
+			setConnectionState('disconnected');
+			window.location.href = '/' + currentToken() + '/' + WEB_LOGIN_PATHS.page;
+			return;
+		}
+		setConnectionState('reconnecting');
+		console.warn(
+			'[bridge] WebSocket closed (code ' + (code ?? 'unavailable') + ') - reconnecting in 1s'
+		);
+		setTimeout(() => this.connect(this.config.wsUrl), 1000);
+	}
+
+	private dispatchEvent(channel: string, args: unknown[]): Promise<void> {
+		const listeners = this.listeners.get(channel);
+		if (!listeners?.size) {
+			if (channel === 'remote:autoRunStateMirror')
+				this.pendingAutoRunFrames.set(args[0] as string, args[1]);
+			return Promise.resolve();
+		}
+		const work: Promise<unknown>[] = [];
+		const socket = this.ws;
+		for (const listener of listeners) {
+			try {
+				const result = listener({ senderFrame: null }, ...args);
+				if (result && typeof (result as PromiseLike<unknown>).then === 'function')
+					work.push(Promise.resolve(result));
+			} catch (error) {
+				if (this.ws === socket) this.listenerFailed(channel, error);
+				return Promise.resolve();
+			}
+		}
+		return Promise.all(work).then(
+			() => {},
+			(error) => {
+				if (this.ws === socket) this.listenerFailed(channel, error);
+			}
+		);
+	}
+
+	private recoverState(): void {
+		if (
+			!this.invalidState ||
+			this.recoveryController ||
+			!this.ws ||
+			this.ws.readyState !== WebSocket.OPEN ||
+			this.resumePending
+		)
+			return;
+		this.connected = false;
+		setConnectionState('reconnecting');
+		clearTimeout(this.recoveryTimer);
+		const controller = new AbortController();
+		this.recoveryController = controller;
+		const work: Promise<void>[] = [];
+		window.dispatchEvent(
+			new CustomEvent<WebBridgeReconcileDetail>(WEB_BRIDGE_RECONCILE_EVENT, {
+				detail: {
+					authoritative: true,
+					signal: controller.signal,
+					waitUntil: (promise) => work.push(promise),
+				},
+			})
+		);
+		void (async () => {
+			try {
+				if (!work.length) throw new Error('Host state restoration is not mounted yet');
+				await Promise.all(work);
+				while (!controller.signal.aborted && this.recoveryEvents.length) {
+					const event = this.recoveryEvents.shift()!;
+					await this.dispatchEvent(event.channel, event.args);
+				}
+				if (!controller.signal.aborted) {
+					this.recoveryEventBytes = 0;
+					this.markReady(true);
+				}
+			} catch (error) {
+				if (!controller.signal.aborted)
+					console.warn('[bridge] In-place host recovery failed; retrying', error);
+			} finally {
+				if (this.recoveryController === controller) this.recoveryController = undefined;
+				if (this.invalidState && this.ws?.readyState === WebSocket.OPEN) {
+					this.recoveryTimer = setTimeout(() => this.recoverState(), 1000);
+				}
+			}
+		})();
 	}
 
 	private notifyListener(
@@ -438,18 +490,21 @@ class BridgeClient {
 		event: { senderFrame: null },
 		args: unknown[]
 	): void {
+		if (this.invalidState) return;
 		try {
-			listener(event, ...args);
-		} catch (err) {
-			console.error(`[bridge] listener for ${channel} threw`, err);
-			captureException(err, {
-				extra: {
-					component: 'BridgeClient',
-					action: 'listener',
-					channel,
-				},
-			});
+			const result = listener(event, ...args);
+			if (result && typeof (result as PromiseLike<unknown>).then === 'function') {
+				void Promise.resolve(result).catch((error) => this.listenerFailed(channel, error));
+			}
+		} catch (error) {
+			this.listenerFailed(channel, error);
 		}
+	}
+
+	private listenerFailed(channel: string, error: unknown): void {
+		this.invalidateState('failed to apply host event ' + channel);
+		console.error(`[bridge] listener for ${channel} failed`, error);
+		captureException(error, { extra: { component: 'BridgeClient', action: 'listener', channel } });
 	}
 
 	/**
@@ -462,29 +517,31 @@ class BridgeClient {
 	}
 
 	private probeHeartbeat(): void {
-		// Only probe a socket that CLAIMS to be open; anything else is already
-		// being handled by the close/reconnect path.
-		if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-		// A probe already in flight: let its deadline settle rather than
-		// stacking a second one and shortening the budget.
-		if (this.pongDeadline !== undefined) return;
+		const socket = this.ws;
+		if (!socket || socket.readyState !== WebSocket.OPEN || this.pongDeadline !== undefined) return;
+		const started = Date.now();
 		this.pongDeadline = setTimeout(() => {
 			this.pongDeadline = undefined;
-			// No `pong`. Whatever `readyState` says, nothing is listening. Close
-			// so the existing handler rejects the pending invokes and reconnects;
-			// closing a socket that is genuinely dead is a no-op beyond that.
+			if (this.ws !== socket) return;
+			// A suspended/blocked renderer has not been observing the peer. Give a
+			// fresh probe its full deadline instead of closing before queued pongs run.
+			const elapsed = Date.now() - started;
+			if (elapsed < 0 || elapsed > BRIDGE_PONG_TIMEOUT_MS + 1000) {
+				this.probeHeartbeat();
+				return;
+			}
+			console.warn('[bridge] Heartbeat deadline expired');
+			this.disconnect(socket, 4000);
 			try {
-				this.ws?.close();
+				socket.close(4000, 'heartbeat deadline expired');
 			} catch {
-				// A socket in a bad state can throw here. The reconnect is already
-				// scheduled by the close handler, or by the next heartbeat tick.
+				/* Already retired locally. */
 			}
 		}, BRIDGE_PONG_TIMEOUT_MS);
 		try {
-			this.ws.send(JSON.stringify({ type: 'ping' }));
+			socket.send(JSON.stringify({ type: 'ping' }));
 		} catch {
-			// Send threw: the socket is dead now rather than in 8s. Let the
-			// deadline above fire and take the same recovery path.
+			/* Deadline retires the socket. */
 		}
 	}
 
@@ -500,44 +557,83 @@ class BridgeClient {
 		this.pongDeadline = undefined;
 	}
 
+	private invalidateState(reason: string): void {
+		this.invalidState = true;
+		this.connected = false;
+		this.recoveryController?.abort();
+		this.recoveryEvents = [];
+		this.recoveryEventBytes = 0;
+		this.rejectPending(reason);
+		setConnectionState('reconnecting');
+		this.recoverState();
+	}
+
 	async invoke(channel: string, ...args: unknown[]): Promise<unknown> {
-		// Startup reads can wait for their first socket. Actions during a later
-		// outage must fail now, not quietly run when the connection returns.
-		if (this.hadOpenConnection && !this.connected) {
-			const submission = isSubmissionChannel(channel);
-			const message = submission
-				? 'Not submitted: host connection is unavailable. Reconnect and review host state before submitting again.'
-				: 'host connection is unavailable';
-			if (submission) showSubmissionNotice(message);
-			throw new Error('bridge disconnected: ' + message);
-		}
-		if (
-			this.uncertainPersistence &&
-			(channel === 'sessions:setMany' || channel === 'sessions:setAll')
-		) {
+		const submission = isSubmissionChannel(channel);
+		if (submission && this.invalidState) {
 			throw new Error(
-				'Submission uncertainty: reload the host view before saving more shared session changes.'
+				'Not submitted: restoring authoritative host state. Your current work is retained.'
 			);
 		}
-		await this.ready;
-		if (!this.connected || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
+		if (
+			this.hadOpenConnection &&
+			(!this.ws ||
+				this.ws.readyState !== WebSocket.OPEN ||
+				this.resumePending ||
+				(!this.connected && !this.invalidState))
+		) {
+			throw new Error('Not submitted: reconnecting to the host. Your current work is retained.');
+		}
+		if (!this.connected && !this.invalidState) {
+			await new Promise<void>((resolve, reject) => {
+				const timer = setTimeout(
+					() => reject(new Error('Bridge connection timed out; request was not submitted')),
+					BRIDGE_READ_TIMEOUT_MS
+				);
+				this.ready.then(() => {
+					clearTimeout(timer);
+					resolve();
+				});
+			});
+		}
+		if (
+			(isSubmissionChannel(channel) && !this.connected) ||
+			!this.ws ||
+			this.ws.readyState !== WebSocket.OPEN ||
+			this.resumePending
+		) {
 			throw new Error('bridge disconnected: request was not submitted');
 		}
 		const requestId = this.nextRequestId++;
 		return new Promise((resolve, reject) => {
-			this.pending.set(requestId, { resolve, reject, channel });
+			const timer = setTimeout(() => {
+				if (!this.pending.delete(requestId)) return;
+				const submission = isSubmissionChannel(channel);
+				const message = submission
+					? 'Submission uncertainty: ' +
+						channel +
+						' timed out before acknowledgement. Check host state before submitting again; it was not automatically retried.'
+					: 'Bridge request timed out: ' + channel;
+				if (submission) showSubmissionNotice(message);
+				reject(new Error(message));
+				if (isPersistenceChannel(channel)) {
+					this.uncertainPersistence = true;
+					this.invalidateState('persistence acknowledgement timed out');
+				}
+			}, requestTimeoutMs(channel));
+			this.pending.set(requestId, { resolve, reject, channel, timer });
 			try {
 				this.ws!.send(JSON.stringify({ type: 'bridge.invoke', requestId, channel, args }));
 			} catch (error) {
 				this.pending.delete(requestId);
+				clearTimeout(timer);
 				if (isSubmissionChannel(channel))
 					showSubmissionNotice(
 						'Submission uncertainty: transport failed while sending ' +
 							channel +
 							'. Check host state before submitting again.'
 					);
-				if (channel === 'sessions:setMany' || channel === 'sessions:setAll')
-					this.uncertainPersistence = true;
+				if (isPersistenceChannel(channel)) this.uncertainPersistence = true;
 				reject(error);
 			}
 		});
@@ -575,7 +671,7 @@ class BridgeClient {
 	once(channel: string, listener: Listener): void {
 		const wrapped: Listener = (event, ...args) => {
 			this.off(channel, wrapped);
-			listener(event, ...args);
+			return listener(event, ...args);
 		};
 		this.on(channel, wrapped);
 	}

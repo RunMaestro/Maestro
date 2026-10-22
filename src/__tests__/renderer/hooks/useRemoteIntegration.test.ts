@@ -1330,6 +1330,42 @@ describe('useRemoteIntegration', () => {
 			]);
 		});
 
+		it('preserves a client-only active wizard when the host inventory omits it', () => {
+			const host = createMockTab({ id: 'host' });
+			const wizard = createMockTab({
+				id: 'local-wizard',
+				inputValue: 'unfinished draft',
+				wizardState: {
+					isActive: true,
+					conversationHistory: [{ role: 'user', text: 'unfinished wizard' }],
+				} as AITab['wizardState'],
+			});
+			const stale = createMockTab({ id: 'removed-on-host' });
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [host, wizard, stale],
+				activeTabId: wizard.id,
+				unifiedTabOrder: [
+					{ type: 'ai', id: wizard.id },
+					{ type: 'ai', id: host.id },
+					{ type: 'ai', id: stale.id },
+				],
+			});
+			const deps = createDeps({ sessions: [session], activeSessionId: session.id });
+			renderHook(() => useRemoteIntegration(deps));
+			act(() =>
+				onRemoteSelectTabHandler?.(session.id, host.id, [{ ...host, name: 'Renamed on host' }])
+			);
+			const current = useSessionStore.getState().sessions[0];
+			expect(current.aiTabs.map((tab) => tab.id)).toEqual([host.id, wizard.id]);
+			expect(current.aiTabs.find((tab) => tab.id === wizard.id)).toEqual(wizard);
+			expect(current.activeTabId).toBe(wizard.id);
+			expect(current.unifiedTabOrder).toEqual([
+				{ type: 'ai', id: wizard.id },
+				{ type: 'ai', id: host.id },
+			]);
+		});
+
 		it('keeps the browser on its own tab when the desktop changes selection in the viewed session', () => {
 			const tab1 = createMockTab({ id: 'tab-1' });
 			const tab2 = createMockTab({ id: 'tab-2' });

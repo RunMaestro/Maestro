@@ -22,6 +22,8 @@ import {
 	triggerCustomNotification,
 	selectUnreadNotificationCount,
 	loadNotificationHistory,
+	flushNotificationHistoryWrites,
+	startNotificationHistorySync,
 	NOTIFICATION_HISTORY_LIMIT,
 	NOTIFICATION_HISTORY_STORAGE_KEY,
 } from '../../../renderer/stores/notificationStore';
@@ -1154,6 +1156,27 @@ describe('notificationStore', () => {
 		beforeEach(() => {
 			installLocalStorageMock();
 			useNotificationStore.setState({ history: [], notificationCenterOpen: false });
+		});
+
+		it('persists the web inbox locally despite private host history APIs in the preload', async () => {
+			mockIsWebDesktop.mockReturnValue(true);
+			const changeHistory = vi.fn().mockResolvedValue({ success: false });
+			const onHistoryChanged = vi.fn(() => () => {});
+			Object.assign(window.maestro.notification, { changeHistory, onHistoryChanged });
+			const dispose = startNotificationHistorySync();
+			const id = notifyToast({ title: 'Remote completion', message: 'Ready', historyOnly: true });
+			await flushNotificationHistoryWrites();
+			expect(loadNotificationHistory()).toMatchObject([
+				{ id, title: 'Remote completion', read: false },
+			]);
+			useNotificationStore.getState().markNotificationRead(id);
+			expect(loadNotificationHistory()).toMatchObject([{ id, read: true }]);
+			useNotificationStore.getState().clearNotificationHistory();
+			expect(loadNotificationHistory()).toEqual([]);
+			expect(useNotificationStore.getState().historyPersistenceFailed).toBe(false);
+			expect(changeHistory).not.toHaveBeenCalled();
+			expect(onHistoryChanged).not.toHaveBeenCalled();
+			dispose();
 		});
 
 		it('records every toast as unread, newest first', () => {

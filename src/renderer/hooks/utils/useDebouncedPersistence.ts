@@ -328,6 +328,10 @@ export interface UseDebouncedPersistenceReturn {
 /** Default debounce delay in milliseconds */
 export const DEFAULT_DEBOUNCE_DELAY = 2000;
 export const SESSION_PERSISTENCE_BASELINE_EVENT = 'maestro:session-persistence-baseline';
+export interface SessionPersistenceBaseline {
+	sessions: Session[];
+	recovered?: boolean;
+}
 
 /**
  * Diff two sessions arrays by reference identity per element.
@@ -417,6 +421,7 @@ export function useDebouncedPersistence(
 	// Retain its wire snapshot until our first successful save; restoration must
 	// not turn that host-owned row into a client-created row without a baseline.
 	const peerBaselinesRef = useRef(new Map<string, Session>());
+	const recoveryGenerationRef = useRef(0);
 
 	/**
 	 * Run one persistence pass. Throws on failure so callers can decide
@@ -452,6 +457,7 @@ export function useDebouncedPersistence(
 		if (!useSessionStore.getState().sessionsReadOk) {
 			throw new Error(SESSIONS_NOT_READ_MESSAGE);
 		}
+		const recoveryGeneration = recoveryGenerationRef.current;
 		const current = sessionsRef.current;
 		const peerBaselines = peerBaselinesRef.current;
 		const observedBaselines = (previous: Session[] | null, toPersist: Session[]): Session[] => {
@@ -482,6 +488,7 @@ export function useDebouncedPersistence(
 							sessionsForPersistence,
 							observedBaselines(mountedSessionsRef.current, current)
 						);
+			if (recoveryGeneration !== recoveryGenerationRef.current) return;
 			if (ok === false) {
 				throw new Error('Session persistence returned false (recoverable disk error)');
 			}
@@ -502,6 +509,7 @@ export function useDebouncedPersistence(
 		const dirtyForPersistence = sessionsToPersist.map(prepareSessionForPersistence);
 		const baselines = observedBaselines(previouslyPersistedRef.current, sessionsToPersist);
 		const ok = await window.maestro.sessions.setMany(dirtyForPersistence, tombstones, baselines);
+		if (recoveryGeneration !== recoveryGenerationRef.current) return;
 		if (ok === false) {
 			throw new Error('sessions:setMany returned false (recoverable disk error)');
 		}
@@ -613,7 +621,20 @@ export function useDebouncedPersistence(
 			for (const id of payload.removedIds ?? []) peerBaselinesRef.current.delete(id);
 		});
 		const rememberBootstrap = (event: Event) => {
-			for (const session of (event as CustomEvent<Session[]>).detail) {
+			const { sessions, recovered } = (event as CustomEvent<SessionPersistenceBaseline>).detail;
+			if (recovered) {
+				recoveryGenerationRef.current++;
+				if (timerRef.current) clearTimeout(timerRef.current);
+				timerRef.current = null;
+				flushRequestedRef.current = false;
+				peerBaselinesRef.current.clear();
+				sessionsRef.current = useSessionStore.getState().sessions;
+				previouslyPersistedRef.current = sessionsRef.current;
+				startupBaselineNeedsFullFlushRef.current = false;
+				isPendingRef.current = false;
+				setIsPending(false);
+			}
+			for (const session of sessions) {
 				peerBaselinesRef.current.set(session.id, structuredClone(session));
 			}
 		};

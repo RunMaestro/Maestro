@@ -128,7 +128,8 @@ export function createSessionsApi() {
 export function createGroupsApi() {
 	return {
 		getAll: () => ipcRenderer.invoke('groups:getAll'),
-		setAll: (groups: Group[]) => ipcRenderer.invoke('groups:setAll', groups),
+		setAll: (groups: Group[], baseline: Group[]) =>
+			ipcRenderer.invoke('groups:setAll', groups, baseline),
 	};
 }
 

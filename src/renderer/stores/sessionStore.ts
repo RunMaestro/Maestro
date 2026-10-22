@@ -39,6 +39,7 @@ export interface SessionStoreState {
 	// Core entities
 	sessions: Session[];
 	groups: Group[];
+	groupPersistenceBaseline: Group[];
 
 	// Active session
 	activeSessionId: string;
@@ -46,6 +47,9 @@ export interface SessionStoreState {
 	// Initialization
 	sessionsLoaded: boolean;
 	initialLoadComplete: boolean;
+
+	// Authoritative recovery retires state-event work from the previous inventory.
+	sessionReconciliationGeneration: number;
 	initialFileTreeReady: boolean;
 
 	// True only once the group registry has been READ back successfully. Group
@@ -191,9 +195,11 @@ export const useSessionStore = create<SessionStore>()((set) => ({
 	// --- State ---
 	sessions: [],
 	groups: [],
+	groupPersistenceBaseline: [],
 	activeSessionId: '',
 	sessionsLoaded: false,
 	initialLoadComplete: false,
+	sessionReconciliationGeneration: 0,
 	initialFileTreeReady: false,
 	groupsLoaded: false,
 	sessionsReadOk: false,

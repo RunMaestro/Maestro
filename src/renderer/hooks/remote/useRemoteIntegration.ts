@@ -591,7 +591,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					if (isInventorySync) {
 						const existingById = new Map(s.aiTabs.map((tab) => [tab.id, tab]));
 						const deferredTabIds = new Set(s.deferredContent?.tabIds ?? []);
-						const aiTabs = remoteTabs.map((remoteTab) => {
+						const aiTabs: Session['aiTabs'] = remoteTabs.map((remoteTab) => {
 							const existing = existingById.get(remoteTab.id);
 							const syncedFields = {
 								id: remoteTab.id,
@@ -619,6 +619,10 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 								showThinking: defaultShowThinking,
 							};
 						});
+						const hostTabIds = new Set(remoteTabs.map((tab) => tab.id));
+						aiTabs.push(
+							...s.aiTabs.filter((tab) => tab.wizardState?.isActive && !hostTabIds.has(tab.id))
+						);
 						const pendingTabIds = aiTabs
 							.filter((tab) => deferredTabIds.has(tab.id))
 							.map((tab) => tab.id);

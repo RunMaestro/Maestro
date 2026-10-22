@@ -343,6 +343,7 @@ function applyHistorySnapshot(snapshot: NotificationHistorySnapshot): void {
 
 /** Serialize this renderer's mutations; main serializes mutations across all clients. */
 function persistNotificationHistoryChange(change: NotificationHistoryChange): void {
+	if (isWebDesktop()) return; // Remote inboxes are client-local; host history APIs stay private.
 	const api = window.maestro?.notification?.changeHistory;
 	if (!api) return; // Legacy/test hosts retain the guarded localStorage fallback.
 	pendingHistoryChanges.push(change);
@@ -379,6 +380,7 @@ export async function flushNotificationHistoryWrites(): Promise<void> {
 
 /** Subscribe before migrating so notifications from another window cannot be missed. */
 export function startNotificationHistorySync(): () => void {
+	if (isWebDesktop()) return () => {};
 	const api = window.maestro?.notification;
 	if (!api?.changeHistory || !api.onHistoryChanged) return () => {};
 	const unsubscribe = api.onHistoryChanged(applyHistorySnapshot);
@@ -388,7 +390,10 @@ export function startNotificationHistorySync(): () => void {
 }
 
 useNotificationStore.subscribe((state, prev) => {
-	if (state.history !== prev.history && !window.maestro?.notification?.changeHistory) {
+	if (
+		state.history !== prev.history &&
+		(isWebDesktop() || !window.maestro?.notification?.changeHistory)
+	) {
 		const historyPersistenceFailed = !saveNotificationHistory(state.history);
 		if (historyPersistenceFailed !== state.historyPersistenceFailed) {
 			useNotificationStore.setState({ historyPersistenceFailed });
@@ -601,6 +606,7 @@ export function triggerCustomNotification(
 	message: string | undefined,
 	vars?: { agent?: string; tab?: string; group?: string; task?: string }
 ): boolean {
+	if (isWebDesktop()) return false;
 	const { config } = useNotificationStore.getState();
 	const hasContent = !!message && message.trim().length > 0;
 	const shouldFire = config.audioFeedbackEnabled && !!config.audioFeedbackCommand && hasContent;

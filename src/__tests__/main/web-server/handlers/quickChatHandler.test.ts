@@ -4,6 +4,7 @@
 // request id attached so the CLI on the far end never hangs.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { WebSocket } from 'ws';
 import { EMPTY_QUICK_CHAT_SNAPSHOT } from '../../../../shared/quickChat';
 
 vi.mock('../../../../main/utils/logger', () => ({
@@ -51,7 +52,7 @@ import type {
 
 function createMockClient(): WebClient {
 	return {
-		socket: { send: vi.fn() } as unknown as WebClient['socket'],
+		socket: { readyState: WebSocket.OPEN, send: vi.fn() } as unknown as WebClient['socket'],
 		id: 'client-1',
 		connectedAt: 0,
 	};

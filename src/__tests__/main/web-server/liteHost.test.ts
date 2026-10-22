@@ -43,6 +43,11 @@ import { WEB_LOGIN_WS_CLOSE_CODE } from '../../../shared/webLogin';
 import { BroadcastService } from '../../../main/web-server/services/broadcastService';
 import { WebSocketMessageHandler } from '../../../main/web-server/handlers/messageHandlers/WebSocketMessageHandler';
 import type { WebClient } from '../../../main/web-server/types';
+import {
+	REMOTE_WORKFLOWS,
+	qualifyRemoteWorkflows,
+} from '../../../main/web-server/remote-workflows';
+import { getActingUser } from '../../../main/web-server/auth/acting-user';
 
 const servers: FastifyInstance[] = [];
 const sockets: WebSocket[] = [];
@@ -91,27 +96,44 @@ async function httpHost(win: BrowserWindow | null = null) {
 	return server;
 }
 
+function installWorkflowFixture() {
+	const mutations: string[] = [];
+	for (const workflow of Object.values(REMOTE_WORKFLOWS)) {
+		for (const channel of workflow.methods)
+			handlers.set(channel, () => {
+				mutations.push(channel);
+				return true;
+			});
+	}
+	for (const channel of ['sessions:getBootstrap', 'groups:getAll', 'process:getActiveProcesses'])
+		handlers.set(channel, () => []);
+	handlers.set('settings:getAll', () => ({ theme: 'dark' }));
+	handlers.set('web:getAutoRunStates', () => ({}));
+	handlers.set('prompts:getSystemPromptPaths', () => ({
+		success: true,
+		computerHistoryDir: '/host/context',
+	}));
+	handlers.set('fs:homeDir', () => '/host/home');
+	state.relayReady = true;
+	return mutations;
+}
+
 describe('Lite host handshake and readiness', () => {
 	it('keeps token auth when optional login is off and distinguishes unavailable owner from empty sessions', async () => {
 		const server = await httpHost();
 		expect((await server.inject('/api/lite/handshake')).statusCode).toBe(404);
 		const response = await server.inject(`/${token}/api/lite/handshake`);
-		expect(response.statusCode).toBe(200);
-		expect(response.json()).toMatchObject({
-			protocolVersion: 1,
-			appVersion: '1.2.3',
-			ready: false,
-			authentication: { loginEnabled: false, authenticated: false },
-			capabilities: emptyCapabilities,
+		expect(response.statusCode).toBe(503);
+		expect(response.json()).toEqual({
+			error: 'Temporarily unavailable',
+			message: 'Owning desktop renderer is unavailable',
 		});
-		expect(response.json().unavailableReason).toMatch(/renderer/);
 		expect(response.headers['cache-control']).toBe('no-store');
-		const second = await server.inject(`/${token}/api/lite/handshake`);
-		expect(second.json().instanceId).toBe(response.json().instanceId);
 	});
 	it('requires a live login session even through loopback, with no auth or credential fields in the contract', async () => {
 		state.settings.set('encoreFeatures', { webLogin: true });
-		const server = await httpHost();
+		installWorkflowFixture();
+		const server = await httpHost(windowWithReply(true));
 		const url = `/${token}/api/lite/handshake`;
 		expect((await server.inject({ url, remoteAddress: '127.0.0.1' })).statusCode).toBe(401);
 		expect(
@@ -126,10 +148,10 @@ describe('Lite host handshake and readiness', () => {
 			hostName: hostname(),
 			appVersion: '1.2.3',
 			platform: process.platform,
-			ready: false,
-			unavailableReason: 'Owning desktop renderer is unavailable',
+			ready: true,
 			authentication: { loginEnabled: true, authenticated: true },
-			capabilities: emptyCapabilities,
+			capabilities: { sessions: true, terminal: true, files: true, browserRelay: true },
+			workflowQualificationVersion: 1,
 		});
 		state.sessions.delete('live');
 		expect(
@@ -172,6 +194,116 @@ describe('Lite host handshake and readiness', () => {
 			browserRelay: true,
 		});
 		expect((await provider(windowWithReply(true), false)()).ready).toBe(false);
+	});
+
+	it('treats an unanswered owner readiness read as transient and recovers when the owner responds', async () => {
+		installWorkflowFixture();
+		const owner = windowWithReply(true);
+		const send = owner.webContents.send;
+		let responding = false;
+		vi.spyOn(owner.webContents, 'send').mockImplementation((channel, ...args) => {
+			if (responding) send(channel, ...args);
+		});
+		const server = await httpHost(owner);
+		const url = `/${token}/api/lite/handshake`;
+		const delayed = await server.inject(url);
+		expect(delayed.statusCode).toBe(503);
+		expect(delayed.json()).toMatchObject({
+			error: 'Temporarily unavailable',
+			message: 'Owning desktop renderer is not ready to accept remote work',
+		});
+		expect(delayed.headers['cache-control']).toBe('no-store');
+		responding = true;
+		const recovered = await server.inject(url);
+		expect(recovered.statusCode).toBe(200);
+		expect(recovered.json()).toMatchObject({ ready: true, capabilities: { sessions: true } });
+	});
+
+	it('qualifies authenticated reads through the real bridge without executing mutations', async () => {
+		const mutations = installWorkflowFixture();
+		state.settings.set('encoreFeatures', { webLogin: true });
+		state.sessions.set('live', { id: 'operator', username: 'ada', displayName: 'Ada' });
+		handlers.set('groups:getAll', async () => {
+			await Promise.resolve();
+			expect(getActingUser()?.id).toBe('operator');
+			return [];
+		});
+		const server = await httpHost(windowWithReply(true));
+		const response = await server.inject({
+			url: '/' + token + '/api/lite/handshake',
+			headers: { cookie: 'maestro_web_session=live' },
+		});
+		expect(response.json().capabilities).toEqual({
+			sessions: true,
+			terminal: true,
+			files: true,
+			browserRelay: true,
+		});
+		expect(response.json().workflowQualificationVersion).toBe(1);
+		expect(mutations).toEqual([]);
+	});
+
+	it('rejects a nominal session capability with a missing conversation-close operation', async () => {
+		installWorkflowFixture();
+		handlers.delete('web:requestCloseTab');
+		const server = await httpHost(windowWithReply(true));
+		const response = await server.inject('/' + token + '/api/lite/handshake');
+		expect(response.json().capabilities.sessions).toBe(false);
+		expect(response.json().capabilities.files).toBe(true);
+		expect(response.json().unavailableReason).toContain('web:requestCloseTab');
+		expect(response.statusCode).toBe(200);
+	});
+
+	it('rejects a failed prompt-context read and does not disclose its private payload', async () => {
+		installWorkflowFixture();
+		handlers.set('prompts:getSystemPromptPaths', () => ({
+			success: false,
+			error: '/private/host/path',
+		}));
+		const server = await httpHost(windowWithReply(true));
+		const response = await server.inject('/' + token + '/api/lite/handshake');
+		expect(response.statusCode).toBe(503);
+		expect(response.json().message).toContain('prompts:getSystemPromptPaths');
+		expect(response.body).not.toContain('/private/host/path');
+	});
+
+	it('rechecks revocation after asynchronous workflow reads', async () => {
+		installWorkflowFixture();
+		state.settings.set('encoreFeatures', { webLogin: true });
+		state.sessions.set('live', { id: 'operator', username: 'ada', displayName: 'Ada' });
+		handlers.set('groups:getAll', async () => {
+			state.sessions.delete('live');
+			return [];
+		});
+		const server = await httpHost(windowWithReply(true));
+		expect(
+			(
+				await server.inject({
+					url: '/' + token + '/api/lite/handshake',
+					headers: { cookie: 'maestro_web_session=live' },
+				})
+			).statusCode
+		).toBe(401);
+	});
+
+	it('bounds unanswered workflow reads instead of declaring a usable session capability', async () => {
+		vi.useFakeTimers();
+		try {
+			installWorkflowFixture();
+			handlers.set('sessions:getBootstrap', () => new Promise(() => {}));
+			const pending = qualifyRemoteWorkflows(
+				{ sessions: true, terminal: true, files: true, browserRelay: false },
+				{ id: 'probe', cli: false }
+			);
+			await vi.advanceTimersByTimeAsync(3001);
+			const result = await pending;
+			expect(result.capabilities.sessions).toBe(false);
+			expect(result.capabilities.terminal).toBe(true);
+			expect(result.failures).toEqual(['sessions read checks failed: sessions:getBootstrap']);
+			expect(result.temporarilyUnavailable).toBe(true);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 	it('uses the local bootstrap identity without adopting synced installation identity', () => {
 		state.settings.set('installationId', 'synced-other-machine');
@@ -272,7 +404,11 @@ describe('live socket authorization', () => {
 			{
 				id: 'c',
 				connectedAt: 1,
-				socket: { send: (value: string) => sent.push(value) } as WebClient['socket'],
+				socket: {
+					readyState: WebSocket.OPEN,
+					bufferedAmount: 0,
+					send: (value: string) => sent.push(value),
+				} as WebClient['socket'],
 			},
 			{ type: 'set_setting', key: 'encoreFeatures', value: { webLogin: false } }
 		);

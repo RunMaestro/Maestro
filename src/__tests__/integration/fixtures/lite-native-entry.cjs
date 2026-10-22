@@ -493,12 +493,48 @@ async function main() {
 	});
 	let healthFailureStatus = 0;
 	let failedHealthReads = 0;
+	let failWorkflowRead = false;
+	let failedWorkflowReads = 0;
+	let ownerReady = true;
+	let failedOwnerReadinessChecks = 0;
 	api.addHook('onRequest', async (request, reply) => {
 		if (healthFailureStatus && request.url === CONNECT + '/api/lite/handshake') {
 			failedHealthReads++;
 			return reply.code(healthFailureStatus).send({ error: 'Isolated transient relay failure' });
 		}
 	});
+	// This fixture exercises pairing/admission, not agent execution. Supply the
+	// declared synthetic host's reviewed bindings; any mutation probe is a bug.
+	const { ipcMain } = require('electron');
+	const { REMOTE_WORKFLOWS } = require(path.join(dist, 'main/web-server/remote-workflows.js'));
+	const fixtureReads = new Map([
+		['sessions:getBootstrap', []],
+		['groups:getAll', []],
+		['settings:getAll', {}],
+		['web:getAutoRunStates', {}],
+		['process:getActiveProcesses', []],
+		['fs:homeDir', directory],
+		[
+			'prompts:getSystemPromptPaths',
+			{ success: true, computerHistoryDir: path.join(directory, 'context') },
+		],
+	]);
+	for (const workflow of Object.values(REMOTE_WORKFLOWS)) {
+		for (const channel of workflow.methods) {
+			if (ipcMain._invokeHandlers.has(channel)) continue;
+			ipcMain.handle(channel, () => {
+				if (channel === 'groups:getAll' && failWorkflowRead) {
+					failedWorkflowReads++;
+					throw new Error('Isolated required workflow read unavailable');
+				}
+				assert(
+					fixtureReads.has(channel),
+					'Qualification must never execute synthetic host mutations'
+				);
+				return fixtureReads.get(channel);
+			});
+		}
+	}
 	require(
 		path.join(dist, 'main/web-server/routes/liteConnectionRoutes.js')
 	).registerLiteConnectionRoutes(api, {
@@ -507,14 +543,25 @@ async function main() {
 		webAssetsPath: web,
 		apiRoutes,
 		wsRoute,
-		getHostStatus: async () => ({
-			instanceId: fixture.remoteIdentity,
-			hostName: 'Synthetic Aster',
-			appVersion: options.appVersion,
-			platform: process.platform,
-			ready: true,
-			capabilities: { sessions: true, terminal: true, files: true, browserRelay: true },
-		}),
+		getHostStatus: async () => {
+			if (!ownerReady) failedOwnerReadinessChecks++;
+			return {
+				instanceId: fixture.remoteIdentity,
+				hostName: 'Synthetic Aster',
+				appVersion: options.appVersion,
+				platform: process.platform,
+				ready: ownerReady,
+				capabilities: {
+					sessions: ownerReady,
+					terminal: ownerReady,
+					files: ownerReady,
+					browserRelay: ownerReady,
+				},
+				...(!ownerReady
+					? { unavailableReason: 'Owning desktop renderer is not ready to accept remote work' }
+					: {}),
+			};
+		},
 	});
 	await api.listen({ port: 0, host: '127.0.0.1' });
 	backendPort = api.server.address().port;
@@ -661,6 +708,32 @@ async function main() {
 	check(
 		'transient HTTP 502/503/504 health reads retain the same native host view, unsent draft and connected WebSocket'
 	);
+	ownerReady = false;
+	await until(() => failedOwnerReadinessChecks > 0, 'unavailable owning-renderer health check');
+	await delay(1100);
+	assert.equal(remote.isDestroyed(), false);
+	assert.equal(lite.contentView.children[0].webContents.id, healthViewId);
+	assert.equal(
+		await js(remote, 'document.querySelector("#draft").value'),
+		'Preserve this unsent draft'
+	);
+	assert.equal(await js(remote, 'window.__MAESTRO_BRIDGE_STATE__'), 'connected');
+	ownerReady = true;
+	check(
+		'unavailable owning-renderer health check retains native view, unsent draft and live bridge'
+	);
+	failWorkflowRead = true;
+	await until(() => failedWorkflowReads > 0, 'failed required qualification read');
+	await delay(1100);
+	assert.equal(remote.isDestroyed(), false);
+	assert.equal(lite.contentView.children[0].webContents.id, healthViewId);
+	assert.equal(
+		await js(remote, 'document.querySelector("#draft").value'),
+		'Preserve this unsent draft'
+	);
+	assert.equal(await js(remote, 'window.__MAESTRO_BRIDGE_STATE__'), 'connected');
+	failWorkflowRead = false;
+	check('failed required qualification read retains native view, unsent draft and live bridge');
 	const credentialPath = path.join(liteDirectory, 'lite-device-credentials.json');
 	const credentialBytes = fs.readFileSync(credentialPath, 'utf8');
 	assert(!credentialBytes.includes('"credential":'));

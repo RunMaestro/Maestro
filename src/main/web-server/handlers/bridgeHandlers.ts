@@ -124,10 +124,10 @@ export function broadcastBridgeEvent(channel: string, args: unknown[]): void {
  * Handle a bridge.invoke message - dispatch to the registered ipcMain handler
  * and send a bridge.response back to the originating client.
  */
-export async function handleBridgeInvoke(
-	client: WebClient,
+export async function handleBridgeInvoke<TClient extends Pick<WebClient, 'id' | 'user' | 'cli'>>(
+	client: TClient,
 	message: InvokeMessage,
-	send: (client: WebClient, payload: object) => void
+	send: (client: TClient, payload: object) => void
 ): Promise<void> {
 	const requestId = message.requestId;
 	const channel = message.channel;

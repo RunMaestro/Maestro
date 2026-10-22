@@ -14,10 +14,17 @@ import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import { useAppRemoteEventListeners } from '../../../../renderer/hooks/remote/useAppRemoteEventListeners';
 import type { Group } from '../../../../shared/types';
 
-const storeState: { groups: Group[] } = { groups: [] };
+const storeState: { groups: Group[]; groupPersistenceBaseline: Group[]; groupsLoaded: boolean } = {
+	groups: [],
+	groupPersistenceBaseline: [],
+	groupsLoaded: true,
+};
 
 vi.mock('../../../../renderer/stores/sessionStore', () => ({
-	useSessionStore: Object.assign(vi.fn(), { getState: vi.fn(() => storeState) }),
+	useSessionStore: Object.assign(vi.fn(), {
+		getState: vi.fn(() => storeState),
+		setState: (next: Partial<typeof storeState>) => Object.assign(storeState, next),
+	}),
 	selectSessionById: vi.fn(),
 }));
 vi.mock('../../../../renderer/stores/settingsStore', () => ({
@@ -36,12 +43,15 @@ vi.mock('../../../../renderer/utils/ids', () => ({ generateId: () => 'new-group'
 
 const createAck = vi.fn();
 const updateAck = vi.fn();
-const setAll = vi.fn().mockResolvedValue(undefined);
+const setAll = vi.fn().mockResolvedValue(true);
 
 const DEFAULT_EMOJI = '\u{1F4C2}';
 
 function setup() {
-	const setGroups = vi.fn();
+	storeState.groupPersistenceBaseline = storeState.groups;
+	const setGroups = vi.fn((update: Group[] | ((groups: Group[]) => Group[])) => {
+		storeState.groups = typeof update === 'function' ? update(storeState.groups) : update;
+	});
 	renderHook(() =>
 		useAppRemoteEventListeners({
 			sessionsRef: { current: [] },
@@ -92,6 +102,8 @@ function group(overrides: Partial<Group> & { id: string }): Group {
 beforeEach(() => {
 	vi.clearAllMocks();
 	storeState.groups = [];
+	storeState.groupPersistenceBaseline = [];
+	setAll.mockResolvedValue(true);
 	(window as any).maestro = {
 		process: {
 			sendRemoteCreateGroupResponse: createAck,

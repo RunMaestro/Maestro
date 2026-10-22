@@ -2870,7 +2870,7 @@ describe('useDebouncedPersistence', () => {
 		try {
 			await act(async () => {
 				window.dispatchEvent(
-					new CustomEvent(SESSION_PERSISTENCE_BASELINE_EVENT, { detail: [observed] })
+					new CustomEvent(SESSION_PERSISTENCE_BASELINE_EVENT, { detail: { sessions: [observed] } })
 				);
 				useSessionStore.getState().setSessions([{ ...observed, name: 'Restored name' }]);
 				useSessionStore.getState().setSessionsReadOk(true);
@@ -2887,6 +2887,61 @@ describe('useDebouncedPersistence', () => {
 		} finally {
 			view.unmount();
 			vi.mocked(window.maestro.sessions.setAll).mockResolvedValue(true);
+			vi.mocked(window.maestro.sessions.setMany).mockResolvedValue(true);
+		}
+	});
+	it('accepts the recovered host baseline without replaying an ambiguous save or its queued flush', async () => {
+		const initialLoad = makeInitialLoadRef(true);
+		let host = makeSession({ id: 'recovery', name: 'Before', cwd: '/original' });
+		useSessionStore.setState({ sessions: [host], sessionsReadOk: true, initialLoadComplete: true });
+		vi.mocked(window.maestro.sessions.setAll).mockResolvedValue(true);
+		let rejectOld!: (error: Error) => void;
+		vi.mocked(window.maestro.sessions.setMany).mockImplementationOnce(async (updates) => {
+			host = updates[0];
+			return new Promise<boolean>((_resolve, reject) => {
+				rejectOld = reject;
+			});
+		});
+		const view = renderHook(() => useDebouncedPersistence(initialLoad));
+		try {
+			await act(async () => {
+				view.result.current.flushNow([host]);
+			});
+			await act(async () => {
+				useSessionStore.getState().setSessions([{ ...host, name: 'Ambiguous old save' }]);
+				await vi.advanceTimersByTimeAsync(DEFAULT_DEBOUNCE_DELAY + 1);
+			});
+			act(() => view.result.current.flushNow(useSessionStore.getState().sessions));
+			const recovered = { ...host, name: 'Newer host state', cwd: '/host-progressed' };
+			host = recovered;
+			await act(async () => {
+				useSessionStore.getState().setSessions([recovered]);
+				window.dispatchEvent(
+					new CustomEvent(SESSION_PERSISTENCE_BASELINE_EVENT, {
+						detail: { sessions: [recovered], recovered: true },
+					})
+				);
+				rejectOld(new Error('Submission uncertainty: connection lost'));
+				await vi.runAllTimersAsync();
+			});
+			expect(host.name).toBe('Newer host state');
+			expect(view.result.current.isPending).toBe(false);
+			expect(window.maestro.sessions.setMany).toHaveBeenCalledTimes(1);
+			vi.mocked(window.maestro.sessions.setMany).mockImplementation(
+				async (updates, _removed, baselines) => {
+					host = mergeSessionPersistenceChanges(updates[0], host, baselines![0], true);
+					return true;
+				}
+			);
+			host = { ...host, cwd: '/peer-changed-after-recovery' };
+			await act(async () => {
+				useSessionStore.getState().setSessions([{ ...recovered, name: 'Fresh explicit change' }]);
+				await vi.runAllTimersAsync();
+			});
+			expect(host.name).toBe('Fresh explicit change');
+			expect(host.cwd).toBe('/peer-changed-after-recovery');
+		} finally {
+			view.unmount();
 			vi.mocked(window.maestro.sessions.setMany).mockResolvedValue(true);
 		}
 	});

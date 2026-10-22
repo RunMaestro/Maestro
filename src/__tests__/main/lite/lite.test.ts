@@ -40,6 +40,7 @@ const profile: LiteProfile = {
 };
 const host: MaestroRemoteHandshake = {
 	protocolVersion: 1,
+	workflowQualificationVersion: 1,
 	instanceId: 'instance-a',
 	hostName: 'Host A',
 	appVersion: '0.18.6',
@@ -137,6 +138,9 @@ describe('Lite URL and host identity boundary', () => {
 		]);
 	});
 	it('refuses changed identity, not-ready hosts, incompatible protocol and unauthenticated direct access', () => {
+		expect(() =>
+			validateHandshake({ ...host, workflowQualificationVersion: undefined }, profile)
+		).toThrow(/Incompatible/);
 		expect(() => validateHandshake(host, { ...profile, instanceId: 'other' })).toThrow(/identity/);
 		expect(() =>
 			validateHandshake({ ...host, ready: false, unavailableReason: 'owner unavailable' }, profile)

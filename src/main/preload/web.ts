@@ -8,7 +8,11 @@
  */
 
 import { ipcRenderer } from 'electron';
-import type { AutoRunOwner, OrphanedAutoRun } from '../../shared/autoRunBroadcast';
+import type {
+	AutoRunBroadcastState,
+	AutoRunOwner,
+	OrphanedAutoRun,
+} from '../../shared/autoRunBroadcast';
 import type { BatchRunConfig } from '../../shared/types';
 import type { AutoRunRemoteControl, AutoRunRemoteResult } from '../../shared/autoRunRemote';
 
@@ -58,6 +62,8 @@ export interface AiTabState {
  */
 export function createWebApi() {
 	return {
+		getAutoRunStates: () =>
+			ipcRenderer.invoke('web:getAutoRunStates') as Promise<Record<string, AutoRunBroadcastState>>,
 		startAutoRun: (sessionId: string, config: BatchRunConfig, folderPath: string) =>
 			ipcRenderer.invoke(
 				'web:startAutoRun',
