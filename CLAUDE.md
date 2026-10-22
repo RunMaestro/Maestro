@@ -250,6 +250,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **A composer's Attach Image input:** `<ImageAttachInput ref>` / `stageImageFiles()` in `src/renderer/components/ChatComposer/ImageAttachInput.tsx` (duplicate check, read error and abort reported); buttons click it through the ref, never `getElementById`.
 - **Trimming a text paste in a composer:** `applyTrimmedTextPaste(e, currentValue, setValue)` / `clipboardHasImage()` in `src/renderer/components/ChatComposer/pasteTrim.ts`.
 - **Composer keys both chat composers share (Cmd+F, `@` picker, Enter / Cmd+Enter, Escape):** `handleComposerFindKey()`, `handleComposerPickerKey()`, `handleComposerSendKey()` in `src/renderer/hooks/input/composerKeyDown.ts`; a composer the window handlers do not know passes `isolateFromWindowKeys`.
+- **Which optional controls a composer toolbar offers:** `ComposerCapabilities`, `deriveAiComposerCapabilities()`, `aiCanAttachImages()`, `GROUP_CHAT_COMPOSER_CAPABILITIES` in `src/renderer/components/ChatComposer/capabilities.ts`; AI tab binding `useAiTabToolbarBinding()`.
 - **Shell tab completion:** `useTabCompletion()` in `src/renderer/hooks/input/useTabCompletion.ts` (terminal composer and command mode)
 - **Revealing output the user asked for, past a paused auto-scroll:** `requestTranscriptScrollToBottom(sessionId, tabId)` in `src/renderer/services/transcriptScroll.ts`
 - **Appending to a transcript entry:** `canAppendToLogEntry(entry, source)` / `isSelfContainedCard(entry)` in `src/renderer/utils/logEntries.ts`

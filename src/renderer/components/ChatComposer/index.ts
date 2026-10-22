@@ -10,3 +10,11 @@ export {
 	type StageImageFilesOptions,
 } from './ImageAttachInput';
 export { applyTrimmedTextPaste, clipboardHasImage } from './pasteTrim';
+export {
+	GROUP_CHAT_COMPOSER_CAPABILITIES,
+	aiCanAttachImages,
+	deriveAiComposerCapabilities,
+	type AiComposerCapabilitiesInput,
+	type AiImageAttachInput,
+	type ComposerCapabilities,
+} from './capabilities';
