@@ -365,8 +365,9 @@ export const MODAL_PRIORITIES = {
 	/** Agent Profiles management modal (named model/effort/role bundles). Sits
 	 * above BOARD_MODAL (457) because the Board's empty state opens it, so Escape
 	 * must close Profiles first and leave the Board up. 458-466 are taken
-	 * by SSH Remote, Pianola, Cue, and its child dialogs, hence 467. */
-	PROFILES_MODAL: 467,
+	 * by SSH Remote, Pianola, Cue, and its child dialogs; 467 belongs to the
+	 * pipeline selector, so Profiles takes 468. */
+	PROFILES_MODAL: 468,
 
 	/** Board kanban modal (task DAG; depends on Maestro Cue) */
 	BOARD_MODAL: 457,
