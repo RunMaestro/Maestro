@@ -112,7 +112,13 @@ function toGlobCandidate(filePath: string, cwd?: string): string {
 		const relative = path.relative(cwd, filePath);
 		// `path.relative` escaping the root (`../`) means the file lives outside
 		// the project; keep the original so an absolute-path glob can still match.
-		if (relative && !relative.startsWith('..')) candidate = relative;
+		if (
+			relative &&
+			relative !== '..' &&
+			!relative.startsWith(`..${path.sep}`) &&
+			!path.isAbsolute(relative)
+		)
+			candidate = relative;
 	}
 	return candidate.replace(/\\/g, '/').replace(/^\.\//, '');
 }

@@ -217,6 +217,7 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// the UI drops the runtime's cached rules straight away; the file watcher
 	// would also catch it, a debounce later.
 	registerTtsrHandlers({
+		getSessions: () => deps.sessionsStore.get('sessions', []) as Array<Record<string, unknown>>,
 		onRulesChanged: (projectRoot: string) => deps.getTtsrRuntime()?.invalidateRules(projectRoot),
 		// The spawning renderer's ack for a corrective turn, which cancels the
 		// "did not start" watchdog armed when the interrupt was broadcast.

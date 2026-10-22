@@ -274,6 +274,7 @@ export function TtsrRulesPanel({
 						On interrupt
 					</span>
 					<select
+						aria-label="On interrupt"
 						value={settings.contextMode ?? ''}
 						onChange={(e) =>
 							void patchSettings({

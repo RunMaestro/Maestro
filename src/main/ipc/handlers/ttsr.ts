@@ -15,6 +15,8 @@
  */
 
 import { ipcMain } from 'electron';
+import * as path from 'path';
+import { foldPathCase, realpathThroughAncestor } from '../../utils/real-path-containment';
 import * as yaml from 'js-yaml';
 import { withIpcErrorLogging, type CreateHandlerOptions } from '../../utils/ipcHandler';
 import {
@@ -46,6 +48,8 @@ const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 
 });
 
 export interface TtsrHandlerDependencies {
+	/** Live host-owned sessions; caller paths never establish project authority. */
+	getSessions?: () => ReadonlyArray<Record<string, unknown>>;
 	/**
 	 * Drop the runtime's cached rules for a project after a write. The rule-file
 	 * watcher would get there on its own, but it debounces by a second and the
@@ -68,6 +72,24 @@ function toSerializable(rule: TtsrRule & { compiledCondition?: RegExp[] }): Ttsr
 
 export function registerTtsrHandlers(deps: TtsrHandlerDependencies = {}): void {
 	const astMatcher = createTtsrAstMatcher();
+	const resolveProjectRoot = (requested: unknown): string => {
+		if (typeof requested !== 'string' || !path.isAbsolute(requested))
+			throw new Error('TTSR project root is not authorized');
+		const resolved = realpathThroughAncestor(path.resolve(requested));
+		const normalized = foldPathCase(resolved);
+		const authorized = (deps.getSessions?.() ?? []).some((session) => {
+			const remote = session.sessionSshRemoteConfig as { enabled?: boolean } | undefined;
+			if (remote?.enabled || session.sshRemoteId) return false;
+			return [session.projectRoot, session.cwd].some(
+				(root) =>
+					typeof root === 'string' &&
+					path.isAbsolute(root) &&
+					foldPathCase(realpathThroughAncestor(path.resolve(root))) === normalized
+			);
+		});
+		if (!authorized) throw new Error('TTSR project root is not authorized');
+		return resolved;
+	};
 	// Every rule in a project, plus the load warnings. The warnings are the only
 	// feedback a user gets for a rule that parsed but can never fire (bad regex,
 	// an agent that cannot evaluate it), so they are surfaced, not swallowed.
@@ -76,7 +98,7 @@ export function registerTtsrHandlers(deps: TtsrHandlerDependencies = {}): void {
 		withIpcErrorLogging(
 			handlerOpts('listRules'),
 			async (args: { projectRoot: string }): Promise<TtsrRuleListResult> => {
-				const result = loadTtsrConfigDetailed(args.projectRoot);
+				const result = loadTtsrConfigDetailed(resolveProjectRoot(args.projectRoot));
 				// Disabled rules are listed, not filtered: one the panel cannot show is
 				// one the user cannot turn back on. Only the runtime's rule cache
 				// filters, so the matcher is unaffected by this.
@@ -114,7 +136,7 @@ export function registerTtsrHandlers(deps: TtsrHandlerDependencies = {}): void {
 		withIpcErrorLogging(
 			handlerOpts('readRule'),
 			async (args: { projectRoot: string; path: string }): Promise<string | null> => {
-				return readTtsrRuleFile(args.projectRoot, args.path);
+				return readTtsrRuleFile(resolveProjectRoot(args.projectRoot), args.path);
 			}
 		)
 	);
@@ -128,8 +150,8 @@ export function registerTtsrHandlers(deps: TtsrHandlerDependencies = {}): void {
 				path: string;
 				content: string;
 			}): Promise<{ path: string }> => {
-				writeTtsrRuleFile(args.projectRoot, args.path, args.content);
-				deps.onRulesChanged?.(args.projectRoot);
+				writeTtsrRuleFile(resolveProjectRoot(args.projectRoot), args.path, args.content);
+				deps.onRulesChanged?.(resolveProjectRoot(args.projectRoot));
 				return { path: args.path };
 			}
 		)
@@ -140,8 +162,8 @@ export function registerTtsrHandlers(deps: TtsrHandlerDependencies = {}): void {
 		withIpcErrorLogging(
 			handlerOpts('deleteRule'),
 			async (args: { projectRoot: string; path: string }): Promise<{ deleted: boolean }> => {
-				const deleted = deleteTtsrRuleFile(args.projectRoot, args.path);
-				if (deleted) deps.onRulesChanged?.(args.projectRoot);
+				const deleted = deleteTtsrRuleFile(resolveProjectRoot(args.projectRoot), args.path);
+				if (deleted) deps.onRulesChanged?.(resolveProjectRoot(args.projectRoot));
 				return { deleted };
 			}
 		)
@@ -166,7 +188,7 @@ export function registerTtsrHandlers(deps: TtsrHandlerDependencies = {}): void {
 		withIpcErrorLogging(
 			handlerOpts('readProjectSettings'),
 			async (args: { projectRoot: string }): Promise<TtsrProjectSettings> => {
-				return loadTtsrConfigDetailed(args.projectRoot).settings;
+				return loadTtsrConfigDetailed(resolveProjectRoot(args.projectRoot)).settings;
 			}
 		)
 	);
@@ -182,7 +204,7 @@ export function registerTtsrHandlers(deps: TtsrHandlerDependencies = {}): void {
 				projectRoot: string;
 				settings: Partial<TtsrProjectSettings>;
 			}): Promise<{ path: string }> => {
-				const existingFile = readTtsrConfigFile(args.projectRoot);
+				const existingFile = readTtsrConfigFile(resolveProjectRoot(args.projectRoot));
 				let parsed: Record<string, unknown> = {};
 				if (existingFile) {
 					const loaded = yaml.load(existingFile.raw);
@@ -205,8 +227,8 @@ export function registerTtsrHandlers(deps: TtsrHandlerDependencies = {}): void {
 					quotingType: "'",
 					forceQuotes: false,
 				});
-				const path = writeTtsrConfigFile(args.projectRoot, dumped);
-				deps.onRulesChanged?.(args.projectRoot);
+				const path = writeTtsrConfigFile(resolveProjectRoot(args.projectRoot), dumped);
+				deps.onRulesChanged?.(resolveProjectRoot(args.projectRoot));
 				return { path };
 			}
 		)
@@ -240,7 +262,7 @@ export function registerTtsrHandlers(deps: TtsrHandlerDependencies = {}): void {
 		withIpcErrorLogging(
 			handlerOpts('listRuleFiles'),
 			async (args: { projectRoot: string }): Promise<string[]> => {
-				return listTtsrRuleFiles(args.projectRoot);
+				return listTtsrRuleFiles(resolveProjectRoot(args.projectRoot));
 			}
 		)
 	);

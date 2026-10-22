@@ -204,7 +204,7 @@ export class ClaudeOutputParser implements AgentOutputParser {
 	 * this marker resets. This is how the parser avoids downstream double-counting
 	 * of prose that was already delivered token-by-token.
 	 */
-	private sawStreamedProseDelta = false;
+	private readonly streamedProseParents = new Set<string | undefined>();
 
 	/**
 	 * Correlates a tool_use id (from an assistant message) with its tool name so
@@ -394,8 +394,8 @@ export class ClaudeOutputParser implements AgentOutputParser {
 			// If prose deltas already streamed for this message via stream_event,
 			// its text reached downstream consumers token-by-token. Stamp the flag
 			// so they skip re-ingesting, then reset the marker for the next message.
-			const textAlreadyStreamed = this.sawStreamedProseDelta || undefined;
-			this.sawStreamedProseDelta = false;
+			const textAlreadyStreamed =
+				this.streamedProseParents.delete(normalizeParentToolUseId(msg)) || undefined;
 
 			return {
 				type: 'text',
@@ -475,22 +475,24 @@ export class ClaudeOutputParser implements AgentOutputParser {
 		const delta = event.delta;
 
 		if (delta.type === 'text_delta' && delta.text) {
-			this.sawStreamedProseDelta = true;
+			this.streamedProseParents.add(normalizeParentToolUseId(msg));
 			return {
 				type: 'text',
 				text: delta.text,
 				sessionId: msg.session_id,
+				parentToolUseId: normalizeParentToolUseId(msg),
 				isPartial: true,
 				raw: msg,
 			};
 		}
 
 		if (delta.type === 'thinking_delta' && delta.thinking) {
-			this.sawStreamedProseDelta = true;
+			this.streamedProseParents.add(normalizeParentToolUseId(msg));
 			return {
 				type: 'text',
 				text: delta.thinking,
 				sessionId: msg.session_id,
+				parentToolUseId: normalizeParentToolUseId(msg),
 				isPartial: true,
 				isReasoning: true,
 				raw: msg,

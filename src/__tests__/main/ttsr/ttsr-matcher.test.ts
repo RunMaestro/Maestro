@@ -95,6 +95,13 @@ describe('matchesGlobs', () => {
 		expect(matchesGlobs(['src/**/*.ts'], file, cwd)).toBe(true);
 	});
 
+	it('matches project directories starting with two dots without treating them as traversal', () => {
+		const cwd = process.platform === 'win32' ? 'C:\\repo' : '/repo';
+		const sep = process.platform === 'win32' ? '\\' : '/';
+		expect(matchesGlobs(['..cache/**/*.ts'], `${cwd}${sep}..cache${sep}a.ts`, cwd)).toBe(true);
+		expect(matchesGlobs(['**/*.ts'], `${cwd}${sep}..${sep}outside${sep}a.ts`, cwd)).toBe(false);
+	});
+
 	it('normalizes Windows separators before matching', () => {
 		expect(matchesGlobs(['src/**/*.ts'], 'src\\main\\thing.ts')).toBe(true);
 	});

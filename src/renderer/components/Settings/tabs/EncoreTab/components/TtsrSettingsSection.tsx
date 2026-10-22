@@ -139,8 +139,7 @@ export function TtsrSettingsSection({
 							className="w-full px-3 py-2 rounded text-sm font-mono outline-none"
 							style={{
 								backgroundColor: theme.colors.bgActivity,
-								borderColor: ttsrState.disabledRuleError ? theme.colors.error : theme.colors.border,
-								border: '1px solid',
+								border: `1px solid ${ttsrState.disabledRuleError ? theme.colors.error : theme.colors.border}`,
 								color: theme.colors.textMain,
 							}}
 						/>

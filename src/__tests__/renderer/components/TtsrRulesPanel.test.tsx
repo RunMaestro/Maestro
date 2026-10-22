@@ -139,7 +139,9 @@ describe('TtsrRulesPanel', () => {
 		render(<TtsrRulesPanel theme={theme} projectRoot={PROJECT} />);
 		await waitFor(() => expect(window.maestro.ttsr.listRules).toHaveBeenCalled());
 
-		fireEvent.change(screen.getByRole('combobox'), { target: { value: '' } });
+		fireEvent.change(screen.getByRole('combobox', { name: 'On interrupt' }), {
+			target: { value: '' },
+		});
 
 		// Undefined, not 'keep': the project stops stating an opinion so the global
 		// setting applies again.

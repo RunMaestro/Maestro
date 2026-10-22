@@ -75,11 +75,49 @@ beforeEach(() => {
 	}) as never);
 	onRulesChanged = vi.fn();
 	onCorrectiveResult = vi.fn();
-	registerTtsrHandlers({ onRulesChanged, onCorrectiveResult });
+	registerTtsrHandlers({
+		getSessions: () => [{ projectRoot }],
+		onRulesChanged,
+		onCorrectiveResult,
+	});
 });
 
 afterEach(() => {
 	fs.rmSync(projectRoot, { recursive: true, force: true });
+});
+
+describe('project root authority', () => {
+	it.each([
+		'ttsr:listRules',
+		'ttsr:readRule',
+		'ttsr:writeRule',
+		'ttsr:deleteRule',
+		'ttsr:readProjectSettings',
+		'ttsr:writeProjectSettings',
+		'ttsr:listRuleFiles',
+	])('denies unregistered, relative and malformed roots before %s effects', async (channel) => {
+		for (const root of [
+			path.dirname(projectRoot),
+			`${projectRoot}-sibling`,
+			'../project',
+			'',
+			null,
+			42,
+		]) {
+			await expect(
+				call(channel, { projectRoot: root, path: 'rule.md', content: RULE, settings: {} })
+			).rejects.toThrow('not authorized');
+		}
+		expect(fs.readdirSync(projectRoot)).toEqual([]);
+	});
+	it('fails closed without host sessions and for remote-only paths', async () => {
+		registerTtsrHandlers({});
+		await expect(call('ttsr:listRules', { projectRoot })).rejects.toThrow('not authorized');
+		registerTtsrHandlers({
+			getSessions: () => [{ projectRoot, sessionSshRemoteConfig: { enabled: true } }],
+		});
+		await expect(call('ttsr:listRules', { projectRoot })).rejects.toThrow('not authorized');
+	});
 });
 
 describe('ttsr:listRules', () => {

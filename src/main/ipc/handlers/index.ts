@@ -409,7 +409,7 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		sessionsStore: deps.sessionsStore,
 	});
 	// Register TTSR rule/settings CRUD (Right Bar Rules tab)
-	registerTtsrHandlers();
+	registerTtsrHandlers({ getSessions: readSessionRecords });
 	// Cue bundles - export / import pipelines and agents (Cue modal Bundles tab)
 	registerCueBundleHandlers({
 		sessionsStore: deps.sessionsStore,

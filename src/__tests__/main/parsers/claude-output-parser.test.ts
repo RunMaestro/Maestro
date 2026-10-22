@@ -1040,6 +1040,54 @@ describe('ClaudeOutputParser', () => {
 				...extra,
 			});
 
+		it.each([
+			['text_delta', 'task-parent'],
+			['thinking_delta', 'task-parent'],
+			['text_delta', null],
+			['thinking_delta', null],
+		])('preserves parent tool identity for %s (%s)', (type, parentToolUseId) => {
+			const p = new ClaudeOutputParser();
+			const event = p.parseJsonLine(
+				streamEvent(
+					{
+						type: 'content_block_delta',
+						delta:
+							type === 'text_delta' ? { type, text: 'partial' } : { type, thinking: 'reasoning' },
+					},
+					{ parent_tool_use_id: parentToolUseId }
+				)
+			);
+			expect(event?.parentToolUseId).toBe(parentToolUseId ?? undefined);
+		});
+
+		it('does not suppress main output after only a subagent streamed prose', () => {
+			const p = new ClaudeOutputParser();
+			p.parseJsonLine(
+				streamEvent(
+					{ type: 'content_block_delta', delta: { type: 'text_delta', text: 'child' } },
+					{ parent_tool_use_id: 'child-1' }
+				)
+			);
+			const main = p.parseJsonLine(
+				JSON.stringify({
+					type: 'assistant',
+					session_id: 'sess-stream',
+					parent_tool_use_id: null,
+					message: { content: [{ type: 'text', text: 'main answer' }] },
+				})
+			);
+			expect(main?.textAlreadyStreamed).toBeUndefined();
+			const child = p.parseJsonLine(
+				JSON.stringify({
+					type: 'assistant',
+					session_id: 'sess-stream',
+					parent_tool_use_id: 'child-1',
+					message: { content: [{ type: 'text', text: 'child' }] },
+				})
+			);
+			expect(child?.textAlreadyStreamed).toBe(true);
+		});
+
 		it('should map text_delta stream_events to partial text events', () => {
 			const p = new ClaudeOutputParser();
 			const event = p.parseJsonLine(
