@@ -1088,6 +1088,28 @@ describe('ClaudeOutputParser', () => {
 			expect(child?.textAlreadyStreamed).toBe(true);
 		});
 
+		it('does not carry an incomplete child stream marker into the next turn', () => {
+			const p = new ClaudeOutputParser();
+			p.parseJsonLine(
+				streamEvent(
+					{ type: 'content_block_delta', delta: { type: 'text_delta', text: 'partial child' } },
+					{ parent_tool_use_id: 'child-1' }
+				)
+			);
+			p.parseJsonLine(
+				JSON.stringify({ type: 'result', result: 'turn done', session_id: 'sess-stream' })
+			);
+			const next = p.parseJsonLine(
+				JSON.stringify({
+					type: 'assistant',
+					session_id: 'sess-stream',
+					parent_tool_use_id: 'child-1',
+					message: { content: [{ type: 'text', text: 'next turn answer' }] },
+				})
+			);
+			expect(next?.textAlreadyStreamed).toBeUndefined();
+		});
+
 		it('should map text_delta stream_events to partial text events', () => {
 			const p = new ClaudeOutputParser();
 			const event = p.parseJsonLine(

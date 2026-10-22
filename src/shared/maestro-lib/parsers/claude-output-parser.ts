@@ -372,6 +372,7 @@ export class ClaudeOutputParser implements AgentOutputParser {
 			// snapshot rather than inheriting this one.
 			this.lastCallOccupancy = undefined;
 			this.callUsageSeen.clear();
+			this.streamedProseParents.clear();
 
 			return event;
 		}
