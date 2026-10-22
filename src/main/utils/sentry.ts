@@ -6,6 +6,12 @@
  */
 
 import { logger } from './logger';
+import {
+	agentInventoryTags,
+	summarizeAgentInventory,
+	summarizeWorkReasons,
+	workContextTags,
+} from '../../shared/sentryContext';
 
 /** Sentry severity levels */
 export type SentrySeverityLevel = 'fatal' | 'error' | 'warning' | 'log' | 'info' | 'debug';
@@ -125,6 +131,81 @@ export async function addBreadcrumb(
 	} catch {
 		// Sentry not available - silently ignore
 	}
+}
+
+/** Where scope tags go once Sentry is initialized. */
+export interface SentryScopeTagSink {
+	setTags: (tags: Record<string, string>) => void;
+}
+
+/** The last value of every scope tag, whether or not it has been delivered yet. */
+const scopeTags: Record<string, string> = {};
+let scopeTagSink: SentryScopeTagSink | null = null;
+
+/**
+ * Record context tags (Auto Run active, agent counts, ...) on the Sentry scope.
+ *
+ * Only tags whose value changed reach Sentry, so callers can report on every
+ * state transition without per-event work. Values set before Sentry has been
+ * initialized (it loads asynchronously, and not at all when crash reporting is
+ * off or the build carries no DSN) are held and delivered by
+ * `attachSentryScopeTags`. Nothing here imports Sentry, so a build that never
+ * initializes it never loads it on this path either.
+ *
+ * The scope is also what `@sentry/electron` persists for native crashes, so a
+ * minidump found on the next launch carries the values from the moment of the
+ * crash.
+ */
+export function setSentryScopeTags(tags: Record<string, string>): void {
+	const changed: Record<string, string> = {};
+	let hasChange = false;
+	for (const [key, value] of Object.entries(tags)) {
+		if (scopeTags[key] === value) continue;
+		scopeTags[key] = value;
+		changed[key] = value;
+		hasChange = true;
+	}
+	if (!hasChange || !scopeTagSink) return;
+	try {
+		scopeTagSink.setTags(changed);
+	} catch {
+		// Context is best-effort: a failing scope write must never break the
+		// state transition that reported it.
+	}
+}
+
+/**
+ * Connect the initialized Sentry scope and deliver every tag recorded so far.
+ * Called once from the Sentry init block in `src/main/index.ts`.
+ */
+export function attachSentryScopeTags(sink: SentryScopeTagSink): void {
+	scopeTagSink = sink;
+	if (Object.keys(scopeTags).length > 0) {
+		sink.setTags({ ...scopeTags });
+	}
+}
+
+/**
+ * Report the configured agents (count + agent type ids) to the Sentry scope.
+ * Called at startup and after every sessions write; a no-op unless the count
+ * or the set of provider types changed.
+ */
+export function noteSentryAgentInventory(sessions: ReadonlyArray<{ toolType?: unknown }>): void {
+	setSentryScopeTags(agentInventoryTags(summarizeAgentInventory(sessions)));
+}
+
+/**
+ * Report background work in flight (Auto Run, busy agents, Cue, group chat),
+ * derived from the power manager's block reasons.
+ */
+export function noteSentryWorkReasons(reasons: Iterable<string>): void {
+	setSentryScopeTags(workContextTags(summarizeWorkReasons(reasons)));
+}
+
+/** Test-only: forget recorded tags and detach the sink. */
+export function resetSentryScopeTagsForTests(): void {
+	for (const key of Object.keys(scopeTags)) delete scopeTags[key];
+	scopeTagSink = null;
 }
 
 /**

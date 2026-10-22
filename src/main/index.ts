@@ -26,6 +26,7 @@ import { WebServer } from './web-server';
 import { AgentDetector } from './agents';
 import { createAgentConfigLookup } from './agents/agent-config-lookup';
 import { shouldDropSentryEvent } from '../shared/sentryFilters';
+import { buildNativeCrashFingerprint, sentryUserForInstallation } from '../shared/sentryContext';
 import { getBuildProvenance } from './utils/build-provenance';
 import {
 	initGlobalHotkey,
@@ -140,7 +141,12 @@ import { initializeStatsDB, closeStatsDB } from './stats';
 import { createSshRemoteStoreAdapter } from './utils/ssh-remote-resolver';
 import { stopSessionCleanup } from './group-chat/group-chat-moderator';
 import { initializePrompts, getPrompt, savePrompt } from './prompt-manager';
-import { captureException } from './utils/sentry';
+import {
+	captureException,
+	attachSentryScopeTags,
+	noteSentryAgentInventory,
+	noteSentryWorkReasons,
+} from './utils/sentry';
 import {
 	resolveToFilePath,
 	configureImageStore,
@@ -372,9 +378,32 @@ if (crashReportingEnabled && !isDevelopment && !buildProvenance.sentryDsn) {
 if (crashReportingEnabled && !isDevelopment && buildProvenance.sentryDsn) {
 	const sentryDsn = buildProvenance.sentryDsn;
 	import('@sentry/electron/main')
-		.then(({ init, setTag, IPCMode }) => {
+		.then(({ init, setTags, IPCMode }) => {
+			const version = app.getVersion();
 			init({
 				dsn: sentryDsn,
+				// Identify the install (a random GUID, never anything about the person)
+				// on the scope from the first event, rather than tagging it after init.
+				// `user.id` is what Sentry's Users column, "users affected" alert
+				// conditions, and crash-free-user rates count; without it every issue
+				// read "Users 0". The tags ride `initialScope` for the same reason: an
+				// event captured before the post-init `setTag` calls ran used to miss
+				// them, and a minidump found on the next launch reads this persisted
+				// scope.
+				initialScope: {
+					user: sentryUserForInstallation(installationId),
+					tags: {
+						installationId,
+						// Release channel (rc vs stable): RC builds use a -RC suffix
+						// (e.g., 0.16.1-RC), stable builds use plain semver.
+						channel: version.includes('-RC') ? 'rc' : 'stable',
+						// Distinguish our own release builds from a fork that supplied its
+						// own DSN. Only official builds should ever reach the
+						// smash-labs/maestro project, so an `unofficial` event there means
+						// the provenance gate has a hole in it.
+						build: buildProvenance.official ? 'official' : 'unofficial',
+					},
+				},
 				// Set release version for better debugging
 				release: app.getVersion(),
 				// Use Classic IPC mode to avoid "sentry-ipc:// URL scheme not supported" errors
@@ -401,19 +430,19 @@ if (crashReportingEnabled && !isDevelopment && buildProvenance.sentryDsn) {
 						delete event.user.ip_address;
 						delete event.user.email;
 					}
+					// Group V8 heap OOM minidumps by process instead of by whichever
+					// allocation tipped the heap over (see buildNativeCrashFingerprint).
+					const nativeFingerprint = buildNativeCrashFingerprint(event);
+					if (nativeFingerprint) {
+						event.fingerprint = nativeFingerprint;
+						event.tags = { ...event.tags, 'native.crash': 'v8-heap-oom' };
+					}
 					return event;
 				},
 			});
-			// Add installation ID to Sentry for error correlation across installations
-			setTag('installationId', installationId);
-			// Tag release channel (rc vs stable) based on version string
-			// RC builds use -RC suffix (e.g., 0.16.1-RC), stable builds use plain semver
-			const version = app.getVersion();
-			setTag('channel', version.includes('-RC') ? 'rc' : 'stable');
-			// Distinguish our own release builds from a fork that supplied its own DSN.
-			// Only official builds should ever reach the smash-labs/maestro project, so an
-			// `unofficial` event there means the provenance gate has a hole in it.
-			setTag('build', buildProvenance.official ? 'official' : 'unofficial');
+			// Auto Run / agent context recorded before Sentry finished loading, and
+			// every change after it (see setSentryScopeTags).
+			attachSentryScopeTags({ setTags });
 
 			// Start memory monitoring for crash diagnostics (MAESTRO-5A/4Y)
 			// Records breadcrumbs with memory state every minute, warns above 1GB heap
@@ -433,6 +462,17 @@ if (crashReportingEnabled && !isDevelopment && buildProvenance.sentryDsn) {
 // Create local references to stores for use throughout this module
 // These are convenience variables - the actual stores are managed by ./stores module
 const sessionsStore = getSessionsStore();
+
+// Crash-report context: which agent types are configured and what background
+// work is in flight. Both are only counts and agent TYPE ids (never names,
+// paths, or prompts) and are pushed to the Sentry scope only when they change,
+// so an event costs nothing extra. The inventory is refreshed by the sessions
+// persistence handlers; the work context follows the power manager's block
+// reasons, which every Auto Run, agent turn, Cue run, and group chat round
+// registers whether or not sleep prevention is enabled.
+noteSentryAgentInventory(sessionsStore.get('sessions', []));
+noteSentryWorkReasons(powerManager.getStatus().reasons);
+powerManager.onReasonsChanged(noteSentryWorkReasons);
 const groupsStore = getGroupsStore();
 const agentConfigsStore = getAgentConfigsStore();
 const agentCapabilitiesStore = getAgentCapabilitiesStore();

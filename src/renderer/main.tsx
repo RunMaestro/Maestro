@@ -4,6 +4,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import * as Sentry from '@sentry/electron/renderer';
 import { shouldDropSentryEvent } from '../shared/sentryFilters';
+import { sentryUserForInstallation } from '../shared/sentryContext';
 import MaestroConsole from './App';
 import { CadenzaHudRoot } from './cadenzaHud';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -30,9 +31,21 @@ const initSentry = async () => {
 		// un-provisioned build already has nowhere to send events - this check just makes
 		// that explicit instead of relying on the IPC channel being absent.
 		if (crashReportingEnabled && !isDevelopment && __CRASH_REPORTING_BUILD__) {
+			// The install GUID main generates on first run. It becomes `user.id` so
+			// Sentry counts affected installs (its Users column was always 0); main
+			// sets the same id, this keeps the renderer's own scope in agreement. A
+			// failed read only costs the id, never crash reporting itself.
+			const installationId = await Promise.resolve(
+				window.maestro?.settings?.get('installationId')
+			).catch(() => undefined);
 			Sentry.init({
 				// Set release version for filtering errors by app version
 				release: __APP_VERSION__,
+				initialScope: {
+					user: sentryUserForInstallation(
+						typeof installationId === 'string' ? installationId : undefined
+					),
+				},
 				// Only send errors, not performance data
 				tracesSampleRate: 0,
 				// PERF: drop console breadcrumbs. Sentry's default Breadcrumbs

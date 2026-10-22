@@ -15,6 +15,7 @@ import Store from 'electron-store';
 import * as path from 'path';
 import * as fs from 'fs/promises';
 import { logger } from '../../utils/logger';
+import { noteSentryAgentInventory } from '../../utils/sentry';
 import { isWebContentsAvailable } from '../../utils/safe-send';
 import { broadcastBridgeEvent } from '../../web-server/handlers/bridgeHandlers';
 import { forgetAgentActors } from '../../web-server/auth/turn-attribution';
@@ -682,6 +683,9 @@ export function registerPersistenceHandlers(
 				throw err;
 			}
 
+			// Crash-report context (agent count + provider types); no-op unless changed.
+			noteSentryAgentInventory(sessionsToPersist);
+
 			// Tell the other clients (desktop windows + web-desktop) what entered and
 			// left, so an agent created or closed in one of them stops being
 			// invisible to - and resurrectable by - the rest.
@@ -803,6 +807,9 @@ export function registerPersistenceHandlers(
 				logger.warn(`Failed to persist sessions: ${code || (err as Error).message}`, 'Sessions');
 				return false;
 			}
+
+			// Crash-report context (agent count + provider types); no-op unless changed.
+			noteSentryAgentInventory(sessionsToPersist);
 
 			// Tell the other clients about agents this bootstrap flush introduced.
 			// Only ADDITIONS travel from here: setAll is a client's opening statement
