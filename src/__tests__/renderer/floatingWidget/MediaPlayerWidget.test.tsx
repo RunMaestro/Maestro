@@ -1,9 +1,9 @@
 /**
  * Tests for MediaPlayerWidget, the media player's desktop-window body. This
  * window is the authority: it owns the one media element, shows and hides its
- * window from the store, dismisses on its X, applies commands the primary
- * window forwards, hydrates the persisted queue, and sizes its window to the
- * media until the user resizes it.
+ * window from the store, minimizes on Minus, stops on X, applies commands the
+ * primary window forwards, hydrates the persisted queue, and sizes its window
+ * to the media until the user resizes it.
  */
 import { useEffect } from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
@@ -174,32 +174,42 @@ describe('MediaPlayerWidget', () => {
 		expect(screen.queryByTestId('media-viewer')).toBeNull();
 	});
 
-	it('dismisses on its close button without stopping playback', () => {
+	it('minimizes on Minus without stopping playback', () => {
 		load(podcast);
 		useMediaPlaybackStore.setState({ playing: true });
 		renderWidget();
 
-		fireEvent.click(screen.getByTestId('floating-widget-close'));
+		fireEvent.click(screen.getByLabelText('Minimize player to the Left Bar'));
 
 		const state = useMediaPlaybackStore.getState();
 		expect(state.dismissed).toBe(true);
 		expect(state.playing).toBe(true);
 		expect(state.activeItemId).toBe(podcast.id);
 		expect(screen.getByTestId('media-viewer')).toBeInTheDocument();
+		expect(api.hide).toHaveBeenLastCalledWith('media-player');
 	});
 
-	it('dismisses on Escape', () => {
+	it('minimizes on Escape without stopping playback', () => {
 		load(podcast);
+		useMediaPlaybackStore.setState({ playing: true });
 		renderWidget();
 		fireEvent.keyDown(window, { key: 'Escape' });
 		expect(useMediaPlaybackStore.getState().dismissed).toBe(true);
+		expect(useMediaPlaybackStore.getState().playing).toBe(true);
+		expect(useMediaPlaybackStore.getState().activeItemId).toBe(podcast.id);
+		expect(screen.getByTestId('media-viewer')).toBeInTheDocument();
+		expect(api.hide).toHaveBeenLastCalledWith('media-player');
 	});
 
-	it('releases the player on its stop button', () => {
+	it('stops playback and closes the player on X', () => {
 		load(podcast);
+		useMediaPlaybackStore.setState({ playing: true });
 		renderWidget();
-		fireEvent.click(screen.getByTestId('media-stop'));
+		fireEvent.click(screen.getByLabelText('Close player and stop playback'));
 		expect(useMediaPlaybackStore.getState().activeItemId).toBeNull();
+		expect(useMediaPlaybackStore.getState().playing).toBe(false);
+		expect(screen.queryByTestId('media-viewer')).toBeNull();
+		expect(api.hide).toHaveBeenLastCalledWith('media-player');
 	});
 
 	it('publishes its snapshot and applies forwarded commands as the authority', () => {
