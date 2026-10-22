@@ -8,6 +8,17 @@
  * - Recording new shortcuts
  * - Canceling recording with Escape
  * - Recording change callback
+ * - The keyboard mode toggle, the per-mode reset, inherited rows, and the
+ *   displaced actions that need a binding in the active mode
+ * - Recording a key SEQUENCE, the second trigger a row can carry, including the
+ *   prefix conflict check that is the only place an unreachable sequence can be
+ *   reported
+ *
+ * The tab reads its bindings from `useActiveShortcuts()`, which is mocked here
+ * so the list is the four fixtures below rather than the whole shipped set.
+ * `mockMode` / `mockInheritedIds` / `mockDisplaced` stand in for what that hook
+ * computes from the live mode; they are reset in `afterEach` so a mode a test
+ * switches to cannot leak into the next one.
  */
 
 import React from 'react';
@@ -15,15 +26,28 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { ShortcutsTab } from '../../../../../renderer/components/Settings/tabs/ShortcutsTab';
 import type { Shortcut } from '../../../../../renderer/types';
+import type { KeyboardMode } from '../../../../../shared/shortcut-types';
 
 import { mockTheme } from '../../../../helpers/mockTheme';
-// Mock formatShortcutKeys
-vi.mock('../../../../../renderer/utils/shortcutFormatter', () => ({
-	formatShortcutKeys: vi.fn((keys: string[]) => keys.join('+')),
-}));
+// Chords are stubbed to a readable `a+b` so a row's chord assertions do not
+// depend on the platform's key glyphs. SEQUENCES keep the real
+// `formatShortcutSequence`: its per-step rules are the behavior under test (a
+// bare `g` stays lowercase where the chord formatter would print `G`, and
+// `Shift+g` folds to `G`), so stubbing it would assert nothing about the thing
+// this tab is required to use.
+vi.mock('../../../../../renderer/utils/shortcutFormatter', async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import('../../../../../renderer/utils/shortcutFormatter')>();
+	return {
+		...actual,
+		formatShortcutKeys: vi.fn((keys: string[]) => keys.join('+')),
+	};
+});
 
 const mockSetShortcuts = vi.fn();
 const mockSetTabShortcuts = vi.fn();
+const mockSetKeyboardMode = vi.fn();
+const mockResetToDefaults = vi.fn();
 
 const mockShortcuts: Record<string, Shortcut> = {
 	'new-session': { id: 'new-session', label: 'New Session', keys: ['Meta', 'n'] },
@@ -35,14 +59,64 @@ const mockTabShortcuts: Record<string, Shortcut> = {
 	'tab-send': { id: 'tab-send', label: 'Send Message', keys: ['Enter'] },
 };
 
+let mockMode: KeyboardMode = 'default';
+let mockInheritedIds: string[] = [];
+let mockDisplaced: string[] = [];
+/**
+ * Extra rows a single test needs on top of the four fixtures, merged into the
+ * general map the hook hands back. Used for the action that has taken the
+ * mode-toggle chord, which only means anything when some row holds it.
+ */
+let mockExtraShortcuts: Record<string, Shortcut> = {};
+// The in-field escape (`jk`). A `let` rather than a literal because the field
+// renders a warning for a value the parser reads as off, and a test sets one.
+let mockInsertEscapeSequence = 'jk';
+const mockSetInsertEscapeSequence = vi.fn();
+// Editor-level Vim. Ships on, so the off case is the one a test has to set.
+let mockVimEditorEnabled = true;
+const mockSetVimEditorEnabled = vi.fn();
+
 vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 	useSettings: () => ({
-		shortcuts: mockShortcuts,
+		encoreFeatures: undefined,
+		setKeyboardMode: mockSetKeyboardMode,
+		vimInsertEscapeSequence: mockInsertEscapeSequence,
+		setVimInsertEscapeSequence: mockSetInsertEscapeSequence,
+		vimEditorEnabled: mockVimEditorEnabled,
+		setVimEditorEnabled: mockSetVimEditorEnabled,
+	}),
+}));
+
+vi.mock('../../../../../renderer/hooks/settings/useActiveShortcuts', () => ({
+	useActiveShortcuts: () => ({
+		keyboardMode: mockMode,
+		shortcuts: { ...mockShortcuts, ...mockExtraShortcuts },
 		setShortcuts: mockSetShortcuts,
 		tabShortcuts: mockTabShortcuts,
 		setTabShortcuts: mockSetTabShortcuts,
+		resetToDefaults: mockResetToDefaults,
+		isInherited: (id: string) => mockInheritedIds.includes(id),
+		displaced: mockDisplaced,
 	}),
 }));
+
+/** Render and let the mount-time filter autofocus timer run. */
+async function renderTab(props: Partial<React.ComponentProps<typeof ShortcutsTab>> = {}) {
+	const result = render(<ShortcutsTab theme={mockTheme} {...props} />);
+	await act(async () => {
+		await vi.advanceTimersByTimeAsync(100);
+	});
+	return result;
+}
+
+function resetModeFixtures() {
+	mockMode = 'default';
+	mockInheritedIds = [];
+	mockDisplaced = [];
+	mockExtraShortcuts = {};
+	mockInsertEscapeSequence = 'jk';
+	mockVimEditorEnabled = true;
+}
 
 describe('ShortcutsTab', () => {
 	beforeEach(() => {
@@ -52,6 +126,7 @@ describe('ShortcutsTab', () => {
 	afterEach(() => {
 		vi.useRealTimers();
 		vi.clearAllMocks();
+		resetModeFixtures();
 	});
 
 	it('should display shortcuts list', async () => {
@@ -607,5 +682,662 @@ describe('ShortcutsTab unbound shortcuts', () => {
 			...mockShortcuts,
 			'tile-ai': { ...mockShortcuts['tile-ai'], keys: ['Meta', 'Shift', 'y'] },
 		});
+	});
+});
+
+/**
+ * Keyboard mode: the toggle at the top of the tab, the per-mode reset, and the
+ * "Default" tag on a row whose chord this mode does not replace.
+ *
+ * Exactly one mode is live, so the toggle is the only thing on this screen that
+ * changes which set every row below it belongs to - and the reset beside it
+ * must only ever touch the live mode's bucket.
+ */
+describe('ShortcutsTab keyboard mode', () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+		vi.clearAllMocks();
+		resetModeFixtures();
+	});
+
+	it('offers both modes with the live one selected', async () => {
+		await renderTab();
+
+		expect(screen.getByTestId('shortcuts-keyboard-mode-default')).toHaveAttribute(
+			'aria-checked',
+			'true'
+		);
+		expect(screen.getByTestId('shortcuts-keyboard-mode-vim')).toHaveAttribute(
+			'aria-checked',
+			'false'
+		);
+	});
+
+	it('switches the mode from the toggle', async () => {
+		await renderTab();
+
+		fireEvent.click(screen.getByTestId('shortcuts-keyboard-mode-vim'));
+
+		expect(mockSetKeyboardMode).toHaveBeenCalledWith('vim');
+	});
+
+	it('shows the live mode as selected after a switch', async () => {
+		mockMode = 'vim';
+		await renderTab();
+
+		expect(screen.getByTestId('shortcuts-keyboard-mode-vim')).toHaveAttribute(
+			'aria-checked',
+			'true'
+		);
+	});
+
+	it('explains that one mode is live and that Vim inherits the rest', async () => {
+		await renderTab();
+
+		expect(screen.getByText(/Only one mode is active at a time/)).toBeInTheDocument();
+		expect(screen.getByText(/keeps every default chord it does not replace/)).toBeInTheDocument();
+	});
+
+	it('wraps the toggle in the searchable setting id', async () => {
+		const { container } = await renderTab();
+
+		expect(container.querySelector('[data-setting-id="shortcuts-keyboard-mode"]')).not.toBeNull();
+	});
+
+	it('asks for a second click before resetting', async () => {
+		await renderTab();
+
+		const reset = screen.getByTestId('shortcuts-reset-defaults');
+		fireEvent.click(reset);
+
+		expect(mockResetToDefaults).not.toHaveBeenCalled();
+		expect(reset).toHaveTextContent('Reset Default mode?');
+
+		fireEvent.click(reset);
+
+		expect(mockResetToDefaults).toHaveBeenCalledTimes(1);
+	});
+
+	it('names the mode the reset restores and the one it leaves alone', async () => {
+		mockMode = 'vim';
+		await renderTab();
+
+		fireEvent.click(screen.getByTestId('shortcuts-reset-defaults'));
+
+		expect(screen.getByTestId('shortcuts-reset-defaults')).toHaveTextContent('Reset Vim mode?');
+		expect(
+			screen.getByText(/shipped Vim mode bindings. Your Default mode customizations are kept/)
+		).toBeInTheDocument();
+	});
+
+	it('disarms a pending reset when the mode changes under it', async () => {
+		await renderTab();
+
+		const reset = screen.getByTestId('shortcuts-reset-defaults');
+		fireEvent.click(reset);
+		expect(reset).toHaveTextContent('Reset Default mode?');
+
+		fireEvent.click(screen.getByTestId('shortcuts-keyboard-mode-vim'));
+
+		// The second click would otherwise land on the mode the user just left.
+		expect(reset).toHaveTextContent('Reset to defaults');
+		expect(mockResetToDefaults).not.toHaveBeenCalled();
+	});
+
+	it('tags a row whose chord this mode does not replace', async () => {
+		mockMode = 'vim';
+		mockInheritedIds = ['close-session'];
+		await renderTab();
+
+		expect(screen.getByTestId('shortcut-inherited-close-session')).toHaveTextContent('Default');
+		expect(screen.queryByTestId('shortcut-inherited-new-session')).not.toBeInTheDocument();
+	});
+
+	it('tags nothing in default mode, which is the set every mode inherits', async () => {
+		await renderTab();
+
+		expect(screen.queryByTestId('shortcut-inherited-close-session')).not.toBeInTheDocument();
+	});
+
+	it('names the action that has taken the mode-toggle chord', async () => {
+		// Opt+Cmd+V switches modes from the keyboard, but the handler stands down
+		// when the chord is already bound, so this screen is the only place that
+		// can explain why the documented key does nothing - and the only place
+		// the user can act on it.
+		mockExtraShortcuts = {
+			'old-concerto': {
+				id: 'old-concerto',
+				label: 'Toggle Concerto',
+				keys: ['Alt', 'Meta', 'v'],
+			},
+		};
+		await renderTab();
+
+		expect(screen.getByTestId('shortcuts-mode-toggle-shadowed')).toHaveTextContent(
+			'Toggle Concerto'
+		);
+	});
+
+	it('says nothing about the mode-toggle chord while it is free', async () => {
+		await renderTab();
+
+		expect(screen.queryByTestId('shortcuts-mode-toggle-shadowed')).not.toBeInTheDocument();
+	});
+
+	it('refuses a chord that fires an existing binding through the Meta/Ctrl collapse', async () => {
+		await renderTab();
+
+		const button = screen.getByText('Meta+w');
+		fireEvent.click(button);
+		fireEvent.keyDown(button, { key: 'n', ctrlKey: true });
+
+		// Ctrl+N is not EQUAL to New Session's Meta+N, but it is the same
+		// keypress to the matcher, so an equality check would have handed out a
+		// chord that already fires another action.
+		expect(mockSetShortcuts).not.toHaveBeenCalled();
+		expect(screen.getByText(/already used by "New Session"/)).toBeInTheDocument();
+	});
+});
+
+/**
+ * Displaced actions: a mode override took the chord this action inherited, so
+ * it is unbound until the user records one here. The tab must ask for that
+ * chord rather than leaving the action silently unreachable.
+ */
+describe('ShortcutsTab in-field escape', () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+		vi.clearAllMocks();
+		resetModeFixtures();
+	});
+
+	it('shows the stored sequence and saves an edit', async () => {
+		await renderTab();
+
+		const input = screen.getByTestId('shortcuts-vim-insert-escape-input');
+		expect(input).toHaveValue('jk');
+
+		fireEvent.change(input, { target: { value: 'kj' } });
+
+		expect(mockSetInsertEscapeSequence).toHaveBeenCalledWith('kj');
+	});
+
+	it('renders in default mode too, so a search can land on it', async () => {
+		// The setting is only READ in Vim mode, but hiding the control would
+		// mean a settings search that jumps here finds nothing at all.
+		mockMode = 'default';
+		await renderTab();
+
+		expect(screen.getByTestId('shortcuts-vim-insert-escape-input')).toBeInTheDocument();
+	});
+
+	it('says nothing extra while the stored value is usable', async () => {
+		await renderTab();
+
+		expect(screen.queryByTestId('shortcuts-vim-insert-escape-off')).not.toBeInTheDocument();
+	});
+
+	it('warns that a one-character value is off, not honored', async () => {
+		// The screen is the only place that can say so: the setter stores what
+		// the user typed, so nothing else distinguishes "saved" from "live".
+		mockInsertEscapeSequence = 'j';
+		await renderTab();
+
+		expect(screen.getByTestId('shortcuts-vim-insert-escape-off')).toBeInTheDocument();
+	});
+
+	it('does not warn about an empty value, which is the documented off switch', async () => {
+		mockInsertEscapeSequence = '';
+		await renderTab();
+
+		expect(screen.queryByTestId('shortcuts-vim-insert-escape-off')).not.toBeInTheDocument();
+	});
+});
+
+/**
+ * Editor-level Vim: the second switch in front of the mode, which turns Vim
+ * keys off INSIDE the markdown editor without touching Vim navigation or any
+ * binding in the tables. The tab is the only surface that offers it, so what is
+ * only observable here is that it is offered, that it is offered in both modes,
+ * and that it is inert in the mode that does not read it.
+ */
+describe('ShortcutsTab editor Vim toggle', () => {
+	const TOGGLE_LABEL = 'Vim keys in the markdown editor';
+
+	beforeEach(() => {
+		vi.useFakeTimers();
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+		vi.clearAllMocks();
+		resetModeFixtures();
+	});
+
+	it('reflects the stored value and saves the switch', async () => {
+		mockMode = 'vim';
+		await renderTab();
+
+		const toggle = screen.getByRole('switch', { name: TOGGLE_LABEL });
+		expect(toggle).toHaveAttribute('aria-checked', 'true');
+
+		fireEvent.click(toggle);
+
+		expect(mockSetVimEditorEnabled).toHaveBeenCalledWith(false);
+	});
+
+	it('shows off as off, so the control is not a one-way door', async () => {
+		mockMode = 'vim';
+		mockVimEditorEnabled = false;
+		await renderTab();
+
+		const toggle = screen.getByRole('switch', { name: TOGGLE_LABEL });
+		expect(toggle).toHaveAttribute('aria-checked', 'false');
+
+		fireEvent.click(toggle);
+
+		expect(mockSetVimEditorEnabled).toHaveBeenCalledWith(true);
+	});
+
+	it('renders in default mode too, so a search can land on it', async () => {
+		// Same reason as the in-field escape above: the setting is only READ in
+		// Vim mode, but a settings search that jumps to a hidden control finds
+		// nothing at all and reads as a broken result.
+		mockMode = 'default';
+		await renderTab();
+
+		expect(screen.getByRole('switch', { name: TOGGLE_LABEL })).toBeInTheDocument();
+	});
+
+	it('is disabled in default mode, where nothing reads it', async () => {
+		// Greyed rather than hidden: the screen says "this is real, just not
+		// yet", and a click cannot write a value that would silently do nothing.
+		mockMode = 'default';
+		await renderTab();
+
+		const toggle = screen.getByRole('switch', { name: TOGGLE_LABEL });
+		expect(toggle).toBeDisabled();
+
+		fireEvent.click(toggle);
+
+		expect(mockSetVimEditorEnabled).not.toHaveBeenCalled();
+	});
+
+	it('is live in Vim mode', async () => {
+		mockMode = 'vim';
+		await renderTab();
+
+		expect(screen.getByRole('switch', { name: TOGGLE_LABEL })).not.toBeDisabled();
+	});
+
+	it('sits under the mode toggle and above the in-field escape', async () => {
+		// Order is the only thing on this screen that says the editor switch
+		// QUALIFIES the mode rather than being a third mode of its own.
+		mockMode = 'vim';
+		const { container } = await renderTab();
+
+		const ids = [...container.querySelectorAll('[data-setting-id]')].map((el) =>
+			el.getAttribute('data-setting-id')
+		);
+
+		expect(ids.indexOf('shortcuts-keyboard-mode')).toBeLessThan(
+			ids.indexOf('shortcuts-vim-editor')
+		);
+		expect(ids.indexOf('shortcuts-vim-editor')).toBeLessThan(
+			ids.indexOf('shortcuts-vim-insert-escape')
+		);
+	});
+
+	it('sits outside the bindable list, because it binds nothing', async () => {
+		// It gates a CodeMirror extension, not an action. Inside the scrolling
+		// list it would read as a row whose chord can be recorded, and recording
+		// one would write a binding nothing matches.
+		mockMode = 'vim';
+		const { container } = await renderTab();
+
+		const toggle = screen.getByRole('switch', { name: TOGGLE_LABEL });
+		const bindableList = container.querySelector('.overflow-y-auto');
+
+		expect(bindableList).not.toBeNull();
+		expect(bindableList?.contains(toggle)).toBe(false);
+		expect(toggle.closest('[data-setting-id]')?.getAttribute('data-setting-id')).toBe(
+			'shortcuts-vim-editor'
+		);
+	});
+});
+
+describe('ShortcutsTab displaced actions', () => {
+	beforeEach(() => {
+		vi.useFakeTimers();
+		mockMode = 'vim';
+		mockDisplaced = ['toggle-mode'];
+		// A displaced action has no override of its own, and the resolver hands
+		// the tab an empty chord for it.
+		mockInheritedIds = ['toggle-mode'];
+		mockShortcuts['toggle-mode'] = { id: 'toggle-mode', label: 'Toggle Mode', keys: [] };
+	});
+
+	afterEach(() => {
+		mockShortcuts['toggle-mode'] = {
+			id: 'toggle-mode',
+			label: 'Toggle Mode',
+			keys: ['Meta', 'j'],
+		};
+		vi.useRealTimers();
+		vi.clearAllMocks();
+		resetModeFixtures();
+	});
+
+	it('leads the list with the actions that need a binding in this mode', async () => {
+		await renderTab();
+
+		expect(screen.getByText('Needs a Vim binding')).toBeInTheDocument();
+		// Moved, not copied: two rows for one action would show two different
+		// chords for it.
+		expect(screen.getAllByText('Toggle Mode')).toHaveLength(1);
+	});
+
+	it('does not tag a displaced row as inherited', async () => {
+		await renderTab();
+
+		// It has no override either, but its chord is gone rather than inherited,
+		// and the row already says so by reading "Not set".
+		expect(screen.queryByTestId('shortcut-inherited-toggle-mode')).not.toBeInTheDocument();
+		expect(screen.getByText('Not set')).toBeInTheDocument();
+	});
+
+	it('records a chord for a displaced action into the active mode', async () => {
+		await renderTab();
+
+		const button = screen.getByText('Not set');
+		fireEvent.click(button);
+		fireEvent.keyDown(button, { key: 'p', ctrlKey: true });
+
+		expect(mockSetShortcuts).toHaveBeenCalledWith({
+			...mockShortcuts,
+			'toggle-mode': { ...mockShortcuts['toggle-mode'], keys: ['Ctrl', 'p'] },
+		});
+	});
+
+	it('shows no such section when nothing is displaced', async () => {
+		mockDisplaced = [];
+		await renderTab();
+
+		expect(screen.queryByText('Needs a Vim binding')).not.toBeInTheDocument();
+		expect(screen.getAllByText('Toggle Mode')).toHaveLength(1);
+	});
+});
+
+/**
+ * Key sequences: the second trigger on every row.
+ *
+ * A chord recording ends on its first keypress, so the interesting cases here
+ * are the ones a chord does not have - a run captured over several keys and
+ * ended by the user, and a conflict that is a PREFIX relation rather than an
+ * equality. The matcher resolves ambiguity short, so `g` bound beside `g g`
+ * leaves `g g` permanently unreachable, and nothing at runtime can report that.
+ */
+describe('ShortcutsTab key sequences', () => {
+	/** The sequence control on a row, found by its accessible name. */
+	function sequenceButton(label: string) {
+		return screen.getByRole('button', { name: `Record a key sequence for ${label}` });
+	}
+
+	/** Type one key at the sequence button, as the capture handler sees it. */
+	function pressSequenceKey(label: string, init: Record<string, unknown>) {
+		fireEvent.keyDown(sequenceButton(label), {
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+			...init,
+		});
+	}
+
+	beforeEach(() => {
+		vi.useFakeTimers();
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+		vi.clearAllMocks();
+		resetModeFixtures();
+	});
+
+	it('offers an empty sequence slot on every row', async () => {
+		await renderTab();
+
+		// Labelled as an invitation rather than "Not set", which the chord
+		// button on the same row already says.
+		expect(sequenceButton('New Session')).toHaveTextContent('Add sequence');
+	});
+
+	it('shows the sequence a row already has', async () => {
+		mockExtraShortcuts = {
+			'go-top': { id: 'go-top', label: 'Go To Top', keys: [], sequence: [['g'], ['g']] },
+		};
+		await renderTab();
+
+		expect(sequenceButton('Go To Top')).toHaveTextContent('g g');
+	});
+
+	it('records a two-step sequence and saves it on Enter', async () => {
+		await renderTab();
+
+		fireEvent.click(sequenceButton('New Session'));
+		// The instructions only exist while a run is live, because a sequence is
+		// the one recording that does not end by itself.
+		expect(screen.getByTestId('shortcuts-sequence-hint')).toBeInTheDocument();
+
+		pressSequenceKey('New Session', { key: 'g', code: 'KeyG' });
+		expect(sequenceButton('New Session')).toHaveTextContent('g ...');
+		pressSequenceKey('New Session', { key: 't', code: 'KeyT' });
+		expect(sequenceButton('New Session')).toHaveTextContent('g t ...');
+
+		expect(mockSetShortcuts).not.toHaveBeenCalled();
+		pressSequenceKey('New Session', { key: 'Enter' });
+
+		expect(mockSetShortcuts).toHaveBeenCalledWith({
+			...mockShortcuts,
+			'new-session': { ...mockShortcuts['new-session'], sequence: [['g'], ['t']] },
+		});
+		expect(screen.queryByTestId('shortcuts-sequence-hint')).not.toBeInTheDocument();
+	});
+
+	it('leaves the row chord alone when a sequence is recorded', async () => {
+		await renderTab();
+
+		fireEvent.click(sequenceButton('New Session'));
+		pressSequenceKey('New Session', { key: 'g', code: 'KeyG' });
+		pressSequenceKey('New Session', { key: 'Enter' });
+
+		const written = mockSetShortcuts.mock.calls[0][0]['new-session'];
+		expect(written.keys).toEqual(['Meta', 'n']);
+	});
+
+	it('undoes a mistyped step on Backspace', async () => {
+		await renderTab();
+
+		fireEvent.click(sequenceButton('New Session'));
+		pressSequenceKey('New Session', { key: 'g', code: 'KeyG' });
+		pressSequenceKey('New Session', { key: 'x', code: 'KeyX' });
+		expect(sequenceButton('New Session')).toHaveTextContent('g x ...');
+
+		pressSequenceKey('New Session', { key: 'Backspace' });
+		expect(sequenceButton('New Session')).toHaveTextContent('g ...');
+
+		pressSequenceKey('New Session', { key: 't', code: 'KeyT' });
+		pressSequenceKey('New Session', { key: 'Enter' });
+
+		expect(mockSetShortcuts.mock.calls[0][0]['new-session'].sequence).toEqual([['g'], ['t']]);
+	});
+
+	it('cancels a run on Escape without saving', async () => {
+		await renderTab();
+
+		fireEvent.click(sequenceButton('New Session'));
+		pressSequenceKey('New Session', { key: 'g', code: 'KeyG' });
+		expect(sequenceButton('New Session')).toHaveTextContent('g ...');
+
+		pressSequenceKey('New Session', { key: 'Escape' });
+
+		expect(mockSetShortcuts).not.toHaveBeenCalled();
+		expect(sequenceButton('New Session')).toHaveTextContent('Add sequence');
+	});
+
+	it('refuses a chord as a step and says where it belongs', async () => {
+		await renderTab();
+
+		fireEvent.click(sequenceButton('New Session'));
+		pressSequenceKey('New Session', { key: 'k', code: 'KeyK', metaKey: true });
+
+		expect(screen.getByRole('alert')).toHaveTextContent(
+			'Meta+k cannot be a step in a key sequence'
+		);
+		expect(mockSetShortcuts).not.toHaveBeenCalled();
+	});
+
+	it('refuses a sequence that another action already answers to', async () => {
+		mockExtraShortcuts = {
+			'go-top': { id: 'go-top', label: 'Go To Top', keys: [], sequence: [['g'], ['g']] },
+		};
+		await renderTab();
+
+		fireEvent.click(sequenceButton('New Session'));
+		pressSequenceKey('New Session', { key: 'g', code: 'KeyG' });
+		pressSequenceKey('New Session', { key: 'g', code: 'KeyG' });
+		pressSequenceKey('New Session', { key: 'Enter' });
+
+		// The LABEL, and both sequences, because the two are not the same keys.
+		expect(screen.getByRole('alert')).toHaveTextContent('"Go To Top"');
+		expect(mockSetShortcuts).not.toHaveBeenCalled();
+	});
+
+	it("refuses a sequence that is a PREFIX of another action's", async () => {
+		// `g` fires immediately, so `g g` would never complete. A conflict check
+		// built on equality would wave this through.
+		mockExtraShortcuts = {
+			'go-top': { id: 'go-top', label: 'Go To Top', keys: [], sequence: [['g'], ['g']] },
+		};
+		await renderTab();
+
+		fireEvent.click(sequenceButton('New Session'));
+		pressSequenceKey('New Session', { key: 'g', code: 'KeyG' });
+		pressSequenceKey('New Session', { key: 'Enter' });
+
+		expect(screen.getByRole('alert')).toHaveTextContent('one is a prefix of the other');
+		expect(mockSetShortcuts).not.toHaveBeenCalled();
+	});
+
+	it('accepts a sequence that only shares a first step', async () => {
+		mockExtraShortcuts = {
+			'go-top': { id: 'go-top', label: 'Go To Top', keys: [], sequence: [['g'], ['g']] },
+		};
+		await renderTab();
+
+		fireEvent.click(sequenceButton('New Session'));
+		pressSequenceKey('New Session', { key: 'g', code: 'KeyG' });
+		pressSequenceKey('New Session', { key: 't', code: 'KeyT' });
+		pressSequenceKey('New Session', { key: 'Enter' });
+
+		expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+		expect(mockSetShortcuts.mock.calls[0][0]['new-session'].sequence).toEqual([['g'], ['t']]);
+	});
+
+	it('does not report a row as fighting its own sequence', async () => {
+		mockExtraShortcuts = {
+			'go-top': { id: 'go-top', label: 'Go To Top', keys: [], sequence: [['g'], ['g']] },
+		};
+		await renderTab();
+
+		fireEvent.click(sequenceButton('Go To Top'));
+		pressSequenceKey('Go To Top', { key: 'g', code: 'KeyG' });
+		pressSequenceKey('Go To Top', { key: 'g', code: 'KeyG' });
+		pressSequenceKey('Go To Top', { key: 'Enter' });
+
+		expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+		expect(mockSetShortcuts).toHaveBeenCalled();
+	});
+
+	it('writes a tab row through setTabShortcuts', async () => {
+		await renderTab();
+
+		fireEvent.click(sequenceButton('Send Message'));
+		pressSequenceKey('Send Message', { key: 'g', code: 'KeyG' });
+		pressSequenceKey('Send Message', { key: 'm', code: 'KeyM' });
+		pressSequenceKey('Send Message', { key: 'Enter' });
+
+		expect(mockSetTabShortcuts).toHaveBeenCalledWith({
+			...mockTabShortcuts,
+			'tab-send': { ...mockTabShortcuts['tab-send'], sequence: [['g'], ['m']] },
+		});
+		expect(mockSetShortcuts).not.toHaveBeenCalled();
+	});
+
+	it('clears a sequence as an explicit empty one', async () => {
+		// Omitting the field in an override bucket means "inherit", so the clear
+		// has to be spelled out or it comes back on the next read.
+		mockExtraShortcuts = {
+			'go-top': { id: 'go-top', label: 'Go To Top', keys: [], sequence: [['g'], ['g']] },
+		};
+		await renderTab();
+
+		fireEvent.click(screen.getByRole('button', { name: 'Clear Go To Top key sequence' }));
+
+		expect(mockSetShortcuts).toHaveBeenCalledWith({
+			...mockShortcuts,
+			...mockExtraShortcuts,
+			'go-top': { ...mockExtraShortcuts['go-top'], sequence: [] },
+		});
+	});
+
+	it('offers no clear button on a row with no sequence', async () => {
+		await renderTab();
+
+		expect(
+			screen.queryByRole('button', { name: 'Clear New Session key sequence' })
+		).not.toBeInTheDocument();
+	});
+
+	it("reports a live sequence run as recording, so Escape is not the modal's", async () => {
+		const onRecordingChange = vi.fn();
+		await renderTab({ onRecordingChange });
+		onRecordingChange.mockClear();
+
+		fireEvent.click(sequenceButton('New Session'));
+		expect(onRecordingChange).toHaveBeenCalledWith(true);
+
+		onRecordingChange.mockClear();
+		pressSequenceKey('New Session', { key: 'Escape' });
+		expect(onRecordingChange).toHaveBeenCalledWith(false);
+	});
+
+	it('ends a sequence run when the chord button on the same row is clicked', async () => {
+		await renderTab();
+
+		fireEvent.click(sequenceButton('New Session'));
+		pressSequenceKey('New Session', { key: 'g', code: 'KeyG' });
+
+		fireEvent.click(screen.getByText('Meta+n'));
+
+		expect(screen.getByText('Press keys...')).toBeInTheDocument();
+		expect(sequenceButton('New Session')).toHaveTextContent('Add sequence');
+	});
+
+	it('ends a sequence run when the mode changes under it', async () => {
+		await renderTab();
+
+		fireEvent.click(sequenceButton('New Session'));
+		pressSequenceKey('New Session', { key: 'g', code: 'KeyG' });
+		fireEvent.click(screen.getByTestId('shortcuts-keyboard-mode-vim'));
+
+		expect(screen.queryByTestId('shortcuts-sequence-hint')).not.toBeInTheDocument();
+		expect(mockSetShortcuts).not.toHaveBeenCalled();
 	});
 });

@@ -98,6 +98,13 @@ describe('searchableSettings', () => {
 			expect(results.some((s) => s.id === 'general-rendering')).toBe(true);
 		});
 
+		it.each(['vim', 'keyboard mode', 'vim mode', 'modal'])(
+			'finds the Shortcuts tab for %s',
+			(query) => {
+				expect(searchSettings(query).some((s) => s.id === 'shortcuts-tab')).toBe(true);
+			}
+		);
+
 		it.each([
 			'Whisper',
 			'Relay',

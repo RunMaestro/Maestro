@@ -16,6 +16,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, renderHook, act, fireEvent } from '@testing-library/react';
 import React from 'react';
 import { LayerStackProvider, useLayerStack } from '../../../renderer/contexts/LayerStackContext';
+import { useUIStore } from '../../../renderer/stores/uiStore';
+import { SEQUENCE_TIMEOUT_MS } from '../../../renderer/utils/shortcutSequence';
 
 // Mock the useLayerStack hook from the hooks module
 vi.mock('../../../renderer/hooks/ui/useLayerStack', () => {
@@ -322,6 +324,103 @@ describe('LayerStackContext', () => {
 				});
 
 				expect(mockLayerStackAPI.closeTopLayer).not.toHaveBeenCalled();
+			});
+
+			/**
+			 * Deck mode is the ONE thing Escape unwinds before the layer stack.
+			 *
+			 * This listener runs in the capture phase and stops propagation, so
+			 * without the yield it would close the user's modal AND end the event
+			 * before the keyboard handler could disarm the armed leader - charging
+			 * them twice for one mistyped chord. Declining here is what lets the
+			 * bubble-phase handler own the cancel.
+			 */
+			describe('yielding Escape to an armed Deck mode', () => {
+				const mockLayer = {
+					id: 'test-layer',
+					type: 'modal' as const,
+					priority: 100,
+					onEscape: vi.fn(),
+				};
+
+				afterEach(() => {
+					useUIStore.getState().disarmDeckMode();
+				});
+
+				it('leaves the top layer open while the mode is armed', async () => {
+					vi.mocked(mockLayerStackAPI.getTopLayer).mockReturnValue(mockLayer);
+					useUIStore.getState().armDeckMode();
+
+					render(
+						<LayerStackProvider>
+							<div>Test</div>
+						</LayerStackProvider>
+					);
+
+					const escapeEvent = new KeyboardEvent('keydown', {
+						key: 'Escape',
+						bubbles: true,
+						cancelable: true,
+					});
+					const preventDefaultSpy = vi.spyOn(escapeEvent, 'preventDefault');
+					const stopPropagationSpy = vi.spyOn(escapeEvent, 'stopPropagation');
+
+					await act(async () => {
+						window.dispatchEvent(escapeEvent);
+					});
+
+					expect(mockLayerStackAPI.closeTopLayer).not.toHaveBeenCalled();
+					// Neither call is made, which is the point: acting at all in the
+					// capture phase would end the event before the handler that
+					// actually disarms the mode ever saw it.
+					expect(preventDefaultSpy).not.toHaveBeenCalled();
+					expect(stopPropagationSpy).not.toHaveBeenCalled();
+				});
+
+				it('closes the top layer again once the mode has ended', async () => {
+					vi.mocked(mockLayerStackAPI.getTopLayer).mockReturnValue(mockLayer);
+					useUIStore.getState().armDeckMode();
+					useUIStore.getState().disarmDeckMode();
+
+					render(
+						<LayerStackProvider>
+							<div>Test</div>
+						</LayerStackProvider>
+					);
+
+					await act(async () => {
+						window.dispatchEvent(
+							new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+						);
+					});
+
+					expect(mockLayerStackAPI.closeTopLayer).toHaveBeenCalled();
+				});
+
+				it('closes the top layer when the armed window has expired', async () => {
+					// The yield asks `deckModeArmedNow()`, not the raw flag. A leader
+					// nobody followed up on must not hold Escape hostage: the window
+					// expires lazily, so only the store helper knows it is over.
+					vi.mocked(mockLayerStackAPI.getTopLayer).mockReturnValue(mockLayer);
+					vi.useFakeTimers();
+					useUIStore.getState().armDeckMode();
+					vi.advanceTimersByTime(SEQUENCE_TIMEOUT_MS + 1);
+
+					render(
+						<LayerStackProvider>
+							<div>Test</div>
+						</LayerStackProvider>
+					);
+
+					await act(async () => {
+						window.dispatchEvent(
+							new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+						);
+					});
+
+					expect(mockLayerStackAPI.closeTopLayer).toHaveBeenCalled();
+					vi.useRealTimers();
+				});
 			});
 
 			it('uses capture phase for event handling', () => {

@@ -15,6 +15,7 @@ vi.unmock('../../../renderer/utils/shortcutFormatter');
 import {
 	formatKey,
 	formatShortcutKeys,
+	formatShortcutSequence,
 	formatMetaKey,
 	formatMetaKeyName,
 	formatAltKeyName,
@@ -173,6 +174,58 @@ describe('shortcutFormatter', () => {
 
 			it('formats function key shortcuts', () => {
 				expect(formatShortcutKeys(['Alt', 'F4'])).toBe('⌥\u00A0F4');
+			});
+
+			// Vim chords are spelled with 'Ctrl' rather than 'Meta' precisely so
+			// macOS draws the Vim-native ⌃ instead of ⌘ (the matcher folds the
+			// two into one modifier, so the spelling only shows up here). Every
+			// displaced Vim binding - goToHistory on Ctrl+Alt+Shift+H - reads as
+			// the wrong key if this regresses.
+			it('renders Ctrl as the Control glyph, not Command', () => {
+				expect(formatShortcutKeys(['Ctrl', 'Alt', 'Shift', 'h'])).toBe('⌃\u00A0⌥\u00A0⇧\u00A0H');
+				expect(formatShortcutKeys(['Ctrl', 'Shift', 'h'])).toBe('⌃\u00A0⇧\u00A0H');
+			});
+		});
+
+		describe('formatShortcutSequence()', () => {
+			it('prints each step in the case it was bound, not uppercased', () => {
+				// NOT `G G`: `g` and `G` are different keystrokes in a sequence,
+				// where a chord's single character is uppercased for looks.
+				expect(formatShortcutSequence([['g'], ['g']])).toBe('g\u00A0g');
+			});
+
+			it('folds Shift over a letter into the capital, the way Vim spells it', () => {
+				expect(formatShortcutSequence([['Shift', 'g']])).toBe('G');
+				expect(formatShortcutSequence([['g'], ['Shift', 't']])).toBe('g\u00A0T');
+			});
+
+			it('separates steps with a no-break space so a sequence cannot wrap', () => {
+				expect(formatShortcutSequence([['g'], ['t']])).toBe('g\u00A0t');
+				expect(formatShortcutSequence([['g'], ['t']], ' ')).toBe('g t');
+			});
+
+			it('falls back to the chord spelling for a step that holds modifiers', () => {
+				expect(formatShortcutSequence([['Ctrl', 'w'], ['h']])).toBe('⌃\u00A0W\u00A0h');
+			});
+
+			it('falls back to the chord spelling when Shift has no capital form', () => {
+				// `Shift+4` is `$` on a US layout and `"` on a German one, and
+				// nothing here knows the layout.
+				expect(formatShortcutSequence([['Shift', '4']])).toBe('⇧\u00A04');
+			});
+
+			it('names a non-character key through the key map', () => {
+				expect(formatShortcutSequence([['ArrowDown']])).toBe('↓');
+			});
+
+			it('returns an empty string for a missing, empty, or all-empty sequence', () => {
+				expect(formatShortcutSequence(undefined)).toBe('');
+				expect(formatShortcutSequence([])).toBe('');
+				expect(formatShortcutSequence([[]])).toBe('');
+			});
+
+			it('drops an empty step rather than printing a gap', () => {
+				expect(formatShortcutSequence([['g'], [], ['g']])).toBe('g\u00A0g');
 			});
 		});
 
@@ -360,6 +413,27 @@ describe('shortcutFormatter', () => {
 
 			it('formats function key shortcuts', () => {
 				expect(formatShortcutKeys(['Alt', 'F4'])).toBe('Alt+F4');
+			});
+
+			it('renders Ctrl as Ctrl, like Meta', () => {
+				expect(formatShortcutKeys(['Ctrl', 'Alt', 'Shift', 'h'])).toBe('Ctrl+Alt+Shift+H');
+			});
+		});
+
+		describe('formatShortcutSequence()', () => {
+			// A sequence is a RUN of keypresses, so its steps are joined by a
+			// space on every platform. A chord joins with `+` off macOS, and
+			// `g+g` would read as two keys held together.
+			it('still separates steps with a space, never the chord plus', () => {
+				expect(formatShortcutSequence([['g'], ['g']])).toBe('g\u00A0g');
+			});
+
+			it('folds Shift over a letter into the capital', () => {
+				expect(formatShortcutSequence([['Shift', 'g']])).toBe('G');
+			});
+
+			it('spells a modifier step as a chord inside the sequence', () => {
+				expect(formatShortcutSequence([['Ctrl', 'w'], ['h']])).toBe('Ctrl+W\u00A0h');
 			});
 		});
 

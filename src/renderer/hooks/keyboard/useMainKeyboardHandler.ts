@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { Session, AITab } from '../../types';
 import {
 	cycleShowThinkingFields,
+	moveActiveUnifiedTabByOne,
 	moveActiveUnifiedTabToEdge,
 	toggleReadOnlyModeFields,
 } from '../../utils/tabHelpers';
@@ -18,6 +19,9 @@ import { requestEditLastQueuedMessage } from '../../services/editQueuedMessage';
 import { requestOpenStagedImagesOrganizer } from '../../services/stagedImagesOrganizer';
 import { toggleAllUnreadFilters } from '../../services/unreadFilters';
 import { toggleInAppToasts } from '../../services/inAppToasts';
+import { keyboardModeToggleShadow, switchKeyboardMode } from '../../services/keyboardMode';
+import { focusRegionDirection, focusRegionVertical } from '../../services/regionFocus';
+import { growFocusedRegion, shrinkFocusedRegion } from '../../services/regionResize';
 import { requestSidebarReveal } from '../../utils/sidebarReveal';
 import { getGitShortcutActions } from '../../services/gitShortcutActions';
 import { useNotificationStore } from '../../stores/notificationStore';
@@ -28,13 +32,33 @@ import { resolveSnoozeTarget } from '../../utils/snoozeHelpers';
 import { selectActiveSession, useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { FONT_ZOOM_DEFAULT, FONT_ZOOM_STEP, clampFontZoom } from '../../../shared/typography';
-import { useUIStore } from '../../stores/uiStore';
+import { deckModeArmedNow, useUIStore } from '../../stores/uiStore';
 import { groupChatOutputSearchKey, isActiveOutputSearchOpen } from '../../utils/outputSearch';
 import { toggleGroupChatRightTab } from '../../utils/groupChatRightTab';
 import { OUTPUT_SEARCH_INPUT_SELECTOR } from '../ui/useOutputSearchLayer';
 import { tileNewTabInSession } from '../../services/tileNewTabAction';
 import type { TileableTabKind } from '../tabs/tileNewTab';
 import { isMacOSKeyboard } from '../../utils/platformUtils';
+import { eventMatchesShortcutKeys } from '../../utils/shortcutMatch';
+import {
+	createSequenceMatcher,
+	MODIFIER_ONLY_KEYS,
+	type SequenceBinding,
+} from '../../utils/shortcutSequence';
+import { publishSequencePrefix } from '../../stores/sequencePrefixStore';
+import { isNormalMode } from '../../utils/messageScrollNavigation';
+import {
+	applyInsertEscape,
+	insertEscapeTarget,
+	type InsertEscapeBinding,
+	type InsertEscapeField,
+} from '../../utils/vimInsertEscape';
+import { FIXED_SHORTCUTS } from '../../constants/shortcuts';
+import {
+	DECK_MODE_LEADER_ID,
+	findDeckModeAction,
+	isDeckModeCancelKey,
+} from '../../constants/deckMode';
 import { editClipboardImage } from '../../components/ImageAnnotator/editClipboardImage';
 import { FORCED_PARALLEL_SEND_EVENT } from '../input/useInputKeyDown';
 import { requestSteerSend } from '../../services/chatSteering';
@@ -106,7 +130,45 @@ const TILE_SHORTCUTS: ReadonlyArray<{ shortcutId: string; kind: TileableTabKind 
 	{ shortcutId: 'tileFileBelow', kind: 'file' },
 ];
 
+/**
+ * Stable empty list, for a context that carries no sequence bindings.
+ *
+ * `KeyboardHandlerContext` is `any`, so nothing type-checks that a caller sets
+ * the field: App does, and the hand-built contexts in the test suite do not.
+ */
+const NO_SEQUENCE_BINDINGS: readonly SequenceBinding[] = [];
+
 export type KeyboardHandlerContext = any;
+
+/**
+ * A view of the keyboard context whose shortcut matchers answer about ONE
+ * action id instead of about the event's keys.
+ *
+ * This is what lets the sequence layer dispatch without a table of its own. The
+ * chord ladder below is driven entirely by `isShortcut` / `isTabShortcut` /
+ * `isPaneShortcut`, so forcing those three to agree on the matched id runs that
+ * action's EXISTING branch, with that branch's own guards intact. A second
+ * action-id-to-handler map would be the alternative, and it would drift: an
+ * action added to the ladder in Phase 03 would work from its chord and
+ * silently do nothing from its sequence.
+ *
+ * All three matchers are forced together because they are not cleanly
+ * separable - `isTabShortcut` already falls back to the general map - and the
+ * two id spaces are disjoint, so there is no id a sequence could legitimately
+ * match in one and not the other.
+ *
+ * The copy is shallow and made only on a match, which is rare, and nothing in
+ * the handler writes through `ctx`, so no later reader can tell the difference.
+ */
+function withForcedAction(ctx: KeyboardHandlerContext, actionId: string): KeyboardHandlerContext {
+	const matchesForcedAction = (_e: KeyboardEvent, id: string) => id === actionId;
+	return {
+		...ctx,
+		isShortcut: matchesForcedAction,
+		isTabShortcut: matchesForcedAction,
+		isPaneShortcut: matchesForcedAction,
+	};
+}
 
 /**
  * Return type for useMainKeyboardHandler hook
@@ -142,6 +204,118 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 
 	// Main keyboard handler effect
 	useEffect(() => {
+		// One sequence matcher for the life of the listener. Deliberately NOT
+		// rebuilt when bindings change: `feed` takes the live binding list per
+		// call, so a settings write cannot discard a half-typed prefix.
+		const sequenceMatcher = createSequenceMatcher();
+
+		// A SECOND matcher, for the in-field escape (`jk`). Separate from the one
+		// above rather than a binding inside it, because the two run under
+		// opposite gates and want opposite things from a captured step: a
+		// normal-mode sequence fires only when NO text field has focus and
+		// swallows every step, while `jk` fires only when one does and must let
+		// its first step through as a typed character. One matcher holding both
+		// would also let a `g` typed in the composer survive into a normal-mode
+		// run, since the prefix buffer is a single piece of state.
+		const insertEscapeMatcher = createSequenceMatcher();
+		/**
+		 * The field a half-typed insert escape belongs to, or null.
+		 *
+		 * An escape is only an escape in the field it was started in: without
+		 * this, a `j` typed in the composer and a `k` typed after clicking into
+		 * the Settings filter would blur a field that never saw the `j`, and the
+		 * retraction would find the wrong character before the caret. Cleared on
+		 * every outcome except a captured step, so the reference outlives the
+		 * keystroke by at most one keypress.
+		 */
+		let insertEscapeField: InsertEscapeField | null = null;
+		const endInsertEscapeRun = () => {
+			if (!insertEscapeField) return;
+			insertEscapeMatcher.reset();
+			insertEscapeField = null;
+		};
+
+		/**
+		 * The `jk` gesture, fed one keydown. True when the keystroke was consumed
+		 * (the field was left), false when it was a captured step, a near miss, or
+		 * nothing to do with the gesture.
+		 *
+		 * A closure function because it is reached from TWO listeners: see the
+		 * capture-phase route in this same effect for why one is not enough.
+		 * Both share this matcher and `insertEscapeField`, which is what keeps a
+		 * run from surviving a change of field no matter which route fed it.
+		 */
+		const runInsertEscape = (
+			e: KeyboardEvent,
+			insertEscape: InsertEscapeBinding | null
+		): boolean => {
+			if (!insertEscape) return false;
+			const field = insertEscapeTarget(e.target);
+			// Focus moved mid-run (a click into another input, a modal autofocusing
+			// its first field): the run ended with it.
+			if (field !== insertEscapeField) endInsertEscapeRun();
+			if (!field) return false;
+			const escapeResult = insertEscapeMatcher.feed(e, insertEscape.bindings);
+			if (escapeResult.outcome === 'consumed-prefix') {
+				// Deliberately NOT prevented. The `j` is a character the user typed
+				// and it belongs in the field; if no `k` follows, nothing was ever
+				// taken away from them.
+				insertEscapeField = field;
+				return false;
+			}
+			if (escapeResult.outcome === 'matched') {
+				insertEscapeField = null;
+				if (applyInsertEscape(field, insertEscape.inserted)) {
+					e.preventDefault();
+					return true;
+				}
+				// The prefix is not where it was expected to be, so this was never
+				// an escape. Let the key be the character it is - a near miss costs
+				// the user nothing.
+				return false;
+			}
+			insertEscapeField = null;
+			return false;
+		};
+
+		/**
+		 * Tell the prefix indicator what the matcher is holding.
+		 *
+		 * The matcher's own answer is published verbatim, so the chip cannot
+		 * disagree with it: a match, an aborted run, Escape and an expired prefix
+		 * all leave `prefix()` empty, which is how the chip learns to disappear,
+		 * and a modifier-only keydown leaves it unchanged, which is how a capital
+		 * mid-sequence does not make the chip flicker. The one case the matcher
+		 * cannot report is the timeout, because it expires lazily on read; the
+		 * indicator owns a timer for that.
+		 *
+		 * Safe to call on every keydown: `prefix()` is identity-stable while the
+		 * run is unchanged and the store skips a write that changes nothing.
+		 */
+		const publishPrefix = () => publishSequencePrefix(sequenceMatcher.prefix());
+
+		/**
+		 * Abandon both half-typed runs, and take the chip down with them.
+		 *
+		 * Three callers, for three readings of the same event: the Deck leader
+		 * (a deliberate fresh start), the window losing focus (the keys that
+		 * would finish the run are going elsewhere), and a keyboard-mode switch
+		 * (the bindings the run was started against are no longer the live ones).
+		 * One helper rather than the triple written out at each, because the
+		 * third was added by forgetting the first two existed - a run left alive
+		 * across a mode switch completes against the NEW mode's bindings, so a
+		 * `g` typed in default mode fired Vim's `g t`.
+		 */
+		const abandonPendingRuns = () => {
+			sequenceMatcher.reset();
+			publishPrefix();
+			// The in-field escape goes with it, and for a second reason: the run
+			// holds a reference to the field it started in, so a reference that
+			// outlives the reason the run ended would retract a character from a
+			// field the user has moved on from.
+			endInsertEscapeRun();
+		};
+
 		const handleKeyDown = (e: KeyboardEvent) => {
 			const target = e.target;
 			const activeElement = document.activeElement;
@@ -164,9 +338,139 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			// Read all values from ref - this allows the handler to stay attached while still
 			// accessing current state values. Active Session is resolved at event time from
 			// the store so App does not need to push a live Session object onto this ref.
-			const ctx = keyboardHandlerRef.current;
+			// Reassignable: a matched key sequence swaps in a view of this same
+			// context whose matchers answer about the matched action (see
+			// `withForcedAction` and the sequence block below).
+			let ctx = keyboardHandlerRef.current;
 			if (!ctx) return;
 			const activeSession = selectActiveSession(useSessionStore.getState());
+
+			// Helper to track shortcut usage for keyboard mastery gamification
+			// AND for the daily-usage time series shown on the Usage Dashboard.
+			// Mastery is short-circuited on second+ firings of the same shortcut
+			// (it's a unique-set), but the daily counter increments every time.
+			//
+			// Usage is recorded PER ACTION, never per mode, per chord, per
+			// sequence, or per Deck key. The same action fired from a Vim
+			// sequence, from Deck mode, and from its default-mode chord is one
+			// entry in the mastery set, which is what makes the count mean "you
+			// know this action" rather than "you know this keystroke". Every new
+			// keyboard path must call this with the action id (the Deck block
+			// below and the sequence layer further down both do).
+			//
+			// Defined up here, above every guard, because the Deck block is the
+			// first thing in the chain and records the action it fires. Nothing
+			// about the closure cares where it sits: it reads `ctx` at CALL time,
+			// so a later `withForcedAction` swap is invisible to it (the copy
+			// carries the same `recordShortcutUsage`).
+			//
+			// `reported` makes one keypress one usage: the Deck and sequence
+			// layers record the action they matched before the ladder runs, and
+			// the branch that then fires records the same id. Mastery is a set and
+			// would not notice, but the daily counter would count that keypress
+			// twice.
+			const reported = new Set<string>();
+			const trackShortcut = (shortcutId: string) => {
+				if (reported.has(shortcutId)) return;
+				reported.add(shortcutId);
+				if (ctx.recordShortcutUsage) {
+					const result = ctx.recordShortcutUsage(shortcutId);
+					if (result.newLevel !== null && ctx.onKeyboardMasteryLevelUp) {
+						ctx.onKeyboardMasteryLevelUp(result.newLevel);
+					}
+				}
+				// Fire-and-forget. A failed IPC must never block a shortcut from
+				// taking effect; the daily counter is best-effort telemetry.
+				void window.maestro?.stats?.recordShortcutUsage?.(Date.now());
+			};
+
+			// --- Deck mode: the leader chord and the one key that follows it ---
+			//
+			// First in the chain, above the terminal blocks, the in-field escape
+			// and the layer guard, because an armed Deck mode owns the NEXT
+			// keystroke outright and every path below claims bare keys for its own
+			// good reasons: terminal focus recovery forwards them to the shell,
+			// `jk` reads a `j` as a prefix step, the layer guard hands them to
+			// whatever modal is open, and sidebar navigation claims a bare Space.
+			// Deck mode is the one keyboard route that is meant to fire from a
+			// focused composer and over an open surface, so it has to be asked
+			// before any of them.
+			//
+			// `deckModeArmedNow()`, never the raw `deckModeArmed` flag: the window
+			// expires lazily (no timer), so the store helper is the only thing that
+			// answers "is the mode live" correctly, and it disarms an expired one on
+			// the way out.
+			//
+			// On a hit the action is dispatched the same way a matched sequence is -
+			// by forcing the three matchers onto the action id and falling through
+			// to that action's EXISTING ladder branch, with that branch's own guards
+			// intact. A second action-id-to-handler map here would drift the first
+			// time a branch grew a guard. What a forced Deck action does NOT do is
+			// re-enter the guards between here and the ladder: the keystroke has
+			// already been matched against the Deck table, and those guards read raw
+			// keys, so each one below is skipped while `deckAction` is set.
+			let deckAction: string | null = null;
+			// A modifier's OWN keydown is invisible to the armed mode, exactly as it
+			// is to the sequence matcher. `Shift+H` sends a bare `Shift` keydown
+			// before the letter: it carries none of the meta/ctrl/alt flags, so it
+			// reached the miss branch below, disarmed the mode, and swallowed
+			// itself - which took away the forgiving capital-letter behaviour the
+			// Deck table promises and left the letter to land in the composer
+			// instead. `Alt` alone had the mirror problem: its own keydown sets
+			// `altKey`, so it read as a deliberate chord and disarmed. Skipping the
+			// whole block leaves the mode armed and the event untouched, which is
+			// what a key the user has not finished pressing deserves.
+			if (deckModeArmedNow() && !MODIFIER_ONLY_KEYS.has(e.key)) {
+				const { disarmDeckMode } = useUIStore.getState();
+				if (isDeckModeCancelKey(e.key)) {
+					// THE ONE PLACE THE LAYER STACK YIELDS. Escape normally closes the
+					// topmost layer from LayerStackProvider's capture-phase listener,
+					// which runs before this one and stops propagation; that listener
+					// asks `deckModeArmedNow()` first and declines while the mode is
+					// armed, which is what lets the keypress reach here. An armed
+					// leader is what the user is cancelling, and taking their modal
+					// away in the same keystroke would charge them twice for one
+					// mistyped chord. Escape fires nothing and is tracked against
+					// nothing: cancelling is the mode's own behaviour, not an action
+					// (see DECK_MODE_CANCEL).
+					e.preventDefault();
+					disarmDeckMode();
+					return;
+				}
+				if (e.metaKey || e.ctrlKey || e.altKey) {
+					// A chord while armed is not a Deck key at all. The user changed
+					// their mind and pressed something they meant for the app, so the
+					// mode gets out of the way: disarm, do NOT swallow the event, and
+					// let it be matched as the chord it is. Pressing the leader again
+					// lands here and then re-arms below, which is how a second press
+					// restarts the clock.
+					disarmDeckMode();
+				} else {
+					const row = findDeckModeAction(e.key);
+					// Swallowed and disarmed on BOTH outcomes, before the branch. A
+					// one-shot mode must not leak the key into the composer it was
+					// armed from, and a miss deliberately does not fall through to the
+					// normal binding ladder: a leader that sometimes passed the key
+					// along would leave the user guessing whether it had taken effect.
+					e.preventDefault();
+					disarmDeckMode();
+					if (!row) return;
+					trackShortcut(row.id);
+					ctx = withForcedAction(ctx, row.id);
+					deckAction = row.id;
+				}
+			}
+			if (deckAction === null && ctx.isShortcut(e, DECK_MODE_LEADER_ID)) {
+				e.preventDefault();
+				useUIStore.getState().armDeckMode();
+				trackShortcut(DECK_MODE_LEADER_ID);
+				// Both half-finished keyboard ideas are abandoned with it. The leader
+				// is a deliberate fresh start, and a live `g` prefix or an in-field
+				// `j` that outlived it would complete against a key the user aimed at
+				// the Deck table.
+				abandonPendingRuns();
+				return;
+			}
 
 			// Terminal focus recovery: if a key event reaches this window handler while in
 			// terminal mode, xterm's textarea likely lost focus. Recover early (before any
@@ -272,6 +576,44 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				return;
 			}
 
+			// --- `jk` to leave a text field (Vim mode's insert-mode escape) ---
+			//
+			// Placed here, ABOVE the layer guard, on purpose. That guard returns
+			// early for every bare key while a modal is open, so a block below it
+			// would make `jk` dead in exactly the text fields a modal is made of -
+			// the Settings filter, a rename field, the search box. It is below the
+			// two terminal blocks for the opposite reason: those own the keyboard
+			// when xterm has it, and `insertEscapeTarget` excludes `.xterm`
+			// anyway, so a `jk` typed into `vim` in a Maestro terminal reaches the
+			// shell and nothing else.
+			//
+			// `ctx.insertEscape` is null unless Vim mode is live AND the setting
+			// parses, so default-mode users pay one property read for this. A
+			// forced Deck action nulls it outright: a Deck `j` is a region move the
+			// user asked for by name, not the first half of an escape, and feeding
+			// it to this matcher would leave a prefix waiting to eat the next real
+			// `k` they typed.
+			//
+			// No `trackShortcut` call: keyboard mastery counts ACTIONS, and every
+			// id it knows is declared in `DEFAULT_SHORTCUTS` or `TAB_SHORTCUTS`
+			// with a row in Settings > Shortcuts. The insert escape is a text-field
+			// behavior configured by a string setting, not a bindable action, so
+			// recording it would put an id in the mastery set that no table
+			// declares and no row could ever explain.
+			// Runs for every text field OUTSIDE a layer; a field inside one is
+			// served by the capture-phase route, which is the only route the
+			// event reaches there at all. The layer check is what keeps the two
+			// EXCLUSIVE, and it is not optional: an event dispatched at `window`
+			// reaches a capture and a bubble listener alike, so without it one
+			// keystroke was fed to the matcher twice and the second feed read the
+			// repeat as a failed step and threw the prefix away.
+			if (
+				!ctx.hasOpenLayers() &&
+				runInsertEscape(e, deckAction ? null : (ctx.insertEscape ?? null))
+			) {
+				return;
+			}
+
 			// When layers (modals/overlays) are open, we need nuanced shortcut handling:
 			// - Escape: handled by LayerStackContext in capture phase
 			// - Tab: allowed for accessibility navigation
@@ -283,7 +625,10 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			// OVERLAYS (FilePreview, LogViewer): Allow Cmd+Shift+[] for tab cycling
 			//   - App.tsx handles this with modified behavior (cycle tabs not sessions)
 
-			if (ctx.hasOpenLayers()) {
+			// `!deckAction`: a Deck key reached its table through the leader, which
+			// is the user naming one action out of a list they are being shown, so
+			// it is not a stray keypress for this guard to adjudicate.
+			if (!deckAction && ctx.hasOpenLayers()) {
 				// Allow Tab for accessibility navigation within modals
 				if (e.key === 'Tab') return;
 
@@ -511,45 +856,27 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			}
 
 			// Skip all keyboard handling when editing a session or group name in the sidebar
-			if (ctx.editingSessionId || ctx.editingGroupId) {
+			if (!deckAction && (ctx.editingSessionId || ctx.editingGroupId)) {
 				return;
 			}
 
-			// Keyboard navigation handlers from useKeyboardNavigation hook
-			// Sidebar navigation with arrow keys (works when sidebar has focus)
-			if (ctx.handleSidebarNavigation(e)) return;
+			// Keyboard navigation handlers from useKeyboardNavigation hook.
+			// Skipped for a forced Deck action: these read raw keys rather than
+			// bindings, and `handleSidebarNavigation` claims a bare Space outright,
+			// which is the Deck key for Quick Actions.
+			if (!deckAction) {
+				// Sidebar navigation with arrow keys (works when sidebar has focus)
+				if (ctx.handleSidebarNavigation(e)) return;
 
-			// Enter to load selected session from sidebar
-			if (ctx.handleEnterToActivate(e)) return;
+				// Enter to load selected session from sidebar
+				if (ctx.handleEnterToActivate(e)) return;
 
-			// Tab navigation between panels
-			if (ctx.handleTabNavigation(e)) return;
+				// Tab navigation between panels
+				if (ctx.handleTabNavigation(e)) return;
 
-			// Escape in main area focuses terminal output
-			if (ctx.handleEscapeInMain(e)) return;
-
-			// Which "Tile New ... Below" command this event matches, if any. Resolved
-			// once here rather than as four more links in the else-if chain below.
-			// isPaneShortcut, not isShortcut: the family lives on Ctrl+Cmd and the
-			// general matcher treats Ctrl and Cmd as the same modifier, so it would
-			// report a match on a bare Cmd+T.
-			const matchedTile = TILE_SHORTCUTS.find((t) => ctx.isPaneShortcut(e, t.shortcutId)) ?? null;
-
-			// Helper to track shortcut usage for keyboard mastery gamification
-			// AND for the daily-usage time series shown on the Usage Dashboard.
-			// Mastery is short-circuited on second+ firings of the same shortcut
-			// (it's a unique-set), but the daily counter increments every time.
-			const trackShortcut = (shortcutId: string) => {
-				if (ctx.recordShortcutUsage) {
-					const result = ctx.recordShortcutUsage(shortcutId);
-					if (result.newLevel !== null && ctx.onKeyboardMasteryLevelUp) {
-						ctx.onKeyboardMasteryLevelUp(result.newLevel);
-					}
-				}
-				// Fire-and-forget. A failed IPC must never block a shortcut from
-				// taking effect; the daily counter is best-effort telemetry.
-				void window.maestro?.stats?.recordShortcutUsage?.(Date.now());
-			};
+				// Escape in main area focuses terminal output
+				if (ctx.handleEscapeInMain(e)) return;
+			}
 
 			// Cmd+F while the output find bar is already open: bring focus back to its
 			// input from anywhere in the MAIN chat, instead of no-opping. Do NOT steal
@@ -568,6 +895,77 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				document.querySelector<HTMLInputElement>(OUTPUT_SEARCH_INPUT_SELECTOR)?.focus();
 				return;
+			}
+
+			// --- Key sequences (`g g`, `g t`) ---
+			//
+			// Placed BEFORE every branch that can dispatch an action, and AFTER
+			// every early return above it, both deliberately. Before, because a
+			// sequence step is a bare key and those branches would otherwise get
+			// first refusal on it, and because a match dispatches by FORCING the
+			// three matchers and falling through to the action's own branch - so
+			// any branch sitting above this point is one a sequence can never
+			// reach. That is not hypothetical: the tiling family below (pane
+			// focus, split, close, zoom, rebalance, cycle) used to run first, so
+			// a sequence bound to one of them was swallowed here, recorded as
+			// used, and then had no branch left to run.
+			//
+			// After, because the paths above already own bare keys for better
+			// reasons: terminal focus recovery forwards them to the shell, the
+			// layer guard hands them to whatever modal is open, the sidebar /
+			// Enter / Escape navigation handlers claim theirs, and the Cmd+R
+			// block only ever calls preventDefault. Group chat handling is not
+			// above this point - it lives inside the ladder - so a matched
+			// sequence reaches it the same way its chord does.
+			//
+			// Both halves of normal mode are checked here. `isNormalMode` owns the
+			// focus half (nothing that accepts typed text holds the keystroke) and
+			// `hasOpenLayers` owns the modal half, which is React context rather
+			// than DOM and so cannot live in the predicate.
+			//
+			// Skipped entirely when the live mode binds no sequence at all, which
+			// is every default-mode user who has not recorded one. This is the
+			// hottest path in the app, and `isNormalMode` costs two `closest()`
+			// walks; with no bindings `feed` can only answer 'no-match' and no
+			// prefix can be live to reset, so the skip changes nothing but the
+			// cost.
+			//
+			// Skipped entirely for a forced Deck action, which is why Deck mode
+			// "composes with" the sequence matcher rather than competing with it:
+			// the leader already reset any live prefix, and feeding the Deck key
+			// here would let it start or finish a run it was never aimed at.
+			const sequenceBindings: readonly SequenceBinding[] =
+				ctx.sequenceBindings ?? NO_SEQUENCE_BINDINGS;
+			if (!deckAction && sequenceBindings.length > 0) {
+				if (isNormalMode(e) && !ctx.hasOpenLayers()) {
+					const sequenceResult = sequenceMatcher.feed(e, sequenceBindings);
+					// Before the branches, so every outcome repaints the chip from
+					// one place: a captured step shows it, a match or an abort hides
+					// it, and a modifier-only key leaves it exactly as it was.
+					publishPrefix();
+					if (sequenceResult.outcome === 'consumed-prefix') {
+						// The keypress belongs to the run in progress. Letting it
+						// also reach the ladder would fire an action mid-sequence.
+						e.preventDefault();
+						return;
+					}
+					if (sequenceResult.outcome === 'matched') {
+						// Swallowed for the same reason its prefix was: the key
+						// completed a sequence, so it is not also a key in its own
+						// right.
+						e.preventDefault();
+						trackShortcut(sequenceResult.actionId);
+						ctx = withForcedAction(ctx, sequenceResult.actionId);
+					}
+					// 'no-match' falls through untouched, to be matched as a chord.
+				} else {
+					// A keypress that could not be a sequence step ends the run:
+					// the user has clicked into a text field or opened a modal, and
+					// a prefix that outlived either would complete against a
+					// keystroke they no longer connect to it.
+					sequenceMatcher.reset();
+					publishPrefix();
+				}
 			}
 
 			// Tab tiling (split panes): the Ctrl+Cmd pane family is matched with a
@@ -635,6 +1033,17 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				return;
 			}
 
+			// Which "Tile New ... Below" command this event matches, if any. Resolved
+			// once here rather than as four more links in the else-if chain below.
+			// isPaneShortcut, not isShortcut: the family lives on Ctrl+Cmd and the
+			// general matcher treats Ctrl and Cmd as the same modifier, so it would
+			// report a match on a bare Cmd+T.
+			//
+			// Resolved AFTER the sequence block, so it sees the forced matcher on a
+			// match like every other ladder branch does. Computed earlier it would
+			// have been the one branch a sequence could never reach.
+			const matchedTile = TILE_SHORTCUTS.find((t) => ctx.isPaneShortcut(e, t.shortcutId)) ?? null;
+
 			// General shortcuts
 			// Only allow collapsing left sidebar when there are sessions (prevent collapse on empty state)
 			if (ctx.isShortcut(e, 'toggleSidebar')) {
@@ -645,6 +1054,15 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			} else if (ctx.isShortcut(e, 'toggleRightPanel')) {
 				ctx.setRightPanelOpen((p: boolean) => !p);
 				trackShortcut('toggleRightPanel');
+			} else if (ctx.isShortcut(e, 'toggleZenMode')) {
+				// Zen composes the two toggles above, so it sits beside them. It writes
+				// the store action rather than ctx.setLeftSidebarOpen / setRightPanelOpen
+				// because the whole point of the action is that entry takes ONE snapshot
+				// of all three visibility booleans and exit spreads it back: three
+				// independent setter calls from here could not restore the Left Bar's
+				// tri-state, and would reopen a Right Bar the user had already closed.
+				useUIStore.getState().toggleZenMode();
+				trackShortcut('toggleZenMode');
 			} else if (ctx.isShortcut(e, 'newInstance')) {
 				e.preventDefault();
 				// Cmd+N goes directly to manual agent creation, bypassing the choice modal
@@ -744,6 +1162,23 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				ctx.setShortcutsHelpOpen(true);
 				trackShortcut('help');
+			} else if (
+				eventMatchesShortcutKeys(e, FIXED_SHORTCUTS.toggleKeyboardMode.keys) &&
+				!keyboardModeToggleShadow()
+			) {
+				// The keyboard route back out of the mode you switched into. Matched by
+				// its FIXED chord rather than through ctx.isShortcut, because it is not
+				// in the configurable map at all: it has to be the same chord in every
+				// mode, or a mode could rebind its own exit key.
+				//
+				// The shadow check is what makes the user's own binding win. When the
+				// live set gives Opt+Cmd+V to another action, this branch stands down
+				// and the event falls through to that action's own branch; Settings >
+				// Shortcuts names the action that took it, so the chord is explained
+				// rather than silently dead.
+				e.preventDefault();
+				switchKeyboardMode();
+				trackShortcut('toggleKeyboardMode');
 			} else if (ctx.isShortcut(e, 'settings')) {
 				e.preventDefault();
 				ctx.setSettingsModalOpen(true);
@@ -753,6 +1188,16 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				ctx.setSettingsTab?.('theme');
 				ctx.setSettingsModalOpen(true);
 				trackShortcut('openThemeSettings');
+			} else if (ctx.isShortcut(e, 'stopTurn')) {
+				// Registered unbound (see DEFAULT_SHORTCUTS.stopTurn: every chord that
+				// reads as Ctrl+C is reserved), so this fires only for a user who bound
+				// one. Routed through the SAME agent-level interrupt the red Stop pill
+				// calls, which also ends the other busy tabs and the cross-agent
+				// consults this turn fanned out - a narrower kill here would stop the
+				// visible process and leave the rest streaming.
+				e.preventDefault();
+				ctx.handleInterrupt?.();
+				trackShortcut('stopTurn');
 			} else if (ctx.isShortcut(e, 'showSnoozeList')) {
 				// Registered unbound since Part 3 and never wired, so binding a key to
 				// it did nothing. Same route the tab strip and the palette already use.
@@ -955,6 +1400,49 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				ctx.setActiveFocus('sidebar');
 				setTimeout(() => ctx.sidebarContainerRef?.current?.focus(), 0);
 				trackShortcut('focusSidebar');
+			} else if (ctx.isShortcut(e, 'focusRegionLeft')) {
+				// The six region actions generalize focusSidebar above, so they sit
+				// directly after it. Each one is a single call into the service that owns
+				// the behavior - reveal-before-focus, the clamp at both ends, and the
+				// per-region vertical axis all live in regionFocus.ts, which the command
+				// palette rows call too, so a key and a palette row cannot drift apart.
+				e.preventDefault();
+				focusRegionDirection('left');
+				trackShortcut('focusRegionLeft');
+			} else if (ctx.isShortcut(e, 'focusRegionRight')) {
+				e.preventDefault();
+				focusRegionDirection('right');
+				trackShortcut('focusRegionRight');
+			} else if (ctx.isShortcut(e, 'focusRegionUp')) {
+				// Inside a bar, `focusRegionVertical` moves the list selection by
+				// dispatching a bare ArrowUp/ArrowDown at the panel, and that synthetic
+				// event bubbles back to this same window listener. Binding this action to
+				// a bare arrow key therefore has it match its own echo. The guard is the
+				// service's own re-entrancy check rather than an `e.isTrusted` test here:
+				// XTerminal's passthrough and the webview's forwarded input both reach
+				// this handler as UNTRUSTED synthetic events, so trust says nothing about
+				// whether a press was real.
+				e.preventDefault();
+				focusRegionVertical('up');
+				trackShortcut('focusRegionUp');
+			} else if (ctx.isShortcut(e, 'focusRegionDown')) {
+				e.preventDefault();
+				focusRegionVertical('down');
+				trackShortcut('focusRegionDown');
+			} else if (ctx.isShortcut(e, 'growRegion')) {
+				// Zero-arg wrappers, not resizeFocusedRegion(STEP), so the key and the
+				// palette row cannot end up stepping by different amounts. Which region
+				// moves is the service's call: focus in the Main Window steps the Right
+				// Bar INVERTED, because the Main Window is the flex child with no width
+				// of its own and can only grow by taking the step back from a bar. See
+				// src/renderer/services/regionResize.ts for that reasoning in full.
+				e.preventDefault();
+				growFocusedRegion();
+				trackShortcut('growRegion');
+			} else if (ctx.isShortcut(e, 'shrinkRegion')) {
+				e.preventDefault();
+				shrinkFocusedRegion();
+				trackShortcut('shrinkRegion');
 			} else if (ctx.isShortcut(e, 'focusActiveTab')) {
 				e.preventDefault();
 				// First press parks focus on the active tab header. A second press has
@@ -1685,6 +2173,32 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					});
 					trackShortcut('moveTabToEnd');
 				}
+				// Move the active tab one VISIBLE position. Ships unassigned, so this
+				// only fires once the user binds a chord (or switches to a mode that
+				// does). Clamps at both ends rather than wrapping - see
+				// moveActiveUnifiedTabByOne.
+				if (ctx.isTabShortcut(e, 'moveTabLeft')) {
+					e.preventDefault();
+					ctx.setSessions((prev: Session[]) => {
+						const current = prev.find((s: Session) => s.id === activeSession.id);
+						if (!current) return prev;
+						const updated = moveActiveUnifiedTabByOne(current, 'left');
+						if (updated === current) return prev;
+						return prev.map((s: Session) => (s.id === current.id ? updated : s));
+					});
+					trackShortcut('moveTabLeft');
+				}
+				if (ctx.isTabShortcut(e, 'moveTabRight')) {
+					e.preventDefault();
+					ctx.setSessions((prev: Session[]) => {
+						const current = prev.find((s: Session) => s.id === activeSession.id);
+						if (!current) return prev;
+						const updated = moveActiveUnifiedTabByOne(current, 'right');
+						if (updated === current) return prev;
+						return prev.map((s: Session) => (s.id === current.id ? updated : s));
+					});
+					trackShortcut('moveTabRight');
+				}
 				// Cmd+1-9, Cmd+0 - Jump to tab by index in unified order.
 				// In unread-only mode, index into the filtered/visible tabs so Cmd+N matches
 				// the Nth tab currently shown in the tab bar (not the Nth tab overall).
@@ -1788,8 +2302,94 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				}
 			}
 		};
+		// A half-typed sequence does not survive the window losing focus: the keys
+		// that would finish it are going somewhere else now. The lazy timeout
+		// would expire it a second later anyway, but the prefix indicator is a
+		// painted thing and would otherwise sit on screen over a window that no
+		// longer has the keyboard, so the chip is taken down with the run.
+		//
+		// Deck mode's own blur guard is installed by `armDeckMode` and lives in
+		// the store, because it must not depend on anything being mounted; see
+		// `installDeckBlurGuard`. So there is nothing to disarm here.
+		const handleBlur = () => {
+			abandonPendingRuns();
+		};
+
+		/**
+		 * A keyboard-mode switch abandons every half-finished keyboard idea.
+		 *
+		 * Subscribed to the STORE rather than hung off the toggle chord, because
+		 * the chord is one of five routes into a switch and the only one that
+		 * passes through this handler. The palette, the hamburger menu, the
+		 * Settings toggle (which calls `setKeyboardMode` directly, bypassing
+		 * `switchKeyboardMode`), and an external settings-file change all land
+		 * here and nowhere else.
+		 *
+		 * The two matchers live in this closure, so nothing outside can reach
+		 * them, and they are the pieces that are stale in the strong sense:
+		 * `feed` takes the LIVE binding list per call, so a `g` captured under
+		 * default mode would complete against Vim mode's `g t`.
+		 *
+		 * Deck mode is disarmed here as WELL as in `setKeyboardMode`, and that is
+		 * not a redundancy to collapse. The setter covers the four in-app routes
+		 * without depending on anything being mounted; it cannot cover the fifth,
+		 * because an external settings change applies one `setState` patch and
+		 * calls no setter. This subscription is the only thing that sees that
+		 * route, and a second window following a mode change is exactly where an
+		 * armed window would otherwise outlive the mode it was armed in.
+		 */
+		const unsubscribeKeyboardMode = useSettingsStore.subscribe((state, previous) => {
+			if (state.keyboardMode === previous.keyboardMode) return;
+			abandonPendingRuns();
+			useUIStore.getState().disarmDeckMode();
+		});
+
+		/**
+		 * `jk` inside an open layer, where the main listener never runs.
+		 *
+		 * `Modal` puts `onKeyDown={(e) => e.stopPropagation()}` on its root, so a
+		 * keystroke typed in a modal's own text field - the Settings filter, the
+		 * shortcuts search box, a rename field - stops at React's root container
+		 * and never bubbles to `window`. The main handler runs the gesture above
+		 * its layer guard, which reads as though it would survive an open modal,
+		 * but that placement cannot help on its own: the event is gone before the
+		 * listener is called at all. CAPTURE phase runs window-first, which is
+		 * the one place ahead of the modal's stop.
+		 *
+		 * Scoped as tightly as the bug: it runs ONLY while a layer is open (the
+		 * exact case the bubble route cannot serve) and ONLY the `jk` gesture, so
+		 * no ordinary background shortcut becomes reachable from inside a modal,
+		 * and the no-layer path keeps its existing ordering untouched. The two
+		 * routes are mutually exclusive per keystroke, and both feed the one
+		 * matcher, so a run cannot be half-held in each.
+		 *
+		 * Deck mode is NOT extended here. Arming it needs the leader chord, which
+		 * the same stop swallows, so an armed Deck mode cannot exist inside a
+		 * modal to begin with - and its table fires tab and layout actions that
+		 * have no business running underneath an open dialog. Checked anyway, so
+		 * the gesture stands down rather than eating a Deck key if arming ever
+		 * becomes reachable.
+		 *
+		 * `stopPropagation` on a consumed keystroke: the gesture blurs the field,
+		 * so letting the same `k` continue to the field's own handlers would hand
+		 * them a key the user spent on leaving.
+		 */
+		const handleKeyDownCapture = (e: KeyboardEvent) => {
+			const ctx = keyboardHandlerRef.current;
+			if (!ctx?.hasOpenLayers?.()) return;
+			if (deckModeArmedNow()) return;
+			if (runInsertEscape(e, ctx.insertEscape ?? null)) e.stopPropagation();
+		};
+
+		window.addEventListener('keydown', handleKeyDownCapture, { capture: true });
 		window.addEventListener('keydown', handleKeyDown);
-		return () => window.removeEventListener('keydown', handleKeyDown);
+		window.addEventListener('blur', handleBlur);
+		return () => {
+			window.removeEventListener('keydown', handleKeyDownCapture, { capture: true });
+			window.removeEventListener('keydown', handleKeyDown);
+			window.removeEventListener('blur', handleBlur);
+			unsubscribeKeyboardMode();
+		};
 	}, []); // Empty dependencies - handler reads from ref
 
 	// Browser tab shortcut forwarding: the main process intercepts shortcuts

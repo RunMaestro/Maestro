@@ -44,6 +44,7 @@ import { useAvailableTemplateVariables } from '../../../hooks/input/useAvailable
 import { isPromptAvailable } from '../../../../shared/promptDefinitions';
 import { useActiveSession } from '../../../hooks/session/useActiveSession';
 import { useSettingsStore } from '../../../stores/settingsStore';
+import { selectActiveShortcuts } from '../../../stores/settingsShortcutsSlice';
 import { gitService } from '../../../services/git';
 import { DualPaneFileEditor, type DualPaneFileEditorItem } from '../../shared/DualPaneFileEditor';
 import { FilterInput } from '../../ui/FilterInput';
@@ -548,7 +549,11 @@ export function MaestroPromptsTab({
 	 * literal `e`, so the chord that flips a file preview, a memory, and a
 	 * prompt stays one key after a remap.
 	 */
-	const toggleModeKeys = useSettingsStore((s) => s.shortcuts?.toggleMarkdownMode?.keys);
+	// Active-mode map, as in MemoryViewer: the chord this matches has to be the
+	// one the live keyboard mode binds.
+	const toggleModeKeys = useSettingsStore(
+		(s) => selectActiveShortcuts(s)?.toggleMarkdownMode?.keys
+	);
 
 	/**
 	 * Picking a mode also leaves the bundled-default comparison. That overlay

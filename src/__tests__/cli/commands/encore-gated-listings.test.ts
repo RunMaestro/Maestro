@@ -7,7 +7,11 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 
-vi.mock('../../../cli/services/storage', () => ({ readSettingValue: vi.fn() }));
+vi.mock('../../../cli/services/storage', () => ({
+	readSettingValue: vi.fn(),
+	readSettings: vi.fn(() => ({})),
+	readEncoreFlags: vi.fn(() => ({})),
+}));
 vi.mock('../../../cli/services/maestro-client', () => ({ withMaestroClient: vi.fn() }));
 vi.mock('../../../cli/services/prompt-loader', () => ({
 	getCliPrompt: vi.fn(async (id: string) => `content of ${id}`),
@@ -15,7 +19,7 @@ vi.mock('../../../cli/services/prompt-loader', () => ({
 
 import { openModal } from '../../../cli/commands/open-modal';
 import { promptsGet, promptsList } from '../../../cli/commands/prompts-get';
-import { readSettingValue } from '../../../cli/services/storage';
+import { readSettingValue, readSettings } from '../../../cli/services/storage';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import { ENCORE_FEATURE_DEFAULTS } from '../../../shared/encoreFeatureDefaults';
 

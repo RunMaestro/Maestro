@@ -11,6 +11,7 @@ import type { MultiWindowState } from '../../shared/window-types';
 import type { QuickChatSettings, QuickChatWindowBounds } from '../../shared/quickChat';
 import type { FloatingWidgetBounds, FloatingWidgetId } from '../../shared/floatingWidgets';
 import type { ThroughputGaugeSettings } from '../../shared/throughputGauge';
+import type { KeyboardMode } from '../../shared/shortcut-types';
 
 // ============================================================================
 // Stored Session Type (minimal interface for main process storage)
@@ -53,6 +54,28 @@ export interface BootstrapSettings {
 export interface MaestroSettings {
 	activeThemeId: string;
 	shortcuts: Record<string, any>;
+	/**
+	 * Vim mode's shortcut overrides, one bucket per matcher. Sparse: an action
+	 * appears only when Vim mode binds it differently. Independent of
+	 * `shortcuts` - neither mode's bucket is ever written by the other.
+	 */
+	vimShortcuts: Record<string, any>;
+	vimTabShortcuts: Record<string, any>;
+	/** Which keyboard binding set is live. One mode is active at a time. */
+	keyboardMode: KeyboardMode;
+	/**
+	 * The characters that leave a text field in Vim mode, typed in quick
+	 * succession: `jk` by default, `''` to switch the behavior off. Read only
+	 * while `keyboardMode` is "vim".
+	 */
+	vimInsertEscapeSequence: string;
+	/**
+	 * Whether the markdown editor runs real Vim keys while `keyboardMode` is
+	 * "vim". Read only in that mode, and independent of it: switching this off
+	 * keeps Vim navigation and the in-field escape, and gives the editor back
+	 * its plain CodeMirror keymap.
+	 */
+	vimEditorEnabled: boolean;
 	fontSize: number;
 	fontFamily: string;
 	terminalFontFamily: string;

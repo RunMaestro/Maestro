@@ -72,6 +72,8 @@ const MISSING_PALETTE_ENTRY = new Set<string>([
 	'forcedParallelSend',
 	'openImageCarousel',
 	'openImageOrganizer',
+	// Process control.
+	'stopTurn',
 	// Type size.
 	'fontSizeReset',
 	// Media transport.

@@ -1,6 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { useUIStore } from '../../../renderer/stores/uiStore';
+import {
+	deckModeArmedNow,
+	deckModeExpired,
+	setZenExitChordResolver,
+	useUIStore,
+} from '../../../renderer/stores/uiStore';
+import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { SEQUENCE_TIMEOUT_MS } from '../../../renderer/utils/shortcutSequence';
 import { resetStore } from '../../helpers';
 
 describe('uiStore', () => {
@@ -188,6 +196,366 @@ describe('uiStore', () => {
 				useUIStore.getState().closeRightPanelForNavigation();
 				expect(useUIStore.getState().rightPanelOpen).toBe(false);
 				expect(useUIStore.getState().leftSidebarOpen).toBe(true);
+			});
+		});
+	});
+
+	describe('zen mode', () => {
+		const setBars = (
+			leftSidebarOpen: boolean,
+			leftSidebarHidden: boolean,
+			rightPanelOpen: boolean
+		) => {
+			useUIStore.setState({ leftSidebarOpen, leftSidebarHidden, rightPanelOpen });
+		};
+
+		const bars = () => {
+			const s = useUIStore.getState();
+			return {
+				leftSidebarOpen: s.leftSidebarOpen,
+				leftSidebarHidden: s.leftSidebarHidden,
+				rightPanelOpen: s.rightPanelOpen,
+			};
+		};
+
+		beforeEach(() => {
+			setZenExitChordResolver(() => null);
+			useCenterFlashStore.getState().setActive(null);
+		});
+
+		afterEach(() => {
+			setZenExitChordResolver(() => null);
+		});
+
+		it('ships off, with nothing parked', () => {
+			expect(useUIStore.getState().zenMode).toBe(false);
+			expect(useUIStore.getState().preZenLayout).toBeNull();
+		});
+
+		it('entering puts BOTH bars away and reports that zen is now on', () => {
+			expect(useUIStore.getState().toggleZenMode()).toBe(true);
+
+			expect(useUIStore.getState().zenMode).toBe(true);
+			expect(bars()).toEqual({
+				// `hidden`, not merely closed: the collapsed Left Bar is still a
+				// 64px strip, which is not "the Main Window has the window".
+				leftSidebarOpen: false,
+				leftSidebarHidden: true,
+				rightPanelOpen: false,
+			});
+		});
+
+		it('leaving restores both bars and reports that zen is now off', () => {
+			useUIStore.getState().toggleZenMode();
+			expect(useUIStore.getState().toggleZenMode()).toBe(false);
+
+			expect(useUIStore.getState().zenMode).toBe(false);
+			expect(bars()).toEqual({
+				leftSidebarOpen: true,
+				leftSidebarHidden: false,
+				rightPanelOpen: true,
+			});
+		});
+
+		it('leaving does NOT open a Right Bar the user already had closed', () => {
+			setBars(true, false, false);
+
+			useUIStore.getState().toggleZenMode();
+			useUIStore.getState().toggleZenMode();
+
+			expect(bars()).toEqual({
+				leftSidebarOpen: true,
+				leftSidebarHidden: false,
+				rightPanelOpen: false,
+			});
+		});
+
+		it('leaving returns a collapsed Left Bar to the strip, not to the full panel', () => {
+			// The tri-state's middle rung: !hidden && !open is the status-dot strip.
+			setBars(false, false, true);
+
+			useUIStore.getState().toggleZenMode();
+			useUIStore.getState().toggleZenMode();
+
+			expect(bars()).toEqual({
+				leftSidebarOpen: false,
+				leftSidebarHidden: false,
+				rightPanelOpen: true,
+			});
+		});
+
+		it('leaving returns an already-hidden Left Bar to hidden', () => {
+			setBars(false, true, true);
+
+			useUIStore.getState().toggleZenMode();
+			useUIStore.getState().toggleZenMode();
+
+			expect(bars()).toEqual({
+				leftSidebarOpen: false,
+				leftSidebarHidden: true,
+				rightPanelOpen: true,
+			});
+		});
+
+		it('survives repeated round trips without drifting', () => {
+			setBars(true, false, false);
+			const before = bars();
+
+			for (let i = 0; i < 3; i++) {
+				useUIStore.getState().toggleZenMode();
+				useUIStore.getState().toggleZenMode();
+			}
+
+			expect(bars()).toEqual(before);
+			expect(useUIStore.getState().zenMode).toBe(false);
+		});
+
+		it('clears the parked snapshot on the way out', () => {
+			useUIStore.getState().toggleZenMode();
+			expect(useUIStore.getState().preZenLayout).toEqual({
+				leftSidebarOpen: true,
+				leftSidebarHidden: false,
+				rightPanelOpen: true,
+			});
+
+			useUIStore.getState().toggleZenMode();
+			expect(useUIStore.getState().preZenLayout).toBeNull();
+		});
+
+		it('destroys no tab, transcript, or panel state on either leg', () => {
+			// Everything a zen round trip must leave alone: the active right tab,
+			// the per-tab find bars, a pending transcript jump, and the tab ids
+			// the filter/terminal toggles park.
+			useUIStore.getState().setActiveRightTab('history');
+			useUIStore.getState().setOutputSearchQuery('agent-1::tab-1', 'needle');
+			useUIStore.getState().setPendingLogJump({
+				sessionId: 'agent-1',
+				tabId: 'tab-1',
+				logId: 'log-9',
+			});
+			useUIStore.getState().setPreFilterActiveTabId('tab-7');
+			useUIStore.getState().setPreTerminalFileTabId('file-3');
+			useUIStore.getState().requestTabFocus({ type: 'browser', id: 'b-1' });
+			useUIStore.getState().setZoomedPaneId('leaf-2');
+
+			const untouched = () => {
+				const s = useUIStore.getState();
+				return {
+					activeRightTab: s.activeRightTab,
+					outputSearchByKey: s.outputSearchByKey,
+					pendingLogJump: s.pendingLogJump,
+					preFilterActiveTabId: s.preFilterActiveTabId,
+					preTerminalFileTabId: s.preTerminalFileTabId,
+					focusRequest: s.focusRequest,
+					zoomedPaneId: s.zoomedPaneId,
+				};
+			};
+			const before = untouched();
+
+			useUIStore.getState().toggleZenMode();
+			expect(untouched()).toEqual(before);
+
+			useUIStore.getState().toggleZenMode();
+			expect(untouched()).toEqual(before);
+		});
+
+		it('flashes the Quick Actions route when no chord is bound', () => {
+			useUIStore.getState().toggleZenMode();
+
+			const active = useCenterFlashStore.getState().active;
+			expect(active?.message).toBe('Zen Mode');
+			expect(active?.detail).toBe('To exit, run Toggle Zen Mode again from Quick Actions');
+		});
+
+		it('flashes the bound chord when one is bound', () => {
+			setZenExitChordResolver(() => '⌘ ⇧ Z');
+
+			useUIStore.getState().toggleZenMode();
+
+			expect(useCenterFlashStore.getState().active?.detail).toBe('Press ⌘ ⇧ Z to exit');
+		});
+
+		it('flashes on the way IN only - leaving is self-evident', () => {
+			useUIStore.getState().toggleZenMode();
+			useCenterFlashStore.getState().setActive(null);
+
+			useUIStore.getState().toggleZenMode();
+
+			expect(useCenterFlashStore.getState().active).toBeNull();
+		});
+	});
+
+	describe('deck mode (the one-shot leader state)', () => {
+		// Every test leaves the mode disarmed, which `resetStore` alone would not
+		// do: disarming is also what removes the window-blur guard, and a guard
+		// left installed by one test is a listener the next test did not ask for.
+		afterEach(() => {
+			useUIStore.getState().disarmDeckMode();
+			vi.useRealTimers();
+		});
+
+		it('ships disarmed, with no armed-at stamp', () => {
+			expect(useUIStore.getState().deckModeArmed).toBe(false);
+			expect(useUIStore.getState().deckModeArmedAt).toBe(0);
+		});
+
+		it('arming raises the flag and stamps the clock', () => {
+			vi.useFakeTimers();
+			vi.setSystemTime(new Date('2026-10-20T12:00:00Z'));
+
+			useUIStore.getState().armDeckMode();
+
+			expect(useUIStore.getState().deckModeArmed).toBe(true);
+			expect(useUIStore.getState().deckModeArmedAt).toBe(Date.now());
+		});
+
+		it('disarming clears both fields', () => {
+			useUIStore.getState().armDeckMode();
+			useUIStore.getState().disarmDeckMode();
+
+			expect(useUIStore.getState().deckModeArmed).toBe(false);
+			expect(useUIStore.getState().deckModeArmedAt).toBe(0);
+		});
+
+		it('re-arming restarts the clock rather than being ignored', () => {
+			vi.useFakeTimers();
+			vi.setSystemTime(new Date('2026-10-20T12:00:00Z'));
+			useUIStore.getState().armDeckMode();
+			const first = useUIStore.getState().deckModeArmedAt;
+
+			vi.advanceTimersByTime(SEQUENCE_TIMEOUT_MS - 1);
+			useUIStore.getState().armDeckMode();
+
+			expect(useUIStore.getState().deckModeArmedAt).toBe(first + SEQUENCE_TIMEOUT_MS - 1);
+			// The window the SECOND press opened, not the remainder of the first.
+			expect(deckModeArmedNow()).toBe(true);
+		});
+
+		it('a disarm with nothing armed returns the same state, so nothing re-renders', () => {
+			const before = useUIStore.getState();
+
+			useUIStore.getState().disarmDeckMode();
+
+			// Identity, not equality: the hint bar subscribes to this store, and an
+			// Escape press meant for the layer stack must not repaint it.
+			expect(useUIStore.getState()).toBe(before);
+		});
+
+		describe('the lazy timeout', () => {
+			beforeEach(() => {
+				vi.useFakeTimers();
+				vi.setSystemTime(new Date('2026-10-20T12:00:00Z'));
+			});
+
+			it('reads as armed for the whole window', () => {
+				useUIStore.getState().armDeckMode();
+
+				vi.advanceTimersByTime(SEQUENCE_TIMEOUT_MS);
+
+				expect(deckModeArmedNow()).toBe(true);
+			});
+
+			it('reads as disarmed once the window has lapsed', () => {
+				useUIStore.getState().armDeckMode();
+
+				vi.advanceTimersByTime(SEQUENCE_TIMEOUT_MS + 1);
+
+				expect(deckModeArmedNow()).toBe(false);
+			});
+
+			it('expires the STATE on that read, so the hint bar agrees with the handler', () => {
+				useUIStore.getState().armDeckMode();
+				vi.advanceTimersByTime(SEQUENCE_TIMEOUT_MS + 1);
+
+				deckModeArmedNow();
+
+				expect(useUIStore.getState().deckModeArmed).toBe(false);
+				expect(useUIStore.getState().deckModeArmedAt).toBe(0);
+			});
+
+			it('needs no timer of its own to expire - nothing was scheduled', () => {
+				useUIStore.getState().armDeckMode();
+
+				// A `setTimeout`-driven mode would have one pending callback here.
+				// The lazy check is what keeps the store free of DOM globals.
+				expect(vi.getTimerCount()).toBe(0);
+			});
+
+			it('answers false while disarmed without touching the clock', () => {
+				expect(deckModeArmedNow()).toBe(false);
+			});
+		});
+
+		describe('deckModeExpired', () => {
+			it('reads a never-armed stamp as expired', () => {
+				expect(deckModeExpired(0, 1_000_000)).toBe(true);
+			});
+
+			it('is inclusive of the final millisecond', () => {
+				expect(deckModeExpired(1000, 1000 + SEQUENCE_TIMEOUT_MS)).toBe(false);
+				expect(deckModeExpired(1000, 1000 + SEQUENCE_TIMEOUT_MS + 1)).toBe(true);
+			});
+		});
+
+		describe('the window-blur guard', () => {
+			it('disarms when the window loses focus', () => {
+				useUIStore.getState().armDeckMode();
+
+				window.dispatchEvent(new Event('blur'));
+
+				expect(useUIStore.getState().deckModeArmed).toBe(false);
+			});
+
+			it('is installed on arm and taken down on disarm', () => {
+				// Start from a known-clean guard: the install is idempotent, so an
+				// already-installed listener would make the spy see nothing.
+				useUIStore.getState().disarmDeckMode();
+				const addSpy = vi.spyOn(window, 'addEventListener');
+				const removeSpy = vi.spyOn(window, 'removeEventListener');
+
+				useUIStore.getState().armDeckMode();
+				expect(addSpy).toHaveBeenCalledWith('blur', expect.any(Function));
+
+				useUIStore.getState().disarmDeckMode();
+				expect(removeSpy).toHaveBeenCalledWith('blur', addSpy.mock.calls[0]?.[1]);
+
+				addSpy.mockRestore();
+				removeSpy.mockRestore();
+			});
+
+			it('leaves nothing listening after the mode ends', () => {
+				useUIStore.getState().armDeckMode();
+				useUIStore.getState().disarmDeckMode();
+				useUIStore.setState({ deckModeArmed: true, deckModeArmedAt: Date.now() });
+
+				// A leaked listener would disarm this hand-set state.
+				window.dispatchEvent(new Event('blur'));
+
+				expect(useUIStore.getState().deckModeArmed).toBe(true);
+			});
+		});
+
+		describe('a keyboard mode change', () => {
+			afterEach(() => {
+				useSettingsStore.getState().setKeyboardMode('default');
+				useUIStore.getState().disarmDeckMode();
+			});
+
+			it('disarms, because every chord may have just moved', () => {
+				useUIStore.getState().armDeckMode();
+
+				useSettingsStore.getState().setKeyboardMode('vim');
+
+				expect(useUIStore.getState().deckModeArmed).toBe(false);
+			});
+
+			it('disarms on the way back to default mode too', () => {
+				useSettingsStore.getState().setKeyboardMode('vim');
+				useUIStore.getState().armDeckMode();
+
+				useSettingsStore.getState().setKeyboardMode('default');
+
+				expect(useUIStore.getState().deckModeArmed).toBe(false);
 			});
 		});
 	});

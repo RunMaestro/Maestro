@@ -100,7 +100,7 @@ import { findActiveHeadingSlug, scrollToHeadingSlug } from './shared/headings';
 import { FontScaleControl } from '../ui/FontScaleControl';
 import { useFontScale } from '../../hooks/ui/useFontScale';
 import { isTextInputTarget } from '../../utils/messageScrollNavigation';
-import { MarkdownEditor } from './markdownEditor';
+import { MarkdownEditor, vimEditorOwnsEscape } from './markdownEditor';
 import type { MarkdownEditorHandle } from './markdownEditor';
 import {
 	domGetTopLine,
@@ -2538,6 +2538,15 @@ export const FilePreview = React.memo(
 									e.stopPropagation();
 									handleSave();
 								} else if (e.key === 'Escape') {
+									// Vim's insert and visual modes end on Escape, and in Vim
+									// mode that press is the editor's: claiming it here would
+									// throw the user out of edit mode every time they finished
+									// typing a word. Declining leaves the key to Vim, which
+									// stops it itself. In normal mode (and in default keyboard
+									// mode) Escape still leaves edit mode, which is the whole
+									// way out of this pane in tab mode, where no layer is
+									// registered to handle it.
+									if (vimEditorOwnsEscape(e)) return;
 									e.preventDefault();
 									e.stopPropagation();
 									setMarkdownEditMode(false);

@@ -15,6 +15,8 @@ import { SETTINGS_METADATA } from '../../../shared/settingsMetadata';
 import { MAESTRO_FONT_STACK } from '../../../shared/fontStack';
 import { DEFAULT_CUE_HISTORY_RETENTION_DAYS } from '../../../shared/cue/retention';
 import { useUIStore } from '../../../renderer/stores/uiStore';
+import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
+import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 import { useNotificationStore } from '../../../renderer/stores/notificationStore';
 import {
 	selectShowNowPlayingIndicator,
@@ -22,16 +24,15 @@ import {
 } from '../../../renderer/stores/mediaPlaybackStore';
 import type { FileExplorerIconTheme } from '../../../renderer/utils/fileExplorerIcons/shared';
 import { FILE_EXPLORER_ICON_THEMES } from '../../../renderer/utils/fileExplorerIcons/shared';
-import {
-	DEFAULT_SHORTCUTS,
-	TAB_SHORTCUTS,
-	FIXED_SHORTCUTS,
-} from '../../../renderer/constants/shortcuts';
+import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS } from '../../../renderer/constants/shortcuts';
+import { VIM_SHORTCUTS, VIM_TAB_SHORTCUTS } from '../../../renderer/constants/vimShortcuts';
 import {
 	KEYBOARD_MASTERY_LEVELS,
-	collectBoundShortcuts,
+	countUsedBoundShortcuts,
 } from '../../../renderer/constants/keyboardMastery';
-import { availableShortcuts } from '../../../renderer/utils/encoreShortcuts';
+import { selectMasteryBoundShortcuts } from '../../../renderer/stores/settingsShortcutsSlice';
+import type { Shortcut } from '../../../renderer/types';
+import type { KeyboardMode, ShortcutOverride } from '../../../shared/shortcut-types';
 import { DEFAULT_CUSTOM_THEME_COLORS } from '../../../renderer/constants/themes';
 import { TYPOGRAPHY_PRESETS } from '../../../shared/typographyPresets';
 import * as runtimeContext from '../../../renderer/utils/runtimeContext';
@@ -141,6 +142,9 @@ function resetStore() {
 		logViewerSelectedLevels: ['debug', 'info', 'warn', 'error', 'toast'],
 		shortcuts: DEFAULT_SHORTCUTS,
 		tabShortcuts: TAB_SHORTCUTS,
+		keyboardMode: 'default',
+		vimShortcuts: VIM_SHORTCUTS,
+		vimTabShortcuts: VIM_TAB_SHORTCUTS,
 		customAICommands: DEFAULT_AI_COMMANDS,
 		totalActiveTimeMs: 0,
 		autoRunStats: DEFAULT_AUTO_RUN_STATS,
@@ -296,6 +300,27 @@ describe('settingsStore', () => {
 			expect(state.logViewerSelectedLevels).toEqual(['debug', 'info', 'warn', 'error', 'toast']);
 			expect(state.shortcuts).toEqual(DEFAULT_SHORTCUTS);
 			expect(state.tabShortcuts).toEqual(TAB_SHORTCUTS);
+			// Default mode is what ships, and it is also what the metadata promises
+			// the CLI and `maestro-cli settings` reader.
+			expect(state.keyboardMode).toBe('default');
+			expect(SETTINGS_METADATA.keyboardMode.default).toBe('default');
+			// The Vim buckets start as the SHIPPED override tables, not empty, so
+			// a user who switches to Vim mode without customizing anything gets
+			// the bundled Vim chords. The metadata default is `{}` because that
+			// is what is on DISK for a fresh install: the shipped table is code,
+			// and only a user edit ever writes a key.
+			expect(state.vimShortcuts).toEqual(VIM_SHORTCUTS);
+			expect(state.vimTabShortcuts).toEqual(VIM_TAB_SHORTCUTS);
+			expect(SETTINGS_METADATA.vimShortcuts.default).toEqual({});
+			expect(SETTINGS_METADATA.vimTabShortcuts.default).toEqual({});
+			// The in-field escape ships on, but only Vim mode reads it, so a
+			// default-mode user never sees it fire.
+			expect(state.vimInsertEscapeSequence).toBe('jk');
+			expect(SETTINGS_METADATA.vimInsertEscapeSequence.default).toBe('jk');
+			// Editor-level Vim ships on for the same reason, and is only read in
+			// Vim mode: it exists to be switched off, not to be found.
+			expect(state.vimEditorEnabled).toBe(true);
+			expect(SETTINGS_METADATA.vimEditorEnabled.default).toBe(true);
 			expect(state.customAICommands).toEqual(DEFAULT_AI_COMMANDS);
 			expect(state.totalActiveTimeMs).toBe(0);
 			expect(state.autoRunStats).toEqual(DEFAULT_AUTO_RUN_STATS);
@@ -792,6 +817,169 @@ describe('settingsStore', () => {
 				useSettingsStore.getState().setTabShortcuts(newTabShortcuts);
 				expect(useSettingsStore.getState().tabShortcuts).toEqual(newTabShortcuts);
 				expect(window.maestro.settings.set).toHaveBeenCalledWith('tabShortcuts', newTabShortcuts);
+			});
+
+			it('setKeyboardMode updates state and persists', () => {
+				useSettingsStore.getState().setKeyboardMode('vim');
+				expect(useSettingsStore.getState().keyboardMode).toBe('vim');
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('keyboardMode', 'vim');
+
+				useSettingsStore.getState().setKeyboardMode('default');
+				expect(useSettingsStore.getState().keyboardMode).toBe('default');
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('keyboardMode', 'default');
+			});
+
+			it('switching mode leaves both shortcut buckets alone', () => {
+				// The mode field says which bucket is LIVE and nothing more. If a
+				// switch ever rewrote a binding, a user who flipped to Vim and back
+				// would lose the chords they recorded in default mode.
+				const customized = {
+					...DEFAULT_SHORTCUTS,
+					toggleSidebar: { ...DEFAULT_SHORTCUTS.toggleSidebar, keys: ['Meta', 'b'] },
+				};
+				useSettingsStore.getState().setShortcuts(customized);
+				useSettingsStore.getState().setKeyboardMode('vim');
+				expect(useSettingsStore.getState().shortcuts).toEqual(customized);
+				expect(useSettingsStore.getState().tabShortcuts).toEqual(TAB_SHORTCUTS);
+				expect(
+					vi.mocked(window.maestro.settings.set).mock.calls.filter(([k]) => k === 'tabShortcuts')
+				).toEqual([]);
+			});
+
+			it('setVimShortcuts updates state and persists to its own key', () => {
+				const overrides = {
+					toggleSidebar: { id: 'toggleSidebar', label: 'Toggle Sidebar', keys: ['Ctrl', 'n'] },
+				};
+				useSettingsStore.getState().setVimShortcuts(overrides);
+				expect(useSettingsStore.getState().vimShortcuts).toEqual(overrides);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('vimShortcuts', overrides);
+			});
+
+			it('setVimTabShortcuts updates state and persists to its own key', () => {
+				const overrides = {
+					...VIM_TAB_SHORTCUTS,
+					nextTab: { id: 'nextTab', label: 'Next Tab', keys: ['Ctrl', 'l'] },
+				};
+				useSettingsStore.getState().setVimTabShortcuts(overrides);
+				expect(useSettingsStore.getState().vimTabShortcuts).toEqual(overrides);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('vimTabShortcuts', overrides);
+			});
+
+			it('writing a Vim bucket never touches a default bucket, or the reverse', () => {
+				// The four buckets are INDEPENDENT. This is the invariant that makes
+				// "customize a chord in one mode, switch, switch back, and find it
+				// where you left it" true, and the only way to break it is for a
+				// setter to reach across, so each setter is checked for silence on
+				// the other three keys.
+				const vim = {
+					toggleSidebar: { id: 'toggleSidebar', label: 'Toggle Sidebar', keys: ['Ctrl', 'n'] },
+				};
+				const base = {
+					...DEFAULT_SHORTCUTS,
+					toggleSidebar: { ...DEFAULT_SHORTCUTS.toggleSidebar, keys: ['Meta', 'b'] },
+				};
+
+				useSettingsStore.getState().setVimShortcuts(vim);
+				expect(useSettingsStore.getState().shortcuts).toEqual(DEFAULT_SHORTCUTS);
+				expect(useSettingsStore.getState().tabShortcuts).toEqual(TAB_SHORTCUTS);
+				expect(useSettingsStore.getState().vimTabShortcuts).toEqual(VIM_TAB_SHORTCUTS);
+				expect(
+					vi
+						.mocked(window.maestro.settings.set)
+						.mock.calls.filter(([k]) =>
+							['shortcuts', 'tabShortcuts', 'vimTabShortcuts'].includes(k as string)
+						)
+				).toEqual([]);
+
+				vi.mocked(window.maestro.settings.set).mockClear();
+
+				useSettingsStore.getState().setShortcuts(base);
+				expect(useSettingsStore.getState().vimShortcuts).toEqual(vim);
+				expect(useSettingsStore.getState().vimTabShortcuts).toEqual(VIM_TAB_SHORTCUTS);
+				expect(
+					vi
+						.mocked(window.maestro.settings.set)
+						.mock.calls.filter(([k]) =>
+							['vimShortcuts', 'vimTabShortcuts', 'tabShortcuts'].includes(k as string)
+						)
+				).toEqual([]);
+			});
+
+			it("switching modes back and forth keeps both modes' customizations", () => {
+				// The round trip the whole phase exists for, at the store level: a
+				// chord recorded in default mode and a different chord recorded for
+				// the same action in Vim mode coexist, and neither switch disturbs
+				// either one.
+				const base = {
+					...DEFAULT_SHORTCUTS,
+					toggleSidebar: { ...DEFAULT_SHORTCUTS.toggleSidebar, keys: ['Meta', 'b'] },
+				};
+				const vim = {
+					toggleSidebar: { id: 'toggleSidebar', label: 'Toggle Sidebar', keys: ['Ctrl', 'n'] },
+				};
+				useSettingsStore.getState().setShortcuts(base);
+				useSettingsStore.getState().setKeyboardMode('vim');
+				useSettingsStore.getState().setVimShortcuts(vim);
+				useSettingsStore.getState().setKeyboardMode('default');
+				useSettingsStore.getState().setKeyboardMode('vim');
+
+				expect(useSettingsStore.getState().shortcuts.toggleSidebar.keys).toEqual(['Meta', 'b']);
+				expect(useSettingsStore.getState().vimShortcuts.toggleSidebar.keys).toEqual(['Ctrl', 'n']);
+			});
+
+			// uiStore's zen flash has to name the way out of zen mode, and the
+			// binding lives here. This store installs the resolver that answers
+			// it (see setZenExitChordResolver) - these cover the seam end to end,
+			// because a resolver that stopped being installed would degrade
+			// silently to the Quick Actions wording.
+			describe('zen exit chord resolver (installed into uiStore)', () => {
+				// uiStore is not reset between these, and a toggle out of zen does
+				// not flash - so without this, the second case would read the first
+				// one's flash and pass on a stale string.
+				beforeEach(() => {
+					useUIStore.setState({ zenMode: false, preZenLayout: null });
+					useCenterFlashStore.getState().setActive(null);
+				});
+
+				it('names the chord bound in the live mode', () => {
+					useSettingsStore.getState().setShortcuts({
+						...DEFAULT_SHORTCUTS,
+						toggleZenMode: { ...DEFAULT_SHORTCUTS.toggleZenMode, keys: ['Meta', 'Shift', 'z'] },
+					});
+
+					useUIStore.getState().toggleZenMode();
+
+					expect(useCenterFlashStore.getState().active?.detail).toBe(
+						`Press ${formatShortcutKeys(['Meta', 'Shift', 'z'])} to exit`
+					);
+				});
+
+				it('follows the live keyboard mode rather than the default bucket', () => {
+					useSettingsStore.getState().setShortcuts({
+						...DEFAULT_SHORTCUTS,
+						toggleZenMode: { ...DEFAULT_SHORTCUTS.toggleZenMode, keys: ['Meta', 'Shift', 'z'] },
+					});
+					useSettingsStore.getState().setKeyboardMode('vim');
+					useSettingsStore.getState().setVimShortcuts({
+						...VIM_SHORTCUTS,
+						toggleZenMode: { id: 'toggleZenMode', keys: ['Ctrl', 'w'] },
+					});
+
+					useUIStore.getState().toggleZenMode();
+
+					expect(useCenterFlashStore.getState().active?.detail).toBe(
+						`Press ${formatShortcutKeys(['Ctrl', 'w'])} to exit`
+					);
+				});
+
+				it('falls back to the Quick Actions route while the action is unbound', () => {
+					// How it ships: `toggleZenMode` has `keys: []` in DEFAULT_SHORTCUTS.
+					useUIStore.getState().toggleZenMode();
+
+					expect(useCenterFlashStore.getState().active?.detail).toBe(
+						'To exit, run Toggle Zen Mode again from Quick Actions'
+					);
+				});
 			});
 
 			it('setCustomAICommands updates state and persists', () => {
@@ -1845,18 +2033,18 @@ describe('settingsStore', () => {
 			]);
 		});
 
-		// The denominator is the shortcuts that actually have a chord bound, so the
-		// ids used here have to be real ones - made-up ids count for nothing.
-		// It also leaves out the chord of an Encore Feature that is switched off:
+		// The denominator is the shortcuts that actually have a binding, so the
+		// ids used here have to be real ones - made-up ids count for nothing. It
+		// also leaves out the chord of an Encore Feature that is switched off:
 		// the keyboard handler refuses it, so it can never be fired either.
-		const boundShortcutIds = () => {
-			const encoreFeatures = useSettingsStore.getState().encoreFeatures;
-			return collectBoundShortcuts(
-				availableShortcuts(DEFAULT_SHORTCUTS, encoreFeatures),
-				TAB_SHORTCUTS,
-				availableShortcuts(FIXED_SHORTCUTS, encoreFeatures)
-			).map((s) => s.id);
-		};
+		//
+		// Read through the PRODUCTION selector rather than rebuilt from the
+		// shipped tables, so these tests cannot drift from the figure the app
+		// shows. It spans both keyboard modes, which is why a hand-built
+		// default-mode total would start lying the moment a mode binds an action
+		// the other one leaves unassigned.
+		const masteryBound = () => selectMasteryBoundShortcuts(useSettingsStore.getState());
+		const boundShortcutIds = () => masteryBound().map((s) => s.id);
 
 		it('recordShortcutUsage detects level-up', () => {
 			const bound = boundShortcutIds();
@@ -1879,7 +2067,7 @@ describe('settingsStore', () => {
 			expect(useSettingsStore.getState().keyboardMasteryStats.currentLevel).toBe(1);
 		});
 
-		it('recordShortcutUsage ignores ids that have no chord bound', () => {
+		it('recordShortcutUsage ignores ids that have no binding at all', () => {
 			const bound = boundShortcutIds();
 			const needed = Math.ceil(bound.length * 0.25);
 
@@ -1893,7 +2081,12 @@ describe('settingsStore', () => {
 
 			// An unbound action can never be fired, so recording one must not move
 			// the level - otherwise the numerator outruns its own denominator.
-			const unbound = Object.values(DEFAULT_SHORTCUTS).find((s) => s.keys.length === 0);
+			//
+			// Unbound in BOTH modes, which is what the denominator asks: an
+			// action default mode leaves unassigned is still reachable if Vim
+			// mode binds it, and then recording it SHOULD count.
+			const inTheTotal = new Set(bound);
+			const unbound = Object.values(DEFAULT_SHORTCUTS).find((s) => !inTheTotal.has(s.id));
 			expect(unbound).toBeDefined();
 			const result = useSettingsStore.getState().recordShortcutUsage(unbound!.id);
 
@@ -1916,6 +2109,310 @@ describe('settingsStore', () => {
 			// Unbound shortcuts used to sit in the denominator, which made the top
 			// level unreachable no matter how many chords the user learned.
 			expect(result.newLevel).toBe(KEYBOARD_MASTERY_LEVELS.length - 1);
+		});
+
+		/**
+		 * Mastery is ONE count across keyboard modes.
+		 *
+		 * `usedShortcuts` is a set of ACTION ids with no mode, no chord and no
+		 * sequence in it, so the denominator has to span modes to match: a
+		 * per-mode total would move the percentage the moment the user switched
+		 * modes, and an action learned in one mode would read as unlearned in
+		 * the other. Every property below is a consequence of that one rule,
+		 * and the two halves it has to hold for are the numerator (what firing
+		 * an action records) and the denominator (`selectMasteryBoundShortcuts`).
+		 *
+		 * The binding tables are replaced with synthetic ones so the counts are
+		 * about the ids each test declares rather than about whatever
+		 * `DEFAULT_SHORTCUTS` happens to bind today. `FIXED_SHORTCUTS` is shared
+		 * by both modes and is always in the denominator, so the assertions
+		 * either filter it back out by id prefix or compare before and after.
+		 */
+		describe('one count across keyboard modes', () => {
+			const ID_PREFIX = 'mastery-';
+
+			const action = (id: string, keys: string[], sequence?: string[][]): Shortcut =>
+				({
+					id,
+					label: id,
+					keys,
+					category: 'general',
+					...(sequence ? { sequence } : {}),
+				}) as Shortcut;
+
+			const override = (
+				id: string,
+				fields: { keys?: string[]; sequence?: string[][] }
+			): ShortcutOverride => ({ id, label: id, ...fields });
+
+			/**
+			 * 20 actions, each on a chord of its own, bound identically in both
+			 * modes. Distinct chords on purpose: a Vim override that collides
+			 * with another action's inherited chord DISPLACES it, which would
+			 * quietly change the total a test is measuring.
+			 */
+			const twentyActions = (): Record<string, Shortcut> =>
+				Object.fromEntries(
+					'abcdefghijklmnopqrst'.split('').map((letter, i) => {
+						const id = `${ID_PREFIX}${i}`;
+						return [id, action(id, ['Alt', 'Meta', letter])];
+					})
+				);
+
+			/**
+			 * The same 20 actions, split down the middle: the first 10 are bound
+			 * in default mode and cleared in Vim mode, the last 10 are
+			 * unassigned in default mode and bound in Vim mode by a bare-key
+			 * SEQUENCE, which is the binding a mode gated on normal mode exists
+			 * to carry.
+			 *
+			 * The split is what makes "one count across modes" observable: with
+			 * every action bound in both modes a per-mode denominator would
+			 * produce the same figure and prove nothing.
+			 */
+			const splitActions = (): {
+				shortcuts: Record<string, Shortcut>;
+				vimShortcuts: Record<string, ShortcutOverride>;
+				defaultOnly: string[];
+				vimOnly: string[];
+			} => {
+				const shortcuts = twentyActions();
+				const vimShortcuts: Record<string, ShortcutOverride> = {};
+				const defaultOnly: string[] = [];
+				const vimOnly: string[] = [];
+				for (let i = 0; i < 20; i++) {
+					const id = `${ID_PREFIX}${i}`;
+					if (i < 10) {
+						vimShortcuts[id] = override(id, { keys: [] });
+						defaultOnly.push(id);
+					} else {
+						shortcuts[id] = action(id, []);
+						vimShortcuts[id] = override(id, { sequence: [['g'], [String(i - 10)]] });
+						vimOnly.push(id);
+					}
+				}
+				return { shortcuts, vimShortcuts, defaultOnly, vimOnly };
+			};
+
+			/** Seed both modes' buckets, with default mode live. */
+			const seed = (
+				shortcuts: Record<string, Shortcut>,
+				vimShortcuts: Record<string, ShortcutOverride> = {}
+			) =>
+				useSettingsStore.setState({
+					shortcuts,
+					tabShortcuts: {},
+					vimShortcuts,
+					vimTabShortcuts: {},
+					keyboardMode: 'default',
+				});
+
+			const switchMode = (mode: KeyboardMode) => useSettingsStore.getState().setKeyboardMode(mode);
+
+			/** The ids this test declared, out of the live denominator. */
+			const syntheticIds = () =>
+				masteryBound()
+					.map((s) => s.id)
+					.filter((id) => id.startsWith(ID_PREFIX))
+					.sort();
+
+			const used = () => useSettingsStore.getState().keyboardMasteryStats.usedShortcuts;
+			const mastered = () => countUsedBoundShortcuts(masteryBound(), used());
+			/** The figure the app renders, computed exactly as `recordShortcutUsage` does. */
+			const percentage = () => {
+				const bound = masteryBound();
+				return bound.length > 0 ? (countUsedBoundShortcuts(bound, used()) / bound.length) * 100 : 0;
+			};
+			const record = (id: string) => useSettingsStore.getState().recordShortcutUsage(id);
+
+			it('counts 10 actions in default mode and 10 more in Vim mode as 20', () => {
+				const { shortcuts, vimShortcuts, defaultOnly, vimOnly } = splitActions();
+				seed(shortcuts, vimShortcuts);
+				const idsBefore = syntheticIds();
+				const totalBefore = masteryBound().length;
+				expect(idsBefore).toHaveLength(20);
+
+				for (const id of defaultOnly) record(id);
+				expect(mastered()).toBe(10);
+
+				// The switch itself changes nothing: not the total, not the id
+				// set, not the list of actions already learned.
+				const usedBefore = used();
+				switchMode('vim');
+				expect(masteryBound().length).toBe(totalBefore);
+				expect(syntheticIds()).toEqual(idsBefore);
+				expect(used()).toEqual(usedBefore);
+				expect(mastered()).toBe(10);
+
+				for (const id of vimOnly) record(id);
+				expect(used()).toHaveLength(20);
+				expect(mastered()).toBe(20);
+
+				// And back, because the figure is not a property of the mode:
+				// the 10 learned in Vim mode are mastered in default mode too,
+				// even though default mode leaves them unassigned.
+				switchMode('default');
+				expect(mastered()).toBe(20);
+				expect(used()).toHaveLength(20);
+			});
+
+			it('counts the same action used in both modes once', () => {
+				seed(twentyActions());
+
+				record(`${ID_PREFIX}0`);
+				switchMode('vim');
+				const second = record(`${ID_PREFIX}0`);
+
+				expect(second.newLevel).toBeNull();
+				expect(used()).toEqual([`${ID_PREFIX}0`]);
+				expect(mastered()).toBe(1);
+			});
+
+			it('counts an action fired through a customized chord as that action', () => {
+				seed(twentyActions());
+				record(`${ID_PREFIX}3`);
+				expect(used()).toEqual([`${ID_PREFIX}3`]);
+				expect(mastered()).toBe(1);
+
+				// Re-binding is not a new action. Usage is keyed by id, so the
+				// action stays mastered on its new chord and does not count twice.
+				useSettingsStore.setState({
+					shortcuts: {
+						...twentyActions(),
+						[`${ID_PREFIX}3`]: action(`${ID_PREFIX}3`, ['Control', 'Shift', 'z']),
+					},
+				});
+				record(`${ID_PREFIX}3`);
+				expect(used()).toEqual([`${ID_PREFIX}3`]);
+				expect(mastered()).toBe(1);
+
+				// Same again for a chord that only exists in the other mode.
+				useSettingsStore.setState({
+					vimShortcuts: {
+						[`${ID_PREFIX}3`]: override(`${ID_PREFIX}3`, { keys: ['Control', 'Shift', 'y'] }),
+					},
+				});
+				switchMode('vim');
+				record(`${ID_PREFIX}3`);
+				expect(used()).toEqual([`${ID_PREFIX}3`]);
+				expect(mastered()).toBe(1);
+			});
+
+			it('counts an action fired through a key sequence as that action', () => {
+				// No chord at all: `g g` is the only way to fire it, which makes
+				// it as reachable as any chord and so part of the total.
+				const sequenceOnly = `${ID_PREFIX}sequence`;
+				seed({
+					...twentyActions(),
+					[sequenceOnly]: action(sequenceOnly, [], [['g'], ['g']]),
+				});
+				expect(syntheticIds()).toContain(sequenceOnly);
+
+				const before = mastered();
+				record(sequenceOnly);
+
+				// The action ID is what is recorded, never the keys that fired it.
+				expect(used()).toEqual([sequenceOnly]);
+				expect(mastered()).toBe(before + 1);
+			});
+
+			it('takes the denominator from the union of the two modes', () => {
+				const inBoth = `${ID_PREFIX}both`;
+				const defaultOnly = `${ID_PREFIX}default-only`;
+				const vimOnly = `${ID_PREFIX}vim-only`;
+				const neither = `${ID_PREFIX}neither`;
+
+				seed(
+					{
+						[inBoth]: action(inBoth, ['Alt', 'Meta', 'a']),
+						[defaultOnly]: action(defaultOnly, ['Alt', 'Meta', 'b']),
+						[vimOnly]: action(vimOnly, []),
+						[neither]: action(neither, []),
+					},
+					{
+						// Cleared in Vim mode, still bound in default mode.
+						[defaultOnly]: override(defaultOnly, { keys: [] }),
+						// Bound in Vim mode only, and by a SEQUENCE: a bare-key
+						// binding is the whole reason a mode can reach an action
+						// default mode leaves unassigned.
+						[vimOnly]: override(vimOnly, { sequence: [['g'], ['t']] }),
+					}
+				);
+
+				// All three, once each - and the action neither mode binds is
+				// left out, because counting a chord that cannot be pressed
+				// holds the user below 100% forever.
+				const expected = [inBoth, defaultOnly, vimOnly].sort();
+				expect(syntheticIds()).toEqual(expected);
+				switchMode('vim');
+				expect(syntheticIds()).toEqual(expected);
+			});
+
+			it('represents an id bound in both modes with the LIVE mode entry', () => {
+				const inBoth = `${ID_PREFIX}both`;
+				seed(
+					{ [inBoth]: action(inBoth, ['Alt', 'Meta', 'a']) },
+					{ [inBoth]: override(inBoth, { keys: ['Control', 'Shift', 'a'] }) }
+				);
+				const entry = () => masteryBound().find((s) => s.id === inBoth);
+
+				// Membership does not depend on the live mode, but the entry
+				// does: the Usage Dashboard lists the ones the user has not
+				// fired yet, and it has to show the chord they would press now.
+				expect(entry()?.keys).toEqual(['Alt', 'Meta', 'a']);
+				switchMode('vim');
+				expect(entry()?.keys).toEqual(['Control', 'Shift', 'a']);
+			});
+
+			it('hands back the same array until a binding really changes', () => {
+				seed(twentyActions());
+				const first = masteryBound();
+				expect(masteryBound()).toBe(first);
+
+				// The selector runs on EVERY settings change, so an uncached
+				// result would re-render every mastery surface on a font size.
+				useSettingsStore.getState().setFontSize(17);
+				expect(masteryBound()).toBe(first);
+
+				useSettingsStore.setState({ shortcuts: twentyActions() });
+				expect(masteryBound()).not.toBe(first);
+			});
+
+			it('tops out at 100% in either mode, never above it', () => {
+				const neither = `${ID_PREFIX}neither`;
+				seed(
+					{ ...twentyActions(), [neither]: action(neither, []) },
+					// Unbound in Vim mode, so the two modes disagree about this
+					// one and the union has to keep it.
+					{ [`${ID_PREFIX}0`]: override(`${ID_PREFIX}0`, { keys: [] }) }
+				);
+
+				// Everything in the total except one, plus ids that are in NO
+				// total: an action neither mode binds, and a retired id still
+				// sitting in the persisted list from an older build.
+				const bound = boundShortcutIds();
+				useSettingsStore.setState({
+					keyboardMasteryStats: {
+						...DEFAULT_KEYBOARD_MASTERY_STATS,
+						usedShortcuts: [neither, `${ID_PREFIX}retired`, ...bound.slice(0, -1)],
+						currentLevel: 3,
+					},
+				});
+
+				expect(record(bound[bound.length - 1]).newLevel).toBe(KEYBOARD_MASTERY_LEVELS.length - 1);
+				expect(percentage()).toBe(100);
+
+				switchMode('vim');
+				expect(percentage()).toBe(100);
+
+				// A further id that is in no total cannot push it over, and the
+				// level cannot climb past the top one.
+				record(`${ID_PREFIX}also-retired`);
+				expect(percentage()).toBe(100);
+				expect(useSettingsStore.getState().keyboardMasteryStats.currentLevel).toBe(
+					KEYBOARD_MASTERY_LEVELS.length - 1
+				);
+			});
 		});
 
 		it('acknowledgeKeyboardMasteryLevel updates level', () => {
@@ -2927,6 +3424,34 @@ describe('settingsStore', () => {
 			]);
 		});
 
+		it('strips a persisted Ctrl+H binding, which the app menu swallows as Hide', async () => {
+			// Cmd+H is registered as the `hide` role in src/main/app-menu.ts, so the
+			// accelerator never reaches the renderer and the binding is dead. `Ctrl`
+			// is the Windows spelling of the same chord - the matcher collapses the
+			// two modifiers - so the guard has to strip it on every platform.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				shortcuts: {
+					nextUnreadTab: {
+						id: 'nextUnreadTab',
+						label: 'Next Unread / Draft Tab',
+						keys: ['Ctrl', 'h'],
+					},
+				},
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().shortcuts.nextUnreadTab.keys).toEqual([
+				'Alt',
+				'Meta',
+				'ArrowDown',
+			]);
+			const persisted = vi
+				.mocked(window.maestro.settings.set)
+				.mock.calls.find(([k]) => k === 'shortcuts')?.[1] as Record<string, { keys: string[] }>;
+			expect(persisted.nextUnreadTab.keys).toEqual(['Alt', 'Meta', 'ArrowDown']);
+		});
+
 		it('strips a reserved chord from tabShortcuts too, which is a separate persist key', async () => {
 			// tabShortcuts runs the same migration through a second call site with
 			// its own defaults table and its own settings key. A guard applied to
@@ -2953,6 +3478,208 @@ describe('settingsStore', () => {
 				.mock.calls.find(([k]) => k === 'tabShortcuts')?.[1] as Record<string, { keys: string[] }>;
 			expect(persisted.closeAllTabs.keys).toEqual(['Meta', 'Shift', 'w']);
 		});
+
+		it('restores a persisted Vim override and keeps the shipped ones alongside it', async () => {
+			// The override bucket merges with its shipped table exactly as the
+			// default buckets merge with theirs, so a Vim chord added in a later
+			// build reaches a user who already has the bucket persisted.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				vimTabShortcuts: {
+					nextTab: { id: 'nextTab', label: 'Next Tab', keys: ['Ctrl', 'l'] },
+				},
+			});
+
+			await loadAllSettings();
+
+			const bucket = useSettingsStore.getState().vimTabShortcuts;
+			expect(bucket.nextTab.keys).toEqual(['Ctrl', 'l']);
+			expect(bucket.prevTab).toEqual(VIM_TAB_SHORTCUTS.prevTab);
+		});
+
+		it('keeps a saved override for an id the sparse shipped table does not mention', async () => {
+			// THE regression this bucket's merge exists to prevent. The shipped
+			// override tables are sparse, so merging over them the way the default
+			// buckets do (iterate the table, take the saved keys) would keep only
+			// the handful of ids the table happens to name and silently discard
+			// every chord the user recorded for anything else. An override id that
+			// is genuinely retired is filtered later, by the resolver, which
+			// ignores an id no base map declares.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				vimShortcuts: {
+					toggleSidebar: { id: 'toggleSidebar', label: 'Toggle Sidebar', keys: ['Ctrl', 'n'] },
+				},
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().vimShortcuts.toggleSidebar.keys).toEqual(['Ctrl', 'n']);
+		});
+
+		it('repairs a macOS Alt character in a Vim override and writes it back to its own key', async () => {
+			// The Alt-character repair is reused rather than re-implemented, so an
+			// override recorded as Opt+J on a Mac (which types the character "∆")
+			// is fixed in the override bucket too, and the write-back goes to
+			// `vimShortcuts`, never to `shortcuts`.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				vimShortcuts: {
+					jumpToBottom: { id: 'jumpToBottom', label: 'Jump to Bottom', keys: ['Alt', '\u2206'] },
+				},
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().vimShortcuts.jumpToBottom.keys).toEqual(['Alt', 'j']);
+			const calls = vi.mocked(window.maestro.settings.set).mock.calls;
+			const persisted = calls.find(([k]) => k === 'vimShortcuts')?.[1] as Record<
+				string,
+				{ keys: string[] }
+			>;
+			expect(persisted.jumpToBottom.keys).toEqual(['Alt', 'j']);
+			expect(calls.filter(([k]) => k === 'shortcuts')).toEqual([]);
+		});
+
+		it('strips a reserved chord from a Vim override back to inherit, not to unbound', async () => {
+			// Cmd+Q is swallowed by the app menu, so the binding is dead wherever
+			// it is persisted and the strip has to cover the override buckets too.
+			// Where it lands differs from a base bucket on purpose: a sparse
+			// override table has no entry to fall back to, so `keys: []` here
+			// would leave the action unbound in Vim mode, which is exactly the
+			// silent-unbinding this phase forbids. Dropping `keys` instead means
+			// "inherit the default-mode chord", so the action stays reachable.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				vimShortcuts: {
+					toggleSidebar: { id: 'toggleSidebar', label: 'Toggle Sidebar', keys: ['Meta', 'q'] },
+				},
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().vimShortcuts.toggleSidebar.keys).toBeUndefined();
+			const persisted = vi
+				.mocked(window.maestro.settings.set)
+				.mock.calls.find(([k]) => k === 'vimShortcuts')?.[1] as Record<string, { keys?: string[] }>;
+			expect(persisted.toggleSidebar.keys).toBeUndefined();
+		});
+
+		it('strips a reserved chord from a Vim override back to the shipped Vim chord when there is one', async () => {
+			// When the shipped table DOES name the id, the free shipped chord is
+			// the better fallback: it is what the mode is supposed to bind, and
+			// taking it keeps the action on a real chord rather than on inherit.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				vimTabShortcuts: {
+					prevTab: { id: 'prevTab', label: 'Previous Tab', keys: ['Meta', 'h'] },
+				},
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().vimTabShortcuts.prevTab.keys).toEqual(['Ctrl', 'PageUp']);
+		});
+
+		it('leaves a Vim override with no keys alone and writes nothing', async () => {
+			// An override entry with no `keys` already says "inherit the
+			// default-mode chord". There is no chord to repair, and rewriting it
+			// as `[]` would turn inherit into unbound. Writing anything back here
+			// is also the start of the settings-watcher ping-pong: the other
+			// window reloads, re-migrates, and writes again.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				vimTabShortcuts: {
+					prevTab: { id: 'prevTab', label: 'Previous Tab' },
+					nextTab: { id: 'nextTab', label: 'Next Tab', keys: ['Ctrl', 'PageDown'] },
+				},
+			});
+
+			await loadAllSettings();
+
+			const bucket = useSettingsStore.getState().vimTabShortcuts;
+			expect(bucket.prevTab.keys).toBeUndefined();
+			expect(bucket.nextTab.keys).toEqual(['Ctrl', 'PageDown']);
+			expect(
+				vi.mocked(window.maestro.settings.set).mock.calls.filter(([k]) => k === 'vimTabShortcuts')
+			).toEqual([]);
+		});
+
+		it('does not apply the default-mode remaps to a Vim override', async () => {
+			// SHORTCUT_DEFAULT_REMAPS reads "this used to be the DEFAULT-mode
+			// default, move it to the current one". A Vim override on the same
+			// chord is a deliberate choice for a different mode, so running the
+			// remaps over it would move a binding the user set, and default mode's
+			// history would be rewriting Vim mode's bindings. The same chord in
+			// `shortcuts` IS remapped, which is what pins the gate rather than the
+			// absence of the rule.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				shortcuts: {
+					moveToGroup: { id: 'moveToGroup', label: 'Move to Group', keys: ['Meta', 'Shift', 'm'] },
+				},
+				vimShortcuts: {
+					moveToGroup: { id: 'moveToGroup', label: 'Move to Group', keys: ['Meta', 'Shift', 'm'] },
+				},
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().shortcuts.moveToGroup.keys).toEqual(['Alt', 'Meta', 'm']);
+			expect(useSettingsStore.getState().vimShortcuts.moveToGroup.keys).toEqual([
+				'Meta',
+				'Shift',
+				'm',
+			]);
+			expect(
+				vi.mocked(window.maestro.settings.set).mock.calls.filter(([k]) => k === 'vimShortcuts')
+			).toEqual([]);
+		});
+
+		it('keeps the shipped Vim tables when nothing is persisted', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().vimShortcuts).toEqual(VIM_SHORTCUTS);
+			expect(useSettingsStore.getState().vimTabShortcuts).toEqual(VIM_TAB_SHORTCUTS);
+		});
+
+		it('restores a persisted vim keyboard mode', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({ keyboardMode: 'vim' });
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().keyboardMode).toBe('vim');
+		});
+
+		it('keeps the default keyboard mode when nothing is persisted', async () => {
+			// An absent key leaves the field at the shipped default. Hydration only
+			// patches what it finds, so a fresh install reads as default mode
+			// without a settings write ever having happened.
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().keyboardMode).toBe('default');
+		});
+
+		it.each([['emacs'], [''], [null], [7], [{ mode: 'vim' }], [['vim']]])(
+			'falls back to the default keyboard mode for the persisted value %s',
+			async (persisted) => {
+				// The value is on disk, so it can be hand-edited or written by a
+				// build that spelled the modes differently. Anything unrecognized has
+				// to read as 'default': every consumer treats "not default" as "match
+				// an override table", and there is no table for a mode that does not
+				// exist.
+				useSettingsStore.setState({ keyboardMode: 'vim' });
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					keyboardMode: persisted,
+				});
+
+				await expect(loadAllSettings()).resolves.not.toThrow();
+
+				expect(useSettingsStore.getState().keyboardMode).toBe('default');
+				// Nothing is written back: hydration corrects the live value, and a
+				// persist here would race the other window doing the same.
+				expect(
+					vi.mocked(window.maestro.settings.set).mock.calls.filter(([k]) => k === 'keyboardMode')
+				).toEqual([]);
+			}
+		);
 
 		it('moves New Group Chat off Opt+Cmd+C and hands the combo to Concerto', async () => {
 			// Without this remap the two COLLIDE: anyone who has ever opened the

@@ -18,6 +18,7 @@ import {
 	foldKeymap,
 } from '@codemirror/language';
 import { highlightSelectionMatches } from '@codemirror/search';
+import { vimEditorOwnsCtrlChord } from './vimKeys';
 
 export interface BuildEditorExtensionsOptions {
 	wrap: boolean;
@@ -31,6 +32,13 @@ export interface BuildEditorExtensionsOptions {
 	 * swallow the key - that is how a host-owned popup (the template-variable
 	 * autocomplete) claims Up/Down/Enter/Escape while it is open. Returning
 	 * anything else leaves the key to the editor.
+	 *
+	 * NOT called for a physical-Ctrl chord Vim owns in normal or visual mode
+	 * (see `vimEditorOwnsCtrlChord`). Hosts match chords with
+	 * `e.metaKey || e.ctrlKey`, so without that gate Ctrl+E and Ctrl+F would
+	 * land on the host from this hook's higher precedence instead of scrolling
+	 * and paging the way a Vim user pressed them. The Cmd spelling is
+	 * unaffected and still reaches the host.
 	 */
 	onKeyDown?: (event: KeyboardEvent) => boolean | void;
 	/**
@@ -121,6 +129,9 @@ export function buildEditorExtensions(opts: BuildEditorExtensionsOptions): Exten
 			Prec.highest(
 				EditorView.domEventHandlers({
 					keydown(event) {
+						// The one key family this precedence has to give back. See
+						// the `onKeyDown` doc above and rule 4 in `./vimKeys`.
+						if (vimEditorOwnsCtrlChord(event)) return false;
 						return opts.onKeyDown?.(event) === true;
 					},
 				})

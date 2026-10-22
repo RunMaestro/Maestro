@@ -35,6 +35,7 @@ import { generateProseStyles } from '../utils/markdownConfig';
 import { searchMatchRanges } from '../utils/highlightMatches';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
 import { useSettingsStore } from '../stores/settingsStore';
+import { selectActiveShortcuts } from '../stores/settingsShortcutsSlice';
 import { useDebouncedValue } from '../hooks/utils/useThrottle';
 import { useEventListener } from '../hooks/utils/useEventListener';
 import { useCommandKeyShortcut } from '../hooks/keyboard/useCommandKeyShortcut';
@@ -285,7 +286,9 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 	 * registers as a modal layer that blocks lower layers, so the app-level
 	 * shortcut never reaches its own handler while the pane is up.
 	 */
-	const toggleModeKeys = useSettingsStore((s) => s.shortcuts.toggleMarkdownMode?.keys);
+	// Through the active-mode selector, not `s.shortcuts`: a non-default keyboard
+	// mode can bind this action elsewhere.
+	const toggleModeKeys = useSettingsStore((s) => selectActiveShortcuts(s).toggleMarkdownMode?.keys);
 	useEventListener(
 		'keydown',
 		(event) => {

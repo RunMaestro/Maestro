@@ -3,6 +3,8 @@ import { useState } from 'react';
 import { Bot } from 'lucide-react';
 import type { Theme } from '../../../types';
 import { ShortcutKeys } from '../../ui/ShortcutHint';
+import { formatShortcutSequence } from '../../../utils/shortcutFormatter';
+import { useShortcutKeys } from '../../../hooks/keyboard/useShortcutKeys';
 import { getStatusColor } from '../../../utils/theme';
 import type { QuickAction } from '../types';
 import { RunningAgentSubtext } from './RunningAgentSubtext';
@@ -29,6 +31,22 @@ export function QuickActionRow({
 	onClick,
 }: QuickActionRowProps) {
 	const [isHovered, setIsHovered] = useState(false);
+	// The resolver's answer is authoritative, including when it is "unbound".
+	// `action.shortcut` carries the DEFAULT-mode record the palette was built
+	// with, so falling back to it whenever `keys` came back empty re-advertised
+	// a chord the live mode does not have: a row the user cleared, or one a Vim
+	// override displaced, kept showing its default-mode chord. That is the exact
+	// case `resolveShortcutKeys` documents as "must not be shown wearing another
+	// table's chord". An empty chord is a real result, not a failed lookup.
+	//
+	// `shortcutKeys` is the one documented exception: a chord that belongs to the
+	// ROW rather than to the action, which no action id can answer for. The hook
+	// is still called unconditionally (it must be - hooks cannot be skipped) and
+	// simply asked about nothing.
+	const literalKeys = action.shortcutKeys;
+	const resolved = useShortcutKeys(literalKeys ? undefined : action.shortcut?.id);
+	const keys = literalKeys ?? resolved.keys;
+	const sequence = literalKeys ? undefined : resolved.sequence;
 	return (
 		<button
 			ref={isSelected ? selectedItemRef : null}
@@ -87,11 +105,26 @@ export function QuickActionRow({
 					action.subtext && <span className="text-2xs opacity-50">{action.subtext}</span>
 				)}
 			</div>
-			{/* Length check, not just presence: an action can ship UNBOUND and still
-			    be handed its shortcut record, and an empty chip would draw a blank
-			    box where a chord belongs. */}
-			{action.shortcut?.keys?.length ? (
-				<ShortcutKeys theme={theme} keys={action.shortcut.keys} onAccent={isSelected} />
+			{/* The two triggers are drawn INDEPENDENTLY: an action can carry a
+			    sequence with no chord (Vim mode's `z`, `g g`), and gating the whole
+			    cluster on `keys.length` hid that sequence completely. Each half is
+			    still length-checked, because an action can ship unbound and a blank
+			    key-cap advertises a combo that does nothing. The "or" only appears
+			    when there really are two ways to fire the action. */}
+			{keys.length > 0 || sequence ? (
+				<span className="inline-flex items-center gap-1.5 whitespace-nowrap shrink-0">
+					{keys.length > 0 && <ShortcutKeys theme={theme} keys={keys} onAccent={isSelected} />}
+					{sequence && (
+						<>
+							{keys.length > 0 && (
+								<span className="text-2xs" style={{ color: theme.colors.textDim }}>
+									or
+								</span>
+							)}
+							<span className="text-2xs font-mono">{formatShortcutSequence(sequence)}</span>
+						</>
+					)}
+				</span>
 			) : null}
 		</button>
 	);

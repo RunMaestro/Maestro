@@ -2145,7 +2145,9 @@ tabTargetOptions(tab.command('enter-to-send <tab-id> <bool>'))
 	);
 
 tabTargetOptions(tab.command('move <tab-id> <position>'))
-	.description('Move a tab to a position in its agent\'s tab bar (0-based, or "first"/"last")')
+	.description(
+		'Move a tab in its agent\'s tab bar: 0-based index, "first"/"last", or "left"/"right" by one'
+	)
 	.action((tabId, position, options) => tabMove(tabId, position, options));
 
 // Create SSH remote command - add a new SSH remote configuration

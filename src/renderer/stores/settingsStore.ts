@@ -17,6 +17,7 @@
 import { create } from 'zustand';
 import type { BrowserConfirmPolicy } from '../../shared/coworkingBrowser';
 import { isWindowsPlatform } from '../utils/platformUtils';
+import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { isWebDesktop } from '../utils/runtimeContext';
 import type {
 	CustomAICommand,
@@ -31,7 +32,6 @@ import type {
 	DirectorNotesSettings,
 	EncoreFeatureFlags,
 } from '../types';
-import { FIXED_SHORTCUTS } from '../constants/shortcuts';
 import {
 	TYPOGRAPHY_SURFACE_LIST,
 	canInherit,
@@ -54,12 +54,7 @@ import {
 	resolveCueHistoryRetentionDays,
 } from '../../shared/cue/retention';
 import { resolveEncoreFeatures } from '../../shared/encoreFeatureDefaults';
-import {
-	collectBoundShortcuts,
-	countUsedBoundShortcuts,
-	getLevelIndex,
-} from '../constants/keyboardMastery';
-import { availableShortcuts } from '../utils/encoreShortcuts';
+import { countUsedBoundShortcuts, getLevelIndex } from '../constants/keyboardMastery';
 import { RIGHT_PANEL_MIN_WIDTH, RIGHT_PANEL_MAX_WIDTH } from '../constants/rightPanel';
 import type { MindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
 import { isMindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
@@ -77,7 +72,7 @@ import {
 import { sanitizeMediaItems, sanitizeMediaTimes } from '../utils/mediaItems';
 import { sanitizeMediaFloat } from '../utils/mediaFloatGeometry';
 import { logger } from '../utils/logger';
-import { useUIStore } from './uiStore';
+import { setZenExitChordResolver, useUIStore } from './uiStore';
 import {
 	useSnoozeHistoryStore,
 	sanitizeSnoozeHistory,
@@ -107,7 +102,12 @@ import {
 import type { BrowserTabsState, BrowserTabsActions } from './settingsBrowserTabsSlice';
 import { createBrowserTabsSlice, hydrateBrowserTabsSettings } from './settingsBrowserTabsSlice';
 import type { ShortcutsState, ShortcutsActions } from './settingsShortcutsSlice';
-import { createShortcutsSlice, hydrateShortcutsSettings } from './settingsShortcutsSlice';
+import {
+	createShortcutsSlice,
+	hydrateShortcutsSettings,
+	selectActiveShortcuts,
+	selectMasteryBoundShortcuts,
+} from './settingsShortcutsSlice';
 import type { ThemeState, ThemeActions } from './settingsThemeSlice';
 import { createThemeSlice, hydrateThemeSettings } from './settingsThemeSlice';
 export {
@@ -1968,11 +1968,12 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 			// unbound one can never be fired, so counting it would make the top
 			// level unreachable. Read from the live maps so a binding the user
 			// cleared in Settings leaves the denominator too.
-			const bound = collectBoundShortcuts(
-				availableShortcuts(get().shortcuts, get().encoreFeatures),
-				get().tabShortcuts,
-				availableShortcuts(FIXED_SHORTCUTS, get().encoreFeatures)
-			);
+			//
+			// Across BOTH keyboard modes, deliberately: the numerator above is a
+			// set of action ids with no mode in it, so a per-mode denominator
+			// would move the percentage on a mode switch and report an action
+			// learned in one mode as unlearned in the other.
+			const bound = selectMasteryBoundShortcuts(get());
 			const percentage =
 				bound.length > 0
 					? (countUsedBoundShortcuts(bound, updatedShortcuts) / bound.length) * 100
@@ -2015,6 +2016,17 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 			return null;
 		},
 	};
+});
+
+// uiStore's zen-mode flash names the chord that leaves zen mode, and that
+// binding lives here. Installed from this side rather than imported from
+// uiStore, because uiStore is the single most widely imported store in the
+// renderer and this module already imports IT - see setZenExitChordResolver.
+// Read through `selectActiveShortcuts` so Vim mode's chord is named while Vim
+// mode is live, and formatted the way every other chord in the UI is drawn.
+setZenExitChordResolver(() => {
+	const keys = selectActiveShortcuts(useSettingsStore.getState()).toggleZenMode?.keys;
+	return keys && keys.length > 0 ? formatShortcutKeys(keys) : null;
 });
 
 // ============================================================================

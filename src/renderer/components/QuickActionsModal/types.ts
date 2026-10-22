@@ -20,7 +20,27 @@ export interface QuickAction {
 	label: string;
 	action: () => void | Promise<void>;
 	subtext?: string;
+	/**
+	 * The action whose binding this row advertises. The row draws the chord the
+	 * LIVE keyboard mode resolves for `shortcut.id`, not the `keys` on this
+	 * record, so a rebind, a clear, or a mode override reaches the palette.
+	 */
 	shortcut?: Shortcut;
+	/**
+	 * A chord computed for THIS ROW, drawn exactly as given.
+	 *
+	 * For the handful of rows whose chord is not a property of the action but of
+	 * the row's position: the agent-jump rows share the one `jumpToSession`
+	 * action while each slot answers to a different digit, so there is no id the
+	 * resolver could be asked that would give `Opt+Cmd+3`. `FIXED_SHORTCUTS`
+	 * spells that family `Opt+Cmd+1-0`, a range for the help list to print and
+	 * not a chord anyone can press.
+	 *
+	 * Takes precedence over `shortcut` for DISPLAY only. Reach for it only when
+	 * the chord genuinely varies per row - anything an action id can answer for
+	 * belongs in `shortcut`, or the row stops following the live mode.
+	 */
+	shortcutKeys?: string[];
 	// Agents-mode only: marks an agent whose state is not 'idle' so we can
 	// bucket "active" agents at the top with a divider beneath them. Also true
 	// for agents in an active Auto Run batch.

@@ -53,6 +53,64 @@ export function formatShortcutKeys(keys: string[], separator?: string): string {
 }
 
 /**
+ * One step of a key SEQUENCE, in the spelling a Vim user types it.
+ *
+ * Two departures from `formatKeyFor`, both because a sequence step is a
+ * keystroke the user reproduces rather than a modifier cluster they hold:
+ *
+ *  - A bare single character is left exactly as it was bound. `formatKeyFor`
+ *    uppercases one, which is right for a chord (`⌘ G` is Cmd and the G key)
+ *    and wrong here: `g` and `G` are DIFFERENT steps, and printing `g g` as
+ *    `G G` tells the user to hold Shift twice.
+ *  - `Shift` + a letter folds into the capital letter. `⇧ G` is the chord
+ *    spelling; `G` is how every Vim document in the world writes that
+ *    keystroke, and it is what the user has to press.
+ *
+ * Anything else - a modifier cluster, a named key, Shift over something that
+ * has no capital form - falls through to the chord formatter, so a step always
+ * reads as something pressable.
+ */
+function formatSequenceStep(step: string[]): string {
+	if (step.length === 1 && step[0].length === 1) return step[0];
+	if (step.length === 2) {
+		const shiftIndex = step.indexOf('Shift');
+		const other = shiftIndex === -1 ? undefined : step[1 - shiftIndex];
+		// A capital form only exists for letters: `Shift+4` is `$` on a US
+		// layout and `"` on a German one, and we do not know the layout.
+		if (other?.length === 1 && other.toUpperCase() !== other.toLowerCase()) {
+			return other.toUpperCase();
+		}
+	}
+	return formatShortcutKeys(step);
+}
+
+/**
+ * Format a key SEQUENCE for display: `[['g'], ['g']]` is `g g`, and
+ * `[['Shift', 'g']]` is `G`.
+ *
+ * The sibling of {@link formatShortcutKeys} for the other trigger an action can
+ * carry. A sequence is a run of keypresses, not a chord, so the steps are
+ * ALWAYS separated by a space - on every platform, unlike a chord, which joins
+ * with `+` off macOS. `g+g` would read as two keys held together, which is a
+ * different (and unbindable) thing.
+ *
+ * The separator is a NO-BREAK space (U+00A0) for the reason given on
+ * `formatShortcutKeys`: a binding is one unit, and a plain space lets every
+ * narrow container break `g g` across two lines. Pass a plain one where the
+ * string is not laid out in a box.
+ *
+ * Returns an empty string for a missing or empty sequence, so a caller can
+ * concatenate blindly. Empty steps are dropped rather than printed as a gap.
+ */
+export function formatShortcutSequence(sequence?: string[][], separator?: string): string {
+	if (!sequence?.length) return '';
+	return sequence
+		.filter((step) => step.length > 0)
+		.map(formatSequenceStep)
+		.join(separator ?? NO_BREAK_SPACE);
+}
+
+/**
  * Format the platform-appropriate meta/command key.
  * Returns '⌘' on macOS, 'Ctrl' on Windows/Linux.
  */

@@ -213,6 +213,27 @@ export const EDITOR_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: 'after-current',
 		category: 'editor',
 	},
+	keyboardMode: {
+		description:
+			'Which keyboard binding set is live: "default" for Maestro\'s own chords, "vim" for the Vim-flavored set. Exactly one mode is active at a time, and each mode keeps its own customizations.',
+		type: 'string',
+		default: 'default',
+		category: 'editor',
+	},
+	vimInsertEscapeSequence: {
+		description:
+			'The characters that leave a text field in Vim mode, typed in quick succession within one second: "jk" by default. The leading characters are retracted from the field and it is blurred, which returns the keyboard to normal mode. Empty switches the behavior off, as does any value shorter than two characters or containing whitespace. Read only while keyboardMode is "vim", and never applied inside a CodeMirror editor or a terminal.',
+		type: 'string',
+		default: 'jk',
+		category: 'editor',
+	},
+	vimEditorEnabled: {
+		description:
+			'Whether the markdown editor uses real Vim keys (operators, motions, counts, registers) while keyboardMode is "vim". Off leaves Vim navigation and the in-field escape sequence alone and gives the editor back its plain CodeMirror keymap, which is the escape hatch for a user who wants Vim chords around the app but not inside the editor. Read only while keyboardMode is "vim".',
+		type: 'boolean',
+		default: true,
+		category: 'editor',
+	},
 	shortcuts: {
 		description: 'Custom keyboard shortcut bindings. Object mapping shortcut IDs to key combos.',
 		type: 'object',
@@ -221,6 +242,20 @@ export const EDITOR_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	},
 	tabShortcuts: {
 		description: 'Keyboard shortcuts for tab switching (Cmd/Ctrl+1 through Cmd/Ctrl+9).',
+		type: 'object',
+		default: {},
+		category: 'editor',
+	},
+	vimShortcuts: {
+		description:
+			'Vim-mode shortcut overrides. Object mapping shortcut IDs to key combos, and SPARSE: an ID appears only when Vim mode binds it differently from default mode, and every other action keeps its default chord. Only read while keyboardMode is "vim", and never written while it is "default".',
+		type: 'object',
+		default: {},
+		category: 'editor',
+	},
+	vimTabShortcuts: {
+		description:
+			'Vim-mode overrides for the tab shortcuts. Same sparse shape and the same rules as vimShortcuts.',
 		type: 'object',
 		default: {},
 		category: 'editor',

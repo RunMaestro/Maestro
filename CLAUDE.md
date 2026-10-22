@@ -34,6 +34,7 @@ None of these load automatically. Read the one that matches the task before you 
 | Store action, selector, or hook                    | [STATE-PATTERNS.md](docs/agent-guides/STATE-PATTERNS.md)         |
 | Agent parser, storage, or error pattern            | [AGENT-INFRA.md](docs/agent-guides/AGENT-INFRA.md)               |
 | UI component, modal, or theme usage                | [UI-PATTERNS.md](docs/agent-guides/UI-PATTERNS.md)               |
+| Keyboard shortcut, keyboard mode, or Vim binding   | [KEYBOARD-MODES.md](docs/agent-guides/KEYBOARD-MODES.md)         |
 | Stat card, chart, sparkline, or input control      | [WIDGET-LIBRARY.md](docs/agent-guides/WIDGET-LIBRARY.md)         |
 | Test mock, factory, or setup pattern               | [TEST-PATTERNS.md](docs/agent-guides/TEST-PATTERNS.md)           |
 | Renderer service or constant                       | [RENDERER-SERVICES.md](docs/agent-guides/RENDERER-SERVICES.md)   |
@@ -220,6 +221,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Any CLI verb that can move the Maestro view:** `resolveBackgroundFlag()` (CLI) / `readBackgroundField()` (handler) in `src/shared/focusPlacement.ts` (never `message.background !== false`)
 - **Which tab a tab-scoped action targets:** `resolveActiveTabRef(session)`, `resolveTabRefRenameValue()`, `resolveTabRefTitle()` in `src/renderer/utils/panelLayout.ts`
 - **Whether an AI tab is drawn in the tab strip:** `isAiTabHidden(tab)`, `visibleAiTabs(tabs)`, `hasUnreadVisibleTab(tabs)` in `src/renderer/utils/unifiedTabOrderUtils.ts` (never `aiTabs.length` or `aiTabs.some((t) => t.hasUnread)`)
+- **Moving the active tab's position in the strip:** `moveActiveUnifiedTabByOne()`, `moveActiveUnifiedTabToEdge()`, `moveUnifiedTabToTarget()` in `src/renderer/utils/tabHelpers/index.ts`
 - **What an unnamed tab is called:** `getTabDisplayName(tab)`, `isSessionIdLabel()` in `src/renderer/utils/tabHelpers`, over `formatSessionId(agentSessionId)`
 - **Where a closed tab's name still exists:** `HistoryEntry.sessionName` only; pass it as the third argument of `handleResumeSession`
 - **Reading a past conversation back into a tab:** `loadResumableSession()` in `src/renderer/services/resumableSession.ts`
@@ -319,6 +321,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Center flash (rapid acks):** `notifyCenterFlash()` in `src/renderer/stores/centerFlashStore.ts`; `flashCopiedToClipboard()` in `src/renderer/utils/flashCopiedToClipboard.ts` (momentary acks; never a Toast for clipboard)
 - **Keeping toasts off a surface the user works in:** `useToastAvoidZone()`, `toastBottomInset()` in `src/renderer/hooks/ui/useToastAvoidZone.ts`
 - **Opening a modal / dashboard by name:** `UI_SURFACES`, `resolveUiSurface()` in `src/shared/uiSurfaces.ts`, dispatched by `openUiSurface()` in `src/renderer/utils/openUiSurface.ts`
+- **A palette action that must not take effect until the palette is gone:** `afterPaletteCloses()` in `src/renderer/components/QuickActionsModal/utils/afterPaletteCloses.ts` (never a bare `setTimeout(..., 50)`)
 - **Whether a modal takes the window over:** `DESTINATION_MODALS`, `registerExternalDestination()` in `src/renderer/stores/modalStore.ts`
 - **Opening a modal from inside Settings:** `launchFromSettings(open)` in `src/renderer/utils/launchFromSettings.ts`
 - **Modal layer:** `useModalLayer()` in `src/renderer/hooks/ui/useModalLayer.ts` (do NOT use manual `registerLayer()` boilerplate)
@@ -339,15 +342,32 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 
 #### Keyboard and shortcuts
 
+- **Which bindings the live keyboard mode matches:** `resolveEffectiveShortcuts()`, `overridesWithEdits()` in `src/shared/effectiveShortcuts.ts`; `selectActiveShortcuts()` and siblings in `src/renderer/stores/settingsShortcutsSlice.ts`; `useActiveShortcuts()` in `src/renderer/hooks/settings/useActiveShortcuts.ts`
+- **The chord and sequence to DISPLAY for an action:** `useShortcutKeys(actionId)` in `src/renderer/hooks/keyboard/useShortcutKeys.ts`; non-hook `resolveShortcutKeys(actionId, maps)`, `UNBOUND_SHORTCUT` in `src/renderer/utils/shortcutResolve.ts` (never a hard-coded chord)
+- **Matching a key sequence (`g g`, `g t`):** `createSequenceMatcher()`, `collectSequenceBindings()`, `SEQUENCE_TIMEOUT_MS` in `src/renderer/utils/shortcutSequence.ts`; each step compares with `eventMatchesShortcutKeys()` in `src/renderer/utils/shortcutMatch.ts` (never a second copy of the chord rules)
+- **Arming and ending Deck mode (the leader chord's one-shot state):** `armDeckMode()`, `disarmDeckMode()`, `deckModeArmedNow()`, `deckModeExpired()` in `src/renderer/stores/uiStore.ts`, over the table in `src/renderer/constants/deckMode.ts` (never the raw `deckModeArmed` flag)
+- **Showing a key sequence in progress:** `<SequencePrefixIndicator>` in `src/renderer/components/SequencePrefixIndicator.tsx`, fed by `publishSequencePrefix()` / `clearSequencePrefix()` / `useSequencePrefixStore` in `src/renderer/stores/sequencePrefixStore.ts` (one app-wide chip; never a second copy of the prefix)
+- **Showing the armed Deck mode's key table:** `<DeckModeHintBar>` in `src/renderer/components/DeckModeHintBar.tsx` and `<DeckModeKeyList>` in `src/renderer/components/DeckModeKeyList.tsx`, over `DECK_MODE_HINT_ROWS` in `src/renderer/constants/deckMode.ts` (never a second copy of the key list)
+- **Recording a key sequence, and whether it may be bound:** `recordSequenceStep()` in `src/renderer/utils/shortcutRecorder.ts`; `shortcutSequencesCollide()`, `shortcutSequencesEqual()` in `src/shared/shortcutKeys.ts`
+- **Switching the live keyboard mode:** `switchKeyboardMode(mode?)`, `nextKeyboardMode()`, `findKeyboardModeToggleShadow()`, `keyboardModeToggleShadow()`, `KEYBOARD_MODE_TOGGLE_KEYS` in `src/renderer/services/keyboardMode.ts` (never `setKeyboardMode` from a surface)
+- **Moving focus between the Left Bar, Main Window, and Right Bar:** `focusRegion()`, `focusRegionDirection()`, `focusRegionVertical()`, `focusedRegion()`, `REGION_ORDER` in `src/renderer/services/regionFocus.ts`
+- **Resizing the focused region from the keyboard:** `resizeFocusedRegion(delta)`, `growFocusedRegion()`, `shrinkFocusedRegion()`, `REGION_RESIZE_STEP_PX` in `src/renderer/services/regionResize.ts` (writes through settingsStore's clamping setters; never a second clamp)
+- **Hiding both bars at once (zen mode):** `toggleZenMode()` in `src/renderer/stores/uiStore.ts`, over `zenMode` / `preZenLayout` and `setZenExitChordResolver()` (restores a snapshot, never an assumed layout)
 - **Modifier-key display text:** `formatKey()`, `formatShortcutKeys()`, `formatMetaKey()`, `formatMetaKeyName()`, `formatAltKeyName()` in `src/renderer/utils/shortcutFormatter.ts`; outside the renderer `formatShortcutKeysFor()` in `src/shared/shortcutKeys.ts`
+- **Printing a key sequence (`g g`, `G`):** `formatShortcutSequence()` in `src/renderer/utils/shortcutFormatter.ts` (never `formatShortcutKeys`, which joins with `+` and uppercases a step)
 - **Advertising a shortcut next to the control that fires it:** `<ShortcutHint>`, `<ShortcutKeys>`, `shortcutText()`, `shortcutSuffix(keys)` in `src/renderer/components/ui/ShortcutHint.tsx` (also the tab overlay-menu badge)
 - **Keyboard-shortcut hint / kbd pill:** `<Keycap>` and `<KeycapHint>` in `src/renderer/components/ui/Keycap.tsx`
 - **A system-wide (OS-level) hotkey:** `setNamedGlobalHotkey(id, keys, onPress)`, `keysToAccelerator(keys)` in `src/main/global-hotkey-manager.ts`
+- **Whether two chords fire on the same keypress:** `shortcutKeysCollide(a, b)` and `SHIFT_REWRITTEN_KEYS` in `src/shared/shortcutKeys.ts` (every conflict check), beside `shortcutKeysEqual()` / `normalizeShortcutKeys()` (the DIFF, literal about spelling)
 - **Whether a chord may be bound at all:** `findReservedShortcutCombo(keys)` in `src/shared/shortcutKeys.ts`
 - **Whether a keystroke belongs to a text field (guard before `preventDefault`):** `isTextInputTarget()`, `isTextEntryTarget()` in `src/renderer/utils/messageScrollNavigation.ts`; `isEditingTextTarget()`, `isEditingTextFocused()` in `src/renderer/utils/editableTarget.ts`
+- **Whether a keystroke is free for a binding to claim (normal mode):** `isNormalMode(event, doc?)` beside `isTextEntryTarget()` in `src/renderer/utils/messageScrollNavigation.ts` (the caller adds `hasOpenLayers()`)
+- **Leaving a text field from the keyboard (Vim's `jk`):** `parseInsertEscapeSequence()`, `insertEscapeTarget()`, `applyInsertEscape()` in `src/renderer/utils/vimInsertEscape.ts`
+- **Vim keys in a CodeMirror surface:** `vimKeysExtension()`, `useVimKeysActive()`, `useVimKeysCompartment()`, `vimEditorOwnsEscape()`, `vimEditorOwnsCtrlChord()` in `src/renderer/components/FilePreview/markdownEditor/vimKeys.ts` (the compartment goes FIRST, ahead of `keymap.of([...defaultKeymap])`)
+
 - **Hiding a switched-off Encore Feature's shortcut, menu item, or setting:** `availableShortcuts()`, `isShortcutAvailable()`, `SHORTCUT_ENCORE_FLAGS` in `src/renderer/utils/encoreShortcuts.ts`; `requiresEncore` on `SearchableSetting`; `encoreFlag` on a `MenuCommand` in `src/main/app-menu.ts`
 - **Hiding a switched-off Encore Feature's prompts and template variables:** `isPromptAvailable()` in `src/shared/promptDefinitions.ts`; `availableTemplateVariables()` in `src/shared/templateVariables.ts`, read through `useAvailableTemplateVariables()` in `src/renderer/hooks/input/useAvailableTemplateVariables.ts`
-- **How much of the keyboard the user has mastered:** `collectBoundShortcuts()`, `countUsedBoundShortcuts()` in `src/renderer/constants/keyboardMastery.ts`
+- **How much of the keyboard the user has mastered:** `selectMasteryBoundShortcuts()` in `src/renderer/stores/settingsShortcutsSlice.ts`; `collectBoundShortcutsAcrossModes()`, `countUsedBoundShortcuts()` in `src/renderer/constants/keyboardMastery.ts`
 - **Arrow-key navigation over a list or grid:** `useListNavigation()` in `src/renderer/hooks/keyboard/useListNavigation.ts`; a grid feeds it `useGridColumnCount()` from `src/renderer/hooks/ui/useGridColumnCount.ts`
 - **Bare `+` / `-` / `0` zoom on a surface:** `useScaleShortcuts(control, { enabled })` in `src/renderer/hooks/ui/useScaleShortcuts.ts`
 - **Keyboard navigation in a `<DualPaneFileEditor>` list:** built in: Up/Down walk the visible rows, Backspace/Delete raise `onDeleteItem`; pass `autoFocusList`, bump `listFocusToken` after a delete

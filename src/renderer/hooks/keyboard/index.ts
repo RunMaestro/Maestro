@@ -15,6 +15,9 @@ export type {
 	UseKeyboardNavigationReturn,
 } from './useKeyboardNavigation';
 
+// The live mode's chord and sequence for an action, for DISPLAY
+export { useShortcutKeys } from './useShortcutKeys';
+
 // Shortcut matching utilities
 export { useKeyboardShortcutHelpers } from './useKeyboardShortcutHelpers';
 export type {

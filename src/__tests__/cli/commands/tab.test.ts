@@ -213,6 +213,27 @@ describe('tab commands', () => {
 		expect(getLast().toIndex).toBe(2);
 	});
 
+	it('tab move accepts relative "left"/"right" and clamps instead of wrapping', async () => {
+		// tab-dddd sits at index 2 of agent-1's three tabs.
+		const getLeft = mockTab({ success: true });
+		await tabMove('tab-dddd', 'left', {});
+		expect(getLeft().toIndex).toBe(1);
+
+		const getRight = mockTab({ success: true });
+		await tabMove('tab-aaaa', 'right', {});
+		expect(getRight().toIndex).toBe(1);
+
+		// The last tab pressed right and the first pressed left are reported no-ops,
+		// matching moveActiveUnifiedTabByOne in the renderer.
+		const getPastEnd = mockTab({ success: true });
+		await tabMove('tab-dddd', 'right', {});
+		expect(getPastEnd()).toEqual({});
+
+		const getPastStart = mockTab({ success: true });
+		await tabMove('tab-aaaa', 'left', {});
+		expect(getPastStart()).toEqual({});
+	});
+
 	it('tab move clamps an out-of-range index to the last position', async () => {
 		const getPayload = mockTab({ success: true });
 		await tabMove('tab-aaaa', '99', {});

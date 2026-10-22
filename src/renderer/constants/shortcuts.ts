@@ -39,6 +39,16 @@ export const DEFAULT_SHORTCUTS = {
 		label: 'Toggle Right Panel',
 		keys: ['Alt', 'Meta', 'ArrowRight'],
 	},
+	// Zen mode: hide BOTH bars and give the whole window to the Main Window, then
+	// restore exactly the visibility each bar had before on a second press. It is
+	// the stand-in for a tiling window manager's "zoom the focused pane", built on
+	// the same two setters the toggles above write to - nothing is destroyed or
+	// reset on the way in or out.
+	//
+	// Ships UNASSIGNED: the two toggles above already reach the same state in two
+	// keypresses, so a third default chord next to them is not worth claiming for
+	// everyone. Reachable from Cmd+K and the hamburger menu; Vim mode binds it.
+	toggleZenMode: { id: 'toggleZenMode', label: 'Toggle Zen Mode', keys: [] },
 	cyclePrev: { id: 'cyclePrev', label: 'Previous Agent', keys: ['Meta', '['], windowScoped: true },
 	cycleNext: { id: 'cycleNext', label: 'Next Agent', keys: ['Meta', ']'], windowScoped: true },
 	navBack: { id: 'navBack', label: 'Navigate Back', keys: ['Meta', 'Shift', ','] },
@@ -110,6 +120,65 @@ export const DEFAULT_SHORTCUTS = {
 	},
 	focusInput: { id: 'focusInput', label: 'Toggle Input/Output Focus', keys: ['Meta', '.'] },
 	focusSidebar: { id: 'focusSidebar', label: 'Focus Left Panel', keys: ['Meta', 'Shift', 'a'] },
+	// Unbound by default, and it cannot ship on `Ctrl+C`: the matcher folds Ctrl
+	// into Meta, so that chord IS `Cmd+C` and `RESERVED_SHORTCUT_COMBOS` holds it
+	// for the Edit menu's Copy. A reserved default is worse than none - on load
+	// `migrateShortcuts` strips the reserved binding and falls back to the
+	// bundled default only when that default is itself free, so a reserved
+	// default leaves the action unbound anyway, silently and for everyone.
+	// `Ctrl+C` is not lost either way: inside a Command Terminal tab xterm still
+	// sends it to the running process (see `XTerminal`'s custom key handler),
+	// which is a different thing from ending an AI turn. The red Stop pill is the
+	// route that always exists; this entry is what lets a user add a chord.
+	stopTurn: {
+		id: 'stopTurn',
+		label: 'Stop Turn',
+		keys: [],
+	},
+
+	// Region focus and region resize. Maestro's window is three regions in a row -
+	// the Left Bar, the Main Window, the Right Bar - and these are the actions a
+	// tiling-window-manager keymap's direction keys point at: left/right crosses
+	// between regions and clamps at both ends, up/down moves along the focused
+	// region's own vertical axis (transcript / composer in the Main Window, the
+	// list selection in either bar). See src/renderer/services/regionFocus.ts.
+	//
+	// All six ship UNASSIGNED. Default mode already spends Cmd+Shift+A and Cmd+.
+	// on the two single-region focus actions above, and six more default chords
+	// for a navigation style most users do not want is not a cost to impose on
+	// everyone. Listing them here is what puts them in Settings -> Shortcuts, the
+	// help sheet, and Cmd+K; Vim mode binds them in its own table.
+	//
+	// Labels mirror the `paneFocus*` family ('Focus Pane Left') on purpose: same
+	// shape of action, so the two families read as siblings in the sorted list and
+	// searching "focus" finds both.
+	focusRegionLeft: { id: 'focusRegionLeft', label: 'Focus Region Left', keys: [] },
+	focusRegionRight: { id: 'focusRegionRight', label: 'Focus Region Right', keys: [] },
+	focusRegionUp: { id: 'focusRegionUp', label: 'Focus Region Up', keys: [] },
+	focusRegionDown: { id: 'focusRegionDown', label: 'Focus Region Down', keys: [] },
+	growRegion: { id: 'growRegion', label: 'Grow Region', keys: [] },
+	shrinkRegion: { id: 'shrinkRegion', label: 'Shrink Region', keys: [] },
+
+	// Deck mode's LEADER, tmux's prefix key. Pressing it arms a one-shot mode in
+	// which the next single bare key fires an action and the mode ends. The table
+	// of those keys is `constants/deckMode.ts`; this entry is the chord that arms
+	// it, and the hint bar reads this entry's LIVE binding for its title, so a
+	// user who rebinds the leader sees the chord they actually press.
+	//
+	// Only the leader is a shortcut. The keys it arms are live for one keystroke
+	// between the leader and the next event, so they claim no keypress, cannot
+	// fight anything, and are deliberately not registered here or merged into any
+	// mode's effective set. This row is the only part of Deck mode the global
+	// matcher, the collision guards, and `findReservedShortcutCombo` ever see.
+	//
+	// Ships UNASSIGNED, for the same reason as the region family above and one
+	// more. A leader is only worth a default chord to someone who wants the
+	// bare-key vocabulary behind it, and in default mode there is no such
+	// vocabulary: every action the Deck table fires already answers to a chord of
+	// its own there. Vim mode binds it, where the bare keys are the whole point
+	// and the composer is exactly where they were previously out of reach.
+	deckMode: { id: 'deckMode', label: 'Deck Mode (Leader Key)', keys: [] },
+
 	viewGitDiff: { id: 'viewGitDiff', label: 'Git: View Diff', keys: ['Meta', 'Shift', 'd'] },
 	viewGitLog: { id: 'viewGitLog', label: 'Git: View Log', keys: ['Meta', 'Shift', 'g'] },
 	// The rest of the branch-pill menu. All four ship UNBOUND: they act on the
@@ -517,6 +586,27 @@ export const FIXED_SHORTCUTS: Record<string, Shortcut> = {
 		label: 'Decrease Font Size',
 		keys: ['Meta', '-'],
 	},
+	// Switching keyboard modes. FIXED rather than configurable, and deliberately
+	// so: this is the way back OUT of the mode you just switched into, so it has
+	// to be the SAME chord in every mode. A rebindable toggle could be rebound
+	// by the mode it switches to - or displaced by one of that mode's own chords
+	// - and the user would be stuck in a binding set whose exit key no longer
+	// exists. For the same reason it is excluded from `DEFAULT_SHORTCUTS`,
+	// `TAB_SHORTCUTS`, and both Vim override tables.
+	//
+	// Opt+Cmd+V (Ctrl+Alt+V on Windows and Linux) is free in the shipped set and
+	// is not reserved: `RESERVED_SHORTCUT_COMBOS` owns plain Cmd+V (the Edit
+	// menu's paste) and Opt+Shift+Cmd+V (paste and match style), neither of
+	// which collides with it. It IS an OLD default of `toggleConcerto`
+	// (`SHORTCUT_DEFAULT_REMAPS`), so an install that never migrated, or a user
+	// who bound it themselves, may already have it - their binding wins, the
+	// toggle handler stands down, and Settings -> Shortcuts names the action
+	// that took it.
+	toggleKeyboardMode: {
+		id: 'toggleKeyboardMode',
+		label: 'Switch Keyboard Mode (Default / Vim)',
+		keys: ['Alt', 'Meta', 'v'],
+	},
 };
 
 // Tab navigation shortcuts (AI mode only)
@@ -562,6 +652,21 @@ export const TAB_SHORTCUTS = {
 		id: 'moveTabToEnd',
 		label: 'Move Tab to Last',
 		keys: ['Meta', 'Alt', ']'],
+	},
+	// Nudge the active tab one visible slot instead of throwing it to an edge.
+	// Registered unassigned (`keys: []`), the convention the git actions and the
+	// media controls already use: the action is in Settings > Shortcuts and the
+	// command palette waiting for a chord the user picks, so shipping it displaces
+	// nothing in the default set. Vim mode binds the pair in a later phase.
+	moveTabLeft: {
+		id: 'moveTabLeft',
+		label: 'Move Tab Left',
+		keys: [],
+	},
+	moveTabRight: {
+		id: 'moveTabRight',
+		label: 'Move Tab Right',
+		keys: [],
 	},
 	toggleReadOnlyMode: {
 		id: 'toggleReadOnlyMode',

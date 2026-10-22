@@ -358,6 +358,100 @@ export function moveActiveUnifiedTabToEdge(session: Session, edge: 'start' | 'en
 }
 
 /**
+ * The slots a nudge may land on: the strip's order, minus the AI tabs the live
+ * unread filter is hiding.
+ *
+ * `getNavigableUnifiedTabOrder` drops hidden AI tabs (unopened cross-agent
+ * consults) and that is all it drops, so with the unread filter ON it still
+ * reports read tabs the strip is not drawing. A nudge then picked an invisible
+ * neighbor and swapped past it, leaving the visible strip unchanged - the exact
+ * failure the filtering exists to prevent, just through the other filter.
+ *
+ * The unread half reuses `getNavigableTabs(session, true)`, which is the
+ * predicate every other keyboard navigation action already models the filter
+ * with (unread, busy, draft, starred-when-opted-in, queued), rather than a
+ * second copy of it. The active tab is added back explicitly because the strip
+ * always keeps it drawn whether it qualifies or not, and a nudge that could not
+ * find its own tab would do nothing at all.
+ *
+ * Two known divergences from the strip, both narrow and both in the safe
+ * direction: `stuckTabIds` and the `inputMode === 'ai'` nuance live in TabBar's
+ * props rather than in a store, so a stuck read tab is treated here as hidden.
+ * That can only make a nudge step OVER a drawn tab in that rare case; it can
+ * never move the tab somewhere the user cannot see. Closing it means lifting
+ * those two into a store and giving the strip and these helpers one predicate,
+ * which is a change to the tab strip's data flow rather than to this function.
+ */
+function getMovableUnifiedTabOrder(session: Session, order: UnifiedTabRef[]): UnifiedTabRef[] {
+	const visible = getNavigableUnifiedTabOrder(session, order);
+	if (!useUIStore.getState().showUnreadOnly) return visible;
+	const shown = new Set(getNavigableTabs(session, true).map((tab) => tab.id));
+	if (session.activeTabId) shown.add(session.activeTabId);
+	// Only AI tabs carry unread state. The other kinds have their own opt-in
+	// settings in the strip; they are left in here rather than guessed at, so a
+	// nudge past one behaves as it always has.
+	return visible.filter((ref) => ref.type !== 'ai' || shown.has(ref.id));
+}
+
+/**
+ * Nudge the currently active tab one position left or right in the unified tab
+ * order. The single-step sibling of `moveActiveUnifiedTabToEdge`, and it keeps
+ * that function's contract exactly: it reorders `unifiedTabOrder` and nothing
+ * else, so the active tab stays active and no active-tab-id field (or
+ * `activeGroupId`) is touched.
+ *
+ * "One position" means one position in the STRIP, not one slot in the stored
+ * array. The stored order keeps the ref of a hidden AI tab - an unopened
+ * cross-agent consult - so that revealing it restores its original spot, but
+ * `buildUnifiedTabs` draws no chip for it. Stepping by one stored slot would
+ * therefore swap the active tab with something invisible and look like the key
+ * did nothing. The neighbor is picked out of `getMovableUnifiedTabOrder`, which
+ * drops both kinds of tab the strip is not drawing, and the write-back lands at
+ * that neighbor's index in the repaired order.
+ *
+ * Clamps rather than wraps: the first visible tab pressed left and the last
+ * visible tab pressed right return the original session unchanged. A wrap would
+ * teleport a chip the whole width of the strip on a key the user pressed to move
+ * it one notch.
+ *
+ * Returns the original session unchanged (no allocation) when there are fewer
+ * than two tabs, no active tab is present in the order, or the move is clamped.
+ *
+ * @param session - The Maestro session
+ * @param direction - 'left' moves the active tab one visible slot earlier, 'right' one later
+ * @returns New session with the reordered unifiedTabOrder, or the original if it's a no-op
+ */
+export function moveActiveUnifiedTabByOne(session: Session, direction: 'left' | 'right'): Session {
+	const order = getRepairedUnifiedTabOrder(session);
+	if (order.length < 2) return session;
+
+	const activeIndex = findActiveUnifiedTabIndex(session, order);
+	if (activeIndex === -1) return session;
+
+	const active = order[activeIndex];
+	const visible = getMovableUnifiedTabOrder(session, order);
+	// Identity, not index: the filters pass the same ref objects through, so the
+	// active ref is findable by reference in both spaces.
+	const visibleIndex = visible.indexOf(active);
+	if (visibleIndex === -1) return session;
+
+	const neighbor = visible[direction === 'left' ? visibleIndex - 1 : visibleIndex + 1];
+	// Already at the end the user is pressing toward.
+	if (!neighbor) return session;
+
+	const neighborIndex = order.indexOf(neighbor);
+	const newOrder = [...order];
+	newOrder.splice(activeIndex, 1);
+	// Insert at the neighbor's own pre-splice index. Moving right, the removal
+	// shifted the neighbor down one, so this lands the tab just past it; moving
+	// left, the neighbor is untouched, so this takes its slot and pushes it right.
+	// Either way any hidden refs in between stay on the side they were on.
+	newOrder.splice(neighborIndex, 0, active);
+
+	return { ...session, unifiedTabOrder: newOrder };
+}
+
+/**
  * Move one unified tab to another tab's slot, addressed by tab id. This is the
  * drag-to-reorder gesture: a chip released on a sibling chip lands where that
  * sibling sits.

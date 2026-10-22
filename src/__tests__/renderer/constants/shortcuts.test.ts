@@ -18,14 +18,43 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { readFileSync, readdirSync, statSync } from 'fs';
-import { join } from 'path';
+import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
+import { dirname, join, relative, resolve } from 'path';
 import {
 	DEFAULT_SHORTCUTS,
 	FIXED_SHORTCUTS,
 	TAB_SHORTCUTS,
 } from '../../../renderer/constants/shortcuts';
-import type { Shortcut } from '../../../shared/shortcut-types';
+import { VIM_SHORTCUTS, VIM_TAB_SHORTCUTS } from '../../../renderer/constants/vimShortcuts';
+import {
+	DECK_MODE_CANCEL_ID,
+	DECK_MODE_HINT_ROWS,
+	DECK_MODE_KEYS,
+	DECK_MODE_LEADER_ID,
+	deckModeKeyName,
+	findDeckModeAction,
+	isDeckModeCancelKey,
+} from '../../../renderer/constants/deckMode';
+import {
+	KEYBOARD_MODES,
+	KEYBOARD_MODE_LABELS,
+	asKeyboardMode,
+} from '../../../shared/shortcut-types';
+import type { KeyboardMode, Shortcut, ShortcutOverride } from '../../../shared/shortcut-types';
+import {
+	findReservedShortcutCombo,
+	shortcutKeysCollide,
+	shortcutKeysEqual,
+	shortcutSequencesEqual,
+} from '../../../shared/shortcutKeys';
+import { resolveEffectiveShortcuts } from '../../../shared/effectiveShortcuts';
+import {
+	INTENTIONALLY_SHARED,
+	MODE_OVERRIDES,
+	SHORTCUT_BASE_MAPS,
+	effectiveActionsForMode,
+	isIntentionallySharedByIds,
+} from '../../helpers/shortcutModes';
 
 const RENDERER_ROOT = join(__dirname, '../../../renderer');
 
@@ -273,40 +302,11 @@ describe('keyboard shortcut registry wiring', () => {
  *
  * Scope is real and this test has to respect it, or it fails on correct design:
  * several actions deliberately share a chord because they can never be live at
- * the same moment. Each such group is listed below WITH the reason it is safe.
- * Anything not on that list is a bug - which is the point. A future action that
+ * the same moment. Each such group is listed in `INTENTIONALLY_SHARED` above
+ * WITH the reason it is safe. Anything not on that list is a bug - which is the point. A future action that
  * takes an already-used chord fails here rather than in a bug report.
  */
 describe('DEFAULT_SHORTCUTS / TAB_SHORTCUTS / FIXED_SHORTCUTS duplicate bindings', () => {
-	/**
-	 * Chords that more than one action may legitimately claim, each with the
-	 * gate that keeps them apart. Add to this ONLY with the reason written down.
-	 */
-	const INTENTIONALLY_SHARED: { chord: string; ids: string[]; why: string }[] = [
-		{
-			chord: 'Meta+f',
-			ids: [
-				'filterFiles',
-				'filterSessions',
-				'filterHistory',
-				'searchLogs',
-				'searchOutput',
-				'searchDirectorNotes',
-			],
-			why: "Each is scoped to the surface that has focus (Files tab, Left Panel, History tab, System Log viewer, Main Window, Director's Notes). Only one of those surfaces is focused at a time.",
-		},
-		{
-			chord: 'Meta+e',
-			ids: ['toggleMarkdownMode', 'renameAgentSession'],
-			why: 'The Sessions Browser is a modal layer that blocks lower layers, and its own handler consumes the key before the app-level one runs. With the browser closed there is no session row to rename; with it open there is no markdown pane to flip.',
-		},
-		{
-			chord: 'Meta+Shift+k',
-			ids: ['clearTerminal', 'toggleShowThinking'],
-			why: 'Mutually exclusive by input mode: clearTerminal is gated on inputMode === "terminal" (useMainKeyboardHandler), toggleShowThinking is a tab shortcut reached only in AI mode.',
-		},
-	];
-
 	const normalize = (keys: string[]): string => [...keys].sort().join('+');
 
 	it('ships no unexplained duplicate binding', () => {
@@ -353,6 +353,437 @@ describe('DEFAULT_SHORTCUTS / TAB_SHORTCUTS / FIXED_SHORTCUTS duplicate bindings
 });
 
 /**
+ * The shipped tables must not contain a chord `RESERVED_SHORTCUT_COMBOS` owns.
+ *
+ * `migrateShortcuts` strips a reserved binding on load and falls back to the
+ * action's bundled default - but only when that default is itself free, and
+ * otherwise leaves the action UNBOUND. So a reserved chord shipped as a default
+ * does not just fail to fire: it silently unbinds the action for every user who
+ * never customized it, on the quietest possible path. Adding an entry to
+ * `RESERVED_SHORTCUT_COMBOS` without checking the tables first is exactly how
+ * that happens, which is what this test is here to stop.
+ */
+describe('shipped bindings avoid reserved chords', () => {
+	const TABLES: [string, Record<string, Shortcut>][] = [
+		['DEFAULT_SHORTCUTS', DEFAULT_SHORTCUTS],
+		['TAB_SHORTCUTS', TAB_SHORTCUTS],
+		['FIXED_SHORTCUTS', FIXED_SHORTCUTS],
+	];
+
+	it.each(TABLES)('%s ships no binding the OS or the app menu owns', (_name, table) => {
+		const offenders = Object.values(table)
+			.map((sc) => ({ sc, reserved: findReservedShortcutCombo(sc.keys) }))
+			.filter(({ reserved }) => reserved !== null)
+			.map(({ sc, reserved }) => `${sc.id} (${sc.keys.join('+')}): ${reserved?.reason}`);
+
+		expect(offenders).toEqual([]);
+	});
+
+	/**
+	 * Stop Turn is the case that proves the rule, so it gets its own test.
+	 *
+	 * It shipped on `['Control', 'c']` - the obvious chord, since that is how you
+	 * interrupt anything in a terminal - and it was wrong twice over. The matcher
+	 * folds Ctrl into Meta, so the binding IS `Cmd+C` and would have shadowed
+	 * Copy; and because the reserved default has no free fallback,
+	 * `migrateShortcuts` would have left the action unbound on load for everyone,
+	 * which is the quiet half. It ships unbound instead, wired in the ladder so a
+	 * chord a user DOES record actually stops the turn.
+	 *
+	 * Asserting on both modes because the Vim bucket inherits this chord: a
+	 * `Ctrl+C` re-added in either table is the same shadowed Copy.
+	 */
+	it.each(KEYBOARD_MODES)('leaves every chord that reads as Ctrl+C free in %s mode', (mode) => {
+		const claimants = effectiveActionsForMode(mode)
+			.filter((sc) => shortcutKeysCollide(sc.keys, ['Control', 'c']))
+			.map((sc) => `${sc.id} (${sc.keys.join('+')})`);
+
+		expect(
+			claimants,
+			'A chord holding Ctrl or Cmd plus C shadows the Edit menu Copy, and migrateShortcuts strips it on load.'
+		).toEqual([]);
+	});
+
+	it('registers Stop Turn unbound rather than on a chord it cannot keep', () => {
+		expect(DEFAULT_SHORTCUTS.stopTurn.keys).toEqual([]);
+		// The entry still has to EXIST: unbound is what lets Settings -> Shortcuts
+		// offer the row, and the ladder branch is what makes the recorded chord fire.
+		expect(DEFAULT_SHORTCUTS.stopTurn.label).toBe('Stop Turn');
+	});
+});
+
+describe('keyboard modes', () => {
+	it('lists default first, which is the mode that ships', () => {
+		// The Settings toggle renders this list in order, so flipping it would
+		// put Vim in the first slot and read as the active mode at a glance.
+		expect(KEYBOARD_MODES).toEqual(['default', 'vim']);
+	});
+
+	it('narrows only the two known modes', () => {
+		for (const mode of KEYBOARD_MODES) expect(asKeyboardMode(mode)).toBe(mode);
+		for (const value of ['Vim', 'VIM', 'emacs', '', ' vim', null, undefined, 0, {}, ['vim']]) {
+			expect(asKeyboardMode(value)).toBeUndefined();
+		}
+	});
+
+	it('names every mode for the surfaces that switch modes', () => {
+		// The toggle, the Quick Actions entry, the menu item and the switch toast
+		// all say the mode's name. A mode with no label here renders as its raw
+		// id in whichever of them forgot to handle it.
+		expect(KEYBOARD_MODE_LABELS).toEqual({ default: 'Default', vim: 'Vim' });
+		for (const mode of KEYBOARD_MODES) {
+			expect(KEYBOARD_MODE_LABELS[mode]).toBeTruthy();
+		}
+	});
+});
+
+/**
+ * Structural guard for the Vim override tables.
+ *
+ * These are the invariants that hold on the SHIPPED constants alone, before any
+ * resolver or persisted state is involved, so they fail at the table rather
+ * than three layers downstream where the symptom is a dead key:
+ *
+ *  - An override id that is not a real action id binds nothing at all. The
+ *    resolver ignores an override whose id is absent from the base tables, so a
+ *    typo here is silent.
+ *  - A mismatched label would show the user two different names for one action
+ *    depending on the mode.
+ *  - A `FIXED_SHORTCUTS` id is shared by both modes and is not rebindable, so an
+ *    override on one describes a binding that can never take effect.
+ *  - A chord holding both a Ctrl-family key and `Meta` is the pane-tiling
+ *    spelling, matched by `isPaneShortcut` (which requires both physical keys
+ *    held) rather than the shared matcher. Vim chords say `'Ctrl'` only, because
+ *    the matcher collapses Ctrl and Cmd into one modifier anyway.
+ *
+ * The reachability and one-chord-one-action rules cannot be read off these
+ * tables, because both depend on what a mode INHERITS. They live in the
+ * per-mode block below, computed over each mode's resolved effective set.
+ */
+describe('Vim override tables', () => {
+	const VIM_TABLES: [string, Record<string, ShortcutOverride>][] = [
+		['VIM_SHORTCUTS', VIM_SHORTCUTS],
+		['VIM_TAB_SHORTCUTS', VIM_TAB_SHORTCUTS],
+	];
+
+	// An override id may be declared in EITHER base table: `isTabShortcut` reads
+	// `tabShortcuts[id] || shortcuts[id]`, so a tab action can live in
+	// DEFAULT_SHORTCUTS (`prevTab` and `nextTab` do).
+	const BASE_ACTIONS: Record<string, Shortcut> = {
+		...(DEFAULT_SHORTCUTS as Record<string, Shortcut>),
+		...(TAB_SHORTCUTS as Record<string, Shortcut>),
+	};
+
+	it.each(VIM_TABLES)('%s keys its entries by their own id', (_name, table) => {
+		const mismatched = Object.entries(table)
+			.filter(([key, override]) => key !== override.id)
+			.map(([key, override]) => `${key} -> ${override.id}`);
+
+		expect(mismatched).toEqual([]);
+	});
+
+	it.each(VIM_TABLES)('%s overrides only real actions, with the same label', (_name, table) => {
+		const offenders = Object.values(table)
+			.filter((override) => BASE_ACTIONS[override.id]?.label !== override.label)
+			.map((override) =>
+				BASE_ACTIONS[override.id]
+					? `${override.id}: label "${override.label}" !== "${BASE_ACTIONS[override.id].label}"`
+					: `${override.id}: not an action in DEFAULT_SHORTCUTS or TAB_SHORTCUTS`
+			);
+
+		expect(offenders).toEqual([]);
+	});
+
+	it.each(VIM_TABLES)('%s overrides no FIXED_SHORTCUTS id', (_name, table) => {
+		const offenders = Object.keys(table).filter((id) => id in FIXED_SHORTCUTS);
+
+		expect(offenders).toEqual([]);
+	});
+
+	it.each(VIM_TABLES)('%s ships no empty chord', (_name, table) => {
+		const offenders = Object.values(table)
+			.filter((override) => override.keys !== undefined && override.keys.length === 0)
+			.map((override) => override.id);
+
+		expect(offenders).toEqual([]);
+	});
+
+	it.each(VIM_TABLES)('%s never combines a Ctrl-family key with Meta', (_name, table) => {
+		const offenders = Object.values(table)
+			.filter((override) => {
+				const lower = (override.keys ?? []).map((k) => k.toLowerCase());
+				return lower.includes('meta') && (lower.includes('ctrl') || lower.includes('control'));
+			})
+			.map((override) => `${override.id} (${override.keys?.join('+')})`);
+
+		expect(offenders).toEqual([]);
+	});
+
+	it.each(VIM_TABLES)('%s ships no chord the OS or the app menu owns', (_name, table) => {
+		const offenders = Object.values(table)
+			.map((override) => ({ override, reserved: findReservedShortcutCombo(override.keys) }))
+			.filter(({ reserved }) => reserved !== null)
+			.map(
+				({ override, reserved }) =>
+					`${override.id} (${override.keys?.join('+')}): ${reserved?.reason}`
+			);
+
+		expect(offenders).toEqual([]);
+	});
+
+	/**
+	 * Escape never changes meaning, in either mode.
+	 *
+	 * The layer stack has first claim on it: `LayerStackProvider` listens in the
+	 * CAPTURE phase and calls `stopPropagation()`, so the topmost open layer
+	 * closes before the main keydown listener (BUBBLE phase) is reached at all.
+	 * A Vim binding on Escape would therefore be one of two bugs, both silent -
+	 * dead while anything is open, or stealing the keypress that closes it. The
+	 * in-field escape is `jk` precisely so that it never touches this.
+	 *
+	 * Checked on both triggers, because `SequenceMatcher.feed` short-circuits on
+	 * Escape before it ever looks at a step: a sequence step spelling Escape
+	 * would be unmatchable rather than merely wrong.
+	 */
+	it.each(VIM_TABLES)('%s binds Escape in no chord and no sequence step', (_name, table) => {
+		const namesEscape = (keys: readonly string[] | undefined) =>
+			(keys ?? []).some((key) => key.toLowerCase() === 'escape' || key.toLowerCase() === 'esc');
+		const offenders = Object.values(table)
+			.filter(
+				(override) =>
+					namesEscape(override.keys) || (override.sequence ?? []).some((step) => namesEscape(step))
+			)
+			.map((override) => override.id);
+
+		expect(offenders).toEqual([]);
+	});
+
+	/**
+	 * The resolver-free half of rule 3, "a displaced action always gets an
+	 * explicit Vim chord".
+	 *
+	 * A Vim chord taking a chord some default action holds is ALLOWED and is the
+	 * point of the override bucket (one mode is live at a time). What is not
+	 * allowed is taking it and leaving the other action to inherit nothing: the
+	 * override wins, so that action is unbound in Vim mode unless this file gives
+	 * it a chord of its own. The region family does exactly that to the five
+	 * Cmd+Shift+H/J/K/L actions, and each one appears in a Vim table with its own
+	 * Ctrl+Alt+Shift chord.
+	 *
+	 * `FIXED_SHORTCUTS` is the exception with no escape hatch: it is shared by
+	 * both modes and no override bucket may name it (the test above pins that),
+	 * so a Vim chord landing on one of its chords can never be resolved and is
+	 * always a bug.
+	 *
+	 * This is the table-level check. The resolved-set version, which also covers
+	 * a collision between two Vim chords, is `displaced` being empty in the
+	 * per-mode block below.
+	 */
+	it('gives every action a shipped Vim chord displaces a Vim chord of its own', () => {
+		const vimChords = VIM_TABLES.flatMap(([, table]) =>
+			Object.values(table).map((override) => ({ id: override.id, keys: override.keys ?? [] }))
+		);
+		// An id with a chord in EITHER bucket is resolved; `collectOverrideField`
+		// reads both, preferring the one mirroring the base map that declares it.
+		const rebound = new Set(vimChords.filter((vim) => vim.keys.length > 0).map((vim) => vim.id));
+		const defaults: [string, Record<string, Shortcut>][] = [
+			['DEFAULT_SHORTCUTS', DEFAULT_SHORTCUTS],
+			['TAB_SHORTCUTS', TAB_SHORTCUTS],
+			['FIXED_SHORTCUTS', FIXED_SHORTCUTS],
+		];
+
+		const unresolved: string[] = [];
+		for (const vim of vimChords) {
+			for (const [tableName, table] of defaults) {
+				for (const sc of Object.values(table)) {
+					// An action keeping its own chord in Vim mode displaces nothing.
+					if (sc.id === vim.id) continue;
+					if (!shortcutKeysCollide(sc.keys, vim.keys)) continue;
+					// Resolved: the displaced action is rebound in a Vim table. A
+					// FIXED_SHORTCUTS id never can be, so it is reported either way.
+					if (tableName !== 'FIXED_SHORTCUTS' && rebound.has(sc.id)) continue;
+					unresolved.push(`${vim.id} (${vim.keys.join('+')}) vs ${tableName}.${sc.id}`);
+				}
+			}
+		}
+
+		expect(
+			unresolved,
+			'These Vim chords take a chord another action holds in default mode and leave it unbound in Vim mode. Give the displaced action its own Vim chord and record it in the displacement table in vimShortcuts.ts.'
+		).toEqual([]);
+	});
+});
+
+/**
+ * Per-mode structural guard, computed over the EFFECTIVE binding set of each
+ * mode rather than over the tables.
+ *
+ * The rules here are the ones a table alone cannot answer, because each one
+ * depends on what a mode INHERITS. A mode's effective set is its override bucket
+ * plus the default chord for every action the bucket does not mention, so an
+ * override can take a chord some OTHER action inherits, and that action then
+ * holds nothing in this mode. Reading `VIM_SHORTCUTS` on its own shows a
+ * perfectly good chord and says nothing about the action it just unbound.
+ *
+ * `FIXED_SHORTCUTS` is part of every mode's set: it is not rebindable and no
+ * override bucket may name it, so both modes are matched against it as it
+ * ships and a mode chord that lands on one of its chords is a real collision.
+ *
+ * Every test but one runs over `KEYBOARD_MODES`, so a third mode is covered the
+ * day it is added, and later phases filling the Vim tables keep them honest: a
+ * new override that displaces an action fails here instead of reading as a dead
+ * key in the mode it was added for.
+ */
+describe('effective binding set, per keyboard mode', () => {
+	// The base maps, each mode's override bucket, and the assembly of the two are
+	// shared with `vimShortcuts.test.ts`, which runs the Vim-only guards over the
+	// same set. See `src/__tests__/helpers/shortcutModes.ts`.
+	const BASE = SHORTCUT_BASE_MAPS;
+	const OVERRIDES = MODE_OVERRIDES;
+	const effectiveActions = effectiveActionsForMode;
+
+	/**
+	 * Actions that ship with no chord at all, derived from the constants rather
+	 * than listed by hand so a new unassigned action needs no edit here.
+	 *
+	 * `keys: []` is the registered-but-unassigned convention: the action is in
+	 * Settings > Shortcuts and the command palette, waiting for a chord the user
+	 * picks (`openLeaderboard`, the four media player controls, the git actions).
+	 * These are the ONLY actions a mode may leave unbound.
+	 */
+	const SHIPS_UNASSIGNED = [
+		...Object.values(BASE.shortcuts),
+		...Object.values(BASE.tabShortcuts),
+		...Object.values(FIXED_SHORTCUTS),
+	]
+		.filter((sc) => sc.keys.length === 0)
+		.map((sc) => sc.id);
+
+	/** The ids a mode is allowed to leave unbound: ships unassigned, and this mode does not bind it. */
+	function expectedUnbound(mode: KeyboardMode): string[] {
+		const { vimShortcuts, vimTabShortcuts } = OVERRIDES[mode];
+		return SHIPS_UNASSIGNED.filter(
+			(id) => !vimShortcuts[id]?.keys?.length && !vimTabShortcuts[id]?.keys?.length
+		).sort();
+	}
+
+	it.each(KEYBOARD_MODES)('%s mode carries every action the tables declare', (mode) => {
+		// Sanity check: a resolver that dropped a map would make the tests below
+		// pass vacuously, and inheritance means the list is exact - a mode adds and
+		// removes no action, it only ever changes chords.
+		expect(
+			effectiveActions(mode)
+				.map((sc) => sc.id)
+				.sort()
+		).toEqual(
+			[
+				...Object.keys(BASE.shortcuts),
+				...Object.keys(BASE.tabShortcuts),
+				...Object.keys(FIXED_SHORTCUTS),
+			].sort()
+		);
+	});
+
+	it('gives the shipped Vim overrides the chord they ask for', () => {
+		// `prevTab` / `nextTab` are declared in DEFAULT_SHORTCUTS but overridden in
+		// VIM_TAB_SHORTCUTS, the crossing the resolver has to handle. If it only
+		// matched the tab bucket against TAB_SHORTCUTS these two would resolve to
+		// their default chords and Vim's tab walk would silently not exist.
+		const byId = new Map(effectiveActions('vim').map((sc) => [sc.id, sc.keys]));
+		const wrong = [...Object.values(VIM_SHORTCUTS), ...Object.values(VIM_TAB_SHORTCUTS)]
+			// An override that omits `keys` is the explicit spelling of "inherit the
+			// default-mode chord" (`goToTab1` and `goToLastTab` add a `g g` / `G`
+			// sequence and keep Cmd+1 / Cmd+0), so there is no chord to check. Only
+			// an override that ASKS for a chord has to get it.
+			.filter((override) => override.keys !== undefined)
+			.filter((override) => !shortcutKeysEqual(byId.get(override.id) ?? [], override.keys ?? []))
+			.map(
+				(override) =>
+					`${override.id}: ${byId.get(override.id)?.join('+')} !== ${override.keys?.join('+')}`
+			);
+
+		expect(wrong).toEqual([]);
+	});
+
+	it('gives the shipped Vim overrides the sequence they ask for, and leaves the chord alone', () => {
+		// The two triggers resolve INDEPENDENTLY, and this is the half with no
+		// shipped data behind it until now: an override spelling only a `sequence`
+		// must gain that sequence AND keep the chord it inherits. Resolving them
+		// together would make `g g` silently unbind Cmd+1.
+		const resolved = resolveEffectiveShortcuts(BASE, OVERRIDES.vim);
+		const byId = new Map(
+			[...Object.values(resolved.shortcuts), ...Object.values(resolved.tabShortcuts)].map((sc) => [
+				sc.id,
+				sc,
+			])
+		);
+
+		const wrong: string[] = [];
+		for (const override of [...Object.values(VIM_SHORTCUTS), ...Object.values(VIM_TAB_SHORTCUTS)]) {
+			if (override.sequence === undefined) continue;
+			const effective = byId.get(override.id);
+			if (!shortcutSequencesEqual(effective?.sequence, override.sequence)) {
+				wrong.push(`${override.id}: sequence not applied`);
+			}
+			// Sequence-only overrides keep the inherited chord rather than losing it.
+			if (override.keys === undefined && !effective?.keys.length) {
+				wrong.push(`${override.id}: a sequence override took away the inherited chord`);
+			}
+		}
+
+		expect(wrong).toEqual([]);
+	});
+
+	it.each(KEYBOARD_MODES)('%s mode leaves no action unreachable', (mode) => {
+		// The failure this catches: an override takes a chord another action
+		// inherits, the resolver reports that action in `displaced` and unbinds it,
+		// and nothing in the UI explains why a key that worked yesterday is dead.
+		// The fix is always to give the displaced action its own chord in the
+		// mode's table, never to drop the override.
+		const unbound = effectiveActions(mode)
+			.filter((sc) => sc.keys.length === 0)
+			.map((sc) => sc.id)
+			.sort();
+		const displaced = resolveEffectiveShortcuts(BASE, OVERRIDES[mode]).displaced;
+
+		expect(displaced, `${mode} mode overrides take a chord these actions inherit`).toEqual([]);
+		// Equality, not a subset: an action that GAINS a chord in this mode drops
+		// out of the expectation too, so the list stays exact as later phases bind
+		// the actions that ship unassigned.
+		expect(unbound, `unbound in ${mode} mode but not shipped unassigned`).toEqual(
+			expectedUnbound(mode)
+		);
+	});
+
+	it.each(KEYBOARD_MODES)('%s mode gives one chord to one action', (mode) => {
+		// Compared with `shortcutKeysCollide`, not key equality: Ctrl and Cmd are
+		// ONE modifier to `eventMatchesShortcutKeys`, so a Vim chord spelled
+		// `['Ctrl', 'o']` fights a default spelled `['Meta', 'o']` at runtime while
+		// reading as a different chord on the page.
+		const groups: { keys: string[]; ids: string[] }[] = [];
+		for (const sc of effectiveActions(mode)) {
+			// An unassigned action claims no keypress and cannot collide.
+			if (sc.keys.length === 0) continue;
+			const group = groups.find((g) => shortcutKeysCollide(g.keys, sc.keys));
+			if (group) group.ids.push(sc.id);
+			else groups.push({ keys: sc.keys, ids: [sc.id] });
+		}
+
+		const unexplained = groups
+			.filter((g) => g.ids.length > 1)
+			// The allowlist must match EXACTLY, in every mode: a group gaining a
+			// member is a new decision about scope and has to be made on purpose.
+			.filter((g) => !isIntentionallySharedByIds(g.ids))
+			.map((g) => `${g.keys.join('+')} is claimed by: ${g.ids.join(', ')}`);
+
+		expect(
+			unexplained,
+			`Two actions on one keypress in ${mode} mode: the earlier branch in useMainKeyboardHandler wins and the other silently never fires.`
+		).toEqual([]);
+	});
+});
+
+/**
  * Unbound ids are only useful if the app can act on them once a user binds a
  * key. `showSnoozeList` shipped registered-but-unhandled: it appeared in the
  * overlay, counted toward the total, and binding a key to it did nothing. This
@@ -369,6 +800,22 @@ describe('every registered action has a handler', () => {
 		'clearAllNotifications',
 		'toggleInAppToasts',
 		'openThemeSettings',
+		// Phase 03's region/zen family. Registered unassigned so Settings ->
+		// Shortcuts and Cmd+K can reach them and Vim mode can bind them; these rows
+		// are what pin that binding a key to one actually does something.
+		'focusRegionLeft',
+		'focusRegionRight',
+		'focusRegionUp',
+		'focusRegionDown',
+		'growRegion',
+		'shrinkRegion',
+		'toggleZenMode',
+		// Phase 05's leader. Unassigned in default mode because every action it
+		// arms already has a chord there, so the leader would cost a key and buy
+		// nothing; Vim mode binds it to Ctrl+;. The handler row below is what
+		// pins that a default-mode user who binds it in Settings gets a working
+		// leader rather than a dead chord.
+		'deckMode',
 	];
 
 	it('registers each unbound id with empty keys', () => {
@@ -378,13 +825,93 @@ describe('every registered action has a handler', () => {
 		}
 	});
 
+	/**
+	 * Ids the handler reaches through an imported CONSTANT instead of a string
+	 * literal, mapped to the symbol it spells instead.
+	 *
+	 * `deckMode` is the only one so far, and deliberately: three places need the
+	 * leader's id for three purposes (the handler matches it, `trackShortcut`
+	 * records it, the hint bar looks up its live chord), so `deckMode.ts`
+	 * exports it as `DECK_MODE_LEADER_ID` rather than having each spell the
+	 * string. Searching for the literal would push the handler back to a fourth
+	 * copy of it to satisfy a test.
+	 */
+	const DISPATCHED_BY_CONSTANT: Record<string, string> = {
+		deckMode: 'DECK_MODE_LEADER_ID',
+	};
+
 	it('handles each unbound id somewhere in the keyboard handler', () => {
 		const handler = readFileSync(
 			join(RENDERER_ROOT, 'hooks/keyboard/useMainKeyboardHandler.ts'),
 			'utf-8'
 		);
-		const unhandled = UNBOUND_IDS.filter((id) => !handler.includes(`'${id}'`));
+		const unhandled = UNBOUND_IDS.filter(
+			(id) =>
+				!handler.includes(`'${id}'`) &&
+				!(DISPATCHED_BY_CONSTANT[id] && handler.includes(DISPATCHED_BY_CONSTANT[id]))
+		);
 		expect(unhandled, 'registered but never dispatched').toEqual([]);
+	});
+
+	it('resolves each by-constant alias to the id it claims to spell', () => {
+		// Without this the map above would be a way to silence the check: a typo
+		// in the alias, or an alias pointing at the wrong action, would read as
+		// "handled". The constants file is the authority on what the symbol means.
+		expect(DECK_MODE_LEADER_ID).toBe('deckMode');
+		expect(Object.keys(DISPATCHED_BY_CONSTANT)).toEqual(['deckMode']);
+	});
+});
+
+/**
+ * Phase 03's nine actions - four region focus, two region resize, zen, and the
+ * two tab nudges - all ship REGISTERED BUT UNASSIGNED. That is the whole
+ * reason the phase could promise default mode behaves exactly as it did
+ * before: an action with no chord claims no keypress, so the only routes to it
+ * are Settings > Shortcuts, Quick Actions, and (from Phase 04) Vim mode.
+ *
+ * The per-mode reachability check above DERIVES its exemption list from
+ * `keys.length === 0` on these same tables, which is what keeps that list
+ * maintenance-free. The flip side is that its default-mode leg cannot notice
+ * one of these actions quietly GAINING a chord: the id leaves both sides of
+ * the equality at once and the assertion still passes. Naming the family here
+ * is what turns the promise into something a later change has to argue with.
+ *
+ * `moveTabLeft` / `moveTabRight` live in `TAB_SHORTCUTS`, so the `UNBOUND_IDS`
+ * block above - which reads `DEFAULT_SHORTCUTS` - cannot hold them. These rows
+ * are their only `keys: []` pin.
+ */
+describe("Phase 03's region, resize, zen, and tab-nudge actions ship unassigned", () => {
+	const REGION_AND_ZEN_IDS = [
+		'focusRegionLeft',
+		'focusRegionRight',
+		'focusRegionUp',
+		'focusRegionDown',
+		'growRegion',
+		'shrinkRegion',
+		'toggleZenMode',
+	];
+	const TAB_NUDGE_IDS = ['moveTabLeft', 'moveTabRight'];
+
+	it('registers all nine with no chord, in the table each one belongs to', () => {
+		const problems: string[] = [];
+		const check = (id: string, table: Record<string, Shortcut>, tableName: string) => {
+			const shortcut = table[id];
+			if (!shortcut) problems.push(`${id} is missing from ${tableName}`);
+			else if (shortcut.keys.length)
+				problems.push(`${id} ships bound to ${shortcut.keys.join('+')}`);
+		};
+
+		for (const id of REGION_AND_ZEN_IDS) {
+			check(id, DEFAULT_SHORTCUTS as Record<string, Shortcut>, 'DEFAULT_SHORTCUTS');
+		}
+		for (const id of TAB_NUDGE_IDS) {
+			check(id, TAB_SHORTCUTS as Record<string, Shortcut>, 'TAB_SHORTCUTS');
+		}
+
+		expect(
+			problems,
+			'A default chord for one of these changes what a default-mode keypress does, which Phase 03 promised not to do - and it is also what makes the action exempt from the per-mode reachability check above. Bind it in the Vim tables instead, or change this list on purpose.'
+		).toEqual([]);
 	});
 });
 
@@ -485,5 +1012,304 @@ describe('shortcut labels carry their family keyword', () => {
 		// one entry that started this whole change unguarded.
 		expect(palette).toContain("'Git: Create Pull Request'");
 		expect(palette).toContain('`Git: Create Pull Request (${gitActions.branch})`');
+	});
+});
+
+/**
+ * DECK MODE's key table.
+ *
+ * `src/renderer/constants/deckMode.ts` imports nothing but the shared types, on
+ * purpose: it is data the hint bar renders during a keydown, so it must not pull
+ * a store or a service into its import graph, and it cannot self-check its own
+ * action ids without creating a cycle. This is where that check lives instead.
+ *
+ * The invariant that matters is the id. A Deck row's `id` IS the action id it
+ * fires, which is what makes `focusRegionLeft` through Deck `h` and
+ * `focusRegionLeft` through its chord count as ONE used action for keyboard
+ * mastery. A typo or a renamed action would leave a row that fires nothing and
+ * a hint bar that advertises it, with no runtime error anywhere.
+ */
+describe('Deck mode key table', () => {
+	const ACTION_TABLES: Record<string, Record<string, Shortcut>> = {
+		DEFAULT_SHORTCUTS: DEFAULT_SHORTCUTS as Record<string, Shortcut>,
+		TAB_SHORTCUTS: TAB_SHORTCUTS as Record<string, Shortcut>,
+	};
+
+	function declaredAction(id: string): Shortcut | undefined {
+		for (const table of Object.values(ACTION_TABLES)) {
+			if (table[id]) return table[id];
+		}
+		return undefined;
+	}
+
+	it('names a real action, with the identical label, for every key', () => {
+		const problems = DECK_MODE_KEYS.flatMap((row) => {
+			const action = declaredAction(row.id);
+			if (!action) {
+				return [`${row.id} (Deck key ${row.keys.join('')}) is in neither base table`];
+			}
+			return action.label === row.label
+				? []
+				: [
+						`${row.id} is labelled "${row.label}" in the Deck table but "${action.label}" in its base table`,
+					];
+		});
+
+		expect(
+			problems,
+			"A Deck row's id must be the action id it fires and its label must be that action's label, so the hint bar, Settings -> Shortcuts, and the mastery count all say the same thing about one action."
+		).toEqual([]);
+	});
+
+	it('is not a FIXED_SHORTCUTS id', () => {
+		// A fixed shortcut is not rebindable and is not merged into the maps
+		// `isShortcut` resolves against, so an action reachable only there has no
+		// handler a Deck key could reach.
+		const fixed = DECK_MODE_KEYS.filter((row) => FIXED_SHORTCUTS[row.id]).map((row) => row.id);
+		expect(fixed, 'Deck rows pointing at FIXED_SHORTCUTS ids').toEqual([]);
+	});
+
+	it('gives each key to exactly one action, and each action one key', () => {
+		const keys = DECK_MODE_KEYS.map((row) => row.keys.join('+'));
+		const ids = DECK_MODE_KEYS.map((row) => row.id);
+		expect(new Set(keys).size, `duplicate Deck keys in ${keys.join(', ')}`).toBe(keys.length);
+		expect(new Set(ids).size, `duplicate Deck action ids in ${ids.join(', ')}`).toBe(ids.length);
+	});
+
+	it('binds a single BARE key per row', () => {
+		// The leader is the chord. Once armed, the next keystroke is a lone key by
+		// definition, so a modifier in a row would describe a binding the armed
+		// matcher can never produce.
+		const modifiers = ['Meta', 'Ctrl', 'Control', 'Alt', 'Shift'];
+		const bad = DECK_MODE_KEYS.filter(
+			(row) => row.keys.length !== 1 || modifiers.includes(row.keys[0])
+		).map((row) => `${row.id}: ${row.keys.join('+')}`);
+		expect(bad, 'Deck rows that are not a single bare key').toEqual([]);
+	});
+
+	it('leaves the multiplexer split keys free', () => {
+		// `v` and `s` split a pane in every terminal multiplexer, and Maestro has
+		// no split to fire. They stay unbound so a real split action can take the
+		// key a tmux user already expects. See the deckMode.ts header.
+		const taken = DECK_MODE_KEYS.filter((row) => row.keys[0] === 'v' || row.keys[0] === 's');
+		expect(taken.map((row) => `${row.keys[0]} -> ${row.id}`)).toEqual([]);
+	});
+
+	it('keeps the cancel row out of the firing rows', () => {
+		// Escape fires nothing, so it must be unreachable through the lookup that
+		// feeds `trackShortcut` and the action dispatch.
+		expect(DECK_MODE_KEYS.some((row) => row.id === DECK_MODE_CANCEL_ID)).toBe(false);
+		expect(declaredAction(DECK_MODE_CANCEL_ID)).toBeUndefined();
+		expect(findDeckModeAction('Escape')).toBeUndefined();
+		expect(isDeckModeCancelKey('Escape')).toBe(true);
+	});
+
+	it('draws the firing rows then cancel, in table order', () => {
+		expect(DECK_MODE_HINT_ROWS.map((row) => row.id)).toEqual([
+			...DECK_MODE_KEYS.map((row) => row.id),
+			DECK_MODE_CANCEL_ID,
+		]);
+	});
+
+	it('resolves a keypress to its row, space and a stray Shift included', () => {
+		expect(findDeckModeAction('h')?.id).toBe('focusRegionLeft');
+		// Shift reports the capital, and the table has no capital rows for it to
+		// select between, so `H` is still `h` rather than a miss that disarms.
+		expect(findDeckModeAction('H')?.id).toBe('focusRegionLeft');
+		expect(findDeckModeAction('7')?.id).toBe('goToTab7');
+		// `event.key` for the space bar is a single space, never the word.
+		expect(findDeckModeAction(' ')?.id).toBe('quickAction');
+		expect(deckModeKeyName(' ')).toBe('Space');
+		expect(findDeckModeAction('Space')?.id).toBe('quickAction');
+		expect(findDeckModeAction('q')).toBeUndefined();
+	});
+
+	it('spells the leader id, and keeps it out of FIXED_SHORTCUTS', () => {
+		// The leader is an ordinary rebindable action, so it must not be a fixed
+		// shortcut: those are not merged into the maps `isShortcut` resolves
+		// against and cannot be rebound in either mode. Its registration in
+		// DEFAULT_SHORTCUTS is asserted by the per-mode checks above once the entry
+		// lands, which is what makes the leader - unlike the Deck rows - answer to
+		// the collision and reserved-chord guards.
+		expect(DECK_MODE_LEADER_ID).toBe('deckMode');
+		expect(FIXED_SHORTCUTS[DECK_MODE_LEADER_ID]).toBeUndefined();
+	});
+
+	it('registers the leader in DEFAULT_SHORTCUTS, unassigned', () => {
+		// Registering it is what puts it in Settings -> Shortcuts, the help sheet
+		// and Cmd+K, and what makes it rebindable in either mode. Unassigned is
+		// what keeps default mode behaving exactly as it did: an action with no
+		// chord claims no keypress, so shipping the leader costs a default-mode
+		// user nothing. The chord lives in the Vim table, which
+		// `vimShortcuts.test.ts` pins.
+		const leader = (DEFAULT_SHORTCUTS as Record<string, Shortcut>)[DECK_MODE_LEADER_ID];
+		expect(leader, 'the Deck leader is not registered in DEFAULT_SHORTCUTS').toBeDefined();
+		expect(leader.id).toBe(DECK_MODE_LEADER_ID);
+		expect(leader.keys, 'the leader must ship unbound in default mode').toEqual([]);
+		// No sequence either. A sequence is gated on normal mode (focus outside a
+		// text field), and arming Deck mode from inside the composer is the one
+		// thing the mode exists for, so a sequence trigger would be dead weight
+		// exactly where the leader is needed.
+		expect(leader.sequence).toBeUndefined();
+	});
+
+	it('keeps the leader out of the firing rows it arms', () => {
+		// The leader is a chord the global matcher sees; the rows are bare keys
+		// live for one keystroke. A row carrying the leader's own id would mean
+		// arming the mode twice and firing nothing.
+		expect(DECK_MODE_KEYS.some((row) => row.id === DECK_MODE_LEADER_ID)).toBe(false);
+		expect(findDeckModeAction(';')).toBeUndefined();
+	});
+});
+
+/**
+ * THE CLI READS THESE TABLES, so their import graph is part of their contract.
+ *
+ * `maestro-cli open <surface>` prints the hotkey for a surface it can open, and
+ * it resolves it from the same tables and the same resolver the renderer uses -
+ * that is what stops the CLI's answer and the app's answer from drifting. The
+ * price is that nothing on that path may reach a store, a component, a React
+ * hook, or the DOM: `maestro-cli` runs under plain node with no `window`, and
+ * an import of `../types` (which pulls in renderer-only, DOM-dependent modules)
+ * breaks `npm run build:cli` rather than failing a test. Each of the five entry
+ * files below says so in its own header comment; this is where the claim is
+ * checked.
+ *
+ * The walk is TRANSITIVE, because that is where this goes wrong. Every one of
+ * the five is obviously clean on its own line of imports, and would stay
+ * obviously clean while a module two hops down grew a `useSettingsStore`.
+ *
+ * `npm run lint` (which type-checks `tsconfig.cli.json`) and `npm run build:cli`
+ * are the other half of this and catch it at the point of breakage; this catches
+ * it at the point of the EDIT, and names which hop introduced it.
+ */
+describe('the shortcut tables the CLI reads', () => {
+	const SRC_ROOT = join(__dirname, '../../..');
+
+	/** The five modules `src/cli/commands/open-modal.ts` resolves a chord through. */
+	const CLI_ENTRY_POINTS = [
+		'renderer/constants/shortcuts.ts',
+		'renderer/constants/vimShortcuts.ts',
+		'renderer/constants/deckMode.ts',
+		'shared/effectiveShortcuts.ts',
+		'renderer/utils/shortcutResolve.ts',
+	];
+
+	/**
+	 * Source with comments and string literals removed, leaving identifiers.
+	 *
+	 * Both halves are needed, and each was a false positive first. Every module
+	 * on this path explains at length WHY it may not touch the DOM, so the
+	 * explanation reads as the violation; and `RESERVED_SHORTCUT_COMBOS` carries
+	 * human-readable reasons like "the app menu minimizes the window", which is
+	 * prose about a window rather than a reference to one.
+	 *
+	 * Crude on purpose: it does not understand a quote inside a comment or a
+	 * comment marker inside a string. The only question asked of the result is
+	 * whether a forbidden IDENTIFIER survives, and over-stripping can only turn
+	 * a real hit into a miss that `npm run build:cli` then catches.
+	 */
+	function identifiersOnly(src: string): string {
+		return src
+			.replace(/\/\*[\s\S]*?\*\//g, ' ')
+			.replace(/\/\/[^\n]*/g, ' ')
+			.replace(/'(?:[^'\\\n]|\\.)*'/g, "''")
+			.replace(/"(?:[^"\\\n]|\\.)*"/g, '""')
+			.replace(/`(?:[^`\\]|\\.)*`/g, '``');
+	}
+
+	/**
+	 * Every module reachable from `entries` by relative import, as
+	 * `src/`-relative paths, with the hop that pulled each one in.
+	 *
+	 * Resolution mirrors what the bundler does for a relative specifier: the
+	 * `.ts` file, then `.tsx`, then the directory's `index.ts`. A specifier that
+	 * resolves to none of those is reported rather than skipped, so a typo
+	 * cannot look like a clean graph.
+	 */
+	function importGraph(entries: string[]): { modules: Map<string, string>; unresolved: string[] } {
+		const modules = new Map<string, string>([...entries.map((e) => [e, '(entry point)'] as const)]);
+		const unresolved: string[] = [];
+		const queue = [...entries];
+		while (queue.length > 0) {
+			const rel = queue.shift() as string;
+			const src = readFileSync(join(SRC_ROOT, rel), 'utf8');
+			for (const match of src.matchAll(/\bfrom\s+'(\.[^']*)'/g)) {
+				const spec = match[1];
+				const candidates = [`${spec}.ts`, `${spec}.tsx`, `${spec}/index.ts`];
+				const found = candidates
+					.map((candidate) => relative(SRC_ROOT, resolve(dirname(join(SRC_ROOT, rel)), candidate)))
+					.find((candidate) => existsSync(join(SRC_ROOT, candidate)));
+				if (!found) {
+					unresolved.push(`${rel} -> ${spec}`);
+					continue;
+				}
+				if (modules.has(found)) continue;
+				modules.set(found, rel);
+				queue.push(found);
+			}
+		}
+		return { modules, unresolved };
+	}
+
+	const { modules, unresolved } = importGraph(CLI_ENTRY_POINTS);
+
+	it('resolves every relative import, so the walk below is complete', () => {
+		expect(unresolved, 'unresolvable relative imports on the CLI shortcut path').toEqual([]);
+		// A graph that collapsed to the entry points alone would pass every
+		// assertion below without having walked anything.
+		expect(modules.size).toBeGreaterThan(CLI_ENTRY_POINTS.length);
+	});
+
+	it('reaches no store, component, hook, context or service', () => {
+		// Directories, not symbols: the point is that the CLI path stays inside
+		// pure tables, pure helpers, and shared types. `renderer/constants` and
+		// the one named `renderer/utils` module are in because they are tables
+		// and a pure lookup; the rest of `renderer/utils` is not, because plenty
+		// of it reaches `window`.
+		const ALLOWED = [
+			/^shared\//,
+			/^renderer\/constants\//,
+			/^renderer\/utils\/shortcutResolve\.ts$/,
+		];
+		const offenders = [...modules]
+			.filter(([file]) => !ALLOWED.some((allowed) => allowed.test(file)))
+			.map(([file, via]) => `${file} (pulled in by ${via})`);
+
+		expect(
+			offenders,
+			'maestro-cli resolves a surface hotkey through these modules under plain node. A store, component, hook, or service on this path breaks `npm run build:cli`.'
+		).toEqual([]);
+	});
+
+	it('names no DOM or Electron global anywhere on the path', () => {
+		// `window` and `document` do not exist in the CLI process, and
+		// `electron` is not installed there. A top-level reference is a crash on
+		// import; one inside a function is a crash the first time a chord is
+		// printed, which is worse because it looks like a chord bug.
+		//
+		// Comments and string literals are stripped first - see
+		// `identifiersOnly` for the two false positives that cost.
+		const FORBIDDEN = /\b(?:window|document|navigator|localStorage|electron)\b/;
+		const offenders = [...modules.keys()]
+			.filter((file) => FORBIDDEN.test(identifiersOnly(readFileSync(join(SRC_ROOT, file), 'utf8'))))
+			.sort();
+
+		expect(offenders, 'DOM or Electron globals on the CLI shortcut path').toEqual([]);
+	});
+
+	it('imports no npm package at all on this path', () => {
+		// Not a style rule: a bare specifier is how `react`, `zustand` and
+		// `electron` get in, and all three are either absent or pointless in the
+		// CLI process. The five entry points reach only each other and
+		// `src/shared/`, so the honest assertion is zero.
+		const offenders: string[] = [];
+		for (const file of modules.keys()) {
+			const src = readFileSync(join(SRC_ROOT, file), 'utf8');
+			for (const match of src.matchAll(/\bfrom\s+'([^.'][^']*)'/g)) {
+				offenders.push(`${file} -> ${match[1]}`);
+			}
+		}
+		expect(offenders, 'package imports on the CLI shortcut path').toEqual([]);
 	});
 });

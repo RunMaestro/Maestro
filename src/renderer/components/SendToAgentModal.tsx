@@ -34,6 +34,7 @@ import { logger } from '../utils/logger';
 import { ResizeHandles } from './ui/ResizeHandles';
 import { ShortcutHint } from './ui/ShortcutHint';
 import { useSettingsStore } from '../stores/settingsStore';
+import { selectActiveShortcuts } from '../stores/settingsShortcutsSlice';
 import { eventMatchesShortcutKeys } from '../utils/shortcutMatch';
 
 /**
@@ -151,7 +152,9 @@ export function SendToAgentModal({
 
 	// Force Send to a busy agent is gated on the same setting as the queue's Force Send
 	const forcedParallelEnabled = useSettingsStore((s) => s.forcedParallelExecution);
-	const forceSendKeys = useSettingsStore((s) => s.shortcuts.forcedParallelSend?.keys);
+	// Active-mode map: this chord is both matched below and drawn as a hint, so
+	// reading the default bucket would advertise a chord that does nothing.
+	const forceSendKeys = useSettingsStore((s) => selectActiveShortcuts(s).forcedParallelSend?.keys);
 
 	// Sending state
 	const [isSending, setIsSending] = useState(false);

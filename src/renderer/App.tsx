@@ -13,6 +13,8 @@ import { isWebDesktop } from './utils/runtimeContext';
 import { isCoarsePointer } from './utils/touch';
 import { useEdgeSwipeHandlers } from './hooks/utils/useEdgeSwipeHandlers';
 import { useEventListener } from './hooks/utils/useEventListener';
+import { collectSequenceBindings } from './utils/shortcutSequence';
+import { parseInsertEscapeSequence } from './utils/vimInsertEscape';
 import { slashCommands } from './slashCommands';
 import { AppModals } from './components/AppModals';
 import { AppStandaloneModals } from './components/AppStandaloneModals';
@@ -42,6 +44,7 @@ import {
 	useBatchedSessionUpdates,
 	// Settings
 	useSettings,
+	useActiveShortcuts,
 	useDebouncedPersistence,
 	// Session management
 	useActivityTracker,
@@ -566,10 +569,40 @@ function MaestroConsoleInner() {
 	}, [encoreFeatures.concerto]);
 
 	// --- KEYBOARD SHORTCUT HELPERS ---
+	// Matched against the LIVE keyboard mode's EFFECTIVE set, never the
+	// `shortcuts` / `tabShortcuts` buckets directly. In a non-default mode those
+	// are different maps, and matching the bucket would fire chords the user
+	// cannot see in Settings while the ones they can see did nothing. The maps
+	// are identity-stable across unrelated settings changes, so this costs no
+	// extra renders.
+	const { shortcuts: activeShortcuts, tabShortcuts: activeTabShortcuts } = useActiveShortcuts();
 	const { isShortcut, isTabShortcut, isPaneShortcut } = useKeyboardShortcutHelpers({
-		shortcuts,
-		tabShortcuts,
+		shortcuts: activeShortcuts,
+		tabShortcuts: activeTabShortcuts,
 	});
+	// The same effective maps, flattened to the actions that carry a key
+	// sequence, for the sequence matcher in `useMainKeyboardHandler`. It travels
+	// on the keyboard context rather than through `useKeyboardShortcutHelpers`:
+	// that hook is a pure per-event lookup shared with surfaces that match a
+	// single chord, and a sequence needs the whole list plus memory of the keys
+	// before this one. Memoized on the maps, which are identity-stable across
+	// unrelated settings changes, so the list is rebuilt only when a binding is.
+	const sequenceBindings = useMemo(
+		() => collectSequenceBindings(activeShortcuts, activeTabShortcuts),
+		[activeShortcuts, activeTabShortcuts]
+	);
+	// `jk`, Vim mode's way out of a text field. Null in default mode and null
+	// when the setting is off or unusable, which is the whole gate: the keydown
+	// handler does nothing at all when this is null, so the feature cannot cost
+	// a default-mode user a keystroke. Parsed here rather than per keydown
+	// because the result holds the matcher's binding array, and a fresh array
+	// every keypress would be an allocation on the hottest path in the app.
+	const keyboardMode = useSettingsStore((s) => s.keyboardMode);
+	const vimInsertEscapeSequence = useSettingsStore((s) => s.vimInsertEscapeSequence);
+	const insertEscape = useMemo(
+		() => (keyboardMode === 'vim' ? parseInsertEscapeSequence(vimInsertEscapeSequence) : null),
+		[keyboardMode, vimInsertEscapeSequence]
+	);
 
 	// --- SESSION STATE (migrated from useSession() to direct useSessionStore selectors) ---
 	// Reactive values - each selector triggers re-render only when its specific value changes
@@ -2821,6 +2854,12 @@ function MaestroConsoleInner() {
 		isShortcut,
 		isTabShortcut,
 		isPaneShortcut,
+		// The live mode's key sequences, read by the sequence matcher in
+		// useMainKeyboardHandler before it runs the chord ladder.
+		sequenceBindings,
+		// The in-field escape (`jk`), read by the same handler above the layer
+		// guard. Null unless Vim mode is live and the setting parses.
+		insertEscape,
 		tilingShortcuts,
 		handleNavBack,
 		handleNavForward,
@@ -2868,6 +2907,10 @@ function MaestroConsoleInner() {
 			return computeCanSummarizeActiveTab();
 		},
 		summarizeAndContinue: handleSummarizeAndContinue,
+
+		// Agent-level interrupt, for a user who bound the (unbound by default)
+		// Stop Turn action. The same callback the red Stop pill runs.
+		handleInterrupt,
 
 		// Keyboard mastery gamification
 		recordShortcutUsage,

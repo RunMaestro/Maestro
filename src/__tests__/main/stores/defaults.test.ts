@@ -14,6 +14,7 @@ import {
 } from '../../../main/stores/defaults';
 import { MAESTRO_FONT_STACK } from '../../../shared/fontStack';
 import { DEFAULT_CUE_HISTORY_RETENTION_DAYS } from '../../../shared/cue/retention';
+import { SETTINGS_METADATA } from '../../../shared/settingsMetadata';
 
 describe('stores/defaults', () => {
 	describe('resolveConfiguredShell', () => {
@@ -128,6 +129,40 @@ describe('stores/defaults', () => {
 
 		it('should have empty shortcuts by default', () => {
 			expect(SETTINGS_DEFAULTS.shortcuts).toEqual({});
+		});
+
+		it('should have empty Vim override buckets by default', () => {
+			// Empty on DISK, deliberately: the shipped Vim chords live in
+			// `VIM_SHORTCUTS` / `VIM_TAB_SHORTCUTS` and are merged in by the
+			// renderer slice, so only a user edit ever puts a key here. Seeding
+			// the shipped table into the store default would freeze whatever
+			// chords shipped that day for everyone who has ever opened the
+			// Shortcuts tab.
+			expect(SETTINGS_DEFAULTS.vimShortcuts).toEqual({});
+			expect(SETTINGS_DEFAULTS.vimTabShortcuts).toEqual({});
+		});
+
+		it('registers every shortcut bucket in the settings metadata', () => {
+			// `maestro-cli settings list` reads SETTINGS_METADATA, so a bucket
+			// with a default here and no metadata entry is invisible to the CLI.
+			for (const key of ['shortcuts', 'vimShortcuts', 'vimTabShortcuts'] as const) {
+				expect(SETTINGS_METADATA[key]).toBeDefined();
+				expect(SETTINGS_METADATA[key].default).toEqual(SETTINGS_DEFAULTS[key]);
+			}
+		});
+
+		it('agrees with the metadata on every keyboard-mode setting', () => {
+			// Three files state each of these defaults (here, the metadata, and
+			// the renderer slice) and only this check makes them one value. A
+			// disagreement is invisible until a user who never touched the
+			// setting gets one answer from the CLI and another from the app.
+			for (const key of ['keyboardMode', 'vimInsertEscapeSequence', 'vimEditorEnabled'] as const) {
+				expect(SETTINGS_METADATA[key]).toBeDefined();
+				expect(SETTINGS_METADATA[key].default).toEqual(SETTINGS_DEFAULTS[key]);
+			}
+			// Spelled out as well as compared, so renaming both sides in lockstep
+			// to the wrong value still fails.
+			expect(SETTINGS_DEFAULTS.vimEditorEnabled).toBe(true);
 		});
 
 		it('should have correct default fontSize', () => {

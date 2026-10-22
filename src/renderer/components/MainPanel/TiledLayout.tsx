@@ -27,6 +27,7 @@ import { TerminalOutput, type TerminalOutputProps } from '../TerminalOutput';
 import { WizardIndicator } from '../SessionList/WizardIndicator';
 import { hasDraft } from '../../utils/tabHelpers';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { selectActiveShortcuts } from '../../stores/settingsShortcutsSlice';
 import { useModalStore } from '../../stores/modalStore';
 import { requestBreakApartTabGroup } from '../../services/tabGroupConfirm';
 import { useUIStore } from '../../stores/uiStore';
@@ -312,7 +313,9 @@ function TiledFilePane({
 	theme: Theme;
 	actions: PaneFileActions | null;
 }) {
-	const shortcuts = useSettingsStore((s) => s.shortcuts);
+	// The LIVE mode's effective map, as in MainPanelContent: this prop is both
+	// matched against and displayed by the file preview.
+	const shortcuts = useSettingsStore(selectActiveShortcuts);
 	// Subscribe to THIS tab via the session store so edit-mode / edit-content / tier /
 	// html-mode changes re-render the pane (the session prop is a snapshot that alone
 	// wouldn't update). The tabStore setters below all mutate the ACTIVE session's file

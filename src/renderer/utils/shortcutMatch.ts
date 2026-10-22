@@ -38,19 +38,7 @@ export interface ShortcutKeyEvent {
 	code?: string;
 }
 
-/** Shift+number produces a symbol on a US layout. */
-const SHIFT_NUMBER_MAP: Record<string, string> = {
-	'!': '1',
-	'@': '2',
-	'#': '3',
-	$: '4',
-	'%': '5',
-	'^': '6',
-	'&': '7',
-	'*': '8',
-	'(': '9',
-	')': '0',
-};
+import { SHIFT_REWRITTEN_KEYS } from '../../shared/shortcutKeys';
 
 /** `e.code` values for punctuation keys, mapped back to their characters. */
 const CODE_TO_KEY: Record<string, string> = {
@@ -93,12 +81,15 @@ export function eventMatchesShortcutKeys(e: ShortcutKeyEvent, keys: string[] | u
 
 	const mainKey = wanted[wanted.length - 1];
 
-	// Shift-rewritten punctuation: the binding names the unshifted character.
-	if (mainKey === '[' && (key === '[' || key === '{')) return true;
-	if (mainKey === ']' && (key === ']' || key === '}')) return true;
-	if (mainKey === ',' && (key === ',' || key === '<')) return true;
-	if (mainKey === '.' && (key === '.' || key === '>')) return true;
-	if (SHIFT_NUMBER_MAP[key] === mainKey) return true;
+	// Shift-rewritten punctuation and digits: the binding names the unshifted
+	// character, and the event reports the produced one. The identity cases
+	// (`[` for `[`) fall through to the plain compare at the end.
+	//
+	// Read from the shared table so the collision checks in `shortcutKeys.ts`
+	// fold exactly the pairs this accepts: a chord those two disagree about is
+	// one the recorder reports as free and the matcher then answers for two
+	// actions at once.
+	if (SHIFT_REWRITTEN_KEYS[key] === mainKey) return true;
 
 	// Alt-rewritten characters: trust the physical key instead.
 	if (e.altKey && e.code) {

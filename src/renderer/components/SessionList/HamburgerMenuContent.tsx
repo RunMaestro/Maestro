@@ -21,11 +21,16 @@ import {
 	LogOut,
 	MessageCircle,
 	Gauge,
+	ToggleLeft,
+	ToggleRight,
+	Maximize2,
+	Minimize2,
 } from 'lucide-react';
 import type { Theme } from '../../types';
 import { ShortcutHint } from '../ui/ShortcutHint';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { getModalActions } from '../../stores/modalStore';
+import { useUIStore } from '../../stores/uiStore';
 import { useThroughputGaugeStore } from '../../stores/throughputGaugeStore';
 import { buildMaestroUrl } from '../../utils/buildMaestroUrl';
 import { openUiSurface } from '../../utils/openUiSurface';
@@ -34,6 +39,13 @@ import { isWebDesktop } from '../../utils/runtimeContext';
 import { canOpenComputerHistory } from '../../utils/computerHistoryAvailability';
 import { currentWebLoginUser, signOutWebLogin } from '../../services/webLoginSession';
 import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
+import {
+	KEYBOARD_MODE_TOGGLE_KEYS,
+	keyboardModeToggleShadow,
+	nextKeyboardMode,
+	switchKeyboardMode,
+} from '../../services/keyboardMode';
+import { KEYBOARD_MODE_LABELS } from '../../../shared/shortcut-types';
 
 /** Stable fallback so the selector never hands React a fresh array. */
 const NO_QUICK_CHAT_HOTKEY: string[] = [];
@@ -56,6 +68,10 @@ export function HamburgerMenuContent({
 	const shortcuts = useSettingsStore((s) => s.shortcuts);
 	const encoreFeatures = useSettingsStore((s) => s.encoreFeatures);
 	const notificationCenterEnabled = useSettingsStore((s) => s.notificationCenterEnabled);
+	const keyboardMode = useSettingsStore((s) => s.keyboardMode);
+	// Subscribed, not read once: the row names which way it will move, and the
+	// chord that put the window into zen can fire while this menu is open.
+	const zenMode = useUIStore((s) => s.zenMode);
 	const quickChatHotkey =
 		useSettingsStore((s) => s.quickChatSettings?.hotkey) ?? NO_QUICK_CHAT_HOTKEY;
 	// A phone has no keyboard and no room for a guided tour's anchored
@@ -204,6 +220,71 @@ export function HamburgerMenuContent({
 						</div>
 					</div>
 					<ShortcutHint theme={theme} keys={shortcuts.help?.keys ?? []} />
+				</button>
+			)}
+			{/* The mode every chord in the app belongs to, switchable without
+			    opening Settings. Row absent on a phone for the same reason the
+			    shortcut list above it is: there is no keyboard to put in a mode.
+			    The chord badge is dropped when another action's binding has taken
+			    Opt+Cmd+V, since the toggle handler stands down in that case. */}
+			{!phone && (
+				<button
+					onClick={() => {
+						switchKeyboardMode();
+						setMenuOpen(false);
+					}}
+					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
+				>
+					{keyboardMode === 'default' ? (
+						<ToggleLeft className="w-5 h-5" style={{ color: theme.colors.accent }} />
+					) : (
+						<ToggleRight className="w-5 h-5" style={{ color: theme.colors.accent }} />
+					)}
+					<div className="flex-1">
+						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+							Keyboard Mode: {KEYBOARD_MODE_LABELS[keyboardMode]}
+						</div>
+						<div className="text-xs" style={{ color: theme.colors.textDim }}>
+							Switch to {KEYBOARD_MODE_LABELS[nextKeyboardMode(keyboardMode)]} mode
+						</div>
+					</div>
+					<ShortcutHint
+						theme={theme}
+						keys={keyboardModeToggleShadow() ? [] : KEYBOARD_MODE_TOGGLE_KEYS}
+					/>
+				</button>
+			)}
+			{/* Zen mode: both bars away, the whole window to the Main Window, and a
+			    second press puts them back exactly as they were. Ships with no
+			    chord, so for most users THIS row and the Quick Actions entry are the
+			    only routes - which is also why the menu keeps it while zen is on,
+			    even though the Left Bar it lives in is hidden by then: reopening the
+			    bar to leave zen is a legitimate way out.
+			    Absent on a phone, where both bars are already overlay drawers (so
+			    zen has no space to reclaim) and hiding the Left Bar outright takes
+			    the edge-swipe drawer with it until zen is left again. */}
+			{!phone && (
+				<button
+					onClick={() => {
+						useUIStore.getState().toggleZenMode();
+						setMenuOpen(false);
+					}}
+					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
+				>
+					{zenMode ? (
+						<Minimize2 className="w-5 h-5" style={{ color: theme.colors.accent }} />
+					) : (
+						<Maximize2 className="w-5 h-5" style={{ color: theme.colors.accent }} />
+					)}
+					<div className="flex-1">
+						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+							Toggle Zen Mode
+						</div>
+						<div className="text-xs" style={{ color: theme.colors.textDim }}>
+							{zenMode ? 'Bring both side bars back' : 'Hide both side bars'}
+						</div>
+					</div>
+					<ShortcutHint theme={theme} actionId="toggleZenMode" />
 				</button>
 			)}
 			<button

@@ -23,6 +23,8 @@ import { MediaPlaybackHost } from './MediaPlayback';
 import { ThroughputGaugeHost } from './ThroughputGauge';
 import { ThoughtStreamPanel } from './ThoughtStreamPanel';
 import { ContextTimelinePanel } from './ContextTimelinePanel';
+import { DeckModeHintBar } from './DeckModeHintBar';
+import { SequencePrefixIndicator } from './SequencePrefixIndicator';
 import { PermissionPrompt } from './PermissionPrompt';
 import { StatsIndexingHost } from './StatsIndexing/StatsIndexingHost';
 import { CadenzaLayer } from './Cadenza';
@@ -295,6 +297,21 @@ export function AppShell({
 
 			<ToastContainer theme={theme} onSessionClick={onToastSessionClick} />
 			<CenterFlash theme={theme} />
+			{/* --- KEY SEQUENCE PREFIX (single, app-wide) ---
+			    Shows the keys captured so far while the user is partway through a
+			    sequence (`g` of `g g`). Renders nothing the rest of the time. Lives
+			    here rather than in the composer's pill stack because a sequence is
+			    typeable in a group chat and on the empty state too. See
+			    SequencePrefixIndicator. */}
+			<SequencePrefixIndicator theme={theme} />
+			{/* --- DECK MODE HINT BAR (single, app-wide) ---
+			    Lists every Deck key and what it fires while the leader-chord mode
+			    is armed, which is the whole of the user's feedback that the next
+			    keystroke has been claimed. Renders nothing the rest of the time.
+			    Pinned to the top so it clears the composer and the transcript
+			    tail, and above the palette's layer because Deck mode can be armed
+			    over an open modal. See DeckModeHintBar. */}
+			<DeckModeHintBar theme={theme} />
 			{/* --- IMAGE CONTEXT MENU (single, app-wide) ---
 			    One delegated listener gives every image and diagram on screen a
 			    right-click Copy / Save. Surfaces wire up nothing. See

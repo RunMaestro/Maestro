@@ -74,6 +74,31 @@ export function isTextInputTarget(target: EventTarget | null): boolean {
 	return false;
 }
 
+/**
+ * Surfaces that own every keystroke while the caret is inside them, even when
+ * the element a keydown lands on is not itself an input.
+ *
+ * CodeMirror keeps the caret in a contenteditable, but the event can land on
+ * the scroller, a gutter, or one of its panel controls; xterm routes typing
+ * through a hidden helper textarea and paints everything else as plain divs and
+ * canvases. In both, a key is the user typing into a document even when the
+ * literal target is a `<div>`, so the only reliable test is an ancestor lookup.
+ * `closest()` matches the element itself too, so the editor or terminal root
+ * counts alongside its contents.
+ *
+ * This is the same `.xterm` test `useMainKeyboardHandler` already runs inline
+ * for terminal focus recovery. Keeping one spelling of it here is what lets
+ * every caller ask the question once.
+ *
+ * Exported for `vimInsertEscape.ts`, which needs the INVERSE question: a plain
+ * `<input>` or `<textarea>` that `jk` may blur, as opposed to the helper
+ * textarea xterm types through or the contenteditable CodeMirror owns. A second
+ * spelling of the selector there would drift the moment a third such surface
+ * appeared, and the failure would be silent: `jk` would start blurring a
+ * document mid-edit.
+ */
+export const TEXT_ENTRY_SURFACE_SELECTOR = '.cm-editor, .xterm';
+
 /** `<input>` types that swallow typed characters. Everything else (range,
  *  color, checkbox, radio, button) reacts to keys but never accepts text. */
 const TEXT_ENTRY_INPUT_TYPES = new Set([
@@ -93,7 +118,9 @@ const TEXT_ENTRY_INPUT_TYPES = new Set([
 
 /**
  * True when the target accepts free-form typed text, so a keystroke belongs to
- * it rather than to a surface-level shortcut.
+ * it rather than to a surface-level shortcut. Counts text-accepting inputs,
+ * textareas, contenteditables, and anything inside a CodeMirror editor or an
+ * xterm terminal (see {@link TEXT_ENTRY_SURFACE_SELECTOR}).
  *
  * Narrower than {@link isTextInputTarget}, which counts every `<input>`. Use
  * that one for arrow keys, where a range slider legitimately owns Left/Right.
@@ -101,6 +128,12 @@ const TEXT_ENTRY_INPUT_TYPES = new Set([
  * tool keys): a focused slider must not silently disable them.
  */
 export function isTextEntryTarget(target: EventTarget | null): boolean {
+	// Checked first, and against Element rather than HTMLElement, so a keydown
+	// anywhere inside an editor or a terminal counts whatever kind of node it
+	// happened to hit (an SVG icon in a CodeMirror panel is still the editor).
+	if (target instanceof Element && target.closest(TEXT_ENTRY_SURFACE_SELECTOR) !== null) {
+		return true;
+	}
 	if (!(target instanceof HTMLElement)) return false;
 	if (target.isContentEditable) return true;
 	if (target.tagName === 'TEXTAREA') return true;
@@ -108,4 +141,39 @@ export function isTextEntryTarget(target: EventTarget | null): boolean {
 	// A bare <input> with no type attribute is a text field.
 	const type = (target as HTMLInputElement).type?.toLowerCase() || 'text';
 	return TEXT_ENTRY_INPUT_TYPES.has(type);
+}
+
+/**
+ * True when a keystroke is free for an app-level binding to claim: nothing that
+ * accepts typed text holds it, so a bare `j` or a `g g` sequence is a command
+ * rather than a character.
+ *
+ * This is the whole definition of Vim "normal mode" in Maestro, and there is
+ * deliberately NO mode state machine behind it. A boolean flag would need an
+ * enter and an exit for every path focus can take - clicking the composer, a
+ * modal autofocusing its first input, CodeMirror mounting, xterm taking focus
+ * back after a tab switch, a window blur - and the first path anyone forgot
+ * would leave the flag reading "normal" while the user typed prose, so the
+ * keyboard would eat their characters with nothing on screen to explain why.
+ * Focus already IS that state and the DOM already tracks it correctly, so this
+ * asks the DOM and cannot desync from it.
+ *
+ * Both the event target AND `document.activeElement` have to be free, because
+ * they disagree in both directions: a handler bound to `window` sees `<body>`
+ * as the target when focus sits on the body, and the image annotator leaves a
+ * composer textarea focused underneath its own overlay (see
+ * `annotatorKeyboard.ts`). Requiring both is the conservative side of that
+ * asymmetry - a wrongly rejected keystroke costs one Vim motion, while a
+ * wrongly accepted one steals a character out of something the user is writing.
+ *
+ * Focus is only half of normal mode. The other half, "no modal layer is open",
+ * lives in the layer stack, which is React context rather than DOM, so it stays
+ * with the caller: `useMainKeyboardHandler` checks `ctx.hasOpenLayers()` beside
+ * this before it feeds an event to the sequence matcher.
+ */
+export function isNormalMode(
+	event: { readonly target: EventTarget | null },
+	doc: Document = document
+): boolean {
+	return !isTextEntryTarget(event.target) && !isTextEntryTarget(doc.activeElement);
 }

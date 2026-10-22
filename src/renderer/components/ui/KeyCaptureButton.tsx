@@ -14,6 +14,7 @@ import { X } from 'lucide-react';
 import type { Theme } from '../../types';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { buildKeysFromEvent } from '../../utils/shortcutRecorder';
+import { useShortcutKeys } from '../../hooks/keyboard/useShortcutKeys';
 
 export interface KeyCaptureButtonProps {
 	theme: Theme;
@@ -23,6 +24,8 @@ export interface KeyCaptureButtonProps {
 	emptyLabel?: string;
 	/** Hide the clear (X) button. Defaults to false. */
 	hideClear?: boolean;
+	/** Action id to display the current mode's binding. When provided, shows the active mode's chord. */
+	actionId?: string;
 	/** Extra Tailwind classes for the outer button. */
 	className?: string;
 }
@@ -33,11 +36,14 @@ export function KeyCaptureButton({
 	onKeysChange,
 	emptyLabel = 'Click to set',
 	hideClear = false,
+	actionId,
 	className,
 }: KeyCaptureButtonProps) {
 	const [recording, setRecording] = React.useState(false);
 	const buttonRef = React.useRef<HTMLButtonElement>(null);
-	const hasValue = keys.length > 0;
+	const resolved = useShortcutKeys(actionId);
+	const displayKeys = actionId && resolved.keys.length > 0 ? resolved.keys : keys;
+	const hasValue = displayKeys.length > 0;
 	const active = recording || hasValue;
 
 	const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -79,7 +85,7 @@ export function KeyCaptureButton({
 					} as React.CSSProperties
 				}
 			>
-				{recording ? 'Press keys...' : hasValue ? formatShortcutKeys(keys) : emptyLabel}
+				{recording ? 'Press keys...' : hasValue ? formatShortcutKeys(displayKeys) : emptyLabel}
 			</button>
 			{!hideClear && hasValue && !recording && (
 				<button

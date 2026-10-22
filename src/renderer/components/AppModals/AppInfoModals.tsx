@@ -4,7 +4,6 @@ import type {
 	Session,
 	Group,
 	GroupChat,
-	Shortcut,
 	KeyboardMasteryStats,
 	AutoRunStats,
 	MaestroUsageStats,
@@ -40,8 +39,6 @@ export interface AppInfoModalsProps {
 	// Shortcuts Help Modal
 	shortcutsHelpOpen: boolean;
 	onCloseShortcutsHelp: () => void;
-	shortcuts: Record<string, Shortcut>;
-	tabShortcuts: Record<string, Shortcut>;
 	hasNoAgents: boolean;
 	keyboardMasteryStats: KeyboardMasteryStats;
 
@@ -102,8 +99,6 @@ export const AppInfoModals = memo(function AppInfoModals({
 	// Shortcuts Help Modal
 	shortcutsHelpOpen,
 	onCloseShortcutsHelp,
-	shortcuts,
-	tabShortcuts,
 	hasNoAgents,
 	keyboardMasteryStats,
 	// About Modal
@@ -151,8 +146,6 @@ export const AppInfoModals = memo(function AppInfoModals({
 			{shortcutsHelpOpen && (
 				<ShortcutsHelpModal
 					theme={theme}
-					shortcuts={shortcuts}
-					tabShortcuts={tabShortcuts}
 					onClose={onCloseShortcutsHelp}
 					hasNoAgents={hasNoAgents}
 					keyboardMasteryStats={keyboardMasteryStats}

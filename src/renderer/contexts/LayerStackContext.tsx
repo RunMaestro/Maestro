@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useEffect, useMemo, ReactNode } from 'react';
 import { useLayerStack as useLayerStackHook, type LayerStackAPI } from '../hooks/ui/useLayerStack';
 import { useLayerSwipeDismiss } from '../hooks/ui/useLayerSwipeDismiss';
+import { deckModeArmedNow } from '../stores/uiStore';
+import { vimEditorOwnsEscape } from '../components/FilePreview/markdownEditor/vimKeys';
 
 // Create context with null as default (will throw if used outside provider)
 const LayerStackContext = createContext<LayerStackAPI | null>(null);
@@ -33,6 +35,30 @@ export function LayerStackProvider({ children }: LayerStackProviderProps) {
 	useEffect(() => {
 		const handleEscape = (e: KeyboardEvent) => {
 			if (e.key === 'Escape') {
+				// The one thing Escape unwinds before the layer stack. An armed Deck
+				// mode owns the next keystroke (see the Deck block in
+				// useMainKeyboardHandler), and Escape is how the user cancels it -
+				// closing their modal in the same keypress would charge them twice
+				// for one mistyped leader. Declining here, with no preventDefault and
+				// no stopPropagation, is what lets the event reach the bubble-phase
+				// handler that disarms it: this listener is in the CAPTURE phase, so
+				// acting would end the event before anything else saw it.
+				//
+				// Only reached on Escape, and only asks the question then, so the
+				// hottest keyboard path pays nothing for it.
+				if (deckModeArmedNow()) return;
+
+				// The second thing Escape belongs to before the layer stack. In
+				// Vim mode the markdown editor's insert and visual modes END on
+				// Escape, and this listener is the reason the editor could never
+				// see that press: capture on `window` runs ahead of everything
+				// inside it, including Vim's own keydown handler. Declining here
+				// (no preventDefault, no stopPropagation) hands the key to Vim,
+				// which stops it itself once it has acted. Normal mode is NOT
+				// declined - Escape there only clears a pending count, so the
+				// user's modal keeps closing. See `vimEditorOwnsEscape`.
+				if (vimEditorOwnsEscape(e)) return;
+
 				const stack = layerStackRef.current;
 				const topLayer = stack.getTopLayer();
 				if (topLayer) {

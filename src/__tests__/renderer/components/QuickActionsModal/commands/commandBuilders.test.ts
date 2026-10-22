@@ -28,6 +28,8 @@ import { buildSupportCommands } from '../../../../../renderer/components/QuickAc
 import { createGroupFromTabRefs } from '../../../../../renderer/utils/panelLayout';
 import { createMockAITab } from '../../../../helpers/mockTab';
 import { useModalStore } from '../../../../../renderer/stores/modalStore';
+import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';
+import { FIXED_SHORTCUTS } from '../../../../../renderer/constants/shortcuts';
 
 const noop = () => {};
 const setSessions = vi.fn();
@@ -436,6 +438,7 @@ describe('QuickActions command builders', () => {
 			setIdleNotificationEnabled: vi.fn(),
 			showStarredSessionsSection: true,
 			setShowStarredSessionsSection: vi.fn(),
+			keyboardMode: 'default' as const,
 			shortcuts: {},
 		};
 		const aiFeatureIds = buildFeatureCommands({ ...featureArgs, activeTabType: 'ai' }).map(
@@ -457,6 +460,22 @@ describe('QuickActions command builders', () => {
 		expect(terminalFeatureIds).not.toContain('summarizeAndContinue');
 		expect(terminalFeatureIds).not.toContain('mergeSession');
 		expect(terminalFeatureIds).not.toContain('sendToAgent');
+
+		// The keyboard-mode switch. Offered in every context, because it is not
+		// about what has focus - it is about which binding set the whole app is
+		// matching - and it names the mode it would switch TO, so the entry reads
+		// as an action rather than a state.
+		const modeEntry = buildFeatureCommands({ ...featureArgs, keyboardMode: 'vim' }).find(
+			(a) => a.id === 'toggleKeyboardMode'
+		);
+		expect(modeEntry?.label).toBe('Switch to Default Keyboard Mode');
+		expect(modeEntry?.subtext).toContain('Keyboard mode: Vim');
+		expect(modeEntry?.shortcut).toBe(FIXED_SHORTCUTS.toggleKeyboardMode);
+		useSettingsStore.setState({ keyboardMode: 'vim' });
+		modeEntry!.action();
+		expect(useSettingsStore.getState().keyboardMode).toBe('default');
+		expect(close).toHaveBeenCalled();
+		useSettingsStore.setState({ keyboardMode: 'default' });
 	});
 
 	it('builds git/worktree, feature, support, and debug commands', async () => {
@@ -564,6 +583,7 @@ describe('QuickActions command builders', () => {
 				setIdleNotificationEnabled: vi.fn(),
 				showStarredSessionsSection: true,
 				setShowStarredSessionsSection: vi.fn(),
+				keyboardMode: 'default' as const,
 				shortcuts: {},
 			}).map((a) => a.id)
 		).toContain('maestro-cue');
@@ -587,6 +607,7 @@ describe('QuickActions command builders', () => {
 			setIdleNotificationEnabled: vi.fn(),
 			showStarredSessionsSection: true,
 			setShowStarredSessionsSection: vi.fn(),
+			keyboardMode: 'default' as const,
 			shortcuts: {},
 		});
 		const viewInGraph = graphCommands.find((a) => a.id === 'viewInDocumentGraph');
@@ -611,6 +632,7 @@ describe('QuickActions command builders', () => {
 				setIdleNotificationEnabled: vi.fn(),
 				showStarredSessionsSection: true,
 				setShowStarredSessionsSection: vi.fn(),
+				keyboardMode: 'default' as const,
 				shortcuts: {},
 			}).map((a) => a.id)
 		).not.toContain('viewInDocumentGraph');

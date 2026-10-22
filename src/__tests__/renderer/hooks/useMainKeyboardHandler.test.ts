@@ -1,13 +1,18 @@
+import { useMemo } from 'react';
 import { renderHook, act } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { useMainKeyboardHandler } from '../../../renderer/hooks';
-import { useKeyboardShortcutHelpers } from '../../../renderer/hooks/keyboard/useKeyboardShortcutHelpers';
-import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS } from '../../../renderer/constants/shortcuts';
+import {
+	useActiveShortcuts,
+	useKeyboardShortcutHelpers,
+	useMainKeyboardHandler,
+} from '../../../renderer/hooks';
 import type { Shortcut } from '../../../renderer/types';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS } from '../../../renderer/constants/shortcuts';
+import { VIM_SHORTCUTS, VIM_TAB_SHORTCUTS } from '../../../renderer/constants/vimShortcuts';
 import { FONT_ZOOM_MAX, FONT_ZOOM_MIN } from '../../../shared/typography';
 import { useModalStore } from '../../../renderer/stores/modalStore';
-import { useUIStore } from '../../../renderer/stores/uiStore';
+import { deckModeArmedNow, useUIStore } from '../../../renderer/stores/uiStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useThroughputGaugeStore } from '../../../renderer/stores/throughputGaugeStore';
 import { useNotificationStore } from '../../../renderer/stores/notificationStore';
@@ -20,12 +25,48 @@ import {
 	clearDesktopAiTabSelections,
 	consumeDesktopAiTabSelection,
 } from '../../../renderer/utils/desktopTabSelectionSync';
+import {
+	clearSequencePrefix,
+	useSequencePrefixStore,
+} from '../../../renderer/stores/sequencePrefixStore';
+import {
+	SEQUENCE_TIMEOUT_MS,
+	collectSequenceBindings,
+} from '../../../renderer/utils/shortcutSequence';
+import {
+	DEFAULT_VIM_INSERT_ESCAPE_SEQUENCE,
+	parseInsertEscapeSequence,
+} from '../../../renderer/utils/vimInsertEscape';
 
 // Cmd+Shift+J delegates to the shared tile action. Mocked so the test asserts the
 // wiring rather than re-running the layout transform (covered in tileNewTab.test).
 const { mockTileNewTabInSession } = vi.hoisted(() => ({ mockTileNewTabInSession: vi.fn() }));
 vi.mock('../../../renderer/services/tileNewTabAction', () => ({
 	tileNewTabInSession: (...args: unknown[]) => mockTileNewTabInSession(...args),
+}));
+
+// The region actions delegate wholesale to two services, which own their own
+// suites (regionFocus.test.ts, regionResize.test.ts). Spied rather than run so
+// these tests assert the WIRING - which branch calls which function with which
+// direction - instead of re-testing reveal-before-focus and the width clamps.
+// Only the four delegating exports are replaced; the rest of each module stays
+// real, so anything else that imports them is unaffected.
+const { mockFocusRegionDirection, mockFocusRegionVertical, mockGrowRegion, mockShrinkRegion } =
+	vi.hoisted(() => ({
+		mockFocusRegionDirection: vi.fn(),
+		mockFocusRegionVertical: vi.fn(),
+		mockGrowRegion: vi.fn(),
+		mockShrinkRegion: vi.fn(),
+	}));
+vi.mock('../../../renderer/services/regionFocus', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/services/regionFocus')>()),
+	focusRegionDirection: (...args: unknown[]) => mockFocusRegionDirection(...args),
+	focusRegionVertical: (...args: unknown[]) => mockFocusRegionVertical(...args),
+}));
+vi.mock('../../../renderer/services/regionResize', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/services/regionResize')>()),
+	growFocusedRegion: () => mockGrowRegion(),
+	shrinkFocusedRegion: () => mockShrinkRegion(),
 }));
 import { publishGitShortcutActions } from '../../../renderer/services/gitShortcutActions';
 import { getSidebarRevealToken } from '../../../renderer/utils/sidebarReveal';
@@ -120,6 +161,40 @@ function createMockContext(overrides: Record<string, unknown> = {}) {
 		activeGroupChatId: null,
 		...rest,
 	};
+}
+
+/**
+ * Press a bare key AND apply the browser's default action, which jsdom does
+ * not: a dispatched KeyboardEvent never inserts a character. Without the second
+ * half there would be no `j` in the field for the in-field escape to retract,
+ * so a test would pass against an implementation that retracts nothing.
+ *
+ * At module scope because both text-field suites below need it - the one that
+ * hands the handler a parsed escape directly and the one that lets Vim mode
+ * produce it - and a second copy is a second place for the insertion to stop
+ * matching what a browser really does.
+ */
+function typeInField(field: HTMLTextAreaElement | HTMLInputElement, key: string) {
+	const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+	act(() => {
+		window.dispatchEvent(event);
+	});
+	if (!event.defaultPrevented && key.length === 1) {
+		const caret = field.selectionStart ?? field.value.length;
+		field.value = field.value.slice(0, caret) + key + field.value.slice(caret);
+		field.setSelectionRange(caret + 1, caret + 1);
+	}
+	return event;
+}
+
+/** A focused textarea in the document, standing in for the composer. */
+function mountComposer(value = ''): HTMLTextAreaElement {
+	const field = document.createElement('textarea');
+	field.value = value;
+	document.body.appendChild(field);
+	field.focus();
+	field.setSelectionRange(value.length, value.length);
+	return field;
 }
 
 describe('useMainKeyboardHandler', () => {
@@ -260,6 +335,49 @@ describe('useMainKeyboardHandler', () => {
 
 			expect(flushGroupChatDraft).toHaveBeenCalledOnce();
 			expect(useModalStore.getState().isOpen('promptComposer')).toBe(true);
+		});
+	});
+
+	/**
+	 * Stop Turn ships UNBOUND (`DEFAULT_SHORTCUTS.stopTurn`), because every chord
+	 * that reads as Ctrl+C is reserved for the Edit menu's Copy. So the ladder
+	 * branch exists purely for a chord the user recorded, and nothing but a test
+	 * like this one would notice it going missing - the pill keeps working either
+	 * way, and a default-mode keypress can never reach the branch.
+	 */
+	describe('Stop Turn', () => {
+		it('runs the agent-level interrupt the Stop pill uses, at whatever key it is bound to', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			const handleInterrupt = vi.fn();
+			const recordShortcutUsage = vi.fn().mockReturnValue({ newLevel: null });
+			result.current.keyboardHandlerRef.current = createMockContext({
+				// Stands in for a user who recorded Ctrl+Alt+Period in Settings.
+				isShortcut: (e: KeyboardEvent, actionId: string) =>
+					actionId === 'stopTurn' && e.ctrlKey && e.altKey && e.key === '.',
+				activeSession: { id: 'session-1', inputMode: 'ai' },
+				handleInterrupt,
+				recordShortcutUsage,
+			});
+
+			const event = new KeyboardEvent('keydown', {
+				key: '.',
+				ctrlKey: true,
+				altKey: true,
+				bubbles: true,
+				cancelable: true,
+			});
+			const preventDefault = vi.spyOn(event, 'preventDefault');
+
+			act(() => {
+				window.dispatchEvent(event);
+			});
+
+			expect(handleInterrupt).toHaveBeenCalledOnce();
+			expect(preventDefault).toHaveBeenCalled();
+			// Mastery counts it like any other action, which is the whole reason it
+			// is a registered action rather than a hard-coded key.
+			expect(recordShortcutUsage).toHaveBeenCalledWith('stopTurn');
 		});
 	});
 
@@ -1943,6 +2061,86 @@ describe('useMainKeyboardHandler', () => {
 
 				expect(useSettingsStore.getState().fontZoom).toBe(1);
 				expect(useSettingsStore.getState().fontSize).toBe(20);
+			});
+		});
+
+		describe('moveTabLeft / moveTabRight', () => {
+			// Both ship unassigned, so the chord here is arbitrary: `isTabShortcut` is
+			// what decides which action a keypress is, exactly as it would once a user
+			// binds one in Settings > Shortcuts.
+			function reorderSession() {
+				return {
+					id: 'session-1',
+					aiTabs: [
+						{ id: 'ai-tab-1', name: 'AI Tab 1', logs: [] },
+						{ id: 'ai-tab-2', name: 'AI Tab 2', logs: [] },
+					],
+					activeTabId: 'ai-tab-1',
+					filePreviewTabs: [],
+					browserTabs: [],
+					terminalTabs: [],
+					activeFileTabId: null,
+					activeBrowserTabId: null,
+					activeTerminalTabId: null,
+					unifiedTabOrder: [
+						{ type: 'ai', id: 'ai-tab-1' },
+						{ type: 'ai', id: 'ai-tab-2' },
+					],
+					unifiedClosedTabHistory: [],
+					inputMode: 'ai',
+				};
+			}
+
+			function pressFor(actionId: string, session: Record<string, unknown>) {
+				const { result } = renderHook(() => useMainKeyboardHandler());
+				let next: Record<string, unknown>[] | null = null;
+				const setSessions = vi.fn((updater: unknown) => {
+					if (typeof updater === 'function') {
+						next = (updater as (prev: unknown[]) => Record<string, unknown>[])([session]);
+					}
+				});
+
+				result.current.keyboardHandlerRef.current = createUnifiedTabContext({
+					isTabShortcut: (_e: KeyboardEvent, id: string) => id === actionId,
+					setSessions,
+					activeSession: session,
+				});
+
+				act(() => {
+					window.dispatchEvent(
+						new KeyboardEvent('keydown', { key: 'ArrowRight', metaKey: true, bubbles: true })
+					);
+				});
+
+				return { setSessions, next };
+			}
+
+			it('moveTabRight nudges the active tab one position later', () => {
+				const { next } = pressFor('moveTabRight', reorderSession());
+				expect(next?.[0].unifiedTabOrder).toEqual([
+					{ type: 'ai', id: 'ai-tab-2' },
+					{ type: 'ai', id: 'ai-tab-1' },
+				]);
+				// The reorder is all it does: the active tab stays active.
+				expect(next?.[0].activeTabId).toBe('ai-tab-1');
+			});
+
+			it('moveTabLeft nudges the active tab one position earlier', () => {
+				const session = { ...reorderSession(), activeTabId: 'ai-tab-2' };
+				const { next } = pressFor('moveTabLeft', session);
+				expect(next?.[0].unifiedTabOrder).toEqual([
+					{ type: 'ai', id: 'ai-tab-2' },
+					{ type: 'ai', id: 'ai-tab-1' },
+				]);
+			});
+
+			it('leaves the session list untouched when the move is clamped', () => {
+				// ai-tab-1 is already first, so pressing left is a no-op and the
+				// handler must hand the PREVIOUS array back rather than a new one -
+				// otherwise every clamped press re-renders every agent.
+				const session = reorderSession();
+				const { next } = pressFor('moveTabLeft', session);
+				expect(next?.[0]).toBe(session);
 			});
 		});
 
@@ -4686,6 +4884,159 @@ describe('useMainKeyboardHandler', () => {
 			expect(useUIStore.getState().outputSearchByKey[SEARCH_KEY]?.open).toBeFalsy();
 		});
 	});
+
+	/**
+	 * The region/zen family ships UNASSIGNED, so `isShortcut` is the only thing
+	 * that can route a press to one. These pin that each id reaches its action and
+	 * reports itself to keyboard mastery: an action registered in the table but
+	 * never dispatched is the `showSnoozeList` shape - visible in the overlay,
+	 * bindable in Settings, and dead on the keypress.
+	 */
+	describe('region focus, region resize, and zen mode', () => {
+		/** A chord shape; the real binding is whatever the user or Vim mode sets. */
+		const press = () =>
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'ArrowLeft',
+						code: 'ArrowLeft',
+						ctrlKey: true,
+						altKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+		/**
+		 * One mount, rebindable. A second `renderHook` in the same test would add a
+		 * second window listener without removing the first, so one dispatch would
+		 * run the ladder twice - which for a TOGGLE like zen means the press appears
+		 * to do nothing at all.
+		 */
+		function mountHandler() {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			const recordShortcutUsage = vi.fn().mockReturnValue({ newLevel: null });
+			const bind = (actionId: string) => {
+				result.current.keyboardHandlerRef.current = createMockContext({
+					isShortcut: (_e: KeyboardEvent, id: string) => id === actionId,
+					recordShortcutUsage,
+				});
+			};
+			return { bind, recordShortcutUsage };
+		}
+
+		function pressFor(actionId: string) {
+			const { bind, recordShortcutUsage } = mountHandler();
+			bind(actionId);
+			press();
+			return recordShortcutUsage;
+		}
+
+		beforeEach(() => {
+			mockFocusRegionDirection.mockClear();
+			mockFocusRegionVertical.mockClear();
+			mockGrowRegion.mockClear();
+			mockShrinkRegion.mockClear();
+			useUIStore.setState({
+				leftSidebarOpen: true,
+				leftSidebarHidden: false,
+				rightPanelOpen: true,
+				zenMode: false,
+				preZenLayout: null,
+			});
+		});
+
+		it.each([
+			['focusRegionLeft', 'left'],
+			['focusRegionRight', 'right'],
+		])('%s crosses one region %s', (actionId, direction) => {
+			const recordShortcutUsage = pressFor(actionId);
+			expect(mockFocusRegionDirection).toHaveBeenCalledWith(direction);
+			expect(recordShortcutUsage).toHaveBeenCalledWith(actionId);
+		});
+
+		it.each([
+			['focusRegionUp', 'up'],
+			['focusRegionDown', 'down'],
+		])('%s moves %s inside the focused region', (actionId, direction) => {
+			const recordShortcutUsage = pressFor(actionId);
+			expect(mockFocusRegionVertical).toHaveBeenCalledWith(direction);
+			expect(recordShortcutUsage).toHaveBeenCalledWith(actionId);
+		});
+
+		it('growRegion and shrinkRegion step through the zero-arg wrappers', () => {
+			// Zero-arg on purpose: the step size lives in the service, so the key and
+			// the Quick Actions row cannot end up resizing by different amounts.
+			const { bind, recordShortcutUsage } = mountHandler();
+
+			bind('growRegion');
+			press();
+			expect(mockGrowRegion).toHaveBeenCalledTimes(1);
+			expect(mockShrinkRegion).not.toHaveBeenCalled();
+			expect(recordShortcutUsage).toHaveBeenCalledWith('growRegion');
+
+			bind('shrinkRegion');
+			press();
+			expect(mockShrinkRegion).toHaveBeenCalledTimes(1);
+			expect(mockGrowRegion).toHaveBeenCalledTimes(1);
+			expect(recordShortcutUsage).toHaveBeenCalledWith('shrinkRegion');
+		});
+
+		it('the direction keys claim their keypress', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'focusRegionUp',
+				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			});
+
+			const event = new KeyboardEvent('keydown', {
+				key: 'ArrowUp',
+				code: 'ArrowUp',
+				ctrlKey: true,
+				bubbles: true,
+				cancelable: true,
+			});
+			const preventDefault = vi.spyOn(event, 'preventDefault');
+
+			act(() => {
+				window.dispatchEvent(event);
+			});
+
+			expect(preventDefault).toHaveBeenCalled();
+		});
+
+		it('toggleZenMode hides both bars and restores them on a second press', () => {
+			// Goes through the store action rather than the two visibility setters so
+			// one press is one snapshot-taking transaction.
+			const { bind, recordShortcutUsage } = mountHandler();
+			bind('toggleZenMode');
+
+			press();
+			expect(useUIStore.getState().zenMode).toBe(true);
+			expect(useUIStore.getState().leftSidebarHidden).toBe(true);
+			expect(useUIStore.getState().rightPanelOpen).toBe(false);
+			expect(recordShortcutUsage).toHaveBeenCalledWith('toggleZenMode');
+
+			press();
+			expect(useUIStore.getState().zenMode).toBe(false);
+			expect(useUIStore.getState().leftSidebarOpen).toBe(true);
+			expect(useUIStore.getState().leftSidebarHidden).toBe(false);
+			expect(useUIStore.getState().rightPanelOpen).toBe(true);
+		});
+
+		it('leaving zen does not reopen a Right Bar the user had already closed', () => {
+			useUIStore.setState({ rightPanelOpen: false });
+			const { bind } = mountHandler();
+			bind('toggleZenMode');
+
+			press();
+			expect(useUIStore.getState().zenMode).toBe(true);
+			press();
+
+			expect(useUIStore.getState().rightPanelOpen).toBe(false);
+			expect(useUIStore.getState().leftSidebarOpen).toBe(true);
+		});
+	});
 });
 
 /**
@@ -5165,6 +5516,1613 @@ describe('useMainKeyboardHandler - steerSend', () => {
 
 	it('does nothing while a group chat is on screen', () => {
 		expect(press({ activeGroupChatId: 'group-chat-1' })).toBe(0);
+	});
+});
+
+/**
+ * Opt+Cmd+V switches the live keyboard mode, and it is the SAME chord in both
+ * modes on purpose: it is the way back out of the mode you just switched into,
+ * so a mode that could rebind it would be a trap. It is not in the
+ * configurable map at all, so the handler matches its FIXED chord rather than
+ * going through `ctx.isShortcut`.
+ */
+describe('useMainKeyboardHandler - toggleKeyboardMode', () => {
+	const pressToggle = () =>
+		act(() => {
+			window.dispatchEvent(
+				new KeyboardEvent('keydown', {
+					// macOS rewrites Opt+Cmd+V's `key`, which is why the matcher falls
+					// back to `code` whenever Alt is held.
+					key: '√',
+					code: 'KeyV',
+					altKey: true,
+					metaKey: true,
+					bubbles: true,
+				})
+			);
+		});
+
+	beforeEach(() => {
+		useSettingsStore.setState({
+			keyboardMode: 'default',
+			shortcuts: DEFAULT_SHORTCUTS,
+			tabShortcuts: TAB_SHORTCUTS,
+			vimShortcuts: {},
+			vimTabShortcuts: {},
+		});
+	});
+
+	afterEach(() => {
+		useSettingsStore.setState({ keyboardMode: 'default' });
+	});
+
+	it('switches the mode and counts the action id', () => {
+		const recordShortcutUsage = vi.fn().mockReturnValue({ newLevel: null });
+		const { result } = renderHook(() => useMainKeyboardHandler());
+		result.current.keyboardHandlerRef.current = createMockContext({ recordShortcutUsage });
+
+		pressToggle();
+
+		expect(useSettingsStore.getState().keyboardMode).toBe('vim');
+		expect(recordShortcutUsage).toHaveBeenCalledWith('toggleKeyboardMode');
+	});
+
+	it('switches back on the same chord, so a mode is never a trap', () => {
+		const { result } = renderHook(() => useMainKeyboardHandler());
+		result.current.keyboardHandlerRef.current = createMockContext({
+			recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+		});
+
+		pressToggle();
+		expect(useSettingsStore.getState().keyboardMode).toBe('vim');
+		pressToggle();
+		expect(useSettingsStore.getState().keyboardMode).toBe('default');
+	});
+
+	it('stands down when the user already has that chord bound to an action', () => {
+		// The user's binding wins. Stealing the chord would kill a key they have
+		// used for months with no indication of where it went; Settings >
+		// Shortcuts names the action that holds it instead.
+		useSettingsStore.setState({
+			shortcuts: {
+				...DEFAULT_SHORTCUTS,
+				newInstance: { id: 'newInstance', label: 'New Agent', keys: ['Alt', 'Meta', 'v'] },
+			},
+		});
+		const recordShortcutUsage = vi.fn().mockReturnValue({ newLevel: null });
+		const { result } = renderHook(() => useMainKeyboardHandler());
+		result.current.keyboardHandlerRef.current = createMockContext({ recordShortcutUsage });
+
+		pressToggle();
+
+		expect(useSettingsStore.getState().keyboardMode).toBe('default');
+		expect(recordShortcutUsage).not.toHaveBeenCalledWith('toggleKeyboardMode');
+	});
+
+	it('stands down for a chord the live mode binds, not just the default one', () => {
+		// Vim mode's effective set is what is being matched while Vim mode is
+		// live, so a Vim override on the chord shadows the toggle just as a
+		// default-mode binding does.
+		useSettingsStore.setState({
+			keyboardMode: 'vim',
+			vimShortcuts: {
+				newInstance: { id: 'newInstance', label: 'New Agent', keys: ['Alt', 'Meta', 'v'] },
+			},
+		});
+		const { result } = renderHook(() => useMainKeyboardHandler());
+		result.current.keyboardHandlerRef.current = createMockContext({
+			recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+		});
+
+		pressToggle();
+
+		expect(useSettingsStore.getState().keyboardMode).toBe('vim');
+	});
+});
+
+/**
+ * Key sequences reaching the ladder.
+ *
+ * The matcher itself is covered in `shortcutSequence.test.ts`; what is proven
+ * here is the WIRING: that a completed sequence runs the action's existing
+ * chord branch, that a prefix is swallowed rather than also fired as a chord,
+ * that the two halves of the normal-mode gate both block, and that the early
+ * returns above the ladder still win the keypress.
+ */
+describe('useMainKeyboardHandler - key sequences', () => {
+	let unmountHandler: (() => void) | null = null;
+	let originalMaestro: unknown;
+
+	/** Mount the hook and give it a context, unmounted again after the test. */
+	function mountHandler(ctx: Record<string, unknown>) {
+		const { result, unmount } = renderHook(() => useMainKeyboardHandler());
+		unmountHandler = unmount;
+		result.current.keyboardHandlerRef.current = ctx;
+		return result;
+	}
+
+	/** Press a bare key, the shape every sequence step arrives in. */
+	function press(key: string, init: KeyboardEventInit = {}) {
+		const event = new KeyboardEvent('keydown', {
+			key,
+			bubbles: true,
+			cancelable: true,
+			...init,
+		});
+		const preventDefault = vi.spyOn(event, 'preventDefault');
+		act(() => {
+			window.dispatchEvent(event);
+		});
+		return preventDefault;
+	}
+
+	beforeEach(() => {
+		originalMaestro = (window as any).maestro;
+		(window as any).maestro = {
+			...(((window as any).maestro ?? {}) as Record<string, unknown>),
+			process: { write: vi.fn() },
+		};
+	});
+
+	afterEach(() => {
+		// Each test's listener has to go, or the next test's keypresses also
+		// reach this one's context and fire its mocks.
+		unmountHandler?.();
+		unmountHandler = null;
+		(window as any).maestro = originalMaestro;
+		document.body.innerHTML = '';
+	});
+
+	/** A context whose `toggleSidebar` is reachable only through `g s`. */
+	function sidebarSequenceContext(overrides: Record<string, unknown> = {}) {
+		return createMockContext({
+			sessions: [{ id: 'session-1' }],
+			activeSessionId: 'session-1',
+			leftSidebarOpen: true,
+			sequenceBindings: [{ id: 'toggleSidebar', sequence: [['g'], ['s']] }],
+			recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			...overrides,
+		});
+	}
+
+	it('runs the matched action through its existing chord branch', () => {
+		// The point of the forced-matcher dispatch: nothing about toggleSidebar
+		// was taught to sequences, and `isShortcut` here answers false for
+		// everything, yet the branch runs.
+		const setLeftSidebarOpen = vi.fn();
+		const recordShortcutUsage = vi.fn().mockReturnValue({ newLevel: null });
+		mountHandler(sidebarSequenceContext({ setLeftSidebarOpen, recordShortcutUsage }));
+
+		press('g');
+		expect(setLeftSidebarOpen).not.toHaveBeenCalled();
+
+		press('s');
+		expect(setLeftSidebarOpen).toHaveBeenCalledTimes(1);
+		expect(recordShortcutUsage).toHaveBeenCalledWith('toggleSidebar');
+	});
+
+	it('counts the action id exactly once, not once per reporting path', () => {
+		// The sequence layer records the match and the branch records it again.
+		// Mastery is a set and would not notice; the daily counter would.
+		const recordShortcutUsage = vi.fn().mockReturnValue({ newLevel: null });
+		mountHandler(sidebarSequenceContext({ setLeftSidebarOpen: vi.fn(), recordShortcutUsage }));
+
+		press('g');
+		press('s');
+
+		expect(recordShortcutUsage).toHaveBeenCalledTimes(1);
+	});
+
+	it('swallows a prefix key so it is not also matched as a chord', () => {
+		const setLeftSidebarOpen = vi.fn();
+		mountHandler(sidebarSequenceContext({ setLeftSidebarOpen }));
+
+		expect(press('g')).toHaveBeenCalled();
+		expect(setLeftSidebarOpen).not.toHaveBeenCalled();
+	});
+
+	it('aborts cleanly on a wrong second key, and the next run still works', () => {
+		const setLeftSidebarOpen = vi.fn();
+		mountHandler(sidebarSequenceContext({ setLeftSidebarOpen }));
+
+		press('g');
+		press('x');
+		expect(setLeftSidebarOpen).not.toHaveBeenCalled();
+
+		press('g');
+		press('s');
+		expect(setLeftSidebarOpen).toHaveBeenCalledTimes(1);
+	});
+
+	it('leaves a chord untouched, and a chord never becomes a sequence step', () => {
+		const setQuickActionOpen = vi.fn();
+		const setLeftSidebarOpen = vi.fn();
+		mountHandler(
+			sidebarSequenceContext({
+				setLeftSidebarOpen,
+				setQuickActionOpen,
+				sequenceBindings: [{ id: 'toggleSidebar', sequence: [['s'], ['s']] }],
+				isShortcut: (e: KeyboardEvent, actionId: string) =>
+					actionId === 'quickAction' && e.metaKey && e.key === 's',
+			})
+		);
+
+		press('s', { metaKey: true });
+		expect(setQuickActionOpen).toHaveBeenCalled();
+
+		// Cmd+S did not start the `s s` prefix, so the bare `s` after it is a
+		// first step rather than a completion.
+		press('s');
+		expect(setLeftSidebarOpen).not.toHaveBeenCalled();
+	});
+
+	it('does not fire while focus sits in a text field', () => {
+		const setLeftSidebarOpen = vi.fn();
+		mountHandler(sidebarSequenceContext({ setLeftSidebarOpen }));
+
+		const textarea = document.createElement('textarea');
+		document.body.appendChild(textarea);
+		textarea.focus();
+
+		press('g');
+		press('s');
+
+		expect(setLeftSidebarOpen).not.toHaveBeenCalled();
+	});
+
+	it('drops a live prefix when focus moves into a text field', () => {
+		const setLeftSidebarOpen = vi.fn();
+		mountHandler(sidebarSequenceContext({ setLeftSidebarOpen }));
+
+		press('g');
+
+		const textarea = document.createElement('textarea');
+		document.body.appendChild(textarea);
+		textarea.focus();
+		press('s');
+		expect(setLeftSidebarOpen).not.toHaveBeenCalled();
+
+		// Back out of the field: the half-typed `g` must not still be waiting.
+		textarea.blur();
+		press('s');
+		expect(setLeftSidebarOpen).not.toHaveBeenCalled();
+	});
+
+	it('does not fire while a layer is open', () => {
+		const setLeftSidebarOpen = vi.fn();
+		mountHandler(
+			sidebarSequenceContext({
+				setLeftSidebarOpen,
+				hasOpenLayers: () => true,
+				hasOpenModal: () => false,
+			})
+		);
+
+		press('g');
+		press('s');
+
+		expect(setLeftSidebarOpen).not.toHaveBeenCalled();
+	});
+
+	it('leaves Escape to the layer stack even with a live prefix', () => {
+		mountHandler(sidebarSequenceContext({ setLeftSidebarOpen: vi.fn() }));
+
+		press('g');
+
+		expect(press('Escape')).not.toHaveBeenCalled();
+	});
+
+	it('dispatches a tab action bound to a sequence', () => {
+		// `nextTab` is matched with isTabShortcut rather than isShortcut, so the
+		// forced matcher has to answer for both.
+		const navigateToNextUnifiedTab = vi.fn().mockReturnValue(null);
+		const recordShortcutUsage = vi.fn().mockReturnValue({ newLevel: null });
+		mountHandler(
+			createMockContext({
+				activeSession: { id: 'session-1' },
+				activeSessionId: 'session-1',
+				setSessions: vi.fn((updater: (prev: unknown[]) => unknown) =>
+					updater([{ id: 'session-1' }])
+				),
+				navigateToNextUnifiedTab,
+				showUnreadOnly: false,
+				sequenceBindings: [{ id: 'nextTab', sequence: [['g'], ['t']] }],
+				recordShortcutUsage,
+			})
+		);
+
+		press('g');
+		press('t');
+
+		expect(navigateToNextUnifiedTab).toHaveBeenCalled();
+		expect(recordShortcutUsage).toHaveBeenCalledWith('nextTab');
+	});
+
+	it('is inert for a context that carries no sequence bindings', () => {
+		// Every pre-sequence caller, including most of this file's own contexts.
+		const setLeftSidebarOpen = vi.fn();
+		mountHandler(
+			createMockContext({
+				sessions: [{ id: 'session-1' }],
+				leftSidebarOpen: true,
+				setLeftSidebarOpen,
+				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			})
+		);
+
+		expect(press('g')).not.toHaveBeenCalled();
+		expect(setLeftSidebarOpen).not.toHaveBeenCalled();
+	});
+
+	it('yields to terminal focus recovery, which owns bare keys first', () => {
+		// The sequence block sits BELOW this early return on purpose: in terminal
+		// mode a bare key is the user typing at a shell.
+		const setLeftSidebarOpen = vi.fn();
+		mountHandler(
+			sidebarSequenceContext({
+				setLeftSidebarOpen,
+				activeSession: {
+					id: 'session-1',
+					inputMode: 'terminal',
+					activeTerminalTabId: 'term-1',
+				},
+				mainPanelRef: { current: { focusActiveTerminal: vi.fn() } },
+				setSessions: vi.fn(),
+			})
+		);
+
+		press('g');
+		press('s');
+
+		expect((window as any).maestro.process.write).toHaveBeenCalledWith(
+			'session-1-terminal-term-1',
+			'g'
+		);
+		expect(setLeftSidebarOpen).not.toHaveBeenCalled();
+	});
+
+	// --- What the prefix indicator is told ---
+	//
+	// The matcher is pure and lives in the effect's closure, so the chip reads a
+	// store the handler publishes to. These assert the publish, not the chip
+	// (SequencePrefixIndicator.test.tsx owns that).
+	describe('published prefix', () => {
+		const publishedPrefix = () => useSequencePrefixStore.getState().prefix;
+
+		beforeEach(() => {
+			clearSequencePrefix();
+		});
+
+		afterEach(() => {
+			clearSequencePrefix();
+		});
+
+		it('publishes a captured step and clears it on the match', () => {
+			mountHandler(sidebarSequenceContext({ setLeftSidebarOpen: vi.fn() }));
+
+			press('g');
+			expect(publishedPrefix()).toEqual([['g']]);
+
+			press('s');
+			expect(publishedPrefix()).toEqual([]);
+		});
+
+		it('clears the published prefix when a wrong key aborts the run', () => {
+			mountHandler(sidebarSequenceContext({ setLeftSidebarOpen: vi.fn() }));
+
+			press('g');
+			// Asserted live first, or the test passes for a chip that was never
+			// shown at all.
+			expect(publishedPrefix()).toEqual([['g']]);
+
+			press('x');
+			expect(publishedPrefix()).toEqual([]);
+		});
+
+		it('clears the published prefix on Escape', () => {
+			mountHandler(sidebarSequenceContext({ setLeftSidebarOpen: vi.fn() }));
+
+			press('g');
+			expect(publishedPrefix()).toEqual([['g']]);
+
+			press('Escape');
+			expect(publishedPrefix()).toEqual([]);
+		});
+
+		it('clears the published prefix when the window loses focus', () => {
+			mountHandler(sidebarSequenceContext({ setLeftSidebarOpen: vi.fn() }));
+
+			press('g');
+			expect(publishedPrefix()).toEqual([['g']]);
+
+			act(() => {
+				window.dispatchEvent(new Event('blur'));
+			});
+
+			expect(publishedPrefix()).toEqual([]);
+		});
+
+		it('clears the published prefix when focus moves into a text field', () => {
+			// The gate closes, so the run ends - and the chip has to go with it,
+			// or it sits over a composer the user is now typing in.
+			mountHandler(sidebarSequenceContext({ setLeftSidebarOpen: vi.fn() }));
+
+			press('g');
+			expect(publishedPrefix()).toEqual([['g']]);
+
+			const textarea = document.createElement('textarea');
+			document.body.appendChild(textarea);
+			textarea.focus();
+			press('s');
+
+			expect(publishedPrefix()).toEqual([]);
+		});
+
+		it('leaves the published prefix alone through a modifier-only keydown', () => {
+			// Shift fires its own keydown before the character it shifts, so a
+			// capital mid-sequence must not blank the chip for a frame.
+			mountHandler(
+				sidebarSequenceContext({
+					setLeftSidebarOpen: vi.fn(),
+					sequenceBindings: [{ id: 'toggleSidebar', sequence: [['g'], ['Shift', 's']] }],
+				})
+			);
+
+			press('g');
+			const before = publishedPrefix();
+
+			press('Shift', { shiftKey: true });
+			// Same identity, not merely equal: an unchanged run must not re-render
+			// the chip or restart its expiry clock.
+			expect(publishedPrefix()).toBe(before);
+		});
+
+		it('publishes each step of a three-step run', () => {
+			mountHandler(
+				sidebarSequenceContext({
+					setLeftSidebarOpen: vi.fn(),
+					sequenceBindings: [{ id: 'toggleSidebar', sequence: [['g'], ['g'], ['s']] }],
+				})
+			);
+
+			press('g');
+			expect(publishedPrefix()).toEqual([['g']]);
+
+			press('g');
+			expect(publishedPrefix()).toEqual([['g'], ['g']]);
+
+			press('s');
+			expect(publishedPrefix()).toEqual([]);
+		});
+
+		it('publishes nothing for a context that carries no sequence bindings', () => {
+			// The whole block is skipped there, which is every default-mode user
+			// today. Nothing can be live, so nothing is published.
+			mountHandler(
+				createMockContext({
+					sessions: [{ id: 'session-1' }],
+					leftSidebarOpen: true,
+					setLeftSidebarOpen: vi.fn(),
+					recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+				})
+			);
+
+			press('g');
+
+			expect(publishedPrefix()).toEqual([]);
+		});
+	});
+});
+
+/**
+ * `jk`, the in-field escape, wired into the real keydown listener.
+ *
+ * The unit-level rules live in `vimInsertEscape.test.ts`. What these cover is
+ * the WIRING, which has two properties the unit tests cannot see:
+ *
+ *  - The block sits ABOVE the layer guard, so the escape works in the text
+ *    fields a modal is made of. Below it, every bare key returns early while
+ *    anything is open and `jk` would be dead in the Settings filter, a rename
+ *    field, and the search box - which is most of the text fields in the app.
+ *  - It is gated entirely on `ctx.insertEscape`, which App leaves null in
+ *    default mode. A default-mode user's `j` must reach the field untouched.
+ */
+describe('useMainKeyboardHandler - the in-field escape (jk)', () => {
+	let unmountHandler: (() => void) | null = null;
+
+	function mountHandler(ctx: Record<string, unknown>) {
+		const { result, unmount } = renderHook(() => useMainKeyboardHandler());
+		unmountHandler = unmount;
+		result.current.keyboardHandlerRef.current = ctx;
+		return result;
+	}
+
+	function vimContext(overrides: Record<string, unknown> = {}) {
+		return createMockContext({
+			sessions: [{ id: 'session-1' }],
+			activeSessionId: 'session-1',
+			activeSession: { id: 'session-1', name: 'Test', inputMode: 'ai' },
+			insertEscape: parseInsertEscapeSequence('jk'),
+			recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			...overrides,
+		});
+	}
+
+	afterEach(() => {
+		unmountHandler?.();
+		unmountHandler = null;
+		document.body.innerHTML = '';
+		vi.useRealTimers();
+	});
+
+	it('blurs the composer and leaves no stray j', () => {
+		mountHandler(vimContext());
+		const field = mountComposer('ship it ');
+
+		typeInField(field, 'j');
+		// The `j` is in the field while the run is live: nothing is held back on
+		// the chance that a `k` follows.
+		expect(field.value).toBe('ship it j');
+
+		const event = typeInField(field, 'k');
+
+		expect(field.value).toBe('ship it ');
+		expect(event.defaultPrevented).toBe(true);
+		expect(document.activeElement).not.toBe(field);
+	});
+
+	it('leaves both characters when the j is followed by anything else', () => {
+		mountHandler(vimContext());
+		const field = mountComposer('');
+
+		typeInField(field, 'j');
+		typeInField(field, 'a');
+
+		expect(field.value).toBe('ja');
+		expect(document.activeElement).toBe(field);
+	});
+
+	it('leaves the j alone when the k arrives after the timeout', () => {
+		vi.useFakeTimers();
+		mountHandler(vimContext());
+		const field = mountComposer('');
+
+		typeInField(field, 'j');
+		vi.advanceTimersByTime(SEQUENCE_TIMEOUT_MS + 1);
+		typeInField(field, 'k');
+
+		expect(field.value).toBe('jk');
+		expect(document.activeElement).toBe(field);
+	});
+
+	it('does nothing in default mode, where ctx.insertEscape is null', () => {
+		mountHandler(vimContext({ insertEscape: null }));
+		const field = mountComposer('');
+
+		typeInField(field, 'j');
+		typeInField(field, 'k');
+
+		expect(field.value).toBe('jk');
+		expect(document.activeElement).toBe(field);
+	});
+
+	it('works with a modal open, served by the capture-phase route', () => {
+		// The Settings filter, a rename field and the search box are all inside
+		// a layer, and `Modal` stops every keydown at React's root - so the
+		// window BUBBLE listener is never called for a key typed in one. A
+		// capture-phase listener runs ahead of that stop and owns the gesture
+		// there. Without it `jk` was dead in most of the app's text fields.
+		mountHandler(vimContext({ hasOpenLayers: () => true }));
+		const field = mountComposer('abc');
+
+		typeInField(field, 'j');
+		typeInField(field, 'k');
+
+		expect(field.value).toBe('abc');
+		expect(document.activeElement).not.toBe(field);
+	});
+
+	it('feeds the matcher once per keystroke, not once per listener', () => {
+		// The capture and bubble routes share one matcher, so exactly one of
+		// them may feed a given keystroke. An event dispatched at `window`
+		// reaches both, and when both fed it the second call read the repeated
+		// `j` as a failed step and threw the prefix away - leaving the gesture
+		// dead in precisely the layer case the capture route was added for.
+		// Asserted on a run SPLIT across the guard's two sides being impossible:
+		// with layers open the whole run is the capture route's.
+		mountHandler(vimContext({ hasOpenLayers: () => true }));
+		const field = mountComposer('');
+
+		// A `j` that is never completed stays in the field, so the prefix is
+		// held rather than swallowed.
+		const first = typeInField(field, 'j');
+		expect(first.defaultPrevented).toBe(false);
+		expect(field.value).toBe('j');
+
+		// The completing `k` retracts the `j` and leaves the field.
+		const second = typeInField(field, 'k');
+		expect(second.defaultPrevented).toBe(true);
+		expect(field.value).toBe('');
+		expect(document.activeElement).not.toBe(field);
+	});
+
+	it('leaves a terminal alone, so jk reaches vim running in the shell', () => {
+		mountHandler(vimContext());
+		const terminal = document.createElement('div');
+		terminal.className = 'xterm';
+		const helper = document.createElement('textarea');
+		helper.className = 'xterm-helper-textarea';
+		terminal.appendChild(helper);
+		document.body.appendChild(terminal);
+		helper.focus();
+
+		typeInField(helper, 'j');
+		typeInField(helper, 'k');
+
+		expect(helper.value).toBe('jk');
+		expect(document.activeElement).toBe(helper);
+	});
+
+	it('does not finish a run in a field the j was never typed into', () => {
+		mountHandler(vimContext());
+		const first = mountComposer('');
+		typeInField(first, 'j');
+
+		const second = mountComposer('');
+		typeInField(second, 'k');
+
+		expect(first.value).toBe('j');
+		expect(second.value).toBe('k');
+		expect(document.activeElement).toBe(second);
+	});
+
+	it('records no shortcut usage, because the escape is not a bindable action', () => {
+		const recordShortcutUsage = vi.fn().mockReturnValue({ newLevel: null });
+		mountHandler(vimContext({ recordShortcutUsage }));
+		const field = mountComposer('');
+
+		typeInField(field, 'j');
+		typeInField(field, 'k');
+
+		expect(recordShortcutUsage).not.toHaveBeenCalled();
+	});
+});
+
+/**
+ * Vim mode, matched through the LIVE MODE'S OWN BINDINGS.
+ *
+ * Every other suite in this file forces the matcher: it hands the handler an
+ * `isShortcut` that answers true for one action id, which proves the branch and
+ * says nothing about which keypress reaches it. That is the right trade
+ * everywhere else, because the chord is the user's to rebind. It is exactly the
+ * wrong trade for Vim mode, where the whole point is that ONE chord resolves to
+ * a DIFFERENT action depending on the live mode, and where four actions were
+ * moved off chords the region family took. A forced matcher cannot tell
+ * `focusRegionLeft` from `goToHistory` on Ctrl+Shift+H, which is the one thing
+ * worth knowing.
+ *
+ * So these mount the real pipeline App.tsx mounts: the settings store's
+ * `keyboardMode` resolves through `useActiveShortcuts` to a pair of effective
+ * maps, `useKeyboardShortcutHelpers` turns those into the three matchers, and
+ * `collectSequenceBindings` flattens them into the normal-mode sequence list.
+ * The event goes in; the action that fires comes out.
+ *
+ * `vimShortcuts.test.ts` owns the TABLE (no reserved chord, one chord one
+ * action, nothing left unreachable). This file owns what happens when the key
+ * is actually pressed, which the table cannot answer: the ladder is a long
+ * else-if chain, and `goToHistory` sits ~120 lines ABOVE `focusRegionLeft` in
+ * it. If both ever matched one event, branch order would decide the winner and
+ * the table would still look clean.
+ */
+describe('useMainKeyboardHandler - Vim mode bindings', () => {
+	let unmountHandler: (() => void) | null = null;
+	let originalMaestro: unknown;
+
+	/**
+	 * The in-field escape the store SHIPS, read at registration time so no test
+	 * in this file can have written it yet. `setMode` restores this value rather
+	 * than a literal, which is what keeps "switching to Vim mode is enough" an
+	 * end-to-end claim instead of a claim about what this suite set.
+	 */
+	const shippedInsertEscape = useSettingsStore.getState().vimInsertEscapeSequence;
+
+	/**
+	 * The assembly App.tsx does in its render, in a hook so the test can press a
+	 * key against it. Nothing here is test-shaped: it is the same four calls in
+	 * the same order, reading the same store.
+	 */
+	function useResolvedBindings() {
+		const handler = useMainKeyboardHandler();
+		const { shortcuts, tabShortcuts } = useActiveShortcuts();
+		const { isShortcut, isTabShortcut, isPaneShortcut } = useKeyboardShortcutHelpers({
+			shortcuts,
+			tabShortcuts,
+		});
+		const sequenceBindings = useMemo(
+			() => collectSequenceBindings(shortcuts, tabShortcuts),
+			[shortcuts, tabShortcuts]
+		);
+		const keyboardMode = useSettingsStore((s) => s.keyboardMode);
+		const escapeSetting = useSettingsStore((s) => s.vimInsertEscapeSequence);
+		const insertEscape = useMemo(
+			() => (keyboardMode === 'vim' ? parseInsertEscapeSequence(escapeSetting) : null),
+			[keyboardMode, escapeSetting]
+		);
+		return {
+			handler,
+			bindings: { isShortcut, isTabShortcut, isPaneShortcut, sequenceBindings, insertEscape },
+		};
+	}
+
+	/**
+	 * Put a mode live. Called BEFORE `mount`, because the effective maps are
+	 * resolved during render and the matchers close over them.
+	 *
+	 * The Vim buckets are the SHIPPED tables rather than a fixture. A fixture
+	 * would make these tests pass forever while the real tables drifted, and the
+	 * drift is the failure they exist to catch.
+	 */
+	function setMode(mode: 'default' | 'vim') {
+		useSettingsStore.setState({
+			keyboardMode: mode,
+			shortcuts: DEFAULT_SHORTCUTS,
+			tabShortcuts: TAB_SHORTCUTS,
+			vimShortcuts: VIM_SHORTCUTS,
+			vimTabShortcuts: VIM_TAB_SHORTCUTS,
+			vimInsertEscapeSequence: shippedInsertEscape,
+		});
+	}
+
+	/**
+	 * A context wired for every action a chord under test could reach.
+	 *
+	 * The displaced branches get their collaborators even though the point is
+	 * that they do NOT fire. A branch that fires with a missing collaborator
+	 * throws inside the dispatched listener, which jsdom reports as an uncaught
+	 * exception rather than a failure - so the test would pass, reporting that
+	 * the action did not fire, when what really happened is that it fired and
+	 * crashed.
+	 */
+	function mount(ctxOverrides: Record<string, unknown> = {}) {
+		const { result, unmount } = renderHook(() => useResolvedBindings());
+		unmountHandler = unmount;
+		const recordShortcutUsage = vi.fn().mockReturnValue({ newLevel: null });
+		const ctx = createMockContext({
+			...result.current.bindings,
+			recordShortcutUsage,
+			activeSession: { id: 'session-1', name: 'Test', inputMode: 'ai' },
+			activeSessionId: 'session-1',
+			// goToHistory
+			setRightPanelOpen: vi.fn(),
+			handleSetActiveRightTab: vi.fn(),
+			setGroupChatRightTab: vi.fn(),
+			// jumpToBottom
+			logsEndRef: { current: null },
+			// agentSessions
+			hasActiveSessionCapability: () => true,
+			setActiveAgentSessionId: vi.fn(),
+			setAgentSessionsOpen: vi.fn(),
+			// clearTerminal
+			mainPanelRef: { current: { clearActiveTerminal: vi.fn() } },
+			// toggleShowThinking, and the tab block the ladder falls through into
+			setSessions: vi.fn((updater: (prev: unknown[]) => unknown) =>
+				updater([{ id: 'session-1', name: 'Test', inputMode: 'ai' }])
+			),
+			navigateToNextUnifiedTab: vi.fn().mockReturnValue(null),
+			navigateToPrevUnifiedTab: vi.fn().mockReturnValue(null),
+			showUnreadOnly: false,
+			...ctxOverrides,
+		});
+		result.current.handler.keyboardHandlerRef.current = ctx;
+		return { ctx, recordShortcutUsage };
+	}
+
+	/** Press a chord. `init` is the event exactly as a keyboard would send it. */
+	function press(init: KeyboardEventInit) {
+		const event = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init });
+		act(() => {
+			window.dispatchEvent(event);
+		});
+		return event;
+	}
+
+	/** Press a bare key, the shape every sequence step arrives in. */
+	function pressKey(key: string) {
+		return press({ key });
+	}
+
+	/** Which action ids `trackShortcut` recorded, in order. */
+	function recorded(recordShortcutUsage: ReturnType<typeof vi.fn>): string[] {
+		return recordShortcutUsage.mock.calls.map((call) => call[0] as string);
+	}
+
+	beforeEach(() => {
+		mockFocusRegionDirection.mockClear();
+		mockFocusRegionVertical.mockClear();
+		clearSequencePrefix();
+		originalMaestro = (window as any).maestro;
+		(window as any).maestro = {
+			...(((window as any).maestro ?? {}) as Record<string, unknown>),
+			process: { write: vi.fn() },
+		};
+		useUIStore.setState({ leftSidebarOpen: true, rightPanelOpen: true });
+	});
+
+	afterEach(() => {
+		// The listener has to go, or the next test's keypresses also reach this
+		// one's context and fire its mocks.
+		unmountHandler?.();
+		unmountHandler = null;
+		(window as any).maestro = originalMaestro;
+		document.body.innerHTML = '';
+		clearSequencePrefix();
+		useSettingsStore.setState({ keyboardMode: 'default' });
+		vi.useRealTimers();
+	});
+
+	// --- The region family, and the four actions it displaced ---
+
+	describe('Ctrl+Shift+H/J/K/L move the focus ring', () => {
+		/**
+		 * Each letter, the region action it fires in Vim mode, the service call
+		 * that proves the DIRECTION, and the action whose default chord it took.
+		 *
+		 * The displaced id is what makes each row worth running. `goToHistory` is
+		 * the load-bearing one (its branch is above the region branches, so a
+		 * double match would fire it instead), but all four letters take a chord
+		 * from a live action, and a user who switched to Vim mode and got the old
+		 * action is the exact failure this phase exists to prevent.
+		 */
+		const CASES = [
+			{ letter: 'h', actionId: 'focusRegionLeft', axis: 'across', to: 'left', took: 'goToHistory' },
+			{
+				letter: 'j',
+				actionId: 'focusRegionDown',
+				axis: 'within',
+				to: 'down',
+				took: 'jumpToBottom',
+			},
+			{ letter: 'k', actionId: 'focusRegionUp', axis: 'within', to: 'up', took: 'clearTerminal' },
+			{
+				letter: 'l',
+				actionId: 'focusRegionRight',
+				axis: 'across',
+				to: 'right',
+				took: 'agentSessions',
+			},
+		] as const;
+
+		it.each(CASES)(
+			'Ctrl+Shift+$letter fires $actionId, not $took',
+			({ letter, actionId, axis, to }) => {
+				setMode('vim');
+				const { recordShortcutUsage } = mount();
+
+				const code = `Key${letter.toUpperCase()}`;
+				press({ key: letter.toUpperCase(), code, ctrlKey: true, shiftKey: true });
+
+				// The direction is asserted through the service call rather than the
+				// action id, so a table that swapped two letters fails here even though
+				// both ids would still be "a region action".
+				const spy = axis === 'across' ? mockFocusRegionDirection : mockFocusRegionVertical;
+				expect(spy).toHaveBeenCalledWith(to);
+				// Exactly one id, so the displaced action cannot have fired alongside it.
+				expect(recorded(recordShortcutUsage)).toEqual([actionId]);
+			}
+		);
+
+		it('never reaches the History tab, whose branch sits above the region ones', () => {
+			// The assertion the id list cannot make: `goToHistory` opens the Right
+			// Bar and switches its tab before it records anything, so a double
+			// match would be visible here even if the recording order hid it.
+			setMode('vim');
+			const { ctx } = mount();
+
+			press({ key: 'H', code: 'KeyH', ctrlKey: true, shiftKey: true });
+
+			expect(mockFocusRegionDirection).toHaveBeenCalledWith('left');
+			expect(ctx.handleSetActiveRightTab).not.toHaveBeenCalled();
+			expect(ctx.setRightPanelOpen).not.toHaveBeenCalled();
+		});
+
+		it.each([
+			['the physical Ctrl key', { ctrlKey: true }],
+			['the physical Cmd key', { metaKey: true }],
+		])('fires on %s, because the matcher folds them into one modifier', (_label, modifier) => {
+			// Rule 4 in `vimShortcuts.ts`. The table is spelled with 'Ctrl' only so
+			// macOS renders the Vim-native glyph; both keys have to work, and this
+			// is what the whole displacement table rests on.
+			setMode('vim');
+			const { recordShortcutUsage } = mount();
+
+			press({ key: 'H', code: 'KeyH', shiftKey: true, ...modifier });
+
+			expect(recorded(recordShortcutUsage)).toEqual(['focusRegionLeft']);
+		});
+	});
+
+	describe('the displaced actions answer to their Vim chord', () => {
+		it('Ctrl+Alt+Shift+H fires goToHistory, through the e.code fallback Alt forces', () => {
+			// `key` is what macOS really sends for Opt+Shift+H, not 'H'. The chord
+			// is reachable ONLY through `eventMatchesShortcutKeys`' `e.code`
+			// fallback, so spelling the event honestly is the test: with `key: 'H'`
+			// it would pass against a matcher that ignores Alt-rewriting entirely.
+			setMode('vim');
+			const { ctx, recordShortcutUsage } = mount();
+
+			press({ key: 'Ó', code: 'KeyH', ctrlKey: true, altKey: true, shiftKey: true });
+
+			expect(ctx.setRightPanelOpen).toHaveBeenCalledWith(true);
+			expect(ctx.handleSetActiveRightTab).toHaveBeenCalledWith('history');
+			expect(recorded(recordShortcutUsage)).toEqual(['goToHistory']);
+			expect(mockFocusRegionDirection).not.toHaveBeenCalled();
+		});
+
+		it('Ctrl+Alt+Shift+L fires agentSessions', () => {
+			setMode('vim');
+			const { ctx, recordShortcutUsage } = mount();
+
+			press({ key: '', code: 'KeyL', ctrlKey: true, altKey: true, shiftKey: true });
+
+			expect(ctx.setAgentSessionsOpen).toHaveBeenCalledWith(true);
+			expect(recorded(recordShortcutUsage)).toEqual(['agentSessions']);
+			expect(mockFocusRegionDirection).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('default mode is untouched by any of it', () => {
+		it('Cmd+Shift+H fires goToHistory, and no region action fires', () => {
+			setMode('default');
+			const { ctx, recordShortcutUsage } = mount();
+
+			press({ key: 'H', code: 'KeyH', metaKey: true, shiftKey: true });
+
+			expect(ctx.setRightPanelOpen).toHaveBeenCalledWith(true);
+			expect(ctx.handleSetActiveRightTab).toHaveBeenCalledWith('history');
+			expect(recorded(recordShortcutUsage)).toEqual(['goToHistory']);
+			expect(mockFocusRegionDirection).not.toHaveBeenCalled();
+			expect(mockFocusRegionVertical).not.toHaveBeenCalled();
+		});
+
+		it('leaves Ctrl+Alt+Shift+H unbound, so the Vim chord is Vim mode only', () => {
+			// The other half of "default mode is untouched": the displaced actions
+			// did not QUIETLY GAIN a second chord. `goToHistory` answers to
+			// Cmd+Shift+H here and to nothing else.
+			setMode('default');
+			const { ctx, recordShortcutUsage } = mount();
+
+			press({ key: 'Ó', code: 'KeyH', ctrlKey: true, altKey: true, shiftKey: true });
+
+			expect(ctx.handleSetActiveRightTab).not.toHaveBeenCalled();
+			expect(recorded(recordShortcutUsage)).toEqual([]);
+		});
+	});
+
+	// --- Normal-mode sequences ---
+
+	describe('g t, the normal-mode tab walk', () => {
+		it('fires nextTab with focus outside a text field', () => {
+			setMode('vim');
+			const { ctx, recordShortcutUsage } = mount();
+
+			expect(pressKey('g').defaultPrevented).toBe(true);
+			expect(ctx.navigateToNextUnifiedTab).not.toHaveBeenCalled();
+
+			expect(pressKey('t').defaultPrevented).toBe(true);
+			expect(ctx.navigateToNextUnifiedTab).toHaveBeenCalled();
+			expect(recorded(recordShortcutUsage)).toEqual(['nextTab']);
+		});
+
+		it('fires nothing with focus in the composer', () => {
+			// The gate that makes a bare-letter binding safe at all: `g` and `t`
+			// are characters the user is typing into a prompt.
+			setMode('vim');
+			const { ctx, recordShortcutUsage } = mount();
+			const field = mountComposer('');
+
+			typeInField(field, 'g');
+			typeInField(field, 't');
+
+			expect(field.value).toBe('gt');
+			expect(ctx.navigateToNextUnifiedTab).not.toHaveBeenCalled();
+			expect(recorded(recordShortcutUsage)).toEqual([]);
+		});
+
+		it('fires nothing with a modal open', () => {
+			// The other half of normal mode. It lives in React context rather than
+			// the DOM, so `isNormalMode` cannot see it and the handler checks it
+			// separately - which is exactly the kind of pair that goes stale.
+			setMode('vim');
+			const { ctx, recordShortcutUsage } = mount({ hasOpenLayers: () => true });
+
+			pressKey('g');
+			pressKey('t');
+
+			expect(ctx.navigateToNextUnifiedTab).not.toHaveBeenCalled();
+			expect(recorded(recordShortcutUsage)).toEqual([]);
+		});
+
+		it('fires nothing in default mode, which binds no sequence at all', () => {
+			setMode('default');
+			const { ctx, recordShortcutUsage } = mount();
+
+			expect(pressKey('g').defaultPrevented).toBe(false);
+			pressKey('t');
+
+			expect(ctx.navigateToNextUnifiedTab).not.toHaveBeenCalled();
+			expect(recorded(recordShortcutUsage)).toEqual([]);
+		});
+	});
+
+	// --- The in-field escape, produced by the mode rather than handed in ---
+	//
+	// The suite above this one covers the escape's own behavior against a parsed
+	// binding passed straight to the handler. What is proven HERE is the half
+	// that suite assumes: that switching the mode to Vim is enough, with no
+	// setting touched, and that switching back takes it away again.
+
+	describe('jk, reached by switching the mode and nothing else', () => {
+		it('blurs the composer and leaves no stray j', () => {
+			// `shippedInsertEscape` is read before any test writes the field, so
+			// this covers the SHIPPED default too: a store that shipped `''` would
+			// leave Vim users with no way out of a text field, and `setMode` below
+			// would otherwise paper over it.
+			expect(shippedInsertEscape).toBe(DEFAULT_VIM_INSERT_ESCAPE_SEQUENCE);
+			setMode('vim');
+			const { recordShortcutUsage } = mount();
+			const field = mountComposer('ship it ');
+
+			typeInField(field, 'j');
+			// In the field while the run is live: nothing is held back on the
+			// chance that a `k` follows.
+			expect(field.value).toBe('ship it j');
+
+			const event = typeInField(field, 'k');
+
+			expect(field.value).toBe('ship it ');
+			expect(event.defaultPrevented).toBe(true);
+			expect(document.activeElement).not.toBe(field);
+			// Not a bindable action, so it has no id for mastery to count.
+			expect(recorded(recordShortcutUsage)).toEqual([]);
+		});
+
+		it('leaves both characters for ja', () => {
+			setMode('vim');
+			mount();
+			const field = mountComposer('');
+
+			typeInField(field, 'j');
+			typeInField(field, 'a');
+
+			expect(field.value).toBe('ja');
+			expect(document.activeElement).toBe(field);
+		});
+
+		it('does nothing in default mode, so no default-mode user ever loses a j', () => {
+			// The gate itself is one line of App.tsx, which `useResolvedBindings`
+			// above restates, so this row pins the CONTRACT rather than catching a
+			// mutation in production code: default mode must produce no binding at
+			// all. `vimInsertEscape.test.ts` owns the parse and the sibling suite
+			// above owns the handler's null path.
+			setMode('default');
+			mount();
+			const field = mountComposer('');
+
+			typeInField(field, 'j');
+			typeInField(field, 'k');
+
+			expect(field.value).toBe('jk');
+			expect(document.activeElement).toBe(field);
+		});
+	});
+});
+
+/**
+ * Deck mode: the leader chord, and the one bare key that follows it.
+ *
+ * Driven through the SHIPPED tables (`useResolvedBindings` below is App.tsx's
+ * own assembly) rather than a hand-forced `isShortcut`, because the claim this
+ * phase makes is end-to-end: switching to Vim mode is the whole setup, and
+ * `Ctrl+;` then arms a mode whose keys fire actions nothing taught them about.
+ *
+ * What these cases are really pinning, in one line each: the leader is the only
+ * chord involved, the key after it is matched against the Deck table ALONE, the
+ * action it fires is the same action its chord fires (same branch, same id), and
+ * the mode ends after exactly one keystroke whatever that keystroke was.
+ */
+describe('useMainKeyboardHandler - Deck mode', () => {
+	let unmountHandler: (() => void) | null = null;
+	let originalMaestro: unknown;
+
+	/** App.tsx's render-time assembly, so the matchers are the real ones. */
+	function useResolvedBindings() {
+		const handler = useMainKeyboardHandler();
+		const { shortcuts, tabShortcuts } = useActiveShortcuts();
+		const { isShortcut, isTabShortcut, isPaneShortcut } = useKeyboardShortcutHelpers({
+			shortcuts,
+			tabShortcuts,
+		});
+		const sequenceBindings = useMemo(
+			() => collectSequenceBindings(shortcuts, tabShortcuts),
+			[shortcuts, tabShortcuts]
+		);
+		const keyboardMode = useSettingsStore((s) => s.keyboardMode);
+		const escapeSetting = useSettingsStore((s) => s.vimInsertEscapeSequence);
+		const insertEscape = useMemo(
+			() => (keyboardMode === 'vim' ? parseInsertEscapeSequence(escapeSetting) : null),
+			[keyboardMode, escapeSetting]
+		);
+		return {
+			handler,
+			bindings: { isShortcut, isTabShortcut, isPaneShortcut, sequenceBindings, insertEscape },
+		};
+	}
+
+	/** Put a mode live, from the shipped tables. Call BEFORE `mount`. */
+	function setMode(mode: 'default' | 'vim') {
+		useSettingsStore.setState({
+			keyboardMode: mode,
+			shortcuts: DEFAULT_SHORTCUTS,
+			tabShortcuts: TAB_SHORTCUTS,
+			vimShortcuts: VIM_SHORTCUTS,
+			vimTabShortcuts: VIM_TAB_SHORTCUTS,
+		});
+	}
+
+	/**
+	 * A context wired for every action the Deck table can reach.
+	 *
+	 * All of them, in every test, even the ones a given case asserts did NOT
+	 * fire: a branch that fires with a missing collaborator throws inside the
+	 * dispatched listener, and jsdom reports that as an uncaught exception rather
+	 * than a failure - so the test would pass, claiming the action did not fire,
+	 * when in fact it fired and crashed.
+	 */
+	function mount(ctxOverrides: Record<string, unknown> = {}) {
+		const { result, unmount } = renderHook(() => useResolvedBindings());
+		unmountHandler = unmount;
+		const recordShortcutUsage = vi.fn().mockReturnValue({ newLevel: null });
+		const ctx = createMockContext({
+			...result.current.bindings,
+			recordShortcutUsage,
+			activeSession: { id: 'session-1', name: 'Test', inputMode: 'ai' },
+			activeSessionId: 'session-1',
+			// t / x
+			handleNewTab: vi.fn(),
+			handleCloseCurrentTab: vi.fn().mockReturnValue({ type: 'ai', tabId: 'tab-1' }),
+			performTabClose: vi.fn(),
+			handleCloseTerminalTab: vi.fn(),
+			inputRef: { current: null },
+			// Space
+			setQuickActionOpen: vi.fn(),
+			// 1-9, plus the tab block the ladder falls through into
+			setSessions: vi.fn((updater: (prev: unknown[]) => unknown) =>
+				updater([{ id: 'session-1', name: 'Test', inputMode: 'ai' }])
+			),
+			navigateToUnifiedTabByIndex: vi.fn().mockReturnValue(null),
+			navigateToNextUnifiedTab: vi.fn().mockReturnValue(null),
+			navigateToPrevUnifiedTab: vi.fn().mockReturnValue(null),
+			showUnreadOnly: false,
+			mainPanelRef: { current: { clearActiveTerminal: vi.fn() } },
+			...ctxOverrides,
+		});
+		result.current.handler.keyboardHandlerRef.current = ctx;
+		return { ctx, recordShortcutUsage };
+	}
+
+	/** The leader exactly as a keyboard sends it: Ctrl+; (Cmd+; on macOS). */
+	function pressLeader() {
+		const event = new KeyboardEvent('keydown', {
+			key: ';',
+			ctrlKey: true,
+			bubbles: true,
+			cancelable: true,
+		});
+		act(() => {
+			window.dispatchEvent(event);
+		});
+		return event;
+	}
+
+	/** Press a bare key, the shape every Deck key arrives in. */
+	function pressKey(key: string, init: KeyboardEventInit = {}) {
+		const event = new KeyboardEvent('keydown', {
+			key,
+			bubbles: true,
+			cancelable: true,
+			...init,
+		});
+		act(() => {
+			window.dispatchEvent(event);
+		});
+		return event;
+	}
+
+	/** Which action ids `trackShortcut` recorded, in order. */
+	function recorded(recordShortcutUsage: ReturnType<typeof vi.fn>): string[] {
+		return recordShortcutUsage.mock.calls.map((call) => call[0] as string);
+	}
+
+	/** Armed with the timeout applied, which is the only honest reading. */
+	const armed = () => deckModeArmedNow();
+
+	beforeEach(() => {
+		mockFocusRegionDirection.mockClear();
+		mockFocusRegionVertical.mockClear();
+		clearSequencePrefix();
+		originalMaestro = (window as any).maestro;
+		(window as any).maestro = {
+			...(((window as any).maestro ?? {}) as Record<string, unknown>),
+			process: { write: vi.fn() },
+		};
+		useUIStore.setState({ leftSidebarOpen: true, rightPanelOpen: true, zenMode: false });
+		useUIStore.getState().disarmDeckMode();
+	});
+
+	afterEach(() => {
+		unmountHandler?.();
+		unmountHandler = null;
+		(window as any).maestro = originalMaestro;
+		document.body.innerHTML = '';
+		clearSequencePrefix();
+		useUIStore.getState().disarmDeckMode();
+		useSettingsStore.setState({ keyboardMode: 'default' });
+		vi.useRealTimers();
+	});
+
+	describe('the leader', () => {
+		it('arms the mode, swallows the chord, and records itself', () => {
+			setMode('vim');
+			const { recordShortcutUsage } = mount();
+
+			const event = pressLeader();
+
+			expect(armed()).toBe(true);
+			expect(event.defaultPrevented).toBe(true);
+			// The leader IS an action with a row in Settings, so unlike the mode's
+			// Escape it has an id to record.
+			expect(recorded(recordShortcutUsage)).toEqual(['deckMode']);
+		});
+
+		it('does nothing in default mode, where it ships unbound', () => {
+			setMode('default');
+			const { recordShortcutUsage } = mount();
+
+			const event = pressLeader();
+
+			expect(armed()).toBe(false);
+			expect(event.defaultPrevented).toBe(false);
+			expect(recorded(recordShortcutUsage)).toEqual([]);
+		});
+
+		it('arms from inside a focused composer, which is the whole point', () => {
+			// A bare key cannot be bound here (it would fire mid-sentence) and a
+			// normal-mode sequence is gated on focus being OUTSIDE a field, so the
+			// leader is the only route to these actions from the composer.
+			setMode('vim');
+			mount();
+			const field = mountComposer('ship it');
+
+			pressLeader();
+
+			expect(armed()).toBe(true);
+			expect(document.activeElement).toBe(field);
+			expect(field.value).toBe('ship it');
+		});
+
+		it('restarts the clock when pressed again while armed', () => {
+			setMode('vim');
+			mount();
+			vi.useFakeTimers();
+
+			pressLeader();
+			vi.advanceTimersByTime(SEQUENCE_TIMEOUT_MS - 50);
+			pressLeader();
+			vi.advanceTimersByTime(SEQUENCE_TIMEOUT_MS - 50);
+
+			// Past the first window, inside the second.
+			expect(armed()).toBe(true);
+		});
+
+		it('abandons a half-typed sequence prefix', () => {
+			// `g` then the leader then `t` must not complete `g t`: the leader is a
+			// deliberate fresh start, and `t` was aimed at the Deck table.
+			setMode('vim');
+			const { ctx } = mount();
+
+			pressKey('g');
+			expect(useSequencePrefixStore.getState().prefix).toEqual([['g']]);
+
+			pressLeader();
+			expect(useSequencePrefixStore.getState().prefix).toEqual([]);
+
+			pressKey('t');
+			expect(ctx.handleNewTab).toHaveBeenCalledTimes(1);
+			expect(ctx.navigateToNextUnifiedTab).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('a Deck key fires the action its chord fires', () => {
+		/** Each direction letter, and the service call that proves it. */
+		const DIRECTIONS: ReadonlyArray<{
+			key: string;
+			id: string;
+			mock: ReturnType<typeof vi.fn>;
+			arg: string;
+		}> = [
+			{ key: 'h', id: 'focusRegionLeft', mock: mockFocusRegionDirection, arg: 'left' },
+			{ key: 'l', id: 'focusRegionRight', mock: mockFocusRegionDirection, arg: 'right' },
+			{ key: 'k', id: 'focusRegionUp', mock: mockFocusRegionVertical, arg: 'up' },
+			{ key: 'j', id: 'focusRegionDown', mock: mockFocusRegionVertical, arg: 'down' },
+		];
+
+		for (const { key, id, mock, arg } of DIRECTIONS) {
+			it(`${key} moves the focus ring ${arg} and records ${id}`, () => {
+				setMode('vim');
+				const { recordShortcutUsage } = mount();
+
+				pressLeader();
+				const event = pressKey(key);
+
+				expect(mock).toHaveBeenCalledWith(arg);
+				expect(event.defaultPrevented).toBe(true);
+				expect(armed()).toBe(false);
+				// The UNDERLYING id, never a Deck-specific one: this is what makes
+				// Deck `h` and Ctrl+Shift+H one action for keyboard mastery.
+				expect(recorded(recordShortcutUsage)).toEqual(['deckMode', id]);
+			});
+		}
+
+		it('fires each action exactly once, not once per reporting path', () => {
+			// The Deck layer records the match and the ladder branch records it
+			// again. Mastery is a set and would not notice; the daily counter would.
+			setMode('vim');
+			const { recordShortcutUsage } = mount();
+
+			pressLeader();
+			pressKey('h');
+
+			expect(mockFocusRegionDirection).toHaveBeenCalledTimes(1);
+			expect(recordShortcutUsage.mock.calls.filter((c) => c[0] === 'focusRegionLeft')).toHaveLength(
+				1
+			);
+		});
+
+		it('t opens a new tab', () => {
+			setMode('vim');
+			const { ctx, recordShortcutUsage } = mount();
+
+			pressLeader();
+			pressKey('t');
+
+			expect(ctx.handleNewTab).toHaveBeenCalledTimes(1);
+			expect(recorded(recordShortcutUsage)).toEqual(['deckMode', 'newTab']);
+		});
+
+		it('x closes the active tab', () => {
+			setMode('vim');
+			const { ctx, recordShortcutUsage } = mount();
+
+			pressLeader();
+			pressKey('x');
+
+			expect(ctx.performTabClose).toHaveBeenCalledWith('tab-1');
+			expect(recorded(recordShortcutUsage)).toEqual(['deckMode', 'closeTab']);
+		});
+
+		it('z toggles zen mode', () => {
+			setMode('vim');
+			const { recordShortcutUsage } = mount();
+
+			pressLeader();
+			pressKey('z');
+
+			expect(useUIStore.getState().zenMode).toBe(true);
+			expect(recorded(recordShortcutUsage)).toEqual(['deckMode', 'toggleZenMode']);
+		});
+
+		it('a digit jumps to that tab position', () => {
+			setMode('vim');
+			const { ctx, recordShortcutUsage } = mount();
+
+			pressLeader();
+			pressKey('3');
+
+			// Zero-based index, so the third tab is 2.
+			expect(ctx.navigateToUnifiedTabByIndex).toHaveBeenCalledWith(expect.anything(), 2, false);
+			expect(recorded(recordShortcutUsage)).toEqual(['deckMode', 'goToTab3']);
+		});
+
+		it('Space opens Quick Actions even with the Left Bar focused', () => {
+			// `handleSidebarNavigation` claims a bare Space outright when the
+			// sidebar has focus, and it runs before the ladder. A Deck key has to
+			// get past it, which is why a forced Deck action skips that handler.
+			setMode('vim');
+			const handleSidebarNavigation = vi.fn().mockReturnValue(true);
+			const { ctx, recordShortcutUsage } = mount({
+				activeFocus: 'sidebar',
+				handleSidebarNavigation,
+			});
+
+			pressLeader();
+			pressKey(' ');
+
+			expect(handleSidebarNavigation).not.toHaveBeenCalled();
+			expect(ctx.setQuickActionOpen).toHaveBeenCalledWith(true, 'main');
+			expect(recorded(recordShortcutUsage)).toEqual(['deckMode', 'quickAction']);
+		});
+
+		it('fires from inside a focused composer without typing the key', () => {
+			setMode('vim');
+			mount();
+			const field = mountComposer('');
+
+			pressLeader();
+			typeInField(field, 'h');
+
+			expect(mockFocusRegionDirection).toHaveBeenCalledWith('left');
+			expect(field.value).toBe('');
+		});
+
+		it('fires over an open modal layer', () => {
+			// The layer guard returns early for a bare key, which would make the
+			// mode arm over a modal and then swallow its keys silently.
+			setMode('vim');
+			const { ctx } = mount({ hasOpenLayers: () => true, hasOpenModal: () => true });
+
+			pressLeader();
+			pressKey('t');
+
+			expect(ctx.handleNewTab).toHaveBeenCalledTimes(1);
+		});
+
+		it('forgives a held Shift, since the table has no capital rows', () => {
+			setMode('vim');
+			mount();
+
+			pressLeader();
+			pressKey('H', { shiftKey: true });
+
+			expect(mockFocusRegionDirection).toHaveBeenCalledWith('left');
+		});
+	});
+
+	describe('the mode ends after one keystroke, whatever it was', () => {
+		it('a miss disarms, swallows the key, and fires nothing', () => {
+			setMode('vim');
+			const { ctx, recordShortcutUsage } = mount();
+
+			pressLeader();
+			const event = pressKey('q');
+
+			expect(armed()).toBe(false);
+			// Swallowed deliberately: a leader that sometimes passed the key along
+			// would leave the user guessing whether it had taken effect.
+			expect(event.defaultPrevented).toBe(true);
+			expect(ctx.handleNewTab).not.toHaveBeenCalled();
+			expect(mockFocusRegionDirection).not.toHaveBeenCalled();
+			expect(recorded(recordShortcutUsage)).toEqual(['deckMode']);
+		});
+
+		it('a miss inserts no character into a focused textarea', () => {
+			setMode('vim');
+			mount();
+			const field = mountComposer('ship it');
+
+			pressLeader();
+			typeInField(field, 'q');
+
+			expect(field.value).toBe('ship it');
+			expect(armed()).toBe(false);
+		});
+
+		it('Escape disarms, fires nothing, and records nothing', () => {
+			setMode('vim');
+			const handleEscapeInMain = vi.fn().mockReturnValue(false);
+			const { recordShortcutUsage } = mount({ handleEscapeInMain });
+
+			pressLeader();
+			const event = pressKey('Escape');
+
+			expect(armed()).toBe(false);
+			expect(event.defaultPrevented).toBe(true);
+			// Cancelling is the mode's own behaviour, not an action, so there is no
+			// id to record and nothing below should see the keypress.
+			expect(recorded(recordShortcutUsage)).toEqual(['deckMode']);
+			expect(handleEscapeInMain).not.toHaveBeenCalled();
+		});
+
+		it('fires nothing on a second bare key', () => {
+			setMode('vim');
+			const { ctx } = mount();
+
+			pressLeader();
+			pressKey('t');
+			pressKey('t');
+
+			expect(ctx.handleNewTab).toHaveBeenCalledTimes(1);
+		});
+
+		it('expires on its own, and the key goes back to being an ordinary key', () => {
+			setMode('vim');
+			const { ctx } = mount();
+			vi.useFakeTimers();
+
+			pressLeader();
+			vi.advanceTimersByTime(SEQUENCE_TIMEOUT_MS + 1);
+
+			const event = pressKey('t');
+
+			expect(armed()).toBe(false);
+			expect(ctx.handleNewTab).not.toHaveBeenCalled();
+			expect(event.defaultPrevented).toBe(false);
+		});
+
+		it('gets out of the way of a chord pressed while armed', () => {
+			// Cmd+K is Quick Actions and a bare `k` is the Deck key for Focus
+			// Region Up, so this is the keypress the two layers could fight over.
+			// The user changed their mind and pressed something they meant for the
+			// app: it reaches its own branch rather than being read as a Deck key,
+			// and the mode does not survive to eat the next keystroke either.
+			setMode('vim');
+			const { ctx } = mount();
+
+			pressLeader();
+			pressKey('k', { metaKey: true });
+
+			expect(ctx.setQuickActionOpen).toHaveBeenCalledWith(true, 'main');
+			expect(mockFocusRegionVertical).not.toHaveBeenCalled();
+			expect(armed()).toBe(false);
+		});
+	});
+
+	describe('composing with the other two keyboard layers', () => {
+		it('a Deck j is not the first half of the in-field escape', () => {
+			// Fed to the insert-escape matcher, the Deck `j` would leave a prefix
+			// waiting to retract the next real `k` the user typed.
+			setMode('vim');
+			mount();
+			const field = mountComposer('');
+
+			pressLeader();
+			typeInField(field, 'j');
+			expect(mockFocusRegionVertical).toHaveBeenCalledWith('down');
+
+			typeInField(field, 'k');
+
+			expect(field.value).toBe('k');
+			expect(document.activeElement).toBe(field);
+		});
+
+		it('a Deck key does not start a sequence run', () => {
+			setMode('vim');
+			const { ctx } = mount();
+
+			pressLeader();
+			pressKey('g');
+
+			// `g` is not a Deck key, so it is a miss: swallowed, and NOT handed to
+			// the sequence matcher, so no prefix is live afterwards.
+			expect(useSequencePrefixStore.getState().prefix).toEqual([]);
+
+			pressKey('t');
+			expect(ctx.navigateToNextUnifiedTab).not.toHaveBeenCalled();
+		});
+
+		it('leaves the sequence matcher working once the mode has ended', () => {
+			setMode('vim');
+			const { ctx } = mount();
+
+			pressLeader();
+			pressKey('t');
+			expect(ctx.handleNewTab).toHaveBeenCalledTimes(1);
+
+			// `g t` is the normal-mode tab walk, and it still runs.
+			pressKey('g');
+			pressKey('t');
+			expect(ctx.navigateToNextUnifiedTab).toHaveBeenCalledTimes(1);
+			expect(ctx.handleNewTab).toHaveBeenCalledTimes(1);
+		});
 	});
 });
 
