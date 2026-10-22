@@ -12,9 +12,12 @@
 
 import {
 	isPermitted,
+	isPathScoped,
+	hasSessionGrantScope,
 	type PluginCapability,
 	type PermissionGrant,
 } from '../../shared/plugins/permissions';
+import { expandPluginHomePath } from './plugin-home-path';
 import {
 	HOST_METHOD_CAPABILITY,
 	HANDLER_REAUTHORIZED_METHODS,
@@ -51,16 +54,47 @@ export interface PermissionBrokerDeps {
 /**
  * Normalize a path for protected-prefix comparison: forward slashes, no trailing
  * separator, and case-folded on Windows (its filesystem is case-insensitive).
+ *
+ * Exported because `plugin-session-fields.ts` compares plugin-supplied
+ * directories against granted project roots and MUST agree with this module's
+ * notion of path identity - two normalizers would be two rules.
  */
-function normalizeForPrefix(p: string): string {
+export function normalizeForPrefix(p: string): string {
 	let out = p.replace(/\\/g, '/').replace(/\/+$/, '');
 	if (out === '') out = '/';
 	return process.platform === 'win32' ? out.toLowerCase() : out;
 }
 
+/**
+ * Expand a leading `~` on both sides of a path comparison, so a grant scoped to
+ * `~/.maestro/kanban-boards` covers a call targeting `~/.maestro/kanban-boards/x.yaml`
+ * AND covers the already-expanded real path the fs handlers re-authorize with.
+ * Only path-scoped capabilities expand (see `isPathScoped`): a host scope or an
+ * exact allowlist member keeps its literal identity. Expansion is a no-op on
+ * every string that does not start with `~`, so an absolute scope is untouched.
+ */
+function expandPathGrants(
+	grants: readonly PermissionGrant[],
+	capability: PluginCapability
+): readonly PermissionGrant[] {
+	if (!isPathScoped(capability)) return grants;
+	let changed = false;
+	const expanded = grants.map((g) => {
+		if (g.capability !== capability || !g.scope) return g;
+		const scope = expandPluginHomePath(g.scope);
+		if (scope === g.scope) return g;
+		changed = true;
+		return { ...g, scope };
+	});
+	return changed ? expanded : grants;
+}
+
 /** Is `target` equal to or inside any protected prefix? Separator-boundary
- * match so `/data/userdata-plugins` does not match prefix `/data/userdata`. */
-function isUnderProtectedPath(target: string, prefixes: readonly string[]): boolean {
+ * match so `/data/userdata-plugins` does not match prefix `/data/userdata`.
+ *
+ * Exported for `plugin-session-fields.ts`, which applies the SAME userData
+ * exclusion to the working directory of a plugin-created session. */
+export function isUnderProtectedPath(target: string, prefixes: readonly string[]): boolean {
 	const t = normalizeForPrefix(target);
 	for (const prefix of prefixes) {
 		const p = normalizeForPrefix(prefix);
@@ -84,8 +118,15 @@ export class PermissionBroker {
 		options?: { audit?: boolean }
 	): BrokerDecision {
 		const capability = HOST_METHOD_CAPABILITY[method];
-		const target = extractTarget(method, params);
-		const grants = this.deps.getGrants(pluginId);
+		const rawTarget = extractTarget(method, params);
+		// Expand `~` on both sides BEFORE anything compares them, and report the
+		// expanded target in the decision: it is the path the host would actually
+		// touch, so it is what the audit log and the deny reason should name.
+		const target =
+			rawTarget !== undefined && isPathScoped(capability)
+				? expandPluginHomePath(rawTarget)
+				: rawTarget;
+		const grants = expandPathGrants(this.deps.getGrants(pluginId), capability);
 		let allowed: boolean;
 		let reason: string | undefined;
 		if (method === 'media.close' || method === 'services.cancel' || method === 'services.status') {
@@ -98,6 +139,18 @@ export class PermissionBroker {
 			// re-authorizes the resource's real origin against the live grant. Without
 			// this, a scoped grant (the recommended form) would be denied for a
 			// missing target even though the operation is in-scope.
+			allowed = grants.some((g) => g.capability === capability);
+			reason = allowed ? undefined : `permission denied: ${capability}`;
+		} else if (isPathScoped(capability) && hasSessionGrantScope(grants, capability)) {
+			// `granted-sessions` replaces this capability's path scope with a set of
+			// session ids held in the host's sealed ledger, which the pure matcher
+			// cannot see - so a path comparison would deny every call. Confirm only
+			// that the capability is held (the HANDLER_REAUTHORIZED_METHODS posture);
+			// the handler then requires `isSessionGranted(pluginId, sessionId)` for
+			// the concrete session before it reads anything, and a Settings revoke
+			// denies on the very next call because grants are re-read every time.
+			// Allowlist-scoped verbs need no relaxation: the host rewrites their
+			// scope to the granted ids, so exact membership already enforces the set.
 			allowed = grants.some((g) => g.capability === capability);
 			reason = allowed ? undefined : `permission denied: ${capability}`;
 		} else {

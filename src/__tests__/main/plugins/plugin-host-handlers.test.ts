@@ -15,6 +15,7 @@ import {
 	purgePluginData,
 	type HostHandlerDeps,
 	type PluginSessionMetadata,
+	type PluginTabMetadata,
 } from '../../../main/plugins/plugin-host-handlers';
 import { ActionGuard } from '../../../main/plugins/action-guard';
 import { PluginKvStore } from '../../../main/plugins/plugin-kv-store';
@@ -33,6 +34,33 @@ import { MAESTRO_PUBLISHER_KEYS } from '../../../shared/plugins/publisher-keys';
 import { RELAY_PUBLISHER_KEY } from '../../../shared/plugins/relay-identity';
 import relayRelease from '../../shared/plugins/fixtures/relay-release-question.json';
 import type { AgentSendProgressEvent } from '../../../shared/plugins/rpc-protocol';
+
+// `~` expansion in plugin fs paths reads os.homedir(). Stub it to a throwaway
+// temp directory so nothing in this file can read or write the real home folder.
+// Minted lazily on the FIRST call and remembered, so even a module-load-time
+// caller gets the stub rather than an empty string.
+const home = vi.hoisted(() => ({ dir: '' }));
+vi.mock('os', async () => {
+	const actual = await vi.importActual<typeof import('os')>('os');
+	const fsActual = await vi.importActual<typeof import('fs')>('fs');
+	const pathActual = await vi.importActual<typeof import('path')>('path');
+	return {
+		...actual,
+		homedir: () => {
+			if (!home.dir) {
+				// realpathSync: on macOS os.tmpdir() is /var/..., a symlink to
+				// /private/var/..., and the fs handlers re-authorize the
+				// symlink-RESOLVED path against the grant. A real home directory is
+				// not a symlink, so resolving here keeps the stub faithful instead of
+				// testing a tmpdir artifact.
+				home.dir = fsActual.realpathSync(
+					fsActual.mkdtempSync(pathActual.join(actual.tmpdir(), 'maestro-hh-home-'))
+				);
+			}
+			return home.dir;
+		},
+	};
+});
 
 let kvBase: string;
 let kv: PluginKvStore;
@@ -699,6 +727,142 @@ describe('net.fetch egress + fs.write guarding', () => {
 	});
 });
 
+describe('fs.read / fs.write with home-relative (~) paths', () => {
+	// The maestro-kanban grant set: one entry per scope per capability, naming
+	// exactly the files and directories the plugin owns under ~/.maestro.
+	const KANBAN_SCOPES = [
+		'~/.maestro/kanban.yaml',
+		'~/.maestro/kanban-boards',
+		'~/.maestro/kanban-conductor',
+		'~/.maestro/kanban-archive',
+	];
+	const kanbanGrants = (): PermissionGrant[] =>
+		(['fs:read', 'fs:write'] as const).flatMap((capability) =>
+			KANBAN_SCOPES.map((scope) => ({ capability, scope, grantedAt: 1 }) as PermissionGrant)
+		);
+
+	let homeDir: string;
+	let boards: string;
+
+	beforeEach(() => {
+		homeDir = os.homedir(); // the stubbed temp home, minted on first use
+		boards = path.join(homeDir, '.maestro', 'kanban-boards');
+		fs.mkdirSync(boards, { recursive: true });
+	});
+	afterEach(() => fs.rmSync(path.join(homeDir, '.maestro'), { recursive: true, force: true }));
+
+	/** Handlers wired to the REAL broker, so the grant scopes do the deciding. */
+	function handlers(protectedPaths?: readonly string[]) {
+		return buildHostCallHandlers(
+			makeDeps({
+				broker: new PermissionBroker({
+					getGrants: kanbanGrants,
+					...(protectedPaths ? { protectedPaths: () => protectedPaths } : {}),
+				}),
+			})
+		);
+	}
+
+	it('writes and reads a board file under the stubbed home', async () => {
+		const h = handlers();
+		const p = '~/.maestro/kanban-boards/my-app-1a2b3c4d.yaml';
+		await expect(h['fs.write']!('p', { path: p, contents: 'version: 1\n' })).resolves.toEqual({
+			ok: true,
+		});
+		expect(fs.readFileSync(path.join(boards, 'my-app-1a2b3c4d.yaml'), 'utf-8')).toBe(
+			'version: 1\n'
+		);
+		await expect(h['fs.read']!('p', { path: p })).resolves.toBe('version: 1\n');
+	});
+
+	it('creates missing parent directories for a ~ write (kanban-conductor does not exist yet)', async () => {
+		const h = handlers();
+		await expect(
+			h['fs.write']!('p', { path: '~/.maestro/kanban-conductor/run/notes.md', contents: 'hi' })
+		).resolves.toEqual({ ok: true });
+		expect(
+			fs.readFileSync(path.join(homeDir, '.maestro/kanban-conductor/run/notes.md'), 'utf-8')
+		).toBe('hi');
+	});
+
+	it('reads and writes the single-file scope ~/.maestro/kanban.yaml', async () => {
+		const h = handlers();
+		await expect(
+			h['fs.write']!('p', { path: '~/.maestro/kanban.yaml', contents: 'version: 1\n' })
+		).resolves.toEqual({ ok: true });
+		await expect(h['fs.read']!('p', { path: '~/.maestro/kanban.yaml' })).resolves.toBe(
+			'version: 1\n'
+		);
+	});
+
+	it('denies a home path outside the granted ~/.maestro/kanban* scopes', async () => {
+		const h = handlers();
+		fs.writeFileSync(path.join(homeDir, '.maestro', 'other.yaml'), 'secret');
+		fs.writeFileSync(path.join(homeDir, 'notes.txt'), 'secret');
+		await expect(h['fs.read']!('p', { path: '~/.maestro/other.yaml' })).rejects.toThrow(
+			/permission denied/
+		);
+		await expect(h['fs.read']!('p', { path: '~/notes.txt' })).rejects.toThrow(/permission denied/);
+		await expect(
+			h['fs.write']!('p', { path: '~/.maestro/other.yaml', contents: 'clobbered' })
+		).rejects.toThrow(/permission denied/);
+		await expect(
+			h['fs.write']!('p', { path: '~/evil.txt', contents: 'clobbered' })
+		).rejects.toThrow(/permission denied/);
+		expect(fs.readFileSync(path.join(homeDir, '.maestro', 'other.yaml'), 'utf-8')).toBe('secret');
+		expect(fs.existsSync(path.join(homeDir, 'evil.txt'))).toBe(false);
+	});
+
+	it('denies a .. escape out of a ~ scope', async () => {
+		const h = handlers();
+		const escape = '~/.maestro/kanban-boards/../../.ssh/id_rsa';
+		await expect(h['fs.read']!('p', { path: escape })).rejects.toThrow(/permission denied/);
+		await expect(h['fs.write']!('p', { path: escape, contents: 'k' })).rejects.toThrow(
+			/permission denied/
+		);
+		expect(fs.existsSync(path.join(homeDir, '.ssh'))).toBe(false);
+	});
+
+	it('denies a symlink inside a ~ scope that points outside it (real-path re-authorization)', async () => {
+		const h = handlers();
+		const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'kanban-outside-'));
+		fs.writeFileSync(path.join(outside, 'secret.yaml'), 'secret');
+		fs.symlinkSync(outside, path.join(boards, 'link'));
+		await expect(
+			h['fs.read']!('p', { path: '~/.maestro/kanban-boards/link/secret.yaml' })
+		).rejects.toThrow(/permission denied/);
+		await expect(
+			h['fs.write']!('p', { path: '~/.maestro/kanban-boards/link/new.yaml', contents: 'x' })
+		).rejects.toThrow(/permission denied/);
+		expect(fs.existsSync(path.join(outside, 'new.yaml'))).toBe(false);
+		fs.rmSync(outside, { recursive: true, force: true });
+	});
+
+	it('does not expand ~user/... (it stays a literal path and is denied)', async () => {
+		const h = handlers();
+		await expect(h['fs.read']!('p', { path: '~root/.maestro/kanban.yaml' })).rejects.toThrow(
+			/permission denied/
+		);
+		// Nothing was created under the stubbed home for the unexpanded form.
+		expect(fs.existsSync(path.join(homeDir, '.maestro', 'kanban.yaml'))).toBe(false);
+	});
+
+	it('still denies a ~ path that resolves inside the userData tree', async () => {
+		const userData = path.join(boards, 'userData');
+		const h = handlers([userData]);
+		await expect(
+			h['fs.write']!('p', {
+				path: '~/.maestro/kanban-boards/userData/plugin-grants.json',
+				contents: '{}',
+			})
+		).rejects.toThrow(/protected location/);
+		await expect(h['fs.read']!('p', { path: '~/.maestro/kanban-boards/userData' })).rejects.toThrow(
+			/protected location/
+		);
+		expect(fs.existsSync(path.join(userData, 'plugin-grants.json'))).toBe(false);
+	});
+});
+
 describe('purgePluginData', () => {
 	it('purges KV, namespaced settings, event subscriptions, and live host views', async () => {
 		kv.set('p', 'k', 'v');
@@ -880,6 +1044,124 @@ describe('transcripts.read', () => {
 		await expect(
 			h['transcripts.read']!('p', { sessionId: 's1', fields: ['summary'], limit: 1 })
 		).resolves.toEqual([{ summary: 's2' }]);
+	});
+
+	describe('under a granted-sessions grant', () => {
+		/** A board-shaped plugin: the host's grant set decides which sessions it may
+		 * read, replacing the project-path scope entirely. The broker here DENIES
+		 * every path, which is the production shape for a keyword grant (it has no
+		 * path to match), so a passing read proves the grant is the only scope. */
+		const grantDeps = (granted: readonly string[], over: Partial<HostHandlerDeps> = {}) =>
+			makeDeps({
+				readSessionTranscript,
+				sessionsGet,
+				broker: brokerFor(() => [grant('transcripts:read')]),
+				usesSessionGrants: () => true,
+				isSessionGranted: (_pluginId, sessionId) => granted.includes(sessionId),
+				...over,
+			});
+
+		it('denies a non-granted session and never touches the transcript', async () => {
+			const read = vi.fn(readSessionTranscript);
+			const audit = vi.fn();
+			const h = buildHostCallHandlers(
+				grantDeps([], { readSessionTranscript: read, auditTranscriptRead: audit })
+			);
+			await expect(
+				h['transcripts.read']!('p', { sessionId: 's1', fields: ['summary'] })
+			).rejects.toThrow(/session s1 is not granted to this plugin/);
+			// Nothing was read and nothing was audited: a denial is not a read.
+			expect(read).not.toHaveBeenCalled();
+			expect(audit).not.toHaveBeenCalled();
+		});
+
+		it('returns projected rows for a granted session, with the read audited', async () => {
+			const audit = vi.fn();
+			const h = buildHostCallHandlers(grantDeps(['s1'], { auditTranscriptRead: audit }));
+			await expect(
+				h['transcripts.read']!('p', {
+					sessionId: 's1',
+					fields: ['summary', 'timestamp', 'type', 'success'],
+				})
+			).resolves.toEqual([
+				{ summary: 's1', timestamp: 100, type: 'USER' },
+				{ summary: 's2', timestamp: 200, type: 'AUTO' },
+			]);
+			expect(audit).toHaveBeenCalledWith(
+				'p',
+				expect.objectContaining({ sessionId: 's1', projectPath: '/repo/a', count: 2 })
+			);
+		});
+
+		it('is a grant check, not a project match: a granted session OUTSIDE any path scope reads', async () => {
+			// The same call under a path-scoped plugin is denied by the broker (see
+			// the re-authorization test above). The grant set is what replaces it.
+			const h = buildHostCallHandlers(
+				makeDeps({
+					readSessionTranscript,
+					sessionsGet,
+					broker: {
+						authorize: () => ({
+							allowed: false,
+							capability: 'transcripts:read',
+							reason: 'permission denied: transcripts:read (/repo/a)',
+						}),
+					} as unknown as HostHandlerDeps['broker'],
+					usesSessionGrants: () => true,
+					isSessionGranted: () => true,
+				})
+			);
+			await expect(
+				h['transcripts.read']!('p', { sessionId: 's1', fields: ['summary'] })
+			).resolves.toEqual([{ summary: 's1' }, { summary: 's2' }]);
+		});
+
+		it('denies before disclosing, so an unknown id is not an existence oracle', async () => {
+			// A path-scoped plugin gets [] for an unknown session (see above). A
+			// grant-set plugin must get the SAME "not granted" answer for a session
+			// that exists and one that does not, or the error text would leak which
+			// ids are real to a plugin that may read none of them.
+			const h = buildHostCallHandlers(grantDeps([]));
+			for (const sessionId of ['s1', 'nope']) {
+				await expect(
+					h['transcripts.read']!('p', { sessionId, fields: ['summary'] })
+				).rejects.toThrow(/is not granted to this plugin/);
+			}
+		});
+
+		it('fails closed when the grant predicate is unwired', async () => {
+			const h = buildHostCallHandlers(
+				grantDeps([], { isSessionGranted: undefined, readSessionTranscript })
+			);
+			await expect(
+				h['transcripts.read']!('p', { sessionId: 's1', fields: ['summary'] })
+			).rejects.toThrow(/is not granted to this plugin/);
+		});
+
+		it('keeps every other gate: the egress conflict and the field allowlist', async () => {
+			// A grant is not a bypass. The untrusted content+egress exclusion still
+			// refuses the read outright...
+			const conflicted = buildHostCallHandlers(
+				grantDeps(['s1'], {
+					assertTranscriptReadAllowed: () => {
+						throw new Error('transcripts:read cannot be combined with net:fetch');
+					},
+				})
+			);
+			await expect(
+				conflicted['transcripts.read']!('p', { sessionId: 's1', fields: ['summary'] })
+			).rejects.toThrow(/cannot be combined with net:fetch/);
+
+			// ...and a granted session still cannot project a field off the allowlist
+			// or skip the projection entirely.
+			const h = buildHostCallHandlers(grantDeps(['s1']));
+			await expect(
+				h['transcripts.read']!('p', { sessionId: 's1', fields: ['hostname'] })
+			).rejects.toThrow(/fields is required/);
+			await expect(
+				h['transcripts.read']!('p', { sessionId: 's1', fields: ['summary', 'hostname'] })
+			).resolves.toEqual([{ summary: 's1' }, { summary: 's2' }]);
+		});
 	});
 });
 
@@ -1896,7 +2178,122 @@ describe('high-power act verbs (agents.dispatch / process.spawn)', () => {
 			h['agents.dispatch']!('p', { agentId: 'a', prompt: 'write a friendly summary' })
 		).resolves.toBe('dispatched');
 		expect(events).toEqual(['audit', 'sink']);
-		expect(dispatch).toHaveBeenCalledWith('a', 'write a friendly summary');
+		// No opts => no tab: the sink gets an explicit undefined, which is the
+		// pre-tab-targeting call (the renderer falls back to the active tab).
+		expect(dispatch).toHaveBeenCalledWith('a', 'write a friendly summary', undefined);
+	});
+
+	it('narrows agents.dispatch to one visible AI tab of the dispatched session and rejects anything else', async () => {
+		const tabs: PluginTabMetadata[] = [
+			{ id: 'tab-a', sessionId: 'a', type: 'ai', title: 'Work' },
+			{ id: 'term-a', sessionId: 'a', type: 'terminal', title: 'Shell' },
+			{ id: 'tab-b', sessionId: 'b', type: 'ai', title: 'Elsewhere' },
+		];
+		const tabsList = (sessionId?: string) =>
+			tabs.filter((tab) => (sessionId === undefined ? true : tab.sessionId === sessionId));
+		const dispatch = vi.fn(async () => 'dispatched');
+		const h = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [scopedGrant('agents:dispatch', 'a')]),
+				dispatchUnattendedAllowed: () => true,
+				tabsList,
+				dispatch,
+			})
+		);
+		// A visible AI tab of the dispatched session reaches the sink as the third
+		// argument, which is what `dispatchPromptToSession` forwards to the renderer.
+		await expect(
+			h['agents.dispatch']!('p', { agentId: 'a', prompt: 'summarize', opts: { tabId: 'tab-a' } })
+		).resolves.toBe('dispatched');
+		expect(dispatch).toHaveBeenCalledWith('a', 'summarize', 'tab-a');
+		dispatch.mockClear();
+		// Unknown tab, another session's tab, a terminal tab, a malformed tabId, an
+		// unexpected opts key, and a non-object opts all deny with nothing sent.
+		for (const opts of [
+			{ tabId: 'nope' },
+			{ tabId: 'tab-b' },
+			{ tabId: 'term-a' },
+			{ tabId: '' },
+			{ tabId: 7 },
+			{ tabId: 'tab-a', inputMode: 'terminal' },
+			'tab-a',
+		]) {
+			await expect(
+				h['agents.dispatch']!('p', { agentId: 'a', prompt: 'summarize', opts })
+			).rejects.toThrow();
+		}
+		expect(dispatch).not.toHaveBeenCalled();
+		// Session grants gate the tab too: a tab of a session that is not granted is
+		// denied before the tab is ever resolved.
+		const granted = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [scopedGrant('agents:dispatch', 'a')]),
+				dispatchUnattendedAllowed: () => true,
+				usesSessionGrants: () => true,
+				isSessionGranted: (_pluginId, sessionId) => sessionId === 'other',
+				tabsList,
+				dispatch,
+			})
+		);
+		await expect(
+			granted['agents.dispatch']!('p', {
+				agentId: 'a',
+				prompt: 'summarize',
+				opts: { tabId: 'tab-a' },
+			})
+		).rejects.toThrow(/not granted/);
+		expect(dispatch).not.toHaveBeenCalled();
+		// The SAME call once that session is granted: the tab target reaches the
+		// sink. A grant does not widen which tab is addressable, so the other
+		// session's tab is still refused even though its own session is granted.
+		const allowed = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [scopedGrant('agents:dispatch', 'a')]),
+				dispatchUnattendedAllowed: () => true,
+				usesSessionGrants: () => true,
+				isSessionGranted: (_pluginId, sessionId) => sessionId === 'a',
+				tabsList,
+				dispatch,
+			})
+		);
+		await expect(
+			allowed['agents.dispatch']!('p', {
+				agentId: 'a',
+				prompt: 'summarize',
+				opts: { tabId: 'tab-a' },
+			})
+		).resolves.toBe('dispatched');
+		expect(dispatch).toHaveBeenCalledWith('a', 'summarize', 'tab-a');
+		dispatch.mockClear();
+		await expect(
+			allowed['agents.dispatch']!('p', {
+				agentId: 'a',
+				prompt: 'summarize',
+				opts: { tabId: 'tab-b' },
+			})
+		).rejects.toThrow();
+		expect(dispatch).not.toHaveBeenCalled();
+		// Fail closed: no tabsList wiring means no tab targeting at all, while a
+		// call WITHOUT opts keeps working exactly as before.
+		const unwired = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => [scopedGrant('agents:dispatch', 'a')]),
+				dispatchUnattendedAllowed: () => true,
+				tabsList: undefined,
+				dispatch,
+			})
+		);
+		await expect(
+			unwired['agents.dispatch']!('p', {
+				agentId: 'a',
+				prompt: 'summarize',
+				opts: { tabId: 'tab-a' },
+			})
+		).rejects.toThrow(/unavailable/);
+		await expect(
+			unwired['agents.dispatch']!('p', { agentId: 'a', prompt: 'summarize' })
+		).resolves.toBe('dispatched');
+		expect(dispatch).toHaveBeenCalledWith('a', 'summarize', undefined);
 	});
 
 	it('denies dispatch without the separate unattended consent even when grant + trust + low risk all pass', async () => {
@@ -2202,6 +2599,29 @@ describe('brokered non-act host API breadth', () => {
 			makeDeps({ broker: brokerFor(() => [grant('sessions:create')]) })
 		);
 		await expect(disabled['sessions.create']!('p', {})).rejects.toThrow(/unavailable/);
+	});
+
+	it('denies sessions.create and sessions.update when the capability grant is absent, before the impl ever runs', async () => {
+		const sessionsCreate = vi.fn(async () => ({ id: 's1', title: 'Created' }));
+		const sessionsUpdate = vi.fn(async () => ({ id: 's1', title: 'Renamed' }));
+		const h = buildHostCallHandlers(
+			makeDeps({
+				broker: brokerFor(() => []),
+				sessionsGet: () => ({ id: 's1', title: 'Created' }),
+				sessionsCreate,
+				sessionsUpdate,
+			})
+		);
+
+		await expect(h['sessions.create']!('p', { title: 'Created' })).rejects.toThrow(
+			/permission denied/
+		);
+		await expect(
+			h['sessions.update']!('p', { sessionId: 's1', patch: { title: 'Renamed' } })
+		).rejects.toThrow(/permission denied/);
+
+		expect(sessionsCreate).not.toHaveBeenCalled();
+		expect(sessionsUpdate).not.toHaveBeenCalled();
 	});
 
 	it('focuses an existing session under sessions:focus and rejects stale or over-wide calls', async () => {

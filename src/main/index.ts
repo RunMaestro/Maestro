@@ -70,6 +70,7 @@ import {
 	type PluginSessionMetadata,
 	type PluginTabMetadata,
 } from './plugins/plugin-host-handlers';
+import { projectSessionTabMetadata } from './plugins/plugin-tab-metadata';
 import { createCadenzaDelivery, registerCadenzaIpcHandlers } from './cadenza-bridge';
 import { createPluginHostViewBridge } from './plugin-host-view-bridge';
 import { ActionGuard } from './plugins/action-guard';
@@ -106,6 +107,18 @@ import {
 } from './plugins/first-party-bridge';
 import { FIRST_PARTY_PLUGINS, type FirstPartyEncoreFlag } from '../shared/plugins/first-party';
 import { pluginIdentity } from './plugins/plugin-identity';
+import {
+	configurePluginSessionGrants,
+	grantSession,
+	isSessionGranted,
+	usesSessionGrants,
+} from './plugins/plugin-session-grants';
+import {
+	mapPluginAgentEntries,
+	resolvePluginSessionCreateFields,
+	resolvePluginSessionUpdateFields,
+	type PluginSessionFieldsDeps,
+} from './plugins/plugin-session-fields';
 import { PLUGIN_ID_PATTERN } from '../shared/plugins/plugin-manifest';
 import { ConsentNonceRegistry, ConsentMinter } from './plugins/consent-minter';
 import {
@@ -1612,6 +1625,24 @@ app
 		// bound, anti-rollback) instead of the forgeable on-disk store.
 		const grantsOf = (pluginId: string) => authStore.readGrants(pluginId);
 
+		// Host-enforced per-session grants. A plugin whose manifest declares the
+		// `granted-sessions` scope may dispatch to, and read the History of, only
+		// the sessions it created itself or the user approved - the set lives in the
+		// sealed ledger as the `agents:dispatch` allowlist scope, so it is persisted,
+		// broker-checked on every call, editable in Settings, and dropped on revoke.
+		// `pluginManager` is assigned later in this function; the closure reads it
+		// lazily and reports no requested permissions until it exists, so the grant
+		// set fails closed during startup rather than guessing.
+		configurePluginSessionGrants({
+			authStore,
+			getRequestedPermissions: (pluginId) => pluginManager?.getRequestedPermissions(pluginId),
+			sessionExists: (sessionId) =>
+				(sessionsStore.get('sessions', []) as Array<{ id?: string }>).some(
+					(session) => session?.id === sessionId
+				),
+			audit: (message) => logger.info(message, '[PluginAudit]'),
+		});
+
 		// First-party plugin bridges (encore-lifts L0): one host-owned lifecycle
 		// bridge per Encore feature definition. Enable mints the definition's
 		// declared grants through the SAME sealed ledger community consents use
@@ -2021,47 +2052,21 @@ app
 		const setPluginSessionsRaw = (sessions: Array<Record<string, unknown>>): void => {
 			sessionsStore.set('sessions', sessions as never);
 		};
+		// Field handling for sessions.create / sessions.update lives in
+		// plugin-session-fields.ts so the scope rule is reviewable and testable
+		// on its own. Every dep is read LIVE on each call: a Settings revoke
+		// narrows the very next create or update, not the next restart.
+		const pluginSessionFieldsDeps: PluginSessionFieldsDeps = {
+			protectedPaths: () => [app.getPath('userData')],
+			rawSessions: () => pluginSessionsRaw(),
+			isSessionGranted,
+			usesSessionGrants,
+		};
 		const pluginTabsList = (sessionId?: string): PluginTabMetadata[] => {
 			const out: PluginTabMetadata[] = [];
 			for (const session of pluginSessionsRaw()) {
 				if (sessionId && session.id !== sessionId) continue;
-				const projectPath =
-					typeof session.cwd === 'string'
-						? session.cwd
-						: typeof session.projectRoot === 'string'
-							? session.projectRoot
-							: undefined;
-				for (const tab of Array.isArray(session.aiTabs) ? session.aiTabs : []) {
-					if (!tab || typeof tab !== 'object') continue;
-					const rec = tab as Record<string, unknown>;
-					if (typeof rec.id !== 'string') continue;
-					out.push({
-						id: rec.id,
-						sessionId: session.id as string,
-						type: 'ai',
-						...(typeof rec.name === 'string' ? { title: rec.name } : {}),
-						...(typeof rec.state === 'string' ? { status: rec.state } : {}),
-						...(typeof rec.createdAt === 'number' ? { createdAt: rec.createdAt } : {}),
-						...(rec.agentSessionId === null || typeof rec.agentSessionId === 'string'
-							? { agentSessionId: rec.agentSessionId as string | null }
-							: {}),
-						...(projectPath ? { projectPath } : {}),
-					});
-				}
-				for (const tab of Array.isArray(session.terminalTabs) ? session.terminalTabs : []) {
-					if (!tab || typeof tab !== 'object') continue;
-					const rec = tab as Record<string, unknown>;
-					if (typeof rec.id !== 'string') continue;
-					out.push({
-						id: rec.id,
-						sessionId: session.id as string,
-						type: 'terminal',
-						...(typeof rec.name === 'string' ? { title: rec.name } : {}),
-						...(typeof rec.state === 'string' ? { status: rec.state } : {}),
-						...(typeof rec.createdAt === 'number' ? { createdAt: rec.createdAt } : {}),
-						...(projectPath ? { projectPath } : {}),
-					});
-				}
+				out.push(...projectSessionTabMetadata(session));
 			}
 			return out;
 		};
@@ -2260,29 +2265,33 @@ app
 		const pluginSessionsGet = (sessionId: string): PluginSessionMetadata | null =>
 			pluginSessionsList().find((s) => s.id === sessionId) ?? null;
 		const pluginSessionsCreate = async (
-			params: Record<string, unknown>
+			params: Record<string, unknown>,
+			pluginId: string
 		): Promise<PluginSessionMetadata> => {
 			const now = Date.now();
-			const sessionId = typeof params.id === 'string' ? params.id : crypto.randomUUID();
+			// A plugin-supplied id must name a session that does NOT exist yet.
+			// Checked BEFORE any store write, and before the field resolver runs.
+			// Without it, `sessions.create({ id })` naming a live agent appended a
+			// SECOND record under the same id and then fell through to
+			// `grantSession(..., 'created')` below, which handed a session-granting
+			// plugin dispatch and History reach over an agent it never created and
+			// the user never approved. `create` is for new sessions; changing an
+			// existing one is `sessions.update`, which is scope-checked.
+			const requestedId = typeof params.id === 'string' ? params.id : undefined;
+			if (requestedId !== undefined && pluginSessionsRaw().some((s) => s.id === requestedId)) {
+				throw new Error(
+					`a session with id "${requestedId}" already exists (sessions.create never adopts an existing session)`
+				);
+			}
+			const sessionId = requestedId ?? crypto.randomUUID();
 			const tabId = crypto.randomUUID();
-			const title =
-				typeof params.title === 'string'
-					? params.title
-					: typeof params.name === 'string'
-						? params.name
-						: 'Plugin Session';
-			const toolType =
-				typeof params.agentId === 'string'
-					? params.agentId
-					: typeof params.toolType === 'string'
-						? params.toolType
-						: 'claude-code';
-			const cwd =
-				typeof params.projectPath === 'string'
-					? params.projectPath
-					: typeof params.cwd === 'string'
-						? params.cwd
-						: os.homedir();
+			// Throws (before any store write) on a directory outside the plugin's
+			// grant set, a cwd inside userData, or a malformed override.
+			const { title, toolType, cwd, optional } = resolvePluginSessionCreateFields(
+				params,
+				pluginId,
+				pluginSessionFieldsDeps
+			);
 			const session = {
 				id: sessionId,
 				name: title,
@@ -2291,6 +2300,7 @@ app
 				cwd,
 				fullPath: cwd,
 				projectRoot: cwd,
+				...optional,
 				createdAt: now,
 				updatedAt: now,
 				aiLogs: [],
@@ -2335,19 +2345,25 @@ app
 			};
 			const previousSessions = pluginSessionsRaw();
 			setPluginSessionsRaw([...previousSessions, session]);
-			if (!previousSessions.some((existing) => existing.id === sessionId)) {
-				try {
-					pianolaSupervisor?.autoWatchNewSessions(
-						[session],
-						[...previousSessions, session] as AutoWatchSession[],
-						store.get('pianolaAutoWatchNewAgents', false) === true
-					);
-				} catch (error) {
-					logger.error('Could not register new Pianola watch', '[Pianola]', error);
-					void captureException(error, { operation: 'pianola:autoWatchPluginSession' });
-				}
+			// Unconditional: the id was proven absent above, so this session is
+			// always new. (It used to be guarded by a duplicate-id check, which the
+			// early rejection now makes unreachable.)
+			try {
+				pianolaSupervisor?.autoWatchNewSessions(
+					[session],
+					[...previousSessions, session] as AutoWatchSession[],
+					store.get('pianolaAutoWatchNewAgents', false) === true
+				);
+			} catch (error) {
+				logger.error('Could not register new Pianola watch', '[Pianola]', error);
+				void captureException(error, { operation: 'pianola:autoWatchPluginSession' });
 			}
 			sessionsStore.set('activeSessionId', sessionId);
+			// A session-granting plugin owns what it just created: it may message and
+			// read the History of this one agent with no further confirmation. Every
+			// OTHER agent still needs an explicit user approval. Done AFTER the store
+			// write so `sessionExists` can see it.
+			if (usesSessionGrants(pluginId)) grantSession(pluginId, sessionId, 'created');
 			return {
 				id: sessionId,
 				title,
@@ -2359,19 +2375,25 @@ app
 		};
 		const pluginSessionsUpdate = async (
 			sessionId: string,
-			patch: Record<string, unknown>
+			patch: Record<string, unknown>,
+			pluginId: string
 		): Promise<PluginSessionMetadata | null> => {
 			const sessions = pluginSessionsRaw();
 			let updated: Record<string, unknown> | null = null;
+			// Resolved ONCE, outside the map, so a rejected patch throws before any
+			// session is touched rather than part-way through the list.
+			const fields = resolvePluginSessionUpdateFields(patch, pluginId, pluginSessionFieldsDeps);
 			const next = sessions.map((session) => {
 				if (session.id !== sessionId) return session;
-				updated = {
+				const merged: Record<string, unknown> = {
 					...session,
-					...(typeof patch.title === 'string' ? { name: patch.title } : {}),
-					...(typeof patch.name === 'string' ? { name: patch.name } : {}),
-					...(typeof patch.status === 'string' ? { state: patch.status } : {}),
+					...fields.set,
 					updatedAt: Date.now(),
 				};
+				// Deleted, not set to undefined: an empty list means "clear this",
+				// and a persisted `undefined` would survive into the store as a key.
+				for (const key of fields.clear) delete merged[key];
+				updated = merged;
 				return updated;
 			});
 			if (!updated) return null;
@@ -2449,7 +2471,8 @@ app
 		// "dispatched" success.
 		const dispatchPromptToSession = (
 			agentId: string,
-			prompt: string
+			prompt: string,
+			tabId?: string
 		): { dispatched: true; sessionId: string } => {
 			const sessions = getLiveSessions() as Array<{
 				id?: string;
@@ -2466,14 +2489,19 @@ app
 				);
 			}
 			logger.info(
-				`agents.dispatch -> session ${target.id} (requested "${agentId}", ${prompt.length} chars)`,
+				`agents.dispatch -> session ${target.id}${tabId ? ` tab ${tabId}` : ''} ` +
+					`(requested "${agentId}", ${prompt.length} chars)`,
 				'[PluginAudit]'
 			);
 			const win = mainWindow;
 			if (!win || win.isDestroyed() || !isWebContentsAvailable(win)) {
 				throw new Error('agents.dispatch: no renderer available to run the agent');
 			}
-			win.webContents.send('remote:executeCommand', target.id, prompt, 'ai');
+			// `tabId` is the renderer listener's argument after `inputMode` (see
+			// src/main/preload/process/commandRemote.ts). Undefined is exactly the
+			// pre-tab-targeting call: the renderer falls back to the session's own
+			// active tab, which is what every existing caller gets.
+			win.webContents.send('remote:executeCommand', target.id, prompt, 'ai', tabId);
 			return { dispatched: true, sessionId: target.id };
 		};
 
@@ -2684,22 +2712,14 @@ app
 				panelVisibility: (pluginId, panelId, action) => {
 					safeSend('plugins:panel-visibility', { pluginId, panelId, action });
 				},
-				listAgents: () => {
-					const sessions = getLiveSessions() as Array<{
-						id?: string;
-						name?: string;
-						cwd?: string;
-						toolType?: string;
-					}>;
-					return sessions
-						.filter((s) => typeof s?.id === 'string')
-						.map((s) => ({
-							id: s.id as string,
-							name: s.name ?? '',
-							...(s.cwd ? { cwd: s.cwd } : {}),
-							...(s.toolType ? { toolType: s.toolType } : {}),
-						}));
-				},
+				// Entry mapping lives in plugin-session-fields.ts, which also stamps
+				// `supportsAdditionalDirectories` from the provider's capabilities so
+				// a plugin can tell a native directory grant from a prompt-only one.
+				// Source is getLiveSessions(), not the raw store: listing an agent whose
+				// Encore Feature is switched off would give a plugin a dormant Pianola to
+				// dispatch at. pluginSessionsRaw() stays raw for the create/update and
+				// pruning paths, which must not drop a dormant agent's stored data.
+				listAgents: () => mapPluginAgentEntries(getLiveSessions()),
 				// agents.dispatch + process.spawn (FC2, Plans/feature-complete-workplan.md):
 				// LIVE as of the FC1 trusted-to-run gate landing. Every call still
 				// traverses the full phase-4 pipeline in plugin-host-handlers:
@@ -2715,7 +2735,40 @@ app
 					'trusted',
 				getPluginSignature: (pluginId) =>
 					pluginManager?.getRegistry().records.find((record) => record.id === pluginId)?.signature,
-				dispatch: async (agentId, prompt) => dispatchPromptToSession(agentId, prompt),
+				// Host-enforced session grants (see plugin-session-grants.ts). Wired as
+				// predicates so the handler never reaches the sealed ledger itself; both
+				// read it LIVE, so a Settings revoke denies on the very next call.
+				usesSessionGrants,
+				isSessionGranted,
+				grantSession,
+				pluginDisplayName: (pluginId) =>
+					pluginManager?.getRegistry().records.find((record) => record.id === pluginId)?.manifest
+						?.name,
+				// Maestro's OWN confirmation, drawn by the main process and parented to
+				// the main window: a native message box the plugin cannot render,
+				// style, pre-answer, or suppress. Defaults to Don't Allow, and the
+				// Escape key resolves to it too (cancelId).
+				confirmSessionAccess: async (info) => {
+					const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+					const where = info.projectPath ? `\n\nProject: ${info.projectPath}` : '';
+					const options = {
+						type: 'question' as const,
+						title: 'Allow plugin access to an agent?',
+						message: `${info.pluginName} wants access to "${info.sessionTitle ?? info.sessionId}"`,
+						detail:
+							`Allowing lets ${info.pluginName} send messages to this agent and read its ` +
+							`History. It does not give access to any other agent.${where}`,
+						buttons: ["Don't Allow", 'Allow'],
+						defaultId: 0,
+						cancelId: 0,
+						noLink: true,
+					};
+					const answer = parent
+						? await dialog.showMessageBox(parent, options)
+						: await dialog.showMessageBox(options);
+					return answer.response === 1;
+				},
+				dispatch: async (agentId, prompt, tabId) => dispatchPromptToSession(agentId, prompt, tabId),
 				sendAgent: runHeadlessAgent,
 				generateTitle: async (agentId, firstMessage, signal) => {
 					const session = (getLiveSessions() as SessionInfo[]).find(

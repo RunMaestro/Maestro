@@ -29,6 +29,17 @@ const jsdomOnlyTs = [
 	// The web-desktop electron shim constructs a BridgeClient and reads
 	// `window`/`document` at module load, so its suites need a DOM.
 	'src/__tests__/web-desktop/**/*.{test,spec}.ts',
+	// Run the maestro-kanban panel's own inline <script> against a real DOM:
+	// rendering, the switcher and keyboard access in kanban-panel.test.ts,
+	// drag/drop and move reconciliation in kanban-drag.test.ts. Both go
+	// through src/__tests__/helpers/kanbanPanel.ts, which reads `document` at
+	// module load, so neither can run under the node environment.
+	'src/__tests__/plugins/kanban-panel.test.ts',
+	'src/__tests__/plugins/kanban-drag.test.ts',
+	// Mixes sandbox-level main.js coverage with the same panel.html harness:
+	// the composer tests need the DOM the sandbox-level ones don't, but a
+	// vitest project include/exclude split is per-file, not per-describe.
+	'src/__tests__/plugins/kanban-messaging.test.ts',
 ];
 
 // Variables that tell git WHERE the repository is. Git exports them to hooks and

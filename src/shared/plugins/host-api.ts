@@ -21,7 +21,69 @@
 import semver from 'semver';
 
 /**
- * The host API version this Maestro build implements. 1.25.0 adds resumable
+ * The host API version this Maestro build implements. 1.26.0 expands a leading
+ * `~` in plugin filesystem paths: `fs.read` / `fs.write` / `fs.watch` accept
+ * `~/...` (the sandbox has no way to learn the home directory), and a manifest
+ * path scope may be home-relative in exactly the form `~/.maestro/<name>` -
+ * every other `~` scope (`~`, `~/`, `~/.maestro`, `~/anything-else`,
+ * `~user/...`) is rejected at manifest-parse time. Absolute path scopes are
+ * unchanged, so older plugins keep working.
+ *
+ * 1.26.0 ALSO adds host-enforced per-session grants, all three additive (a
+ * plugin that declares none of this keeps today's behavior exactly):
+ *  - the manifest scope keyword `granted-sessions`, accepted for exactly
+ *    `agents:dispatch` and `transcripts:read`. It is an explicit scope, never
+ *    the unscoped form: a consented keyword grant starts with NO members and
+ *    covers nothing until the host adds one. The consent window shows it as
+ *    "only agents this plugin creates, or that you approve when asked".
+ *  - the grant set itself: a plugin holding the keyword may dispatch to, and
+ *    read the History of, ONLY sessions it created through `sessions.create` or
+ *    that the user approved. Members live in the sealed authorization ledger as
+ *    the `agents:dispatch` allowlist scope, so they persist, are checked by the
+ *    broker on every call, stay editable in Settings, and are dropped on revoke.
+ *  - `maestro.sessions.requestAccess(sessionId)` -> `{ granted }`, which asks
+ *    the USER (a host-owned confirmation in the main process, defaulting to
+ *    Don't Allow) to add one session to that set. Only a plugin that declared
+ *    the keyword may call it.
+ *  - `maestro.agents.dispatch(agentId, prompt, { tabId })`: the optional, closed
+ *    `opts` (`tabId` is its ONLY member) narrows delivery to one VISIBLE AI tab
+ *    of the session being dispatched to, resolved against `tabs.list` after
+ *    every existing gate. It never widens reach - the scope target stays
+ *    `agentId`, and a session-grant plugin still needs that session granted.
+ *    Omitting `opts` is exactly the previous behavior (the session's own active
+ *    tab), so older plugins are untouched.
+ *
+ * 1.26.0 ALSO widens the session fields a plugin may set, on the EXISTING
+ * `sessions:create` / `sessions:write` capabilities (no new capability: the
+ * reasoning is in the module doc of `plugin-session-fields.ts`, which owns all
+ * of this). Every rule here fails closed, so a plugin declaring none of it keeps
+ * today's behavior exactly:
+ *  - `sessions.create({ additionalDirectories })` and
+ *    `sessions.update(id, { additionalDirectories })` accept the
+ *    `{ path, read, write }` shape the rest of Maestro already turns into native
+ *    provider flags and into the `{{ADDITIONAL_DIRECTORIES}}` prompt block. A
+ *    path is accepted ONLY when it is absolute and EQUAL to the resolved project
+ *    root of a session already in the plugin's host-held grant set. A relative
+ *    path, a `..` segment, a `~`-relative path, a subdirectory of a granted
+ *    root, and the root of an existing but UNGRANTED session are each rejected
+ *    with their own error, so a plugin can restate reach the user handed it but
+ *    never widen it. `write: true` is refused for a session-granting plugin (a
+ *    grant set is a read relationship). An empty list CLEARS the field rather
+ *    than persisting an empty array.
+ *  - `customModel` and `customEffort` are accepted as plain strings on create
+ *    and update; an empty string clears the override. `customPath`,
+ *    `customArgs`, `customEnvVars`, `sshRemoteConfig` and the Claude token-mode
+ *    fields are never accepted from a plugin - they decide which binary runs in
+ *    which environment and stay user-owned in Maestro's agent settings.
+ *  - a create `cwd` / `projectPath` expands a leading `~` (the sandbox cannot
+ *    learn the home directory), and a cwd inside the userData tree is rejected,
+ *    the same structural exclusion the broker already applies to `fs:*`.
+ *  - every `agents.list` / `agents.get` entry now carries
+ *    `supportsAdditionalDirectories`, read from `getAgentCapabilities`, so a
+ *    plugin can tell a natively enforced directory grant from a prompt-only one
+ *    instead of guessing at files the agent cannot open.
+ *
+ * 1.25.0 adds resumable
  * agents.send with public progress, verified plugin-tool caller identity, and
  * isolated agents.generateTitle. 1.24.0 added host-mediated services.
  * 1.23.0 adds independent
@@ -57,7 +119,7 @@ import semver from 'semver';
  * `ui:contribute` / `ui:panel` / `ui:render-unsafe` UI capabilities; 1.3.0
  * added `tools` + `keybindings`; 1.2.0 added `transcripts:read`.
  */
-export const HOST_API_VERSION = '1.25.0';
+export const HOST_API_VERSION = '1.26.0';
 
 /** Result of checking a plugin's declared host-API requirement. */
 export interface HostApiCompatibility {

@@ -224,6 +224,90 @@ export function isAllowlistScoped(capability: PluginCapability): boolean {
 	return CAPABILITY_SCOPE_KIND[capability] === 'allowlist';
 }
 
+/**
+ * Does this capability take a filesystem path scope (`fs:*`, `transcripts:*`)?
+ * The main-process broker uses this to decide where to expand a leading `~`
+ * (see `expandPluginHomePath`): a path scope and a path target both expand, a
+ * host or allowlist scope never does, so a `~`-prefixed hostname or exact
+ * allowlist member keeps its literal identity. Exposes the module-private
+ * scope-kind map so the broker does not keep a second copy of it.
+ */
+export function isPathScoped(capability: PluginCapability): boolean {
+	return CAPABILITY_SCOPE_KIND[capability] === 'path';
+}
+
+/**
+ * The ONE exact scope keyword that replaces a scope the plugin author could not
+ * know with a HOST-HELD set of session ids. A plugin cannot know, at authoring
+ * time, which agents a user will have, and `agents:dispatch` requires a
+ * non-empty member list while `transcripts:read` requires a project path. This
+ * keyword says instead: "whatever sessions the host has granted me" - the
+ * sessions this plugin created itself, plus the ones the user approved in a
+ * one-time Maestro confirmation (`sessions.requestAccess`).
+ *
+ * It is an EXPLICIT scope, never the unscoped (broadest) form: a consented
+ * keyword grant starts with NO members and therefore covers nothing until the
+ * host adds one (see `parseAllowlistScope`, which drops the keyword, and
+ * `hasSessionGrantScope`, which the broker uses to hand enforcement to the
+ * handler). The member set itself lives in the sealed authorization ledger -
+ * the host rewrites the grant's scope through `setAllowlistScope` as sessions
+ * are granted and revoked, so it is persisted, user-editable in Settings, and
+ * cleared when the capability is revoked.
+ */
+export const GRANTED_SESSIONS_SCOPE = 'granted-sessions';
+
+/**
+ * Stable consent/UI wording for a {@link GRANTED_SESSIONS_SCOPE} grant. The
+ * consent page must never show the raw keyword: "granted-sessions" tells the
+ * user nothing about the blast radius, while this sentence tells them exactly
+ * which agents the plugin can reach and that they are the ones who decide.
+ */
+export const GRANTED_SESSIONS_CONSENT_TEXT =
+	'only agents this plugin creates, or that you approve when asked';
+
+/**
+ * The capabilities whose scope may be the {@link GRANTED_SESSIONS_SCOPE}
+ * keyword. Deliberately only the two verbs that act on ONE session: dispatch
+ * (send it a prompt) and transcript reads (read its History). Anything else -
+ * including `transcripts:write` and the `fs:*` path verbs - keeps its own scope
+ * kind, so the keyword can never appear where no grant set governs it.
+ */
+const SESSION_GRANT_CAPABILITIES: readonly PluginCapability[] = [
+	'agents:dispatch',
+	'transcripts:read',
+];
+
+/** May `capability` carry the `granted-sessions` scope keyword? */
+export function capabilitySupportsSessionGrants(capability: PluginCapability): boolean {
+	return SESSION_GRANT_CAPABILITIES.includes(capability);
+}
+
+/** Is `scope` exactly the `granted-sessions` keyword (not a path, host, or
+ * member list that merely contains it)? */
+export function isSessionGrantScope(scope: string | undefined): boolean {
+	return typeof scope === 'string' && scope.trim() === GRANTED_SESSIONS_SCOPE;
+}
+
+/**
+ * Does the plugin hold a `granted-sessions`-scoped grant of `capability`? The
+ * broker asks this for the PATH-scoped `transcripts:read`: the grant set is a
+ * host-side structure the pure matcher cannot see, so a path comparison would
+ * deny every call. When this is true the broker confirms only that the
+ * capability is held (the `HANDLER_REAUTHORIZED_METHODS` posture) and the
+ * handler requires the concrete session to be granted before it reads anything.
+ *
+ * Allowlist-scoped capabilities need no such relaxation: the host rewrites
+ * their scope to the granted session ids, so the ordinary exact-membership
+ * check already enforces the grant set on every call.
+ */
+export function hasSessionGrantScope(
+	grants: readonly PermissionGrant[],
+	capability: PluginCapability
+): boolean {
+	if (!capabilitySupportsSessionGrants(capability)) return false;
+	return grants.some((g) => g.capability === capability && isSessionGrantScope(g.scope));
+}
+
 export function isPluginCapability(value: unknown): value is PluginCapability {
 	return typeof value === 'string' && (PLUGIN_CAPABILITIES as readonly string[]).includes(value);
 }
@@ -282,6 +366,24 @@ export interface PermissionParseResult {
 	errors: string[];
 }
 
+export interface PermissionParseOptions {
+	/**
+	 * Parse HOST-AUTHORED first-party definitions
+	 * (`FIRST_PARTY_PLUGIN_DEFINITIONS` in `first-party.ts`) rather than a
+	 * third-party `plugin.json`. Its ONLY effect is that a home-relative (`~`)
+	 * path scope is not confined to `~/.maestro/`: the shipped Coworking and
+	 * MaestroRun features legitimately name `~/.claude.json`,
+	 * `~/.codex/config.toml` and `~/Applications/MaestroRun.app`, which are
+	 * reviewed in this repository rather than chosen by a plugin author.
+	 *
+	 * Every other rule still applies, including the `~/` prefix requirement
+	 * (`~`, `~/` and `~user/...` stay rejected) and the ban on empty, `.` and
+	 * `..` segments. Manifest validation never passes this, so a third-party
+	 * plugin cannot reach the relaxed form.
+	 */
+	firstParty?: boolean;
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -291,7 +393,10 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * malformed entries are rejected (collected as errors) rather than dropped
  * silently, because a permission typo must never degrade to "no restriction".
  */
-export function parsePermissions(input: unknown): PermissionParseResult {
+export function parsePermissions(
+	input: unknown,
+	options?: PermissionParseOptions
+): PermissionParseResult {
 	const out: PermissionParseResult = { requests: [], errors: [] };
 	if (input === undefined) return out;
 	if (!Array.isArray(input)) {
@@ -313,8 +418,36 @@ export function parsePermissions(input: unknown): PermissionParseResult {
 			out.errors.push(`capability "${capability}" scope must be a string`);
 			continue;
 		}
+		if (reason !== undefined && typeof reason !== 'string') {
+			out.errors.push(`capability "${capability}" reason must be a string`);
+			continue;
+		}
 		if (scopeKind === 'none' && typeof scope === 'string' && scope.trim() !== '') {
 			out.errors.push(`capability "${capability}" does not take a scope`);
+			continue;
+		}
+		// The `granted-sessions` keyword replaces this capability's own scope kind
+		// with the host-held grant set, so it skips both the allowlist member
+		// validation (a plugin author cannot know a session id at authoring time)
+		// and the path validation (there is no project path to name). Accepted for
+		// EXACTLY the two session-acting verbs and rejected everywhere else.
+		if (isSessionGrantScope(scope) && !capabilitySupportsSessionGrants(capability)) {
+			// Reject rather than fall through: a path-scoped verb would otherwise
+			// silently accept the keyword as a RELATIVE directory named
+			// "granted-sessions", so the author would believe the host was managing
+			// a grant set that does not exist for this capability.
+			out.errors.push(
+				`capability "${capability}" does not take the "${GRANTED_SESSIONS_SCOPE}" scope ` +
+					`(only ${SESSION_GRANT_CAPABILITIES.join(' and ')} do)`
+			);
+			continue;
+		}
+		if (isSessionGrantScope(scope)) {
+			out.requests.push({
+				capability,
+				scope: GRANTED_SESSIONS_SCOPE,
+				...(typeof reason === 'string' && reason.trim() !== '' ? { reason: reason.trim() } : {}),
+			});
 			continue;
 		}
 		if (scopeKind === 'allowlist') {
@@ -324,15 +457,35 @@ export function parsePermissions(input: unknown): PermissionParseResult {
 				continue;
 			}
 		}
-		if (reason !== undefined && typeof reason !== 'string') {
-			out.errors.push(`capability "${capability}" reason must be a string`);
-			continue;
+		if (scopeKind === 'path' && typeof scope === 'string') {
+			const err = validateHomePathScope(capability, scope.trim(), options?.firstParty !== true);
+			if (err) {
+				out.errors.push(err);
+				continue;
+			}
 		}
 		out.requests.push({
 			capability,
 			...(typeof scope === 'string' && scope.trim() !== '' ? { scope: scope.trim() } : {}),
 			...(typeof reason === 'string' && reason.trim() !== '' ? { reason: reason.trim() } : {}),
 		});
+	}
+	// Cross-entry rule, so it runs after every request is collected: the grant set
+	// is stored as the `agents:dispatch` allowlist scope and nowhere else, so the
+	// keyword on `transcripts:read` ALONE asks the host to govern reads with a set
+	// that cannot exist. Left accepted, it failed two ways: with no dispatch grant
+	// every `grantSession` call failed and the keyword covered nothing, and with an
+	// ordinary dispatch allowlist the user's own Settings-managed dispatch targets
+	// became the transcript-read set that `sessions.create` then appended to.
+	// Rejecting the manifest is the honest answer: the author must declare the
+	// keyword on both, or scope `transcripts:read` to a real project path.
+	const keywordRequestedOn = (target: PluginCapability): boolean =>
+		out.requests.some((r) => r.capability === target && isSessionGrantScope(r.scope));
+	if (keywordRequestedOn('transcripts:read') && !keywordRequestedOn('agents:dispatch')) {
+		out.errors.push(
+			`capability "transcripts:read" may only take the "${GRANTED_SESSIONS_SCOPE}" scope when ` +
+				`"agents:dispatch" declares it too (the grant set is stored as the dispatch allowlist)`
+		);
 	}
 	return out;
 }
@@ -388,6 +541,70 @@ function pathScopeCovers(scope: string, target: string): boolean {
 	return t === s || t.startsWith(`${s}/`);
 }
 
+/**
+ * The ONLY home directory a plugin may name in a path scope. A plugin needs
+ * somewhere under the user's home to keep its own files (the sandbox cannot
+ * learn the home path, so `~` is the only way to say it), but a scope of `~`
+ * or `~/` would be the whole home directory - every repository, every dotfile,
+ * every key. So a home-relative scope must name something INSIDE `~/.maestro/`,
+ * which is Maestro's own directory, and must name a child of it rather than the
+ * directory itself.
+ */
+const HOME_SCOPE_PREFIX = '~/';
+const HOME_SCOPE_ROOT = '.maestro';
+
+/**
+ * Validate a home-relative path scope. Returns an error message when `scope`
+ * starts with `~` in a form the host could not expand safely, and null for an
+ * accepted home scope or for any scope that is not home-relative at all (an
+ * absolute path keeps its existing behavior - this adds a rule, it does not
+ * change one).
+ *
+ * `confineToMaestroRoot` is the third-party rule and the default: a manifest
+ * may only name something inside `~/.maestro/`. Host-authored first-party
+ * definitions pass false, because the shipped Coworking and MaestroRun features
+ * write agent config files like `~/.codex/config.toml` that live elsewhere under
+ * the home directory. Both principals still require a leading `~/` and reject
+ * empty, `.` and `..` segments.
+ *
+ * The main process expands the accepted form with `expandPluginHomePath()`
+ * before matching; everything rejected here could never be expanded safely.
+ */
+function validateHomePathScope(
+	capability: PluginCapability,
+	scope: string,
+	confineToMaestroRoot: boolean
+): string | null {
+	if (!scope.startsWith('~')) return null;
+	const where = `capability "${capability}" path scope "${scope}"`;
+	const root = confineToMaestroRoot ? `${HOME_SCOPE_PREFIX}${HOME_SCOPE_ROOT}/` : HOME_SCOPE_PREFIX;
+	if (!scope.startsWith(HOME_SCOPE_PREFIX)) {
+		// `~`, `~user/...`: only a leading `~/` is ever expanded, so anything else
+		// would be matched as a literal directory named `~` and silently never hit.
+		return `${where} must start with "${root}" (a bare "~" and "~user/..." are not expanded)`;
+	}
+	const segments = scope.slice(HOME_SCOPE_PREFIX.length).split('/');
+	if (confineToMaestroRoot) {
+		if (segments[0] !== HOME_SCOPE_ROOT) {
+			return `${where} must be inside "${root}" (a plugin may not scope to the rest of the home directory)`;
+		}
+		if (segments.length < 2) {
+			return `${where} must name a file or directory inside "${root}" (the directory itself is too broad)`;
+		}
+	}
+	// Every name the scope spells out must be a real one. An empty segment means
+	// a bare `~/` or a `//`, and `.` / `..` are segments `normalizePath` would
+	// silently rewrite at match time - so the scope the user consented to would
+	// not be the scope that gets enforced. (When confined, segment 0 is
+	// `.maestro` and was just matched exactly.)
+	for (const segment of segments.slice(confineToMaestroRoot ? 1 : 0)) {
+		if (segment === '' || segment === '.' || segment === '..') {
+			return `${where} must not contain empty, "." or ".." path segments`;
+		}
+	}
+	return null;
+}
+
 /** Does host `scope` cover `target`? Exact host, or `target` is a subdomain of
  * `scope` (suffix match on a dot boundary). Case-insensitive. */
 function hostScopeCovers(scope: string, target: string): boolean {
@@ -430,7 +647,11 @@ export function parseAllowlistScope(scope: string | undefined): readonly string[
 	const members = scope
 		.split(',')
 		.map((m) => m.trim())
-		.filter((m) => m !== '');
+		// The `granted-sessions` keyword names the host-held grant set, not a
+		// session. Dropping it here is what makes a freshly consented keyword grant
+		// cover NOTHING: the host rewrites the scope to real session ids as it
+		// grants them, and until it does there are no members to match.
+		.filter((m) => m !== '' && m !== GRANTED_SESSIONS_SCOPE);
 	if (members.length === 0) return null;
 	return members;
 }
@@ -503,6 +724,11 @@ export function isPermitted(
 			continue;
 		}
 		if (!grant.scope) return true; // unscoped grant = broadest
+		// A `granted-sessions` path scope is not a path: the member set lives in the
+		// host's sealed ledger, which this pure matcher cannot see. Deny here (never
+		// let it prefix-match a relative target) and let the broker + handler pair
+		// enforce it - see `hasSessionGrantScope`.
+		if (isSessionGrantScope(grant.scope)) continue;
 		if (target === undefined) continue; // scoped grant needs a concrete target
 		if (scopeKind === 'path' && pathScopeCovers(grant.scope, target)) return true;
 		if (scopeKind === 'host' && hostScopeCovers(grant.scope, target)) return true;

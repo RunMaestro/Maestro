@@ -78,6 +78,13 @@ export const HOST_API = {
 	'sessions.update': { capability: 'sessions:write' },
 	'sessions.delete': { capability: 'sessions:write' },
 	'sessions.focus': { capability: 'sessions:focus' },
+	// Ask the USER (never the plugin) to add one session to the plugin's
+	// host-held grant set. Mapped to `agents:dispatch` because granting is what
+	// makes dispatch to that session possible at all, and listed in
+	// HANDLER_REAUTHORIZED_METHODS below: the session being requested is by
+	// definition NOT yet in the allowlist, so an exact-membership check here
+	// would deny every request. The handler owns the confirmation.
+	'sessions.requestAccess': { capability: 'agents:dispatch' },
 	'history.list': { capability: 'history:read' },
 	'history.get': { capability: 'history:read' },
 	'transcripts.read': { capability: 'transcripts:read' },
@@ -145,6 +152,11 @@ export const HANDLER_REAUTHORIZED_METHODS: ReadonlySet<HostMethod> = new Set<Hos
 	'services.result',
 	'net.send',
 	'net.close',
+	// sessions.requestAccess asks the user to ADD a session to the grant set, so
+	// the requested id is never already in the allowlist scope. The broker
+	// confirms only that `agents:dispatch` is held; the handler then requires the
+	// plugin to use session grants and raises the host-owned confirmation itself.
+	'sessions.requestAccess',
 ]);
 
 /** A request from the sandbox to the host. */
@@ -268,6 +280,10 @@ export function extractTarget(method: HostMethod, params: unknown): string | und
 			// Allowlist scope target: the exact agent id the plugin wants to run.
 			// A missing/malformed id yields undefined, which an allowlist grant
 			// treats as deny (act verbs never match a target-less call).
+			// `agents.dispatch`'s optional `opts.tabId` is deliberately NOT part of
+			// the target: it narrows which tab of an already-authorized session the
+			// prompt lands in, so it can never widen what the grant covers. The
+			// handler resolves it against `tabsList` after every gate.
 			return typeof p.agentId === 'string' ? p.agentId : undefined;
 		case 'process.spawn':
 			// Allowlist scope target: the host-blessed binary NAME the plugin

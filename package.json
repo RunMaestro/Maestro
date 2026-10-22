@@ -38,6 +38,7 @@
 		"build:cli": "node scripts/build-cli.mjs",
 		"build:server": "npm run build:cli && node scripts/build-server.mjs",
 		"gen:cli-reference": "node scripts/gen-cli-reference.mjs",
+		"plugin:dev": "node scripts/install-dev-plugin.mjs",
 		"gen:og-image": "node scripts/generate-og-image.mjs",
 		"build:maestro-p": "node scripts/build-maestro-p.mjs",
 		"build:maestro-lib": "node scripts/build-maestro-lib.mjs",

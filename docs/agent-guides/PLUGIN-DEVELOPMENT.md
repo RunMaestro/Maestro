@@ -94,7 +94,7 @@ One folder per plugin. The folder name and the manifest `id` must agree on insta
 | `name`        | string                   | yes       | display name                                                                                                                                                                                                       |
 | `version`     | string                   | yes       | semver (distinct from `minHostApi`)                                                                                                                                                                                |
 | `tier`        | `0 \| 1 \| 2`            | yes       | trust/capability tier                                                                                                                                                                                              |
-| `maestro`     | `{ minHostApi: string }` | yes       | minimum host API (current host is `1.25.0`)                                                                                                                                                                        |
+| `maestro`     | `{ minHostApi: string }` | yes       | minimum host API (current host is `1.26.0`)                                                                                                                                                                        |
 | `description` | string                   | no        |                                                                                                                                                                                                                    |
 | `author`      | string                   | no        |                                                                                                                                                                                                                    |
 | `license`     | string                   | no        |                                                                                                                                                                                                                    |
@@ -393,35 +393,100 @@ host controls the frame, icon mapping, tooltip, and non-suppressible plugin prov
 
 ## 5. Capabilities
 
-Request these in `permissions` as `{ capability, scope?, reason? }`. `scope` narrows `fs:*` (a directory), `net:fetch` (a host), and `transcripts:read` (a project path); absent means the broad form. `reason` shows at the consent prompt.
+Request these in `permissions` as `{ capability, scope?, reason? }`. `scope` narrows `fs:*` (a directory), `net:fetch` (a host), and `transcripts:read` (a project path, or the `granted-sessions` keyword); absent means the broad form. `reason` shows at the consent prompt.
 
-| Capability            | Risk   | Scope | What it allows                                                                         | How to request                                                   |
-| --------------------- | ------ | ----- | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| `fs:read`             | medium | path  | read files under the scope path                                                        | `{ "capability": "fs:read", "scope": "/abs/dir" }`               |
-| `fs:write`            | high   | path  | write files under the scope path                                                       | `{ "capability": "fs:write", "scope": "/abs/dir" }`              |
-| `net:fetch`           | medium | host  | HTTP(S) fetch to the scope host                                                        | `{ "capability": "net:fetch", "scope": "example.com" }`          |
-| `net:connect`         | high   | host  | persistent outbound `wss://` socket to the scope host (trusted-only)                   | `{ "capability": "net:connect", "scope": "gateway.discord.gg" }` |
-| `agents:read`         | low    | none  | list/read agent metadata                                                               | `{ "capability": "agents:read" }`                                |
-| `agents:dispatch`     | high   | none  | send a prompt to an agent (LIVE, gated; direct dispatch also needs unattended consent) | `{ "capability": "agents:dispatch" }`                            |
-| `notifications:toast` | low    | none  | raise a toast                                                                          | `{ "capability": "notifications:toast" }`                        |
-| `settings:read`       | low    | none  | read non-secret app settings + own `plugins.<id>.*`                                    | `{ "capability": "settings:read" }`                              |
-| `settings:write`      | low    | none  | write ONLY own `plugins.<id>.*` keys                                                   | `{ "capability": "settings:write" }`                             |
-| `sessions:read`       | medium | none  | list session METADATA (never transcript)                                               | `{ "capability": "sessions:read" }`                              |
-| `sessions:focus`      | low    | none  | switch Maestro to one of the user's existing sessions (navigation only)                | `{ "capability": "sessions:focus" }`                             |
-| `transcripts:read`    | high   | path  | read PROJECTED session content (you declare fields)                                    | `{ "capability": "transcripts:read", "scope": "/abs/project" }`  |
-| `storage:read`        | low    | none  | read own private key-value store                                                       | `{ "capability": "storage:read" }`                               |
-| `storage:write`       | low    | none  | write own private key-value store                                                      | `{ "capability": "storage:write" }`                              |
-| `ui:command`          | low    | none  | invoke a registered palette command                                                    | `{ "capability": "ui:command" }`                                 |
-| `events:subscribe`    | medium | none  | subscribe to metadata-only host topics                                                 | `{ "capability": "events:subscribe" }`                           |
-| `process:spawn`       | high   | none  | run a shell command (LIVE, gated: trusted + allowlisted + risk-capped)                 | `{ "capability": "process:spawn" }`                              |
-| `ui:contribute`       | medium | none  | add declarative controls in approved host-owned surfaces                               | `{ "capability": "ui:contribute" }`                              |
-| `ui:panel`            | medium | none  | render sandboxed panels in approved Maestro regions                                    | `{ "capability": "ui:panel" }`                                   |
-| `ui:hostView`         | medium | none  | render/update declared host BlockView data                                             | `{ "capability": "ui:hostView" }`                                |
-| `ui:render-unsafe`    | high   | none  | render custom UI only in host-approved, non-protected regions                          | `{ "capability": "ui:render-unsafe" }`                           |
+**Paths under the user's home (`~`), host API 1.26.0+.** Your plugin has no `process` and no `os`, so it cannot learn where home is. Pass the literal `~` instead and the host expands it: `maestro.fs.read('~/.maestro/my-plugin/state.yaml')` resolves under the real home directory. Exactly `~` and a leading `~/` expand; `~user/...` does not, and a `~` anywhere but the first character is an ordinary filename character.
+
+A home-relative `fs:*` **scope** is accepted in exactly one form: `~/.maestro/<name>[/<more>]`. These are rejected when the manifest is parsed, each with its own message: `~` and `~/` (the whole home directory), `~/.maestro` (the directory itself), `~/anything-else` (outside Maestro's own directory), `~user/...` (never expanded), and any empty, `.`, or `..` segment. So keep your plugin's files under `~/.maestro/<your-plugin>/` and scope to that:
+
+```json
+{
+	"capability": "fs:write",
+	"scope": "~/.maestro/my-plugin",
+	"reason": "Stores only its own files under ~/.maestro; never touches a project folder."
+}
+```
+
+Declare one entry per scope per capability (a plugin may declare the same capability more than once, and any covering grant authorizes the call) rather than widening one scope to cover both. Absolute scopes behave exactly as before, and the host still resolves symlinks and re-authorizes the real path, so a `~` scope cannot be used to escape through a link.
+
+| Capability            | Risk   | Scope     | What it allows                                                                                                                                    | How to request                                                     |
+| --------------------- | ------ | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `fs:read`             | medium | path      | read files under the scope path (absolute, or `~/.maestro/<name>`)                                                                                | `{ "capability": "fs:read", "scope": "/abs/dir" }`                 |
+| `fs:write`            | high   | path      | write files under the scope path (absolute, or `~/.maestro/<name>`)                                                                               | `{ "capability": "fs:write", "scope": "/abs/dir" }`                |
+| `net:fetch`           | medium | host      | HTTP(S) fetch to the scope host                                                                                                                   | `{ "capability": "net:fetch", "scope": "example.com" }`            |
+| `net:connect`         | high   | host      | persistent outbound `wss://` socket to the scope host (trusted-only)                                                                              | `{ "capability": "net:connect", "scope": "gateway.discord.gg" }`   |
+| `agents:read`         | low    | none      | list/read agent metadata (id, name, cwd, toolType, `supportsAdditionalDirectories`)                                                               | `{ "capability": "agents:read" }`                                  |
+| `agents:dispatch`     | high   | allowlist | send a prompt to an agent (LIVE, gated; direct dispatch also needs unattended consent). Scope is REQUIRED: exact agent ids, or `granted-sessions` | `{ "capability": "agents:dispatch", "scope": "granted-sessions" }` |
+| `notifications:toast` | low    | none      | raise a toast                                                                                                                                     | `{ "capability": "notifications:toast" }`                          |
+| `settings:read`       | low    | none      | read non-secret app settings + own `plugins.<id>.*`                                                                                               | `{ "capability": "settings:read" }`                                |
+| `settings:write`      | low    | none      | write ONLY own `plugins.<id>.*` keys                                                                                                              | `{ "capability": "settings:write" }`                               |
+| `sessions:read`       | medium | none      | list session METADATA (never transcript)                                                                                                          | `{ "capability": "sessions:read" }`                                |
+| `sessions:create`     | high   | none      | create an agent, including its `additionalDirectories` / `customModel` / `customEffort` (see below)                                               | `{ "capability": "sessions:create" }`                              |
+| `sessions:write`      | high   | none      | patch an agent's metadata and the same host-validated field set                                                                                   | `{ "capability": "sessions:write" }`                               |
+| `sessions:focus`      | low    | none      | switch Maestro to one of the user's existing sessions (navigation only)                                                                           | `{ "capability": "sessions:focus" }`                               |
+| `transcripts:read`    | high   | path      | read PROJECTED session content (you declare fields). Scope is a project path, or `granted-sessions`                                               | `{ "capability": "transcripts:read", "scope": "/abs/project" }`    |
+| `storage:read`        | low    | none      | read own private key-value store                                                                                                                  | `{ "capability": "storage:read" }`                                 |
+| `storage:write`       | low    | none      | write own private key-value store                                                                                                                 | `{ "capability": "storage:write" }`                                |
+| `ui:command`          | low    | none      | invoke a registered palette command                                                                                                               | `{ "capability": "ui:command" }`                                   |
+| `events:subscribe`    | medium | none      | subscribe to metadata-only host topics                                                                                                            | `{ "capability": "events:subscribe" }`                             |
+| `process:spawn`       | high   | allowlist | run a shell command (LIVE, gated: trusted + allowlisted + risk-capped)                                                                            | `{ "capability": "process:spawn" }`                                |
+| `ui:contribute`       | medium | none      | add declarative controls in approved host-owned surfaces                                                                                          | `{ "capability": "ui:contribute" }`                                |
+| `ui:panel`            | medium | none      | render sandboxed panels in approved Maestro regions                                                                                               | `{ "capability": "ui:panel" }`                                     |
+| `ui:hostView`         | medium | none      | render/update declared host BlockView data                                                                                                        | `{ "capability": "ui:hostView" }`                                  |
+| `ui:render-unsafe`    | high   | none      | render custom UI only in host-approved, non-protected regions                                                                                     | `{ "capability": "ui:render-unsafe" }`                             |
 
 `agents:dispatch`, `process:spawn`, and `net:connect` are LIVE but fully gated: each requires a trusted (signed) plugin, an allowlist/host-scope grant, and passes a Pianola risk ceiling plus the ActionGuard rate cap. `agents:dispatch` from your own plugin code ALSO requires the separate unattended consent (plugin-initiated dispatch is never user-present). The broker re-reads grants on every call, so a revoke takes effect immediately, and it re-authorizes `fs:*` paths against the symlink-resolved real path. See "Persistent network connections" below for `net:connect`.
 
 `transcripts:read` is project-scoped: `scope` is a project path, and an absent scope means all projects (presented as such at consent). It is refused for an untrusted plugin that also holds `net:fetch`, `net:connect`, or `process:spawn` (the content-exfiltration combination) - sign with a trusted key to allow both. Reads are rate-limited as a high-risk verb and every read is audited.
+
+### Host-enforced session grants: `scope: "granted-sessions"` (host API 1.26.0+)
+
+A plugin author cannot know a session id at authoring time, but `agents:dispatch` requires its scope to name exact agent ids and `transcripts:read` requires a project path. The `granted-sessions` keyword solves that honestly: declare it as the scope on `agents:dispatch`, optionally on `transcripts:read` as well, and the HOST decides the member set.
+
+**`agents:dispatch` must carry the keyword whenever `transcripts:read` does.** The member set is physically stored as the `agents:dispatch` grant's allowlist scope, so the keyword on `transcripts:read` by itself names a set that cannot exist, and the manifest is rejected with that reason. If you want host-governed transcript reads, declare the keyword on both; if you only want transcript reads, scope `transcripts:read` to a real project path instead.
+
+```json
+{ "capability": "agents:dispatch", "scope": "granted-sessions", "reason": "..." }
+```
+
+What the keyword means:
+
+- **It is an explicit scope, never the broad form.** A freshly consented `granted-sessions` grant has NO members and therefore covers nothing. The consent prompt shows it as "only agents this plugin creates, or that you approve when asked".
+- **Two ways in.** A session your plugin creates through `maestro.sessions.create(...)` is granted automatically (source `created`). Any other session needs the user: call `maestro.sessions.requestAccess(sessionId)` and Maestro raises its OWN confirmation naming your plugin, the agent, and its project, defaulting to Don't Allow. It resolves `{ granted }`. Only a plugin that declared the keyword may call it; at most one confirmation is open per plugin at a time, and a session the user declines is not re-prompted until your plugin restarts.
+- **What a grant buys.** `agents.dispatch` to that exact session id (never an agent NAME - name resolution is off for these plugins) and `transcripts.read` of that session's History. Every other gate still applies: a trusted signature, unattended consent for dispatch, the risk ceiling, the ActionGuard rate cap, the egress conflict rule, field projection, and the per-read audit line.
+- **Revocation is the user's, any time.** The member set is the `agents:dispatch` grant's allowlist scope in the sealed ledger, so Settings -> Plugins -> Permissions (the dispatch allow list editor) removes a session, and the very next dispatch or History read for it is denied. Revoking the capability clears the whole set.
+- **Track it yourself from what the host tells you.** Never assume a grant you have not seen. Treat a session as granted only after `requestAccess` returned `{ granted: true }` or a call to it succeeded, and return it to ungranted when a call is denied.
+- **One tab, not the whole agent.** `maestro.agents.dispatch(sessionId, prompt, { tabId })` lands the prompt in one specific AI tab. `opts` is closed - `tabId` is its only member, and any other key throws - and `tabId` must name a **visible** AI tab (a hidden consult tab is not addressable) **of the session you are dispatching to**, so pair it with a session id, never an agent name. It narrows delivery and never widens reach: the grant check still runs against `sessionId`, and an unknown, hidden, other-session, or non-AI tab throws with nothing sent. Omit `opts` and the agent's own active tab receives the prompt, exactly as before.
+
+Declaring the keyword nowhere changes anything for existing plugins: ordinary scopes keep today's exact behavior, and `opts.tabId` is optional for everyone.
+
+### Configuring an agent you created (host API 1.26.0+)
+
+`sessions.create` and `sessions.update` take a few more fields than the title and project path, so a plugin that makes an agent can finish setting it up without asking the user to go configure it by hand:
+
+```js
+const session = await maestro.sessions.create({
+	agentId: 'claude-code',
+	title: 'Board conductor',
+	cwd: '~/.maestro/my-plugin/scratch', // a leading `~` expands host-side
+	customModel: 'opus',
+	customEffort: 'high',
+});
+
+// Read-only reach, one entry per project root you have been granted.
+await maestro.sessions.update(session.id, {
+	additionalDirectories: [{ path: '/Users/you/code/api', read: true, write: false }],
+});
+```
+
+- **`additionalDirectories` is scope-checked, hard.** Maestro turns it into real provider flags (`--add-dir` and its per-provider equivalents) and into the agent's system prompt, so the AGENT does the reading and your own `fs:read` scope never applies. The host therefore accepts exactly one kind of path: an absolute directory **equal to the project root of a session already granted to you** (one you created, or one the user approved through `sessions.requestAccess`). A relative path, a `..` segment, a `~`-relative path, a _subdirectory_ of a granted root, and the project root of an agent you were never granted are each rejected with their own error. You can restate reach the user handed you; you can never widen it. `write: true` is refused outright - a session grant is a read relationship.
+- **An empty list clears the field.** `additionalDirectories: []` removes every grant rather than storing an empty array, which is how you shrink an agent's reach when a card leaves your board.
+- **`customModel` / `customEffort` are plain strings** (an empty string clears the override). They pick among the provider's own models for an agent you may already create; they are not a provider-agnostic tier name, so pass what that provider accepts.
+- **What you may never set:** `customPath`, `customArgs`, `customEnvVars`, `sshRemoteConfig`, and the Claude token-mode fields. Those decide which binary runs with which environment, and they stay the user's, set in Maestro's own agent settings. Passing them is ignored, not honored - so tell the user to open the agent's settings instead of trying.
+- **`cwd` / `projectPath` expands a leading `~`** (the sandbox cannot learn the home directory) and may not sit inside Maestro's own data directory.
+- **Check `supportsAdditionalDirectories` first.** Every `maestro.agents.list()` / `agents.get()` entry carries it. When it is `false`, that provider has no add-directory flag: the grant still reaches the agent's system prompt but nothing enforces it, so say so in your UI rather than implying the agent can open those files.
+
+None of this needs a new capability: `additionalDirectories` cannot name a path outside your grant set, and the fields that would need one are refused. `sessions:create` and `sessions:write` are enough.
 
 The `ui:*` capabilities gate what the host accepts and renders: `ui:contribute` admits declarative `uiItems` into approved host-owned surfaces, `ui:panel` admits sandboxed `panels` into approved Maestro regions, and `ui:hostView` admits brokered updates/removals for declared host views. Static `hostViews` remain available to tier-0 plugins because they are host-rendered data, not plugin UI. `ui:render-unsafe` is a high-trust policy for host-approved custom UI only; it neither grants another UI capability nor bypasses trusted chrome. An enabled plugin without the matching grant contributes none of that surface.
 
@@ -471,15 +536,15 @@ Every method below is broker-gated and needs the matching capability granted. Si
 | SDK method                                                                                            | Capability                   |
 | ----------------------------------------------------------------------------------------------------- | ---------------------------- |
 | `maestro.pluginId` (string)                                                                           | -                            |
-| `maestro.fs.read(path)` -> `Promise<string>`                                                          | `fs:read`                    |
-| `maestro.fs.write(path, contents)` -> `Promise<void>`                                                 | `fs:write`                   |
+| `maestro.fs.read(path)` -> `Promise<string>` (a leading `~` expands)                                  | `fs:read`                    |
+| `maestro.fs.write(path, contents)` -> `Promise<void>` (a leading `~` expands)                         | `fs:write`                   |
 | `maestro.net.fetch(url, init?)` -> `Promise<unknown>`                                                 | `net:fetch`                  |
 | `maestro.net.connect(url, opts?)` -> `Promise<{ socketId }>` (`wss://` only)                          | `net:connect`                |
 | `maestro.net.send(socketId, data)` -> `Promise<{ ok: true }>`                                         | `net:connect`                |
 | `maestro.net.close(socketId, opts?)` -> `Promise<{ ok: true }>`                                       | `net:connect`                |
 | `maestro.agents.list()`                                                                               | `agents:read`                |
 | `maestro.agents.get(agentId)`                                                                         | `agents:read`                |
-| `maestro.agents.dispatch(agentId, prompt, opts?)` (needs unattended consent)                          | `agents:dispatch`            |
+| `maestro.agents.dispatch(agentId, prompt, { tabId? })` (needs unattended consent)                     | `agents:dispatch`            |
 | `maestro.agents.send(agentId, prompt, { sessionId?, onProgress? })` -> response + provider session ID | `agents:dispatch`            |
 | `maestro.agents.generateTitle(agentId, firstMessage)` -> short title or `null`                        | `agents:dispatch`            |
 | `maestro.notifications.toast(message, opts?)` -> `Promise<void>`                                      | `notifications:toast`        |
@@ -487,7 +552,11 @@ Every method below is broker-gated and needs the matching capability granted. Si
 | `maestro.settings.set(key, value)` (key must be `plugins.<id>.*`)                                     | `settings:write`             |
 | `maestro.sessions.list()` (metadata only)                                                             | `sessions:read`              |
 | `maestro.sessions.get(sessionId)` (metadata only)                                                     | `sessions:read`              |
+| `maestro.sessions.create(params?)` -> session metadata (see "Configuring an agent you created")       | `sessions:create`            |
+| `maestro.sessions.update(sessionId, patch)` -> session metadata                                       | `sessions:write`             |
+| `maestro.sessions.delete(sessionId)` -> `Promise<void>`                                               | `sessions:write`             |
 | `maestro.sessions.focus(sessionId, tabId?)` -> `Promise<void>` (lands on an AI tab)                   | `sessions:focus`             |
+| `maestro.sessions.requestAccess(sessionId)` -> `{ granted }` (host-owned confirmation)                | `agents:dispatch`            |
 | `maestro.transcripts.read({ sessionId, fields, projectPath?, limit?, since? })`                       | `transcripts:read`           |
 | `maestro.storage.get(key)`                                                                            | `storage:read`               |
 | `maestro.storage.keys()`                                                                              | `storage:read`               |
@@ -509,7 +578,7 @@ Every method below is broker-gated and needs the matching capability granted. Si
 
 `net.fetch` returns `{ status, statusText, headers, body }` (body is text, capped at 5 MB). Requests are egress-guarded: loopback, link-local, RFC1918, cloud-metadata, and the app's own port are blocked, and redirects are not followed (`redirect: 'error'`), so a 3xx to a non-granted host fails.
 
-`transcripts.read` returns only the `fields` you declare for each entry (projection, not redaction); allowlisted fields include `summary`, `fullResponse`, `timestamp`, `type`, `sessionName`, and `agentSessionId`. Pass `projectPath` (from `sessions.list` metadata) so a project-scoped grant authorizes; the handler re-checks the session's real project before returning. It is bounded as a high-risk verb and audited per read.
+`transcripts.read` returns only the `fields` you declare for each entry (projection, not redaction); allowlisted fields include `summary`, `fullResponse`, `timestamp`, `type`, `sessionName`, and `agentSessionId`. Pass `projectPath` (from `sessions.list` metadata) so a project-scoped grant authorizes; the handler re-checks the session's real project before returning. Under a `granted-sessions` scope there is no path to pass: the handler requires the session to be in your host-held grant set instead. It is bounded as a high-risk verb and audited per read.
 
 `hostViewUpdate` accepts only BlockView data for a view declared by the calling plugin; it
 resolves the local id in that plugin's namespace, keeps the declaration's title and surface, and

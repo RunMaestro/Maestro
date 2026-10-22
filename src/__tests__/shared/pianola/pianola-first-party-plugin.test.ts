@@ -169,7 +169,11 @@ describe('first-party plugin registry', () => {
 	it('every definition declares first-party, valid permissions, and supervised-only services', () => {
 		for (const def of FIRST_PARTY_PLUGIN_DEFINITIONS) {
 			expect(def.firstParty).toBe(true);
-			const parsed = parsePermissions(def.permissions);
+			// firstParty: these are HOST-authored declarations, not a third-party
+			// plugin.json, so a `~` path scope is not confined to `~/.maestro/`
+			// (Coworking writes `~/.claude.json`, MaestroRun installs into
+			// `~/Applications`). Every other permission rule still applies.
+			const parsed = parsePermissions(def.permissions, { firstParty: true });
 			expect(parsed.errors).toEqual([]);
 			expect(parsed.requests.length).toBeGreaterThan(0);
 			// Every feature at least discloses reading its own Encore flag.

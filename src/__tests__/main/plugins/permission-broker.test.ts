@@ -1,6 +1,17 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { PermissionBroker } from '../../../main/plugins/permission-broker';
 import type { PermissionGrant } from '../../../shared/plugins/permissions';
+
+// `~` expansion reads os.homedir(). Stub it to a throwaway temp directory so no
+// assertion here can depend on (or touch) the machine's real home folder.
+const home = vi.hoisted(() => ({ dir: '' }));
+vi.mock('os', async () => {
+	const actual = await vi.importActual<typeof import('os')>('os');
+	return { ...actual, homedir: () => home.dir };
+});
 
 function grant(capability: string, scope?: string): PermissionGrant {
 	return { capability, ...(scope ? { scope } : {}), grantedAt: 1 } as PermissionGrant;
@@ -112,5 +123,115 @@ describe('PermissionBroker', () => {
 		});
 		expect(broker.authorize('trusted', 'fs.read', { path: '/x' }).allowed).toBe(true);
 		expect(broker.authorize('other', 'fs.read', { path: '/x' }).allowed).toBe(false);
+	});
+});
+
+describe('PermissionBroker home-relative (~) path scopes', () => {
+	// The maestro-kanban grant set: one entry per scope per capability, exactly
+	// the four directories/files the plugin ever owns under ~/.maestro.
+	const KANBAN_SCOPES = [
+		'~/.maestro/kanban.yaml',
+		'~/.maestro/kanban-boards',
+		'~/.maestro/kanban-conductor',
+		'~/.maestro/kanban-archive',
+	];
+
+	beforeAll(() => {
+		home.dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-broker-home-'));
+	});
+	afterAll(() => fs.rmSync(home.dir, { recursive: true, force: true }));
+
+	function kanbanBroker(protectedPaths?: readonly string[]): PermissionBroker {
+		return new PermissionBroker({
+			getGrants: () => [
+				...KANBAN_SCOPES.map((scope) => grant('fs:read', scope)),
+				...KANBAN_SCOPES.map((scope) => grant('fs:write', scope)),
+			],
+			...(protectedPaths ? { protectedPaths: () => protectedPaths } : {}),
+		});
+	}
+
+	it('covers a ~ target with a ~ scope, for read and write', () => {
+		const b = kanbanBroker();
+		for (const target of [
+			'~/.maestro/kanban.yaml',
+			'~/.maestro/kanban-boards/my-app-1a2b3c4d.yaml',
+			'~/.maestro/kanban-conductor/notes.md',
+			'~/.maestro/kanban-archive/2026/old.yaml',
+		]) {
+			expect(b.authorize('p', 'fs.read', { path: target }).allowed, target).toBe(true);
+			expect(b.authorize('p', 'fs.write', { path: target }).allowed, target).toBe(true);
+		}
+	});
+
+	it('covers the EXPANDED real path too (the fs handlers re-authorize with it)', () => {
+		const b = kanbanBroker();
+		const real = path.join(home.dir, '.maestro', 'kanban-boards', 'my-app-1a2b3c4d.yaml');
+		expect(b.authorize('p', 'fs.read', { path: real }).allowed).toBe(true);
+		expect(b.authorize('p', 'fs.write', { path: real }).allowed).toBe(true);
+	});
+
+	it('reports the expanded path as the decision target (what the host would touch)', () => {
+		const onDecision = vi.fn();
+		const broker = new PermissionBroker({
+			getGrants: () => [grant('fs:read', '~/.maestro/kanban-boards')],
+			onDecision,
+		});
+		const d = broker.authorize('p', 'fs.read', { path: '~/.maestro/kanban-boards/x.yaml' });
+		expect(d.target).toBe(path.join(home.dir, '.maestro/kanban-boards/x.yaml'));
+		expect(d.target).not.toContain('~');
+		expect(onDecision).toHaveBeenCalledWith('p', 'fs.read', d);
+	});
+
+	it('denies a home path outside the granted ~/.maestro/kanban* scopes', () => {
+		const b = kanbanBroker();
+		for (const target of ['~/.maestro/other.yaml', '~/notes.txt', '~/.ssh/id_rsa', '~']) {
+			expect(b.authorize('p', 'fs.read', { path: target }).allowed, target).toBe(false);
+			expect(b.authorize('p', 'fs.write', { path: target }).allowed, target).toBe(false);
+		}
+	});
+
+	it('denies a .. escape out of a ~ scope (segments collapse before matching)', () => {
+		const b = kanbanBroker();
+		const escape = '~/.maestro/kanban-boards/../../.ssh/id_rsa';
+		expect(b.authorize('p', 'fs.read', { path: escape }).allowed).toBe(false);
+		expect(b.authorize('p', 'fs.write', { path: escape }).allowed).toBe(false);
+		// A `..` that stays inside the scope is still fine.
+		expect(
+			b.authorize('p', 'fs.read', { path: '~/.maestro/kanban-boards/sub/../ok.yaml' }).allowed
+		).toBe(true);
+	});
+
+	it('does not expand ~user/... (it is matched as a literal, so it is denied)', () => {
+		const b = kanbanBroker();
+		const d = b.authorize('p', 'fs.read', { path: '~root/.maestro/kanban.yaml' });
+		expect(d.allowed).toBe(false);
+		expect(d.target).toBe('~root/.maestro/kanban.yaml');
+		expect(d.target).not.toContain(home.dir);
+	});
+
+	it('still denies a ~ path that resolves inside the userData tree', () => {
+		const userData = path.join(home.dir, '.maestro', 'kanban-boards', 'userData');
+		const b = kanbanBroker([userData]);
+		const d = b.authorize('p', 'fs.write', { path: '~/.maestro/kanban-boards/userData/x.json' });
+		expect(d.allowed).toBe(false);
+		expect(d.reason).toMatch(/protected location/);
+		// A sibling sharing the textual prefix is NOT inside it.
+		expect(
+			b.authorize('p', 'fs.write', { path: '~/.maestro/kanban-boards/userData-sibling/x' }).allowed
+		).toBe(true);
+	});
+
+	it('leaves absolute scopes and non-path capabilities untouched', () => {
+		const broker = new PermissionBroker({
+			getGrants: () => [grant('fs:read', '/data'), grant('net:fetch', 'example.com')],
+		});
+		expect(broker.authorize('p', 'fs.read', { path: '/data/x' }).allowed).toBe(true);
+		expect(broker.authorize('p', 'fs.read', { path: '~/.maestro/kanban.yaml' }).allowed).toBe(
+			false
+		);
+		const net = broker.authorize('p', 'net.fetch', { url: 'https://example.com/x' });
+		expect(net.allowed).toBe(true);
+		expect(net.target).toBe('example.com');
 	});
 });

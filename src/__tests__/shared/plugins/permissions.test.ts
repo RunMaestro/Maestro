@@ -8,9 +8,16 @@ import {
 	describeCapability,
 	isPluginCapability,
 	isAllowlistScoped,
+	isPathScoped,
 	isValidAllowlistMember,
+	capabilitySupportsSessionGrants,
+	hasSessionGrantScope,
+	isSessionGrantScope,
+	parseAllowlistScope,
+	GRANTED_SESSIONS_SCOPE,
 	PLUGIN_CAPABILITIES,
 	type PermissionGrant,
+	type PluginCapability,
 } from '../../../shared/plugins/permissions';
 
 describe('parsePermissions', () => {
@@ -66,6 +73,134 @@ describe('parsePermissions', () => {
 		const r = parsePermissions([{ capability: 'fs:read', scope: '/data', reason: 'read config' }]);
 		expect(r.errors).toEqual([]);
 		expect(r.requests[0]).toEqual({ capability: 'fs:read', scope: '/data', reason: 'read config' });
+	});
+});
+
+describe('parsePermissions home-relative (~) path scopes', () => {
+	it('accepts a scope inside ~/.maestro/ and keeps the literal ~ (the main process expands it)', () => {
+		const r = parsePermissions([
+			{ capability: 'fs:write', scope: '~/.maestro/kanban-boards', reason: 'own board files' },
+		]);
+		expect(r.errors).toEqual([]);
+		expect(r.requests[0]).toEqual({
+			capability: 'fs:write',
+			scope: '~/.maestro/kanban-boards',
+			reason: 'own board files',
+		});
+	});
+
+	it('accepts a deeper path and a single file inside ~/.maestro/', () => {
+		const r = parsePermissions([
+			{ capability: 'fs:read', scope: '~/.maestro/kanban.yaml' },
+			{ capability: 'fs:read', scope: '~/.maestro/kanban-boards/archive/old' },
+		]);
+		expect(r.errors).toEqual([]);
+		expect(r.requests.map((x) => x.scope)).toEqual([
+			'~/.maestro/kanban.yaml',
+			'~/.maestro/kanban-boards/archive/old',
+		]);
+	});
+
+	it('rejects a bare ~ (the whole home directory)', () => {
+		const r = parsePermissions([{ capability: 'fs:read', scope: '~' }]);
+		expect(r.requests).toEqual([]);
+		expect(r.errors).toHaveLength(1);
+		expect(r.errors[0]).toContain('"~/.maestro/"');
+		expect(r.errors[0]).toMatch(/bare "~"/);
+	});
+
+	it('rejects ~/ (the whole home directory, trailing slash)', () => {
+		const r = parsePermissions([{ capability: 'fs:write', scope: '~/' }]);
+		expect(r.requests).toEqual([]);
+		expect(r.errors[0]).toMatch(/must be inside "~\/\.maestro\/"/);
+	});
+
+	it('rejects ~/.maestro itself (too broad)', () => {
+		const r = parsePermissions([{ capability: 'fs:write', scope: '~/.maestro' }]);
+		expect(r.requests).toEqual([]);
+		expect(r.errors[0]).toMatch(/must name a file or directory inside/);
+	});
+
+	it('rejects a home path outside ~/.maestro/', () => {
+		const r = parsePermissions([{ capability: 'fs:read', scope: '~/notes.txt' }]);
+		expect(r.requests).toEqual([]);
+		expect(r.errors[0]).toMatch(/must be inside "~\/\.maestro\/"/);
+	});
+
+	it('rejects ~user/... (another home directory is never expanded)', () => {
+		const r = parsePermissions([{ capability: 'fs:read', scope: '~root/.maestro/kanban.yaml' }]);
+		expect(r.requests).toEqual([]);
+		expect(r.errors[0]).toMatch(/"~user\/\.\.\." are not expanded/);
+	});
+
+	it('rejects empty, "." and ".." segments inside an accepted root', () => {
+		for (const scope of [
+			'~/.maestro/kanban-boards/',
+			'~/.maestro/kanban-boards//x',
+			'~/.maestro/./kanban.yaml',
+			'~/.maestro/kanban-boards/../../.ssh/id_rsa',
+		]) {
+			const r = parsePermissions([{ capability: 'fs:write', scope }]);
+			expect(r.requests, scope).toEqual([]);
+			expect(r.errors[0], scope).toMatch(/must not contain empty, "\." or "\.\." path segments/);
+		}
+	});
+
+	it('names the offending capability and scope in every message', () => {
+		const r = parsePermissions([{ capability: 'fs:watch', scope: '~/evil' }]);
+		expect(r.errors[0]).toContain('capability "fs:watch"');
+		expect(r.errors[0]).toContain('"~/evil"');
+	});
+
+	it('leaves absolute path scopes alone (this adds a rule, it does not change one)', () => {
+		const r = parsePermissions([
+			{ capability: 'fs:read', scope: '/data/sub' },
+			{ capability: 'fs:read', scope: '/data/../etc' },
+			{ capability: 'fs:read', scope: 'relative/dir' },
+		]);
+		expect(r.errors).toEqual([]);
+		expect(r.requests).toHaveLength(3);
+	});
+
+	it('does not police ~ on host or allowlist scopes (only path scopes expand)', () => {
+		const r = parsePermissions([{ capability: 'net:fetch', scope: '~weird.example.com' }]);
+		expect(r.errors).toEqual([]);
+		expect(r.requests[0]?.scope).toBe('~weird.example.com');
+	});
+
+	describe('firstParty: host-authored definitions are not confined to ~/.maestro/', () => {
+		// FIRST_PARTY_PLUGIN_DEFINITIONS are reviewed in this repository, and the
+		// shipped Coworking / MaestroRun features write agent config files that do
+		// not live under ~/.maestro. Manifest validation never passes this option.
+		it('accepts the shipped first-party home scopes', () => {
+			const scopes = [
+				'~/.claude.json',
+				'~/.codex/config.toml',
+				'~/.config/opencode/opencode.json',
+				'~/.factory/mcp.json',
+				'~/Applications/MaestroRun.app',
+			];
+			const r = parsePermissions(
+				scopes.map((scope) => ({ capability: 'fs:write', scope })),
+				{ firstParty: true }
+			);
+			expect(r.errors).toEqual([]);
+			expect(r.requests.map((x) => x.scope)).toEqual(scopes);
+		});
+
+		it('rejects those same scopes for a third-party manifest (the default)', () => {
+			const r = parsePermissions([{ capability: 'fs:write', scope: '~/.claude.json' }]);
+			expect(r.requests).toEqual([]);
+			expect(r.errors[0]).toMatch(/must be inside "~\/\.maestro\/"/);
+		});
+
+		it('still requires a leading ~/ and bans empty, "." and ".." segments', () => {
+			for (const scope of ['~', '~/', '~root/.codex/config.toml', '~/../etc/passwd', '~/a//b']) {
+				const r = parsePermissions([{ capability: 'fs:write', scope }], { firstParty: true });
+				expect(r.requests, scope).toEqual([]);
+				expect(r.errors, scope).toHaveLength(1);
+			}
+		});
 	});
 });
 
@@ -220,6 +355,25 @@ describe('isAllowlistScoped', () => {
 		expect(isAllowlistScoped('net:fetch')).toBe(false);
 		expect(isAllowlistScoped('agents:read')).toBe(false);
 		expect(isAllowlistScoped('transcripts:read')).toBe(false);
+	});
+});
+
+describe('isPathScoped (which capabilities expand a leading ~)', () => {
+	it('is true only for the filesystem/path-scoped capabilities', () => {
+		expect(isPathScoped('fs:read')).toBe(true);
+		expect(isPathScoped('fs:write')).toBe(true);
+		expect(isPathScoped('fs:watch')).toBe(true);
+		expect(isPathScoped('transcripts:read')).toBe(true);
+		expect(isPathScoped('transcripts:write')).toBe(true);
+	});
+
+	it('is false for host / allowlist / none scoped capabilities', () => {
+		expect(isPathScoped('net:fetch')).toBe(false);
+		expect(isPathScoped('net:connect')).toBe(false);
+		expect(isPathScoped('shell:openExternal')).toBe(false);
+		expect(isPathScoped('agents:dispatch')).toBe(false);
+		expect(isPathScoped('process:spawn')).toBe(false);
+		expect(isPathScoped('storage:read')).toBe(false);
 	});
 });
 
@@ -440,4 +594,142 @@ describe('services:call exact provider/service allowlists', () => {
 			expect(isValidAllowlistMember(target)).toBe(false);
 		}
 	);
+});
+
+describe('granted-sessions scope keyword (host-held per-session grants)', () => {
+	const keyword = { scope: GRANTED_SESSIONS_SCOPE } as const;
+
+	it('parses for agents:dispatch, which is where the set is stored', () => {
+		const parsed = parsePermissions([{ capability: 'agents:dispatch', ...keyword, reason: 'why' }]);
+		expect(parsed.errors).toEqual([]);
+		expect(parsed.requests).toEqual([
+			{ capability: 'agents:dispatch', scope: GRANTED_SESSIONS_SCOPE, reason: 'why' },
+		]);
+		expect(capabilitySupportsSessionGrants('agents:dispatch')).toBe(true);
+	});
+
+	it('parses for transcripts:read ONLY alongside the dispatch keyword', () => {
+		// Both: the shipping kanban combination.
+		const both = parsePermissions([
+			{ capability: 'agents:dispatch', ...keyword, reason: 'send' },
+			{ capability: 'transcripts:read', ...keyword, reason: 'read' },
+		]);
+		expect(both.errors).toEqual([]);
+		expect(both.requests).toHaveLength(2);
+		expect(capabilitySupportsSessionGrants('transcripts:read')).toBe(true);
+
+		// Alone: rejected. The grant set IS the `agents:dispatch` allowlist scope,
+		// so without the keyword there it would govern reads with a set that cannot
+		// exist - and with an ordinary dispatch allowlist it would quietly promote
+		// the user's own Settings-managed dispatch targets into the read set.
+		const alone = parsePermissions([{ capability: 'transcripts:read', ...keyword }]);
+		expect(alone.errors).toEqual([
+			expect.stringMatching(/only take the "granted-sessions" scope when "agents:dispatch"/),
+		]);
+
+		// An ordinary dispatch scope does not satisfy the requirement either.
+		const ordinaryDispatch = parsePermissions([
+			{ capability: 'agents:dispatch', scope: 'sess-1' },
+			{ capability: 'transcripts:read', ...keyword },
+		]);
+		expect(ordinaryDispatch.errors).toHaveLength(1);
+		expect(ordinaryDispatch.errors[0]).toMatch(/when "agents:dispatch" declares it too/);
+
+		// A path-scoped transcripts:read is unaffected by the rule.
+		const pathScoped = parsePermissions([
+			{ capability: 'agents:dispatch', scope: 'sess-1' },
+			{ capability: 'transcripts:read', scope: '/projects/app' },
+		]);
+		expect(pathScoped.errors).toEqual([]);
+	});
+
+	it('trims the keyword to its exact form and keeps a malformed reason loud', () => {
+		expect(
+			parsePermissions([{ capability: 'agents:dispatch', scope: `  ${GRANTED_SESSIONS_SCOPE}  ` }])
+				.requests
+		).toEqual([{ capability: 'agents:dispatch', scope: GRANTED_SESSIONS_SCOPE }]);
+		const badReason = parsePermissions([{ capability: 'agents:dispatch', ...keyword, reason: 7 }]);
+		expect(badReason.requests).toEqual([]);
+		expect(badReason.errors[0]).toMatch(/reason must be a string/);
+	});
+
+	it('is rejected for every other capability', () => {
+		const supported: readonly PluginCapability[] = ['agents:dispatch', 'transcripts:read'];
+		for (const capability of PLUGIN_CAPABILITIES) {
+			if (supported.includes(capability)) continue;
+			const parsed = parsePermissions([{ capability, ...keyword }]);
+			expect(parsed.requests, `${capability} must not accept the keyword`).toEqual([]);
+			expect(parsed.errors.length, `${capability} must report why`).toBe(1);
+			expect(capabilitySupportsSessionGrants(capability)).toBe(false);
+		}
+		// Spot-check the shapes of refusal so a reworded message still has to
+		// explain itself. A path verb and the OTHER act verb both get the specific
+		// keyword message, which names where the keyword IS accepted; a no-scope
+		// verb is caught one check earlier by the ordinary "takes no scope" rule.
+		for (const capability of ['transcripts:write', 'process:spawn', 'fs:read'] as const) {
+			expect(parsePermissions([{ capability, ...keyword }]).errors[0]).toMatch(
+				/does not take the "granted-sessions" scope \(only agents:dispatch and transcripts:read do\)/
+			);
+		}
+		expect(parsePermissions([{ capability: 'agents:read', ...keyword }]).errors[0]).toMatch(
+			/does not take a scope/
+		);
+	});
+
+	it('covers NO session when consented: the keyword is never a member', () => {
+		const grants: PermissionGrant[] = [
+			{ capability: 'agents:dispatch', scope: GRANTED_SESSIONS_SCOPE, grantedAt: 1 },
+		];
+		expect(parseAllowlistScope(GRANTED_SESSIONS_SCOPE)).toBeNull();
+		expect(parseAllowlistScope(`${GRANTED_SESSIONS_SCOPE},sess-1`)).toEqual(['sess-1']);
+		for (const target of [GRANTED_SESSIONS_SCOPE, 'sess-1', 'anything', '']) {
+			expect(isPermitted(grants, 'agents:dispatch', target)).toBe(false);
+		}
+		expect(isPermitted(grants, 'agents:dispatch')).toBe(false);
+	});
+
+	it('covers no project path either, and never prefix-matches a relative one', () => {
+		const grants: PermissionGrant[] = [
+			{ capability: 'transcripts:read', scope: GRANTED_SESSIONS_SCOPE, grantedAt: 1 },
+		];
+		for (const target of [
+			'/projects/app',
+			GRANTED_SESSIONS_SCOPE,
+			`${GRANTED_SESSIONS_SCOPE}/nested`,
+			undefined,
+		]) {
+			expect(isPermitted(grants, 'transcripts:read', target)).toBe(false);
+		}
+		// It IS reported as a session-grant scope, which is how the broker knows to
+		// hand enforcement to the handler instead of denying outright.
+		expect(hasSessionGrantScope(grants, 'transcripts:read')).toBe(true);
+		expect(hasSessionGrantScope(grants, 'transcripts:write')).toBe(false);
+		expect(hasSessionGrantScope(grants, 'agents:dispatch')).toBe(false);
+	});
+
+	it('never reports a session-grant scope for a capability that cannot hold one', () => {
+		// Defense in depth: even a forged grant (the parser rejects this manifest)
+		// must not turn a path verb into a capability-held check.
+		const forged: PermissionGrant[] = [
+			{ capability: 'fs:read', scope: GRANTED_SESSIONS_SCOPE, grantedAt: 1 },
+		];
+		expect(hasSessionGrantScope(forged, 'fs:read')).toBe(false);
+		expect(isPermitted(forged, 'fs:read', '/etc/passwd')).toBe(false);
+		expect(isPermitted(forged, 'fs:read', 'granted-sessions/escape')).toBe(false);
+	});
+
+	it('recognizes only the exact keyword', () => {
+		expect(isSessionGrantScope(GRANTED_SESSIONS_SCOPE)).toBe(true);
+		expect(isSessionGrantScope(` ${GRANTED_SESSIONS_SCOPE}\n`)).toBe(true);
+		for (const near of [
+			undefined,
+			'',
+			'granted-session',
+			'granted-sessions,sess-1',
+			'GRANTED-SESSIONS',
+			'~/granted-sessions',
+		]) {
+			expect(isSessionGrantScope(near)).toBe(false);
+		}
+	});
 });

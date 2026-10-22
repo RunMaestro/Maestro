@@ -1,12 +1,16 @@
 import { describe, it, expect, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { buildPluginCommandPaletteCommands } from '../pluginCommandPaletteCommands';
 import { mergePluginContributions } from '../../../../utils/pluginContributionMerge';
 import type { QuickAction } from '../../types';
-import type {
-	CommandContribution,
-	CommandMacroContribution,
-	UiItemContribution,
+import {
+	collectContributions,
+	type CommandContribution,
+	type CommandMacroContribution,
+	type UiItemContribution,
 } from '../../../../../shared/plugins/contributions';
+import { validatePluginManifest } from '../../../../../shared/plugins/plugin-manifest';
 
 function command(over: Partial<CommandContribution> = {}): CommandContribution {
 	return {
@@ -152,5 +156,69 @@ describe('buildPluginCommandPaletteCommands - uiItems (menu surface)', () => {
 			setQuickActionOpen: vi.fn(),
 		});
 		expect(actions).toHaveLength(0);
+	});
+});
+
+describe('buildPluginCommandPaletteCommands - the shipped Kanban board', () => {
+	/** The REAL `examples/plugins/maestro-kanban/plugin.json`, through the host's
+	 * own manifest and contribution validators. Reading the shipped manifest
+	 * rather than a fixture is the point: the palette is one of the board's three
+	 * ways in, and a fixture would keep passing while the plugin a user installs
+	 * had lost its entry. */
+	function kanbanContributions() {
+		const require = createRequire(import.meta.url);
+		const path = require.resolve('../../../../../../examples/plugins/maestro-kanban/plugin.json');
+		const { manifest, errors } = validatePluginManifest(JSON.parse(readFileSync(path, 'utf8')));
+		expect(errors).toEqual([]);
+		if (!manifest) throw new Error('maestro-kanban plugin.json did not validate');
+		const collected = collectContributions(manifest);
+		expect(collected.errors).toEqual([]);
+		return collected;
+	}
+
+	it("turns the board's open command into a palette entry that opens the board", async () => {
+		const { commands, uiItems } = kanbanContributions();
+		const invokeCommand = vi.fn().mockResolvedValue({ dispatched: true });
+		const onCommandResult = vi.fn();
+		const setQuickActionOpen = vi.fn();
+
+		const actions = buildPluginCommandPaletteCommands({
+			commands,
+			macros: [],
+			uiItems,
+			invokeCommand,
+			onCommandResult,
+			setQuickActionOpen,
+		});
+
+		const open = actions.find((a) => a.id === 'maestro-kanban/open');
+		expect(open).toBeDefined();
+		expect(open?.label).toBe('Kanban: Open Board');
+		expect(open?.subtext).toContain('from maestro-kanban');
+
+		await open?.action();
+		expect(invokeCommand).toHaveBeenCalledWith('maestro-kanban/open');
+		expect(setQuickActionOpen).toHaveBeenCalledWith(false);
+		await Promise.resolve();
+		expect(onCommandResult).toHaveBeenCalledWith({
+			dispatched: true,
+			title: 'Kanban: Open Board',
+		});
+	});
+
+	it("leaves the board's Left Bar launcher to its own surface", () => {
+		const { uiItems } = kanbanContributions();
+		// The launcher mounts on `sidebar`, so it renders in the Left Bar action
+		// row and must NOT also appear in the palette - that would be the same way
+		// in listed twice, next to the `open` command entry above.
+		expect(uiItems.map((i) => i.surface)).toContain('sidebar');
+		const actions = buildPluginCommandPaletteCommands({
+			commands: [],
+			macros: [],
+			uiItems,
+			invokeCommand: vi.fn(),
+			setQuickActionOpen: vi.fn(),
+		});
+		expect(actions).toEqual([]);
 	});
 });
