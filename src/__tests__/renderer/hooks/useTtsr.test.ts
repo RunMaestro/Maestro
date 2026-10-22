@@ -732,6 +732,13 @@ describe('corrective-turn ack', () => {
 		});
 	});
 
+	it('rejects a nonthrowing refused spawn and releases the busy tab', async () => {
+		seedSession();
+		window.maestro.process.spawn = vi.fn().mockResolvedValue({ pid: -1, success: false });
+		expect(await runTtsrCorrectiveTurn(makePayload())).toBe(false);
+		expect(report).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
+		expect(useSessionStore.getState().sessions[0].aiTabs[0].state).toBe('idle');
+	});
 	it('acks failure with the spawn error', async () => {
 		seedSession();
 		window.maestro.process.spawn = vi.fn().mockRejectedValue(new Error('spawn failed'));

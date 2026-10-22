@@ -68,6 +68,8 @@ describe('agent-definitions', () => {
 			expect(claudeCode?.args).toContain('--verbose');
 			expect(claudeCode?.args).toContain('--output-format');
 			expect(claudeCode?.args).toContain('stream-json');
+			expect(claudeCode?.args).toContain('--include-partial-messages');
+			expect(claudeCode?.apiModeArgs).toContain('--include-partial-messages');
 			// Base args are the standard-permission default; --dangerously-skip-permissions
 			// only applies in full permission mode via fullAccessArgs.
 			expect(claudeCode?.args).not.toContain('--dangerously-skip-permissions');

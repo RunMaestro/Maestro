@@ -1064,7 +1064,7 @@ async function handleProcessSpawnImpl(
 
 	// The prompt carrying the reminders is now in the agent's hands, so the queue
 	// can be cleared. Anything that threw above left it intact for the retry.
-	ttsrReminders.commit();
+	if (result.success) ttsrReminders.commit();
 
 	// The prime outran the spawn cap, so the process started without a usable
 	// catalog and its first usage event carries the 200k fallback. Close the loop:

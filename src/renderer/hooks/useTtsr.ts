@@ -193,7 +193,8 @@ export async function runTtsrCorrectiveTurn(payload: TtsrTriggeredPayload): Prom
 			agentError: undefined,
 		}));
 
-		await processService.spawn(config);
+		const result = await processService.spawn(config);
+		if (!result.success) throw new Error('The corrective agent process did not start');
 		// Acked only after the spawn returns: the promise the interrupt toast made
 		// is "the turn is being corrected", and until this resolves it is not.
 		reportCorrectiveResult(payload.sessionId, true);
