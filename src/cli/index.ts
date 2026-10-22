@@ -1608,8 +1608,8 @@ board
 	.command('watch')
 	.description(
 		'Run `board tick` on a loop until Ctrl-C. The desktop Cue engine ticks the same ' +
-			'boards; overlapping is safe (board.yaml writes are atomic and serialized) but ' +
-			'still discouraged. No daemonization, no lock files.'
+			'boards; overlapping dispatchers on the same board are unsupported: the write ' +
+			'chain is process-local. Use one dispatcher per board. No daemonization, no lock files.'
 	)
 	.requiredOption('-a, --agent <id-or-name>', 'Agent whose project owns the board(s)')
 	.option('--board <boardId>', 'Watch only a specific board')
