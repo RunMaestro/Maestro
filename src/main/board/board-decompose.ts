@@ -60,8 +60,8 @@ export interface AutoDecomposeDeps {
 	 * pattern the dispatcher's own `finalize()` uses.
 	 *
 	 * When omitted, the mutations are applied to the passed-in `board` and the
-	 * caller persists it (the CLI's single-shot `board tick`, where nothing else
-	 * is writing during the pass).
+	 * caller persists it. Production desktop and CLI dispatchers both supply the
+	 * fresh-read seam because card editors may write during the LLM pass.
 	 */
 	reload?: () => Board | null;
 	/** Persist a merged board. Required when {@link reload} is supplied. */

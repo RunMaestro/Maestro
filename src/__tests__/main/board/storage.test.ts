@@ -453,6 +453,20 @@ describe('board-storage card mutations', () => {
 		saveBoards(projectRoot, [board([card({ id: 'a', status: 'done' })])]);
 	});
 
+	it.each(['ready', 'running'] as const)(
+		'rejects a new card with dispatcher-owned %s status',
+		(status) => {
+			expect(() => addCard(projectRoot, 'b1', card({ id: 'new', status }))).toThrow(
+				'dispatcher-owned status'
+			);
+			expect(getBoard(projectRoot, 'b1')?.cards.map((c) => c.id)).toEqual(['a']);
+		}
+	);
+	it('permits author-owned review status without changing persisted running validation', () => {
+		expect(
+			addCard(projectRoot, 'b1', card({ id: 'review', status: 'review' })).cards.at(-1)?.status
+		).toBe('review');
+	});
 	it('addCard appends and persists a card', () => {
 		const updated = addCard(projectRoot, 'b1', card({ id: 'b', parents: ['a'] }));
 		expect(updated.cards.map((c) => c.id)).toEqual(['a', 'b']);

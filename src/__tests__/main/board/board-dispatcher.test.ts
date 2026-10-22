@@ -835,6 +835,20 @@ describe('BoardDispatcher cancelCard', () => {
 		return { ...h, killed, settle: (r: CardSpawnResult) => settle?.(r) };
 	}
 
+	it('does not keep a cancel tombstone for a persisted run this dispatcher never spawned', async () => {
+		const h = harness(
+			board([card({ id: 'a', status: 'running', runs: [{ attempt: 1, startedAt: NOW }] })], 1),
+			() => completeMarker()
+		);
+		h.dispatcher.tick();
+		expect(h.dispatcher.isInFlight('a')).toBe(false);
+		expect(h.dispatcher.cancelCard('a')).toBe(true);
+		h.cardById('a').heldByUser = false;
+		h.dispatcher.tick();
+		await flush();
+		expect(h.status('a')).toBe('done');
+		expect(h.spawns).toEqual(['a']);
+	});
 	it('kills the run, holds the card in todo, and records a canceled run', async () => {
 		const h = pendingHarness(board([card({ id: 'a' })], 1));
 

@@ -52,7 +52,14 @@ import {
 	boardTick,
 	boardWatch,
 } from '../../../cli/commands/board';
-import { createBoard, addCard, loadBoards } from '../../../main/board/board-storage';
+import {
+	createBoard,
+	addCard,
+	loadBoards,
+	saveBoards,
+	updateCard,
+	deleteCard,
+} from '../../../main/board/board-storage';
 import { upsertProfile } from '../../../main/profiles/profile-storage';
 import type { BoardCard } from '../../../shared/board/types';
 
@@ -170,7 +177,14 @@ describe('maestro-cli board', () => {
 
 	it('board delete refuses unfinished cards without --force', async () => {
 		const b = createBoard(projectRoot, 'Busy');
-		addCard(projectRoot, b.id, card('c1', { status: 'running' }));
+		saveBoards(
+			projectRoot,
+			loadBoards(projectRoot).map((entry) =>
+				entry.id === b.id
+					? { ...entry, cards: [...entry.cards, card('c1', { status: 'running' })] }
+					: entry
+			)
+		);
 		await boardDelete(b.id, { agent: 'Alpha', json: true });
 		expect(exitSpy).toHaveBeenCalledWith(1);
 		expect(loadBoards(projectRoot)).toHaveLength(1);
@@ -178,7 +192,14 @@ describe('maestro-cli board', () => {
 
 	it('board delete --force removes a board with unfinished cards', async () => {
 		const b = createBoard(projectRoot, 'Busy');
-		addCard(projectRoot, b.id, card('c1', { status: 'running' }));
+		saveBoards(
+			projectRoot,
+			loadBoards(projectRoot).map((entry) =>
+				entry.id === b.id
+					? { ...entry, cards: [...entry.cards, card('c1', { status: 'running' })] }
+					: entry
+			)
+		);
 		await boardDelete(b.id, { agent: 'Alpha', force: true, json: true });
 		expect(exitSpy).not.toHaveBeenCalled();
 		expect(loadBoards(projectRoot)).toHaveLength(0);
@@ -406,7 +427,14 @@ describe('maestro-cli board', () => {
 
 	it('board update-card refuses a running card', async () => {
 		const b = createBoard(projectRoot, 'B');
-		addCard(projectRoot, b.id, card('c1', { status: 'running', title: 'Live' }));
+		saveBoards(
+			projectRoot,
+			loadBoards(projectRoot).map((entry) =>
+				entry.id === b.id
+					? { ...entry, cards: [...entry.cards, card('c1', { status: 'running', title: 'Live' })] }
+					: entry
+			)
+		);
 		await boardUpdateCard('c1', { agent: 'Alpha', title: 'Nope', json: true });
 		expect(exitSpy).toHaveBeenCalledWith(1);
 		expect(loadBoards(projectRoot)[0].cards[0].title).toBe('Live');
@@ -449,7 +477,14 @@ describe('maestro-cli board', () => {
 
 	it('board remove-card refuses a running card without --force', async () => {
 		const b = createBoard(projectRoot, 'B');
-		addCard(projectRoot, b.id, card('c1', { status: 'running' }));
+		saveBoards(
+			projectRoot,
+			loadBoards(projectRoot).map((entry) =>
+				entry.id === b.id
+					? { ...entry, cards: [...entry.cards, card('c1', { status: 'running' })] }
+					: entry
+			)
+		);
 		await boardRemoveCard('c1', { agent: 'Alpha', json: true });
 		expect(exitSpy).toHaveBeenCalledWith(1);
 		expect(loadBoards(projectRoot)[0].cards).toHaveLength(1);
@@ -457,7 +492,14 @@ describe('maestro-cli board', () => {
 
 	it('board remove-card --force removes a running card', async () => {
 		const b = createBoard(projectRoot, 'B');
-		addCard(projectRoot, b.id, card('c1', { status: 'running' }));
+		saveBoards(
+			projectRoot,
+			loadBoards(projectRoot).map((entry) =>
+				entry.id === b.id
+					? { ...entry, cards: [...entry.cards, card('c1', { status: 'running' })] }
+					: entry
+			)
+		);
 		await boardRemoveCard('c1', { agent: 'Alpha', force: true, json: true });
 		expect(exitSpy).not.toHaveBeenCalled();
 		expect(loadBoards(projectRoot)[0].cards).toHaveLength(0);
@@ -468,6 +510,61 @@ describe('maestro-cli board', () => {
 		addCard(projectRoot, b.id, card('c1'));
 		await boardSetStatus('c1', 'done', { agent: 'Alpha', json: true });
 		expect(loadBoards(projectRoot)[0].cards[0].status).toBe('done');
+	});
+
+	it('keeps concurrent card edits while awaiting auto-decomposition', async () => {
+		const b = createBoard(projectRoot, 'B', { autoDecompose: true });
+		addCard(
+			projectRoot,
+			b.id,
+			card('triage', { status: 'triage', assigneeProfileId: undefined, assigneeAgentId: 'agent-1' })
+		);
+		addCard(projectRoot, b.id, card('existing', { status: 'blocked' }));
+		mockReadSessions.mockReturnValue([mockGetSessionById()]);
+		let decomposing = true;
+		mockSpawnAgent.mockImplementation(async () => {
+			if (decomposing) {
+				decomposing = false;
+				addCard(projectRoot, b.id, card('new-during-llm', { status: 'blocked' }));
+				updateCard(projectRoot, b.id, {
+					...loadBoards(projectRoot)[0].cards.find((c) => c.id === 'existing')!,
+					title: 'Edited during LLM',
+				});
+				return {
+					success: true,
+					response: JSON.stringify([
+						{ title: 'Child one', body: 'First' },
+						{ title: 'Child two', body: 'Second' },
+					]),
+				};
+			}
+			return { success: true, response: '<!-- maestro:card-complete -->' };
+		});
+		await boardTick({ agent: 'Alpha', json: true });
+		const current = loadBoards(projectRoot)[0];
+		expect(current.cards.find((c) => c.id === 'new-during-llm')?.status).toBe('blocked');
+		expect(current.cards.find((c) => c.id === 'existing')?.title).toBe('Edited during LLM');
+		expect(current.cards.find((c) => c.id === 'triage')?.status).toBe('done');
+		expect(current.cards.some((c) => c.title === 'Child one')).toBe(true);
+	});
+	it('does not resurrect a triage card deleted during the decomposition await', async () => {
+		const b = createBoard(projectRoot, 'B', { autoDecompose: true });
+		addCard(
+			projectRoot,
+			b.id,
+			card('triage', { status: 'triage', assigneeProfileId: undefined, assigneeAgentId: 'agent-1' })
+		);
+		mockReadSessions.mockReturnValue([mockGetSessionById()]);
+		mockSpawnAgent.mockImplementation(async () => {
+			deleteCard(projectRoot, b.id, 'triage');
+			return {
+				success: true,
+				response: JSON.stringify([{ title: 'Discarded child', body: 'Work' }]),
+			};
+		});
+		await boardTick({ agent: 'Alpha', json: true });
+		expect(loadBoards(projectRoot)[0].cards).toEqual([]);
+		expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
 	});
 
 	it('board set-status rejects an invalid status', async () => {
@@ -691,7 +788,17 @@ describe('maestro-cli board', () => {
 				status: 'ready',
 				assigneeAgentId: 'agent-1',
 			});
-			addCard(repoRoot, board.id, { ...pinned, ...(worktree ? { worktree } : {}) });
+			saveBoards(
+				repoRoot,
+				loadBoards(repoRoot).map((entry) =>
+					entry.id === board.id
+						? {
+								...entry,
+								cards: [...entry.cards, { ...pinned, ...(worktree ? { worktree } : {}) }],
+							}
+						: entry
+				)
+			);
 			return board;
 		}
 
@@ -747,7 +854,14 @@ describe('maestro-cli board', () => {
 						}
 			);
 			const board = createBoard(repoRoot, 'Pool board');
-			addCard(repoRoot, board.id, card('c1', { status: 'ready' }));
+			saveBoards(
+				repoRoot,
+				loadBoards(repoRoot).map((entry) =>
+					entry.id === board.id
+						? { ...entry, cards: [...entry.cards, card('c1', { status: 'ready' })] }
+						: entry
+				)
+			);
 
 			await boardTick({ agent: 'Alpha', json: true });
 

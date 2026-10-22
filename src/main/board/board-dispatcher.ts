@@ -751,7 +751,7 @@ export class BoardDispatcher {
 		const before = snapshotCardStatuses(board);
 		if (!applyCardCancel(board, cardId, nowIso)) return false;
 
-		this.canceled.add(cardId);
+		if (this.inFlight.has(cardId)) this.canceled.add(cardId);
 		this.inFlight.delete(cardId);
 		try {
 			this.deps.cancelSpawn?.(cardId);

@@ -182,6 +182,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 
 	// Editor state: null = board view, otherwise the card editor is showing.
 	const [draft, setDraft] = useState<CardDraft | null>(null);
+	const [showNewRole, setShowNewRole] = useState(false);
 	const [cycleError, setCycleError] = useState<string | null>(null);
 	const [saving, setSaving] = useState(false);
 	/** Set when the editor was opened with `m`, so it lands on the Move to picker. */
@@ -414,6 +415,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 	}, []);
 
 	const closeEditor = useCallback(() => {
+		setShowNewRole(false);
 		setDraft(null);
 		setCycleError(null);
 		setFocusMovePicker(false);
@@ -437,6 +439,10 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 	 * unsaved edits.
 	 */
 	const handleEscape = useCallback(() => {
+		if (showNewRole) {
+			setShowNewRole(false);
+			return;
+		}
 		if (renaming) {
 			setRenaming(false);
 			return;
@@ -446,7 +452,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 			return;
 		}
 		onClose();
-	}, [renaming, isDraftDirty, onClose]);
+	}, [showNewRole, renaming, isDraftDirty, onClose]);
 
 	useModalLayer(MODAL_PRIORITIES.BOARD_MODAL, 'Board', handleEscape);
 
@@ -993,6 +999,8 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 					{/* Card editor (create/edit) */}
 					{board && draft && (
 						<CardEditor
+							showNewRole={showNewRole}
+							setShowNewRole={setShowNewRole}
 							theme={theme}
 							draft={draft}
 							setDraft={setDraft}
@@ -1638,6 +1646,8 @@ function BoardCardTile({
 // ---------------------------------------------------------------------------
 
 interface CardEditorProps {
+	showNewRole: boolean;
+	setShowNewRole: React.Dispatch<React.SetStateAction<boolean>>;
 	theme: Theme;
 	draft: CardDraft;
 	setDraft: React.Dispatch<React.SetStateAction<CardDraft | null>>;
@@ -1671,6 +1681,8 @@ interface CardEditorProps {
  * same grid-vs-details pattern the Extensions pane uses. Content-driven, so its
  * root opts back into text selection. */
 function CardEditor({
+	showNewRole,
+	setShowNewRole,
 	theme,
 	draft,
 	setDraft,
@@ -1703,11 +1715,11 @@ function CardEditor({
 		moveFocusDone.current = true;
 	}, []);
 
-	// Inline "+ New role" quick-create. Kept LOCAL to the editor so the mini-form's
+	// Inline "+ New role" quick-create. The modal owns open state for capture-phase
+	// Escape; the editor keeps scratch values local so the mini-form's
 	// name/base-agent scratch state and its async saving flag never touch the card
 	// `draft` (and so never trip the dirty-check). Only a successful create mutates
 	// the draft, via `onProfilesUpdated` selecting the new role.
-	const [showNewRole, setShowNewRole] = useState(false);
 	const [newRoleName, setNewRoleName] = useState('');
 	const [newRoleBaseAgent, setNewRoleBaseAgent] = useState('');
 	const [creatingRole, setCreatingRole] = useState(false);
@@ -1968,11 +1980,13 @@ function CardEditor({
 						className="w-full rounded-md px-2 py-1.5 text-sm outline-none"
 						style={inputStyle}
 					>
-						{CARD_STATUSES.map((s) => (
-							<option key={s} value={s}>
-								{STATUS_META[s].label}
-							</option>
-						))}
+						{CARD_STATUSES.filter((s) => isExisting || (s !== 'ready' && s !== 'running')).map(
+							(s) => (
+								<option key={s} value={s}>
+									{STATUS_META[s].label}
+								</option>
+							)
+						)}
 					</select>
 				</label>
 			</div>

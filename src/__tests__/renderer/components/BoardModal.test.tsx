@@ -1,3 +1,5 @@
+import { useModalLayer } from '../../../renderer/hooks/ui/useModalLayer';
+import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 /**
  * @file BoardModal.test.tsx
  * @description Interaction tests for the Board kanban modal (Phase 4): creating
@@ -877,6 +879,42 @@ describe('BoardModal inline role quick-create (G2)', () => {
 		return screen.getByPlaceholderText('Role name, e.g. Reviewer') as HTMLInputElement;
 	}
 
+	it('handles the inline role Escape through the real window capture layer before modal close', async () => {
+		const actual = await vi.importActual<typeof import('../../../renderer/hooks/ui/useModalLayer')>(
+			'../../../renderer/hooks/ui/useModalLayer'
+		);
+		vi.mocked(useModalLayer).mockImplementation(actual.useModalLayer);
+		const onClose = vi.fn();
+		try {
+			installApis([{ id: 'b1', name: 'My Board', cards: [] }], []);
+			render(
+				<LayerStackProvider>
+					<BoardModal theme={mockTheme} onClose={onClose} />
+				</LayerStackProvider>
+			);
+			const input = await openMiniForm();
+			fireEvent.change(input, { target: { value: 'Unsaved role' } });
+			fireEvent.keyDown(input, { key: 'Escape' });
+			expect(screen.queryByPlaceholderText('Role name, e.g. Reviewer')).not.toBeInTheDocument();
+			expect(onClose).not.toHaveBeenCalled();
+			fireEvent.keyDown(window, { key: 'Escape' });
+			expect(onClose).toHaveBeenCalledTimes(1);
+		} finally {
+			cleanup();
+			vi.mocked(useModalLayer).mockImplementation(() => {});
+		}
+	});
+	it('offers only author-settable initial card statuses', async () => {
+		installApis([{ id: 'b1', name: 'My Board', cards: [] }]);
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		fireEvent.click(await screen.findByRole('button', { name: /New card/i }));
+		const options = within(screen.getByRole('combobox', { name: 'Status' }))
+			.getAllByRole('option')
+			.map((option) => (option as HTMLOptionElement).value);
+		expect(options).not.toContain('ready');
+		expect(options).not.toContain('running');
+		expect(options).toContain('review');
+	});
 	it('creates a role inline, defaulting its base agent to the active agent, and selects it', async () => {
 		installApis([{ id: 'b1', name: 'My Board', cards: [] }], []);
 		// Echo the upserted profile back as the full list, the way the main process

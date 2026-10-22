@@ -1325,7 +1325,7 @@ Delete a card (its children inherit the card's parents)
 
 ## `maestro-cli board set-status <cardId> <status>`
 
-Set a card's status (triage|todo|blocked|done). `ready` and `running` are dispatcher-owned and rejected: move a card to `todo` and it is promoted to `ready` once its parents are done.
+Set a card's status (triage|todo|review|blocked|done). `ready` and `running` are dispatcher-owned and rejected: move a card to `todo` and it is promoted to `ready` once its parents are done.
 
 | Option                     | Description                               | Default |
 | -------------------------- | ----------------------------------------- | ------- |

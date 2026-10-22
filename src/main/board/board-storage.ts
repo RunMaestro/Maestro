@@ -384,6 +384,7 @@ export function addCard(projectRoot: string, boardId: string, card: BoardCard): 
 	if (!validated) {
 		throw new Error('addCard: invalid card shape');
 	}
+	if (DERIVED_STATUSES.has(validated.status)) throw new Error('addCard: dispatcher-owned status');
 	const boards = loadBoards(projectRoot);
 	const board = requireBoard(boards, boardId);
 	if (board.cards.some((c) => c.id === validated.id)) {

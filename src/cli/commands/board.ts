@@ -733,8 +733,8 @@ export async function boardWatch(options: BoardWatchOptions): Promise<void> {
 	if (!options.json) {
 		console.log(
 			`Watching board(s) every ${intervalMs / 1000}s. Press Ctrl-C to stop.\n` +
-				'Note: the desktop Cue engine ticks the same boards. Overlapping runs are safe ' +
-				'(board.yaml writes are atomic and serialized), but running both is still discouraged.'
+				'Use one dispatcher per board. Desktop/CLI overlap is unsupported: ' +
+				'atomic writes prevent torn files, but process-local queues cannot prevent lost updates.'
 		);
 	}
 
@@ -865,77 +865,85 @@ async function tickBoard(
 		notes: [],
 	};
 
-	let board = getBoard(projectRoot, boardId);
-	if (!board) {
-		summary.notes.push('board disappeared');
-		return summary;
-	}
-	summary.name = board.name;
+	const claimed = await enqueueBoardWrite(projectRoot, async () => {
+		let board = getBoard(projectRoot, boardId);
+		if (!board) {
+			summary.notes.push('board disappeared');
+			return [];
+		}
+		summary.name = board.name;
 
-	const nowIso = new Date().toISOString();
-
-	// 1. Reclaim stale running cards (no live CLI processes across ticks).
-	const reclaimed = reclaimStaleRunning(
-		board,
-		new Set<string>(),
-		DEFAULT_STALE_RUNNING_MS,
-		Date.now(),
-		nowIso
-	);
-
-	// 2. Optional auto-decompose (off by default; gated on board.autoDecompose).
-	const decomposed = await autoDecomposeBoard(board, {
-		spawn: makeDecomposeSpawn(projectRoot, sessions),
-		promptTemplate: decomposeTemplate,
-		now: () => new Date().toISOString(),
-		onLog: (level, message) => {
-			if (!json && level !== 'info') console.error(`  [decompose] ${message}`);
-		},
-	});
-	summary.decomposed = decomposed;
-
-	// 3. Promote eligible todo cards to ready.
-	const promoted = promoteEligibleCards(board, nowIso);
-	summary.promoted = promoted.length;
-
-	// 4. Claim ready cards to FREE pool workers up to the WIP cap (Phase 6).
-	const cap = board.maxInProgress ?? DEFAULT_MAX_IN_PROGRESS;
-	const { claimed, unresolvable } = claimReadyCardsPooled(board, cap, nowIso, (card, busy) =>
-		resolveCliAssignment(projectRoot, card, busy, sessions)
-	);
-
-	// Force-block cards that named a missing profile/agent (config error).
-	for (const { card, reason } of unresolvable) {
-		const target = board.cards.find((c) => c.id === card.id);
-		if (!target) continue;
-		target.status = 'blocked';
-		target.updatedAt = nowIso;
-		target.runs = [
-			...(target.runs ?? []),
-			{
-				attempt: (target.runs?.length ?? 0) + 1,
-				startedAt: nowIso,
-				endedAt: nowIso,
-				outcome: 'error',
-				summary: reason ?? 'Assignee could not be resolved.',
+		// 2. Optional auto-decompose (off by default; gated on board.autoDecompose).
+		const decomposed = await autoDecomposeBoard(board, {
+			spawn: makeDecomposeSpawn(projectRoot, sessions),
+			promptTemplate: decomposeTemplate,
+			reload: () => getBoard(projectRoot, boardId),
+			save: (fresh) => saveBoard(projectRoot, fresh),
+			now: () => new Date().toISOString(),
+			onLog: (level, message) => {
+				if (!json && level !== 'info') console.error(`  [decompose] ${message}`);
 			},
-		];
-		summary.blocked++;
-		summary.notes.push(
-			`${card.title} (${card.id.slice(0, 8)}) -> blocked (${reason ?? 'unresolvable'})`
-		);
-	}
+		});
+		summary.decomposed = decomposed;
 
-	// Persist BEFORE spawning so a crash / next tick sees the cards as running.
-	if (
-		reclaimed.length > 0 ||
-		decomposed > 0 ||
-		promoted.length > 0 ||
-		claimed.length > 0 ||
-		unresolvable.length > 0
-	) {
-		saveBoard(projectRoot, board);
-	}
+		// The LLM pass may have overlapped ordinary card edits/deletions.
+		board = getBoard(projectRoot, boardId);
+		if (!board) return [];
+		const nowIso = new Date().toISOString();
+		// 1. Reclaim stale running cards (no live CLI processes across ticks).
+		const reclaimed = reclaimStaleRunning(
+			board,
+			new Set<string>(),
+			DEFAULT_STALE_RUNNING_MS,
+			Date.now(),
+			nowIso
+		);
+
+		// 3. Promote eligible todo cards to ready.
+		const promoted = promoteEligibleCards(board, nowIso);
+		summary.promoted = promoted.length;
+
+		// 4. Claim ready cards to FREE pool workers up to the WIP cap (Phase 6).
+		const cap = board.maxInProgress ?? DEFAULT_MAX_IN_PROGRESS;
+		const { claimed, unresolvable } = claimReadyCardsPooled(board, cap, nowIso, (card, busy) =>
+			resolveCliAssignment(projectRoot, card, busy, sessions)
+		);
+
+		// Force-block cards that named a missing profile/agent (config error).
+		for (const { card, reason } of unresolvable) {
+			const target = board.cards.find((c) => c.id === card.id);
+			if (!target) continue;
+			target.status = 'blocked';
+			target.updatedAt = nowIso;
+			target.runs = [
+				...(target.runs ?? []),
+				{
+					attempt: (target.runs?.length ?? 0) + 1,
+					startedAt: nowIso,
+					endedAt: nowIso,
+					outcome: 'error',
+					summary: reason ?? 'Assignee could not be resolved.',
+				},
+			];
+			summary.blocked++;
+			summary.notes.push(
+				`${card.title} (${card.id.slice(0, 8)}) -> blocked (${reason ?? 'unresolvable'})`
+			);
+		}
+
+		// Persist BEFORE spawning so a crash / next tick sees the cards as running.
+		if (
+			reclaimed.length > 0 ||
+			decomposed > 0 ||
+			promoted.length > 0 ||
+			claimed.length > 0 ||
+			unresolvable.length > 0
+		) {
+			saveBoard(projectRoot, board);
+		}
+
+		return claimed;
+	});
 
 	// 5. Spawn each claimed card on its chosen worker, await, and apply its result.
 	for (const { card, agentId, overrides } of claimed) {
@@ -962,7 +970,6 @@ async function tickBoard(
 		if (status === 'done') summary.done++;
 		else if (status === 'blocked') summary.blocked++;
 		summary.notes.push(`${card.title} (${card.id.slice(0, 8)}) -> ${status}`);
-		board = fresh;
 	}
 
 	return summary;
