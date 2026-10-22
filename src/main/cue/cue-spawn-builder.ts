@@ -20,6 +20,9 @@ import {
 	describeUndeliveredSecrets,
 } from '../../shared/maestro-lib/launch/launch-plan';
 import { buildSpawnPath } from '../utils/spawnPath';
+import { buildPromptArgv } from '../../shared/maestro-lib/launch/prompt-delivery';
+import { windowsShellReason } from '../../shared/maestro-lib/launch/windows-command';
+import { isWindows } from '../../shared/platformDetection';
 import { QUERY_SOURCE_ENV_VAR } from '../../shared/querySource';
 import { ensureRemoteMaestroPProbed } from '../agents/probeRemoteMaestroP';
 import { sanitizeCustomEnvVars } from './cue-env-sanitizer';
@@ -187,16 +190,24 @@ export async function buildSpawnSpec(
 	const sanitizeLayer = (vars: Record<string, string> | undefined) =>
 		vars === undefined ? undefined : sanitizeCustomEnvVars(vars, config.onLog).sanitized;
 
+	// A Windows `.cmd` / `.bat` shim (claude.cmd, codex.cmd) only starts
+	// through cmd.exe (cue-process-lifecycle applies the shell), and cmd.exe ends
+	// a command at a line break, so its prompt goes over stdin for a provider
+	// that reads it there, as the desktop and the CLI session turn send it.
+	const cmdShellLaunch =
+		isWindows() && windowsShellReason(customPath || agentDef.command).reason !== null;
+
 	// 4. The launch plan decides where the run happens, what it execs, its
 	// environment and how the prompt reaches it, as the `cue` surface: the
 	// inherited environment, then the provider defaults, then the agent's own
-	// vars, with the prompt on the command line. An SSH remote that cannot be
-	// resolved fails the run here: it never falls back to running the agent on
-	// this machine.
+	// vars, with the prompt on the command line (on stdin for a cmd.exe launch,
+	// above). An SSH remote that cannot be resolved fails the run here: it never
+	// falls back to running the agent on this machine.
 	const planResult = buildAgentLaunchPlan({
 		surface: 'cue',
 		agent: { ...agentDef, capabilities: agentConfig.capabilities },
 		command: customPath || agentDef.command,
+		cmdShellLaunch,
 		args: finalArgs,
 		cwd: projectRoot,
 		prompt: promptToSend,
@@ -333,6 +344,16 @@ export async function buildSpawnSpec(
 		// claude TUI, and reads the trailing positional as the prompt). The vars
 		// it adds (MAESTRO_CLAUDE_BIN and its Node settings) are merged over the
 		// planned env, which already holds the agent's own.
+		// maestro-p reads the prompt as its trailing positional, never stdin, so a
+		// prompt the plan sent to stdin for a cmd.exe launch comes back to argv:
+		// the command is maestro-p from here on, not the shim.
+		if (plan.prompt.via === 'stdin' && stdinPrompt !== undefined) {
+			spawnArgs = [
+				...spawnArgs.slice(0, spawnArgs.length - plan.prompt.args.length),
+				...buildPromptArgv(agentDef, stdinPrompt),
+			];
+			stdinPrompt = undefined;
+		}
 		const applied = applyClaudeSpawnDecision({
 			decision: claudeSpawnDecision,
 			interactiveModeArgs: agentDef.interactiveModeArgs,

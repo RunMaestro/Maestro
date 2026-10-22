@@ -31,7 +31,11 @@ import {
 	BACKGROUND_STOP_GRACE_MS,
 	type StopHandle,
 } from '../../shared/maestro-lib/control/termination';
-import { startTurn, type TurnHandle } from '../../shared/maestro-lib/run/start-turn';
+import {
+	applyWindowsShellRules,
+	startTurn,
+	type TurnHandle,
+} from '../../shared/maestro-lib/run/start-turn';
 import { isLaunchCancelled } from './cue-launch-cancel';
 import {
 	newRemotePidFilePath,
@@ -486,8 +490,20 @@ export async function runProcess(
 		// maestro-p (interactive token mode) self-allocates its own PTY via
 		// node-pty internally, so plain pipe stdio here is sufficient; no
 		// caller-side TTY is needed.
+		const processSpec = {
+			command: spec.command,
+			args: spec.args,
+			cwd: spec.cwd,
+			env: spec.env,
+			stdin,
+		};
 		turn = startTurn(
-			{ command: spec.command, args: spec.args, cwd: spec.cwd, env: spec.env, stdin },
+			// A local Windows `.cmd` / `.bat` shim (claude.cmd, codex.cmd) has to
+			// start through cmd.exe: Node refuses it without a shell (spawn EINVAL,
+			// MAESTRO-R0). The launch plan already moved a stdin-capable agent's
+			// prompt to stdin on a Windows host, so cmd.exe never carries it. An SSH
+			// run starts the local ssh client, which needs no shell.
+			sshRemoteEnabled ? processSpec : applyWindowsShellRules(processSpec),
 			{
 				onStdout: (text) => {
 					stdout += text;

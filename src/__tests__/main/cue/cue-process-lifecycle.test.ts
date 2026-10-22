@@ -302,6 +302,51 @@ describe('cue-process-lifecycle', () => {
 			await resultPromise;
 		});
 
+		it('starts a local Windows .cmd shim through cmd.exe (MAESTRO-R0)', async () => {
+			mockIsWindows.mockReturnValue(true);
+			const shim = 'C:\\Users\\First Last\\AppData\\Roaming\\npm\\codex.cmd';
+			const spec = createSpec({ command: shim, args: ['exec', '--json'] });
+			const resultPromise = runProcess(
+				'run-1',
+				spec,
+				createOptions({ stdinPrompt: 'line one\nline two' })
+			);
+			await vi.advanceTimersByTimeAsync(0);
+
+			expect(mockSpawn).toHaveBeenCalledWith(
+				`"${shim}"`,
+				['exec', '--json'],
+				expect.objectContaining({ shell: true, stdio: ['pipe', 'pipe', 'pipe'] })
+			);
+			expect(mockChild.stdin.write).toHaveBeenCalledWith(
+				'line one\nline two',
+				expect.any(Function)
+			);
+
+			mockChild.emit('close', 0);
+			await resultPromise;
+		});
+
+		it('does not put an SSH client behind a shell on Windows', async () => {
+			mockIsWindows.mockReturnValue(true);
+			const spec = createSpec({ command: 'C:\\Tools\\ssh.cmd', args: ['host'] });
+			const resultPromise = runProcess(
+				'run-1',
+				spec,
+				createOptions({ sshRemoteEnabled: true, sshStdinScript: 'echo hi' })
+			);
+			await vi.advanceTimersByTimeAsync(0);
+
+			expect(mockSpawn).toHaveBeenCalledWith(
+				'C:\\Tools\\ssh.cmd',
+				['host'],
+				expect.objectContaining({ shell: false })
+			);
+
+			mockChild.emit('close', 0);
+			await resultPromise;
+		});
+
 		it('captures stdout and returns it in result', async () => {
 			const resultPromise = runProcess('run-1', createSpec(), createOptions());
 			await vi.advanceTimersByTimeAsync(0);

@@ -813,4 +813,84 @@ describe('cue-spawn-builder', () => {
 			expect(result.spec.args).not.toContain('--append-system-prompt');
 		});
 	});
+
+	describe('Windows .cmd shim (MAESTRO-R0)', () => {
+		const shimPath = 'C:\\Users\\dev\\AppData\\Roaming\\npm\\claude.cmd';
+		const multiLinePrompt = 'Review the diff.\nThen summarize it.';
+
+		function stdinCapable() {
+			mockGetAgentCapabilities.mockReturnValueOnce({
+				...mockGetAgentCapabilities(),
+				supportsPromptViaStdin: true,
+			} as ReturnType<typeof mockGetAgentCapabilities>);
+		}
+
+		beforeEach(() => {
+			vi.mocked(platformDetection.isWindows).mockReturnValue(true);
+		});
+
+		afterEach(async () => {
+			const actual = await vi.importActual<typeof import('../../../shared/platformDetection')>(
+				'../../../shared/platformDetection'
+			);
+			vi.mocked(platformDetection.isWindows).mockImplementation(actual.isWindows);
+		});
+
+		it('sends the prompt on stdin, since cmd.exe cannot carry a line break', async () => {
+			stdinCapable();
+
+			const result = await buildSpawnSpec(
+				createConfig({ customPath: shimPath, enableMaestroP: false }),
+				multiLinePrompt
+			);
+
+			expect(result.ok).toBe(true);
+			if (!result.ok) return;
+			expect(result.spec.command).toBe(shimPath);
+			expect(result.spec.stdinPrompt).toBe(multiLinePrompt);
+			expect(result.spec.args).not.toContain(multiLinePrompt);
+			expect(result.spec.args).not.toContain('--');
+		});
+
+		it('keeps the prompt on argv for a Windows .exe', async () => {
+			stdinCapable();
+			const exe = 'C:\\Program Files\\Claude\\claude.exe';
+
+			const result = await buildSpawnSpec(
+				createConfig({ customPath: exe, enableMaestroP: false }),
+				multiLinePrompt
+			);
+
+			expect(result.ok).toBe(true);
+			if (!result.ok) return;
+			expect(result.spec.stdinPrompt).toBeUndefined();
+			expect(result.spec.args.slice(-2)).toEqual(['--', multiLinePrompt]);
+		});
+
+		it('hands maestro-p its prompt as the trailing positional, not stdin', async () => {
+			stdinCapable();
+			mockGetAgentDefinition.mockReturnValue({
+				...defaultAgentDef,
+				interactiveCommand: 'maestro-p',
+				interactiveModeArgs: ['--dangerously-skip-permissions'],
+				defaultEnvVars: {},
+			});
+
+			const result = await buildSpawnSpec(
+				createConfig({
+					customPath: shimPath,
+					enableMaestroP: true,
+					maestroPMode: 'interactive',
+				}),
+				multiLinePrompt
+			);
+
+			expect(result.ok).toBe(true);
+			if (!result.ok) return;
+			expect(result.spec.command).toBe(process.execPath);
+			expect(result.spec.args[0]).toBe('/bundled/maestro-p.js');
+			expect(result.spec.args[result.spec.args.length - 1]).toBe(multiLinePrompt);
+			expect(result.spec.stdinPrompt).toBeUndefined();
+		});
+	});
 });
