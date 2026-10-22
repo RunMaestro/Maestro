@@ -16,6 +16,7 @@ import { GroupChatInput } from '../../../renderer/components/GroupChatInput';
 import { useImageAnnotatorStore } from '../../../renderer/components/ImageAnnotator/imageAnnotatorStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
+import { groupChatOutputSearchKey } from '../../../renderer/utils/outputSearch';
 import type { Session, Group, GroupChatParticipant } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { resetStores } from '../../helpers/resetStores';
@@ -899,6 +900,151 @@ describe('GroupChatInput', () => {
 	// paused queue sends nothing, and an item already in flight cannot be pulled
 	// back. Both used to be invisible, so messages sat there with no explanation
 	// and no control.
+	describe('composer keys', () => {
+		/** Records every keydown that reaches the window handlers. */
+		function watchWindowKeys() {
+			const seen: string[] = [];
+			const listener = (e: KeyboardEvent) =>
+				seen.push(`${e.metaKey ? 'Meta+' : ''}${e.shiftKey ? 'Shift+' : ''}${e.key}`);
+			window.addEventListener('keydown', listener);
+			return { seen, stop: () => window.removeEventListener('keydown', listener) };
+		}
+
+		function openPicker(onSend = vi.fn(), extra = {}) {
+			const sessions = [createMockSession('session-1', 'Maestro', 'claude-code')];
+			render(<GroupChatInput {...createDefaultProps({ sessions, onSend, ...extra })} />);
+			const textarea = screen.getByPlaceholderText(/Type a message/i) as HTMLTextAreaElement;
+			typeInTextarea(textarea, '@');
+			return textarea;
+		}
+
+		describe('Enter to send on', () => {
+			it('sends on Enter and Cmd/Ctrl+Enter, and keeps Cmd+Enter from the window', () => {
+				const onSend = vi.fn();
+				const windowKeys = watchWindowKeys();
+				render(<GroupChatInput {...createDefaultProps({ onSend, enterToSendAI: true })} />);
+				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+
+				typeInTextarea(textarea, 'one');
+				fireEvent.keyDown(textarea, { key: 'Enter' });
+				typeInTextarea(textarea, 'two');
+				fireEvent.keyDown(textarea, { key: 'Enter', metaKey: true });
+				typeInTextarea(textarea, 'three');
+				fireEvent.keyDown(textarea, { key: 'Enter', ctrlKey: true });
+
+				expect(onSend.mock.calls.map((call) => call[0])).toEqual(['one', 'two', 'three']);
+				expect(windowKeys.seen).toEqual(['Enter']);
+				windowKeys.stop();
+			});
+
+			it('leaves Shift+Enter as a newline', () => {
+				const onSend = vi.fn();
+				render(<GroupChatInput {...createDefaultProps({ onSend, enterToSendAI: true })} />);
+				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+				typeInTextarea(textarea, 'draft');
+
+				fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: true });
+
+				expect(onSend).not.toHaveBeenCalled();
+			});
+		});
+
+		describe('Cmd+Enter to send', () => {
+			it('sends only on Cmd/Ctrl+Enter, which never reaches the window', () => {
+				const onSend = vi.fn();
+				const windowKeys = watchWindowKeys();
+				render(<GroupChatInput {...createDefaultProps({ onSend, enterToSendAI: false })} />);
+				const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+				typeInTextarea(textarea, 'draft');
+
+				fireEvent.keyDown(textarea, { key: 'Enter' });
+				expect(onSend).not.toHaveBeenCalled();
+
+				fireEvent.keyDown(textarea, { key: 'Enter', metaKey: true });
+				typeInTextarea(textarea, 'again');
+				fireEvent.keyDown(textarea, { key: 'Enter', ctrlKey: true });
+
+				expect(onSend.mock.calls.map((call) => call[0])).toEqual(['draft', 'again']);
+				expect(windowKeys.seen).toEqual(['Enter']);
+				windowKeys.stop();
+			});
+		});
+
+		describe('@ picker', () => {
+			it('keeps Tab and Escape away from the window handlers', () => {
+				const windowKeys = watchWindowKeys();
+				const textarea = openPicker();
+
+				fireEvent.keyDown(textarea, { key: 'Escape' });
+				typeInTextarea(textarea, '');
+				typeInTextarea(textarea, '@');
+				fireEvent.keyDown(textarea, { key: 'Tab' });
+
+				expect(textarea.value).toBe('@Maestro ');
+				expect(windowKeys.seen).toEqual([]);
+				windowKeys.stop();
+			});
+
+			it('accepts on Shift+Enter, as the AI composer does', () => {
+				const onSend = vi.fn();
+				const textarea = openPicker(onSend);
+
+				fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: true });
+
+				expect(textarea.value).toBe('@Maestro ');
+				expect(onSend).not.toHaveBeenCalled();
+			});
+
+			it('accepts on Cmd+Enter instead of sending, as the AI composer does', () => {
+				const onSend = vi.fn();
+				const textarea = openPicker(onSend, { enterToSendAI: false });
+
+				fireEvent.keyDown(textarea, { key: 'Enter', metaKey: true });
+
+				expect(textarea.value).toBe('@Maestro ');
+				expect(onSend).not.toHaveBeenCalled();
+			});
+
+			it('keeps the caret in the composer when Escape closes it', () => {
+				const textarea = openPicker();
+				textarea.focus();
+
+				fireEvent.keyDown(textarea, { key: 'Escape' });
+
+				expect(document.activeElement).toBe(textarea);
+			});
+		});
+
+		describe('Cmd+F', () => {
+			beforeEach(() => {
+				useUIStore.setState({ outputSearchByKey: {} });
+			});
+
+			it("opens the room's Find bar and keeps the key from the window", () => {
+				const windowKeys = watchWindowKeys();
+				render(<GroupChatInput {...createDefaultProps()} />);
+
+				fireEvent.keyDown(screen.getByRole('textbox'), { key: 'f', metaKey: true });
+
+				expect(
+					useUIStore.getState().outputSearchByKey[groupChatOutputSearchKey('test-group-chat')]?.open
+				).toBe(true);
+				expect(windowKeys.seen).toEqual([]);
+				windowKeys.stop();
+			});
+
+			it('leaves Cmd+Shift+F to the window', () => {
+				const windowKeys = watchWindowKeys();
+				render(<GroupChatInput {...createDefaultProps()} />);
+
+				fireEvent.keyDown(screen.getByRole('textbox'), { key: 'f', metaKey: true, shiftKey: true });
+
+				expect(windowKeys.seen).toEqual(['Meta+Shift+f']);
+				windowKeys.stop();
+			});
+		});
+	});
+
 	describe('send column', () => {
 		it('disables Send until there is text', () => {
 			const onSend = vi.fn();

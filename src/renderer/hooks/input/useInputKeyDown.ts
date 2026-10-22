@@ -18,7 +18,6 @@ import {
 } from '../input/useMentionPicker';
 import { useInputContext } from '../../contexts/InputContext';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
-import { useUIStore } from '../../stores/uiStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { filterSlashCommands } from '../../utils/search';
 import { logger } from '../../utils/logger';
@@ -31,6 +30,11 @@ import {
 import { aiCommandKey, getAiCommandEntry, useAiCommandStore } from '../../stores/aiCommandStore';
 import { acceptAiCommand, dismissAiCommand } from '../../services/aiCommand';
 import { eventMatchesShortcutKeys } from '../../utils/shortcutMatch';
+import {
+	handleComposerFindKey,
+	handleComposerPickerKey,
+	handleComposerSendKey,
+} from './composerKeyDown';
 import { useEventListener } from '../utils/useEventListener';
 import { STEER_SEND_EVENT, steerNewestQueuedMessage } from '../../services/chatSteering';
 import { useGroupChatStore } from '../../stores/groupChatStore';
@@ -243,15 +247,12 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 
 			// Cmd+F opens output search from input field. Search is scoped per
 			// agent+AI-tab, so target the active window's slot.
-			// Alt must be excluded: Opt+Cmd+F is cross-tab search, and on
-			// Windows/Linux it still reports e.key === 'f' (macOS rewrites it to 'ƒ'),
-			// so without this guard that combo silently opens the in-tab Find bar.
-			if (e.key === 'f' && (e.metaKey || e.ctrlKey) && !e.altKey) {
-				e.preventDefault();
-				if (activeSession) {
-					const key = outputSearchKeyFor(activeSession.id, activeSession.activeTabId);
-					useUIStore.getState().setOutputSearchOpen(key, true);
-				}
+			if (
+				handleComposerFindKey(e, {
+					resolveSearchKey: () =>
+						activeSession ? outputSearchKeyFor(activeSession.id, activeSession.activeTabId) : null,
+				})
+			) {
 				return;
 			}
 
@@ -441,54 +442,46 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 					setAtMentionCategory(cycle[nextIdx]);
 					setSelectedAtMentionIndex(0);
 					return;
-				} else if (e.key === 'ArrowDown') {
-					e.preventDefault();
-					if (atMentionItems.length > 0) {
-						setSelectedAtMentionIndex((prev) => Math.min(prev + 1, atMentionItems.length - 1));
-					}
-					return;
-				} else if (e.key === 'ArrowUp') {
-					e.preventDefault();
-					if (atMentionItems.length > 0) {
-						setSelectedAtMentionIndex((prev) => Math.max(prev - 1, 0));
-					}
-					return;
-				} else if (e.key === 'Tab' || e.key === 'Enter') {
-					e.preventDefault();
-					const selected = atMentionItems[selectedAtMentionIndex];
-					if (selected) {
-						const accept = buildMentionAccept(
-							inputValue,
-							atMentionStartIndex,
-							atMentionFilter,
-							selected
-						);
-						setInputValue(accept.value);
-						// Land the caret right after the inserted token (past its
-						// trailing space) so typing continues seamlessly. Deferred a
-						// frame so it runs after the controlled value commits.
-						requestAnimationFrame(() => {
-							const el = inputRef.current;
-							if (el) el.selectionStart = el.selectionEnd = accept.caretPos;
-						});
-						if (accept.keepOpen) {
-							// Directory drill-in: keep the picker open and re-filter
-							// inside the chosen folder (category preserved).
-							setAtMentionFilter(accept.nextFilter);
-							setSelectedAtMentionIndex(0);
-							return;
-						}
-					}
+				}
+				const closeAtMention = () => {
 					setAtMentionOpen(false);
 					setAtMentionFilter('');
 					setAtMentionStartIndex(-1);
-					return;
-				} else if (e.key === 'Escape') {
-					e.preventDefault();
-					setAtMentionOpen(false);
-					setAtMentionFilter('');
-					setAtMentionStartIndex(-1);
-					inputRef.current?.focus();
+				};
+				if (
+					handleComposerPickerKey(e, {
+						open: true,
+						items: atMentionItems,
+						selectedIndex: selectedAtMentionIndex,
+						setSelectedIndex: setSelectedAtMentionIndex,
+						inputRef,
+						close: closeAtMention,
+						accept: (selected) => {
+							const accept = buildMentionAccept(
+								inputValue,
+								atMentionStartIndex,
+								atMentionFilter,
+								selected
+							);
+							setInputValue(accept.value);
+							// Land the caret right after the inserted token (past its
+							// trailing space) so typing continues seamlessly. Deferred a
+							// frame so it runs after the controlled value commits.
+							requestAnimationFrame(() => {
+								const el = inputRef.current;
+								if (el) el.selectionStart = el.selectionEnd = accept.caretPos;
+							});
+							if (accept.keepOpen) {
+								// Directory drill-in: keep the picker open and re-filter
+								// inside the chosen folder (category preserved).
+								setAtMentionFilter(accept.nextFilter);
+								setSelectedAtMentionIndex(0);
+								return;
+							}
+							closeAtMention();
+						},
+					})
+				) {
 					return;
 				}
 			}
@@ -558,19 +551,20 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 						return;
 					}
 				}
+			}
 
-				if (enterToSendAI && !e.shiftKey) {
-					e.preventDefault();
-					processInput();
-				} else if (!enterToSendAI && (e.metaKey || e.ctrlKey)) {
-					e.preventDefault();
-					processInput();
-				}
-			} else if (e.key === 'Escape') {
-				e.preventDefault();
-				inputRef.current?.blur();
-				terminalOutputRef.current?.focus();
-			} else if (e.key === 'ArrowUp') {
+			if (
+				handleComposerSendKey(e, {
+					enterToSend: enterToSendAI,
+					send: () => processInput(),
+					inputRef,
+					escapeFocusTarget: terminalOutputRef,
+				})
+			) {
+				return;
+			}
+
+			if (e.key === 'ArrowUp') {
 				if (activeSession?.inputMode === 'terminal') {
 					e.preventDefault();
 					setCommandHistoryOpen(true);
