@@ -398,7 +398,7 @@ describe('HistoryEntryItem', () => {
 
 	it('calls onOpenSessionAsTab when session button is clicked', () => {
 		const onOpenSessionAsTab = vi.fn();
-		const entry = createMockEntry({ agentSessionId: 'session-abc-123' });
+		const entry = createMockEntry({ agentSessionId: 'session-abc-123', provider: 'codex' });
 		render(
 			<HistoryEntryItem
 				entry={entry}
@@ -414,7 +414,12 @@ describe('HistoryEntryItem', () => {
 		const sessionButton = screen.getByTitle('session-abc-123');
 		fireEvent.click(sessionButton);
 
-		expect(onOpenSessionAsTab).toHaveBeenCalledWith('session-abc-123', '/test/project', undefined);
+		expect(onOpenSessionAsTab).toHaveBeenCalledWith(
+			'session-abc-123',
+			'/test/project',
+			undefined,
+			'codex'
+		);
 	});
 
 	// The pill is the only place the closed session's name still exists: the tab
@@ -443,7 +448,8 @@ describe('HistoryEntryItem', () => {
 		expect(onOpenSessionAsTab).toHaveBeenCalledWith(
 			'session-abc-123',
 			'/test/project',
-			'PP Farm Meta Data'
+			'PP Farm Meta Data',
+			undefined
 		);
 	});
 

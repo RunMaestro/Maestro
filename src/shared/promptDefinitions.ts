@@ -7,6 +7,14 @@
  */
 
 import { resolveEncoreFeatures, type EncoreFeatureDefaults } from './encoreFeatureDefaults';
+import {
+	SYSTEM_ONE_GUIDE_PROMPT_CATEGORY,
+	systemOneGuidePromptDefinitions,
+} from './local-models/system-one-guide';
+import {
+	SYSTEM_ONE_REFERENCE_PROMPT_ID,
+	SYSTEM_ONE_SYSTEM_PROMPT_ID,
+} from './local-models/system-one-prompt';
 
 // ============================================================================
 // Types
@@ -127,6 +135,68 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 			'AI command mode: turns a plain-English request into one shell command line for confirmation',
 		category: 'commands',
 	},
+	{
+		id: 'ai-command-local',
+		filename: 'ai-command-local.md',
+		description:
+			'AI command mode for a small local model or endpoint: short, and answers as JSON with the command and one sentence on what it does',
+		category: 'commands',
+	},
+	{
+		id: 'git-draft-pr-local',
+		filename: 'git-draft-pr-local.md',
+		description:
+			'Pull request draft for a small local model or endpoint: writes a title and body from the branch commits and diff summary, as JSON',
+		category: 'commands',
+	},
+	{
+		id: 'spoken-notice-local',
+		filename: 'spoken-notice-local.md',
+		description:
+			'Spoken notice summary for a small local model or endpoint: one short clause, read aloud when an agent finishes a turn, as JSON',
+		category: 'commands',
+	},
+	{
+		id: 'tab-cleanup-local',
+		filename: 'tab-cleanup-local.md',
+		description:
+			'Tab cleanup suggestions for a small local model or endpoint: reads one line of facts per tab and suggests which to close, snooze, or wake, as JSON',
+		category: 'commands',
+	},
+	{
+		id: 'cue-gate-local',
+		filename: 'cue-gate-local.md',
+		description:
+			'Cue gate for a small local model or endpoint: reads a subscription gate condition and one event, and answers whether the run should start, as JSON',
+		category: 'commands',
+	},
+	{
+		id: 'token-proxy-local',
+		filename: 'token-proxy-local.md',
+		description:
+			'Token proxy summary for a small local model or endpoint: shortens one piece of a large tool result, keeping paths, identifiers, numbers and errors',
+		category: 'commands',
+	},
+	{
+		id: 'system-one-judge-local',
+		filename: 'system-one-judge-local.md',
+		description:
+			'System One local judge for a small local model or endpoint: reads a state and one typed question (yes or no, pick one, rate on a rubric), and answers as JSON',
+		category: 'commands',
+	},
+	// System One guide for agents: one prompt per topic (`system-one-guide-<topic>`)
+	// and per recipe (`system-one-example-<name>`), declared once in
+	// `SYSTEM_ONE_GUIDE_TOPICS` and `SYSTEM_ONE_EXAMPLES`.
+	...systemOneGuidePromptDefinitions(),
+	// System One (core system-prompt section): what every local agent is told
+	// while a System One request from it would be answered.
+	{
+		id: SYSTEM_ONE_SYSTEM_PROMPT_ID,
+		filename: 'system-one-system.md',
+		description:
+			'System One section appended to a local agent system prompt while a System One request from that agent would be answered',
+		category: SYSTEM_ONE_GUIDE_PROMPT_CATEGORY,
+	},
 	// Per-agent prompt preambles
 	{
 		id: 'copilot-preamble',
@@ -156,6 +226,14 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		filename: 'computer-history-system.md',
 		description:
 			'Computer History section appended to every local agent system prompt while the feature is on',
+		category: 'computer-history',
+		encoreFlag: 'computerHistory',
+	},
+	{
+		id: 'computer-history-digest-local',
+		filename: 'computer-history-digest-local.md',
+		description:
+			'Computer History digest for a small local model or endpoint: summarizes one piece of the activity record, or the notes and digests made from it, as markdown bullets',
 		category: 'computer-history',
 		encoreFlag: 'computerHistory',
 	},
@@ -282,6 +360,20 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		category: 'system',
 	},
 	{
+		id: 'group-chat-participant-summary-local',
+		filename: 'group-chat-participant-summary-local.md',
+		description:
+			'Group chat participant summary for a small local model or endpoint: read from the chat log, short',
+		category: 'system',
+	},
+	{
+		id: 'tab-naming-local',
+		filename: 'tab-naming-local.md',
+		description:
+			'Tab naming prompt for a small local model or endpoint: short, and answers as JSON',
+		category: 'system',
+	},
+	{
 		id: 'quick-chat-route',
 		filename: 'quick-chat-route.md',
 		description:
@@ -295,6 +387,20 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		description: "Director's Notes prompt",
 		category: 'system',
 		encoreFlag: 'directorNotes',
+	},
+	{
+		id: 'acappella-router',
+		filename: 'acappella-router.md',
+		description:
+			'A Cappella Conductor routing prompt: which agent a spoken instruction is for, and which tab it belongs in',
+		category: 'system',
+	},
+	{
+		id: 'acappella-translator',
+		filename: 'acappella-translator.md',
+		description:
+			"A Cappella conversational translator: rewrites an agent's written answer as spoken conversation",
+		category: 'system',
 	},
 	{
 		id: 'feedback',
@@ -354,6 +460,13 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 			'Maestro Cue reference: event types, `maestro-cue.yaml` schema, pipeline topologies, and template variables',
 		category: 'includes',
 		encoreFlag: 'maestroCue',
+	},
+	{
+		id: SYSTEM_ONE_REFERENCE_PROMPT_ID,
+		filename: '_system-one.md',
+		description:
+			'System One reference for agents: every `maestro-cli s1` verb and flag, the output shapes, exit codes, limits and pitfalls',
+		category: 'includes',
 	},
 	{
 		id: '_computer-history',
@@ -437,6 +550,15 @@ export const PROMPT_IDS = {
 	IMAGE_ONLY_DEFAULT: 'image-only-default',
 	COMMIT_COMMAND: 'commit-command',
 	AI_COMMAND: 'ai-command',
+	AI_COMMAND_LOCAL: 'ai-command-local',
+	GIT_DRAFT_PR_LOCAL: 'git-draft-pr-local',
+	TAB_CLEANUP_LOCAL: 'tab-cleanup-local',
+	SPOKEN_NOTICE_LOCAL: 'spoken-notice-local',
+	CUE_GATE_LOCAL: 'cue-gate-local',
+	TOKEN_PROXY_LOCAL: 'token-proxy-local',
+	SYSTEM_ONE_JUDGE_LOCAL: 'system-one-judge-local',
+	// System One (core system-prompt section)
+	SYSTEM_ONE_SYSTEM: SYSTEM_ONE_SYSTEM_PROMPT_ID,
 	// Per-agent prompt preambles
 	COPILOT_PREAMBLE: 'copilot-preamble',
 	// System
@@ -445,6 +567,7 @@ export const PROMPT_IDS = {
 	PIANOLA_SYSTEM: 'pianola-system',
 	// Computer History
 	COMPUTER_HISTORY_SYSTEM: 'computer-history-system',
+	COMPUTER_HISTORY_DIGEST_LOCAL: 'computer-history-digest-local',
 	// Maestro Cue
 	CUE_SYSTEM: 'cue-system',
 	// MaestroRun
@@ -467,8 +590,12 @@ export const PROMPT_IDS = {
 	CROSS_AGENT_HANDOFF_PENDING: 'cross-agent-handoff-pending',
 	// System
 	TAB_NAMING: 'tab-naming',
+	TAB_NAMING_LOCAL: 'tab-naming-local',
+	GROUP_CHAT_PARTICIPANT_SUMMARY_LOCAL: 'group-chat-participant-summary-local',
 	QUICK_CHAT_ROUTE: 'quick-chat-route',
 	DIRECTOR_NOTES: 'director-notes',
+	ACAPPELLA_ROUTER: 'acappella-router',
+	ACAPPELLA_TRANSLATOR: 'acappella-translator',
 	FEEDBACK: 'feedback',
 	FEEDBACK_CONVERSATION: 'feedback-conversation',
 } as const;

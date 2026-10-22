@@ -3963,6 +3963,28 @@ describe('MainPanel', () => {
 	});
 
 	describe('Model/effort pill race condition', () => {
+		it('discovers the selected tab provider while the agent keeps its default', async () => {
+			vi.mocked(window.maestro.agents.getModels).mockResolvedValue(['gpt-tab-model']);
+			vi.mocked(window.maestro.agents.getConfigOptions).mockResolvedValue([]);
+			vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({});
+			const session = createSession({
+				customModel: 'agent-model',
+				providerOverrides: { codex: { customModel: 'gpt-tab-model' } },
+			});
+			session.aiTabs[0] = { ...session.aiTabs[0], tabProvider: 'codex' };
+			renderMainPanel({ activeSession: session });
+			await waitFor(() =>
+				expect(window.maestro.agents.getModels).toHaveBeenCalledWith('codex', false, undefined)
+			);
+			await waitFor(() =>
+				expect(screen.getByTestId('input-area')).toHaveAttribute(
+					'data-available-models',
+					JSON.stringify(['gpt-tab-model'])
+				)
+			);
+			expect(session.toolType).toBe('claude-code');
+		});
+
 		it('should discard stale model responses when switching agent types', async () => {
 			// Simulate: OpenCode model discovery (slow subprocess) resolves AFTER
 			// Claude model discovery (fast file read) when switching agents.
@@ -4027,7 +4049,11 @@ describe('MainPanel', () => {
 
 			// Wait for Claude models to be applied
 			await waitFor(() => {
-				expect(vi.mocked(window.maestro.agents.getModels)).toHaveBeenCalledWith('claude-code');
+				expect(vi.mocked(window.maestro.agents.getModels)).toHaveBeenCalledWith(
+					'claude-code',
+					false,
+					undefined
+				);
 			});
 
 			// Now resolve the stale OpenCode models (arriving late)
@@ -4036,8 +4062,16 @@ describe('MainPanel', () => {
 			});
 
 			// Both IPC calls should have fired
-			expect(vi.mocked(window.maestro.agents.getModels)).toHaveBeenCalledWith('opencode');
-			expect(vi.mocked(window.maestro.agents.getModels)).toHaveBeenCalledWith('claude-code');
+			expect(vi.mocked(window.maestro.agents.getModels)).toHaveBeenCalledWith(
+				'opencode',
+				false,
+				undefined
+			);
+			expect(vi.mocked(window.maestro.agents.getModels)).toHaveBeenCalledWith(
+				'claude-code',
+				false,
+				undefined
+			);
 
 			// The stale OpenCode models should NOT appear - Claude models should persist.
 			// Verify via the data attribute exposed by the InputArea mock.

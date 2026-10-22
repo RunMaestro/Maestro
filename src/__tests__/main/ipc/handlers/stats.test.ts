@@ -43,6 +43,11 @@ vi.mock('../../../../main/stats/token-usage/token-usage-accessor', () => ({
 	getTokenUsageAggregate: (...args: unknown[]) => mockGetTokenUsageAggregate(...args),
 }));
 
+const mockReadModelUsage = vi.fn();
+vi.mock('../../../../main/local-models/model-usage', () => ({
+	readModelUsage: (...args: unknown[]) => mockReadModelUsage(...args),
+}));
+
 // Mock the stats-db module
 vi.mock('../../../../main/stats', () => ({
 	getStatsDB: vi.fn(),
@@ -169,6 +174,7 @@ describe('stats IPC handlers', () => {
 				'stats:get-autorun-sessions',
 				'stats:get-autorun-tasks',
 				'stats:get-aggregation',
+				'stats:get-model-usage',
 				'stats:export',
 				'stats:clear-old-data',
 				'stats:get-database-size',
@@ -567,6 +573,27 @@ describe('stats IPC handlers', () => {
 
 				expect(mockStatsDB.getAggregatedStats).toHaveBeenCalledWith('year');
 				expect(mockMainWindow.webContents.send).not.toHaveBeenCalled();
+			});
+		});
+
+		describe('stats:get-model-usage', () => {
+			it('answers with the named model usage record for the range, and broadcasts nothing', async () => {
+				const usage = { range: 'month', sources: [] };
+				mockReadModelUsage.mockResolvedValue(usage);
+				const handler = handlers.get('stats:get-model-usage');
+
+				const result = await handler!({} as any, 'month');
+
+				expect(mockReadModelUsage).toHaveBeenCalledWith('month');
+				expect(result).toBe(usage);
+				expect(mockMainWindow.webContents.send).not.toHaveBeenCalled();
+			});
+
+			it('rejects with the reason for a range the service refuses', async () => {
+				mockReadModelUsage.mockRejectedValue(new Error('Invalid range.'));
+				const handler = handlers.get('stats:get-model-usage');
+
+				await expect(handler!({} as any, 'fortnight')).rejects.toThrow('Invalid range.');
 			});
 		});
 

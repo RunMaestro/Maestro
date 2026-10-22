@@ -172,6 +172,33 @@ describe('tabHelpers', () => {
 			useSettingsStore.setState({ newTabPlacement: 'after-current' });
 		});
 
+		it('pins a foreign History identity and restores its provider selections', () => {
+			const session = createMockSession({ toolType: 'codex' });
+			const result = createTab(session, {
+				agentSessionId: 'claude-history',
+				sourceProvider: 'claude-code',
+				providerSessions: {
+					'claude-code': {
+						agentSessionId: 'claude-history',
+						customModel: 'auto',
+						customEffort: 'high',
+						runOn: { type: 'provider' },
+					},
+					codex: { agentSessionId: 'codex-history', customModel: 'gpt' },
+				},
+			})!;
+			expect(result.tab).toMatchObject({
+				agentSessionId: 'claude-history',
+				tabProvider: 'claude-code',
+				customModel: 'auto',
+				customEffort: 'high',
+				runOn: { type: 'provider' },
+			});
+			expect(result.tab.pendingTranslation).toBeUndefined();
+			expect(result.tab.providerSessions?.['claude-code']).toBeUndefined();
+			expect(result.tab.providerSessions?.codex?.agentSessionId).toBe('codex-history');
+			expect(result.session.unifiedTabOrder).toContainEqual({ type: 'ai', id: result.tab.id });
+		});
 		it('creates a new tab with default options', () => {
 			const session = createMockSession({ aiTabs: [] });
 
@@ -7037,5 +7064,91 @@ describe('markTabBusyFromOutput', () => {
 		expect(error.state).toBe('error');
 		expect(shell.aiTabs[0].state).toBe('busy');
 		expect(shell.busySource).toBe('terminal');
+	});
+});
+
+describe('Ensemble tab lifecycle', () => {
+	it('creates default tabs without copying the active tab pin or Run on', () => {
+		const original = createMockTab({
+			tabProvider: 'codex',
+			customModel: 'auto',
+			runOn: { type: 'provider' },
+		});
+		const session = createMockSession({ aiTabs: [original], activeTabId: original.id });
+		const created = createTab(session)!;
+		expect(created.tab.tabProvider).toBeUndefined();
+		expect(created.tab.runOn).toBeUndefined();
+		expect(created.tab.customModel).toBeUndefined();
+		expect(created.session.aiTabs[0]).toBe(original);
+		const closed = closeTab(session, original.id)!;
+		expect(closed.session.aiTabs[0].tabProvider).toBeUndefined();
+	});
+	it.each([false, true])(
+		'keeps the whole provider record through close/undo (unified=%s)',
+		(unified) => {
+			const original = createMockTab({
+				id: 'mixed',
+				agentSessionId: 'shared-id',
+				tabProvider: 'codex',
+				customModel: 'auto',
+				runOn: { type: 'provider' },
+				pendingTranslation: 'claude-code',
+				providerSessions: { 'claude-code': { agentSessionId: 'source', customModel: 'opus' } },
+			});
+			const other = createMockTab({ id: 'other', agentSessionId: 'shared-id' });
+			const session = createMockSession({
+				aiTabs: [original, other],
+				activeTabId: original.id,
+				unifiedTabOrder: [
+					{ type: 'ai', id: original.id },
+					{ type: 'ai', id: other.id },
+				],
+			});
+			const closed = closeTab(session, original.id)!;
+			const reopened = unified
+				? reopenUnifiedClosedTab(closed.session)!
+				: reopenClosedTab(closed.session)!;
+			expect(reopened.wasDuplicate).toBe(false);
+			const restored = reopened.session.aiTabs.find((t) => t.tabProvider === 'codex')!;
+			expect(restored).toMatchObject({ ...original, id: expect.any(String) });
+		}
+	);
+	it('reattaches the latest orphan slot after a mid-turn switch', () => {
+		const original = createMockTab({
+			id: 'running',
+			state: 'busy',
+			tabProvider: 'codex',
+			turnProvider: 'claude-code',
+			pendingTranslation: 'claude-code',
+			runOn: { type: 'provider' },
+		});
+		const session = createMockSession({ aiTabs: [original], activeTabId: original.id });
+		const closed = closeTab(session, original.id)!.session;
+		const updated = {
+			...closed,
+			orphanedThinkingTabs: [
+				{ ...original, providerSessions: { 'claude-code': { agentSessionId: 'late-source' } } },
+			],
+		};
+		const reopened = reopenUnifiedClosedTab(updated)!;
+		expect(reopened.session.aiTabs.find((t) => t.id === original.id)).toEqual(
+			updated.orphanedThinkingTabs[0]
+		);
+	});
+	it('does not mistake an orphan on another provider for the same native ID', () => {
+		const original = createMockTab({
+			id: 'closed-codex',
+			agentSessionId: 'shared',
+			tabProvider: 'codex',
+		});
+		const orphan = createMockTab({ id: 'orphan-claude', agentSessionId: 'shared', state: 'busy' });
+		const session = createMockSession({
+			aiTabs: [],
+			orphanedThinkingTabs: [orphan],
+			closedTabHistory: [{ tab: original, index: 0, closedAt: 0 }],
+		});
+		const reopened = reopenClosedTab(session)!;
+		expect(reopened.tab.tabProvider).toBe('codex');
+		expect(reopened.session.orphanedThinkingTabs).toEqual([orphan]);
 	});
 });

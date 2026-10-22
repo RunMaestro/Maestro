@@ -10,12 +10,12 @@ import {
 } from '../../../stores/sessionStore';
 import { clearLiveDraft } from '../../../utils/liveDraftStore';
 import { logger } from '../../../utils/logger';
-import { persistTabStarred, snapshotClosedTabTranscript } from '../../../utils/starredSessions';
+import { persistTabStarred } from '../../../utils/starredSessions';
 import { isWebDesktop } from '../../../utils/runtimeContext';
-import { requestDesktopTabClose, requestDesktopTabCloses } from '../../../services/desktopTabClose';
+import { closeAiTabInSession } from '../../../services/aiTabClose';
+import { requestDesktopTabCloses } from '../../../services/desktopTabClose';
 import { noteDesktopAiTabSelection } from '../../../utils/desktopTabSelectionSync';
 import {
-	addAiTabToUnifiedHistory,
 	aiTabFocusFields,
 	closeTab,
 	createTab,
@@ -31,6 +31,8 @@ import {
 	visibleAiTabs,
 } from '../../../utils/tabHelpers';
 import type { AITabHandlersReturn } from './types';
+import type { ToolType } from '../../../types';
+import { projectTabProvider, resolveTabNativeProvider } from '../../../utils/providerTabSessions';
 
 /** Manage AI tabs, delegating browser inventory changes to the owning desktop. */
 export function useAITabHandlers(
@@ -128,42 +130,7 @@ export function useAITabHandlers(
 	const performTabClose = useCallback(
 		(tabId: string) => {
 			const { activeSessionId } = useSessionStore.getState();
-			const sessionBeforeClose = useSessionStore
-				.getState()
-				.sessions.find((s) => s.id === activeSessionId);
-			const tabBeforeClose = sessionBeforeClose?.aiTabs.find((t) => t.id === tabId);
-			const wasWizardTab = !!tabBeforeClose && hasActiveWizard(tabBeforeClose);
-
-			if (isWebDesktop()) {
-				void requestDesktopTabClose(activeSessionId, tabId, endInlineWizard);
-				return;
-			}
-			if (sessionBeforeClose && tabBeforeClose) {
-				snapshotClosedTabTranscript(sessionBeforeClose, tabBeforeClose);
-			}
-
-			clearLiveDraft(tabId);
-			updateSessionWith(activeSessionId, (s) => {
-				const tab = s.aiTabs.find((t) => t.id === tabId);
-				const isWizardTab = tab && hasActiveWizard(tab);
-				const unifiedIndex = s.unifiedTabOrder.findIndex(
-					(ref) => ref.type === 'ai' && ref.id === tabId
-				);
-				// `undefined` = read the live unread-filter state, so closing a tab while
-				// the strip is narrowed lands on a tab the user can still see.
-				const result = closeTab(s, tabId, undefined, { skipHistory: isWizardTab });
-				if (!result) return s;
-				if (!isWizardTab && tab) {
-					return addAiTabToUnifiedHistory(result.session, tab, unifiedIndex);
-				}
-				return result.session;
-			});
-
-			if (wasWizardTab) {
-				endInlineWizard(tabId).catch((error) =>
-					logger.warn('[useTabHandlers] Failed to end wizard on tab close:', undefined, error)
-				);
-			}
+			closeAiTabInSession(activeSessionId, tabId, endInlineWizard);
 		},
 		[endInlineWizard]
 	);
@@ -279,15 +246,19 @@ export function useAITabHandlers(
 	}, []);
 
 	const handleUpdateTabByClaudeSessionId = useCallback(
-		(agentSessionId: string, updates: { name?: string | null; starred?: boolean }) => {
+		(
+			agentSessionId: string,
+			updates: { name?: string | null; starred?: boolean },
+			provider?: ToolType,
+			sessionId?: string
+		) => {
 			const { activeSessionId } = useSessionStore.getState();
-			updateSessionWith(activeSessionId, (s) => {
-				const tabIndex = s.aiTabs.findIndex((tab) => tab.agentSessionId === agentSessionId);
-				if (tabIndex === -1) return s;
+			updateSessionWith(sessionId ?? activeSessionId, (s) => {
 				return {
 					...s,
 					aiTabs: s.aiTabs.map((tab) =>
-						tab.agentSessionId === agentSessionId
+						projectTabProvider(s, tab, provider ?? resolveTabNativeProvider(tab, s)).tab
+							?.agentSessionId === agentSessionId
 							? {
 									...tab,
 									...(updates.name !== undefined ? { name: updates.name } : {}),

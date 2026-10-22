@@ -2,7 +2,7 @@
  * Tests for the Document Graph layout algorithms
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Node, Edge } from 'reactflow';
 import {
 	applyForceLayout,
@@ -78,6 +78,28 @@ describe('layoutAlgorithms', () => {
 		it('should return empty array for empty input', () => {
 			const result = applyForceLayout([], []);
 			expect(result).toEqual([]);
+		});
+
+		it('uses the size the caller gives for nodes that are not documents', () => {
+			const nodes: Node<{ width: number }>[] = ['a', 'b'].map((id, index) => ({
+				id,
+				// A start that is not the origin, so the run is not random.
+				position: { x: 50 + index * 10, y: 70 + index * 10 },
+				data: { width: 600 },
+			}));
+			const measureNode = vi.fn((node: Node<{ width: number }>) => ({
+				width: node.data.width,
+				height: 80,
+			}));
+
+			const result = applyForceLayout(nodes, [createEdge('a', 'b')], { measureNode });
+
+			expect(measureNode).toHaveBeenCalledTimes(2);
+			const [a, b] = result;
+			// Collision keeps two nodes further apart than half their stated width each.
+			expect(Math.hypot(a.position.x - b.position.x, a.position.y - b.position.y)).toBeGreaterThan(
+				600
+			);
 		});
 
 		it('should position a single node at center', () => {
@@ -169,6 +191,30 @@ describe('layoutAlgorithms', () => {
 		it('should return empty array for empty input', () => {
 			const result = applyHierarchicalLayout([], []);
 			expect(result).toEqual([]);
+		});
+
+		// The Delegation Graph runs this algorithm over agent nodes, whose data is
+		// not a document's and whose size the caller states.
+		it('lays out nodes that are not documents, at the size the caller gives', () => {
+			const nodes: Node<{ width: number }>[] = ['a', 'b', 'c'].map((id) => ({
+				id,
+				position: { x: 0, y: 0 },
+				data: { width: 400 },
+			}));
+			const edges: Edge[] = [createEdge('a', 'b'), createEdge('a', 'c')];
+
+			const result = applyHierarchicalLayout(nodes, edges, {
+				nodeSeparation: 10,
+				measureNode: (node) => ({ width: node.data.width, height: 80 }),
+			});
+
+			const b = result.find((n) => n.id === 'b')!;
+			const c = result.find((n) => n.id === 'c')!;
+			expect(result.find((n) => n.id === 'a')!.position.y).toBeLessThan(b.position.y);
+			// Two nodes of one rank are at least their stated width apart.
+			expect(Math.abs(b.position.x - c.position.x)).toBeGreaterThanOrEqual(400);
+			// The data the caller passed comes back untouched.
+			expect(b.data).toEqual({ width: 400 });
 		});
 
 		it('should position nodes in hierarchical order', () => {

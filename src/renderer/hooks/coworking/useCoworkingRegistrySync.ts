@@ -26,7 +26,7 @@ import { getTerminalTabDisplayName } from '../../utils/terminalTabHelpers';
 import { captureException } from '../../utils/sentry';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import type { Session } from '../../types';
-import { DEFAULT_BROWSER_CONFIRM_POLICY } from '../../../shared/coworkingBrowser';
+import { coworkingBrowserPolicy } from '../../utils/coworkingBrowserPolicy';
 
 /** Errors we expect during teardown / pre-init - silently ignore. Anything else
  *  bubbles up to Sentry so we can see real bridge failures in production.
@@ -163,9 +163,7 @@ export function useCoworkingRegistrySync(): void {
 		const perSessionBrowsers = sessions.map((s) => ({
 			sessionId: s.id,
 			inputs: buildBrowserInputs(s),
-			interactionEnabled: browserInteractionAgents.includes(s.toolType),
-			agentType: s.toolType,
-			confirmPolicy: browserConfirmPolicies[s.toolType] ?? DEFAULT_BROWSER_CONFIRM_POLICY,
+			...coworkingBrowserPolicy(s, browserInteractionAgents, browserConfirmPolicies),
 		}));
 		const currentIds = new Set(perSession.map((p) => p.sessionId));
 
@@ -202,13 +200,15 @@ export function useCoworkingRegistrySync(): void {
 						interactionEnabled,
 						agentType,
 						confirmPolicy,
+						providerPolicies,
 					} of perSessionBrowsers) {
 						await bridge.syncSessionBrowsers(
 							sessionId,
 							inputs,
 							interactionEnabled,
 							agentType,
-							confirmPolicy
+							confirmPolicy,
+							providerPolicies
 						);
 					}
 				} catch (err) {

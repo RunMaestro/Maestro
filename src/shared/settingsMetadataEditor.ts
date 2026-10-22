@@ -6,6 +6,10 @@
  */
 
 import type { SettingMetadata } from './settingsMetadata';
+import {
+	DEFAULT_MAX_CONSULTATIONS_PER_TURN,
+	MAX_CONSULTATIONS_PER_TURN_CEILING,
+} from './consultBudget';
 
 export const EDITOR_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	spellCheck: {
@@ -53,6 +57,12 @@ export const EDITOR_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 			'When true, an @-mention is a delegation: the mentioned agent may modify files. When false (default), it is a consult and runs read-only.',
 		type: 'boolean',
 		default: false,
+		category: 'editor',
+	},
+	maxConsultationsPerTurn: {
+		description: `The most consults and delegations an agent's peers may make in total while working on one of your messages. Counts the whole chain, so an agent that consults a peer who consults another spends two. 0 turns peer consults and delegations off. Range: 0-${MAX_CONSULTATIONS_PER_TURN_CEILING}.`,
+		type: 'number',
+		default: DEFAULT_MAX_CONSULTATIONS_PER_TURN,
 		category: 'editor',
 	},
 	crossAgentHandoffsWritable: {
@@ -103,6 +113,13 @@ export const EDITOR_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	modalSizes: {
 		description:
 			'Per-modal remembered sizes in pixels, keyed by modal identifier. Values are clamped to the current viewport when used.',
+		type: 'object',
+		default: {},
+		category: 'editor',
+	},
+	delegationGraphLayouts: {
+		description:
+			"Where each agent sits on the Delegation Graph, per scope: 'all', 'group:<groupId>', or 'agent:<sessionId>' for a connected cluster. Each value is { layout, positions }, where layout is hierarchical, force, radial, mindmap, lobes, or manual, and positions maps an agent id to { x, y }. The global default is lobes; groups and agent clusters default to hierarchical.",
 		type: 'object',
 		default: {},
 		category: 'editor',

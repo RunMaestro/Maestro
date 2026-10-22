@@ -490,6 +490,8 @@ export interface GroupChatsApi {
 // ---------------------------------------------------------------------------
 
 export interface ConsultAskInput {
+	/** Place already admitted by the calling CLI, forwarded across hosts. */
+	consultChain?: import('../../consultBudget').ConsultChain;
 	/** The agent to ask. */
 	targetAgentId: string;
 	/** A self-contained question: no transcript is forwarded unless `withContext`. */
@@ -514,6 +516,8 @@ export interface ConsultAnswer {
 	answer: string;
 	/** The consulted agent's name, as the host reports it. */
 	agentName?: string;
+	/** Provider captured from the destination consult's launch. */
+	provider?: string;
 }
 
 /**

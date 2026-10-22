@@ -15,6 +15,7 @@ import {
 	resolveAgentOrFail,
 	resolveTabEntry,
 	type SimpleResult,
+	failFromError,
 	exitIfMaestroNotRunning,
 } from '../services/session-command';
 import { formatSuccess } from '../output/formatter';
@@ -55,8 +56,7 @@ async function sendSnooze(request: SnoozeCommandRequest, json?: boolean): Promis
 		if (!result.success) failCommand(result.error || 'Snooze command failed', json);
 		return result;
 	} catch (error) {
-		exitIfMaestroNotRunning(error, { json });
-		return failCommand(error instanceof Error ? error.message : String(error), json);
+		return failFromError(error, json);
 	}
 }
 

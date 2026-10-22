@@ -2,8 +2,9 @@
  * Registry of Maestro's openable UI surfaces (modals and dashboards).
  *
  * One list, three consumers:
- *   - `maestro-cli open <surface> [--tab <tab>]` validates its argument here
- *     and prints the "you can also reach it by ..." hint from the same entry.
+ *   - `maestro-cli open <surface> [--tab <tab>] [--group <id>] [--agent <id>]`
+ *     validates its arguments here and prints the "you can also reach it by
+ *     ..." hint from the same entry.
  *   - The main process validates the `open_modal` bridge message against it.
  *   - The renderer maps a surface id to a `ModalId` + optional tab payload.
  *
@@ -13,6 +14,14 @@
  * time. Adding a modal means adding one entry here, not touching four files.
  */
 
+import { AGENT_SETTINGS_TAB_IDS, AGENT_SETTINGS_TAB_LABELS } from './agentSettingsTabs';
+import { resolveEncoreFeatures } from './encoreFeatureDefaults';
+import {
+	MODELS_SETTINGS_SUB_TAB_PATHS,
+	modelsSettingsPlaceLabel,
+	parseModelsSettingsSubTab,
+} from './local-models/settings-location';
+
 /** A deep-linkable tab inside a surface. */
 export interface UiSurfaceTab {
 	/** Value passed to `--tab`, matching the renderer's tab id. */
@@ -21,6 +30,31 @@ export interface UiSurfaceTab {
 	label: string;
 	/** Encore Feature that must be on for this tab to exist. */
 	encore?: UiSurfaceEncoreFlag;
+	/** Retired or alternate ids that still resolve to this tab (a renamed tab keeps its old deep link). */
+	aliases?: string[];
+	/** Deep-linkable tabs inside this tab, passed as `--sub-tab`. */
+	subTabs?: UiSurfaceTab[];
+}
+
+/** What `maestro-cli open` asks the app to open: a surface, and where inside it. */
+export interface OpenUiSurfaceRequest {
+	surface: string;
+	tab?: string;
+	subTab?: string;
+	/** The agent group to open the surface on. Only a surface with `groupClick` takes one. */
+	group?: string;
+	/** The agent whose surface this is. Only a surface with `agentClick` takes one. */
+	agent?: string;
+}
+
+/** Where inside a surface an open request lands, once validated. */
+export interface UiSurfaceTarget {
+	tab?: UiSurfaceTab;
+	subTab?: UiSurfaceTab;
+	/** A group id, passed through as given: the registry knows no groups. */
+	group?: string;
+	/** An agent id, passed through as given: the registry knows no agents. */
+	agent?: string;
 }
 
 /** Encore Feature flag that must be on for a surface to exist. */
@@ -30,6 +64,7 @@ export type UiSurfaceEncoreFlag =
 	| 'symphony'
 	| 'maestroCue'
 	| 'concerto'
+	| 'aCappella'
 	| 'computerHistory'
 	| 'quickChat'
 	| 'throughputGauge';
@@ -53,9 +88,41 @@ export interface UiSurface {
 	commandPalette?: string;
 	/** Where to click to reach it. */
 	click?: string;
+	/**
+	 * Present when the surface can open on ONE agent group (`--group`): where to
+	 * click to get that by hand. Absent, `--group` is refused for the surface.
+	 */
+	groupClick?: string;
+	/**
+	 * The surface exists only for one group, so it cannot open without `--group`.
+	 * Implies {@link groupClick}.
+	 */
+	groupRequired?: boolean;
+	/**
+	 * Present when the surface is ONE agent's (`--agent`): where to click to get
+	 * it by hand. Such a surface cannot open without an agent, and the caller
+	 * names it: a hotkey acts on the agent the user is looking at, which a CLI
+	 * caller cannot see. Absent, `--agent` is refused for the surface.
+	 */
+	agentClick?: string;
 	/** Encore Feature that gates the surface. */
 	encore?: UiSurfaceEncoreFlag;
 }
+
+/**
+ * The places inside Settings > Models, from the one list the tab itself draws:
+ * each panel (`gateway`) and each Library section (`library/speech`).
+ */
+export const MODELS_SETTINGS_SUB_TABS: UiSurfaceTab[] = MODELS_SETTINGS_SUB_TAB_PATHS.map((id) => {
+	const place = parseModelsSettingsSubTab(id)!;
+	return { id, label: modelsSettingsPlaceLabel(place.panel, place.librarySection) };
+});
+
+/** The tabs of the agent settings form, from the one list the form itself draws. */
+export const AGENT_SETTINGS_SURFACE_TABS: UiSurfaceTab[] = AGENT_SETTINGS_TAB_IDS.map((id) => ({
+	id,
+	label: AGENT_SETTINGS_TAB_LABELS[id],
+}));
 
 export const CUE_MODAL_TABS: UiSurfaceTab[] = [
 	{ id: 'dashboard', label: 'Dashboard' },
@@ -102,6 +169,17 @@ export const UI_SURFACES: UiSurface[] = [
 		encore: 'maestroCue',
 	},
 	{
+		id: 'voice-setup',
+		label: 'Voice Setup',
+		aliases: ['voice-models', 'acappella-setup', 'a-cappella-setup'],
+		modal: 'voiceSetup',
+		description:
+			'Download the speech recognition and speech synthesis models voice runs on, with every size and licence listed before anything is fetched.',
+		commandPalette: 'Set Up Voice Models',
+		click: 'Settings -> Plugins -> A Cappella',
+		encore: 'aCappella',
+	},
+	{
 		id: 'settings',
 		label: 'Settings',
 		modal: 'settings',
@@ -114,6 +192,12 @@ export const UI_SURFACES: UiSurface[] = [
 			{ id: 'notifications', label: 'Notifications' },
 			{ id: 'aicommands', label: 'AI Commands' },
 			{ id: 'prompts', label: 'Maestro Prompts' },
+			{
+				id: 'models',
+				label: 'Models',
+				aliases: ['local-models'],
+				subTabs: MODELS_SETTINGS_SUB_TABS,
+			},
 		],
 		shortcutId: 'settings',
 		commandPalette: 'Settings',
@@ -129,6 +213,7 @@ export const UI_SURFACES: UiSurface[] = [
 			{ id: 'overview', label: 'Overview' },
 			{ id: 'agent-overview', label: 'Agent Overview' },
 			{ id: 'agents', label: 'Agents' },
+			{ id: 'models', label: 'Models' },
 			{ id: 'activity', label: 'Activity' },
 			{ id: 'autorun', label: 'Auto Run' },
 			{ id: 'cue', label: 'Cue', encore: 'maestroCue' },
@@ -160,6 +245,41 @@ export const UI_SURFACES: UiSurface[] = [
 		commandPalette: 'Computer History',
 		click: 'the hamburger menu > Computer History',
 		encore: 'computerHistory',
+	},
+	{
+		id: 'delegation-graph',
+		label: 'Delegation Graph',
+		aliases: ['delegation', 'delegations', 'peer-graph', 'peers-graph'],
+		modal: 'delegationGraph',
+		description:
+			'Which agent can consult or delegate to which, drawn as a graph. Opens in View; Edit draws, changes and removes an edge. --group opens it on one group.',
+		shortcutId: 'openDelegationGraph',
+		commandPalette: 'Delegation Graph',
+		click: 'the hamburger menu > Delegation Graph',
+		groupClick: 'right-click the group in the Left Bar > Delegation Graph',
+	},
+	{
+		id: 'group-settings',
+		label: 'Group Settings',
+		aliases: ['group-defaults'],
+		modal: 'groupSettings',
+		description:
+			"One group's defaults for new agents, its pill label, and Publish to existing agents. Needs --group. Read and write the same settings with group-settings and update-group-settings.",
+		commandPalette: 'Group Settings',
+		groupClick: 'right-click the group in the Left Bar > Group Settings',
+		groupRequired: true,
+	},
+	{
+		id: 'agent-settings',
+		label: 'Edit Agent',
+		aliases: ['edit-agent'],
+		modal: 'editAgent',
+		description:
+			"One agent's settings form: General, Provider, Models, Environment, Peers and SSH. Needs --agent. Read and write the same fields with show agent and update-agent.",
+		tabs: AGENT_SETTINGS_SURFACE_TABS,
+		shortcutId: 'agentSettings',
+		commandPalette: 'Edit Agent',
+		agentClick: 'right-click the agent in the Left Bar > Edit Agent',
 	},
 	{
 		id: 'symphony',
@@ -261,6 +381,17 @@ export const UI_SURFACES: UiSurface[] = [
 		commandPalette: 'Snoozed Tabs',
 	},
 	{
+		id: 'tab-cleanup',
+		label: 'Tab Cleanup Suggestions',
+		aliases: ['tab-cleanup-suggestions', 'cleanup'],
+		modal: 'tabCleanup',
+		description:
+			'Tabs a local model suggests closing, snoozing, or waking. Nothing changes until you tick a row and press Apply.',
+		shortcutId: 'tabCleanupSuggestions',
+		commandPalette: 'Tab Cleanup Suggestions',
+		click: 'the hamburger menu at the top of the Left Bar',
+	},
+	{
 		id: 'quick-actions',
 		label: 'Quick Actions',
 		aliases: ['command-palette', 'palette'],
@@ -334,48 +465,139 @@ export function resolveUiSurface(name: string): UiSurface | null {
 	);
 }
 
-/**
- * Resolve a `--tab` value against a surface. Matches the tab id first, then
- * the label case-insensitively so `--tab "Scheduled Tasks"` works too.
- */
-export function resolveUiSurfaceTab(surface: UiSurface, tab: string): UiSurfaceTab | null {
-	const needle = tab.trim().toLowerCase();
+function matchUiSurfaceTab(tabs: UiSurfaceTab[] | undefined, name: string): UiSurfaceTab | null {
+	const needle = name.trim().toLowerCase();
 	if (needle.length === 0) return null;
 	return (
-		(surface.tabs ?? []).find(
-			(entry) => entry.id.toLowerCase() === needle || entry.label.toLowerCase() === needle
+		(tabs ?? []).find(
+			(entry) =>
+				entry.id.toLowerCase() === needle ||
+				entry.label.toLowerCase() === needle ||
+				(entry.aliases ?? []).some((alias) => alias.toLowerCase() === needle)
 		) ?? null
 	);
 }
 
 /**
- * Why a surface (or one of its tabs) cannot open right now, or `null` when it
- * can. A surface or tab behind a switched-off Encore Feature does not exist for
- * the user, so opening it is refused - never silently, never by flipping the
- * setting. The message goes back to the caller only: an in-app toast would
- * advertise the disabled feature to someone who turned it off.
+ * Resolve a `--tab` value against a surface. Matches the tab id first, then
+ * the label case-insensitively so `--tab "Scheduled Tasks"` works too, then
+ * any alias so a renamed tab keeps its old deep link.
  */
+export function resolveUiSurfaceTab(surface: UiSurface, tab: string): UiSurfaceTab | null {
+	return matchUiSurfaceTab(surface.tabs, tab);
+}
+
+/** Resolve a `--sub-tab` value against the tab it sits inside, by the same rules as `--tab`. */
+export function resolveUiSurfaceSubTab(tab: UiSurfaceTab, subTab: string): UiSurfaceTab | null {
+	return matchUiSurfaceTab(tab.subTabs, subTab);
+}
+
+/** Every valid `--sub-tab` value for a tab, or an empty array when it has none. */
+export function surfaceSubTabIds(tab: UiSurfaceTab): string[] {
+	return (tab.subTabs ?? []).map((entry) => entry.id);
+}
+
+/**
+ * Validate the `tab`, `subTab`, `group` and `agent` of an open request against
+ * a surface. One function for the CLI and the main-process handler, so the two
+ * cannot disagree about what a valid deep link is. `subTab` without `tab` is
+ * refused: a sub-tab only means something inside a tab. `group` is refused on
+ * a surface that does not open on a group, and `agent` on one that is not an
+ * agent's; whether the group or the agent EXISTS is the caller's question,
+ * since the registry knows neither.
+ */
+export function resolveUiSurfaceTarget(
+	surface: UiSurface,
+	request: { tab?: string; subTab?: string; group?: string; agent?: string }
+): UiSurfaceTarget | { error: string } {
+	const { group, agent } = request;
+	if (group !== undefined && !surface.groupClick) {
+		return { error: `${surface.label} does not open on one group, so --group does not apply.` };
+	}
+	if (group === undefined && surface.groupRequired) {
+		return { error: `${surface.label} opens on one group: pass --group <id>.` };
+	}
+	if (agent !== undefined && !surface.agentClick) {
+		return { error: `${surface.label} is not one agent's, so --agent does not apply.` };
+	}
+	if (agent === undefined && surface.agentClick) {
+		return { error: `${surface.label} opens on one agent: pass --agent <id>.` };
+	}
+	const target = resolveUiSurfaceTabTarget(surface, request);
+	if ('error' in target) return target;
+	return {
+		...target,
+		...(group !== undefined ? { group } : {}),
+		...(agent !== undefined ? { agent } : {}),
+	};
+}
+
+function resolveUiSurfaceTabTarget(
+	surface: UiSurface,
+	request: { tab?: string; subTab?: string }
+): { tab?: UiSurfaceTab; subTab?: UiSurfaceTab } | { error: string } {
+	const { tab: tabName, subTab: subTabName } = request;
+	if (tabName === undefined) {
+		return subTabName === undefined
+			? {}
+			: { error: '--sub-tab needs --tab: a sub-tab is a tab inside a tab.' };
+	}
+	const tab = resolveUiSurfaceTab(surface, tabName);
+	if (!tab) {
+		const valid = surfaceTabIds(surface);
+		return {
+			error:
+				valid.length > 0
+					? `Unknown tab "${tabName}" for ${surface.label}. Valid tabs: ${valid.join(', ')}`
+					: `${surface.label} has no tabs, so --tab does not apply.`,
+		};
+	}
+	if (subTabName === undefined) return { tab };
+	const subTab = resolveUiSurfaceSubTab(tab, subTabName);
+	if (!subTab) {
+		const valid = surfaceSubTabIds(tab);
+		return {
+			error:
+				valid.length > 0
+					? `Unknown sub-tab "${subTabName}" for ${surface.label} > ${tab.label}. Valid sub-tabs: ${valid.join(', ')}`
+					: `${surface.label} > ${tab.label} has no sub-tabs, so --sub-tab does not apply.`,
+		};
+	}
+	return { tab, subTab };
+}
+
+/** Refuse a surface or tab while its Encore Feature is off. */
 export function uiSurfaceRefusal(
 	surface: UiSurface,
 	tab: UiSurfaceTab | null | undefined,
-	encoreFeatures: Partial<Record<UiSurfaceEncoreFlag, boolean>>
+	encoreFeatures: unknown
 ): string | null {
-	if (surface.encore && encoreFeatures[surface.encore] !== true) {
+	const flags = resolveEncoreFeatures(encoreFeatures);
+	if (surface.encore && !flags[surface.encore])
 		return `${surface.label} is turned off. Turn it on in Settings → Plugins.`;
-	}
-	if (tab?.encore && encoreFeatures[tab.encore] !== true) {
+	if (tab?.encore && !flags[tab.encore])
 		return `The ${tab.label} tab of ${surface.label} is turned off. Turn it on in Settings → Plugins.`;
-	}
 	return null;
+}
+
+/** Surface-only gate for callers without a tab. */
+export function surfaceEncoreRefusal(surface: UiSurface, encoreFeatures: unknown): string | null {
+	return uiSurfaceRefusal(surface, undefined, encoreFeatures);
 }
 
 /**
  * Build the "you can also get there by ..." sentence for a surface. The CLI
  * prints this after opening so the agent relaying the result can teach the
  * user the manual paths. `shortcut` is the already-formatted hotkey (the
- * caller owns platform detection); omit it when the surface has none.
+ * caller owns platform detection); omit it when the surface has none. A target
+ * with a `group` adds the surface's own way to open on one group, and a target
+ * with an `agent` the way to open it on an agent other than the selected one.
  */
-export function describeSurfaceAccess(surface: UiSurface, shortcut?: string): string {
+export function describeSurfaceAccess(
+	surface: UiSurface,
+	shortcut?: string,
+	target?: UiSurfaceTarget
+): string {
 	const paths: string[] = [];
 	if (shortcut) paths.push(`press ${shortcut}`);
 	if (surface.commandPalette) {
@@ -383,5 +605,15 @@ export function describeSurfaceAccess(surface: UiSurface, shortcut?: string): st
 	}
 	if (surface.click) paths.push(`click ${surface.click}`);
 	if (paths.length === 0) return '';
-	return `You can also reach ${surface.label} yourself: ${paths.join(', or ')}.`;
+	const where = [target?.tab?.label, target?.subTab?.label].filter(Boolean).join(' > ');
+	const inside = where ? `, then pick ${where}` : '';
+	const forGroup =
+		target?.group !== undefined && surface.groupClick
+			? ` For one group: ${surface.groupClick}.`
+			: '';
+	const forAgent =
+		target?.agent !== undefined && surface.agentClick
+			? ` For any agent: ${surface.agentClick}.`
+			: '';
+	return `You can also reach ${surface.label} yourself: ${paths.join(', or ')}${inside}.${forGroup}${forAgent}`;
 }

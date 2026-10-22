@@ -29,6 +29,8 @@ import { filterSessionsVisibleInSidebar } from '../../utils/sessionVisibility';
 import { revealAgentInSidebar } from '../../services/agentNavigation';
 import { buildSessionJumpSlotMap } from '../../utils/sessionJumpSlots';
 import { useGitAgentActions } from '../../hooks/git/useGitAgentActions';
+import { useVoiceAgentActions } from '../../hooks/voice/useVoiceAgentActions';
+import { useVoiceUiStore } from '../../stores/voiceUiStore';
 import { safeClipboardWrite } from '../../utils/clipboard';
 import { getOpenInLabel } from '../../utils/platformUtils';
 import { visibleAiTabs } from '../../utils/tabHelpers';
@@ -62,6 +64,7 @@ import { buildAgentPanelCommands } from './commands/agentPanelCommands';
 import { buildAgentSwitcherCommands } from './commands/agentSwitcherCommands';
 import { buildMediaPlayerCommands } from './commands/mediaPlayerCommands';
 import { buildQuickChatCommands } from './commands/quickChatCommands';
+import { buildDelegationGraphCommands } from './commands/delegationGraphCommands';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { buildStatsIndexingCommands } from './commands/statsIndexingCommands';
 import { selectCanOpenMediaPlayer, useMediaPlaybackStore } from '../../stores/mediaPlaybackStore';
@@ -71,6 +74,7 @@ import { buildDebugCommands } from './commands/debugCommands';
 import { buildFeatureCommands } from './commands/featureCommands';
 import { areToastsEnabled } from '../../../shared/toastDuration';
 import { buildGitWorktreeCommands } from './commands/gitWorktreeCommands';
+import { buildVoiceCommands } from './commands/voiceCommands';
 import {
 	buildGroupChatCommands,
 	buildGroupChatJumpCommands,
@@ -455,6 +459,10 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	// The palette is the third surface for the git action set, after the header
 	// branch pill and the Left Bar right-click menu.
 	const gitActions = useGitAgentActions(activeSession);
+	// Same arrangement for voice - see `buildVoiceCommands`.
+	const voiceActions = useVoiceAgentActions(activeSession);
+	const voiceTranscriptVisible = useVoiceUiStore((s) => s.transcriptVisible);
+	const toggleVoiceTranscript = useVoiceUiStore((s) => s.toggleTranscript);
 	// Output search is scoped per agent+AI-tab; open the active window's slot so
 	// the Find bar doesn't follow the user to other agents/tabs.
 	const openActiveOutputSearch = useCallback(
@@ -598,6 +606,11 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			hotkey: quickChatHotkey,
 			openQuickChat: () => void window.maestro.quickChat.window('show'),
 			setQuickActionOpen,
+		}),
+		...buildDelegationGraphCommands({
+			setQuickActionOpen,
+			openDelegationGraphShortcut: shortcuts.openDelegationGraph,
+			groups,
 		}),
 		...buildStatsIndexingCommands({
 			scanActive: statsIndexingActive,
@@ -791,6 +804,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			shortcuts: {
 				toggleMarkdownMode: shortcuts.toggleMarkdownMode,
 				showSnoozeList: shortcuts.showSnoozeList,
+				tabCleanupSuggestions: shortcuts.tabCleanupSuggestions,
 				focusActiveTab: shortcuts.focusActiveTab,
 				clearTerminal: shortcuts.clearTerminal,
 				openModelEffort: shortcuts.openModelEffort,
@@ -873,6 +887,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			activeSession,
 			activeSessionId,
 			activeTabType,
+			voiceEnabled: voiceActions.enabled,
 			ghCliAvailable,
 			setSessions,
 			setQuickActionOpen,
@@ -884,6 +899,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			mainPanelRef,
 			toggleTabStarShortcut: shortcuts.toggleTabStar,
 			toggleTabUnreadShortcut: tabShortcuts?.toggleTabUnread,
+			documentChatShortcut: shortcuts.toggleDocumentChat,
 		}),
 		...buildSupportCommands({
 			setQuickActionOpen,
@@ -934,6 +950,15 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			notifyToast,
 			openUrl,
 			logger,
+		}),
+		...buildVoiceCommands({
+			activeSession,
+			voiceActions,
+			openVoiceSetup: () => getModalActions().setVoiceSetupOpen(true),
+			transcriptVisible: voiceTranscriptVisible,
+			toggleTranscript: toggleVoiceTranscript,
+			setQuickActionOpen,
+			tabShortcuts,
 		}),
 		...buildRightPanelCommands({
 			autoRunDisabled: useSettingsStore.getState().autoRunDisabled,

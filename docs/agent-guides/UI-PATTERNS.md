@@ -1320,7 +1320,7 @@ Do NOT add a new hard-coded five-digit z-index. If a surface needs to sit above 
 
 ## Floating Widget Windows
 
-A floating widget is a small piece of Maestro in its own frameless, always-on-top desktop window, like Quick Chat. It floats over every app, on every Space and monitor, and stays up while the Maestro window is minimized or behind something else. The Throughput Gauge and the media player are the two today; A Cappella's voice widget is next. Design and history: `Plans/floating-widgets.md`.
+A floating widget is a small piece of Maestro in its own frameless, always-on-top desktop window, like Quick Chat. It floats over every app, on every Space and monitor, and stays up while the Maestro window is minimized or behind something else. The Throughput Gauge, media player, and A Cappella voice HUD use this pattern. Design and history: `Plans/floating-widgets.md`.
 
 ### When to use it
 
@@ -1330,7 +1330,7 @@ Use a floating widget for a glanceable readout or a small control set the user w
 
 1. **Id and spec** in `src/shared/floatingWidgets.ts`: add the id to `FLOATING_WIDGET_IDS`, an entry in `FLOATING_WIDGET_SPECS` (`defaultSize`, `minSize`, `authority`), and the widget's state and command types with an `is...Command()` guard. Every relay handler validates the id with `isFloatingWidgetId()` and every authority validates a command with its guard, so a new widget needs both.
 2. **Pick the authority**, the ONE window that owns the live state and takes the commands:
-   - `app`: the primary app window, when the state is produced there (the gauge's rate engine).
+   - `app`: the app window that produces the state. The gauge uses the primary window; A Cappella uses the originating voice-session window, retaining its focus and UI preferences.
    - `widget`: the widget's own window, when it owns something that cannot be copied (the media player's media element). A command to a `widget` authority creates its window hidden and is held until the window reports ready.
 
    Add the matching branch to `getAuthorityWindow` in `src/main/index.ts`. The controller itself comes from the `FLOATING_WIDGET_IDS.map(...)` there (`createFloatingWidgetWindow()` in `src/main/floating-widgets/floating-widget-window.ts`); pass `isEnabled` when the widget belongs to an Encore Feature.
@@ -1338,10 +1338,19 @@ Use a floating widget for a glanceable readout or a small control set the user w
 3. **Sync the state** with the helpers in `src/renderer/utils/windowStoreMirror.ts`:
    - Authority: `publishStoreState(id, store, select)` publishes a plain-JSON selection now and on every change (shallow-compared, at most one publish per 100ms), and `onWidgetCommand(id, handler)` answers commands.
    - Replica: `mirrorStoreState(id, store, apply)` seeds from the latest published state and applies each snapshot. It never publishes back.
-   - Either side acts through `sendWidgetCommand(id, command)`. When a replica's callers already use store actions (the media player), forward them through ONE wrapper over the action list (`installMediaPlaybackReplica()` in `src/renderer/stores/mediaPlaybackReplica.ts`), never per-action code. IDs and timestamps are made by the authority only, and only the authority writes persisted state.
-4. **The body** goes in `src/renderer/floatingWidget/`: a component that draws inside `<FloatingWidgetFrame>` (title strip as the OS drag region, X control, Escape closes), registered in `WIDGET_BODIES` in `FloatingWidgetRoot.tsx`. Share the drawing with the in-app card (the gauge's `ThroughputGaugeBody`) rather than forking it. A replica body's X sends a command (the gauge's `hide`), so the authority's latch and the window never disagree.
+   - Either side acts through `sendWidgetCommand(id, command)`. When a replica's callers already use store actions (the media player), forward them through ONE wrapper over the action list (`installMediaPlaybackReplica()` in `src/renderer/stores/mediaPlaybackReplica.ts`), never per-action code. Call forwarded actions from event handlers explicitly (`onClick={() => requestToggle()}`): passing the action directly forwards the React event, which IPC cannot serialize. IDs and timestamps are made by the authority only, and only the authority writes persisted state.
+4. **The body** goes in `src/renderer/floatingWidget/`: a component that draws inside `<FloatingWidgetFrame>` (title strip as the OS drag region, X control, Escape calls `onClose` unless `onEscape` is supplied), registered in `WIDGET_BODIES` in `FloatingWidgetRoot.tsx`. The media player uses `onEscape` to minimize while X stops playback; its Minus button also minimizes. Share the drawing with the in-app card (the gauge's `ThroughputGaugeBody`) rather than forking it. A replica body's X sends a command (the gauge's `hide`), so the authority's latch and the window never disagree.
 5. **Branch the host on `floatingWidgetsAvailable()`** (`src/renderer/utils/floatingWidgetMode.ts`): true drives the window (`window.maestro.floatingWidgets.show/hide` from the authority's visible state) and renders no in-app card; false renders the in-app card exactly as before. The browser build (`isWebDesktop()`) cannot open windows, so the in-app card is the fallback and must keep working. `ThroughputGaugeHost` and `MediaPlaybackHost` are the two references.
 6. **CLI parity:** the existing verbs must still reach the widget through the store (the window follows the store, not the other way round). A status read reports the window bounds through `floatingWidgets.getBounds(id)` (`throughput-gauge status` does).
+
+A Cappella registers `acappella-voice` with an app authority. `VoiceHud` publishes the shared
+`VoiceSessionProjection` and voice UI preferences; `VoiceWidget` mirrors them and draws the same
+HUD body inside `FloatingWidgetFrame`. Controls, including mode changes and transcript route
+chips, return as validated `VoiceWidgetCommand` messages. The main-process session and hidden
+audio host stay in place. Minimize hides the window and keeps the session; X or Escape ends the
+session. Ownership changes hide the previous HUD, and `canControlVisibility` refuses a previous
+owner's late hide after the next owner publishes. `canPublishState` drops trailing snapshots from the old owner. Quick Chat keeps its own voice controls.
+The explicit developer harness remains an in-app debugging surface.
 
 ### Rules
 
@@ -2336,6 +2345,8 @@ Escape ordering is the host's call. On a layer-stack modal, delegate to `closeIf
 The Left Bar header is a single row that neither wraps nor scrolls, and the user can drag the sidebar down to 256px. Every control added to it (the badge pill, the now-playing pill, the LIVE toggle) takes room from a fixed budget, so the row needs a declared yield order rather than whatever CSS happens to shrink first.
 
 **The row is three zones: identity, indicators, menu.** The wand and the wordmark sit in a `shrink-0` zone on the left, the hamburger in a `shrink-0` zone on the right, and every status control goes in the `flex-1 justify-center min-w-0` band between them (`data-testid="sidebar-header-indicators"`). `flex-1` is what centers the band: it takes whatever the two fixed zones leave and centers its contents in that, so the indicators read as their own group rather than as a tail on the wordmark. A new status control belongs in the band, not beside the wordmark.
+
+The Conductor voice-floor mark is the one exception: it sits beside the wordmark because the session is bound to Maestro itself. `useConductorHoldsFloor()` controls both the mark and its width reserve, which scales with `useHeaderTextDelta().remScale`. The collapsed rail also shows it.
 
 **The MAESTRO wordmark is drawn in full or not at all.** It used to carry `truncate`, which rendered the brand as "MAE..." on a narrow sidebar. A clipped brand reads as a rendering bug, not as a deliberate space saving, so `SessionList` gates it on a width instead:
 

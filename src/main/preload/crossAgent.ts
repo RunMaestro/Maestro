@@ -5,12 +5,16 @@
  * - `send(request)`  -> invoke `cross-agent:send`, returns `{ requestId }`.
  * - `cancel(sourceSessionId)` -> invoke `cross-agent:cancel`, stopping every
  *   consult that agent still has in flight (Stop).
+ * - `consultBudget(consultChain?)` -> invoke `cross-agent:consultBudget`: where
+ *   the consultation budget stands for a turn about to be spawned, for the
+ *   sentence its system prompt carries.
  * - `onChunk(handler)` -> subscribe to streamed `cross-agent:chunk` events,
  *   returns a cleanup function.
  */
 
 import { ipcRenderer } from 'electron';
 import type { CrossAgentSendRequest, CrossAgentResponseChunk } from '../../shared/crossAgentTypes';
+import type { ConsultBudgetStatus, ConsultChain } from '../../shared/consultBudget';
 
 /**
  * Creates the cross-agent API object for preload exposure.
@@ -31,6 +35,15 @@ export function createCrossAgentApi() {
 		 */
 		cancel: (sourceSessionId: string): Promise<{ canceled: number }> =>
 			ipcRenderer.invoke('cross-agent:cancel', { sourceSessionId }),
+
+		/**
+		 * Where the consultation budget stands for a turn about to be spawned:
+		 * the limit, and what its chain has spent. `consultChain` is the place the
+		 * turn takes when another agent delegated it; without one the turn is a
+		 * root and nothing is spent. `null` when the counter cannot be read.
+		 */
+		consultBudget: (consultChain?: ConsultChain): Promise<ConsultBudgetStatus | null> =>
+			ipcRenderer.invoke('cross-agent:consultBudget', { consultChain }),
 
 		/**
 		 * Subscribe to streamed cross-agent response chunks.

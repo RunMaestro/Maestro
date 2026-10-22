@@ -1,6 +1,7 @@
 import type {
 	ProviderMigrationState,
 	HistoryTranslationMapping,
+	ContextTranslationRecord,
 } from '../../shared/maestro-lib/translation/types';
 // Type definitions for Maestro renderer
 import type { BrowserTab } from '../../shared/browserPage';
@@ -22,10 +23,13 @@ export type {
 	AgentConfig,
 	AgentConfigOption,
 	DirectoryEntry,
+	PeerAccess,
+	PeerAgent,
 	ShellInfo,
 	UpdateStatus,
 	ToolType,
 	Group,
+	GroupAgentDefaults,
 	UsageStats,
 	BatchDocumentEntry,
 	PlaybookDocumentEntry,
@@ -54,6 +58,8 @@ export type { ProviderAgentOverrides, ProviderTabSession };
 // Import for extension in this file
 import type {
 	AdditionalDirectory,
+	PeerAccess,
+	PeerAgent,
 	SessionWorktreeConfig,
 	UsageStats,
 	ToolType,
@@ -74,8 +80,13 @@ export type {
 // Import AgentError for use within this file
 import type { AgentError, SessionCliActivity } from '../../shared/types';
 import type { AgentDelegationKind } from '../../shared/agentDelegation';
+import type { AutoRouteStamp, AutoTurnStamp } from '../../shared/autoTurn';
 import type { MentionRouting } from '../../shared/crossAgentContext';
 import type { CodexTransport } from '../../shared/codexTransport';
+import type { ConsultChain } from '../../shared/consultBudget';
+import type { BackgroundRequests } from '../../shared/local-models/background-requests';
+import type { RunOnSourceTarget, RunOnTarget } from '../../shared/local-models/run-on';
+import type { TierTargets } from '../../shared/modelTiers';
 import type { ComposerCommandMode } from '../utils/shellCommandInput';
 import type { MindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
 
@@ -92,27 +103,35 @@ export type UsageDashboardViewMode =
 	| 'groups'
 	| 'agent-overview'
 	| 'tokens'
+	| 'models'
 	| 'activity'
 	| 'autorun'
 	| 'anthropic-usage'
 	| 'codex-usage'
 	| 'cue'
 	| 'shortcuts';
+/**
+ * Every tab the Settings modal can open on.
+ *
+ * Kept in step with `SettingsTabId` in `SettingsModal.tsx`, which renders them.
+ * This list used to be a stale subset that could not name half the tabs that
+ * existed, so a caller asking to deep-link into Plugins, SSH, or Display simply
+ * would not compile - and the workaround was to open Settings with no tab and
+ * let the user go hunting.
+ */
 export type SettingsTab =
-	| 'environment'
+	| 'about'
 	| 'general'
-	// SettingsModal has always rendered a Display tab and accepted it as an
-	// `initialTab`; it was simply missing from this union, so nothing could
-	// deep-link there through openSettings().
 	| 'display'
 	| 'shortcuts'
 	| 'theme'
 	| 'notifications'
 	| 'aicommands'
-	// Same story as Display: rendered and accepted by SettingsModal, missing
-	// here, so Director's Notes could not deep-link to its own settings.
+	| 'ssh'
+	| 'environment'
 	| 'encore'
-	| 'prompts';
+	| 'prompts'
+	| 'models';
 // Note: ScratchPadMode was removed as part of the Scratchpad → Auto Run migration
 export type FocusArea = 'sidebar' | 'main' | 'right';
 
@@ -333,7 +352,18 @@ export interface LogEntry {
 	// response. Undefined means the agent's own default was in force, and the
 	// footer pill is omitted rather than guessed at.
 	turnModel?: string;
+	turnProvider?: ToolType;
+	/** A committed native import, rendered as a standalone transcript marker. */
+	contextTranslation?: ContextTranslationRecord;
 	turnEffort?: string;
+	// Where this turn ran when the agent's Run on target was a source, copied
+	// from `AITab.turnRunOn`. Shown in place of the model pill.
+	turnRunOn?: string;
+	// Set when this turn was sent on the Auto model, copied from
+	// `AITab.turnAuto`: what the router answered and what the turn did with it.
+	// The footer draws it as one pill (`Auto → medium · sonnet`) in the model
+	// pill's place.
+	turnAuto?: AutoTurnStamp;
 	// For session_not_found system entries - payload for the inline "Create new
 	// session from prior context" action. The button on the entry opens
 	// SessionRecoveryModal which re-spawns the agent in place on `tabId`,
@@ -453,10 +483,24 @@ export type QueuedItemType = 'message' | 'command';
  * model the user picked afterwards.
  */
 export interface QueuedTurnSettings {
-	/** Model in force when the item was queued, or undefined for the default. */
+	runOn?: RunOnTarget;
+	routing?: import('../../shared/modelTiers').TierRouting;
+	provider?: ToolType;
+	/**
+	 * Model in force when the item was queued, or undefined for the default.
+	 * `auto` (`AUTO_MODEL`) is a value like any other: the item was queued on the
+	 * Auto model, and stays on it whatever the agent is set to when it drains.
+	 */
 	model?: string;
 	/** Effort in force when the item was queued, or undefined for the default. */
 	effort?: string;
+	/**
+	 * What the model router answered for this item, when `model` is Auto. A
+	 * queued message is routed when it is queued and never again, so the answer
+	 * rides with it. Absent on an Auto item the router has not answered yet: the
+	 * dispatch asks then (`settleAutoTurn`).
+	 */
+	route?: AutoRouteStamp;
 }
 
 /**
@@ -505,6 +549,13 @@ export interface MentionHandoff {
 	targets: ConsultHoldTarget[];
 	/** The user's message, verbatim, relayed alongside the answer. */
 	message: string;
+	/**
+	 * The turn's own place in a consult chain, when another agent's
+	 * `maestro-cli dispatch` started it. The hand-off is then a delegation that
+	 * agent set off, so it spends from that chain when it goes out. Absent when
+	 * the user typed the message.
+	 */
+	sourceConsultChain?: ConsultChain;
 }
 
 export interface QueuedItem {
@@ -568,6 +619,12 @@ export interface QueuedItem {
 	// with - the configuration it was queued with, not whatever is selected by
 	// the time the queue drains. Undefined only on items queued by older builds.
 	turnSettings?: QueuedTurnSettings;
+	// The place in a consult chain the turn this item starts takes, set when
+	// another agent's `maestro-cli dispatch` put the item here. It rides the item
+	// to the spawn, however long the item waits and whichever tab it drains in,
+	// so the delegated turn's own consults spend the chain it descends from
+	// (shared/consultBudget.ts). Absent on everything the user queued.
+	consultChain?: ConsultChain;
 }
 
 export interface WorkLogItem {
@@ -791,6 +848,8 @@ export interface OnboardingStats {
 // AI Tab for multi-tab support within a Maestro session
 // Each tab represents a separate AI agent conversation (Claude Code, OpenCode, etc.)
 export interface AITab {
+	/** Transient native translation progress, shown in the existing busy pill. */
+	translatingFrom?: ToolType;
 	/** Durable conversation provenance, independent of whether a turn is running. */
 	origin?: 'user' | 'auto' | 'relay';
 	id: string; // Unique tab ID (generated UUID)
@@ -849,6 +908,28 @@ export interface AITab {
 		sourceTabId: string;
 	};
 	/**
+	 * When set, this tab holds the persistent chat about one document: the
+	 * conversation behind the File Preview's chat bubble.
+	 *
+	 * It is the continuity key, the same way `consultOrigin` is. There is at most
+	 * one chat per (agent, path), so reopening a document - after a tab switch,
+	 * after a restart - finds this tab and shows its history rather than starting
+	 * over. The binding lives on the tab so it is persisted, migrated and
+	 * discarded with the conversation it describes, instead of being a side table
+	 * of ids pointing at tabs that may no longer exist.
+	 *
+	 * A document chat is created `hidden` and stays that way until the user pops
+	 * it out (`revealAiTab`), so chatting about a file does not put a chip in the
+	 * strip nobody asked for. Resetting the chat archives this binding: the fresh
+	 * chat gets a new tab, and the old transcript remains in document history.
+	 */
+	documentOrigin?: {
+		/** Absolute path of the document, as the owning agent sees it. */
+		path: string;
+		/** Retained in document history; excluded from active text and voice routing. */
+		archived?: boolean;
+	};
+	/**
 	 * When true, the tab exists as a data container but is NOT surfaced in the tab
 	 * strip or reachable by tab-cycling shortcuts. Set on consult tabs created by an
 	 * inbound `@mention`: the consulted agent's workspace belongs to the user, and a
@@ -882,11 +963,17 @@ export interface AITab {
 	/**
 	 * Parked per-provider state for every provider this tab is NOT currently
 	 * using. The live provider's values stay in `agentSessionId` / `usageStats` /
-	 * `customModel` / `customEffort` as they always have, so this map never holds
-	 * an entry for `session.toolType`. Changing the agent's provider swaps the
+	 * `customModel` / `customEffort` / `runOn`, so this map never holds
+	 * an entry for `resolveTabProvider(tab, session)`. Changing the provider swaps the
 	 * live values with this map's entry rather than clearing them.
 	 */
 	providerSessions?: Partial<Record<ToolType, ProviderTabSession>>;
+	/** Absent inherits the agent's provider; a named provider explicitly pins this tab. */
+	tabProvider?: ToolType;
+	/** Per-provider Run on choice; absent inherits the matching harness default. */
+	runOn?: RunOnTarget;
+	/** Latest native owner awaiting lazy translation, even if the destination has an older slot. */
+	pendingTranslation?: ToolType;
 	/**
 	 * The provider that owns the turn most recently sent from this tab, captured
 	 * at send time. Settings are codified when the user hits send, so a provider
@@ -898,6 +985,9 @@ export interface AITab {
 	 * written into another's slot. Undefined on a tab that has never sent.
 	 */
 	turnProvider?: ToolType;
+	turnSessionId?: string;
+	turnRunOnTarget?: RunOnTarget;
+	turnRouting?: import('../../shared/modelTiers').TierRouting;
 	/**
 	 * The model and effort the most recent turn from this tab was sent with,
 	 * captured at send time next to `turnProvider` and for the same reason:
@@ -909,6 +999,30 @@ export interface AITab {
 	 */
 	turnModel?: string;
 	turnEffort?: string;
+	/**
+	 * Where the most recent turn ran when the agent's Run on target was a source
+	 * (`qwen3:latest · Ollama`), captured with the fields above. A label only:
+	 * the launch reads the target itself from the agent record. Undefined for a
+	 * turn on the provider's own model.
+	 */
+	turnRunOn?: string;
+	/**
+	 * The source behind `turnRunOn`, frozen with it: the agent's Run on target as
+	 * it stood at send, or the place Auto chose. It is what the turn's stats row
+	 * names (`query_events.run_on_endpoint` / `run_on_model`), so a target edited
+	 * while the turn is in flight does not refile it. Undefined for a turn on the
+	 * provider's own model.
+	 */
+	turnRunOnSource?: RunOnSourceTarget;
+	/**
+	 * Set when the most recent turn was sent on the Auto model: what the router
+	 * answered and what the turn did with it (`shared/autoTurn.ts`). `pending`
+	 * from the moment the turn takes the tab until the router answers, which is
+	 * when `turnModel`, `turnEffort` and `turnRunOn` above become final. Its
+	 * `runOn` is the place the launch uses, and what the NEXT turn's rule 1 reads
+	 * as where this session ran. Undefined for a turn on a named model.
+	 */
+	turnAuto?: AutoTurnStamp;
 }
 
 // A single "thinking item" - one busy tab within a session.
@@ -1283,6 +1397,8 @@ export type SnoozedGroupEntry = SnoozedGroupPayload & SnoozedTabEntryBase;
 
 /** A delivered chat steer awaiting its transcript verdict (see Session.pendingSteers). */
 export interface PendingSteer {
+	/** Captured running owner; legacy records fall back to the queued item/tab. */
+	provider?: ToolType;
 	/** The steer id the socket answered with; verdicts carry the same id. */
 	steerId: string;
 	/** `{sessionId}-ai-{tabId}`, the process the text was typed into. */
@@ -1300,7 +1416,7 @@ export interface Session {
 	providerTranslationHistoryMappings?: HistoryTranslationMapping[];
 	providerTranslationKnowledgeDirectory?: string;
 	providerTranslationTabInventory?: Array<
-		Pick<AITab, 'id' | 'agentSessionId' | 'providerSessions'>
+		Pick<AITab, 'id' | 'agentSessionId' | 'providerSessions' | 'pendingTranslation' | 'tabProvider'>
 	>;
 	id: string;
 	/** Browser-only marker. Main restores omitted content on every partial save. */
@@ -1316,6 +1432,21 @@ export interface Session {
 	// working directory. Prompt-level grants: rendered into the Maestro system
 	// prompt as {{ADDITIONAL_DIRECTORIES}}, not enforced by a sandbox.
 	additionalDirectories?: AdditionalDirectory[];
+	// Peer agents this agent may reach on its own, without an @mention. The three
+	// fields below are the stored SOURCES only. The roster the agent sees is
+	// resolved from them at prompt-build time (group and worktree membership are
+	// read live), so moving, renaming, or deleting an agent reshapes it with no
+	// further configuration.
+	//
+	// Explicit rows. A row replaces any derived grant for that peer, so a row with
+	// neither bit set is a deliberate exclusion.
+	peerAgents?: PeerAgent[];
+	// "Peers in my group": every other agent sharing this agent's groupId is a
+	// peer at this access. Absent means the checkbox is off.
+	groupPeerAccess?: PeerAccess;
+	// "Worktree family": the agent's worktree parent and sibling worktree children
+	// are peers at this access. Absent means the checkbox is off.
+	worktreePeerAccess?: PeerAccess;
 	createdAt: number; // Timestamp when the session was created
 	aiLogs: LogEntry[];
 	// DEPRECATED: Legacy shell output logs - terminal tabs use xterm.js with direct PTY streaming
@@ -1408,6 +1539,8 @@ export interface Session {
 	// Active time tracking - cumulative milliseconds of active use
 	activeTimeMs: number;
 	// Agent slash commands available for this session (fetched per session based on cwd)
+	/** Discovery scope for agentCommands; an unscoped legacy list must be refreshed. */
+	agentCommandsScope?: string;
 	agentCommands?: { command: string; description: string; prompt?: string }[];
 	// Bookmark flag - bookmarked sessions appear in a dedicated section at the top
 	bookmarked?: boolean;
@@ -1545,6 +1678,30 @@ export interface Session {
 	customEnvVars?: Record<string, string>; // Custom environment variables (overrides agent-level)
 	// Env vars switched off in the editor: parked, never spawned with. See shared/types.ts.
 	customEnvVarsDisabled?: Record<string, string>;
+	// Local Models gateway: an HTTP proxy this agent's provider traffic goes
+	// through. Applied at launch as the provider's base-URL variable unless the
+	// agent's own env vars already set it. See shared/local-models/gateway.ts.
+	gatewayUrl?: string;
+	// How the Maestro token proxy carries this agent's requests when gatewayUrl
+	// points at it. Absent means passthrough. See shared/local-models/token-proxy.ts.
+	tokenProxyMode?: 'passthrough' | 'compress' | 'compress-early';
+	// Run on: where this agent's model runs. Absent (or provider) is the
+	// provider's own model; a source target points the same harness at a model on
+	// a Local Models source at launch. See shared/local-models/run-on.ts.
+	runOn?: RunOnTarget;
+	// Tier targets: where a turn that asks for a model tier launches for this
+	// agent (a provider model or a Run on target). An absent tier follows the
+	// harness default, then the built-in table. See resolveTierTarget in
+	// shared/modelTiers.ts.
+	tierTargets?: TierTargets;
+	// Background requests: where the Maestro token proxy sends this agent's side
+	// requests (its CLI's small-model requests) when gatewayUrl points at the
+	// proxy. Absent means the provider. See shared/local-models/background-requests.ts.
+	backgroundRequests?: BackgroundRequests;
+	// System One opt-out: true switches `maestro-cli s1` off for this agent while
+	// it stays on for the others. Absent means the agent follows "Let agents use
+	// System One". See isSystemOneOptedOut in shared/local-models/system-one-agent.ts.
+	systemOneOptOut?: boolean;
 	// Secret NAMES from bundle import, resolved by the CLI and Cue at launch. Carried, never read here. See shared/types.ts.
 	requiredSecrets?: string[];
 	customModel?: string; // Custom model ID (overrides agent-level)
@@ -1668,6 +1825,15 @@ export interface ProcessConfig {
 	sessionCustomModel?: string;
 	sessionCustomEffort?: string;
 	sessionCustomContextWindow?: number;
+	// The Run on target this turn launches on in place of the agent's stored
+	// one: a tier's target, set only by a spawn that resolved a tier.
+	runOnOverride?: RunOnTarget;
+	// The consult chain this turn runs IN, already at its own depth, when
+	// another agent's delegation started it (`maestro-cli dispatch`). The spawn
+	// handler states it in the agent's environment so what the agent asks and
+	// delegates spends that chain's budget (shared/consultBudget.ts). Absent on
+	// every other turn: the handler then decides whether the turn roots a chain.
+	consultChain?: ConsultChain;
 	// Session's Additional Directories. Providers that declare
 	// `supportsAdditionalDirectories` turn these into native grant flags
 	// (e.g. --add-dir); every agent also gets them via the system prompt.
@@ -1837,6 +2003,12 @@ export interface EncoreFeatureFlags {
 	// Groups+ - nested groups, standard folder icons, and label colors.
 	// Off by default. Optional so older fixtures and persisted settings remain valid.
 	groupsPlus?: boolean;
+	// A Cappella - the voice interface (headless voice session in main, HUD in
+	// the renderer). Off by default, and enabling it only makes the Voice Setup
+	// surface reachable: no device, model, or socket is touched until a session
+	// is explicitly started. Optional so older fixtures and persisted settings
+	// remain valid.
+	aCappella?: boolean;
 	// Web Login - require a username and password on the web interface, with
 	// per-account attribution on History and stats. Off by default. Optional so
 	// older fixtures and persisted settings remain valid.

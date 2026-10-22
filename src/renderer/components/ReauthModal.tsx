@@ -62,6 +62,8 @@ import { useSshRemoteNames } from '../hooks/stats/useProviderProfiles';
 import { getHomeDir, getHomeDirAsync } from '../utils/homeDir';
 import type { Theme } from '../types';
 import type { ReauthHost } from '../stores/modalStore';
+import { projectTabProvider } from '../utils/providerTabSessions';
+import { isValidAgentId } from '../../shared/agentIds';
 
 export interface ReauthModalProps {
 	theme: Theme;
@@ -78,6 +80,12 @@ export interface ReauthModalProps {
 }
 
 export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProps) {
+	// The outage owns the login even after the agent or composer switches harness.
+	session = projectTabProvider(
+		session,
+		undefined,
+		isValidAgentId(outage.toolType) ? outage.toolType : session.toolType
+	).agent;
 	const defaultShell = useSettingsStore((s) => s.defaultShell);
 	const shellArgs = useSettingsStore((s) => s.shellArgs);
 	const shellEnvVars = useSettingsStore((s) => s.shellEnvVars);
@@ -85,7 +93,10 @@ export function ReauthModal({ theme, outage, session, onClose }: ReauthModalProp
 
 	// One login shell per modal open. The `reauth-` prefix keeps the routing
 	// key from colliding with an agent's own terminal tabs (see LoginTerminal).
-	const ptySessionId = useMemo(() => loginPtySessionId(`reauth-${session.id}`), [session.id]);
+	const ptySessionId = useMemo(
+		() => loginPtySessionId(`reauth-${session.id}-${outage.providerKey}`),
+		[session.id, outage.providerKey]
+	);
 
 	const [status, setStatus] = useState<LoginTerminalStatus>('starting');
 	const [spawnError, setSpawnError] = useState<string | null>(null);

@@ -78,6 +78,96 @@ describe('useAgentSessionManagement', () => {
 		Object.assign(window.maestro, originalMaestro);
 	});
 
+	it.each([false, true])(
+		'reopens an explicit native owner without duplicate tabs (parked: %s)',
+		async (parked) => {
+			const logs: LogEntry[] = [
+				{ id: 'native-log', timestamp: 1, source: 'user', text: 'hello', turnProvider: 'codex' },
+			];
+			const tab = createMockTab(
+				parked
+					? {
+							id: 'existing',
+							tabProvider: 'opencode',
+							agentSessionId: 'opencode-native',
+							providerSessions: {
+								codex: { agentSessionId: 'codex-native', customModel: 'saved-codex' },
+							},
+							logs,
+						}
+					: { id: 'other', agentSessionId: 'other-native' }
+			);
+			const session = createMockSession({
+				toolType: 'claude-code',
+				aiTabs: [tab],
+				activeTabId: tab.id,
+			});
+			seedActiveSession(session);
+			const setSessions = vi.fn();
+			const { result } = renderHook(() =>
+				useAgentSessionManagement({
+					setSessions,
+					setActiveAgentSessionId: vi.fn(),
+					setAgentSessionsOpen: vi.fn(),
+					rightPanelRef: createRightPanelRef(),
+					defaultSaveToHistory: true,
+					defaultShowThinking: 'off',
+				})
+			);
+			await act(async () => {
+				expect(
+					await result.current.handleResumeSession(
+						'codex-native',
+						logs,
+						undefined,
+						undefined,
+						undefined,
+						undefined,
+						{ provider: 'codex' }
+					)
+				).toBe(true);
+			});
+			const [updated] = setSessions.mock.calls[0][0]([session]) as Session[];
+			const reopened = updated.aiTabs.find((t) => t.id === updated.activeTabId)!;
+			expect(updated.toolType).toBe('claude-code');
+			expect(reopened).toMatchObject({ tabProvider: 'codex', agentSessionId: 'codex-native' });
+			expect(reopened.providerSessions?.codex).toBeUndefined();
+			if (parked) {
+				expect(updated.aiTabs).toHaveLength(1);
+				expect(reopened.customModel).toBe('saved-codex');
+				expect(reopened.providerSessions?.opencode?.agentSessionId).toBe('opencode-native');
+			}
+		}
+	);
+
+	it('deduplicates pinned live tabs independently of the agent default', async () => {
+		const tab = createMockTab({
+			id: 'pinned',
+			tabProvider: 'codex',
+			agentSessionId: 'native',
+			logs: [{ id: 'log', timestamp: 1, source: 'user', text: 'hello' }],
+		});
+		const session = createMockSession({ aiTabs: [tab], activeTabId: tab.id });
+		seedActiveSession(session);
+		const setSessions = vi.fn();
+		const { result } = renderHook(() =>
+			useAgentSessionManagement({
+				setSessions,
+				setActiveAgentSessionId: vi.fn(),
+				setAgentSessionsOpen: vi.fn(),
+				rightPanelRef: createRightPanelRef(),
+				defaultSaveToHistory: true,
+				defaultShowThinking: 'off',
+			})
+		);
+		await act(async () => {
+			await result.current.handleResumeSession('native');
+		});
+		const [updated] = setSessions.mock.calls[0][0]([session]) as Session[];
+		expect(updated.aiTabs).toHaveLength(1);
+		expect(updated.activeTabId).toBe(tab.id);
+	});
+
 	it('adds history entries using active session metadata', async () => {
 		const activeSession = createMockSession({
 			contextUsage: 42,
@@ -643,12 +733,14 @@ describe('useAgentSessionManagement', () => {
 				timestamp: new Date('2024-01-01T00:00:00.000Z').getTime(),
 				source: 'user',
 				text: 'Hello',
+				turnProvider: 'claude-code',
 			},
 			{
 				id: 'msg-2',
 				timestamp: new Date('2024-01-01T00:00:01.000Z').getTime(),
 				source: 'stdout',
 				text: 'Hi there',
+				turnProvider: 'claude-code',
 			},
 		]);
 		expect(updatedSession.activeFileTabId).toBeNull();

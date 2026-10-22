@@ -1,7 +1,10 @@
 import { buildSessionDeepLink, buildGroupDeepLink } from './deep-link-urls';
 import { formatAdditionalDirectoriesForPrompt } from './additionalDirectories';
+import type { ConsultBudgetStatus } from './consultBudget';
+import { formatPeerAgentsForPrompt, type ResolvedPeer } from './peerAgents';
 import type { AdditionalDirectory } from './types';
 import { resolveEncoreFeatures, type EncoreFeatureDefaults } from './encoreFeatureDefaults';
+import type { SystemOnePromptVariables } from './local-models/system-one-prompt';
 
 /**
  * Template Variable System for Auto Run and Custom AI Commands
@@ -26,6 +29,7 @@ import { resolveEncoreFeatures, type EncoreFeatureDefaults } from './encoreFeatu
  *   {{CWD}}               - Current working directory
  *   {{AUTORUN_FOLDER}}    - Auto Run documents folder path
  *   {{ADDITIONAL_DIRECTORIES}} - Markdown block of extra granted directories (empty when none)
+ *   {{PEER_AGENTS}}       - Markdown block of authorized peer agents and how to reach them (empty when none)
  *   {{WORKTREE_BASE_PATH}} - Directory where this agent's git worktrees are created (empty when none is configured)
  *   {{COMPUTER_HISTORY_DIR}} - Computer History store on this machine (empty for SSH-remote agents)
  *   {{MAESTRO_RUN_PATH}}  - The MaestroRun launcher on this Mac (empty until it is installed and granted)
@@ -63,6 +67,12 @@ import { resolveEncoreFeatures, type EncoreFeatureDefaults } from './encoreFeatu
  *
  * Maestro Variables:
  *   {{MAESTRO_CLI_PATH}}  - Platform-appropriate path to maestro-cli
+ *
+ * System One Variables (filled only in a system prompt, and only while a System One
+ * request from the agent would be answered; empty otherwise):
+ *   {{SYSTEM_ONE_ENGINE}}     - The engine that answers, as a person reads it
+ *   {{SYSTEM_ONE_CALIBRATED}} - Whether its numbers are calibrated, and what to do about it
+ *   {{SYSTEM_ONE_BUDGET}}     - The daily budget and roughly how much of it is left
  *
  * Cue Variables (Cue automation only):
  *   {{CUE_EVENT_TYPE}}      - Cue event type (app.startup, time.heartbeat, time.scheduled, file.changed, agent.completed, github.*, task.pending, cli.trigger, webhook.received)
@@ -235,6 +245,28 @@ export interface TemplateContext {
 	 * back to `getMaestroCLIPath()`.
 	 */
 	maestroCliPath?: string;
+	/**
+	 * The agent's peer roster (`resolvePeerRoster` in `src/shared/peerAgents.ts`),
+	 * rendered as {{PEER_AGENTS}}. It is resolved by the two system prompt
+	 * builders and by nothing else, because a group grant needs the whole fleet
+	 * and the session object does not carry it. An absent value renders nothing,
+	 * which is what every other call site gets.
+	 */
+	peerRoster?: ResolvedPeer[];
+	/**
+	 * Where the consultation budget stands for the turn being spawned
+	 * (`ConsultBudgetStatus` in `src/shared/consultBudget.ts`), rendered as one
+	 * sentence of {{PEER_AGENTS}}. A builder sets it only when it knows which
+	 * chain the turn is in; unset leaves the sentence out.
+	 */
+	consultBudget?: ConsultBudgetStatus;
+	/**
+	 * What the System One system-prompt section says about the engine and the
+	 * budget (`systemOnePromptVariables`). A builder sets it only while a System
+	 * One request from this agent would be answered, which is exactly when the
+	 * section is included; unset renders the three variables empty.
+	 */
+	systemOne?: SystemOnePromptVariables;
 	// Conductor profile (user's About Me from settings)
 	conductorProfile?: string;
 	/** The clock for the date and time variables. Absent: the real time. */
@@ -533,6 +565,22 @@ export const TEMPLATE_VARIABLES = [
 		autoRunOnly: true,
 	},
 	{ variable: '{{MONTH}}', description: 'Month (01-12)' },
+	{
+		variable: '{{PEER_AGENTS}}',
+		description: 'Authorized peer agents with consult/delegate access (empty when none)',
+	},
+	{
+		variable: '{{SYSTEM_ONE_BUDGET}}',
+		description: 'System One daily budget and roughly how much is left (system prompt only)',
+	},
+	{
+		variable: '{{SYSTEM_ONE_CALIBRATED}}',
+		description: 'Whether the System One engine is calibrated (system prompt only)',
+	},
+	{
+		variable: '{{SYSTEM_ONE_ENGINE}}',
+		description: 'The System One engine that answers (system prompt only)',
+	},
 	{ variable: '{{TAB_DEEP_LINK}}', description: 'Deep link to agent + active tab (maestro://)' },
 	{ variable: '{{TIME}}', description: 'Time (HH:MM:SS)' },
 	{ variable: '{{TIMESTAMP}}', description: 'Unix timestamp (ms)' },
@@ -546,6 +594,122 @@ export const TEMPLATE_VARIABLES = [
 export const TEMPLATE_VARIABLES_GENERAL = TEMPLATE_VARIABLES.filter(
 	(v) => !v.autoRunOnly && !v.cueOnly
 );
+
+/** A Cue template variable whose value a third party can write. */
+export interface CueUntrustedTemplateVariable {
+	/** The variable name, without braces. */
+	variable: string;
+	/** The `TemplateContext.cue` field the variable is substituted from. */
+	contextKey: keyof NonNullable<TemplateContext['cue']>;
+	/** The Cue event types that fill the variable. */
+	events: readonly string[];
+	/** What the text is, for a block notice. */
+	description: string;
+}
+
+const CUE_GITHUB_EVENTS = ['github.pull_request', 'github.issue', 'github.label'] as const;
+
+/**
+ * The Cue template variables that carry UNTRUSTED text: text written by
+ * someone other than the user, which Cue then substitutes into a prompt or a
+ * shell command. This is the one list the prompt-injection screen reads
+ * (`src/shared/cue/injection-screen.ts`), so adding a variable that carries
+ * outside text means adding it here.
+ *
+ * In: GitHub titles, bodies, comments and the head branch of a pull request
+ * (the author of a fork names it), the content of a watched task file, and
+ * everything a webhook sender controls.
+ *
+ * Out, on purpose: labels and the base branch (set by people with write access
+ * to the repository), authors and URLs (a fixed character set), file paths (a
+ * local file name), `{{CUE_CLI_PROMPT}}` (typed by the person who ran the
+ * trigger), and `{{CUE_SOURCE_OUTPUT}}` with its per-source forms (the output
+ * of the user's own upstream agent, which reads as instructions by nature and
+ * would be flagged constantly).
+ */
+export const CUE_UNTRUSTED_TEMPLATE_VARIABLES: readonly CueUntrustedTemplateVariable[] = [
+	{
+		variable: 'CUE_GH_TITLE',
+		contextKey: 'ghTitle',
+		events: CUE_GITHUB_EVENTS,
+		description: 'pull request or issue title',
+	},
+	{
+		variable: 'CUE_GH_BODY',
+		contextKey: 'ghBody',
+		events: CUE_GITHUB_EVENTS,
+		description: 'pull request or issue body',
+	},
+	{
+		variable: 'CUE_NEW_COMMENTS',
+		contextKey: 'ghNewComments',
+		events: CUE_GITHUB_EVENTS,
+		description: 'new comments',
+	},
+	{
+		variable: 'CUE_GH_BRANCH',
+		contextKey: 'ghBranch',
+		events: CUE_GITHUB_EVENTS,
+		description: 'pull request head branch',
+	},
+	{
+		variable: 'CUE_TASK_CONTENT',
+		contextKey: 'taskContent',
+		events: ['task.pending'],
+		description: 'task file content',
+	},
+	{
+		variable: 'CUE_TASK_LIST',
+		contextKey: 'taskList',
+		events: ['task.pending'],
+		description: 'pending task list',
+	},
+	{
+		variable: 'CUE_WEBHOOK_BODY',
+		contextKey: 'webhookBody',
+		events: ['webhook.received'],
+		description: 'webhook payload',
+	},
+	{
+		variable: 'CUE_WEBHOOK_HEADERS',
+		contextKey: 'webhookHeaders',
+		events: ['webhook.received'],
+		description: 'webhook request headers',
+	},
+	{
+		variable: 'CUE_WEBHOOK_EVENT',
+		contextKey: 'webhookEvent',
+		events: ['webhook.received'],
+		description: 'webhook event name',
+	},
+	{
+		variable: 'CUE_WEBHOOK_DELIVERY_ID',
+		contextKey: 'webhookDeliveryId',
+		events: ['webhook.received'],
+		description: 'webhook delivery id',
+	},
+];
+
+/**
+ * The untrusted variables a set of templates references, in list order.
+ * Matching is case-insensitive, the same as {@link substituteTemplateVariables}:
+ * a variable this misses would still be substituted.
+ */
+export function findCueUntrustedTemplateVariables(
+	templates: readonly (string | undefined | null)[]
+): CueUntrustedTemplateVariable[] {
+	const text = templates
+		.filter((template): template is string => typeof template === 'string')
+		.join('\n')
+		.toUpperCase();
+	if (!text.includes('{{')) return [];
+	return CUE_UNTRUSTED_TEMPLATE_VARIABLES.filter((entry) => text.includes(`{{${entry.variable}}}`));
+}
+
+/** Whether an event type fills any untrusted variable. */
+export function cueEventCarriesUntrustedText(eventType: string): boolean {
+	return CUE_UNTRUSTED_TEMPLATE_VARIABLES.some((entry) => entry.events.includes(eventType));
+}
 
 /**
  * Drop the variables of every Encore Feature that is switched off, for the
@@ -586,6 +750,11 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		conductorProfile,
 	} = context;
 	const now = context.now ?? new Date();
+	// How this agent invokes the CLI. Resolved once: it is {{MAESTRO_CLI_PATH}},
+	// and the {{PEER_AGENTS}} block writes it into the commands it teaches.
+	const maestroCliCommand = context.maestroCliPath
+		? `node "${context.maestroCliPath}"`
+		: getMaestroCLIPath();
 
 	// Build replacements map
 	const replacements: Record<string, string> = {
@@ -612,6 +781,15 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		// Renders the whole "## Additional Directories" section, or '' when the
 		// agent has no grants - an empty heading reads like a failed load.
 		ADDITIONAL_DIRECTORIES: formatAdditionalDirectoriesForPrompt(session.additionalDirectories),
+		// Renders the whole "## Peer Agents" section, or '' when the builder
+		// passed no roster. The block is given the agent's id and CLI command as
+		// plain text: {{AGENT_ID}} is replaced before this key, so a placeholder
+		// emitted here would reach the agent unexpanded.
+		PEER_AGENTS: formatPeerAgentsForPrompt(context.peerRoster ?? [], {
+			agentId: session.id,
+			cliCommand: maestroCliCommand,
+			budget: context.consultBudget,
+		}),
 		AUTORUN_FOLDER:
 			autoRunFolder ||
 			session.autoRunFolderPath ||
@@ -673,9 +851,12 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		CONTEXT_USAGE: String(session.contextUsage || 0),
 
 		// Maestro variables
-		MAESTRO_CLI_PATH: context.maestroCliPath
-			? `node "${context.maestroCliPath}"`
-			: getMaestroCLIPath(),
+		MAESTRO_CLI_PATH: maestroCliCommand,
+
+		// System One variables (set by a system prompt builder; empty otherwise)
+		SYSTEM_ONE_ENGINE: context.systemOne?.engine || '',
+		SYSTEM_ONE_CALIBRATED: context.systemOne?.calibrated || '',
+		SYSTEM_ONE_BUDGET: context.systemOne?.budget || '',
 
 		// Cue variables
 		CUE_EVENT_TYPE: context.cue?.eventType || '',

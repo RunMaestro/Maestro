@@ -15,7 +15,6 @@ import type Database from 'better-sqlite3';
 import type { Migration, MigrationRecord } from './types';
 import { mapMigrationRecordRow, type MigrationRecordRow } from './row-mappers';
 import {
-	CREATE_MIGRATIONS_TABLE_SQL,
 	CREATE_QUERY_EVENTS_SQL,
 	CREATE_QUERY_EVENTS_INDEXES_SQL,
 	CREATE_AUTO_RUN_SESSIONS_SQL,
@@ -35,10 +34,25 @@ import {
 	CREATE_WIZARD_RUNS_SQL,
 	CREATE_WIZARD_RUNS_INDEXES_SQL,
 	ADD_AUTO_RUN_SESSION_KIND_COLUMN_SQL,
+	CREATE_LOCAL_MODEL_RUNS_SQL,
+	CREATE_LOCAL_MODEL_RUNS_INDEXES_SQL,
+	CREATE_PROXY_REQUESTS_SQL,
+	CREATE_PROXY_REQUESTS_INDEXES_SQL,
+	ADD_PROXY_REQUEST_ROUTED_TO_COLUMN_SQL,
+	CREATE_S1_DECISIONS_SQL,
+	CREATE_S1_DECISIONS_INDEXES_SQL,
+	ADD_S1_DECISION_TAB_ID_COLUMN_SQL,
+	ADD_S1_DECISION_CACHED_COLUMN_SQL,
+	ADD_QUERY_EVENT_MODEL_COLUMNS,
+	CREATE_LOCAL_MODEL_RUNS_AGENT_INDEX_SQL,
+	CREATE_LOCAL_MODEL_RUNS_REBUILD_SQL,
+	LOCAL_MODEL_RUNS_REBUILD_TABLE,
+	LOCAL_MODEL_RUNS_V15_COLUMNS,
 	runStatements,
 } from './schema';
 import { LOG_CONTEXT } from './utils';
 import { logger } from '../utils/logger';
+import { runSqliteMigrations, sqliteUserVersion } from '../utils/sqlite-migrations';
 
 // ============================================================================
 // Migration Registry
@@ -139,6 +153,46 @@ function getMigrations(): Migration[] {
 			description: 'Add kind column to auto_run_sessions for goal-driven vs spec-driven split',
 			up: (db) => migrateV14(db),
 		},
+		{
+			version: 15,
+			description: 'Add local_model_runs table for Local Models task router runs',
+			up: (db) => migrateV15(db),
+			isApplied: (db) => hasTable(db, 'local_model_runs'),
+		},
+		{
+			version: 16,
+			description: 'Add proxy_requests table for the Maestro token proxy',
+			up: (db) => migrateV16(db),
+			isApplied: (db) => hasTable(db, 'proxy_requests'),
+		},
+		{
+			version: 17,
+			description: 'Add routed_to column to proxy_requests for background request routing',
+			up: (db) => migrateV17(db),
+			isApplied: (db) => hasColumn(db, 'proxy_requests', 'routed_to'),
+		},
+		{
+			version: 18,
+			description: 'Add s1_decisions table for the System One decision ledger',
+			up: (db) => migrateV18(db),
+			isApplied: (db) => hasTable(db, 's1_decisions'),
+		},
+		{
+			version: 19,
+			description: 'Add tab_id and cached columns to s1_decisions for agent requests',
+			up: (db) => migrateV19(db),
+			isApplied: (db) =>
+				hasColumn(db, 's1_decisions', 'tab_id') && hasColumn(db, 's1_decisions', 'cached'),
+		},
+		{
+			version: 20,
+			description:
+				'Widen local_model_runs.source_type, add its agent_id, and add Run on and routed tier columns to query_events',
+			up: (db) => migrateV20(db),
+			isApplied: (db) =>
+				localModelRunsIsCurrent(db) &&
+				ADD_QUERY_EVENT_MODEL_COLUMNS.every((column) => hasColumn(db, 'query_events', column)),
+		},
 	];
 }
 
@@ -149,111 +203,12 @@ function getMigrations(): Migration[] {
 /**
  * Run all pending database migrations.
  *
- * 1. Creates the _migrations table if it doesn't exist
- * 2. Gets the current schema version from user_version pragma
- * 3. Re-applies already-covered migrations whose schema is missing
- * 4. Runs each pending migration in a transaction
- * 5. Records each migration in the _migrations table
- * 6. Updates the user_version pragma
+ * The bookkeeping (the _migrations table, user_version, the repair of a version
+ * number that covers a migration whose schema is missing, one transaction per
+ * migration) is the shared runner's; this module owns only the stats schema.
  */
 export function runMigrations(db: Database.Database): void {
-	// Create migrations table (the only table created outside the migration system)
-	db.prepare(CREATE_MIGRATIONS_TABLE_SQL).run();
-
-	// Get current version (0 if fresh database)
-	const versionResult = db.pragma('user_version') as Array<{ user_version: number }>;
-	const currentVersion = versionResult[0]?.user_version ?? 0;
-
-	const migrations = getMigrations();
-	repairSkippedMigrations(db, migrations, currentVersion);
-
-	const pendingMigrations = migrations.filter((m) => m.version > currentVersion);
-
-	if (pendingMigrations.length === 0) {
-		logger.debug(`Database is up to date (version ${currentVersion})`, LOG_CONTEXT);
-		return;
-	}
-
-	// Sort by version to ensure sequential execution
-	pendingMigrations.sort((a, b) => a.version - b.version);
-
-	logger.info(
-		`Running ${pendingMigrations.length} pending migration(s) (current version: ${currentVersion})`,
-		LOG_CONTEXT
-	);
-
-	for (const migration of pendingMigrations) {
-		applyMigration(db, migration);
-	}
-}
-
-/**
- * Re-apply migrations the version check says ran but whose schema is missing.
- *
- * user_version is a bare number, and it only means the same thing on every
- * branch up to v7. Past that, rc and main number their migrations differently,
- * so a database last opened by an rc build can report a version that covers a
- * main migration it never ran. Every write that touches the missing schema then
- * fails, e.g. `table query_events has no column named input_tokens` on each
- * query event (MAESTRO-113/114). Only migrations that declare `isApplied` are
- * checked, and their bodies are idempotent. user_version is left alone.
- */
-function repairSkippedMigrations(
-	db: Database.Database,
-	migrations: Migration[],
-	currentVersion: number
-): void {
-	for (const migration of migrations) {
-		if (migration.version > currentVersion || !migration.isApplied) continue;
-		if (migration.isApplied(db)) continue;
-
-		logger.warn(
-			`Re-applying migration v${migration.version} (schema missing at version ${currentVersion}): ${migration.description}`,
-			LOG_CONTEXT
-		);
-		db.transaction(() => migration.up(db))();
-	}
-}
-
-/**
- * Apply a single migration within a transaction.
- * Records the migration in the _migrations table with success/failure status.
- */
-function applyMigration(db: Database.Database, migration: Migration): void {
-	const startTime = Date.now();
-	logger.info(`Applying migration v${migration.version}: ${migration.description}`, LOG_CONTEXT);
-
-	try {
-		const runMigrationTxn = db.transaction(() => {
-			migration.up(db);
-
-			db.prepare(
-				`
-        INSERT OR REPLACE INTO _migrations (version, description, applied_at, status, error_message)
-        VALUES (?, ?, ?, 'success', NULL)
-      `
-			).run(migration.version, migration.description, Date.now());
-
-			db.pragma(`user_version = ${migration.version}`);
-		});
-
-		runMigrationTxn();
-
-		const duration = Date.now() - startTime;
-		logger.info(`Migration v${migration.version} completed in ${duration}ms`, LOG_CONTEXT);
-	} catch (error) {
-		const errorMessage = error instanceof Error ? error.message : String(error);
-
-		db.prepare(
-			`
-      INSERT OR REPLACE INTO _migrations (version, description, applied_at, status, error_message)
-      VALUES (?, ?, ?, 'failed', ?)
-    `
-		).run(migration.version, migration.description, Date.now(), errorMessage);
-
-		logger.error(`Migration v${migration.version} failed: ${errorMessage}`, LOG_CONTEXT);
-		throw error;
-	}
+	runSqliteMigrations(db, getMigrations(), LOG_CONTEXT);
 }
 
 // ============================================================================
@@ -289,8 +244,7 @@ export function getMigrationHistory(db: Database.Database): MigrationRecord[] {
  * Get the current database schema version.
  */
 export function getCurrentVersion(db: Database.Database): number {
-	const versionResult = db.pragma('user_version') as Array<{ user_version: number }>;
-	return versionResult[0]?.user_version ?? 0;
+	return sqliteUserVersion(db);
 }
 
 /**
@@ -510,6 +464,166 @@ function migrateV14(db: Database.Database): void {
 		db.prepare(ADD_AUTO_RUN_SESSION_KIND_COLUMN_SQL).run();
 	}
 	logger.debug('Added kind column to auto_run_sessions table', LOG_CONTEXT);
+}
+
+/**
+ * Migration v15: local_model_runs - one row per Local Models task run that
+ * reached a model (local or endpoint), so the Usage Dashboard can show what
+ * housekeeping ran where, how long it took, and what failed.
+ *
+ * Declares `isApplied` like v8 onwards: if rc lands a different v15 first, an
+ * install stamped 15 by that build still gets this table.
+ */
+function migrateV15(db: Database.Database): void {
+	runStatements(db, CREATE_LOCAL_MODEL_RUNS_SQL);
+	runStatements(db, CREATE_LOCAL_MODEL_RUNS_INDEXES_SQL);
+	logger.debug('Created local_model_runs table', LOG_CONTEXT);
+}
+
+/**
+ * Migration v16: proxy_requests - one row per model request the Maestro token
+ * proxy carried, so the Local Models tab can show what it saved and what it
+ * cost in latency. Declares `isApplied` for the same reason v15 does.
+ */
+function migrateV16(db: Database.Database): void {
+	runStatements(db, CREATE_PROXY_REQUESTS_SQL);
+	runStatements(db, CREATE_PROXY_REQUESTS_INDEXES_SQL);
+	logger.debug('Created proxy_requests table', LOG_CONTEXT);
+}
+
+/**
+ * Migration v17: proxy_requests.routed_to - the Local Models target a
+ * background request was sent to in place of the provider. A table created by
+ * v16 at this version already has the column, so the body is guarded; it
+ * declares `isApplied` so a database stamped 17 by another branch still gets it.
+ */
+function migrateV17(db: Database.Database): void {
+	if (!hasColumn(db, 'proxy_requests', 'routed_to')) {
+		db.prepare(ADD_PROXY_REQUEST_ROUTED_TO_COLUMN_SQL).run();
+	}
+	logger.debug('Added routed_to column to proxy_requests', LOG_CONTEXT);
+}
+
+/**
+ * Migration v18: s1_decisions - one row per task run that was handed to a
+ * System One engine, so the ledger can show what was decided and what happened
+ * when no answer came. Declares `isApplied` for the same reason v15 does.
+ */
+function migrateV18(db: Database.Database): void {
+	runStatements(db, CREATE_S1_DECISIONS_SQL);
+	runStatements(db, CREATE_S1_DECISIONS_INDEXES_SQL);
+	logger.debug('Created s1_decisions table', LOG_CONTEXT);
+}
+
+/**
+ * Migration v19: s1_decisions.tab_id and s1_decisions.cached - the AI tab an
+ * agent's own request came from, and whether it was answered from the answer
+ * cache. A table created by v18 at this version already has both, so each is
+ * guarded; it declares `isApplied` for the same reason v17 does.
+ */
+function migrateV19(db: Database.Database): void {
+	if (!hasColumn(db, 's1_decisions', 'tab_id')) {
+		db.prepare(ADD_S1_DECISION_TAB_ID_COLUMN_SQL).run();
+	}
+	if (!hasColumn(db, 's1_decisions', 'cached')) {
+		db.prepare(ADD_S1_DECISION_CACHED_COLUMN_SQL).run();
+	}
+	logger.debug('Added tab_id and cached columns to s1_decisions', LOG_CONTEXT);
+}
+
+/**
+ * Migration v20: what the Usage Dashboard's Models tab needs and nothing
+ * recorded.
+ *
+ *   - `local_model_runs.source_type` gains `server` (a run the Maestro model
+ *     server answered) and `system-one` (a request sent to a remote System One
+ *     engine), and the table gains a nullable `agent_id`.
+ *   - `query_events` gains `run_on_endpoint`, `run_on_model` and `routed_tier`:
+ *     where an agent turn's model ran, and the tier Auto's router chose.
+ *
+ * Every step is guarded, so the body is safe to repeat, and it declares
+ * `isApplied` for the same reason v15 does.
+ */
+function migrateV20(db: Database.Database): void {
+	rebuildLocalModelRuns(db);
+	db.prepare(CREATE_LOCAL_MODEL_RUNS_AGENT_INDEX_SQL).run();
+
+	for (const column of ADD_QUERY_EVENT_MODEL_COLUMNS) {
+		if (hasColumn(db, 'query_events', column)) continue;
+		db.prepare(`ALTER TABLE query_events ADD COLUMN ${column} TEXT`).run();
+	}
+
+	logger.debug(
+		'Rebuilt local_model_runs and added model columns to query_events table',
+		LOG_CONTEXT
+	);
+}
+
+/**
+ * Whether `local_model_runs` has the v20 shape: the `agent_id` column, and a
+ * `source_type` CHECK that names `system-one`. A CHECK cannot be read through a
+ * pragma, so the test is on the table's stored definition.
+ */
+function localModelRunsIsCurrent(db: Database.Database): boolean {
+	if (!hasColumn(db, 'local_model_runs', 'agent_id')) return false;
+	const row = db
+		.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name = 'local_model_runs'")
+		.get() as { sql: string } | undefined;
+	return !!row?.sql.includes("'system-one'");
+}
+
+/**
+ * Give `local_model_runs` its v20 shape without losing a row.
+ *
+ * SQLite cannot alter a CHECK constraint, so this is the table rebuild its
+ * documentation prescribes: create the new table beside the old one, copy
+ * every row, drop the old table, rename the new one into place, and put the
+ * indexes back (a dropped table takes its indexes with it). The migration
+ * runner holds one transaction around all of it, so a failure at any step
+ * leaves the old table exactly as it was.
+ *
+ * The row counts are compared before the old table is dropped. The copy has no
+ * WHERE clause and every old `source_type` satisfies the wider CHECK, so they
+ * cannot differ; if they ever do, the migration fails rather than drop data.
+ */
+function rebuildLocalModelRuns(db: Database.Database): void {
+	if (!hasTable(db, 'local_model_runs')) {
+		// Stamped past v15 by a build that never created it: there is nothing to copy.
+		runStatements(db, CREATE_LOCAL_MODEL_RUNS_SQL);
+		runStatements(db, CREATE_LOCAL_MODEL_RUNS_INDEXES_SQL);
+		return;
+	}
+	if (localModelRunsIsCurrent(db)) return;
+
+	// A table that already carries `agent_id` under the old CHECK keeps its values.
+	const columns = [
+		...LOCAL_MODEL_RUNS_V15_COLUMNS,
+		...(hasColumn(db, 'local_model_runs', 'agent_id') ? ['agent_id'] : []),
+	].join(', ');
+
+	db.prepare(`DROP TABLE IF EXISTS ${LOCAL_MODEL_RUNS_REBUILD_TABLE}`).run();
+	db.prepare(CREATE_LOCAL_MODEL_RUNS_REBUILD_SQL).run();
+	db.prepare(
+		`INSERT INTO ${LOCAL_MODEL_RUNS_REBUILD_TABLE} (${columns}) SELECT ${columns} FROM local_model_runs`
+	).run();
+
+	const before = countRows(db, 'local_model_runs');
+	const after = countRows(db, LOCAL_MODEL_RUNS_REBUILD_TABLE);
+	if (before !== after) {
+		throw new Error(
+			`local_model_runs rebuild copied ${after} of ${before} rows; the table was left as it was.`
+		);
+	}
+
+	db.prepare('DROP TABLE local_model_runs').run();
+	db.prepare(`ALTER TABLE ${LOCAL_MODEL_RUNS_REBUILD_TABLE} RENAME TO local_model_runs`).run();
+	runStatements(db, CREATE_LOCAL_MODEL_RUNS_INDEXES_SQL);
+
+	logger.info(`Rebuilt local_model_runs with ${after} row(s) carried over`, LOG_CONTEXT);
+}
+
+function countRows(db: Database.Database, table: string): number {
+	return (db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number }).count;
 }
 
 /**

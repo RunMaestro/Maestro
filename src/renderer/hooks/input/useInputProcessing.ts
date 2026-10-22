@@ -1,3 +1,8 @@
+import { getAgentCommands } from '../../utils/agentCommands';
+import { prepareProviderTranslationForSend } from '../../services/providerTranslation';
+import { TranslationSendHeldError } from '../../../shared/maestro-lib/translation/send';
+import { applyQueuedItemDispatchFailure } from '../../utils/executionQueue';
+import { pendingTranslationSource } from '../../../shared/maestro-lib/translation/send';
 import { useCallback, useLayoutEffect, useRef } from 'react';
 import type {
 	Session,
@@ -7,6 +12,7 @@ import type {
 	CustomAICommand,
 	BatchRunState,
 	AITab,
+	QueuedTurnSettings,
 } from '../../types';
 import {
 	getActiveTab,
@@ -17,7 +23,14 @@ import {
 } from '../../utils/tabHelpers';
 import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 import { generateId, getInputBroadcastOriginId } from '../../utils/ids';
-import { captureQueuedTurnSettings, codifyTurnSettings } from '../../utils/providerTabSessions';
+import {
+	captureQueuedTurnSettings,
+	codifyQueuedTurnSettings,
+	projectTabProvider,
+	resolveTabProvider,
+} from '../../utils/providerTabSessions';
+import { routeQueuedAutoItem, settleAutoTurn, turnSpawnSettings } from '../../services/autoTurn';
+import type { AutoRouteStamp } from '../../../shared/autoTurn';
 import { substituteTemplateVariables } from '../../utils/templateVariables';
 import { prependNewSessionMessageOnFirstTurn } from '../../../shared/newSessionMessage';
 import { resolveTabPermissionMode } from '../../../shared/agentMetadata';
@@ -244,6 +257,8 @@ export type ProcessInputOptions = {
 	sessionId?: string;
 	/** Prefer this AI tab over the session's current activeTabId. */
 	tabId?: string;
+	/** Frozen ownership for a deferred recovery send. */
+	turnSettings?: QueuedTurnSettings;
 };
 
 export interface UseInputProcessingReturn {
@@ -336,6 +351,8 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							? sessionsRef.current.find((s) => s.id === resolvedSessionId)
 							: undefined) ?? selectActiveSession(useSessionStore.getState()));
 
+			if (options?.tabId && !activeSession?.aiTabs.some((tab) => tab.id === options.tabId)) return;
+
 			// Pin the target tab before any async work. The user can switch tabs while
 			// process reconciliation or agent configuration is in flight, but this send
 			// must keep using the tab that owned the submitted input.
@@ -346,6 +363,13 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				: undefined;
 			const resolveTargetTab = (session: Session) =>
 				targetTabId ? session.aiTabs.find((tab) => tab.id === targetTabId) : getActiveTab(session);
+
+			const submittedSettings =
+				options?.turnSettings ??
+				(activeSession
+					? captureQueuedTurnSettings(resolveTargetTab(activeSession), activeSession)
+					: undefined);
+			const submittedProvider = submittedSettings?.provider;
 
 			const syncTarget = activeSession
 				? {
@@ -492,7 +516,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					!isTerminalMode &&
 					commandText === '/skills' &&
 					onSkillsCommand &&
-					activeSession.toolType === 'claude-code'
+					submittedProvider! === 'claude-code'
 				) {
 					setInputValue('');
 					setSlashCommandOpen(false);
@@ -516,9 +540,11 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						firstSpaceIndex === -1 ? '' : commandText.substring(firstSpaceIndex + 1).trim();
 
 					// Check custom AI commands first, then agent-discovered commands with prompts
-					const matchingAgentCommand = activeSession.agentCommands?.find(
-						(cmd) => cmd.command === baseCommand && cmd.prompt
-					);
+					const matchingAgentCommand = getAgentCommands(
+						activeSession,
+						resolveTargetTab(activeSession),
+						submittedProvider
+					)?.find((cmd) => cmd.command === baseCommand && cmd.prompt);
 					const matchingCustomCommand =
 						customAICommands.find((cmd) => cmd.command === baseCommand) ||
 						(matchingAgentCommand
@@ -597,7 +623,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 								// after the user has switched to something else, and this
 								// command must run under - and be labeled with - what was
 								// selected when they sent it.
-								turnSettings: captureQueuedTurnSettings(activeTab, activeSession),
+								turnSettings: submittedSettings,
 							};
 
 							// If session is idle, we need to set up state and process immediately
@@ -614,7 +640,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 													...tab,
 													state: 'busy' as const,
 													thinkingStartTime: Date.now(),
-													...codifyTurnSettings(tab, s),
+													...codifyQueuedTurnSettings({ turnSettings: submittedSettings }, tab, s),
 												}
 											: tab
 									);
@@ -1116,6 +1142,14 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				);
 
 				const shouldQueue =
+					(liveTab &&
+						Boolean(
+							pendingTranslationSource(
+								liveSession,
+								liveTab.id,
+								resolveTabProvider(liveTab, liveSession)
+							)
+						)) ||
 					options?.hold ||
 					connectionHold ||
 					retryHoldsTab ||
@@ -1169,7 +1203,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						}),
 						// Freeze the model/effort now - see the slash-command queue path
 						// above. Queuing is the send; the dispatch happens later.
-						turnSettings: captureQueuedTurnSettings(liveTab, liveSession),
+						turnSettings: submittedSettings,
 					};
 
 					// Add to queue - will be processed when:
@@ -1203,6 +1237,10 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							executionQueue: [...s.executionQueue, queuedItem],
 						};
 					});
+					// A message queued on the Auto model is routed NOW, while it waits,
+					// and the answer is written onto the item: what the router said is
+					// part of what was frozen at send. A no-op on a named model.
+					routeQueuedAutoItem(resolvedSessionId, queuedItem);
 					// Steer Running Turn: the draft is a queued item now, which is what a
 					// steer starts from. One that cannot be steered stays queued and the
 					// service says why.
@@ -1422,7 +1460,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 								// the time they land. The model and effort are frozen here for
 								// the same reason - the transcript attributes each response to
 								// the configuration it actually ran under.
-								...codifyTurnSettings(tab, s),
+								...codifyQueuedTurnSettings({ turnSettings: submittedSettings }, tab, s),
 								// Mark this tab as awaiting session ID so we can assign it correctly
 								// when the session ID comes back (prevents cross-tab assignment)
 								awaitingSessionId: isNewSession ? true : tab.awaitingSessionId,
@@ -1513,13 +1551,13 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			// Check if this is an AI agent in batch mode
 			// Batch mode agents spawn a new process per message rather than writing to stdin
 			const isBatchModeAgent =
-				currentMode === 'ai' && hasCapabilityCached(activeSession.toolType, 'supportsBatchMode');
+				currentMode === 'ai' && hasCapabilityCached(submittedProvider!, 'supportsBatchMode');
 
 			if (isForceParallel) {
 				logger.info('[ForcedParallel] Reached spawn path:', undefined, {
 					targetSessionId,
 					isBatchModeAgent,
-					toolType: activeSession.toolType,
+					toolType: submittedProvider!,
 				});
 			}
 
@@ -1528,10 +1566,13 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			// queue if the spawn collides with a live turn. Both must describe the same
 			// message - the raw text the user typed (no nudge, which processQueuedItem
 			// does not add either), its images, and the turn settings frozen at send.
+			// `route` is what the model router answered for this send, once a turn
+			// on the Auto model has been settled: a resend or a re-queue of the same
+			// message carries the answer instead of asking again.
 			const buildComposerQueuedItem = (
 				tabId: string,
 				tab: AITab | undefined,
-				session: Session
+				route?: AutoRouteStamp
 			): QueuedItem => ({
 				id: generateId(),
 				timestamp: Date.now(),
@@ -1543,22 +1584,44 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				readOnlyMode: isReadOnlyEntry,
 				...(isForceParallel && { forceParallel: true }),
 				...queuedMentionFields(crossAgentMentionPlan),
-				turnSettings: captureQueuedTurnSettings(tab, session),
+				turnSettings: { ...submittedSettings, ...(route ? { route } : {}) },
 			});
+
+			const directQueuedItem = buildComposerQueuedItem(
+				targetTabId || activeSession.activeTabId,
+				activeTabForEntry ?? undefined
+			);
 
 			if (isBatchModeAgent) {
 				// Batch mode: Spawn new agent process with prompt
 				(async () => {
+					// What the model router answered for this send, when it went out on
+					// the Auto model. Outside the `try` so a collision re-queue keeps it.
+					let sentRoute: AutoRouteStamp | undefined;
 					try {
 						// Get agent configuration
-						const agent = await window.maestro.agents.get(activeSession.toolType);
-						if (!agent) throw new Error(`${activeSession.toolType} agent not found`);
+						const agent = await window.maestro.agents.get(submittedProvider!);
+						if (!agent) throw new Error(`${submittedProvider!} agent not found`);
 
 						// Read mutable session fields from the ref, but keep the submitted tab pinned.
-						const freshSession = sessionsRef.current.find((s) => s.id === resolvedSessionId);
+						await prepareProviderTranslationForSend(
+							resolvedSessionId,
+							directQueuedItem.tabId!,
+							directQueuedItem.turnSettings!.provider!
+						);
+						const currentSession = useSessionStore
+							.getState()
+							.sessions.find((s) => s.id === resolvedSessionId);
+						const projected = currentSession
+							? projectTabProvider(
+									currentSession,
+									resolveTargetTab(currentSession),
+									directQueuedItem.turnSettings!.provider!
+								)
+							: undefined;
+						const freshSession = projected?.agent;
 						if (!freshSession) throw new Error('Session not found');
-
-						const freshActiveTab = resolveTargetTab(freshSession);
+						const freshActiveTab = projected?.tab;
 						if (!freshActiveTab) throw new Error('Target tab not found');
 
 						// Use the target tab's agentSessionId (not the deprecated session-level one)
@@ -1600,7 +1663,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						// Use agent.path (full path) if available, otherwise fall back to agent.command
 						const commandToUse = agent.path || agent.command;
 						if (!commandToUse) {
-							throw new Error(`${activeSession.toolType} agent has no command configured`);
+							throw new Error(`${submittedProvider!} agent has no command configured`);
 						}
 
 						// If user sends only an image without text, inject the default image-only prompt
@@ -1644,10 +1707,24 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						//    invocation - the flag isn't persisted into the session transcript.
 						//  - Fallback-embed agents (e.g. Copilot-CLI, Codex): embed only on first
 						//    turn; on resume the prompt is already in the transcript.
-						const appendSystemPrompt = await prepareMaestroSystemPrompt({
-							session: freshSession,
-							activeTabId: targetTabId,
-						});
+						// A turn on the Auto model is settled here, beside the system
+						// prompt: the tab took the turn with a pending stamp, and the
+						// router's answer decides the model, effort and place this spawn
+						// launches with. The router judges what the user sent, without the
+						// notes added around it above. Null for a turn on a named model. A
+						// tier target that cannot be used throws, into the catch below.
+						const [appendSystemPrompt, autoLaunch] = await Promise.all([
+							prepareMaestroSystemPrompt({
+								session: freshSession,
+								activeTabId: targetTabId,
+							}),
+							settleAutoTurn({
+								sessionId: resolvedSessionId,
+								tabId: freshActiveTab.id,
+								prompt: hasImages && hasNoText ? DEFAULT_IMAGE_ONLY_PROMPT : effectiveInputValue,
+							}),
+						]);
+						sentRoute = autoLaunch?.route;
 
 						// Agent Resilience: snapshot the prompt BEFORE spawning. This path does
 						// not go through agentStore.processQueuedItem, so without this a limit
@@ -1657,7 +1734,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						// spawn promise settles, so this cannot wait until after the await.
 						noteDirectDispatch(
 							resolvedSessionId,
-							buildComposerQueuedItem(freshActiveTab.id, freshActiveTab, freshSession)
+							buildComposerQueuedItem(freshActiveTab.id, freshActiveTab, sentRoute)
 						);
 
 						// Spawn agent with generic config - the main process will use agent-specific
@@ -1680,13 +1757,45 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							sessionCustomArgs: freshSession.customArgs,
 							sessionAdditionalDirectories: freshSession.additionalDirectories,
 							sessionCustomEnvVars: freshSession.customEnvVars,
-							sessionCustomModel: freshActiveTab?.customModel ?? freshSession.customModel,
-							sessionCustomEffort: freshActiveTab?.customEffort ?? freshSession.customEffort,
+							...turnSpawnSettings(autoLaunch, {
+								model: directQueuedItem.turnSettings?.model,
+								effort: directQueuedItem.turnSettings?.effort,
+								runOn: directQueuedItem.turnSettings?.runOn,
+							}),
 							sessionCustomContextWindow: freshSession.customContextWindow,
 							// Per-session SSH remote config (takes precedence over agent-level SSH config)
 							sessionSshRemoteConfig: freshSession.sessionSshRemoteConfig,
 						});
 					} catch (error) {
+						if (error instanceof TranslationSendHeldError) {
+							const targetRunning =
+								error.deferred &&
+								(await probeSessionAiProcesses(resolvedSessionId, directQueuedItem.tabId))
+									.targetTabActive;
+							updateSessionWith(resolvedSessionId, (s) => {
+								const recovered = applyQueuedItemDispatchFailure(
+									{
+										...s,
+										aiTabs: s.aiTabs.map((tab) =>
+											tab.id === directQueuedItem.tabId
+												? { ...tab, logs: tab.logs.filter((log) => log.id !== newEntry.id) }
+												: tab
+										),
+									},
+									directQueuedItem,
+									{ collision: targetRunning }
+								);
+								return error.deferred
+									? {
+											...recovered,
+											executionQueue: recovered.executionQueue.map((item) =>
+												item.id === directQueuedItem.id ? { ...item, paused: false } : item
+											),
+										}
+									: recovered;
+							});
+							return;
+						}
 						logger.error('Failed to spawn agent batch process:', undefined, error);
 						// "Agent process already running" is a COLLISION, not an outcome:
 						// this dispatch arrived while the tab was already mid-turn. The
@@ -1717,7 +1826,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							// only a real spawn failure, where nothing is running, resets
 							// it and writes the error the user can act on.
 							if (isSpawnCollision) {
-								const requeued = buildComposerQueuedItem(errorTabId, errorTab, s);
+								const requeued = buildComposerQueuedItem(errorTabId, errorTab, sentRoute);
 								return { ...s, executionQueue: [...executionQueue, requeued] };
 							}
 							// Settle the target tab and add the error log; another tab

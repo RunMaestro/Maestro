@@ -1,9 +1,10 @@
-import * as fs from 'node:fs/promises';
+import { localTranslationFs } from './local-fs';
 import * as path from 'node:path';
 import { generateUUID } from '../../uuid';
 import { encodeClaudeProjectPath } from '../../pathUtils';
 import { canonicalJson } from '../../canonicalJson';
 import { extractNativeConversation } from './native-records';
+import { activeContextRecords } from './context-window';
 import { nativeRecordKey, recordKey, translationHash } from './identity';
 import { TranslationRegistry } from './registry';
 import { TRANSLATION_DIRECTIONS, TRANSLATION_PROVIDER_VERSIONS } from './support';
@@ -27,11 +28,11 @@ export function projectConversation(
 	conversation: PortableConversation,
 	provider: 'claude-code' | 'codex',
 	sessionId: string,
-	destinationVersion: string = TRANSLATION_PROVIDER_VERSIONS['claude-code'][0]
+	destinationVersion: string = TRANSLATION_PROVIDER_VERSIONS['claude-code'].testedVersions[0]
 ): ProjectedNativeRecord[] {
 	const projected: ProjectedNativeRecord[] = [];
 	let parentUuid: string | null = null;
-	for (const record of conversation.records) {
+	for (const record of activeContextRecords(conversation.records)) {
 		if (
 			record.native &&
 			typeof record.native === 'object' &&
@@ -87,6 +88,7 @@ export function projectConversation(
 					break;
 				}
 				case 'tool-call':
+					if (block.interrupted) break;
 					if (provider === 'claude-code') {
 						let input = block.input;
 						if (typeof input === 'string') {
@@ -203,9 +205,12 @@ async function stageClaude(
 	conversation: PortableConversation,
 	context: TranslationStageContext
 ): Promise<TranslationTabMapping> {
+	const nativeFs = context.nativeFs ?? localTranslationFs;
+	const paths = nativeFs.paths ?? path;
 	const sessionId = generateUUID();
-	const file = path.join(
-		context.destination.nativeSessionRoot ?? path.join(context.destination.accountRoot, 'projects'),
+	const file = paths.join(
+		context.destination.nativeSessionRoot ??
+			paths.join(context.destination.accountRoot, 'projects'),
 		encodeClaudeProjectPath(context.destination.projectRoot),
 		`${sessionId}.jsonl`
 	);
@@ -234,24 +239,25 @@ async function stageClaude(
 	await context.recordIntent(mapping);
 	await assertTranslationTarget(
 		file,
-		context.destination.nativeSessionRoot ?? context.destination.accountRoot
+		context.destination.nativeSessionRoot ?? context.destination.accountRoot,
+		nativeFs
 	);
-	await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
+	await nativeFs.mkdir(paths.dirname(file), { recursive: true, mode: 0o700 });
 	await assertTranslationTarget(
 		file,
-		context.destination.nativeSessionRoot ?? context.destination.accountRoot
+		context.destination.nativeSessionRoot ?? context.destination.accountRoot,
+		nativeFs
 	);
 	// Exclusive new file: a provider or another process can never lose an existing transcript.
-	const handle = await fs.open(file, 'wx', 0o600);
-	try {
-		mapping.artifacts[0].created = true;
-		await context.recordIntent(mapping);
-		await handle.writeFile(bytes);
-		await handle.sync();
-	} finally {
-		await handle.close();
-	}
-	if (translationHash(await fs.readFile(file)) !== mapping.artifacts[0].sha256)
+	await nativeFs.createExclusive(file, bytes, {
+		mode: 0o600,
+		durable: true,
+		onCreated: async () => {
+			mapping.artifacts[0].created = true;
+			await context.recordIntent(mapping);
+		},
+	});
+	if (translationHash(await nativeFs.readFile(file)) !== mapping.artifacts[0].sha256)
 		throw new Error('Claude destination readback failed');
 	return mapping;
 }
@@ -260,6 +266,8 @@ async function stageCodex(
 	conversation: PortableConversation,
 	context: TranslationStageContext
 ): Promise<TranslationTabMapping> {
+	const nativeFs = context.nativeFs ?? localTranslationFs;
+	const paths = nativeFs.paths ?? path;
 	if (!context.codex) throw new Error('Codex native import channel unavailable; no exec fallback');
 	const rows = projectConversation(conversation, 'codex', 'pending');
 	const items = rows.map((row) => {
@@ -290,10 +298,10 @@ async function stageCodex(
 	const sessionId = started.thread?.id;
 	if (!sessionId || !started.thread.path)
 		throw new Error('Codex did not return a durable native thread identity');
-	const relative = path.relative(context.destination.accountRoot, started.thread.path);
-	if (relative.startsWith('..') || path.isAbsolute(relative))
+	const relative = paths.relative(context.destination.accountRoot, started.thread.path);
+	if (relative.startsWith('..') || paths.isAbsolute(relative))
 		throw new Error('Codex returned a rollout outside the selected account');
-	await assertTranslationTarget(started.thread.path, context.destination.accountRoot);
+	await assertTranslationTarget(started.thread.path, context.destination.accountRoot, nativeFs);
 	const mapping: TranslationTabMapping = {
 		...intent,
 		destinationSessionId: sessionId,
@@ -306,7 +314,7 @@ async function stageCodex(
 		items,
 	});
 	// Read persisted bytes, not a successful RPC response or a flattened UI projection.
-	const bytes = await fs.readFile(started.thread.path);
+	const bytes = await nativeFs.readFile(started.thread.path);
 	const readback = extractNativeConversation(
 		context.destination,
 		conversation.tabId,
@@ -337,13 +345,13 @@ async function stageCodex(
 
 export const claudeTranslationAdapter: TranslationAdapter = {
 	provider: 'claude-code',
-	versions: TRANSLATION_PROVIDER_VERSIONS['claude-code'],
+	...TRANSLATION_PROVIDER_VERSIONS['claude-code'],
 	extract: extractNativeConversation,
 	stage: stageClaude,
 };
 export const codexTranslationAdapter: TranslationAdapter = {
 	provider: 'codex',
-	versions: TRANSLATION_PROVIDER_VERSIONS.codex,
+	...TRANSLATION_PROVIDER_VERSIONS.codex,
 	extract: extractNativeConversation,
 	stage: stageCodex,
 };

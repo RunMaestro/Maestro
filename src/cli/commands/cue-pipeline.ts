@@ -9,6 +9,7 @@
 
 import * as fs from 'fs';
 import { withMaestroClient, type MaestroClient } from '../services/maestro-client';
+import { ExitCode, exitWith } from '../exit-codes';
 import { exitIfMaestroNotRunning } from '../services/session-command';
 
 interface CommonOptions {
@@ -50,7 +51,7 @@ function reportError(message: string, options: CommonOptions): never {
 	} else {
 		console.error(`Error: ${message}`);
 	}
-	process.exit(1);
+	exitWith(ExitCode.GeneralError);
 }
 
 async function listPipelines(client: MaestroClient): Promise<PipelineEntry[]> {

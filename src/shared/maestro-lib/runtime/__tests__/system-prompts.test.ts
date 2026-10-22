@@ -27,6 +27,7 @@ import { loadAgentSystemPrompt, loadPluginSectionsSystemPrompt } from '../../tur
 import { toTurnAgent } from '../../turns/records';
 import type { BackgroundTurns } from '../background-turns';
 import { createRuntimeConsults, type RuntimeConsultInput } from '../consults';
+import { createProcessRegistry } from '../processes';
 import { createMaestroRuntime, type MaestroRuntime, type RuntimeDeps } from '../index';
 
 /** Every spawn a group chat runner was handed, in order. */
@@ -276,6 +277,7 @@ describe('a headless consult', () => {
 		const runtime = createRuntimeConsults({
 			paths,
 			repository,
+			registry: createProcessRegistry(),
 			fence: () => ({ ok: true }),
 			background,
 			historyWriter: { append: async () => ({ ok: true }) as never },

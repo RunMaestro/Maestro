@@ -5,6 +5,7 @@
  * transfer_context, summarize_context, create_gist.
  */
 
+import type { CreateGistResult } from '../../../../shared/gitUtils';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
 
 /**
@@ -134,7 +135,7 @@ export function handleCreateGist(
 	client: WebClient,
 	message: WebClientMessage
 ): void {
-	const reply = (result: { success: boolean; gistUrl?: string; error?: string }) => {
+	const reply = (result: CreateGistResult) => {
 		ctx.send(client, {
 			type: 'create_gist_result',
 			...result,
@@ -174,8 +175,15 @@ export function handleCreateGist(
 		}
 		agentSessionId = rawAgentSessionId;
 	}
+	// Only a literal `true` publishes past the secret screen. Anything else,
+	// including a string, is a refusal rather than a quiet opt-in.
+	if (message.allowSecrets !== undefined && typeof message.allowSecrets !== 'boolean') {
+		reply({ success: false, error: 'allowSecrets must be a boolean when provided' });
+		return;
+	}
 	const description = message.description ?? '';
 	const isPublic = message.isPublic ?? false;
+	const allowSecrets = message.allowSecrets === true;
 
 	if (!ctx.callbacks.createGist) {
 		reply({ success: false, error: 'Gist creation not configured' });
@@ -183,7 +191,7 @@ export function handleCreateGist(
 	}
 
 	ctx.callbacks
-		.createGist(sessionId, description, isPublic, agentSessionId)
+		.createGist(sessionId, description, isPublic, agentSessionId, allowSecrets)
 		.then((result) => {
 			reply(result);
 		})

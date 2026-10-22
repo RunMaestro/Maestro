@@ -142,6 +142,41 @@ afterEach(() => {
 // ============================================================================
 
 describe('handleSummarizeAndContinue (Tier 3E)', () => {
+	it('summarizes with the source native owner and pins the continuation', async () => {
+		const tab = createMockTab({
+			tabProvider: 'codex',
+			pendingTranslation: 'opencode',
+			providerSessions: { opencode: { agentSessionId: 'native' } },
+		});
+		const session = createMockSession({
+			aiTabs: [tab],
+			activeTabId: tab.id,
+			customPath: '/claude',
+			customEnvVars: { CLAUDE: 'yes' },
+			providerOverrides: { opencode: { customPath: '/opencode', customEnvVars: { OPEN: 'yes' } } },
+		});
+		seedActiveSession(session);
+		const { result } = renderHook(() => useSummarizeAndContinue());
+		let summary: Awaited<ReturnType<typeof result.current.startSummarize>>;
+		await act(async () => {
+			summary = await result.current.startSummarize(tab.id);
+		});
+		expect(contextSummarizationService.summarizeContext).toHaveBeenCalledWith(
+			expect.objectContaining({
+				agentType: 'opencode',
+				customPath: '/opencode',
+				customEnvVars: { OPEN: 'yes' },
+				claudeTokenSource: {},
+			}),
+			tab.logs,
+			expect.any(Function)
+		);
+		expect(
+			summary!.updatedSession.aiTabs.find((t) => t.id === summary!.newTabId)?.tabProvider
+		).toBe('opencode');
+		expect(session.toolType).toBe('claude-code');
+	});
+
 	it('returns when no session is provided', async () => {
 		seedActiveSession(null);
 		const { result } = renderHook(() => useSummarizeAndContinue());

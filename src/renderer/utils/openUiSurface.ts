@@ -10,12 +10,20 @@
 
 import type { CueModalData, ModalId } from '../stores/modalStore';
 import { getModalActions, useModalStore } from '../stores/modalStore';
+import { selectSessionById, useSessionStore } from '../stores/sessionStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useUIStore } from '../stores/uiStore';
 import { useFeedbackDraftStore } from '../stores/feedbackDraftStore';
 import { useThroughputGaugeStore } from '../stores/throughputGaugeStore';
 import { notifyToast, useNotificationStore } from '../stores/notificationStore';
-import { resolveUiSurface, resolveUiSurfaceTab, uiSurfaceRefusal } from '../../shared/uiSurfaces';
+import { openAgentSettings } from '../services/agentNavigation';
+import {
+	resolveUiSurface,
+	resolveUiSurfaceTarget,
+	uiSurfaceRefusal,
+	type OpenUiSurfaceRequest,
+} from '../../shared/uiSurfaces';
+import type { AgentSettingsTabId } from '../../shared/agentSettingsTabs';
 import { isWebDesktop } from './runtimeContext';
 import type { SettingsTab, UsageDashboardViewMode } from '../types';
 
@@ -26,7 +34,9 @@ export interface OpenUiSurfaceResult {
 }
 
 /**
- * Open `surfaceId`, optionally deep-linking to `tabId`.
+ * Open the surface a request names, optionally deep-linking to its `tab` and,
+ * inside it, `subTab`, on the agent group `group` for a surface that takes
+ * one, or for the agent `agent` when the surface is one agent's.
  *
  * Refuses when the surface (or the requested tab) is behind an Encore Feature
  * the user has turned off. The refusal goes back to the caller only - no toast:
@@ -35,14 +45,19 @@ export interface OpenUiSurfaceResult {
  * a setting the user never touched. (`maestro-cli open` gets the same refusal
  * from the main process, which checks before the renderer is asked.)
  */
-export function openUiSurface(surfaceId: string, tabId?: string): OpenUiSurfaceResult {
-	const surface = resolveUiSurface(surfaceId);
-	if (!surface) return { ok: false, error: `Unknown surface "${surfaceId}"` };
+export function openUiSurface(request: OpenUiSurfaceRequest): OpenUiSurfaceResult {
+	const surface = resolveUiSurface(request.surface);
+	if (!surface) return { ok: false, error: `Unknown surface "${request.surface}"` };
 
-	const tab = tabId ? resolveUiSurfaceTab(surface, tabId) : null;
-	if (tabId && !tab) return { ok: false, error: `Unknown tab "${tabId}" for ${surface.label}` };
+	const target = resolveUiSurfaceTarget(surface, request);
+	if ('error' in target) return { ok: false, error: target.error };
+	const { tab, subTab } = target;
 
-	const refusal = uiSurfaceRefusal(surface, tab, useSettingsStore.getState().encoreFeatures);
+	const refusal = uiSurfaceRefusal(
+		surface,
+		subTab ?? tab,
+		useSettingsStore.getState().encoreFeatures
+	);
 	if (refusal) return { ok: false, error: refusal };
 
 	const actions = getModalActions();
@@ -61,7 +76,7 @@ export function openUiSurface(surfaceId: string, tabId?: string): OpenUiSurfaceR
 			return { ok: true };
 		}
 		case 'settings':
-			actions.openSettings(tab ? (tab.id as SettingsTab) : undefined);
+			actions.openSettings(tab ? (tab.id as SettingsTab) : undefined, undefined, subTab?.id);
 			return { ok: true };
 		case 'cue':
 			if (tab) actions.openCueModalWithTab(tab.id as NonNullable<CueModalData['initialTab']>);
@@ -100,6 +115,27 @@ export function openUiSurface(surfaceId: string, tabId?: string): OpenUiSurfaceR
 			else useModalStore.getState().openModal('feedback');
 			return { ok: true };
 		}
+		case 'group-settings':
+			// The registry refuses this surface without a group, so one is here.
+			if (!target.group) return { ok: false, error: `${surface.label} opens on one group.` };
+			actions.openGroupSettings(target.group);
+			return { ok: true };
+		case 'agent-settings': {
+			// The registry refuses this surface without an agent, so one is here.
+			const session = target.agent
+				? selectSessionById(target.agent)(useSessionStore.getState())
+				: undefined;
+			if (!session) return { ok: false, error: `Agent not found: ${target.agent ?? ''}` };
+			// The same opener the Delegation Graph uses to land on the Peers tab.
+			openAgentSettings(session, tab ? { tab: tab.id as AgentSettingsTabId } : {});
+			return { ok: true };
+		}
+		case 'delegation-graph':
+			// A group that is gone by now is not refused here: the graph falls
+			// back to every agent, the same as a scope whose group is deleted
+			// while it is open.
+			actions.openDelegationGraph(target.group);
+			return { ok: true };
 		default:
 			// Surfaces with no data payload open generically - one line here beats
 			// a switch arm per modal that would drift as the registry grows.

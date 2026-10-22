@@ -186,6 +186,27 @@ describe('cue-stats-query - getCueStatsAggregation', () => {
 			expect(result.totals.totalCostUsd).toBeCloseTo(0.03, 5);
 		});
 
+		it('leaves gated events out: a gate skipping an event is not a run', async () => {
+			const now = Date.now();
+			mockEvents = [
+				makeEvent({
+					id: 'ran',
+					sessionId: 's1',
+					status: 'completed',
+					createdAt: now - 60_000,
+					completedAt: now - 30_000,
+				}),
+				makeEvent({ id: 'gated-1', sessionId: 's1', status: 'gated', createdAt: now - 50_000 }),
+				makeEvent({ id: 'gated-2', sessionId: 's1', status: 'gated', createdAt: now - 40_000 }),
+			];
+
+			const result = await getCueStatsAggregation('day');
+
+			expect(result.totals.occurrences).toBe(1);
+			expect(result.totals.successCount).toBe(1);
+			expect(result.totals.failureCount).toBe(0);
+		});
+
 		it('reports totalCostUsd as null when no event in the window has cost data', async () => {
 			mockEvents = [makeEvent({ id: 'e1', sessionId: 's1', status: 'completed' })];
 			mockSummaries.set(

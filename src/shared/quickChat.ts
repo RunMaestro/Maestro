@@ -679,7 +679,7 @@ export interface QuickChatLogLike {
  */
 export function logsToQuickChatMessages(
 	logs: readonly QuickChatLogLike[],
-	options: { thinking?: ThinkingMode; running?: boolean } = {}
+	options: { thinking?: ThinkingMode; running?: boolean; maxMessages?: number } = {}
 ): QuickChatMessage[] {
 	const thinking = options.thinking ?? 'off';
 	let messages: QuickChatMessage[] = [];
@@ -707,7 +707,6 @@ export function logsToQuickChatMessages(
 			(m, i) => m.role !== 'thinking' || (options.running === true && i > lastAnswer)
 		);
 	}
-	return messages.length > QUICK_CHAT_MAX_MESSAGES
-		? messages.slice(-QUICK_CHAT_MAX_MESSAGES)
-		: messages;
+	const limit = options.maxMessages ?? QUICK_CHAT_MAX_MESSAGES;
+	return messages.length > limit ? messages.slice(-limit) : messages;
 }

@@ -359,6 +359,20 @@ describe('FormInput', () => {
 		});
 	});
 
+	describe('length cap', () => {
+		it('should pass maxLength to the input', () => {
+			render(<FormInput theme={mockTheme} value="" onChange={vi.fn()} maxLength={12} />);
+
+			expect(screen.getByRole('textbox')).toHaveAttribute('maxlength', '12');
+		});
+
+		it('should set no cap when maxLength is omitted', () => {
+			render(<FormInput theme={mockTheme} value="" onChange={vi.fn()} />);
+
+			expect(screen.getByRole('textbox')).not.toHaveAttribute('maxlength');
+		});
+	});
+
 	describe('input types', () => {
 		it('should support password type', () => {
 			const onChange = vi.fn();

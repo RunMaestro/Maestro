@@ -64,7 +64,23 @@ import {
 	setTerminalTabStartupCommand as setTerminalTabStartupCommandHelper,
 	getTerminalSessionId,
 } from '../utils/terminalTabHelpers';
-import { useSessionStore, selectActiveSession, updateSessionWith } from './sessionStore';
+import {
+	useSessionStore,
+	selectActiveSession,
+	updateSessionWith,
+	updateAiTab as updateSessionAiTab,
+} from './sessionStore';
+import { useSettingsStore } from './settingsStore';
+import {
+	resolveTabProvider,
+	PROVIDER_OVERRIDE_KEYS,
+} from '../../shared/maestro-lib/agents/providerSwap';
+import { migrationHoldsTurns } from '../../shared/maestro-lib/translation/session';
+import { projectTabProvider } from '../utils/providerTabSessions';
+import { autoModelProblem } from '../../shared/autoTurn';
+import { isAutoModel, AUTO_MODEL } from '../../shared/autoModel';
+import { parseRunOnEdit } from '../../shared/local-models/run-on';
+import { getAgentPickerMeta } from '../../shared/agentMetadata';
 import {
 	renameGroup as renameGroupHelper,
 	setGroupEmoji as setGroupEmojiHelper,
@@ -297,6 +313,16 @@ export interface TabStoreActions {
 	 * Set per-tab model override. Pass undefined to clear and fall back to session/agent default.
 	 */
 	setTabModel: (tabId: string, model: string | undefined) => void;
+	/** Validate model, effort and Run on without changing the tab's native ownership. */
+	setTabSettings: (
+		sessionId: string,
+		tabId: string,
+		settings?: {
+			model?: string | null;
+			effort?: string | null;
+			runOn?: unknown;
+		}
+	) => Promise<void>;
 
 	/**
 	 * Set per-tab effort/reasoning override. Pass undefined to clear and fall back to session/agent default.
@@ -729,6 +755,94 @@ export const useTabStore = create<TabStore>()((set) => ({
 
 	setTabModel: (tabId, model) => {
 		updateAiTab(tabId, { customModel: model || undefined });
+	},
+
+	setTabSettings: async (sessionId, tabId, settings = {}) => {
+		const snapshot = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+		const snapshotTab = snapshot?.aiTabs.find((t) => t.id === tabId);
+		if (!snapshot || !snapshotTab) throw new Error('Tab not found');
+		const destination = resolveTabProvider(snapshotTab, snapshot);
+		if (!getAgentPickerMeta(destination))
+			throw new Error(`Provider cannot run an AI tab: ${destination}`);
+		if (migrationHoldsTurns(snapshot.providerMigration))
+			throw new Error('Finish the current provider translation before changing providers.');
+		const projected = projectTabProvider(snapshot, snapshotTab, destination);
+		const patch: Partial<AITab> = {};
+		if (settings.model !== undefined) {
+			if (settings.model !== null && (typeof settings.model !== 'string' || !settings.model.trim()))
+				throw new Error('Invalid tab model');
+			if (isAutoModel(settings.model)) {
+				const problem = autoModelProblem(
+					projected.agent,
+					useSettingsStore.getState().harnessTierDefaults
+				);
+				if (problem) throw new Error(problem);
+			}
+			patch.customModel =
+				settings.model === null
+					? undefined
+					: isAutoModel(settings.model)
+						? AUTO_MODEL
+						: settings.model;
+		}
+		if (settings.effort !== undefined) {
+			if (settings.effort !== null) {
+				const [effort, reasoning] = await Promise.all([
+					window.maestro.agents.getConfigOptions(destination, 'effort'),
+					window.maestro.agents.getConfigOptions(destination, 'reasoningEffort'),
+				]);
+				if (!(effort.length ? effort : reasoning).includes(settings.effort))
+					throw new Error(`Invalid effort for ${destination}: ${settings.effort}`);
+			}
+			patch.customEffort = settings.effort ?? undefined;
+		}
+		if ('runOn' in settings) {
+			if (settings.runOn === null) patch.runOn = undefined;
+			else {
+				const edit = parseRunOnEdit(
+					destination,
+					settings.runOn,
+					useSettingsStore.getState().localModelEndpoints ?? []
+				);
+				if (!edit.ok) throw new Error(edit.error);
+				patch.runOn = edit.target ?? { type: 'provider' };
+				if (
+					(snapshot.sessionSshRemoteConfig?.enabled || snapshot.sshRemoteId) &&
+					patch.runOn.type === 'source'
+				)
+					throw new Error('Run on sources are not available for SSH tabs.');
+			}
+		}
+		if (
+			!useSessionStore
+				.getState()
+				.sessions.find((s) => s.id === sessionId)
+				?.aiTabs.some((t) => t.id === tabId)
+		)
+			throw new Error('Tab changed while validating provider settings; retry the operation.');
+		updateSessionAiTab(sessionId, tabId, (tab) => {
+			const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+			if (
+				!session ||
+				session.toolType !== snapshot.toolType ||
+				session.providerOverrides !== snapshot.providerOverrides ||
+				PROVIDER_OVERRIDE_KEYS.some((key) => session[key] !== snapshot[key]) ||
+				session.sessionSshRemoteConfig !== snapshot.sessionSshRemoteConfig ||
+				session.sshRemoteId !== snapshot.sshRemoteId ||
+				tab.tabProvider !== snapshotTab.tabProvider ||
+				tab.pendingTranslation !== snapshotTab.pendingTranslation ||
+				tab.customModel !== snapshotTab.customModel ||
+				tab.customEffort !== snapshotTab.customEffort ||
+				tab.runOn !== snapshotTab.runOn
+			)
+				throw new Error('Tab changed while validating provider settings; retry the operation.');
+			if (migrationHoldsTurns(session.providerMigration))
+				throw new Error('Finish the current provider translation before changing providers.');
+			return {
+				...tab,
+				...patch,
+			};
+		});
 	},
 
 	setTabEffort: (tabId, effort) => {

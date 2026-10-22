@@ -1,6 +1,7 @@
 import { canonicalJson } from '../../canonicalJson';
 import { isPathAtOrUnderRoot } from '../../worktreePaths';
-import * as fs from 'node:fs/promises';
+import type { TranslationFs } from './fs-port';
+import { localTranslationFs } from './local-fs';
 import * as path from 'node:path';
 import yaml from 'js-yaml';
 import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
@@ -18,12 +19,13 @@ export interface TranslationResources {
 	limitations: TranslationLimitation[];
 }
 
-async function resolveResourceRoot(root: string): Promise<string> {
+async function resolveResourceRoot(root: string, nativeFs: TranslationFs): Promise<string> {
+	const paths = nativeFs?.paths ?? path;
 	try {
-		return await fs.realpath(root);
+		return await nativeFs.realpath(root);
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-		return path.resolve(root);
+		return paths.resolve(root);
 	}
 }
 
@@ -31,11 +33,13 @@ async function resolveResourceRoot(root: string): Promise<string> {
 export async function collectTranslationResources(
 	identity: TranslationIdentity,
 	scope: TranslationScope,
-	managedDirectory?: string
+	managedDirectory?: string,
+	nativeFs: TranslationFs = localTranslationFs
 ): Promise<TranslationResources> {
+	const paths = nativeFs?.paths ?? path;
 	const projectRoot = managedDirectory ?? identity.projectRoot;
-	const realProjectRoot = await resolveResourceRoot(projectRoot);
-	const realAccountRoot = await resolveResourceRoot(identity.accountRoot);
+	const realProjectRoot = await resolveResourceRoot(projectRoot, nativeFs);
+	const realAccountRoot = await resolveResourceRoot(identity.accountRoot, nativeFs);
 	const artifacts: TranslationArtifact[] = [];
 	const limitations: TranslationLimitation[] = [];
 	const seen = new Map<string, string>();
@@ -47,19 +51,19 @@ export async function collectTranslationResources(
 		allowedRoot?: string;
 	}> = [
 		...['CLAUDE.md', 'AGENTS.md'].map((name) => ({
-			file: path.join(projectRoot, name),
+			file: paths.join(projectRoot, name),
 			kind: 'instruction' as const,
 			scope: 'project' as const,
 			prefix: name,
 		})),
 		...['.claude/skills', '.agents/skills', '.codex/skills'].map((name) => ({
-			file: path.join(projectRoot, name),
+			file: paths.join(projectRoot, name),
 			kind: 'skill' as const,
 			scope: 'project' as const,
 			prefix: name,
 		})),
 		...['.claude/agents', '.codex/agents'].map((name) => ({
-			file: path.join(projectRoot, name),
+			file: paths.join(projectRoot, name),
 			kind: 'subagent' as const,
 			scope: 'project' as const,
 			prefix: name,
@@ -67,14 +71,14 @@ export async function collectTranslationResources(
 	];
 	for (const name of ['.claude/agent-memory', '.claude/agent-memory-local'])
 		roots.push({
-			file: path.join(projectRoot, name),
+			file: paths.join(projectRoot, name),
 			kind: 'memory',
 			scope: 'project',
 			prefix: name,
 		});
 	if (managedDirectory) {
 		roots.push({
-			file: path.join(managedDirectory, 'memory'),
+			file: paths.join(managedDirectory, 'memory'),
 			kind: 'memory',
 			scope: 'project',
 			prefix: 'memory',
@@ -85,7 +89,7 @@ export async function collectTranslationResources(
 			['selected-user/memories', 'memory'],
 		] as const)
 			roots.push({
-				file: path.join(managedDirectory, prefix),
+				file: paths.join(managedDirectory, prefix),
 				kind,
 				scope: 'selected-user',
 				prefix,
@@ -94,7 +98,9 @@ export async function collectTranslationResources(
 		const memory = await discoverClaudeMemoryRoot(
 			identity.projectRoot,
 			identity.accountRoot,
-			identity.memoryProjectRoot
+			identity.memoryProjectRoot,
+			nativeFs,
+			identity.remoteHome
 		);
 		if (memory.source === 'account')
 			limitations.push({
@@ -106,13 +112,13 @@ export async function collectTranslationResources(
 		else roots.push({ file: memory.path, kind: 'memory', scope: 'project', prefix: 'memory' });
 	}
 	for (const file of managedDirectory ? [] : scope.selectedUserResources) {
-		const relative = path.relative(identity.accountRoot, file).replace(/\\/g, '/');
+		const relative = paths.relative(identity.accountRoot, file).split(paths.sep).join('/');
 		const approved = identity.userResourceRoots?.find(
 			(root) =>
 				isPathAtOrUnderRoot(
-					path.resolve(file).replace(/\\/g, '/'),
-					path.resolve(root.path).replace(/\\/g, '/')
-				) && path.resolve(file) !== path.resolve(root.path)
+					paths.resolve(file).split(paths.sep).join('/'),
+					paths.resolve(root.path).split(paths.sep).join('/')
+				) && paths.resolve(file) !== paths.resolve(root.path)
 		);
 		const kind =
 			approved?.kind ??
@@ -127,7 +133,7 @@ export async function collectTranslationResources(
 							: null);
 		if (
 			!kind ||
-			!path.isAbsolute(file) ||
+			!paths.isAbsolute(file) ||
 			(!approved && relative.startsWith('../')) ||
 			relative.endsWith('memory_summary.md')
 		) {
@@ -152,16 +158,16 @@ export async function collectTranslationResources(
 			file,
 			kind,
 			scope: 'selected-user',
-			allowedRoot: approved?.path ?? path.join(identity.accountRoot, relative.split('/')[0]),
+			allowedRoot: approved?.path ?? paths.join(identity.accountRoot, relative.split('/')[0]),
 			prefix: approved
-				? `selected-user/${category}/${path.relative(approved.path, file).replace(/\\/g, '/')}`
+				? `selected-user/${category}/${paths.relative(approved.path, file).split(paths.sep).join('/')}`
 				: `selected-user/${relative}`,
 		});
 	}
 	for (const root of roots) {
 		let stat;
 		try {
-			stat = await fs.stat(root.file);
+			stat = await nativeFs.stat(root.file);
 		} catch (error) {
 			if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
 				if (root.allowedRoot)
@@ -174,12 +180,12 @@ export async function collectTranslationResources(
 			}
 			throw error;
 		}
-		const realRoot = await fs.realpath(root.file);
+		const realRoot = await nativeFs.realpath(root.file);
 		if (
 			root.allowedRoot &&
 			!isPathAtOrUnderRoot(
-				realRoot.replace(/\\/g, '/'),
-				(await resolveResourceRoot(root.allowedRoot)).replace(/\\/g, '/')
+				realRoot.split(paths.sep).join('/'),
+				(await resolveResourceRoot(root.allowedRoot, nativeFs)).split(paths.sep).join('/')
 			)
 		) {
 			limitations.push({
@@ -191,7 +197,10 @@ export async function collectTranslationResources(
 		}
 		if (
 			stat.isDirectory() &&
-			isPathAtOrUnderRoot(realAccountRoot.replace(/\\/g, '/'), realRoot.replace(/\\/g, '/'))
+			isPathAtOrUnderRoot(
+				realAccountRoot.split(paths.sep).join('/'),
+				realRoot.split(paths.sep).join('/')
+			)
 		) {
 			limitations.push({
 				code: 'unsafe-resource-scope',
@@ -203,11 +212,14 @@ export async function collectTranslationResources(
 		}
 		if (
 			((root.scope === 'project' && root.kind !== 'memory') || managedDirectory) &&
-			!isPathAtOrUnderRoot(realRoot.replace(/\\/g, '/'), realProjectRoot.replace(/\\/g, '/'))
+			!isPathAtOrUnderRoot(
+				realRoot.split(paths.sep).join('/'),
+				realProjectRoot.split(paths.sep).join('/')
+			)
 		) {
-			const link = await fs.lstat(root.file);
+			const link = await nativeFs.lstat(root.file);
 			if (link.isSymbolicLink()) {
-				const target = await fs.readlink(root.file);
+				const target = await nativeFs.readlink(root.file);
 				const artifact = translationArtifact(
 					root.kind,
 					root.file,
@@ -227,17 +239,17 @@ export async function collectTranslationResources(
 			continue;
 		}
 		const entries = stat.isDirectory()
-			? (await fs.readdir(root.file, { recursive: true }))
-					.map((name) => path.join(root.file, name))
+			? (await nativeFs.readdir(root.file, { recursive: true }))
+					.map((name) => paths.join(root.file, name))
 					.sort()
 			: [root.file];
 		for (const file of entries) {
-			const lst = await fs.lstat(file);
+			const lst = await nativeFs.lstat(file);
 			if (lst.isDirectory()) continue;
-			const real = await fs.realpath(file);
+			const real = await nativeFs.realpath(file);
 			// Existing AGENTS.md -> CLAUDE.md loads once, with the original link preserved.
 			if (seen.has(real) && !lst.isSymbolicLink()) continue;
-			if (path.basename(file) === 'memory_summary.md') {
+			if (paths.basename(file) === 'memory_summary.md') {
 				limitations.push({
 					code: 'generated-global-memory',
 					severity: 'warning',
@@ -246,22 +258,26 @@ export async function collectTranslationResources(
 				});
 				continue;
 			}
-			const directoryLink = lst.isSymbolicLink() && (await fs.stat(file)).isDirectory();
+			const directoryLink = lst.isSymbolicLink() && (await nativeFs.stat(file)).isDirectory();
 			const outsideScope = !isPathAtOrUnderRoot(
-				real.replace(/\\/g, '/'),
+				real.split(paths.sep).join('/'),
 				((root.scope === 'project' && root.kind !== 'memory') || managedDirectory
 					? realProjectRoot
 					: realRoot
-				).replace(/\\/g, '/')
+				)
+					.split(paths.sep)
+					.join('/')
 			);
 			const archiveOnlyLink = lst.isSymbolicLink() && (directoryLink || outsideScope);
-			const data = archiveOnlyLink ? Buffer.from(await fs.readlink(file)) : await fs.readFile(real);
+			const data = archiveOnlyLink
+				? Buffer.from(await nativeFs.readlink(file))
+				: await nativeFs.readFile(real);
 			const relativePath = stat.isDirectory()
-				? `${root.prefix}/${path.relative(root.file, file).replace(/\\/g, '/')}`
+				? `${root.prefix}/${paths.relative(root.file, file).split(paths.sep).join('/')}`
 				: root.prefix;
 			const artifact = translationArtifact(root.kind, file, relativePath, data, root.scope);
-			artifact.mode = 0o600 | ((await fs.stat(file)).mode & 0o100);
-			if (lst.isSymbolicLink()) artifact.symlinkTarget = await fs.readlink(file);
+			artifact.mode = 0o600 | ((await nativeFs.stat(file)).mode & 0o100);
+			if (lst.isSymbolicLink()) artifact.symlinkTarget = await nativeFs.readlink(file);
 			if (seen.has(real)) artifact.metadata = { aliasOf: seen.get(real) };
 			else seen.set(real, artifact.id);
 			if (archiveOnlyLink) {
@@ -276,7 +292,7 @@ export async function collectTranslationResources(
 			if (
 				!archiveOnlyLink &&
 				!artifact.metadata?.aliasOf &&
-				((root.kind === 'skill' && path.basename(file) === 'SKILL.md') || root.kind === 'subagent')
+				((root.kind === 'skill' && paths.basename(file) === 'SKILL.md') || root.kind === 'subagent')
 			) {
 				const projection = projectResourceDefinition(
 					artifact,
@@ -395,12 +411,13 @@ export function projectResourceDefinition(
 /** Managed resource tree is loaded through the same launch binding for both providers. */
 export function translationKnowledgePrompt(
 	directory: string,
-	artifacts: TranslationArtifact[]
+	artifacts: TranslationArtifact[],
+	paths: path.PlatformPath = path
 ): string {
 	if (!artifacts.length) return '';
 	const entries = artifacts
 		.filter((a) => a.kind !== 'instruction' || a.scope === 'selected-user')
-		.map((artifact) => `${artifact.kind}: ${path.join(directory, artifact.relativePath)}`);
+		.map((artifact) => `${artifact.kind}: ${paths.join(directory, artifact.relativePath)}`);
 	return `Maestro provider translation project knowledge\nRead the selected project instructions and memory index below before continuing. Follow their linked topic files when relevant. These are selected project resources, not account-global memory. Skills and subagents retain their source definitions; native execution equivalence is unverified.\n${entries.join('\n')}`;
 }
 

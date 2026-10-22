@@ -49,6 +49,7 @@ import { logger } from '../../main/utils/logger';
 import type { CueReadinessReport } from '../../main/cue/cue-readiness';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 import { humanizeDuration } from '../../shared/duration';
+import { ExitCode } from '../exit-codes';
 
 export interface CueEngineStartOptions {
 	json?: boolean;
@@ -504,7 +505,7 @@ export async function cueEngineStop(options: CueEngineStopOptions = {}): Promise
 		if (options.json)
 			console.log(JSON.stringify({ stopped: false, reason: 'desktop-owned', pid: lock.pid }));
 		else console.error(`[Cue] ${message}`);
-		process.exitCode = 1;
+		process.exitCode = ExitCode.GeneralError;
 		return;
 	}
 
@@ -529,7 +530,7 @@ export async function cueEngineStop(options: CueEngineStopOptions = {}): Promise
 		const message = `Could not signal pid ${lock.pid}: ${err instanceof Error ? err.message : String(err)}`;
 		if (options.json) console.log(JSON.stringify({ stopped: false, reason: 'signal-failed' }));
 		else console.error(`[Cue] ${message}`);
-		process.exitCode = 1;
+		process.exitCode = ExitCode.GeneralError;
 		return;
 	}
 
@@ -549,7 +550,7 @@ export async function cueEngineStop(options: CueEngineStopOptions = {}): Promise
 	if (options.json)
 		console.log(JSON.stringify({ stopped: false, reason: 'timeout', pid: lock.pid }));
 	else console.warn(`[Cue] ${message}`);
-	process.exitCode = 1;
+	process.exitCode = ExitCode.GeneralError;
 }
 
 interface CueEngineStatusPayload {

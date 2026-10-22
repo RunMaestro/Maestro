@@ -16,7 +16,7 @@
 import { describe, expect, test } from 'vitest';
 import { readFileSync } from 'fs';
 import path from 'path';
-import { buildAiCommandPrompt } from '../../shared/aiCommand';
+import { AI_COMMAND_REPLY_SCHEMA, buildAiCommandPrompt } from '../../shared/aiCommand';
 
 const PROMPT_PATH = path.join(__dirname, '../../prompts/ai-command.md');
 const prompt = readFileSync(PROMPT_PATH, 'utf-8');
@@ -82,5 +82,61 @@ describe('ai-command.md', () => {
 		// is pasted straight into a shell.
 		expect(prompt).toMatch(/ONE shell command line/);
 		expect(prompt).toMatch(/Emit ONE line/);
+	});
+});
+
+/**
+ * src/prompts/ai-command-local.md is the same job condensed for a small model
+ * (a Local Models source), so it carries the same shell examples and the same
+ * Prettier hazard.
+ */
+describe('ai-command-local.md', () => {
+	const localPrompt = readFileSync(
+		path.join(__dirname, '../../prompts/ai-command-local.md'),
+		'utf-8'
+	);
+
+	test('keeps glob asterisks literal in its examples', () => {
+		expect(localPrompt).toContain("--include='*.ts'");
+		expect(localPrompt).toContain('du -sh * | sort -rh');
+		expect(localPrompt).not.toContain("--include='_.ts'");
+		expect(localPrompt).not.toContain('\\*');
+	});
+
+	test('declares every token the builder substitutes and leaves none unfilled', () => {
+		for (const token of [
+			'{{OS}}',
+			'{{SHELL}}',
+			'{{CWD}}',
+			'{{IS_GIT_REPO}}',
+			'{{REMOTE_LINE}}',
+			'{{RECENT_COMMANDS}}',
+			'{{USER_REQUEST}}',
+		]) {
+			expect(localPrompt).toContain(token);
+		}
+
+		const built = buildAiCommandPrompt(
+			localPrompt,
+			{ platform: 'darwin', release: '24.0.0', shell: '/bin/zsh', cwd: '/repo', isGitRepo: true },
+			'count the files changed today',
+			[{ command: "find . -newermt '2 days ago' -type f", exitCode: 0, status: 'finished' }]
+		);
+		expect(built).not.toMatch(/\{\{[A-Z_]+\}\}/);
+		expect(built).toContain('count the files changed today');
+	});
+
+	test('asks for the JSON fields the reply schema names', () => {
+		for (const field of Object.keys(
+			AI_COMMAND_REPLY_SCHEMA.properties as Record<string, unknown>
+		)) {
+			expect(localPrompt).toContain(`"${field}"`);
+		}
+	});
+
+	test('stays short enough for a small context window', () => {
+		// The agent prompt runs to several KB. A local model reads a few thousand
+		// tokens in total, and the history and request still have to fit.
+		expect(localPrompt.length).toBeLessThan(prompt.length / 2);
 	});
 });

@@ -10,6 +10,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { QuickChatRoot } from '../../../renderer/quickChat/QuickChatRoot';
 import {
 	EMPTY_QUICK_CHAT_SNAPSHOT,
+	QUICK_CHAT_COMPACT_HEIGHT,
 	type QuickChatMessage,
 	type QuickChatRoute,
 	type QuickChatSnapshot,
@@ -861,6 +862,11 @@ describe('composer-only window height', () => {
 		expect(window.maestro.quickChat.setCompactHeight).toHaveBeenLastCalledWith(260);
 		// Its height is its content's, never stretched to the window it sizes.
 		expect(screen.getByTestId('quick-chat-composer').className).not.toContain('h-full');
+		// Extracting the shared surface must preserve compact sizing and its DOM ref.
+		expect(screen.getByTestId('quick-chat-composer')).toHaveStyle({
+			minHeight: `${QUICK_CHAT_COMPACT_HEIGHT}px`,
+		});
+		expect(screen.getByTestId('quick-chat-composer')).toHaveClass('rounded-3xl');
 	});
 });
 
@@ -950,7 +956,7 @@ describe('images', () => {
 		await renderWith(snapshot());
 		const composer = screen.getByPlaceholderText(/Ask Pedsidian anything/);
 		fireEvent.drop(composer, { dataTransfer: transfer([new File(['x'], 'notes.txt')]) });
-		expect(screen.getByText('Only images can be attached to a Quick Chat message')).toBeTruthy();
+		expect(screen.getByText('Only images can be attached to a chat message')).toBeTruthy();
 		fireEvent.drop(composer, { dataTransfer: transfer([imageFile()]) });
 		await vi.waitFor(() =>
 			expect(screen.getByRole('button', { name: 'Staged image 1' })).toBeTruthy()

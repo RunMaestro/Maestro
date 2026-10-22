@@ -1,0 +1,9 @@
+ {"type":"user","uuid":"old-user","parentUuid":null,"cwd":"/isolated/project","message":{"role":"user","content":"Archived request: inspect the synthetic alpha file."}}
+{"type":"assistant","uuid":"old-call","parentUuid":"old-user","message":{"role":"assistant","content":[{"type":"tool_use","id":"archived-call","name":"Read","input":{"path":"alpha.txt"}}]}}
+{"type":"system","uuid":"first-boundary","parentUuid":null,"logicalParentUuid":"old-call","subtype":"compact_boundary","compactMetadata":{"trigger":"auto","preTokens":800,"postTokens":100}}
+{"type":"user","uuid":"first-summary","parentUuid":"first-boundary","isCompactSummary":true,"message":{"role":"user","content":"Earlier provider summary: alpha was inspected."}}
+{"type":"assistant","uuid":"between-compactions","parentUuid":"first-summary","message":{"role":"assistant","content":"Archived intermediate answer."}}
+{"type":"system","uuid":"last-boundary","parentUuid":null,"logicalParentUuid":"between-compactions","subtype":"compact_boundary","compactMetadata":{"trigger":"auto","preTokens":900,"postTokens":120}}
+{"type":"attachment","uuid":"summary-attachment","parentUuid":"last-boundary","attachment":{"type":"synthetic-runtime-state"}}
+{"type":"user","uuid":"latest-summary","parentUuid":"last-boundary","isCompactSummary":true,"message":{"role":"user","content":"Latest provider summary: archived lookup resolved to alpha."}}
+{"type":"assistant","uuid":"later","parentUuid":"latest-summary","message":{"role":"assistant","content":"Continue from the compacted context."}}

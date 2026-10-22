@@ -84,6 +84,7 @@ interface AITab {
 	name: string;
 	logs: LogEntry[]; // Tab-specific conversation history
 	agentSessionId?: string; // Provider session ID for this tab
+	documentOrigin?: { path: string; archived?: boolean }; // Document chat binding
 	scrollTop?: number;
 	draftInput?: string;
 }
@@ -107,6 +108,11 @@ interface FilePreviewTab {
 // Unified tab references for ordering
 type UnifiedTabRef = { type: 'ai' | 'file'; id: string };
 ```
+
+Document chats are ordinary AI tabs. New chat sets `documentOrigin.archived` on the old thread;
+active text and voice routing exclude archived threads, while document history can restore them.
+Persistence retains the full transcript of active and archived document chats, including deferred
+content merges and closed-tab history. Ordinary tabs keep their existing log cap.
 
 ---
 

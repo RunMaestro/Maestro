@@ -112,3 +112,97 @@ describe('observed session changes', () => {
 		expect(closedNormal.activeBrowserTabId).toBe('private');
 	});
 });
+
+describe('Ensemble slot persistence', () => {
+	const source = {
+		id: 'tab',
+		agentSessionId: 'claude-id',
+		customModel: 'opus',
+		customEffort: 'high',
+		runOn: { type: 'provider' },
+		providerSessions: {},
+	};
+	const switched = {
+		...source,
+		tabProvider: 'codex',
+		agentSessionId: 'codex-id',
+		customModel: 'auto',
+		customEffort: 'low',
+		runOn: { type: 'provider' },
+		pendingTranslation: 'claude-code',
+		providerSessions: {
+			'claude-code': {
+				agentSessionId: 'claude-id',
+				customModel: 'opus',
+				runOn: { type: 'provider' },
+			},
+		},
+	};
+	it('persists a complete switch while retaining an independent host rename', () => {
+		const baseline = { aiTabs: [source] };
+		const stored = { aiTabs: [{ ...source, name: 'Host rename' }] };
+		const incoming = { aiTabs: [switched] };
+		expect(mergeSessionPersistenceChanges(incoming, stored, baseline, true).aiTabs[0]).toEqual({
+			...switched,
+			name: 'Host rename',
+		});
+	});
+	it('rejects a split slot when a host changed the outgoing native ID', () => {
+		const baseline = { aiTabs: [source] };
+		const stored = { aiTabs: [{ ...source, agentSessionId: 'new-host-id' }] };
+		const incoming = { aiTabs: [{ ...switched, name: 'Client rename' }] };
+		expect(mergeSessionPersistenceChanges(incoming, stored, baseline, true).aiTabs[0]).toEqual({
+			...stored.aiTabs[0],
+			name: 'Client rename',
+		});
+	});
+	it('keeps the host switch when a stale client edits the old Run on', () => {
+		const baseline = { aiTabs: [source] };
+		const stored = { aiTabs: [switched] };
+		const incoming = {
+			aiTabs: [
+				{
+					...source,
+					runOn: { type: 'source', endpointId: 'old-source', model: 'old-model' },
+					customModel: 'old-model',
+				},
+			],
+		};
+		expect(mergeSessionPersistenceChanges(incoming, stored, baseline, true).aiTabs[0]).toEqual(
+			switched
+		);
+	});
+	it('cannot combine two competing switches when both changed disjoint selections', () => {
+		const baseline = { aiTabs: [source] };
+		const host = {
+			...switched,
+			tabProvider: 'opencode',
+			agentSessionId: 'opencode-id',
+			customModel: 'opencode-model',
+			customEffort: 'medium',
+		};
+		expect(
+			mergeSessionPersistenceChanges({ aiTabs: [switched] }, { aiTabs: [host] }, baseline).aiTabs[0]
+		).toEqual(host);
+	});
+	it('merges nested snoozed provider state as one slot', () => {
+		const baseline = { snoozedTabs: [{ id: 'snooze', type: 'ai', tab: source }] };
+		const stored = { snoozedTabs: [{ id: 'snooze', type: 'ai', tab: switched }] };
+		const incoming = {
+			snoozedTabs: [{ id: 'snooze', type: 'ai', tab: { ...source, customModel: 'stale' } }],
+		};
+		expect(mergeSessionPersistenceChanges(incoming, stored, baseline).snoozedTabs[0].tab).toEqual(
+			switched
+		);
+	});
+	it('applies clearing an explicit pin without dropping the native selection', () => {
+		const pinned = { ...source, tabProvider: 'claude-code' };
+		const result = mergeSessionPersistenceChanges(
+			{ aiTabs: [source] },
+			{ aiTabs: [pinned] },
+			{ aiTabs: [pinned] }
+		);
+		expect(result.aiTabs[0]).toEqual(source);
+		expect(result.aiTabs[0]).not.toHaveProperty('tabProvider');
+	});
+});

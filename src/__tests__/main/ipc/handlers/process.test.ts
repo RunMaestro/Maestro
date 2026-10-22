@@ -31,6 +31,24 @@ import {
 } from '../../../../main/agents/omp-model-catalog';
 import { runAsActingUser } from '../../../../main/web-server/auth/acting-user';
 import {
+	CONSULT_CHAIN_ENV_VAR,
+	CONSULT_DEPTH_ENV_VAR,
+	isConsultChainId,
+} from '../../../../shared/consultBudget';
+import {
+	configureAgentRunOn,
+	resetAgentRunOnForTests,
+	type AgentRunOnDeps,
+} from '../../../../main/local-models/run-on';
+import { MODEL_SERVER_ENDPOINT_ID } from '../../../../shared/local-models/model-server';
+import {
+	RUN_ON_KEY_ENV_VAR,
+	RUN_ON_DEFAULT_CONTEXT_TOKENS,
+	RUN_ON_PLACEHOLDER_KEY,
+} from '../../../../shared/local-models/run-on';
+import { getContextWindowValue } from '../../../../shared/maestro-lib/launch/agent-args';
+import { logger } from '../../../../main/utils/logger';
+import {
 	noteTurnActor,
 	resolveTurnActor,
 	resetTurnActors,
@@ -60,17 +78,25 @@ vi.mock('../../../../shared/maestro-lib/launch/path-prober', () => ({
 }));
 
 // Mock the agent-args utilities
-vi.mock('../../../../shared/maestro-lib/launch/agent-args', () => ({
-	buildAgentArgs: vi.fn((agent, opts) => opts.baseArgs || []),
-	applyAgentConfigOverrides: vi.fn((agent, args, opts) => ({
-		args,
-		modelSource: 'none' as const,
-		customArgsSource: 'none' as const,
-		customEnvSource: 'none' as const,
-		effectiveCustomEnvVars: undefined,
-	})),
-	getContextWindowValue: vi.fn(() => 0),
-}));
+vi.mock('../../../../shared/maestro-lib/launch/agent-args', async () => {
+	const actual = await vi.importActual<
+		typeof import('../../../../shared/maestro-lib/launch/agent-args')
+	>('../../../../shared/maestro-lib/launch/agent-args');
+	return {
+		// The launch plan puts a Run on target's model on the arguments with this.
+		replaceModelArg: actual.replaceModelArg,
+		placeSubcommandArgs: actual.placeSubcommandArgs,
+		buildAgentArgs: vi.fn((agent, opts) => opts.baseArgs || []),
+		applyAgentConfigOverrides: vi.fn((agent, args, opts) => ({
+			args,
+			modelSource: 'none' as const,
+			customArgsSource: 'none' as const,
+			customEnvSource: 'none' as const,
+			effectiveCustomEnvVars: undefined,
+		})),
+		getContextWindowValue: vi.fn(() => 0),
+	};
+});
 
 // Mock node-pty (required for process-manager but not directly used in these tests)
 vi.mock('node-pty', () => ({
@@ -282,6 +308,25 @@ vi.mock('../../../../main/agents/claude-transcript-sanitizer', () => ({
 // and time the test out. `undefined` is the probe's own "could not determine".
 vi.mock('../../../../main/agents/probeRemoteMaestroP', () => ({
 	ensureRemoteMaestroPProbed: vi.fn().mockResolvedValue(undefined),
+}));
+
+// Mock the token proxy's launch check. The real one reads its port from the
+// data dir and can bind a socket; a spawn test decides the answer instead.
+const mockEnsureTokenProxyForGateway = vi.hoisted(() =>
+	vi.fn(
+		async (_gatewayUrl: string): Promise<{ ok: true } | { ok: false; error: string }> => ({
+			ok: true,
+		})
+	)
+);
+// The launch URL is the stored gateway unless it is the Maestro proxy, which
+// only the service (it knows the port) can tell.
+const mockTokenProxyLaunchGatewayUrl = vi.hoisted(() =>
+	vi.fn(async (_agentId: string | undefined, gatewayUrl: string | undefined) => gatewayUrl)
+);
+vi.mock('../../../../main/local-models/proxy/service', () => ({
+	ensureTokenProxyForGateway: mockEnsureTokenProxyForGateway,
+	tokenProxyLaunchGatewayUrl: mockTokenProxyLaunchGatewayUrl,
 }));
 
 // The slash-command probe would run a real claude; tests assert on the call.
@@ -604,6 +649,606 @@ describe('process IPC handlers', () => {
 			expect(mockProcessManager.spawn).toHaveBeenCalled();
 		});
 
+		describe("the agent's Local Models gateway", () => {
+			const gatewayUrl = 'http://127.0.0.1:8787';
+
+			/** Give the stored agent record a gateway, as an edit flushed to main would. */
+			function storeAgent(agent: Record<string, unknown>) {
+				mockSessionsStore.get.mockImplementation((key: string, defaultValue: unknown) =>
+					key === 'sessions' ? [agent] : defaultValue
+				);
+			}
+
+			function spawnClaude(extra: Record<string, unknown> = {}) {
+				mockAgentDetector.getAgent.mockResolvedValue({ id: 'claude-code', requiresPty: false });
+				mockProcessManager.spawn.mockReturnValue({ pid: 3100, success: true });
+				return handlers.get('process:spawn')!({} as any, {
+					// The tab suffix is stripped to find the agent's record.
+					sessionId: 'agent-gw-ai-tab-1',
+					toolType: 'claude-code',
+					cwd: '/test',
+					command: 'claude',
+					args: [],
+					...extra,
+				});
+			}
+
+			it('does not apply the default harness gateway to a foreign tab provider', async () => {
+				storeAgent({
+					id: 'agent-gw',
+					toolType: 'codex',
+					gatewayUrl,
+					aiTabs: [{ id: 'tab-1', tabProvider: 'claude-code', agentSessionId: null }],
+				});
+				await spawnClaude();
+				expect(mockTokenProxyLaunchGatewayUrl).toHaveBeenCalledWith('agent-gw', undefined);
+				expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+					expect.objectContaining({
+						customEnvVars: expect.not.objectContaining({ ANTHROPIC_BASE_URL: gatewayUrl }),
+					})
+				);
+			});
+
+			it('reads the gateway from the stored agent and sets its base-URL variable', async () => {
+				storeAgent({ id: 'agent-gw', gatewayUrl });
+
+				await spawnClaude();
+
+				expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+					expect.objectContaining({
+						customEnvVars: expect.objectContaining({ ANTHROPIC_BASE_URL: gatewayUrl }),
+					})
+				);
+			});
+
+			it.each([
+				['an Auto Run task', 'agent-gw-batch-1760000000000'],
+				['the History synopsis', 'agent-gw-synopsis-1760000000000'],
+			])('applies the gateway to %s, not only to a typed turn', async (_label, sessionId) => {
+				// These spawn under the agent's id plus a suffix that is not `-ai-`.
+				// Looking the gateway up without stripping it found no agent, so the
+				// agent's Auto Run turns went direct while its typed turns were proxied.
+				storeAgent({ id: 'agent-gw', gatewayUrl });
+
+				await spawnClaude({ sessionId });
+
+				expect(mockTokenProxyLaunchGatewayUrl).toHaveBeenCalledWith('agent-gw', gatewayUrl);
+				expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+					expect.objectContaining({
+						customEnvVars: expect.objectContaining({ ANTHROPIC_BASE_URL: gatewayUrl }),
+					})
+				);
+				expect(mockEnsureTokenProxyForGateway).toHaveBeenCalledWith(gatewayUrl);
+			});
+
+			it('points Codex at the gateway with its config argument, ahead of its own arguments', async () => {
+				storeAgent({ id: 'agent-gw', gatewayUrl });
+				mockAgentDetector.getAgent.mockResolvedValue({ id: 'codex', requiresPty: false });
+				mockProcessManager.spawn.mockReturnValue({ pid: 3101, success: true });
+
+				await handlers.get('process:spawn')!({} as any, {
+					sessionId: 'agent-gw-ai-tab-1',
+					toolType: 'codex',
+					cwd: '/test',
+					command: 'codex',
+					args: ['exec', '--json'],
+				});
+
+				// Codex CLI ignores OPENAI_BASE_URL on a ChatGPT login; the variable
+				// alone left the agent running direct while the UI said it was proxied.
+				const spawned = mockProcessManager.spawn.mock.calls[0][0];
+				expect(spawned.args.slice(0, 2)).toEqual([
+					'-c',
+					`openai_base_url=${JSON.stringify(gatewayUrl)}`,
+				]);
+				expect(spawned.args.indexOf('exec')).toBeGreaterThan(1);
+				expect(spawned.customEnvVars).toMatchObject({ OPENAI_BASE_URL: gatewayUrl });
+			});
+
+			it('sets nothing for an agent with no gateway', async () => {
+				storeAgent({ id: 'agent-gw' });
+
+				await spawnClaude();
+
+				const spawned = mockProcessManager.spawn.mock.calls[0][0];
+				expect(spawned.customEnvVars ?? {}).not.toHaveProperty('ANTHROPIC_BASE_URL');
+			});
+
+			it("leaves the variable to the agent's own value", async () => {
+				storeAgent({ id: 'agent-gw', gatewayUrl });
+
+				await spawnClaude({
+					sessionCustomEnvVars: { ANTHROPIC_BASE_URL: 'https://mine.example.com' },
+				});
+
+				expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+					expect.objectContaining({
+						customEnvVars: expect.objectContaining({
+							ANTHROPIC_BASE_URL: 'https://mine.example.com',
+						}),
+					})
+				);
+			});
+
+			it('refuses to spawn on an SSH remote with a loopback gateway, and says so in the tab', async () => {
+				storeAgent({ id: 'agent-gw', gatewayUrl });
+				mockSettingsStore.get.mockImplementation((key: string, defaultValue: unknown) =>
+					key === 'sshRemotes'
+						? [
+								{
+									id: 'remote-1',
+									name: 'Dev Server',
+									host: 'dev.example.com',
+									port: 22,
+									username: 'devuser',
+									privateKeyPath: '~/.ssh/id_ed25519',
+									enabled: true,
+								},
+							]
+						: defaultValue
+				);
+
+				const result = await spawnClaude({
+					sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+				});
+
+				// Never run without the gateway the user chose, on either machine.
+				expect(result).toEqual({ success: false, pid: 0 });
+				expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+				expect(deps.getMainWindow()!.webContents.send).toHaveBeenCalledWith(
+					'process:data',
+					'agent-gw-ai-tab-1',
+					expect.stringContaining(`gateway (${gatewayUrl}) is a loopback address`)
+				);
+			});
+
+			it("gives the process the agent's own base URL when the gateway is the token proxy", async () => {
+				storeAgent({ id: 'agent-gw', gatewayUrl: `${gatewayUrl}/anthropic` });
+				const scoped = `${gatewayUrl}/agent/agent-gw/anthropic`;
+				mockTokenProxyLaunchGatewayUrl.mockResolvedValueOnce(scoped);
+
+				await spawnClaude();
+
+				// The agent id (tab suffix stripped) and the stored URL go in; what
+				// comes back is what the process is given and what must be up.
+				expect(mockTokenProxyLaunchGatewayUrl).toHaveBeenCalledWith(
+					'agent-gw',
+					`${gatewayUrl}/anthropic`
+				);
+				expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+					expect.objectContaining({
+						customEnvVars: expect.objectContaining({ ANTHROPIC_BASE_URL: scoped }),
+					})
+				);
+				expect(mockEnsureTokenProxyForGateway).toHaveBeenCalledWith(scoped);
+			});
+
+			it('asks the token proxy to be up for the gateway before it spawns', async () => {
+				storeAgent({ id: 'agent-gw', gatewayUrl });
+
+				await spawnClaude();
+
+				expect(mockEnsureTokenProxyForGateway).toHaveBeenCalledWith(gatewayUrl);
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			it('does not ask the token proxy for an agent with no gateway in force', async () => {
+				storeAgent({ id: 'agent-gw' });
+				await spawnClaude();
+
+				storeAgent({ id: 'agent-gw', gatewayUrl });
+				await spawnClaude({
+					sessionCustomEnvVars: { ANTHROPIC_BASE_URL: 'https://mine.example.com' },
+				});
+
+				expect(mockEnsureTokenProxyForGateway).not.toHaveBeenCalled();
+			});
+
+			it('refuses to spawn when the token proxy cannot start, and says so in the tab', async () => {
+				storeAgent({ id: 'agent-gw', gatewayUrl });
+				mockEnsureTokenProxyForGateway.mockResolvedValueOnce({
+					ok: false,
+					error: 'the Maestro token proxy, which could not start: port in use',
+				});
+
+				const result = await spawnClaude();
+
+				// The request must not reach whatever holds the proxy's port.
+				expect(result).toEqual({ success: false, pid: 0 });
+				expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+				expect(deps.getMainWindow()!.webContents.send).toHaveBeenCalledWith(
+					'process:data',
+					'agent-gw-ai-tab-1',
+					expect.stringContaining('Maestro token proxy, which could not start')
+				);
+			});
+		});
+
+		describe("the agent's Run on target", () => {
+			const OLLAMA = {
+				id: 'ep-ollama',
+				name: 'Ollama',
+				kind: 'ollama' as const,
+				baseUrl: 'http://127.0.0.1:11434',
+				enabled: true,
+			};
+			const QWEN = { type: 'source', endpointId: OLLAMA.id, model: 'qwen3:latest' };
+			const ON_SERVER = {
+				type: 'source',
+				endpointId: MODEL_SERVER_ENDPOINT_ID,
+				model: 'gpt-oss-20b',
+			};
+			const SERVER_URL = 'http://127.0.0.1:52100';
+			const claudeAgent = {
+				id: 'claude-code',
+				requiresPty: false,
+				interactiveCommand: 'maestro-p',
+				interactiveModeArgs: ['--dangerously-skip-permissions'],
+				modelArgs: (model: string) => ['--model', model],
+			};
+			const codexAgent = {
+				id: 'codex',
+				requiresPty: false,
+				modelArgs: (model: string) => ['-m', model],
+			};
+			let runOnDeps: { [K in keyof Required<AgentRunOnDeps>]: ReturnType<typeof vi.fn> };
+
+			/** Give the stored agent record a target, as an edit flushed to main would. */
+			function storeAgent(agent: Record<string, unknown>) {
+				mockSessionsStore.get.mockImplementation((key: string, defaultValue: unknown) =>
+					key === 'sessions' ? [agent] : defaultValue
+				);
+			}
+
+			function spawnClaude(extra: Record<string, unknown> = {}) {
+				mockAgentDetector.getAgent.mockResolvedValue(claudeAgent);
+				mockProcessManager.spawn.mockReturnValue({ pid: 3200, success: true });
+				return handlers.get('process:spawn')!({} as any, {
+					sessionId: 'agent-ro-ai-tab-1',
+					toolType: 'claude-code',
+					cwd: '/test',
+					command: 'claude',
+					args: ['--print', '--model', 'opus'],
+					...extra,
+				});
+			}
+
+			function spawnCodex(extra: Record<string, unknown> = {}) {
+				mockAgentDetector.getAgent.mockResolvedValue(codexAgent);
+				mockProcessManager.spawn.mockReturnValue({ pid: 3201, success: true });
+				return handlers.get('process:spawn')!({} as any, {
+					sessionId: 'agent-ro-ai-tab-1',
+					toolType: 'codex',
+					cwd: '/test',
+					command: 'codex',
+					args: ['exec', '--json'],
+					...extra,
+				});
+			}
+
+			const spawned = () => mockProcessManager.spawn.mock.calls[0][0];
+
+			beforeEach(() => {
+				runOnDeps = {
+					sessions: vi.fn(() => []),
+					endpoints: vi.fn(() => [OLLAMA]),
+					shellEnvVars: vi.fn(() => ({})),
+					modelServer: vi.fn(async () => ({ ok: true, baseUrl: SERVER_URL, key: 'sk-server' })),
+					listModels: vi.fn(async () => [{ id: 'qwen3:latest' }]),
+				};
+				configureAgentRunOn(runOnDeps as unknown as AgentRunOnDeps);
+			});
+
+			afterEach(() => {
+				resetAgentRunOnForTests();
+			});
+
+			it('reads the target from the stored agent and points Claude Code at the source', async () => {
+				storeAgent({ id: 'agent-ro', runOn: QWEN });
+
+				await spawnClaude();
+
+				expect(spawned().customEnvVars).toMatchObject({
+					ANTHROPIC_BASE_URL: 'http://127.0.0.1:11434',
+					ANTHROPIC_AUTH_TOKEN: RUN_ON_PLACEHOLDER_KEY,
+					ANTHROPIC_DEFAULT_HAIKU_MODEL: 'qwen3:latest',
+					ANTHROPIC_DEFAULT_SONNET_MODEL: 'qwen3:latest',
+					ANTHROPIC_DEFAULT_OPUS_MODEL: 'qwen3:latest',
+					// Blank: the provider's own key does not go to the source.
+					ANTHROPIC_API_KEY: '',
+				});
+				// The model takes the place of the agent's own; one flag, not two.
+				expect(spawned().args).toEqual(['--print', '--model', 'qwen3:latest']);
+			});
+
+			it.each([
+				['an Auto Run task', 'agent-ro-batch-1760000000000'],
+				['the History synopsis', 'agent-ro-synopsis-1760000000000'],
+			])('runs %s on the target, not only a typed turn', async (_label, sessionId) => {
+				// These spawn under the agent's id plus a suffix that is not `-ai-`.
+				// The synopsis resumes the agent's conversation with a cheap model of
+				// the provider's: missed here, the conversation would go to its cloud.
+				storeAgent({ id: 'agent-ro', runOn: QWEN });
+
+				await spawnClaude({ sessionId, args: ['--print', '--model', 'haiku'] });
+
+				expect(spawned().customEnvVars).toMatchObject({
+					ANTHROPIC_BASE_URL: 'http://127.0.0.1:11434',
+				});
+				expect(spawned().args).toEqual(['--print', '--model', 'qwen3:latest']);
+			});
+
+			describe("a turn's Run on override (a tier target)", () => {
+				const BATCH = 'agent-ro-batch-1760000000000';
+
+				it('launches a provider agent on the source a tier names', async () => {
+					storeAgent({ id: 'agent-ro' });
+
+					// The renderer resolved `low` to a local model and sends both halves:
+					// the model and the place.
+					await spawnClaude({
+						sessionId: BATCH,
+						args: ['--print', '--model', 'qwen3:latest'],
+						runOnOverride: QWEN,
+					});
+
+					expect(spawned().customEnvVars).toMatchObject({
+						ANTHROPIC_BASE_URL: 'http://127.0.0.1:11434',
+						ANTHROPIC_DEFAULT_HAIKU_MODEL: 'qwen3:latest',
+					});
+					expect(spawned().args).toEqual(['--print', '--model', 'qwen3:latest']);
+				});
+
+				it('launches a source agent on the provider when a tier names it, with nothing of the source', async () => {
+					storeAgent({ id: 'agent-ro', runOn: QWEN });
+
+					await spawnClaude({
+						sessionId: BATCH,
+						args: ['--print', '--model', 'opus'],
+						runOnOverride: { type: 'provider' },
+					});
+
+					expect(spawned().args).toEqual(['--print', '--model', 'opus']);
+					expect(spawned().customEnvVars ?? {}).not.toHaveProperty('ANTHROPIC_BASE_URL');
+					expect(runOnDeps.endpoints).not.toHaveBeenCalled();
+				});
+
+				it("keeps the agent's own target for a spawn that names none", async () => {
+					storeAgent({ id: 'agent-ro', runOn: QWEN });
+
+					await spawnClaude({ sessionId: BATCH, runOnOverride: undefined });
+
+					expect(spawned().args).toEqual(['--print', '--model', 'qwen3:latest']);
+				});
+
+				it('refuses a malformed override: it never falls back to the stored target', async () => {
+					storeAgent({ id: 'agent-ro' });
+
+					const result = await spawnClaude({ sessionId: BATCH, runOnOverride: { type: 'source' } });
+
+					expect(result).toEqual({ success: false, pid: 0 });
+					expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+				});
+
+				it('refuses an override whose source cannot serve the model', async () => {
+					storeAgent({ id: 'agent-ro' });
+					runOnDeps.listModels.mockResolvedValue([{ id: 'some-other-model' }]);
+
+					const result = await spawnClaude({ sessionId: BATCH, runOnOverride: QWEN });
+
+					expect(result).toEqual({ success: false, pid: 0 });
+					expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+					expect(deps.getMainWindow()!.webContents.send).toHaveBeenCalledWith(
+						'process:data',
+						BATCH,
+						expect.stringContaining('does not serve "qwen3:latest"')
+					);
+				});
+			});
+
+			it('gives Codex a provider of its own ahead of its arguments, and the model after exec', async () => {
+				storeAgent({ id: 'agent-ro', runOn: ON_SERVER });
+
+				await spawnCodex();
+
+				expect(runOnDeps.modelServer).toHaveBeenCalledWith('gpt-oss-20b');
+				expect(spawned().args.slice(0, 2)).toEqual([
+					'-c',
+					`model_providers.maestro={name='Maestro',base_url='${SERVER_URL}/v1',env_key='${RUN_ON_KEY_ENV_VAR}',wire_api='responses'}`,
+				]);
+				expect(spawned().args.slice(-4)).toEqual(['exec', '--json', '-m', 'gpt-oss-20b']);
+				expect(spawned().customEnvVars).toMatchObject({ [RUN_ON_KEY_ENV_VAR]: 'sk-server' });
+			});
+
+			it('keeps Codex on exec when the agent opted into the app-server', async () => {
+				storeAgent({ id: 'agent-ro', runOn: ON_SERVER, codexTransport: 'app-server' });
+
+				await spawnCodex();
+
+				expect(spawned().codexTransport).toBe('exec');
+			});
+
+			it('keeps Claude Code on claude --print when the agent selected the TUI', async () => {
+				storeAgent({
+					id: 'agent-ro',
+					runOn: QWEN,
+					enableMaestroP: true,
+					maestroPMode: 'interactive',
+					maestroPPath: path.join(process.cwd(), 'src', 'maestro-p', 'index.ts'),
+				});
+
+				await spawnClaude({ command: '/usr/local/bin/claude' });
+
+				// Not rewritten to maestro-p: the recipe was measured on `claude --print`.
+				expect(spawned().command).not.toBe(process.execPath);
+				expect(spawned().customEnvVars?.MAESTRO_CLAUDE_BIN).toBeUndefined();
+			});
+
+			it("tells the process manager the target's context window", async () => {
+				storeAgent({ id: 'agent-ro', runOn: { ...QWEN, contextTokens: 65_536 } });
+
+				await spawnClaude();
+
+				expect(vi.mocked(getContextWindowValue).mock.calls.at(-1)?.[2]).toBe(65_536);
+				expect(spawned().customEnvVars.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe('65536');
+			});
+
+			it('uses the default window for a target that names none', async () => {
+				storeAgent({ id: 'agent-ro', runOn: QWEN });
+
+				await spawnClaude();
+
+				expect(vi.mocked(getContextWindowValue).mock.calls.at(-1)?.[2]).toBe(
+					RUN_ON_DEFAULT_CONTEXT_TOKENS
+				);
+			});
+
+			it('takes the place of the gateway, and logs that it was skipped', async () => {
+				const gatewayUrl = 'http://127.0.0.1:8787/anthropic';
+				storeAgent({ id: 'agent-ro', runOn: QWEN, gatewayUrl });
+
+				await spawnClaude();
+
+				// The base URL is the source's, and the token proxy is not asked to be up.
+				expect(spawned().customEnvVars.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:11434');
+				expect(mockEnsureTokenProxyForGateway).not.toHaveBeenCalled();
+				expect(logger.info).toHaveBeenCalledWith(
+					expect.stringContaining('Skipped the Local Models gateway'),
+					expect.any(String),
+					expect.objectContaining({ sessionId: 'agent-ro-ai-tab-1', gatewayUrl })
+				);
+			});
+
+			it('leaves an agent on its provider alone, and looks nothing up', async () => {
+				storeAgent({ id: 'agent-ro', runOn: { type: 'provider' } });
+
+				await spawnClaude();
+
+				expect(spawned().args).toEqual(['--print', '--model', 'opus']);
+				expect(spawned().customEnvVars ?? {}).not.toHaveProperty('ANTHROPIC_BASE_URL');
+				expect(runOnDeps.endpoints).not.toHaveBeenCalled();
+			});
+
+			it.each<[string, () => void, string]>([
+				[
+					'the source does not answer',
+					() => runOnDeps.listModels.mockResolvedValue([{ id: 'some-other-model' }]),
+					'does not serve "qwen3:latest"',
+				],
+				[
+					'the source is disabled',
+					() => runOnDeps.endpoints.mockReturnValue([{ ...OLLAMA, enabled: false }]),
+					'the source "Ollama" is disabled',
+				],
+				[
+					'the source is no longer configured',
+					() => runOnDeps.endpoints.mockReturnValue([]),
+					'is no longer configured',
+				],
+			])(
+				"refuses to spawn when %s, and never runs the turn on the provider's model",
+				async (_case, arrange, text) => {
+					storeAgent({ id: 'agent-ro', runOn: QWEN });
+					arrange();
+
+					const result = await spawnClaude();
+
+					expect(result).toEqual({ success: false, pid: 0 });
+					expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+					expect(deps.getMainWindow()!.webContents.send).toHaveBeenCalledWith(
+						'process:data',
+						'agent-ro-ai-tab-1',
+						expect.stringContaining(text)
+					);
+				}
+			);
+
+			it('refuses to spawn when the model server cannot serve the model', async () => {
+				storeAgent({ id: 'agent-ro', runOn: ON_SERVER });
+				runOnDeps.modelServer.mockResolvedValue({
+					ok: false,
+					error: 'the engine is not installed',
+				});
+
+				const result = await spawnCodex();
+
+				expect(result).toEqual({ success: false, pid: 0 });
+				expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+				expect(deps.getMainWindow()!.webContents.send).toHaveBeenCalledWith(
+					'process:data',
+					'agent-ro-ai-tab-1',
+					expect.stringContaining('the engine is not installed')
+				);
+			});
+
+			it('refuses a harness with no recipe without starting the model server', async () => {
+				storeAgent({ id: 'agent-ro', runOn: ON_SERVER });
+				mockAgentDetector.getAgent.mockResolvedValue({ id: 'factory-droid', requiresPty: false });
+
+				const result = await handlers.get('process:spawn')!({} as any, {
+					sessionId: 'agent-ro-ai-tab-1',
+					toolType: 'factory-droid',
+					cwd: '/test',
+					command: 'droid',
+					args: [],
+				});
+
+				expect(result).toEqual({ success: false, pid: 0 });
+				expect(runOnDeps.modelServer).not.toHaveBeenCalled();
+				expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+			});
+
+			it('refuses to spawn on an SSH remote with a loopback source, and says so in the tab', async () => {
+				storeAgent({ id: 'agent-ro', runOn: ON_SERVER });
+				mockSettingsStore.get.mockImplementation((key: string, defaultValue: unknown) =>
+					key === 'sshRemotes'
+						? [
+								{
+									id: 'remote-1',
+									name: 'Dev Server',
+									host: 'dev.example.com',
+									port: 22,
+									username: 'devuser',
+									privateKeyPath: '~/.ssh/id_ed25519',
+									enabled: true,
+								},
+							]
+						: defaultValue
+				);
+
+				const result = await spawnCodex({
+					sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+				});
+
+				expect(result).toEqual({ success: false, pid: 0 });
+				// Refused before the server is started for a host that cannot reach it.
+				expect(runOnDeps.modelServer).not.toHaveBeenCalled();
+				expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+				expect(deps.getMainWindow()!.webContents.send).toHaveBeenCalledWith(
+					'process:data',
+					'agent-ro-ai-tab-1',
+					expect.stringContaining('loopback address')
+				);
+			});
+
+			it('never runs a terminal on a target', async () => {
+				storeAgent({ id: 'agent-ro', runOn: QWEN });
+				mockAgentDetector.getAgent.mockResolvedValue({ id: 'terminal', requiresPty: true });
+				mockProcessManager.spawn.mockReturnValue({ pid: 3202, success: true });
+
+				await handlers.get('process:spawn')!({} as any, {
+					sessionId: 'agent-ro',
+					toolType: 'terminal',
+					cwd: '/test',
+					command: '/bin/zsh',
+					args: [],
+				});
+
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+				expect(runOnDeps.listModels).not.toHaveBeenCalled();
+			});
+		});
+
 		it('primes the omp model catalog with an expanded env whose PATH lists the binary dir first', async () => {
 			// The bun-based `omp` binary lives next to a co-located `bun` runtime;
 			// in a packaged Electron app the shell PATH is not inherited, so the
@@ -725,6 +1370,137 @@ describe('process IPC handlers', () => {
 					}),
 				})
 			);
+		});
+
+		/**
+		 * Consult chain.
+		 *
+		 * A peer consult or delegation spends one budget shared by the whole
+		 * tree under a user message, so every process in that tree has to know
+		 * which chain it is in. The spawn states it in the agent's environment:
+		 * minted here at the root, kept as it arrived for a descendant.
+		 */
+		describe('consult chain', () => {
+			/** Give the stored agent record a peer configuration (or none). */
+			function storeAgent(agent: Record<string, unknown>) {
+				mockSessionsStore.get.mockImplementation((key: string, defaultValue: unknown) =>
+					key === 'sessions' ? [agent] : defaultValue
+				);
+			}
+
+			async function spawnedEnv(
+				extra: Record<string, unknown> = {}
+			): Promise<Record<string, string>> {
+				mockAgentDetector.getAgent.mockResolvedValue({ id: 'opencode', requiresPty: false });
+				mockProcessManager.spawn.mockReturnValue({ pid: 2200, success: true });
+				await handlers.get('process:spawn')!({} as any, {
+					sessionId: 'agent-chain-ai-tab-1',
+					tabId: 'tab-1',
+					toolType: 'opencode',
+					cwd: '/test',
+					command: 'opencode',
+					args: [],
+					...extra,
+				});
+				const calls = mockProcessManager.spawn.mock.calls;
+				const spawned = calls[calls.length - 1][0] as { customEnvVars?: Record<string, string> };
+				return spawned.customEnvVars ?? {};
+			}
+
+			it('mints a chain at depth 0 for an agent with a peer grant', async () => {
+				storeAgent({ id: 'agent-chain', groupPeerAccess: { read: true, write: false } });
+
+				const env = await spawnedEnv();
+
+				expect(isConsultChainId(env[CONSULT_CHAIN_ENV_VAR])).toBe(true);
+				expect(env[CONSULT_DEPTH_ENV_VAR]).toBe('0');
+			});
+
+			it('mints a new chain for every root spawn, so each user message has its own budget', async () => {
+				storeAgent({
+					id: 'agent-chain',
+					peerAgents: [{ sessionId: 'peer-1', read: true, write: false }],
+				});
+
+				const first = await spawnedEnv();
+				const second = await spawnedEnv();
+
+				expect(second[CONSULT_CHAIN_ENV_VAR]).not.toBe(first[CONSULT_CHAIN_ENV_VAR]);
+			});
+
+			it('finds the agent behind an Auto Run task id', async () => {
+				storeAgent({ id: 'agent-chain', worktreePeerAccess: { read: false, write: true } });
+
+				const env = await spawnedEnv({ sessionId: 'agent-chain-batch-1700000000000' });
+
+				expect(isConsultChainId(env[CONSULT_CHAIN_ENV_VAR])).toBe(true);
+			});
+
+			it('adds nothing for an agent with no roster', async () => {
+				storeAgent({ id: 'agent-chain' });
+
+				const env = await spawnedEnv();
+
+				expect(env).not.toHaveProperty(CONSULT_CHAIN_ENV_VAR);
+				expect(env).not.toHaveProperty(CONSULT_DEPTH_ENV_VAR);
+			});
+
+			it('does not count an exclusion row as a roster', async () => {
+				storeAgent({
+					id: 'agent-chain',
+					peerAgents: [{ sessionId: 'peer-1', read: false, write: false }],
+				});
+
+				expect(await spawnedEnv()).not.toHaveProperty(CONSULT_CHAIN_ENV_VAR);
+			});
+
+			it('keeps the chain a delegated turn arrives with, at the depth it was given', async () => {
+				storeAgent({ id: 'agent-chain', groupPeerAccess: { read: true, write: true } });
+
+				const env = await spawnedEnv({ consultChain: { chainId: 'chain-from-caller', depth: 2 } });
+
+				expect(env[CONSULT_CHAIN_ENV_VAR]).toBe('chain-from-caller');
+				expect(env[CONSULT_DEPTH_ENV_VAR]).toBe('2');
+			});
+
+			it('keeps an arriving chain for an agent with no roster of its own', async () => {
+				// Otherwise an agent with no peers in the middle of a chain would
+				// hand whatever it starts a fresh budget.
+				storeAgent({ id: 'agent-chain' });
+
+				const env = await spawnedEnv({ consultChain: { chainId: 'chain-from-caller', depth: 1 } });
+
+				expect(env[CONSULT_CHAIN_ENV_VAR]).toBe('chain-from-caller');
+				expect(env[CONSULT_DEPTH_ENV_VAR]).toBe('1');
+			});
+
+			it('treats an arriving chain with a bad id as no chain, and mints', async () => {
+				storeAgent({ id: 'agent-chain', groupPeerAccess: { read: true, write: false } });
+
+				const env = await spawnedEnv({ consultChain: { chainId: '../escape', depth: 4 } });
+
+				expect(isConsultChainId(env[CONSULT_CHAIN_ENV_VAR])).toBe(true);
+				expect(env[CONSULT_DEPTH_ENV_VAR]).toBe('0');
+			});
+
+			it('never puts a terminal in a chain', async () => {
+				storeAgent({ id: 'agent-chain', groupPeerAccess: { read: true, write: true } });
+				mockAgentDetector.getAgent.mockResolvedValue({ id: 'terminal', requiresPty: true });
+				mockProcessManager.spawn.mockReturnValue({ pid: 2201, success: true });
+
+				await handlers.get('process:spawn')!({} as any, {
+					sessionId: 'agent-chain',
+					toolType: 'terminal',
+					cwd: '/test',
+					command: '/bin/zsh',
+					args: [],
+					consultChain: { chainId: 'chain-from-caller', depth: 1 },
+				});
+
+				const calls = mockProcessManager.spawn.mock.calls;
+				const spawned = calls[calls.length - 1][0] as { customEnvVars?: Record<string, string> };
+				expect(spawned.customEnvVars ?? {}).not.toHaveProperty(CONSULT_CHAIN_ENV_VAR);
+			});
 		});
 
 		/**
@@ -1154,6 +1930,12 @@ describe('process IPC handlers', () => {
 				);
 			};
 
+			it('ignores transport settings owned by a different default harness', async () => {
+				persist([{ id: 'codex-agent', toolType: 'claude-code', codexTransport: 'app-server' }]);
+				const spawnCall = await spawnCodex();
+				expect(spawnCall.codexTransport).toBe('exec');
+			});
+
 			it('passes app-server when the persisted agent opted in', async () => {
 				persist([{ id: 'codex-agent', codexTransport: 'app-server' }]);
 				const spawnCall = await spawnCodex();
@@ -1220,6 +2002,33 @@ describe('process IPC handlers', () => {
 				interactiveModeArgs: ['--dangerously-skip-permissions'],
 				requiresPty: true,
 			};
+
+			it('reads Claude token mode from its parked provider overrides', async () => {
+				mockAgentDetector.getAgent.mockResolvedValue(claudeCodeAgent);
+				mockProcessManager.spawn.mockReturnValue({ pid: 4244, success: true });
+				mockSessionsStore.get.mockImplementation((key: string, fallback: unknown) =>
+					key === 'sessions'
+						? [
+								{
+									id: 'pinned-agent',
+									toolType: 'codex',
+									enableMaestroP: true,
+									maestroPMode: 'interactive',
+									providerOverrides: { 'claude-code': { enableMaestroP: false } },
+								},
+							]
+						: fallback
+				);
+				await handlers.get('process:spawn')!({} as any, {
+					sessionId: 'pinned-agent-ai-tab-1',
+					toolType: 'claude-code',
+					cwd: '/test',
+					command: 'claude',
+					args: claudeCodeAgent.args,
+					prompt: 'hi',
+				});
+				expect(mockProcessManager.spawn.mock.calls[0][0].args).toContain('--print');
+			});
 
 			it('leaves API-mode args intact when Batch Mode is off (default)', async () => {
 				mockAgentDetector.getAgent.mockResolvedValue(claudeCodeAgent);

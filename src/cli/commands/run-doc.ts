@@ -17,6 +17,7 @@ import { installInterruptHandler } from '../utils/interrupt';
 import type { Playbook } from '../../shared/types';
 import * as fs from 'fs';
 import * as path from 'path';
+import { ExitCode, exitWith } from '../exit-codes';
 
 interface RunDocOptions {
 	agent: string; // required via commander
@@ -108,7 +109,7 @@ export async function runDoc(docs: string[], options: RunDocOptions): Promise<vo
 			const message = 'At least one document path is required';
 			if (useJson) emitError(message, 'NO_DOCUMENTS');
 			else console.error(formatError(message));
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 
 		// Resolve the target agent (accepts an ID or a display name)
@@ -119,7 +120,7 @@ export async function runDoc(docs: string[], options: RunDocOptions): Promise<vo
 			const message = error instanceof Error ? error.message : 'Unknown error';
 			if (useJson) emitError(message, 'AGENT_NOT_FOUND');
 			else console.error(formatError(message));
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 
 		const agent = getSessionById(agentId)!;
@@ -130,7 +131,7 @@ export async function runDoc(docs: string[], options: RunDocOptions): Promise<vo
 			const message = `Agent type "${agent.toolType}" is not supported in CLI batch mode yet.`;
 			if (useJson) emitError(message, 'AGENT_UNSUPPORTED');
 			else console.error(formatError(message));
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 
 		const detection = await detectAgent(agent.toolType);
@@ -139,7 +140,7 @@ export async function runDoc(docs: string[], options: RunDocOptions): Promise<vo
 			const message = `${def.name} CLI not found. Please install ${def.name}.`;
 			if (useJson) emitError(message, errorCode);
 			else console.error(formatError(message));
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 
 		// Check if agent is busy (either from desktop or another CLI instance)
@@ -151,7 +152,7 @@ export async function runDoc(docs: string[], options: RunDocOptions): Promise<vo
 				const message = `Agent "${agent.name}" is busy: ${busyCheck.reason}. Use --wait to wait for availability.`;
 				if (useJson) emitError(message, 'AGENT_BUSY');
 				else console.error(formatError(message));
-				process.exit(1);
+				exitWith(ExitCode.GeneralError);
 			}
 		}
 
@@ -164,7 +165,7 @@ export async function runDoc(docs: string[], options: RunDocOptions): Promise<vo
 			const message = error instanceof Error ? error.message : 'Unknown error';
 			if (useJson) emitError(message, 'DOCUMENT_RESOLUTION_FAILED');
 			else console.error(formatError(message));
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 
 		// Loop configuration
@@ -179,7 +180,7 @@ export async function runDoc(docs: string[], options: RunDocOptions): Promise<vo
 			const message = '--max-loops must be a positive integer';
 			if (useJson) emitError(message, 'INVALID_MAX_LOOPS');
 			else console.error(formatError(message));
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 
 		// Build an ephemeral playbook. An empty prompt makes batch-processor fall
@@ -255,7 +256,7 @@ export async function runDoc(docs: string[], options: RunDocOptions): Promise<vo
 				}
 				// A stopped run is not a success; report it the way a shell reports SIGINT.
 				if (event.type === 'complete' && (event as CompleteEvent).stopped) {
-					process.exitCode = 130;
+					process.exitCode = ExitCode.Interrupted;
 				}
 			}
 		} finally {
@@ -268,6 +269,6 @@ export async function runDoc(docs: string[], options: RunDocOptions): Promise<vo
 		} else {
 			console.error(formatError(`Failed to run document: ${message}`));
 		}
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 }

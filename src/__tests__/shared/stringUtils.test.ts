@@ -5,7 +5,30 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { safeDecodeURIComponent, stripAnsiCodes } from '../../shared/stringUtils';
+import {
+	normalizedEditSimilarity,
+	safeDecodeURIComponent,
+	stripAnsiCodes,
+} from '../../shared/stringUtils';
+
+describe('normalizedEditSimilarity', () => {
+	it('handles identical and empty inputs without division by zero', () => {
+		expect(normalizedEditSimilarity('', '')).toBe(1);
+		expect(normalizedEditSimilarity('Maestro', 'Maestro')).toBe(1);
+		expect(normalizedEditSimilarity('', 'Maestro')).toBe(0);
+		expect(normalizedEditSimilarity('Maestro', '')).toBe(0);
+	});
+
+	it.each([
+		['cat', 'cut', 2 / 3],
+		['cat', 'cart', 3 / 4],
+		['kitten', 'sitting', 4 / 7],
+		['abc', 'xyz', 0],
+	])('scores edits symmetrically for %s and %s', (a, b, expected) => {
+		expect(normalizedEditSimilarity(a, b)).toBeCloseTo(expected);
+		expect(normalizedEditSimilarity(b, a)).toBeCloseTo(expected);
+	});
+});
 
 describe('stripAnsiCodes', () => {
 	it('should return empty string for empty input', () => {

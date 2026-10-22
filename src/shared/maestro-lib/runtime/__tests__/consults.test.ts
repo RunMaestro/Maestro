@@ -135,6 +135,96 @@ describe('runtime consults', () => {
 	});
 
 	describe('an answer, inline (XM-2)', () => {
+		it('resumes an existing consult with its own provider and native ID despite a different agent default', async () => {
+			const runtime = await start(
+				() => ({ text: 'Claude consult reply.', sessionId: 'new-claude' }),
+				[
+					agentRecord('a1', 'Alpha', work, { toolType: 'codex' }),
+					agentRecord('a2', 'Beta', work, {
+						toolType: 'codex',
+						customPath: '/wrong/codex',
+						providerOverrides: { 'claude-code': { customPath: '/fake/claude-consult' } },
+						aiTabs: [
+							{ id: 'a2-t1', agentSessionId: 'active-codex', logs: [] },
+							{
+								id: 'consult',
+								tabProvider: 'claude-code',
+								agentSessionId: 'prior-claude',
+								logs: [],
+								hidden: true,
+								consultOrigin: { sourceSessionId: 'a1', sourceTabId: CROSS_AGENT_ASK_TAB_ID },
+							},
+						],
+					}),
+				]
+			);
+			const answer = value(
+				await runtime.consults.ask({
+					targetAgentId: 'a2',
+					fromAgentId: 'a1',
+					question: 'Follow up',
+				})
+			);
+			expect(answer.provider).toBe('claude-code');
+			const [call] = provider.callsFor('consult');
+			expect(call.spec.command).toBe('/fake/claude-consult');
+			expect(call.spec.args).toEqual(expect.arrayContaining(['--resume', 'prior-claude']));
+			const target = readSessions().find((agent: { id: string }) => agent.id === 'a2');
+			const consult = target.aiTabs.find((tab: { id: string }) => tab.id === 'consult');
+			expect(consult.agentSessionId).toBe('new-claude');
+			expect(consult.logs[1].turnProvider).toBe('claude-code');
+			expect(consult.providerSessions?.codex).toBeUndefined();
+			expect(target.aiTabs[0].agentSessionId).toBe('active-codex');
+			expect(target.activeTabId).toBe('a2-t1');
+		});
+
+		it('new hidden consults inherit the target default instead of either visible tab selection', async () => {
+			const runtime = await start(ANSWER, [
+				agentRecord('a1', 'Alpha', work, { toolType: 'codex' }),
+				agentRecord('a2', 'Beta', work, {
+					aiTabs: [{ id: 'a2-t1', tabProvider: 'codex', agentSessionId: 'active-codex', logs: [] }],
+				}),
+			]);
+			expect(
+				value(
+					await runtime.consults.ask({
+						targetAgentId: 'a2',
+						fromAgentId: 'a1',
+						question: 'New question',
+					})
+				).provider
+			).toBe('claude-code');
+			const target = readSessions().find((agent: { id: string }) => agent.id === 'a2');
+			const consult = target.aiTabs.find((tab: { consultOrigin?: unknown }) => tab.consultOrigin);
+			expect(consult.tabProvider).toBeUndefined();
+			expect(provider.callsFor('consult')[0].spec.args).not.toContain('active-codex');
+		});
+
+		it('holds an untranslated consult instead of starting an empty provider session', async () => {
+			const runtime = await start(ANSWER, [
+				agentRecord('a2', 'Beta', work, {
+					aiTabs: [
+						{
+							id: 'consult',
+							tabProvider: 'claude-code',
+							agentSessionId: null,
+							logs: [],
+							hidden: true,
+							pendingTranslation: 'codex',
+							consultOrigin: {
+								sourceSessionId: CROSS_AGENT_ASK_SESSION_ID,
+								sourceTabId: CROSS_AGENT_ASK_TAB_ID,
+							},
+						},
+					],
+				}),
+			]);
+			expect(
+				errorOf(await runtime.consults.ask({ targetAgentId: 'a2', question: 'Continue' })).code
+			).toBe('rejected');
+			expect(provider.callsFor('consult')).toHaveLength(0);
+		});
+
 		it('asks the target and returns what it said', async () => {
 			const runtime = await start();
 			const answer = value(
@@ -145,7 +235,11 @@ describe('runtime consults', () => {
 				})
 			);
 
-			expect(answer).toEqual({ answer: 'Answer 1: use a queue.', agentName: 'Beta' });
+			expect(answer).toEqual({
+				answer: 'Answer 1: use a queue.',
+				agentName: 'Beta',
+				provider: 'claude-code',
+			});
 			const [call] = provider.callsFor('consult');
 			expect(call.processId).toMatch(/^cross-agent-/);
 			expect(call.spec.command).toBe('/fake/bin/claude');

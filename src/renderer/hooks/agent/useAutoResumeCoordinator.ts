@@ -42,6 +42,12 @@ import { notifyToast } from '../../stores/notificationStore';
 import { LIMIT_THRESHOLD } from '../../components/UsageDashboard/quota/quotaFormatting';
 import { generateId } from '../../utils/ids';
 import { logger } from '../../utils/logger';
+import { PROVIDER_OVERRIDE_KEYS } from '../../../shared/maestro-lib/agents/providerSwap';
+import {
+	resolveErrorProvider,
+	projectTabProvider,
+	captureQueuedTurnSettings,
+} from '../../utils/providerTabSessions';
 
 const LOG_CONTEXT = '[AutoResume]';
 
@@ -165,8 +171,12 @@ export function isEligibleToProbe(
  * path re-pauses it and the next interval retries. This is how "all providers"
  * is supported.
  */
-export async function probeAvailability(session: Session): Promise<boolean> {
-	if (session.toolType !== 'claude-code') return true;
+export async function probeAvailability(
+	session: Session,
+	error: AgentError | undefined = session.agentError
+): Promise<boolean> {
+	const tab = session.aiTabs.find((t) => t.id === session.agentErrorTabId);
+	if (resolveErrorProvider(tab, session, error) !== 'claude-code') return true;
 
 	// SSH-backed sessions: the usage sampler (`maestro-p --status` in
 	// claude-usage-sampler.ts) runs LOCALLY and is keyed by the LOCAL account's
@@ -177,9 +187,9 @@ export async function probeAvailability(session: Session): Promise<boolean> {
 	// (resume-as-probe, like non-Claude providers): the resume runs on the remote,
 	// and if it re-hits the limit Phase 2 re-pauses it for the next interval. If a
 	// real remote `--status` probe is added later, run it here via wrapSpawnWithSsh.
-	if (session.sessionSshRemoteConfig?.enabled) return true;
+	if (session.sessionSshRemoteConfig?.enabled || session.sshRemoteId) return true;
 
-	const snapshot = getClaudeUsageSnapshotForSession(session);
+	const snapshot = getClaudeUsageSnapshotForSession({ ...session, agentError: error });
 	if (!snapshot) return false;
 	if (snapshot.authState === 'unauthenticated') return false;
 
@@ -277,20 +287,35 @@ function enqueueCapturedPrompt(
 		type: 'message',
 		text: captured.text,
 	};
-	updateSessionWith(sessionId, (s) => ({
-		...s,
-		executionQueue: [item, ...s.executionQueue],
-		aiTabs: s.aiTabs.map((tab) =>
-			tab.id === captured.tabId
-				? {
-						...tab,
-						logs: tab.logs.map((log) =>
-							log.id === captured.logId ? { ...log, recoveryAction: undefined } : log
-						),
-					}
-				: tab
-		),
-	}));
+	updateSessionWith(sessionId, (s) => {
+		const tab = s.aiTabs.find((t) => t.id === captured.tabId);
+		if (!tab) return s;
+		const projected = projectTabProvider(s, tab, resolveErrorProvider(tab, s, s.agentError));
+		return {
+			...s,
+			executionQueue: [
+				{
+					...item,
+					turnSettings: captureQueuedTurnSettings(
+						projected.tab,
+						projected.agent,
+						tab.turnAuto?.route
+					),
+				},
+				...s.executionQueue,
+			],
+			aiTabs: s.aiTabs.map((tab) =>
+				tab.id === captured.tabId
+					? {
+							...tab,
+							logs: tab.logs.map((log) =>
+								log.id === captured.logId ? { ...log, recoveryAction: undefined } : log
+							),
+						}
+					: tab
+			),
+		};
+	});
 }
 
 // ============================================================================
@@ -350,8 +375,16 @@ function resume(session: Session, resumeAutoRunAfterError: (sessionId: string) =
  * (falling back to the provider display name) so a user with several agents can
  * tell which one came back.
  */
-function fireResumedToast(session: Session): void {
-	const agentName = session.name?.trim() || getAgentDisplayName(session.toolType);
+function fireResumedToast(session: Session, error: AgentError): void {
+	const agentName =
+		session.name?.trim() ||
+		getAgentDisplayName(
+			resolveErrorProvider(
+				session.aiTabs.find((t) => t.id === session.agentErrorTabId),
+				session,
+				error
+			)
+		);
 	notifyToast({
 		color: 'green',
 		title: 'Resumed',
@@ -414,8 +447,16 @@ function pruneGiveUpTracking(
  * has stopped for this session and they must resume manually. Trigger is purely
  * time-based (the give-up window), never an attempt count.
  */
-function fireGaveUpToast(session: Session, giveUpDays: number): void {
-	const agentName = session.name?.trim() || getAgentDisplayName(session.toolType);
+function fireGaveUpToast(session: Session, giveUpDays: number, error: AgentError): void {
+	const agentName =
+		session.name?.trim() ||
+		getAgentDisplayName(
+			resolveErrorProvider(
+				session.aiTabs.find((t) => t.id === session.agentErrorTabId),
+				session,
+				error
+			)
+		);
 	const dayWord = giveUpDays === 1 ? 'day' : 'days';
 	notifyToast({
 		color: 'orange',
@@ -474,34 +515,43 @@ export async function runAutoResumeTick(
 	// past its time-based cutoff and fire one toast. Probing is cheap, so
 	// everything inside the window keeps retrying on the normal interval - the
 	// cutoff is the ONLY thing that ends retries, never an attempt count.
-	const retryable: Session[] = [];
+	const retryable: { session: Session; error: AgentError }[] = [];
 	for (const { session, error } of candidates) {
 		const anchor = resolveGiveUpAnchor(giveUp, session, error, now);
 		if (now >= anchor + Math.max(1, giveUpDays) * MS_PER_DAY) {
 			const tracking = giveUp.get(session.id);
 			if (tracking && !tracking.toastFired) {
 				tracking.toastFired = true;
-				fireGaveUpToast(session, giveUpDays);
+				fireGaveUpToast(session, giveUpDays, error);
 			}
 			continue; // leave it paused; stop auto-retrying this one
 		}
-		retryable.push(session);
+		retryable.push({ session, error });
 	}
 	if (retryable.length === 0) return;
 
 	// Re-sample Claude usage once per tick if any retryable candidate is Claude.
-	if (retryable.some((s) => s.toolType === 'claude-code')) {
+	if (
+		retryable.some(
+			({ session, error }) =>
+				resolveErrorProvider(
+					session.aiTabs.find((t) => t.id === session.agentErrorTabId),
+					session,
+					error
+				) === 'claude-code'
+		)
+	) {
 		await refreshClaudeUsageForTick();
 	}
 
-	for (const session of retryable) {
+	for (const { session, error } of retryable) {
 		// Don't start a second probe/resume for a session already mid-resume.
 		if (inFlight.has(session.id)) continue;
 		inFlight.add(session.id);
 
 		void (async () => {
 			try {
-				const available = await probeAvailability(session);
+				const available = await probeAvailability(session, error);
 				if (!available) return; // stay paused; retried next interval
 				// Ownership can change while the async probe is pending. A mirror is
 				// read-only, so re-check before mutating its pause state or queue.
@@ -509,9 +559,21 @@ export async function runAutoResumeTick(
 				// The user may have resumed or aborted while the probe was pending.
 				const current = useSessionStore.getState().sessions.find((s) => s.id === session.id);
 				const currentBatch = useBatchStore.getState().batchRunStates[session.id];
-				if (!current || !pausedLimitError(current, currentBatch)) return;
-				resume(session, resumeAutoRunAfterError);
-				fireResumedToast(session);
+				const currentError = current && pausedLimitError(current, currentBatch);
+				if (
+					!current ||
+					!currentError ||
+					currentError.timestamp !== error.timestamp ||
+					currentError.agentId !== error.agentId ||
+					current.agentErrorTabId !== session.agentErrorTabId ||
+					current.providerOverrides !== session.providerOverrides ||
+					PROVIDER_OVERRIDE_KEYS.some((key) => current[key] !== session[key]) ||
+					current.sessionSshRemoteConfig !== session.sessionSshRemoteConfig ||
+					current.sshRemoteId !== session.sshRemoteId
+				)
+					return;
+				resume(current, resumeAutoRunAfterError);
+				fireResumedToast(session, error);
 			} catch (err) {
 				logger.warn('Auto-resume probe/resume failed', LOG_CONTEXT, {
 					sessionId: session.id,

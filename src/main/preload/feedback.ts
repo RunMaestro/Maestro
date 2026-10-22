@@ -74,7 +74,11 @@ export interface FeedbackApi {
 	/**
 	 * Subscribe to an existing issue (+1 reaction) and optionally comment
 	 */
-	subscribeIssue: (issueNumber: number, comment?: string) => Promise<FeedbackSubmitResponse>;
+	subscribeIssue: (
+		issueNumber: number,
+		comment?: string,
+		options?: { allowSecrets?: boolean }
+	) => Promise<FeedbackSubmitResponse>;
 	/**
 	 * Persisted, resumable feedback drafts (list / upsert / delete)
 	 */
@@ -132,8 +136,16 @@ export function createFeedbackApi(): FeedbackApi {
 
 		searchIssues: (query: string) => ipcRenderer.invoke('feedback:search-issues', { query }),
 
-		subscribeIssue: (issueNumber: number, comment?: string): Promise<FeedbackSubmitResponse> =>
-			ipcRenderer.invoke('feedback:subscribe-issue', { issueNumber, comment }),
+		subscribeIssue: (
+			issueNumber: number,
+			comment?: string,
+			options?: { allowSecrets?: boolean }
+		): Promise<FeedbackSubmitResponse> =>
+			ipcRenderer.invoke('feedback:subscribe-issue', {
+				issueNumber,
+				comment,
+				allowSecrets: options?.allowSecrets === true,
+			}),
 
 		drafts: {
 			list: (): Promise<{ drafts: FeedbackDraft[] }> => ipcRenderer.invoke('feedback:drafts:list'),

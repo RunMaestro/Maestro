@@ -67,6 +67,21 @@ export interface TriggerNodeData {
 		repo?: string;
 		poll_minutes?: number;
 		filter?: Record<string, string | number | boolean>;
+		/** Any event type: a condition the event must meet before a run starts,
+		 *  answered by the `cue-gate` Local Models task. See
+		 *  `CueSubscription.gate`. */
+		gate?: string;
+		/** What the gate does when its model cannot answer. See
+		 *  `CueSubscription.gate_on_unavailable`. */
+		gate_on_unavailable?: 'run' | 'skip';
+		/** Triggers that carry untrusted text: whether the `injection-screen`
+		 *  Local Models task scores it before a run starts. Absent is the
+		 *  default (shell commands that use it are screened). See
+		 *  `CueSubscription.screen_injection`. */
+		screen_injection?: boolean;
+		/** The score at or above which a screened value blocks the run. See
+		 *  `CueSubscription.injection_threshold`. */
+		injection_threshold?: number;
 		/** `github.label` only: pull requests, issues, or both. See
 		 *  `CueSubscription.gh_label_target`. */
 		gh_label_target?: 'pr' | 'issue' | 'both';

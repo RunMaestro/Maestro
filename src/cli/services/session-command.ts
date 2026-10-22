@@ -7,12 +7,12 @@
 
 import { withMaestroClient } from './maestro-client';
 import { MaestroNotRunningError } from './maestro-not-running';
-import { ExitCode, exitCodeForError, exitWith } from '../exit-codes';
 import { resolveAgentId, readActiveAgentId } from './storage';
 import type { DesktopTabEntry } from '../../shared/desktopTabs';
 
 export type { DesktopTabEntry };
 import { formatError, formatSuccess } from '../output/formatter';
+import { ExitCode, exitCodeForError, exitWith } from '../exit-codes';
 import { isQuiet } from '../output/verbosity';
 
 export interface SimpleResult {
@@ -42,14 +42,65 @@ export function errorFrameMessage(reply: unknown): string | null {
 	return null;
 }
 
-/** Print an error (JSON-aware) and exit non-zero. Never returns. */
-export function failCommand(message: string, json?: boolean): never {
+/**
+ * Print an error (JSON-aware) and exit non-zero. Never returns.
+ *
+ * `code` names the class of failure for a script: a bad invocation is
+ * `InvalidUsage`, a bridge call that failed takes `exitCodeForError(error)`.
+ * Left out, it is the general failure every caller of this had before.
+ */
+export function failCommand(
+	message: string,
+	json?: boolean,
+	code: ExitCode = ExitCode.GeneralError
+): never {
 	if (json) {
 		console.log(JSON.stringify({ success: false, error: message }));
 	} else {
 		console.error(formatError(message));
 	}
-	return process.exit(1);
+	return exitWith(code);
+}
+
+/**
+ * Report a caught failure and exit with the code its class names: a closed app
+ * is `NotRunning`, an old build `Unsupported`, a hung renderer `Timeout`, and
+ * anything else the general failure. The one spelling of
+ * `catch (error) { failCommand(...) }` so no verb reports 1 for all of them.
+ */
+export function failFromError(error: unknown, json?: boolean): never {
+	exitIfMaestroNotRunning(error, { json });
+	return failCommand(
+		error instanceof Error ? error.message : String(error),
+		json,
+		exitCodeForError(error)
+	);
+}
+
+/**
+ * One bridge round trip for a verb that needs the reply's fields.
+ *
+ * A transport failure exits with the code for it (an older app build, a hung
+ * renderer), and a reply the app marked `success: false` exits with its error,
+ * so the caller reads a reply that succeeded and nothing else.
+ */
+export async function sendBridgeCommand<T extends { success: boolean; error?: string }>(
+	payload: Record<string, unknown>,
+	responseType: string,
+	json: boolean | undefined,
+	timeoutMs?: number
+): Promise<T> {
+	let reply: T;
+	try {
+		reply = await withMaestroClient((client) =>
+			client.sendCommand<T>(payload, responseType, timeoutMs)
+		);
+	} catch (error) {
+		failFromError(error, json);
+	}
+	if (!reply.success)
+		failCommand(reply.error || errorFrameMessage(reply) || 'Request failed', json);
+	return reply;
 }
 
 export interface NotRunningReportOptions {
@@ -93,19 +144,6 @@ export function exitIfMaestroNotRunning(
 	exitWith(ExitCode.NotRunning);
 }
 
-/**
- * Report any failure from a bridge call and exit with its typed code: exit 3
- * for an absent app (via {@link exitIfMaestroNotRunning}), 4 for an old app
- * build, 5 for a renderer that never answered, 1 otherwise.
- */
-export function failFromError(error: unknown, json?: boolean): never {
-	exitIfMaestroNotRunning(error, { json });
-	const message = error instanceof Error ? error.message : String(error);
-	if (json) console.log(JSON.stringify({ success: false, error: message }));
-	else console.error(`Error: ${message}`);
-	return exitWith(exitCodeForError(error));
-}
-
 /** Report a `{ success }` result: success line, or error + exit(1) on failure. */
 export function reportResult(
 	result: SimpleResult,
@@ -139,7 +177,7 @@ export function resolveAgentOrFail(agentId: string, json?: boolean): string {
 	try {
 		return resolveAgentId(agentId);
 	} catch (error) {
-		return failCommand(error instanceof Error ? error.message : String(error), json);
+		return failFromError(error, json);
 	}
 }
 
@@ -232,7 +270,6 @@ export async function runAgentCommand(
 		const result = await sendSimpleCommand({ type, sessionId, ...extraPayload }, responseType);
 		reportResult(result, { json: options.json, successMessage, jsonExtra: { sessionId } });
 	} catch (error) {
-		exitIfMaestroNotRunning(error, options);
-		failCommand(error instanceof Error ? error.message : String(error), options.json);
+		failFromError(error, options.json);
 	}
 }

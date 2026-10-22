@@ -914,3 +914,13 @@ describe('consult tab records', () => {
 		expect(JSON.stringify(after.providerSessions)).toContain('sess-claude');
 	});
 });
+
+describe('Ensemble raw pin protection', () => {
+	it('refuses a provider pin through the generic tab patch before changing a model', () => {
+		const tab = { id: 'tab', agentSessionId: 'native', customModel: 'old' };
+		expect(applyTabPatch(tab as never, { tabProvider: 'codex', customModel: 'new' })).toMatchObject(
+			{ ok: false, message: expect.stringContaining('parking operation') }
+		);
+		expect(tab.customModel).toBe('old');
+	});
+});

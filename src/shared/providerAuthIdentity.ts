@@ -10,7 +10,7 @@
  * grouped by: one prompt per provider rather than one per agent, and one list
  * of blocked agents to resume once the login succeeds.
  *
- * The scope is (agent binary, host). The host matters because an SSH remote has
+ * The scope is (agent binary, host, explicit account directory). The host matters because an SSH remote has
  * its own credential store: the same agent can be authenticated locally and
  * expired on a remote, and re-authenticating one does nothing for the other.
  *
@@ -35,9 +35,15 @@ export type ProviderAuthKey = string;
  * @param toolType - The agent id (e.g. `claude-code`).
  * @param sshRemoteId - The SSH remote the agent runs on, when it runs remotely.
  *   Omit (or pass null) for a local agent.
+ * @param accountKey - Explicit account directory, when configured. Omit for the provider default.
  */
-export function providerAuthKey(toolType: string, sshRemoteId?: string | null): ProviderAuthKey {
-	return sshRemoteId ? `${toolType}@${sshRemoteId}` : toolType;
+export function providerAuthKey(
+	toolType: string,
+	sshRemoteId?: string | null,
+	accountKey?: string | null
+): ProviderAuthKey {
+	const hostKey = sshRemoteId ? `${toolType}@${sshRemoteId}` : toolType;
+	return accountKey ? `${hostKey}:${encodeURIComponent(accountKey)}` : hostKey;
 }
 
 // ============================================================================

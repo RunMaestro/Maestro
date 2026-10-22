@@ -47,11 +47,24 @@ vi.mock('../../../cli/services/system-prompt', () => ({
 	prepareMaestroSystemPromptCli: vi.fn(),
 }));
 
+vi.mock('../../../cli/services/auto-turn', () => ({
+	resolveCliAutoTurn: vi.fn(),
+}));
+
+// The consult budget is a real file in the Maestro data directory, and
+// MAESTRO_USER_DATA in an agent's shell points that at the LIVE one. The guard
+// runs against a temp directory in services/consult-budget-guard.test.ts; here
+// it only answers.
+vi.mock('../../../cli/services/consult-budget-guard', () => ({
+	admitCliConsult: vi.fn(),
+}));
+
 // Mock storage
 vi.mock('../../../cli/services/storage', () => ({
 	resolveAgentId: vi.fn(),
 	getSessionById: vi.fn(),
 	addHistoryEntry: vi.fn(),
+	readHarnessTierDefaults: vi.fn(() => ({})),
 }));
 
 // Mock prompt-loader so the synopsis turn gets a fixed prompt
@@ -81,11 +94,23 @@ import { send } from '../../../cli/commands/send';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import { UnsupportedCommandError } from '../../../cli/services/maestro-client';
 import { spawnAgent, detectAgent } from '../../../cli/services/agent-spawner';
-import { resolveAgentId, getSessionById, addHistoryEntry } from '../../../cli/services/storage';
+import {
+	resolveAgentId,
+	getSessionById,
+	addHistoryEntry,
+	readHarnessTierDefaults,
+} from '../../../cli/services/storage';
+import { autoTurnReport } from '../../../shared/autoTurn';
 import { estimateContextUsage } from '../../../shared/maestro-lib/parsers/usage-aggregator';
 import { prepareMaestroSystemPromptCli } from '../../../cli/services/system-prompt';
+import { resolveCliAutoTurn } from '../../../cli/services/auto-turn';
+import { admitCliConsult } from '../../../cli/services/consult-budget-guard';
+import { CONSULT_BUDGET_EXHAUSTED_CODE } from '../../../shared/consultBudget';
 import { CALLER_AGENT_ID_ENV_VAR } from '../../../shared/agentDelegation';
 import { QUERY_SOURCE_ENV_VAR } from '../../../shared/querySource';
+
+/** The place in a consult chain every admitted send below hands its target. */
+const TARGET_CHAIN = { chainId: 'chain-test', depth: 1 };
 
 describe('send command', () => {
 	let consoleSpy: MockInstance;
@@ -109,6 +134,7 @@ describe('send command', () => {
 		// that don't include `appendSystemPrompt` keep passing (vitest treats
 		// undefined-valued object keys as absent in `toHaveBeenCalledWith`).
 		vi.mocked(prepareMaestroSystemPromptCli).mockResolvedValue(undefined);
+		vi.mocked(admitCliConsult).mockReturnValue({ allowed: true, chain: TARGET_CHAIN });
 		// A test run started from an agent's own shell inherits its caller
 		// identity and its turn's origin, which would turn every entry here into
 		// an AGENT or CUE entry. Blank reads as absent.
@@ -119,6 +145,52 @@ describe('send command', () => {
 	afterEach(() => {
 		vi.unstubAllEnvs();
 	});
+
+	it.each([
+		{ live: false },
+		{ live: true },
+		{ live: false, nativeId: 'native-codex' },
+		{ live: true, nativeId: 'native-codex' },
+	])(
+		'keeps a no-tab send on the agent default with $live and native $nativeId',
+		async ({ live, nativeId }) => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			const agent = {
+				...mockAgent(),
+				activeTabId: 'foreign',
+				aiTabs: [{ id: 'foreign', tabProvider: 'codex', agentSessionId: 'native-codex' }],
+			};
+			vi.mocked(getSessionById).mockReturnValue(agent);
+			vi.mocked(detectAgent).mockResolvedValue({ available: true, path: '/usr/bin/claude' });
+			vi.mocked(spawnAgent).mockResolvedValue({ success: true, response: 'standalone' });
+			if (live) {
+				desktop.connect.mockResolvedValue(undefined);
+				desktop.sendCommand.mockResolvedValue({
+					available: true,
+					success: true,
+					response: 'desktop',
+				});
+			}
+			await send('agent-abc', 'hello', { history: false, session: nativeId });
+			expect(detectAgent).toHaveBeenCalledWith('claude-code');
+			if (live) {
+				expect(desktop.sendCommand.mock.calls[0][0]).toMatchObject({
+					type: 'plugins_send_agent',
+					agentId: 'agent-abc-123',
+				});
+				expect(desktop.sendCommand.mock.calls[0][0]).not.toHaveProperty('tabId');
+				expect(spawnAgent).not.toHaveBeenCalled();
+			} else {
+				expect(spawnAgent).toHaveBeenCalledWith(
+					'claude-code',
+					agent.cwd,
+					'hello',
+					nativeId,
+					expect.any(Object)
+				);
+			}
+		}
+	);
 
 	it('falls back to standalone spawning when an older desktop rejects the host verb', async () => {
 		vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
@@ -274,7 +346,11 @@ describe('send command', () => {
 			'/path/to/project',
 			'SYNOPSIS PROMPT',
 			'provider-1',
-			expect.objectContaining({ querySource: 'auto', customEffort: 'low' })
+			expect.objectContaining({
+				querySource: 'auto',
+				customModel: 'gpt-6-luna',
+				customEffort: 'low',
+			})
 		);
 		expect(addHistoryEntry).toHaveBeenCalledWith(
 			expect.objectContaining({ type: 'USER', summary: 'Reported it.', success: true })
@@ -435,7 +511,7 @@ describe('send command', () => {
 			'/path/to/project',
 			'Hello world',
 			undefined,
-			{ readOnlyMode: undefined, signal: expect.any(AbortSignal) }
+			{ readOnlyMode: undefined, signal: expect.any(AbortSignal), consultChain: TARGET_CHAIN }
 		);
 
 		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
@@ -484,7 +560,7 @@ describe('send command', () => {
 			'/path/to/project',
 			'Continue from before',
 			'session-xyz-789',
-			{ readOnlyMode: undefined, signal: expect.any(AbortSignal) }
+			{ readOnlyMode: undefined, signal: expect.any(AbortSignal), consultChain: TARGET_CHAIN }
 		);
 
 		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
@@ -552,7 +628,7 @@ describe('send command', () => {
 			'/custom/project/path',
 			'Do something',
 			undefined,
-			{ readOnlyMode: undefined, signal: expect.any(AbortSignal) }
+			{ readOnlyMode: undefined, signal: expect.any(AbortSignal), consultChain: TARGET_CHAIN }
 		);
 	});
 
@@ -574,6 +650,7 @@ describe('send command', () => {
 		expect(spawnAgent).toHaveBeenCalledWith('codex', expect.any(String), 'Use codex', undefined, {
 			signal: expect.any(AbortSignal),
 			readOnlyMode: undefined,
+			consultChain: TARGET_CHAIN,
 		});
 	});
 
@@ -594,7 +671,7 @@ describe('send command', () => {
 			'/path/to/project',
 			'Analyze this code',
 			undefined,
-			{ readOnlyMode: true, signal: expect.any(AbortSignal) }
+			{ readOnlyMode: true, signal: expect.any(AbortSignal), consultChain: TARGET_CHAIN }
 		);
 	});
 
@@ -769,7 +846,10 @@ describe('send command', () => {
 
 		await send('agent-abc', 'hello', {});
 
-		expect(prepareMaestroSystemPromptCli).toHaveBeenCalledWith(agent);
+		// The chain the send was admitted to, so the prompt can state what is left of it.
+		expect(prepareMaestroSystemPromptCli).toHaveBeenCalledWith(agent, {
+			consultChain: TARGET_CHAIN,
+		});
 		expect(spawnAgent).toHaveBeenCalledWith(
 			'claude-code',
 			'/path/to/project',
@@ -862,6 +942,336 @@ describe('send command', () => {
 		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
 		expect(output.success).toBe(true);
 		expect(output.usage).toBeNull();
+	});
+
+	// A send the CLI spawns itself to an agent set to the Auto model: the
+	// desktop's router decides the turn, and the harness never sees the word.
+	describe('an agent on the Auto model', () => {
+		const LOCAL = { type: 'source' as const, endpointId: 'maestro-server', model: 'qwen3.5-4b' };
+		const OWN = { type: 'source' as const, endpointId: 'ep-ollama', model: 'qwen3:latest' };
+		const spawnOptions = () => vi.mocked(spawnAgent).mock.calls[0][4];
+
+		const ready = (overrides: Partial<SessionInfo> = {}) => {
+			const agent = mockAgent({ customModel: 'auto', customEffort: 'high', ...overrides });
+			vi.mocked(resolveAgentId).mockReturnValue(agent.id);
+			vi.mocked(getSessionById).mockReturnValue(agent);
+			vi.mocked(detectAgent).mockResolvedValue({ available: true, path: '/usr/bin/claude' });
+			vi.mocked(spawnAgent).mockResolvedValue({ success: true, response: 'done' });
+			return agent;
+		};
+		const resolvesTo = (turn: Record<string, unknown>) =>
+			vi.mocked(resolveCliAutoTurn).mockResolvedValue({
+				notes: [],
+				warnings: [],
+				stamp: { status: 'routed' },
+				...turn,
+			} as never);
+
+		it('routes the message and spawns on the model and effort it resolves to', async () => {
+			const agent = ready();
+			resolvesTo({ model: 'haiku', effort: 'low' });
+
+			await send('agent-abc', 'rename the helper', { synopsis: false, history: false });
+
+			expect(resolveCliAutoTurn).toHaveBeenCalledWith({
+				agent,
+				prompt: 'rename the helper',
+				agentEffort: 'high',
+				client: null,
+			});
+			expect(spawnOptions()).toMatchObject({ customModel: 'haiku', customEffort: 'low' });
+		});
+
+		it('never passes the word auto: no decision is no model at all', async () => {
+			ready();
+			resolvesTo({ model: undefined, effort: 'high', stamp: { status: 'no-decision' } });
+
+			await send('agent-abc', 'rename the helper', { synopsis: false, history: false });
+
+			expect(spawnOptions()!.customModel).toBeUndefined();
+			expect(spawnOptions()!.customEffort).toBe('high');
+		});
+
+		it("launches on the tier's place, and on the agent's own when the tier names none", async () => {
+			ready({ runOn: OWN });
+			resolvesTo({ model: 'qwen3.5-4b', runOn: LOCAL });
+			await send('agent-abc', 'rename the helper', { synopsis: false, history: false });
+			expect(spawnOptions()).toMatchObject({ customModel: 'qwen3.5-4b', runOn: LOCAL });
+
+			vi.mocked(spawnAgent).mockClear();
+			resolvesTo({ model: 'qwen3:latest' });
+			await send('agent-abc', 'rename the helper', { synopsis: false, history: false });
+			expect(spawnOptions()).toMatchObject({ runOn: OWN });
+		});
+
+		it('fails the send by name, and spawns nothing, when the tier target cannot be used', async () => {
+			ready();
+			resolvesTo({
+				refusal: { code: 'tier-unsupported-source', message: 'The "low" tier target cannot run.' },
+			});
+			const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+			await send('agent-abc', 'rename the helper', { synopsis: false, history: false });
+
+			expect(spawnAgent).not.toHaveBeenCalled();
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+				success: false,
+				error: 'The "low" tier target cannot run.',
+			});
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+			errorSpy.mockRestore();
+		});
+
+		it('says on stderr when the provider could not act on what the router chose', async () => {
+			ready();
+			resolvesTo({
+				warnings: ['copilot-cli has no model tier mapping, so tier="high" was ignored.'],
+			});
+			const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+			await send('agent-abc', 'rename the helper', { synopsis: false, history: false });
+
+			expect(errorSpy).toHaveBeenCalledWith(
+				'Warning: copilot-cli has no model tier mapping, so tier="high" was ignored.'
+			);
+			errorSpy.mockRestore();
+		});
+
+		it('leaves a send the desktop runs to the desktop, which routes it there', async () => {
+			ready();
+			desktop.connect.mockResolvedValue(undefined);
+			desktop.sendCommand.mockResolvedValue({ available: true, success: true, response: 'done' });
+
+			await send('agent-abc', 'rename the helper', { synopsis: false, history: false });
+
+			expect(resolveCliAutoTurn).not.toHaveBeenCalled();
+			expect(spawnAgent).not.toHaveBeenCalled();
+		});
+
+		it('routes nothing for an agent on a named model', async () => {
+			ready({ customModel: 'opus' });
+
+			await send('agent-abc', 'rename the helper', { synopsis: false, history: false });
+
+			expect(resolveCliAutoTurn).not.toHaveBeenCalled();
+			expect(spawnOptions()).toMatchObject({ customModel: 'opus', customEffort: 'high' });
+		});
+	});
+
+	// `--model <model>`: this one turn's model, in place of the agent's own.
+	// `auto` routes the turn the way an agent set to Auto is routed.
+	describe('--model', () => {
+		const spawnOptions = () => vi.mocked(spawnAgent).mock.calls[0][4];
+		const output = () => JSON.parse(consoleSpy.mock.calls[0][0]);
+
+		const ready = (overrides: Partial<SessionInfo> = {}) => {
+			const agent = mockAgent({ customModel: 'opus', customEffort: 'high', ...overrides });
+			vi.mocked(resolveAgentId).mockReturnValue(agent.id);
+			vi.mocked(getSessionById).mockReturnValue(agent);
+			vi.mocked(detectAgent).mockResolvedValue({ available: true, path: '/usr/bin/claude' });
+			vi.mocked(spawnAgent).mockResolvedValue({ success: true, response: 'done' });
+			vi.mocked(readHarnessTierDefaults).mockReturnValue({});
+			return agent;
+		};
+		/** A routed turn as the resolver answers it, with the router's decision on its stamp. */
+		const routedTurn = {
+			model: 'haiku',
+			effort: 'low',
+			notes: [],
+			warnings: [],
+			stamp: {
+				status: 'routed' as const,
+				route: {
+					tier: 'low' as const,
+					effort: 'low' as const,
+					engine: 'Embedding router',
+					calibrated: false,
+				},
+			},
+		};
+
+		it("spawns on the named model in place of the agent's own, and routes nothing", async () => {
+			ready();
+
+			await send('agent-abc', 'rename the helper', {
+				model: 'sonnet',
+				synopsis: false,
+				history: false,
+			});
+
+			expect(resolveCliAutoTurn).not.toHaveBeenCalled();
+			expect(spawnOptions()).toMatchObject({ customModel: 'sonnet', customEffort: 'high' });
+			expect(output()).not.toHaveProperty('auto');
+		});
+
+		it('keeps the named model for this turn even when the agent is set to Auto', async () => {
+			ready({ customModel: 'auto' });
+
+			await send('agent-abc', 'rename the helper', {
+				model: 'sonnet',
+				synopsis: false,
+				history: false,
+			});
+
+			expect(resolveCliAutoTurn).not.toHaveBeenCalled();
+			expect(spawnOptions()).toMatchObject({ customModel: 'sonnet' });
+		});
+
+		it('routes an auto turn for an agent on a named model, and reports what Auto did', async () => {
+			const agent = ready();
+			vi.mocked(resolveCliAutoTurn).mockResolvedValue(routedTurn as never);
+
+			await send('agent-abc', 'rename the helper', {
+				model: 'auto',
+				synopsis: false,
+				history: false,
+			});
+
+			expect(resolveCliAutoTurn).toHaveBeenCalledWith({
+				agent,
+				prompt: 'rename the helper',
+				agentEffort: 'high',
+				client: null,
+			});
+			// The harness is handed the routed model, never the word and never the agent's own.
+			expect(spawnOptions()).toMatchObject({ customModel: 'haiku', customEffort: 'low' });
+			expect(output()).toMatchObject({
+				success: true,
+				auto: autoTurnReport(routedTurn as never),
+			});
+			expect(output().auto).toEqual({
+				label: 'Auto → low · haiku',
+				detail: expect.stringContaining('Embedding router chose tier low, effort low.'),
+			});
+		});
+
+		it('reads the word auto whatever its case', async () => {
+			ready();
+			vi.mocked(resolveCliAutoTurn).mockResolvedValue(routedTurn as never);
+
+			await send('agent-abc', 'rename the helper', {
+				model: 'Auto',
+				synopsis: false,
+				history: false,
+			});
+
+			expect(resolveCliAutoTurn).toHaveBeenCalledOnce();
+			expect(spawnOptions()).toMatchObject({ customModel: 'haiku' });
+		});
+
+		it('refuses auto by name, before anything is started, for an agent Auto cannot act on', async () => {
+			ready({ toolType: 'opencode', customModel: undefined, customEffort: undefined });
+			desktop.connect.mockResolvedValue(undefined);
+
+			await send('agent-abc', 'rename the helper', {
+				model: 'auto',
+				synopsis: false,
+				history: false,
+			});
+
+			expect(output()).toMatchObject({ success: false, code: 'AUTO_MODEL_UNAVAILABLE' });
+			expect(output().error).toMatch(/^--model auto: Auto would change nothing for this agent/);
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+			expect(desktop.connect).not.toHaveBeenCalled();
+			expect(desktop.sendCommand).not.toHaveBeenCalled();
+			expect(resolveCliAutoTurn).not.toHaveBeenCalled();
+			expect(spawnAgent).not.toHaveBeenCalled();
+		});
+
+		it('allows auto for that provider once one of its tiers is mapped to a model', async () => {
+			ready({
+				toolType: 'opencode',
+				customModel: undefined,
+				tierTargets: { medium: { type: 'provider-model', model: 'some-model' } },
+			});
+			vi.mocked(resolveCliAutoTurn).mockResolvedValue({
+				...routedTurn,
+				model: 'some-model',
+			} as never);
+
+			await send('agent-abc', 'rename the helper', {
+				model: 'auto',
+				synopsis: false,
+				history: false,
+			});
+
+			expect(processExitSpy).not.toHaveBeenCalledWith(1);
+			expect(spawnOptions()).toMatchObject({ customModel: 'some-model' });
+		});
+
+		it.each(['-x', '', ' sonnet', 'sonnet ', 'son\nnet'])(
+			'refuses %j as a model name before anything is started',
+			async (model) => {
+				ready();
+				desktop.connect.mockResolvedValue(undefined);
+
+				await send('agent-abc', 'rename the helper', { model, synopsis: false, history: false });
+
+				expect(output()).toMatchObject({ success: false, code: 'INVALID_MODEL' });
+				expect(processExitSpy).toHaveBeenCalledWith(1);
+				expect(desktop.connect).not.toHaveBeenCalled();
+				expect(resolveCliAutoTurn).not.toHaveBeenCalled();
+				expect(spawnAgent).not.toHaveBeenCalled();
+			}
+		);
+
+		it('hands the model to the desktop when the desktop runs the send, and passes its Auto report on', async () => {
+			ready();
+			desktop.connect.mockResolvedValue(undefined);
+			const auto = { label: 'Auto → low · haiku', detail: 'Auto: the router chose tier low.' };
+			desktop.sendCommand.mockResolvedValue({
+				available: true,
+				success: true,
+				response: 'done',
+				auto,
+			});
+
+			await send('agent-abc', 'rename the helper', {
+				model: 'auto',
+				synopsis: false,
+				history: false,
+			});
+
+			expect(desktop.sendCommand).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'plugins_send_agent',
+					agentId: 'agent-abc-123',
+					prompt: 'rename the helper',
+					model: 'auto',
+				}),
+				'plugins_send_agent_result',
+				expect.any(Number)
+			);
+			// The desktop routes a send it runs; the CLI asks nothing and spawns nothing.
+			expect(resolveCliAutoTurn).not.toHaveBeenCalled();
+			expect(spawnAgent).not.toHaveBeenCalled();
+			expect(output()).toMatchObject({ success: true, response: 'done', auto });
+		});
+
+		it('hands a named model to the desktop too', async () => {
+			ready();
+			desktop.connect.mockResolvedValue(undefined);
+			desktop.sendCommand.mockResolvedValue({ available: true, success: true, response: 'done' });
+
+			await send('agent-abc', 'rename the helper', {
+				model: 'sonnet',
+				synopsis: false,
+				history: false,
+			});
+
+			expect(desktop.sendCommand.mock.calls[0][0]).toMatchObject({ model: 'sonnet' });
+			expect(output()).not.toHaveProperty('auto');
+		});
+
+		it('sends no model field to the desktop without --model', async () => {
+			ready();
+			desktop.connect.mockResolvedValue(undefined);
+			desktop.sendCommand.mockResolvedValue({ available: true, success: true, response: 'done' });
+
+			await send('agent-abc', 'rename the helper', { synopsis: false, history: false });
+
+			expect(desktop.sendCommand.mock.calls[0][0]).not.toHaveProperty('model');
+		});
 	});
 
 	describe('history', () => {
@@ -1152,6 +1562,21 @@ describe('send command', () => {
 			expect(vi.mocked(spawnAgent).mock.calls[1][4]).toMatchObject({ customModel: 'opus[1m]' });
 		});
 
+		it("runs the turn and its synopsis on the agent's Run on target", async () => {
+			const runOn = { type: 'source', endpointId: 'ep-ollama', model: 'qwen3:latest' };
+			ready({ runOn });
+			vi.mocked(spawnAgent)
+				.mockResolvedValueOnce({ success: true, response: 'Done', agentSessionId: 'session-1' })
+				.mockResolvedValueOnce({ success: true, response: '**Summary:** Did it.' });
+
+			await send('agent-abc', 'Do it', {});
+
+			// The synopsis resumes the turn's conversation. Without the target it
+			// would send that conversation to the provider's cloud.
+			expect(vi.mocked(spawnAgent).mock.calls[0][4]).toMatchObject({ runOn });
+			expect(vi.mocked(spawnAgent).mock.calls[1][4]).toMatchObject({ runOn });
+		});
+
 		it('keeps the synopsis turn read-only after a --read-only send', async () => {
 			ready();
 			vi.mocked(spawnAgent)
@@ -1227,6 +1652,120 @@ describe('send command', () => {
 			expect(processExitSpy).not.toHaveBeenCalled();
 			expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('disk full'));
 			errSpy.mockRestore();
+		});
+	});
+
+	// A send from an agent's shell is a consult made while working on a user
+	// message. It spends that message's budget, and a chain that is out refuses
+	// it loudly: a silent no-op would read as a peer with nothing to say.
+	describe('the consult budget', () => {
+		const refusal = {
+			allowed: false as const,
+			code: CONSULT_BUDGET_EXHAUSTED_CODE,
+			message:
+				'Consultation budget exhausted, so nothing was sent: the agents working on this message have spent 25 of 25 consults and delegations.',
+		};
+
+		function ready(): void {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			vi.mocked(getSessionById).mockReturnValue(mockAgent());
+			vi.mocked(detectAgent).mockResolvedValue({ available: true, path: '/usr/bin/claude' });
+			vi.mocked(spawnAgent).mockResolvedValue({
+				success: true,
+				response: 'Done',
+				agentSessionId: 'session-1',
+			});
+		}
+
+		it('refuses with the JSON error shape and a non-zero exit, and reaches nobody', async () => {
+			ready();
+			desktop.connect.mockResolvedValue(undefined);
+			vi.mocked(admitCliConsult).mockReturnValue(refusal);
+
+			await send('agent-abc', 'What do you think?', {});
+
+			expect(consoleSpy).toHaveBeenCalledOnce();
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toEqual({
+				success: false,
+				error: refusal.message,
+				code: CONSULT_BUDGET_EXHAUSTED_CODE,
+			});
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+			expect(spawnAgent).not.toHaveBeenCalled();
+			expect(desktop.sendCommand).not.toHaveBeenCalled();
+			expect(desktop.disconnect).toHaveBeenCalled();
+			// Nothing was sent, so the target's History must not say something was.
+			expect(addHistoryEntry).not.toHaveBeenCalled();
+		});
+
+		it('names the budget, the number spent and the setting in the error', async () => {
+			ready();
+			vi.mocked(admitCliConsult).mockReturnValue({
+				...refusal,
+				message: `${refusal.message} The budget is the maxConsultationsPerTurn setting.`,
+			});
+
+			await send('agent-abc', 'What do you think?', {});
+
+			const { error } = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(error).toContain('Consultation budget');
+			expect(error).toContain('25 of 25');
+			expect(error).toContain('maxConsultationsPerTurn');
+		});
+
+		it('spends once per send, from the environment the command runs in', async () => {
+			ready();
+
+			await send('agent-abc', 'What do you think?', { synopsis: false });
+
+			expect(admitCliConsult).toHaveBeenCalledExactlyOnceWith();
+		});
+
+		// Checked last: a send that was never going to start must not cost the
+		// chain one of its consults.
+		it('spends nothing on a model name it refuses', async () => {
+			ready();
+
+			await send('agent-abc', 'What do you think?', { model: '-x' });
+
+			expect(admitCliConsult).not.toHaveBeenCalled();
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({ code: 'INVALID_MODEL' });
+		});
+
+		it('spends nothing on a plugin-tool run that has no desktop to run on', async () => {
+			ready();
+
+			await send('agent-abc', 'What do you think?', { requirePluginTools: true });
+
+			expect(admitCliConsult).not.toHaveBeenCalled();
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toMatchObject({
+				code: 'PLUGIN_TOOLS_UNAVAILABLE',
+			});
+		});
+
+		it('hands the agent it spawns its place in the chain, so its own consults are counted', async () => {
+			ready();
+
+			await send('agent-abc', 'What do you think?', { synopsis: false });
+
+			expect(vi.mocked(spawnAgent).mock.calls[0][4]).toMatchObject({ consultChain: TARGET_CHAIN });
+		});
+
+		// The desktop spawns the agent on this route, so the chain cannot ride the
+		// CLI's own environment: it has to be in the message.
+		it('hands the desktop the same place in the chain when the desktop runs the send', async () => {
+			ready();
+			desktop.connect.mockResolvedValue(undefined);
+			desktop.sendCommand.mockResolvedValue({ available: true, success: true, response: 'done' });
+
+			await send('agent-abc', 'What do you think?', { synopsis: false });
+
+			expect(desktop.sendCommand).toHaveBeenCalledWith(
+				expect.objectContaining({ type: 'plugins_send_agent', consultChain: TARGET_CHAIN }),
+				'plugins_send_agent_result',
+				expect.any(Number)
+			);
+			expect(spawnAgent).not.toHaveBeenCalled();
 		});
 	});
 });

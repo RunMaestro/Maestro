@@ -3,6 +3,7 @@ import { ipcRenderer } from 'electron';
 import type { CallUsage, UsageStats } from '../../../shared/types';
 import type { ParsedQuestion } from '../../permission-relay/types';
 import type { SteeringResultFrame } from '../../../shared/chatSteering';
+import type { ConsultChain } from '../../../shared/consultBudget';
 
 /**
  * Configuration for spawning a process
@@ -30,6 +31,9 @@ export interface ProcessConfig {
 	// Stats tracking options
 	querySource?: 'user' | 'auto'; // Whether this query is user-initiated or from Auto Run
 	tabId?: string; // Tab ID for multi-tab tracking
+	// The consult chain this turn runs IN, when another agent's delegation
+	// started it (`maestro-cli dispatch`). See shared/consultBudget.ts.
+	consultChain?: ConsultChain;
 }
 
 /**

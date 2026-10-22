@@ -18,6 +18,25 @@ import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { buildNewAgentRecord } from '../../../shared/newAgentRecord';
 import { asThinkingMode } from '../../../shared/types';
+import { parseTierTargetsEdit } from '../../../shared/modelTiers';
+import {
+	applyPeerAgentEdits,
+	parsePeerAgentEdits,
+	parsePeerGrantValue,
+	peerAgentEditsProblem,
+} from '../../../shared/peerAgents';
+import { applyAgentConfigExtras } from '../../../shared/agentConfigExtras';
+import { AUTO_MODEL, isAutoModel } from '../../../shared/autoModel';
+import { autoModelProblem } from '../../../shared/autoTurn';
+import { parseBackgroundRequests } from '../../../shared/local-models/background-requests';
+import { parseGatewayUrlEdit } from '../../../shared/local-models/gateway';
+import { parseSystemOneOptOutEdit } from '../../../shared/local-models/system-one-agent';
+import { asTokenProxyMode, TOKEN_PROXY_MODES } from '../../../shared/local-models/token-proxy';
+import {
+	parseRunOnEdit,
+	runOnGatewayEditProblem,
+	type RunOnSourceTarget,
+} from '../../../shared/local-models/run-on';
 import { resolveAutoRunDocumentNames } from '../../../shared/autoRunDocumentPaths';
 import {
 	getRemoteMediaKind,
@@ -36,6 +55,7 @@ import {
 	getTerminalSessionId,
 } from '../../utils/terminalTabHelpers';
 import type { Session, ToolType, Group, BatchRunConfig } from '../../types';
+import { TAB_EDITABLE_KEYS } from '../../../shared/maestro-lib/agents/rules';
 import type { BrowserTab } from '../../../shared/browserPage';
 import { logger } from '../../utils/logger';
 import { FILE_TREE_REFRESH_EVENT } from '../../utils/fileTreeRefresh';
@@ -44,6 +64,9 @@ import {
 	workingDirectoryChangeBlocker,
 } from '../../utils/agentWorkingDirectory';
 import { spawnPtyForTab } from '../../services/terminalSpawn';
+import { applySeededTokenProxy } from '../../services/groupDefaultsPublish';
+import { seedRemoteCreate } from '../../services/groupSeededCreate';
+import type { GroupDefaultsCreateFields } from '../../../shared/groupAgentDefaults';
 import { readPathForOpen, revealPathInFileTree } from '../../services/fileTreeReveal';
 import { useTabStore } from '../../stores/tabStore';
 import {
@@ -53,6 +76,11 @@ import {
 import { captureException, captureMessage } from '../../utils/sentry';
 import { DEFAULT_BATCH_PROMPT } from '../batch/batchUtils';
 import { gitService } from '../../services/git';
+import {
+	OFF_TOKEN_PROXY_FIELDS,
+	setAgentBackgroundRequests,
+	setAgentTokenProxyMode,
+} from '../../services/agentGateway';
 import { spawnWorktreeAgentAndDispatch } from '../../utils/worktreeSpawn';
 import { resolveAutoRunDispatchTarget } from '../../services/autoRunDispatchTarget';
 import { notifyToast } from '../../stores/notificationStore';
@@ -71,28 +99,12 @@ import {
 	type GroupUpdateRequest,
 } from '../../../shared/groupAppearance';
 import { isCodexTransport } from '../../../shared/codexTransport';
+import { flushGroupsToDisk } from '../../services/groupPersistence';
+import { applyRemoteGroupSettings } from '../../services/groupSettingsRemote';
 
 // ============================================================================
 // Group update helpers
 // ============================================================================
-
-/**
- * Write the group list straight to disk and wait for it.
- *
- * The store's own persistence runs from a React effect, so it lands after this
- * listener has already answered the caller. A CLI that verifies its write by
- * reading `maestro-groups.json` back would then see the pre-update list and
- * report a false mismatch. Flushing before responding makes the readback
- * deterministic; the effect's later write is the same data and is idempotent.
- * Same reasoning as the remote session-rename handler above.
- */
-async function flushGroupsToDisk(groups: Group[]): Promise<void> {
-	try {
-		await window.maestro.groups.setAll(groups);
-	} catch (error) {
-		logger.error('[Remote] Failed to persist group change:', undefined, error);
-	}
-}
 
 /**
  * Apply a validated update to one group. Pure so the ordering rules are
@@ -1482,6 +1494,78 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				return;
 			}
 
+			// The CLI already checked the gateway; checked again here, the way the
+			// config patch is, so a direct WebSocket caller cannot store one the
+			// launch would refuse. A refused gateway refuses the create: dropping it
+			// would make an agent the caller did not ask for.
+			let gatewayUrl: string | undefined;
+			if (config?.gatewayUrl !== undefined) {
+				const edit =
+					typeof config.gatewayUrl === 'string'
+						? parseGatewayUrlEdit(toolType, config.gatewayUrl)
+						: ({ ok: false, error: 'gatewayUrl must be a URL.' } as const);
+				if (!edit.ok) {
+					logger.error(`[Remote] Refused create-agent gateway: ${edit.error}`);
+					window.maestro.process.sendRemoteCreateSessionResponse(responseChannel, null);
+					return;
+				}
+				gatewayUrl = edit.gatewayUrl ?? undefined;
+			}
+
+			// The Run on target (`create-agent --run-on`), checked the same way and
+			// for the same reason: against this provider and the saved sources, so
+			// the agent's first launch is not refused for a target nobody could
+			// have picked. A gateway beside a source target is refused as the
+			// dialog's disabled field refuses it.
+			let runOn: RunOnSourceTarget | undefined;
+			if (config?.runOn !== undefined) {
+				const edit = parseRunOnEdit(
+					toolType,
+					config.runOn,
+					useSettingsStore.getState().localModelEndpoints ?? []
+				);
+				const problem = edit.ok ? runOnGatewayEditProblem(edit.target, { gatewayUrl }) : edit.error;
+				if (!edit.ok || problem) {
+					logger.error(`[Remote] Refused create-agent Run on target: ${problem}`);
+					window.maestro.process.sendRemoteCreateSessionResponse(responseChannel, null);
+					return;
+				}
+				runOn = edit.target;
+			}
+
+			// The group's defaults, when the agent is created in a group that holds
+			// some (`--no-group-defaults` turns that off). What the caller set on
+			// purpose is laid over them, field by field, so a flag always wins.
+			const explicitFields: GroupDefaultsCreateFields = {
+				...(config?.nudgeMessage && { nudgeMessage: config.nudgeMessage as string }),
+				...(config?.newSessionMessage && { newSessionMessage: config.newSessionMessage as string }),
+				...(config?.customPath && { customPath: config.customPath as string }),
+				...(config?.customArgs && { customArgs: config.customArgs as string }),
+				...(config?.customEnvVars && {
+					customEnvVars: config.customEnvVars as Record<string, string>,
+				}),
+				...(config?.customModel && { customModel: config.customModel as string }),
+				...(config?.customEffort && { customEffort: config.customEffort as string }),
+				...(config?.customContextWindow && {
+					customContextWindow: config.customContextWindow as number,
+				}),
+				...(config?.sessionSshRemoteConfig && {
+					sessionSshRemoteConfig:
+						config.sessionSshRemoteConfig as GroupDefaultsCreateFields['sessionSshRemoteConfig'],
+				}),
+				...(gatewayUrl && { gatewayUrl }),
+				...(runOn && { runOn }),
+			};
+			const seeded = await seedRemoteCreate({
+				groupId: groupId || undefined,
+				toolType: toolType as ToolType,
+				explicit: explicitFields,
+				seed: config?.seedFromGroup !== false,
+			});
+			if (seeded.skipped.length > 0) {
+				logger.warn(`[Remote] Group defaults not applied: ${seeded.skipped.join('; ')}`);
+			}
+
 			const currentDefaults = useSettingsStore.getState();
 			const newId = generateId();
 
@@ -1490,9 +1574,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			// sessions, defer the check until onSshRemote fires (see useAgentListeners).
 			// gitService methods route through createIpcMethod with a defaultValue,
 			// so they swallow IPC errors (and report to Sentry) rather than throwing.
-			const sshConfig = config?.sessionSshRemoteConfig as
-				| { enabled?: boolean; remoteId?: string | null }
-				| undefined;
+			const sshConfig = seeded.fields.sessionSshRemoteConfig;
 			const isRemoteSession = !!(sshConfig?.enabled && sshConfig.remoteId);
 			let isGitRepo = false;
 			let gitBranches: string[] | undefined;
@@ -1527,28 +1609,20 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				...(gitBranches !== undefined && { gitBranches }),
 				...(gitTags !== undefined && { gitTags }),
 				...(gitRefsCacheTime !== undefined && { gitRefsCacheTime }),
-				// Apply optional config fields from CLI/web
-				...(config?.nudgeMessage && { nudgeMessage: config.nudgeMessage as string }),
-				...(config?.newSessionMessage && { newSessionMessage: config.newSessionMessage as string }),
-				...(config?.customPath && { customPath: config.customPath as string }),
-				...(config?.customArgs && { customArgs: config.customArgs as string }),
-				...(config?.customEnvVars && {
-					customEnvVars: config.customEnvVars as Record<string, string>,
+				// The seed under the caller's explicit fields (see `seedRemoteCreate`).
+				...(seeded.fields as Partial<Session>),
+				// Defaults the create has no field for. The token proxy is applied
+				// below, through the writers that work out its address.
+				...(seeded.extras.customEnvVarsDisabled && {
+					customEnvVarsDisabled: seeded.extras.customEnvVarsDisabled,
 				}),
-				...(config?.customModel && { customModel: config.customModel as string }),
-				...(config?.customEffort && { customEffort: config.customEffort as string }),
-				...(config?.customContextWindow && {
-					customContextWindow: config.customContextWindow as number,
-				}),
+				...(seeded.extras.tierTargets && { tierTargets: seeded.extras.tierTargets }),
+				...(seeded.extras.systemOneOptOut && { systemOneOptOut: true }),
 				...(config?.contextWindowSource === 'user-edited' && {
 					contextWindowSource: 'user-edited' as const,
 				}),
 				...(config?.customProviderPath && {
 					customProviderPath: config.customProviderPath as string,
-				}),
-				...(config?.sessionSshRemoteConfig && {
-					sessionSshRemoteConfig:
-						config.sessionSshRemoteConfig as Session['sessionSshRemoteConfig'],
 				}),
 				...(config?.autoRunFolderPath && {
 					autoRunFolderPath: config.autoRunFolderPath as string,
@@ -1556,6 +1630,11 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			};
 
 			setSessions((prev: Session[]) => [...prev, newSession]);
+			// The agent is in the store now, which is where the proxy writers look
+			// it up. Not awaited: a refusal is reported by its own toast.
+			if (seeded.extras.tokenProxyMode) {
+				void applySeededTokenProxy(newId, seeded.extras);
+			}
 			// A background create leaves the Left Bar selection where it is. The
 			// agent still exists, is listed, and is addressable by the id handed
 			// back - it just does not take the window from whoever is working.
@@ -1586,6 +1665,8 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 
 			window.maestro.process.sendRemoteCreateSessionResponse(responseChannel, {
 				sessionId: newId,
+				seededFromGroup: seeded.seededFromGroup,
+				skipped: seeded.skipped,
 			});
 		} catch (error) {
 			logger.error('[Remote] Failed to create session:', undefined, error);
@@ -1743,6 +1824,13 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		}
 
 		const patchObj = configPatch as Record<string, unknown>;
+		if ('tabProviderSelection' in patchObj) {
+			window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+				success: false,
+				error: 'Per-tab provider switching has been removed. Change the provider in Edit Agent.',
+			});
+			return;
+		}
 
 		const requestedToolType =
 			typeof patchObj.toolType === 'string' ? (patchObj.toolType as ToolType) : undefined;
@@ -1779,10 +1867,12 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			}
 			const report = await requestProviderTranslation({
 				agentId: sessionId,
+				tabId: typeof patchObj.tabId === 'string' ? patchObj.tabId : undefined,
 				destination:
 					requestedToolType ?? session.providerMigration?.destination ?? session.toolType,
 				action: action as 'plan' | 'apply' | 'status' | 'recover' | 'rollback',
 				acceptLimitations: patchObj.acceptTranslationLimitations === true,
+				projectResourcesIntoRepo: patchObj.projectResourcesIntoRepo === true,
 				planId: typeof patchObj.migrationPlanId === 'string' ? patchObj.migrationPlanId : undefined,
 				selectedUserResources: Array.isArray(patchObj.selectedUserResources)
 					? (patchObj.selectedUserResources as string[])
@@ -1800,21 +1890,22 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		// persistent state over adding another fire-and-forget renderer channel.
 		const targetTabId = typeof patchObj.tabId === 'string' ? patchObj.tabId : undefined;
 		if (targetTabId !== undefined) {
+			if (
+				'tabProvider' in patchObj ||
+				'providerSessions' in patchObj ||
+				'pendingTranslation' in patchObj
+			) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: 'Use tab provider to select a provider through the parking operation.',
+				});
+				return;
+			}
 			// Everything the composer chips toggle, keyed by the value it accepts.
 			// The type is enforced here rather than trusted from the wire: these
 			// land straight in the persisted tab, so a bad value (a string in
 			// `readOnlyMode`, a typo'd thinking mode) would be a permanently wrong
 			// chip rather than a rejected command.
-			const TAB_EDITABLE_KEYS: Record<string, 'boolean' | 'string' | 'thinking'> = {
-				starred: 'boolean',
-				hasUnread: 'boolean',
-				saveToHistory: 'boolean',
-				readOnlyMode: 'boolean',
-				enterToSend: 'boolean',
-				showThinking: 'thinking',
-				customModel: 'string',
-				customEffort: 'string',
-			};
 			const tabPatch: Record<string, unknown> = {};
 			for (const key of Object.keys(patchObj)) {
 				const kind = TAB_EDITABLE_KEYS[key];
@@ -1859,6 +1950,28 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				return;
 			}
 
+			if ('customModel' in tabPatch || 'customEffort' in tabPatch) {
+				try {
+					await useTabStore.getState().setTabSettings(sessionId, targetTabId, {
+						...('customModel' in tabPatch
+							? { model: (tabPatch.customModel as string | undefined) ?? null }
+							: {}),
+						...('customEffort' in tabPatch
+							? { effort: (tabPatch.customEffort as string | undefined) ?? null }
+							: {}),
+					});
+					// The validated action already wrote these into the captured slot.
+					// Reapplying them after the await could overwrite a newly selected provider.
+					delete tabPatch.customModel;
+					delete tabPatch.customEffort;
+				} catch (error) {
+					window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+						success: false,
+						error: error instanceof Error ? error.message : String(error),
+					});
+					return;
+				}
+			}
 			const applyTabPatch = (s: Session): Session => ({
 				...s,
 				aiTabs: s.aiTabs.map((t) => (t.id === targetTabId ? { ...t, ...tabPatch } : t)),
@@ -1869,9 +1982,15 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			);
 
 			try {
-				await window.maestro.sessions.setMany([applyTabPatch(session) as any], []);
+				const current = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+				await window.maestro.sessions.setMany([applyTabPatch(current ?? session) as any], []);
 			} catch (persistErr) {
 				logger.error('[Remote] Failed to persist tab config:', undefined, persistErr);
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: 'Failed to persist tab config',
+				});
+				return;
 			}
 
 			window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
@@ -1895,6 +2014,23 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			'customPath',
 			'customArgs',
 			'customEnvVars',
+			// Local Models gateway. Validated below, never written as given.
+			'gatewayUrl',
+			// Run on target (`update-agent --run-on`). Validated below as well.
+			'runOn',
+			// Tier targets (`update-agent --tier`): a PATCH, one target per tier
+			// named, merged onto the agent's own below.
+			'tierTargets',
+			// Where the token proxy sends background requests
+			// (`update-agent --background-requests`). Written by its service below.
+			'backgroundRequests',
+			// System One opt-out (`update-agent --system-one`). Validated below.
+			'systemOneOptOut',
+			// The two derived peer grants (`update-agent --group-peers` and
+			// `--worktree-peers`). Validated below. The explicit rows are not a key
+			// here: `peerAgentEdits` is a patch, applied below.
+			'groupPeerAccess',
+			'worktreePeerAccess',
 			'customModel',
 			'customEffort',
 			'customContextWindow',
@@ -1935,6 +2071,266 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			}
 			(updated as Record<string, unknown>)[key] = value === null ? undefined : value;
 		}
+
+		// A gateway is validated against THIS agent's provider before it is stored,
+		// with the same function the Edit Agent field uses: the launch refuses a
+		// gateway it cannot use, so storing one would leave the agent unable to
+		// start. `null` (the CLI's `none`) clears it.
+		if ('gatewayUrl' in patch && patch.gatewayUrl !== null) {
+			const edit =
+				typeof patch.gatewayUrl === 'string'
+					? parseGatewayUrlEdit(session.toolType, patch.gatewayUrl)
+					: ({ ok: false, error: 'gatewayUrl must be a URL or null.' } as const);
+			if (!edit.ok) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: edit.error,
+				});
+				return;
+			}
+			updated.gatewayUrl = edit.gatewayUrl ?? undefined;
+		}
+		// A proxy mode belongs to the gateway it was chosen for: a different
+		// gateway starts from the default, the same rule `setAgentGatewayUrl` has.
+		if ('gatewayUrl' in patch && (updated.gatewayUrl ?? undefined) !== session.gatewayUrl) {
+			Object.assign(updated, OFF_TOKEN_PROXY_FIELDS);
+		}
+
+		// A Run on target goes through the check the Edit Agent dialog saves with,
+		// plus the saved sources, since this caller typed the source's id: a target
+		// for a provider with no recipe, or for a source that does not exist, would
+		// refuse every launch. `null` (the CLI's `provider`) clears it. The write
+		// below flushes to main, which is where the launch reads the target.
+		if ('runOn' in patch) {
+			const edit = parseRunOnEdit(
+				session.toolType,
+				patch.runOn,
+				useSettingsStore.getState().localModelEndpoints ?? []
+			);
+			if (!edit.ok) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: edit.error,
+				});
+				return;
+			}
+			updated.runOn = edit.target;
+		}
+
+		// Tier targets arrive as a patch: each tier named is checked with the
+		// function the Edit Agent dialog saves with (plus the saved sources, since
+		// this caller typed the source's id) and merged onto the agent's own. A
+		// `null` tier clears it back to the harness default; `null` for the whole
+		// field clears every tier.
+		if ('tierTargets' in patch) {
+			const edit = parseTierTargetsEdit(session.toolType, patch.tierTargets, {
+				base: session.tierTargets,
+				endpoints: useSettingsStore.getState().localModelEndpoints ?? [],
+			});
+			if (!edit.ok) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: edit.error,
+				});
+				return;
+			}
+			updated.tierTargets = edit.tierTargets;
+		}
+
+		// `auto` as the model is stored as the word, and only for an agent Auto
+		// can act on, judged against the tiers and the Run on target this same
+		// patch leaves it with. An Auto that would change nothing is refused by
+		// name, the way no picker offers it.
+		if (isAutoModel(updated.customModel)) {
+			const problem = autoModelProblem(
+				{
+					toolType: session.toolType,
+					tierTargets: 'tierTargets' in updated ? updated.tierTargets : session.tierTargets,
+					runOn: 'runOn' in patch ? patch.runOn : session.runOn,
+				},
+				useSettingsStore.getState().harnessTierDefaults
+			);
+			if (problem) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: problem,
+				});
+				return;
+			}
+			updated.customModel = AUTO_MODEL;
+		}
+
+		// A background requests target needs the proxy. Taking the agent off the
+		// proxy (mode off, or a gateway of the caller's own) and naming a target in
+		// one patch is refused before either is acted on, so the caller is not
+		// left with half of what it asked for.
+		if (
+			'backgroundRequests' in patch &&
+			(patch.tokenProxyMode === 'off' || 'gatewayUrl' in patch)
+		) {
+			const wanted = parseBackgroundRequests(patch.backgroundRequests);
+			if (!wanted.ok || wanted.backgroundRequests) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error:
+						'Background requests are routed by the token proxy, so a target cannot be set in the change that turns the proxy off or sets another gateway.',
+				});
+				return;
+			}
+		}
+
+		// A gateway is not applied to an agent on a source, and the dialog disables
+		// both gateway controls for one. Refused before the proxy mode below is
+		// acted on, so the token proxy is never started for an agent that will not
+		// use it. Clearing a gateway stays allowed.
+		const gatewayProblem = runOnGatewayEditProblem(
+			'runOn' in patch ? updated.runOn : session.runOn,
+			{
+				gatewayUrl: 'gatewayUrl' in patch ? updated.gatewayUrl : undefined,
+				tokenProxyMode: patch.tokenProxyMode,
+			}
+		);
+		if (gatewayProblem) {
+			window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+				success: false,
+				error: gatewayProblem,
+			});
+			return;
+		}
+
+		// The Maestro token proxy mode (`update-agent --proxy-mode`). It is not a
+		// plain field: turning the proxy on points the gateway at it, and turning
+		// it off clears that gateway, so it goes through the same service the
+		// Gateway section's mode control calls. The result is folded into this
+		// patch so the write below carries it rather than undoing it.
+		if ('tokenProxyMode' in patch) {
+			const mode = asTokenProxyMode(patch.tokenProxyMode);
+			const modeResult =
+				mode === undefined
+					? ({
+							ok: false,
+							error: `tokenProxyMode must be one of: ${TOKEN_PROXY_MODES.join(', ')}.`,
+						} as const)
+					: 'gatewayUrl' in patch
+						? ({
+								ok: false,
+								error:
+									'Set the gateway URL or the proxy mode, not both: the proxy mode chooses the gateway URL.',
+							} as const)
+						: await setAgentTokenProxyMode(sessionId, mode);
+			if (!modeResult.ok) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: modeResult.error,
+				});
+				return;
+			}
+			updated.gatewayUrl = modeResult.gatewayUrl;
+			updated.tokenProxyMode = modeResult.mode === 'off' ? undefined : modeResult.mode;
+			// Off took the background requests target with it; the write below
+			// starts from the record as it was before, so it is told as well.
+			if (modeResult.mode === 'off') updated.backgroundRequests = undefined;
+		}
+
+		// Where the token proxy sends this agent's background requests. Like the
+		// mode it is a proxy setting, so it goes through the service the Models
+		// tab's picker calls: checked against the provider and the saved sources,
+		// refused for an agent that is not on the proxy, and flushed to main. It
+		// runs after the mode above, so one patch can turn the proxy on and name
+		// the target. `null` (the CLI's `none`) turns it off.
+		if ('backgroundRequests' in patch) {
+			const result = await setAgentBackgroundRequests(sessionId, patch.backgroundRequests);
+			if (!result.ok) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: result.error,
+				});
+				return;
+			}
+			updated.backgroundRequests = result.backgroundRequests;
+		}
+
+		// The System One opt-out goes through the validator the Models tab switch
+		// uses. On is the absence of the field, so `false` and `null` both clear
+		// it. The write below flushes to main, which is where a `maestro-cli s1`
+		// request and the system prompt builder read it.
+		if ('systemOneOptOut' in patch) {
+			const edit = parseSystemOneOptOutEdit(patch.systemOneOptOut);
+			if (!edit.ok) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: edit.error,
+				});
+				return;
+			}
+			updated.systemOneOptOut = edit.optOut;
+		}
+
+		// Peer grants (`update-agent --group-peers`, `--worktree-peers`) are `null`
+		// (off) or a pair with a bit set, never an arbitrary object.
+		for (const key of ['groupPeerAccess', 'worktreePeerAccess'] as const) {
+			if (!(key in patch)) continue;
+			const grant = parsePeerGrantValue(patch[key]);
+			if (!grant.ok) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: `${key}: ${grant.error}`,
+				});
+				return;
+			}
+			updated[key] = grant.access ?? undefined;
+		}
+
+		// Explicit peer rows (`update-agent --peer`, `--peer-note`, `--remove-peer`)
+		// arrive as a patch and are applied to the rows this agent holds, with the
+		// function the CLI used to check it, so a note on a peer with no row is
+		// refused here as well. A peer must be a live agent other than this one:
+		// a row for a name that matches nothing is inert, and the caller should
+		// hear that instead.
+		if ('peerAgentEdits' in patch) {
+			const parsed = parsePeerAgentEdits(patch.peerAgentEdits);
+			if (!parsed.ok) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: parsed.error,
+				});
+				return;
+			}
+			const problem = peerAgentEditsProblem(
+				parsed.edits,
+				new Set(sessionsRef.current.map((s) => s.id)),
+				sessionId
+			);
+			if (problem) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: problem,
+				});
+				return;
+			}
+			const applied = applyPeerAgentEdits(session.peerAgents, parsed.edits);
+			if (!applied.ok) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: applied.error,
+				});
+				return;
+			}
+			updated.peerAgents = applied.peerAgents;
+		}
+
+		// The Agent Resilience switches, the Codex auto reset, the Additional
+		// Directories list and parking an environment variable. Checked and
+		// worked out by the shared function, against this agent's own records.
+		const extras = applyAgentConfigExtras(session, patch);
+		if (!extras.ok) {
+			window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+				success: false,
+				error: extras.error,
+			});
+			return;
+		}
+		Object.assign(updated, extras.updated);
 
 		// Clearing the window clears its provenance too, even when the caller sent
 		// only `customContextWindow: null`. Otherwise a stale 'user-edited' outlives
@@ -2116,6 +2512,22 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		setGroups(() => nextGroups);
 		await flushGroupsToDisk(nextGroups);
 		respond(true);
+	});
+
+	// Handle a remote write to a group's Group Settings profile and pill label
+	// (`maestro-cli update-group-settings`). The service folds the typed patch
+	// into the form the dialog would hold and builds the profile with the
+	// dialog's own validator, so a flag and a click store the same thing; the
+	// group list is flushed before answering, so the caller's readback is
+	// deterministic.
+	useEventListener('maestro:remoteUpdateGroupSettings', async (e: Event) => {
+		const { groupId, request, responseChannel } = (e as CustomEvent).detail as {
+			groupId: string;
+			request: unknown;
+			responseChannel: string;
+		};
+		const result = await applyRemoteGroupSettings(groupId, request);
+		window.maestro.process.sendRemoteUpdateGroupSettingsResponse(responseChannel, result);
 	});
 
 	// Handle remote delete group from web interface (fire-and-forget)

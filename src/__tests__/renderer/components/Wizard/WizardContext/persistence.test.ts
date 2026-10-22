@@ -40,6 +40,31 @@ describe('WizardContext persistence helpers', () => {
 		expect(serializable).not.toHaveProperty('isGeneratingDocuments');
 	});
 
+	it('serializes the three peer sources so a resumed wizard keeps them', () => {
+		const peerAgents = [
+			{ sessionId: 'agent-a', read: true, write: false, description: 'Docs' },
+			// Neither square lit: an exclusion, and it must survive the round trip.
+			{ sessionId: 'agent-b', read: false, write: false },
+		];
+
+		const serializable = buildSerializableWizardState({
+			...initialState,
+			currentStep: 'conversation',
+			peerAgents,
+			groupPeerAccess: { read: true, write: false },
+			worktreePeerAccess: { read: true, write: true },
+		});
+
+		expect(serializable.peerAgents).toEqual(peerAgents);
+		expect(serializable.groupPeerAccess).toEqual({ read: true, write: false });
+		expect(serializable.worktreePeerAccess).toEqual({ read: true, write: true });
+		// What the settings store keeps is JSON: a grant that is off stays absent.
+		const saved = JSON.parse(JSON.stringify(buildSerializableWizardState(initialState)));
+		expect(saved.peerAgents).toEqual([]);
+		expect(saved).not.toHaveProperty('groupPeerAccess');
+		expect(saved).not.toHaveProperty('worktreePeerAccess');
+	});
+
 	it('accepts saved object state but only loads states past the first step', () => {
 		expect(hasSavedResumeState({ currentStep: 'agent-selection' })).toBe(true);
 		expect(hasSavedResumeState(null)).toBe(false);

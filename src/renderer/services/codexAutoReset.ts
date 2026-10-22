@@ -39,7 +39,14 @@ import type { AgentError, Session } from '../types';
 import { isLimitError } from '../../shared/types';
 import { classifyRetryableError } from '../../shared/retryClassification';
 import { shouldAutoSpendCredit } from '../../shared/codexResetCredits';
-import { effectiveAgentCustomEnvVars, resolveAgentAccountKey } from '../../shared/providerProfiles';
+import {
+	effectiveAgentCustomEnvVars,
+	resolveAgentAccountKey,
+	resolveAgentBillingCredential,
+} from '../../shared/providerProfiles';
+import { projectTabProvider, resolveTurnProvider } from '../utils/providerTabSessions';
+import { isValidAgentId } from '../../shared/agentIds';
+import { parseSessionId } from '../utils/sessionIdParser';
 import { useCodexResetCreditsStore } from '../stores/codexResetCreditsStore';
 import { notifyToast } from '../stores/notificationStore';
 import { getHomeDir, getHomeDirAsync } from '../utils/homeDir';
@@ -91,7 +98,7 @@ function declineReason(session: Session, error: AgentError): string | null {
 	if (!isQuotaWall(error)) return 'not-a-limit';
 	// The credit read and the spend both run against the LOCAL auth.json, which
 	// describes this machine's account rather than the remote's.
-	if (session.sessionSshRemoteConfig?.enabled) return 'ssh-backed';
+	if (session.sessionSshRemoteConfig?.enabled || session.sshRemoteId) return 'ssh-backed';
 	return null;
 }
 
@@ -106,10 +113,22 @@ export async function maybeAutoResetCodexUsage(
 	session: Session,
 	error: AgentError
 ): Promise<boolean> {
+	const tabId = parseSessionId(error.sessionId ?? '').tabId ?? session.agentErrorTabId;
+	const tab =
+		session.aiTabs?.find((candidate) => candidate.id === tabId) ??
+		session.orphanedThinkingTabs?.find((candidate) => candidate.id === tabId) ??
+		session.closedTabHistory?.find((entry) => entry.tab.id === tabId)?.tab;
+	// A named target that disappeared must never become a default-account spend.
+	if (tabId && !tab) return false;
+	const provider = isValidAgentId(error.agentId)
+		? error.agentId
+		: resolveTurnProvider(tab, session);
+	if (!tab && provider !== session.toolType) return false;
+	session = projectTabProvider(session, tab, provider).agent;
 	const declined = declineReason(session, error);
 	if (declined) return false;
 
-	const outageKey = `${session.id}:${error.timestamp}`;
+	const outageKey = `${session.id}:${tabId ?? ''}:${provider}:${error.timestamp}`;
 	if (handledOutages.has(outageKey)) return false;
 	// Claim before any await: two errors arriving in the same tick for one
 	// outage must not both get through.
@@ -123,13 +142,20 @@ export async function maybeAutoResetCodexUsage(
 	// `null` (no provider-level set configured) collapses to `undefined`, since
 	// `effectiveAgentCustomEnvVars` treats absence as "fall through", and a null
 	// would instead be taken as an empty override.
-	const providerEnv =
-		(await window.maestro.agents.getCustomEnvVars('codex').catch(() => undefined)) ?? undefined;
+	let providerEnv: Record<string, string> | undefined;
+	try {
+		providerEnv = (await window.maestro.agents.getCustomEnvVars('codex')) ?? undefined;
+	} catch (error) {
+		logger.warn('Could not confirm Codex account for auto reset', LOG_CONTEXT, error);
+		return false;
+	}
+	const env = effectiveAgentCustomEnvVars(session.customEnvVars, providerEnv);
+	if (resolveAgentBillingCredential('codex', env)) return false;
 	const codexHomeKey = resolveAgentAccountKey(
 		'codex',
 		// Env vars REPLACE rather than layer, so the agent's own set wins outright
 		// when it has one. A merge would describe a process nobody is running.
-		effectiveAgentCustomEnvVars(session.customEnvVars, providerEnv),
+		env,
 		homeDir
 	);
 	if (!codexHomeKey) {

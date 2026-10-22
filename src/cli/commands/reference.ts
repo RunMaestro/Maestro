@@ -13,6 +13,7 @@
 
 import type { Command, Option } from 'commander';
 import { listedSubcommands } from '../utils/encore-gate';
+import { commandPath, examplesFor } from '../command-examples';
 
 interface OptionInfo {
 	flags: string;
@@ -25,6 +26,7 @@ interface CommandInfo {
 	description: string;
 	args: string;
 	options: OptionInfo[];
+	examples: readonly string[];
 	subcommands: CommandInfo[];
 }
 
@@ -64,6 +66,7 @@ function buildInfo(cmd: Command, parentPath: string, includeHidden: boolean): Co
 		description: cmd.description() ?? '',
 		args: argSignature(cmd),
 		options: optionInfo(cmd, includeHidden),
+		examples: examplesFor(commandPath(cmd)),
 		subcommands: listedSubcommands(cmd, includeHidden).map((c) =>
 			buildInfo(c, path, includeHidden)
 		),
@@ -124,6 +127,12 @@ function toMarkdown(root: CommandInfo): string {
 				const flags = opt.flags.replace(/\|/g, '\\|');
 				lines.push(`| \`${flags}\` | ${desc} | ${def} |`);
 			}
+			lines.push('');
+		}
+		if (cmd.examples.length > 0) {
+			lines.push('```bash');
+			lines.push(...cmd.examples);
+			lines.push('```');
 			lines.push('');
 		}
 	}

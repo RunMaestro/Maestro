@@ -35,6 +35,9 @@ const FULL_EVENT: Omit<QueryEvent, 'id'> = {
 	cacheReadTokens: 900,
 	cacheCreationTokens: 80,
 	costUsd: 0.42,
+	runOnEndpoint: 'ep-ollama',
+	runOnModel: 'qwen3:latest',
+	routedTier: 'low',
 };
 
 describe('INSERT_QUERY_EVENT_SQL', () => {
@@ -58,6 +61,9 @@ describe('INSERT_QUERY_EVENT_SQL', () => {
 				'cache_read_tokens',
 				'cache_creation_tokens',
 				'cost_usd',
+				'run_on_endpoint',
+				'run_on_model',
+				'routed_tier',
 			])
 		);
 	});
@@ -92,7 +98,80 @@ describe('bindQueryEvent', () => {
 			cache_read_tokens: 900,
 			cache_creation_tokens: 80,
 			cost_usd: 0.42,
+			run_on_endpoint: 'ep-ollama',
+			run_on_model: 'qwen3:latest',
+			routed_tier: 'low',
 		});
+	});
+
+	it('writes NULL in the model columns for a turn on the provider that Auto did not route', () => {
+		const columns = insertColumns();
+		const values = bindQueryEvent('id-5', {
+			sessionId: 'session-5',
+			agentType: 'claude-code',
+			source: 'user',
+			startTime: 1,
+			duration: 2,
+		});
+		const row = Object.fromEntries(columns.map((c, i) => [c, values[i]]));
+
+		expect(row.run_on_endpoint).toBeNull();
+		expect(row.run_on_model).toBeNull();
+		expect(row.routed_tier).toBeNull();
+	});
+
+	it('writes the Run on source whole or not at all', () => {
+		// One fact in two columns. Half of it names no place a turn could have run,
+		// and a row with an endpoint and no model would be counted under a source
+		// with nothing to group it by.
+		const columns = insertColumns();
+		const bind = (event: Partial<QueryEvent>) =>
+			Object.fromEntries(
+				columns.map((c, i) => [
+					c,
+					bindQueryEvent('id-6', {
+						sessionId: 's',
+						agentType: 'codex',
+						source: 'user',
+						startTime: 1,
+						duration: 2,
+						...event,
+					})[i],
+				])
+			);
+
+		expect(bind({ runOnEndpoint: 'ep-ollama' })).toMatchObject({
+			run_on_endpoint: null,
+			run_on_model: null,
+		});
+		expect(bind({ runOnModel: 'qwen3:latest' })).toMatchObject({
+			run_on_endpoint: null,
+			run_on_model: null,
+		});
+		expect(bind({ runOnEndpoint: '', runOnModel: 'qwen3:latest' })).toMatchObject({
+			run_on_endpoint: null,
+			run_on_model: null,
+		});
+	});
+
+	it('refuses a routed tier that is not one of the three levels', () => {
+		// The value arrives from a renderer, and the dashboard groups on it as-is.
+		const columns = insertColumns();
+		const tierOf = (routedTier: unknown) =>
+			bindQueryEvent('id-7', {
+				sessionId: 's',
+				agentType: 'codex',
+				source: 'user',
+				startTime: 1,
+				duration: 2,
+				routedTier: routedTier as QueryEvent['routedTier'],
+			})[columns.indexOf('routed_tier')];
+
+		expect(tierOf('high')).toBe('high');
+		expect(tierOf('medium')).toBe('medium');
+		expect(tierOf('ultra')).toBeNull();
+		expect(tierOf('HIGH')).toBeNull();
+		expect(tierOf(3)).toBeNull();
 	});
 
 	it('writes NULL, not 0, for a turn that reported no usage', () => {

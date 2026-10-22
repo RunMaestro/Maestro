@@ -18,6 +18,7 @@ import { generateId } from '../utils/ids';
 import { truncateText } from '../../shared/formatters';
 import type { AgentDelegationNotice } from '../../shared/agentDelegation';
 import type { AITab, LogEntry, Session } from '../types';
+import { resolveTabProvider, resolveTurnProvider } from '../utils/providerTabSessions';
 
 type DelegationRecord = NonNullable<LogEntry['delegation']>;
 
@@ -34,6 +35,7 @@ export interface DelegationOutcome {
 	error?: string;
 	/** The consult tab that holds the exchange, learned only once it completes. */
 	toTabId?: string;
+	toToolType?: Session['toolType'];
 }
 
 /** One line is enough; the full prompt is already in the tool card that ran the command. */
@@ -60,19 +62,28 @@ export function resolveDelegationSourceTab(
 /** Pure: the transcript entry for one hand-off. Exported for unit testing. */
 export function buildDelegationLogEntry(
 	notice: AgentDelegationNotice,
-	target: Pick<Session, 'id' | 'name' | 'toolType'>,
+	target: Pick<Session, 'id' | 'name' | 'toolType'> &
+		Partial<Pick<Session, 'aiTabs' | 'activeTabId'>>,
 	status?: DelegationRecord['status']
 ): LogEntry {
 	const subject = truncateText(
 		notice.prompt.replace(/\s+/g, ' ').trim(),
 		DELEGATION_SUBJECT_MAX_CHARS
 	);
+	const targetTabId =
+		notice.targetTabId ??
+		(notice.kind === 'dispatch' && !notice.newTab ? target.activeTabId : undefined);
+	const targetTab = target.aiTabs?.find((tab) => tab.id === targetTabId);
 	const delegation: DelegationRecord = {
 		kind: notice.kind,
 		toSessionId: target.id,
 		...(notice.targetTabId ? { toTabId: notice.targetTabId } : {}),
 		toAgentName: target.name,
-		toToolType: target.toolType,
+		toToolType:
+			notice.targetProvider ??
+			(targetTab?.state === 'busy' && !notice.queued
+				? resolveTurnProvider(targetTab, target)
+				: resolveTabProvider(targetTab, target)),
 		subject,
 		...(notice.newTab ? { newTab: true } : {}),
 		...(notice.queued ? { queued: true } : {}),
@@ -124,6 +135,7 @@ export function settleAgentDelegation(ref: DelegationEntryRef, outcome: Delegati
 				status: outcome.status,
 				...(outcome.error ? { error: outcome.error } : {}),
 				...(outcome.toTabId ? { toTabId: outcome.toTabId } : {}),
+				...(outcome.toToolType ? { toToolType: outcome.toToolType } : {}),
 			},
 		};
 		return { ...tab, logs };

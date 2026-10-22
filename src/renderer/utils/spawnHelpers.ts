@@ -1,9 +1,16 @@
 import { gitService } from '../services/git';
 import { useSettingsStore } from '../stores/settingsStore';
+import { useSessionStore } from '../stores/sessionStore';
 import { PROMPT_IDS } from '../../shared/promptDefinitions';
+import { resolvePeerRosterForPrompt } from '../../shared/peerAgents';
+import type { ConsultBudgetStatus, ConsultChain } from '../../shared/consultBudget';
+import type { SystemOneAgentAccess } from '../../shared/local-models/system-one-agent';
 import {
 	assembleMaestroSystemPrompt,
+	coreSystemPromptContext,
+	coreSystemPromptSectionsFor,
 	systemPromptSectionsFor,
+	type CoreSystemPromptInput,
 } from '../../shared/maestroSystemPrompt';
 
 /**
@@ -45,6 +52,40 @@ async function getMaestroRunReadyPath(): Promise<string | undefined> {
 	}
 }
 
+/**
+ * Whether a System One request from this agent would be answered right now, or
+ * undefined when main cannot say. Asked on every spawn (never cached here):
+ * main owns the answer, so an engine the user just switched off, an agent they
+ * just opted out, or a budget that just ran out is gone from the next spawn's
+ * prompt. It reads a small file and sends nothing to an engine.
+ */
+async function getSystemOneAccess(agentId: string): Promise<SystemOneAgentAccess | undefined> {
+	try {
+		return (await window.maestro.localModels.systemOne.agentAccess(agentId)) || undefined;
+	} catch {
+		// Older preload or main not ready: no answer, so the section stays out.
+		return undefined;
+	}
+}
+
+/**
+ * Where the consultation budget stands for the turn about to be spawned, or
+ * undefined when main cannot say. Asked on every spawn of an agent that has
+ * peers (never cached here): the count moves with every consult in the chain.
+ * Main owns the answer because the counter is a file and a root turn's chain
+ * is minted in `process:spawn`, neither of which the renderer can see.
+ */
+async function getConsultBudget(
+	consultChain: ConsultChain | undefined
+): Promise<ConsultBudgetStatus | undefined> {
+	try {
+		return (await window.maestro.crossAgent.consultBudget(consultChain)) || undefined;
+	} catch {
+		// Older preload or main not ready: no answer, so the sentence stays out.
+		return undefined;
+	}
+}
+
 /** A core prompt's text, or undefined when it cannot be loaded. */
 async function loadPrompt(id: string): Promise<string | undefined> {
 	try {
@@ -61,7 +102,8 @@ async function loadPrompt(id: string): Promise<string | undefined> {
  * Loads the prompt template, resolves git branch, history file path,
  * and conductor profile, then hands everything to the shared assembler
  * (`src/shared/maestroSystemPrompt.ts`), which also appends the Pianola role
- * section and every enabled first-party plugin section.
+ * section, the core sections that are ready for this agent (System One), and
+ * every enabled first-party plugin section.
  *
  * Must be called on every spawn (fresh AND resume): agents like Claude Code
  * deliver system prompts via a per-invocation flag (`--append-system-prompt`)
@@ -84,6 +126,12 @@ export async function prepareMaestroSystemPrompt(opts: {
 		sessionSshRemoteConfig?: { enabled: boolean } | null;
 	};
 	activeTabId?: string;
+	/**
+	 * The place this turn takes in a consult chain, when another agent delegated
+	 * it (the same value the spawn sends as `consultChain`). Unset for a turn
+	 * the user or an automation started: that turn roots a chain of its own.
+	 */
+	consultChain?: ConsultChain;
 }): Promise<string | undefined> {
 	const result = await window.maestro.prompts.get(PROMPT_IDS.MAESTRO_SYSTEM_PROMPT);
 	if (!result.success || !result.content) return undefined;
@@ -130,8 +178,28 @@ export async function prepareMaestroSystemPrompt(opts: {
 		readyFlags: maestroRunPath ? ['maestroRun'] : [],
 	});
 	const pluginSections = await Promise.all(sectionRefs.map((ref) => loadPrompt(ref.promptId)));
+	// `maestro-cli s1` reaches this desktop, so an SSH agent is never asked about.
+	const core: CoreSystemPromptInput = {
+		isSsh,
+		systemOne: isSsh ? undefined : await getSystemOneAccess(opts.session.id),
+	};
+	const coreSections = await Promise.all(
+		coreSystemPromptSectionsFor(core).map((ref) => loadPrompt(ref.promptId))
+	);
 	// Only a local agent's shell can reach the store on this machine.
 	const computerHistoryDir = isSsh ? undefined : await getComputerHistoryDir();
+
+	// {{PEER_AGENTS}}. The grants come from the session being spawned; the
+	// agent list comes from the store, because a group grant needs every
+	// agent and the session carries only itself. The store is read only
+	// when the agent has a grant.
+	const peerRoster = resolvePeerRosterForPrompt(
+		opts.session,
+		() => useSessionStore.getState().sessions
+	);
+	// The budget sentence of that block. Only an agent that has peers pays the
+	// round trip.
+	const consultBudget = peerRoster?.length ? await getConsultBudget(opts.consultChain) : undefined;
 
 	return assembleMaestroSystemPrompt({
 		template: result.content,
@@ -144,8 +212,12 @@ export async function prepareMaestroSystemPrompt(opts: {
 			conductorProfile,
 			computerHistoryDir,
 			maestroRunPath,
+			peerRoster,
+			consultBudget,
+			...coreSystemPromptContext(core),
 		},
 		roleSections,
+		coreSections,
 		pluginSections,
 	});
 }

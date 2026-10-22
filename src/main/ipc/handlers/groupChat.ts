@@ -9,13 +9,18 @@
  * - Participant management (add, send, remove)
  */
 
+import {
+	getGroupChatState,
+	groupChatEvents,
+	publishGroupChatState,
+} from '../../group-chat/emitters';
 import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs/promises';
 import { ipcMain, BrowserWindow } from 'electron';
 import { withIpcErrorLogging, CreateHandlerOptions } from '../../utils/ipcHandler';
 import { logger } from '../../utils/logger';
-import { createSafeSend } from '../../utils/safe-send';
+import { createSafeSend, type SafeSendFn } from '../../utils/safe-send';
 
 // Group chat storage imports
 import {
@@ -39,7 +44,13 @@ import {
 import { mentionMatches, type GroupChatHistoryEntry } from '../../../shared/group-chat-types';
 
 // Group chat log imports
-import { appendToLog, readLog, saveImage, GroupChatMessage } from '../../group-chat/group-chat-log';
+import {
+	appendToLog,
+	formatChatHistoryForPrompt,
+	readLog,
+	saveImage,
+	GroupChatMessage,
+} from '../../group-chat/group-chat-log';
 import {
 	addToQueue,
 	getQueue,
@@ -92,17 +103,33 @@ import {
 import { AgentDetector } from '../../agents';
 import { groomContext } from '../../utils/context-groomer';
 import { createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
-import { getSessionsStore, getSettingsStore } from '../../stores';
+import { getSessionsStore, getSettingsStore, getAgentConfigsStore } from '../../stores';
 import { v4 as uuidv4 } from 'uuid';
 import { captureException } from '../../utils/sentry';
 import { cheapTurnSettings } from '../../../shared/modelTiers';
 import type { ToolType } from '../../../shared/types';
+import { getPrompt } from '../../prompt-manager';
+import { runLocalTask } from '../../local-models/task-router';
+import { resolveUtilityProvider } from '../../../shared/local-models/tasks';
+import { clearLocalTaskNotice, reportLocalTaskUnavailable } from '../../local-models/task-notices';
 import {
 	getClaudeTokenSourceFields,
 	type ClaudeTokenSourceFields,
 } from '../../../shared/claudeTokenMode';
 
 const LOG_CONTEXT = '[GroupChat]';
+
+/** Same budget as the agent path's summary turn. */
+const PARTICIPANT_SUMMARY_TIMEOUT_MS = 60_000;
+
+/** A summary is a paragraph; the prompt asks for under 200 words. */
+const LOCAL_PARTICIPANT_SUMMARY_MAX_TOKENS = 400;
+
+/**
+ * How much of the chat log a local summary reads. Sized for a 4k-token local
+ * context: the transcript, the prompt, and the reply all have to fit.
+ */
+const LOCAL_PARTICIPANT_SUMMARY_HISTORY = { last: 20, maxContentChars: 300 } as const;
 
 const areGroupChatProviderProcessesDisabled = (): boolean =>
 	process.env.MAESTRO_DISABLE_GROUP_CHAT_PROVIDERS === '1';
@@ -999,51 +1026,83 @@ Respond with ONLY the summary text, no additional commentary.`;
 				// local machine, where that session does not exist (issue #1416).
 				const participantSshRemoteConfig = resolveParticipantSshRemoteConfig(participantName);
 
-				const cheapSummary = cheapTurnSettings(participant.agentId as ToolType);
+				// Local Models assignment first. Only `use-utility-agent` (the
+				// default) continues to the agent turn below, unchanged.
+				const assigned = await summarizeParticipantWithAssignedModel({
+					logPath: chat.logPath,
+					chatName: chat.name,
+					participantName,
+					safeSend,
+				});
+
+				const settings = getSettingsStore();
+				const utility = resolveUtilityProvider(
+					{
+						utilitySource: settings.get('utilitySource'),
+						utilityAgentId: settings.get('utilityAgentId', null),
+						utilityModelId: settings.get('utilityModelId', null),
+					},
+					participant.agentId
+				);
+				const cheapSummary = cheapTurnSettings(utility.agentType as ToolType);
 
 				// Use the shared groomContext utility to get the summary
 				// This spawns a batch process, collects the response, and handles cleanup
-				let summaryResponse = '';
-				try {
-					const result = await groomContext(
-						{
-							projectRoot: effectiveCwd,
-							agentType: participant.agentId,
-							prompt: summaryPrompt,
-							agentSessionId: participant.agentSessionId, // Resume existing session for context
-							readOnlyMode: true, // Summary is read-only
-							timeoutMs: 60000, // 60 second timeout for summary
-							// Pinned to the bottom of both ladders, same as a history
-							// synopsis. Safe because this is a LEAF turn: it resumes the
-							// participant's finished session and the caller keeps only
-							// `response` and `durationMs`, discarding any session id - so
-							// the cheap model cannot follow the conversation forward into
-							// the participant's next real turn.
-							sessionCustomModel: cheapSummary.model,
-							sessionCustomEffort: cheapSummary.effort,
-							sessionSshRemoteConfig: participantSshRemoteConfig,
-							claudeTokenSource: resolveParticipantClaudeTokenSource(participantName),
-							sshStore: participantSshRemoteConfig?.enabled
-								? createSshRemoteStoreAdapter(getSettingsStore())
-								: undefined,
-						},
-						processManager,
-						agentDetector
-					);
-					summaryResponse = result.response;
-					logger.info(`Context summary collected for ${participantName}`, LOG_CONTEXT, {
-						responseLength: summaryResponse.length,
-						durationMs: result.durationMs,
-					});
-				} catch (error) {
-					// Expected grooming failures are fully recovered by the fresh-session
-					// fallback just below, so they aren't worth a Sentry breadcrumb. Only
-					// unexpected grooming failures get reported.
-					if (!isExpectedGroomingFailure(error)) {
-						void captureException(error);
+				let summaryResponse = assigned.handled ? (assigned.summary ?? '') : '';
+				if (!assigned.handled) {
+					try {
+						const result = await groomContext(
+							{
+								projectRoot: effectiveCwd,
+								agentType: utility.agentType,
+								prompt: utility.usesUtilityProvider ? assigned.utilityPrompt : summaryPrompt,
+								// A utility provider gets the chat transcript in a fresh turn;
+								// the participant's native session belongs to its own provider.
+								agentSessionId: utility.usesUtilityProvider
+									? undefined
+									: participant.agentSessionId,
+								readOnlyMode: true, // Summary is read-only
+								disableTools: utility.usesUtilityProvider || undefined,
+								timeoutMs: 60000, // 60 second timeout for summary
+								// Pinned to the bottom of both ladders, same as a history
+								// synopsis. Safe because this is a LEAF turn: it resumes the
+								// participant's finished session and the caller keeps only
+								// `response` and `durationMs`, discarding any session id - so
+								// the cheap model cannot follow the conversation forward into
+								// the participant's next real turn.
+								sessionCustomModel: utility.usesUtilityProvider
+									? utility.modelId
+									: cheapSummary.model,
+								sessionCustomEffort: utility.usesUtilityProvider ? undefined : cheapSummary.effort,
+								agentConfigValues: utility.usesUtilityProvider
+									? (getAgentConfigsStore().get('configs', {})[utility.agentType] ?? {})
+									: undefined,
+								sessionSshRemoteConfig: participantSshRemoteConfig,
+								claudeTokenSource: utility.usesUtilityProvider
+									? undefined
+									: resolveParticipantClaudeTokenSource(participantName),
+								sshStore: participantSshRemoteConfig?.enabled
+									? createSshRemoteStoreAdapter(getSettingsStore())
+									: undefined,
+							},
+							processManager,
+							agentDetector
+						);
+						summaryResponse = result.response;
+						logger.info(`Context summary collected for ${participantName}`, LOG_CONTEXT, {
+							responseLength: summaryResponse.length,
+							durationMs: result.durationMs,
+						});
+					} catch (error) {
+						// Expected grooming failures are fully recovered by the fresh-session
+						// fallback just below, so they aren't worth a Sentry breadcrumb. Only
+						// unexpected grooming failures get reported.
+						if (!isExpectedGroomingFailure(error)) {
+							void captureException(error);
+						}
+						logger.warn(`Summary generation failed for ${participantName}: ${error}`, LOG_CONTEXT);
+						summaryResponse = 'No summary available - starting fresh session.';
 					}
-					logger.warn(`Summary generation failed for ${participantName}: ${error}`, LOG_CONTEXT);
-					summaryResponse = 'No summary available - starting fresh session.';
 				}
 
 				// Generate a new agent session ID (the actual UUID will be set when the agent responds)
@@ -1198,6 +1257,7 @@ Respond with ONLY the summary text, no additional commentary.`;
 	 */
 	groupChatEmitters.emitMessage = (groupChatId: string, message: GroupChatMessage): void => {
 		safeSend('groupChat:message', groupChatId, message);
+		groupChatEvents.emit('message', groupChatId, message);
 	};
 
 	/**
@@ -1208,7 +1268,6 @@ Respond with ONLY the summary text, no additional commentary.`;
 	 * from `emitStateChange` below, which is the single funnel every transition
 	 * already goes through.
 	 */
-	const lastModeratorState = new Map<string, GroupChatState>();
 
 	installGroupChatQueue({
 		broadcast: (groupChatId, state) => safeSend('groupChat:queueState', groupChatId, state),
@@ -1227,7 +1286,7 @@ Respond with ONLY the summary text, no additional commentary.`;
 			});
 		},
 		// Absent means nothing has run yet, which is idle.
-		isIdle: (groupChatId) => (lastModeratorState.get(groupChatId) ?? 'idle') === 'idle',
+		isIdle: (groupChatId) => getGroupChatState(groupChatId) === 'idle',
 		steer: async (groupChatId, text, readOnly) => {
 			const processManager = getProcessManager();
 			const steer = processManager?.steer?.bind(processManager);
@@ -1247,7 +1306,7 @@ Respond with ONLY the summary text, no additional commentary.`;
 		// moderator free?". This emitter is the one funnel every state change
 		// already passes through, so the map is recorded here rather than being
 		// re-derived somewhere that could disagree with what clients were told.
-		lastModeratorState.set(groupChatId, state);
+		publishGroupChatState(groupChatId, state);
 		safeSend('groupChat:stateChange', groupChatId, state);
 		onModeratorStateChanged(groupChatId, state === 'idle');
 	};
@@ -1348,4 +1407,79 @@ Respond with ONLY the summary text, no additional commentary.`;
 	};
 
 	logger.info('Registered Group Chat IPC handlers', LOG_CONTEXT);
+}
+
+type AssignedParticipantSummary =
+	| { handled: false; utilityPrompt: string }
+	| { handled: true; summary: string | null };
+
+/**
+ * Summarize a participant with the `tab-summary` Local Models assignment, when
+ * it is a local model or an endpoint.
+ *
+ * `use-utility-agent` (the default) is not handled here: the caller keeps its
+ * agent turn. Every other verdict is handled, and none falls back to an agent:
+ *   - `off` skips the summary. The reset itself does not depend on it.
+ *   - `unavailable` skips it and tells the user once why.
+ *   - `cancelled` (the timeout) skips it.
+ *
+ * The agent path resumes the participant's own provider session, which a local
+ * model cannot open. So this reads the group chat log instead: the messages
+ * the participant sent and received, which is what continuity needs.
+ *
+ * SSH: a local model runs on THIS machine even for a remote participant. The
+ * chat log already lives here, so nothing leaves the machine that was not on it.
+ */
+async function summarizeParticipantWithAssignedModel(options: {
+	logPath: string;
+	chatName: string;
+	participantName: string;
+	safeSend: SafeSendFn;
+}): Promise<AssignedParticipantSummary> {
+	const { logPath, chatName, participantName, safeSend } = options;
+	const transcript = formatChatHistoryForPrompt(
+		await readLog(logPath),
+		LOCAL_PARTICIPANT_SUMMARY_HISTORY
+	);
+	const system = getPrompt('group-chat-participant-summary-local');
+	const prompt = `Participant: ${participantName}\nGroup chat: ${chatName}\n\nTranscript (oldest first):\n${transcript}`;
+	let verdict: Awaited<ReturnType<typeof runLocalTask>>;
+	try {
+		verdict = await runLocalTask('tab-summary', {
+			system,
+			prompt,
+			maxTokens: LOCAL_PARTICIPANT_SUMMARY_MAX_TOKENS,
+			signal: AbortSignal.timeout(PARTICIPANT_SUMMARY_TIMEOUT_MS),
+		});
+	} catch (error) {
+		// The router throws only for an unclassified engine failure: a bug worth
+		// reporting, but the summary is optional, so the reset goes ahead.
+		void captureException(error);
+		logger.error('Participant summary on the assigned model failed', LOG_CONTEXT, {
+			error: String(error),
+		});
+		return { handled: true, summary: null };
+	}
+	switch (verdict.status) {
+		case 'use-utility-agent':
+			return { handled: false, utilityPrompt: `${system}\n\n${prompt}` };
+		case 'off':
+			return { handled: true, summary: null };
+		case 'cancelled':
+			logger.warn('Participant summary on the assigned model timed out', LOG_CONTEXT, {
+				source: verdict.source,
+			});
+			return { handled: true, summary: null };
+		case 'unavailable':
+			reportLocalTaskUnavailable({ safeSend, taskId: 'tab-summary', verdict });
+			return { handled: true, summary: null };
+		case 'ok':
+			clearLocalTaskNotice('tab-summary');
+			logger.info(`Context summary collected for ${participantName}`, LOG_CONTEXT, {
+				source: verdict.source,
+				responseLength: verdict.text.length,
+				durationMs: verdict.durationMs,
+			});
+			return { handled: true, summary: verdict.text.trim() };
+	}
 }

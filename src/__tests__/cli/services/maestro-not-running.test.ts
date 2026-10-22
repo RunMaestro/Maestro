@@ -134,7 +134,7 @@ describe('not-running reporter', () => {
 
 		it('exits 1 for an ordinary error', () => {
 			expect(() => failFromError(new Error('boom'))).toThrow(ExitSignal);
-			expect(String(errorSpy.mock.calls[0][0])).toBe('Error: boom');
+			expect(String(errorSpy.mock.calls[0][0])).toBe('✗ Error: boom');
 			expect(exitSpy).toHaveBeenCalledWith(1);
 		});
 	});

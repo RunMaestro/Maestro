@@ -16,6 +16,7 @@
 
 import type { CueAction, CueAutoRunConfig, CueScheduleDay } from './contracts';
 import { CUE_SCHEDULE_DAYS } from './contracts';
+import type { CueGateOnUnavailable } from './gate';
 import { getBasename } from '../formatters';
 import type { CueTurnSettings, CueTurnSettingsPatch } from './turn-settings';
 
@@ -72,6 +73,12 @@ export interface ScheduledTask extends CueTurnSettings {
 	 *  Scheduled Tasks tab can show WHICH documents a pending run will launch
 	 *  rather than just "an Auto Run". */
 	autoRun?: CueAutoRunConfig;
+	/** The task's gate condition, when it has one: a local model reads each
+	 *  fire and skips the ones that do not meet it. See `CueSubscription.gate`. */
+	gate?: string;
+	/** What the gate does when its model cannot answer. Present only beside a
+	 *  `gate`, and only when the task spells it out (absent = run). */
+	gateOnUnavailable?: CueGateOnUnavailable;
 	/**
 	 * Epoch ms of the next projected fire, or `null` when it cannot be known
 	 * (an `interval` task's phase depends on engine run state, and an expired
@@ -107,13 +114,18 @@ export interface ScheduledTaskCreateInput extends CueTurnSettings {
 	graceMinutes?: number;
 	/** Keep a `once` task on disk after a failed run (default: consume it). */
 	keepOnFailure?: boolean;
+	/** Gate condition. Written to every subscription the task becomes. */
+	gate?: string;
+	/** What the gate does when its model cannot answer. Needs a `gate`. */
+	gateOnUnavailable?: CueGateOnUnavailable;
 }
 
 /**
  * Fields accepted when editing an existing task. Every field is optional -
- * only what is present is written. `undefined` means "leave alone"; there is
- * deliberately no way to null a field out, because every field this patch can
- * touch is required by the event that uses it.
+ * only what is present is written. `undefined` means "leave alone". Nothing
+ * here can be nulled out except the gate, because every other field this
+ * patch can touch is required by the event that uses it; a gate is optional,
+ * so `gate: null` removes it (and its policy with it).
  */
 export interface ScheduledTaskUpdateInput {
 	fireAt?: string;
@@ -124,6 +136,10 @@ export interface ScheduledTaskUpdateInput {
 	label?: string;
 	enabled?: boolean;
 	notify?: { message: string; sticky?: boolean };
+	/** A condition sets the gate; `null` removes it. */
+	gate?: string | null;
+	/** Changes the policy of the gate the task has (or the one `gate` sets). */
+	gateOnUnavailable?: CueGateOnUnavailable;
 	/** Change the prompt run's model choice. The one field here that CAN be
 	 *  cleared: a `null` axis falls back to the agent's own model or effort. */
 	turnSettings?: CueTurnSettingsPatch;

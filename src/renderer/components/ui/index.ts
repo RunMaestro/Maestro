@@ -10,6 +10,8 @@ export type { ModalProps, ModalFooterProps } from './Modal';
 
 export { FormInput } from './FormInput';
 export type { FormInputProps } from './FormInput';
+export { FormFieldLabel } from './FormFieldLabel';
+export type { FormFieldLabelProps } from './FormFieldLabel';
 
 export { FilterInput } from './FilterInput';
 export type { FilterInputProps } from './FilterInput';
@@ -53,10 +55,20 @@ export type { GhostIconButtonProps } from './GhostIconButton';
 export { EmptyStatePlaceholder } from './EmptyStatePlaceholder';
 export type { EmptyStatePlaceholderProps } from './EmptyStatePlaceholder';
 
+export { ModalTabStrip, tabPanelProps, useModalTabs, useModalTabCycling } from './ModalTabStrip';
+export type {
+	ModalTab,
+	ModalTabStripProps,
+	UseModalTabsOptions,
+	UseModalTabCyclingOptions,
+} from './ModalTabStrip';
+
 export { ShortcutFilterButton } from './ShortcutFilterButton';
 export type { ShortcutFilterButtonProps } from './ShortcutFilterButton';
 
 export { WorktreePill } from './WorktreePill';
+export { GroupPill } from './GroupPill';
+export type { GroupPillProps } from './GroupPill';
 
 export { TurnSettingPills } from './TurnSettingPills';
 export type { TurnSettingPillsProps } from './TurnSettingPills';

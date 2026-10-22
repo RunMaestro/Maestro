@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import {
 	useDebouncedPersistence,
+	prepareSessionForPersistence,
 	DEFAULT_DEBOUNCE_DELAY,
 	SESSION_PERSISTENCE_BASELINE_EVENT,
 } from '../../../../renderer/hooks/utils/useDebouncedPersistence';
@@ -598,6 +599,39 @@ describe('useDebouncedPersistence', () => {
 				expect(persisted[0].executionQueue[0].waitingForConnection).toBe(true);
 			});
 
+			it('preserves full document chat history and its binding, including snoozed chats', () => {
+				const logs = Array.from({ length: 200 }, (_, i) => makeLog(`document-${i}`));
+				const tab = makeTab({
+					id: 'document-chat',
+					documentOrigin: { path: '/docs/plan.md' },
+					hidden: true,
+					agentSessionId: 'provider-conversation',
+					logs,
+				});
+				const saved = prepareSessionForPersistence(
+					makeSession({
+						aiTabs: [tab],
+						snoozedTabs: [
+							{
+								id: 'snoozed-document',
+								type: 'ai',
+								tab,
+								unifiedIndex: 0,
+								snoozedAt: 0,
+								wakeAt: 10,
+							},
+						],
+					})
+				);
+				expect(saved.aiTabs[0]).toMatchObject({
+					documentOrigin: tab.documentOrigin,
+					hidden: true,
+					agentSessionId: 'provider-conversation',
+					logs,
+				});
+				expect(saved.snoozedTabs?.[0]).toMatchObject({ tab: { logs } });
+			});
+
 			it('should truncate tab logs to 100 entries (MAX_PERSISTED_LOGS_PER_TAB)', () => {
 				const logs = Array.from({ length: 200 }, (_, i) => makeLog(`log-${i}`));
 				const tab = makeTab({ id: 'big-logs', logs });
@@ -703,8 +737,8 @@ describe('useDebouncedPersistence', () => {
 				expect(persisted[0].aiTabs[0].state).toBe('idle');
 			});
 
-			it('should clear tab thinkingStartTime', () => {
-				const tab = makeTab({ id: 't', thinkingStartTime: 123456 });
+			it('should clear tab thinkingStartTime and translation progress', () => {
+				const tab = makeTab({ id: 't', thinkingStartTime: 123456, translatingFrom: 'codex' });
 				const session = makeSession({
 					aiTabs: [tab],
 					activeTabId: 't',
@@ -720,6 +754,7 @@ describe('useDebouncedPersistence', () => {
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
 				expect(persisted[0].aiTabs[0].thinkingStartTime).toBeUndefined();
+				expect(persisted[0].aiTabs[0].translatingFrom).toBeUndefined();
 			});
 
 			it('should clear tab agentError', () => {
@@ -2889,5 +2924,49 @@ describe('useDebouncedPersistence', () => {
 			vi.mocked(window.maestro.sessions.setAll).mockResolvedValue(true);
 			vi.mocked(window.maestro.sessions.setMany).mockResolvedValue(true);
 		}
+	});
+});
+
+describe('Ensemble persistence round trip', () => {
+	it('retains pins, Auto, Run on and pending ownership in live and snoozed tabs', () => {
+		const tab = makeTab({
+			id: 'mixed',
+			state: 'busy',
+			tabProvider: 'codex',
+			customModel: 'auto',
+			customEffort: 'high',
+			runOn: { type: 'provider' },
+			pendingTranslation: 'claude-code',
+			providerSessions: {
+				'claude-code': {
+					agentSessionId: 'source',
+					customModel: 'opus',
+					runOn: { type: 'provider' },
+				},
+			},
+		});
+		const session = makeSession({
+			aiTabs: [tab],
+			snoozedTabs: [{ id: 'snooze', type: 'ai', tab, unifiedIndex: 0, snoozedAt: 0, wakeAt: 10 }],
+		});
+		const persisted = prepareSessionForPersistence(session);
+		const expected = {
+			...tab,
+			state: 'idle',
+			thinkingStartTime: undefined,
+			translatingFrom: undefined,
+			agentError: undefined,
+			wizardState: undefined,
+		};
+		expect(persisted.aiTabs[0]).toEqual(expected);
+		expect(persisted.snoozedTabs?.[0]).toMatchObject({
+			tab: {
+				tabProvider: 'codex',
+				customModel: 'auto',
+				runOn: tab.runOn,
+				pendingTranslation: 'claude-code',
+				providerSessions: tab.providerSessions,
+			},
+		});
 	});
 });

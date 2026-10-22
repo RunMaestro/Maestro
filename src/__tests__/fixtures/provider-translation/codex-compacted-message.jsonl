@@ -1,0 +1,5 @@
+{"type":"session_meta","payload":{"id":"synthetic-compacted","cwd":"/isolated/project"}}
+{"type":"response_item","payload":{"type":"message","id":"old-user","role":"user","content":[{"type":"input_text","text":"Archived request: inspect the synthetic alpha file."}]}}
+{"type":"response_item","payload":{"type":"function_call","id":"old-call","call_id":"archived-call","name":"Read","arguments":"{\"path\":\"alpha.txt\"}"}}
+{"type":"compacted","payload":{"message":"Latest provider summary: archived lookup resolved to alpha."}}
+{"type":"response_item","payload":{"type":"message","id":"later","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"Continue from the compacted context."}]}}

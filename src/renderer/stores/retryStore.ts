@@ -1,3 +1,9 @@
+import { agentCommandScope } from '../utils/agentCommands';
+import {
+	projectTabProvider,
+	resolveTabProvider,
+	resolveTurnProvider,
+} from '../utils/providerTabSessions';
 /**
  * retryStore - Agent Resilience auto-retry engine (renderer).
  *
@@ -58,7 +64,7 @@ import { logger } from '../utils/logger';
 import { useSessionStore, selectSessionById, updateSessionWith } from './sessionStore';
 import { notifyToast } from './notificationStore';
 import { useAgentStore, type ProcessQueuedItemDeps } from './agentStore';
-import type { AgentError, QueuedItem } from '../types';
+import type { AgentError, QueuedItem, ToolType } from '../types';
 import { registerBatchResumer, getBatchResumer } from '../services/batchResumer';
 
 // ============================================================================
@@ -97,6 +103,7 @@ export interface ContextCompactionRecovery {
 }
 
 export interface RetryEntry {
+	provider?: ToolType;
 	sessionId: string;
 	tabId: string;
 	/** `${sessionId}:${tabId}` */
@@ -145,6 +152,7 @@ export type OutageStatus = 'active' | 'recovered' | 'stopped' | 'failed';
  * keep their own card. Kept in the reactive store so the card ticks live.
  */
 export interface OutageRecord {
+	provider?: ToolType;
 	outageId: string;
 	sessionId: string;
 	tabId: string;
@@ -426,16 +434,21 @@ const providerWatchers = new Map<string, () => void>();
  * out from behind a plan-quota wall, and it would be perverse to make them
  * keep waiting out a reset they have just routed around.
  */
-function providerSignature(sessionId: string): string {
+function providerSignature(sessionId: string, tabId: string): string {
 	const session = selectSessionById(sessionId)(useSessionStore.getState());
 	if (!session) return '';
+	const tab = session.aiTabs.find((candidate) => candidate.id === tabId);
+	const provider =
+		snapshots.get(keyFor(sessionId, tabId))?.item.turnSettings?.provider ??
+		resolveTurnProvider(tab, session);
+	const projected = projectTabProvider(session, tab, provider);
 	return [
-		session.toolType,
-		session.customModel ?? '',
-		session.customEffort ?? '',
-		session.enableMaestroP ? '1' : '0',
-		session.maestroPMode ?? '',
-		session.customPath ?? '',
+		agentCommandScope(session, tab, provider),
+		projected.tab?.customModel ?? projected.agent.customModel ?? '',
+		projected.tab?.customEffort ?? projected.agent.customEffort ?? '',
+		projected.agent.enableMaestroP ? '1' : '0',
+		projected.agent.maestroPMode ?? '',
+		projected.agent.customPath ?? '',
 	].join('|');
 }
 
@@ -460,11 +473,11 @@ function stopProviderWatch(key: string): void {
  * Only `'scheduled'` entries fire: an in-flight resend is already on its way,
  * and a config change mid-flight is picked up by the turn after it.
  */
-function startProviderWatch(key: string, sessionId: string): void {
+function startProviderWatch(key: string, sessionId: string, tabId: string): void {
 	stopProviderWatch(key);
 	if (typeof useSessionStore.subscribe !== 'function') return;
 
-	let baseline = providerSignature(sessionId);
+	let baseline = providerSignature(sessionId, tabId);
 	const unsubscribe = useSessionStore.subscribe(() => {
 		const entry = useRetryStore.getState().retries[key];
 		// Self-terminate rather than trusting every path that ends an outage to
@@ -477,7 +490,7 @@ function startProviderWatch(key: string, sessionId: string): void {
 			return;
 		}
 		if (entry.status !== 'scheduled') return;
-		const current = providerSignature(sessionId);
+		const current = providerSignature(sessionId, tabId);
 		if (current === baseline) return;
 		baseline = current;
 		logger.info('[retry] Provider changed during outage; retrying now', undefined, { key });
@@ -660,7 +673,13 @@ export function scheduleRetryForError(
 
 	clearTimer(key);
 	const heldSnapshot = mode === 'resend' ? snapshots.get(key) : undefined;
+	const ownerSession = selectSessionById(sessionId)(useSessionStore.getState());
+	const ownerTab = ownerSession?.aiTabs.find((tab) => tab.id === tabId);
+	const provider =
+		heldSnapshot?.item.turnSettings?.provider ??
+		(ownerSession ? resolveTurnProvider(ownerTab, ownerSession) : undefined);
 	const entry: RetryEntry = {
+		provider,
 		sessionId,
 		tabId,
 		key,
@@ -683,10 +702,11 @@ export function scheduleRetryForError(
 	if (heldSnapshot) holdFailedItemInQueue(sessionId, tabId, heldSnapshot.item);
 
 	// Re-point the agent and the wait is over: see startProviderWatch.
-	startProviderWatch(key, sessionId);
+	startProviderWatch(key, sessionId, tabId);
 
 	// Mirror the live state into the persistent outage record the card reads.
 	useRetryStore.getState().patchOutage(outageId, {
+		provider,
 		outageId,
 		sessionId,
 		tabId,
@@ -737,15 +757,32 @@ export function scheduleRetryForError(
  *
  * Text, images, and slash-command expansion are untouched: the prompt resent is
  * still the one the user typed. Only the knobs they can reach while the
- * countdown runs are re-read. The provider was always taken live (see
- * `codifyQueuedTurnSettings`), so model and effort are all that needed
- * unfreezing.
+ * countdown runs are re-read. A captured provider remains authoritative; only
+ * legacy items without a provider capture follow the effective tab. Model and effort are refreshed
+ * inside that provider's own slot.
+ *
+ * What the model router answered for the prompt is not one of those knobs. A
+ * turn that went out on the Auto model and is resent on it keeps its answer:
+ * the words are the same, so they are not routed twice. It is dropped by the
+ * capture when the agent is on a named model now.
  */
 function replayItem(entry: RetryEntry, item: QueuedItem): QueuedItem {
 	const session = selectSessionById(entry.sessionId)(useSessionStore.getState());
 	if (!session) return item;
 	const tab = session.aiTabs?.find((t) => t.id === entry.tabId);
-	return { ...item, turnSettings: captureQueuedTurnSettings(tab, session) };
+	const projected = projectTabProvider(
+		session,
+		tab,
+		item.turnSettings?.provider ?? resolveTabProvider(tab, session)
+	);
+	return {
+		...item,
+		turnSettings: captureQueuedTurnSettings(
+			projected.tab,
+			projected.agent,
+			item.turnSettings?.route
+		),
+	};
 }
 
 /**
@@ -1045,15 +1082,20 @@ function scheduleContextCompaction(sessionId: string, tabId: string, error: Agen
 
 	const snapshot = snapshots.get(key);
 	if (!snapshot) return false;
-	if (!canCompactTabContext(sessionId, tabId)) return false;
+	const session = selectSessionById(sessionId)(useSessionStore.getState());
+	const tab = session?.aiTabs.find((candidate) => candidate.id === tabId);
+	const provider =
+		snapshot.item.turnSettings?.provider ??
+		(session ? resolveTurnProvider(tab, session) : undefined);
+	if (!canCompactTabContext(sessionId, tabId, provider)) return false;
 
 	// The turn that failed WAS a compaction the user asked for.
-	const session = selectSessionById(sessionId)(useSessionStore.getState());
 	const sent = snapshot.item.type === 'command' ? snapshot.item.command : snapshot.item.text;
-	if (sent?.trim() === getContextCompactCommand(session?.toolType)) return false;
+	if (sent?.trim() === getContextCompactCommand(provider)) return false;
 
 	const now = Date.now();
 	const entry: RetryEntry = {
+		provider,
 		sessionId,
 		tabId,
 		key,
@@ -1175,7 +1217,7 @@ async function compactBeforeResend(key: string, entry: RetryEntry): Promise<bool
 		),
 	}));
 
-	const result = await compactTabContext(entry.sessionId, entry.tabId);
+	const result = await compactTabContext(entry.sessionId, entry.tabId, entry.provider);
 
 	// Stop, or anything else that ended this recovery while the provider was
 	// compacting, has already settled the pill and the tab.
@@ -1572,7 +1614,14 @@ function resolveOutage(
 		?.recordResilience({
 			id: record.outageId,
 			sessionId: record.sessionId,
-			agentType: session?.toolType ?? 'unknown',
+			agentType:
+				record.provider ??
+				(session
+					? resolveTurnProvider(
+							session.aiTabs.find((tab) => tab.id === record.tabId),
+							session
+						)
+					: 'unknown'),
 			strategy: record.strategy,
 			outcome: status === 'recovered' ? 'recovered' : 'stopped',
 			startedAt: record.startedAt,

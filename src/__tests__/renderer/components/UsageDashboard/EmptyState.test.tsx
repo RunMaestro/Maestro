@@ -10,8 +10,8 @@
  * - Theme-aware styling for all elements
  */
 
-import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, vi } from 'vitest';
+import { fireEvent, render, screen } from '@testing-library/react';
 import React from 'react';
 import { EmptyState } from '../../../../renderer/components/UsageDashboard/EmptyState';
 import { THEMES } from '../../../../shared/themes';
@@ -21,6 +21,27 @@ const darkTheme = THEMES['dracula'];
 const lightTheme = THEMES['solarized-light'];
 
 describe('EmptyState', () => {
+	describe('Action', () => {
+		it('renders no button unless an action is given', () => {
+			render(<EmptyState theme={darkTheme} />);
+
+			expect(screen.queryByTestId('usage-dashboard-empty-action')).not.toBeInTheDocument();
+		});
+
+		it('renders the action under the message and runs it on click', () => {
+			const onClick = vi.fn();
+			render(
+				<EmptyState theme={darkTheme} action={{ label: 'Open Settings > Models', onClick }} />
+			);
+
+			const button = screen.getByRole('button', { name: 'Open Settings > Models' });
+			expect(button).toHaveStyle({ backgroundColor: darkTheme.colors.accent });
+
+			fireEvent.click(button);
+			expect(onClick).toHaveBeenCalledTimes(1);
+		});
+	});
+
 	describe('Rendering', () => {
 		it('renders the empty state container with correct test ID', () => {
 			render(<EmptyState theme={darkTheme} />);

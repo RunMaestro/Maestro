@@ -214,12 +214,15 @@ interface DiscoveredCommand {
  * frontmatter are omitted rather than returned as empty strings, so the renderer
  * can fall back to its built-in description table.
  */
-async function readClaudeSkillDescriptions(cwd: string): Promise<Map<string, string>> {
+async function readClaudeSkillDescriptions(
+	cwd: string,
+	configDir?: string
+): Promise<Map<string, string>> {
 	const descriptions = new Map<string, string>();
 	const homeDir = os.homedir();
 	const skillDirs = [
 		path.join(cwd, '.claude', 'skills'), // project-local (wins)
-		path.join(homeDir, '.claude', 'skills'), // user-level
+		path.join(configDir || path.join(homeDir, '.claude'), 'skills'), // user-level
 	];
 
 	// Extract the YAML frontmatter block from a file so we don't pick up a
@@ -1783,19 +1786,10 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 					return discoverOpenCodeSlashCommandsRemote(sshRemote, cwd);
 				}
 
+				// Only OpenCode has a remote discovery implementation. Never read local accounts for SSH.
+				if (sshRemoteId) return null;
 				const agent = await agentDetector.getAgent(agentId);
 				if (agentId === 'codex') {
-					// Codex skills/prompts live on the machine that runs the CLI.
-					// For an SSH-remote agent that is the remote host, so return
-					// nothing rather than offering this machine's commands - a
-					// command the remote Codex has never heard of is worse than none.
-					if (sshRemoteId) {
-						logger.debug(
-							'Skipping Codex slash command discovery for SSH remote agent',
-							LOG_CONTEXT
-						);
-						return null;
-					}
 					let commandPath = agent?.available ? agent.path || agent.command : undefined;
 					if (customPath) {
 						const detection = await checkCustomPath(customPath);
@@ -1848,7 +1842,13 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 
 					// The init message of a `/help` probe names every command; see
 					// claude-slash-command-probe.ts.
-					const names = await probeClaudeSlashCommands(commandPath, cwd);
+					const providerEnv = agentConfigsStore.get('configs', {})['claude-code']?.customEnvVars;
+					const env = buildChildProcessEnv(
+						effectiveAgentCustomEnvVars(customEnvVars, providerEnv),
+						false,
+						settingsStore?.get('shellEnvVars', {})
+					);
+					const names = await probeClaudeSlashCommands(commandPath, cwd, env);
 					if (!names) return null;
 					logger.info(`Discovered ${names.length} slash commands for ${agentId}`, LOG_CONTEXT);
 					// Description enrichment is best-effort: a permission/IO
@@ -1857,7 +1857,7 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 					// Sentry and fall back to names-only.
 					let skillDescriptions = new Map<string, string>();
 					try {
-						skillDescriptions = await readClaudeSkillDescriptions(cwd);
+						skillDescriptions = await readClaudeSkillDescriptions(cwd, env.CLAUDE_CONFIG_DIR);
 					} catch (err) {
 						void captureException(err);
 						logger.warn(

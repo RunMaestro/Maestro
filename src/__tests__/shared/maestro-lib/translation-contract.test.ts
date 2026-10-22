@@ -11,8 +11,95 @@ import { CodexAppServerRpc } from '../../../shared/maestro-lib/codex/rpc-client'
 import { CodexAppServerRpc as MainRpc } from '../../../main/codex-app-server/rpc-client';
 import { isCodexResponse } from '../../../shared/maestro-lib/codex/protocol';
 import { answerCodexServerRequest } from '../../../shared/maestro-lib/codex/server-requests';
+import {
+	TRANSLATION_DIRECTIONS,
+	TRANSLATION_PROVIDER_VERSIONS,
+	translationVersionLimitation,
+} from '../../../shared/maestro-lib/translation/support';
+import {
+	claudeTranslationAdapter,
+	codexTranslationAdapter,
+} from '../../../shared/maestro-lib/translation/adapters';
+import {
+	TranslationRegistry,
+	planTranslation,
+} from '../../../shared/maestro-lib/translation/registry';
 
 describe('translation evidence contract', () => {
+	it.each([
+		['2.1.295', 'block'],
+		['2.1.296-rc.1', 'block'],
+		['2.1.296', undefined],
+		['2.1.297-rc.1', 'warning'],
+		['2.1.296+build.1', 'warning'],
+		['2.1.301', 'warning'],
+		['3.0.0', 'warning'],
+		['invalid', 'block'],
+		['2.1.296-garbage!', 'block'],
+		['2.1', 'block'],
+	] as const)('enforces strict semantic version coverage for %s', (version, severity) => {
+		const limitation = translationVersionLimitation(
+			'claude-code',
+			version,
+			TRANSLATION_PROVIDER_VERSIONS['claude-code']
+		);
+		expect(limitation?.severity).toBe(severity);
+	});
+	it.each([
+		['2.1.296', '0.162.1', 'verified'],
+		['2.1.297', '0.162.1', 'unverified'],
+		['2.1.296', '0.162.2', 'unverified'],
+		['2.1.301', '0.163.0', 'unverified'],
+	] as const)(
+		'bounds native certification to tested versions %s -> %s',
+		(sourceVersion, destinationVersion, verification) => {
+			const registry = new TranslationRegistry();
+			registry.register(claudeTranslationAdapter);
+			registry.register(codexTranslationAdapter);
+			registry.declareDirection({
+				...TRANSLATION_DIRECTIONS[0],
+				verification: 'verified',
+				evidence: {
+					nativeResume: 'synthetic resume evidence',
+					roundTrip: 'synthetic round-trip evidence',
+					resources: 'synthetic resource evidence',
+					payloadClasses: ['conversation'],
+				},
+			});
+			const source = {
+				provider: 'claude-code' as const,
+				version: sourceVersion,
+				accountRoot: '/isolated/claude',
+				projectRoot: '/isolated/project',
+			};
+			const destination = {
+				...source,
+				provider: 'codex' as const,
+				version: destinationVersion,
+				accountRoot: '/isolated/codex',
+			};
+			const plan = planTranslation({
+				agentId: 'a',
+				source,
+				destination,
+				registry,
+				conversations: [],
+				scope: { projectKnowledge: true, selectedUserResources: [] },
+			});
+			expect(registry.direction(source, destination)?.verification).toBe(verification);
+			expect(plan.status).toBe('ready');
+			expect(plan.verification).toBe(verification);
+			if (verification === 'verified') expect(plan.limitations).toEqual([]);
+			else {
+				expect(plan.limitations).toEqual(
+					expect.arrayContaining([
+						expect.objectContaining({ code: 'untested-version', severity: 'warning' }),
+						expect.objectContaining({ code: 'unverified-native-resume', severity: 'warning' }),
+					])
+				);
+			}
+		}
+	);
 	it('resolves the migration account through the launch environment including explicit unset values', () => {
 		const env = buildAgentEnvironment({
 			surface: 'desktop',

@@ -32,6 +32,7 @@ export function computeTurnDurations(logs: LogEntry[]): Map<string, number> {
 	let turnEndedAt = 0;
 	let turnReplyId: string | null = null;
 	let groupFirstId: string | null = null;
+	let groupProvider: LogEntry['turnProvider'] | null;
 
 	const closeTurn = () => {
 		if (turnReplyId !== null && turnStartedAt !== null && turnEndedAt >= turnStartedAt) {
@@ -46,6 +47,7 @@ export function computeTurnDurations(logs: LogEntry[]): Map<string, number> {
 			turnReplyId = groupFirstId;
 			groupFirstId = null;
 		}
+		groupProvider = undefined;
 	};
 
 	for (const log of logs) {
@@ -71,6 +73,14 @@ export function computeTurnDurations(logs: LogEntry[]): Map<string, number> {
 			turnEndedAt = Math.max(turnEndedAt, log.timestamp);
 			turnReplyId = log.id;
 		} else {
+			const provider =
+				log.turnProvider ??
+				(log.source === 'stdout' || log.source === 'ai' || log.source === 'stderr'
+					? null
+					: undefined);
+			if (provider !== undefined && groupProvider !== undefined && provider !== groupProvider)
+				flushGroup();
+			if (provider !== undefined) groupProvider = provider;
 			// Accumulate the local agent's own response entries.
 			turnEndedAt = Math.max(turnEndedAt, log.timestamp);
 			if (groupFirstId === null) groupFirstId = log.id;

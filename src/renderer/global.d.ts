@@ -76,6 +76,15 @@ interface ProcessConfig {
 	sessionCustomModel?: string;
 	sessionCustomEffort?: string;
 	sessionCustomContextWindow?: number;
+	// The Run on target this turn launches on in place of the agent's stored
+	// one: a tier's target, set only by a spawn that resolved a tier.
+	runOnOverride?: import('../shared/local-models/run-on').RunOnTarget;
+	// The consult chain this turn runs IN, already at its own depth, when
+	// another agent's delegation started it (`maestro-cli dispatch`). The spawn
+	// handler states it in the agent's environment so what the agent asks and
+	// delegates spends that chain's budget (shared/consultBudget.ts). Absent on
+	// every other turn: the handler then decides whether the turn roots a chain.
+	consultChain?: import('../shared/consultBudget').ConsultChain;
 	// Session's Additional Directories. Providers that support it get native grant
 	// flags (--add-dir); all agents get the {{ADDITIONAL_DIRECTORIES}} prompt block.
 	sessionAdditionalDirectories?: import('../shared/types').AdditionalDirectory[];
@@ -227,10 +236,15 @@ import type { AggregatedContributions as PluginContributions } from '../shared/p
 import type { FirstPartyBridgeState } from '../main/plugins/first-party-bridge';
 import type { FirstPartyEncoreFlag } from '../shared/plugins/first-party';
 import type { AgentRunApi } from '../main/preload/agentRun';
+import type { VoiceApi } from '../main/preload/acappella';
+import type { VoiceSelfTestResponse } from '../main/preload/debug';
+import type { VoiceAudioHostApi } from '../main/preload/acappellaAudio';
+import type { LocalModelsApi } from '../main/preload/localModels';
 import type { QuickChatApi } from '../main/preload/quickChat';
 import type { FloatingWidgetsApi } from '../main/preload/floatingWidgets';
 import type { MemoryApi } from '../main/preload/memory';
 import type { BrowserOp } from '../shared/coworkingBrowser';
+import type { GroupSeededCreateReport } from '../shared/groupAgentDefaults';
 import type { HistoryEntry } from '../shared/types';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../shared/snoozeCommands';
 import type {
@@ -306,6 +320,7 @@ interface MaestroAPI {
 			logs?: import('./types').LogEntry[];
 			shellLogs?: import('./types').LogEntry[];
 			agentCommands?: NonNullable<import('./types').Session['agentCommands']>;
+			agentCommandsScope?: string;
 			aiCommandHistory?: string[];
 			transcriptSnapshots?: import('../shared/sessionTranscript').SessionRuntimeSnapshot[];
 		}>;
@@ -553,6 +568,7 @@ interface MaestroAPI {
 				force?: boolean,
 				images?: string[],
 				background?: boolean,
+				consultChain?: import('../shared/consultBudget').ConsultChain,
 				receiptChannel?: string
 			) => void
 		) => () => void;
@@ -576,6 +592,19 @@ interface MaestroAPI {
 			callback: (sessionId: string, responseChannel: string, background?: boolean) => void
 		) => () => void;
 		sendRemoteNewTabResponse: (responseChannel: string, result: { tabId: string } | null) => void;
+		/** Land on one AI tab, waking or reopening it if that is what it takes. */
+		onRemoteFocusAiTab: (
+			callback: (sessionId: string, tabId: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteFocusAiTabResponse: (
+			responseChannel: string,
+			result: {
+				ok: boolean;
+				tabId?: string;
+				action?: 'focused' | 'woke' | 'reopened';
+				reason?: string;
+			}
+		) => void;
 		onRemoteCloseTab: (
 			callback: (sessionId: string, tabId: string, responseChannel: string) => void
 		) => () => void;
@@ -632,7 +661,7 @@ interface MaestroAPI {
 				| Promise<import('../shared/notificationInbox').NotificationInboxResult>
 		) => () => void;
 		onRemoteOpenModal: (
-			callback: (params: { surface: string; tab?: string }) => void
+			callback: (params: import('../shared/uiSurfaces').OpenUiSurfaceRequest) => void
 		) => () => void;
 		onRemoteOpenDocumentGraph: (
 			callback: (params: {
@@ -862,7 +891,8 @@ interface MaestroAPI {
 				prompt: string,
 				responseChannel: string,
 				background?: boolean,
-				hidden?: boolean
+				hidden?: boolean,
+				consultChain?: import('../shared/consultBudget').ConsultChain
 			) => void
 		) => () => void;
 		sendRemoteNewAITabWithPromptResponse: (
@@ -879,6 +909,7 @@ interface MaestroAPI {
 					fromSessionId?: string;
 					fromTabId?: string;
 					withContext?: boolean;
+					consultChain?: import('../shared/consultBudget').ConsultChain;
 				},
 				responseChannel: string
 			) => void
@@ -907,7 +938,8 @@ interface MaestroAPI {
 				tabId?: string,
 				images?: string[],
 				background?: boolean,
-				held?: boolean
+				held?: boolean,
+				consultChain?: import('../shared/consultBudget').ConsultChain
 			) => void
 		) => () => void;
 		sendRemoteEnqueueCommandResponse: (
@@ -1110,7 +1142,7 @@ interface MaestroAPI {
 		) => () => void;
 		sendRemoteCreateSessionResponse: (
 			responseChannel: string,
-			result: { sessionId: string } | null
+			result: ({ sessionId: string } & Partial<GroupSeededCreateReport>) | null
 		) => void;
 		onRemoteDeleteSession: (callback: (sessionId: string) => void) => () => void;
 		onRemoteRenameSession: (
@@ -1144,7 +1176,7 @@ interface MaestroAPI {
 		) => () => void;
 		sendRemoteUpdateSessionConfigResponse: (
 			responseChannel: string,
-			result: TranslationReport
+			result: import('../shared/desktopTabs').TabConfigResult
 		) => void;
 		onRemoteCreateGroup: (
 			callback: (
@@ -1168,6 +1200,17 @@ interface MaestroAPI {
 			) => void
 		) => () => void;
 		sendRemoteUpdateGroupResponse: (responseChannel: string, success: boolean) => void;
+		onRemoteUpdateGroupSettings: (
+			callback: (
+				groupId: string,
+				request: import('../shared/groupSettingsUpdate').GroupSettingsUpdateRequest,
+				responseChannel: string
+			) => void
+		) => () => void;
+		sendRemoteUpdateGroupSettingsResponse: (
+			responseChannel: string,
+			result: import('../shared/groupSettingsUpdate').GroupSettingsUpdateResult
+		) => void;
 		onRemoteDeleteGroup: (callback: (groupId: string) => void) => () => void;
 		onRemoteMoveSessionToGroup: (
 			callback: (sessionId: string, groupId: string | null, responseChannel: string) => void
@@ -1187,12 +1230,13 @@ interface MaestroAPI {
 				description: string,
 				isPublic: boolean,
 				agentSessionId: string | undefined,
+				allowSecrets: boolean,
 				responseChannel: string
 			) => void
 		) => () => void;
 		sendRemoteCreateGistResponse: (
 			responseChannel: string,
-			result: { success: boolean; gistUrl?: string; error?: string }
+			result: import('../shared/gitUtils').CreateGistResult
 		) => void;
 		onRemoteTriggerCueSubscription: (
 			callback: (
@@ -1270,6 +1314,7 @@ interface MaestroAPI {
 			attachments?: Array<{ name: string; dataUrl: string }>;
 			includeDebugPackage?: boolean;
 			performanceTracePath?: string;
+			allowSecrets?: boolean;
 		}) => Promise<import('../shared/feedback').FeedbackSubmitResponse>;
 		searchIssues: (query: string) => Promise<{
 			issues: Array<{
@@ -1285,7 +1330,8 @@ interface MaestroAPI {
 		}>;
 		subscribeIssue: (
 			issueNumber: number,
-			comment?: string
+			comment?: string,
+			options?: { allowSecrets?: boolean }
 		) => Promise<import('../shared/feedback').FeedbackSubmitResponse>;
 		listAccounts: () => Promise<import('../shared/feedbackAccounts').FeedbackAccountsResponse>;
 		rememberAccount: (key: string | null) => Promise<void>;
@@ -1644,12 +1690,9 @@ interface MaestroAPI {
 			content: string,
 			description: string,
 			isPublic: boolean,
-			ghPath?: string
-		) => Promise<{
-			success: boolean;
-			gistUrl?: string;
-			error?: string;
-		}>;
+			ghPath?: string,
+			options?: { allowSecrets?: boolean }
+		) => Promise<import('../shared/gitUtils').CreateGistResult>;
 		// Git worktree operations for Auto Run parallelization
 		// All worktree operations support SSH remote execution via optional sshRemoteId parameter
 		worktreeInfo: (
@@ -2467,7 +2510,9 @@ interface MaestroAPI {
 				groupId?: string;
 			}) => void
 		) => () => void;
-		onGlobalHotkeyRegistrationFailed: (callback: (keys: string[]) => void) => () => void;
+		onGlobalHotkeyRegistrationFailed: (
+			callback: (status: import('../shared/global-hotkeys').GlobalHotkeyStatus) => void
+		) => () => void;
 		/** Publish merged shortcut bindings so the native menu shows real accelerators. */
 		setMenuShortcutKeys: (keys: Record<string, string[]>) => void;
 		/** Native application menu click, carrying the clicked item's shortcut id. */
@@ -2614,7 +2659,10 @@ interface MaestroAPI {
 				matchCount: number;
 			}>
 		>;
-		getCommands: (projectPath: string) => Promise<
+		getCommands: (
+			projectPath: string,
+			configDir?: string
+		) => Promise<
 			Array<{
 				command: string;
 				description: string;
@@ -2701,6 +2749,7 @@ interface MaestroAPI {
 				summary: string;
 				fullResponse?: string;
 				agentSessionId?: string;
+				provider?: import('../shared/types').ToolType;
 				projectPath: string;
 				sessionId?: string;
 				sessionName?: string;
@@ -2730,6 +2779,7 @@ interface MaestroAPI {
 				summary: string;
 				fullResponse?: string;
 				agentSessionId?: string;
+				provider?: import('../shared/types').ToolType;
 				projectPath: string;
 				sessionId?: string;
 				sessionName?: string;
@@ -2765,6 +2815,7 @@ interface MaestroAPI {
 				summary: string;
 				fullResponse?: string;
 				agentSessionId?: string;
+				provider?: import('../shared/types').ToolType;
 				projectPath: string;
 				sessionId?: string;
 				sessionName?: string;
@@ -2790,7 +2841,12 @@ interface MaestroAPI {
 			},
 			sessionId?: string
 		) => Promise<boolean>;
-		updateSessionName: (agentSessionId: string, sessionName: string) => Promise<number>;
+		updateSessionName: (
+			agentSessionId: string,
+			sessionName: string,
+			provider?: import('../shared/types').ToolType,
+			ownerSessionId?: string
+		) => Promise<number>;
 		getFilePath: (sessionId: string) => Promise<string | null>;
 		listSessions: () => Promise<string[]>;
 		getGraphData: (
@@ -3206,14 +3262,16 @@ interface MaestroAPI {
 	};
 	// Debug Package API
 	debug: {
-		createPackage: (options?: DebugPackageOptions) => Promise<{
-			success: boolean;
-			path?: string;
-			filesIncluded: string[];
-			totalSizeBytes: number;
-			cancelled?: boolean;
-			error?: string;
-		}>;
+		createPackage: (options?: DebugPackageOptions) => Promise<
+			import('../shared/secretScan').SecretScreenFields & {
+				success: boolean;
+				path?: string;
+				filesIncluded: string[];
+				totalSizeBytes: number;
+				cancelled?: boolean;
+				error?: string;
+			}
+		>;
 		previewPackage: () => Promise<{
 			success: boolean;
 			categories: Array<{
@@ -3313,6 +3371,14 @@ interface MaestroAPI {
 				error?: string;
 			}) => void
 		) => () => void;
+		/**
+		 * A Cappella voice self-test. Loads each native runtime, runs a trivial
+		 * operation, and reports per-runtime pass/fail with timings. Loads no model
+		 * and opens no device, so it is safe to run before anything is downloaded.
+		 *
+		 * `success` is "the self-test ran", `report.passed` is "the runtimes work".
+		 */
+		voiceSelfTest: () => Promise<VoiceSelfTestResponse>;
 		onProfilingAutoStopped: (
 			handler: (event: {
 				reason: 'buffer-full';
@@ -3370,6 +3436,13 @@ interface MaestroAPI {
 		) => Promise<{ requestId: string }>;
 		/** Stop every consult this source agent still has in flight (Stop button). */
 		cancel: (sourceSessionId: string) => Promise<{ canceled: number }>;
+		/**
+		 * Where the consultation budget stands for a turn about to be spawned. No
+		 * chain means a root turn (nothing spent); `null` means it cannot be read.
+		 */
+		consultBudget: (
+			consultChain?: import('../shared/consultBudget').ConsultChain
+		) => Promise<import('../shared/consultBudget').ConsultBudgetStatus | null>;
 		/** Subscribe to streamed cross-agent response chunks. Returns a cleanup fn. */
 		onChunk: (
 			handler: (chunk: import('../shared/crossAgentTypes').CrossAgentResponseChunk) => void
@@ -4015,6 +4088,10 @@ interface MaestroAPI {
 		getAggregation: (
 			range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'
 		) => Promise<StatsAggregation>;
+		// What every model other than a provider's own did in a range (Models tab)
+		getModelUsage: (
+			range?: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'
+		) => Promise<import('../shared/local-models/model-usage').ModelUsage>;
 		// Interactive vs autonomous (Auto Run + Cue) totals, merged across the
 		// stats DB and the Cue DB. Defaults to all retained history.
 		getDelegationTotals: (
@@ -4531,6 +4608,8 @@ interface MaestroAPI {
 			userMessage: string;
 			agentType: string;
 			cwd: string;
+			// The agent the tab belongs to; scopes the Local Models "unavailable" notice.
+			sessionId?: string;
 			sessionSshRemoteConfig?: {
 				enabled: boolean;
 				remoteId: string | null;
@@ -4578,7 +4657,13 @@ interface MaestroAPI {
 				exitCode?: number;
 				status?: 'running' | 'finished' | 'cancelled';
 			}[];
-		}) => Promise<{ success: boolean; command?: string; error?: string }>;
+		}) => Promise<{
+			success: boolean;
+			command?: string;
+			error?: string;
+			explanation?: string;
+			producedBy?: string;
+		}>;
 	};
 
 	// Director's Notes API (unified history + synopsis generation)
@@ -5000,7 +5085,8 @@ interface MaestroAPI {
 			}>,
 			interactionEnabled: boolean,
 			agentType?: string,
-			confirmPolicy?: 'off' | 'dangerous' | 'all'
+			confirmPolicy?: 'off' | 'dangerous' | 'all',
+			providerPolicies?: import('../shared/coworkingBrowser').CoworkingBrowserPolicies
 		) => Promise<void>;
 		onRequestBrowserOp: (
 			callback: (
@@ -5008,7 +5094,8 @@ interface MaestroAPI {
 				sessionId: string,
 				op: BrowserOp,
 				responseChannel: string,
-				needsConfirm?: boolean
+				needsConfirm?: boolean,
+				caller?: import('../shared/coworkingBrowser').CoworkingBrowserCaller
 			) => void
 		) => () => void;
 		sendBrowserOpResponse: (
@@ -5126,6 +5213,31 @@ interface MaestroAPI {
 	images: {
 		resolve: (ref: string) => Promise<string | null>;
 	};
+
+	/**
+	 * A Cappella Voice API. The session itself is headless and lives in the main
+	 * process, so this window is one client among several (the iPhone is another)
+	 * and holds no authoritative state: render from the `onEvent` stream.
+	 *
+	 * Every channel except `stop` rejects with 'ACappellaDisabled' when the
+	 * Encore flag is off.
+	 */
+	voice: VoiceApi;
+
+	/**
+	 * Local Models: the core catalog, downloader, and native runtime manager.
+	 * Ungated (a core service, not an Encore Feature); `voice.models` reaches the
+	 * same main-process service behind the A Cappella flag.
+	 */
+	localModels: LocalModelsApi;
+
+	/**
+	 * A Cappella audio host control link. Only the hidden audio window
+	 * (`?acappellaAudio`) uses this: main answers PCM frames from that
+	 * webContents alone, so calling it from the app window sends into a void.
+	 */
+	voiceAudioHost: VoiceAudioHostApi;
+
 	/**
 	 * Chain of thought export, operated only from the Edit Agent dialog. The
 	 * handlers refuse every sender that is not the desktop window. Mirrors

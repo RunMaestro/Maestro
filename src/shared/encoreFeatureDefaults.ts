@@ -24,6 +24,7 @@ export const ENCORE_FEATURE_DEFAULTS = {
 	opencodeServer: false,
 	concerto: false,
 	groupsPlus: false,
+	aCappella: false,
 	webLogin: false,
 	computerHistory: false,
 	quickChat: true,

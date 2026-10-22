@@ -36,6 +36,7 @@ Quick Chat is an [Encore Feature](/encore-features), on by default. It ships as 
 | Keep the chat as a tab                       | `Cmd+S` / `Ctrl+S`, or the bookmark in the window. Press again to make it temporary                                                                                                                                                                                                                                           |
 | Pin the window on top                        | `Cmd+P` / `Ctrl+P`, or the pin in the window. Press again to unpin                                                                                                                                                                                                                                                            |
 | Show the agent's thinking                    | `Cmd+Shift+K` / `Ctrl+Shift+K`, or the brain in the window. It steps through hidden, shown while the agent works (gone once the answer arrives), and kept above each answer. Remembered across restarts                                                                                                                       |
+| Talk instead of typing                       | The microphone beside Send, when [A Cappella](./voice-mode) is on. Click to start or end, hold to talk                                                                                                                                                                                                                        |
 
 The hotkey toggles: when the window is closed it opens; when it is open but behind another window it comes to the front; when it is in front it closes. Closing the window keeps the conversation, so the next press brings you back where you were.
 
@@ -106,6 +107,27 @@ The chat in the window is saved to the list before the other one comes back, so 
 
 A reply in a tab Quick Chat created never raises a completion toast in the main window: you are reading it in Quick Chat. The audio or spoken notification you configured still plays. A reply in one of your own tabs notifies the way that tab always does.
 
+## Talking to it
+
+With [A Cappella](./voice-mode) turned on, the composer has a microphone beside Send. It opens a voice session that is locked to this chat: what you say is sent as your message, word for word, and the reply is spoken as well as shown.
+
+| Gesture | What it does                                                                            |
+| ------- | --------------------------------------------------------------------------------------- |
+| Click   | Starts the session with the microphone open. Click again to end it                      |
+| Hold    | Push-to-talk: the microphone is open while you hold, and letting go sends what you said |
+
+While a session is running, the microphone shows what it is doing (listening, working, speaking), and what it hears appears in the window before it is sent. Spoken and typed messages land in the same conversation, so you can mix them.
+
+A spoken message is routed like a typed one: it continues the conversation it belongs to, or starts a new tab. When that tab is still answering an earlier message, the spoken one waits in the queue, and its reply is spoken once the tab answers it.
+
+Three things differ from the voice session you start in the main window:
+
+- **It stays here.** There is no Tab / Agent / Conductor switch, and the session does not follow the agent or tab you click in the main window. To talk somewhere else, end it and start a session there.
+- **Nothing is routed.** Naming another agent is part of the message, not an instruction to send it elsewhere.
+- **Closing the window ends it.** `Esc`, the **X**, the hotkey, and **Open as a tab** all put the window away, and the microphone closes with it. Switching agents or starting a new chat keeps the session: it follows the chat.
+
+Starting a voice session from the main window while this one is running replaces it, since there is one microphone.
+
 ## Settings
 
 Open **Settings -> Plugins**, select **Quick Chat**, and open its **Settings** tab.
@@ -150,6 +172,8 @@ maestro-cli quick-chat bounds --x 200 --y 120 --width 640 --height 520   # move 
 ```
 
 `send` returns as soon as the message is accepted, while a tab is still being found for it. `status` shows each message you sent with its id and where it went, for example `You [m7] (queued for open tab "CI Build")`. That id is what `reveal` and `new-tab` take.
+
+The microphone has no `quick-chat` verb of its own because it is a voice session: `maestro-cli voice start --quick-chat` opens the window and starts one locked to the chat, `voice stop` ends it, and `voice status` reads it. `voice scope` is refused for it.
 
 `bounds` takes any of the four flags (`--x` and `--y` together). `--height` is the conversation height, so before the first message it is remembered rather than applied. `quick-chat status` reports the current size and spot.
 

@@ -10,6 +10,7 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { CrossTabSearchModal } from '../../../renderer/components/CrossTabSearchModal';
+import { SEMANTIC_SEARCH_DEBOUNCE_MS } from '../../../renderer/hooks/localModels';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import { MOUNT_FOCUS_DELAY_MS } from '../../../renderer/hooks/utils/useFocusAfterRender';
 import { mockTheme } from '../../helpers/mockTheme';
@@ -219,5 +220,183 @@ describe('CrossTabSearchModal', () => {
 		expect(screen.getByText('Auth work')).toBeInTheDocument();
 		expect(screen.queryByText('Consult')).not.toBeInTheDocument();
 		expect(screen.getByText('Searching 2 open tabs')).toBeInTheDocument();
+	});
+});
+
+/**
+ * Semantic mode: the same modal, searching the agent's transcript turns by
+ * meaning through the main-process search instead of matching text in the
+ * open tabs' logs.
+ */
+describe('CrossTabSearchModal semantic mode', () => {
+	const taskReadiness = () => vi.mocked(window.maestro.localModels.taskReadiness);
+	const search = () => vi.mocked(window.maestro.localModels.search);
+
+	const HITS = [
+		{
+			sourceType: 'transcript',
+			sourceId: 'tab-b#b1',
+			agentId: 'agent-1',
+			score: 0.82,
+			title: 'stale name',
+			snippet: 'the login flow charges twice',
+			timestamp: 1_700_000_000_000,
+			transcript: { tabId: 'tab-b', turnId: 'b1', tabName: 'stale name' },
+		},
+		{
+			sourceType: 'transcript',
+			sourceId: 'tab-a#a1',
+			agentId: 'agent-1',
+			score: 0.41,
+			title: 'Auth work',
+			snippet: 'refactor the login handler',
+			transcript: { tabId: 'tab-a', turnId: 'a1', tabName: 'Auth work' },
+		},
+		{
+			// A tab closed since it was indexed: nowhere to jump to.
+			sourceType: 'transcript',
+			sourceId: 'tab-gone#g1',
+			agentId: 'agent-1',
+			score: 0.4,
+			title: 'Closed tab',
+			snippet: 'a turn in a tab that is gone',
+			transcript: { tabId: 'tab-gone', turnId: 'g1', tabName: 'Closed tab' },
+		},
+	];
+
+	function setReadiness(state: string) {
+		taskReadiness().mockResolvedValue([{ taskId: 'semantic-search', state }] as never);
+	}
+
+	/** Let the readiness answer land. */
+	async function flush() {
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(0);
+		});
+	}
+
+	async function typeSemanticQuery(value: string) {
+		fireEvent.change(screen.getByRole('textbox'), { target: { value } });
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(SEMANTIC_SEARCH_DEBOUNCE_MS);
+		});
+	}
+
+	beforeEach(() => {
+		vi.useFakeTimers({ shouldAdvanceTime: true });
+		setReadiness('ready');
+		search()
+			.mockReset()
+			.mockResolvedValue({ status: 'ok', mode: 'semantic', hits: HITS, durationMs: 1 } as never);
+	});
+
+	it.each(['off', 'unavailable', 'utility-agent'])(
+		'does not offer the toggle while the task is %s',
+		async (state) => {
+			setReadiness(state);
+			renderModal({ agentId: 'agent-1' });
+			await flush();
+			expect(screen.queryByTestId('semantic-search-toggle')).not.toBeInTheDocument();
+		}
+	);
+
+	it('does not offer the toggle without an agent to scope the search to', async () => {
+		renderModal();
+		await flush();
+		expect(screen.queryByTestId('semantic-search-toggle')).not.toBeInTheDocument();
+	});
+
+	it('offers the toggle once the task is ready, and text search stays the default', async () => {
+		renderModal({ agentId: 'agent-1' });
+		await flush();
+
+		expect(screen.getByTestId('semantic-search-toggle')).toHaveAttribute('aria-pressed', 'false');
+		typeQuery('login');
+		expect(screen.getByText('2 messages in 2 tabs')).toBeInTheDocument();
+		expect(search()).not.toHaveBeenCalled();
+	});
+
+	it("searches this agent's transcripts by meaning and lists hits with score and snippet", async () => {
+		renderModal({ agentId: 'agent-1' });
+		await flush();
+		fireEvent.click(screen.getByTestId('semantic-search-toggle'));
+		await typeSemanticQuery('why is billing wrong');
+
+		expect(search()).toHaveBeenCalledWith({
+			query: 'why is billing wrong',
+			mode: 'semantic',
+			sourceTypes: ['transcript'],
+			agentId: 'agent-1',
+			limit: 30,
+		});
+
+		const rows = screen.getAllByTestId('semantic-result-row');
+		// Best first, and the hit in a closed tab is left out.
+		expect(rows).toHaveLength(2);
+		// The live tab name, not the one recorded when the turn was indexed.
+		expect(rows[0]).toHaveTextContent('Billing work');
+		expect(rows[0]).toHaveTextContent('82%');
+		expect(rows[0]).toHaveTextContent('the login flow charges twice');
+		expect(rows[1]).toHaveTextContent('Auth work');
+		expect(rows[1]).toHaveTextContent('41%');
+		expect(rows[1]).toHaveTextContent('current');
+		expect(screen.getByText('2 turns by meaning')).toBeInTheDocument();
+		// A pattern has nothing to match against here.
+		expect(screen.queryByText('Plain Text')).not.toBeInTheDocument();
+	});
+
+	it("jumps to the best hit's tab and turn on Enter, without a Find query", async () => {
+		const { onJump, onClose } = renderModal({ agentId: 'agent-1' });
+		await flush();
+		fireEvent.click(screen.getByTestId('semantic-search-toggle'));
+		await typeSemanticQuery('why is billing wrong');
+
+		fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' });
+
+		expect(onJump).toHaveBeenCalledWith({ tabId: 'tab-b', logId: 'b1', query: '', regex: false });
+		expect(onClose).toHaveBeenCalled();
+	});
+
+	it('moves the selection with the arrow keys before jumping', async () => {
+		const { onJump } = renderModal({ agentId: 'agent-1' });
+		await flush();
+		fireEvent.click(screen.getByTestId('semantic-search-toggle'));
+		await typeSemanticQuery('login');
+
+		const input = screen.getByRole('textbox');
+		fireEvent.keyDown(input, { key: 'ArrowDown' });
+		fireEvent.keyDown(input, { key: 'Enter' });
+
+		expect(onJump).toHaveBeenCalledWith({ tabId: 'tab-a', logId: 'a1', query: '', regex: false });
+	});
+
+	it('shows why a search could not run instead of an empty list', async () => {
+		search().mockResolvedValue({
+			status: 'unavailable',
+			reason: 'bge-small-en-v1.5 is not downloaded.',
+		} as never);
+		renderModal({ agentId: 'agent-1' });
+		await flush();
+		fireEvent.click(screen.getByTestId('semantic-search-toggle'));
+		await typeSemanticQuery('anything');
+
+		expect(screen.getByText('bge-small-en-v1.5 is not downloaded.')).toBeInTheDocument();
+		expect(screen.queryByTestId('semantic-result-row')).not.toBeInTheDocument();
+	});
+
+	it('says when the index is still building', async () => {
+		search().mockResolvedValue({
+			status: 'ok',
+			mode: 'semantic',
+			hits: HITS,
+			durationMs: 1,
+			index: { state: 'indexing', indexed: 12, total: 90 },
+		} as never);
+		renderModal({ agentId: 'agent-1' });
+		await flush();
+		fireEvent.click(screen.getByTestId('semantic-search-toggle'));
+		await typeSemanticQuery('login');
+
+		expect(screen.getByText(/Index is still building: 12 of 90 sources\./)).toBeInTheDocument();
 	});
 });

@@ -1,5 +1,11 @@
 import type { ReactNode } from 'react';
-import type { AdditionalDirectory, ToolType, AgentConfig } from '../../../types';
+import type {
+	AdditionalDirectory,
+	AgentConfig,
+	PeerAccess,
+	PeerAgent,
+	ToolType,
+} from '../../../types';
 import type { CodexTransport } from '../../../../shared/codexTransport';
 
 export type WizardStep =
@@ -61,6 +67,14 @@ export interface WizardState {
 	directoryPath: string;
 	/** Extra directories granted beyond the working directory (prompt-level grants). */
 	additionalDirectories: AdditionalDirectory[];
+	/**
+	 * The three stored sources of the new agent's peer roster, edited by
+	 * `PeerAgentsSection` on the directory step. A grant that is off is absent,
+	 * never a pair of false bits.
+	 */
+	peerAgents: PeerAgent[];
+	groupPeerAccess?: PeerAccess;
+	worktreePeerAccess?: PeerAccess;
 	isGitRepo: boolean;
 	detectedAgentPath: string | null;
 	directoryError: string | null;
@@ -107,6 +121,9 @@ export type WizardAction =
 	  }
 	| { type: 'SET_DIRECTORY_PATH'; path: string }
 	| { type: 'SET_ADDITIONAL_DIRECTORIES'; directories: AdditionalDirectory[] }
+	| { type: 'SET_PEER_AGENTS'; peers: PeerAgent[] }
+	| { type: 'SET_GROUP_PEER_ACCESS'; access: PeerAccess | undefined }
+	| { type: 'SET_WORKTREE_PEER_ACCESS'; access: PeerAccess | undefined }
 	| { type: 'SET_IS_GIT_REPO'; isGitRepo: boolean }
 	| { type: 'SET_DETECTED_AGENT_PATH'; path: string | null }
 	| { type: 'SET_DIRECTORY_ERROR'; error: string | null }
@@ -134,6 +151,9 @@ export interface SerializableWizardState {
 	agentName: string;
 	directoryPath: string;
 	additionalDirectories?: AdditionalDirectory[];
+	peerAgents?: PeerAgent[];
+	groupPeerAccess?: PeerAccess;
+	worktreePeerAccess?: PeerAccess;
 	isGitRepo: boolean;
 	conversationHistory: WizardMessage[];
 	confidenceLevel: number;
@@ -169,6 +189,9 @@ export interface WizardContextAPI {
 	setSessionSshRemoteConfig: (config: WizardSessionSshRemoteConfig | undefined) => void;
 	setDirectoryPath: (path: string) => void;
 	setAdditionalDirectories: (directories: AdditionalDirectory[]) => void;
+	setPeerAgents: (peers: PeerAgent[]) => void;
+	setGroupPeerAccess: (access: PeerAccess | undefined) => void;
+	setWorktreePeerAccess: (access: PeerAccess | undefined) => void;
 	setIsGitRepo: (isGitRepo: boolean) => void;
 	setDetectedAgentPath: (path: string | null) => void;
 	setDirectoryError: (error: string | null) => void;

@@ -1,4 +1,6 @@
 import type { ToolType } from '../../types';
+import type { TranslationTab } from './session';
+import type { TranslationFs } from './fs-port';
 
 export interface TranslationIdentity {
 	provider: ToolType;
@@ -7,6 +9,9 @@ export interface TranslationIdentity {
 	/** Canonical Claude projects directory selected with the account, including shared profile links. */
 	nativeSessionRoot?: string;
 	projectRoot: string;
+	/** Remote identity binds preflight to the selected host and its home, never the local user's. */
+	remoteHost?: string;
+	remoteHome?: string;
 	/** Repository identity for default project memory; session cwd remains projectRoot. */
 	memoryProjectRoot?: string;
 	/** Host-approved user resource roots, e.g. ~/.agents/skills. Never provider home defaults. */
@@ -26,7 +31,15 @@ export interface RecordOrigin {
 
 export type PortableBlock =
 	| { kind: 'text'; text: string }
-	| { kind: 'tool-call'; callId: string; name: string; input: unknown; custom?: boolean }
+	| {
+			kind: 'tool-call';
+			callId: string;
+			name: string;
+			input: unknown;
+			custom?: boolean;
+			/** Stopped source turn: retain evidence, omit this call from native projection. */
+			interrupted?: boolean;
+	  }
 	| { kind: 'tool-result'; callId: string; output: unknown; isError?: boolean; custom?: boolean }
 	| { kind: 'attachment'; artifactId: string; mediaType: string; native: unknown }
 	| { kind: 'opaque'; native: unknown };
@@ -43,6 +56,8 @@ export interface PortableRecord {
 	timestamp?: string;
 	phase?: string;
 	boundary?: 'compaction' | 'fork';
+	/** Source context after its latest compaction. Older checkpoints without this field are active. */
+	window?: 'archived' | 'active';
 	/** Native record is evidence. It must never become a foreign system instruction. */
 	native: unknown;
 }
@@ -66,7 +81,7 @@ export interface TranslationArtifact {
 export interface TranslationLimitation {
 	code: string;
 	message: string;
-	severity: 'warning' | 'block';
+	severity: 'info' | 'warning' | 'block';
 	artifactId?: string;
 	tabId?: string;
 }
@@ -84,9 +99,15 @@ export interface TranslationScope {
 	/** Exact paths selected by the user; never an implicit account-wide import. */
 	selectedUserResources: string[];
 	projectKnowledge: true;
+	/** Explicit per-switch consent for native files in the project. Defaults to false. */
+	projectResourcesIntoRepo?: boolean;
 }
 
 export interface TranslationCheckpoint {
+	/** Last committed journal; prevents a stale tab plan from replacing newer lineage. */
+	operationId?: string;
+	/** Agent-wide resource import, reused by successive tabs with the same payload. */
+	resourceImport?: { key: string; operationId: string };
 	/** Every observed native record, including display projections and opaque rows. */
 	observed: Record<string, string>;
 	/** Written native IDs -> original lineage; repeated text is not an identity. */
@@ -124,6 +145,8 @@ export interface OwnedTranslationWrite {
 	created: boolean;
 	/** Provider-owned indexes cannot be undone by unlinking a rollout. */
 	cleanup?: 'retain';
+	/** Exact operation-owned addition to the local git exclude file. */
+	gitExcludeBlock?: string;
 	backup?: TranslationArtifact;
 	resourceKey?: string;
 	format?: 'markdown' | 'toml' | 'binary';
@@ -137,11 +160,19 @@ export interface ResourceProjection extends OwnedTranslationWrite {
 	expectedHash: string | null;
 }
 
+export interface TranslationVersionSupport {
+	minVersion: string;
+	/** Schema versions exercised by synthetic cases, not native resume certification. */
+	testedVersions: readonly string[];
+}
+
 export interface TranslationDirection {
 	source: TranslationIdentity['provider'];
 	destination: TranslationIdentity['provider'];
-	sourceVersions: readonly string[];
-	destinationVersions: readonly string[];
+	sourceMinVersion: string;
+	destinationMinVersion: string;
+	sourceTestedVersions: readonly string[];
+	destinationTestedVersions: readonly string[];
 	verification: 'unverified' | 'verified';
 	/** Verified declarations require recorded native reload, round-trip and capability evidence. */
 	evidence?: {
@@ -156,6 +187,8 @@ export interface TranslationPlan {
 	schemaVersion: 1;
 	id: string;
 	agentId: string;
+	/** Absent for an agent-wide switch. A scoped operation never changes other tabs. */
+	tabId?: string;
 	source: TranslationIdentity;
 	destination: TranslationIdentity;
 	scope: TranslationScope;
@@ -165,11 +198,28 @@ export interface TranslationPlan {
 	tabs: Array<{
 		tabId: string;
 		sourceSessionId: string | null;
+		/** Total retained records, including archive-only evidence. */
 		records: number;
+		/** Optional only for plans saved before compaction-aware projection. */
+		activeRecords?: number;
+		archivedRecords?: number;
 		newRecords: number;
 	}>;
-	counts: { records: number; artifacts: number; bytes: number };
+	/** Native identities only; these conversations are translated on their next send. */
+	deferredTabs?: TranslationTab[];
+	counts: { records: number; messages?: number; artifacts: number; bytes: number };
 	fingerprint: string;
+}
+
+/** Transcript evidence of a committed import, without private account paths or native content. */
+export interface ContextTranslationRecord {
+	operationId: string;
+	source: Pick<TranslationIdentity, 'provider' | 'version'>;
+	destination: Pick<TranslationIdentity, 'provider' | 'version'>;
+	verification: TranslationPlan['verification'];
+	counts: TranslationPlan['counts'];
+	/** Committed plan warnings have passed the operation's acceptance gate. */
+	limitations: TranslationLimitation[];
 }
 
 export type TranslationOperationState =
@@ -185,14 +235,24 @@ export type TranslationOperationState =
 /** Persist this reference, not private native content, on the Maestro agent. */
 export interface ProviderMigrationState {
 	operationId: string;
+	tabId?: string;
 	destination: ToolType;
 	state: TranslationOperationState | 'deferred';
 	verification: 'unverified' | 'verified';
 	error?: string;
 	acceptLimitations?: boolean;
 	selectedUserResources?: string[];
+	projectResourcesIntoRepo?: boolean;
 	/** Canonical complete limitations; legacy code/artifact keys require renewed review. */
 	acceptedLimitationCodes?: string[];
+	/** Reviewed warnings scoped to this agent, provider direction and exact CLI versions. */
+	acceptedDirections?: Array<{
+		source: ToolType;
+		destination: ToolType;
+		sourceVersion: string;
+		destinationVersion: string;
+		warnings: string[];
+	}>;
 }
 
 export interface TranslationResult {
@@ -205,11 +265,13 @@ export interface TranslationResult {
 
 export interface TranslationRequest {
 	agentId: string;
+	tabId?: string;
 	destination: ToolType;
 	action: 'plan' | 'apply' | 'status' | 'recover' | 'rollback';
 	acceptLimitations?: boolean;
 	planId?: string;
 	selectedUserResources?: string[];
+	projectResourcesIntoRepo?: boolean;
 }
 
 export interface TranslationReport {
@@ -228,10 +290,8 @@ export class TranslationSourceBusyError extends Error {
 	}
 }
 
-export interface TranslationAdapter {
+export interface TranslationAdapter extends TranslationVersionSupport {
 	provider: ToolType;
-	/** Schema versions exercised by synthetic cases, not native resume certification. */
-	versions: readonly string[];
 	extract(
 		identity: TranslationIdentity,
 		tabId: string,
@@ -245,6 +305,8 @@ export interface TranslationAdapter {
 }
 
 export interface TranslationStageContext {
+	/** Native files only; recordIntent always writes the host's local archive. */
+	nativeFs?: TranslationFs;
 	operationId: string;
 	destination: TranslationIdentity;
 	/** Must journal ownership BEFORE any provider mutation. */

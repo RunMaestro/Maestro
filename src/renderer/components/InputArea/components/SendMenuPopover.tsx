@@ -304,7 +304,7 @@ export const SendMenuPopover = memo(function SendMenuPopover({
 									{support.kind === 'unsupported' && support.reason === 'not-claude' && (
 										<button
 											type="button"
-											onClick={() => openUrl(steerFeatureRequestUrl(session.toolType))}
+											onClick={() => openUrl(steerFeatureRequestUrl(model.steerProvider))}
 											className="inline-flex items-center gap-1"
 											style={{ color: theme.colors.accent }}
 										>

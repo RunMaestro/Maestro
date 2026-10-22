@@ -47,6 +47,7 @@ import { registerPairingRoutes } from '../lite/pairing/routes';
 import { registerLiteConnectionRoutes } from './routes/liteConnectionRoutes';
 import { logger } from '../utils/logger';
 import type { GroupAppearance, GroupUpdateRequest } from '../../shared/groupAppearance';
+import type { GroupSettingsUpdateRequest } from '../../shared/groupSettingsUpdate';
 import { getLocalIpAddress } from '../utils/networkUtils';
 import {
 	createNetworkAddressWatcher,
@@ -54,6 +55,7 @@ import {
 } from '../utils/network-address-watcher';
 import { captureException } from '../utils/sentry';
 import { WebSocketMessageHandler } from './handlers';
+import { handleACappellaSignalDisconnect } from './handlers/messageHandlers/acappellaSignal';
 import { BroadcastService } from './services';
 import {
 	ApiRoutes,
@@ -166,6 +168,7 @@ import type {
 	CreateGroupCallback,
 	RenameGroupCallback,
 	UpdateGroupCallback,
+	UpdateGroupSettingsCallback,
 	DeleteGroupCallback,
 	MoveSessionToGroupCallback,
 	CreateSessionCallback,
@@ -198,6 +201,8 @@ import type {
 	CreateGistCallback,
 	GetCueSubscriptionsCallback,
 	ToggleCueSubscriptionCallback,
+	SetCueSubscriptionGateCallback,
+	SetCueSubscriptionInjectionScreenCallback,
 	TriggerCueSubscriptionCallback,
 	GetCueActivityCallback,
 	CueActivityEntry,
@@ -223,6 +228,7 @@ import type {
 import type { SnoozeCommandRequest } from '../../shared/snoozeCommands';
 import type { SteeringCommandRequest } from '../../shared/autoRunSteeringCommands';
 import type { WindowCommandRequest } from '../../shared/windowCommands';
+import type { ConsultChain } from '../../shared/consultBudget';
 import type { ThroughputGaugeCommandRequest } from '../../shared/throughputGaugeCommands';
 
 // Logger context for all web server logs
@@ -857,6 +863,10 @@ export class WebServer {
 		this.callbackRegistry.setRenameGroupCallback(callback);
 	}
 
+	setUpdateGroupSettingsCallback(callback: UpdateGroupSettingsCallback): void {
+		this.callbackRegistry.setUpdateGroupSettingsCallback(callback);
+	}
+
 	setUpdateGroupCallback(callback: UpdateGroupCallback): void {
 		this.callbackRegistry.setUpdateGroupCallback(callback);
 	}
@@ -963,6 +973,16 @@ export class WebServer {
 
 	setToggleCueSubscriptionCallback(callback: ToggleCueSubscriptionCallback): void {
 		this.callbackRegistry.setToggleCueSubscriptionCallback(callback);
+	}
+
+	setSetCueSubscriptionGateCallback(callback: SetCueSubscriptionGateCallback): void {
+		this.callbackRegistry.setSetCueSubscriptionGateCallback(callback);
+	}
+
+	setSetCueSubscriptionInjectionScreenCallback(
+		callback: SetCueSubscriptionInjectionScreenCallback
+	): void {
+		this.callbackRegistry.setSetCueSubscriptionInjectionScreenCallback(callback);
 	}
 
 	setTriggerCueSubscriptionCallback(callback: TriggerCueSubscriptionCallback): void {
@@ -1245,6 +1265,10 @@ export class WebServer {
 				logger.info(`Client connected: ${client.id} (total: ${this.webClients.size})`, LOG_CONTEXT);
 			},
 			onClientDisconnect: (clientId) => {
+				// Tears down any A Cappella peer connection and closes the voice
+				// session if this socket's device was holding the microphone. A
+				// dropped socket must not leave a hot mic behind.
+				handleACappellaSignalDisconnect(clientId);
 				// Release only this connection's capture/input lease. Accepted host
 				// work and terminals survive disconnecting a browser or Lite.
 				void this.releaseWebClient(clientId);
@@ -1254,6 +1278,7 @@ export class WebServer {
 				);
 			},
 			onClientError: (clientId) => {
+				handleACappellaSignalDisconnect(clientId);
 				void this.releaseWebClient(clientId);
 			},
 			handleMessage: (clientId, message) => {
@@ -1318,7 +1343,8 @@ export class WebServer {
 				tabId?: string,
 				force?: boolean,
 				images?: string[],
-				background?: boolean
+				background?: boolean,
+				consultChain?: ConsultChain
 			) =>
 				this.callbackRegistry.executeCommand(
 					sessionId,
@@ -1327,7 +1353,8 @@ export class WebServer {
 					tabId,
 					force,
 					images,
-					background
+					background,
+					consultChain
 				),
 			switchMode: async (sessionId: string, mode: 'ai' | 'terminal', background?: boolean) =>
 				this.callbackRegistry.switchMode(sessionId, mode, background),
@@ -1379,8 +1406,16 @@ export class WebServer {
 				sessionId: string,
 				prompt: string,
 				background?: boolean,
-				hidden?: boolean
-			) => this.callbackRegistry.newAITabWithPrompt(sessionId, prompt, background, hidden),
+				hidden?: boolean,
+				consultChain?: ConsultChain
+			) =>
+				this.callbackRegistry.newAITabWithPrompt(
+					sessionId,
+					prompt,
+					background,
+					hidden,
+					consultChain
+				),
 			consultAgent: async (params: ConsultAgentParams): Promise<ConsultAgentResult> =>
 				this.callbackRegistry.consultAgent(params),
 			noteAgentDelegation: (notice: Parameters<NoteAgentDelegationCallback>[0]) =>
@@ -1392,7 +1427,8 @@ export class WebServer {
 				tabId?: string,
 				images?: string[],
 				background?: boolean,
-				held?: boolean
+				held?: boolean,
+				consultChain?: ConsultChain
 			) =>
 				this.callbackRegistry.enqueueCommand(
 					sessionId,
@@ -1401,7 +1437,8 @@ export class WebServer {
 					tabId,
 					images,
 					background,
-					held
+					held,
+					consultChain
 				),
 			listQueue: async (sessionId?: string) => this.callbackRegistry.listQueue(sessionId),
 			removeQueueItem: async (sessionId: string, itemId: string) =>
@@ -1467,6 +1504,8 @@ export class WebServer {
 				this.callbackRegistry.renameGroup(groupId, name),
 			updateGroup: async (groupId: string, update: GroupUpdateRequest) =>
 				this.callbackRegistry.updateGroup(groupId, update),
+			updateGroupSettings: async (groupId: string, request: GroupSettingsUpdateRequest) =>
+				this.callbackRegistry.updateGroupSettings(groupId, request),
 			deleteGroup: async (groupId: string) => this.callbackRegistry.deleteGroup(groupId),
 			moveSessionToGroup: async (sessionId: string, groupId: string | null) =>
 				this.callbackRegistry.moveSessionToGroup(sessionId, groupId),
@@ -1529,6 +1568,10 @@ export class WebServer {
 				this.callbackRegistry.getCueSubscriptions(sessionId),
 			toggleCueSubscription: async (subscriptionId: string, enabled: boolean) =>
 				this.callbackRegistry.toggleCueSubscription(subscriptionId, enabled),
+			setCueSubscriptionGate: async (subscriptionId, gate) =>
+				this.callbackRegistry.setCueSubscriptionGate(subscriptionId, gate),
+			setCueSubscriptionInjectionScreen: async (subscriptionId, setting) =>
+				this.callbackRegistry.setCueSubscriptionInjectionScreen(subscriptionId, setting),
 			getCueActivity: async (sessionId?: string, limit?: number) =>
 				this.callbackRegistry.getCueActivity(sessionId, limit),
 			triggerCueSubscription: async (

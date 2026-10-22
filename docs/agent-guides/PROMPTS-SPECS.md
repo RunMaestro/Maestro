@@ -18,6 +18,8 @@ Prompt templates are stored as `.md` files in `src/prompts/` and stay `.md` all 
 
 The source of truth for which prompts exist is `src/shared/promptDefinitions.ts` (`CORE_PROMPTS`, `PROMPT_IDS`); `src/prompts/index.ts` is a thin re-export of it, not a bundle of prompt text.
 
+Collaboration setup is discoverable from `maestro-system-prompt.md` even when an agent has no peers and `formatPeerAgentsForPrompt()` emits no roster. `_interface-primitives.md` routes natural language setup requests to the procedure in `_maestro-cli.md`. The roster formatter points existing peers to the same procedure. Keep these entry points consistent: a one-time consult does not authorize persistent grants, unresolved access and direction require user input, and authorized changes require live roster verification before use. Regression coverage lives in `src/__tests__/prompts/maestroCollaborationPrompt.test.ts`, `src/__tests__/prompts/maestroCliPrompt.test.ts`, and `src/__tests__/shared/peerAgents.test.ts`.
+
 ```text
 src/prompts/*.md
     |
@@ -95,6 +97,32 @@ An earlier build step compiled these templates into `src/generated/prompts.ts`. 
 > [!NOTE]
 > `director-notes.md` is only the BASE of the synopsis prompt. `buildDirectorNotesSynopsisPrompt()` (`src/main/utils/director-notes-prompt.ts`) appends the session-history manifest and, when the conductor has configured an Ideal End State, the block built by `buildIdealEndStateBlock()` in `src/shared/directorNotesEndState.ts`. That block lives in code rather than in the prompt file on purpose: prompt files are user-customizable and persisted to `userData/core-prompts-customizations.json`, so anyone running a customized copy would never receive an edit made to the `.md`. Add conditional prompt sections in the builder, not in the customizable base.
 
+#### System One System Prompt Section
+
+System One is disclosed to an agent in three levels. The first two files below are levels 1 and 3; the guide prompts in the next table are level 2.
+
+| File                   | Purpose                                                                                                                                                                                                                                  |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `system-one-system.md` | The section appended to a local agent's system prompt while a System One request from that agent would be answered: when to reach for it, the engine and whether it is calibrated, the budget, and one pointer to `maestro-cli s1 guide` |
+| `_system-one.md`       | The full reference the section points at with `{{REF:_system-one}}`: every `s1` verb and flag an agent asks with, output shapes, exit codes, limits and the measured rules. An include, listed in `_toc.md`                              |
+
+- **The section is a CORE section, not a plugin section.** System One is not an Encore Feature, so no flag gates it. `coreSystemPromptSectionsFor({ isSsh, systemOne })` in `src/shared/maestroSystemPrompt.ts` returns it when `isSystemOneAdvertised()` (`src/shared/local-models/system-one-prompt.ts`) says so: the builder's `systemOne` is `getSystemOneAgentAccess()` for the agent being spawned, and the section is there only while `allowed` is true. It is never there for an SSH remote agent, and never when the builder could not ask.
+- **Each builder asks the same question in its own process.** Main calls the service (`localSystemOneAccess`), the renderer calls `window.maestro.localModels.systemOne.agentAccess(agentId)`, and the CLI asks the desktop over the WS bridge (`system_one_access`, `src/cli/services/system-one-access.ts`). A desktop that is closed or too old gives no answer, which leaves the section out: the `s1` verbs could not reach it either.
+- **The moderator variant (`buildPluginSystemPromptSections`) carries no core section.** It has no agent to count a request against, cap, or switch off.
+- **The budget is worded as a band** ("more than half is left"), never an exact remainder. The section is part of the system prompt, which a provider caches by its exact text: a figure that changed after every request would cost every agent its cached prompt on its next turn.
+- `_system-one.md` is read from disk through the `{{REF:...}}` path, so it holds no template variables. `src/__tests__/cli/commands/system-one-guide.test.ts` checks that it names every flag of every agent-facing verb.
+
+#### System One Guide Prompts
+
+Read by agents through `maestro-cli s1 guide [topic]` and `maestro-cli s1 examples [name]`, not injected into any prompt. The list of topics and recipes is `SYSTEM_ONE_GUIDE_TOPICS` and `SYSTEM_ONE_EXAMPLES` in `src/shared/local-models/system-one-guide.ts`; `CORE_PROMPTS` registers one prompt per entry from it.
+
+| File                           | Purpose                                                                                                                                 |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `system-one-guide-<topic>.md`  | One guide topic: `when` (the playbook), `questions`, `noul`, `choice`, `score`, `state`, `confidence`, `patterns`, `pitfalls`, `limits` |
+| `system-one-example-<name>.md` | One copy-paste recipe: `gutcheck`, `triage`, `rank`, `verify`, `screen`, `dedupe`                                                       |
+
+The CLI prints these files as written, so they hold no template variables, and every shell example sits in a `bash` code fence. `src/__tests__/cli/commands/system-one-guide.test.ts` checks each fenced `maestro-cli s1` command against the real option parser.
+
 ## Template Variables
 
 Defined in `src/shared/templateVariables.ts`. Variables use `{{VARIABLE_NAME}}` syntax and are case-insensitive.
@@ -122,6 +150,16 @@ Defined in `src/shared/templateVariables.ts`. Variables use `{{VARIABLE_NAME}}` 
 | `{{TAB_ID}}`               | This conversation's AI tab ID (empty on headless CLI/Cue spawns) |
 | `{{TAB_NAME}}`             | Custom tab name (alias: `SESSION_NAME`)                          |
 | `{{TOOL_TYPE}}`            | Agent type (`claude-code`, `codex`, `opencode`, `factory-droid`) |
+
+#### System One Variables
+
+Filled only by a system prompt builder, and only while the System One section is included (`coreSystemPromptContext()` in `src/shared/maestroSystemPrompt.ts`). Empty everywhere else. The words come from `systemOnePromptVariables()` in `src/shared/local-models/system-one-prompt.ts`.
+
+| Variable                    | Description                                                                  |
+| --------------------------- | ---------------------------------------------------------------------------- |
+| `{{SYSTEM_ONE_ENGINE}}`     | The engine that answers, as a person reads it (`Jev (TypeSafe cloud)`)       |
+| `{{SYSTEM_ONE_CALIBRATED}}` | Whether its numbers are calibrated, and what to do about it                  |
+| `{{SYSTEM_ONE_BUDGET}}`     | The daily budget and a band of what is left, or that the engine has no price |
 
 #### Path Variables
 

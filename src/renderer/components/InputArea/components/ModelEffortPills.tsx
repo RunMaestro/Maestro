@@ -3,6 +3,11 @@ import type React from 'react';
 import { Gauge, Sparkles } from 'lucide-react';
 import type { Theme } from '../../../types';
 import { ShortcutHint, shortcutSuffix } from '../../ui/ShortcutHint';
+import { isAutoModel } from '../../../../shared/autoModel';
+import { modelChoiceLabel } from '../../../../shared/autoTurn';
+import { FilterInput } from '../../ui/FilterInput';
+import { ResizeHandles } from '../../ui/ResizeHandles';
+import { useResizableModal } from '../../../hooks/ui/useResizableModal';
 import { elevatedSurfaceStyle } from '../../../utils/elevatedSurface';
 
 interface ModelEffortPillsProps {
@@ -23,6 +28,14 @@ interface ModelEffortPillsProps {
 	currentEffort?: string;
 	availableModels: string[];
 	availableEfforts: string[];
+	/**
+	 * What the Auto model choice says for this agent (`useAutoModelChoice`):
+	 * which axes it acts on and which router decides. The tooltip of the Auto row
+	 * and, while Auto is the selection, of the pill. The row itself is in
+	 * `availableModels` (`withAutoModelOption`), so a caller that does not offer
+	 * Auto passes neither.
+	 */
+	autoModelTitle?: string;
 	onModelChange?: (model: string) => void;
 	onEffortChange?: (effort: string) => void;
 	modelMenuOpen: boolean;
@@ -41,6 +54,7 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 	currentEffort,
 	availableModels,
 	availableEfforts,
+	autoModelTitle,
 	onModelChange,
 	onEffortChange,
 	modelMenuOpen,
@@ -51,6 +65,19 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 	effortMenuRef,
 }: ModelEffortPillsProps) {
 	const [typedModel, setTypedModel] = useState('');
+	const [modelFilter, setModelFilter] = useState('');
+	const modelMenu = useResizableModal({
+		resizeKey: 'composer-model-picker',
+		defaultSize: { width: 420, height: 320 },
+		minSize: { width: 260, height: 180 },
+		anchor: 'bottom-left',
+		enabled: isVisible && modelMenuOpen,
+	});
+	const modelOptions = availableModels.includes('') ? availableModels : ['', ...availableModels];
+	const query = modelFilter.trim().toLowerCase();
+	const filteredModels = modelOptions.filter((model) =>
+		(model ? modelChoiceLabel(model) : '(default)').toLowerCase().includes(query)
+	);
 
 	if (!isVisible) {
 		return null;
@@ -62,6 +89,7 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 				<div className="relative" ref={modelMenuRef} data-tour="model-selector">
 					<button
 						onClick={() => {
+							setModelFilter('');
 							setModelMenuOpen(!modelMenuOpen);
 							setEffortMenuOpen(false);
 						}}
@@ -71,38 +99,64 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 							color: theme.colors.accent,
 							border: `1px solid ${theme.colors.accent}25`,
 						}}
-						title={`Change model${shortcutSuffix(shortcutKeys)}`}
+						title={
+							isAutoModel(currentModel) && autoModelTitle
+								? `${autoModelTitle} Click to change${shortcutSuffix(shortcutKeys)}`
+								: `Change model${shortcutSuffix(shortcutKeys)}`
+						}
 					>
 						<Sparkles className="w-3 h-3" />
-						<span>{currentModel || 'default'}</span>
+						<span>{currentModel ? modelChoiceLabel(currentModel) : 'default'}</span>
 					</button>
 					{modelMenuOpen && (
 						<div
-							className="absolute bottom-full left-0 mb-1 rounded z-50"
+							ref={modelMenu.modalRef}
+							data-testid="model-picker"
+							className="absolute bottom-full left-0 mb-1 flex flex-col rounded z-50"
 							style={{
+								...modelMenu.style,
 								...elevatedSurfaceStyle(theme),
 							}}
 						>
 							<ShortcutHint theme={theme} keys={shortcutKeys ?? []} label="Try:" variant="row" />
-							<div className="max-h-48 overflow-y-auto scrollbar-thin">
-								{(availableModels.includes('') ? availableModels : ['', ...availableModels]).map(
-									(model) => (
-										<button
-											key={model || '__default__'}
-											onClick={() => {
-												onModelChange(model);
-												setModelMenuOpen(false);
-											}}
-											className="w-full text-left px-3 py-1.5 text-xs font-mono whitespace-nowrap hover:bg-white/10 transition-colors"
-											style={{
-												color: model === currentModel ? theme.colors.accent : theme.colors.textMain,
-												backgroundColor:
-													model === currentModel ? 'rgba(255,255,255,0.05)' : undefined,
-											}}
-										>
-											{model || '(default)'}
-										</button>
-									)
+							<div className="shrink-0 flex p-2">
+								<FilterInput
+									theme={theme}
+									value={modelFilter}
+									onChange={setModelFilter}
+									placeholder="Filter models..."
+									width={0}
+									className="flex-1 min-w-0"
+									autoFocus
+									onKeyDown={(event) => {
+										event.stopPropagation();
+										if (event.key === 'Escape') setModelMenuOpen(false);
+									}}
+								/>
+							</div>
+							<div className="flex-1 min-h-0 overflow-auto scrollbar-thin">
+								{filteredModels.map((model) => (
+									<button
+										key={model || '__default__'}
+										onClick={() => {
+											onModelChange(model);
+											setModelMenuOpen(false);
+										}}
+										title={isAutoModel(model) ? autoModelTitle : undefined}
+										className="w-full text-left px-3 py-1.5 text-xs font-mono whitespace-nowrap hover:bg-white/10 transition-colors"
+										style={{
+											color: model === currentModel ? theme.colors.accent : theme.colors.textMain,
+											backgroundColor:
+												model === currentModel ? 'rgba(255,255,255,0.05)' : undefined,
+										}}
+									>
+										{model ? modelChoiceLabel(model) : '(default)'}
+									</button>
+								))}
+								{filteredModels.length === 0 && (
+									<div className="px-3 py-2 text-xs" style={{ color: theme.colors.textDim }}>
+										No matching models
+									</div>
 								)}
 							</div>
 							{/*
@@ -116,7 +170,10 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 							 * and `claude --print` does not - so on an API-mode tab this field
 							 * stays the way in.
 							 */}
-							<div className="border-t px-3 py-1.5" style={{ borderColor: theme.colors.border }}>
+							<div
+								className="shrink-0 border-t px-3 py-1.5"
+								style={{ borderColor: theme.colors.border }}
+							>
 								<input
 									type="text"
 									value={typedModel}
@@ -155,6 +212,13 @@ export const ModelEffortPills = memo(function ModelEffortPills({
 									style={{ color: theme.colors.textMain }}
 								/>
 							</div>
+							<ResizeHandles
+								onResizeStart={modelMenu.onResizeStart}
+								onResetSize={modelMenu.onResetSize}
+								canReset={modelMenu.canReset}
+								accentColor={theme.colors.accent}
+								directions={['n', 'e', 'ne']}
+							/>
 						</div>
 					)}
 				</div>

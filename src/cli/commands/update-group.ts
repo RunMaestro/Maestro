@@ -8,11 +8,7 @@
 // clicking through the UI.
 
 import { resolveGroupId } from '../services/storage';
-import {
-	sendSimpleCommand,
-	failCommand,
-	exitIfMaestroNotRunning,
-} from '../services/session-command';
+import { sendSimpleCommand, failCommand, failFromError } from '../services/session-command';
 import {
 	verifyPersistedGroup,
 	describePersistedGroup,
@@ -42,7 +38,7 @@ export async function updateGroup(groupId: string, options: UpdateGroupOptions):
 	try {
 		resolvedGroupId = resolveGroupId(groupId);
 	} catch (error) {
-		return failCommand(error instanceof Error ? error.message : String(error), options.json);
+		return failFromError(error, options.json);
 	}
 
 	const clear: GroupClearableField[] = [];
@@ -63,7 +59,7 @@ export async function updateGroup(groupId: string, options: UpdateGroupOptions):
 		try {
 			parentGroupId = resolveGroupId(options.parent);
 		} catch (error) {
-			return failCommand(error instanceof Error ? error.message : String(error), options.json);
+			return failFromError(error, options.json);
 		}
 	}
 
@@ -97,8 +93,7 @@ export async function updateGroup(groupId: string, options: UpdateGroupOptions):
 			'update_group_result'
 		);
 	} catch (error) {
-		exitIfMaestroNotRunning(error, { json: options.json });
-		return failCommand(error instanceof Error ? error.message : String(error), options.json);
+		return failFromError(error, options.json);
 	}
 
 	if (!result.success) {

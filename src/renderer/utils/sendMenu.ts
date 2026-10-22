@@ -12,6 +12,7 @@
  * mean nothing with no turn running.
  */
 
+import { projectTabProvider, resolveTabProvider, resolveTurnProvider } from './providerTabSessions';
 import type { Session } from '../types';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
@@ -138,6 +139,7 @@ export interface SendMenuRow {
 export interface SendMenuModel {
 	rows: SendMenuRow[];
 	steerSupport: SteerSupport;
+	steerProvider: Session['toolType'];
 	/** The active tab is the one mid-turn (as opposed to another tab of the agent). */
 	activeTabWorking: boolean;
 }
@@ -156,7 +158,8 @@ export function buildSendMenuModel(
 ): SendMenuModel {
 	const activeTab = session.aiTabs?.find((tab) => tab.id === session.activeTabId);
 	const activeTabWorking = activeTab?.state === 'busy';
-	const steerSupport = getSteerSupport(session);
+	const steerProvider = resolveTurnProvider(activeTab, session);
+	const steerSupport = getSteerSupport(projectTabProvider(session, activeTab, steerProvider).agent);
 
 	const force: SendMenuRow = activeTabWorking
 		? {
@@ -181,6 +184,7 @@ export function buildSendMenuModel(
 		// the steer itself runs, so the row cannot promise what the steer refuses.
 		const eligibility = getSteerEligibility(session, {
 			tabId: session.activeTabId,
+			turnSettings: { provider: resolveTabProvider(activeTab, session) },
 			text: draft.text,
 			images: draft.imageCount > 0 ? new Array<string>(draft.imageCount).fill('') : undefined,
 			readOnlyMode: activeTab?.readOnlyMode === true || undefined,
@@ -197,6 +201,7 @@ export function buildSendMenuModel(
 	return {
 		rows: [{ action: 'queue', enabled: true }, force, steer, { action: 'hold', enabled: true }],
 		steerSupport,
+		steerProvider,
 		activeTabWorking,
 	};
 }

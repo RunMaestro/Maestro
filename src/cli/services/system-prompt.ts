@@ -8,15 +8,34 @@
 // Maestro and what can I do with it" preamble.
 
 import type { SessionInfo } from '../../shared/types';
+import { resolvePeerRosterForPrompt, type PeerRosterInput } from '../../shared/peerAgents';
+import {
+	MAX_CONSULTATIONS_PER_TURN_SETTING,
+	normalizeMaxConsultationsPerTurn,
+	type ConsultChain,
+} from '../../shared/consultBudget';
+import {
+	readConsultBudgetStatus,
+	type ConsultBudgetStoreOptions,
+} from '../../main/peer-consults/consult-budget';
 import { PROMPT_IDS } from '../../shared/promptDefinitions';
 import { computerHistoryDir } from '../../shared/computer-history/paths';
 import { readMaestroRunReadyPath } from '../../shared/maestro-run/state-file';
 import {
 	assembleMaestroSystemPrompt,
+	coreSystemPromptContext,
+	coreSystemPromptSectionsFor,
 	systemPromptSectionsFor,
+	type CoreSystemPromptInput,
 } from '../../shared/maestroSystemPrompt';
 import { getCliPrompt } from './prompt-loader';
-import { getConfigDirectory, readSettingValue, resolveSessionHistoryFilePath } from './storage';
+import { readSystemOneAccessFromDesktop, type SystemOneAccessReader } from './system-one-access';
+import {
+	getConfigDirectory,
+	readSessions,
+	readSettingValue,
+	resolveSessionHistoryFilePath,
+} from './storage';
 import { getGitBranch, isGitRepo } from './git-utils';
 import { isPianolaEnabled } from '../../shared/agentVisibility';
 
@@ -47,6 +66,34 @@ async function loadSection(promptId: string): Promise<string | undefined> {
 	}
 }
 
+export interface PrepareMaestroSystemPromptCliOptions {
+	/**
+	 * How to learn whether a System One request from the agent would be
+	 * answered. The CLI asks the desktop app over the WS bridge (the default). A
+	 * caller that runs INSIDE the desktop's main process passes the service
+	 * function itself, so the app does not open a socket to itself.
+	 */
+	readSystemOneAccess?: SystemOneAccessReader;
+	/**
+	 * How to read every agent, for the Peer Agents roster (a group grant needs
+	 * the whole list, and `session` is one agent). The CLI reads the sessions
+	 * file (the default). A caller that runs INSIDE the desktop's main process
+	 * passes its store, which is ahead of the file while a write is deferred.
+	 * Called only when the agent has a peer grant.
+	 */
+	readAgents?: () => readonly PeerRosterInput[];
+	/**
+	 * The place the spawned turn takes in a consult chain (the chain
+	 * `admitCliConsult()` returned for a `send`). The Peer Agents block then
+	 * states what is left of that chain's budget. Left unset by a caller that
+	 * put the spawn in no chain (a playbook, a goal run): the sentence is left
+	 * out.
+	 */
+	consultChain?: ConsultChain;
+	/** Where the budget counter lives. Tests pass a temp directory. */
+	consultBudgetStore?: ConsultBudgetStoreOptions;
+}
+
 /**
  * Build the Maestro system prompt to pass via `appendSystemPrompt` when
  * spawning a CLI agent. Returns undefined if the prompt template fails to
@@ -58,7 +105,8 @@ async function loadSection(promptId: string): Promise<string | undefined> {
  * expanded to absolute on-disk paths the agent can read with its file tools.
  */
 export async function prepareMaestroSystemPromptCli(
-	session: SessionInfo
+	session: SessionInfo,
+	options: PrepareMaestroSystemPromptCliOptions = {}
 ): Promise<string | undefined> {
 	let template: string;
 	try {
@@ -90,12 +138,22 @@ export async function prepareMaestroSystemPromptCli(
 	const conductorProfile =
 		typeof conductorProfileSetting === 'string' ? conductorProfileSetting : undefined;
 
-	// Same role and plugin sections the desktop appends (see spawnHelpers.ts).
-	// A dormant Pianola (flag off) gets no manager role.
+	// Same role, core and plugin sections the desktop appends (see spawnHelpers.ts).
 	const roleSections =
 		session.isPianola && isPianolaEnabled(readSettingValue('encoreFeatures'))
 			? [await loadSection(PROMPT_IDS.PIANOLA_SYSTEM)]
 			: [];
+	// `maestro-cli s1` reaches the desktop on this machine, so an SSH agent is
+	// never asked about. A reader that cannot answer leaves the section out.
+	const readSystemOneAccess = options.readSystemOneAccess ?? readSystemOneAccessFromDesktop;
+	const core: CoreSystemPromptInput = {
+		isSsh,
+		systemOne: isSsh ? undefined : await readSystemOneAccess(session.id),
+	};
+	const coreSections: Array<string | undefined> = [];
+	for (const ref of coreSystemPromptSectionsFor(core)) {
+		coreSections.push(await loadSection(ref.promptId));
+	}
 	// The app owns the MaestroRun check and records its answer on disk; the CLI
 	// has no service to ask. An SSH agent is never told about a local launcher.
 	const maestroRunPath = isSsh ? undefined : readMaestroRunReadyPath(getConfigDirectory());
@@ -106,6 +164,24 @@ export async function prepareMaestroSystemPromptCli(
 	})) {
 		pluginSections.push(await loadSection(ref.promptId));
 	}
+
+	// {{PEER_AGENTS}}: the same call the desktop builders make, so a headless
+	// run and a desktop tab of one agent are told about the same peers.
+	const peerRoster = resolvePeerRosterForPrompt(session, options.readAgents ?? readSessions);
+	// The budget sentence of that block: only for an agent that has peers, and
+	// only when the caller named the chain this spawn is in.
+	const consultBudget =
+		peerRoster?.length && options.consultChain
+			? readConsultBudgetStatus(
+					{
+						chain: options.consultChain,
+						limit: normalizeMaxConsultationsPerTurn(
+							readSettingValue(MAX_CONSULTATIONS_PER_TURN_SETTING)
+						),
+					},
+					options.consultBudgetStore
+				)
+			: undefined;
 
 	return assembleMaestroSystemPrompt({
 		template,
@@ -127,8 +203,12 @@ export async function prepareMaestroSystemPromptCli(
 			conductorProfile,
 			computerHistoryDir: isSsh ? undefined : computerHistoryDir(getConfigDirectory()),
 			maestroRunPath,
+			peerRoster,
+			consultBudget,
+			...coreSystemPromptContext(core),
 		},
 		roleSections,
+		coreSections,
 		pluginSections,
 	});
 }

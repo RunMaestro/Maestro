@@ -262,10 +262,13 @@ describe('list-groups command', () => {
 
 			expect(() => listGroups({ json: true })).toThrow('process.exit(1)');
 
-			expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
-			const errorOutput = consoleErrorSpy.mock.calls[0][0];
+			expect(consoleSpy).toHaveBeenCalledTimes(1);
+			const errorOutput = consoleSpy.mock.calls[0][0];
 			const parsed = JSON.parse(errorOutput);
-			expect(parsed.error).toBe('JSON storage error');
+			expect(parsed).toEqual({
+				success: false,
+				error: 'Failed to list groups: JSON storage error',
+			});
 		});
 
 		it('should handle non-Error objects thrown', () => {
@@ -285,9 +288,9 @@ describe('list-groups command', () => {
 
 			expect(() => listGroups({ json: true })).toThrow('process.exit(1)');
 
-			const errorOutput = consoleErrorSpy.mock.calls[0][0];
+			const errorOutput = consoleSpy.mock.calls[0][0];
 			const parsed = JSON.parse(errorOutput);
-			expect(parsed.error).toBe('Unknown error');
+			expect(parsed).toEqual({ success: false, error: 'Failed to list groups: Unknown error' });
 		});
 
 		it('should exit with code 1 on error', () => {

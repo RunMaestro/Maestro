@@ -58,6 +58,19 @@ The `window.maestro` API exposes the following namespaces:
 - `documentGraph` - File watching: watchFolder, unwatchFolder
 - `documentGraph` - Real-time updates via `documentGraph:filesChanged` event
 
+## Semantic Index API
+
+`window.maestro.localModels.semanticIndex` exposes the shared index behind Semantic search:
+
+| Method                                              | Result                                                                                                                                               |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `status()` / `onProgress(handler)`                  | The indexer's source counts and state; progress is broadcast to every window.                                                                        |
+| `storage()`                                         | Per-model chunk counts and disk bytes across the database, write-ahead log, and shared-memory file.                                                  |
+| `browse({ modelId, sourceType?, offset?, limit? })` | A page of indexed sources with readable previews when originals are available. Defaults to 20 sources, capped at 50. Loads no model.                 |
+| `clear()`                                           | Aborts and drains active indexing, clears all models' cached vectors, invalidates search memory, compacts SQLite, and returns updated storage usage. |
+
+Clearing preserves History, notes, and transcripts. The next full pass is deferred for 15 minutes; new records can still be indexed incrementally while Semantic search is assigned a model. Route clearing through `clearSemanticIndex()` so an in-flight batch cannot repopulate a cache just cleared.
+
 ## History API
 
 Per-agent history storage with 5,000 entries per agent (up from 1,000 global). Each agent's history is stored as a JSON file in `~/Library/Application Support/Maestro/history/{sessionId}.json`.

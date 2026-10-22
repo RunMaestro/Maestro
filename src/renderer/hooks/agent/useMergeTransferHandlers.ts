@@ -26,9 +26,14 @@ import { notifyToast, showOsNotification } from '../../stores/notificationStore'
 import { useMergeSessionWithSessions } from './useMergeSession';
 import { useSendToAgentWithSessions } from './useSendToAgent';
 import { captureException } from '../../utils/sentry';
-import { aiTabFocusFields, settleTabThinkingState } from '../../utils/tabHelpers';
+import { aiTabFocusFields, settleTabThinkingState, getActiveTab } from '../../utils/tabHelpers';
 import { generateId } from '../../utils/ids';
-import { captureQueuedTurnSettings } from '../../utils/providerTabSessions';
+import {
+	captureQueuedTurnSettings,
+	codifyTurnSettings,
+	projectTabProvider,
+	resolveTabNativeProvider,
+} from '../../utils/providerTabSessions';
 import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 
 // ============================================================================
@@ -334,7 +339,7 @@ export function useMergeTransferHandlers(
 			const pendingBuffer = useTabStore.getState().pendingTerminalBufferSend;
 
 			// Store source and target agents for progress modal display
-			setTransferSourceAgent(activeSession.toolType);
+			setTransferSourceAgent(resolveTabNativeProvider(getActiveTab(activeSession), activeSession));
 			setTransferTargetAgent(targetSession.toolType);
 
 			// Close the selection modal - progress modal will take over
@@ -368,7 +373,7 @@ export function useMergeTransferHandlers(
 			const sourceName = pendingBuffer
 				? pendingBuffer.sourceName
 				: activeSession.name || activeSession.projectRoot.split('/').pop() || 'Unknown';
-			const sourceAgentName = activeSession.toolType;
+			const sourceAgentName = resolveTabNativeProvider(sourceTab, activeSession);
 
 			// Create the context message to be sent directly to the agent
 			const contextMessage = pendingBuffer
@@ -514,6 +519,9 @@ You are taking over this conversation. Based on the context above, provide a bri
 				awaitingSessionId: true, // Mark as awaiting session ID
 			};
 
+			Object.assign(newTab, codifyTurnSettings(newTab, targetSession));
+			const launchSession = projectTabProvider(targetSession, newTab).agent;
+
 			// Add the new tab to the target session and set it as active
 			setSessions((prev) =>
 				prev.map((s) => {
@@ -553,19 +561,19 @@ You are taking over this conversation. Based on the context above, provide a bri
 			(async () => {
 				try {
 					// Get agent configuration
-					const agent = await window.maestro.agents.get(targetSession.toolType);
-					if (!agent) throw new Error(`${targetSession.toolType} agent not found`);
+					const agent = await window.maestro.agents.get(launchSession.toolType);
+					if (!agent) throw new Error(`${launchSession.toolType} agent not found`);
 
 					const baseArgs = agent.args ?? [];
 					const commandToUse = agent.path || agent.command;
 					if (!commandToUse) {
-						throw new Error(`${targetSession.toolType} agent has no command configured`);
+						throw new Error(`${launchSession.toolType} agent has no command configured`);
 					}
 
 					const effectivePrompt = contextMessage;
 
 					const appendSystemPrompt = await prepareMaestroSystemPrompt({
-						session: targetSession,
+						session: launchSession,
 						activeTabId: newTabId,
 					});
 
@@ -573,19 +581,20 @@ You are taking over this conversation. Based on the context above, provide a bri
 					const spawnSessionId = `${targetSessionId}-ai-${newTabId}`;
 					await window.maestro.process.spawn({
 						sessionId: spawnSessionId,
-						toolType: targetSession.toolType,
+						toolType: launchSession.toolType,
 						cwd: targetSession.cwd,
 						command: commandToUse,
 						args: [...baseArgs],
 						prompt: effectivePrompt,
 						appendSystemPrompt,
 						// Per-session config overrides (if set)
-						sessionCustomPath: targetSession.customPath,
-						sessionCustomArgs: targetSession.customArgs,
+						sessionCustomPath: launchSession.customPath,
+						sessionCustomArgs: launchSession.customArgs,
 						sessionAdditionalDirectories: targetSession.additionalDirectories,
-						sessionCustomEnvVars: targetSession.customEnvVars,
-						sessionCustomModel: targetSession.customModel,
-						sessionCustomContextWindow: targetSession.customContextWindow,
+						sessionCustomEnvVars: launchSession.customEnvVars,
+						sessionCustomModel: launchSession.customModel,
+						sessionCustomEffort: launchSession.customEffort,
+						sessionCustomContextWindow: launchSession.customContextWindow,
 						sessionSshRemoteConfig: targetSession.sessionSshRemoteConfig,
 						// Windows stdin handling - context transfer prompts contain the
 						// full conversation history and can easily exceed shell limits
@@ -594,7 +603,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 					captureException(error, {
 						extra: {
 							targetSessionId,
-							toolType: targetSession.toolType,
+							toolType: launchSession.toolType,
 							newTabId,
 							operation: 'context-transfer-spawn',
 						},

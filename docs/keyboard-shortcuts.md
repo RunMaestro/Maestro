@@ -74,6 +74,7 @@ The two system-wide hotkeys cannot share a combo. If you set one to the other's 
 | Director's Notes              | `Cmd+Shift+O`           | `Ctrl+Shift+O`            |
 | Maestro Cue                   | `Opt+Q`                 | `Alt+Q`                   |
 | Computer History              | `Ctrl+Cmd+H`            | `Ctrl+Win+H`              |
+| Delegation Graph              | unassigned by default   | unassigned by default     |
 | Show/Hide Concerto Stage      | `Opt+Cmd+C`             | `Alt+Ctrl+C`              |
 | Show/Hide All Cadenzas        | `Opt+Cmd+Shift+C`       | `Alt+Ctrl+Shift+C`        |
 | Show/Hide Throughput Gauge    | `Opt+Cmd+Shift+T`       | `Alt+Ctrl+Shift+T`        |
@@ -84,7 +85,8 @@ The two system-wide hotkeys cannot share a combo. If you set one to the other's 
 | Cycle Focus Backwards         | `Shift+Tab`             | `Shift+Tab`               |
 
 The full-window surfaces in that table (Settings, Usage Dashboard, Director's
-Notes, Symphony, Cue, Process Monitor, System Logs, Agent Sessions, Memory)
+Notes, Symphony, Cue, Process Monitor, System Logs, Agent Sessions, Memory, and
+the Delegation Graph once you give it a chord in **Settings** → **Shortcuts**)
 replace each other rather than stacking, and their hotkeys stay live while one
 of them is up. Press `Opt+Cmd+U` from Director's Notes to land on the Usage
 Dashboard, then `Cmd+Shift+O` to go straight back. This holds for a rebound
@@ -196,6 +198,7 @@ If you scroll the tab strip away while the tab header still holds focus, the nex
 | Snooze Tab                | `Opt+Cmd+S`             | `Alt+Ctrl+S`              |
 | Change Model and Effort   | `Opt+Cmd+.`             | `Alt+Ctrl+.`              |
 | Show Snoozed Tabs         | unassigned by default   | unassigned by default     |
+| Tab Cleanup Suggestions   | unassigned by default   | unassigned by default     |
 | Move Tab to First         | `Cmd+Opt+[`             | `Ctrl+Alt+[`              |
 | Move Tab to Last          | `Cmd+Opt+]`             | `Ctrl+Alt+]`              |
 | Close Tab                 | `Cmd+W`                 | `Ctrl+W`                  |
@@ -413,6 +416,7 @@ the full walkthrough.
 | Copy File Path                      | `Cmd+P`         | `Ctrl+P`        |
 | Open Search                         | `Cmd+F`         | `Ctrl+F`        |
 | Toggle Table of Contents (Markdown) | `Cmd+\`         | `Ctrl+\`        |
+| Toggle Document Chat                | `Cmd+Shift+\`   | `Ctrl+Shift+\`  |
 | Jump to Heading (Markdown)          | `#`             | `#`             |
 | Go Back                             | `Cmd+Left`      | `Ctrl+Left`     |
 | Go Forward                          | `Cmd+Right`     | `Ctrl+Right`    |
@@ -651,6 +655,8 @@ Most shortcuts can be remapped to fit your workflow:
 5. The new binding is saved immediately
 
 Some actions ship with **no** key assigned and read **Not set** instead of a combination - the media player controls, Open Leaderboard, and Toggle In-App Toasts are current examples. They are dimmed, but they work exactly like any other row: click and record. Maestro leaves them unbound rather than claiming chords for actions most people reach through Quick Actions.
+
+**Dictate into Text Box** is one of them, for a different reason: it has to work while you are typing in any text box, so any chord Maestro picked would take a key away from typing somewhere. Assign it one that suits your keyboard. Tap the chord to start dictating into the text box that holds the caret and tap it again to stop, or hold it down and speak, then release. It does nothing until the [Dictation task](./local-models#dictation) has a speech model assigned.
 
 ![Shortcuts Settings](./screenshots/shortcuts-settings.png)
 

@@ -8,6 +8,8 @@ icon: gear
 
 Open Settings with `Cmd+,` / `Ctrl+,` or via **Quick Actions** (`Cmd+K` / `Ctrl+K`) → "Open Settings".
 
+In the sidebar, use the chevron beside a tab such as **Models** to expand or collapse its panels without changing the current page. Your manual choice overrides automatic expansion while Settings is mounted. On narrow screens, panels appear under the selected tab in the horizontal tab strip.
+
 Settings are organized into tabs:
 
 | Tab                             | Contents                                                                                                                                                                                                                                                                                             |
@@ -16,7 +18,7 @@ Settings are organized into tabs:
 | **Display**                     | [Typography](#typography) (a font and size per surface, presets, custom fonts, zoom), terminal width, log level and buffer, max output lines per response, document graph settings, context window warnings, [Accessibility](#accessibility) (Color Blind Mode, Bionify reading emphasis)            |
 | **Shortcuts**                   | Customize keyboard shortcuts (see [Keyboard Shortcuts](./keyboard-shortcuts))                                                                                                                                                                                                                        |
 | **Themes**                      | Dark, light, and vibe mode themes, custom theme builder with import/export                                                                                                                                                                                                                           |
-| **Notifications**               | OS notifications, custom command notifications, toast notification duration, position, and width                                                                                                                                                                                                     |
+| **Notifications**               | OS notifications, custom command notifications, spoken notices, toast notification duration, position, and width                                                                                                                                                                                     |
 | **AI Commands**                 | View and edit slash commands, [Spec-Kit](./speckit-commands), [OpenSpec](./openspec-commands), and [BMAD](./bmad-commands) prompts                                                                                                                                                                   |
 | **Maestro Prompts**             | Browse and edit the 23 core system prompts (wizard, Auto Run, group chat, context, etc.). Changes take effect immediately; reset to bundled defaults at any time                                                                                                                                     |
 | **SSH Hosts**                   | Configure remote hosts for [SSH agent execution](./ssh-remote-execution)                                                                                                                                                                                                                             |
@@ -311,6 +313,8 @@ maestro-cli create-agent "Reviewer" --env ANTHROPIC_BASE_URL=https://proxy.inter
 maestro-cli update-agent <agent-id> --clear-env   # remove all per-agent variables
 ```
 
+To send an agent's provider traffic through a proxy, prefer the agent's [Local Models gateway](/local-models#gateway) over setting a base-URL variable by hand: it picks the right variable for the provider and refuses a URL the agent could not reach. A base-URL variable you set here still wins over the gateway.
+
 The eye button parks a variable here too: the row keeps its key and value and stays editable, but the variable is not passed to the agent. Parked variables are stored separately and are never merged into a spawned process.
 
 Here the name suggestions are narrowed to the agent's provider: a Claude agent leads with `CLAUDE_CONFIG_DIR` and the `ANTHROPIC_*` variables, a Codex agent with `CODEX_HOME`. Names you have set before are offered too, which matters most for the ones no catalog can know about, like a company proxy or an internal token.
@@ -325,7 +329,7 @@ This is the quickest way to catch the case where an agent behaves oddly because 
 
 Maestro spawns each provider's own CLI, so it does not have a "model gateway" setting of its own. What an agent bills to, and which endpoint it talks to, is whatever its CLI reads from the environment. That makes per-agent variables the way to point one agent at a proxy, a gateway, or a company account while every other agent keeps its normal login.
 
-Set these in **Edit Agent → Environment Variables (optional)** (`Alt+Cmd+,` / `Alt+Ctrl+,`) so they apply to that agent alone, or in **Settings → Environment** to apply them everywhere.
+Set these in **Edit Agent → Provider → Environment variables** (`Alt+Cmd+,` / `Alt+Ctrl+,`) so they apply to that agent alone, or in **Settings → Environment** to apply them everywhere.
 
 | Provider          | Variables that redirect it                                                                                                            | Notes                                                                            |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
@@ -465,6 +469,22 @@ Execute a custom command when AI tasks complete. Use any notification method tha
 - `notify-send "Maestro" && espeak` - show desktop notification and speak (Linux)
 - `afplay ~/sounds/done.wav` - play a sound file (macOS)
 
+### Speak When an Agent Finishes
+
+Maestro can say one line aloud when an agent finishes a turn, for example "Backend finished". It is off until you turn it on.
+
+**To configure:**
+
+1. Under **Speak When an Agent Finishes**, choose **When Maestro is not focused** or **Always**
+2. Click **Test** to hear a sample line
+
+- **When Maestro is not focused** speaks only while no Maestro window is in front, which is when a toast cannot reach you.
+- **Always** speaks about every finished turn.
+
+The line is spoken on the computer that runs Maestro, with a local voice, and nothing is sent anywhere. Notices never overlap: when several agents finish together, each line waits its turn. Nothing is spoken while an A Cappella voice session is open.
+
+By default the line is the agent's name and "finished". To add a short summary of what the agent did ("Backend finished: tests pass, two files changed"), assign a model to the **Spoken notices** task in **Settings**, then **Local Models**. See [Spoken notices](./local-models#spoken-notices).
+
 ### Toast Notifications
 
 In-app toast notifications appear in the corner when events occur. Configure how long they stay visible:
@@ -532,6 +552,7 @@ A final completion is recorded even when you are viewing its tab. Its popup rema
 Notifications are sent when:
 
 - An AI task completes (OS notification + optional custom notification)
+- An agent finishes a turn (the spoken notice, when **Speak When an Agent Finishes** is on)
 - A long-running command finishes (OS notification)
 
 ## Sleep Prevention

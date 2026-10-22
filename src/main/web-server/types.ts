@@ -1,13 +1,18 @@
-import type { TranslationReport } from '../../shared/maestro-lib/translation/types';
 /**
  * Shared type definitions for the web server module.
  * All web server components should import types from this file to avoid duplication.
  */
 
 import type { AutoRunBroadcastState } from '../../shared/autoRunBroadcast';
+import type { GroupSeededCreateReport } from '../../shared/groupAgentDefaults';
 import type { QueueSteerResult } from '../../shared/chatSteering';
 import type { GroupChatSteerResult } from '../../shared/groupChatSteering';
-import type { DesktopTabEntry } from '../../shared/desktopTabs';
+import type {
+	DesktopTabEntry,
+	TabProviderInspection,
+	TabConfigResult,
+} from '../../shared/desktopTabs';
+import type { OpenUiSurfaceRequest } from '../../shared/uiSurfaces';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../shared/snoozeCommands';
 import type {
 	SteeringCommandRequest,
@@ -23,12 +28,17 @@ import type { RemoteGroupChatMessage, RemoteGroupChatState } from '../../shared/
 import type { ToastClickAction } from '../../shared/toastClickAction';
 import type { CueTurnSettings } from '../../shared/cue/turn-settings';
 import type { GroupAppearance, GroupUpdateRequest } from '../../shared/groupAppearance';
+import type {
+	GroupSettingsUpdateRequest,
+	GroupSettingsUpdateResult,
+} from '../../shared/groupSettingsUpdate';
 import type { WebSocket } from 'ws';
 import type { Theme } from '../../shared/theme-types';
 import type { Shortcut } from '../../shared/shortcut-types';
 import type { CadenzaPayload } from '../../shared/cadenza-types';
 import type { MovementPayload, MovementStateSnapshot } from '../../shared/movement-types';
 import type { AgentDelegationNotice } from '../../shared/agentDelegation';
+import type { ConsultChain } from '../../shared/consultBudget';
 import type { WebActingUser } from '../../shared/webLogin';
 import type {
 	ConcertoDesignerAction,
@@ -36,6 +46,16 @@ import type {
 	MovementDesignerInspection,
 } from '../../shared/concerto-html';
 import type { MediaOpenMode } from '../../shared/mediaTypes';
+import type { CreateGistResult } from '../../shared/gitUtils';
+import type {
+	CueGateOnUnavailable,
+	CueGateSetting,
+	CueGateWriteResult,
+} from '../../shared/cue/gate';
+import type {
+	CueInjectionScreenSetting,
+	CueInjectionScreenWriteResult,
+} from '../../shared/cue/injection-screen';
 import type { DebugPackageDependencies } from '../debug-package';
 
 // Re-export Theme for convenience
@@ -156,7 +176,7 @@ export interface SessionData {
 /**
  * Session detail type for single session endpoint.
  */
-export interface SessionDetail {
+export interface SessionDetail extends TabProviderInspection {
 	id: string;
 	name: string;
 	toolType: string;
@@ -337,7 +357,13 @@ export type ExecuteCommandCallback = (
 	 * (the renderer selects it "for visual feedback"), so the web/mobile client and
 	 * every in-app caller keep focusing exactly as they do now.
 	 */
-	background?: boolean
+	background?: boolean,
+	/**
+	 * The place in a consult chain the turn this command starts takes, when a
+	 * `maestro-cli dispatch` admitted it (see shared/consultBudget.ts). The
+	 * renderer hands it to the spawn. Absent for every other sender.
+	 */
+	consultChain?: ConsultChain
 ) => Promise<boolean>;
 
 /**
@@ -482,10 +508,11 @@ export type OpenDocumentGraphParams = {
 export type OpenDocumentGraphCallback = (params: OpenDocumentGraphParams) => Promise<boolean>;
 /**
  * Open one of the app's modals/dashboards (see `shared/uiSurfaces.ts` for the
- * registry). `surface` is a `UiSurface.id`; `tab` is an optional tab id within
- * it, already validated against that surface.
+ * registry). `surface` is a `UiSurface.id`; `tab` and `subTab` are optional ids
+ * within it, already validated against that surface. `group` is an agent group
+ * id, sent only for a surface that opens on one.
  */
-export type OpenModalParams = { surface: string; tab?: string };
+export type OpenModalParams = OpenUiSurfaceRequest;
 export type OpenModalCallback = (params: OpenModalParams) => Promise<boolean>;
 /**
  * Callback type for atomically creating a new AI tab and dispatching a prompt into it.
@@ -512,6 +539,12 @@ export type ConsultAgentParams = {
 	withContext?: boolean;
 	/** How long the caller is willing to wait, already clamped by the CLI. */
 	timeoutMs: number;
+	/**
+	 * The consulted agent's place in a consult chain, when `maestro-cli ask`
+	 * admitted the consult (see shared/consultBudget.ts). The CLI has already
+	 * spent for it; it only has to reach the consult's environment.
+	 */
+	consultChain?: ConsultChain;
 };
 export type ConsultAgentResult = {
 	success: boolean;
@@ -520,6 +553,7 @@ export type ConsultAgentResult = {
 	canceled?: boolean;
 	targetAgentName?: string;
 	targetTabId?: string;
+	targetToolType?: string;
 };
 export type ConsultAgentCallback = (params: ConsultAgentParams) => Promise<ConsultAgentResult>;
 /**
@@ -546,7 +580,9 @@ export type NewAITabWithPromptCallback = (
 	prompt: string,
 	background?: boolean,
 	/** Create the tab with no chip in the strip (see `AITab.hidden`). */
-	hidden?: boolean
+	hidden?: boolean,
+	/** The new tab's turn's place in a consult chain (see ExecuteCommandCallback). */
+	consultChain?: ConsultChain
 ) => Promise<NewAITabWithPromptResult>;
 /**
  * Result of enqueuing (or immediately dispatching) a CLI prompt into the
@@ -584,7 +620,9 @@ export type EnqueueCommandCallback = (
 	images?: string[],
 	background?: boolean,
 	/** Queue Held: always queue, paused, even on an idle agent. */
-	held?: boolean
+	held?: boolean,
+	/** The queued turn's place in a consult chain (see ExecuteCommandCallback). */
+	consultChain?: ConsultChain
 ) => Promise<EnqueueCommandResult>;
 /**
  * A single queued item, mirrored from the renderer's executionQueue for CLI
@@ -1009,7 +1047,7 @@ export interface SessionHistoryMessage {
 	timestamp: string;
 }
 
-export interface SessionHistoryResult {
+export interface SessionHistoryResult extends TabProviderInspection {
 	tabId: string;
 	sessionId: string;
 	agentId: string;
@@ -1224,6 +1262,15 @@ export type RenameGroupCallback = (groupId: string, name: string) => Promise<boo
  * is the only place that can answer either question.
  */
 export type UpdateGroupCallback = (groupId: string, update: GroupUpdateRequest) => Promise<boolean>;
+/**
+ * Write a group's Group Settings profile and pill label (`update-group-settings`).
+ * The reply carries what was stored and, for a publish, what it reached, so it
+ * is a result object rather than the bare boolean `update_group` answers with.
+ */
+export type UpdateGroupSettingsCallback = (
+	groupId: string,
+	request: GroupSettingsUpdateRequest
+) => Promise<GroupSettingsUpdateResult>;
 export type DeleteGroupCallback = (groupId: string) => Promise<boolean>;
 export type MoveSessionToGroupCallback = (
 	sessionId: string,
@@ -1257,6 +1304,19 @@ export interface CreateSessionConfig {
 		workingDirOverride?: string;
 	};
 	autoRunFolderPath?: string;
+	/** Local Models gateway URL. The CLI validated it; the renderer checks it again. */
+	gatewayUrl?: string;
+	/**
+	 * Run on target, as data off the wire. The CLI checked it; the renderer
+	 * checks it again with `parseRunOnEdit` before it is stored.
+	 */
+	runOn?: unknown;
+	/**
+	 * `false` creates the agent bare, without the group's defaults
+	 * (`create-agent --no-group-defaults`). Absent or `true` seeds from the
+	 * group named by `groupId`, when it holds defaults.
+	 */
+	seedFromGroup?: boolean;
 }
 
 export type CreateSessionCallback = (
@@ -1266,7 +1326,7 @@ export type CreateSessionCallback = (
 	groupId?: string,
 	config?: CreateSessionConfig,
 	background?: boolean
-) => Promise<{ sessionId: string } | null>;
+) => Promise<({ sessionId: string } & Partial<GroupSeededCreateReport>) | null>;
 /**
  * Create a new agent in a git worktree branched off an existing parent agent,
  * without an Auto Run playbook. The desktop creates the worktree on disk, builds
@@ -1310,7 +1370,7 @@ export type UpdateSessionSshCallback = (
 export type UpdateSessionConfigCallback = (
 	sessionId: string,
 	configPatch: Record<string, unknown>
-) => Promise<TranslationReport>;
+) => Promise<TabConfigResult>;
 export type GetAutoRunDocsCallback = (sessionId: string) => Promise<AutoRunDocument[]>;
 export type GetAutoRunDocContentCallback = (sessionId: string, filename: string) => Promise<string>;
 export type SaveAutoRunDocCallback = (
@@ -1463,8 +1523,13 @@ export type CreateGistCallback = (
 	 * rather than a desktop tab, and publishing the agent's tabs for them
 	 * leaks an unrelated conversation.
 	 */
-	agentSessionId?: string
-) => Promise<{ success: boolean; gistUrl?: string; error?: string }>;
+	agentSessionId?: string,
+	/**
+	 * Publish even when the secret screen found something. Set only by
+	 * `maestro-cli gist create --allow-secrets`.
+	 */
+	allowSecrets?: boolean
+) => Promise<CreateGistResult>;
 
 // =============================================================================
 // Cue Automation Types
@@ -1480,6 +1545,18 @@ export interface CueSubscriptionInfo {
 	sessionId: string;
 	sessionName: string;
 	enabled: boolean;
+	/** The subscription's gate condition, when it has one. See
+	 *  `CueSubscription.gate`. Set with `set_cue_subscription_gate`. */
+	gate?: string;
+	/** What the gate does when its model cannot answer. Present only beside a
+	 *  `gate`, and only when the subscription spells it out (absent = run). */
+	gateOnUnavailable?: CueGateOnUnavailable;
+	/** `screen_injection` as written: `true` or `false`. Absent is the default
+	 *  (shell commands that use untrusted text are screened). Set with
+	 *  `set_cue_subscription_injection_screen`. */
+	screenInjection?: boolean;
+	/** `injection_threshold` as written. Absent means 0.8. */
+	injectionThreshold?: number;
 	lastTriggered?: number;
 	triggerCount: number;
 	/** The run's model choice, when the subscription sets one. */
@@ -1496,7 +1573,10 @@ export interface CueActivityEntry {
 	eventType: string;
 	sessionId: string;
 	timestamp: number;
-	status: 'triggered' | 'running' | 'completed' | 'failed';
+	/** `gated`: the subscription's gate skipped the event and nothing ran;
+	 *  `result` then carries the gate's reason. `blocked`: the prompt-injection
+	 *  screen refused the run; `result` names the variable and the score. */
+	status: 'triggered' | 'running' | 'completed' | 'failed' | 'gated' | 'blocked';
 	result?: string;
 	duration?: number;
 }
@@ -1510,6 +1590,16 @@ export type ToggleCueSubscriptionCallback = (
 	subscriptionId: string,
 	enabled: boolean
 ) => Promise<boolean>;
+/** Set (`gate` present) or remove (`null`) a subscription's gate. */
+export type SetCueSubscriptionGateCallback = (
+	subscriptionId: string,
+	gate: CueGateSetting | null
+) => Promise<CueGateWriteResult>;
+/** Set a subscription's prompt-injection screen (mode and threshold). */
+export type SetCueSubscriptionInjectionScreenCallback = (
+	subscriptionId: string,
+	setting: CueInjectionScreenSetting
+) => Promise<CueInjectionScreenWriteResult>;
 export type GetCueActivityCallback = (
 	sessionId?: string,
 	limit?: number

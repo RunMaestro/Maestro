@@ -4,6 +4,7 @@ import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
 import { FilePreview } from '../../../renderer/components/FilePreview';
 import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { useVoiceSessionStore } from '../../../renderer/stores/voiceSessionStore';
 import { useImageAnnotatorStore } from '../../../renderer/components/ImageAnnotator/imageAnnotatorStore';
 import { isWebDesktop } from '../../../renderer/utils/runtimeContext';
 
@@ -11,7 +12,8 @@ import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
 import { mockTheme } from '../../helpers/mockTheme';
 import { requestHeadingPalette } from '../../../renderer/services/headingPalette';
 // Mock lucide-react icons
-vi.mock('lucide-react', () => ({
+vi.mock('lucide-react', async (importOriginal) => ({
+	...(await importOriginal<typeof import('lucide-react')>()),
 	FileCode: () => <span data-testid="file-code-icon">FileCode</span>,
 	Eye: () => <span data-testid="eye-icon">Eye</span>,
 	ChevronUp: () => <span data-testid="chevron-up">ChevronUp</span>,
@@ -55,6 +57,14 @@ vi.mock('lucide-react', () => ({
 	AArrowDown: () => <span data-testid="a-arrow-down-icon">AArrowDown</span>,
 	// Resting-circle icon for the collapsible variant of that control.
 	ALargeSmall: () => <span data-testid="a-large-small-icon">ALargeSmall</span>,
+	// Icons added by the document chat bubble and its composer.
+	MessageSquare: () => <span data-testid="message-square-icon">MessageSquare</span>,
+	RotateCcw: () => <span data-testid="rotate-ccw-icon">RotateCcw</span>,
+	PanelRightOpen: () => <span data-testid="panel-right-open-icon">PanelRightOpen</span>,
+	Mic: () => <span data-testid="mic-icon">Mic</span>,
+	MicOff: () => <span data-testid="mic-off-icon">MicOff</span>,
+	Send: () => <span data-testid="send-icon">Send</span>,
+	ArrowUp: () => <span data-testid="arrow-up-icon">ArrowUp</span>,
 }));
 
 // Mock react-markdown
@@ -102,20 +112,32 @@ vi.mock('../../../renderer/constants/modalPriorities', () => ({
 	},
 }));
 
-// Mock useClickOutside hook - capture both container and TOC callbacks separately
-// FilePreview calls useClickOutside twice: first for container (handleEscapeRequest), second for TOC
+// Mock useClickOutside hook - capture the container and TOC callbacks separately.
+//
+// Told apart by the SHAPE of the first argument rather than by call order: the
+// preview container passes one ref, while every floating panel passes a pair
+// (its own node plus its toggle button). Counting calls and taking every other
+// one broke the moment a third panel - the document chat bubble - registered,
+// and it would break again on the fourth.
 const mockContainerClickOutside = { callback: null as (() => void) | null, enabled: false };
+const mockChatClickOutside = { callback: null as (() => void) | null, enabled: false };
 const mockTocClickOutside = { callback: null as (() => void) | null, enabled: false };
 let useClickOutsideCallCount = 0;
 vi.mock('../../../renderer/hooks/ui/useClickOutside', () => ({
-	useClickOutside: (_ref: unknown, callback: () => void, enabled: boolean, _options?: unknown) => {
-		// First call is for container (handleEscapeRequest), second is for TOC
-		if (useClickOutsideCallCount % 2 === 0) {
+	useClickOutside: (ref: unknown, callback: () => void, enabled: boolean, _options?: unknown) => {
+		if (!Array.isArray(ref)) {
 			mockContainerClickOutside.callback = callback;
 			mockContainerClickOutside.enabled = enabled;
-		} else {
+			return;
+		}
+		// Panels, in hook order: the chat bubble registers first, the ToC second.
+		// Only the ToC's is asserted on, so the chat's is simply skipped.
+		if (useClickOutsideCallCount % 2 === 1) {
 			mockTocClickOutside.callback = callback;
 			mockTocClickOutside.enabled = enabled;
+		} else {
+			mockChatClickOutside.callback = callback;
+			mockChatClickOutside.enabled = enabled;
 		}
 		useClickOutsideCallCount++;
 	},
@@ -240,6 +262,8 @@ describe('FilePreview', () => {
 		useClickOutsideCallCount = 0;
 		mockContainerClickOutside.callback = null;
 		mockContainerClickOutside.enabled = false;
+		mockChatClickOutside.callback = null;
+		mockChatClickOutside.enabled = false;
 		mockTocClickOutside.callback = null;
 		mockTocClickOutside.enabled = false;
 	});
@@ -1205,6 +1229,95 @@ describe('FilePreview', () => {
 
 			const textarea = screen.getByRole('textbox');
 			expect(textarea).toHaveValue('preserved content');
+		});
+	});
+
+	describe('embedded document chat', () => {
+		describe('Talk with Document shortcut', () => {
+			let originalVoiceEnabled: boolean;
+
+			beforeEach(() => {
+				originalVoiceEnabled = useSettingsStore.getState().encoreFeatures.aCappella;
+				useSettingsStore.setState({
+					encoreFeatures: { ...useSettingsStore.getState().encoreFeatures, aCappella: true },
+				});
+				useVoiceSessionStore.getState().reset();
+			});
+
+			afterEach(() => {
+				useVoiceSessionStore.getState().reset();
+				useSettingsStore.setState({
+					encoreFeatures: {
+						...useSettingsStore.getState().encoreFeatures,
+						aCappella: originalVoiceEnabled,
+					},
+				});
+			});
+
+			it('opens the existing chat in voice when the preview is already mounted', () => {
+				render(<FilePreview {...defaultProps} sessionId="agent-1" />);
+				expect(screen.queryByTestId('document-chat-panel')).not.toBeInTheDocument();
+				act(() => {
+					useVoiceSessionStore.setState({
+						state: 'listening',
+						scope: { kind: 'document', sessionId: 'agent-1', path: defaultProps.file.path },
+					});
+				});
+				expect(screen.getByTestId('document-chat-panel')).toBeInTheDocument();
+				expect(screen.getByRole('button', { name: 'Stop', exact: true })).toBeInTheDocument();
+			});
+
+			it('opens chat after voice starts before the preview mounts and allows closing it', () => {
+				useVoiceSessionStore.setState({
+					state: 'listening',
+					scope: { kind: 'document', sessionId: 'agent-1', path: defaultProps.file.path },
+				});
+				render(<FilePreview {...defaultProps} sessionId="agent-1" />);
+				expect(screen.getByTestId('document-chat-panel')).toBeInTheDocument();
+				fireEvent.keyDown(screen.getByTestId('document-chat-input'), { key: 'Escape' });
+				act(() => useVoiceSessionStore.setState({ state: 'speaking' }));
+				expect(screen.queryByTestId('document-chat-panel')).not.toBeInTheDocument();
+				act(() => useVoiceSessionStore.setState({ sessionId: 'new-voice-session' }));
+				expect(screen.getByTestId('document-chat-panel')).toBeInTheDocument();
+			});
+
+			it.each([
+				{ sessionId: 'other-agent', path: defaultProps.file.path },
+				{ sessionId: 'agent-1', path: '/test/other.md' },
+			])('does not open chat for another document scope: %o', (scope) => {
+				useVoiceSessionStore.setState({
+					state: 'listening',
+					scope: { kind: 'document', ...scope },
+				});
+				render(<FilePreview {...defaultProps} sessionId="agent-1" />);
+				expect(screen.queryByTestId('document-chat-panel')).not.toBeInTheDocument();
+			});
+		});
+
+		it('docks outside the document scroller and stays open while reading', () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'doc.md', content: '# Document\nSome content', path: '/test/doc.md' }}
+				/>
+			);
+			fireEvent.click(screen.getByTestId('document-chat-button'));
+			const panel = screen.getByTestId('document-chat-panel');
+			const scroller = screen.getByTestId('file-preview-font-scale').closest('.overflow-y-auto');
+			expect(scroller).not.toBeNull();
+			expect(scroller).not.toContainElement(panel);
+			expect(mockChatClickOutside.enabled).toBe(false);
+			fireEvent.mouseDown(screen.getByTestId('markdown-content'));
+			expect(screen.getByTestId('document-chat-panel')).toBeInTheDocument();
+		});
+
+		it('closes the embedded chat on Escape before closing the document', () => {
+			const onClose = vi.fn();
+			render(<FilePreview {...defaultProps} onClose={onClose} />);
+			fireEvent.click(screen.getByTestId('document-chat-button'));
+			fireEvent.keyDown(screen.getByTestId('document-chat-input'), { key: 'Escape' });
+			expect(screen.queryByTestId('document-chat-panel')).not.toBeInTheDocument();
+			expect(onClose).not.toHaveBeenCalled();
 		});
 	});
 

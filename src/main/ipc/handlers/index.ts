@@ -76,6 +76,16 @@ import { registerCueHandlers, CueHandlerDependencies } from './cue';
 import { registerCueBackupHandlers } from './cue-backup';
 import { registerCueBundleHandlers } from './cue-bundle';
 import { registerPianolaHandlers, PianolaHandlerDependencies } from './pianola';
+import {
+	registerACappellaHandlers,
+	stopVoiceSessionForWindow,
+	ACappellaHandlerDependencies,
+} from './acappella';
+import {
+	registerACappellaModelsHandlers,
+	ACappellaModelsHandlerDependencies,
+} from './acappella-models';
+import { registerLocalModelsHandlers, LocalModelsHandlerDependencies } from './local-models';
 import { registerPluginsHandlers, PluginsHandlerDependencies } from './plugins';
 import { registerWakatimeHandlers } from './wakatime';
 import { registerCoworkingHandlers } from './coworking';
@@ -166,6 +176,12 @@ export { registerCueBackupHandlers };
 export { registerCueBundleHandlers };
 export { registerPianolaHandlers };
 export type { PianolaHandlerDependencies };
+export { registerACappellaHandlers, stopVoiceSessionForWindow };
+export type { ACappellaHandlerDependencies };
+export { registerACappellaModelsHandlers };
+export type { ACappellaModelsHandlerDependencies };
+export { registerLocalModelsHandlers };
+export type { LocalModelsHandlerDependencies };
 export { registerPluginsHandlers };
 export type { PluginsHandlerDependencies };
 export { registerWakatimeHandlers };
@@ -387,6 +403,7 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		getAgentDetector: deps.getAgentDetector,
 		agentConfigsStore: deps.agentConfigsStore,
 		settingsStore: deps.settingsStore,
+		safeSend: createSafeSend(() => BrowserWindow.getAllWindows()),
 	});
 	// Register Director's Notes handlers (unified history + synopsis)
 	registerDirectorNotesHandlers({

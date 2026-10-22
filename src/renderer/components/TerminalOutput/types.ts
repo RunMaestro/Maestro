@@ -102,6 +102,8 @@ export interface LogItemProps {
 	 * including on every user message.
 	 */
 	responseDurationMs?: number;
+	/** First attributed response, or a change from the preceding response's owner. */
+	showTurnProvider?: boolean;
 	/**
 	 * The entry right below this one is a steered message stitched to the same
 	 * turn (`steerJoinsRunningTurn`), so a stitched steer draws its connector on

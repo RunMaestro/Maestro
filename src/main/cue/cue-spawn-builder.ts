@@ -19,6 +19,12 @@ import {
 	buildAgentLaunchPlan,
 	describeUndeliveredSecrets,
 } from '../../shared/maestro-lib/launch/launch-plan';
+import {
+	ensureTokenProxyForGateway,
+	tokenProxyLaunchGatewayUrl,
+} from '../local-models/proxy/service';
+import { logRunOnLaunch, prepareLaunchRunOn } from '../local-models/run-on';
+import { runOnHarnessMode } from '../../shared/local-models/run-on';
 import { buildSpawnPath } from '../utils/spawnPath';
 import { QUERY_SOURCE_ENV_VAR } from '../../shared/querySource';
 import { ensureRemoteMaestroPProbed } from '../agents/probeRemoteMaestroP';
@@ -94,7 +100,8 @@ export type SpawnBuildResult = SpawnBuildSuccess | SpawnBuildError;
  * 2. Build base args via buildAgentArgs
  * 3. Apply config overrides (custom model, args)
  * 4. Plan the launch (target, command, env, prompt delivery) via
- *    `buildAgentLaunchPlan`, failing on an unresolvable SSH remote
+ *    `buildAgentLaunchPlan`, failing on an unresolvable SSH remote, a gateway
+ *    that cannot be used, or a Run on target that cannot run
  * 5. Wrap a remote launch with SSH, or realize a local maestro-p decision
  */
 export async function buildSpawnSpec(
@@ -109,6 +116,8 @@ export async function buildSpawnSpec(
 		customPath,
 		customArgs,
 		customEnvVars,
+		gatewayUrl,
+		runOn,
 		requiredSecrets,
 		customModel,
 		customEffort,
@@ -193,6 +202,32 @@ export async function buildSpawnSpec(
 	// vars, with the prompt on the command line. An SSH remote that cannot be
 	// resolved fails the run here: it never falls back to running the agent on
 	// this machine.
+	const sessionEnvVars = sanitizeLayer(customEnvVars);
+	const agentEnvVars = sanitizeLayer(
+		(agentConfigValues as Record<string, unknown> | undefined)?.customEnvVars as
+			| Record<string, string>
+			| undefined
+	);
+
+	// The agent's Run on target: its source looked up and asked whether it can
+	// serve the model, before the plan. A Cue run is the agent working
+	// unattended, so it runs where the agent's own turns run. One that cannot
+	// fails the run by name; it never runs on the provider's model.
+	const preparedRunOn = await prepareLaunchRunOn({
+		toolType,
+		target: runOn,
+		userEnvVars: sessionEnvVars ?? agentEnvVars,
+		sshRemoteConfig,
+		sshStore,
+	});
+	if (preparedRunOn.kind === 'refused') {
+		return { ok: false, message: preparedRunOn.message };
+	}
+
+	// A gateway that is the Maestro token proxy carries the agent's id in its
+	// path for this launch, so the proxy applies the agent's mode and counts the
+	// run under it. Any other gateway comes back unchanged.
+	const launchGatewayUrl = await tokenProxyLaunchGatewayUrl(session.id, gatewayUrl);
 	const planResult = buildAgentLaunchPlan({
 		surface: 'cue',
 		agent: { ...agentDef, capabilities: agentConfig.capabilities },
@@ -200,12 +235,13 @@ export async function buildSpawnSpec(
 		args: finalArgs,
 		cwd: projectRoot,
 		prompt: promptToSend,
-		agentCustomEnvVars: sanitizeLayer(
-			(agentConfigValues as Record<string, unknown> | undefined)?.customEnvVars as
-				| Record<string, string>
-				| undefined
-		),
-		sessionCustomEnvVars: sanitizeLayer(customEnvVars),
+		agentCustomEnvVars: agentEnvVars,
+		sessionCustomEnvVars: sessionEnvVars,
+		// The agent's Local Models gateway. A gateway that cannot be used (a
+		// loopback URL for an SSH remote) fails the run by name below. A Run on
+		// target takes its place: the plan then skips it.
+		gateway: { toolType, url: launchGatewayUrl },
+		runOn: preparedRunOn.kind === 'ready' ? preparedRunOn.runOn : undefined,
 		// A Cue run is a Cue run no matter what the agent's env overrides say.
 		// Without this every downstream consumer of the spawned process (Claude
 		// Code hooks, telemetry sidecars) sees a turn indistinguishable from one
@@ -221,6 +257,15 @@ export async function buildSpawnSpec(
 		return { ok: false, message: planResult.error };
 	}
 	const plan = planResult.plan;
+	if (plan.runOn) {
+		logRunOnLaunch('[CueSpawnBuilder]', { sessionId: `cue-${config.runId}`, toolType }, plan.runOn);
+	}
+	// A gateway that is the Maestro token proxy must be up before the run is
+	// sent to its port. One that cannot start fails the run by name.
+	if (plan.gateway) {
+		const proxy = await ensureTokenProxyForGateway(plan.gateway.url);
+		if (!proxy.ok) return { ok: false, message: proxy.error };
+	}
 	// Names only: the run still starts, and the agent reports its own auth error.
 	const undeliveredSecrets = describeUndeliveredSecrets(session?.name ?? toolType, plan.secrets);
 	if (undeliveredSecrets) config.onLog('warn', `[CUE] ${undeliveredSecrets}`);
@@ -246,14 +291,18 @@ export async function buildSpawnSpec(
 	const remoteMaestroPAvailable = remoteTarget
 		? await ensureRemoteMaestroPProbed(remoteTarget)
 		: undefined;
-	const tokenMode = getClaudeTokenMode(
-		{
-			enableMaestroP: config.enableMaestroP,
-			maestroPMode: config.maestroPMode,
-		},
-		// Remote agents default to the TUI when the user hasn't chosen, unless the
-		// remote has no maestro-p to run it (then API).
-		{ sshEnabled: !!remoteTarget, sshMaestroPAvailable: remoteMaestroPAvailable }
+	const tokenMode = runOnHarnessMode(
+		runOn,
+		getClaudeTokenMode(
+			{
+				enableMaestroP: config.enableMaestroP,
+				maestroPMode: config.maestroPMode,
+			},
+			// Remote agents default to the TUI when the user hasn't chosen, unless the
+			// remote has no maestro-p to run it (then API).
+			{ sshEnabled: !!remoteTarget, sshMaestroPAvailable: remoteMaestroPAvailable }
+		),
+		'api'
 	);
 	const claudeSpawnDecision = resolveClaudeSpawnMode({
 		agent: {

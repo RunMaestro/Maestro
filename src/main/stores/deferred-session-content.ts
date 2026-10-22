@@ -23,13 +23,18 @@ import {
 	type DeferredSessionContent,
 } from '../../shared/deferredSessionContent';
 
-type StoredAiTab = { id: string; logs: { id?: string; timestamp?: number }[] };
+type StoredAiTab = {
+	id: string;
+	logs: { id?: string; timestamp?: number }[];
+	documentOrigin?: { path: string };
+};
 
 /** What `sessions:getDeferredContent` returns for one agent. */
 export interface DeferredContentPayload {
 	logs?: StoredAiTab['logs'];
 	shellLogs?: unknown[];
 	agentCommands?: unknown[];
+	agentCommandsScope?: string;
 	aiCommandHistory?: string[];
 	transcriptSnapshots?: SessionRuntimeSnapshot[];
 }
@@ -136,6 +141,7 @@ export function readDeferredContent(
 			? {
 					shellLogs: session.shellLogs ?? [],
 					agentCommands: session.agentCommands ?? [],
+					agentCommandsScope: session.agentCommandsScope,
 					aiCommandHistory: session.aiCommandHistory ?? [],
 				}
 			: {}),
@@ -181,7 +187,7 @@ export function mergeDeferredSessionContent(
 				previousTab.logs,
 				tab.logs,
 				(log) => log.id,
-				MAX_PERSISTED_SESSION_LOGS
+				tab.documentOrigin ? undefined : MAX_PERSISTED_SESSION_LOGS
 			),
 		};
 	});
@@ -206,11 +212,14 @@ export function mergeDeferredSessionContent(
 			incoming.shellLogs,
 			(log: { id?: string }) => log.id
 		);
-		complete.agentCommands = mergeDeferredItems(
-			stored.agentCommands,
-			incoming.agentCommands,
-			(command: { command: string }) => command.command
-		);
+		complete.agentCommands =
+			stored.agentCommandsScope === incoming.agentCommandsScope
+				? mergeDeferredItems(
+						stored.agentCommands,
+						incoming.agentCommands,
+						(command: { command: string }) => command.command
+					)
+				: (incoming.agentCommands ?? []);
 		complete.aiCommandHistory = mergeDeferredItems(
 			stored.aiCommandHistory,
 			incoming.aiCommandHistory,

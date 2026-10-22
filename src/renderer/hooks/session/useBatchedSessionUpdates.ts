@@ -1,3 +1,8 @@
+import {
+	resolveTabProvider,
+	resolveTurnProvider,
+	updateProviderSlot,
+} from '../../utils/providerTabSessions';
 /**
  * useBatchedSessionUpdates.ts
  *
@@ -79,6 +84,10 @@ interface LogAccumulator {
 	isStderr: boolean;
 	chunks: string[];
 	timestamp: number;
+	turnSettings?: Pick<
+		LogEntry,
+		'turnProvider' | 'turnModel' | 'turnEffort' | 'turnRunOn' | 'turnAuto'
+	>;
 }
 
 /**
@@ -91,7 +100,8 @@ interface SessionAccumulator {
 	status?: SessionState;
 	tabStatuses?: Map<string, 'idle' | 'busy'>;
 	// Usage stats (accumulated)
-	usageDeltas?: Map<string | null, UsageStats>; // key = tabId or null for session-level
+	usageDeltas?: Map<string | null, UsageStats>;
+	usageOwners?: Map<string, { tabId: string; provider: Session['toolType'] }>; // key = captured tab/provider pair
 	// Context percentage (always uses latest value)
 	contextUsage?: number;
 	// Tabs to mark as delivered
@@ -213,7 +223,12 @@ export function useBatchedSessionUpdates(
 					// Process AI tab logs
 					const aiTabLogs = new Map<
 						string,
-						{ data: string; isStderr: boolean; timestamp: number }
+						{
+							data: string;
+							isStderr: boolean;
+							timestamp: number;
+							turnSettings?: LogAccumulator['turnSettings'];
+						}
 					>();
 					let shellStdout = '';
 					let shellStderr = '';
@@ -235,6 +250,7 @@ export function useBatchedSessionUpdates(
 									data: combinedData,
 									isStderr: logAcc.isStderr,
 									timestamp: logAcc.timestamp,
+									turnSettings: logAcc.turnSettings,
 								});
 							}
 						} else {
@@ -257,78 +273,93 @@ export function useBatchedSessionUpdates(
 						// stderr stays untagged - error frames aren't interactive output.
 						const isInteractive = updatedSession.claudeInteractive?.mode === 'interactive';
 
+						const openLogCount = updatedSession.aiTabs.length;
+						const loggedTabs = [
+							...updatedSession.aiTabs,
+							...(updatedSession.orphanedThinkingTabs ?? []),
+						].map((tab) => {
+							const logData = aiTabLogs.get(tab.id);
+							if (!logData) return tab;
+
+							// ThinkingMode contract - inline clear point.
+							// When new assistant text arrives, drop transient thinking/tool entries
+							// from prior reasoning so the final answer replaces them. The matching
+							// exit-time clear lives in useAgentListeners → cleanupExitedTabLogs.
+							// Sticky mode opts out of BOTH clear points.
+							const existingLogs = tab.logs.filter((log) => {
+								if (log.source === 'thinking' || log.source === 'tool') {
+									return tab.showThinking === 'sticky';
+								}
+								return true;
+							});
+							const lastLog = existingLogs[existingLogs.length - 1];
+
+							// Determine the source based on stderr flag
+							const logSource = logData.isStderr ? 'stderr' : 'stdout';
+
+							// Time-based grouping for AI output (500ms window). canAppendToLogEntry
+							// answers both halves of "may this be appended to": same source, AND not
+							// a self-contained card. Source alone is not enough - a `!` command's
+							// output card is `source: 'stdout'` but owns its own text, so streamed
+							// agent output used to land inside it. See utils/logEntries.ts.
+							//
+							// (A `logger.warn` for "refusing to coalesce into a non-stream entry"
+							// used to sit here. It was unreachable: it required lastLog.source to
+							// equal logSource while NOT being stdout/stderr, but logSource is always
+							// one of those two. It never fired for the bug it was meant to catch.)
+							const shouldGroup =
+								canAppendToLogEntry(lastLog, logSource) &&
+								lastLog.turnProvider === logData.turnSettings?.turnProvider &&
+								logData.timestamp - lastLog.timestamp < 500;
+
+							const shouldTagInteractive =
+								isInteractive &&
+								logData.turnSettings?.turnProvider === 'claude-code' &&
+								!logData.isStderr;
+
+							// Stamp the turn's codified model/effort onto the entry so the
+							// transcript records which configuration produced this response
+							// (rendered as footer pills next to the token-source pill). Read
+							// from the tab's send-time stamp, never the live tab/agent values:
+							// a model change made while this turn streams applies to the NEXT
+							// message, not to the one already running.
+							const turnSettings = logData.turnSettings ?? {
+								turnProvider: resolveTurnProvider(tab, session),
+								...(tab.turnModel ? { turnModel: tab.turnModel } : {}),
+								...(tab.turnEffort ? { turnEffort: tab.turnEffort } : {}),
+								...(tab.turnRunOn ? { turnRunOn: tab.turnRunOn } : {}),
+								...(tab.turnAuto ? { turnAuto: tab.turnAuto } : {}),
+							};
+
+							let updatedLogs: LogEntry[];
+							if (shouldGroup) {
+								updatedLogs = [...existingLogs];
+								updatedLogs[updatedLogs.length - 1] = {
+									...lastLog,
+									text: lastLog.text + logData.data,
+									...(shouldTagInteractive ? { renderStyle: 'text-stream' } : {}),
+									...turnSettings,
+								};
+							} else {
+								const newLog: LogEntry = {
+									id: generateId(),
+									timestamp: logData.timestamp,
+									source: logSource,
+									text: logData.data,
+									...(shouldTagInteractive ? { renderStyle: 'text-stream' } : {}),
+									...turnSettings,
+								};
+								updatedLogs = [...existingLogs, newLog];
+							}
+
+							return { ...tab, logs: updatedLogs };
+						});
 						updatedSession = {
 							...updatedSession,
-							aiTabs: updatedSession.aiTabs.map((tab) => {
-								const logData = aiTabLogs.get(tab.id);
-								if (!logData) return tab;
-
-								// ThinkingMode contract - inline clear point.
-								// When new assistant text arrives, drop transient thinking/tool entries
-								// from prior reasoning so the final answer replaces them. The matching
-								// exit-time clear lives in useAgentListeners → cleanupExitedTabLogs.
-								// Sticky mode opts out of BOTH clear points.
-								const existingLogs = tab.logs.filter((log) => {
-									if (log.source === 'thinking' || log.source === 'tool') {
-										return tab.showThinking === 'sticky';
-									}
-									return true;
-								});
-								const lastLog = existingLogs[existingLogs.length - 1];
-
-								// Determine the source based on stderr flag
-								const logSource = logData.isStderr ? 'stderr' : 'stdout';
-
-								// Time-based grouping for AI output (500ms window). canAppendToLogEntry
-								// answers both halves of "may this be appended to": same source, AND not
-								// a self-contained card. Source alone is not enough - a `!` command's
-								// output card is `source: 'stdout'` but owns its own text, so streamed
-								// agent output used to land inside it. See utils/logEntries.ts.
-								//
-								// (A `logger.warn` for "refusing to coalesce into a non-stream entry"
-								// used to sit here. It was unreachable: it required lastLog.source to
-								// equal logSource while NOT being stdout/stderr, but logSource is always
-								// one of those two. It never fired for the bug it was meant to catch.)
-								const shouldGroup =
-									canAppendToLogEntry(lastLog, logSource) &&
-									logData.timestamp - lastLog.timestamp < 500;
-
-								const shouldTagInteractive = isInteractive && !logData.isStderr;
-
-								// Stamp the turn's codified model/effort onto the entry so the
-								// transcript records which configuration produced this response
-								// (rendered as footer pills next to the token-source pill). Read
-								// from the tab's send-time stamp, never the live tab/agent values:
-								// a model change made while this turn streams applies to the NEXT
-								// message, not to the one already running.
-								const turnSettings = {
-									...(tab.turnModel ? { turnModel: tab.turnModel } : {}),
-									...(tab.turnEffort ? { turnEffort: tab.turnEffort } : {}),
-								};
-
-								let updatedLogs: LogEntry[];
-								if (shouldGroup) {
-									updatedLogs = [...existingLogs];
-									updatedLogs[updatedLogs.length - 1] = {
-										...lastLog,
-										text: lastLog.text + logData.data,
-										...(shouldTagInteractive ? { renderStyle: 'text-stream' } : {}),
-										...turnSettings,
-									};
-								} else {
-									const newLog: LogEntry = {
-										id: generateId(),
-										timestamp: logData.timestamp,
-										source: logSource,
-										text: logData.data,
-										...(shouldTagInteractive ? { renderStyle: 'text-stream' } : {}),
-										...turnSettings,
-									};
-									updatedLogs = [...existingLogs, newLog];
-								}
-
-								return { ...tab, logs: updatedLogs };
-							}),
+							aiTabs: loggedTabs.slice(0, openLogCount),
+							...(updatedSession.orphanedThinkingTabs
+								? { orphanedThinkingTabs: loggedTabs.slice(openLogCount) }
+								: {}),
 						};
 					}
 
@@ -439,23 +470,36 @@ export function useBatchedSessionUpdates(
 
 					// Tab-level usage
 					if (updatedSession.aiTabs) {
-						updatedSession = {
-							...updatedSession,
-							aiTabs: updatedSession.aiTabs.map((tab) => {
-								const tabUsageDelta = acc.usageDeltas?.get(tab.id);
-								if (!tabUsageDelta) return tab;
+						const usageByTab = new Map<string, Array<[string, UsageStats]>>();
+						for (const [key, delta] of acc.usageDeltas) {
+							if (key === null) continue;
+							const tabId = acc.usageOwners?.get(key)?.tabId ?? key;
+							const deltas = usageByTab.get(tabId) ?? [];
+							deltas.push([key, delta]);
+							usageByTab.set(tabId, deltas);
+						}
+						const openCount = updatedSession.aiTabs.length;
+						const updatedTabs = [
+							...updatedSession.aiTabs,
+							...(updatedSession.orphanedThinkingTabs ?? []),
+						].map((tab) => {
+							return (usageByTab.get(tab.id) ?? []).reduce((tab, [key, tabUsageDelta]) => {
+								const captured = acc.usageOwners?.get(key);
+								const owner = captured?.provider ?? resolveTurnProvider(tab, updatedSession);
 
-								const existing = tab.usageStats;
+								const existing =
+									owner === resolveTabProvider(tab, updatedSession)
+										? tab.usageStats
+										: tab.providerSessions?.[owner]?.usageStats;
 								if (tabUsageDelta.contextWindowCorrectionOnly) {
 									// Window-only correction: preserve this tab's already-counted
 									// tokens/cost and update only the context window.
-									return {
-										...tab,
+									return updateProviderSlot(tab, updatedSession, owner, {
 										usageStats: {
 											...(existing ?? tabUsageDelta),
 											...mergeContextWindow(tabUsageDelta, existing),
 										},
-									};
+									});
 								}
 								// An "output-only" delta carries new output tokens but zero
 								// input/cache. Copilot CLI streams these per-turn (each
@@ -481,8 +525,7 @@ export function useBatchedSessionUpdates(
 								const occupancySnapshot = isOutputOnlyDelta
 									? existing?.absoluteUsage
 									: tabUsageDelta.absoluteUsage;
-								return {
-									...tab,
+								return updateProviderSlot(tab, updatedSession, owner, {
 									usageStats: {
 										inputTokens: isOutputOnlyDelta
 											? (existing?.inputTokens ?? 0)
@@ -499,8 +542,15 @@ export function useBatchedSessionUpdates(
 										reasoningTokens: tabUsageDelta.reasoningTokens,
 										...(occupancySnapshot ? { absoluteUsage: occupancySnapshot } : {}),
 									},
-								};
-							}),
+								});
+							}, tab);
+						});
+						updatedSession = {
+							...updatedSession,
+							aiTabs: updatedTabs.slice(0, openCount),
+							...(updatedSession.orphanedThinkingTabs
+								? { orphanedThinkingTabs: updatedTabs.slice(openCount) }
+								: {}),
 						};
 					}
 				}
@@ -608,8 +658,22 @@ export function useBatchedSessionUpdates(
 		) => {
 			if (!data) return;
 
-			const acc = getAccumulator(sessionId);
-			const key = `${tabId || 'shell'}-${isStderr ? 'stderr' : 'stdout'}`;
+			let acc = getAccumulator(sessionId);
+			const owner = useSessionStore.getState().sessions.find((session) => session.id === sessionId);
+			const tab =
+				owner?.aiTabs.find((candidate) => candidate.id === tabId) ??
+				owner?.orphanedThinkingTabs?.find((candidate) => candidate.id === tabId);
+			const provider = owner && isAi ? resolveTurnProvider(tab, owner) : undefined;
+			const key = `${tabId || 'shell'}-${isStderr ? 'stderr' : 'stdout'}-${provider ?? ''}`;
+			if (
+				isAi &&
+				[...acc.logAccumulators.values()].some(
+					(pending) => pending.tabId === tabId && pending.turnSettings?.turnProvider !== provider
+				)
+			) {
+				flush();
+				acc = getAccumulator(sessionId);
+			}
 
 			let logAcc = acc.logAccumulators.get(key);
 			if (!logAcc) {
@@ -620,6 +684,15 @@ export function useBatchedSessionUpdates(
 					isStderr,
 					chunks: [],
 					timestamp: Date.now(),
+					...(provider && {
+						turnSettings: {
+							turnProvider: provider,
+							turnModel: tab?.turnModel,
+							turnEffort: tab?.turnEffort,
+							turnRunOn: tab?.turnRunOn,
+							turnAuto: tab?.turnAuto,
+						},
+					}),
 				};
 				acc.logAccumulators.set(key, logAcc);
 			}
@@ -628,7 +701,7 @@ export function useBatchedSessionUpdates(
 			logAcc.timestamp = Date.now();
 			hasPendingRef.current = true;
 		},
-		[getAccumulator]
+		[getAccumulator, flush]
 	);
 
 	const setStatus = useCallback(
@@ -659,7 +732,17 @@ export function useBatchedSessionUpdates(
 				acc.usageDeltas = new Map();
 			}
 
-			const existing = acc.usageDeltas.get(tabId);
+			const owner = useSessionStore.getState().sessions.find((session) => session.id === sessionId);
+			const tab =
+				owner?.aiTabs.find((candidate) => candidate.id === tabId) ??
+				owner?.orphanedThinkingTabs?.find((candidate) => candidate.id === tabId);
+			const provider = owner ? resolveTurnProvider(tab, owner) : undefined;
+			const usageKey = tabId && provider ? `${tabId}:${provider}` : tabId;
+			if (tabId && provider && usageKey) {
+				acc.usageOwners ??= new Map();
+				acc.usageOwners.set(usageKey, { tabId, provider });
+			}
+			const existing = acc.usageDeltas.get(usageKey);
 
 			// A context-window correction replays an already-counted turn, so it must
 			// never add tokens/cost. Fold its corrected window onto a real delta still
@@ -667,7 +750,7 @@ export function useBatchedSessionUpdates(
 			// correction the flush applies as window-only against the committed stats.
 			if (usage.contextWindowCorrectionOnly) {
 				acc.usageDeltas.set(
-					tabId,
+					usageKey,
 					existing
 						? {
 								...existing,
@@ -693,7 +776,7 @@ export function useBatchedSessionUpdates(
 			if (existing) {
 				// For tab-level: inputTokens etc. are current (not accumulated), but outputTokens and cost are accumulated
 				if (tabId !== null) {
-					acc.usageDeltas.set(tabId, {
+					acc.usageDeltas.set(usageKey, {
 						inputTokens: usage.inputTokens,
 						cacheReadInputTokens: usage.cacheReadInputTokens,
 						cacheCreationInputTokens: usage.cacheCreationInputTokens,
@@ -705,7 +788,7 @@ export function useBatchedSessionUpdates(
 					});
 				} else {
 					// Session-level: all values are accumulated
-					acc.usageDeltas.set(tabId, {
+					acc.usageDeltas.set(usageKey, {
 						inputTokens: existing.inputTokens + usage.inputTokens,
 						outputTokens: existing.outputTokens + usage.outputTokens,
 						cacheReadInputTokens: existing.cacheReadInputTokens + usage.cacheReadInputTokens,
@@ -717,7 +800,7 @@ export function useBatchedSessionUpdates(
 					});
 				}
 			} else {
-				acc.usageDeltas.set(tabId, { ...usage });
+				acc.usageDeltas.set(usageKey, { ...usage });
 			}
 			hasPendingRef.current = true;
 		},

@@ -28,7 +28,10 @@
  * - truncateCommand: Truncate command text for display with ellipsis
  * - formatSshTarget: SSH connection target for display (user@host:port)
  * - abbreviateGroupName: Shorten a group name for badge/pill display
+ * - groupBadgeLabel: The text of a group's badge/pill (the user's own label, or the abbreviation)
  */
+
+import type { Group } from './types';
 
 // ============================================================================
 // Cached Intl formatters
@@ -676,6 +679,31 @@ export function abbreviateGroupName(
 	const devoweled = first + trimmed.slice(1).replace(/[aeiouAEIOU]/g, '');
 	if (devoweled.length <= max) return devoweled;
 	return devoweled.slice(0, max);
+}
+
+/**
+ * The longest pill label a user may set for a group (`Group.shortLabel`). The
+ * Group Settings input, the CLI flag and the tests all cap at this one number.
+ * It is 12 and not the abbreviator's `max` of 10: a label the user chose earns
+ * two more characters, and the pill has the room.
+ */
+export const GROUP_SHORT_LABEL_MAX_LENGTH = 12;
+
+/**
+ * The text of a group's badge/pill: the user's own `shortLabel` when it is set,
+ * otherwise the automatic abbreviation of the group name.
+ *
+ * A label that is absent, empty or whitespace-only is "not set", so a stored
+ * `''` can never draw an empty pill. A set label is returned trimmed and
+ * otherwise verbatim: it is not abbreviated, and it is not cut here. The cap
+ * (`GROUP_SHORT_LABEL_MAX_LENGTH`) is applied where the label is written.
+ *
+ * Use this wherever a group is drawn as a short badge. Do not call
+ * `abbreviateGroupName(group.name)` directly, or the user's label is ignored.
+ */
+export function groupBadgeLabel(group: Pick<Group, 'name' | 'shortLabel'>): string {
+	const shortLabel = group.shortLabel?.trim();
+	return shortLabel ? shortLabel : abbreviateGroupName(group.name);
 }
 
 /**

@@ -39,7 +39,7 @@ export const AiCommandProposal = memo(function AiCommandProposal({
 	onDismiss,
 	onChoose,
 }: AiCommandProposalProps) {
-	const { status, request, command, error, choice } = entry;
+	const { status, request, command, explanation, error, choice } = entry;
 
 	// The proposal is a command line, so it is set in the same fixed-pitch face
 	// the composer and the output card use - what you confirm here looks exactly
@@ -114,6 +114,19 @@ export const AiCommandProposal = memo(function AiCommandProposal({
 							iconClassName="w-3.5 h-3.5"
 						/>
 					</div>
+
+					{/* What the command does, in the model's words. A Local Models
+					    source is asked for it; the review is what makes a small
+					    model acceptable here, so the review gets the extra line. */}
+					{explanation && (
+						<div
+							className="text-xs select-text"
+							style={{ color: theme.colors.textDim }}
+							data-testid="ai-command-explanation"
+						>
+							{explanation}
+						</div>
+					)}
 
 					<div className="flex items-center gap-2">
 						<ChoiceButton

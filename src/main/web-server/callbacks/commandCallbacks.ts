@@ -5,6 +5,7 @@ import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
 import { requestFromRenderer } from './remoteRequest';
 import type { ConsultAgentResult } from '../types';
+import type { ConsultChain } from '../../../shared/consultBudget';
 
 /**
  * The renderer's answer to a `remote:executeCommand` send: did it accept the
@@ -71,6 +72,7 @@ export function parseConsultAgentResult(raw: unknown): ConsultAgentResult {
 		canceled: r.canceled === true,
 		targetAgentName: str(r.targetAgentName),
 		targetTabId: str(r.targetTabId),
+		targetToolType: str(r.targetToolType),
 	};
 }
 
@@ -96,7 +98,8 @@ export function registerCommandCallbacks(
 			tabId?: string,
 			force?: boolean,
 			images?: string[],
-			background?: boolean
+			background?: boolean,
+			consultChain?: ConsultChain
 		) => {
 			const targetWindow = resolveSessionWindow(sessionId);
 			if (!targetWindow) {
@@ -140,7 +143,9 @@ export function registerCommandCallbacks(
 					fallback: { accepted: false, reason: 'renderer-timeout', timedOut: true },
 					timeoutMs: REMOTE_COMMAND_RECEIPT_TIMEOUT_MS,
 					parse: parseRemoteCommandReceipt,
-					args: [sessionId, command, inputMode, tabId, force, images, background],
+					// `consultChain` holds its position even when absent: the receipt
+					// channel is appended after these and the preload reads it by index.
+					args: [sessionId, command, inputMode, tabId, force, images, background, consultChain],
 				}
 			);
 			if (!receipt.accepted) {
@@ -189,6 +194,7 @@ export function registerCommandCallbacks(
 					fromSessionId: params.fromSessionId,
 					fromTabId: params.fromTabId,
 					withContext: params.withContext,
+					...(params.consultChain ? { consultChain: params.consultChain } : {}),
 				},
 			],
 		});

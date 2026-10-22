@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { CodexAppServerRpc } from './rpc-client';
 import { isCodexResponse, isCodexServerRequest, type CodexAppServerMessage } from './protocol';
 import { answerCodexServerRequest } from './server-requests';
@@ -11,21 +11,27 @@ export async function openCodexTranslationConnection(options: {
 	binary: string;
 	cwd: string;
 	env: NodeJS.ProcessEnv;
+	/** The host can supply an SSH child; env.CODEX_HOME still pins the remote account. */
+	spawn?: () => ChildProcessWithoutNullStreams;
 }): Promise<TranslationRpc & { close(): void }> {
-	const child = spawn(options.binary, ['app-server'], {
-		cwd: options.cwd,
-		env: options.env,
-		stdio: ['pipe', 'pipe', 'pipe'],
-		windowsHide: true,
-	});
+	const child = options.spawn
+		? options.spawn()
+		: spawn(options.binary, ['app-server'], {
+				cwd: options.cwd,
+				env: options.env,
+				stdio: ['pipe', 'pipe', 'pipe'],
+				windowsHide: true,
+			});
 	const listeners = new Set<(method: string, params: unknown) => void>();
 	const reader = new BufferedLineReader();
 	const rpc = new CodexAppServerRpc((line) => {
 		if (!child.stdin.writable) throw new Error('Codex stdin closed');
 		child.stdin.write(line + '\n');
 	});
-	child.stdout.on('data', (chunk: Buffer) => {
-		for (const line of reader.push(chunk.toString('utf8'))) {
+	// Preserve UTF-8 characters split across transport chunks before framing JSON lines.
+	child.stdout.setEncoding('utf8');
+	child.stdout.on('data', (chunk: string) => {
+		for (const line of reader.push(chunk)) {
 			try {
 				const message = JSON.parse(line) as CodexAppServerMessage;
 				if (isCodexResponse(message)) rpc.handleResponse(message);
@@ -40,6 +46,11 @@ export async function openCodexTranslationConnection(options: {
 	});
 	// Drain without exposing provider diagnostics or credentials in migration reports.
 	child.stderr.resume();
+	child.stdin.once('error', () => rpc.close('Codex app-server stdin failed'));
+	child.stdout.once('error', () => rpc.close('Codex app-server stdout failed'));
+	child.stderr.once('error', () => rpc.close('Codex app-server stderr failed'));
+	child.stdout.once('end', () => rpc.close('Codex app-server stdout ended'));
+	child.once('close', () => rpc.close('Codex app-server connection closed'));
 	child.once('error', (error) => rpc.close(error.message));
 	child.once('exit', () => rpc.close('Codex app-server exited'));
 	const close = (): void => {

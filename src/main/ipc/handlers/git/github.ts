@@ -10,6 +10,8 @@ import {
 } from '../../../utils/cliDetection';
 import { getShellPath } from '../../../runtime/getShellPath';
 import { captureMessage } from '../../../utils/sentry';
+import { screenForSecrets } from '../../../local-models/secret-screen';
+import { secretScreenRefusal } from '../../../../shared/secretScan';
 import { LOG_CONTEXT, handlerOpts } from './shared';
 
 /**
@@ -151,6 +153,13 @@ export function registerGithubHandlers(): void {
 
 	// Create a GitHub Gist from file content
 	// Returns the gist URL on success
+	//
+	// The content is screened for secrets first, here, because this handler is
+	// where every route to a gist meets: the Publish Gist modal calls it
+	// directly and `maestro-cli gist create` reaches it through the renderer. A
+	// finding refuses the publish and returns the masked list; only a request
+	// carrying `allowSecrets` (the modal's "Publish anyway", the CLI's
+	// `--allow-secrets`) goes through.
 	ipcMain.handle(
 		'git:createGist',
 		withIpcErrorLogging(
@@ -160,8 +169,19 @@ export function registerGithubHandlers(): void {
 				content: string,
 				description: string,
 				isPublic: boolean,
-				ghPath?: string
+				ghPath?: string,
+				options?: { allowSecrets?: boolean }
 			) => {
+				if (options?.allowSecrets !== true) {
+					const screen = await screenForSecrets([
+						{ source: filename, text: content },
+						{ source: 'description', text: description ?? '' },
+					]);
+					if (screen.findings.length > 0) {
+						return secretScreenRefusal(screen.findings, 'the gist', screen.note);
+					}
+				}
+
 				// Resolve gh CLI path (uses cached detection or custom path)
 				const ghCommand = await resolveGhPath(ghPath);
 				logger.debug(`Using gh CLI for gist creation at: ${ghCommand}`, LOG_CONTEXT);

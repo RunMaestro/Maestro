@@ -6,10 +6,17 @@
  * renderer's in-memory `batchStore`, so a call site that goes straight to
  * `window.maestro.debug.createPackage` silently ships a package with no Auto
  * Run diagnostics at all. Call this instead.
+ *
+ * It is also where the secret screen's confirmation lives. The main process
+ * screens the collected package before it asks where to save it; on a finding
+ * this asks the user, and "Create anyway" repeats the request with
+ * `allowSecrets`. A no comes back as `cancelled`, the same as a dismissed save
+ * dialog, so no caller has to learn a third outcome.
  */
 
 import { useBatchStore } from '../stores/batchStore';
 import type { AutoRunDebugSnapshot, DebugPackageOptions } from '../../shared/debugPackage';
+import { withSecretScreenConfirm } from './secretScreen';
 
 /**
  * Capture the current Auto Run state for every agent, as counters and flags.
@@ -56,11 +63,14 @@ export function captureAutoRunSnapshots(): AutoRunDebugSnapshot[] {
 /**
  * Generate a debug package, attaching the live Auto Run snapshot.
  */
-export function createDebugPackage(
-	options?: Omit<DebugPackageOptions, 'autoRunSnapshots'>
+export async function createDebugPackage(
+	options?: Omit<DebugPackageOptions, 'autoRunSnapshots' | 'allowSecrets'>
 ): ReturnType<typeof window.maestro.debug.createPackage> {
-	return window.maestro.debug.createPackage({
-		...options,
-		autoRunSnapshots: captureAutoRunSnapshots(),
-	});
+	const autoRunSnapshots = captureAutoRunSnapshots();
+	const { result, declined } = await withSecretScreenConfirm(
+		(allowSecrets) =>
+			window.maestro.debug.createPackage({ ...options, autoRunSnapshots, allowSecrets }),
+		{ subject: 'this support package', confirmLabel: 'Create anyway' }
+	);
+	return declined ? { ...result, cancelled: true } : result;
 }

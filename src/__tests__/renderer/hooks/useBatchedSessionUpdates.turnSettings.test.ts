@@ -72,6 +72,42 @@ describe('useBatchedSessionUpdates - turn settings stamped on agent output', () 
 		expect(entry.turnEffort).toBe('high');
 	});
 
+	it('stamps where a Run on turn ran, from the send-time stamp', () => {
+		seed({ turnModel: 'opus', turnRunOn: 'qwen3:latest · Ollama' });
+
+		const { result } = renderHook(() => useBatchedSessionUpdates());
+
+		act(() => {
+			result.current.appendLog(SESSION_ID, TAB_ID, true, 'Answered by the source.');
+			result.current.flushNow();
+		});
+
+		expect(tabLogs()[0].turnRunOn).toBe('qwen3:latest · Ollama');
+	});
+
+	it("stamps a turn's Auto, from the send-time stamp", () => {
+		const turnAuto = {
+			status: 'routed' as const,
+			route: {
+				tier: 'medium' as const,
+				effort: 'high' as const,
+				engine: 'Embedding router',
+				calibrated: false,
+			},
+		};
+		seed({ turnModel: 'sonnet', turnAuto });
+
+		const { result } = renderHook(() => useBatchedSessionUpdates());
+
+		act(() => {
+			result.current.appendLog(SESSION_ID, TAB_ID, true, 'Answered on the routed model.');
+			result.current.flushNow();
+		});
+
+		expect(tabLogs()[0].turnAuto).toEqual(turnAuto);
+		expect(tabLogs()[0].turnModel).toBe('sonnet');
+	});
+
 	it('leaves the entry unstamped when the agent default was in force', () => {
 		seed({});
 
@@ -85,5 +121,42 @@ describe('useBatchedSessionUpdates - turn settings stamped on agent output', () 
 		const [entry] = tabLogs();
 		expect(entry.turnModel).toBeUndefined();
 		expect(entry.turnEffort).toBeUndefined();
+		expect(entry.turnRunOn).toBeUndefined();
+		expect(entry.turnAuto).toBeUndefined();
+	});
+});
+
+it('keeps the event owner when selection changes before the batch flush', () => {
+	seed({ turnProvider: 'claude-code', turnModel: 'opus' });
+	const { result } = renderHook(() => useBatchedSessionUpdates());
+	act(() => {
+		result.current.appendLog(SESSION_ID, TAB_ID, true, 'Claude answer');
+		result.current.updateUsage(SESSION_ID, TAB_ID, {
+			inputTokens: 10,
+			outputTokens: 2,
+			cacheReadInputTokens: 0,
+			cacheCreationInputTokens: 0,
+			totalCostUsd: 0.1,
+			contextWindow: 200000,
+		});
+		useSessionStore.setState(({ sessions }) => ({
+			sessions: sessions.map((session) => ({
+				...session,
+				aiTabs: session.aiTabs.map((tab) => ({
+					...tab,
+					tabProvider: 'codex',
+					usageStats: undefined,
+					providerSessions: { 'claude-code': { agentSessionId: 'claude-native' } },
+				})),
+			})),
+		}));
+		result.current.flushNow();
+	});
+	const tab = useSessionStore.getState().sessions[0].aiTabs[0];
+	expect(tab.logs[0]).toMatchObject({ turnProvider: 'claude-code', turnModel: 'opus' });
+	expect(tab.usageStats).toBeUndefined();
+	expect(tab.providerSessions?.['claude-code']?.usageStats).toMatchObject({
+		inputTokens: 10,
+		outputTokens: 2,
 	});
 });

@@ -2,6 +2,7 @@
 
 import { resolveTargetSessionId } from '../services/maestro-client';
 import { refreshFileTreeFor } from '../services/file-tree-refresh';
+import { ExitCode, exitWith } from '../exit-codes';
 import { exitIfMaestroNotRunning } from '../services/session-command';
 
 interface RefreshFilesOptions {
@@ -32,13 +33,13 @@ export async function refreshFiles(options: RefreshFilesOptions): Promise<void> 
 			const error = result.error || 'Failed to refresh file tree';
 			if (options.json) console.log(JSON.stringify({ success: false, error }));
 			else console.error(`Error: ${error}`);
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 	} catch (error) {
 		exitIfMaestroNotRunning(error, { json: options.json });
 		const msg = error instanceof Error ? error.message : String(error);
 		if (options.json) console.log(JSON.stringify({ success: false, error: msg }));
 		else console.error(`Error: ${msg}`);
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 }

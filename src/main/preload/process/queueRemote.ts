@@ -1,5 +1,6 @@
 import { ipcRenderer } from 'electron';
 import type { QueueSteerResult } from '../../../shared/chatSteering';
+import type { ConsultChain } from '../../../shared/consultBudget';
 
 export function createQueueRemoteApi() {
 	return {
@@ -18,7 +19,8 @@ export function createQueueRemoteApi() {
 				tabId?: string,
 				images?: string[],
 				background?: boolean,
-				held?: boolean
+				held?: boolean,
+				consultChain?: ConsultChain
 			) => void
 		): (() => void) => {
 			const handler = (
@@ -30,10 +32,21 @@ export function createQueueRemoteApi() {
 				tabId?: string,
 				images?: string[],
 				background?: boolean,
-				held?: boolean
+				held?: boolean,
+				consultChain?: ConsultChain
 			) => {
 				try {
-					callback(sessionId, command, responseChannel, inputMode, tabId, images, background, held);
+					callback(
+						sessionId,
+						command,
+						responseChannel,
+						inputMode,
+						tabId,
+						images,
+						background,
+						held,
+						consultChain
+					);
 				} catch (error) {
 					ipcRenderer.send(responseChannel, { success: false });
 					throw error;

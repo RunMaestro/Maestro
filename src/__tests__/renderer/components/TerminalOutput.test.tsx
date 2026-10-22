@@ -23,6 +23,8 @@ import { useUIStore } from '../../../renderer/stores/uiStore';
 import type { Session, Theme, LogEntry } from '../../../renderer/types';
 import { TRANSCRIPT_SCROLL_TO_BOTTOM_EVENT } from '../../../renderer/services/transcriptScroll';
 import { useComposerInputStore } from '../../../renderer/stores/composerInputStore';
+import { computeTurnDurations } from '../../../renderer/components/TerminalOutput/utils/turnDurations';
+import { createMockAITab } from '../../helpers/mockTab';
 
 // Mock dependencies
 vi.mock('react-syntax-highlighter', () => ({
@@ -4205,6 +4207,7 @@ describe('TerminalOutput', () => {
 					id: 'resp-1',
 					text: 'response from API stream',
 					source: 'stdout',
+					turnProvider: 'claude-code',
 					renderStyle: 'structured',
 				}),
 			];
@@ -4230,6 +4233,7 @@ describe('TerminalOutput', () => {
 					id: 'resp-1',
 					text: 'response',
 					source: 'stdout',
+					turnProvider: 'claude-code',
 					renderStyle: 'structured',
 					turnModel: 'opus',
 					turnEffort: 'high',
@@ -4255,6 +4259,7 @@ describe('TerminalOutput', () => {
 					id: 'api-resp',
 					text: 'response from API stream',
 					source: 'stdout',
+					turnProvider: 'claude-code',
 					renderStyle: 'structured',
 				}),
 				createLogEntry({ id: 'user-2', text: 'second prompt', source: 'user' }),
@@ -4262,6 +4267,7 @@ describe('TerminalOutput', () => {
 					id: 'interactive-resp',
 					text: 'response captured from interactive TUI',
 					source: 'stdout',
+					turnProvider: 'claude-code',
 					renderStyle: 'text-stream',
 				}),
 			];
@@ -4296,6 +4302,7 @@ describe('TerminalOutput', () => {
 					id: 'interactive-resp',
 					text: 'response captured from interactive TUI',
 					source: 'stdout',
+					turnProvider: 'claude-code',
 					renderStyle: 'text-stream',
 				}),
 			];
@@ -4320,6 +4327,7 @@ describe('TerminalOutput', () => {
 					id: 'resp-tui',
 					text: 'tui response',
 					source: 'stdout',
+					turnProvider: 'claude-code',
 					renderStyle: 'text-stream',
 				}),
 				createLogEntry({ id: 'user-2', text: 'second prompt', source: 'user' }),
@@ -4327,6 +4335,7 @@ describe('TerminalOutput', () => {
 					id: 'resp-api',
 					text: 'api response',
 					source: 'stdout',
+					turnProvider: 'claude-code',
 					renderStyle: 'structured',
 				}),
 			];
@@ -4354,6 +4363,7 @@ describe('TerminalOutput', () => {
 					id: 'resp-tui',
 					text: 'tui response',
 					source: 'stdout',
+					turnProvider: 'claude-code',
 					renderStyle: 'text-stream',
 				}),
 				createLogEntry({ id: 'user-2', text: 'second prompt', source: 'user' }),
@@ -4361,6 +4371,7 @@ describe('TerminalOutput', () => {
 					id: 'resp-api',
 					text: 'api response',
 					source: 'stdout',
+					turnProvider: 'claude-code',
 					renderStyle: 'structured',
 				}),
 			];
@@ -4411,7 +4422,7 @@ describe('TerminalOutput', () => {
 		it('does not render the pill on non-Claude agents', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({ id: 'user-1', text: 'prompt', source: 'user' }),
-				createLogEntry({ id: 'resp-1', text: 'response', source: 'stdout' }),
+				createLogEntry({ id: 'resp-1', text: 'response', source: 'stdout', turnProvider: 'codex' }),
 			];
 
 			const session = createDefaultSession({
@@ -4430,6 +4441,133 @@ describe('TerminalOutput', () => {
 	});
 
 	describe('model / effort pill rendering', () => {
+		it('keeps a translation marker between providers without stealing turn attribution or merging replies', () => {
+			const translation: NonNullable<LogEntry['contextTranslation']> = {
+				operationId: 'op',
+				source: { provider: 'claude-code', version: 'source-version' },
+				destination: { provider: 'codex', version: 'destination-version' },
+				verification: 'unverified',
+				counts: { records: 1, artifacts: 0, bytes: 100 },
+				limitations: [
+					{ code: 'native', severity: 'warning', message: 'Native resume unverified.' },
+				],
+			};
+			const before = createLogEntry({ id: 'a', text: 'Before.', turnProvider: 'claude-code' });
+			const marker = createLogEntry({
+				id: 'marker',
+				source: 'system',
+				text: 'Context translated',
+				contextTranslation: translation,
+			});
+			const after = createLogEntry({ id: 'b', text: 'After.', turnProvider: 'codex' });
+			const logs = [before, marker, after];
+			expect(collapseAiResponseLogs(logs).map((log) => log.id)).toEqual(['a', 'marker', 'b']);
+			const tabs = [createMockAITab({ id: 'tab-1', agentSessionId: 'native', logs })];
+			const session = createDefaultSession({
+				toolType: 'opencode',
+				tabs,
+				activeTabId: 'tab-1',
+			} as never);
+			session.aiTabs = tabs;
+			const props = createDefaultProps({ session }) as React.ComponentProps<typeof TerminalOutput>;
+			const { rerender } = render(<TerminalOutput {...props} />);
+			expect(screen.getByText('Context translated from Claude Code')).toBeInTheDocument();
+			expect(screen.getAllByTestId('turn-provider-pill').map((pill) => pill.textContent)).toEqual([
+				'Claude Code',
+				'Codex',
+			]);
+			// Metadata-only updates must pass LogItem's memo comparison.
+			const updatedTabs = [
+				{
+					...tabs[0],
+					logs: [
+						before,
+						{ ...marker, contextTranslation: { ...translation, source: translation.destination } },
+						after,
+					],
+				},
+			];
+			const updated = { ...session, tabs: updatedTabs, aiTabs: updatedTabs };
+			rerender(<TerminalOutput {...props} session={updated} />);
+			expect(screen.getByText('Context translated from Codex')).toBeInTheDocument();
+		});
+
+		it('shows the first captured owner and changes, skipping legacy and non-response entries', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'a', text: 'first', turnProvider: 'claude-code' }),
+				createLogEntry({ id: 'tool', source: 'tool', text: 'tool', turnProvider: 'codex' }),
+				createLogEntry({ id: 'a2', text: 'same owner', turnProvider: 'claude-code' }),
+				createLogEntry({ id: 'u1', source: 'user' }),
+				createLogEntry({ id: 'legacy', text: 'legacy owner unknown' }),
+				createLogEntry({ id: 'u2', source: 'user' }),
+				createLogEntry({ id: 'a3', text: 'still same owner', turnProvider: 'claude-code' }),
+				createLogEntry({ id: 'u3', source: 'user' }),
+				createLogEntry({ id: 'b', text: 'second owner', turnProvider: 'codex' }),
+				createLogEntry({ id: 'u4', source: 'user' }),
+				createLogEntry({ id: 'b2', text: 'same second owner', turnProvider: 'codex' }),
+				createLogEntry({ id: 'u5', source: 'user' }),
+				createLogEntry({ id: 'a4', text: 'returned owner', turnProvider: 'claude-code' }),
+			];
+			const session = createDefaultSession({
+				toolType: 'opencode',
+				tabs: [{ id: 'tab-1', agentSessionId: 'native', logs, isUnread: false }],
+			});
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+			expect(screen.getAllByTestId('turn-provider-pill').map((pill) => pill.textContent)).toEqual([
+				'Claude Code',
+				'Codex',
+				'Claude Code',
+			]);
+		});
+
+		it('updates captured pills when attribution changes without changing the reply text', () => {
+			const entry = createLogEntry({ id: 'reply', text: 'same text', turnProvider: 'codex' });
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'native', logs: [entry], isUnread: false }],
+			});
+			// Keep the legacy mock's tabs aligned with the component's memo dependency.
+			session.aiTabs = session.tabs;
+			const { rerender } = render(<TerminalOutput {...createDefaultProps({ session })} />);
+			expect(screen.getByTestId('turn-provider-pill')).toHaveTextContent('Codex');
+			const updated = createDefaultSession({
+				tabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'native',
+						logs: [{ ...entry, turnProvider: 'claude-code', turnModel: 'sonnet' }],
+						isUnread: false,
+					},
+				],
+			});
+			updated.aiTabs = updated.tabs;
+			rerender(<TerminalOutput {...createDefaultProps({ session: updated })} />);
+			expect(screen.getByTestId('turn-provider-pill')).toHaveTextContent('Claude Code');
+			expect(screen.getByTestId('turn-model-pill')).toHaveTextContent('sonnet');
+		});
+
+		it('uses captured ownership for mode pills and leaves untagged history unknown', () => {
+			useSettingsStore.setState({ showProviderModePill: true });
+			const logs = [
+				createLogEntry({ id: 'legacy', text: 'legacy text', renderStyle: 'text-stream' }),
+				createLogEntry({ id: 'u', source: 'user' }),
+				createLogEntry({
+					id: 'claude',
+					text: 'captured',
+					renderStyle: 'text-stream',
+					turnProvider: 'claude-code',
+				}),
+			];
+			const session = createDefaultSession({
+				toolType: 'codex',
+				providerOverrides: { 'claude-code': { enableMaestroP: true } },
+				tabs: [{ id: 'tab-1', agentSessionId: 'native', logs, isUnread: false }],
+			});
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+			expect(screen.getAllByText('Dynamic TUI Wrapper')).toHaveLength(1);
+			expect(screen.getAllByTestId('turn-provider-pill')).toHaveLength(1);
+			useSettingsStore.setState({ showProviderModePill: false });
+		});
+
 		it('labels each response with the model and effort its turn was sent with', () => {
 			// The point of the pills: the user switched configuration mid-conversation,
 			// so each response has to say which one produced it.
@@ -4463,6 +4601,90 @@ describe('TerminalOutput', () => {
 			expect(screen.getByText('high')).toBeInTheDocument();
 			expect(screen.getByText('sonnet')).toBeInTheDocument();
 			expect(screen.getByText('low')).toBeInTheDocument();
+		});
+
+		it('names where a Run on turn ran in place of its model', () => {
+			// The agent's own model was not the one asked, so the pill names the
+			// source's model and the source.
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'prompt', source: 'user' }),
+				createLogEntry({
+					id: 'resp-1',
+					text: 'answered by a source',
+					source: 'stdout',
+					turnModel: 'opus',
+					turnRunOn: 'qwen3:latest · Ollama',
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByTestId('turn-run-on-pill')).toHaveTextContent('qwen3:latest · Ollama');
+			expect(screen.queryByText('opus')).not.toBeInTheDocument();
+		});
+
+		it('reads what the router decided on a turn sent on Auto, in place of its model', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'prompt', source: 'user' }),
+				createLogEntry({
+					id: 'resp-1',
+					text: 'answered on a routed model',
+					source: 'stdout',
+					turnModel: 'sonnet',
+					turnAuto: {
+						status: 'routed',
+						route: {
+							tier: 'medium',
+							effort: 'high',
+							engine: 'Embedding router',
+							calibrated: false,
+						},
+					},
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByTestId('turn-auto-pill')).toHaveTextContent(
+				'Auto \u2192 medium \u00b7 sonnet'
+			);
+			expect(screen.queryByTestId('turn-model-pill')).not.toBeInTheDocument();
+		});
+
+		it('draws the Auto pill for a turn that carries nothing but its stamp', () => {
+			// The router was off and the agent names no model: no model, effort or
+			// Run on label is on the entry, and the pill still has to say so.
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'prompt', source: 'user' }),
+				createLogEntry({
+					id: 'resp-1',
+					text: 'answered on the agent default',
+					source: 'stdout',
+					turnAuto: {
+						status: 'router-off',
+						route: { skipped: 'off', detail: 'Model routing is off.' },
+					},
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByTestId('turn-auto-pill')).toHaveTextContent('Auto (router off)');
 		});
 
 		it('renders on non-Claude agents, which have no token-source pill', () => {
@@ -4884,6 +5106,50 @@ describe('collapseAiResponseLogs', () => {
 		...(error ? { error } : {}),
 	});
 
+	it('preserves the captured owner when a system banner leads the response', () => {
+		const out = collapseAiResponseLogs([
+			mk({ id: 'banner', source: 'system', text: 'Mode changed. ' }),
+			mk({ id: 'reply', turnProvider: 'codex', text: 'Answer' }),
+		]);
+		expect(out).toHaveLength(1);
+		expect(out[0]).toMatchObject({
+			id: 'banner',
+			turnProvider: 'codex',
+			text: 'Mode changed. Answer',
+		});
+	});
+
+	it('does not assign adjacent providers to untagged assistant history', () => {
+		const logs = [
+			mk({ id: 'u', source: 'user', timestamp: 10 }),
+			mk({ id: 'old', text: 'unknown', timestamp: 20 }),
+			mk({ id: 'owned', text: 'known', turnProvider: 'codex', timestamp: 30 }),
+			mk({ id: 'old2', text: 'unknown again', timestamp: 40 }),
+		];
+		const out = collapseAiResponseLogs(logs);
+		expect(out.map((entry) => entry.id)).toEqual(['u', 'old', 'owned', 'old2']);
+		expect(out[1].turnProvider).toBeUndefined();
+		expect(out[2].turnProvider).toBe('codex');
+		expect(out[3].turnProvider).toBeUndefined();
+		expect([...computeTurnDurations(logs)]).toEqual([['old2', 30]]);
+	});
+
+	it('keeps different captured owners separate without requiring a user row', () => {
+		const logs = [
+			mk({ id: 'u', source: 'user', timestamp: 10 }),
+			mk({ id: 'a', turnProvider: 'claude-code', text: 'A', timestamp: 20 }),
+			mk({ id: 'b', turnProvider: 'codex', text: 'B', timestamp: 30 }),
+			mk({ id: 'b2', turnProvider: 'codex', text: '2', timestamp: 40 }),
+		];
+		expect(collapseAiResponseLogs(logs).map((entry) => [entry.id, entry.text])).toEqual([
+			['u', ''],
+			['a', 'A'],
+			['b', 'B2'],
+		]);
+		// The elapsed badge must still point to the last rendered reply's id.
+		expect([...computeTurnDurations(logs)]).toEqual([['b', 30]]);
+	});
+
 	it('collapses consecutive local response entries into one bubble', () => {
 		const out = collapseAiResponseLogs([
 			mk({ id: 'u', source: 'user', text: 'hi' }),
@@ -4941,6 +5207,40 @@ describe('collapseAiResponseLogs', () => {
 		]);
 		expect(out).toHaveLength(1);
 		expect(out[0].renderStyle).toBe('text-stream');
+	});
+
+	it('carries where a Run on turn ran onto the combined entry', () => {
+		const out = collapseAiResponseLogs([
+			mk({ id: 'a', source: 'stdout', text: 'part 1 ' }),
+			mk({ id: 'b', source: 'stdout', text: 'part 2', turnRunOn: 'qwen3:latest \u00b7 Ollama' }),
+		]);
+		expect(out).toHaveLength(1);
+		expect(out[0].turnRunOn).toBe('qwen3:latest \u00b7 Ollama');
+	});
+
+	it("carries a turn's Auto stamp onto the combined entry", () => {
+		// Like the Run on label, the stamp may sit on any entry of the group, and
+		// the bubble is drawn from the first.
+		const turnAuto = {
+			status: 'routed' as const,
+			route: { tier: 'medium' as const, effort: 'high' as const, engine: 'Embedding router' },
+		};
+		const out = collapseAiResponseLogs([
+			mk({ id: 'a', source: 'stdout', text: 'part 1 ' }),
+			mk({ id: 'b', source: 'stdout', text: 'part 2', turnModel: 'sonnet', turnAuto }),
+		]);
+		expect(out).toHaveLength(1);
+		expect(out[0].id).toBe('a');
+		expect(out[0].turnAuto).toEqual(turnAuto);
+		expect(out[0].turnModel).toBe('sonnet');
+	});
+
+	it('leaves the combined entry without an Auto stamp when no entry carries one', () => {
+		const out = collapseAiResponseLogs([
+			mk({ id: 'a', source: 'stdout', text: 'part 1 ' }),
+			mk({ id: 'b', source: 'stdout', text: 'part 2' }),
+		]);
+		expect(out[0]).not.toHaveProperty('turnAuto');
 	});
 
 	it('keeps Agent Resilience outage markers standalone, not folded into a text group', () => {

@@ -19,6 +19,7 @@ import {
 } from '../../../../renderer/hooks/session/useBatchedSessionUpdates';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import type { Session, UsageStats } from '../../../../renderer/types';
+import { createMockSession } from '../../../helpers/mockSession';
 
 const ONE_M = 1_000_000;
 const FALLBACK = 200_000;
@@ -146,7 +147,7 @@ describe('useBatchedSessionUpdates accumulator preserves resolved window', () =>
 
 	it('keeps the resolved window when a same-model fallback delta accumulates (session-level)', () => {
 		useSessionStore.setState({
-			sessions: [{ id: 's1' } as unknown as Session],
+			sessions: [createMockSession({ id: 's1', aiTabs: [] })],
 		} as never);
 
 		const { result } = renderHook(() => useBatchedSessionUpdates(10_000));

@@ -5,6 +5,7 @@ import ReactDOM from 'react-dom/client';
 import * as Sentry from '@sentry/electron/renderer';
 import { shouldDropSentryEvent } from '../shared/sentryFilters';
 import MaestroConsole from './App';
+import { AudioHostRoot } from './acappella-audio';
 import { CadenzaHudRoot } from './cadenzaHud';
 import { QuickChatRoot } from './quickChat/QuickChatRoot';
 import {
@@ -17,6 +18,7 @@ import { LayerStackProvider } from './contexts/LayerStackContext';
 // ModalProvider removed - modal state now managed by modalStore (Zustand)
 import { WizardProvider } from './components/Wizard';
 import { logger } from './utils/logger';
+import { startUserLocalModelsSync } from './services/userLocalModels';
 import './index.css';
 
 // Initialize Sentry for renderer process
@@ -127,7 +129,25 @@ const isFloatingWidget = new URLSearchParams(window.location.search).has(
 	FLOATING_WIDGET_QUERY_PARAM
 );
 
-if (isFloatingWidget) {
+// Audio host mode: A Cappella's hidden window (src/main/acappella/audio-host-window.ts)
+// loads this bundle with `?acappellaAudio` purely to own an AudioContext, the
+// mic capture graph, and TTS playback. It renders nothing and must never mount
+// the app - a second full renderer would duplicate every store and listener.
+const isAcappellaAudioHost = new URLSearchParams(window.location.search).has('acappellaAudio');
+
+if (isAcappellaAudioHost) {
+	// The window is never painted, but drop the static splash anyway so anything
+	// that does force it visible (devtools, a stray show()) shows an empty page.
+	document.getElementById('initial-splash')?.remove();
+	// Renders null and owns the mic/AudioContext; no chrome, no providers.
+	ReactDOM.createRoot(document.getElementById('root')!).render(
+		<React.StrictMode>
+			<ErrorBoundary>
+				<AudioHostRoot />
+			</ErrorBoundary>
+		</React.StrictMode>
+	);
+} else if (isFloatingWidget) {
 	document.documentElement.classList.add('floating-widget-window');
 	document.body.classList.add('floating-widget-window');
 	document.getElementById('initial-splash')?.remove();
@@ -163,6 +183,8 @@ if (isFloatingWidget) {
 		</React.StrictMode>
 	);
 } else {
+	// The models the user added from Hugging Face join this window's catalog.
+	startUserLocalModelsSync();
 	ReactDOM.createRoot(document.getElementById('root')!).render(
 		<React.StrictMode>
 			<ErrorBoundary>

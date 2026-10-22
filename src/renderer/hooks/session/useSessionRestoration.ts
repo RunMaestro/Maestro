@@ -314,11 +314,14 @@ export function useSessionRestoration(): SessionRestorationReturn {
 										current.shellLogs,
 										(log) => log.id
 									),
-									agentCommands: mergeDeferredItems(
-										content.agentCommands,
-										current.agentCommands,
-										(command) => command.command
-									),
+									agentCommands:
+										content.agentCommandsScope === current.agentCommandsScope
+											? mergeDeferredItems(
+													content.agentCommands,
+													current.agentCommands,
+													(command) => command.command
+												)
+											: current.agentCommands,
 									aiCommandHistory: mergeDeferredItems(
 										content.aiCommandHistory,
 										current.aiCommandHistory,

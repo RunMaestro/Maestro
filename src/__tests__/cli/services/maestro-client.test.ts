@@ -67,11 +67,318 @@ import {
 	isCliServerRunning,
 } from '../../../shared/maestro-lib/client/discovery';
 import { readSessions } from '../../../cli/services/storage';
+import { MaestroNotRunningError } from '../../../cli/services/maestro-bridge-errors';
+import WebSocket from 'ws';
 
 describe('CLI names for the library bridge connection', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		vi.useFakeTimers();
+		vi.mocked(isCliServerRunning).mockReturnValue(true);
+	});
 	it('MaestroClient and withMaestroClient are the library connection and helper', () => {
 		expect(MaestroClient).toBe(BridgeConnection);
 		expect(withMaestroClient).toBe(withBridgeConnection);
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	describe('connect()', () => {
+		it('should throw when no discovery file exists', async () => {
+			vi.mocked(readCliServerInfo).mockReturnValue(null);
+
+			const client = new MaestroClient();
+			await expect(client.connect()).rejects.toThrow('Maestro desktop app is not running');
+		});
+
+		it('should name an unreachable app with MaestroNotRunningError, so a verb exits 3', async () => {
+			vi.mocked(readCliServerInfo).mockReturnValue(null);
+			await expect(new MaestroClient().connect()).rejects.toBeInstanceOf(MaestroNotRunningError);
+
+			vi.mocked(readCliServerInfo).mockReturnValue({
+				port: 3000,
+				token: 'test-token',
+				pid: 12345,
+				startedAt: Date.now(),
+			});
+			vi.mocked(isCliServerRunning).mockReturnValue(false);
+			await expect(new MaestroClient().connect()).rejects.toBeInstanceOf(MaestroNotRunningError);
+
+			vi.mocked(isCliServerRunning).mockReturnValue(true);
+			const client = new MaestroClient();
+			const connecting = client.connect();
+			mockWsInstance.emit(
+				'error',
+				Object.assign(new Error('Connection refused'), { code: 'ECONNREFUSED' })
+			);
+			await expect(connecting).rejects.toBeInstanceOf(MaestroNotRunningError);
+		});
+
+		it('should throw when PID is stale', async () => {
+			vi.mocked(readCliServerInfo).mockReturnValue({
+				port: 3000,
+				token: 'test-token',
+				pid: 12345,
+				startedAt: Date.now(),
+			});
+			vi.mocked(isCliServerRunning).mockReturnValue(false);
+
+			const client = new MaestroClient();
+			await expect(client.connect()).rejects.toMatchObject({ reason: 'stale-discovery-file' });
+		});
+
+		it('should connect successfully when server is running', async () => {
+			vi.mocked(readCliServerInfo).mockReturnValue({
+				port: 3000,
+				token: 'test-token',
+				pid: 12345,
+				startedAt: Date.now(),
+			});
+			vi.mocked(isCliServerRunning).mockReturnValue(true);
+
+			const client = new MaestroClient();
+			const connectPromise = client.connect();
+
+			// Simulate WebSocket open event
+			mockWsInstance.emit('open');
+
+			await connectPromise;
+
+			// Verify connection was established (mockWsInstance is set)
+			expect(mockWsInstance).toBeDefined();
+		});
+
+		it('should reject on WebSocket error', async () => {
+			vi.mocked(readCliServerInfo).mockReturnValue({
+				port: 3000,
+				token: 'test-token',
+				pid: 12345,
+				startedAt: Date.now(),
+			});
+			vi.mocked(isCliServerRunning).mockReturnValue(true);
+
+			const client = new MaestroClient();
+			const connectPromise = client.connect();
+
+			// Simulate WebSocket error
+			mockWsInstance.emit('error', new Error('Connection refused'));
+
+			await expect(connectPromise).rejects.toThrow(
+				'Failed to connect to Maestro: Connection refused'
+			);
+		});
+
+		it('should timeout after 5 seconds', async () => {
+			vi.mocked(readCliServerInfo).mockReturnValue({
+				port: 3000,
+				token: 'test-token',
+				pid: 12345,
+				startedAt: Date.now(),
+			});
+			vi.mocked(isCliServerRunning).mockReturnValue(true);
+
+			const client = new MaestroClient();
+			const connectPromise = client.connect();
+
+			// Advance past timeout
+			vi.advanceTimersByTime(5001);
+
+			await expect(connectPromise).rejects.toMatchObject({ reason: 'connect-timeout' });
+		});
+	});
+
+	describe('sendCommand()', () => {
+		async function createConnectedClient(): Promise<MaestroClient> {
+			vi.mocked(readCliServerInfo).mockReturnValue({
+				port: 3000,
+				token: 'test-token',
+				pid: 12345,
+				startedAt: Date.now(),
+			});
+			vi.mocked(isCliServerRunning).mockReturnValue(true);
+
+			const client = new MaestroClient();
+			const connectPromise = client.connect();
+			mockWsInstance.emit('open');
+			await connectPromise;
+			return client;
+		}
+
+		it('should throw when not connected', async () => {
+			const client = new MaestroClient();
+			await expect(client.sendCommand({ type: 'ping' }, 'pong')).rejects.toThrow(
+				'Not connected to Maestro'
+			);
+		});
+
+		it('should resolve via requestId when response includes matching requestId', async () => {
+			const client = await createConnectedClient();
+
+			const commandPromise = client.sendCommand<{ type: string; data: string }>(
+				{ type: 'ping' },
+				'pong'
+			);
+
+			// Extract the requestId that was sent
+			const sentPayload = JSON.parse(mockWsInstance.send.mock.calls[0][0] as string) as Record<
+				string,
+				unknown
+			>;
+			expect(sentPayload.requestId).toBeDefined();
+
+			// Respond with the same requestId (triggers requestId-based resolution)
+			mockWsInstance.emit(
+				'message',
+				JSON.stringify({ type: 'pong', data: 'ok', requestId: sentPayload.requestId })
+			);
+
+			const result = await commandPromise;
+			expect(result.type).toBe('pong');
+			expect(result.data).toBe('ok');
+		});
+
+		it('should resolve on matching response type', async () => {
+			const client = await createConnectedClient();
+
+			const commandPromise = client.sendCommand<{ type: string; data: string }>(
+				{ type: 'ping' },
+				'pong'
+			);
+
+			// Simulate matching response
+			mockWsInstance.emit('message', JSON.stringify({ type: 'pong', data: 'ok' }));
+
+			const result = await commandPromise;
+			expect(result.type).toBe('pong');
+			expect(result.data).toBe('ok');
+			expect(mockWsInstance.send).toHaveBeenCalledWith(expect.stringContaining('"type":"ping"'));
+		});
+
+		it('should reject on timeout', async () => {
+			const client = await createConnectedClient();
+
+			const commandPromise = client.sendCommand({ type: 'ping' }, 'pong', 2000);
+
+			// Advance past timeout
+			vi.advanceTimersByTime(2001);
+
+			// The error names the expected response type so callers can tell which
+			// command stalled.
+			await expect(commandPromise).rejects.toThrow("expected 'pong'");
+		});
+
+		it('should use default 10s timeout', async () => {
+			const client = await createConnectedClient();
+
+			const commandPromise = client.sendCommand({ type: 'ping' }, 'pong');
+
+			// At 9.9s it should still be pending
+			vi.advanceTimersByTime(9900);
+
+			// At 10.1s it should timeout
+			vi.advanceTimersByTime(200);
+
+			await expect(commandPromise).rejects.toThrow('Timed out waiting for the Maestro app');
+		});
+
+		it('rejects immediately with UnsupportedCommandError when the app echoes back', async () => {
+			const client = await createConnectedClient();
+
+			const commandPromise = client.sendCommand({ type: 'brand_new_cmd' }, 'brand_new_cmd_result');
+
+			// The app does not recognize the type and replies with an echo carrying
+			// the original message (and its requestId) under `data`.
+			const sent = JSON.parse((mockWsInstance.send as ReturnType<typeof vi.fn>).mock.calls[0][0]);
+			mockWsInstance.emit(
+				'message',
+				JSON.stringify({
+					type: 'echo',
+					originalType: 'brand_new_cmd',
+					data: { type: 'brand_new_cmd', requestId: sent.requestId },
+				})
+			);
+
+			await expect(commandPromise).rejects.toThrow("does not support the 'brand_new_cmd' command");
+		});
+
+		it('should ignore non-matching response types', async () => {
+			const client = await createConnectedClient();
+
+			const commandPromise = client.sendCommand<{ type: string }>({ type: 'ping' }, 'pong');
+
+			// Send non-matching response first
+			mockWsInstance.emit('message', JSON.stringify({ type: 'other_event', data: 'ignored' }));
+
+			// Then matching one
+			mockWsInstance.emit('message', JSON.stringify({ type: 'pong' }));
+
+			const result = await commandPromise;
+			expect(result.type).toBe('pong');
+		});
+
+		it('should ignore non-JSON messages', async () => {
+			const client = await createConnectedClient();
+
+			const commandPromise = client.sendCommand<{ type: string }>({ type: 'ping' }, 'pong');
+
+			// Send invalid JSON
+			mockWsInstance.emit('message', 'not json');
+
+			// Then send valid matching message
+			mockWsInstance.emit('message', JSON.stringify({ type: 'pong' }));
+
+			const result = await commandPromise;
+			expect(result.type).toBe('pong');
+		});
+	});
+
+	describe('disconnect()', () => {
+		it('should close the WebSocket connection', async () => {
+			vi.mocked(readCliServerInfo).mockReturnValue({
+				port: 3000,
+				token: 'test-token',
+				pid: 12345,
+				startedAt: Date.now(),
+			});
+			vi.mocked(isCliServerRunning).mockReturnValue(true);
+
+			const client = new MaestroClient();
+			const connectPromise = client.connect();
+			mockWsInstance.emit('open');
+			await connectPromise;
+
+			client.disconnect();
+
+			expect(mockWsInstance.close).toHaveBeenCalled();
+		});
+
+		it('should reject pending requests on disconnect', async () => {
+			vi.mocked(readCliServerInfo).mockReturnValue({
+				port: 3000,
+				token: 'test-token',
+				pid: 12345,
+				startedAt: Date.now(),
+			});
+			vi.mocked(isCliServerRunning).mockReturnValue(true);
+
+			const client = new MaestroClient();
+			const connectPromise = client.connect();
+			mockWsInstance.emit('open');
+			await connectPromise;
+
+			const commandPromise = client.sendCommand({ type: 'ping' }, 'pong');
+
+			client.disconnect();
+
+			await expect(commandPromise).rejects.toThrow('Client disconnected');
+		});
+
+		it('should be safe to call when not connected', () => {
+			const client = new MaestroClient();
+			expect(() => client.disconnect()).not.toThrow();
+		});
 	});
 
 	it('re-exports the library error classes, so instanceof checks keep matching', () => {

@@ -2,12 +2,25 @@
  * Cue domain WebSocket message handlers.
  *
  * Extracted from WebSocketMessageHandler.ts. Handles: get_cue_subscriptions,
- * toggle_cue_subscription, get_cue_activity, trigger_cue_subscription,
+ * toggle_cue_subscription, set_cue_subscription_gate,
+ * set_cue_subscription_injection_screen, get_cue_activity,
+ * trigger_cue_subscription,
  * cue_pipeline_list, cue_pipeline_get, cue_pipeline_set, cue_pipeline_remove.
  */
 
 import { logger } from '../../../utils/logger';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
+import {
+	cueGateConditionProblem,
+	parseCueGateOnUnavailable,
+	type CueGateSetting,
+} from '../../../../shared/cue/gate';
+import {
+	CUE_INJECTION_SCREEN_MODES,
+	cueInjectionThresholdProblem,
+	parseCueInjectionScreenMode,
+	type CueInjectionScreenSetting,
+} from '../../../../shared/cue/injection-screen';
 
 /**
  * Handle get_cue_subscriptions message - fetch Cue subscriptions
@@ -79,6 +92,145 @@ export function handleToggleCueSubscription(
 		})
 		.catch((error) => {
 			ctx.sendError(client, `Failed to toggle Cue subscription: ${error.message}`, {
+				requestId: message.requestId,
+			});
+		});
+}
+
+/**
+ * Handle set_cue_subscription_gate message - set or remove a subscription's
+ * gate. `gate: null` removes it; `gate: "<condition>"` sets it, with an
+ * optional `gateOnUnavailable` (`run` | `skip`).
+ *
+ * The message is checked here, before the engine is asked: the bridge is the
+ * boundary, and a frame that is neither a removal nor a usable condition is
+ * refused by name instead of being read as one of them. `gate` absent is NOT
+ * a removal: a caller that dropped the field must not erase a gate.
+ */
+export function handleSetCueSubscriptionGate(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const subscriptionId = message.subscriptionId;
+	if (typeof subscriptionId !== 'string' || subscriptionId.length === 0) {
+		ctx.sendError(client, 'Missing subscriptionId', { requestId: message.requestId });
+		return;
+	}
+
+	let gate: CueGateSetting | null;
+	if (message.gate === null) {
+		gate = null;
+	} else if (typeof message.gate === 'string') {
+		const problem = cueGateConditionProblem(message.gate);
+		if (problem) {
+			ctx.sendError(client, problem, { requestId: message.requestId });
+			return;
+		}
+		gate = { condition: message.gate };
+		if (message.gateOnUnavailable !== undefined) {
+			const onUnavailable = parseCueGateOnUnavailable(message.gateOnUnavailable);
+			if (!onUnavailable) {
+				ctx.sendError(client, 'Invalid gateOnUnavailable: must be "run" or "skip"', {
+					requestId: message.requestId,
+				});
+				return;
+			}
+			gate.onUnavailable = onUnavailable;
+		}
+	} else {
+		ctx.sendError(client, 'Missing gate: pass a condition, or null to remove the gate', {
+			requestId: message.requestId,
+		});
+		return;
+	}
+
+	if (!ctx.callbacks.setCueSubscriptionGate) {
+		ctx.sendError(client, 'Cue gate editing is not available', { requestId: message.requestId });
+		return;
+	}
+
+	ctx.callbacks
+		.setCueSubscriptionGate(subscriptionId, gate)
+		.then((result) => {
+			ctx.send(client, {
+				type: 'set_cue_subscription_gate_result',
+				success: result.ok,
+				subscriptionId,
+				...(result.ok ? { updated: result.updated } : { error: result.error }),
+				gate: gate ? gate.condition.trim() : null,
+				...(gate?.onUnavailable ? { gateOnUnavailable: gate.onUnavailable } : {}),
+				requestId: message.requestId,
+				timestamp: Date.now(),
+			});
+		})
+		.catch((error) => {
+			ctx.sendError(client, `Failed to set the Cue gate: ${error.message}`, {
+				requestId: message.requestId,
+			});
+		});
+}
+
+/**
+ * Handle set_cue_subscription_injection_screen message - set a subscription's
+ * prompt-injection screen: `mode` (`auto` | `on` | `off`) and an optional
+ * `threshold` (above 0, at most 1).
+ *
+ * `mode` is required. A frame without it is refused instead of being read as
+ * `auto`: that would turn off a screen someone set to `on`, on a caller's
+ * dropped field.
+ */
+export function handleSetCueSubscriptionInjectionScreen(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const subscriptionId = message.subscriptionId;
+	if (typeof subscriptionId !== 'string' || subscriptionId.length === 0) {
+		ctx.sendError(client, 'Missing subscriptionId', { requestId: message.requestId });
+		return;
+	}
+
+	const mode = parseCueInjectionScreenMode(message.mode);
+	if (!mode) {
+		ctx.sendError(client, `Invalid mode: must be one of ${CUE_INJECTION_SCREEN_MODES.join(', ')}`, {
+			requestId: message.requestId,
+		});
+		return;
+	}
+	const setting: CueInjectionScreenSetting = { mode };
+	if (message.threshold !== undefined) {
+		const problem = cueInjectionThresholdProblem(message.threshold);
+		if (problem) {
+			ctx.sendError(client, problem, { requestId: message.requestId });
+			return;
+		}
+		setting.threshold = message.threshold as number;
+	}
+
+	if (!ctx.callbacks.setCueSubscriptionInjectionScreen) {
+		ctx.sendError(client, 'Cue injection screen editing is not available', {
+			requestId: message.requestId,
+		});
+		return;
+	}
+
+	ctx.callbacks
+		.setCueSubscriptionInjectionScreen(subscriptionId, setting)
+		.then((result) => {
+			ctx.send(client, {
+				type: 'set_cue_subscription_injection_screen_result',
+				success: result.ok,
+				subscriptionId,
+				...(result.ok ? { updated: result.updated } : { error: result.error }),
+				mode: setting.mode,
+				...(setting.threshold !== undefined ? { threshold: setting.threshold } : {}),
+				requestId: message.requestId,
+				timestamp: Date.now(),
+			});
+		})
+		.catch((error) => {
+			ctx.sendError(client, `Failed to set the Cue injection screen: ${error.message}`, {
 				requestId: message.requestId,
 			});
 		});

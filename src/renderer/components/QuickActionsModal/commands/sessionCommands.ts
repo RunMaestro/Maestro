@@ -174,8 +174,8 @@ export function buildSessionManagementCommands({
 		const agentName = getAgentDisplayName(activeSession.toolType);
 		commands.push({
 			id: 'reauthenticateProvider',
-			label: `Re-authenticate Provider: ${agentName}`,
-			subtext: `Sign in to ${agentName} again for ${activeSession.name}`,
+			label: `Re-authenticate Agent Default: ${agentName}`,
+			subtext: `Sign in to the default provider for ${activeSession.name}`,
 			action: () => {
 				const { providerKey } = startManualReauth(activeSession.id);
 				setQuickActionOpen(false);

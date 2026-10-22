@@ -79,7 +79,21 @@ import {
 	parseCueSubscriptionId,
 	pipelineKeyForSubscription,
 } from '../../shared/cue/subscription-id';
-import { triggerGroupKey } from '../../shared/cue/trigger-group-key';
+import { isSameTriggerGroup } from '../../shared/cue/trigger-group-key';
+import {
+	cueGateConditionProblem,
+	writeCueGateFields,
+	type CueGateEvaluator,
+	type CueGateSetting,
+	type CueGateWriteResult,
+} from '../../shared/cue/gate';
+import {
+	cueInjectionThresholdProblem,
+	writeCueInjectionScreenFields,
+	type CueInjectionScorer,
+	type CueInjectionScreenSetting,
+	type CueInjectionScreenWriteResult,
+} from '../../shared/cue/injection-screen';
 import {
 	acquireCueEngineLock,
 	describeCueEngineLockHolder,
@@ -142,6 +156,23 @@ export interface CueEngineDeps {
 	 * an app restart. Omit (tests) to prune with the default window.
 	 */
 	getCueHistoryRetentionDays?: () => unknown;
+	/**
+	 * Answers a subscription's `gate` condition against an event (the `cue-gate`
+	 * Local Models task). Injected so the engine never imports the model stack:
+	 * the desktop passes `evaluateCueGate`, the standalone runner passes
+	 * nothing. Omitted means a gate cannot be checked in this process; the
+	 * subscription's `gate_on_unavailable` policy then decides, and the default
+	 * is to run with a warning.
+	 */
+	evaluateGate?: CueGateEvaluator;
+	/**
+	 * Scores one untrusted value for prompt injection (the `injection-screen`
+	 * Local Models task). Injected for the same reason as `evaluateGate`.
+	 * Omitted means this process has no screen: a subscription that set
+	 * `screen_injection: true` on a command is then blocked, and one that only
+	 * got the default runs unscreened (see `resolveCueInjectionDecision`).
+	 */
+	scoreInjection?: CueInjectionScorer;
 	/**
 	 * Which kind of process this engine instance runs in - `'desktop'`
 	 * (default, every existing caller) or `'standalone'` (the headless
@@ -525,6 +556,68 @@ export class CueEngine {
 			},
 			onLog: meteredOnLog,
 			onTriggerFired: deps.onTriggerFired,
+			evaluateGate: deps.evaluateGate,
+			isActive: () => this.enabled,
+			onGated: (gated) => {
+				// The run manager owns `cue_events` writes and their stats
+				// lineage; the engine owns the activity log.
+				const result = this.runManager.recordSkippedRun({
+					sessionId: gated.ownerSessionId,
+					event: gated.event,
+					subscriptionName: gated.subscription.name,
+					pipelineName: gated.subscription.pipeline_name,
+					status: 'gated',
+					startedAt: gated.startedAt,
+					chainRootId: gated.chainRootId,
+					parentEventId: gated.parentEventId,
+				});
+				this.pushActivityLog(result);
+				// A typed payload, so the renderer refreshes the activity list.
+				// Not `runFinished`: nothing ran, and it must not count as a run.
+				meteredOnLog('cue', `[CUE] Run gated: ${gated.subscription.name}`, {
+					type: 'runGated',
+					runId: result.runId,
+					sessionId: result.sessionId,
+					subscriptionName: result.subscriptionName,
+					reason: gated.record.reason,
+				} satisfies CueLogPayload);
+				// No completion is raised: nothing ran, so no chain step may
+				// fire off it, and no Conductor time is credited. A one-shot is
+				// still consumed (see maybeSelfDestructOnce).
+				this.maybeSelfDestructOnce(gated.ownerSessionId, result, gated.subscription.name);
+			},
+			scoreInjection: deps.scoreInjection,
+			onInjectionBlocked: (blocked) => {
+				const result = this.runManager.recordSkippedRun({
+					sessionId: blocked.ownerSessionId,
+					event: blocked.event,
+					subscriptionName: blocked.subscription.name,
+					pipelineName: blocked.subscription.pipeline_name,
+					status: 'blocked-injection',
+					reason: blocked.record.reason,
+					startedAt: blocked.startedAt,
+					chainRootId: blocked.chainRootId,
+					parentEventId: blocked.parentEventId,
+				});
+				this.pushActivityLog(result);
+				// The typed payload refreshes the activity list and is what the
+				// desktop turns into the red notice. Not `runFinished`: nothing
+				// ran, so no chain step may fire off it and no time is credited.
+				meteredOnLog('warn', `[CUE] Run blocked: ${blocked.subscription.name}`, {
+					type: 'injectionBlocked',
+					runId: result.runId,
+					sessionId: result.sessionId,
+					sessionName: result.sessionName,
+					subscriptionName: result.subscriptionName,
+					...(result.pipelineName ? { pipelineName: result.pipelineName } : {}),
+					reason: blocked.record.reason,
+					...(blocked.record.variable ? { variable: blocked.record.variable } : {}),
+					...(blocked.record.score !== undefined ? { score: blocked.record.score } : {}),
+				} satisfies CueLogPayload);
+				// A blocked one-shot is a failed one: it is consumed unless the
+				// subscription asked to be kept on failure.
+				this.maybeSelfDestructOnce(blocked.ownerSessionId, result, blocked.subscription.name);
+			},
 		});
 		this.sessionRuntimeService = createCueSessionRuntimeService({
 			enabled: () => this.enabled,
@@ -1248,51 +1341,209 @@ export class CueEngine {
 		subName: string,
 		enabled: boolean
 	): boolean {
+		const changed = this.patchSubscriptionRecords(
+			sessionId,
+			projectRoot,
+			'setSubscriptionEnabled',
+			new Set([subName]),
+			targetPipeline,
+			(record) => {
+				record.enabled = enabled;
+			}
+		);
+		return changed.length > 0;
+	}
+
+	/**
+	 * Read cue.yaml, apply `mutate` to every subscription record that is named
+	 * in `names` AND belongs to `targetPipeline`, write the file back, and
+	 * refresh the session so the change takes effect. Returns the names that
+	 * were changed; empty when nothing matched or the file could not be read
+	 * or written (the failure is reported to Sentry).
+	 *
+	 * Matching BOTH pipeline AND name is deliberate. Without the pipeline
+	 * discriminator, two same-named subs in different pipelines under one
+	 * session would have indistinguishable ids and a name-only match could
+	 * silently change the wrong row.
+	 *
+	 * Callers run this inside {@link enqueueYamlWrite}: it is a read, a
+	 * mutate and a write, which is not atomic on the filesystem.
+	 */
+	private patchSubscriptionRecords(
+		sessionId: string,
+		projectRoot: string,
+		operation: string,
+		names: ReadonlySet<string>,
+		targetPipeline: string,
+		mutate: (record: Record<string, unknown>) => void
+	): string[] {
 		const file = readCueConfigFile(projectRoot);
-		if (!file) return false;
+		if (!file) return [];
 
 		let parsed: unknown;
 		try {
 			parsed = yaml.load(file.raw);
 		} catch (err) {
-			captureException(err, { operation: 'setSubscriptionEnabled:yamlLoad', sessionId });
-			return false;
+			captureException(err, { operation: `${operation}:yamlLoad`, sessionId });
+			return [];
 		}
-		if (!parsed || typeof parsed !== 'object') return false;
+		if (!parsed || typeof parsed !== 'object') return [];
 		const subs = (parsed as Record<string, unknown>).subscriptions;
-		if (!Array.isArray(subs)) return false;
+		if (!Array.isArray(subs)) return [];
 
-		// Match BOTH pipeline AND name. Without the pipeline discriminator,
-		// two same-named subs in different pipelines under one session would
-		// have indistinguishable ids and the first-match heuristic could
-		// silently toggle the wrong row.
-		let found = false;
+		const changed: string[] = [];
 		for (const sub of subs) {
 			if (!sub || typeof sub !== 'object') continue;
 			const subRecord = sub as Record<string, unknown>;
-			if (subRecord.name !== subName) continue;
+			if (typeof subRecord.name !== 'string' || !names.has(subRecord.name)) continue;
+			// One row per name: names are unique within a pipeline, and a
+			// hand-edited duplicate must not be changed twice.
+			if (changed.includes(subRecord.name)) continue;
 			const subPipeline = pipelineKeyForSubscription({
-				name: subRecord.name as string,
+				name: subRecord.name,
 				pipeline_name:
 					typeof subRecord.pipeline_name === 'string' ? subRecord.pipeline_name : undefined,
 			});
 			if (subPipeline !== targetPipeline) continue;
-			subRecord.enabled = enabled;
-			found = true;
-			break;
+			mutate(subRecord);
+			changed.push(subRecord.name);
 		}
-		if (!found) return false;
+		if (changed.length === 0) return [];
 
 		try {
 			const serialized = yaml.dump(parsed, { lineWidth: -1, noRefs: true });
 			writeCueConfigFile(projectRoot, serialized);
 		} catch (err) {
-			captureException(err, { operation: 'setSubscriptionEnabled:yamlWrite', sessionId });
-			return false;
+			captureException(err, { operation: `${operation}:yamlWrite`, sessionId });
+			return [];
 		}
 
 		this.refreshSession(sessionId, projectRoot);
-		return true;
+		return changed;
+	}
+
+	/**
+	 * Set or remove the `gate` on a subscription in its owning session's
+	 * cue.yaml (`gate: null` removes it), then refresh that session.
+	 *
+	 * This is the `maestro-cli cue gate` half of the Gate field on a trigger
+	 * node in the pipeline editor, and it lands where that field does: on
+	 * EVERY subscription that is the same visual trigger as the one named
+	 * (see `isSameTriggerGroup`). A trigger that fans out is several
+	 * subscriptions in the file; gating one of them would leave the other
+	 * branches firing on every event, and would split one trigger node in two
+	 * the next time the editor loads the file.
+	 *
+	 * Identity and concurrency are {@link setSubscriptionEnabled}'s: the id is
+	 * `${sessionId}::${pipeline}::${name}` and the write is serialised per
+	 * project root.
+	 */
+	async setSubscriptionGate(
+		subscriptionId: string,
+		gate: CueGateSetting | null
+	): Promise<CueGateWriteResult> {
+		const parsedId = parseCueSubscriptionId(subscriptionId);
+		if (!parsedId) return { ok: false, error: `"${subscriptionId}" is not a subscription id.` };
+		const { sessionId, pipeline: targetPipeline, name: subName } = parsedId;
+
+		if (gate) {
+			const problem = cueGateConditionProblem(gate.condition);
+			if (problem) return { ok: false, error: problem };
+		}
+
+		const session = this.deps.getSessions().find((s) => s.id === sessionId);
+		const projectRoot = session?.projectRoot;
+		if (!projectRoot) return { ok: false, error: `No agent owns subscription "${subName}".` };
+
+		return await this.enqueueYamlWrite(projectRoot, () => {
+			const updated = this.patchSubscriptionRecords(
+				sessionId,
+				projectRoot,
+				'setSubscriptionGate',
+				this.triggerGroupNames(sessionId, subName, targetPipeline),
+				targetPipeline,
+				(record) => writeCueGateFields(record, gate)
+			);
+			if (updated.length === 0) {
+				return {
+					ok: false as const,
+					error: `Could not write the gate: subscription "${subName}" was not found in cue.yaml, or the file could not be read or written.`,
+				};
+			}
+			return { ok: true as const, updated };
+		});
+	}
+
+	/**
+	 * Set the prompt-injection screen on a subscription in its owning
+	 * session's cue.yaml (`screen_injection` / `injection_threshold`), then
+	 * refresh that session.
+	 *
+	 * The `maestro-cli cue screen` half of the screen field on a trigger node
+	 * in the pipeline editor. Like {@link setSubscriptionGate} it lands on
+	 * every subscription of the named trigger, for the same reason: the editor
+	 * stores the setting on the trigger node, and screening one branch of a
+	 * fan-out would split that node in two on the next load.
+	 */
+	async setSubscriptionInjectionScreen(
+		subscriptionId: string,
+		setting: CueInjectionScreenSetting
+	): Promise<CueInjectionScreenWriteResult> {
+		const parsedId = parseCueSubscriptionId(subscriptionId);
+		if (!parsedId) return { ok: false, error: `"${subscriptionId}" is not a subscription id.` };
+		const { sessionId, pipeline: targetPipeline, name: subName } = parsedId;
+
+		if (setting.threshold !== undefined) {
+			const problem = cueInjectionThresholdProblem(setting.threshold);
+			if (problem) return { ok: false, error: problem };
+		}
+
+		const session = this.deps.getSessions().find((s) => s.id === sessionId);
+		const projectRoot = session?.projectRoot;
+		if (!projectRoot) return { ok: false, error: `No agent owns subscription "${subName}".` };
+
+		return await this.enqueueYamlWrite(projectRoot, () => {
+			const updated = this.patchSubscriptionRecords(
+				sessionId,
+				projectRoot,
+				'setSubscriptionInjectionScreen',
+				this.triggerGroupNames(sessionId, subName, targetPipeline),
+				targetPipeline,
+				(record) => writeCueInjectionScreenFields(record, setting)
+			);
+			if (updated.length === 0) {
+				return {
+					ok: false as const,
+					error: `Could not write the screen: subscription "${subName}" was not found in cue.yaml, or the file could not be read or written.`,
+				};
+			}
+			return { ok: true as const, updated };
+		});
+	}
+
+	/**
+	 * The names of every subscription that is the same visual trigger as the
+	 * one named (see `isSameTriggerGroup`), the named one included. Call it
+	 * inside the per-root write chain: siblings are read from the config the
+	 * engine has loaded, so a write queued ahead is already reflected. When the
+	 * session is not loaded, only the named subscription is returned.
+	 */
+	private triggerGroupNames(
+		sessionId: string,
+		subName: string,
+		targetPipeline: string
+	): Set<string> {
+		const loaded = this.registry.get(sessionId)?.config.subscriptions ?? [];
+		const anchor = loaded.find(
+			(sub) => sub.name === subName && pipelineKeyForSubscription(sub) === targetPipeline
+		);
+		const names = new Set([subName]);
+		if (anchor) {
+			for (const sub of loaded) {
+				if (isSameTriggerGroup(anchor, sub)) names.add(sub.name);
+			}
+		}
+		return names;
 	}
 
 	/** Returns the lifetime count of Cue events recorded in the journal. */
@@ -1577,6 +1828,12 @@ export class CueEngine {
 			case 'runStopped':
 				this.metrics.increment('runsStopped');
 				break;
+			case 'runGated':
+				this.metrics.increment('runsGated');
+				break;
+			case 'injectionBlocked':
+				this.metrics.increment('runsBlocked');
+				break;
 			case 'queueOverflow':
 				this.metrics.increment('eventsDropped');
 				break;
@@ -1675,23 +1932,13 @@ export class CueEngine {
 		}
 		if (!anchor) return false;
 
-		// Decide whether to fire the sibling group or just the anchor.
-		// See method docstring for the rationale on each condition.
-		const shouldFireGroup =
-			anchor.sub.event !== 'agent.completed' && !!anchor.sub.pipeline_name && !promptOverride;
-
-		let toDispatch: OwnedSub[];
-		if (shouldFireGroup) {
-			const anchorKey = triggerGroupKey(anchor.sub);
-			toDispatch = ownedSubs.filter(
-				(x) =>
-					x.sub.pipeline_name === anchor!.sub.pipeline_name &&
-					x.sub.event !== 'agent.completed' &&
-					triggerGroupKey(x.sub) === anchorKey
-			);
-		} else {
-			toDispatch = [anchor];
-		}
+		// Fire the whole visual trigger, or just the anchor when a prompt
+		// override targets it. See the method docstring; which subscriptions
+		// are the same trigger is `isSameTriggerGroup`'s answer.
+		const anchorSub = anchor.sub;
+		const toDispatch: OwnedSub[] = promptOverride
+			? [anchor]
+			: ownedSubs.filter((x) => isSameTriggerGroup(anchorSub, x.sub));
 
 		let totalDispatched = 0;
 		for (const { ownerSessionId, state, sub } of toDispatch) {
@@ -1806,9 +2053,14 @@ export class CueEngine {
 	 * it so the one-shot task does not fire again on a future engine cycle.
 	 *
 	 *  - `completed`  → always self-destruct.
-	 *  - `failed` / `timeout` → self-destruct unless the sub set
-	 *                  `self_destruct_on_failure: false` (default true).
+	 *  - `failed` / `timeout` / `blocked-injection` → self-destruct unless
+	 *                  the sub set `self_destruct_on_failure: false` (default
+	 *                  true). A block is a failure: the one-shot did not run.
 	 *  - `stopped`    → never; the manual-stop callback never reaches here.
+	 *  - `gated`      → always self-destruct. The one-shot's gate was asked at
+	 *                  its instant and said no, so the task is consumed. Left
+	 *                  in place it would fire again on every reload inside its
+	 *                  grace window and ask a model the same question each time.
 	 *
 	 * No-op for non-`time.once` runs and when the sub is already absent from
 	 * the in-memory config (e.g. removed by a hot-reload between fire and
@@ -1826,11 +2078,15 @@ export class CueEngine {
 		const sub = state?.config.subscriptions.find((s) => s.name === subscriptionName);
 		if (!sub) return;
 
-		let reason: 'completed' | 'failed';
+		let reason: 'completed' | 'failed' | 'gated';
 		if (result.status === 'completed') {
 			reason = 'completed';
+		} else if (result.status === 'gated') {
+			reason = 'gated';
 		} else if (
-			(result.status === 'failed' || result.status === 'timeout') &&
+			(result.status === 'failed' ||
+				result.status === 'timeout' ||
+				result.status === 'blocked-injection') &&
 			sub.self_destruct_on_failure !== false
 		) {
 			reason = 'failed';

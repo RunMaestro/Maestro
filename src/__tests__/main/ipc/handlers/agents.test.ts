@@ -1504,6 +1504,39 @@ describe('agents IPC handlers', () => {
 	});
 
 	describe('agents:discoverSlashCommands', () => {
+		it('uses the selected Claude account for the probe and description enrichment', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue({
+				id: 'claude-code',
+				available: true,
+				path: '/usr/bin/claude',
+			});
+			vi.mocked(fs.existsSync).mockReturnValue(true);
+			vi.mocked(execFileNoThrow).mockResolvedValue({
+				exitCode: 0,
+				stdout: JSON.stringify({ type: 'system', subtype: 'init', slash_commands: ['work'] }),
+				stderr: '',
+			});
+			await (
+				handlers.get('agents:discoverSlashCommands') as (...args: unknown[]) => Promise<unknown>
+			)({}, 'claude-code', '/test', undefined, undefined, { CLAUDE_CONFIG_DIR: '/accounts/work' });
+			expect(execFileNoThrow).toHaveBeenCalledWith('/usr/bin/claude', expect.any(Array), '/test', {
+				env: expect.objectContaining({ CLAUDE_CONFIG_DIR: '/accounts/work' }),
+			});
+			expect(fs.promises.readdir).toHaveBeenCalledWith(
+				expect.stringContaining('/accounts/work/skills'),
+				expect.anything()
+			);
+		});
+
+		it('does not probe local Claude accounts for an SSH host', async () => {
+			expect(
+				await (
+					handlers.get('agents:discoverSlashCommands') as (...args: unknown[]) => Promise<unknown>
+				)({}, 'claude-code', '/remote', undefined, 'ssh-1')
+			).toBeNull();
+			expect(execFileNoThrow).not.toHaveBeenCalled();
+		});
+
 		it('should return slash commands for Claude Code', async () => {
 			const mockAgent = {
 				id: 'claude-code',
@@ -1543,7 +1576,8 @@ describe('agents IPC handlers', () => {
 					'--',
 					'/help',
 				],
-				'/test/project'
+				'/test/project',
+				{ env: expect.any(Object) }
 			);
 			expect(result).toEqual([{ name: '/help' }, { name: '/compact' }, { name: '/clear' }]);
 		});
@@ -1698,7 +1732,9 @@ describe('agents IPC handlers', () => {
 			const handler = handlers.get('agents:discoverSlashCommands');
 			await handler!({} as any, 'claude-code', '/test', '/custom/claude');
 
-			expect(execFileNoThrow).toHaveBeenCalledWith('/custom/claude', expect.any(Array), '/test');
+			expect(execFileNoThrow).toHaveBeenCalledWith('/custom/claude', expect.any(Array), '/test', {
+				env: expect.any(Object),
+			});
 		});
 
 		it('should return null for unsupported agents', async () => {

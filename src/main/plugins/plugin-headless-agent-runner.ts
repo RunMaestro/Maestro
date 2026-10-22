@@ -5,6 +5,10 @@ import type { HeadlessAgentRunner } from './plugin-manager-singleton';
 import { createPluginRunProofFile, removePluginRunProofFile } from './plugin-tool-run-identity';
 import type { PluginToolReceipt } from './plugin-tool-run-identity';
 import { MCP_CONFIG_BY_AGENT } from '../../shared/plugins/mcp-agent-config';
+import { isAutoModel } from '../../shared/autoModel';
+import { autoTurnReport, type AutoTurn } from '../../shared/autoTurn';
+import type { ConsultChain } from '../../shared/consultBudget';
+import type { AgentAutoTurnRequest } from '../local-models/auto-turn';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
@@ -29,13 +33,36 @@ export interface PluginHeadlessRunnerDeps {
 		sessionId?: string,
 		options?: SpawnAgentOptions
 	) => Promise<AgentResult>;
-	prepareSystemPrompt: (agent: SessionInfo) => Promise<string | undefined>;
+	/**
+	 * `consultChain` is the place the turn takes in a consult chain, when the
+	 * send that started it carried one, so the prompt can state what is left of
+	 * that chain's budget.
+	 */
+	prepareSystemPrompt: (
+		agent: SessionInfo,
+		consultChain?: ConsultChain
+	) => Promise<string | undefined>;
 	issueRunToken: (agentId: string, ttlMs: number, receiptToolId?: string) => string;
 	getRunReceipts?: (token: string) => PluginToolReceipt[];
 	hasRunReceiptOverflow?: (token: string) => boolean;
 	revokeRunToken: (token: string) => void;
 	cliScriptPath: () => string;
 	audit: (agentId: string, resumed: boolean) => void;
+	/**
+	 * Decide and resolve a turn for an agent set to the Auto model
+	 * (`resolveAgentAutoTurn`). Never rejects on a routing: no decision resolves
+	 * to the agent's default.
+	 */
+	resolveAutoTurn: (request: AgentAutoTurnRequest) => Promise<AutoTurn>;
+	/**
+	 * Remember what a provider session launched on, so a send that resumes it
+	 * keeps its model while the provider's cache is warm (`noteAutoSessionLaunch`).
+	 */
+	noteAutoSessionLaunch: (
+		toolType: SessionInfo['toolType'],
+		providerSessionId: string,
+		turn: Pick<AutoTurn, 'model' | 'runOn'>
+	) => void;
 	recordRelayOrigin?: (agent: SessionInfo, providerSessionId: string) => void;
 }
 
@@ -54,7 +81,8 @@ export function createPluginHeadlessAgentRunner(
 		origin = 'auto',
 		onProgress,
 		receiptToolId,
-		requirePluginTools = false
+		requirePluginTools = false,
+		turn
 	) => {
 		const agent = deps.getAgent(agentId);
 		if (!agent) throw new Error(`agents.send: no agent "${agentId}"`);
@@ -112,9 +140,36 @@ export function createPluginHeadlessAgentRunner(
 					error: 'Agent run timed out or was cancelled',
 				};
 			}
+			// An agent set to the Auto model has no model of its own to pass: the
+			// router decides this turn's model and effort, and the place when the
+			// tier names one. A tier target that cannot be used fails the send by
+			// name; the turn is never launched on some other model in its place.
+			// `turn.model` is this one turn's model (`maestro-cli send --model`), in
+			// place of the agent's own. It may be the word `auto` too.
+			const turnModel = turn?.model ?? agent.customModel;
+			const autoTurn = isAutoModel(turnModel)
+				? await deps.resolveAutoTurn({
+						agent,
+						prompt,
+						...(providerSessionId ? { providerSessionId } : {}),
+						...(signal ? { signal } : {}),
+					})
+				: undefined;
+			if (autoTurn?.refusal) {
+				return {
+					success: false,
+					response: null,
+					sessionId: null,
+					error: autoTurn.refusal.message,
+				};
+			}
+			for (const line of autoTurn ? [...autoTurn.notes, ...autoTurn.warnings] : []) {
+				logger.info(`agents.send -> agent ${agent.id}: ${line}`, '[ModelRouting]');
+			}
 			const result = await deps.spawn(agent.toolType, agent.cwd, prompt, providerSessionId, {
-				customModel: agent.customModel,
-				customEffort: agent.customEffort,
+				customModel: autoTurn ? autoTurn.model : turnModel,
+				customEffort: autoTurn ? autoTurn.effort : agent.customEffort,
+				...(autoTurn?.runOn ? { runOn: autoTurn.runOn } : {}),
 				customArgs: agent.customArgs,
 				customEnvVars: agent.customEnvVars,
 				globalEnvVars: deps.getGlobalEnvVars?.(),
@@ -122,11 +177,12 @@ export function createPluginHeadlessAgentRunner(
 				agentCommand: detection?.path,
 				additionalDirectories: agent.additionalDirectories,
 				sshRemoteConfig: agent.sessionSshRemoteConfig,
-				appendSystemPrompt: await deps.prepareSystemPrompt(agent),
+				appendSystemPrompt: await deps.prepareSystemPrompt(agent, turn?.consultChain),
 				enableMaestroP: agent.enableMaestroP,
 				maestroPMode: agent.maestroPMode,
 				maestroPPath: agent.maestroPPath,
 				querySource: origin === 'relay' ? 'auto' : origin,
+				...(turn?.consultChain ? { consultChain: turn.consultChain } : {}),
 				pluginRunProofFile,
 				mcpCliScriptPath: deps.cliScriptPath(),
 				timeoutMs: HEADLESS_RUN_TIMEOUT_MS,
@@ -139,7 +195,12 @@ export function createPluginHeadlessAgentRunner(
 				onProgress,
 			});
 			conversationId = result.agentSessionId || providerSessionId;
-
+			// The session's last activity is now, and a session this turn started
+			// has only just been named: record what it ran on for the send that
+			// resumes it.
+			if (autoTurn && result.agentSessionId) {
+				deps.noteAutoSessionLaunch(agent.toolType, result.agentSessionId, autoTurn);
+			}
 			const receiptsOverflowed =
 				!!receiptToolId && !!runToken && deps.hasRunReceiptOverflow!(runToken);
 			const success =
@@ -154,6 +215,7 @@ export function createPluginHeadlessAgentRunner(
 				sessionId: result.agentSessionId ?? null,
 				usageStats: result.usageStats,
 				...(receiptToolId && runToken ? { toolReceipts: deps.getRunReceipts!(runToken) } : {}),
+				...(autoTurn ? { auto: autoTurnReport(autoTurn) } : {}),
 				...(success
 					? {}
 					: {

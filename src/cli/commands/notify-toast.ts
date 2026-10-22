@@ -3,6 +3,7 @@
 import { withMaestroClient } from '../services/maestro-client';
 import { resolveAgentId } from '../services/storage';
 import type { ToastClickAction } from '../../shared/toastClickAction';
+import { ExitCode, exitWith, exitCodeForError } from '../exit-codes';
 import { exitIfMaestroNotRunning } from '../services/session-command';
 
 interface NotifyToastOptions {
@@ -35,7 +36,7 @@ export async function notifyToast(
 ): Promise<void> {
 	if (!title.trim()) {
 		console.error('Error: title cannot be empty');
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 
 	let color: AllowedColor;
@@ -43,7 +44,7 @@ export async function notifyToast(
 		const candidate = options.color.toLowerCase();
 		if (!ALLOWED_COLORS.includes(candidate as AllowedColor)) {
 			console.error(`Error: --color must be one of: ${ALLOWED_COLORS.join(', ')}`);
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 		color = candidate as AllowedColor;
 	} else {
@@ -58,7 +59,7 @@ export async function notifyToast(
 			console.error(
 				'Error: --dismissible cannot be combined with --timeout (a sticky toast has no auto-dismiss)'
 			);
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 
 		const seconds = Number(options.timeout);
@@ -66,13 +67,13 @@ export async function notifyToast(
 			console.error(
 				'Error: --timeout must be a positive number of seconds (use --dismissible for sticky toasts)'
 			);
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 		if (seconds > MAX_TIMEOUT_SECONDS) {
 			console.error(
 				`Error: --timeout cannot exceed ${MAX_TIMEOUT_SECONDS} seconds (use --dismissible to make the toast sticky)`
 			);
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 		// The WebSocket contract uses seconds; main normalizes to renderer milliseconds.
 		duration = seconds;
@@ -84,7 +85,7 @@ export async function notifyToast(
 			sessionId = resolveAgentId(options.agent);
 		} catch (error) {
 			console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
-			process.exit(1);
+			exitWith(exitCodeForError(error));
 		}
 	}
 
@@ -96,7 +97,7 @@ export async function notifyToast(
 	const tabId = options.tab && options.tab.length > 0 ? options.tab : undefined;
 	if (tabId && !sessionId) {
 		console.error('Error: --tab requires --agent (a tab is scoped to an agent)');
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 
 	const actionUrl =
@@ -105,7 +106,7 @@ export async function notifyToast(
 		options.actionLabel && options.actionLabel.length > 0 ? options.actionLabel : undefined;
 	if (actionLabel && !actionUrl) {
 		console.error('Error: --action-label requires --action-url');
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 
 	// Build the clickAction (data-driven click intent that survives the IPC
@@ -138,13 +139,13 @@ export async function notifyToast(
 	].filter((flag): flag is string => typeof flag === 'string');
 	if (chosen.length > 1) {
 		console.error(`Error: ${chosen.join(', ')} are mutually exclusive`);
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 
 	if (openFile) {
 		if (!sessionId) {
 			console.error('Error: --open-file requires --agent (file preview is scoped to an agent)');
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 		clickAction = { kind: 'open-file', sessionId, path: openFile };
 	} else if (openTerminal !== undefined) {
@@ -152,7 +153,7 @@ export async function notifyToast(
 			console.error(
 				'Error: --open-terminal requires --agent (a terminal tab is scoped to an agent)'
 			);
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 		clickAction = {
 			kind: 'open-terminal',
@@ -163,7 +164,7 @@ export async function notifyToast(
 		if (!sessionId) {
 			const flag = openBrowser ? '--open-browser' : '--open-browser-tab';
 			console.error(`Error: ${flag} requires --agent (a browser tab is scoped to an agent)`);
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 		// A tab id (what `open-browser` hands back) focuses that tab; a URL opens
 		// a new in-app browser tab. Kept as two flags so neither has to be guessed
@@ -207,7 +208,7 @@ export async function notifyToast(
 			} else {
 				console.error(`Error: ${errMsg}`);
 			}
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 	} catch (error) {
 		exitIfMaestroNotRunning(error, { json: options.json });
@@ -217,6 +218,6 @@ export async function notifyToast(
 		} else {
 			console.error(`Error: ${errMsg}`);
 		}
-		process.exit(1);
+		exitWith(exitCodeForError(error));
 	}
 }

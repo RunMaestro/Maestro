@@ -491,3 +491,60 @@ export function formatSnoozeCountdown(at: number, now: number = Date.now()): str
 	const months = Math.round(days / 30);
 	return `in ${months} month${months === 1 ? '' : 's'}`;
 }
+
+/** Trim a label to something that fits a list row. */
+export function clampSnoozeLabel(text: string): string {
+	const firstLine = text.trim().split('\n')[0];
+	return firstLine.length > 60 ? `${firstLine.slice(0, 57)}...` : firstLine;
+}
+
+/**
+ * What {@link snoozedEntryLabel} reads off a snoozed entry. Structural, and
+ * every field optional, so the renderer can pass its typed `SnoozedTabEntry`
+ * and the main process can pass a record straight out of the sessions store.
+ */
+export interface SnoozedEntryLabelSource {
+	type: 'ai' | 'file' | 'terminal' | 'browser' | 'group';
+	tab?: {
+		name?: string | null;
+		agentSessionId?: string | null;
+		logs?: ReadonlyArray<{ source?: string; text?: string }> | null;
+		extension?: string | null;
+		customTitle?: string | null;
+		title?: string | null;
+		url?: string | null;
+		cwd?: string | null;
+	} | null;
+	group?: { name?: string | null } | null;
+}
+
+/**
+ * Display label for a snoozed tab.
+ *
+ * Each kind names itself differently, and the fallbacks matter because the list
+ * is read weeks later: an AI tab falls back to its opening message, a browser
+ * tab to its URL, a terminal to its working directory. "Untitled tab" is the
+ * last resort, not the second one.
+ *
+ * In `shared/` because two processes name a parked tab: the Snoozed Tabs list
+ * and `maestro-cli snooze list` (renderer), and the tab cleanup task (main).
+ */
+export function snoozedEntryLabel(entry: SnoozedEntryLabelSource): string {
+	const tab = entry.tab ?? {};
+	switch (entry.type) {
+		case 'ai': {
+			if (tab.name) return tab.name;
+			const firstUserLog = tab.logs?.find((log) => log.source === 'user' && log.text?.trim());
+			if (firstUserLog?.text) return clampSnoozeLabel(firstUserLog.text);
+			return tab.agentSessionId ? tab.agentSessionId.slice(0, 8) : 'Untitled tab';
+		}
+		case 'file':
+			return clampSnoozeLabel(`${tab.name ?? ''}${tab.extension ?? ''}`) || 'Untitled file';
+		case 'browser':
+			return clampSnoozeLabel(tab.customTitle || tab.title || tab.url || '') || 'Browser tab';
+		case 'terminal':
+			return tab.name || clampSnoozeLabel(tab.cwd ?? '') || 'Terminal';
+		case 'group':
+			return clampSnoozeLabel(entry.group?.name ?? '') || 'Tab group';
+	}
+}

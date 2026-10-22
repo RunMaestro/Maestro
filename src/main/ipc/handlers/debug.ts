@@ -27,6 +27,8 @@ import {
 	setProfilingAutoStopHandler,
 	finalizeCapture,
 } from '../../profiling';
+import { runVoiceSelfTest, type VoiceSelfTestReport } from '../../acappella/voice-self-test';
+import { selfTestVerdict } from '../../../shared/local-models/native-runtimes';
 import { AgentDetector } from '../../agents';
 import { ProcessManager } from '../../process-manager';
 import { WebServer } from '../../web-server';
@@ -85,28 +87,6 @@ export function registerDebugHandlers(deps: DebugHandlerDependencies): void {
 				throw new Error('No main window available');
 			}
 
-			// Generate a default filename with timestamp
-			const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-			const defaultFilename = `maestro-debug-${timestamp}.zip`;
-
-			// Show save dialog
-			const result = await dialog.showSaveDialog(mainWindow, {
-				title: 'Save Debug Package',
-				defaultPath: path.join(app.getPath('desktop'), defaultFilename),
-				filters: [{ name: 'Zip Files', extensions: ['zip'] }],
-			});
-
-			if (result.canceled || !result.filePath) {
-				return {
-					path: null,
-					filesIncluded: [],
-					totalSizeBytes: 0,
-					cancelled: true,
-				};
-			}
-
-			const outputDir = path.dirname(result.filePath);
-
 			// Create dependencies object for the debug package generator
 			const debugDeps: DebugPackageDependencies = {
 				getAgentDetector,
@@ -118,7 +98,46 @@ export function registerDebugHandlers(deps: DebugHandlerDependencies): void {
 				bootstrapStore,
 			};
 
-			const packageResult = await generateDebugPackage(outputDir, debugDeps, options);
+			// The save dialog is handed over as the destination, so it is raised
+			// only after the secret screen passes: a package that is about to be
+			// refused never asks where to save it.
+			const chooseOutputDir = async (): Promise<string | null> => {
+				const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+				const defaultFilename = `maestro-debug-${timestamp}.zip`;
+				const result = await dialog.showSaveDialog(mainWindow, {
+					title: 'Save Debug Package',
+					defaultPath: path.join(app.getPath('desktop'), defaultFilename),
+					filters: [{ name: 'Zip Files', extensions: ['zip'] }],
+				});
+				return result.canceled || !result.filePath ? null : path.dirname(result.filePath);
+			};
+
+			const packageResult = await generateDebugPackage(chooseOutputDir, debugDeps, options);
+
+			if (packageResult.cancelled) {
+				return {
+					path: null,
+					filesIncluded: [],
+					totalSizeBytes: 0,
+					cancelled: true,
+				};
+			}
+
+			// Refused by the secret screen: not an error. The renderer shows the
+			// masked findings and asks again with `allowSecrets` if the user agrees.
+			if (packageResult.secretFindings?.length) {
+				return {
+					success: false,
+					path: null,
+					filesIncluded: [],
+					totalSizeBytes: 0,
+					cancelled: false,
+					error: packageResult.error,
+					code: packageResult.code,
+					secretFindings: packageResult.secretFindings,
+					secretScreenNote: packageResult.secretScreenNote,
+				};
+			}
 
 			if (!packageResult.success) {
 				throw new Error(packageResult.error || 'Failed to generate debug package');
@@ -142,6 +161,25 @@ export function registerDebugHandlers(deps: DebugHandlerDependencies): void {
 			const preview = previewDebugPackage();
 			return preview;
 		})
+	);
+
+	// A Cappella voice self-test. Lives on the debug surface rather than the voice
+	// one because it is a diagnostic, and because it must stay runnable when the
+	// voice feature is exactly what is not working. It loads each native runtime
+	// and no model, so running it is cheap and safe at any time.
+	ipcMain.handle(
+		'debug:voiceSelfTest',
+		createIpcHandler(
+			handlerOpts('voiceSelfTest'),
+			async (): Promise<{ report: VoiceSelfTestReport }> => {
+				const report = await runVoiceSelfTest();
+				logger.info(`Voice self-test: ${selfTestVerdict(report).toLowerCase()}`, LOG_CONTEXT);
+				// Nested rather than spread: `createIpcHandler` merges the result into
+				// its `{ success }` envelope, and a report field named `passed` sitting
+				// beside `success` is two words for two different things.
+				return { report };
+			}
+		)
 	);
 
 	// Snapshot of runtime memory / process info for the Debug: View Application Stats modal

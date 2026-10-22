@@ -42,8 +42,11 @@ import { replaceUsageStats } from '../../shared/maestro-lib/streaming/usage-tota
 import type { TurnOutcome } from '../../shared/maestro-lib/streaming/turn-outcome';
 import { resolveCliTurnResult, interruptedResult, spawnFailureResult } from './turn-result';
 import { getAgentCustomPath, readAgentConfig, readSshRemotes } from './storage';
+import { prepareCliRunOn } from './run-on';
+import { runOnHarnessMode, type ResolvedRunOn } from '../../shared/local-models/run-on';
 import { generateUUID } from '../../shared/uuid';
 import type { QuerySource } from '../../shared/querySource';
+import { buildConsultChainEnv, type ConsultChain } from '../../shared/consultBudget';
 import { sanitizeSessionId } from '../../shared/history';
 import { isWindows } from '../../shared/platformDetection';
 import { embedSystemPromptInPrompt } from '../../shared/embeddedSystemPrompt';
@@ -154,6 +157,8 @@ type SpawnOverrides = Pick<
 	| 'customEffort'
 	| 'customArgs'
 	| 'customEnvVars'
+	| 'gatewayUrl'
+	| 'runOn'
 	| 'requiredSecrets'
 	| 'globalEnvVars'
 	| 'agentConfigValues'
@@ -161,6 +166,7 @@ type SpawnOverrides = Pick<
 	| 'appendSystemPrompt'
 	| 'additionalDirectories'
 	| 'querySource'
+	| 'consultChain'
 	| 'signal'
 	| 'pluginRunProofFile'
 	| 'mcpCliScriptPath'
@@ -435,7 +441,10 @@ function planCliLaunch(
 		sessionCustomEnvVars?: Record<string, string>;
 		isResuming: boolean;
 		querySource?: SpawnOverrides['querySource'];
+		consultChain?: SpawnOverrides['consultChain'];
 		sshRemoteConfig?: AgentSshRemoteConfig;
+		gatewayUrl?: string;
+		runOn?: ResolvedRunOn;
 		requiredSecrets?: string[];
 	}
 ): AgentLaunchPlanResult {
@@ -452,6 +461,11 @@ function planCliLaunch(
 		batchMode: true,
 		isResuming: input.isResuming,
 		querySource: input.querySource,
+		// Stated over the inherited environment, and carried to an SSH remote,
+		// which inherits nothing from this process.
+		maestroEnvVars: input.consultChain ? buildConsultChainEnv(input.consultChain) : undefined,
+		gateway: { toolType, url: input.gatewayUrl },
+		runOn: input.runOn,
 		sshRemoteConfig: input.sshRemoteConfig,
 		sshStore: { getSshRemotes: () => readSshRemotes() },
 		requiredSecrets: input.requiredSecrets,
@@ -839,6 +853,19 @@ async function spawnClaudeAgent(
 		: (overrides.agentCommand ?? (await resolveLocalAgentCommand('claude-code')));
 	const sshEnabled = !!sshRemoteConfig?.enabled;
 
+	// The agent's Run on target, with its source looked up (see prepareCliRunOn).
+	// One that cannot run fails the turn by name; it never runs on Claude's own
+	// model instead.
+	const preparedRunOn = await prepareCliRunOn({
+		toolType: 'claude-code',
+		target: overrides.runOn,
+		userEnvVars: userCustomEnvVars,
+		sshRemoteConfig,
+	});
+	if (preparedRunOn.kind === 'refused') {
+		return spawnFailureResult(preparedRunOn.message);
+	}
+
 	// Target, environment and prompt delivery come from the shared launch plan,
 	// by the CLI's own rules (see planCliLaunch). An SSH remote that cannot be
 	// resolved fails here, before anything is spawned.
@@ -853,7 +880,10 @@ async function spawnClaudeAgent(
 		sessionCustomEnvVars: overrides.customEnvVars,
 		isResuming: !!agentSessionId,
 		querySource: overrides.querySource,
+		consultChain: overrides.consultChain,
 		sshRemoteConfig,
+		gatewayUrl: overrides.gatewayUrl,
+		runOn: preparedRunOn.kind === 'ready' ? preparedRunOn.runOn : undefined,
 		requiredSecrets: overrides.requiredSecrets,
 	});
 	if (!planResult.ok) {
@@ -873,10 +903,17 @@ async function spawnClaudeAgent(
 	// do NOT pass the `{ sshEnabled }` default-flip option (which the desktop uses
 	// only because it has a live remote maestro-p probe as a safety net). Only an
 	// EXPLICIT TUI/Dynamic selection routes through maestro-p.
-	const tokenMode = getClaudeTokenMode({
-		enableMaestroP: tokenSource.enableMaestroP,
-		maestroPMode: tokenSource.maestroPMode,
-	});
+	//
+	// An agent that runs on a source keeps to `claude --print`, the mode its
+	// recipe was measured in, whatever it selected.
+	const tokenMode = runOnHarnessMode(
+		overrides.runOn,
+		getClaudeTokenMode({
+			enableMaestroP: tokenSource.enableMaestroP,
+			maestroPMode: tokenSource.maestroPMode,
+		}),
+		'api'
+	);
 	const spawnDecision = resolveClaudeSpawnModeCore(
 		{
 			agent: def
@@ -1309,13 +1346,11 @@ async function spawnJsonLineAgent(
 
 	// Layer agent-level + session-level overrides (model, effort, customArgs)
 	// and extract the user-configured env vars (agent + session customEnvVars).
-	const { args: resolvedArgs, agentCustomEnvVars } = resolveAgentOverrides(
-		toolType,
-		def,
-		preOverrideArgs,
-		overrides,
-		readOnlyMode
-	);
+	const {
+		args: resolvedArgs,
+		userCustomEnvVars,
+		agentCustomEnvVars,
+	} = resolveAgentOverrides(toolType, def, preOverrideArgs, overrides, readOnlyMode);
 
 	// System prompt delivery for JSON-line agents:
 	//  - Agents declaring `supportsAppendSystemPrompt: true` get the dedicated
@@ -1359,6 +1394,19 @@ async function spawnJsonLineAgent(
 		? getAgentCommand(toolType)
 		: (overrides.agentCommand ?? (await resolveLocalAgentCommand(toolType)));
 
+	// The agent's Run on target, with its source looked up (see prepareCliRunOn).
+	// One that cannot run fails the turn by name; it never runs on the
+	// provider's own model instead.
+	const preparedRunOn = await prepareCliRunOn({
+		toolType,
+		target: overrides.runOn,
+		userEnvVars: userCustomEnvVars,
+		sshRemoteConfig,
+	});
+	if (preparedRunOn.kind === 'refused') {
+		return spawnFailureResult(preparedRunOn.message);
+	}
+
 	// Target, environment and prompt delivery come from the shared launch plan,
 	// by the CLI's own rules (see planCliLaunch): the provider's own prompt flag
 	// (Copilot's `-p`), a bare positional or `-- <prompt>`, on the command line
@@ -1375,7 +1423,10 @@ async function spawnJsonLineAgent(
 		sessionCustomEnvVars: overrides.customEnvVars,
 		isResuming: isResume,
 		querySource: overrides.querySource,
+		consultChain: overrides.consultChain,
 		sshRemoteConfig,
+		gatewayUrl: overrides.gatewayUrl,
+		runOn: preparedRunOn.kind === 'ready' ? preparedRunOn.runOn : undefined,
 		requiredSecrets: overrides.requiredSecrets,
 	});
 	if (!planResult.ok) {
@@ -1646,6 +1697,19 @@ export interface SpawnAgentOptions {
 	agentConfigValues?: Record<string, unknown>;
 	agentCommand?: string;
 	/**
+	 * The agent's Local Models gateway URL. The launch plan sets the provider's
+	 * base-URL variable from it unless `customEnvVars` already sets that variable,
+	 * and fails the spawn when the gateway cannot be used.
+	 */
+	gatewayUrl?: string;
+	/**
+	 * The agent's stored Run on target, as data (the launch validates it). One
+	 * that names a source replaces `customModel` and the gateway: the launch plan
+	 * points the harness at the source, and fails the spawn by name when the
+	 * source cannot serve the model. It never falls back to the provider's model.
+	 */
+	runOn?: unknown;
+	/**
 	 * Secret names the agent declared (`SessionInfo.requiredSecrets`, from bundle
 	 * import). Resolved from systemd credentials, `/run/secrets` or the
 	 * environment and put in this agent's environment only.
@@ -1697,6 +1761,15 @@ export interface SpawnAgentOptions {
 	 * the processes are otherwise identical. Defaults to 'user'.
 	 */
 	querySource?: QuerySource;
+	/**
+	 * The spawned agent's place in a consult chain (see shared/consultBudget.ts),
+	 * stated in its environment as MAESTRO_CONSULT_CHAIN / MAESTRO_CONSULT_DEPTH
+	 * so the consults and delegations it makes spend that chain's one budget.
+	 * Set by a spawn that IS a consult or delegation (`maestro-cli send`), with
+	 * the place `admitConsult()` returned. Left unset everywhere else: the agent
+	 * then keeps whatever chain this process is in.
+	 */
+	consultChain?: ConsultChain;
 	/**
 	 * Abort the turn. The shared stop ladder terminates the process tree and
 	 * the result comes back with `outcome: 'interrupted'` - a user
@@ -1762,6 +1835,8 @@ async function spawnAgentOnce(
 		customEffort: options?.customEffort,
 		customArgs: options?.customArgs,
 		customEnvVars: options?.customEnvVars,
+		gatewayUrl: options?.gatewayUrl,
+		runOn: options?.runOn,
 		requiredSecrets: options?.requiredSecrets,
 		globalEnvVars: options?.globalEnvVars,
 		agentConfigValues: options?.agentConfigValues,
@@ -1769,6 +1844,7 @@ async function spawnAgentOnce(
 		appendSystemPrompt: options?.appendSystemPrompt,
 		additionalDirectories: options?.additionalDirectories,
 		querySource: options?.querySource,
+		consultChain: options?.consultChain,
 		maestroPMaxWaitSeconds: options?.maestroPMaxWaitSeconds,
 	};
 	// Single source of truth for the token-source triple (never a partial forward).

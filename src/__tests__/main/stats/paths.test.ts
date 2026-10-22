@@ -720,9 +720,9 @@ describe('File path normalization in database (forward slashes consistently)', (
 			});
 
 			// Verify that the statement was called with normalized path
-			// insertQueryEvent binds 16 parameters: id, sessionId, agentType, source,
+			// insertQueryEvent binds 19 parameters: id, sessionId, agentType, source,
 			// startTime, duration, projectPath, tabId, isRemote, isWorktree, userName,
-			// then the five token/cost columns.
+			// the five token/cost columns, then the Run on source and the routed tier.
 			expect(mockStatement.run).toHaveBeenCalledWith(
 				expect.any(String), // id
 				'session-1',
@@ -739,7 +739,10 @@ describe('File path normalization in database (forward slashes consistently)', (
 				null, // outputTokens
 				null, // cacheReadTokens
 				null, // cacheCreationTokens
-				null // costUsd
+				null, // costUsd
+				null, // runOnEndpoint
+				null, // runOnModel
+				null // routedTier
 			);
 		});
 
@@ -758,7 +761,8 @@ describe('File path normalization in database (forward slashes consistently)', (
 				tabId: 'tab-1',
 			});
 
-			// insertQueryEvent binds 16 parameters: identity, timing, flags, sender, tokens.
+			// insertQueryEvent binds 19 parameters: identity, timing, flags, sender, tokens,
+			// then the Run on source and the routed tier.
 			expect(mockStatement.run).toHaveBeenCalledWith(
 				expect.any(String),
 				'session-1',
@@ -775,7 +779,10 @@ describe('File path normalization in database (forward slashes consistently)', (
 				null, // outputTokens
 				null, // cacheReadTokens
 				null, // cacheCreationTokens
-				null // costUsd
+				null, // costUsd
+				null, // runOnEndpoint
+				null, // runOnModel
+				null // routedTier
 			);
 		});
 
@@ -793,8 +800,9 @@ describe('File path normalization in database (forward slashes consistently)', (
 				// projectPath is undefined
 			});
 
-			// 16 parameters: identity, timing, flags, sender, then the five
-			// token/cost columns. Everything optional and unreported binds as NULL.
+			// 19 parameters: identity, timing, flags, sender, the five token/cost
+			// columns, then the Run on source and the routed tier. Everything
+			// optional and unreported binds as NULL.
 			expect(mockStatement.run).toHaveBeenCalledWith(
 				expect.any(String),
 				'session-1',
@@ -811,7 +819,10 @@ describe('File path normalization in database (forward slashes consistently)', (
 				null, // outputTokens
 				null, // cacheReadTokens
 				null, // cacheCreationTokens
-				null // costUsd
+				null, // costUsd
+				null, // runOnEndpoint
+				null, // runOnModel
+				null // routedTier
 			);
 		});
 	});

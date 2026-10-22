@@ -1,3 +1,12 @@
+import { useSessionStore } from '../../../../renderer/stores/sessionStore';
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
+import { useTabStore } from '../../../../renderer/stores/tabStore';
+const { selectTabProvider } = vi.hoisted(() => ({ selectTabProvider: vi.fn() }));
+vi.mock('../../../../renderer/stores/tabStore', () => ({
+	useTabStore: {
+		getState: vi.fn(() => ({ setTabSettings: selectTabProvider })),
+	},
+}));
 import { requestProviderTranslation } from '../../../../renderer/services/providerTranslation';
 vi.mock('../../../../renderer/services/providerTranslation', () => ({
 	requestProviderTranslation: vi.fn(),
@@ -39,6 +48,7 @@ const ack = vi.fn();
 const setMany = vi.fn().mockResolvedValue(undefined);
 
 function setup(sessions: Session[]) {
+	vi.mocked(useSessionStore.getState).mockReturnValue({ sessions } as never);
 	const sessionsRef = { current: sessions };
 	const setSessions = vi.fn();
 
@@ -81,6 +91,9 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	selectTabProvider.mockResolvedValue(undefined);
+	vi.mocked(useTabStore.getState).mockReturnValue({ setTabSettings: selectTabProvider } as never);
+	vi.mocked(useSettingsStore.getState).mockReturnValue({} as never);
 	(window as any).maestro = {
 		process: {
 			sendRemoteUpdateSessionConfigResponse: ack,
@@ -91,6 +104,25 @@ beforeEach(() => {
 });
 
 describe('maestro:remoteUpdateSessionConfig', () => {
+	it('forwards a tab-scoped translation to the shared client', async () => {
+		setup([createMockSession({ id: 'session-1' })]);
+		vi.mocked(requestProviderTranslation).mockResolvedValue({ success: true });
+		dispatchPatch('session-1', {
+			toolType: 'codex',
+			tabId: 'selected-tab',
+			migrationAction: 'plan',
+		});
+		await flush();
+		expect(requestProviderTranslation).toHaveBeenCalledWith(
+			expect.objectContaining({
+				agentId: 'session-1',
+				tabId: 'selected-tab',
+				destination: 'codex',
+				action: 'plan',
+			})
+		);
+		expect(ack).toHaveBeenCalledWith('ch', { success: true });
+	});
 	it('writes the bookmark flag so the CLI can pin an agent in the Left Bar', async () => {
 		const sessions = [createMockSession({ id: 'session-1', bookmarked: false })];
 		const { setSessions } = setup(sessions);
@@ -219,17 +251,17 @@ describe('maestro:remoteUpdateSessionConfig codexTransport', () => {
 	});
 });
 
-describe('maestro:remoteUpdateSessionConfig with a tabId', () => {
-	/** An agent whose second tab is the one under test. */
-	function twoTabSession() {
-		const session = createMockSession({ id: 'session-1' });
-		session.aiTabs = [
-			{ ...session.aiTabs[0], id: 'tab-1', hasUnread: false, saveToHistory: true },
-			{ ...session.aiTabs[0], id: 'tab-2', hasUnread: false, saveToHistory: true },
-		];
-		return session;
-	}
+/** An agent whose second tab is the one under test. */
+function twoTabSession() {
+	const session = createMockSession({ id: 'session-1' });
+	session.aiTabs = [
+		{ ...session.aiTabs[0], id: 'tab-1', hasUnread: false, saveToHistory: true },
+		{ ...session.aiTabs[0], id: 'tab-2', hasUnread: false, saveToHistory: true },
+	];
+	return session;
+}
 
+describe('maestro:remoteUpdateSessionConfig with a tabId', () => {
 	it('patches only the targeted tab', async () => {
 		const sessions = [twoTabSession()];
 		const { setSessions } = setup(sessions);
@@ -293,8 +325,11 @@ describe('maestro:remoteUpdateSessionConfig with a tabId', () => {
 		const [updated] = applyUpdate(setSessions, sessions);
 		expect(updated.aiTabs[1].showThinking).toBe('sticky');
 		expect(updated.aiTabs[1].readOnlyMode).toBe(true);
-		expect(updated.aiTabs[1].customModel).toBe('opus');
-		expect(updated.aiTabs[1].customEffort).toBe('high');
+		expect(selectTabProvider).toHaveBeenCalledWith('session-1', 'tab-2', {
+			model: 'opus',
+			effort: 'high',
+		});
+		expect(updated.aiTabs[1].customModel).toBe(sessions[0].aiTabs[1].customModel);
 		expect(updated.aiTabs[1].enterToSend).toBe(false);
 		expect(ack).toHaveBeenCalledWith('ch', { success: true });
 	});
@@ -308,7 +343,10 @@ describe('maestro:remoteUpdateSessionConfig with a tabId', () => {
 		await flush();
 
 		const [updated] = applyUpdate(setSessions, sessions);
-		expect(updated.aiTabs[1].customModel).toBeUndefined();
+		expect(selectTabProvider).toHaveBeenCalledWith('session-1', 'tab-2', {
+			model: null,
+		});
+		expect(updated.aiTabs[1].customModel).toBe('opus');
 		expect(updated.aiTabs[1].enterToSend).toBeUndefined();
 	});
 
@@ -354,22 +392,75 @@ describe('maestro:remoteUpdateSessionConfig with a tabId', () => {
 });
 
 describe('provider migration parity', () => {
-	it('passes the library report through and never resets tabs or kills source work', async () => {
-		const session = createMockSession({ id: 'agent', toolType: 'claude-code' });
-		const { setSessions } = setup([session]);
-		const report = {
-			success: false,
-			error: 'unverified native resume',
-			plan: { id: 'plan', status: 'ready' },
-		} as any;
-		vi.mocked(requestProviderTranslation).mockResolvedValue(report);
-		dispatchPatch(session.id, { toolType: 'codex', migrationAction: 'plan' });
+	it.each([undefined, true])(
+		'passes resource consent and the library report through without resetting source work (%s)',
+		async (projectResourcesIntoRepo) => {
+			const session = createMockSession({ id: 'agent', toolType: 'claude-code' });
+			const { setSessions } = setup([session]);
+			const report = {
+				success: false,
+				error: 'unverified native resume',
+				plan: { id: 'plan', status: 'ready' },
+			} as any;
+			vi.mocked(requestProviderTranslation).mockResolvedValue(report);
+			dispatchPatch(session.id, {
+				toolType: 'codex',
+				migrationAction: 'plan',
+				projectResourcesIntoRepo,
+			});
+			await flush();
+			expect(requestProviderTranslation).toHaveBeenCalledWith(
+				expect.objectContaining({
+					action: 'plan',
+					agentId: session.id,
+					destination: 'codex',
+					projectResourcesIntoRepo: projectResourcesIntoRepo === true,
+				})
+			);
+			expect(ack).toHaveBeenCalledWith('ch', report);
+			expect(setSessions).not.toHaveBeenCalled();
+			expect(setMany).not.toHaveBeenCalled();
+		}
+	);
+	it('rejects retired provider selection without invoking settings or persistence', async () => {
+		const { setSessions } = setup([twoTabSession()]);
+		dispatchPatch('session-1', { tabId: 'tab-2', tabProviderSelection: { provider: 'codex' } });
 		await flush();
-		expect(requestProviderTranslation).toHaveBeenCalledWith(
-			expect.objectContaining({ action: 'plan', agentId: session.id, destination: 'codex' })
-		);
-		expect(ack).toHaveBeenCalledWith('ch', report);
+		expect(selectTabProvider).not.toHaveBeenCalled();
 		expect(setSessions).not.toHaveBeenCalled();
-		expect(setMany).not.toHaveBeenCalled();
+		expect(ack).toHaveBeenCalledWith(
+			'ch',
+			expect.objectContaining({
+				success: false,
+				error: expect.stringContaining('has been removed'),
+			})
+		);
+	});
+
+	it('rejects a raw pin even when another editable field accompanies it', async () => {
+		const { setSessions } = setup([twoTabSession()]);
+		dispatchPatch('session-1', { tabId: 'tab-2', tabProvider: 'codex', customModel: 'gpt-x' });
+		await flush();
+		expect(setSessions).not.toHaveBeenCalled();
+		expect(ack).toHaveBeenCalledWith(
+			'ch',
+			expect.objectContaining({
+				success: false,
+				error: expect.stringContaining('parking operation'),
+			})
+		);
+	});
+
+	it('refuses retired provider reads', async () => {
+		setup([twoTabSession()]);
+		dispatchPatch('session-1', { tabId: 'tab-2', tabProviderSelection: {} });
+		await flush();
+		expect(ack).toHaveBeenCalledWith(
+			'ch',
+			expect.objectContaining({
+				success: false,
+				error: expect.stringContaining('has been removed'),
+			})
+		);
 	});
 });

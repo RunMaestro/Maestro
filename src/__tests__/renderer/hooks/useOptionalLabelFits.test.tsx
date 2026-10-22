@@ -1,5 +1,5 @@
 /**
- * Tests for useOptionalLabelFits.
+ * Tests for useOptionalLabelFits and useOptionalContentFits.
  *
  * The point of the hook is that a label is dropped whole rather than clipped,
  * so the behavior worth pinning is the two-sided decision: hide on overflow,
@@ -10,7 +10,10 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { useOptionalLabelFits } from '../../../renderer/hooks/ui/useOptionalLabelFits';
+import {
+	useOptionalContentFits,
+	useOptionalLabelFits,
+} from '../../../renderer/hooks/ui/useOptionalLabelFits';
 
 /** Live observers, so a test can drive a re-measure. */
 let observers: Array<() => void> = [];
@@ -156,6 +159,56 @@ describe('useOptionalLabelFits', () => {
 		const ref = { current: makeRow(0, 0) };
 		const { result } = renderHook(() => useOptionalLabelFits(ref));
 
+		expect(result.current).toBe(true);
+	});
+});
+
+/** A stand-in column whose heights the test controls. */
+function setHeights(el: HTMLElement, scrollHeight: number, clientHeight: number) {
+	Object.defineProperty(el, 'scrollHeight', {
+		value: scrollHeight,
+		writable: true,
+		configurable: true,
+	});
+	Object.defineProperty(el, 'clientHeight', {
+		value: clientHeight,
+		writable: true,
+		configurable: true,
+	});
+}
+
+describe('useOptionalContentFits', () => {
+	it('decides on height for a column, ignoring its width', () => {
+		const column = makeRow(999, 10);
+		setHeights(column, 900, 600);
+		const ref = { current: column };
+		const { result } = renderHook(() => useOptionalContentFits(ref, { axis: 'height' }));
+		expect(result.current).toBe(false);
+
+		// Collapsed, it fits in 600; it comes back only at the 900 it measured.
+		setHeights(column, 700, 800);
+		triggerResize();
+		expect(result.current).toBe(false);
+
+		setHeights(column, 700, 900);
+		triggerResize();
+		expect(result.current).toBe(true);
+	});
+
+	it('shows the content again and re-measures when the content key changes', () => {
+		const column = makeRow(0, 0);
+		setHeights(column, 900, 600);
+		const ref = { current: column };
+		const { result, rerender } = renderHook(
+			({ contentKey }) => useOptionalContentFits(ref, { axis: 'height', contentKey }),
+			{ initialProps: { contentKey: 'a' } }
+		);
+		expect(result.current).toBe(false);
+
+		// Rows were removed: with the content shown it now fits, which only a
+		// fresh measurement can tell.
+		setHeights(column, 550, 600);
+		rerender({ contentKey: 'b' });
 		expect(result.current).toBe(true);
 	});
 });

@@ -7,11 +7,15 @@
  * `Plans/floating-widgets.md`.
  */
 
+import type { VoiceSessionProjection } from './acappella/hud-state';
+import type { VoiceUiPrefs } from './acappella/ui-prefs';
+import type { VoiceSendWait } from './acappella/listen-mode';
+import type { SwitchableVoiceMode } from './acappella/voice-mode';
 import type { MediaItem } from './mediaTypes';
 import type { ThroughputHistory, ThroughputRates } from './throughputRate';
 
 /** Every widget that can float. The order is stable; tests and IPC rely on it. */
-export const FLOATING_WIDGET_IDS = ['throughput-gauge', 'media-player'] as const;
+export const FLOATING_WIDGET_IDS = ['throughput-gauge', 'media-player', 'acappella-voice'] as const;
 
 export type FloatingWidgetId = (typeof FLOATING_WIDGET_IDS)[number];
 
@@ -49,6 +53,12 @@ export const FLOATING_WIDGET_SPECS: Record<FloatingWidgetId, FloatingWidgetSpec>
 		authority: 'app',
 		defaultSize: { width: 300, height: 220 },
 		minSize: { width: 200, height: 150 },
+	},
+	'acappella-voice': {
+		id: 'acappella-voice',
+		authority: 'app',
+		defaultSize: { width: 360, height: 440 },
+		minSize: { width: 340, height: 200 },
 	},
 	'media-player': {
 		id: 'media-player',
@@ -158,4 +168,93 @@ export function isMediaPlayerWidgetCommand(value: unknown): value is MediaPlayer
 		(MEDIA_COMMAND_ACTIONS as readonly string[]).includes(action) &&
 		Array.isArray(args)
 	);
+}
+
+/** The owning app window publishes the HUD projection; audio stays in its audio host. */
+export interface VoiceWidgetState {
+	session: VoiceSessionProjection;
+	ui: VoiceUiPrefs & {
+		loaded: boolean;
+		minimized: boolean;
+		muted: boolean;
+		holdThresholdMs: number;
+		sendWait: VoiceSendWait | null;
+	};
+	inputDevices: {
+		devices: Array<{ deviceId: string; label: string }>;
+		selectedId: string;
+		loading: boolean;
+	};
+	forceSendAllowed: boolean;
+}
+
+/** Controls return to the app window that owns this voice session. */
+export type VoiceWidgetCommand =
+	| {
+			type:
+				| 'close'
+				| 'minimize'
+				| 'interrupt'
+				| 'toggle-mute'
+				| 'toggle-transcript'
+				| 'toggle-listen-mode'
+				| 'send'
+				| 'open-mic-settings'
+				| 'refresh-send-wait';
+	  }
+	| { type: 'open-mic'; hold: boolean }
+	| { type: 'close-mic'; send: boolean }
+	| { type: 'set-wait'; waitMs: number | null }
+	| { type: 'set-send-phrases'; phrases: string }
+	| { type: 'set-hold-while-busy' | 'set-force-send'; enabled: boolean }
+	| { type: 'set-input'; deviceId: string }
+	| { type: 'set-mode'; mode: SwitchableVoiceMode }
+	| { type: 'cycle-mode'; direction: 1 | -1 }
+	| { type: 'navigate'; agentSessionId: string; tabId: string; groupChatId?: string };
+
+export function isVoiceWidgetCommand(value: unknown): value is VoiceWidgetCommand {
+	if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+	const c = value as Record<string, unknown>;
+	switch (c.type) {
+		case 'close':
+		case 'minimize':
+		case 'interrupt':
+		case 'toggle-mute':
+		case 'toggle-transcript':
+		case 'toggle-listen-mode':
+		case 'send':
+		case 'open-mic-settings':
+		case 'refresh-send-wait':
+			return true;
+		case 'open-mic':
+			return typeof c.hold === 'boolean';
+		case 'close-mic':
+			return typeof c.send === 'boolean';
+		case 'set-wait':
+			return (
+				c.waitMs === null ||
+				(typeof c.waitMs === 'number' && Number.isFinite(c.waitMs) && c.waitMs >= 0)
+			);
+		case 'set-send-phrases':
+			return typeof c.phrases === 'string';
+		case 'set-hold-while-busy':
+		case 'set-force-send':
+			return typeof c.enabled === 'boolean';
+		case 'set-input':
+			return typeof c.deviceId === 'string' && c.deviceId.length > 0;
+		case 'set-mode':
+			return c.mode === 'tab' || c.mode === 'agent' || c.mode === 'conductor';
+		case 'cycle-mode':
+			return c.direction === 1 || c.direction === -1;
+		case 'navigate':
+			return (
+				typeof c.agentSessionId === 'string' &&
+				c.agentSessionId.length > 0 &&
+				typeof c.tabId === 'string' &&
+				c.tabId.length > 0 &&
+				(c.groupChatId === undefined || typeof c.groupChatId === 'string')
+			);
+		default:
+			return false;
+	}
 }

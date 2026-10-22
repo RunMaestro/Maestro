@@ -53,6 +53,8 @@ export interface AITabRecord extends UnknownFields {
 	consultOrigin?: { sourceSessionId: string; sourceTabId: string };
 	customModel?: string;
 	customEffort?: string;
+	/** Explicit harness pin. Absent follows the agent default; unknown ids survive reads. */
+	tabProvider?: string;
 	/** Composer chips: what a turn sent from this tab saves, shows, and allows. */
 	saveToHistory?: boolean;
 	showThinking?: string;

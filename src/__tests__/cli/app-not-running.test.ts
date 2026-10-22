@@ -316,7 +316,7 @@ const rows: Row[] = [
 		run: (json) => goalRun('agent-1', 'Ship it', { visible: true, json }),
 		jsonlMessage: true,
 	},
-	{ name: 'status', run: () => status(), humanOnly: true, humanOnStdout: true },
+	{ name: 'status', run: () => status(), humanOnly: true },
 	{ name: 'pianola watch', run: () => pianolaWatch('tab-1', { once: true }), humanOnly: true },
 	{
 		name: 'pianola orchestrate',

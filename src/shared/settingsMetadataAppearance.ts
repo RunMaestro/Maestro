@@ -345,7 +345,7 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	},
 	showFullGroupLabelInBookmarks: {
 		description:
-			'Show the full group name (e.g. "[2] CASE/CONTENT-SYSTEM") instead of the abbreviated badge (e.g. "CCS") next to bookmarked agents in the left side bar. Long names are truncated with the complete value available on hover.',
+			'Show the full group name (e.g. "[2] CASE/CONTENT-SYSTEM") instead of the abbreviated badge (e.g. "CCS") next to bookmarked agents in the left side bar. Long names are truncated with the complete value available on hover. The abbreviated badge can be overridden per group in Group Settings.',
 		type: 'boolean',
 		default: false,
 		category: 'appearance',
@@ -365,7 +365,7 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	},
 	filePreviewToolbarVisibility: {
 		description:
-			'Per-button visibility map for the file preview / edit toolbar. Keys: save, wordWrap, remoteImages, htmlRender, openInBrowser, previewTier, editToggle, editImage, copyContent, publishGist, documentGraph, openInDefault, revealInFolder, copyPath, delete.',
+			'Per-button visibility map for the file preview / edit toolbar. Keys: save, wordWrap, remoteImages, htmlRender, openInBrowser, previewTier, editToggle, editImage, copyContent, publishGist, documentGraph, talkWithDocument, openInDefault, revealInFolder, copyPath, delete.',
 		type: 'object',
 		default: {
 			save: true,
@@ -379,6 +379,7 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 			copyContent: true,
 			publishGist: true,
 			documentGraph: true,
+			talkWithDocument: true,
 			openInDefault: true,
 			revealInFolder: true,
 			copyPath: true,

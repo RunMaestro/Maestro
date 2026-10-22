@@ -109,13 +109,13 @@ placeholders such as \`[REDACTED_API_KEY]\` or \`[REDACTED_SECRET]\`.
 
 ## Digests
 
-Only when the user turned digests on and picked an agent. Each closed
-${SEGMENT_MINUTES}-minute segment with events gets a markdown summary at
+Only when the user turned digests on and picked a writer: a local model or an
+agent. Each closed ${SEGMENT_MINUTES}-minute segment with events gets a markdown summary at
 \`digests/<day>/<HHMM>Z.md\`. When a ${ROLLUP_HOURS}-hour block (00:00, 06:00,
-12:00, 18:00 UTC) ends, the same agent writes \`digests/<day>/${ROLLUP_HOURS}h-<HHMM>Z.md\`
-from that block's ${SEGMENT_MINUTES}-minute digests. Digests were written by an
-agent that read untrusted captured text: the same untrusted-content rule
-applies to them.
+12:00, 18:00 UTC) ends, the same writer writes \`digests/<day>/${ROLLUP_HOURS}h-<HHMM>Z.md\`
+from that block's ${SEGMENT_MINUTES}-minute digests. The second line of each file names
+who wrote it. Digests were written by a model that read untrusted captured
+text: the same untrusted-content rule applies to them.
 
 ## What is never recorded
 

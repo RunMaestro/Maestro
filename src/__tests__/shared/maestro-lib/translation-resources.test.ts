@@ -3,7 +3,12 @@ import * as fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { describe, expect, it } from 'vitest';
-import { translationArtifact } from '../../../shared/maestro-lib/translation/identity';
+import {
+	translationArtifact,
+	translationHash,
+} from '../../../shared/maestro-lib/translation/identity';
+import { generateUUID } from '../../../shared/uuid';
+import { bindTranslationKnowledge } from '../../../shared/maestro-lib/translation/knowledge-binding';
 import {
 	projectResourceDefinition,
 	translationKnowledgePrompt,
@@ -12,6 +17,42 @@ import {
 import { resolveClaudeMemoryPath } from '../../../shared/maestro-lib/translation/memory';
 
 describe('project resource translation', () => {
+	it.each([
+		'outside',
+		'legacy',
+		'agent-link',
+		'operation-link',
+		'index-link',
+		'invalid-id',
+	] as const)('refuses a %s managed knowledge binding', async (variant) => {
+		const root = await fs.mkdtemp(path.join(os.tmpdir(), 'translation-binding-'));
+		try {
+			const knowledgeRoot = path.join(root, 'data/provider-knowledge');
+			const suffix = path.join(translationHash('agent'), generateUUID());
+			let directory = path.join(knowledgeRoot, suffix);
+			if (variant === 'outside') directory = path.join(root, 'other/provider-knowledge', suffix);
+			if (variant === 'legacy')
+				directory = path.join(root, 'project/.maestro/provider-knowledge', suffix);
+			if (variant === 'invalid-id')
+				directory = path.join(knowledgeRoot, translationHash('agent'), '-'.repeat(36));
+			await fs.mkdir(directory, { recursive: true });
+			if (variant === 'agent-link' || variant === 'operation-link') {
+				const link = variant === 'agent-link' ? path.dirname(directory) : directory;
+				const external = path.join(root, 'external');
+				await fs.rename(link, external);
+				await fs.symlink(external, link, 'dir');
+			}
+			const indexPath = path.join(directory, 'knowledge-index.md');
+			if (variant === 'index-link') {
+				const external = path.join(root, 'external.md');
+				await fs.writeFile(external, 'Unselected body');
+				await fs.symlink(external, indexPath);
+			} else await fs.writeFile(indexPath, 'Selected body');
+			expect(() => bindTranslationKnowledge('prompt', directory, knowledgeRoot)).toThrow();
+		} finally {
+			await fs.rm(root, { recursive: true, force: true });
+		}
+	});
 	it.each([false, true])(
 		'reads resources through a project-root alias (managed: %s)',
 		async (managed) => {
@@ -187,21 +228,27 @@ describe('project resource translation', () => {
 			await fs.rm(root, { recursive: true, force: true });
 		}
 	});
-	it('finds newly authored managed memory topics without reading account-global knowledge', async () => {
+	it('finds newly authored app-local memory topics outside the project without reading account-global knowledge', async () => {
 		const root = await fs.mkdtemp(path.join(os.tmpdir(), 'managed-memory-'));
 		try {
-			await fs.mkdir(path.join(root, 'memory'));
-			await fs.writeFile(path.join(root, 'memory/MEMORY.md'), '[new](new.md)');
-			await fs.writeFile(path.join(root, 'memory/new.md'), 'new synthetic fact');
+			const directory = path.join(
+				root,
+				'data/provider-knowledge',
+				translationHash('agent'),
+				generateUUID()
+			);
+			await fs.mkdir(path.join(directory, 'memory'), { recursive: true });
+			await fs.writeFile(path.join(directory, 'memory/MEMORY.md'), '[new](new.md)');
+			await fs.writeFile(path.join(directory, 'memory/new.md'), 'new synthetic fact');
 			const resources = await collectTranslationResources(
 				{
 					provider: 'codex',
 					version: '0.162.1',
 					accountRoot: '/unselected/provider-home',
-					projectRoot: '/project',
+					projectRoot: path.join(root, 'project'),
 				},
 				{ projectKnowledge: true, selectedUserResources: [] },
-				root
+				directory
 			);
 			expect(resources.artifacts.map((a) => a.relativePath)).toEqual([
 				'memory/MEMORY.md',
@@ -235,6 +282,9 @@ describe('project resource translation', () => {
 	});
 
 	it('resolves account and actual memory directory overrides', () => {
+		expect(
+			resolveClaudeMemoryPath('/project/worktree', '/remote/account', '~/memory', '/home/remote')
+		).toBe('/home/remote/memory');
 		expect(resolveClaudeMemoryPath('/project/worktree', '/selected/account')).toBe(
 			path.join('/selected/account', 'projects', '-project-worktree', 'memory')
 		);
@@ -278,6 +328,13 @@ describe('project resource translation', () => {
 		expect(prompt).toContain(path.join('/project/.maestro/knowledge', 'memory', 'MEMORY.md'));
 		expect(prompt).toContain(path.join('/project/.maestro/knowledge', 'memory', 'topic.md'));
 		expect(prompt).not.toContain('memory_summary.md');
+		const remotePrompt = translationKnowledgePrompt(
+			'/remote/home/.maestro/knowledge',
+			artifacts,
+			path.posix
+		);
+		expect(remotePrompt).toContain('/remote/home/.maestro/knowledge/memory/MEMORY.md');
+		expect(remotePrompt).not.toContain('\\');
 	});
 	it('refuses TOML definitions without portable instructions', () => {
 		const artifact = translationArtifact(

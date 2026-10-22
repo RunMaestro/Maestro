@@ -28,7 +28,12 @@ import {
 } from '../../utils/tabHelpers';
 import { resolveTabPermissionMode } from '../../../shared/agentMetadata';
 import { generateId } from '../../utils/ids';
-import { codifyTurnSettings } from '../../utils/providerTabSessions';
+import {
+	captureQueuedTurnSettings,
+	codifyQueuedTurnSettings,
+	projectTabProvider,
+} from '../../utils/providerTabSessions';
+import { settleAutoTurn } from '../../services/autoTurn';
 import { substituteTemplateVariables } from '../../utils/templateVariables';
 import { gitService } from '../../services/git';
 import { captureException } from '../../utils/sentry';
@@ -44,8 +49,12 @@ import {
 	withMentionTurnNotes,
 } from '../../services/crossAgentMentions';
 import { noteDirectDispatch } from '../../stores/retryStore';
+import { enqueuePromptForTab } from '../../services/queuedPrompt';
+import { pendingTranslationSource } from '../../../shared/maestro-lib/translation/send';
+import { migrationHoldsTurns } from '../../../shared/maestro-lib/translation/session';
 import { requestTabAutoNameForMessage } from '../../services/tabAutoNaming';
 import { logger } from '../../utils/logger';
+import type { ConsultChain } from '../../../shared/consultBudget';
 
 // ============================================================================
 // Dependencies interface
@@ -175,6 +184,11 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				 *  command arrived over `remote:executeCommand`; absent for
 				 *  in-renderer synthetic dispatches. */
 				receiptChannel?: string;
+				/** The place in a consult chain this command's turn takes, set when
+				 *  another agent's `maestro-cli dispatch` sent it. Handed to the
+				 *  spawn so the delegated turn's own consults spend the chain it
+				 *  descends from (shared/consultBudget.ts). */
+				consultChain?: ConsultChain;
 			}>;
 			const {
 				sessionId,
@@ -185,6 +199,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				images,
 				literalPrompt,
 				receiptChannel,
+				consultChain,
 			} = customEvent.detail;
 
 			// The CLI's `dispatch` success flag is this ack, not the fact that an
@@ -207,7 +222,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 			});
 
 			// Find the session directly from sessionsRef (not from React state which may be stale)
-			const session = sessionsRef.current.find((s) => s.id === sessionId);
+			let session = sessionsRef.current.find((s) => s.id === sessionId);
 			if (!session) {
 				logger.info('[Remote] ERROR: Session not found in sessionsRef:', undefined, sessionId);
 				reportDelivery(false, 'session-not-found');
@@ -307,6 +322,15 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				return;
 			}
 
+			const submittedTab = requestedTabId
+				? session.aiTabs.find((tab) => tab.id === requestedTabId)
+				: getActiveTab(session);
+			if (requestedTabId && !submittedTab) {
+				reportDelivery(false, `tab-not-found:${requestedTabId}`);
+				return;
+			}
+			session = projectTabProvider(session, submittedTab).agent;
+
 			// Handle AI mode for batch-mode agents.
 			//
 			// A cache MISS is not an answer. `hasCapabilityCached` reports one as
@@ -370,6 +394,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 			}
 			const targetTab = requestedTab ?? getActiveTab(session);
 			const writeTabId = targetTab?.id;
+			const submittedSettings = captureQueuedTurnSettings(targetTab, session);
 
 			// Cross-agent @mentions, resolved the way the composer does it
 			// (useInputProcessing): a remote prompt is the same message a user would
@@ -394,7 +419,10 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					reportDelivery(false, 'no-target-tab-for-mention');
 					return;
 				}
-				dispatchCrossAgentMentions(mentionPlan, command, session, writeTabId, images);
+				// `consultChain` is set when another agent's `maestro-cli dispatch` sent
+				// this prompt: its mentions are then that agent's consults, and spend
+				// the chain the prompt arrived in.
+				dispatchCrossAgentMentions(mentionPlan, command, session, writeTabId, images, consultChain);
 				// The bubble below lands in this tab, so name it from the message just as
 				// the composer does for a leading mention (it names before planning).
 				requestTabAutoNameForMessage(session, writeTabId, command, 'remote');
@@ -526,6 +554,25 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				promptToSend = DEFAULT_IMAGE_ONLY_PROMPT;
 			}
 
+			// Pending native context uses the queue's shared send gate. A warning
+			// can then hold the original message and its captured settings safely.
+			if (
+				targetTab &&
+				(pendingTranslationSource(session, targetTab.id, session.toolType) ||
+					migrationHoldsTurns(session.providerMigration))
+			) {
+				const queued = enqueuePromptForTab({
+					sessionId,
+					tabId: targetTab.id,
+					text: promptToSend,
+					turnSettings: submittedSettings,
+					images,
+					consultChain,
+				});
+				reportDelivery(!!queued, queued ? undefined : 'translation-queue-unavailable');
+				return;
+			}
+
 			try {
 				// Get agent configuration for this session's tool type
 				const agent = await window.maestro.agents.get(session.toolType);
@@ -569,6 +616,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				const appendSystemPrompt = await prepareMaestroSystemPrompt({
 					session,
 					activeTabId: targetTab?.id,
+					consultChain,
 				});
 
 				const remoteImages = images && images.length > 0 ? images : undefined;
@@ -637,7 +685,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 													// Chat's "Working for", parallel tabs) reads the tab's own start.
 													thinkingStartTime: Date.now(),
 													logs: [...tab.logs, userLogEntry],
-													...codifyTurnSettings(tab, s),
+													...codifyQueuedTurnSettings({ turnSettings: submittedSettings }, tab, s),
 												}
 											: tab
 									)
@@ -687,8 +735,20 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 						tabId: targetTab.id,
 						type: 'message',
 						text: promptToSend,
+						// A resend of a delegated turn stays in the chain it was
+						// admitted to, rather than rooting a fresh one.
+						...(consultChain ? { consultChain } : {}),
 					});
 				}
+
+				// A command that lands on an agent set to the Auto model took the tab
+				// with a pending stamp just above. Settle it before the spawn: the
+				// router's answer decides the model, effort and place. Null on a named
+				// model, which keeps what this path has always passed. A tier target
+				// that cannot be used throws, into the catch below.
+				const autoLaunch = targetTab?.id
+					? await settleAutoTurn({ sessionId, tabId: targetTab.id, prompt: promptToSend })
+					: null;
 
 				// Ack delivery on whichever comes first: the spawn settling, or a
 				// timer set inside the main-side receipt timeout.
@@ -734,9 +794,20 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 						sessionCustomArgs: session.customArgs,
 						sessionAdditionalDirectories: session.additionalDirectories,
 						sessionCustomEnvVars: session.customEnvVars,
-						sessionCustomModel: session.customModel,
+						...(autoLaunch
+							? {
+									sessionCustomModel: autoLaunch.model,
+									sessionCustomEffort: autoLaunch.effort,
+									...(autoLaunch.runOn ? { runOnOverride: autoLaunch.runOn } : {}),
+								}
+							: {
+									sessionCustomModel: submittedSettings.model,
+									sessionCustomEffort: submittedSettings.effort,
+									runOnOverride: submittedSettings.runOn,
+								}),
 						sessionCustomContextWindow: session.customContextWindow,
 						sessionSshRemoteConfig: session.sessionSshRemoteConfig,
+						...(consultChain ? { consultChain } : {}),
 					});
 				} finally {
 					clearTimeout(ackTimer);
@@ -749,7 +820,14 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				// Trailing mention: this agent answers AND the mentioned agent is
 				// consulted alongside it, or handed the answer when it ends.
 				if (mentionPlan && writeTabId) {
-					dispatchCrossAgentMentions(mentionPlan, command, session, writeTabId, images);
+					dispatchCrossAgentMentions(
+						mentionPlan,
+						command,
+						session,
+						writeTabId,
+						images,
+						consultChain
+					);
 				}
 			} catch (error: unknown) {
 				// A remote command that lands while the agent is mid-turn is refused

@@ -596,3 +596,38 @@ describe('returnPendingSteersToQueue', () => {
 		expect(returnPendingSteersToQueue(session, new Set(['nope']), true)).toBe(session);
 	});
 });
+
+describe('Ensemble steering attribution', () => {
+	it('names the captured running provider in delivery and late verdict messages for a closed tab', async () => {
+		const session = steerableSession([item()]);
+		session.toolType = 'opencode';
+		session.providerOverrides = {
+			'claude-code': { enableMaestroP: true, maestroPMode: 'interactive' },
+		};
+		session.aiTabs[0] = { ...session.aiTabs[0], tabProvider: 'codex', turnProvider: 'claude-code' };
+		useSessionStore.setState({ sessions: [session] });
+		steer.mockResolvedValue({ type: 'steering', id: 'ensemble-steer', verdict: 'delivered' });
+		expect(await steerQueuedItem('sess-1', 'item-a')).toEqual({
+			outcome: 'delivered',
+			verdict: 'delivered',
+		});
+		expect(notifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({ message: expect.stringContaining('Claude Code has your message') })
+		);
+		useSessionStore.setState((state) => ({
+			sessions: state.sessions.map((s) => ({
+				...s,
+				orphanedThinkingTabs: s.aiTabs.map((tab) => ({ ...tab, turnProvider: 'codex' as const })),
+				aiTabs: [],
+			})),
+		}));
+		applySteeringVerdict(PROCESS_KEY, {
+			type: 'steering',
+			id: 'ensemble-steer',
+			verdict: 'queued',
+		});
+		expect(notifyToast).toHaveBeenLastCalledWith(
+			expect.objectContaining({ message: expect.stringContaining('Claude Code could not fold') })
+		);
+	});
+});

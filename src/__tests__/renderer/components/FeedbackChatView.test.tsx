@@ -8,6 +8,7 @@ import {
 import type { Theme, Session } from '../../../renderer/types';
 import { FeedbackConversationManager } from '../../../renderer/services/feedbackConversation';
 import type { FeedbackAccount } from '../../../shared/feedbackAccounts';
+import { useSecretScreenStore } from '../../../renderer/stores/secretScreenStore';
 
 // The real login dialog spawns a PTY; here it is a stub that signs in on click.
 vi.mock('../../../renderer/components/GitHubLoginModal', () => ({
@@ -526,6 +527,99 @@ describe('FeedbackChatView', () => {
 
 		expect(await screen.findByText('Feedback Submitted')).toBeTruthy();
 		expect(window.maestro.feedback.submitConversation).toHaveBeenCalledTimes(2);
+	});
+
+	// Main screens the issue text for secrets and refuses on a finding. The chat
+	// asks through the shared confirm (driven here through its store) and files
+	// the same feedback with `allowSecrets` on a yes.
+	it('asks before filing feedback the secret screen flagged, then files it on yes', async () => {
+		useSecretScreenStore.setState({ queue: [] });
+		window.maestro.feedback.checkGhAuth.mockResolvedValue({ authenticated: true });
+		window.maestro.feedback.listAccounts.mockResolvedValue({
+			accounts: [WORK],
+			lastWorkingKey: null,
+		});
+		window.maestro.feedback.searchIssues.mockResolvedValue({ issues: [] });
+		const secretFindings = [
+			{ kind: 'anthropic-key', line: 1, preview: '••••••••AbCd', source: 'Actual' },
+		];
+		window.maestro.feedback.submitConversation
+			.mockResolvedValueOnce({
+				success: false,
+				error: 'Found 1 possible secret in the feedback. Nothing was sent.',
+				code: 'SECRETS_FOUND',
+				secretFindings,
+			})
+			.mockResolvedValueOnce({ success: true, issueUrl: 'https://github.com/x/y/issues/8' });
+		window.maestro.agents.get.mockResolvedValue({
+			id: 'claude-code',
+			available: true,
+			command: 'claude',
+			args: [],
+		});
+		let onExit: ((sid: string, code: number) => void) | undefined;
+		let onData: ((sid: string, data: string) => void) | undefined;
+		window.maestro.process.onExit.mockImplementation((cb: typeof onExit) => {
+			onExit = cb;
+			return () => {};
+		});
+		(window.maestro.process as unknown as { onData: unknown }).onData = vi.fn(
+			(cb: typeof onData) => {
+				onData = cb;
+				return () => {};
+			}
+		);
+		window.maestro.process.spawn.mockImplementation((config: { sessionId: string }) => {
+			queueMicrotask(() => {
+				onData?.(
+					config.sessionId,
+					JSON.stringify({
+						confidence: 95,
+						ready: true,
+						message: 'Got it',
+						category: 'bug_report',
+						summary: 'Agent prints its key',
+						structured: { expectedBehavior: 'no key', actualBehavior: 'key printed' },
+					})
+				);
+				onExit?.(config.sessionId, 0);
+			});
+			return Promise.resolve({ pid: 1, success: true });
+		});
+
+		render(
+			<FeedbackChatView
+				theme={theme}
+				sessions={sessions}
+				onCancel={vi.fn()}
+				onSubmitSuccess={vi.fn()}
+			/>
+		);
+		const input = await screen.findByPlaceholderText('Describe your issue or idea...');
+		fireEvent.change(input, { target: { value: 'The agent prints its key' } });
+		await act(async () => {
+			fireEvent.keyDown(input, { key: 'Enter' });
+		});
+		fireEvent.click(await screen.findByText('Submit Feedback'));
+
+		await waitFor(() => expect(useSecretScreenStore.getState().queue).toHaveLength(1));
+		const request = useSecretScreenStore.getState().queue[0];
+		expect(request.subject).toBe('this feedback');
+		expect(request.findings).toEqual(secretFindings);
+		expect(window.maestro.feedback.submitConversation).toHaveBeenCalledTimes(1);
+		expect(window.maestro.feedback.submitConversation.mock.calls[0][0]).toMatchObject({
+			allowSecrets: false,
+		});
+
+		await act(async () => {
+			useSecretScreenStore.getState().settle(request.id, true);
+		});
+
+		expect(await screen.findByText('Feedback Submitted')).toBeTruthy();
+		expect(window.maestro.feedback.submitConversation).toHaveBeenCalledTimes(2);
+		expect(window.maestro.feedback.submitConversation.mock.calls[1][0]).toMatchObject({
+			allowSecrets: true,
+		});
 	});
 
 	it('lets the user submit early with what has been gathered, and keeps the account row last', async () => {

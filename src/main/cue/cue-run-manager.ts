@@ -270,6 +270,28 @@ export interface CueRunManager {
 		 */
 		exemptFromQueueCap?: boolean
 	): void;
+	/**
+	 * Record an event that was skipped before anything was spawned (a
+	 * subscription's `gate` said no, or the prompt-injection screen refused
+	 * it). Writes one `cue_events` row, born in its final status, and returns
+	 * the result for the activity log.
+	 *
+	 * It claims no concurrency slot, holds no self-overlap guard, and raises no
+	 * completion: nothing ran, so nothing downstream may fire off it.
+	 */
+	recordSkippedRun(skipped: {
+		sessionId: string;
+		event: CueEvent;
+		subscriptionName: string;
+		pipelineName?: string;
+		status: Extract<CueRunResult['status'], 'gated' | 'blocked-injection'>;
+		/** Why it was skipped, when a person should read it in History. */
+		reason?: string;
+		/** When the check that skipped it began (ms). Defaults to now. */
+		startedAt?: number;
+		chainRootId?: string;
+		parentEventId?: string;
+	}): CueRunResult;
 	stopRun(runId: string): boolean;
 	stopAll(): void;
 	/**
@@ -1122,6 +1144,54 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				autoRun,
 				turnSettings
 			);
+		},
+
+		recordSkippedRun(skipped): CueRunResult {
+			const runId = crypto.randomUUID();
+			const endedAtMs = Date.now();
+			const startedAtMs = Math.min(skipped.startedAt ?? endedAtMs, endedAtMs);
+			const result: CueRunResult = {
+				runId,
+				sessionId: skipped.sessionId,
+				sessionName: getSessionName(skipped.sessionId),
+				subscriptionName: skipped.subscriptionName,
+				pipelineName: skipped.pipelineName,
+				event: skipped.event,
+				status: skipped.status,
+				stdout: '',
+				// A refusal explains itself where a failed run would: the
+				// activity row and History both read `stderr`.
+				stderr: skipped.reason ?? '',
+				exitCode: null,
+				durationMs: endedAtMs - startedAtMs,
+				startedAt: new Date(startedAtMs).toISOString(),
+				endedAt: new Date(endedAtMs).toISOString(),
+			};
+			// Born finalized, like a stale queue drop: there is no `running`
+			// phase to flip out of. No output columns are written, which is what
+			// keeps a skipped event out of History (see
+			// CUE_EVENT_WORTH_SHOWING_SQL).
+			safeRecordCueEvent({
+				id: runId,
+				type: skipped.event.type,
+				triggerName: skipped.event.triggerName,
+				sessionId: skipped.sessionId,
+				subscriptionName: skipped.subscriptionName,
+				status: skipped.status,
+				payload: JSON.stringify(skipped.event.payload),
+				...buildLineageColumns({
+					runId,
+					chainRootId: skipped.chainRootId,
+					parentEventId: skipped.parentEventId,
+					pipelineName: skipped.pipelineName,
+				}),
+			});
+			if (skipped.reason) {
+				// Only a skip with a reason to show writes the completion
+				// columns. A `gated` event passes none and keeps them NULL.
+				safeUpdateCueEventStatus(runId, skipped.status, null, completionInfoFromResult(result));
+			}
+			return result;
 		},
 
 		stopRun(runId: string): boolean {

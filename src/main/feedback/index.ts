@@ -66,6 +66,8 @@ import {
 	GH_LOGIN_ARGS,
 } from '../../shared/feedback';
 import { formatAgentLoginCommand } from '../../shared/agentMetadata';
+import { secretScreenRefusal, type SecretFinding } from '../../shared/secretScan';
+import { screenForSecrets, type SecretScreenPart } from '../local-models/secret-screen';
 
 const LOG_CONTEXT = '[Feedback]';
 // The repo feedback issues are filed on, and how long the up-front write
@@ -1162,10 +1164,19 @@ export async function searchFeedbackIssues(payload: {
 export async function subscribeFeedbackIssue(payload: {
 	issueNumber: number;
 	comment?: string;
+	allowSecrets?: boolean;
 }): Promise<FeedbackSubmitResponse> {
 	const { issueNumber, comment } = payload;
 	if (!issueNumber || typeof issueNumber !== 'number') {
 		return { success: false, error: 'Invalid issue number.' };
+	}
+
+	// Screened before the +1, so a refusal leaves nothing behind on the issue.
+	if (comment && comment.trim() && payload.allowSecrets !== true) {
+		const screen = await screenForSecrets([{ source: 'Comment', text: comment }]);
+		if (screen.findings.length > 0) {
+			return secretScreenRefusal(screen.findings, 'the comment', screen.note);
+		}
 	}
 
 	// Add a +1 reaction to show interest
@@ -1208,10 +1219,30 @@ export async function subscribeFeedbackIssue(payload: {
 	return { success: true };
 }
 
+/**
+ * The issue's free-text fields as named parts for the secret screen, so a
+ * finding says which field it is in. Both submit forms publish these same five.
+ */
+function feedbackTextParts(fields: {
+	summary?: string;
+	expected?: string;
+	actual?: string;
+	steps?: string;
+	context?: string;
+}): SecretScreenPart[] {
+	return [
+		{ source: 'Summary', text: fields.summary ?? '' },
+		{ source: 'Expected', text: fields.expected ?? '' },
+		{ source: 'Actual', text: fields.actual ?? '' },
+		{ source: 'Steps', text: fields.steps ?? '' },
+		{ source: 'Context', text: fields.context ?? '' },
+	];
+}
+
 /** Legacy one-shot submit: create a structured GitHub issue directly. */
 export async function submitFeedback(
 	rawPayload: FeedbackSubmitPayload
-): Promise<{ success: boolean; error?: string }> {
+): Promise<FeedbackSubmitResponse> {
 	if (!rawPayload || typeof rawPayload !== 'object') {
 		return { success: false, error: 'Feedback payload is missing.' };
 	}
@@ -1294,6 +1325,20 @@ export async function submitFeedback(
 		sshRemoteEnabled: typeof sshRemoteEnabled === 'boolean' ? sshRemoteEnabled : undefined,
 		attachments: normalizedAttachments,
 	};
+	if (rawPayload.allowSecrets !== true) {
+		const screen = await screenForSecrets(
+			feedbackTextParts({
+				summary: normalizedPayload.summary,
+				expected: normalizedPayload.expectedBehavior,
+				actual: normalizedPayload.details,
+				steps: normalizedPayload.reproductionSteps,
+				context: normalizedPayload.additionalContext,
+			})
+		);
+		if (screen.findings.length > 0) {
+			return secretScreenRefusal(screen.findings, 'the feedback', screen.note);
+		}
+	}
 	const { markdown } = await uploadAttachments(normalizedAttachments);
 	await ensureFeedbackLabel();
 	const environment = buildEnvironmentSummary(normalizedPayload);
@@ -1446,6 +1491,63 @@ export async function submitFeedbackConversation(
 		sshRemoteEnabled: payload.sshRemoteEnabled,
 	});
 
+	// Secret screen, before anything is uploaded. The issue text and the
+	// support package are screened together so a refusal lists every finding at
+	// once, and a refusal uploads nothing: no screenshots, no package, no issue.
+	const allowSecrets = payload.allowSecrets === true;
+	const findings: SecretFinding[] = [];
+	let secretScreenNote: string | undefined;
+	if (!allowSecrets) {
+		const screen = await screenForSecrets(
+			feedbackTextParts({
+				summary: summaryField.value,
+				expected: expectedField.value,
+				actual: actualField.value,
+				steps: reproField.value,
+				context: contextField.value,
+			})
+		);
+		findings.push(...screen.findings);
+		secretScreenNote = screen.note;
+	}
+
+	// Live state as of filing: an anonymized section on the issue, and the Auto
+	// Run counters the support package cannot read on its own (they live only in
+	// the renderer, so a package built here used to ship that section empty).
+	const liveDiagnosis = await captureFeedbackLiveDiagnosis();
+
+	// Generate the debug package if requested. It screens its own contents and
+	// writes no zip when it finds something.
+	let debugPackagePath: string | undefined;
+	if (payload.includeDebugPackage && debugPackageDeps) {
+		try {
+			const packageResult = await generateDebugPackage(os.tmpdir(), debugPackageDeps, {
+				allowSecrets,
+				...(liveDiagnosis.rendererAvailable
+					? { autoRunSnapshots: liveDiagnosis.autoRunSnapshots }
+					: {}),
+			});
+			if (packageResult.secretFindings?.length) {
+				findings.push(...packageResult.secretFindings);
+				secretScreenNote ??= packageResult.secretScreenNote;
+			} else if (packageResult.success && packageResult.path) {
+				debugPackagePath = packageResult.path;
+			}
+		} catch (e) {
+			void captureException(e);
+			logger.warn(`Failed to generate debug package: ${e}`, LOG_CONTEXT);
+		}
+	}
+	const discardDebugPackage = async (): Promise<void> => {
+		if (debugPackagePath) await fs.unlink(debugPackagePath).catch(() => {});
+		debugPackagePath = undefined;
+	};
+
+	if (findings.length > 0) {
+		await discardDebugPackage();
+		return secretScreenRefusal(findings, 'the feedback', secretScreenNote);
+	}
+
 	// Upload attachments
 	const normalizedAttachments = Array.isArray(payload.attachments)
 		? payload.attachments.filter(
@@ -1462,6 +1564,7 @@ export async function submitFeedbackConversation(
 	try {
 		({ markdown: attachmentMarkdown } = await uploadAttachments(normalizedAttachments));
 	} catch (error) {
+		await discardDebugPackage();
 		return {
 			success: false,
 			error: error instanceof Error ? error.message : 'Failed to upload screenshots.',
@@ -1469,35 +1572,16 @@ export async function submitFeedbackConversation(
 		};
 	}
 
-	// Live state as of filing: an anonymized section on the issue, and the Auto
-	// Run counters the support package cannot read on its own (they live only in
-	// the renderer, so a package built here used to ship that section empty).
-	const liveDiagnosis = await captureFeedbackLiveDiagnosis();
-
-	// Generate and upload debug package if requested
+	// Upload the debug package generated above
 	let debugPackageMarkdown = '';
-	if (payload.includeDebugPackage && debugPackageDeps) {
+	if (debugPackagePath) {
 		try {
-			const packageResult = await generateDebugPackage(
-				os.tmpdir(),
-				debugPackageDeps,
-				liveDiagnosis.rendererAvailable
-					? { autoRunSnapshots: liveDiagnosis.autoRunSnapshots }
-					: undefined
-			);
-			if (packageResult.success && packageResult.path) {
-				try {
-					debugPackageMarkdown = await uploadFeedbackZip(
-						packageResult.path,
-						'maestro-debug-package.zip'
-					);
-				} finally {
-					await fs.unlink(packageResult.path).catch(() => {});
-				}
-			}
+			debugPackageMarkdown = await uploadFeedbackZip(debugPackagePath, 'maestro-debug-package.zip');
 		} catch (e) {
 			void captureException(e);
-			logger.warn(`Failed to generate/upload debug package: ${e}`, LOG_CONTEXT);
+			logger.warn(`Failed to upload debug package: ${e}`, LOG_CONTEXT);
+		} finally {
+			await discardDebugPackage();
 		}
 	}
 

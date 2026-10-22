@@ -48,6 +48,7 @@ import {
 	formatConversationDuration,
 } from '../../../shared/tabConversationStats';
 import { useProviderProfiles } from '../../hooks/stats/useProviderProfiles';
+import { projectTabProvider } from '../../utils/providerTabSessions';
 import { PluginUiItemsSlot } from '../plugins/PluginUiItemsSlot';
 
 /** Snapshot an element's viewport rect as plain numbers for the timeline anchor. */
@@ -157,16 +158,20 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 	// `claudeInteractive.lastUsageSnapshotKey` (Adaptive Mode / interactive
 	// path), we prefer that exact key; otherwise we derive it from session +
 	// agent env + home dir.
-	const resolvedConfigDirKey = useResolvedClaudeConfigDirKey(activeSession);
+	const providerSession = useMemo(
+		() => projectTabProvider(activeSession, activeTab ?? undefined).agent,
+		[activeSession, activeTab]
+	);
+	const resolvedConfigDirKey = useResolvedClaudeConfigDirKey(providerSession);
 	const batchUsageSnapshot = useClaudeUsageSnapshot(resolvedConfigDirKey);
-	const showBatchUsage = activeSession?.toolType === 'claude-code';
+	const showBatchUsage = providerSession.toolType === 'claude-code';
 
 	// Provider profile for the tab in view - the same attribution the Usage
 	// Dashboard files this agent under, so the account named here and the
 	// account whose quota bars render below are the same account by
 	// construction. Null for providers with no account split (OpenCode, Droid)
 	// and while $HOME is still resolving.
-	const profileSessions = useMemo(() => [activeSession], [activeSession]);
+	const profileSessions = useMemo(() => [providerSession], [providerSession]);
 	const activeProfile = useProviderProfiles(profileSessions).profiles[0];
 	// Named only for a provider that splits: a config-dir account, a billed
 	// credential, or either one on a remote host.
@@ -466,6 +471,13 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 							)}
 						{gitPillMenu}
 					</div>
+
+					{/* No voice microphone here. The composer's Send column owns that
+					    button, and a second microphone in the header was the same action
+					    twice on one screen. Everything the header menu offered lives in
+					    the command palette (`voiceCommands.ts`): talk to this agent, talk
+					    to the Conductor, show the HUD, toggle the transcript, end the
+					    session. */}
 				</div>
 
 				{/* Git Status Widget - compact mode handled via CSS container queries */}
@@ -646,7 +658,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 														className="text-xs font-mono"
 														style={{ color: theme.colors.textMain }}
 													>
-														{getAgentDisplayName(activeSession.toolType)}
+														{getAgentDisplayName(providerSession.toolType)}
 													</span>
 												</div>
 												{activeProfile && activeProfileLabel && (
@@ -712,7 +724,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 													>
 														{calculateDisplayInputTokens(
 															activeTab?.usageStats ?? {},
-															activeSession.toolType
+															providerSession.toolType
 														).toLocaleString('en-US')}
 													</span>
 												</div>

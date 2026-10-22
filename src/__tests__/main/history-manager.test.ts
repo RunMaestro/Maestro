@@ -748,6 +748,57 @@ describe('HistoryManager', () => {
 			expect(rotated[0].id).toBe('e-10');
 		});
 
+		it('tells a listener about an entry once it is on disk', async () => {
+			mockExistsSync.mockReturnValue(false);
+			const listener = vi.fn();
+			const release = manager.onEntryAdded(listener);
+
+			await manager.addEntry(
+				'session-1',
+				'/test/project',
+				createMockEntry({ id: 'heard', projectPath: '' })
+			);
+
+			expect(listener).toHaveBeenCalledTimes(1);
+			const [sessionId, entry] = listener.mock.calls[0];
+			expect(sessionId).toBe('session-1');
+			// The record as written, with the project path the file line carries.
+			expect(entry).toMatchObject({ id: 'heard', projectPath: '/test/project' });
+
+			release();
+			await manager.addEntry('session-1', '/test/project', createMockEntry({ id: 'unheard' }));
+			expect(listener).toHaveBeenCalledTimes(1);
+		});
+
+		it('does not tell a listener about an entry that failed to write', async () => {
+			mockExistsSync.mockReturnValue(false);
+			mockAppendFileSync.mockImplementationOnce(() => {
+				throw new Error('disk full');
+			});
+			const listener = vi.fn();
+			manager.onEntryAdded(listener);
+
+			await manager.addEntry('session-1', '/test/project', createMockEntry({ id: 'lost' }));
+
+			expect(listener).not.toHaveBeenCalled();
+		});
+
+		it('keeps the write when a listener throws, and still tells the others', async () => {
+			mockExistsSync.mockReturnValue(false);
+			const second = vi.fn();
+			manager.onEntryAdded(() => {
+				throw new Error('listener bug');
+			});
+			manager.onEntryAdded(second);
+
+			await expect(
+				manager.addEntry('session-1', '/test/project', createMockEntry({ id: 'kept' }))
+			).resolves.toBeUndefined();
+
+			expect(mockAppendFileSync).toHaveBeenCalledTimes(1);
+			expect(second).toHaveBeenCalledTimes(1);
+		});
+
 		it('does not rotate a file that is already within the cap', async () => {
 			mockExistsSync.mockImplementation((p: fs.PathLike) => p.toString() === sessionFile);
 			mockReadFileSync.mockReturnValue(
@@ -1302,6 +1353,36 @@ describe('HistoryManager', () => {
 	// updateSessionNameByClaudeSessionId(agentSessionId, sessionName)
 	// ----------------------------------------------------------------
 	describe('updateSessionNameByClaudeSessionId()', () => {
+		it('does not rename another provider with the same native ID', async () => {
+			mockExistsSync.mockReturnValue(true);
+			const entries = [
+				createMockEntry({
+					id: 'codex',
+					agentSessionId: 'shared',
+					provider: 'codex',
+					sessionName: 'old',
+				}),
+				createMockEntry({
+					id: 'claude',
+					agentSessionId: 'shared',
+					provider: 'claude-code',
+					sessionName: 'old',
+				}),
+				createMockEntry({ id: 'legacy', agentSessionId: 'shared', sessionName: 'old' }),
+			];
+			mockReadFileSync.mockReturnValue(createJsonlFileData(entries));
+			const count = await manager.updateSessionNameByClaudeSessionId(
+				'shared',
+				'Owned',
+				'codex',
+				'sess_a'
+			);
+			expect(count).toBe(2);
+			const written = parseJsonlWrite(mockWriteFileSync.mock.calls[0][1]);
+			expect(written.find((entry) => entry.id === 'claude')?.sessionName).toBe('old');
+			expect(written.find((entry) => entry.id === 'codex')?.sessionName).toBe('Owned');
+		});
+
 		it('should update sessionName for matching entries and return count', async () => {
 			mockExistsSync.mockReturnValue(true);
 			mockReaddirSync.mockReturnValue(['sess_a.jsonl' as unknown as fs.Dirent]);

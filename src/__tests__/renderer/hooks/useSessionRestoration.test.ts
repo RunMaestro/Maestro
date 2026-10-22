@@ -29,6 +29,8 @@ vi.mock('../../../renderer/utils/ids', () => ({
 	generateId: vi.fn(() => `mock-id-${++idCounter}`),
 }));
 
+import { prepareSessionForPersistence } from '../../../renderer/hooks/utils/useDebouncedPersistence';
+import { findDocumentChatTab, readDocumentChatView } from '../../../renderer/services/documentChat';
 import { useSessionRestoration } from '../../../renderer/hooks/session/useSessionRestoration';
 import {
 	updateAiTab,
@@ -38,6 +40,7 @@ import {
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { gitService } from '../../../renderer/services/git';
 import type { Session } from '../../../renderer/types';
+import { createMockAITab } from '../../helpers/mockTab';
 import type { BrowserTab } from '../../../shared/browserPage';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { WEB_BRIDGE_RECONCILE_EVENT } from '../../../shared/webClientConfig';
@@ -166,6 +169,37 @@ afterEach(() => {
 // ============================================================================
 
 describe('restoreSession - Migration logic', () => {
+	it('restores an Ensemble slot without moving its pending native owner', async () => {
+		const tab = createMockAITab({
+			id: 'mixed',
+			state: 'busy',
+			tabProvider: 'codex',
+			agentSessionId: 'old-codex',
+			customModel: 'auto',
+			customEffort: 'high',
+			runOn: { type: 'provider' },
+			pendingTranslation: 'claude-code',
+			providerSessions: {
+				'claude-code': {
+					agentSessionId: 'source',
+					customModel: 'opus',
+					runOn: { type: 'provider' },
+				},
+			},
+		});
+		const session = createMockSession({
+			aiTabs: [tab],
+			activeTabId: tab.id,
+			unifiedTabOrder: [{ type: 'ai', id: tab.id }],
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+		let restored!: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+		expect(restored.aiTabs[0]).toMatchObject({ ...tab, state: 'idle', isGeneratingName: false });
+		expect(restored.toolType).toBe(session.toolType);
+	});
 	it('sets projectRoot to cwd when missing', async () => {
 		const session = createMockSession({ projectRoot: undefined, cwd: '/my/path' });
 		const { result } = renderHook(() => useSessionRestoration());
@@ -880,6 +914,41 @@ describe('restoreSession - Corruption recovery', () => {
 // ============================================================================
 
 describe('restoreSession - Runtime state reset', () => {
+	it('restores the same hidden document conversation and full history after a disk round trip', async () => {
+		const session = createMockSession();
+		const tab = {
+			...session.aiTabs[0],
+			id: 'document-chat',
+			hidden: true,
+			documentOrigin: { path: '/docs/plan.md' },
+			agentSessionId: 'provider-conversation',
+			logs: Array.from({ length: 200 }, (_, i) => ({
+				id: `message-${i}`,
+				timestamp: i,
+				source: i % 2 === 0 ? ('user' as const) : ('ai' as const),
+				text: `Message ${i}`,
+			})),
+		};
+		const persisted = JSON.parse(
+			JSON.stringify(prepareSessionForPersistence({ ...session, aiTabs: [...session.aiTabs, tab] }))
+		);
+		const { result } = renderHook(() => useSessionRestoration());
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(persisted);
+		});
+		expect(findDocumentChatTab(restored!, '/docs/plan.md')).toMatchObject({
+			id: tab.id,
+			hidden: true,
+			agentSessionId: 'provider-conversation',
+			logs: tab.logs,
+		});
+		const view = readDocumentChatView(restored!, '/docs/plan.md');
+		expect(view.messages).toHaveLength(200);
+		expect(view.messages[0].text).toBe('Message 0');
+		expect(view.messages[199].text).toBe('Message 199');
+	});
+
 	it('resets aiPid to 0 (lazy spawn)', async () => {
 		const session = createMockSession({ aiPid: 999 });
 		const { result } = renderHook(() => useSessionRestoration());
@@ -1526,6 +1595,8 @@ describe('Session & Group loading effect', () => {
 			updateSessionWith('web-agent', (session) => ({
 				...session,
 				shellLogs: [{ id: 'live-shell', timestamp: 2, source: 'stdout', text: 'new shell' }],
+				agentCommandsScope: 'new-provider',
+				agentCommands: [{ command: '/current', description: 'Current provider' }],
 			}));
 		});
 		await act(async () => {
@@ -1540,6 +1611,7 @@ describe('Session & Group loading effect', () => {
 			const session = useSessionStore.getState().sessions[0];
 			expect(session.aiTabs[0].logs.map((log) => log.id)).toEqual(['old', 'live']);
 			expect(session.shellLogs.map((log) => log.id)).toEqual(['old-shell', 'live-shell']);
+			expect(session.agentCommands?.map((command) => command.command)).toEqual(['/current']);
 			expect(session.deferredContent).toBeUndefined();
 			expect(session.aiCommandHistory).toEqual(['old prompt']);
 		});

@@ -5,6 +5,9 @@
 export { AGENT_IDS, isValidAgentId } from './agentIds';
 export type { AgentId } from './agentIds';
 import type { CodexTransport } from './codexTransport';
+import type { BackgroundRequests } from './local-models/background-requests';
+import type { RunOnTarget } from './local-models/run-on';
+import type { TierTargets } from './modelTiers';
 
 /**
  * Union type of all valid agent IDs.
@@ -215,6 +218,64 @@ export const DEFAULT_CAPABILITIES: AgentCapabilities = {
 	supportsAdditionalDirectories: false,
 };
 
+/**
+ * Group Settings: the values a new agent created in a group starts with.
+ *
+ * COPY-AT-CREATE. These are seed values for the create-agent form and nothing
+ * else: they are stamped into the form when an agent is created in the group
+ * and never read again. No spawn, launch plan or `resolveAgentEnvironment()`
+ * call reads them, moving an agent between groups changes nothing about it,
+ * and a later edit reaches an existing agent only through an explicit publish,
+ * which writes into that agent's own record.
+ *
+ * Every field is optional, and an absent field means "no opinion, use the
+ * Maestro default". The fields are the agent's own (`SessionInfo`), under the
+ * same names and types, so a default is copied or published key for key. They
+ * are flat, for one provider: the provider settings belong to `toolType`, and
+ * a default with no `toolType` carries only the fields every provider reads.
+ * Never here: `name`, `id`, `groupId`, or any runtime state.
+ */
+export type GroupAgentDefaults = Partial<
+	Pick<
+		SessionInfo,
+		// General
+		| 'projectRoot'
+		| 'additionalDirectories'
+		| 'newSessionMessage'
+		| 'nudgeMessage'
+		// Provider
+		| 'toolType'
+		| 'customPath'
+		| 'customArgs'
+		| 'customModel'
+		| 'customEffort'
+		| 'customContextWindow'
+		| 'enableMaestroP'
+		| 'maestroPMode'
+		| 'maestroPPath'
+		| 'codexTransport'
+		| 'retryOnAvailabilityErrors'
+		| 'retryOnTokenExhaustion'
+		| 'codexAutoResetOnExhaustion'
+		// Models
+		| 'runOn'
+		| 'tierTargets'
+		| 'backgroundRequests'
+		| 'systemOneOptOut'
+		| 'gatewayUrl'
+		| 'tokenProxyMode'
+		// Environment
+		| 'customEnvVars'
+		| 'customEnvVarsDisabled'
+		// Peers
+		| 'peerAgents'
+		| 'groupPeerAccess'
+		| 'worktreePeerAccess'
+		// SSH
+		| 'sessionSshRemoteConfig'
+	>
+>;
+
 // Session group
 export interface Group {
 	id: string;
@@ -225,6 +286,15 @@ export interface Group {
 	color?: string;
 	parentGroupId?: string;
 	collapsed: boolean;
+	/**
+	 * Hand-picked text for the badge drawn beside this group's bookmarked agents,
+	 * in place of the automatic abbreviation of `name`. Display-only: it is a
+	 * property of the group, not a default, so it is never copied into a new
+	 * agent and never published to an existing one.
+	 */
+	shortLabel?: string;
+	/** Seed values copied into the create-agent form for a new agent in this group. */
+	defaults?: GroupAgentDefaults;
 	/**
 	 * Parked out of the Left Bar. A middle ground between keeping a group on
 	 * screen and deleting it: hiding SUPPRESSES the group from the list, it
@@ -270,6 +340,17 @@ export interface SessionInfo {
 	/** Extra directories granted beyond the working directory (prompt-level grants). */
 	additionalDirectories?: AdditionalDirectory[];
 	/**
+	 * Peer Agents: the stored sources of the agents this one may reach on its
+	 * own (explicit rows, the group grant, the worktree family grant). The roster
+	 * is resolved from them at prompt-build time by `resolvePeerRosterForPrompt`
+	 * (see `shared/peerAgents.ts`); the desktop `Session` documents each field.
+	 */
+	peerAgents?: PeerAgent[];
+	groupPeerAccess?: PeerAccess;
+	worktreePeerAccess?: PeerAccess;
+	/** Set on a worktree child: the id of the parent agent. Read by the worktree family grant. */
+	parentSessionId?: string;
+	/**
 	 * Per-agent worktree settings (Worktree Directory, watcher, setup script).
 	 * Set on parent agents from the Git menu's Configure Worktrees dialog.
 	 */
@@ -294,6 +375,50 @@ export interface SessionInfo {
 	 * can be turned back on without retyping its value.
 	 */
 	customEnvVarsDisabled?: Record<string, string>;
+	/**
+	 * Local Models gateway: an HTTP proxy this agent's provider traffic goes
+	 * through, set at launch as the provider's base-URL variable unless the
+	 * agent's own vars already set it (see `shared/local-models/gateway.ts`).
+	 */
+	gatewayUrl?: string;
+	/**
+	 * How the Maestro token proxy carries this agent's requests, when
+	 * `gatewayUrl` points at it. Absent means `passthrough`; the third mode,
+	 * `off`, is the gateway not pointing at the proxy at all (see
+	 * `resolveTokenProxyMode` in `shared/local-models/token-proxy.ts`).
+	 */
+	tokenProxyMode?: 'passthrough' | 'compress' | 'compress-early';
+	/**
+	 * Run on: where this agent's model runs. Absent (or `provider`) is the
+	 * provider's own cloud model; a `source` target points the same harness at a
+	 * model on a Local Models source, resolved at launch by `resolveRunOnLaunch`
+	 * (see `shared/local-models/run-on.ts`). A source target means the gateway
+	 * above does not apply.
+	 */
+	runOn?: RunOnTarget;
+	/**
+	 * Tier targets: where a turn that asks for a model tier (`low`, `medium`,
+	 * `high`) launches for this agent. Each is a provider model or a Run on
+	 * target. An absent tier means "Harness default": it follows the
+	 * `harnessTierDefaults` setting, then the built-in table. Resolved at launch
+	 * by `resolveTierTarget` (see `shared/modelTiers.ts`).
+	 */
+	tierTargets?: TierTargets;
+	/**
+	 * Background requests: where the Maestro token proxy sends this agent's side
+	 * requests (the ones its CLI makes on the provider's small model), when
+	 * `gatewayUrl` points at the proxy. Absent means every request goes to the
+	 * provider. Read per request by the proxy (see
+	 * `shared/local-models/background-requests.ts`).
+	 */
+	backgroundRequests?: BackgroundRequests;
+	/**
+	 * System One opt-out: true switches `maestro-cli s1` off for this agent while
+	 * it stays on for the others. Absent means the agent follows "Let agents use
+	 * System One". Read by `isSystemOneOptedOut` (see
+	 * `shared/local-models/system-one-agent.ts`).
+	 */
+	systemOneOptOut?: boolean;
 	/**
 	 * Secret env var NAMES this agent needs but whose values are never stored:
 	 * written by bundle import from the bundle's `env.required`. The CLI and
@@ -467,6 +592,8 @@ export interface HistoryEntry {
 	summary: string;
 	fullResponse?: string;
 	agentSessionId?: string;
+	/** Native provider captured when this History entry was recorded. */
+	provider?: ToolType;
 	sessionName?: string;
 	projectPath: string;
 	sessionId?: string;
@@ -646,6 +773,28 @@ export interface AdditionalDirectory {
 	path: string;
 	read: boolean;
 	write: boolean;
+	description?: string;
+}
+
+/** Read/write access bits, shared by explicit peer rows and derived grants. */
+export interface PeerAccess {
+	/** May CONSULT this peer: ask a question, get an answer back. */
+	read: boolean;
+	/** May DELEGATE to this peer: put work into their live tab. */
+	write: boolean;
+}
+
+/**
+ * One explicit peer row. Stores the peer's session id, never its name: names
+ * change and agents get deleted, so the display name is resolved at render time.
+ *
+ * A row with neither bit set is an explicit EXCLUSION - it overrides any group or
+ * worktree grant that would otherwise cover this peer. This differs from
+ * AdditionalDirectory, where a row with neither toggle is merely inert.
+ */
+export interface PeerAgent extends PeerAccess {
+	sessionId: string;
+	/** Optional Conductor hint on when this peer is worth consulting. */
 	description?: string;
 }
 

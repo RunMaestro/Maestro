@@ -13,11 +13,26 @@
  * value, the provider default. A tier or effort the provider cannot honor falls
  * back to the agent's value and lands in `warnings`, so the run still happens
  * and the activity log says why it ran on a different model than asked.
+ *
+ * `model: auto` is how a subscription opts its runs into model routing
+ * ({@link cueRunIsAutoRouted}). Routing needs the prompt, which only exists
+ * once the run's variables are substituted, so such a run is resolved in two
+ * steps: {@link resolveCueTurnSettings} gives what it launches with when the
+ * router has no decision, and the executor asks the host to finish it
+ * (`CueExecutionConfig.resolveLateTurn`) when the prompt is known. A
+ * subscription that does not opt in is never routed, whatever the agent's own
+ * model is: an agent set to Auto then runs its Cue turns on its default.
  */
 
 import type { ToolType } from '../types';
-import { resolveTurnSettings, type ResolvedTurnSettings } from '../autorunTurnSettings';
-import { TIER_LEVELS, asTierLevel } from '../modelTiers';
+import { isAutoModel, ownModel } from '../autoModel';
+import type { ModelHint } from '../autorunModelHints';
+import {
+	resolveTurnSettings,
+	turnRunOnTarget,
+	type ResolvedTurnSettings,
+} from '../autorunTurnSettings';
+import { TIER_LEVELS, asTierLevel, type TierRouting } from '../modelTiers';
 import type { CueSubscription } from './contracts';
 
 /** The three per-subscription model fields, carried from dispatch to spawn. */
@@ -38,15 +53,21 @@ export function cueTurnSettingsOf(sub: CueTurnSettings): CueTurnSettings | undef
 
 /**
  * Resolve a subscription's settings against the agent that runs it.
- * `agentModel` / `agentEffort` are the agent's own configured values.
+ * `agentModel` / `agentEffort` are the agent's own configured values, and
+ * `routing` its tier targets and the harness defaults, so a subscription's
+ * tier launches where the same tier launches in a playbook. A pinned model
+ * names the model only: the run stays on the agent's own Run on target.
  */
 export function resolveCueTurnSettings(
 	toolType: ToolType,
 	settings: CueTurnSettings | undefined,
 	agentModel?: string,
-	agentEffort?: string
+	agentEffort?: string,
+	routing?: TierRouting
 ): ResolvedTurnSettings {
-	const pinnedModel = settings?.model?.trim();
+	// `auto` pins nothing: it is the word for "route this run", and neither the
+	// subscription's nor the agent's is ever a model name to launch on.
+	const pinnedModel = ownModel(settings?.model?.trim());
 	// A pinned model replaces the tier outright. The validator refuses both on
 	// one subscription; dropping the tier here keeps a hand-built value from
 	// reporting a tier note for a model it did not choose.
@@ -57,14 +78,57 @@ export function resolveCueTurnSettings(
 		tier || effort
 			? { tier, effort, line: 0, scopes: { tier: 'subscription', effort: 'subscription' } }
 			: null,
-		agentModel,
-		agentEffort
+		ownModel(agentModel),
+		agentEffort,
+		routing
 	);
 	if (pinnedModel) {
 		resolved.model = pinnedModel;
 		resolved.notes.unshift(`model="${pinnedModel}" (subscription)`);
 	}
 	return resolved;
+}
+
+/** Whether a subscription opts its runs into model routing: `model: auto`. */
+export function cueRunIsAutoRouted(settings: CueTurnSettings | undefined): boolean {
+	return isAutoModel(settings?.model);
+}
+
+/**
+ * What a routed subscription still fixes for its run, as the marker
+ * `resolveAutoTurn` takes: its `effort`. The router decides the tier (a
+ * subscription cannot set both `tier` and `model`), and the effort too when
+ * the subscription names none.
+ */
+export function cueAutoMarker(settings: CueTurnSettings | undefined): ModelHint | null {
+	return settings?.effort
+		? { line: 0, effort: settings.effort, scopes: { effort: 'subscription' } }
+		: null;
+}
+
+/** The launch fields of a Cue run that a resolved turn decides. */
+export interface CueTurnLaunch {
+	customModel?: string;
+	customEffort?: string;
+	/** The Run on target the run launches on, as data for the Run on path. */
+	runOn?: unknown;
+	/** Set when the turn's tier names a target that cannot be used. The run must not start. */
+	launchRefusal?: string;
+}
+
+/**
+ * A resolved turn as the launch fields `executeCuePrompt` takes. One mapping
+ * for both hosts (the desktop app and the standalone CLI engine) and for both
+ * moments a turn is resolved (at dispatch, and once the prompt is known), so a
+ * tier's place and a refusal cannot be carried one way here and another there.
+ */
+export function cueTurnLaunch(turn: ResolvedTurnSettings, agentRunOn: unknown): CueTurnLaunch {
+	return {
+		customModel: turn.model,
+		customEffort: turn.effort,
+		runOn: turnRunOnTarget(turn, agentRunOn),
+		...(turn.refusal ? { launchRefusal: turn.refusal.message } : {}),
+	};
 }
 
 /** Whether two holders carry the same model choice. Absent matches absent. */

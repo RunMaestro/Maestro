@@ -218,12 +218,13 @@ describe('query-events-buffer', () => {
 
 		expect(stmt.run).toHaveBeenCalledTimes(1);
 		const args = stmt.run.mock.calls[0];
-		// 16 columns: the 10 identity/timing/flag columns, the Web Login
-		// sender, plus the five token and cost columns. This used to be 9 -
-		// the buffered statement had silently dropped is_worktree, so every
+		// 19 columns: the 10 identity/timing/flag columns, the Web Login
+		// sender, the five token and cost columns, plus the Run on source
+		// (endpoint, model) and the routed tier. This used to be 9 - the
+		// buffered statement had silently dropped is_worktree, so every
 		// interactive turn wrote NULL there while the direct insert path
 		// wrote the real flag.
-		expect(args).toHaveLength(16);
+		expect(args).toHaveLength(19);
 		// args[0] is the generated id; args[1..] mirror the event fields.
 		expect(args[1]).toBe('s1');
 		expect(args[2]).toBe('claude-code');
@@ -250,7 +251,31 @@ describe('query-events-buffer', () => {
 
 		// NULL rather than 0 - an unreported turn is not a free turn. Index 10
 		// is the sender, which is NULL for a turn typed at the desktop.
-		expect(stmt.run.mock.calls[0].slice(11)).toEqual([null, null, null, null, null]);
+		expect(stmt.run.mock.calls[0].slice(11, 16)).toEqual([null, null, null, null, null]);
+	});
+
+	it('writes NULL model columns for a turn on the provider that Auto did not route', () => {
+		const { db, stmt } = makeMockDb();
+		enqueueQueryEvent(db as never, sampleEvent);
+		flushQueryEventsSync();
+
+		// run_on_endpoint, run_on_model, routed_tier.
+		expect(stmt.run.mock.calls[0].slice(16)).toEqual([null, null, null]);
+	});
+
+	it('carries the Run on source and the routed tier through the buffer', () => {
+		// The buffered statement is the one production uses, and it is the one
+		// that once dropped a column the direct path wrote.
+		const { db, stmt } = makeMockDb();
+		enqueueQueryEvent(db as never, {
+			...sampleEvent,
+			runOnEndpoint: 'maestro-server',
+			runOnModel: 'qwen3.5-4b',
+			routedTier: 'low',
+		});
+		flushQueryEventsSync();
+
+		expect(stmt.run.mock.calls[0].slice(16)).toEqual(['maestro-server', 'qwen3.5-4b', 'low']);
 	});
 
 	it('carries per-turn token and cost values through the buffer', () => {
@@ -265,7 +290,7 @@ describe('query-events-buffer', () => {
 		});
 		flushQueryEventsSync();
 
-		expect(stmt.run.mock.calls[0].slice(11)).toEqual([100, 20, 900, 5, 0.75]);
+		expect(stmt.run.mock.calls[0].slice(11, 16)).toEqual([100, 20, 900, 5, 0.75]);
 	});
 
 	it('encodes isRemote=true as 1 and missing tabId as null', () => {

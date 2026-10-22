@@ -13,6 +13,8 @@ import type { ToolType, Session } from '../../types';
 import type { AgentCapabilities } from './useAgentCapabilities';
 import { DEFAULT_CAPABILITIES } from './useAgentCapabilities';
 import { getAgentIcon } from '../../constants/agentIcons';
+import { getBusyTabs } from '../../utils/tabHelpers';
+import { resolveTurnProvider } from '../../utils/providerTabSessions';
 
 // Use AgentConfig from types - it has optional capabilities fields
 // The detect API may not return all capability fields
@@ -132,7 +134,10 @@ export function useAvailableAgents(
 	const busyAgents = useMemo(() => {
 		const busy = new Set<string>();
 		for (const session of sessions) {
-			if (session.state === 'busy') {
+			const tabs = getBusyTabs(session, { includeOrphans: true });
+			for (const tab of tabs) busy.add(resolveTurnProvider(tab, session));
+			// Auto Run and legacy processes have no conversation tab.
+			if (session.state === 'busy' && tabs.length === 0) {
 				busy.add(session.toolType);
 			}
 		}

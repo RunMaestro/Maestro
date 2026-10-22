@@ -2,6 +2,8 @@ import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from 'rea
 import { EditorState, EditorSelection, Compartment, type Extension } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import { buildEditorTheme } from '../giantPreview/themeAdapter';
+import { DictationButton } from '../../ui/DictationButton';
+import { editorViewDictationTarget } from '../../../utils/dictationTargets';
 import { loadLanguageExtension, hasLanguageSupport } from '../giantPreview/languageLoader';
 import { buildEditorExtensions } from './extensions';
 import { searchHighlightExtension, setSearchMatchesEffect } from './searchHighlight';
@@ -247,6 +249,17 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 			view.dispatch({ effects: compartments.base.reconfigure(baseExt) });
 		}, [wrap, showLineNumbers, spellCheck, readOnly, placeholder, compartments.base]);
 
+		// Where a dictated transcript lands: one transaction at the selection,
+		// reported to the host through the same update listener as a keystroke.
+		const dictationTarget = useMemo(
+			() =>
+				editorViewDictationTarget({
+					getElement: () => hostRef.current,
+					getView: () => viewRef.current,
+				}),
+			[]
+		);
+
 		useImperativeHandle(
 			ref,
 			() => ({
@@ -375,11 +388,25 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 
 		return (
 			<div
-				ref={hostRef}
 				data-testid="markdown-editor-root"
 				className={`relative w-full h-full ${className ?? ''}`}
 				style={{ overflow: 'hidden' }}
-			/>
+			>
+				{/* CodeMirror mounts into this node and owns everything inside it,
+				    which is why the dictation button is a sibling and not a child. */}
+				<div ref={hostRef} className="w-full h-full" />
+				{/* Every editable editor in the app (file editor, Auto Run, memory,
+				    prompts) gets dictation from here, so no host wires it up. It
+				    draws nothing unless the dictation task is on. */}
+				{!readOnly && (
+					<DictationButton
+						theme={theme}
+						target={dictationTarget}
+						variant="floating"
+						testId="markdown-editor-dictation-button"
+					/>
+				)}
+			</div>
 		);
 	}
 );

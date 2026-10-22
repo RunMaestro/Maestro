@@ -1,6 +1,16 @@
-import { translatedHistorySessionId } from '../../../shared/maestro-lib/translation/session';
+import {
+	resolveHistorySession,
+	translationSessionTabs,
+} from '../../../shared/maestro-lib/translation/session';
 import { useCallback, useRef } from 'react';
-import type { Session, LogEntry, UsageStats, ThinkingMode, HistoryEntryType } from '../../types';
+import type {
+	Session,
+	LogEntry,
+	UsageStats,
+	ThinkingMode,
+	HistoryEntryType,
+	ToolType,
+} from '../../types';
 import { useSessionStore, selectSessionById, selectActiveSession } from '../../stores/sessionStore';
 import { focusAiTabInSession, createTab, getActiveTab } from '../../utils/tabHelpers';
 import { generateId } from '../../utils/ids';
@@ -9,6 +19,11 @@ import { resolveSessionProjectPath } from '../../components/AgentSessionsBrowser
 import type { RightPanelHandle } from '../../components/RightPanel';
 import { logger } from '../../utils/logger';
 import { isSynopsisRequest } from '../../utils/transcriptMessages';
+import {
+	resolveTabProvider,
+	resolveTurnProvider,
+	switchTabProviderFor,
+} from '../../utils/providerTabSessions';
 import { loadResumableSession } from '../../services/resumableSession';
 
 // Re-exported from its shared home so existing importers keep working; the
@@ -23,6 +38,8 @@ export interface HistoryEntryInput {
 	summary: string;
 	fullResponse?: string;
 	agentSessionId?: string;
+	/** Native owner supplied by a background turn when its tab is unavailable. */
+	provider?: ToolType;
 	usageStats?: UsageStats;
 	/** Optional override for background operations (prevents cross-agent bleed) */
 	sessionId?: string;
@@ -109,6 +126,8 @@ export interface UseAgentSessionManagementReturn {
  * Optional behavior overrides for {@link UseAgentSessionManagementReturn.handleResumeSession}.
  */
 export interface ResumeSessionOptions {
+	/** Explicit native owner supplied by a provider-scoped browser or History record. */
+	provider?: ToolType;
 	/**
 	 * Resume into a specific Maestro agent (Session.id) resolved fresh from the
 	 * store, rather than the current active session. Required when jumping
@@ -186,6 +205,20 @@ export function useAgentSessionManagement(
 
 			const shouldIncludeContextUsage = !entry.sessionId || entry.sessionId === activeSession?.id;
 
+			const entryTab = entrySession
+				? translationSessionTabs(entrySession).find((tab) =>
+						entry.tabId
+							? tab.id === entry.tabId
+							: entry.agentSessionId
+								? tab.agentSessionId === entry.agentSessionId ||
+									tab.turnSessionId === entry.agentSessionId
+								: tab.id === entrySession.activeTabId
+					)
+				: undefined;
+			const provider =
+				entry.provider ??
+				(entrySession && entryTab ? resolveTurnProvider(entryTab, entrySession) : undefined);
+
 			// Resolve the Claude token source for this turn. Token source belongs on
 			// the ENTRY, not the agent: a Dynamic-mode agent flips between TUI and API
 			// across turns, so we snapshot the resolved mode at write time. An explicit
@@ -202,7 +235,7 @@ export function useAgentSessionManagement(
 						...(entry.tokenSourceReason ? { tokenSourceReason: entry.tokenSourceReason } : {}),
 					};
 				}
-				if (entrySession?.toolType === 'claude-code') {
+				if (entrySession && (provider ?? entrySession.toolType) === 'claude-code') {
 					const ci = entrySession.claudeInteractive;
 					return {
 						tokenSource: ci?.mode ?? 'api',
@@ -220,6 +253,7 @@ export function useAgentSessionManagement(
 					summary: entry.summary,
 					fullResponse: entry.fullResponse,
 					agentSessionId: entry.agentSessionId,
+					...(provider ? { provider } : {}),
 					sessionId: targetSessionId,
 					// Lets main resolve which Web Login account started this turn.
 					...(entry.tabId ? { tabId: entry.tabId } : {}),
@@ -298,8 +332,10 @@ export function useAgentSessionManagement(
 				: activeSession;
 			// Need a session for tab management
 			if (!targetSession) return false;
+			let native: ReturnType<typeof resolveHistorySession>;
 			try {
-				agentSessionId = translatedHistorySessionId(targetSession, agentSessionId);
+				native = resolveHistorySession(targetSession, agentSessionId, opts?.provider);
+				agentSessionId = native.agentSessionId;
 			} catch (error) {
 				if (!opts?.suppressUnavailableFlash)
 					showFlash?.(error instanceof Error ? error.message : String(error));
@@ -325,7 +361,10 @@ export function useAgentSessionManagement(
 
 			// Check if a tab with this agentSessionId already exists
 			const existingTab = targetSession.aiTabs?.find(
-				(tab) => tab.agentSessionId === agentSessionId
+				(tab) =>
+					(native.provider === resolveTabProvider(tab, targetSession)
+						? tab.agentSessionId
+						: tab.providerSessions?.[native.provider]?.agentSessionId) === agentSessionId
 			);
 
 			try {
@@ -333,7 +372,7 @@ export function useAgentSessionManagement(
 				// context lookup are shared with every other way a conversation is
 				// reopened (see loadResumableSession).
 				const resumable = await loadResumableSession({
-					toolType: targetSession.toolType,
+					toolType: native.provider,
 					projectRoot: resolvedProjectRoot,
 					sshRemoteId,
 					agentSessionId,
@@ -372,13 +411,20 @@ export function useAgentSessionManagement(
 						// the pre-await dedup with no tab present. Re-checking here means the
 						// second update sees the first's committed tab and focuses it instead
 						// of creating a duplicate. There must never be two tabs for one session.
-						const freshExistingTab = s.aiTabs?.find((tab) => tab.agentSessionId === agentSessionId);
+						const freshExistingTab = s.aiTabs?.find(
+							(tab) =>
+								(native.provider === resolveTabProvider(tab, s)
+									? tab.agentSessionId
+									: tab.providerSessions?.[native.provider]?.agentSessionId) === agentSessionId
+						);
 
 						// If a tab already exists for this session, repopulate (if needed) and
 						// focus it instead of creating a duplicate.
 						if (freshExistingTab) {
 							const updatedTabs = s.aiTabs.map((tab) => {
 								if (tab.id !== freshExistingTab.id) return tab;
+								// Restore the requested native owner without changing the agent default.
+								tab = switchTabProviderFor(tab, s, native.provider);
 								// Already-loaded tabs own newer metadata than History's snapshot.
 								if (tab.logs?.length) return { ...tab, origin: origin ?? tab.origin };
 								return {
@@ -386,7 +432,9 @@ export function useAgentSessionManagement(
 									logs: messages,
 									name: name ?? tab.name,
 									starred: isStarred || tab.starred,
-									usageStats: finalUsageStats ?? tab.usageStats,
+									usageStats: tab.pendingTranslation
+										? tab.usageStats
+										: (finalUsageStats ?? tab.usageStats),
 									origin: origin ?? tab.origin,
 								};
 							});
@@ -396,6 +444,8 @@ export function useAgentSessionManagement(
 						// Create tab from the CURRENT session state (not stale closure value)
 						const result = createTab(s, {
 							agentSessionId,
+							sourceProvider: native.provider,
+							providerSessions: native.providerSessions,
 							logs: messages,
 							name,
 							origin,
@@ -405,8 +455,13 @@ export function useAgentSessionManagement(
 							showThinking: defaultShowThinking,
 						});
 						if (!result) return s;
-
-						return { ...result.session, activeFileTabId: null, inputMode: 'ai' };
+						const reopened = switchTabProviderFor(result.tab, s, native.provider);
+						return {
+							...result.session,
+							aiTabs: result.session.aiTabs.map((tab) => (tab.id === reopened.id ? reopened : tab)),
+							activeFileTabId: null,
+							inputMode: 'ai',
+						};
 					})
 				);
 				setActiveAgentSessionId(agentSessionId);

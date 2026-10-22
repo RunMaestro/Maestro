@@ -60,6 +60,55 @@ describe('shouldOpenSendMenu', () => {
 });
 
 describe('getSteerSupport', () => {
+	it('uses the running provider for support even when the next provider differs', () => {
+		const session = workingSession({
+			toolType: 'opencode',
+			providerOverrides: { 'claude-code': { enableMaestroP: true, maestroPMode: 'interactive' } },
+			aiTabs: [
+				createMockAITab({
+					id: 'tab-1',
+					state: 'busy',
+					tabProvider: 'codex',
+					turnProvider: 'claude-code',
+				}),
+			],
+		});
+		const model = buildSendMenuModel(
+			session,
+			{ text: 'change course', imageCount: 0 },
+			{ forcedParallelEnabled: true }
+		);
+		expect(model.steerProvider).toBe('claude-code');
+		expect(model.steerSupport).toEqual({ kind: 'supported' });
+		expect(model.rows.find((row) => row.action === 'steer')).toMatchObject({
+			enabled: false,
+			reason: expect.stringContaining('another provider'),
+		});
+	});
+
+	it('does not borrow the agent default steering support for a foreign turn', () => {
+		const session = workingSession({
+			aiTabs: [
+				createMockAITab({
+					id: 'tab-1',
+					state: 'busy',
+					tabProvider: 'opencode',
+					turnProvider: 'opencode',
+				}),
+			],
+		});
+		const model = buildSendMenuModel(
+			session,
+			{ text: 'change course', imageCount: 0 },
+			{ forcedParallelEnabled: true }
+		);
+		expect(model.steerProvider).toBe('opencode');
+		expect(model.steerSupport).toMatchObject({
+			kind: 'unsupported',
+			detail: expect.stringContaining('OpenCode'),
+		});
+	});
+
 	it('supports a Claude agent on the TUI token source', () => {
 		expect(getSteerSupport(workingSession()).kind).toBe('supported');
 	});

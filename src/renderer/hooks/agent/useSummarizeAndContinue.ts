@@ -15,6 +15,7 @@
  * State lives in operationStore (Zustand); this hook owns orchestration only.
  */
 
+import { projectTabProvider, resolveTabNativeProvider } from '../../utils/providerTabSessions';
 import { useRef, useCallback } from 'react';
 import type { Session, LogEntry } from '../../types';
 import type { SummarizeProgress, SummarizeResult } from '../../types/contextMerge';
@@ -196,6 +197,11 @@ export function useSummarizeAndContinue(): UseSummarizeAndContinueResult {
 			});
 			cancelRefs.current.set(sourceTabId, false);
 
+			const launchSession = projectTabProvider(
+				session,
+				sourceTab,
+				resolveTabNativeProvider(sourceTab, session)
+			).agent;
 			try {
 				// Run the summarization
 				const summarizeResult = await contextSummarizationService.summarizeContext(
@@ -203,14 +209,14 @@ export function useSummarizeAndContinue(): UseSummarizeAndContinueResult {
 						sourceSessionId: session.id,
 						sourceTabId,
 						projectRoot: session.projectRoot,
-						agentType: session.toolType,
+						agentType: launchSession.toolType,
 						// Pass SSH remote config if the session uses remote execution
 						sshRemoteConfig: session.sessionSshRemoteConfig,
 						// Pass custom agent configuration for proper remote execution
-						customPath: session.customPath,
-						customArgs: session.customArgs,
-						customEnvVars: session.customEnvVars,
-						claudeTokenSource: getClaudeTokenSourceFields(session),
+						customPath: launchSession.customPath,
+						customArgs: launchSession.customArgs,
+						customEnvVars: launchSession.customEnvVars,
+						claudeTokenSource: getClaudeTokenSourceFields(launchSession),
 					},
 					sourceTab.logs,
 					(p) => {
@@ -241,6 +247,8 @@ export function useSummarizeAndContinue(): UseSummarizeAndContinueResult {
 				if (!tabResult) {
 					throw new Error('Failed to create compacted tab');
 				}
+
+				tabResult.tab.tabProvider = launchSession.toolType;
 
 				// Calculate final result
 				const finalResult: SummarizeResult = {

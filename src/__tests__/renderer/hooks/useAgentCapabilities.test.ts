@@ -57,6 +57,44 @@ describe('useAgentCapabilities', () => {
 		expect(result.current.hasCapability('supportsProjectMemory')).toBe(true);
 		expect(hasCapabilityCached('codex', 'supportsProjectMemory')).toBe(false);
 	});
+	it('discards late capabilities after switching provider and host', async () => {
+		let finish!: (value: typeof baseCapabilities) => void;
+		vi.mocked(window.maestro.agents.getCapabilities)
+			.mockReturnValueOnce(
+				new Promise((resolve) => {
+					finish = resolve;
+				})
+			)
+			.mockResolvedValueOnce({ ...baseCapabilities, supportsImageInput: false });
+		const { result, rerender } = renderHook(
+			({ provider, host }) => useAgentCapabilities(provider, undefined, host),
+			{ initialProps: { provider: 'claude-code', host: 'host-a' } }
+		);
+		rerender({ provider: 'codex', host: 'host-b' });
+		await waitFor(() => expect(result.current.loading).toBe(false));
+		await act(async () => {
+			finish(baseCapabilities);
+		});
+		expect(result.current.hasCapability('supportsImageInput')).toBe(false);
+	});
+
+	it('does not reuse a local capability view on another host', async () => {
+		setCapabilitiesCache('codex', { ...baseCapabilities, supportsImageInput: true });
+		vi.mocked(window.maestro.agents.getCapabilities).mockResolvedValue({
+			...baseCapabilities,
+			supportsImageInput: false,
+		});
+		const { result, rerender } = renderHook(
+			({ host }: { host?: string }) => useAgentCapabilities('codex', undefined, host),
+			{ initialProps: { host: undefined } }
+		);
+		expect(result.current.hasCapability('supportsImageInput')).toBe(true);
+		rerender({ host: 'remote' });
+		expect(result.current.hasCapability('supportsImageInput')).toBe(false);
+		await waitFor(() => expect(result.current.loading).toBe(false));
+		expect(hasCapabilityCached('codex', 'supportsImageInput')).toBe(true);
+	});
+
 	it('loads capabilities and caches results', async () => {
 		vi.mocked(window.maestro.agents.getCapabilities).mockResolvedValueOnce(baseCapabilities);
 

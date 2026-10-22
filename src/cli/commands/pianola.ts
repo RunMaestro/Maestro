@@ -54,6 +54,7 @@ import type {
 	PianolaRisk,
 	PianolaSignalKind,
 } from '../../shared/pianola/types';
+import { ExitCode, exitWith } from '../exit-codes';
 import { exitIfMaestroNotRunning } from '../services/session-command';
 
 const DEFAULT_INTERVAL_SECONDS = 5;
@@ -207,7 +208,11 @@ export async function pianolaWatch(tabId: string, options: PianolaWatchOptions):
 	const deps: WatchDeps = {
 		readRules: readPianolaRules,
 		dispatch: async (target, answer) => {
-			const res = await runDispatch(target.agentId, answer, { tab: target.tabId });
+			const res = await runDispatch(target.agentId, answer, {
+				tab: target.tabId,
+				// The watch is a supervisor loop, not a consult (see DispatchOptions).
+				skipConsultBudget: true,
+			});
 			return { success: !!res.success, error: res.error };
 		},
 		recordDecision: appendPianolaDecision,
@@ -229,7 +234,7 @@ export async function pianolaWatch(tabId: string, options: PianolaWatchOptions):
 				return { success: false, error: 'target agent is Pianola itself' };
 			}
 			const message = buildPianolaHandoffPrompt(request);
-			const res = await runDispatch(pianolaAgentId, message, {});
+			const res = await runDispatch(pianolaAgentId, message, { skipConsultBudget: true });
 			return { success: !!res.success, error: res.error };
 		};
 	}
@@ -249,7 +254,7 @@ export async function pianolaWatch(tabId: string, options: PianolaWatchOptions):
 		process.off('SIGINT', onSignal);
 		const message = error instanceof Error ? error.message : String(error);
 		console.error(`[pianola] could not connect to Maestro: ${message}`);
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 		return;
 	}
 
@@ -424,7 +429,7 @@ export function pianolaAddRule(options: PianolaAddRuleOptions): void {
 		} else {
 			console.error(message);
 		}
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	};
 
 	const scope = (options.scope ?? 'global') as PianolaRuleScope;

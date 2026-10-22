@@ -1,4 +1,4 @@
-import type { TranslationReport } from '../../../shared/maestro-lib/translation/types';
+import type { TabConfigResult } from '../../../shared/desktopTabs';
 /**
  * CallbackRegistry - Manages callback functions for the WebServer
  *
@@ -12,6 +12,8 @@ import type {
 } from '../../../shared/notificationInbox';
 
 import { logger } from '../../utils/logger';
+import type { CreateGistResult } from '../../../shared/gitUtils';
+import type { GroupSeededCreateReport } from '../../../shared/groupAgentDefaults';
 import type { GroupChatSteerResult } from '../../../shared/groupChatSteering';
 import type {
 	GetSessionsCallback,
@@ -101,6 +103,7 @@ import type {
 	CreateGroupCallback,
 	RenameGroupCallback,
 	UpdateGroupCallback,
+	UpdateGroupSettingsCallback,
 	DeleteGroupCallback,
 	MoveSessionToGroupCallback,
 	CreateSessionCallback,
@@ -139,6 +142,8 @@ import type {
 	CreateGistCallback,
 	GetCueSubscriptionsCallback,
 	ToggleCueSubscriptionCallback,
+	SetCueSubscriptionGateCallback,
+	SetCueSubscriptionInjectionScreenCallback,
 	GetCueActivityCallback,
 	TriggerCueSubscriptionCallback,
 	CueSubscriptionInfo,
@@ -172,6 +177,11 @@ import type {
 	SessionHistoryResult,
 } from '../types';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../../shared/snoozeCommands';
+import type { CueGateSetting, CueGateWriteResult } from '../../../shared/cue/gate';
+import type {
+	CueInjectionScreenSetting,
+	CueInjectionScreenWriteResult,
+} from '../../../shared/cue/injection-screen';
 import type {
 	SteeringCommandRequest,
 	SteeringCommandResult,
@@ -182,7 +192,12 @@ import type {
 	ThroughputGaugeCommandResult,
 } from '../../../shared/throughputGaugeCommands';
 import type { GroupAppearance, GroupUpdateRequest } from '../../../shared/groupAppearance';
+import type {
+	GroupSettingsUpdateRequest,
+	GroupSettingsUpdateResult,
+} from '../../../shared/groupSettingsUpdate';
 import type { CadenzaPayload } from '../../../shared/cadenza-types';
+import type { ConsultChain } from '../../../shared/consultBudget';
 import type { MovementPayload, MovementStateSnapshot } from '../../../shared/movement-types';
 import type {
 	AutoRunRemoteControl,
@@ -267,6 +282,7 @@ export interface WebServerCallbacks {
 	createGroup: CreateGroupCallback | null;
 	renameGroup: RenameGroupCallback | null;
 	updateGroup: UpdateGroupCallback | null;
+	updateGroupSettings: UpdateGroupSettingsCallback | null;
 	deleteGroup: DeleteGroupCallback | null;
 	moveSessionToGroup: MoveSessionToGroupCallback | null;
 	createSession: CreateSessionCallback | null;
@@ -293,6 +309,8 @@ export interface WebServerCallbacks {
 	createGist: CreateGistCallback | null;
 	getCueSubscriptions: GetCueSubscriptionsCallback | null;
 	toggleCueSubscription: ToggleCueSubscriptionCallback | null;
+	setCueSubscriptionGate: SetCueSubscriptionGateCallback | null;
+	setCueSubscriptionInjectionScreen: SetCueSubscriptionInjectionScreenCallback | null;
 	getCueActivity: GetCueActivityCallback | null;
 	triggerCueSubscription: TriggerCueSubscriptionCallback | null;
 	getUsageDashboard: GetUsageDashboardCallback | null;
@@ -383,6 +401,7 @@ export class CallbackRegistry {
 		createGroup: null,
 		renameGroup: null,
 		updateGroup: null,
+		updateGroupSettings: null,
 		deleteGroup: null,
 		moveSessionToGroup: null,
 		createSession: null,
@@ -409,6 +428,8 @@ export class CallbackRegistry {
 		createGist: null,
 		getCueSubscriptions: null,
 		toggleCueSubscription: null,
+		setCueSubscriptionGate: null,
+		setCueSubscriptionInjectionScreen: null,
 		getCueActivity: null,
 		triggerCueSubscription: null,
 		getUsageDashboard: null,
@@ -463,7 +484,8 @@ export class CallbackRegistry {
 		tabId?: string,
 		force?: boolean,
 		images?: string[],
-		background?: boolean
+		background?: boolean,
+		consultChain?: ConsultChain
 	): Promise<boolean> {
 		if (!this.callbacks.executeCommand) return false;
 		return this.callbacks.executeCommand(
@@ -473,7 +495,8 @@ export class CallbackRegistry {
 			tabId,
 			force,
 			images,
-			background
+			background,
+			consultChain
 		);
 	}
 
@@ -660,10 +683,11 @@ export class CallbackRegistry {
 		sessionId: string,
 		prompt: string,
 		background?: boolean,
-		hidden?: boolean
+		hidden?: boolean,
+		consultChain?: ConsultChain
 	): Promise<{ success: boolean; tabId?: string }> {
 		if (!this.callbacks.newAITabWithPrompt) return { success: false };
-		return this.callbacks.newAITabWithPrompt(sessionId, prompt, background, hidden);
+		return this.callbacks.newAITabWithPrompt(sessionId, prompt, background, hidden, consultChain);
 	}
 
 	async consultAgent(params: ConsultAgentParams): Promise<ConsultAgentResult> {
@@ -685,7 +709,8 @@ export class CallbackRegistry {
 		tabId?: string,
 		images?: string[],
 		background?: boolean,
-		held?: boolean
+		held?: boolean,
+		consultChain?: ConsultChain
 	): Promise<EnqueueCommandResult> {
 		if (!this.callbacks.enqueueCommand) return { success: false, error: 'not configured' };
 		return this.callbacks.enqueueCommand(
@@ -695,7 +720,8 @@ export class CallbackRegistry {
 			tabId,
 			images,
 			background,
-			held
+			held,
+			consultChain
 		);
 	}
 
@@ -932,6 +958,16 @@ export class CallbackRegistry {
 		return this.callbacks.updateGroup(groupId, update);
 	}
 
+	async updateGroupSettings(
+		groupId: string,
+		request: GroupSettingsUpdateRequest
+	): Promise<GroupSettingsUpdateResult> {
+		if (!this.callbacks.updateGroupSettings) {
+			return { success: false, error: 'Group settings updates not configured' };
+		}
+		return this.callbacks.updateGroupSettings(groupId, request);
+	}
+
 	async deleteGroup(groupId: string): Promise<boolean> {
 		if (!this.callbacks.deleteGroup) return false;
 		return this.callbacks.deleteGroup(groupId);
@@ -949,7 +985,7 @@ export class CallbackRegistry {
 		groupId?: string,
 		config?: CreateSessionConfig,
 		background?: boolean
-	): Promise<{ sessionId: string } | null> {
+	): Promise<({ sessionId: string } & Partial<GroupSeededCreateReport>) | null> {
 		if (!this.callbacks.createSession) return null;
 		return this.callbacks.createSession(name, toolType, cwd, groupId, config, background);
 	}
@@ -999,7 +1035,7 @@ export class CallbackRegistry {
 	async updateSessionConfig(
 		sessionId: string,
 		configPatch: Record<string, unknown>
-	): Promise<TranslationReport> {
+	): Promise<TabConfigResult> {
 		if (!this.callbacks.updateSessionConfig) {
 			return { success: false, error: 'Session config updates not configured' };
 		}
@@ -1089,12 +1125,19 @@ export class CallbackRegistry {
 		sessionId: string,
 		description: string,
 		isPublic: boolean,
-		agentSessionId?: string
-	): Promise<{ success: boolean; gistUrl?: string; error?: string }> {
+		agentSessionId?: string,
+		allowSecrets?: boolean
+	): Promise<CreateGistResult> {
 		if (!this.callbacks.createGist) {
 			return { success: false, error: 'Gist creation not configured' };
 		}
-		return this.callbacks.createGist(sessionId, description, isPublic, agentSessionId);
+		return this.callbacks.createGist(
+			sessionId,
+			description,
+			isPublic,
+			agentSessionId,
+			allowSecrets
+		);
 	}
 
 	async getCueSubscriptions(sessionId?: string): Promise<CueSubscriptionInfo[]> {
@@ -1105,6 +1148,26 @@ export class CallbackRegistry {
 	async toggleCueSubscription(subscriptionId: string, enabled: boolean): Promise<boolean> {
 		if (!this.callbacks.toggleCueSubscription) return false;
 		return this.callbacks.toggleCueSubscription(subscriptionId, enabled);
+	}
+
+	async setCueSubscriptionGate(
+		subscriptionId: string,
+		gate: CueGateSetting | null
+	): Promise<CueGateWriteResult> {
+		if (!this.callbacks.setCueSubscriptionGate) {
+			return { ok: false, error: 'Cue gate editing is not available.' };
+		}
+		return this.callbacks.setCueSubscriptionGate(subscriptionId, gate);
+	}
+
+	async setCueSubscriptionInjectionScreen(
+		subscriptionId: string,
+		setting: CueInjectionScreenSetting
+	): Promise<CueInjectionScreenWriteResult> {
+		if (!this.callbacks.setCueSubscriptionInjectionScreen) {
+			return { ok: false, error: 'Cue injection screen editing is not available.' };
+		}
+		return this.callbacks.setCueSubscriptionInjectionScreen(subscriptionId, setting);
 	}
 
 	async getCueActivity(sessionId?: string, limit?: number): Promise<CueActivityEntry[]> {
@@ -1511,6 +1574,10 @@ export class CallbackRegistry {
 		this.callbacks.renameGroup = callback;
 	}
 
+	setUpdateGroupSettingsCallback(callback: UpdateGroupSettingsCallback): void {
+		this.callbacks.updateGroupSettings = callback;
+	}
+
 	setUpdateGroupCallback(callback: UpdateGroupCallback): void {
 		this.callbacks.updateGroup = callback;
 	}
@@ -1617,6 +1684,16 @@ export class CallbackRegistry {
 
 	setToggleCueSubscriptionCallback(callback: ToggleCueSubscriptionCallback): void {
 		this.callbacks.toggleCueSubscription = callback;
+	}
+
+	setSetCueSubscriptionGateCallback(callback: SetCueSubscriptionGateCallback): void {
+		this.callbacks.setCueSubscriptionGate = callback;
+	}
+
+	setSetCueSubscriptionInjectionScreenCallback(
+		callback: SetCueSubscriptionInjectionScreenCallback
+	): void {
+		this.callbacks.setCueSubscriptionInjectionScreen = callback;
 	}
 
 	setGetCueActivityCallback(callback: GetCueActivityCallback): void {

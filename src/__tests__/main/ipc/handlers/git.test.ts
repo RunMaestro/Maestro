@@ -156,6 +156,14 @@ const { mockSpawnSync } = vi.hoisted(() => ({
 	mockSpawnSync: vi.fn(),
 }));
 
+// The secret screen's optional model pass. Off, which is the shipped default,
+// so only the pattern scan decides what `git:createGist` refuses.
+vi.mock('../../../../main/local-models/task-router', () => ({
+	// Asked first: it answers `not-assigned` for any assignment but System One.
+	runSystemOneTask: vi.fn(async () => ({ status: 'not-assigned' })),
+	runClassifierTask: vi.fn(async () => ({ status: 'off' })),
+}));
+
 vi.mock('child_process', () => {
 	const mock = {
 		spawnSync: mockSpawnSync,
@@ -4044,6 +4052,79 @@ export function Component() {
 				undefined,
 				expect.objectContaining({ env: { PATH: '/expanded/path:/usr/bin' } })
 			);
+		});
+
+		// This handler is where the Publish Gist modal and `maestro-cli gist
+		// create` meet, so it is where the secret screen has to refuse. Tokens
+		// are assembled at runtime so no literal sits in the repository.
+		describe('secret screen', () => {
+			const githubToken = ['ghp', 'a1B2c3D4e5'.repeat(4).slice(0, 36)].join('_');
+			const body = `# Session\n\nthe agent printed ${githubToken} here\n`;
+
+			it('refuses a gist whose content holds a token, and runs no gh command', async () => {
+				const handler = handlers.get('git:createGist');
+				const result = await handler!({} as any, 'session_context.md', body, '', false);
+
+				expect(result).toEqual({
+					success: false,
+					error: 'Found 1 possible secret in the gist. Nothing was sent.',
+					code: 'SECRETS_FOUND',
+					secretFindings: [
+						{
+							kind: 'github-token',
+							line: 3,
+							preview: `••••••••${githubToken.slice(-4)}`,
+							source: 'session_context.md',
+						},
+					],
+				});
+				expect(JSON.stringify(result)).not.toContain(githubToken);
+				expect(execFile.execFileNoThrow).not.toHaveBeenCalled();
+			});
+
+			it('screens the description too', async () => {
+				const handler = handlers.get('git:createGist');
+				const result = await handler!({} as any, 'notes.md', 'clean body', githubToken, true);
+
+				expect(result.success).toBe(false);
+				expect(result.secretFindings).toEqual([
+					expect.objectContaining({ kind: 'github-token', source: 'description' }),
+				]);
+				expect(execFile.execFileNoThrow).not.toHaveBeenCalled();
+			});
+
+			it('publishes the same content when the caller allows secrets', async () => {
+				const cliDetection = await import('../../../../main/utils/cliDetection');
+				vi.mocked(cliDetection.resolveGhPath).mockResolvedValue('gh');
+				vi.mocked(execFile.execFileNoThrow).mockResolvedValueOnce({
+					stdout: 'https://gist.github.com/user/allowed\n',
+					stderr: '',
+					exitCode: 0,
+				});
+
+				const handler = handlers.get('git:createGist');
+				const result = await handler!({} as any, 'session_context.md', body, '', false, undefined, {
+					allowSecrets: true,
+				});
+
+				expect(result).toEqual({ success: true, gistUrl: 'https://gist.github.com/user/allowed' });
+				expect(execFile.execFileNoThrow).toHaveBeenCalledWith(
+					'gh',
+					expect.any(Array),
+					undefined,
+					expect.objectContaining({ input: body })
+				);
+			});
+
+			it('does not read a truthy non-boolean as consent', async () => {
+				const handler = handlers.get('git:createGist');
+				const result = await handler!({} as any, 'session_context.md', body, '', false, undefined, {
+					allowSecrets: 'yes',
+				});
+
+				expect(result.code).toBe('SECRETS_FOUND');
+				expect(execFile.execFileNoThrow).not.toHaveBeenCalled();
+			});
 		});
 	});
 

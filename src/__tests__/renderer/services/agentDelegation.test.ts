@@ -58,6 +58,63 @@ describe('resolveDelegationSourceTab', () => {
 });
 
 describe('buildDelegationLogEntry', () => {
+	it('uses the running owner for a live dispatch and the selected owner for queued work', () => {
+		const target = createMockSession({
+			id: 'proxmox',
+			toolType: 'claude-code',
+			aiTabs: [
+				createMockAITab({
+					id: 'dest',
+					state: 'busy',
+					tabProvider: 'codex',
+					turnProvider: 'claude-code',
+				}),
+			],
+		});
+		expect(
+			buildDelegationLogEntry(notice({ targetTabId: 'dest' }), target).delegation?.toToolType
+		).toBe('claude-code');
+		expect(
+			buildDelegationLogEntry(notice({ targetTabId: 'dest', queued: true }), target).delegation
+				?.toToolType
+		).toBe('codex');
+	});
+	it('uses the destination tab provider and accepts a captured launch owner', () => {
+		const target = createMockSession({
+			id: 'proxmox',
+			toolType: 'claude-code',
+			activeTabId: 'active',
+			aiTabs: [
+				createMockAITab({ id: 'active' }),
+				createMockAITab({ id: 'dest', tabProvider: 'codex' }),
+			],
+		});
+		expect(
+			buildDelegationLogEntry(notice({ targetTabId: 'dest' }), target).delegation?.toToolType
+		).toBe('codex');
+		expect(
+			buildDelegationLogEntry(
+				notice({ targetTabId: 'dest', targetProvider: 'claude-code' }),
+				target
+			).delegation?.toToolType
+		).toBe('claude-code');
+	});
+
+	it('uses the active destination for a dispatch, and the target default for a new consult', () => {
+		const target = createMockSession({
+			id: 'proxmox',
+			toolType: 'claude-code',
+			activeTabId: 'active',
+			aiTabs: [createMockAITab({ id: 'active', tabProvider: 'codex' })],
+		});
+		expect(buildDelegationLogEntry(notice(), target).delegation?.toToolType).toBe('codex');
+		expect(buildDelegationLogEntry(notice({ kind: 'ask' }), target).delegation?.toToolType).toBe(
+			'claude-code'
+		);
+		expect(buildDelegationLogEntry(notice({ newTab: true }), target).delegation?.toToolType).toBe(
+			'claude-code'
+		);
+	});
 	it('builds a self-contained card with a one-line subject', () => {
 		const entry = buildDelegationLogEntry(
 			notice({ targetTabId: 'queued-tab', prompt: 'Fix the\n\n advisory   bug', queued: true }),
@@ -115,13 +172,19 @@ describe('recordAgentDelegation / settleAgentDelegation', () => {
 		const ref = recordAgentDelegation(notice({ kind: 'ask' }), { pending: true })!;
 		expect(logsOf('maestro', 'caller-tab')[0].delegation?.status).toBe('pending');
 
-		settleAgentDelegation(ref, { status: 'error', error: 'timed out', toTabId: 'consult-1' });
+		settleAgentDelegation(ref, {
+			status: 'error',
+			error: 'timed out',
+			toTabId: 'consult-1',
+			toToolType: 'codex',
+		});
 
 		expect(logsOf('maestro', 'caller-tab')).toHaveLength(1);
 		expect(logsOf('maestro', 'caller-tab')[0].delegation).toMatchObject({
 			status: 'error',
 			error: 'timed out',
 			toTabId: 'consult-1',
+			toToolType: 'codex',
 		});
 	});
 

@@ -974,10 +974,20 @@ function rowToCueEventRecord(row: CueEventRow): CueEventRecord {
  * run produced no captured output". Thousands of those per week are exactly
  * what buried real entries in the JSONL files.
  *
+ * A `gated` row is not a run at all: the subscription's gate skipped the event
+ * before anything was spawned. Gated events are the bulk of what a gate sees,
+ * so they stay in the Cue activity list and out of History, and they are not
+ * failures.
+ *
+ * A `blocked-injection` row was not spawned either, but it is the opposite
+ * case: the prompt-injection screen refused it, which is rare and is exactly
+ * what a person needs to see. It is shown in History and counted as a failure
+ * (see `getCueEventGroupCounts`), so it is deliberately absent from both lists.
+ *
  * Exported so every reader of this table (History merge, activity-graph
  * buckets) filters on one predicate instead of three drifting copies.
  */
-export const CUE_EVENT_WORTH_SHOWING_SQL = `(output_excerpt IS NOT NULL OR status != 'completed')`;
+export const CUE_EVENT_WORTH_SHOWING_SQL = `(output_excerpt IS NOT NULL OR status NOT IN ('completed', 'gated'))`;
 
 /**
  * Cue runs for one agent inside a time window, filtered to the runs worth
@@ -1087,7 +1097,7 @@ export function getCueEventGroupCounts(options: {
 	const sql = `SELECT *,
 			COUNT(*) AS run_count,
 			MAX(created_at) AS last_run_at,
-			SUM(status != 'completed') AS failure_count
+			SUM(status NOT IN ('completed', 'gated')) AS failure_count
 		FROM cue_events
 		WHERE ${clauses.join(' AND ')}
 		GROUP BY pipeline_id, subscription_name

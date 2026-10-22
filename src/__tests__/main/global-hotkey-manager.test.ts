@@ -38,7 +38,7 @@ vi.mock('../../main/quick-chat/quick-chat-window', () => ({
 }));
 
 import {
-	disposeGlobalHotkey,
+	disposeAllGlobalHotkeys,
 	initGlobalHotkey,
 	keysToAccelerator,
 	setGlobalShowHotkey,
@@ -46,7 +46,7 @@ import {
 } from '../../main/global-hotkey-manager';
 
 beforeEach(() => {
-	disposeGlobalHotkey();
+	disposeAllGlobalHotkeys();
 	registered.clear();
 	register.mockClear();
 	unregister.mockClear();
@@ -112,7 +112,7 @@ describe('setNamedGlobalHotkey', () => {
 	it('dispose releases every binding', () => {
 		setGlobalShowHotkey(['Meta', 'Shift', 'M']);
 		setNamedGlobalHotkey('quickChat', ['Alt', 'Space'], vi.fn());
-		disposeGlobalHotkey();
+		disposeAllGlobalHotkeys();
 		expect(registered.size).toBe(0);
 	});
 });

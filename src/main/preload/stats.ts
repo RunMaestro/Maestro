@@ -21,6 +21,7 @@ import type {
 	UsageExportFormat,
 	UsageExportResult,
 } from '../../shared/stats-types';
+import type { ModelUsage } from '../../shared/local-models/model-usage';
 export type {
 	QueryEvent,
 	AutoRunSession,
@@ -125,6 +126,11 @@ export function createStatsApi() {
 		getAggregation: (
 			range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'
 		): Promise<StatsAggregation> => ipcRenderer.invoke('stats:get-aggregation', range),
+
+		// What every model other than a provider's own did in a range, per source,
+		// task and agent (the Models tab). Names are resolved in the main process.
+		getModelUsage: (range: StatsTimeRange = 'week'): Promise<ModelUsage> =>
+			ipcRenderer.invoke('stats:get-model-usage', range),
 
 		// Interactive vs autonomous (Auto Run + Cue) totals. Merges the stats DB
 		// and the Cue DB in the main process; defaults to all retained history,

@@ -1696,6 +1696,7 @@ describe('recent chats', () => {
 	it("reuses a tab still open, reads its reply live, and moves Quick Chat to the chat's agent", async () => {
 		patchTab('a', 'a-main', () => ({
 			agentSessionId: 'conv-a',
+			tabProvider: 'codex',
 			logs: [
 				{ id: 'card', timestamp: 1, source: 'user', text: 'how is the build', queuedItemId: 'q-1' },
 				{ id: 'out', timestamp: 2, source: 'stdout', text: 'green' },
@@ -1708,6 +1709,7 @@ describe('recent chats', () => {
 		expect(result.ok).toBe(true);
 		expect(reopenClosedConversation).not.toHaveBeenCalled();
 		expect(result.snapshot).toMatchObject({ chatId: 'chat-1', agentId: 'a', persistent: true });
+		expect(result.snapshot.agents.find((entry) => entry.id === 'a')?.provider).toBe('Codex');
 		expect(useSettingsStore.getState().quickChatSettings.agentId).toBe('a');
 		expect(result.snapshot.messages.map((m) => m.text)).toEqual(['how is the build', 'green']);
 		expect(result.snapshot.next).toMatchObject({ kind: 'tab', tabId: 'a-main' });

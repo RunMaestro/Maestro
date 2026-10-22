@@ -1,4 +1,5 @@
-import type { Theme, Session, LogEntry, UsageStats } from '../../types';
+import type { Theme, Session, ToolType } from '../../types';
+import type { UseAgentSessionManagementReturn } from '../../hooks/agent/useAgentSessionManagement';
 
 export type SearchMode = 'title' | 'user' | 'assistant' | 'all';
 
@@ -34,16 +35,16 @@ export interface AgentSessionsBrowserProps {
 	activeSession: Session | undefined;
 	activeAgentSessionId: string | null;
 	onClose: () => void;
+	/** Explicit scope for a provider browser; omitted means the active conversation at open. */
+	provider?: ToolType;
 	onResumeSession: (
-		agentSessionId: string,
-		messages: LogEntry[],
-		sessionName?: string,
-		starred?: boolean,
-		usageStats?: UsageStats
+		...args: Parameters<UseAgentSessionManagementReturn['handleResumeSession']>
 	) => void;
 	onNewSession: () => void;
 	onUpdateTab?: (
 		agentSessionId: string,
-		updates: { name?: string | null; starred?: boolean }
+		updates: { name?: string | null; starred?: boolean },
+		provider?: ToolType,
+		sessionId?: string
 	) => void;
 }

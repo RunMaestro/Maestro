@@ -1,10 +1,12 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { act, renderHook } from '@testing-library/react';
 import {
 	accumulateCrossAgentChunk,
 	buildCrossAgentLogEntry,
 	buildConsultTabName,
 	ensureConsultTab,
 	sendCrossAgentRequest,
+	useCrossAgentDispatch,
 } from '../../../renderer/hooks/agent/useCrossAgentDispatch';
 import { useCrossAgentInFlightStore } from '../../../renderer/stores/crossAgentInFlightStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
@@ -14,6 +16,7 @@ import {
 	revealAiTab,
 } from '../../../renderer/utils/tabHelpers';
 import { createMockSession } from '../../helpers/mockSession';
+import { createMockAITab } from '../../helpers/mockTab';
 import type { CrossAgentResponseChunk } from '../../../shared/crossAgentTypes';
 
 /**
@@ -157,6 +160,63 @@ describe('buildConsultTabName', () => {
 });
 
 describe('ensureConsultTab', () => {
+	it('resolves an existing consult pin independently of the target active tab and default', () => {
+		useSessionStore.setState({
+			sessions: [
+				createMockSession({
+					id: 'target',
+					toolType: 'claude-code',
+					activeTabId: 'active',
+					aiTabs: [
+						createMockAITab({ id: 'active', agentSessionId: 'active-id' }),
+						createMockAITab({
+							id: 'consult',
+							tabProvider: 'codex',
+							agentSessionId: 'codex-id',
+							consultOrigin: { sourceSessionId: 'src', sourceTabId: 'src-tab' },
+						}),
+					],
+				}),
+			],
+		});
+		expect(
+			ensureConsultTab({
+				targetSessionId: 'target',
+				sourceSessionId: 'src',
+				sourceTabId: 'src-tab',
+				sourceAgentName: 'Source',
+				question: 'q',
+			})
+		).toMatchObject({
+			targetTabId: 'consult',
+			targetProvider: 'codex',
+			resumeAgentSessionId: 'codex-id',
+		});
+	});
+
+	it('creates hidden consults with the target default even when its active tab is pinned', () => {
+		useSessionStore.setState({
+			sessions: [
+				createMockSession({
+					id: 'target',
+					toolType: 'claude-code',
+					aiTabs: [createMockAITab({ id: 'active', tabProvider: 'codex' })],
+					activeTabId: 'active',
+				}),
+			],
+		});
+		const result = ensureConsultTab({
+			targetSessionId: 'target',
+			sourceSessionId: 'src',
+			sourceTabId: 'src-tab',
+			sourceAgentName: 'Source',
+			question: 'q',
+		})!;
+		expect(result.targetProvider).toBe('claude-code');
+		const target = useSessionStore.getState().sessions[0];
+		expect(target.aiTabs.find((tab) => tab.id === result.targetTabId)?.tabProvider).toBeUndefined();
+		expect(target.activeTabId).toBe('active');
+	});
 	beforeEach(() => {
 		useSessionStore.setState({ sessions: [] } as never);
 	});
@@ -361,6 +421,44 @@ describe('sendCrossAgentRequest in-flight registration', () => {
 		useCrossAgentInFlightStore.setState({ requests: {} });
 	});
 
+	it('keeps the pinned consult owner when translation holds the send', async () => {
+		useSessionStore.setState({
+			sessions: [
+				createMockSession({
+					id: 'target',
+					toolType: 'claude-code',
+					aiTabs: [
+						createMockAITab({
+							id: 'consult',
+							tabProvider: 'codex',
+							pendingTranslation: 'claude-code',
+							consultOrigin: { sourceSessionId: 'src', sourceTabId: 'src-tab' },
+						}),
+					],
+				}),
+			],
+		});
+		const send = vi.fn();
+		window.maestro = { crossAgent: { send } } as never;
+		const onComplete = vi.fn();
+		sendCrossAgentRequest({
+			sourceSessionId: 'src',
+			sourceTabId: 'src-tab',
+			sourceAgentName: 'Source',
+			sourceLogs: [],
+			targetSessionId: 'target',
+			userPrompt: 'q',
+			onComplete,
+		});
+		await vi.waitFor(() => expect(onComplete).toHaveBeenCalledTimes(1));
+		expect(send).not.toHaveBeenCalled();
+		expect(onComplete.mock.calls[0][0]).toMatchObject({
+			targetTabId: 'consult',
+			targetToolType: 'codex',
+			error: expect.any(String),
+		});
+	});
+
 	it('registers the consult tab so the responding-agent chip can deep-link to it', async () => {
 		useSessionStore.setState({
 			sessions: [
@@ -397,6 +495,47 @@ describe('sendCrossAgentRequest in-flight registration', () => {
 		expect(registered.targetTabId).toBeTruthy();
 	});
 
+	it('forwards an admitted consult chain to the main process, and only then', async () => {
+		useSessionStore.setState({
+			sessions: [
+				createMockSession({ id: 'target', name: 'Pedsidian', toolType: 'claude-code' }),
+				createMockSession({ id: 'src', name: 'Scratch' }),
+			],
+		} as never);
+
+		const send = vi.fn().mockResolvedValue({ requestId: 'req-1' });
+		(globalThis as unknown as { window: Record<string, unknown> }).window.maestro = {
+			crossAgent: { send },
+		} as never;
+
+		const base = {
+			sourceSessionId: 'src',
+			sourceAgentName: 'Scratch',
+			sourceTabId: 'src-tab',
+			sourceLogs: [],
+			targetSessionId: 'target',
+			userPrompt: 'what is the status?',
+		};
+		// `maestro-cli ask` spent for this consult and names the target's place.
+		sendCrossAgentRequest({ ...base, consultChain: { chainId: 'chain-a', depth: 2 } });
+		// A typed mention carries none.
+		sendCrossAgentRequest(base);
+		// A mention inside a dispatched prompt names the MENTIONING turn's place,
+		// for main to spend from. Never as an admitted chain.
+		sendCrossAgentRequest({ ...base, sourceConsultChain: { chainId: 'chain-a', depth: 1 } });
+		await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(3));
+
+		expect(send.mock.calls[0][0].consultChain).toEqual({ chainId: 'chain-a', depth: 2 });
+		expect(send.mock.calls[0][0]).not.toHaveProperty('sourceConsultChain');
+		expect(send.mock.calls[1][0]).not.toHaveProperty('consultChain');
+		expect(send.mock.calls[1][0]).not.toHaveProperty('sourceConsultChain');
+		expect(send.mock.calls[2][0].sourceConsultChain).toEqual({ chainId: 'chain-a', depth: 1 });
+		expect(send.mock.calls[2][0]).not.toHaveProperty('consultChain');
+		await vi.waitFor(() => {
+			expect(Object.keys(useCrossAgentInFlightStore.getState().requests)).toHaveLength(1);
+		});
+	});
+
 	it('delivers onComplete when the send itself rejects', async () => {
 		useSessionStore.setState({
 			sessions: [
@@ -428,4 +567,69 @@ describe('sendCrossAgentRequest in-flight registration', () => {
 		});
 		expect(onComplete.mock.calls[0][0]).toMatchObject({ text: '', error: 'bridge down' });
 	});
+});
+
+describe('consult answer ownership', () => {
+	it.each(['open', 'closed'] as const)(
+		'parks late native IDs under their captured provider on an %s consult',
+		(location) => {
+			const consult = createMockAITab({
+				id: 'consult',
+				tabProvider: 'codex',
+				agentSessionId: 'codex-id',
+			});
+			useSessionStore.setState({
+				sessions: [
+					createMockSession({
+						id: 'tgt',
+						toolType: 'codex',
+						customPath: '/codex',
+						providerOverrides: { 'claude-code': { customPath: '/claude' } },
+						aiTabs: location === 'open' ? [consult] : [],
+						closedTabHistory:
+							location === 'closed' ? [{ tab: consult, index: 0, closedAt: 1 }] : [],
+					}),
+				],
+			});
+			let receive!: (piece: CrossAgentResponseChunk) => void;
+			window.maestro = {
+				crossAgent: {
+					onChunk: (callback: typeof receive) => {
+						receive = callback;
+						return () => {};
+					},
+				},
+				history: { add: vi.fn().mockResolvedValue(true) },
+			} as never;
+			const synopsis = vi.fn(async () => ({ success: false }));
+			const { unmount } = renderHook(() => useCrossAgentDispatch(synopsis));
+			act(() =>
+				receive(
+					chunk({
+						requestId: `late-${location}`,
+						targetTabId: 'consult',
+						targetToolType: 'claude-code',
+						targetAgentSessionId: 'late-claude',
+						chunk: 'answer',
+						done: true,
+					})
+				)
+			);
+			const target = useSessionStore.getState().sessions[0];
+			const saved = location === 'open' ? target.aiTabs[0] : target.closedTabHistory![0].tab;
+			expect(saved.agentSessionId).toBe('codex-id');
+			expect(saved.providerSessions?.['claude-code']?.agentSessionId).toBe('late-claude');
+			expect(saved.pendingTranslation).toBe('claude-code');
+			expect(saved.logs[0]).toMatchObject({ text: 'answer', turnProvider: 'claude-code' });
+			expect(synopsis).toHaveBeenCalledWith(
+				'tgt',
+				expect.any(String),
+				'late-claude',
+				expect.any(String),
+				'claude-code',
+				expect.objectContaining({ customPath: '/claude' })
+			);
+			unmount();
+		}
+	);
 });

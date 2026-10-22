@@ -70,6 +70,13 @@ function renderTextarea(overrides: Partial<TextareaProps> = {}) {
 }
 
 describe('InputTextarea', () => {
+	it('names the selected provider while another provider owns the running turn', () => {
+		const session = createInputAreaSession();
+		session.aiTabs[0] = { ...session.aiTabs[0], tabProvider: 'codex', turnProvider: 'claude-code' };
+		const { container } = renderTextarea({ session });
+		expect(container.querySelector('textarea')?.placeholder).toContain('powered by Codex');
+	});
+
 	it('caps the textarea with the shared KEYSTROKE_TEXTAREA_MAX_HEIGHT constant', () => {
 		const { textarea } = renderTextarea();
 

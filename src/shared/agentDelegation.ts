@@ -25,6 +25,8 @@
  * role to any agent that happens to run a watch.
  */
 
+import type { ToolType } from './types';
+
 /** The Maestro agent id a spawned agent process runs as. */
 export const CALLER_AGENT_ID_ENV_VAR = 'MAESTRO_CALLER_AGENT_ID';
 
@@ -123,6 +125,8 @@ export interface AgentDelegationNotice {
 	targetSessionId: string;
 	/** The tab it landed in, when known (a `--new-tab`, a named `--tab`, a queue). */
 	targetTabId?: string;
+	/** Provider captured when the destination accepted the dispatch, when available. */
+	targetProvider?: ToolType;
 	/** What was handed over. The card shows a one-line subject of it. */
 	prompt: string;
 	/** The dispatch created a fresh tab on the target. */

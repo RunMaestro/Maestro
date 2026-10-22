@@ -22,6 +22,9 @@
  * - get_file_tree: Read directory tree from filesystem for web file explorer
  * - get_settings: Fetch current web settings
  * - set_setting: Modify a single setting (allowlisted keys only)
+ * - acappella_signal: WebRTC signaling for a paired A Cappella voice device
+ * - voice_wake_enrollment: record, train and manage a user's own wake phrase
+ * - voice_control: the Voice HUD's and the Voice settings' actions, for maestro-cli
  * - list_desktop_sessions: Enumerate open AI tabs across all agents (CLI: `session list`)
  * - get_session_history: Return tab conversation history with --since/--tail filters (CLI: `session show`)
  * - computer_history_command: Computer History writes, CLI clients only (CLI: `computer-history`)
@@ -49,6 +52,9 @@ import {
 	handleSelectSession,
 	handleCrossAgentAsk,
 } from './commands';
+import { ACAPPELLA_SIGNAL_MESSAGE, handleACappellaSignal } from './acappellaSignal';
+import { VOICE_WAKE_ENROLLMENT_MESSAGE, handleVoiceWakeEnrollment } from './voiceWake';
+import { VOICE_CONTROL_MESSAGE, handleVoiceControl } from './voiceControl';
 import {
 	handleGetSessions,
 	handleCreateSession,
@@ -95,6 +101,50 @@ import {
 } from './marketplace';
 import { handlePluginsListTools, handlePluginsCallTool, handlePluginsSendAgent } from './plugins';
 import {
+	handleLocalModelsCancel,
+	handleLocalModelsDownload,
+	handleLocalModelsEndpointModels,
+	handleLocalModelsEndpointsDetect,
+	handleLocalModelsEndpointTest,
+	handleLocalModelsGitDraft,
+	handleLocalModelsTranscribe,
+	handleLocalModelsList,
+	handleLocalModelsHfAdd,
+	handleLocalModelsHfRemove,
+	handleLocalModelsPause,
+	handleLocalModelsRuntimeInstall,
+	handleLocalModelsRuntimesList,
+	handleLocalModelsRemove,
+	handleLocalModelsRunOnTest,
+	handleLocalModelsTierOptions,
+	handleLocalModelsRunTask,
+	handleLocalModelsSemanticIndexStatus,
+	handleLocalModelsProxyStatus,
+	handleLocalModelsProxyBlock,
+	handleLocalModelsServerEnsure,
+	handleLocalModelsServerKey,
+	handleLocalModelsServerSet,
+	handleLocalModelsServerStart,
+	handleLocalModelsServerStatus,
+	handleLocalModelsServerStop,
+	handleLocalModelsSearch,
+	handleLocalModelsTabCleanup,
+	handleSystemOneAccess,
+	handleModelRouteTurn,
+	handleModelRouteCorrect,
+	handleSystemOneAgentRequest,
+	handleSystemOneKeyClear,
+	handleSystemOneKeySet,
+	handleSystemOneLedger,
+	handleSystemOneSet,
+	handleSystemOneStatus,
+	handleSystemOneTest,
+	handleSystemOneUsage,
+	handleLocalModelsTaskReadiness,
+	handleLocalModelsVerify,
+	handleNotifySpeak,
+} from './localModels';
+import {
 	handleRefreshAutoRunDocs,
 	handleConfigureAutoRun,
 	handleLaunchGoalRun,
@@ -118,6 +168,7 @@ import { handleWindowCommand } from './windows';
 import { handleThroughputGaugeCommand } from './throughputGauge';
 import {
 	handleSelectTab,
+	handleTabProvider,
 	handleNewTab,
 	handleCloseTab,
 	handleRenameTab,
@@ -148,6 +199,7 @@ import {
 	handleCreateGroup,
 	handleRenameGroup,
 	handleUpdateGroup,
+	handleUpdateGroupSettings,
 	handleDeleteGroup,
 	handleMoveSessionToGroup,
 } from './groups';
@@ -169,6 +221,8 @@ import {
 import {
 	handleGetCueSubscriptions,
 	handleToggleCueSubscription,
+	handleSetCueSubscriptionGate,
+	handleSetCueSubscriptionInjectionScreen,
 	handleGetCueActivity,
 	handleTriggerCueSubscription,
 	handleCuePipelineList,
@@ -195,6 +249,7 @@ import {
 import {
 	handleGetUsageDashboard,
 	handleGetStatsAggregation,
+	handleGetModelUsage,
 	handleGetTokenUsage,
 	handleGetStatsIndexing,
 	handleStatsQuery,
@@ -546,6 +601,10 @@ export class WebSocketMessageHandler {
 				handleProviderTranslation(this.ctx, client, message);
 				break;
 
+			case 'tab_provider':
+				void handleTabProvider(this.ctx, client, message);
+				break;
+
 			case 'get_groups':
 				handleGetGroups(this.ctx, client, message);
 				break;
@@ -560,6 +619,10 @@ export class WebSocketMessageHandler {
 
 			case 'update_group':
 				handleUpdateGroup(this.ctx, client, message);
+				break;
+
+			case 'update_group_settings':
+				handleUpdateGroupSettings(this.ctx, client, message);
 				break;
 
 			case 'delete_group':
@@ -638,6 +701,14 @@ export class WebSocketMessageHandler {
 				handleToggleCueSubscription(this.ctx, client, message);
 				break;
 
+			case 'set_cue_subscription_gate':
+				handleSetCueSubscriptionGate(this.ctx, client, message);
+				break;
+
+			case 'set_cue_subscription_injection_screen':
+				handleSetCueSubscriptionInjectionScreen(this.ctx, client, message);
+				break;
+
 			case 'get_cue_activity':
 				handleGetCueActivity(this.ctx, client, message);
 				break;
@@ -680,6 +751,10 @@ export class WebSocketMessageHandler {
 
 			case 'get_stats_aggregation':
 				handleGetStatsAggregation(this.ctx, client, message);
+				break;
+
+			case 'get_model_usage':
+				void handleGetModelUsage(this.ctx, client, message);
 				break;
 
 			case 'get_token_usage':
@@ -782,6 +857,182 @@ export class WebSocketMessageHandler {
 				void handleFeedbackDiagnose(this.ctx, client, message);
 				break;
 
+			case 'local_models_list':
+				void handleLocalModelsList(this.ctx, client, message);
+				break;
+
+			case 'local_models_download':
+				void handleLocalModelsDownload(this.ctx, client, message);
+				break;
+
+			case 'local_models_runtimes_list':
+				void handleLocalModelsRuntimesList(this.ctx, client, message);
+				break;
+
+			case 'local_models_runtime_install':
+				void handleLocalModelsRuntimeInstall(this.ctx, client, message);
+				break;
+
+			case 'local_models_pause':
+				void handleLocalModelsPause(this.ctx, client, message);
+				break;
+
+			case 'local_models_cancel':
+				void handleLocalModelsCancel(this.ctx, client, message);
+				break;
+
+			case 'local_models_verify':
+				void handleLocalModelsVerify(this.ctx, client, message);
+				break;
+
+			case 'local_models_remove':
+				void handleLocalModelsRemove(this.ctx, client, message);
+				break;
+
+			case 'local_models_hf_add':
+				void handleLocalModelsHfAdd(this.ctx, client, message);
+				break;
+
+			case 'local_models_hf_remove':
+				void handleLocalModelsHfRemove(this.ctx, client, message);
+				break;
+
+			case 'local_models_endpoints_detect':
+				void handleLocalModelsEndpointsDetect(this.ctx, client, message);
+				break;
+
+			case 'local_models_endpoint_models':
+				void handleLocalModelsEndpointModels(this.ctx, client, message);
+				break;
+
+			case 'local_models_endpoint_test':
+				void handleLocalModelsEndpointTest(this.ctx, client, message);
+				break;
+
+			case 'local_models_run_task':
+				void handleLocalModelsRunTask(this.ctx, client, message);
+				break;
+
+			case 'local_models_task_readiness':
+				void handleLocalModelsTaskReadiness(this.ctx, client, message);
+				break;
+
+			case 'local_models_git_draft':
+				void handleLocalModelsGitDraft(this.ctx, client, message);
+				break;
+
+			case 'local_models_transcribe':
+				void handleLocalModelsTranscribe(this.ctx, client, message);
+				break;
+
+			case 'notify_speak':
+				void handleNotifySpeak(this.ctx, client, message);
+				break;
+
+			case VOICE_WAKE_ENROLLMENT_MESSAGE:
+				void handleVoiceWakeEnrollment(this.ctx, client, message);
+				break;
+
+			case VOICE_CONTROL_MESSAGE:
+				void handleVoiceControl(this.ctx, client, message);
+				break;
+
+			case 'local_models_semantic_index_status':
+				void handleLocalModelsSemanticIndexStatus(this.ctx, client, message);
+				break;
+
+			case 'local_models_proxy_status':
+				void handleLocalModelsProxyStatus(this.ctx, client, message);
+				break;
+
+			case 'local_models_proxy_block':
+				void handleLocalModelsProxyBlock(this.ctx, client, message);
+				break;
+
+			case 'local_models_server_status':
+				void handleLocalModelsServerStatus(this.ctx, client, message);
+				break;
+
+			case 'local_models_server_start':
+				void handleLocalModelsServerStart(this.ctx, client, message);
+				break;
+
+			case 'local_models_server_stop':
+				void handleLocalModelsServerStop(this.ctx, client, message);
+				break;
+
+			case 'local_models_server_set':
+				void handleLocalModelsServerSet(this.ctx, client, message);
+				break;
+
+			case 'local_models_server_key':
+				void handleLocalModelsServerKey(this.ctx, client, message);
+				break;
+
+			case 'local_models_server_ensure':
+				void handleLocalModelsServerEnsure(this.ctx, client, message);
+				break;
+
+			case 'local_models_run_on_test':
+				void handleLocalModelsRunOnTest(this.ctx, client, message);
+				break;
+
+			case 'local_models_tier_options':
+				void handleLocalModelsTierOptions(this.ctx, client, message);
+				break;
+
+			case 'system_one_status':
+				void handleSystemOneStatus(this.ctx, client, message);
+				break;
+
+			case 'system_one_set':
+				void handleSystemOneSet(this.ctx, client, message);
+				break;
+
+			case 'system_one_key_set':
+				void handleSystemOneKeySet(this.ctx, client, message);
+				break;
+
+			case 'system_one_key_clear':
+				void handleSystemOneKeyClear(this.ctx, client, message);
+				break;
+
+			case 'system_one_test':
+				void handleSystemOneTest(this.ctx, client, message);
+				break;
+
+			case 'system_one_ledger':
+				void handleSystemOneLedger(this.ctx, client, message);
+				break;
+
+			case 'system_one_agent_request':
+				void handleSystemOneAgentRequest(this.ctx, client, message);
+				break;
+
+			case 'system_one_usage':
+				void handleSystemOneUsage(this.ctx, client, message);
+				break;
+
+			case 'system_one_access':
+				void handleSystemOneAccess(this.ctx, client, message);
+				break;
+
+			case 'model_route_turn':
+				void handleModelRouteTurn(this.ctx, client, message);
+				break;
+
+			case 'model_route_correct':
+				void handleModelRouteCorrect(this.ctx, client, message);
+				break;
+
+			case 'local_models_search':
+				void handleLocalModelsSearch(this.ctx, client, message);
+				break;
+
+			case 'local_models_tab_cleanup':
+				void handleLocalModelsTabCleanup(this.ctx, client, message);
+				break;
+
 			case 'marketplace_get_manifest':
 				handleMarketplaceGetManifest(this.ctx, client, message);
 				break;
@@ -816,6 +1067,10 @@ export class WebSocketMessageHandler {
 
 			case 'get_session_history':
 				handleGetSessionHistory(this.ctx, client, message);
+				break;
+
+			case ACAPPELLA_SIGNAL_MESSAGE:
+				handleACappellaSignal(this.ctx, client, message);
 				break;
 
 			case 'bridge.invoke':

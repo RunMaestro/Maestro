@@ -34,13 +34,14 @@ import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useMessageGistStore } from '../../stores/messageGistStore';
 import { getClaudeTokenMode } from '../../../shared/claudeTokenMode';
-import { collapseAiResponseLogs } from './utils/collapseAiResponseLogs';
+import { collapseAiResponseLogs, isHiddenProgressEntry } from './utils/collapseAiResponseLogs';
 import { computeTurnDurations } from './utils/turnDurations';
 import { groupSubagentToolLogs } from './utils/groupSubagentToolLogs';
 import { buildRenderedIdMap } from './utils/renderedLogIds';
 import { useUIStore } from '../../stores/uiStore';
 import { jumpToElement } from '../../utils/jumpHighlight';
-import { steerJoinsRunningTurn } from '../../utils/logEntries';
+import { isSelfContainedCard, steerJoinsRunningTurn } from '../../utils/logEntries';
+import { providerOverridesFor } from '../../utils/providerTabSessions';
 import { LogItem } from './components/LogItem';
 import { OutputSearchBar } from './components/OutputSearchBar';
 import { ScrollToBottomButton } from './components/ScrollToBottomButton';
@@ -236,6 +237,29 @@ export const TerminalOutput = memo(
 			() => groupSubagentToolLogs(collapsedLogs),
 			[collapsedLogs]
 		);
+		// Compare owners over the complete transcript, before the render window
+		// slices it. Legacy entries have no owner and cannot change attribution.
+		const providerPillLogIds = useMemo(() => {
+			const ids = new Set<string>();
+			let previous: LogEntry['turnProvider'];
+			for (const log of filteredLogs) {
+				if (
+					!log.turnProvider ||
+					log.source === 'user' ||
+					log.source === 'tool' ||
+					log.source === 'thinking' ||
+					log.source === 'error' ||
+					log.metadata?.crossAgent ||
+					isHiddenProgressEntry(log) ||
+					isSelfContainedCard(log)
+				)
+					continue;
+				if (log.turnProvider !== previous) ids.add(log.id);
+				previous = log.turnProvider;
+			}
+			return ids;
+		}, [filteredLogs]);
+		const claudeTokenMode = getClaudeTokenMode(providerOverridesFor(session, 'claude-code'));
 		const debouncedSearchQuery = useDebouncedValue(outputSearchQuery, 150);
 
 		// ============================================================================
@@ -749,6 +773,7 @@ export const TerminalOutput = memo(
 									bionifyAlgorithm={globalBionifyAlgorithm}
 									userMessageAlignment={userMessageAlignment}
 									responseDurationMs={responseDurationByLogId.get(log.id)}
+									showTurnProvider={providerPillLogIds.has(log.id)}
 									steerRunContinues={steerJoinsRunningTurn(visibleLogs[visibleIndex + 1])}
 									// Codex's assistant directives are Codex's own emitting
 									// convention, so the same string from another provider is a
@@ -757,10 +782,10 @@ export const TerminalOutput = memo(
 									// still name a hidden consult tab - the transcript below is
 									// drawing `activeTab`'s logs, so that is the conversation a
 									// chip in them belongs to.
-									codexDirectives={session.toolType === 'codex'}
+									codexDirectives={log.turnProvider === 'codex'}
 									codexFollowupTabId={activeTab?.id}
-									isClaudeCode={session.toolType === 'claude-code'}
-									isAdaptiveMode={getClaudeTokenMode(session) === 'dynamic'}
+									isClaudeCode={log.turnProvider === 'claude-code'}
+									isAdaptiveMode={claudeTokenMode === 'dynamic'}
 									showProviderModePill={showProviderModePill}
 								/>
 							);
