@@ -12,6 +12,8 @@
  * the same structure gets the richer rendering for free.
  */
 
+import type { LogEntry } from '../types';
+
 /** Normalized task state shared by every agent's checklist format. */
 export type AgentTaskStatus = 'pending' | 'in_progress' | 'completed';
 
@@ -118,4 +120,41 @@ export function summarizeAgentTaskList(list: AgentTaskList): string {
 	const label = inProgress?.activeForm || inProgress?.content || tasks[0]?.content;
 	if (!label) return `${tasks.length} tasks`;
 	return `${label} (${completed}/${tasks.length})`;
+}
+
+/** A checklist plus the log entry it came from. */
+export interface LatestAgentTaskList {
+	/**
+	 * Id of the tool entry the checklist was read from. The docked bar keys its
+	 * dismissal off this, so dismissing hides that one list and the next
+	 * checklist the agent writes brings the bar back.
+	 */
+	entryId: string;
+	list: AgentTaskList;
+}
+
+/**
+ * Newest checklist in a tab's conversation, or null when the agent has not
+ * written one. Agents rewrite the whole list on every update, so the last
+ * checklist-shaped tool call in the log IS the current state - there is nothing
+ * to merge across entries.
+ *
+ * Checklists written INSIDE a subagent (`metadata.parentToolUseId`) are skipped.
+ * A delegated worker keeps its own private plan, and it is written last, so
+ * without this guard a Task tool call would replace the plan the user is
+ * actually following with a scratch list they never asked to see.
+ */
+export function findLatestAgentTaskList(
+	logs: readonly LogEntry[] | undefined
+): LatestAgentTaskList | null {
+	if (!logs) return null;
+	for (let i = logs.length - 1; i >= 0; i--) {
+		const entry = logs[i];
+		if (entry.metadata?.parentToolUseId) continue;
+		const toolState = entry.metadata?.toolState;
+		if (!toolState || toolState.input === undefined) continue;
+		const list = extractAgentTaskList(toolState.input);
+		if (list) return { entryId: entry.id, list };
+	}
+	return null;
 }

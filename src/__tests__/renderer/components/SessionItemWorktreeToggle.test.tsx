@@ -14,9 +14,10 @@
  * subtree. The live child count is the only input.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { SessionItem } from '../../../renderer/components/SessionItem';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type { Session, Theme } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
@@ -64,6 +65,85 @@ const defaultProps = {
 	onStartRename: vi.fn(),
 	onToggleBookmark: vi.fn(),
 };
+
+describe('SessionItem worktree metadata', () => {
+	const initialSettings = {
+		showWorktreeProvider: useSettingsStore.getState().showWorktreeProvider,
+		showWorktreeBranchName: useSettingsStore.getState().showWorktreeBranchName,
+	};
+
+	beforeEach(() => {
+		useSettingsStore.setState({ showWorktreeProvider: false, showWorktreeBranchName: false });
+	});
+
+	afterEach(() => {
+		useSettingsStore.setState(initialSettings);
+	});
+
+	it.each([
+		[false, false],
+		[false, true],
+		[true, false],
+		[true, true],
+	])('independently shows provider=%s and branch=%s', (showProvider, showBranch) => {
+		useSettingsStore.setState({
+			showWorktreeProvider: showProvider,
+			showWorktreeBranchName: showBranch,
+		});
+		render(
+			<SessionItem
+				{...defaultProps}
+				variant="worktree"
+				session={createMockSession({ toolType: 'codex', worktreeBranch: 'feat/x' })}
+			/>
+		);
+
+		expect(screen.queryByTitle('Provider: Codex') !== null).toBe(showProvider);
+		expect(screen.queryByTitle('feat/x') !== null).toBe(showBranch);
+		expect(screen.queryByText('·') !== null).toBe(showProvider && showBranch);
+		if (showProvider && showBranch) {
+			const provider = screen.getByTitle('Provider: Codex');
+			const branch = screen.getByTitle('feat/x');
+			expect(provider.parentElement).toBe(branch.parentElement);
+			expect(provider).toHaveClass('shrink-0');
+			expect(branch).toHaveClass('truncate');
+		}
+	});
+
+	it('shows the provider without a branch and updates when the agent changes provider', () => {
+		useSettingsStore.setState({ showWorktreeProvider: true, showWorktreeBranchName: true });
+		const session = createMockSession({ toolType: 'codex', worktreeBranch: undefined });
+		const { rerender } = render(
+			<SessionItem {...defaultProps} variant="worktree" session={session} />
+		);
+		expect(screen.getByTitle('Provider: Codex')).toHaveTextContent('Codex');
+		expect(screen.queryByText('·')).not.toBeInTheDocument();
+
+		rerender(
+			<SessionItem
+				{...defaultProps}
+				variant="worktree"
+				session={{ ...session, toolType: 'claude-code' }}
+			/>
+		);
+		expect(screen.getByTitle('Provider: Claude Code')).toHaveTextContent('Claude Code');
+		expect(screen.queryByTitle('Provider: Codex')).not.toBeInTheDocument();
+	});
+
+	it('hides worktree metadata while renaming', () => {
+		useSettingsStore.setState({ showWorktreeProvider: true, showWorktreeBranchName: true });
+		render(
+			<SessionItem
+				{...defaultProps}
+				variant="worktree"
+				isEditing
+				session={createMockSession({ toolType: 'codex', worktreeBranch: 'feat/x' })}
+			/>
+		);
+		expect(screen.queryByTitle('Provider: Codex')).not.toBeInTheDocument();
+		expect(screen.queryByTitle('feat/x')).not.toBeInTheDocument();
+	});
+});
 
 describe('SessionItem worktree collapse toggle', () => {
 	it('shows the toggle for a parent with children but no worktreeConfig (#1292)', () => {

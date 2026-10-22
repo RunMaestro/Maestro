@@ -1,0 +1,27 @@
+{
+	"provider": "opencode",
+	"providerVersion": "1.18.23",
+	"capturedOn": "2026-09-28",
+	"platform": "darwin",
+	"command": [
+		"opencode",
+		"run",
+		"--format",
+		"json",
+		"--model",
+		"opencode/big-pickle",
+		"--",
+		"<prompt>"
+	],
+	"prompt": "Run this exact shell command with your bash tool: sleep 41. After it finishes, reply with the single word: done.",
+	"stop": "SIGTERM 9000ms after the step_start event, while the bash tool was running `sleep 41`. This is what a CLI stop sends (linkAbortSignal in agent-spawner.ts). The `sleep` outlived OpenCode.",
+	"chunks": [
+		"{\"type\":\"step_start\",\"timestamp\":1790624890409,\"sessionID\":\"ses_f1670a7e6ffecQgVAvhIMMjTox\",\"part\":{\"id\":\"prt_0e98f7e20001IGi1xD0i5EMATM\",\"messageID\":\"msg_0e98f59790011uHcg10046oUEK\",\"sessionID\":\"ses_f1670a7e6ffecQgVAvhIMMjTox\",\"type\":\"step-start\"}}\n",
+		"{\"type\":\"text\",\"timestamp\":1790624890608,\"sessionID\":\"ses_f1670a7e6ffecQgVAvhIMMjTox\",\"part\":{\"id\":\"prt_0e98f7e24001202yFItrhhtZNI\",\"messageID\":\"msg_0e98f59790011uHcg10046oUEK\",\"sessionID\":\"ses_f1670a7e6ffecQgVAvhIMMjTox\",\"type\":\"text\",\"text\":\"I'll run that command.\",\"time\":{\"start\":1790624890404,\"end\":1790624890606}}}\n"
+	],
+	"stderr": "",
+	"close": {
+		"code": null,
+		"signal": "SIGTERM"
+	}
+}

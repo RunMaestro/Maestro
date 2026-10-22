@@ -11,6 +11,10 @@
  * `enabled = (metricMode === 'tokens')` and the fetch fires on the first chart
  * that asks. Because the state lives here rather than in each chart, six charts
  * asking still produce one IPC round trip.
+ *
+ * The payload itself is the shared `useTokenUsage` cache entry, so when the
+ * Overview speed cards or the Tokens tab have already loaded the range, a chart
+ * flipping to Tokens has its series on the first frame.
  */
 
 import {
@@ -24,8 +28,8 @@ import {
 	type ReactNode,
 } from 'react';
 import type { StatsTimeRange } from '../../../shared/stats-types';
-import type { TokenSeries, TokenUsageQuery } from '../../../shared/tokenUsage';
-import { captureException } from '../../utils/sentry';
+import type { TokenSeries } from '../../../shared/tokenUsage';
+import { useTokenUsage } from './useTokenUsage';
 
 interface TokenSeriesState {
 	series: TokenSeries | null;
@@ -37,20 +41,6 @@ interface TokenSeriesState {
 
 const TokenSeriesContext = createContext<TokenSeriesState | null>(null);
 
-/** Lookback per dashboard range, mirroring `getTimeRangeStart` in main. */
-const RANGE_DAYS: Record<Exclude<StatsTimeRange, 'all'>, number> = {
-	day: 1,
-	week: 7,
-	month: 30,
-	quarter: 90,
-	year: 365,
-};
-
-function toQuery(range: StatsTimeRange): TokenUsageQuery {
-	if (range === 'all') return { granularity: 'month' };
-	return { sinceMs: Date.now() - RANGE_DAYS[range] * 24 * 60 * 60 * 1000, granularity: 'day' };
-}
-
 export function TokenSeriesProvider({
 	timeRange,
 	children,
@@ -58,9 +48,6 @@ export function TokenSeriesProvider({
 	timeRange: StatsTimeRange;
 	children: ReactNode;
 }) {
-	const [series, setSeries] = useState<TokenSeries | null>(null);
-	const [loading, setLoading] = useState(false);
-	const [error, setError] = useState<string | null>(null);
 	// Sticky across time-range changes: once the user has opted into a Tokens
 	// view we keep refetching for the new range instead of making them re-click.
 	const [requested, setRequested] = useState(false);
@@ -72,40 +59,18 @@ export function TokenSeriesProvider({
 		setRequested(true);
 	}, []);
 
-	useEffect(() => {
-		if (!requested) return;
-		// Guard the bridge call: a renderer running against an older preload (or a
-		// test harness with a partial `window.maestro` mock) would otherwise throw
-		// inside an effect and unmount the whole dashboard. Charts fall back to
-		// showing no token data, which is the correct degraded behavior.
-		const getTokenUsage = window.maestro?.stats?.getTokenUsage;
-		if (typeof getTokenUsage !== 'function') {
-			setError('Token usage is unavailable in this build.');
-			return;
-		}
-
-		let cancelled = false;
-		setLoading(true);
-		setError(null);
-		getTokenUsage(toQuery(timeRange))
-			.then((agg) => {
-				if (!cancelled) setSeries(agg.series);
-			})
-			.catch((err) => {
-				captureException(err);
-				if (!cancelled) setError(err instanceof Error ? err.message : String(err));
-			})
-			.finally(() => {
-				if (!cancelled) setLoading(false);
-			});
-		return () => {
-			cancelled = true;
-		};
-	}, [requested, timeRange]);
+	// Reads the cache entry the Tokens tab and the Overview speed cards share, so
+	// a series one of them already loaded is available without asking.
+	const { data, loading, error } = useTokenUsage(timeRange, requested);
 
 	const value = useMemo<TokenSeriesState>(
-		() => ({ series, loading, error, request }),
-		[series, loading, error, request]
+		() => ({
+			series: data?.series ?? null,
+			loading: requested && loading,
+			error: data ? null : error,
+			request,
+		}),
+		[data, loading, error, requested, request]
 	);
 
 	return <TokenSeriesContext.Provider value={value}>{children}</TokenSeriesContext.Provider>;

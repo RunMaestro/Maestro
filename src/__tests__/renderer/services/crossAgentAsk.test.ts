@@ -91,6 +91,37 @@ describe('runCrossAgentAsk', () => {
 		await pending;
 	});
 
+	it('forwards the ASKING tab transcript, not whichever tab the user has open', async () => {
+		const caller = createMockSession({ id: 'caller', name: '🥋 Kensho' });
+		caller.aiTabs = [
+			{
+				id: 'asking-tab',
+				name: 'Work',
+				logs: [{ id: 'l1', timestamp: 1, source: 'user', text: 'the real thread' }],
+			},
+			{
+				id: 'open-tab',
+				name: 'Unrelated',
+				logs: [{ id: 'l2', timestamp: 2, source: 'user', text: 'something else' }],
+			},
+		] as never;
+		caller.activeTabId = 'open-tab';
+		useSessionStore.setState({
+			sessions: [createMockSession({ id: 'target', name: 'PedTome' }), caller],
+		} as never);
+
+		const pending = runCrossAgentAsk({
+			targetSessionId: 'target',
+			question: 'and now?',
+			fromSessionId: 'caller',
+			fromTabId: 'asking-tab',
+			withContext: true,
+		});
+		expect(sentOptions().sourceLogs.map((log: { id: string }) => log.id)).toEqual(['l1']);
+		complete({ text: 'ok' });
+		await pending;
+	});
+
 	it('keys the consult on the CALLING AGENT, not on whichever tab it had open', async () => {
 		// One consult tab per (caller -> target) pairing is what lets a follow-up
 		// `ask` resume the earlier exchange. Keying it on the caller's active tab

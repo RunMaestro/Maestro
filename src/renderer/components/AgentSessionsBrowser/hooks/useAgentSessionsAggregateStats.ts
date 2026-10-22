@@ -36,6 +36,8 @@ export function useAgentSessionsAggregateStats({
 		totalSize: number;
 		totalCost: number;
 		totalTokens: number;
+		tokenSplit?: AggregateStats['tokenSplit'];
+		unsplitTokens?: number;
 		oldestSession: Date | null;
 		isComplete: boolean;
 	};
@@ -63,6 +65,8 @@ export function useAgentSessionsAggregateStats({
 					totalCostUsd: stats.totalCostUsd,
 					totalSizeBytes: stats.totalSizeBytes,
 					totalTokens: stats.totalTokens ?? 0,
+					tokenSplit: stats.tokenSplit,
+					unsplitTokens: stats.unsplitTokens,
 					oldestTimestamp: stats.oldestTimestamp,
 					isComplete: stats.isComplete,
 				});
@@ -80,14 +84,22 @@ export function useAgentSessionsAggregateStats({
 		let totalMessages = 0;
 		let totalCostUsd = 0;
 		let totalSizeBytes = 0;
-		let totalTokens = 0;
+		const tokenSplit = {
+			inputTokens: 0,
+			outputTokens: 0,
+			cacheReadTokens: 0,
+			cacheCreationTokens: 0,
+		};
 		let oldestTimestamp: string | null = null;
 
 		for (const session of sessions) {
 			totalMessages += session.messageCount || 0;
 			totalCostUsd += session.costUsd || 0;
 			totalSizeBytes += session.sizeBytes || 0;
-			totalTokens += (session.inputTokens || 0) + (session.outputTokens || 0);
+			tokenSplit.inputTokens += session.inputTokens || 0;
+			tokenSplit.outputTokens += session.outputTokens || 0;
+			tokenSplit.cacheReadTokens += session.cacheReadTokens || 0;
+			tokenSplit.cacheCreationTokens += session.cacheCreationTokens || 0;
 			if (session.timestamp) {
 				if (!oldestTimestamp || session.timestamp < oldestTimestamp) {
 					oldestTimestamp = session.timestamp;
@@ -100,7 +112,12 @@ export function useAgentSessionsAggregateStats({
 			totalMessages,
 			totalCostUsd,
 			totalSizeBytes,
-			totalTokens,
+			totalTokens:
+				tokenSplit.inputTokens +
+				tokenSplit.outputTokens +
+				tokenSplit.cacheReadTokens +
+				tokenSplit.cacheCreationTokens,
+			tokenSplit,
 			oldestTimestamp,
 			isComplete: !hasMoreSessions,
 		});
@@ -113,6 +130,8 @@ export function useAgentSessionsAggregateStats({
 			totalSize: aggregateStats.totalSizeBytes,
 			totalCost: aggregateStats.totalCostUsd,
 			totalTokens: aggregateStats.totalTokens,
+			tokenSplit: aggregateStats.tokenSplit,
+			unsplitTokens: aggregateStats.unsplitTokens,
 			oldestSession: aggregateStats.oldestTimestamp
 				? new Date(aggregateStats.oldestTimestamp)
 				: null,

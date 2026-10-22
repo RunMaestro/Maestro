@@ -1,3 +1,4 @@
+import { useHasHeadlessActivity } from '../stores/headlessActivityStore';
 import React, { memo } from 'react';
 import {
 	Activity,
@@ -67,7 +68,8 @@ export function getEnhancedStatusColor(
 	isInBatch: boolean,
 	colorBlindMode: boolean = false,
 	hasActiveOutage: boolean = false,
-	isBeingConsulted: boolean = false
+	isBeingConsulted: boolean = false,
+	hasHeadlessActivity: boolean = false
 ): { color: string; animate: boolean; label: string } {
 	const success = colorBlindMode ? COLORBLIND_STATUS_COLORS.success : theme.colors.success;
 	const warning = colorBlindMode ? COLORBLIND_STATUS_COLORS.warning : theme.colors.warning;
@@ -95,6 +97,10 @@ export function getEnhancedStatusColor(
 	// specific "Thinking" / "Running command" label; both draw the same dot.
 	if (isBeingConsulted && session.state !== 'busy') {
 		return { color: warning, animate: true, label: 'Answering a consult' };
+	}
+
+	if (hasHeadlessActivity) {
+		return { color: warning, animate: true, label: 'Running headless turn' };
 	}
 
 	if (hasNoClaudeProviderSession(session)) {
@@ -234,6 +240,7 @@ export const SessionItem = memo(function SessionItem({
 }: SessionItemProps) {
 	const showWorktreePill = useSettingsStore((s) => s.showWorktreePill);
 	const showWorktreeBranchName = useSettingsStore((s) => s.showWorktreeBranchName);
+	const showWorktreeProvider = useSettingsStore((s) => s.showWorktreeProvider);
 	const showLeftPanelLocationPills = useSettingsStore((s) => s.showLeftPanelLocationPills);
 	const showLeftPanelGitIndicator = useSettingsStore((s) => s.showLeftPanelGitIndicator);
 	const showLeftPanelCueIndicator = useSettingsStore((s) => s.showLeftPanelCueIndicator);
@@ -250,6 +257,9 @@ export const SessionItem = memo(function SessionItem({
 	// and a user on a handheld already knows which agent is which. State that
 	// needs attention (AUTO, ERR, unread, wizard) stays.
 	const phone = usePhoneLayout();
+	const worktreeProviderName =
+		showWorktreeProvider && !phone ? getAgentDisplayName(session.toolType) : undefined;
+	const worktreeBranchName = showWorktreeBranchName ? session.worktreeBranch : undefined;
 	const cueIndicatorVisible = maestroCueEnabled && showLeftPanelCueIndicator && !phone;
 	const startupCommandTabCount =
 		session.terminalTabs?.reduce(
@@ -301,15 +311,18 @@ export const SessionItem = memo(function SessionItem({
 	// A cross-agent consult is invisible to `session.state` by design, so the dot
 	// asks the in-flight store directly.
 	const isBeingConsulted = useSessionIsBeingConsulted(session.id);
+	const hasHeadlessActivity = useHasHeadlessActivity(session.id);
 	const statusInfo = getEnhancedStatusColor(
 		session,
 		theme,
 		isInBatch,
 		colorBlindMode,
 		hasActiveOutage,
-		isBeingConsulted
+		isBeingConsulted,
+		hasHeadlessActivity
 	);
-	const isDisconnected = !isInBatch && !isBeingConsulted && hasNoClaudeProviderSession(session);
+	const isDisconnected =
+		!isInBatch && !isBeingConsulted && !hasHeadlessActivity && hasNoClaudeProviderSession(session);
 
 	// Determine container styling based on variant
 	const getContainerClassName = () => {
@@ -476,19 +489,29 @@ export const SessionItem = memo(function SessionItem({
 					</div>
 				)}
 
-				{/* Branch name for worktree children (below session name) */}
-				{variant === 'worktree' &&
-					showWorktreeBranchName &&
-					session.worktreeBranch &&
-					!isEditing && (
-						<div
-							className="text-2xs mt-0.5 truncate"
-							style={{ color: theme.colors.textDim }}
-							title={session.worktreeBranch}
-						>
-							{session.worktreeBranch}
-						</div>
-					)}
+				{/* Optional provider and branch share one line beneath worktree child names. */}
+				{variant === 'worktree' && (worktreeProviderName || worktreeBranchName) && !isEditing && (
+					<div
+						className="flex items-center gap-1 min-w-0 text-2xs mt-0.5"
+						style={{ color: theme.colors.textDim }}
+					>
+						{worktreeProviderName && (
+							<span className="shrink-0" title={`Provider: ${worktreeProviderName}`}>
+								{worktreeProviderName}
+							</span>
+						)}
+						{worktreeProviderName && worktreeBranchName && (
+							<span className="shrink-0" aria-hidden="true">
+								·
+							</span>
+						)}
+						{worktreeBranchName && (
+							<span className="truncate" title={worktreeBranchName}>
+								{worktreeBranchName}
+							</span>
+						)}
+					</div>
+				)}
 
 				{/* Session metadata row (hidden for compact worktree variant, and on a phone) */}
 				{variant !== 'worktree' && !phone && (

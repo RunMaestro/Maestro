@@ -1,9 +1,11 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
 	useAutoRunSteeringStore,
+	groupSteeringDeliveries,
 	selectDeliveredSteeringNotes,
 	selectPendingSteeringNotes,
 	MAX_DELIVERED_STEERING_NOTES,
+	MAX_STEERING_RESPONSE_LENGTH,
 } from '../../../renderer/stores/autoRunSteeringStore';
 import { MAX_PENDING_STEERING_NOTES } from '../../../shared/autorunSteering';
 
@@ -104,13 +106,135 @@ describe('autoRunSteeringStore', () => {
 		expect(useAutoRunSteeringStore.getState().delivered[SESSION]).toBeUndefined();
 	});
 
+	it('clearPendingNotes keeps the delivered record, since a reply lands as the run ends', () => {
+		const taken = useAutoRunSteeringStore.getState().addNote(SESSION, 'stop after this doc')!;
+		useAutoRunSteeringStore.getState().takeNotes(SESSION);
+		useAutoRunSteeringStore.getState().recordResponse(SESSION, [taken.id], {
+			summary: '[steered] Halting after this document.',
+			text: '[steered] Halting after this document.',
+			success: true,
+		});
+		useAutoRunSteeringStore.getState().addNote(SESSION, 'never taken');
+
+		useAutoRunSteeringStore.getState().clearPendingNotes(SESSION);
+
+		expect(useAutoRunSteeringStore.getState().notes[SESSION]).toBeUndefined();
+		const [kept] = useAutoRunSteeringStore.getState().delivered[SESSION];
+		expect(kept.response?.summary).toBe('[steered] Halting after this document.');
+	});
+
+	describe('replies', () => {
+		const reply = (text: string, success = true) => ({ summary: text, text, success });
+
+		it('stamps every note one task took with the same delivery', () => {
+			useAutoRunSteeringStore.getState().addNote(SESSION, 'first');
+			useAutoRunSteeringStore.getState().addNote(SESSION, 'second');
+			useAutoRunSteeringStore.getState().takeNotes(SESSION);
+			useAutoRunSteeringStore.getState().addNote(SESSION, 'third');
+			useAutoRunSteeringStore.getState().takeNotes(SESSION);
+
+			const [a, b, c] = useAutoRunSteeringStore.getState().delivered[SESSION];
+			expect(a.deliveryId).toBe(b.deliveryId);
+			expect(c.deliveryId).not.toBe(a.deliveryId);
+		});
+
+		it('attaches a reply only to the notes that task took', () => {
+			useAutoRunSteeringStore.getState().addNote(SESSION, 'first');
+			const first = useAutoRunSteeringStore.getState().takeNotes(SESSION);
+			useAutoRunSteeringStore.getState().addNote(SESSION, 'second');
+			useAutoRunSteeringStore.getState().takeNotes(SESSION);
+
+			useAutoRunSteeringStore.getState().recordResponse(
+				SESSION,
+				first.map((n) => n.id),
+				reply('  [steered] switched endpoints  ')
+			);
+
+			const [a, b] = useAutoRunSteeringStore.getState().delivered[SESSION];
+			expect(a.response).toMatchObject({
+				summary: '[steered] switched endpoints',
+				text: '[steered] switched endpoints',
+				success: true,
+			});
+			expect(a.response!.timestamp).toBeGreaterThan(0);
+			expect(b.response).toBeUndefined();
+		});
+
+		it('keeps a failed task as a reply rather than leaving the note waiting', () => {
+			const note = useAutoRunSteeringStore.getState().addNote(SESSION, 'first')!;
+			useAutoRunSteeringStore.getState().takeNotes(SESSION);
+
+			useAutoRunSteeringStore
+				.getState()
+				.recordResponse(SESSION, [note.id], reply('context limit reached', false));
+
+			expect(useAutoRunSteeringStore.getState().delivered[SESSION][0].response?.success).toBe(
+				false
+			);
+		});
+
+		it('does not resurrect a note a new run already cleared', () => {
+			const note = useAutoRunSteeringStore.getState().addNote(SESSION, 'first')!;
+			useAutoRunSteeringStore.getState().takeNotes(SESSION);
+			useAutoRunSteeringStore.getState().clearNotes(SESSION);
+
+			useAutoRunSteeringStore.getState().recordResponse(SESSION, [note.id], reply('late'));
+
+			expect(useAutoRunSteeringStore.getState().delivered[SESSION]).toBeUndefined();
+		});
+
+		it('caps a runaway reply', () => {
+			const note = useAutoRunSteeringStore.getState().addNote(SESSION, 'first')!;
+			useAutoRunSteeringStore.getState().takeNotes(SESSION);
+
+			useAutoRunSteeringStore.getState().recordResponse(SESSION, [note.id], {
+				summary: 'short',
+				text: 'x'.repeat(MAX_STEERING_RESPONSE_LENGTH + 500),
+				success: true,
+			});
+
+			expect(useAutoRunSteeringStore.getState().delivered[SESSION][0].response!.text).toHaveLength(
+				MAX_STEERING_RESPONSE_LENGTH
+			);
+		});
+
+		it("groups notes by the task that took them, with that task's one reply", () => {
+			useAutoRunSteeringStore.getState().addNote(SESSION, 'first');
+			useAutoRunSteeringStore.getState().addNote(SESSION, 'second');
+			const batch = useAutoRunSteeringStore.getState().takeNotes(SESSION);
+			useAutoRunSteeringStore.getState().recordResponse(
+				SESSION,
+				batch.map((n) => n.id),
+				reply('[steered] did both')
+			);
+			useAutoRunSteeringStore.getState().addNote(SESSION, 'third');
+			useAutoRunSteeringStore.getState().takeNotes(SESSION);
+
+			const deliveries = groupSteeringDeliveries(
+				useAutoRunSteeringStore.getState().delivered[SESSION]
+			);
+
+			expect(deliveries.map((d) => d.notes.map((n) => n.text))).toEqual([
+				['first', 'second'],
+				['third'],
+			]);
+			expect(deliveries[0].response?.summary).toBe('[steered] did both');
+			// The second task is still running: delivered, not yet answered.
+			expect(deliveries[1].response).toBeUndefined();
+		});
+
+		it('groups nothing into nothing', () => {
+			expect(groupSteeringDeliveries([])).toEqual([]);
+		});
+	});
+
 	it('hands back a stable empty array so the selectors never churn subscribers', () => {
 		const state = useAutoRunSteeringStore.getState();
 		expect(selectPendingSteeringNotes(SESSION)(state)).toBe(
 			selectPendingSteeringNotes('other')(state)
 		);
 		expect(selectDeliveredSteeringNotes(SESSION)(state)).toBe(
-			selectPendingSteeringNotes('other')(state)
+			selectDeliveredSteeringNotes('other')(state)
 		);
 	});
 });

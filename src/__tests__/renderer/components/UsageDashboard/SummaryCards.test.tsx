@@ -24,6 +24,7 @@ import {
 import type { StatsAggregation } from '../../../../renderer/hooks/stats/useStats';
 import type { Session } from '../../../../renderer/types';
 import { THEMES } from '../../../../shared/themes';
+import { emptyPromptCadence } from '../../../../shared/promptCadence';
 
 // Test theme
 const theme = THEMES['dracula'];
@@ -58,6 +59,7 @@ const mockData: StatsAggregation = {
 		parent: { count: 150, duration: 7200000 },
 	},
 	imageAnnotations: 0,
+	prompts: emptyPromptCadence(),
 };
 
 // Empty data for edge case testing
@@ -84,6 +86,7 @@ const emptyData: StatsAggregation = {
 		parent: { count: 0, duration: 0 },
 	},
 	imageAnnotations: 0,
+	prompts: emptyPromptCadence(),
 };
 
 // Data with large numbers
@@ -113,6 +116,7 @@ const largeNumbersData: StatsAggregation = {
 		parent: { count: 1500000, duration: 360000000 },
 	},
 	imageAnnotations: 0,
+	prompts: emptyPromptCadence(),
 };
 
 // Single agent data
@@ -141,6 +145,7 @@ const singleAgentData: StatsAggregation = {
 		parent: { count: 50, duration: 1800000 },
 	},
 	imageAnnotations: 0,
+	prompts: emptyPromptCadence(),
 };
 
 // Mock sessions with tabs for open tab count testing

@@ -8,8 +8,8 @@
  *
  * This suite mocks ExtensionsView to render whatever `settingsBodies` it
  * receives, so it verifies:
- * - EncoreTab builds a settingsBodies map with exactly the four configurable
- *   first-party keys (usageStats/symphony/maestroCue/directorNotes), each wired
+ * - EncoreTab builds a settingsBodies map with the configurable first-party
+ *   keys (usageStats/symphony/maestroCue/directorNotes/quickChat/throughputGauge), each wired
  *   to its real config body (asserted via the body's data-setting-id anchor).
  * - Pianola has no inline config body (it uses its own modal).
  * - The real Director's Notes hook chain: agent detection is gated on
@@ -173,6 +173,24 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		setTtsrDisabledRules: vi.fn(),
 		ttsrContextMode: 'keep',
 		setTtsrContextMode: vi.fn(),
+		// Quick Chat
+		quickChatSettings: {
+			hotkey: ['Alt', 'Space'],
+			agentId: '',
+			persistent: false,
+			defaultTab: 'auto',
+			ephemeralHistory: true,
+		},
+		setQuickChatSettings: vi.fn(),
+		// Throughput Gauge
+		throughputGaugeSettings: {
+			scope: 'all',
+			metric: 'combined',
+			layout: 'single',
+			style: 'dial',
+			windowMs: 10000,
+		},
+		setThroughputGaugeSettings: vi.fn(),
 		...mockUseSettingsOverrides,
 	}),
 }));
@@ -274,7 +292,7 @@ describe('EncoreTab', () => {
 			expect(screen.queryByTestId('encore-feature-manage')).not.toBeInTheDocument();
 		});
 
-		it('passes a settingsBodies map with exactly the four configurable feature keys', async () => {
+		it('passes a settingsBodies map with the configurable feature keys', async () => {
 			render(<EncoreTab theme={mockTheme} isOpen={true} />);
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
@@ -284,6 +302,8 @@ describe('EncoreTab', () => {
 			expect(screen.getByTestId('settings-body-symphony')).toBeInTheDocument();
 			expect(screen.getByTestId('settings-body-maestroCue')).toBeInTheDocument();
 			expect(screen.getByTestId('settings-body-directorNotes')).toBeInTheDocument();
+			expect(screen.getByTestId('settings-body-quickChat')).toBeInTheDocument();
+			expect(screen.getByTestId('settings-body-throughputGauge')).toBeInTheDocument();
 			// Pianola configures via its own modal - no inline body in the map.
 			expect(screen.queryByTestId('settings-body-pianola')).not.toBeInTheDocument();
 			expect(screen.queryByTestId('settings-body-plugins')).not.toBeInTheDocument();
@@ -303,6 +323,10 @@ describe('EncoreTab', () => {
 			expect(document.querySelector('[data-setting-id="encore-cue"]')).toBeInTheDocument();
 			expect(
 				document.querySelector('[data-setting-id="encore-director-notes"]')
+			).toBeInTheDocument();
+			expect(document.querySelector('[data-setting-id="encore-quick-chat"]')).toBeInTheDocument();
+			expect(
+				document.querySelector('[data-setting-id="encore-throughput-gauge"]')
 			).toBeInTheDocument();
 		});
 	});

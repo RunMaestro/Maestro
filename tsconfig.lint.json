@@ -4,5 +4,12 @@
 		"noUnusedLocals": false,
 		"noUnusedParameters": false
 	},
-	"include": ["src/renderer", "src/shared", "src/web", "src/web-desktop", "src/types"]
+	"include": [
+		"src/renderer",
+		"src/shared",
+		"src/web",
+		"src/web-desktop",
+		"src/types",
+		"src/main/lite/preload.ts"
+	]
 }

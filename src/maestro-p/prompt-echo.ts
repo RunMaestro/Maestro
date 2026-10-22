@@ -18,13 +18,23 @@
 // U+0300, common in text pulled from macOS sources such as iMessage) is logged
 // as the single code point U+00E8. Both sides are composed before comparing,
 // or a whole prompt fails as "truncated" when claude received every character.
+//
+// Since claude 2.1.294 the editor can also read part of the paced typing as a
+// paste and log that span between `<pasted_content id="..">` and
+// `</pasted_content id="..">` markers. The markers add text and lose none, so
+// they are stripped from both sides before comparing.
 
 const IGNORED_CHARS = /[\s\p{Cc}]+/gu;
 const IGNORED_CHAR = /[\s\p{Cc}]/u;
+const PASTE_MARKERS = /<\/?pasted_content id="[^"]*">/g;
 const MISSING_SNIPPET_CHARS = 80;
 
+function stripPasteMarkers(text: string): string {
+	return text.replace(PASTE_MARKERS, '');
+}
+
 export function normalizePromptForEcho(text: string): string {
-	return text.normalize('NFC').replace(IGNORED_CHARS, '');
+	return stripPasteMarkers(text.normalize('NFC')).replace(IGNORED_CHARS, '');
 }
 
 // Claude rewrites slash commands (`/compact`) and bash-mode input (`!ls`)
@@ -77,8 +87,9 @@ export function checkPromptEcho(sent: string, received: string): PromptEchoMisma
 	while (common < want.length && common < got.length && want[common] === got[common]) {
 		common += 1;
 	}
-	// `common` counts composed characters, so map it back through the composed text.
-	const composed = sent.normalize('NFC');
+	// `common` counts characters of the normalized text, so map it back through
+	// the same composed, marker-free text.
+	const composed = stripPasteMarkers(sent.normalize('NFC'));
 	const start = originalOffset(composed, common);
 	return {
 		sentBytes: Buffer.byteLength(sent, 'utf8'),

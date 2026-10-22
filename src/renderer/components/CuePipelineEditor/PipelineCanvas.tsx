@@ -39,6 +39,7 @@ import { AgentNode, type AgentNodeDataProps } from './nodes/AgentNode';
 import { CommandNode, type CommandNodeDataProps } from './nodes/CommandNode';
 import { ErrorNode } from './nodes/ErrorNode';
 import { PipelineGroupNode } from './nodes/PipelineGroupNode';
+import { AgentClusterNode } from './nodes/AgentClusterNode';
 import { edgeTypes } from './edges/PipelineEdge';
 import { TriggerDrawer } from './drawers/TriggerDrawer';
 import { AgentDrawer } from './drawers/AgentDrawer';
@@ -54,6 +55,7 @@ const nodeTypes = {
 	command: CommandNode,
 	error: ErrorNode,
 	'pipeline-group': PipelineGroupNode,
+	'agent-cluster': AgentClusterNode,
 };
 
 // Stable module-scope reference so passing it to ReactFlow doesn't break
@@ -192,8 +194,10 @@ export interface PipelineCanvasProps {
 	 *  pipelines are still loading. */
 	onTidy: () => void;
 	/** Open the "Arrange" confirmation: align into columns AND reorder within
-	 *  each column to minimize edge crossings. */
-	onArrange: () => void;
+	 *  each column to minimize edge crossings. Omitted where there is nothing
+	 *  to arrange (an agent-scoped view is packed on the fly), which hides the
+	 *  button. */
+	onArrange?: () => void;
 }
 
 export const PipelineCanvas = React.memo(function PipelineCanvas({
@@ -359,6 +363,9 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 			if (node.type === 'error') {
 				return theme.colors.error ?? '#ef4444';
 			}
+			// An agent cluster encloses its pipelines' cards; filled, it would
+			// paint one solid block over everything they contain.
+			if (node.type === 'agent-cluster') return 'transparent';
 			return theme.colors.accent;
 		},
 		[theme.colors.accent, theme.colors.error]
@@ -536,10 +543,11 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 			    into flow columns without reshuffling; "Arrange" also reorders nodes
 			    within each column to minimize crossing edges. In All-Pipelines view
 			    there are no edges between cards to cross, so only "Arrange" shows and
-			    it packs the group cards into a tidy grid. Shifts left past the agent
-			    drawer when it's open. Hidden when there's nothing to arrange or while
-			    pipelines are loading. */}
-			{!isLoading && nodes.length > 0 && (
+			    it packs the group cards into one cluster per agent; an agent-scoped
+			    view passes no `onArrange` and shows neither. Shifts left past the
+			    agent drawer when it's open. Hidden when there's nothing to arrange or
+			    while pipelines are loading. */}
+			{!isLoading && nodes.length > 0 && (selectedPipelineId !== null || onArrange) && (
 				<div
 					style={{
 						position: 'absolute',
@@ -564,20 +572,22 @@ export const PipelineCanvas = React.memo(function PipelineCanvas({
 							Tidy
 						</button>
 					)}
-					<button
-						onClick={onArrange}
-						title={
-							selectedPipelineId !== null
-								? 'Align into columns and reorder to minimize crossing edges'
-								: 'Pack pipelines into a tidy grid'
-						}
-						style={layoutButtonStyle}
-						onMouseEnter={onLayoutButtonEnter}
-						onMouseLeave={onLayoutButtonLeave}
-					>
-						<Wand2 size={14} />
-						Arrange
-					</button>
+					{onArrange && (
+						<button
+							onClick={onArrange}
+							title={
+								selectedPipelineId !== null
+									? 'Align into columns and reorder to minimize crossing edges'
+									: 'Group pipelines by agent and pack them into a tidy grid'
+							}
+							style={layoutButtonStyle}
+							onMouseEnter={onLayoutButtonEnter}
+							onMouseLeave={onLayoutButtonLeave}
+						>
+							<Wand2 size={14} />
+							Arrange
+						</button>
+					)}
 				</div>
 			)}
 

@@ -171,11 +171,11 @@ subscriptions:
 		name: 'PR Review',
 		description: 'Auto-review new GitHub pull requests',
 		explanation:
-			'Polls GitHub for new pull requests at a configurable interval. Filters let you skip drafts, bot PRs, or target specific labels. The repo is auto-detected from your git remote, or you can set it explicitly. Reference {{CUE_NEW_COMMENTS}} in your prompt to receive comments posted since the last fire when re-trigger is enabled.',
+			'Polls GitHub for new pull requests at a configurable interval. Filters let you skip drafts, bot PRs, or target specific labels. Set repo to the repository to watch (owner/name): the trigger never runs without it. Reference {{CUE_NEW_COMMENTS}} in your prompt to receive comments posted since the last fire when re-trigger is enabled.',
 		yaml: `subscriptions:
   - name: "Review New PRs"
     event: github.pull_request
-    # repo: "owner/repo"  # optional - auto-detected from git remote
+    # repo: "owner/repo"  # required - uncomment and set your repository; the trigger never runs without it
     poll_minutes: 5
     # retrigger_on_comments: true   # re-fire on new activity (comments, edits, reviews)
     # max_notifications: 10         # per-PR cap on re-fires (0 = unlimited)
@@ -191,11 +191,11 @@ subscriptions:
 		name: 'Issue Triage',
 		description: 'Auto-triage new GitHub issues',
 		explanation:
-			'Polls GitHub for new issues and runs a triage prompt against each one. Useful for auto-labeling, prioritizing, assigning, or responding to incoming issues. Add filters to narrow by label, author, or other fields. Reference {{CUE_NEW_COMMENTS}} in your prompt to receive comments posted since the last fire when re-trigger is enabled.',
+			'Polls GitHub for new issues and runs a triage prompt against each one. Useful for auto-labeling, prioritizing, assigning, or responding to incoming issues. Set repo to the repository to watch (owner/name): the trigger never runs without it. Add filters to narrow by label, author, or other fields. Reference {{CUE_NEW_COMMENTS}} in your prompt to receive comments posted since the last fire when re-trigger is enabled.',
 		yaml: `subscriptions:
   - name: "Triage New Issues"
     event: github.issue
-    # repo: "owner/repo"  # optional - auto-detected from git remote
+    # repo: "owner/repo"  # required - uncomment and set your repository; the trigger never runs without it
     poll_minutes: 10
     # retrigger_on_comments: true   # re-fire on new activity (comments, edits, labels)
     # max_notifications: 10         # per-issue cap on re-fires (0 = unlimited)
@@ -208,11 +208,11 @@ subscriptions:
 		name: 'Label Routing',
 		description: 'Run an agent the moment a label lands on a PR or issue',
 		explanation:
-			'Watches GitHub label activity and fires when a label is added, so applying a label becomes the button that starts the work. Choose whether to watch pull requests, issues, or both, and list the labels that should fire (omit gh_labels to fire on any label). {{CUE_GH_LABEL}} carries the label that landed and {{CUE_GH_LABEL_ACTOR}} carries who applied it. Labels already present when the subscription is first saved never fire - only new ones do.',
+			'Watches GitHub label activity and fires when a label is added, so applying a label becomes the button that starts the work. Set repo to the repository to watch (owner/name), since the trigger never runs without it. Choose whether to watch pull requests, issues, or both, and list the labels that should fire (omit gh_labels to fire on any label). {{CUE_GH_LABEL}} carries the label that landed and {{CUE_GH_LABEL_ACTOR}} carries who applied it. Labels already present when the subscription is first saved never fire - only new ones do.',
 		yaml: `subscriptions:
   - name: "Work Labeled PRs"
     event: github.label
-    # repo: "owner/repo"  # optional - auto-detected from git remote
+    # repo: "owner/repo"  # required - uncomment and set your repository; the trigger never runs without it
     gh_label_target: pr   # pr | issue | both (default: both)
     gh_labels:
       - "ready-to-merge"

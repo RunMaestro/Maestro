@@ -1,3 +1,5 @@
+import { processCarriageReturns, stripAnsiCodes } from './stringUtils';
+
 /** Maximum tool result kept in Maestro's session cache. */
 export const MAX_PERSISTED_TOOL_OUTPUT_CHARS = 4000;
 
@@ -34,6 +36,17 @@ export function compactToolOutput(output: unknown): { output: unknown; truncated
 	} catch {
 		return { output: '[tool output omitted: serialization failed]', truncated: true };
 	}
+}
+
+/**
+ * Turn raw terminal output into the plain text a tool badge can show. The badge
+ * renders `toolState.output` as text, so ANSI color codes print as `[34m` and a
+ * PTY's CRLF leaves stray carriage returns. Parsers run command output through
+ * this before handing it on; the result is capped like any stored tool result.
+ */
+export function cleanToolOutputText(text: string): string {
+	const cleaned = processCarriageReturns(stripAnsiCodes(text)).replace(/\s+$/, '');
+	return compactToolOutput(cleaned).output as string;
 }
 
 interface CompactedValue<T> {

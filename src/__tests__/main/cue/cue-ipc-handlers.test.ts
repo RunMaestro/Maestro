@@ -114,6 +114,11 @@ function createMockEngine() {
 
 describe('Cue IPC Handlers', () => {
 	let mockEngine: ReturnType<typeof createMockEngine>;
+	// The stored Encore flags; unset resolves to the defaults (Cue on).
+	let encoreFeatures: Record<string, boolean> | undefined;
+	const settingsStore = {
+		get: (key: string) => (key === 'encoreFeatures' ? encoreFeatures : undefined),
+	};
 
 	beforeEach(() => {
 		registeredHandlers.clear();
@@ -125,6 +130,7 @@ describe('Cue IPC Handlers', () => {
 		vi.mocked(readCueConfigFile).mockReturnValue(null);
 		vi.mocked(readCuePromptFile).mockReturnValue(null);
 		mockEngine = createMockEngine();
+		encoreFeatures = undefined;
 	});
 
 	afterEach(() => {
@@ -134,6 +140,7 @@ describe('Cue IPC Handlers', () => {
 	function registerAndGetHandler(channel: string) {
 		registerCueHandlers({
 			getCueEngine: () => mockEngine as any,
+			settingsStore,
 		});
 		const handler = registeredHandlers.get(channel);
 		if (!handler) {
@@ -146,6 +153,7 @@ describe('Cue IPC Handlers', () => {
 		it('should register all expected IPC channels', () => {
 			registerCueHandlers({
 				getCueEngine: () => mockEngine as any,
+				settingsStore,
 			});
 
 			const expectedChannels = [
@@ -181,6 +189,7 @@ describe('Cue IPC Handlers', () => {
 		it('should throw when engine is null', async () => {
 			registerCueHandlers({
 				getCueEngine: () => null,
+				settingsStore,
 			});
 
 			const handler = registeredHandlers.get('cue:getStatus')!;
@@ -244,6 +253,37 @@ describe('Cue IPC Handlers', () => {
 			const handler = registerAndGetHandler('cue:enable');
 			await handler(null);
 			expect(mockEngine.start).toHaveBeenCalledWith('system-boot');
+		});
+	});
+
+	describe('with Maestro Cue switched off', () => {
+		beforeEach(() => {
+			encoreFeatures = { maestroCue: false };
+		});
+
+		it.each([
+			['cue:enable', []],
+			['cue:triggerSubscription', [{ subscriptionName: 'my-sub' }]],
+			['cue:refreshSession', [{ sessionId: 's1', projectRoot: '/p' }]],
+			['cue:writeYaml', [{ projectRoot: '/p', content: 'subscriptions: []' }]],
+			['cue:deleteYaml', [{ projectRoot: '/p' }]],
+			['cue:savePipelineLayout', [{ layout: {} }]],
+			['cue:renamePipeline', [{ oldName: 'Old', newName: 'New' }]],
+			['cue:updateScheduledTask', [{ projectRoot: '/p', name: 'n', patch: {} }]],
+			['cue:cancelScheduledTask', [{ projectRoot: '/p', name: 'n' }]],
+		])('%s refuses with CueDisabled and touches nothing', async (channel, args) => {
+			const handler = registerAndGetHandler(channel);
+			await expect(handler(null, ...args)).rejects.toThrow('CueDisabled');
+			expect(mockEngine.start).not.toHaveBeenCalled();
+			expect(mockEngine.triggerSubscription).not.toHaveBeenCalled();
+			expect(mockEngine.refreshSession).not.toHaveBeenCalled();
+			expect(writeCueConfigFile).not.toHaveBeenCalled();
+		});
+
+		it('still lets the engine be stopped', async () => {
+			const handler = registerAndGetHandler('cue:disable');
+			await handler(null);
+			expect(mockEngine.stop).toHaveBeenCalledOnce();
 		});
 	});
 
@@ -806,7 +846,7 @@ describe('Cue IPC Handlers', () => {
 		});
 
 		it('throws when the engine is not initialized', async () => {
-			registerCueHandlers({ getCueEngine: () => null });
+			registerCueHandlers({ getCueEngine: () => null, settingsStore });
 			const handler = registeredHandlers.get('cue:renamePipeline')!;
 			await expect(handler(null, { oldName: 'Old', newName: 'New' })).rejects.toThrow();
 			expect(renamePipelineOnDisk).not.toHaveBeenCalled();

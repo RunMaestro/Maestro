@@ -44,8 +44,9 @@
  * always derived from the media (audio has no picture, video wants its own
  * aspect ratio), so it is not a number anyone stores. See `mediaFloatGeometry`.
  *
- * Multi-window note: each renderer holds its own copy of this store, so on a
- * multi-window build two windows can each own a player.
+ * Multi-window note: each renderer holds its own copy of this store. In the
+ * desktop app the media widget window owns the player and every other window
+ * holds a REPLICA that forwards commands to it; see `mediaPlaybackReplica.ts`.
  */
 
 import { create } from 'zustand';
@@ -295,8 +296,37 @@ function persistFloat(float: PersistedMediaFloat): void {
 const QUEUE_PERSIST_DELAY_MS = 500;
 let queuePersistTimer: ReturnType<typeof setTimeout> | null = null;
 
+/**
+ * Whether this window may write `mediaPlayerQueue`. Cleared by the replica
+ * (`mediaPlaybackReplica.ts`): only the window that owns the media element
+ * persists the queue, or two windows race and roll it back on disk.
+ */
+let queuePersistEnabled = true;
+
+/**
+ * Allow or forbid this window's queue writes. Forbidding also drops a pending
+ * write, so nothing scheduled before the switch lands after it.
+ */
+export function setMediaQueuePersistEnabled(enabled: boolean): void {
+	queuePersistEnabled = enabled;
+	if (!enabled && queuePersistTimer) {
+		clearTimeout(queuePersistTimer);
+		queuePersistTimer = null;
+	}
+}
+
+/**
+ * Whether this window owns the persisted queue. A replica neither writes it nor
+ * hydrates from it: the authority does both, and its snapshot is what the
+ * replica shows.
+ */
+export function isMediaQueuePersistEnabled(): boolean {
+	return queuePersistEnabled;
+}
+
 /** Write the queue, the loaded item, and every remembered position to settings. */
 function writeQueueNow(): void {
+	if (!queuePersistEnabled) return;
 	const { items, activeItemId, resumeTimes, durations } = useMediaPlaybackStore.getState();
 	const queued = new Set(items.map((item) => item.id));
 	// Durations outlive the queue in memory, because history rows still show the
@@ -316,6 +346,7 @@ function writeQueueNow(): void {
 }
 
 function persistQueue(): void {
+	if (!queuePersistEnabled) return;
 	if (queuePersistTimer) clearTimeout(queuePersistTimer);
 	queuePersistTimer = setTimeout(() => {
 		queuePersistTimer = null;

@@ -14,13 +14,14 @@ import {
 	ExternalLink,
 } from 'lucide-react';
 import { GhostIconButton } from './ui/GhostIconButton';
+import { ShortcutHint } from './ui/ShortcutHint';
 import type { Theme, Shortcut } from '../types';
-import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { useClickOutside } from '../hooks';
 import { WelcomeContent } from './WelcomeContent';
 import { buildMaestroUrl } from '../utils/buildMaestroUrl';
 import { openUrl } from '../utils/openUrl';
 import { PluginUiItemsSlot } from './plugins/PluginUiItemsSlot';
+import { elevatedSurfaceStyle } from '../utils/elevatedSurface';
 
 interface EmptyStateViewProps {
 	theme: Theme;
@@ -93,10 +94,9 @@ export function EmptyStateView({
 					{/* Menu Overlay */}
 					{menuOpen && (
 						<div
-							className="absolute top-full right-0 mt-2 w-72 rounded-lg shadow-2xl z-50 overflow-hidden"
+							className="absolute top-full right-0 mt-2 w-72 rounded-lg z-50 overflow-hidden"
 							style={{
-								backgroundColor: theme.colors.bgSidebar,
-								border: `1px solid ${theme.colors.border}`,
+								...elevatedSurfaceStyle(theme),
 							}}
 						>
 							<div className="p-1">
@@ -116,15 +116,7 @@ export function EmptyStateView({
 											Get started with AI
 										</div>
 									</div>
-									<span
-										className="text-xs font-mono px-1.5 py-0.5 rounded"
-										style={{
-											backgroundColor: theme.colors.bgActivity,
-											color: theme.colors.textDim,
-										}}
-									>
-										{shortcuts.openWizard ? formatShortcutKeys(shortcuts.openWizard.keys) : '⇧⌘N'}
-									</span>
+									<ShortcutHint theme={theme} keys={shortcuts.openWizard?.keys ?? []} />
 								</button>
 
 								{onStartTour && (
@@ -162,15 +154,7 @@ export function EmptyStateView({
 											Settings
 										</div>
 									</div>
-									<span
-										className="text-xs font-mono px-1.5 py-0.5 rounded"
-										style={{
-											backgroundColor: theme.colors.bgActivity,
-											color: theme.colors.textDim,
-										}}
-									>
-										{shortcuts.settings ? formatShortcutKeys(shortcuts.settings.keys) : '⌘,'}
-									</span>
+									<ShortcutHint theme={theme} keys={shortcuts.settings?.keys ?? []} />
 								</button>
 
 								<button
@@ -186,15 +170,7 @@ export function EmptyStateView({
 											Keyboard Shortcuts
 										</div>
 									</div>
-									<span
-										className="text-xs font-mono px-1.5 py-0.5 rounded"
-										style={{
-											backgroundColor: theme.colors.bgActivity,
-											color: theme.colors.textDim,
-										}}
-									>
-										{shortcuts.help ? formatShortcutKeys(shortcuts.help.keys) : '?'}
-									</span>
+									<ShortcutHint theme={theme} keys={shortcuts.help?.keys ?? []} />
 								</button>
 
 								<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />

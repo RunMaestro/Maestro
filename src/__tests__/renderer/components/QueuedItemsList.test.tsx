@@ -1,6 +1,6 @@
 /// <reference types="@testing-library/jest-dom/vitest" />
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { QueuedItemsList } from '../../../renderer/components/QueuedItemsList';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 import { useUIStore } from '../../../renderer/stores/uiStore';
@@ -65,6 +65,70 @@ describe('QueuedItemsList pause/hold', () => {
 		setup({ onTogglePauseQueuedItem: undefined });
 		expect(screen.queryByTitle(/Hold this message/i)).toBeNull();
 		expect(screen.queryByText('HELD')).toBeNull();
+	});
+});
+
+describe('QueuedItemsList merge into the message above', () => {
+	const MERGE_TITLE = /Merge into the message above/i;
+
+	it('offers Merge on every card below another message', () => {
+		setup({
+			executionQueue: [item({ id: 'q1' }), item({ id: 'q2' }), item({ id: 'q3' })],
+			onMergeQueuedItem: vi.fn(),
+		});
+		expect(screen.getAllByTitle(MERGE_TITLE)).toHaveLength(2);
+	});
+
+	it('confirms with both messages shown and Merge focused before merging', async () => {
+		const onMergeQueuedItem = vi.fn();
+		setup({
+			executionQueue: [
+				item({ id: 'q1', text: 'first message' }),
+				item({ id: 'q2', text: 'second message' }),
+			],
+			onMergeQueuedItem,
+		});
+		fireEvent.click(screen.getByTitle(MERGE_TITLE));
+
+		// Nothing merges until the user accepts.
+		expect(onMergeQueuedItem).not.toHaveBeenCalled();
+		expect(screen.getByText('Merge Queued Messages?')).toBeInTheDocument();
+		expect(screen.getAllByText('first message').length).toBeGreaterThan(1);
+		expect(screen.getAllByText('second message').length).toBeGreaterThan(1);
+		expect(screen.getByText(/can't be undone/i)).toBeInTheDocument();
+
+		const confirm = screen.getByRole('button', { name: 'Merge' });
+		// The modal focuses Merge on the next frame, so Enter accepts.
+		await waitFor(() => expect(document.activeElement).toBe(confirm));
+		fireEvent.click(confirm);
+		expect(onMergeQueuedItem).toHaveBeenCalledWith('q2');
+		expect(screen.queryByText('Merge Queued Messages?')).toBeNull();
+	});
+
+	it('cancelling the confirmation leaves the queue alone', () => {
+		const onMergeQueuedItem = vi.fn();
+		setup({ executionQueue: [item({ id: 'q1' }), item({ id: 'q2' })], onMergeQueuedItem });
+		fireEvent.click(screen.getByTitle(MERGE_TITLE));
+		fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+		expect(onMergeQueuedItem).not.toHaveBeenCalled();
+		expect(screen.queryByText('Merge Queued Messages?')).toBeNull();
+	});
+
+	it('hides Merge when the card above is a command or another tab', () => {
+		setup({
+			executionQueue: [
+				item({ id: 'q1', type: 'command', command: '/commit' }),
+				item({ id: 'q2' }),
+				item({ id: 'q3', tabId: 'tab-2' }),
+			],
+			onMergeQueuedItem: vi.fn(),
+		});
+		expect(screen.queryByTitle(MERGE_TITLE)).toBeNull();
+	});
+
+	it('omits Merge when no handler is wired', () => {
+		setup({ executionQueue: [item({ id: 'q1' }), item({ id: 'q2' })] });
+		expect(screen.queryByTitle(MERGE_TITLE)).toBeNull();
 	});
 });
 

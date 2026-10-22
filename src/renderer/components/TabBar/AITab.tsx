@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useEffect, useRef, memo, useMemo } from 'react';
-import { X, Star, Pencil, Loader2, AlertCircle, MessageSquare } from 'lucide-react';
+import { X, Star, Pencil, AlertCircle, MessageSquare } from 'lucide-react';
+import { Spinner } from '../ui/Spinner';
 import type { AITab as AITabType, Theme } from '../../types';
 import type { CopyContextOptions } from '../../hooks/tabs/useTabExportHandlers';
 import { safeClipboardWrite } from '../../utils/clipboard';
@@ -547,10 +548,7 @@ export const AITab = memo(function AITab({
 			{/* Show regardless of busy state since tab naming runs in parallel with the main request */}
 			{tab.isGeneratingName && (
 				<span title="Generating tab name...">
-					<Loader2
-						className="w-3 h-3 shrink-0 animate-spin"
-						style={{ color: theme.colors.textDim }}
-					/>
+					<Spinner size={12} color={theme.colors.textDim} decorative />
 				</span>
 			)}
 
@@ -607,6 +605,16 @@ export const AITab = memo(function AITab({
 			>
 				{displayName}
 			</span>
+
+			{tab.origin === 'relay' && (
+				<span
+					className="text-3xs px-1 py-0.5 rounded shrink-0"
+					style={{ color: theme.colors.accent, backgroundColor: `${theme.colors.accent}20` }}
+					title="Conversation started through Relay"
+				>
+					Relay
+				</span>
+			)}
 
 			{/* Close button - visible on hover or when active, takes space of busy indicator when not busy */}
 			{canClose && (isHovered || isActive) && (

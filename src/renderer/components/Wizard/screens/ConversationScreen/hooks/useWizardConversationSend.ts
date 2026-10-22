@@ -15,6 +15,7 @@ import { extractStreamingTextFromChunk } from '../utils/streamingChunks';
 import { isStructuredThinkingResponse } from '../utils/thinkingFilters';
 import type { SendStateSetters, ToolExecutionEvent, WizardConversationState } from '../types';
 import { projectNameFromPath } from '../../../shared/projectIdentity';
+import { getClaudeTokenSourceFields } from '../../../../../../shared/claudeTokenMode';
 
 /**
  * Which opening turn the wizard sends on the user's behalf.
@@ -287,6 +288,7 @@ export function useWizardConversationSend({
 					projectName: projectNameFromPath(state.directoryPath),
 					model: state.plannerModel,
 					sshRemoteConfig: state.sessionSshRemoteConfig,
+					claudeTokenSource: getClaudeTokenSourceFields(state),
 				});
 			}
 
@@ -381,6 +383,7 @@ export function useWizardConversationSend({
 						model: state.plannerModel,
 						existingDocs: existingDocs.length > 0 ? existingDocs : undefined,
 						sshRemoteConfig: state.sessionSshRemoteConfig,
+						claudeTokenSource: getClaudeTokenSourceFields(state),
 					});
 				}
 

@@ -83,3 +83,66 @@ describe('quickActionSorting', () => {
 		).toBe(false);
 	});
 });
+
+describe('quickActionSorting - hidden tier', () => {
+	const live = action({ id: 'live', label: 'Zulu', isRunningAgent: true });
+	const idle = action({ id: 'idle', label: 'Alpha' });
+	const hidden = action({ id: 'hidden', label: 'Bravo', inHiddenGroup: true });
+
+	it('sorts hidden-group agents into the last tier, after live and idle', () => {
+		const sorted = filterAndSortQuickActions([hidden, idle, live], '', 'agents');
+		expect(sorted.map((a) => a.id)).toEqual(['live', 'idle', 'hidden']);
+	});
+
+	// The tier is a property of where the agent was PARKED, not of what it
+	// happens to be doing, so it does not move between tiers as a turn runs.
+	it('keeps a running agent in the hidden tier when its group is hidden', () => {
+		const busyHidden = action({
+			id: 'busyHidden',
+			label: 'Charlie',
+			isRunningAgent: true,
+			inHiddenGroup: true,
+		});
+		const sorted = filterAndSortQuickActions([busyHidden, live], '', 'agents');
+		expect(sorted.map((a) => a.id)).toEqual(['live', 'busyHidden']);
+	});
+
+	// The sort key is the agent's name, which two agents can share. A bookmark
+	// must not lift the parked one out of its tier and under the wrong header.
+	it('keeps a bookmarked hidden agent below a same-named visible agent', () => {
+		const visible = action({ id: 'visible', label: 'Jump to: rc', agentSortKey: 'rc' });
+		const parked = action({
+			id: 'parked',
+			label: 'Jump to: rc',
+			agentSortKey: 'rc',
+			bookmarked: true,
+			inHiddenGroup: true,
+		});
+		const sorted = filterAndSortQuickActions([parked, visible], '', 'agents');
+		expect(sorted.map((a) => a.id)).toEqual(['visible', 'parked']);
+	});
+
+	it('still prefers the bookmarked entry inside one tier', () => {
+		const plain = action({ id: 'plain', label: 'Jump to: rc', agentSortKey: 'rc' });
+		const starred = action({
+			id: 'starred',
+			label: 'Jump to: rc',
+			agentSortKey: 'rc',
+			bookmarked: true,
+		});
+		const sorted = filterAndSortQuickActions([plain, starred], '', 'agents');
+		expect(sorted.map((a) => a.id)).toEqual(['starred', 'plain']);
+	});
+
+	// Hiding suppresses a group from the LIST; it never restricts access.
+	it('still returns a hidden agent that matches the search', () => {
+		expect(filterAndSortQuickActions([hidden, idle], 'bravo', 'agents').map((a) => a.id)).toEqual([
+			'hidden',
+		]);
+	});
+
+	it('shows bucket headers once a hidden agent joins a single-bucket list', () => {
+		expect(shouldShowAgentBucketHeaders([idle], 'agents')).toBe(false);
+		expect(shouldShowAgentBucketHeaders([idle, hidden], 'agents')).toBe(true);
+	});
+});

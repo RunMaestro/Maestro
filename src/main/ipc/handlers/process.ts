@@ -1,3 +1,4 @@
+import { getHeadlessAgentActivity } from '../../utils/headless-agent-activity';
 import { ipcMain, BrowserWindow } from 'electron';
 import Store from 'electron-store';
 import type { AgentConfigsData } from '../../stores/types';
@@ -112,6 +113,7 @@ export interface ProcessHandlerDependencies {
  * - runCommand: Execute a single command and capture output
  */
 export function registerProcessHandlers(deps: ProcessHandlerDependencies): void {
+	ipcMain.handle('process:getHeadlessActivity', () => getHeadlessAgentActivity());
 	const {
 		getProcessManager,
 		getAgentDetector,
@@ -190,6 +192,23 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				dataLength: data.length,
 			});
 			return processManager.write(sessionId, data);
+		})
+	);
+
+	// Chat steering: hand text to a Claude turn that is ALREADY RUNNING so claude can
+	// fold it into the loop in flight. Distinct from `process:write`, which writes
+	// raw bytes to stdin - a maestro-p turn's stdin is already closed, and the TUI
+	// needs the text typed into its composer with the screen checked first. See
+	// src/shared/chatSteering.ts.
+	ipcMain.handle(
+		'process:steer',
+		withIpcErrorLogging(handlerOpts('steer'), async (sessionId: string, text: string) => {
+			const processManager = requireProcessManager(getProcessManager);
+			logger.debug(`Steering running turn: ${sessionId}`, LOG_CONTEXT, {
+				sessionId,
+				textLength: text.length,
+			});
+			return processManager.steer(sessionId, text);
 		})
 	);
 
@@ -478,6 +497,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 
 						return processManager.spawn({
 							sessionId: config.sessionId,
+							reuseTerminal: true,
 							toolType: 'terminal',
 							cwd: os.homedir(),
 							command: await resolveSshPath(),

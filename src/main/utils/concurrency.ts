@@ -26,6 +26,15 @@ export const REMOTE_SESSION_READ_CONCURRENCY = 6;
 export const LOCAL_SESSION_READ_CONCURRENCY = 16;
 
 /**
+ * Cap on parallel whole-transcript reads that are parsed in memory (the global
+ * stats scan). Lower than `LOCAL_SESSION_READ_CONCURRENCY` because each worker
+ * holds an entire transcript as a string, and a single one can run to hundreds
+ * of MB; the parse itself is synchronous on the main thread, so more workers
+ * would only overlap the I/O, which four already saturates.
+ */
+export const LOCAL_SESSION_PARSE_CONCURRENCY = 4;
+
+/**
  * Cap on parallel local filesystem deletes when removing a multi-selection.
  *
  * Deleting sequentially costs one full renderer->main round trip plus one
@@ -61,4 +70,13 @@ export async function mapWithConcurrency<T, R>(
 	});
 	await Promise.all(workers);
 	return results;
+}
+
+/**
+ * Yield to the event loop once. Long synchronous work in the main process (a
+ * parse loop, a scan over many stores) calls this between batches so IPC and
+ * timers get a turn and the app stays responsive.
+ */
+export function yieldToEventLoop(): Promise<void> {
+	return new Promise((resolve) => setImmediate(resolve));
 }

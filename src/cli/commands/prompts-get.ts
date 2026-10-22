@@ -1,18 +1,28 @@
 // `prompts get <id>` - print a Maestro prompt's content to stdout.
 // Honors the same customization precedence as the Electron app, so an agent
-// fetching `_maestro-cue` (etc.) sees what the user actually edits in Settings.
+// fetching `_autorun-playbooks` (etc.) sees what the user actually edits in
+// Settings. A prompt that belongs to a switched-off Encore Feature is neither
+// listed nor served, the same as in Settings > Maestro Prompts.
 
 import { getCliPrompt } from '../services/prompt-loader';
-import { CORE_PROMPTS } from '../../shared/promptDefinitions';
+import { CORE_PROMPTS, isPromptAvailable } from '../../shared/promptDefinitions';
+import { readSettingValue } from '../services/storage';
+
+/** The core prompts that exist right now (none from a switched-off feature). */
+function availablePrompts() {
+	const encoreFeatures = readSettingValue('encoreFeatures');
+	return CORE_PROMPTS.filter((def) => isPromptAvailable(def.id, encoreFeatures));
+}
 
 interface PromptsGetOptions {
 	json?: boolean;
 }
 
 export async function promptsGet(id: string, options: PromptsGetOptions): Promise<void> {
-	const def = CORE_PROMPTS.find((p) => p.id === id);
+	const available = availablePrompts();
+	const def = available.find((p) => p.id === id);
 	if (!def) {
-		const known = CORE_PROMPTS.map((p) => p.id).join(', ');
+		const known = available.map((p) => p.id).join(', ');
 		const message = `Unknown prompt id: ${id}. Available: ${known}`;
 		if (options.json) {
 			console.error(JSON.stringify({ error: message }));
@@ -49,7 +59,7 @@ export async function promptsGet(id: string, options: PromptsGetOptions): Promis
 }
 
 export function promptsList(options: PromptsGetOptions): void {
-	const items = CORE_PROMPTS.map((p) => ({
+	const items = availablePrompts().map((p) => ({
 		id: p.id,
 		category: p.category,
 		description: p.description,

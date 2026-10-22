@@ -15,11 +15,11 @@
  */
 
 import type React from 'react';
-import { CornerUpRight, Loader2, MessageCircleQuestion, Send } from 'lucide-react';
+import { CornerUpRight, MessageCircleQuestion, Send } from 'lucide-react';
+import { Spinner } from './ui/Spinner';
 import type { LogEntry, Theme } from '../types';
 import { getAgentIcon } from '../constants/agentIcons';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
-import { truncateText } from '../../shared/formatters';
 import { jumpToAgentConversation } from '../utils/jumpToAgentConversation';
 import { MiniBadge } from './ui/MiniBadge';
 
@@ -69,9 +69,13 @@ export function AgentDelegationCard({
 			agentName: delegation.toAgentName,
 		});
 
+	// Wraps rather than squeezing: the target agent's name is the one thing this
+	// pill exists to show, so it never truncates. When the row runs out of room
+	// the subject drops to a second line and truncates there instead. rounded-2xl
+	// reads as a full pill on one line and stays tidy on two.
 	return (
 		<div
-			className="inline-flex max-w-full items-center gap-2 px-2.5 py-1 rounded-full border text-xs select-none"
+			className="inline-flex max-w-full flex-wrap items-center gap-x-2 gap-y-1 px-2.5 py-1 rounded-2xl border text-xs select-none"
 			style={{
 				backgroundColor: `color-mix(in srgb, ${accent} 10%, transparent)`,
 				borderColor: `color-mix(in srgb, ${accent} 35%, ${theme.colors.border})`,
@@ -79,11 +83,7 @@ export function AgentDelegationCard({
 			data-testid="agent-delegation-card"
 		>
 			{isPending ? (
-				<Loader2
-					className="w-3.5 h-3.5 shrink-0 animate-spin"
-					style={{ color: accent }}
-					aria-hidden
-				/>
+				<Spinner size={14} color={accent} decorative />
 			) : (
 				<KindIcon className="w-3.5 h-3.5 shrink-0" style={{ color: accent }} aria-hidden />
 			)}
@@ -96,14 +96,16 @@ export function AgentDelegationCard({
 			<button
 				type="button"
 				onClick={jump}
-				className="min-w-0 inline-flex items-center gap-1 font-semibold hover:underline outline-none focus-visible:ring-2 rounded"
+				className="inline-flex items-center gap-1 text-left font-semibold hover:underline outline-none focus-visible:ring-2 rounded"
 				style={{ color: accent, ...ringStyle }}
 				title={`Open "${delegation.toAgentName}"`}
 			>
 				<span className="shrink-0 leading-none" aria-hidden>
 					{getAgentIcon(delegation.toToolType)}
 				</span>
-				<span className="truncate">{truncateText(delegation.toAgentName, 28)}</span>
+				<span className="break-words" data-testid="agent-delegation-target">
+					{delegation.toAgentName}
+				</span>
 			</button>
 
 			<span className="shrink-0 text-2xs leading-none" style={{ color: theme.colors.textDim }}>
@@ -121,7 +123,7 @@ export function AgentDelegationCard({
 
 			{delegation.subject && (
 				<span
-					className="min-w-0 truncate select-text"
+					className="flex-1 basis-40 min-w-0 truncate select-text"
 					style={{ color: theme.colors.textMain }}
 					title={delegation.subject}
 				>

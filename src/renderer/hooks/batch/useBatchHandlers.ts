@@ -42,6 +42,7 @@ import type { AgentSpawnResult, SpawnAgentOptions } from '../agent/useAgentExecu
 import * as Sentry from '@sentry/electron/renderer';
 import { queueLeaderboardDelta, noteAutoRunCreditSettled } from '../../services/leaderboard';
 import { logger } from '../../utils/logger';
+import { groupChatAutoRunSummary } from '../../../shared/maestro-lib/groupchat/autorun-summary';
 
 /**
  * Resolve the effective group name for a session, falling back to the parent's group
@@ -392,6 +393,7 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 								longestRunMs: updatedLongestRunMs,
 								longestRunDate,
 								currentRunMs: info.elapsedTimeMs,
+								currentRunKind: info.kind ?? 'spec-driven',
 								theme: activeThemeId,
 								authToken: lbReg.authToken,
 								deltaMs: info.elapsedTimeMs,
@@ -486,11 +488,18 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 			}
 
 			// Symphony auto-finalization: when auto-run completes for a Symphony
-			// contribution, automatically push code and mark the PR as ready.
-			if (!info.wasStopped && session?.symphonyMetadata?.isSymphonySession) {
+			// contribution, automatically push code and mark the PR as ready. Skipped
+			// entirely (no IPC, no toast) while the Symphony Encore Feature is off.
+			if (
+				!info.wasStopped &&
+				session?.symphonyMetadata?.isSymphonySession &&
+				useSettingsStore.getState().encoreFeatures?.symphony === true
+			) {
 				const contributionId = session.symphonyMetadata.contributionId;
 				// Delay slightly to let the final task's git operations settle
 				setTimeout(async () => {
+					// The flag may have been switched off during the settle delay.
+					if (useSettingsStore.getState().encoreFeatures?.symphony !== true) return;
 					try {
 						const result = await window.maestro.symphony.complete({
 							contributionId,
@@ -574,9 +583,7 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 			// This MUST succeed for the moderator to receive the result and continue the conversation.
 			const gcAutoRun = consumeGroupChatAutoRun(info.sessionId);
 			if (gcAutoRun) {
-				const summary = info.wasStopped
-					? `Auto Run stopped: completed ${info.completedTasks} of ${info.totalTasks} tasks across ${info.documentsProcessed} document(s).`
-					: `Auto Run complete: ${info.completedTasks}/${info.totalTasks} tasks finished across ${info.documentsProcessed} document(s).`;
+				const summary = groupChatAutoRunSummary(info);
 				window.maestro.groupChat
 					.reportAutoRunComplete(gcAutoRun.groupChatId, gcAutoRun.participantName, summary)
 					.catch((err) => {

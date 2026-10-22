@@ -23,11 +23,12 @@
  *     the column count whose overall aspect ratio best matches the viewport, so
  *     the whole graph fits on screen without scrolling or zooming way out.
  *
- *  3. arrangePipelineGroups(pipelines, currentOffsets, widths)
- *     All-Pipelines view. Packs each pipeline's group card into a balanced
- *     grid by returning a `viewOffset` per pipeline. Internal node positions
- *     are left untouched - only the cards move. There are no edges between
- *     cards to cross, so Tidy and Arrange both route here.
+ *  3. arrangePipelineGroups(pipelines, currentOffsets, widths, homes)
+ *     All-Pipelines view. Packs each pipeline's group card into a masonry by
+ *     returning a `viewOffset` per pipeline, one cluster per home agent when
+ *     `homes` is given. Internal node positions are left untouched - only the
+ *     cards move. There are no edges between cards to cross, so Tidy and
+ *     Arrange both route here.
  *
  *  4. separateOverlappingNodes(pipeline, widths) - the collision guard
  *     Not a layout: a repair. Every pass above has to GUESS how wide a node
@@ -53,11 +54,15 @@ import { computePipelineYOffsets, resolvePipelineOffset } from './pipelineGraph'
 // renderer uses. `estimateNodeWidth` is re-exported below because it moved out
 // of this module and callers still reach for it here.
 import {
+	AGENT_CLUSTER_GAP,
+	AGENT_CLUSTER_HEADER,
+	AGENT_CLUSTER_PADDING,
 	NODE_BG_WIDTH,
 	estimateNodeWidth,
 	nodeFootprintWidth,
 	pipelineCardBounds,
 } from './nodeFootprint';
+import type { PipelineHome } from './pipelineMembership';
 
 export { estimateNodeWidth };
 
@@ -836,6 +841,49 @@ function groupInfo(
 }
 
 /**
+ * Deal boxes into a masonry and return each one's top-left, in input order.
+ * Each box drops into the currently-SHORTEST column, and each column is only
+ * as wide as its widest box, so one giant never inflates its neighbours (see
+ * `arrangePipelineGroups` for why a uniform grid fails here).
+ */
+function packMasonry(
+	boxes: { width: number; height: number }[],
+	gap: number
+): {
+	positions: { x: number; y: number }[];
+	width: number;
+	height: number;
+} {
+	if (boxes.length === 0) return { positions: [], width: 0, height: 0 };
+	const cols = Math.max(1, Math.round(Math.sqrt(boxes.length)));
+	const colOf = new Array<number>(boxes.length);
+	const colHeights = new Array<number>(cols).fill(0);
+	const colWidths = new Array<number>(cols).fill(0);
+	const tops = new Array<number>(boxes.length);
+	boxes.forEach((box, i) => {
+		let shortest = 0;
+		for (let c = 1; c < cols; c++) {
+			if (colHeights[c] < colHeights[shortest]) shortest = c;
+		}
+		colOf[i] = shortest;
+		tops[i] = colHeights[shortest];
+		colHeights[shortest] += box.height + gap;
+		colWidths[shortest] = Math.max(colWidths[shortest], box.width);
+	});
+	// Column x-origins from per-column widths so left edges line up snugly.
+	const colX = new Array<number>(cols).fill(0);
+	for (let c = 1; c < cols; c++) {
+		colX[c] = colX[c - 1] + colWidths[c - 1] + (colWidths[c - 1] > 0 ? gap : 0);
+	}
+	const usedCols = colWidths.filter((w) => w > 0).length;
+	return {
+		positions: boxes.map((_, i) => ({ x: colX[colOf[i]], y: tops[i] })),
+		width: colWidths.reduce((a, w) => a + w, 0) + Math.max(0, usedCols - 1) * gap,
+		height: Math.max(...colHeights) - gap,
+	};
+}
+
+/**
  * Pack pipeline group cards into a tight masonry. Returns a map of pipeline id
  * → new `viewOffset`. Pipelines are visited in their current reading order
  * (top-to-bottom, then left-to-right) and dealt into columns, so the layout
@@ -855,17 +903,27 @@ function groupInfo(
  *     pipelines stays narrow next to the giant's column. No card inherits
  *     another's width.
  *
+ * With `homes`, the packing is two-level: each agent's cards are packed into a
+ * masonry of their own, that block is padded into an agent cluster (the room
+ * `agentClusterBounds` draws its labeled box in), and the clusters are then
+ * packed the same way. Clusters keep the reading order of their first card, and
+ * a pipeline with no home is packed alongside the clusters on its own. Because
+ * an agent filter packs ITS pipelines with the same function, a filtered view
+ * shows the same grouping in the same order as All Pipelines.
+ *
  * @param currentOffsets auto-stack Y-offsets (from computePipelineYOffsets) so
  *   pipelines that have never been dragged still report a sensible current
  *   position for the ordering sort.
  * @param nodeWidths optional measured widths (canonical node id → px). Card
  *   footprints are sized from these so a wide node cannot spill out of its own
  *   card and into the one packed beside it.
+ * @param homes optional home agent per pipeline (`resolvePipelineHomes`).
  */
 export function arrangePipelineGroups(
 	pipelines: CuePipeline[],
 	currentOffsets: Map<string, number>,
-	nodeWidths?: Map<string, number>
+	nodeWidths?: Map<string, number>,
+	homes?: ReadonlyMap<string, PipelineHome>
 ): Map<string, { x: number; y: number }> {
 	const infos: GroupInfo[] = [];
 	for (const pipeline of pipelines) {
@@ -878,42 +936,59 @@ export function arrangePipelineGroups(
 
 	infos.sort((a, b) => a.currentY - b.currentY || a.currentX - b.currentX);
 
-	const cols = Math.max(1, Math.round(Math.sqrt(infos.length)));
-
-	// Deal each card into the shortest column (running height includes the gap).
-	const colCards: GroupInfo[][] = Array.from({ length: cols }, () => []);
-	const colHeights = new Array<number>(cols).fill(0);
+	// Top-level items in reading order: an agent's cluster sits where its
+	// first card was, and a homeless card stands alone.
+	type Item = { cards: GroupInfo[]; clustered: boolean };
+	const items: Item[] = [];
+	const clusterItems = new Map<string, Item>();
 	for (const info of infos) {
-		let shortest = 0;
-		for (let c = 1; c < cols; c++) {
-			if (colHeights[c] < colHeights[shortest]) shortest = c;
+		const home = homes?.get(info.id);
+		if (!home) {
+			items.push({ cards: [info], clustered: false });
+			continue;
 		}
-		colCards[shortest].push(info);
-		colHeights[shortest] += info.height + GROUP_GAP;
+		const existing = clusterItems.get(home.sessionId);
+		if (existing) {
+			existing.cards.push(info);
+			continue;
+		}
+		const item = { cards: [info], clustered: true };
+		clusterItems.set(home.sessionId, item);
+		items.push(item);
 	}
 
-	// Column x-origins from per-column widths so left edges line up snugly.
-	const colWidths = colCards.map((cards) =>
-		cards.length === 0 ? 0 : Math.max(...cards.map((i) => i.width))
-	);
-	const colX = new Array<number>(cols).fill(0);
-	for (let c = 1; c < cols; c++) {
-		colX[c] = colX[c - 1] + colWidths[c - 1] + GROUP_GAP;
-	}
+	// Pack each cluster's cards, then size the cluster around them.
+	const packedItems = items.map((item) => {
+		const inner = packMasonry(item.cards, GROUP_GAP);
+		const insetX = item.clustered ? AGENT_CLUSTER_PADDING : 0;
+		const insetY = item.clustered ? AGENT_CLUSTER_HEADER : 0;
+		return {
+			item,
+			inner,
+			insetX,
+			insetY,
+			width: inner.width + 2 * insetX,
+			height: inner.height + insetY + (item.clustered ? AGENT_CLUSTER_PADDING : 0),
+		};
+	});
+	// Clusters need the wider gap (their label sits above the box); a board
+	// with no clusters at all keeps the plain card spacing.
+	const gap = items.some((item) => item.clustered) ? AGENT_CLUSTER_GAP : GROUP_GAP;
+	const outer = packMasonry(packedItems, gap);
 
-	for (let c = 0; c < cols; c++) {
-		let top = 0;
-		for (const info of colCards[c]) {
-			// Place the card's padded top-left corner at (colX, top). The card
-			// renders at its canonical origin plus the offset, so solve the offset
-			// that puts that origin where the column wants it.
+	packedItems.forEach((packed, i) => {
+		const origin = outer.positions[i];
+		packed.item.cards.forEach((info, j) => {
+			const local = packed.inner.positions[j];
+			// Place the card's padded top-left corner where the packing wants
+			// it. The card renders at its canonical origin plus the offset, so
+			// solve the offset that puts that origin there.
 			result.set(info.id, {
-				x: colX[c] - info.cardX,
-				y: top - info.cardY,
+				x: origin.x + packed.insetX + local.x - info.cardX,
+				y: origin.y + packed.insetY + local.y - info.cardY,
 			});
-			top += info.height + GROUP_GAP;
-		}
-	}
+		});
+	});
 	return result;
 }
 
@@ -943,11 +1018,14 @@ export function arrangePipelineGroups(
  *   independent sub-circuits into. Absent, everything stacks in one column.
  * @param nodeWidths optional measured widths (canonical node id → px), unioned
  *   with estimates per `arrangeByColumns`.
+ * @param homes optional home agent per pipeline; when given, the group cards
+ *   are packed into one labeled cluster per agent (see `arrangePipelineGroups`).
  */
 export function beautifyPipelineLayouts(
 	pipelines: CuePipeline[],
 	viewport?: { width: number; height: number },
-	nodeWidths?: Map<string, number>
+	nodeWidths?: Map<string, number>,
+	homes?: ReadonlyMap<string, PipelineHome>
 ): CuePipeline[] {
 	const untangled = pipelines.map((p) =>
 		p.nodes.length > 1 ? { ...p, nodes: untanglePipelineNodes(p, nodeWidths, viewport) } : p
@@ -958,7 +1036,8 @@ export function beautifyPipelineLayouts(
 	const offsets = arrangePipelineGroups(
 		untangled,
 		computePipelineYOffsets(untangled, null),
-		nodeWidths
+		nodeWidths,
+		homes
 	);
 	if (offsets.size === 0) return untangled;
 	return untangled.map((p) => {

@@ -1,6 +1,8 @@
 import '@testing-library/jest-dom';
-import { vi } from 'vitest';
+import { afterEach, vi } from 'vitest';
 import React from 'react';
+import { clearCachedResources } from '../renderer/hooks/utils/useCachedResource';
+import { emptyTokenSpeedSummary } from '../shared/tokenSpeed';
 
 // Create a mock icon component factory
 const createMockIcon = (name: string) => {
@@ -120,9 +122,20 @@ vi.mock('../renderer/utils/shortcutFormatter', () => ({
 	isMacOS: vi.fn(() => false),
 }));
 
-// Mock window.matchMedia for components that use media queries
+// Set browser APIs from the JSDOM environment.
 // Only mock if window exists (jsdom environment)
 if (typeof window !== 'undefined') {
+	// Node 25 exposes native Web Storage globals; each DOM suite must use its own storage.
+	const jsdomWindow = (globalThis as typeof globalThis & { jsdom: { window: Window } }).jsdom
+		.window;
+	for (const name of ['localStorage', 'sessionStorage'] as const) {
+		Object.defineProperty(window, name, {
+			configurable: true,
+			writable: true,
+			value: jsdomWindow[name],
+		});
+	}
+
 	Object.defineProperty(window, 'matchMedia', {
 		writable: true,
 		value: vi.fn().mockImplementation((query: string) => ({
@@ -584,9 +597,20 @@ const mockMaestro = {
 		clearPersistentToken: vi.fn().mockResolvedValue({ success: true }),
 		disableAll: vi.fn().mockResolvedValue({ success: true, count: 0 }),
 	},
+	browserSession: {
+		onRelayRequest: vi.fn(() => () => {}),
+		onCreateTabRequest: vi.fn(() => () => {}),
+		onPageEvent: vi.fn(() => () => {}),
+		relayReady: vi.fn().mockResolvedValue(undefined),
+		relayRespond: vi.fn(),
+		pageClose: vi.fn().mockResolvedValue(undefined),
+	},
 	web: {
+		onLiteReady: vi.fn(() => () => {}),
 		claimAutoRunStart: vi.fn().mockResolvedValue(true),
 		releaseAutoRunStartClaim: vi.fn().mockResolvedValue(true),
+		takeOrphanedAutoRuns: vi.fn().mockResolvedValue([]),
+		abandonAutoRunReclaim: vi.fn().mockResolvedValue(true),
 		broadcastAutoRunState: vi.fn(),
 		broadcastSessionState: vi.fn(),
 		start: vi.fn().mockResolvedValue(undefined),
@@ -614,6 +638,16 @@ const mockMaestro = {
 		selectFolder: vi.fn().mockResolvedValue(null),
 		saveFile: vi.fn().mockResolvedValue(null),
 	},
+	cueBundle: {
+		export: vi.fn().mockResolvedValue({ ok: false, code: 'EXPORT_FAILED', message: 'not mocked' }),
+		chooseFile: vi.fn().mockResolvedValue(null),
+		inspect: vi
+			.fn()
+			.mockResolvedValue({ ok: false, code: 'BUNDLE_UNREADABLE', message: 'not mocked' }),
+		import: vi.fn().mockResolvedValue({ ok: false, code: 'WRITE_FAILED', message: 'not mocked' }),
+		onApplyAgents: vi.fn().mockReturnValue(() => {}),
+		sendApplyAgentsResponse: vi.fn(),
+	},
 	shells: {
 		detect: vi.fn().mockResolvedValue([]),
 	},
@@ -634,6 +668,8 @@ const mockMaestro = {
 	},
 	stats: {
 		recordQuery: vi.fn().mockResolvedValue({ success: true }),
+		getIndexingState: vi.fn().mockResolvedValue({ jobs: [] }),
+		onIndexingUpdate: vi.fn(() => () => {}),
 		getTokenUsage: vi.fn().mockResolvedValue({
 			totals: {
 				inputTokens: 0,
@@ -656,6 +692,7 @@ const mockMaestro = {
 				bySessionByDay: {},
 				bySource: { user: 0, auto: 0 },
 			},
+			speed: emptyTokenSpeedSummary(),
 			coverageByAgent: {},
 			generatedAtMs: 0,
 		}),
@@ -839,6 +876,9 @@ const mockMaestro = {
 		save: vi.fn().mockResolvedValue({ success: true }),
 		reset: vi.fn().mockResolvedValue({ success: true, content: '' }),
 		getPath: vi.fn().mockResolvedValue({ success: true, path: '/mock/prompts/core' }),
+		getSystemPromptPaths: vi
+			.fn()
+			.mockResolvedValue({ success: true, computerHistoryDir: '/mock/userData/computer-history' }),
 		listFiles: vi.fn().mockResolvedValue({ success: true, files: [] }),
 	},
 	// Multi-window API (window<->session ownership). Defaults model a single
@@ -860,6 +900,58 @@ const mockMaestro = {
 		// clean up. Window tests capture the registered callback to fire broadcasts.
 		onSessionMoved: vi.fn(() => () => {}),
 		onHighlightDropZone: vi.fn(() => () => {}),
+		onRemoteCommand: vi.fn(() => () => {}),
+		sendRemoteCommandResponse: vi.fn(),
+	},
+	// MaestroRun (macOS launcher install + Full Disk Access walkthrough). Not
+	// ready by default, so no spawn test picks up its system-prompt section.
+	maestroRun: {
+		status: vi.fn().mockResolvedValue(null),
+		refresh: vi.fn().mockResolvedValue(null),
+		install: vi.fn().mockResolvedValue(null),
+		requestAccess: vi.fn().mockResolvedValue(null),
+		readyPath: vi.fn().mockResolvedValue(null),
+		onStatusChanged: vi.fn(() => () => {}),
+	},
+	// Dataview (Encore Feature, off by default). Queries never resolve on their
+	// own; a test that renders a block sets the answer it needs.
+	dataview: {
+		query: vi.fn(() => new Promise(() => {})),
+		queryInline: vi.fn(() => new Promise(() => {})),
+		status: vi.fn().mockResolvedValue([]),
+		rebuild: vi.fn().mockResolvedValue(null),
+		jsSnapshot: vi.fn(() => new Promise(() => {})),
+		readInRoot: vi.fn(() => new Promise(() => {})),
+		jsRoot: vi.fn(() => new Promise(() => {})),
+		jsRunOnce: vi.fn(() => new Promise(() => {})),
+		trustedRoots: vi.fn().mockResolvedValue([]),
+		trust: vi.fn(() => new Promise(() => {})),
+		untrust: vi.fn(() => new Promise(() => {})),
+		onChanged: vi.fn(() => () => {}),
+	},
+	// Quick Chat (floating window + its engine). Subscriptions return a no-op
+	// unsubscribe so App's engine hook mounts and cleans up in every render test.
+	quickChat: {
+		command: vi.fn().mockResolvedValue({ ok: true, snapshot: null }),
+		window: vi.fn().mockResolvedValue(null),
+		getSnapshot: vi.fn().mockResolvedValue(null),
+		setLayout: vi.fn(),
+		setCompactHeight: vi.fn(),
+		setFullView: vi.fn(),
+		getPinned: vi.fn().mockResolvedValue(true),
+		setPinned: vi.fn((pinned: boolean) => Promise.resolve(pinned)),
+		onPinned: vi.fn(() => () => {}),
+		getFontScale: vi.fn().mockResolvedValue(1),
+		setFontScale: vi.fn().mockResolvedValue(1),
+		onFontScale: vi.fn(() => () => {}),
+		getRecents: vi.fn().mockResolvedValue([]),
+		getRecent: vi.fn().mockResolvedValue(null),
+		saveRecent: vi.fn(),
+		onSnapshot: vi.fn(() => () => {}),
+		onFocusInput: vi.fn(() => () => {}),
+		onCommand: vi.fn(() => () => {}),
+		pushSnapshot: vi.fn(),
+		onHotkeyFailed: vi.fn(() => () => {}),
 	},
 	// Automatic tab naming (ephemeral namer spawn). Returns null by default so a
 	// test that sends a message doesn't accidentally rename tabs; tests that care
@@ -878,3 +970,10 @@ if (typeof window !== 'undefined') {
 		value: mockMaestro,
 	});
 }
+
+// `useCachedResource` keeps results at module scope so a remounted surface
+// renders instantly. Within one test file that would hand one test's fetched
+// data to the next, so every test starts from an empty cache.
+afterEach(() => {
+	clearCachedResources();
+});

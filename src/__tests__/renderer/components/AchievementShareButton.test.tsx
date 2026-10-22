@@ -212,6 +212,44 @@ describe('AchievementShareButton', () => {
 		expect(screen.queryByText('Save as Image')).not.toBeInTheDocument();
 	});
 
+	it('waits for the stats scan instead of baking "-" into Sessions and Total Tokens', async () => {
+		// The Usage Dashboard's stats scan takes seconds; a Share clicked before it
+		// finished used to draw the click-time null as "-".
+		const ctx = installCanvasMocks();
+		const completeStats = {
+			totalSessions: 1234,
+			totalMessages: 0,
+			totalInputTokens: 1_000_000,
+			totalOutputTokens: 500_000,
+			totalCacheReadTokens: 0,
+			totalCacheCreationTokens: 0,
+			totalCostUsd: 0,
+			totalSizeBytes: 0,
+			isComplete: true,
+		};
+		const { rerender } = render(
+			<AchievementShareButton theme={mockTheme} autoRunStats={firstBadgeStats} globalStats={null} />
+		);
+
+		fireEvent.click(screen.getByTitle('Share achievements'));
+		fireEvent.click(screen.getByText('Copy to Clipboard'));
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		expect(safeClipboardWriteImageMock).not.toHaveBeenCalled();
+
+		rerender(
+			<AchievementShareButton
+				theme={mockTheme}
+				autoRunStats={firstBadgeStats}
+				globalStats={completeStats}
+			/>
+		);
+
+		await waitFor(() => expect(safeClipboardWriteImageMock).toHaveBeenCalled());
+		const drawn = ctx.fillText.mock.calls.map(([text]) => text);
+		expect(drawn).toContain('1,234');
+		expect(drawn).toContain('1.5M');
+	});
+
 	it('reports a failed save and keeps the menu open', async () => {
 		saveImageMock.mockResolvedValue({ saved: false, error: 'EACCES' });
 		render(<AchievementShareButton theme={mockTheme} autoRunStats={firstBadgeStats} />);

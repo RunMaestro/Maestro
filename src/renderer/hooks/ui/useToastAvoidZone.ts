@@ -70,17 +70,27 @@ export function toastBottomInset(
 	return inset;
 }
 
-export function useToastAvoidZone(): (element: HTMLElement | null) => void {
+function measureZone(id: string, element: HTMLElement): void {
+	const r = element.getBoundingClientRect();
+	useToastAvoidZoneStore
+		.getState()
+		.setZone(id, { left: r.left, top: r.top, right: r.right, bottom: r.bottom });
+}
+
+/**
+ * @param remeasureKey - for a surface that MOVES without resizing (a dragged
+ *   floating card): pass anything that changes when it moves, such as its
+ *   position, and the zone is measured again. Neither ResizeObserver nor a
+ *   window resize sees a move.
+ */
+export function useToastAvoidZone(remeasureKey?: unknown): (element: HTMLElement | null) => void {
 	const id = useId();
 	const [element, setElement] = useState<HTMLElement | null>(null);
 
 	useEffect(() => {
 		if (!element) return;
 		const { setZone } = useToastAvoidZoneStore.getState();
-		const measure = () => {
-			const r = element.getBoundingClientRect();
-			setZone(id, { left: r.left, top: r.top, right: r.right, bottom: r.bottom });
-		};
+		const measure = () => measureZone(id, element);
 		measure();
 
 		// A window resize can move the element without resizing it (a taller
@@ -95,6 +105,11 @@ export function useToastAvoidZone(): (element: HTMLElement | null) => void {
 			setZone(id, null);
 		};
 	}, [element, id]);
+
+	// On mount this repeats the measure above; the store drops the duplicate write.
+	useEffect(() => {
+		if (element) measureZone(id, element);
+	}, [element, id, remeasureKey]);
 
 	return setElement;
 }

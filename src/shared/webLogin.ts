@@ -13,7 +13,7 @@
  *
  * Every account is an equal OPERATOR - there are no roles. The desktop is the
  * administrator: the `webLogin:*` IPC channels that create, delete and reset
- * accounts are refused over the bridge (`BRIDGE_DENIED_CHANNELS`), so a
+ * accounts are refused by the explicit remote bridge policy, so a
  * logged-in browser can never mint or remove another account.
  */
 

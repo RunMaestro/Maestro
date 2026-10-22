@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { prepareMaestroSystemPrompt } from '../../../renderer/utils/spawnHelpers';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 
 vi.mock('../../../renderer/utils/templateVariables', () => ({
 	substituteTemplateVariables: vi.fn((content: string, vars: Record<string, any>) => {
@@ -131,6 +132,151 @@ describe('prepareMaestroSystemPrompt', () => {
 		const second = await prepareMaestroSystemPrompt({ session: baseSession });
 		expect(first).toBeDefined();
 		expect(second).toBeDefined();
-		expect((window as any).maestro.prompts.get).toHaveBeenCalledTimes(2);
+		// The base prompt each time, plus the Maestro Cue section (Cue ships on).
+		const ids = (window as any).maestro.prompts.get.mock.calls.map((call: unknown[]) => call[0]);
+		expect(ids.filter((id: string) => id === 'maestro-system-prompt')).toHaveLength(2);
+	});
+
+	describe('role and plugin sections (shared assembler)', () => {
+		const prompts: Record<string, string> = {
+			'maestro-system-prompt': 'BASE',
+			'pianola-system': 'PIANOLA',
+			'computer-history-system': 'HISTORY {{COMPUTER_HISTORY_DIR}}',
+		};
+		let savedEncore: unknown;
+
+		beforeEach(() => {
+			savedEncore = useSettingsStore.getState().encoreFeatures;
+			(window as any).maestro.prompts.get = vi.fn(async (id: string) =>
+				id in prompts ? { success: true, content: prompts[id] } : { success: false }
+			);
+			(window as any).maestro.prompts.getSystemPromptPaths = vi
+				.fn()
+				.mockResolvedValue({ success: true, computerHistoryDir: '/ud/computer-history' });
+		});
+
+		afterEach(() => {
+			useSettingsStore.setState({ encoreFeatures: savedEncore as any });
+		});
+
+		const enableComputerHistory = () =>
+			useSettingsStore.setState({
+				encoreFeatures: { ...(savedEncore as any), computerHistory: true },
+			});
+
+		it('returns only the base prompt while no section applies', async () => {
+			useSettingsStore.setState({
+				encoreFeatures: { ...(savedEncore as any), computerHistory: false },
+			});
+			const result = await prepareMaestroSystemPrompt({ session: baseSession });
+			expect(result).toBe('BASE');
+		});
+
+		it('appends the Pianola role section for the Pianola agent', async () => {
+			useSettingsStore.setState({
+				encoreFeatures: { ...(savedEncore as any), computerHistory: false, pianola: true },
+			});
+			const result = await prepareMaestroSystemPrompt({
+				session: { ...baseSession, isPianola: true },
+			});
+			expect(result).toBe('BASE\n\n---\n\nPIANOLA');
+		});
+
+		it('leaves the Pianola role section out while the pianola flag is off', async () => {
+			useSettingsStore.setState({
+				encoreFeatures: { ...(savedEncore as any), computerHistory: false, pianola: false },
+			});
+			const result = await prepareMaestroSystemPrompt({
+				session: { ...baseSession, isPianola: true },
+			});
+			expect(result).toBe('BASE');
+		});
+
+		it('appends the Computer History section with the local store path when enabled', async () => {
+			enableComputerHistory();
+			const result = await prepareMaestroSystemPrompt({ session: baseSession });
+			expect(result).toBe('BASE\n\n---\n\nHISTORY /ud/computer-history');
+			expect((window as any).maestro.prompts.get).toHaveBeenCalledWith('computer-history-system');
+		});
+
+		it('skips the localOnly section and the store path for SSH agents', async () => {
+			enableComputerHistory();
+			const result = await prepareMaestroSystemPrompt({
+				session: { ...baseSession, sessionSshRemoteConfig: { enabled: true } },
+			});
+			expect(result).toBe('BASE');
+			expect((window as any).maestro.prompts.get).not.toHaveBeenCalledWith(
+				'computer-history-system'
+			);
+		});
+
+		describe('MaestroRun', () => {
+			const LAUNCHER = '/Users/me/Applications/MaestroRun.app/Contents/MacOS/maestro-run';
+			const readyPath = () =>
+				(window as any).maestro.maestroRun.readyPath as ReturnType<typeof vi.fn>;
+
+			beforeEach(() => {
+				prompts['maestro-run-system'] = 'RUN {{MAESTRO_RUN_PATH}}';
+				readyPath().mockReset();
+				readyPath().mockResolvedValue(null);
+				useSettingsStore.setState({
+					encoreFeatures: { ...(savedEncore as any), computerHistory: false, maestroRun: true },
+				});
+			});
+
+			afterEach(() => {
+				delete prompts['maestro-run-system'];
+			});
+
+			it('is left out while the tile is on but the launcher is not ready', async () => {
+				const result = await prepareMaestroSystemPrompt({ session: baseSession });
+				expect(result).toBe('BASE');
+				expect(readyPath()).toHaveBeenCalledTimes(1);
+				expect((window as any).maestro.prompts.get).not.toHaveBeenCalledWith('maestro-run-system');
+			});
+
+			it('is appended with the launcher path once main says ready', async () => {
+				readyPath().mockResolvedValue(LAUNCHER);
+				const result = await prepareMaestroSystemPrompt({ session: baseSession });
+				expect(result).toBe(`BASE\n\n---\n\nRUN ${LAUNCHER}`);
+			});
+
+			it('asks main on every spawn, so a new or revoked grant shows up at once', async () => {
+				readyPath().mockResolvedValueOnce(LAUNCHER).mockResolvedValueOnce(null);
+				expect(await prepareMaestroSystemPrompt({ session: baseSession })).toContain('RUN');
+				expect(await prepareMaestroSystemPrompt({ session: baseSession })).toBe('BASE');
+			});
+
+			it('does not ask main at all while the feature is off', async () => {
+				readyPath().mockResolvedValue(LAUNCHER);
+				useSettingsStore.setState({
+					encoreFeatures: { ...(savedEncore as any), computerHistory: false, maestroRun: false },
+				});
+				expect(await prepareMaestroSystemPrompt({ session: baseSession })).toBe('BASE');
+				expect(readyPath()).not.toHaveBeenCalled();
+			});
+
+			it('is never given to an SSH agent', async () => {
+				readyPath().mockResolvedValue(LAUNCHER);
+				const result = await prepareMaestroSystemPrompt({
+					session: { ...baseSession, sessionSshRemoteConfig: { enabled: true } },
+				});
+				expect(result).toBe('BASE');
+				expect(readyPath()).not.toHaveBeenCalled();
+			});
+
+			it('reads a failed check as not ready', async () => {
+				readyPath().mockRejectedValue(new Error('main not ready'));
+				expect(await prepareMaestroSystemPrompt({ session: baseSession })).toBe('BASE');
+			});
+		});
+
+		it('skips a section whose prompt fails to load', async () => {
+			enableComputerHistory();
+			delete prompts['computer-history-system'];
+			const result = await prepareMaestroSystemPrompt({ session: baseSession });
+			expect(result).toBe('BASE');
+			prompts['computer-history-system'] = 'HISTORY {{COMPUTER_HISTORY_DIR}}';
+		});
 	});
 });

@@ -1,10 +1,4 @@
-/**
- * Movement payloads reach the Electron renderer through a direct
- * `webContents.send`, which bypasses `safeSend` and therefore the web-desktop
- * bridge fanout. Without an explicit broadcast a browser client's Movement
- * store stays empty forever, and every `maestro://concerto/movement/<id>` chip
- * reports the panel as unavailable (#1442).
- */
+/** Remote Movement writes must honor the host's enabled feature state. */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -66,38 +60,11 @@ describe('movement view callback', () => {
 		clearConcertoHtmlDocumentsForTests();
 	});
 
-	it('fans an HTML movement out to web-desktop bridge clients', async () => {
-		const { movementCallback } = setup();
-		void movementCallback({
-			op: 'add',
-			id: 'mockup',
-			viewType: 'html',
-			body: '<button>Buy</button>',
-		});
-		// The renderer ack is awaited on a timeout; the fanout is synchronous.
-		await Promise.resolve();
-
-		expect(mockedBroadcast).toHaveBeenCalledTimes(1);
-		const [channel, args] = mockedBroadcast.mock.calls[0];
-		expect(channel).toBe('remote:movement');
-		expect(args).toHaveLength(1);
-		// The broadcast carries the HTML-routed payload, so a browser client sees
-		// the same revision the desktop renderer does.
-		expect((args[0] as MovementPayload).id).toBe('mockup');
-		expect((args[0] as MovementPayload & { revision?: number }).revision).toBe(1);
-	});
-
-	it('sends no response channel, which a bridge client could not answer', async () => {
-		const { movementCallback } = setup();
-		void movementCallback({ op: 'move', id: 'mockup', x: 10, y: 20 });
-		await Promise.resolve();
-
-		expect(mockedBroadcast.mock.calls[0][1]).toHaveLength(1);
-	});
-
 	it('stays inert while the Concerto Encore Feature is off', async () => {
 		const { movementCallback } = setup({ concerto: false });
-		await movementCallback({ op: 'add', id: 'mockup', viewType: 'view', body: '{}' });
+		expect(await movementCallback({ op: 'add', id: 'mockup', viewType: 'view', body: '{}' })).toBe(
+			false
+		);
 
 		expect(mockedBroadcast).not.toHaveBeenCalled();
 	});

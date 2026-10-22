@@ -6,6 +6,8 @@
  * so neither needs to hardcode its own mapping.
  */
 
+import { resolveEncoreFeatures, type EncoreFeatureDefaults } from './encoreFeatureDefaults';
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -15,6 +17,12 @@ export interface PromptDefinition {
 	filename: string;
 	description: string;
 	category: string;
+	/**
+	 * Encore Feature this prompt belongs to. Settings -> Maestro Prompts leaves
+	 * it out while that feature is off (see `isPromptAvailable`). It does not
+	 * change loading: agents and `maestro-cli prompts get` still resolve it.
+	 */
+	encoreFlag?: keyof EncoreFeatureDefaults;
 }
 
 // ============================================================================
@@ -147,6 +155,52 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		filename: 'pianola-system.md',
 		description: 'Pianola manager agent system prompt (appended for the pinned Pianola agent)',
 		category: 'pianola',
+		encoreFlag: 'pianola',
+	},
+	// Computer History (first-party plugin system-prompt section)
+	{
+		id: 'computer-history-system',
+		filename: 'computer-history-system.md',
+		description:
+			'Computer History section appended to every local agent system prompt while the feature is on',
+		category: 'computer-history',
+		encoreFlag: 'computerHistory',
+	},
+	// Concerto (first-party plugin system-prompt section)
+	{
+		id: 'concerto-system',
+		filename: 'concerto-system.md',
+		description:
+			'Concerto routing section appended to every agent system prompt while the feature is on',
+		category: 'concerto',
+		encoreFlag: 'concerto',
+	},
+	// Maestro Cue (first-party plugin system-prompt section)
+	{
+		id: 'cue-system',
+		filename: 'cue-system.md',
+		description:
+			'Maestro Cue section appended to every agent system prompt while the feature is on: routing, scheduling, and duty lookup',
+		category: 'system',
+		encoreFlag: 'maestroCue',
+	},
+	// Concerto views and the designer workflow (include, read from concerto-system)
+	{
+		id: '_concerto',
+		filename: '_concerto.md',
+		description:
+			'Concerto guide: cadenza and movement commands, block specs, HTML mockups, and the designer workflow',
+		category: 'includes',
+		encoreFlag: 'concerto',
+	},
+	// MaestroRun (first-party plugin system-prompt section, macOS only)
+	{
+		id: 'maestro-run-system',
+		filename: 'maestro-run-system.md',
+		description:
+			'MaestroRun section appended to every local agent system prompt once the launcher is installed and holds Full Disk Access',
+		category: 'maestro-run',
+		encoreFlag: 'maestroRun',
 	},
 	// Group Chat
 	{
@@ -213,6 +267,20 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 			'The continuation Maestro sends once every consult has replied: the replies verbatim, then finish the answer',
 		category: 'context',
 	},
+	{
+		id: 'cross-agent-consult-first',
+		filename: 'cross-agent-consult-first.md',
+		description:
+			'The turn Maestro sends after a consult the user asked to run FIRST: the replies verbatim, then the message to answer',
+		category: 'context',
+	},
+	{
+		id: 'cross-agent-handoff-pending',
+		filename: 'cross-agent-handoff-pending.md',
+		description:
+			'Appended to a turn whose result the user asked to send to another agent: the final answer is forwarded when the turn ends',
+		category: 'context',
+	},
 	// System (UI/meta)
 	{
 		id: 'tab-naming',
@@ -221,10 +289,19 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		category: 'system',
 	},
 	{
+		id: 'quick-chat-route',
+		filename: 'quick-chat-route.md',
+		description:
+			'Quick Chat routing: picks which existing conversation a new message continues, or that it starts a new one',
+		category: 'system',
+		encoreFlag: 'quickChat',
+	},
+	{
 		id: 'director-notes',
 		filename: 'director-notes.md',
 		description: "Director's Notes prompt",
 		category: 'system',
+		encoreFlag: 'directorNotes',
 	},
 	{
 		id: 'feedback',
@@ -274,7 +351,7 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 	{
 		id: '_maestro-cli',
 		filename: '_maestro-cli.md',
-		description: 'Full `maestro-cli` reference covering settings, agents, playbooks, cue, and more',
+		description: 'Full `maestro-cli` reference covering settings, agents, playbooks, and more',
 		category: 'includes',
 	},
 	{
@@ -282,6 +359,30 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		filename: '_maestro-cue.md',
 		description:
 			'Maestro Cue reference: event types, `maestro-cue.yaml` schema, pipeline topologies, and template variables',
+		category: 'includes',
+		encoreFlag: 'maestroCue',
+	},
+	{
+		id: '_computer-history',
+		filename: '_computer-history.md',
+		description:
+			'Computer History guide: CLI queries, event meanings, untrusted-content and privacy rules',
+		category: 'includes',
+		encoreFlag: 'computerHistory',
+	},
+	{
+		id: '_maestro-run',
+		filename: '_maestro-run.md',
+		description:
+			'MaestroRun guide: when to use the launcher, its commands and exit codes, and the approval rule',
+		category: 'includes',
+		encoreFlag: 'maestroRun',
+	},
+	{
+		id: '_desktop-instrumentation',
+		filename: '_desktop-instrumentation.md',
+		description:
+			'Desktop app instrumentation over CDP: CDP-accessible apps, finding a debug port, safety rules',
 		category: 'includes',
 	},
 	{
@@ -296,11 +397,33 @@ export const CORE_PROMPTS: PromptDefinition[] = [
 		description: 'Wizard-only file restrictions (writes limited to Auto Run folder)',
 		category: 'includes',
 	},
+	{
+		id: '_rich-chat-rendering',
+		filename: '_rich-chat-rendering.md',
+		description:
+			'What the chat renderer draws (Mermaid, inline SVG, images, KaTeX, callouts) and what it strips',
+		category: 'includes',
+	},
+	{
+		id: '_wizard-rich-replies',
+		filename: '_wizard-rich-replies.md',
+		description: 'Tells a wizard to draw mockups and diagrams inside its JSON `message`',
+		category: 'includes',
+	},
 ];
 
 /**
  * Prompt IDs as constants for type-safe usage.
  */
+/**
+ * Whether Settings -> Maestro Prompts lists a prompt: false only for one whose
+ * Encore Feature is switched off. Unknown ids (plugin prompts) are available.
+ */
+export function isPromptAvailable(promptId: string, encoreFeatures: unknown): boolean {
+	const flag = CORE_PROMPTS.find((def) => def.id === promptId)?.encoreFlag;
+	return !flag || resolveEncoreFeatures(encoreFeatures)[flag];
+}
+
 export const PROMPT_IDS = {
 	// Wizard
 	WIZARD_SYSTEM: 'wizard-system',
@@ -329,6 +452,14 @@ export const PROMPT_IDS = {
 	PIANOLA_SYSTEM: 'pianola-system',
 	// TTSR
 	TTSR_RULE_AUTHORING: 'ttsr-rule-authoring',
+	// Computer History
+	COMPUTER_HISTORY_SYSTEM: 'computer-history-system',
+	// Maestro Cue
+	CUE_SYSTEM: 'cue-system',
+	// MaestroRun
+	MAESTRO_RUN_SYSTEM: 'maestro-run-system',
+	// Concerto
+	CONCERTO_SYSTEM: 'concerto-system',
 	// Group Chat
 	GROUP_CHAT_MODERATOR_SYSTEM: 'group-chat-moderator-system',
 	GROUP_CHAT_MODERATOR_SYNTHESIS: 'group-chat-moderator-synthesis',
@@ -341,8 +472,11 @@ export const PROMPT_IDS = {
 	CONTEXT_SUMMARIZE: 'context-summarize',
 	CROSS_AGENT_CONSULT_PENDING: 'cross-agent-consult-pending',
 	CROSS_AGENT_CONSULT_REPLY: 'cross-agent-consult-reply',
+	CROSS_AGENT_CONSULT_FIRST: 'cross-agent-consult-first',
+	CROSS_AGENT_HANDOFF_PENDING: 'cross-agent-handoff-pending',
 	// System
 	TAB_NAMING: 'tab-naming',
+	QUICK_CHAT_ROUTE: 'quick-chat-route',
 	DIRECTOR_NOTES: 'director-notes',
 	FEEDBACK: 'feedback',
 	FEEDBACK_CONVERSATION: 'feedback-conversation',
@@ -357,6 +491,8 @@ export type PromptId = (typeof PROMPT_IDS)[keyof typeof PROMPT_IDS];
 export const QUICK_ACTION_PROMPTS: { id: PromptId; label: string }[] = [
 	{ id: 'maestro-system-prompt', label: 'Maestro System Prompt' },
 	{ id: 'pianola-system', label: 'Pianola Manager System Prompt' },
+	{ id: 'computer-history-system', label: 'Computer History System Prompt Section' },
+	{ id: 'maestro-run-system', label: 'MaestroRun System Prompt Section' },
 	{ id: 'autorun-default', label: 'Auto Run Default' },
 	{ id: 'commit-command', label: 'Commit Command' },
 	{ id: 'ai-command', label: 'AI Command Mode' },

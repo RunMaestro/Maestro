@@ -1,0 +1,310 @@
+import { describe, expect, it } from 'vitest';
+import {
+	appRuleMatches,
+	dropReason,
+	hostMatchesDomain,
+	isPrivateWindowTitle,
+	validateRuleInput,
+} from '../../../shared/computer-history/rules';
+import {
+	applyConfigPatch,
+	defaultComputerHistoryConfig,
+	isPausedAt,
+	normalizeConfig,
+	normalizeRuleValue,
+	ruleIdFor,
+} from '../../../shared/computer-history/config';
+import {
+	builtInBlockedApps,
+	builtInExclusions,
+	isBuiltInBlockedApp,
+} from '../../../shared/computer-history/exclusions';
+import { parseDurationInput, parseTimeInput } from '../../../shared/computer-history/timeRange';
+import { resolveKindInput } from '../../../shared/computer-history/status';
+import type { CaptureRule, ObservedEvent } from '../../../shared/computer-history/types';
+
+function ev(partial: Partial<ObservedEvent>): ObservedEvent {
+	return {
+		v: 1,
+		ts: '2026-10-03T14:10:00.000Z',
+		kind: 'text.committed',
+		app: { id: 'com.tinyspeck.slackmacgap', name: 'Slack', pid: 42 },
+		...partial,
+	};
+}
+
+const rules: CaptureRule[] = [
+	{ id: 'a', match: 'app', value: 'com.apple.mobilesms', action: 'ignore' },
+	{ id: 'b', match: 'domain', value: 'bank.example.com', action: 'ignore' },
+];
+
+describe('dropReason', () => {
+	it('keeps an ordinary event', () => {
+		expect(dropReason(ev({}), { rules })).toBeNull();
+	});
+
+	it('drops built-in password managers and Maestro on every platform, case-insensitively', () => {
+		expect(
+			dropReason(ev({ app: { id: 'com.1password.1password', name: '1P', pid: 1 } }), { rules: [] })
+		).toBe('built-in-app');
+		expect(dropReason(ev({ app: { id: 'KeePassXC.exe', name: 'K', pid: 1 } }), { rules: [] })).toBe(
+			'built-in-app'
+		);
+		expect(
+			dropReason(ev({ app: { id: 'com.maestro.app', name: 'Maestro', pid: 1 } }), { rules: [] })
+		).toBe('built-in-app');
+		expect(
+			dropReason(ev({ app: { id: 'com.apple.keychainaccess', name: 'K', pid: 1 } }), { rules: [] })
+		).toBe('built-in-app');
+	});
+
+	it('an app rule matches the app NAME too, case-insensitively', () => {
+		const byName: CaptureRule[] = [{ id: 'n', match: 'app', value: 'slack', action: 'ignore' }];
+		expect(dropReason(ev({}), { rules: byName })).toBe('app-rule');
+		expect(appRuleMatches('slack', { id: 'com.tinyspeck.slackmacgap', name: 'Slack' })).toBe(true);
+		expect(appRuleMatches('sla', { id: 'com.tinyspeck.slackmacgap', name: 'Slack' })).toBe(false);
+	});
+
+	it('drops app rules (case-insensitive) and blocked pids', () => {
+		expect(
+			dropReason(ev({ app: { id: 'com.apple.MobileSMS', name: 'Messages', pid: 7 } }), { rules })
+		).toBe('app-rule');
+		expect(dropReason(ev({}), { rules: [], blockPids: [42] })).toBe('blocked-pid');
+	});
+
+	it('drops private windows', () => {
+		expect(
+			dropReason(ev({ window: { title: 'New Incognito Tab - Google Chrome' } }), { rules })
+		).toBe('private-window');
+		expect(
+			dropReason(ev({ window: { title: 'Mozilla Firefox Private Browsing' } }), { rules })
+		).toBe('private-window');
+		expect(isPrivateWindowTitle('InPrivate - Microsoft Edge')).toBe(true);
+		expect(isPrivateWindowTitle('Privacy policy')).toBe(false);
+	});
+
+	it('keeps private windows only when the user switched skipping off', () => {
+		const incognito = ev({ window: { title: 'New Incognito Tab - Google Chrome' } });
+		expect(dropReason(incognito, { rules, skipPrivateWindows: true })).toBe('private-window');
+		expect(dropReason(incognito, { rules, skipPrivateWindows: false })).toBeNull();
+	});
+
+	it('drops a built-in app by display name when its id is one we do not list', () => {
+		const authy = ev({ app: { id: 'com.example.authy-rebuild', name: 'Authy Desktop', pid: 1 } });
+		expect(dropReason(authy, { rules: [] })).toBe('built-in-app');
+		expect(dropReason(ev({ app: { id: 'x', name: 'coreautha', pid: 1 } }), { rules: [] })).toBe(
+			'built-in-app'
+		);
+	});
+
+	it('drops blocked domains and their subdomains only', () => {
+		const at = (url: string) => ev({ window: { title: 't', url } });
+		expect(dropReason(at('https://bank.example.com/login'), { rules })).toBe('domain-rule');
+		expect(dropReason(at('https://www.bank.example.com/'), { rules })).toBe('domain-rule');
+		expect(dropReason(at('https://notbank.example.com/'), { rules })).toBeNull();
+		expect(dropReason(at('https://example.com/'), { rules })).toBeNull();
+		expect(dropReason(at('not a url'), { rules })).toBeNull();
+	});
+
+	it('include mode records only apps with a record rule; ignore still wins; no app fails closed', () => {
+		const include: CaptureRule[] = [
+			{ id: 'r', match: 'app', value: 'slack', action: 'record' },
+			{ id: 'n', match: 'app', value: 'com.apple.notes', action: 'record' },
+			{ id: 'i', match: 'app', value: 'com.apple.notes', action: 'ignore' },
+		];
+		const ctx = { rules: include, appMode: 'include' as const };
+		expect(dropReason(ev({}), ctx)).toBeNull();
+		expect(dropReason(ev({ app: { id: 'com.apple.Safari', name: 'Safari', pid: 1 } }), ctx)).toBe(
+			'not-included'
+		);
+		expect(dropReason(ev({ app: { id: 'com.apple.Notes', name: 'Notes', pid: 1 } }), ctx)).toBe(
+			'app-rule'
+		);
+		expect(dropReason(ev({ app: undefined }), ctx)).toBe('not-included');
+		expect(dropReason(ev({}), { rules: [], appMode: 'include' })).toBe('not-included');
+		// Exclude mode ignores record rules entirely.
+		expect(
+			dropReason(ev({ app: { id: 'com.apple.Safari', name: 'Safari', pid: 1 } }), {
+				rules: include,
+				appMode: 'exclude',
+			})
+		).toBeNull();
+	});
+
+	it('hostMatchesDomain', () => {
+		expect(hostMatchesDomain('a.b.c', 'b.c')).toBe(true);
+		expect(hostMatchesDomain('ab.c', 'b.c')).toBe(false);
+		expect(hostMatchesDomain('B.C.', '*.b.c')).toBe(true);
+	});
+});
+
+describe('rule input', () => {
+	it('normalizes domains from URLs and wildcards', () => {
+		expect(normalizeRuleValue('domain', 'https://Bank.Example.com:443/path?q=1')).toBe(
+			'bank.example.com'
+		);
+		expect(normalizeRuleValue('domain', '*.example.com')).toBe('example.com');
+		expect(normalizeRuleValue('app', ' Com.Apple.MobileSMS ')).toBe('com.apple.mobilesms');
+	});
+
+	it('validates', () => {
+		expect(validateRuleInput('domain', 'bank.example.com')).toBeNull();
+		expect(validateRuleInput('domain', 'not a domain')).toMatch(/not a domain/);
+		expect(validateRuleInput('app', '   ')).toMatch(/needs a value/);
+	});
+
+	it('accepts an app display name with spaces: that is how most apps are named', () => {
+		expect(validateRuleInput('app', 'Google Chrome')).toBeNull();
+		expect(validateRuleInput('app', 'Visual Studio Code')).toBeNull();
+		expect(validateRuleInput('app', 'Slack\nrm')).toMatch(/line break/);
+		// A domain still cannot contain one.
+		expect(validateRuleInput('domain', 'bank example.com')).toMatch(/not a domain/);
+	});
+
+	it('rule ids are deterministic', () => {
+		expect(ruleIdFor('app', 'x')).toBe(ruleIdFor('app', 'x'));
+		expect(ruleIdFor('app', 'x')).not.toBe(ruleIdFor('domain', 'x'));
+		// Ignore ids keep their original shape; record ids differ so one app can
+		// sit on both lists.
+		expect(ruleIdFor('app', 'x', 'ignore')).toBe(ruleIdFor('app', 'x'));
+		expect(ruleIdFor('app', 'x', 'record')).toMatch(/^record-app-/);
+		expect(ruleIdFor('app', 'x', 'record')).not.toBe(ruleIdFor('app', 'x'));
+	});
+});
+
+describe('config', () => {
+	it('defaults: 90 days, 25 GB, snapshots on, digests off', () => {
+		const d = defaultComputerHistoryConfig();
+		expect(d.retentionDays).toBe(90);
+		expect(d.maxBytes).toBe(25 * 1024 ** 3);
+		expect(d.snapshots).toBe(true);
+		expect(d.digests).toEqual({ enabled: false, agentId: null, rollup: true });
+		expect(d.pausedUntil).toBeNull();
+		expect(d.appMode).toBe('exclude');
+	});
+
+	it('normalizes the app mode and record rules (app-only), deduping per action', () => {
+		const c = normalizeConfig({
+			appMode: 'include',
+			rules: [
+				{ match: 'app', value: 'Slack', action: 'record' },
+				{ match: 'app', value: 'slack', action: 'record' },
+				{ match: 'app', value: 'Slack', action: 'ignore' },
+				{ match: 'domain', value: 'x.example.com', action: 'record' },
+			],
+		});
+		expect(c.appMode).toBe('include');
+		expect(c.rules.map((r) => `${r.action}:${r.match}:${r.value}`)).toEqual([
+			'record:app:slack',
+			'ignore:app:slack',
+			// A domain cannot be on the record-only list; it degrades to ignore.
+			'ignore:domain:x.example.com',
+		]);
+		expect(normalizeConfig({ appMode: 'whatever' }).appMode).toBe('exclude');
+		expect(applyConfigPatch(c, { appMode: 'exclude' }).appMode).toBe('exclude');
+	});
+
+	it('normalizes junk field by field', () => {
+		const c = normalizeConfig({
+			retentionDays: -4,
+			maxBytes: 'big',
+			snapshots: 'yes',
+			rules: [
+				{ match: 'app', value: 'A' },
+				{ match: 'app', value: 'a' },
+				{ match: 'bogus', value: 'x' },
+				{ match: 'domain', value: '' },
+			],
+			pausedUntil: 'not a date',
+			digests: { enabled: true, agentId: '  ' },
+		});
+		expect(c.retentionDays).toBe(1);
+		expect(c.maxBytes).toBe(25 * 1024 ** 3);
+		expect(c.snapshots).toBe(true);
+		expect(c.rules).toHaveLength(1);
+		expect(c.rules[0]).toMatchObject({ match: 'app', value: 'a', action: 'ignore' });
+		expect(c.pausedUntil).toBeNull();
+		expect(c.digests).toEqual({ enabled: true, agentId: null, rollup: true });
+		expect(normalizeConfig('garbage')).toEqual(defaultComputerHistoryConfig());
+	});
+
+	it('skips private windows unless the config says false, and patches the flag', () => {
+		expect(defaultComputerHistoryConfig().skipPrivateWindows).toBe(true);
+		expect(normalizeConfig({ skipPrivateWindows: 'no' }).skipPrivateWindows).toBe(true);
+		const off = applyConfigPatch(defaultComputerHistoryConfig(), { skipPrivateWindows: false });
+		expect(off.skipPrivateWindows).toBe(false);
+		expect(applyConfigPatch(off, { retentionDays: 30 }).skipPrivateWindows).toBe(false);
+	});
+
+	it('applyConfigPatch merges digests and clamps', () => {
+		const next = applyConfigPatch(defaultComputerHistoryConfig(), {
+			retentionDays: 30,
+			digests: { agentId: 'agent-1' },
+		});
+		expect(next.retentionDays).toBe(30);
+		expect(next.digests).toEqual({ enabled: false, agentId: 'agent-1', rollup: true });
+	});
+
+	it('digests.rollup defaults on, stays off when set off, and patches', () => {
+		expect(normalizeConfig({ digests: { enabled: true, rollup: false } }).digests.rollup).toBe(
+			false
+		);
+		expect(normalizeConfig({ digests: { enabled: true, rollup: 'yes' } }).digests.rollup).toBe(
+			true
+		);
+		const off = applyConfigPatch(defaultComputerHistoryConfig(), { digests: { rollup: false } });
+		expect(off.digests).toEqual({ enabled: false, agentId: null, rollup: false });
+	});
+
+	it('isPausedAt', () => {
+		expect(isPausedAt(null, 0)).toBe(false);
+		expect(isPausedAt('forever', 0)).toBe(true);
+		expect(isPausedAt('2026-10-03T15:00:00.000Z', Date.parse('2026-10-03T14:00:00Z'))).toBe(true);
+		expect(isPausedAt('2026-10-03T13:00:00.000Z', Date.parse('2026-10-03T14:00:00Z'))).toBe(false);
+	});
+});
+
+describe('exclusions, time parsing, kinds', () => {
+	it('built-ins per platform include the platform Maestro id', () => {
+		expect(builtInBlockedApps('macos')).toContain('com.maestro.app');
+		expect(builtInBlockedApps('windows')).toContain('maestro.exe');
+		expect(builtInBlockedApps('linux')).toContain('maestro');
+		expect(builtInBlockedApps('linux')).toContain('seahorse');
+	});
+
+	it('built-ins carry display names to every platform, but ids stay ids', () => {
+		expect(builtInBlockedApps('windows')).toContain('1password');
+		expect(builtInBlockedApps('macos')).toContain('com.ledger.live');
+		// Names block only where the entry applies, so the list shows every block.
+		expect(builtInBlockedApps('linux')).not.toContain('dashlane');
+		expect(builtInExclusions('linux').map((e) => e.label)).not.toContain('Dashlane');
+		expect(builtInBlockedApps('linux')).toContain('ente auth');
+		// A Linux id that is a plain word does not block a same-named macOS app.
+		expect(isBuiltInBlockedApp({ id: 'com.example.sparrow', name: 'Sparrow' })).toBe(false);
+		expect(isBuiltInBlockedApp({ id: 'com.sparrowwallet.sparrow', name: 'S' })).toBe(true);
+	});
+
+	it('lists the built-ins that apply on a platform, by name and category', () => {
+		const mac = builtInExclusions('macos');
+		expect(mac).toContainEqual({ label: 'Keychain Access', category: 'password-manager' });
+		expect(mac).toContainEqual({ label: 'Ente Auth', category: 'authenticator' });
+		expect(mac.map((e) => e.label)).not.toContain('KDE Wallet');
+		expect(builtInExclusions('linux').map((e) => e.label)).toContain('KDE Wallet');
+	});
+
+	it('parses durations including weeks, ISO, and epoch', () => {
+		const now = Date.parse('2026-10-03T14:00:00Z');
+		expect(parseDurationInput('1w')).toBe(7 * 86_400_000);
+		expect(parseDurationInput('30m')).toBe(30 * 60_000);
+		expect(parseTimeInput('2h', now)).toBe(now - 2 * 3_600_000);
+		expect(parseTimeInput('2026-10-03T13:00:00Z', now)).toBe(Date.parse('2026-10-03T13:00:00Z'));
+		expect(parseTimeInput('1759500000', now)).toBe(1759500000 * 1000);
+		expect(parseTimeInput('yesterday-ish', now)).toBeNull();
+	});
+
+	it('resolves kind aliases', () => {
+		expect(resolveKindInput('text')).toBe('text.committed');
+		expect(resolveKindInput('content.snapshot')).toBe('content.snapshot');
+		expect(resolveKindInput('nope')).toBeNull();
+	});
+});

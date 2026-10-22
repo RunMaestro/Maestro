@@ -7,6 +7,9 @@
  * play to the user. Queueing must reach `handleOpenFileTab` as `mediaMode:
  * 'queue'` (anything else plays), and it must not switch agents - the player
  * is app-wide, so there is nowhere to take the user.
+ *
+ * A folder has no preview tab: it is revealed in the Files panel instead, and
+ * only takes focus when the open is allowed to move the view.
  */
 import { renderHook } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -28,6 +31,11 @@ vi.mock('../../../../renderer/utils/worktreeSpawn', () => ({
 vi.mock('../../../../renderer/stores/notificationStore', () => ({ notifyToast: vi.fn() }));
 vi.mock('../../../../renderer/utils/browserTabPersistence', () => ({
 	getBrowserTabPartition: () => 'persist:test',
+}));
+const mockRevealPathInFileTree = vi.fn().mockReturnValue(true);
+vi.mock('../../../../renderer/services/fileTreeReveal', async (importActual) => ({
+	...(await importActual<typeof import('../../../../renderer/services/fileTreeReveal')>()),
+	revealPathInFileTree: (...args: unknown[]) => mockRevealPathInFileTree(...args),
 }));
 
 const STREAM_URL = 'maestro-media://stream/token/abc';
@@ -94,5 +102,31 @@ describe('maestro:openFileTab', () => {
 		await vi.waitFor(() => expect(handleOpenFileTab).toHaveBeenCalled());
 		expect(handleOpenFileTab.mock.calls[0][1].mediaMode).toBeUndefined();
 		expect(setActiveSessionId).toHaveBeenCalledWith('session-1');
+	});
+
+	it('reveals a folder in the Files panel instead of opening a tab', async () => {
+		(window.maestro.fs.stat as ReturnType<typeof vi.fn>).mockResolvedValue({ isDirectory: true });
+		(window.maestro.fs.readFile as ReturnType<typeof vi.fn>).mockRejectedValue(
+			Object.assign(new Error('EISDIR'), { code: 'EISDIR' })
+		);
+		const { handleOpenFileTab } = setup();
+
+		dispatchOpen({ filePath: '/projects/pod/episodes' });
+
+		await vi.waitFor(() => expect(mockRevealPathInFileTree).toHaveBeenCalled());
+		expect(mockRevealPathInFileTree).toHaveBeenCalledWith('session-1', '/projects/pod/episodes', {
+			focus: true,
+		});
+		expect(handleOpenFileTab).not.toHaveBeenCalled();
+	});
+
+	it('reveals a folder without focus for a background open', async () => {
+		(window.maestro.fs.stat as ReturnType<typeof vi.fn>).mockResolvedValue({ isDirectory: true });
+		setup();
+
+		dispatchOpen({ filePath: '/projects/pod/episodes', background: true });
+
+		await vi.waitFor(() => expect(mockRevealPathInFileTree).toHaveBeenCalled());
+		expect(mockRevealPathInFileTree.mock.calls[0][2]).toEqual({ focus: false });
 	});
 });

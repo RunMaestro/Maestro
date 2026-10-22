@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { HistoryDetailModal } from '../../../renderer/components/HistoryDetailModal';
 import type { Theme, HistoryEntry } from '../../../renderer/types';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { CenterFlash } from '../../../renderer/components/CenterFlash/CenterFlash';
+import { dismissCenterFlash, useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
 
 import { mockTheme } from '../../helpers/mockTheme';
 import { spyOnListeners, expectAllListenersRemoved } from '../../helpers/listenerLeakAssertions';
@@ -68,6 +70,7 @@ describe('HistoryDetailModal', () => {
 	});
 
 	afterEach(() => {
+		dismissCenterFlash();
 		vi.clearAllTimers();
 		vi.useRealTimers();
 	});
@@ -367,30 +370,37 @@ describe('HistoryDetailModal', () => {
 			expect(screen.getByText('ABC12345')).toBeInTheDocument();
 		});
 
-		it('should copy full session ID to clipboard when clicking session button', async () => {
-			vi.useRealTimers(); // Use real timers for async clipboard operations
+		it('keeps copied session feedback visible after the history modal closes', async () => {
 			const sessionId = 'abc12345-def6-7890-ghij-klmnopqrstuv';
-			render(
-				<HistoryDetailModal
-					theme={mockTheme}
-					entry={createMockEntry({ agentSessionId: sessionId })}
-					onClose={mockOnClose}
-				/>
+			const { rerender } = render(
+				<>
+					<CenterFlash theme={mockTheme} />
+					<HistoryDetailModal
+						theme={mockTheme}
+						entry={createMockEntry({ agentSessionId: sessionId })}
+						onClose={mockOnClose}
+					/>
+				</>
 			);
 
-			const copyButton = screen.getByTitle(`Copy session ID: ${sessionId}`);
-			fireEvent.click(copyButton);
-
-			await waitFor(() => {
-				expect(mockWriteText).toHaveBeenCalledWith(sessionId);
+			await act(async () => {
+				fireEvent.click(screen.getByTitle('Copy session ID: ' + sessionId));
 			});
-			vi.useFakeTimers(); // Restore fake timers
+			expect(mockWriteText).toHaveBeenCalledWith(sessionId);
+			expect(screen.getByRole('status')).toHaveTextContent(sessionId);
+
+			rerender(<CenterFlash theme={mockTheme} />);
+			expect(screen.queryByTitle('Copy session ID: ' + sessionId)).not.toBeInTheDocument();
+			expect(screen.getByRole('status')).toHaveTextContent(sessionId);
+
+			act(() => vi.advanceTimersByTime(useCenterFlashStore.getState().active!.duration));
+			act(() => vi.runOnlyPendingTimers());
+			expect(screen.queryByRole('status')).not.toBeInTheDocument();
 		});
 
-		it('should show copied state after copying session ID', async () => {
-			vi.useRealTimers(); // Use real timers for async clipboard operations
+		it('expires copied session feedback safely after DOM teardown', async () => {
 			const sessionId = 'abc12345-def6-7890-ghij-klmnopqrstuv';
-			render(
+			const { unmount } = render(
 				<HistoryDetailModal
 					theme={mockTheme}
 					entry={createMockEntry({ agentSessionId: sessionId })}
@@ -398,14 +408,21 @@ describe('HistoryDetailModal', () => {
 				/>
 			);
 
-			const copyButton = screen.getByTitle(`Copy session ID: ${sessionId}`);
-			fireEvent.click(copyButton);
-
-			// Wait for copy state to show
-			await waitFor(() => {
-				expect(mockWriteText).toHaveBeenCalled();
+			await act(async () => {
+				fireEvent.click(screen.getByTitle('Copy session ID: ' + sessionId));
 			});
-			vi.useFakeTimers(); // Restore fake timers
+			expect(mockWriteText).toHaveBeenCalledWith(sessionId);
+			unmount();
+
+			vi.stubGlobal('window', undefined);
+			try {
+				vi.runAllTimers();
+			} finally {
+				vi.unstubAllGlobals();
+			}
+
+			expect(useCenterFlashStore.getState().active).toBeNull();
+			expect(vi.getTimerCount()).toBe(0);
 		});
 
 		it('should not display session ID elements when agentSessionId is undefined', () => {

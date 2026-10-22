@@ -52,6 +52,9 @@ import * as fs from 'fs';
 
 const THINKING_BLOCK_TYPES = new Set(['thinking', 'redacted_thinking']);
 
+/** Raw-text form of an empty-thinking shell, tolerant of JSON whitespace. */
+const EMPTY_THINKING_PATTERN = /"thinking"\s*:\s*""/;
+
 export interface SanitizeResult {
 	/** True when the transcript was rewritten (at least one block removed). */
 	sanitized: boolean;
@@ -111,6 +114,13 @@ export function stripThinkingFromTranscript(transcriptPath: string): SanitizeRes
 	if (!fs.existsSync(transcriptPath)) return noop;
 
 	const original = fs.readFileSync(transcriptPath, 'utf8');
+	// This runs synchronously on the main thread before every API-mode resume,
+	// and most transcripts hold no shells at all. Skip the per-line parse unless
+	// the raw text can contain one: an empty `thinking` string, or a
+	// `redacted_thinking` block (which may carry no `thinking` field at all).
+	if (!EMPTY_THINKING_PATTERN.test(original) && !original.includes('"redacted_thinking"')) {
+		return noop;
+	}
 	// Preserve trailing-newline shape: split on \n, the final element is the
 	// trailing-newline remainder (usually "") which we re-join unchanged.
 	const lines = original.split('\n');

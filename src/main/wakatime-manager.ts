@@ -612,6 +612,13 @@ export class WakaTimeManager {
 		const ctx: HeartbeatContext =
 			typeof sourceOrContext === 'string' ? { source: sourceOrContext } : (sourceOrContext ?? {});
 		const source = ctx.source;
+		// Debounce per session BEFORE touching settings. Callers fire this on every
+		// stdout chunk of a running agent, and each settings get() is a synchronous
+		// read + parse of the whole settings file on the main thread.
+		const now = Date.now();
+		const lastBeat = this.lastHeartbeatPerSession.get(sessionId) || 0;
+		if (now - lastBeat < HEARTBEAT_DEBOUNCE_MS) return;
+
 		// Check if enabled
 		const enabled = this.settingsStore.get('wakatimeEnabled', false);
 		if (!enabled) return;
@@ -621,11 +628,6 @@ export class WakaTimeManager {
 			apiKey = this.readApiKeyFromConfig();
 		}
 		if (!apiKey) return;
-
-		// Debounce per session
-		const now = Date.now();
-		const lastBeat = this.lastHeartbeatPerSession.get(sessionId) || 0;
-		if (now - lastBeat < HEARTBEAT_DEBOUNCE_MS) return;
 
 		// Ensure CLI is available (auto-installs if needed)
 		if (!(await this.ensureCliInstalled())) {

@@ -1,10 +1,13 @@
 // Version command - report the running Maestro desktop app's version and the git
 // commit hash it was built from (the same hash shown in the About modal), plus the
 // CLI's own version. Queries the app over the WebSocket bridge (get_app_info).
+// A headless host (`maestro-cli host`) has no app to ask; its version is the one
+// it wrote into the discovery file.
 
 import { readCliServerInfo, isCliServerRunning } from '../../shared/cli-server-discovery';
 import { withMaestroClient } from '../services/maestro-client';
 import { ExitCode } from '../exit-codes';
+import { NOT_RUNNING_MESSAGE } from './status';
 
 interface AppInfoResponse {
 	type: string;
@@ -27,9 +30,28 @@ export async function version(cliVersion: string, options: VersionOptions = {}):
 			console.log(JSON.stringify({ cliVersion, appRunning: false }, null, 2));
 		} else {
 			console.log(`maestro-cli ${cliVersion}`);
-			console.log('Maestro desktop app is not running');
+			console.log(NOT_RUNNING_MESSAGE);
 		}
 		process.exit(ExitCode.NotRunning);
+	}
+
+	// The headless host serves no `get_app_info`: it is a build of the CLI, not
+	// of the app, and says which in the discovery file it wrote.
+	if (info?.hostKind === 'headless') {
+		const hostVersion = info.version ?? 'unknown';
+		if (options.json) {
+			console.log(
+				JSON.stringify(
+					{ cliVersion, appRunning: false, hostKind: 'headless', hostVersion, hostPid: info.pid },
+					null,
+					2
+				)
+			);
+		} else {
+			console.log(`maestro-cli   ${cliVersion}`);
+			console.log(`Maestro host  ${hostVersion} (headless, pid ${info.pid})`);
+		}
+		return;
 	}
 
 	try {

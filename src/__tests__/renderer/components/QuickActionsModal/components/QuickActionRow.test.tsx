@@ -2,6 +2,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { QuickActionRow } from '../../../../../renderer/components/QuickActionsModal/components/QuickActionRow';
 import { mockTheme } from '../../../../helpers/mockTheme';
+import { getShortcutKeys } from '../../../../helpers/shortcutKeys';
 
 describe('QuickActionRow', () => {
 	it('renders label, subtext, number badge, shortcut, and calls action click handler', () => {
@@ -30,7 +31,7 @@ describe('QuickActionRow', () => {
 		expect(screen.getByText('Settings')).toBeInTheDocument();
 		expect(screen.getByText('Open settings')).toBeInTheDocument();
 		expect(screen.getByText('1')).toBeInTheDocument();
-		expect(screen.getByText('Cmd+,')).toBeInTheDocument();
+		expect(getShortcutKeys(['Cmd', ','])).toBeInTheDocument();
 
 		fireEvent.click(screen.getByRole('button'));
 		expect(onClick).toHaveBeenCalledWith(action);
@@ -88,5 +89,67 @@ describe('QuickActionRow', () => {
 		expect(screen.getByText('AUTO')).toBeInTheDocument();
 		expect(screen.getByText(/Tab 1/)).toBeInTheDocument();
 		expect(screen.getByText(/2 queued/)).toBeInTheDocument();
+	});
+	it('fills the AUTO pill to the run percent and prints it', () => {
+		render(
+			<QuickActionRow
+				action={{
+					id: 'agent',
+					label: 'Atlas',
+					action: vi.fn(),
+					isInBatch: true,
+					autoRunProgress: { percent: 42, goalMode: false },
+				}}
+				isSelected={false}
+				showNumber={false}
+				now={1000}
+				theme={mockTheme}
+				selectedItemRef={{ current: null }}
+				onClick={vi.fn()}
+			/>
+		);
+
+		expect(screen.getByText('42%')).toBeInTheDocument();
+		expect(screen.getByTestId('auto-run-pill-fill')).toHaveStyle({ width: '42%' });
+		expect(screen.getByTitle('Auto Run active: 42% complete')).toBeInTheDocument();
+	});
+
+	it('marks a goal-mode percent as an estimate', () => {
+		render(
+			<QuickActionRow
+				action={{
+					id: 'agent',
+					label: 'Atlas',
+					action: vi.fn(),
+					isInBatch: true,
+					autoRunProgress: { percent: 70, goalMode: true },
+				}}
+				isSelected={false}
+				showNumber={false}
+				now={1000}
+				theme={mockTheme}
+				selectedItemRef={{ current: null }}
+				onClick={vi.fn()}
+			/>
+		);
+
+		expect(screen.getByText('~70%')).toBeInTheDocument();
+	});
+
+	it('draws a plain AUTO pill when no progress is known', () => {
+		render(
+			<QuickActionRow
+				action={{ id: 'agent', label: 'Atlas', action: vi.fn(), isInBatch: true }}
+				isSelected={false}
+				showNumber={false}
+				now={1000}
+				theme={mockTheme}
+				selectedItemRef={{ current: null }}
+				onClick={vi.fn()}
+			/>
+		);
+
+		expect(screen.getByTitle('Auto Run active')).toBeInTheDocument();
+		expect(screen.queryByTestId('auto-run-pill-fill')).toBeNull();
 	});
 });

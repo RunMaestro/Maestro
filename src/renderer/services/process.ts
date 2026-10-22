@@ -5,6 +5,7 @@
 
 import { createIpcMethod } from './ipcWrapper';
 import { resolveLiveAiTurns, type LiveAiTurn } from '../utils/liveTurnReattach';
+import { logger } from '../utils/logger';
 import type { ProcessConfig } from '../types';
 
 export type { ProcessConfig } from '../types';
@@ -221,6 +222,36 @@ export async function probeSessionAiProcesses(
 		// behind on every keystroke-driven send.
 		deadline.cancel();
 	}
+}
+
+/**
+ * Kill every AI process an agent owns: its per-tab turns (`{id}-ai-{tabId}`),
+ * their forced-parallel `-fp-` siblings, and the legacy bare `{id}-ai`.
+ *
+ * The ids come from the MAIN process table, not from the agent's tabs. The
+ * callers used to kill only the bare `{id}-ai`, which no per-tab turn uses, so
+ * deleting an agent or its group, or switching its provider, left every
+ * running turn alive with no tab left to stop it from. A closed tab still
+ * draining and a forced-parallel run have no tab to derive an id from either.
+ */
+export async function killAgentAiProcesses(agentId: string): Promise<void> {
+	const bare = `${agentId}-ai`;
+	const ids = new Set([bare]);
+	try {
+		const active = await window.maestro.process.getActiveProcesses({
+			includeChildProcesses: false,
+		});
+		for (const process of active) {
+			if (!process.isTerminal && process.sessionId.startsWith(`${bare}-`)) {
+				ids.add(process.sessionId);
+			}
+		}
+	} catch (error) {
+		// Still kill what can be named without the table; a failed read must not
+		// turn "kill everything" into "kill nothing".
+		logger.warn('[process] Could not list AI processes to kill', undefined, { agentId, error });
+	}
+	await Promise.all([...ids].map((id) => window.maestro.process.kill(id)));
 }
 
 /**

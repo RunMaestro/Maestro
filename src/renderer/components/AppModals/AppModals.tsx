@@ -241,6 +241,7 @@ export interface AppModalsProps {
 	onCloseOtherTabs?: (pivotTabId?: string) => void;
 	onCloseTabsLeft?: (pivotTabId?: string) => void;
 	onCloseTabsRight?: (pivotTabId?: string) => void;
+	onCloseTabGroup?: (groupId: string) => void;
 	setPlaygroundOpen?: (open: boolean) => void;
 	onQuickActionsRefreshGitFileState: () => Promise<void>;
 	onQuickActionsDebugReleaseQueuedItem: () => void;
@@ -383,6 +384,7 @@ export interface AppModalsProps {
 	onTogglePauseQueueItem: (sessionId: string, itemId: string) => void;
 	onEditQueueItem: (sessionId: string, itemId: string, patch: QueuedItemEditPatch) => void;
 	onForceSendQueueItem: (sessionId: string, itemId: string) => void;
+	onMergeQueueItem: (sessionId: string, itemId: string) => void;
 	// New tab creation (for QuickActionsModal)
 	onQuickActionsNewTab?: () => void;
 	onQuickActionsNewFileTab?: () => void;
@@ -734,6 +736,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onCloseOtherTabs,
 		onCloseTabsLeft,
 		onCloseTabsRight,
+		onCloseTabGroup,
 		setPlaygroundOpen,
 		onQuickActionsRefreshGitFileState,
 		onQuickActionsDebugReleaseQueuedItem,
@@ -853,6 +856,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onTogglePauseQueueItem,
 		onEditQueueItem,
 		onForceSendQueueItem,
+		onMergeQueueItem,
 		onQuickActionsNewTab,
 		onQuickActionsNewFileTab,
 		onQuickActionsNewBrowserTab,
@@ -1103,6 +1107,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onCloseOtherTabs={onCloseOtherTabs}
 				onCloseTabsLeft={onCloseTabsLeft}
 				onCloseTabsRight={onCloseTabsRight}
+				onCloseTabGroup={onCloseTabGroup}
 				setPlaygroundOpen={setPlaygroundOpen}
 				onRefreshGitFileState={onQuickActionsRefreshGitFileState}
 				onDebugReleaseQueuedItem={onQuickActionsDebugReleaseQueuedItem}
@@ -1237,6 +1242,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onTogglePauseQueueItem={onTogglePauseQueueItem}
 				onEditQueueItem={onEditQueueItem}
 				onForceSendQueueItem={onForceSendQueueItem}
+				onMergeQueueItem={onMergeQueueItem}
 			/>
 
 			{/* Group Chat Modals */}

@@ -14,6 +14,8 @@
  */
 
 import type { TokenCounts } from './modelPricing';
+import type { TokenSpeedBucket, TokenSpeedSummary } from './tokenSpeed';
+import type { StatsTimeRange } from './stats-types';
 
 /**
  * Per-agent token coverage, mirroring the Cue accessor's classification so both
@@ -82,7 +84,7 @@ export interface SessionTokenBreakdown {
 	 * Distribution chart's token mode; sessions with no recorded origin are left
 	 * out of that split rather than guessed at.
 	 */
-	origin?: 'user' | 'auto';
+	origin?: 'user' | 'auto' | 'relay';
 	byModel: ModelTokenUsage[];
 	inputTokens: number;
 	outputTokens: number;
@@ -92,6 +94,8 @@ export interface SessionTokenBreakdown {
 	/** True when any contributing model bucket was rate-table estimated. */
 	costEstimated: boolean;
 	coverage: TokenCoverage;
+	/** Per-call throughput buckets, when the agent's transcript times its calls. */
+	speed?: TokenSpeedBucket[];
 }
 
 /** Rolled-up token + cost totals over an arbitrary set of sessions/models. */
@@ -141,6 +145,12 @@ export interface TokenUsageAggregate {
 	 * dashboard charts can add a Tokens metric mode.
 	 */
 	series: TokenSeries;
+	/**
+	 * Tokens per second, measured per API call. Bucketed by the hour each call
+	 * finished, so unlike the session totals above it is NOT attributed to a
+	 * session's last activity.
+	 */
+	speed: TokenSpeedSummary;
 	coverageByAgent: Record<string, TokenCoverage>;
 	/** When the aggregate was computed (ms since epoch). */
 	generatedAtMs: number;
@@ -187,4 +197,28 @@ export interface TokenUsageQuery {
 	untilMs?: number;
 	/** Timeline bucket granularity. Defaults to `day`. */
 	granularity?: TokenTimelineGranularity;
+}
+
+/** Lookback per dashboard range, matching `getTimeRangeStart` in main. */
+const RANGE_DAYS: Record<Exclude<StatsTimeRange, 'all'>, number> = {
+	day: 1,
+	week: 7,
+	month: 30,
+	quarter: 90,
+	year: 365,
+};
+
+/**
+ * The token-usage query for a dashboard time range. One definition so the
+ * Tokens tab, the Overview speed cards, the chart Tokens modes, and
+ * `maestro-cli stats-tokens` all read the same window.
+ */
+export function tokenUsageQueryForRange(
+	range: StatsTimeRange,
+	nowMs: number = Date.now()
+): TokenUsageQuery {
+	if (range === 'all') return { granularity: 'month' };
+	const days = RANGE_DAYS[range];
+	const granularity = days <= 30 ? 'day' : days <= 90 ? 'week' : 'month';
+	return { sinceMs: nowMs - days * 24 * 60 * 60 * 1000, granularity };
 }

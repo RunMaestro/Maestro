@@ -8,6 +8,7 @@
 
 import path from 'path';
 import { isWindows } from './platformDetection';
+import { MAX_ENTRIES_PER_SESSION } from './history';
 import type { SettingMetadata } from './settingsMetadata';
 
 function getDefaultShell(): string {
@@ -90,6 +91,14 @@ export const CORE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		category: 'shell',
 	},
 
+	mediaModelDirectory: {
+		description:
+			'Absolute directory containing local multilingual Whisper ggml-<model>.bin files for host media tools. Takes precedence over MAESTRO_MEDIA_MODEL_DIR; empty uses that environment fallback. Changes apply without restart.',
+		type: 'string',
+		default: '',
+		category: 'integrations',
+	},
+
 	// --- Logging ---
 	logLevel: {
 		description: 'Minimum log level for the system log viewer. Values: debug, info, warn, error.',
@@ -98,9 +107,10 @@ export const CORE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		category: 'logging',
 	},
 	maxLogBuffer: {
-		description: 'Maximum number of log entries kept in memory for the log viewer.',
+		description:
+			'Maximum number of entries kept per agent in History, and in memory for the system log viewer. Values: 1000, 5000, 10000, 25000, 50000.',
 		type: 'number',
-		default: 5000,
+		default: MAX_ENTRIES_PER_SESSION,
 		category: 'logging',
 	},
 	maxOutputLines: {

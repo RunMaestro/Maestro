@@ -18,7 +18,7 @@
 import { memo } from 'react';
 import { X, AlertTriangle, ExternalLink, ZoomIn, Move } from 'lucide-react';
 import type { Theme } from '../../types';
-import { formatShortcutKeys } from '../../utils/shortcutFormatter';
+import { ShortcutKeys } from '../ui/ShortcutHint';
 import { SCROLL_MODE_LABELS, type GraphScrollMode } from './scrollMode';
 
 /**
@@ -59,7 +59,8 @@ interface EdgeLegendItem {
  * Legend item for a keyboard shortcut
  */
 interface KeyboardShortcutItem {
-	keys: string;
+	/** A chord as raw key names, or a legend label drawn on one cap ('↑ ↓ ← →'). */
+	keys: string | string[];
 	description: string;
 }
 
@@ -111,7 +112,7 @@ const KEYBOARD_SHORTCUTS: KeyboardShortcutItem[] = [
 		description: 'Close preview / modal',
 	},
 	{
-		keys: formatShortcutKeys(['Meta', 'f']),
+		keys: ['Meta', 'f'],
 		description: 'Focus search',
 	},
 	{
@@ -264,20 +265,14 @@ const EdgePreview = memo(function EdgePreview({
 /**
  * Keyboard shortcut badge
  */
-const KeyboardBadge = memo(function KeyboardBadge({ keys, theme }: { keys: string; theme: Theme }) {
-	return (
-		<span
-			className="inline-flex items-center justify-center px-1.5 py-0.5 rounded text-2xs font-mono"
-			style={{
-				backgroundColor: `${theme.colors.textDim}15`,
-				color: theme.colors.textMain,
-				border: `1px solid ${theme.colors.border}`,
-				minWidth: 24,
-			}}
-		>
-			{keys}
-		</span>
-	);
+const KeyboardBadge = memo(function KeyboardBadge({
+	keys,
+	theme,
+}: {
+	keys: string | string[];
+	theme: Theme;
+}) {
+	return <ShortcutKeys theme={theme} keys={typeof keys === 'string' ? [keys] : keys} />;
 });
 
 /**
@@ -577,7 +572,7 @@ export const GraphLegend = memo(function GraphLegend({
 					</h4>
 					<div className="space-y-1.5">
 						{KEYBOARD_SHORTCUTS.map((shortcut) => (
-							<div key={shortcut.keys} className="flex items-center justify-between gap-2">
+							<div key={shortcut.description} className="flex items-center justify-between gap-2">
 								<KeyboardBadge keys={shortcut.keys} theme={theme} />
 								<span
 									className="text-xs flex-1 text-right"

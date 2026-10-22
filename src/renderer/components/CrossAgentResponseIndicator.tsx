@@ -15,7 +15,8 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import { ChevronRight, Loader2 } from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
+import { Spinner } from './ui/Spinner';
 import type { Theme } from '../types';
 import {
 	selectInFlightForTab,
@@ -104,10 +105,7 @@ export function CrossAgentResponseIndicator({
 					}}
 					title={expanded ? 'Hide consulted agents' : 'Show consulted agents'}
 				>
-					<Loader2
-						className="w-3.5 h-3.5 shrink-0 animate-spin"
-						style={{ color: theme.colors.accent }}
-					/>
+					<Spinner size={14} color={theme.colors.accent} decorative />
 					<span className="shrink-0">
 						{count} {count === 1 ? 'agent' : 'agents'} responding…
 					</span>

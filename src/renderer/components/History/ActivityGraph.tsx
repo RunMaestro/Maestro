@@ -6,6 +6,7 @@ import { useContextMenuPosition } from '../../hooks/ui/useContextMenuPosition';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { COLORBLIND_STATUS_COLORS } from '../../constants/colorblindPalettes';
 import type { GraphBucket } from '../../../shared/history';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 /**
  * A `GraphBucket` as received/computed by the renderer, where `agent` may be
@@ -59,6 +60,7 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 	const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 	const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
 	const colorBlindMode = useSettingsStore((s) => s.colorBlindMode);
+	const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures?.maestroCue === true);
 	const autoBarColor = colorBlindMode ? COLORBLIND_STATUS_COLORS.warning : theme.colors.warning;
 	const graphRef = useRef<HTMLDivElement>(null);
 	const contextMenuRef = useRef<HTMLDivElement>(null);
@@ -314,12 +316,11 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 			{contextMenu && (
 				<div
 					ref={contextMenuRef}
-					className="fixed z-50 py-1 rounded border shadow-lg"
+					className="fixed z-50 py-1 rounded"
 					style={{
 						left: contextMenuLeft,
 						top: contextMenuTop,
-						backgroundColor: theme.colors.bgSidebar,
-						borderColor: theme.colors.border,
+						...elevatedSurfaceStyle(theme),
 						minWidth: '120px',
 						opacity: contextMenuReady ? 1 : 0,
 					}}
@@ -356,8 +357,7 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 				<div
 					className="absolute top-full mt-1 px-2 py-1.5 rounded text-2xs font-mono whitespace-nowrap z-20 pointer-events-none"
 					style={{
-						backgroundColor: theme.colors.bgSidebar,
-						border: `1px solid ${theme.colors.border}`,
+						...elevatedSurfaceStyle(theme),
 						color: theme.colors.textMain,
 						left: `${(hoveredIndex / (bucketCount - 1)) * 100}%`,
 						transform:
@@ -384,12 +384,16 @@ export const ActivityGraph: React.FC<ActivityGraphProps> = ({
 								{bucketData[hoveredIndex].user}
 							</span>
 						</div>
-						<div className="flex items-center justify-between gap-3">
-							<span style={{ color: CUE_COLOR }}>Cue</span>
-							<span className="font-bold" style={{ color: CUE_COLOR }}>
-								{bucketData[hoveredIndex].cue}
-							</span>
-						</div>
+						{/* With Maestro Cue off the row would read "Cue 0" forever. Entries
+						    recorded while it was on still show their count. */}
+						{(maestroCueEnabled || bucketData[hoveredIndex].cue > 0) && (
+							<div className="flex items-center justify-between gap-3">
+								<span style={{ color: CUE_COLOR }}>Cue</span>
+								<span className="font-bold" style={{ color: CUE_COLOR }}>
+									{bucketData[hoveredIndex].cue}
+								</span>
+							</div>
+						)}
 						<div className="flex items-center justify-between gap-3">
 							<span style={{ color: AGENT_COLOR }}>Agent</span>
 							<span className="font-bold" style={{ color: AGENT_COLOR }}>

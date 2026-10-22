@@ -216,6 +216,7 @@ subscriptions:
   # Only THIS one should trigger the reviewer
   - name: implement-feature
     event: github.issue
+    repo: owner/name
     filter:
       labels: 'enhancement'
     prompt: |
@@ -309,6 +310,7 @@ The `pr-reviewer` agent's `.maestro/cue.yaml`:
 subscriptions:
   - name: review-all-prs
     event: github.pull_request
+    repo: owner/name
     poll_minutes: 3
     filter:
       draft: false
@@ -428,6 +430,7 @@ Auto-triage new GitHub issues by labeling and assigning them.
 subscriptions:
   - name: triage-issues
     event: github.issue
+    repo: owner/name
     poll_minutes: 5
     filter:
       state: open

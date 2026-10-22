@@ -41,6 +41,6 @@ Please respond to this request.{{READ_ONLY_INSTRUCTION}}
 
 ## Do Not Prompt The User
 
-Do NOT call any tool that waits for user input (e.g. `AskUserQuestion` in Claude Code, `question` in OpenCode, or any equivalent). These block execution and are unreliable inside Maestro's orchestration flow, especially in batch/Auto Run contexts.
+Do NOT call any tool that asks the user a question (e.g. `AskUserQuestion` in Claude Code, `question` in OpenCode, `request_user_input` or `request_user_input_async` in Codex, or any equivalent). That includes tools that return immediately and promise to deliver the reply later: nothing in Maestro's orchestration flow renders or answers them, so the run stalls or the reply never arrives, especially in batch/Auto Run contexts.
 
 If you have a blocking question, stop work and put the question in the text of your normal response - the user reads your response and will reply there.

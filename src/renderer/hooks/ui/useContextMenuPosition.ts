@@ -1,4 +1,5 @@
 import { type RefObject, useLayoutEffect, useState } from 'react';
+import type { ModalSize } from '../../utils/modalSizing';
 
 interface ContextMenuPosition {
 	left: number;
@@ -36,8 +37,11 @@ export function useContextMenuPosition(
 	x: number,
 	y: number,
 	padding = 8,
-	contentKey?: unknown
+	contentKey?: unknown,
+	minPlacementSize?: Partial<ModalSize>
 ): ContextMenuPosition {
+	const minWidth = minPlacementSize?.width ?? 0;
+	const minHeight = minPlacementSize?.height ?? 0;
 	const [position, setPosition] = useState<ContextMenuPosition>({
 		left: x,
 		top: y,
@@ -49,7 +53,11 @@ export function useContextMenuPosition(
 		const el = menuRef.current;
 		if (!el) return;
 
-		const { width, height } = el.getBoundingClientRect();
+		const measured = el.getBoundingClientRect();
+		// Reserve a resizable surface's default footprint so a smaller saved size
+		// can grow/reset without moving its pinned origin or hitting the viewport.
+		const width = Math.max(measured.width, minWidth);
+		const height = Math.max(measured.height, minHeight);
 		const maxLeft = window.innerWidth - width - padding;
 		const maxTop = window.innerHeight - height - padding;
 		// The budget is measured from where the menu ACTUALLY lands, not from the
@@ -66,7 +74,7 @@ export function useContextMenuPosition(
 		// Measuring changes `top`, which would re-run this effect and re-measure
 		// forever if `top` were a dependency. It is deliberately derived here and
 		// read nowhere else in the effect.
-	}, [menuRef, x, y, padding, contentKey]);
+	}, [menuRef, x, y, padding, contentKey, minWidth, minHeight]);
 
 	return position;
 }

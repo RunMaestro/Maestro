@@ -117,3 +117,71 @@ export function buildWindowMoveTargets(windows: WindowInfo[], agentId: string): 
 		];
 	});
 }
+
+/**
+ * The window that surfaces an agent: the secondary window that claimed it, else
+ * the primary (the catch-all owner). `null` before the registry has hydrated.
+ */
+export function resolveOwningWindowId(windows: WindowInfo[], agentId: string): string | null {
+	const claimant = windows.find((win) => !win.isMain && win.sessionIds.includes(agentId));
+	if (claimant) return claimant.id;
+	return windows.find((win) => win.isMain)?.id ?? null;
+}
+
+/**
+ * Window destinations for moving a whole GROUP, labeled exactly like the
+ * per-agent list. A group's agents can be split across windows, so a window is
+ * the group's "current owner" only when it already surfaces EVERY agent in it;
+ * a partly-split group can be gathered into any window, including one that holds
+ * some of it.
+ */
+export function buildGroupWindowMoveTargets(
+	windows: WindowInfo[],
+	agentIds: string[]
+): WindowMoveTarget[] {
+	if (agentIds.length === 0) return [];
+	return buildWindowMoveTargets(windows, agentIds[0]).map((target) => ({
+		...target,
+		isCurrentOwner: agentIds.every((id) => resolveOwningWindowId(windows, id) === target.windowId),
+	}));
+}
+
+/** Minimal shape needed to find a group's agents. */
+interface GroupableSession {
+	id: string;
+	groupId?: string | null;
+	parentSessionId?: string | null;
+}
+
+/**
+ * The top-level agents a group move carries: every agent filed directly in the
+ * group and, when `includeSubgroups` is set (Groups+ nesting is on, so subgroups
+ * render inside their parent), every agent in its descendant groups. Worktree
+ * children are excluded - they ride along with their parent's unit. Order
+ * follows the session list.
+ */
+export function collectGroupAgentIds(
+	sessions: GroupableSession[],
+	groups: Array<{ id: string; parentGroupId?: string | null }>,
+	groupId: string,
+	includeSubgroups: boolean
+): string[] {
+	const groupIds = new Set<string>([groupId]);
+	if (includeSubgroups) {
+		// Walk to a fixed point so any depth is covered; the Set doubles as the
+		// cycle guard for a malformed parent chain.
+		let grew = true;
+		while (grew) {
+			grew = false;
+			for (const group of groups) {
+				if (group.parentGroupId && groupIds.has(group.parentGroupId) && !groupIds.has(group.id)) {
+					groupIds.add(group.id);
+					grew = true;
+				}
+			}
+		}
+	}
+	return sessions
+		.filter((s) => !s.parentSessionId && s.groupId != null && groupIds.has(s.groupId))
+		.map((s) => s.id);
+}

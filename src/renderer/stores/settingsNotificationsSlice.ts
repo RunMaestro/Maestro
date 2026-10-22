@@ -18,6 +18,12 @@ import {
 	TOAST_POSITION_LABELS,
 	toastSidePanel,
 } from '../../shared/toastPosition';
+import {
+	areToastsEnabled,
+	DEFAULT_TOAST_DURATION,
+	resolveEnabledToastDuration,
+	TOAST_DURATION_OFF,
+} from '../../shared/toastDuration';
 import { notifyToast, useNotificationStore } from './notificationStore';
 import type { SettingsStore } from './settingsStore';
 
@@ -48,6 +54,7 @@ function showToastSettingPreview(title: string, message: string): void {
 		// In-app preview only: no TTS command, no Notification Center entry.
 		skipCustomNotification: true,
 		skipOsNotification: true,
+		skipHistory: true,
 	});
 }
 
@@ -58,6 +65,14 @@ export interface NotificationsState {
 	audioFeedbackEnabled: boolean;
 	audioFeedbackCommand: string;
 	toastDuration: number;
+	notificationCenterEnabled: boolean;
+	/** Duration in effect before toasts were last switched off; restored when they come back on. */
+	toastDurationBeforeOff: number;
+	notificationCenterLarge: boolean;
+	notificationCenterDetails: boolean;
+	notificationCenterKeyboardNavigation: boolean;
+	notificationHistoryQueuedReplies: boolean;
+	notificationHistoryAutoRunTasks: boolean;
 	idleNotificationEnabled: boolean;
 	idleNotificationCommand: string;
 }
@@ -69,6 +84,14 @@ export interface NotificationsActions {
 	setAudioFeedbackEnabled: (value: boolean) => void;
 	setAudioFeedbackCommand: (value: string) => void;
 	setToastDuration: (value: number) => void;
+	setNotificationCenterEnabled: (value: boolean) => void;
+	/** Switch in-app toasts off, or back on at the duration they had before. */
+	setToastsEnabled: (enabled: boolean) => void;
+	setNotificationCenterLarge: (value: boolean) => void;
+	setNotificationCenterDetails: (value: boolean) => void;
+	setNotificationCenterKeyboardNavigation: (value: boolean) => void;
+	setNotificationHistoryQueuedReplies: (value: boolean) => void;
+	setNotificationHistoryAutoRunTasks: (value: boolean) => void;
 	setIdleNotificationEnabled: (value: boolean) => void;
 	setIdleNotificationCommand: (value: string) => void;
 }
@@ -84,7 +107,14 @@ export const createNotificationsSlice: StateCreator<SettingsStore, [], [], Notif
 	osNotificationsEnabled: true,
 	audioFeedbackEnabled: false,
 	audioFeedbackCommand: 'say',
-	toastDuration: 20,
+	toastDuration: DEFAULT_TOAST_DURATION,
+	toastDurationBeforeOff: DEFAULT_TOAST_DURATION,
+	notificationCenterEnabled: false,
+	notificationCenterLarge: false,
+	notificationCenterDetails: false,
+	notificationCenterKeyboardNavigation: false,
+	notificationHistoryQueuedReplies: false,
+	notificationHistoryAutoRunTasks: false,
 	idleNotificationEnabled: false,
 	idleNotificationCommand: 'say Maestro is idle',
 
@@ -123,8 +153,53 @@ export const createNotificationsSlice: StateCreator<SettingsStore, [], [], Notif
 	},
 
 	setToastDuration: (value) => {
+		// Remember the duration being switched away from, whichever surface turns
+		// toasts off (Settings "Off", the bell popover, the palette), so turning
+		// them back on restores it instead of the factory default.
+		const current = get().toastDuration;
+		if (!areToastsEnabled(value) && areToastsEnabled(current)) {
+			set({ toastDurationBeforeOff: current });
+			window.maestro.settings.set('toastDurationBeforeOff', current);
+		}
 		set({ toastDuration: value });
 		window.maestro.settings.set('toastDuration', value);
+	},
+
+	setNotificationCenterEnabled: (value) => {
+		set({ notificationCenterEnabled: value });
+		window.maestro.settings.set('notificationCenterEnabled', value);
+	},
+
+	setToastsEnabled: (enabled) => {
+		if (enabled === areToastsEnabled(get().toastDuration)) return;
+		get().setToastDuration(
+			enabled ? resolveEnabledToastDuration(get().toastDurationBeforeOff) : TOAST_DURATION_OFF
+		);
+	},
+
+	setNotificationCenterLarge: (value) => {
+		set({ notificationCenterLarge: value });
+		window.maestro.settings.set('notificationCenterLarge', value);
+	},
+
+	setNotificationCenterDetails: (value) => {
+		set({ notificationCenterDetails: value });
+		window.maestro.settings.set('notificationCenterDetails', value);
+	},
+
+	setNotificationCenterKeyboardNavigation: (value) => {
+		set({ notificationCenterKeyboardNavigation: value });
+		window.maestro.settings.set('notificationCenterKeyboardNavigation', value);
+	},
+
+	setNotificationHistoryQueuedReplies: (value) => {
+		set({ notificationHistoryQueuedReplies: value });
+		window.maestro.settings.set('notificationHistoryQueuedReplies', value);
+	},
+
+	setNotificationHistoryAutoRunTasks: (value) => {
+		set({ notificationHistoryAutoRunTasks: value });
+		window.maestro.settings.set('notificationHistoryAutoRunTasks', value);
 	},
 
 	setIdleNotificationEnabled: (value) => {
@@ -166,6 +241,34 @@ export function hydrateNotificationsSettings(
 
 	if (allSettings['toastDuration'] !== undefined)
 		patch.toastDuration = allSettings['toastDuration'] as number;
+
+	if (typeof allSettings['notificationCenterEnabled'] === 'boolean')
+		patch.notificationCenterEnabled = allSettings['notificationCenterEnabled'] as boolean;
+	if (typeof allSettings['toastDurationBeforeOff'] === 'number')
+		patch.toastDurationBeforeOff = resolveEnabledToastDuration(
+			allSettings['toastDurationBeforeOff']
+		);
+
+	if (typeof allSettings['notificationCenterLarge'] === 'boolean')
+		patch.notificationCenterLarge = allSettings['notificationCenterLarge'] as boolean;
+
+	if (typeof allSettings['notificationCenterDetails'] === 'boolean')
+		patch.notificationCenterDetails = allSettings['notificationCenterDetails'] as boolean;
+
+	if (typeof allSettings['notificationCenterKeyboardNavigation'] === 'boolean')
+		patch.notificationCenterKeyboardNavigation = allSettings[
+			'notificationCenterKeyboardNavigation'
+		] as boolean;
+
+	if (typeof allSettings['notificationHistoryQueuedReplies'] === 'boolean')
+		patch.notificationHistoryQueuedReplies = allSettings[
+			'notificationHistoryQueuedReplies'
+		] as boolean;
+
+	if (typeof allSettings['notificationHistoryAutoRunTasks'] === 'boolean')
+		patch.notificationHistoryAutoRunTasks = allSettings[
+			'notificationHistoryAutoRunTasks'
+		] as boolean;
 
 	if (allSettings['idleNotificationEnabled'] !== undefined)
 		patch.idleNotificationEnabled = allSettings['idleNotificationEnabled'] as boolean;

@@ -30,7 +30,9 @@
  *     and memoized in a `WeakMap` keyed by the session OBJECT. The renderer and
  *     every main-process mutator update sessions immutably, so a changed
  *     session arrives as a fresh reference (cache miss) while untouched ones
- *     keep theirs (cache hit). The serialize cost becomes proportional to what
+ *     keep theirs (cache hit). What is cached is the session's UTF-8 BYTES, and
+ *     the file goes out as those chunks, so the document is never joined into
+ *     one string or re-encoded. The serialize cost becomes proportional to what
  *     actually changed rather than to the whole file.
  *   - **Async, coalesced write.** Writes are batched behind a short timer and
  *     go out as an async atomic write (temp file + rename), off the UI thread.
@@ -51,6 +53,14 @@ import type Store from 'electron-store';
 
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
+import {
+	encodeWithMemoizedArray,
+	serializeWithMemoizedArray,
+} from '../../shared/memoizedJsonSerialize';
+
+// Re-exported for existing importers; the implementation lives in shared/ so
+// the CLI's agent-run store can use the same memo.
+export { serializeWithMemoizedArray };
 
 /** Distinguishes temp files created by successive writes. */
 let writeSequence = 0;
@@ -61,7 +71,7 @@ function tempPathFor(filePath: string): string {
 }
 
 /**
- * Write `content` to `filePath` atomically: write a sibling temp file, then
+ * Write `chunks` to `filePath` atomically: write a sibling temp file, then
  * rename over the target. A crash mid-write leaves the previous document intact
  * rather than a truncated, unparseable store file. Mirrors
  * `writeCueYamlAtomicSync`; kept local so this module owns no dependency conf
@@ -69,12 +79,15 @@ function tempPathFor(filePath: string): string {
  */
 async function writeFileAtomic(
 	filePath: string,
-	content: string,
+	chunks: Uint8Array[],
 	shouldCommit: () => boolean
 ): Promise<boolean> {
 	const tmpPath = tempPathFor(filePath);
 	try {
-		await fsp.writeFile(tmpPath, content, 'utf-8');
+		// An iterable of byte chunks goes out one write at a time on the thread
+		// pool. A string here would be UTF-8 encoded in full, synchronously, on
+		// this thread before the async write even began.
+		await fsp.writeFile(tmpPath, chunks);
 		if (!shouldCommit()) {
 			await fsp.unlink(tmpPath).catch(() => {
 				// Stale temp cleanup must not turn a newer durable write into failure.
@@ -97,10 +110,11 @@ async function writeFileAtomic(
 }
 
 /** Synchronous counterpart of {@link writeFileAtomic}, for the quit path. */
-function writeFileAtomicSync(filePath: string, content: string): void {
+function writeFileAtomicSync(filePath: string, chunks: Uint8Array[]): void {
 	const tmpPath = tempPathFor(filePath);
 	try {
-		fs.writeFileSync(tmpPath, content, 'utf-8');
+		// One copy on the way out is fine on the quit path; nothing is waiting.
+		fs.writeFileSync(tmpPath, Buffer.concat(chunks));
 		fs.renameSync(tmpPath, filePath);
 	} catch (err) {
 		try {
@@ -126,19 +140,6 @@ const WRITE_RETRY_MS = 5_000;
 /** Filesystem errors that a later retry can plausibly recover from. */
 const RECOVERABLE_WRITE_CODES = new Set(['ENOSPC', 'ENFILE', 'EMFILE', 'EBUSY', 'EAGAIN']);
 
-/**
- * Memoized JSON for a single session, keyed by the session object itself.
- *
- * Keyed by reference rather than by id on purpose: an id-keyed cache would go
- * stale the moment a session changed, and would need every mutator to
- * invalidate it. Reference identity gets that for free - a mutated session is a
- * different object, so it simply misses. A WeakMap also lets removed sessions
- * fall out with no bookkeeping.
- *
- * Module-scoped so a re-wrapped store (tests) keeps the memo.
- */
-const serializedByValue = new WeakMap<object, string>();
-
 export interface DeferredWriteStore<T extends Record<string, any>> {
 	/** The wrapped store. Same instance - `get`/`set` are patched in place. */
 	store: Store<T>;
@@ -148,87 +149,6 @@ export interface DeferredWriteStore<T extends Record<string, any>> {
 	flushSync(): void;
 	/** Write pending revisions now and resolve when durable. For IPC and tests. */
 	flushAsync(): Promise<void>;
-}
-
-/** Indent every line of `json` after the first by `depth` tabs. */
-function indentJson(json: string, depth: number): string {
-	if (depth <= 0) return json;
-	const pad = '\t'.repeat(depth);
-	return json.split('\n').join(`\n${pad}`);
-}
-
-/**
- * Depth every memoized array element is rendered at. The memo below stores the
- * ALREADY-INDENTED string, so it is only valid for this one depth - re-indenting
- * a cache hit was most of what the memo was supposed to save. A field trace put
- * `indentJson` at 75ms of main-process CPU, roughly twice `serializeWithMemoizedArray`
- * itself, because every write re-ran a split/join over every unchanged session.
- */
-const MEMOIZED_ELEMENT_DEPTH = 2;
-
-/**
- * Serialize one array element at {@link MEMOIZED_ELEMENT_DEPTH}, reusing the
- * memo when the object is unchanged.
- *
- * Returns the indented text, ready to concatenate - not the raw
- * `JSON.stringify` output.
- */
-function serializeElement(value: unknown): string | undefined {
-	// Only objects can be WeakMap keys. Primitives are cheap anyway.
-	if (typeof value !== 'object' || value === null) {
-		const primitive = JSON.stringify(value, undefined, '\t');
-		// `undefined` and functions stringify to undefined; the caller renders
-		// those array slots as `null`, so pass the miss through unindented.
-		return primitive === undefined ? undefined : indentJson(primitive, MEMOIZED_ELEMENT_DEPTH);
-	}
-	const cached = serializedByValue.get(value);
-	if (cached !== undefined) return cached;
-	const json = JSON.stringify(value, undefined, '\t');
-	// `undefined` (a non-serializable value) is not cacheable and JSON.stringify
-	// renders such array slots as `null` anyway - let the caller handle it.
-	if (json === undefined) return undefined;
-	const indented = indentJson(json, MEMOIZED_ELEMENT_DEPTH);
-	serializedByValue.set(value, indented);
-	return indented;
-}
-
-/**
- * Serialize `data` exactly as conf would (`JSON.stringify(data, undefined,
- * '\t')`), but reusing memoized JSON for the elements of `memoKey`'s array.
- *
- * Falls back to a plain stringify whenever the shape is not the one this
- * optimization understands, so a surprising document is never mis-serialized.
- */
-export function serializeWithMemoizedArray(data: unknown, memoKey: string): string {
-	if (typeof data !== 'object' || data === null || Array.isArray(data)) {
-		return JSON.stringify(data, undefined, '\t');
-	}
-	const record = data as Record<string, unknown>;
-	const items = record[memoKey];
-	if (!Array.isArray(items)) {
-		return JSON.stringify(data, undefined, '\t');
-	}
-
-	const parts: string[] = [];
-	for (const [key, value] of Object.entries(record)) {
-		let json: string | undefined;
-		if (key === memoKey) {
-			// `serializeElement` already indents to MEMOIZED_ELEMENT_DEPTH, so only
-			// the element's own leading tabs are added here. `undefined` elements
-			// render as `null`, matching JSON.stringify's array behaviour.
-			const elements = items.map((item) => `\t\t${serializeElement(item) ?? 'null'}`);
-			json = elements.length === 0 ? '[]' : `[\n${elements.join(',\n')}\n\t]`;
-		} else {
-			const plain = JSON.stringify(value, undefined, '\t');
-			// A key whose value is not serializable (undefined, a function) is
-			// omitted from the object entirely - same as JSON.stringify.
-			if (plain === undefined) continue;
-			json = indentJson(plain, 1);
-		}
-		parts.push(`\t${JSON.stringify(key)}: ${json}`);
-	}
-
-	return parts.length === 0 ? '{}' : `{\n${parts.join(',\n')}\n}`;
 }
 
 /**
@@ -298,9 +218,13 @@ export function deferStoreWrites<T extends Record<string, any>>(
 		resolveTimer?.();
 	}
 
-	/** Serialize the current document. Throws only on a genuinely broken value. */
-	function serialize(): string {
-		return serializeWithMemoizedArray(document, memoKey);
+	/**
+	 * Serialize the current document to UTF-8 chunks. Throws only on a genuinely
+	 * broken value. Bytes rather than a string: on a large store the full-string
+	 * join and its UTF-8 encode were the bulk of every flush's main-thread time.
+	 */
+	function serialize(): Uint8Array[] {
+		return encodeWithMemoizedArray(document, memoKey);
 	}
 
 	/** Log a failed write and schedule a retry when the errno may recover. */
@@ -331,7 +255,7 @@ export function deferStoreWrites<T extends Record<string, any>>(
 		const drain = (async () => {
 			while (durableRevision < documentRevision) {
 				const snapshotRevision = documentRevision;
-				let data: string;
+				let data: Uint8Array[];
 				try {
 					data = serialize();
 				} catch (err) {

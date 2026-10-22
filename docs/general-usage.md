@@ -371,6 +371,12 @@ You will know you are in command mode: a `$` appears at the left of the input, t
 - **Colour is preserved.** Output keeps the colours the command produced (`git status`, `eza`, `rg`), rendered properly rather than shown as raw escape codes. The copy button gives you clean, uncoloured text.
 - **The draft survives a tab switch**, mode and all. Leave a half-typed command, go read another tab, come back, and it is still a command.
 
+### Running a Command from an Agent's Reply
+
+When an agent answers with a shell code block (`bash`, `sh`, `zsh`, `console`), the block gets a **Run** button beside its copy button. Clicking it runs the command exactly as if you had typed it after `!`: same card, same working directory, same recall history. **Alt-click** puts the command in the composer in command mode instead, so you can edit it before pressing Enter. Hover the button to see the full command line, which matters when a long line scrolls off the side of the block.
+
+A block written as a terminal session (`$ npm test` followed by its output) runs only the `$` lines, so the sample output is never executed. Blocks in your own messages, and blocks in other languages, have no Run button.
+
 ### Tab Completion in Command Mode
 
 Command mode gets the same `Tab` completion the [Command Terminal](#command-terminal) has, so you are not typing paths from memory:
@@ -469,13 +475,24 @@ Each queued item has a row of controls (hover reveals them, and they stay visibl
 
 | Control           | Icon  | What it does                                                                                            |
 | ----------------- | ----- | ------------------------------------------------------------------------------------------------------- |
+| **Merge**         | ⑂     | Fold the message into the one above it, so both go out as a single message in the upper one's place     |
 | **Edit**          | ✏️    | Reopen the message to change its text or add, annotate, and remove image attachments before it's sent   |
 | **Copy**          | ⧉     | Copy the message text (or the command) to the clipboard                                                 |
 | **Hold / Resume** | ⏸ / ▶ | Hold a message so the queue skips over it, then resume it later. Held items show a **HELD** badge       |
 | **Reorder**       | ⠿     | Drag any item by its handle to change the order they'll be sent (available once two or more are queued) |
 | **Remove**        | ✕     | Delete a message from the queue so it's never sent (asks for confirmation)                              |
 
-**Editing** is only offered for messages, not slash commands. Only genuinely long messages are truncated behind a **Show all** toggle (short ones render in full, since collapsing them would save nothing), and attached images collapse behind a click-to-expand thumbnail strip (click a thumbnail to open it full-size in the carousel).
+**Editing** is only offered for messages, not slash commands. See [Merging queued messages](#merging-queued-messages) for when **Merge** appears. Only genuinely long messages are truncated behind a **Show all** toggle (short ones render in full, since collapsing them would save nothing), and attached images collapse behind a click-to-expand thumbnail strip (click a thumbnail to open it full-size in the carousel).
+
+### Merging queued messages
+
+Queued two messages that belong together? **Merge** folds a message into the one above it, so they go out as a single message.
+
+- **When it shows:** only when there is a message above to merge into, for the same tab. The first message on a tab never shows it. Neither does a message whose card above is a slash command, a message that starts with an `@mention` (another agent answers those), or a turn waiting on a consult.
+- **Confirmation:** a dialog shows both messages and asks you to confirm, because a merge cannot be undone. **Merge** has focus, so `Enter` accepts and `Esc` cancels.
+- **Result:** the upper message keeps its place in the queue, its hold state, and its model and effort. The lower message's text follows it as a new paragraph (one blank line between them), and its images are added after the upper message's.
+
+Merge is on the queued cards in the chat and in the [Execution Queue view](#execution-queue-view). Agents can do the same with `maestro-cli queue merge <item-id> --agent <id>`.
 
 ### Force Send
 
@@ -483,11 +500,48 @@ A queued item carries a **Force Send** button that dispatches that message immed
 
 `Cmd+Shift+Enter` / `Ctrl+Shift+Enter` does the same thing from the keyboard, and it works wherever you are in the app - you do not have to click into the input box first. With text in the input, it sends what you typed in parallel; with the input empty, it force-sends the newest eligible queued item.
 
+A message that Force Send ran beside another working tab, or that the chord sent from the input, carries a small hammer icon in the transcript, so you can tell later which messages jumped the queue.
+
+### Steer
+
+While a turn is running, a queued message for that tab can carry a **Steer** button instead. Steering hands the message to the turn already in progress, so the agent can change course without waiting for the turn to end. It is offered only where the running turn can take input: a Claude Code agent on the interactive token source, or a Codex agent on the [app-server transport](./provider-notes). A message with images or an `@mention` is not steerable and sends normally when the turn ends. The same holds on Claude Code for a message that starts with `/` or `!`, which its editor would read as a command.
+
+`Opt+Cmd+Enter` / `Alt+Ctrl+Enter` (**Steer Running Turn**) does the same thing from the keyboard, wherever you are in the app. With text in the input, it sends what you typed as a steer; if the tab is idle, that is an ordinary send. With the input empty, it steers the newest queued message on the tab. When a message cannot be steered, it stays queued and a notice says why. The chord can be rebound or cleared in **Settings → Shortcuts**, and the same action is in the command palette.
+
+A steered message is headed with the Steer button's arrow in the transcript, and the header says what the agent did with it. **Steering the running turn** shows while the agent has the text and has not yet acted on it. **Steered into the running turn**, with a check, means the turn took the message and changed course; the bubble is indented and joined by a line to the turn it steered. **Sent as a follow-up** means the agent could not fold the message in and runs it as a follow-up after the turn ends, so that bubble stands on its own. If the agent never takes the message, it goes back in the queue and leaves the transcript, so only a message the agent has keeps the header. The agent is told to answer each steer in its final reply, because the transcript keeps only that reply and drops what the agent writes between tool calls.
+
+Force Send and Steer are a pair. A queued card offers one or the other, never both, because Force Send needs the message's tab idle and Steer needs it mid-turn.
+
+|                     | Force Send                                                                                              | Steer                                                                         |
+| ------------------- | ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| Use it when         | The message's tab is idle and the queue is holding it                                                   | The message's tab is working                                                  |
+| What it does        | Starts the message as its own turn now                                                                  | Hands the message to the turn in progress                                     |
+| Keyboard            | `Cmd+Shift+Enter` / `Ctrl+Shift+Enter`                                                                  | `Opt+Cmd+Enter` / `Alt+Ctrl+Enter`                                            |
+| Needs               | Forced Parallel Execution: always for the chord, and for the button only to run beside another busy tab | Claude Code on the interactive token source, or Codex on app-server transport |
+| Mark on the message | Hammer                                                                                                  | Arrow                                                                         |
+
+### Send button menu
+
+While the agent is working, clicking **Send** opens a small menu instead of sending, so you can pick how the message goes:
+
+| Row        | What it does                                                      | Keyboard                               |
+| ---------- | ----------------------------------------------------------------- | -------------------------------------- |
+| Queue      | Queues the message behind the running turn, the same as Enter     | `Enter`                                |
+| Force Send | Sends now, beside a working tab (needs Forced Parallel Execution) | `Cmd+Shift+Enter` / `Ctrl+Shift+Enter` |
+| Steer      | Hands the message to the turn in progress (see [Steer](#steer))   | `Opt+Cmd+Enter` / `Alt+Ctrl+Enter`     |
+| Queue Held | Queues the message paused. It waits until you resume its card     | none                                   |
+
+A row that cannot run right now is dimmed and says why in one line. Force Send while Forced Parallel Execution is off jumps to that setting when you click it. The `?` next to Steer explains how to get steering on this agent: switch a Claude Code agent to the TUI token source, or a Codex agent to the app-server transport. For any other provider, it links a pre-filled feature request.
+
+When the agent is idle, or the input is empty, a click just sends. To make every click send at once, turn off **Show this menu on click** in the menu itself, or **Send Button Menu** in **Settings → General**. Your agent can also change it (`maestro-cli settings set sendButtonMenu false`). Only the click changes; the keyboard works the same either way.
+
+Agents reach the same actions from the CLI: `maestro-cli dispatch <agent> "..." --held` queues a message held, and `maestro-cli queue hold <item-id> --agent <id>` / `queue resume <item-id> --agent <id>` hold or release a queued card. `queue list` shows which items are held.
+
 ### Execution Queue view
 
-Press `Cmd+Shift+X` / `Ctrl+Shift+X` (or click the queue indicator) to open the **Execution Queue** - a single view of everything queued across all of your agents. It offers the same per-item controls (edit, copy, hold/resume, reorder, remove) plus a jump-to-agent shortcut, so you can manage a busy fleet from one place. Items are processed sequentially per agent to keep concurrent file edits from colliding.
+Press `Cmd+Shift+X` / `Ctrl+Shift+X` (or click the queue indicator) to open the **Execution Queue** - a single view of everything queued across all of your agents. It offers the same per-item controls (merge, edit, copy, hold/resume, reorder, remove) plus a jump-to-agent shortcut, so you can manage a busy fleet from one place. Items are processed sequentially per agent to keep concurrent file edits from colliding.
 
-The view is fully keyboard-driven. `Up` / `Down` move a highlight through the queued messages, walking across agent boundaries in the All Agents view, and `Enter` opens an action menu for the highlighted message with everything that card offers - Send Now, Edit, Delete, Hold/Resume, Copy. `Up` / `Down` pick an action in that menu, `Enter` runs it, and `Esc` closes it. Clicking a card also moves the highlight to it. The menu only lists actions the message actually supports, so a queued slash command has no Edit entry.
+The view is fully keyboard-driven. `Up` / `Down` move a highlight through the queued messages, walking across agent boundaries in the All Agents view, and `Enter` opens an action menu for the highlighted message with everything that card offers - Send Now, Merge into Message Above, Edit, Delete, Hold/Resume, Copy. `Up` / `Down` pick an action in that menu, `Enter` runs it, and `Esc` closes it. Clicking a card also moves the highlight to it. The menu only lists actions the message actually supports, so a queued slash command has no Edit entry, and Merge appears only when an earlier message for the same tab is queued. Messages for different tabs of one agent sit in the same list here, so the message a card merges into can be further up than the card directly above it. The confirmation shows exactly which two messages will join.
 
 Every card here also carries a **Send Now** button, which runs that one item immediately instead of waiting for its turn. Use it to jump an item ahead of the rest of the queue or to release a held message on the spot. The button dims when the item cannot run yet because another tab in that agent is working and Forced Parallel Execution is off; clicking it explains the block and links straight to that setting. It is hidden entirely when there is nothing to force: the item's own tab is already mid-turn, so the item is next in line anyway, or the tab it was queued for is gone. When another tab is working, Send Now confirms first and lists which tabs are busy.
 
@@ -716,6 +770,37 @@ Configure a command to run automatically every time a terminal tab's shell is st
 
 > **SSH agents**: when the agent is configured to run on a remote host, the terminal tab also runs on that host, and the startup command executes remotely (the working directory must be a path on the remote machine).
 
+## Opening Links
+
+Clicking a web link in the AI Terminal, a Command Terminal, a file preview, or a user message opens it in the browser chosen under **Settings -> General -> Default Browser**: an in-app Maestro browser tab, or your system browser.
+
+| Gesture                    | Result                                                           |
+| -------------------------- | ---------------------------------------------------------------- |
+| Click                      | Opens in the default browser                                     |
+| `Cmd+Click` / `Ctrl+Click` | Opens in the other browser, for this link only                   |
+| Right-click                | Menu: Copy Link, Open in Maestro Browser, Open in System Browser |
+
+### Routing Hints
+
+To make one link always open in a specific browser, whatever the setting and whatever key is held, put a hint in front of its `http://` or `https://`:
+
+| Written as                      | Always opens in                           |
+| ------------------------------- | ----------------------------------------- |
+| `maestro+http://localhost:5173` | A Maestro browser tab in the active agent |
+| `system+https://github.com`     | The system browser                        |
+
+Maestro removes the hint before it opens the page, so the server never sees it, and **Copy Link** copies the address without it. This is useful for a script that prints a local dev-server URL into a terminal tab, or for an agent that links a preview in chat:
+
+```bash
+echo "Preview: maestro+http://localhost:5173"
+```
+
+```markdown
+[dev server](maestro+http://localhost:5173)
+```
+
+Hints work in plain terminal output, in OSC 8 terminal hyperlinks, and in markdown links. In chat markdown, write a hinted URL as a link (`[label](maestro+https://...)`) or in angle brackets (`<maestro+https://...>`); a bare hinted URL in markdown is only partly linked. Only `http` and `https` may follow a hint: `maestro+file://...` or `system+ssh://...` opens nothing.
+
 ## Agent Management
 
 Agents are the core of Maestro - each agent represents an AI coding assistant running in its own workspace.
@@ -730,19 +815,43 @@ Agents are the core of Maestro - each agent represents an AI coding assistant ru
 
 **Advanced configuration options:**
 
-- **New Session Message** - A hidden message prefixed to the first message whenever a new session (tab) is created. Use this for initial context, setup instructions, or persona definitions that should apply at the start of every conversation. Not visible in chat.
-- **Nudge Message** - A hidden message appended to every interactive user message sent to the agent. This is useful for persistent instructions or reminders that guide the agent's behavior across all conversations. **Note:** Nudge messages only apply to interactive AI messages - they are not included in Auto Run tasks.
+- **New Session Message** - A hidden message prefixed to the first message of every new provider session. Use this for initial context, setup instructions, or persona definitions that should apply at the start of every conversation. Not visible in chat. See [When Each Message Is Sent](#when-each-message-is-sent).
+- **Nudge Message** - A hidden message appended to every message you type to the agent. This is useful for persistent instructions or reminders that guide the agent's behavior across all conversations. It is not added to automation. See [When Each Message Is Sent](#when-each-message-is-sent).
 - **Custom Path** - Override the default executable path
 - **Custom Arguments** - Additional command-line arguments
 - **Environment Variables** - Custom environment variables for the agent process
 - **Model Selection** - Choose a specific model and (where supported) reasoning/effort level. This sets the default for new tabs in this agent. You can override the model or effort on any individual tab using the model/effort pill in the input bar - per-tab overrides only affect that tab and don't change the agent default or any other tab.
 - **Additional Directories** - Grant the agent access to directories beyond its working directory. Add a row per directory, then toggle **R** (read) and **W** (write) independently: a directory can be read-only reference material, a write-only drop box the agent should never read back, or both. A row with neither toggle lit is inert and is not sent to the agent. Each row also takes an optional **description** - a short hint about what the directory is for or how the agent should use it, which is passed to the agent alongside the access rule. Providers that support directory flags (for example Claude Code's `--add-dir`) also receive these grants natively; the read/write split and the descriptions are always carried in the agent's system prompt.
 
-  Each response in the transcript is stamped underneath with the model and effort it was actually sent with (alongside the Claude [token source](/provider-notes#token-source-max-plan-vs-api) pill, where that applies). The stamp is taken when you press Enter, so changing the model while a turn is streaming labels your next message, never the one already running. A pill is omitted when no override was set and the agent's own default applied.
+  Each response in the transcript is stamped underneath with the model and effort it was actually sent with (alongside the Claude [token source](/provider-notes#token-source) pill, where that applies). The stamp is taken when you press Enter, so changing the model while a turn is streaming labels your next message, never the one already running. A pill is omitted when no override was set and the agent's own default applied.
+
+#### When Each Message Is Sent
+
+The two messages follow different rules. The New Session Message goes with the first turn of a new provider session, no matter how that turn starts. The Nudge Message goes only with a message you type and send straight to the agent.
+
+| How the turn starts                            | New Session Message            | Nudge Message |
+| ---------------------------------------------- | ------------------------------ | ------------- |
+| Message typed to an idle agent                 | First turn of a new tab        | Every message |
+| Message typed while the agent is busy (queued) | First turn of a new tab        | No            |
+| Slash command                                  | First turn of a new tab        | No            |
+| `maestro-cli dispatch`, a snooze wake prompt   | First turn of a new tab        | No            |
+| `maestro-cli send`                             | Every send without `--session` | No            |
+| Auto Run, document tasks (desktop and CLI)     | Every task                     | No            |
+| Auto Run, goal-driven (desktop and CLI)        | Every iteration                | No            |
+| Cue pipeline                                   | Every run                      | No            |
+| Group Chat and `@mention` consults             | No                             | No            |
+
+Auto Run and Cue start a new provider session for each task, iteration, or run, so each one gets the New Session Message. A message that joins a conversation already in progress does not repeat it: the first turn of that conversation already carried it.
+
+If automation needs an instruction on every turn, put it in the New Session Message, in the Auto Run document, or in the Cue prompt. The Nudge Message will not reach it.
 
 ### Editing Agents
 
 Right-click any agent in the left panel and select **Edit Agent...** to modify its configuration. You can change the name, new session message, nudge message, custom paths, arguments, environment variables, additional directories, model, and effort. Model and effort set here apply as the default to new tabs; existing tabs that haven't been overridden also follow this default. To override on a single tab without changing the agent-wide default, use the model/effort pill in that tab's input bar.
+
+Changing the **Agent Provider** here is a plain switch by default. Tabs, transcripts, drafts, queued messages, and file previews are kept; each tab starts a new conversation on the new provider, and switching back resumes the old one. The provider's own settings (binary path, arguments, environment, model, effort) are parked per provider, so switching back restores them too.
+
+Where a converter exists (marked **Carry Over**), you can also check **Convert memory and session history** to carry conversations and project memory across. Conversion is opt-in: it opens a native translation preflight that lists any limits, and saving accepts them. Native resume and round-trip conversion remain unverified until live acceptance checks pass. A running turn defers the migration until its final native events are recorded. If the conversion is blocked or fails, a notice says so and saving switches providers without converting.
 
 ### Deleting Agents
 
@@ -788,6 +897,11 @@ Organize agents into groups for better project management:
 - Right-click an agent → **Move to Group** → Select target group
 - Or drag-and-drop agents between groups
 
+**Adding agents to a group:** right-click the group header.
+
+- **New Agent in Group...** creates an agent in that group.
+- **Import Agent...**, right below it, imports an agent bundle (from **Export Agent...**) into that group.
+
 **Collapsing/Expanding:**
 
 - Click the group header to collapse or expand
@@ -807,6 +921,8 @@ Right-click any agent for quick actions. The menu is headed by the name of the a
 
 - **Rename** - Change the agent's display name
 - **Edit Agent...** - Open configuration modal
+- **Duplicate...** - Create a new agent with the same settings
+- **Export Agent...** - Save the agent to a bundle file: its settings, playbooks, Cue subscriptions and Claude Code assets. Tick **Exact copy** to restore it later on this machine exactly as it was (see [Sharing Pipelines and Agents](./maestro-cue-bundles#exact-copies))
 - **Add/Remove Bookmark** - Toggle bookmark status
 - **Move to Group** - Organize into groups
 - **Move to Window** - Send the agent to another Maestro window
@@ -827,9 +943,12 @@ Drag the right edge of the sidebar to resize it. The width is persisted across s
 
 Click the sidebar toggle (`Opt+Cmd+Left` / `Alt+Ctrl+Left`) to collapse the sidebar to icon-only mode. In collapsed mode:
 
-- Agents show as icons with status indicators
-- Hover for agent name tooltip
+- Each agent shows as a two-letter badge tinted with its status color (`MR` for "Maestro RC", `Ma` for "Maestro"). Letters are picked across all your agents so no two share a label where the names allow
+- The active agent gets a ring and a stronger fill; a red corner dot marks unread messages
+- Hover for the full agent tooltip
 - Click to select an agent
+
+Prefer the plain status dots? Turn off **Settings → Display → Left Side Panel → Show agent initials when collapsed**.
 
 ## Tab Management
 
@@ -860,6 +979,7 @@ When you send your first message to a new tab, Maestro automatically generates a
 - Go to **Settings** (`Cmd+,` / `Ctrl+,`) → **General**
 - Toggle **Automatic Tab Naming** on or off
 - Default: Enabled
+- Toggle **Shorten long tab names** to cut a generated name longer than 40 characters at the last whole word (for example `Donation Appeal Pages Japanese...`). Default: off, which keeps the full name.
 
 **Wizard tabs:** a tab started with `/wizard` opens as `Wizard`, because it exists before anyone knows what you are planning. It renames itself to `wizard: <topic>` as soon as you say what you want (from the `/wizard <topic>` argument, or from your first message), and to the generated playbook folder once the wizard finishes. Rename it yourself at any point and Maestro leaves your name alone.
 
@@ -961,11 +1081,12 @@ Hover the chip to reveal its menu:
 | **Rename group**                 | Edit the name inline on the chip. `Enter` commits, `Esc` cancels. Submitting a blank name restores the automatic one rather than leaving the chip unlabeled. |
 | **Change icon**                  | Opens the emoji picker. The chosen emoji replaces the grid glyph on the chip.                                                                                |
 | **Break apart**                  | Returns every pane to the tab bar as an individual tab, in the chip's old position rather than at the end.                                                   |
+| **Close group**                  | Closes every tab in the group after a confirmation (`Enter` confirms). Focus moves to the chip beside it. Closed AI tabs can be reopened like any other.     |
 | **Move to First / Move to Last** | Jumps the chip to either end of the tab bar, the keyboard counterpart to dragging it.                                                                        |
 
 **Double-click the chip** to rename it without opening the menu.
 
-Renaming and breaking apart are also in Quick Actions (`Cmd+K` / `Ctrl+K`) as **Rename Tab Group** and **Break Apart Tab Group**, which act on the group currently showing. Break apart asks for confirmation first. Nothing is closed either way - the panes become ordinary tabs again and you can tile them whenever you like.
+Renaming, breaking apart, and closing are also in Quick Actions (`Cmd+K` / `Ctrl+K`) as **Rename Tab Group**, **Break Apart Tab Group**, and **Close Tab Group**, which act on the group currently showing. Break apart and close both ask for confirmation first. Breaking apart closes nothing - the panes become ordinary tabs again and you can tile them whenever you like.
 
 <Note>
 **Change icon** lives on the chip menu only, and the picker has no "no icon" entry - once a group has an emoji, the way back to the plain grid glyph is to break the group apart and tile it again.

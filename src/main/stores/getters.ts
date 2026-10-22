@@ -11,6 +11,7 @@ import type {
 	BootstrapSettings,
 	MaestroSettings,
 	SessionsData,
+	StoredSession,
 	GroupsData,
 	AgentConfigsData,
 	AgentCapabilitiesData,
@@ -22,6 +23,7 @@ import type { SshRemoteConfig } from '../../shared/types';
 
 import { isInitialized, getStoreInstances, getCachedPaths } from './instances';
 import { logger } from '../utils/logger';
+import { filterLiveAgents } from '../../shared/agentVisibility';
 
 // ============================================================================
 // Initialization Check
@@ -114,6 +116,19 @@ export function getProductionDataPath(): string {
 // ============================================================================
 // Convenience Functions
 // ============================================================================
+
+/**
+ * Every stored agent that is LIVE: the session list minus agents whose Encore
+ * Feature is switched off (a dormant Pianola). Use this for anything that
+ * lists, resolves, watches, or polls agents. Persistence, migrations, and
+ * pruning must keep reading `getSessionsStore()` directly so the dormant
+ * agent's data survives. See `src/shared/agentVisibility.ts`.
+ */
+export function getLiveSessions(): StoredSession[] {
+	const sessions = getSessionsStore().get('sessions', []);
+	if (!Array.isArray(sessions)) return [];
+	return filterLiveAgents(sessions, getSettingsStore().get('encoreFeatures'));
+}
 
 /** Logged at most once per process - see getSshRemoteById. */
 let warnedAboutMalformedSshRemotes = false;

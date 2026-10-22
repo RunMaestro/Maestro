@@ -40,6 +40,8 @@ import { buildMaestroUrl } from '../../../utils/buildMaestroUrl';
 import { useEditorTemplateAutocomplete } from '../../../hooks/input/useEditorTemplateAutocomplete';
 import { TemplateAutocompleteDropdown } from '../../TemplateAutocompleteDropdown';
 import { TEMPLATE_VARIABLES, substituteTemplateVariables } from '../../../utils/templateVariables';
+import { useAvailableTemplateVariables } from '../../../hooks/input/useAvailableTemplateVariables';
+import { isPromptAvailable } from '../../../../shared/promptDefinitions';
 import { useActiveSession } from '../../../hooks/session/useActiveSession';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { gitService } from '../../../services/git';
@@ -122,10 +124,14 @@ function matchingLine(content: string, query: string): string | undefined {
 const CATEGORY_INFO: Record<string, { label: string }> = {
 	autorun: { label: 'Auto Run' },
 	commands: { label: 'Commands' },
+	'computer-history': { label: 'Computer History' },
+	concerto: { label: 'Concerto' },
 	context: { label: 'Context' },
 	'group-chat': { label: 'Group Chat' },
 	includes: { label: 'Includes' },
 	'inline-wizard': { label: 'Inline Wizard' },
+	'maestro-run': { label: 'MaestroRun' },
+	pianola: { label: 'Pianola' },
 	[PLUGIN_PROMPT_CATEGORY]: { label: 'Plugin Prompts' },
 	system: { label: 'System' },
 	wizard: { label: 'Wizard' },
@@ -148,18 +154,28 @@ const CATEGORY_HELP: Record<string, string> = {
 	includes:
 		'Reusable blocks referenced from other prompts. Two directives consume them: {{INCLUDE:name}} fully inlines the content at assembly time (use for foundational rules every agent must have); {{REF:name}} expands to a one-line pointer that tells the agent to fetch it on demand via `maestro-cli prompts get <name>` (use for heavy reference material only some sessions need). Keeps shared content (history format, Auto Run spec, CLI reference, Cue model, file-access rules) in one place so every agent that needs it gets the same wording.',
 	system:
-		"System-level prompts - the Maestro system context injected into agents, tab naming, Director's Notes, and feedback.",
+		'System-level prompts - the Maestro system context injected into agents, tab naming, feedback, and cross-fleet synopsis generation.',
 	[PLUGIN_PROMPT_CATEGORY]:
 		'Read-only prompts contributed by installed plugins. Their content is owned by the plugin and cannot be edited here.',
+	pianola: 'The manager instructions appended to the system prompt of the pinned Pianola agent.',
+	'computer-history':
+		'The section appended to every local agent system prompt while Computer History is on.',
+	concerto: 'The routing section appended to every agent system prompt while Concerto is on.',
+	'maestro-run':
+		'The section appended to every local agent system prompt once the MaestroRun launcher is installed and granted.',
 };
 
-// Group template variables by prefix for the help panel
-function groupTemplateVariables(): { label: string; variables: typeof TEMPLATE_VARIABLES }[] {
-	const general = TEMPLATE_VARIABLES.filter(
+// Group template variables by prefix for the help panel. `variables` is the
+// list already narrowed to the Encore Features that are on, so a group whose
+// feature is off (Cue) comes out empty and is not listed.
+function groupTemplateVariables(
+	variables: typeof TEMPLATE_VARIABLES
+): { label: string; variables: typeof TEMPLATE_VARIABLES }[] {
+	const general = variables.filter(
 		(v) => !(v as { autoRunOnly?: boolean }).autoRunOnly && !(v as { cueOnly?: boolean }).cueOnly
 	);
-	const autoRun = TEMPLATE_VARIABLES.filter((v) => (v as { autoRunOnly?: boolean }).autoRunOnly);
-	const cue = TEMPLATE_VARIABLES.filter((v) => (v as { cueOnly?: boolean }).cueOnly);
+	const autoRun = variables.filter((v) => (v as { autoRunOnly?: boolean }).autoRunOnly);
+	const cue = variables.filter((v) => (v as { cueOnly?: boolean }).cueOnly);
 
 	const groups: { label: string; variables: typeof TEMPLATE_VARIABLES }[] = [];
 	if (general.length > 0) groups.push({ label: 'General', variables: general });
@@ -168,9 +184,21 @@ function groupTemplateVariables(): { label: string; variables: typeof TEMPLATE_V
 	return groups;
 }
 
-const TEMPLATE_VARIABLE_GROUPS = groupTemplateVariables();
-
-function PromptsHelpPanel({ theme, onClose }: { theme: Theme; onClose?: () => void }): JSX.Element {
+function PromptsHelpPanel({
+	theme,
+	onClose,
+	visibleCategories,
+}: {
+	theme: Theme;
+	onClose?: () => void;
+	/** Categories with at least one listed prompt; the rest are not described. */
+	visibleCategories: ReadonlySet<string>;
+}): JSX.Element {
+	const templateVariables = useAvailableTemplateVariables();
+	const templateVariableGroups = useMemo(
+		() => groupTemplateVariables(templateVariables),
+		[templateVariables]
+	);
 	return (
 		<div className="prompts-help-panel" style={{ color: theme.colors.textMain }}>
 			{onClose && (
@@ -211,6 +239,7 @@ function PromptsHelpPanel({ theme, onClose }: { theme: Theme; onClose?: () => vo
 					Prompt Categories
 				</h3>
 				{Object.entries(CATEGORY_INFO)
+					.filter(([key]) => visibleCategories.has(key))
 					.sort(([, a], [, b]) => a.label.localeCompare(b.label))
 					.map(([key, info]) => (
 						<div key={key} className="prompts-help-category-item">
@@ -282,7 +311,7 @@ function PromptsHelpPanel({ theme, onClose }: { theme: Theme; onClose?: () => vo
 					</code>{' '}
 					in the editor to trigger autocomplete.
 				</p>
-				{TEMPLATE_VARIABLE_GROUPS.map((group) => (
+				{templateVariableGroups.map((group) => (
 					<div key={group.label} className="prompts-help-var-group">
 						<div className="prompts-help-var-group-label" style={{ color: theme.colors.textMain }}>
 							{group.label}
@@ -409,9 +438,19 @@ export function MaestroPromptsTab({
 		() => new Set(pluginPromptItems.map((p) => p.id)),
 		[pluginPromptItems]
 	);
+	// The prompts of a switched-off Encore Feature are not listed: the feature
+	// leaves no trace until its tile turns it on.
+	const encoreFeatures = useSettingsStore((s) => s.encoreFeatures);
 	const allPrompts = useMemo(
-		() => [...prompts, ...pluginPromptItems],
-		[prompts, pluginPromptItems]
+		() => [
+			...prompts.filter((prompt) => isPromptAvailable(prompt.id, encoreFeatures)),
+			...pluginPromptItems,
+		],
+		[prompts, pluginPromptItems, encoreFeatures]
+	);
+	const visibleCategories = useMemo(
+		() => new Set(allPrompts.map((prompt) => prompt.category)),
+		[allPrompts]
 	);
 	const isSelectedPluginPrompt = selectedPrompt ? pluginPromptIds.has(selectedPrompt.id) : false;
 
@@ -1244,7 +1283,13 @@ export function MaestroPromptsTab({
 				collapsedCategories={collapsedCategories}
 				onToggleCategory={toggleCategory}
 				header={header}
-				helpPanel={<PromptsHelpPanel theme={theme} onClose={() => setShowHelp(false)} />}
+				helpPanel={
+					<PromptsHelpPanel
+						theme={theme}
+						onClose={() => setShowHelp(false)}
+						visibleCategories={visibleCategories}
+					/>
+				}
 				showHelp={showHelp}
 				isExpanded={isEditorExpanded}
 				emptyStateMessage={

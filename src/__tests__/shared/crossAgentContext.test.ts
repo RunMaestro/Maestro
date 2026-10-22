@@ -6,6 +6,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+	inferMentionTiming,
 	parseAgentMentions,
 	messageStartsWithAgentMention,
 	inferContextStrategy,
@@ -281,5 +282,54 @@ describe('deriveConsultSubject', () => {
 	it('returns empty string when only a mention with no prose', () => {
 		expect(deriveConsultSubject('@rc')).toBe('');
 		expect(deriveConsultSubject('   @rc   ')).toBe('');
+	});
+});
+
+// ============================================================================
+// inferMentionTiming
+// ============================================================================
+
+describe('inferMentionTiming', () => {
+	it.each([
+		// Hand-off: this turn's result is the mentioned agent's input.
+		[
+			"then let's kick it off with an ask about MNQ trading and feed whatever we learn over to @Kensho",
+			'handoff',
+		],
+		['review this and send the results to @Docs', 'handoff'],
+		['finish the refactor, then hand it off to @QA', 'handoff'],
+		['fix the bug and let @Docs know', 'handoff'],
+		['tell @Docs what you find', 'handoff'],
+		['keep @PM posted', 'handoff'],
+		// Consult first: the mentioned agent's answer is this turn's input.
+		['check with @Backend first and then write the migration', 'consult-first'],
+		['based on what @Backend says, update the schema', 'consult-first'],
+		['ask @Backend about the schema, then write the migration', 'consult-first'],
+		['once @Backend replies, summarize it', 'consult-first'],
+		['first ask @Backend, then decide', 'consult-first'],
+		// Parallel: no ordering cue.
+		['what does @Backend think about this too?', 'parallel'],
+		['work with @Backend on this', 'parallel'],
+		// A weak relay verb alone hands over WORK, not a result.
+		['send this to @Docs for a review', 'parallel'],
+		['tell @Docs to review the readme', 'parallel'],
+	])('%s -> %s', (message, expected) => {
+		expect(inferMentionTiming(message)).toBe(expected);
+	});
+
+	it('judges each mention by its own clause', () => {
+		// The "first" belongs to the second sentence's mention only... and still
+		// wins, because waiting costs less than running ahead of a needed answer.
+		expect(inferMentionTiming('Loop in @A. Check with @B first.')).toBe('consult-first');
+		// A relay verb in an EARLIER sentence does not leak into this mention.
+		expect(inferMentionTiming('Send the report to finance. What does @A think?')).toBe('parallel');
+	});
+
+	it('prefers consult-first over hand-off when mentions disagree', () => {
+		expect(inferMentionTiming('ask @A first, then send the result to @B')).toBe('consult-first');
+	});
+
+	it('is parallel when there is no agent mention', () => {
+		expect(inferMentionTiming('send the results to finance')).toBe('parallel');
 	});
 });

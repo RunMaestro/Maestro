@@ -36,6 +36,8 @@ const FOCUSING_TODAY: BackgroundCapableVerb[] = [
 	// absent, they flash/toast exactly as the click paths do.
 	'snooze',
 	'snooze-dismiss',
+	// Sending a steering note flashes "Steering note queued", as the click does.
+	'steer-auto-run',
 ];
 
 describe('no verb changes its default', () => {
@@ -94,6 +96,14 @@ describe('verbs that accept the flag and ignore it', () => {
 		for (const verb of ['snooze-list', 'snooze-wake', 'snooze-reschedule', 'snooze-history']) {
 			expect(isAlreadyQuietVerb(verb), verb).toBe(true);
 		}
+	});
+
+	it('recognises reading and cancelling steering notes as already quiet', () => {
+		for (const verb of ['steer-auto-run-list', 'steer-auto-run-cancel']) {
+			expect(isAlreadyQuietVerb(verb), verb).toBe(true);
+		}
+		// `send` flashes a confirmation, so the flag means something there.
+		expect(isAlreadyQuietVerb('steer-auto-run')).toBe(false);
 	});
 
 	it('does not claim a verb that really can move the view', () => {

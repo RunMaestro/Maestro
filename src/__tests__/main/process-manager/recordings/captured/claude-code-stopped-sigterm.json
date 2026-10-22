@@ -1,0 +1,32 @@
+{
+	"provider": "claude-code",
+	"providerVersion": "2.1.282",
+	"capturedOn": "2026-09-28",
+	"platform": "darwin",
+	"command": [
+		"claude",
+		"--print",
+		"--verbose",
+		"--output-format",
+		"stream-json",
+		"--dangerously-skip-permissions",
+		"--",
+		"<prompt>"
+	],
+	"prompt": "Use the Bash tool to run exactly this command: sleep 41. After it finishes, reply with the single word: done.",
+	"stop": "SIGTERM 1500ms after the tool_use event, while the Bash tool was running. This is what a CLI stop sends (linkAbortSignal in agent-spawner.ts).",
+	"chunks": [
+		"{\"type\":\"system\",\"subtype\":\"hook_started\",\"hook_id\":\"6c978c2a-5cc0-4cd1-bcbe-4116ecfdafd1\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"uuid\":\"4b7a234f-b6e5-4fad-bc21-0ab8c03576f2\",\"session_id\":\"827735bf-54d8-4768-8e3a-c14d4016af29\"}\n{\"type\":\"system\",\"subtype\":\"hook_started\",\"hook_id\":\"c7789a4a-54fe-4a67-bcb0-e3fbc5a5c255\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"uuid\":\"ede189f0-9761-430c-8b0a-af5014343e00\",\"session_id\":\"827735bf-54d8-4768-8e3a-c14d4016af29\"}\n",
+		"{\"type\":\"system\",\"subtype\":\"hook_response\",\"hook_id\":\"6c978c2a-5cc0-4cd1-bcbe-4116ecfdafd1\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"output\":\"\",\"stdout\":\"\",\"stderr\":\"\",\"exit_code\":0,\"outcome\":\"success\",\"uuid\":\"d5610a54-18a4-4eb4-998f-aa75a218cb58\",\"session_id\":\"827735bf-54d8-4768-8e3a-c14d4016af29\"}\n{\"type\":\"system\",\"subtype\":\"hook_response\",\"hook_id\":\"c7789a4a-54fe-4a67-bcb0-e3fbc5a5c255\",\"hook_name\":\"SessionStart:startup\",\"hook_event\":\"SessionStart\",\"output\":\"\",\"stdout\":\"\",\"stderr\":\"\",\"exit_code\":0,\"outcome\":\"success\",\"uuid\":\"91d6374b-c734-41fb-92e8-af761ceffd38\",\"session_id\":\"827735bf-54d8-4768-8e3a-c14d4016af29\"}\n",
+		"{\"type\":\"system\",\"subtype\":\"init\",\"cwd\":\"/project\",\"session_id\":\"827735bf-54d8-4768-8e3a-c14d4016af29\",\"tools\":[\"Task\",\"Artifact\",\"ArtifactComments\",\"ArtifactData\",\"Bash\",\"CronCreate\",\"CronDelete\",\"CronList\",\"DesignSync\",\"Edit\",\"EnterWorktree\",\"ExitWorktree\",\"ListAgents\",\"ListMcpResourcesTool\",\"Monitor\",\"NotebookEdit\",\"PushNotification\",\"Read\",\"ReadMcpResourceDirTool\",\"ReadMcpResourceTool\",\"RemoteTrigger\",\"ReportFindings\",\"ScheduleWakeup\",\"SendMessage\",\"Skill\",\"TaskStop\",\"ToolSearch\",\"WebFetch\",\"WebSearch\",\"Workflow\",\"Write\"],\"mcp_servers\":[],\"model\":\"claude-opus-5-5\",\"permissionMode\":\"bypassPermissions\",\"slash_commands\":[\"agents\",\"clear\",\"compact\",\"config\",\"context\",\"effort\",\"init\",\"mcp\",\"model\",\"rename\",\"usage\"],\"terminal_slash_commands\":[\"doctor\",\"color\",\"focus\",\"reload-plugins\"],\"apiKeySource\":\"none\",\"claude_code_version\":\"2.1.282\",\"output_style\":\"default\",\"agents\":[\"claude\",\"claude-code-guide\",\"Explore\",\"general-purpose\",\"Plan\",\"statusline-setup\"],\"skills\":[],\"plugins\":[],\"capabilities\":[\"interrupt_receipt_v1\",\"interrupt_cancel_queued_v1\",\"msg_lifecycle_v1\",\"mcp_read_resource_v1\",\"mcp_tool_ui_meta_v1\"],\"analytics_disabled\":false,\"product_feedback_disabled\":false,\"uuid\":\"570b2221-bb12-4153-b480-ed5bcf59a751\",\"fast_mode_state\":\"off\",\"fast_mode_disabled_reason\":\"sdk_opt_in_required\",\"per_turn_effort_active\":true,\"view_mode\":\"default\"}\n",
+		"{\"type\":\"assistant\",\"message\":{\"model\":\"claude-opus-5-5\",\"id\":\"msg_011CfWQyNCBhCfe7hQQiV8Js\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"toolu_01GSJMG3DdjNmc8zuxE8L8bt\",\"name\":\"Bash\",\"input\":{\"command\":\"sleep 41\",\"description\":\"Wait 41 seconds\",\"timeout\":60000},\"caller\":{\"type\":\"direct\"}}],\"container\":null,\"stop_reason\":null,\"stop_sequence\":null,\"stop_details\":null,\"usage\":{\"input_tokens\":2,\"cache_creation_input_tokens\":10326,\"cache_read_input_tokens\":23060,\"cache_creation\":{\"ephemeral_5m_input_tokens\":0,\"ephemeral_1h_input_tokens\":10326},\"output_tokens\":16,\"service_tier\":\"standard\",\"inference_geo\":\"not_available\"},\"input_transformations\":[],\"diagnostics\":null,\"context_management\":null},\"parent_tool_use_id\":null,\"session_id\":\"827735bf-54d8-4768-8e3a-c14d4016af29\",\"uuid\":\"092bc369-f87c-47cc-9ab8-48781afcbbb0\",\"timestamp\":\"2026-09-28T19:47:02.113Z\",\"request_id\":\"req_011CfWQyMosRuU3FFJ4aUaTL\",\"wire_tool_inputs\":{\"toolu_01GSJMG3DdjNmc8zuxE8L8bt\":{\"command\":\"sleep 41\",\"description\":\"Wait 41 seconds\",\"timeout\":60000}}}\n",
+		"{\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"allowed\",\"resetsAt\":1790632800,\"rateLimitType\":\"five_hour\",\"overageStatus\":\"rejected\",\"overageDisabledReason\":\"out_of_credits\",\"isUsingOverage\":false,\"unifiedWindows\":{\"five_hour\":{\"utilization\":0.42,\"resetsAt\":1790632800},\"seven_day\":{\"utilization\":0.09,\"resetsAt\":1791082800}}},\"uuid\":\"2d8dad23-6163-4de4-8864-04ce538a2c76\",\"session_id\":\"827735bf-54d8-4768-8e3a-c14d4016af29\"}\n",
+		"{\"type\":\"system\",\"subtype\":\"task_summary\",\"detail\":\"Waiting 41 seconds\",\"uuid\":\"acda6de9-f703-4c56-a9a6-ef8458d17ab1\",\"session_id\":\"827735bf-54d8-4768-8e3a-c14d4016af29\"}\n",
+		"{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"content\":\"Exit code 137\",\"is_error\":true,\"tool_use_id\":\"toolu_01GSJMG3DdjNmc8zuxE8L8bt\"}]},\"parent_tool_use_id\":null,\"session_id\":\"827735bf-54d8-4768-8e3a-c14d4016af29\",\"uuid\":\"4f2728ad-f4c7-4416-bc35-cc4ef6093d22\",\"timestamp\":\"2026-09-28T19:47:03.665Z\",\"tool_use_result\":\"Error: Exit code 137\"}\n"
+	],
+	"stderr": "",
+	"close": {
+		"code": 143,
+		"signal": null
+	}
+}

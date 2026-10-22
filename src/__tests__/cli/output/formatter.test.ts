@@ -26,6 +26,8 @@ import {
 	formatWarning,
 	formatSessions,
 	formatSshRemotes,
+	formatDirectorNotesHistory,
+	formatTextTable,
 	type GroupDisplay,
 	type AgentDisplay,
 	type PlaybookDisplay,
@@ -56,6 +58,38 @@ describe('formatter', () => {
 	// ============================================================================
 	// Color and Style Helper Tests
 	// ============================================================================
+
+	it('labels Relay History entries with their host origin', () => {
+		const result = formatDirectorNotesHistory(
+			{
+				stats: {
+					agentCount: 1,
+					autoCount: 0,
+					userCount: 0,
+					cueCount: 0,
+					agentEntryCount: 0,
+					relayCount: 1,
+					totalCount: 1,
+					lookbackDays: 1,
+				},
+				total: 1,
+				showing: 1,
+				entries: [
+					{
+						id: 'relay-turn',
+						type: 'RELAY',
+						timestamp: 1,
+						summary: 'Relay answer',
+						sourceSessionId: 'agent-a',
+					},
+				],
+			},
+			1
+		);
+		expect(result).toContain('[RELAY]');
+		expect(result).toContain('1 relay');
+		expect(result).not.toContain('[USER]');
+	});
 
 	describe('Color and style handling', () => {
 		it('should include ANSI codes when stdout is TTY', () => {
@@ -109,6 +143,16 @@ describe('formatter', () => {
 			expect(result).toContain('🚀');
 			expect(result).toContain('My Project');
 			expect(result).toContain('group-123');
+		});
+
+		it('should mark a group parked out of the Left Bar', () => {
+			const result = formatGroups([
+				{ id: 'group-1', name: 'Shown' },
+				{ id: 'group-2', name: 'Parked', hidden: true },
+			]);
+
+			expect(result).toMatch(/Parked.*\(hidden\)/);
+			expect(result).not.toMatch(/Shown.*\(hidden\)/);
 		});
 
 		it('should format multiple groups', () => {
@@ -976,6 +1020,19 @@ describe('formatter', () => {
 			expect(result).toContain('My Group');
 		});
 
+		it('should show the Codex transport for a Codex agent only', () => {
+			const codex = formatAgentDetail({
+				...baseAgent,
+				toolType: 'codex',
+				codexTransport: 'app-server',
+			});
+			expect(codex).toContain('Codex transport:');
+			expect(codex).toContain('app-server');
+
+			const claude = formatAgentDetail({ ...baseAgent, codexTransport: 'app-server' });
+			expect(claude).not.toContain('Codex transport:');
+		});
+
 		it('should show auto run folder when provided', () => {
 			const agent: AgentDetailDisplay = {
 				...baseAgent,
@@ -1409,6 +1466,46 @@ describe('formatter', () => {
 		it('should show remote ID', () => {
 			const result = formatSshRemotes([baseRemote]);
 			expect(result).toContain('remote-abc-123');
+		});
+	});
+
+	describe('formatTextTable', () => {
+		const headers = ['NAME', 'ROLE', 'NOTE'];
+		const rows = [
+			['Rami Example', 'Engineer', 'first'],
+			['Dana', 'Designer and long-time collaborator', 'second'],
+		];
+
+		it('pads each column to its widest cell and leaves the last column unpadded', () => {
+			expect(formatTextTable(headers, rows)).toBe(
+				[
+					'NAME          ROLE                                 NOTE',
+					'Rami Example  Engineer                             first',
+					'Dana          Designer and long-time collaborator  second',
+				].join('\n')
+			);
+		});
+
+		it('shrinks the widest columns with an ellipsis to fit maxWidth', () => {
+			const table = formatTextTable(headers, rows, { maxWidth: 40 });
+			const lines = table.split('\n');
+			for (const line of lines) expect(line.length).toBeLessThanOrEqual(40);
+			expect(lines[2]).toContain('…');
+			expect(lines[1].startsWith('Rami Example')).toBe(true);
+		});
+
+		it('leaves a table that fits alone, and never shrinks a column below the minimum', () => {
+			expect(formatTextTable(headers, rows, { maxWidth: 200 })).toBe(
+				formatTextTable(headers, rows)
+			);
+			const narrow = formatTextTable(['A', 'B'], [['abcdefghij', 'klmnopqrst']], { maxWidth: 4 });
+			expect(narrow.split('\n')[1]).toBe('abcd…  klmn…');
+		});
+
+		it('keeps a row on one line and fills missing cells', () => {
+			expect(formatTextTable(['A', 'B'], [['one\ntwo', 'x\ty'], ['z']])).toBe(
+				['A        B', 'one two  x y', 'z'].join('\n')
+			);
 		});
 	});
 });

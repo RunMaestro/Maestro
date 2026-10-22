@@ -12,9 +12,30 @@
  *      onActivityUpdate listener.
  */
 
+/**
+ * Why a queued event was dropped without running. `stale`, `malformed`,
+ * `session-missing` and `subscription-missing` come from the restore at start
+ * (and `stale` from the runtime drain too). A cue.yaml reload drops with
+ * `subscription-missing` (the subscription was removed, renamed or switched
+ * off), `superseded` (a heartbeat whose timing changed fires on load instead
+ * of running its waiting tick) or `session-missing` (the agent is gone).
+ */
+export type CueQueueDropReason =
+	| 'stale'
+	| 'malformed'
+	| 'session-missing'
+	| 'subscription-missing'
+	| 'superseded';
+
 export type CueLogPayload =
 	| { type: 'engineStarted' }
 	| { type: 'engineStopped' }
+	| {
+			/** One phase of a graceful drain (`CueEngine.drain`); counts are in the message. */
+			type: 'engineDrain';
+			drainPhase: 'disarmed' | 'waiting' | 'stopping' | 'persisted' | 'finished' | 'forced';
+			count?: number;
+	  }
 	| { type: 'configReloaded'; sessionId: string }
 	| { type: 'configRemoved'; sessionId: string }
 	| { type: 'triggerHealthWarning'; sessionId: string; message: string }
@@ -23,6 +44,8 @@ export type CueLogPayload =
 			runId: string;
 			sessionId: string;
 			subscriptionName: string;
+			/** The pipeline the subscription belongs to (its name, as `cue_events.pipeline_id` stores it). */
+			pipelineId?: string;
 	  }
 	| {
 			type: 'runFinished';
@@ -30,12 +53,15 @@ export type CueLogPayload =
 			sessionId: string;
 			subscriptionName: string;
 			status: string;
+			pipelineId?: string;
 	  }
 	| {
 			type: 'runStopped';
 			runId: string;
 			sessionId: string;
 			subscriptionName: string;
+			/** The pipeline the subscription belongs to (its name, as `cue_events.pipeline_id` stores it). */
+			pipelineId?: string;
 	  }
 	| {
 			type: 'queueOverflow';
@@ -50,7 +76,7 @@ export type CueLogPayload =
 			/** Omitted for aggregate restore-path drops that span multiple sessions. */
 			sessionId?: string;
 			count: number;
-			reason: 'stale' | 'malformed' | 'session-missing';
+			reason: CueQueueDropReason;
 	  }
 	| {
 			type: 'fanInTimeout';

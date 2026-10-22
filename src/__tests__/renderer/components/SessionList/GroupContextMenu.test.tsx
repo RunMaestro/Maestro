@@ -36,6 +36,32 @@ describe('GroupContextMenu', () => {
 		expect(screen.getByText('Rename Group...')).toBeTruthy();
 	});
 
+	it('lists New Agent in Group first, above Rename', () => {
+		setup();
+		const labels = screen.getAllByRole('button').map((b) => b.textContent?.trim());
+		expect(labels[0]).toBe('New Agent in Group...');
+		expect(labels[1]).toBe('Rename Group...');
+	});
+
+	it('lists Import Agent right below New Agent in Group, and fires it', () => {
+		const onImportAgent = vi.fn();
+		const props = setup({ onImportAgent });
+		const labels = screen.getAllByRole('button').map((b) => b.textContent?.trim());
+		expect(labels.slice(0, 3)).toEqual([
+			'New Agent in Group...',
+			'Import Agent...',
+			'Rename Group...',
+		]);
+		fireEvent.click(screen.getByText('Import Agent...'));
+		expect(onImportAgent).toHaveBeenCalledTimes(1);
+		expect(props.onDismiss).toHaveBeenCalled();
+	});
+
+	it('omits Import Agent when no handler is given', () => {
+		setup();
+		expect(screen.queryByText('Import Agent...')).toBeNull();
+	});
+
 	it('honors deleteLabel override and fires onDelete', () => {
 		const props = setup({ memberCount: 3, deleteLabel: 'Delete Group' });
 		fireEvent.click(screen.getByText('Delete Group'));
@@ -87,5 +113,51 @@ describe('GroupContextMenu', () => {
 		expect(screen.queryByText('Move into...')).not.toBeInTheDocument();
 		expect(screen.queryByText('Move to top level')).not.toBeInTheDocument();
 		expect(screen.queryByText('New group inside...')).not.toBeInTheDocument();
+	});
+
+	describe('Move Group to Window', () => {
+		const targets = [
+			{ windowId: 'p', isMain: true, windowNumber: 1, label: 'Main Window', isCurrentOwner: true },
+			{ windowId: 'w2', isMain: false, windowNumber: 2, label: 'Window 2', isCurrentOwner: false },
+		];
+
+		it('is hidden in a single-window app', () => {
+			setup({ onMoveToNewWindow: vi.fn(), onMoveToWindow: vi.fn(), windowTargets: [] });
+			expect(screen.queryByText('Move Group to Window...')).not.toBeInTheDocument();
+		});
+
+		it('shows even when this window holds none of the group (memberCount 0)', () => {
+			setup({
+				memberCount: 0,
+				windowTargets: targets,
+				onMoveToNewWindow: vi.fn(),
+				onMoveToWindow: vi.fn(),
+			});
+			expect(screen.getByText('Move Group to Window...')).toBeInTheDocument();
+		});
+
+		it('moves to a new or existing window and disables the window holding all of it', () => {
+			const props = setup({
+				windowTargets: targets,
+				onMoveToNewWindow: vi.fn(),
+				onMoveToWindow: vi.fn(),
+			});
+			fireEvent.click(screen.getByText('Move Group to Window...'));
+			expect(screen.getByText('Main Window').closest('button')).toBeDisabled();
+			fireEvent.click(screen.getByText('Window 2'));
+			expect(props.onMoveToWindow).toHaveBeenCalledWith('w2');
+			expect(props.onDismiss).toHaveBeenCalled();
+		});
+
+		it('offers New Window', () => {
+			const props = setup({
+				windowTargets: targets,
+				onMoveToNewWindow: vi.fn(),
+				onMoveToWindow: vi.fn(),
+			});
+			fireEvent.click(screen.getByText('Move Group to Window...'));
+			fireEvent.click(screen.getByText('New Window'));
+			expect(props.onMoveToNewWindow).toHaveBeenCalledTimes(1);
+		});
 	});
 });

@@ -10,6 +10,8 @@
 import type { ToolType } from '../types';
 import { stripAnsiCodes } from '../../shared/stringUtils';
 import type { FeedbackAccount } from '../../shared/feedbackAccounts';
+import { redactSecrets } from '../../shared/redactSecrets';
+import { MAX_FEEDBACK_FIELD_LENGTH } from '../../shared/feedback';
 
 // ============================================================================
 // Types
@@ -269,16 +271,19 @@ function normalizeResponse(raw: any): FeedbackParsedResponse {
 	};
 }
 
+/**
+ * Failure output is shown to the user and may be filed in a GitHub issue, so
+ * scrub it through the canonical redactor. The labels keep this surface's
+ * historical wording (`OPENAI_API_KEY=[REDACTED]`, `[REDACTED_GITHUB_TOKEN]`).
+ */
 function redactProviderSecrets(output: string): string {
-	return output
-		.replace(
-			/\b((?:[A-Z][A-Z0-9_]*_)?(?:API_KEY|TOKEN|ACCESS_TOKEN|SECRET)\b\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s\r\n]+)/gi,
-			'$1[REDACTED]'
-		)
-		.replace(/\b(Authorization\s*:\s*Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, '$1[REDACTED]')
-		.replace(/\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{20,}\b/g, '[REDACTED_GITHUB_TOKEN]')
-		.replace(/\bgithub_pat_[A-Za-z0-9_]{20,}\b/g, '[REDACTED_GITHUB_TOKEN]')
-		.replace(/\bsk-[A-Za-z0-9][A-Za-z0-9_-]{8,}\b/g, '[REDACTED_API_KEY]');
+	return redactSecrets(output, {
+		labels: {
+			secret: '[REDACTED]',
+			bearer: '[REDACTED]',
+			github_token: '[REDACTED_GITHUB_TOKEN]',
+		},
+	}).text;
 }
 
 function summarizeProcessFailure(output: string): string {
@@ -746,3 +751,75 @@ export function getConfidenceColor(confidence: number): string {
 }
 
 export { FEEDBACK_CONFIDENCE_THRESHOLD };
+
+// ============================================================================
+// What gets filed
+// ============================================================================
+
+/** Title length when the summary has to be derived from the user's words. */
+const DERIVED_SUMMARY_LENGTH = 72;
+
+/** The fields an issue is filed with, plus whether the interview finished. */
+export interface FeedbackSubmission {
+	category: FeedbackCategory;
+	summary: string;
+	structured: FeedbackStructured;
+	/** True when filed before the agent reported it had enough. */
+	early: boolean;
+}
+
+function clip(text: string, max: number): string {
+	return text.length > max ? `${text.slice(0, max - 3).trimEnd()}...` : text;
+}
+
+/**
+ * Resolve what to file right now. Submitting is never gated on the agent's
+ * understanding: the user can file at any point, and whatever the interview
+ * has not filled yet is backed by the user's own words, so nothing they typed
+ * is lost and the required fields are never empty. Returns null only when the
+ * user has not said anything yet - there is nothing to file.
+ */
+export function resolveFeedbackSubmission(
+	lastResponse: FeedbackParsedResponse | null,
+	messages: FeedbackMessage[],
+	ready: boolean,
+	confidence: number
+): FeedbackSubmission | null {
+	const userWords = messages
+		.filter((m) => m.role === 'user')
+		.map((m) => m.content.trim())
+		.filter(Boolean);
+	if (userWords.length === 0) return null;
+
+	const structured = lastResponse?.structured;
+	const early = !ready || !lastResponse;
+	const firstLine = userWords[0].split('\n')[0].trim();
+	const transcript = userWords.join('\n\n');
+	const quoted = transcript
+		.split('\n')
+		.map((line) => `> ${line}`)
+		.join('\n');
+
+	const actual = structured?.actualBehavior?.trim() || transcript;
+	const contextParts = [structured?.additionalContext?.trim() || ''];
+	if (early) {
+		contextParts.push(
+			`Submitted before the interview finished (understanding ${confidence}%).` +
+				(actual === transcript ? '' : ` The reporter's own words:\n\n${quoted}`)
+		);
+	}
+
+	return {
+		category: lastResponse?.category ?? 'general_feedback',
+		summary: lastResponse?.summary?.trim() || clip(firstLine, DERIVED_SUMMARY_LENGTH),
+		structured: {
+			expectedBehavior:
+				structured?.expectedBehavior?.trim() ||
+				'Not provided (submitted before the interview finished).',
+			actualBehavior: clip(actual, MAX_FEEDBACK_FIELD_LENGTH),
+			reproductionSteps: structured?.reproductionSteps?.trim() || '',
+			additionalContext: clip(contextParts.filter(Boolean).join('\n\n'), MAX_FEEDBACK_FIELD_LENGTH),
+		},
+		early,
+	};
+}

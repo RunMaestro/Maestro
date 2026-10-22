@@ -19,6 +19,7 @@
 import type { Theme } from '../../../constants/themes';
 import { captureException } from '../../../utils/sentry';
 import { normalizeMermaidSource } from '../../../../shared/mermaidSource';
+import { repairDiagramLabelContrast } from '../../../utils/diagramLabelContrast';
 
 type MermaidModule = typeof import('mermaid');
 
@@ -91,6 +92,9 @@ export function createMermaidRenderer(options: MermaidRendererOptions): MermaidR
 			container.className = 'markdown-fast-mermaid';
 			container.innerHTML = svg;
 			wrapper.replaceWith(container);
+			// After the swap: author fills only resolve once the SVG is attached.
+			const rendered = container.querySelector('svg');
+			if (rendered) repairDiagramLabelContrast(rendered);
 		} catch (err) {
 			// Bad syntax in the diagram source is the common case and noisy by
 			// design (the user pastes broken syntax, sees no diagram, edits, etc.).

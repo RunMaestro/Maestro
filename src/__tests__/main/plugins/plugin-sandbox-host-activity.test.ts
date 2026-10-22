@@ -79,6 +79,220 @@ describe('PluginSandboxHost per-plugin observability', () => {
 
 	afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
+	it('returns stable media codes and suppresses raw host error details', async () => {
+		const mediaHost = new PluginSandboxHost({
+			broker: allowAll,
+			handlers: {
+				'media.download': async () => {
+					throw new Error('TOKEN signed-url private/audio');
+				},
+			},
+		});
+		mediaHost.start('media', dir, 'entry.js');
+		await (mediaHost as unknown as HostInternals).handleChildMessage('media', proc, {
+			id: 42,
+			method: 'media.download',
+			params: { jobId: 'opaque', url: 'signed-url' },
+		});
+		expect(proc.postMessage).toHaveBeenLastCalledWith({
+			id: 42,
+			ok: false,
+			error: 'MediaProcessFailed',
+			errorCode: 'MediaProcessFailed',
+		});
+	});
+
+	it('reserves only two cancellation slots independently of ordinary RPC saturation', async () => {
+		const gate = Promise.withResolvers<void>();
+		const close = vi.fn(() => gate.promise);
+		const bounded = new PluginSandboxHost({ broker: allowAll, handlers: { 'media.close': close } });
+		bounded.start('bounded', dir, 'entry.js');
+		const running = (
+			bounded as unknown as { running: Map<string, { inFlight: number; windowCount: number }> }
+		).running.get('bounded')!;
+		running.inFlight = 32;
+		running.windowCount = 201;
+		const dispatch = bounded as unknown as HostInternals;
+		const first = dispatch.handleChildMessage('bounded', proc, {
+			id: 1,
+			method: 'media.close',
+			params: { jobId: 'a' },
+		});
+		const second = dispatch.handleChildMessage('bounded', proc, {
+			id: 2,
+			method: 'media.close',
+			params: { jobId: 'b' },
+		});
+		await dispatch.handleChildMessage('bounded', proc, {
+			id: 3,
+			method: 'media.close',
+			params: { jobId: 'c' },
+		});
+		expect(close).toHaveBeenCalledTimes(2);
+		expect(proc.postMessage).toHaveBeenLastCalledWith({
+			id: 3,
+			ok: false,
+			error: 'MediaBusy',
+			errorCode: 'MediaBusy',
+		});
+		gate.resolve();
+		await Promise.all([first, second]);
+		expect(running.inFlight).toBe(32);
+	});
+
+	it('keeps both API release budgets available when one call and its parent job drain together', async () => {
+		const gate = Promise.withResolvers<void>();
+		const release = vi.fn(() => gate.promise);
+		const bounded = new PluginSandboxHost({
+			broker: allowAll,
+			handlers: { 'media.close': release, 'services.cancel': release },
+		});
+		bounded.start('bounded', dir, 'entry.js');
+		const dispatch = bounded as unknown as HostInternals;
+		const requests = [
+			{ method: 'services.cancel', params: { callId: 'a' } },
+			{ method: 'media.close', params: { jobId: 'parent-a' } },
+			{ method: 'services.cancel', params: { callId: 'b' } },
+			{ method: 'media.close', params: { jobId: 'parent-b' } },
+		];
+		const pending = requests.map((request, id) =>
+			dispatch.handleChildMessage('bounded', proc, { id, ...request })
+		);
+		expect(release).toHaveBeenCalledTimes(4);
+		await dispatch.handleChildMessage('bounded', proc, {
+			id: 5,
+			method: 'services.cancel',
+			params: { callId: 'c' },
+		});
+		expect(proc.postMessage).toHaveBeenLastCalledWith({
+			id: 5,
+			ok: false,
+			error: 'ServiceBusy',
+			errorCode: 'ServiceBusy',
+		});
+		gate.resolve();
+		await Promise.all(pending);
+	});
+
+	it('bounds sequential unknown close requests while preserving owned-job cancellation', async () => {
+		const close = Object.assign(
+			vi.fn(async () => undefined),
+			{
+				ownsReleaseResource: (_pluginId: string, params: unknown) =>
+					(params as { jobId?: string }).jobId === 'owned',
+			}
+		);
+		const bounded = new PluginSandboxHost({ broker: allowAll, handlers: { 'media.close': close } });
+		bounded.start('bounded', dir, 'entry.js');
+		const dispatch = bounded as unknown as HostInternals;
+		const now = vi.spyOn(Date, 'now').mockReturnValue(Date.now());
+		try {
+			for (let id = 1; id <= 201; id++) {
+				await dispatch.handleChildMessage('bounded', proc, {
+					id,
+					method: 'media.close',
+					params: { jobId: 'missing' },
+				});
+			}
+			expect(close).toHaveBeenCalledTimes(200);
+			expect(proc.postMessage).toHaveBeenLastCalledWith({
+				id: 201,
+				ok: false,
+				error: 'MediaBusy',
+				errorCode: 'MediaBusy',
+			});
+			await dispatch.handleChildMessage('bounded', proc, {
+				id: 202,
+				method: 'media.close',
+				params: { jobId: 'owned' },
+			});
+			expect(close).toHaveBeenCalledTimes(201);
+			now.mockReturnValue(Date.now() + 1001);
+			await dispatch.handleChildMessage('bounded', proc, {
+				id: 203,
+				method: 'media.close',
+				params: { jobId: 'missing' },
+			});
+			expect(close).toHaveBeenCalledTimes(202);
+		} finally {
+			now.mockRestore();
+		}
+	});
+
+	it.each(['media.close', 'services.cancel'] as const)(
+		'rejects duplicate %s waiters without blocking release of the other owned resource',
+		async (method) => {
+			const resourceKey = method === 'media.close' ? 'jobId' : 'callId';
+			const busyCode = method === 'media.close' ? 'MediaBusy' : 'ServiceBusy';
+			const a = Promise.withResolvers<void>();
+			const b = Promise.withResolvers<void>();
+			const close = Object.assign(
+				vi.fn((_pluginId: string, params: unknown) =>
+					(params as Record<string, string>)[resourceKey] === 'a' ? a.promise : b.promise
+				),
+				{ ownsReleaseResource: () => true }
+			);
+			const bounded = new PluginSandboxHost({ broker: allowAll, handlers: { [method]: close } });
+			bounded.start('bounded', dir, 'entry.js');
+			const dispatch = bounded as unknown as HostInternals;
+			const running = (
+				bounded as unknown as {
+					running: Map<
+						string,
+						{ inFlight: number; windowCount: number; mediaClosingJobs: Set<string> }
+					>;
+				}
+			).running.get('bounded')!;
+			running.inFlight = 32;
+			running.windowCount = 201;
+			const now = vi.spyOn(Date, 'now').mockReturnValue(Date.now());
+			try {
+				const first = dispatch.handleChildMessage('bounded', proc, {
+					id: 1,
+					method,
+					params: { [resourceKey]: 'a' },
+				});
+				for (let id = 2; id <= 202; id++) {
+					await dispatch.handleChildMessage('bounded', proc, {
+						id,
+						method,
+						params: { [resourceKey]: 'a' },
+					});
+					expect(proc.postMessage).toHaveBeenLastCalledWith({
+						id,
+						ok: false,
+						error: busyCode,
+						errorCode: busyCode,
+					});
+				}
+				expect(close).toHaveBeenCalledTimes(1);
+				expect(running.inFlight).toBe(33);
+				// Even after a duplicate flood exhausts the close-rate window, job B can abort.
+				const second = dispatch.handleChildMessage('bounded', proc, {
+					id: 203,
+					method,
+					params: { [resourceKey]: 'b' },
+				});
+				expect(close).toHaveBeenCalledTimes(2);
+				expect(running.inFlight).toBe(34);
+				a.resolve();
+				b.reject(new Error('MediaProcessFailed'));
+				await Promise.all([first, second]);
+				expect(running.inFlight).toBe(32);
+				expect(running.mediaClosingJobs.size).toBe(0);
+				// A failed cleanup does not leave a stale duplicate marker blocking a retry.
+				await dispatch.handleChildMessage('bounded', proc, {
+					id: 204,
+					method,
+					params: { [resourceKey]: 'b' },
+				});
+				expect(close).toHaveBeenCalledTimes(3);
+			} finally {
+				now.mockRestore();
+			}
+		}
+	);
+
 	it('lists a started plugin with zeroed counters', () => {
 		const map = host.getActivity();
 		expect(Object.keys(map)).toEqual(['p']);

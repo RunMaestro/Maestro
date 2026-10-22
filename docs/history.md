@@ -12,12 +12,12 @@ The History panel provides a timestamped log of all agent activity - both automa
 
 History entries are categorized by source:
 
-| Type      | Label    | Description                                                    |
-| --------- | -------- | -------------------------------------------------------------- |
-| **AUTO**  | 🤖 AUTO  | Entries created by Auto Run task completions                   |
-| **USER**  | 👤 USER  | Entries created manually by the user                           |
-| **AGENT** | 💬 AGENT | Questions another agent sent this one by `@mention`ing it      |
-| **CUE**   | ⚡ CUE   | Turns triggered by a Cue subscription (when the feature is on) |
+| Type      | Label    | Description                                                        |
+| --------- | -------- | ------------------------------------------------------------------ |
+| **AUTO**  | 🤖 AUTO  | Entries created by Auto Run task completions                       |
+| **USER**  | 👤 USER  | Turns you asked for, in the app or with `maestro-cli send`         |
+| **AGENT** | 💬 AGENT | Turns another agent asked for, by `@mention` or `maestro-cli send` |
+| **CUE**   | ⚡ CUE   | Turns Maestro Cue started (when the feature is on)                 |
 
 ### Auto Entries
 
@@ -30,7 +30,7 @@ Auto entries are created automatically when Auto Run completes a task. Each entr
 
 ### User Entries
 
-User entries are created in three ways:
+User entries are created in four ways:
 
 1. **History Toggle** - Enable the **History** pill in the AI input box. Each completed prompt-response cycle that did real work creates a user history entry. Turns that only exchanged text (a plain question answered with prose, no tool use) are skipped, so asking a quick question never clutters your history.
 
@@ -38,11 +38,17 @@ User entries are created in three ways:
 
 3. **`/clear` Command** - Running `/clear` automatically creates a history entry before clearing the conversation, preserving a synopsis of your work.
 
+4. **`maestro-cli send`** - Sending a message from your own shell or a script records the turn, whether or not the app is running. Pass `--no-history` to skip it. See [Sending Messages to Agents](/cli#sending-messages-to-agents).
+
 **Toggle the default History behavior** in Settings → General → "Enable 'History' by default for new tabs".
 
 ### Agent Entries
 
-Agent entries are created when another agent consults this one by `@mention`ing it. They are ordinary turns, not automation - the only difference from a user entry is who asked. Each entry names the calling agent and the subject of the question, carries a pass/fail indicator, and links to the conversation the answer was written in.
+Agent entries are created when another agent consults this one by `@mention`ing it, or runs `maestro-cli send` against it from its own shell. They are ordinary turns, not automation - the only difference from a user entry is who asked. Each entry names the calling agent, carries a pass/fail indicator, and links to the conversation the answer was written in. A consult's summary reads `Consulted by <agent>: <subject>`; a send's reads `Sent by <agent>:` followed by a synopsis of the turn.
+
+### Cue Entries
+
+Cue entries are created when a [Maestro Cue](/maestro-cue) subscription runs a turn on this agent. A `maestro-cli send` that Cue started is recorded the same way, on the agent that received the message: a `command` action that runs it, or an agent Cue woke that runs it from its shell. Each entry carries a pass/fail indicator.
 
 ### Synopsis Debounce
 
@@ -58,7 +64,7 @@ Use the filter buttons at the top of the History panel to show or hide each entr
 
 - Click **AUTO** to toggle Auto Run entries
 - Click **USER** to toggle user-created entries
-- Click **AGENT** to toggle questions proxied in from other agents
+- Click **AGENT** to toggle turns other agents asked for
 - Click **CUE** to toggle Cue-triggered entries (shown only when Maestro Cue is enabled)
 - Any combination can be active simultaneously
 
@@ -193,7 +199,7 @@ History is stored per-session in JSON files within the `history/` subdirectory o
 - **Windows**: `%APPDATA%/maestro/history/<sessionId>.json`
 - **Linux**: `~/.config/maestro/history/<sessionId>.json`
 
-The maximum number of entries per session is controlled by the **Maximum Log Buffer** setting in Settings → Display (default: 5,000). History files can be passed to AI agents as context for understanding past work patterns.
+The maximum number of entries per session is controlled by the **Maximum Log Buffer** setting in Settings → Display (default: 10,000). History files can be passed to AI agents as context for understanding past work patterns.
 
 ## Help Panel
 

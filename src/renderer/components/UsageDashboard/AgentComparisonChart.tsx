@@ -16,7 +16,7 @@ import { memo, useMemo, useCallback, useState, type MouseEvent } from 'react';
 import type { Theme, Session } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
 import { formatDurationHuman as formatDuration, formatNumber } from '../../../shared/formatters';
-import { barChartLabelWidth } from './chartUtils';
+import { BAR_CHART_GRID_CLASS, BAR_CHART_GRID_STYLE, BAR_CHART_ROW_STYLE } from './chartUtils';
 import { ChartTooltip } from './ChartTooltip';
 import { buildAgentComparisonData, buildAgentSplitAggregation } from './agentComparisonUtils';
 
@@ -66,8 +66,6 @@ export const AgentComparisonChart = memo(function AgentComparisonChart({
 	}, [data.byAgent, splitAggregation, theme, colorBlindMode, sessions]);
 
 	const hasWorktreeBars = useMemo(() => agentData.some((d) => d.isWorktree), [agentData]);
-
-	const labelWidth = useMemo(() => barChartLabelWidth(agentData.map((d) => d.label)), [agentData]);
 
 	// Get max duration for bar width calculation
 	const maxDuration = useMemo(() => {
@@ -138,7 +136,12 @@ export const AgentComparisonChart = memo(function AgentComparisonChart({
 						<span className="text-sm">No agent data available</span>
 					</div>
 				) : (
-					<div className="space-y-2" role="list" aria-label="Agent usage data">
+					<div
+						className={BAR_CHART_GRID_CLASS}
+						style={BAR_CHART_GRID_STYLE}
+						role="list"
+						aria-label="Agent usage data"
+					>
 						{agentData.map((agent) => {
 							const barWidth = maxDuration > 0 ? (agent.duration / maxDuration) * 100 : 0;
 							const isHovered = hoveredAgent === agent.key;
@@ -150,8 +153,8 @@ export const AgentComparisonChart = memo(function AgentComparisonChart({
 							return (
 								<div
 									key={agent.key}
-									className="flex items-center gap-3"
 									style={{
+										...BAR_CHART_ROW_STYLE,
 										height: barHeight,
 										cursor: isClickable ? 'pointer' : undefined,
 										opacity: isDimmed ? 0.3 : 1,
@@ -178,9 +181,8 @@ export const AgentComparisonChart = memo(function AgentComparisonChart({
 								>
 									{/* Agent name label */}
 									<div
-										className="text-sm truncate flex-shrink-0"
+										className="text-sm truncate min-w-0"
 										style={{
-											width: labelWidth,
 											color: isHovered ? theme.colors.textMain : theme.colors.textDim,
 										}}
 										title={agent.label}
@@ -191,7 +193,7 @@ export const AgentComparisonChart = memo(function AgentComparisonChart({
 
 									{/* Bar container */}
 									<div
-										className="flex-1 h-full rounded overflow-hidden relative"
+										className="h-full rounded overflow-hidden relative"
 										style={{
 											backgroundColor: `${theme.colors.border}30`,
 											// Selected bar gets an accent outline (analogue of recharts
@@ -259,7 +261,7 @@ export const AgentComparisonChart = memo(function AgentComparisonChart({
 
 									{/* Count and Duration labels */}
 									<div
-										className="flex items-center gap-3 flex-shrink-0"
+										className="flex items-center justify-end gap-3"
 										style={{ color: theme.colors.textDim }}
 									>
 										<div className="text-xs text-right whitespace-nowrap" title="Query count">

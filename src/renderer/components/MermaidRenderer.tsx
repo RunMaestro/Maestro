@@ -5,6 +5,7 @@ import type { Theme } from '../types';
 import { logger } from '../utils/logger';
 import { normalizeMermaidSource } from '../../shared/mermaidSource';
 import { expandSvgViewBoxToContent } from '../utils/svgViewBox';
+import { repairDiagramLabelContrast } from '../utils/diagramLabelContrast';
 import { ExpandToViewerButton } from './ZoomViewer/ExpandToViewerButton';
 import {
 	adjustBrightness,
@@ -493,11 +494,14 @@ export function MermaidRenderer({ chart, theme, expandable = true }: MermaidRend
 			// mermaid declared (quadrantChart hard-codes 500x500 and lets long
 			// titles and point labels spill past it, where the browser clips
 			// them). Must happen after the append: getBBox needs a layout.
+			// Label contrast is repaired here too, for the same reason: an
+			// author's classDef fill only resolves through getComputedStyle.
 			if (svgElement) {
 				const appended = containerRef.current.appendChild(
 					document.importNode(svgElement, true)
 				) as SVGSVGElement;
 				expandSvgViewBoxToContent(appended);
+				repairDiagramLabelContrast(appended);
 			}
 		}
 	}, [svgContent, isLoading]);

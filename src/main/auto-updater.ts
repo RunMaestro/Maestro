@@ -398,3 +398,72 @@ export function setAllowPrerelease(allow: boolean): void {
 	autoUpdater.allowPrerelease = allow;
 	logger.info(`Auto-updater prerelease mode: ${allow ? 'enabled' : 'disabled'}`, 'AutoUpdater');
 }
+/** User-driven connection repair, shared by full host and the isolated Lite picker.
+ * Never downloads on check, installs on exit, or takes an update URL from a remote host. */
+let connectionUpdate: { status: string; message: string; version?: string } = {
+	status: 'idle',
+	message: '',
+};
+let connectionUpdateBusy = false;
+export async function connectionUpdateAction(action: string): Promise<typeof connectionUpdate> {
+	if (action === 'status') return { ...connectionUpdate };
+	if (!['check', 'download', 'install'].includes(action)) throw new Error('Unknown update action.');
+	if (connectionUpdateBusy) return { ...connectionUpdate };
+	connectionUpdateBusy = true;
+	try {
+		const updater = getAutoUpdater();
+		if (action === 'check') {
+			connectionUpdate = { status: 'checking', message: 'Checking official Maestro releases…' };
+			const result = await withUpdateRetry('connection update check', () =>
+				updater.checkForUpdates()
+			);
+			const current = require('electron').app.getVersion();
+			const newer =
+				result?.updateInfo?.version && require('semver').gt(result.updateInfo.version, current);
+			connectionUpdate = newer
+				? {
+						status: 'available',
+						version: result!.updateInfo.version,
+						message:
+							'A Maestro update is available. Download on both computers, then explicitly restart to install. Running host work must finish first.',
+					}
+				: {
+						status: 'not-available',
+						message:
+							'No newer published update is available. For an unpublished review build, install the supplied matched host and Lite packages on both computers. An older host without discovery must be updated locally; it cannot be identified safely from a missing endpoint.',
+					};
+		} else if (action === 'download') {
+			if (connectionUpdate.status !== 'available')
+				throw new Error('Check for an available update first.');
+			// This flow promises an explicit restart, not installation on a later ordinary quit.
+			updater.autoInstallOnAppQuit = false;
+			connectionUpdate = {
+				...connectionUpdate,
+				status: 'downloading',
+				message: 'Downloading the official update. This app will not restart automatically.',
+			};
+			await withUpdateRetry('connection update download', () => updater.downloadUpdate());
+			connectionUpdate = {
+				...connectionUpdate,
+				status: 'downloaded',
+				message:
+					'Download verified by the updater. Finish running work, then choose Restart and install. Remote computers are not updated by this action.',
+			};
+		} else {
+			if (connectionUpdate.status !== 'downloaded') throw new Error('Download an update first.');
+			onBeforeQuitAndInstall?.();
+			updater.quitAndInstall(false, true);
+		}
+	} catch (error) {
+		connectionUpdate = {
+			status: 'error',
+			message:
+				'Update could not complete: ' +
+				describeUpdateError(error) +
+				' Retry the check; no remote host was changed.',
+		};
+	} finally {
+		connectionUpdateBusy = false;
+	}
+	return { ...connectionUpdate };
+}

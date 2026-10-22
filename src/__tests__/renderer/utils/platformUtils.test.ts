@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import {
 	getFileManagerName,
 	fileManagerName,
@@ -7,11 +7,34 @@ import {
 	isWindowsPlatform,
 	isMacOSPlatform,
 	isLinuxPlatform,
+	isMacOSKeyboard,
 } from '../../../renderer/utils/platformUtils';
 
 describe('platformUtils', () => {
+	const originalConfig = window.__MAESTRO_CONFIG__;
 	afterEach(() => {
 		(window as any).maestro = { platform: 'darwin' };
+		window.__MAESTRO_CONFIG__ = originalConfig;
+		vi.restoreAllMocks();
+	});
+
+	it('keeps physical keyboard conventions independent of remote execution OS', () => {
+		window.__MAESTRO_CONFIG__ = {
+			securityToken: 'test',
+			sessionId: null,
+			tabId: null,
+			apiBase: '/test/api',
+			wsUrl: '/test/ws',
+			hostPlatform: 'win32',
+		};
+		(window as any).maestro = { platform: 'win32' };
+		const platform = vi.spyOn(navigator, 'platform', 'get').mockReturnValue('MacIntel');
+		expect(isWindowsPlatform()).toBe(true);
+		expect(isMacOSKeyboard()).toBe(true);
+		(window as any).maestro = { platform: 'darwin' };
+		platform.mockReturnValue('Win32');
+		expect(isMacOSPlatform()).toBe(true);
+		expect(isMacOSKeyboard()).toBe(false);
 	});
 
 	describe('isWindowsPlatform', () => {

@@ -15,6 +15,7 @@ import { shortcutKeysEqual, findReservedShortcutCombo } from '../../../../shared
 import { ShortcutFilterButton } from '../../ui/ShortcutFilterButton';
 import { GhostIconButton } from '../../ui/GhostIconButton';
 import { FIXED_SHORTCUTS } from '../../../constants/shortcuts';
+import { availableShortcuts } from '../../../utils/encoreShortcuts';
 import { SettingsSectionHeading } from '../SettingsSectionHeading';
 import type { Theme, Shortcut } from '../../../types';
 
@@ -25,7 +26,7 @@ export interface ShortcutsTabProps {
 }
 
 export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: ShortcutsTabProps) {
-	const { shortcuts, setShortcuts, tabShortcuts, setTabShortcuts } = useSettings();
+	const { shortcuts, setShortcuts, tabShortcuts, setTabShortcuts, encoreFeatures } = useSettings();
 
 	const [recordingId, setRecordingId] = useState<string | null>(null);
 	const [shortcutsFilter, setShortcutsFilter] = useState('');
@@ -140,8 +141,14 @@ export function ShortcutsTab({ theme, hasNoAgents, onRecordingChange }: Shortcut
 		setRecordingId(null);
 	};
 
+	// A switched-off Encore Feature's shortcut is not offered for rebinding. The
+	// conflict check above still scans the full map, so its chord cannot be
+	// handed to another action and collide when the feature comes back.
 	const allShortcuts = [
-		...Object.values(shortcuts).map((sc) => ({ ...sc, isTabShortcut: false })),
+		...Object.values(availableShortcuts(shortcuts, encoreFeatures)).map((sc) => ({
+			...sc,
+			isTabShortcut: false,
+		})),
 		...Object.values(tabShortcuts).map((sc) => ({ ...sc, isTabShortcut: true })),
 	];
 	const totalShortcuts = allShortcuts.length;

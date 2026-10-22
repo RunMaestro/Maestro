@@ -22,6 +22,8 @@ import {
 	Eye,
 	Plus,
 	X,
+	ChevronDown,
+	ChevronRight,
 } from 'lucide-react';
 import type { Theme } from '../../types';
 import { formatRelativeTime } from '../../../shared/formatters';
@@ -32,6 +34,7 @@ import {
 } from './usePianolaDashboardData';
 import { usePianolaSupervisor, type PianolaSupervisorState } from './usePianolaSupervisor';
 import type { PianolaSupervisedState } from '../../../main/pianola/pianola-supervisor';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 interface PianolaDashboardProps {
 	theme: Theme;
@@ -47,6 +50,8 @@ function Section({
 	count,
 	emptyLabel,
 	headerAction,
+	controlRow,
+	collapsed = false,
 	children,
 }: {
 	theme: Theme;
@@ -55,6 +60,8 @@ function Section({
 	count: number;
 	emptyLabel: string;
 	headerAction?: React.ReactNode;
+	controlRow?: React.ReactNode;
+	collapsed?: boolean;
 	children: React.ReactNode;
 }): React.ReactElement {
 	return (
@@ -68,11 +75,12 @@ function Section({
 				<span className="opacity-60">({count})</span>
 				{headerAction && <div className="ml-auto">{headerAction}</div>}
 			</div>
+			{controlRow}
 			{count === 0 ? (
 				<div className="text-sm italic px-3 py-2" style={{ color: theme.colors.textDim }}>
 					{emptyLabel}
 				</div>
-			) : (
+			) : collapsed ? null : (
 				<div className="flex flex-col gap-1.5">{children}</div>
 			)}
 		</div>
@@ -244,8 +252,22 @@ function WatchedSection({
 	onJumpToAgent: (sessionId: string) => void;
 	supervisor: PianolaSupervisorState;
 }): React.ReactElement {
-	const { watched, watchable, watch, unwatch, setEnabled } = supervisor;
+	const {
+		watched,
+		watchable,
+		watch,
+		unwatch,
+		setEnabled,
+		autoWatchNewAgents,
+		setAutoWatchNewAgents,
+	} = supervisor;
 	const [pickerOpen, setPickerOpen] = React.useState(false);
+	const [expanded, setExpanded] = React.useState(false);
+	const canCollapse = watched.length > 5;
+	const collapsed = canCollapse && !expanded;
+	const failingCount = watched.filter(
+		(row) => row.enabled && (row.state === 'failed' || row.state === 'backing-off')
+	).length;
 
 	const addButton = (
 		<div className="relative">
@@ -270,13 +292,12 @@ function WatchedSection({
 						onClick={() => setPickerOpen(false)}
 					/>
 					<div
-						className="absolute right-0 mt-1 z-50 rounded shadow-lg overflow-y-auto scrollbar-thin whitespace-nowrap normal-case py-1"
+						className="absolute right-0 mt-1 z-50 rounded overflow-y-auto scrollbar-thin whitespace-nowrap normal-case py-1"
 						style={{
 							minWidth: '12rem',
 							maxWidth: '20rem',
 							maxHeight: '15rem',
-							backgroundColor: theme.colors.bgSidebar,
-							border: `1px solid ${theme.colors.border}`,
+							...elevatedSurfaceStyle(theme),
 						}}
 					>
 						{watchable.map((a) => (
@@ -307,7 +328,50 @@ function WatchedSection({
 			title="Watched by Pianola"
 			count={watched.length}
 			emptyLabel="No agents watched yet. Add one and Pianola babysits its questions."
-			headerAction={addButton}
+			collapsed={collapsed}
+			headerAction={
+				<div className="flex items-center gap-1">
+					{collapsed && failingCount > 0 && (
+						<span
+							className="text-xs normal-case"
+							style={{ color: theme.colors.error }}
+							role="status"
+						>
+							{failingCount} failing
+						</span>
+					)}
+					{canCollapse && (
+						<button
+							type="button"
+							aria-expanded={!collapsed}
+							onClick={() => setExpanded((value) => !value)}
+							className="flex items-center gap-1 text-xs px-2 py-1 rounded hover:bg-white/5 normal-case"
+							style={{ color: theme.colors.textDim }}
+						>
+							{collapsed ? (
+								<ChevronRight className="w-3.5 h-3.5" />
+							) : (
+								<ChevronDown className="w-3.5 h-3.5" />
+							)}
+							{collapsed ? 'Show agents' : 'Hide agents'}
+						</button>
+					)}
+					{addButton}
+				</div>
+			}
+			controlRow={
+				<label
+					className="flex items-center gap-2 text-xs mb-2 px-1 cursor-pointer"
+					style={{ color: theme.colors.textDim }}
+				>
+					<input
+						type="checkbox"
+						checked={autoWatchNewAgents}
+						onChange={(event) => void setAutoWatchNewAgents(event.target.checked)}
+					/>
+					Automatically watch new agents
+				</label>
+			}
 		>
 			{watched.map((row) => (
 				<div

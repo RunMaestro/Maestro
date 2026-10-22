@@ -115,3 +115,95 @@ describe('computeSortedSessions - unread filter jump-badge visibility', () => {
 		expect(visibleSessions.map((s) => s.name)).toContain('Parent');
 	});
 });
+
+describe('computeSortedSessions - hidden groups', () => {
+	const hiddenGroup = {
+		id: 'g-hidden',
+		name: 'PARKED',
+		emoji: '\u{1F4C1}',
+		collapsed: false,
+		hidden: true,
+	};
+	const openGroup = { id: 'g-open', name: 'ACTIVE', emoji: '\u{1F4C1}', collapsed: false };
+
+	const parked = () => createMockSession({ id: 'p1', name: 'Parked', groupId: 'g-hidden' });
+	const working = () => createMockSession({ id: 'w1', name: 'Working', groupId: 'g-open' });
+
+	// Jump badges number what is on screen, and the arrow keys step through it,
+	// so neither may land on an agent the Left Bar is not drawing.
+	it('drops a hidden group from the jump-badge and arrow-key projections', () => {
+		const { visibleSessions, navSessions } = computeSortedSessions({
+			sessions: [parked(), working()],
+			groups: [hiddenGroup, openGroup],
+			bookmarksCollapsed: false,
+		});
+
+		expect(visibleSessions.map((s) => s.name)).toEqual(['Working']);
+		expect(navSessions.map((s) => s.name)).toEqual(['Working']);
+	});
+
+	it('restores them when "Show Hidden" is on', () => {
+		const { visibleSessions, navSessions } = computeSortedSessions({
+			sessions: [parked(), working()],
+			groups: [hiddenGroup, openGroup],
+			bookmarksCollapsed: false,
+			showHiddenGroups: true,
+		});
+
+		expect(visibleSessions.map((s) => s.name).sort()).toEqual(['Parked', 'Working']);
+		expect(navSessions.map((s) => s.name).sort()).toEqual(['Parked', 'Working']);
+	});
+
+	// Hiding the group you are working in would strand the cycle on a row that
+	// is not on screen.
+	it('keeps the active agent visible even inside a hidden group', () => {
+		const { visibleSessions } = computeSortedSessions({
+			sessions: [parked(), working()],
+			groups: [hiddenGroup, openGroup],
+			bookmarksCollapsed: false,
+			activeSessionId: 'p1',
+		});
+
+		expect(visibleSessions.map((s) => s.name).sort()).toEqual(['Parked', 'Working']);
+	});
+
+	// The render path drops a hidden group's agents before it builds the bookmark
+	// list, so a bookmarked one has no row. Left in these projections it would
+	// hold a jump slot and shift every badge after it onto the wrong agent.
+	it('drops a bookmarked agent in a hidden group from both projections', () => {
+		const { visibleSessions, navSessions, bookmarkNavSize } = computeSortedSessions({
+			sessions: [{ ...parked(), bookmarked: true }, working()],
+			groups: [hiddenGroup, openGroup],
+			bookmarksCollapsed: false,
+		});
+
+		expect(visibleSessions.map((s) => s.name)).toEqual(['Working']);
+		expect(navSessions.map((s) => s.name)).toEqual(['Working']);
+		expect(bookmarkNavSize).toBe(0);
+	});
+
+	it('keeps a bookmarked agent in a hidden group when "Show Hidden" is on', () => {
+		const { visibleSessions, bookmarkNavSize } = computeSortedSessions({
+			sessions: [{ ...parked(), bookmarked: true }, working()],
+			groups: [hiddenGroup, openGroup],
+			bookmarksCollapsed: false,
+			showHiddenGroups: true,
+		});
+
+		// The bookmark row first, then the groups in name order (ACTIVE, PARKED).
+		expect(visibleSessions.map((s) => s.name)).toEqual(['Parked', 'Working', 'Parked']);
+		expect(bookmarkNavSize).toBe(1);
+	});
+
+	// `sortedSessions` is the full ordering other callers index into, not a
+	// statement about what is drawn.
+	it('leaves the complete sorted ordering untouched', () => {
+		const { sortedSessions } = computeSortedSessions({
+			sessions: [parked(), working()],
+			groups: [hiddenGroup, openGroup],
+			bookmarksCollapsed: false,
+		});
+
+		expect(sortedSessions.map((s) => s.name).sort()).toEqual(['Parked', 'Working']);
+	});
+});

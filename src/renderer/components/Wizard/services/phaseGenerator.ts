@@ -59,6 +59,8 @@ export interface GenerationConfig {
 		remoteId: string | null;
 		workingDirOverride?: string;
 	};
+	/** The Claude token source picked for the new agent, so a TUI pick plans through maestro-p */
+	claudeTokenSource?: ClaudeTokenSourceFields;
 }
 
 /**
@@ -172,6 +174,10 @@ interface ParsedDocument {
 import { PLAYBOOKS_DIR } from '../../../../shared/maestro-paths';
 import { logger } from '../../../utils/logger';
 import { createPlaybookDocumentEmitter } from '../../../services/inlineWizardDocumentGeneration';
+import {
+	getClaudeTokenSourceFields,
+	type ClaudeTokenSourceFields,
+} from '../../../../shared/claudeTokenMode';
 
 /**
  * Sanitize a filename to prevent path traversal attacks.
@@ -1163,6 +1169,7 @@ class PhaseGenerator {
 					sessionCustomModel: config.model,
 					// Pass SSH configuration for remote execution
 					sessionSshRemoteConfig: config.sshRemoteConfig,
+					...getClaudeTokenSourceFields(config.claudeTokenSource),
 				})
 				.then(() => {
 					logger.info('[PhaseGenerator] Agent spawned successfully');

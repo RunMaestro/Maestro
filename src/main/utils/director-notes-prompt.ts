@@ -96,6 +96,11 @@ export async function buildDirectorNotesSynopsisPrompt(params: {
 	 * byte-for-byte what it was before shared history was folded in.
 	 */
 	sharedHistoryFile?: DirectorNotesSharedHistoryFile | null;
+	/**
+	 * Agents whose history must stay out of the synopsis: dormant ones (a
+	 * Pianola whose Encore flag is off). Their files stay on disk.
+	 */
+	excludeSessionIds?: ReadonlySet<string>;
 }): Promise<DirectorNotesSynopsisPromptResult> {
 	const { historyManager, sessionNameMap, lookbackDays, basePrompt } = params;
 	const sharedHistoryFile = params.sharedHistoryFile ?? null;
@@ -115,6 +120,7 @@ export async function buildDirectorNotesSynopsisPrompt(params: {
 	let entryCount = 0;
 
 	for (const sessionId of sessionIds) {
+		if (params.excludeSessionIds?.has(sessionId)) continue;
 		const filePath = await historyManager.getHistoryFilePath(sessionId);
 		if (!filePath) continue;
 

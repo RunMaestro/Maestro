@@ -8,8 +8,13 @@ import fsSync from 'fs';
 import path from 'path';
 import { CORE_PROMPTS, getPromptFilename } from '../../shared/promptDefinitions';
 import { getConfigDirectory } from './storage';
-import { describeSegmentLimit } from '../../shared/autorunModelHints';
-import { PROMPT_IDS } from '../../shared/promptDefinitions';
+import { buildTaskSelectionBlock } from '../../shared/maestro-lib/autorun/task-selection';
+import { bundledPromptCandidates } from '../../shared/maestro-lib/prompts/load';
+import {
+	MAX_PROMPT_INCLUDE_DEPTH,
+	findPromptIncludeNames,
+	resolvePromptIncludes,
+} from '../../shared/promptIncludes';
 
 const cliPromptCache = new Map<string, string>();
 let bundledPromptsDir: string | null = null;
@@ -18,29 +23,10 @@ export function _getBundledPromptCandidatesForTests(
 	filename: string,
 	moduleDirectory = __dirname
 ): string[] {
-	// The CLI runs in three contexts: dev (ts-node from src), packaged Electron
-	// (process.resourcesPath), and standalone bundled CLI (Resources/maestro-cli.js).
-	// Source modules live at src/cli/services, while the development bundle lives
-	// at dist/cli. Probe both possible project-root depths so each can find the
-	// checkout's src/prompts directory.
-	const projectRoots = [
-		path.resolve(moduleDirectory, '..', '..', '..'),
-		path.resolve(moduleDirectory, '..', '..'),
-	];
-	const candidates = projectRoots.map((root) => path.join(root, 'src', 'prompts', filename));
-
-	if (typeof process !== 'undefined' && (process as { resourcesPath?: string }).resourcesPath) {
-		candidates.push(
-			path.join((process as { resourcesPath?: string }).resourcesPath!, 'prompts', 'core', filename)
-		);
-	}
-
-	candidates.push(
-		path.join(path.dirname(process.argv[1] || __dirname), 'prompts', 'core', filename)
-	);
-	candidates.push(path.join(moduleDirectory, '..', 'prompts', 'core', filename));
-
-	return [...new Set(candidates)];
+	// The candidate chain (dev checkout, packaged Electron, standalone bundle) lives in
+	// the library so the TUI probes the same places. `__dirname` stays HERE: it is this
+	// bundle's own directory, which is what the probe is relative to.
+	return bundledPromptCandidates(filename, moduleDirectory);
 }
 
 const getBundledPromptCandidates = _getBundledPromptCandidatesForTests;
@@ -112,35 +98,66 @@ async function getCustomizedPrompt(id: string): Promise<string | null> {
 	return null;
 }
 
+/**
+ * A prompt's text before any directive is expanded: the user's customization
+ * when there is one, else the bundled file. Null when neither exists.
+ */
+async function getRawCliPrompt(id: string): Promise<string | null> {
+	const customized = await getCustomizedPrompt(id);
+	if (customized !== null) return customized;
+
+	const filename = getPromptFilename(id);
+	for (const candidate of getBundledPromptCandidates(filename)) {
+		try {
+			return await fs.readFile(candidate, 'utf-8');
+		} catch {
+			// Try next candidate
+		}
+	}
+	return null;
+}
+
+/**
+ * Read every include `content` reaches, down to the depth the resolver will
+ * expand, so the synchronous shared resolver has them all in hand.
+ */
+async function loadIncludeSources(
+	content: string,
+	sources = new Map<string, string | null>(),
+	depth = 0
+): Promise<Map<string, string | null>> {
+	if (depth >= MAX_PROMPT_INCLUDE_DEPTH) return sources;
+	for (const name of findPromptIncludeNames(content)) {
+		if (sources.has(name)) continue;
+		const raw = CORE_PROMPTS.some((p) => p.id === name) ? await getRawCliPrompt(name) : null;
+		sources.set(name, raw);
+		if (raw !== null) await loadIncludeSources(raw, sources, depth + 1);
+	}
+	return sources;
+}
+
 export async function getCliPrompt(id: string): Promise<string> {
 	if (cliPromptCache.has(id)) {
 		return cliPromptCache.get(id)!;
 	}
 
-	const customized = await getCustomizedPrompt(id);
-	if (customized !== null) {
-		const resolved = resolveRefs(customized);
-		cliPromptCache.set(id, resolved);
-		return resolved;
+	const raw = await getRawCliPrompt(id);
+	if (raw === null) {
+		const filename = getPromptFilename(id);
+		throw new Error(
+			`Failed to load prompt "${id}" (${filename}). Searched: ${getBundledPromptCandidates(filename).join(', ')}`
+		);
 	}
 
-	const filename = getPromptFilename(id);
-	const candidates = getBundledPromptCandidates(filename);
-
-	for (const candidate of candidates) {
-		try {
-			const content = await fs.readFile(candidate, 'utf-8');
-			const resolved = resolveRefs(content);
-			cliPromptCache.set(id, resolved);
-			return resolved;
-		} catch {
-			// Try next candidate
-		}
-	}
-
-	throw new Error(
-		`Failed to load prompt "${id}" (${filename}). Searched: ${candidates.join(', ')}`
-	);
+	// Same order as the desktop's prompt manager: refs, then includes.
+	const withRefs = resolveRefs(raw);
+	const sources = await loadIncludeSources(withRefs);
+	const resolved = resolvePromptIncludes(withRefs, {
+		load: (name) => sources.get(name) ?? null,
+		rootId: id,
+	});
+	cliPromptCache.set(id, resolved);
+	return resolved;
 }
 
 /**
@@ -164,13 +181,9 @@ export function _resetCliPromptCacheForTests(): void {
  * mode. A playbook that predates the setting has no `taskSelectionMode`, and
  * per-task is the behaviour those playbooks were written against.
  */
-export async function getCliTaskSelectionBlock(
+export function getCliTaskSelectionBlock(
 	mode: 'task' | 'document' | undefined,
 	segment?: { count: number; total: number }
 ): Promise<string> {
-	const id = mode === 'document' ? PROMPT_IDS.AUTORUN_PER_DOCUMENT : PROMPT_IDS.AUTORUN_PER_TASK;
-	const content = await getCliPrompt(id);
-	const block = content.replace(/\s+$/, '');
-	if (mode !== 'document') return block;
-	return `${block}${describeSegmentLimit(segment)}`;
+	return buildTaskSelectionBlock(getCliPrompt, mode, segment);
 }

@@ -1,11 +1,11 @@
 import { ipcMain } from 'electron';
 import { execFileNoThrow } from '../../../utils/execFile';
-import { execGit } from '../../../utils/remote-git';
+import { execGit, execGitReadOnly } from '../../../utils/remote-git';
 import { getSshRemoteById } from '../../../stores';
 import { withIpcErrorLogging, createIpcHandler } from '../../../utils/ipcHandler';
 import { parseGitBranches, parseGitTags } from '../../../../shared/gitUtils';
 import { branchSwitchBlocker } from '../../../utils/branch-switch-guard';
-import { handlerOpts, type GitHandlerDependencies } from './shared';
+import { handlerOpts, readOnlyGitReply, type GitHandlerDependencies } from './shared';
 
 /**
  * Register branch/tag/repo-mutation Git IPC handlers: init, commitAll, branch,
@@ -122,13 +122,13 @@ export function registerBranchHandlers(deps: GitHandlerDependencies): void {
 			async (cwd: string, sshRemoteId?: string, remoteCwd?: string) => {
 				const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
 				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
-				const result = await execGit(
+				const result = await execGitReadOnly(
 					['rev-parse', '--abbrev-ref', 'HEAD'],
 					cwd,
 					sshRemote,
 					effectiveRemoteCwd
 				);
-				return { stdout: result.stdout.trim(), stderr: result.stderr };
+				return readOnlyGitReply(result, { trim: true });
 			}
 		)
 	);

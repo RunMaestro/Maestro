@@ -14,6 +14,10 @@
  */
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
+import {
+	MaestroNotRunningError,
+	MAESTRO_NOT_RUNNING_MESSAGE,
+} from '../../../cli/services/maestro-not-running';
 
 vi.mock('../../../cli/services/maestro-client', () => ({
 	withMaestroClient: vi.fn(),
@@ -156,31 +160,34 @@ describe('session list command', () => {
 		expect(consoleSpy.mock.calls[0][0]).toContain('unknown');
 	});
 
-	it('maps connection errors to MAESTRO_NOT_RUNNING (consistent with dispatch)', async () => {
+	it.each([
+		['no-discovery-file'],
+		['stale-discovery-file'],
+		['connect-timeout'],
+		['connect-failed'],
+	] as const)('maps a %s MaestroNotRunningError to MAESTRO_NOT_RUNNING, exit 3', async (reason) => {
+		// Same outcome dispatch reports, so external scripts can branch on one
+		// code and one exit status whichever verb they used.
+		vi.mocked(withMaestroClient).mockRejectedValue(new MaestroNotRunningError(reason));
+
+		await sessionList({ json: true });
+
+		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+		expect(output).toEqual({
+			success: false,
+			error: MAESTRO_NOT_RUNNING_MESSAGE,
+			code: 'MAESTRO_NOT_RUNNING',
+		});
+		expect(processExitSpy.mock.calls[0]).toEqual([3]);
+	});
+
+	it('keeps an ordinary error as COMMAND_FAILED, exit 1', async () => {
 		vi.mocked(withMaestroClient).mockRejectedValue(new Error('ECONNREFUSED'));
 
 		await sessionList({ json: true });
 
 		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
-		expect(output.success).toBe(false);
-		expect(output.code).toBe('MAESTRO_NOT_RUNNING');
-		expect(processExitSpy).toHaveBeenCalledWith(1);
-	});
-
-	it.each([
-		['Maestro desktop app is not running'],
-		['Maestro discovery file is stale (app may have crashed)'],
-		['Not connected to Maestro'],
-	])('maps MaestroClient error "%s" to MAESTRO_NOT_RUNNING', async (errorMessage) => {
-		// Same three pre-WebSocket throws covered by dispatch.test - keeping the
-		// mapping in sync means external scripts can branch on a single error
-		// code regardless of which CLI verb they used.
-		vi.mocked(withMaestroClient).mockRejectedValue(new Error(errorMessage));
-
-		await sessionList({ json: true });
-
-		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
-		expect(output.code).toBe('MAESTRO_NOT_RUNNING');
+		expect(output.code).toBe('COMMAND_FAILED');
 		expect(processExitSpy).toHaveBeenCalledWith(1);
 	});
 });
@@ -501,14 +508,14 @@ describe('session show command', () => {
 		expect(processExitSpy).toHaveBeenCalledWith(1);
 	});
 
-	it('maps connection errors to MAESTRO_NOT_RUNNING', async () => {
-		vi.mocked(withMaestroClient).mockRejectedValue(new Error('ECONNREFUSED'));
+	it('maps an absent app to MAESTRO_NOT_RUNNING, exit 3', async () => {
+		vi.mocked(withMaestroClient).mockRejectedValue(new MaestroNotRunningError('no-discovery-file'));
 
 		await sessionShow('tab-1', {});
 
 		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
 		expect(output.success).toBe(false);
 		expect(output.code).toBe('MAESTRO_NOT_RUNNING');
-		expect(processExitSpy).toHaveBeenCalledWith(1);
+		expect(processExitSpy.mock.calls[0]).toEqual([3]);
 	});
 });

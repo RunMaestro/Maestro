@@ -16,6 +16,7 @@ import {
 	ERROR_PATTERN_DEFAULT_MIN_CHUNK_LENGTH,
 	SSH_ERROR_PATTERNS,
 	isClaudeLimitNotice,
+	stripJsonEventLines,
 	type AgentErrorPatterns,
 } from '../../../main/parsers/error-patterns';
 
@@ -1245,5 +1246,31 @@ describe('isClaudeLimitNotice', () => {
 	it('does not fire on limit kinds Claude never paints a plan banner for', () => {
 		expect(isClaudeLimitNotice("You've hit your disk limit")).toBe(false);
 		expect(isClaudeLimitNotice('Rate limit exceeded')).toBe(false);
+	});
+});
+
+describe('stripJsonEventLines', () => {
+	it('drops lines that parse as JSON objects and keeps plain text around them', () => {
+		const stdout = [
+			'{"type":"item.completed","text":"token budget hit the limit"}',
+			'Error: rate limit exceeded',
+			'{"type":"turn.completed"}',
+		].join('\n');
+		expect(stripJsonEventLines(stdout)).toBe('Error: rate limit exceeded');
+	});
+
+	it('keeps a brace-wrapped line that is not valid JSON', () => {
+		expect(stripJsonEventLines('{not json}')).toBe('{not json}');
+	});
+
+	it('returns an empty string for empty input', () => {
+		expect(stripJsonEventLines('')).toBe('');
+	});
+
+	it('stops a loose pattern from matching across one JSON event line', () => {
+		const patterns = getErrorPatterns('codex');
+		const event = '{"type":"agent_message","text":"the token count is under the limit"}';
+		expect(matchErrorPattern(patterns, event)).not.toBeNull();
+		expect(matchErrorPattern(patterns, stripJsonEventLines(event))).toBeNull();
 	});
 });

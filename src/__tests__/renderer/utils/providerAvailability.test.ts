@@ -40,6 +40,15 @@ describe('filterToAvailableProviders', () => {
 		expect(filterToAvailableProviders(none, isAvailable, false)).toEqual(none);
 	});
 
+	it('falls back to the full list when nothing is installed, even with a pinned row', () => {
+		// The availability bar reads "nothing detected" as "showing everything", so
+		// a pin must not turn the fallback into a one-row list.
+		const none = PROVIDERS.map((p) => ({ ...p, available: false }));
+		expect(filterToAvailableProviders(none, isAvailable, false, (p) => p.id === 'codex')).toEqual(
+			none
+		);
+	});
+
 	it('keeps a pinned provider that would otherwise be filtered out', () => {
 		expect(
 			filterToAvailableProviders(PROVIDERS, isAvailable, false, (p) => p.id === 'codex').map(

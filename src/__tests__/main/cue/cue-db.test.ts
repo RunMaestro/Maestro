@@ -16,6 +16,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as path from 'path';
 import * as os from 'os';
+import * as fs from 'fs';
 
 // Store parameters passed to mock statement methods
 const runCalls: unknown[][] = [];
@@ -37,9 +38,12 @@ const mockStatement = {
 		allCalls.push(args);
 		return mockAllReturn;
 	}),
+	iterate: vi.fn(() => mockAllReturn[Symbol.iterator]()),
 };
 
 const prepareCalls: string[] = [];
+const constructorCalls: unknown[][] = [];
+let constructorError: Error | null = null;
 
 const mockDb = {
 	pragma: vi.fn((query: string) => {
@@ -66,8 +70,8 @@ const mockDb = {
 		}
 		// Same idea for cue_event_queue - Phase 01 added chain_root_id /
 		// parent_event_id so persisted queue rows survive restart with
-		// lineage intact. Returning the full column set keeps the additive
-		// migration a no-op under the mock.
+		// lineage intact. This is the set from BEFORE `turn_settings_json`,
+		// so the additive migration must backfill that one column.
 		if (query.startsWith('table_info(cue_event_queue)')) {
 			return [
 				{ name: 'id' },
@@ -83,6 +87,8 @@ const mockDb = {
 				{ name: 'queued_at' },
 				{ name: 'chain_root_id' },
 				{ name: 'parent_event_id' },
+				{ name: 'auto_run_json' },
+				{ name: 'notify_json' },
 			];
 		}
 		// cue_github_seen - the GitHub re-trigger feature added `last_revision`
@@ -108,18 +114,13 @@ const mockDb = {
 
 vi.mock('better-sqlite3', () => ({
 	default: class MockDatabase {
-		constructor() {
-			/* noop */
+		constructor(...args: unknown[]) {
+			constructorCalls.push(args);
+			if (constructorError) throw constructorError;
 		}
 		pragma = mockDb.pragma;
 		prepare = mockDb.prepare;
 		close = mockDb.close;
-	},
-}));
-
-vi.mock('electron', () => ({
-	app: {
-		getPath: vi.fn(() => os.tmpdir()),
 	},
 }));
 
@@ -141,6 +142,11 @@ import {
 	clearGitHubSeenForSubscription,
 	safeRecordCueEvent,
 	safeUpdateCueEventStatus,
+	claimWebhookDelivery,
+	isWebhookDeliveryClaimed,
+	WEBHOOK_DELIVERY_RETENTION_MS,
+	readCueDbStatusFigures,
+	readRecentCueEventsReadOnly,
 } from '../../../main/cue/cue-db';
 
 beforeEach(() => {
@@ -149,6 +155,8 @@ beforeEach(() => {
 	getCalls.length = 0;
 	allCalls.length = 0;
 	prepareCalls.length = 0;
+	constructorCalls.length = 0;
+	constructorError = null;
 	mockGetReturn = undefined;
 	mockAllReturn = [];
 
@@ -225,6 +233,286 @@ describe('cue-db lifecycle', () => {
 	});
 });
 
+describe('readCueDbStatusFigures (read-only, for status beside a live engine)', () => {
+	let dir: string;
+	let dbPath: string;
+
+	/** A cue.db with the sidecars a live engine's open connection keeps. */
+	function liveDbFiles(): void {
+		fs.writeFileSync(dbPath, 'db');
+		fs.chmodSync(dbPath, 0o600);
+		fs.writeFileSync(`${dbPath}-wal`, '');
+		fs.writeFileSync(`${dbPath}-shm`, '');
+	}
+
+	beforeEach(() => {
+		dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cue-db-ro-'));
+		dbPath = path.join(dir, 'cue.db');
+	});
+
+	afterEach(() => {
+		fs.rmSync(dir, { recursive: true, force: true });
+	});
+
+	it('opens read-only with fileMustExist and reads the figures', () => {
+		liveDbFiles();
+		mockGetReturn = { last_seen: 1234, c: 1234 };
+
+		expect(readCueDbStatusFigures(dbPath)).toEqual({
+			ok: true,
+			lastHeartbeatMs: 1234,
+			totalEvents: 1234,
+		});
+		expect(constructorCalls).toEqual([[dbPath, { readonly: true, fileMustExist: true }]]);
+		expect(mockDb.close).toHaveBeenCalledTimes(1);
+	});
+
+	it('runs no schema, migration or journal-mode statement', () => {
+		liveDbFiles();
+		readCueDbStatusFigures(dbPath);
+
+		expect(mockDb.pragma).not.toHaveBeenCalled();
+		expect(mockStatement.run).not.toHaveBeenCalled();
+		expect(prepareCalls.length).toBeGreaterThan(0);
+		for (const sql of prepareCalls) expect(sql.trim()).toMatch(/^SELECT\b/);
+	});
+
+	it('creates no file beside the database', () => {
+		liveDbFiles();
+		const before = fs.readdirSync(dir).sort();
+
+		readCueDbStatusFigures(dbPath);
+
+		expect(fs.readdirSync(dir).sort()).toEqual(before);
+	});
+
+	// POSIX modes are largely ignored on NTFS.
+	it.skipIf(process.platform === 'win32')('leaves the mode of cue.db unchanged', () => {
+		liveDbFiles();
+		fs.chmodSync(dbPath, 0o640);
+
+		readCueDbStatusFigures(dbPath);
+
+		expect(fs.statSync(dbPath).mode & 0o777).toBe(0o640);
+	});
+
+	it('never becomes the module singleton a writer would reuse', () => {
+		liveDbFiles();
+		readCueDbStatusFigures(dbPath);
+
+		expect(isCueDbReady()).toBe(false);
+		expect(() => getLastHeartbeat()).toThrow('Cue database not initialized');
+	});
+
+	it('reports a missing cue.db without creating it or its folder', () => {
+		const missing = path.join(dir, 'nested', 'cue.db');
+
+		const result = readCueDbStatusFigures(missing);
+
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.reason).toContain('does not exist');
+		expect(constructorCalls).toHaveLength(0);
+		expect(fs.existsSync(path.dirname(missing))).toBe(false);
+	});
+
+	it('does not open a WAL database whose sidecars are gone (the open would create them)', () => {
+		fs.writeFileSync(dbPath, 'db');
+
+		const result = readCueDbStatusFigures(dbPath);
+
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.reason).toContain('no process has the database open');
+		expect(constructorCalls).toHaveLength(0);
+		expect(fs.readdirSync(dir)).toEqual(['cue.db']);
+	});
+
+	it('reports an open failure as a reason', () => {
+		liveDbFiles();
+		constructorError = Object.assign(new Error('unable to open database file'), {
+			code: 'SQLITE_CANTOPEN',
+		});
+
+		const result = readCueDbStatusFigures(dbPath);
+
+		expect(result).toEqual({
+			ok: false,
+			reason: `could not read ${dbPath}: unable to open database file`,
+		});
+	});
+
+	it('reports a failed query as a reason and still closes the handle', () => {
+		liveDbFiles();
+		mockStatement.get.mockImplementationOnce(() => {
+			throw new Error('database is locked');
+		});
+
+		const result = readCueDbStatusFigures(dbPath);
+
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.reason).toContain('database is locked');
+		expect(mockDb.close).toHaveBeenCalledTimes(1);
+	});
+
+	it('rethrows SqliteUnavailableError so the CLI reports it as before', () => {
+		liveDbFiles();
+		const unavailable = new Error('cannot load better-sqlite3');
+		unavailable.name = 'SqliteUnavailableError';
+		constructorError = unavailable;
+
+		expect(() => readCueDbStatusFigures(dbPath)).toThrow(unavailable);
+	});
+});
+
+describe('readRecentCueEventsReadOnly (activity history without the engine)', () => {
+	let dir: string;
+	let dbPath: string;
+
+	/** A WAL-mode header: bytes 18 and 19 (read / write format versions) are 2. */
+	function walImage(): Buffer {
+		const image = Buffer.alloc(100);
+		image.write('SQLite format 3\0', 0, 'latin1');
+		image[18] = 2;
+		image[19] = 2;
+		return image;
+	}
+
+	const row = {
+		id: 'run-1',
+		type: 'time.scheduled',
+		trigger_name: 't',
+		session_id: 'agent-1',
+		subscription_name: 'nightly',
+		status: 'completed',
+		created_at: 1000,
+		completed_at: 2000,
+		payload: null,
+		pipeline_id: null,
+		chain_root_id: null,
+		parent_event_id: null,
+		provider_session_id: null,
+		error_message: null,
+		exit_code: null,
+		output_excerpt: null,
+		full_output: null,
+		stream_usage_json: null,
+	};
+
+	beforeEach(() => {
+		dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cue-db-history-'));
+		dbPath = path.join(dir, 'cue.db');
+		mockAllReturn = [row];
+	});
+
+	afterEach(() => {
+		fs.rmSync(dir, { recursive: true, force: true });
+	});
+
+	it('reads beside a live engine with a read-only, must-exist handle', () => {
+		fs.writeFileSync(dbPath, walImage());
+		fs.writeFileSync(`${dbPath}-wal`, '');
+		fs.writeFileSync(`${dbPath}-shm`, '');
+
+		const result = readRecentCueEventsReadOnly(1000, dbPath);
+
+		expect(result).toMatchObject({ ok: true, source: 'live' });
+		if (result.ok) expect(result.records.map((r) => r.id)).toEqual(['run-1']);
+		expect(constructorCalls).toEqual([[dbPath, { readonly: true, fileMustExist: true }]]);
+		expect(allCalls).toEqual([[0, 1000]]);
+		expect(mockDb.close).toHaveBeenCalledTimes(1);
+	});
+
+	it('uses the same recent-events query as the engine', () => {
+		fs.writeFileSync(dbPath, walImage());
+
+		readRecentCueEventsReadOnly(5, dbPath);
+
+		expect(prepareCalls).toEqual([
+			'SELECT * FROM cue_events WHERE created_at >= ? ORDER BY created_at DESC LIMIT ?',
+		]);
+		expect(mockDb.pragma).not.toHaveBeenCalled();
+		expect(mockStatement.run).not.toHaveBeenCalled();
+	});
+
+	it('with no sidecars, queries an in-memory copy and leaves the file and folder alone', () => {
+		fs.writeFileSync(dbPath, walImage());
+		const before = fs.readFileSync(dbPath);
+
+		const result = readRecentCueEventsReadOnly(1000, dbPath);
+
+		expect(result).toMatchObject({ ok: true, source: 'snapshot' });
+		expect(constructorCalls).toHaveLength(1);
+		const [image, options] = constructorCalls[0] as [Buffer, unknown];
+		expect(Buffer.isBuffer(image)).toBe(true);
+		expect(options).toEqual({ readonly: true });
+		// The copy is rewritten to a rollback-journal header; the file is not.
+		expect([image[18], image[19]]).toEqual([1, 1]);
+		expect(fs.readFileSync(dbPath).equals(before)).toBe(true);
+		expect(fs.readdirSync(dir)).toEqual(['cue.db']);
+	});
+
+	it('reads an in-memory copy when only an empty -wal is left', () => {
+		fs.writeFileSync(dbPath, walImage());
+		fs.writeFileSync(`${dbPath}-wal`, '');
+
+		expect(readRecentCueEventsReadOnly(1000, dbPath)).toMatchObject({
+			ok: true,
+			source: 'snapshot',
+		});
+	});
+
+	it('refuses a non-empty -wal without its -shm rather than miss or recover its rows', () => {
+		fs.writeFileSync(dbPath, walImage());
+		fs.writeFileSync(`${dbPath}-wal`, 'frames');
+
+		const result = readRecentCueEventsReadOnly(1000, dbPath);
+
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.reason).toContain('did not shut down cleanly');
+		expect(constructorCalls).toHaveLength(0);
+		expect(fs.readdirSync(dir).sort()).toEqual(['cue.db', 'cue.db-wal']);
+	});
+
+	it('reports a missing cue.db without creating it or its folder', () => {
+		const missing = path.join(dir, 'nested', 'cue.db');
+
+		const result = readRecentCueEventsReadOnly(1000, missing);
+
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.reason).toContain('does not exist');
+		expect(fs.existsSync(path.dirname(missing))).toBe(false);
+	});
+
+	it('reports an unreadable database as a reason and closes nothing it did not open', () => {
+		fs.writeFileSync(dbPath, walImage());
+		constructorError = new Error('file is not a database');
+
+		const result = readRecentCueEventsReadOnly(1000, dbPath);
+
+		expect(result).toEqual({
+			ok: false,
+			reason: `could not read ${dbPath}: file is not a database`,
+		});
+		expect(mockDb.close).not.toHaveBeenCalled();
+	});
+
+	it('rethrows SqliteUnavailableError', () => {
+		fs.writeFileSync(dbPath, walImage());
+		const unavailable = new Error('cannot load better-sqlite3');
+		unavailable.name = 'SqliteUnavailableError';
+		constructorError = unavailable;
+
+		expect(() => readRecentCueEventsReadOnly(1000, dbPath)).toThrow(unavailable);
+	});
+
+	it('never becomes the module singleton', () => {
+		fs.writeFileSync(dbPath, walImage());
+		readRecentCueEventsReadOnly(1000, dbPath);
+
+		expect(isCueDbReady()).toBe(false);
+		expect(getRecentCueEvents(0, 10)).toEqual([]);
+	});
+});
+
 describe('cue-db additive column migration', () => {
 	const dbPath = path.join(os.tmpdir(), 'test-cue.db');
 
@@ -237,6 +525,30 @@ describe('cue-db additive column migration', () => {
 		expect(createSql).toBeDefined();
 		expect(createSql).toContain('output_excerpt TEXT');
 		expect(createSql).toContain('full_output TEXT');
+	});
+
+	it('declares turn_settings_json on the persisted queue table', () => {
+		initCueDb(undefined, dbPath);
+
+		const createSql = prepareCalls.find((sql) =>
+			sql.includes('CREATE TABLE IF NOT EXISTS cue_event_queue')
+		);
+		expect(createSql).toContain('turn_settings_json TEXT');
+	});
+
+	it('ALTERs a queue table that predates turn_settings_json', () => {
+		initCueDb(undefined, dbPath);
+
+		expect(
+			prepareCalls.some(
+				(sql) => sql === 'ALTER TABLE cue_event_queue ADD COLUMN turn_settings_json TEXT'
+			)
+		).toBe(true);
+		expect(
+			prepareCalls.some(
+				(sql) => sql === 'ALTER TABLE cue_event_queue ADD COLUMN chain_root_id TEXT'
+			)
+		).toBe(false);
 	});
 
 	it('ALTERs an existing database that predates the output columns', () => {
@@ -276,6 +588,7 @@ describe('cue-db additive column migration', () => {
 					{ name: 'exit_code' },
 					{ name: 'output_excerpt' },
 					{ name: 'full_output' },
+					{ name: 'stream_usage_json' },
 				];
 			}
 			return originalPragma?.(query);
@@ -372,12 +685,14 @@ describe('cue-db event journal', () => {
 		const lastPrepare = prepareCalls[prepareCalls.length - 1];
 		expect(lastPrepare).toContain('output_excerpt = ?');
 		expect(lastPrepare).toContain('full_output = ?');
+		expect(lastPrepare).toContain('stream_usage_json = ?');
 		const lastRun = runCalls[runCalls.length - 1];
 		// status, completed_at, provider_session_id, error_message, exit_code,
-		// output_excerpt, full_output, id
+		// output_excerpt, full_output, stream_usage_json, id
 		expect(lastRun[5]).toBe('Merged PR #12.');
 		expect(lastRun[6]).toBe('Merged PR #12.\nDetails follow.');
-		expect(lastRun[7]).toBe('evt-5');
+		expect(lastRun[7]).toBeNull(); // stream_usage_json (not passed by this call)
+		expect(lastRun[8]).toBe('evt-5');
 	});
 
 	it('should write NULL output columns for a silent run', () => {
@@ -387,7 +702,8 @@ describe('cue-db event journal', () => {
 		// No provider session id, so the columns shift left by one.
 		expect(lastRun[4]).toBeNull(); // output_excerpt
 		expect(lastRun[5]).toBeNull(); // full_output
-		expect(lastRun[6]).toBe('evt-6');
+		expect(lastRun[6]).toBeNull(); // stream_usage_json
+		expect(lastRun[7]).toBe('evt-6');
 	});
 
 	it('should query recent events with correct since parameter', () => {
@@ -699,5 +1015,78 @@ describe('safeUpdateCueEventStatus', () => {
 	it('does not throw when DB is unavailable (not initialized)', () => {
 		closeCueDb();
 		expect(() => safeUpdateCueEventStatus('evt-1', 'completed')).not.toThrow();
+	});
+});
+
+describe('cue-db webhook delivery dedupe', () => {
+	beforeEach(() => {
+		initCueDb(undefined, path.join(os.tmpdir(), 'test-cue.db'));
+	});
+
+	it('creates the deliveries table and its index at init', () => {
+		expect(
+			prepareCalls.some((sql) => sql.includes('CREATE TABLE IF NOT EXISTS cue_webhook_deliveries'))
+		).toBe(true);
+		expect(prepareCalls.some((sql) => sql.includes('idx_cue_webhook_deliveries_received'))).toBe(
+			true
+		);
+	});
+
+	it('claims a new delivery with one INSERT OR IGNORE, after dropping an expired row', () => {
+		vi.clearAllMocks();
+		runCalls.length = 0;
+		prepareCalls.length = 0;
+		const before = Date.now();
+
+		expect(claimWebhookDelivery('github', 'abc-123')).toBe(true);
+
+		const expire = prepareCalls.findIndex((sql) =>
+			sql.includes('DELETE FROM cue_webhook_deliveries WHERE path = ? AND delivery_id = ?')
+		);
+		const insert = prepareCalls.findIndex((sql) =>
+			sql.includes('INSERT OR IGNORE INTO cue_webhook_deliveries')
+		);
+		expect(expire).toBeGreaterThanOrEqual(0);
+		expect(insert).toBeGreaterThan(expire);
+		const [expirePath, expireId, cutoff] = runCalls[0] as [string, string, number];
+		expect([expirePath, expireId]).toEqual(['github', 'abc-123']);
+		expect(cutoff).toBeGreaterThanOrEqual(before - WEBHOOK_DELIVERY_RETENTION_MS);
+		expect(runCalls[1].slice(0, 2)).toEqual(['github', 'abc-123']);
+	});
+
+	it('checks for a live claim with one SELECT, without writing', () => {
+		vi.clearAllMocks();
+		runCalls.length = 0;
+		getCalls.length = 0;
+		prepareCalls.length = 0;
+		const before = Date.now();
+		mockGetReturn = { 1: 1 };
+		expect(isWebhookDeliveryClaimed('github#session-1:sub', 'abc-123')).toBe(true);
+		mockGetReturn = undefined;
+		expect(isWebhookDeliveryClaimed('github#session-1:sub', 'abc-123')).toBe(false);
+		expect(
+			prepareCalls.every((sql) => sql.startsWith('SELECT 1 FROM cue_webhook_deliveries'))
+		).toBe(true);
+		expect(runCalls).toEqual([]);
+		const [path, id, cutoff] = getCalls[0] as [string, string, number];
+		expect([path, id]).toEqual(['github#session-1:sub', 'abc-123']);
+		expect(cutoff).toBeGreaterThanOrEqual(before - WEBHOOK_DELIVERY_RETENTION_MS);
+	});
+
+	it('reports a redelivery when the INSERT changes nothing', () => {
+		mockStatement.run
+			.mockImplementationOnce(() => ({ changes: 0 }))
+			.mockImplementationOnce(() => ({ changes: 0 }));
+		expect(claimWebhookDelivery('github', 'abc-123')).toBe(false);
+	});
+
+	it('treats every delivery as new without a database', () => {
+		closeCueDb();
+		expect(claimWebhookDelivery('github', 'abc-123')).toBe(true);
+		expect(isWebhookDeliveryClaimed('github', 'abc-123')).toBe(false);
+	});
+
+	it('remembers deliveries for 24 hours', () => {
+		expect(WEBHOOK_DELIVERY_RETENTION_MS).toBe(24 * 60 * 60 * 1000);
 	});
 });

@@ -5,6 +5,7 @@
 
 import {
 	formatSize,
+	formatTokensPerSecond,
 	formatNumber,
 	formatCount,
 	formatTokens,
@@ -20,6 +21,7 @@ import {
 	estimateTokenCount,
 	truncatePath,
 	truncateCommand,
+	truncateAtWordBoundary,
 	abbreviateGroupName,
 	isAbsolutePath,
 	getBasename,
@@ -144,6 +146,20 @@ describe('shared/formatters', () => {
 	// ==========================================================================
 	// formatTokensCompact tests (without ~ prefix, decimal)
 	// ==========================================================================
+	describe('formatTokensPerSecond', () => {
+		it('uses one decimal below 100, whole numbers below 1,000, then compact', () => {
+			expect(formatTokensPerSecond(42.66)).toBe('42.7');
+			expect(formatTokensPerSecond(412.4)).toBe('412');
+			expect(formatTokensPerSecond(38_400)).toBe('38.4K');
+		});
+
+		it('renders an unmeasured rate as a dash', () => {
+			expect(formatTokensPerSecond(0)).toBe('-');
+			expect(formatTokensPerSecond(-1)).toBe('-');
+			expect(formatTokensPerSecond(Number.NaN)).toBe('-');
+		});
+	});
+
 	describe('formatTokensCompact', () => {
 		it('should format small token counts', () => {
 			expect(formatTokensCompact(0)).toBe('0');
@@ -601,6 +617,29 @@ describe('shared/formatters', () => {
 
 		it('should handle paths with two parts', () => {
 			expect(truncatePath('/parent/child', 50)).toBe('/parent/child');
+		});
+	});
+
+	// ==========================================================================
+	// truncateAtWordBoundary tests
+	// ==========================================================================
+	describe('truncateAtWordBoundary', () => {
+		it('returns text that already fits unchanged', () => {
+			expect(truncateAtWordBoundary('Short Title', 40)).toBe('Short Title');
+		});
+
+		it('cuts at the last space that fits, ellipsis included in the limit', () => {
+			const result = truncateAtWordBoundary(
+				'Donation Appeal Pages Japanese Translation Dates',
+				40,
+				'...'
+			);
+			expect(result).toBe('Donation Appeal Pages Japanese...');
+			expect(result.length).toBeLessThanOrEqual(40);
+		});
+
+		it('hard-cuts a string with no usable space', () => {
+			expect(truncateAtWordBoundary('a'.repeat(50), 10)).toBe('aaaaaaaaa…');
 		});
 	});
 

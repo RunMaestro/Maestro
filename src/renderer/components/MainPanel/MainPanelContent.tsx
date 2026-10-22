@@ -38,12 +38,12 @@ import { useToastAvoidZone } from '../../hooks/ui/useToastAvoidZone';
 import { useTabStore } from '../../stores/tabStore';
 import { useLayerStack } from '../../contexts/LayerStackContext';
 import { outputSearchKeyFor } from '../../utils/outputSearch';
+import type { BrowserTab } from '../../../shared/browserPage';
 import type {
 	Session,
 	Theme,
 	AITab,
 	BatchRunState,
-	BrowserTab,
 	FilePreviewTab,
 	QueuedItem,
 	UnifiedTabRef,
@@ -59,7 +59,7 @@ import type {
 	GroomingProgress,
 	MergeResult,
 } from '../../types/contextMerge';
-import type { ForceSendEligibility } from '../../utils/executionQueue';
+import type { ForceSendEligibility, SteerEligibility } from '../../utils/executionQueue';
 
 // Lazy-loaded: FilePreview is the single aggregation point that pulls mermaid,
 // react-syntax-highlighter, and the full react-markdown/remark/rehype stack into
@@ -195,9 +195,11 @@ export interface MainPanelContentProps {
 	handleInputKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
 	handlePaste: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void;
 	handleDrop: (e: React.DragEvent<HTMLElement>) => void;
+	onUploadFiles?: (files: File[]) => void;
 	onStopBatchRun?: (sessionId?: string) => void;
 	onRemoveQueuedItem?: (itemId: string) => void;
 	onTogglePauseQueuedItem?: (itemId: string) => void;
+	onMergeQueuedItem?: (itemId: string) => void;
 	onEditQueuedItem?: (itemId: string, patch: QueuedItemEditPatch) => void;
 	onReorderQueuedItem?: (fromIndex: number, toIndex: number, tabId?: string) => void;
 	onForceSendQueuedItem?: (itemId: string) => void;
@@ -209,6 +211,8 @@ export interface MainPanelContentProps {
 	 * Execution Queue modal does instead of re-deriving one from a subset.
 	 */
 	getForceSendContext?: (item: QueuedItem) => ForceSendEligibility | null;
+	getSteerContext?: (item: QueuedItem) => SteerEligibility | null;
+	onSteerQueuedItem?: (itemId: string) => void;
 	onOpenQueueBrowser?: () => void;
 	showFlashNotification?: (message: string) => void;
 
@@ -392,14 +396,18 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 		handleInputKeyDown,
 		handlePaste,
 		handleDrop,
+		onUploadFiles,
 		onStopBatchRun,
 		onRemoveQueuedItem,
 		onTogglePauseQueuedItem,
+		onMergeQueuedItem,
 		onEditQueuedItem,
 		onReorderQueuedItem,
 		onForceSendQueuedItem,
 		forcedParallelEnabled,
 		getForceSendContext,
+		getSteerContext,
+		onSteerQueuedItem,
 		onOpenQueueBrowser,
 		showFlashNotification,
 		summarizeProgress,
@@ -735,11 +743,14 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 			onDeleteLog,
 			onRemoveQueuedItem,
 			onTogglePauseQueuedItem,
+			onMergeQueuedItem,
 			onEditQueuedItem,
 			onReorderQueuedItem,
 			onForceSendQueuedItem,
 			forcedParallelEnabled,
 			getForceSendContext,
+			getSteerContext,
+			onSteerQueuedItem,
 			onInterrupt: handleInterrupt,
 			setLightboxImage,
 			setMarkdownEditMode: useSettingsStore.getState().setChatRawTextMode,
@@ -769,11 +780,14 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 			onDeleteLog,
 			onRemoveQueuedItem,
 			onTogglePauseQueuedItem,
+			onMergeQueuedItem,
 			onEditQueuedItem,
 			onReorderQueuedItem,
 			onForceSendQueuedItem,
 			forcedParallelEnabled,
 			getForceSendContext,
+			getSteerContext,
+			onSteerQueuedItem,
 			handleInterrupt,
 			setLightboxImage,
 			onReplayMessage,
@@ -899,6 +913,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 							onOpenInGraph={onOpenInGraph}
 							onOpenInBrowser={onOpenInBrowser}
 							sshRemoteId={filePreviewSshRemoteId}
+							sessionId={activeSession.id}
 							// Pass external edit content for persistence across tab switches
 							externalEditContent={activeFileTab.editContent}
 							onEditContentChange={handleFilePreviewEditContentChange}
@@ -1005,11 +1020,14 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 								onDeleteLog={onDeleteLog}
 								onRemoveQueuedItem={onRemoveQueuedItem}
 								onTogglePauseQueuedItem={onTogglePauseQueuedItem}
+								onMergeQueuedItem={onMergeQueuedItem}
 								onEditQueuedItem={onEditQueuedItem}
 								onReorderQueuedItem={onReorderQueuedItem}
 								onForceSendQueuedItem={onForceSendQueuedItem}
 								forcedParallelEnabled={forcedParallelEnabled}
 								getForceSendContext={getForceSendContext}
+								getSteerContext={getSteerContext}
+								onSteerQueuedItem={onSteerQueuedItem}
 								onInterrupt={handleInterrupt}
 								onScrollPositionChange={onScrollPositionChange}
 								onAtBottomChange={onAtBottomChange}
@@ -1104,6 +1122,7 @@ export const MainPanelContent = React.memo(function MainPanelContent(props: Main
 						handleInputKeyDown={handleInputKeyDown}
 						handlePaste={handlePaste}
 						handleDrop={handleDrop}
+						onUploadFiles={onUploadFiles}
 						toggleInputMode={toggleInputMode}
 						processInput={processInput}
 						handleInterrupt={handleInterrupt}

@@ -2,11 +2,16 @@
 //
 // Walks argv once and partitions tokens into three buckets:
 //   (a) consumed   - maestro-p's own flags (-p/--print/--prompt, --status,
-//                    --stream-thinking, --max-wait, --help, --version) and
-//                    their values.
+//                    --stream-thinking, --max-wait, --first-byte-timeout,
+//                    --ready-timeout, --help, --version) and their values.
 //   (b) stripped   - headless-mode flags that would corrupt the TUI spawn
-//                    (--output-format, --input-format, --verbose). Dropped
-//                    silently with a one-line stderr warning.
+//                    (--output-format, --input-format, --verbose, and the
+//                    --print-only --include-partial-messages and
+//                    --replay-user-messages). Dropped without a word when
+//                    maestro-p honors them anyway or loses nothing the TUI
+//                    could give (`--verbose`, `--output-format stream-json`,
+//                    the partial-message flags), with a
+//                    one-line stderr warning when it cannot.
 //   (c) passthrough - everything else, forwarded verbatim to the spawned
 //                    `claude` TUI.
 //
@@ -61,6 +66,13 @@ export interface ParsedArgs {
 	 * instead of burning the full idle budget. Always <= maxWaitSeconds.
 	 */
 	firstByteTimeoutSeconds: number;
+	/**
+	 * Budget for the claude TUI to boot and paint its input prompt (the ready
+	 * handshake), before maestro-p fails with `ready_timeout` (exit 4). Nothing
+	 * has been sent to the model at that point. Always <= firstByteTimeoutSeconds,
+	 * whose timer also spans the handshake.
+	 */
+	readyTimeoutSeconds: number;
 	resumeSessionId: string | null;
 	/**
 	 * True when invoked with `--input-format stream-json`. Maestro sets this
@@ -96,6 +108,15 @@ export const DEFAULT_MAX_WAIT_SECONDS = 300;
 // `--first-byte-timeout`.
 export const DEFAULT_FIRST_BYTE_TIMEOUT_SECONDS = 240;
 
+// How long the claude TUI gets to boot and paint its input prompt before
+// `ready_timeout` (exit 4). This was a fixed 8s, which a loaded host blows
+// through: at a 1-minute load average of ~15 on 18 cores, up to 7 of 16 runs
+// failed at 8.0-9.9s while the same runs passed alone (issue #1765). A boot
+// that slow is still healthy, and a TUI genuinely stuck on a startup modal
+// only costs the caller the extra wait, so the default leaves 3x headroom
+// over the slowest boot observed. Overridable via `--ready-timeout`.
+export const DEFAULT_READY_TIMEOUT_SECONDS = 30;
+
 const PROMPT_VALUE_FLAGS = new Set(['-p', '--print', '--prompt']);
 const CONSUMED_BOOLEAN_FLAGS = new Set(['-h', '--help', '-v', '--version']);
 // `--input-format` is handled specially below: `stream-json` flips
@@ -103,7 +124,41 @@ const CONSUMED_BOOLEAN_FLAGS = new Set(['-h', '--help', '-v', '--version']);
 // with `@path` image mentions; other values are stripped with a warning
 // (same as the legacy behavior for the rest of the headless-only flags).
 const STRIPPED_VALUE_FLAGS = new Set(['--output-format']);
-const STRIPPED_BOOLEAN_FLAGS = new Set(['--verbose']);
+// `--include-partial-messages` and `--replay-user-messages` are `--print`-only:
+// the TUI refuses to start with either ("--include-partial-messages requires
+// --print and --output-format=stream-json") and the turn dies as `tui_exited`
+// in a quarter second. Every wizard and the feedback conversation pass the
+// first one, so a Claude agent on TUI mode could not run any of them.
+const STRIPPED_BOOLEAN_FLAGS = new Set([
+	'--verbose',
+	'--include-partial-messages',
+	'--replay-user-messages',
+]);
+
+// Long flags that take one OR MORE values (`<tools...>` in `claude --help`).
+// Maestro spawns `--allowedTools Read Glob Grep LS`; under the one-value
+// heuristic `Glob` became the prompt and the real prompt after `--` fell into
+// passthrough. These consume every following token up to the next flag or `--`.
+const VARIADIC_CLAUDE_LONG_FLAGS = new Set([
+	'--add-dir',
+	'--allowedTools',
+	'--allowed-tools',
+	'--betas',
+	'--disallowedTools',
+	'--disallowed-tools',
+	'--file',
+	'--mcp-config',
+	'--tools',
+]);
+
+/**
+ * Whether an argv token is a flag rather than a value. `--` counts (it ends
+ * the options), as does any `--name` / `--name=value` token. A value that only
+ * starts with dashes (`--- frontmatter`, `-1`) does not.
+ */
+function isFlagToken(token: string): boolean {
+	return token === '--' || /^--[A-Za-z][A-Za-z0-9-]*(=|$)/.test(token);
+}
 
 // Long flags that claude treats as booleans - the parser must NOT swallow the
 // next argv slot when one of these appears. Out-of-date entries here only cause
@@ -182,6 +237,7 @@ export function parseArgs(argv: string[], options: ParseArgsOptions = {}): Parse
 	let streamThinking = false;
 	let maxWaitSeconds = DEFAULT_MAX_WAIT_SECONDS;
 	let firstByteTimeoutSeconds = DEFAULT_FIRST_BYTE_TIMEOUT_SECONDS;
+	let readyTimeoutSeconds = DEFAULT_READY_TIMEOUT_SECONDS;
 	let resumeSessionId: string | null = null;
 	let streamJsonInput = false;
 	const passThroughArgs: string[] = [];
@@ -241,7 +297,10 @@ export function parseArgs(argv: string[], options: ParseArgsOptions = {}): Parse
 		if (PROMPT_VALUE_FLAGS.has(flag)) {
 			const value = consumeValue();
 			if (value === undefined) {
-				warn(`maestro-p: ${flag} requires a value; ignoring.`);
+				// A bare `-p` / `--print` is claude's print-mode switch, which is
+				// the only mode maestro-p has, so it is not an error. Maestro passes
+				// it on every spawn; only `--prompt` genuinely needs its value.
+				if (flag === '--prompt') warn(`maestro-p: ${flag} requires a value; ignoring.`);
 			} else {
 				promptFromFlag = value;
 			}
@@ -293,6 +352,26 @@ export function parseArgs(argv: string[], options: ParseArgsOptions = {}): Parse
 			continue;
 		}
 
+		if (flag === '--ready-timeout') {
+			const value = consumeValue();
+			if (value === undefined) {
+				warn(
+					`maestro-p: --ready-timeout requires a value; using default ${DEFAULT_READY_TIMEOUT_SECONDS}s.`
+				);
+			} else {
+				const parsed = Number.parseInt(value, 10);
+				if (Number.isFinite(parsed) && parsed > 0) {
+					readyTimeoutSeconds = parsed;
+				} else {
+					warn(
+						`maestro-p: --ready-timeout "${value}" is not a positive integer; using default ${DEFAULT_READY_TIMEOUT_SECONDS}s.`
+					);
+				}
+			}
+			i += 1;
+			continue;
+		}
+
 		if (CONSUMED_BOOLEAN_FLAGS.has(flag)) {
 			// commander in index.ts prints the actual --help/--version output
 			// before parseArgs runs in production; consume here so bare
@@ -302,7 +381,13 @@ export function parseArgs(argv: string[], options: ParseArgsOptions = {}): Parse
 		}
 
 		if (STRIPPED_VALUE_FLAGS.has(flag)) {
-			warn(`maestro-p: ignoring ${flag} - headless-mode flag, not forwarded to the TUI.`);
+			const value = inlineValue ?? (i + 1 < argv.length ? argv[i + 1] : undefined);
+			// maestro-p always writes stream-json, so `--output-format stream-json`
+			// (what Maestro passes every time) is honored, not ignored.
+			if (value !== 'stream-json') {
+				const shown = value === undefined ? flag : `${flag} ${value}`;
+				warn(`maestro-p: ignoring ${shown} - maestro-p always writes stream-json.`);
+			}
 			if (inlineValue === undefined && i + 1 < argv.length) {
 				i += 1;
 			}
@@ -329,7 +414,8 @@ export function parseArgs(argv: string[], options: ParseArgsOptions = {}): Parse
 			continue;
 		}
 		if (STRIPPED_BOOLEAN_FLAGS.has(flag)) {
-			warn(`maestro-p: ignoring ${flag} - headless-mode flag, not forwarded to the TUI.`);
+			// `--verbose` only shapes `claude -p`'s stream-json, which maestro-p
+			// writes in that same shape anyway: nothing is lost, so stay quiet.
 			i += 1;
 			continue;
 		}
@@ -351,13 +437,19 @@ export function parseArgs(argv: string[], options: ParseArgsOptions = {}): Parse
 		}
 
 		// Pass-through long flag. Apply the value-arity heuristic: assume the
-		// next argv slot is its value unless this is a known boolean.
+		// next argv slot is its value unless this is a known boolean, or the
+		// slot is itself a flag (an unknown boolean followed by another flag
+		// must not swallow it). Variadic flags take every value up to the next flag.
 		if (raw.startsWith('--')) {
 			passThroughArgs.push(raw);
 			const isKnownBoolean = KNOWN_CLAUDE_BOOLEAN_LONG_FLAGS.has(flag);
-			if (!isKnownBoolean && inlineValue === undefined && i + 1 < argv.length) {
-				i += 1;
-				passThroughArgs.push(argv[i]);
+			if (!isKnownBoolean && inlineValue === undefined) {
+				const isVariadic = VARIADIC_CLAUDE_LONG_FLAGS.has(flag);
+				while (i + 1 < argv.length && !isFlagToken(argv[i + 1])) {
+					i += 1;
+					passThroughArgs.push(argv[i]);
+					if (!isVariadic) break;
+				}
 			}
 			i += 1;
 			continue;
@@ -411,6 +503,11 @@ export function parseArgs(argv: string[], options: ParseArgsOptions = {}): Parse
 	if (firstByteTimeoutSeconds > maxWaitSeconds) {
 		firstByteTimeoutSeconds = maxWaitSeconds;
 	}
+	// Same rule one level down: the first-byte timer is armed at spawn and spans
+	// the ready handshake, so a longer ready budget could never be reached.
+	if (readyTimeoutSeconds > firstByteTimeoutSeconds) {
+		readyTimeoutSeconds = firstByteTimeoutSeconds;
+	}
 
 	return {
 		prompt,
@@ -419,6 +516,7 @@ export function parseArgs(argv: string[], options: ParseArgsOptions = {}): Parse
 		streamThinking,
 		maxWaitSeconds,
 		firstByteTimeoutSeconds,
+		readyTimeoutSeconds,
 		resumeSessionId,
 		streamJsonInput,
 	};

@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import type { AITab, EncoreFeatureFlags, Session } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { useSidebarNavStore } from '../../stores/sidebarNavStore';
 import { generateId } from '../../utils/ids';
 import { getHomeDirAsync } from '../../utils/homeDir';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
@@ -32,6 +33,26 @@ import { logger } from '../../utils/logger';
 export function usePianolaAgent(encoreFeatures: EncoreFeatureFlags): void {
 	const sessionsLoaded = useSessionStore((s) => s.sessionsLoaded);
 	const ensuredRef = useRef(false);
+
+	// The Pianola agent outlives its flag in the session store. If it is the
+	// ACTIVE agent when the flag goes off (or is the one restored at startup with
+	// the flag already off), the main panel would keep showing an agent that has
+	// no Left Bar row. Move to the first agent the Left Bar is drawing (already
+	// scoped to this window), else to any other agent. With no other agent there
+	// is nowhere to go, so the selection stays.
+	const activeIsHiddenPianola = useSessionStore(
+		(s) =>
+			!encoreFeatures.pianola &&
+			s.sessions.some((session) => session.id === s.activeSessionId && session.isPianola)
+	);
+	useEffect(() => {
+		if (!sessionsLoaded || !activeIsHiddenPianola) return;
+		const { sessions, setActiveSessionId } = useSessionStore.getState();
+		const next =
+			useSidebarNavStore.getState().visibleSessions.find((session) => !session.isPianola) ??
+			sessions.find((session) => !session.isPianola);
+		if (next) setActiveSessionId(next.id);
+	}, [sessionsLoaded, activeIsHiddenPianola]);
 
 	useEffect(() => {
 		// Wait until sessions are hydrated from disk; otherwise we would race the

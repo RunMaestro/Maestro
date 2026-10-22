@@ -33,6 +33,9 @@ import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { agentAlreadyRunningMessage } from '../../../shared/processErrors';
 import {
 	applyQueuedItemDispatch,
+	resetSpawnCollisionsForTest,
+	spawnCollisionCooldownMs,
+	SPAWN_COLLISION_MAX_ATTEMPTS,
 	takeNextRunnableQueueItem,
 } from '../../../renderer/utils/executionQueue';
 import { createMockSession } from '../../helpers/mockSession';
@@ -46,9 +49,16 @@ import type { AgentConfig, QueuedItem, Session } from '../../../renderer/types';
 
 const mockSpawn = vi.fn().mockResolvedValue({ pid: 1, success: true });
 const mockGetAgent = vi.fn();
+/** What the main process reports as running. Empty unless a test says otherwise. */
+const mockGetActiveProcesses = vi.fn().mockResolvedValue([]);
 
 (window as any).maestro = {
-	process: { spawn: mockSpawn, kill: vi.fn(), interrupt: vi.fn() },
+	process: {
+		spawn: mockSpawn,
+		kill: vi.fn(),
+		interrupt: vi.fn(),
+		getActiveProcesses: mockGetActiveProcesses,
+	},
 	agents: { detect: vi.fn().mockResolvedValue([]), get: mockGetAgent },
 	agentError: { clearError: vi.fn() },
 	prompts: {
@@ -64,6 +74,7 @@ vi.mock('../../../renderer/utils/templateVariables', () => ({
 }));
 vi.mock('../../../renderer/services/crossAgentMentions', () => ({
 	dispatchCrossAgentMentionsForMessage: vi.fn(),
+	withMentionTurnNotes: (prompt: string) => prompt,
 	planCrossAgentMentions: vi.fn(() => null),
 }));
 vi.mock('../../../renderer/utils/logger', () => ({
@@ -127,9 +138,11 @@ async function drainOnce(): Promise<QueuedItem | null> {
 
 beforeEach(() => {
 	resetStores(useAgentStore, useSessionStore);
+	resetSpawnCollisionsForTest();
 	vi.clearAllMocks();
 	mockGetAgent.mockResolvedValue(AGENT);
 	mockSpawn.mockResolvedValue({ pid: 1, success: true });
+	mockGetActiveProcesses.mockResolvedValue([]);
 	setSession(
 		createMockSession({
 			id: SESSION,
@@ -164,8 +177,11 @@ describe('a queue drain that races a dying process', () => {
 		// not claim it was sent.
 		expect(session().executionQueue.map((i) => i.id)).toEqual(['q1', 'q2']);
 		expect(cardsFor('q1')).toBe(0);
-		expect(session().aiTabs[0].state).toBe('idle');
-		expect(session().state).toBe('idle');
+		// The interrupted child still owns this tab, so it stays busy: releasing it
+		// painted a live process "Ready" and told every drain the tab was free. The
+		// child's exit is what settles it - and what drains q1 below.
+		expect(session().aiTabs[0].state).toBe('busy');
+		expect(session().state).toBe('busy');
 
 		// A collision is transient, so the item comes back RUNNABLE - the exit
 		// listener drains it for real a moment later, once the child is gone.
@@ -205,6 +221,43 @@ describe('a queue drain that races a dying process', () => {
 		// Every message is still queued, still in order, still exactly one copy.
 		expect(session().executionQueue.map((i) => i.id)).toEqual(['q1', 'q2', 'q3']);
 		expect(session().aiTabs[0].logs).toHaveLength(0);
+	});
+
+	// 2026-10-12, rc, SSH agent: Stop on a turn whose ssh client exited without
+	// its stdio ever closing left the process entry in place for good. Every
+	// refused dispatch came back runnable, which re-fired the drain, about 14
+	// times a second, and the tab sat on "Thinking... 0m 0s" indefinitely.
+	it('backs off between collisions, then holds the prompt and says why', async () => {
+		setSession({ ...session(), executionQueue: [queued('q1', 'hello')] });
+		mockSpawn.mockRejectedValue(new Error(agentAlreadyRunningMessage(`${SESSION}-ai-${TAB}`)));
+
+		await drainOnce();
+		// The drain poll is told to wait before trying this item again.
+		expect(spawnCollisionCooldownMs('q1')).toBeGreaterThan(0);
+		expect(session().executionQueue[0].paused).toBeFalsy();
+
+		for (let i = 1; i < SPAWN_COLLISION_MAX_ATTEMPTS; i++) await drainOnce();
+
+		const queue = session().executionQueue;
+		expect(queue.map((i) => i.id)).toEqual(['q1']);
+		expect(queue[0].paused).toBe(true);
+		const errors = session().aiTabs[0].logs.filter((l) => l.source === 'error');
+		expect(errors).toHaveLength(1);
+		expect(errors[0].text).toContain('held in the queue');
+		// Held for the user now, so the poll has nothing left to wait out.
+		expect(spawnCollisionCooldownMs('q1')).toBe(0);
+	});
+
+	it('forgets earlier collisions once the item finally sends', async () => {
+		setSession({ ...session(), executionQueue: [queued('q1', 'hello')] });
+		mockSpawn.mockRejectedValueOnce(new Error(agentAlreadyRunningMessage(`${SESSION}-ai-${TAB}`)));
+
+		await drainOnce();
+		expect(spawnCollisionCooldownMs('q1')).toBeGreaterThan(0);
+		await drainOnce();
+
+		expect(spawnCollisionCooldownMs('q1')).toBe(0);
+		expect(session().executionQueue).toHaveLength(0);
 	});
 });
 
@@ -292,7 +345,8 @@ describe('recovery on a multi-tab agent', () => {
 			aiTabs: [createMockAITab({ id: TAB }), createMockAITab({ id: 'tab-2', state: 'busy' })],
 			executionQueue: [queued('q1', 'hello')],
 		});
-		mockSpawn.mockRejectedValueOnce(new Error(agentAlreadyRunningMessage(`${SESSION}-ai-${TAB}`)));
+		// A real failure, so something IS released (a collision releases nothing).
+		mockSpawn.mockRejectedValueOnce(new Error('spawn claude ENOENT'));
 
 		await drainOnce();
 
@@ -315,6 +369,133 @@ describe('recovery on a multi-tab agent', () => {
 
 		// Matching by text would have deleted the user's real history here.
 		expect(session().aiTabs[0].logs.map((l) => l.id)).toEqual(['earlier']);
+	});
+
+	it('leaves the agent busy when the colliding tab is not the only one running', async () => {
+		setSession({
+			...session(),
+			aiTabs: [createMockAITab({ id: TAB }), createMockAITab({ id: 'tab-2', state: 'busy' })],
+			executionQueue: [queued('q1', 'hello')],
+		});
+		mockSpawn.mockRejectedValueOnce(new Error(agentAlreadyRunningMessage(`${SESSION}-ai-${TAB}`)));
+
+		await drainOnce();
+
+		expect(session().aiTabs.find((t) => t.id === TAB)!.state).toBe('busy');
+		expect(session().aiTabs.find((t) => t.id === 'tab-2')!.state).toBe('busy');
+		expect(session().state).toBe('busy');
+		expect(session().executionQueue[0].paused).toBeFalsy();
+	});
+});
+
+// ============================================================================
+// An item whose own tab is gone
+// ============================================================================
+
+describe('a queued item whose tab was closed', () => {
+	// The queue resolves a dead tabId onto the ACTIVE tab and marks that tab
+	// running, card included; `processQueuedItem` then refuses to run there.
+	it('takes back the busy state and the card it never sent, and keeps other turns busy', async () => {
+		setSession({
+			...session(),
+			aiTabs: [createMockAITab({ id: TAB }), createMockAITab({ id: 'tab-2', state: 'busy' })],
+			activeTabId: TAB,
+			executionQueue: [queued('q1', 'for a closed tab', 'tab-gone')],
+		});
+
+		await drainOnce();
+
+		expect(mockSpawn).not.toHaveBeenCalled();
+		expect(cardsFor('q1')).toBe(0);
+		expect(session().aiTabs.find((t) => t.id === TAB)!.state).toBe('idle');
+		// Forcing the agent idle read "Ready" while tab-2 was still mid-turn.
+		expect(session().aiTabs.find((t) => t.id === 'tab-2')!.state).toBe('busy');
+		expect(session().state).toBe('busy');
+	});
+
+	it('goes idle when nothing else is running', async () => {
+		setSession({
+			...session(),
+			executionQueue: [queued('q1', 'for a closed tab', 'tab-gone')],
+		});
+
+		await drainOnce();
+
+		expect(session().aiTabs[0].state).toBe('idle');
+		expect(session().state).toBe('idle');
+	});
+
+	// The dispatch runs after the dequeue, so the user can switch tabs in
+	// between. Re-resolving the fallback then released the NEW active tab and
+	// left the one actually marked running pulsing.
+	it('releases the tab the dequeue marked, not whichever tab is active now', async () => {
+		setSession({
+			...session(),
+			aiTabs: [createMockAITab({ id: TAB }), createMockAITab({ id: 'tab-2', state: 'busy' })],
+			activeTabId: TAB,
+			executionQueue: [queued('q1', 'for a closed tab', 'tab-gone')],
+		});
+		const { item } = takeNextRunnableQueueItem(session().executionQueue);
+		setSession(applyQueuedItemDispatch(session(), item!));
+		setSession({ ...session(), activeTabId: 'tab-2' });
+
+		await useAgentStore.getState().processQueuedItem(SESSION, item!, deps);
+
+		expect(session().aiTabs.find((t) => t.id === TAB)!.state).toBe('idle');
+		expect(cardsFor('q1')).toBe(0);
+		expect(session().aiTabs.find((t) => t.id === 'tab-2')!.state).toBe('busy');
+	});
+
+	// A read-only or forced-parallel item can land beside a live turn. Releasing
+	// that tab would paint a running turn idle.
+	it('leaves the tab busy when a live turn owns it, and only takes the card back', async () => {
+		mockGetActiveProcesses.mockResolvedValue([
+			{ sessionId: `${SESSION}-ai-${TAB}`, pid: 7, isTerminal: false, toolType: 'claude-code' },
+		]);
+		setSession({
+			...session(),
+			executionQueue: [queued('q1', 'for a closed tab', 'tab-gone')],
+		});
+
+		await drainOnce();
+
+		expect(cardsFor('q1')).toBe(0);
+		expect(session().aiTabs[0].state).toBe('busy');
+	});
+});
+
+// ============================================================================
+// A dispatch cancelled while it was being prepared
+// ============================================================================
+
+describe('a dispatch cancelled before it spawns', () => {
+	// An auto-retry resend passes "Stop has not ended me". Stop can land while
+	// the agent and system prompt load, before any process exists to interrupt.
+	it('does not spawn, releases the tab, and reports nothing sent', async () => {
+		setSession({ ...session(), executionQueue: [queued('q1', 'stopped meanwhile')] });
+		const { item } = takeNextRunnableQueueItem(session().executionQueue);
+		setSession(applyQueuedItemDispatch(session(), item!));
+
+		const sent = await useAgentStore
+			.getState()
+			.processQueuedItem(SESSION, item!, { ...deps, isCancelled: () => true });
+
+		expect(sent).toBe(false);
+		expect(mockSpawn).not.toHaveBeenCalled();
+		expect(session().aiTabs[0].state).toBe('idle');
+		expect(session().state).toBe('idle');
+	});
+
+	it('spawns as usual when the check says it is still wanted', async () => {
+		setSession({ ...session(), executionQueue: [queued('q1', 'still wanted')] });
+		const { item } = takeNextRunnableQueueItem(session().executionQueue);
+		setSession(applyQueuedItemDispatch(session(), item!));
+
+		await useAgentStore
+			.getState()
+			.processQueuedItem(SESSION, item!, { ...deps, isCancelled: () => false });
+
+		expect(mockSpawn).toHaveBeenCalledTimes(1);
 	});
 });
 

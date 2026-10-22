@@ -178,6 +178,7 @@ export class UsageRefreshScheduler {
 					sessionsStore: this.deps.sessionsStore,
 					agentConfigsStore: this.deps.agentConfigsStore,
 					agentDetector: this.deps.agentDetector,
+					settingsStore: this.deps.settingsStore,
 				});
 			}
 		} catch (err) {

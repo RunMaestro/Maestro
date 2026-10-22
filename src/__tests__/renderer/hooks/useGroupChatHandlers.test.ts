@@ -45,6 +45,7 @@ const mockGroupChat = {
 	queueRemove: vi.fn().mockResolvedValue({ state: { items: [], paused: false }, refused: false }),
 	queueReorder: vi.fn().mockResolvedValue({ state: { items: [], paused: false }, refused: false }),
 	queueResume: vi.fn().mockResolvedValue({ items: [], paused: false }),
+	queueSteer: vi.fn().mockResolvedValue({ outcome: 'delivered', targets: ['Moderator'] }),
 	onQueueState: vi.fn().mockReturnValue(() => {}),
 };
 
@@ -951,6 +952,44 @@ describe('useGroupChatHandlers', () => {
 			});
 
 			expect(mockGroupChat.queueResume).toHaveBeenCalledWith('gc-1');
+		});
+
+		it('asks main to steer a queued item into the running round', async () => {
+			useGroupChatStore.setState({ activeGroupChatId: 'gc-1' });
+			const { result } = renderHook(() => useGroupChatHandlers());
+
+			await act(async () => {
+				await result.current.handleSteerGroupChatQueueItem('q-1');
+			});
+
+			expect(mockGroupChat.queueSteer).toHaveBeenCalledWith('gc-1', 'q-1');
+		});
+
+		it('says the message stays queued when the steer request itself fails', async () => {
+			useGroupChatStore.setState({ activeGroupChatId: 'gc-1' });
+			mockGroupChat.queueSteer.mockRejectedValueOnce(new Error('bridge closed'));
+			const { result } = renderHook(() => useGroupChatHandlers());
+
+			await act(async () => {
+				await expect(result.current.handleSteerGroupChatQueueItem('q-1')).resolves.toBeUndefined();
+			});
+
+			expect(notifyToast).toHaveBeenCalledWith({
+				color: 'red',
+				title: 'Could not steer this round',
+				message: 'The request did not reach the app. The message stays queued.',
+			});
+		});
+
+		it('steers nothing when no chat is open', async () => {
+			useGroupChatStore.setState({ activeGroupChatId: null });
+			const { result } = renderHook(() => useGroupChatHandlers());
+
+			await act(async () => {
+				await result.current.handleSteerGroupChatQueueItem('q-1');
+			});
+
+			expect(mockGroupChat.queueSteer).not.toHaveBeenCalled();
 		});
 
 		// The broadcast is the only thing that keeps two clients agreeing about

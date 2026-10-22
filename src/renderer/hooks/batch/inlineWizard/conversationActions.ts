@@ -132,6 +132,7 @@ export function useInlineWizardConversationActions({
 				sessionCustomArgs: sessionOverrides?.customArgs,
 				sessionCustomEnvVars: sessionOverrides?.customEnvVars,
 				sessionCustomModel: sessionOverrides?.customModel,
+				sessionClaudeTokenSource: sessionOverrides?.claudeTokenSource,
 				conductorProfile,
 			}));
 
@@ -189,6 +190,7 @@ export function useInlineWizardConversationActions({
 						sessionCustomArgs: sessionOverrides?.customArgs,
 						sessionCustomEnvVars: sessionOverrides?.customEnvVars,
 						sessionCustomModel: sessionOverrides?.customModel,
+						sessionClaudeTokenSource: sessionOverrides?.claudeTokenSource,
 						conductorProfile,
 						historyFilePath,
 					});
@@ -315,6 +317,7 @@ export function useInlineWizardConversationActions({
 						sessionCustomArgs: currentState.sessionCustomArgs,
 						sessionCustomEnvVars: currentState.sessionCustomEnvVars,
 						sessionCustomModel: currentState.sessionCustomModel,
+						sessionClaudeTokenSource: currentState.sessionClaudeTokenSource,
 						conductorProfile: currentState.conductorProfile,
 						historyFilePath: currentState.historyFilePath,
 					});
@@ -532,6 +535,7 @@ export function useInlineWizardConversationActions({
 						sessionCustomArgs: currentState.sessionCustomArgs,
 						sessionCustomEnvVars: currentState.sessionCustomEnvVars,
 						sessionCustomModel: currentState.sessionCustomModel,
+						sessionClaudeTokenSource: currentState.sessionClaudeTokenSource,
 						conductorProfile: currentState.conductorProfile,
 						historyFilePath: currentState.historyFilePath,
 					});

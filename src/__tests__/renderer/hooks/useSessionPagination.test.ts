@@ -117,7 +117,31 @@ describe('useSessionPagination', () => {
 				expect(result.current.loading).toBe(false);
 			});
 
-			expect(mockGetProjectStats).toHaveBeenCalledWith('/path/to/project');
+			expect(mockGetProjectStats).toHaveBeenCalledWith('/path/to/project', undefined);
+		});
+
+		it("scopes the list and the totals to the browsing agent's account", async () => {
+			const { result } = renderHook(() =>
+				useSessionPagination({
+					projectPath: '/path/to/project',
+					agentId: 'claude-code',
+					ownerAgentId: 'agent-7',
+				})
+			);
+
+			await waitFor(() => {
+				expect(result.current.loading).toBe(false);
+			});
+
+			// Main resolves the agent's CLAUDE_CONFIG_DIR from the owner id: the list
+			// and the totals must come from the pool the agent can resume from.
+			expect(mockListPaginated).toHaveBeenCalledWith(
+				'claude-code',
+				'/path/to/project',
+				expect.objectContaining({ ownerAgentId: 'agent-7' }),
+				undefined
+			);
+			expect(mockGetProjectStats).toHaveBeenCalledWith('/path/to/project', 'agent-7');
 		});
 
 		it('does not load sessions when projectPath is undefined', async () => {

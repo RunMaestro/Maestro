@@ -137,6 +137,54 @@ describe('FeedbackChatView', () => {
 		expect(picker.value).toBe(WORK.key);
 	});
 
+	it('attaches a pasted clipboard image as a screenshot, and leaves text pastes alone', async () => {
+		window.maestro.feedback.checkGhAuth.mockResolvedValue({ authenticated: true });
+		window.maestro.feedback.listAccounts.mockResolvedValue({
+			accounts: [WORK],
+			lastWorkingKey: null,
+		});
+		window.maestro.feedback.getConversationPrompt.mockResolvedValue({
+			prompt: 'system prompt',
+			environment: '- Maestro version: 1.0.0',
+		});
+
+		render(
+			<FeedbackChatView
+				theme={theme}
+				sessions={sessions}
+				onCancel={vi.fn()}
+				onSubmitSuccess={vi.fn()}
+			/>
+		);
+
+		const input = await screen.findByPlaceholderText('Describe your issue or idea...');
+
+		// A plain text paste is not intercepted.
+		const textPaste = fireEvent.paste(input, {
+			clipboardData: { items: [{ kind: 'string', type: 'text/plain', getAsFile: () => null }] },
+		});
+		expect(textPaste).toBe(true);
+
+		// Chromium hands clipboard bitmap data over as a File named "image.png".
+		const bitmap = new File([new Uint8Array([137, 80, 78, 71])], 'image.png', {
+			type: 'image/png',
+		});
+		const imagePaste = fireEvent.paste(input, {
+			clipboardData: {
+				items: [
+					{ kind: 'string', type: 'text/plain', getAsFile: () => null },
+					{ kind: 'file', type: 'image/png', getAsFile: () => bitmap },
+				],
+			},
+		});
+		// The image is the paste, so the default text insertion is suppressed.
+		expect(imagePaste).toBe(false);
+
+		const thumbnail = await screen.findByRole('img');
+		expect(thumbnail.getAttribute('alt')).toMatch(/^screenshot-\d{8}-\d{6}\.png$/);
+		expect(thumbnail.getAttribute('src')).toMatch(/^data:image\/png;base64,/);
+	});
+
 	it('falls through to the next account when the first turn fails, and remembers the one that worked', async () => {
 		const OTHER = account({
 			key: 'claude-code::/home/me/.claude-home',
@@ -206,6 +254,48 @@ describe('FeedbackChatView', () => {
 		expect((screen.getByTestId('feedback-account-picker') as HTMLSelectElement).value).toBe(
 			OTHER.key
 		);
+	});
+
+	it('keeps the account picker usable while a turn is running', async () => {
+		const OTHER = account({
+			key: 'claude-code::/home/me/.claude-home',
+			label: 'Claude Code - home',
+			env: { CLAUDE_CONFIG_DIR: '/home/me/.claude-home' },
+		});
+		window.maestro.feedback.checkGhAuth.mockResolvedValue({ authenticated: true });
+		window.maestro.feedback.listAccounts.mockResolvedValue({
+			accounts: [WORK, OTHER],
+			lastWorkingKey: null,
+		});
+		window.maestro.agents.get.mockResolvedValue({
+			id: 'claude-code',
+			available: true,
+			command: 'claude',
+			args: [],
+		});
+		// The turn never exits, so the chat stays mid-turn for the whole test.
+		window.maestro.process.spawn.mockResolvedValue({ pid: 1, success: true });
+
+		render(
+			<FeedbackChatView
+				theme={theme}
+				sessions={sessions}
+				onCancel={vi.fn()}
+				onSubmitSuccess={vi.fn()}
+			/>
+		);
+
+		const input = await screen.findByPlaceholderText('Describe your issue or idea...');
+		fireEvent.change(input, { target: { value: 'The player gets stuck' } });
+		await act(async () => {
+			fireEvent.keyDown(input, { key: 'Enter' });
+		});
+		await waitFor(() => expect(window.maestro.process.spawn).toHaveBeenCalled());
+
+		const picker = screen.getByTestId('feedback-account-picker') as HTMLSelectElement;
+		expect(picker.disabled).toBe(false);
+		fireEvent.change(picker, { target: { value: OTHER.key } });
+		expect(picker.value).toBe(OTHER.key);
 	});
 
 	it('shows loading spinner during GH auth check', () => {
@@ -436,6 +526,91 @@ describe('FeedbackChatView', () => {
 
 		expect(await screen.findByText('Feedback Submitted')).toBeTruthy();
 		expect(window.maestro.feedback.submitConversation).toHaveBeenCalledTimes(2);
+	});
+
+	it('lets the user submit early with what has been gathered, and keeps the account row last', async () => {
+		window.maestro.feedback.checkGhAuth.mockResolvedValue({ authenticated: true });
+		window.maestro.feedback.listAccounts.mockResolvedValue({
+			accounts: [WORK],
+			lastWorkingKey: null,
+		});
+		window.maestro.feedback.searchIssues.mockResolvedValue({ issues: [] });
+		window.maestro.feedback.submitConversation.mockResolvedValue({
+			success: true,
+			issueUrl: 'https://github.com/x/y/issues/9',
+		});
+		window.maestro.agents.get.mockResolvedValue({
+			id: 'claude-code',
+			available: true,
+			command: 'claude',
+			args: [],
+		});
+		let onExit: ((sid: string, code: number) => void) | undefined;
+		let onData: ((sid: string, data: string) => void) | undefined;
+		window.maestro.process.onExit.mockImplementation((cb: typeof onExit) => {
+			onExit = cb;
+			return () => {};
+		});
+		(window.maestro.process as unknown as { onData: unknown }).onData = vi.fn(
+			(cb: typeof onData) => {
+				onData = cb;
+				return () => {};
+			}
+		);
+		// The agent is nowhere near ready and has filled nothing in.
+		window.maestro.process.spawn.mockImplementation((config: { sessionId: string }) => {
+			queueMicrotask(() => {
+				onData?.(
+					config.sessionId,
+					JSON.stringify({
+						confidence: 30,
+						ready: false,
+						message: 'Which agent was it?',
+						category: 'bug_report',
+						summary: '',
+						structured: {},
+					})
+				);
+				onExit?.(config.sessionId, 0);
+			});
+			return Promise.resolve({ pid: 1, success: true });
+		});
+
+		render(
+			<FeedbackChatView
+				theme={theme}
+				sessions={sessions}
+				onCancel={vi.fn()}
+				onSubmitSuccess={vi.fn()}
+			/>
+		);
+		const input = await screen.findByPlaceholderText('Describe your issue or idea...');
+		// Nothing said yet: nothing to file.
+		expect(screen.queryByTestId('feedback-submit')).toBeNull();
+
+		// The account row sits below the composer, at the very bottom.
+		const runningAs = screen.getByTestId('feedback-running-as');
+		expect(
+			input.compareDocumentPosition(runningAs) & Node.DOCUMENT_POSITION_FOLLOWING
+		).toBeTruthy();
+
+		fireEvent.change(input, { target: { value: 'Auto Run did not resume after the limit reset' } });
+		await act(async () => {
+			fireEvent.keyDown(input, { key: 'Enter' });
+		});
+		await screen.findByText('Which agent was it?');
+
+		const submit = screen.getByTestId('feedback-submit');
+		expect(submit.textContent).toContain('Submit now');
+		fireEvent.click(submit);
+
+		expect(await screen.findByText('Feedback Submitted')).toBeTruthy();
+		const payload = window.maestro.feedback.submitConversation.mock.calls[0][0];
+		expect(payload.category).toBe('bug_report');
+		expect(payload.summary).toBe('Auto Run did not resume after the limit reset');
+		expect(payload.actualBehavior).toBe('Auto Run did not resume after the limit reset');
+		expect(payload.expectedBehavior).toMatch(/submitted before the interview finished/i);
+		expect(payload.additionalContext).toContain('understanding 30%');
 	});
 
 	it('calls onCancel when Close button is clicked on GH error', async () => {

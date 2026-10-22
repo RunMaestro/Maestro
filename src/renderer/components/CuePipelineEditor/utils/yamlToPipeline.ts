@@ -22,10 +22,14 @@ import {
 } from '../../../../shared/cue-pipeline-types';
 import {
 	triggerGroupKey,
+	type CueAction,
 	type CueCommand,
 	type CueNotifyConfig,
 	type CueSubscription,
 } from '../../../../shared/cue';
+import { applyWebhookToTriggerConfig } from './webhookTriggerConfig';
+import { cueTurnSettingsOf } from '../../../../shared/cue/turn-settings';
+import type { EffortLevel, ModelTier } from '../../../../shared/modelTiers';
 
 /** Minimal graph session input - compatible with both local and cue-types CueGraphSession */
 interface GraphSessionInput {
@@ -56,7 +60,9 @@ interface GraphSessionInput {
 		include_output_from?: string[];
 		forward_output_from?: string[];
 		cli_output?: { target: string };
-		action?: 'prompt' | 'command' | 'notify';
+		// Mirrors CueAction rather than re-listing it: a re-declared union here
+		// silently rejects every CueSubscription the moment a new action lands.
+		action?: CueAction;
 		command?: CueCommand;
 		notify?: CueNotifyConfig;
 		fire_at?: string;
@@ -64,6 +70,9 @@ interface GraphSessionInput {
 		self_destruct_on_failure?: boolean;
 		target_node_key?: string;
 		fan_out_node_keys?: string[];
+		tier?: ModelTier;
+		model?: string;
+		effort?: EffortLevel;
 	}>;
 }
 
@@ -307,26 +316,20 @@ function extractTriggerConfig(sub: CueSubscription): TriggerNodeData['config'] {
 			if (sub.poll_minutes != null) config.poll_minutes = sub.poll_minutes;
 			if (sub.retrigger_on_comments === true) config.retrigger_on_comments = true;
 			if (sub.max_notifications != null) config.max_notifications = sub.max_notifications;
+			applyWebhookToTriggerConfig(sub.webhook, config);
 			break;
 		case 'github.label':
 			if (sub.repo != null) config.repo = sub.repo;
 			if (sub.poll_minutes != null) config.poll_minutes = sub.poll_minutes;
 			if (sub.gh_label_target != null) config.gh_label_target = sub.gh_label_target;
 			if (sub.gh_labels != null) config.gh_labels = sub.gh_labels;
+			applyWebhookToTriggerConfig(sub.webhook, config);
 			break;
 		case 'task.pending':
 			if (sub.watch != null) config.watch = sub.watch;
 			break;
 		case 'webhook.received':
-			// A literal `secret` is hydrated (and re-emitted on save) purely so
-			// the editor doesn't strip a hand-written one off disk. The panel
-			// shows it read-only; new triggers always get `secret_env`.
-			if (sub.webhook?.secret != null) config.webhook_secret = sub.webhook.secret;
-			if (sub.webhook?.path != null) config.webhook_path = sub.webhook.path;
-			if (sub.webhook?.secret_env != null) config.webhook_secret_env = sub.webhook.secret_env;
-			if (sub.webhook?.signature_header != null) {
-				config.webhook_signature_header = sub.webhook.signature_header;
-			}
+			applyWebhookToTriggerConfig(sub.webhook, config);
 			break;
 	}
 
@@ -754,6 +757,8 @@ export function subscriptionsToPipelines(
 						if (i === 0 && sub.output_prompt) {
 							(agentNode.data as AgentNodeData).outputPrompt = sub.output_prompt;
 						}
+						// A fan-out sub's one model choice belongs to every target.
+						Object.assign(agentNode.data, cueTurnSettingsOf(sub));
 
 						// Store per-edge prompt when fan_out_prompts differ from shared prompt
 						const edgePrompt =
@@ -859,6 +864,7 @@ export function subscriptionsToPipelines(
 					if (sub.output_prompt) {
 						(agentNode.data as AgentNodeData).outputPrompt = sub.output_prompt;
 					}
+					Object.assign(agentNode.data, cueTurnSettingsOf(sub));
 
 					// `edge.prompt` is the single source of truth for every
 					// trigger→agent edge. Always emit the subscription's prompt
@@ -1154,6 +1160,7 @@ export function subscriptionsToPipelines(
 				if (sub.output_prompt) {
 					(targetNode.data as AgentNodeData).outputPrompt = sub.output_prompt;
 				}
+				Object.assign(targetNode.data, cueTurnSettingsOf(sub));
 				// Fan-in timeout settings
 				if (typeof sub.fan_in_timeout_minutes === 'number') {
 					(targetNode.data as AgentNodeData).fanInTimeoutMinutes = sub.fan_in_timeout_minutes;

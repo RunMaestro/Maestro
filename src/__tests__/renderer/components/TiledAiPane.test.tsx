@@ -75,6 +75,8 @@ describe('tiled AI pane chat wiring', () => {
 			onForceSendQueuedItem: vi.fn(),
 			forcedParallelEnabled: true,
 			getForceSendContext: vi.fn(),
+			getSteerContext: vi.fn(),
+			onSteerQueuedItem: vi.fn(),
 			onRemoveQueuedItem: vi.fn(),
 			onTogglePauseQueuedItem: vi.fn(),
 			onEditQueuedItem: vi.fn(),
@@ -95,6 +97,8 @@ describe('tiled AI pane chat wiring', () => {
 			expect(props.onForceSendQueuedItem).toBe(actions.onForceSendQueuedItem);
 			expect(props.forcedParallelEnabled).toBe(true);
 			expect(props.getForceSendContext).toBe(actions.getForceSendContext);
+			expect(props.getSteerContext).toBe(actions.getSteerContext);
+			expect(props.onSteerQueuedItem).toBe(actions.onSteerQueuedItem);
 			expect(props.onRemoveQueuedItem).toBe(actions.onRemoveQueuedItem);
 			expect(props.onTogglePauseQueuedItem).toBe(actions.onTogglePauseQueuedItem);
 			expect(props.onEditQueuedItem).toBe(actions.onEditQueuedItem);

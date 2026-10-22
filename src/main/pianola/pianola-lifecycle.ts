@@ -14,6 +14,7 @@ import { resolveMaestroCliScriptPath } from '../cue/cue-cli-executor';
 import { PianolaSupervisor } from './pianola-supervisor';
 import { PianolaRelearnScheduler } from './pianola-relearn-scheduler';
 import { runRelearnJob } from './pianola-relearn';
+import { isEncoreFeatureEnabled } from '../../shared/encoreFeatureDefaults';
 import { readRules, writeSuggestions, getProfile } from './pianola-store-main';
 import type { DecisionPair } from '../../shared/pianola/transcript-mining';
 import type { PianolaRule } from '../../shared/pianola/types';
@@ -102,13 +103,12 @@ export function createPianolaLifecycle(deps: PianolaLifecycleDependencies): Pian
 	// Initialize the Pianola supervised daemon. It owns Pianola's background
 	// watchers and orchestrations as supervised child processes (restart on
 	// crash, relaunch on app start, visible health), replacing the unmanaged
-	// nohup model. It self-gates on encoreFeatures.pianola and reconciles from a
-	// shared store file that both the CLI and renderer write.
+	// nohup model. It is started only while encoreFeatures.pianola is on (the
+	// Encore lifecycle in main/index.ts), still self-gates on it, and reconciles
+	// from a shared store file that both the CLI and renderer write.
 	const supervisor = new PianolaSupervisor({
-		isEnabled: () => {
-			const ef = deps.settingsStore.get('encoreFeatures', {}) as Record<string, boolean>;
-			return ef.pianola === true;
-		},
+		getStoredSessions: () => deps.sessionsStore.get('sessions', []),
+		isEnabled: () => isEncoreFeatureEnabled(deps.settingsStore, 'pianola'),
 		getPianolaAgentId: () => {
 			const sessions = deps.sessionsStore.get('sessions', []) as Array<{
 				id?: string;
@@ -120,20 +120,15 @@ export function createPianolaLifecycle(deps: PianolaLifecycleDependencies): Pian
 
 	// Pianola scheduled re-learn: keeps the learned profile fresh as a PROPOSAL
 	// (stages suggestions; never overwrites the live profile/rules) and
-	// relaunches stale supervised targets, on a fixed cadence. Self-gates per
-	// tick on encoreFeatures.pianola. Mining reuses the existing `pianola learn`
-	// crawler via the bundled CLI; the composition is pure with injected deps.
+	// relaunches stale supervised targets, on a fixed cadence. Armed only while
+	// encoreFeatures.pianola is on, and still self-gates per tick on it. Mining
+	// reuses the existing `pianola learn` crawler via the bundled CLI; the
+	// composition is pure with injected deps.
 	const relearnScheduler = new PianolaRelearnScheduler({
-		isEnabled: () => {
-			const ef = deps.settingsStore.get('encoreFeatures', {}) as Record<string, boolean>;
-			return ef.pianola === true;
-		},
+		isEnabled: () => isEncoreFeatureEnabled(deps.settingsStore, 'pianola'),
 		runJob: async () => {
 			await runRelearnJob({
-				isEnabled: () => {
-					const ef = deps.settingsStore.get('encoreFeatures', {}) as Record<string, boolean>;
-					return ef.pianola === true;
-				},
+				isEnabled: () => isEncoreFeatureEnabled(deps.settingsStore, 'pianola'),
 				mine: mineDecisionPairsViaCli,
 				readExisting: readExistingForRelearn,
 				writeSuggestions,

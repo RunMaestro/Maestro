@@ -10,6 +10,7 @@ import {
 	describePipeline,
 	derivePipelineHealth,
 	stripPipelinePrefix,
+	summarizeCommandNode,
 } from '../../shared/cue-pipeline-summary';
 import type { CuePipeline, PipelineNode } from '../../shared/cue-pipeline-types';
 import type { CueRunResult } from '../../shared/cue/contracts';
@@ -73,6 +74,25 @@ function run(overrides: Partial<CueRunResult> = {}): CueRunResult {
 }
 
 // ─── describePipeline ────────────────────────────────────────────────────────
+
+describe('summarizeCommandNode', () => {
+	it.each([
+		[true, 'agent message → Synapse-Server (new tab)'],
+		[false, 'cli send → Synapse-Server'],
+		[undefined, 'cli send → Synapse-Server'],
+	])('describes new-tab delivery when cliNewTab is %s', (cliNewTab, expected) => {
+		expect(
+			summarizeCommandNode({
+				name: 'Issue triage',
+				mode: 'cli',
+				cliTarget: 'Synapse-Server',
+				cliNewTab,
+				owningSessionId: 'synapse-id',
+				owningSessionName: 'Synapse-Server',
+			})
+		).toBe(expected);
+	});
+});
 
 describe('describePipeline', () => {
 	it('reads the flow left-to-right from the trigger', () => {

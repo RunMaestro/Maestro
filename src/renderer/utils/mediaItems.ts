@@ -18,7 +18,12 @@
  */
 
 import { formatElapsedTimeColon } from '../../shared/formatters';
-import { getMediaKind, isMediaStreamUrl, type MediaKind } from '../../shared/mediaTypes';
+import {
+	getMediaKind,
+	isMediaStreamUrl,
+	type MediaItem,
+	type MediaKind,
+} from '../../shared/mediaTypes';
 
 /**
  * A media clock time (`4:26`, `1:02:30`), or `--:--` when it is not known yet.
@@ -48,29 +53,15 @@ export function getOpenedMediaKind(fileName: string, content: string): MediaKind
 	return getMediaKind(fileName);
 }
 
-/** One entry in the play queue. */
-export interface MediaItem {
-	/** Stable per agent + path, so re-opening the same file resumes it. */
-	id: string;
-	path: string;
-	/** Filename including the extension, shown in the player's title bar. */
-	name: string;
-	/** Agent the file was opened from, so the player can say where it came from. */
-	sessionId: string;
-	sessionName: string;
-	kind: MediaKind;
-}
+/** One entry in the play queue. Defined in shared so the widget relay can type it. */
+export type { MediaItem } from '../../shared/mediaTypes';
 
 /**
- * Identity of a media item.
- *
- * Keyed on agent + path rather than a generated ID so re-opening the same file
- * lands on the same queue entry and picks up its remembered position, instead
- * of stacking duplicates that all start from zero.
+ * Item identity and the persisted-queue sanitizer live in shared, because the
+ * main process reads the saved queue at launch too (see
+ * `src/main/floating-widgets/media-window-launch.ts`).
  */
-export function mediaItemId(sessionId: string, path: string): string {
-	return `${sessionId}::${path}`;
-}
+export { mediaItemId, sanitizeMediaItems } from '../../shared/mediaTypes';
 
 /**
  * The item `steps` positions from the active one, or `null` when there is
@@ -150,39 +141,6 @@ export function trimMediaQueue(
 		if (trimmed.length < limit || item.id === keepId) trimmed.unshift(item);
 	}
 	return trimmed;
-}
-
-/**
- * Coerce a persisted queue back into media items, dropping anything malformed.
- *
- * Entries are read straight off disk and handed to a media element, so a
- * hand-edited or half-written settings file must not be able to put a
- * non-string path into the player.
- */
-export function sanitizeMediaItems(value: unknown): MediaItem[] {
-	if (!Array.isArray(value)) return [];
-	const seen = new Set<string>();
-	const items: MediaItem[] = [];
-	for (const entry of value) {
-		if (typeof entry !== 'object' || entry === null) continue;
-		const { path, name, sessionId, sessionName, kind } = entry as Record<string, unknown>;
-		if (typeof path !== 'string' || !path) continue;
-		if (typeof name !== 'string' || !name) continue;
-		if (typeof sessionId !== 'string' || !sessionId) continue;
-		if (kind !== 'audio' && kind !== 'video') continue;
-		const id = mediaItemId(sessionId, path);
-		if (seen.has(id)) continue;
-		seen.add(id);
-		items.push({
-			id,
-			path,
-			name,
-			sessionId,
-			sessionName: typeof sessionName === 'string' ? sessionName : '',
-			kind,
-		});
-	}
-	return items;
 }
 
 /**

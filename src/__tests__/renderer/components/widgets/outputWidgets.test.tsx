@@ -28,6 +28,7 @@ import {
 	AgentActivityBars,
 	SuccessFailureWidget,
 	ChartErrorBoundary,
+	Sparkline,
 } from '../../../../renderer/components/widgets';
 import type { TimelineBucket, DonutSlice, BarDatum } from '../../../../renderer/components/widgets';
 import { mockTheme, createMockTheme } from '../../../helpers/mockTheme';
@@ -82,6 +83,60 @@ describe('StatCard', () => {
 		// collapsed baseline rather than a real (and crash-prone) trend line.
 		expect(screen.getByTestId('sparkline-empty')).toBeInTheDocument();
 		expect(screen.queryByTestId('sparkline')).not.toBeInTheDocument();
+	});
+});
+
+describe('Sparkline', () => {
+	/** The y of every vertex the line path passes through, in order. */
+	function lineYs(container: HTMLElement): number[] {
+		const line = container.querySelectorAll('path')[1];
+		const numbers = (line.getAttribute('d') ?? '').match(/-?\d+(\.\d+)?/g) ?? [];
+		return numbers.map(Number).filter((_, index) => index % 2 === 1);
+	}
+
+	it('collapses all-zero data to the empty baseline without a domain', () => {
+		render(<Sparkline data={[0, 0, 0]} color="#fff" />);
+		expect(screen.getByTestId('sparkline-empty')).toBeInTheDocument();
+	});
+
+	it('draws all-zero data as a line on the floor of a fixed domain', () => {
+		const { container } = render(
+			<Sparkline data={[0, 0, 0]} color="#fff" height={24} domain={{ min: 0, max: 100 }} />
+		);
+		expect(screen.getByTestId('sparkline')).toBeInTheDocument();
+		// Floor = height - padding (2).
+		expect(new Set(lineYs(container))).toEqual(new Set([22]));
+	});
+
+	it('plots against the domain rather than the data range', () => {
+		const { container } = render(
+			<Sparkline
+				data={[50, 50]}
+				color="#fff"
+				height={24}
+				domain={{ min: 0, max: 100 }}
+				showEndDot={false}
+			/>
+		);
+		// Half of the 20px inner height, below the 2px top padding.
+		expect(lineYs(container)).toEqual([12, 12]);
+	});
+
+	it('draws a dashed reference line at its value on the same scale', () => {
+		render(
+			<Sparkline
+				data={[10, 20]}
+				color="#fff"
+				height={24}
+				domain={{ min: 0, max: 100 }}
+				reference={{ value: 100, color: '#f00', label: 'Peak 100' }}
+			/>
+		);
+		const reference = screen.getByTestId('sparkline-reference');
+		expect(reference).toHaveAttribute('y1', '2');
+		expect(reference).toHaveAttribute('stroke', '#f00');
+		expect(reference).toHaveAttribute('stroke-dasharray', '3 3');
+		expect(reference.textContent).toBe('Peak 100');
 	});
 });
 

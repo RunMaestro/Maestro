@@ -20,6 +20,7 @@ import { useCodexUsageStore } from '../../../../renderer/stores/codexUsageStore'
 import { useUIStore } from '../../../../renderer/stores/uiStore';
 import { mockTheme } from '../../../helpers/mockTheme';
 import type { StatsAggregation } from '../../../../shared/stats-types';
+import { emptyPromptCadence } from '../../../../shared/promptCadence';
 
 // useModalLayer needs a LayerStackProvider in real renders. The stack
 // behavior is irrelevant to this test, so stub the context hook.
@@ -56,6 +57,7 @@ vi.mock('../../../../renderer/components/UsageDashboard/CodexPlanUsage', () => (
 // Populated aggregation so the dashboard renders the tab panel (the empty
 // state branch swallows everything before tabs become reachable).
 const populatedAggregation: StatsAggregation = {
+	prompts: emptyPromptCadence(),
 	totalQueries: 42,
 	totalDuration: 3_600_000,
 	avgDuration: 85_714,
@@ -118,6 +120,7 @@ const populatedAggregation: StatsAggregation = {
 };
 
 const emptyAggregation: StatsAggregation = {
+	prompts: emptyPromptCadence(),
 	totalQueries: 0,
 	totalDuration: 0,
 	avgDuration: 0,

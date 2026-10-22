@@ -117,6 +117,26 @@ describe('crash -> bounded-backoff restart', () => {
 		expect(recovered.lastError).toBeUndefined();
 	});
 
+	it.each(['stop', 'replace'] as const)(
+		'late crash drain cannot restart supervision after %s',
+		async (mode) => {
+			const sup = makeSupervisor();
+			const gate = Promise.withResolvers<void>();
+			sup.register('p', { id: 'svc' });
+			sup.onPluginCrash('p', 1, gate.promise);
+			if (mode === 'stop') sup.onPluginStopped('p');
+			else {
+				sup.teardown('p');
+				sup.register('p', { id: 'new-svc' });
+			}
+			gate.resolve();
+			await vi.advanceTimersByTimeAsync(BACKOFF_CAP_MS * 2);
+			expect(restartPlugin).not.toHaveBeenCalled();
+			expect(vi.getTimerCount()).toBe(0);
+			expect(sup.health('p').state).toBe(mode === 'stop' ? 'stopped' : 'running');
+		}
+	);
+
 	it('doubles the backoff per consecutive failure and caps the delay', () => {
 		const sup = makeSupervisor();
 		sup.register('p', { id: 'svc' });

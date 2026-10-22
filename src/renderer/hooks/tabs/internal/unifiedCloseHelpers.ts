@@ -1,14 +1,24 @@
 import type { AITab, Session, UnifiedTabRef } from '../../../types';
 import {
 	addAiTabToUnifiedHistory,
+	agentHasVisibleTab,
 	closeBrowserTab,
 	closeTab,
+	ensureAgentHasVisibleTab,
+	getNavigableUnifiedTabOrder,
 	getRepairedUnifiedTabOrder,
+	groupFocusFields,
 	hasActiveWizard,
 	hasDraft,
 	isAiTabHidden,
 } from '../../../utils/tabHelpers';
 import { closeTerminalTab as closeTerminalTabHelper } from '../../../utils/terminalTabHelpers';
+import {
+	collectLeafTabRefs,
+	dissolveGroup,
+	standaloneFocusPatch,
+	tabRefKey,
+} from '../../../utils/panelLayout';
 
 export function getActiveUnifiedRef(
 	session: Session
@@ -184,4 +194,78 @@ export function applyUnifiedTabClosures(session: Session, refsToClose: UnifiedTa
 	}
 
 	return updatedSession;
+}
+
+/**
+ * Every tab a tiled group's layout references, in left-to-right pane order.
+ * Empty when the group id is unknown.
+ */
+export function getTabGroupMemberRefs(session: Session, groupId: string): UnifiedTabRef[] {
+	const group = (session.tabGroups ?? []).find((g) => g.id === groupId);
+	return group ? collectLeafTabRefs(group.layout) : [];
+}
+
+/**
+ * Close a tiled group's tabs (the group chip's "Close group" action).
+ *
+ * The group is dissolved FIRST, so its members sit in the strip where the chip
+ * was and every close runs through the ordinary per-kind path in
+ * {@link applyUnifiedTabClosures} (AI tabs stay reopenable via Cmd+Shift+T).
+ * Non-AI members close before AI members, so the last AI close can see when the
+ * agent is about to be left empty and mint its replacement chat.
+ *
+ * `refsToClose` defaults to every member. Web-desktop passes the non-AI members
+ * only, because AI tab closes are routed to the desktop one at a time.
+ *
+ * When the group was the active view, focus lands on the chip to its left (or,
+ * when it led the strip, to its right), mirroring single-tab close. An agent left
+ * with no tabs at all (a group of only file/terminal/browser panes) gets a fresh
+ * AI tab, the same guarantee closeTab gives for the last AI tab.
+ */
+export function closeTabGroup(
+	session: Session,
+	groupId: string,
+	refsToClose: UnifiedTabRef[] = getTabGroupMemberRefs(session, groupId)
+): Session {
+	if (!(session.tabGroups ?? []).some((g) => g.id === groupId)) return session;
+	const wasActive = session.activeGroupId === groupId;
+
+	// Neighbor to land on, resolved over the pre-close strip so the group still
+	// holds its slot. Members and the group itself are not candidates.
+	const closingKeys = new Set(refsToClose.map(tabRefKey));
+	const order = getNavigableUnifiedTabOrder(session, getRepairedUnifiedTabOrder(session));
+	const groupIndex = order.findIndex((ref) => ref.type === 'group' && ref.id === groupId);
+	const isSurvivor = (ref: UnifiedTabRef) =>
+		!(ref.type === 'group' && ref.id === groupId) && !closingKeys.has(tabRefKey(ref));
+	const left = groupIndex > 0 ? order.slice(0, groupIndex).filter(isSurvivor).pop() : undefined;
+	const right = order.slice(groupIndex + 1).find(isSurvivor);
+	const neighbor = left ?? right ?? null;
+
+	const ordered = [
+		...refsToClose.filter((ref) => ref.type !== 'ai'),
+		...refsToClose.filter((ref) => ref.type === 'ai'),
+	];
+	let next = applyUnifiedTabClosures(dissolveGroup(session, groupId), ordered);
+
+	// Hidden consult tabs have no chip, so they do not keep the strip company.
+	if (!agentHasVisibleTab(next)) {
+		return ensureAgentHasVisibleTab(next);
+	}
+	if (!wasActive) {
+		// A background group: whatever the user is looking at stays on screen. Its
+		// panes can still own a stale activeTabId (focusing a file tab leaves it
+		// alone), and closing that tab would otherwise move the view to its neighbor.
+		const activeRef = getActiveUnifiedRef(session);
+		return activeRef && !closingKeys.has(tabRefKey(activeRef))
+			? { ...next, ...standaloneFocusPatch(activeRef) }
+			: next;
+	}
+
+	if (neighbor?.type === 'group') {
+		const neighborGroup = next.tabGroups?.find((g) => g.id === neighbor.id);
+		if (neighborGroup) return { ...next, ...groupFocusFields(neighborGroup) };
+	} else if (neighbor) {
+		next = { ...next, ...standaloneFocusPatch(neighbor), activeGroupId: null };
+	}
+	return next;
 }

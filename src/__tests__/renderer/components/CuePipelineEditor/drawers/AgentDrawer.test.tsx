@@ -194,7 +194,7 @@ describe('AgentDrawer', () => {
 			);
 
 			expect(screen.getByText('Command')).toBeInTheDocument();
-			expect(screen.getByText('shell or maestro-cli')).toBeInTheDocument();
+			expect(screen.getByText('shell or agent message')).toBeInTheDocument();
 			const pill = screen.getByTestId('command-pill');
 			expect(pill).toHaveAttribute('draggable', 'true');
 		});

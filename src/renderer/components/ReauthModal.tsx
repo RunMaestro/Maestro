@@ -60,7 +60,8 @@ import {
 } from '../../shared/providerProfiles';
 import { useSshRemoteNames } from '../hooks/stats/useProviderProfiles';
 import { getHomeDir, getHomeDirAsync } from '../utils/homeDir';
-import type { Session, Theme } from '../types';
+import type { Theme } from '../types';
+import type { ReauthHost } from '../stores/modalStore';
 
 export interface ReauthModalProps {
 	theme: Theme;
@@ -69,9 +70,10 @@ export interface ReauthModalProps {
 	/**
 	 * An agent backed by the failed provider, used to run the login in the right
 	 * place (its cwd, its custom binary path, its SSH remote). Any blocked agent
-	 * will do - they share the credential store, which is the whole point.
+	 * will do - they share the credential store, which is the whole point. An
+	 * account login (Usage Dashboard) passes a host built for that account.
 	 */
-	session: Session;
+	session: ReauthHost;
 	onClose: () => void;
 }
 

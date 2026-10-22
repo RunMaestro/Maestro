@@ -25,6 +25,7 @@ import { useSessionStore, selectActiveSession } from '../../stores/sessionStore'
 import { notifyToast } from '../../stores/notificationStore';
 import type { SummarizeState, TabSummarizeState } from '../../stores/operationStore';
 import { logger } from '../../utils/logger';
+import { getClaudeTokenSourceFields } from '../../../shared/claudeTokenMode';
 
 // Re-export types from the canonical store location
 export type { SummarizeState, TabSummarizeState } from '../../stores/operationStore';
@@ -209,6 +210,7 @@ export function useSummarizeAndContinue(): UseSummarizeAndContinueResult {
 						customPath: session.customPath,
 						customArgs: session.customArgs,
 						customEnvVars: session.customEnvVars,
+						claudeTokenSource: getClaudeTokenSourceFields(session),
 					},
 					sourceTab.logs,
 					(p) => {

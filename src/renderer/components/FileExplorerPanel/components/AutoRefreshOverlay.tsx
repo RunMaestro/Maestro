@@ -2,6 +2,7 @@ import { createPortal } from 'react-dom';
 import { Check } from 'lucide-react';
 import { AUTO_REFRESH_OPTIONS } from '../types';
 import type { Theme } from '../../../types';
+import { elevatedSurfaceStyle } from '../../../utils/elevatedSurface';
 
 interface AutoRefreshOverlayProps {
 	theme: Theme;
@@ -22,10 +23,9 @@ export function AutoRefreshOverlay({
 }: AutoRefreshOverlayProps) {
 	return createPortal(
 		<div
-			className="fixed z-[100] rounded-lg shadow-xl border overflow-hidden"
+			className="fixed z-[100] rounded-lg overflow-hidden"
 			style={{
-				backgroundColor: theme.colors.bgSidebar,
-				borderColor: theme.colors.border,
+				...elevatedSurfaceStyle(theme),
 				minWidth: '200px',
 				top: position.top,
 				left: position.left,

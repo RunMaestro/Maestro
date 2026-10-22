@@ -32,6 +32,8 @@ import { aiCommandKey, getAiCommandEntry, useAiCommandStore } from '../../stores
 import { acceptAiCommand, dismissAiCommand } from '../../services/aiCommand';
 import { eventMatchesShortcutKeys } from '../../utils/shortcutMatch';
 import { useEventListener } from '../utils/useEventListener';
+import { STEER_SEND_EVENT, steerNewestQueuedMessage } from '../../services/chatSteering';
+import { useGroupChatStore } from '../../stores/groupChatStore';
 
 /**
  * Window event that runs Forced Parallel Send from outside the composer.
@@ -42,6 +44,13 @@ import { useEventListener } from '../utils/useEventListener';
  * two ends of the bridge stay in one place.
  */
 export const FORCED_PARALLEL_SEND_EVENT = 'maestro:forcedParallelSend';
+
+/**
+ * Window event that runs Queue Held: queue the draft PAUSED, so it waits on its
+ * card until the user resumes it. Raised by the Send button's menu; same bridge
+ * as {@link FORCED_PARALLEL_SEND_EVENT}, because the composer owns the draft.
+ */
+export const HOLD_SEND_EVENT = 'maestro:holdSend';
 
 // ============================================================================
 // Dependencies interface
@@ -66,7 +75,10 @@ export interface InputKeyDownDeps {
 	/** Sync file tree to highlight the tab completion suggestion */
 	syncFileTreeToTabCompletion: (suggestion: TabCompletionSuggestion | undefined) => void;
 	/** Process and send the current input */
-	processInput: (overrideInputValue?: string, options?: { forceParallel?: boolean }) => void;
+	processInput: (
+		overrideInputValue?: string,
+		options?: { forceParallel?: boolean; steer?: boolean; hold?: boolean }
+	) => void;
 	/** Get tab completion suggestions for a given input */
 	getTabCompletionSuggestions: (
 		input: string,
@@ -169,6 +181,58 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 	}, [getInputValue, processInput]);
 
 	useEventListener(FORCED_PARALLEL_SEND_EVENT, runForcedParallelSend);
+
+	/**
+	 * Steer Running Turn, from wherever the user pressed it (the composer, the
+	 * window handler, the command palette - the last two via
+	 * {@link STEER_SEND_EVENT}). Force Send's counterpart for a tab that is BUSY.
+	 *
+	 * With a draft, send it flagged to steer: `processInput` queues it behind the
+	 * running turn as usual and then steers that item, so a message that cannot be
+	 * steered is still queued rather than lost. With an empty draft, steer the
+	 * newest queued message on this tab. No confirmation, matching the Steer button.
+	 *
+	 * Staged images count as a draft even with no text. Force Send can treat an
+	 * image-only draft as empty because it asks before sending the queued item; a
+	 * steer does not ask and cannot be taken back, so it must never pick an older
+	 * message while the user is looking at one they have not sent.
+	 */
+	const runSteerSend = useCallback(() => {
+		// A group chat covers the agent without changing which agent is active, so
+		// this would act on a draft and a queue the user cannot see.
+		if (useGroupChatStore.getState().activeGroupChatId) return;
+		const activeSession = selectActiveSession(useSessionStore.getState());
+		if (activeSession?.inputMode !== 'ai') return;
+
+		trackShortcutUsage('steerSend');
+		const stagedImageCount =
+			activeSession.aiTabs?.find((tab) => tab.id === activeSession.activeTabId)?.stagedImages
+				?.length ?? 0;
+		if (getInputValue().trim().length === 0 && stagedImageCount === 0) {
+			void steerNewestQueuedMessage(activeSession.id, activeSession.activeTabId);
+			return;
+		}
+		processInput(undefined, { steer: true });
+	}, [getInputValue, processInput]);
+
+	useEventListener(STEER_SEND_EVENT, runSteerSend);
+
+	/**
+	 * Queue Held, from the Send button's menu. Queues the draft paused even on an
+	 * idle agent; an empty draft has nothing to hold, so it does nothing.
+	 */
+	const runHoldSend = useCallback(() => {
+		if (useGroupChatStore.getState().activeGroupChatId) return;
+		const activeSession = selectActiveSession(useSessionStore.getState());
+		if (activeSession?.inputMode !== 'ai') return;
+		const stagedImageCount =
+			activeSession.aiTabs?.find((tab) => tab.id === activeSession.activeTabId)?.stagedImages
+				?.length ?? 0;
+		if (getInputValue().trim().length === 0 && stagedImageCount === 0) return;
+		processInput(undefined, { hold: true });
+	}, [getInputValue, processInput]);
+
+	useEventListener(HOLD_SEND_EVENT, runHoldSend);
 
 	const handleInputKeyDown = useCallback(
 		(e: React.KeyboardEvent) => {
@@ -465,6 +529,23 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 			const activeTab = activeSession?.aiTabs?.find((t) => t.id === activeSession.activeTabId);
 			const enterToSendAI = activeTab?.enterToSend ?? settings.enterToSendAI;
 
+			// Steer Running Turn. Checked ahead of the Enter rules because its default
+			// chord contains Enter, and they would read it as a plain send. Not inside
+			// the Enter guard, so a rebind to any other key still works here.
+			if (
+				activeSession?.inputMode === 'ai' &&
+				eventMatchesShortcutKeys(e, settings.shortcuts.steerSend?.keys)
+			) {
+				// Mid-composition the keystroke belongs to the IME, which confirms a
+				// candidate with Enter. Return without acting: steering the
+				// half-composed text cannot be taken back, and falling through would
+				// let the Enter rules below send it as a plain message instead.
+				if (e.nativeEvent?.isComposing) return;
+				e.preventDefault();
+				runSteerSend();
+				return;
+			}
+
 			if (e.key === 'Enter') {
 				// Check for forced parallel send shortcut (only in AI mode, only when feature enabled)
 				// Note: This check is inside the `e.key === 'Enter'` guard, so the shortcut's
@@ -525,6 +606,7 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 			allSlashCommands,
 			syncFileTreeToTabCompletion,
 			processInput,
+			runSteerSend,
 			getTabCompletionSuggestions,
 			getCommandMode,
 			setCommandMode,

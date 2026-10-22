@@ -1,10 +1,5 @@
-import type {
-	AITab,
-	BrowserTab,
-	FilePreviewHistoryEntry,
-	FilePreviewTab,
-	UnifiedTab,
-} from '../../../types';
+import type { AITab, FilePreviewHistoryEntry, FilePreviewTab, UnifiedTab } from '../../../types';
+import type { BrowserTab } from '../../../../shared/browserPage';
 import type { MediaOpenMode } from '../../../../shared/mediaTypes';
 
 export interface CloseCurrentTabResult {
@@ -109,6 +104,8 @@ export interface UnifiedTabHandlersReturn {
 	handleCloseOtherTabs: (pivotTabId?: string) => void;
 	handleCloseTabsLeft: (pivotTabId?: string) => void;
 	handleCloseTabsRight: (pivotTabId?: string) => void;
+	/** Close every tab in a tiled group (confirmed by the caller). */
+	handleCloseTabGroup: (groupId: string) => void;
 	handleCloseCurrentTab: () => CloseCurrentTabResult;
 }
 

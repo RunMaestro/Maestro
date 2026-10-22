@@ -1,0 +1,308 @@
+<div id="provider-display-mockups">
+	<style>
+		#provider-display-mockups {
+			--pd-bg: light-dark(#fafafa, #19191f);
+			--pd-panel: light-dark(#f1f1f5, #202028);
+			--pd-text: light-dark(#252530, #eeeef3);
+			--pd-dim: light-dark(#626273, #a4a4b1);
+			--pd-line: light-dark(#d7d7e0, #363640);
+			--pd-selected: light-dark(#ece4fb, #30253f);
+			--pd-accent: #9146ff;
+			color: var(--pd-text);
+			font:
+				14px/1.5 -apple-system,
+				BlinkMacSystemFont,
+				'Segoe UI',
+				sans-serif;
+		}
+		#provider-display-mockups .pd-setting {
+			padding: 20px;
+			background: var(--pd-panel);
+			border: 1px solid var(--pd-line);
+			border-radius: 9px;
+			margin-bottom: 20px;
+		}
+		#provider-display-mockups .pd-setting-row {
+			display: flex;
+			align-items: center;
+			gap: 18px;
+		}
+		#provider-display-mockups .pd-setting-copy {
+			flex: 1;
+		}
+		#provider-display-mockups .pd-setting-description {
+			color: var(--pd-dim);
+			font-size: 12px;
+			margin-top: 4px;
+		}
+		#provider-display-mockups .pd-switch {
+			width: 38px;
+			height: 20px;
+			flex-shrink: 0;
+			border-radius: 20px;
+			background: var(--pd-line);
+			display: flex;
+			align-items: center;
+			padding: 3px;
+			box-sizing: border-box;
+		}
+		#provider-display-mockups .pd-switch span {
+			width: 14px;
+			height: 14px;
+			border-radius: 50%;
+			background: var(--pd-text);
+		}
+		#provider-display-mockups .pd-default {
+			font-size: 12px;
+			color: var(--pd-dim);
+			white-space: nowrap;
+		}
+		#provider-display-mockups .pd-stage {
+			min-height: 365px;
+			padding: 20px 14px;
+			box-sizing: border-box;
+		}
+		#provider-display-mockups .pd-caption {
+			max-width: 380px;
+			margin: 0 auto 12px;
+			display: flex;
+			justify-content: space-between;
+			gap: 10px;
+			color: var(--pd-dim);
+			font-size: 12px;
+		}
+		#provider-display-mockups .pd-sidebar {
+			width: 100%;
+			max-width: 380px;
+			margin: auto;
+			background: var(--pd-bg);
+			border: 1px solid var(--pd-line);
+			border-radius: 9px;
+			overflow: hidden;
+		}
+		#provider-display-mockups .pd-heading {
+			padding: 12px 16px;
+			font-size: 12px;
+			letter-spacing: 0.08em;
+			color: var(--pd-dim);
+			border-bottom: 1px solid var(--pd-line);
+		}
+		#provider-display-mockups .pd-parent {
+			display: flex;
+			align-items: center;
+			gap: 9px;
+			padding: 12px 16px 8px;
+			font-weight: 500;
+		}
+		#provider-display-mockups .pd-dot {
+			width: 7px;
+			height: 7px;
+			border-radius: 50%;
+			background: #6fcf97;
+			flex-shrink: 0;
+		}
+		#provider-display-mockups .pd-tree {
+			margin: 0 8px 12px 26px;
+			padding-left: 10px;
+			border-left: 1px solid var(--pd-line);
+		}
+		#provider-display-mockups .pd-agent {
+			padding: 9px 10px;
+			border-radius: 5px;
+			margin: 2px 0;
+		}
+		#provider-display-mockups .pd-agent.pd-active {
+			background: var(--pd-selected);
+		}
+		#provider-display-mockups .pd-name {
+			display: flex;
+			gap: 8px;
+			align-items: center;
+			min-width: 0;
+			font-size: 12px;
+			font-weight: 500;
+		}
+		#provider-display-mockups .pd-name-text {
+			overflow: hidden;
+			text-overflow: ellipsis;
+			white-space: nowrap;
+			flex: 1;
+			min-width: 0;
+		}
+		#provider-display-mockups .pd-meta {
+			font-size: 11px;
+			color: var(--pd-dim);
+			display: flex;
+			align-items: center;
+			gap: 6px;
+			margin: 3px 0 0 15px;
+			min-width: 0;
+		}
+		#provider-display-mockups .pd-branch {
+			white-space: nowrap;
+			overflow: hidden;
+			text-overflow: ellipsis;
+			min-width: 0;
+		}
+		#provider-display-mockups .pd-provider {
+			white-space: nowrap;
+			flex-shrink: 0;
+		}
+		#provider-display-mockups .pd-badge {
+			font-size: 10px;
+			line-height: 1.4;
+			font-weight: 400;
+			padding: 2px 6px;
+			border-radius: 4px;
+			color: var(--pd-dim);
+			background: var(--pd-panel);
+			border: 1px solid var(--pd-line);
+			flex-shrink: 0;
+			white-space: nowrap;
+		}
+		#provider-display-mockups .pd-meta svg {
+			width: 11px;
+			height: 11px;
+			flex-shrink: 0;
+		}
+		@media (max-width: 400px) {
+			#provider-display-mockups .pd-setting {
+				padding: 14px;
+			}
+			#provider-display-mockups .pd-setting-row {
+				gap: 10px;
+				flex-wrap: wrap;
+			}
+			#provider-display-mockups .pd-setting-copy {
+				flex-basis: 75%;
+			}
+			#provider-display-mockups .pd-stage {
+				min-height: 380px;
+				padding: 14px 4px;
+			}
+		}
+	</style>
+	<div class="pd-setting" aria-label="Proposed Display setting, default off">
+		<div class="pd-setting-row">
+			<div class="pd-setting-copy">
+				<div>Show provider in subagent list</div>
+				<div class="pd-setting-description">
+					Display the provider backing each worktree agent in the left panel.
+				</div>
+			</div>
+			<div class="pd-switch" role="img" aria-label="Off"><span></span></div>
+			<span class="pd-default">Default off</span>
+		</div>
+	</div>
+	<div class="viz-carousel viz-dotted-background" aria-label="Provider display designs">
+		<section data-variant="Shared metadata line" aria-label="O1: Shared metadata line">
+			<div class="pd-stage">
+				<div class="pd-caption">
+					<span>O1 · Shared metadata line</span><span>Enabled preview</span>
+				</div>
+				<div class="pd-sidebar">
+					<div class="pd-heading">AGENTS</div>
+					<div class="pd-parent"><span>⌄</span><span class="pd-dot"></span>Maestro</div>
+					<div class="pd-tree">
+						<div class="pd-agent pd-active">
+							<div class="pd-name">
+								<span class="pd-dot"></span
+								><span class="pd-name-text">provider-translation-layer</span>
+							</div>
+							<div class="pd-meta">
+								<span class="pd-provider">Codex</span><span>·</span
+								><span class="pd-branch">provider-translation-layer</span>
+							</div>
+						</div>
+						<div class="pd-agent">
+							<div class="pd-name">
+								<span class="pd-dot"></span><span class="pd-name-text">acappella</span>
+							</div>
+							<div class="pd-meta">
+								<span class="pd-provider">Claude Code</span><span>·</span
+								><span class="pd-branch">acappella</span>
+							</div>
+						</div>
+						<div class="pd-agent">
+							<div class="pd-name">
+								<span class="pd-dot"></span><span class="pd-name-text">runtime-review</span>
+							</div>
+							<div class="pd-meta">
+								<span class="pd-provider">OpenCode</span><span>·</span
+								><span class="pd-branch">feat/runtime-review</span>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+		</section>
+		<section data-variant="Inline badge" aria-label="O2: Inline badge" hidden>
+			<div class="pd-stage">
+				<div class="pd-caption"><span>O2 · Inline badge</span><span>Enabled preview</span></div>
+				<div class="pd-sidebar">
+					<div class="pd-heading">AGENTS</div>
+					<div class="pd-parent"><span>⌄</span><span class="pd-dot"></span>Maestro</div>
+					<div class="pd-tree">
+						<div class="pd-agent pd-active">
+							<div class="pd-name">
+								<span class="pd-dot"></span
+								><span class="pd-name-text">provider-translation-layer</span
+								><span class="pd-badge">Codex</span>
+							</div>
+							<div class="pd-meta"><span class="pd-branch">provider-translation-layer</span></div>
+						</div>
+						<div class="pd-agent">
+							<div class="pd-name">
+								<span class="pd-dot"></span><span class="pd-name-text">acappella</span
+								><span class="pd-badge">Claude Code</span>
+							</div>
+							<div class="pd-meta"><span class="pd-branch">acappella</span></div>
+						</div>
+						<div class="pd-agent">
+							<div class="pd-name">
+								<span class="pd-dot"></span><span class="pd-name-text">runtime-review</span
+								><span class="pd-badge">OpenCode</span>
+							</div>
+							<div class="pd-meta"><span class="pd-branch">feat/runtime-review</span></div>
+						</div>
+					</div>
+				</div>
+			</div>
+		</section>
+		<section data-variant="Separate provider line" aria-label="O3: Separate provider line" hidden>
+			<div class="pd-stage">
+				<div class="pd-caption">
+					<span>O3 · Separate provider line</span><span>Enabled preview</span>
+				</div>
+				<div class="pd-sidebar">
+					<div class="pd-heading">AGENTS</div>
+					<div class="pd-parent"><span>⌄</span><span class="pd-dot"></span>Maestro</div>
+					<div class="pd-tree">
+						<div class="pd-agent pd-active">
+							<div class="pd-name">
+								<span class="pd-dot"></span
+								><span class="pd-name-text">provider-translation-layer</span>
+							</div>
+							<div class="pd-meta"><span class="pd-branch">provider-translation-layer</span></div>
+							<div class="pd-meta"><span class="pd-provider">Provider: Codex</span></div>
+						</div>
+						<div class="pd-agent">
+							<div class="pd-name">
+								<span class="pd-dot"></span><span class="pd-name-text">acappella</span>
+							</div>
+							<div class="pd-meta"><span class="pd-branch">acappella</span></div>
+							<div class="pd-meta"><span class="pd-provider">Provider: Claude Code</span></div>
+						</div>
+						<div class="pd-agent">
+							<div class="pd-name">
+								<span class="pd-dot"></span><span class="pd-name-text">runtime-review</span>
+							</div>
+							<div class="pd-meta"><span class="pd-branch">feat/runtime-review</span></div>
+							<div class="pd-meta"><span class="pd-provider">Provider: OpenCode</span></div>
+						</div>
+					</div>
+				</div>
+			</div>
+		</section>
+	</div>
+</div>

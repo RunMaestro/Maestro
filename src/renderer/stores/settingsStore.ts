@@ -18,6 +18,7 @@ import { create } from 'zustand';
 import type { BrowserConfirmPolicy } from '../../shared/coworkingBrowser';
 import { isTtsrContextMode, type TtsrContextMode } from '../../shared/ttsr-types';
 import { isWindowsPlatform } from '../utils/platformUtils';
+import { isWebDesktop } from '../utils/runtimeContext';
 import type {
 	CustomAICommand,
 	AchievementTimeSource,
@@ -40,6 +41,16 @@ import {
 } from '../../shared/typography';
 import { parseTypographySnapshot } from '../../shared/typographySnapshot';
 import {
+	QUICK_CHAT_SETTINGS_KEY,
+	resolveQuickChatSettings,
+	type QuickChatSettings,
+} from '../../shared/quickChat';
+import {
+	THROUGHPUT_GAUGE_SETTINGS_KEY,
+	resolveThroughputGaugeSettings,
+	type ThroughputGaugeSettings,
+} from '../../shared/throughputGauge';
+import {
 	DEFAULT_CUE_HISTORY_RETENTION_DAYS,
 	resolveCueHistoryRetentionDays,
 } from '../../shared/cue/retention';
@@ -49,15 +60,18 @@ import {
 	countUsedBoundShortcuts,
 	getLevelIndex,
 } from '../constants/keyboardMastery';
+import { availableShortcuts } from '../utils/encoreShortcuts';
 import { RIGHT_PANEL_MIN_WIDTH, RIGHT_PANEL_MAX_WIDTH } from '../constants/rightPanel';
 import type { MindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
 import { isMindMapLayoutType } from '../components/DocumentGraph/layoutTypes';
 import { normalizePlaybackRate } from '../../shared/mediaTypes';
 import { ENCORE_FEATURE_DEFAULTS } from '../../shared/encoreFeatureDefaults';
+import { MAX_ENTRIES_PER_SESSION } from '../../shared/history';
 import { ZERO_USAGE_PEAKS, mergeUsagePeaks, usagePeaksEqual } from '../../shared/usagePeaks';
 import {
 	MEDIA_FLOAT_SETTINGS_KEY,
 	MEDIA_QUEUE_SETTINGS_KEY,
+	isMediaQueuePersistEnabled,
 	useMediaPlaybackStore,
 	type PersistedMediaQueue,
 } from './mediaPlaybackStore';
@@ -351,6 +365,7 @@ export interface SettingsStoreState
 	 */
 	shellEnvVarsDisabled: Record<string, string>;
 	ghPath: string;
+	mediaModelDirectory: string;
 	/** Playback speed for audio/video in the file preview. Sticky across files. */
 	/**
 	 * True when the main process found an installation id already on disk (i.e.
@@ -368,8 +383,11 @@ export interface SettingsStoreState
 	forcedParallelAcknowledged: boolean;
 	/** When forced parallel is on, treat EVERY send as a force-send (no modifier needed). */
 	forcedParallelAlways: boolean;
+	/** When true, clicking Send while the agent works opens the send-mode menu (Queue, Force Send, Queue Held, Steer). */
+	sendButtonMenu: boolean;
 	/** When true, agents consulted via @-mention may write; when false (default), consults are read-only. */
 	crossAgentMentionsWritable: boolean;
+	crossAgentHandoffsWritable: boolean;
 	defaultSaveToHistory: boolean;
 	synopsisDebounceSeconds: number;
 	defaultShowThinking: ThinkingMode;
@@ -413,6 +431,7 @@ export interface SettingsStoreState
 	autoRunStats: AutoRunStats;
 	usageStats: MaestroUsageStats;
 	ungroupedCollapsed: boolean;
+	showHiddenGroups: boolean;
 	groupChatsExpanded: boolean;
 	groupChatSortAlphabetical: boolean;
 	starredSessionsCollapsed: boolean;
@@ -455,11 +474,19 @@ export interface SettingsStoreState
 	coworkingBrowserInteractionConfirm: Record<string, BrowserConfirmPolicy>;
 	coworkingBackgroundBrowsers: boolean;
 	coworkingBackgroundBrowsersLimit: number;
+	dataviewJsEnabled: boolean;
+	dataviewJsTrustedRoots: string[];
 	directorNotesSettings: DirectorNotesSettings;
+	quickChatSettings: QuickChatSettings;
+	throughputGaugeSettings: ThroughputGaugeSettings;
 	cueHistoryRetentionDays: number;
 	groupCueEntries: boolean;
 	useNativeTitleBar: boolean;
 	autoHideMenuBar: boolean;
+	/** Show the agent's current checklist docked above the composer. */
+	showAgentTaskListBar: boolean;
+	/** Open that docked checklist in full whenever the agent writes a new one. */
+	autoExpandAgentTaskListBar: boolean;
 	// File Edit & Preview
 	fileEditWordWrap: boolean;
 	fileEditShowLineNumbers: boolean;
@@ -474,6 +501,7 @@ export interface SettingsStoreState
 	bmadEnabled: boolean;
 	lastSelectedPromptId: string | null;
 	spellCheck: boolean;
+	pianolaAutoWatchNewAgents: boolean;
 }
 
 export interface SettingsStoreActions
@@ -495,13 +523,16 @@ export interface SettingsStoreActions
 	setShellEnvVars: (value: Record<string, string>) => void;
 	setShellEnvVarsDisabled: (value: Record<string, string>) => void;
 	setGhPath: (value: string) => void;
+	setMediaModelDirectory: (value: string) => Promise<boolean>;
 	setMediaPlaybackRate: (value: number) => void;
 	setEnterToSendAI: (value: boolean) => void;
 	setEnterToSendAIExpanded: (value: boolean) => void;
 	setForcedParallelExecution: (value: boolean) => void;
 	setForcedParallelAcknowledged: (value: boolean) => void;
 	setForcedParallelAlways: (value: boolean) => void;
+	setSendButtonMenu: (value: boolean) => void;
 	setCrossAgentMentionsWritable: (value: boolean) => void;
+	setCrossAgentHandoffsWritable: (value: boolean) => void;
 	setDefaultSaveToHistory: (value: boolean) => void;
 	setSynopsisDebounceSeconds: (value: number) => void;
 	setDefaultShowThinking: (value: ThinkingMode) => void;
@@ -533,6 +564,7 @@ export interface SettingsStoreActions
 	setLogViewerSelectedLevels: (value: string[]) => void;
 	setCustomAICommands: (value: CustomAICommand[]) => void;
 	setUngroupedCollapsed: (value: boolean) => void;
+	setShowHiddenGroups: (value: boolean) => void;
 	setGroupChatsExpanded: (value: boolean) => void;
 	setGroupChatSortAlphabetical: (value: boolean) => void;
 	setStarredSessionsCollapsed: (value: boolean) => void;
@@ -570,11 +602,18 @@ export interface SettingsStoreActions
 	setCoworkingBrowserInteractionConfirm: (value: Record<string, BrowserConfirmPolicy>) => void;
 	setCoworkingBackgroundBrowsers: (value: boolean) => void;
 	setCoworkingBackgroundBrowsersLimit: (value: number) => void;
+	setDataviewJsEnabled: (value: boolean) => void;
+	setDataviewJsTrustedRoots: (value: string[]) => void;
 	setDirectorNotesSettings: (value: DirectorNotesSettings) => void;
+	setQuickChatSettings: (value: QuickChatSettings) => void;
+	/** Resolves once the write lands on disk (`false` when it failed), for `maestro-cli throughput-gauge set`. */
+	setThroughputGaugeSettings: (value: ThroughputGaugeSettings) => Promise<boolean>;
 	setCueHistoryRetentionDays: (value: number) => void;
 	setGroupCueEntries: (value: boolean) => void;
 	setUseNativeTitleBar: (value: boolean) => void;
 	setAutoHideMenuBar: (value: boolean) => void;
+	setShowAgentTaskListBar: (value: boolean) => void;
+	setAutoExpandAgentTaskListBar: (value: boolean) => void;
 	setFileEditWordWrap: (value: boolean) => void;
 	setFileEditShowLineNumbers: (value: boolean) => void;
 	setFilePreviewToolbarButtonVisibility: (button: FilePreviewToolbarButton, value: boolean) => void;
@@ -588,6 +627,7 @@ export interface SettingsStoreActions
 	setBmadEnabled: (value: boolean) => void;
 	setLastSelectedPromptId: (value: string | null) => void;
 	setSpellCheck: (value: boolean) => void;
+	setPianolaAutoWatchNewAgents: (value: boolean) => Promise<void>;
 
 	// Async setters
 	setLogLevel: (value: string) => Promise<void>;
@@ -718,6 +758,10 @@ export function resolveForceParallel(optionForce?: boolean): boolean {
 	return optionForce === true || s.forcedParallelAlways;
 }
 
+// Order confirmed auto-watch saves and hydration without exposing unsaved values.
+let pianolaAutoWatchRevision = 0;
+let pianolaAutoWatchAppliedRevision = 0;
+
 export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 	/** Monotonic counter to discard stale async completions in setPersistentWebLink */
 	let persistentWebLinkRequestSeq = 0;
@@ -736,6 +780,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		shellEnvVars: {},
 		shellEnvVarsDisabled: {},
 		ghPath: '',
+		mediaModelDirectory: '',
 		hasPriorInstallation: false,
 		mediaPlaybackRate: 1,
 		enterToSendAI: true,
@@ -743,7 +788,9 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		forcedParallelExecution: false,
 		forcedParallelAcknowledged: false,
 		forcedParallelAlways: false,
+		sendButtonMenu: true,
 		crossAgentMentionsWritable: false,
+		crossAgentHandoffsWritable: true,
 		defaultSaveToHistory: true,
 		synopsisDebounceSeconds: 0,
 		defaultShowThinking: 'off',
@@ -762,7 +809,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		bionifyAlgorithm: '- 0 1 1 2 0.4',
 		terminalWidth: 100,
 		logLevel: 'info',
-		maxLogBuffer: 5000,
+		maxLogBuffer: MAX_ENTRIES_PER_SESSION,
 		maxOutputLines: Infinity,
 		checkForUpdatesOnStartup: true,
 		autoResumeOnLimit: true,
@@ -777,6 +824,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		autoRunStats: DEFAULT_AUTO_RUN_STATS,
 		usageStats: DEFAULT_USAGE_STATS,
 		ungroupedCollapsed: false,
+		showHiddenGroups: false,
 		groupChatsExpanded: true,
 		groupChatSortAlphabetical: false,
 		starredSessionsCollapsed: false,
@@ -819,11 +867,17 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		coworkingBrowserInteractionConfirm: {},
 		coworkingBackgroundBrowsers: false,
 		coworkingBackgroundBrowsersLimit: 2,
+		dataviewJsEnabled: false,
+		dataviewJsTrustedRoots: [],
 		directorNotesSettings: DEFAULT_DIRECTOR_NOTES_SETTINGS,
+		quickChatSettings: resolveQuickChatSettings(undefined),
+		throughputGaugeSettings: resolveThroughputGaugeSettings(undefined),
 		cueHistoryRetentionDays: DEFAULT_CUE_HISTORY_RETENTION_DAYS,
 		groupCueEntries: true,
 		useNativeTitleBar: isWindowsPlatform(),
 		autoHideMenuBar: false,
+		showAgentTaskListBar: false,
+		autoExpandAgentTaskListBar: false,
 		fileEditWordWrap: true,
 		fileEditShowLineNumbers: true,
 		filePreviewToolbarVisibility: { ...DEFAULT_FILE_PREVIEW_TOOLBAR_VISIBILITY },
@@ -837,6 +891,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		bmadEnabled: true,
 		lastSelectedPromptId: null,
 		spellCheck: false,
+		pianolaAutoWatchNewAgents: false,
 
 		...createAnnotatorSlice(set, get, api),
 		...createWakatimeSlice(set, get, api),
@@ -892,6 +947,13 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 			window.maestro.settings.set('ghPath', value);
 		},
 
+		setMediaModelDirectory: async (value) => {
+			if (!(await window.maestro.settings.set('mediaModelDirectory', value))) return false;
+			const persisted = await window.maestro.settings.get('mediaModelDirectory');
+			set({ mediaModelDirectory: typeof persisted === 'string' ? persisted : '' });
+			return true;
+		},
+
 		setMediaPlaybackRate: (value) => {
 			const rate = normalizePlaybackRate(value);
 			set({ mediaPlaybackRate: rate });
@@ -923,9 +985,19 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 			window.maestro.settings.set('forcedParallelAlways', value);
 		},
 
+		setSendButtonMenu: (value) => {
+			set({ sendButtonMenu: value });
+			window.maestro.settings.set('sendButtonMenu', value);
+		},
+
 		setCrossAgentMentionsWritable: (value) => {
 			set({ crossAgentMentionsWritable: value });
 			window.maestro.settings.set('crossAgentMentionsWritable', value);
+		},
+
+		setCrossAgentHandoffsWritable: (value) => {
+			set({ crossAgentHandoffsWritable: value });
+			window.maestro.settings.set('crossAgentHandoffsWritable', value);
 		},
 
 		setDefaultSaveToHistory: (value) => {
@@ -1104,6 +1176,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setUngroupedCollapsed: (value) => {
 			set({ ungroupedCollapsed: value });
 			window.maestro.settings.set('ungroupedCollapsed', value);
+		},
+
+		setShowHiddenGroups: (value) => {
+			set({ showHiddenGroups: value });
+			window.maestro.settings.set('showHiddenGroups', value);
 		},
 
 		setGroupChatsExpanded: (value) => {
@@ -1360,6 +1437,16 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 			set({ coworkingBackgroundBrowsers: value });
 			window.maestro.settings.set('coworkingBackgroundBrowsers', value);
 		},
+
+		setDataviewJsEnabled: (value) => {
+			set({ dataviewJsEnabled: value });
+			window.maestro.settings.set('dataviewJsEnabled', value);
+		},
+
+		setDataviewJsTrustedRoots: (value) => {
+			set({ dataviewJsTrustedRoots: value });
+			window.maestro.settings.set('dataviewJsTrustedRoots', value);
+		},
 		setCoworkingBackgroundBrowsersLimit: (value) => {
 			const clamped = Math.min(10, Math.max(1, Math.floor(value) || 1));
 			set({ coworkingBackgroundBrowsersLimit: clamped });
@@ -1369,6 +1456,16 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setDirectorNotesSettings: (value) => {
 			set({ directorNotesSettings: value });
 			window.maestro.settings.set('directorNotesSettings', value);
+		},
+
+		setQuickChatSettings: (value) => {
+			set({ quickChatSettings: value });
+			window.maestro.settings.set(QUICK_CHAT_SETTINGS_KEY, value);
+		},
+
+		setThroughputGaugeSettings: (value) => {
+			set({ throughputGaugeSettings: value });
+			return window.maestro.settings.set(THROUGHPUT_GAUGE_SETTINGS_KEY, value);
 		},
 
 		setCueHistoryRetentionDays: (value) => {
@@ -1389,6 +1486,16 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setAutoHideMenuBar: (value) => {
 			set({ autoHideMenuBar: value });
 			window.maestro.settings.set('autoHideMenuBar', value);
+		},
+
+		setShowAgentTaskListBar: (value) => {
+			set({ showAgentTaskListBar: value });
+			window.maestro.settings.set('showAgentTaskListBar', value);
+		},
+
+		setAutoExpandAgentTaskListBar: (value) => {
+			set({ autoExpandAgentTaskListBar: value });
+			window.maestro.settings.set('autoExpandAgentTaskListBar', value);
 		},
 
 		setFileEditWordWrap: (value) => {
@@ -1464,6 +1571,25 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setSpellCheck: (value) => {
 			set({ spellCheck: value });
 			window.maestro.settings.set('spellCheck', value);
+		},
+
+		setPianolaAutoWatchNewAgents: async (value) => {
+			const revision = ++pianolaAutoWatchRevision;
+			try {
+				const saved = await window.maestro.settings.set('pianolaAutoWatchNewAgents', value);
+				if (saved === false) throw new Error('Setting was not saved');
+				// Only confirmed values reach the checkbox. A newer confirmed save
+				// or external hydration must survive a delayed acknowledgement.
+				if (revision > pianolaAutoWatchAppliedRevision) {
+					pianolaAutoWatchAppliedRevision = revision;
+					set({ pianolaAutoWatchNewAgents: value });
+				}
+			} catch (error) {
+				// Re-read the persisted value. If that also fails, the store still
+				// holds its last confirmed value, even with overlapping failed saves.
+				await loadAllSettings();
+				throw error;
+			}
 		},
 
 		// ============================================================================
@@ -1867,7 +1993,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 			// unbound one can never be fired, so counting it would make the top
 			// level unreachable. Read from the live maps so a binding the user
 			// cleared in Settings leaves the denominator too.
-			const bound = collectBoundShortcuts(get().shortcuts, get().tabShortcuts, FIXED_SHORTCUTS);
+			const bound = collectBoundShortcuts(
+				availableShortcuts(get().shortcuts, get().encoreFeatures),
+				get().tabShortcuts,
+				availableShortcuts(FIXED_SHORTCUTS, get().encoreFeatures)
+			);
 			const percentage =
 				bound.length > 0
 					? (countUsedBoundShortcuts(bound, updatedShortcuts) / bound.length) * 100
@@ -1932,6 +2062,7 @@ export async function loadAllSettings(): Promise<void> {
 	// Snapshot before the awaited reads below. Anything the user changes while
 	// they are in flight must survive this load - see the filter before setState.
 	const beforeRead = useSettingsStore.getState() as unknown as Record<string, unknown>;
+	const pianolaRevisionAtRead = ++pianolaAutoWatchRevision;
 
 	try {
 		// Batch load all settings in a single IPC call
@@ -1939,7 +2070,10 @@ export async function loadAllSettings(): Promise<void> {
 
 		// Logger settings need separate calls (different IPC channel)
 		const savedLogLevel = await window.maestro.logger.getLogLevel();
-		const savedMaxLogBuffer = await window.maestro.logger.getMaxLogBuffer();
+		// The native logger buffer is not exposed through the remote IPC bridge.
+		const savedMaxLogBuffer = isWebDesktop()
+			? undefined
+			: await window.maestro.logger.getMaxLogBuffer();
 
 		// Build a single patch to apply to the store
 		const patch: Partial<SettingsStoreState> = {};
@@ -1955,6 +2089,10 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['defaultShell'] !== undefined)
 			patch.defaultShell = allSettings['defaultShell'] as string;
 
+		patch.mediaModelDirectory =
+			typeof allSettings['mediaModelDirectory'] === 'string'
+				? allSettings['mediaModelDirectory']
+				: '';
 		if (allSettings['customShellPath'] !== undefined)
 			patch.customShellPath = allSettings['customShellPath'] as string;
 
@@ -2015,9 +2153,13 @@ export async function loadAllSettings(): Promise<void> {
 			patch.forcedParallelAcknowledged = allSettings['forcedParallelAcknowledged'] as boolean;
 		if (allSettings['forcedParallelAlways'] !== undefined)
 			patch.forcedParallelAlways = allSettings['forcedParallelAlways'] as boolean;
+		if (allSettings['sendButtonMenu'] !== undefined)
+			patch.sendButtonMenu = allSettings['sendButtonMenu'] as boolean;
 
 		if (allSettings['crossAgentMentionsWritable'] !== undefined)
 			patch.crossAgentMentionsWritable = allSettings['crossAgentMentionsWritable'] as boolean;
+		if (allSettings['crossAgentHandoffsWritable'] !== undefined)
+			patch.crossAgentHandoffsWritable = allSettings['crossAgentHandoffsWritable'] as boolean;
 
 		if (allSettings['defaultSaveToHistory'] !== undefined)
 			patch.defaultSaveToHistory = allSettings['defaultSaveToHistory'] as boolean;
@@ -2253,6 +2395,9 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['ungroupedCollapsed'] !== undefined)
 			patch.ungroupedCollapsed = allSettings['ungroupedCollapsed'] as boolean;
 
+		if (allSettings['showHiddenGroups'] !== undefined)
+			patch.showHiddenGroups = allSettings['showHiddenGroups'] as boolean;
+
 		if (allSettings['groupChatsExpanded'] !== undefined)
 			patch.groupChatsExpanded = allSettings['groupChatsExpanded'] as boolean;
 
@@ -2347,11 +2492,19 @@ export async function loadAllSettings(): Promise<void> {
 		// describes a session that has since moved on - so the live store wins and
 		// the read is skipped entirely. That also makes the hydration idempotent,
 		// which matters because a second `useSettings` mount calls it again.
+		//
+		// A media REPLICA (the primary window while the player has its own desktop
+		// window) skips it too: the widget window owns the queue, hydrates it, and
+		// publishes the snapshot this window shows.
 		const mediaAlreadyLoaded = (): boolean => {
 			const media = useMediaPlaybackStore.getState();
 			return media.activeItemId !== null || media.items.length > 0;
 		};
-		if (allSettings[MEDIA_QUEUE_SETTINGS_KEY] !== undefined && !mediaAlreadyLoaded()) {
+		if (
+			allSettings[MEDIA_QUEUE_SETTINGS_KEY] !== undefined &&
+			isMediaQueuePersistEnabled() &&
+			!mediaAlreadyLoaded()
+		) {
 			const stored = allSettings[MEDIA_QUEUE_SETTINGS_KEY] as PersistedMediaQueue | null;
 			const items = sanitizeMediaItems(stored?.items);
 			if (items.length > 0) {
@@ -2537,6 +2690,16 @@ export async function loadAllSettings(): Promise<void> {
 		if (typeof allSettings['coworkingBackgroundBrowsers'] === 'boolean') {
 			patch.coworkingBackgroundBrowsers = allSettings['coworkingBackgroundBrowsers'];
 		}
+
+		// Dataview: DataviewJS switch and the vault roots whose scripts run unasked.
+		if (typeof allSettings['dataviewJsEnabled'] === 'boolean') {
+			patch.dataviewJsEnabled = allSettings['dataviewJsEnabled'];
+		}
+		if (Array.isArray(allSettings['dataviewJsTrustedRoots'])) {
+			patch.dataviewJsTrustedRoots = (allSettings['dataviewJsTrustedRoots'] as unknown[])
+				.filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
+				.map((v) => v.trim());
+		}
 		if (
 			typeof allSettings['coworkingBackgroundBrowsersLimit'] === 'number' &&
 			Number.isFinite(allSettings['coworkingBackgroundBrowsersLimit'])
@@ -2553,6 +2716,18 @@ export async function loadAllSettings(): Promise<void> {
 				...DEFAULT_DIRECTOR_NOTES_SETTINGS,
 				...(allSettings['directorNotesSettings'] as Partial<DirectorNotesSettings>),
 			};
+		}
+
+		// Quick Chat settings (field-by-field merge so a partial object keeps defaults)
+		if (allSettings[QUICK_CHAT_SETTINGS_KEY] !== undefined) {
+			patch.quickChatSettings = resolveQuickChatSettings(allSettings[QUICK_CHAT_SETTINGS_KEY]);
+		}
+
+		// Throughput Gauge settings (each field validated on its own, see resolveThroughputGaugeSettings)
+		if (allSettings[THROUGHPUT_GAUGE_SETTINGS_KEY] !== undefined) {
+			patch.throughputGaugeSettings = resolveThroughputGaugeSettings(
+				allSettings[THROUGHPUT_GAUGE_SETTINGS_KEY]
+			);
 		}
 
 		hydrateWakatimeSettings(allSettings, patch);
@@ -2577,6 +2752,12 @@ export async function loadAllSettings(): Promise<void> {
 			patch.autoHideMenuBar = allSettings['autoHideMenuBar'] as boolean;
 
 		hydrateLeftPanelDisplaySettings(allSettings, patch);
+
+		if (allSettings['showAgentTaskListBar'] !== undefined)
+			patch.showAgentTaskListBar = allSettings['showAgentTaskListBar'] as boolean;
+
+		if (allSettings['autoExpandAgentTaskListBar'] !== undefined)
+			patch.autoExpandAgentTaskListBar = allSettings['autoExpandAgentTaskListBar'] as boolean;
 
 		if (allSettings['fileEditWordWrap'] !== undefined)
 			patch.fileEditWordWrap = allSettings['fileEditWordWrap'] as boolean;
@@ -2641,6 +2822,8 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['spellCheck'] !== undefined)
 			patch.spellCheck = allSettings['spellCheck'] as boolean;
 
+		patch.pianolaAutoWatchNewAgents = allSettings['pianolaAutoWatchNewAgents'] === true;
+
 		hydrateAnnotatorSettings(allSettings, patch);
 
 		// On a RELOAD (system resume, another window's write), drop any key the user
@@ -2657,6 +2840,15 @@ export async function loadAllSettings(): Promise<void> {
 				if (live[key] !== beforeRead[key]) {
 					delete patchKeys[key];
 				}
+			}
+		}
+
+		// Even an identical persisted value supersedes older save acknowledgements.
+		if (patch.pianolaAutoWatchNewAgents !== undefined) {
+			if (pianolaRevisionAtRead > pianolaAutoWatchAppliedRevision) {
+				pianolaAutoWatchAppliedRevision = pianolaRevisionAtRead;
+			} else {
+				delete patch.pianolaAutoWatchNewAgents;
 			}
 		}
 
@@ -2790,6 +2982,7 @@ export function getSettingsActions() {
 		setAudioFeedbackEnabled: state.setAudioFeedbackEnabled,
 		setAudioFeedbackCommand: state.setAudioFeedbackCommand,
 		setToastDuration: state.setToastDuration,
+		setToastsEnabled: state.setToastsEnabled,
 		setCheckForUpdatesOnStartup: state.setCheckForUpdatesOnStartup,
 		setAutoResumeOnLimit: state.setAutoResumeOnLimit,
 		setAutoResumeCheckIntervalHours: state.setAutoResumeCheckIntervalHours,
@@ -2811,6 +3004,7 @@ export function getSettingsActions() {
 		setUsageStats: state.setUsageStats,
 		updateUsageStats: state.updateUsageStats,
 		setUngroupedCollapsed: state.setUngroupedCollapsed,
+		setShowHiddenGroups: state.setShowHiddenGroups,
 		setGroupChatsExpanded: state.setGroupChatsExpanded,
 		setGroupChatSortAlphabetical: state.setGroupChatSortAlphabetical,
 		setStarredSessionsCollapsed: state.setStarredSessionsCollapsed,
@@ -2854,6 +3048,7 @@ export function getSettingsActions() {
 		setSshRemoteIgnorePatterns: state.setSshRemoteIgnorePatterns,
 		setSshRemoteHonorGitignore: state.setSshRemoteHonorGitignore,
 		setAutomaticTabNamingEnabled: state.setAutomaticTabNamingEnabled,
+		setShortenLongTabNames: state.setShortenLongTabNames,
 		setNewTabPlacement: state.setNewTabPlacement,
 		setNewBrowserTabPlacement: state.setNewBrowserTabPlacement,
 		setNewTerminalPlacement: state.setNewTerminalPlacement,
@@ -2864,6 +3059,8 @@ export function getSettingsActions() {
 		setUtilityModelId: state.setUtilityModelId,
 		setEncoreFeatures: state.setEncoreFeatures,
 		setDirectorNotesSettings: state.setDirectorNotesSettings,
+		setQuickChatSettings: state.setQuickChatSettings,
+		setThroughputGaugeSettings: state.setThroughputGaugeSettings,
 		setWakatimeApiKey: state.setWakatimeApiKey,
 		setWakatimeEnabled: state.setWakatimeEnabled,
 		setWakatimeDetailedTracking: state.setWakatimeDetailedTracking,
@@ -2876,6 +3073,7 @@ export function getSettingsActions() {
 		setShowWorktreePill: state.setShowWorktreePill,
 		setShowWorktreeBranchName: state.setShowWorktreeBranchName,
 		setShowLeftPanelGroupMemberCount: state.setShowLeftPanelGroupMemberCount,
+		setShowLeftPanelCollapsedInitials: state.setShowLeftPanelCollapsedInitials,
 		showStarredSessionsSection: state.showStarredSessionsSection,
 		setShowStarredSessionsSection: state.setShowStarredSessionsSection,
 		setLeftPanelCollapsedPillsPerRow: state.setLeftPanelCollapsedPillsPerRow,
@@ -2883,11 +3081,14 @@ export function getSettingsActions() {
 		setShowLeftPanelGitIndicator: state.setShowLeftPanelGitIndicator,
 		setShowLeftPanelCueIndicator: state.setShowLeftPanelCueIndicator,
 		setShowLeftPanelStartupCommandIndicator: state.setShowLeftPanelStartupCommandIndicator,
+		setShowAgentTaskListBar: state.setShowAgentTaskListBar,
+		setAutoExpandAgentTaskListBar: state.setAutoExpandAgentTaskListBar,
 		setFileEditWordWrap: state.setFileEditWordWrap,
 		setFileEditShowLineNumbers: state.setFileEditShowLineNumbers,
 		setFilePreviewToolbarButtonVisibility: state.setFilePreviewToolbarButtonVisibility,
 		setModeratorStandingInstructions: state.setModeratorStandingInstructions,
 		setSpellCheck: state.setSpellCheck,
+		setPianolaAutoWatchNewAgents: state.setPianolaAutoWatchNewAgents,
 		setAutoRunDisabled: state.setAutoRunDisabled,
 		setDotfilesToggleHidden: state.setDotfilesToggleHidden,
 		setAutoRunInactivityTimeoutMin: state.setAutoRunInactivityTimeoutMin,

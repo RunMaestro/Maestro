@@ -2,7 +2,8 @@
  * Group Chat domain WebSocket message handlers.
  *
  * Extracted from WebSocketMessageHandler.ts. Handles: get_group_chats,
- * start_group_chat, get_group_chat_state, send_group_chat_message, stop_group_chat.
+ * start_group_chat, get_group_chat_state, send_group_chat_message,
+ * steer_group_chat, stop_group_chat, archive_group_chat.
  */
 
 import type { StartGroupChatOptions } from '../../types';
@@ -176,6 +177,63 @@ export function handleSendGroupChatMessage(
 }
 
 /**
+ * Handle steer_group_chat - type a message into the round running in a chat.
+ *
+ * Takes a queued message (`itemId`) or new text (`message`), never both. The
+ * result is always sent back, refusals included: a refusal is an answer the
+ * caller reports, not a transport failure.
+ */
+export function handleSteerGroupChat(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const reply = { requestId: message.requestId };
+	const chatId = message.chatId;
+	const itemId = message.itemId;
+	const text = message.message;
+
+	if (!chatId || typeof chatId !== 'string') {
+		ctx.sendError(client, 'Missing chatId', reply);
+		return;
+	}
+	const hasItem = typeof itemId === 'string' && itemId.length > 0;
+	const hasText = typeof text === 'string' && text.trim().length > 0;
+	if (hasItem === hasText) {
+		ctx.sendError(client, 'Pass a queued item id or a message, not both', reply);
+		return;
+	}
+	// A queued item keeps the read-only setting it was queued with. Accepting the
+	// flag here and ignoring it would read as a constraint that was never applied.
+	if (hasItem && message.readOnly === true) {
+		ctx.sendError(client, 'readOnly applies to new text; a queued item keeps its own', reply);
+		return;
+	}
+	if (!ctx.callbacks.steerGroupChat) {
+		ctx.sendError(client, 'Group chat steering not configured', reply);
+		return;
+	}
+
+	ctx.callbacks
+		.steerGroupChat(chatId, {
+			...(hasItem ? { itemId: itemId as string } : { message: text as string }),
+			...(message.readOnly === true && { readOnly: true }),
+		})
+		.then((result) => {
+			ctx.send(client, {
+				type: 'steer_group_chat_result',
+				success: result.outcome === 'delivered' || result.outcome === 'settled',
+				chatId,
+				result,
+				requestId: message.requestId,
+			});
+		})
+		.catch((error) => {
+			ctx.sendError(client, `Failed to steer group chat: ${error.message}`, reply);
+		});
+}
+
+/**
  * Handle stop_group_chat message - stop an active group chat
  */
 export function handleStopGroupChat(
@@ -207,6 +265,48 @@ export function handleStopGroupChat(
 		})
 		.catch((error) => {
 			ctx.sendError(client, `Failed to stop group chat: ${error.message}`, {
+				requestId: message.requestId,
+			});
+		});
+}
+
+/**
+ * Handle archive_group_chat message - archive (or with archived: false,
+ * restore) a group chat. Archiving also stops its moderator and participants.
+ */
+export function handleArchiveGroupChat(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const chatId = message.chatId as string;
+
+	if (!chatId) {
+		ctx.sendError(client, 'Missing chatId', { requestId: message.requestId });
+		return;
+	}
+
+	if (!ctx.callbacks.archiveGroupChat) {
+		ctx.sendError(client, 'Group chat not configured', { requestId: message.requestId });
+		return;
+	}
+
+	// Opt-in to restoring: only a literal false unarchives.
+	const archived = message.archived !== false;
+
+	ctx.callbacks
+		.archiveGroupChat(chatId, archived)
+		.then((success) => {
+			ctx.send(client, {
+				type: 'archive_group_chat_result',
+				success,
+				chatId,
+				archived,
+				requestId: message.requestId,
+			});
+		})
+		.catch((error) => {
+			ctx.sendError(client, `Failed to archive group chat: ${error.message}`, {
 				requestId: message.requestId,
 			});
 		});

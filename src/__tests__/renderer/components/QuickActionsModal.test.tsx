@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { getShortcutKeys } from '../../helpers/shortcutKeys';
 import { logger } from '../../../renderer/utils/logger';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QuickActionsModal } from '../../../renderer/components/QuickActionsModal';
@@ -315,9 +316,7 @@ describe('QuickActionsModal', () => {
 			render(<QuickActionsModal {...props} />);
 
 			expect(screen.getByText('Toggle Sidebar')).toBeInTheDocument();
-			expect(
-				screen.getByText(formatShortcutKeys(mockShortcuts.toggleSidebar.keys))
-			).toBeInTheDocument();
+			expect(getShortcutKeys(mockShortcuts.toggleSidebar.keys)).toBeInTheDocument();
 		});
 
 		it('renders Next Unread Tab action with shortcut', () => {
@@ -325,9 +324,7 @@ describe('QuickActionsModal', () => {
 			render(<QuickActionsModal {...props} />);
 
 			expect(screen.getByText('Next Unread / Draft Tab')).toBeInTheDocument();
-			expect(
-				screen.getByText(formatShortcutKeys(mockShortcuts.nextUnreadTab.keys))
-			).toBeInTheDocument();
+			expect(getShortcutKeys(mockShortcuts.nextUnreadTab.keys)).toBeInTheDocument();
 		});
 
 		it('renders Previous Unread Tab with the chord that actually reaches it', () => {
@@ -337,9 +334,7 @@ describe('QuickActionsModal', () => {
 			render(<QuickActionsModal {...props} />);
 
 			expect(screen.getByText('Previous Unread / Draft Tab')).toBeInTheDocument();
-			expect(
-				screen.getByText(formatShortcutKeys(mockShortcuts.focusActiveTab.keys))
-			).toBeInTheDocument();
+			expect(getShortcutKeys(mockShortcuts.focusActiveTab.keys)).toBeInTheDocument();
 		});
 
 		it('names the state the Unread Only entry puts you in, not the one you are in', () => {
@@ -374,10 +369,8 @@ describe('QuickActionsModal', () => {
 
 			expect(screen.getByText('Navigate Back')).toBeInTheDocument();
 			expect(screen.getByText('Navigate Forward')).toBeInTheDocument();
-			expect(screen.getByText(formatShortcutKeys(mockShortcuts.navBack.keys))).toBeInTheDocument();
-			expect(
-				screen.getByText(formatShortcutKeys(mockShortcuts.navForward.keys))
-			).toBeInTheDocument();
+			expect(getShortcutKeys(mockShortcuts.navBack.keys)).toBeInTheDocument();
+			expect(getShortcutKeys(mockShortcuts.navForward.keys)).toBeInTheDocument();
 		});
 
 		it('omits Navigate Back / Forward actions when handlers are absent', () => {
@@ -1652,7 +1645,7 @@ describe('QuickActionsModal', () => {
 			});
 			render(<QuickActionsModal {...props} />);
 
-			expect(screen.getByText(formatShortcutKeys(['Alt', 'Cmd', 'R']))).toBeInTheDocument();
+			expect(getShortcutKeys(['Alt', 'Cmd', 'R'])).toBeInTheDocument();
 		});
 
 		it('handles Refresh Files action', async () => {
@@ -1928,7 +1921,7 @@ describe('QuickActionsModal', () => {
 			});
 			render(<QuickActionsModal {...props} />);
 
-			expect(screen.getByText(formatShortcutKeys(['Cmd', 'Shift', 'D']))).toBeInTheDocument();
+			expect(getShortcutKeys(['Cmd', 'Shift', 'D'])).toBeInTheDocument();
 		});
 	});
 
@@ -2109,7 +2102,7 @@ describe('QuickActionsModal', () => {
 			render(<QuickActionsModal {...props} />);
 
 			expect(screen.getByText('Maestro Cue')).toBeInTheDocument();
-			expect(screen.getByText(formatShortcutKeys(['Alt', 'q']))).toBeInTheDocument();
+			expect(getShortcutKeys(['Alt', 'q'])).toBeInTheDocument();
 		});
 	});
 
@@ -2125,7 +2118,7 @@ describe('QuickActionsModal', () => {
 			render(<QuickActionsModal {...props} />);
 
 			expect(screen.getByText('View Execution Queue')).toBeInTheDocument();
-			expect(screen.getByText(formatShortcutKeys(['Cmd', 'Shift', 'X']))).toBeInTheDocument();
+			expect(getShortcutKeys(['Cmd', 'Shift', 'X'])).toBeInTheDocument();
 		});
 	});
 

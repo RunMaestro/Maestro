@@ -18,6 +18,11 @@
  * per-provider settings that would point Maestro at a binary in a non-standard
  * place, and no way to proceed. An empty picker is a dead end, so the full list
  * stands in for it.
+ *
+ * The fallback keys on DETECTION alone, never on a pinned row: a pinned
+ * selection on a machine with nothing installed still gets the full list. That
+ * keeps "nothing detected" and "showing everything" the same statement, which is
+ * what lets `ProviderAvailabilityBar` say so from `availableCount === 0` alone.
  */
 export function filterToAvailableProviders<T>(
 	providers: T[],
@@ -31,11 +36,8 @@ export function filterToAvailableProviders<T>(
 	 */
 	isPinned?: (provider: T) => boolean
 ): T[] {
-	if (showAll) return providers;
-	const available = providers.filter(
-		(provider) => isAvailable(provider) || isPinned?.(provider) === true
-	);
-	return available.length > 0 ? available : providers;
+	if (showAll || !providers.some(isAvailable)) return providers;
+	return providers.filter((provider) => isAvailable(provider) || isPinned?.(provider) === true);
 }
 
 /**

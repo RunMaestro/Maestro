@@ -176,9 +176,11 @@ export class PluginBackgroundSupervisor {
 	 * plugin holds registered services, clear them (they died with the child)
 	 * and schedule a bounded-backoff restart; otherwise ignore. A crash while
 	 * already `restarting` (child came back but died before re-registering)
-	 * also lands here and burns another restart attempt.
+	 * also lands here and burns another restart attempt. Clear registrations immediately;
+	 * when a resource drain is supplied, begin backoff only after it succeeds.
+	 * Failed cleanup remains blocked; late drains cannot revive stopped/replaced supervision.
 	 */
-	onPluginCrash(pluginId: string, code: number): void {
+	onPluginCrash(pluginId: string, code: number, drain?: Promise<void>): void {
 		const entry = this.plugins.get(pluginId);
 		if (!entry) return;
 		if (entry.state !== 'running' && entry.state !== 'restarting') return;
@@ -192,7 +194,18 @@ export class PluginBackgroundSupervisor {
 		// Registrations died with the child; the restarted activate() re-creates them.
 		entry.services.clear();
 		entry.lastError = `sandbox exited with code ${code}`;
-		this.scheduleRestart(pluginId, entry);
+		if (drain) {
+			entry.state = 'restarting';
+			void drain.then(
+				() => {
+					if (this.plugins.get(pluginId) === entry && entry.state === 'restarting')
+						this.scheduleRestart(pluginId, entry);
+				},
+				() => {
+					/* retain failed cleanup barriers; an explicit stop/retry is required */
+				}
+			);
+		} else this.scheduleRestart(pluginId, entry);
 	}
 
 	/**

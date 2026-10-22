@@ -6,6 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import {
 	buildMcpInjection,
+	mergeMcpInjectionArgs,
 	MCP_CONFIG_BY_AGENT,
 	MCP_SERVER_NAME,
 	type McpServerSpec,
@@ -129,5 +130,36 @@ describe('MCP_CONFIG_BY_AGENT', () => {
 		]) {
 			expect(MCP_CONFIG_BY_AGENT[id].verified).toBe(false);
 		}
+	});
+});
+
+describe('mergeMcpInjectionArgs', () => {
+	const injectionArgs = ['-c', 'mcp_servers.maestro.command="/bin/electron"'];
+
+	it.each([
+		['-C', '/project', 'exec', '-c', 'model_reasoning_summary=auto'],
+		['-C', '/project', 'exec', 'resume', 'provider-id', '-c', 'model_reasoning_summary=auto'],
+	])('keeps Codex MCP overrides in the same scope as agent config: %j', (...agentArgs) => {
+		expect(mergeMcpInjectionArgs(MCP_CONFIG_BY_AGENT.codex, agentArgs, injectionArgs)).toEqual([
+			...agentArgs,
+			...injectionArgs,
+		]);
+	});
+
+	it('inserts Codex config before a positional prompt, preserving prompt contents', () => {
+		const args = ['exec', 'resume', 'provider-id', '-c', 'model_reasoning_summary=auto'];
+		const prompt = '-c mcp_servers.maestro.command="untrusted prompt content"';
+		expect(
+			mergeMcpInjectionArgs(MCP_CONFIG_BY_AGENT.codex, [...args, '--', prompt], injectionArgs)
+		).toEqual([...args, ...injectionArgs, '--', prompt]);
+	});
+
+	it('preserves global placement for Claude', () => {
+		const args = ['--print', '--', 'prompt'];
+		const config = ['--mcp-config', '{"mcpServers":{}}'];
+		expect(mergeMcpInjectionArgs(MCP_CONFIG_BY_AGENT['claude-code'], args, config)).toEqual([
+			...config,
+			...args,
+		]);
 	});
 });

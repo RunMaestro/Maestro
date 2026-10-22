@@ -15,6 +15,37 @@ export function parseJsonWithBom<T = unknown>(value: string): T {
 }
 
 /**
+ * Size of JSON data as it crosses a UTF-8 message boundary. Returns null when
+ * the value is not serializable, rather than throwing from an input validator.
+ */
+export function serializedJsonByteLength(value: unknown): number | null {
+	let serialized: string | undefined;
+	try {
+		serialized = JSON.stringify(value);
+	} catch {
+		return null;
+	}
+	if (typeof serialized !== 'string') return null;
+
+	let bytes = 0;
+	for (let index = 0; index < serialized.length; index += 1) {
+		const codePoint = serialized.codePointAt(index);
+		if (codePoint === undefined) continue;
+		if (codePoint <= 0x7f) {
+			bytes += 1;
+		} else if (codePoint <= 0x7ff) {
+			bytes += 2;
+		} else if (codePoint <= 0xffff) {
+			bytes += 3;
+		} else {
+			bytes += 4;
+			index += 1;
+		}
+	}
+	return bytes;
+}
+
+/**
  * Largest serialized payload we still round-trip through `JSON.parse` as a
  * final integrity check before writing it over a good file.
  *

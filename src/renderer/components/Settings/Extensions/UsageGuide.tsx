@@ -1,6 +1,6 @@
 /**
- * "How to use it" block for a first-party feature, rendered under its
- * description in the Extensions details pane.
+ * The usage guide for a first-party feature: the body of the Help tab in the
+ * Extensions details pane.
  *
  * A one-line description says what a feature IS. It does not say that the
  * feature has a hotkey, that the command palette reaches it, or what an agent
@@ -48,13 +48,6 @@ export function UsageGuide({ theme, usage }: UsageGuideProps) {
 
 	return (
 		<div className="mt-4" data-testid="extension-usage-guide">
-			<h4
-				className="text-xs-plus font-bold uppercase tracking-wide mb-2"
-				style={{ color: theme.colors.textDim }}
-			>
-				How to use it
-			</h4>
-
 			<div className="space-y-2">
 				{usage.overview.map((paragraph, index) => (
 					<p
@@ -69,6 +62,12 @@ export function UsageGuide({ theme, usage }: UsageGuideProps) {
 
 			{usage.access && usage.access.length > 0 && (
 				<div className="mt-4 space-y-3" data-testid="extension-usage-access">
+					<h4
+						className="text-xs-plus font-bold uppercase tracking-wide"
+						style={{ color: theme.colors.textDim }}
+					>
+						Ways in
+					</h4>
 					{usage.access.map((path) => {
 						const keys = keysFor(path.shortcutId);
 						return (

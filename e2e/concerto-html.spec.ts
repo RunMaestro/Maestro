@@ -1,11 +1,33 @@
-import { execFileSync } from 'child_process';
+import { execFile } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-import { test, expect } from './fixtures/electron-app';
+import { promisify } from 'util';
+import { test as base, expect } from './fixtures/electron-app';
 
-function runCli(testDataDir: string, ...args: string[]): string {
+const execFileAsync = promisify(execFile);
+
+const test = base.extend({
+	electronLaunchEnv: async ({ testDataDir }, use) => {
+		// Enable Concerto before startup and keep first-run dialogs out of its viewport.
+		fs.writeFileSync(
+			path.join(testDataDir, 'maestro-settings.json'),
+			JSON.stringify({
+				encoreFeatures: { concerto: true },
+				typographyPromptSeen: true,
+				themePromptSeen: true,
+				updatesPromptSeen: true,
+				agentPowersPromptSeen: true,
+			}),
+			'utf8'
+		);
+		await use({ MAESTRO_USER_DATA: testDataDir });
+	},
+});
+
+/** Run the isolated CLI without blocking Playwright's iframe readiness events. */
+async function runCli(testDataDir: string, ...args: string[]): Promise<string> {
 	const cliPath = path.join(__dirname, '../dist/cli/maestro-cli.js');
-	return execFileSync(process.execPath, [cliPath, ...args], {
+	const { stdout } = await execFileAsync(process.execPath, [cliPath, ...args], {
 		cwd: path.join(__dirname, '..'),
 		encoding: 'utf8',
 		timeout: 30_000,
@@ -16,6 +38,7 @@ function runCli(testDataDir: string, ...args: string[]): string {
 			MAESTRO_USER_DATA: testDataDir,
 		},
 	});
+	return stdout;
 }
 
 test('renders an interactive HTML Movement inside the main window', async ({
@@ -43,8 +66,8 @@ test('renders an interactive HTML Movement inside the main window', async ({
 		'utf8'
 	);
 
-	runCli(testDataDir, 'settings', 'set', 'encoreFeatures.concerto', 'true');
-	runCli(
+	await expect(window.getByTestId('concerto-stage-modal')).toBeAttached();
+	await runCli(
 		testDataDir,
 		'movement',
 		'add',
@@ -60,6 +83,21 @@ test('renders an interactive HTML Movement inside the main window', async ({
 	);
 
 	const iframe = window.getByTestId('concerto-html-iframe');
+	await expect(window.getByTestId('concerto-stage-modal')).toBeHidden();
+	await expect(iframe).toBeHidden();
+	await expect(
+		runCli(
+			testDataDir,
+			'movement',
+			'inspect',
+			'concerto-e2e',
+			'--output',
+			path.join(testDataDir, 'hidden-preview.png'),
+			'--json'
+		)
+	).rejects.toMatchObject({ stdout: expect.stringContaining('not visible or did not load') });
+	await expect(window.getByTestId('concerto-stage-modal')).toBeHidden();
+	await runCli(testDataDir, 'open', 'concerto');
 	await expect(iframe).toBeVisible();
 	await expect(iframe).toHaveAttribute('src', /^maestro-concerto:\/\/render\//);
 
@@ -67,14 +105,30 @@ test('renders an interactive HTML Movement inside the main window', async ({
 	await expect(mockup.locator('#increment')).toBeVisible();
 
 	const interaction = JSON.parse(
-		runCli(testDataDir, 'movement', 'interact', 'concerto-e2e', '--click', '#increment', '--json')
+		await runCli(
+			testDataDir,
+			'movement',
+			'interact',
+			'concerto-e2e',
+			'--click',
+			'#increment',
+			'--json'
+		)
 	);
 	expect(interaction.success).toBe(true);
 	await expect(mockup.locator('#count')).toHaveText('1');
 
 	const previewPath = path.join(testDataDir, 'concerto-preview.png');
 	const inspection = JSON.parse(
-		runCli(testDataDir, 'movement', 'inspect', 'concerto-e2e', '--output', previewPath, '--json')
+		await runCli(
+			testDataDir,
+			'movement',
+			'inspect',
+			'concerto-e2e',
+			'--output',
+			previewPath,
+			'--json'
+		)
 	);
 	expect(inspection.ready).toBe(true);
 	expect(inspection.viewport.width).toBeGreaterThan(500);
@@ -99,8 +153,8 @@ test('confirms clearing a non-empty sandboxed chess game without a native dialog
 	testDataDir,
 }) => {
 	const chessPath = path.join(__dirname, '../mockups/chess.html');
-	runCli(testDataDir, 'settings', 'set', 'encoreFeatures.concerto', 'true');
-	runCli(
+	await expect(window.getByTestId('concerto-stage-modal')).toBeAttached();
+	await runCli(
 		testDataDir,
 		'movement',
 		'add',
@@ -114,6 +168,7 @@ test('confirms clearing a non-empty sandboxed chess game without a native dialog
 		'--height',
 		'720'
 	);
+	await runCli(testDataDir, 'open', 'concerto');
 
 	const mockup = window.frameLocator('[data-testid="concerto-html-iframe"]');
 	await expect(mockup.locator('#board')).toBeVisible();
@@ -121,11 +176,11 @@ test('confirms clearing a non-empty sandboxed chess game without a native dialog
 	await mockup.locator('[data-row="4"][data-column="4"]').click();
 	await expect(mockup.locator('#move-count')).toHaveText('2 moves');
 
-	runCli(testDataDir, 'movement', 'interact', 'chess-e2e', '--click', '#new-game', '--json');
+	await runCli(testDataDir, 'movement', 'interact', 'chess-e2e', '--click', '#new-game', '--json');
 	await expect(mockup.locator('#new-game-confirmation')).toBeVisible();
 	await expect(mockup.locator('#move-count')).toHaveText('2 moves');
 
-	runCli(
+	await runCli(
 		testDataDir,
 		'movement',
 		'interact',

@@ -40,6 +40,7 @@ import { groupSubagentToolLogs } from './utils/groupSubagentToolLogs';
 import { buildRenderedIdMap } from './utils/renderedLogIds';
 import { useUIStore } from '../../stores/uiStore';
 import { jumpToElement } from '../../utils/jumpHighlight';
+import { steerJoinsRunningTurn } from '../../utils/logEntries';
 import { LogItem } from './components/LogItem';
 import { OutputSearchBar } from './components/OutputSearchBar';
 import { ScrollToBottomButton } from './components/ScrollToBottomButton';
@@ -83,11 +84,14 @@ export const TerminalOutput = memo(
 			onDeleteLog,
 			onRemoveQueuedItem,
 			onTogglePauseQueuedItem,
+			onMergeQueuedItem,
 			onEditQueuedItem,
 			onReorderQueuedItem,
 			onForceSendQueuedItem,
 			forcedParallelEnabled,
 			getForceSendContext,
+			getSteerContext,
+			onSteerQueuedItem,
 			forceSendShortcutEnabled = true,
 			onInterrupt: _onInterrupt,
 			onScrollPositionChange,
@@ -745,6 +749,7 @@ export const TerminalOutput = memo(
 									bionifyAlgorithm={globalBionifyAlgorithm}
 									userMessageAlignment={userMessageAlignment}
 									responseDurationMs={responseDurationByLogId.get(log.id)}
+									steerRunContinues={steerJoinsRunningTurn(visibleLogs[visibleIndex + 1])}
 									// Codex's assistant directives are Codex's own emitting
 									// convention, so the same string from another provider is a
 									// message about the format. The tab comes from the resolved
@@ -768,6 +773,7 @@ export const TerminalOutput = memo(
 								theme={theme}
 								onRemoveQueuedItem={onRemoveQueuedItem}
 								onTogglePauseQueuedItem={onTogglePauseQueuedItem}
+								onMergeQueuedItem={onMergeQueuedItem}
 								onEditQueuedItem={onEditQueuedItem}
 								onReorderItems={
 									onReorderQueuedItem
@@ -778,6 +784,8 @@ export const TerminalOutput = memo(
 								onForceSendQueuedItem={onForceSendQueuedItem}
 								forcedParallelEnabled={forcedParallelEnabled}
 								getForceSendContext={getForceSendContext}
+								getSteerContext={getSteerContext}
+								onSteerQueuedItem={onSteerQueuedItem}
 								shortcutEnabled={forceSendShortcutEnabled}
 								activeTabId={activeTabId || undefined}
 								onOpenLightbox={setLightboxImage}

@@ -412,6 +412,40 @@ describe('closeTerminalTab', () => {
 		expect(updated.terminalTabs).toHaveLength(0);
 		expect(updated.activeTerminalTabId).toBeNull();
 		expect(updated.inputMode).toBe('ai');
+		// The agent had no other tab, so it lands on a fresh AI chat.
+		expect(updated.aiTabs.map((t) => t.id)).toEqual(['mock-id']);
+		expect(updated.activeTabId).toBe('mock-id');
+		expect(updated.unifiedTabOrder).toEqual([{ type: 'ai', id: 'mock-id' }]);
+	});
+
+	it('does not mint an AI tab when another tab survives the close', () => {
+		const tab = createMockTerminalTab({ id: 'only-tab' });
+		const session = createMockSession({
+			aiTabs: [
+				{
+					id: 'ai-1',
+					agentSessionId: null,
+					name: null,
+					starred: false,
+					logs: [],
+					inputValue: '',
+					stagedImages: [],
+					createdAt: 0,
+					state: 'idle',
+				},
+			],
+			activeTabId: 'ai-1',
+			terminalTabs: [tab],
+			activeTerminalTabId: 'only-tab',
+			inputMode: 'terminal',
+			unifiedTabOrder: [
+				{ type: 'ai' as const, id: 'ai-1' },
+				{ type: 'terminal' as const, id: 'only-tab' },
+			],
+		});
+		const updated = closeTerminalTab(session, 'only-tab');
+		expect(updated.aiTabs.map((t) => t.id)).toEqual(['ai-1']);
+		expect(updated.activeTabId).toBe('ai-1');
 	});
 
 	it('selects the adjacent tab when closing the active tab', () => {

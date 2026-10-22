@@ -4,8 +4,8 @@
 // already understands:
 //
 //   { type: 'system',    subtype: 'init', session_id, model, cwd }
-//   { type: 'assistant', message }                          // verbatim from JSONL
-//   { type: 'user',      message }                          // verbatim, tool_result only
+//   { type: 'assistant', message, parent_tool_use_id, session_id } // verbatim from JSONL
+//   { type: 'user',      message, parent_tool_use_id, session_id } // verbatim, tool_result only
 //   { type: 'result',    subtype, session_id, duration_ms, is_error, ... }
 //
 // Plus a single-shot `status` event for --status mode.
@@ -26,6 +26,8 @@
 // subsequent emit calls throw. assistant/user emissions before init or after
 // the terminal also throw - these are programmer errors that would corrupt
 // the wire protocol if allowed through.
+
+import type { SteeringResultFrame } from '../shared/chatSteering';
 
 export interface EmitInitOptions {
 	sessionId: string;
@@ -86,6 +88,7 @@ export interface StatusSnapshot {
 export class JsonEmitter {
 	private initEmitted = false;
 	private finalEmitted = false;
+	private sessionId = '';
 
 	emitInit(options: EmitInitOptions): void {
 		if (this.finalEmitted) {
@@ -98,6 +101,7 @@ export class JsonEmitter {
 			return;
 		}
 		this.initEmitted = true;
+		this.sessionId = options.sessionId;
 		this.writeLine({
 			type: 'system',
 			subtype: 'init',
@@ -107,14 +111,41 @@ export class JsonEmitter {
 		});
 	}
 
-	emitAssistantMessage(message: unknown): void {
+	/**
+	 * `parentToolUseId` is the Task call a subagent's message belongs to, and
+	 * null on the main thread, the same as `claude -p` reports it.
+	 */
+	emitAssistantMessage(message: unknown, parentToolUseId: string | null = null): void {
 		this.requireInitOpen('emitAssistantMessage');
-		this.writeLine({ type: 'assistant', message });
+		this.writeLine(this.messageEnvelope('assistant', message, parentToolUseId));
 	}
 
-	emitUserMessage(message: unknown): void {
+	emitUserMessage(message: unknown, parentToolUseId: string | null = null): void {
 		this.requireInitOpen('emitUserMessage');
-		this.writeLine({ type: 'user', message });
+		this.writeLine(this.messageEnvelope('user', message, parentToolUseId));
+	}
+
+	private messageEnvelope(
+		type: 'assistant' | 'user',
+		message: unknown,
+		parentToolUseId: string | null
+	): Record<string, unknown> {
+		return { type, message, parent_tool_use_id: parentToolUseId, session_id: this.sessionId };
+	}
+
+	/**
+	 * Report what became of one chat-steering attempt (see shared/chatSteering.ts).
+	 *
+	 * This is a maestro-p EXTENSION to the stream-json wire format, not something
+	 * `claude --print` emits, and it is safe to add because an unrecognized `type`
+	 * degrades to a harmless `system` event in Maestro's Claude parser rather than
+	 * failing the stream. Subject to the same one-shot final-envelope rule as every
+	 * other event: a verdict arriving after `result` is a wire-format bug, since the
+	 * turn it describes is already reported.
+	 */
+	emitSteering(frame: SteeringResultFrame): void {
+		this.requireInitOpen('emitSteering');
+		this.writeLine(frame);
 	}
 
 	emitResult(options: EmitResultOptions): void {

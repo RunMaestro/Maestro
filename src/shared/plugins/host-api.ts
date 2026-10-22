@@ -21,8 +21,13 @@
 import semver from 'semver';
 
 /**
- * The host API version this Maestro build implements. Bumped to 1.16.0 for three
- * backward-compatible additions: the metadata-only `session.activated` event
+ * The host API version this Maestro build implements. 1.25.0 adds resumable
+ * agents.send with public progress, verified plugin-tool caller identity, and
+ * isolated agents.generateTitle. 1.24.0 added host-mediated services.
+ * 1.23.0 adds independent
+ * plugin settings cards and host-owned navigation links. 1.17.0 added the bounded
+ * media:tools job API (Discord attachments and fixed local profiles).
+ * 1.16.0 added three backward-compatible additions: the metadata-only `session.activated` event
  * topic (`{ sessionId, tabId? }`, opaque ids only, fired when the focused agent
  * changes), the `sessions.focus` method plus its narrow `sessions:focus`
  * capability (navigate to an existing session's AI tab; no tab create/close
@@ -52,7 +57,7 @@ import semver from 'semver';
  * `ui:contribute` / `ui:panel` / `ui:render-unsafe` UI capabilities; 1.3.0
  * added `tools` + `keybindings`; 1.2.0 added `transcripts:read`.
  */
-export const HOST_API_VERSION = '1.16.0';
+export const HOST_API_VERSION = '1.25.0';
 
 /** Result of checking a plugin's declared host-API requirement. */
 export interface HostApiCompatibility {

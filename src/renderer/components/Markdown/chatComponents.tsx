@@ -22,11 +22,16 @@ import { createShikiCodeBlock } from './components/ShikiCodeBlock';
 import { AlertCallout } from './components/AlertCallout';
 import { FollowupChip } from './components/FollowupChip';
 import { CodexFileCitation } from './components/CodexFileCitation';
+import { CodexVisualizationFrame } from './components/CodexVisualizationFrame';
 import { CodeCommentCard } from './components/CodeCommentCard';
 import { GitActionCard, isGitDirectiveName } from './components/GitActionCard';
 import { alertTypeFromClassName } from './remarkAlert';
 import { readCodexDirectiveProps } from './remarkCodexDirectives';
 import { requestCodexFollowup } from '../../services/codexFollowup';
+import {
+	requestCodeFenceCommand,
+	type CodeFenceCommandTarget,
+} from '../../services/codeFenceCommand';
 
 export interface ChatMarkdownComponentsOptions {
 	theme: Theme;
@@ -53,6 +58,12 @@ export interface ChatMarkdownComponentsOptions {
 	 * label, with no control to press.
 	 */
 	codexFollowup?: { sessionId: string; tabId: string };
+	/**
+	 * Which conversation a shell fence's Run button belongs to. Present only
+	 * where an agent's own reply is drawn in a live tab, for any provider. Absent
+	 * leaves shell fences with just their copy button.
+	 */
+	commandRun?: CodeFenceCommandTarget;
 }
 
 export function createChatMarkdownComponents(
@@ -70,6 +81,7 @@ export function createChatMarkdownComponents(
 		onLinkContextMenu,
 		onFileContextMenu,
 		codexFollowup,
+		commandRun,
 	} = options;
 
 	const withReadableTransforms = (children: React.ReactNode) =>
@@ -92,7 +104,13 @@ export function createChatMarkdownComponents(
 		onFileContextMenu,
 		behavior: { directExternal: true },
 	});
-	const ChatCodeBlock = createShikiCodeBlock(theme, onCopy);
+	const ChatCodeBlock = createShikiCodeBlock(
+		theme,
+		onCopy,
+		commandRun
+			? (command, mode) => requestCodeFenceCommand({ ...commandRun, command, mode })
+			: undefined
+	);
 
 	return {
 		a: ChatLink,
@@ -258,6 +276,23 @@ export function createChatMarkdownComponents(
 						pageNumber={directive.attributes.page_number}
 						theme={theme}
 						LinkComponent={ChatLink}
+					/>
+				);
+			}
+
+			// Codex's `visualize` reference names an HTML fragment the agent just
+			// wrote. It renders the way the Codex app renders it: wrapped in
+			// Codex's own visualize kit and run in an isolated sandboxed frame,
+			// with the file chip as the fallback (see CodexVisualizationFrame).
+			if (directive.name === 'visualize' && directive.attributes.path) {
+				return (
+					<CodexVisualizationFrame
+						path={directive.attributes.path}
+						title={directive.attributes.title}
+						mode={directive.attributes.mode}
+						theme={theme}
+						LinkComponent={ChatLink}
+						conversation={codexFollowup}
 					/>
 				);
 			}

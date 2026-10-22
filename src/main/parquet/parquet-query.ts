@@ -55,6 +55,7 @@ import type {
 } from '../../shared/parquet/types';
 import { getParquetFile, loadParquetReader, type OpenParquetFile } from './parquet-file';
 import { withHeapGuard } from '../utils/heap-guard';
+import { yieldToEventLoop } from '../utils/concurrency';
 
 /**
  * Most matching row indexes the engine will retain.
@@ -227,11 +228,6 @@ function runExclusive<T>(handle: string, task: () => Promise<T>): Promise<T> {
 		next.catch(() => undefined)
 	);
 	return next;
-}
-
-/** Yield to the event loop so a long scan cannot starve IPC. */
-function breathe(): Promise<void> {
-	return new Promise((resolve) => setImmediate(resolve));
 }
 
 // ─── Value normalization ──────────────────────────────────────────────────────
@@ -448,7 +444,7 @@ async function extendMatches(
 			session.nextRowInRange = windowEnd;
 		}
 
-		await breathe();
+		await yieldToEventLoop();
 	}
 
 	if (session.nextRange >= session.ranges.length) session.complete = true;

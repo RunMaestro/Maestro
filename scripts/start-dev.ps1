@@ -18,7 +18,10 @@ Start-Process powershell -ArgumentList '-NoExit', '-Command', $cmdRenderer
 Write-Host "Waiting for renderer dev server on port $vitePort..." -ForegroundColor Yellow
 Start-Sleep -Seconds 5
 
-$cmdBuild = "Set-Location -LiteralPath '$repoRootEscaped'; bunx tsc -p tsconfig.main.json; bun run build:preload; `$env:NODE_ENV='development'; `$env:VITE_PORT='$vitePort'; bunx electron ."
+# build:main wipes dist/main before compiling, so a failed build leaves no preload
+# behind. Start Electron only when the build succeeded, or it opens without its
+# preload bridge.
+$cmdBuild = "Set-Location -LiteralPath '$repoRootEscaped'; bun run build:main; if (`$LASTEXITCODE -eq 0) { `$env:NODE_ENV='development'; `$env:VITE_PORT='$vitePort'; bunx electron . } else { Write-Host 'build:main failed, so Electron was not started.' -ForegroundColor Red }"
 Start-Process powershell -ArgumentList '-NoExit', '-Command', $cmdBuild
 
 Write-Host "Launched renderer and main developer windows on port $vitePort." -ForegroundColor Green

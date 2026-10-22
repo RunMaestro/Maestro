@@ -29,6 +29,7 @@ import type {
 	TokenUsageGroup,
 	TokenUsageTimeBucket,
 } from '../../shared/tokenUsage';
+import type { TokenSpeedGroup, TokenSpeedPoint, TokenSpeedStats } from '../../shared/tokenSpeed';
 
 /** Bump when a field is renamed or removed, so scripts can tell exports apart. */
 export const USAGE_EXPORT_VERSION = 1;
@@ -124,6 +125,10 @@ export function countUsageExportRows(bundle: UsageExportBundle): Record<string, 
 		counts['token-usage-by-project'] = bundle.tokenUsage.byProject.length;
 		counts['token-usage-by-account'] = bundle.tokenUsage.byAccount.length;
 		counts['token-usage-timeline'] = bundle.tokenUsage.timeline.length;
+		counts['token-speed-by-agent'] = bundle.tokenUsage.speed.byAgent.length;
+		counts['token-speed-by-model'] = bundle.tokenUsage.speed.byModel.length;
+		counts['token-speed-by-hour-of-day'] = bundle.tokenUsage.speed.byHourOfDay.length;
+		counts['token-speed-timeline'] = bundle.tokenUsage.speed.timeline.length;
 	}
 	return counts;
 }
@@ -142,6 +147,7 @@ const TIMESTAMP_FIELDS = new Set([
 	'resolvedAt',
 	'completedAt',
 	'startMs',
+	'peakOutputAtMs',
 ]);
 
 const QUERY_EVENT_COLUMNS: readonly (keyof QueryEvent)[] = [
@@ -270,6 +276,32 @@ const TOKEN_TIMELINE_COLUMNS: readonly (keyof TokenUsageTimeBucket)[] = [
 	...TOKEN_TOTAL_COLUMNS,
 ];
 
+const TOKEN_SPEED_STAT_COLUMNS = [
+	'calls',
+	'inputTokens',
+	'outputTokens',
+	'durationMs',
+	'avgInputTps',
+	'avgOutputTps',
+	'avgTotalTps',
+	'peakInputTps',
+	'peakOutputTps',
+	'peakTotalTps',
+	'peakOutputAtMs',
+	'peakOutputModel',
+] as const satisfies readonly (keyof TokenSpeedStats)[];
+
+const TOKEN_SPEED_GROUP_COLUMNS: readonly (keyof TokenSpeedGroup)[] = [
+	'key',
+	'label',
+	...TOKEN_SPEED_STAT_COLUMNS,
+];
+
+const TOKEN_SPEED_TIMELINE_COLUMNS: readonly (keyof TokenSpeedPoint)[] = [
+	'startMs',
+	...TOKEN_SPEED_STAT_COLUMNS,
+];
+
 /** Quote a value and double any embedded quotes (RFC 4180). */
 function csvEscape(value: string): string {
 	return `"${value.replace(/"/g, '""')}"`;
@@ -355,6 +387,25 @@ export function usageExportToCsvFiles(bundle: UsageExportBundle): UsageExportFil
 			{
 				name: 'token-usage-timeline.csv',
 				content: rowsToCsv(tokens.timeline, TOKEN_TIMELINE_COLUMNS),
+			},
+			{
+				name: 'token-speed-by-agent.csv',
+				content: rowsToCsv(tokens.speed.byAgent, TOKEN_SPEED_GROUP_COLUMNS),
+			},
+			{
+				name: 'token-speed-by-model.csv',
+				content: rowsToCsv(tokens.speed.byModel, TOKEN_SPEED_GROUP_COLUMNS),
+			},
+			{
+				name: 'token-speed-by-hour-of-day.csv',
+				content: rowsToCsv(
+					tokens.speed.byHourOfDay.map((stats, hour) => ({ hour, ...stats })),
+					['hour', ...TOKEN_SPEED_STAT_COLUMNS]
+				),
+			},
+			{
+				name: 'token-speed-timeline.csv',
+				content: rowsToCsv(tokens.speed.timeline, TOKEN_SPEED_TIMELINE_COLUMNS),
 			}
 		);
 	}

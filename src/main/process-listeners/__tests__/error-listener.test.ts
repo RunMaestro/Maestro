@@ -14,6 +14,7 @@ describe('Error Listener', () => {
 	let mockProcessManager: ProcessManager;
 	let mockSafeSend: SafeSendFn;
 	let mockLogger: ProcessListenerDependencies['logger'];
+	let mockFlushPendingData: ReturnType<typeof vi.fn<(sessionId: string) => void>>;
 	let eventHandlers: Map<string, (...args: unknown[]) => void>;
 
 	beforeEach(() => {
@@ -21,6 +22,7 @@ describe('Error Listener', () => {
 		eventHandlers = new Map();
 
 		mockSafeSend = vi.fn();
+		mockFlushPendingData = vi.fn();
 		mockLogger = {
 			info: vi.fn(),
 			error: vi.fn(),
@@ -36,13 +38,21 @@ describe('Error Listener', () => {
 	});
 
 	it('should register the agent-error event listener', () => {
-		setupErrorListener(mockProcessManager, { safeSend: mockSafeSend, logger: mockLogger });
+		setupErrorListener(
+			mockProcessManager,
+			{ safeSend: mockSafeSend, logger: mockLogger },
+			mockFlushPendingData
+		);
 
 		expect(mockProcessManager.on).toHaveBeenCalledWith('agent-error', expect.any(Function));
 	});
 
 	it('should log agent error and forward to renderer', () => {
-		setupErrorListener(mockProcessManager, { safeSend: mockSafeSend, logger: mockLogger });
+		setupErrorListener(
+			mockProcessManager,
+			{ safeSend: mockSafeSend, logger: mockLogger },
+			mockFlushPendingData
+		);
 
 		const handler = eventHandlers.get('agent-error');
 		const testSessionId = 'test-session-123';
@@ -71,8 +81,39 @@ describe('Error Listener', () => {
 		expect(mockSafeSend).toHaveBeenCalledWith('agent:error', testSessionId, testAgentError);
 	});
 
+	// The renderer reads output that lands after an error as the agent having
+	// recovered and erases the error, so the output the turn produced has to be
+	// released before the error is sent.
+	it("releases the session's buffered output before forwarding the error", () => {
+		setupErrorListener(
+			mockProcessManager,
+			{ safeSend: mockSafeSend, logger: mockLogger },
+			mockFlushPendingData
+		);
+
+		const testAgentError: AgentError = {
+			type: 'auth_expired',
+			agentId: 'claude-code',
+			message: 'Authentication failed',
+			recoverable: true,
+			timestamp: Date.now(),
+		};
+
+		eventHandlers.get('agent-error')?.('session-1-ai-tab-1', testAgentError);
+
+		expect(mockFlushPendingData).toHaveBeenCalledTimes(1);
+		expect(mockFlushPendingData).toHaveBeenCalledWith('session-1-ai-tab-1');
+		expect(mockFlushPendingData.mock.invocationCallOrder[0]).toBeLessThan(
+			vi.mocked(mockSafeSend).mock.invocationCallOrder[0]
+		);
+	});
+
 	it('should handle token exhaustion errors', () => {
-		setupErrorListener(mockProcessManager, { safeSend: mockSafeSend, logger: mockLogger });
+		setupErrorListener(
+			mockProcessManager,
+			{ safeSend: mockSafeSend, logger: mockLogger },
+			mockFlushPendingData
+		);
 
 		const handler = eventHandlers.get('agent-error');
 		const testSessionId = 'session-456';
@@ -90,7 +131,11 @@ describe('Error Listener', () => {
 	});
 
 	it('should handle rate limit errors', () => {
-		setupErrorListener(mockProcessManager, { safeSend: mockSafeSend, logger: mockLogger });
+		setupErrorListener(
+			mockProcessManager,
+			{ safeSend: mockSafeSend, logger: mockLogger },
+			mockFlushPendingData
+		);
 
 		const handler = eventHandlers.get('agent-error');
 		const testSessionId = 'session-789';

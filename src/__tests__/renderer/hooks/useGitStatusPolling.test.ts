@@ -98,6 +98,189 @@ describe('useGitStatusPolling', () => {
 		});
 	});
 
+	describe('when git is slow (e.g. a repo in iCloud Drive)', () => {
+		it("does not show another folder's counts when a terminal cd lands on a slow repo", async () => {
+			vi.mocked(gitService.getStatus).mockResolvedValue({
+				files: [{ path: 'README.md', status: 'M' }],
+				branch: 'repo-a-branch',
+			});
+			const inRepoA = createMockSession({
+				id: 'term',
+				isGitRepo: true,
+				cwd: '/repo-a',
+				inputMode: 'terminal',
+				shellCwd: '/repo-a',
+			});
+			const { result, rerender } = renderHook(({ sessions }) => useGitStatusPolling(sessions), {
+				initialProps: { sessions: [inRepoA] },
+			});
+			await waitFor(() => {
+				expect(result.current.gitStatusMap.get('term')?.branch).toBe('repo-a-branch');
+			});
+
+			rerender({ sessions: [{ ...inRepoA, shellCwd: '/icloud/repo-b' }] });
+			vi.mocked(gitService.getStatus).mockResolvedValue({
+				files: [],
+				branch: undefined,
+				timedOut: true,
+			});
+			await act(async () => {
+				await result.current.refreshGitStatus();
+			});
+
+			// Unknown, not repo A's branch and counts under repo B's folder.
+			expect(result.current.gitStatusMap.has('term')).toBe(false);
+		});
+
+		it("keeps the active agent's last good data when git:info timed out", async () => {
+			const info = vi.mocked(window.maestro.git.info);
+			info.mockResolvedValue({
+				branch: 'main',
+				remote: 'git@github.com:u/r.git',
+				behind: 2,
+				ahead: 3,
+				uncommittedChanges: 1,
+			});
+			vi.mocked(gitService.getStatus).mockResolvedValue({
+				files: [{ path: 'README.md', status: 'M' }],
+				branch: 'main',
+			});
+			vi.mocked(gitService.getNumstat).mockResolvedValue({
+				files: [{ path: 'README.md', additions: 4, deletions: 1 }],
+			});
+			const sessions = [createMockSession({ id: 'active', isGitRepo: true })];
+			const { result } = renderHook(() =>
+				useGitStatusPolling(sessions, { activeSessionId: 'active' })
+			);
+			await waitFor(() => {
+				expect(result.current.gitStatusMap.get('active')?.ahead).toBe(3);
+			});
+
+			// Only the upstream count stalled: its zeros must not replace 2 / 3.
+			info.mockResolvedValue({
+				branch: 'main',
+				remote: 'git@github.com:u/r.git',
+				behind: 0,
+				ahead: 0,
+				uncommittedChanges: 1,
+				timedOut: true,
+			});
+			await act(async () => {
+				await result.current.refreshGitStatus();
+			});
+
+			expect(result.current.gitStatusMap.get('active')).toEqual(
+				expect.objectContaining({ ahead: 3, behind: 2, totalAdditions: 4 })
+			);
+			info.mockResolvedValue({
+				branch: 'main',
+				remote: '',
+				behind: 0,
+				ahead: 0,
+				uncommittedChanges: 0,
+			});
+		});
+
+		it('never overlaps the non-git re-check with itself', async () => {
+			let finish!: (isRepo: boolean) => void;
+			vi.mocked(gitService.isRepo).mockImplementationOnce(
+				() =>
+					new Promise((resolve) => {
+						finish = resolve;
+					})
+			);
+			const sessions = [createMockSession({ id: 'plain', isGitRepo: false })];
+			const { result } = renderHook(() => useGitStatusPolling(sessions));
+			await waitFor(() => {
+				expect(gitService.isRepo).toHaveBeenCalledTimes(1);
+			});
+
+			await act(async () => {
+				await result.current.refreshGitStatus();
+				await result.current.refreshGitStatus();
+			});
+			expect(gitService.isRepo).toHaveBeenCalledTimes(1);
+
+			await act(async () => {
+				finish(false);
+				await Promise.resolve();
+			});
+			await act(async () => {
+				await result.current.refreshGitStatus();
+			});
+			expect(gitService.isRepo).toHaveBeenCalledTimes(2);
+		});
+
+		it('keeps the last good counts when a status check times out', async () => {
+			vi.mocked(gitService.getStatus).mockResolvedValue({
+				files: [{ path: 'README.md', status: 'M' }],
+				branch: 'main',
+			});
+			const sessions = [createMockSession({ id: 'slow', isGitRepo: true })];
+
+			const { result } = renderHook(() => useGitStatusPolling(sessions));
+			await waitFor(() => {
+				expect(result.current.gitStatusMap.get('slow')?.fileCount).toBe(1);
+			});
+
+			vi.mocked(gitService.getStatus).mockResolvedValue({
+				files: [],
+				branch: undefined,
+				timedOut: true,
+			});
+			await act(async () => {
+				await result.current.refreshGitStatus();
+			});
+
+			expect(result.current.gitStatusMap.get('slow')?.fileCount).toBe(1);
+			expect(updateSessionWith).not.toHaveBeenCalled();
+		});
+
+		it('never runs two polls at once, and folds explicit refreshes into one more pass', async () => {
+			let finish!: () => void;
+			vi.mocked(gitService.getStatus).mockImplementationOnce(
+				() =>
+					new Promise((resolve) => {
+						finish = () => resolve({ files: [], branch: 'main' });
+					})
+			);
+			vi.mocked(gitService.getStatus).mockResolvedValue({ files: [], branch: 'main' });
+			const sessions = [createMockSession({ id: 'slow', isGitRepo: true })];
+
+			// A custom interval is not scaled, so the timer fires every 20ms.
+			const { result, unmount } = renderHook(() =>
+				useGitStatusPolling(sessions, { pollInterval: 20 })
+			);
+			await waitFor(() => {
+				expect(gitService.getStatus).toHaveBeenCalledTimes(1);
+			});
+
+			// Timer ticks and two refreshes land while the first poll hangs.
+			let refreshes!: Promise<void[]>;
+			await act(async () => {
+				refreshes = Promise.all([
+					result.current.refreshGitStatus(),
+					result.current.refreshGitStatus(),
+				]);
+				await new Promise((resolve) => setTimeout(resolve, 100));
+			});
+			expect(gitService.getStatus).toHaveBeenCalledTimes(1);
+
+			// Count inside the same microtask run that settles the refreshes: once
+			// the queued pass ends the 20ms timer may legitimately start a fresh
+			// poll, and on a loaded machine it can do so before act() returns.
+			let callsWhenSettled = 0;
+			await act(async () => {
+				finish();
+				await refreshes;
+				callsWhenSettled = vi.mocked(gitService.getStatus).mock.calls.length;
+			});
+			unmount();
+			// Exactly one queued pass for both refreshes, nothing for the dropped ticks.
+			expect(callsWhenSettled).toBe(2);
+		});
+	});
+
 	describe('when a git agent stops being a repo', () => {
 		it('demotes the session and drops it from the status map', async () => {
 			vi.mocked(gitService.getStatus).mockResolvedValue({

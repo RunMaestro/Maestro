@@ -4,6 +4,7 @@ import type { LucideIcon } from 'lucide-react';
 import type { Theme } from '../../constants/themes';
 import type { PreviewTier } from './filePreviewUtils';
 import { HoverTooltip } from '../ui/HoverTooltip';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 export interface PreviewTierChipProps {
 	/** The tier the auto-picker would choose for the current file. */
@@ -146,10 +147,9 @@ export const PreviewTierChip: React.FC<PreviewTierChipProps> = ({
 				<div
 					role="menu"
 					data-testid="preview-tier-chip-menu"
-					className="absolute right-0 mt-1 rounded-md shadow-lg z-50 overflow-hidden"
+					className="absolute right-0 mt-1 rounded-md z-50 overflow-hidden"
 					style={{
-						backgroundColor: theme.colors.bgSidebar,
-						border: `1px solid ${theme.colors.border}`,
+						...elevatedSurfaceStyle(theme),
 						minWidth: '240px',
 					}}
 				>

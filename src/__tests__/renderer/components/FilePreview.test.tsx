@@ -158,9 +158,9 @@ vi.mock('../../../renderer/components/CsvTableRenderer', () => ({
 	),
 }));
 
-// Mock token counter - getEncoder must return a Promise
+// Mock token counter - countTokens must return a Promise
 vi.mock('../../../renderer/utils/tokenCounter', () => ({
-	getEncoder: vi.fn(() => Promise.resolve({ encode: () => [1, 2, 3] })),
+	countTokens: vi.fn(() => Promise.resolve(3)),
 	formatTokenCount: vi.fn((count: number) => `${count} tokens`),
 }));
 
@@ -1037,8 +1037,6 @@ describe('FilePreview', () => {
 		});
 
 		it('skips token counting for files larger than 1MB', async () => {
-			const { getEncoder } = await import('../../../renderer/utils/tokenCounter');
-
 			// Create content larger than LARGE_FILE_TOKEN_SKIP_THRESHOLD (1MB)
 			const hugeContent = 'z'.repeat(1.5 * 1024 * 1024); // 1.5MB
 			render(
@@ -1049,7 +1047,7 @@ describe('FilePreview', () => {
 			);
 
 			// Token counting should be skipped for large files
-			// getEncoder should not have been called for this file
+			// countTokens should not have been called for this file
 			// (it may have been called from previous tests, but not with this content)
 			// The token count state should remain null for large files
 			expect(screen.queryByText(/tokens/)).not.toBeInTheDocument();

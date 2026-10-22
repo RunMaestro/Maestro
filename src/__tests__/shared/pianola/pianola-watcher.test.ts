@@ -9,6 +9,8 @@ import {
 	runWatchIteration,
 	initialWatchState,
 	rehydrateWatchState,
+	lastWatchActivityMs,
+	isWatchIdleExpired,
 	MAX_DISPATCH_ATTEMPTS,
 	HANDOFF_TIMEOUT_POLLS,
 	type WatchDeps,
@@ -710,5 +712,49 @@ describe('runWatchIteration - handoff resolution', () => {
 		expect(result.acted).toBe(false);
 		expect(records).toHaveLength(0);
 		expect(state.pendingHandoff).toBeNull();
+	});
+});
+
+describe('watch idle retirement', () => {
+	const HOUR = 3_600_000;
+	const msg = (id: string, timestamp: string): PianolaMessage => ({
+		id,
+		role: 'assistant',
+		source: 'ai',
+		content: 'done',
+		timestamp,
+	});
+
+	it('takes the newest message timestamp, floored at the watch start', () => {
+		const t1 = Date.parse('2026-01-01T00:00:00.000Z');
+		const t2 = Date.parse('2026-01-01T05:00:00.000Z');
+		const messages = [msg('a', new Date(t1).toISOString()), msg('b', new Date(t2).toISOString())];
+		expect(lastWatchActivityMs(messages, 0)).toBe(t2);
+		expect(lastWatchActivityMs(messages, t2 + HOUR)).toBe(t2 + HOUR);
+		expect(lastWatchActivityMs([msg('c', 'not a date')], 42)).toBe(42);
+	});
+
+	it('expires only after the idle window with nothing in flight', () => {
+		const state = initialWatchState();
+		expect(isWatchIdleExpired(state, 0, 6 * HOUR - 1, 6 * HOUR)).toBe(false);
+		expect(isWatchIdleExpired(state, 0, 6 * HOUR, 6 * HOUR)).toBe(true);
+	});
+
+	it('never expires while a handoff or retry is pending, or when disabled', () => {
+		const handoff: WatchState = {
+			...initialWatchState(),
+			pendingHandoff: {
+				messageId: 'm1',
+				polls: 1,
+				classification: { kind: 'question', risk: 'low', topic: 't' },
+			} as WatchState['pendingHandoff'],
+		};
+		const retry: WatchState = {
+			...initialWatchState(),
+			pendingRetry: { messageId: 'm1', attempts: 1 },
+		};
+		expect(isWatchIdleExpired(handoff, 0, 100 * HOUR, HOUR)).toBe(false);
+		expect(isWatchIdleExpired(retry, 0, 100 * HOUR, HOUR)).toBe(false);
+		expect(isWatchIdleExpired(initialWatchState(), 0, 100 * HOUR, 0)).toBe(false);
 	});
 });

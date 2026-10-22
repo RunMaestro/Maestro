@@ -8,12 +8,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock the agent capabilities before importing
-vi.mock('../../../main/agents', () => ({
+vi.mock('../../../shared/maestro-lib/providers/capabilities', () => ({
 	getAgentCapabilities: vi.fn(),
 }));
 
 // Mock the shell escape utility
-vi.mock('../../../main/process-manager/utils/shellEscape', () => ({
+vi.mock('../../../shared/maestro-lib/launch/windows-shell-escape', () => ({
 	getWindowsShellForAgentExecution: vi.fn(() => ({
 		shell: 'powershell.exe',
 		useShell: true,
@@ -26,8 +26,8 @@ import {
 	setGetCustomShellPathCallback,
 	type SpawnSshConfig,
 } from '../../../main/group-chat/group-chat-config';
-import { getAgentCapabilities } from '../../../main/agents';
-import { getWindowsShellForAgentExecution } from '../../../main/process-manager/utils/shellEscape';
+import { getAgentCapabilities } from '../../../shared/maestro-lib/providers/capabilities';
+import { getWindowsShellForAgentExecution } from '../../../shared/maestro-lib/launch/windows-shell-escape';
 
 describe('group-chat-config', () => {
 	let originalPlatform: NodeJS.Platform;

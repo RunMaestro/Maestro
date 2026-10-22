@@ -1,8 +1,18 @@
+import { requestProviderTranslation } from '../../services/providerTranslation';
+import type { TranslationPlan } from '../../../shared/maestro-lib/translation/types';
+import { getDeclaredTranslationDirection } from '../../../shared/maestro-lib/translation/support';
+import { providerOverridesFor } from '../../../shared/maestro-lib/agents/providerSwap';
+import { canonicalJson } from '../../../shared/canonicalJson';
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Info, Copy, Check, X, Folder } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
+import { Spinner } from '../ui/Spinner';
+import { MiniBadge } from '../ui/MiniBadge';
+import { ThemedSelect } from '../shared/ThemedSelect';
 import { AgentResilienceSection } from './AgentResilienceSection';
+import { AgentCotExportSection } from './AgentCotExportSection';
 import { resilienceEnabled } from '../../../shared/agentConstants';
+import { getClaudeTokenMode } from '../../../shared/claudeTokenMode';
 import { normalizeAdditionalDirectories } from '../../../shared/additionalDirectories';
 import { formatTokensCompact } from '../../../shared/formatters';
 import { getActiveTab } from '../../utils/tabHelpers';
@@ -33,6 +43,7 @@ import { logger } from '../../utils/logger';
 import { isAbsolutePath } from '../../../shared/formatters';
 import { isSameDirectory, workingDirectoryChangeBlocker } from '../../utils/agentWorkingDirectory';
 import { withBlankEnvVarRow } from '../../../shared/envVarCatalog';
+import type { CodexTransport } from '../../../shared/codexTransport';
 
 /**
  * EditAgentModal - Modal for editing an existing agent's settings
@@ -87,6 +98,8 @@ export function EditAgentModal({
 	// on Session for why this one does NOT follow the resilience flags' default-on
 	// rule: reset credits are finite and irreversible.
 	const [codexAutoReset, setCodexAutoReset] = useState(false);
+	// Codex transport. `exec` is the default; app-server is an experimental opt-in.
+	const [codexTransport, setCodexTransport] = useState<CodexTransport>('exec');
 	const [editDynamicOptions, setEditDynamicOptions] = useState<Record<string, string[]>>({});
 	const [editLoadingDynamicOptions, setEditLoadingDynamicOptions] = useState(false);
 	const [refreshingAgent, setRefreshingAgent] = useState(false);
@@ -131,6 +144,96 @@ export function EditAgentModal({
 
 	// Track whether provider has been changed from the original
 	const providerChanged = session ? selectedToolType !== session.toolType : false;
+	/** Live store entry for this agent; the form's session prop is an opening snapshot. */
+	const liveSession = useSessionStore(selectSessionById(session?.id ?? ''));
+	const [migrationPlan, setMigrationPlan] = useState<TranslationPlan | null>(null);
+	const [migrationError, setMigrationError] = useState('');
+	const [migrationLoading, setMigrationLoading] = useState(false);
+	const [migrationSaving, setMigrationSaving] = useState(false);
+	const [selectedUserResources, setSelectedUserResources] = useState<string[]>(['']);
+	const [selectionRevision, setSelectionRevision] = useState(0);
+	// Converting memory and session history is opt-in. Off, a provider change is
+	// a plain switch: tabs and transcripts stay, and each tab starts a fresh
+	// conversation on the new provider.
+	const [convertProviderHistory, setConvertProviderHistory] = useState(false);
+	const canConvertProvider =
+		providerChanged && !!getDeclaredTranslationDirection(session?.toolType ?? '', selectedToolType);
+	const convertingProvider = canConvertProvider && convertProviderHistory;
+	/** What the incoming provider parked when the agent last left it; the form is seeded from it. */
+	const parkedOverrides = useMemo(
+		() => (session && providerChanged ? providerOverridesFor(session, selectedToolType) : {}),
+		[session, providerChanged, selectedToolType]
+	);
+	const carryOverBadge = useMemo(
+		() => (
+			<MiniBadge
+				label="Carry Over"
+				theme={theme}
+				className="inline-flex align-middle whitespace-nowrap"
+				style={{ textTransform: 'none', borderRadius: '9999px' }}
+			/>
+		),
+		[theme]
+	);
+	const providerOptions = useMemo(
+		() =>
+			SUPPORTED_AGENTS.map((provider) => ({
+				value: provider,
+				label: getAgentDisplayName(provider),
+				rightContent: getDeclaredTranslationDirection(session?.toolType ?? '', provider)
+					? carryOverBadge
+					: undefined,
+			})),
+		[session?.toolType, carryOverBadge]
+	);
+	const currentMigration = (liveSession ?? session)?.providerMigration;
+	const migrationState =
+		currentMigration?.operationId === migrationPlan?.id
+			? currentMigration?.state
+			: migrationPlan?.status;
+	const migrationActivity = !convertingProvider
+		? null
+		: migrationSaving
+			? migrationState === 'deferred'
+				? 'Waiting for the current turn to finish...'
+				: migrationState === 'staged' || migrationState === 'committing'
+					? 'Finishing provider switch...'
+					: 'Translating memory and session history...'
+			: migrationLoading
+				? 'Reading memory and session history...'
+				: null;
+	useEffect(() => {
+		if (!isOpen || !session || !convertingProvider) {
+			setMigrationPlan(null);
+			setMigrationError('');
+			return;
+		}
+		let disposed = false;
+		setMigrationLoading(true);
+		setMigrationError('');
+		void requestProviderTranslation({
+			agentId: session.id,
+			destination: selectedToolType,
+			action: 'plan',
+			selectedUserResources: selectedUserResources.map((p) => p.trim()).filter(Boolean),
+		})
+			.then((report) => {
+				if (disposed) return;
+				setMigrationPlan(report.plan ?? null);
+				setMigrationError(report.error ?? '');
+				setMigrationLoading(false);
+			})
+			.catch((error) => {
+				if (disposed) return;
+				setMigrationPlan(null);
+				setMigrationError(error instanceof Error ? error.message : String(error));
+				setMigrationLoading(false);
+			});
+		return () => {
+			disposed = true;
+		};
+		// Resource edits are reviewed explicitly, so typing does not repeatedly scan native history.
+	}, [isOpen, session?.id, convertingProvider, selectedToolType, selectionRevision]);
 
 	// Resolve the auto-detected maestro-p path so the Batch Mode toggle can show
 	// it as helper text in the path-override input.
@@ -148,6 +251,10 @@ export function EditAgentModal({
 		let stale = false;
 		const activeToolType = selectedToolType;
 		const isProviderSwitch = activeToolType !== session.toolType;
+		// On a provider switch the form edits what the incoming provider parked
+		// when the agent last left it (blank if it never ran there), so saving
+		// keeps the configuration a switch back would restore.
+		const overrides = isProviderSwitch ? providerOverridesFor(session, activeToolType) : session;
 
 		// Load agent definition (for configOptions) and the agent-level config together:
 		// seeding the config panel needs the agent's effort key, which only the
@@ -220,37 +327,29 @@ export function EditAgentModal({
 				// overrides win. Model, contextWindow and effort are per-session: showing
 				// the agent-level effort here while the session override silently drove
 				// the spawn is what made "Effort: high" run at max.
-				if (isProviderSwitch) {
-					// When provider changed, use agent-level defaults for the new provider
-					setAgentConfig(globalConfig);
-					// The new provider's default is the seed, so leaving it alone is not
-					// an edit. The provider switch clears the old override anyway.
-					seededContextWindowRef.current = globalConfig.contextWindow;
-				} else {
-					// Empty string means explicitly cleared, undefined means never set (use agent-level default)
-					const effortKey = getEffortConfigKey(foundAgent);
-					const modelValue =
-						session.customModel !== undefined ? session.customModel : (globalConfig.model ?? '');
-					const contextWindowValue = session.customContextWindow ?? globalConfig.contextWindow;
-					// Remember what the control was SEEDED with so save can tell an
-					// actual edit from an untouched round-trip. Seeding from
-					// `globalConfig.contextWindow` when the session has no override is
-					// exactly how the agent-level default gets materialized into a
-					// per-session value just by opening this modal and pressing Save
-					// (finding P1); without this the write would be indistinguishable
-					// from a deliberate choice (finding AD1).
-					seededContextWindowRef.current = contextWindowValue;
-					const effortValue =
-						session.customEffort !== undefined
-							? session.customEffort
-							: (globalConfig[effortKey] ?? '');
-					setAgentConfig({
-						...globalConfig,
-						model: modelValue,
-						contextWindow: contextWindowValue,
-						[effortKey]: effortValue,
-					});
-				}
+				// Empty string means explicitly cleared, undefined means never set (use agent-level default)
+				const effortKey = getEffortConfigKey(foundAgent);
+				const modelValue =
+					overrides.customModel !== undefined ? overrides.customModel : (globalConfig.model ?? '');
+				const contextWindowValue = overrides.customContextWindow ?? globalConfig.contextWindow;
+				// Remember what the control was SEEDED with so save can tell an
+				// actual edit from an untouched round-trip. Seeding from
+				// `globalConfig.contextWindow` when the session has no override is
+				// exactly how the agent-level default gets materialized into a
+				// per-session value just by opening this modal and pressing Save
+				// (finding P1); without this the write would be indistinguishable
+				// from a deliberate choice (finding AD1).
+				seededContextWindowRef.current = contextWindowValue;
+				const effortValue =
+					overrides.customEffort !== undefined
+						? overrides.customEffort
+						: (globalConfig[effortKey] ?? '');
+				setAgentConfig({
+					...globalConfig,
+					model: modelValue,
+					contextWindow: contextWindowValue,
+					[effortKey]: effortValue,
+				});
 			})
 			.catch((err) => {
 				logger.error('Failed to detect agents:', undefined, err);
@@ -295,33 +394,26 @@ export function EditAgentModal({
 			})
 			.catch((err) => logger.error('Failed to load SSH remotes:', undefined, err));
 
-		// Load per-session config (stored on the session/agent instance)
-		// When provider changed, clear provider-specific overrides
-		if (isProviderSwitch) {
-			setCustomPath('');
-			setCustomArgs('');
-			setCustomEnvVars({});
-			setCustomEnvVarsDisabled({});
-			setEnableMaestroP(undefined);
-			setMaestroPMode('dynamic');
-			setMaestroPPath('');
-			setRetryOnAvailabilityErrors(true);
-			setRetryOnTokenExhaustion(true);
-		} else {
-			setCustomPath(session.customPath ?? '');
-			setCustomArgs(session.customArgs ?? '');
-			setCustomEnvVars(session.customEnvVars ?? {});
-			setCustomEnvVarsDisabled(session.customEnvVarsDisabled ?? {});
-			// Preserve the tri-state (undefined stays undefined) so an unconfigured
-			// SSH agent keeps its "unset" signal instead of looking like explicit API.
-			setEnableMaestroP(session.enableMaestroP);
-			setMaestroPMode(session.maestroPMode ?? 'dynamic');
-			setMaestroPPath(session.maestroPPath ?? '');
-			// Both default ON; `undefined` (never configured) reads as enabled.
-			setRetryOnAvailabilityErrors(resilienceEnabled(session.retryOnAvailabilityErrors));
-			setRetryOnTokenExhaustion(resilienceEnabled(session.retryOnTokenExhaustion));
-			setCodexAutoReset(session.codexAutoResetOnExhaustion === true);
-		}
+		// Load per-session config (stored on the session/agent instance). The
+		// provider-specific overrides come from `overrides` above.
+		setCustomPath(overrides.customPath ?? '');
+		setCustomArgs(overrides.customArgs ?? '');
+		setCustomEnvVars(overrides.customEnvVars ?? {});
+		setCustomEnvVarsDisabled(overrides.customEnvVarsDisabled ?? {});
+		// Preserve the tri-state (undefined stays undefined) so an unconfigured
+		// SSH agent keeps its "unset" signal instead of looking like explicit API.
+		setEnableMaestroP(overrides.enableMaestroP);
+		setMaestroPMode(overrides.maestroPMode ?? 'dynamic');
+		setMaestroPPath(overrides.maestroPPath ?? '');
+		// Provider-agnostic: a switch keeps them. Both default ON; `undefined`
+		// (never configured) reads as enabled.
+		setRetryOnAvailabilityErrors(resilienceEnabled(session.retryOnAvailabilityErrors));
+		setRetryOnTokenExhaustion(resilienceEnabled(session.retryOnTokenExhaustion));
+		setCodexAutoReset(session.codexAutoResetOnExhaustion === true);
+		// Read the stored value, not `resolveCodexTransport`: that answers `exec`
+		// for a non-Codex agent, and saving it back would erase the preference
+		// of an agent that was moved off Codex and may move back.
+		setCodexTransport(session.codexTransport === 'app-server' ? 'app-server' : 'exec');
 
 		return () => {
 			stale = true;
@@ -340,8 +432,11 @@ export function EditAgentModal({
 			setAdditionalDirectories((session.additionalDirectories ?? []).map((d) => ({ ...d })));
 			// Only reset if different to avoid re-triggering the config loading effect
 			setSelectedToolType((prev) => (prev === session.toolType ? prev : session.toolType));
+			setSelectedUserResources(['']);
+			setConvertProviderHistory(false);
+			setSelectionRevision((v) => v + 1);
 		}
-	}, [isOpen, session]);
+	}, [isOpen, session?.id]);
 
 	// Validate session name uniqueness (excluding current session)
 	const validation = useMemo(() => {
@@ -420,9 +515,6 @@ export function EditAgentModal({
 		if (folder) setWorkingDir(folder);
 	}, []);
 
-	/** Live store entry for this agent; see the snapshot note in the memo below. */
-	const liveSession = useSessionStore(selectSessionById(session?.id ?? ''));
-
 	/**
 	 * Advisory note for the context-window control when the stored value is NOT
 	 * the one in use (#1370, following finding AD1).
@@ -471,8 +563,21 @@ export function EditAgentModal({
 		};
 	}, [liveSession, session, providerChanged]);
 
-	const handleSave = useCallback(() => {
-		if (!session) return;
+	// The opted-in conversion was refused or failed. Saving is never blocked on
+	// it: the notice says so, and the save switches providers without converting.
+	const conversionFailed =
+		convertingProvider &&
+		!migrationLoading &&
+		!migrationSaving &&
+		(!!migrationError || migrationPlan?.status === 'blocked');
+	const conversionRunnable =
+		convertingProvider && !!migrationPlan && migrationPlan.status !== 'blocked' && !migrationError;
+
+	const handleSave = useCallback(async () => {
+		if (!session || migrationSaving) return;
+		// Wait for the plan being read; anything but a runnable plan saves plainly.
+		if (convertingProvider && migrationLoading) return;
+		const converting = conversionRunnable;
 		const name = instanceName.trim();
 		if (!name) return;
 
@@ -499,7 +604,9 @@ export function EditAgentModal({
 					undefined
 				: contextWindowValue !== seededContextWindowRef.current
 					? ('user-edited' as const)
-					: session.contextWindowSource;
+					: providerChanged
+						? parkedOverrides.contextWindowSource
+						: session.contextWindowSource;
 		const effortValue = agentConfig[getEffortConfigKey(agent)]?.trim() ?? undefined;
 
 		// Build per-session SSH remote config: ALWAYS pass explicitly to override any agent-level config.
@@ -526,35 +633,71 @@ export function EditAgentModal({
 						shareHistoryToProjectDir: sshRemoteConfig?.shareHistoryToProjectDir,
 					};
 
+		const formCustomPath = customPath.trim() || undefined;
+		const formCustomArgs = customArgs.trim() || undefined;
+		const formCustomEnvVars = Object.keys(customEnvVars).length > 0 ? customEnvVars : undefined;
+		// A conversion owns the binary, arguments and account environment, so
+		// only a value the user actually changed from the parked seed is sent
+		// (and refused by the save, which asks for it in a separate edit).
+		const editedFromParked = <T,>(value: T | undefined, parked: T | undefined) =>
+			converting && canonicalJson(value ?? null) === canonicalJson(parked ?? null)
+				? undefined
+				: value;
+
 		// Save with per-session config fields including model, contextWindow, and SSH config
-		onSave(
-			session.id,
-			name,
-			providerChanged ? selectedToolType : undefined,
-			nudgeMessage.trim() || undefined,
-			newSessionMessage.trim() || undefined,
-			customPath.trim() || undefined,
-			customArgs.trim() || undefined,
-			Object.keys(customEnvVars).length > 0 ? customEnvVars : undefined,
-			modelValue,
-			effortValue,
-			contextWindowValue,
-			sessionSshRemoteConfig,
-			// Preserve the explicit tri-state: an explicit `false` (API) must NOT
-			// collapse to `undefined`, or over SSH it reverts to the TUI default.
-			enableMaestroP,
-			enableMaestroP && maestroPPath.trim() ? maestroPPath.trim() : undefined,
-			enableMaestroP ? maestroPMode : undefined,
-			retryOnAvailabilityErrors,
-			retryOnTokenExhaustion,
-			normalizeAdditionalDirectories(additionalDirectories, homeDir),
-			contextWindowSource,
-			Object.keys(customEnvVarsDisabled).length > 0 ? customEnvVarsDisabled : undefined,
-			workingDirChanged ? trimmedWorkingDir : undefined,
-			codexAutoReset
-		);
-		onClose();
+		setMigrationSaving(true);
+		setMigrationError('');
+		try {
+			const saveArguments: Parameters<typeof onSave> = [
+				session.id,
+				name,
+				providerChanged ? selectedToolType : undefined,
+				nudgeMessage.trim() || undefined,
+				newSessionMessage.trim() || undefined,
+				editedFromParked(formCustomPath, parkedOverrides.customPath),
+				editedFromParked(formCustomArgs, parkedOverrides.customArgs),
+				editedFromParked(formCustomEnvVars, parkedOverrides.customEnvVars),
+				modelValue,
+				effortValue,
+				contextWindowValue,
+				sessionSshRemoteConfig,
+				// Preserve the explicit tri-state: an explicit `false` (API) must NOT
+				// collapse to `undefined`, or over SSH it reverts to the TUI default.
+				enableMaestroP,
+				enableMaestroP && maestroPPath.trim() ? maestroPPath.trim() : undefined,
+				enableMaestroP ? maestroPMode : undefined,
+				retryOnAvailabilityErrors,
+				retryOnTokenExhaustion,
+				normalizeAdditionalDirectories(additionalDirectories, homeDir),
+				contextWindowSource,
+				Object.keys(customEnvVarsDisabled).length > 0 ? customEnvVarsDisabled : undefined,
+				workingDirChanged ? trimmedWorkingDir : undefined,
+				codexAutoReset,
+				codexTransport,
+			];
+			if (converting) {
+				// Limitations are shown as a notice; opting in and saving accepts them.
+				saveArguments[23] = true;
+				saveArguments[24] = selectedUserResources.map((p) => p.trim()).filter(Boolean);
+				saveArguments[25] = migrationPlan?.id;
+				saveArguments[26] = true;
+			}
+			const saved = onSave(...saveArguments);
+			if (saved) await saved;
+			onClose();
+		} catch (error) {
+			setMigrationError(error instanceof Error ? error.message : String(error));
+		} finally {
+			setMigrationSaving(false);
+		}
 	}, [
+		migrationSaving,
+		convertingProvider,
+		conversionRunnable,
+		parkedOverrides,
+		migrationPlan,
+		migrationLoading,
+		selectedUserResources,
 		session,
 		instanceName,
 		workingDirChanged,
@@ -575,6 +718,7 @@ export function EditAgentModal({
 		retryOnAvailabilityErrors,
 		retryOnTokenExhaustion,
 		codexAutoReset,
+		codexTransport,
 		agent,
 		agentConfig,
 		sshRemoteConfig,
@@ -614,14 +758,16 @@ export function EditAgentModal({
 	}, [selectedToolType]);
 
 	// Check if form is valid for submission
-	const isFormValid = useMemo(() => {
-		// Path validation only blocks a NEW directory (newWorkingDirUnverified).
-		// The existing path stays informational so an agent whose remote is offline
-		// can still be edited.
-		return (
-			!!instanceName.trim() && validation.valid && !workingDirError && !newWorkingDirUnverified
-		);
-	}, [instanceName, validation.valid, workingDirError, newWorkingDirUnverified]);
+	// Path validation only blocks a NEW directory (newWorkingDirUnverified).
+	// The existing path stays informational so an agent whose remote is offline
+	// can still be edited.
+	const baseFormValid =
+		!!instanceName.trim() &&
+		validation.valid &&
+		!workingDirError &&
+		!newWorkingDirUnverified &&
+		!migrationSaving;
+	const isFormValid = baseFormValid && !(convertingProvider && migrationLoading);
 
 	// Handle keyboard shortcuts via window listener (Modal stops propagation on its backdrop)
 	useEffect(() => {
@@ -641,6 +787,13 @@ export function EditAgentModal({
 	if (!isOpen || !session) return null;
 
 	const agentName = getAgentDisplayName(selectedToolType);
+	// Whether a turn of this agent can run through the claude TUI, as the form
+	// stands now. Dynamic counts: it starts on the TUI and leaves it only near a
+	// limit. Read through the one resolver every spawn uses, so an SSH agent
+	// that was never configured (TUI by default) is answered the same way here.
+	const usesInteractiveTokenSource =
+		selectedToolType === 'claude-code' &&
+		getClaudeTokenMode({ enableMaestroP, maestroPMode }, { sshEnabled: !!isSshEnabled }) !== 'api';
 
 	return (
 		<Modal
@@ -685,8 +838,14 @@ export function EditAgentModal({
 				<ModalFooter
 					theme={theme}
 					onCancel={onClose}
-					onConfirm={handleSave}
-					confirmLabel="Save Changes"
+					onConfirm={() => void handleSave()}
+					confirmLabel={
+						migrationSaving && convertingProvider
+							? migrationState === 'deferred'
+								? 'Waiting for current turn'
+								: 'Translating provider'
+							: 'Save Changes'
+					}
 					confirmDisabled={!isFormValid}
 				/>
 			}
@@ -713,37 +872,132 @@ export function EditAgentModal({
 					>
 						Agent Provider
 					</div>
-					<select
+					<ThemedSelect
+						aria-label="Agent Provider"
 						value={selectedToolType}
-						onChange={(e) => setSelectedToolType(e.target.value as ToolType)}
-						className="w-full p-2 rounded border bg-transparent outline-none text-sm"
-						style={{
-							borderColor: theme.colors.border,
-							color: theme.colors.textMain,
-							backgroundColor: theme.colors.bgMain,
-						}}
-					>
-						{SUPPORTED_AGENTS.map((agentId) => (
-							<option key={agentId} value={agentId}>
-								{getAgentDisplayName(agentId)}
-							</option>
-						))}
-					</select>
+						options={providerOptions}
+						theme={theme}
+						disabled={migrationSaving}
+						onChange={(value) => setSelectedToolType(value as ToolType)}
+					/>
+					<div className="mt-2 text-xs" style={{ color: theme.colors.textDim }}>
+						Some providers support the ability to transfer sessions, memories, subagents, etc
+						between them. They are denoted as {carryOverBadge} in the list.
+					</div>
+					{providerChanged && migrationActivity && (
+						<div role="status" aria-live="polite" className="mt-2 flex items-center gap-2 text-xs">
+							<Spinner size={14} color={theme.colors.accent} decorative />
+							<span>{migrationActivity}</span>
+						</div>
+					)}
 					{providerChanged && (
 						<div
-							className="mt-2 p-2 rounded border text-xs flex items-start gap-2"
+							className="mt-2 p-2 rounded border text-xs space-y-2"
 							style={{
 								borderColor: theme.colors.accent + '60',
 								backgroundColor: theme.colors.accent + '10',
-								color: theme.colors.accent,
+								color: theme.colors.textMain,
 							}}
 						>
-							<Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-							<span>
-								Your tabs and their transcripts are kept. Each provider remembers its own session
-								per tab, so switching back picks up where you left off. Any turn already running
-								finishes on the current provider.
-							</span>
+							<div className="flex items-start gap-2">
+								<Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+								<span>
+									{convertingProvider
+										? 'Tabs, transcripts, drafts, queue and file previews are preserved.'
+										: `Tabs, transcripts, drafts, queue and file previews are kept. Each tab starts a new ${agentName} conversation; switching back to ${getAgentDisplayName(session.toolType)} resumes where it left off.`}
+								</span>
+							</div>
+							{canConvertProvider && (
+								<label
+									className="flex items-start gap-2 px-2 py-1.5 rounded cursor-pointer transition-colors hover:bg-white/5"
+									style={{ backgroundColor: theme.colors.bgActivity }}
+								>
+									<input
+										type="checkbox"
+										checked={convertProviderHistory}
+										disabled={migrationSaving}
+										onChange={(e) => setConvertProviderHistory(e.target.checked)}
+										className="mt-0.5 accent-current"
+										style={{ accentColor: theme.colors.accent }}
+										aria-label="Convert memory and session history"
+									/>
+									<div className="flex flex-col min-w-0">
+										<span className="text-xs font-medium" style={{ color: theme.colors.textMain }}>
+											Convert memory and session history
+										</span>
+										<span className="text-2xs" style={{ color: theme.colors.textDim }}>
+											Carry conversations, project memory and selected resources into {agentName} so
+											tabs resume where they left off.
+										</span>
+									</div>
+								</label>
+							)}
+							{convertingProvider && (
+								<>
+									{selectedUserResources.map((resource, index) => (
+										<FormInput
+											key={index}
+											theme={theme}
+											label={`Selected user resource ${index + 1} (optional)`}
+											value={resource}
+											onChange={(value) => {
+												setSelectedUserResources((paths) =>
+													paths.map((p, i) => (i === index ? value : p))
+												);
+												setMigrationPlan(null);
+											}}
+											placeholder="Absolute path to a selected skill, memory, instruction or subagent"
+											disabled={migrationSaving}
+										/>
+									))}
+									<div className="flex gap-3">
+										<button
+											type="button"
+											disabled={migrationSaving}
+											onClick={() => setSelectedUserResources((paths) => [...paths, ''])}
+										>
+											Add resource
+										</button>
+										<button
+											type="button"
+											disabled={migrationLoading || migrationSaving}
+											onClick={() => setSelectionRevision((v) => v + 1)}
+										>
+											Review selection
+										</button>
+									</div>
+									{migrationPlan && (
+										<div>
+											{migrationPlan.tabs.length} conversations, {migrationPlan.counts.records}{' '}
+											native records, {migrationPlan.counts.artifacts} artifacts.{' '}
+											{migrationPlan.status === 'deferred'
+												? 'Migration waits for the current turn to finish.'
+												: ''}
+										</div>
+									)}
+									{migrationPlan?.limitations.map((limit, index) => (
+										<div
+											key={`${limit.code}-${index}`}
+											style={{
+												color:
+													limit.severity === 'block' ? theme.colors.error : theme.colors.textDim,
+											}}
+										>
+											{limit.message}
+										</div>
+									))}
+								</>
+							)}
+						</div>
+					)}
+					{migrationError && (
+						<div role="alert" className="mt-2 text-xs" style={{ color: theme.colors.error }}>
+							{migrationError}
+						</div>
+					)}
+					{conversionFailed && (
+						<div className="mt-2 text-xs" style={{ color: theme.colors.textDim }}>
+							The conversion cannot run, so saving switches providers without converting.
 						</div>
 					)}
 				</div>
@@ -755,6 +1009,18 @@ export function EditAgentModal({
 					retryOnTokenExhaustion={retryOnTokenExhaustion}
 					onChangeAvailability={setRetryOnAvailabilityErrors}
 					onChangeTokenExhaustion={setRetryOnTokenExhaustion}
+				/>
+
+				{/* Chain of thought export. The section saves its own changes the
+				    moment they are made, into the feature's own store. It hands this
+				    dialog no state on purpose: nothing of it may reach `onSave`, and
+				    through that the Session object. */}
+				<AgentCotExportSection
+					theme={theme}
+					agentId={session.id}
+					agentName={session.name}
+					supportsReasoning={agent?.capabilities?.supportsThinkingDisplay !== false}
+					usesInteractiveTokenSource={usesInteractiveTokenSource}
 				/>
 
 				{/* Working Directory */}
@@ -949,6 +1215,8 @@ export function EditAgentModal({
 							detectedMaestroPPath={detectedMaestroPPath}
 							codexAutoResetOnExhaustion={codexAutoReset}
 							onCodexAutoResetChange={setCodexAutoReset}
+							codexTransport={codexTransport}
+							onCodexTransportChange={setCodexTransport}
 						/>
 					</div>
 				)}

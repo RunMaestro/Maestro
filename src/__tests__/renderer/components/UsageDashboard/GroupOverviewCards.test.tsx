@@ -16,6 +16,7 @@ import type { GroupLike } from '../../../../shared/statsGroupRollup';
 import { THEMES } from '../../../../shared/themes';
 import { installLocalStorageMock } from '../../../helpers/mockLocalStorage';
 import { GROUP_TILE_SCALE_KEY } from '../../../../renderer/components/UsageDashboard/tileScale';
+import { emptyPromptCadence } from '../../../../shared/promptCadence';
 
 // The grid reads the layer stack to decide whether the bare zoom keys are its
 // to answer. Stub it as the top layer so the component renders standalone.
@@ -86,6 +87,7 @@ function makeData(overrides: Partial<StatsAggregation> = {}): StatsAggregation {
 		parentQueries: 0,
 		byWorktreeStatus: { worktree: { count: 0, duration: 0 }, parent: { count: 0, duration: 0 } },
 		imageAnnotations: 0,
+		prompts: emptyPromptCadence(),
 		...overrides,
 	} as StatsAggregation;
 }

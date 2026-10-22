@@ -48,6 +48,20 @@ html.cadenza-hud #root {
 	background: transparent !important;
 }
 
+/* Quick Chat window: transparent so its rounded corners show the desktop. */
+html.quick-chat-window,
+html.quick-chat-window body,
+html.quick-chat-window #root {
+	background: transparent !important;
+}
+
+/* Floating widget windows: transparent so the card's rounded corners show the desktop. */
+html.floating-widget-window,
+html.floating-widget-window body,
+html.floating-widget-window #root {
+	background: transparent !important;
+}
+
 /* Placeholder text styling - ensure clear distinction from actual input values */
 /* Uses lower opacity and italic to clearly indicate placeholder state */
 input::placeholder,

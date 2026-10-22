@@ -80,6 +80,35 @@ describe('JsonlTailer', () => {
 		return { tailer, filePath, entries, parseErrors };
 	}
 
+	// claude writes its cost-state row as it exits; finalize reads it with
+	// drain() rather than waiting out a poll interval.
+	describe('drain', () => {
+		it('emits rows written since the last poll without waiting for the next one', async () => {
+			const { tailer, filePath, entries } = makeHarness('drain.jsonl', { pollIntervalMs: 60_000 });
+			fs.writeFileSync(filePath, '');
+			await tailer.start();
+
+			fs.appendFileSync(filePath, JSON.stringify({ type: 'cost-state' }) + '\n');
+			tailer.drain();
+
+			expect(entries).toEqual([{ type: 'cost-state' }]);
+		});
+
+		it('does nothing once stopped', async () => {
+			const { tailer, filePath, entries } = makeHarness('drain-stopped.jsonl', {
+				pollIntervalMs: 60_000,
+			});
+			fs.writeFileSync(filePath, '');
+			await tailer.start();
+			tailer.stop();
+
+			fs.appendFileSync(filePath, JSON.stringify({ type: 'cost-state' }) + '\n');
+			tailer.drain();
+
+			expect(entries).toEqual([]);
+		});
+	});
+
 	describe('exposed constants', () => {
 		it('DEFAULT_POLL_INTERVAL_MS = 75 (snappy for streaming, cheap for idle)', () => {
 			expect(DEFAULT_POLL_INTERVAL_MS).toBe(75);

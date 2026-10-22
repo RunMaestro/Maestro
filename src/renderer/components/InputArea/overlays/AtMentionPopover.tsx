@@ -12,6 +12,7 @@ import { getAgentIcon } from '../../../constants/agentIcons';
 import { getAgentDisplayName } from '../../../../shared/agentMetadata';
 import { useSshRemoteNames } from '../../../hooks/remote/useSshRemoteNames';
 import { SshRemotePill } from '../../ui/SshRemotePill';
+import { elevatedSurfaceStyle } from '../../../utils/elevatedSurface';
 
 interface AtMentionPopoverProps {
 	isOpen: boolean;
@@ -143,8 +144,8 @@ export const AtMentionPopover = memo(function AtMentionPopover({
 
 	return (
 		<div
-			className="absolute bottom-full left-4 right-4 mb-1 rounded-lg border shadow-lg overflow-hidden z-50 select-none"
-			style={{ backgroundColor: theme.colors.bgSidebar, borderColor: theme.colors.border }}
+			className="absolute bottom-full left-4 right-4 mb-1 rounded-lg overflow-hidden z-50 select-none"
+			style={elevatedSurfaceStyle(theme)}
 		>
 			{/* Category bar: Left/Right cycle these; each shows its live count. */}
 			{showCategoryBar && (

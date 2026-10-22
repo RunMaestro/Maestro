@@ -162,4 +162,19 @@ describe('validateGroupUpdate', () => {
 		const result = validateGroupUpdate({ clear: ['parent'] });
 		expect(result).toEqual({ ok: true, value: { clear: ['parent'] } });
 	});
+
+	it('carries a hide request through on its own', () => {
+		expect(validateGroupUpdate({ hidden: true })).toEqual({ ok: true, value: { hidden: true } });
+	});
+
+	// `false` is a real instruction (show the group), not an absent field, so it
+	// must not be mistaken for an update that changes nothing.
+	it('treats showing a group as a change', () => {
+		expect(validateGroupUpdate({ hidden: false })).toEqual({ ok: true, value: { hidden: false } });
+	});
+
+	it('rejects a hidden value that is not a boolean', () => {
+		const result = validateGroupUpdate({ hidden: 'yes' as never });
+		expect(result).toEqual({ ok: false, error: 'hidden must be true or false' });
+	});
 });

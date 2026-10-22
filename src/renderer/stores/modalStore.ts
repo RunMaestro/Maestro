@@ -191,11 +191,48 @@ export interface AgentErrorModalData {
  */
 export interface ReauthModalData {
 	providerKey: string;
+	/**
+	 * Where the login runs, when it must not be the outage's first blocked
+	 * agent. Set by an ACCOUNT login (Usage Dashboard quota panels): the
+	 * outage is keyed by provider, but a provider can hold several accounts,
+	 * and the blocked agent may be on a different one - or the account may
+	 * have no agent at all.
+	 */
+	host?: ReauthHost;
 }
+
+/**
+ * The fields of an agent the re-auth login reads to decide where it runs and
+ * which account it writes to. A real `Session` satisfies it; an account with
+ * no agent is described by a synthesized one (see `quotaAccountLogin.ts`).
+ */
+export type ReauthHost = Pick<
+	Session,
+	| 'id'
+	| 'name'
+	| 'toolType'
+	| 'cwd'
+	| 'projectRoot'
+	| 'customEnvVars'
+	| 'customPath'
+	| 'sessionSshRemoteConfig'
+	| 'sshRemoteId'
+	| 'remoteCwd'
+>;
 
 /** Delete agent modal data */
 export interface DeleteAgentModalData {
 	session: Session;
+}
+
+/** Export Agent modal: the agent to export. */
+export interface AgentExportModalData {
+	sessionId: string;
+}
+
+/** Import Agent modal: the Left Bar group the imported agents go in. */
+export interface AgentImportModalData {
+	groupId?: string;
 }
 
 /** Director's Notes modal data */
@@ -214,7 +251,14 @@ export interface CueModalData {
 	/** Tab the modal opens on. Values match `CueModalTab` in
 	 *  `components/CueModal/CueModalHeader.tsx` and the `cue` entry in
 	 *  `shared/uiSurfaces.ts`. */
-	initialTab?: 'dashboard' | 'scheduled' | 'pipeline' | 'pipeline-list' | 'activity' | 'backup';
+	initialTab?:
+		| 'dashboard'
+		| 'scheduled'
+		| 'pipeline'
+		| 'pipeline-list'
+		| 'activity'
+		| 'backup'
+		| 'bundles';
 	/**
 	 * Agent to highlight and scroll to in the dashboard's session table.
 	 *
@@ -344,6 +388,8 @@ export type ModalId =
 	| 'newInstance'
 	| 'editAgent'
 	| 'deleteAgent'
+	| 'agentExport'
+	| 'agentImport'
 	| 'renameInstance'
 	| 'agentError'
 	| 'reauth'
@@ -424,6 +470,8 @@ export type ModalId =
 	| 'cueYamlEditor'
 	// Pianola (autonomous manager)
 	| 'pianolaModal'
+	// Computer History viewer
+	| 'computerHistory'
 	// Concerto (agent-composed views)
 	| 'concertoStage';
 
@@ -464,6 +512,7 @@ export const DESTINATION_MODALS: ReadonlySet<ModalId> = new Set<ModalId>([
 	'cueModal',
 	'marketplace',
 	'processMonitor',
+	'computerHistory',
 	// Main-panel destinations - these replace the whole center workspace, so an
 	// overlay left open on top of one hides it completely.
 	'logViewer',
@@ -551,6 +600,8 @@ export interface ModalDataMap {
 	agentError: AgentErrorModalData;
 	reauth: ReauthModalData;
 	deleteAgent: DeleteAgentModalData;
+	agentExport: AgentExportModalData;
+	agentImport: AgentImportModalData;
 	/**
 	 * Present when opened from the Left Bar's right-click menu, naming the agent
 	 * to configure. Absent when opened from the header or Settings, where the
@@ -1217,6 +1268,10 @@ export function getModalActions() {
 		setPianolaModalOpen: (open: boolean) =>
 			open ? openModal('pianolaModal') : closeModal('pianolaModal'),
 
+		// Computer History viewer (Encore: computerHistory, desktop only)
+		setComputerHistoryOpen: (open: boolean) =>
+			open ? openModal('computerHistory') : closeModal('computerHistory'),
+
 		// Concerto stage. This one flag is the whole truth about whether the stage
 		// is up: the movement store reads it back rather than keeping its own
 		// `hidden` copy, so the hotkey, the palette, the CLI and an agent adding a
@@ -1328,6 +1383,7 @@ export function useModalActions() {
 	const cueYamlEditorOpen = useModalStore(selectModalOpen('cueYamlEditor'));
 	const cueYamlEditorData = useModalStore(selectModalData('cueYamlEditor'));
 	const pianolaModalOpen = useModalStore(selectModalOpen('pianolaModal'));
+	const computerHistoryOpen = useModalStore(selectModalOpen('computerHistory'));
 
 	// Get stable actions
 	const actions = getModalActions();
@@ -1340,6 +1396,7 @@ export function useModalActions() {
 		settingsTab: settingsData?.tab,
 		settingsPromptId: settingsData?.promptId,
 		settingsSettingId: settingsData?.settingId,
+		settingsNavigationRequest: settingsData,
 		...actions,
 
 		// New Instance Modal
@@ -1542,6 +1599,7 @@ export function useModalActions() {
 
 		// Pianola Modal (autonomous manager)
 		pianolaModalOpen,
+		computerHistoryOpen,
 
 		// Lightbox ref replacements (now stored as data)
 		lightboxIsGroupChat: lightboxData?.isGroupChat ?? false,

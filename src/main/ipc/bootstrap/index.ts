@@ -35,11 +35,16 @@ import {
 	registerSshRemoteHandlers,
 	registerFilesystemHandlers,
 	registerParquetHandlers,
+	registerCodexVisualizationHandlers,
 	registerAttachmentsHandlers,
 	registerWebHandlers,
 	registerWebLoginHandlers,
+	registerComputerHistoryHandlers,
+	registerMaestroRunHandlers,
+	registerDataviewHandlers,
 	registerLeaderboardHandlers,
 	registerNotificationsHandlers,
+	registerNotificationHistoryHandlers,
 	registerSymphonyHandlers,
 	registerTabNamingHandlers,
 	registerAiCommandHandlers,
@@ -49,6 +54,7 @@ import {
 	registerCueHandlers,
 	registerCueBackupHandlers,
 	registerTtsrHandlers,
+	registerCueBundleHandlers,
 	registerWakatimeHandlers,
 	registerFeedbackHandlers,
 	registerMaestroCliHandlers,
@@ -61,6 +67,7 @@ import {
 	registerAgentRunHandlers,
 	registerCoworkingHandlers,
 	registerBrowserSessionHandlers,
+	registerCotExportHandlers,
 	registerWindowsHandlers,
 	wireWindowRegistryBroadcast,
 	wireEmptySecondaryWindowAutoClose,
@@ -68,12 +75,12 @@ import {
 } from '../handlers';
 import { wireMultiWindowTelemetry } from '../../stats';
 import { saveWindowState } from '../../window-state-persistence';
-import { ensureCoworkingServerScript } from '../../coworking/coworking-server-paths';
-import { startCoworkingBridge } from '../../coworking/coworking-bridge';
-import { resolveSessionFromPidWalk } from '../../coworking/pid-resolution';
+import { startCoworkingService } from '../../coworking/coworking-lifecycle';
+import { isEncoreFeatureEnabled } from '../../../shared/encoreFeatureDefaults';
 import { initializeOutputParsers } from '../../parsers';
 import { initializeSessionStorages } from '../../storage';
 import { getCueProcessList } from '../../cue/cue-executor';
+import { createCotStateKeyringAnchor } from '../../cot-export/config-store';
 import { getSshRemoteById, flushPendingSessionWrites } from '../../stores';
 import { createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
 import { tunnelManager } from '../../tunnel-manager';
@@ -89,11 +96,21 @@ import {
 	setGetCustomShellPathCallback,
 } from '../../group-chat/group-chat-router';
 import { mapSessionsForMentions } from './session-mention-mapper';
+import { filterLiveAgents } from '../../../shared/agentVisibility';
 import type { IpcBootstrapDependencies } from './types';
 
 export type { IpcBootstrapDependencies } from './types';
 
 export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
+	/** The name the person gave an agent, read from the stored agent list. */
+	const getAgentName = (agentId: string): string | undefined => {
+		const sessions = deps.sessionsStore.get('sessions', []) as Array<{
+			id?: string;
+			name?: string;
+		}>;
+		return sessions.find((s) => s.id === agentId)?.name;
+	};
+
 	// Settings, sessions, and groups persistence - extracted to src/main/ipc/handlers/persistence.ts
 
 	// Web/Live handlers - extracted to src/main/ipc/handlers/web.ts
@@ -108,18 +125,24 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// `webLogin:*` channel. See src/main/ipc/handlers/webLogin.ts.
 	registerWebLoginHandlers();
 
+	// Computer History - desktop-only, the bridge refuses every
+	// `computerHistory:*` channel (D15). See src/main/ipc/handlers/computerHistory.ts.
+	registerComputerHistoryHandlers();
+
+	// MaestroRun - install, grant walkthrough, and the readiness that gates its
+	// system-prompt section. See src/main/ipc/handlers/maestroRun.ts.
+	registerMaestroRunHandlers();
+
+	// Dataview - DQL queries, index status and rebuild, and the `dataview:changed`
+	// push to every window. See src/main/ipc/handlers/dataview.ts.
+	registerDataviewHandlers({ safeSend: deps.safeSend });
+
 	// Git operations - extracted to src/main/ipc/handlers/git.ts
 	registerGitHandlers({
 		settingsStore: deps.settingsStore,
 		getMainWindow: deps.getMainWindow,
 		getProcessManager: deps.getProcessManager,
-		getAgentName: (agentId) => {
-			const sessions = deps.sessionsStore.get('sessions', []) as Array<{
-				id?: string;
-				name?: string;
-			}>;
-			return sessions.find((s) => s.id === agentId)?.name;
-		},
+		getAgentName,
 	});
 
 	// Auto Run operations - extracted to src/main/ipc/handlers/autorun.ts
@@ -177,11 +200,17 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// Cue - event-driven automation engine
 	registerCueHandlers({
 		getCueEngine: deps.getCueEngine,
+		settingsStore: deps.settingsStore,
 	});
 
 	// Cue Backup - snapshot / restore .maestro/cue.yaml + prompts (Cue modal Backup tab)
 	registerCueBackupHandlers({
 		sessionsStore: deps.sessionsStore,
+	});
+	// Cue bundles - export / import pipelines and agents (Cue modal Bundles tab)
+	registerCueBundleHandlers({
+		sessionsStore: deps.sessionsStore,
+		getMainWindow: deps.getMainWindow,
 	});
 
 	// TTSR rule + per-project settings CRUD (Right Bar Rules tab). A write from
@@ -197,6 +226,7 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// Agent management operations - extracted to src/main/ipc/handlers/agents.ts
 	registerAgentsHandlers({
 		getAgentDetector: deps.getAgentDetector,
+		getProcessManager: deps.getProcessManager,
 		agentConfigsStore: deps.agentConfigsStore,
 		settingsStore: deps.settingsStore,
 		sessionsStore: deps.sessionsStore,
@@ -252,6 +282,21 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		// block the UI thread. Await it here so the handlers' boolean
 		// acknowledgement keeps meaning "this revision reached disk".
 		flushSessionWrites: flushPendingSessionWrites,
+		onSessionsPersisted: (added, current, removedIds) => {
+			try {
+				deps
+					.getPianolaSupervisor()
+					?.autoWatchNewSessions(
+						added,
+						current,
+						deps.settingsStore.get('pianolaAutoWatchNewAgents', false) === true,
+						removedIds
+					);
+			} catch (error) {
+				logger.error('Could not register new Pianola watches', '[Pianola]', error);
+				void captureException(error, { operation: 'pianola:autoWatchNewSessions' });
+			}
+		},
 	});
 	// Wire the plugin focus verbs into the persistence layer's session.activated
 	// dedupe so the two emit paths share one last-emitted id.
@@ -313,7 +358,7 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// Register Core Prompts handlers (no dependencies needed)
 	registerPromptsHandlers();
 
-	// Register project Memory handlers (Claude Code per-project memory viewer)
+	// Register agent Memory handlers (Claude Code per project, Codex per account)
 	registerMemoryHandlers();
 
 	// Register tab lifecycle handlers (renderer -> main tab-close notification)
@@ -359,36 +404,29 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// Register Browser Session handlers (clear per-partition browsing data)
 	registerBrowserSessionHandlers();
 
-	// Register Coworking handlers + start the IPC bridge socket and refresh the bundled
-	// MCP-server script. The bridge runs whenever Maestro is up; per-agent activation
-	// is opt-in via Settings -> Encore Features -> Coworking Setup. Bridge startup is
-	// non-fatal - feature degrades to "not available" until next launch.
-	registerCoworkingHandlers({ getMainWindow: deps.getMainWindow });
-	void (async () => {
-		try {
-			await ensureCoworkingServerScript();
-			await startCoworkingBridge({
-				resolveSessionFromPid: (pid) =>
-					resolveSessionFromPidWalk(
-						pid,
-						(candidate) => deps.getProcessManager()?.getSessionIdByPid(candidate) ?? null
-					),
-			});
-		} catch (err) {
-			// EADDRINUSE means another Maestro process already owns the bridge
-			// socket/pipe for this userData slug. Bridge startup is deliberately
-			// non-fatal (the feature degrades to "not available" until the next
-			// launch), so a second instance losing the race is an expected
-			// outcome rather than a defect worth reporting (MAESTRO-WH).
-			const code = (err as NodeJS.ErrnoException | null)?.code;
-			if (code !== 'EADDRINUSE') {
-				void captureException(err instanceof Error ? err : new Error(String(err)), {
-					operation: 'startup:coworkingBridge',
-				});
-			}
-			logger.warn(`Failed to start coworking bridge: ${String(err)}`, 'Startup');
-		}
-	})();
+	// Per-agent turn log control. Desktop window only: every handler refuses a
+	// caller that is not one. See src/main/ipc/handlers/cot-export.ts.
+	registerCotExportHandlers({
+		getAgentName,
+		anchor: createCotStateKeyringAnchor(),
+		isAppWindow: (window) =>
+			deps.windowRegistry
+				.getAll()
+				.some((entry) => entry.browserWindow === window && entry.kind === 'app'),
+	});
+
+	// Register Coworking handlers, and start the IPC bridge socket + refresh the
+	// bundled MCP-server script only while the coworking Encore flag is on. A flag
+	// change after boot starts or stops the service through the Encore lifecycle
+	// (src/main/encore-feature-lifecycle.ts); per-agent activation is opt-in via
+	// the Coworking tile. Bridge startup is non-fatal (see coworking-lifecycle.ts).
+	registerCoworkingHandlers({
+		getMainWindow: deps.getMainWindow,
+		settingsStore: deps.settingsStore,
+	});
+	if (isEncoreFeatureEnabled(deps.settingsStore, 'coworking')) {
+		void startCoworkingService(deps.getProcessManager);
+	}
 	// Register multi-window handlers (windows:* channel surface). Registered here
 	// because the running app wires handlers through setupIpcHandlers(), not
 	// registerAllHandlers(). The registry and window manager are module-scope
@@ -468,7 +506,11 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// Set up callback for group chat router to lookup sessions for auto-add @mentions
 	setGetSessionsCallback(() =>
 		mapSessionsForMentions(
-			deps.sessionsStore.get('sessions', []),
+			// Live agents only: the moderator never lists or auto-adds a dormant Pianola.
+			filterLiveAgents(
+				deps.sessionsStore.get('sessions', []),
+				deps.settingsStore.get('encoreFeatures')
+			),
 			getSshRemoteById,
 			deps.getProcessManager()
 		)
@@ -503,6 +545,9 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// never runs and every Parquet preview fails with no handler.
 	registerParquetHandlers();
 
+	// Codex `visualize` content references rendered inline in the transcript.
+	registerCodexVisualizationHandlers();
+
 	// System operations (dialog, fonts, shells, tunnel, devtools, updates, logger)
 	// extracted to src/main/ipc/handlers/system.ts
 
@@ -512,7 +557,12 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	registerAgentErrorHandlers();
 
 	// Register notification handlers (extracted to handlers/notifications.ts)
-	registerNotificationsHandlers({ getMainWindow: deps.getMainWindow });
+	registerNotificationHistoryHandlers();
+	registerNotificationsHandlers({
+		getMainWindow: deps.getMainWindow,
+		ensureMainWindow: deps.ensureMainWindow,
+		getWindowRegistry: () => deps.windowRegistry,
+	});
 
 	// Register attachments handlers (extracted to handlers/attachments.ts)
 	registerAttachmentsHandlers({ app: deps.app });

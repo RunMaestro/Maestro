@@ -8,6 +8,7 @@ import { ProviderTrendsChart } from '../../ProviderTrendsChart';
 import { RadialActivityChart } from '../../RadialActivityChart';
 import { SourceDistributionChart } from '../../SourceDistributionChart';
 import { SummaryCards } from '../../SummaryCards';
+import { OverviewTokenSpeed } from '../../TokenSpeedCards';
 import { YearInPixelsStrip } from '../../YearInPixelsStrip';
 import { DashboardSection } from '../components';
 import { DashboardTabPanel } from './DashboardTabPanel';
@@ -82,6 +83,19 @@ export function OverviewView({
 						delegation={delegationTotals}
 						colorBlindMode={colorBlindMode}
 					/>
+				</ChartErrorBoundary>
+			</DashboardSection>
+
+			<DashboardSection
+				sectionId="token-speed"
+				focusedSection={focusedSection}
+				setSectionRef={setSectionRef}
+				handleSectionKeyDown={handleSectionKeyDown}
+				theme={theme}
+				style={{ animationDelay: '0ms' }}
+			>
+				<ChartErrorBoundary theme={theme} chartName="Tokens per Second">
+					<OverviewTokenSpeed timeRange={timeRange} theme={theme} />
 				</ChartErrorBoundary>
 			</DashboardSection>
 

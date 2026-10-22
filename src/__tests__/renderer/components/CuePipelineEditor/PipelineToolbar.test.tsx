@@ -7,9 +7,15 @@ import {
 	PipelineToolbarProps,
 } from '../../../../renderer/components/CuePipelineEditor/PipelineToolbar';
 
+const selectorProps = vi.fn();
 vi.mock('../../../../renderer/components/CuePipelineEditor/PipelineSelector', () => ({
-	PipelineSelector: (props: any) => <div data-testid="pipeline-selector" />,
+	PipelineSelector: (props: any) => {
+		selectorProps(props);
+		return <div data-testid="pipeline-selector" />;
+	},
 }));
+
+const scope = { sessionId: 'sess-1', sessionName: 'Marketing', pipelineIds: ['p1', 'p2'] };
 
 function buildProps(overrides: Partial<PipelineToolbarProps> = {}): PipelineToolbarProps {
 	return {
@@ -131,5 +137,52 @@ describe('PipelineToolbar', () => {
 		const props = buildProps({ validationErrors: [] });
 		render(<PipelineToolbar {...props} />);
 		expect(screen.queryByText(/Missing trigger/)).not.toBeInTheDocument();
+	});
+
+	describe('agent scope', () => {
+		it('hands the selector the agents and the active one', () => {
+			const onSelectAgentScope = vi.fn();
+			render(
+				<PipelineToolbar
+					{...buildProps({
+						agentScopes: [scope],
+						activeScope: scope,
+						onSelectAgentScope,
+					})}
+				/>
+			);
+			const props = selectorProps.mock.calls[selectorProps.mock.calls.length - 1][0];
+			expect(props.agents).toEqual([scope]);
+			expect(props.activeAgent).toBe(scope);
+			expect(props.onSelectAgent).toBe(onSelectAgentScope);
+		});
+
+		it('offers a clear button only while a scope is active', () => {
+			const onClearScope = vi.fn();
+			const { rerender } = render(<PipelineToolbar {...buildProps({ onClearScope })} />);
+			expect(screen.queryByTestId('pipeline-scope-clear')).not.toBeInTheDocument();
+
+			rerender(<PipelineToolbar {...buildProps({ onClearScope, activeScope: scope })} />);
+			fireEvent.click(screen.getByLabelText('Show all pipelines'));
+			expect(onClearScope).toHaveBeenCalledTimes(1);
+		});
+
+		it('leads back to the scope a pipeline was opened from', () => {
+			const onReturnToScope = vi.fn();
+			render(
+				<PipelineToolbar
+					{...buildProps({ selectedPipelineId: 'p1', parentScope: scope, onReturnToScope })}
+				/>
+			);
+			const back = screen.getByTestId('pipeline-scope-back');
+			expect(back).toHaveTextContent('Marketing');
+			fireEvent.click(back);
+			expect(onReturnToScope).toHaveBeenCalledTimes(1);
+		});
+
+		it('shows no breadcrumb without a parent scope', () => {
+			render(<PipelineToolbar {...buildProps({ onReturnToScope: vi.fn() })} />);
+			expect(screen.queryByTestId('pipeline-scope-back')).not.toBeInTheDocument();
+		});
 	});
 });

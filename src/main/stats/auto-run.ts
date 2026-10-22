@@ -15,17 +15,18 @@ import {
 } from './row-mappers';
 import { StatementCache } from './utils';
 import { logger } from '../utils/logger';
+import {
+	INSERT_AUTO_RUN_SESSION_SQL,
+	INSERT_AUTO_RUN_TASK_SQL,
+	bindAutoRunSession,
+	bindAutoRunTask,
+} from '../../shared/maestro-lib/stats/auto-run-insert';
 
 const stmtCache = new StatementCache();
 
 // ============================================================================
 // Auto Run Sessions
 // ============================================================================
-
-const INSERT_SESSION_SQL = `
-  INSERT INTO auto_run_sessions (id, session_id, agent_type, document_path, start_time, duration, tasks_total, tasks_completed, project_path)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-`;
 
 /**
  * Insert a new Auto Run session
@@ -35,19 +36,9 @@ export function insertAutoRunSession(
 	session: Omit<AutoRunSession, 'id'>
 ): string {
 	const id = generateId();
-	const stmt = stmtCache.get(db, INSERT_SESSION_SQL);
+	const stmt = stmtCache.get(db, INSERT_AUTO_RUN_SESSION_SQL);
 
-	stmt.run(
-		id,
-		session.sessionId,
-		session.agentType,
-		normalizePath(session.documentPath),
-		session.startTime,
-		session.duration,
-		session.tasksTotal ?? null,
-		session.tasksCompleted ?? null,
-		normalizePath(session.projectPath)
-	);
+	stmt.run(...bindAutoRunSession(id, session));
 
 	logger.debug(`Inserted Auto Run session ${id}`, LOG_CONTEXT);
 	return id;
@@ -116,29 +107,14 @@ export function getAutoRunSessions(db: Database.Database, range: StatsTimeRange)
 // Auto Run Tasks
 // ============================================================================
 
-const INSERT_TASK_SQL = `
-  INSERT INTO auto_run_tasks (id, auto_run_session_id, session_id, agent_type, task_index, task_content, start_time, duration, success)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-`;
-
 /**
  * Insert a new Auto Run task
  */
 export function insertAutoRunTask(db: Database.Database, task: Omit<AutoRunTask, 'id'>): string {
 	const id = generateId();
-	const stmt = stmtCache.get(db, INSERT_TASK_SQL);
+	const stmt = stmtCache.get(db, INSERT_AUTO_RUN_TASK_SQL);
 
-	stmt.run(
-		id,
-		task.autoRunSessionId,
-		task.sessionId,
-		task.agentType,
-		task.taskIndex,
-		task.taskContent ?? null,
-		task.startTime,
-		task.duration,
-		task.success ? 1 : 0
-	);
+	stmt.run(...bindAutoRunTask(id, task));
 
 	logger.debug(`Inserted Auto Run task ${id}`, LOG_CONTEXT);
 	return id;

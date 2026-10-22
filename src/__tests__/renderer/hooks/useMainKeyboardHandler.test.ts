@@ -1,13 +1,21 @@
 import { renderHook, act } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { useMainKeyboardHandler } from '../../../renderer/hooks';
+import { useKeyboardShortcutHelpers } from '../../../renderer/hooks/keyboard/useKeyboardShortcutHelpers';
+import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS } from '../../../renderer/constants/shortcuts';
+import type { Shortcut } from '../../../renderer/types';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { FONT_ZOOM_MAX, FONT_ZOOM_MIN } from '../../../shared/typography';
 import { useModalStore } from '../../../renderer/stores/modalStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useThroughputGaugeStore } from '../../../renderer/stores/throughputGaugeStore';
+import { useNotificationStore } from '../../../renderer/stores/notificationStore';
 import { groupChatOutputSearchKey } from '../../../renderer/utils/outputSearch';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
+import { STEER_SEND_EVENT } from '../../../renderer/services/chatSteering';
+import { OPEN_STAGED_IMAGES_ORGANIZER_EVENT } from '../../../renderer/services/stagedImagesOrganizer';
+import { FORCED_PARALLEL_SEND_EVENT } from '../../../renderer/hooks/input/useInputKeyDown';
 import {
 	clearDesktopAiTabSelections,
 	consumeDesktopAiTabSelection,
@@ -2832,6 +2840,52 @@ describe('useMainKeyboardHandler', () => {
 
 			expect(mockSetRenameTabModalOpen).not.toHaveBeenCalled();
 		});
+
+		it('renameTabGroup renames the active group itself, not its focused pane', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			const mockSetRenameTabId = vi.fn();
+			const mockSetRenameTabInitialName = vi.fn();
+			const mockSetRenameTabModalOpen = vi.fn();
+
+			result.current.keyboardHandlerRef.current = createTiledGroupRenameContext({
+				isTabShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'renameTabGroup',
+				setRenameTabId: mockSetRenameTabId,
+				setRenameTabInitialName: mockSetRenameTabInitialName,
+				setRenameTabModalOpen: mockSetRenameTabModalOpen,
+			});
+
+			pressRenameShortcut();
+
+			expect(mockSetRenameTabId).toHaveBeenCalledWith('group-1');
+			expect(mockSetRenameTabInitialName).toHaveBeenCalledWith('Group: Terminal 1');
+			expect(mockSetRenameTabModalOpen).toHaveBeenCalledWith(true);
+		});
+
+		it('renameTabGroup does nothing when no tab group is active', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			const mockSetRenameTabModalOpen = vi.fn();
+
+			result.current.keyboardHandlerRef.current = createTiledGroupRenameContext({
+				activeSession: {
+					id: 'session-1',
+					inputMode: 'ai',
+					aiTabs: [{ id: 'ai-tab-1', name: 'AI Tab 1', logs: [] }],
+					activeTabId: 'ai-tab-1',
+					terminalTabs: [],
+					tabGroups: [],
+				},
+				isTabShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'renameTabGroup',
+				setRenameTabId: vi.fn(),
+				setRenameTabInitialName: vi.fn(),
+				setRenameTabModalOpen: mockSetRenameTabModalOpen,
+			});
+
+			pressRenameShortcut();
+
+			expect(mockSetRenameTabModalOpen).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('Cmd+E markdown toggle (toggleMarkdownMode)', () => {
@@ -3458,6 +3512,90 @@ describe('useMainKeyboardHandler', () => {
 			});
 
 			expect(mockToggle).toHaveBeenCalled();
+		});
+	});
+
+	describe('toggleThroughputGauge shortcut', () => {
+		const pressGaugeChord = () =>
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'T',
+						code: 'KeyT',
+						altKey: true,
+						metaKey: true,
+						shiftKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+		beforeEach(() => {
+			useThroughputGaugeStore.setState({ visible: false });
+		});
+
+		it('toggles the gauge on Opt+Cmd+Shift+T while the Encore Feature is on', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				encoreFeatures: { throughputGauge: true },
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'toggleThroughputGauge',
+				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			});
+
+			pressGaugeChord();
+			expect(useThroughputGaugeStore.getState().visible).toBe(true);
+			pressGaugeChord();
+			expect(useThroughputGaugeStore.getState().visible).toBe(false);
+		});
+
+		it('does nothing while the Encore Feature is off', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				encoreFeatures: { throughputGauge: false },
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'toggleThroughputGauge',
+			});
+
+			pressGaugeChord();
+			expect(useThroughputGaugeStore.getState().visible).toBe(false);
+		});
+	});
+
+	describe('openNotificationCenter shortcut', () => {
+		// Unbound by default, so the test binds it through isShortcut.
+		const press = () =>
+			act(() => {
+				window.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', bubbles: true }));
+			});
+
+		beforeEach(() => {
+			useNotificationStore.getState().setNotificationCenterOpen(false);
+		});
+
+		afterEach(() => {
+			useSettingsStore.setState({ notificationCenterEnabled: false });
+		});
+
+		it('opens the inbox while the notification center is enabled', () => {
+			useSettingsStore.setState({ notificationCenterEnabled: true });
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'openNotificationCenter',
+				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			});
+
+			press();
+			expect(useNotificationStore.getState().notificationCenterOpen).toBe(true);
+		});
+
+		it('does nothing while the notification center is disabled', () => {
+			useSettingsStore.setState({ notificationCenterEnabled: false });
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'openNotificationCenter',
+			});
+
+			press();
+			expect(useNotificationStore.getState().notificationCenterOpen).toBe(false);
 		});
 	});
 
@@ -4889,6 +5027,41 @@ describe('useMainKeyboardHandler - destination surface switching', () => {
 		expect(setDirectorNotesOpen).toHaveBeenCalledWith(true);
 	});
 
+	describe('Computer History (a Ctrl+Cmd chord)', () => {
+		const withHistory = { usageStats: true, computerHistory: true };
+
+		afterEach(() => {
+			useModalStore.getState().closeModal('computerHistory');
+		});
+
+		it('opens on Ctrl+Cmd+H', () => {
+			// Both matchers accept the full chord; the folded one is what lets it
+			// through the open-modal guard as a destination shortcut.
+			pressShortcut(
+				'computerHistory',
+				{ key: 'h', metaKey: true, ctrlKey: true },
+				{
+					encoreFeatures: withHistory,
+					isPaneShortcut: (_e: KeyboardEvent, id: string) => id === 'computerHistory',
+				}
+			);
+
+			expect(useModalStore.getState().isOpen('computerHistory')).toBe(true);
+		});
+
+		it('does not open on plain Cmd+H, which the general matcher would accept', () => {
+			// isShortcut folds Ctrl and Cmd into one modifier, so it reports this
+			// binding as matched on a bare Cmd+H (macOS Hide) or Ctrl+H.
+			pressShortcut(
+				'computerHistory',
+				{ key: 'h', metaKey: true },
+				{ encoreFeatures: withHistory, isPaneShortcut: () => false }
+			);
+
+			expect(useModalStore.getState().isOpen('computerHistory')).toBe(false);
+		});
+	});
+
 	it('still opens the Usage Dashboard from an open modal', () => {
 		const setUsageDashboardOpen = vi.fn();
 		pressShortcut(
@@ -4948,5 +5121,354 @@ describe('useMainKeyboardHandler - destination surface switching', () => {
 			activeSession: { id: 'test' },
 		});
 		expect(blockedWithModal).not.toHaveBeenCalled();
+	});
+});
+
+/**
+ * Steer Running Turn from outside the composer. The composer answers the chord
+ * itself while the caret is in it; everywhere else the window handler asks for it
+ * by event, because the queued message it steers is drawn in the transcript.
+ */
+describe('useMainKeyboardHandler - steerSend', () => {
+	function press(ctxOverrides: Record<string, unknown>, target?: HTMLElement): number {
+		const heard = vi.fn();
+		window.addEventListener(STEER_SEND_EVENT, heard);
+		const { result } = renderHook(() => useMainKeyboardHandler());
+		result.current.keyboardHandlerRef.current = createMockContext({
+			isShortcut: (_e: KeyboardEvent, id: string) => id === 'steerSend',
+			...ctxOverrides,
+		});
+		act(() => {
+			(target ?? window).dispatchEvent(
+				new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, altKey: true, bubbles: true })
+			);
+		});
+		window.removeEventListener(STEER_SEND_EVENT, heard);
+		return heard.mock.calls.length;
+	}
+
+	it('asks the composer to steer when the chord is pressed outside it', () => {
+		expect(press({})).toBe(1);
+	});
+
+	it('leaves the chord to the composer when the caret is inside it', () => {
+		// The composer already ran it on its own keydown; firing the event too
+		// would send the draft twice.
+		const textarea = document.createElement('textarea');
+		document.body.appendChild(textarea);
+		try {
+			expect(press({ inputRef: { current: textarea } }, textarea)).toBe(0);
+		} finally {
+			textarea.remove();
+		}
+	});
+
+	it('does nothing while a group chat is on screen', () => {
+		expect(press({ activeGroupChatId: 'group-chat-1' })).toBe(0);
+	});
+});
+
+describe('group chat chords that must act on the room', () => {
+	const ROOM_ID = 'room-keys';
+	const aiTab = { id: 'ai-tab-1', name: 'Tab 1', logs: [], readOnlyMode: false };
+	const hiddenSession = {
+		id: 'agent-1',
+		name: 'Agent',
+		inputMode: 'ai',
+		aiTabs: [aiTab],
+		activeTabId: 'ai-tab-1',
+	};
+
+	// Real binding lookup over the shipped maps, with per-test rebinding, so the
+	// handler is exercised against the same matcher App gives it.
+	function matchers(rebound: Record<string, string[]> = {}) {
+		const shortcuts: Record<string, Shortcut> = { ...DEFAULT_SHORTCUTS };
+		const tabShortcuts: Record<string, Shortcut> = { ...TAB_SHORTCUTS };
+		for (const [id, keys] of Object.entries(rebound)) {
+			const target = id in tabShortcuts ? tabShortcuts : shortcuts;
+			target[id] = { ...target[id], keys };
+		}
+		const { result } = renderHook(() => useKeyboardShortcutHelpers({ shortcuts, tabShortcuts }));
+		return { isShortcut: result.current.isShortcut, isTabShortcut: result.current.isTabShortcut };
+	}
+
+	function mountRoom(overrides: Record<string, unknown> = {}) {
+		const { result } = renderHook(() => useMainKeyboardHandler());
+		const setSessions = vi.fn();
+		const handleSetLightboxImage = vi.fn();
+		result.current.keyboardHandlerRef.current = createMockContext({
+			activeSession: hiddenSession,
+			activeGroupChatId: ROOM_ID,
+			setSessions,
+			handleSetLightboxImage,
+			mainPanelRef: { current: { reloadBrowserTab: vi.fn() } },
+			...matchers(),
+			...overrides,
+		});
+		return { setSessions, handleSetLightboxImage };
+	}
+
+	function press(init: KeyboardEventInit) {
+		const event = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init });
+		act(() => {
+			window.dispatchEvent(event);
+		});
+		return event;
+	}
+
+	beforeEach(() => {
+		useGroupChatStore.setState({ groupChatReadOnlyMode: false });
+	});
+
+	it('toggles the room read-only flag on the default chord and leaves the AI tab alone', () => {
+		const { setSessions } = mountRoom();
+
+		const event = press({ key: 'r', code: 'KeyR', metaKey: true });
+
+		expect(event.defaultPrevented).toBe(true);
+		expect(useGroupChatStore.getState().groupChatReadOnlyMode).toBe(true);
+		expect(setSessions).not.toHaveBeenCalled();
+
+		press({ key: 'r', code: 'KeyR', metaKey: true });
+		expect(useGroupChatStore.getState().groupChatReadOnlyMode).toBe(false);
+	});
+
+	it('follows a rebound read-only chord and ignores the old one', () => {
+		const { setSessions } = mountRoom(matchers({ toggleReadOnlyMode: ['Alt', 'Meta', 'x'] }));
+
+		press({ key: 'r', code: 'KeyR', metaKey: true });
+		expect(useGroupChatStore.getState().groupChatReadOnlyMode).toBe(false);
+
+		press({ key: 'x', code: 'KeyX', metaKey: true, altKey: true });
+		expect(useGroupChatStore.getState().groupChatReadOnlyMode).toBe(true);
+		expect(setSessions).not.toHaveBeenCalled();
+	});
+
+	it('opens the room staged images on the default carousel chord', () => {
+		const images = ['data:image/png;base64,a', 'data:image/png;base64,b'];
+		const { handleSetLightboxImage } = mountRoom({
+			groupChatStagedImages: images,
+			stagedImages: ['data:image/png;base64,ai'],
+		});
+
+		press({ key: 'y', code: 'KeyY', metaKey: true });
+
+		expect(handleSetLightboxImage).toHaveBeenCalledTimes(1);
+		expect(handleSetLightboxImage).toHaveBeenCalledWith(images[0], images, 'staged');
+	});
+
+	it('opens the room staged images on a rebound carousel chord only', () => {
+		const images = ['data:image/png;base64,a'];
+		const { handleSetLightboxImage } = mountRoom({
+			groupChatStagedImages: images,
+			...matchers({ openImageCarousel: ['Alt', 'Meta', 'o'] }),
+		});
+
+		press({ key: 'y', code: 'KeyY', metaKey: true });
+		expect(handleSetLightboxImage).not.toHaveBeenCalled();
+
+		press({ key: 'o', code: 'KeyO', metaKey: true, altKey: true });
+		expect(handleSetLightboxImage).toHaveBeenCalledWith(images[0], images, 'staged');
+	});
+
+	describe('focus input toggle', () => {
+		const CHORD = { key: '.', code: 'Period', metaKey: true };
+		const terminalSession = { ...hiddenSession, inputMode: 'terminal' };
+		let roomInput: HTMLTextAreaElement;
+		let aiInput: HTMLTextAreaElement;
+		let aiOutput: HTMLDivElement;
+
+		beforeEach(() => {
+			vi.useFakeTimers();
+			roomInput = document.createElement('textarea');
+			aiInput = document.createElement('textarea');
+			aiOutput = document.createElement('div');
+			aiOutput.tabIndex = 0;
+			document.body.append(roomInput, aiInput, aiOutput);
+		});
+
+		afterEach(() => {
+			vi.useRealTimers();
+			roomInput.remove();
+			aiInput.remove();
+			aiOutput.remove();
+		});
+
+		function mountFocusRoom(overrides: Record<string, unknown> = {}) {
+			const roomMessages = { scrollToMessage: vi.fn(), focus: vi.fn() };
+			const focusActiveTerminal = vi.fn();
+			mountRoom({
+				activeSession: terminalSession,
+				groupChatInputRef: { current: roomInput },
+				groupChatMessagesRef: { current: roomMessages },
+				inputRef: { current: aiInput },
+				terminalOutputRef: { current: aiOutput },
+				mainPanelRef: { current: { focusActiveTerminal } },
+				...overrides,
+			});
+			return { roomMessages, focusActiveTerminal };
+		}
+
+		it('moves from the room composer to the room transcript, even with a terminal-mode agent underneath', () => {
+			const { roomMessages, focusActiveTerminal } = mountFocusRoom();
+			roomInput.focus();
+
+			press(CHORD);
+			vi.runAllTimers();
+
+			expect(document.activeElement).not.toBe(roomInput);
+			expect(roomMessages.focus).toHaveBeenCalledTimes(1);
+			expect(focusActiveTerminal).not.toHaveBeenCalled();
+			expect(document.activeElement).not.toBe(aiOutput);
+		});
+
+		it('moves from elsewhere in the room to the room composer, not the hidden xterm', () => {
+			const { roomMessages, focusActiveTerminal } = mountFocusRoom();
+
+			press(CHORD);
+			vi.runAllTimers();
+
+			expect(document.activeElement).toBe(roomInput);
+			expect(roomMessages.focus).not.toHaveBeenCalled();
+			expect(focusActiveTerminal).not.toHaveBeenCalled();
+		});
+
+		it('keeps the AI composer and transcript pair in regular chat', () => {
+			mountFocusRoom({ activeGroupChatId: null, activeSession: hiddenSession });
+
+			press(CHORD);
+			vi.runAllTimers();
+			expect(document.activeElement).toBe(aiInput);
+
+			press(CHORD);
+			vi.runAllTimers();
+			expect(document.activeElement).toBe(aiOutput);
+		});
+
+		it('keeps focusing the xterm for a terminal-mode agent in regular chat', () => {
+			const { focusActiveTerminal } = mountFocusRoom({ activeGroupChatId: null });
+
+			press(CHORD);
+
+			expect(focusActiveTerminal).toHaveBeenCalledTimes(1);
+		});
+	});
+
+	describe('forced parallel send', () => {
+		const CHORD = { key: 'Enter', code: 'Enter', metaKey: true, shiftKey: true };
+		let forcedSends: ReturnType<typeof vi.fn>;
+		let previousSetting: boolean;
+
+		beforeEach(() => {
+			previousSetting = useSettingsStore.getState().forcedParallelExecution;
+			useSettingsStore.setState({ forcedParallelExecution: true });
+			forcedSends = vi.fn();
+			window.addEventListener(FORCED_PARALLEL_SEND_EVENT, forcedSends);
+		});
+
+		afterEach(() => {
+			window.removeEventListener(FORCED_PARALLEL_SEND_EVENT, forcedSends);
+			useSettingsStore.setState({ forcedParallelExecution: previousSetting });
+		});
+
+		it('does not reach the hidden agent while a room is open', () => {
+			mountRoom();
+
+			const event = press(CHORD);
+
+			expect(forcedSends).not.toHaveBeenCalled();
+			expect(event.defaultPrevented).toBe(false);
+		});
+
+		it('still fires from outside the composer in regular chat', () => {
+			mountRoom({ activeGroupChatId: null, inputRef: { current: null } });
+
+			const event = press(CHORD);
+
+			expect(forcedSends).toHaveBeenCalledTimes(1);
+			expect(event.defaultPrevented).toBe(true);
+		});
+	});
+
+	describe('image organizer', () => {
+		const ROOM_IMAGES = ['data:image/png;base64,a', 'data:image/png;base64,b'];
+		const AI_IMAGES = ['data:image/png;base64,c', 'data:image/png;base64,d'];
+		const DEFAULT_CHORD = { key: 'Y', code: 'KeyY', metaKey: true, shiftKey: true };
+		let organizerRequests: ReturnType<typeof vi.fn>;
+
+		beforeEach(() => {
+			organizerRequests = vi.fn();
+			window.addEventListener(OPEN_STAGED_IMAGES_ORGANIZER_EVENT, organizerRequests);
+		});
+
+		afterEach(() => {
+			window.removeEventListener(OPEN_STAGED_IMAGES_ORGANIZER_EVENT, organizerRequests);
+		});
+
+		it('opens the organizer for 2+ room images even when the AI tab holds none', () => {
+			const recordShortcutUsage = vi.fn().mockReturnValue({ newLevel: null });
+			mountRoom({ groupChatStagedImages: ROOM_IMAGES, stagedImages: [], recordShortcutUsage });
+
+			const event = press(DEFAULT_CHORD);
+
+			expect(event.defaultPrevented).toBe(true);
+			expect(organizerRequests).toHaveBeenCalledTimes(1);
+			expect(recordShortcutUsage).toHaveBeenCalledWith('openImageOrganizer');
+		});
+
+		it('is an untracked no-op with fewer than 2 room images, whatever the AI tab holds', () => {
+			const recordShortcutUsage = vi.fn().mockReturnValue({ newLevel: null });
+			mountRoom({
+				groupChatStagedImages: [ROOM_IMAGES[0]],
+				stagedImages: AI_IMAGES,
+				recordShortcutUsage,
+			});
+
+			press(DEFAULT_CHORD);
+
+			expect(organizerRequests).not.toHaveBeenCalled();
+			expect(recordShortcutUsage).not.toHaveBeenCalled();
+		});
+
+		it('follows a rebound organizer chord in a room', () => {
+			mountRoom({
+				groupChatStagedImages: ROOM_IMAGES,
+				...matchers({ openImageOrganizer: ['Alt', 'Meta', 'k'] }),
+			});
+
+			press(DEFAULT_CHORD);
+			expect(organizerRequests).not.toHaveBeenCalled();
+
+			press({ key: 'k', code: 'KeyK', metaKey: true, altKey: true });
+			expect(organizerRequests).toHaveBeenCalledTimes(1);
+		});
+
+		it('still reads the AI composer images in regular chat', () => {
+			const recordShortcutUsage = vi.fn().mockReturnValue({ newLevel: null });
+			mountRoom({
+				activeGroupChatId: null,
+				stagedImages: AI_IMAGES,
+				groupChatStagedImages: [],
+				recordShortcutUsage,
+			});
+
+			press(DEFAULT_CHORD);
+			expect(organizerRequests).toHaveBeenCalledTimes(1);
+			expect(recordShortcutUsage).toHaveBeenCalledWith('openImageOrganizer');
+		});
+
+		it('is an untracked no-op in regular chat with fewer than 2 AI images', () => {
+			const recordShortcutUsage = vi.fn().mockReturnValue({ newLevel: null });
+			mountRoom({
+				activeGroupChatId: null,
+				stagedImages: [AI_IMAGES[0]],
+				groupChatStagedImages: ROOM_IMAGES,
+				recordShortcutUsage,
+			});
+
+			press(DEFAULT_CHORD);
+			expect(organizerRequests).not.toHaveBeenCalled();
+			expect(recordShortcutUsage).not.toHaveBeenCalled();
+		});
 	});
 });

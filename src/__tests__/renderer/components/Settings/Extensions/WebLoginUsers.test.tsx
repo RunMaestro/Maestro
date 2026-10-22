@@ -339,6 +339,7 @@ describe('Web Login tile body', () => {
 
 	it('says to enable the feature first when it is off', () => {
 		renderTile(false);
+		fireEvent.click(screen.getByTestId('extension-subtab-settings'));
 		expect(screen.getByTestId('extension-settings-disabled-hint')).toHaveTextContent(
 			'Enable Web Login to manage accounts.'
 		);

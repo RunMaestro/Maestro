@@ -21,17 +21,23 @@
 import { useEffect, useRef } from 'react';
 import { getClaudeTokenSourceFields } from '../../../../shared/claudeTokenMode';
 import { updateAiTab, updateSessionWith, useSessionStore } from '../../../stores/sessionStore';
-import { clearRetryIfSettled, hasPendingRetry } from '../../../stores/retryStore';
+import {
+	clearRetryIfSettled,
+	hasPendingRetry,
+	noteFailedTurnExited,
+} from '../../../stores/retryStore';
 import { isTtsrAbortPending } from '../../../stores/ttsrStore';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { notifyToast, triggerCustomNotification } from '../../../stores/notificationStore';
 import { REGEX_AI_TAB } from '../../../utils/sessionIdParser';
+import { isQuickChatTab } from '../../../services/quickChatEngine';
 import {
 	formatSessionId,
 	getActiveTab,
 	markTabRunningQueuedItem,
 	resolveQueuedItemTarget,
 } from '../../../utils/tabHelpers';
+import { summarizeAnswer } from '../../../../shared/maestro-lib/turns/summary';
 import { generateId } from '../../../utils/ids';
 import { logger } from '../../../utils/logger';
 import { cleanupExitedTabLogs } from './helpers/exitTabCleanup';
@@ -48,6 +54,7 @@ import {
 import { thinkingLogsRecorded } from './helpers/thinkingLogs';
 import { drainTurnUsage, turnUsageStatsFields } from '../../../../shared/turnUsageLedger';
 import { getAutorunSynopsisPrompt } from './helpers/autorunSynopsisPrompt';
+import { releaseMentionHandoff } from '../../../services/crossAgentHandoff';
 import { useOwnedSessionGate, useOwnedSideEffectGate } from './useOwnedSessionGate';
 import type { LogEntry, QueuedItem, Session, SessionState, UsageStats } from '../../../types';
 import type { UseAgentListenersDeps, ToolProgressState } from './types';
@@ -197,6 +204,18 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 				}
 			}
 
+			// Land everything the finished turn printed BEFORE anything below reads
+			// or extends its transcript. Output is batched for up to a flush
+			// interval, and a `--print` run emits its whole reply on the final
+			// result, an instant before this exit. Without the flush the reply is
+			// still in the buffer when the reducer below appends the NEXT queued
+			// message's card, so the transcript reads "next question, previous
+			// answer": the turn that is now running looks finished, and the queue
+			// behind it looks stalled. It also left the toast and synopsis quoting
+			// the reply before last. (Issue #1022 added the flush further down,
+			// ahead of the spawn, which is after the card is already in place.)
+			deps.batchedUpdater.flushNow();
+
 			if (isFromAi && tabIdFromSession) {
 				deps.activeHiddenToolRef.current?.delete(`${actualSessionId}:${tabIdFromSession}`);
 				// Agent Resilience: if an auto-retry resend is still 'in-flight' at
@@ -244,10 +263,8 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 					isRetryPending
 				);
 
-			// A client that does not own the side effects never dequeues either:
-			// the desktop renderer drains its own copy of the queue, and a web
-			// client's copy must survive so its own idle-time drain (useQueueProcessing)
-			// can send what was queued from that browser.
+			// Only the full owning renderer consumes the shared queue. Attached
+			// clients mirror its persisted decisions and never execute a second turn.
 			if (isFromAi && ownsSideEffects) {
 				const currentSession = getSessions().find((s) => s.id === actualSessionId);
 				if (currentSession) {
@@ -305,24 +322,7 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 						title = userText.length > 50 ? userText.substring(0, 47) + '...' : userText;
 					}
 
-					let summary = '';
-					if (lastAiLog?.text) {
-						const text = lastAiLog.text.trim();
-						if (text.length > 10) {
-							const sentences = text.match(/[^.!?\n]+[.!?]+/g) || [];
-							const fillerPattern =
-								/^(excellent|perfect|great|awesome|wonderful|fantastic|good|nice|cool|done|ok|okay|alright|sure|yes|yeah|absolutely|certainly|definitely|looks?\s+good|all\s+(set|done|ready)|got\s+it|understood|will\s+do|on\s+it|no\s+problem|no\s+worries|happy\s+to\s+help)[!.\s]*$/i;
-							const meaningfulSentence = sentences.find((s) => !fillerPattern.test(s.trim()));
-							const firstSentence = meaningfulSentence?.trim() || text.substring(0, 120);
-							summary =
-								firstSentence.length < text.length
-									? firstSentence
-									: text.substring(0, 120) + (text.length > 120 ? '...' : '');
-						}
-					}
-					if (!summary) {
-						summary = 'Completed successfully';
-					}
+					const summary = summarizeAnswer(lastAiLog?.text) || 'Completed successfully';
 
 					const agentSessionId = completedTab?.agentSessionId || currentSession.agentSessionId;
 					// Same label the tab strip draws, via the one formatter. A hand-rolled
@@ -772,7 +772,8 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 					state: anyAiTabBusy ? s.state : ('idle' as SessionState),
 					busySource: anyAiTabBusy ? s.busySource : undefined,
 					// TODO: Remove shellLogs once terminal tabs migration is complete
-					...(!s.terminalTabs?.length && { shellLogs: [...s.shellLogs, exitLog] }),
+					...(ownsSideEffects &&
+						!s.terminalTabs?.length && { shellLogs: [...s.shellLogs, exitLog] }),
 				};
 			});
 
@@ -824,11 +825,31 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 					});
 			}
 
+			// A message that asked for this turn's result to go to other agents
+			// ("then send what you find to @Backend") armed a hand-off on the tab;
+			// the turn is over, so forward its answer now. Flush first so the
+			// answer's trailing chunks are in the store. A retry still counting
+			// down means the turn will run again, so the hand-off waits for that
+			// run instead of forwarding the failed one.
+			if (isFromAi && ownsSideEffects && tabIdFromSession && !isRetryPending(tabIdFromSession)) {
+				deps.batchedUpdater.flushNow();
+				releaseMentionHandoff(actualSessionId, tabIdFromSession, { failed: code !== 0 });
+			}
+
+			// A turn refused on the context limit is recovered by compacting its
+			// session and resending, and that waits for exactly this: the failed
+			// process is gone and the tab is settled. After the state update above
+			// on purpose - the compaction marks the tab busy again, and the update
+			// would have idled it.
+			if (isFromAi && tabIdFromSession) {
+				noteFailedTurnExited(actualSessionId, tabIdFromSession);
+			}
+
 			if (queuedItemToProcess && ownsSideEffects) {
-				// Flush any pending batched stdout/stderr chunks before the queued
-				// message is dispatched. Otherwise the new user log entry is appended
-				// ahead of the trailing chunks from the response that just finished,
-				// and those chunks merge into the next response's bubble (issue #1022).
+				// Belt and braces for anything batched while this handler awaited
+				// (git refresh, stats): it must not merge into the next response's
+				// bubble (issue #1022). The flush that keeps the finished reply ahead
+				// of the next message's card is at the top of this handler.
 				deps.batchedUpdater.flushNow();
 				setTimeout(() => {
 					// This is the MAIN queue-drain path, and it used to reject into
@@ -847,7 +868,14 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 							);
 						});
 				}, 0);
-			} else if (toastData) {
+			}
+
+			if (
+				toastData &&
+				!(tabIdFromSession && isRetryPending(tabIdFromSession)) &&
+				(!queuedItemToProcess || useSettingsStore.getState().notificationHistoryQueuedReplies)
+			) {
+				// Retry attempts have failed, so they must not announce a successful completion.
 				setTimeout(() => {
 					window.maestro.logger.log('info', 'Agent process completed', 'App', {
 						agentSessionId: toastData!.agentSessionId,
@@ -868,24 +896,33 @@ export function useAgentExitListener(deps: UseAgentExitListenerDeps): void {
 					});
 
 					const currentActiveSession = getSessions().find((s) => s.id === getActiveSessionId());
+					// A Quick Chat reply is read in the Quick Chat window (and an
+					// ephemeral one sits in a hidden tab a toast could not open), so it
+					// counts as watched: no visual toast, the audio cue still fires.
+					const completedSession = getSessions().find((s) => s.id === actualSessionId);
+					const isQuickChatReply = isQuickChatTab(
+						completedSession?.aiTabs?.find((t) => t.id === tabIdFromSession)
+					);
 					const isViewingCompletedTab =
-						currentActiveSession?.id === actualSessionId &&
-						(!tabIdFromSession || currentActiveSession.activeTabId === tabIdFromSession);
+						isQuickChatReply ||
+						(currentActiveSession?.id === actualSessionId &&
+							(!tabIdFromSession || currentActiveSession.activeTabId === tabIdFromSession));
 
-					if (!isViewingCompletedTab) {
-						notifyToast({
-							type: 'success',
-							title: toastData!.title,
-							message: toastData!.summary,
-							group: toastData!.groupName,
-							project: toastData!.projectName,
-							taskDuration: toastData!.duration,
-							agentSessionId: toastData!.agentSessionId,
-							tabName: toastData!.tabName,
-							sessionId: toastData!.sessionId,
-							tabId: toastData!.tabId,
-						});
-					} else {
+					const historyOnly = !!queuedItemToProcess || isViewingCompletedTab;
+					notifyToast({
+						historyOnly,
+						type: 'success',
+						title: toastData!.title,
+						message: toastData!.summary,
+						group: toastData!.groupName,
+						project: toastData!.projectName,
+						taskDuration: toastData!.duration,
+						agentSessionId: toastData!.agentSessionId,
+						tabName: toastData!.tabName,
+						sessionId: toastData!.sessionId,
+						tabId: toastData!.tabId,
+					});
+					if (isViewingCompletedTab && !queuedItemToProcess) {
 						// Viewing the completed tab: the visual toast is suppressed (no need
 						// to pop a toast about the tab you're already watching), but the
 						// audio/TTS cue must still fire. Otherwise custom notifications are

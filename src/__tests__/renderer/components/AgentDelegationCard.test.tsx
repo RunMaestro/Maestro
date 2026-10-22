@@ -47,6 +47,18 @@ describe('AgentDelegationCard', () => {
 		expect(screen.getByText('Fix the advisory recovery bug')).toBeInTheDocument();
 	});
 
+	it('shows the full target name, however long, and wraps instead of truncating it', () => {
+		const longName = '🕵️ Pedsidian Research and Knowledge Vault Curator';
+		render(
+			<AgentDelegationCard log={logWith(delegation({ toAgentName: longName }))} theme={mockTheme} />
+		);
+
+		const target = screen.getByTestId('agent-delegation-target');
+		expect(target).toHaveTextContent(longName);
+		expect(target.className).not.toContain('truncate');
+		expect(screen.getByTestId('agent-delegation-card').className).toContain('flex-wrap');
+	});
+
 	it('jumps to the tab the work landed in from both the name and the arrow', () => {
 		render(<AgentDelegationCard log={logWith(delegation())} theme={mockTheme} />);
 

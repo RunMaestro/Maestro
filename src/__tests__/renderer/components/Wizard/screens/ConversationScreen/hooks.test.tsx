@@ -266,6 +266,11 @@ describe('ConversationScreen hooks', () => {
 				model: undefined,
 				existingDocs: undefined,
 				sshRemoteConfig: undefined,
+				claudeTokenSource: {
+					enableMaestroP: undefined,
+					maestroPMode: undefined,
+					maestroPPath: undefined,
+				},
 			});
 			expect(setConversationStarted).toHaveBeenCalledWith(true);
 
@@ -515,6 +520,11 @@ describe('ConversationScreen hooks', () => {
 				projectName: 'project',
 				model: undefined,
 				sshRemoteConfig: undefined,
+				claudeTokenSource: {
+					enableMaestroP: undefined,
+					maestroPMode: undefined,
+					maestroPPath: undefined,
+				},
 			});
 		});
 	});

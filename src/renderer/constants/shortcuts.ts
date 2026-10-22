@@ -190,6 +190,12 @@ export const DEFAULT_SHORTCUTS = {
 		label: 'Maestro Cue',
 		keys: ['Alt', 'q'],
 	},
+	// Ctrl+Cmd, not Opt+Cmd: Opt+Cmd+H is the macOS "Hide Others" chord.
+	computerHistory: {
+		id: 'computerHistory',
+		label: 'Computer History',
+		keys: ['Control', 'Meta', 'h'],
+	},
 	// Opt+Cmd, not a bare Opt: on macOS a plain Opt+letter is a TEXT-ENTRY combo
 	// (Opt+C types "ç", Opt+U starts a dead-key umlaut), so it lands as a
 	// character whenever the composer has focus - which is Maestro's usual state.
@@ -207,6 +213,13 @@ export const DEFAULT_SHORTCUTS = {
 		id: 'toggleCadenzas',
 		label: 'Show/Hide All Cadenzas',
 		keys: ['Alt', 'Meta', 'Shift', 'c'],
+	},
+	// T for Throughput (or tokens). Opt+Cmd+T is the Tab Switcher, so the gauge
+	// takes the Shift sibling, the same way Cadenzas sit beside Concerto.
+	toggleThroughputGauge: {
+		id: 'toggleThroughputGauge',
+		label: 'Show/Hide Throughput Gauge',
+		keys: ['Alt', 'Meta', 'Shift', 't'],
 	},
 	filterUnreadAgents: {
 		id: 'filterUnreadAgents',
@@ -255,6 +268,13 @@ export const DEFAULT_SHORTCUTS = {
 		id: 'forcedParallelSend',
 		label: 'Forced Parallel Send',
 		keys: ['Meta', 'Shift', 'Enter'],
+	},
+	// Send the draft into the turn ALREADY RUNNING on this tab, or with an empty
+	// draft, steer the newest queued message. Clear the binding to turn it off.
+	steerSend: {
+		id: 'steerSend',
+		label: 'Steer Running Turn',
+		keys: ['Alt', 'Meta', 'Enter'],
 	},
 	clearTerminal: {
 		id: 'clearTerminal',
@@ -418,9 +438,21 @@ export const DEFAULT_SHORTCUTS = {
 	// Palette-only actions that had no keyboard route at all. Same reasoning:
 	// registered so they can be bound, unbound so nothing is claimed by default.
 	openLeaderboard: { id: 'openLeaderboard', label: 'Open Leaderboard', keys: [] },
+	openNotificationCenter: {
+		id: 'openNotificationCenter',
+		label: 'Open Notification Center',
+		keys: [],
+	},
 	clearAllNotifications: {
 		id: 'clearAllNotifications',
 		label: 'Clear All Notifications',
+		keys: [],
+	},
+	// Unbound by default: the bell popover and the palette already reach it, and
+	// listing it here is what lets a user bind it in Settings -> Shortcuts.
+	toggleInAppToasts: {
+		id: 'toggleInAppToasts',
+		label: 'Toggle In-App Toasts',
 		keys: [],
 	},
 	openThemeSettings: { id: 'openThemeSettings', label: 'Open Theme Settings', keys: [] },
@@ -518,6 +550,9 @@ export const TAB_SHORTCUTS = {
 		keys: ['Meta', 'Shift', 't'],
 	},
 	renameTab: { id: 'renameTab', label: 'Rename Tab', keys: ['Meta', 'Shift', 'r'] },
+	// Unbound by default: Rename Tab already reaches a tiled pane, and the group
+	// itself is renamed from its chip or the command palette.
+	renameTabGroup: { id: 'renameTabGroup', label: 'Rename Tab Group', keys: [] },
 	moveTabToStart: {
 		id: 'moveTabToStart',
 		label: 'Move Tab to First',

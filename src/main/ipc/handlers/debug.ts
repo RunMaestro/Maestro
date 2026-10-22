@@ -288,9 +288,21 @@ export function registerDebugHandlers(deps: DebugHandlerDependencies): void {
 	// seconds for a large capture. We emit `debug:profilingProgress` phase events
 	// throughout so the renderer can show a live progress modal instead of the UI
 	// looking frozen after the user hits "End Performance Profiling".
+	// Set when the user dismisses the progress modal while the stop is still
+	// running. The save dialog is a sheet over the main window, so raising it
+	// later would grab the app back from someone who deliberately walked away;
+	// a backgrounded capture saves to the default location instead and reports
+	// the path through a toast.
+	let profilingRunInBackground = false;
+	ipcMain.handle('debug:profilingRunInBackground', () => {
+		profilingRunInBackground = true;
+		return { success: true };
+	});
+
 	ipcMain.handle(
 		'debug:stopProfiling',
 		createIpcHandler(handlerOpts('stopProfiling'), async () => {
+			profilingRunInBackground = false;
 			const mainWindow = getMainWindow();
 			if (!mainWindow) {
 				throw new Error('No main window available');
@@ -310,12 +322,18 @@ export function registerDebugHandlers(deps: DebugHandlerDependencies): void {
 			const outcome = await stopProfiling(tracePath);
 			const { durationMs } = outcome;
 
-			sendProgress({ phase: 'awaiting-save' });
-			const result = await dialog.showSaveDialog(mainWindow, {
-				title: 'Save Performance Profile',
-				defaultPath: path.join(app.getPath('desktop'), `maestro-profile-${timestamp}.zip`),
-				filters: [{ name: 'Zip Files', extensions: ['zip'] }],
-			});
+			const defaultPath = path.join(app.getPath('desktop'), `maestro-profile-${timestamp}.zip`);
+			let result: { canceled: boolean; filePath?: string };
+			if (profilingRunInBackground) {
+				result = { canceled: false, filePath: defaultPath };
+			} else {
+				sendProgress({ phase: 'awaiting-save' });
+				result = await dialog.showSaveDialog(mainWindow, {
+					title: 'Save Performance Profile',
+					defaultPath,
+					filters: [{ name: 'Zip Files', extensions: ['zip'] }],
+				});
+			}
 
 			if (result.canceled || !result.filePath) {
 				await fs.promises.unlink(tracePath).catch(() => {});

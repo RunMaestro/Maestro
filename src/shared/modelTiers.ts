@@ -19,7 +19,8 @@
  * is not the identity even where the provider happens to use the same three
  * words. Claude's ladder runs `low, medium, high, xhigh, max`, so Maestro's
  * `high` means `max` (the actual ceiling) and Maestro's `medium` means `high`
- * (the actual middle). Codex's floor is `minimal`, not `low`. The tables below
+ * (the actual middle). Codex's ceiling is `xhigh`, the top rung every one of
+ * its models accepts. The tables below
  * are written out per provider rather than computed from an index so the
  * resolution is auditable by reading it - a surprising row should be obvious
  * here rather than discovered at runtime.
@@ -32,6 +33,8 @@
  */
 
 import type { ToolType } from './types';
+import { FALLBACK_CONTEXT_WINDOW, getModelContextWindowOverride } from './agentConstants';
+import { getEffortRejection, type EffortRejection } from './effortRejection';
 
 /** The one vocabulary: model tier and effort level both use these three rungs. */
 export const TIER_LEVELS = ['low', 'medium', 'high'] as const;
@@ -59,12 +62,23 @@ export function asTierLevel(value: unknown): ModelTier | undefined {
  * must resolve identically on every machine. Discovery can ADD rungs a given
  * install supports; it cannot be allowed to silently change what `high` means
  * for a playbook someone else wrote.
+ *
+ * The one runtime input is a REFUSAL. A static table goes stale the day a
+ * provider retires a rung, and the provider then fails the turn outright rather
+ * than clamping. A value the provider has refused in this process resolves to
+ * `undefined` from then on (see `effortRejection.ts`): never a different value,
+ * only "inherit the agent's own", and always reported.
  */
 const EFFORT_LADDERS: Partial<Record<ToolType, Record<EffortLevel, string>>> = {
 	// Ladder: low, medium, high, xhigh, max
 	'claude-code': { low: 'low', medium: 'high', high: 'max' },
-	// Ladder: minimal, low, medium, high, xhigh
-	codex: { low: 'minimal', medium: 'medium', high: 'xhigh' },
+	// Ladder: low, medium, high, xhigh (then max / ultra on some models).
+	// The floor is `low`, NOT `minimal`: no model in Codex's catalogue accepts
+	// `minimal` any more, and the API answers it with a 400 rather than
+	// clamping, so every cheap turn (tab naming, synopsis) died with no output.
+	// `xhigh` stays the ceiling because it is the highest rung EVERY model
+	// lists; `max` and `ultra` are per-model.
+	codex: { low: 'low', medium: 'medium', high: 'xhigh' },
 	// Ladder: low, medium, high - the one provider where the mapping IS the identity.
 	'factory-droid': { low: 'low', medium: 'medium', high: 'high' },
 	// Ladder: low, medium, high, xhigh. Even-length, so "middle" is a judgment
@@ -117,7 +131,37 @@ export function resolveTierModel(toolType: ToolType, tier: ModelTier): string | 
  * {@link resolveTierModel}: `undefined` is inherit-and-say-so.
  */
 export function resolveEffortLevel(toolType: ToolType, level: EffortLevel): string | undefined {
-	return EFFORT_LADDERS[toolType]?.[level];
+	return rejectedEffortForLevel(toolType, level) ? undefined : EFFORT_LADDERS[toolType]?.[level];
+}
+
+/**
+ * The provider's refusal of the value this level maps to, when it has refused
+ * it in this process (see `effortRejection.ts`).
+ *
+ * The ladders above are a snapshot of each provider's catalogue, and a provider
+ * can retire a rung without notice. Once it has said no, the level resolves to
+ * `undefined` - inherit the agent's own effort - instead of sending a value
+ * that is known to fail the turn. Callers that explain an unmapped level to the
+ * user read the refusal from here so they can say what actually happened.
+ */
+export function rejectedEffortForLevel(
+	toolType: ToolType,
+	level: EffortLevel
+): EffortRejection | undefined {
+	const value = EFFORT_LADDERS[toolType]?.[level];
+	return value === undefined ? undefined : getEffortRejection(toolType, value);
+}
+
+/**
+ * True when `value` is one a ladder above hands out for this provider.
+ *
+ * Tells a refusal of something MAESTRO chose (the shipped table has drifted
+ * from the provider's catalogue, fixable only in a release) apart from a
+ * refusal of something the user picked on a tab, which is theirs to change.
+ */
+export function isLadderEffortValue(toolType: string, value: string): boolean {
+	const ladder = EFFORT_LADDERS[toolType as ToolType];
+	return ladder !== undefined && Object.values(ladder).includes(value);
 }
 
 /** True when this provider can act on a tier hint at all. */
@@ -153,5 +197,38 @@ export function cheapTurnSettings(toolType: ToolType): {
 	return {
 		model: resolveTierModel(toolType, 'low'),
 		effort: resolveEffortLevel(toolType, 'low'),
+	};
+}
+
+/**
+ * `cheapTurnSettings` for a turn that RESUMES the session it summarizes, with
+ * the fallbacks already applied. This is what a synopsis spawn should pass.
+ *
+ * The cheap tier is a MODEL swap, and a model carries a context window with
+ * it. Resuming replays the whole transcript, so downgrading a session running
+ * Anthropic's 1M beta (`opus[1m]`) onto a 200k model makes the synopsis of a
+ * long conversation fail with "Prompt is too long": the transcript fit the
+ * session's model and cannot fit the cheap one. So the session's model is kept
+ * whenever the downgrade would shrink the window. Effort still drops to the
+ * bottom rung, since that costs nothing to read.
+ *
+ * `current` is what the summarized turn ran at. It is also what the turn
+ * inherits on a provider with no tier mapping (codex, opencode), where there
+ * is nothing to downgrade TO.
+ */
+export function cheapResumeTurnSettings(
+	toolType: ToolType,
+	current: { model?: string; effort?: string } = {}
+): {
+	model: string | undefined;
+	effort: string | undefined;
+} {
+	const cheap = cheapTurnSettings(toolType);
+	const shrinksWindow =
+		(getModelContextWindowOverride(current.model) ?? FALLBACK_CONTEXT_WINDOW) >
+		(getModelContextWindowOverride(cheap.model) ?? FALLBACK_CONTEXT_WINDOW);
+	return {
+		model: shrinksWindow ? current.model : (cheap.model ?? current.model),
+		effort: cheap.effort ?? current.effort,
 	};
 }

@@ -18,13 +18,22 @@ import { AArrowDown, AArrowUp, ALargeSmall } from 'lucide-react';
 import type { Theme } from '../../constants/themes';
 import type { UseFontScaleReturn } from '../../hooks/ui/useFontScale';
 import { ScaleControl } from './ScaleControl';
+import type { ShortcutChords } from './ShortcutHint';
 
 export interface FontScaleControlProps {
 	theme: Theme;
 	/** State from `useFontScale`. */
 	control: UseFontScaleReturn;
 	/** Visual treatment. Defaults to `inline`. */
-	variant?: 'inline' | 'floating';
+	variant?: 'inline' | 'floating' | 'ghost';
+	/** `native` titles (the default) or `overlay` hover tooltips; see `ScaleControl`. */
+	tooltips?: 'native' | 'overlay';
+	/** Keys the surface binds to this control, named in the tooltips. */
+	shortcutHint?: {
+		decrease?: string | ShortcutChords;
+		increase?: string | ShortcutChords;
+		reset?: string | ShortcutChords;
+	};
 	/** Button size - `sm` for a dense `text-xs` button row. Defaults to `md`. */
 	size?: 'sm' | 'md';
 	/**
@@ -46,6 +55,8 @@ export const FontScaleControl = React.memo(function FontScaleControl({
 	theme,
 	control,
 	variant = 'inline',
+	tooltips,
+	shortcutHint,
 	size = 'md',
 	collapsible = false,
 	target,
@@ -75,6 +86,8 @@ export const FontScaleControl = React.memo(function FontScaleControl({
 			collapsedIcon={ALargeSmall}
 			subject={target ? `${target} font size` : 'font size'}
 			variant={variant}
+			tooltips={tooltips}
+			shortcutHint={shortcutHint}
 			size={size}
 			className={className}
 			testId={testId}

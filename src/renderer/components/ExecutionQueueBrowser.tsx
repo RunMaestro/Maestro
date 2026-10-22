@@ -13,11 +13,12 @@ import {
 	Play,
 	Pencil,
 	Hammer,
+	Merge,
 } from 'lucide-react';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { useResizableModal } from '../hooks/ui/useResizableModal';
 import { useEventListener } from '../hooks/utils/useEventListener';
-import { useFocusOnClose } from '../hooks/utils/useFocusAfterRender';
+import { useFocusOnMount, useFocusOnClose } from '../hooks/utils/useFocusAfterRender';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import type { Session, Theme, QueuedItem, QueuedItemEditPatch } from '../types';
 import { formatRelativeTime } from '../../shared/formatters';
@@ -25,6 +26,7 @@ import { safeClipboardWrite } from '../utils/clipboard';
 import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
 import { useSettingsStore } from '../stores/settingsStore';
 import {
+	findQueuedMergeTarget,
 	getForceSendEligibility,
 	getForceSendTitle,
 	shouldOfferForceSend,
@@ -33,6 +35,7 @@ import {
 } from '../utils/executionQueue';
 import { Modal, ModalFooter } from './ui/Modal';
 import { QueuedItemEditModal } from './QueuedItemEditModal';
+import { QueuedMergeConfirmModal } from './QueuedMergeConfirmModal';
 import { ForcedParallelRequiredModal } from './ForcedParallelRequiredModal';
 import { TurnSettingPills } from './ui/TurnSettingPills';
 import { MiniBadge } from './ui/MiniBadge';
@@ -61,6 +64,8 @@ interface ExecutionQueueBrowserProps {
 	onEditItem?: (sessionId: string, itemId: string, patch: QueuedItemEditPatch) => void;
 	/** Dispatch a queued item immediately, out of queue order */
 	onForceSendItem?: (sessionId: string, itemId: string) => void;
+	/** Fold a queued message into the earlier message for the same tab */
+	onMergeItem?: (sessionId: string, itemId: string) => void;
 }
 
 /**
@@ -79,6 +84,7 @@ export function ExecutionQueueBrowser({
 	onToggleItemPause,
 	onEditItem,
 	onForceSendItem,
+	onMergeItem,
 }: ExecutionQueueBrowserProps) {
 	const [viewMode, setViewMode] = useState<'current' | 'global'>('current');
 	// Force Send awaiting confirmation. Only the parallel case confirms - sending
@@ -88,6 +94,10 @@ export function ExecutionQueueBrowser({
 		item: QueuedItem;
 	} | null>(null);
 	const forceSendConfirmButtonRef = useRef<HTMLButtonElement>(null);
+	// The item awaiting a merge confirmation, with its owning agent.
+	const [mergeConfirm, setMergeConfirm] = useState<{ sessionId: string; itemId: string } | null>(
+		null
+	);
 	// Explainer for a dimmed Send Now that only Forced Parallel Execution unlocks
 	const [showForcedParallelRequired, setShowForcedParallelRequired] = useState(false);
 	const forcedParallelEnabled = useSettingsStore((s) => s.forcedParallelExecution);
@@ -224,20 +234,16 @@ export function ExecutionQueueBrowser({
 		}
 	};
 
-	// Land on the card when the browser opens so the arrow keys work without a
-	// click first, and take focus back when a child surface (action menu, edit
-	// modal, force-send confirm) closes - otherwise focus falls to <body> and
-	// the next arrow key silently does nothing.
-	useEffect(() => {
-		if (!isOpen) return;
-		const id = setTimeout(() => modalRef.current?.focus(), 0);
-		return () => clearTimeout(id);
-	}, [isOpen]);
-	useFocusOnClose(
-		modalRef,
-		actionMenuOpen || !!editing || !!forceSendConfirm || showForcedParallelRequired
-	);
-
+	const hasChildSurface =
+		actionMenuOpen ||
+		!!editing ||
+		!!forceSendConfirm ||
+		!!mergeConfirm ||
+		showForcedParallelRequired;
+	// Land on the card when opening the queue; later renders must not
+	// take focus from controls or child surfaces.
+	useFocusOnMount(modalRef, 0, isOpen);
+	useFocusOnClose(modalRef, hasChildSurface);
 	if (!isOpen) return null;
 
 	// Send now. A plain queue jump goes straight through; running alongside
@@ -279,6 +285,27 @@ export function ExecutionQueueBrowser({
 			? getForceSendEligibility(confirmSession, forceSendConfirm.item, { forcedParallelEnabled })
 			: null;
 
+	// Merge into the earlier message for the same tab. Only offered when there is
+	// one: the first message on a tab, a command, a leading-mention message, or a
+	// consult hold has nothing to merge with.
+	const mergeAction = (session: Session, item: QueuedItem): (() => void) | undefined =>
+		onMergeItem && findQueuedMergeTarget(session.executionQueue ?? [], item.id)
+			? () => setMergeConfirm({ sessionId: session.id, itemId: item.id })
+			: undefined;
+
+	// The pair the merge confirmation shows, read live so the dialog closes on its
+	// own if either message runs or is removed while it is open.
+	const mergeSession = mergeConfirm
+		? sessions.find((s) => s.id === mergeConfirm.sessionId)
+		: undefined;
+	const mergeLower = mergeConfirm
+		? mergeSession?.executionQueue?.find((i) => i.id === mergeConfirm.itemId)
+		: undefined;
+	const mergeUpper =
+		mergeSession && mergeLower
+			? findQueuedMergeTarget(mergeSession.executionQueue ?? [], mergeLower.id)
+			: null;
+
 	// Actions for the Enter menu, built from the same availability rules the
 	// row's own buttons use so the menu can never offer something the card
 	// does not.
@@ -296,6 +323,15 @@ export function ExecutionQueueBrowser({
 				icon: <Hammer className="w-4 h-4" />,
 				color: theme.colors.warning,
 				run: sendNow,
+			});
+		}
+		const merge = mergeAction(session, item);
+		if (merge) {
+			menuActions.push({
+				id: 'merge',
+				label: 'Merge into Message Above',
+				icon: <Merge className="w-4 h-4" />,
+				run: merge,
 			});
 		}
 		if (onEditItem && item.type !== 'command') {
@@ -488,6 +524,7 @@ export function ExecutionQueueBrowser({
 													forceSend={forceSend}
 													onForceSend={forceSendAction(session, item, forceSend)}
 													onRemove={() => onRemoveItem(session.id, item.id)}
+													onMerge={mergeAction(session, item)}
 													isPaused={!!item.paused}
 													onTogglePause={
 														onToggleItemPause
@@ -600,6 +637,23 @@ export function ExecutionQueueBrowser({
 				</div>
 			)}
 
+			{/* Merge confirmation. Merge holds focus, so Enter accepts. CONFIRM
+			    priority puts it above this browser for Escape. */}
+			{mergeConfirm && mergeLower && mergeUpper && onMergeItem && (
+				<div onClick={(e) => e.stopPropagation()}>
+					<QueuedMergeConfirmModal
+						theme={theme}
+						upper={mergeUpper}
+						lower={mergeLower}
+						onConfirm={() => {
+							onMergeItem(mergeConfirm.sessionId, mergeConfirm.itemId);
+							setMergeConfirm(null);
+						}}
+						onCancel={() => setMergeConfirm(null)}
+					/>
+				</div>
+			)}
+
 			{showForcedParallelRequired && (
 				<div onClick={(e) => e.stopPropagation()}>
 					<ForcedParallelRequiredModal
@@ -660,6 +714,8 @@ interface QueueItemRowProps {
 	/** Sends when allowed; opens the Forced Parallel explainer when that is the only block */
 	onForceSend?: () => void;
 	onRemove: () => void;
+	/** Fold this message into the earlier one for its tab. Absent when there is none. */
+	onMerge?: () => void;
 	isPaused?: boolean;
 	onTogglePause?: () => void;
 	onEdit?: () => void;
@@ -683,6 +739,7 @@ function QueueItemRow({
 	forceSend,
 	onForceSend,
 	onRemove,
+	onMerge,
 	isPaused,
 	onTogglePause,
 	onEdit,
@@ -918,6 +975,20 @@ function QueueItemRow({
 							/>
 						</div>
 						<div className="flex items-center justify-end gap-1">
+							{onMerge && (
+								<button
+									onClick={(e) => {
+										e.stopPropagation();
+										onMerge();
+									}}
+									className="p-1.5 rounded hover:bg-black/20 transition-all"
+									style={{ color: theme.colors.textDim }}
+									title="Merge into the earlier message for this tab (send both as one message)"
+									aria-label="Merge into the message above"
+								>
+									<Merge className="w-4 h-4" />
+								</button>
+							)}
 							{onEdit && (
 								<button
 									onClick={(e) => {

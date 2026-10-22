@@ -5,8 +5,18 @@
  * stay pixel-identical without copy-pasting markup.
  */
 
-import { memo } from 'react';
-import { ChevronDown, Clock, Eye, EyeOff, Link2, Loader2, RefreshCw, Users } from 'lucide-react';
+import { memo, type ReactNode } from 'react';
+import {
+	ChevronDown,
+	Clock,
+	Eye,
+	EyeOff,
+	KeyRound,
+	Link2,
+	Loader2,
+	RefreshCw,
+	Users,
+} from 'lucide-react';
 import type { Theme } from '../../../types';
 import { formatFutureTime, formatTimestamp } from '../../../../shared/formatters';
 import {
@@ -579,6 +589,57 @@ export const QuotaShowAllToggle = memo(function QuotaShowAllToggle({
 			)}
 			<span>{revealing ? 'Hide hidden' : `Show all (${hiddenCount})`}</span>
 		</button>
+	);
+});
+
+/**
+ * Warning strip shown in place of an account's bars when it cannot be sampled.
+ * Given `onLogin`, it carries a "Log in" button that opens the provider login
+ * for this account (see `useQuotaAccountLogin`), so a logged-out row is fixed
+ * where it is reported instead of by hunting for a terminal.
+ */
+export const QuotaAuthNotice = memo(function QuotaAuthNotice({
+	theme,
+	message,
+	testId,
+	onLogin,
+}: {
+	theme: Theme;
+	message: ReactNode;
+	testId: string;
+	onLogin?: () => void;
+}) {
+	const tone = theme.colors.warning ?? theme.colors.accent;
+	return (
+		<div
+			className="flex items-center gap-2 px-3 py-2 rounded text-xs"
+			style={{
+				backgroundColor: `${tone}15`,
+				color: theme.colors.textMain,
+				border: `1px solid ${tone}40`,
+			}}
+			data-testid={testId}
+		>
+			<span style={{ color: tone }}>●</span>
+			<span className="flex-1 min-w-0">{message}</span>
+			{onLogin && (
+				<button
+					type="button"
+					onClick={onLogin}
+					className="flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium transition-colors hover:opacity-80 shrink-0"
+					style={{
+						backgroundColor: `${theme.colors.accent}22`,
+						color: theme.colors.accent,
+						border: `1px solid ${theme.colors.accent}40`,
+					}}
+					data-testid={`${testId}-login`}
+					title="Run the provider login for this account, then re-sample it"
+				>
+					<KeyRound className="w-3 h-3" aria-hidden="true" />
+					Log in
+				</button>
+			)}
+		</div>
 	);
 });
 

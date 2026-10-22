@@ -1,10 +1,18 @@
+import { atomicWriteJson as sharedAtomicWriteJson } from '../../../shared/maestro-lib/storage/atomic-json-store';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
-import { atomicWriteJson, createKeyedWriteQueue } from '../../../main/utils/atomic-json-store';
+import {
+	atomicWriteJson,
+	atomicWriteFile,
+	createKeyedWriteQueue,
+} from '../../../main/utils/atomic-json-store';
 
 describe('atomicWriteJson', () => {
+	it('keeps the main facade on the shared implementation', () => {
+		expect(atomicWriteJson).toBe(sharedAtomicWriteJson);
+	});
 	let dir: string;
 
 	beforeEach(async () => {
@@ -13,6 +21,13 @@ describe('atomicWriteJson', () => {
 
 	afterEach(async () => {
 		await fs.rm(dir, { recursive: true, force: true });
+	});
+
+	it('retains non-UTF8 resource bytes on atomic replacement', async () => {
+		const file = path.join(dir, 'asset.bin');
+		const bytes = Buffer.from([0, 255, 128, 1, 2]);
+		await atomicWriteFile(file, bytes);
+		expect(await fs.readFile(file)).toEqual(bytes);
 	});
 
 	it('writes JSON that round-trips', async () => {

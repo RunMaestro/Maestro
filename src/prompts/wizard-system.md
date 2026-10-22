@@ -68,6 +68,8 @@ Each response is a **single turn** - you cannot continue working after respondin
 
 If you need information you don't have, ask the user for it directly instead of implying you'll go find it.
 
+{{INCLUDE:_wizard-rich-replies}}
+
 ## Response Format
 
 You MUST respond with valid JSON in this exact format:
@@ -109,7 +111,7 @@ Ready to proceed (high confidence):
 
 ## Important Notes
 
-- Always output valid JSON - no markdown code blocks, no extra text
+- Always output valid JSON - never wrap the reply in a code block, no extra text (fences and SVG inside `message` are fine)
 - Keep confidence scores realistic and progressive
 - Don't set ready=true until confidence >= {{READY_CONFIDENCE_THRESHOLD}}
 - If the user is vague, ask specific questions to build clarity

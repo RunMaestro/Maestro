@@ -1,0 +1,337 @@
+/**
+ * Maestro Library - Public Entry Point
+ *
+ * This module exports the stable public API of maestro-lib.
+ * All library clients should import from here, not from deep module paths.
+ *
+ * Internal modules (bin/, test utilities) are not exported.
+ */
+
+// The library's own version, separate from the app's (docs/maestro-lib.md, Version)
+export { MAESTRO_LIB_VERSION } from './version';
+
+// Paths and configuration
+export * from './paths/userDataDir';
+export * from './paths/resolve';
+export * from './paths/syncPath';
+export * from './paths/doctor';
+export * from './paths/complete';
+
+// The lock primitive and the data-dir lock built on it
+export * from './runtime/lock';
+export * from './runtime/data-dir-lock';
+
+// The runtime: the in-process MaestroClient that owns writes to a data directory (L1a, L2, L4, L5)
+export * from './runtime/index';
+export * from './runtime/client';
+export * from './runtime/processes';
+export * from './runtime/turns';
+export * from './runtime/autorun';
+export * from './runtime/providers';
+export * from './runtime/settings-watch';
+export * from './runtime/turn-options';
+export * from './runtime/file-logger';
+export * from './runtime/server';
+export * from './client/host-control';
+
+// Desktop bridge: find the running desktop (cli-server.json) and talk to it
+export * from './client/discovery';
+export * from './client/bridge-connection';
+export * from './client/not-running';
+
+// The client interface the TUI programs against, and its WebSocket implementation
+export * from './client/types';
+export { createWsMaestroClient } from './client/ws-client';
+
+// Store files (read-only)
+export * from './store/corrupt-store';
+export * from './store/records';
+export * from './store/read-stores';
+export * from './store/atomic-write';
+export * from './store/native-sqlite';
+export * from './store/io';
+export * from './store/read-history';
+export * from './store/transcript';
+export * from './store/agent-tree';
+export * from './store/tab-display';
+
+// Provider display names (a provider this build does not know still gets a label)
+export { getAgentDisplayName, AGENT_AUTOSELECT_ORDER } from '../agentMetadata';
+
+export type { AgentError, SshRemoteConfig, ThinkingMode, ToolType, UsageStats } from '../types';
+export type { QuerySource } from '../querySource';
+export type { AgentCapabilitiesSnapshot } from '../agentCapabilities';
+export { asThinkingMode } from '../types';
+
+// Where Claude keeps auto memory for a project (the Memory Viewer, provider translation, Cue bundles)
+export { resolveClaudeMemoryPath } from './translation/memory';
+
+// Provider swap: park and restore provider-specific tab and agent state (PS-5)
+export * from './agents/providerSwap';
+
+// The agent, group, and tab commands (L1a): pure rules shared with the desktop, the closed-tab
+// archive, and the repository that applies them to the store files
+export * from './agents/rules';
+export * from './agents/closed-tabs';
+export * from './agents/repository';
+export * from './client/event-bus';
+
+// Auto Run: the folder, document scanners, and validation both engines and the TUI read alike
+export * from '../markdownTaskScan';
+export * from '../autorunMarkers';
+export { PLAYBOOKS_DIR } from '../maestro-paths';
+export * from './autorun/documents';
+export * from './autorun/last-run';
+export * from './autorun/launch';
+export * from './autorun/progress';
+export * from './autorun/run-tracker';
+export * from './autorun/templates';
+export * from './autorun/validate';
+
+// The Auto Run engine the CLI and the runtime both run (L6). `engine-types` names the ports; its
+// `AutoRunPause` is the engine's own and the progress module's is the wire reading of one, so
+// the engine's types are listed rather than starred.
+export type {
+	AutoRunController,
+	AutoRunDeps,
+	AutoRunDocumentRead,
+	AutoRunEvent,
+	AutoRunResolution,
+	AutoRunStatsRun,
+	AutoRunStatsTask,
+	AutoRunTurnPurpose,
+	AutoRunTurnRequest,
+	AutoRunTurnResult,
+	MaybePromise,
+} from './autorun/engine-types';
+export * from './autorun/run-playbook';
+export * from './autorun/run-goal';
+export * from './autorun/policy';
+export * from './autorun/preflight';
+export * from './autorun/run-control';
+export * from './autorun/synopsis';
+export * from './autorun/task-selection';
+
+// Group chats: the record, its events and reducer, and the create rules (GC-1 to GC-4)
+export * from './groupchat/chat';
+export { createGroupChatStore, extractFirstSentence } from './groupchat/storage';
+export type { GroupChatStore, GroupChatStoreOptions } from './groupchat/storage';
+export { appendToLog, readLog, saveImage, escapeContent, unescapeContent } from './groupchat/log';
+export type { GroupChatMessage } from './groupchat/log';
+// The engine: rounds, delegation, synthesis, recovery, watchdogs, over injected ports (Phase 8)
+export {
+	createGroupChatEngine,
+	isDeletedGroupChatFailure,
+	extractMentions,
+	extractAutoRunDirectives,
+} from './groupchat/router';
+export type { GroupChatEngine, GroupChatEngineOptions, AutoRunDirective } from './groupchat/router';
+export type {
+	GroupChatAgentDirectory,
+	GroupChatEventSink,
+	GroupChatLauncher,
+	GroupChatPromptId,
+	GroupChatSessionInfo,
+	GroupChatSpawn,
+	GroupChatTurnEnd,
+	GroupChatTurnRunner,
+	ModeratorUsage,
+	ParticipantState,
+} from './groupchat/types';
+export { createGroupChatTurnMetrics } from './groupchat/turn-metrics';
+export type { GroupChatTurnMetrics, GroupChatTurnSpans } from './groupchat/turn-metrics';
+export {
+	GROUP_CHAT_PREFIX,
+	parseModeratorSessionId,
+	parseParticipantSessionId,
+} from './groupchat/session-ids';
+// The pieces the desktop's thin bindings and the headless runtime share (Phase 8): the launch, the
+// process spec, the storage shapes, session recovery, and the consult prompt and service
+export { createConsultService } from './agents/consult';
+export type { ConsultRunner, CrossAgentTargetSession } from './agents/consult';
+export {
+	buildConsultHistoryEntry,
+	buildConsultTabName,
+	buildCrossAgentPrompt,
+	crossAgentTerminationNote,
+	serializeTranscript,
+} from './agents/consult-prompt';
+export { GROUP_CHAT_MODERATOR_NAME, resolveGroupChatTurnKey } from './groupchat/turn-metrics';
+export type { GroupChatTurnMeasurement } from './groupchat/turn-metrics';
+export type {
+	GroupChat,
+	GroupChatUpdate,
+	ParticipantRemovalResult,
+	ParticipantUpdate,
+} from './groupchat/types';
+export {
+	REGEX_MODERATOR_SESSION,
+	REGEX_MODERATOR_SESSION_TIMESTAMP,
+	REGEX_PARTICIPANT_FALLBACK,
+	REGEX_PARTICIPANT_TIMESTAMP,
+	REGEX_PARTICIPANT_UUID,
+} from './groupchat/session-ids';
+export type { SessionOverrides } from './groupchat/participants';
+export { extractAllMentions } from './groupchat/router';
+export {
+	createSessionRecovery,
+	detectSessionNotFoundError,
+	needsSessionRecovery,
+} from './groupchat/session-recovery';
+export { prepareGroupChatSpawn } from './groupchat/spawn';
+export { getWindowsSpawnConfig } from './groupchat/windows-spawn';
+export type { SpawnSshConfig, WindowsSpawnConfig } from './groupchat/windows-spawn';
+export { toGroupChatSessionInfo } from './groupchat/session-info';
+export { buildStreamJsonMessage } from './launch/stream-json-message';
+export {
+	escapeArgsForShell,
+	escapeCmdArg,
+	escapeCmdArgs,
+	escapePowerShellArg,
+	escapePowerShellArgs,
+	getWindowsShellForAgentExecution,
+	isPowerShellShell,
+} from './launch/windows-shell-escape';
+export type { WindowsShellConfig, WindowsShellResult } from './launch/windows-shell-escape';
+export {
+	argsResumeSession,
+	planPipeSpawn,
+	removeTempFiles,
+	resumeIdFromArgs,
+} from './run/pipe-spawn';
+export type { PipeSpawnConfig, PipeSpawnImages, PipeSpawnPlan } from './run/pipe-spawn';
+export { locateProviderBinary } from './turns/provider-binary';
+export type { BinaryProbe } from './turns/provider-binary';
+export { resolveProviderAgent } from './turns/provider-agent';
+export type { BackgroundTurnDeps } from './runtime/background-turns';
+// How a name is spoken as a mention in a chat (the TUI's picker over a chat's message box)
+export { getMentionNameForContext, mentionMatches } from '../group-chat-types';
+export { groupChatAutoRunSummary } from './groupchat/autorun-summary';
+export type { GroupChatAutoRunOutcome } from './groupchat/autorun-summary';
+
+// Cross-agent mentions: who a message can mention, what it resolves to, the `@` picker's rules (XM-1 to XM-3)
+export * from './mentions/roster';
+export * from './mentions/trigger';
+export { stripMentionQuotes } from '../mentionPatterns';
+
+// Shared settings (ST-1) and the Encore gate (ST-2): one read of what the desktop holds
+export * from './settings/snapshot';
+
+// Agent form rules, shared with the desktop so a TUI form and the Edit dialog cannot disagree
+export { defaultAgentNameForPath, projectNameFromPath } from '../projectIdentity';
+export {
+	isSameDirectory,
+	rebasePathOntoRoot,
+	workingDirectoryChangeBlocker,
+} from '../agentWorkingDirectory';
+export {
+	isBlankEnvKey,
+	isBlankEnvValue,
+	isSecretEnvKey,
+	maskEnvValue,
+	stripBlankEnvVars,
+} from '../agentEnvironment';
+
+// One-line tool call descriptions ("Read src/App.tsx"), shared with the desktop activity feed
+export * from '../toolActivityLabel';
+
+// Timestamp, token, and cost display, shared so every surface shows a figure the same way
+export {
+	formatTimestamp,
+	formatTokensCompact,
+	formatCost,
+	formatElapsedTimeColon,
+} from '../formatters';
+
+// Context window sizing, shared so a status line and the desktop gauge size the same window
+export { getContextWindowForAgent } from '../agentConstants';
+
+// Fuzzy matching, shared with the desktop renderer (its utils/search.ts re-exports the same module)
+export * from '../fuzzyMatch';
+
+// Launch and argument building
+export * from './launch/launch-plan';
+export * from './launch/prompt-delivery';
+export * from './launch/agent-args';
+export * from './launch/env';
+export * from './launch/interactive-mode';
+export * from './launch/ssh-remote-resolver';
+export * from './launch/path-prober';
+export * from './launch/shell-escape';
+export * from './launch/cwd';
+export * from './launch/spawn-path';
+export * from './launch/ssh-spawn-wrapper';
+export * from './launch/ssh-command-builder';
+export * from './launch/ssh-path';
+export * from './launch/windows-command';
+export * from './launch/claude-mode-selector';
+export * from './launch/exec-file';
+export * from './launch/getShellPath';
+export * from './launch/image-refs';
+
+// Output parsing
+export * from './parsers/index';
+export * from './parsers/agent-output-parser';
+export * from './parsers/parser-factory';
+export * from './parsers/usage-aggregator';
+export * from './parsers/claude-output-parser';
+export * from './parsers/codex-output-parser';
+export * from './parsers/copilot-output-parser';
+export * from './parsers/antigravity-output-parser';
+export * from './parsers/grok-output-parser';
+export * from './parsers/opencode-output-parser';
+export * from './parsers/factory-droid-output-parser';
+export * from './parsers/pi-output-parser';
+export * from './parsers/omp-output-parser';
+export * from './parsers/qwen-output-parser';
+export * from './parsers/terminal-filter';
+export * from './parsers/error-patterns';
+
+// Provider definitions and capabilities
+export * from './providers/definitions';
+export * from './providers/capabilities';
+
+// Streaming and turn contract
+export * from './streaming/buffered-line-reader';
+export * from './streaming/turn-outcome';
+export * from './streaming/usage-accumulator';
+export * from './streaming/usage-totals';
+
+// Turn execution
+export * from './run/start-turn';
+export * from './run/turn-capture';
+export * from './run/session';
+export * from './run/run-to-completion';
+
+// Headless turns: the prompt a desktop turn would send (L12), assembled with no desktop
+export * from './prompts/load';
+export * from './turns/prompt';
+export * from './turns/args';
+export * from './turns/assemble';
+export * from './turns/context';
+export * from './turns/records';
+export * from './turns/run-agent-turn';
+export * from './turns/queue';
+export * from './turns/summary';
+export * from './turns/history';
+export * from './turns/stats';
+export * from './turns/record-turn';
+export * from './turns/turn-events';
+
+// The usage row a turn writes, defined once for the desktop's stats module and the runtime
+export * from './stats/query-event-insert';
+export * from './stats/auto-run-insert';
+export * from './stats/utils';
+
+// Process control
+export * from './control/termination';
+export * from './control/process-tree';
+export * from './control/pty-kill';
+export * from './control/idle-watchdog';
+export * from './control/agent-liveness';
+export * from './control/stdio-close-watchdog';
+export * from './control/ssh-remote-signal';
+export * from './control/turn-guard';
+
+// Host services
+export * from './host';

@@ -18,6 +18,7 @@ import { PIPELINE_LAYOUT_DEFAULT_PROJECT_KEY } from '../../../shared/cue-pipelin
 import { graphSessionsToPipelines } from '../../components/CuePipelineEditor/utils/yamlToPipeline';
 import { mergePipelinesWithSavedLayout } from '../../components/CuePipelineEditor/utils/pipelineLayout';
 import { beautifyPipelineLayouts } from '../../components/CuePipelineEditor/utils/pipelineAutoArrange';
+import { resolvePipelineHomes } from '../../components/CuePipelineEditor/utils/pipelineMembership';
 import { resolvePipelinesWriteRoots } from '../../components/CuePipelineEditor/utils/pipelineRoots';
 import { captureException } from '../../utils/sentry';
 import { cueService } from '../../services/cue';
@@ -323,7 +324,12 @@ export function usePipelineLayout({
 			if (savedLayout && savedLayout.pipelines) {
 				const merged = mergePipelinesWithSavedLayout(livePipelines, savedLayout);
 				const preHealSnapshot = JSON.stringify(merged.pipelines);
-				merged.pipelines = beautifyPipelineLayouts(merged.pipelines, healViewport);
+				merged.pipelines = beautifyPipelineLayouts(
+					merged.pipelines,
+					healViewport,
+					undefined,
+					resolvePipelineHomes(merged.pipelines, graphSessions)
+				);
 				const healChangedLayout = JSON.stringify(merged.pipelines) !== preHealSnapshot;
 				// Seed the per-project cache so future saves don't stomp on
 				// sibling projects' entries.
@@ -374,7 +380,12 @@ export function usePipelineLayout({
 					}
 				}
 			} else {
-				const healed = beautifyPipelineLayouts(livePipelines, healViewport);
+				const healed = beautifyPipelineLayouts(
+					livePipelines,
+					healViewport,
+					undefined,
+					resolvePipelineHomes(livePipelines, graphSessions)
+				);
 				setPipelineState({ pipelines: healed, selectedPipelineId: healed[0].id });
 				savedStateRef.current = JSON.stringify(healed);
 				pipelinesForRoots = healed;

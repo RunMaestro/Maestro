@@ -13,6 +13,7 @@ import type { ProcessListenerDependencies } from './types';
 import { setupForwardingListeners } from './forwarding-listeners';
 import { setupDataListener } from './data-listener';
 import { setupGroupChatLivenessListener } from './group-chat-liveness-listener';
+import { setupGroupChatSteeringListener } from './group-chat-steering-listener';
 import { setupUsageListener } from './usage-listener';
 import { setupSessionIdListener } from './session-id-listener';
 import { setupErrorListener } from './error-listener';
@@ -38,10 +39,13 @@ export function setupProcessListeners(
 	setupForwardingListeners(processManager, deps);
 
 	// Data output listener (with group chat buffering and web broadcast)
-	setupDataListener(processManager, deps);
+	const { flushPendingData } = setupDataListener(processManager, deps);
 
 	// Re-arms the Group Chat router's per-turn silence budgets on any proof of life.
 	setupGroupChatLivenessListener(processManager);
+
+	// Settles group chat steers: a steer no turn took goes back in the main-owned queue.
+	setupGroupChatSteeringListener(processManager);
 
 	// Usage statistics listener (with group chat participant/moderator updates)
 	setupUsageListener(processManager, deps);
@@ -49,8 +53,10 @@ export function setupProcessListeners(
 	// Session ID listener (with group chat participant/moderator storage)
 	setupSessionIdListener(processManager, deps);
 
-	// Agent error listener
-	setupErrorListener(processManager, deps);
+	// Agent error listener. Releases the data listener's coalesced output ahead
+	// of each error it forwards, so an error never reaches the renderer before
+	// the text it ends.
+	setupErrorListener(processManager, deps, flushPendingData);
 
 	// Exit listener (with group chat routing, recovery, and synthesis)
 	setupExitListener(processManager, deps);

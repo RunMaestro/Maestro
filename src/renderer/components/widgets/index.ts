@@ -34,6 +34,8 @@ export { TypeBreakdown } from './output/TypeBreakdown';
 export { AgentActivityBars } from './output/AgentActivityBars';
 export { SuccessFailureWidget } from './output/SuccessFailureWidget';
 export { Sparkline } from './output/Sparkline';
+export { MultiLineChart } from './output/MultiLineChart';
+export type { LineSeries, MultiLineChartProps } from './output/MultiLineChart';
 export { ChartTooltip } from './output/ChartTooltip';
 export { ChartErrorBoundary } from './output/ChartErrorBoundary';
 export { clampTooltipToViewport } from './output/tooltipGeometry';

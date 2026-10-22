@@ -5,6 +5,8 @@
 
 import type { AITab, Session, UnifiedTabRef } from '../types';
 import { useSettingsStore } from '../stores/settingsStore';
+import { generateId } from './ids';
+import { aiTabFocusFields } from './tabHelpers/focusFields';
 
 /**
  * Whether an AI tab is hidden from the tab strip and from tab-cycling shortcuts.
@@ -52,6 +54,60 @@ export function visibleAiTabs(tabs: AITab[] | undefined): AITab[] {
  */
 export function hasUnreadVisibleTab(tabs: AITab[] | undefined): boolean {
 	return (tabs ?? []).some((tab) => tab.hasUnread && !isAiTabHidden(tab));
+}
+
+/**
+ * A fresh, empty AI chat tab: no provider session, no transcript, idle.
+ * The one literal behind every "the agent ran out of tabs" replacement.
+ */
+export function createBlankAiTab(): AITab {
+	return {
+		id: generateId(),
+		agentSessionId: null,
+		name: null,
+		starred: false,
+		logs: [],
+		inputValue: '',
+		stagedImages: [],
+		createdAt: Date.now(),
+		state: 'idle',
+	};
+}
+
+/**
+ * Whether the tab strip still draws at least one chip for this agent. Hidden
+ * consult tabs do not count: they have no chip, so an agent holding only those
+ * renders an empty strip with no way to reach anything.
+ */
+export function agentHasVisibleTab(session: Session): boolean {
+	return (
+		visibleAiTabs(session.aiTabs).length > 0 ||
+		(session.filePreviewTabs?.length ?? 0) > 0 ||
+		(session.terminalTabs?.length ?? 0) > 0 ||
+		(session.browserTabs?.length ?? 0) > 0
+	);
+}
+
+/**
+ * Guarantee an agent is never left with an empty tab strip. When the last
+ * visible tab of ANY kind has just closed, append a blank AI chat and land on
+ * it. Without this, closing a lone file, terminal, or browser tab left the
+ * panel pointed at whatever stale id survived (often a hidden consult tab),
+ * rendering a conversation with no chip and no tab controls.
+ *
+ * Every non-AI close primitive runs its result through this. `closeTab` keeps
+ * its own replacement branch because it also has to manage the closed-tab
+ * history; both build the tab from {@link createBlankAiTab}.
+ */
+export function ensureAgentHasVisibleTab(session: Session): Session {
+	if (agentHasVisibleTab(session)) return session;
+	const freshTab = createBlankAiTab();
+	return {
+		...session,
+		aiTabs: [...(session.aiTabs || []), freshTab],
+		unifiedTabOrder: [...(session.unifiedTabOrder || []), { type: 'ai', id: freshTab.id }],
+		...aiTabFocusFields(freshTab.id),
+	};
 }
 
 /**

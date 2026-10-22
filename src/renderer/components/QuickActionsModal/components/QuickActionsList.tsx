@@ -61,6 +61,9 @@ export function QuickActionsList({
 						{startsBucket && bucket === 'idle' && (
 							<SectionHeader label="IDLE" color={theme.colors.textDim} />
 						)}
+						{startsBucket && bucket === 'hidden' && (
+							<SectionHeader label="HIDDEN" color={theme.colors.textDim} />
+						)}
 						<QuickActionRow
 							action={action}
 							isSelected={index === selectedIndex}

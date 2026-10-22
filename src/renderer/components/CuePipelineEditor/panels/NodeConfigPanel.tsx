@@ -6,7 +6,8 @@
  */
 
 import React, { useState } from 'react';
-import { Trash2, Zap, ChevronsUp, ChevronsDown, ChevronDown, Play, Loader2 } from 'lucide-react';
+import { Trash2, Zap, ChevronsUp, ChevronsDown, ChevronDown, Play } from 'lucide-react';
+import { Spinner } from '../../ui/Spinner';
 import type { Theme } from '../../../types';
 import type {
 	PipelineNode,
@@ -270,7 +271,7 @@ function NodeConfigPanelInner({
 							}}
 							title={isRunning ? 'Running...' : 'Run now'}
 						>
-							{isRunning ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+							{isRunning ? <Spinner size={14} decorative /> : <Play size={14} />}
 						</button>
 					)}
 					{!isTrigger && (

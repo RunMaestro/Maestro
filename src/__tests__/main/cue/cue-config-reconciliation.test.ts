@@ -14,6 +14,7 @@ import {
 	readCueConfigFile,
 	watchCueConfigFile,
 } from '../../../main/cue/config/cue-config-repository';
+import { logger } from '../../../main/utils/logger';
 import { writeCueYamlAtomicSync } from '../../../main/cue/cue-yaml-write';
 
 describe('YAML reconciliation when native notifications are lost', () => {
@@ -31,11 +32,13 @@ describe('YAML reconciliation when native notifications are lost', () => {
 	afterEach(() => {
 		cleanup?.();
 		vi.useRealTimers();
+		vi.restoreAllMocks();
 		fs.rmSync(root, { recursive: true, force: true });
 	});
-	it('recovers changed bytes despite equal size and timestamp, once, with a health warning', () => {
+	it('recovers changed bytes despite equal size and timestamp, once, with an informational log', () => {
 		fs.writeFileSync(config, 'subscriptions: [a]\n');
 		const stamp = fs.statSync(config).mtime;
+		const info = vi.spyOn(logger, 'info');
 		const onChange = vi.fn();
 		const onWarning = vi.fn();
 		cleanup = watchCueConfigFile(root, onChange, { onWarning });
@@ -43,7 +46,8 @@ describe('YAML reconciliation when native notifications are lost', () => {
 		fs.utimesSync(config, stamp, stamp);
 		vi.advanceTimersByTime(31_000);
 		expect(onChange).toHaveBeenCalledTimes(1);
-		expect(onWarning).toHaveBeenCalledWith(expect.stringContaining('Missed config change'));
+		expect(onWarning).not.toHaveBeenCalled();
+		expect(info).toHaveBeenCalledWith(expect.stringContaining('Missed config change'), 'CueConfig');
 		vi.advanceTimersByTime(60_000);
 		expect(onChange).toHaveBeenCalledTimes(1);
 	});
@@ -75,6 +79,18 @@ describe('YAML reconciliation when native notifications are lost', () => {
 		expect(onWarning).toHaveBeenCalledWith(expect.stringContaining('Config reload failed'));
 		vi.advanceTimersByTime(30_000);
 		expect(onChange).toHaveBeenCalledTimes(2);
+	});
+	it('alarms on watcher errors while retaining missed-change recovery', () => {
+		const onChange = vi.fn();
+		const onWarning = vi.fn();
+		cleanup = watchCueConfigFile(root, onChange, { onWarning });
+		const watcher = vi.mocked(watch).mock.results.at(-1)!.value;
+		watcher.emit('error', new Error('ENOSPC: watcher unavailable'));
+		expect(onWarning).toHaveBeenCalledWith(expect.stringContaining('Config watcher unhealthy'));
+		writeCueYamlAtomicSync(config, 'subscriptions: [a]\n');
+		vi.advanceTimersByTime(31_000);
+		expect(onChange).toHaveBeenCalledTimes(1);
+		expect(onWarning).toHaveBeenCalledTimes(1);
 	});
 	it('ignores a late native notification for loaded YAML using chokidar path separators', () => {
 		const loaded = readCueConfigFile(root);

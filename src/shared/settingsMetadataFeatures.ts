@@ -9,6 +9,8 @@
 import type { SettingMetadata } from './settingsMetadata';
 import { ENCORE_FEATURE_DEFAULTS } from './encoreFeatureDefaults';
 import { DEFAULT_CUE_HISTORY_RETENTION_DAYS } from './cue/retention';
+import { DEFAULT_QUICK_CHAT_SETTINGS } from './quickChat';
+import { DEFAULT_THROUGHPUT_GAUGE_SETTINGS } from './throughputGauge';
 
 export const FEATURES_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	// --- Integrations ---
@@ -76,6 +78,12 @@ export const FEATURES_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: { ...ENCORE_FEATURE_DEFAULTS },
 		category: 'advanced',
 	},
+	pianolaAutoWatchNewAgents: {
+		description: 'Automatically watch newly created top-level agents when Pianola is enabled.',
+		type: 'boolean',
+		default: false,
+		category: 'advanced',
+	},
 	directorNotesSettings: {
 		description:
 			"Director's Notes settings: provider (or auto-select), lookback window, default reading mode, optional ideal end state.",
@@ -86,6 +94,20 @@ export const FEATURES_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 			defaultLookbackDays: 7,
 			defaultMode: 'rich',
 		},
+		category: 'advanced',
+	},
+	quickChatSettings: {
+		description:
+			'Quick Chat settings: system-wide hotkey (key array, empty disables it), agent id (empty = the active agent), whether new chats are kept as visible tabs, whether ephemeral chats write History entries, and whether the window shows the agent thinking (off, on, sticky).',
+		type: 'object',
+		default: { ...DEFAULT_QUICK_CHAT_SETTINGS, hotkey: [...DEFAULT_QUICK_CHAT_SETTINGS.hotkey] },
+		category: 'advanced',
+	},
+	throughputGaugeSettings: {
+		description:
+			'Throughput Gauge settings: scope (all agents or the active agent), metric (combined, in, out), layout (one gauge or all three), style (dial, vu, lcd, sparkline), and the rolling-average window in ms (5000, 10000, 30000, 60000).',
+		type: 'object',
+		default: { ...DEFAULT_THROUGHPUT_GAUGE_SETTINGS },
 		category: 'advanced',
 	},
 	cueHistoryRetentionDays: {
@@ -149,6 +171,20 @@ export const FEATURES_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 			'Maximum number of background Coworking webviews kept alive at once (LRU-evicted, clamped 1-10).',
 		type: 'number',
 		default: 2,
+		category: 'advanced',
+	},
+	dataviewJsEnabled: {
+		description:
+			'Run `dataviewjs` blocks and inline `$=` spans in File Preview (Dataview Encore Feature). DataviewJS runs code from your notes, in an isolated sandbox, and only in vault roots you trust.',
+		type: 'boolean',
+		default: false,
+		category: 'advanced',
+	},
+	dataviewJsTrustedRoots: {
+		description:
+			'Vault roots (absolute paths) whose DataviewJS scripts run without asking. Manage with `maestro-cli dataview trust` and `untrust`.',
+		type: 'array',
+		default: [],
 		category: 'advanced',
 	},
 

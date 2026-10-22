@@ -70,6 +70,9 @@ export function serializedJsonByteLength(value: unknown): number | null {
 export type PluginCapability =
 	| 'fs:read' // read files under a path scope
 	| 'fs:write' // write files under a path scope
+	| 'services:call'
+	| 'services:provide'
+	| 'media:tools' // fixed Discord voice media profiles, opaque jobs only
 	| 'net:fetch' // HTTP(S) fetch to a host scope
 	| 'net:connect' // hold an outbound persistent websocket to a host scope (Discord/Slack gateway)
 	| 'agents:read' // list/read agents and their state
@@ -105,6 +108,9 @@ export type PluginCapability =
 export const PLUGIN_CAPABILITIES: readonly PluginCapability[] = [
 	'fs:read',
 	'fs:write',
+	'services:call',
+	'services:provide',
+	'media:tools',
 	'net:fetch',
 	'net:connect',
 	'agents:read',
@@ -155,6 +161,9 @@ const CAPABILITY_RISK: Record<PluginCapability, CapabilityRisk> = {
 	'sessions:focus': 'low',
 	'fs:read': 'medium',
 	'fs:watch': 'medium',
+	'services:call': 'high',
+	'services:provide': 'high',
+	'media:tools': 'high',
 	'net:fetch': 'medium',
 	'net:connect': 'high',
 	'sessions:read': 'medium',
@@ -194,6 +203,9 @@ const CAPABILITY_SCOPE_KIND: Record<PluginCapability, ScopeKind> = {
 	'fs:read': 'path',
 	'fs:write': 'path',
 	'fs:watch': 'path',
+	'services:call': 'allowlist',
+	'services:provide': 'allowlist',
+	'media:tools': 'allowlist',
 	'net:fetch': 'host',
 	'net:connect': 'host',
 	'agents:read': 'none',
@@ -289,7 +301,11 @@ function validateAllowlistScope(capability: PluginCapability, scope: unknown): s
 		return `capability "${capability}" allowlist scope has no valid members`;
 	}
 	for (const member of members) {
-		if (ALLOWLIST_MEMBER_FORBIDDEN.test(member)) {
+		const valid =
+			capability === 'services:call'
+				? isValidServiceCallTarget(member)
+				: !ALLOWLIST_MEMBER_FORBIDDEN.test(member);
+		if (!valid) {
 			return `capability "${capability}" allowlist member "${member}" contains forbidden characters (exact names only)`;
 		}
 	}
@@ -351,6 +367,12 @@ export function describeCapability(capability: PluginCapability): string {
 			return 'Read files';
 		case 'fs:write':
 			return 'Create and modify files';
+		case 'services:call':
+			return 'Call an explicitly bound plugin service (exact provider/service; bounded requests and results)';
+		case 'services:provide':
+			return 'Provide an own declared host-mediated service (exact service ID; no direct plugin IPC)';
+		case 'media:tools':
+			return 'Download Discord voice attachments and run fixed local media tools (8 MiB, 120 seconds; no general file or process access)';
 		case 'net:fetch':
 			return 'Make network requests (unscoped includes localhost and your internal network)';
 		case 'net:connect':
@@ -419,8 +441,13 @@ export function describeCapability(capability: PluginCapability): string {
 // --- Host API version (from shared/plugins/host-api.ts) ---------------------
 
 /**
- * The host API version this Maestro build implements. Bumped to 1.16.0 for three
- * backward-compatible additions: the metadata-only `session.activated` event
+ * The host API version this Maestro build implements. 1.25.0 adds resumable
+ * agents.send with public progress, verified plugin-tool caller identity, and
+ * isolated agents.generateTitle. 1.24.0 added host-mediated services.
+ * 1.23.0 adds independent
+ * plugin settings cards and host-owned navigation links. 1.17.0 added the bounded
+ * media:tools job API (Discord attachments and fixed local profiles).
+ * 1.16.0 added three backward-compatible additions: the metadata-only `session.activated` event
  * topic (`{ sessionId, tabId? }`, opaque ids only, fired when the focused agent
  * changes), the `sessions.focus` method plus its narrow `sessions:focus`
  * capability (navigate to an existing session's AI tab; no tab create/close
@@ -450,7 +477,7 @@ export function describeCapability(capability: PluginCapability): string {
  * `ui:contribute` / `ui:panel` / `ui:render-unsafe`; 1.3.0 added `tools` +
  * `keybindings`; 1.2.0 added `transcripts:read`.
  */
-export const HOST_API_VERSION = '1.16.0';
+export const HOST_API_VERSION = '1.25.0';
 
 /** Result of checking a plugin's declared host-API requirement. */
 export interface HostApiCompatibility {
@@ -469,7 +496,7 @@ function parseSemver(
 		`^v?(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-(${identifier}(?:\\.${identifier})*))?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$`
 	);
 	const m = re.exec(value.trim());
-	if (!m) return null;
+	if (!m || [m[1], m[2], m[3]].some((part) => !Number.isSafeInteger(Number(part)))) return null;
 	return {
 		major: Number(m[1]),
 		minor: Number(m[2]),
@@ -605,12 +632,16 @@ export interface PluginManifest {
 	 * requires no minHostApi bump.
 	 */
 	beta?: boolean;
+	/** Optional marketplace publication date, YYYY-MM-DD. */
+	releaseDate?: string;
 	/** Declarative contributions. Structurally validated; semantics land later. */
 	contributes?: Record<string, unknown>;
 	/** Relative path to the sandboxed code entrypoint. Required tier >= 1; forbidden tier 0. */
 	entry?: string;
 	/** Capabilities requested (tier >= 1). Validated against the fixed vocabulary. */
 	permissions?: PermissionRequest[];
+	provides?: ProvidedService[];
+	requires?: RequiredService[];
 }
 
 /** Outcome of validating one manifest. */
@@ -622,6 +653,8 @@ export interface ManifestValidationResult {
 /** Allowed plugin id shape: reverse-DNS-ish or kebab-case, starting with a
  * letter. Strict so an id is always safe as an object key and a log token. */
 export const PLUGIN_ID_PATTERN = /^[a-z][a-z0-9]*([._-][a-z0-9]+)*$/;
+
+const RELEASE_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 const SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)*$/;
 
@@ -646,6 +679,7 @@ export function validatePluginManifest(input: unknown): ManifestValidationResult
 		homepage,
 		category,
 		beta,
+		releaseDate,
 		contributes,
 		entry,
 		permissions,
@@ -716,6 +750,18 @@ export function validatePluginManifest(input: unknown): ManifestValidationResult
 	if (beta !== undefined && typeof beta !== 'boolean') {
 		errors.push('beta, when present, must be a boolean');
 	}
+	if (releaseDate !== undefined) {
+		if (typeof releaseDate !== 'string') {
+			errors.push('releaseDate, when present, must be a string');
+		} else if (!RELEASE_DATE_PATTERN.test(releaseDate.trim())) {
+			errors.push(`releaseDate "${releaseDate}" is invalid: use YYYY-MM-DD`);
+		} else if (
+			Number.isNaN(Date.parse(`${releaseDate.trim()}T00:00:00Z`)) ||
+			new Date(`${releaseDate.trim()}T00:00:00Z`).toISOString().slice(0, 10) !== releaseDate.trim()
+		) {
+			errors.push(`releaseDate "${releaseDate}" is not a real calendar date`);
+		}
+	}
 	if (contributes !== undefined && !isPlainObject(contributes)) {
 		errors.push('contributes, when present, must be an object');
 	}
@@ -750,6 +796,12 @@ export function validatePluginManifest(input: unknown): ManifestValidationResult
 		errors.push('tier 0 plugins are data-only and must not request permissions');
 	}
 
+	const services = parseServiceDeclarations(
+		(input as Record<string, unknown>).provides,
+		(input as Record<string, unknown>).requires,
+		normalizedTier
+	);
+	errors.push(...services.errors);
 	if (errors.length > 0) {
 		return { manifest: null, errors };
 	}
@@ -766,8 +818,11 @@ export function validatePluginManifest(input: unknown): ManifestValidationResult
 		...(isNonEmptyString(homepage) ? { homepage: (homepage as string).trim() } : {}),
 		...(normalizedCategory ? { category: normalizedCategory } : {}),
 		...(beta === true ? { beta: true } : {}),
+		...(isNonEmptyString(releaseDate) ? { releaseDate: (releaseDate as string).trim() } : {}),
 		...(isPlainObject(contributes) ? { contributes } : {}),
 		...(safeEntry ? { entry: safeEntry } : {}),
+		...(services.provides.length ? { provides: services.provides } : {}),
+		...(services.requires.length ? { requires: services.requires } : {}),
 		...(parsedPermissions.requests.length > 0 ? { permissions: parsedPermissions.requests } : {}),
 	};
 	return { manifest, errors: [] };
@@ -891,7 +946,8 @@ export interface CommandContribution {
 	description?: string;
 }
 
-/** Where a contributed panel docks. `modal` (default) keeps today's behavior. */
+/** Where a panel renders. `settings` uses an independent host Settings card,
+ * linked from the owning plugin's management page (Host API 1.23.0+). */
 export type PanelPlacement = 'modal' | 'left' | 'right' | 'main' | 'settings';
 
 /** Chrome size for a `modal` panel. `full` renders edge-to-edge (a summonable
@@ -909,6 +965,7 @@ export interface PanelContribution {
 	entry: string;
 	placement: PanelPlacement;
 	size: PanelSize;
+	hostSettings?: 'media'[];
 }
 
 /** A runtime agent a (tier-1) plugin registers - a Left Bar entry backed by a
@@ -1303,6 +1360,24 @@ export interface PluginEvent<T extends PluginEventTopic = PluginEventTopic> {
 export const HOST_API = {
 	'fs.read': { capability: 'fs:read' },
 	'fs.write': { capability: 'fs:write' },
+	'services.register': { capability: 'services:provide' },
+	'services.unregister': { capability: 'services:provide' },
+	'services.readiness': { capability: 'services:provide' },
+	'services.status': { capability: 'services:call' },
+	'services.openSettings': { capability: 'services:call' },
+	'services.start': { capability: 'services:call' },
+	'services.result': { capability: 'services:call' },
+	'services.cancel': { capability: 'services:call' },
+	'services.media.probe': { capability: 'media:tools' },
+	'services.media.decode': { capability: 'media:tools' },
+	'services.media.run': { capability: 'media:tools' },
+	'media.status': { capability: 'media:tools' },
+	'media.open': { capability: 'media:tools' },
+	'media.download': { capability: 'media:tools' },
+	'media.probe': { capability: 'media:tools' },
+	'media.decode': { capability: 'media:tools' },
+	'media.run': { capability: 'media:tools' },
+	'media.close': { capability: 'media:tools' },
 	'net.fetch': { capability: 'net:fetch' },
 	'net.connect': { capability: 'net:connect' },
 	'net.send': { capability: 'net:connect' },
@@ -1310,6 +1385,8 @@ export const HOST_API = {
 	'agents.list': { capability: 'agents:read' },
 	'agents.get': { capability: 'agents:read' },
 	'agents.dispatch': { capability: 'agents:dispatch' },
+	'agents.send': { capability: 'agents:dispatch' },
+	'agents.generateTitle': { capability: 'agents:dispatch' },
 	'notifications.toast': { capability: 'notifications:toast' },
 	'settings.get': { capability: 'settings:read' },
 	'settings.set': { capability: 'settings:write' },
@@ -1461,10 +1538,35 @@ export interface MaestroNetApi {
 }
 
 /** List/read agents (`agents:read`) and dispatch prompts (`agents:dispatch`). */
+export type AgentSendProgressEvent =
+	| { type: 'activity'; text: string; at: string }
+	| { type: 'commentary'; text: string; at: string }
+	| {
+			type: 'tool';
+			tool: string;
+			status: 'started' | 'completed' | 'failed';
+			at: string;
+			/** English public action, at most 120 chars, from allowlisted tool metadata. */
+			summary?: string;
+	  };
+
 export interface MaestroAgentsApi {
 	list(): Promise<unknown>;
 	get(agentId: string): Promise<unknown>;
 	dispatch(agentId: string, prompt: string, opts?: unknown): Promise<unknown>;
+	/** Isolated cheap naming turn; never creates or resumes a provider conversation. */
+	generateTitle(agentId: string, firstMessage: string): Promise<string | null>;
+	/** Fresh provider session unless sessionId is supplied; never a desktop tab id. */
+	send(
+		agentId: string,
+		prompt: string,
+		opts?: { sessionId?: string; onProgress?: (event: AgentSendProgressEvent) => void }
+	): Promise<{
+		success: boolean;
+		response: string | null;
+		sessionId: string | null;
+		error?: string;
+	}>;
 }
 
 /** Read metadata-only history entries (`history:read`). */
@@ -1576,9 +1678,9 @@ export interface MaestroUiApi {
 	 * (`ui:panel`). Delivered to the panel page as a `maestro:panelData` window
 	 * message; JSON-only, capped at MAX_PANEL_POST_BYTES, no reply channel. */
 	panelPost(panelId: string, data: unknown): Promise<void>;
-	/** Show one of this plugin's OWN `modal` panels as a host-drawn overlay
+	/** Open this plugin's own modal overlay or settings card (Host API 1.23.0)
 	 * (`ui:panel`). Own-panels-only: a foreign or namespaced id never resolves,
-	 * and a docked panel is rejected. */
+	 * and other docked placements are rejected. */
 	openPanel(panelId: string): Promise<void>;
 	/** Hide one of this plugin's own modal panels, if it is the open one. */
 	closePanel(panelId: string): Promise<void>;
@@ -1621,7 +1723,10 @@ export interface MaestroCommandsApi {
 
 /** Register handlers for agent tools the host invokes on this plugin. */
 export interface MaestroToolsApi {
-	register(localId: string, handler: (args: unknown) => unknown): void;
+	register(
+		localId: string,
+		handler: (args: unknown, context: { readonly callerAgentId: string | null }) => unknown
+	): void;
 }
 
 /** Ask the OS to open an external URL (`shell:openExternal`). */
@@ -1666,9 +1771,82 @@ export interface MaestroBackgroundApi {
 	list(): Promise<MaestroBackgroundHealth>;
 }
 
+/** Bounded media primitives. STT orchestration and result interpretation belong to plugins. */
+export const MEDIA_LIMITS = {
+	maxDownloadBytes: 8 * 1024 * 1024,
+	maxDurationSeconds: 120,
+	jobTimeoutMs: 120_000,
+	maxProcessOutputBytes: 16 * 1024,
+	maxResultBytes: 128 * 1024,
+	maxPcmBytes: 4 * 1024 * 1024,
+	maxJobsPerPlugin: 2,
+	maxJobs: 4,
+} as const;
+
+/** Only multilingual model IDs; never a plugin-selected filesystem path. */
+export const MEDIA_MODEL_IDS = [
+	'tiny',
+	'base',
+	'small',
+	'medium',
+	'large-v1',
+	'large-v2',
+	'large-v3',
+	'large-v3-turbo',
+] as const;
+export type MediaModelId = (typeof MEDIA_MODEL_IDS)[number];
+export const MEDIA_ERROR_CODES = [
+	'MediaInvalid',
+	'MediaDenied',
+	'MediaUnavailable',
+	'MediaTooLarge',
+	'MediaTooLong',
+	'MediaTimeout',
+	'MediaCancelled',
+	'MediaBusy',
+	'MediaProcessFailed',
+	'MediaOutputTooLarge',
+] as const;
+export type MediaErrorCode = (typeof MEDIA_ERROR_CODES)[number];
+
+/** Stable error.code across the host RPC; diagnostic text contains only this code. */
+export interface MediaFailure extends Error {
+	code: MediaErrorCode;
+}
+
+export interface MediaProbe {
+	container: 'ogg' | 'wav';
+	durationSeconds: number;
+	streams: { type: 'audio'; codec: 'opus' | 'pcm_s16le'; sampleRate: number; channels: number }[];
+}
+export interface MediaToolStatus {
+	profiles: 'whisper-cli'[];
+	models: MediaModelId[];
+	missing: ('ffprobe' | 'ffmpeg' | 'whisper-cli' | 'model-directory')[];
+}
+export interface MediaRunOptions {
+	profile: 'whisper-cli';
+	model: MediaModelId;
+	/** Lowercase Whisper language code or auto (default). Translation is always off. */
+	language?: string;
+}
+export interface MaestroMediaApi {
+	status(): Promise<MediaToolStatus>;
+	/** Reserves an opaque job without I/O. Fixed deadline starts here. */
+	open(): Promise<{ jobId: string }>;
+	download(jobId: string, url: string): Promise<{ audioId: string; bytes: number }>;
+	probe(jobId: string, audioId: string): Promise<MediaProbe>;
+	decode(jobId: string, audioId: string): Promise<{ audioId: string; durationSeconds: number }>;
+	run(jobId: string, audioId: string, options: MediaRunOptions): Promise<{ json: string }>;
+	/** Cancels pending work, waits for child exit and removes all artifacts. Idempotent. */
+	close(jobId: string): Promise<void>;
+}
+
 /** The full `maestro` runtime surface handed to `activate(maestro)`. Frozen and
  * namespaced exactly as the host injects it. */
 export interface MaestroSdk {
+	readonly services: MaestroServicesApi;
+	readonly media: MaestroMediaApi;
 	readonly pluginId: string;
 	readonly fs: MaestroFsApi;
 	readonly net: MaestroNetApi;
@@ -1707,4 +1885,236 @@ export function defineManifest(m: PluginManifest): PluginManifest {
 /** Identity helper: type-check a plugin module's activate/deactivate hooks. */
 export function definePlugin(p: PluginModule): PluginModule {
 	return p;
+}
+
+// Vendored host-known service contracts; parity is pinned by the SDK drift tests.
+export const TRANSCRIPTION_CONTRACT = 'maestro.audio.transcribe';
+export const TRANSCRIPTION_VERSION = '1.0.0';
+export const TRANSCRIPTION_LANGUAGES = ['de', 'en'] as const;
+export const SERVICE_LIMITS = {
+	declarations: 16,
+	requestBytes: 4096,
+	resultBytes: 64 * 1024,
+	textCharacters: 12_000,
+	calls: 4,
+	callsPerPlugin: 2,
+	timeoutMs: MEDIA_LIMITS.jobTimeoutMs,
+} as const;
+export const SERVICE_ERROR_CODES = [
+	'ServiceDenied',
+	'ServiceUnavailable',
+	'ServiceIncompatible',
+	'ServiceBusy',
+	'ServiceTimeout',
+	'ServiceCancelled',
+	'ServiceInvalid',
+	'ServiceEmpty',
+	'ServiceFailed',
+] as const;
+export type ServiceErrorCode = (typeof SERVICE_ERROR_CODES)[number];
+export interface ProvidedService {
+	id: string;
+	contract: typeof TRANSCRIPTION_CONTRACT;
+	version: string;
+	settingsPanel?: string;
+}
+export interface RequiredService {
+	id: string;
+	provider: string;
+	service: string;
+	contract: typeof TRANSCRIPTION_CONTRACT;
+	version: string;
+	optional?: boolean;
+}
+export interface TranscriptionRequest {
+	jobId: string;
+	audioId: string;
+	model: MediaModelId;
+	language: (typeof TRANSCRIPTION_LANGUAGES)[number];
+}
+export interface TranscriptionResult {
+	text: string;
+	language: string;
+	durationSeconds: number;
+	model: MediaModelId;
+	multilingual: true;
+	translated: false;
+}
+/** Provider sees minted aliases and the original deadline, never owner handles or URLs. */
+export interface TranscriptionInvocation {
+	callId: string;
+	audioId: string;
+	expiresAt: number;
+	model: MediaModelId;
+	language: (typeof TRANSCRIPTION_LANGUAGES)[number];
+}
+export interface PluginServiceStatus {
+	state: 'ready' | 'unavailable' | 'denied' | 'incompatible' | 'busy';
+	provider: string;
+	service: string;
+	contract: typeof TRANSCRIPTION_CONTRACT;
+	version?: string;
+	settingsTarget?: { kind: 'plugin-panel'; pluginId: string; panelId: string };
+	readiness?: MediaToolStatus & { languages: readonly string[] };
+}
+export interface ServiceInvocationContext {
+	isCancelled(): boolean;
+	onCancel(callback: () => void): () => void;
+}
+export interface MaestroServicesApi {
+	register(
+		serviceId: string,
+		handler: (
+			request: TranscriptionInvocation,
+			context: ServiceInvocationContext
+		) => Promise<TranscriptionResult>
+	): Promise<void>;
+	unregister(serviceId: string): Promise<void>;
+	status(requirementId: string): Promise<PluginServiceStatus>;
+	openSettings(requirementId: string): Promise<void>;
+	/** Reserves synchronously in the host. Caller must cancel a late successful start after local cancellation. */
+	start(requirementId: string, request: TranscriptionRequest): Promise<{ callId: string }>;
+	result(callId: string): Promise<TranscriptionResult>;
+	cancel(callId: string): Promise<void>;
+	/** Provider diagnostics, no paths, only for an own declared service with scoped consent. */
+	readiness(serviceId: string): Promise<MediaToolStatus & { languages: readonly string[] }>;
+	readonly media: {
+		probe(callId: string, audioId: string): Promise<MediaProbe>;
+		decode(callId: string, audioId: string): Promise<{ audioId: string; durationSeconds: number }>;
+		run(callId: string, audioId: string): Promise<{ json: string }>;
+	};
+}
+
+const LOCAL_SERVICE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
+const PROVIDER_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
+
+/** Exact provider/service pair, using the same bounded IDs as service declarations. */
+export function isValidServiceCallTarget(target: string): boolean {
+	const parts = target.split('/');
+	return (
+		parts.length === 2 &&
+		PROVIDER_ID.exec(parts[0])?.[0] === parts[0] &&
+		LOCAL_SERVICE_ID.exec(parts[1])?.[0] === parts[1]
+	);
+}
+
+/** Admit any non-null object except arrays; callers still enforce closed fields and domain constraints. */
+function object(value: unknown): value is Record<string, unknown> {
+	return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+/** Closed, bounded declarations; only contracts the host can validate are admitted. */
+export function parseServiceDeclarations(
+	provides: unknown,
+	requires: unknown,
+	tier: number
+): { provides: ProvidedService[]; requires: RequiredService[]; errors: string[] } {
+	const out: { provides: ProvidedService[]; requires: RequiredService[]; errors: string[] } = {
+		provides: [],
+		requires: [],
+		errors: [],
+	};
+	for (const [kind, raw] of [
+		['provides', provides],
+		['requires', requires],
+	] as const) {
+		if (raw === undefined) continue;
+		if (tier < 1 || !Array.isArray(raw) || raw.length > SERVICE_LIMITS.declarations) {
+			out.errors.push(
+				`${kind}: expected at most ${SERVICE_LIMITS.declarations} code-tier service declarations`
+			);
+			continue;
+		}
+		const ids = new Set<string>();
+		for (const item of raw) {
+			const allowed =
+				kind === 'provides'
+					? ['id', 'contract', 'version', 'settingsPanel']
+					: ['id', 'provider', 'service', 'contract', 'version', 'optional'];
+			if (
+				!object(item) ||
+				Object.keys(item).some((key) => !allowed.includes(key)) ||
+				typeof item.id !== 'string' ||
+				!LOCAL_SERVICE_ID.test(item.id) ||
+				ids.has(item.id) ||
+				item.contract !== TRANSCRIPTION_CONTRACT ||
+				typeof item.version !== 'string' ||
+				item.version.length > 128
+			) {
+				out.errors.push(`${kind}: invalid or duplicate service declaration`);
+				continue;
+			}
+			ids.add(item.id);
+			if (kind === 'provides') {
+				if (
+					!/^1\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(item.version) ||
+					!parseSemver(item.version) ||
+					parseSemver(item.version)?.major !== 1 ||
+					(item.settingsPanel !== undefined &&
+						(typeof item.settingsPanel !== 'string' || !LOCAL_SERVICE_ID.test(item.settingsPanel)))
+				) {
+					out.errors.push('provides: invalid contract version or settingsPanel');
+					continue;
+				}
+				out.provides.push(item as unknown as ProvidedService);
+			} else {
+				if (
+					typeof item.provider !== 'string' ||
+					!PROVIDER_ID.test(item.provider) ||
+					typeof item.service !== 'string' ||
+					!LOCAL_SERVICE_ID.test(item.service) ||
+					!/^\^?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(item.version) ||
+					!parseSemver(item.version.replace(/^\^/, '')) ||
+					(item.optional !== undefined && typeof item.optional !== 'boolean')
+				) {
+					out.errors.push(
+						'requires: invalid pinned provider, service, version range or optional flag'
+					);
+					continue;
+				}
+				out.requires.push(item as unknown as RequiredService);
+			}
+		}
+	}
+	return out;
+}
+
+/** Validate the closed request shape and supported model/language; handle ownership and consent are host checks. */
+export function isTranscriptionRequest(value: unknown): value is TranscriptionRequest {
+	return (
+		object(value) &&
+		Object.keys(value).length === 4 &&
+		Object.keys(value).every((k) => ['jobId', 'audioId', 'model', 'language'].includes(k)) &&
+		typeof value.jobId === 'string' &&
+		value.jobId.length > 0 &&
+		value.jobId.length <= 64 &&
+		typeof value.audioId === 'string' &&
+		value.audioId.length > 0 &&
+		value.audioId.length <= 64 &&
+		(MEDIA_MODEL_IDS as readonly unknown[]).includes(value.model) &&
+		(TRANSCRIPTION_LANGUAGES as readonly unknown[]).includes(value.language)
+	);
+}
+/** Require nonempty bounded text, valid duration and the requested model/language without translation. */
+export function isTranscriptionResult(
+	value: unknown,
+	expected: Pick<TranscriptionRequest, 'model' | 'language'>
+): value is TranscriptionResult {
+	return (
+		object(value) &&
+		Object.keys(value).length === 6 &&
+		Object.keys(value).every((k) =>
+			['text', 'language', 'durationSeconds', 'model', 'multilingual', 'translated'].includes(k)
+		) &&
+		typeof value.text === 'string' &&
+		value.text.trim().length > 0 &&
+		value.text.length <= SERVICE_LIMITS.textCharacters &&
+		value.language === expected.language &&
+		value.model === expected.model &&
+		value.multilingual === true &&
+		value.translated === false &&
+		typeof value.durationSeconds === 'number' &&
+		Number.isFinite(value.durationSeconds) &&
+		value.durationSeconds > 0 &&
+		value.durationSeconds <= MEDIA_LIMITS.maxDurationSeconds
+	);
 }

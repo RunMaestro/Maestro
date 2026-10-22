@@ -19,13 +19,16 @@ import {
 	emptyQueueState,
 	enqueueMessage,
 	failHead,
+	markSending,
 	mustQueue,
 	parseQueueState,
 	pauseQueue,
 	removeItem,
 	reorderItem,
+	requeueAtFront,
 	requeueFailedAtFront,
 	resumeQueue,
+	unmarkSending,
 } from '../../shared/groupChatQueueModel';
 import type { GroupChatQueuedItem } from '../../shared/group-chat-types';
 
@@ -182,6 +185,36 @@ describe('editing the queue', () => {
 	it('ignores a reorder for an item that is gone', () => {
 		const state = queueOf('1', '2');
 		expect(reorderItem(state, 'missing', 0)).toBe(state);
+	});
+});
+
+describe('steering: a message the running round never took', () => {
+	it('requeueAtFront puts it first, live, without pausing or marking it', () => {
+		const state = queueOf('1', '2');
+		const next = requeueAtFront(state, item('9', 'steered'));
+		expect(next.items.map((i) => i.id)).toEqual(['9', '1', '2']);
+		expect(next.paused).toBe(false);
+		expect(next.items[0]).toEqual(item('9', 'steered'));
+		expect(state.items.map((i) => i.id)).toEqual(['1', '2']);
+	});
+
+	it('requeueAtFront leaves a paused queue paused', () => {
+		const paused = { ...queueOf('1'), paused: true };
+		expect(requeueAtFront(paused, item('9')).paused).toBe(true);
+	});
+
+	it('unmarkSending clears only the named item, in place', () => {
+		const state = markSending(markSending(queueOf('1', '2', '3'), '2'), '3');
+		const next = unmarkSending(state, '2');
+		expect(next.items.map((i) => i.id)).toEqual(['1', '2', '3']);
+		expect(next.items[1].sending).toBeUndefined();
+		expect(next.items[2].sending).toBe(true);
+		expect(next.paused).toBe(state.paused);
+	});
+
+	it('unmarkSending is a no-op for an item that is gone', () => {
+		const state = markSending(queueOf('1'), '1');
+		expect(unmarkSending(state, 'missing').items).toEqual(state.items);
 	});
 });
 

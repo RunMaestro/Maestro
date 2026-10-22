@@ -1,11 +1,15 @@
+import { requestProviderTranslation } from '../../../../renderer/services/providerTranslation';
+vi.mock('../../../../renderer/services/providerTranslation', () => ({
+	requestProviderTranslation: vi.fn(),
+}));
 /**
  * @fileoverview Tests for EditAgentModal component
  * Tests: rendering, form population, validation, save handling,
  * provider switching, SSH config, keyboard shortcuts
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { act, render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { EditAgentModal } from '../../../../renderer/components/NewInstanceModal/EditAgentModal';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import type { Theme, Session, AgentConfig } from '../../../../renderer/types';
@@ -78,6 +82,26 @@ describe('EditAgentModal', () => {
 	let onSave: ReturnType<typeof vi.fn>;
 
 	beforeEach(() => {
+		// Clear the call log too, or "not called" assertions see earlier tests' plans.
+		vi.mocked(requestProviderTranslation)
+			.mockClear()
+			.mockResolvedValue({
+				success: true,
+				plan: {
+					id: 'plan',
+					status: 'ready',
+					tabs: [],
+					counts: { records: 0, artifacts: 0, bytes: 0 },
+					verification: 'unverified',
+					limitations: [
+						{
+							code: 'unverified-native-resume',
+							message: 'Native resume remains unverified',
+							severity: 'warning',
+						},
+					],
+				} as any,
+			});
 		theme = createTheme();
 		onClose = vi.fn();
 		onSave = vi.fn();
@@ -223,9 +247,9 @@ describe('EditAgentModal', () => {
 
 		expect(onSave).toHaveBeenCalledTimes(1);
 		const args = onSave.mock.calls[0];
-		// `workingDirectory` is second-from-last now that `codexAutoResetOnExhaustion`
-		// trails it - anchor on the slot rather than on "last".
-		expect(args[args.length - 2]).toBe('/home/user/moved-project');
+		// `workingDirectory` is third-from-last now that `codexAutoResetOnExhaustion`
+		// and `codexTransport` trail it - anchor on the slot rather than on "last".
+		expect(args[args.length - 3]).toBe('/home/user/moved-project');
 	});
 
 	it('should refuse a local working directory that does not exist', async () => {
@@ -310,9 +334,9 @@ describe('EditAgentModal', () => {
 
 		expect(onSave).toHaveBeenCalled();
 		const args = onSave.mock.calls[0];
-		// `workingDirectory` is second-from-last now that `codexAutoResetOnExhaustion`
-		// trails it - anchor on the slot rather than on "last".
-		expect(args[args.length - 2]).toBeUndefined(); // workingDirectory unchanged
+		// `workingDirectory` is third-from-last now that `codexAutoResetOnExhaustion`
+		// and `codexTransport` trail it - anchor on the slot rather than on "last".
+		expect(args[args.length - 3]).toBeUndefined(); // workingDirectory unchanged
 	});
 
 	it('should refuse a new SSH working directory the remote reports is not a directory', async () => {
@@ -415,34 +439,391 @@ describe('EditAgentModal', () => {
 		);
 
 		await waitFor(() => {
-			const providerSelect = screen.getByDisplayValue('Claude Code');
-			expect(providerSelect).toBeInTheDocument();
+			const providerSelect = screen.getByRole('button', { name: 'Agent Provider' });
+			expect(providerSelect).toHaveTextContent('Claude Code');
 		});
 	});
 
 	it('should show provider change notice when provider is changed', async () => {
+		const session = createSession({ toolType: 'claude-code' });
+		const { rerender } = render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={session}
+				existingSessions={[]}
+			/>
+		);
+
+		const providerSelect = screen.getByRole('button', { name: 'Agent Provider' });
+
+		// Change provider
+		fireEvent.click(providerSelect);
+		fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
+		rerender(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={{ ...session, providerTranslationTabInventory: [] }}
+				existingSessions={[]}
+			/>
+		);
+		expect(providerSelect).toHaveTextContent('Codex');
+
+		// A plain switch is the default: nothing is converted.
+		await waitFor(() => {
+			expect(
+				screen.getByText(
+					/Tabs, transcripts, drafts, queue and file previews are kept\. Each tab starts a new Codex conversation; switching back to Claude Code resumes/
+				)
+			).toBeInTheDocument();
+		});
+		expect(requestProviderTranslation).not.toHaveBeenCalled();
+		fireEvent.click(screen.getByLabelText('Convert memory and session history'));
+		await waitFor(() => {
+			expect(
+				screen.getByText(/Tabs, transcripts, drafts, queue and file previews are preserved/)
+			).toBeInTheDocument();
+		});
+		// The old copy promised the opposite. Tabs are preserved now, so the notice
+		// must never tell the user their tabs will be cleared.
+		expect(screen.queryByText(/clear your session list/)).not.toBeInTheDocument();
+	});
+
+	it('marks only destinations with memory and history carry from the original provider', () => {
 		render(
 			<EditAgentModal
 				isOpen={true}
 				onClose={onClose}
 				onSave={onSave}
 				theme={theme}
-				session={createSession({ toolType: 'claude-code' })}
+				session={createSession()}
 				existingSessions={[]}
 			/>
 		);
+		const hint = screen.getByText(/Some providers support the ability to transfer sessions/);
+		expect(hint).toHaveTextContent(
+			'Some providers support the ability to transfer sessions, memories, subagents, etc between them. They are denoted as Carry Over in the list.'
+		);
+		const hintBadge = within(hint).getByText('Carry Over');
+		fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
+		const destination = screen.getByRole('option', { name: 'Codex Carry Over' });
+		expect(within(destination).getByText('Carry Over').className).toBe(hintBadge.className);
+		expect(within(destination).getByText('Carry Over').getAttribute('style')).toBe(
+			hintBadge.getAttribute('style')
+		);
+		expect(screen.getByRole('option', { name: 'Claude Code' })).toBeInTheDocument();
+		expect(screen.getByRole('option', { name: 'OpenCode' })).toBeInTheDocument();
+		fireEvent.click(screen.getByRole('option', { name: 'OpenCode' }));
+		// Selection is not a completed switch: compatibility still uses the original Claude source.
+		fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
+		expect(screen.getByRole('option', { name: 'Codex Carry Over' })).toBeInTheDocument();
+	});
 
-		const providerSelect = await screen.findByDisplayValue('Claude Code');
+	it('marks the reverse Claude destination for a Codex agent', () => {
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={createSession({ toolType: 'codex' })}
+				existingSessions={[]}
+			/>
+		);
+		fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
+		expect(screen.getByRole('option', { name: 'Claude Code Carry Over' })).toBeInTheDocument();
+		expect(screen.getByRole('option', { name: 'Codex' })).toBeInTheDocument();
+	});
 
-		// Change provider
-		fireEvent.change(providerSelect, { target: { value: 'codex' } });
+	it('shows no carry badge when the source provider has no conversion adapter', () => {
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={createSession({ toolType: 'opencode' })}
+				existingSessions={[]}
+			/>
+		);
+		fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
+		expect(screen.queryByRole('option', { name: /Carry Over/ })).not.toBeInTheDocument();
+		expect(
+			screen.getByText(/Some providers support the ability to transfer sessions/)
+		).toBeInTheDocument();
+	});
 
-		await waitFor(() => {
-			expect(screen.getByText(/Your tabs and their transcripts are kept/)).toBeInTheDocument();
+	it('clears the reading indicator and saves plainly if preflight rejects', async () => {
+		vi.mocked(requestProviderTranslation).mockRejectedValueOnce(new Error('Cannot read history'));
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={createSession()}
+				existingSessions={[]}
+			/>
+		);
+		fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
+		fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
+		fireEvent.click(screen.getByLabelText('Convert memory and session history'));
+		expect(screen.getByRole('status')).toHaveTextContent('Reading memory and session history...');
+		expect(await screen.findByRole('alert')).toHaveTextContent('Cannot read history');
+		expect(screen.queryByText('Reading memory and session history...')).not.toBeInTheDocument();
+		// A failed conversion never blocks saving: the notice says the save is a plain switch.
+		expect(
+			screen.getByText(
+				'The conversion cannot run, so saving switches providers without converting.'
+			)
+		).toBeInTheDocument();
+		fireEvent.click(screen.getByText('Save Changes'));
+		await waitFor(() => expect(onSave).toHaveBeenCalled());
+		expect(onSave.mock.calls[0].slice(23)).toEqual([]);
+	});
+
+	it('shows translation activity and locks the provider picker until save completes', async () => {
+		let finishSave!: () => void;
+		onSave.mockImplementation(
+			() =>
+				new Promise<void>((resolve) => {
+					finishSave = resolve;
+				})
+		);
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={createSession()}
+				existingSessions={[]}
+			/>
+		);
+		const picker = screen.getByRole('button', { name: 'Agent Provider' });
+		fireEvent.click(picker);
+		fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
+		fireEvent.click(screen.getByLabelText('Convert memory and session history'));
+		await screen.findByText('Native resume remains unverified');
+		fireEvent.click(screen.getByText('Save Changes'));
+		expect(screen.getByRole('status')).toHaveTextContent(
+			'Translating memory and session history...'
+		);
+		expect(picker).toBeDisabled();
+		finishSave();
+		await waitFor(() => expect(onClose).toHaveBeenCalled());
+		expect(screen.queryByText('Translating memory and session history...')).not.toBeInTheDocument();
+	});
+
+	it('advances deferred activity from waiting to translation using the live operation state', async () => {
+		const previousSessions = useSessionStore.getState().sessions;
+		const session = createSession();
+		vi.mocked(requestProviderTranslation).mockResolvedValue({
+			success: true,
+			plan: {
+				id: 'plan',
+				status: 'deferred',
+				tabs: [],
+				counts: { records: 0, artifacts: 0, bytes: 0 },
+				limitations: [
+					{ code: 'unverified-native-resume', message: 'Review conversion', severity: 'warning' },
+				],
+			} as any,
 		});
-		// The old copy promised the opposite. Tabs are preserved now, so the notice
-		// must never tell the user their tabs will be cleared.
-		expect(screen.queryByText(/clear your session list/)).not.toBeInTheDocument();
+		let finishSave!: () => void;
+		onSave.mockImplementation(
+			() =>
+				new Promise<void>((resolve) => {
+					finishSave = resolve;
+				})
+		);
+		try {
+			render(
+				<EditAgentModal
+					isOpen={true}
+					onClose={onClose}
+					onSave={onSave}
+					theme={theme}
+					session={session}
+					existingSessions={[]}
+				/>
+			);
+			fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
+			fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
+			fireEvent.click(screen.getByLabelText('Convert memory and session history'));
+			await screen.findByText('Review conversion');
+			fireEvent.click(screen.getByText('Save Changes'));
+			expect(screen.getByRole('status')).toHaveTextContent(
+				'Waiting for the current turn to finish...'
+			);
+			act(() =>
+				useSessionStore.setState({
+					sessions: [
+						{
+							...session,
+							providerMigration: {
+								operationId: 'plan',
+								destination: 'codex',
+								state: 'staging',
+								verification: 'unverified',
+							},
+						},
+					],
+				})
+			);
+			expect(screen.getByRole('status')).toHaveTextContent(
+				'Translating memory and session history...'
+			);
+			finishSave();
+			await waitFor(() => expect(onClose).toHaveBeenCalled());
+		} finally {
+			act(() => useSessionStore.setState({ sessions: previousSessions }));
+		}
+	});
+
+	it('shows conversion limitations as a notice and saves with them accepted', async () => {
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={createSession()}
+				existingSessions={[]}
+			/>
+		);
+		fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
+		fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
+		fireEvent.click(screen.getByLabelText('Convert memory and session history'));
+		expect(await screen.findByText('Native resume remains unverified')).toBeInTheDocument();
+		expect(
+			screen.queryByLabelText('Accept the listed conversion limitations')
+		).not.toBeInTheDocument();
+		const save = screen.getByText('Save Changes').closest('button')!;
+		expect(save).not.toBeDisabled();
+		fireEvent.click(save);
+		await waitFor(() => expect(onSave).toHaveBeenCalled());
+		const args = onSave.mock.calls[0];
+		// acceptTranslationLimitations, resources, plan id, convert flag
+		expect(args.slice(23)).toEqual([true, [], 'plan', true]);
+	});
+
+	it('switches provider without converting by default', async () => {
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={createSession()}
+				existingSessions={[]}
+			/>
+		);
+		fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
+		fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
+		expect(screen.getByLabelText('Convert memory and session history')).not.toBeChecked();
+		const save = screen.getByText('Save Changes').closest('button')!;
+		await waitFor(() => expect(save).not.toBeDisabled());
+		fireEvent.click(save);
+		await waitFor(() => expect(onSave).toHaveBeenCalled());
+		expect(requestProviderTranslation).not.toHaveBeenCalled();
+		const args = onSave.mock.calls[0];
+		expect(args[2]).toBe('codex');
+		// No conversion arguments: the save does a plain switch.
+		expect(args.slice(23)).toEqual([]);
+	});
+
+	it('offers no conversion for a provider pair without an adapter, and still saves', async () => {
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={createSession()}
+				existingSessions={[]}
+			/>
+		);
+		fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
+		fireEvent.click(screen.getByRole('option', { name: 'OpenCode' }));
+		expect(screen.queryByLabelText('Convert memory and session history')).not.toBeInTheDocument();
+		const save = screen.getByText('Save Changes').closest('button')!;
+		await waitFor(() => expect(save).not.toBeDisabled());
+		fireEvent.click(save);
+		await waitFor(() => expect(onSave).toHaveBeenCalled());
+		expect(onSave.mock.calls[0][2]).toBe('opencode');
+		expect(requestProviderTranslation).not.toHaveBeenCalled();
+	});
+
+	it('saves a plain switch when an opted-in conversion is blocked', async () => {
+		vi.mocked(requestProviderTranslation).mockResolvedValue({
+			success: true,
+			plan: {
+				id: 'plan',
+				status: 'blocked',
+				tabs: [],
+				counts: { records: 0, artifacts: 0, bytes: 0 },
+				limitations: [
+					{ code: 'unsupported-version', message: 'Codex is too old', severity: 'block' },
+				],
+			} as any,
+		});
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={createSession()}
+				existingSessions={[]}
+			/>
+		);
+		fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
+		fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
+		fireEvent.click(screen.getByLabelText('Convert memory and session history'));
+		expect(await screen.findByText('Codex is too old')).toBeInTheDocument();
+		const save = screen.getByText('Save Changes').closest('button')!;
+		expect(save).not.toBeDisabled();
+		expect(screen.getByText(/The conversion cannot run/)).toBeInTheDocument();
+		fireEvent.click(save);
+		await waitFor(() => expect(onSave).toHaveBeenCalled());
+		const args = onSave.mock.calls[0];
+		expect(args[2]).toBe('codex');
+		expect(args.slice(23)).toEqual([]);
+		await waitFor(() => expect(onClose).toHaveBeenCalled());
+	});
+
+	it('seeds the form with what the incoming provider parked, so a switch back keeps it', async () => {
+		render(
+			<EditAgentModal
+				isOpen={true}
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={createSession({
+					providerOverrides: {
+						codex: { customPath: '/opt/codex', customArgs: '--search' },
+					},
+				})}
+				existingSessions={[]}
+			/>
+		);
+		fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
+		fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
+		const save = screen.getByText('Save Changes').closest('button')!;
+		await waitFor(() => expect(save).not.toBeDisabled());
+		fireEvent.click(save);
+		await waitFor(() => expect(onSave).toHaveBeenCalled());
+		const args = onSave.mock.calls[0];
+		// Codex's parked binary and arguments, not Claude's live ones or blanks.
+		expect(args[5]).toBe('/opt/codex');
+		expect(args[6]).toBe('--search');
+		expect(args[7]).toBeUndefined();
 	});
 
 	// Effort is per-session (like model), but the panel used to render it straight
@@ -520,7 +901,8 @@ describe('EditAgentModal', () => {
 				// provenance is recorded and P1 precedence stands (finding AD1)
 				undefined, // customEnvVarsDisabled (nothing switched off)
 				undefined, // workingDirectory unchanged
-				false // codexAutoResetOnExhaustion: off by default
+				false, // codexAutoResetOnExhaustion: off by default
+				'exec' // codexTransport: Standard by default
 			);
 		});
 
@@ -620,7 +1002,8 @@ describe('EditAgentModal', () => {
 			// provenance is recorded and P1 precedence stands (finding AD1)
 			undefined, // customEnvVarsDisabled (nothing switched off)
 			undefined, // workingDirectory unchanged
-			false // codexAutoResetOnExhaustion: off by default
+			false, // codexAutoResetOnExhaustion: off by default
+			'exec' // codexTransport: Standard by default
 		);
 		expect(onClose).toHaveBeenCalled();
 	});
@@ -857,7 +1240,8 @@ describe('EditAgentModal', () => {
 			// provenance is recorded and P1 precedence stands (finding AD1)
 			undefined, // customEnvVarsDisabled (nothing switched off)
 			undefined, // workingDirectory unchanged
-			false // codexAutoResetOnExhaustion: off by default
+			false, // codexAutoResetOnExhaustion: off by default
+			'exec' // codexTransport: Standard by default
 		);
 	});
 
@@ -934,7 +1318,8 @@ describe('EditAgentModal', () => {
 			// provenance is recorded and P1 precedence stands (finding AD1)
 			undefined, // customEnvVarsDisabled (nothing switched off)
 			undefined, // workingDirectory unchanged
-			false // codexAutoResetOnExhaustion: off by default
+			false, // codexAutoResetOnExhaustion: off by default
+			'exec' // codexTransport: Standard by default
 		);
 	});
 
@@ -1017,7 +1402,8 @@ describe('EditAgentModal', () => {
 			// provenance is recorded and P1 precedence stands (finding AD1)
 			undefined, // customEnvVarsDisabled (nothing switched off)
 			undefined, // workingDirectory unchanged
-			false // codexAutoResetOnExhaustion: off by default
+			false, // codexAutoResetOnExhaustion: off by default
+			'exec' // codexTransport: Standard by default
 		);
 	});
 
@@ -1259,11 +1645,9 @@ describe('EditAgentModal', () => {
 				await screen.findByDisplayValue('200000');
 				expect(note()).toBeInTheDocument();
 
-				// ...and gone once a different provider is selected. The provider
-				// control is a <select>, so change it rather than clicking a label.
-				fireEvent.change(screen.getByDisplayValue('Claude Code'), {
-					target: { value: 'codex' },
-				});
+				// ...and gone once a different provider is selected.
+				fireEvent.click(screen.getByRole('button', { name: 'Agent Provider' }));
+				fireEvent.click(screen.getByRole('option', { name: 'Codex Carry Over' }));
 				// The control itself is still on screen - the note is gone, not the panel.
 				await waitFor(() => expect(note()).not.toBeInTheDocument());
 				expect(screen.getByDisplayValue('200000')).toBeInTheDocument();
@@ -1443,7 +1827,8 @@ describe('EditAgentModal', () => {
 			fireEvent.click(screen.getByText('Save Changes'));
 
 			const args = onSave.mock.calls[0];
-			expect(args[args.length - 1]).toBe(true);
+			// `codexTransport` trails it, so the reset flag is second-from-last.
+			expect(args[args.length - 2]).toBe(true);
 		});
 
 		it('carries an opt-OUT out through Save', async () => {
@@ -1456,7 +1841,7 @@ describe('EditAgentModal', () => {
 			fireEvent.click(screen.getByText('Save Changes'));
 
 			const args = onSave.mock.calls[0];
-			expect(args[args.length - 1]).toBe(false);
+			expect(args[args.length - 2]).toBe(false);
 		});
 
 		it('is absent for a provider with no reset credits', async () => {
@@ -1473,6 +1858,271 @@ describe('EditAgentModal', () => {
 
 			await waitFor(() => expect(screen.getByDisplayValue('My Agent')).toBeInTheDocument());
 			expect(screen.queryByTestId('codex-auto-reset-option')).not.toBeInTheDocument();
+		});
+
+		// The transport rides the same Codex-only slot. Load and Save are both
+		// pinned: a Save that dropped the value would silently put an opted-in
+		// agent back on codex exec.
+		describe('Codex transport', () => {
+			const appServerButton = () => screen.getByText('codex app-server').closest('button');
+
+			it('loads Standard for an agent that never opted in, and saves exec', async () => {
+				renderCodex(codexSession());
+
+				await waitFor(() => expect(screen.getByText('Codex Transport')).toBeInTheDocument());
+				expect(appServerButton()?.className).not.toContain('ring-2');
+				fireEvent.click(screen.getByText('Save Changes'));
+
+				const args = onSave.mock.calls[0];
+				expect(args[args.length - 1]).toBe('exec');
+			});
+
+			it('reflects a stored app-server choice', async () => {
+				renderCodex(codexSession({ codexTransport: 'app-server' }));
+
+				await waitFor(() => expect(appServerButton()?.className).toContain('ring-2'));
+			});
+
+			it('carries a new app-server choice out through Save', async () => {
+				renderCodex(codexSession());
+
+				await waitFor(() => expect(screen.getByText('Codex Transport')).toBeInTheDocument());
+				fireEvent.click(appServerButton()!);
+				fireEvent.click(screen.getByText('Save Changes'));
+
+				const args = onSave.mock.calls[0];
+				expect(args[args.length - 1]).toBe('app-server');
+			});
+
+			it('is absent for a non-Codex agent', async () => {
+				render(
+					<EditAgentModal
+						isOpen={true}
+						onClose={onClose}
+						onSave={onSave}
+						theme={theme}
+						session={createSession()}
+						existingSessions={[]}
+					/>
+				);
+
+				await waitFor(() => expect(screen.getByDisplayValue('My Agent')).toBeInTheDocument());
+				expect(screen.queryByTestId('codex-transport-option')).not.toBeInTheDocument();
+			});
+		});
+	});
+
+	// The export section saves its own changes into its own store. Nothing of
+	// it may ride along with Save: Save writes the Session object, and that
+	// object lands in a file the CLI reads.
+	describe('chain of thought export section', () => {
+		/** A name unlike anything else in the dialog, so a leak of the folder is found by it. */
+		const LOG_FOLDER = '/audit/turn-log-7f3c91d2';
+		const TOGGLE_LABEL = 'Keep an audit log for this agent';
+		const UNSUPPORTED_NOTE = /This provider does not expose its reasoning\./;
+		const INTERACTIVE_NOTE =
+			/Reasoning may be missing while this agent runs through the interactive/;
+
+		type Choice = { enabled: boolean; folder: string | null };
+		const statusOf = (choice: Choice) => ({ ...choice, turnsToday: 0, unencrypted: false });
+
+		/** A fake `window.maestro.cotExport` that keeps what it is told, as the store does. */
+		function installCotExport(initial: Choice = { enabled: false, folder: null }) {
+			let stored = initial;
+			const api = {
+				get: vi.fn(),
+				set: vi.fn(async (_agentId: string, choice: Choice) => {
+					stored = choice;
+					return { ok: true, status: statusOf(stored) };
+				}),
+				status: vi.fn(async () => statusOf(stored)),
+				validateFolder: vi.fn(async (_agentId: string, folder: string) => ({
+					ok: true,
+					resolved: folder,
+				})),
+				verify: vi.fn(async () => []),
+			};
+			(window.maestro as any).cotExport = api;
+			return api;
+		}
+
+		const renderModal = (session: Session = createSession()) =>
+			render(
+				<EditAgentModal
+					isOpen={true}
+					onClose={onClose}
+					onSave={onSave}
+					theme={theme}
+					session={session}
+					existingSessions={[]}
+				/>
+			);
+
+		/** The form, once the agent and its config have loaded: what Save reads. */
+		const formReady = () =>
+			waitFor(() => {
+				expect(screen.getByDisplayValue('My Agent')).toBeInTheDocument();
+				expect(screen.queryAllByText('Claude Code Settings').length).toBeGreaterThan(0);
+			});
+
+		/** The section, once its first status has arrived and its controls are free. */
+		const sectionReady = () =>
+			waitFor(() => expect(screen.getByText('Choose Folder')).not.toBeDisabled());
+
+		let originalDialog: unknown;
+
+		beforeEach(() => {
+			originalDialog = (window.maestro as any).dialog;
+		});
+
+		afterEach(() => {
+			delete (window.maestro as any).cotExport;
+			(window.maestro as any).dialog = originalDialog;
+		});
+
+		it('is absent where the API is not exposed', async () => {
+			renderModal();
+
+			await formReady();
+			expect(screen.queryByText('Audit Log')).not.toBeInTheDocument();
+		});
+
+		it('mounts directly after Agent Resilience, for the agent being edited', async () => {
+			const api = installCotExport();
+			renderModal(createSession({ id: 'agent-under-edit' }));
+
+			const section = await screen.findByTestId('cot-export-section');
+			expect(section.previousElementSibling).toHaveTextContent('Agent Resilience');
+			expect(api.status).toHaveBeenCalledWith('agent-under-edit');
+		});
+
+		it('keeps every export change out of Save', async () => {
+			// What Save hands over with the feature absent...
+			const without = renderModal();
+			await formReady();
+			fireEvent.click(screen.getByText('Save Changes'));
+			const baseline = onSave.mock.calls[0];
+			expect(baseline).toBeDefined();
+			without.unmount();
+			onSave.mockClear();
+
+			// ...is what it hands over after a folder was chosen and export turned on.
+			const api = installCotExport();
+			const selectFolder = vi.fn().mockResolvedValue(LOG_FOLDER);
+			(window.maestro as any).dialog = { ...(window.maestro as any).dialog, selectFolder };
+			renderModal();
+			await formReady();
+			await sectionReady();
+
+			fireEvent.click(screen.getByText('Choose Folder'));
+			await waitFor(() =>
+				expect(screen.getByTestId('cot-export-folder')).toHaveTextContent(LOG_FOLDER)
+			);
+			fireEvent.click(screen.getByLabelText(TOGGLE_LABEL));
+			await waitFor(() =>
+				expect(screen.getByRole('switch', { name: TOGGLE_LABEL })).toHaveAttribute(
+					'aria-checked',
+					'true'
+				)
+			);
+
+			// The section saved both changes itself, the moment they were made.
+			expect(api.set).toHaveBeenNthCalledWith(1, 'session-123', {
+				enabled: false,
+				folder: LOG_FOLDER,
+			});
+			expect(api.set).toHaveBeenNthCalledWith(2, 'session-123', {
+				enabled: true,
+				folder: LOG_FOLDER,
+			});
+			expect(onSave).not.toHaveBeenCalled();
+
+			fireEvent.click(screen.getByText('Save Changes'));
+
+			const saved = onSave.mock.calls[0];
+			expect(saved).toEqual(baseline);
+			expect(JSON.stringify(saved)).not.toMatch(
+				/cot[-_ ]?export|chain of thought|turn-log-7f3c91d2/i
+			);
+		});
+
+		it('notes a provider that does not expose its reasoning', async () => {
+			installCotExport();
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				{
+					id: 'claude-code',
+					name: 'Claude Code',
+					available: true,
+					path: '/usr/local/bin/claude',
+					binaryName: 'claude',
+					hidden: false,
+					capabilities: { supportsThinkingDisplay: false },
+				} as unknown as AgentConfig,
+			]);
+			renderModal();
+
+			expect(await screen.findByText(UNSUPPORTED_NOTE)).toBeInTheDocument();
+		});
+
+		it('shows no reasoning note for a provider that exposes it', async () => {
+			installCotExport();
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				{
+					id: 'claude-code',
+					name: 'Claude Code',
+					available: true,
+					path: '/usr/local/bin/claude',
+					binaryName: 'claude',
+					hidden: false,
+					capabilities: { supportsThinkingDisplay: true },
+				} as unknown as AgentConfig,
+			]);
+			renderModal();
+			await sectionReady();
+
+			expect(screen.queryByText(UNSUPPORTED_NOTE)).not.toBeInTheDocument();
+		});
+
+		it.each([
+			['interactive', { enableMaestroP: true, maestroPMode: 'interactive' }],
+			// Dynamic starts every turn on the TUI and leaves it only near a limit.
+			['dynamic', { enableMaestroP: true, maestroPMode: 'dynamic' }],
+		] as const)(
+			'notes that reasoning may be missing on the %s token source',
+			async (_mode, source) => {
+				installCotExport();
+				renderModal(createSession(source));
+
+				expect(await screen.findByText(INTERACTIVE_NOTE)).toBeInTheDocument();
+			}
+		);
+
+		it('shows no token source note for an agent on the API', async () => {
+			installCotExport();
+			renderModal(createSession({ enableMaestroP: false }));
+			await sectionReady();
+
+			expect(screen.queryByText(INTERACTIVE_NOTE)).not.toBeInTheDocument();
+		});
+
+		it('shows no token source note for another provider', async () => {
+			installCotExport();
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				{
+					id: 'codex',
+					name: 'Codex',
+					available: true,
+					path: '/usr/local/bin/codex',
+					binaryName: 'codex',
+					hidden: false,
+				} as AgentConfig,
+			]);
+			renderModal(
+				createSession({ toolType: 'codex', enableMaestroP: true, maestroPMode: 'interactive' })
+			);
+			await sectionReady();
+
+			expect(screen.queryByText(INTERACTIVE_NOTE)).not.toBeInTheDocument();
 		});
 	});
 });

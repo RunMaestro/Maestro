@@ -6,6 +6,7 @@ import { useGitFileStatus, useGitDetail, type GitFileChange } from '../contexts/
 import { useAnchoredMenuPosition } from '../hooks/ui/useAnchoredMenuPosition';
 import { GitChangeCounts } from './ui/GitChangeCounts';
 import { formatGitChangeSummary, type GitChangeTotals } from '../../shared/gitUtils';
+import { elevatedSurfaceStyle } from '../utils/elevatedSurface';
 
 interface GitStatusWidgetProps {
 	/** Session ID to look up git status from context */
@@ -177,13 +178,12 @@ function GitStatusTooltip({
 	return createPortal(
 		<div
 			ref={tooltipRef}
-			className="fixed w-max max-w-[400px] rounded shadow-xl z-[100] pointer-events-auto"
+			className="fixed w-max max-w-[400px] rounded z-[100] pointer-events-auto"
 			style={{
 				left,
 				top,
 				opacity: ready ? 1 : 0,
-				backgroundColor: theme.colors.bgSidebar,
-				border: `1px solid ${theme.colors.border}`,
+				...elevatedSurfaceStyle(theme),
 			}}
 			onMouseEnter={onKeepOpen}
 			onMouseLeave={onScheduleClose}

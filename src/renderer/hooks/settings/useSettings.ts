@@ -34,6 +34,8 @@ import type { FileExplorerIconTheme } from '../../utils/fileExplorerIcons/shared
 import type { ToastWidth } from '../../../shared/toastWidth';
 import type { ToastPosition } from '../../../shared/toastPosition';
 import type { GlossLevel } from '../../../shared/themeGloss';
+import type { QuickChatSettings } from '../../../shared/quickChat';
+import type { ThroughputGaugeSettings } from '../../../shared/throughputGauge';
 import {
 	useSettingsStore,
 	loadAllSettings,
@@ -52,7 +54,10 @@ import { logger } from '../../utils/logger';
 import type { TypographySurface } from '../../../shared/typography';
 import type { TypographyPresetId } from '../../../shared/typographyPresets';
 import type { TypographySnapshot } from '../../../shared/typographySnapshot';
-import { applyTypographyVars } from '../../utils/applyTypographyVars';
+import {
+	usePublishTypographyVars,
+	useReloadSettingsOnExternalChange,
+} from './useWindowSettingsSync';
 
 export interface UseSettingsReturn {
 	// Loading state
@@ -78,6 +83,14 @@ export interface UseSettingsReturn {
 	/** Variables switched off in the editor: kept for later, never spawned with. */
 	shellEnvVarsDisabled: Record<string, string>;
 	setShellEnvVarsDisabled: (value: Record<string, string>) => void;
+
+	// Pianola auto-watch
+	pianolaAutoWatchNewAgents: boolean;
+	setPianolaAutoWatchNewAgents: (value: boolean) => Promise<void>;
+
+	// Host media tools
+	mediaModelDirectory: string;
+	setMediaModelDirectory: (value: string) => Promise<boolean>;
 
 	// GitHub CLI settings
 	ghPath: string;
@@ -190,6 +203,18 @@ export interface UseSettingsReturn {
 	audioFeedbackCommand: string;
 	setAudioFeedbackCommand: (value: string) => void;
 	toastDuration: number;
+	notificationCenterEnabled: boolean;
+	setNotificationCenterEnabled: (value: boolean) => void;
+	notificationCenterLarge: boolean;
+	setNotificationCenterLarge: (value: boolean) => void;
+	notificationCenterDetails: boolean;
+	setNotificationCenterDetails: (value: boolean) => void;
+	notificationCenterKeyboardNavigation: boolean;
+	setNotificationCenterKeyboardNavigation: (value: boolean) => void;
+	notificationHistoryQueuedReplies: boolean;
+	setNotificationHistoryQueuedReplies: (value: boolean) => void;
+	notificationHistoryAutoRunTasks: boolean;
+	setNotificationHistoryAutoRunTasks: (value: boolean) => void;
 	setToastDuration: (value: number) => void;
 	idleNotificationEnabled: boolean;
 	setIdleNotificationEnabled: (value: boolean) => void;
@@ -405,6 +430,8 @@ export interface UseSettingsReturn {
 	// Automatic tab naming settings
 	automaticTabNamingEnabled: boolean;
 	setAutomaticTabNamingEnabled: (value: boolean) => void;
+	shortenLongTabNames: boolean;
+	setShortenLongTabNames: (value: boolean) => void;
 
 	// Utility agent settings (auxiliary tasks: tab naming, context grooming)
 	utilityAgentId: string | null;
@@ -460,6 +487,12 @@ export interface UseSettingsReturn {
 	coworkingBackgroundBrowsersLimit: number;
 	setCoworkingBackgroundBrowsersLimit: (value: number) => void;
 
+	// Dataview: DataviewJS switch and the trusted vault roots (D3)
+	dataviewJsEnabled: boolean;
+	setDataviewJsEnabled: (value: boolean) => void;
+	dataviewJsTrustedRoots: string[];
+	setDataviewJsTrustedRoots: (value: string[]) => void;
+
 	// Forced Parallel Execution
 	forcedParallelExecution: boolean;
 	setForcedParallelExecution: (value: boolean) => void;
@@ -467,12 +500,24 @@ export interface UseSettingsReturn {
 	setForcedParallelAcknowledged: (value: boolean) => void;
 	forcedParallelAlways: boolean;
 	setForcedParallelAlways: (value: boolean) => void;
+	sendButtonMenu: boolean;
+	setSendButtonMenu: (value: boolean) => void;
 	crossAgentMentionsWritable: boolean;
 	setCrossAgentMentionsWritable: (value: boolean) => void;
+	crossAgentHandoffsWritable: boolean;
+	setCrossAgentHandoffsWritable: (value: boolean) => void;
 
 	// Director's Notes settings
 	directorNotesSettings: DirectorNotesSettings;
 	setDirectorNotesSettings: (value: DirectorNotesSettings) => void;
+
+	// Quick Chat settings (hotkey, agent, ephemeral/persistent defaults)
+	quickChatSettings: QuickChatSettings;
+	setQuickChatSettings: (value: QuickChatSettings) => void;
+
+	// Throughput Gauge settings (scope, metric, layout, style, rate window)
+	throughputGaugeSettings: ThroughputGaugeSettings;
+	setThroughputGaugeSettings: (value: ThroughputGaugeSettings) => Promise<boolean>;
 
 	// Maestro Cue history retention (days kept in cue.db)
 	cueHistoryRetentionDays: number;
@@ -511,12 +556,16 @@ export interface UseSettingsReturn {
 	setShowWorktreePill: (value: boolean) => void;
 	showWorktreeBranchName: boolean;
 	setShowWorktreeBranchName: (value: boolean) => void;
+	showWorktreeProvider: boolean;
+	setShowWorktreeProvider: (value: boolean) => void;
 
 	// Left side panel
 	showStarredSessionsSection: boolean;
 	setShowStarredSessionsSection: (value: boolean) => void;
 	showLeftPanelGroupMemberCount: boolean;
 	setShowLeftPanelGroupMemberCount: (value: boolean) => void;
+	showLeftPanelCollapsedInitials: boolean;
+	setShowLeftPanelCollapsedInitials: (value: boolean) => void;
 	leftPanelCollapsedPillsPerRow: number;
 	setLeftPanelCollapsedPillsPerRow: (value: number) => void;
 	showLeftPanelLocationPills: boolean;
@@ -531,6 +580,14 @@ export interface UseSettingsReturn {
 	setShowGroupLabelInBookmarks: (value: boolean) => void;
 	showFullGroupLabelInBookmarks: boolean;
 	setShowFullGroupLabelInBookmarks: (value: boolean) => void;
+
+	/** Show the agent's current checklist docked above the composer. */
+	showAgentTaskListBar: boolean;
+	setShowAgentTaskListBar: (value: boolean) => void;
+
+	/** Open that docked checklist in full whenever the agent writes a new one. */
+	autoExpandAgentTaskListBar: boolean;
+	setAutoExpandAgentTaskListBar: (value: boolean) => void;
 
 	// File Edit & Preview
 	fileEditWordWrap: boolean;
@@ -601,65 +658,9 @@ export function useSettings(): UseSettingsReturn {
 		return cleanup;
 	}, []);
 
-	// Reload settings when external change detected (e.g., maestro-cli settings set)
-	useEffect(() => {
-		if (!window.maestro?.settings?.onExternalChange) {
-			return;
-		}
-		const cleanup = window.maestro.settings.onExternalChange(() => {
-			logger.info('[Settings] External settings change detected, reloading');
-			loadAllSettings();
-		});
-		return cleanup;
-	}, []);
-
-	// Publish the resolved typography as CSS custom properties on the document
-	// root, and set the root font-size so rem-based Tailwind spacing scales.
-	//
-	// The custom properties are how a font setting reaches surfaces no prop can
-	// carry: everything that portals to document.body (47 components) and every
-	// `font-mono` utility (~200 sites). See applyTypographyVars.
-	//
-	// Gated on settingsLoaded so the app does not paint at the default size and
-	// then jump to the saved one.
-	useEffect(() => {
-		if (!store.settingsLoaded) return;
-		applyTypographyVars({
-			fonts: {
-				interface: store.fontFamily,
-				chat: store.chatFontFamily,
-				terminal: store.terminalFontFamily,
-				filePreview: store.filePreviewFontFamily,
-				fileEditor: store.fileEditorFontFamily,
-				documentGraph: store.documentGraphFontFamily,
-			},
-			sizes: {
-				interface: store.fontSize,
-				chat: store.chatFontSize,
-				terminal: store.terminalFontSize,
-				filePreview: store.filePreviewFontSize,
-				fileEditor: store.fileEditorFontSize,
-				documentGraph: store.documentGraphFontSize,
-			},
-			baseSize: store.fontSize,
-			zoom: store.fontZoom,
-		});
-	}, [
-		store.settingsLoaded,
-		store.fontFamily,
-		store.chatFontFamily,
-		store.terminalFontFamily,
-		store.filePreviewFontFamily,
-		store.fileEditorFontFamily,
-		store.documentGraphFontFamily,
-		store.fontSize,
-		store.chatFontSize,
-		store.terminalFontSize,
-		store.filePreviewFontSize,
-		store.fileEditorFontSize,
-		store.documentGraphFontSize,
-		store.fontZoom,
-	]);
+	// Shared with every secondary window (see useWindowSettingsSync).
+	useReloadSettingsOnExternalChange();
+	usePublishTypographyVars();
 
 	// Surface global-hotkey registration failures (e.g. combo already owned by
 	// another app). Mounted here so the toast fires even when Settings is closed.

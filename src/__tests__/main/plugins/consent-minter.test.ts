@@ -14,7 +14,11 @@ import {
 	type ConsentSender,
 } from '../../../main/plugins/consent-minter';
 import type { AuthIdentity } from '../../../main/plugins/authorization-ledger';
-import type { PermissionRequest, PermissionGrant } from '../../../shared/plugins/permissions';
+import type {
+	PermissionRequest,
+	PermissionGrant,
+	PluginCapability,
+} from '../../../shared/plugins/permissions';
 
 function reg(now: { t: number }, seq = { n: 0 }, ttlMs = 1000): ConsentNonceRegistry {
 	return new ConsentNonceRegistry({
@@ -414,5 +418,201 @@ describe('sameConsentSender', () => {
 		expect(sameConsentSender(SENDER, { webContentsId: 7, frameId: 1, url: 'app://evil' })).toBe(
 			false
 		);
+	});
+});
+
+describe('Dispatch allowlist during renewed consent', () => {
+	const obsidianCodexId = '76fd8ebe-7346-4db0-8799-edcd03071bb2';
+	const previousIdentity: AuthIdentity = { ...TRUSTED, contentHash: 'old-code' };
+	const requested: PermissionRequest[] = [
+		{ capability: 'agents:dispatch', scope: 'CONFIGURE_IN_MAESTRO' },
+		{ capability: 'process:spawn', scope: 'new-tool' },
+	];
+
+	function renewed(
+		opts: {
+			identity?: AuthIdentity;
+			previous?: AuthIdentity | null;
+			grants?: PermissionGrant[];
+			requests?: PermissionRequest[];
+		} = {}
+	) {
+		let offer: { nonce: string; requested: readonly PermissionRequest[] };
+		let grants = opts.grants ?? [
+			{
+				capability: 'agents:dispatch',
+				scope: 'agent-a,agent-b',
+				grantedAt: 1,
+				unattended: true,
+			},
+		];
+		let manifestRequests = opts.requests ?? requested;
+		const minter = new ConsentMinter({
+			registry: new ConsentNonceRegistry({ newNonce: () => 'renewed-consent' }),
+			store: {
+				mint: (_id, caps) => {
+					grants = caps;
+				},
+				readGrants: () => grants,
+				entryIdentity: () =>
+					opts.previous === null ? undefined : (opts.previous ?? previousIdentity),
+			},
+			requested: () => manifestRequests,
+			identityOf: () => opts.identity ?? TRUSTED,
+			openPrompt: async (req) => {
+				offer = req;
+				return SENDER;
+			},
+		});
+		return {
+			minter,
+			offer: () => offer!,
+			setGrants: (next: PermissionGrant[]) => {
+				grants = next;
+			},
+			setRequests: (next: PermissionRequest[]) => {
+				manifestRequests = next;
+			},
+			confirm: (
+				approvedHighRisk: PluginCapability[] = ['agents:dispatch'],
+				unattended: PluginCapability[] = []
+			) =>
+				minter.confirm(SENDER, {
+					pluginId: 'p',
+					nonce: offer!.nonce,
+					approved: [],
+					approvedHighRisk,
+					unattended,
+				}),
+		};
+	}
+
+	it('shows and re-mints the selected agents after a same-publisher code update', async () => {
+		const f = renewed();
+		await f.minter.requestConsent('p');
+		expect(f.offer().requested[0].scope).toBe('agent-a,agent-b');
+		const out = f.confirm();
+		expect(out.ok).toBe(true);
+		if (out.ok) {
+			expect(out.grants[0].scope).toBe('agent-a,agent-b');
+			expect(out.grants[0].unattended).toBeUndefined();
+		}
+	});
+
+	it('offers the existing Obsidian Codex selection but requires fresh Dispatch and Unattended approval', async () => {
+		const previousGrant: PermissionGrant = {
+			capability: 'agents:dispatch',
+			scope: obsidianCodexId,
+			grantedAt: 1,
+			unattended: true,
+		};
+		const withoutDispatch = renewed({ grants: [previousGrant] });
+		await withoutDispatch.minter.requestConsent('p');
+		expect(withoutDispatch.offer().requested[0].scope).toBe(obsidianCodexId);
+		expect(withoutDispatch.confirm([])).toEqual({ ok: true, grants: [] });
+
+		const withoutUnattended = renewed({ grants: [previousGrant] });
+		await withoutUnattended.minter.requestConsent('p');
+		const dispatchOnly = withoutUnattended.confirm(['agents:dispatch']);
+		if (!dispatchOnly.ok) throw new Error(dispatchOnly.reason);
+		expect(dispatchOnly.grants[0]).toMatchObject({
+			capability: 'agents:dispatch',
+			scope: obsidianCodexId,
+		});
+		expect(dispatchOnly.grants[0].unattended).toBeUndefined();
+
+		const fullyApproved = renewed({ grants: [previousGrant] });
+		await fullyApproved.minter.requestConsent('p');
+		const result = fullyApproved.confirm(['agents:dispatch'], ['agents:dispatch']);
+		if (!result.ok) throw new Error(result.reason);
+		expect(result.grants[0]).toMatchObject({
+			capability: 'agents:dispatch',
+			scope: obsidianCodexId,
+			unattended: true,
+		});
+	});
+
+	it('keeps an empty deny-all selection instead of restoring the package placeholder', async () => {
+		const f = renewed({ grants: [{ capability: 'agents:dispatch', grantedAt: 1 }] });
+		await f.minter.requestConsent('p');
+		expect(f.offer().requested[0].scope).toBeUndefined();
+		const out = f.confirm();
+		if (!out.ok) throw new Error(out.reason);
+		expect(out.grants[0].scope).toBeUndefined();
+	});
+
+	it('falls back to the requested dispatch scope when a saved scope is malformed', async () => {
+		const f = renewed({
+			grants: [{ capability: 'agents:dispatch', scope: 'agent-*', grantedAt: 1 }],
+		});
+		await f.minter.requestConsent('p');
+		expect(f.offer().requested[0].scope).toBe('CONFIGURE_IN_MAESTRO');
+		const out = f.confirm();
+		if (!out.ok) throw new Error(out.reason);
+		expect(out.grants[0].scope).toBe('CONFIGURE_IN_MAESTRO');
+	});
+
+	it.each([
+		{ identity: { ...TRUSTED, signerKey: 'different-publisher' } },
+		{ identity: UNTRUSTED },
+		{ previous: UNTRUSTED },
+		{ previous: null },
+		{ grants: [] },
+	])(
+		'does not inherit a selection without live grants from the same trusted publisher: %j',
+		async (opts) => {
+			const f = renewed(opts);
+			await f.minter.requestConsent('p');
+			expect(f.offer().requested[0].scope).toBe('CONFIGURE_IN_MAESTRO');
+			const out = f.confirm();
+			if (!out.ok) throw new Error(out.reason);
+			expect(out.grants[0].scope).toBe('CONFIGURE_IN_MAESTRO');
+		}
+	);
+
+	it('drops dispatch access when the user does not approve it again', async () => {
+		const f = renewed();
+		await f.minter.requestConsent('p');
+		const out = f.confirm([]);
+		expect(out).toEqual({ ok: true, grants: [] });
+	});
+
+	it('requires explicit renewed unattended approval and does not retain process scopes', async () => {
+		const f = renewed();
+		await f.minter.requestConsent('p');
+		const out = f.confirm(['agents:dispatch', 'process:spawn'], ['agents:dispatch']);
+		if (!out.ok) throw new Error(out.reason);
+		expect(out.grants.find((g) => g.capability === 'agents:dispatch')?.unattended).toBe(true);
+		expect(out.grants.find((g) => g.capability === 'process:spawn')?.scope).toBe('new-tool');
+	});
+
+	it('retains only capabilities that the new manifest requests', async () => {
+		const f = renewed({ requests: [{ capability: 'process:spawn', scope: 'new-tool' }] });
+		await f.minter.requestConsent('p');
+		expect(f.offer().requested.some((r) => r.capability === 'agents:dispatch')).toBe(false);
+		const out = f.confirm(['process:spawn']);
+		if (!out.ok) throw new Error(out.reason);
+		expect(out.grants.map((grant) => grant.capability)).toEqual(['process:spawn']);
+	});
+
+	it('rejects consent if the selected agents are revoked while the window is open', async () => {
+		const f = renewed();
+		await f.minter.requestConsent('p');
+		f.setGrants([]);
+		expect(f.confirm()).toEqual({ ok: false, reason: 'offer-changed' });
+	});
+
+	it('rejects consent if the user changes the selection while the window is open', async () => {
+		const f = renewed();
+		await f.minter.requestConsent('p');
+		f.setGrants([{ capability: 'agents:dispatch', scope: 'agent-c', grantedAt: 2 }]);
+		expect(f.confirm()).toEqual({ ok: false, reason: 'offer-changed' });
+	});
+
+	it('rejects consent if the new manifest removes Dispatch while the window is open', async () => {
+		const f = renewed();
+		await f.minter.requestConsent('p');
+		f.setRequests([{ capability: 'process:spawn', scope: 'new-tool' }]);
+		expect(f.confirm()).toEqual({ ok: false, reason: 'offer-changed' });
 	});
 });

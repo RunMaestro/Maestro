@@ -15,6 +15,7 @@ import type { Session, AgentConfig, QueuedItem } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { dispatchCrossAgentMentionsForMessage } from '../../../renderer/services/crossAgentMentions';
 import { resetStores } from '../../helpers';
+import { requestTabAutoNameForMessage } from '../../../renderer/services/tabAutoNaming';
 
 // ============================================================================
 // Helpers
@@ -117,6 +118,13 @@ vi.mock('../../../renderer/utils/templateVariables', () => ({
 // without standing up the whole @mention resolution + IPC pipeline.
 vi.mock('../../../renderer/services/crossAgentMentions', () => ({
 	dispatchCrossAgentMentionsForMessage: vi.fn(),
+	withMentionTurnNotes: (prompt: string) => prompt,
+}));
+
+// Tab auto-naming is fire-and-forget and covered in services/tabAutoNaming.test.ts;
+// here we only assert which queued items the drain hands to it (issue #1531).
+vi.mock('../../../renderer/services/tabAutoNaming', () => ({
+	requestTabAutoNameForMessage: vi.fn(),
 }));
 
 beforeEach(() => {
@@ -650,6 +658,23 @@ describe('agentStore', () => {
 
 			// Process killed
 			expect(mockKill).toHaveBeenCalledWith('session-1-ai');
+		});
+
+		// Turns run per tab, so the bare `-ai` id matched nothing and a hung turn
+		// survived the restart. Only the tab that failed is restarted.
+		it('kills the process of the tab that failed', async () => {
+			const session = createMockSession({
+				id: 'session-1',
+				state: 'error',
+				agentError: { type: 'agent_crashed', message: 'crash' } as any,
+				agentErrorTabId: 'tab-7',
+			});
+			useSessionStore.getState().setSessions([session]);
+
+			await useAgentStore.getState().restartAgentAfterError('session-1');
+
+			expect(mockKill).toHaveBeenCalledWith('session-1-ai-tab-7');
+			expect(mockKill).toHaveBeenCalledTimes(1);
 		});
 
 		it('does nothing if session not found', async () => {
@@ -1273,6 +1298,196 @@ describe('agentStore', () => {
 			);
 		});
 
+		describe('New Session Message', () => {
+			function seedTab(agentSessionId: string | null) {
+				const session = createMockSession({
+					id: 'session-1',
+					toolType: 'claude-code',
+					newSessionMessage: 'Always check linting',
+					aiTabs: [
+						{
+							id: 'tab-1',
+							agentSessionId,
+							name: null,
+							starred: false,
+							logs: [],
+							inputValue: '',
+							stagedImages: [],
+							createdAt: Date.now(),
+							state: 'idle',
+						},
+					],
+					activeTabId: 'tab-1',
+				});
+				useSessionStore.getState().setSessions([session]);
+			}
+
+			it('prefixes a queued message that opens the tab (no provider session yet)', async () => {
+				seedTab(null);
+
+				await useAgentStore
+					.getState()
+					.processQueuedItem(
+						'session-1',
+						createQueuedItem({ tabId: 'tab-1', text: 'Build the feature' }),
+						defaultDeps
+					);
+
+				expect(mockSpawn).toHaveBeenCalledWith(
+					expect.objectContaining({
+						prompt: 'Always check linting\n\n---\n\nBuild the feature',
+					})
+				);
+			});
+
+			it('leaves a message queued behind an existing conversation alone', async () => {
+				seedTab('existing-conv-id');
+
+				await useAgentStore
+					.getState()
+					.processQueuedItem(
+						'session-1',
+						createQueuedItem({ tabId: 'tab-1', text: 'Build the feature' }),
+						defaultDeps
+					);
+
+				expect(mockSpawn).toHaveBeenCalledWith(
+					expect.objectContaining({ prompt: 'Build the feature' })
+				);
+			});
+
+			it('prefixes a slash command that opens the tab, and keeps it out of the transcript', async () => {
+				seedTab(null);
+
+				await useAgentStore.getState().processQueuedItem(
+					'session-1',
+					createQueuedItem({
+						tabId: 'tab-1',
+						type: 'command',
+						command: '/commit',
+						text: undefined,
+					}),
+					{
+						...defaultDeps,
+						customAICommands: [
+							{
+								id: 'cmd-1',
+								command: '/commit',
+								description: 'Commit changes',
+								prompt: 'Please commit all changes',
+							},
+						],
+					}
+				);
+
+				expect(mockSpawn).toHaveBeenCalledWith(
+					expect.objectContaining({
+						prompt: expect.stringMatching(
+							/^Always check linting\n\n---\n\n[\s\S]*commit all changes/
+						),
+					})
+				);
+
+				const [userEntry] = useSessionStore.getState().sessions[0].aiTabs[0].logs;
+				expect(userEntry.text).not.toContain('Always check linting');
+			});
+		});
+
+		describe('tab auto-naming (issue #1531)', () => {
+			const seedUnnamedTab = () => {
+				useSessionStore.getState().setSessions([
+					createMockSession({
+						id: 'session-1',
+						toolType: 'claude-code',
+						aiTabs: [
+							{
+								id: 'tab-1',
+								agentSessionId: null,
+								name: null,
+								starred: false,
+								logs: [],
+								inputValue: '',
+								stagedImages: [],
+								createdAt: Date.now(),
+								state: 'idle',
+							},
+						],
+						activeTabId: 'tab-1',
+					}),
+				]);
+			};
+
+			it('names the target tab from a queued message (dispatch --queue never passes the composer)', async () => {
+				seedUnnamedTab();
+				await useAgentStore
+					.getState()
+					.processQueuedItem(
+						'session-1',
+						createQueuedItem({ tabId: 'tab-1', text: 'Build the feature' }),
+						defaultDeps
+					);
+
+				expect(requestTabAutoNameForMessage).toHaveBeenCalledTimes(1);
+				expect(requestTabAutoNameForMessage).toHaveBeenCalledWith(
+					expect.objectContaining({ id: 'session-1' }),
+					'tab-1',
+					'Build the feature',
+					'queue'
+				);
+			});
+
+			it('names the tab of a leading-mention item, which consults without spawning', async () => {
+				seedUnnamedTab();
+				await useAgentStore.getState().processQueuedItem(
+					'session-1',
+					createQueuedItem({
+						tabId: 'tab-1',
+						text: '@Backend review the schema',
+						crossAgentMention: true,
+						crossAgentOnly: true,
+					}),
+					defaultDeps
+				);
+
+				expect(mockSpawn).not.toHaveBeenCalled();
+				expect(requestTabAutoNameForMessage).toHaveBeenCalledWith(
+					expect.objectContaining({ id: 'session-1' }),
+					'tab-1',
+					'@Backend review the schema',
+					'queue'
+				);
+			});
+
+			it('does not name a tab from a queued slash command', async () => {
+				seedUnnamedTab();
+				await useAgentStore
+					.getState()
+					.processQueuedItem(
+						'session-1',
+						createQueuedItem({ tabId: 'tab-1', type: 'command', text: undefined, command: '/x' }),
+						defaultDeps
+					);
+
+				expect(requestTabAutoNameForMessage).not.toHaveBeenCalled();
+			});
+
+			it("does not name a tab from a released consult hold (Maestro's own note)", async () => {
+				seedUnnamedTab();
+				await useAgentStore.getState().processQueuedItem(
+					'session-1',
+					createQueuedItem({
+						tabId: 'tab-1',
+						text: 'Backend replied. Finish your answer with what came back.',
+						agentContext: 'Backend said: looks good',
+					}),
+					defaultDeps
+				);
+
+				expect(mockSpawn).toHaveBeenCalledTimes(1);
+				expect(requestTabAutoNameForMessage).not.toHaveBeenCalled();
+			});
+		});
+
 		// A queued message that @mentions another agent must consult that agent HERE,
 		// as the message becomes this agent's turn - not when the user typed it into
 		// a queue that was several messages deep.
@@ -1309,10 +1524,53 @@ describe('agentStore', () => {
 			expect(dispatchCrossAgentMentionsForMessage).toHaveBeenCalledWith(
 				'now ask @Backend to review',
 				expect.objectContaining({ id: 'session-1' }),
-				'tab-1'
+				'tab-1',
+				undefined,
+				undefined
 			);
 			// The local turn still runs: a trailing mention does not suppress it.
 			expect(mockSpawn).toHaveBeenCalledTimes(1);
+		});
+
+		// The routing the user PICKED when queuing must reach the drain: it re-plans
+		// from the text, which on its own would route the other way.
+		it("passes a queued item's picked mention routing to the dispatch", async () => {
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'existing-conv-id',
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'idle',
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.getState().setSessions([session]);
+
+			const item = createQueuedItem({
+				tabId: 'tab-1',
+				text: 'fix it, then send the results to @Backend',
+				crossAgentMention: true,
+				mentionRouting: 'parallel',
+			});
+
+			await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
+
+			expect(dispatchCrossAgentMentionsForMessage).toHaveBeenCalledWith(
+				'fix it, then send the results to @Backend',
+				expect.objectContaining({ id: 'session-1' }),
+				'tab-1',
+				undefined,
+				'parallel'
+			);
 		});
 
 		// A mention-only item (the message was addressed at the other agent) fires
@@ -1843,54 +2101,70 @@ describe('agentStore', () => {
 			expect(tab2.logs).toHaveLength(0);
 		});
 
-		it('resolves and dispatches a command matched via session.agentCommands', async () => {
-			const session = createMockSession({
-				id: 'session-1',
-				aiTabs: [
-					{
-						id: 'tab-1',
-						agentSessionId: 'conv-1',
-						name: null,
-						starred: false,
-						logs: [],
-						inputValue: '',
-						stagedImages: [],
-						createdAt: Date.now(),
-						state: 'idle',
-					},
-				],
-				activeTabId: 'tab-1',
-				agentCommands: [
-					{
-						command: '/implement',
-						description: 'Implement the plan',
-						prompt: 'Implement the approved plan now.',
-					},
-				],
-			});
-			useSessionStore.getState().setSessions([session]);
-
-			const item = createQueuedItem({
-				tabId: 'tab-1',
-				type: 'command',
+		it.each([
+			{
+				toolType: 'claude-code' as const,
 				command: '/implement',
-				text: undefined,
-			});
+				prompt: 'Implement the approved plan now.',
+			},
+			{
+				toolType: 'codex' as const,
+				command: '/plugin:code-review',
+				prompt: '$plugin:code-review\n\nUse the skill at "/skills/code-review/SKILL.md".',
+			},
+		])(
+			'resolves and dispatches $command via session.agentCommands with trailing arguments',
+			async ({ toolType, command, prompt }) => {
+				const session = createMockSession({
+					id: 'session-1',
+					toolType,
+					aiTabs: [
+						{
+							id: 'tab-1',
+							agentSessionId: 'conv-1',
+							name: null,
+							starred: false,
+							logs: [],
+							inputValue: '',
+							stagedImages: [],
+							createdAt: Date.now(),
+							state: 'idle',
+						},
+					],
+					activeTabId: 'tab-1',
+					agentCommands: [
+						{
+							command,
+							description: 'Implement the plan',
+							prompt,
+						},
+					],
+				});
+				useSessionStore.getState().setSessions([session]);
 
-			await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
+				const item = createQueuedItem({
+					tabId: 'tab-1',
+					type: 'command',
+					command,
+					commandArgs: 'Focus on the current branch.',
+					text: undefined,
+				});
 
-			expect(mockSpawn).toHaveBeenCalledTimes(1);
-			expect(mockSpawn).toHaveBeenCalledWith(
-				expect.objectContaining({
-					prompt: expect.stringContaining('Implement the approved plan now.'),
-				})
-			);
+				await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
 
-			const updated = useSessionStore.getState().sessions[0];
-			expect(updated.aiTabs[0].logs).toHaveLength(1);
-			expect(updated.aiTabs[0].logs[0].source).toBe('user');
-			expect(updated.aiTabs[0].logs[0].aiCommand?.command).toBe('/implement');
-		});
+				expect(mockSpawn).toHaveBeenCalledTimes(1);
+				expect(mockSpawn).toHaveBeenCalledWith(
+					expect.objectContaining({
+						prompt: expect.stringContaining(`${prompt}\n\nFocus on the current branch.`),
+					})
+				);
+
+				const updated = useSessionStore.getState().sessions[0];
+				expect(updated.aiTabs[0].logs).toHaveLength(1);
+				expect(updated.aiTabs[0].logs[0].source).toBe('user');
+				expect(updated.aiTabs[0].logs[0].aiCommand?.command).toBe(command);
+			}
+		);
 
 		it('handles spawn error gracefully', async () => {
 			mockSpawn.mockRejectedValueOnce(new Error('Spawn failed'));

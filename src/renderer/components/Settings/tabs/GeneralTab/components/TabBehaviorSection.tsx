@@ -10,6 +10,8 @@ interface TabBehaviorSectionProps {
 	theme: Theme;
 	automaticTabNamingEnabled: boolean;
 	setAutomaticTabNamingEnabled: (enabled: boolean) => void;
+	shortenLongTabNames: boolean;
+	setShortenLongTabNames: (enabled: boolean) => void;
 	newTabPlacement: TabPlacement;
 	setNewTabPlacement: (placement: TabPlacement) => void;
 	newBrowserTabPlacement: TabPlacement;
@@ -24,6 +26,8 @@ export function TabBehaviorSection({
 	theme,
 	automaticTabNamingEnabled,
 	setAutomaticTabNamingEnabled,
+	shortenLongTabNames,
+	setShortenLongTabNames,
 	newTabPlacement,
 	setNewTabPlacement,
 	newBrowserTabPlacement,
@@ -66,6 +70,37 @@ export function TabBehaviorSection({
 						onChange={setAutomaticTabNamingEnabled}
 						theme={theme}
 						ariaLabel="Automatically name tabs based on first message"
+					/>
+				</div>
+
+				<div
+					data-setting-id="general-shorten-tab-names"
+					className="flex items-center justify-between cursor-pointer"
+					style={{ opacity: automaticTabNamingEnabled ? 1 : 0.5 }}
+					onClick={() => setShortenLongTabNames(!shortenLongTabNames)}
+					role="button"
+					tabIndex={0}
+					onKeyDown={(e) => {
+						if (e.key === 'Enter' || e.key === ' ') {
+							e.preventDefault();
+							setShortenLongTabNames(!shortenLongTabNames);
+						}
+					}}
+				>
+					<div className="flex-1 pr-3">
+						<div className="font-medium" style={{ color: theme.colors.textMain }}>
+							Shorten long tab names
+						</div>
+						<div className="text-xs opacity-70 mt-0.5">
+							Cut an automatic tab name longer than 40 characters at the last whole word. When off,
+							the full name is kept and shown in the tab bar.
+						</div>
+					</div>
+					<ToggleSwitch
+						checked={shortenLongTabNames}
+						onChange={setShortenLongTabNames}
+						theme={theme}
+						ariaLabel="Shorten long tab names"
 					/>
 				</div>
 

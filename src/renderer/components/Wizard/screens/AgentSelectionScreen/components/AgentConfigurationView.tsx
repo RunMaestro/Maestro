@@ -1,6 +1,7 @@
 import { ArrowLeft } from 'lucide-react';
 import type { RefObject } from 'react';
 import type { AgentSshRemoteConfig, SshRemoteConfig } from '../../../../../../shared/types';
+import type { CodexTransport } from '../../../../../../shared/codexTransport';
 import type { AgentConfig, Theme } from '../../../../../types';
 import { AgentConfigPanel } from '../../../../shared/AgentConfigPanel';
 import type { AgentTile } from '../types';
@@ -46,6 +47,9 @@ interface AgentConfigurationViewProps {
 	maestroPPath: string;
 	onMaestroPPathChange: (value: string) => void;
 	detectedMaestroPPath?: string;
+	// Codex Transport (codex only; AgentConfigPanel gates on agent.id)
+	codexTransport?: CodexTransport;
+	onCodexTransportChange: (transport: CodexTransport) => void;
 }
 
 export function AgentConfigurationView({
@@ -87,6 +91,8 @@ export function AgentConfigurationView({
 	maestroPPath,
 	onMaestroPPathChange,
 	detectedMaestroPPath,
+	codexTransport,
+	onCodexTransportChange,
 }: AgentConfigurationViewProps): JSX.Element {
 	const isSshEnabled = !!(sshRemoteConfig?.enabled && sshRemoteConfig?.remoteId);
 	const sshRemoteId = sshRemoteConfig?.remoteId ?? undefined;
@@ -178,6 +184,8 @@ export function AgentConfigurationView({
 							/* Persisted when the wizard creates the session */
 						}}
 						detectedMaestroPPath={detectedMaestroPPath}
+						codexTransport={codexTransport}
+						onCodexTransportChange={onCodexTransportChange}
 					/>
 				</div>
 			</div>

@@ -6,6 +6,7 @@
  * env vars via the correct ProcessConfig field.
  */
 
+import * as path from 'path';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { groomContext, type GroomingProcessManager } from '../../../main/utils/context-groomer';
 import type { AgentDetector } from '../../../main/agents';
@@ -14,7 +15,7 @@ import type { SshRemoteSettingsStore } from '../../../main/utils/ssh-remote-reso
 import type { SshRemoteConfig } from '../../../shared/types';
 
 // Mock agent-args module to verify override resolution
-vi.mock('../../../main/utils/agent-args', () => ({
+vi.mock('../../../shared/maestro-lib/launch/agent-args', () => ({
 	buildAgentArgs: vi.fn((_agent: unknown, opts: { baseArgs: string[] }) => [...opts.baseArgs]),
 	applyAgentConfigOverrides: vi.fn(
 		(_agent: unknown, baseArgs: string[], overrides: Record<string, unknown>) => ({
@@ -41,7 +42,7 @@ vi.mock('uuid', () => ({
 
 // Keep the real SSH wrapping logic, but pin the resolved ssh binary so the
 // built command is deterministic (and no PATH probing happens in tests).
-vi.mock('../../../main/utils/cliDetection', () => ({
+vi.mock('../../../shared/maestro-lib/launch/ssh-path', () => ({
 	resolveSshPath: vi.fn().mockResolvedValue('ssh'),
 }));
 
@@ -55,7 +56,10 @@ vi.mock('../../../main/utils/logger', () => ({
 	},
 }));
 
-import { buildAgentArgs, applyAgentConfigOverrides } from '../../../main/utils/agent-args';
+import {
+	buildAgentArgs,
+	applyAgentConfigOverrides,
+} from '../../../shared/maestro-lib/launch/agent-args';
 import { isWindows } from '../../../shared/platformDetection';
 
 function makeAgent(overrides: Partial<AgentConfig> = {}): AgentConfig {
@@ -174,6 +178,62 @@ describe('groomContext', () => {
 			yoloMode: false,
 			permissionMode: 'standard',
 			agentSessionId: undefined,
+		});
+	});
+
+	// A one-shot turn that belongs to an agent (AI command mode, summarization,
+	// a participant's context summary) honors that agent's TUI setting.
+	describe('Claude token source', () => {
+		const maestroPPath = path.join(process.cwd(), 'src', 'maestro-p', 'index.ts');
+		const tuiAgent = () =>
+			makeAgent({
+				interactiveCommand: 'maestro-p',
+				interactiveModeArgs: ['--dangerously-skip-permissions'],
+			} as Partial<AgentConfig>);
+
+		it('runs through maestro-p when the agent is set to TUI', async () => {
+			await groomContext(
+				{
+					projectRoot: '/project',
+					agentType: 'claude-code',
+					prompt: 'summarize',
+					timeoutMs: 60_000,
+					claudeTokenSource: { enableMaestroP: true, maestroPMode: 'interactive', maestroPPath },
+				},
+				mockPM,
+				createMockAgentDetector(tuiAgent())
+			);
+
+			const spawned = mockPM._lastSpawnConfig!;
+			expect(spawned.command).toBe(process.execPath);
+			const args = spawned.args as string[];
+			expect(args[0]).toBe(maestroPPath);
+			expect(args[args.indexOf('--max-wait') + 1]).toBe('60');
+		});
+
+		it('stays on claude --print when the agent is set to API', async () => {
+			await groomContext(
+				{
+					projectRoot: '/project',
+					agentType: 'claude-code',
+					prompt: 'summarize',
+					claudeTokenSource: { enableMaestroP: false, maestroPPath },
+				},
+				mockPM,
+				createMockAgentDetector(tuiAgent())
+			);
+
+			expect(mockPM._lastSpawnConfig!.command).toBe('/usr/local/bin/claude');
+		});
+
+		it('stays on claude --print when the caller names no agent', async () => {
+			await groomContext(
+				{ projectRoot: '/project', agentType: 'claude-code', prompt: 'summarize' },
+				mockPM,
+				createMockAgentDetector(tuiAgent())
+			);
+
+			expect(mockPM._lastSpawnConfig!.command).toBe('/usr/local/bin/claude');
 		});
 	});
 
@@ -727,6 +787,25 @@ describe('groomContext', () => {
 		).rejects.toThrow('Grooming timed out with no response');
 	});
 
+	it('kills the process it gave up on, so a short deadline does not leak one', async () => {
+		const detector = createMockAgentDetector(agent);
+		mockPM.spawn = vi.fn((config: Record<string, unknown>) => {
+			(mockPM as any)._lastSpawnConfig = config;
+			return { pid: 12345, success: true };
+		});
+
+		await expect(
+			groomContext(
+				{ projectRoot: '/project', agentType: 'claude-code', prompt: 'pick one', timeoutMs: 50 },
+				mockPM,
+				detector
+			)
+		).rejects.toThrow('Grooming timed out with no response');
+
+		const sessionId = (mockPM as any)._lastSpawnConfig.sessionId;
+		expect(mockPM.kill).toHaveBeenCalledWith(sessionId);
+	});
+
 	it('resolves with content on timeout when response buffer has data', async () => {
 		const detector = createMockAgentDetector(agent);
 
@@ -817,5 +896,120 @@ describe('groomContext', () => {
 		for (const call of onProgress.mock.calls) {
 			expect(call[0].elapsedMs).toBeGreaterThanOrEqual(0);
 		}
+	});
+
+	describe('effort refused by the provider', () => {
+		// The message an AgentError carries when the API answers the effort with
+		// a 400. The turn never ran, so there is no response to fall back on.
+		const REFUSAL = {
+			type: 'unknown',
+			agentId: 'codex',
+			message:
+				'{"type":"error","error":{"message":"Unsupported value: \'low\' is not supported with the \'gpt-6-astra\' model. Supported values are: \'medium\', \'high\'.","type":"invalid_request_error","param":"reasoning.effort","code":"unsupported_value"},"status":400}',
+		};
+
+		/** First spawn is refused; every later one answers normally. */
+		function refuseFirstSpawn(pm: ReturnType<typeof createMockProcessManager>) {
+			const answer = pm.spawn.bind(pm);
+			let spawns = 0;
+			pm.spawn = (config: Record<string, unknown>) => {
+				spawns++;
+				if (spawns > 1) return answer(config);
+				const sessionId = config.sessionId as string;
+				setTimeout(() => {
+					pm._emitError(sessionId, REFUSAL);
+					pm._emitExit(sessionId, 1);
+				}, 10);
+				return { pid: 12345, success: true };
+			};
+			return () => spawns;
+		}
+
+		it('runs the turn once more with the effort left to the agent', async () => {
+			const spawnCount = refuseFirstSpawn(mockPM);
+
+			const result = await groomContext(
+				{
+					projectRoot: '/project',
+					agentType: 'claude-code',
+					prompt: 'summarize',
+					sessionCustomModel: 'haiku',
+					sessionCustomEffort: 'low',
+				},
+				mockPM,
+				createMockAgentDetector(agent)
+			);
+
+			expect(result.response).toBe('groomed response');
+			expect(spawnCount()).toBe(2);
+			const calls = vi.mocked(applyAgentConfigOverrides).mock.calls;
+			expect(calls[0][2]).toMatchObject({ sessionCustomEffort: 'low' });
+			expect(calls[1][2].sessionCustomEffort).toBeUndefined();
+			// Only the effort is dropped; the model the caller asked for stays.
+			expect(calls[1][2]).toMatchObject({ sessionCustomModel: 'haiku' });
+		});
+
+		it('does not retry when no effort was sent', async () => {
+			// The agent's own configured effort was refused. Nothing Maestro chose
+			// is left to drop, so the error is the caller's to see.
+			const spawnCount = refuseFirstSpawn(mockPM);
+
+			await expect(
+				groomContext(
+					{ projectRoot: '/project', agentType: 'claude-code', prompt: 'summarize' },
+					mockPM,
+					createMockAgentDetector(agent)
+				)
+			).rejects.toThrow(/Unsupported value/);
+			expect(spawnCount()).toBe(1);
+		});
+
+		it('does not retry an ordinary failure', async () => {
+			let spawns = 0;
+			mockPM.spawn = (config: Record<string, unknown>) => {
+				spawns++;
+				const sessionId = config.sessionId as string;
+				setTimeout(() => mockPM._emitError(sessionId, { message: 'Not logged in' }), 10);
+				return { pid: 12345, success: true };
+			};
+
+			await expect(
+				groomContext(
+					{
+						projectRoot: '/project',
+						agentType: 'claude-code',
+						prompt: 'summarize',
+						sessionCustomEffort: 'low',
+					},
+					mockPM,
+					createMockAgentDetector(agent)
+				)
+			).rejects.toThrow('Grooming error: Not logged in');
+			expect(spawns).toBe(1);
+		});
+
+		it('surfaces the refusal when the retry is refused as well', async () => {
+			let spawns = 0;
+			mockPM.spawn = (config: Record<string, unknown>) => {
+				spawns++;
+				const sessionId = config.sessionId as string;
+				setTimeout(() => mockPM._emitError(sessionId, REFUSAL), 10);
+				return { pid: 12345, success: true };
+			};
+
+			await expect(
+				groomContext(
+					{
+						projectRoot: '/project',
+						agentType: 'claude-code',
+						prompt: 'summarize',
+						sessionCustomEffort: 'low',
+					},
+					mockPM,
+					createMockAgentDetector(agent)
+				)
+			).rejects.toThrow(/Unsupported value/);
+			expect(spawns).toBe(2);
+		});
 	});
 });

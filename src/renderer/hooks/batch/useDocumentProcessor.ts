@@ -20,6 +20,7 @@ import { countMarkdownTasks, getTaskSelectionBlock } from './batchUtils';
 import type { AgentSpawnErrorKind, SpawnAgentRunOverrides } from '../agent/useAgentExecution';
 import { logger } from '../../utils/logger';
 import { beginSleepAwareSpan, sleepAwareElapsedMs } from '../../services/systemSleep';
+import { extractTaskSynopsis } from '../../../shared/maestro-lib/autorun/synopsis';
 import { findActiveModelHint, countTasksUnderActiveHint } from '../../../shared/autorunModelHints';
 import { resolveTurnSettings } from '../../../shared/autorunTurnSettings';
 import {
@@ -542,36 +543,8 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 			let fullSynopsis = shortSummary;
 
 			if (result.success && result.response) {
-				// Extract synopsis from the task response (first paragraph is the synopsis per prompt instructions)
-				const responseText = result.response.trim();
-				if (responseText) {
-					// Use the first paragraph as the short summary
-					const paragraphs = responseText.split(/\n\n+/);
-					const firstParagraph = paragraphs[0]?.trim() || '';
-
-					// Clean up the first paragraph - remove markdown formatting for summary
-					const cleanFirstParagraph = firstParagraph
-						.replace(/^\*\*Summary:\*\*\s*/i, '') // Remove **Summary:** prefix if present
-						.replace(/^#+\s*/, '') // Remove heading markers
-						.replace(/\*\*/g, '') // Remove bold markers
-						.trim();
-
-					if (cleanFirstParagraph && cleanFirstParagraph.length > 10) {
-						// Use first sentence or first 150 chars as short summary
-						// Match sentence-ending punctuation followed by space+capital, newline, or end of string
-						// This avoids splitting on periods in file extensions like "file.tsx"
-						const firstSentenceMatch = cleanFirstParagraph.match(
-							/^.+?[.!?](?=\s+[A-Z]|\s*\n|\s*$)/
-						);
-						shortSummary = firstSentenceMatch
-							? firstSentenceMatch[0].trim()
-							: cleanFirstParagraph.substring(0, 150) +
-								(cleanFirstParagraph.length > 150 ? '...' : '');
-
-						// Full synopsis is the complete response
-						fullSynopsis = responseText;
-					}
-				}
+				// The first paragraph is the synopsis per the prompt's instructions
+				({ shortSummary, fullSynopsis } = extractTaskSynopsis(result.response, filename));
 			} else if (!result.success) {
 				shortSummary = `[${filename}] Task failed`;
 				fullSynopsis = result.error || result.response || shortSummary;

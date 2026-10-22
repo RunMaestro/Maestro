@@ -1,3 +1,4 @@
+import { parseNativeLines } from '../../shared/maestro-lib/translation/native-records';
 /**
  * Codex CLI Session Storage Implementation
  *
@@ -24,6 +25,8 @@ import { app } from 'electron';
 import path from 'path';
 import os from 'os';
 import fs from 'fs/promises';
+import type Store from 'electron-store';
+import type { ClaudeSessionOriginsData } from '../stores/types';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { readFileRemote, readDirRemote, statRemote } from '../utils/remote-fs';
@@ -38,6 +41,7 @@ import { BaseSessionStorage } from './base-session-storage';
 import type { SearchableMessage } from './base-session-storage';
 import { ModelUsageAccumulator } from '../../shared/modelUsage';
 import { CodexTokenCounts } from '../../shared/codexTokenUsage';
+import { CodexTokenSpeedTracker } from '../../shared/tokenSpeed';
 
 const LOG_CONTEXT = '[CodexSessionStorage]';
 const MAX_SESSION_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
@@ -65,7 +69,10 @@ function getCodexSessionsDir(accountDir?: string): string {
 // Bumped to 5: pruning is now scoped to the account dir that was walked, so
 // entries left behind by an account dir that no longer exists are unreachable.
 // One clean slate here retires the ones that predate the scoped prune.
-const CODEX_SESSION_CACHE_VERSION = 5;
+//
+// Bumped to 6: sessions carry per-call token speed buckets (`speed`), which
+// cached entries lack and the fingerprint cannot ask for.
+const CODEX_SESSION_CACHE_VERSION = 6;
 const CODEX_SESSION_CACHE_FILENAME = 'codex-sessions-cache.json';
 
 /**
@@ -308,6 +315,7 @@ async function parseSessionFile(
 		let userMessageCount = 0;
 		let assistantMessageCount = 0;
 		const tokenCounts = new CodexTokenCounts();
+		const speedTracker = new CodexTokenSpeedTracker();
 		let firstTimestamp = timestamp;
 		let lastTimestamp = timestamp;
 		// Codex is single-model per session; the model id lives on turn_context /
@@ -326,6 +334,8 @@ async function parseSessionFile(
 				if (entry.type === 'turn_context' && entry.payload?.model) {
 					capturedModel = entry.payload.model;
 				}
+
+				speedTracker.observe(entry, capturedModel);
 
 				// Handle turn.completed for usage stats (already per-turn)
 				if (entry.type === 'turn.completed' && entry.usage) {
@@ -468,6 +478,7 @@ async function parseSessionFile(
 			cacheCreationTokens: 0, // Codex doesn't report cache creation separately
 			durationSeconds,
 			byModel: modelAcc.isEmpty ? undefined : modelAcc.finalize(),
+			speed: speedTracker.result(),
 		};
 	} catch (error) {
 		// RangeError: Invalid string length occurs when the file is too large for V8
@@ -491,6 +502,34 @@ async function parseSessionFile(
 export class CodexSessionStorage extends BaseSessionStorage {
 	readonly agentId: ToolType = 'codex';
 
+	constructor(private readonly originsStore?: Store<ClaudeSessionOriginsData>) {
+		super();
+	}
+
+	private attachOriginInfo(sessions: AgentSessionInfo[], projectPath: string): AgentSessionInfo[] {
+		if (!this.originsStore) return sessions;
+		const origins = this.originsStore.get('origins', {});
+		return sessions.map((session) => {
+			const record =
+				origins[projectPath]?.[session.sessionId] ??
+				origins[normalizeProjectPath(projectPath)]?.[session.sessionId] ??
+				origins[session.projectPath]?.[session.sessionId] ??
+				origins[normalizeProjectPath(session.projectPath)]?.[session.sessionId];
+			if (!record) return session;
+			const info = typeof record === 'string' ? { origin: record } : record;
+			return {
+				...session,
+				...(info.origin !== undefined ? { origin: info.origin } : {}),
+				...(typeof record === 'object' && record.sessionName !== undefined
+					? { sessionName: record.sessionName }
+					: {}),
+				...(typeof record === 'object' && record.starred !== undefined
+					? { starred: record.starred }
+					: {}),
+			};
+		});
+	}
+
 	/**
 	 * Get the Codex sessions directory path for an account (`CODEX_HOME`), or
 	 * the default account when `accountDir` is undefined.
@@ -503,8 +542,8 @@ export class CodexSessionStorage extends BaseSessionStorage {
 	 * Get the Codex sessions directory path (remote via SSH)
 	 * On remote Linux hosts, ~ expands to the user's home directory
 	 */
-	private getRemoteSessionsDir(): string {
-		return '~/.codex/sessions';
+	private getRemoteSessionsDir(accountDir?: string): string {
+		return path.posix.join(accountDir || '~/.codex', 'sessions');
 	}
 
 	/**
@@ -583,9 +622,10 @@ export class CodexSessionStorage extends BaseSessionStorage {
 	 * Recursively scans the YYYY/MM/DD directory structure
 	 */
 	private async findAllSessionFilesRemote(
-		sshConfig: SshRemoteConfig
+		sshConfig: SshRemoteConfig,
+		accountDir?: string
 	): Promise<Array<{ filePath: string; filename: string }>> {
-		const sessionsDir = this.getRemoteSessionsDir();
+		const sessionsDir = this.getRemoteSessionsDir(accountDir);
 		const sessionFiles: Array<{ filePath: string; filename: string }> = [];
 
 		// List YYYY directories
@@ -848,7 +888,7 @@ export class CodexSessionStorage extends BaseSessionStorage {
 	): Promise<AgentSessionInfo[]> {
 		// Use SSH remote access if config provided
 		if (sshConfig) {
-			return this.listSessionsRemote(projectPath, sshConfig);
+			return this.listSessionsRemote(projectPath, sshConfig, accountDir);
 		}
 		const sessionsDir = this.getSessionsDir(accountDir);
 		const allSessionFiles = await this.findAllSessionFiles(accountDir);
@@ -940,7 +980,7 @@ export class CodexSessionStorage extends BaseSessionStorage {
 			);
 		}
 
-		return sessions;
+		return this.attachOriginInfo(sessions, projectPath);
 	}
 
 	/**
@@ -948,9 +988,10 @@ export class CodexSessionStorage extends BaseSessionStorage {
 	 */
 	private async listSessionsRemote(
 		projectPath: string,
-		sshConfig: SshRemoteConfig
+		sshConfig: SshRemoteConfig,
+		accountDir?: string
 	): Promise<AgentSessionInfo[]> {
-		const allSessionFiles = await this.findAllSessionFilesRemote(sshConfig);
+		const allSessionFiles = await this.findAllSessionFilesRemote(sshConfig, accountDir);
 
 		if (allSessionFiles.length === 0) {
 			logger.info(`No Codex sessions found on remote`, LOG_CONTEXT);
@@ -988,7 +1029,7 @@ export class CodexSessionStorage extends BaseSessionStorage {
 			LOG_CONTEXT
 		);
 
-		return sessions;
+		return this.attachOriginInfo(sessions, projectPath);
 	}
 
 	async readSessionMessages(
@@ -1029,14 +1070,12 @@ export class CodexSessionStorage extends BaseSessionStorage {
 		}
 
 		try {
-			const lines = content.split('\n').filter((l) => l.trim());
-
 			const messages: SessionMessage[] = [];
 			let messageIndex = 0;
 
-			for (const line of lines) {
+			for (const { entry } of parseNativeLines(content)) {
 				try {
-					const entry = JSON.parse(line);
+					if (!entry) continue;
 
 					// Handle direct message entries
 					if (entry.type === 'message' && (entry.role === 'user' || entry.role === 'assistant')) {
@@ -1233,12 +1272,11 @@ export class CodexSessionStorage extends BaseSessionStorage {
 			return [];
 		}
 
-		const lines = content.split('\n').filter((l) => l.trim());
 		const searchableMessages: SearchableMessage[] = [];
 
-		for (const line of lines) {
+		for (const { entry } of parseNativeLines(content)) {
 			try {
-				const entry = JSON.parse(line);
+				if (!entry) continue;
 
 				let textContent = '';
 				let role: 'user' | 'assistant' | null = null;
@@ -1286,8 +1324,8 @@ export class CodexSessionStorage extends BaseSessionStorage {
 	/**
 	 * Find the file path for a session by ID (async)
 	 */
-	private async findSessionFile(sessionId: string): Promise<string | null> {
-		const allFiles = await this.findAllSessionFiles();
+	async findSessionFile(sessionId: string, accountDir?: string): Promise<string | null> {
+		const allFiles = await this.findAllSessionFiles(accountDir);
 
 		for (const { filePath, filename } of allFiles) {
 			const fileSessionId = extractSessionIdFromFilename(filename);

@@ -1,3 +1,4 @@
+import { useHeadlessActivityStore } from '../../stores/headlessActivityStore';
 import { memo, useState } from 'react';
 import type { Session, Theme } from '../../types';
 import { getStatusColor } from '../../utils/theme';
@@ -6,6 +7,7 @@ import { SessionTooltipContent } from './SessionTooltipContent';
 import { CornerDot } from '../ui/CornerDot';
 import { hasUnreadVisibleTab } from '../../utils/tabHelpers';
 import { useConsultedSessionIds } from '../../stores/crossAgentInFlightStore';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 interface CollapsedSessionPillProps {
 	session: Session;
@@ -86,6 +88,7 @@ export const CollapsedSessionPill = memo(function CollapsedSessionPill({
 }: CollapsedSessionPillProps) {
 	const [tooltipPosition, setTooltipPosition] = useState<{ x: number; y: number } | null>(null);
 	const consultedSessionIds = useConsultedSessionIds();
+	const headlessCounts = useHeadlessActivityStore((s) => s.counts);
 
 	const worktreeChildren = getWorktreeChildren(session.id);
 	const allSessions = [session, ...worktreeChildren];
@@ -106,7 +109,8 @@ export const CollapsedSessionPill = memo(function CollapsedSessionPill({
 				// the pill folds it in beside Auto Run: same warning fill, same pulse,
 				// and it outranks the unbound-Claude hollow pill (a consult tab has no
 				// provider session of its own until the agent answers).
-				const isBusyOffState = isInBatch || consultedSessionIds.has(s.id);
+				const isBusyOffState =
+					isInBatch || consultedSessionIds.has(s.id) || (headlessCounts[s.id] ?? 0) > 0;
 
 				return (
 					<div
@@ -150,13 +154,12 @@ export const CollapsedSessionPill = memo(function CollapsedSessionPill({
 					>
 						{hasUnreadTabs && isLast && <CornerDot color={theme.colors.error} placement="right" />}
 						<div
-							className="fixed rounded px-3 py-2 z-[100] opacity-0 group-hover/segment:opacity-100 pointer-events-none transition-opacity shadow-xl"
+							className="fixed rounded px-3 py-2 z-[100] opacity-0 group-hover/segment:opacity-100 pointer-events-none transition-opacity"
 							style={{
 								minWidth: '240px',
 								left: `${leftSidebarWidth + 8}px`,
 								top: tooltipPosition ? `${tooltipPosition.y}px` : undefined,
-								backgroundColor: theme.colors.bgSidebar,
-								border: `1px solid ${theme.colors.border}`,
+								...elevatedSurfaceStyle(theme),
 							}}
 						>
 							<SessionTooltipContent

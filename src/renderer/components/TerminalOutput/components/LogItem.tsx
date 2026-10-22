@@ -16,7 +16,7 @@ import {
 	ShieldAlert,
 } from 'lucide-react';
 import type { LogItemProps } from '../types';
-import type { LogEntry } from '../../../types';
+import type { LogEntry, Session } from '../../../types';
 import {
 	processLogTextHelper,
 	filterTextByLinesHelper,
@@ -33,10 +33,16 @@ import { displayImageSrc } from '../../../utils/sessionImageSrc';
 import { RetryStatusCard } from '../../RetryStatusCard';
 import { SnoozeReturnCard } from '../../SnoozeReturnCard';
 import { AgentDelegationCard } from '../../AgentDelegationCard';
+import { DispatchCallbackCard } from '../../DispatchCallbackCard';
+import { parseDispatchCallbackPrompt } from '../../../../shared/dispatchCallbackCard';
+import { useSessionStore } from '../../../stores/sessionStore';
+import { ContextCompactionCard } from '../../ContextCompactionCard';
 import { ShellCommandCard } from '../../ShellCommandCard';
 import { getTokenSourcePill } from '../../../../shared/claudeTokenModeLabel';
 import { TurnSettingPills } from '../../ui/TurnSettingPills';
 import { CrossAgentResponseHeader } from '../../CrossAgentResponseHeader';
+import { SteeredMessageHeader, SteerTurnConnector } from '../../SteeredMessageHeader';
+import { steerJoinsRunningTurn } from '../../../utils/logEntries';
 import { isHiddenProgressEntry } from '../utils/collapseAiResponseLogs';
 import { SessionRecoveryCardConnector } from './SessionRecoveryCardConnector';
 import { ToolBadge } from './ToolBadge';
@@ -59,6 +65,29 @@ const sameSubagentLogs = (prev?: LogEntry[], next?: LogEntry[]): boolean => {
 			log.metadata?.toolState?.status === next[i].metadata?.toolState?.status
 	);
 };
+
+/**
+ * The clock in a transcript row's left gutter: the time for today, or the date
+ * over the time for any other day.
+ */
+function LogTimestamp({ timestamp }: { timestamp: number }): React.ReactElement {
+	const logDate = new Date(timestamp);
+	const time = logDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+	if (logDate.toDateString() === new Date().toDateString()) {
+		return <>{time}</>;
+	}
+	const year = logDate.getFullYear();
+	const month = String(logDate.getMonth() + 1).padStart(2, '0');
+	const day = String(logDate.getDate()).padStart(2, '0');
+	return (
+		<>
+			<div>
+				{year}-{month}-{day}
+			</div>
+			<div>{time}</div>
+		</>
+	);
+}
 
 export const LogItem = memo(
 	({
@@ -106,6 +135,7 @@ export const LogItem = memo(
 		bionifyAlgorithm,
 		userMessageAlignment,
 		responseDurationMs,
+		steerRunContinues,
 		codexDirectives,
 		codexFollowupTabId,
 		isClaudeCode,
@@ -248,11 +278,23 @@ export const LogItem = memo(
 			codexDirectivesForBody && codexFollowupTabId
 				? { sessionId, tabId: codexFollowupTabId }
 				: undefined;
+		// A shell fence's Run button follows the same "agent's own output in a live
+		// tab" rule, but for every provider: a command an agent offers is an offer
+		// whoever the agent is. A fence in a user message stays copy-only.
+		const commandRun =
+			codexDirectivesLiveForSource(log.source) && codexFollowupTabId
+				? { sessionId, tabId: codexFollowupTabId }
+				: undefined;
 
 		const isUserMessage = log.source === 'user';
 		const isReversed = isUserMessage
 			? userMessageAlignment === 'left'
 			: userMessageAlignment === 'right';
+		// A message steered into a turn that was already running wears a header
+		// saying so. One the turn took (or may yet take) is also stitched to the
+		// entry above it; one taken as a follow-up stands alone.
+		const isSteered = isUserMessage && isAIMode && Boolean(log.steered);
+		const isStitchedSteer = isSteered && steerJoinsRunningTurn(log);
 
 		// An AI-command entry is a header pill plus an ordinary prompt body. The
 		// body is authored markdown like any other chat message, so it goes through
@@ -277,6 +319,57 @@ export const LogItem = memo(
 			) : (
 				<div className="whitespace-pre-wrap text-sm break-words">{linkifyNode(text, theme)}</div>
 			);
+
+		// A slash command expands to a long authored prompt the user already knows,
+		// so its body starts COLLAPSED to the first line and the header pill toggles
+		// it. It rides the per-log `isExpanded` state rather than local state so the
+		// choice survives the virtualized list remounting the row.
+		const renderAiCommandCard = (aiCommand: NonNullable<LogEntry['aiCommand']>) => {
+			const firstLine = filteredText.split('\n').find((line) => line.trim()) ?? '';
+			const hasMore = filteredText.trim() !== firstLine.trim();
+			return (
+				<div className="space-y-3">
+					<button
+						type="button"
+						onClick={handleExpandToggle}
+						aria-expanded={isExpanded}
+						className="w-full flex items-center gap-2 px-3 py-2 rounded-lg border text-left hover:opacity-80 transition-opacity"
+						style={{
+							backgroundColor: theme.colors.accent + '15',
+							borderColor: theme.colors.accent + '30',
+						}}
+					>
+						<span className="font-mono font-bold text-sm" style={{ color: theme.colors.accent }}>
+							{aiCommand.command}:
+						</span>
+						<span className="text-sm flex-1 min-w-0" style={{ color: theme.colors.textMain }}>
+							{aiCommand.description}
+						</span>
+						{isExpanded ? (
+							<ChevronUp className="w-3.5 h-3.5 shrink-0" style={{ color: theme.colors.textDim }} />
+						) : (
+							<ChevronDown
+								className="w-3.5 h-3.5 shrink-0"
+								style={{ color: theme.colors.textDim }}
+							/>
+						)}
+					</button>
+					{isExpanded ? (
+						<div style={{ color: theme.colors.textMain }}>{renderAiCommandBody(filteredText)}</div>
+					) : (
+						<div
+							className="text-sm truncate cursor-pointer"
+							style={{ color: theme.colors.textDim }}
+							onClick={handleExpandToggle}
+							title="Show full prompt"
+						>
+							{firstLine}
+							{hasMore && ' …'}
+						</div>
+					)}
+				</div>
+			);
+		};
 
 		// Command mode: a `!command` run renders as its own terminal-output card
 		// (monospace, ANSI preserved) rather than a markdown chat bubble.
@@ -335,9 +428,71 @@ export const LogItem = memo(
 					data-log-id={log.id}
 					style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 36px' }}
 				>
-					<div className="hidden sm:block w-20 shrink-0" />
+					{/* When the hand-off happened, in the same gutter and format as a message. */}
+					<div
+						className="hidden sm:block w-20 shrink-0 text-2xs sm:pt-1"
+						style={{ fontFamily, color: theme.colors.textDim, opacity: 0.6 }}
+						data-testid="agent-delegation-timestamp"
+					>
+						<LogTimestamp timestamp={log.timestamp} />
+					</div>
 					<div className="flex-1 min-w-0">
 						<AgentDelegationCard log={log} theme={theme} />
+					</div>
+				</div>
+			);
+		}
+
+		// A dispatch this agent sent has finished and woken it. The wake arrives
+		// as the raw `[Maestro dispatch callback]` prompt (it must stay a real
+		// turn the agent reads); here we parse that known text back into a clean
+		// result card for the human. Non-default (`--callback-prompt`) bodies do
+		// not parse and fall through to plain text.
+		const dispatchCallback =
+			log.source === 'user' ? parseDispatchCallbackPrompt(log.text ?? '') : null;
+		if (dispatchCallback) {
+			const targetToolType = useSessionStore
+				.getState()
+				.sessions.find((s: Session) => s.id === dispatchCallback.targetAgentId)?.toolType;
+			return (
+				<div
+					ref={logItemRef}
+					className="flex gap-4 px-3 sm:px-6 py-1.5"
+					data-log-index={index}
+					data-log-id={log.id}
+					style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 36px' }}
+				>
+					<div
+						className="hidden sm:block w-20 shrink-0 text-2xs sm:pt-1"
+						style={{ fontFamily, color: theme.colors.textDim, opacity: 0.6 }}
+					>
+						<LogTimestamp timestamp={log.timestamp} />
+					</div>
+					<div className="flex-1 min-w-0">
+						<DispatchCallbackCard
+							parsed={dispatchCallback}
+							theme={theme}
+							targetToolType={targetToolType}
+						/>
+					</div>
+				</div>
+			);
+		}
+
+		// Maestro compacted the conversation to get a refused turn through. Same
+		// clean pill row as a hand-off: it marks where it happened and asks nothing.
+		if (log.contextCompaction) {
+			return (
+				<div
+					ref={logItemRef}
+					className="flex gap-4 px-3 sm:px-6 py-1.5"
+					data-log-index={index}
+					data-log-id={log.id}
+					style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 36px' }}
+				>
+					<div className="hidden sm:block w-20 shrink-0" />
+					<div className="flex-1 min-w-0">
+						<ContextCompactionCard log={log} theme={theme} />
 					</div>
 				</div>
 			);
@@ -388,7 +543,9 @@ export const LogItem = memo(
 				// for the timestamp costs ~96px of bubble width, so the row stacks -
 				// timestamp above, bubble full-width. From `sm` up it's the classic
 				// side-by-side layout with the w-20 timestamp column.
-				className={`flex flex-col gap-1 sm:gap-4 group ${isReversed ? 'sm:flex-row-reverse' : 'sm:flex-row'} px-3 sm:px-6 py-2`}
+				// A stitched steer pulls itself up over the previous row's bottom padding
+				// so its connector starts at the bubble above (see SteerTurnConnector).
+				className={`flex flex-col gap-1 sm:gap-4 group ${isReversed ? 'sm:flex-row-reverse' : 'sm:flex-row'} px-3 sm:px-6 py-2 ${isStitchedSteer ? 'sm:-mt-2' : ''}`}
 				data-log-index={index}
 				// Jump anchor for cross-tab message search. For a collapsed response
 				// group this is the FIRST entry's id (see buildRenderedIdMap).
@@ -406,27 +563,7 @@ export const LogItem = memo(
 					className={`shrink-0 text-2xs sm:w-20 sm:pt-2 flex gap-1 sm:block ${isReversed ? 'text-right justify-end' : 'text-left'}`}
 					style={{ fontFamily, color: theme.colors.textDim, opacity: 0.6 }}
 				>
-					{(() => {
-						const logDate = new Date(log.timestamp);
-						const today = new Date();
-						const isToday = logDate.toDateString() === today.toDateString();
-						const time = logDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-						if (isToday) {
-							return time;
-						}
-						// Format: YYYY-MM-DD on first line, time on second
-						const year = logDate.getFullYear();
-						const month = String(logDate.getMonth() + 1).padStart(2, '0');
-						const day = String(logDate.getDate()).padStart(2, '0');
-						return (
-							<>
-								<div>
-									{year}-{month}-{day}
-								</div>
-								<div>{time}</div>
-							</>
-						);
-					})()}
+					<LogTimestamp timestamp={log.timestamp} />
 					{/*
 						Turn time, under the clock. Only ever on an agent reply: a user
 						message is instantaneous, so the same line under it would be
@@ -443,6 +580,13 @@ export const LogItem = memo(
 						</div>
 					)}
 				</div>
+				{isStitchedSteer && (
+					<SteerTurnConnector
+						theme={theme}
+						mirrored={isReversed}
+						continues={Boolean(steerRunContinues)}
+					/>
+				)}
 				<div
 					className={`flex-1 min-w-0 p-4 pb-10 rounded-xl border ${isReversed ? 'rounded-tr-none' : 'rounded-tl-none'} relative overflow-hidden ${isCrossAgentStreaming ? 'animate-status-glow' : ''}`}
 					style={{
@@ -459,11 +603,13 @@ export const LogItem = memo(
 										: 'transparent',
 						borderColor: crossAgent
 							? crossAgentBubbleBorder
-							: isUserMessage && isAIMode
-								? theme.colors.accent + '40'
-								: log.source === 'stderr' || log.source === 'error'
-									? theme.colors.error
-									: theme.colors.border,
+							: isStitchedSteer
+								? theme.colors.accent + 'AA'
+								: isUserMessage && isAIMode
+									? theme.colors.accent + '40'
+									: log.source === 'stderr' || log.source === 'error'
+										? theme.colors.error
+										: theme.colors.border,
 						// Drives the accent hue of the streaming pulse (.animate-status-glow).
 						...(isCrossAgentStreaming
 							? ({ '--status-glow-color': theme.colors.accent } as React.CSSProperties)
@@ -477,6 +623,7 @@ export const LogItem = memo(
 					    consult tints it red. In a group fan-out it's what tells each
 					    response apart. */}
 					{crossAgent && <CrossAgentResponseHeader crossAgent={crossAgent} theme={theme} />}
+					{isSteered && <SteeredMessageHeader state={log.steerState} theme={theme} />}
 					{/* Local filter icon for system output only */}
 					{log.source !== 'user' && isTerminal && (
 						<div className="absolute top-2 right-2 flex items-center gap-2">
@@ -749,6 +896,8 @@ export const LogItem = memo(
 							>
 								<span>No matches found for filter</span>
 							</div>
+						) : log.aiCommand ? (
+							renderAiCommandCard(log.aiCommand)
 						) : shouldCollapse && !isExpanded ? (
 							<div>
 								<div
@@ -786,6 +935,7 @@ export const LogItem = memo(
 											chatMath
 											codexDirectives={codexDirectivesForBody}
 											codexFollowup={codexFollowup}
+											commandRun={commandRun}
 										/>
 									) : (
 										displayText
@@ -838,29 +988,6 @@ export const LogItem = memo(
 											<span style={{ color: theme.colors.accent }}>$ </span>
 											{filteredText}
 										</div>
-									) : log.aiCommand ? (
-										<div className="space-y-3">
-											<div
-												className="flex items-center gap-2 px-3 py-2 rounded-lg border"
-												style={{
-													backgroundColor: theme.colors.accent + '15',
-													borderColor: theme.colors.accent + '30',
-												}}
-											>
-												<span
-													className="font-mono font-bold text-sm"
-													style={{ color: theme.colors.accent }}
-												>
-													{log.aiCommand.command}:
-												</span>
-												<span className="text-sm" style={{ color: theme.colors.textMain }}>
-													{log.aiCommand.description}
-												</span>
-											</div>
-											<div style={{ color: theme.colors.textMain }}>
-												{renderAiCommandBody(filteredText)}
-											</div>
-										</div>
 									) : isAIMode && !markdownEditMode ? (
 										// Expanded markdown rendering
 										<MarkdownRenderer
@@ -879,6 +1006,7 @@ export const LogItem = memo(
 											chatMath
 											codexDirectives={codexDirectivesForBody}
 											codexFollowup={codexFollowup}
+											commandRun={commandRun}
 										/>
 									) : (
 										<div>{filteredText}</div>
@@ -918,29 +1046,6 @@ export const LogItem = memo(
 										<span style={{ color: theme.colors.accent }}>$ </span>
 										{filteredText}
 									</div>
-								) : log.aiCommand ? (
-									<div className="space-y-3">
-										<div
-											className="flex items-center gap-2 px-3 py-2 rounded-lg border"
-											style={{
-												backgroundColor: theme.colors.accent + '15',
-												borderColor: theme.colors.accent + '30',
-											}}
-										>
-											<span
-												className="font-mono font-bold text-sm"
-												style={{ color: theme.colors.accent }}
-											>
-												{log.aiCommand.command}:
-											</span>
-											<span className="text-sm" style={{ color: theme.colors.textMain }}>
-												{log.aiCommand.description}
-											</span>
-										</div>
-										<div style={{ color: theme.colors.textMain }}>
-											{renderAiCommandBody(filteredText)}
-										</div>
-									</div>
 								) : isAIMode && !markdownEditMode ? (
 									// Rendered markdown for AI responses
 									<MarkdownRenderer
@@ -959,6 +1064,7 @@ export const LogItem = memo(
 										chatMath
 										codexDirectives={codexDirectivesForBody}
 										codexFollowup={codexFollowup}
+										commandRun={commandRun}
 									/>
 								) : (
 									// Raw markdown source mode (show original text with markdown syntax visible)
@@ -1225,6 +1331,11 @@ export const LogItem = memo(
 			prevProps.log.delivered === nextProps.log.delivered &&
 			prevProps.log.readOnly === nextProps.log.readOnly &&
 			prevProps.log.forceParallel === nextProps.log.forceParallel &&
+			prevProps.log.steered === nextProps.log.steered &&
+			// A steer's verdict lands on the bubble long after its text, and a
+			// neighbor's verdict changes whether this row's connector runs on.
+			prevProps.log.steerState === nextProps.log.steerState &&
+			prevProps.steerRunContinues === nextProps.steerRunContinues &&
 			prevProps.log.ttsr === nextProps.log.ttsr &&
 			prevProps.log.renderStyle === nextProps.log.renderStyle &&
 			prevProps.log.metadata?.hiddenProgress === nextProps.log.metadata?.hiddenProgress &&
@@ -1253,6 +1364,8 @@ export const LogItem = memo(
 			// consult tab id the jump arrow needs only arrives with the answer.
 			prevProps.log.delegation?.status === nextProps.log.delegation?.status &&
 			prevProps.log.delegation?.toTabId === nextProps.log.delegation?.toTabId &&
+			// A compaction pill settles the same way: spinner to outcome, same text.
+			prevProps.log.contextCompaction?.status === nextProps.log.contextCompaction?.status &&
 			prevProps.isExpanded === nextProps.isExpanded &&
 			prevProps.localFilterQuery === nextProps.localFilterQuery &&
 			prevProps.filterMode.mode === nextProps.filterMode.mode &&

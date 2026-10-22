@@ -1,3 +1,7 @@
+import { requestProviderTranslation } from '../../../../renderer/services/providerTranslation';
+vi.mock('../../../../renderer/services/providerTranslation', () => ({
+	requestProviderTranslation: vi.fn(),
+}));
 /**
  * Covers the `update_session_config` allowlist in useAppRemoteEventListeners -
  * the single gate every CLI-driven per-agent edit passes through.
@@ -159,6 +163,62 @@ describe('maestro:remoteUpdateSessionConfig', () => {
 	});
 });
 
+describe('maestro:remoteUpdateSessionConfig codexTransport', () => {
+	it('writes the app-server opt-in and flushes it before acking', async () => {
+		const sessions = [createMockSession({ id: 'session-1', toolType: 'codex' })];
+		const { setSessions } = setup(sessions);
+
+		dispatchPatch('session-1', { codexTransport: 'app-server' });
+		await flush();
+
+		expect(applyUpdate(setSessions, sessions)[0].codexTransport).toBe('app-server');
+		expect(setMany).toHaveBeenCalledWith(
+			[expect.objectContaining({ id: 'session-1', codexTransport: 'app-server' })],
+			[]
+		);
+		expect(ack).toHaveBeenCalledWith('ch', { success: true });
+	});
+
+	it('stores exec as an unset field, the way the Edit Agent modal does', async () => {
+		const sessions = [
+			createMockSession({ id: 'session-1', toolType: 'codex', codexTransport: 'app-server' }),
+		];
+		const { setSessions } = setup(sessions);
+
+		dispatchPatch('session-1', { codexTransport: 'exec' });
+		await flush();
+
+		expect(applyUpdate(setSessions, sessions)[0].codexTransport).toBeUndefined();
+	});
+
+	it('clears the opt-in on null', async () => {
+		const sessions = [
+			createMockSession({ id: 'session-1', toolType: 'codex', codexTransport: 'app-server' }),
+		];
+		const { setSessions } = setup(sessions);
+
+		dispatchPatch('session-1', { codexTransport: null });
+		await flush();
+
+		expect(applyUpdate(setSessions, sessions)[0].codexTransport).toBeUndefined();
+	});
+
+	it('rejects an unknown transport by name instead of persisting it', async () => {
+		const sessions = [createMockSession({ id: 'session-1', toolType: 'codex' })];
+		const { setSessions } = setup(sessions);
+
+		// Alongside a valid field: the whole patch is refused, not applied in part.
+		dispatchPatch('session-1', { codexTransport: 'websocket', customModel: 'gpt-x' });
+		await flush();
+
+		expect(setSessions).not.toHaveBeenCalled();
+		expect(ack).toHaveBeenCalledWith('ch', {
+			success: false,
+			error: "Invalid value for field 'codexTransport'",
+		});
+	});
+});
+
 describe('maestro:remoteUpdateSessionConfig with a tabId', () => {
 	/** An agent whose second tab is the one under test. */
 	function twoTabSession() {
@@ -290,5 +350,26 @@ describe('maestro:remoteUpdateSessionConfig with a tabId', () => {
 			success: false,
 			error: 'No editable tab fields in patch',
 		});
+	});
+});
+
+describe('provider migration parity', () => {
+	it('passes the library report through and never resets tabs or kills source work', async () => {
+		const session = createMockSession({ id: 'agent', toolType: 'claude-code' });
+		const { setSessions } = setup([session]);
+		const report = {
+			success: false,
+			error: 'unverified native resume',
+			plan: { id: 'plan', status: 'ready' },
+		} as any;
+		vi.mocked(requestProviderTranslation).mockResolvedValue(report);
+		dispatchPatch(session.id, { toolType: 'codex', migrationAction: 'plan' });
+		await flush();
+		expect(requestProviderTranslation).toHaveBeenCalledWith(
+			expect.objectContaining({ action: 'plan', agentId: session.id, destination: 'codex' })
+		);
+		expect(ack).toHaveBeenCalledWith('ch', report);
+		expect(setSessions).not.toHaveBeenCalled();
+		expect(setMany).not.toHaveBeenCalled();
 	});
 });

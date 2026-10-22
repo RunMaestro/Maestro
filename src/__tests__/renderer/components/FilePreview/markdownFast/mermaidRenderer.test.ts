@@ -4,6 +4,7 @@ import {
 	MERMAID_RENDERED_ATTR,
 } from '../../../../../renderer/components/FilePreview/markdownFast/mermaidRenderer';
 import { mockTheme } from '../../../../helpers/mockTheme';
+import { AA_CONTRAST, contrastRatio, cssColorToHex } from '../../../../../shared/colorContrast';
 
 class FakeIntersectionObserver implements IntersectionObserver {
 	static instances: FakeIntersectionObserver[] = [];
@@ -97,6 +98,26 @@ describe('createMermaidRenderer', () => {
 		expect(root.querySelector('pre')).toBeNull();
 		expect(root.querySelector('.markdown-fast-mermaid')).not.toBeNull();
 		expect(root.querySelector('svg')).not.toBeNull();
+	});
+
+	it('repairs an unreadable author-set node label once the SVG is attached', async () => {
+		const mermaid = (await import('mermaid')).default;
+		vi.mocked(mermaid.render).mockResolvedValueOnce({
+			svg:
+				'<svg><g class="node"><rect style="fill:#f9e79f"></rect>' +
+				'<g class="label"><foreignObject><div><p style="color:#f8f8f2">S4</p></div></foreignObject></g></g></svg>',
+		} as Awaited<ReturnType<typeof mermaid.render>>);
+
+		const root = makeRoot('<pre><code class="language-mermaid">graph TD;\nA-->B</code></pre>');
+		const handle = createMermaidRenderer({ theme: mockTheme });
+		handle.observe(root);
+		FakeIntersectionObserver.instances[0].trigger([root.querySelector('code')!]);
+		await new Promise((r) => setTimeout(r, 0));
+		await new Promise((r) => setTimeout(r, 0));
+
+		const label = root.querySelector('.markdown-fast-mermaid p') as HTMLElement;
+		const color = cssColorToHex(getComputedStyle(label).color)!;
+		expect(contrastRatio(color, '#f9e79f')).toBeGreaterThanOrEqual(AA_CONTRAST);
 	});
 
 	it('passes the diagram source to mermaid.render', async () => {

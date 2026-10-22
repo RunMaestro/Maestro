@@ -49,6 +49,63 @@ const VIDEO_MIME_TYPES: Record<string, string> = {
 
 export type MediaKind = 'audio' | 'video';
 
+/** One entry in the play queue. */
+export interface MediaItem {
+	/** Stable per agent + path, so re-opening the same file resumes it. */
+	id: string;
+	path: string;
+	/** Filename including the extension, shown in the player's title bar. */
+	name: string;
+	/** Agent the file was opened from, so the player can say where it came from. */
+	sessionId: string;
+	sessionName: string;
+	kind: MediaKind;
+}
+
+/**
+ * Identity of a media item.
+ *
+ * Keyed on agent + path rather than a generated ID so re-opening the same file
+ * lands on the same queue entry and picks up its remembered position, instead
+ * of stacking duplicates that all start from zero.
+ */
+export function mediaItemId(sessionId: string, path: string): string {
+	return `${sessionId}::${path}`;
+}
+
+/**
+ * Coerce a persisted queue back into media items, dropping anything malformed.
+ *
+ * Entries are read straight off disk and handed to a media element, so a
+ * hand-edited or half-written settings file must not be able to put a
+ * non-string path into the player.
+ */
+export function sanitizeMediaItems(value: unknown): MediaItem[] {
+	if (!Array.isArray(value)) return [];
+	const seen = new Set<string>();
+	const items: MediaItem[] = [];
+	for (const entry of value) {
+		if (typeof entry !== 'object' || entry === null) continue;
+		const { path, name, sessionId, sessionName, kind } = entry as Record<string, unknown>;
+		if (typeof path !== 'string' || !path) continue;
+		if (typeof name !== 'string' || !name) continue;
+		if (typeof sessionId !== 'string' || !sessionId) continue;
+		if (kind !== 'audio' && kind !== 'video') continue;
+		const id = mediaItemId(sessionId, path);
+		if (seen.has(id)) continue;
+		seen.add(id);
+		items.push({
+			id,
+			path,
+			name,
+			sessionId,
+			sessionName: typeof sessionName === 'string' ? sessionName : '',
+			kind,
+		});
+	}
+	return items;
+}
+
 /**
  * What opening a playable audio/video file should do.
  *
@@ -176,6 +233,53 @@ export function parseMediaStreamUrl(url: string, expectedToken: string): string 
 	const filePath = fromHex(hex);
 	if (!filePath || !isMediaFile(filePath)) return null;
 	return filePath;
+}
+
+/**
+ * Whether a media item's `path` is a remote http(s) URL rather than a local file.
+ *
+ * Remote media skips the `maestro-media://` protocol entirely: the element
+ * loads the URL itself, and Chromium range-requests a progressive MP4
+ * (H.264/AAC) over HTTP the same way it seeks a local file. Adaptive formats
+ * (HLS, DASH) and live transports (RTSP, RTMP) are NOT covered - they need a
+ * Media Source Extensions demuxer this player does not ship.
+ */
+export function isRemoteMediaUrl(value: string | null | undefined): boolean {
+	return typeof value === 'string' && /^https?:\/\//i.test(value);
+}
+
+/**
+ * Audio or video for a remote URL, read off the extension of its path (never
+ * the query string, so a signed `clip.mp4?sig=...` still counts as video).
+ *
+ * Falls back to `video` when the path names no known extension: a `<video>`
+ * element plays an audio-only stream too, while an `<audio>` element given a
+ * video discards the picture.
+ */
+export function getRemoteMediaKind(url: string): MediaKind {
+	try {
+		return getMediaKind(new URL(url).pathname) ?? 'video';
+	} catch {
+		return 'video';
+	}
+}
+
+/** Title for a remote media item: the last path segment, else the host. */
+export function getRemoteMediaName(url: string): string {
+	try {
+		const parsed = new URL(url);
+		const segment = parsed.pathname.split('/').filter(Boolean).pop();
+		if (segment) {
+			try {
+				return decodeURIComponent(segment);
+			} catch {
+				return segment;
+			}
+		}
+		return parsed.host || url;
+	} catch {
+		return url;
+	}
 }
 
 /** Playback speeds offered by the media transport, slowest first. */

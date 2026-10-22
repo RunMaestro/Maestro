@@ -77,8 +77,13 @@ const INHERIT_KEYWORD = 'default';
  */
 export type HintDirective = ModelTier | typeof INHERIT_KEYWORD;
 
-/** Which scope supplied a value, for reporting where a setting came from. */
-export type HintScope = 'document' | 'task';
+/**
+ * Which scope supplied a value, for reporting where a setting came from.
+ * `'subscription'` is a Cue subscription's static `tier` / `effort`, which
+ * rides the same resolver (see `src/shared/cue/turn-settings.ts`); markers
+ * never produce it.
+ */
+export type HintScope = 'document' | 'task' | 'subscription';
 
 export interface ModelHint {
 	tier?: HintDirective;

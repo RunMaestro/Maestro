@@ -40,6 +40,7 @@ import {
 	type ScheduledTask,
 	type ScheduledTaskKind,
 } from '../../../shared/cue/scheduled-tasks';
+import { formatCueTurnSettings } from '../../../shared/cue/turn-settings';
 import { ScheduledTaskForm, type ScheduledTaskFormAgent } from './ScheduledTaskForm';
 
 export interface ScheduledTasksTabProps {
@@ -108,6 +109,8 @@ function subtitleFor(task: ScheduledTask): string {
 	const parts = [task.name];
 	if (task.pipelineName && task.pipelineName !== task.agentName) parts.push(task.pipelineName);
 	if (task.action !== 'prompt') parts.push(task.action);
+	const model = formatCueTurnSettings(task);
+	if (model) parts.push(model);
 	if (!task.enabled) parts.push('paused');
 	return parts.join(' · ');
 }
@@ -268,9 +271,12 @@ export function ScheduledTasksTab({
 		);
 	}
 
-	const headerClass = 'pb-2 font-medium whitespace-nowrap';
+	const headerClass = 'pt-3 pb-2 font-medium whitespace-nowrap';
 	// The header stays put while 100+ rows scroll past under it. The background
-	// is required: without it the rows show through the transparent cells.
+	// is required: without it the rows show through the transparent cells. The
+	// top padding lives on the cells, not the scroller: a sticky header pins at
+	// the scroller's content edge, so padding there leaves a gap above it that
+	// the rows bleed through.
 	const stickyHeaderStyle = {
 		position: 'sticky' as const,
 		top: 0,
@@ -360,9 +366,9 @@ export function ScheduledTasksTab({
 				</button>
 			</div>
 
-			<div className="flex-1 min-h-0 overflow-y-auto px-5 py-3">
+			<div className="flex-1 min-h-0 overflow-y-auto px-5 pb-3">
 				{warnings.length > 0 && (
-					<div className="mb-3 text-xs" style={{ color: theme.colors.warning }}>
+					<div className="pt-3 mb-3 text-xs" style={{ color: theme.colors.warning }}>
 						{warnings.map((warning) => (
 							<div key={warning}>{warning}</div>
 						))}

@@ -18,11 +18,17 @@ import * as path from 'path';
 import Database from 'better-sqlite3';
 import { logger } from '../utils/logger';
 import { fetchWithTimeout } from '../utils/fetchWithTimeout';
+import { PluginServiceHost, ServiceError } from './plugin-service-host';
+import { RELAY_PLUGIN_ID, isRelayConversationIdentity } from '../../shared/plugins/relay-identity';
+import type { PluginSignatureInfo } from '../../shared/plugins/plugin-registry';
+import type { PluginManifest } from '../../shared/plugins/plugin-manifest';
+import { PluginMediaTools, resolveMediaRuntime } from './plugin-media-tools';
 import type { HostCallHandler, HostCallHandlers } from './plugin-sandbox-host';
 import type { PermissionBroker } from './permission-broker';
-import type { HostMethod } from '../../shared/plugins/rpc-protocol';
+import type { AgentSendProgressEvent, HostMethod } from '../../shared/plugins/rpc-protocol';
 import type { ActionGuard } from './action-guard';
 import type { PluginKvStore } from './plugin-kv-store';
+import type { PluginAgentSessionBindings } from './plugin-agent-session-bindings';
 import type { EgressGuard } from './net-egress-guard';
 import type { PluginBackgroundHealth } from './plugin-background-supervisor';
 import type { SpawnBinaryEntry } from './spawn-binary-registry';
@@ -39,11 +45,11 @@ import {
 	isHostViewBlocks,
 	MAX_HOST_VIEW_BLOCKS_BYTES,
 	MAX_PANEL_POST_BYTES,
-	serializedJsonByteLength,
 	type HostViewBlocks,
 	type HostViewContribution,
 	type PanelContribution,
 } from '../../shared/plugins/contributions';
+import { serializedJsonByteLength } from '../../shared/jsonUtils';
 import type { HistoryEntry } from '../../shared/types';
 import { isHistoryEntryType } from '../../shared/history';
 
@@ -67,6 +73,7 @@ const MAX_BACKGROUND_SERVICES_PER_PLUGIN = 16;
 /** Closed-schema caps for the Phase-4 act verbs (agents.dispatch / process.spawn). */
 const MAX_DISPATCH_AGENT_ID_CHARS = 256;
 const MAX_DISPATCH_PROMPT_CHARS = 64 * 1024;
+const MAX_TITLE_MESSAGE_CHARS = 4 * 1024;
 const MAX_SPAWN_ARGS = 32;
 const MAX_SPAWN_ARG_CHARS = 4 * 1024;
 /** At most this many concurrently-open host sockets per plugin (net:connect).
@@ -123,6 +130,27 @@ export interface PluginSessionMetadata {
 }
 
 export interface HostHandlerDeps {
+	serviceManifest?: (pluginId: string) => PluginManifest | undefined;
+	serviceRunning?: (pluginId: string) => boolean;
+	serviceAllowed?: (
+		pluginId: string,
+		capability: 'services:call' | 'services:provide' | 'media:tools',
+		target: string
+	) => boolean;
+	serviceInvoke?: (
+		provider: string,
+		command: string,
+		request: unknown,
+		signal: AbortSignal,
+		timeoutMs: number
+	) => Promise<unknown>;
+	registerServiceReconcile?: (reconcile: () => void) => void;
+	registerServiceAvailability?: (
+		available: (pluginId: string, requirementId: string) => boolean
+	) => void;
+	serviceChanged?: () => void;
+	serviceCancelProvider?: (pluginId: string, callId: string) => void;
+
 	/** The broker, so fs handlers can RE-authorize the real (symlink-resolved)
 	 * path after the initial string-based authorization (TOCTOU/symlink defense
 	 * AND the userData-tree exclusion, which runs on the resolved path). */
@@ -271,7 +299,7 @@ export interface HostHandlerDeps {
 	/** Registers a per-plugin resource-cleanup callback with the host lifecycle
 	 * so the sandbox can release wake locks and close fs watchers when a plugin
 	 * stops, crashes, or is uninstalled. Invoked once during handler construction. */
-	registerResourceCleanup?: (cleanup: (pluginId: string) => void) => void;
+	registerResourceCleanup?: (cleanup: (pluginId: string) => Promise<void>) => void;
 	backgroundRegister?: (
 		pluginId: string,
 		service: PluginBackgroundService
@@ -283,11 +311,41 @@ export interface HostHandlerDeps {
 	/** Whether the plugin currently has a trusted signature. Required for
 	 * high-power act verbs even when the user granted the capability. */
 	isPluginTrusted?: (pluginId: string) => boolean;
+	/** Live verified signature from the host registry; absent means no Relay topic exception. */
+	getPluginSignature?: (pluginId: string) => PluginSignatureInfo | undefined;
 	/** Optional Phase-4 act verb: send a prompt to an agent through the brokered
 	 * high-power path. The handler enforces the closed {agentId, prompt} schema
 	 * and re-checks broker (allowlist scope) + trust + risk + guard before
 	 * calling; the sink resolves the agent id to a live session at call time. */
 	dispatch?: (agentId: string, prompt: string) => Promise<unknown>;
+	/** Headless, resumable provider turn. The host returns the provider session id. */
+	sendAgent?: (
+		agentId: string,
+		prompt: string,
+		sessionId?: string,
+		signal?: AbortSignal,
+		origin?: 'user' | 'auto' | 'relay',
+		onProgress?: (event: AgentSendProgressEvent) => void
+	) => Promise<{
+		success: boolean;
+		response: string | null;
+		sessionId: string | null;
+		error?: string;
+	}>;
+	/** Host-owned tab naming turn; resolves provider, cwd and auth by agent id. */
+	generateTitle?: (
+		agentId: string,
+		firstMessage: string,
+		signal: AbortSignal
+	) => Promise<string | null>;
+	/** Host-only persistent ownership ledger for resumable provider sessions. */
+	providerSessions?: PluginAgentSessionBindings;
+	/** Host-owned persistence for a turn from the authenticated Relay plugin. */
+	recordRelayTurn?: (
+		agentId: string,
+		prompt: string,
+		result: { success: boolean; response: string | null; sessionId: string | null; error?: string }
+	) => Promise<void>;
 	/** Whether the plugin holds the separate, revocable UNATTENDED consent for
 	 * `agents:dispatch` against `agentId`. Direct plugin dispatch is definitionally
 	 * "nobody at the keyboard" (a plugin's own code called it), so the handler
@@ -580,9 +638,10 @@ function assertBrokerAllowed(
 	deps: Pick<HostHandlerDeps, 'broker'>,
 	pluginId: string,
 	method: HostMethod,
-	params: unknown
+	params: unknown,
+	options?: { audit?: boolean }
 ): void {
-	const decision = deps.broker.authorize(pluginId, method, params);
+	const decision = deps.broker.authorize(pluginId, method, params, options);
 	if (!decision.allowed) {
 		throw new Error(decision.reason ?? 'permission denied');
 	}
@@ -671,7 +730,39 @@ function resolveRealPath(target: string): string {
 	return missing.length > 0 ? path.join(realBase, ...missing) : realBase;
 }
 
+/**
+ * Build brokered handlers and their shared media/service registries using host-owned dependencies.
+ * Relay conversations require the exact pinned verified publisher in addition to live grants/consent.
+ * Missing service wiring fails closed; cleanupPluginResources returns the media/service teardown barrier.
+ */
 export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
+	const mediaTools = new PluginMediaTools({
+		resolveRuntime: () => resolveMediaRuntime(deps.settingsGet('mediaModelDirectory')),
+		egressGuard: deps.egressGuard,
+		authorize: (pluginId, options) => {
+			assertBrokerAllowed(deps, pluginId, 'media.open', {}, options);
+			assertTrustedActVerb(deps, pluginId);
+		},
+	});
+	const services = new PluginServiceHost({
+		manifest: (id) => deps.serviceManifest?.(id),
+		running: (id) => deps.serviceRunning?.(id) === true,
+		allowed: (id, capability, target) => deps.serviceAllowed?.(id, capability, target) === true,
+		invoke: (provider, command, request, signal, timeoutMs) =>
+			deps.serviceInvoke
+				? deps.serviceInvoke(provider, command, request, signal, timeoutMs)
+				: Promise.reject(new ServiceError('ServiceUnavailable')),
+		media: mediaTools,
+		guard: deps.actionGuard,
+		changed: deps.serviceChanged,
+		cancelProvider: deps.serviceCancelProvider,
+		settingsPanel: (id, panel) => deps.getPanel?.(id, panel)?.placement === 'settings',
+		openSettings: deps.panelVisibility
+			? (id, panel) => deps.panelVisibility!(id, `${id}/${panel}`, 'open')
+			: undefined,
+	});
+	deps.registerServiceAvailability?.((id, requirement) => services.available(id, requirement));
+	deps.registerServiceReconcile?.(() => services.reconcile());
 	const fsWatchers = new Map<string, { pluginId: string; watcher: fs.FSWatcher }>();
 	const sleepHandles = new Map<string, { pluginId: string; reason: string }>();
 	const backgroundServices = new Map<string, Map<string, PluginBackgroundService>>();
@@ -680,6 +771,7 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 	// net.send / net.close can re-authorize the still-held grant on every call, and
 	// we count entries per plugin to enforce MAX_SOCKETS_PER_PLUGIN.
 	const netSockets = new Map<string, { pluginId: string; url: string }>();
+	const pluginRunControllers = new Map<string, Set<AbortController>>();
 
 	/**
 	 * Re-authorize the symlink-resolved real path against the plugin's grant.
@@ -810,6 +902,7 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 			assertBrokerAllowed(deps, pluginId, 'settings.get', p);
 			if (SECRET_KEY_PATTERN.test(p.key)) throw new Error('access to secret settings is denied');
 			if (/encorefeatures/i.test(p.key)) throw new Error('access to the feature gate is denied');
+			if (p.key === 'mediaModelDirectory') throw new Error('host media configuration is host-only');
 			const ownNamespace = `plugins.${pluginId}.`;
 			if (p.key.startsWith('plugins.') && !p.key.startsWith(ownNamespace)) {
 				throw new Error("access to another plugin's settings is denied");
@@ -1371,7 +1464,7 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 	}
 
 	// ui.openPanel / ui.closePanel / ui.togglePanel: let a plugin summon or dismiss
-	// its OWN modal panel (the hotkey-summoned overlay path). Same own-panels-only
+	// its OWN modal panel, or open its own Settings card. Same own-panels-only
 	// resolution as ui.panelPost, so a plugin can never open, close, or flicker
 	// another plugin's surface, and no new consent is needed: anything that can
 	// contribute a panel at all already holds `ui:panel`. The verbs carry no data -
@@ -1395,10 +1488,10 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 				if (!panel) {
 					throw new Error(`panel "${panelId}" is not declared by this plugin`);
 				}
-				// Only `modal` panels have a summonable host; docked ones are always
-				// mounted and have their own hide control, so this would be a no-op the
-				// plugin could not distinguish from success.
-				if (panel.placement !== 'modal') {
+				// Modal panels support all visibility actions. Settings cards can only
+				// be opened; plugins cannot close or toggle the host Settings modal.
+				// Other docked panels are always mounted, so visibility would be a no-op.
+				if (panel.placement !== 'modal' && !(panel.placement === 'settings' && action === 'open')) {
 					throw new Error(`panel "${panelId}" is not a modal panel`);
 				}
 				panelVisibility(pluginId, `${pluginId}/${panelId}`, action);
@@ -1450,6 +1543,211 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 			assertLowOrMediumRisk(prompt);
 			return underGuard(deps.actionGuard, pluginId, 'agents:dispatch', `agent:${agentId}`, () =>
 				dispatch(agentId, prompt)
+			);
+		};
+	}
+	if (deps.sendAgent) {
+		const sendAgent = deps.sendAgent;
+		const activeRuns = pluginRunControllers;
+		// Joined into the existing resource cleanup below; a disabled/crashed
+		// plugin cannot leave its unattended provider run editing for 20 minutes.
+		handlers['agents.send'] = async (pluginId, params, context) => {
+			const p = asObject(params);
+			assertClosedSchema('agents.send', p, { agentId: true, prompt: true, opts: true });
+			if (
+				p.opts !== undefined &&
+				(typeof p.opts !== 'object' || p.opts === null || Array.isArray(p.opts))
+			) {
+				throw new Error('agents.send: opts must be an object');
+			}
+			const opts = p.opts === undefined ? {} : asObject(p.opts);
+			assertClosedSchema('agents.send opts', opts, { sessionId: true });
+			const agentId = p.agentId;
+			const prompt = p.prompt;
+			if (
+				typeof agentId !== 'string' ||
+				!agentId.trim() ||
+				agentId.length > MAX_DISPATCH_AGENT_ID_CHARS
+			) {
+				throw new Error('agents.send: invalid agentId');
+			}
+			if (
+				typeof prompt !== 'string' ||
+				!prompt.trim() ||
+				prompt.length > MAX_DISPATCH_PROMPT_CHARS
+			) {
+				throw new Error('agents.send: invalid prompt');
+			}
+			if (
+				opts.sessionId !== undefined &&
+				(typeof opts.sessionId !== 'string' || !/^[^\x00-\x1f\x7f]{1,256}$/.test(opts.sessionId))
+			) {
+				throw new Error('agents.send: invalid provider sessionId');
+			}
+			assertBrokerAllowed(deps, pluginId, 'agents.send', p);
+			if (!deps.dispatchUnattendedAllowed?.(pluginId, agentId)) {
+				throw new Error('agents.send requires separate unattended consent');
+			}
+			assertTrustedActVerb(deps, pluginId);
+			// The trusted Relay is an authorized user conversation transport.
+			// Preserve its full prompt and the agent's configured execution mode;
+			// topic keywords are not an additional conversation permission gate.
+			// Caller identity comes from the sandbox host, never from params/opts.
+			const relayConversation = isRelayConversationIdentity(
+				pluginId,
+				deps.getPluginSignature?.(pluginId)
+			);
+			if (!relayConversation) assertLowOrMediumRisk(prompt);
+			const providerSessions = deps.providerSessions;
+			if (!providerSessions) {
+				throw new Error('agents.send: provider session binding store unavailable');
+			}
+			if (opts.sessionId) {
+				providerSessions.assertOwned(pluginId, agentId, opts.sessionId as string);
+			}
+			return underGuard(
+				deps.actionGuard,
+				pluginId,
+				'agents:dispatch',
+				`agent:${agentId}`,
+				async () => {
+					const controller = new AbortController();
+					const runs = activeRuns.get(pluginId) ?? new Set<AbortController>();
+					runs.add(controller);
+					activeRuns.set(pluginId, runs);
+					try {
+						/** Forward progress only while the run retains live grants, consent and Relay identity. */
+						const onProgress = (event: AgentSendProgressEvent): void => {
+							if (controller.signal.aborted) return;
+							if (
+								!deps.broker.authorize(pluginId, 'agents.send', p, { audit: false }).allowed ||
+								!deps.dispatchUnattendedAllowed?.(pluginId, agentId) ||
+								(relayConversation &&
+									!isRelayConversationIdentity(pluginId, deps.getPluginSignature?.(pluginId)))
+							) {
+								controller.abort();
+								return;
+							}
+							context?.onProgress(event);
+						};
+						const { success, response, sessionId, error } = await sendAgent(
+							agentId,
+							prompt,
+							opts.sessionId as string | undefined,
+							controller.signal,
+							pluginId === RELAY_PLUGIN_ID ? 'relay' : 'auto',
+							onProgress
+						);
+						// Stop/uninstall may have purged this plugin's bindings while the
+						// provider was closing. A late successful result must not restore them.
+						if (controller.signal.aborted) {
+							return {
+								success: false,
+								response: null,
+								sessionId: null,
+								error: 'Agent run timed out or was cancelled',
+							};
+						}
+						// Quiet providers may finish without any progress callbacks. Check
+						// current grants again before releasing text or recording ownership.
+						assertBrokerAllowed(deps, pluginId, 'agents.send', p);
+						if (!deps.dispatchUnattendedAllowed?.(pluginId, agentId)) {
+							throw new Error('agents.send requires separate unattended consent');
+						}
+						assertTrustedActVerb(deps, pluginId);
+						if (
+							relayConversation &&
+							!isRelayConversationIdentity(pluginId, deps.getPluginSignature?.(pluginId))
+						) {
+							throw new Error('Relay conversation identity was revoked');
+						}
+						if (success && sessionId) {
+							providerSessions.remember(pluginId, agentId, sessionId);
+						}
+						if (pluginId === RELAY_PLUGIN_ID) {
+							try {
+								await deps.recordRelayTurn?.(agentId, prompt, {
+									success,
+									response,
+									sessionId,
+									error,
+								});
+							} catch (recordError) {
+								logger.error(`Could not record Relay turn: ${String(recordError)}`, '[Plugins]');
+							}
+						}
+						return { success, response, sessionId, ...(error ? { error } : {}) };
+					} finally {
+						runs.delete(controller);
+						if (runs.size === 0 && activeRuns.get(pluginId) === runs) {
+							activeRuns.delete(pluginId);
+						}
+					}
+				}
+			);
+		};
+	}
+	if (deps.generateTitle) {
+		const generateTitle = deps.generateTitle;
+		handlers['agents.generateTitle'] = async (pluginId, params) => {
+			const p = asObject(params);
+			assertClosedSchema('agents.generateTitle', p, { agentId: true, firstMessage: true });
+			const agentId = p.agentId;
+			const firstMessage = p.firstMessage;
+			if (
+				typeof agentId !== 'string' ||
+				!agentId.trim() ||
+				agentId.length > MAX_DISPATCH_AGENT_ID_CHARS
+			) {
+				throw new Error('agents.generateTitle: invalid agentId');
+			}
+			if (
+				typeof firstMessage !== 'string' ||
+				!firstMessage.trim() ||
+				firstMessage.length > MAX_TITLE_MESSAGE_CHARS
+			) {
+				throw new Error(
+					`agents.generateTitle: firstMessage must be 1-${MAX_TITLE_MESSAGE_CHARS} characters`
+				);
+			}
+			assertBrokerAllowed(deps, pluginId, 'agents.generateTitle', p);
+			if (!deps.dispatchUnattendedAllowed?.(pluginId, agentId)) {
+				throw new Error('agents.generateTitle requires separate unattended consent');
+			}
+			assertTrustedActVerb(deps, pluginId);
+			assertLowOrMediumRisk(firstMessage);
+			return underGuard(
+				deps.actionGuard,
+				pluginId,
+				'agents:dispatch',
+				`agent:${agentId}`,
+				async () => {
+					const controller = new AbortController();
+					const runs = pluginRunControllers.get(pluginId) ?? new Set<AbortController>();
+					runs.add(controller);
+					pluginRunControllers.set(pluginId, runs);
+					try {
+						const title = await generateTitle(agentId, firstMessage, controller.signal);
+						if (controller.signal.aborted) return null;
+						assertBrokerAllowed(deps, pluginId, 'agents.generateTitle', p);
+						if (!deps.dispatchUnattendedAllowed?.(pluginId, agentId)) {
+							throw new Error('agents.generateTitle requires separate unattended consent');
+						}
+						assertTrustedActVerb(deps, pluginId);
+						return title;
+					} catch (error) {
+						logger.warn(
+							`agents.generateTitle failed for agent ${agentId}: ${String(error)}`,
+							'[PluginAudit]'
+						);
+						return null;
+					} finally {
+						runs.delete(controller);
+						if (runs.size === 0 && pluginRunControllers.get(pluginId) === runs) {
+							pluginRunControllers.delete(pluginId);
+						}
+					}
+				}
 			);
 		};
 	}
@@ -1640,12 +1938,127 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 		};
 	}
 
+	for (const method of [
+		'media.status',
+		'media.open',
+		'media.download',
+		'media.probe',
+		'media.decode',
+		'media.run',
+		'media.close',
+	] as const) {
+		handlers[method] = (pluginId, params) => {
+			// Per-job serialization bounds download/probe/decode; close uses reserved
+			// cancellation slots. Only status/open/run need the ActionGuard as well.
+			if (!['media.status', 'media.open', 'media.run'].includes(method))
+				return mediaTools.call(pluginId, method, params);
+			return underGuard(deps.actionGuard, pluginId, 'media:tools', 'discord-voice', () =>
+				mediaTools.call(pluginId, method, params)
+			);
+		};
+	}
+
+	for (const [method, keys, execute] of [
+		[
+			'services.register',
+			['serviceId'],
+			(id: string, p: Record<string, unknown>) => services.register(id, p.serviceId as string),
+		],
+		[
+			'services.unregister',
+			['serviceId'],
+			(id: string, p: Record<string, unknown>) => services.unregister(id, p.serviceId as string),
+		],
+		[
+			'services.readiness',
+			['serviceId'],
+			(id: string, p: Record<string, unknown>) => services.readiness(id, p.serviceId as string),
+		],
+		[
+			'services.status',
+			['requirementId'],
+			(id: string, p: Record<string, unknown>) => services.status(id, p.requirementId as string),
+		],
+		[
+			'services.openSettings',
+			['requirementId'],
+			(id: string, p: Record<string, unknown>) =>
+				services.openSettings(id, p.requirementId as string),
+		],
+		[
+			'services.start',
+			['requirementId', 'request'],
+			(id: string, p: Record<string, unknown>) =>
+				services.start(id, p.requirementId as string, p.request),
+		],
+		[
+			'services.result',
+			['callId'],
+			(id: string, p: Record<string, unknown>) => services.result(id, p.callId as string),
+		],
+		[
+			'services.cancel',
+			['callId'],
+			(id: string, p: Record<string, unknown>) => services.cancel(id, p.callId as string),
+		],
+		[
+			'services.media.probe',
+			['callId', 'audioId'],
+			(id: string, p: Record<string, unknown>) =>
+				services.media(id, 'probe', p.callId as string, p.audioId as string),
+		],
+		[
+			'services.media.decode',
+			['callId', 'audioId'],
+			(id: string, p: Record<string, unknown>) =>
+				services.media(id, 'decode', p.callId as string, p.audioId as string),
+		],
+		[
+			'services.media.run',
+			['callId', 'audioId'],
+			(id: string, p: Record<string, unknown>) =>
+				services.media(id, 'run', p.callId as string, p.audioId as string),
+		],
+	] as const) {
+		handlers[method] = async (id, raw) => {
+			const p = asObject(raw);
+			if (
+				Object.keys(p).some((key) => !(keys as readonly string[]).includes(key)) ||
+				keys.some(
+					(key) =>
+						key !== 'request' &&
+						(typeof p[key] !== 'string' ||
+							(p[key] as string).length > 128 ||
+							!(p[key] as string).length)
+				)
+			)
+				throw new ServiceError('ServiceInvalid');
+			assertBrokerAllowed(deps, id, method, p);
+			return execute(id, p);
+		};
+	}
+	handlers['services.cancel']!.ownsReleaseResource = (id, raw) => services.ownsCancel(id, raw);
+
+	handlers['media.close']!.ownsReleaseResource = (pluginId, params) =>
+		mediaTools.ownsCloseRequest(pluginId, params);
+
 	// Release a plugin's still-open host resources (wake locks + fs watchers) when
 	// it stops, crashes, or is uninstalled. Absent an explicit release/unwatch
 	// call these maps are never pruned, so a stopped plugin would otherwise leak an
 	// active powerSaveBlocker and an open fs.watch handle. Idempotent: a second
 	// call for the same plugin finds nothing left to release.
-	const cleanupPluginResources = (pluginId: string): void => {
+	/**
+	 * Release watchers/wake locks and initiate best-effort socket closure for a stopped plugin.
+	 * Return the rejecting media/service drain barrier; mutation acknowledgments must await it.
+	 */
+	const cleanupPluginResources = (pluginId: string): Promise<void> => {
+		const drain = Promise.all([
+			services.cleanupPlugin(pluginId),
+			mediaTools.cleanupPlugin(pluginId),
+		]).then(() => {});
+		void drain.catch(() => {});
+		for (const controller of pluginRunControllers.get(pluginId) ?? []) controller.abort();
+		pluginRunControllers.delete(pluginId);
 		for (const [watchId, entry] of fsWatchers) {
 			if (entry.pluginId !== pluginId) continue;
 			try {
@@ -1677,6 +2090,7 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 			});
 			netSockets.delete(socketId);
 		}
+		return drain;
 	};
 	deps.registerResourceCleanup?.(cleanupPluginResources);
 

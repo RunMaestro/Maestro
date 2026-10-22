@@ -10,7 +10,7 @@ The `window.maestro` API exposes the following namespaces:
 
 - `settings` - Get/set app settings
 - `sessions` / `groups` - Agent and group persistence
-- `process` - Spawn, write, kill, resize, runCommand/cancelCommand (one-off commands)
+- `process` - Spawn, write, kill, resize, runCommand/cancelCommand (one-off commands); getHeadlessActivity/onHeadlessActivity (transient host process counts by target agent, versioned snapshots)
 - `fs` - readDir, readFile
 - `parquet` - Windowed reads over an open Parquet file (see Parquet API below)
 - `dialog` - Folder selection
@@ -181,3 +181,4 @@ Engine internals (pruning, projection, resumable scans) are documented in [REMAI
 - `notification` - Desktop notifications, text-to-speech
 - `devtools` - Developer tools: open, close, toggle
 - `attachments` - Image attachment management
+- `codexVisualization` - Codex `visualize` content references: load (builds and registers the isolated frame document; local agents only)

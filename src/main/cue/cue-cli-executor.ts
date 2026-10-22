@@ -25,6 +25,7 @@ import { buildCueTemplateContext } from './cue-template-context-builder';
 import { captureException } from '../utils/sentry';
 import { isWindows } from '../../shared/platformDetection';
 import { killCueProcess, trackCueProcess } from './cue-process-lifecycle';
+import { isLaunchCancelled, stoppedBeforeLaunchResult } from './cue-launch-cancel';
 
 /** Timeout for a single maestro-cli send invocation. */
 const CLI_SEND_TIMEOUT_MS = 30_000;
@@ -57,6 +58,8 @@ export interface CueCliExecutionConfig {
 	templateContext: TemplateContext;
 	timeoutMs: number;
 	onLog: (level: string, message: string) => void;
+	/** Aborted when the run is stopped: a call not yet spawned returns `stopped` (see cue-launch-cancel.ts). */
+	signal?: AbortSignal;
 }
 
 export interface CliSendResult {
@@ -86,6 +89,16 @@ export function resolveMaestroCliScriptPath(): string {
 	candidates.push(path.resolve(__dirname, '..', '..', 'cli', 'maestro-cli.js'));
 	// Legacy single-level fallback (kept for any flattened/bundled layout).
 	candidates.push(path.resolve(__dirname, '..', 'cli', 'maestro-cli.js'));
+	// Outside Electron this code runs INSIDE a maestro-cli bundle (`maestro-cli
+	// host`, `maestro-cli cue engine`), which can sit in any directory, not only
+	// one named `cli`. The running script is that bundle, or sits beside it.
+	const runningScript = process.argv[1];
+	if (runningScript) {
+		if (path.basename(runningScript) === 'maestro-cli.js') {
+			candidates.push(path.resolve(runningScript));
+		}
+		candidates.push(path.resolve(path.dirname(runningScript), 'maestro-cli.js'));
+	}
 
 	for (const candidate of candidates) {
 		try {
@@ -112,7 +125,8 @@ export async function runMaestroCliSend(
 	target: string,
 	message: string,
 	timeoutMs: number = CLI_SEND_TIMEOUT_MS,
-	runId?: string
+	runId?: string,
+	newTab = false
 ): Promise<CliSendResult> {
 	const cliScriptPath = resolveMaestroCliScriptPath();
 	const truncated = message.substring(0, CLI_SEND_OUTPUT_MAX_CHARS);
@@ -121,7 +135,12 @@ export async function runMaestroCliSend(
 	return new Promise<CliSendResult>((resolve) => {
 		let child: ChildProcess;
 		try {
-			child = spawn(process.execPath, [cliScriptPath, 'dispatch', target, truncated], {
+			const args = [cliScriptPath, 'dispatch', target, truncated, '--background'];
+			// Cue Agent messages promise a tab in the target's tab strip while
+			// preserving the user's view. Visibility is separate from placement;
+			// ordinary background dispatches keep their existing hidden default.
+			if (newTab) args.push('--new-tab', '--visible');
+			child = spawn(process.execPath, args, {
 				stdio: ['ignore', 'pipe', 'pipe'],
 				// In packaged Electron, `process.execPath` is the app binary, not
 				// Node - without this flag the spawn would launch the app instead
@@ -235,7 +254,8 @@ export async function runMaestroCliSend(
  * `target` + `message` with template variables then invokes maestro-cli.
  */
 export async function executeCueCli(config: CueCliExecutionConfig): Promise<CueRunResult> {
-	const { runId, session, subscription, event, cli, templateContext, timeoutMs, onLog } = config;
+	const { runId, session, subscription, event, cli, templateContext, timeoutMs, onLog, signal } =
+		config;
 
 	const startedAt = new Date().toISOString();
 	const startTime = Date.now();
@@ -296,7 +316,25 @@ export async function executeCueCli(config: CueCliExecutionConfig): Promise<CueR
 		}
 		const clampedTimeout =
 			timeoutMs > 0 ? Math.min(timeoutMs, CLI_SEND_TIMEOUT_MS) : CLI_SEND_TIMEOUT_MS;
-		const result = await runMaestroCliSend(resolvedTarget, resolvedMessage, clampedTimeout, runId);
+		// Last check before the spawn: runMaestroCliSend spawns synchronously.
+		if (isLaunchCancelled(signal)) {
+			return stoppedBeforeLaunchResult({
+				runId,
+				sessionId: session.id,
+				sessionName: session.name,
+				subscriptionName: subscription.name,
+				pipelineName: subscription.pipeline_name,
+				event,
+				startedAt,
+			});
+		}
+		const result = await runMaestroCliSend(
+			resolvedTarget,
+			resolvedMessage,
+			clampedTimeout,
+			runId,
+			cli.new_tab
+		);
 		const status = result.timedOut ? 'timeout' : result.ok ? 'completed' : 'failed';
 		if (result.timedOut) {
 			onLog(

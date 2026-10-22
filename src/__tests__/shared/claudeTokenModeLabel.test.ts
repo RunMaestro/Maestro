@@ -55,12 +55,12 @@ describe('getTokenSourcePill', () => {
 				'Captured via maestro-p driving the Claude TUI (Dynamic Mode enabled)'
 			);
 			expect(getTokenSourcePill({ mode: 'api', adaptive: true }).title).toBe(
-				'Captured via claude --print (Dynamic Mode enabled - fell back to API)'
+				'Captured via claude --print (Dynamic Mode enabled - switched from the TUI)'
 			);
 		});
 
 		it('uses the forced-fallback wording when reason is "limit", regardless of mode', () => {
-			const forced = 'Forced fallback: Max plan 5-hour or weekly quota is exhausted.';
+			const forced = "Forced fallback: the plan's 5-hour or weekly limit was hit.";
 			expect(getTokenSourcePill({ mode: 'api', reason: 'limit' }).title).toBe(forced);
 			expect(getTokenSourcePill({ mode: 'interactive', reason: 'limit' }).title).toBe(forced);
 		});

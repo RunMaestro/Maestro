@@ -103,6 +103,15 @@ export class JsonlTailer extends EventEmitter {
 		return this.lastByteAt;
 	}
 
+	/**
+	 * Read and emit whatever the file holds now, without waiting for the next
+	 * poll. Used once the writer has exited, so rows it wrote on the way out
+	 * (claude's `cost-state`) are seen before the tailer is stopped.
+	 */
+	drain(): void {
+		this.pollOnce();
+	}
+
 	private async waitForFile(): Promise<void> {
 		const deadline = Date.now() + this.existsTimeoutMs;
 		let backoff = EXISTS_BACKOFF_INITIAL_MS;

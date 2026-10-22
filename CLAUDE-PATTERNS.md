@@ -29,24 +29,14 @@ const result = await execFileNoThrow('git', ['status'], cwd);
 
 ## 3. Settings Persistence
 
-Add new settings in `useSettings.ts`:
+Settings live in the zustand store `src/renderer/stores/settingsStore.ts`, not in component state. A new setting touches four files, and skipping the hydration mapping is the classic "setting resets on restart" bug:
 
-```typescript
-// 1. Add state with default value
-const [mySetting, setMySettingState] = useState(defaultValue);
+1. `src/shared/settingsMetadata.ts` - the `SETTINGS_METADATA` entry (`description`, `type`, `default`, `category`).
+2. `src/renderer/stores/settingsStore.ts` - interface field, setter signature, initial-state default, setter action (which must call `window.maestro.settings.set`), and the `allSettings[...]` hydration mapping.
+3. `src/renderer/hooks/settings/useSettings.ts` - the field and setter on `UseSettingsReturn`.
+4. `src/main/stores/defaults.ts` - only when `MaestroSettings` requires the key.
 
-// 2. Add wrapper that persists
-const setMySetting = (value) => {
-	setMySettingState(value);
-	window.maestro.settings.set('mySetting', value);
-};
-
-// 3. Load from batch response in useEffect (settings use batch loading)
-// In the loadSettings useEffect, extract from allSettings object:
-const allSettings = await window.maestro.settings.getAll();
-const savedMySetting = allSettings['mySetting'];
-if (savedMySetting !== undefined) setMySettingState(savedMySetting);
-```
+The full six-step checklist, with the Settings modal style rules, is [[CLAUDE-SETTINGS.md]] §9.
 
 **MANDATORY: Register the setting with Settings Search.** Every user-facing setting must be findable from the Settings modal search bar (Cmd+F). Two steps, both required:
 
@@ -59,27 +49,19 @@ The DOM-parity test at `src/__tests__/renderer/components/Settings/searchableSet
 
 1. Create component in `src/renderer/components/`
 2. Add priority in `src/renderer/constants/modalPriorities.ts`
-3. Register with layer stack:
+3. Register with the layer stack through `useModalLayer()` (`src/renderer/hooks/ui/useModalLayer.ts`). Do NOT hand-roll `registerLayer()` / `unregisterLayer()` in an effect, and do not handle Escape locally:
 
 ```typescript
-import { useLayerStack } from '../contexts/LayerStackContext';
+import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 
-const { registerLayer, unregisterLayer } = useLayerStack();
-const onCloseRef = useRef(onClose);
-onCloseRef.current = onClose;
-
-useEffect(() => {
-	if (isOpen) {
-		const id = registerLayer({
-			type: 'modal',
-			priority: MODAL_PRIORITIES.YOUR_MODAL,
-			onEscape: () => onCloseRef.current(),
-		});
-		return () => unregisterLayer(id);
-	}
-}, [isOpen, registerLayer, unregisterLayer]);
+function MyModal({ onClose }: { onClose: () => void }) {
+	useModalLayer(MODAL_PRIORITIES.MY_MODAL, 'My Modal', onClose);
+	return <div>...</div>;
+}
 ```
+
+Pass `{ enabled: isOpen }` in the options to skip registration without unmounting the host, and `blocksAppShortcuts: false` for a passive panel that registers only so Escape closes it. A surface the user opens also needs its hotkey, palette entry, menu item, and `UI_SURFACES` row: see [UI-PATTERNS.md → Every Surface Needs Three Ways In](docs/agent-guides/UI-PATTERNS.md#every-surface-needs-three-ways-in-and-two-ways-out).
 
 **Max size:** The Maestro Cue modal (`90vw x 90vh`) is the maximum modal footprint - no modal, including "expanded"/"fullscreen" states, should exceed it (never `w-screen h-screen`). See [UI-PATTERNS.md → Modal Sizing](docs/agent-guides/UI-PATTERNS.md#modal-sizing-max-footprint).
 
@@ -313,7 +295,49 @@ const isRemote = !!session.sshRemoteId;
 const isRemote = !!session.sshRemoteId || !!session.sessionSshRemoteConfig?.enabled;
 ```
 
-## 11. UI Bug Debugging Checklist
+### Spawning an agent on a remote
+
+Any feature that spawns an agent process (context grooming, group chat, batch operations) MUST support SSH remote execution. Without the wrapping the agent always executes locally, which breaks what the user configured.
+
+1. Check whether the session has `sshRemoteConfig` with `enabled: true`.
+2. Wrap the spawn config with `wrapSpawnWithSsh()` from `src/main/utils/ssh-spawn-wrapper.ts`.
+3. Pass the SSH store (`createSshRemoteStoreAdapter(settingsStore)`).
+
+```typescript
+import { wrapSpawnWithSsh } from '../utils/ssh-spawn-wrapper';
+import { createSshRemoteStoreAdapter } from '../utils/ssh-remote-resolver';
+
+// Before spawning, wrap the config with SSH if needed
+if (sshStore && session.sshRemoteConfig?.enabled) {
+	const sshWrapped = await wrapSpawnWithSsh(spawnConfig, session.sshRemoteConfig, sshStore);
+	// Use sshWrapped.command, sshWrapped.args, sshWrapped.cwd, etc.
+}
+```
+
+Also ensure:
+
+- The correct agent type is used (don't hardcode `claude-code`).
+- Custom agent configuration (`customPath`, `customArgs`, `customEnvVars`) is passed through.
+- The agent's `binaryName` is used for remote execution (not local paths).
+- **An unresolvable remote fails loudly instead of silently running locally.** The user explicitly opted into SSH and their prompt must not leak to the local machine. `wrapSpawnWithSsh()` does NOT throw in that case: it hands back the unmodified local config with `sshRemoteUsed: null`, which still carries the REMOTE's `cwd`, so taking it runs the agent on the user's machine against a path that is either missing or (worse) the wrong files. Every caller must check `sshRemoteUsed` and throw `sshUnresolvedRemoteMessage(sshConfig)` from `ssh-spawn-wrapper.ts`. See `groomContext()` and `spawnGroupChatAgent()` for the pattern, and `sshUnresolvedFailure()` in `src/cli/services/agent-spawner.ts` for the CLI's version. Better still, resolve the target BEFORE any side effect: `buildAgentLaunchPlan()` / `resolveSshLaunchTarget()` in `src/shared/maestro-lib/launch/` return an actionable error for a missing, deleted, or disabled remote, which is how desktop, Cue, and the CLI now fail.
+
+**CLI parity:** the CLI (`src/cli/services/agent-spawner.ts`) spawns agent processes for batch and playbook automation and honors the same SSH wrapping and agent-config overrides as the desktop app. A new CLI spawn site threads `sessionSshRemoteConfig`, `customArgs`, `customEnvVars`, `customModel`, and `customEffort` through to `spawnAgent(...)`. The CLI loads `ssh-spawn-wrapper` via dynamic `import()` so the SSH chain stays out of the local hot path.
+
+## 11. Debugging Checklists
+
+Verify the root cause before changing code. Patterns that have wasted time here:
+
+- Tab naming bug: modal coordination was "fixed" when the real issue was an unregistered IPC handler.
+- Tooltip clipping: `overflow: visible` was tried on the element while a parent container had `overflow: hidden`.
+- Session validation: renderer calls were fixed when the handler was never wired in the main process.
+
+**Focus not working:** add `tabIndex={0}` or `tabIndex={-1}`, add the `outline-none` class, and focus through `useFocusAfterRender()` / `useFocusOnMount()` (`src/renderer/hooks/utils/useFocusAfterRender.ts`).
+
+**Settings not persisting:** check that the setter calls `window.maestro.settings.set()`, and that the store's hydration mapping reads the key back (§3).
+
+**Modal Escape not working:** register through `useModalLayer()` rather than handling Escape locally, and check that its priority is set correctly (§4).
+
+### Visual issues
 
 When debugging visual issues (tooltips clipped, elements not visible, scroll behavior):
 
@@ -350,14 +374,16 @@ Optional features that not all users need should be gated behind Encore Features
 When adding a new Encore Feature, gate **all** access points:
 
 1. **Type flag** - Add to `EncoreFeatureFlags` in `src/renderer/types/index.ts`
-2. **Default** - Set to `false` in `DEFAULT_ENCORE_FEATURES` in `useSettings.ts`
+2. **Default** - Set to `false` in `ENCORE_FEATURE_DEFAULTS` in `src/shared/encoreFeatureDefaults.ts` (the renderer store reads it as `DEFAULT_ENCORE_FEATURES` in `src/renderer/stores/settingsStore.ts`)
 3. **Toggle UI** - Add section in SettingsModal's Encore tab (follow Director's Notes pattern)
 4. **App.tsx** - Gate modal rendering and callback props on `encoreFeatures.yourFeature`
-5. **Keyboard shortcuts** - Guard with `ctx.encoreFeatures?.yourFeature` in `useMainKeyboardHandler.ts`
+5. **Keyboard shortcuts** - Guard with `ctx.encoreFeatures?.yourFeature` in `useMainKeyboardHandler.ts`, AND add the shortcut id to `SHORTCUT_ENCORE_FLAGS` in `src/renderer/utils/encoreShortcuts.ts` so it leaves Shortcuts Help, Settings -> Shortcuts, and the mastery count while the feature is off. A native menu item sets `encoreFlag` in `src/main/app-menu.ts`
 6. **Hamburger menu** - Make the setter optional, conditionally render the menu item in `SessionList.tsx`
 7. **Command palette** - Pass `undefined` for the handler in `QuickActionsModal.tsx` (already conditionally renders based on handler existence)
-8. **Left Bar / cycling** - A feature that adds a pinned AGENT (like Pianola) must also be hidden from the keyboard orders: the agent persists in the session store while the flag is off, so add it to `isSessionVisibleInSidebar()` in `src/renderer/utils/sessionVisibility.ts` or `Cmd+[` / `Cmd+]` still lands on it
-9. **Usage guide** - Fill in the entry's `description` in `src/shared/plugins/first-party.ts`, and add a `usage` block when the one-liner cannot carry it: `overview` (what it does), `access` (every way in - name a `shortcutId` rather than literal key text so the pane prints the user's LIVE binding), `steps` (an ordered walkthrough when setup takes more than one action), `notes` (guard rails worth stating before someone enables it), `agentCommands`, and `docsSlug`. `UsageGuide.tsx` renders whichever sections exist, so nothing is hard-coded per feature in the view
+8. **Settings outside the tile** - A control that configures the feature but lives on another Settings tab is gated on the flag where it renders, and its search entry sets `requiresEncore` (never on the tile's own entry)
+9. **Prompts and template variables** - Text that tells an agent to use the feature goes in its own prompt delivered by `systemPromptSection` in `src/shared/plugins/first-party.ts`, never in `maestro-system-prompt.md` (the base prompt reaches every agent, flag or not). Give each of the feature's prompts an `encoreFlag` in `src/shared/promptDefinitions.ts` and each of its template variables an `encoreFlag` in `src/shared/templateVariables.ts` so Settings -> Maestro Prompts and the `{{` pickers leave them out while the feature is off
+10. **Left Bar / cycling** - A feature that adds a pinned AGENT (like Pianola) must also be hidden from the keyboard orders: the agent persists in the session store while the flag is off, so add it to `isSessionVisibleInSidebar()` in `src/renderer/utils/sessionVisibility.ts` or `Cmd+[` / `Cmd+]` still lands on it, and run every list that offers agents (palette jump targets, the `@` picker, Send to Agent / Merge targets) through `filterSessionsVisibleInSidebar()`
+11. **Usage guide** - Fill in the entry's one-line `description` in `src/shared/plugins/first-party.ts` and its `usage` block. `usage` is REQUIRED (the type rejects a definition without one): it is the details pane's Help tab, which every tile has and which a disabled tile opens on. Sections: `overview` (what it does), `access` (every way in - name a `shortcutId` rather than literal key text so the pane prints the user's LIVE binding), `steps` (an ordered walkthrough when setup takes more than one action), `notes` (guard rails worth stating before someone enables it), `agentCommands`, and `docsSlug`. `UsageGuide.tsx` renders whichever sections exist, so nothing is hard-coded per feature in the view
 
 ### Reference Implementations
 
@@ -398,47 +424,70 @@ See [[IPC-PATTERNS.md → Browser Tab Shortcut Forwarding]](docs/agent-guides/IP
 
 ## 14. Search / Filter Input ESC Pill
 
-Any search or filter input that is dismissible via Escape **must** display an inline `ESC` pill flush-right inside the input bar. This gives users a consistent visual affordance that Escape will clear or close the input - no hidden affordances.
+Any search or filter input that is dismissible via Escape **must** display an inline `ESC` pill flush-right inside the input bar, so the user can see that Escape clears or closes it. Escape alone strands users on remote desktop and tablets.
 
 **When this applies:**
 
 - The input is meant for searching, filtering, or fuzzy-matching (not free-form text entry like chat input).
-- Pressing Escape clears the query, collapses the search bar, or closes the surrounding modal/panel.
+- Pressing Escape clears the query, collapses the search bar, or closes the surrounding modal or panel.
 
-**Reference implementation:** `src/renderer/components/LogViewer.tsx` (Search Bar section)
+Use `<EscCloseButton>` from `src/renderer/components/ui/EscCloseButton.tsx`. Do NOT hand-roll the pill: the inert copy-pasted version used to exist in nine places.
 
 ```tsx
-<div className="px-4 py-2 border-b flex items-center gap-3" style={{ ... }}>
-	<Search className="w-4 h-4" style={{ color: theme.colors.textDim }} />
-	<input
-		ref={searchInputRef}
-		type="text"
-		className="flex-1 bg-transparent outline-none text-sm"
-		placeholder="Search..."
-		style={{ color: theme.colors.textMain }}
-		value={query}
-		onChange={(e) => setQuery(e.target.value)}
-	/>
-	<button
-		onClick={() => {
-			setQuery('');
-			closeSearch(); // or whatever the Escape handler does
-		}}
-		className="text-xs font-bold opacity-50 hover:opacity-100"
-		style={{ color: theme.colors.textDim }}
-	>
-		ESC
-	</button>
-</div>
+<EscCloseButton theme={theme} onClose={closeSearch} />
 ```
 
 **Rules:**
 
-1. The pill must perform the **same action** as Escape - never have the pill diverge from the keyboard handler.
-2. Use `theme.colors.textDim` and `text-xs font-bold opacity-50 hover:opacity-100` so the pill stays muted but discoverable.
-3. The pill is a `<button>` (focusable, click-dismissible), not decorative text.
-4. For inputs inside modals registered with the LayerStack, the pill still belongs - Escape closes the layer, the pill mirrors that.
+1. `onClose` must do **exactly** what the Escape handler does. Extract the body into a shared `useCallback` rather than duplicating it, so the pill can never diverge from the keyboard.
+2. For an input inside a modal registered with the layer stack, the pill still belongs: Escape closes the layer, and the pill mirrors that.
+3. A text box that narrows a list should be `<FilterInput>` (`src/renderer/components/ui/FilterInput.tsx`), which already carries its own clear control.
 
-**Examples that follow this pattern:** `LogViewer.tsx`, `FileSearchModal.tsx`, `TabSwitcherModal.tsx`, `QuickActionsModal.tsx`.
+Full rules: [UI-PATTERNS.md → Every Modal Needs a Graphical Exit](docs/agent-guides/UI-PATTERNS.md#every-modal-needs-a-graphical-exit-escclosebutton).
 
-When adding any new search/filter input, include the ESC pill from the start.
+## 15. Error Handling & Sentry
+
+Maestro uses Sentry for error tracking. Field data from production crashes is invaluable for improving code quality.
+
+**DO let exceptions bubble up:**
+
+```typescript
+// WRONG - silently swallowing errors hides bugs from Sentry
+try {
+	await riskyOperation();
+} catch (e) {
+	console.error(e); // Lost to the void
+}
+
+// CORRECT - let unhandled exceptions reach Sentry
+await riskyOperation(); // Crashes are reported automatically
+```
+
+**DO handle expected/recoverable errors explicitly:**
+
+```typescript
+// CORRECT - known failure modes should be handled gracefully
+try {
+	await fetchUserData();
+} catch (e) {
+	if (e.code === 'NETWORK_ERROR') {
+		showOfflineMessage(); // Expected, recoverable
+	} else {
+		throw e; // Unexpected - let Sentry capture it
+	}
+}
+```
+
+**DO use Sentry utilities for explicit reporting:**
+
+```typescript
+import { captureException, captureMessage } from '../utils/sentry';
+
+// Report exceptions with context
+await captureException(error, { userId, operation: 'sync' });
+
+// Report notable events that aren't crashes
+await captureMessage('Unusual state detected', 'warning', { state });
+```
+
+**Key files:** `src/main/utils/sentry.ts`, `src/renderer/components/ErrorBoundary.tsx`

@@ -197,4 +197,30 @@ describe('SessionListStatsBar layout', () => {
 		expect(container.firstChild).toHaveClass('overflow-x-auto');
 		expect(screen.getByText('30 messages').parentElement).toHaveClass('whitespace-nowrap');
 	});
+
+	it('breaks the token total down by kind on hover, including tokens with no record of their kind', () => {
+		render(
+			<SessionListStatsBar
+				loading={false}
+				sessionsCount={5}
+				stats={makeStats({
+					totalTokens: 1_300_000,
+					tokenSplit: {
+						inputTokens: 1_000,
+						outputTokens: 2_000,
+						cacheReadTokens: 1_000_000,
+						cacheCreationTokens: 97_000,
+					},
+					unsplitTokens: 200_000,
+				})}
+				sessionSinceDate={null}
+				theme={theme}
+			/>
+		);
+		const title = screen.getByTestId('session-stats-tokens').getAttribute('title') ?? '';
+		expect(title).toMatch(/Cache reads 1(\.0)?M/);
+		expect(title).toContain('Input');
+		expect(title).toContain('Cache writes');
+		expect(title).toMatch(/Archived sessions, no breakdown 200(\.0)?K/);
+	});
 });

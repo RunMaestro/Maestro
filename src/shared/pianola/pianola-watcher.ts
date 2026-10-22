@@ -32,6 +32,54 @@ export const MAX_DISPATCH_ATTEMPTS = 3;
  */
 export const HANDOFF_TIMEOUT_POLLS = 12;
 
+/**
+ * Exit code a watcher uses when its target is finished for good: the tab is gone,
+ * or it sat idle past the idle timeout. The desktop supervisor removes the
+ * target on this code instead of restarting it, so dead watchers do not pile up.
+ */
+export const PIANOLA_WATCH_RETIRED_EXIT_CODE = 3;
+
+/**
+ * How long a tab must stay missing before the watcher retires. A grace period,
+ * not a single failed poll: a tab created moments ago may not be persisted yet.
+ */
+export const WATCH_TAB_GONE_GRACE_MS = 2 * 60_000;
+
+/** Default idle timeout (hours) before a watcher with nothing to do retires. */
+export const DEFAULT_WATCH_IDLE_HOURS = 6;
+
+/**
+ * Epoch ms of the newest activity a watcher has seen: the latest message
+ * timestamp in the polled tail, or the watch start when that is later (so a
+ * newly started watch on an old tab gets a full idle window).
+ */
+export function lastWatchActivityMs(
+	messages: readonly PianolaMessage[],
+	startedAtMs: number
+): number {
+	let latest = startedAtMs;
+	for (const m of messages) {
+		const ts = Date.parse(m.timestamp);
+		if (Number.isFinite(ts) && ts > latest) latest = ts;
+	}
+	return latest;
+}
+
+/**
+ * Whether a watcher has been idle long enough to retire. Never while it is
+ * mid-handoff or retrying a dispatch. `idleMs <= 0` disables the timeout.
+ */
+export function isWatchIdleExpired(
+	state: WatchState,
+	lastActivityMs: number,
+	nowMs: number,
+	idleMs: number
+): boolean {
+	if (idleMs <= 0) return false;
+	if (state.pendingHandoff || state.pendingRetry) return false;
+	return nowMs - lastActivityMs >= idleMs;
+}
+
 /** Why Pianola is pushing a blocking ask to the user's attention. */
 export type PianolaNotifyKind = 'escalate' | 'handoff_failed' | 'handoff_timeout';
 

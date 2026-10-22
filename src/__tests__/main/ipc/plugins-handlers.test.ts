@@ -62,7 +62,10 @@ function fakeManager() {
 		refresh: vi.fn(() => emptyRegistry),
 		getRegistry: vi.fn(() => emptyRegistry),
 		getContributions: vi.fn(() => EMPTY),
+		getRequestedPermissions: vi.fn(() => []),
 		setEnabled: vi.fn(() => emptyRegistry),
+		stopAndDrain: vi.fn(async () => {}),
+		uninstall: vi.fn(async () => ({ success: true })),
 	};
 }
 
@@ -130,6 +133,49 @@ describe('plugins IPC read channels are pure (no refresh -> no feedback loop)', 
 		expect(manager.setEnabled).toHaveBeenCalledWith('some-plugin', true);
 	});
 
+	it.each(['plugins:set-enabled', 'plugins:revoke-grants'])(
+		'%s waits for the stop/cleanup barrier before acknowledging the mutation',
+		async (channel) => {
+			const manager = register(true);
+			const gate = Promise.withResolvers<void>();
+			manager.stopAndDrain.mockReturnValue(gate.promise);
+			let finished = false;
+			const pending = Promise.resolve(handlers.get(channel)!(event, 'some-plugin', false)).then(
+				() => {
+					finished = true;
+				}
+			);
+			await vi.waitFor(() => expect(manager.stopAndDrain).toHaveBeenCalledWith('some-plugin'));
+			expect(finished).toBe(false);
+			gate.resolve();
+			await pending;
+			expect(finished).toBe(true);
+		}
+	);
+	it('awaits the manager-owned uninstall mutation before acknowledging removal', async () => {
+		const manager = register(true);
+		const gate = Promise.withResolvers<{ success: boolean }>();
+		manager.uninstall.mockReturnValue(gate.promise);
+		let finished = false;
+		const pending = Promise.resolve(handlers.get('plugins:uninstall')!(event, 'some-plugin')).then(
+			() => {
+				finished = true;
+			}
+		);
+		await vi.waitFor(() => expect(manager.uninstall).toHaveBeenCalledWith('some-plugin'));
+		expect(finished).toBe(false);
+		gate.resolve({ success: true });
+		await pending;
+		expect(finished).toBe(true);
+	});
+	it('does not acknowledge uninstall when the manager mutation fails', async () => {
+		const manager = register(true);
+		manager.uninstall.mockRejectedValue(new Error('MediaProcessFailed'));
+		await expect(handlers.get('plugins:uninstall')!(event, 'some-plugin')).rejects.toThrow(
+			'MediaProcessFailed'
+		);
+	});
+
 	it('mutation channels reject a path-traversal plugin id (InvalidPluginId) and never reach the manager', async () => {
 		const manager = register(true);
 		const handler = handlers.get('plugins:set-enabled');
@@ -194,8 +240,10 @@ describe('plugins:set-enabled gates code-tier activation on ledger authorization
 		const manager = {
 			refresh: vi.fn(() => emptyRegistry),
 			getContributions: vi.fn(() => EMPTY),
+			getRequestedPermissions: vi.fn(() => []),
 			getRegistry: vi.fn(() => ({ records: [{ id: 'com.p', manifest: { tier: opts.tier } }] })),
 			setEnabled: setEnabledMock,
+			stopAndDrain: vi.fn(async () => {}),
 		};
 		registerPluginsHandlers({
 			settingsStore: settingsStore(true),
@@ -269,8 +317,13 @@ describe('plugins:first-party-set-enabled routes the marketplace toggle through 
 		return { encore, supervisor };
 	}
 
+	const realPlatform = process.platform;
+	const setPlatform = (value: string) =>
+		Object.defineProperty(process, 'platform', { value, configurable: true });
+
 	afterEach(() => {
 		setFirstPartyBridges({});
+		setPlatform(realPlatform);
 	});
 
 	it('enable flips the flag through the bridge and reconciles the supervisor', async () => {
@@ -365,9 +418,67 @@ describe('plugins:first-party-set-enabled routes the marketplace toggle through 
 		setFirstPartyBridges(bridges);
 		const handler = handlers.get('plugins:first-party-set-enabled');
 
+		// macOS is the one host every first-party feature exists on (MaestroRun is
+		// macOS only), so pin it: this must cover every flag on every CI leg.
+		setPlatform('darwin');
 		for (const flag of Object.keys(FIRST_PARTY_PLUGINS)) {
 			await expect(handler!(event, flag, true)).resolves.toMatchObject({ enabled: true });
 			expect(encore[flag]).toBe(true);
 		}
+	});
+
+	describe('a feature that does not exist on this operating system', () => {
+		function maestroRunBridge() {
+			const encore: Record<string, unknown> = { maestroRun: false };
+			let ledger: PermissionGrant[] = [];
+			const bridge = new FirstPartyPluginBridge(FIRST_PARTY_PLUGINS.maestroRun, {
+				settingsStore: {
+					get: (key: string) => (key === 'encoreFeatures' ? { ...encore } : undefined),
+					set: (_key: string, value: unknown) => {
+						if (value && typeof value === 'object') Object.assign(encore, value);
+					},
+				},
+				readGrants: () => ledger,
+				mintFirstPartyGrants: (def) => {
+					ledger = grantsFromRequests([...def.permissions], Date.now());
+				},
+				revokeGrants: () => {
+					ledger = [];
+				},
+			});
+			setFirstPartyBridges({ maestroRun: bridge });
+			return encore;
+		}
+
+		it.each(['win32', 'linux'])('refuses to enable MaestroRun on %s', async (platform) => {
+			register(true);
+			const encore = maestroRunBridge();
+			setPlatform(platform);
+			const handler = handlers.get('plugins:first-party-set-enabled');
+
+			await expect(handler!(event, 'maestroRun', true)).rejects.toThrow(
+				'FirstPartyPlatformUnsupported'
+			);
+			expect(encore.maestroRun).toBe(false);
+		});
+
+		it('enables MaestroRun on macOS', async () => {
+			register(true);
+			const encore = maestroRunBridge();
+			setPlatform('darwin');
+			const handler = handlers.get('plugins:first-party-set-enabled');
+
+			await expect(handler!(event, 'maestroRun', true)).resolves.toMatchObject({ enabled: true });
+			expect(encore.maestroRun).toBe(true);
+		});
+
+		it('always allows switching it off', async () => {
+			register(true);
+			maestroRunBridge();
+			setPlatform('linux');
+			const handler = handlers.get('plugins:first-party-set-enabled');
+
+			await expect(handler!(event, 'maestroRun', false)).resolves.toMatchObject({ enabled: false });
+		});
 	});
 });

@@ -1,34 +1,58 @@
 // Cue trigger command - manually trigger a Cue subscription by name
 
 import { withMaestroClient } from '../services/maestro-client';
+import { submitCueTrigger } from '../services/cue-trigger-inbox';
+import { readCueEngineLock } from '../../main/cue/cue-engine-lock';
+import { exitIfMaestroNotRunning } from '../services/session-command';
+import { applyDataDirOption, requireDataDirOrExit } from '../services/data-dir-option';
 
 interface CueTriggerOptions {
 	prompt?: string;
 	json?: boolean;
 	sourceAgentId?: string;
+	/** Explicit data directory; decides which engine lock and inbox (or desktop discovery file) is used. */
+	dataDir?: string;
 }
 
 export async function cueTrigger(
 	subscriptionName: string,
 	options: CueTriggerOptions
 ): Promise<void> {
+	// Before the lock read below: the lock, the inbox and the desktop's
+	// discovery file all live in the data directory. Only an EXPLICIT path is
+	// checked for existence; without one, an absent desktop app keeps
+	// reporting itself as MAESTRO_NOT_RUNNING (exit 3), as it always has.
+	if (options.dataDir !== undefined) {
+		applyDataDirOption(options.dataDir);
+		requireDataDirOrExit({ json: options.json });
+	}
 	try {
-		const result = await withMaestroClient(async (client) => {
-			return client.sendCommand<{
-				type: string;
-				success: boolean;
-				subscriptionName: string;
-				error?: string;
-			}>(
-				{
-					type: 'trigger_cue_subscription',
-					subscriptionName,
-					prompt: options.prompt,
-					sourceAgentId: options.sourceAgentId,
-				},
-				'trigger_cue_subscription_result'
-			);
-		});
+		// Whoever holds the engine lock is the engine that will run it. A
+		// standalone runner has no WebSocket, so it is reached through its
+		// trigger inbox instead (see cue-trigger-inbox.ts).
+		const result =
+			readCueEngineLock()?.mode === 'standalone'
+				? await submitCueTrigger({
+						subscriptionName,
+						prompt: options.prompt,
+						sourceAgentId: options.sourceAgentId,
+					})
+				: await withMaestroClient(async (client) => {
+						return client.sendCommand<{
+							type: string;
+							success: boolean;
+							subscriptionName: string;
+							error?: string;
+						}>(
+							{
+								type: 'trigger_cue_subscription',
+								subscriptionName,
+								prompt: options.prompt,
+								sourceAgentId: options.sourceAgentId,
+							},
+							'trigger_cue_subscription_result'
+						);
+					});
 
 		if (options.json) {
 			console.log(
@@ -57,6 +81,7 @@ export async function cueTrigger(
 			process.exit(1);
 		}
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json, jsonExtra: { type: 'error' } });
 		if (options.json) {
 			console.log(
 				JSON.stringify({

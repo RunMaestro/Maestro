@@ -11,7 +11,7 @@
  * file is the I/O shell: WebSocket polling, dispatch, and console output.
  */
 
-import { readSettingValue } from '../services/storage';
+import { isEncoreEnabled, requireEncore } from '../utils/encore-gate';
 import {
 	readPianolaRules,
 	readPianolaRulesResult,
@@ -27,6 +27,11 @@ import {
 	runWatchIteration,
 	initialWatchState,
 	rehydrateWatchState,
+	lastWatchActivityMs,
+	isWatchIdleExpired,
+	PIANOLA_WATCH_RETIRED_EXIT_CODE,
+	WATCH_TAB_GONE_GRACE_MS,
+	DEFAULT_WATCH_IDLE_HOURS,
 	type WatchDeps,
 	type WatchState,
 	type WatchTarget,
@@ -49,6 +54,7 @@ import type {
 	PianolaRisk,
 	PianolaSignalKind,
 } from '../../shared/pianola/types';
+import { exitIfMaestroNotRunning } from '../services/session-command';
 
 const DEFAULT_INTERVAL_SECONDS = 5;
 const POLL_TAIL = 40;
@@ -56,6 +62,7 @@ const POLL_TAIL = 40;
 export interface PianolaWatchOptions {
 	agent?: string;
 	interval?: string;
+	idleHours?: string;
 	dryRun?: boolean;
 	once?: boolean;
 	json?: boolean;
@@ -84,15 +91,7 @@ interface SessionHistoryResponse {
 
 /** Exit with a clear message if the Pianola Encore feature is disabled. */
 export function ensurePianolaEnabled(json?: boolean): void {
-	const flags = readSettingValue('encoreFeatures') as Record<string, unknown> | undefined;
-	if (flags?.pianola === true) return;
-	const message = 'Pianola is not enabled. Enable it with: maestro-cli encore set pianola on';
-	if (json) {
-		console.log(JSON.stringify({ success: false, error: message, code: 'PIANOLA_DISABLED' }));
-	} else {
-		console.error(message);
-	}
-	process.exit(1);
+	requireEncore('pianola', json);
 }
 
 /**
@@ -101,8 +100,7 @@ export function ensurePianolaEnabled(json?: boolean): void {
  * only runs once).
  */
 function pianolaEnabledNow(): boolean {
-	const flags = readSettingValue('encoreFeatures') as Record<string, unknown> | undefined;
-	return flags?.pianola === true;
+	return isEncoreEnabled('pianola');
 }
 
 /** Build the desktop toast for a blocking ask the user must see. */
@@ -139,6 +137,14 @@ function parseIntervalSeconds(raw?: string): number {
 	const match = raw.trim().match(/^(\d+)s?$/i);
 	if (!match) return DEFAULT_INTERVAL_SECONDS;
 	return Math.max(1, parseInt(match[1], 10));
+}
+
+/** Parse `--idle-hours` (fractional allowed); defaults to 6, 0 disables. */
+function parseIdleHours(raw?: string): number {
+	if (raw === undefined) return DEFAULT_WATCH_IDLE_HOURS;
+	const hours = Number(raw.trim());
+	if (raw.trim() === '' || !Number.isFinite(hours) || hours < 0) return DEFAULT_WATCH_IDLE_HOURS;
+	return hours;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -194,6 +200,7 @@ export async function pianolaWatch(tabId: string, options: PianolaWatchOptions):
 	ensurePianolaEnabled(options.json);
 
 	const intervalMs = parseIntervalSeconds(options.interval) * 1000;
+	const idleMs = parseIdleHours(options.idleHours) * 3_600_000;
 	const dryRun = !!options.dryRun;
 	const once = !!options.once;
 
@@ -238,6 +245,7 @@ export async function pianolaWatch(tabId: string, options: PianolaWatchOptions):
 	try {
 		await client.connect();
 	} catch (error) {
+		exitIfMaestroNotRunning(error, {});
 		process.off('SIGINT', onSignal);
 		const message = error instanceof Error ? error.message : String(error);
 		console.error(`[pianola] could not connect to Maestro: ${message}`);
@@ -269,6 +277,10 @@ export async function pianolaWatch(tabId: string, options: PianolaWatchOptions):
 		);
 	}
 
+	const startedAtMs = Date.now();
+	// When the tab was first seen missing; cleared on any successful poll.
+	let tabMissingSinceMs: number | null = null;
+
 	try {
 		for (;;) {
 			// Re-check consent each poll: if Pianola was toggled off in Settings,
@@ -294,10 +306,23 @@ export async function pianolaWatch(tabId: string, options: PianolaWatchOptions):
 
 			if (!resp.success) {
 				console.error(`[pianola] ${resp.error ?? 'session history unavailable'}`);
+				// A tab that stays gone (closed, or its agent deleted) will never come
+				// back: retire so the supervisor drops the target instead of polling
+				// a dead tab forever.
+				if (resp.code === 'TAB_NOT_FOUND') {
+					tabMissingSinceMs ??= Date.now();
+					if (Date.now() - tabMissingSinceMs >= WATCH_TAB_GONE_GRACE_MS) {
+						console.error(`[pianola] tab ${tabId} no longer exists; retiring watch.`);
+						process.exitCode = PIANOLA_WATCH_RETIRED_EXIT_CODE;
+						break;
+					}
+				}
 				if (once || stopped) break;
 				await sleep(intervalMs);
 				continue;
 			}
+
+			tabMissingSinceMs = null;
 
 			const agentId = options.agent ?? resp.agentId ?? '';
 			if (!agentId) {
@@ -315,6 +340,16 @@ export async function pianolaWatch(tabId: string, options: PianolaWatchOptions):
 				// Fail closed: log and keep watching rather than crashing the loop.
 				const message = error instanceof Error ? error.message : String(error);
 				console.error(`[pianola] iteration error: ${message}`);
+			}
+
+			// Nothing has happened on the tab for the idle timeout and no ask is in
+			// flight: retire rather than poll an abandoned tab for days.
+			if (
+				isWatchIdleExpired(state, lastWatchActivityMs(messages, startedAtMs), Date.now(), idleMs)
+			) {
+				console.log(`[pianola] tab ${tabId} idle for ${idleMs / 3_600_000}h; retiring watch.`);
+				process.exitCode = PIANOLA_WATCH_RETIRED_EXIT_CODE;
+				break;
 			}
 
 			if (once || stopped) break;

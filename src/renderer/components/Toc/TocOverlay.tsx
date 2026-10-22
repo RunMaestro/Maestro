@@ -21,6 +21,7 @@ import { useScrollIntoView } from '../../hooks/ui/useScrollIntoView';
 import { List, ChevronUp, ChevronDown } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { TocEntry } from './types';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 interface TocOverlayProps {
 	theme: Theme;
@@ -190,10 +191,9 @@ export const TocOverlay = React.memo(function TocOverlay({
 			{open && (
 				<div
 					ref={overlayRef}
-					className="absolute bottom-16 right-4 rounded-lg shadow-xl overflow-hidden z-20 animate-in fade-in slide-in-from-bottom-2 duration-200 flex flex-col"
+					className="absolute bottom-16 right-4 rounded-lg overflow-hidden z-20 animate-in fade-in slide-in-from-bottom-2 duration-200 flex flex-col"
 					style={{
-						backgroundColor: theme.colors.bgSidebar,
-						border: `1px solid ${theme.colors.border}`,
+						...elevatedSurfaceStyle(theme),
 						maxHeight: 'calc(70vh - 80px)',
 						width: `${width}px`,
 					}}

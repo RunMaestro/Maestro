@@ -3,6 +3,7 @@ import type { Theme } from '../../../../../types';
 import { SettingCheckbox } from '../../../../SettingCheckbox';
 import { ToggleButtonGroup } from '../../../../ToggleButtonGroup';
 import { SettingsSectionHeading } from '../../../SettingsSectionHeading';
+import { useSettingsStore } from '../../../../../stores/settingsStore';
 
 interface HistorySectionProps {
 	theme: Theme;
@@ -23,6 +24,7 @@ export function HistorySection({
 	groupCueEntries,
 	setGroupCueEntries,
 }: HistorySectionProps) {
+	const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures.maestroCue);
 	return (
 		<div data-setting-id="general-history">
 			<SettingCheckbox
@@ -59,18 +61,21 @@ export function HistorySection({
 				</div>
 			)}
 
-			{/* Group Cue entries in the History panel */}
-			<div className="mt-3" data-setting-id="general-group-cue-entries">
-				<SettingCheckbox
-					icon={Layers}
-					sectionLabel="Group Cue History Entries"
-					title="Collapse repeated Cue runs into one History row"
-					description="A high-frequency trigger becomes a single row with its run count, the most recent run time, and a failure count. Expand the row to see the individual runs. Turn this off to list every Cue run separately."
-					checked={groupCueEntries}
-					onChange={setGroupCueEntries}
-					theme={theme}
-				/>
-			</div>
+			{/* Group Cue entries in the History panel. A Cue option, so it exists only
+			    while Maestro Cue is on. */}
+			{maestroCueEnabled && (
+				<div className="mt-3" data-setting-id="general-group-cue-entries">
+					<SettingCheckbox
+						icon={Layers}
+						sectionLabel="Group Cue History Entries"
+						title="Collapse repeated Cue runs into one History row"
+						description="A high-frequency trigger becomes a single row with its run count, the most recent run time, and a failure count. Expand the row to see the individual runs. Turn this off to list every Cue run separately."
+						checked={groupCueEntries}
+						onChange={setGroupCueEntries}
+						theme={theme}
+					/>
+				</div>
+			)}
 		</div>
 	);
 }

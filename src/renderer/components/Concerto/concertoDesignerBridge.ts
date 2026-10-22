@@ -167,6 +167,7 @@ function isMatchingReadyRecord(
 	);
 }
 
+/** Wait for a connected frame's authored revision to be ready, independent of visibility. */
 async function waitForMatchingReadyRecord(
 	key: string,
 	expectedRevision: number | undefined,
@@ -197,6 +198,19 @@ async function waitForMatchingReadyRecord(
 	}
 }
 
+/** Confirm the authored revision loaded even when the stage is hidden. */
+export async function waitForConcertoDesignerFrameReady(
+	surface: ConcertoHtmlSurface,
+	id: string,
+	timeoutMs = DEFAULT_READY_TIMEOUT_MS,
+	expectedRevision?: number
+): Promise<boolean> {
+	return (
+		(await waitForMatchingReadyRecord(frameKey(surface, id), expectedRevision, timeoutMs)) !== null
+	);
+}
+
+/** Return diagnostics and crop geometry only for a ready frame with a nonzero viewport. */
 export async function getConcertoDesignerFrameSnapshot(
 	surface: ConcertoHtmlSurface,
 	id: string,

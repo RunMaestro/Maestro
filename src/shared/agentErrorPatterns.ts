@@ -691,6 +691,19 @@ const CODEX_ERROR_PATTERNS: AgentErrorPatterns = {
 			message: 'Unknown model or provider. Check the model setting in configuration.',
 			recoverable: true,
 		},
+		{
+			// `codex exec resume <id>` while another Codex process still owns the
+			// thread. Codex allows one writer per thread and exits 1 with stderr:
+			//   "thread/resume failed: thread <uuid> already has an active writer"
+			// Seen when an SSH turn's local process ended but Codex kept running on
+			// the remote, and the synopsis resumed the thread under it. NOT
+			// session_not_found: the thread exists, and fresh-session recovery would
+			// throw its context away.
+			pattern: /already has an active writer|thread-store conflict/i,
+			message:
+				'This Codex conversation is still running in another process. Wait for it to finish, then send again.',
+			recoverable: true,
+		},
 	],
 
 	session_not_found: [
@@ -1746,6 +1759,34 @@ export function matchErrorPattern(
 	}
 
 	return null;
+}
+
+/**
+ * Drop the lines of a structured (JSONL) stdout that parse as JSON objects,
+ * keeping any plain text around them.
+ *
+ * Exit-time detection must not run the pattern bank over those lines. Each
+ * event was already classified on its own as it streamed, and a JSON line is
+ * one physical line, so a loose pattern like `/token.*limit/` matches across a
+ * whole assistant message or command output. A turn that exited non-zero
+ * after quoting the word "token" and later the word "limit" was reported as
+ * "Context length exceeded" at 25% context.
+ */
+export function stripJsonEventLines(text: string): string {
+	if (!text) return '';
+	return text
+		.split('\n')
+		.filter((line) => {
+			const trimmed = line.trim();
+			if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return true;
+			try {
+				JSON.parse(trimmed);
+				return false;
+			} catch {
+				return true;
+			}
+		})
+		.join('\n');
 }
 
 /**

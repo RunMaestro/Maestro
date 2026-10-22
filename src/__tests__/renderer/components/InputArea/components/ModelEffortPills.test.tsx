@@ -3,12 +3,15 @@ import { describe, expect, it, vi } from 'vitest';
 import { ModelEffortPills } from '../../../../../renderer/components/InputArea/components/ModelEffortPills';
 import { inputAreaTheme } from '../_fixtures';
 import { formatShortcutKeys } from '../../../../../renderer/utils/shortcutFormatter';
+import { getShortcutKeys } from '../../../../helpers/shortcutKeys';
 
 // Formatted through the real formatter rather than spelled out: the chord
 // renders as '⌘X' on macOS and 'Ctrl+X' elsewhere, and hardcoding either makes
 // the test pass on one platform's CI and fail on the other's.
 const HINT_KEYS = ['Meta', 'x'];
 const HINT_TEXT = `Try: ${formatShortcutKeys(HINT_KEYS)}`;
+// The hint row: the chord is drawn as separate key caps, so find it by its keys.
+const hintRow = () => getShortcutKeys(HINT_KEYS).closest('div') as HTMLElement;
 
 describe('ModelEffortPills', () => {
 	function renderPills(overrides = {}) {
@@ -82,11 +85,11 @@ describe('ModelEffortPills', () => {
 	describe('shortcut hint header', () => {
 		it('renders the hint at the top of both menus when one is supplied', () => {
 			const { unmount } = renderPills({ modelMenuOpen: true, shortcutKeys: HINT_KEYS });
-			expect(screen.getByText(HINT_TEXT)).toBeInTheDocument();
+			expect(hintRow()).toHaveTextContent(HINT_TEXT);
 			unmount();
 
 			renderPills({ effortMenuOpen: true, shortcutKeys: HINT_KEYS });
-			expect(screen.getByText(HINT_TEXT)).toBeInTheDocument();
+			expect(hintRow()).toHaveTextContent(HINT_TEXT);
 		});
 
 		it('renders no header when no hint is supplied', () => {
@@ -100,7 +103,8 @@ describe('ModelEffortPills', () => {
 		it('is not focusable and is not one of the menu buttons', () => {
 			renderPills({ modelMenuOpen: true, shortcutKeys: HINT_KEYS });
 
-			const hint = screen.getByText(HINT_TEXT);
+			const hint = hintRow();
+			expect(hint).toHaveTextContent(HINT_TEXT);
 			expect(hint.tagName).not.toBe('BUTTON');
 			expect(hint.closest('button')).toBeNull();
 			expect(hint).not.toHaveAttribute('tabindex');
@@ -108,6 +112,124 @@ describe('ModelEffortPills', () => {
 			expect(screen.getAllByRole('button').some((b) => b.textContent?.startsWith('Try:'))).toBe(
 				false
 			);
+		});
+	});
+	describe('typing a model ID that is not in the list', () => {
+		// The motivating case: a limited-access model the CLI accepts but that
+		// discovery cannot see, so it never reaches availableModels.
+		const UNLISTED = 'claude-mythos-5-1';
+
+		it('applies the typed model and closes the menu on Enter', () => {
+			const onModelChange = vi.fn();
+			const setModelMenuOpen = vi.fn();
+			renderPills({ modelMenuOpen: true, onModelChange, setModelMenuOpen });
+
+			const input = screen.getByLabelText('Use a model ID that is not listed');
+			fireEvent.change(input, { target: { value: UNLISTED } });
+			fireEvent.keyDown(input, { key: 'Enter' });
+
+			expect(onModelChange).toHaveBeenCalledWith(UNLISTED);
+			expect(setModelMenuOpen).toHaveBeenCalledWith(false);
+		});
+
+		it('trims surrounding whitespace', () => {
+			const onModelChange = vi.fn();
+			renderPills({ modelMenuOpen: true, onModelChange });
+
+			const input = screen.getByLabelText('Use a model ID that is not listed');
+			fireEvent.change(input, { target: { value: `  ${UNLISTED}  ` } });
+			fireEvent.keyDown(input, { key: 'Enter' });
+
+			expect(onModelChange).toHaveBeenCalledWith(UNLISTED);
+		});
+
+		it('ignores Enter on an empty or whitespace-only entry', () => {
+			const onModelChange = vi.fn();
+			const setModelMenuOpen = vi.fn();
+			renderPills({ modelMenuOpen: true, onModelChange, setModelMenuOpen });
+
+			const input = screen.getByLabelText('Use a model ID that is not listed');
+			fireEvent.keyDown(input, { key: 'Enter' });
+			fireEvent.change(input, { target: { value: '   ' } });
+			fireEvent.keyDown(input, { key: 'Enter' });
+
+			expect(onModelChange).not.toHaveBeenCalled();
+			expect(setModelMenuOpen).not.toHaveBeenCalled();
+		});
+
+		it('does not apply the model on other keys', () => {
+			const onModelChange = vi.fn();
+			renderPills({ modelMenuOpen: true, onModelChange });
+
+			const input = screen.getByLabelText('Use a model ID that is not listed');
+			fireEvent.change(input, { target: { value: UNLISTED } });
+			fireEvent.keyDown(input, { key: 'a' });
+
+			expect(onModelChange).not.toHaveBeenCalled();
+		});
+
+		// Enter confirms a candidate mid-composition in Japanese, Chinese and
+		// Korean input. Treating that as submit applies a half-typed ID.
+		it('ignores Enter while an IME composition is active', () => {
+			const onModelChange = vi.fn();
+			const setModelMenuOpen = vi.fn();
+			renderPills({ modelMenuOpen: true, onModelChange, setModelMenuOpen });
+
+			const input = screen.getByLabelText('Use a model ID that is not listed');
+			fireEvent.change(input, { target: { value: UNLISTED } });
+			fireEvent.keyDown(input, { key: 'Enter', isComposing: true });
+
+			expect(onModelChange).not.toHaveBeenCalled();
+			expect(setModelMenuOpen).not.toHaveBeenCalled();
+
+			// The same key once composition has ended still applies.
+			fireEvent.keyDown(input, { key: 'Enter' });
+			expect(onModelChange).toHaveBeenCalledWith(UNLISTED);
+		});
+
+		it('closes the menu on Escape instead of swallowing the key', () => {
+			const onModelChange = vi.fn();
+			const setModelMenuOpen = vi.fn();
+			renderPills({ modelMenuOpen: true, onModelChange, setModelMenuOpen });
+
+			const input = screen.getByLabelText('Use a model ID that is not listed');
+			fireEvent.change(input, { target: { value: UNLISTED } });
+			fireEvent.keyDown(input, { key: 'Escape' });
+
+			expect(setModelMenuOpen).toHaveBeenCalledWith(false);
+			expect(onModelChange).not.toHaveBeenCalled();
+		});
+
+		// Escape elsewhere interrupts the turn, so the field must not let it
+		// through on its way to closing the menu.
+		it('keeps every key, Escape included, away from the composer', () => {
+			const onKeyDown = vi.fn();
+			render(
+				<div onKeyDown={onKeyDown}>
+					<ModelEffortPills
+						isVisible
+						theme={inputAreaTheme}
+						currentModel="gpt-5"
+						currentEffort="medium"
+						availableModels={['gpt-5']}
+						availableEfforts={['', 'low']}
+						onModelChange={vi.fn()}
+						onEffortChange={vi.fn()}
+						modelMenuOpen
+						setModelMenuOpen={vi.fn()}
+						modelMenuRef={{ current: null }}
+						effortMenuOpen={false}
+						setEffortMenuOpen={vi.fn()}
+						effortMenuRef={{ current: null }}
+					/>
+				</div>
+			);
+
+			const input = screen.getByLabelText('Use a model ID that is not listed');
+			fireEvent.keyDown(input, { key: 'Escape' });
+			fireEvent.keyDown(input, { key: 'a' });
+
+			expect(onKeyDown).not.toHaveBeenCalled();
 		});
 	});
 });

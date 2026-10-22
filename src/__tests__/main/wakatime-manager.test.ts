@@ -551,6 +551,20 @@ describe('WakaTimeManager', () => {
 			expect(execFileNoThrow).toHaveBeenCalledTimes(2);
 		});
 
+		// Callers fire on every stdout chunk, and each settings get() is a sync
+		// read + parse of the settings file on the main thread.
+		it('does not read settings for a debounced heartbeat', async () => {
+			vi.mocked(execFileNoThrow)
+				.mockResolvedValueOnce({ exitCode: 0, stdout: 'wakatime-cli 1.73.1\n', stderr: '' })
+				.mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' });
+
+			await manager.sendHeartbeat('session-1', 'My Project');
+			mockStore.get.mockClear();
+			await manager.sendHeartbeat('session-1', 'My Project');
+
+			expect(mockStore.get).not.toHaveBeenCalled();
+		});
+
 		it('should not debounce different sessions', async () => {
 			vi.mocked(execFileNoThrow)
 				.mockResolvedValueOnce({ exitCode: 0, stdout: 'wakatime-cli 1.73.1\n', stderr: '' })

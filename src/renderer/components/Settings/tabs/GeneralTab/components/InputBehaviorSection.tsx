@@ -20,6 +20,8 @@ interface InputBehaviorSectionProps {
 	forcedParallelExecution: boolean;
 	forcedParallelAlways: boolean;
 	setForcedParallelAlways: (enabled: boolean) => void;
+	sendButtonMenu: boolean;
+	setSendButtonMenu: (enabled: boolean) => void;
 	shortcuts: GeneralTabSettings['shortcuts'];
 	forcedParallelWarning: ForcedParallelWarningState;
 }
@@ -33,6 +35,8 @@ export function InputBehaviorSection({
 	forcedParallelExecution,
 	forcedParallelAlways,
 	setForcedParallelAlways,
+	sendButtonMenu,
+	setSendButtonMenu,
 	shortcuts,
 	forcedParallelWarning,
 }: InputBehaviorSectionProps) {
@@ -105,6 +109,30 @@ export function InputBehaviorSection({
 					{enterToSendAIExpanded
 						? 'In the expanded Prompt Composer, press Enter to send. Use Shift+Enter for new line.'
 						: `In the expanded Prompt Composer, press ${formatMetaKey()}+Enter to send. Enter creates new line.`}
+				</p>
+			</div>
+
+			<div
+				data-setting-id="general-send-button-menu"
+				className="mb-4 p-3 rounded border"
+				style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+			>
+				<div className="flex items-center justify-between mb-2">
+					<div className="text-sm font-medium">Send Button Menu</div>
+					<ToggleSwitch
+						checked={sendButtonMenu}
+						onChange={setSendButtonMenu}
+						theme={theme}
+						ariaLabel="Send Button Menu"
+					/>
+				</div>
+				<p className="text-xs opacity-70">
+					{sendButtonMenu
+						? 'Clicking Send while the agent is working opens a menu: Queue, Force Send, Steer, or Queue Held. An idle click sends at once.'
+						: 'Clicking Send always sends at once, the same as the keyboard.'}
+				</p>
+				<p className="text-xs-plus opacity-55 mt-1">
+					Only the mouse click changes. Keyboard sends and their shortcuts work the same either way.
 				</p>
 			</div>
 

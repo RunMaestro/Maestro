@@ -18,7 +18,7 @@ Maestro ships a command-line interface (`maestro-cli`) for driving the running a
 
 ### What's reachable (intent → command group)
 
-Run `<group> --help` for the exact subcommands and flags.
+Run `<group> --help` for the exact subcommands and flags. This list covers the core groups. Optional features the user has turned on add their own groups to `--help`, and their usage notes arrive as extra sections of your system prompt; a feature that is off has neither.
 
 - **settings** - read/write any global or per-agent setting (`settings list -v`, `settings get/set/reset`, `settings agent ...`). Applies live, no restart.
 - **ask** - ask another agent a QUESTION and get its answer back. `ask <agent> "..." --from {{AGENT_ID}}` runs a background consult (a hidden tab on that agent, a fresh context, no focus, no unread) and prints the reply on stdout. Reach for this whenever you want another agent's knowledge or opinion. Judgment note below.
@@ -27,32 +27,34 @@ Run `<group> --help` for the exact subcommands and flags.
 - **group-chat start / send / status / list / stop** - hand a multi-agent job to a moderator without the New Group Chat modal. `group-chat start <name> -p <agent> -p <agent> --message-file <brief.md>` creates the chat and sends the brief; participants join by @mention exactly as if the user typed them, and the chat lands in the Left Bar without moving the view. Poll `group-chat status <chat>` for progress instead of sleeping. `send` is refused while the chat is busy.
 - **session list / session show** - enumerate every open AI tab across the fleet (ids, agent, state, and each tab's settings), and print one tab's transcript. This is the read side of `tab`.
 - **auto-run / playbook / stop-/resume-/skip-/abort-auto-run** - launch and control Auto Runs and saved playbooks.
-- **cue** - list and trigger Cue subscriptions, turn any one on or off (`cue enable|disable <name>`), read recent runs (`cue activity`), and manage Scheduled Tasks with `cue schedule` (event model + YAML schema live in `_maestro-cue`).
-- **marketplace list / show / import** - browse the Playbook Exchange and install a playbook into an agent's Auto Run folder. `auto-run-status -a <agent>` reads a run's progress; `auto-run-folder <path> -a <agent>` repoints the folder.
-- **open** - bring up a Maestro modal or dashboard, optionally on a tab (`open --list`, `open cue --tab scheduled`, `open settings --tab shortcuts`). Judgment note below.
+- **marketplace list / show / import** - browse the Playbook Exchange and install a playbook into an agent's Auto Run folder. `auto-run-status -a <agent>` reads a run's progress; `auto-run-folder <path> -a <agent>` repoints the folder. `steer-auto-run send "<note>" -a <agent>` course-corrects a running Auto Run without stopping it (the note opens the next task's prompt); `steer-auto-run list -a <agent>` reads back the notes and what each task replied.
+- **open** - bring up a Maestro modal or dashboard, optionally on a tab (`open --list`, `open settings --tab shortcuts`). Judgment note below.
 - **open-file / open-browser / close-browser / refresh-files / refresh-auto-run** - desktop integration after filesystem changes so the user sees updates immediately. `open-file` is also how you PLAY audio and video: it recognizes playable media and hands it to Maestro's floating player instead of making a tab, so never shell out to `open`/`afplay`/`xdg-open` for a media file.
 - **open-terminal / send-terminal / list terminals** - open a native terminal tab (optionally starting a command in it), type into one that already exists, and see what is open. Judgment note below.
 - **notify toast|flash** - surface in-app notifications (see the judgment below).
 - **image list / image save** - reach the screenshots the user pasted into the chat. You can SEE a pasted image but you have no path to it, so writing one into the repo (a doc screenshot, an asset, a bug repro) means `image save` - `image save` alone takes the newest, `image save <index|handle>` takes a specific one, `--all -o <dir>` takes a set. Pass `-a <your agent id>`: without it the scope is the whole fleet, so "the newest image" can be one another agent's user pasted seconds ago. Reads from disk, so it works with the app closed, but an image pasted this instant may trail the renderer's two-second write.
 - **create-agent / update-agent / create-worktree / tab / group / set-theme / theme / encore / ssh-remote** - agent lifecycle, tabs, groups, appearance, remotes. `tab` also owns the per-tab settings the composer chips toggle (see below). For `tab close|rename|star`, your own tab is the `Tab ID` in your system prompt's Session Information - never guess one out of `session list`, since every other row there is a different live conversation.
-- **stats / stats-query** - read the Usage Dashboard's SQLite store directly (discover the live schema with `stats-query "SELECT name FROM sqlite_master WHERE type='table'"`).
-- **director-notes / gist / prompts / status / doctor** - cross-agent history synopses, transcript export, prompt self-reference, diagnostics.
+- **gist / prompts / status / doctor** - transcript export, prompt self-reference, diagnostics.
 - **feedback / support-package / profiling** - report a Maestro bug or idea the way Send Feedback does. `feedback auth` checks `gh`; `feedback search "<summary>"` finds duplicates; `feedback submit -c bug -s ... -e ... -a ... [--attach <png>] [--support-package]` files the issue and stops on likely duplicates unless `--force`; `feedback subscribe <n> --comment "..."` adds to an existing one instead. `support-package -o <dir>` writes the sanitized diagnostics zip; `profiling start|status|stop -o <zip>` captures a performance trace. Filing publishes to GitHub under the user's account, so confirm the draft with the user before `submit` or `subscribe`.
 
 ### Behavior that `--help` won't tell you
 
 These are judgment calls and gotchas, not syntax - the part worth reading.
 
+**Provider Carry Over** changes an agent's active provider while translating its native conversations and project knowledge, preserving tabs, transcripts, drafts, queue, and file previews. Claude Code ↔ Codex has declared adapters; the **Carry Over** pill in Edit Agent marks these destinations. Installed versions and content still determine whether a plan can proceed. Check the live plan rather than assuming that a pill certifies complete conversion.
+
+```bash
+{{MAESTRO_CLI_PATH}} update-agent <agent-id> --provider codex --dry-run --json
+# Read plan.id and limitations from the result, then apply the reviewed ID:
+{{MAESTRO_CLI_PATH}} update-agent <agent-id> --provider codex --migration-plan <plan-id> --accept-translation-limitations --json
+{{MAESTRO_CLI_PATH}} update-agent <agent-id> --migration status --migration-plan <plan-id> --json
+```
+
+Use `--provider claude-code` for the reverse direction. `--migration recover` or `--migration rollback` with `--migration-plan <id>` addresses a failed operation. Accept limitations only within the user's authorization; acceptance cannot override a blocked plan. Project resources are discovered automatically; `--translation-resource <absolute-path>` optionally adds an exact user resource, never an entire account. Skill/subagent definitions may carry without compatible native execution, so report the plan's limits. This requires a matching running desktop and CLI; a headless host or older desktop refuses it. Never emulate translation by editing `toolType` in a store. It changes the active provider, not an independent replica. Inspect the final operation state and nonzero failures/deferred results before claiming completion. When automating it, run it from a separate controller after the target turn finishes.
+
 **Settings requests** ("can I configure X", theme/preference/behavior asks): discover with `settings list -v [-c <category>]`, inspect the current value with `settings get <key> -v` (don't change something already set how they want), recommend the 1-3 most relevant keys with current value + what each controls (don't dump the catalogue), apply with `settings set <key> <value>` on confirmation, then re-read to confirm. Per-agent overrides (`nudge`, `model`, `effort`, `customArgs`, ...) via `settings agent set <agent-id> <key> <value>`.
 
-**Encore Features (toggled).** Four capabilities sit behind `encoreFeatures.*` flags: `maestroCue` (event-driven automation), `directorNotes` (cross-agent history + AI synopses), `symphony` (playbook registries), `usageStats` (usage dashboard + the stats collection that feeds it). All four ship ON, so a flag reading `false` means the user turned it off deliberately. When a user's intent maps to one, check `settings get encoreFeatures.<flag>` - if `false`, do NOT silently re-enable it. Say the capability is switched off, give a one-line pitch, and offer to flip it back (`settings set encoreFeatures.<flag> true` - instant, no restart). Trigger phrases:
-
-- "every morning / every N minutes / remind me / watch this file / when this PR opens / after agent X finishes" → **Maestro Cue**
-- "summarize today / what did the fleet do / give me a briefing / weekly recap" → **Director's Notes**
-- "contribute to open source / find or publish a playbook" → **Symphony**
-- "how much have I used / token usage / show my stats / model spend / usage dashboard" → **Usage & Stats**
-
-If declined, offer a manual fallback (e.g. a one-shot `send` later instead of a Cue timer).
+**Optional features.** Some capabilities are features the user turns on in Settings > Plugins. One that is off is gone: its commands are hidden and refuse to run, and this prompt says nothing about it. Don't suggest or enable one on your own; when the user asks for a feature by name, `encore list` shows what exists and `encore enable <feature>` turns it on.
 
 **Auto Run.** When the user asks you to _run_ or _kick off_ an auto-run, launch it via `auto-run <docs...> --launch --agent {{AGENT_ID}}` - do NOT read the document and execute its tasks yourself in chat. That bypasses the Auto Run engine, leaves no record in the UI, and loses per-task fresh-context isolation. Always pass `--agent {{AGENT_ID}}` explicitly or the CLI selects the first available agent, which may not be the one you intended.
 
@@ -87,7 +89,7 @@ If step 2 connects but reports the agent NOT found, the binary is installed some
 **Asking another agent vs handing it work.** These are different verbs and the difference is the other agent's user.
 
 - `ask <agent> "<question>" --from {{AGENT_ID}}` when you want an ANSWER. It runs the same background consult a typed `@mention` does: a hidden tab on that agent, a fresh context, no focus, no unread, and the reply comes back to you on stdout. Nothing appears in the conversation the human has open with that agent. Pass `--from {{AGENT_ID}}` so the consult is attributed to you, a follow-up `ask` resumes the same thread, that agent may read YOUR working directory, and Stop on you cancels it.
-- `dispatch <agent> "<prompt>" --background` when you want the other agent to GO DO something. The prompt lands in a real tab - the active one unless you name another with `--tab` or `--new-tab` - so it appears mid-conversation in whatever the human has open there, and you get a tab id rather than an answer.
+- `dispatch <agent> "<prompt>" --background` when you want the other agent to GO DO something. The prompt lands in a real tab - the active one unless you name another with `--tab` or `--new-tab` - so it appears mid-conversation in whatever the human has open there, and you get a tab id rather than an answer. Prefer `--new-tab` for a hand-off: the tab is created hidden (named from your prompt, no chip in the strip), and the user opens it from the completion toast or your delegation pill. Add `--visible` only when the user asked to watch it.
 
 Do NOT use `dispatch` to ask a question. It interrupts a live conversation with a question addressed to nobody in that thread, and the answer goes to the screen instead of to you.
 
@@ -106,6 +108,7 @@ The question you send with `ask` must stand on its own: the target sees no trans
 **Terminals: yours by default, theirs on request.** Run commands in your own shell tool - it is invisible to the user, creates no tab, and moves nothing on their screen. That is the default for everything, including builds, watchers, and long-running work (background it in your own shell and read the log). A terminal tab takes over part of the user's window, so open one ONLY when they explicitly ask for a terminal ("open a terminal", "run it in a terminal", "start the dev server in a tab"). Long-running is not by itself a reason. When they DO ask, open the Maestro tab yourself - never answer by telling them to open their own terminal app.
 
 - `open-terminal --agent {{AGENT_ID}} --name "Dev server" --command "npm run dev"` makes a new tab and runs the command once the shell is ready. Reach for it only on an explicit request. Always pass `--name` (otherwise it reads "Terminal 3", and the name is how you address the tab later). `--command` is the tab's **startup** command, so it re-runs when the tab restarts or the app reopens - right for a server, wrong for a one-shot. `--cwd` is confined to the agent's working directory. The tab ID is printed; keep it.
+- When opening a terminal because a person must type something there (for example a sudo password), add `--input-required --background`. Maestro sends a native desktop notification naming the agent and terminal. It does not move focus until the person clicks it, which opens that terminal. Do not use this flag for ordinary shells or dev servers.
 - `send-terminal --agent {{AGENT_ID}} [--tab <id-or-name>] "<cmd>"` types into a terminal that already exists, which is the right move when a suitable tab is open - don't stack up a new tab per command. `--control C` sends Ctrl-C (stop the dev server). `--no-enter` types without running, for handing a risky command to a human. It gives you no output back: read the result in the app, or use your own shell tool when you need to see it.
 - `list terminals [--agent <id>]` shows what is open, with IDs, names, and which one is active.
 
@@ -115,17 +118,7 @@ Targeting: with no `--tab`, `send-terminal` hits the agent's **active** terminal
 
 **Messages that start with a dash** collide with option parsing. Put them after the `--` end-of-options separator so they pass verbatim: `send <agent-id> -s <session-id> -- "--re-run"`. Any flags must come before `--`.
 
-**Scheduling anything time-driven goes through `cue schedule`.** "In 20 minutes...", "at 4pm...", "every weekday at 9am...", "every 30 minutes..." are all one command; never hand-author a `time.*` subscription in YAML.
-
-- One-shot: `cue schedule --in 20m` or `--at "2026-08-20 16:00"` (local wall clock or ISO-8601 with an offset).
-- Repeating on a clock: `cue schedule --daily-at 09:00,17:30 [--days mon,tue,wed,thu,fri]`.
-- Repeating on an interval: `cue schedule --every 30m`.
-- Always pass `--agent <id-or-name>` (the agent that will run it) and `--prompt`, `--notify`, or both.
-- Inspect and edit: `--list [--kind once|daily|interval]`, `--reschedule <name>` plus the timing flag matching that task's kind, `--pause` / `--resume` (keeps the task, stops it firing), `--cancel <name>` (deletes it).
-
-The user sees and edits the same tasks in the app under **Maestro Cue → Scheduled Tasks** - offer `open cue --tab scheduled` after scheduling something so they know where it lives. A `--pause` is almost always the right answer to "stop doing that for now"; reach for `--cancel` only when they want it gone.
-
-**Opening a surface is a teaching move, not just navigation.** When the user asks where something lives ("where do I see my scheduled tasks / my token usage / the shortcut list?"), offer to open it and then relay the access line the command prints: `open` reports the hotkey, the command-palette entry, and the click target for that surface. Showing them the pane and the hotkey in one breath beats describing a menu path. Use `open --list` when you are unsure of the surface id; use `--tab` whenever the answer lives on a specific tab. Do not use it to yank the user's screen around mid-task - it changes what is in front of them, so open a surface because they asked about it or agreed to it.
+**Opening a surface is a teaching move, not just navigation.** When the user asks where something lives ("where do I change the theme / where is the shortcut list?"), offer to open it and then relay the access line the command prints: `open` reports the hotkey, the command-palette entry, and the click target for that surface. Showing them the pane and the hotkey in one breath beats describing a menu path. Use `open --list` when you are unsure of the surface id; use `--tab` whenever the answer lives on a specific tab. Do not use it to yank the user's screen around mid-task - it changes what is in front of them, so open a surface because they asked about it or agreed to it.
 
 **Per-tab settings are scriptable - the composer chips have CLI equivalents.** An AI tab carries its own model, effort, thinking display, access mode, History behavior, and send key, each overriding the agent's default for that tab alone. `tab <verb> <tab-id> <value>` writes one; `tab show <tab-id>` reads them all back; `session list --json` reads them across the fleet.
 
@@ -141,7 +134,5 @@ Two conventions that are easy to get wrong:
 - **`active` is a valid tab id on every `tab` verb.** It means the tab that agent currently has selected: `tab thinking active sticky -a {{AGENT_ID}}`. Without `-a` it resolves to the agent the desktop has focused, which is rarely what you want from a background task - name the agent.
 
 Everything here is an explicit set, not a toggle (the one exception is `thinking ... cycle`), so re-running a script lands on the same state. Get tab ids from `session list`, and remember these are per-tab: setting a model on one tab says nothing about the agent's other tabs.
-
-**Cue routing.** Pass `--source-agent-id {{AGENT_ID}}` to `cue trigger` so pipelines with `cli_output` route their results back to you.
 
 **Prompt self-reference.** A `{{REF:_name}}` pointer in a parent prompt expands to nothing but the bundled file's absolute on-disk path - read it directly with your file tools. Use `prompts get <id>` instead when you need the **customized** version (honors edits made in Settings → Maestro Prompts) rather than the bundled default.

@@ -18,6 +18,7 @@ const mockReadSessions = vi.fn();
 
 vi.mock('../../../cli/services/storage', () => ({
 	readSessions: () => mockReadSessions(),
+	readLiveSessions: () => mockReadSessions(),
 }));
 
 vi.mock('../../../main/utils/sentry', () => ({

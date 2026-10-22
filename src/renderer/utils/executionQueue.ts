@@ -12,8 +12,22 @@
  * not finished until the agents it consulted have replied.
  */
 
-import type { LogEntry, QueuedItem, QueuedItemEditPatch, Session, SessionState } from '../types';
+import type {
+	AITab,
+	LogEntry,
+	QueuedItem,
+	QueuedItemEditPatch,
+	Session,
+	SessionState,
+} from '../types';
 import { generateId } from './ids';
+import {
+	STEERING_TOO_LONG_DETAIL,
+	startsWithTuiCommandPrefix,
+	steeringTextTooLong,
+} from '../../shared/chatSteering';
+import { resolveCodexTransport } from '../../shared/codexTransport';
+import { isSessionRemote } from './sessionHelpers';
 import {
 	getBusyTabs,
 	getTabDisplayName,
@@ -35,7 +49,7 @@ import {
  * settings it was displaying, so clearing a picker back to "Default" has to
  * clear the stored field rather than leave the previous value behind.
  *
- * `crossAgent` is optional and carries the two `@mention` flags, re-derived by
+ * `crossAgent` is optional and carries the `@mention` fields, re-derived by
  * the caller from the EDITED text. It is a parameter rather than something this
  * function works out for itself because deriving it needs `planCrossAgentMentions`,
  * which reads the session store - a dependency a pure queue utility must not take
@@ -46,7 +60,9 @@ export function applyQueuedItemEdit(
 	queue: QueuedItem[],
 	itemId: string,
 	patch: QueuedItemEditPatch,
-	crossAgent?: { crossAgentMention: boolean; crossAgentOnly: boolean }
+	crossAgent?: Pick<QueuedItem, 'crossAgentOnly' | 'mentionRouting'> & {
+		crossAgentMention: boolean;
+	}
 ): QueuedItem[] {
 	return queue.map((item) =>
 		item.id === itemId
@@ -228,7 +244,8 @@ export function applyQueuedItemRelease(session: Session, tabId: string | undefin
  *
  * Three things happen together, and they only make sense together:
  *
- * 1. **The tab is released.** Dispatch marked it busy; nothing is running.
+ * 1. **The tab is released** - unless the failure was a collision (below).
+ *    Dispatch marked it busy; nothing is running.
  * 2. **The card is removed.** The user-visible entry is appended BEFORE the
  *    spawn, so a failed dispatch leaves a card for a prompt that was never
  *    delivered. Matching is by `queuedItemId`, not by text, so an identical
@@ -239,27 +256,30 @@ export function applyQueuedItemRelease(session: Session, tabId: string | undefin
  *    turn in the queue for the life of an outage, and a second copy would
  *    double-send the prompt when the outage cleared.
  *
- * `hold` decides whether the item comes back runnable. A spawn collision (the
- * tab's previous process has not exited yet) is transient and self-correcting,
- * so the item stays runnable and the next drain trigger sends it a moment
- * later. Any OTHER failure would fail again the same way on the next tick, so
- * the item comes back `paused`: still there, still editable, still one click
- * from Force Send, but not spinning the queue against a wall.
+ * `collision` is a spawn the main process refused because a process still
+ * owns the tab's key ("Agent process already running"). That is transient and
+ * self-correcting, so the item comes back runnable and the exit listener sends
+ * it once the old process is gone. The tab is NOT released: something IS
+ * it once the old process is gone, bounded by {@link noteSpawnCollision} since
+ * an old process that never releases its key would otherwise collide forever
+ * (the caller passes `collision: false` past the cap). The tab is NOT released:
+ * something IS running on it, and only the exit handler removes that process
+ * entry, so its exit always arrives to settle the tab. Releasing it painted a
+ * live turn as "Ready" and told the queue the tab was free - the same rule the
+ * composer path follows (`useInputProcessing`). Any OTHER failure would fail
+ * again the same way on the next tick, so the item comes back `paused`: still
+ * there, still editable, still one click from Force Send, but not spinning the
+ * queue against a wall.
  */
 export function applyQueuedItemDispatchFailure(
 	session: Session,
 	item: QueuedItem,
-	opts: { hold: boolean }
+	opts: { collision: boolean }
 ): Session {
-	const released = applyQueuedItemRelease(session, item.tabId);
-
-	const stripCard = <T extends { id: string; logs: LogEntry[] }>(tab: T): T =>
-		tab.logs.some((log) => log.queuedItemId === item.id)
-			? { ...tab, logs: tab.logs.filter((log) => log.queuedItemId !== item.id) }
-			: tab;
-
-	const aiTabs = released.aiTabs.map(stripCard);
-	const orphans = released.orphanedThinkingTabs?.map(stripCard);
+	const released = stripQueuedItemCard(
+		opts.collision ? session : applyQueuedItemRelease(session, item.tabId),
+		item.id
+	);
 
 	// A message that @mentions another agent placed a consult hold when it
 	// dispatched. Its turn never started, so that hold has nothing to finish -
@@ -267,17 +287,129 @@ export function applyQueuedItemDispatchFailure(
 	const queue = item.crossAgentMention
 		? dropConsultHold(released.executionQueue ?? [], item.tabId)
 		: (released.executionQueue ?? []);
-	const restored: QueuedItem = opts.hold ? { ...item, paused: true } : item;
+	const restored: QueuedItem = opts.collision ? item : { ...item, paused: true };
 	const executionQueue = queue.some((i) => i.id === item.id)
 		? queue.map((i) => (i.id === item.id ? restored : i))
 		: [restored, ...queue];
 
+	return { ...released, executionQueue };
+}
+
+/**
+ * A dequeued item `processQueuedItem` refused because the tab it names is gone.
+ *
+ * The dispatcher resolved that dead tabId onto the agent's ACTIVE tab (the
+ * fallback in `resolveQueuedItemTarget`) and marked THAT tab running, card
+ * included, before `processQueuedItem` declined to run it there. Release that
+ * tab (`ownerTabId`, see `queuedItemOwnerTabId`) and take its card back.
+ * Forcing only the agent idle left that tab pulsing forever over a message no
+ * model saw, and read "Ready" while another tab was still mid-turn. The caller
+ * passes `undefined` when a live turn owns the tab (a read-only or
+ * forced-parallel item can land beside one): then only the card goes. The item
+ * is not re-queued: it would resolve onto the same wrong tab again.
+ */
+export function applyQueuedItemAbort(
+	session: Session,
+	item: QueuedItem,
+	ownerTabId: string | undefined
+): Session {
+	return stripQueuedItemCard(
+		ownerTabId ? applyQueuedItemRelease(session, ownerTabId) : session,
+		item.id
+	);
+}
+
+/**
+ * The tab a dequeue marked running for `item`: the one holding its card, found
+ * by `queuedItemId` because the active tab can change between the dequeue and
+ * the dispatch. A command item writes no card, so it falls back to resolving
+ * the target again.
+ */
+export function queuedItemOwnerTabId(session: Session, item: QueuedItem): string | undefined {
+	const holdsCard = (tab: { logs: LogEntry[] }) =>
+		tab.logs.some((log) => log.queuedItemId === item.id);
+	return (
+		session.aiTabs.find(holdsCard)?.id ??
+		session.orphanedThinkingTabs?.find(holdsCard)?.id ??
+		resolveQueuedItemTarget(session, item)?.tabId
+	);
+}
+
+/**
+ * Remove the transcript card a dispatch wrote for `itemId`, wherever it landed.
+ * Matched by `queuedItemId`, never by text, so an identical message the user
+ * genuinely sent earlier is untouched.
+ */
+function stripQueuedItemCard(session: Session, itemId: string): Session {
+	const stripCard = <T extends { id: string; logs: LogEntry[] }>(tab: T): T =>
+		tab.logs.some((log) => log.queuedItemId === itemId)
+			? { ...tab, logs: tab.logs.filter((log) => log.queuedItemId !== itemId) }
+			: tab;
+	const orphans = session.orphanedThinkingTabs?.map(stripCard);
 	return {
-		...released,
-		aiTabs,
+		...session,
+		aiTabs: session.aiTabs.map(stripCard),
 		...(orphans && { orphanedThinkingTabs: orphans }),
-		executionQueue,
 	};
+}
+
+/**
+ * How many spawn collisions a queued item may hit before it is treated as a
+ * real failure (held, with an error frame) instead of a transient one.
+ */
+export const SPAWN_COLLISION_MAX_ATTEMPTS = 6;
+
+/** First back-off after a collision; doubles per attempt (1s, 2s, 4s, ...). */
+export const SPAWN_COLLISION_BASE_DELAY_MS = 1000;
+
+/**
+ * Spawn collisions per queued item id. Module state on purpose: it is timing
+ * bookkeeping for a retry in flight, not part of the item, so it must not be
+ * persisted with the queue or survive a restart (a restart frees every key).
+ */
+const spawnCollisions = new Map<string, { count: number; retryAt: number }>();
+
+/**
+ * Record that dispatching `itemId` was refused because its tab's previous
+ * process still owns the process key, and return how many times that has now
+ * happened.
+ *
+ * {@link applyQueuedItemDispatchFailure} treats a collision as transient and
+ * returns the item runnable, which is right when the old process is a moment
+ * from exiting (Stop dispatches the next item before the interrupted child is
+ * gone). It is wrong when the old entry never clears: the refused dispatch
+ * restores the very queue state that triggers the next drain, so the queue
+ * re-dispatched into the same refusal on every render, about 14 times a second,
+ * and the tab sat on "Thinking... 0m 0s" forever. Counting bounds that: the
+ * drain waits out a doubling back-off, and after
+ * {@link SPAWN_COLLISION_MAX_ATTEMPTS} the caller holds the item instead.
+ */
+export function noteSpawnCollision(itemId: string, now: number = Date.now()): number {
+	const count = (spawnCollisions.get(itemId)?.count ?? 0) + 1;
+	const delay = SPAWN_COLLISION_BASE_DELAY_MS * 2 ** (count - 1);
+	spawnCollisions.set(itemId, { count, retryAt: now + delay });
+	return count;
+}
+
+/**
+ * Milliseconds until a collided item may be dispatched again by the drain
+ * poll, or 0 when it is free to go. Only the poll honours this: a real process
+ * exit, Stop, and Force Send are edges that prove (or override) the old owner
+ * being gone, so they dispatch regardless.
+ */
+export function spawnCollisionCooldownMs(itemId: string, now: number = Date.now()): number {
+	const entry = spawnCollisions.get(itemId);
+	return entry ? Math.max(0, entry.retryAt - now) : 0;
+}
+
+/** Forget an item's collisions: it dispatched, or it was held for the user. */
+export function clearSpawnCollision(itemId: string): void {
+	spawnCollisions.delete(itemId);
+}
+
+/** Test-only: drop all collision bookkeeping. */
+export function resetSpawnCollisionsForTest(): void {
+	spawnCollisions.clear();
 }
 
 /**
@@ -335,6 +467,70 @@ export function reorderQueueItem(
 		next[pos] = reordered[idx];
 	});
 	return next;
+}
+
+/**
+ * Whether a queued item can take part in a merge. Only plain messages qualify:
+ * a command has no prompt body to join, a leading-`@mention` message is
+ * answered by another agent rather than this one, and a consult hold is a turn
+ * already underway.
+ */
+function isMergeableQueueItem(item: QueuedItem): boolean {
+	return item.type === 'message' && !item.crossAgentOnly && !item.awaitingConsult;
+}
+
+/**
+ * The item a "merge into the message above" would fold `itemId` into: the
+ * nearest EARLIER item for the same tab, since that is the card drawn directly
+ * above it in the tab's queue. Null when there is none, or when either side is
+ * not a plain message (see {@link isMergeableQueueItem}).
+ */
+export function findQueuedMergeTarget(queue: QueuedItem[], itemId: string): QueuedItem | null {
+	const index = queue.findIndex((i) => i.id === itemId);
+	if (index <= 0) return null;
+	const item = queue[index];
+	if (!isMergeableQueueItem(item)) return null;
+	for (let i = index - 1; i >= 0; i--) {
+		if (queue[i].tabId !== item.tabId) continue;
+		return isMergeableQueueItem(queue[i]) ? queue[i] : null;
+	}
+	return null;
+}
+
+/**
+ * Fold queued message `itemId` into the message above it (see
+ * {@link findQueuedMergeTarget}) and return the resulting queue. The target
+ * keeps its id, place, hold state, and frozen model/effort, since it is the
+ * turn that runs first; the merged item's text is appended after a blank line
+ * and its images after the target's. A mention in either message survives, as
+ * dispatch re-plans the consult from the merged text. Returns null when the item
+ * cannot be merged.
+ */
+export function mergeQueuedItemIntoPrevious(
+	queue: QueuedItem[],
+	itemId: string
+): { queue: QueuedItem[]; targetId: string } | null {
+	const target = findQueuedMergeTarget(queue, itemId);
+	const item = queue.find((i) => i.id === itemId);
+	if (!target || !item) return null;
+	// Exactly one blank line between the two, so the second reads as its own
+	// paragraph: trailing whitespace of the first and leading blank lines of the
+	// second are dropped (the second's own indentation is kept).
+	const text = [target.text?.replace(/\s+$/, ''), item.text?.replace(/^(\s*\n)+/, '')]
+		.filter((t) => t && t.trim())
+		.join('\n\n');
+	const images = [...(target.images ?? []), ...(item.images ?? [])];
+	const merged: QueuedItem = {
+		...target,
+		text,
+		images: images.length > 0 ? images : undefined,
+		crossAgentMention: target.crossAgentMention || item.crossAgentMention || undefined,
+		mentionRouting: target.mentionRouting ?? item.mentionRouting,
+	};
+	return {
+		queue: queue.filter((i) => i.id !== itemId).map((i) => (i.id === target.id ? merged : i)),
+		targetId: target.id,
+	};
 }
 
 /**
@@ -497,6 +693,263 @@ export function getForceSendTitle(eligibility: ForceSendEligibility): string {
 	}
 }
 
+/** Why a queued message cannot be steered into the running turn right now. */
+export type SteerBlockedReason =
+	| 'no-target-tab'
+	| 'tab-not-working'
+	| 'not-claude'
+	| 'codex-exec'
+	| 'api-token-source'
+	| 'nothing-to-type'
+	| 'has-images'
+	| 'awaiting-consult'
+	| 'cross-agent-mention'
+	| 'has-agent-context'
+	| 'too-long'
+	| 'paused'
+	| 'waiting-for-connection'
+	| 'ssh-remote'
+	| 'steer-in-flight'
+	| 'tui-command-prefix'
+	| 'read-only';
+
+export interface SteerEligibility {
+	canSteer: boolean;
+	blockedReason?: SteerBlockedReason;
+}
+
+function findQueueTargetTab(session: Session, tabId: string): AITab | undefined {
+	return (
+		session.aiTabs?.find((tab) => tab.id === tabId) ??
+		session.orphanedThinkingTabs?.find((tab) => tab.id === tabId)
+	);
+}
+
+/**
+ * Whether `item` would run read-only if dispatched now. Mirrors the dispatch rule
+ * in agentStore.processQueuedItem: the item's own flag, or the target tab's
+ * current read-only setting.
+ */
+function queuedItemWantsReadOnly(
+	session: Session,
+	tabId: string,
+	item: Pick<QueuedItem, 'readOnlyMode'>
+): boolean {
+	const tab = findQueueTargetTab(session, tabId);
+	return (
+		item.readOnlyMode === true || tab?.readOnlyMode === true || tab?.permissionMode === 'readonly'
+	);
+}
+
+/**
+ * Whether the turn running on `tabId` is KNOWN to be read-only, read from the
+ * user entry that started it (stamped `readOnly` at send). Unknown counts as not
+ * read-only: the cost is a Steer button that is not offered, never a message run
+ * with more access than the user gave it.
+ */
+function runningTurnIsReadOnly(session: Session, tabId: string): boolean {
+	const logs = findQueueTargetTab(session, tabId)?.logs ?? [];
+	for (let i = logs.length - 1; i >= 0; i -= 1) {
+		if (logs[i].source === 'user') return logs[i].readOnly === true;
+	}
+	return false;
+}
+
+/**
+ * Whether a queued message can be STEERED into the turn already running on its
+ * tab, rather than waiting for that turn to finish.
+ *
+ * The inverse of {@link getForceSendEligibility} on the one condition that
+ * matters: Force Send needs the target tab IDLE (a tab runs one turn at a time),
+ * while steering needs it BUSY, because there has to be a turn in flight to steer.
+ * The two are mutually exclusive by construction, which is what lets a queued card
+ * offer exactly one of them.
+ *
+ * Only a Claude turn on the INTERACTIVE token source can be steered, and that is a
+ * hard physical limit rather than a policy: `claude --print` closes stdin and holds
+ * no writable PTY for the length of the turn, so there is nothing to type into.
+ * See src/shared/chatSteering.ts. The one other steerable provider is a Codex agent
+ * opted into the app-server transport (`turn/steer`); see
+ * docs/agent-guides/CODEX-APP-SERVER.md.
+ *
+ * `dynamic` mode is the interesting case and the reason this reads
+ * `session.claudeInteractive.mode` rather than the configured token mode. A dynamic
+ * agent starts interactive and falls back to API when usage crosses the limit
+ * threshold, so the CONFIGURED value cannot say which shape the turn in flight
+ * actually has - only the RESOLVED value can, and the spawner writes it there after
+ * every spawn. Two limits on that, both deliberate rather than overlooked: it is
+ * recorded per AGENT, so with two tabs spawned in different modes it describes the
+ * most recent spawn; and it is absent until an agent has spawned at least once.
+ *
+ * Neither is worth guessing around, because this predicate decides whether to SHOW
+ * a control, and the truth is established at the moment it is used: maestro-p opens
+ * a steering channel only for a local interactive turn, so a steer against a turn
+ * that is really on API finds nothing listening and comes back `refused` with
+ * `not-running`, leaving the message queued. Being wrong here costs a button that
+ * declines with a reason; being wrong the other way hides a working feature.
+ */
+export function getSteerEligibility(
+	session: Session,
+	item: Pick<
+		QueuedItem,
+		| 'tabId'
+		| 'text'
+		| 'images'
+		| 'awaitingConsult'
+		| 'crossAgentMention'
+		| 'agentContext'
+		| 'paused'
+		| 'waitingForConnection'
+		| 'readOnlyMode'
+	>
+): SteerEligibility {
+	const target = resolveQueuedItemTarget(session, item);
+	if (!target) {
+		return { canSteer: false, blockedReason: 'no-target-tab' };
+	}
+	// Busy-ness comes from the SAME helper Force Send reads, so the two controls
+	// cannot disagree about whether a tab is mid-turn - which would let a card offer
+	// both, or neither.
+	if (!getQueueBusyContext(session, item).targetTabBusy) {
+		return { canSteer: false, blockedReason: 'tab-not-working' };
+	}
+	if (session.toolType === 'codex') {
+		// A Codex turn is steerable only on the opt-in app-server transport, which
+		// accepts `turn/steer` while a turn runs, locally or over SSH (the protocol
+		// rides the ssh client's stdio). `codex exec` (the default) accepts nothing
+		// once the turn has started. An app-server agent can still run a given turn
+		// on exec (images, an unsupported arg); main answers that steer `refused`
+		// with `not-running`, so the routing is not re-derived here.
+		if (resolveCodexTransport(session) !== 'app-server') {
+			return { canSteer: false, blockedReason: 'codex-exec' };
+		}
+	} else if (isSessionRemote(session)) {
+		// A Claude TUI on another host has no local socket to type into. Main would
+		// refuse every attempt, so the button would be a control that can only decline.
+		return { canSteer: false, blockedReason: 'ssh-remote' };
+	} else if (session.toolType !== 'claude-code') {
+		return { canSteer: false, blockedReason: 'not-claude' };
+	} else if (session.claudeInteractive?.mode !== 'interactive') {
+		return { canSteer: false, blockedReason: 'api-token-source' };
+	}
+	// Steering TYPES text into the composer, so an item with nothing to type has
+	// nothing to steer with.
+	if (!item.text?.trim()) return { canSteer: false, blockedReason: 'nothing-to-type' };
+	// A paused item is held on purpose: by the user, or by the steer path itself
+	// after an unconfirmed delivery (where steering it again types it twice). The
+	// card's play button is the way out, not Steer.
+	if (item.paused) return { canSteer: false, blockedReason: 'paused' };
+	// Steering a Claude turn TYPES into its TUI, where a leading `/` opens the
+	// slash-command menu (Enter would run `/clear` or `/compact` mid-turn) and a
+	// leading `!` switches the editor to bash mode. Neither is the message the user
+	// queued, so it waits and dispatches normally. Codex receives `turn/steer` as
+	// plain input, so it is unaffected.
+	if (session.toolType === 'claude-code' && startsWithTuiCommandPrefix(item.text)) {
+		return { canSteer: false, blockedReason: 'tui-command-prefix' };
+	}
+	if (item.waitingForConnection) {
+		return { canSteer: false, blockedReason: 'waiting-for-connection' };
+	}
+	// Steering types into a process spawned with the permissions of the turn
+	// ALREADY running; nothing re-applies the queued message's own. A read-only
+	// message dispatched normally spawns read-only, so steering it into a turn
+	// that started with full access would run it with access the user took away.
+	// Allowed only when the running turn is known to be read-only too.
+	if (
+		queuedItemWantsReadOnly(session, target.tabId, item) &&
+		!runningTurnIsReadOnly(session, target.tabId)
+	) {
+		return { canSteer: false, blockedReason: 'read-only' };
+	}
+	// An item carrying images cannot be steered without LOSING them. Images reach a
+	// maestro-p turn as `@/path` mentions translated from a stream-json envelope on
+	// stdin (see stream-json-input.ts), and stdin is long closed by the time a turn is
+	// running - there is no way to attach a file to a turn already in flight. Typing
+	// the text alone would silently discard what the user attached, so the item stays
+	// queued and sends intact when the turn ends.
+	if (item.images?.length) return { canSteer: false, blockedReason: 'has-images' };
+	// The three below are items whose dispatch does MORE than send their text, so
+	// typing the text into the running turn would quietly drop the rest. A consult
+	// hold has nothing to type yet: its text is a placeholder until the reply lands.
+	if (item.awaitingConsult) return { canSteer: false, blockedReason: 'awaiting-consult' };
+	// A queued `@mention` fires its consult when processQueuedItem dispatches it.
+	// Steering bypasses that path, so the mention would reach claude as plain text
+	// and the mentioned agent would never be asked.
+	if (item.crossAgentMention) return { canSteer: false, blockedReason: 'cross-agent-mention' };
+	// A released hold carries the consult's replies in agentContext, which only the
+	// spawn prepends. Typing the visible text alone would lose the replies.
+	if (item.agentContext) return { canSteer: false, blockedReason: 'has-agent-context' };
+	// Over the per-frame cap maestro-p accepts; it would be refused, so it waits and
+	// sends normally instead. Same predicate as the client and server.
+	if (steeringTextTooLong(item.text)) return { canSteer: false, blockedReason: 'too-long' };
+	return { canSteer: true };
+}
+
+/**
+ * Whether a Steer control should be RENDERED at all, given its eligibility.
+ *
+ * Same split as {@link shouldOfferForceSend}, for the same reason, and here EVERY
+ * blocked reason hides the control rather than dimming it. None of them is
+ * something the user can act on from a queued card: a tab that is not working has
+ * no turn to steer (and will start this very message shortly), a non-Claude agent
+ * can never steer, a Codex agent on `codex exec` cannot be reached mid-turn (the
+ * transport is an agent setting, not something to flip from a queued card), and an
+ * API-source turn has no PTY. A dimmed button whose
+ * tooltip amounts to "not right now" is exactly the dead control the Force Send
+ * work was fixing.
+ *
+ * So there is no `visible-but-disabled` case today. Keep this function anyway:
+ * it is the seam a future reason with an actionable remedy (the way
+ * `needs-forced-parallel` names a setting) would hook into, and both surfaces
+ * already call it.
+ */
+export function shouldOfferSteer(eligibility: SteerEligibility | null | undefined): boolean {
+	return !!eligibility?.canSteer;
+}
+
+/**
+ * Why a steer was declined, as a sentence for the user. A Record rather than a
+ * switch so a new {@link SteerBlockedReason} fails to compile until it is worded.
+ *
+ * The Steer button never needs this: it is hidden for every blocked reason (see
+ * {@link shouldOfferSteer}). A keyboard steer has no control to hide, so it has
+ * to say why nothing happened.
+ */
+const STEER_BLOCKED_DETAILS: Record<SteerBlockedReason, string> = {
+	'no-target-tab': 'The tab this message was queued on is gone.',
+	'tab-not-working': 'No turn is running on this tab, so there is nothing to steer.',
+	'not-claude': 'This provider cannot take a message while a turn is running.',
+	'codex-exec':
+		'This Codex agent runs on the exec transport. Set Codex Transport to app server to steer it.',
+	'api-token-source':
+		'This turn is running on the API token source, which takes no input until it ends.',
+	'nothing-to-type': 'The message has no text to steer with.',
+	'has-images': 'Images cannot be attached to a turn that is already running.',
+	'awaiting-consult': 'The message is waiting on a consult reply.',
+	'cross-agent-mention': 'An @mention only reaches the other agent on a normal send.',
+	'has-agent-context': 'The message carries consult replies that only a normal send delivers.',
+	'too-long': `${STEERING_TOO_LONG_DETAIL[0].toUpperCase()}${STEERING_TOO_LONG_DETAIL.slice(1)}.`,
+	paused: 'The message is paused. Resume it from its queued card.',
+	'waiting-for-connection': 'The message is waiting for the agent to reconnect.',
+	'ssh-remote': 'A turn on an SSH remote cannot be steered.',
+	'steer-in-flight': 'A steer for this message is already waiting for an answer.',
+	'tui-command-prefix':
+		'A message that starts with / or ! would run as a command in the running turn.',
+	'read-only': 'The message is read-only and the running turn is not.',
+};
+
+const STEER_BLOCKED_FALLBACK = 'The running turn cannot take this message right now.';
+
+/**
+ * The sentence for one blocked reason. Takes a string because the reason crosses
+ * a process boundary as one (`QueueSteerResult.blockedReason`).
+ */
+export function describeSteerBlocked(reason: string | undefined): string {
+	return reason && Object.prototype.hasOwnProperty.call(STEER_BLOCKED_DETAILS, reason)
+		? STEER_BLOCKED_DETAILS[reason as SteerBlockedReason]
+		: STEER_BLOCKED_FALLBACK;
+}
+
 /**
  * State transition for dispatching ONE specific queued item now: drop it from the
  * queue, mark its target tab busy (which appends the user-visible log entry), and
@@ -581,64 +1034,100 @@ export interface ReplayDispatchResult {
 
 /**
  * State transition for REPLAYING a turn that already failed: mark its target tab
- * busy and note in the transcript that the prompt went back out.
+ * busy and, when `noteText` is given, note in the transcript that the prompt
+ * went back out. The auto-retry passes no note: its outage card already shows
+ * every attempt, and a note per resend is the wall of frames that card replaced.
  *
  * Distinct from {@link applyQueuedItemDispatch} in two ways, both because the
  * item is not in the queue: nothing is dequeued, and no user bubble is appended
  * (the original send already wrote one - see {@link markTabRunningTurn}).
  *
  * Blocks rather than dispatching when:
- *  - the tab is gone (nothing to run on);
+ *  - the tab is gone (nothing to run on). The queue's fallback onto the ACTIVE
+ *    tab does not apply: `processQueuedItem` refuses an item whose own tab is
+ *    gone, so marking the active tab here left it busy with nothing behind it;
  *  - the tab is already mid-turn - a second spawn on one tab key makes the main
- *    process KILL the live one, so a replay must never race a running turn;
+ *    process KILL the live one, so a replay must never race a running turn.
+ *    `opts.targetBusyIsOurs` waives this when the caller itself marked the tab
+ *    busy for this same turn and no process holds it (a context compaction
+ *    keeps the tab busy across the summary, so the turn never reads idle);
  *  - the user has already re-sent this exact prompt, which is queued and will
  *    drain on its own.
  */
 export function applyReplayDispatch(
 	session: Session,
 	item: QueuedItem,
-	noteText: string
+	noteText?: string,
+	opts: { targetBusyIsOurs?: boolean } = {}
 ): ReplayDispatchResult {
 	const duplicate = findQueuedDuplicate(session, item);
 	if (duplicate) return { session, blocked: 'already-queued' };
 
 	const target = resolveQueuedItemTarget(session, item);
-	if (!target) return { session, blocked: 'no-target-tab' };
+	if (!target || (item.tabId && target.tabId !== item.tabId)) {
+		return { session, blocked: 'no-target-tab' };
+	}
 
 	const targetTab =
 		session.aiTabs.find((t) => t.id === target.tabId) ??
 		session.orphanedThinkingTabs?.find((t) => t.id === target.tabId);
-	if (targetTab?.state === 'busy') return { session, blocked: 'target-tab-busy' };
+	if (targetTab?.state === 'busy' && !opts.targetBusyIsOurs) {
+		return { session, blocked: 'target-tab-busy' };
+	}
 
-	const note: LogEntry = {
-		id: generateId(),
-		timestamp: Date.now(),
-		source: 'system',
-		text: noteText,
-	};
-	const markReplayed = (tab: Session['aiTabs'][number]) => {
-		const next = markTabRunningTurn(tab, item, session);
-		return { ...next, logs: [...tab.logs, note] };
-	};
+	const note: LogEntry | undefined = noteText
+		? { id: generateId(), timestamp: Date.now(), source: 'system', text: noteText }
+		: undefined;
+	const running = applyResendRunning(
+		session,
+		item,
+		note ? (tab) => ({ ...tab, logs: [...tab.logs, note] }) : undefined
+	);
+	return running ? { session: running } : { session, blocked: 'no-target-tab' };
+}
 
-	const aiTabs = session.aiTabs.map((tab) => (tab.id === target.tabId ? markReplayed(tab) : tab));
+/**
+ * Put the agent and the target tab of a turn that is being SENT AGAIN into the
+ * running state. Returns null when the item has no tab left to run on.
+ *
+ * Nothing is dequeued and no user bubble is appended: the original send already
+ * wrote one (see {@link markTabRunningTurn}). Shared by the two resend paths, the
+ * re-authentication replay ({@link applyReplayDispatch}) and Agent Resilience's
+ * auto-retry (`retryStore.fireRetry`). `processQueuedItem` marks nothing busy -
+ * its callers do - so a resend that skips this runs as a GHOST TURN: the provider
+ * is working while the tab reads idle, the Thinking pill never lists it, and the
+ * last thing on screen is whatever the failed attempt printed before it died.
+ *
+ * `decorateTab` runs on the target tab after it is marked running, for a caller
+ * that also writes to the transcript.
+ */
+export function applyResendRunning(
+	session: Session,
+	item: QueuedItem,
+	decorateTab: (tab: Session['aiTabs'][number]) => Session['aiTabs'][number] = (tab) => tab
+): Session | null {
+	const target = resolveQueuedItemTarget(session, item);
+	if (!target) return null;
+
+	const markRunning = (tab: Session['aiTabs'][number]) =>
+		decorateTab(markTabRunningTurn(tab, item, session));
+
+	const aiTabs = session.aiTabs.map((tab) => (tab.id === target.tabId ? markRunning(tab) : tab));
 	const orphans =
 		target.location === 'orphan' && session.orphanedThinkingTabs
 			? session.orphanedThinkingTabs.map((tab) =>
-					tab.id === target.tabId ? markReplayed(tab) : tab
+					tab.id === target.tabId ? markRunning(tab) : tab
 				)
 			: session.orphanedThinkingTabs;
 
 	return {
-		session: {
-			...session,
-			state: 'busy' as SessionState,
-			busySource: 'ai',
-			thinkingStartTime: Date.now(),
-			currentCycleTokens: 0,
-			currentCycleBytes: 0,
-			aiTabs,
-			...(orphans !== session.orphanedThinkingTabs && { orphanedThinkingTabs: orphans }),
-		},
+		...session,
+		state: 'busy' as SessionState,
+		busySource: 'ai',
+		thinkingStartTime: Date.now(),
+		currentCycleTokens: 0,
+		currentCycleBytes: 0,
+		aiTabs,
+		...(orphans !== session.orphanedThinkingTabs && { orphanedThinkingTabs: orphans }),
 	};
 }

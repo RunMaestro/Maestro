@@ -113,9 +113,10 @@ export interface ThemeColors {
 	 */
 	accentHover?: string;
 	/**
-	 * Surface for something raised above `bgMain` (a popover, a card, a menu).
-	 * Optional: derived by lifting `bgMain` toward white on dark themes and
-	 * toward black on light ones. Published as `--surface-elevated`.
+	 * Fill for something floating above the app (a popover, a menu, a hover
+	 * card). Optional: derived one step past `bgActivity` toward `textMain`, so
+	 * it differs from every base surface (see `getElevatedSurfaceColors` in
+	 * `src/renderer/utils/elevatedSurface.ts`). Published as `--surface-elevated`.
 	 */
 	surfaceElevated?: string;
 

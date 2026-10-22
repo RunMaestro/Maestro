@@ -1,3 +1,4 @@
+import { captureException } from '../utils/sentry';
 /**
  * TTSR runtime facade - what main actually installs.
  *
@@ -263,6 +264,7 @@ export class TtsrRuntime {
 			const pending = this.manager
 				.observeAst(sessionId, event, observeCtx)
 				.catch((err: unknown) => {
+					captureException(err, { operation: 'ttsr:ast', sessionId });
 					logger.warn('TTSR AST pass failed', LOG_CONTEXT, {
 						sessionId,
 						error: err instanceof Error ? err.message : String(err),
@@ -525,6 +527,7 @@ export class TtsrRuntime {
 			// is told which prompt to expect from the driver's `onTriggered`, which
 			// runs before the renderer ever sees the payload.
 			.catch((err: unknown) => {
+				captureException(err, { operation: 'ttsr:interrupt', sessionId });
 				logger.error('TTSR interrupt failed', LOG_CONTEXT, {
 					sessionId,
 					error: err instanceof Error ? err.message : String(err),
@@ -606,6 +609,7 @@ export class TtsrRuntime {
 		} catch (err) {
 			// A broken rule directory must never break the agent's output stream:
 			// fall back to "no rules" and keep going. The throw is still reported.
+			captureException(err, { operation: 'ttsr:load', projectRoot });
 			logger.error('TTSR rule load failed', LOG_CONTEXT, {
 				projectRoot,
 				error: err instanceof Error ? err.message : String(err),

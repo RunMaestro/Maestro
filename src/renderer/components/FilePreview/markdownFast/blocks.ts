@@ -1,4 +1,4 @@
-import type { MarkdownBlock } from './types';
+import type { MarkdownBlock, MarkdownFence } from './types';
 import type { ParserInstance, ParserToken } from './parser';
 
 /**
@@ -25,6 +25,11 @@ export interface TokensToBlocksOptions {
 	 * search). Build via `buildLineOffsets(body)`.
 	 */
 	lineOffsets?: number[];
+	/**
+	 * Fence languages to tag with a `fence` descriptor (a React item renders
+	 * them). Matched exactly against the fence's first info word.
+	 */
+	reactFenceLanguages?: ReadonlySet<string>;
 }
 
 /**
@@ -52,7 +57,7 @@ export function tokensToBlocks(
 	tokens: ParserToken[],
 	options: TokensToBlocksOptions = {}
 ): MarkdownBlock[] {
-	const { lineOffsets } = options;
+	const { lineOffsets, reactFenceLanguages } = options;
 	const blocks: MarkdownBlock[] = [];
 	let i = 0;
 	let nextId = 0;
@@ -77,7 +82,9 @@ export function tokensToBlocks(
 		// Standalone block-level token (no matching close).
 		if (!tok.type.endsWith('_open')) {
 			const html = md.renderer.render([tok], md.options, {});
-			blocks.push({ id: nextId++, html, ...sourceRange(tok) });
+			// Keeps `html` too: it is the item's fallback when the renderer goes away.
+			const fence = reactFence(tok, reactFenceLanguages);
+			blocks.push({ id: nextId++, html, ...sourceRange(tok), ...(fence ? { fence } : null) });
 			i++;
 			continue;
 		}
@@ -105,4 +112,19 @@ export function tokensToBlocks(
 	}
 
 	return blocks;
+}
+
+/**
+ * The descriptor of a fence a React item renders, or undefined for any other
+ * token. `line` is body-relative and 1-based here; the pipeline shifts it past
+ * the frontmatter.
+ */
+function reactFence(
+	tok: ParserToken,
+	languages: ReadonlySet<string> | undefined
+): MarkdownFence | undefined {
+	if (!languages || tok.type !== 'fence' || !tok.map) return undefined;
+	const language = tok.info.trim().split(/\s+/)[0] ?? '';
+	if (!languages.has(language)) return undefined;
+	return { language, content: tok.content.replace(/\n$/, ''), line: tok.map[0] + 1 };
 }

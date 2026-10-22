@@ -6,6 +6,7 @@
  *   - handleSwitchQueueSession: sets active session ID
  *   - handleReorderQueueItems: move item up, move item down, first to last, last to first, only affects target session, empty queue edge case
  *   - handleForceSendQueueItem: out-of-turn dispatch, busy-tab guard, forceParallel stamping, failure re-queue
+ *   - handleSteerQueueItem: verdict handling (delivered drops, refused keeps, unknown pauses), stale-card and non-Claude guards
  *   - Return type completeness
  */
 
@@ -955,8 +956,139 @@ describe('useQueueHandlers', () => {
 	});
 
 	// ========================================================================
+	// handleSteerQueueItem - chat steering
+	// ========================================================================
+	describe('handleSteerQueueItem', () => {
+		const steer = vi.fn();
+		const maestroProcess = (window as unknown as { maestro: { process: Record<string, unknown> } })
+			.maestro.process;
+
+		beforeEach(() => {
+			steer.mockReset();
+			maestroProcess.steer = steer;
+		});
+		afterEach(() => {
+			delete maestroProcess.steer;
+		});
+
+		// A Claude interactive turn in flight on tab-1: the only shape that can steer.
+		function steerableSession(queue: QueuedItem[]): Session {
+			const base = createSession({ executionQueue: queue });
+			return {
+				...base,
+				aiTabs: [{ ...base.aiTabs[0], state: 'busy' as const }],
+				claudeInteractive: { mode: 'interactive', modeReason: 'auto' },
+			} as Session;
+		}
+
+		async function steerItem(itemId: string): Promise<Session> {
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
+			await act(async () => {
+				await result.current.handleSteerQueueItem('sess-1', itemId);
+			});
+			return useSessionStore.getState().sessions[0];
+		}
+
+		// The full verdict lifecycle (absorbed / queued / dropped / exit) is covered
+		// in services/chatSteering.test.ts; these pin that the hook reaches it.
+		it('sends to the tab process key and drops the item once delivered', async () => {
+			// Claude has the text; keeping it queued would send it a second time.
+			steer.mockResolvedValue({ type: 'steering', id: 'x', verdict: 'delivered' });
+			const item = createQueuedItem({ id: 'item-a', text: 'go left instead' });
+			useSessionStore.setState({ sessions: [steerableSession([item])] });
+
+			const updated = await steerItem('item-a');
+
+			expect(steer).toHaveBeenCalledWith('sess-1-ai-tab-1', 'go left instead');
+			expect(updated.executionQueue).toEqual([]);
+		});
+
+		it('keeps a refused item queued exactly as it was', async () => {
+			// Nothing was typed, so the message is still ours and sends normally later.
+			steer.mockResolvedValue({
+				type: 'steering',
+				id: 'x',
+				verdict: 'refused',
+				refusal: 'blocking-dialog',
+				detail: 'a permission prompt',
+			});
+			const item = createQueuedItem({ id: 'item-a', text: 'go left' });
+			useSessionStore.setState({ sessions: [steerableSession([item])] });
+
+			const updated = await steerItem('item-a');
+
+			expect(updated.executionQueue).toEqual([item]);
+		});
+
+		it('pauses an item whose outcome is unknown rather than dropping or resending it', async () => {
+			steer.mockResolvedValue({ type: 'steering', id: 'x', verdict: 'unknown' });
+			const item = createQueuedItem({ id: 'item-a', text: 'go left' });
+			useSessionStore.setState({ sessions: [steerableSession([item])] });
+
+			const updated = await steerItem('item-a');
+
+			expect(updated.executionQueue).toEqual([{ ...item, paused: true }]);
+		});
+
+		it('does not steer an item the live state says is not steerable', async () => {
+			// The card can be stale by the click: here the item became a consult hold.
+			const item = createQueuedItem({
+				id: 'item-a',
+				text: 'Waiting',
+				awaitingConsult: {
+					pending: [{ targetSessionId: 's-b', targetAgentName: 'Backend' }],
+					replies: [],
+				},
+			});
+			useSessionStore.setState({ sessions: [steerableSession([item])] });
+
+			const updated = await steerItem('item-a');
+
+			expect(steer).not.toHaveBeenCalled();
+			expect(updated.executionQueue).toEqual([item]);
+		});
+
+		it('does not steer a non-Claude agent', async () => {
+			const item = createQueuedItem({ id: 'item-a', text: 'go left' });
+			useSessionStore.setState({
+				sessions: [{ ...steerableSession([item]), toolType: 'codex' } as Session],
+			});
+
+			await steerItem('item-a');
+
+			expect(steer).not.toHaveBeenCalled();
+		});
+	});
+
+	// ========================================================================
 	// Return type completeness
 	// ========================================================================
+	describe('handleMergeQueueItem', () => {
+		it('folds a message into the earlier one for its tab, in any agent', () => {
+			useSessionStore.setState({
+				sessions: [
+					createSession({ id: 'sess-1' }),
+					createSession({
+						id: 'sess-2',
+						executionQueue: [
+							createQueuedItem({ id: 'a', text: 'first' }),
+							createQueuedItem({ id: 'b', text: 'second' }),
+						],
+					}),
+				],
+			});
+			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
+
+			act(() => {
+				result.current.handleMergeQueueItem('sess-2', 'b');
+			});
+
+			const queue = useSessionStore.getState().sessions[1].executionQueue;
+			expect(queue).toHaveLength(1);
+			expect(queue[0]).toMatchObject({ id: 'a', text: 'first\n\nsecond' });
+		});
+	});
+
 	describe('return type', () => {
 		it('returns all three handler functions', () => {
 			const { result } = renderHook(() => useQueueHandlers({ processQueuedItem }));
@@ -965,6 +1097,7 @@ describe('useQueueHandlers', () => {
 			expect(typeof result.current.handleSwitchQueueSession).toBe('function');
 			expect(typeof result.current.handleReorderQueueItems).toBe('function');
 			expect(typeof result.current.handleForceSendQueueItem).toBe('function');
+			expect(typeof result.current.handleMergeQueueItem).toBe('function');
 		});
 
 		it('returns stable handler references across renders', () => {

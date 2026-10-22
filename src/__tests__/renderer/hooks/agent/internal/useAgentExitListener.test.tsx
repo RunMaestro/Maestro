@@ -1,8 +1,16 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useAgentExitListener } from '../../../../../renderer/hooks/agent/internal/useAgentExitListener';
 import { useSessionStore } from '../../../../../renderer/stores/sessionStore';
-import { useRetryStore } from '../../../../../renderer/stores/retryStore';
+import {
+	useRetryStore,
+	noteDispatch,
+	scheduleRetryForError,
+	cancelContextCompaction,
+} from '../../../../../renderer/stores/retryStore';
+import { registerContextCompactionSpawner } from '../../../../../renderer/services/contextCompaction';
+import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';
+import { useNotificationStore } from '../../../../../renderer/stores/notificationStore';
 import { DEFAULT_BATCH_STATE } from '../../../../../renderer/hooks/batch/batchReducer';
 import type { BatchRunState } from '../../../../../renderer/types';
 import { createMockSession } from '../../../../helpers/mockSession';
@@ -53,6 +61,11 @@ function makeDeps() {
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	useSettingsStore.setState(useSettingsStore.getInitialState(), true);
+	useNotificationStore.setState(useNotificationStore.getInitialState(), true);
+	useNotificationStore.getState().setOsNotifications(false);
+	// Completions are asserted in the inbox, which exists only with the Notification Center on.
+	useNotificationStore.getState().setHistoryEnabled(true);
 	handler = undefined;
 	mockIsWebDesktop = false;
 	useRetryStore.setState({ retries: {}, outages: {} } as any);
@@ -69,6 +82,13 @@ beforeEach(() => {
 		stats: { recordQuery: vi.fn().mockResolvedValue(undefined) },
 		logger: { log: vi.fn() },
 	};
+});
+
+afterEach(async () => {
+	// Exit side effects are intentionally deferred; settle them before resetting stores.
+	await act(async () => {
+		await new Promise((resolve) => setTimeout(resolve, 0));
+	});
 });
 
 describe('useAgentExitListener', () => {
@@ -106,6 +126,61 @@ describe('useAgentExitListener', () => {
 		const updated = useSessionStore.getState().sessions[0];
 		expect(updated.aiTabs[0].state).toBe('idle');
 		expect(updated.state).toBe('idle');
+	});
+
+	// 2026-10-12: a `--print` turn emits its whole reply on the final result, an
+	// instant before exit, so the reply was still in the batch buffer when the
+	// exit reducer appended the next queued message's card. The transcript then
+	// read "next question, previous answer" and the running turn looked finished.
+	it('lands the finished reply before the next queued message card', async () => {
+		const tab = createMockAITab({
+			id: 'tab-1',
+			state: 'busy',
+			thinkingStartTime: 0,
+			logs: [{ id: 'u1', timestamp: 1, source: 'user', text: 'first question' }],
+		});
+		const session = createMockSession({
+			id: 'sess-1',
+			aiTabs: [tab],
+			activeTabId: 'tab-1',
+			state: 'busy',
+			busySource: 'ai',
+			executionQueue: [
+				{ id: 'q-next', timestamp: 2, tabId: 'tab-1', type: 'message', text: 'second question' },
+			] as any,
+		});
+		useSessionStore.setState({ sessions: [session] } as any);
+
+		const deps = makeDeps();
+		deps.processQueuedItemRef.current = vi.fn().mockResolvedValue(undefined) as any;
+		// The buffered reply only reaches the store when the batch is flushed.
+		let buffered = true;
+		deps.batchedUpdater.flushNow.mockImplementation(() => {
+			if (!buffered) return;
+			buffered = false;
+			useSessionStore.getState().setSessions((prev) =>
+				prev.map((s) => ({
+					...s,
+					aiTabs: s.aiTabs.map((t) => ({
+						...t,
+						logs: [
+							...t.logs,
+							{ id: 'a1', timestamp: 3, source: 'stdout' as const, text: 'first answer' },
+						],
+					})),
+				}))
+			);
+		});
+
+		renderHook(() => useAgentExitListener(deps));
+		await act(async () => {
+			await handler!('sess-1-ai-tab-1', 0);
+			await new Promise((r) => setTimeout(r, 0));
+		});
+
+		const logs = useSessionStore.getState().sessions[0].aiTabs[0].logs;
+		expect(logs.map((l) => l.text)).toEqual(['first question', 'first answer', 'second question']);
+		expect(logs[2].queuedItemId).toBe('q-next');
 	});
 
 	describe('on a web-desktop client', () => {
@@ -457,6 +532,61 @@ describe('useAgentExitListener', () => {
 		expect(processQueuedItem).not.toHaveBeenCalled();
 	});
 
+	// A failed attempt is not a completed turn. Each attempt of an outage used to
+	// raise a green "success" toast quoting whatever the dying turn printed last,
+	// so the user was told the work was done three times while it had not run.
+	it.each([
+		['raises no completion toast while a retry is counting down', true, 0],
+		['raises the completion toast once no retry is pending', false, 1],
+	])('%s', async (_name, retryPending, expectedToasts) => {
+		const tab = createMockAITab({
+			id: 'tab-1',
+			state: 'busy',
+			thinkingStartTime: 0,
+			logs: [
+				{ id: 'u', timestamp: 1, source: 'user', text: 'do the thing' },
+				{ id: 'a', timestamp: 2, source: 'stdout', text: 'Halfway there before it died.' },
+			],
+		});
+		const session = createMockSession({
+			id: 'sess-1',
+			aiTabs: [tab],
+			activeTabId: 'tab-1',
+			state: 'busy',
+			busySource: 'ai',
+			executionQueue: [],
+		});
+		useSessionStore.setState({ sessions: [session] } as any);
+		useNotificationStore.setState({ toasts: [] } as any);
+		if (retryPending) {
+			useRetryStore.setState({
+				retries: {
+					'sess-1:tab-1': {
+						sessionId: 'sess-1',
+						tabId: 'tab-1',
+						key: 'sess-1:tab-1',
+						outageId: 'outage-1',
+						mode: 'resend',
+						status: 'scheduled',
+						attempt: 0,
+						startedAt: 0,
+						nextRetryAt: 60_000,
+						lastMessage: 'Your workspace is out of credits.',
+					},
+				},
+			} as any);
+		}
+
+		renderHook(() => useAgentExitListener(makeDeps()));
+		await act(async () => {
+			await handler!('sess-1-ai-tab-1', 1);
+			await new Promise((r) => setTimeout(r, 0));
+		});
+
+		expect(useNotificationStore.getState().toasts).toHaveLength(expectedToasts);
+		expect(useNotificationStore.getState().history).toHaveLength(expectedToasts);
+	});
+
 	it('drains the queue normally once the retry has settled', async () => {
 		// Same shape as above with no retry entry: proves the hold is the retry's
 		// doing, not the exit code or the read-only flag.
@@ -493,6 +623,68 @@ describe('useAgentExitListener', () => {
 		expect(processQueuedItem).toHaveBeenCalledTimes(1);
 	});
 
+	// The whole point of tying the compaction to this exit: the failed turn's
+	// process is gone (no second writer on the provider session), the tab has
+	// been settled, and no synopsis or completion runs for a turn that is about
+	// to be re-run.
+	it('starts a waiting context compaction once the failed turn has exited', async () => {
+		const compact = vi.fn(() => new Promise<{ success: boolean }>(() => {}));
+		registerContextCompactionSpawner(compact);
+		const tab = createMockAITab({
+			id: 'tab-1',
+			state: 'busy',
+			thinkingStartTime: 0,
+			agentSessionId: 'claude-abc',
+			saveToHistory: true,
+		});
+		const session = createMockSession({
+			id: 'sess-1',
+			toolType: 'claude-code',
+			aiTabs: [tab],
+			activeTabId: 'tab-1',
+			state: 'busy',
+		});
+		useSessionStore.setState({ sessions: [session] } as any);
+		noteDispatch(
+			'sess-1',
+			{ id: 'turn-1', timestamp: 1, tabId: 'tab-1', type: 'message', text: 'hi' },
+			{} as any
+		);
+		scheduleRetryForError('sess-1', 'tab-1', {
+			type: 'token_exhaustion',
+			message: 'Prompt is too long',
+			recoverable: true,
+			timestamp: 1,
+			agentId: 'claude-code',
+		} as any);
+		expect(compact).not.toHaveBeenCalled();
+
+		const deps = makeDeps();
+		const spawnSynopsis = vi.fn();
+		deps.spawnBackgroundSynopsisRef = { current: spawnSynopsis } as any;
+		const processQueuedItem = vi.fn().mockResolvedValue(true);
+		deps.processQueuedItemRef = { current: processQueuedItem } as any;
+
+		renderHook(() => useAgentExitListener(deps));
+		await act(async () => {
+			await handler!('sess-1-ai-tab-1', 1);
+		});
+
+		expect(compact).toHaveBeenCalledTimes(1);
+		// The turn still reads as running, the parked prompt was not drained, and
+		// the turn that died got no synopsis.
+		const updated = useSessionStore.getState().sessions[0];
+		expect(updated.aiTabs[0].state).toBe('busy');
+		expect(updated.state).toBe('busy');
+		expect(updated.executionQueue.map((i) => i.id)).toEqual(['turn-1']);
+		expect(processQueuedItem).not.toHaveBeenCalled();
+		expect(spawnSynopsis).not.toHaveBeenCalled();
+		expect(useRetryStore.getState().retries['sess-1:tab-1']?.status).toBe('in-flight');
+
+		cancelContextCompaction('sess-1');
+		registerContextCompactionSpawner(null);
+	});
+
 	it('deletes activeHiddenToolRef entry on AI exit', async () => {
 		const tab = createMockAITab({ id: 'tab-1', state: 'busy' });
 		const session = createMockSession({
@@ -512,4 +704,75 @@ describe('useAgentExitListener', () => {
 
 		expect(deps.activeHiddenToolRef.current.has('sess-1:tab-1')).toBe(false);
 	});
+	it.each([true, false])(
+		'records a final completion with viewing=%s while retaining popup/audio defaults',
+		async (viewing) => {
+			const tab = createMockAITab({
+				id: 'tab-1',
+				state: 'busy',
+				thinkingStartTime: Date.now() - 100,
+				logs: [],
+			});
+			useSessionStore.setState({
+				sessions: [
+					createMockSession({ id: 'sess-1', aiTabs: [tab], activeTabId: 'tab-1', state: 'busy' }),
+				],
+				activeSessionId: viewing ? 'sess-1' : '',
+			});
+			const speak = vi.fn().mockResolvedValue(undefined);
+			window.maestro.notification.speak = speak;
+			useNotificationStore.getState().setAudioFeedback(true, 'say');
+			renderHook(() => useAgentExitListener(makeDeps()));
+			await act(async () => {
+				await handler!('sess-1-ai-tab-1', 0);
+				await new Promise((resolve) => setTimeout(resolve, 0));
+			});
+			expect(useNotificationStore.getState().history).toHaveLength(1);
+			expect(useNotificationStore.getState().toasts).toHaveLength(viewing ? 0 : 1);
+			expect(speak).toHaveBeenCalledTimes(1);
+		}
+	);
+
+	it.each([false, true])(
+		'records intermediate queued replies only when opted in (%s)',
+		async (enabled) => {
+			useSettingsStore.setState({ notificationHistoryQueuedReplies: enabled });
+			const tab = createMockAITab({
+				id: 'tab-1',
+				state: 'busy',
+				thinkingStartTime: Date.now() - 100,
+				logs: [],
+			});
+			const queued = {
+				id: 'next',
+				timestamp: 1,
+				tabId: 'tab-1',
+				type: 'message' as const,
+				text: 'Next',
+				readOnlyMode: true,
+			};
+			useSessionStore.setState({
+				sessions: [
+					createMockSession({
+						id: 'sess-1',
+						aiTabs: [tab],
+						activeTabId: 'tab-1',
+						state: 'busy',
+						executionQueue: [queued],
+					}),
+				],
+			});
+			const dispatch = vi.fn().mockResolvedValue(undefined);
+			const deps = makeDeps();
+			deps.processQueuedItemRef.current = dispatch as never;
+			renderHook(() => useAgentExitListener(deps));
+			await act(async () => {
+				await handler!('sess-1-ai-tab-1', 0);
+				await new Promise((resolve) => setTimeout(resolve, 0));
+			});
+			expect(dispatch).toHaveBeenCalledTimes(1);
+			expect(useNotificationStore.getState().history).toHaveLength(enabled ? 1 : 0);
+			expect(useNotificationStore.getState().toasts).toHaveLength(0);
+		}
+	);
 });

@@ -24,6 +24,10 @@ vi.stubGlobal('window', {
 import { spawnPtyForTab, isSpawnInFlight } from '../../../renderer/services/terminalSpawn';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type { Session, TerminalTab } from '../../../renderer/types';
+import {
+	updateTerminalTabPid,
+	restartTerminalTab,
+} from '../../../renderer/utils/terminalTabHelpers';
 
 function session(overrides: Partial<Session> = {}): Session {
 	return { id: 'sess-1', cwd: '/repo', projectRoot: '/repo', ...overrides } as Session;
@@ -45,6 +49,50 @@ beforeEach(() => {
 });
 
 describe('spawnPtyForTab', () => {
+	it('does not initialize an attached zero-PID terminal again after view remounts', async () => {
+		spawnTerminalTab.mockResolvedValue({ success: true, pid: 0 });
+		let current = { ...session(), terminalTabs: [tab({ startupCommand: 'npm run dev' })] };
+		const reportPid = (id: string, pid: number) => {
+			current = updateTerminalTabPid(current, id, pid) as typeof current;
+		};
+		await spawnPtyForTab({
+			session: current,
+			tab: current.terminalTabs[0],
+			onPid: reportPid,
+			onSpawnFailure,
+		});
+		for (let render = 0; render < 20; render++) {
+			await spawnPtyForTab({
+				session: current,
+				tab: current.terminalTabs[0],
+				onPid: reportPid,
+				onSpawnFailure,
+			});
+		}
+		expect(current.terminalTabs[0].ptyInitialized).toBe(true);
+		expect(current.terminalTabs[0].pid).toBe(0);
+		expect(spawnTerminalTab).toHaveBeenCalledTimes(1);
+		expect(write).toHaveBeenCalledTimes(1);
+		current = restartTerminalTab(current, 'tab-1') as typeof current;
+		await spawnPtyForTab({
+			session: current,
+			tab: current.terminalTabs[0],
+			onPid: reportPid,
+			onSpawnFailure,
+		});
+		expect(spawnTerminalTab).toHaveBeenCalledTimes(2);
+	});
+	it('never reruns the startup command when another client attaches to an existing host shell', async () => {
+		spawnTerminalTab.mockResolvedValue({ success: true, pid: 0, attached: true });
+		await spawnPtyForTab({
+			session: session(),
+			tab: tab({ startupCommand: 'npm run dev' }),
+			onPid,
+			onSpawnFailure,
+		});
+		expect(onPid).toHaveBeenCalledWith('tab-1', 0);
+		expect(write).not.toHaveBeenCalled();
+	});
 	it('spawns without any rendered terminal and reports the pid', async () => {
 		await spawnPtyForTab({ session: session(), tab: tab(), onPid, onSpawnFailure });
 

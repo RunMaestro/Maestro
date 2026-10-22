@@ -213,6 +213,45 @@ describe('computeClaudeUsageCost', () => {
 		expect(result.inputTokens).toBe(1_000_000);
 		expect(result.costUsd).toBeCloseTo(5, 10); // 1M Opus input
 	});
+
+	it('counts one API response once even though Claude Code writes a line per content block', () => {
+		// Thinking, text, and tool_use blocks of ONE response each get their own
+		// line, and every line repeats the response's usage.
+		const block = (id: string, requestId: string) =>
+			JSON.stringify({
+				type: 'assistant',
+				requestId,
+				message: {
+					id,
+					model: 'claude-opus-4-8',
+					usage: { input_tokens: 1_000_000, output_tokens: 1_000_000 },
+				},
+			});
+		const content = [
+			block('msg_a', 'req_a'),
+			block('msg_a', 'req_a'),
+			block('msg_a', 'req_a'),
+			block('msg_b', 'req_b'),
+		].join('\n');
+
+		const result = computeClaudeUsageCost(content);
+		expect(result.inputTokens).toBe(2_000_000);
+		expect(result.outputTokens).toBe(2_000_000);
+		// Two responses at Opus rates: 2 x ($5 input + $25 output).
+		expect(result.costUsd).toBeCloseTo(60, 10);
+		expect(result.byModel[0]).toMatchObject({ inputTokens: 2_000_000 });
+	});
+
+	it('keeps responses that share a message id but came from different requests', () => {
+		const line = (requestId: string) =>
+			JSON.stringify({
+				type: 'assistant',
+				requestId,
+				message: { id: 'msg_a', model: 'claude-opus-4-8', usage: { input_tokens: 1_000_000 } },
+			});
+		const result = computeClaudeUsageCost([line('req_1'), line('req_2')].join('\n'));
+		expect(result.inputTokens).toBe(2_000_000);
+	});
 });
 
 describe('OpenAI (Codex) pricing', () => {

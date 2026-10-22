@@ -157,6 +157,7 @@ export class BroadcastService {
 		for (const client of this.getWebClients().values()) {
 			if (
 				client.socket.readyState === WebSocket.OPEN &&
+				client.isAuthorized?.() !== false &&
 				frameReaches(frame.scope, client.subscribedSessionId)
 			) {
 				client.socket.send(frame.data);

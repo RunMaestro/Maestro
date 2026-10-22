@@ -86,6 +86,8 @@ export function MyFeatureSection({ theme, value, setValue }: MyFeatureSectionPro
 
 The outer `<div>` carries `data-setting-id` and nothing else. Do not put padding, margins, or borders on it: vertical rhythm between sections is owned by the tab root (`space-y-5`), not by sections.
 
+**Viewport-filling plugin tab exception:** `PluginSettingsCard` may put `flex flex-col flex-1 min-h-0 min-w-0` on its `data-setting-id` root. This direct flex child passes the modal's bounded space through `SectionCard` to the isolated guest. Keep padding, borders, and section spacing on the existing primitives; keep guest scrolling inside the frame and the host media action outside it with `shrink-0`. This sizing exception applies only to the dedicated plugin tab; ordinary settings sections retain the bare anchor.
+
 ---
 
 ## 3. Use the primitives. Do not hand-roll.

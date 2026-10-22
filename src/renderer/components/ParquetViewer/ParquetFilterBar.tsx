@@ -27,6 +27,7 @@ import type {
 import type { Theme } from '../../types';
 import { formatCount, formatSize } from '../../../shared/formatters';
 import { quoteColumnName } from './parquetFormat';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 /** Examples shown in the help popover, in ascending order of sophistication. */
 const SYNTAX_EXAMPLES: { expression: string; description: string }[] = [
@@ -281,10 +282,9 @@ export const ParquetFilterBar = forwardRef<ParquetFilterBarHandle, ParquetFilter
 				{/* Column completion */}
 				{suggestions.length > 0 && suggestionIndex >= 0 && (
 					<div
-						className="absolute left-9 top-full z-20 rounded shadow-lg overflow-hidden"
+						className="absolute left-9 top-full z-20 rounded overflow-hidden"
 						style={{
-							backgroundColor: theme.colors.bgActivity,
-							border: `1px solid ${theme.colors.border}`,
+							...elevatedSurfaceStyle(theme),
 							minWidth: 260,
 						}}
 						data-testid="parquet-filter-suggestions"
@@ -313,10 +313,9 @@ export const ParquetFilterBar = forwardRef<ParquetFilterBarHandle, ParquetFilter
 
 				{showHelp && (
 					<div
-						className="absolute right-3 top-full z-20 rounded shadow-lg p-3 max-w-md"
+						className="absolute right-3 top-full z-20 rounded p-3 max-w-md"
 						style={{
-							backgroundColor: theme.colors.bgActivity,
-							border: `1px solid ${theme.colors.border}`,
+							...elevatedSurfaceStyle(theme),
 						}}
 					>
 						<div className="text-xs font-semibold mb-2" style={{ color: theme.colors.textMain }}>

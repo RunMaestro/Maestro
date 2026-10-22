@@ -12,7 +12,7 @@ The command palette is your gateway to nearly every action in Maestro. Press `Cm
 
 ## System-Wide Hotkey (Summon Maestro)
 
-Configure a single OS-level hotkey that summons Maestro - bringing the window to the foreground and focusing it - from any application on macOS, Windows, or Linux. This is the only shortcut in Maestro that fires while the app is in the background; every other shortcut on this page is in-app.
+Configure a single OS-level hotkey that summons Maestro - bringing the window to the foreground and focusing it - from any application on macOS, Windows, or Linux. It and the [Quick Chat](#quick-chat-hotkey) hotkey are the only shortcuts in Maestro that fire while the app is in the background; every other shortcut on this page is in-app.
 
 **To configure:**
 
@@ -27,6 +27,14 @@ Tips and gotchas:
 - If the OS or another app already owns the combo, Maestro will surface a registration failure - pick a different binding.
 - `Meta` maps to **Cmd** on macOS and **Win** (Super) on Windows/Linux automatically.
 - The hotkey works even when Maestro is hidden, minimized, or behind other windows.
+
+## Quick Chat Hotkey
+
+[Quick Chat](./quick-chat) has its own system-wide hotkey, `Opt+Space` on macOS and `Alt+Space` on Windows and Linux by default. It opens a small floating chat window from any app, brings it to the front if it is behind another window, and closes it if it is in front. Change or clear it in **Settings -> Plugins -> Quick Chat -> Settings**.
+
+Inside the Quick Chat window: `Enter` sends, `Shift+Enter` adds a line, `Cmd+N` / `Ctrl+N` starts a new chat, `Cmd+O` / `Ctrl+O` opens the agent picker, `Cmd+T` / `Ctrl+T` opens the tab picker (where the next message goes), `Cmd+Y` / `Ctrl+Y` opens the recent chats to bring one back, `Cmd+S` / `Ctrl+S` keeps the chat as a tab (or makes it temporary again), `Cmd+P` / `Ctrl+P` pins the window on top (or unpins it), `Cmd+Shift+K` / `Ctrl+Shift+K` cycles the agent's thinking (hidden, shown while it works, kept), `Cmd+Shift+T` / `Ctrl+Shift+T` opens the chat as a tab in Maestro, `Cmd+=` / `Cmd+-` / `Cmd+0` (`Ctrl` off macOS) make the conversation text bigger, smaller, or back to normal, `Esc` closes the window (or, with the picker open, just the picker), `Cmd+W` / `Ctrl+W` closes the window even with the picker open, and ``Cmd+` `` (macOS) closes it and brings Maestro forward. The [show Maestro hotkey](#system-wide-hotkey-summon-maestro) also closes Quick Chat on its way to the Maestro window.
+
+The two system-wide hotkeys cannot share a combo. If you set one to the other's combo, the second registration fails and Maestro tells you.
 
 ## Global Shortcuts
 
@@ -65,10 +73,13 @@ Tips and gotchas:
 | Maestro Symphony              | `Opt+Cmd+Y`             | `Alt+Ctrl+Y`              |
 | Director's Notes              | `Cmd+Shift+O`           | `Ctrl+Shift+O`            |
 | Maestro Cue                   | `Opt+Q`                 | `Alt+Q`                   |
+| Computer History              | `Ctrl+Cmd+H`            | `Ctrl+Win+H`              |
 | Show/Hide Concerto Stage      | `Opt+Cmd+C`             | `Alt+Ctrl+C`              |
 | Show/Hide All Cadenzas        | `Opt+Cmd+Shift+C`       | `Alt+Ctrl+Shift+C`        |
+| Show/Hide Throughput Gauge    | `Opt+Cmd+Shift+T`       | `Alt+Ctrl+Shift+T`        |
 | Edit Image from Clipboard     | `Opt+Cmd+E`             | `Alt+Ctrl+E`              |
 | Forced Parallel Send          | `Cmd+Shift+Enter`       | `Ctrl+Shift+Enter`        |
+| Steer Running Turn            | `Opt+Cmd+Enter`         | `Alt+Ctrl+Enter`          |
 | Cycle Focus Areas             | `Tab`                   | `Tab`                     |
 | Cycle Focus Backwards         | `Shift+Tab`             | `Shift+Tab`               |
 
@@ -197,6 +208,7 @@ If you scroll the tab strip away while the tab header still holds focus, the nex
 | Next Tab                  | `Cmd+Shift+]`           | `Ctrl+Shift+]`            |
 | Tab Switcher              | `Opt+Cmd+T`             | `Alt+Ctrl+T`              |
 | Rename Tab                | `Cmd+Shift+R`           | `Ctrl+Shift+R`            |
+| Rename Tab Group          | unassigned by default   | unassigned by default     |
 | Go to Tab 1-9             | `Cmd+1` through `Cmd+9` | `Ctrl+1` through `Ctrl+9` |
 | Go to Last Tab            | `Cmd+0`                 | `Ctrl+0`                  |
 
@@ -638,7 +650,7 @@ Most shortcuts can be remapped to fit your workflow:
 4. Press your desired key combination
 5. The new binding is saved immediately
 
-Some actions ship with **no** key assigned and read **Not set** instead of a combination - the media player controls and Open Leaderboard are current examples. They are dimmed, but they work exactly like any other row: click and record. Maestro leaves them unbound rather than claiming chords for actions most people reach through Quick Actions.
+Some actions ship with **no** key assigned and read **Not set** instead of a combination - the media player controls, Open Leaderboard, and Toggle In-App Toasts are current examples. They are dimmed, but they work exactly like any other row: click and record. Maestro leaves them unbound rather than claiming chords for actions most people reach through Quick Actions.
 
 ![Shortcuts Settings](./screenshots/shortcuts-settings.png)
 

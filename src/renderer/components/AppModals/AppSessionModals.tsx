@@ -12,6 +12,7 @@ import { getTerminalTabDisplayName } from '../../utils/terminalTabHelpers';
 import { useModalStore, selectModalOpen, selectModalData } from '../../stores/modalStore';
 import { useTabStore } from '../../stores/tabStore';
 import { useSessionStore } from '../../stores/sessionStore';
+import type { CodexTransport } from '../../../shared/codexTransport';
 
 /**
  * Props for the AppSessionModals component
@@ -51,7 +52,9 @@ export interface AppSessionModalsProps {
 		retryOnTokenExhaustion?: boolean,
 		additionalDirectories?: AdditionalDirectory[],
 		/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
-		codexAutoResetOnExhaustion?: boolean
+		codexAutoResetOnExhaustion?: boolean,
+		/** Codex only: which transport chat turns use. `undefined` means `exec`. */
+		codexTransport?: CodexTransport
 	) => void;
 	existingSessions: Session[];
 	sourceSession?: Session; // For agent duplication
@@ -90,7 +93,9 @@ export interface AppSessionModalsProps {
 		customEnvVarsDisabled?: Record<string, string>,
 		workingDirectory?: string,
 		/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
-		codexAutoResetOnExhaustion?: boolean
+		codexAutoResetOnExhaustion?: boolean,
+		/** Codex only: which transport chat turns use. `undefined` means `exec`. */
+		codexTransport?: CodexTransport
 	) => void;
 	editAgentSession: Session | null;
 

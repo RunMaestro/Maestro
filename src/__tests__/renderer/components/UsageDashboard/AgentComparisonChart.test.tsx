@@ -266,14 +266,14 @@ describe('AgentComparisonChart', () => {
 			const { container } = render(<AgentComparisonChart data={mockData} theme={theme} />);
 
 			// Find the first bar row
-			const barRows = container.querySelectorAll('.flex.items-center.gap-3');
+			const barRows = container.querySelectorAll('[role="listitem"]');
 
 			if (barRows.length > 0) {
 				fireEvent.mouseEnter(barRows[0]);
 
 				// Tooltip should appear
 				// Tooltip portals to document.body and uses inline zIndex (no .z-50 class).
-				const tooltip = document.body.querySelector('div.fixed.shadow-lg');
+				const tooltip = document.body.querySelector('div.fixed.pointer-events-none');
 				expect(tooltip).toBeInTheDocument();
 			}
 		});
@@ -281,14 +281,14 @@ describe('AgentComparisonChart', () => {
 		it('hides tooltip on mouse leave', () => {
 			const { container } = render(<AgentComparisonChart data={mockData} theme={theme} />);
 
-			const barRows = container.querySelectorAll('.flex.items-center.gap-3');
+			const barRows = container.querySelectorAll('[role="listitem"]');
 
 			if (barRows.length > 0) {
 				fireEvent.mouseEnter(barRows[0]);
 				fireEvent.mouseLeave(barRows[0]);
 
 				// Tooltip portals to document.body and uses inline zIndex (no .z-50 class).
-				const tooltip = document.body.querySelector('div.fixed.shadow-lg');
+				const tooltip = document.body.querySelector('div.fixed.pointer-events-none');
 				expect(tooltip).not.toBeInTheDocument();
 			}
 		});
@@ -296,14 +296,14 @@ describe('AgentComparisonChart', () => {
 		it('tooltip shows query count and duration', () => {
 			const { container } = render(<AgentComparisonChart data={mockData} theme={theme} />);
 
-			const barRows = container.querySelectorAll('.flex.items-center.gap-3');
+			const barRows = container.querySelectorAll('[role="listitem"]');
 
 			if (barRows.length > 0) {
 				fireEvent.mouseEnter(barRows[0]);
 
 				// Tooltip should contain queries text and total text
 				// Tooltip portals to document.body and uses inline zIndex (no .z-50 class).
-				const tooltip = document.body.querySelector('div.fixed.shadow-lg');
+				const tooltip = document.body.querySelector('div.fixed.pointer-events-none');
 				expect(tooltip?.textContent).toContain('queries');
 				expect(tooltip?.textContent).toContain('total');
 			}
@@ -404,7 +404,7 @@ describe('AgentComparisonChart', () => {
 		it('highlights agent name on hover', () => {
 			const { container } = render(<AgentComparisonChart data={mockData} theme={theme} />);
 
-			const barRows = container.querySelectorAll('.flex.items-center.gap-3');
+			const barRows = container.querySelectorAll('[role="listitem"]');
 
 			if (barRows.length > 0) {
 				const agentLabel = barRows[0].querySelector('[data-testid="bar-chart-label"]');
@@ -539,8 +539,8 @@ describe('AgentComparisonChart', () => {
 	});
 
 	describe('Drill-Down Filtering', () => {
-		// `[role="listitem"]` targets the outer bar row only - the inner count/
-		// duration labels share `.flex.items-center.gap-3` but have no role.
+		// `[role="listitem"]` targets the outer bar row only; the inner count/
+		// duration labels have no role.
 		const BAR_ROW_SELECTOR = '[role="listitem"][aria-label]';
 
 		it('does not set cursor pointer or tabIndex when onAgentClick is not provided', () => {
@@ -635,9 +635,7 @@ describe('AgentComparisonChart', () => {
 				/>
 			);
 
-			const barContainers = container.querySelectorAll(
-				'.flex-1.h-full.rounded.overflow-hidden.relative'
-			);
+			const barContainers = container.querySelectorAll('[role="meter"]');
 			expect(barContainers.length).toBe(3);
 			// Selected bar (claude-code, sorted first) gets an inset accent outline.
 			const selected = barContainers[0] as HTMLElement;
@@ -798,11 +796,11 @@ describe('AgentComparisonChart', () => {
 				<AgentComparisonChart data={data} theme={theme} sessions={[session]} />
 			);
 
-			const barRows = container.querySelectorAll('.flex.items-center.gap-3');
+			const barRows = container.querySelectorAll('[role="listitem"]');
 			fireEvent.mouseEnter(barRows[0]);
 
 			// Tooltip portals to document.body and uses inline zIndex (no .z-50 class).
-			const tooltip = document.body.querySelector('div.fixed.shadow-lg');
+			const tooltip = document.body.querySelector('div.fixed.pointer-events-none');
 			expect(tooltip?.textContent).toContain('Backend API');
 		});
 	});

@@ -14,6 +14,7 @@ import { useContextMenuPosition } from '../hooks/ui/useContextMenuPosition';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { getRevealLabel } from '../utils/platformUtils';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
+import { elevatedSurfaceStyle } from '../utils/elevatedSurface';
 
 export interface FileContextMenuState {
 	x: number;
@@ -113,7 +114,7 @@ export function FileContextMenu({
 	return createPortal(
 		<div
 			ref={menuRef}
-			className="fixed z-[10000] rounded-lg shadow-xl border overflow-hidden whitespace-nowrap"
+			className="fixed z-[10000] rounded-lg overflow-hidden whitespace-nowrap"
 			style={{
 				left,
 				top,
@@ -123,8 +124,7 @@ export function FileContextMenu({
 				maxHeight,
 				overflowY: 'auto',
 				opacity: ready ? 1 : 0,
-				backgroundColor: theme.colors.bgSidebar,
-				borderColor: theme.colors.border,
+				...elevatedSurfaceStyle(theme),
 				minWidth: '11.25rem',
 			}}
 			onMouseDown={(e) => e.stopPropagation()}

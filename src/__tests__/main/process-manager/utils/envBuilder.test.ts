@@ -10,7 +10,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-vi.mock('../../../../main/runtime/getShellPath', () => ({
+vi.mock('../../../../shared/maestro-lib/launch/getShellPath', () => ({
 	peekShellPath: () => null,
 }));
 

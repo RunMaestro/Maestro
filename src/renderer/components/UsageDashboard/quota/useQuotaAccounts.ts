@@ -15,7 +15,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useSessionStore } from '../../../stores/sessionStore';
+import { useLiveSessions } from '../../../hooks/session/useLiveSessions';
 import {
 	effectiveAgentCustomEnvVars,
 	resolveAgentAccountKey,
@@ -64,7 +64,8 @@ export interface UseQuotaAccountsResult {
 
 export function useQuotaAccounts(opts: UseQuotaAccountsOptions): UseQuotaAccountsResult {
 	const { toolType, accountKeys, snapshots, normalizeKey, deriveShortName } = opts;
-	const sessions = useSessionStore((s) => s.sessions);
+	// Live agents only: a dormant Pianola (flag off) is not counted on an account.
+	const sessions = useLiveSessions();
 
 	// Keep the latest fetchers in refs so the mount-only effects below can call
 	// them without re-firing when the parent passes fresh closures each render.

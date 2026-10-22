@@ -127,7 +127,7 @@ export const SidebarActions = memo(function SidebarActions({
 					}
 				>
 					<Bell className="w-4 h-4" />
-					{hasUnreadAgents && <CornerDot color={theme.colors.accent} size="md" />}
+					{hasUnreadAgents && <CornerDot color={theme.colors.error} size="md" />}
 				</button>
 			)}
 		</div>

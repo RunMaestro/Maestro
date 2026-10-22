@@ -651,12 +651,12 @@ describe('director-notes IPC handlers', () => {
 		};
 
 		// A busy agent's history file evicts its own oldest entries at the retention
-		// cap, so its bar silently pins to exactly 5000 and reads as an exact figure.
+		// cap, so its bar silently pins to exactly the cap and reads as an exact figure.
 		// Two agents at wildly different volumes then tie for top. `truncated` is
 		// what lets the chart say "at least" instead of stating a number it cannot know.
 		it('flags an agent whose count was bounded by retention, not the window', async () => {
 			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['busy']);
-			// 5000 entries spanning 5 days, well inside a 30-day window: the cutoff
+			// A full file spanning 5 days, well inside a 30-day window: the cutoff
 			// dropped nothing, so the cap is what produced this number.
 			vi.mocked(mockHistoryManager.getEntries).mockReturnValue(fullFile(5, 'busy'));
 
@@ -665,6 +665,31 @@ describe('director-notes IPC handlers', () => {
 
 			expect(result.perAgent[0].entryCount).toBe(MAX_ENTRIES_PER_SESSION);
 			expect(result.perAgent[0].truncated).toBe(true);
+		});
+
+		// The cap is the user's maxLogBuffer, not the built-in default: a file held
+		// to 1,000 entries is full at 1,000 and must still read as a floor.
+		it('flags a file full at a retention limit the user lowered', async () => {
+			mockGetSettingsStore.mockReturnValue({
+				get: vi.fn((key: string) => (key === 'maxLogBuffer' ? 1000 : undefined)),
+			});
+			const now = Date.now();
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['capped']);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue(
+				Array.from({ length: 1000 }, (_, i) =>
+					createMockEntry({ id: `capped-${i}`, timestamp: now - i * 1000 })
+				)
+			);
+
+			try {
+				const handler = handlers.get('director-notes:getRichOverviewStats');
+				const result = await handler!({} as any, { lookbackDays: 30 });
+
+				expect(result.perAgent[0].entryCount).toBe(1000);
+				expect(result.perAgent[0].truncated).toBe(true);
+			} finally {
+				mockGetSettingsStore.mockReturnValue({ get: vi.fn().mockReturnValue(undefined) });
+			}
 		});
 
 		it('does not flag a full file whose older entries fall outside the window', async () => {
@@ -678,6 +703,31 @@ describe('director-notes IPC handlers', () => {
 
 			expect(result.perAgent[0].entryCount).toBeLessThan(MAX_ENTRIES_PER_SESSION);
 			expect(result.perAgent[0].truncated).toBe(false);
+		});
+
+		// The other direction: a user who raised the limit to 25,000 has files
+		// that hold 25,000, so 12,000 entries in the window is an exact count.
+		it('does not flag an agent below a retention limit the user raised', async () => {
+			mockGetSettingsStore.mockReturnValue({
+				get: vi.fn((key: string) => (key === 'maxLogBuffer' ? 25000 : undefined)),
+			});
+			const now = Date.now();
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['roomy']);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue(
+				Array.from({ length: 12000 }, (_, i) =>
+					createMockEntry({ id: `roomy-${i}`, timestamp: now - i * 1000 })
+				)
+			);
+
+			try {
+				const handler = handlers.get('director-notes:getRichOverviewStats');
+				const result = await handler!({} as any, { lookbackDays: 30 });
+
+				expect(result.perAgent[0].entryCount).toBe(12000);
+				expect(result.perAgent[0].truncated).toBe(false);
+			} finally {
+				mockGetSettingsStore.mockReturnValue({ get: vi.fn().mockReturnValue(undefined) });
+			}
 		});
 
 		it('does not flag an agent below the retention cap', async () => {
@@ -781,6 +831,29 @@ describe('director-notes IPC handlers', () => {
 			// "All time" must not smuggle in a cutoff.
 			await handler({} as any, { lookbackDays: 0 });
 			expect((getCueHistoryEntries.mock.calls[1][0] as any).since).toBeUndefined();
+		});
+
+		// One cap for the whole read: the history file is trimmed to maxLogBuffer,
+		// so that is how many Cue rows are fetched for an agent too.
+		it('fetches Cue rows up to the user’s entry limit', async () => {
+			mockGetSessionsStore.mockReturnValue({
+				get: vi
+					.fn()
+					.mockReturnValue([{ id: 'session-1', name: 'Sweeper', projectRoot: '/repo/maestro' }]),
+			});
+			mockGetSettingsStore.mockReturnValue({
+				get: vi.fn((key: string) => (key === 'maxLogBuffer' ? 25000 : undefined)),
+			});
+			const getCueHistoryEntries = vi.fn(() => []);
+
+			try {
+				const handler = registerWith({ getCueHistoryEntries })('director-notes:getUnifiedHistory');
+				await handler({} as any, { lookbackDays: 7 });
+
+				expect((getCueHistoryEntries.mock.calls[0][0] as any).limit).toBe(25000);
+			} finally {
+				mockGetSettingsStore.mockReturnValue({ get: vi.fn().mockReturnValue(undefined) });
+			}
 		});
 
 		it('returns database Cue rows when the CUE filter pill is the only one on', async () => {
@@ -1059,6 +1132,28 @@ describe('director-notes IPC handlers', () => {
 			expect(result.stats.agentCount).toBe(2);
 		});
 
+		it('reads a peer host’s file up to the user’s entry limit', async () => {
+			withSshAgent();
+			mockGetSettingsStore.mockReturnValue({
+				get: vi.fn((key: string) => (key === 'maxLogBuffer' ? 25000 : undefined)),
+			});
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue([]);
+			mockReadRemoteEntriesSsh.mockResolvedValue([]);
+
+			try {
+				const handler = handlers.get('director-notes:getUnifiedHistory');
+				await handler!({} as any, { lookbackDays: 7 });
+
+				expect(mockReadRemoteEntriesSsh).toHaveBeenCalledWith(
+					'/remote/project',
+					expect.objectContaining({ id: 'petopswatt' }),
+					25000
+				);
+			} finally {
+				mockGetSettingsStore.mockReturnValue({ get: vi.fn().mockReturnValue(undefined) });
+			}
+		});
+
 		// A run this machine drove over SSH is recorded locally AND mirrored to the
 		// project dir. Entry ids are stable across hosts, so the copy must not
 		// double count.
@@ -1260,6 +1355,20 @@ describe('director-notes IPC handlers', () => {
 		// empty / out-of-window paths override this explicitly.
 		beforeEach(() => {
 			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([createMockEntry()]);
+		});
+
+		it("refuses before resolving a provider while Director's Notes is off", async () => {
+			mockGetSettingsStore.mockReturnValueOnce({
+				get: vi.fn((key: string) =>
+					key === 'encoreFeatures' ? { directorNotes: false } : undefined
+				),
+			});
+
+			const handler = handlers.get('director-notes:generateSynopsis');
+			await expect(
+				handler!({} as any, { lookbackDays: 7, provider: 'claude-code' })
+			).rejects.toThrow('DirectorNotesDisabled');
+			expect(mockAgentDetector.getAgent).not.toHaveBeenCalled();
 		});
 
 		it('should return error when agent is not available', async () => {

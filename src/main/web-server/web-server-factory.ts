@@ -7,6 +7,7 @@ import { randomUUID } from 'crypto';
 import { BrowserWindow } from 'electron';
 import { WebServer, type WebServerOptions } from './WebServer';
 import { tunnelManager } from '../tunnel-manager';
+import { createRemoteHostStatusProvider } from './remote-host-status';
 import { logger } from '../utils/logger';
 import { isWebContentsAvailable } from '../utils/safe-send';
 import type { ProcessManager } from '../process-manager';
@@ -28,6 +29,8 @@ import { registerUsageAchievementsCallbacks } from './callbacks/usageAchievement
 import { registerAutoRunConfigCallbacks } from './callbacks/autoRunConfigCallbacks';
 import { registerSessionCrudCallbacks } from './callbacks/sessionCrudCallbacks';
 import { registerGroupCrudCallbacks } from './callbacks/groupCrudCallbacks';
+import { registerWindowCommandCallbacks } from './callbacks/windowCommandCallbacks';
+import { registerThroughputGaugeCallbacks } from './callbacks/throughputGaugeCallbacks';
 import { registerGitCallbacks } from './callbacks/gitCallbacks';
 import { registerGroupChatCallbacks } from './callbacks/groupChatCallbacks';
 import { registerDirectorNotesCallbacks } from './callbacks/directorNotesCallbacks';
@@ -158,6 +161,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			const { url } = tunnelManager.getStatus();
 			return url ? [url] : [];
 		});
+		server.setRemoteHostStatusProvider(createRemoteHostStatusProvider(deps), deps.getMainWindow);
 
 		// Roaming to a different network changes the LAN IP the URL and QR code
 		// are built from. A LAN server keeps serving (it binds 0.0.0.0), so all
@@ -194,6 +198,8 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 
 		registerSessionCrudCallbacks(server, deps);
 		registerGroupCrudCallbacks(server, deps);
+		registerWindowCommandCallbacks(server, deps);
+		registerThroughputGaugeCallbacks(server, deps);
 
 		registerGitCallbacks(server, deps);
 

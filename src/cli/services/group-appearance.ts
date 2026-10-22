@@ -21,6 +21,8 @@ export interface ExpectedGroupState {
 	icon?: string;
 	color?: string;
 	parentGroupId?: string;
+	/** Parked out of the Left Bar (`true`) or back in it (`false`). */
+	hidden?: boolean;
 	/** Fields that must be absent (or, for emoji, back at the default) afterwards. */
 	cleared?: readonly ('emoji' | 'icon' | 'color' | 'parent')[];
 }
@@ -69,6 +71,13 @@ export function verifyPersistedGroup(groupId: string, expected: ExpectedGroupSta
 	if (expected.parentGroupId && stored.parentGroupId !== expected.parentGroupId) {
 		mismatches.push(
 			`parent is ${stored.parentGroupId || '(top level)'}, expected ${expected.parentGroupId}`
+		);
+	}
+
+	// A visible group stores no `hidden` key at all, so compare truthiness.
+	if (expected.hidden !== undefined && !!stored.hidden !== expected.hidden) {
+		mismatches.push(
+			`group is ${stored.hidden ? 'hidden' : 'visible'}, expected ${expected.hidden ? 'hidden' : 'visible'}`
 		);
 	}
 
@@ -133,5 +142,6 @@ export function describePersistedGroup(groupId: string): Partial<Group> {
 		...(stored.icon ? { icon: stored.icon } : {}),
 		...(stored.color ? { color: stored.color } : {}),
 		...(stored.parentGroupId ? { parentGroupId: stored.parentGroupId } : {}),
+		...(stored.hidden ? { hidden: true } : {}),
 	};
 }

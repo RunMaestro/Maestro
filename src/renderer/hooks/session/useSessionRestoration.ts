@@ -19,13 +19,15 @@ import type { Session, SessionState, ToolType, LogEntry } from '../../types';
 import { isLimitError } from '../../../shared/types';
 import { updateSessionWith, useSessionStore } from '../../stores/sessionStore';
 import { useGroupChatStore } from '../../stores/groupChatStore';
+import { useSettingsStore } from '../../stores/settingsStore';
+import { isAgentDormant } from '../../../shared/agentVisibility';
 import { gitService } from '../../services/git';
 import { generateId } from '../../utils/ids';
 import { isEphemeralBrowserTab, rehydrateBrowserTab } from '../../utils/browserTabPersistence';
 import { applyLiveAiTurns } from '../../utils/liveTurnReattach';
 import { fetchLiveAiTurns } from '../../services/process';
 import { useOwnedSessionGate } from '../agent/internal/useOwnedSessionGate';
-import { getRepairedUnifiedTabOrder } from '../../utils/tabHelpers';
+import { ensureAgentHasVisibleTab, getRepairedUnifiedTabOrder } from '../../utils/tabHelpers';
 import {
 	collectLeafTabRefs,
 	normalizeTabGroups,
@@ -35,9 +37,14 @@ import { migrateLegacySnoozedTabs } from '../../utils/snoozeHelpers';
 import { isMediaStreamUrl } from '../../../shared/mediaTypes';
 import { PLAYBOOKS_DIR } from '../../../shared/maestro-paths';
 import { logger } from '../../utils/logger';
-import { readPersistedActiveSessionId } from '../../utils/activeSessionPersistence';
+import {
+	readPersistedActiveSessionId,
+	restoreClientSessionView,
+} from '../../utils/activeSessionPersistence';
 import { useSessionLifecycleSync } from './useSessionLifecycleSync';
+import { applyRuntime } from './useSessionTranscriptSync';
 import { useEventListener } from '../utils/useEventListener';
+import { SESSION_PERSISTENCE_BASELINE_EVENT } from '../utils/useDebouncedPersistence';
 import { WEB_BRIDGE_RECONCILE_EVENT } from '../../../shared/webClientConfig';
 import { requestWebBridgeReconcile } from '../../services/webBridgeReconcile';
 import { releaseConnectionHeldQueueItems } from '../../utils/executionQueue';
@@ -297,7 +304,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 						content.shellLogs &&
 						content.agentCommands &&
 						content.aiCommandHistory;
-					return {
+					let updated: Session = {
 						...current,
 						aiTabs,
 						...(commandsLoaded
@@ -328,6 +335,23 @@ export function useSessionRestoration(): SessionRestorationReturn {
 									}
 								: undefined,
 					};
+					for (const patch of content.transcriptSnapshots ?? []) {
+						if (patch.sessionId !== session.id) continue;
+						if (patch.tabId) {
+							const baseline = session.aiTabs.find((tab) => tab.id === patch.tabId);
+							if (!baseline) continue;
+							updated = {
+								...updated,
+								aiTabs: updated.aiTabs.map((tab) =>
+									tab.id === patch.tabId ? applyRuntime(tab, patch, baseline) : tab
+								),
+							};
+						} else {
+							updated = applyRuntime(updated, patch, session);
+							updated.unifiedTabOrder = getRepairedUnifiedTabOrder(updated);
+						}
+					}
+					return updated;
 				});
 			})
 			.catch((error) => {
@@ -402,6 +426,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 	// --- restoreSession ---
 	const restoreSession = useCallback(async (session: Session): Promise<Session> => {
 		try {
+			session = restoreClientSessionView(session);
 			// Migration: tag snoozes parked before SnoozedTabEntry carried a kind.
 			// An untagged entry falls through every per-kind switch, and the wake
 			// path would clear the snooze without restoring the tab.
@@ -575,6 +600,12 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				undefined;
 
 			const isRemoteSession = !!sshRemoteId;
+			// A dormant Pianola (flag off) runs no git in its folder: it keeps the
+			// persisted values until the flag comes back on.
+			const isDormant = isAgentDormant(
+				correctedSession,
+				useSettingsStore.getState().encoreFeatures
+			);
 
 			// For local sessions, fetch git info with a timeout to prevent
 			// slow/unreachable filesystems from blocking the splash screen.
@@ -584,7 +615,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 			let gitTags = correctedSession.gitTags;
 			let gitRefsCacheTime = correctedSession.gitRefsCacheTime;
 
-			if (!isRemoteSession) {
+			if (!isRemoteSession && !isDormant) {
 				const GIT_TIMEOUT_MS = 5000;
 				// NOTE: On timeout, the inner git operations continue running in the
 				// background until the OS/filesystem eventually resolves/rejects them.
@@ -674,20 +705,24 @@ export function useSessionRestoration(): SessionRestorationReturn {
 			// also stops normalizeTabGroups from pruning its now-dangling leaf and
 			// dissolving the group. Collect the group-tiled terminal ids first.
 			const groupedTerminalIds = collectGroupedTerminalIds(correctedSession);
-			const resetTerminalTabs = (correctedSession.terminalTabs || [])
-				.filter((tab) => terminalTabSurvivesRestart(tab, groupedTerminalIds))
-				.map((tab) => ({
-					...tab,
-					pid: 0,
-					state: 'idle' as const,
-					exitCode: undefined,
-				}));
-			// Ephemeral (incognito) tabs are never persisted, but drop any that leak
-			// through anyway (older snapshots): their in-memory partition did not
-			// survive the restart, so rehydrating them would produce a blank tab.
-			const resetBrowserTabs = (correctedSession.browserTabs || [])
-				.filter((tab) => !isEphemeralBrowserTab(tab))
-				.map((tab) => rehydrateBrowserTab(tab, correctedSession.id));
+			const resetTerminalTabs = isWebDesktop()
+				? correctedSession.terminalTabs || []
+				: (correctedSession.terminalTabs || [])
+						.filter((tab) => terminalTabSurvivesRestart(tab, groupedTerminalIds))
+						.map((tab) => ({
+							...tab,
+							pid: 0,
+							ptyInitialized: false,
+							state: 'idle' as const,
+							exitCode: undefined,
+						}));
+			// A remote reload is not a host restart: preserve its live partitions.
+			// Native restart still discards ephemeral partitions and rehydrates durable tabs.
+			const resetBrowserTabs = isWebDesktop()
+				? correctedSession.browserTabs || []
+				: (correctedSession.browserTabs || [])
+						.filter((tab) => !isEphemeralBrowserTab(tab))
+						.map((tab) => rehydrateBrowserTab(tab, correctedSession.id));
 			const validAiTabIds = new Set(resetAiTabs.map((tab) => tab.id));
 			const validBrowserTabIds = new Set(resetBrowserTabs.map((tab) => tab.id));
 			const validTerminalTabIds = new Set(resetTerminalTabs.map((tab) => tab.id));
@@ -764,42 +799,46 @@ export function useSessionRestoration(): SessionRestorationReturn {
 			// lands in the store: prune leaves whose tab no longer exists, collapse
 			// resulting single-child splits, dissolve sub-two-pane groups (promoting
 			// survivors), and clear a stale activeGroupId. A session with no groups
-			// round-trips untouched.
-			return normalizeTabGroups({
-				...restoredSession,
-				aiPid: 0,
-				terminalPid: 0,
-				state: isLimitPause ? ('error' as SessionState) : ('idle' as SessionState),
-				busySource: undefined,
-				thinkingStartTime: undefined,
-				currentCycleTokens: undefined,
-				currentCycleBytes: undefined,
-				statusMessage: undefined,
-				isGitRepo,
-				gitBranches,
-				gitTags,
-				gitRefsCacheTime,
-				isLive: false,
-				liveUrl: undefined,
-				aiLogs: [],
-				aiTabs: resetAiTabs,
-				shellLogs: correctedSession.shellLogs,
-				// A cold desktop start kills every consult process, so a turn still
-				// waiting on one would hold its tab forever: release it with an
-				// "interrupted" reply. A web-desktop reload is different - main kept
-				// running and the consult with it, so the hold settles normally.
-				executionQueue: isWebDesktop()
-					? correctedSession.executionQueue || []
-					: interruptConsultHolds(correctedSession.executionQueue || []),
-				activeTimeMs: correctedSession.activeTimeMs || 0,
-				// Keep a limit pause live so auto-resume re-attaches; clear anything else.
-				// `agentErrorTabId` rides through the spread above (persistence only keeps
-				// it for limit pauses, so it's already undefined for everything else).
-				agentError: isLimitPause ? correctedSession.agentError : undefined,
-				agentErrorPaused: isLimitPause ? true : false,
-				closedTabHistory: [],
-				unifiedTabOrder: repairedUnifiedTabOrder,
-			});
+			// round-trips untouched. An agent saved with only hidden consult tabs (an
+			// older build let the last file/terminal/browser close strand it there)
+			// comes back with a blank AI chat instead of a chipless conversation.
+			return ensureAgentHasVisibleTab(
+				normalizeTabGroups({
+					...restoredSession,
+					aiPid: 0,
+					terminalPid: 0,
+					state: isLimitPause ? ('error' as SessionState) : ('idle' as SessionState),
+					busySource: undefined,
+					thinkingStartTime: undefined,
+					currentCycleTokens: undefined,
+					currentCycleBytes: undefined,
+					statusMessage: undefined,
+					isGitRepo,
+					gitBranches,
+					gitTags,
+					gitRefsCacheTime,
+					isLive: false,
+					liveUrl: undefined,
+					aiLogs: [],
+					aiTabs: resetAiTabs,
+					shellLogs: correctedSession.shellLogs,
+					// A cold desktop start kills every consult process, so a turn still
+					// waiting on one would hold its tab forever: release it with an
+					// "interrupted" reply. A web-desktop reload is different - main kept
+					// running and the consult with it, so the hold settles normally.
+					executionQueue: isWebDesktop()
+						? correctedSession.executionQueue || []
+						: interruptConsultHolds(correctedSession.executionQueue || []),
+					activeTimeMs: correctedSession.activeTimeMs || 0,
+					// Keep a limit pause live so auto-resume re-attaches; clear anything else.
+					// `agentErrorTabId` rides through the spread above (persistence only keeps
+					// it for limit pauses, so it's already undefined for everything else).
+					agentError: isLimitPause ? correctedSession.agentError : undefined,
+					agentErrorPaused: isLimitPause ? true : false,
+					closedTabHistory: [],
+					unifiedTabOrder: repairedUnifiedTabOrder,
+				})
+			);
 		} catch (error) {
 			logger.error(`Error restoring session ${session.id}:`, undefined, error);
 			return {
@@ -833,6 +872,9 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					? await window.maestro.sessions.getBootstrap()
 					: await window.maestro.sessions.getAll();
 
+				window.dispatchEvent(
+					new CustomEvent(SESSION_PERSISTENCE_BASELINE_EVENT, { detail: savedSessions ?? [] })
+				);
 				// Handle sessions
 				if (savedSessions && savedSessions.length > 0) {
 					const restoredSessions = await Promise.all(savedSessions.map((s) => restoreSession(s)));
@@ -863,7 +905,10 @@ export function useSessionRestoration(): SessionRestorationReturn {
 
 					// Background tasks: agent validation + SSH git info.
 					// These run after splash hides so they never block startup.
+					const { encoreFeatures } = useSettingsStore.getState();
 					for (const session of restoredSessions) {
+						// A dormant Pianola (flag off) is neither validated nor polled.
+						if (isAgentDormant(session, encoreFeatures)) continue;
 						const sshRemoteId =
 							session.sshRemoteId ||
 							(session.sessionSshRemoteConfig?.enabled

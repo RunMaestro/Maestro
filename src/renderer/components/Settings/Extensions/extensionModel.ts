@@ -15,6 +15,7 @@ import type { PluginCategory } from '../../../../shared/plugins/plugin-manifest'
 import { ENCORE_FEATURE_DEFAULTS } from '../../../../shared/encoreFeatureDefaults';
 import {
 	FIRST_PARTY_PLUGIN_DEFINITIONS,
+	isFirstPartyPluginAvailableOn,
 	type FirstPartyEncoreFlag,
 	type FirstPartyPluginDefinition,
 } from '../../../../shared/plugins/first-party';
@@ -159,6 +160,11 @@ export function extensionBadge(
 	return null;
 }
 
+/** The tile key of a first-party feature (see UnifiedExtension.key). */
+export function builtinExtensionKey(flag: keyof EncoreFeatureFlags): string {
+	return `builtin:${flag}`;
+}
+
 /** Project a first-party feature flag onto a tile. */
 export function builtinExtension(
 	def: BuiltinFeatureDef,
@@ -167,7 +173,7 @@ export function builtinExtension(
 	const on = flags[def.flag] === true;
 	const backing = def.pluginBacking;
 	return {
-		key: `builtin:${def.flag}`,
+		key: builtinExtensionKey(def.flag),
 		kind: 'builtin',
 		id: def.flag,
 		name: backing.name,
@@ -210,12 +216,21 @@ export function pluginExtension(record: PluginRecord): UnifiedExtension {
 	};
 }
 
-/** Build the full, source-merged tile list (features first, then plugins). */
+/**
+ * Build the full, source-merged tile list (features first, then plugins).
+ *
+ * `platform` is the operating system Maestro runs on (`hostPlatform()`). A
+ * first-party feature that does not exist there gets no tile at all, rather
+ * than a tile that can never work.
+ */
 export function buildExtensions(
 	flags: EncoreFeatureFlags,
-	plugins: PluginRecord[]
+	plugins: PluginRecord[],
+	platform: string
 ): UnifiedExtension[] {
-	const builtins = BUILTIN_FEATURES.map((def) => builtinExtension(def, flags));
+	const builtins = BUILTIN_FEATURES.filter((def) =>
+		isFirstPartyPluginAvailableOn(def.pluginBacking, platform)
+	).map((def) => builtinExtension(def, flags));
 	const pluginTiles = plugins.map(pluginExtension);
 	return [...builtins, ...pluginTiles];
 }

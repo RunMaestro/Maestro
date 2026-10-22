@@ -20,7 +20,28 @@
 import { useEffect, useState, type RefObject } from 'react';
 
 export function useElementWidth(ref: RefObject<HTMLElement | null>, enabled = true): number {
-	const [width, setWidth] = useState(0);
+	return useElementSize(ref, 'offsetWidth', enabled);
+}
+
+/**
+ * useElementHeight - the vertical twin of `useElementWidth`: an element's
+ * rendered height (border box), tracked via ResizeObserver. Same contract: 0
+ * means "not measured yet".
+ *
+ * For a host that sizes itself to its content (a native window following the
+ * composer inside it). Measure an element whose height its CONTENT decides; an
+ * element stretched to fill its container just reports the container back.
+ */
+export function useElementHeight(ref: RefObject<HTMLElement | null>, enabled = true): number {
+	return useElementSize(ref, 'offsetHeight', enabled);
+}
+
+function useElementSize(
+	ref: RefObject<HTMLElement | null>,
+	dimension: 'offsetWidth' | 'offsetHeight',
+	enabled: boolean
+): number {
+	const [size, setSize] = useState(0);
 
 	useEffect(() => {
 		const element = ref.current;
@@ -28,7 +49,7 @@ export function useElementWidth(ref: RefObject<HTMLElement | null>, enabled = tr
 			return;
 		}
 
-		const measure = () => setWidth(element.offsetWidth);
+		const measure = () => setSize(element[dimension]);
 		measure();
 
 		// jsdom has no layout engine and no ResizeObserver by default; bail out
@@ -40,9 +61,9 @@ export function useElementWidth(ref: RefObject<HTMLElement | null>, enabled = tr
 		const observer = new ResizeObserver(measure);
 		observer.observe(element);
 		return () => observer.disconnect();
-	}, [ref, enabled]);
+	}, [ref, dimension, enabled]);
 
-	return width;
+	return size;
 }
 
 /**

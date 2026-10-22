@@ -1,4 +1,4 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useLayoutEffect, useRef } from 'react';
 import type {
 	Session,
 	SessionState,
@@ -7,14 +7,19 @@ import type {
 	CustomAICommand,
 	BatchRunState,
 	AITab,
-	ConsultHoldTarget,
 } from '../../types';
-import { getActiveTab, getBusyTabs, getTabDisplayName } from '../../utils/tabHelpers';
+import {
+	getActiveTab,
+	getBusyTabs,
+	getTabDisplayName,
+	settleAgentStateFromTabs,
+	settleTabThinkingState,
+} from '../../utils/tabHelpers';
 import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
 import { generateId, getInputBroadcastOriginId } from '../../utils/ids';
 import { captureQueuedTurnSettings, codifyTurnSettings } from '../../utils/providerTabSessions';
 import { substituteTemplateVariables } from '../../utils/templateVariables';
-import { prependNewSessionMessage } from '../../../shared/newSessionMessage';
+import { prependNewSessionMessageOnFirstTurn } from '../../../shared/newSessionMessage';
 import { resolveTabPermissionMode } from '../../../shared/agentMetadata';
 import { filterYoloArgs } from '../../utils/agentArgs';
 import { hasCapabilityCached } from '../agent/useAgentCapabilities';
@@ -22,20 +27,23 @@ import { stripShellCommandEscape, type ComposerCommandMode } from '../../utils/s
 import { dispatchShellCommand } from '../../services/shellCommand';
 import { requestAiCommand } from '../../services/aiCommand';
 import {
-	collectNamingPrompt,
-	requestTabAutoName,
+	requestTabAutoNameForMessage,
 	requestWizardTabAutoName,
 } from '../../services/tabAutoNaming';
 import { getAiCommandEntry } from '../../stores/aiCommandStore';
 import { gitService } from '../../services/git';
-import type { CrossAgentMentionPlan } from '../../services/crossAgentMentions';
+import {
+	queuedMentionFields,
+	withMentionTurnNotes,
+	type CrossAgentMentionDispatch,
+	type CrossAgentMentionPlan,
+} from '../../services/crossAgentMentions';
 import {
 	dropConsultHold,
 	hasConsultHoldForTab,
 	hasRunnableQueueItem,
 	hasWorkAheadOfNewMessage,
 } from '../../utils/executionQueue';
-import { withConsultPendingNote } from '../../services/crossAgentConsultHold';
 import { probeSessionAiProcesses } from '../../services/process';
 import { isAgentAlreadyRunningError } from '../../../shared/processErrors';
 import { hasPendingRetry, noteDirectDispatch } from '../../stores/retryStore';
@@ -48,6 +56,9 @@ import {
 } from '../../stores/sessionStore';
 import { logger } from '../../utils/logger';
 import { requestWebBridgeReconcile } from '../../services/webBridgeReconcile';
+import { steerQueuedItemOrExplain } from '../../services/chatSteering';
+import { isWebDesktop } from '../../utils/runtimeContext';
+import { notifyToast } from '../../stores/notificationStore';
 
 let cachedImageOnlyPrompt: string = '';
 let inputProcessingPromptsLoaded = false;
@@ -179,9 +190,10 @@ export interface UseInputProcessingDeps {
 	 * invoked for direct input-box submits (not queued replays / force-sends).
 	 *
 	 * `suppressLocal` on the returned plan means the source agent's own send must
-	 * be SUPPRESSED: the message leads with an `@agent` mention, so it is
-	 * addressed only at the consulted agent(s), and the caller records the user's
-	 * bubble without dispatching locally.
+	 * be SUPPRESSED: the message leads with an `@agent` mention (addressed only at
+	 * the consulted agents), or asks for the consult to run FIRST (the source
+	 * agent answers when the consult hold releases). Either way the caller
+	 * records the user's bubble without dispatching locally.
 	 */
 	onPlanCrossAgentMentions?: (
 		message: string,
@@ -199,8 +211,9 @@ export interface UseInputProcessingDeps {
 		plan: CrossAgentMentionPlan,
 		message: string,
 		sourceSession: Session,
-		sourceTabId: string
-	) => ConsultHoldTarget[] | void;
+		sourceTabId: string,
+		images?: string[]
+	) => CrossAgentMentionDispatch | void;
 }
 
 /**
@@ -214,6 +227,18 @@ export type BatchState = BatchRunState;
 /** Optional pins for deferred sends (replay / recovery) so a late timeout cannot retarget. */
 export type ProcessInputOptions = {
 	forceParallel?: boolean;
+	/**
+	 * Steer Running Turn: when this send lands in the queue, hand it straight to
+	 * the turn already running on its tab. A send that dispatches immediately has
+	 * no turn to steer and is an ordinary send.
+	 */
+	steer?: boolean;
+	/**
+	 * Queue Held: always queue this send, paused, even when the agent is idle. It
+	 * waits on the queue card until the user resumes it (the Send menu's Queue
+	 * Held row). Never dispatches on its own.
+	 */
+	hold?: boolean;
 	images?: string[];
 	/** Prefer this agent over the live activeSessionId when the callback runs. */
 	sessionId?: string;
@@ -273,6 +298,11 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 		onDispatchCrossAgentMentions,
 	} = deps;
 
+	const stagedImagesRef = useRef(stagedImages);
+	useLayoutEffect(() => {
+		stagedImagesRef.current = stagedImages;
+	}, [stagedImages]);
+
 	// Ref for the processInput function so external code can access the latest version
 	const processInputRef = useRef<
 		((overrideInputValue?: string, options?: ProcessInputOptions) => Promise<void>) | null
@@ -326,7 +356,8 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 
 			// `let` because command mode's escape (`\!foo`) is unwrapped in place
 			// below once we know we're in AI mode.
-			let effectiveInputValue = overrideInputValue ?? getInputValue();
+			const inputValueAtSubmit = overrideInputValue ?? getInputValue();
+			let effectiveInputValue = inputValueAtSubmit;
 			// When the caller passes explicit images (e.g. Force Send button replaying a
 			// queued item), use those instead of the active tab's stagedImages. This avoids
 			// the stale-closure race when the caller does setStagedImages() right before
@@ -542,6 +573,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 								activeTab?.id || activeSession.activeTabId
 							);
 							const sessionIsIdle =
+								!options?.hold &&
 								!retryHoldsTab &&
 								(forceParallel
 									? activeTab?.state !== 'busy'
@@ -560,6 +592,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 								tabName: activeTab ? getTabDisplayName(activeTab) : undefined,
 								readOnlyMode: isReadOnlyMode,
 								...(forceParallel && { forceParallel: true }),
+								...(options?.hold && { paused: true }),
 								// Freeze the model/effort now: the queue may not drain until
 								// after the user has switched to something else, and this
 								// command must run under - and be labeled with - what was
@@ -655,14 +688,9 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				return;
 			}
 
-			// The AI path takes the draft out of the composer BEFORE its ownership
-			// probe rather than after, so a second Enter during the probe reads an
-			// empty box instead of the same text. `composerTaken` tells the exits
-			// past the probe the composer is already clear: clearing again there
-			// would wipe whatever the user typed while the probe was out. Nothing
-			// past the probe returns without sending or queuing the message (and
-			// the probe resolves on failure rather than rejecting), so the taken
-			// draft never needs putting back.
+			// Desktop owns its queue and takes the draft before probing. Remote
+			// clients keep it until readiness is known: a failed read cannot turn
+			// unsubmitted input into a local-only host queue item.
 			let composerTaken = false;
 			const clearComposer = () => {
 				setInputValue('');
@@ -670,26 +698,77 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				syncAiInputToSession('', syncTarget);
 				if (inputRef.current) inputRef.current.style.height = 'auto';
 			};
-			const clearComposerUnlessTaken = () => {
-				if (!composerTaken) clearComposer();
+			const canClearComposer = () => {
+				if (!isWebDesktop() || currentMode !== 'ai') return true;
+				const selected = selectActiveSession(useSessionStore.getState());
+				return (
+					selected?.id === activeSession.id &&
+					getActiveTab(selected)?.id === targetTabId &&
+					getInputValue() === inputValueAtSubmit &&
+					(usingOverrideImages || stagedImagesRef.current === submitted.images)
+				);
 			};
-			// The probe is the only await between Enter and the queue/send decision,
-			// and everything after it is synchronous, so the in-flight window is
-			// exactly the probe.
-			const probeForSubmit = async (tabId: string | undefined) => {
-				if (!isComposerSubmit) return probeSessionAiProcesses(activeSession.id, tabId);
-				const inFlight = composerSubmitsInFlight.get(inFlightKey) ?? [];
-				composerSubmitsInFlight.set(inFlightKey, [...inFlight, submitted]);
-				try {
+			const clearComposerUnlessTaken = () => {
+				if (composerTaken) return;
+				if (canClearComposer()) {
 					clearComposer();
-					composerTaken = true;
-					return await probeSessionAiProcesses(activeSession.id, tabId);
+					return;
+				}
+				if (!isWebDesktop() || currentMode !== 'ai' || !isComposerSubmit) return;
+				// Switching owners flushes the original draft. Clear only the submitted
+				// fields there, without cancelling or stamping the new owner's composer.
+				updateSessionWith(activeSession.id, (session) => ({
+					...session,
+					aiTabs: session.aiTabs.map((tab) => {
+						if (tab.id !== targetTabId) return tab;
+						const clearText = tab.inputValue === inputValueAtSubmit;
+						const images = tab.stagedImages ?? [];
+						const clearImages =
+							!usingOverrideImages &&
+							images.length === submitted.images.length &&
+							images.every((image, index) => image === submitted.images[index]);
+						if (!clearText && !clearImages) return tab;
+						return {
+							...tab,
+							...(clearText ? { inputValue: '' } : {}),
+							...(clearImages ? { stagedImages: [] } : {}),
+						};
+					}),
+				}));
+			};
+			const probeForSubmit = async (tabId: string | undefined) => {
+				if (isComposerSubmit) {
+					const inFlight = composerSubmitsInFlight.get(inFlightKey) ?? [];
+					composerSubmitsInFlight.set(inFlightKey, [...inFlight, submitted]);
+				}
+				try {
+					if (isComposerSubmit && !isWebDesktop()) {
+						clearComposer();
+						composerTaken = true;
+					}
+					const state = await probeSessionAiProcesses(activeSession.id, tabId);
+					if (state.probeFailed && isWebDesktop()) {
+						notifyToast({
+							color: 'yellow',
+							title: 'Message not submitted',
+							message:
+								'Could not verify the host connection. Your draft was kept; reconnect and review host state before sending again.',
+							dismissible: true,
+							skipCustomNotification: true,
+							skipOsNotification: true,
+						});
+						requestWebBridgeReconcile();
+						return null;
+					}
+					return state;
 				} finally {
-					const remaining = (composerSubmitsInFlight.get(inFlightKey) ?? []).filter(
-						(entry) => entry !== submitted
-					);
-					if (remaining.length > 0) composerSubmitsInFlight.set(inFlightKey, remaining);
-					else composerSubmitsInFlight.delete(inFlightKey);
+					if (isComposerSubmit) {
+						const remaining = (composerSubmitsInFlight.get(inFlightKey) ?? []).filter(
+							(entry) => entry !== submitted
+						);
+						if (remaining.length > 0) composerSubmitsInFlight.set(inFlightKey, remaining);
+						else composerSubmitsInFlight.delete(inFlightKey);
+					}
 				}
 			};
 
@@ -750,21 +829,11 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			// an early `return` and the dequeue path (agentStore.processQueuedItem) does no
 			// naming of its own. Sitting after it meant a first message sent while any other
 			// tab was busy got queued and the tab stayed permanently unnamed - the retry
-			// never fires because there is no second send.
+			// never fires because there is no second send. (The drain and remote
+			// dispatch now name too, so this is no longer the only entry point.)
 			const activeTabForNaming = resolveTargetTab(activeSession);
-			if (currentMode === 'ai' && activeTabForNaming && effectiveInputValue.trim()) {
-				requestTabAutoName({
-					session: activeSession,
-					tabId: activeTabForNaming.id,
-					// Prior user messages plus the current one - richer context produces
-					// names that survive the extractor's filters.
-					prompt: collectNamingPrompt(
-						activeTabForNaming.logs
-							.filter((entry) => entry.source === 'user')
-							.map((entry) => entry.text),
-						effectiveInputValue
-					),
-				});
+			if (currentMode === 'ai' && activeTabForNaming) {
+				requestTabAutoNameForMessage(activeSession, activeTabForNaming.id, effectiveInputValue);
 			}
 
 			// Cross-agent @mentions (Phase 03). RESOLVE ONLY - nothing is consulted
@@ -789,7 +858,9 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				const sourceTab = resolveTargetTab(activeSession);
 
 				// The message leads with an `@agent` mention, so it is addressed only at
-				// the consulted agent(s): this agent does not answer it.
+				// the consulted agent(s) and this agent does not answer it - or it asks
+				// for the consult FIRST, so this agent answers only once the consult
+				// hold releases with the replies. Either way nothing spawns here.
 				if (crossAgentMentionPlan.suppressLocal) {
 					// ...but "this agent doesn't answer it" is NOT the same as "it has
 					// nothing to wait for". When the user has already put work in front
@@ -803,6 +874,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					// consult fired in that window is exactly the premature ping this
 					// whole path exists to prevent.
 					const mentionProbe = await probeForSubmit(mentionSourceTabId);
+					if (!mentionProbe) return;
 					const liveMentionSession =
 						useSessionStore.getState().sessions.find((s) => s.id === activeSession.id) ??
 						activeSession;
@@ -810,6 +882,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						(item) => item.waitingForConnection
 					);
 					if (
+						options?.hold ||
 						mentionProbe.probeFailed ||
 						mentionProbe.anyActive ||
 						hasWorkAheadOfNewMessage(liveMentionSession, {
@@ -830,8 +903,9 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 									? activeTab.agentSessionId.split('-')[0].toUpperCase()
 									: 'New'),
 							readOnlyMode: activeTab?.readOnlyMode === true,
-							crossAgentMention: true,
+							...queuedMentionFields(crossAgentMentionPlan),
 							crossAgentOnly: true,
+							...(options?.hold && { paused: true }),
 							...((mentionProbe.probeFailed || connectionHold) && {
 								waitingForConnection: true,
 							}),
@@ -849,6 +923,10 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 								executionQueue: [...s.executionQueue, mentionQueuedItem],
 							};
 						});
+						// An @mention cannot be steered; asking anyway reports why.
+						if (options?.steer) {
+							void steerQueuedItemOrExplain(resolvedSessionId, mentionQueuedItem.id);
+						}
 
 						clearComposerUnlessTaken();
 						if (mentionProbe.probeFailed) {
@@ -865,7 +943,8 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						crossAgentMentionPlan,
 						effectiveInputValue,
 						activeSession,
-						mentionSourceTabId
+						mentionSourceTabId,
+						effectiveImages
 					);
 					const mentionOnlyEntry = {
 						id: generateId(),
@@ -932,6 +1011,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				// process and discard its eventual response. A failed probe holds the
 				// message until bridge recovery can answer authoritatively.
 				const processState = await probeForSubmit(activeTab?.id);
+				if (!processState) return;
 				if (processState.probeFailed) {
 					logger.warn(
 						'[processInput] Failed to reconcile active processes before queue decision; holding the message for bridge recovery'
@@ -1036,6 +1116,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				);
 
 				const shouldQueue =
+					options?.hold ||
 					connectionHold ||
 					retryHoldsTab ||
 					consultHoldsTab ||
@@ -1079,9 +1160,10 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						tabName: liveTab ? getTabDisplayName(liveTab) : undefined,
 						readOnlyMode: isReadOnlyMode,
 						...(forceParallel && { forceParallel: true }),
+						...(options?.hold && { paused: true }),
 						// Consult the mentioned agent(s) when this item is dispatched, not
 						// now: see the mention-resolution block above.
-						...(crossAgentMentionPlan && { crossAgentMention: true }),
+						...queuedMentionFields(crossAgentMentionPlan),
 						...((processState.probeFailed || connectionHold) && {
 							waitingForConnection: true,
 						}),
@@ -1121,6 +1203,12 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							executionQueue: [...s.executionQueue, queuedItem],
 						};
 					});
+					// Steer Running Turn: the draft is a queued item now, which is what a
+					// steer starts from. One that cannot be steered stays queued and the
+					// service says why.
+					if (options?.steer) {
+						void steerQueuedItemOrExplain(resolvedSessionId, queuedItem.id);
+					}
 
 					clearComposerUnlessTaken();
 					if (processState.probeFailed) {
@@ -1131,17 +1219,19 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			}
 
 			// This message dispatches now, so its consults fire now too - just before
-			// the source agent's own turn, matching the order the user sees. The
-			// returned targets are what this turn's consult hold is waiting on.
-			const consultTargets =
+			// the source agent's own turn, matching the order the user sees (or a
+			// hand-off is armed for when that turn ends). The result is what this
+			// turn's prompt has to be told about.
+			const mentionDispatch =
 				(crossAgentMentionPlan &&
 					onDispatchCrossAgentMentions?.(
 						crossAgentMentionPlan,
 						effectiveInputValue,
 						activeSession,
-						mentionSourceTabId
+						mentionSourceTabId,
+						effectiveImages
 					)) ||
-				[];
+				undefined;
 
 			// Check if we're in read-only mode for the log entry (tab setting OR Auto Run without worktree).
 			// Force Send (Cmd+Shift+Enter / the Force Send button on a queued item) is an explicit user
@@ -1396,20 +1486,14 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			});
 			window.maestro.web.broadcastUserInput(activeSession.id, effectiveInputValue, currentMode);
 
-			// An AI send already took the draft before its probe; clearing here again
-			// would wipe whatever the user typed while that probe was out.
-			if (!composerTaken) {
+			// Desktop already took an AI draft; remote clients clear only the
+			// submitted draft, not input typed or selected while readiness was pending.
+			if (currentMode === 'ai') {
+				clearComposerUnlessTaken();
+			} else {
 				setInputValue('');
 				if (!usingOverrideImages) setStagedImages([]);
-
-				// Sync empty value to session state (prevents stale input restoration on blur)
-				if (isAiMode) {
-					syncAiInputToSession('', syncTarget);
-				} else {
-					syncTerminalInputToSession('');
-				}
-
-				// Reset height
+				syncTerminalInputToSession('');
 				if (inputRef.current) inputRef.current.style.height = 'auto';
 			}
 
@@ -1458,7 +1542,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				tabName: tab ? getTabDisplayName(tab) : undefined,
 				readOnlyMode: isReadOnlyEntry,
 				...(isForceParallel && { forceParallel: true }),
-				...(crossAgentMentionPlan && { crossAgentMention: true }),
+				...queuedMentionFields(crossAgentMentionPlan),
 				turnSettings: captureQueuedTurnSettings(tab, session),
 			});
 
@@ -1526,12 +1610,11 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							hasImages && hasNoText ? DEFAULT_IMAGE_ONLY_PROMPT : capturedInputValue;
 
 						// Prefix new session message if present (only for the first message in a new session)
-						if (!tabAgentSessionId) {
-							effectivePrompt = prependNewSessionMessage(
-								effectivePrompt,
-								freshSession.newSessionMessage
-							);
-						}
+						effectivePrompt = prependNewSessionMessageOnFirstTurn(
+							effectivePrompt,
+							freshSession.newSessionMessage,
+							tabAgentSessionId
+						);
 
 						// For read-only mode, append instruction to return plan in response instead of writing files
 						if (isReadOnly) {
@@ -1550,9 +1633,10 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						}
 
 						// A mid-message @mention is being answered by the consulted agent
-						// in parallel: tell this turn so it works without finishing, and
-						// waits for the reply its consult hold will deliver.
-						effectivePrompt = withConsultPendingNote(effectivePrompt, consultTargets);
+						// in parallel (work without finishing, wait for the reply its
+						// consult hold will deliver), or is handed this turn's answer when
+						// it ends (write an answer that stands alone). Tell this turn which.
+						effectivePrompt = withMentionTurnNotes(effectivePrompt, mentionDispatch);
 
 						// Prepare Maestro system prompt. Always send it; the main-process handler
 						// decides how to deliver it based on agent capabilities:
@@ -1636,28 +1720,18 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 								const requeued = buildComposerQueuedItem(errorTabId, errorTab, s);
 								return { ...s, executionQueue: [...executionQueue, requeued] };
 							}
-							// Reset target tab's state to 'idle' and add error log
-							const updatedAiTabs =
-								s.aiTabs?.length > 0
-									? s.aiTabs.map((tab) =>
-											tab.id === errorTabId
-												? {
-														...tab,
-														state: 'idle' as const,
-														thinkingStartTime: undefined,
-														logs: [...tab.logs, errorLog],
-													}
-												: tab
-										)
-									: s.aiTabs;
-							return {
-								...s,
-								state: 'idle',
-								busySource: undefined,
-								thinkingStartTime: undefined,
-								aiTabs: updatedAiTabs,
-								executionQueue,
-							};
+							// Settle the target tab and add the error log; another tab
+							// mid-turn keeps the agent busy.
+							return settleTabThinkingState(
+								{
+									...s,
+									aiTabs: s.aiTabs.map((tab) =>
+										tab.id === errorTabId ? { ...tab, logs: [...tab.logs, errorLog] } : tab
+									),
+									executionQueue,
+								},
+								errorTabId
+							);
 						});
 					}
 				})();
@@ -1666,10 +1740,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				const trimmedCommand = capturedInputValue.trim();
 				if (trimmedCommand === 'clear') {
 					updateSessionWith(resolvedSessionId, (s) => ({
-						...s,
-						state: 'idle',
-						busySource: undefined,
-						thinkingStartTime: undefined,
+						...settleAgentStateFromTabs(s),
 						shellLogs: [],
 					}));
 					return;
@@ -1697,10 +1768,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					.catch((error) => {
 						logger.error('Failed to run command:', undefined, error);
 						updateSessionWith(resolvedSessionId, (s) => ({
-							...s,
-							state: 'idle',
-							busySource: undefined,
-							thinkingStartTime: undefined,
+							...settleAgentStateFromTabs(s),
 							// TODO: Remove shellLogs once terminal tabs migration is complete
 							...(!s.terminalTabs?.length && {
 								shellLogs: [
@@ -1725,29 +1793,19 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						source: 'system',
 						text: `Error: Failed to write to process - ${(error as Error).message}`,
 					};
-					updateSessionWith(resolvedSessionId, (s) => {
-						// Reset active tab's state to 'idle' and add error log
-						const updatedAiTabs =
-							s.aiTabs?.length > 0
-								? s.aiTabs.map((tab) =>
-										tab.id === s.activeTabId
-											? {
-													...tab,
-													state: 'idle' as const,
-													thinkingStartTime: undefined,
-													logs: [...tab.logs, errorLog],
-												}
-											: tab
-									)
-								: s.aiTabs;
-						return {
-							...s,
-							state: 'idle',
-							busySource: undefined,
-							thinkingStartTime: undefined,
-							aiTabs: updatedAiTabs,
-						};
-					});
+					// Settle the active tab and add the error log; another tab mid-turn
+					// keeps the agent busy.
+					updateSessionWith(resolvedSessionId, (s) =>
+						settleTabThinkingState(
+							{
+								...s,
+								aiTabs: s.aiTabs.map((tab) =>
+									tab.id === s.activeTabId ? { ...tab, logs: [...tab.logs, errorLog] } : tab
+								),
+							},
+							s.activeTabId
+						)
+					);
 				});
 			}
 		},

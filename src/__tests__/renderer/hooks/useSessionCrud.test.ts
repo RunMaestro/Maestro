@@ -15,10 +15,17 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { logger } from '../../../renderer/utils/logger';
 import { renderHook, act, cleanup } from '@testing-library/react';
+import { useDebouncedPersistence } from '../../../renderer/hooks/utils/useDebouncedPersistence';
+vi.mock('../../../renderer/utils/sentry', () => ({
+	captureException: vi.fn(),
+	captureMessage: vi.fn(),
+}));
 
 // ============================================================================
 // Mocks
 // ============================================================================
+let web = false;
+vi.mock('../../../renderer/utils/runtimeContext', () => ({ isWebDesktop: () => web }));
 
 vi.mock('../../../renderer/services/git', () => ({
 	gitService: {
@@ -213,6 +220,68 @@ describe('useSessionCrud', () => {
 	// createNewSession
 	// ========================================================================
 	describe('createNewSession', () => {
+		it('publishes a newly created agent behind an in-flight save while another agent keeps streaming', async () => {
+			vi.useFakeTimers();
+			web = true;
+
+			const existing = createSession({ id: 'streaming-agent' });
+			let hostSessions: Session[] = [existing];
+			let releaseWrite!: () => void;
+			const pendingWrite = new Promise<void>((resolve) => {
+				releaseWrite = resolve;
+			});
+			const previousApi = window.maestro.sessions;
+			window.maestro.sessions = {
+				...previousApi,
+				setActiveSessionId: vi.fn().mockResolvedValue(undefined),
+				setAll: vi.fn(async (sessions: Session[]) => {
+					await pendingWrite;
+					hostSessions = structuredClone(sessions);
+					return true;
+				}),
+				setMany: vi.fn(async (updates: Session[]) => {
+					const merged = new Map(hostSessions.map((session) => [session.id, session]));
+					for (const session of updates) merged.set(session.id, structuredClone(session));
+					hostSessions = [...merged.values()];
+					return true;
+				}),
+			};
+			useSessionStore.setState({ sessions: [existing], sessionsReadOk: true });
+			const loaded = { current: true };
+			const view = renderHook(() => {
+				const persistence = useDebouncedPersistence(loaded);
+				const crud = useSessionCrud(createDeps({ flushSessionPersistence: persistence.flushNow }));
+				return { ...crud, flush: persistence.flushNow };
+			});
+			try {
+				await act(async () => {
+					view.result.current.flush([existing]);
+					await view.result.current.createNewSession('omp', '/test/project', 'Remote OMP');
+					releaseWrite();
+				});
+				for (let tick = 0; tick < 10; tick++) {
+					await act(async () => {
+						await vi.advanceTimersByTimeAsync(500);
+						useSessionStore
+							.getState()
+							.setSessions((sessions) =>
+								sessions.map((session) =>
+									session.id === existing.id ? { ...session, activeTimeMs: tick + 1 } : session
+								)
+							);
+					});
+				}
+
+				expect(hostSessions.map((session) => session.name)).toContain('Remote OMP');
+			} finally {
+				releaseWrite();
+				view.unmount();
+				window.maestro.sessions = previousApi;
+				web = false;
+				vi.useRealTimers();
+			}
+		});
+
 		it('creates a session with correct properties', async () => {
 			const deps = createDeps();
 			const { result } = renderHook(() => useSessionCrud(deps));
@@ -228,6 +297,20 @@ describe('useSessionCrud', () => {
 			expect(sessions[0].toolType).toBe('claude-code');
 			expect(sessions[0].state).toBe('idle');
 			expect(sessions[0].projectRoot).toBe('/test/project');
+		});
+
+		it('writes the new agent to disk right away, since its first spawn routes from it', async () => {
+			vi.useFakeTimers();
+			const deps = createDeps();
+			const { result } = renderHook(() => useSessionCrud(deps));
+
+			await act(async () => {
+				await result.current.createNewSession('codex', '/test/project', 'Codex');
+			});
+			vi.runAllTimers();
+			vi.useRealTimers();
+
+			expect(deps.flushSessionPersistence).toHaveBeenCalled();
 		});
 
 		it('sets active session ID to the new session', async () => {
@@ -534,6 +617,33 @@ describe('useSessionCrud', () => {
 			expect(aiRef!.id).toBe(session.activeTabId);
 			expect(termRef).toBeUndefined();
 			expect(session.terminalTabs).toHaveLength(0);
+		});
+
+		// `exec` is the default, so only the app-server opt-in is stored. Writing
+		// `exec` onto every new agent would be noise in every session record.
+		it.each([
+			['app-server', 'app-server'],
+			['exec', undefined],
+			[undefined, undefined],
+		] as const)('stores codexTransport %s as %s', async (chosen, stored) => {
+			mockMaestro.agents.get.mockResolvedValueOnce({
+				id: 'codex',
+				name: 'Codex',
+				command: 'codex',
+			});
+			const deps = createDeps();
+			const { result } = renderHook(() => useSessionCrud(deps));
+
+			// codexTransport is the 22nd positional argument; everything between
+			// the name and it is left at its default.
+			const args: unknown[] = ['codex', '/test/project', 'Codex Session'];
+			args[21] = chosen;
+			const create = result.current.createNewSession as (...a: unknown[]) => Promise<void>;
+			await act(async () => {
+				await create(...args);
+			});
+
+			expect(useSessionStore.getState().sessions[0].codexTransport).toBe(stored);
 		});
 	});
 

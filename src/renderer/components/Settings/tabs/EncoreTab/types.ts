@@ -1,11 +1,20 @@
 import type { UseSettingsReturn } from '../../../../hooks/settings/useSettings';
 import type { UseAgentConfigurationReturn } from '../../../../hooks/agent/useAgentConfiguration';
 import type { CueSettings } from '../../../../../shared/cue';
-import type { AgentConfig, Theme, ToolType } from '../../../../types';
+import type { AgentConfig, EncoreFeatureFlags, Theme, ToolType } from '../../../../types';
+
+/**
+ * A request to open one built-in tile's details pane (a deep link or search
+ * jump). A new object per request, so jumping to the same tile twice reopens it.
+ */
+export interface EncoreTileRequest {
+	flag: keyof EncoreFeatureFlags;
+}
 
 export interface EncoreTabProps {
 	theme: Theme;
 	isOpen: boolean;
+	tileRequest?: EncoreTileRequest | null;
 }
 
 export type EncoreTabSettings = UseSettingsReturn;

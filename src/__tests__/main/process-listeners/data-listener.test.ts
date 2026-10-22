@@ -8,11 +8,29 @@
  * finished while its output is still buffered. Consumers tear down their output
  * listeners on exit, so that output is dropped and the command appears to have
  * printed nothing.
+ *
+ * The same window sits in front of `agent:error`, which is sent at once. The
+ * renderer reads output that lands AFTER an error as the agent having recovered
+ * and erases the error, so a turn's last output has to be released first.
  */
 
 import { EventEmitter } from 'events';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { setupDataListener } from '../../../main/process-listeners/data-listener';
+
+vi.mock('../../../main/utils/sentry', () => ({
+	captureMessage: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('../../../main/agents/capability-snapshot', () => ({
+	capabilitySnapshots: { markAuthRequired: vi.fn() },
+}));
+
+import {
+	setupDataListener,
+	type DataListenerHandle,
+} from '../../../main/process-listeners/data-listener';
+import { setupErrorListener } from '../../../main/process-listeners/error-listener';
+import type { AgentError } from '../../../shared/types';
 
 const SESSION_ID = 'session-1-shell-run1';
 
@@ -48,12 +66,13 @@ function channels(safeSend: ReturnType<typeof vi.fn>): string[] {
 
 let processManager: EventEmitter;
 let safeSend: ReturnType<typeof vi.fn>;
+let dataListener: DataListenerHandle;
 
 beforeEach(() => {
 	vi.useFakeTimers();
 	processManager = new EventEmitter();
 	safeSend = vi.fn();
-	setupDataListener(processManager as never, createDeps(safeSend));
+	dataListener = setupDataListener(processManager as never, createDeps(safeSend));
 });
 
 afterEach(() => {
@@ -120,5 +139,64 @@ describe('setupDataListener - one-off command output', () => {
 
 		vi.advanceTimersByTime(20);
 		expect(channels(safeSend)).toEqual(['process:data']);
+	});
+});
+
+describe('setupDataListener - output ahead of an agent error', () => {
+	const AI_SESSION_ID = 'session-1-ai-tab-1';
+	// Captured from `claude -p` with an expired OAuth login: the failure text is
+	// the turn's result, and the classified error follows it within the same tick.
+	const AUTH_FAILURE_TEXT =
+		'Failed to authenticate: OAuth session expired and could not be refreshed';
+	const authError: AgentError = {
+		type: 'auth_expired',
+		agentId: 'claude-code',
+		message: 'Authentication failed. Sign in again to continue.',
+		recoverable: true,
+		timestamp: 0,
+	};
+
+	beforeEach(() => {
+		const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+		setupErrorListener(
+			processManager as never,
+			{ safeSend, logger } as never,
+			dataListener.flushPendingData
+		);
+	});
+
+	it('sends the output a failed turn produced BEFORE its error', () => {
+		processManager.emit('data', AI_SESSION_ID, AUTH_FAILURE_TEXT);
+		processManager.emit('agent-error', AI_SESSION_ID, authError);
+
+		expect(channels(safeSend)).toEqual(['process:data', 'agent:error']);
+		expect(safeSend.mock.calls[0][2]).toBe(AUTH_FAILURE_TEXT);
+	});
+
+	it('sends nothing after the error once the coalescing window elapses', () => {
+		processManager.emit('data', AI_SESSION_ID, AUTH_FAILURE_TEXT);
+		processManager.emit('agent-error', AI_SESSION_ID, authError);
+		processManager.emit('exit', AI_SESSION_ID, 1);
+		vi.advanceTimersByTime(100);
+
+		// A late `process:data` is what un-blocks the agent and lets the queue
+		// drain into the failure, so the error must be the last word.
+		expect(channels(safeSend)).toEqual(['process:data', 'agent:error']);
+	});
+
+	it('leaves another session buffered when one session errors', () => {
+		processManager.emit('data', 'session-2-ai-tab-9', 'still streaming');
+		processManager.emit('data', AI_SESSION_ID, AUTH_FAILURE_TEXT);
+		processManager.emit('agent-error', AI_SESSION_ID, authError);
+
+		const dataSends = safeSend.mock.calls.filter((c) => c[0] === 'process:data');
+		expect(dataSends).toHaveLength(1);
+		expect(dataSends[0][1]).toBe(AI_SESSION_ID);
+	});
+
+	it('forwards an error that had no output in front of it', () => {
+		processManager.emit('agent-error', AI_SESSION_ID, authError);
+
+		expect(channels(safeSend)).toEqual(['agent:error']);
 	});
 });

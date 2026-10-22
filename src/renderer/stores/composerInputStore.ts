@@ -27,6 +27,7 @@
 
 import { create } from 'zustand';
 import type { ComposerCommandMode } from '../utils/shellCommandInput';
+import type { MentionRouting } from '../../shared/crossAgentContext';
 
 type Updater = string | ((prev: string) => string);
 
@@ -70,9 +71,20 @@ interface ComposerInputState {
 	 * `aiValue` -> `tab.inputValue`.
 	 */
 	aiCommandMode: ComposerCommandMode;
+	/**
+	 * How the draft's `@mentions` run, when the user picked it in the routing
+	 * menu (`MentionRoutingBar`) instead of leaving it to the wording. `null`:
+	 * the wording decides.
+	 *
+	 * Qualifies the live draft only, so it is never persisted: loading another
+	 * tab's draft drops it, and `useMentionRouting` drops it once the draft
+	 * mentions nobody (which is also what a send does, by clearing the draft).
+	 */
+	mentionRoutingOverride: MentionRouting | null;
 	setAiValue: (value: Updater) => void;
 	setTerminalValue: (value: Updater) => void;
 	setAiCommandMode: (commandMode: ComposerCommandMode) => void;
+	setMentionRoutingOverride: (routing: MentionRouting | null) => void;
 	/**
 	 * Put a tab's draft in the composer and stamp that tab as its owner, in one
 	 * write. Text, mode and owner are a triple: the same string is a message, a
@@ -94,11 +106,18 @@ export const useComposerInputStore = create<ComposerInputState>()((set) => ({
 	aiValueTabId: null,
 	terminalValue: '',
 	aiCommandMode: 'off',
+	mentionRoutingOverride: null,
 	setAiValue: (value) => set((s) => ({ aiValue: resolve(value, s.aiValue) })),
 	setTerminalValue: (value) => set((s) => ({ terminalValue: resolve(value, s.terminalValue) })),
 	setAiCommandMode: (commandMode) => set({ aiCommandMode: commandMode }),
+	setMentionRoutingOverride: (routing) => set({ mentionRoutingOverride: routing }),
 	loadAiDraft: (tabId, value, commandMode) =>
-		set({ aiValue: value, aiValueTabId: tabId, aiCommandMode: commandMode }),
+		set({
+			aiValue: value,
+			aiValueTabId: tabId,
+			aiCommandMode: commandMode,
+			mentionRoutingOverride: null,
+		}),
 	adoptAiDraft: (tabId) => set({ aiValueTabId: tabId }),
 }));
 
@@ -113,6 +132,10 @@ export const selectTerminalComposerValue = (s: ComposerInputState): string => s.
 
 /** Selector: which rung of the bang ladder the AI composer is on. */
 export const selectAiCommandMode = (s: ComposerInputState): ComposerCommandMode => s.aiCommandMode;
+
+/** Selector: the routing the user picked for the draft's mentions, if any. */
+export const selectMentionRoutingOverride = (s: ComposerInputState): MentionRouting | null =>
+	s.mentionRoutingOverride;
 
 /** Selector: true while the AI composer holds a literal shell command line. */
 export const selectIsShellCommandMode = (s: ComposerInputState): boolean =>

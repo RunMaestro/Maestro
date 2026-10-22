@@ -1,0 +1,4 @@
+# The server packaging ships into a Linux tarball and image: install.sh, the
+# maestro-cli wrapper, the systemd unit and the Dockerfile must stay LF even on
+# a Windows checkout with core.autocrlf, or sh and systemd reject them.
+packaging/server/** text eol=lf

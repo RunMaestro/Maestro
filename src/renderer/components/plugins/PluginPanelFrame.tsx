@@ -29,7 +29,7 @@
  * lives in exactly one place.
  */
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Puzzle } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { PanelContribution } from '../../../shared/plugins/contributions';
@@ -39,16 +39,15 @@ import {
 	PANEL_BRIDGE_CHANNEL,
 	PANEL_DATA_CHANNEL,
 } from '../../../shared/plugins/panel-host';
+import {
+	buildPanelThemePayload,
+	isPanelThemeColor,
+	PANEL_THEME_CHANNEL,
+} from '../../../shared/plugins/panel-theme';
 import { notifyToast } from '../../stores/notificationStore';
 import { captureException } from '../../utils/sentry';
-
-// webview.send throws when the guest webContents is not attached yet (a push can
-// land before the panel finishes loading) or is tearing down - both are expected
-// races for a best-effort UI data frame. Anything else is unexpected.
-function isDetachedWebviewError(error: unknown): boolean {
-	const message = error instanceof Error ? error.message : String(error);
-	return /destroyed|disposed|detached|not attached|must be attached/i.test(message);
-}
+import { useEventListener } from '../../hooks/utils/useEventListener';
+import { isDetachedWebviewError } from '../../utils/webviewErrors';
 
 interface PluginPanelFrameProps {
 	theme: Theme;
@@ -72,9 +71,55 @@ interface PanelIpcMessageEvent extends Event {
 	args?: unknown[];
 }
 
+/** Render an isolated plugin panel and report command delivery failures without exposing arguments. */
 export function PluginPanelFrame({ theme, panel, frameClassName }: PluginPanelFrameProps) {
 	const [failed, setFailed] = useState(false);
 	const webviewRef = useRef<PanelWebviewElement | null>(null);
+	const [webviewElement, setWebviewElement] = useState<PanelWebviewElement | null>(null);
+	const attachWebview = useCallback((element: HTMLElement | null) => {
+		const webview = element as PanelWebviewElement | null;
+		webviewRef.current = webview;
+		setWebviewElement(webview);
+	}, []);
+	const readyWebviewRef = useRef<PanelWebviewElement | null>(null);
+	// dom-ready can arrive after several theme changes. Its listener reads this
+	// ref so the first frame always receives the newest palette.
+	const themePayload = useMemo(() => buildPanelThemePayload(theme), [theme]);
+	const latestThemeRef = useRef(themePayload);
+	useEffect(() => {
+		latestThemeRef.current = themePayload;
+	}, [themePayload]);
+
+	useEffect(() => {
+		readyWebviewRef.current = null;
+		return () => {
+			if (readyWebviewRef.current === webviewElement) readyWebviewRef.current = null;
+		};
+	}, [panel.id, panel.pluginId, failed, webviewElement]);
+
+	useEventListener(
+		'dom-ready',
+		() => {
+			if (!webviewElement) return;
+			readyWebviewRef.current = webviewElement;
+			try {
+				webviewElement.send(PANEL_THEME_CHANNEL, latestThemeRef.current);
+			} catch (error) {
+				if (!isDetachedWebviewError(error)) captureException(error);
+			}
+		},
+		{ target: webviewElement, enabled: !failed }
+	);
+
+	useEffect(() => {
+		const webview = webviewRef.current;
+		if (!webview || readyWebviewRef.current !== webview) return;
+		try {
+			webview.send(PANEL_THEME_CHANNEL, latestThemeRef.current);
+		} catch (error) {
+			if (!isDetachedWebviewError(error)) captureException(error);
+		}
+	}, [themePayload]);
 
 	// Bridge: the guest preload forwards the panel's postMessage bridge
 	// (`{ type: 'maestro:invokeCommand', commandId, args }`) as an ipc-message
@@ -82,11 +127,9 @@ export function PluginPanelFrame({ theme, panel, frameClassName }: PluginPanelFr
 	// panel can only ever invoke its own plugin's commands, then hand it to the
 	// broker-gated RPC. Also surface load failures (unknown/ungranted panel ⇒
 	// the protocol handler refuses the document).
-	useEffect(() => {
-		const webview = webviewRef.current;
-		if (!webview) return;
-
-		const onIpcMessage = (event: Event): void => {
+	useEventListener(
+		'ipc-message',
+		(event) => {
 			const message = event as PanelIpcMessageEvent;
 			if (message.channel !== PANEL_BRIDGE_CHANNEL) return;
 			const payload = message.args?.[0];
@@ -95,6 +138,15 @@ export function PluginPanelFrame({ theme, panel, frameClassName }: PluginPanelFr
 			if (typeof commandId !== 'string' || commandId.length === 0) return;
 			void window.maestro.plugins
 				.invokeCommand(`${panel.pluginId}/${commandId}`, args)
+				.then(({ dispatched }) => {
+					if (!dispatched) {
+						notifyToast({
+							color: 'red',
+							title: 'Plugin',
+							message: `Command could not be delivered to plugin "${panel.pluginId}". Check its status and the command input, then try again.`,
+						});
+					}
+				})
 				.catch((err) => {
 					notifyToast({
 						color: 'red',
@@ -102,17 +154,13 @@ export function PluginPanelFrame({ theme, panel, frameClassName }: PluginPanelFr
 						message: `Command failed: ${String(err)}`,
 					});
 				});
-		};
-
-		const onFailLoad = (): void => setFailed(true);
-
-		webview.addEventListener('ipc-message', onIpcMessage);
-		webview.addEventListener('did-fail-load', onFailLoad);
-		return () => {
-			webview.removeEventListener('ipc-message', onIpcMessage);
-			webview.removeEventListener('did-fail-load', onFailLoad);
-		};
-	}, [panel.pluginId, failed]);
+		},
+		{ target: webviewElement, enabled: !failed }
+	);
+	useEventListener('did-fail-load', () => setFailed(true), {
+		target: webviewElement,
+		enabled: !failed,
+	});
 
 	// Host-to-panel push (`ui.panelPost`). Main validated ownership, JSON-ness and
 	// size before broadcasting; here we only route the event to the ONE frame
@@ -160,14 +208,17 @@ export function PluginPanelFrame({ theme, panel, frameClassName }: PluginPanelFr
 					</div>
 				) : (
 					<webview
-						ref={(element) => {
-							webviewRef.current = element as unknown as PanelWebviewElement | null;
-						}}
+						key={`${panel.pluginId}:${panel.id}`}
+						ref={attachWebview}
 						title={panel.title}
 						partition={pluginPanelPartition(panel.pluginId)}
 						src={pluginPanelUrl(panel.id)}
 						className={frameClassName ?? 'w-full h-full border-0'}
-						style={{ backgroundColor: '#fff' }}
+						style={{
+							backgroundColor: isPanelThemeColor(theme.colors.bgMain)
+								? theme.colors.bgMain
+								: 'transparent',
+						}}
 					/>
 				)}
 			</div>

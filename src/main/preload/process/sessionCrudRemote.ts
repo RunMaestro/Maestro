@@ -1,3 +1,4 @@
+import type { TranslationReport } from '../../../shared/maestro-lib/translation/types';
 import { ipcRenderer } from 'electron';
 
 export function createSessionCrudRemoteApi() {
@@ -210,7 +211,7 @@ export function createSessionCrudRemoteApi() {
 		 */
 		sendRemoteUpdateSessionConfigResponse: (
 			responseChannel: string,
-			result: { success: boolean; error?: string }
+			result: TranslationReport
 		): void => {
 			ipcRenderer.send(responseChannel, result);
 		},

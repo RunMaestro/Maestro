@@ -15,11 +15,19 @@ import type { AgentSshRemoteConfig, SessionInfo } from '../../shared/types';
 import { substituteTemplateVariables, type TemplateContext } from '../../shared/templateVariables';
 import { buildCueTemplateContext } from './cue-template-context-builder';
 import { captureException, captureMessage } from '../utils/sentry';
-import { wrapSpawnWithSsh } from '../utils/ssh-spawn-wrapper';
+import {
+	wrapSpawnWithSsh,
+	sshUnresolvedRemoteMessage,
+	type SshSpawnWrapResult,
+} from '../utils/ssh-spawn-wrapper';
 import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
 import { getShellPath } from '../runtime/getShellPath';
 import { buildSpawnPath } from '../utils/spawnPath';
+import { filterServerProcessEnv, isServerModeActive } from '../../shared/maestro-lib/launch/env';
 import { killCueProcess, trackCueProcess } from './cue-process-lifecycle';
+import type { StopHandle } from '../../shared/maestro-lib/control/termination';
+import { isLaunchCancelled, stoppedBeforeLaunchResult } from './cue-launch-cancel';
+import { QUERY_SOURCE_ENV_VAR } from '../../shared/querySource';
 
 export interface CueShellExecutionConfig {
 	runId: string;
@@ -40,6 +48,10 @@ export interface CueShellExecutionConfig {
 	sshRemoteConfig?: AgentSshRemoteConfig;
 	/** Store adapter used by {@link wrapSpawnWithSsh}. Required for SSH mode. */
 	sshStore?: SshRemoteSettingsStore;
+	/** Inherit only the server-mode env allowlist (see `filterServerProcessEnv`). */
+	isServerMode?: boolean;
+	/** Aborted when the run is stopped: a command not yet spawned returns `stopped` (see cue-launch-cancel.ts). */
+	signal?: AbortSignal;
 }
 
 /**
@@ -60,6 +72,8 @@ export async function executeCueShell(config: CueShellExecutionConfig): Promise<
 		onLog,
 		sshRemoteConfig,
 		sshStore,
+		isServerMode,
+		signal,
 	} = config;
 
 	const startedAt = new Date().toISOString();
@@ -103,12 +117,18 @@ export async function executeCueShell(config: CueShellExecutionConfig): Promise<
 	let spawnCommand = substitutedCommand;
 	let spawnArgs: string[] = [];
 	let spawnCwd = projectRoot;
-	let spawnEnv: Record<string, string> = { ...process.env } as Record<string, string>;
+	// In server mode the command sees only the allowlisted part of the engine's
+	// environment, the same cut the Cue agent spawn makes.
+	const inheritedEnv = isServerModeActive(isServerMode)
+		? filterServerProcessEnv(process.env)
+		: process.env;
+	let spawnEnv: Record<string, string> = { ...inheritedEnv } as Record<string, string>;
 	let useLocalShell = true;
 
 	if (sshRemoteConfig?.enabled && sshStore) {
+		let wrapped: SshSpawnWrapResult;
 		try {
-			const wrapped = await wrapSpawnWithSsh(
+			wrapped = await wrapSpawnWithSsh(
 				{
 					command: 'bash',
 					args: ['-c', substitutedCommand],
@@ -117,21 +137,27 @@ export async function executeCueShell(config: CueShellExecutionConfig): Promise<
 				sshRemoteConfig,
 				sshStore
 			);
-			if (wrapped.sshRemoteUsed) {
-				spawnCommand = wrapped.command;
-				spawnArgs = wrapped.args;
-				spawnCwd = wrapped.cwd;
-				spawnEnv = { ...process.env, ...(wrapped.customEnvVars || {}) } as Record<string, string>;
-				useLocalShell = false;
-				onLog(
-					'cue',
-					`[CUE] Shell run ${runId} executing on SSH remote "${wrapped.sshRemoteUsed.name}"`
-				);
-			}
 		} catch (err) {
 			captureException(err, { operation: 'cue:shell:sshWrap', runId });
 			return failedResult(`SSH wrap error: ${err instanceof Error ? err.message : String(err)}`);
 		}
+		// A missing or disabled remote comes back unwrapped. Running it locally
+		// would execute the user's command on this machine in a cwd that is a
+		// REMOTE path, so fail the run instead.
+		if (!wrapped.sshRemoteUsed) {
+			const message = sshUnresolvedRemoteMessage(sshRemoteConfig);
+			onLog('error', `[CUE] Shell run ${runId} not started: ${message}`);
+			return failedResult(message);
+		}
+		spawnCommand = wrapped.command;
+		spawnArgs = wrapped.args;
+		spawnCwd = wrapped.cwd;
+		spawnEnv = { ...inheritedEnv, ...(wrapped.customEnvVars || {}) } as Record<string, string>;
+		useLocalShell = false;
+		onLog(
+			'cue',
+			`[CUE] Shell run ${runId} executing on SSH remote "${wrapped.sshRemoteUsed.name}"`
+		);
 	}
 
 	// macOS GUI apps inherit a minimal launchd PATH (no `~/.local/bin`,
@@ -152,6 +178,26 @@ export async function executeCueShell(config: CueShellExecutionConfig): Promise<
 			);
 		}
 		spawnEnv.PATH = shellPath || buildSpawnPath();
+	}
+
+	// A shell action is not an agent turn, but what it launches can start one
+	// (`maestro-cli send`). Claiming the origin here is what lets that turn be
+	// recorded as Cue's instead of as something the user typed.
+	spawnEnv[QUERY_SOURCE_ENV_VAR] = 'cue';
+
+	// Stopped while the SSH wrap or the PATH probe was awaited. Checked after
+	// the last await, so nothing can stop the run between here and the spawn
+	// without also reaching the registered child.
+	if (isLaunchCancelled(signal)) {
+		return stoppedBeforeLaunchResult({
+			runId,
+			sessionId: session.id,
+			sessionName: session.name,
+			subscriptionName: subscription.name,
+			pipelineName: subscription.pipeline_name,
+			event,
+			startedAt,
+		});
 	}
 
 	return new Promise<CueRunResult>((resolve) => {
@@ -192,7 +238,7 @@ export async function executeCueShell(config: CueShellExecutionConfig): Promise<
 		let settled = false;
 		let timedOut = false;
 		let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
-		let sigkillTimer: ReturnType<typeof setTimeout> | undefined;
+		let stopHandle: StopHandle | undefined;
 
 		const finish = (status: CueRunStatus, exitCode: number | null) => {
 			if (settled) return;
@@ -200,7 +246,7 @@ export async function executeCueShell(config: CueShellExecutionConfig): Promise<
 
 			untrack();
 			if (timeoutTimer) clearTimeout(timeoutTimer);
-			if (sigkillTimer) clearTimeout(sigkillTimer);
+			stopHandle?.dispose();
 
 			resolve({
 				runId,
@@ -257,7 +303,7 @@ export async function executeCueShell(config: CueShellExecutionConfig): Promise<
 				if (settled) return;
 				onLog('cue', `[CUE] Shell run ${runId} timed out after ${timeoutMs}ms, killing process`);
 				timedOut = true;
-				sigkillTimer = killCueProcess(child);
+				stopHandle = killCueProcess(child);
 			}, timeoutMs);
 		}
 	});

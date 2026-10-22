@@ -12,24 +12,18 @@
  * rounding, and storage handling shared with the staged-image thumbnail zoom.
  */
 
-import { clampScale, useScalePreference, type ScaleRange } from './useScalePreference';
+import { FONT_SCALE_RANGE } from '../../../shared/scaleRange';
+import { useScalePreference } from './useScalePreference';
 
-export const FONT_SCALE_MIN = 0.7;
-export const FONT_SCALE_MAX = 2.0;
-export const FONT_SCALE_STEP = 0.1;
-export const FONT_SCALE_DEFAULT = 1.0;
-
-const FONT_SCALE_RANGE: ScaleRange = {
-	min: FONT_SCALE_MIN,
-	max: FONT_SCALE_MAX,
-	step: FONT_SCALE_STEP,
-	initial: FONT_SCALE_DEFAULT,
-};
-
-/** Clamp to the supported range and round to two decimals. */
-export function clampFontScale(value: number): number {
-	return clampScale(value, FONT_SCALE_RANGE);
-}
+// The range lives in shared/scaleRange.ts so a main-process scale (Quick Chat)
+// uses the same one. Re-exported for the existing renderer imports.
+export {
+	clampFontScale,
+	FONT_SCALE_MIN,
+	FONT_SCALE_MAX,
+	FONT_SCALE_STEP,
+	FONT_SCALE_DEFAULT,
+} from '../../../shared/scaleRange';
 
 export interface UseFontScaleReturn {
 	/** Current multiplier (1 = the surface's own base size). */

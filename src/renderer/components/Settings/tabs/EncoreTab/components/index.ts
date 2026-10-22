@@ -1,6 +1,11 @@
+export { ComputerHistorySection } from './ComputerHistorySection';
 export { CueSettingsSection } from './CueSettingsSection';
+export { DataviewSection } from './DataviewSection';
 export { DirectorNotesSection } from './DirectorNotesSection';
+export { MaestroRunSection } from './MaestroRunSection';
+export { QuickChatSection } from './QuickChatSection';
 export { SymphonyRegistrySection } from './SymphonyRegistrySection';
+export { ThroughputGaugeSection } from './ThroughputGaugeSection';
 export { TtsrSettingsSection } from './TtsrSettingsSection';
 export { UsageStatsSection } from './UsageStatsSection';
 export { WakatimeSettings } from './WakatimeSettings';

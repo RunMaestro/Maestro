@@ -49,6 +49,24 @@ describe('mergeClaudeSessionOrigin', () => {
 		expect(mergeClaudeSessionOrigin(undefined, { origin: 'auto' })).toBe('auto');
 		expect(mergeClaudeSessionOrigin('user', { origin: 'auto' })).toBe('auto');
 	});
+
+	it('preserves trusted Relay origin and saved name/star when a desktop turn resumes it', () => {
+		expect(
+			mergeClaudeSessionOrigin(
+				{ origin: 'relay', sessionName: 'Discord thread', starred: true },
+				{ origin: 'user' }
+			)
+		).toEqual({ origin: 'relay', sessionName: 'Discord thread', starred: true });
+		expect(mergeClaudeSessionOrigin('relay', { origin: 'auto' })).toBe('relay');
+		expect(
+			mergeClaudeSessionOrigin(
+				{ origin: 'user', sessionName: 'Kept', starred: true },
+				{
+					origin: 'relay',
+				}
+			)
+		).toEqual({ origin: 'relay', sessionName: 'Kept', starred: true });
+	});
 });
 
 describe('setClaudeSessionOrigin', () => {

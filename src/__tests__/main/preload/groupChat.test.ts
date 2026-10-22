@@ -240,6 +240,16 @@ describe('GroupChat Preload API', () => {
 		});
 	});
 
+	describe('Queue operations', () => {
+		it('should invoke groupChat:queueSteer with the chat and item ids', async () => {
+			const result = { outcome: 'delivered', targets: ['Moderator'] };
+			mockInvoke.mockResolvedValue(result);
+
+			await expect(api.queueSteer('gc-123', 'item-1')).resolves.toEqual(result);
+			expect(mockInvoke).toHaveBeenCalledWith('groupChat:queueSteer', 'gc-123', 'item-1');
+		});
+	});
+
 	describe('Participant operations', () => {
 		describe('addParticipant', () => {
 			it('should invoke groupChat:addParticipant', async () => {

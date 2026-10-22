@@ -473,6 +473,14 @@ export function useBatchedSessionUpdates(
 									tabUsageDelta.cacheReadInputTokens === 0 &&
 									tabUsageDelta.cacheCreationInputTokens === 0 &&
 									tabUsageDelta.outputTokens > 0;
+								// The occupancy snapshot rides with the input/cache fields it
+								// describes: replaced by a real report (and dropped when that
+								// report carries none, so a stale snapshot is never paired with
+								// a newer turn's totals), kept across an output-only delta. The
+								// header gauge measures it instead of the turn's summed spend.
+								const occupancySnapshot = isOutputOnlyDelta
+									? existing?.absoluteUsage
+									: tabUsageDelta.absoluteUsage;
 								return {
 									...tab,
 									usageStats: {
@@ -489,6 +497,7 @@ export function useBatchedSessionUpdates(
 										outputTokens: tabUsageDelta.outputTokens, // Current (not accumulated)
 										totalCostUsd: (existing?.totalCostUsd || 0) + tabUsageDelta.totalCostUsd,
 										reasoningTokens: tabUsageDelta.reasoningTokens,
+										...(occupancySnapshot ? { absoluteUsage: occupancySnapshot } : {}),
 									},
 								};
 							}),
@@ -692,6 +701,7 @@ export function useBatchedSessionUpdates(
 						outputTokens: usage.outputTokens,
 						totalCostUsd: existing.totalCostUsd + usage.totalCostUsd,
 						reasoningTokens: usage.reasoningTokens,
+						...(usage.absoluteUsage ? { absoluteUsage: usage.absoluteUsage } : {}),
 					});
 				} else {
 					// Session-level: all values are accumulated

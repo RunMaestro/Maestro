@@ -146,4 +146,48 @@ describe('buildBlocks', () => {
 			expect(a).toEqual(b);
 		});
 	});
+
+	describe('React fences (reactFenceLanguages)', () => {
+		const DATAVIEW = new Set(['dataview']);
+
+		it('tags a top-level fence of a listed language with its body and 1-based line', () => {
+			const blocks = buildBlocks('# Title\n\n```dataview\nLIST\nFROM "People"\n```\n', {
+				reactFenceLanguages: DATAVIEW,
+			});
+			const fence = blocks.find((b) => b.fence);
+			expect(fence?.fence).toEqual({
+				language: 'dataview',
+				content: 'LIST\nFROM "People"',
+				line: 3,
+			});
+			// The HTML stays as the fallback when the renderer goes away.
+			expect(fence?.html).toContain('<pre');
+		});
+
+		it('counts the frontmatter lines into the fence line', () => {
+			const blocks = buildBlocks('---\ntitle: Doc\n---\n```dataview\nLIST\n```\n', {
+				reactFenceLanguages: DATAVIEW,
+			});
+			expect(blocks.find((b) => b.fence)?.fence?.line).toBe(4);
+		});
+
+		it('matches the first info word exactly', () => {
+			const blocks = buildBlocks(
+				'```dataview extra\nLIST\n```\n\n```dataviewjs\ndv.list([])\n```\n\n```js\nx\n```\n',
+				{ reactFenceLanguages: DATAVIEW }
+			);
+			expect(blocks.filter((b) => b.fence).map((b) => b.fence?.content)).toEqual(['LIST']);
+		});
+
+		it('leaves a fence nested in a list as HTML', () => {
+			const blocks = buildBlocks('- item\n\n  ```dataview\n  LIST\n  ```\n', {
+				reactFenceLanguages: DATAVIEW,
+			});
+			expect(blocks.some((b) => b.fence)).toBe(false);
+		});
+
+		it('tags nothing without the option', () => {
+			expect(buildBlocks('```dataview\nLIST\n```\n').some((b) => b.fence)).toBe(false);
+		});
+	});
 });

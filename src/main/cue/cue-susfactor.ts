@@ -1,9 +1,9 @@
 /**
  * 0DIN.ai SusFactor pre-flight check for attacker-controllable Cue input.
  *
- * Cue ingests GitHub issue/PR bodies and comments and hands them to an agent.
- * Those are the only Cue inputs a third party can write, so they are the only
- * ones scored here - task files, CLI prompts, and watched files are the user's
+ * Cue ingests GitHub issue/PR bodies and comments and hands them to an agent,
+ * from the poller and from `webhook.received` deliveries. Those are the only
+ * Cue inputs a third party can write, so they are the only ones scored here - task files, CLI prompts, and watched files are the user's
  * own text and scoring them only produced false positives (Maestro's own test
  * fixtures contain injection strings) and fan-out cost.
  *
@@ -344,8 +344,133 @@ export interface GuardGitHubEventParams {
  * Never throws - any unexpected failure falls through to `true` (fail open).
  */
 export async function guardGitHubEvent(params: GuardGitHubEventParams): Promise<boolean> {
+	const { event } = params;
+	return guardScoredText({
+		...params,
+		scorableText: extractGitHubScorableText(event.payload),
+		itemRef: describeItem(event.payload),
+		url: typeof event.payload.url === 'string' ? event.payload.url : null,
+	});
+}
+
+// ─── Webhook guard ───────────────────────────────────────────────────────────
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+	return value && typeof value === 'object' && !Array.isArray(value)
+		? (value as Record<string, unknown>)
+		: null;
+}
+
+function nonBlankString(value: unknown): string | null {
+	return typeof value === 'string' && value.trim() !== '' ? value : null;
+}
+
+/**
+ * Concatenate the attacker-controllable text on a webhook delivery.
+ *
+ * Only the GitHub fields a third party writes are read, and only from a body
+ * that arrived as parsed JSON: issue and PR titles and bodies, a comment body,
+ * and commit messages. Any other vendor's payload, or a non-JSON body, yields
+ * the empty string and is not scored - sending arbitrary message strings to
+ * 0DIN would ship content we have no reason to believe is hostile to a third
+ * party, and would score the user's own integrations into false positives.
+ */
+export function extractWebhookScorableText(payload: Record<string, unknown>): string {
+	const body = asRecord(payload.body);
+	if (!body) return '';
+
+	const parts: string[] = [];
+	const push = (value: unknown) => {
+		const text = nonBlankString(value);
+		if (text !== null) parts.push(text);
+	};
+
+	for (const key of ['issue', 'pull_request'] as const) {
+		const item = asRecord(body[key]);
+		if (!item) continue;
+		push(item.title);
+		push(item.body);
+	}
+	push(asRecord(body.comment)?.body);
+	if (Array.isArray(body.commits)) {
+		for (const commit of body.commits) push(asRecord(commit)?.message);
+	}
+	return parts.join('\n\n');
+}
+
+/** `owner/repo#412` for a GitHub delivery, the subscription name when the payload names no repo. */
+export function describeWebhookItem(
+	payload: Record<string, unknown>,
+	subscriptionName: string
+): string {
+	const body = asRecord(payload.body);
+	const repo = nonBlankString(asRecord(body?.repository)?.full_name) ?? subscriptionName;
+	const number = asRecord(body?.pull_request)?.number || asRecord(body?.issue)?.number || '?';
+	return `${repo}#${String(number)}`;
+}
+
+/** The delivery's browser link, for the block notice's click action. */
+function webhookItemUrl(payload: Record<string, unknown>): string | null {
+	const body = asRecord(payload.body);
+	return (
+		nonBlankString(asRecord(body?.pull_request)?.html_url) ??
+		nonBlankString(asRecord(body?.issue)?.html_url) ??
+		nonBlankString(asRecord(body?.comment)?.html_url)
+	);
+}
+
+export type GuardWebhookEventParams = GuardGitHubEventParams;
+
+/**
+ * Decide whether a webhook delivery may reach an agent. Same contract as
+ * {@link guardGitHubEvent}: `true` to emit, never throws, fails open.
+ */
+export async function guardWebhookEvent(params: GuardWebhookEventParams): Promise<boolean> {
+	const { event } = params;
+	return guardScoredText({
+		...params,
+		scorableText: extractWebhookScorableText(event.payload),
+		itemRef: describeWebhookItem(event.payload, params.subscriptionName),
+		url: webhookItemUrl(event.payload),
+	});
+}
+
+// ─── Shared guard ────────────────────────────────────────────────────────────
+
+export interface GuardScoredTextParams {
+	/** The attacker-controllable text to score, already extracted by the caller. */
+	scorableText: string;
+	/** Human-readable item reference, e.g. `owner/repo#412`. */
+	itemRef: string;
+	url?: string | null;
+	event: { id: string; type: string; payload: Record<string, unknown> };
+	sessionId: string;
+	subscriptionId: string;
+	subscriptionName: string;
+	enabled: boolean;
+	threshold: number;
+	onLog: Logger;
+}
+
+/**
+ * Whether {@link guardScoredText} would do any work at all. Lets a caller that
+ * normally emits synchronously keep doing so when no check can run.
+ */
+export function wouldScoreText(enabled: boolean, scorableText: string): boolean {
+	return enabled && isSusFactorConfigured() && scorableText.trim() !== '';
+}
+
+/**
+ * The one gate every scored Cue source goes through: hashing, the stored
+ * verdict cache, scoring, fail-open, and the `cue_susfactor_blocks` record.
+ * Each source only decides WHAT text is attacker-controllable and how to name
+ * the item.
+ *
+ * Never throws - any unexpected failure falls through to `true` (fail open).
+ */
+export async function guardScoredText(params: GuardScoredTextParams): Promise<boolean> {
 	try {
-		return await guardGitHubEventInner(params);
+		return await guardScoredTextInner(params);
 	} catch (err) {
 		// Belt and braces on the documented never-throws contract: the caller is
 		// a fire-and-forget poll callback, so a rejection here would be an
@@ -358,15 +483,10 @@ export async function guardGitHubEvent(params: GuardGitHubEventParams): Promise<
 	}
 }
 
-async function guardGitHubEventInner(params: GuardGitHubEventParams): Promise<boolean> {
-	const { event, enabled, threshold, onLog } = params;
-	if (!enabled) return true;
-	if (!isSusFactorConfigured()) return true;
+async function guardScoredTextInner(params: GuardScoredTextParams): Promise<boolean> {
+	const { event, enabled, threshold, onLog, scorableText: text, itemRef } = params;
+	if (!wouldScoreText(enabled, text)) return true;
 
-	const text = extractGitHubScorableText(event.payload);
-	if (text.trim() === '') return true;
-
-	const itemRef = describeItem(event.payload);
 	const context = `${itemRef} (${event.type})`;
 
 	// Lazy imports keep the DB out of the module graph for callers that only
@@ -391,7 +511,7 @@ async function guardGitHubEventInner(params: GuardGitHubEventParams): Promise<bo
 	// Fail open: null means the check could not run, not that the item is clean.
 	if (!verdict || !verdict.suspicious) return true;
 
-	const url = typeof event.payload.url === 'string' ? event.payload.url : null;
+	const url = params.url ?? null;
 	recordSusFactorBlock({
 		contentHash: verdict.contentHash,
 		subscriptionId: params.subscriptionId,

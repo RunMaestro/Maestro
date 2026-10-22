@@ -20,6 +20,8 @@ import {
 	noteDispatch,
 	clearRetryIfSettled,
 	hasPendingRetry,
+	isHeldByRecovery,
+	cancelRecoveryForTab,
 	getRetryEntry,
 	getOutage,
 	useRetryStore,
@@ -226,5 +228,42 @@ describe('queueIsHeldByRetry', () => {
 
 	it('does not hold an empty queue', () => {
 		expect(queueIsHeldByRetry({ executionQueue: [] }, TAB, () => false)).toBe(false);
+	});
+});
+
+describe('a turn the user withdrew during an outage', () => {
+	/** A turn that ran, hit the plan limit, and is now parked for its resend. */
+	async function failRunningTurn() {
+		void useAgentStore.getState().processQueuedItem(SESSION, queuedItem('q0', 'running'), deps);
+		await vi.advanceTimersByTimeAsync(0);
+		expect(scheduleRetryForError(SESSION, TAB, quotaError())).toBe(true);
+	}
+
+	it('tells a held item from one that is only waiting', async () => {
+		setQueue([queuedItem('q1', 'waiting')]);
+		await failRunningTurn();
+
+		// Both sit in the same queue. Only one of them already ran.
+		expect(session().executionQueue.map((i) => i.id)).toEqual(['q0', 'q1']);
+		expect(isHeldByRecovery('q0')).toBe(true);
+		expect(isHeldByRecovery('q1')).toBe(false);
+		expect(isHeldByRecovery(null)).toBe(false);
+	});
+
+	it("ends that tab's recovery, so the withdrawn turn is never resent", async () => {
+		await failRunningTurn();
+		cancelRecoveryForTab(SESSION, TAB);
+
+		expect(hasPendingRetry(SESSION, TAB)).toBe(false);
+		expect(isHeldByRecovery('q0')).toBe(false);
+		// Past every wait the outage could have scheduled: nothing goes out again.
+		await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000);
+		expect(dispatched).toEqual(['running']);
+	});
+
+	it("leaves another tab's recovery alone", async () => {
+		await failRunningTurn();
+		cancelRecoveryForTab(SESSION, 'some-other-tab');
+		expect(hasPendingRetry(SESSION, TAB)).toBe(true);
 	});
 });

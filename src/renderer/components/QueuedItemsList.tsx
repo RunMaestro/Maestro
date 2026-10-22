@@ -6,14 +6,25 @@ import {
 	Copy,
 	Check,
 	Hammer,
+	Navigation,
 	Pause,
 	Play,
 	Pencil,
 	ImageIcon,
+	Merge,
 } from 'lucide-react';
 import type { Theme, QueuedItem, QueuedItemEditPatch } from '../types';
-import type { BusyTabSummary, ForceSendEligibility } from '../utils/executionQueue';
-import { getForceSendTitle, shouldOfferForceSend } from '../utils/executionQueue';
+import type {
+	BusyTabSummary,
+	ForceSendEligibility,
+	SteerEligibility,
+} from '../utils/executionQueue';
+import {
+	findQueuedMergeTarget,
+	getForceSendTitle,
+	shouldOfferForceSend,
+	shouldOfferSteer,
+} from '../utils/executionQueue';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { displayImageSrc } from '../utils/sessionImageSrc';
 import { formatNumber } from '../../shared/formatters';
@@ -21,6 +32,7 @@ import { Modal, ModalFooter } from './ui/Modal';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { QueuedItemEditModal } from './QueuedItemEditModal';
+import { QueuedMergeConfirmModal } from './QueuedMergeConfirmModal';
 import { ForcedParallelRequiredModal } from './ForcedParallelRequiredModal';
 import { TurnSettingPills } from './ui/TurnSettingPills';
 import { MiniBadge } from './ui/MiniBadge';
@@ -72,12 +84,20 @@ interface QueuedItemsListProps {
 	// Edit a queued message's prompt text and attached images. Only wired for
 	// message items (commands have no image attachments).
 	onEditQueuedItem?: (itemId: string, patch: QueuedItemEditPatch) => void;
+	// Fold a queued message into the message drawn directly above it.
+	onMergeQueuedItem?: (itemId: string) => void;
 	onReorderItems?: (fromIndex: number, toIndex: number) => void;
 	activeTabId?: string; // If provided, only show queued items for this tab
 	// Force Send support: when forcedParallelExecution is enabled, allow the user
 	// to bypass the cross-tab queue wait for an individual queued item.
 	forcedParallelEnabled?: boolean;
 	onForceSendQueuedItem?: (itemId: string) => void;
+	// Chat steering: hand this message to the turn ALREADY RUNNING on its tab
+	// instead of waiting for that turn to finish. Only offered for a Claude turn on
+	// the interactive token source (a live PTY to type into) or a Codex turn on the
+	// app-server transport (`turn/steer`) - see getSteerEligibility.
+	getSteerContext?: (item: QueuedItem) => SteerEligibility | null;
+	onSteerQueuedItem?: (itemId: string) => void;
 	// Lookup for tab state/name used by the Force Send button + confirm modal.
 	// Returns the tab's current busy state, the other tabs currently busy in the
 	// same agent, and the item's own target tab display name.
@@ -110,10 +130,13 @@ export const QueuedItemsList = memo(
 		onRemoveQueuedItem,
 		onTogglePauseQueuedItem,
 		onEditQueuedItem,
+		onMergeQueuedItem,
 		onReorderItems,
 		activeTabId,
 		forcedParallelEnabled = false,
 		onForceSendQueuedItem,
+		getSteerContext,
+		onSteerQueuedItem,
 		getForceSendContext,
 		shortcutEnabled = true,
 		onOpenLightbox,
@@ -124,6 +147,8 @@ export const QueuedItemsList = memo(
 			: executionQueue;
 		// Queue removal confirmation state
 		const [queueRemoveConfirmId, setQueueRemoveConfirmId] = useState<string | null>(null);
+		// Merge confirmation state (the id of the item that would fold into the one above)
+		const [mergeConfirmId, setMergeConfirmId] = useState<string | null>(null);
 
 		// Force Send confirmation state
 		const [forceSendConfirmId, setForceSendConfirmId] = useState<string | null>(null);
@@ -212,6 +237,13 @@ export const QueuedItemsList = memo(
 			setQueueRemoveConfirmId(null);
 		}, [onRemoveQueuedItem, queueRemoveConfirmId]);
 
+		const handleConfirmMerge = useCallback(() => {
+			if (onMergeQueuedItem && mergeConfirmId) {
+				onMergeQueuedItem(mergeConfirmId);
+			}
+			setMergeConfirmId(null);
+		}, [onMergeQueuedItem, mergeConfirmId]);
+
 		const handleConfirmForceSend = useCallback(() => {
 			if (onForceSendQueuedItem && forceSendConfirmId) {
 				onForceSendQueuedItem(forceSendConfirmId);
@@ -264,6 +296,15 @@ export const QueuedItemsList = memo(
 				? getForceSendContext(forceSendConfirmItem)
 				: null;
 
+		// The pair the merge confirmation shows, read live so the modal closes on
+		// its own if either message runs or is removed while it is open.
+		const mergeConfirmItem =
+			mergeConfirmId != null
+				? executionQueue.find((item) => item.id === mergeConfirmId)
+				: undefined;
+		const mergeConfirmTarget =
+			mergeConfirmItem != null ? findQueuedMergeTarget(executionQueue, mergeConfirmItem.id) : null;
+
 		return (
 			<>
 				{/* QUEUED separator */}
@@ -300,6 +341,24 @@ export const QueuedItemsList = memo(
 						const forceSendTitle = forceSendContext
 							? getForceSendTitle(forceSendContext)
 							: undefined;
+						// Steering is Force Send's mirror image: it needs the target tab BUSY
+						// where force send needs it idle, so at most one of these buttons can
+						// ever be eligible on the same card (pinned by a test in
+						// executionQueue.test.ts). Commands are excluded - a shell command is
+						// not something an agent can be steered with.
+						const steerContext =
+							onSteerQueuedItem && getSteerContext && item.type !== 'command'
+								? getSteerContext(item)
+								: null;
+						const showSteerButton = shouldOfferSteer(steerContext);
+						// Merge is offered only when the card drawn directly above this
+						// one is the item it would fold into. Without a tab filter the
+						// list can interleave tabs, and the merge target is always the
+						// previous item for the SAME tab.
+						const canMergeUp =
+							!!onMergeQueuedItem &&
+							index > 0 &&
+							findQueuedMergeTarget(executionQueue, item.id)?.id === filteredQueue[index - 1].id;
 
 						return (
 							<React.Fragment key={item.id}>
@@ -340,10 +399,13 @@ export const QueuedItemsList = memo(
 											? setForceSendConfirmId(item.id)
 											: setShowForcedParallelRequired(true)
 									}
+									showSteerButton={showSteerButton}
+									onSteer={() => onSteerQueuedItem?.(item.id)}
 									onOpenLightbox={onOpenLightbox}
 									onTogglePause={
 										onTogglePauseQueuedItem ? () => onTogglePauseQueuedItem(item.id) : undefined
 									}
+									onMergeUp={canMergeUp ? () => setMergeConfirmId(item.id) : undefined}
 									onRequestRemove={() => setQueueRemoveConfirmId(item.id)}
 								/>
 							</React.Fragment>
@@ -359,6 +421,17 @@ export const QueuedItemsList = memo(
 						onDragOver={() => overDrag(INLINE_QUEUE_KEY, filteredQueue.length)}
 					/>
 				</div>
+
+				{/* Merge confirmation. Merge holds focus, so Enter accepts. */}
+				{mergeConfirmItem && mergeConfirmTarget && (
+					<QueuedMergeConfirmModal
+						theme={theme}
+						upper={mergeConfirmTarget}
+						lower={mergeConfirmItem}
+						onConfirm={handleConfirmMerge}
+						onCancel={() => setMergeConfirmId(null)}
+					/>
+				)}
 
 				{/* Queue removal confirmation modal */}
 				{queueRemoveConfirmId && (
@@ -498,7 +571,12 @@ interface QueuedItemRowProps {
 	/** Why it can or cannot be forced. Shown as the button's tooltip. */
 	forceSendTitle?: string;
 	onForceSend: () => void;
+	/** Chat steering: offer to inject this message into the turn already running. */
+	showSteerButton: boolean;
+	onSteer: () => void;
 	onTogglePause?: () => void;
+	/** Fold this message into the one above it. Absent when that is not possible. */
+	onMergeUp?: () => void;
 	onRequestRemove: () => void;
 	onOpenLightbox?: (image: string, contextImages?: string[], source?: 'staged' | 'history') => void;
 }
@@ -524,7 +602,10 @@ function QueuedItemRow({
 	canForceSend,
 	forceSendTitle,
 	onForceSend,
+	showSteerButton,
+	onSteer,
 	onTogglePause,
+	onMergeUp,
 	onRequestRemove,
 	onOpenLightbox,
 }: QueuedItemRowProps) {
@@ -760,6 +841,20 @@ function QueuedItemRow({
 								Force Send
 							</button>
 						)}
+						{showSteerButton && (
+							<button
+								onClick={onSteer}
+								className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium whitespace-nowrap transition-opacity hover:opacity-80"
+								style={{
+									backgroundColor: theme.colors.accent + '33',
+									color: theme.colors.accent,
+								}}
+								title="Send this into the turn that is running now, so the agent can change course mid-task"
+							>
+								<Navigation className="w-3.5 h-3.5" />
+								Steer
+							</button>
+						)}
 					</div>
 
 					{/* What this item will actually run under. The queue can sit through
@@ -775,6 +870,19 @@ function QueuedItemRow({
 					</div>
 
 					<div className="flex items-center justify-end gap-1">
+						{/* Merge into the message above */}
+						{onMergeUp && (
+							<button
+								onClick={onMergeUp}
+								className="p-1 rounded hover:bg-black/20 transition-colors"
+								style={{ color: theme.colors.textDim }}
+								title="Merge into the message above (send both as one message)"
+								aria-label="Merge into the message above"
+							>
+								<Merge className="w-3.5 h-3.5" />
+							</button>
+						)}
+
 						{/* Edit button */}
 						{onEdit && (
 							<button

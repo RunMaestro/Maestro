@@ -17,10 +17,19 @@ import { v4 as uuidv4 } from 'uuid';
 import { logger } from './logger';
 import { buildAgentArgs, applyAgentConfigOverrides } from './agent-args';
 import { wrapSpawnWithSsh, sshUnresolvedRemoteMessage } from './ssh-spawn-wrapper';
-import type { SshRemoteSettingsStore } from './ssh-remote-resolver';
 import type { SshRemoteConfig } from '../../shared/types';
 import { isWindows } from '../../shared/platformDetection';
+import { parseEffortRejection } from '../../shared/effortRejection';
 import type { AgentDetector } from '../agents';
+import {
+	resolveClaudeSpawnMode,
+	applyClaudeSpawnDecision,
+	buildRemoteInteractiveSpawn,
+	type ClaudeSpawnDecision,
+} from '../agents/resolveClaudeSpawnMode';
+import { ensureRemoteMaestroPProbed } from '../agents/probeRemoteMaestroP';
+import { getSshRemoteConfig, type SshRemoteSettingsStore } from './ssh-remote-resolver';
+import { getClaudeTokenMode, type ClaudeTokenSourceFields } from '../../shared/claudeTokenMode';
 
 const LOG_CONTEXT = '[ContextGroomer]';
 
@@ -177,6 +186,14 @@ export interface GroomContextOptions {
 	disableTools?: boolean;
 	/** Agent-level config values (from agent config store) for override resolution */
 	agentConfigValues?: Record<string, any>;
+	/**
+	 * Claude token source of the agent this turn runs for (see
+	 * getClaudeTokenSourceFields). Set it whenever the turn belongs to one agent,
+	 * so an agent set to TUI runs this turn through maestro-p like its chat
+	 * turns. Left undefined the turn runs `claude --print`, which is right for a
+	 * caller with no owning agent (Director's Notes, a utility agent).
+	 */
+	claudeTokenSource?: ClaudeTokenSourceFields;
 	/** Optional callback for progress updates during grooming */
 	onProgress?: (update: GroomProgressUpdate) => void;
 }
@@ -209,6 +226,39 @@ export async function groomContext(
 	processManager: GroomingProcessManager,
 	agentDetector: AgentDetector
 ): Promise<GroomContextResult> {
+	try {
+		return await groomContextOnce(options, processManager, agentDetector);
+	} catch (error) {
+		// The provider refused the effort level this turn asked for (see
+		// `shared/effortRejection.ts`). Callers pass an effort Maestro picked off
+		// a static ladder for a throwaway turn, and a provider can retire a rung
+		// without notice - so run it once more at the agent's own effort rather
+		// than lose the summary. Only when an effort was actually sent, so a
+		// refusal of the agent's own configured value cannot loop.
+		const rejection =
+			options.sessionCustomEffort !== undefined && options.sessionCustomEffort !== ''
+				? parseEffortRejection(error instanceof Error ? error.message : String(error))
+				: null;
+		if (!rejection) throw error;
+
+		logger.warn(
+			'Grooming effort rejected by the provider; retrying at the agent default',
+			LOG_CONTEXT,
+			{ agentType: options.agentType, effort: options.sessionCustomEffort, ...rejection }
+		);
+		return groomContextOnce(
+			{ ...options, sessionCustomEffort: undefined },
+			processManager,
+			agentDetector
+		);
+	}
+}
+
+async function groomContextOnce(
+	options: GroomContextOptions,
+	processManager: GroomingProcessManager,
+	agentDetector: AgentDetector
+): Promise<GroomContextResult> {
 	const {
 		projectRoot,
 		agentType,
@@ -226,6 +276,7 @@ export async function groomContext(
 		sessionCustomEffort,
 		disableTools = false,
 		agentConfigValues,
+		claudeTokenSource,
 		onProgress,
 	} = options;
 
@@ -305,6 +356,49 @@ export async function groomContext(
 	let sshRemoteCommand: string | undefined;
 	let sshRemoteUsed: SshRemoteConfig | null = null;
 
+	// Claude token source: an agent set to TUI runs this turn through maestro-p,
+	// the same as its chat turns. Same resolve-then-apply sequence as
+	// spawnGroupChatAgent; a non-Claude agent always resolves to API.
+	let claudeDecision: ClaudeSpawnDecision | null = null;
+	if (claudeTokenSource && agent.id === 'claude-code') {
+		const sshEnabled = !!sessionSshRemoteConfig?.enabled;
+		let sshMaestroPAvailable: boolean | undefined;
+		if (sshEnabled && sshStore) {
+			const sshRemote = getSshRemoteConfig(sshStore, {
+				sessionSshConfig: sessionSshRemoteConfig,
+			}).config;
+			if (sshRemote) sshMaestroPAvailable = await ensureRemoteMaestroPProbed(sshRemote);
+		}
+		claudeDecision = resolveClaudeSpawnMode({
+			agent,
+			tokenMode: getClaudeTokenMode(claudeTokenSource, { sshEnabled, sshMaestroPAvailable }),
+			sshEnabled,
+			sshRemoteId: sessionSshRemoteConfig?.remoteId ?? undefined,
+			command: resolvedCommand,
+			sessionCustomPath,
+			sessionCustomEnvVars: resolvedEnvVars,
+			maestroPPath: claudeTokenSource.maestroPPath,
+			now: new Date(),
+		});
+		if (!sshEnabled && claudeDecision.mode === 'interactive' && claudeDecision.maestroPBinPath) {
+			const applied = applyClaudeSpawnDecision({
+				decision: claudeDecision,
+				interactiveModeArgs: agent.interactiveModeArgs,
+				command: resolvedCommand,
+				args: resolvedArgs,
+				customEnvVars: resolvedEnvVars,
+				maxWaitSeconds: Math.ceil(timeoutMs / 1000),
+			});
+			spawnCommand = applied.command;
+			spawnArgs = applied.args;
+			spawnEnvVars = applied.customEnvVars;
+		}
+		logger.info('Grooming token source resolved', LOG_CONTEXT, {
+			groomerSessionId,
+			mode: claudeDecision.mode,
+		});
+	}
+
 	if (sessionSshRemoteConfig?.enabled) {
 		if (!sshStore) {
 			throw new Error(
@@ -318,13 +412,28 @@ export async function groomContext(
 		// grooming lands in the same directory the agent's own turns run in.
 		const remoteCwd = sessionSshRemoteConfig.workingDirOverride || projectRoot;
 
+		// Remote TUI: maestro-p on the remote host drives the remote claude.
+		// Null for the API path, which leaves the plain claude spawn untouched.
+		const remoteInteractive = claudeDecision
+			? buildRemoteInteractiveSpawn({
+					decision: claudeDecision,
+					interactiveModeArgs: agent.interactiveModeArgs,
+					remoteClaudeBin: claudeDecision.claudeRealBinPath,
+					maxWaitSeconds: Math.ceil(timeoutMs / 1000),
+				})
+			: null;
+
 		const wrapped = await wrapSpawnWithSsh(
 			{
 				command: resolvedCommand,
-				args: resolvedArgs,
+				args: remoteInteractive
+					? [...remoteInteractive.prependArgs, ...resolvedArgs]
+					: resolvedArgs,
 				cwd: remoteCwd,
 				prompt,
-				customEnvVars: resolvedEnvVars,
+				customEnvVars: remoteInteractive
+					? { ...(resolvedEnvVars ?? {}), ...remoteInteractive.env }
+					: resolvedEnvVars,
 				promptArgs: agent.promptArgs,
 				noPromptSeparator: agent.noPromptSeparator,
 				// Never send a locally-detected absolute path to the remote host -
@@ -332,7 +441,9 @@ export async function groomContext(
 				// SSH session the user configures it as the remote path), matching
 				// what the `process:spawn` handler does; otherwise resolve the agent
 				// by binary name against the remote PATH.
-				agentBinaryName: sessionCustomPath || agent.binaryName,
+				agentBinaryName: remoteInteractive
+					? remoteInteractive.command
+					: sessionCustomPath || agent.binaryName,
 			},
 			sessionSshRemoteConfig,
 			sshStore
@@ -553,6 +664,14 @@ export async function groomContext(
 				if (responseBuffer.length > 0) {
 					finishWithResponse('overall timeout with content');
 				} else {
+					// Nobody is waiting for this process anymore. Left running it
+					// keeps its provider session open until it finishes on its own,
+					// which a caller with a short deadline (tab routing) would stack up.
+					try {
+						processManager.kill(groomerSessionId);
+					} catch {
+						// Process may have already exited
+					}
 					cleanup();
 					resolved = true;
 					reject(new Error('Grooming timed out with no response'));

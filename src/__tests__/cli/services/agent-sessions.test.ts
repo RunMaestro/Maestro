@@ -10,6 +10,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { listClaudeSessions } from '../../../cli/services/agent-sessions';
+import { readClaudeSubagentTranscriptsSync } from '../../../shared/claudeSessionUsage';
 
 // Mock fs
 vi.mock('fs', () => ({
@@ -17,6 +18,14 @@ vi.mock('fs', () => ({
 	readdirSync: vi.fn(),
 	readFileSync: vi.fn(),
 	statSync: vi.fn(),
+}));
+
+// The fs mock above answers every readdirSync with the session listing, which
+// would hand the session files back as their own "subagents". Subagent reads are
+// stubbed instead and driven per test.
+vi.mock('../../../shared/claudeSessionUsage', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../shared/claudeSessionUsage')>()),
+	readClaudeSubagentTranscriptsSync: vi.fn(() => []),
 }));
 
 // Mock os
@@ -372,6 +381,39 @@ describe('listClaudeSessions', () => {
 		expect(result.sessions[0].origin).toBe('user');
 	});
 
+	// The origins store used to be read from a hard-coded `Maestro` folder that
+	// ignored MAESTRO_USER_DATA, so an agent the app spawned with a dev data dir
+	// listed its sessions without their names. It now shares the CLI's resolver.
+	it('reads the origins store from MAESTRO_USER_DATA', () => {
+		const saved = process.env.MAESTRO_USER_DATA;
+		process.env.MAESTRO_USER_DATA = '/data/maestro-dev';
+		const originsPath = path.join(path.resolve('/data/maestro-dev'), 'claude-session-origins.json');
+		try {
+			vi.mocked(fs.existsSync).mockImplementation((p) => p === sessionsDir);
+			vi.mocked(fs.readdirSync).mockReturnValue(['session-named.jsonl' as unknown as fs.Dirent]);
+			vi.mocked(fs.statSync).mockReturnValue({ size: 500, mtimeMs: Date.now() } as fs.Stats);
+			vi.mocked(fs.readFileSync).mockImplementation((p) => {
+				const pStr = p.toString();
+				if (pStr === originsPath) {
+					return JSON.stringify({
+						origins: { [projectPath]: { 'session-named': { sessionName: 'From Dev Data' } } },
+					});
+				}
+				if (pStr.includes('session-named.jsonl')) {
+					return makeJsonlContent({ userMessage: 'Do something', assistantMessage: 'Done' });
+				}
+				throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+			});
+
+			const result = listClaudeSessions(projectPath);
+
+			expect(result.sessions[0].sessionName).toBe('From Dev Data');
+		} finally {
+			if (saved === undefined) delete process.env.MAESTRO_USER_DATA;
+			else process.env.MAESTRO_USER_DATA = saved;
+		}
+	});
+
 	it('should search in session names from origins store', () => {
 		vi.mocked(os.platform).mockReturnValue('darwin');
 
@@ -475,5 +517,27 @@ describe('listClaudeSessions', () => {
 		expect(session.cacheCreationTokens).toBe(100);
 		expect(session.costUsd).toBeGreaterThan(0);
 		expect(session.durationSeconds).toBe(5);
+	});
+
+	it("prices a session's subagent transcripts into its cost and tokens", () => {
+		vi.mocked(fs.existsSync).mockImplementation((p) => p === sessionsDir);
+		vi.mocked(fs.readdirSync).mockReturnValue(['session-sub.jsonl' as unknown as fs.Dirent]);
+		vi.mocked(fs.statSync).mockReturnValue({ size: 1000, mtimeMs: Date.now() } as fs.Stats);
+		vi.mocked(fs.readFileSync).mockImplementation((p) => {
+			if (p.toString().includes('session-sub.jsonl')) {
+				return makeJsonlContent({ userMessage: 'Go', inputTokens: 1000, outputTokens: 0 });
+			}
+			throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+		});
+		vi.mocked(readClaudeSubagentTranscriptsSync).mockReturnValueOnce([
+			makeJsonlContent({ inputTokens: 3000, outputTokens: 0 }),
+		]);
+
+		const [session] = listClaudeSessions(projectPath).sessions;
+
+		expect(readClaudeSubagentTranscriptsSync).toHaveBeenCalledWith(
+			path.join(sessionsDir, 'session-sub.jsonl')
+		);
+		expect(session.inputTokens).toBe(4000);
 	});
 });

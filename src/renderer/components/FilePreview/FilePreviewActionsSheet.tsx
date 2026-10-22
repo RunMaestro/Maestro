@@ -25,6 +25,7 @@ import React, { useState } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import type { Theme } from '../../types';
 import { PhoneBottomSheet } from '../ui/PhoneBottomSheet';
+import type { ShortcutChords } from '../ui/ShortcutHint';
 import { PhoneSheetActionRow, PhoneSheetOptionRow, PhoneSheetSection } from '../ui/PhoneSheetRows';
 import { TIER_DESCRIPTION, TIER_META } from './PreviewTierChip';
 import type { PreviewTier } from './filePreviewUtils';
@@ -42,7 +43,7 @@ export interface FilePreviewHeaderButton {
 	active?: boolean;
 	/** Shortcut shown in the desktop tooltip. Dropped in the sheet: a phone has
 	 *  no keyboard, matching the `data-shortcut-hint` rule. */
-	shortcut?: string;
+	shortcut?: string | ShortcutChords;
 	testId?: string;
 }
 

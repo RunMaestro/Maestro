@@ -16,19 +16,19 @@ Each subscription has a unique `name`, an `event` type, an `enabled` flag, a `pr
 
 ### Event Types
 
-| Event                 | Fires when…                                                          | Key config fields                                                                                   |
-| --------------------- | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `app.startup`         | Maestro launches                                                     | -                                                                                                   |
-| `time.heartbeat`      | Every N minutes                                                      | `interval_minutes`                                                                                  |
-| `time.scheduled`      | At specific clock times (cron-like)                                  | `schedule_times`, `schedule_days`                                                                   |
-| `time.once`           | At a specific wall-clock moment, exactly once (self-destructs after) | `fire_at`, optional `grace_minutes`, `self_destruct_on_failure`                                     |
-| `file.changed`        | Files matching a glob are added/changed/removed                      | `watch` (glob)                                                                                      |
-| `agent.completed`     | An upstream agent finishes a run                                     | `source_session` (name or names)                                                                    |
-| `github.pull_request` | A PR matches a filter (polled)                                       | `repo`, `gh_state`, `label`, `poll_minutes`, `filter`, `retrigger_on_comments`, `max_notifications` |
-| `github.issue`        | An issue matches a filter (polled)                                   | `repo`, `gh_state`, `label`, `poll_minutes`, `filter`, `retrigger_on_comments`, `max_notifications` |
-| `github.label`        | A label is added to a PR or issue (polled)                           | `repo`, `gh_label_target` (`pr`/`issue`/`both`), `gh_labels`, `poll_minutes`, `filter`              |
-| `task.pending`        | Pending `- [ ]` tasks detected in watched files                      | `watch`                                                                                             |
-| `cli.trigger`         | Manually fired via `maestro-cli cue trigger`                         | -                                                                                                   |
+| Event                 | Fires when…                                                            | Key config fields                                                                                              |
+| --------------------- | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `app.startup`         | Maestro launches                                                       | -                                                                                                              |
+| `time.heartbeat`      | Every N minutes                                                        | `interval_minutes`                                                                                             |
+| `time.scheduled`      | At specific clock times (cron-like)                                    | `schedule_times`, `schedule_days`                                                                              |
+| `time.once`           | At a specific wall-clock moment, exactly once (self-destructs after)   | `fire_at`, optional `grace_minutes`, `self_destruct_on_failure`                                                |
+| `file.changed`        | Files matching a glob are added/changed/removed                        | `watch` (glob)                                                                                                 |
+| `agent.completed`     | An upstream agent finishes a run                                       | `source_session` (name or names)                                                                               |
+| `github.pull_request` | A PR matches a filter (polled, optionally also by webhook)             | `repo`, `gh_state`, `label`, `poll_minutes`, `filter`, `retrigger_on_comments`, `max_notifications`, `webhook` |
+| `github.issue`        | An issue matches a filter (polled, optionally also by webhook)         | `repo`, `gh_state`, `label`, `poll_minutes`, `filter`, `retrigger_on_comments`, `max_notifications`, `webhook` |
+| `github.label`        | A label is added to a PR or issue (polled, optionally also by webhook) | `repo`, `gh_label_target` (`pr`/`issue`/`both`), `gh_labels`, `poll_minutes`, `filter`, `webhook`              |
+| `task.pending`        | Pending `- [ ]` tasks detected in watched files                        | `watch`                                                                                                        |
+| `cli.trigger`         | Manually fired via `maestro-cli cue trigger`                           | -                                                                                                              |
 
 ### Scheduled Tasks (one-shot and repeating)
 
@@ -235,11 +235,34 @@ A **Command node** is a subscription that runs a shell command or invokes `maest
       command: send # required; only 'send' is supported today
       target: <session-id-or-name> # required, supports template vars
       message: '{{CUE_SOURCE_OUTPUT}}' # optional; default is exactly this
+      new_tab: true # optional boolean; default false, fresh visible background AI tab
   # standard subscription fields all still apply (pipeline_name, target_node_key,
   # source_session, source_sub, event-specific fields like interval_minutes, etc.)
 ```
 
-**Validator rules:** `command.mode` must be `'shell'` or `'cli'`; `command.shell` must be non-empty; `command.cli.command` must be `'send'`; `command.cli.target` must be non-empty; `command.cli.message` must be a string when present. **`fan_out` is rejected** on `action: command` subs - Command nodes do not fan out. `output_prompt` and the legacy `cli_output` field are silently skipped at runtime for command actions.
+**Validator rules:** `command.mode` must be `'shell'` or `'cli'`; `command.shell` must be non-empty; `command.cli.command` must be `'send'`; `command.cli.target` must be non-empty; `command.cli.message` must be a string when present; `command.cli.new_tab` must be a boolean when present. **`fan_out` is rejected** on `action: command` subs - Command nodes do not fan out. `output_prompt` and the legacy `cli_output` field are silently skipped at runtime for command actions.
+
+**Agent message to a fresh tab:** In the Pipeline Graph, choose **Agent message**, pick the target, enter a message or slash command, and enable **Run in a new agent tab**. This uses the structured `cli` block below; no user-written CLI script is needed:
+
+```yaml
+- name: triage-new-issue
+  pipeline_name: Synapse issue triage
+  event: github.issue
+  repo: chr1sw0/Synapse-Server
+  agent_id: <synapse-agent-id>
+  action: command
+  command:
+    mode: cli
+    cli:
+      command: send
+      target: <synapse-agent-id>
+      message: '/triage {{CUE_GH_NUMBER}}'
+      new_tab: true
+```
+
+Cue substitutes event variables before delivery. Existing Maestro custom and project/provider prompt commands expand with their arguments as they do in the composer; `/triage` must already exist for the target agent. Each `new_tab: true` dispatch creates a fresh AI tab visible in the target's tab strip. The active agent and active tab stay unchanged. If the target is busy, the message enters its serial execution queue. With `new_tab` omitted or `false`, delivery uses the target's active tab. The Maestro desktop app must be running.
+
+**Completion means delivery:** A `mode: cli` command completes when its message is delivered, without waiting for the target AI turn. Downstream subscriptions receive the delivery command's stdout, not the target AI's answer.
 
 **Fields that are NOT configurable per node** (and what they actually use):
 
@@ -371,6 +394,7 @@ When a user asks you to add, modify, or debug a Cue subscription:
 6. For full schema, field reference, and worked examples, fetch the official Cue docs: https://docs.runmaestro.ai/maestro-cue-configuration.md, https://docs.runmaestro.ai/maestro-cue-events.md, https://docs.runmaestro.ai/maestro-cue-advanced.md, https://docs.runmaestro.ai/maestro-cue-examples.md. Don't guess field names.
 7. After writing, validate with `{{MAESTRO_CLI_PATH}} cue list` - the engine reloads automatically when the file changes.
 8. For anything clock-driven - one-off ("do X at 4pm") or repeating ("every weekday at 9am", "every 30 minutes") - use `{{MAESTRO_CLI_PATH}} cue schedule` - see the **Scheduled Tasks** section. Never hand-write `time.once`, `time.scheduled`, or `time.heartbeat` subscriptions; let the CLI generate them, and point the user at Maestro Cue → Scheduled Tasks to manage them.
+9. **Per-step model and effort.** A subscription that runs an agent may set `tier: low|medium|high` OR an exact `model: <id>`, plus `effort: low|medium|high`. They override the agent's own model for that run only. Tier and effort map per provider (Claude: tier `high` = opus, effort `high` = max). Codex, Copilot-CLI, and OpenCode have no tier table, so use `model` there. Never set both `tier` and `model`, and never set them on `action: command` or `action: notify`; the validator rejects all three cases. Typical use: `tier: low` on a high-volume triage step, `tier: high` on the one synthesis step that needs it. To change it on a subscription that already exists, run `{{MAESTRO_CLI_PATH}} cue model <subscription> --tier high --effort low` (or `--model <id>`, `--clear-model`, `--clear-effort`) instead of hand-editing the YAML; with no setting flag it prints the current choice and what it resolves to. When creating a scheduled task, pass `--tier` / `--model` / `--effort` to `cue schedule`.
 
 ### Multi-Root Pipelines (agents in different project roots)
 
@@ -542,6 +566,23 @@ By default, a `github.pull_request` / `github.issue` subscription fires **once**
 ```
 
 Counter semantics: the **initial discovery fire is always allowed** and does NOT count toward the cap. With `max_notifications: 10` you get 1 initial + 10 re-fires = 11 total fires per PR/issue. Once the cap is hit, the poller stops emitting events for that item but freezes its tracked revision, so raising the cap later resumes from the right point rather than replaying stale activity.
+
+**"React within seconds, not on the next poll" - add a `webhook` block to a GitHub trigger.**
+
+Any `github.pull_request` / `github.issue` / `github.label` subscription can also take GitHub webhook deliveries. Polling continues as a reconcile (every 30 minutes unless `poll_minutes` is set), and a change seen by both fires once. Only add this when the user has, or will set up, a GitHub webhook that can reach Maestro (a tunnel or reverse proxy to `http://127.0.0.1:17997/cue/<path>`, content type `application/json`, the same secret). Never put the secret in the YAML: use `secret_env`.
+
+```yaml
+- name: pr-review-fast
+  event: github.pull_request
+  enabled: true
+  repo: owner/name
+  webhook:
+    path: gh-prs # served at /cue/gh-prs
+    secret_env: GH_WEBHOOK_SECRET # GitHub's X-Hub-Signature-256 is checked by default
+  agent_id: <agent-id>
+  prompt: |
+    Review PR #{{CUE_GH_NUMBER}}: {{CUE_GH_TITLE}} - {{CUE_GH_URL}}
+```
 
 **"When pending tasks pile up in /docs/tasks, work on them" → `task.pending`**
 

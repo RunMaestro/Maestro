@@ -226,6 +226,28 @@ describe('pipelineValidation', () => {
 		});
 
 		describe('per-event trigger config', () => {
+			it('GitHub triggers need a secret once any webhook setting is filled in', () => {
+				for (const eventType of ['github.pull_request', 'github.issue', 'github.label'] as const) {
+					const t = triggerNode('t1', eventType, { repo: 'org/repo', webhook_path: 'gh' });
+					const a = agentNode('a1', { inputPrompt: 'p' });
+					const errors = validatePipelines([pipeline('GH', [t, a], [edge('e1', 't1', 'a1')])]);
+					expect(
+						errors.some((e) => /secret environment variable to take GitHub webhooks/.test(e))
+					).toBe(true);
+				}
+			});
+
+			it('GitHub triggers accept webhook settings with a secret, and no webhook at all', () => {
+				for (const config of [
+					{ repo: 'org/repo', webhook_secret_env: 'GH_WEBHOOK_SECRET' },
+					{ repo: 'org/repo' },
+				]) {
+					const t = triggerNode('t1', 'github.pull_request', config);
+					const a = agentNode('a1', { inputPrompt: 'p' });
+					expect(validatePipelines([pipeline('GH', [t, a], [edge('e1', 't1', 'a1')])])).toEqual([]);
+				}
+			});
+
 			it('time.heartbeat requires positive interval_minutes', () => {
 				const cases = [
 					{ interval_minutes: undefined },
@@ -282,7 +304,7 @@ describe('pipelineValidation', () => {
 				expect(errors.some((e) => /needs a "watch" glob pattern/.test(e))).toBe(true);
 			});
 
-			it('github.pull_request accepts missing repo (defaults to current)', () => {
+			it('github.pull_request leaves a missing repo to readiness (no error here)', () => {
 				const t = triggerNode('t1', 'github.pull_request', {});
 				const a = agentNode('a1', { inputPrompt: 'p' });
 				expect(validatePipelines([pipeline('PR', [t, a], [edge('e1', 't1', 'a1')])])).toEqual([]);
@@ -292,7 +314,9 @@ describe('pipelineValidation', () => {
 				const t = triggerNode('t1', 'github.pull_request', { repo: '  ' });
 				const a = agentNode('a1', { inputPrompt: 'p' });
 				const errors = validatePipelines([pipeline('PR', [t, a], [edge('e1', 't1', 'a1')])]);
-				expect(errors.some((e) => /empty "repo"/.test(e))).toBe(true);
+				const repoError = errors.find((e) => /empty "repo"/.test(e));
+				expect(repoError).toContain('set it to "owner/repo"');
+				expect(repoError).not.toMatch(/leave blank/);
 			});
 
 			it('github.issue same rule as pull_request', () => {

@@ -3,6 +3,7 @@ import type { MutableRefObject } from 'react';
 import type { Theme } from '../../../types';
 import { highlightSlashCommand } from '../../../utils/search';
 import type { SlashCommand } from '../types';
+import { elevatedSurfaceStyle } from '../../../utils/elevatedSurface';
 
 interface SlashCommandPopoverProps {
 	isOpen: boolean;
@@ -35,8 +36,8 @@ export const SlashCommandPopover = memo(function SlashCommandPopover({
 
 	return (
 		<div
-			className="absolute bottom-full left-0 right-0 mb-2 border rounded-lg shadow-2xl overflow-hidden"
-			style={{ backgroundColor: theme.colors.bgSidebar, borderColor: theme.colors.border }}
+			className="absolute bottom-full left-0 right-0 mb-2 rounded-lg overflow-hidden"
+			style={elevatedSurfaceStyle(theme)}
 		>
 			<div
 				className="overflow-y-auto max-h-96 scrollbar-thin"

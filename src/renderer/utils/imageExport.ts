@@ -18,6 +18,8 @@ import { DIAGRAMS_DIR } from '../../shared/maestro-paths';
 import { joinPath, isAbsolutePath, fileTimestampSlug } from '../../shared/formatters';
 import { requestFileTreeRefresh } from './fileTreeRefresh';
 import { isSessionImageRef } from '../../shared/sessionImageRefs';
+import { isWebDesktop } from './runtimeContext';
+import { readBlobAsDataUrl } from './imageData';
 
 /** Anything the right-click menu can copy or save. */
 export type ExportableImage = SVGSVGElement | HTMLImageElement;
@@ -145,12 +147,7 @@ export async function imgToDataUrl(img: HTMLImageElement): Promise<string | null
 	try {
 		const response = await fetch(src);
 		const blob = await response.blob();
-		return await new Promise<string>((resolve, reject) => {
-			const reader = new FileReader();
-			reader.onload = () => resolve(reader.result as string);
-			reader.onerror = () => reject(reader.error);
-			reader.readAsDataURL(blob);
-		});
+		return await readBlobAsDataUrl(blob);
 	} catch {
 		// Fetch can fail on custom protocols or a restrictive CSP - fall back to
 		// reading the pixels the browser already painted.
@@ -453,7 +450,7 @@ export async function saveImageElementToDisk(el: ExportableImage): Promise<SaveI
 	const defaultName = svg ? 'maestro-diagram.svg' : `maestro-image.${sourceExt}`;
 
 	const saveFile = window.maestro?.dialog?.saveFile;
-	if (!saveFile) {
+	if (!saveFile || isWebDesktop()) {
 		// No native dialog (web renderer): fall back to a plain browser download.
 		if (svg) downloadSvg(svg, defaultName);
 		else downloadDataUrl(sourceDataUrl!, defaultName);
@@ -508,7 +505,7 @@ export async function saveImageDataUrlToDisk(
 	const name = defaultName?.trim() || `maestro-image.${ext}`;
 
 	const saveFile = window.maestro?.dialog?.saveFile;
-	if (!saveFile) {
+	if (!saveFile || isWebDesktop()) {
 		downloadDataUrl(dataUrl, name);
 		return { saved: true };
 	}

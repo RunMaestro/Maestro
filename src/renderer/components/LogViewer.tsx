@@ -23,6 +23,7 @@ import { safeClipboardWrite } from '../utils/clipboard';
 import { ConfirmModal } from './ConfirmModal';
 import { EscCloseButton } from './ui/EscCloseButton';
 import { useSessionStore } from '../stores/sessionStore';
+import { useSettingsStore } from '../stores/settingsStore';
 import { logger } from '../utils/logger';
 import { formatRelativeTime } from '../../shared/formatters';
 
@@ -134,6 +135,9 @@ export function LogViewer({
 	enabledLevels.add('autorun');
 	// Cue is always enabled (event-driven automation tracking)
 	enabledLevels.add('cue');
+	// The CUE pill is drawn only while Maestro Cue is on: with the feature off
+	// the engine logs nothing, so the pill would name a disabled feature.
+	const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures?.maestroCue === true);
 
 	// Initialize selectedLevels from saved settings if available
 	const [selectedLevels, setSelectedLevelsState] = useState<
@@ -596,6 +600,7 @@ export function LogViewer({
 				</button>
 				{/* Individual level toggle buttons */}
 				{(['debug', 'info', 'warn', 'error', 'toast', 'autorun', 'cue'] as const).map((level) => {
+					if (level === 'cue' && !maestroCueEnabled) return null;
 					const isSelected = selectedLevels.has(level);
 					const isEnabled = enabledLevels.has(level);
 					return (

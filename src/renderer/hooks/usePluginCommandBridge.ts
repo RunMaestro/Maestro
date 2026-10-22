@@ -21,6 +21,7 @@
 import { useEffect } from 'react';
 import { registerCommand, runCommandById } from '../stores/pluginCommandRegistry';
 import { getModalActions } from '../stores/modalStore';
+import { useSettingsStore } from '../stores/settingsStore';
 
 /**
  * Curated global command ids. These are part of the plugin-facing contract
@@ -42,7 +43,13 @@ function registerGlobalCommands(): () => void {
 		registerCommand({
 			id: 'maestro.usageDashboard.open',
 			title: 'Open Usage Dashboard',
-			run: () => actions.setUsageDashboardOpen(true),
+			// The dashboard is an Encore Feature: a plugin cannot open what the
+			// user has switched off.
+			run: () => {
+				if (useSettingsStore.getState().encoreFeatures.usageStats) {
+					actions.setUsageDashboardOpen(true);
+				}
+			},
 		}),
 		registerCommand({
 			id: 'maestro.shortcutsHelp.open',

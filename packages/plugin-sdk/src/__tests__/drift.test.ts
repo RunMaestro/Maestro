@@ -96,9 +96,9 @@ describe('@maestro/plugin-sdk vendored-contract drift guard', () => {
 		expect(HOST_METHOD_CAPABILITY).toEqual(SRC_HOST_METHOD_CAPABILITY);
 	});
 
-	it('HOST_API_VERSION matches the source and is pinned to 1.16.0', () => {
+	it('HOST_API_VERSION matches the source and is pinned to 1.25.0', () => {
 		expect(HOST_API_VERSION).toBe(SRC_HOST_API_VERSION);
-		expect(HOST_API_VERSION).toBe('1.16.0');
+		expect(HOST_API_VERSION).toBe('1.25.0');
 	});
 
 	it('capability risk and descriptions match the source', () => {
@@ -168,6 +168,26 @@ describe('@maestro/plugin-sdk vendored-contract drift guard', () => {
 	it('validatePluginManifest agrees with the source on a malformed manifest', () => {
 		const malformed = { id: '1nope', name: '', tier: 7, maestro: {} };
 		expect(validatePluginManifest(malformed)).toEqual(srcValidatePluginManifest(malformed));
+	});
+
+	it('rejects impossible release dates in both vendored and host validators', () => {
+		const base = {
+			id: 'com.example.dated',
+			name: 'Dated',
+			version: '1.0.0',
+			tier: 0,
+			maestro: { minHostApi: HOST_API_VERSION },
+		};
+		for (const releaseDate of ['2026-02-30', '2026-04-31', '2025-02-29']) {
+			const manifest = { ...base, releaseDate };
+			expect(validatePluginManifest(manifest)).toEqual(srcValidatePluginManifest(manifest));
+			expect(validatePluginManifest(manifest).manifest).toBeNull();
+		}
+		for (const releaseDate of ['2024-02-29', '0000-01-01']) {
+			const manifest = { ...base, releaseDate };
+			expect(validatePluginManifest(manifest)).toEqual(srcValidatePluginManifest(manifest));
+			expect(validatePluginManifest(manifest).manifest).not.toBeNull();
+		}
 	});
 
 	it('validatePluginManifest agrees with the source on a well-formed manifest with category', () => {
@@ -256,5 +276,75 @@ describe('@maestro/plugin-sdk vendored-contract drift guard', () => {
 		const wildcard = { ...base, permissions: [{ capability: 'process:spawn', scope: '*' }] };
 		expect(validatePluginManifest(wildcard)).toEqual(srcValidatePluginManifest(wildcard));
 		expect(validatePluginManifest(wildcard).manifest).toBeNull();
+	});
+});
+
+import { MEDIA_LIMITS, MEDIA_MODEL_IDS, MEDIA_ERROR_CODES } from '../index';
+import {
+	MEDIA_LIMITS as SRC_MEDIA_LIMITS,
+	MEDIA_MODEL_IDS as SRC_MEDIA_MODELS,
+	MEDIA_ERROR_CODES as SRC_MEDIA_ERRORS,
+} from '../../../../src/shared/plugins/media-tools';
+it('media ceilings, model IDs and failure codes match the host', () => {
+	expect(MEDIA_LIMITS).toEqual(SRC_MEDIA_LIMITS);
+	expect(MEDIA_MODEL_IDS).toEqual(SRC_MEDIA_MODELS);
+	expect(MEDIA_ERROR_CODES).toEqual(SRC_MEDIA_ERRORS);
+});
+
+describe('vendored services contract parity', () => {
+	it('matches manifest parsing for closed provides/requires declarations', async () => {
+		const host = await import('../../../../src/shared/plugins/services');
+		const sdk = await import('../index');
+		expect(sdk.SERVICE_LIMITS).toEqual(host.SERVICE_LIMITS);
+		expect(sdk.SERVICE_ERROR_CODES).toEqual(host.SERVICE_ERROR_CODES);
+		for (const version of [
+			'1.0.0',
+			'^1.0.0',
+			'*',
+			'>=1.0.0',
+			'bad',
+			'2.0.0',
+			'1.0.0-beta',
+			'1.00.0',
+			'1.999999999999999999999.0',
+			'^1.999999999999999999999.0',
+		]) {
+			const provided = { id: 'transcription', contract: host.TRANSCRIPTION_CONTRACT, version };
+			const required = {
+				id: 'voice',
+				provider: 'example.media',
+				service: 'transcription',
+				contract: host.TRANSCRIPTION_CONTRACT,
+				version,
+				optional: true,
+			};
+			expect(sdk.parseServiceDeclarations([provided], [required], 1)).toEqual(
+				host.parseServiceDeclarations([provided], [required], 1)
+			);
+		}
+		const manifest = {
+			id: 'example.plugin',
+			name: 'Example',
+			version: '1.0.0',
+			tier: 1,
+			entry: 'main.js',
+			maestro: { minHostApi: '1.25.0' },
+			provides: [{ id: 'transcription', contract: host.TRANSCRIPTION_CONTRACT, version: '1.0.0' }],
+			requires: [
+				{
+					id: 'voice',
+					provider: 'example.media',
+					service: 'transcription',
+					contract: host.TRANSCRIPTION_CONTRACT,
+					version: '^1.0.0',
+					optional: true,
+				},
+			],
+		};
+		for (const scope of ['example.media/transcription', 'example.media/*', undefined]) {
+			const scoped = { ...manifest, permissions: [{ capability: 'services:call', scope }] };
+			expect(validatePluginManifest(scoped)).toEqual(srcValidatePluginManifest(scoped));
+		}
+		expect(validatePluginManifest(manifest)).toEqual(srcValidatePluginManifest(manifest));
 	});
 });

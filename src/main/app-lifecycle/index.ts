@@ -24,3 +24,4 @@ export {
 	type SettingsWatcher,
 	type SettingsWatcherDependencies,
 } from './settings-watcher';
+export { claimDataDirForDesktop, type DataDirClaim, type DataDirGuardDeps } from './data-dir-guard';

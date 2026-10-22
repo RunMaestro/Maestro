@@ -32,6 +32,7 @@ import { markTabRunningQueuedItem, resolveQueuedItemTarget } from '../../utils/t
 import {
 	hasRunnableQueueItem,
 	nextRunnableQueueItem,
+	spawnCollisionCooldownMs,
 	takeNextRunnableQueueItem,
 } from '../../utils/executionQueue';
 import {
@@ -41,6 +42,7 @@ import {
 } from '../../stores/retryStore';
 import { queueIsHeldByRetry } from './internal/helpers/exitDequeue';
 import { logger } from '../../utils/logger';
+import { useOwnedSideEffectGate } from './internal/useOwnedSessionGate';
 
 // ============================================================================
 // Dependencies interface
@@ -124,6 +126,7 @@ function buildDispatchDeps(d: UseQueueProcessingDeps): ProcessQueuedItemDeps {
 export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProcessingReturn {
 	const depsRef = useRef(deps);
 	depsRef.current = deps;
+	const sideEffectGate = useOwnedSideEffectGate();
 
 	// --- Narrow reactive subscriptions (not the full sessions array) ---
 	const sessionsLoaded = useSessionStore((s) => s.sessionsLoaded);
@@ -142,6 +145,7 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 	// Process a queued item - delegates to agentStore action.
 	// Stable identity: conductor profile + command refs read from depsRef.
 	const processQueuedItem = useCallback(async (sessionId: string, item: QueuedItem) => {
+		if (!sideEffectGate.current?.(sessionId)) return;
 		await useAgentStore
 			.getState()
 			.processQueuedItem(sessionId, item, buildDispatchDeps(depsRef.current));
@@ -169,12 +173,20 @@ export function useQueueProcessing(deps: UseQueueProcessingDeps): UseQueueProces
 	// back. `drainIdleQueues` does exactly that.
 	const dispatchQueuedItem = useCallback(
 		(session: { id: string; executionQueue: QueuedItem[] }): boolean => {
+			if (!sideEffectGate.current?.(session.id)) return false;
 			const { setSessions } = useSessionStore.getState();
 
 			// Skip paused items: dispatch the first runnable one. If all items are
 			// held, there's nothing to do.
 			const firstItem = nextRunnableQueueItem(session.executionQueue);
 			if (!firstItem) return false;
+
+			// The last dispatch of this item was refused because its tab's previous
+			// process still owned the key. A refused dispatch restores exactly the
+			// state this poll fires on, so without a wait it re-dispatches into the
+			// same refusal on every render. The real exit (or Stop, or Force Send)
+			// dispatches without this wait; the poll looks back once it has passed.
+			if (spawnCollisionCooldownMs(firstItem.id) > 0) return false;
 
 			// Agent Resilience owns the queue while a retry counts down. The exit path
 			// already holds it (chooseNextQueuedItem returns 'wait'), which leaves the

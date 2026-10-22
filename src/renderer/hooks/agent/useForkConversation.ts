@@ -1,6 +1,11 @@
 import { useCallback } from 'react';
 import type { LogEntry } from '../../types';
-import { createTabAtPosition, getTabDisplayName, getActiveTab } from '../../utils/tabHelpers';
+import {
+	createTabAtPosition,
+	getTabDisplayName,
+	getActiveTab,
+	settleTabThinkingState,
+} from '../../utils/tabHelpers';
 import { notifyToast } from '../../stores/notificationStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { captureException } from '../../utils/sentry';
@@ -233,26 +238,21 @@ You are continuing this conversation from the fork point above. Briefly acknowle
 					source: 'system',
 					text: `Error: Failed to spawn agent - ${(error as Error).message}`,
 				};
+				// Settle only the fork's tab: another tab mid-turn keeps the agent busy.
 				useSessionStore.getState().setSessions((prev) =>
 					prev.map((s) => {
 						if (s.id !== session.id) return s;
-						return {
-							...s,
-							state: 'idle',
-							busySource: undefined,
-							thinkingStartTime: undefined,
-							aiTabs: s.aiTabs.map((tab) =>
-								tab.id === newTabId
-									? {
-											...tab,
-											state: 'idle' as const,
-											thinkingStartTime: undefined,
-											awaitingSessionId: false,
-											logs: [...tab.logs, errorLog],
-										}
-									: tab
-							),
-						};
+						return settleTabThinkingState(
+							{
+								...s,
+								aiTabs: s.aiTabs.map((tab) =>
+									tab.id === newTabId
+										? { ...tab, awaitingSessionId: false, logs: [...tab.logs, errorLog] }
+										: tab
+								),
+							},
+							newTabId
+						);
 					})
 				);
 			}

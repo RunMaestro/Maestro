@@ -99,7 +99,9 @@ export interface CuePersistedOutput {
  *
  * Returns null - never an empty string - for a run that printed nothing, which
  * is what makes `WHERE output_excerpt IS NOT NULL` the noise filter on
- * `cue_events`.
+ * `cue_events`. The converse holds too: visible stdout always yields an
+ * excerpt, even one that is only a table or a single run-on line, or History
+ * would hide a run that answered.
  */
 export function buildCuePersistedOutput(
 	result: Pick<CueRunResult, 'stdout' | 'stderr'>

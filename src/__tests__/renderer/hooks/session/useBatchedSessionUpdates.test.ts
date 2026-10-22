@@ -186,3 +186,105 @@ describe('useBatchedSessionUpdates accumulator preserves resolved window', () =>
 		expect(tab?.usageStats?.contextWindowResolved).toBe(true);
 	});
 });
+
+/**
+ * A tab's usage record used to drop the provider's occupancy snapshot, leaving
+ * the header gauge only the turn's summed token spend to measure. On a 1M
+ * window that sum stays under the limit, so it was displayed as the context
+ * size (issue #1782). The snapshot now rides with the input/cache fields.
+ */
+describe('useBatchedSessionUpdates carries the occupancy snapshot on a tab', () => {
+	const snapshot = (inputTokens: number): NonNullable<UsageStats['absoluteUsage']> => ({
+		inputTokens,
+		outputTokens: 600,
+		cacheReadInputTokens: 78_900,
+		cacheCreationInputTokens: 4_500,
+		reasoningTokens: 0,
+	});
+
+	const turn = (over: Partial<UsageStats> = {}): UsageStats => ({
+		inputTokens: 22,
+		outputTokens: 4_100,
+		cacheReadInputTokens: 437_222,
+		cacheCreationInputTokens: 89_297,
+		totalCostUsd: 0.4,
+		contextWindow: ONE_M,
+		contextWindowResolved: true,
+		contextWindowModel: 'opus',
+		...over,
+	});
+
+	const tabStats = () => useSessionStore.getState().sessions[0].aiTabs?.[0]?.usageStats;
+
+	beforeEach(() => {
+		useSessionStore.setState({
+			sessions: [{ id: 's1', aiTabs: [{ id: 't1', logs: [] }] } as unknown as Session],
+		} as never);
+	});
+
+	it('stores the snapshot beside the turn totals', () => {
+		const { result } = renderHook(() => useBatchedSessionUpdates(10_000));
+		act(() => {
+			result.current.updateUsage('s1', 't1', turn({ absoluteUsage: snapshot(3) }));
+			result.current.flushNow();
+		});
+
+		expect(tabStats()?.absoluteUsage).toEqual(snapshot(3));
+		// The turn's spend is untouched: it still feeds the token rows.
+		expect(tabStats()?.cacheReadInputTokens).toBe(437_222);
+	});
+
+	it('keeps the newest snapshot when two reports land in one batch', () => {
+		const { result } = renderHook(() => useBatchedSessionUpdates(10_000));
+		act(() => {
+			result.current.updateUsage('s1', 't1', turn({ absoluteUsage: snapshot(3) }));
+			result.current.updateUsage('s1', 't1', turn({ absoluteUsage: snapshot(9) }));
+			result.current.flushNow();
+		});
+
+		expect(tabStats()?.absoluteUsage).toEqual(snapshot(9));
+	});
+
+	it('drops a stale snapshot when a later real report carries none', () => {
+		const { result } = renderHook(() => useBatchedSessionUpdates(10_000));
+		act(() => {
+			result.current.updateUsage('s1', 't1', turn({ absoluteUsage: snapshot(3) }));
+			result.current.flushNow();
+		});
+		act(() => {
+			result.current.updateUsage('s1', 't1', turn({ cacheReadInputTokens: 50_000 }));
+			result.current.flushNow();
+		});
+
+		expect(tabStats()?.cacheReadInputTokens).toBe(50_000);
+		expect(tabStats()?.absoluteUsage).toBeUndefined();
+	});
+
+	it('preserves the snapshot across an output-only delta and a window correction', () => {
+		const { result } = renderHook(() => useBatchedSessionUpdates(10_000));
+		act(() => {
+			result.current.updateUsage('s1', 't1', turn({ absoluteUsage: snapshot(3) }));
+			result.current.flushNow();
+		});
+		act(() => {
+			result.current.updateUsage(
+				's1',
+				't1',
+				turn({
+					inputTokens: 0,
+					cacheReadInputTokens: 0,
+					cacheCreationInputTokens: 0,
+					outputTokens: 120,
+				})
+			);
+			result.current.flushNow();
+		});
+		expect(tabStats()?.absoluteUsage).toEqual(snapshot(3));
+
+		act(() => {
+			result.current.updateUsage('s1', 't1', turn({ contextWindowCorrectionOnly: true }));
+			result.current.flushNow();
+		});
+		expect(tabStats()?.absoluteUsage).toEqual(snapshot(3));
+	});
+});

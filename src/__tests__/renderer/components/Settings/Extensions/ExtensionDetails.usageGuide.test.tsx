@@ -1,5 +1,5 @@
 /**
- * The "How to use it" block in the Extensions details pane.
+ * The usage guide in the Extensions details pane's Help tab.
  *
  * A user who turns a feature on and cannot work out how to summon it has been
  * failed by the panel, so these pin the two things that make the block worth
@@ -8,13 +8,14 @@
  * the feature definition - a rebound key must never leave the panel advertising
  * a combination that does nothing.
  */
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ExtensionDetails } from '../../../../../renderer/components/Settings/Extensions/ExtensionDetails';
 import { builtinExtension } from '../../../../../renderer/components/Settings/Extensions/extensionModel';
 import type { UnifiedExtension } from '../../../../../renderer/components/Settings/Extensions/extensionModel';
 import {
 	CONCERTO_FIRST_PARTY_PLUGIN,
+	FIRST_PARTY_PLUGIN_DEFINITIONS,
 	PIANOLA_FIRST_PARTY_PLUGIN,
 } from '../../../../../shared/plugins/first-party';
 import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';
@@ -108,12 +109,25 @@ describe('ExtensionDetails usage guide', () => {
 		);
 	});
 
-	it('renders nothing for a feature with no usage guide', () => {
+	it('says so, instead of an empty tab, for an extension with no guide', () => {
 		const bare = { ...concertoExtension(), usage: undefined };
 		renderDetails(bare);
 
 		expect(screen.queryByTestId('extension-usage-guide')).toBeNull();
+		expect(screen.getByTestId('extension-help-missing')).toHaveTextContent(
+			'does not ship a usage guide'
+		);
 	});
+
+	// `usage` is required on the type; this pins that no definition dodges it
+	// with an empty guide.
+	it.each(FIRST_PARTY_PLUGIN_DEFINITIONS.map((d) => [d.name, d] as const))(
+		'%s ships a guide with an overview',
+		(_name, def) => {
+			expect(def.usage.overview.length).toBeGreaterThan(0);
+			for (const paragraph of def.usage.overview) expect(paragraph.trim()).not.toBe('');
+		}
+	);
 });
 
 /**
@@ -127,14 +141,16 @@ describe('ExtensionDetails usage guide - walkthrough and guard rails', () => {
 		useSettingsStore.setState({ shortcuts: { ...DEFAULT_SHORTCUTS } as never });
 	});
 
-	function pianolaExtension(): UnifiedExtension {
+	function pianolaExtension(enabled = true): UnifiedExtension {
 		return builtinExtension({ flag: 'pianola', pluginBacking: PIANOLA_FIRST_PARTY_PLUGIN }, {
-			pianola: true,
+			pianola: enabled,
 		} as never);
 	}
 
 	it('numbers the setup walkthrough in the order the definition lists it', () => {
+		// Enabled Pianola opens on Settings; the guide is one click away.
 		renderDetails(pianolaExtension());
+		fireEvent.click(screen.getByTestId('extension-subtab-help'));
 
 		const steps = screen.getByTestId('extension-usage-steps');
 		const titles = PIANOLA_FIRST_PARTY_PLUGIN.usage!.steps!.map((s) => s.title);
@@ -145,7 +161,8 @@ describe('ExtensionDetails usage guide - walkthrough and guard rails', () => {
 	});
 
 	it('states the guard rails before the user enables anything', () => {
-		renderDetails(pianolaExtension());
+		// Disabled opens straight on Help, so the guard rails are the first read.
+		renderDetails(pianolaExtension(false));
 
 		const notes = screen.getByTestId('extension-usage-notes').textContent ?? '';
 		expect(notes).toContain('High-risk prompts ALWAYS escalate');

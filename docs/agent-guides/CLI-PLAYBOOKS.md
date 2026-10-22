@@ -270,12 +270,18 @@ Conventions to preserve when touching this:
 Send a message to an agent and receive a JSON response. Supports multi-turn conversations via session resumption.
 
 ```bash
-maestro-cli send <agent-id> <message> [-s, --session <id>]
+maestro-cli send <agent-id> <message> [-s, --session <id>] [--require-plugin-tools] [--require-tool-receipt <tool-id>]
 ```
 
 Options:
 
 - `--session <id>` - Resume an existing agent session for multi-turn conversations
+- `--require-plugin-tools` - Require the authenticated desktop plugin runner with active tools. If unavailable, fail instead of falling back to a standalone CLI run. Use with a supported local provider; the caller must still verify the specific tool result and any external delivery receipt.
+- `--require-tool-receipt <tool-id>` - Also require a host-observed successful call to this exact namespaced plugin tool ID (for Relay, `sh.maestro.relay/send`) with nonempty numeric `messageIds`. Implies the fail-closed desktop path. The JSON response adds `toolReceipts: [{ runId, agentId, toolId, messageIds }]`; exit status is nonzero if the provider fails, the tool is unavailable, or no matching receipt is observed. A failed run may still include receipts from a tool call that completed before the failure, so consumers must inspect them before retrying.
+- `--no-history` - Skip writing the History entry
+- `--no-synopsis` - Skip the synopsis turn; the History entry carries the response
+
+Every send writes one History entry on the target agent (`recordSendHistory` in `src/cli/commands/send.ts`). `resolveSendOrigin` picks the kind from the environment the command inherited: `CUE` when `MAESTRO_QUERY_SOURCE` is `cue`, `AGENT` (with `sourceAgentName`) when a caller identity is present, `USER` otherwise.
 
 Response format:
 
@@ -684,7 +690,9 @@ The batch processor outputs machine-parseable JSON Lines events (defined in `src
 
 After all tasks complete, the batch processor spawns the agent one more time to generate a synopsis (summary of work done). This uses a special prompt from `src/prompts/` and the same agent session for context continuity. The synopsis is parsed for structured data (title, description, files changed).
 
-The synopsis turn is pinned to the bottom of both ladders via `cheapTurnSettings()` (`src/shared/modelTiers.ts`) regardless of what the tasks ran at - it summarizes work that already happened, so paying premium rates for it is one wasted turn per task. Safe only because the synopsis is a leaf: its returned `agentSessionId` is discarded, so the downgrade cannot follow the conversation into a later real turn.
+The turn is `requestCliSynopsis()` in `src/cli/services/synopsis.ts`, the one synopsis spawn on the CLI: Auto Run and `maestro-cli send` both record their turns through it. It is pinned to the bottom of both ladders via `cheapResumeTurnSettings()` (`src/shared/modelTiers.ts`) regardless of what the tasks ran at - it summarizes work that already happened, so paying premium rates for it is one wasted turn per task. The one exception is a task that ran on a larger context window than the cheap model has (`opus[1m]`): the synopsis resumes that transcript, so it keeps the task's model and only drops effort. Safe only because the synopsis is a leaf: its returned `agentSessionId` is discarded, so the downgrade cannot follow the conversation into a later real turn.
+
+The helper returns `null` when there is nothing usable - the turn failed, printed only a provider error, or answered NOTHING_TO_REPORT - and the task keeps its default `[<document>] Task completed` label rather than recording an error line as the summary of the work.
 
 ### CLI Activity Registration
 
@@ -769,7 +777,7 @@ Machine-parseable output format. Each line is a complete JSON object. Used when 
 | Batch processor     | `src/cli/services/batch-processor.ts`                                                                          |
 | Playbook management | `src/cli/services/playbooks.ts`                                                                                |
 | Agent sessions      | `src/cli/services/agent-sessions.ts`                                                                           |
-| Desktop IPC client  | `src/cli/services/maestro-client.ts`                                                                           |
+| Desktop IPC client  | `src/cli/services/maestro-client.ts` over `src/shared/maestro-lib/client/bridge-connection.ts`                 |
 | Human output        | `src/cli/output/formatter.ts`                                                                                  |
 | JSONL output        | `src/cli/output/jsonl.ts`                                                                                      |
 | Send command        | `src/cli/commands/send.ts`                                                                                     |

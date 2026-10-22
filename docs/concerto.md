@@ -28,11 +28,13 @@ Use Movements for the roomy, multi-panel "dashboard" view of a task you are acti
 
 #### Opening and closing the stage
 
-The stage opens by itself the moment an agent composes a Concerto. You open and close it yourself in the three usual ways:
+Agents create and update Movements in the background. Creating a Concerto leaves the stage closed until you choose to open it. You open and close it yourself in the three usual ways:
 
 - **Hotkey** - `Opt+Cmd+C` / `Alt+Ctrl+C` toggles the stage.
 - **Command palette** - `Cmd+K` / `Ctrl+K`, then "Concerto Stage".
 - **Hamburger menu** - **Concerto** in the Left Bar menu.
+
+Clicking a Movement chip in chat also opens the stage and highlights that panel. The CLI command `maestro-cli open concerto` explicitly opens the stage.
 
 Escape (or the ESC pill in the header) closes it, and you can drag the window to whatever size you like - Maestro remembers it.
 
@@ -63,7 +65,7 @@ When an agent composes a view, its chat message should point at the view rather 
 
 Concerto is driven over the Maestro CLI bridge, so anything that can run `maestro-cli` - an agent mid-session, a playbook, or you at a shell - can compose views. Native views use JSON block specs; mockups use self-contained HTML documents.
 
-Agents should route inherently visual or interactive requests to Concerto without waiting for the user to name the feature. Board and card games, simulators, calculators, interactive demos, interface mockups, spatial diagrams, maps, and visual comparisons should open a useful surface on the first turn. For example, "let's play chess" should produce a playable board rather than a text-only request for algebraic notation. Text-only remains appropriate when the user explicitly asks for it or a visual surface adds no material value.
+Agents should route inherently visual or interactive requests to Concerto without waiting for the user to name the feature. Board and card games, simulators, calculators, interactive demos, interface mockups, spatial diagrams, maps, and visual comparisons should create a useful surface on the first turn. For example, "let's play chess" should produce a playable board rather than a text-only request for algebraic notation. Agents offer a Movement chip so you can open the result when you are ready; they open the stage themselves only when you explicitly ask. Text-only remains appropriate when the user explicitly asks for it or a visual surface adds no material value.
 
 ### Movement commands
 
@@ -77,13 +79,13 @@ maestro-cli movement state                                    # read visible lay
 maestro-cli movement progress <id> --title "Mockup" --phase composing
 ```
 
-`add` also accepts `--x`, `--y`, `--width`, and `--height`. `state` returns the current size of the Concerto stage plus every non-minimized panel's geometry and stacking layer, so an agent can place a new Movement without overlapping the others. It also reports whether the stage window is closed - panels survive that, so an agent can keep working and you see the result when you reopen it.
+`begin` reserves a host-rendered frame, and `add` creates or replaces its content. Both leave the stage's open or closed state unchanged. `add` also accepts `--x`, `--y`, `--width`, and `--height`. `state` returns the current size of the Concerto stage plus every non-minimized panel's geometry and stacking layer, so an agent can place a new Movement without overlapping the others. It also reports whether the stage window is closed - panels survive that, so an agent can keep working and you see the result when you reopen it.
 
 HTML Concerto requests run as independent design tracks in a compact conductor score above every Movement window. The score defaults above the bottom-right taskbar and can be dragged elsewhere. It uses one shared staff with compact measures for `composing`, `refining`, `arranging`, `reviewing`, and `testing`; each active Concerto is a numbered note that moves between measures as its work advances. When several mockups are requested, the parent agent assigns one track to each available subagent, and each subagent advances its own note with `movement progress`. The command updates only the progress pipeline; it does not create, move, or replace a Movement window.
 
 The parent registers each note in `composing`, then stops driving progress. Each assigned subagent advances only its own Movement id and emits the next phase when entering that work, not after completing it. `composing` covers design direction and the content outline; `refining` begins before the first complete implementation; `arranging` begins before the responsive, interaction, polish, and window-placement pass. This keeps early implementation time visible without artificially delaying `reviewing` or `testing`.
 
-For an interactive interface mockup, write a self-contained HTML file and open it directly:
+For an interactive interface mockup, write a self-contained HTML file and create its Movement in the background:
 
 ```bash
 maestro-cli movement add checkout-mockup \
@@ -95,7 +97,7 @@ maestro-cli movement add checkout-mockup \
 # After editing mockup.html, refresh the same panel in place
 maestro-cli movement update checkout-mockup --html-file mockup.html
 
-# Capture what is actually rendered, including runtime diagnostics
+# With the stage already open, capture the visible panel and runtime diagnostics
 maestro-cli movement inspect checkout-mockup --output .maestro/design/checkout.png
 
 # Exercise an interaction, then capture the resulting state
@@ -103,7 +105,7 @@ maestro-cli movement interact checkout-mockup --click "#continue-button"
 maestro-cli movement interact checkout-mockup --type "#email" --value "ada@example.com"
 ```
 
-`inspect` crops a PNG from the live embedded viewport and reports its exact size plus captured console messages and runtime errors. This gives the agent visual feedback instead of asking it to judge a mockup from source alone. `interact` performs a selector-scoped click or text entry inside the sandbox, so the agent can inspect hover-independent interaction states, validation, progress, and completion screens. The agent prompt requires a render, inspect, interact, and revise loop and activates a product-design persona for mockup requests.
+`inspect` requires an open stage and a visible panel. It crops a PNG from the live embedded viewport and reports its exact size plus captured console messages and runtime errors. It leaves a closed stage closed and reports that the panel is not visible. `interact` performs a selector-scoped click or text entry inside the sandbox, so the agent can inspect hover-independent interaction states, validation, progress, and completion screens. The agent prompt requires a render, inspect, interact, and revise loop while the stage is open and activates a product-design persona for mockup requests. When `movement state` reports `hidden: true`, agents keep creating and refining in the background, provide a Movement chip, and leave visual verification pending until you open the stage.
 
 ### Cadenza commands
 

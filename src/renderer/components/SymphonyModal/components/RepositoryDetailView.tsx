@@ -25,6 +25,7 @@ import { openUrl } from '../../../utils/openUrl';
 import { STATUS_COLORS } from '../helpers/statusInfo';
 import { useDocumentCycle } from '../hooks/useDocumentCycle';
 import { IssueCard } from './IssueCard';
+import { elevatedSurfaceStyle } from '../../../utils/elevatedSurface';
 
 export interface RepositoryDetailViewProps {
 	theme: Theme;
@@ -382,10 +383,9 @@ export function RepositoryDetailView({
 
 									{showDocDropdown && (
 										<div
-											className="absolute top-full left-0 right-0 mt-1 rounded shadow-lg z-10 overflow-hidden max-h-64 overflow-y-auto"
+											className="absolute top-full left-0 right-0 mt-1 rounded z-10 overflow-hidden max-h-64 overflow-y-auto"
 											style={{
-												backgroundColor: theme.colors.bgSidebar,
-												border: `1px solid ${theme.colors.border}`,
+												...elevatedSurfaceStyle(theme),
 											}}
 										>
 											{selectedIssue.documentPaths.map((doc, index) => (

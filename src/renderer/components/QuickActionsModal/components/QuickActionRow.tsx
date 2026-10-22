@@ -2,7 +2,7 @@ import type React from 'react';
 import { useState } from 'react';
 import { Bot } from 'lucide-react';
 import type { Theme } from '../../../types';
-import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
+import { ShortcutKeys } from '../../ui/ShortcutHint';
 import { getStatusColor } from '../../../utils/theme';
 import type { QuickAction } from '../types';
 import { RunningAgentSubtext } from './RunningAgentSubtext';
@@ -74,19 +74,7 @@ export function QuickActionRow({
 					<span className="font-medium truncate" data-action-label={action.label}>
 						{action.label}
 					</span>
-					{action.isInBatch && (
-						<div
-							className="flex-shrink-0 flex items-center gap-1 px-1.5 py-0.5 rounded text-3xs font-bold uppercase"
-							style={{
-								backgroundColor: theme.colors.warning + '30',
-								color: theme.colors.warning,
-							}}
-							title="Auto Run active"
-						>
-							<Bot className="w-2.5 h-2.5" />
-							AUTO
-						</div>
-					)}
+					{action.isInBatch && <AutoRunPill progress={action.autoRunProgress} theme={theme} />}
 				</div>
 				{action.runningInfo ? (
 					<RunningAgentSubtext
@@ -103,10 +91,44 @@ export function QuickActionRow({
 			    be handed its shortcut record, and an empty chip would draw a blank
 			    box where a chord belongs. */}
 			{action.shortcut?.keys?.length ? (
-				<span className="text-xs font-mono opacity-60" data-shortcut-hint="">
-					{formatShortcutKeys(action.shortcut.keys)}
-				</span>
+				<ShortcutKeys theme={theme} keys={action.shortcut.keys} onAccent={isSelected} />
 			) : null}
 		</button>
+	);
+}
+
+/**
+ * The AUTO pill, filled left to right by how far the run is. A goal-mode run
+ * reports the agent's own estimate, so its percent carries a `~`.
+ */
+function AutoRunPill({
+	progress,
+	theme,
+}: {
+	progress: QuickAction['autoRunProgress'];
+	theme: Theme;
+}) {
+	const percentLabel = progress ? `${progress.goalMode ? '~' : ''}${progress.percent}%` : null;
+	return (
+		<div
+			className="relative flex-shrink-0 flex items-center gap-1 px-1.5 py-0.5 rounded overflow-hidden text-3xs font-bold uppercase"
+			style={{
+				backgroundColor: theme.colors.warning + '30',
+				color: theme.colors.warning,
+			}}
+			title={percentLabel ? `Auto Run active: ${percentLabel} complete` : 'Auto Run active'}
+		>
+			{progress && (
+				<span
+					className="absolute inset-y-0 left-0 transition-[width] duration-500"
+					style={{ width: `${progress.percent}%`, backgroundColor: theme.colors.warning + '40' }}
+					data-testid="auto-run-pill-fill"
+					aria-hidden="true"
+				/>
+			)}
+			<Bot className="relative w-2.5 h-2.5" />
+			<span className="relative">AUTO</span>
+			{percentLabel && <span className="relative tabular-nums">{percentLabel}</span>}
+		</div>
 	);
 }

@@ -19,6 +19,7 @@ import {
 import { LayerStackProvider, useLayerStack } from '../../../renderer/contexts/LayerStackContext';
 import { useThoughtStreamStore } from '../../../renderer/stores/thoughtStreamStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useBatchStore } from '../../../renderer/stores/batchStore';
 import { useAutoRunSteeringStore } from '../../../renderer/stores/autoRunSteeringStore';
 import { mockTheme } from '../../helpers/mockTheme';
@@ -81,6 +82,7 @@ beforeEach(() => {
 	installLocalStorageMock();
 	useThoughtStreamStore.setState({ panelSessionId: null, buffers: {} });
 	useUIStore.setState({ rightPanelOpen: true });
+	useSettingsStore.setState({ rightPanelWidth: 480 } as never);
 	useBatchStore.setState({ batchRunStates: {} } as never);
 	useAutoRunSteeringStore.setState({ notes: {}, delivered: {} });
 });
@@ -242,7 +244,7 @@ describe('ThoughtStreamPanel tool activity', () => {
 	it('search matches the rendered line', () => {
 		seed();
 		renderPanel();
-		fireEvent.change(screen.getByPlaceholderText('Search activity...'), {
+		fireEvent.change(screen.getByPlaceholderText('Search thought stream...'), {
 			target: { value: 'npm test' },
 		});
 		expect(screen.getByText('npm test')).toBeInTheDocument();
@@ -305,7 +307,7 @@ describe('ThoughtStreamPanel tool activity', () => {
 		// they configured ("Bash") has to find it anyway.
 		seed();
 		renderPanel();
-		fireEvent.change(screen.getByPlaceholderText('Search activity...'), {
+		fireEvent.change(screen.getByPlaceholderText('Search thought stream...'), {
 			target: { value: 'Bash' },
 		});
 		expect(toolRow('Ran npm test')).not.toBeNull();
@@ -512,6 +514,279 @@ describe('ThoughtStreamPanel steering', () => {
 
 		expect(screen.getByTestId('steering-note-delivered')).toHaveTextContent('already read');
 		expect(screen.queryByLabelText('Cancel steering note')).not.toBeInTheDocument();
+	});
+
+	/** Park a note, hand it to a task, and return the ids that task took. */
+	const deliver = (...texts: string[]): string[] => {
+		for (const text of texts) useAutoRunSteeringStore.getState().addNote(SID, text);
+		return useAutoRunSteeringStore
+			.getState()
+			.takeNotes(SID)
+			.map((note) => note.id);
+	};
+
+	it('says the task is still working while a delivered note has no reply yet', () => {
+		runFor(SID);
+		deliver('already read');
+		useThoughtStreamStore.getState().openPanel(SID);
+		renderPanel();
+
+		expect(screen.getByTestId('steering-reply-waiting')).toHaveTextContent('still working');
+		expect(screen.queryByTestId('steering-reply')).not.toBeInTheDocument();
+	});
+
+	// A spinner over a run that no longer exists would spin forever.
+	it('stops claiming the task is working once the run is over', () => {
+		deliver('already read');
+		useThoughtStreamStore.getState().openPanel(SID);
+		renderPanel();
+
+		expect(screen.getByTestId('steering-reply-waiting')).toHaveTextContent(
+			'The run ended before this task replied'
+		);
+	});
+
+	it('shows what the task said back, and opens to the whole reply', () => {
+		runFor(SID);
+		const ids = deliver('use the v3 endpoint');
+		useAutoRunSteeringStore.getState().recordResponse(SID, ids, {
+			summary: '[steered] Switched to v3.',
+			text: '[steered] Switched to v3.\n\nSet aside the v2 instruction.',
+			success: true,
+		});
+		useThoughtStreamStore.getState().openPanel(SID);
+		renderPanel();
+
+		const reply = screen.getByTestId('steering-reply');
+		expect(reply).toHaveTextContent('[steered] Switched to v3.');
+		expect(screen.queryByTestId('steering-reply-full')).not.toBeInTheDocument();
+
+		fireEvent.click(reply.querySelector('button')!);
+		expect(screen.getByTestId('steering-reply-full')).toHaveTextContent(
+			'Set aside the v2 instruction.'
+		);
+
+		fireEvent.click(reply.querySelector('button')!);
+		expect(screen.queryByTestId('steering-reply-full')).not.toBeInTheDocument();
+	});
+
+	it('draws one reply under the notes a task took together', () => {
+		runFor(SID);
+		const ids = deliver('first', 'second');
+		useAutoRunSteeringStore.getState().recordResponse(SID, ids, {
+			summary: '[steered] did both',
+			text: '[steered] did both',
+			success: true,
+		});
+		useThoughtStreamStore.getState().openPanel(SID);
+		renderPanel();
+
+		expect(screen.getAllByTestId('steering-note-delivered')).toHaveLength(2);
+		expect(screen.getAllByTestId('steering-reply')).toHaveLength(1);
+	});
+
+	it('marks the reply of a task that failed, and offers nothing to open when there is no more', () => {
+		runFor(SID);
+		const ids = deliver('use the v3 endpoint');
+		useAutoRunSteeringStore.getState().recordResponse(SID, ids, {
+			summary: 'context limit reached',
+			text: 'context limit reached',
+			success: false,
+		});
+		useThoughtStreamStore.getState().openPanel(SID);
+		renderPanel();
+
+		const reply = screen.getByTestId('steering-reply');
+		expect(reply).toHaveTextContent('context limit reached');
+		expect(screen.getByLabelText('failed')).toBeInTheDocument();
+		expect(reply.querySelector('button')).toBeDisabled();
+	});
+
+	it('keeps the reply on screen after the run ends', () => {
+		const ids = deliver('stop after this doc');
+		useAutoRunSteeringStore.getState().recordResponse(SID, ids, {
+			summary: '[steered] Halting after this document.',
+			text: '[steered] Halting after this document.',
+			success: true,
+		});
+		useThoughtStreamStore.getState().openPanel(SID);
+		renderPanel();
+
+		expect(screen.getByTestId('steering-reply')).toHaveTextContent(
+			'[steered] Halting after this document.'
+		);
+	});
+
+	/**
+	 * The bar under the header. While a run can be steered it rests as two
+	 * labelled buttons, because steering as a fourth dim icon in the header was
+	 * not being found.
+	 */
+	describe('search / steer bar', () => {
+		const SEARCH = 'Search thought stream...';
+		const searchButton = () => screen.queryByTestId('thought-stream-search-open');
+		const open = () => {
+			useThoughtStreamStore.getState().openPanel(SID);
+			return renderPanel();
+		};
+
+		it('is just the search box between runs, since there is nothing to steer', () => {
+			open();
+
+			expect(screen.getByPlaceholderText(SEARCH)).toBeInTheDocument();
+			expect(searchButton()).toBeNull();
+			expect(steerButton()).toBeNull();
+		});
+
+		it('rests as two labelled buttons while a run can be steered', () => {
+			runFor(SID);
+			open();
+
+			expect(searchButton()).toHaveTextContent('Search thought stream');
+			expect(steerButton()).toHaveTextContent('Steer Auto Run');
+			expect(screen.queryByPlaceholderText(SEARCH)).not.toBeInTheDocument();
+			expect(screen.queryByPlaceholderText(/Steer the Auto Run/)).not.toBeInTheDocument();
+		});
+
+		it('swaps the whole bar for the search box, focused, when Search is clicked', () => {
+			runFor(SID);
+			open();
+
+			fireEvent.click(searchButton()!);
+
+			expect(screen.getByPlaceholderText(SEARCH)).toHaveFocus();
+			expect(searchButton()).toBeNull();
+			expect(steerButton()).toBeNull();
+		});
+
+		it('swaps the whole bar for the note box, focused, when Steer is clicked', () => {
+			runFor(SID);
+			open();
+
+			fireEvent.click(steerButton()!);
+
+			expect(screen.getByPlaceholderText(/Steer the Auto Run/)).toHaveFocus();
+			expect(searchButton()).toBeNull();
+		});
+
+		it('goes back to the buttons once a note is sent', () => {
+			runFor(SID);
+			open();
+
+			fireEvent.click(steerButton()!);
+			fireEvent.change(screen.getByPlaceholderText(/Steer the Auto Run/), {
+				target: { value: 'use the v3 endpoint' },
+			});
+			fireEvent.click(screen.getByTestId('thought-stream-steer-send'));
+
+			expect(searchButton()).toBeInTheDocument();
+			expect(steerButton()).toBeInTheDocument();
+		});
+
+		it('counts the notes still waiting on the Steer button', () => {
+			runFor(SID);
+			useAutoRunSteeringStore.getState().addNote(SID, 'first');
+			useAutoRunSteeringStore.getState().addNote(SID, 'second');
+			open();
+
+			expect(screen.getByTestId('thought-stream-steer-pending-count')).toHaveTextContent('2');
+		});
+
+		// An input holding nothing must not squat on the bar and hide the other
+		// button behind it.
+		it('puts an empty input away when it loses focus, and keeps one holding text', () => {
+			runFor(SID);
+			open();
+
+			fireEvent.click(searchButton()!);
+			fireEvent.blur(screen.getByPlaceholderText(SEARCH));
+			expect(searchButton()).toBeInTheDocument();
+
+			fireEvent.click(steerButton()!);
+			fireEvent.blur(screen.getByPlaceholderText(/Steer the Auto Run/));
+			expect(steerButton()).toBeInTheDocument();
+
+			fireEvent.click(steerButton()!);
+			const box = screen.getByPlaceholderText(/Steer the Auto Run/);
+			fireEvent.change(box, { target: { value: 'half a thought' } });
+			fireEvent.blur(box);
+			expect(screen.getByPlaceholderText(/Steer the Auto Run/)).toHaveValue('half a thought');
+		});
+
+		it('holds the bar in search while a filter is narrowing the feed', () => {
+			runFor(SID);
+			useThoughtStreamStore.getState().appendThought(SID, 'tab-a', 'reasoning about endpoints');
+			open();
+
+			fireEvent.click(searchButton()!);
+			const input = screen.getByPlaceholderText(SEARCH);
+			fireEvent.change(input, { target: { value: 'endpoints' } });
+			fireEvent.blur(input);
+
+			expect(screen.getByPlaceholderText(SEARCH)).toHaveValue('endpoints');
+			expect(searchButton()).toBeNull();
+		});
+
+		it('Escape in the search box drops the filter and returns to the buttons', () => {
+			runFor(SID);
+			open();
+
+			fireEvent.click(searchButton()!);
+			const input = screen.getByPlaceholderText(SEARCH);
+			fireEvent.change(input, { target: { value: 'endpoints' } });
+			fireEvent.keyDown(input, { key: 'Escape' });
+
+			expect(searchButton()).toBeInTheDocument();
+			expect(screen.getByText('Thought Stream')).toBeInTheDocument();
+
+			// The filter went with it: reopening search starts clean.
+			fireEvent.click(searchButton()!);
+			expect(screen.getByPlaceholderText(SEARCH)).toHaveValue('');
+		});
+
+		it('clearing the search returns to the buttons', () => {
+			runFor(SID);
+			open();
+
+			fireEvent.click(searchButton()!);
+			fireEvent.change(screen.getByPlaceholderText(SEARCH), { target: { value: 'endpoints' } });
+			fireEvent.click(screen.getByLabelText('Clear search'));
+
+			expect(searchButton()).toBeInTheDocument();
+		});
+
+		it('the search box offers no steer control of its own', () => {
+			runFor(SID);
+			open();
+
+			fireEvent.click(searchButton()!);
+
+			expect(screen.getByPlaceholderText(SEARCH)).toBeInTheDocument();
+			expect(screen.queryByLabelText('Steer the Auto Run')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('thought-stream-steer-toggle')).not.toBeInTheDocument();
+		});
+
+		it('keeps a note draft across an Escape', () => {
+			runFor(SID);
+			open();
+
+			fireEvent.click(steerButton()!);
+			const box = screen.getByPlaceholderText(/Steer the Auto Run/);
+			fireEvent.change(box, { target: { value: 'half a thought' } });
+			fireEvent.keyDown(box, { key: 'Escape' });
+			fireEvent.click(steerButton()!);
+
+			expect(screen.getByPlaceholderText(/Steer the Auto Run/)).toHaveValue('half a thought');
+		});
+
+		it('shortens both labels in a narrow panel rather than truncating them', () => {
+			useSettingsStore.setState({ rightPanelWidth: 320 } as never);
+			runFor(SID);
+			open();
+
+			expect(searchButton()!.textContent).toBe('Search');
+			expect(steerButton()!.textContent).toBe('Steer');
+		});
 	});
 
 	it('puts the note box away when the run ends rather than leaving a dead Send', () => {

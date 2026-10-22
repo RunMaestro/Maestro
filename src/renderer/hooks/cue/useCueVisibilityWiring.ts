@@ -5,9 +5,10 @@
  * scanner subsystem so it can pause expensive background work (file walks,
  * gh CLI fetches, file-event dispatch) while the app is hidden.
  *
- * Mounts once in App.tsx. The hook is fire-and-forget: failures to invoke
- * `cue:setActive` are logged at debug level - the worst case is the
- * scanners stay running, which is the pre-existing behavior.
+ * Mounts once in App.tsx, gated on the `maestroCue` Encore flag. The hook is
+ * fire-and-forget: failures to invoke `cue:setActive` are logged at debug
+ * level - the worst case is the scanners stay running, which is the
+ * pre-existing behavior.
  *
  * See CLAUDE-PERFORMANCE.md§"Visibility-Aware Operations" and PR-B 1.4.
  */
@@ -31,19 +32,22 @@ function notifyMain(active: boolean): void {
 	});
 }
 
-export function useCueVisibilityWiring(): void {
-	// Seed the main process with the current visibility state on mount.
-	// Without this, a renderer that starts up while the window is hidden
-	// would leave Cue active until the first visibilitychange event fires.
+export function useCueVisibilityWiring(enabled: boolean): void {
+	// Seed the main process with the current visibility state on mount (and
+	// whenever Cue is switched back on). Without this, a renderer that starts up
+	// while the window is hidden would leave Cue active until the first
+	// visibilitychange event fires. With the Cue Encore Feature off there is no
+	// engine to pause, so the hook sends nothing and listens to nothing.
 	useEffect(() => {
+		if (!enabled) return;
 		notifyMain(!document.hidden);
-	}, []);
+	}, [enabled]);
 
 	useEventListener(
 		'visibilitychange',
 		() => {
 			notifyMain(!document.hidden);
 		},
-		{ target: document }
+		{ target: document, enabled }
 	);
 }

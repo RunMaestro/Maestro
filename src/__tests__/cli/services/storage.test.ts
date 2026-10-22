@@ -37,6 +37,7 @@ vi.mock('os', () => ({
 
 import {
 	readSessions,
+	readLiveSessions,
 	readGroups,
 	readHistory,
 	readSettings,
@@ -54,6 +55,7 @@ import {
 	getSessionById,
 	getSessionsByGroup,
 	getConfigDirectory,
+	getSyncDir,
 	addHistoryEntry,
 	readSshRemotes,
 	writeSshRemotes,
@@ -169,6 +171,110 @@ describe('storage service', () => {
 			const result = getConfigDirectory();
 
 			expect(result).toBe(path.join('/home/testuser', '.config', 'Maestro'));
+		});
+	});
+
+	// Issue #1784: with a custom Storage Location the desktop keeps its synced
+	// stores somewhere else, and the CLI kept reading the copies left behind.
+	describe('custom sync path', () => {
+		const configDir = path.join('/Users/testuser', 'Library', 'Application Support', 'Maestro');
+		const syncDir = '/Users/testuser/Sync/Maestro';
+
+		function enoent(): NodeJS.ErrnoException {
+			const error = new Error('ENOENT') as NodeJS.ErrnoException;
+			error.code = 'ENOENT';
+			return error;
+		}
+
+		/** Serve the given files by absolute path; every other read is a missing file. */
+		function mockFiles(files: Record<string, unknown>): void {
+			vi.mocked(fs.readFileSync).mockImplementation((file) => {
+				const content = files[file as string];
+				if (content === undefined) throw enoent();
+				return JSON.stringify(content);
+			});
+		}
+
+		const bootstrap = {
+			[path.join(configDir, 'maestro-bootstrap.json')]: { customSyncPath: syncDir },
+		};
+
+		beforeEach(() => {
+			vi.mocked(fs.existsSync).mockImplementation((file) => file === syncDir);
+			vi.mocked(fs.writeFileSync).mockReset();
+			vi.spyOn(console, 'error').mockImplementation(() => {});
+		});
+
+		it('resolves the sync directory from the bootstrap store', () => {
+			mockFiles(bootstrap);
+
+			expect(getSyncDir()).toBe(syncDir);
+			expect(getConfigDirectory()).toBe(configDir);
+		});
+
+		it('reads agents from the sync directory, not the stale copy beside the bootstrap store', () => {
+			mockFiles({
+				...bootstrap,
+				[path.join(configDir, 'maestro-sessions.json')]: {
+					sessions: [mockSession({ id: 'stale' })],
+				},
+				[path.join(syncDir, 'maestro-sessions.json')]: {
+					sessions: [mockSession({ id: 'stale' }), mockSession({ id: 'created-after-move' })],
+				},
+			});
+
+			expect(readSessions().map((s) => s.id)).toEqual(['stale', 'created-after-move']);
+			expect(getSessionById('created-after-move')?.id).toBe('created-after-move');
+		});
+
+		it('reads groups and settings from the sync directory', () => {
+			mockFiles({
+				...bootstrap,
+				[path.join(syncDir, 'maestro-groups.json')]: { groups: [mockGroup({ id: 'synced' })] },
+				[path.join(syncDir, 'maestro-settings.json')]: { fontSize: 18 },
+				[path.join(configDir, 'maestro-settings.json')]: { fontSize: 12 },
+			});
+
+			expect(readGroups().map((g) => g.id)).toEqual(['synced']);
+			expect(readSettingValue('fontSize')).toBe(18);
+		});
+
+		it('writes settings to the sync directory', () => {
+			mockFiles({ ...bootstrap, [path.join(syncDir, 'maestro-settings.json')]: { fontSize: 12 } });
+
+			writeSettingValue('fontSize', 18);
+
+			expect(fs.writeFileSync).toHaveBeenCalledTimes(1);
+			expect(vi.mocked(fs.writeFileSync).mock.calls[0][0]).toBe(
+				path.join(syncDir, 'maestro-settings.json')
+			);
+		});
+
+		it('keeps reading agent configs from the config directory', () => {
+			mockFiles({
+				...bootstrap,
+				[path.join(configDir, 'maestro-agent-configs.json')]: {
+					configs: { 'claude-code': { customPath: '/real/claude' } },
+				},
+				[path.join(syncDir, 'maestro-agent-configs.json')]: {
+					configs: { 'claude-code': { customPath: '/migrated/copy/claude' } },
+				},
+			});
+
+			expect(getAgentCustomPath('claude-code')).toBe('/real/claude');
+		});
+
+		it('falls back to the config directory when the sync directory is missing', () => {
+			vi.mocked(fs.existsSync).mockReturnValue(false);
+			mockFiles({
+				...bootstrap,
+				[path.join(configDir, 'maestro-sessions.json')]: {
+					sessions: [mockSession({ id: 'local' })],
+				},
+			});
+
+			expect(getSyncDir()).toBe(configDir);
+			expect(readSessions().map((s) => s.id)).toEqual(['local']);
 		});
 	});
 
@@ -535,6 +641,33 @@ describe('storage service', () => {
 			);
 
 			expect(() => resolveAgentId('\u{1F94B}')).toThrow('Agent not found');
+		});
+
+		describe('a dormant Pianola agent', () => {
+			const stores = (encoreFeatures: Record<string, boolean>) =>
+				vi.mocked(fs.readFileSync).mockImplementation(((file: fs.PathOrFileDescriptor) =>
+					String(file).includes('maestro-settings')
+						? JSON.stringify({ encoreFeatures })
+						: JSON.stringify({
+								sessions: [
+									mockSession({ id: 'pianola-1', name: 'Pianola', isPianola: true }),
+									mockSession({ id: 'worker-1', name: 'Worker' }),
+								],
+							})) as never);
+
+			it('never resolves while the pianola flag is off, and says why', () => {
+				stores({ pianola: false });
+				expect(() => resolveAgentId('Pianola')).toThrow('Pianola is turned off');
+				expect(() => resolveAgentId('pianola-1')).toThrow('Pianola is turned off');
+				expect(readLiveSessions().map((s) => s.id)).toEqual(['worker-1']);
+				expect(getSessionById('pianola-1')).toBeUndefined();
+			});
+
+			it('resolves normally once the flag is on', () => {
+				stores({ pianola: true });
+				expect(resolveAgentId('Pianola')).toBe('pianola-1');
+				expect(getSessionById('pianola-1')?.id).toBe('pianola-1');
+			});
 		});
 
 		it('should throw with match list when ambiguous', () => {

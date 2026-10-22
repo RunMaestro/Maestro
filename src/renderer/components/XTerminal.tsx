@@ -18,7 +18,10 @@ import { safeClipboardWrite } from '../utils/clipboard';
 import { toControlChar } from '../utils/terminalKeys';
 import { isTapGesture, type TouchPoint } from '../utils/touch';
 import { readLogicalLine } from '../utils/terminalBuffer';
+import { parseOsc52 } from '../utils/terminalClipboard';
+import { copyTextWithFlash } from '../utils/inlineCodeCopy';
 import { logger } from '../utils/logger';
+import { URL_ROUTING_HINT_PREFIX_SOURCE, isWebUrl } from '../../shared/urlRoutingHint';
 import {
 	createCanvasMeasureAdvance,
 	resolveTerminalFontFamily,
@@ -194,8 +197,34 @@ export function mapThemeToXterm(theme: Theme): ITheme {
 // Link detection
 // ============================================================================
 
-/** URL regex matching HTTP/HTTPS URLs, trimming trailing punctuation */
-const URL_PATTERN = /https?:\/\/[^\s<>[\]"'{}|\\^`\x00-\x1f]+[^\s<>[\]"'{}|\\^`.,;:!?)\x00-\x1f]/g;
+/**
+ * URL regex matching HTTP/HTTPS URLs, with an optional routing hint
+ * (`maestro+https://`, `system+https://`), trimming trailing punctuation.
+ */
+export const TERMINAL_URL_PATTERN = new RegExp(
+	`(?:${URL_ROUTING_HINT_PREFIX_SOURCE})?` +
+		/https?:\/\/[^\s<>[\]"'{}|\\^`\x00-\x1f]+[^\s<>[\]"'{}|\\^`.,;:!?)\x00-\x1f]/.source,
+	'g'
+);
+
+/**
+ * Open a clicked terminal link (plain-text or OSC 8).
+ *
+ * Left button only: right-click is reserved for the context menu. Cmd counts
+ * as the inversion modifier beside Ctrl, because on macOS Ctrl-click is the
+ * secondary-click gesture and the inversion was unreachable from a terminal.
+ * Anything that is not http(s) (hinted or not) is dropped here: OSC 8 links
+ * arrive with `allowNonHttpProtocols` on so hinted links survive xterm's own
+ * filter, and openUrl's fallback for an unknown scheme is shell.openExternal.
+ */
+export function activateTerminalLink(
+	event: Pick<MouseEvent, 'button' | 'ctrlKey' | 'metaKey'>,
+	text: string
+): void {
+	if (event.button !== 0) return;
+	if (!isWebUrl(text)) return;
+	openUrl(text, { ctrlKey: event.ctrlKey || event.metaKey });
+}
 
 // ============================================================================
 // Types
@@ -550,10 +579,12 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 			// shows a confirm() dialog and then calls window.open(), which Electron's
 			// setWindowOpenHandler blocks - clicks silently fail.
 			linkHandler: {
+				// Without this xterm drops every OSC 8 URI that is not http(s), which
+				// includes routing-hinted ones (`maestro+https://`). activateTerminalLink
+				// re-applies the http(s)-only rule after stripping the hint.
+				allowNonHttpProtocols: true,
 				activate(event, text) {
-					// Only left-click opens the link; right-click is reserved for the context menu.
-					if (event.button !== 0) return;
-					openUrl(text, { ctrlKey: event.ctrlKey });
+					activateTerminalLink(event, text);
 				},
 				hover(_event, text) {
 					hoveredLinkRef.current = text;
@@ -573,6 +604,19 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 		term.loadAddon(unicode11Addon);
 		term.unicode.activeVersion = '11';
 
+		// OSC 52: the program in the PTY asking the terminal to copy text for it.
+		// xterm.js drops the sequence unless something handles it, so "press c to
+		// copy" in a TUI (and the TUI's own drag-select, which copies the same way)
+		// did nothing at all. Write-only: a clipboard QUERY is consumed and never
+		// answered, since the reply would hand the clipboard to whatever asked.
+		// The flash is not just an ack - it is what keeps a program from replacing
+		// the clipboard without the user seeing it happen.
+		const osc52Disposable = term.parser.registerOscHandler(52, (data) => {
+			const request = parseOsc52(data);
+			if (request.kind === 'write') void copyTextWithFlash(request.text);
+			return true;
+		});
+
 		// Custom link provider: detects URLs, tracks hover for right-click context menu
 		const linkProviderDisposable = term.registerLinkProvider({
 			provideLinks(lineNumber, callback) {
@@ -584,7 +628,7 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 				const text = line.translateToString();
 				const links: ILink[] = [];
 				let match: RegExpExecArray | null;
-				const re = new RegExp(URL_PATTERN.source, 'g');
+				const re = new RegExp(TERMINAL_URL_PATTERN.source, 'g');
 				while ((match = re.exec(text)) !== null) {
 					const url = match[0];
 					const startCol = match.index + 1; // 1-based
@@ -595,9 +639,7 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 						},
 						text: url,
 						activate(event, linkText) {
-							// Only left-click opens the link; right-click is reserved for the context menu.
-							if (event.button !== 0) return;
-							openUrl(linkText, { ctrlKey: event.ctrlKey });
+							activateTerminalLink(event, linkText);
 						},
 						hover(_event, linkText) {
 							hoveredLinkRef.current = linkText;
@@ -816,6 +858,7 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 			termElement.removeEventListener('touchstart', handleTouchStart);
 			termElement.removeEventListener('touchend', handleTouchEnd);
 			selectionChangeDisposable.dispose();
+			osc52Disposable.dispose();
 			linkProviderDisposable.dispose();
 			titleChangeDisposable?.dispose();
 			resizeObserver.disconnect();

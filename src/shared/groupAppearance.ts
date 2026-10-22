@@ -197,6 +197,12 @@ export interface GroupUpdateRequest {
 	icon?: string;
 	color?: string;
 	parentGroupId?: string;
+	/**
+	 * Park the group out of the Left Bar (`true`) or bring it back (`false`).
+	 * A real boolean rather than a `clear` target: visible is a state the group
+	 * is put in, not the absence of a value.
+	 */
+	hidden?: boolean;
 	clear?: GroupClearableField[];
 }
 
@@ -252,6 +258,12 @@ export function validateGroupUpdate(request: GroupUpdateRequest): GroupUpdateVal
 	if (appearance.value.color) value.color = appearance.value.color;
 	const parentGroupId = request.parentGroupId?.trim();
 	if (parentGroupId) value.parentGroupId = parentGroupId;
+	if (request.hidden !== undefined) {
+		if (typeof request.hidden !== 'boolean') {
+			return { ok: false, error: 'hidden must be true or false' };
+		}
+		value.hidden = request.hidden;
+	}
 	if (clear.length > 0) value.clear = [...clear];
 
 	if (request.name !== undefined && !name) {

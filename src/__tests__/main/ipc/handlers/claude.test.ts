@@ -82,6 +82,21 @@ vi.mock('os', () => ({
 	},
 }));
 
+// Session usage now goes through the shared subagent-aware helper. Delegate to
+// the mocked pricing above so the cost assertions keep one formula, and report
+// no subagents (that module is covered by shared/claudeSessionUsage.test.ts).
+vi.mock('../../../../shared/claudeSessionUsage', async () => {
+	const { computeClaudeUsageCost } = await import('../../../../main/utils/pricing');
+	const price = (content: string, subagents: readonly string[] = []) =>
+		computeClaudeUsageCost(subagents.length ? [content, ...subagents].join('\n') : content);
+	return {
+		readClaudeSubagentTranscripts: vi.fn(async () => []),
+		readClaudeSubagentTranscriptsSync: vi.fn(() => []),
+		computeClaudeUsageWithSubagents: vi.fn(price),
+		computeClaudeSessionUsage: vi.fn(async (_filePath: string, content: string) => price(content)),
+	};
+});
+
 // Mock statsCache module
 // Mock Sentry so transcript-read noise assertions can inspect the reporter
 vi.mock('../../../../main/utils/sentry', () => ({
@@ -89,10 +104,14 @@ vi.mock('../../../../main/utils/sentry', () => ({
 	captureMessage: vi.fn(),
 }));
 
-vi.mock('../../../../main/utils/statsCache', () => ({
+// The derivation-upgrade helpers stay real (they are pure); only disk I/O and
+// the version are pinned.
+vi.mock('../../../../main/utils/statsCache', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../main/utils/statsCache')>()),
 	encodeClaudeProjectPath: vi.fn((p: string) => p.replace(/[^a-zA-Z0-9]/g, '-')),
 	loadStatsCache: vi.fn(),
 	saveStatsCache: vi.fn(),
+	statsCacheScope: vi.fn().mockResolvedValue(undefined),
 	STATS_CACHE_VERSION: 1,
 }));
 
@@ -2339,6 +2358,97 @@ not valid json at all
 	// MAESTRO-YJ: the stats walk reads every transcript it discovers under
 	// ~/.claude/projects. A tree we lack permission on paged one Sentry event per
 	// file per refresh; it's environmental, so it stays a local warn.
+	describe('claude:getProjectStats scans', () => {
+		const transcript = `${JSON.stringify({
+			type: 'assistant',
+			message: { usage: { input_tokens: 1_000_000 } },
+		})}\n`;
+
+		const listSessionFiles = async (names: string[]) => {
+			const fs = await import('fs/promises');
+			vi.mocked(fs.default.access).mockResolvedValue(undefined);
+			vi.mocked(fs.default.readdir).mockResolvedValue(
+				names as unknown as Awaited<ReturnType<typeof fs.default.readdir>>
+			);
+			vi.mocked(fs.default.stat).mockResolvedValue({
+				size: 100,
+				mtimeMs: 1000,
+			} as unknown as Awaited<ReturnType<typeof fs.default.stat>>);
+			vi.mocked(fs.default.readFile).mockResolvedValue(transcript as never);
+			return fs;
+		};
+
+		it('shares one scan between concurrent requests for the same project', async () => {
+			await listSessionFiles(['a.jsonl']);
+			const { loadStatsCache } = await import('../../../../main/utils/statsCache');
+			vi.mocked(loadStatsCache).mockResolvedValue(null);
+
+			const handler = handlers.get('claude:getProjectStats')!;
+			const [first, second] = await Promise.all([
+				handler({} as any, '/test/project'),
+				handler({} as any, '/test/project'),
+			]);
+
+			expect(vi.mocked(loadStatsCache)).toHaveBeenCalledTimes(1);
+			expect(second).toEqual(first);
+		});
+
+		it('resumes a part-done upgrade: skips upgraded entries and rescales archived ones once', async () => {
+			const fs = await listSessionFiles(['live.jsonl', 'done.jsonl']);
+			const { loadStatsCache, saveStatsCache } = await import('../../../../main/utils/statsCache');
+			const entry = (costUsd: number, tokens: number, extra: Record<string, unknown> = {}) => ({
+				messages: 1,
+				costUsd,
+				sizeBytes: 100,
+				tokens,
+				oldestTimestamp: null,
+				// Newer than the file, so only the derivation can force a re-parse.
+				fileMtimeMs: 5000,
+				...extra,
+			});
+			vi.mocked(loadStatsCache).mockResolvedValue({
+				version: 0,
+				// A previous run re-parsed one session ($4 -> $2) before it was killed.
+				upgrade: {
+					toVersion: 1,
+					baseline: {
+						costUsd: { oldSum: 4, newSum: 2 },
+						tokens: { oldSum: 2_000_000, newSum: 1_000_000 },
+					},
+				},
+				sessions: {
+					live: entry(6, 2_000_000),
+					done: entry(5, 5, { derivedVersion: 1 }),
+					gone: entry(12, 4_000_000, { archived: true }),
+				},
+				totals: {
+					totalSessions: 3,
+					totalMessages: 3,
+					totalCostUsd: 23,
+					totalSizeBytes: 300,
+					totalTokens: 6_000_005,
+					oldestTimestamp: null,
+				},
+				lastUpdated: 0,
+			} as never);
+
+			const handler = handlers.get('claude:getProjectStats')!;
+			await handler({} as any, '/test/project');
+
+			// Only the session still derived by the old parser was read again.
+			expect(vi.mocked(fs.default.readFile)).toHaveBeenCalledTimes(1);
+			const saved = vi.mocked(saveStatsCache).mock.calls.at(-1)![1];
+			expect(saved.version).toBe(1);
+			expect(saved.upgrade).toBeUndefined();
+			expect(saved.sessions.live).toMatchObject({ costUsd: 3, derivedVersion: 1 });
+			expect(saved.sessions.done.costUsd).toBe(5);
+			// Both runs' sums: $10 -> $5 halves the archived session, once.
+			expect(saved.sessions.gone.costUsd).toBeCloseTo(6, 10);
+			expect(saved.sessions.gone.tokens).toBe(2_000_000);
+			expect(saved.sessions.gone.derivedVersion).toBe(1);
+		});
+	});
+
 	describe('claude:getProjectStats unreadable transcripts', () => {
 		const listOneSessionFile = async () => {
 			const fs = await import('fs/promises');

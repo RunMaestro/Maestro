@@ -254,6 +254,14 @@ vi.mock('../../../main/maestro-cli-manager', () => ({
 	resolveBundledCliPathSync: vi.fn(() => '/resolved/maestro-cli.js'),
 }));
 
+// Linux window icon resolution (fs + platform) is covered by app-icon.test.ts.
+const { mockResolveLinuxWindowIconPath } = vi.hoisted(() => ({
+	mockResolveLinuxWindowIconPath: vi.fn((): string | undefined => undefined),
+}));
+vi.mock('../../../main/app-lifecycle/app-icon', () => ({
+	resolveLinuxWindowIconPath: mockResolveLinuxWindowIconPath,
+}));
+
 // Mock electron-devtools-installer (for development mode)
 vi.mock('electron-devtools-installer', () => ({
 	default: vi.fn().mockResolvedValue('React DevTools'),
@@ -994,6 +1002,159 @@ describe('app-lifecycle/window-manager', () => {
 			expect(redirectEvent.preventDefault).toHaveBeenCalled();
 		});
 
+		describe('DataviewJS guests (D4)', () => {
+			const DATAVIEW_URL = 'dataview-guest://sandbox/guest.html';
+
+			async function createDataviewWindow(serving: boolean) {
+				const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+				// Same module registry as the window manager, so this wires the check it reads.
+				const guestHost = await import('../../../main/dataview/guest-host');
+				const { dataviewGuestPartition } = await import('../../../shared/dataview/sandboxHost');
+				guestHost.setDataviewJsServingCheck(() => serving);
+				const windowManager = createWindowManager({
+					windowStateStore: mockWindowStateStore as unknown as Parameters<
+						typeof createWindowManager
+					>[0]['windowStateStore'],
+					isDevelopment: false,
+					preloadPath: '/dist/main/preload.js',
+					rendererProductionUrl: 'app://app/index.html',
+					devServerUrl: 'http://localhost:5173',
+					useNativeTitleBar: false,
+					autoHideMenuBar: false,
+				});
+				windowManager.createWindow();
+				return { partition: dataviewGuestPartition('/vault', null) };
+			}
+
+			it('attaches the guest document with forced bridge-only prefs and a hardened per-root session', async () => {
+				const { partition } = await createDataviewWindow(true);
+				const handler = webContentsEventHandlers.get('will-attach-webview');
+				const preventDefault = vi.fn();
+				const webPreferences: Record<string, unknown> = {
+					partition,
+					preload: '/tmp/renderer-supplied.js',
+					nodeIntegration: true,
+					contextIsolation: false,
+					sandbox: false,
+				};
+
+				handler?.({ preventDefault } as any, webPreferences, { src: DATAVIEW_URL } as any);
+
+				expect(preventDefault).not.toHaveBeenCalled();
+				expect(String(webPreferences.preload)).toMatch(/dataview-guest-preload\.js$/);
+				expect(webPreferences.nodeIntegration).toBe(false);
+				expect(webPreferences.nodeIntegrationInSubFrames).toBe(false);
+				expect(webPreferences.contextIsolation).toBe(true);
+				expect(webPreferences.sandbox).toBe(true);
+				expect(webPreferences.webSecurity).toBe(true);
+				expect(webPreferences.webviewTag).toBe(false);
+
+				const ses = mockPanelSessions.get(partition);
+				expect(ses).toBeDefined();
+				expect(ses!.protocol.handle).toHaveBeenCalledWith('dataview-guest', expect.any(Function));
+				expect(ses!.webRequest.onBeforeRequest).toHaveBeenCalled();
+				expect(ses!.setPermissionRequestHandler).toHaveBeenCalled();
+				expect(ses!.setPermissionCheckHandler).toHaveBeenCalled();
+			});
+
+			it('blocks any other document, a malformed partition, and every guest while DataviewJS is off', async () => {
+				const { partition } = await createDataviewWindow(true);
+				const handler = webContentsEventHandlers.get('will-attach-webview');
+				const attempts: Array<[string, string]> = [
+					[partition, 'https://example.com/'],
+					[partition, 'file:///etc/passwd'],
+					[partition, `${DATAVIEW_URL}?x=1`],
+					['dataview-guest:nothex', DATAVIEW_URL],
+				];
+				for (const [attemptPartition, src] of attempts) {
+					const preventDefault = vi.fn();
+					handler?.({ preventDefault } as any, { partition: attemptPartition }, { src } as any);
+					expect(preventDefault, `${attemptPartition} ${src}`).toHaveBeenCalled();
+				}
+				expect(mockPanelSessions.size).toBe(0);
+				expect(mockLogger.warn).toHaveBeenCalledWith(
+					expect.stringContaining('Blocked Dataview guest attachment'),
+					'Window',
+					expect.anything()
+				);
+
+				const guestHost = await import('../../../main/dataview/guest-host');
+				guestHost.setDataviewJsServingCheck(() => false);
+				const preventDefault = vi.fn();
+				handler?.({ preventDefault } as any, { partition }, { src: DATAVIEW_URL } as any);
+				expect(preventDefault).toHaveBeenCalled();
+				expect(mockPanelSessions.size).toBe(0);
+			});
+
+			it('locks an attached guest down and forwards real app shortcuts, with no paste, injection, or menu', async () => {
+				const { partition } = await createDataviewWindow(true);
+				webContentsEventHandlers.get('will-attach-webview')?.(
+					{ preventDefault: vi.fn() } as any,
+					{ partition },
+					{ src: DATAVIEW_URL } as any
+				);
+				const guest = {
+					...mockGuestWebContents,
+					session: mockPanelSessions.get(partition),
+					setWindowOpenHandler: vi.fn(),
+					setAudioMuted: vi.fn(),
+					executeJavaScript: vi.fn(),
+					paste: vi.fn(),
+					on: vi.fn((event: string, handler: (...args: any[]) => void) => {
+						guestWebContentsEventHandlers.set(event, handler);
+					}),
+				};
+
+				webContentsEventHandlers.get('did-attach-webview')?.({} as any, guest as any);
+
+				expect(guest.setWindowOpenHandler.mock.calls[0][0]({ url: 'https://x/' })).toEqual({
+					action: 'deny',
+				});
+				for (const eventName of ['will-navigate', 'will-redirect']) {
+					const event = { preventDefault: vi.fn() };
+					guestWebContentsEventHandlers.get(eventName)?.(event, 'https://example.com/');
+					expect(event.preventDefault, eventName).toHaveBeenCalled();
+				}
+				expect(guest.setAudioMuted).toHaveBeenCalledWith(true);
+				expect(guestWebContentsEventHandlers.has('dom-ready')).toBe(false);
+				expect(guestWebContentsEventHandlers.has('console-message')).toBe(false);
+				expect(guestWebContentsEventHandlers.has('context-menu')).toBe(false);
+				expect(guest.executeJavaScript).not.toHaveBeenCalled();
+
+				const input = (key: string, extra: Record<string, unknown> = {}) => ({
+					type: 'keyDown',
+					key,
+					code: `Key${key.toUpperCase()}`,
+					meta: true,
+					control: false,
+					alt: false,
+					shift: false,
+					...extra,
+				});
+				const beforeInput = guestWebContentsEventHandlers.get('before-input-event')!;
+				const paste = { preventDefault: vi.fn() };
+				beforeInput(paste, input('v'));
+				expect(paste.preventDefault).not.toHaveBeenCalled();
+				expect(guest.paste).not.toHaveBeenCalled();
+
+				const copy = { preventDefault: vi.fn() };
+				beforeInput(copy, input('c'));
+				expect(copy.preventDefault).not.toHaveBeenCalled();
+
+				const appShortcut = { preventDefault: vi.fn() };
+				beforeInput(appShortcut, input('k'));
+				expect(appShortcut.preventDefault).toHaveBeenCalled();
+				expect(mockWebContents.send).toHaveBeenCalledWith('browser-tab:shortcutKey', {
+					key: 'k',
+					code: 'KeyK',
+					meta: true,
+					control: false,
+					alt: false,
+					shift: false,
+				});
+			});
+		});
+
 		it('should maximize window if saved state is maximized', async () => {
 			mockWindowStateStore.store.isMaximized = true;
 
@@ -1636,6 +1797,47 @@ describe('app-lifecycle/window-manager', () => {
 			windowManager.createWindow();
 
 			expect(lastBrowserWindowOptions).toHaveProperty('autoHideMenuBar', true);
+		});
+
+		it('should set the window icon when a Linux icon resolves', async () => {
+			mockResolveLinuxWindowIconPath.mockReturnValueOnce('/opt/Maestro/resources/icon.png');
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererProductionUrl: 'app://app/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+			});
+
+			windowManager.createWindow();
+
+			expect(lastBrowserWindowOptions).toHaveProperty('icon', '/opt/Maestro/resources/icon.png');
+		});
+
+		it('should omit the window icon when no Linux icon resolves', async () => {
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererProductionUrl: 'app://app/index.html',
+				devServerUrl: 'http://localhost:5173',
+				useNativeTitleBar: false,
+				autoHideMenuBar: false,
+			});
+
+			windowManager.createWindow();
+
+			expect(lastBrowserWindowOptions).not.toHaveProperty('icon');
 		});
 
 		it('should allow clipboard permissions and deny all others', async () => {

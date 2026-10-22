@@ -11,13 +11,19 @@
  *
  * Empty data (or all zeros) collapses to a dashed horizontal baseline
  * so the layout stays stable when there's nothing to plot yet.
+ *
+ * By default the line is normalized to its own min and max. Pass `domain` to
+ * plot against a fixed scale instead (a gauge sharing one scale across several
+ * charts), and `reference` to draw a dashed horizontal mark at a value on that
+ * scale (a peak, a limit). With a domain, all-zero data is a real reading and
+ * draws as a flat line on the floor rather than the empty baseline.
  */
 
 import { memo, useMemo } from 'react';
 
 interface SparklineProps {
 	/** Sequential numeric values to plot (oldest → newest) */
-	data: number[];
+	data: readonly number[];
 	/** SVG width in px (default 80) */
 	width?: number;
 	/** SVG height in px (default 24) */
@@ -30,6 +36,10 @@ interface SparklineProps {
 	showEndDot?: boolean;
 	/** Line stroke width (default 1.5) */
 	strokeWidth?: number;
+	/** Fixed vertical scale. Omit to fit the line to the data's own range. */
+	domain?: { min: number; max: number };
+	/** Dashed horizontal mark at `value`, on the same scale as the line. */
+	reference?: { value: number; color: string; label?: string };
 }
 
 const PADDING = 2;
@@ -74,8 +84,44 @@ export const Sparkline = memo(function Sparkline({
 	fillOpacity = 0.15,
 	showEndDot = true,
 	strokeWidth = 1.5,
+	domain,
+	reference,
 }: SparklineProps) {
-	const isEmpty = useMemo(() => data.length === 0 || data.every((v) => v === 0), [data]);
+	const isEmpty = useMemo(
+		() => data.length === 0 || (!domain && data.every((v) => v === 0)),
+		[data, domain]
+	);
+	const domainMin = domain?.min;
+	const domainMax = domain?.max;
+
+	/** Y of a value on the plotted scale, clamped inside the padding. */
+	const yOf = useMemo(() => {
+		const innerHeight = Math.max(0, height - PADDING * 2);
+		const min = domainMin ?? (data.length ? Math.min(...data) : 0);
+		const max = domainMax ?? (data.length ? Math.max(...data) : 0);
+		const range = max - min;
+		return (value: number) => {
+			// Flat data -> center vertically; otherwise normalize so max sits at top.
+			const normalized = range === 0 ? 0.5 : Math.min(1, Math.max(0, (value - min) / range));
+			return PADDING + (1 - normalized) * innerHeight;
+		};
+	}, [data, domainMin, domainMax, height]);
+
+	const referenceLine =
+		reference && Number.isFinite(reference.value) ? (
+			<line
+				x1={PADDING}
+				y1={yOf(reference.value)}
+				x2={width - PADDING}
+				y2={yOf(reference.value)}
+				stroke={reference.color}
+				strokeWidth={1}
+				strokeDasharray="3 3"
+				data-testid="sparkline-reference"
+			>
+				{reference.label && <title>{reference.label}</title>}
+			</line>
+		) : null;
 
 	const { linePath, areaPath, endPoint } = useMemo(() => {
 		if (isEmpty || data.length === 0) {
@@ -83,19 +129,11 @@ export const Sparkline = memo(function Sparkline({
 		}
 
 		const innerWidth = Math.max(0, width - PADDING * 2);
-		const innerHeight = Math.max(0, height - PADDING * 2);
 
-		const min = Math.min(...data);
-		const max = Math.max(...data);
-		const range = max - min;
-
-		const points: Point[] = data.map((value, i) => {
-			const x = data.length === 1 ? width / 2 : PADDING + (i / (data.length - 1)) * innerWidth;
-			// Flat data → center vertically; otherwise normalize so max sits at top.
-			const normalized = range === 0 ? 0.5 : (value - min) / range;
-			const y = PADDING + (1 - normalized) * innerHeight;
-			return { x, y };
-		});
+		const points: Point[] = data.map((value, i) => ({
+			x: data.length === 1 ? width / 2 : PADDING + (i / (data.length - 1)) * innerWidth,
+			y: yOf(value),
+		}));
 
 		const line = buildSmoothPath(points);
 		const baseY = height - PADDING;
@@ -108,7 +146,7 @@ export const Sparkline = memo(function Sparkline({
 			areaPath: area,
 			endPoint: points[points.length - 1],
 		};
-	}, [data, isEmpty, width, height]);
+	}, [data, isEmpty, width, height, yOf]);
 
 	if (isEmpty) {
 		const midY = height / 2;
@@ -131,6 +169,7 @@ export const Sparkline = memo(function Sparkline({
 					strokeLinecap="round"
 					opacity={0.5}
 				/>
+				{referenceLine}
 			</svg>
 		);
 	}
@@ -144,6 +183,7 @@ export const Sparkline = memo(function Sparkline({
 			data-testid="sparkline"
 		>
 			<path d={areaPath} fill={color} fillOpacity={fillOpacity} stroke="none" />
+			{referenceLine}
 			<path
 				d={linePath}
 				fill="none"

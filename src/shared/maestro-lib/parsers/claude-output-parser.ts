@@ -1,0 +1,1295 @@
+/**
+ * Claude Code Output Parser
+ *
+ * Parses stream-json output from Claude Code CLI.
+ * Claude Code outputs JSONL (JSON Lines) with different message types:
+ * - system/init: Session initialization with slash commands
+ * - assistant: Streaming text content (partial responses)
+ * - result: Final complete response
+ * - Messages may include session_id, modelUsage, usage, total_cost_usd
+ *
+ * @see https://github.com/anthropics/claude-code
+ */
+
+import type { ToolType, AgentError, CallUsage } from '../../types';
+import type { AgentOutputParser, ParsedEvent } from './agent-output-parser';
+import { aggregateModelUsage, type ModelStats } from './usage-aggregator';
+import {
+	claudeTurnCost,
+	costStateFromResult,
+	rememberClaudeSessionCost,
+	rememberedClaudeSessionCost,
+	type ClaudeCostState,
+} from '../../claudeCostTracker';
+import {
+	getErrorPatterns,
+	isClaudeLimitNotice,
+	matchErrorPattern,
+	stripJsonEventLines,
+} from './error-patterns';
+
+/**
+ * Content block in Claude assistant messages
+ * Can be text, tool_use, thinking, or redacted_thinking blocks
+ *
+ * Extended thinking (Claude 3.7 Sonnet, Claude 4+) produces:
+ * - thinking: Internal reasoning content (may be encrypted in signature)
+ * - redacted_thinking: Encrypted thinking content (for safety-flagged reasoning)
+ * - text: The final user-facing response
+ */
+interface ClaudeContentBlock {
+	type: string;
+	text?: string;
+	// Extended thinking fields (Claude 3.7+, Claude 4+)
+	thinking?: string;
+	signature?: string;
+	// Tool use fields
+	name?: string;
+	id?: string;
+	input?: unknown;
+	// Tool result fields (delivered inside user-role messages)
+	tool_use_id?: string;
+	content?: string | Array<{ type?: string; text?: string }>;
+	is_error?: boolean;
+}
+
+/**
+ * Raw SSE event carried inside a stream_event object.
+ *
+ * Emitted by claude-code when spawned with --include-partial-messages. The CLI
+ * wraps each raw Anthropic streaming (SSE) event as
+ * `{ type: 'stream_event', event: <raw SSE event>, session_id, parent_tool_use_id }`.
+ * Only content_block_delta carries token-level text/thinking; the other kinds
+ * (message_start, content_block_start, message_delta, message_stop, etc.) are
+ * control-plane framing.
+ */
+interface ClaudeStreamRawEvent {
+	type: string;
+	delta?: {
+		type?: string;
+		text?: string;
+		thinking?: string;
+	};
+}
+
+/**
+ * Token usage as Claude reports it, both per API call (on `assistant` messages)
+ * and as the turn total (on `result` messages).
+ */
+interface ClaudeCallUsage {
+	input_tokens?: number;
+	output_tokens?: number;
+	cache_read_input_tokens?: number;
+	cache_creation_input_tokens?: number;
+}
+
+/** Absolute context-occupancy snapshot, in the shape `UsageStats.absoluteUsage` expects. */
+type OccupancySnapshot = NonNullable<NonNullable<ParsedEvent['usage']>['absoluteUsage']>;
+
+/**
+ * Raw message structure from Claude Code stream-json output
+ */
+interface ClaudeRawMessage {
+	type: string;
+	subtype?: string;
+	session_id?: string;
+	/**
+	 * Set on assistant/user messages produced by a Task subagent; references the
+	 * tool_use id of the Task call that spawned it. Absent on main-transcript
+	 * messages. Also carried on stream_event objects, where claude-code may emit
+	 * an explicit null - normalizeParentToolUseId collapses null to undefined.
+	 */
+	parent_tool_use_id?: string | null;
+	result?: string;
+	message?: {
+		id?: string;
+		role?: string;
+		content?: string | ClaudeContentBlock[];
+		/**
+		 * Per-call token usage, present on every `assistant` message. This is the
+		 * usage of ONE internal API call, unlike the result message's `modelUsage`
+		 * which is the CLI's own sum across every call of the session (see
+		 * claudeCostTracker.ts).
+		 */
+		usage?: ClaudeCallUsage;
+		model?: string;
+	};
+	slash_commands?: string[];
+	modelUsage?: Record<string, ModelStats>;
+	usage?: ClaudeCallUsage;
+	total_cost_usd?: number;
+	// Present only on type:"stream_event" objects (--include-partial-messages)
+	event?: ClaudeStreamRawEvent;
+}
+
+/**
+ * Upper bound on outstanding tool_use id -> name entries. Well above any
+ * realistic number of concurrently-running tools; exists purely so a stream
+ * that never delivers results cannot leak memory.
+ */
+const MAX_TOOL_NAME_ENTRIES = 500;
+
+/**
+ * Upper bound on the per-message usage remembered for `callUsage` deltas. A
+ * turn is hundreds of calls at most; the bound only stops a turn that never
+ * delivers its `result` from growing the map forever.
+ */
+const MAX_CALL_USAGE_ENTRIES = 500;
+
+/**
+ * Maximum tool_result output length forwarded over IPC. Tool output can be
+ * megabytes (a full file read); the badge only shows a preview.
+ */
+const MAX_TOOL_OUTPUT_CHARS = 4000;
+
+/**
+ * Flatten a tool_result `content` field into display text.
+ * Claude sends either a plain string or an array of `{ type: 'text', text }`
+ * blocks. Output is truncated to MAX_TOOL_OUTPUT_CHARS.
+ */
+function flattenToolResultContent(content: ClaudeContentBlock['content']): string {
+	let text: string;
+	if (typeof content === 'string') {
+		text = content;
+	} else if (Array.isArray(content)) {
+		text = content
+			.filter((block) => block?.type === 'text' && typeof block.text === 'string')
+			.map((block) => block.text!)
+			.join('');
+	} else {
+		text = '';
+	}
+
+	return text.length > MAX_TOOL_OUTPUT_CHARS ? `${text.slice(0, MAX_TOOL_OUTPUT_CHARS)}...` : text;
+}
+
+/**
+ * Read the top-level `parent_tool_use_id` off a message, normalizing the
+ * non-subagent cases (absent, null, empty string) to undefined so downstream
+ * consumers only ever see a real id.
+ */
+function normalizeParentToolUseId(msg: ClaudeRawMessage): string | undefined {
+	const id = msg.parent_tool_use_id;
+	return typeof id === 'string' && id.length > 0 ? id : undefined;
+}
+
+/**
+ * Prefix of the user-role message Claude Code injects when a Stop hook blocks
+ * the end of a turn (exit code 2 or `decision: "block"`). The model then keeps
+ * going inside the SAME turn, so the reply it had just finished is no longer
+ * the last assistant message and the `result` event no longer carries it.
+ */
+const STOP_HOOK_FEEDBACK_PREFIX = 'Stop hook feedback:';
+
+/** Between a reply a Stop hook held back and the text the hook made the model write next. */
+export const STOP_HOOK_ANSWER_SEPARATOR = '\n\n---\n\n';
+
+/** True when a message came from a Task subagent rather than the main transcript. */
+function isSubagentMessage(msg: ClaudeRawMessage): boolean {
+	return normalizeParentToolUseId(msg) !== undefined;
+}
+
+/**
+ * Claude Code Output Parser Implementation
+ *
+ * Transforms Claude Code's stream-json format into normalized ParsedEvents.
+ */
+export class ClaudeOutputParser implements AgentOutputParser {
+	readonly agentId: ToolType = 'claude-code';
+
+	/**
+	 * Set to true when a prose (text_delta / thinking_delta) stream_event has been
+	 * emitted for the in-flight assistant message. When the complete 'assistant'
+	 * event for that message arrives, it is stamped textAlreadyStreamed: true and
+	 * this marker resets. This is how the parser avoids downstream double-counting
+	 * of prose that was already delivered token-by-token.
+	 */
+	private sawStreamedProseDelta = false;
+
+	/**
+	 * Correlates a tool_use id (from an assistant message) with its tool name so
+	 * the matching tool_result (which arrives later, in a user-role message and
+	 * carries no name) can be emitted with the right label. Mirrors the
+	 * `lastToolName` correlation in the Codex parser, but keyed by id since
+	 * Claude runs tools in parallel.
+	 */
+	private readonly toolNamesById = new Map<string, string>();
+
+	/**
+	 * Occupancy snapshot taken from the most recent main-transcript `assistant`
+	 * message of the CURRENT turn, attached to that turn's usage event as
+	 * `absoluteUsage` and cleared at the `result` message (the turn boundary) so
+	 * a snapshot can never leak into the next turn.
+	 *
+	 * Why the LAST call and not the turn total: the result message's `modelUsage`
+	 * is the CLI's own sum across every internal API call of the turn, which is
+	 * token SPEND. A tool-heavy turn therefore reports far more than the window
+	 * holds (a captured two-call turn summed to 49,063 against a real occupancy
+	 * of 24,586), which is what pinned the context gauge at 0% (finding Q1). A
+	 * single call's input is what was physically sent to the model, so it cannot
+	 * exceed the window, and it grows across a turn as each call re-reads the
+	 * prior context from cache - making the last call the end-of-turn occupancy.
+	 * It also tracks auto-compaction correctly, which no accumulated figure can.
+	 */
+	private lastCallOccupancy: OccupancySnapshot | undefined = undefined;
+
+	/**
+	 * Usage each `assistant` message of the current turn has already reported
+	 * through `callUsage`, keyed by message id. Every row of a message repeats
+	 * that message's usage (and stream-json repeats whole messages), so only the
+	 * growth past this is new spend. Cleared at the `result` message.
+	 */
+	private readonly callUsageSeen = new Map<string, CallUsage>();
+
+	/**
+	 * Text of the current main-transcript assistant message, kept until a tool
+	 * call or tool result shows it was narration rather than a reply. Keyed by
+	 * message id because stream-json emits one event per content block and
+	 * repeats whole messages.
+	 */
+	private pendingReply: { id: string | undefined; texts: string[] } | null = null;
+
+	/**
+	 * The session's cost tracker as of the start of this turn, which a result's
+	 * running totals are reduced by (see claudeCostTracker.ts). `null` is a
+	 * known zero (a fresh session); `undefined` is unknown (a resumed session
+	 * whose transcript could not be read).
+	 */
+	private costBaseline: ClaudeCostState | null | undefined = null;
+
+	/**
+	 * Set once the baseline is settled: by the spawn, or by the first result.
+	 * Settled once per process, so a result line parsed twice (the held-error
+	 * path re-reads it) yields the same turn cost both times instead of being
+	 * subtracted from its own remembered total.
+	 */
+	private baselineSettled = false;
+
+	/** The model the main thread's last call ran on; prices an estimate. */
+	private lastMainModel: string | undefined;
+
+	/**
+	 * Replies the model finished before a Stop hook blocked the turn. The
+	 * `result` event only carries the text written AFTER the hook, so without
+	 * these the user's question looks unanswered: the screen shows only what
+	 * the hook asked for (for example "I committed the 8 paths").
+	 */
+	private stopHookHeldReplies: string[] = [];
+
+	/**
+	 * The last `result` message and the text composed for it. A line can be
+	 * parsed more than once (StdoutHandler re-parses while it holds an in-turn
+	 * error), and the turn state is cleared on the first pass, so a re-parse of
+	 * the same object returns the composed text instead of the bare result.
+	 */
+	private lastComposedResult: { raw: ClaudeRawMessage; text: string | undefined } | null = null;
+
+	/**
+	 * Parse a single JSON line from Claude Code output.
+	 * Delegates to parseJsonObject after JSON.parse.
+	 *
+	 * Claude Code message types:
+	 * - { type: 'system', subtype: 'init', session_id, slash_commands }
+	 * - { type: 'assistant', message: { role, content } }
+	 * - { type: 'result', result: string, session_id, modelUsage, usage, total_cost_usd }
+	 */
+	parseJsonLine(line: string): ParsedEvent | null {
+		if (!line.trim()) {
+			return null;
+		}
+
+		try {
+			return this.parseJsonObject(JSON.parse(line));
+		} catch {
+			// Not valid JSON - return as raw text event
+			// Note: This doesn't set isPartial, so it won't be emitted as thinking content
+			return {
+				type: 'text',
+				text: line,
+				raw: line,
+			};
+		}
+	}
+
+	/**
+	 * Parse a pre-parsed JSON object into a normalized event.
+	 * Core logic extracted from parseJsonLine to avoid redundant JSON.parse calls.
+	 */
+	parseJsonObject(parsed: unknown): ParsedEvent | null {
+		if (!parsed || typeof parsed !== 'object') {
+			return null;
+		}
+
+		const msg = parsed as ClaudeRawMessage;
+
+		return this.transformMessage(msg);
+	}
+
+	/**
+	 * Transform a parsed Claude message into a normalized ParsedEvent.
+	 * Returns null for stream_event framing that should not reach downstream
+	 * consumers (everything except token-level text/thinking deltas).
+	 */
+	private transformMessage(msg: ClaudeRawMessage): ParsedEvent | null {
+		// Handle token-level streaming deltas (--include-partial-messages)
+		if (msg.type === 'stream_event') {
+			return this.transformStreamEvent(msg);
+		}
+
+		// Handle system/init messages
+		if (msg.type === 'system' && msg.subtype === 'init') {
+			return {
+				type: 'init',
+				sessionId: msg.session_id,
+				slashCommands: msg.slash_commands,
+				raw: msg,
+			};
+		}
+
+		// Handle result messages (final complete response)
+		if (msg.type === 'result') {
+			// The result field contains the complete formatted response
+			// Fall back to message.content if result is not present
+			let resultText = msg.result;
+			if (!resultText && msg.message?.content) {
+				resultText = this.extractTextFromMessage(msg);
+			}
+
+			const event: ParsedEvent = {
+				type: 'result',
+				text: this.composeResultText(msg, resultText),
+				sessionId: msg.session_id,
+				raw: msg,
+			};
+
+			// Extract usage stats if present
+			const usage = this.extractUsageFromRaw(msg);
+			if (usage) {
+				event.usage = usage;
+			}
+
+			// The result message ends the turn, so the next turn starts without a
+			// snapshot rather than inheriting this one.
+			this.lastCallOccupancy = undefined;
+			this.callUsageSeen.clear();
+
+			return event;
+		}
+
+		// Handle assistant messages (streaming partial responses)
+		if (msg.type === 'assistant') {
+			this.trackCallOccupancy(msg);
+
+			const text = this.extractTextFromMessage(msg);
+			const thinkingText = this.extractThinkingFromMessage(msg);
+			const toolUseBlocks = this.extractToolUseBlocks(msg);
+			this.trackPendingReply(msg, text, toolUseBlocks.length > 0);
+
+			// For thinking content, prioritize thinking blocks over text blocks
+			// This ensures extended thinking (Claude 3.7+, Claude 4+) content streams properly
+			// When thinking blocks are present, emit them as partial content for thinking-chunk events
+			const contentToEmit = thinkingText || text;
+			const callUsage = this.newCallUsage(msg);
+
+			// If prose deltas already streamed for this message via stream_event,
+			// its text reached downstream consumers token-by-token. Stamp the flag
+			// so they skip re-ingesting, then reset the marker for the next message.
+			const textAlreadyStreamed = this.sawStreamedProseDelta || undefined;
+			this.sawStreamedProseDelta = false;
+
+			return {
+				type: 'text',
+				text: contentToEmit,
+				sessionId: msg.session_id,
+				isPartial: true,
+				isReasoning: thinkingText.length > 0 || undefined,
+				textAlreadyStreamed,
+				toolUseBlocks: toolUseBlocks.length > 0 ? toolUseBlocks : undefined,
+				parentToolUseId: normalizeParentToolUseId(msg),
+				...(callUsage ? { callUsage } : {}),
+				raw: msg,
+			};
+		}
+
+		// Handle user messages. They carry tool_result blocks (how Claude Code
+		// reports tool completion; without them every tool badge would stay stuck
+		// in the "running" state forever, and the narration before them was not
+		// the reply) or, when a Stop hook blocks the end of the turn, its feedback.
+		if (msg.type === 'user') {
+			this.trackUserMessage(msg);
+			const resultEvent = this.extractToolResultEvent(msg);
+			if (resultEvent) {
+				return resultEvent;
+			}
+		}
+
+		// Handle messages with only usage stats (no content type)
+		if (msg.modelUsage || msg.usage || msg.total_cost_usd !== undefined) {
+			const usage = this.extractUsageFromRaw(msg);
+			return {
+				type: 'usage',
+				sessionId: msg.session_id,
+				usage: usage || undefined,
+				raw: msg,
+			};
+		}
+
+		// Handle system messages (other subtypes)
+		if (msg.type === 'system') {
+			return {
+				type: 'system',
+				sessionId: msg.session_id,
+				raw: msg,
+			};
+		}
+
+		// Default: preserve as system event
+		return {
+			type: 'system',
+			sessionId: msg.session_id,
+			raw: msg,
+		};
+	}
+
+	/**
+	 * Transform a stream_event object into a token-level partial text event.
+	 *
+	 * stream_event objects only appear with --include-partial-messages and wrap a
+	 * raw Anthropic SSE event. Only content_block_delta carries user-visible token
+	 * deltas:
+	 * - text_delta    -> partial 'text' event
+	 * - thinking_delta -> partial 'text' event with isReasoning: true
+	 *
+	 * Every other SSE kind (message_start, content_block_start, input_json_delta,
+	 * message_delta, message_stop, content_block_stop, signature_delta, and empty
+	 * deltas) returns null so it never spams downstream. Tool inputs continue to
+	 * arrive via the complete assistant event's toolUseBlocks, so input_json_delta
+	 * is intentionally dropped here.
+	 */
+	private transformStreamEvent(msg: ClaudeRawMessage): ParsedEvent | null {
+		const event = msg.event;
+		if (!event || event.type !== 'content_block_delta' || !event.delta) {
+			return null;
+		}
+
+		const delta = event.delta;
+
+		if (delta.type === 'text_delta' && delta.text) {
+			this.sawStreamedProseDelta = true;
+			return {
+				type: 'text',
+				text: delta.text,
+				sessionId: msg.session_id,
+				isPartial: true,
+				raw: msg,
+			};
+		}
+
+		if (delta.type === 'thinking_delta' && delta.thinking) {
+			this.sawStreamedProseDelta = true;
+			return {
+				type: 'text',
+				text: delta.thinking,
+				sessionId: msg.session_id,
+				isPartial: true,
+				isReasoning: true,
+				raw: msg,
+			};
+		}
+
+		// input_json_delta, signature_delta, or any other delta kind: drop it.
+		return null;
+	}
+
+	/**
+	 * Follow the text of the current main-transcript assistant message. A tool
+	 * call means the text was narration on the way to the call, so it is dropped;
+	 * text with no call after it is the reply the model is about to end on.
+	 * Subagent messages are skipped: their text is never the reply.
+	 */
+	private trackPendingReply(msg: ClaudeRawMessage, text: string, hasToolUse: boolean): void {
+		if (isSubagentMessage(msg)) {
+			return;
+		}
+		if (hasToolUse) {
+			this.pendingReply = null;
+			return;
+		}
+		if (!text) {
+			return;
+		}
+
+		const id = msg.message?.id;
+		if (!this.pendingReply || !id || this.pendingReply.id !== id) {
+			this.pendingReply = { id, texts: [text] };
+		} else if (!this.pendingReply.texts.includes(text)) {
+			this.pendingReply.texts.push(text);
+		}
+	}
+
+	/**
+	 * A main-transcript user message either returns tool results, which ends any
+	 * pending reply, or is a Stop hook's feedback, which holds the reply the model
+	 * had just finished so the `result` can show it next to the text the hook made
+	 * the model write.
+	 */
+	private trackUserMessage(msg: ClaudeRawMessage): void {
+		if (isSubagentMessage(msg) || !this.pendingReply) {
+			return;
+		}
+
+		const content = msg.message?.content;
+		if (Array.isArray(content) && content.some((block) => block.type === 'tool_result')) {
+			this.pendingReply = null;
+			return;
+		}
+
+		const text =
+			typeof content === 'string'
+				? content
+				: Array.isArray(content)
+					? content
+							.filter((block) => block.type === 'text' && block.text)
+							.map((block) => block.text!)
+							.join('')
+					: '';
+		if (!text.trimStart().startsWith(STOP_HOOK_FEEDBACK_PREFIX)) {
+			return;
+		}
+
+		const reply = this.pendingReply.texts.join('');
+		this.pendingReply = null;
+		if (reply.trim() && !this.stopHookHeldReplies.includes(reply)) {
+			this.stopHookHeldReplies.push(reply);
+		}
+	}
+
+	/**
+	 * The text a `result` event shows: any replies a Stop hook held back, then
+	 * the result's own text. Ends the turn's reply tracking.
+	 */
+	private composeResultText(
+		msg: ClaudeRawMessage,
+		resultText: string | undefined
+	): string | undefined {
+		if (this.lastComposedResult?.raw === msg) {
+			return this.lastComposedResult.text;
+		}
+
+		const parts = [...this.stopHookHeldReplies];
+		if (resultText && !parts.includes(resultText)) {
+			parts.push(resultText);
+		}
+		const text = parts.length > 0 ? parts.join(STOP_HOOK_ANSWER_SEPARATOR) : resultText;
+
+		this.pendingReply = null;
+		this.stopHookHeldReplies = [];
+		this.lastComposedResult = { raw: msg, text };
+		return text;
+	}
+
+	/**
+	 * Extract tool_use blocks from a Claude assistant message
+	 * These blocks contain tool invocation requests from the AI
+	 */
+	private extractToolUseBlocks(
+		msg: ClaudeRawMessage
+	): Array<{ name: string; id?: string; input?: unknown }> {
+		if (!msg.message?.content || typeof msg.message.content === 'string') {
+			return [];
+		}
+
+		const blocks = msg.message.content
+			.filter((block) => block.type === 'tool_use' && block.name)
+			.map((block) => ({
+				name: block.name!,
+				id: block.id,
+				input: block.input,
+			}));
+
+		for (const block of blocks) {
+			if (block.id) {
+				this.rememberToolName(block.id, block.name);
+			}
+		}
+
+		return blocks;
+	}
+
+	/**
+	 * Record a tool_use id -> name mapping for later tool_result correlation.
+	 * Evicts the oldest entry past MAX_TOOL_NAME_ENTRIES so a long session with
+	 * results we never see cannot grow the map without bound.
+	 */
+	private rememberToolName(id: string, name: string): void {
+		if (this.toolNamesById.size >= MAX_TOOL_NAME_ENTRIES) {
+			const oldest = this.toolNamesById.keys().next();
+			if (!oldest.done) {
+				this.toolNamesById.delete(oldest.value);
+			}
+		}
+		this.toolNamesById.set(id, name);
+	}
+
+	/**
+	 * Build a terminal-state tool_use event from the tool_result blocks in a user
+	 * message. Returns null when the message carries no tool_result blocks
+	 * (ordinary user prompts fall through to the default system event).
+	 *
+	 * Claude Code returns parallel tool calls as several tool_result blocks in a
+	 * single user message. The first result populates the top-level tool_use
+	 * fields; any remaining results ride along in `toolResultBlocks` so
+	 * StdoutHandler can emit a terminal event for every one - otherwise the
+	 * second and later parallel calls would stay stuck in the 'running' state.
+	 */
+	private extractToolResultEvent(msg: ClaudeRawMessage): ParsedEvent | null {
+		if (!msg.message?.content || typeof msg.message.content === 'string') {
+			return null;
+		}
+
+		const blocks = msg.message.content.filter(
+			(candidate) => candidate.type === 'tool_result' && candidate.tool_use_id
+		);
+		if (blocks.length === 0) {
+			return null;
+		}
+
+		const parentToolUseId = normalizeParentToolUseId(msg);
+		const toResult = (block: (typeof blocks)[number]) => {
+			const toolCallId = block.tool_use_id!;
+			// StdoutHandler drops tool_use events without a toolName, so an unknown
+			// id (parser started mid-stream, or the map was evicted) still needs a
+			// label.
+			const toolName = this.toolNamesById.get(toolCallId) || 'Tool';
+			this.toolNamesById.delete(toolCallId);
+			return {
+				toolName,
+				toolCallId,
+				toolState: {
+					status: block.is_error ? ('failed' as const) : ('completed' as const),
+					output: flattenToolResultContent(block.content),
+				},
+			};
+		};
+
+		const [primary, ...rest] = blocks.map(toResult);
+
+		return {
+			type: 'tool_use',
+			toolName: primary.toolName,
+			toolCallId: primary.toolCallId,
+			toolState: primary.toolState,
+			// Extra parallel results (empty for the common single-result case).
+			toolResultBlocks: rest.length ? rest.map((r) => ({ ...r, parentToolUseId })) : undefined,
+			sessionId: msg.session_id,
+			parentToolUseId,
+			raw: msg,
+		};
+	}
+
+	/**
+	 * Extract text content from a Claude assistant message
+	 *
+	 * Only extracts 'text' type blocks - explicitly excludes:
+	 * - 'thinking' blocks (handled by extractThinkingFromMessage)
+	 * - 'redacted_thinking' blocks (safety-encrypted thinking)
+	 * - 'tool_use' blocks (handled separately by extractToolUseBlocks)
+	 *
+	 * @see extractThinkingFromMessage for thinking content extraction
+	 */
+	private extractTextFromMessage(msg: ClaudeRawMessage): string {
+		if (!msg.message?.content) {
+			return '';
+		}
+
+		// Content can be string or array of content blocks
+		if (typeof msg.message.content === 'string') {
+			return msg.message.content;
+		}
+
+		// Array of content blocks - extract ONLY text blocks
+		// Thinking blocks (type: 'thinking', 'redacted_thinking') are intentionally excluded
+		return msg.message.content
+			.filter((block) => block.type === 'text' && block.text)
+			.map((block) => block.text!)
+			.join('');
+	}
+
+	/**
+	 * Extract thinking content from a Claude assistant message
+	 *
+	 * Extracts 'thinking' type blocks from extended thinking (Claude 3.7+, Claude 4+).
+	 * This content represents the model's internal reasoning process.
+	 *
+	 * Note: 'redacted_thinking' blocks are excluded as they contain encrypted content
+	 * that cannot be displayed.
+	 */
+	private extractThinkingFromMessage(msg: ClaudeRawMessage): string {
+		if (!msg.message?.content) {
+			return '';
+		}
+
+		// Content must be array for thinking blocks
+		if (typeof msg.message.content === 'string') {
+			return '';
+		}
+
+		// Extract thinking blocks (excluding redacted_thinking which is encrypted)
+		return msg.message.content
+			.filter((block) => block.type === 'thinking' && block.thinking)
+			.map((block) => block.thinking!)
+			.join('');
+	}
+
+	/**
+	 * Record an `assistant` message's per-call usage as the turn's running
+	 * occupancy snapshot (see `lastCallOccupancy`). Last-wins, which is also what
+	 * makes it idempotent under stream-json's habit of emitting each assistant
+	 * message twice.
+	 *
+	 * Subagent messages are skipped: a Task subagent runs in its own context
+	 * window, so its calls say nothing about the main transcript's occupancy.
+	 */
+	private trackCallOccupancy(msg: ClaudeRawMessage): void {
+		if (normalizeParentToolUseId(msg)) {
+			return;
+		}
+
+		const model = msg.message?.model;
+		if (typeof model === 'string' && model && model !== '<synthetic>') {
+			this.lastMainModel = model;
+		}
+
+		const usage = msg.message?.usage;
+		if (!usage) {
+			return;
+		}
+
+		this.lastCallOccupancy = {
+			inputTokens: usage.input_tokens || 0,
+			outputTokens: usage.output_tokens || 0,
+			cacheReadInputTokens: usage.cache_read_input_tokens || 0,
+			cacheCreationInputTokens: usage.cache_creation_input_tokens || 0,
+			reasoningTokens: 0,
+		};
+	}
+
+	/**
+	 * The part of an `assistant` message's per-call usage that no earlier row of
+	 * the same message reported, or undefined when there is none. Subagent calls
+	 * count: they are real spend, unlike for occupancy. A message with no id
+	 * cannot be matched to its repeats, so each of its rows counts in full.
+	 */
+	private newCallUsage(msg: ClaudeRawMessage): CallUsage | undefined {
+		const usage = msg.message?.usage;
+		if (!usage) {
+			return undefined;
+		}
+		const reported: CallUsage = {
+			inputTokens: usage.input_tokens || 0,
+			outputTokens: usage.output_tokens || 0,
+			cacheReadInputTokens: usage.cache_read_input_tokens || 0,
+			cacheCreationInputTokens: usage.cache_creation_input_tokens || 0,
+		};
+		const id = msg.message?.id;
+		const seen = id ? this.callUsageSeen.get(id) : undefined;
+		const keys = Object.keys(reported) as Array<keyof CallUsage>;
+		const delta = {} as CallUsage;
+		const high = {} as CallUsage;
+		for (const key of keys) {
+			delta[key] = Math.max(0, reported[key] - (seen?.[key] ?? 0));
+			high[key] = Math.max(reported[key], seen?.[key] ?? 0);
+		}
+		if (id) {
+			if (!seen && this.callUsageSeen.size >= MAX_CALL_USAGE_ENTRIES) {
+				const oldest = this.callUsageSeen.keys().next();
+				if (!oldest.done) this.callUsageSeen.delete(oldest.value);
+			}
+			this.callUsageSeen.set(id, high);
+		}
+		return keys.some((key) => delta[key] > 0) ? delta : undefined;
+	}
+
+	/**
+	 * Tell the parser which session this process resumes and what that
+	 * session's cost tracker held when the turn spawned. `baseline` follows
+	 * readLastClaudeCostState: `null` when the transcript holds none, `undefined`
+	 * when it could not be read, in which case a total this app saw the session
+	 * report earlier is used if there is one.
+	 */
+	primeResumedSession(resumeSessionId: string, baseline: ClaudeCostState | null | undefined): void {
+		this.baselineSettled = true;
+		this.costBaseline =
+			baseline !== undefined ? baseline : rememberedClaudeSessionCost(resumeSessionId);
+	}
+
+	/** This turn's share of a result's session totals, remembering them for the next turn. */
+	private turnCostOf(msg: ClaudeRawMessage) {
+		// A spawn that did not say it resumes (an SSH spawn, whose transcript is
+		// on the remote host) still resumes a session this app may have seen
+		// report before, and that report is the baseline.
+		if (!this.baselineSettled) {
+			this.baselineSettled = true;
+			if (msg.session_id) {
+				this.costBaseline = rememberedClaudeSessionCost(msg.session_id) ?? this.costBaseline;
+			}
+		}
+		const turn = claudeTurnCost(msg, this.costBaseline, this.lastMainModel);
+		const reported = costStateFromResult(msg);
+		if (msg.session_id && reported) rememberClaudeSessionCost(msg.session_id, reported);
+		return turn;
+	}
+
+	/**
+	 * Extract usage statistics from raw Claude message
+	 */
+	private extractUsageFromRaw(msg: ClaudeRawMessage): ParsedEvent['usage'] | null {
+		if (!msg.modelUsage && !msg.usage && msg.total_cost_usd === undefined) {
+			return null;
+		}
+
+		// A result's modelUsage and total_cost_usd are the SESSION's running
+		// totals; reduce them to this turn's before anything records them.
+		const turn = msg.type === 'result' ? this.turnCostOf(msg) : null;
+
+		// Use the aggregateModelUsage helper from process-manager
+		const aggregated = aggregateModelUsage(
+			turn ? (turn.modelUsage as Record<string, ModelStats> | undefined) : msg.modelUsage,
+			msg.usage || {},
+			turn ? turn.totalCostUsd : msg.total_cost_usd || 0
+		);
+
+		return {
+			inputTokens: aggregated.inputTokens,
+			outputTokens: aggregated.outputTokens,
+			cacheReadTokens: aggregated.cacheReadInputTokens,
+			cacheCreationTokens: aggregated.cacheCreationInputTokens,
+			contextWindow: aggregated.contextWindow,
+			// The aggregator flags the window as resolved only when a model actually
+			// reported one; the untouched FALLBACK_CONTEXT_WINDOW seed leaves it off.
+			...(aggregated.contextWindowResolved ? { contextWindowReported: true } : {}),
+			costUsd: aggregated.totalCostUsd,
+			// The fields above are the turn's summed SPEND and can exceed the window;
+			// this is the same turn's real occupancy, when the stream gave us one.
+			...(this.lastCallOccupancy ? { absoluteUsage: this.lastCallOccupancy } : {}),
+		};
+	}
+
+	/**
+	 * Check if an event is a final result message
+	 */
+	isResultMessage(event: ParsedEvent): boolean {
+		return event.type === 'result';
+	}
+
+	/**
+	 * Extract session ID from an event
+	 */
+	extractSessionId(event: ParsedEvent): string | null {
+		return event.sessionId || null;
+	}
+
+	/**
+	 * Extract usage statistics from an event
+	 */
+	extractUsage(event: ParsedEvent): ParsedEvent['usage'] | null {
+		return event.usage || null;
+	}
+
+	/**
+	 * Extract slash commands from an event
+	 */
+	extractSlashCommands(event: ParsedEvent): string[] | null {
+		return event.slashCommands || null;
+	}
+
+	/**
+	 * Detect an error from a line of agent output.
+	 * Delegates to detectErrorFromParsed for valid JSON; falls back to
+	 * extractErrorFromMixedLine for non-JSON lines with embedded JSON.
+	 *
+	 * IMPORTANT: Only detect errors from structured JSON error events, not from
+	 * arbitrary text content. Pattern matching on conversational text leads to
+	 * false positives (e.g., AI discussing "timeout" triggers timeout error).
+	 */
+	detectErrorFromLine(line: string): AgentError | null {
+		// Skip empty lines
+		if (!line.trim()) {
+			return null;
+		}
+
+		try {
+			const parsed = JSON.parse(line);
+			const error = this.detectErrorFromParsed(parsed);
+			if (error) {
+				// Preserve original line in raw for backwards compatibility
+				error.raw = { ...(error.raw as Record<string, unknown>), errorLine: line };
+			}
+			return error;
+		} catch {
+			// Not pure JSON - try to extract embedded JSON from stderr messages
+			// Example: "Error streaming...: 400 {"type":"error","error":{"type":"invalid_request_error","message":"..."}}"
+			const errorText = this.extractErrorFromMixedLine(line);
+			if (!errorText) {
+				return null;
+			}
+
+			const patterns = getErrorPatterns(this.agentId);
+			const match = matchErrorPattern(patterns, errorText);
+			if (match) {
+				return {
+					type: match.type,
+					message: match.message,
+					recoverable: match.recoverable,
+					agentId: this.agentId,
+					timestamp: Date.now(),
+					raw: { errorLine: line },
+				};
+			}
+			return null;
+		}
+	}
+
+	/**
+	 * Detect an error from a pre-parsed JSON object.
+	 * Core logic extracted from detectErrorFromLine to avoid redundant JSON.parse calls.
+	 */
+	detectErrorFromParsed(parsed: unknown): AgentError | null {
+		if (!parsed || typeof parsed !== 'object') {
+			return null;
+		}
+
+		const obj = parsed as Record<string, unknown>;
+
+		// system/* events (api_retry, init, etc.) are control-plane messages, not
+		// assistant-turn failures. api_retry in particular carries `error: "rate_limit"`
+		// as a retry-category tag for HTTP 429/529 and similar transient conditions
+		// that Claude Code will automatically retry. Treating them as errors would
+		// flag a still-streaming (and ultimately successful) response as failed.
+		if (obj.type === 'system') {
+			return null;
+		}
+
+		// ── Plan-limit notice ───────────────────────────────────────────────────
+		// Claude Code does NOT report a hit plan limit as an error event. It emits
+		// a SYNTHETIC ASSISTANT MESSAGE whose text is the banner:
+		//
+		//   { type: 'assistant', error: 'rate_limit', isApiErrorMessage: true,
+		//     apiErrorStatus: 429, message: { model: '<synthetic>', content:
+		//       [{ type:'text', text: "You've hit your session limit · resets …" }] },
+		//     quotaLimits: { resetsAt: 1787416800, rateLimitType: 'five_hour', … } }
+		//
+		// Verified against a real captured transcript. Two consequences that cost
+		// us before: it is an `assistant` event (so it rendered as an ordinary
+		// reply and the turn looked successful), and the top-level `error` is the
+		// bare tag `"rate_limit"`, which matched no pattern and classified as
+		// `unknown` - so Agent Resilience never saw a retryable failure.
+		//
+		// The richer top-level fields are only present on some paths (the
+		// transcript carries them; plain `--output-format stream-json` stdout may
+		// forward just `message`), so recognizing the TEXT is what makes this work
+		// everywhere. `quotaLimits` is preserved on `parsedJson` when present so
+		// the retry lands on the exact reset second instead of an hourly poll.
+		const limitError = this.detectPlanLimitNotice(obj, parsed);
+		if (limitError) return limitError;
+
+		// ── Failed terminal result ──────────────────────────────────────────────
+		// Claude Code ends a failed turn with an ordinary `result` envelope flagged
+		// `is_error: true` and then EXITS 0 (max turns, a budget cap, an API error
+		// it gave up on, an error during execution). Nothing else on the line says
+		// failure: there is no `error` field, and `subtype` can even read
+		// "success". Read as a plain result, the failure text rendered as the
+		// agent's answer and the turn settled as a success, on every surface.
+		if (obj.type === 'result' && obj.is_error === true) {
+			const failureText = this.failedResultText(obj);
+			const match = matchErrorPattern(getErrorPatterns(this.agentId), failureText);
+			return {
+				type: match?.type ?? 'unknown',
+				message: match?.message ?? failureText,
+				recoverable: match?.recoverable ?? true,
+				agentId: this.agentId,
+				timestamp: Date.now(),
+				parsedJson: parsed,
+			};
+		}
+
+		let errorText: string | null = null;
+		let parsedJson: unknown = null;
+
+		if (obj.type === 'error' && obj.message) {
+			parsedJson = parsed;
+			errorText = obj.message as string;
+		} else if (
+			(obj.type === 'turn.failed' || obj.type === 'turn_failed') &&
+			(obj.error as Record<string, unknown>)?.message
+		) {
+			parsedJson = parsed;
+			errorText = (obj.error as Record<string, unknown>).message as string;
+		} else if (obj.error) {
+			parsedJson = parsed;
+			errorText = typeof obj.error === 'string' ? obj.error : JSON.stringify(obj.error);
+		}
+
+		if (!errorText) {
+			return null;
+		}
+
+		const patterns = getErrorPatterns(this.agentId);
+		// An in-turn API error notice puts only a bare category tag in `error`
+		// (`invalid_request`, `server_error`), and a tag matches no pattern. What
+		// actually failed is the notice's own text, so classify from that when the
+		// tag says nothing. Captured live: a full context window arrived as
+		//
+		//   { type: 'assistant', error: 'invalid_request', is_api_error_message: true,
+		//     message: { model: '<synthetic>', content: [{ type: 'text',
+		//       text: 'Prompt is too long' }] } }
+		//
+		// and surfaced as an `unknown` error reading "invalid_request". The result
+		// that follows does classify, but the held notice is settled first and wins.
+		const match =
+			matchErrorPattern(patterns, errorText) ??
+			(this.isProvisionalErrorNotice(parsed)
+				? matchErrorPattern(
+						patterns,
+						this.extractTextFromMessage(obj as unknown as ClaudeRawMessage)
+					)
+				: null);
+
+		if (match) {
+			return {
+				type: match.type,
+				message: match.message,
+				recoverable: match.recoverable,
+				agentId: this.agentId,
+				timestamp: Date.now(),
+				parsedJson,
+			};
+		}
+
+		// Structured error event that didn't match a known pattern -
+		// still report it rather than silently dropping
+		if (parsedJson) {
+			return {
+				type: 'unknown',
+				message: errorText,
+				recoverable: true,
+				agentId: this.agentId,
+				timestamp: Date.now(),
+				parsedJson,
+			};
+		}
+
+		return null;
+	}
+
+	/**
+	 * What a failed `result` envelope says went wrong. Its `result` string is the
+	 * provider's own message when there is one ("API Error: ..."); otherwise the
+	 * `subtype` names the cause. The `errors` array is not used: it carries
+	 * internal diagnostics (`[ede_diagnostic] result_type=user ...`), not text
+	 * meant for a person.
+	 */
+	private failedResultText(obj: Record<string, unknown>): string {
+		if (typeof obj.result === 'string' && obj.result.trim()) {
+			return obj.result;
+		}
+		switch (obj.subtype) {
+			case 'error_max_turns':
+				return 'Claude Code stopped after reaching its maximum number of turns.';
+			case 'error_max_budget_usd':
+				return 'Claude Code stopped after reaching its spending limit for this turn.';
+			case 'error_during_execution':
+				return 'Claude Code stopped with an error before finishing the turn.';
+			default:
+				return 'Claude Code reported that the turn failed.';
+		}
+	}
+
+	/**
+	 * Claude Code reports a failed API call INSIDE a turn as a synthetic assistant
+	 * message, and then often retries the call itself and carries on. Captured live:
+	 *
+	 *   { type: 'assistant', error: 'server_error', is_api_error_message: true,
+	 *     message: { model: '<synthetic>', content: [{ type: 'text',
+	 *       text: 'API Error: Connection lost mid-response. ...' }] } }
+	 *
+	 * followed two minutes later by more tool calls from the real model, and no
+	 * `result` for another twenty. The notice alone therefore does not end the turn.
+	 * Stdout carries the flag in snake_case and the transcript in camelCase, so
+	 * both are accepted, and the `<synthetic>` model marks it on paths that forward
+	 * neither.
+	 */
+	isProvisionalErrorNotice(parsed: unknown): boolean {
+		if (!parsed || typeof parsed !== 'object') return false;
+		const obj = parsed as Record<string, unknown>;
+		if (obj.type !== 'assistant') return false;
+		const message = obj.message as { model?: unknown } | undefined;
+		return (
+			obj.is_api_error_message === true ||
+			obj.isApiErrorMessage === true ||
+			message?.model === '<synthetic>'
+		);
+	}
+
+	/**
+	 * Recognize Claude Code's plan-limit notice on any envelope that can carry it,
+	 * or return null when this isn't one.
+	 *
+	 * Handles three shapes, in the order they occur in the wild:
+	 *  - a synthetic `assistant` message whose text is the banner (what actually
+	 *    happens on a hit limit - see the block that calls this),
+	 *  - a `result` envelope whose `result` string is the banner,
+	 *  - the legacy `Claude AI usage limit reached|<epoch>` marker in either.
+	 *
+	 * False positives are the real risk here: Maestro's own agents discuss usage
+	 * limits constantly, and mistaking a normal reply for a quota failure aborts a
+	 * good turn. So the banner must be the ENTIRE message text (anchored and
+	 * length-capped by `isClaudeLimitNotice`), not merely contained in it - a reply
+	 * that quotes or explains the banner always carries surrounding prose. An
+	 * explicit marker (`isApiErrorMessage`, `error: 'rate_limit'`, or the
+	 * `<synthetic>` model Claude stamps on generated messages) is accepted as
+	 * corroboration but never required, since not every path forwards it.
+	 */
+	private detectPlanLimitNotice(obj: Record<string, unknown>, parsed: unknown): AgentError | null {
+		const msg = obj as unknown as ClaudeRawMessage;
+		const isAssistant = obj.type === 'assistant';
+		const isResult = obj.type === 'result';
+		if (!isAssistant && !isResult) return null;
+
+		const text = isResult
+			? typeof obj.result === 'string'
+				? obj.result
+				: ''
+			: this.extractTextFromMessage(msg);
+		if (!isClaudeLimitNotice(text)) return null;
+
+		// A synthetic limit message carries no tool calls and no other content, so
+		// requiring the notice to BE the message (not just start it) is what keeps
+		// an agent explaining limits from tripping this.
+		const message = obj.message as { model?: unknown } | undefined;
+		const explicitlyFlagged =
+			obj.isApiErrorMessage === true ||
+			obj.error === 'rate_limit' ||
+			message?.model === '<synthetic>';
+		if (isAssistant && !explicitlyFlagged && this.extractToolUseBlocks(msg).length > 0) {
+			return null;
+		}
+
+		const match = matchErrorPattern(getErrorPatterns(this.agentId), text);
+		return {
+			// `rate_limited` rather than `token_exhaustion`: Maestro's
+			// `token_exhaustion` means the CONTEXT WINDOW is full, which is not
+			// retryable. Plan quota lives under `rate_limited`; the retry strategy is
+			// then chosen from the message text by `classifyRetryableError`.
+			type: match?.type ?? 'rate_limited',
+			// Keep Claude's own wording rather than the generic pattern message: it
+			// names which limit was hit and when it resets, which is both what the
+			// user wants to read and what `tokenExhaustionResetAt` falls back to
+			// parsing when no structured `quotaLimits` came through.
+			message: text.trim(),
+			recoverable: true,
+			agentId: this.agentId,
+			timestamp: Date.now(),
+			// Carries `quotaLimits.resetsAt` through to the retry scheduler.
+			parsedJson: parsed,
+		};
+	}
+
+	/**
+	 * Extract error message from a line that contains embedded JSON.
+	 * Handles stderr output like:
+	 * "Error streaming, falling back to non-streaming mode: 400 {"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 206491 tokens > 200000 maximum"}}"
+	 */
+	private extractErrorFromMixedLine(line: string): string | null {
+		// Look for embedded JSON in the line
+		const jsonStart = line.indexOf('{');
+		if (jsonStart === -1) {
+			return null;
+		}
+
+		try {
+			const jsonPart = line.substring(jsonStart);
+			const parsed = JSON.parse(jsonPart);
+
+			// Handle nested error structure from API: { "type": "error", "error": { "message": "..." } }
+			if (parsed.error?.message) {
+				return parsed.error.message;
+			}
+			// Handle flat error structure: { "type": "error", "message": "..." }
+			if (parsed.message) {
+				return parsed.message;
+			}
+		} catch {
+			// JSON parsing failed, ignore
+		}
+
+		return null;
+	}
+
+	/**
+	 * Detect an error from process exit information
+	 */
+	detectErrorFromExit(exitCode: number, stderr: string, stdout: string): AgentError | null {
+		// Exit code 0 is success
+		if (exitCode === 0) {
+			return null;
+		}
+
+		// First try to extract detailed error from embedded JSON in stderr
+		// This handles messages like: "Error streaming...: 400 {"type":"error","error":{"message":"prompt is too long: 206491 tokens > 200000 maximum"}}"
+		const extractedError = this.extractErrorFromMixedLine(stderr);
+		if (extractedError) {
+			const patterns = getErrorPatterns(this.agentId);
+			const match = matchErrorPattern(patterns, extractedError);
+			if (match) {
+				return {
+					type: match.type,
+					message: match.message,
+					recoverable: match.recoverable,
+					agentId: this.agentId,
+					timestamp: Date.now(),
+					raw: {
+						exitCode,
+						stderr,
+						stdout,
+					},
+				};
+			}
+		}
+
+		// Check stderr and stdout for error patterns (fallback to raw text matching)
+		// JSON event lines were classified as they streamed; see stripJsonEventLines.
+		const combined = `${stderr}\n${stripJsonEventLines(stdout)}`;
+		const patterns = getErrorPatterns(this.agentId);
+		const match = matchErrorPattern(patterns, combined);
+
+		if (match) {
+			return {
+				type: match.type,
+				message: match.message,
+				recoverable: match.recoverable,
+				agentId: this.agentId,
+				timestamp: Date.now(),
+				raw: {
+					exitCode,
+					stderr,
+					stdout,
+				},
+			};
+		}
+
+		// Non-zero exit with no recognized pattern - treat as crash
+		return {
+			type: 'agent_crashed',
+			message: `Agent exited with code ${exitCode}`,
+			recoverable: true,
+			agentId: this.agentId,
+			timestamp: Date.now(),
+			raw: {
+				exitCode,
+				stderr,
+				stdout,
+			},
+		};
+	}
+}

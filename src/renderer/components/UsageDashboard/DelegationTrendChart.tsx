@@ -30,6 +30,7 @@ import {
 	parseYmd,
 	type DelegationBucket,
 } from './delegationTrendUtils';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 interface DelegationTrendChartProps {
 	/** Per-day split from `stats.getDelegationByDay`. Empty while loading. */
@@ -153,15 +154,14 @@ export const DelegationTrendChart = memo(function DelegationTrendChart({
 				<div className="relative">
 					{hoveredBucket && (
 						<div
-							className="absolute z-10 px-3 py-2 rounded text-xs whitespace-nowrap pointer-events-none shadow-lg"
+							className="absolute z-10 px-3 py-2 rounded text-xs whitespace-nowrap pointer-events-none"
 							style={{
 								left: `${((hovered! + 0.5) / buckets.length) * 100}%`,
 								bottom: '100%',
 								transform: 'translateX(-50%)',
 								marginBottom: '8px',
-								backgroundColor: theme.colors.bgActivity,
+								...elevatedSurfaceStyle(theme),
 								color: theme.colors.textMain,
-								border: `1px solid ${theme.colors.border}`,
 							}}
 						>
 							<div className="font-medium mb-1">{formatBucketLabel(hoveredBucket)}</div>

@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron';
 import { execFileNoThrow, execFileBufferNoThrow } from '../../../utils/execFile';
-import { execGit } from '../../../utils/remote-git';
+import { execGit, execGitReadOnly, isGitTimeout } from '../../../utils/remote-git';
 import { logger } from '../../../utils/logger';
 import { getSshRemoteById } from '../../../stores';
 import { withIpcErrorLogging, createIpcHandler } from '../../../utils/ipcHandler';
@@ -11,7 +11,7 @@ import {
 	getImageMimeType,
 } from '../../../../shared/gitUtils';
 import { getRepoRootRemote } from '../../../utils/remote-git';
-import { LOG_CONTEXT, handlerOpts } from './shared';
+import { LOG_CONTEXT, handlerOpts, readOnlyGitReply } from './shared';
 
 /**
  * Register read-only Git IPC handlers: status, diff, isRepo, numstat, remote,
@@ -29,8 +29,13 @@ export function registerReadHandlers(): void {
 			async (cwd: string, sshRemoteId?: string, remoteCwd?: string) => {
 				const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
 				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
-				const result = await execGit(['status', '--porcelain'], cwd, sshRemote, effectiveRemoteCwd);
-				return { stdout: result.stdout, stderr: result.stderr };
+				const result = await execGitReadOnly(
+					['status', '--porcelain'],
+					cwd,
+					sshRemote,
+					effectiveRemoteCwd
+				);
+				return readOnlyGitReply(result);
 			}
 		)
 	);
@@ -74,8 +79,13 @@ export function registerReadHandlers(): void {
 			async (cwd: string, sshRemoteId?: string, remoteCwd?: string) => {
 				const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
 				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
-				const result = await execGit(['diff', '--numstat'], cwd, sshRemote, effectiveRemoteCwd);
-				return { stdout: result.stdout, stderr: result.stderr };
+				const result = await execGitReadOnly(
+					['diff', '--numstat'],
+					cwd,
+					sshRemote,
+					effectiveRemoteCwd
+				);
+				return readOnlyGitReply(result);
 			}
 		)
 	);
@@ -106,17 +116,23 @@ export function registerReadHandlers(): void {
 				const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
 				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
 				// Get comprehensive git info in a single call
-				const [branchResult, remoteResult, statusResult, behindAheadResult] = await Promise.all([
-					execGit(['rev-parse', '--abbrev-ref', 'HEAD'], cwd, sshRemote, effectiveRemoteCwd),
-					execGit(['remote', 'get-url', 'origin'], cwd, sshRemote, effectiveRemoteCwd),
-					execGit(['status', '--porcelain'], cwd, sshRemote, effectiveRemoteCwd),
-					execGit(
+				const results = await Promise.all([
+					execGitReadOnly(
+						['rev-parse', '--abbrev-ref', 'HEAD'],
+						cwd,
+						sshRemote,
+						effectiveRemoteCwd
+					),
+					execGitReadOnly(['remote', 'get-url', 'origin'], cwd, sshRemote, effectiveRemoteCwd),
+					execGitReadOnly(['status', '--porcelain'], cwd, sshRemote, effectiveRemoteCwd),
+					execGitReadOnly(
 						['rev-list', '--left-right', '--count', '@{upstream}...HEAD'],
 						cwd,
 						sshRemote,
 						effectiveRemoteCwd
 					),
 				]);
+				const [branchResult, remoteResult, statusResult, behindAheadResult] = results;
 
 				// Use shared parsing functions for behind/ahead and uncommitted changes
 				const { behind, ahead } =
@@ -125,13 +141,16 @@ export function registerReadHandlers(): void {
 						: { behind: 0, ahead: 0 };
 				const uncommittedChanges = countUncommittedChanges(statusResult.stdout);
 
-				return {
+				const info = {
 					branch: branchResult.stdout.trim(),
 					remote: remoteResult.stdout.trim(),
 					behind,
 					ahead,
 					uncommittedChanges,
 				};
+				// Any query that did not answer leaves its field at an empty/zero
+				// placeholder, which must not be read as a real value.
+				return results.some(isGitTimeout) ? { ...info, timedOut: true } : info;
 			}
 		)
 	);

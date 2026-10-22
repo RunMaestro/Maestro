@@ -9,6 +9,12 @@
  * Two states: hidden (no session focused) and open (the full panel - a
  * searchable, auto-tailing thought log).
  *
+ * Under the header sits ONE bar with two jobs. While a run can be steered it
+ * rests as two labelled buttons, Search and Steer, and clicking either swaps
+ * the whole bar for that input; sending or leaving puts the buttons back.
+ * Steering used to be a fourth dim icon in the header, which is how a feature
+ * that changes what the run does next came to look like a view toggle.
+ *
  * The panel is a VIEWER, not the capture switch: buffering runs ambiently in
  * the store, so closing does not stop it and reopening shows everything the
  * agent thought while the panel was away. Discarding is the explicit trash
@@ -25,7 +31,10 @@ import {
 	AlertTriangle,
 	Brain,
 	Check,
+	ChevronDown,
+	ChevronRight,
 	Compass,
+	CornerDownRight,
 	Loader2,
 	Search,
 	SendHorizonal,
@@ -47,18 +56,26 @@ import {
 import { useSessionStore } from '../stores/sessionStore';
 import { useBatchStore } from '../stores/batchStore';
 import {
+	groupSteeringDeliveries,
 	selectDeliveredSteeringNotes,
 	selectPendingSteeringNotes,
 	useAutoRunSteeringStore,
+	type SteeringDelivery,
 } from '../stores/autoRunSteeringStore';
-import { cancelSteeringNote, submitSteeringNote } from '../services/autoRunSteering';
+import {
+	cancelSteeringNote,
+	steeringBlocker,
+	submitSteeringNote,
+} from '../services/autoRunSteering';
 import { MAX_STEERING_NOTE_LENGTH, type AutoRunSteeringNote } from '../../shared/autorunSteering';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useUIStore } from '../stores/uiStore';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { usePersistedToggle } from '../hooks/ui/usePersistedToggle';
+import { useAutosizeTextarea } from '../hooks/ui/useAutosizeTextarea';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { GhostIconButton } from './ui/GhostIconButton';
+import { CountBadge } from './ui/CountBadge';
 import { InlineCode } from './Markdown/components/InlineCode';
 import { Markdown } from './Markdown';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
@@ -69,6 +86,24 @@ import { generateTerminalProseStyles } from '../utils/markdownConfig';
  * survive the panel unmounting (closing it, or the Right Panel folding away).
  */
 export const SHOW_TOOL_ACTIVITY_KEY = 'thoughtStream.showToolActivity';
+
+/**
+ * What the bar under the header is showing: the two buttons, or the input one
+ * of them opened.
+ */
+type BarMode = 'buttons' | 'search' | 'steer';
+
+/** Tallest the steering note box grows before it scrolls instead. */
+const STEER_COMPOSER_MAX_HEIGHT = 120;
+
+/**
+ * Panel widths below which a bar button drops to a one-word label rather than
+ * truncating mid-phrase. Two thresholds because the buttons are equal halves
+ * and the labels are not equal lengths: at the Right Panel's default width
+ * "Steer Auto Run" still fits its half and "Search thought stream" does not.
+ */
+const COMPACT_SEARCH_LABEL_WIDTH = 380;
+const COMPACT_STEER_LABEL_WIDTH = 310;
 
 interface ThoughtStreamPanelProps {
 	theme: Theme;
@@ -262,6 +297,105 @@ function SteeringNoteRow({
 	);
 }
 
+/**
+ * What the task that took a delivery's notes said back.
+ *
+ * Three states, because "delivered" on its own answers the wrong question: the
+ * operator is not asking whether the note reached a prompt, they are asking
+ * what the agent did about it.
+ *
+ * - No reply, run in flight: the task is still working, so say so.
+ * - No reply, run over: the task was stopped before it answered. A spinner here
+ *   would spin forever over a run that no longer exists.
+ * - Reply: the task's one-line synopsis, opening to its whole response.
+ *
+ * The collapsed line is the synopsis rather than a clamp of the full text: the
+ * Auto Run prompt has a steered task lead with `[steered]` and what it changed,
+ * which is exactly the sentence worth showing in two lines. The full reply is
+ * markdown and renders as markdown, in the same scoped prose styles as the
+ * reasoning blocks below it.
+ */
+function SteeringReply({
+	delivery,
+	theme,
+	runInFlight,
+	expanded,
+	onToggle,
+}: {
+	delivery: SteeringDelivery;
+	theme: Theme;
+	runInFlight: boolean;
+	expanded: boolean;
+	onToggle: () => void;
+}) {
+	const { response } = delivery;
+
+	if (!response) {
+		return (
+			<div
+				className="flex items-center gap-1.5 pl-[18px] text-2xs italic"
+				style={{ color: theme.colors.textDim }}
+				data-testid="steering-reply-waiting"
+			>
+				{runInFlight ? (
+					<>
+						<Loader2 className="w-3 h-3 shrink-0 animate-spin" />
+						The task that took this is still working
+					</>
+				) : (
+					'The run ended before this task replied'
+				)}
+			</div>
+		);
+	}
+
+	const color = response.success ? theme.colors.textMain : theme.colors.error;
+	// Nothing to open when the reply is its own summary (a failure with no
+	// output, or a one-line response).
+	const hasMore = response.text.length > 0 && response.text !== response.summary;
+	const Chevron = expanded ? ChevronDown : ChevronRight;
+
+	return (
+		<div className="pl-[18px]" data-testid="steering-reply">
+			<button
+				type="button"
+				onClick={onToggle}
+				disabled={!hasMore}
+				aria-expanded={hasMore ? expanded : undefined}
+				className="w-full flex items-start gap-1.5 text-left text-2xs leading-snug rounded px-1.5 py-1 transition-colors enabled:hover:bg-white/5 disabled:cursor-default"
+				style={{ backgroundColor: theme.colors.bgActivity, color }}
+				title={`${formatThoughtTime(response.timestamp)} - ${
+					response.success ? 'reply from the task that took this' : 'the task that took this failed'
+				}`}
+			>
+				{response.success ? (
+					<CornerDownRight
+						className="w-3 h-3 mt-0.5 shrink-0"
+						style={{ color: theme.colors.textDim }}
+					/>
+				) : (
+					<AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" aria-label="failed" />
+				)}
+				<span className={`flex-1 min-w-0 break-words ${expanded ? '' : 'line-clamp-2'}`}>
+					{response.summary || response.text}
+				</span>
+				{hasMore && (
+					<Chevron className="w-3 h-3 mt-0.5 shrink-0" style={{ color: theme.colors.textDim }} />
+				)}
+			</button>
+			{expanded && hasMore && (
+				<div
+					className="thought-stream-prose prose max-w-none break-words select-text mt-1.5 px-1.5"
+					style={{ fontSize: '0.75rem', color: theme.colors.textMain }}
+					data-testid="steering-reply-full"
+				>
+					<Markdown preset="document" content={response.text} theme={theme} frontmatter={false} />
+				</div>
+			)}
+		</div>
+	);
+}
+
 export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 	const panelSessionId = useThoughtStreamStore((s) => s.panelSessionId);
 	const buffer = useThoughtStreamStore((s) =>
@@ -283,25 +417,29 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 	const [query, setQuery] = useState('');
 	const scrollRef = useRef<HTMLDivElement>(null);
 
-	// Steering: the composer is open/closed here, the note itself lives in
-	// autoRunSteeringStore. Auto Run steering is a property of the RUN, so this
+	// Steering: which input the bar is showing lives here, the note itself lives
+	// in autoRunSteeringStore. Auto Run steering is a property of the RUN, so this
 	// panel is where it is offered - a note typed at the agent's chat composer
 	// would be a message that silently meant something else.
-	const [steerOpen, setSteerOpen] = useState(false);
+	const [barMode, setBarMode] = useState<BarMode>('buttons');
 	const [steerDraft, setSteerDraft] = useState('');
 	const steerRef = useRef<HTMLTextAreaElement>(null);
+	const searchRef = useRef<HTMLInputElement>(null);
 
-	// Only a run THIS client owns can be steered: the notes are renderer state,
-	// so a mirrored run's loop is in another client and would never read them.
-	// A Steer button that quietly did nothing is worse than no button.
-	const canSteer = useBatchStore((st) => {
-		const run = panelSessionId ? st.batchRunStates[panelSessionId] : undefined;
-		return !!run?.isRunning && run.mirrored !== true;
-	});
+	// Only a run THIS client owns can be steered. `steeringBlocker` is the one
+	// statement of that rule, shared with `maestro-cli steer-auto-run`.
+	const canSteer = useBatchStore(
+		(st) => steeringBlocker(panelSessionId ? st.batchRunStates[panelSessionId] : undefined) === null
+	);
 	const pendingNotes = useAutoRunSteeringStore(selectPendingSteeringNotes(panelSessionId ?? ''));
 	const deliveredNotes = useAutoRunSteeringStore(
 		selectDeliveredSteeringNotes(panelSessionId ?? '')
 	);
+	// One entry per task that took notes: the notes it took, then its one reply.
+	const deliveries = useMemo(() => groupSteeringDeliveries(deliveredNotes), [deliveredNotes]);
+	// One reply open at a time. The strip is a few lines tall by design, and two
+	// open replies would push the stream it sits above off the panel.
+	const [expandedDeliveryId, setExpandedDeliveryId] = useState<string | null>(null);
 	// Newest blocks render on top, so "following" the live stream means staying
 	// pinned to the TOP of the scroll area, not the bottom.
 	const stickToTopRef = useRef(true);
@@ -362,6 +500,12 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 
 	const searching = query.trim().length > 0;
 
+	// What the bar actually draws. With nothing to steer there is no choice to
+	// offer, so the bar is simply the search box. A live query also holds it in
+	// search: a filter that is narrowing the feed has to stay on screen and
+	// clearable, not hide behind a button that says nothing is filtered.
+	const bar: BarMode = !canSteer || (barMode === 'buttons' && searching) ? 'search' : barMode;
+
 	// The feed is empty ONLY because the toggle is off: the agent did work, we
 	// are just not drawing it.
 	const hiddenActionsOnly = !showToolActivity && feed.length === 0 && actionCount > 0;
@@ -394,17 +538,29 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 	// Send button that can no longer deliver anything.
 	useEffect(() => {
 		if (!canSteer) {
-			setSteerOpen(false);
+			setBarMode('buttons');
 			setSteerDraft('');
 		}
 	}, [canSteer]);
 
-	// Focus the note box when it opens. The panel registers a PASSIVE layer, so
-	// nothing hands it the caret; without this the operator clicks Steer and then
-	// has to click again to type.
+	// Hand the caret to whichever input a button just opened. The panel registers
+	// a PASSIVE layer, so nothing else does; without this the operator clicks
+	// Steer and then has to click again to type. Keyed on the button press rather
+	// than on what the bar draws, so the search box that is simply always there
+	// between runs never pulls focus when the panel opens.
 	useEffect(() => {
-		if (steerOpen) steerRef.current?.focus();
-	}, [steerOpen]);
+		if (barMode === 'steer') steerRef.current?.focus();
+		else if (barMode === 'search') searchRef.current?.focus();
+	}, [barMode]);
+
+	// The note box is one line until the note is not. `bar` re-measures a draft
+	// that was kept across an Escape and is being shown again.
+	useAutosizeTextarea({
+		textareaRef: steerRef,
+		value: steerDraft,
+		maxHeight: STEER_COMPOSER_MAX_HEIGHT,
+		resetKey: bar,
+	});
 
 	const sendSteeringNote = () => {
 		if (!panelSessionId) return;
@@ -413,14 +569,27 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 		// text, and the service has already said on screen why it did not land.
 		if (!submitSteeringNote({ sessionId: panelSessionId, text: steerDraft })) return;
 		setSteerDraft('');
-		setSteerOpen(false);
+		setBarMode('buttons');
 	};
 
-	// Escape closes the panel - but the note box first, so a reflex Escape while
-	// typing does not put away the whole panel and lose the draft with it.
+	// Leaving search drops the filter with it: the buttons say nothing about a
+	// query, so one left active would be narrowing the feed invisibly.
+	const leaveSearch = () => {
+		setQuery('');
+		setBarMode('buttons');
+	};
+
+	// Escape closes the panel - but it steps the bar back to its buttons first,
+	// so a reflex Escape while typing does not put away the whole panel and lose
+	// the draft with it. Between runs the bar has no buttons to step back to, so
+	// Escape closes the panel as it always did.
 	const handleEscape = () => {
-		if (steerOpen) {
-			setSteerOpen(false);
+		if (bar === 'steer') {
+			setBarMode('buttons');
+			return;
+		}
+		if (canSteer && bar === 'search') {
+			leaveSearch();
 			return;
 		}
 		closePanel();
@@ -461,6 +630,9 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 	// gutter scales with panel width so it tracks resize.
 	const gutter = Math.round(Math.min(40, Math.max(12, rightPanelWidth * 0.06)));
 	const panelWidth = Math.max(280, rightPanelWidth - gutter * 2);
+	const steerButtonTitle = pendingNotes.length
+		? `Steer the Auto Run (${pendingNotes.length} note${pendingNotes.length === 1 ? '' : 's'} waiting for the next task)`
+		: 'Steer the Auto Run - send a note that opens the next task';
 
 	// --- Full panel ---------------------------------------------------------
 	return (
@@ -504,23 +676,6 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 						{live ? ' · live' : ''}
 					</span>
 				</div>
-				{canSteer && (
-					<GhostIconButton
-						onClick={() => setSteerOpen((open) => !open)}
-						pressed={steerOpen}
-						title={
-							pendingNotes.length
-								? `Steer the Auto Run (${pendingNotes.length} note${pendingNotes.length === 1 ? '' : 's'} waiting for the next task)`
-								: 'Steer the Auto Run - send a note that opens the next task'
-						}
-						ariaLabel="Steer the Auto Run"
-						testId="thought-stream-steer-toggle"
-						className="shrink-0"
-						color={steerOpen || pendingNotes.length ? theme.colors.warning : theme.colors.textDim}
-					>
-						<Compass className="w-3.5 h-3.5" />
-					</GhostIconButton>
-				)}
 				<GhostIconButton
 					onClick={toggleToolActivity}
 					pressed={showToolActivity}
@@ -556,101 +711,206 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 				</GhostIconButton>
 			</div>
 
-			{/* Search */}
-			<div className="px-3 py-2 border-b shrink-0" style={{ borderColor: theme.colors.border }}>
-				<div
-					className="flex items-center gap-2 rounded px-2 py-1.5"
-					style={{ backgroundColor: theme.colors.bgActivity }}
-				>
-					<Search className="w-3.5 h-3.5 shrink-0" style={{ color: theme.colors.textDim }} />
-					<input
-						type="text"
-						value={query}
-						onChange={(e) => setQuery(e.target.value)}
-						placeholder="Search activity..."
-						className="flex-1 bg-transparent border-none outline-none text-xs"
-						style={{ color: theme.colors.textMain }}
-					/>
-					{searching && (
+			{/* The bar: two labelled buttons at rest, the input either one opened
+			    otherwise. Between runs there is nothing to steer, so it is the
+			    search box alone. */}
+			<div
+				className="px-3 py-2 border-b shrink-0"
+				style={{ borderColor: theme.colors.border }}
+				data-testid="thought-stream-bar"
+			>
+				{bar === 'buttons' ? (
+					<div className="flex gap-2">
 						<button
-							onClick={() => setQuery('')}
-							className="p-0.5 rounded hover:bg-white/10 transition-colors shrink-0"
-							title="Clear search"
+							type="button"
+							onClick={() => setBarMode('search')}
+							className="flex-1 min-w-0 flex items-center justify-center gap-1.5 rounded px-2 py-1.5 text-xs font-medium border transition-colors hover:bg-white/5"
+							style={{
+								backgroundColor: theme.colors.bgActivity,
+								borderColor: theme.colors.border,
+								color: theme.colors.textMain,
+							}}
+							title="Search the thought stream"
+							data-testid="thought-stream-search-open"
 						>
-							<X className="w-3 h-3" style={{ color: theme.colors.textDim }} />
+							<Search className="w-3.5 h-3.5 shrink-0" style={{ color: theme.colors.textDim }} />
+							<span className="truncate">
+								{panelWidth < COMPACT_SEARCH_LABEL_WIDTH ? 'Search' : 'Search thought stream'}
+							</span>
 						</button>
-					)}
-				</div>
-			</div>
-
-			{/* Steering composer. Opens on the Compass, sends on Enter, keeps the
-			    draft on Shift+Enter. The note does not spawn a turn of its own - it
-			    rides in front of the next task's prompt - so the hint says when it
-			    will be read rather than leaving the operator to guess. */}
-			{steerOpen && (
-				<div
-					className="px-3 py-2 border-b shrink-0"
-					style={{ borderColor: theme.colors.border }}
-					data-testid="thought-stream-steer-composer"
-				>
-					<textarea
-						ref={steerRef}
-						value={steerDraft}
-						onChange={(e) => setSteerDraft(e.target.value.slice(0, MAX_STEERING_NOTE_LENGTH))}
-						onKeyDown={(e) => {
-							if (e.key === 'Enter' && !e.shiftKey) {
-								e.preventDefault();
-								sendSteeringNote();
-								return;
-							}
-							// Escape belongs to the box while the caret is in it. The
-							// layer handler would see the same key and reach the same
-							// branch, but stopping here keeps the panel's Escape from
-							// depending on which element happened to have focus.
-							if (e.key === 'Escape') {
-								e.preventDefault();
-								e.stopPropagation();
-								setSteerOpen(false);
-							}
-						}}
-						rows={3}
-						placeholder="Steer the Auto Run - delivered at the start of the next task"
-						className="w-full resize-none rounded px-2 py-1.5 text-xs outline-none border select-text scrollbar-thin"
-						style={{
-							backgroundColor: theme.colors.bgActivity,
-							borderColor: theme.colors.border,
-							color: theme.colors.textMain,
-						}}
-					/>
-					<div className="flex items-center gap-2 mt-1.5">
-						<span className="text-2xs flex-1 min-w-0" style={{ color: theme.colors.textDim }}>
-							Enter sends · Shift+Enter for a new line
-						</span>
 						<button
-							onClick={sendSteeringNote}
-							disabled={!steerDraft.trim()}
-							className="flex items-center gap-1 px-2 py-1 rounded text-2xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-							style={{ backgroundColor: theme.colors.accent, color: theme.colors.bgMain }}
-							data-testid="thought-stream-steer-send"
+							type="button"
+							onClick={() => setBarMode('steer')}
+							className="flex-1 min-w-0 flex items-center justify-center gap-1.5 rounded px-2 py-1.5 text-xs font-semibold border transition-colors hover:brightness-125"
+							style={{
+								backgroundColor: theme.colors.warning + '20',
+								borderColor: theme.colors.warning,
+								color: theme.colors.warning,
+							}}
+							title={steerButtonTitle}
+							data-testid="thought-stream-steer-toggle"
 						>
-							<SendHorizonal className="w-3 h-3" />
-							Send
+							<Compass className="w-3.5 h-3.5 shrink-0" />
+							<span className="truncate">
+								{panelWidth < COMPACT_STEER_LABEL_WIDTH ? 'Steer' : 'Steer Auto Run'}
+							</span>
+							{pendingNotes.length > 0 && (
+								<CountBadge
+									count={pendingNotes.length}
+									theme={theme}
+									label="pending steering note"
+									style={{
+										backgroundColor: theme.colors.warning + '33',
+										border: `1px solid ${theme.colors.warning}66`,
+										color: theme.colors.warning,
+									}}
+									data-testid="thought-stream-steer-pending-count"
+								/>
+							)}
 						</button>
 					</div>
-				</div>
-			)}
+				) : bar === 'steer' ? (
+					// Sends on Enter, keeps the draft on Shift+Enter. The note does
+					// not spawn a turn of its own - it rides in front of the next
+					// task's prompt - so the placeholder says when it will be read
+					// rather than leaving the operator to guess.
+					<div data-testid="thought-stream-steer-composer">
+						<div
+							className="flex items-end gap-2 rounded border px-2 py-1.5"
+							style={{
+								backgroundColor: theme.colors.bgActivity,
+								borderColor: theme.colors.warning,
+							}}
+						>
+							<Compass
+								className="w-3.5 h-3.5 shrink-0 mb-1"
+								style={{ color: theme.colors.warning }}
+							/>
+							<textarea
+								ref={steerRef}
+								value={steerDraft}
+								onChange={(e) => setSteerDraft(e.target.value.slice(0, MAX_STEERING_NOTE_LENGTH))}
+								onKeyDown={(e) => {
+									if (e.key === 'Enter' && !e.shiftKey) {
+										e.preventDefault();
+										sendSteeringNote();
+										return;
+									}
+									// Escape belongs to the box while the caret is in it. The
+									// layer handler would see the same key and reach the same
+									// branch, but stopping here keeps the panel's Escape from
+									// depending on which element happened to have focus.
+									if (e.key === 'Escape') {
+										e.preventDefault();
+										e.stopPropagation();
+										setBarMode('buttons');
+									}
+								}}
+								// An empty box left behind goes back to the buttons: it
+								// holds nothing, and it is hiding Search. A draft stays.
+								onBlur={() => {
+									if (!steerDraft.trim()) setBarMode('buttons');
+								}}
+								rows={1}
+								placeholder="Steer the Auto Run - delivered at the start of the next task"
+								className="flex-1 min-w-0 resize-none bg-transparent border-none outline-none text-xs leading-snug py-0.5 select-text scrollbar-thin"
+								style={{ color: theme.colors.textMain }}
+							/>
+							<button
+								type="button"
+								onClick={sendSteeringNote}
+								disabled={!steerDraft.trim()}
+								className="flex items-center gap-1 px-2 py-1 rounded text-2xs font-medium transition-colors shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+								style={{ backgroundColor: theme.colors.accent, color: theme.colors.bgMain }}
+								data-testid="thought-stream-steer-send"
+							>
+								<SendHorizonal className="w-3 h-3" />
+								Send
+							</button>
+						</div>
+						<div
+							className="text-2xs mt-1.5"
+							style={{ color: theme.colors.textDim }}
+							data-shortcut-hint
+						>
+							Enter sends · Shift+Enter for a new line · Esc goes back
+						</div>
+					</div>
+				) : (
+					<div
+						className="flex items-center gap-2 rounded px-2 py-1.5"
+						style={{ backgroundColor: theme.colors.bgActivity }}
+					>
+						<Search className="w-3.5 h-3.5 shrink-0" style={{ color: theme.colors.textDim }} />
+						<input
+							ref={searchRef}
+							type="text"
+							value={query}
+							onChange={(e) => setQuery(e.target.value)}
+							onKeyDown={(e) => {
+								// Same reasoning as the note box: while a run can be
+								// steered, Escape here means "back to the buttons".
+								if (e.key === 'Escape' && canSteer) {
+									e.preventDefault();
+									e.stopPropagation();
+									leaveSearch();
+								}
+							}}
+							// An empty search box left behind goes back to the buttons,
+							// so Steer is never hidden behind an input holding nothing.
+							onBlur={() => {
+								if (!searching) setBarMode('buttons');
+							}}
+							placeholder="Search thought stream..."
+							className="flex-1 min-w-0 bg-transparent border-none outline-none text-xs"
+							style={{ color: theme.colors.textMain }}
+						/>
+						{searching && (
+							<button
+								type="button"
+								onClick={leaveSearch}
+								className="p-0.5 rounded hover:bg-white/10 transition-colors shrink-0"
+								title="Clear search"
+								aria-label="Clear search"
+							>
+								<X className="w-3 h-3" style={{ color: theme.colors.textDim }} />
+							</button>
+						)}
+					</div>
+				)}
+			</div>
 
-			{/* What the operator has already said this run. Pending notes stay
-			    cancellable; delivered ones are the record that replaced the
-			    transcript entry this feature used to write into the AI chat. */}
-			{(pendingNotes.length > 0 || deliveredNotes.length > 0) && (
+			{/* What the operator has already said this run, and what came back.
+			    Pending notes stay cancellable; delivered ones are grouped by the
+			    task that took them, each group closing with that task's reply. The
+			    strip grows while a reply is open - a whole task response does not
+			    fit in the few lines the collapsed list is held to. */}
+			{(pendingNotes.length > 0 || deliveries.length > 0) && (
 				<div
 					className="px-3 py-2 border-b shrink-0 flex flex-col gap-1.5 overflow-y-auto scrollbar-thin"
-					style={{ borderColor: theme.colors.border, maxHeight: 120 }}
+					style={{
+						borderColor: theme.colors.border,
+						maxHeight: deliveries.some((d) => d.deliveryId === expandedDeliveryId) ? '60%' : 120,
+					}}
 					data-testid="thought-stream-steer-notes"
 				>
-					{deliveredNotes.map((note) => (
-						<SteeringNoteRow key={note.id} note={note} theme={theme} />
+					{deliveries.map((delivery) => (
+						<div key={delivery.deliveryId} className="flex flex-col gap-1.5">
+							{delivery.notes.map((note) => (
+								<SteeringNoteRow key={note.id} note={note} theme={theme} />
+							))}
+							<SteeringReply
+								delivery={delivery}
+								theme={theme}
+								runInFlight={canSteer}
+								expanded={expandedDeliveryId === delivery.deliveryId}
+								onToggle={() =>
+									setExpandedDeliveryId((open) =>
+										open === delivery.deliveryId ? null : delivery.deliveryId
+									)
+								}
+							/>
+						</div>
 					))}
 					{pendingNotes.map((note) => (
 						<SteeringNoteRow

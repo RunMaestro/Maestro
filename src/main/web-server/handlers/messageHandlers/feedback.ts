@@ -3,7 +3,7 @@
  *
  * Handles: support_package_create, feedback_check_auth,
  * feedback_gh_login_command, feedback_search, feedback_submit,
- * feedback_subscribe, feedback_accounts. These are the CLI's route to the same
+ * feedback_subscribe, feedback_accounts, feedback_diagnose. These are the CLI's route to the same
  * service functions the Send Feedback modal and Create Debug Package use, so
  * the CLI files the byte-identical issue and zip.
  */
@@ -18,6 +18,7 @@ import {
 	subscribeFeedbackIssue,
 } from '../../../feedback';
 import { listFeedbackAccounts, rememberFeedbackAccount } from '../../../feedback/accounts';
+import { captureFeedbackLiveDiagnosis } from '../../../feedback/live-state';
 import {
 	MAX_FEEDBACK_ATTACHMENTS,
 	type FeedbackConversationSubmitPayload,
@@ -221,4 +222,19 @@ export function handleFeedbackAccounts(
 		}
 		return { ...(await listFeedbackAccounts(getAgentDetector)) };
 	});
+}
+
+/**
+ * Handle feedback_diagnose - the live app state the Feedback chat opens with
+ * (notable agents, Auto Run, limit and auto-resume pauses, retries, recent
+ * warnings and errors), read now. Read-only.
+ */
+export function handleFeedbackDiagnose(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	return answerFeedback(ctx, client, message, async () => ({
+		diagnosis: await captureFeedbackLiveDiagnosis(),
+	}));
 }

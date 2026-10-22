@@ -212,8 +212,8 @@ describe('keyboard shortcut registry wiring', () => {
 		).toEqual([]);
 	});
 
-	it('keeps the Concerto surfaces on a modifier pair that produces no text', () => {
-		for (const id of ['toggleConcerto', 'toggleCadenzas'] as const) {
+	it('keeps the Concerto and Throughput Gauge toggles on a modifier pair that produces no text', () => {
+		for (const id of ['toggleConcerto', 'toggleCadenzas', 'toggleThroughputGauge'] as const) {
 			const keys = DEFAULT_SHORTCUTS[id].keys.map((k) => k.toLowerCase());
 			expect(keys, `${id} must hold Alt`).toContain('alt');
 			expect(keys, `${id} must pair Alt with Meta so it cannot type a character`).toContain('meta');
@@ -367,6 +367,7 @@ describe('every registered action has a handler', () => {
 		'mediaPrev',
 		'openLeaderboard',
 		'clearAllNotifications',
+		'toggleInAppToasts',
 		'openThemeSettings',
 	];
 

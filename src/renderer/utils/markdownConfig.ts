@@ -37,6 +37,7 @@ import { createMarkdownLink } from '../components/Markdown/components/MarkdownLi
 import { createPrismCodeBlock } from '../components/Markdown/components/PrismCodeBlock';
 import { InlineCode } from '../components/Markdown/components/InlineCode';
 import { CopyablePre } from '../components/CodeFence/CodeCopyButton';
+import { isWebUrl } from '../../shared/urlRoutingHint';
 
 // ============================================================================
 // Types
@@ -99,6 +100,13 @@ export interface MarkdownComponentsOptions {
 	 * option to keep the read-only checkboxes react-markdown emits by default.
 	 */
 	onTaskToggle?: (sourceLine: number) => Promise<boolean>;
+	/**
+	 * Takes over chosen inline code spans (Dataview's `` `= expr` ``). Called with
+	 * the span's raw text, read from the hast node so search-highlight marks never
+	 * leak in, and the default `InlineCode` element; return null to keep the
+	 * default. Omit it everywhere a span should stay plain code.
+	 */
+	renderInlineCode?: (code: string, fallback: React.ReactElement) => React.ReactNode | null;
 }
 
 /**
@@ -385,6 +393,14 @@ export function applyReadableTextTransforms(
 	});
 }
 
+/** The text content of a hast node (its text descendants, in order). */
+function hastText(node: unknown): string {
+	if (!node || typeof node !== 'object') return '';
+	const { type, value, children } = node as { type?: string; value?: unknown; children?: unknown };
+	if (type === 'text' && typeof value === 'string') return value;
+	return Array.isArray(children) ? children.map(hastText).join('') : '';
+}
+
 export function createMarkdownComponents(options: MarkdownComponentsOptions): Partial<Components> {
 	const {
 		theme,
@@ -400,6 +416,7 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 		bionifyIntensity,
 		bionifyAlgorithm,
 		onTaskToggle,
+		renderInlineCode,
 	} = options;
 
 	// Reset match counter at start of each render
@@ -475,8 +492,15 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 		// language renderers like mermaid + theme-aware syntax highlighting).
 		pre: createPrismCodeBlock({ theme, customLanguageRenderers, codeBlockStyle }),
 		// Inline code only - block code is handled by the pre component above.
-		code: ({ node: _node, className, children, style, ...props }: any) =>
-			React.createElement(InlineCode, { className, style, passthrough: props, children }),
+		code: ({ node, className, children, style, ...props }: any) => {
+			const fallback = React.createElement(InlineCode, {
+				className,
+				style,
+				passthrough: props,
+				children,
+			});
+			return renderInlineCode ? (renderInlineCode(hastText(node), fallback) ?? fallback) : fallback;
+		},
 	};
 
 	// Custom image renderer if provided
@@ -654,95 +678,6 @@ export function generateInlineWizardPreviewProseStyles(
 }
 
 /**
- * Shared markdown component overrides for wizard chat bubbles
- * (ConversationScreen + WizardMessageBubble).
- */
-export function createWizardBubbleMarkdownComponents(theme: Theme): Partial<Components> {
-	return {
-		p: ({ children }: any) => React.createElement('p', { className: 'mb-2 last:mb-0' }, children),
-		ul: ({ children }: any) =>
-			React.createElement('ul', { className: 'list-disc ml-4 mb-2' }, children),
-		ol: ({ children }: any) =>
-			React.createElement('ol', { className: 'list-decimal ml-4 mb-2' }, children),
-		li: ({ children }: any) => React.createElement('li', { className: 'mb-1' }, children),
-		strong: ({ children }: any) =>
-			React.createElement('strong', { className: 'font-semibold' }, children),
-		em: ({ children }: any) => React.createElement('em', { className: 'italic' }, children),
-		code: ({ children, className }: any) => {
-			const isInline = !className;
-			if (isInline) {
-				const hexColor = extractHexColor(children);
-				return React.createElement(
-					'code',
-					{
-						className: 'px-1 py-0.5 rounded text-xs font-mono',
-						style: { backgroundColor: `${theme.colors.bgMain}80`, ...INLINE_CODE_CLICK_STYLE },
-						...INLINE_CODE_CLICK_PROPS,
-						...buildInlineCodeHandlers(children),
-					},
-					hexColor
-						? React.createElement('span', {
-								style: {
-									display: 'inline-block',
-									width: '0.75em',
-									height: '0.75em',
-									backgroundColor: hexColor,
-									borderRadius: '2px',
-									marginRight: '0.35em',
-									verticalAlign: 'middle',
-									border: '1px solid rgba(128, 128, 128, 0.3)',
-								},
-							})
-						: null,
-					children
-				);
-			}
-			return React.createElement('code', { className }, children);
-		},
-		pre: ({ children }: any) =>
-			React.createElement(
-				CopyablePre,
-				{
-					theme,
-					className: 'p-2 rounded text-xs font-mono overflow-x-auto mb-2',
-					style: { backgroundColor: theme.colors.bgMain },
-				},
-				children
-			),
-		a: ({ href, children }: any) =>
-			React.createElement(
-				'button',
-				{
-					type: 'button',
-					className: 'underline',
-					style: { color: theme.colors.accent },
-					onClick: (e: React.MouseEvent) => {
-						if (href && /^https?:\/\/|^mailto:/.test(href)) {
-							openUrl(href, { ctrlKey: e.metaKey || e.ctrlKey });
-						}
-					},
-				},
-				children
-			),
-		h1: ({ children }: any) =>
-			React.createElement('h1', { className: 'text-lg font-bold mb-2' }, children),
-		h2: ({ children }: any) =>
-			React.createElement('h2', { className: 'text-base font-bold mb-2' }, children),
-		h3: ({ children }: any) =>
-			React.createElement('h3', { className: 'text-sm font-bold mb-1' }, children),
-		blockquote: ({ children }: any) =>
-			React.createElement(
-				'blockquote',
-				{
-					className: 'border-l-2 pl-2 mb-2 italic',
-					style: { borderColor: theme.colors.border },
-				},
-				children
-			),
-	};
-}
-
-/**
  * Shared markdown component overrides for release notes
  * (currently used by UpdateCheckModal).
  */
@@ -837,7 +772,7 @@ export function createReleaseNotesMarkdownComponents(theme: Theme): Partial<Comp
 					href,
 					onClick: (e: React.MouseEvent) => {
 						e.preventDefault();
-						if (href && /^https?:\/\/|^mailto:/.test(href)) {
+						if (href && (isWebUrl(href) || /^mailto:/.test(href))) {
 							openUrl(href, { ctrlKey: e.metaKey || e.ctrlKey });
 						}
 					},

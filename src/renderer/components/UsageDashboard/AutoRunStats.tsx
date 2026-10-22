@@ -12,11 +12,10 @@
  * - Tooltip on hover for the bar chart
  */
 
-import React, { memo, useState, useEffect, useMemo, useCallback } from 'react';
-import { Play, CheckSquare, ListChecks, Target, Clock, Timer } from 'lucide-react';
+import React, { memo, useState, useMemo, useCallback } from 'react';
+import { Play, CheckSquare, ListChecks, Target, Clock, Timer, Hourglass } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { StatsTimeRange, AutoRunSession } from '../../../shared/stats-types';
-import { captureException } from '../../utils/sentry';
 import { formatDurationHuman as formatDuration, formatNumber } from '../../../shared/formatters';
 import { ChartTooltip } from './ChartTooltip';
 import {
@@ -30,6 +29,7 @@ import {
 import { MetricCard } from './MetricCard';
 import { buildAutoRunSummary } from './footerSummary';
 import { usePublishFooterSummary } from './useFooterSummary';
+import { useDashboardResource } from './useDashboardResource';
 
 interface AutoRunStatsProps {
 	/** Current time range for filtering */
@@ -40,44 +40,28 @@ interface AutoRunStatsProps {
 	columns?: number;
 }
 
+const NO_SESSIONS: AutoRunSession[] = [];
+
 export const AutoRunStats = memo(function AutoRunStats({
 	timeRange,
 	theme,
 	columns = 6,
 }: AutoRunStatsProps) {
-	const [sessions, setSessions] = useState<AutoRunSession[]>([]);
-	const [loading, setLoading] = useState(true);
-	const [error, setError] = useState<string | null>(null);
+	const {
+		data,
+		loading,
+		error: fetchError,
+		refresh: fetchData,
+	} = useDashboardResource(
+		`autorun-sessions:${timeRange}`,
+		() => window.maestro.stats.getAutoRunSessions(timeRange),
+		'fetchAutoRunStats'
+	);
+	const sessions = data ?? NO_SESSIONS;
+	// A failed refresh keeps the last good data on screen.
+	const error = data ? null : fetchError;
 	const [hoveredBar, setHoveredBar] = useState<AutoRunDayData | null>(null);
 	const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
-
-	// Fetch Auto Run sessions (metrics and chart both derive from session-level data)
-	const fetchData = useCallback(async () => {
-		setLoading(true);
-		setError(null);
-
-		try {
-			const autoRunSessions = await window.maestro.stats.getAutoRunSessions(timeRange);
-			setSessions(autoRunSessions);
-		} catch (err) {
-			captureException(err);
-			setError(err instanceof Error ? err.message : 'Failed to load Auto Run stats');
-		} finally {
-			setLoading(false);
-		}
-	}, [timeRange]);
-
-	// Fetch data on mount and when time range changes
-	useEffect(() => {
-		fetchData();
-
-		// Subscribe to stats updates
-		const unsubscribe = window.maestro.stats.onStatsUpdate(() => {
-			fetchData();
-		});
-
-		return () => unsubscribe();
-	}, [fetchData]);
 
 	// Calculate metrics from session-level data (tasksCompleted = checkboxes, not agent invocations)
 	const metrics = useMemo(() => {
@@ -254,6 +238,14 @@ export const AutoRunStats = memo(function AutoRunStats({
 					icon={<Timer className="w-4 h-4" />}
 					label="Avg Task"
 					value={formatDuration(metrics.avgTaskDuration)}
+					theme={theme}
+				/>
+				<MetricCard
+					testId="autorun-metric-card"
+					icon={<Hourglass className="w-4 h-4" />}
+					label="Total Auto Run Time"
+					value={formatDuration(metrics.totalDuration)}
+					subValue={`${formatDuration(metrics.goalDrivenDuration)} goal / ${formatDuration(metrics.specDrivenDuration)} spec`}
 					theme={theme}
 				/>
 			</div>

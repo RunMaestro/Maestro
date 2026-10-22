@@ -1,4 +1,4 @@
-import { lazy, Suspense, memo, useCallback } from 'react';
+import { lazy, Suspense, memo, useCallback, useMemo } from 'react';
 import type React from 'react';
 import type {
 	Theme,
@@ -20,6 +20,8 @@ import type { FlatFileItem } from '../FileSearchModal';
 
 // Modal store (for reading per-modal data passed by callers)
 import { useModalStore, selectModalData, selectModalOpen } from '../../stores/modalStore';
+import { useSettingsStore } from '../../stores/settingsStore';
+import { filterLiveAgents } from '../../../shared/agentVisibility';
 import type { GitLogModalData } from '../../stores/modalStore';
 
 // Utility Modal Components
@@ -109,6 +111,7 @@ export interface AppUtilityModalsProps {
 	onCloseOtherTabs?: (pivotTabId?: string) => void;
 	onCloseTabsLeft?: (pivotTabId?: string) => void;
 	onCloseTabsRight?: (pivotTabId?: string) => void;
+	onCloseTabGroup?: (groupId: string) => void;
 	setPlaygroundOpen?: (open: boolean) => void;
 	onRefreshGitFileState: () => Promise<void>;
 	onDebugReleaseQueuedItem: () => void;
@@ -297,6 +300,7 @@ export interface AppUtilityModalsProps {
 	onTogglePauseQueueItem: (sessionId: string, itemId: string) => void;
 	onEditQueueItem: (sessionId: string, itemId: string, patch: QueuedItemEditPatch) => void;
 	onForceSendQueueItem: (sessionId: string, itemId: string) => void;
+	onMergeQueueItem: (sessionId: string, itemId: string) => void;
 	// New tab creation (for QuickActionsModal)
 	onQuickActionsNewTab?: () => void;
 	onQuickActionsNewFileTab?: () => void;
@@ -380,6 +384,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	onCloseOtherTabs,
 	onCloseTabsLeft,
 	onCloseTabsRight,
+	onCloseTabGroup,
 	setPlaygroundOpen,
 	onRefreshGitFileState,
 	onDebugReleaseQueuedItem,
@@ -523,6 +528,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	onTogglePauseQueueItem,
 	onEditQueueItem,
 	onForceSendQueueItem,
+	onMergeQueueItem,
 	// New tab creation (for QuickActionsModal)
 	onQuickActionsNewTab,
 	onQuickActionsNewFileTab,
@@ -533,6 +539,13 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	onNavBack,
 	onNavForward,
 }: AppUtilityModalsProps) {
+	// Live agents only: a dormant Pianola (flag off) is not offered as a prompt
+	// target and its queue is not browsed.
+	const pianolaEnabled = useSettingsStore((s) => s.encoreFeatures.pianola);
+	const liveSessions = useMemo(
+		() => filterLiveAgents(sessions, { pianola: pianolaEnabled }),
+		[sessions, pianolaEnabled]
+	);
 	// Read per-modal data from the modal store for modals that support it.
 	// `presetDocuments` is set by the inline wizard's "Start Auto Run" button so
 	// the BatchRunnerModal opens with all freshly generated docs pre-selected.
@@ -622,6 +635,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					onCloseOtherTabs={onCloseOtherTabs}
 					onCloseTabsLeft={onCloseTabsLeft}
 					onCloseTabsRight={onCloseTabsRight}
+					onCloseTabGroup={onCloseTabGroup}
 					setPlaygroundOpen={setPlaygroundOpen}
 					onRefreshGitFileState={onRefreshGitFileState}
 					onDebugReleaseQueuedItem={onDebugReleaseQueuedItem}
@@ -856,7 +870,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					enterToSend={promptEnterToSend}
 					onToggleEnterToSend={onPromptToggleEnterToSend}
 					activeSession={activeGroupChatId ? undefined : activeSession}
-					sessions={activeGroupChatId ? sessions : undefined}
+					sessions={activeGroupChatId ? liveSessions : undefined}
 					groups={activeGroupChatId ? groups : undefined}
 				/>
 			)}
@@ -866,7 +880,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 				<ExecutionQueueBrowser
 					isOpen={queueBrowserOpen}
 					onClose={onCloseQueueBrowser}
-					sessions={sessions}
+					sessions={liveSessions}
 					activeSessionId={activeSessionId}
 					theme={theme}
 					onRemoveItem={onRemoveQueueItem}
@@ -875,6 +889,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					onToggleItemPause={onTogglePauseQueueItem}
 					onEditItem={onEditQueueItem}
 					onForceSendItem={onForceSendQueueItem}
+					onMergeItem={onMergeQueueItem}
 				/>
 			)}
 

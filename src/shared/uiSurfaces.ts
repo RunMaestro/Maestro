@@ -19,6 +19,8 @@ export interface UiSurfaceTab {
 	id: string;
 	/** Label as it reads in the app. */
 	label: string;
+	/** Encore Feature that must be on for this tab to exist. */
+	encore?: UiSurfaceEncoreFlag;
 }
 
 /** Encore Feature flag that must be on for a surface to exist. */
@@ -27,7 +29,10 @@ export type UiSurfaceEncoreFlag =
 	| 'usageStats'
 	| 'symphony'
 	| 'maestroCue'
-	| 'concerto';
+	| 'concerto'
+	| 'computerHistory'
+	| 'quickChat'
+	| 'throughputGauge';
 
 export interface UiSurface {
 	/** CLI name (kebab-case), and the wire value on the `open_modal` message. */
@@ -59,9 +64,20 @@ export const CUE_MODAL_TABS: UiSurfaceTab[] = [
 	{ id: 'pipeline-list', label: 'Pipeline List' },
 	{ id: 'activity', label: 'Activity Log' },
 	{ id: 'backup', label: 'Backup' },
+	{ id: 'bundles', label: 'Bundles' },
 ];
 
 export const UI_SURFACES: UiSurface[] = [
+	{
+		id: 'notification-center',
+		shortcutId: 'openNotificationCenter',
+		label: 'Notification Center',
+		aliases: ['inbox'],
+		modal: 'notificationCenter',
+		description: 'Persistent notification history and unread entries.',
+		commandPalette: 'Open Notification Center',
+		click: 'the bell in the Left Bar header (Settings → Notifications → Notification center)',
+	},
 	{
 		id: 'concerto',
 		label: 'Concerto',
@@ -115,7 +131,7 @@ export const UI_SURFACES: UiSurface[] = [
 			{ id: 'agents', label: 'Agents' },
 			{ id: 'activity', label: 'Activity' },
 			{ id: 'autorun', label: 'Auto Run' },
-			{ id: 'cue', label: 'Cue' },
+			{ id: 'cue', label: 'Cue', encore: 'maestroCue' },
 			{ id: 'shortcuts', label: 'Shortcuts' },
 		],
 		shortcutId: 'usageDashboard',
@@ -132,6 +148,18 @@ export const UI_SURFACES: UiSurface[] = [
 		shortcutId: 'directorNotes',
 		commandPalette: "Director's Notes",
 		encore: 'directorNotes',
+	},
+	{
+		id: 'computer-history',
+		label: 'Computer History',
+		aliases: ['history-viewer', 'screen-history'],
+		modal: 'computerHistory',
+		description:
+			'Browse and search what Computer History recorded: app timeline, typed text, selections, digests, and which apps are recorded.',
+		shortcutId: 'computerHistory',
+		commandPalette: 'Computer History',
+		click: 'the hamburger menu > Computer History',
+		encore: 'computerHistory',
 	},
 	{
 		id: 'symphony',
@@ -192,7 +220,8 @@ export const UI_SURFACES: UiSurface[] = [
 		label: 'Memory Viewer',
 		aliases: ['memory'],
 		modal: 'memoryViewer',
-		description: "The active agent's CLAUDE.md / AGENTS.md memory files.",
+		description:
+			"The active agent's persistent memory files (Claude Code per project, Codex per account).",
 		shortcutId: 'openMemoryViewer',
 		commandPalette: 'Memory',
 	},
@@ -238,6 +267,33 @@ export const UI_SURFACES: UiSurface[] = [
 		modal: 'quickAction',
 		description: 'The command palette itself.',
 		shortcutId: 'quickAction',
+	},
+	{
+		// Not a modal: Quick Chat is its own floating window, opened through the
+		// main process (see openUiSurface). Its hotkey is system-wide and lives in
+		// the Quick Chat settings rather than DEFAULT_SHORTCUTS, so no shortcutId.
+		id: 'quick-chat',
+		label: 'Quick Chat',
+		aliases: ['quickchat'],
+		modal: 'quickChat',
+		description:
+			'The floating chat window with one agent, also summoned from any app by its system-wide hotkey.',
+		commandPalette: 'Open Quick Chat',
+		click: 'Quick Chat in the Left Bar hamburger menu',
+		encore: 'quickChat',
+	},
+	{
+		// Not a modal: the gauge is a floating card owned by its own store, shown
+		// through that store (see openUiSurface) so it never takes focus.
+		id: 'throughput-gauge',
+		label: 'Throughput Gauge',
+		aliases: ['gauge', 'tokens-per-second', 'tps'],
+		modal: 'throughputGauge',
+		description: 'The floating gauge of live tokens per second across your agents.',
+		shortcutId: 'toggleThroughputGauge',
+		commandPalette: 'Show Throughput Gauge',
+		click: 'Throughput Gauge in the Left Bar hamburger menu',
+		encore: 'throughputGauge',
 	},
 	{
 		id: 'feedback',
@@ -290,6 +346,27 @@ export function resolveUiSurfaceTab(surface: UiSurface, tab: string): UiSurfaceT
 			(entry) => entry.id.toLowerCase() === needle || entry.label.toLowerCase() === needle
 		) ?? null
 	);
+}
+
+/**
+ * Why a surface (or one of its tabs) cannot open right now, or `null` when it
+ * can. A surface or tab behind a switched-off Encore Feature does not exist for
+ * the user, so opening it is refused - never silently, never by flipping the
+ * setting. The message goes back to the caller only: an in-app toast would
+ * advertise the disabled feature to someone who turned it off.
+ */
+export function uiSurfaceRefusal(
+	surface: UiSurface,
+	tab: UiSurfaceTab | null | undefined,
+	encoreFeatures: Partial<Record<UiSurfaceEncoreFlag, boolean>>
+): string | null {
+	if (surface.encore && encoreFeatures[surface.encore] !== true) {
+		return `${surface.label} is turned off. Turn it on in Settings → Plugins.`;
+	}
+	if (tab?.encore && encoreFeatures[tab.encore] !== true) {
+		return `The ${tab.label} tab of ${surface.label} is turned off. Turn it on in Settings → Plugins.`;
+	}
+	return null;
 }
 
 /**

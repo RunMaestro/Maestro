@@ -10,6 +10,7 @@ import {
 	computeOverLimitDisplay,
 	calculateDisplayInputTokens,
 	estimateAccumulatedGrowth,
+	resolveGaugeTokenStats,
 	DEFAULT_CONTEXT_WINDOWS,
 } from '../../../renderer/utils/contextUsage';
 import type { UsageStats } from '../../../shared/types';
@@ -788,5 +789,61 @@ describe('header and timeline cross-surface agreement (finding R1)', () => {
 		expect(header.trustworthy).toBe(true);
 		expect(header.percentage).toBe(100);
 		expect(timeline.truePercentage).toBe(147);
+	});
+});
+
+describe('resolveGaugeTokenStats (issue #1782)', () => {
+	// The reporter's numbers: one turn of ~7 internal API calls on a 1M window.
+	// The result message's totals are the SUM of those calls; the last call alone
+	// is what was actually in the window.
+	const turnSpend = {
+		inputTokens: 22,
+		outputTokens: 4_100,
+		cacheReadInputTokens: 437_222,
+		cacheCreationInputTokens: 89_297,
+	};
+	const lastCall = {
+		inputTokens: 3,
+		outputTokens: 600,
+		cacheReadInputTokens: 78_900,
+		cacheCreationInputTokens: 4_500,
+		reasoningTokens: 0,
+	};
+	const ONE_M = 1_000_000;
+
+	it('measures the occupancy snapshot instead of the summed turn spend for Claude', () => {
+		const stats = resolveGaugeTokenStats({ ...turnSpend, absoluteUsage: lastCall }, 'claude-code');
+		const display = calculateContextDisplay(stats, ONE_M, 'claude-code');
+
+		expect(display.tokens).toBe(83_403);
+		expect(display.percentage).toBe(8);
+		expect(display.trustworthy).toBe(true);
+	});
+
+	it('pins the bug: the summed spend stays under a 1M window, so no overflow guard fires', () => {
+		// Without the snapshot this is what the gauge rendered - 53% for a context
+		// that was 8% full. The guard only catches a sum that EXCEEDS the window.
+		const display = calculateContextDisplay(turnSpend, ONE_M, 'claude-code');
+
+		expect(display.tokens).toBe(526_541);
+		expect(display.percentage).toBe(53);
+		expect(display.trustworthy).toBe(true);
+	});
+
+	it('falls back to the top-level fields when no snapshot was attached', () => {
+		expect(resolveGaugeTokenStats(turnSpend, 'claude-code')).toBe(turnSpend);
+	});
+
+	it('uses the snapshot when the agent is unknown (Claude semantics are the default)', () => {
+		expect(resolveGaugeTokenStats({ ...turnSpend, absoluteUsage: lastCall })).toBe(lastCall);
+	});
+
+	it('keeps the top-level fields for combined-context providers', () => {
+		// Codex's snapshot is its CLI's running session total, not one call's
+		// input, and its gauge has always read the per-turn fields.
+		const stats = { ...turnSpend, absoluteUsage: lastCall };
+
+		expect(resolveGaugeTokenStats(stats, 'codex')).toBe(stats);
+		expect(resolveGaugeTokenStats(stats, 'copilot-cli')).toBe(stats);
 	});
 });

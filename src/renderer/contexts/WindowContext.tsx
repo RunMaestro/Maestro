@@ -32,12 +32,17 @@ import {
 	useContext,
 	useEffect,
 	useMemo,
+	useRef,
 	useState,
 	type ReactNode,
 } from 'react';
 import { formatWindowTitle, type WindowInfo } from '../../shared/window-types';
+import type { WindowCommandResult } from '../../shared/windowCommands';
 import { useSessionStore } from '../stores/sessionStore';
 import { notifyToast } from '../stores/notificationStore';
+import { selectGroupsPlusEnabled, useSettingsStore } from '../stores/settingsStore';
+import { collectGroupAgentIds } from '../utils/windowTargets';
+import { runRemoteWindowCommand } from '../services/windowCommands';
 import { isWebDesktop } from '../utils/runtimeContext';
 
 /**
@@ -127,7 +132,10 @@ export interface WindowContextValue {
 	 * Pass `bounds` to position the new window; omit it to let the main process
 	 * pick a default position.
 	 */
-	moveSessionToNewWindow: (sessionId: string, bounds?: { x: number; y: number }) => Promise<void>;
+	moveSessionToNewWindow: (
+		sessionId: string,
+		bounds?: { x: number; y: number }
+	) => Promise<WindowMoveResult>;
 	/**
 	 * Move an agent into an EXISTING window, leaving its current owner. The
 	 * destination surfaces the agent in its tab bar and activates it via the
@@ -135,7 +143,20 @@ export interface WindowContextValue {
 	 * agent's owner (resolved from the registry, not assumed to be this window) to
 	 * `targetWindowId`. No-op when the target already owns the agent.
 	 */
-	moveSessionToWindow: (sessionId: string, targetWindowId: string) => Promise<void>;
+	moveSessionToWindow: (sessionId: string, targetWindowId: string) => Promise<WindowMoveResult>;
+	/**
+	 * Detach every agent in a group (plus its subgroups when Groups+ nesting is
+	 * on, and every member's worktree children) into ONE brand-new window. Each
+	 * agent leaves whichever window currently surfaces it, so a group already
+	 * split across windows is gathered back together.
+	 */
+	moveGroupToNewWindow: (groupId: string) => Promise<WindowMoveResult>;
+	/**
+	 * Move every agent in a group into an EXISTING window. Members already there
+	 * are left alone, so this also gathers a split group. Same membership rules
+	 * as {@link moveGroupToNewWindow}.
+	 */
+	moveGroupToWindow: (groupId: string, targetWindowId: string) => Promise<WindowMoveResult>;
 	/**
 	 * Set (or clear, via an empty string) a window's user-assigned name. Any window
 	 * may rename any window (the affordance lives in the Left Bar's Move to Window
@@ -159,6 +180,20 @@ export interface WindowContextValue {
 	 * as one unit; no live caller reads it.
 	 */
 	isDropTarget: boolean;
+}
+
+/**
+ * What a move reports back. The menus ignore it; `maestro-cli window` relays it,
+ * so a blocked or empty move is an error the caller sees rather than a silent
+ * no-op. `moved: false` with no `error` means everything was already there.
+ */
+export interface WindowMoveResult {
+	moved: boolean;
+	/** The destination window (the new one, for a move into a new window). */
+	windowId?: string;
+	/** Every agent id that changed windows, worktree children included. */
+	movedAgentIds?: string[];
+	error?: string;
 }
 
 const WindowContext = createContext<WindowContextValue | null>(null);
@@ -451,93 +486,160 @@ export function WindowProvider({ children }: { children: ReactNode }) {
 
 	/**
 	 * Guard against emptying the primary window. The primary is the catch-all
-	 * owner, so it must always surface at least one agent; moving the last agent
-	 * out of it is blocked (with a toast) rather than leaving the user with no
-	 * primary tab strip. Secondary windows are NOT guarded - they may be emptied
-	 * and the main process auto-closes them.
+	 * owner, so it must always surface at least one agent; a move that would take
+	 * every remaining agent out of it is blocked (with a toast) rather than
+	 * leaving the user with no primary tab strip. Secondary windows are NOT
+	 * guarded - they may be emptied and the main process auto-closes them.
 	 *
 	 * Owner-aware, not initiator-aware: any window's Left Bar / palette can move
-	 * any agent, so the guard keys off whether the AGENT is a primary catch-all
-	 * agent (not claimed by a secondary), never off which window is initiating.
-	 * Only moving a primary agent can empty the primary; a secondary-owned agent
-	 * moving out never touches the primary's count.
+	 * any agent, so the guard keys off whether each moving AGENT is a primary
+	 * catch-all agent (not claimed by a secondary), never off which window is
+	 * initiating. A secondary-owned agent moving out never touches the primary.
 	 *
-	 * Counts TOP-LEVEL agents (worktree children excluded), keyed on the unit's
-	 * root id, because a unit move relocates exactly one top-level agent (its
-	 * worktrees ride along). Read live from the session store at gesture time (a
-	 * snapshot is correct on a user move). An agent the store doesn't track (e.g.
-	 * isolation tests) fails open so a legitimate move is never wrongly blocked.
+	 * Counts TOP-LEVEL agents (worktree children excluded), keyed on unit root
+	 * ids, because a unit move relocates top-level agents and their worktrees
+	 * ride along. Read live from the session store at gesture time. An agent the
+	 * store doesn't track (e.g. isolation tests) fails open so a legitimate move
+	 * is never wrongly blocked.
 	 *
-	 * Returns `true` when the move was blocked (and the toast fired) so callers can
-	 * bail before mutating any window state.
+	 * Returns the reason when the move was blocked (and the toast fired) so
+	 * callers can bail before mutating any window state, else `null`.
 	 */
 	const blocksEmptyingPrimary = useCallback(
-		(rootSessionId: string): boolean => {
-			// A secondary-owned agent leaving never empties the primary.
-			if (secondaryClaimedSessionIds.has(rootSessionId)) return false;
+		(rootSessionIds: string[]): string | null => {
+			const moving = new Set(rootSessionIds);
 			const topLevelPrimaryAgents = useSessionStore
 				.getState()
 				.sessions.filter(
 					(session) => !session.parentSessionId && !secondaryClaimedSessionIds.has(session.id)
 				);
-			const isLastInPrimary =
-				topLevelPrimaryAgents.length <= 1 &&
-				topLevelPrimaryAgents.some((session) => session.id === rootSessionId);
-			if (!isLastInPrimary) return false;
-			notifyToast({
-				color: 'yellow',
-				title: "Can't empty the primary window",
-				message: 'This is the last agent in the primary window. Keep at least one agent here.',
-			});
-			return true;
+			const movingFromPrimary = topLevelPrimaryAgents.filter((session) => moving.has(session.id));
+			if (movingFromPrimary.length === 0) return null;
+			if (topLevelPrimaryAgents.length > movingFromPrimary.length) return null;
+			const message =
+				movingFromPrimary.length > 1
+					? 'These are the last agents in the primary window. Keep at least one agent here.'
+					: 'This is the last agent in the primary window. Keep at least one agent here.';
+			notifyToast({ color: 'yellow', title: "Can't empty the primary window", message });
+			return message;
 		},
 		[secondaryClaimedSessionIds]
 	);
 
-	const moveSessionToNewWindow = useCallback(
-		async (sessionId: string, bounds?: { x: number; y: number }) => {
-			// Move the whole unit (top-level parent + its worktree children) so the
-			// worktrees follow their agent into the new window (option A).
-			const unit = resolveAgentUnit(sessionId);
-			const rootId = unit[0];
-			const sourceWindowId = resolveOwnerWindowId(rootId) ?? windowId;
-			if (!sourceWindowId) return;
-			if (blocksEmptyingPrimary(rootId)) return;
-			const created = await window.maestro.windows.create(unit, bounds);
-			if (!created) return;
-			// The new window already owns the unit; these transfers strip each member
-			// from its previous owner (enforcing single-window-per-agent) and emit the
-			// moves so every window refreshes. Serialized in the registry's move queue.
-			for (const id of unit) {
-				await window.maestro.windows.moveSession(id, sourceWindowId, created.id);
+	/**
+	 * Move a set of agent units (each a top-level agent plus its worktree
+	 * children) into ONE brand-new window. Every member leaves its own current
+	 * owner, so units that started in different windows all land together.
+	 */
+	const moveUnitsToNewWindow = useCallback(
+		async (rootIds: string[], bounds?: { x: number; y: number }): Promise<WindowMoveResult> => {
+			const units = [...new Set(rootIds)].map((id) => resolveAgentUnit(id));
+			if (units.length === 0) return { moved: false, error: 'No agents to move' };
+			const blocked = blocksEmptyingPrimary(units.map((unit) => unit[0]));
+			if (blocked) return { moved: false, error: blocked };
+			const sources = units.map((unit) => resolveOwnerWindowId(unit[0]) ?? windowId);
+			if (sources.some((source) => !source)) {
+				return { moved: false, error: 'Window registry is not ready' };
 			}
-			// No-op unless this window happened to be the owner; the broadcast handles
+			const allIds = units.flat();
+			const created = await window.maestro.windows.create(allIds, bounds);
+			if (!created) return { moved: false, error: 'Could not create a new window' };
+			// The new window already owns every member; these transfers strip each
+			// one from its previous owner (enforcing single-window-per-agent) and emit
+			// the moves so every window refreshes. Serialized in the registry's move
+			// queue.
+			for (let i = 0; i < units.length; i++) {
+				for (const id of units[i]) {
+					await window.maestro.windows.moveSession(id, sources[i] as string, created.id);
+				}
+			}
+			// No-op unless this window happened to own a member; the broadcast handles
 			// the rest.
-			setScope((prev) => unit.reduce((acc, id) => removeFromScope(acc, id), prev));
+			setScope((prev) => allIds.reduce((acc, id) => removeFromScope(acc, id), prev));
+			return { moved: true, windowId: created.id, movedAgentIds: allIds };
 		},
 		[windowId, resolveAgentUnit, resolveOwnerWindowId, blocksEmptyingPrimary]
 	);
 
-	const moveSessionToWindow = useCallback(
-		async (sessionId: string, targetWindowId: string) => {
-			const unit = resolveAgentUnit(sessionId);
-			const rootId = unit[0];
-			const sourceWindowId = resolveOwnerWindowId(rootId) ?? windowId;
-			// No owner yet, or a "move" onto the window that already owns it: nothing
-			// to do.
-			if (!sourceWindowId || targetWindowId === sourceWindowId) return;
-			if (blocksEmptyingPrimary(rootId)) return;
-			let anyMoved = false;
-			for (const id of unit) {
-				const result = await window.maestro.windows.moveSession(id, sourceWindowId, targetWindowId);
-				if (result?.moved) anyMoved = true;
+	/**
+	 * Move a set of agent units into an EXISTING window. Units the target already
+	 * surfaces are skipped, so this is also how a split group is gathered.
+	 */
+	const moveUnitsToWindow = useCallback(
+		async (rootIds: string[], targetWindowId: string): Promise<WindowMoveResult> => {
+			const units = [...new Set(rootIds)]
+				.map((id) => resolveAgentUnit(id))
+				.map((unit) => ({ unit, source: resolveOwnerWindowId(unit[0]) ?? windowId }))
+				// No owner yet, or already in the target: nothing to do for that unit.
+				.filter(({ source }) => source && source !== targetWindowId);
+			if (units.length === 0) return { moved: false, windowId: targetWindowId, movedAgentIds: [] };
+			const blocked = blocksEmptyingPrimary(units.map(({ unit }) => unit[0]));
+			if (blocked) return { moved: false, error: blocked };
+			const movedIds: string[] = [];
+			for (const { unit, source } of units) {
+				for (const id of unit) {
+					const result = await window.maestro.windows.moveSession(
+						id,
+						source as string,
+						targetWindowId
+					);
+					if (result?.moved) movedIds.push(id);
+				}
 			}
-			// Only drop the unit from this window once the registry confirms a move,
+			// Only drop members from this window once the registry confirms a move,
 			// so a failed transfer never strands an agent (owned by no window).
-			if (!anyMoved) return;
-			setScope((prev) => unit.reduce((acc, id) => removeFromScope(acc, id), prev));
+			if (movedIds.length === 0) {
+				return { moved: false, error: 'The window registry refused the move' };
+			}
+			setScope((prev) => movedIds.reduce((acc, id) => removeFromScope(acc, id), prev));
+			return { moved: true, windowId: targetWindowId, movedAgentIds: movedIds };
 		},
 		[windowId, resolveAgentUnit, resolveOwnerWindowId, blocksEmptyingPrimary]
+	);
+
+	// Move the whole unit (top-level parent + its worktree children) so the
+	// worktrees follow their agent (option A).
+	const moveSessionToNewWindow = useCallback(
+		(sessionId: string, bounds?: { x: number; y: number }) =>
+			moveUnitsToNewWindow([resolveAgentUnit(sessionId)[0]], bounds),
+		[moveUnitsToNewWindow, resolveAgentUnit]
+	);
+
+	const moveSessionToWindow = useCallback(
+		(sessionId: string, targetWindowId: string) =>
+			moveUnitsToWindow([resolveAgentUnit(sessionId)[0]], targetWindowId),
+		[moveUnitsToWindow, resolveAgentUnit]
+	);
+
+	// A group's members, read from the store at gesture time. Subgroups ride along
+	// only when Groups+ nesting is on, because only then do they render inside the
+	// group the user right-clicked.
+	const resolveGroupRoots = useCallback((groupId: string): string[] => {
+		const { sessions, groups } = useSessionStore.getState();
+		return collectGroupAgentIds(
+			sessions,
+			groups,
+			groupId,
+			selectGroupsPlusEnabled(useSettingsStore.getState())
+		);
+	}, []);
+
+	const moveGroupToNewWindow = useCallback(
+		async (groupId: string) => {
+			const roots = resolveGroupRoots(groupId);
+			if (roots.length === 0) return { moved: false, error: 'This group has no agents to move' };
+			return moveUnitsToNewWindow(roots);
+		},
+		[moveUnitsToNewWindow, resolveGroupRoots]
+	);
+
+	const moveGroupToWindow = useCallback(
+		async (groupId: string, targetWindowId: string) => {
+			const roots = resolveGroupRoots(groupId);
+			if (roots.length === 0) return { moved: false, error: 'This group has no agents to move' };
+			return moveUnitsToWindow(roots, targetWindowId);
+		},
+		[moveUnitsToWindow, resolveGroupRoots]
 	);
 
 	const renameWindow = useCallback(async (targetWindowId: string, name: string) => {
@@ -563,6 +665,8 @@ export function WindowProvider({ children }: { children: ReactNode }) {
 			closeTab,
 			moveSessionToNewWindow,
 			moveSessionToWindow,
+			moveGroupToNewWindow,
+			moveGroupToWindow,
 			renameWindow,
 			isDropTarget,
 		}),
@@ -580,10 +684,31 @@ export function WindowProvider({ children }: { children: ReactNode }) {
 			closeTab,
 			moveSessionToNewWindow,
 			moveSessionToWindow,
+			moveGroupToNewWindow,
+			moveGroupToWindow,
 			renameWindow,
 			isDropTarget,
 		]
 	);
+
+	// Answer `maestro-cli window` through the very methods the menus call. Only
+	// the primary window listens: main routes every window command to it, and it
+	// can move any agent because the move methods are owner-aware. A ref keeps
+	// the subscription stable while the methods it calls track the latest state.
+	const valueRef = useRef(value);
+	valueRef.current = value;
+	useEffect(() => {
+		if (!windowScoped || !isMainWindow) return;
+		const subscribe = window.maestro?.windows?.onRemoteCommand;
+		if (!subscribe) return;
+		return subscribe((request, responseChannel) => {
+			const reply = (result: WindowCommandResult) =>
+				window.maestro.windows.sendRemoteCommandResponse(responseChannel, result);
+			runRemoteWindowCommand(request, valueRef.current).then(reply, (error: unknown) =>
+				reply({ success: false, error: error instanceof Error ? error.message : String(error) })
+			);
+		});
+	}, [windowScoped, isMainWindow]);
 
 	return <WindowContext.Provider value={value}>{children}</WindowContext.Provider>;
 }

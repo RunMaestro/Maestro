@@ -21,6 +21,7 @@ import {
  */
 const RENAME_CONFIRMATION_RELEASE_MS = 60_000;
 
+/** Register remote tab operations against each session's owning desktop window. */
 export function registerTabCallbacks(
 	server: WebServer,
 	deps: Pick<WebServerFactoryDependencies, 'getMainWindow' | 'getWindowForSession'>
@@ -119,8 +120,24 @@ export function registerTabCallbacks(
 			logger.warn('webContents is not available for closeTab', 'WebServer');
 			return false;
 		}
-		targetWindow.webContents.send('remote:closeTab', sessionId, tabId);
-		return true;
+		return requestFromRenderer(targetWindow, 'remote:closeTab', {
+			args: [sessionId, tabId],
+			fallback: false,
+			parse: (raw) => raw === true,
+		});
+	});
+
+	server.setReopenTabCallback(async (sessionId: string, tabId: string) => {
+		const targetWindow = resolveSessionWindow(sessionId);
+		if (!isWebContentsAvailable(targetWindow)) return null;
+		return requestFromRenderer<{ tabId: string } | null>(targetWindow, 'remote:reopenTab', {
+			args: [sessionId, tabId],
+			fallback: null,
+			parse: (raw) =>
+				raw && typeof raw === 'object' && 'tabId' in raw && typeof raw.tabId === 'string'
+					? { tabId: raw.tabId }
+					: null,
+		});
 	});
 
 	server.setRenameTabCallback(async (sessionId: string, tabId: string, newName: string) => {

@@ -21,6 +21,7 @@ import {
 } from '../../shared/campaign';
 import { TERMINAL_AGENT_RUN_STATUSES } from '../../shared/agent-run/lifecycle';
 import { assertSerializedJsonIsSafe } from '../../shared/jsonUtils';
+import { serializeWithMemoizedArray } from '../../shared/memoizedJsonSerialize';
 import { getConfigDirectory } from './storage';
 import { withStoreLock } from './agent-run-lock';
 
@@ -82,10 +83,118 @@ function ensureConfigDirectory(): void {
 	}
 }
 
+// --- Process-local cache of the runs ledger ---------------------------------
+//
+// The desktop app runs this module on the Electron main thread, and every agent
+// spawn and exit goes through upsertAgentRun + appendAgentRunEvent. Uncached,
+// one spawn read and parsed the multi-MB runs file twice, validated every entry
+// twice, re-serialized it twice and re-read the whole events log twice; the
+// store watcher then read all of it again ~150ms later. A field trace caught
+// that as a 169ms main-thread freeze per spawn.
+//
+// The parsed documents are therefore kept in memory, validated against the
+// file's stat signature (inode, size, mtime in ns) on every read. Another
+// process (maestro-cli) writing a file replaces it by rename, which changes the
+// signature, so its writes are picked up on the next read. This process's own
+// writes refresh the cache with what was just written, so they never cost a
+// re-read. A read that races a foreign write can only cache newer content under
+// an older signature, which the next read sees as a mismatch and re-reads.
+//
+// Cached values are SHARED: nothing here mutates a cached document or entry in
+// place (every update builds new objects), and that must stay true - it is also
+// what lets serializeWithMemoizedArray reuse each unchanged entry's JSON.
+
+/** Store files whose parsed document is cached. Every other file is small. */
+const CACHED_JSON_FILES: ReadonlySet<string> = new Set([AGENT_RUNS_FILE, AGENT_RUNS_ARCHIVE_FILE]);
+
+interface FileSignature {
+	ino: bigint;
+	size: bigint;
+	mtimeNs: bigint;
+}
+
+function readFileSignature(filePath: string): FileSignature {
+	const stats = fs.statSync(filePath, { bigint: true });
+	return { ino: stats.ino, size: stats.size, mtimeNs: stats.mtimeNs };
+}
+
+function sameSignature(left: FileSignature, right: FileSignature): boolean {
+	return left.ino === right.ino && left.size === right.size && left.mtimeNs === right.mtimeNs;
+}
+
+const jsonDocumentCache = new Map<string, { signature: FileSignature; value: unknown }>();
+
+/**
+ * Runs entries known to be exactly what JSON.parse would produce for their
+ * serialized form: entries parsed from disk, and new entries after
+ * {@link normalizeRunEntries}. Only such entries can be cached as "what is on
+ * disk" without a re-read.
+ */
+const normalizedRunEntries = new WeakSet<object>();
+
+function rememberNormalizedRunEntries(document: unknown): void {
+	const entries = Array.isArray(document)
+		? document
+		: isRecord(document) && Array.isArray(document.runs)
+			? document.runs
+			: [];
+	for (const entry of entries) {
+		if (typeof entry === 'object' && entry !== null) normalizedRunEntries.add(entry);
+	}
+}
+
+/**
+ * Round-trip any entry not already in on-disk form through JSON (dropping
+ * `undefined` fields and the like), so the cached document equals a re-read.
+ * Only new or changed entries pay this; untouched ones are returned as is.
+ */
+function normalizeRunEntries(entries: unknown[]): unknown[] {
+	return entries.map((entry) => {
+		if (typeof entry === 'object' && entry !== null && normalizedRunEntries.has(entry)) {
+			return entry;
+		}
+		const normalized: unknown = JSON.parse(JSON.stringify(entry) ?? 'null');
+		if (typeof normalized === 'object' && normalized !== null) {
+			normalizedRunEntries.add(normalized);
+		}
+		return normalized;
+	});
+}
+
+/**
+ * Parse a store file, serving the runs files from the cache when unchanged.
+ * Throws exactly what an uncached read would: an ENOENT error, or a
+ * SyntaxError for malformed content.
+ */
+function readJsonFile(filename: string): unknown {
+	const filePath = getStorePath(filename);
+	if (!CACHED_JSON_FILES.has(filename)) {
+		return JSON.parse(fs.readFileSync(filePath, 'utf-8')) as unknown;
+	}
+	let signature: FileSignature;
+	try {
+		signature = readFileSignature(filePath);
+	} catch (error) {
+		jsonDocumentCache.delete(filePath);
+		throw error;
+	}
+	const cached = jsonDocumentCache.get(filePath);
+	if (cached && sameSignature(cached.signature, signature)) {
+		return cached.value;
+	}
+	const value = JSON.parse(fs.readFileSync(filePath, 'utf-8')) as unknown;
+	rememberNormalizedRunEntries(value);
+	jsonDocumentCache.set(filePath, { signature, value });
+	return value;
+}
+
 function atomicWriteJson(filename: string, value: unknown): void {
 	ensureConfigDirectory();
 	const filePath = getStorePath(filename);
-	const content = `${JSON.stringify(value, null, '\t')}\n`;
+	const cached = CACHED_JSON_FILES.has(filename);
+	// The runs files reuse each unchanged entry's memoized JSON; the output is
+	// byte-identical to JSON.stringify(value, null, '\t').
+	const content = `${cached ? serializeWithMemoizedArray(value, 'runs') : JSON.stringify(value, null, '\t')}\n`;
 	// Guards against writing the literal "undefined" over a good file. Skips the
 	// full round-trip parse on large payloads, where it cost more than the write
 	// itself - see assertSerializedJsonIsSafe.
@@ -93,12 +202,16 @@ function atomicWriteJson(filename: string, value: unknown): void {
 	const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
 	fs.writeFileSync(tempPath, content, 'utf-8');
 	fs.renameSync(tempPath, filePath);
+	if (cached) {
+		// Every writer holds the store lock, so nothing else can replace the file
+		// between the rename and this stat.
+		jsonDocumentCache.set(filePath, { signature: readFileSignature(filePath), value });
+	}
 }
 
 function readJsonValue(filename: string): unknown | undefined {
 	try {
-		const content = fs.readFileSync(getStorePath(filename), 'utf-8');
-		return JSON.parse(content) as unknown;
+		return readJsonFile(filename);
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code === 'ENOENT' || error instanceof SyntaxError) {
 			return undefined;
@@ -108,14 +221,34 @@ function readJsonValue(filename: string): unknown | undefined {
 }
 function readJsonValueForWrite(filename: string): unknown | undefined {
 	try {
-		const content = fs.readFileSync(getStorePath(filename), 'utf-8');
-		return JSON.parse(content) as unknown;
+		return readJsonFile(filename);
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
 			return undefined;
 		}
 		throw error;
 	}
+}
+
+/**
+ * Validation results for cached (shared, never-mutated) raw entries, per
+ * validator. A cache hit on the runs file hands back the same entry objects,
+ * so re-validating all of them on every write is pure waste. Entries read
+ * uncached are fresh objects and simply miss.
+ */
+const validationMemo = new WeakMap<object, WeakMap<object, unknown>>();
+
+function validateMemoized<T>(validateEntry: (raw: unknown) => T | null, entry: unknown): T | null {
+	if (typeof entry !== 'object' || entry === null) return validateEntry(entry);
+	let memo = validationMemo.get(validateEntry);
+	if (!memo) {
+		memo = new WeakMap();
+		validationMemo.set(validateEntry, memo);
+	}
+	if (memo.has(entry)) return memo.get(entry) as T | null;
+	const validated = validateEntry(entry);
+	memo.set(entry, validated);
+	return validated;
 }
 
 interface SnapshotForWrite<T> {
@@ -143,7 +276,7 @@ function readSnapshotForWrite<T>(
 	}
 
 	const validatedEntries = rawEntries.map((entry) => {
-		const validated = validateEntry(entry);
+		const validated = validateMemoized(validateEntry, entry);
 		if (!validated) {
 			throw new Error(`Invalid ${wrappedKey} entry`);
 		}
@@ -349,7 +482,7 @@ function archiveEvictedRuns(evicted: unknown[]): void {
  * bypassed by a new call site. Callers MUST hold the store lock.
  */
 function writeRunsSnapshot(entries: unknown[]): void {
-	const { kept, archived } = partitionRunsForRetention(entries);
+	const { kept, archived } = partitionRunsForRetention(normalizeRunEntries(entries));
 	if (archived.length > 0) {
 		archiveEvictedRuns(archived);
 	}
@@ -451,12 +584,12 @@ export function appendAgentRunEvent(event: AgentRunEvent): AgentRunEvent {
 		// Bound the events log before appending so the current file stays small.
 		rotateEventLogIfNeeded();
 		// Stamp a monotonic per-run sequence from the (post-rotation) current file.
-		const nextSeq =
-			readAgentRunEvents(validated.runId).reduce(
-				(max, existing) => Math.max(max, existing.seq ?? 0),
-				0
-			) + 1;
-		const stamped: AgentRunEvent = { ...validated, seq: nextSeq };
+		const log = readEventLog();
+		let maxSeq = 0;
+		for (const existing of log?.events ?? []) {
+			if (existing.runId === validated.runId) maxSeq = Math.max(maxSeq, existing.seq ?? 0);
+		}
+		const stamped: AgentRunEvent = { ...validated, seq: maxSeq + 1 };
 		// Live file only, so an event for an already-archived run does not drag
 		// the archive back into the write path. Archived runs are terminal by
 		// construction, and a terminal run can only change through an audited
@@ -467,8 +600,15 @@ export function appendAgentRunEvent(event: AgentRunEvent): AgentRunEvent {
 		const existingIndex = snapshot.validatedEntries.findIndex(
 			(entry) => entry.id === stamped.runId
 		);
-		if (existingIndex !== -1) {
-			const existingRun = snapshot.validatedEntries[existingIndex];
+		const existingRun = existingIndex === -1 ? undefined : snapshot.validatedEntries[existingIndex];
+		// Capture upserts a run and then logs its event with the same timestamp and
+		// status, so the rewrite below would change nothing. Skip it: it is a full
+		// rewrite of the multi-MB runs file on the main thread.
+		const runUnchanged =
+			existingRun !== undefined &&
+			existingRun.updatedAt === stamped.timestamp &&
+			(!stamped.status || stamped.status === existingRun.status);
+		if (existingRun !== undefined && !runUnchanged) {
 			const nextRuns = snapshot.entries.map((entry, index) =>
 				index === existingIndex
 					? {
@@ -481,27 +621,112 @@ export function appendAgentRunEvent(event: AgentRunEvent): AgentRunEvent {
 			);
 			writeRunsSnapshot(nextRuns);
 		}
-		fs.appendFileSync(getStorePath(AGENT_RUN_EVENTS_FILE), `${JSON.stringify(stamped)}\n`, 'utf-8');
+		const line = `${JSON.stringify(stamped)}\n`;
+		const eventsPath = getStorePath(AGENT_RUN_EVENTS_FILE);
+		fs.appendFileSync(eventsPath, line, 'utf-8');
+		recordEventLogAppend(eventsPath, log, line);
 		return stamped;
+	});
+}
+
+/**
+ * The parsed current events log. `events` is in file order, validated but not
+ * yet ordered or deduped; `lineCount` and `byteLength` feed rotation.
+ */
+interface EventLogSnapshot {
+	signature: FileSignature;
+	lineCount: number;
+	byteLength: number;
+	events: AgentRunEvent[];
+}
+
+/** Cached event logs by path, under the same stat-signature rule as the runs files. */
+const eventLogCache = new Map<string, EventLogSnapshot>();
+
+function countNewlines(content: string): number {
+	let lineCount = 0;
+	for (let index = 0; index < content.length; index += 1) {
+		if (content.charCodeAt(index) === 10) lineCount += 1;
+	}
+	return lineCount;
+}
+
+/** The current events log, or undefined when there is none. */
+function readEventLog(): EventLogSnapshot | undefined {
+	const filePath = getStorePath(AGENT_RUN_EVENTS_FILE);
+	let signature: FileSignature;
+	try {
+		signature = readFileSignature(filePath);
+	} catch (error) {
+		eventLogCache.delete(filePath);
+		if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+			return undefined;
+		}
+		throw error;
+	}
+	const cached = eventLogCache.get(filePath);
+	if (cached && sameSignature(cached.signature, signature)) {
+		return cached;
+	}
+	const content = fs.readFileSync(filePath, 'utf-8');
+	const snapshot: EventLogSnapshot = {
+		signature,
+		lineCount: countNewlines(content),
+		byteLength: Buffer.byteLength(content, 'utf-8'),
+		events: validateAgentRunEvents(content.split(/\r?\n/)),
+	};
+	eventLogCache.set(filePath, snapshot);
+	return snapshot;
+}
+
+/**
+ * Fold this process's own append into the cached log instead of re-reading the
+ * whole file. Only when the cache described the file right before the append
+ * (`before`) and the file grew by exactly `line`; anything else drops the
+ * cache so the next read parses the file.
+ */
+function recordEventLogAppend(
+	filePath: string,
+	before: EventLogSnapshot | undefined,
+	line: string
+): void {
+	const lineBytes = Buffer.byteLength(line, 'utf-8');
+	let signature: FileSignature;
+	try {
+		signature = readFileSignature(filePath);
+	} catch {
+		eventLogCache.delete(filePath);
+		return;
+	}
+	if (
+		!before ||
+		eventLogCache.get(filePath) !== before ||
+		signature.ino !== before.signature.ino ||
+		signature.size !== before.signature.size + BigInt(lineBytes)
+	) {
+		eventLogCache.delete(filePath);
+		return;
+	}
+	eventLogCache.set(filePath, {
+		signature,
+		lineCount: before.lineCount + 1,
+		byteLength: before.byteLength + lineBytes,
+		// Re-validated from the written line so the entry is exactly what a
+		// re-read of the file would produce.
+		events: [...before.events, ...validateAgentRunEvents([line])],
 	});
 }
 
 export function readAgentRunEvents(runId?: string): AgentRunEvent[] {
 	// Only the current file is read; rotated archives (AGENT_RUN_EVENTS_ARCHIVE_FILE)
 	// exist purely to bound live-file growth and are intentionally not merged in.
-	let lines: string[];
-	try {
-		lines = fs.readFileSync(getStorePath(AGENT_RUN_EVENTS_FILE), 'utf-8').split(/\r?\n/);
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-			return [];
-		}
-		throw error;
-	}
+	const log = readEventLog();
+	if (!log) return [];
 
 	// Order by monotonic seq first (stable per run), timestamp as tiebreaker for
-	// legacy events written before seq stamping existed.
-	const ordered = validateAgentRunEvents(lines).sort((left, right) => {
+	// legacy events written before seq stamping existed. Sorts a copy: the
+	// cached list must keep file order.
+	const ordered = [...log.events].sort((left, right) => {
 		const seqDelta = (left.seq ?? 0) - (right.seq ?? 0);
 		return seqDelta !== 0 ? seqDelta : left.timestamp - right.timestamp;
 	});
@@ -525,31 +750,21 @@ export function readAgentRunEvents(runId?: string): AgentRunEvent[] {
  * an older archive is overwritten.
  */
 export function rotateEventLogIfNeeded(): boolean {
-	const filePath = getStorePath(AGENT_RUN_EVENTS_FILE);
-	let content: string;
-	try {
-		content = fs.readFileSync(filePath, 'utf-8');
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-			return false;
-		}
-		throw error;
+	const log = readEventLog();
+	if (!log) {
+		return false;
 	}
-
-	const byteLength = Buffer.byteLength(content, 'utf-8');
-	let lineCount = 0;
-	for (let index = 0; index < content.length; index += 1) {
-		if (content.charCodeAt(index) === 10) lineCount += 1;
-	}
-	if (lineCount < AGENT_RUN_EVENTS_MAX_LINES && byteLength < AGENT_RUN_EVENTS_MAX_BYTES) {
+	if (log.lineCount < AGENT_RUN_EVENTS_MAX_LINES && log.byteLength < AGENT_RUN_EVENTS_MAX_BYTES) {
 		return false;
 	}
 
+	const filePath = getStorePath(AGENT_RUN_EVENTS_FILE);
 	const archivePath = getStorePath(AGENT_RUN_EVENTS_ARCHIVE_FILE);
 	if (fs.existsSync(archivePath)) {
 		fs.rmSync(archivePath);
 	}
 	fs.renameSync(filePath, archivePath);
+	eventLogCache.delete(filePath);
 	return true;
 }
 

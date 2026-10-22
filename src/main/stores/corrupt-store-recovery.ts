@@ -32,24 +32,16 @@
 import fs from 'fs';
 import path from 'path';
 
-import { parseJsonWithBom } from '../../shared/jsonUtils';
-import { fileTimestampSlug } from '../../shared/formatters';
+import { corruptStorePath, parseStoreJson } from '../../shared/maestro-lib/store/corrupt-store';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 
 const LOG_CONTEXT = 'Stores';
 
-/**
- * Sidecar path for a store file that could not be parsed.
- *
- * Stamped rather than fixed so a second incident cannot overwrite the first
- * quarantine, which would be the one way this recovery could still lose data.
- */
-export function corruptStorePath(storePath: string, now: Date = new Date()): string {
-	const dir = path.dirname(storePath);
-	const base = path.basename(storePath, '.json');
-	return path.join(dir, `${base}.corrupt-${fileTimestampSlug(now)}.json`);
-}
+// The classification (`parseStoreJson`) and sidecar naming (`corruptStorePath`)
+// live in the library so a read-only client reports exactly the files this
+// module would quarantine. Re-exported for existing importers.
+export { corruptStorePath };
 
 /**
  * Move an unparseable store file aside so the next read starts clean.
@@ -102,28 +94,26 @@ export function createStoreDeserializer<T = Record<string, unknown>>(
 	storePath: string
 ): (value: string) => T {
 	return (value: string): T => {
-		try {
-			return parseJsonWithBom<T>(value);
-		} catch (err) {
-			if (!(err instanceof SyntaxError)) throw err;
+		const parsed = parseStoreJson<T>(value);
+		if (parsed.ok) return parsed.value;
 
-			const sidecarPath = quarantineCorruptStore(storePath, value);
-			logger.error(
-				`Store ${path.basename(storePath)} is not valid JSON (${(err as Error).message}). ` +
-					(sidecarPath
-						? `Moved to ${path.basename(sidecarPath)} and started from defaults.`
-						: `Could not move it aside; started from defaults.`),
-				LOG_CONTEXT
-			);
-			// Reported, not thrown: a corrupt store is now survivable, but we still
-			// want to know how often it happens and to what file.
-			void captureException(err, {
-				operation: 'store:deserialize',
-				storeFile: path.basename(storePath),
-				byteLength: value.length,
-				quarantined: sidecarPath !== null,
-			});
-			return {} as T;
-		}
+		const err = parsed.error;
+		const sidecarPath = quarantineCorruptStore(storePath, value);
+		logger.error(
+			`Store ${path.basename(storePath)} is not valid JSON (${err.message}). ` +
+				(sidecarPath
+					? `Moved to ${path.basename(sidecarPath)} and started from defaults.`
+					: `Could not move it aside; started from defaults.`),
+			LOG_CONTEXT
+		);
+		// Reported, not thrown: a corrupt store is now survivable, but we still
+		// want to know how often it happens and to what file.
+		void captureException(err, {
+			operation: 'store:deserialize',
+			storeFile: path.basename(storePath),
+			byteLength: value.length,
+			quarantined: sidecarPath !== null,
+		});
+		return {} as T;
 	};
 }

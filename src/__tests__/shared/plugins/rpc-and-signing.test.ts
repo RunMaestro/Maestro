@@ -34,6 +34,7 @@ describe('rpc-protocol', () => {
 
 	it('extracts allowlist targets for the Phase-4 act verbs (exact id/name, no parsing)', () => {
 		expect(extractTarget('agents.dispatch', { agentId: 'x' })).toBe('x');
+		expect(extractTarget('agents.generateTitle', { agentId: 'x' })).toBe('x');
 		expect(extractTarget('process.spawn', { command: 'echo-tool' })).toBe('echo-tool');
 		expect(extractTarget('agents.dispatch', {})).toBeUndefined();
 		expect(extractTarget('process.spawn', { command: 42 })).toBeUndefined();

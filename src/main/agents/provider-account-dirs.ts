@@ -32,8 +32,10 @@ import fsp from 'fs/promises';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { isInitialized } from '../stores/instances';
-import { getAgentConfigsStore, getSessionsStore } from '../stores/getters';
+import { getAgentConfigsStore, getSessionsStore, getSettingsStore } from '../stores/getters';
 import { isBlankEnvValue } from '../../shared/agentEnvironment';
+import { filterLiveAgents } from '../../shared/agentVisibility';
+import { resolveAgentAccountDir as resolveAccountDirForAgent } from '../../shared/agentAccountDir';
 import {
 	effectiveAgentCustomEnvVars,
 	getProviderProfileConfig,
@@ -68,10 +70,16 @@ export interface ProviderAccountDirsOptions {
 	agentLevelEnvVars?: Record<string, string>;
 }
 
-/** Stored agents, or an empty list before `initializeStores()` has run. */
+/**
+ * Live stored agents (a dormant Pianola is left out), or an empty list before
+ * `initializeStores()` has run.
+ */
 function readStoredSessions(): Array<Record<string, unknown>> {
 	if (!isInitialized()) return [];
-	return getSessionsStore().get('sessions', []) as Array<Record<string, unknown>>;
+	return filterLiveAgents(
+		getSessionsStore().get('sessions', []) as Array<Record<string, unknown>>,
+		getSettingsStore().get('encoreFeatures')
+	);
 }
 
 /** Provider-level `customEnvVars`, or none before `initializeStores()` has run. */
@@ -217,4 +225,46 @@ export async function getProviderAccountDirs(
 		}
 	}
 	return Array.from(byRealSessionsDir.values());
+}
+
+export interface AgentAccountDirOptions extends ProviderAccountDirsOptions {
+	/** Settings -> Environment. Defaults to the settings store. */
+	globalShellEnvVars?: Record<string, string>;
+}
+
+/** Settings -> Environment, or none before `initializeStores()` has run. */
+function readGlobalShellEnvVars(): Record<string, string> {
+	if (!isInitialized()) return {};
+	const vars = getSettingsStore().get('shellEnvVars', {});
+	return vars && typeof vars === 'object' ? (vars as Record<string, string>) : {};
+}
+
+/**
+ * The account dir one STORED agent runs under, read from the stores. The rule
+ * itself lives in `shared/agentAccountDir.ts`, shared with the CLI.
+ */
+export function resolveAgentAccountDir(
+	maestroSessionId: string,
+	options: AgentAccountDirOptions = {}
+): string | undefined {
+	const sessions = options.sessions ?? readStoredSessions();
+	const session = sessions.find((s) => s?.id === maestroSessionId);
+	if (!session || typeof session.toolType !== 'string') return undefined;
+	const sshConfig = session.sessionSshRemoteConfig as { enabled?: boolean } | undefined;
+	return resolveAccountDirForAgent(
+		{
+			toolType: session.toolType,
+			customEnvVars:
+				session.customEnvVars && typeof session.customEnvVars === 'object'
+					? (session.customEnvVars as Record<string, string>)
+					: undefined,
+			sshRemote: !!sshConfig?.enabled,
+		},
+		{
+			agentLevelEnvVars: options.agentLevelEnvVars ?? readAgentLevelEnvVars(session.toolType),
+			globalShellEnvVars: options.globalShellEnvVars ?? readGlobalShellEnvVars(),
+			env: options.env ?? process.env,
+			homeDir: options.homeDir ?? os.homedir(),
+		}
+	);
 }

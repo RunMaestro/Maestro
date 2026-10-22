@@ -28,6 +28,21 @@ export interface MarkdownBlock {
 	sourceStart?: number;
 	/** Exclusive end offset in the source string. */
 	sourceEnd?: number;
+	/**
+	 * Set on a top-level fence whose language the preview renders as a React
+	 * item (`fenceRenderers`, e.g. `dataview`) instead of as `html`.
+	 */
+	fence?: MarkdownFence;
+}
+
+/** A top-level fenced code block handed to a React renderer. */
+export interface MarkdownFence {
+	/** The fence's first info word, e.g. `dataview`. */
+	language: string;
+	/** The fence body without its trailing newline (what the Rich tier passes as `code`). */
+	content: string;
+	/** 1-based line of the opening fence in the full document, frontmatter included. */
+	line: number;
 }
 
 /**
@@ -83,6 +98,13 @@ export interface MarkdownPreviewFastProps {
 	filePath?: string;
 	onFileClick?: (filePath: string, opts?: { openInNewTab?: boolean }) => void;
 	onExternalLinkClick?: (href: string, opts?: { ctrlKey?: boolean }) => void;
+	/**
+	 * Fence languages rendered as React items, keyed like the Rich tier's
+	 * `customLanguageRenderers`. Only top-level fences qualify; one nested in a
+	 * list or callout stays highlighted code inside its block's HTML. Pass a
+	 * stable reference: a new map re-parses the document.
+	 */
+	fenceRenderers?: Record<string, React.ComponentType<{ code: string; theme: Theme }>>;
 }
 
 /**

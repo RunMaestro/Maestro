@@ -2439,4 +2439,68 @@ describe('ExecutionQueueBrowser', () => {
 			expect(selectedIndexOf(container)).toBe(0);
 		});
 	});
+	describe('merge into the message above', () => {
+		const MERGE_TITLE = /Merge into the earlier message/i;
+
+		const renderMerge = (executionQueue: QueuedItem[], onMergeItem = vi.fn()) => {
+			const session = createSession({ id: 'active-session', executionQueue });
+			render(
+				<ExecutionQueueBrowser
+					isOpen={true}
+					onClose={mockOnClose}
+					sessions={[session]}
+					activeSessionId="active-session"
+					theme={theme}
+					onRemoveItem={mockOnRemoveItem}
+					onSwitchSession={mockOnSwitchSession}
+					onMergeItem={onMergeItem}
+				/>
+			);
+			return onMergeItem;
+		};
+
+		it('offers Merge only where an earlier message for the same tab exists', () => {
+			renderMerge([
+				createQueuedItem({ id: 'a1', text: 'first', tabId: 'tab-a' }),
+				createQueuedItem({ id: 'b1', text: 'other tab', tabId: 'tab-b' }),
+				createQueuedItem({ id: 'a2', text: 'second', tabId: 'tab-a' }),
+			]);
+			// a1 is first on its tab, b1 is the only message on tab-b: only a2 qualifies.
+			expect(screen.getAllByTitle(MERGE_TITLE)).toHaveLength(1);
+		});
+
+		it('hides Merge when nothing above it can take the merge', () => {
+			renderMerge([
+				createQueuedItem({ id: 'c1', type: 'command', command: '/commit', text: undefined }),
+				createQueuedItem({ id: 'm1', text: 'after a command' }),
+			]);
+			expect(screen.queryByTitle(MERGE_TITLE)).toBeNull();
+		});
+
+		it('confirms with both messages before merging', async () => {
+			const onMergeItem = renderMerge([
+				createQueuedItem({ id: 'a1', text: 'upper message' }),
+				createQueuedItem({ id: 'a2', text: 'lower message' }),
+			]);
+			fireEvent.click(screen.getByTitle(MERGE_TITLE));
+
+			expect(onMergeItem).not.toHaveBeenCalled();
+			expect(screen.getByText('Merge Queued Messages?')).toBeInTheDocument();
+			const confirm = screen.getByRole('button', { name: 'Merge' });
+			await waitFor(() => expect(document.activeElement).toBe(confirm));
+			fireEvent.click(confirm);
+			expect(onMergeItem).toHaveBeenCalledWith('active-session', 'a2');
+		});
+
+		it('lists Merge in the Enter action menu only for a mergeable message', () => {
+			renderMerge([
+				createQueuedItem({ id: 'a1', text: 'upper message' }),
+				createQueuedItem({ id: 'a2', text: 'lower message' }),
+			]);
+			const card = screen.getByLabelText('Execution Queue');
+			fireEvent.keyDown(card, { key: 'Enter' });
+			expect(within(screen.getByTestId('queue-action-list')).queryByText(/Merge/)).toBeNull();
+			fireEvent.keyDown(document.activeElement ?? card, { key: 'Escape' });
+		});
+	});
 });
