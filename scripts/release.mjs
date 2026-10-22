@@ -12,6 +12,8 @@
  *   node scripts/release.mjs preflight --scope main|rc|all [--json]
  *   node scripts/release.mjs kickoff   --scope main|rc|all [--dry-run]
  *                                              [--main-agent <id>] [--rc-agent <id>] [--site-agent <id>]
+ *                                              [--supervisor <agent>] [--no-supervise]
+ *   node scripts/release.mjs finish    [--chat <id|name>] [--tag <tag>]... [--wait-min <n>] [--no-nudge]
  *   node scripts/release.mjs draft     --tag <tag> [--show] [--create] [--title <t>] [--notes-file <f>]
  *   node scripts/release.mjs tag       --branch main|rc [--sha <sha>] [--wait-min <n>]
  *   node scripts/release.mjs watch     --tag <tag> [--max-min <n>] [--notes-file <approved>]
@@ -37,6 +39,12 @@
  *   job for them is the full test suite, which already ran on the commit (tag)
  *   or cannot be affected by a version string (bump); its main-branch guards are
  *   re-checked here instead. CI still runs on the bump commit.
+ * - Starting the chat is not the job; the release shipping is. `kickoff`
+ *   schedules a Cue task that runs `finish` on an interval, and `finish` is
+ *   the only thing that declares a release done: every tag published and
+ *   verified, every branch bumped past it, the X post live. Then it archives
+ *   the chat and cancels its own schedule. On 2026-10-20 a moderator stalled
+ *   an hour waiting for a "go" nobody needed to give, and nothing noticed.
  * - The bump is built with git plumbing (temporary index, commit-tree), so it
  *   never touches a working tree. The shared checkout usually has other agents'
  *   uncommitted work in it and must stay on main.
@@ -127,11 +135,17 @@ function parseArgs(argv) {
 			opts._.push(arg);
 			continue;
 		}
+		if (arg.startsWith('--no-')) {
+			opts[arg.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = false;
+			continue;
+		}
 		const key = arg.slice(2).replace(/-([a-z])/g, (_, c) => c.toUpperCase());
 		const next = argv[i + 1];
 		if (next === undefined || next.startsWith('--')) opts[key] = true;
 		else {
-			opts[key] = next;
+			// A repeated flag (--tag a --tag b) collects every value.
+			if (key in opts) opts[key] = [opts[key], next].flat();
+			else opts[key] = next;
 			i++;
 		}
 	}
@@ -145,7 +159,7 @@ function needBranch(opts) {
 
 function needTag(opts) {
 	if (typeof opts.tag !== 'string' || !/^v\d+\.\d+\.\d+(-RC)?$/.test(opts.tag)) {
-		misuse('--tag must look like v0.17.5 or v0.18.6-RC');
+		misuse('--tag must look like v1.0.1 or v1.1.0-RC');
 	}
 	return opts.tag;
 }
@@ -158,6 +172,28 @@ function scopeBranches(opts) {
 }
 
 const isRcTag = (tag) => /-rc$/i.test(tag);
+
+/**
+ * Why `version` cannot ship from `branch`, or null when it can. From 1.0 on the
+ * minor's parity names the line: main is X.EVEN.z, rc is X.ODD.z-RC. Before 1.0
+ * it was the other way round (0.17.x stable, 0.18.x-RC), so the parity rule only
+ * applies from major 1 up; the -RC suffix rule applies to every version.
+ */
+function channelMismatch(branch, version) {
+	const rc = isRcTag(version);
+	if ((branch === 'rc') !== rc) {
+		return rc ? 'main must never carry an -RC version' : 'rc versions must end in -RC';
+	}
+	const m = version.match(/^(\d+)\.(\d+)\./);
+	if (!m || Number(m[1]) < 1) return null;
+	const oddMinor = Number(m[2]) % 2 === 1;
+	if (oddMinor !== rc) {
+		return rc
+			? `rc versions need an ODD minor (X.ODD.z-RC), not ${version}`
+			: `main versions need an EVEN minor (X.EVEN.z), not ${version}`;
+	}
+	return null;
+}
 const versionOf = (tag) => tag.replace(/^v/, '');
 const releaseUrl = (tag) => `https://github.com/${REPO}/releases/tag/${tag}`;
 
@@ -305,8 +341,11 @@ function preflightBranch(branch, releases) {
 	const { published, drafts } = releasesForTag(tag, releases);
 	const problems = [];
 
-	if ((branch === 'rc') !== isRcTag(tag)) {
-		problems.push(`${branch} carries version ${version}, which is on the wrong channel`);
+	const mismatch = channelMismatch(branch, version);
+	if (mismatch) {
+		problems.push(
+			`${branch} carries version ${version}, which is on the wrong channel: ${mismatch}`
+		);
 	}
 	const tagCommit = remoteTagCommit(tag);
 	if (published.length > 0 || tagCommit) {
@@ -468,7 +507,7 @@ function buildBrief(scope, roles, results) {
 			`- ${mention('main')} owns the stable release from \`main\` (worktree ${roles.main.cwd}).`,
 		roles.rc &&
 			`- ${mention('rc')} owns the release candidate from \`rc\` (worktree ${roles.rc.cwd}).`,
-		`- ${mention('site')} owns the announcement: Discord #announcements and the subscriber email.`,
+		`- ${mention('site')} owns the announcement: Discord #announcements, the subscriber email, then the release art and the X post as the last step.`,
 	].filter(Boolean);
 	return [
 		`# Maestro Release (${scope}), ${today}`,
@@ -477,6 +516,16 @@ function buildBrief(scope, roles, results) {
 		'group permanently. **There is no human approval gate**: draft, dedup, tag, verify, announce,',
 		'and only stop to ask the conductor on a failure you cannot resolve or a decision nobody has',
 		'made before.',
+		'',
+		'**Your own read-only (plan) mode is not a gate.** A moderator always runs read-only; that is',
+		'why you delegate. Tagging, bumping and announcing are done by participants with full write',
+		'access, so route each step the moment the one before it passes. Never stop to ask for a "go",',
+		'and never wait for plan mode to be turned off: nobody is watching this chat to give one.',
+		'',
+		`A supervisor runs \`node ${path.join(ROOT, 'scripts/release.mjs')} finish\` on a schedule. It treats the`,
+		'release as done only when every tag is published and verified, every branch is bumped past it,',
+		'and your Phase 4 report carries the live tweet URL; then it archives this chat. An idle chat',
+		'with anything missing gets a message naming what is missing.',
 		'',
 		`**Read the runbook before you route anything; it is the process:** \`${RUNBOOK}\``,
 		'',
@@ -501,7 +550,7 @@ function activeReleaseChat() {
 		if (/does not support|unknown command|group-chat/i.test(error.message)) return undefined;
 		throw error;
 	}
-	return chats.find((c) => c.topic.startsWith('Maestro Release') && c.isActive) ?? null;
+	return chats.find((c) => c.topic.startsWith(RELEASE_CHAT_PREFIX) && c.isActive) ?? null;
 }
 
 async function kickoff(opts) {
@@ -509,7 +558,9 @@ async function kickoff(opts) {
 	const results = preflight({ scope: opts.scope }, { quiet: true });
 	const roles = resolveAgents(opts, branches);
 	const brief = buildBrief(opts.scope, roles, results);
-	const name = `Maestro Release ${opts.scope} ${localDate()}`;
+	// The tags ride in the name so `finish` can tell what "shipped" means for this
+	// chat without any state file.
+	const name = `${RELEASE_CHAT_PREFIX} ${results.map((r) => r.tag).join(' + ')} ${localDate()}`;
 	const briefFile = path.join(os.tmpdir(), `maestro-release-${opts.scope}-${Date.now()}.md`);
 	const participants = Object.values(roles);
 	const startArgs = [
@@ -554,6 +605,169 @@ async function kickoff(opts) {
 	const blocked = results.filter((r) => r.problems.length);
 	if (blocked.length)
 		console.log(`Preflight flagged: ${blocked.flatMap((r) => r.problems).join('; ')}`);
+	if (opts.supervise !== false) scheduleSupervisor(result.chatId, opts);
+}
+
+const RELEASE_CHAT_PREFIX = 'Maestro Release';
+const SUPERVISE_EVERY = '20m';
+const superviseTaskName = (chatId) => `release-finish-${chatId.slice(0, 8)}`;
+
+/**
+ * A Cue interval task that runs `finish` until it reports the release done.
+ * It goes to the agent that ran kickoff (Maestro stamps MAESTRO_CALLER_AGENT_ID
+ * on every agent it spawns), or to --supervisor.
+ */
+function scheduleSupervisor(chatId, opts) {
+	const agent = opts.supervisor || process.env.MAESTRO_CALLER_AGENT_ID;
+	const command = `node ${path.join(ROOT, 'scripts/release.mjs')} finish --chat ${chatId}`;
+	if (!agent) {
+		console.log(`No supervisor agent; run \`${command}\` until it exits 0.`);
+		return;
+	}
+	const prompt = [
+		`Supervise the Maestro release in group chat ${chatId}. Run exactly:`,
+		'',
+		`    ${command}`,
+		'',
+		'Exit 0: it shipped and the chat is archived; relay the summary to the conductor.',
+		'Exit 3: still in progress (or it nudged a stalled chat); report one line and stop.',
+		'Exit 1: relay its output verbatim. Do no release work yourself and do not join the chat.',
+	].join('\n');
+	cli([
+		'cue',
+		'schedule',
+		'--every',
+		SUPERVISE_EVERY,
+		'--agent',
+		agent,
+		'--name',
+		superviseTaskName(chatId),
+		'--label',
+		`Supervise release ${chatId.slice(0, 8)}`,
+		'--prompt',
+		prompt,
+	]);
+	console.log(
+		`Supervising every ${SUPERVISE_EVERY} from agent ${agent} (${superviseTaskName(chatId)}).`
+	);
+}
+
+// ---------------------------------------------------------------------------
+// finish
+// ---------------------------------------------------------------------------
+
+function groupChats() {
+	return JSON.parse(cli(['group-chat', 'list', '--all', '--json'])).chats ?? [];
+}
+
+function chatState(chatId, tail = 0) {
+	return JSON.parse(cli(['group-chat', 'status', chatId, '--tail', String(tail), '--json'])).chat;
+}
+
+const isBusy = (chat) => (chat.state ?? (chat.isActive ? 'busy' : 'idle')) !== 'idle';
+
+function resolveReleaseChat(ref) {
+	const chats = groupChats().filter((c) => c.topic.startsWith(RELEASE_CHAT_PREFIX));
+	if (ref) {
+		const hits = chats.filter((c) => c.id === ref || c.id.startsWith(ref) || c.topic === ref);
+		if (hits.length !== 1) misuse(`${hits.length} release chats match ${ref}`);
+		return hits[0];
+	}
+	const live = chats.filter((c) => !c.archived);
+	if (live.length !== 1) misuse(`${live.length} unarchived release chats; pass --chat <id>`);
+	return live[0];
+}
+
+const TWEET_URL = /https:\/\/(?:x|twitter)\.com\/RunMaestroAI\/status\/(\d+)/gi;
+
+/** The newest tweet URL the moderator reported, if fxtwitter shows it is live. */
+async function liveTweet(messages) {
+	const moderator = messages.filter((m) => m.participantName === 'moderator');
+	for (const m of moderator.reverse()) {
+		const ids = [...m.content.matchAll(TWEET_URL)].map((x) => x[1]);
+		for (const id of ids.reverse()) {
+			const res = await fetch(`https://api.fxtwitter.com/RunMaestroAI/status/${id}`).catch(
+				() => null
+			);
+			if (res?.ok) return `https://x.com/RunMaestroAI/status/${id}`;
+		}
+	}
+	return null;
+}
+
+/** What is still missing before this release counts as shipped. */
+async function releaseGaps(tags, messages) {
+	fetchOrigin();
+	const gaps = [];
+	for (const tag of tags) {
+		const branch = isRcTag(tag) ? 'rc' : 'main';
+		if (!releasesForTag(tag).published.length) {
+			gaps.push(`${tag} is not published`);
+			continue;
+		}
+		let verified;
+		try {
+			verified = !verifyCommand({ tag, quietFailure: true }).some((r) => r.startsWith('❌'));
+		} catch (error) {
+			verified = false;
+			console.log(error.message);
+		}
+		if (!verified) gaps.push(`${tag} does not verify`);
+		if (packageVersionAt(`origin/${branch}`) === versionOf(tag))
+			gaps.push(`${branch} is not bumped past ${tag}`);
+	}
+	const tweet = await liveTweet(messages);
+	if (!tweet)
+		gaps.push('no live @RunMaestroAI tweet URL in a moderator message (Phase 3 step 7 / Phase 4)');
+	return { gaps, tweet };
+}
+
+async function finishCommand(opts) {
+	const chat = resolveReleaseChat(typeof opts.chat === 'string' ? opts.chat : undefined);
+	const tags = [opts.tag ?? chat.topic.match(/v\d+\.\d+\.\d+(?:-RC)?/gi) ?? []].flat();
+	if (!tags.length) misuse(`Cannot read a tag from "${chat.topic}"; pass --tag <tag>`);
+	for (const tag of tags) needTag({ tag });
+
+	const deadline = Date.now() + Number(opts.waitMin ?? 0) * 60_000;
+	let state = chatState(chat.id, 50);
+	while (isBusy(state) && Date.now() < deadline) {
+		await sleep(30_000);
+		state = chatState(chat.id, 50);
+	}
+
+	const { gaps, tweet } = await releaseGaps(tags, state.messages);
+	if (!gaps.length) {
+		cli(['group-chat', 'archive', chat.id]);
+		try {
+			cli(['cue', 'schedule', '--cancel', superviseTaskName(chat.id)]);
+		} catch {
+			// Nothing scheduled (kickoff ran with --no-supervise); nothing to cancel.
+		}
+		console.log(
+			[
+				`Shipped: ${tags.map((t) => releaseUrl(t)).join(', ')}`,
+				`Tweet: ${tweet}`,
+				`Archived "${chat.topic}" (${chat.id}).`,
+			].join('\n')
+		);
+		return;
+	}
+
+	const missing = gaps.map((g) => `- ${g}`).join('\n');
+	if (isBusy(state)) pending(`"${chat.topic}" is still working. Missing so far:\n${missing}`);
+	if (opts.nudge !== false) {
+		const nudge = [
+			'Supervisor check: this release is not finished, and the chat is idle. Still missing:',
+			missing,
+			'',
+			'There is no approval gate and nobody will reply "go"; your own read-only mode never',
+			'gates participants. Route the next runbook step now. If a step failed in a way the',
+			'runbook cannot recover, say exactly what failed in your report.',
+		].join('\n');
+		cli(['group-chat', 'send', chat.id, nudge]);
+		pending(`"${chat.topic}" was idle with work left; nudged it. Missing:\n${missing}`);
+	}
+	fail(`"${chat.topic}" is idle and unfinished:\n${missing}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -640,8 +854,8 @@ async function tagCommand(opts) {
 
 	const version = packageVersionAt(sha);
 	const tag = `v${version}`;
-	if ((branch === 'rc') !== isRcTag(tag))
-		misuse(`${branch} at ${sha.slice(0, 9)} carries ${version}`);
+	const mismatch = channelMismatch(branch, version);
+	if (mismatch) misuse(`${branch} at ${sha.slice(0, 9)} carries ${version}: ${mismatch}`);
 
 	const existing = remoteTagCommit(tag);
 	if (existing) {
@@ -876,6 +1090,7 @@ function verifyCommand(opts) {
 
 	console.log(`${releaseUrl(tag)}\n${results.join('\n')}`);
 	if (results.some((r) => r.startsWith('❌')) && !opts.quietFailure) fail(`${tag} did not verify`);
+	return results;
 }
 
 // ---------------------------------------------------------------------------
@@ -913,7 +1128,8 @@ function bumpCommand(opts) {
 	const { published } = releasesForTag(tag);
 	if (!published.length) misuse(`${tag} is not published yet; bump only after it ships`);
 	const next = nextVersion(current);
-	if (branch === 'main' && /-rc/i.test(next)) misuse('main must never carry an -RC version');
+	const mismatch = channelMismatch(branch, next);
+	if (mismatch) misuse(`Refusing to bump ${branch} to ${next}: ${mismatch}`);
 
 	const files = {
 		'package.json': replaceVersion(gitFileAt(base, 'package.json'), current, next, 1),
@@ -969,6 +1185,7 @@ const COMMANDS = {
 	watch: watchCommand,
 	verify: verifyCommand,
 	bump: bumpCommand,
+	finish: finishCommand,
 };
 
 async function main() {

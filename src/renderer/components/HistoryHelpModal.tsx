@@ -1,4 +1,4 @@
-import { memo } from 'react';
+import { memo, useCallback } from 'react';
 import {
 	History,
 	Play,
@@ -18,9 +18,14 @@ import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal } from './ui/Modal';
 import { useSettingsStore } from '../stores/settingsStore';
+import { getModalActions } from '../stores/modalStore';
+import { formatCount } from '../../shared/formatters';
 import { openUrl } from '../utils/openUrl';
 import { buildMaestroUrl } from '../utils/buildMaestroUrl';
 import { CUE_COLOR, AGENT_COLOR } from './History';
+
+/** `data-setting-id` of the Maximum Log Buffer control in Settings > Display. */
+const MAX_LOG_BUFFER_SETTING_ID = 'display-max-log-buffer';
 
 interface HistoryHelpModalProps {
 	theme: Theme;
@@ -32,6 +37,14 @@ export const HistoryHelpModal = memo(function HistoryHelpModal({
 	onClose,
 }: HistoryHelpModalProps) {
 	const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures.maestroCue);
+	const maxLogBuffer = useSettingsStore((s) => s.maxLogBuffer);
+
+	// Settings sits below this modal in the layer stack, so it would open
+	// hidden behind it. Close first, then deep-link to the exact control.
+	const openLimitSetting = useCallback(() => {
+		onClose();
+		getModalActions().openSettings('display', MAX_LOG_BUFFER_SETTING_ID);
+	}, [onClose]);
 
 	return (
 		<Modal
@@ -167,9 +180,15 @@ export const HistoryHelpModal = memo(function HistoryHelpModal({
 					</div>
 					<div className="text-sm space-y-3 pl-7" style={{ color: theme.colors.textDim }}>
 						<p>
-							<span style={{ color: theme.colors.warning }}>AUTO</span>,{' '}
-							<span style={{ color: AGENT_COLOR }}>AGENT</span>, and{' '}
-							<span style={{ color: CUE_COLOR }}>CUE</span> entries show a status indicator:
+							<span style={{ color: theme.colors.warning }}>AUTO</span>
+							{maestroCueEnabled ? ', ' : ' and '}
+							<span style={{ color: AGENT_COLOR }}>AGENT</span>
+							{maestroCueEnabled && (
+								<>
+									, and <span style={{ color: CUE_COLOR }}>CUE</span>
+								</>
+							)}{' '}
+							entries show a status indicator:
 						</p>
 						<div className="flex items-center gap-4">
 							<div className="flex items-center gap-2">
@@ -309,8 +328,22 @@ export const HistoryHelpModal = memo(function HistoryHelpModal({
 					<div className="text-sm space-y-2 pl-7" style={{ color: theme.colors.textDim }}>
 						<p>
 							History is stored in per-session files with a limit of{' '}
-							<strong style={{ color: theme.colors.textMain }}>5,000 entries per session</strong>.
-							This provides better isolation and scalability compared to a single global file.
+							<strong style={{ color: theme.colors.textMain }}>
+								{formatCount(maxLogBuffer)} entries per session
+							</strong>
+							. This provides better isolation and scalability compared to a single global file.
+						</p>
+						<p>
+							Older entries are discarded once a session reaches the limit. Change it under{' '}
+							<button
+								type="button"
+								onClick={openLimitSetting}
+								className="underline hover:opacity-80 transition-colors"
+								style={{ color: theme.colors.accent }}
+							>
+								Settings &gt; Display &gt; Maximum Log Buffer
+							</button>
+							.
 						</p>
 						<p>
 							Use the{' '}

@@ -1,21 +1,18 @@
 import type { Session, ToolType } from '../types';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
+import {
+	validateAgentRename,
+	validateNewAgent,
+	type AgentValidationResult,
+} from '../../shared/maestro-lib/agents/rules';
 
-export interface SessionValidationResult {
-	valid: boolean;
-	error?: string;
-	errorField?: 'name' | 'directory';
-	/** Warning about directory conflict (user can acknowledge and proceed) */
-	warning?: string;
-	warningField?: 'directory';
-	/** Names of conflicting agents for display */
-	conflictingAgents?: string[];
-}
+/** What the new-agent and edit-agent validators report. The rules live in the library, shared with the TUI. */
+export type SessionValidationResult = AgentValidationResult;
 
 /**
  * Validates that a new session can be created with the given parameters.
  *
- * Rules:
+ * Rules (`validateNewAgent` in `src/shared/maestro-lib/agents/rules.ts`):
  * 1. Session names must be unique across all sessions (hard error)
  * 2. Home directories (projectRoot) shared with any existing agent on the same host produce a warning
  *    - Users can acknowledge the risk and proceed
@@ -29,50 +26,13 @@ export function validateNewSession(
 	existingSessions: Session[],
 	sshRemoteId?: string | null
 ): SessionValidationResult {
-	const trimmedName = name.trim();
-	const normalizedDir = normalizeDirectory(directory);
-	const newRemoteId = sshRemoteId || null;
-
-	// Check for duplicate name (hard error - cannot proceed)
-	const duplicateName = existingSessions.find(
-		(session) => session.name.toLowerCase() === trimmedName.toLowerCase()
-	);
-	if (duplicateName) {
-		return {
-			valid: false,
-			error: `An agent named "${duplicateName.name}" already exists`,
-			errorField: 'name',
-		};
-	}
-
-	// Check for duplicate directory with existing agents on the SAME host (warning - user can acknowledge)
-	// Agents on different hosts (local vs SSH, or different SSH remotes) are not considered conflicting
-	const conflictingAgents = existingSessions.filter((session) => {
-		const sessionDir = normalizeDirectory(session.projectRoot || session.cwd);
-		if (sessionDir !== normalizedDir) return false;
-		const existingRemoteId = getSessionSshRemoteId(session);
-		return existingRemoteId === newRemoteId;
-	});
-
-	if (conflictingAgents.length > 0) {
-		const agentNames = conflictingAgents.map((s) => s.name);
-		const agentList =
-			agentNames.length === 1 ? `"${agentNames[0]}"` : agentNames.map((n) => `"${n}"`).join(', ');
-		return {
-			valid: true, // User can proceed after acknowledgment
-			warning: `This directory is already used by ${agentList}. Running multiple agents in the same directory may cause them to clobber each other's work.`,
-			warningField: 'directory',
-			conflictingAgents: agentNames,
-		};
-	}
-
-	return { valid: true };
+	return validateNewAgent(name, directory, existingSessions, sshRemoteId);
 }
 
 /**
  * Validates that a session can be edited with the given name.
  *
- * Rules:
+ * Rules (`validateAgentRename`):
  * 1. Session names must be unique across all sessions (excluding the current session)
  */
 export function validateEditSession(
@@ -80,48 +40,7 @@ export function validateEditSession(
 	sessionId: string,
 	existingSessions: Session[]
 ): SessionValidationResult {
-	const trimmedName = name.trim();
-
-	// Check for duplicate name (excluding the current session)
-	const duplicateName = existingSessions.find(
-		(session) =>
-			session.id !== sessionId && session.name.toLowerCase() === trimmedName.toLowerCase()
-	);
-	if (duplicateName) {
-		return {
-			valid: false,
-			error: `An agent named "${duplicateName.name}" already exists`,
-			errorField: 'name',
-		};
-	}
-
-	return { valid: true };
-}
-
-/**
- * Resolve the SSH remote ID from a session, checking all possible locations.
- * Returns null for local sessions.
- */
-function getSessionSshRemoteId(session: Session): string | null {
-	// sessionSshRemoteConfig is the canonical per-session SSH config
-	if (session.sessionSshRemoteConfig?.enabled && session.sessionSshRemoteConfig.remoteId) {
-		return session.sessionSshRemoteConfig.remoteId;
-	}
-	// Fallback to flattened fields set during session lifecycle
-	return session.sshRemoteId || session.sshRemote?.id || null;
-}
-
-/**
- * Normalize directory path for comparison.
- * Removes trailing slashes and resolves common variations.
- */
-function normalizeDirectory(dir: string): string {
-	// Remove trailing slashes
-	let normalized = dir.replace(/\/+$/, '');
-	// Ensure consistent case on case-insensitive file systems (macOS/Windows)
-	// For now, we'll do case-insensitive comparison by lowercasing
-	normalized = normalized.toLowerCase();
-	return normalized;
+	return validateAgentRename(name, sessionId, existingSessions);
 }
 
 /**

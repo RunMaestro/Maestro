@@ -15,6 +15,22 @@
 
 import type { PluginCapability } from './permissions';
 
+/** Maximum length of a public tool action sent to a plugin. */
+export const MAX_AGENT_SEND_TOOL_SUMMARY_CHARS = 120;
+
+/** Public, invocation-scoped progress from a headless agents.send turn. */
+export type AgentSendProgressEvent =
+	| { type: 'activity'; text: string; at: string }
+	| { type: 'commentary'; text: string; at: string }
+	| {
+			type: 'tool';
+			tool: string;
+			status: 'started' | 'completed' | 'failed';
+			at: string;
+			/** English public action, at most 120 chars, from allowlisted tool metadata. */
+			summary?: string;
+	  };
+
 /**
  * The host API surface as ONE data-driven table: method -> { capability }. The
  * method-name union, the runtime method list, and the method->capability map are
@@ -26,6 +42,24 @@ import type { PluginCapability } from './permissions';
 export const HOST_API = {
 	'fs.read': { capability: 'fs:read' },
 	'fs.write': { capability: 'fs:write' },
+	'services.register': { capability: 'services:provide' },
+	'services.unregister': { capability: 'services:provide' },
+	'services.readiness': { capability: 'services:provide' },
+	'services.status': { capability: 'services:call' },
+	'services.openSettings': { capability: 'services:call' },
+	'services.start': { capability: 'services:call' },
+	'services.result': { capability: 'services:call' },
+	'services.cancel': { capability: 'services:call' },
+	'services.media.probe': { capability: 'media:tools' },
+	'services.media.decode': { capability: 'media:tools' },
+	'services.media.run': { capability: 'media:tools' },
+	'media.status': { capability: 'media:tools' },
+	'media.open': { capability: 'media:tools' },
+	'media.download': { capability: 'media:tools' },
+	'media.probe': { capability: 'media:tools' },
+	'media.decode': { capability: 'media:tools' },
+	'media.run': { capability: 'media:tools' },
+	'media.close': { capability: 'media:tools' },
 	'net.fetch': { capability: 'net:fetch' },
 	'net.connect': { capability: 'net:connect' },
 	'net.send': { capability: 'net:connect' },
@@ -33,6 +67,8 @@ export const HOST_API = {
 	'agents.list': { capability: 'agents:read' },
 	'agents.get': { capability: 'agents:read' },
 	'agents.dispatch': { capability: 'agents:dispatch' },
+	'agents.send': { capability: 'agents:dispatch' },
+	'agents.generateTitle': { capability: 'agents:dispatch' },
 	'notifications.toast': { capability: 'notifications:toast' },
 	'settings.get': { capability: 'settings:read' },
 	'settings.set': { capability: 'settings:write' },
@@ -103,6 +139,10 @@ export function isHostMethod(value: unknown): value is HostMethod {
  * special-casing.
  */
 export const HANDLER_REAUTHORIZED_METHODS: ReadonlySet<HostMethod> = new Set<HostMethod>([
+	'services.status',
+	'services.openSettings',
+	'services.start',
+	'services.result',
 	'net.send',
 	'net.close',
 ]);
@@ -121,14 +161,23 @@ export interface HostResponse {
 	ok: boolean;
 	result?: unknown;
 	error?: string;
+	/** Stable machine-readable failure code when provided by the host. */
+	errorCode?: string;
 }
 
 /** Control messages the host sends to the sandbox (not request/response). */
 export type HostControlMessage =
 	| { kind: 'init'; pluginId: string; entryCode?: string }
 	| { kind: 'invokeCommand'; commandId: string; args?: unknown }
-	| { kind: 'invokeTool'; id: number; commandId: string; args?: unknown }
+	| {
+			kind: 'invokeTool';
+			id: number;
+			commandId: string;
+			args?: unknown;
+			context: PluginToolCallerContext;
+	  }
 	| { kind: 'event'; topic: string; at: string; payload: unknown }
+	| { kind: 'progress'; id: number; event: AgentSendProgressEvent }
 	| { kind: 'shutdown' };
 
 /**
@@ -143,6 +192,13 @@ export interface ToolResult {
 	ok: boolean;
 	result?: unknown;
 	error?: string;
+	/** Only host-known codes survive a service invocation. */
+	errorCode?: string;
+}
+
+/** Host-verified call metadata. Never read this identity from tool arguments. */
+export interface PluginToolCallerContext {
+	callerAgentId: string | null;
 }
 
 /**
@@ -157,10 +213,26 @@ export function extractTarget(method: HostMethod, params: unknown): string | und
 		unknown
 	>;
 	switch (method) {
+		case 'services.register':
+		case 'services.unregister':
+		case 'services.readiness':
+			return typeof p.serviceId === 'string' ? p.serviceId : undefined;
+		case 'services.media.probe':
+		case 'services.media.decode':
+		case 'services.media.run':
+			return 'service-transcription';
 		case 'fs.read':
 		case 'fs.write':
 		case 'fs.watch':
 			return typeof p.path === 'string' ? p.path : undefined;
+		case 'media.status':
+		case 'media.open':
+		case 'media.download':
+		case 'media.probe':
+		case 'media.decode':
+		case 'media.run':
+		case 'media.close':
+			return 'discord-voice';
 		case 'net.fetch': {
 			const url = typeof p.url === 'string' ? p.url : undefined;
 			if (!url) return undefined;
@@ -191,6 +263,8 @@ export function extractTarget(method: HostMethod, params: unknown): string | und
 			// projectPath before reading or writing any content.
 			return typeof p.projectPath === 'string' ? p.projectPath : undefined;
 		case 'agents.dispatch':
+		case 'agents.send':
+		case 'agents.generateTitle':
 			// Allowlist scope target: the exact agent id the plugin wants to run.
 			// A missing/malformed id yields undefined, which an allowlist grant
 			// treats as deny (act verbs never match a target-less call).

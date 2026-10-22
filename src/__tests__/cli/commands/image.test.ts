@@ -21,14 +21,19 @@ vi.mock('../../../cli/services/file-tree-refresh', () => ({
 	nudgeFileTreeForPaths: vi.fn().mockResolvedValue([]),
 }));
 
-vi.mock('../../../cli/services/storage', () => ({
-	resolveAgentId: vi.fn((id: string) => id),
-	readSessions: vi.fn().mockReturnValue([]),
-	getConfigDir: vi.fn(),
-}));
+vi.mock('../../../cli/services/storage', () => {
+	const readSessions = vi.fn().mockReturnValue([]);
+	return {
+		resolveAgentId: vi.fn((id: string) => id),
+		readSessions,
+		// The live list is the stored list here: no fixture holds a dormant agent.
+		readLiveSessions: (...args: unknown[]) => readSessions(...args),
+		getSyncDir: vi.fn(),
+	};
+});
 
 import { imageList, imageSave } from '../../../cli/commands/image';
-import { readSessions, getConfigDir, resolveAgentId } from '../../../cli/services/storage';
+import { readSessions, getSyncDir, resolveAgentId } from '../../../cli/services/storage';
 import { nudgeFileTreeForPaths } from '../../../cli/services/file-tree-refresh';
 
 const PNG_SHA = 'a'.repeat(64);
@@ -75,7 +80,7 @@ describe('image commands', () => {
 		fs.writeFileSync(path.join(imageDir, `${JPEG_SHA}.jpeg`), Buffer.from('jpeg-bytes'));
 		fs.writeFileSync(path.join(imageDir, `${STAGED_SHA}.png`), Buffer.from('staged-bytes'));
 
-		vi.mocked(getConfigDir).mockReturnValue(configDir);
+		vi.mocked(getSyncDir).mockReturnValue(configDir);
 		vi.mocked(resolveAgentId).mockImplementation((id: string) => id);
 		vi.mocked(readSessions).mockReturnValue(mockSessions());
 		vi.mocked(nudgeFileTreeForPaths).mockResolvedValue([]);

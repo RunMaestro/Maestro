@@ -1,3 +1,5 @@
+import { ProviderTranslationService } from '../../provider-translation-service';
+import type { ProcessLivenessProbe } from '../../utils/agent-busy';
 import { ipcMain } from 'electron';
 import Store from 'electron-store';
 import * as fs from 'fs';
@@ -20,6 +22,12 @@ import { capabilitySnapshots } from '../../agents/capability-snapshot';
 import type { AgentCapabilitiesSnapshotMap } from '../../../shared/agentCapabilities';
 import { probeRemoteMaestroP, ensureRemoteMaestroPProbed } from '../../agents/probeRemoteMaestroP';
 import { execFileNoThrow } from '../../utils/execFile';
+import { discoverCodexSkills } from '../../agents/codex-skills';
+import { checkCustomPath } from '../../agents/path-prober';
+import { CodexRpcRequestError, CodexRpcTransportError } from '../../codex-app-server/rpc-client';
+import { buildChildProcessEnv } from '../../process-manager/utils/envBuilder';
+import { effectiveAgentCustomEnvVars } from '../../../shared/providerProfiles';
+import { probeClaudeSlashCommands } from '../../agents/claude-slash-command-probe';
 import { logger } from '../../utils/logger';
 import { getWhichCommand } from '../../../shared/platformDetection';
 import {
@@ -46,6 +54,7 @@ import {
 	resolveCodexHomeKey,
 } from '../../stores/codexUsageStore';
 import { pruneMissingQuotaAccounts } from '../../stores/quotaAccountsStore';
+import { filterLiveAgents } from '../../../shared/agentVisibility';
 import type { UsageSnapshot } from '../../agents/claude-mode-selector';
 import type { CodexUsageSnapshot } from '../../stores/codexUsageStore';
 import {
@@ -351,31 +360,42 @@ async function discoverOpenCodeSlashCommands(cwd: string): Promise<DiscoveredCom
 }
 
 /**
- * Discover Codex slash commands by reading from disk.
- *
- * Codex commands come from these sources (checked in priority order):
- * 1. Project-local skills:  <cwd>/.codex/skills/<name>/SKILL.md
- * 2. User-global skills:    <CODEX_HOME>/skills/<name>/SKILL.md
- * 3. Project-local prompts: <cwd>/.codex/prompts/<name>.md
- * 4. User-global prompts:   <CODEX_HOME>/prompts/<name>.md
- *
- * Every discovered command carries the file body as its `prompt`, because
- * Maestro drives Codex through headless `codex exec`, where the CLI does not
- * expand `/name` itself - the renderer substitutes the body before sending
- * (see `useInputProcessing`), exactly as it already does for OpenCode.
+ * Discover Codex skills through skills/list so plugin, system, and repository
+ * skills follow Codex's own configuration. Native skills carry a $name invocation
+ * and their resource path; the renderer expands the slash entry before sending.
+ * Older CLIs fall back to the legacy .codex/skills directory scan. Custom prompt
+ * files are read from disk in either case and carry their body as the prompt.
  *
  * Codex's own built-in commands (/init, /compact, /review, ...) are excluded:
  * they are implemented inside the TUI and have no on-disk prompt to inline, so
  * offering them would send a literal "/compact" to the model.
  */
-async function discoverCodexSlashCommands(cwd: string): Promise<DiscoveredCommand[]> {
+async function discoverCodexSlashCommands(
+	cwd: string,
+	command: string,
+	env: NodeJS.ProcessEnv
+): Promise<DiscoveredCommand[]> {
 	const commands = new Map<string, DiscoveredCommand>();
+	let nativeSkillsAvailable = false;
+	try {
+		for (const skill of await discoverCodexSkills(command, cwd, env)) {
+			commands.set(skill.name, skill);
+		}
+		nativeSkillsAvailable = true;
+	} catch (error) {
+		const unsupportedRequest =
+			error instanceof CodexRpcRequestError && (error.code === -32601 || error.code === -32602);
+		if (!unsupportedRequest && !(error instanceof CodexRpcTransportError)) {
+			void captureException(error, { operation: 'discoverCodexSlashCommands' });
+		}
+		logger.debug('Codex skills/list unavailable; using disk discovery', LOG_CONTEXT);
+	}
 
 	const addCommand = (name: string, content: string) => {
 		if (commands.has(name)) return; // project-local wins over global
 		const doc = parseCodexMarkdownDoc(content);
 		// `user-invocable: false` marks a background/reference skill that Codex
-		// itself never offers as a `/name`, so Maestro must not either.
+		// must not be offered by the legacy disk fallback.
 		if (!doc.userInvocable) return;
 		if (!doc.body) return;
 		commands.set(name, { name, prompt: doc.body, description: doc.description });
@@ -433,10 +453,13 @@ async function discoverCodexSlashCommands(cwd: string): Promise<DiscoveredComman
 		}
 	};
 
-	for (const dir of getCodexSkillDirs(cwd)) {
-		await addSkillsFromDir(dir);
+	// An authoritative empty result must stay empty (e.g. all skills disabled).
+	if (!nativeSkillsAvailable) {
+		for (const dir of getCodexSkillDirs(cwd, env)) {
+			await addSkillsFromDir(dir);
+		}
 	}
-	for (const dir of getCodexPromptDirs(cwd)) {
+	for (const dir of getCodexPromptDirs(cwd, env)) {
 		await addPromptsFromDir(dir);
 	}
 
@@ -449,6 +472,7 @@ async function discoverCodexSlashCommands(cwd: string): Promise<DiscoveredComman
  * Dependencies required for agents handler registration
  */
 export interface AgentsHandlerDependencies {
+	getProcessManager?: () => ProcessLivenessProbe | null;
 	getAgentDetector: () => AgentDetector | null;
 	agentConfigsStore: Store<AgentConfigsData>;
 	/** The settings store (MaestroSettings) - required for SSH remote lookup */
@@ -1026,6 +1050,24 @@ async function discoverOpenCodeSlashCommandsRemote(
 
 export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 	const { getAgentDetector, agentConfigsStore, settingsStore, sessionsStore } = deps;
+	const translation =
+		sessionsStore && settingsStore && deps.getProcessManager
+			? new ProviderTranslationService({
+					sessionsStore,
+					settingsStore,
+					agentConfigsStore,
+					getAgentDetector,
+					getProcessManager: deps.getProcessManager,
+				})
+			: null;
+	ipcMain.handle(
+		'agents:translateProvider',
+		(_event, request) =>
+			translation?.run(request) ?? {
+				success: false,
+				error: 'Provider translation host unavailable',
+			}
+	);
 
 	// Detect all available agents (supports SSH remote detection via optional sshRemoteId)
 	ipcMain.handle(
@@ -1583,7 +1625,11 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 			handlerOpts('getKnownAuthDirs', CONFIG_LOG_CONTEXT),
 			async (): Promise<KnownAuthDirs> => {
 				const allConfigs = agentConfigsStore.get('configs', {});
-				const sessions = sessionsStore?.get('sessions', []) ?? [];
+				// Live agents only: a dormant Pianola (flag off) contributes nothing.
+				const sessions = filterLiveAgents(
+					sessionsStore?.get('sessions', []) ?? [],
+					settingsStore?.get('encoreFeatures')
+				);
 				return {
 					claudeConfigDirs: collectKnownAuthPaths(
 						getCustomEnvVars(allConfigs['claude-code']),
@@ -1614,7 +1660,11 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 			handlerOpts('getKnownEnvVarKeys', CONFIG_LOG_CONTEXT),
 			async (): Promise<KnownEnvVarKeys> => {
 				const allConfigs = agentConfigsStore.get('configs', {});
-				const sessions = sessionsStore?.get('sessions', []) ?? [];
+				// Live agents only: a dormant Pianola (flag off) contributes nothing.
+				const sessions = filterLiveAgents(
+					sessionsStore?.get('sessions', []) ?? [],
+					settingsStore?.get('encoreFeatures')
+				);
 
 				const byProvider = new Map<string, Set<string>>();
 				const remember = (toolType: unknown, source: Record<string, unknown>) => {
@@ -1710,7 +1760,13 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 		'agents:discoverSlashCommands',
 		withIpcErrorLogging(
 			handlerOpts('discoverSlashCommands'),
-			async (agentId: string, cwd: string, customPath?: string, sshRemoteId?: string) => {
+			async (
+				agentId: string,
+				cwd: string,
+				customPath?: string,
+				sshRemoteId?: string,
+				customEnvVars?: Record<string, string>
+			) => {
 				const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
 				logger.info(`Discovering slash commands for agent: ${agentId} in ${cwd}`, LOG_CONTEXT);
 
@@ -1728,16 +1784,6 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 				}
 
 				const agent = await agentDetector.getAgent(agentId);
-				if (!agent?.available) {
-					logger.warn(`Agent ${agentId} not available for slash command discovery`, LOG_CONTEXT);
-					return null;
-				}
-
-				// Agent-specific discovery paths
-				if (agentId === 'opencode') {
-					return discoverOpenCodeSlashCommands(cwd);
-				}
-
 				if (agentId === 'codex') {
 					// Codex skills/prompts live on the machine that runs the CLI.
 					// For an SSH-remote agent that is the remote host, so return
@@ -1750,7 +1796,31 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 						);
 						return null;
 					}
-					return discoverCodexSlashCommands(cwd);
+					let commandPath = agent?.available ? agent.path || agent.command : undefined;
+					if (customPath) {
+						const detection = await checkCustomPath(customPath);
+						if (detection.exists && detection.path) commandPath = detection.path;
+					}
+					if (!commandPath) {
+						logger.warn(`Agent ${agentId} not available for slash command discovery`, LOG_CONTEXT);
+						return null;
+					}
+					const providerEnv = agentConfigsStore.get('configs', {}).codex?.customEnvVars;
+					const env = buildChildProcessEnv(
+						effectiveAgentCustomEnvVars(customEnvVars, providerEnv),
+						false,
+						settingsStore?.get('shellEnvVars', {})
+					);
+					return discoverCodexSlashCommands(cwd, commandPath, env);
+				}
+				if (!agent?.available) {
+					logger.warn(`Agent ${agentId} not available for slash command discovery`, LOG_CONTEXT);
+					return null;
+				}
+
+				// Agent-specific discovery paths
+				if (agentId === 'opencode') {
+					return discoverOpenCodeSlashCommands(cwd);
 				}
 
 				if (agentId === 'copilot-cli') {
@@ -1776,75 +1846,31 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 						return null;
 					}
 
-					// Spawn Claude with /help which immediately exits and costs no tokens
-					// The init message contains all available slash commands
-					const args = [
-						'--print',
-						'--verbose',
-						'--output-format',
-						'stream-json',
-						'--dangerously-skip-permissions',
-						'--',
-						'/help',
-					];
-
-					logger.debug(
-						`Spawning for slash command discovery: ${commandPath} ${args.join(' ')}`,
-						LOG_CONTEXT
-					);
-
-					const result = await execFileNoThrow(commandPath, args, cwd);
-
-					if (result.exitCode !== 0 && !result.stdout) {
+					// The init message of a `/help` probe names every command; see
+					// claude-slash-command-probe.ts.
+					const names = await probeClaudeSlashCommands(commandPath, cwd);
+					if (!names) return null;
+					logger.info(`Discovered ${names.length} slash commands for ${agentId}`, LOG_CONTEXT);
+					// Description enrichment is best-effort: a permission/IO
+					// error on the skills dir shouldn't lose the user's
+					// entire slash-command list. Capture the exception for
+					// Sentry and fall back to names-only.
+					let skillDescriptions = new Map<string, string>();
+					try {
+						skillDescriptions = await readClaudeSkillDescriptions(cwd);
+					} catch (err) {
+						void captureException(err);
 						logger.warn(
-							`Slash command discovery failed with exit code ${result.exitCode}`,
+							`Skill description enrichment failed; returning slash commands without descriptions`,
 							LOG_CONTEXT,
-							{
-								stderr: result.stderr?.substring(0, 500),
-							}
+							{ error: String(err) }
 						);
-						return null;
 					}
-
-					// Parse the first JSON line to get the init message
-					const lines = result.stdout.split('\n');
-					for (const line of lines) {
-						if (!line.trim()) continue;
-						try {
-							const msg = JSON.parse(line);
-							if (msg.type === 'system' && msg.subtype === 'init' && msg.slash_commands) {
-								logger.info(
-									`Discovered ${msg.slash_commands.length} slash commands for ${agentId}`,
-									LOG_CONTEXT
-								);
-								// Description enrichment is best-effort: a permission/IO
-								// error on the skills dir shouldn't lose the user's
-								// entire slash-command list. Capture the exception for
-								// Sentry and fall back to names-only.
-								let skillDescriptions = new Map<string, string>();
-								try {
-									skillDescriptions = await readClaudeSkillDescriptions(cwd);
-								} catch (err) {
-									void captureException(err);
-									logger.warn(
-										`Skill description enrichment failed; returning slash commands without descriptions`,
-										LOG_CONTEXT,
-										{ error: String(err) }
-									);
-								}
-								return (msg.slash_commands as string[]).map((name: string) => {
-									const lookupKey = name.startsWith('/') ? name.slice(1) : name;
-									const description = skillDescriptions.get(lookupKey);
-									return description ? { name, description } : { name };
-								});
-							}
-						} catch {
-							// Not valid JSON, skip
-						}
-					}
-
-					logger.warn(`No init message found in slash command discovery output`, LOG_CONTEXT);
-					return null;
+					return names.map((name: string) => {
+						const lookupKey = name.startsWith('/') ? name.slice(1) : name;
+						const description = skillDescriptions.get(lookupKey);
+						return description ? { name, description } : { name };
+					});
 				} catch (error) {
 					void captureException(error);
 					logger.error(`Error discovering slash commands for ${agentId}`, LOG_CONTEXT, {
@@ -2114,6 +2140,7 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 							sessionsStore,
 							agentConfigsStore,
 							agentDetector,
+							settingsStore,
 						}).catch((error) => {
 							logger.warn('Post-reset Codex usage re-sample failed', LOG_CONTEXT, { error });
 						});
@@ -2162,6 +2189,7 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 					sessionsStore,
 					agentConfigsStore,
 					agentDetector,
+					settingsStore,
 				});
 
 				const refreshed = Object.keys(getAllCodexUsageSnapshots()).length;

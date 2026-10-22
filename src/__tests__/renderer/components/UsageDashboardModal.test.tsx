@@ -1491,6 +1491,37 @@ describe('UsageDashboardModal', () => {
 				expect(screen.getAllByText('175').length).toBeGreaterThan(0);
 			});
 		});
+
+		it('reopens instantly from the cached result while it refreshes', async () => {
+			// The app unmounts the dashboard on close, so reopening is a fresh
+			// mount. It must render the last result on its first frame rather than
+			// a skeleton, then swap in the refreshed numbers in place.
+			mockGetAggregation.mockResolvedValueOnce({ ...createSampleData(), totalQueries: 150 });
+			const first = render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
+			await waitFor(() => {
+				expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
+			});
+			first.unmount();
+
+			let resolveRefresh: (data: ReturnType<typeof createSampleData>) => void = () => {};
+			mockGetAggregation.mockReturnValueOnce(
+				new Promise((resolve) => {
+					resolveRefresh = resolve;
+				})
+			);
+			render(<UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />);
+
+			expect(screen.queryByTestId('dashboard-skeleton')).not.toBeInTheDocument();
+			expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
+			expect(screen.getAllByText('150').length).toBeGreaterThan(0);
+
+			await act(async () => {
+				resolveRefresh({ ...createSampleData(), totalQueries: 175 });
+			});
+			await waitFor(() => {
+				expect(screen.getAllByText('175').length).toBeGreaterThan(0);
+			});
+		});
 	});
 
 	describe('Database Size Indicator', () => {
@@ -1835,10 +1866,10 @@ describe('UsageDashboardModal', () => {
 			summarySection.focus();
 			fireEvent.keyDown(summarySection, { key: 'ArrowDown' });
 
-			// Should focus the Delegation Score card, which sits directly under
+			// Should focus the Tokens per Second row, which sits directly under
 			// the summary cards on Overview.
 			await waitFor(() => {
-				expect(document.activeElement).toBe(screen.getByTestId('section-delegation-score'));
+				expect(document.activeElement).toBe(screen.getByTestId('section-token-speed'));
 			});
 		});
 
@@ -2054,7 +2085,7 @@ describe('UsageDashboardModal', () => {
 			fireEvent.keyDown(summarySection, { key: 'ArrowDown' });
 
 			await waitFor(() => {
-				expect(document.activeElement).toBe(screen.getByTestId('section-delegation-score'));
+				expect(document.activeElement).toBe(screen.getByTestId('section-token-speed'));
 			});
 
 			// Switch to Agents view by name (its index drifted when "Agent

@@ -248,6 +248,20 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: false,
 		category: 'appearance',
 	},
+	showAgentTaskListBar: {
+		description:
+			"Dock the agent's current checklist (TodoWrite / update_plan) in a collapsible bar above the composer.",
+		type: 'boolean',
+		default: false,
+		category: 'appearance',
+	},
+	autoExpandAgentTaskListBar: {
+		description:
+			'Open the docked agent task list to its full checklist whenever the agent writes a new one, instead of the one-line summary. Requires showAgentTaskListBar.',
+		type: 'boolean',
+		default: false,
+		category: 'appearance',
+	},
 	showWorktreePill: {
 		description: 'Show the WORKTREE badge next to worktree child agents in the left panel.',
 		type: 'boolean',
@@ -256,6 +270,12 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	},
 	showWorktreeBranchName: {
 		description: 'Show the branch name beneath worktree child agents in the left panel.',
+		type: 'boolean',
+		default: false,
+		category: 'appearance',
+	},
+	showWorktreeProvider: {
+		description: 'Show the provider backing each worktree agent in the left panel.',
 		type: 'boolean',
 		default: false,
 		category: 'appearance',
@@ -272,6 +292,13 @@ export const APPEARANCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 			'Show a member count in parentheses after each group name in the left side bar (e.g. "UNGROUPED AGENTS (24)").',
 		type: 'boolean',
 		default: false,
+		category: 'appearance',
+	},
+	showLeftPanelCollapsedInitials: {
+		description:
+			'When the left side bar is collapsed, label each agent with two letters from its name (e.g. "MR" for "Maestro RC"), tinted with its status color. Turn off to show a plain status dot instead.',
+		type: 'boolean',
+		default: true,
 		category: 'appearance',
 	},
 	leftPanelCollapsedPillsPerRow: {

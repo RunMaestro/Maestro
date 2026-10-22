@@ -3,7 +3,10 @@
 // Requires the Maestro desktop app to be running
 
 import { withMaestroClient } from '../services/maestro-client';
+import { exitIfMaestroNotRunning } from '../services/session-command';
 import { readSettings } from '../services/storage';
+import { resolveEncoreFeatures } from '../../shared/encoreFeatureDefaults';
+import { encoreDisabledMessage } from '../utils/encore-gate';
 import { formatError } from '../output/formatter';
 import {
 	parseDirectorNotesNarrative,
@@ -65,11 +68,11 @@ function getDefaultProvider(): string {
 	});
 }
 
+// Resolved against the shipped defaults: Director's Notes ships on, so an
+// install that never saved the flag has it on, not off.
 function checkEncoreFeatureEnabled(): void {
-	const settings = readSettings();
-	const encoreFeatures = settings.encoreFeatures as { directorNotes?: boolean } | undefined;
-	if (!encoreFeatures?.directorNotes) {
-		throw new Error("Director's Notes is not enabled. Enable it in Settings > Encore Features.");
+	if (!resolveEncoreFeatures(readSettings().encoreFeatures).directorNotes) {
+		throw new Error(encoreDisabledMessage('directorNotes'));
 	}
 }
 
@@ -191,6 +194,7 @@ export async function directorNotesSynopsis(options: DirectorNotesSynopsisOption
 			}
 		}
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: format === 'json', stderrJson: true });
 		const message = error instanceof Error ? error.message : 'Unknown error';
 		if (format === 'json') {
 			console.error(JSON.stringify({ error: message }));

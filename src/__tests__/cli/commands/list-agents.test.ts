@@ -14,12 +14,17 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { SessionInfo, Group } from '../../../shared/types';
 
 // Mock the storage service
-vi.mock('../../../cli/services/storage', () => ({
-	readSessions: vi.fn(),
-	readGroups: vi.fn(),
-	getSessionsByGroup: vi.fn(),
-	resolveGroupId: vi.fn((id: string) => id),
-}));
+vi.mock('../../../cli/services/storage', () => {
+	const readSessions = vi.fn();
+	return {
+		readSessions,
+		// The live list is the stored list here: no fixture holds a dormant agent.
+		readLiveSessions: (...args: unknown[]) => readSessions(...args),
+		readGroups: vi.fn(),
+		getSessionsByGroup: vi.fn(),
+		resolveGroupId: vi.fn((id: string) => id),
+	};
+});
 
 // Mock the formatter
 vi.mock('../../../cli/output/formatter', () => ({

@@ -14,7 +14,8 @@ import {
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useModalStore } from '../../../renderer/stores/modalStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
-import type { Session, AITab, BrowserTab, FilePreviewTab } from '../../../renderer/types';
+import type { Session, AITab, FilePreviewTab } from '../../../renderer/types';
+import type { BrowserTab } from '../../../shared/browserPage';
 import {
 	createMockAITab as createBaseMockAITab,
 	createMockFileTab as createBaseMockFileTab,

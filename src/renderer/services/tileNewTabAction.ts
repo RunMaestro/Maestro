@@ -11,49 +11,79 @@
  */
 
 import { notifyCenterFlash } from '../stores/centerFlashStore';
-import { updateSessionWith } from '../stores/sessionStore';
+import { updateSessionWith, useSessionStore } from '../stores/sessionStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useUIStore } from '../stores/uiStore';
 import { findLeafByTabRef, type DropZone } from '../utils/panelLayout';
-import { tileNewTab, type TileableTabKind } from '../hooks/tabs/tileNewTab';
+import { tileNewTab, canTileNewTab, type TileableTabKind } from '../hooks/tabs/tileNewTab';
+import type { BrowserTab } from '../../shared/browserPage';
+import { isWebDesktop } from '../utils/runtimeContext';
+import { DEFAULT_BROWSER_TAB_URL } from '../utils/browserTabPersistence';
 
 /**
  * Create a `kind` tab, tile it into `zone` of the view currently on screen, and
  * focus the resulting pane.
  *
- * Returns true when a tile landed. When there is nothing on screen to split
- * against it flashes "Nothing here to tile with" and returns false, so a caller
- * that owns a key event can still decide whether to swallow it.
+ * Returns true when a tile lands or a host browser creation request is submitted.
+ * When there is nothing on screen to split against it flashes a notice and returns
+ * false, so a caller that owns a key event can decide whether to swallow it.
  */
 export function tileNewTabInSession(
 	sessionId: string,
 	kind: TileableTabKind,
 	zone: DropZone = 'bottom'
 ): boolean {
-	// Captured inside the updater so focus is only requested when the tile
-	// actually landed.
-	let paneId: string | null = null;
-	updateSessionWith(sessionId, (s) => {
-		const result = tileNewTab(
-			s,
-			kind,
-			{
-				saveToHistory: useSettingsStore.getState().defaultSaveToHistory,
-				showThinking: useSettingsStore.getState().defaultShowThinking,
-				browserHomeUrl: useSettingsStore.getState().browserHomeUrl,
-			},
-			zone
-		);
-		if (!result) return s;
-		const group = result.session.tabGroups?.find((g) => g.id === result.session.activeGroupId);
-		paneId = group ? (findLeafByTabRef(group.layout, result.ref)?.id ?? null) : null;
-		return result.session;
-	});
-
-	if (!paneId) {
-		notifyCenterFlash({ color: 'yellow', message: 'Nothing here to tile with' });
-		return false;
+	const land = (registeredBrowserTab?: BrowserTab): boolean => {
+		// Capture focus only after the tile lands, including after host acknowledgement.
+		let paneId: string | null = null;
+		updateSessionWith(sessionId, (session) => {
+			const result = tileNewTab(
+				session,
+				kind,
+				{
+					saveToHistory: useSettingsStore.getState().defaultSaveToHistory,
+					showThinking: useSettingsStore.getState().defaultShowThinking,
+					browserHomeUrl: useSettingsStore.getState().browserHomeUrl,
+				},
+				zone,
+				registeredBrowserTab
+			);
+			if (!result) return session;
+			const group = result.session.tabGroups?.find(
+				(candidate) => candidate.id === result.session.activeGroupId
+			);
+			paneId = group ? (findLeafByTabRef(group.layout, result.ref)?.id ?? null) : null;
+			return result.session;
+		});
+		if (!paneId) {
+			notifyCenterFlash({ color: 'yellow', message: 'Nothing here to tile with' });
+			return false;
+		}
+		if (!registeredBrowserTab || useSessionStore.getState().activeSessionId === sessionId)
+			useUIStore.getState().requestPaneFocus(paneId);
+		return true;
+	};
+	if (kind === 'browser' && isWebDesktop()) {
+		const session = useSessionStore
+			.getState()
+			.sessions.find((candidate) => candidate.id === sessionId);
+		if (!canTileNewTab(session)) {
+			notifyCenterFlash({ color: 'yellow', message: 'Nothing here to tile with' });
+			return false;
+		}
+		void window.maestro.browserSession
+			.createTab(sessionId, {
+				url: useSettingsStore.getState().browserHomeUrl || DEFAULT_BROWSER_TAB_URL,
+			})
+			.then((tab) => land(tab))
+			.catch((error) =>
+				notifyCenterFlash({
+					color: 'red',
+					message: 'Could not create host browser tile',
+					detail: error instanceof Error ? error.message : String(error),
+				})
+			);
+		return true;
 	}
-	useUIStore.getState().requestPaneFocus(paneId);
-	return true;
+	return land();
 }

@@ -14,6 +14,7 @@
 
 import type { PluginManifest } from './plugin-manifest';
 import type { PluginCapability } from './permissions';
+import { serializedJsonByteLength } from '../jsonUtils';
 
 /**
  * Maximum UTF-8 size of one host view's serialized BlockView data. This pure
@@ -31,35 +32,10 @@ export const MAX_HOST_VIEW_BLOCKS_BYTES = 1_000_000;
 export const MAX_PANEL_POST_BYTES = 64 * 1024;
 
 /**
- * Size of JSON data as it crosses a UTF-8 message boundary. Returns null when
- * the value is not serializable, rather than throwing from an input validator.
+ * Part of the plugin contract surface: `packages/plugin-sdk` vendors it, and its
+ * drift test compares that copy against this export. It lives in `../jsonUtils`.
  */
-export function serializedJsonByteLength(value: unknown): number | null {
-	let serialized: string | undefined;
-	try {
-		serialized = JSON.stringify(value);
-	} catch {
-		return null;
-	}
-	if (typeof serialized !== 'string') return null;
-
-	let bytes = 0;
-	for (let index = 0; index < serialized.length; index += 1) {
-		const codePoint = serialized.codePointAt(index);
-		if (codePoint === undefined) continue;
-		if (codePoint <= 0x7f) {
-			bytes += 1;
-		} else if (codePoint <= 0x7ff) {
-			bytes += 2;
-		} else if (codePoint <= 0xffff) {
-			bytes += 3;
-		} else {
-			bytes += 4;
-			index += 1;
-		}
-	}
-	return bytes;
-}
+export { serializedJsonByteLength };
 
 /** A theme a plugin adds to the theme picker. Colors are validated loosely
  * (a string map) here; the renderer maps them onto its ThemeColors shape. */
@@ -175,9 +151,8 @@ export interface CommandContribution {
 	description?: string;
 }
 
-/** Where a contributed panel docks. `modal` (default) preserves today's
- * Settings-launched behavior; the others dock the same sandboxed iframe into a
- * UI slot via the contribution registry. */
+/** Where a contributed panel renders. `settings` uses an independent
+ * host Settings card; `left`/`right`/`main` use shared docks. */
 export type PanelPlacement = 'modal' | 'left' | 'right' | 'main' | 'settings';
 
 /**
@@ -206,6 +181,8 @@ export interface PanelContribution {
 	placement: PanelPlacement;
 	/** Chrome size for `modal` panels. Defaults to `default`. */
 	size: PanelSize;
+	/** Host-owned destinations only; never grants settings read/write access. */
+	hostSettings?: 'media'[];
 }
 
 /**
@@ -1471,6 +1448,16 @@ function parsePanel(pluginId: string, raw: unknown, errors: string[]): PanelCont
 	}
 	const placement = parsePanelPlacement(pluginId, localId, raw.placement, errors);
 	const size = parsePanelSize(pluginId, localId, raw.size, errors);
+	if (
+		raw.hostSettings !== undefined &&
+		(!Array.isArray(raw.hostSettings) ||
+			raw.hostSettings.some((v) => v !== 'media') ||
+			placement !== 'settings')
+	) {
+		errors.push(`[${pluginId}] panel "${localId}" has invalid hostSettings`);
+		return null;
+	}
+
 	return {
 		id: namespaced(pluginId, localId),
 		localId,
@@ -1479,6 +1466,9 @@ function parsePanel(pluginId: string, raw: unknown, errors: string[]): PanelCont
 		entry: raw.entry.trim(),
 		placement,
 		size,
+		...(raw.hostSettings === undefined
+			? {}
+			: { hostSettings: [...new Set(raw.hostSettings as 'media'[])] }),
 	};
 }
 

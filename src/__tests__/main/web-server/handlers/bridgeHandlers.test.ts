@@ -48,6 +48,16 @@ import {
 	uninstallWebContentsBridgeHook,
 } from '../../../../main/web-server/handlers/bridgeHandlers';
 import { getActingUser } from '../../../../main/web-server/auth/acting-user';
+import {
+	__resetDesktopOnlyChannelsForTests,
+	markDesktopOnlyChannel,
+} from '../../../../main/ipc/desktop-only-channels';
+import { setBridgeGuardContextProvider } from '../../../../main/web-server/handlers/bridgePathGuard';
+import {
+	isRemoteEventAllowed,
+	isRemoteMethodAllowed,
+	isRemoteSettingWritable,
+} from '../../../../main/web-server/handlers/bridgeDenyList';
 
 function makeClient(user?: { id: string; username: string; displayName: string }) {
 	return {
@@ -68,6 +78,7 @@ function lastSend(client: ReturnType<typeof makeClient>): Record<string, unknown
 beforeEach(() => {
 	invokeHandlers.clear();
 	sendListeners.clear();
+	__resetDesktopOnlyChannelsForTests();
 });
 
 describe('handleBridgeInvoke', () => {
@@ -99,7 +110,6 @@ describe('handleBridgeInvoke', () => {
 			requestId: 7,
 			ok: false,
 		});
-		expect(String(payload.error)).toMatch(/No ipcMain handler/);
 	});
 
 	/**
@@ -153,23 +163,6 @@ describe('handleBridgeInvoke', () => {
 		const payload = send.mock.calls[0][1] as Record<string, unknown>;
 		expect(payload).toMatchObject({ requestId: 12, ok: false });
 		expect(String(payload.error)).toMatch(/listener exploded/);
-	});
-
-	it('prefers an invoke handler when a channel has both', async () => {
-		invokeHandlers.set('dual', async () => 'from-handle');
-		sendListeners.set('dual', () => {
-			throw new Error('the send listener must not run');
-		});
-
-		const send = vi.fn();
-		const client = makeClient();
-		await handleBridgeInvoke(
-			client,
-			{ type: 'bridge.invoke', requestId: 13, channel: 'dual' },
-			send
-		);
-
-		expect(send.mock.calls[0][1]).toMatchObject({ ok: true, result: 'from-handle' });
 	});
 
 	it('returns the handler result on success', async () => {
@@ -273,6 +266,18 @@ describe('broadcastBridgeEvent', () => {
 		uninstallWebContentsBridgeHook();
 	});
 
+	it('never fans out a denied channel (Computer History status push)', () => {
+		const broadcastToAll = vi.fn();
+		installWebContentsBridgeHook({
+			broadcastToAll,
+		} as unknown as Parameters<typeof installWebContentsBridgeHook>[0]);
+
+		broadcastBridgeEvent('computerHistory:statusChanged', [{ state: 'recording' }]);
+		expect(broadcastToAll).not.toHaveBeenCalled();
+
+		uninstallWebContentsBridgeHook();
+	});
+
 	it('stops broadcasting after uninstall', () => {
 		const broadcastToAll = vi.fn();
 		installWebContentsBridgeHook({
@@ -316,14 +321,14 @@ describe('handleBridgeInvoke acting user', () => {
 		// variable: a handler that awaits must still read the same account after
 		// the continuation, and two clients can be in flight at once.
 		let seen: unknown;
-		invokeHandlers.set('slow', async () => {
+		invokeHandlers.set('history:add', async () => {
 			await new Promise((r) => setTimeout(r, 1));
 			seen = getActingUser();
 		});
 
 		await handleBridgeInvoke(
 			makeClient({ id: 'u2', username: 'grace', displayName: 'Grace' }),
-			{ type: 'bridge.invoke', requestId: 2, channel: 'slow' },
+			{ type: 'bridge.invoke', requestId: 2, channel: 'history:add' },
 			vi.fn()
 		);
 
@@ -362,10 +367,10 @@ describe('handleBridgeInvoke acting user', () => {
 	});
 
 	it('leaves no context behind for the next call', async () => {
-		invokeHandlers.set('noop', async () => undefined);
+		invokeHandlers.set('history:add', async () => undefined);
 		await handleBridgeInvoke(
 			makeClient({ id: 'u1', username: 'ada', displayName: 'Ada' }),
-			{ type: 'bridge.invoke', requestId: 5, channel: 'noop' },
+			{ type: 'bridge.invoke', requestId: 5, channel: 'history:add' },
 			vi.fn()
 		);
 
@@ -394,7 +399,6 @@ describe('handleBridgeInvoke denied channels', () => {
 		expect(handler).not.toHaveBeenCalled();
 		const payload = send.mock.calls[0][1] as Record<string, unknown>;
 		expect(payload).toMatchObject({ requestId: 9, ok: false });
-		expect(String(payload.error)).toContain('not available over the web interface');
 	});
 
 	it('refuses every channel in the namespace, including ones added later', async () => {
@@ -414,6 +418,59 @@ describe('handleBridgeInvoke denied channels', () => {
 		}
 	});
 
+	it('refuses every computerHistory channel (D15: a browser must not read screen history)', async () => {
+		for (const channel of [
+			'computerHistory:query',
+			'computerHistory:status',
+			'computerHistory:clear',
+			'computerHistory:somethingNew',
+		]) {
+			const handler = vi.fn(async () => 'leaked');
+			invokeHandlers.set(channel, handler);
+			const send = vi.fn();
+			await handleBridgeInvoke(
+				makeClient({ id: 'u1', username: 'ada', displayName: 'Ada' }),
+				{ type: 'bridge.invoke', requestId: channel, channel },
+				send
+			);
+			expect(handler).not.toHaveBeenCalled();
+			expect((send.mock.calls[0][1] as Record<string, unknown>).ok).toBe(false);
+		}
+	});
+
+	it('refuses windows:setPanelState (a browser has no window of its own to persist)', async () => {
+		const handler = vi.fn();
+		invokeHandlers.set('windows:setPanelState', handler);
+		const send = vi.fn();
+		await handleBridgeInvoke(
+			makeClient(),
+			{
+				type: 'bridge.invoke',
+				requestId: 11,
+				channel: 'windows:setPanelState',
+				args: [{ rightPanelCollapsed: true }],
+			},
+			send
+		);
+		expect(handler).not.toHaveBeenCalled();
+		expect((send.mock.calls[0][1] as Record<string, unknown>).ok).toBe(false);
+	});
+
+	it('answers maestroRun:readyPath, which a browser spawn needs for its system prompt', async () => {
+		invokeHandlers.set('maestroRun:readyPath', async () => '/opt/maestro-run');
+		const send = vi.fn();
+		await handleBridgeInvoke(
+			makeClient(),
+			{ type: 'bridge.invoke', requestId: 12, channel: 'maestroRun:readyPath' },
+			send
+		);
+		expect(send.mock.calls[0][1]).toMatchObject({
+			requestId: 12,
+			ok: true,
+			result: '/opt/maestro-run',
+		});
+	});
+
 	it('refuses a denied send-style channel too', async () => {
 		const listener = vi.fn();
 		sendListeners.set('webLogin:notify', listener);
@@ -428,17 +485,194 @@ describe('handleBridgeInvoke denied channels', () => {
 		expect(listener).not.toHaveBeenCalled();
 		expect((send.mock.calls[0][1] as Record<string, unknown>).ok).toBe(false);
 	});
+});
 
-	it('leaves every other namespace alone', async () => {
-		invokeHandlers.set('settings:get', async () => 'dracula');
+/**
+ * Computer History behind the generic handlers: a browser must not reach the
+ * store or the CLI secret through `fs:*`, nor flip the flag through
+ * `settings:set`. maestro-cli (client.cli) is exempt.
+ */
+describe('handleBridgeInvoke argument guard', () => {
+	const userData = '/guard-test-user-data';
+	const storeFile = `${userData}/computer-history/index.jsonl`;
 
+	beforeEach(() => {
+		setBridgeGuardContextProvider(() => ({
+			userDataDir: userData,
+			encoreFeatures: { computerHistory: true },
+			platform: 'linux',
+		}));
+	});
+
+	it('refuses a browser reading the store through fs:readFile', async () => {
+		const handler = vi.fn(async () => 'leaked');
+		invokeHandlers.set('fs:readFile', handler);
 		const send = vi.fn();
 		await handleBridgeInvoke(
 			makeClient(),
-			{ type: 'bridge.invoke', requestId: 11, channel: 'settings:get' },
+			{ type: 'bridge.invoke', requestId: 'g1', channel: 'fs:readFile', args: [storeFile] },
 			send
 		);
+		expect(handler).not.toHaveBeenCalled();
+		expect(send.mock.calls[0][1]).toMatchObject({ requestId: 'g1', ok: false });
+	});
 
-		expect(send.mock.calls[0][1]).toMatchObject({ ok: true, result: 'dracula' });
+	it('refuses the same on the ipcMain.emit fallback path', async () => {
+		const listener = vi.fn();
+		sendListeners.set('fs:sendStyleWrite', listener);
+		const send = vi.fn();
+		await handleBridgeInvoke(
+			makeClient(),
+			{
+				type: 'bridge.invoke',
+				requestId: 'g2',
+				channel: 'fs:sendStyleWrite',
+				args: [{ target: `${userData}/cli-server.json` }],
+			},
+			send
+		);
+		expect(listener).not.toHaveBeenCalled();
+		expect((send.mock.calls[0][1] as Record<string, unknown>).ok).toBe(false);
+	});
+
+	it('refuses a browser turning Computer History off through settings:set', async () => {
+		const handler = vi.fn(async () => true);
+		invokeHandlers.set('settings:set', handler);
+		const send = vi.fn();
+		await handleBridgeInvoke(
+			makeClient(),
+			{
+				type: 'bridge.invoke',
+				requestId: 'g3',
+				channel: 'settings:set',
+				args: ['encoreFeatures', { computerHistory: false }],
+			},
+			send
+		);
+		expect(handler).not.toHaveBeenCalled();
+		expect((send.mock.calls[0][1] as Record<string, unknown>).ok).toBe(false);
+	});
+
+	it('lets maestro-cli through and leaves unrelated calls alone', async () => {
+		const handler = vi.fn(async () => 'contents');
+		invokeHandlers.set('fs:readFile', handler);
+		const send = vi.fn();
+		await handleBridgeInvoke(
+			{ ...makeClient(), cli: true },
+			{ type: 'bridge.invoke', requestId: 'g4', channel: 'fs:readFile', args: [storeFile] },
+			send
+		);
+		expect(handler).toHaveBeenCalledTimes(1);
+		await handleBridgeInvoke(
+			makeClient(),
+			{ type: 'bridge.invoke', requestId: 'g5', channel: 'fs:readFile', args: ['/tmp/notes.md'] },
+			send
+		);
+		expect(handler).toHaveBeenCalledTimes(2);
+		setBridgeGuardContextProvider(null);
+	});
+});
+
+/** Desktop-only registrations override the explicit remote inventory. */
+describe('handleBridgeInvoke desktop-only channels', () => {
+	/** The whole answer the bridge gives for `channel`. */
+	async function answerFor(
+		channel: string,
+		client = makeClient()
+	): Promise<Record<string, unknown>> {
+		const send = vi.fn();
+		await handleBridgeInvoke(
+			client,
+			{ type: 'bridge.invoke', requestId: 'd1', channel, args: ['agent-1'] },
+			send
+		);
+		expect(send).toHaveBeenCalledTimes(1);
+		return send.mock.calls[0][1] as Record<string, unknown>;
+	}
+
+	it('does not run a send-style listener of a marked channel either', async () => {
+		const listener = vi.fn();
+		sendListeners.set('tabs:aiTabClosed', listener);
+		markDesktopOnlyChannel('tabs:aiTabClosed');
+
+		expect(await answerFor('tabs:aiTabClosed')).toMatchObject({ ok: false });
+		expect(listener).not.toHaveBeenCalled();
+	});
+
+	it('keeps a marked channel from maestro-cli as well', async () => {
+		const handler = vi.fn().mockResolvedValue('secret');
+		invokeHandlers.set('sessions:getAll', handler);
+		markDesktopOnlyChannel('sessions:getAll');
+
+		const cli = { ...makeClient(), cli: true };
+		expect(await answerFor('sessions:getAll', cli)).toMatchObject({ ok: false });
+		expect(handler).not.toHaveBeenCalled();
+	});
+
+	it('never fans out an event pushed on a marked channel', () => {
+		const broadcastToAll = vi.fn();
+		installWebContentsBridgeHook({
+			broadcastToAll,
+		} as unknown as Parameters<typeof installWebContentsBridgeHook>[0]);
+		markDesktopOnlyChannel('sessions:lifecycleSync');
+
+		broadcastBridgeEvent('sessions:lifecycleSync', [{ added: [] }]);
+		expect(broadcastToAll).not.toHaveBeenCalled();
+
+		uninstallWebContentsBridgeHook();
+	});
+});
+
+/**
+ * Dataview DQL runs in the browser build too (DV-14): its four channels and the change push are on the
+ * remote allowlist, while the DataviewJS settings stay out of a browser's reach.
+ */
+describe('Dataview over the bridge', () => {
+	it('answers dataview:query', async () => {
+		const answer = { root: '/vault', revision: 1, result: { kind: 'list', items: [] } };
+		const handler = vi.fn(async () => answer);
+		invokeHandlers.set('dataview:query', handler);
+		const send = vi.fn();
+		await handleBridgeInvoke(
+			makeClient(),
+			{
+				type: 'bridge.invoke',
+				requestId: 21,
+				channel: 'dataview:query',
+				args: [{ filePath: '/vault/A.md', source: 'LIST', agentId: 'a' }],
+			},
+			send
+		);
+		expect(handler).toHaveBeenCalledOnce();
+		expect(send.mock.calls[0][1]).toMatchObject({ requestId: 21, ok: true, result: answer });
+	});
+
+	it('allows every Dataview request channel and the change push', () => {
+		for (const operation of ['query', 'queryInline', 'status', 'rebuild']) {
+			expect(isRemoteMethodAllowed(`dataview:${operation}`)).toBe(true);
+		}
+		expect(isRemoteEventAllowed('dataview:changed')).toBe(true);
+	});
+
+	it('fans dataview:changed out to bridge clients', () => {
+		const broadcastToAll = vi.fn();
+		installWebContentsBridgeHook({
+			broadcastToAll,
+		} as unknown as Parameters<typeof installWebContentsBridgeHook>[0]);
+
+		const event = { root: '/vault', sshRemoteId: null, revision: 2, changedPaths: ['A.md'] };
+		broadcastBridgeEvent('dataview:changed', [event]);
+		expect(broadcastToAll.mock.calls[0][0]).toMatchObject({
+			type: 'bridge.event',
+			channel: 'dataview:changed',
+			args: [event],
+		});
+
+		uninstallWebContentsBridgeHook();
+	});
+
+	it('refuses browser writes to the DataviewJS settings', () => {
+		expect(isRemoteSettingWritable('dataviewJsEnabled')).toBe(false);
+		expect(isRemoteSettingWritable('dataviewJsTrustedRoots')).toBe(false);
 	});
 });

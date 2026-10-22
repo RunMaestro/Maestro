@@ -13,11 +13,10 @@
  * - Project (last path segment)
  */
 
-import { memo, useState, useEffect, useMemo, useCallback } from 'react';
+import { memo, useMemo } from 'react';
 import { Trophy } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { StatsTimeRange, AutoRunSession } from '../../../shared/stats-types';
-import { captureException } from '../../utils/sentry';
 import { formatDurationHuman as formatDuration } from '../../../shared/formatters';
 import { isGoalRunDocument, goalRunLabel } from '../../../shared/goalDriven/goalRunLabel';
 import {
@@ -30,6 +29,7 @@ import {
 	getTopAutoRunSessions,
 	MAX_LONGEST_AUTORUN_ROWS,
 } from './autoRunTableUtils';
+import { useDashboardResource } from './useDashboardResource';
 
 interface LongestAutoRunsTableProps {
 	/** Current time range for filtering */
@@ -38,34 +38,19 @@ interface LongestAutoRunsTableProps {
 	theme: Theme;
 }
 
+const NO_SESSIONS: AutoRunSession[] = [];
+
 export const LongestAutoRunsTable = memo(function LongestAutoRunsTable({
 	timeRange,
 	theme,
 }: LongestAutoRunsTableProps) {
-	const [sessions, setSessions] = useState<AutoRunSession[]>([]);
-	const [loading, setLoading] = useState(true);
-
-	const fetchData = useCallback(async () => {
-		setLoading(true);
-		try {
-			const autoRunSessions = await window.maestro.stats.getAutoRunSessions(timeRange);
-			setSessions(autoRunSessions);
-		} catch (err) {
-			captureException(err);
-		} finally {
-			setLoading(false);
-		}
-	}, [timeRange]);
-
-	useEffect(() => {
-		fetchData();
-
-		const unsubscribe = window.maestro.stats.onStatsUpdate(() => {
-			fetchData();
-		});
-
-		return () => unsubscribe();
-	}, [fetchData]);
+	// Shares its cache entry with AutoRunStats: one fetch feeds both panels.
+	const { data, loading } = useDashboardResource(
+		`autorun-sessions:${timeRange}`,
+		() => window.maestro.stats.getAutoRunSessions(timeRange),
+		'fetchLongestAutoRuns'
+	);
+	const sessions = data ?? NO_SESSIONS;
 
 	// Sort by duration (longest first) and take top 25
 	const topSessions = useMemo(() => {

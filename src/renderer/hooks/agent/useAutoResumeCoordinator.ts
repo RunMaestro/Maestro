@@ -26,11 +26,12 @@
  */
 
 import { useEffect, useRef } from 'react';
-import type { Session, QueuedItem } from '../../types';
+import type { AgentError, BatchRunState, Session, QueuedItem } from '../../types';
 import { isLimitError } from '../../../shared/types';
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useSessionStore, updateSessionWith } from '../../stores/sessionStore';
+import { getLiveSessionsSnapshot } from '../session/useLiveSessions';
 import { useBatchStore } from '../../stores/batchStore';
 import { useAgentStore } from '../../stores/agentStore';
 import {
@@ -104,14 +105,44 @@ export function isLimitPausedSession(session: Session): boolean {
 }
 
 /**
+ * The limit error an Auto Run is parked on, or `undefined`.
+ *
+ * An Auto Run task runs in its own `-batch-` process, and the agent-error
+ * listener deliberately keeps that failure OFF the session (no `agentError`, no
+ * `error` state) so it cannot block the user's chat tab. The pause lives only on
+ * the batch state, so `isLimitPausedSession` never sees it. Without this, a run
+ * stopped by a usage limit was resumed by nothing: Agent Resilience needs a tab,
+ * `scheduleAutoResume` leaves limits to this coordinator, and this coordinator
+ * only looked at the session.
+ */
+export function limitPausedAutoRunError(batch: BatchRunState | undefined): AgentError | undefined {
+	if (!batch || batch.errorPaused !== true || batch.mirrored === true) return undefined;
+	return batch.error && isLimitError(batch.error) ? batch.error : undefined;
+}
+
+/** The limit error a session or its Auto Run is paused on, or `undefined`. */
+function pausedLimitError(
+	session: Session,
+	batch: BatchRunState | undefined
+): AgentError | undefined {
+	if (isLimitPausedSession(session)) return session.agentError;
+	return limitPausedAutoRunError(batch);
+}
+
+/**
  * Whether a limit-paused session is eligible to probe on this tick. When the
  * provider told us when the window reopens (`limitResetAt`) and it's still in
  * the future, skip - it's not time yet. Sessions with an unknown reset time
  * (non-Claude / unparseable) are always eligible: the interval itself is the
- * backoff.
+ * backoff. `error` defaults to the session's own; an Auto Run pause passes the
+ * batch's.
  */
-export function isEligibleToProbe(session: Session, now: number): boolean {
-	const resetAt = session.agentError?.limitResetAt;
+export function isEligibleToProbe(
+	session: Session,
+	now: number,
+	error: AgentError | undefined = session.agentError
+): boolean {
+	const resetAt = error?.limitResetAt;
 	if (typeof resetAt === 'number' && resetAt > now) return false;
 	return true;
 }
@@ -345,13 +376,16 @@ function fireResumedToast(session: Session): void {
 function resolveGiveUpAnchor(
 	giveUp: Map<string, GiveUpTracking>,
 	session: Session,
+	error: AgentError,
 	now: number
 ): number {
 	const existing = giveUp.get(session.id);
-	const err = session.agentError;
-	const anchor = existing?.anchor ?? err?.limitPausedAt ?? err?.timestamp ?? now;
+	const anchor = existing?.anchor ?? error.limitPausedAt ?? error.timestamp ?? now;
 	giveUp.set(session.id, { anchor, toastFired: existing?.toastFired ?? false });
-	if (err && err.limitPausedAt !== anchor) {
+	// Only the session's own error is persisted; an Auto Run pause lives in the
+	// in-memory batch state, so there is nothing to stamp for a restart.
+	const err = session.agentError;
+	if (err && err === error && err.limitPausedAt !== anchor) {
 		patchAgentError(session.id, (e) =>
 			e.limitPausedAt === anchor ? e : { ...e, limitPausedAt: anchor }
 		);
@@ -410,12 +444,18 @@ export async function runAutoResumeTick(
 ): Promise<void> {
 	const { giveUp = new Map(), giveUpDays = DEFAULT_GIVE_UP_DAYS, now = Date.now() } = options;
 
-	const sessions = useSessionStore.getState().sessions;
-	const limitPaused = sessions.filter(isLimitPausedSession);
+	// Live agents only: a dormant Pianola (flag off) is never resumed.
+	const sessions = getLiveSessionsSnapshot();
+	const batchStates = useBatchStore.getState().batchRunStates;
+	const limitPaused: { session: Session; error: AgentError }[] = [];
+	for (const session of sessions) {
+		const error = pausedLimitError(session, batchStates[session.id]);
+		if (error) limitPaused.push({ session, error });
+	}
 
 	// A session that left the limit-paused state resumed successfully (or was
 	// cleared by the user); forget its give-up window so a future limit is fresh.
-	pruneGiveUpTracking(giveUp, new Set(limitPaused.map((s) => s.id)));
+	pruneGiveUpTracking(giveUp, new Set(limitPaused.map(({ session }) => session.id)));
 
 	// Skip any session whose Auto Run is a read-only mirror of a run owned by
 	// another Maestro client (a web-desktop tab watching the desktop app's run).
@@ -423,9 +463,9 @@ export async function runAutoResumeTick(
 	// refs that live in the owning client, and the standard branch would clear
 	// the agent error and drain the queue out from under a loop this client
 	// cannot see. The owner runs its own coordinator and will resume it.
-	const batchStates = useBatchStore.getState().batchRunStates;
 	const candidates = limitPaused.filter(
-		(s) => batchStates[s.id]?.mirrored !== true && isEligibleToProbe(s, now)
+		({ session, error }) =>
+			batchStates[session.id]?.mirrored !== true && isEligibleToProbe(session, now, error)
 	);
 	if (candidates.length === 0) return;
 
@@ -435,8 +475,8 @@ export async function runAutoResumeTick(
 	// everything inside the window keeps retrying on the normal interval - the
 	// cutoff is the ONLY thing that ends retries, never an attempt count.
 	const retryable: Session[] = [];
-	for (const session of candidates) {
-		const anchor = resolveGiveUpAnchor(giveUp, session, now);
+	for (const { session, error } of candidates) {
+		const anchor = resolveGiveUpAnchor(giveUp, session, error, now);
 		if (now >= anchor + Math.max(1, giveUpDays) * MS_PER_DAY) {
 			const tracking = giveUp.get(session.id);
 			if (tracking && !tracking.toastFired) {
@@ -466,6 +506,10 @@ export async function runAutoResumeTick(
 				// Ownership can change while the async probe is pending. A mirror is
 				// read-only, so re-check before mutating its pause state or queue.
 				if (useBatchStore.getState().batchRunStates[session.id]?.mirrored === true) return;
+				// The user may have resumed or aborted while the probe was pending.
+				const current = useSessionStore.getState().sessions.find((s) => s.id === session.id);
+				const currentBatch = useBatchStore.getState().batchRunStates[session.id];
+				if (!current || !pausedLimitError(current, currentBatch)) return;
 				resume(session, resumeAutoRunAfterError);
 				fireResumedToast(session);
 			} catch (err) {

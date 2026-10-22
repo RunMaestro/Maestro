@@ -1,0 +1,191 @@
+/**
+ * CLI Server Discovery
+ *
+ * The discovery file (`cli-server.json`) the Electron main process writes when
+ * its WebSocket bridge is up, and the reads every client uses to find it: the
+ * CLI, the TUI, and `maestro-cli tui --doctor`.
+ *
+ * Moved into maestro-lib from `src/shared/cli-server-discovery.ts`, which now
+ * re-exports this module, so the library's bridge connection finds a running
+ * desktop without reaching outside the library.
+ *
+ * The directory comes from `resolveUserDataDir()`, the same resolver the CLI's
+ * agent store uses. A private lowercase `maestro` fallback used to live here, so
+ * on a case-sensitive Linux install the CLI read agents from `~/.config/Maestro`
+ * while looking for the app in `~/.config/maestro`, and reported the desktop as
+ * not running while it was. It backs the no-argument reads the CLI has always
+ * used. A caller that has already resolved its data directory (`--data-dir`,
+ * `--dev`) reads with `readCliServerInfoFrom(userDataDir)` instead, so it cannot
+ * end up on a different directory than the one it resolved.
+ */
+
+import * as fs from 'fs';
+import * as path from 'path';
+import { resolveUserDataDir } from '../paths/userDataDir';
+
+export interface CliServerInfo {
+	port: number;
+	token: string;
+	pid: number;
+	startedAt: number;
+	/**
+	 * Version of the desktop app that wrote this file (`app.getVersion()`).
+	 * Optional: older builds did not write it, so a missing value itself signals
+	 * an app predating version-skew detection. Read by `maestro-cli doctor` /
+	 * `status` to compare against the CLI's own build version.
+	 */
+	version?: string;
+	/**
+	 * Per-boot secret the CLI presents on its WebSocket upgrade
+	 * (`CLI_SECRET_HEADER`) so the Web Login gate admits it without a session
+	 * cookie. Optional: an older app did not write it, and the gate simply
+	 * stays closed to the CLI on such a build when Web Login is on.
+	 */
+	cliSecret?: string;
+	/**
+	 * Who wrote this file. Absent means the desktop app (every build before the
+	 * detached host); `headless` is `maestro-cli host`, which serves the same
+	 * bridge with no window. Read for the host label (`headless pid 812`).
+	 */
+	hostKind?: 'headless';
+}
+
+/** Maestro's data directory, as every other reader resolves it (`resolveUserDataDir()`). */
+export function getConfigDir(): string {
+	return resolveUserDataDir();
+}
+
+const DISCOVERY_FILE = 'cli-server.json';
+
+/**
+ * Owner-only permissions for the discovery file. The token in it grants full
+ * control of the app, so other users on the machine must not read it. Ignored
+ * on Windows, where the per-user AppData ACL does the same job.
+ */
+const DISCOVERY_FILE_MODE = 0o600;
+
+/**
+ * Absolute path of the discovery file. Exported so the web bridge can refuse
+ * to hand it (and the CLI secret inside) to a browser.
+ */
+export function cliServerInfoPath(): string {
+	return path.join(getConfigDir(), DISCOVERY_FILE);
+}
+
+/**
+ * Write CLI server info atomically (write to .tmp then rename). The file holds
+ * the token and the CLI secret, so it is created owner-only (0600).
+ */
+export function writeCliServerInfo(info: CliServerInfo): void {
+	writeCliServerInfoTo(getConfigDir(), info);
+}
+
+/**
+ * `writeCliServerInfo` for a data directory the caller resolved: a detached host
+ * serves the directory it was started on, which the environment may not name.
+ */
+export function writeCliServerInfoTo(userDataDir: string, info: CliServerInfo): void {
+	const filePath = path.join(userDataDir, DISCOVERY_FILE);
+	if (!fs.existsSync(userDataDir)) {
+		fs.mkdirSync(userDataDir, { recursive: true });
+	}
+	const tmpPath = filePath + '.tmp';
+	// `mode` only applies when the file is created, so a .tmp left over from an
+	// older build keeps its old bits; chmod covers that case before the rename.
+	fs.writeFileSync(tmpPath, JSON.stringify(info, null, 2), {
+		encoding: 'utf-8',
+		mode: DISCOVERY_FILE_MODE,
+	});
+	fs.chmodSync(tmpPath, DISCOVERY_FILE_MODE);
+	fs.renameSync(tmpPath, filePath);
+}
+
+/**
+ * Read CLI server info from the discovery file
+ * Returns null if the file is missing or invalid
+ */
+export function readCliServerInfo(): CliServerInfo | null {
+	return readCliServerInfoFrom(getConfigDir());
+}
+
+/**
+ * Read CLI server info from the discovery file inside a data directory the
+ * caller resolved. Returns null if the file is missing or invalid, with the
+ * same validity rule as `readCliServerInfo`.
+ */
+export function readCliServerInfoFrom(userDataDir: string): CliServerInfo | null {
+	try {
+		return parseCliServerInfo(fs.readFileSync(path.join(userDataDir, DISCOVERY_FILE), 'utf-8'));
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Parse the contents of a discovery file. Returns null for anything that is
+ * not valid JSON or lacks the four required fields. Separate from the read so
+ * a caller with its own path (the TUI's `--doctor`) applies the same validity
+ * rule as the CLI.
+ */
+export function parseCliServerInfo(raw: string): CliServerInfo | null {
+	try {
+		const data = JSON.parse(raw) as CliServerInfo;
+		if (
+			typeof data.port === 'number' &&
+			typeof data.token === 'string' &&
+			typeof data.pid === 'number' &&
+			typeof data.startedAt === 'number'
+		) {
+			return data;
+		}
+		return null;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Whether a process with this pid exists. `process.kill(pid, 0)` sends no
+ * signal. EPERM means it exists but this caller cannot signal it: common for
+ * sandboxed read-only monitors, and not a stale result.
+ */
+export function isPidAlive(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (error) {
+		return (error as NodeJS.ErrnoException).code === 'EPERM';
+	}
+}
+
+/**
+ * Delete the CLI server discovery file (called on shutdown)
+ */
+export function deleteCliServerInfo(): void {
+	deleteCliServerInfoFrom(getConfigDir());
+}
+
+/**
+ * Delete the discovery file in a resolved data directory, but only while it still
+ * names `onlyIfPid`: a host that exits late must not remove the file a newer host
+ * has already published. Without `onlyIfPid` it is removed unconditionally.
+ */
+export function deleteCliServerInfoFrom(userDataDir: string, onlyIfPid?: number): void {
+	try {
+		if (onlyIfPid !== undefined && readCliServerInfoFrom(userDataDir)?.pid !== onlyIfPid) return;
+		fs.unlinkSync(path.join(userDataDir, DISCOVERY_FILE));
+	} catch {
+		// File may not exist, ignore
+	}
+}
+
+/**
+ * Check if the CLI server is still running by reading the discovery file
+ * and verifying the PID is alive
+ */
+export function isCliServerRunning(): boolean {
+	const info = readCliServerInfo();
+	// The authenticated WebSocket connection remains the authoritative
+	// reachability check; this only says the recorded process still exists.
+	return info !== null && isPidAlive(info.pid);
+}

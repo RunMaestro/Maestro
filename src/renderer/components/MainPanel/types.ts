@@ -1,10 +1,10 @@
 import type React from 'react';
+import type { BrowserTab } from '../../../shared/browserPage';
 import type {
 	Theme,
 	BatchRunState,
 	UnifiedTab,
 	FilePreviewTab,
-	BrowserTab,
 	AgentError,
 	QueuedItem,
 	QueuedItemEditPatch,
@@ -13,7 +13,7 @@ import type {
 	CopyContextOptions,
 	PublishTextAsGistOptions,
 } from '../../hooks/tabs/useTabExportHandlers';
-import type { ForceSendEligibility } from '../../utils/executionQueue';
+import type { ForceSendEligibility, SteerEligibility } from '../../utils/executionQueue';
 
 export interface SlashCommand {
 	command: string;
@@ -144,11 +144,13 @@ export interface MainPanelProps {
 	handleInputKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
 	handlePaste: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void;
 	handleDrop: (e: React.DragEvent<HTMLElement>) => void;
+	onUploadFiles?: (files: File[]) => void;
 	getContextColor: (usage: number, theme: Theme) => string;
 	setActiveSessionId: (id: string) => void;
 	onDeleteLog?: (logId: string) => number | null;
 	onRemoveQueuedItem?: (itemId: string) => void;
 	onTogglePauseQueuedItem?: (itemId: string) => void;
+	onMergeQueuedItem?: (itemId: string) => void;
 	onEditQueuedItem?: (itemId: string, patch: QueuedItemEditPatch) => void;
 	onReorderQueuedItem?: (fromIndex: number, toIndex: number, tabId?: string) => void;
 	onForceSendQueuedItem?: (itemId: string) => void;
@@ -160,6 +162,8 @@ export interface MainPanelProps {
 	 * Execution Queue modal does instead of re-deriving one from a subset.
 	 */
 	getForceSendContext?: (item: QueuedItem) => ForceSendEligibility | null;
+	getSteerContext?: (item: QueuedItem) => SteerEligibility | null;
+	onSteerQueuedItem?: (itemId: string) => void;
 	onOpenQueueBrowser?: () => void;
 
 	// Auto mode props
@@ -194,6 +198,8 @@ export interface MainPanelProps {
 	onCloseOtherTabs?: (pivotTabId?: string) => void;
 	onCloseTabsLeft?: (pivotTabId?: string) => void;
 	onCloseTabsRight?: (pivotTabId?: string) => void;
+	/** Close every tab in a tiled group (the group chip confirms first) */
+	onCloseTabGroup?: (groupId: string) => void;
 
 	// Unified tab system (Phase 4) - file preview tabs integrated with AI tabs
 	unifiedTabs?: UnifiedTab[];

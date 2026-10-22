@@ -18,6 +18,7 @@
  * why. There is no path that drops one silently.
  */
 
+import { randomUUID } from 'crypto';
 import { existsSync } from 'fs';
 import { mkdir, readFile, rename } from 'fs/promises';
 import path from 'path';
@@ -34,10 +35,18 @@ import {
 	parseQueueState,
 	pauseQueue,
 	removeItem,
+	requeueAtFront,
 	requeueFailedAtFront,
 	reorderItem,
 	resumeQueue,
+	unmarkSending,
 } from '../../shared/groupChatQueueModel';
+import {
+	GROUP_CHAT_STEER_BLOCKED_DETAILS,
+	groupChatSteerBlockedReason,
+	type GroupChatSteerBlockedReason,
+	type GroupChatSteerResult,
+} from '../../shared/groupChatSteering';
 import { atomicWriteJson, createKeyedWriteQueue } from '../utils/atomic-json-store';
 import { logger } from '../utils/logger';
 import { captureMessage } from '../utils/sentry';
@@ -149,6 +158,11 @@ export interface GroupChatQueueDeps {
 	postSystemMessage: (groupChatId: string, content: string) => Promise<void>;
 	/** Whether the moderator for this chat is idle right now. */
 	isIdle: (groupChatId: string) => boolean;
+	/**
+	 * Type a message into the round running right now (group chat steering).
+	 * Absent where the host cannot steer; every steer then answers `unavailable`.
+	 */
+	steer?: (groupChatId: string, text: string, readOnly?: boolean) => Promise<GroupChatSteerResult>;
 }
 
 let deps: GroupChatQueueDeps | null = null;
@@ -344,6 +358,10 @@ async function drain(groupChatId: string): Promise<void> {
 	// read is slowest.
 	const active = deps;
 	if (!active || inFlight.has(groupChatId)) return;
+	// A busy room cannot drain (`canDrain` refuses), so do not take the latch
+	// just to find that out: holding it across the disk read refuses a Steer
+	// that lands in the same moment, and a busy room is exactly when one does.
+	if (!active.isIdle(groupChatId)) return;
 	inFlight.add(groupChatId);
 
 	drainRuns++;
@@ -394,12 +412,7 @@ async function drainClaimed(groupChatId: string, active: GroupChatQueueDeps): Pr
 	// claim back if it did, or the item is sent to a busy moderator AND left
 	// wearing an in-flight mark that makes it un-removable.
 	if (!active.isIdle(groupChatId)) {
-		await mutate(groupChatId, (current) => ({
-			...current,
-			items: current.items.map((entry) =>
-				entry.id === sendingId ? { ...entry, sending: undefined } : entry
-			),
-		}));
+		await mutate(groupChatId, (current) => unmarkSending(current, sendingId));
 		return false;
 	}
 
@@ -512,4 +525,164 @@ export async function submitMessage(
 		// the latch was held. Look again now. `canDrain` still decides.
 		scheduleDrain(groupChatId);
 	}
+}
+
+// ==========================================================================
+// Steering: hand a message to the round that is already running
+//
+// A steer IS a send, so it holds the same one-send-at-a-time latch. Without it
+// the round can end while the text is being typed, the idle drain sees the item
+// still queued, and the moderator gets it a second time as a new message.
+// ==========================================================================
+
+function notSteerable(reason: GroupChatSteerBlockedReason): GroupChatSteerResult {
+	return {
+		outcome: 'not-steerable',
+		blockedReason: reason,
+		detail: GROUP_CHAT_STEER_BLOCKED_DETAILS[reason],
+	};
+}
+
+/** Run `body` holding the chat's send latch, then look at the queue again. */
+async function withSendLatch(
+	groupChatId: string,
+	body: (
+		active: GroupChatQueueDeps & Required<Pick<GroupChatQueueDeps, 'steer'>>
+	) => Promise<GroupChatSteerResult>
+): Promise<GroupChatSteerResult> {
+	const active = deps;
+	if (!active?.steer) {
+		return { outcome: 'unavailable', detail: 'this build cannot steer a group chat' };
+	}
+	const steer = active.steer;
+	// Claimed in the same synchronous step as the test, for the reason on `drain`.
+	if (inFlight.has(groupChatId)) return notSteerable('steer-in-flight');
+	inFlight.add(groupChatId);
+	try {
+		return await body({ ...active, steer });
+	} finally {
+		inFlight.delete(groupChatId);
+		// The round may have ended while the latch was held, and that idle event
+		// was ignored. Look again; `canDrain` still decides.
+		scheduleDrain(groupChatId);
+	}
+}
+
+/**
+ * Steer one QUEUED message into the round that is running. The Steer button on
+ * a queued card and `maestro-cli group-chat steer --item` both land here.
+ *
+ * Never loses the message and never sends it twice: it is marked in flight
+ * while it is typed, leaves the queue only once a turn has it, stays where it
+ * was when nothing was typed, and is held (paused, marked) when nobody knows.
+ */
+export async function steerQueuedItem(
+	groupChatId: string,
+	itemId: string
+): Promise<GroupChatSteerResult> {
+	return withSendLatch(groupChatId, async (active) => {
+		const current = await getQueue(groupChatId);
+		const item = current.items.find((entry) => entry.id === itemId);
+		if (!item) {
+			return { outcome: 'not-found', detail: `no queued message ${itemId} in this group chat` };
+		}
+		const blocked = groupChatSteerBlockedReason({
+			busy: !active.isIdle(groupChatId),
+			text: item.text,
+			images: item.images,
+			sending: item.sending,
+			failed: item.failed,
+		});
+		if (blocked) return notSteerable(blocked);
+
+		// In flight while it is typed, so a remove or reorder cannot act on it.
+		const { changed } = await mutate(groupChatId, (state) =>
+			state.items.some((entry) => entry.id === itemId) ? markSending(state, itemId) : state
+		);
+		if (!changed) {
+			return { outcome: 'not-found', detail: `no queued message ${itemId} in this group chat` };
+		}
+
+		let result: GroupChatSteerResult;
+		try {
+			result = await active.steer(groupChatId, item.text, item.readOnlyMode);
+		} catch (err) {
+			result = {
+				outcome: 'unconfirmed',
+				verdict: 'unknown',
+				detail: err instanceof Error ? err.message : String(err),
+			};
+		}
+
+		if (result.outcome === 'delivered' || result.outcome === 'settled') {
+			await mutate(groupChatId, (state) => completeItem(state, itemId));
+		} else if (result.outcome === 'unconfirmed') {
+			// It MAY have been typed. Dropping it can lose the user's words; leaving
+			// it live sends it twice. So hold it, and say so in the room.
+			const reason = `Steer unconfirmed: ${result.detail ?? 'no answer from the running turn'}`;
+			await mutate(groupChatId, (state) => failItem(state, itemId, reason));
+			await active
+				.postSystemMessage(
+					groupChatId,
+					'⚠️ A steered message may or may not have reached the running round, so the queue is paused rather than sending it twice. Resume it if nobody answered it.'
+				)
+				.catch(() => {});
+		} else {
+			// Nothing was typed. It is still the user's, exactly where it was.
+			await mutate(groupChatId, (state) => unmarkSending(state, itemId));
+		}
+		return result;
+	});
+}
+
+/**
+ * Steer a NEW message (never queued) into the round that is running.
+ * `maestro-cli group-chat steer <chat> <message>` lands here. Nothing is queued
+ * on any outcome: a caller whose steer was refused still holds its text and can
+ * send it normally.
+ */
+export async function steerNewMessage(
+	groupChatId: string,
+	text: string,
+	readOnly?: boolean
+): Promise<GroupChatSteerResult> {
+	return withSendLatch(groupChatId, async (active) => {
+		const blocked = groupChatSteerBlockedReason({ busy: !active.isIdle(groupChatId), text });
+		if (blocked) return notSteerable(blocked);
+		return active.steer(groupChatId, text, readOnly);
+	});
+}
+
+/**
+ * Put a steered message no turn took back in the queue, at the front.
+ *
+ * `held` is for a turn that exited without saying what it did with the text:
+ * the message comes back paused and marked, never sent again without asking.
+ * Otherwise the turn said it never took it, so it goes live and sends next.
+ */
+export async function returnSteeredMessage(
+	groupChatId: string,
+	message: { text: string; readOnly?: boolean },
+	held: boolean
+): Promise<void> {
+	const item: GroupChatQueuedItem = {
+		id: randomUUID(),
+		timestamp: Date.now(),
+		text: message.text,
+		...(message.readOnly && { readOnlyMode: true }),
+	};
+	await mutate(groupChatId, (state) =>
+		held
+			? requeueFailedAtFront(state, item, 'Steer unconfirmed: the turn ended without answering')
+			: requeueAtFront(state, item)
+	);
+	await deps
+		?.postSystemMessage(
+			groupChatId,
+			held
+				? '⚠️ A turn ended without saying whether it took your steered message, so it is back in the queue, paused. Resume it if nobody answered it.'
+				: '↩️ The turn ended before it took your steered message, so it is back at the front of the queue.'
+		)
+		.catch(() => {});
+	if (!held) scheduleDrain(groupChatId);
 }

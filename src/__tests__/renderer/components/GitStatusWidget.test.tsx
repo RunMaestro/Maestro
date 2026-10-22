@@ -16,6 +16,7 @@ import type { Theme } from '../../../renderer/types';
 import type { GitStatusData, GitFileChange } from '../../../renderer/contexts/GitStatusContext';
 
 import { mockTheme } from '../../helpers/mockTheme';
+import { getElevatedSurfaceColors } from '../../../renderer/utils/elevatedSurface';
 // Mock the GitStatusContext hooks (focused contexts)
 const mockGetFileCount = vi.fn<[string], number>();
 const mockGetFileDetails = vi.fn<
@@ -590,7 +591,9 @@ describe('GitStatusWidget', () => {
 			fireEvent.mouseEnter(container);
 
 			const tooltip = screen.getByText('View Full Diff').closest('div');
-			expect(tooltip).toHaveStyle({ backgroundColor: mockTheme.colors.bgSidebar });
+			expect(tooltip).toHaveStyle({
+				backgroundColor: getElevatedSurfaceColors(mockTheme.colors).background,
+			});
 		});
 
 		it('should apply theme border colors', () => {
@@ -601,7 +604,9 @@ describe('GitStatusWidget', () => {
 			fireEvent.mouseEnter(container);
 
 			const tooltip = screen.getByText('View Full Diff').closest('div');
-			expect(tooltip).toHaveStyle({ borderColor: mockTheme.colors.border });
+			expect(tooltip).toHaveStyle({
+				borderColor: getElevatedSurfaceColors(mockTheme.colors).border,
+			});
 		});
 	});
 

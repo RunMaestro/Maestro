@@ -11,6 +11,8 @@ import type { Theme } from '../types';
 import { useContextMenuPosition } from '../hooks/ui/useContextMenuPosition';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { openInMaestroBrowser, openInSystemBrowser } from '../utils/openUrl';
+import { isWebUrl, stripUrlRoutingHint } from '../../shared/urlRoutingHint';
+import { elevatedSurfaceStyle } from '../utils/elevatedSurface';
 
 export interface LinkContextMenuState {
 	x: number;
@@ -51,11 +53,13 @@ export function LinkContextMenu({ menu, theme, onDismiss }: LinkContextMenuProps
 	}, []);
 
 	const handleCopy = useCallback(() => {
-		safeClipboardWrite(menu.url);
+		// A routing hint (`maestro+https://`) is an instruction to Maestro, not
+		// part of the address: copy what a browser can load.
+		safeClipboardWrite(stripUrlRoutingHint(menu.url));
 		onDismiss();
 	}, [menu.url, onDismiss]);
 
-	const isOpenable = /^https?:\/\/|^mailto:/.test(menu.url);
+	const isOpenable = isWebUrl(menu.url) || /^mailto:/.test(menu.url);
 
 	const handleOpenMaestro = useCallback(() => {
 		if (isOpenable) openInMaestroBrowser(menu.url);
@@ -70,7 +74,7 @@ export function LinkContextMenu({ menu, theme, onDismiss }: LinkContextMenuProps
 	return createPortal(
 		<div
 			ref={menuRef}
-			className="fixed z-[10000] py-1 rounded-md shadow-xl border whitespace-nowrap"
+			className="fixed z-[10000] py-1 rounded-md whitespace-nowrap"
 			style={{
 				left,
 				top,
@@ -80,8 +84,7 @@ export function LinkContextMenu({ menu, theme, onDismiss }: LinkContextMenuProps
 				maxHeight,
 				overflowY: 'auto',
 				opacity: ready ? 1 : 0,
-				backgroundColor: theme.colors.bgSidebar,
-				borderColor: theme.colors.border,
+				...elevatedSurfaceStyle(theme),
 				minWidth: '12.5rem',
 			}}
 			onMouseDown={(e) => e.stopPropagation()}

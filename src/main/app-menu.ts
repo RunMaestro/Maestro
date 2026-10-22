@@ -43,6 +43,7 @@
 import { app, BrowserWindow, Menu } from 'electron';
 import { isMacOS } from '../shared/platformDetection';
 import { formatShortcutKeysFor } from '../shared/shortcutKeys';
+import { resolveEncoreFeatures, type EncoreFeatureDefaults } from '../shared/encoreFeatureDefaults';
 import { logger } from './utils/logger';
 
 /** Map of shortcut id -> key array, e.g. `{ toggleMode: ['Meta', 'j'] }`. */
@@ -55,6 +56,8 @@ interface MenuCommand {
 	label: string;
 	/** Id from DEFAULT_SHORTCUTS / TAB_SHORTCUTS / FIXED_SHORTCUTS. */
 	shortcutId: string;
+	/** Encore Feature this item opens; the item is left out while it is off. */
+	encoreFlag?: keyof EncoreFeatureDefaults;
 }
 
 type MenuEntry = MenuCommand | 'separator';
@@ -110,7 +113,12 @@ const VIEW_MENU_COMMANDS: MenuEntry[] = [
 	{ label: 'Quick Actions...', shortcutId: 'quickAction' },
 	{ label: 'Switch Agent...', shortcutId: 'agentSwitcher' },
 	'separator',
-	{ label: 'Usage Dashboard', shortcutId: 'usageDashboard' },
+	{ label: 'Usage Dashboard', shortcutId: 'usageDashboard', encoreFlag: 'usageStats' },
+	{
+		label: 'Throughput Gauge',
+		shortcutId: 'toggleThroughputGauge',
+		encoreFlag: 'throughputGauge',
+	},
 	{ label: 'System Log Viewer', shortcutId: 'systemLogs' },
 	{ label: 'Process Monitor', shortcutId: 'processMonitor' },
 	'separator',
@@ -123,6 +131,11 @@ const VIEW_MENU_COMMANDS: MenuEntry[] = [
 let shortcutKeys: MenuShortcutKeys = {};
 /** Serialized form of the above, so redundant pushes don't rebuild the menu. */
 let shortcutKeysSignature = '';
+/**
+ * Encore flags the menu was last built for. Starts at the defaults; main pushes
+ * the stored flags before the first install and again on every change.
+ */
+let encoreFeatures: EncoreFeatureDefaults = resolveEncoreFeatures(undefined);
 
 /**
  * Gap between an item's name and its keystroke in the menu label.
@@ -163,7 +176,12 @@ function sendMenuCommand(clickedWindow: Electron.BaseWindow | undefined, shortcu
 }
 
 function buildSubmenu(entries: MenuEntry[]): Electron.MenuItemConstructorOptions[] {
-	return entries.map((entry) =>
+	// A switched-off Encore Feature gets no item: the renderer refuses its
+	// keystroke, so the item would be visible and dead.
+	const offered = entries.filter(
+		(entry) => entry === 'separator' || !entry.encoreFlag || encoreFeatures[entry.encoreFlag]
+	);
+	return offered.map((entry) =>
 		entry === 'separator'
 			? { type: 'separator' as const }
 			: {
@@ -295,8 +313,20 @@ export function setMenuShortcutKeys(keys: MenuShortcutKeys): void {
 	installApplicationMenu();
 }
 
+/**
+ * Store the current Encore flags and rebuild the menu when one that owns a menu
+ * item changed. Takes the raw stored value; missing keys fall back to defaults.
+ */
+export function setMenuEncoreFeatures(raw: unknown): void {
+	const next = resolveEncoreFeatures(raw);
+	const changed = JSON.stringify(next) !== JSON.stringify(encoreFeatures);
+	encoreFeatures = next;
+	if (changed && isMacOS()) installApplicationMenu();
+}
+
 /** Test seam: drop the cached bindings so the next push always rebuilds. */
 export function resetMenuShortcutKeysForTesting(): void {
 	shortcutKeys = {};
 	shortcutKeysSignature = '';
+	encoreFeatures = resolveEncoreFeatures(undefined);
 }

@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import type { Theme, CustomAICommand } from '../types';
 import { TEMPLATE_VARIABLES_GENERAL } from '../utils/templateVariables';
+import { useAvailableTemplateVariables } from '../hooks/input/useAvailableTemplateVariables';
 import { useSaveShortcut, useTemplateAutocomplete } from '../hooks';
 import { TemplateAutocompleteDropdown } from './TemplateAutocompleteDropdown';
 import { useResizableTextarea } from '../hooks/ui/useResizableTextarea';
@@ -79,6 +80,7 @@ export function AICommandsPanel({
 	customAICommands,
 	setCustomAICommands,
 }: AICommandsPanelProps) {
+	const templateVariables = useAvailableTemplateVariables(TEMPLATE_VARIABLES_GENERAL);
 	const [editingCommand, setEditingCommand] = useState<EditingCommand | null>(null);
 	const [filter, setFilter] = useState('');
 	const [isCreating, setIsCreating] = useState(false);
@@ -281,7 +283,7 @@ export function AICommandsPanel({
 							at runtime.
 						</p>
 						<div className="grid grid-cols-2 gap-x-4 gap-y-1 max-h-48 overflow-y-auto scrollbar-thin">
-							{TEMPLATE_VARIABLES_GENERAL.map(({ variable, description }) => (
+							{templateVariables.map(({ variable, description }) => (
 								<div key={variable} className="flex items-center gap-2 py-0.5">
 									<code
 										className="text-2xs font-mono px-1 py-0.5 rounded shrink-0"

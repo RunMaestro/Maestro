@@ -25,6 +25,7 @@ import { findLoginUrl } from '../utils/loginUrl';
 import { isWindowsPlatform } from '../utils/platformUtils';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
+import { copyTextWithFlash } from '../utils/inlineCodeCopy';
 import { logger } from '../utils/logger';
 import type { Theme } from '../types';
 
@@ -352,6 +353,9 @@ export function LoginTerminal({
 					theme={theme}
 					fontFamily={fontFamily}
 					fontSize={Math.round(fontSize * 0.85)}
+					// Without a copy handler the terminal's right-click menu never opens,
+					// which left a login screen with no pointer route to its own text.
+					onCopySelection={copyTextWithFlash}
 				/>
 			</div>
 		</>

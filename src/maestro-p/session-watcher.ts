@@ -49,6 +49,12 @@ export interface DiscoverSessionIdOptions {
 	 * that entirely. Falls back to earliest-new only when this is absent.
 	 */
 	expectSessionId?: string;
+	/**
+	 * Session ids the earliest-new scan must skip: transcripts this run is
+	 * already tailing, when the caller is watching for a SECOND session the
+	 * TUI rotated onto (`/clear`).
+	 */
+	excludeSessionIds?: ReadonlySet<string>;
 }
 
 export interface DiscoverSessionIdResult {
@@ -78,6 +84,21 @@ export function cwdSlug(cwd: string): string {
 	return normalized.replace(/[^a-zA-Z0-9]/g, '-');
 }
 
+/** Where claude keeps the transcript of `sessionId` for a project rooted at `cwd`. */
+export function sessionTranscriptPath(configDir: string, cwd: string, sessionId: string): string {
+	return path.join(configDir, 'projects', cwdSlug(cwd), `${sessionId}.jsonl`);
+}
+
+/**
+ * What `claude --print --resume <id>` says when no transcript backs the id.
+ * maestro-p reuses the exact words so the desktop's `session_not_found`
+ * pattern classifies a TUI turn the same way as a print turn, and its in-place
+ * recovery starts a fresh session instead of reporting an anonymous failure.
+ */
+export function noConversationFoundMessage(sessionId: string): string {
+	return `No conversation found with session ID: ${sessionId}`;
+}
+
 interface Candidate {
 	sessionId: string;
 	jsonlPath: string;
@@ -97,7 +118,7 @@ export async function discoverSessionId(
 	for (;;) {
 		const candidate = options.expectSessionId
 			? await findExpectedJsonl(projectsDir, options.expectSessionId)
-			: await findEarliestNewJsonl(projectsDir, options.spawnTimestamp);
+			: await findEarliestNewJsonl(projectsDir, options.spawnTimestamp, options.excludeSessionIds);
 		if (candidate) {
 			return { sessionId: candidate.sessionId, jsonlPath: candidate.jsonlPath };
 		}
@@ -136,7 +157,8 @@ async function findExpectedJsonl(
 
 async function findEarliestNewJsonl(
 	projectsDir: string,
-	spawnTimestamp: number
+	spawnTimestamp: number,
+	exclude?: ReadonlySet<string>
 ): Promise<Candidate | null> {
 	let entries: string[];
 	try {
@@ -150,6 +172,7 @@ async function findEarliestNewJsonl(
 	let best: Candidate | null = null;
 	for (const name of entries) {
 		if (!name.endsWith('.jsonl')) continue;
+		if (exclude?.has(name.slice(0, -'.jsonl'.length))) continue;
 		const fullPath = path.join(projectsDir, name);
 		let stat;
 		try {
@@ -173,6 +196,44 @@ async function findEarliestNewJsonl(
 		}
 	}
 	return best;
+}
+
+// A main-session transcript is `<uuid>.jsonl`; subagent and other side files
+// live in subfolders or carry other names.
+const SESSION_JSONL = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jsonl$/i;
+
+/**
+ * The session `claude --continue` would pick for `cwd`: the most recently
+ * written transcript in its project folder, or null when there is none.
+ * maestro-p resolves this itself because it pre-assigns `--session-id` to
+ * every fresh TUI, and claude refuses `--continue` together with
+ * `--session-id`.
+ */
+export async function findLatestSessionId(configDir: string, cwd: string): Promise<string | null> {
+	const projectsDir = path.join(configDir, 'projects', cwdSlug(cwd));
+	let entries: string[];
+	try {
+		entries = await fsp.readdir(projectsDir);
+	} catch (err) {
+		if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+		throw err;
+	}
+	let latest: { sessionId: string; mtimeMs: number } | null = null;
+	for (const name of entries) {
+		if (!SESSION_JSONL.test(name)) continue;
+		let stat;
+		try {
+			stat = await fsp.stat(path.join(projectsDir, name));
+		} catch (err) {
+			if ((err as NodeJS.ErrnoException).code === 'ENOENT') continue;
+			throw err;
+		}
+		if (!stat.isFile()) continue;
+		if (!latest || stat.mtimeMs > latest.mtimeMs) {
+			latest = { sessionId: name.slice(0, -'.jsonl'.length), mtimeMs: stat.mtimeMs };
+		}
+	}
+	return latest?.sessionId ?? null;
 }
 
 function sleep(ms: number): Promise<void> {

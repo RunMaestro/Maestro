@@ -39,11 +39,16 @@ describe('ConcertoStageModal', () => {
 		useSettingsStore.setState({ concertoStageFloating: false, concertoStagePosition: null });
 	});
 
-	it('opens itself when an agent composes a Concerto', () => {
+	it('keeps new panels hidden until the user opens them through a chat chip', () => {
 		renderStage();
 		expect(stageCard()).toHaveStyle({ display: 'none' });
 
 		act(() => applyMovementPayload({ op: 'add', id: 'board', title: 'Chess' }));
+
+		expect(stageCard()).toHaveStyle({ display: 'none' });
+		expect(document.querySelector('[data-movement-id="board"]')).not.toBeNull();
+
+		act(() => useMovementStore.getState().flashItem('board'));
 
 		expect(stageCard()).not.toHaveStyle({ display: 'none' });
 		expect(document.querySelector('[data-movement-id="board"]')).not.toBeNull();
@@ -59,6 +64,7 @@ describe('ConcertoStageModal', () => {
 				body: '<button>Move</button>',
 			})
 		);
+		act(() => getModalActions().setConcertoStageOpen(true));
 		renderStage();
 		const frame = screen.getByTestId('concerto-html-iframe');
 
@@ -110,6 +116,7 @@ describe('ConcertoStageModal', () => {
 					body: '<button>Move</button>',
 				})
 			);
+			act(() => getModalActions().setConcertoStageOpen(true));
 			renderStage();
 			const frame = screen.getByTestId('concerto-html-iframe');
 			expect(screen.queryByTestId('modal-float-handle')).not.toBeInTheDocument();

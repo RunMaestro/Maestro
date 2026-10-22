@@ -17,6 +17,7 @@ import * as path from 'path';
 import { withMaestroClient } from '../services/maestro-client';
 import { getSessionById } from '../services/storage';
 import { resolveOwningAgent } from '../utils/owning-agent';
+import { exitIfMaestroNotRunning } from '../services/session-command';
 
 interface OpenGraphOptions {
 	agent?: string;
@@ -114,6 +115,7 @@ export async function openGraph(paths: string[], options: OpenGraphOptions): Pro
 			process.exit(1);
 		}
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		const msg = error instanceof Error ? error.message : String(error);
 		if (options.json) console.log(JSON.stringify({ success: false, error: msg }));
 		else console.error(`Error: ${msg}`);

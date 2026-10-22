@@ -149,6 +149,59 @@ describe('update-group command', () => {
 		});
 	});
 
+	describe('hiding and showing', () => {
+		it('should send hidden: true for --hide', async () => {
+			const payload = mockSend({ type: 'update_group_result', success: true });
+			persisted({ id: 'g1', hidden: true });
+
+			await updateGroup('g1', { hide: true });
+
+			expect(payload()).toMatchObject({ type: 'update_group', groupId: 'g1', hidden: true });
+			expect(processExitSpy).not.toHaveBeenCalled();
+		});
+
+		it('should send hidden: false for --show', async () => {
+			const payload = mockSend({ type: 'update_group_result', success: true });
+			// A visible group is stored with no `hidden` key at all.
+			persisted({ id: 'g1' });
+
+			await updateGroup('g1', { show: true });
+
+			expect(payload().hidden).toBe(false);
+			expect(processExitSpy).not.toHaveBeenCalled();
+		});
+
+		it('should report the hidden state in --json output', async () => {
+			mockSend({ type: 'update_group_result', success: true });
+			persisted({ id: 'g1', hidden: true });
+
+			await updateGroup('g1', { hide: true, json: true });
+
+			const output = JSON.parse(consoleSpy.mock.calls[0][0] as string);
+			expect(output.group.hidden).toBe(true);
+		});
+
+		it('should reject --hide together with --show', async () => {
+			await updateGroup('g1', { hide: true, show: true });
+
+			expect(formatError).toHaveBeenCalledWith('Cannot pass both --hide and --show');
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+			expect(withMaestroClient).not.toHaveBeenCalled();
+		});
+
+		it('should fail when the desktop reported success but the group is still visible', async () => {
+			mockSend({ type: 'update_group_result', success: true });
+			persisted({ id: 'g1' });
+
+			await updateGroup('g1', { hide: true });
+
+			expect(formatError).toHaveBeenCalledWith(
+				expect.stringContaining('group is visible, expected hidden')
+			);
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+		});
+	});
+
 	describe('validation errors', () => {
 		it('should reject an update that changes nothing', async () => {
 			await updateGroup('g1', {});

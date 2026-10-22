@@ -4,6 +4,7 @@ import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import { HistoryHelpModal } from '../../../renderer/components/HistoryHelpModal';
 import type { Theme } from '../../../renderer/types';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { useModalStore } from '../../../renderer/stores/modalStore';
 
 // Mock the layer stack context
 const mockRegisterLayer = vi.fn();
@@ -489,6 +490,43 @@ describe('HistoryHelpModal', () => {
 			render(<HistoryHelpModal {...defaultProps} />);
 
 			expect(screen.getByText(/Hover over any bar to see the exact count/)).toBeInTheDocument();
+		});
+	});
+
+	describe('Per-Session Storage Section', () => {
+		afterEach(() => {
+			useModalStore.getState().closeAll();
+		});
+
+		it('shows the configured entry limit, not a fixed number', () => {
+			useSettingsStore.setState({ maxLogBuffer: 25000 });
+			render(<HistoryHelpModal {...defaultProps} />);
+
+			expect(screen.getByText('25,000 entries per session')).toBeInTheDocument();
+		});
+
+		it('follows the setting when it changes', () => {
+			useSettingsStore.setState({ maxLogBuffer: 1000 });
+			render(<HistoryHelpModal {...defaultProps} />);
+
+			expect(screen.getByText('1,000 entries per session')).toBeInTheDocument();
+			expect(screen.queryByText(/5,000 entries/)).not.toBeInTheDocument();
+		});
+
+		it('deep-links to the Maximum Log Buffer setting and closes itself', () => {
+			const onClose = vi.fn();
+			render(<HistoryHelpModal {...defaultProps} onClose={onClose} />);
+
+			fireEvent.click(
+				screen.getByRole('button', { name: 'Settings > Display > Maximum Log Buffer' })
+			);
+
+			// Settings would open underneath this modal, so it has to get out of the way.
+			expect(onClose).toHaveBeenCalledTimes(1);
+			expect(useModalStore.getState().getData('settings')).toEqual({
+				tab: 'display',
+				settingId: 'display-max-log-buffer',
+			});
 		});
 	});
 

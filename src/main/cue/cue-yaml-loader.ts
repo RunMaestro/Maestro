@@ -8,10 +8,16 @@
 import * as yaml from 'js-yaml';
 import type { CueConfig } from './cue-types';
 import { readCueConfigFile, watchCueConfigFile } from './config/cue-config-repository';
-import { materializeCueConfig, parseCueConfigDocument } from './config/cue-config-normalizer';
+import {
+	materializeCueConfig,
+	normalizeSettings,
+	parseCueConfigDocument,
+	type CueHealthWarning,
+} from './config/cue-config-normalizer';
 import {
 	partitionValidSubscriptions,
 	validateCueConfigDocument,
+	validateSettings,
 } from './config/cue-config-validator';
 
 export { resolveCueConfigPath } from './config/cue-config-repository';
@@ -23,11 +29,21 @@ export { resolveCueConfigPath } from './config/cue-config-repository';
  * caller can surface them to the user.
  */
 export type LoadCueConfigDetailedResult = (
-	| { ok: true; config: CueConfig; warnings: string[] }
+	| {
+			ok: true;
+			config: CueConfig;
+			warnings: string[];
+			/** Warning positions and execution targets; paused subscriptions remain log-only. */
+			healthWarnings?: CueHealthWarning[];
+	  }
 	| { ok: false; reason: 'missing' }
 	| { ok: false; reason: 'parse-error'; message: string }
 	| { ok: false; reason: 'invalid'; errors: string[] }
-) & { file?: ReturnType<typeof readCueConfigFile> };
+) & {
+	file?: ReturnType<typeof readCueConfigFile>;
+	/** Readable settings survive schema-invalid subscriptions for error ownership. */
+	settings?: CueConfig['settings'];
+};
 
 /**
  * Loads, validates, and materializes the Cue config for a project root.
@@ -72,7 +88,24 @@ export function loadCueConfigDetailed(projectRoot: string): LoadCueConfigDetaile
 	// pipelines belonging to other agents that share the same project root.
 	const partitioned = partitionValidSubscriptions(parsed);
 	if (partitioned.configErrors.length > 0) {
-		return { ok: false, reason: 'invalid', errors: partitioned.configErrors, file };
+		const rawSettings = (parsed as Record<string, unknown>).settings;
+		// Only readable ownership may replace the last known owner. Validate
+		// the block shape and owner with the canonical settings validator;
+		// unrelated invalid settings must not hide an otherwise valid owner.
+		const ownershipSettings =
+			rawSettings && typeof rawSettings === 'object' && !Array.isArray(rawSettings)
+				? { owner_agent_id: (rawSettings as Record<string, unknown>).owner_agent_id }
+				: rawSettings;
+		return {
+			ok: false,
+			reason: 'invalid',
+			errors: partitioned.configErrors,
+			file,
+			settings:
+				rawSettings !== undefined && validateSettings(ownershipSettings).length === 0
+					? normalizeSettings(rawSettings as Record<string, unknown> | undefined)
+					: undefined,
+		};
 	}
 
 	const document = parseCueConfigDocument(file.raw, projectRoot);
@@ -124,12 +157,24 @@ export function loadCueConfigDetailed(projectRoot: string): LoadCueConfigDetaile
 	// Surface skipped subscriptions as warnings so the user sees what was
 	// excluded and can fix the YAML, but the rest of the config still loads.
 	const warnings = [...materialized.warnings];
+	const healthWarnings = [...materialized.healthWarnings];
 	for (const entry of partitioned.subscriptionErrors) {
 		const detail = entry.errors.join('; ');
-		warnings.push(`Skipped invalid subscription at index ${entry.index} - ${detail}`);
+		const message = `Skipped invalid subscription at index ${entry.index} - ${detail}`;
+		warnings.push(message);
+		if ((rawSubs[entry.index] as Record<string, unknown> | null)?.enabled !== false) {
+			const normalizedIndex = rawToNormalized.get(entry.index);
+			healthWarnings.push({
+				warningIndex: warnings.length - 1,
+				agentId:
+					normalizedIndex === undefined
+						? undefined
+						: document.subscriptions[normalizedIndex].agent_id,
+			});
+		}
 	}
 
-	return { ok: true, config: materialized.config, warnings, file };
+	return { ok: true, config: materialized.config, warnings, healthWarnings, file };
 }
 
 /**

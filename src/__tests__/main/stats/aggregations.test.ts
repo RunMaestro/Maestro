@@ -1518,6 +1518,64 @@ describe('Aggregation queries return correct calculations', () => {
 			expect(worktreeCall![0]).toContain('SUM(duration)');
 		});
 	});
+
+	describe('prompt cadence', () => {
+		it('counts only non-auto turns and windows from local midnight', async () => {
+			const now = new Date();
+			const atHour = (daysAgo: number, hour: number) =>
+				new Date(now.getFullYear(), now.getMonth(), now.getDate() - daysAgo, hour).getTime();
+			const promptRows = [
+				{ start_time: atHour(2, 9) },
+				{ start_time: atHour(2, 10) },
+				{ start_time: atHour(1, 9) },
+			];
+			let windowBound: unknown;
+			mockStatement.get.mockReturnValue({ count: 0, total_duration: 0 });
+			mockStatement.all.mockReturnValue([]);
+			mockDb.prepare.mockImplementation((sql: string) => {
+				if (sql.includes('MIN(start_time) as first')) {
+					return { ...mockStatement, get: vi.fn(() => ({ first: atHour(20, 8) })) };
+				}
+				if (sql.includes("source != 'auto' AND start_time >= ?")) {
+					return {
+						...mockStatement,
+						all: vi.fn((bound: unknown) => {
+							windowBound = bound;
+							return promptRows;
+						}),
+					};
+				}
+				return mockStatement;
+			});
+
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+			db.initialize();
+
+			const stats = db.getAggregatedStats('week');
+
+			expect(stats.prompts.total).toBe(3);
+			expect(stats.prompts.calendarDays).toBe(7);
+			expect(stats.prompts.busiestDay?.count).toBe(2);
+			// Window opens at local midnight six days back, not a rolling 7 * 24h.
+			const sixDaysAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6);
+			expect(windowBound).toBe(sixDaysAgo.getTime());
+		});
+
+		it('reports an empty cadence when nothing was ever prompted', async () => {
+			mockStatement.get.mockReturnValue({ count: 0, total_duration: 0 });
+			mockStatement.all.mockReturnValue([]);
+
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+			db.initialize();
+
+			const stats = db.getAggregatedStats('all');
+
+			expect(stats.prompts.total).toBe(0);
+			expect(stats.prompts.days).toEqual([]);
+		});
+	});
 });
 
 /**

@@ -377,6 +377,43 @@ describe('show-agent command', () => {
 			expect(parsed.worktreeBasePath).toBe('/project-worktrees');
 		});
 
+		it('should report the resolved Codex transport for a Codex agent', () => {
+			vi.mocked(getSessionById).mockReturnValue(
+				mockSession({ toolType: 'codex', codexTransport: 'app-server' })
+			);
+			vi.mocked(readGroups).mockReturnValue([]);
+			vi.mocked(readHistory).mockReturnValue([]);
+
+			showAgent('agent-123', { json: true });
+
+			const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(parsed.codexTransport).toBe('app-server');
+			expect(parsed.codexTransportStored).toBe('app-server');
+		});
+
+		it('should resolve an unset Codex transport to exec', () => {
+			vi.mocked(getSessionById).mockReturnValue(mockSession({ toolType: 'codex' }));
+			vi.mocked(readGroups).mockReturnValue([]);
+			vi.mocked(readHistory).mockReturnValue([]);
+
+			showAgent('agent-123', { json: true });
+
+			const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(parsed.codexTransport).toBe('exec');
+			expect(parsed.codexTransportStored).toBeNull();
+		});
+
+		it('should report a null Codex transport for a non-Codex agent', () => {
+			vi.mocked(getSessionById).mockReturnValue(mockSession({ codexTransport: 'app-server' }));
+			vi.mocked(readGroups).mockReturnValue([]);
+			vi.mocked(readHistory).mockReturnValue([]);
+
+			showAgent('agent-123', { json: true });
+
+			const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
+			expect(parsed.codexTransport).toBeNull();
+		});
+
 		it('should report worktreeBasePath as null when no worktree directory is configured', () => {
 			vi.mocked(getSessionById).mockReturnValue(mockSession({ worktreeConfig: undefined }));
 			vi.mocked(readGroups).mockReturnValue([]);

@@ -13,14 +13,11 @@
  * `feedback subscribe <n>` adds to the existing issue instead.
  */
 
-import * as fs from 'fs';
-import * as path from 'path';
 import { runGhLogin } from '../services/gh-login';
 import { withMaestroClient } from '../services/maestro-client';
+import { exitIfMaestroNotRunning } from '../services/session-command';
 import { ExitCode, exitCodeForError, exitWith } from '../exit-codes';
-import { resolveCliPath } from '../utils/parse';
-import { getImageMimeType } from '../../shared/gitUtils';
-import { formatSize } from '../../shared/formatters';
+import { readCliImageFile } from '../utils/imageFiles';
 import {
 	FEEDBACK_CATEGORY_ALIASES,
 	MAX_FEEDBACK_ATTACHMENTS,
@@ -37,6 +34,10 @@ import {
 	isFeedbackAccountUsable,
 	type FeedbackAccountsResponse,
 } from '../../shared/feedbackAccounts';
+import {
+	formatLiveDiagnosisForPrompt,
+	type FeedbackLiveDiagnosis,
+} from '../../shared/feedbackLiveState';
 
 /**
  * Filing uploads screenshots, may build and upload a support package, and runs
@@ -46,9 +47,6 @@ import {
 const SUBMIT_TIMEOUT_MS = 180_000;
 /** Search fans out several `gh search` calls in parallel. */
 const GH_TIMEOUT_MS = 60_000;
-
-/** Extensions the modal's drop zone advertises. */
-const ATTACHMENT_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp']);
 
 interface JsonOption {
 	json?: boolean;
@@ -81,6 +79,7 @@ function fail(message: string, options: JsonOption, code: ExitCode, extra?: obje
 }
 
 function failFromError(error: unknown, options: JsonOption): never {
+	exitIfMaestroNotRunning(error, options);
 	const message = error instanceof Error ? error.message : String(error);
 	return fail(message, options, exitCodeForError(error));
 }
@@ -96,29 +95,7 @@ export function readAttachments(paths: string[]): FeedbackAttachmentPayload[] {
 			`At most ${MAX_FEEDBACK_ATTACHMENTS} screenshots can be attached (got ${paths.length}).`
 		);
 	}
-	return paths.map((input) => {
-		const filePath = resolveCliPath(input);
-		const ext = path.extname(filePath).slice(1).toLowerCase();
-		if (!ATTACHMENT_EXTENSIONS.has(ext)) {
-			throw new Error(`${input}: screenshots must be PNG, JPG, GIF, or WebP.`);
-		}
-		let size: number;
-		try {
-			size = fs.statSync(filePath).size;
-		} catch {
-			throw new Error(`${input}: file not found.`);
-		}
-		if (size > MAX_FEEDBACK_ATTACHMENT_BYTES) {
-			throw new Error(
-				`${input}: ${formatSize(size)} exceeds the ${formatSize(MAX_FEEDBACK_ATTACHMENT_BYTES)} limit.`
-			);
-		}
-		const base64 = fs.readFileSync(filePath).toString('base64');
-		return {
-			name: path.basename(filePath),
-			dataUrl: `data:${getImageMimeType(ext)};base64,${base64}`,
-		};
-	});
+	return paths.map((input) => readCliImageFile(input, MAX_FEEDBACK_ATTACHMENT_BYTES));
 }
 
 function printIssues(issues: FeedbackIssueMatch[]): void {
@@ -322,6 +299,29 @@ export async function feedbackAccounts(options: AccountsOptions): Promise<void> 
 		console.log(`    key: ${account.key}`);
 	}
 	if (!pick) exitWith(ExitCode.GeneralError);
+}
+
+/**
+ * `feedback diagnose` - the live app state the Feedback chat opens with, read
+ * now: agents that are busy, errored, limit-paused, retrying, or running Auto
+ * Run, plus recent warnings and errors (redacted). Read-only.
+ */
+export async function feedbackDiagnose(options: JsonOption): Promise<void> {
+	let result: { success: boolean; error?: string; diagnosis?: FeedbackLiveDiagnosis };
+	try {
+		result = await withMaestroClient((client) =>
+			client.sendCommand({ type: 'feedback_diagnose' }, 'feedback_diagnose_result')
+		);
+	} catch (error) {
+		failFromError(error, options);
+	}
+	if (!result.success || !result.diagnosis)
+		fail(result.error || 'Reading the live app state failed', options, ExitCode.GeneralError);
+	if (options.json) {
+		console.log(JSON.stringify({ success: true, diagnosis: result.diagnosis }));
+		return;
+	}
+	console.log(formatLiveDiagnosisForPrompt(result.diagnosis));
 }
 
 /** `feedback search <query>` - possible duplicates on RunMaestro/Maestro. */

@@ -4,6 +4,7 @@ import type { ConductorBadge } from '../../../constants/conductorBadges';
 import { formatCumulativeTime } from '../../../constants/conductorBadges';
 import { openUrl } from '../../../utils/openUrl';
 import type { BadgeTooltipPosition } from '../types';
+import { elevatedSurfaceStyle } from '../../../utils/elevatedSurface';
 
 interface BadgeTooltipProps {
 	badge: ConductorBadge;
@@ -37,11 +38,9 @@ export function BadgeTooltip({ badge, theme, isUnlocked, position }: BadgeToolti
 
 	return (
 		<div
-			className="absolute bottom-full mb-2 p-3 rounded-lg shadow-xl z-[100] w-64"
+			className="absolute bottom-full mb-2 p-3 rounded-lg z-[100] w-64"
 			style={{
-				backgroundColor: theme.colors.bgSidebar,
-				border: `1px solid ${theme.colors.border}`,
-				boxShadow: `0 4px 20px rgba(0,0,0,0.3)`,
+				...elevatedSurfaceStyle(theme),
 				...getPositionStyles(),
 			}}
 			onClick={(e) => e.stopPropagation()}

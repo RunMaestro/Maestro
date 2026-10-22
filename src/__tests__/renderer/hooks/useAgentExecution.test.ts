@@ -5,6 +5,8 @@ import type { Session, AITab, UsageStats, QueuedItem } from '../../../renderer/t
 import { createMockAITab } from '../../helpers/mockTab';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { observeEffortRejection } from '../../../renderer/services/effortRejection';
+import { resetEffortRejections } from '../../../shared/effortRejection';
 
 const createMockTab = (overrides: Partial<AITab> = {}): AITab =>
 	createMockAITab({
@@ -43,12 +45,14 @@ describe('useAgentExecution', () => {
 		onSessionId: vi.fn(),
 		onUsage: vi.fn(),
 		onExit: vi.fn(),
+		onAgentError: vi.fn(),
 	};
 
 	let onDataHandler: ((sid: string, data: string) => void) | undefined;
 	let onSessionIdHandler: ((sid: string, sessionId: string) => void) | undefined;
 	let onUsageHandler: ((sid: string, usage: UsageStats) => void) | undefined;
 	let onExitHandler: ((sid: string) => void) | undefined;
+	let onAgentErrorHandler: ((sid: string, error: { message: string }) => void) | undefined;
 
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -57,6 +61,7 @@ describe('useAgentExecution', () => {
 		onSessionIdHandler = undefined;
 		onUsageHandler = undefined;
 		onExitHandler = undefined;
+		onAgentErrorHandler = undefined;
 
 		mockProcess.spawn.mockResolvedValue(undefined);
 		mockProcess.onData.mockImplementation((handler: (sid: string, data: string) => void) => {
@@ -77,6 +82,12 @@ describe('useAgentExecution', () => {
 			onExitHandler = handler;
 			return () => {};
 		});
+		mockProcess.onAgentError.mockImplementation(
+			(handler: (sid: string, error: { message: string }) => void) => {
+				onAgentErrorHandler = handler;
+				return () => {};
+			}
+		);
 
 		window.maestro = {
 			...window.maestro,
@@ -225,6 +236,42 @@ describe('useAgentExecution', () => {
 		expect(mockProcess.spawn.mock.calls[1][0].sessionCustomEffort).toBe('medium');
 	});
 
+	it('forwards the Claude token source on an Auto Run spawn', async () => {
+		// The Auto Run process id (`{agentId}-batch-{ts}`) does not match the
+		// persisted agent record, so the payload must carry the TUI / Dynamic
+		// selection or the run falls back to API.
+		const session = createMockSession({
+			toolType: 'claude-code',
+			enableMaestroP: true,
+			maestroPMode: 'dynamic',
+			maestroPPath: '/opt/maestro-p',
+		});
+		const sessionsRef = { current: [session] };
+		const processQueuedItemRef = { current: null };
+
+		const { result } = renderHook(() =>
+			useAgentExecution({
+				activeSession: session,
+				sessionsRef,
+				setSessions: vi.fn(),
+				processQueuedItemRef,
+				setFlashNotification: vi.fn(),
+				setSuccessFlashNotification: vi.fn(),
+			})
+		);
+
+		result.current.spawnAgentForSession(session.id, 'Task', undefined, { isAutoRun: true });
+
+		await waitFor(() => {
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+		});
+		const spawned = mockProcess.spawn.mock.calls[0][0];
+		expect(spawned.sessionId).toMatch(/-batch-\d+$/);
+		expect(spawned.enableMaestroP).toBe(true);
+		expect(spawned.maestroPMode).toBe('dynamic');
+		expect(spawned.maestroPPath).toBe('/opt/maestro-p');
+	});
+
 	it('pins a background synopsis to the cheapest model rather than the tab model', async () => {
 		const session = createMockSession();
 		const sessionsRef = { current: [session] };
@@ -339,6 +386,91 @@ describe('useAgentExecution', () => {
 		expect(resultData.error).toBe('Prompt is too long');
 	});
 
+	// A `/compact` runs through this spawner for its hidden process id, but it
+	// is not a synopsis: it prints nothing on success, and the summary it writes
+	// becomes the conversation, so it must run on the tab's own settings.
+	it('runs a compaction on the tab settings and accepts its empty output', async () => {
+		const session = createMockSession();
+		const sessionsRef = { current: [session] };
+		const processQueuedItemRef = { current: null };
+
+		const { result } = renderHook(() =>
+			useAgentExecution({
+				activeSessionId: session.id,
+				sessionsRef,
+				setSessions: vi.fn(),
+				processQueuedItemRef,
+				setFlashNotification: vi.fn(),
+				setSuccessFlashNotification: vi.fn(),
+			})
+		);
+
+		const spawnPromise = result.current.spawnBackgroundSynopsis(
+			session.id,
+			session.cwd,
+			'resume-123',
+			'/compact',
+			'claude-code',
+			{ customModel: 'sonnet', customEffort: 'high' },
+			{ keepTurnSettings: true, allowEmptyResponse: true }
+		);
+
+		await waitFor(() => {
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+		});
+
+		const spawned = mockProcess.spawn.mock.calls[0][0];
+		expect(spawned.sessionCustomModel).toBe('sonnet');
+		expect(spawned.sessionCustomEffort).toBe('high');
+
+		act(() => {
+			onExitHandler?.(spawned.sessionId as string, 0);
+		});
+
+		expect((await spawnPromise).success).toBe(true);
+	});
+
+	it('still fails a compaction that printed a provider error', async () => {
+		const session = createMockSession();
+		const sessionsRef = { current: [session] };
+		const processQueuedItemRef = { current: null };
+
+		const { result } = renderHook(() =>
+			useAgentExecution({
+				activeSessionId: session.id,
+				sessionsRef,
+				setSessions: vi.fn(),
+				processQueuedItemRef,
+				setFlashNotification: vi.fn(),
+				setSuccessFlashNotification: vi.fn(),
+			})
+		);
+
+		const spawnPromise = result.current.spawnBackgroundSynopsis(
+			session.id,
+			session.cwd,
+			'resume-123',
+			'/compact',
+			'claude-code',
+			undefined,
+			{ keepTurnSettings: true, allowEmptyResponse: true }
+		);
+
+		await waitFor(() => {
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+		});
+		const targetSessionId = mockProcess.spawn.mock.calls[0][0].sessionId as string;
+
+		act(() => {
+			onDataHandler?.(targetSessionId, 'Prompt is too long');
+			onExitHandler?.(targetSessionId, 0);
+		});
+
+		const resultData = await spawnPromise;
+		expect(resultData.success).toBe(false);
+		expect(resultData.error).toBe('Prompt is too long');
+	});
+
 	it('reports a non-zero synopsis exit as failed even with prose on stdout', async () => {
 		const session = createMockSession();
 		const sessionsRef = { current: [session] };
@@ -377,6 +509,50 @@ describe('useAgentExecution', () => {
 		const resultData = await spawnPromise;
 
 		expect(resultData.success).toBe(false);
+	});
+
+	// Codex refuses a resume while another process owns the thread: exit 1,
+	// nothing on stdout, the reason only on stderr. The toast read "exit code 1".
+	it("reports the agent error's reason when a failed synopsis printed nothing", async () => {
+		const session = createMockSession();
+		const sessionsRef = { current: [session] };
+		const processQueuedItemRef = { current: null };
+
+		const { result } = renderHook(() =>
+			useAgentExecution({
+				activeSessionId: session.id,
+				sessionsRef,
+				setSessions: vi.fn(),
+				processQueuedItemRef,
+				setFlashNotification: vi.fn(),
+				setSuccessFlashNotification: vi.fn(),
+			})
+		);
+
+		const spawnPromise = result.current.spawnBackgroundSynopsis(
+			session.id,
+			session.cwd,
+			'resume-123',
+			'Summarize session',
+			'codex'
+		);
+
+		await waitFor(() => {
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+		});
+		const targetSessionId = mockProcess.spawn.mock.calls[0][0].sessionId as string;
+		const reason =
+			'This Codex conversation is still running in another process. Wait for it to finish, then send again.';
+
+		act(() => {
+			onAgentErrorHandler?.('some-other-process', { message: 'not mine' });
+			onAgentErrorHandler?.(targetSessionId, { message: reason });
+			onExitHandler?.(targetSessionId, 1);
+		});
+
+		const resultData = await spawnPromise;
+		expect(resultData.success).toBe(false);
+		expect(resultData.error).toBe(reason);
 	});
 
 	it('includes appendSystemPrompt in batch spawns', async () => {
@@ -967,6 +1143,206 @@ describe('useAgentExecution', () => {
 				onExitHandler?.(targetSessionId);
 			});
 			await spawnPromise;
+		});
+	});
+
+	describe('effort refused by the provider', () => {
+		// What the agent-error listener sees when the API answers the effort a
+		// turn asked for with a 400. The turn never ran. `observeEffortRejection`
+		// is the call that listener makes for every agent error.
+		const refusal = (value: string) => ({
+			agentId: 'claude-code',
+			message: `{"type":"error","error":{"message":"Unsupported value: '${value}' is not supported with the 'some-model' model. Supported values are: 'medium', 'high'.","type":"invalid_request_error","param":"reasoning.effort","code":"unsupported_value"},"status":400}`,
+		});
+
+		afterEach(() => {
+			resetEffortRejections();
+		});
+
+		const renderExecution = (session: Session) =>
+			renderHook(() =>
+				useAgentExecution({
+					activeSession: session,
+					sessionsRef: { current: [session] },
+					setSessions: vi.fn(),
+					processQueuedItemRef: { current: null },
+					setFlashNotification: vi.fn(),
+					setSuccessFlashNotification: vi.fn(),
+				})
+			);
+
+		it('re-runs an Auto Run task at the agent own effort instead of failing it', async () => {
+			const session = createMockSession({ customEffort: 'medium' });
+			const { result } = renderExecution(session);
+
+			const spawnPromise = result.current.spawnAgentForSession(
+				session.id,
+				'Do the task',
+				undefined,
+				{
+					isAutoRun: true,
+					modelOverride: 'opus',
+					effortOverride: 'max',
+				}
+			);
+			await waitFor(() => {
+				expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+			});
+			const firstId = mockProcess.spawn.mock.calls[0][0].sessionId as string;
+			expect(mockProcess.spawn.mock.calls[0][0].sessionCustomEffort).toBe('max');
+
+			observeEffortRejection(firstId, refusal('max'));
+			await act(async () => {
+				(onExitHandler as (sid: string, code: number) => void)(firstId, 1);
+			});
+
+			await waitFor(() => {
+				expect(mockProcess.spawn).toHaveBeenCalledTimes(2);
+			});
+			const retry = mockProcess.spawn.mock.calls[1][0];
+			// The override is gone, so the session's own effort is what is sent.
+			expect(retry.sessionCustomEffort).toBe('medium');
+			// Everything else about the task is unchanged.
+			expect(retry.sessionCustomModel).toBe('opus');
+			expect(retry.prompt).toBe('Do the task');
+			expect(retry.querySource).toBe('auto');
+
+			onDataHandler?.(retry.sessionId, 'done');
+			await act(async () => {
+				(onExitHandler as (sid: string, code: number) => void)(retry.sessionId, 0);
+			});
+
+			const outcome = await spawnPromise;
+			expect(outcome.success).toBe(true);
+			expect(outcome.response).toBe('done');
+		});
+
+		it('does not retry a task that sent no effort override', async () => {
+			// The session's own configured effort was refused. That is the user's
+			// setting to change, and there is nothing of Maestro's left to drop.
+			const session = createMockSession({ customEffort: 'max' });
+			const { result } = renderExecution(session);
+
+			const spawnPromise = result.current.spawnAgentForSession(
+				session.id,
+				'Do the task',
+				undefined,
+				{
+					isAutoRun: true,
+				}
+			);
+			await waitFor(() => {
+				expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+			});
+			const firstId = mockProcess.spawn.mock.calls[0][0].sessionId as string;
+
+			observeEffortRejection(firstId, refusal('max'));
+			await act(async () => {
+				(onExitHandler as (sid: string, code: number) => void)(firstId, 1);
+			});
+
+			const outcome = await spawnPromise;
+			expect(outcome.success).toBe(false);
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+		});
+
+		it('does not retry an armed task that failed for another reason', async () => {
+			const session = createMockSession();
+			const { result } = renderExecution(session);
+
+			const spawnPromise = result.current.spawnAgentForSession(
+				session.id,
+				'Do the task',
+				undefined,
+				{
+					isAutoRun: true,
+					effortOverride: 'max',
+				}
+			);
+			await waitFor(() => {
+				expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+			});
+			const firstId = mockProcess.spawn.mock.calls[0][0].sessionId as string;
+
+			observeEffortRejection(firstId, { agentId: 'claude-code', message: 'Not logged in' });
+			await act(async () => {
+				(onExitHandler as (sid: string, code: number) => void)(firstId, 1);
+			});
+
+			const outcome = await spawnPromise;
+			expect(outcome.success).toBe(false);
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+		});
+
+		it('re-runs a synopsis once the cheap effort is refused', async () => {
+			const session = createMockSession();
+			const { result } = renderExecution(session);
+
+			const spawnPromise = result.current.spawnBackgroundSynopsis(
+				session.id,
+				session.cwd,
+				'resume-123',
+				'Summarize session',
+				'claude-code',
+				{ customModel: 'opus', customEffort: 'high' }
+			);
+			await waitFor(() => {
+				expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+			});
+			const first = mockProcess.spawn.mock.calls[0][0];
+			expect(first.sessionCustomEffort).toBe('low');
+
+			observeEffortRejection(first.sessionId, refusal('low'));
+			await act(async () => {
+				(onExitHandler as (sid: string, code: number) => void)(first.sessionId, 1);
+			});
+
+			await waitFor(() => {
+				expect(mockProcess.spawn).toHaveBeenCalledTimes(2);
+			});
+			const retry = mockProcess.spawn.mock.calls[1][0];
+			// The ladder no longer hands out `low`, so the tab's own effort stands.
+			expect(retry.sessionCustomEffort).toBe('high');
+			// The cheap MODEL is still wanted; only the effort was refused.
+			expect(retry.sessionCustomModel).toBe('haiku');
+			expect(retry.agentSessionId).toBe('resume-123');
+
+			onDataHandler?.(retry.sessionId, 'A summary');
+			await act(async () => {
+				(onExitHandler as (sid: string, code: number) => void)(retry.sessionId, 0);
+			});
+
+			const outcome = await spawnPromise;
+			expect(outcome.success).toBe(true);
+			expect(outcome.response).toBe('A summary');
+		});
+
+		it('does not loop when the refusal is not one the ladder can act on', async () => {
+			// A refusal of some OTHER value leaves `low` in the ladder, so a retry
+			// would send the same effort again. It must fail once, not spin.
+			const session = createMockSession();
+			const { result } = renderExecution(session);
+
+			const spawnPromise = result.current.spawnBackgroundSynopsis(
+				session.id,
+				session.cwd,
+				'resume-123',
+				'Summarize session',
+				'claude-code'
+			);
+			await waitFor(() => {
+				expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+			});
+			const first = mockProcess.spawn.mock.calls[0][0];
+
+			observeEffortRejection(first.sessionId, refusal('ultra'));
+			await act(async () => {
+				(onExitHandler as (sid: string, code: number) => void)(first.sessionId, 1);
+			});
+
+			const outcome = await spawnPromise;
+			expect(outcome.success).toBe(false);
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
 		});
 	});
 });

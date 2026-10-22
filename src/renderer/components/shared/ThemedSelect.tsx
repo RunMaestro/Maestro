@@ -13,10 +13,14 @@ import { useState, useRef, useCallback, useEffect, useId, useMemo } from 'react'
 import { ChevronDown, Search } from 'lucide-react';
 import type { Theme } from '../../types';
 import { useClickOutside } from '../../hooks/ui';
+import { EscCloseButton } from '../ui/EscCloseButton';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 export interface ThemedSelectOption {
 	value: string;
 	label: string;
+	/** Optional badge or other content aligned to the right of the option label. */
+	rightContent?: React.ReactNode;
 }
 
 interface ThemedSelectProps {
@@ -24,6 +28,7 @@ interface ThemedSelectProps {
 	options: ThemedSelectOption[];
 	onChange: (value: string) => void;
 	theme: Theme;
+	disabled?: boolean;
 	style?: React.CSSProperties;
 	/** Optional CSS class for the trigger button */
 	className?: string;
@@ -42,6 +47,7 @@ export function ThemedSelect({
 	options,
 	onChange,
 	theme,
+	disabled = false,
 	style,
 	className,
 	'aria-label': ariaLabel,
@@ -71,7 +77,7 @@ export function ThemedSelect({
 		triggerRef.current?.focus();
 	}, []);
 
-	useClickOutside(containerRef, closeAndRefocus, open);
+	useClickOutside(containerRef, closeAndRefocus, open && !disabled);
 
 	// On open: reset query, seed active index, focus the right element.
 	// With a filter we focus the search input so typing narrows immediately;
@@ -160,6 +166,7 @@ export function ThemedSelect({
 					}
 					break;
 				case 'Escape':
+					e.stopPropagation();
 					closeAndRefocus();
 					break;
 			}
@@ -175,8 +182,9 @@ export function ThemedSelect({
 				ref={triggerRef}
 				type="button"
 				id={id}
+				disabled={disabled}
 				aria-label={ariaLabel}
-				aria-expanded={open}
+				aria-expanded={open && !disabled}
 				aria-haspopup="listbox"
 				onClick={handleOpen}
 				className={`focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-1${className ? ` ${className}` : ''}`}
@@ -192,7 +200,8 @@ export function ThemedSelect({
 					padding: '4px 8px',
 					fontSize: 12,
 					outline: 'none',
-					cursor: 'pointer',
+					cursor: disabled ? 'not-allowed' : 'pointer',
+					opacity: disabled ? 0.5 : undefined,
 					textAlign: 'left',
 					gap: 4,
 				}}
@@ -211,7 +220,7 @@ export function ThemedSelect({
 				/>
 			</button>
 
-			{open && (
+			{open && !disabled && (
 				<div
 					ref={menuRef}
 					role="listbox"
@@ -224,10 +233,8 @@ export function ThemedSelect({
 						right: 0,
 						...(dropUp ? { bottom: '100%', marginBottom: 4 } : { top: '100%', marginTop: 4 }),
 						zIndex: 10000,
-						backgroundColor: theme.colors.bgSidebar,
-						border: `1px solid ${theme.colors.border}`,
+						...elevatedSurfaceStyle(theme),
 						borderRadius: 6,
-						boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
 						overflow: 'hidden',
 						maxHeight: 240,
 						display: 'flex',
@@ -237,6 +244,9 @@ export function ThemedSelect({
 				>
 					{filterable && (
 						<div
+							onKeyDown={(e) => {
+								if (e.key === 'Escape') handleNavKeyDown(e);
+							}}
 							style={{
 								display: 'flex',
 								alignItems: 'center',
@@ -267,6 +277,7 @@ export function ThemedSelect({
 									padding: 0,
 								}}
 							/>
+							<EscCloseButton theme={theme} onClose={closeAndRefocus} label="Close filter (Esc)" />
 						</div>
 					)}
 					<div style={{ overflowY: 'auto', minHeight: 0 }}>
@@ -292,7 +303,10 @@ export function ThemedSelect({
 									onClick={() => handleSelect(opt.value)}
 									onMouseEnter={() => setActiveIndex(i)}
 									style={{
-										display: 'block',
+										display: opt.rightContent ? 'flex' : 'block',
+										alignItems: 'center',
+										justifyContent: 'space-between',
+										gap: 8,
 										width: '100%',
 										padding: '6px 10px',
 										fontSize: 12,
@@ -305,7 +319,12 @@ export function ThemedSelect({
 										transition: 'background-color 0.1s',
 									}}
 								>
-									{opt.label}
+									<span>{opt.label}</span>
+									{/* The space keeps the badge a separate word in the option's
+									    accessible name ("Beta Carry Over", not "BetaCarry Over");
+									    a flex container does not render it. */}
+									{opt.rightContent ? ' ' : null}
+									{opt.rightContent}
 								</button>
 							))
 						)}

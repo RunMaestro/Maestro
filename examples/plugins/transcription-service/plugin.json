@@ -1,0 +1,46 @@
+{
+	"id": "example.transcription",
+	"name": "Local transcription example",
+	"version": "0.1.0",
+	"tier": 2,
+	"maestro": { "minHostApi": "1.24.0" },
+	"entry": "main.js",
+	"category": "data",
+	"description": "Example provider of the bounded host-mediated transcription contract.",
+	"provides": [
+		{
+			"id": "transcription",
+			"contract": "maestro.audio.transcribe",
+			"version": "1.0.0",
+			"settingsPanel": "config"
+		}
+	],
+	"permissions": [
+		{
+			"capability": "services:provide",
+			"scope": "transcription",
+			"reason": "Provide the declared transcription service."
+		},
+		{
+			"capability": "media:tools",
+			"scope": "service-transcription",
+			"reason": "Probe, decode and transcribe only host-delegated audio; no download or owner jobs."
+		},
+		{
+			"capability": "ui:panel",
+			"reason": "Show service readiness and link to host media configuration."
+		}
+	],
+	"contributes": {
+		"panels": [
+			{
+				"id": "config",
+				"title": "Local transcription",
+				"entry": "panel.html",
+				"placement": "settings",
+				"hostSettings": ["media"]
+			}
+		],
+		"commands": [{ "id": "refresh", "title": "Refresh transcription readiness" }]
+	}
+}

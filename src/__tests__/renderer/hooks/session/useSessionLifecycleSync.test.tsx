@@ -1,3 +1,7 @@
+import { resumeDeferredProviderTranslations } from '../../../../renderer/services/providerTranslation';
+vi.mock('../../../../renderer/services/providerTranslation', () => ({
+	resumeDeferredProviderTranslations: vi.fn(),
+}));
 /**
  * Tests for useSessionLifecycleSync.
  *
@@ -14,11 +18,28 @@ import { renderHook, waitFor } from '@testing-library/react';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import { useSessionLifecycleSync } from '../../../../renderer/hooks/session/useSessionLifecycleSync';
 import type { Session } from '../../../../renderer/types';
-import { createMockSession, resetStore } from '../../../helpers';
+import { createMockSession, createMockAITab, resetStore } from '../../../helpers';
 
-type Payload = { added?: Session[]; removedIds?: string[] };
+type Payload = {
+	added?: Session[];
+	removedIds?: string[];
+	updated?: Session[];
+	baselines?: Session[];
+};
 
 describe('useSessionLifecycleSync', () => {
+	it('resumes only after persisted sessions have loaded', async () => {
+		useSessionStore.setState({ initialLoadComplete: false });
+		vi.mocked(resumeDeferredProviderTranslations).mockClear();
+		renderHook(() => useSessionLifecycleSync(restoreSession));
+		expect(resumeDeferredProviderTranslations).not.toHaveBeenCalled();
+		useSessionStore.setState({ initialLoadComplete: true });
+		await waitFor(() =>
+			expect(resumeDeferredProviderTranslations).toHaveBeenCalledWith(
+				useSessionStore.getState().sessions
+			)
+		);
+	});
 	let handler: ((payload: Payload) => void) | null;
 	let unsubscribe: ReturnType<typeof vi.fn>;
 	let setActiveSessionId: ReturnType<typeof vi.fn>;
@@ -241,5 +262,47 @@ describe('useSessionLifecycleSync', () => {
 	it('does nothing when the bridge predates the channel', () => {
 		(window as unknown as { maestro: unknown }).maestro = { sessions: {} };
 		expect(() => renderHook(() => useSessionLifecycleSync(restoreSession))).not.toThrow();
+	});
+	it('converges peer queue and tab updates without stealing focus, drafts or a live turn', async () => {
+		const baseline = createMockSession({
+			id: 'shared',
+			activeTabId: 'one',
+			executionQueue: [],
+			aiTabs: [createMockAITab({ id: 'one' })],
+		});
+		const local = {
+			...baseline,
+			activeTabId: 'mine',
+			state: 'busy' as const,
+			aiTabs: [{ ...baseline.aiTabs[0], inputValue: 'my unsent draft' }],
+		};
+		useSessionStore.setState({ sessions: [local], activeSessionId: 'shared' });
+		renderHook(() => useSessionLifecycleSync(restoreSession));
+		const item = {
+			id: 'from-peer',
+			type: 'message' as const,
+			text: 'accepted host work',
+			tabId: local.aiTabs[0].id,
+		};
+		handler!({
+			updated: [
+				{
+					...baseline,
+					activeTabId: 'peer',
+					executionQueue: [item],
+					aiTabs: [...baseline.aiTabs, { ...baseline.aiTabs[0], id: 'peer-tab' }],
+				},
+			],
+			baselines: [baseline],
+		});
+		await waitFor(() =>
+			expect(useSessionStore.getState().sessions[0].executionQueue).toEqual([item])
+		);
+		const current = useSessionStore.getState().sessions[0];
+		expect(current.activeTabId).toBe('mine');
+		expect(current.state).toBe('busy');
+		expect(current.aiTabs[0].inputValue).toBe('my unsent draft');
+		expect(current.aiTabs.map((tab) => tab.id)).toContain('peer-tab');
+		expect(useSessionStore.getState().activeSessionId).toBe('shared');
 	});
 });

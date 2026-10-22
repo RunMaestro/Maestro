@@ -31,6 +31,7 @@ import {
 	synopsisProviderChoice,
 } from '../../../shared/directorNotesProvider';
 import { notifyToast } from '../../stores/notificationStore';
+import { useSettingsStore } from '../../stores/settingsStore';
 import { useModalStore } from '../../stores/modalStore';
 import { safeStorageGet, safeStorageSet } from '../../utils/safeLocalStorage';
 import {
@@ -114,8 +115,13 @@ export function hasCachedSynopsis(): boolean {
 type SynopsisResult = Awaited<ReturnType<typeof window.maestro.directorNotes.generateSynopsis>>;
 let activeGenerationPromise: Promise<SynopsisResult> | null = null;
 
-/** Fire a toast when synopsis completes while the modal is closed */
+/**
+ * Fire a toast when synopsis completes while the modal is closed. Skipped when
+ * Director's Notes was switched off while the synopsis was generating: the
+ * toast would advertise (and its click would open) a disabled feature.
+ */
 function fireSynopsisReadyToast() {
+	if (useSettingsStore.getState().encoreFeatures?.directorNotes !== true) return;
 	notifyToast({
 		type: 'success',
 		title: "Director's Notes",

@@ -3,7 +3,9 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import * as os from 'os';
+import { resolveUserDataDir } from '../../shared/userDataDir';
+import { readSessionsStoreFile } from '../../main/stores/sessions-store-file';
+import { readAgentConfigsStoreFile } from '../../main/stores/agent-configs-store-file';
 import type { Group, SessionInfo, HistoryEntry, SshRemoteConfig } from '../../shared/types';
 import {
 	HISTORY_JSONL_EXT,
@@ -18,24 +20,46 @@ import {
 	sortEntriesByTimestamp,
 	normalizeHistoryEntries,
 } from '../../shared/history';
+import { resolveSyncDir } from '../../shared/syncPath';
+import {
+	DORMANT_PIANOLA_MESSAGE,
+	filterLiveAgents,
+	isAgentDormant,
+} from '../../shared/agentVisibility';
 
-// Get the Maestro config directory path
+// Get the Maestro config directory path. Delegates to the shared resolver
+// (`src/shared/userDataDir.ts`) so this CLI and the standalone Cue engine
+// runner can never disagree on where Maestro's data lives - see that module's
+// doc comment for how `MAESTRO_USER_DATA` and the platform fallback agree with
+// the desktop app.
 export function getConfigDir(): string {
-	// Allow overriding the data directory (e.g. for dev mode: maestro-dev)
-	if (process.env.MAESTRO_USER_DATA) {
-		return path.resolve(process.env.MAESTRO_USER_DATA);
-	}
-	const platform = os.platform();
-	const home = os.homedir();
+	return resolveUserDataDir();
+}
 
-	if (platform === 'darwin') {
-		return path.join(home, 'Library', 'Application Support', 'Maestro');
-	} else if (platform === 'win32') {
-		return path.join(process.env.APPDATA || path.join(home, 'AppData', 'Roaming'), 'Maestro');
-	} else {
-		// Linux and others
-		return path.join(process.env.XDG_CONFIG_HOME || path.join(home, '.config'), 'Maestro');
-	}
+/**
+ * The directory the desktop keeps its SYNCED stores in: the custom Storage
+ * Location when one is set (Settings -> General), else the config directory.
+ * Agents, groups, settings and pasted images live here; history, playbooks,
+ * agent configs and the CLI server discovery file stay in the config directory
+ * on every machine.
+ */
+export function getSyncDir(): string {
+	return resolveSyncDir(getConfigDir());
+}
+
+/**
+ * Store files the desktop opens under the sync directory. Must match the
+ * stores `initializeStores()` (src/main/stores/instances.ts) gives
+ * `cwd: _syncPath`; anything not listed is read from the config directory.
+ */
+const SYNCED_STORE_FILES: ReadonlySet<string> = new Set([
+	'maestro-sessions.json',
+	'maestro-groups.json',
+	'maestro-settings.json',
+]);
+
+function getStoreFileDir(filename: string): string {
+	return SYNCED_STORE_FILES.has(filename) ? getSyncDir() : getConfigDir();
 }
 
 /**
@@ -43,7 +67,7 @@ export function getConfigDir(): string {
  * Returns undefined if file doesn't exist
  */
 function readStoreFile<T>(filename: string): T | undefined {
-	const filePath = path.join(getConfigDir(), filename);
+	const filePath = path.join(getStoreFileDir(filename), filename);
 
 	try {
 		const content = fs.readFileSync(filePath, 'utf-8');
@@ -61,7 +85,7 @@ function readStoreFile<T>(filename: string): T | undefined {
  * Creates the file (and parent directory) if it doesn't exist.
  */
 function writeStoreFile<T>(filename: string, data: T): void {
-	const dirPath = getConfigDir();
+	const dirPath = getStoreFileDir(filename);
 	if (!fs.existsSync(dirPath)) {
 		fs.mkdirSync(dirPath, { recursive: true });
 	}
@@ -70,12 +94,6 @@ function writeStoreFile<T>(filename: string, data: T): void {
 }
 
 // Store file structures (as used by Electron Store)
-interface SessionsStore {
-	sessions: SessionInfo[];
-	/** Agent the desktop UI currently has selected (400ms-debounced write). */
-	activeSessionId?: string;
-}
-
 interface GroupsStore {
 	groups: Group[];
 }
@@ -97,8 +115,34 @@ interface AgentConfigsStore {
  * Read all sessions from storage
  */
 export function readSessions(): SessionInfo[] {
-	const data = readStoreFile<SessionsStore>('maestro-sessions.json');
-	return data?.sessions || [];
+	return readSessionsStoreFile(getSyncDir()).sessions;
+}
+
+/**
+ * Every LIVE agent: `readSessions()` minus agents whose Encore Feature is
+ * switched off (a dormant Pianola). Anything that lists, resolves, or acts on
+ * agents reads this; only persistence and pruning read the full list. See
+ * `src/shared/agentVisibility.ts`.
+ */
+export function readLiveSessions(): SessionInfo[] {
+	return filterLiveAgents(readSessions(), readSettingValue('encoreFeatures'));
+}
+
+/**
+ * True when `ref` (an id, id prefix, or name) points at a DORMANT agent, so a
+ * resolver that came up empty can say why instead of a bare "not found".
+ */
+function refersToDormantAgent(ref: string): boolean {
+	const encoreFeatures = readSettingValue('encoreFeatures');
+	const lower = ref.toLowerCase();
+	const readable = readableAgentName(ref);
+	return readSessions().some(
+		(s) =>
+			isAgentDormant(s, encoreFeatures) &&
+			(s.id.startsWith(ref) ||
+				s.name.toLowerCase() === lower ||
+				(readable !== '' && readableAgentName(s.name) === readable))
+	);
 }
 
 /**
@@ -107,8 +151,7 @@ export function readSessions(): SessionInfo[] {
  * themselves, so this is the same read `readSessions` already does.
  */
 export function readActiveAgentId(): string | null {
-	const data = readStoreFile<SessionsStore>('maestro-sessions.json');
-	const id = data?.activeSessionId;
+	const id = readSessionsStoreFile(getSyncDir()).data?.activeSessionId;
 	return typeof id === 'string' && id.length > 0 ? id : null;
 }
 
@@ -373,8 +416,7 @@ function deleteNestedValue(obj: Record<string, unknown>, path: string): boolean 
  * This includes custom paths set by the user in the desktop app
  */
 export function readAgentConfigs(): Record<string, Record<string, unknown>> {
-	const data = readStoreFile<AgentConfigsStore>('maestro-agent-configs.json');
-	return data?.configs || {};
+	return readAgentConfigsStoreFile(getConfigDir()).configs;
 }
 
 /**
@@ -411,7 +453,8 @@ export function readAgentConfigValue(agentId: string, key: string): unknown {
  * Write a single agent config value.
  */
 export function writeAgentConfigValue(agentId: string, key: string, value: unknown): boolean {
-	const data = readStoreFile<AgentConfigsStore>('maestro-agent-configs.json') || { configs: {} };
+	const file = readAgentConfigsStoreFile(getConfigDir());
+	const data: AgentConfigsStore = { ...file.data, configs: file.configs };
 	if (!data.configs[agentId]) {
 		data.configs[agentId] = {};
 	}
@@ -425,8 +468,9 @@ export function writeAgentConfigValue(agentId: string, key: string, value: unkno
  * Returns true if the key existed and was removed.
  */
 export function deleteAgentConfigValue(agentId: string, key: string): boolean {
-	const data = readStoreFile<AgentConfigsStore>('maestro-agent-configs.json');
-	if (!data?.configs?.[agentId] || !(key in data.configs[agentId])) {
+	const file = readAgentConfigsStoreFile(getConfigDir());
+	const data: AgentConfigsStore = { ...file.data, configs: file.configs };
+	if (!data.configs[agentId] || !(key in data.configs[agentId])) {
 		return false;
 	}
 	delete data.configs[agentId][key];
@@ -473,9 +517,13 @@ function resolveId(partialId: string, allIds: string[]): IdResolution {
 /**
  * Resolve an agent ID (partial or full)
  * Throws if ambiguous or not found
+ *
+ * `sessions` defaults to the LIVE agents in Maestro's data directory (a dormant
+ * Pianola never resolves; naming it throws a "turned off" error); pass a list
+ * read from somewhere else (`bundle export --data-dir`) to resolve against it.
  */
-export function resolveAgentId(partialId: string): string {
-	const sessions = readSessions();
+export function resolveAgentId(partialId: string, sessionList?: SessionInfo[]): string {
+	const sessions = sessionList ?? readLiveSessions();
 	const allIds = sessions.map((s) => s.id);
 	const resolution = resolveId(partialId, allIds);
 
@@ -525,6 +573,9 @@ export function resolveAgentId(partialId: string): string {
 		}
 	}
 
+	if (!sessionList && refersToDormantAgent(partialId)) {
+		throw new Error(DORMANT_PIANOLA_MESSAGE);
+	}
 	throw new Error(`Agent not found: ${partialId}`);
 }
 
@@ -582,10 +633,32 @@ export function getSessionHistoryMtimeMs(sessionId: string): number {
 }
 
 /**
- * Get a session by ID (supports partial IDs)
+ * Absolute path of a session's existing history file, for the system prompt's
+ * `{{AGENT_HISTORY_PATH}}`. Prefers the JSONL file and falls back to a legacy
+ * `.json` one the desktop app has not migrated yet (the CLI never migrates; see
+ * `readSessionHistory`). Undefined when neither exists, e.g. a brand-new agent.
+ */
+export function resolveSessionHistoryFilePath(sessionId: string): string | undefined {
+	for (const filePath of [
+		getSessionHistoryPath(sessionId),
+		getLegacySessionHistoryPath(sessionId),
+	]) {
+		try {
+			fs.accessSync(filePath, fs.constants.R_OK);
+			return filePath;
+		} catch {
+			// Not there (or unreadable); try the next format.
+		}
+	}
+	return undefined;
+}
+
+/**
+ * Get a LIVE session by ID (supports partial IDs). A dormant Pianola is not
+ * returned; see `readLiveSessions`.
  */
 export function getSessionById(sessionId: string): SessionInfo | undefined {
-	const sessions = readSessions();
+	const sessions = readLiveSessions();
 
 	// First try exact match
 	const exact = sessions.find((s) => s.id === sessionId);
@@ -601,10 +674,10 @@ export function getSessionById(sessionId: string): SessionInfo | undefined {
 }
 
 /**
- * Get sessions by group ID (supports partial IDs)
+ * Get the LIVE sessions in a group (supports partial IDs)
  */
 export function getSessionsByGroup(groupId: string): SessionInfo[] {
-	const sessions = readSessions();
+	const sessions = readLiveSessions();
 	const groups = readGroups();
 
 	// Resolve group ID

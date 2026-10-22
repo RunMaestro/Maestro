@@ -54,6 +54,7 @@ export {
 	getSyncPath,
 	getProductionDataPath,
 	getSshRemoteById,
+	getLiveSessions,
 } from './getters';
 
 // ============================================================================

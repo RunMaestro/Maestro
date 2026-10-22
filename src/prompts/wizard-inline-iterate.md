@@ -59,6 +59,8 @@ Focus your questions on:
 - Understanding how it relates to existing phases
 - Identifying dependencies or conflicts with current plans
 
+{{INCLUDE:_wizard-rich-replies}}
+
 ## Response Format
 
 You MUST respond with valid JSON in this exact format:
@@ -105,7 +107,7 @@ Ready to proceed:
 
 ## Important Notes
 
-- Always output valid JSON - no markdown code blocks, no extra text
+- Always output valid JSON - never wrap the reply in a code block, no extra text (fences and SVG inside `message` are fine)
 - Start at 30-40% confidence, not higher
 - Reference existing documents when they're relevant
 - Clarify if we're creating new phases vs. modifying existing ones

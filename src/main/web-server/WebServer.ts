@@ -25,6 +25,11 @@
  *   it knows the URL
  */
 
+import type {
+	NotificationInboxRequest,
+	NotificationInboxResult,
+} from '../../shared/notificationInbox';
+
 import Fastify from 'fastify';
 import websocket from '@fastify/websocket';
 import rateLimit from '@fastify/rate-limit';
@@ -33,6 +38,13 @@ import { FastifyInstance, FastifyRequest } from 'fastify';
 import { randomUUID } from 'crypto';
 import path from 'path';
 import { existsSync } from 'fs';
+import { app, type BrowserWindow } from 'electron';
+import { tunnelManager } from '../tunnel-manager';
+import { HostPairingWindow } from '../lite/pairing/host-window';
+import { listenLan, listenTailnet } from '../lite/tailnet-listener';
+import { registerPairingRoutes } from '../lite/pairing/routes';
+
+import { registerLiteConnectionRoutes } from './routes/liteConnectionRoutes';
 import { logger } from '../utils/logger';
 import type { GroupAppearance, GroupUpdateRequest } from '../../shared/groupAppearance';
 import { getLocalIpAddress } from '../utils/networkUtils';
@@ -55,6 +67,16 @@ import {
 import { MEDIA_PATH_PARAM_MAX_LENGTH } from './routes/mediaRoutes';
 import { IMMUTABLE_ASSET_CACHE_CONTROL, isContentHashedAsset } from './asset-cache-policy';
 import { webLoginPreHandler } from './auth/web-login-hook';
+import { registerLiteRoutes, type RemoteHostStatus } from './routes/liteRoutes';
+import { FileRoutes } from './routes/fileRoutes';
+import { closeBrowserRelayClient } from '../browser/browser-relay';
+import type {
+	AutoRunRemoteControl,
+	AutoRunRemoteResult,
+	StartAutoRunCallback,
+	ControlAutoRunCallback,
+} from '../../shared/autoRunRemote';
+import type { BatchRunConfig } from '../../shared/types';
 import { getWebUserStore } from './auth/web-user-store';
 import { WEB_LOGIN_WS_CLOSE_CODE } from '../../shared/webLogin';
 import { LiveSessionManager, CallbackRegistry } from './managers';
@@ -85,9 +107,13 @@ import type {
 	SelectTabCallback,
 	NewTabCallback,
 	CloseTabCallback,
+	ReopenTabCallback,
 	RenameTabCallback,
 	StarTabCallback,
 	SnoozeCommandCallback,
+	AutoRunSteeringCommandCallback,
+	WindowCommandCallback,
+	ThroughputGaugeCommandCallback,
 	ReorderTabCallback,
 	ToggleBookmarkCallback,
 	OpenFileTabCallback,
@@ -111,6 +137,9 @@ import type {
 	EnqueueCommandCallback,
 	ListQueueCallback,
 	RemoveQueueItemCallback,
+	SteerQueueItemCallback,
+	SetQueueItemPausedCallback,
+	MergeQueueItemCallback,
 	RefreshAutoRunDocsCallback,
 	ConfigureAutoRunCallback,
 	LaunchGoalRunCallback,
@@ -157,7 +186,10 @@ import type {
 	StartGroupChatOptions,
 	GetGroupChatStateCallback,
 	StopGroupChatCallback,
+	ArchiveGroupChatCallback,
 	SendGroupChatMessageCallback,
+	SteerGroupChatCallback,
+	SteerGroupChatRequest,
 	GroupChatMessage,
 	GroupChatState,
 	MergeContextCallback,
@@ -189,6 +221,9 @@ import type {
 	GetSessionHistoryCallback,
 } from './types';
 import type { SnoozeCommandRequest } from '../../shared/snoozeCommands';
+import type { SteeringCommandRequest } from '../../shared/autoRunSteeringCommands';
+import type { WindowCommandRequest } from '../../shared/windowCommands';
+import type { ThroughputGaugeCommandRequest } from '../../shared/throughputGaugeCommands';
 
 // Logger context for all web server logs
 const LOG_CONTEXT = 'WebServer';
@@ -218,6 +253,26 @@ export interface WebServerOptions {
 export class WebServer {
 	private server: FastifyInstance;
 	private port: number;
+	private litePairing = new HostPairingWindow();
+	private getPairingParent: () => BrowserWindow | null = () => null;
+	/** Open the host owner's pairing controls using the running server's identity and scoped private listeners. */
+	async openLitePairing(parent: BrowserWindow): Promise<void> {
+		if (!this.isRunning || !this.getRemoteHostStatus)
+			throw new Error('Existing Maestro server must be running');
+		const status = await this.getRemoteHostStatus();
+		await this.litePairing.open(parent, status.instanceId, {
+			name: status.hostName,
+			appVersion: status.appVersion,
+			parent: this.getPairingParent,
+			backendPort: () => this.port,
+			listenTailnet: (address) => listenTailnet(this.server, address),
+			listenLan: (address) => listenLan(this.server, address),
+			endpoints: () => {
+				const tunnel = tunnelManager.getStatus();
+				return tunnel.isRunning && tunnel.url ? [tunnel.url] : [];
+			},
+		});
+	}
 	private isRunning: boolean = false;
 	private webClients: Map<string, WebClient> = new Map();
 	private rateLimitConfig: RateLimitConfig = { ...DEFAULT_RATE_LIMIT_CONFIG };
@@ -283,6 +338,7 @@ export class WebServer {
 	private imageRoutes: ImageRoutes;
 	private staticRoutes: StaticRoutes;
 	private wsRoute: WsRoute;
+	private getRemoteHostStatus: (() => Promise<RemoteHostStatus>) | null = null;
 
 	constructor(port: number = 0, securityToken?: string, options: WebServerOptions = {}) {
 		// Use port 0 to let OS assign a random available port
@@ -351,6 +407,14 @@ export class WebServer {
 		this.wsRoute = new WsRoute(this.securityToken);
 
 		// Note: setupMiddleware and setupRoutes are called in start() to handle async properly
+	}
+
+	setRemoteHostStatusProvider(
+		provider: () => Promise<RemoteHostStatus>,
+		parent?: () => BrowserWindow | null
+	): void {
+		this.getRemoteHostStatus = provider;
+		if (parent) this.getPairingParent = parent;
 	}
 
 	/**
@@ -539,6 +603,11 @@ export class WebServer {
 		this.callbackRegistry.setCloseTabCallback(callback);
 	}
 
+	/** Register the owner-side conversation restore callback. */
+	setReopenTabCallback(callback: ReopenTabCallback): void {
+		this.callbackRegistry.setReopenTabCallback(callback);
+	}
+
 	setRenameTabCallback(callback: RenameTabCallback): void {
 		this.callbackRegistry.setRenameTabCallback(callback);
 	}
@@ -549,6 +618,18 @@ export class WebServer {
 
 	setSnoozeCommandCallback(callback: SnoozeCommandCallback): void {
 		this.callbackRegistry.setSnoozeCommandCallback(callback);
+	}
+
+	setAutoRunSteeringCommandCallback(callback: AutoRunSteeringCommandCallback): void {
+		this.callbackRegistry.setAutoRunSteeringCommandCallback(callback);
+	}
+
+	setWindowCommandCallback(callback: WindowCommandCallback): void {
+		this.callbackRegistry.setWindowCommandCallback(callback);
+	}
+
+	setThroughputGaugeCommandCallback(callback: ThroughputGaugeCommandCallback): void {
+		this.callbackRegistry.setThroughputGaugeCommandCallback(callback);
 	}
 
 	setReorderTabCallback(callback: ReorderTabCallback): void {
@@ -565,6 +646,13 @@ export class WebServer {
 
 	setOpenDocumentGraphCallback(callback: OpenDocumentGraphCallback): void {
 		this.callbackRegistry.setOpenDocumentGraphCallback(callback);
+	}
+
+	/** Register the request-response bridge to the desktop history store. */
+	setNotificationInboxCallback(
+		callback: (request: NotificationInboxRequest) => Promise<NotificationInboxResult>
+	): void {
+		this.callbackRegistry.setNotificationInboxCallback(callback);
 	}
 
 	setOpenModalCallback(callback: OpenModalCallback): void {
@@ -646,6 +734,18 @@ export class WebServer {
 		this.callbackRegistry.setRemoveQueueItemCallback(callback);
 	}
 
+	setSteerQueueItemCallback(callback: SteerQueueItemCallback): void {
+		this.callbackRegistry.setSteerQueueItemCallback(callback);
+	}
+
+	setSetQueueItemPausedCallback(callback: SetQueueItemPausedCallback): void {
+		this.callbackRegistry.setSetQueueItemPausedCallback(callback);
+	}
+
+	setMergeQueueItemCallback(callback: MergeQueueItemCallback): void {
+		this.callbackRegistry.setMergeQueueItemCallback(callback);
+	}
+
 	setRefreshAutoRunDocsCallback(callback: RefreshAutoRunDocsCallback): void {
 		this.callbackRegistry.setRefreshAutoRunDocsCallback(callback);
 	}
@@ -680,6 +780,29 @@ export class WebServer {
 
 	setStopAutoRunCallback(callback: StopAutoRunCallback): void {
 		this.callbackRegistry.setStopAutoRunCallback(callback);
+	}
+
+	setStartAutoRunCallback(callback: StartAutoRunCallback): void {
+		this.callbackRegistry.setStartAutoRunCallback(callback);
+	}
+
+	setControlAutoRunCallback(callback: ControlAutoRunCallback): void {
+		this.callbackRegistry.setControlAutoRunCallback(callback);
+	}
+
+	requestStartAutoRun(
+		sessionId: string,
+		config: BatchRunConfig,
+		folderPath: string
+	): Promise<AutoRunRemoteResult> {
+		return this.callbackRegistry.startAutoRun(sessionId, config, folderPath);
+	}
+
+	requestControlAutoRun(
+		sessionId: string,
+		control: AutoRunRemoteControl
+	): Promise<AutoRunRemoteResult> {
+		return this.callbackRegistry.controlAutoRun(sessionId, control);
 	}
 
 	setResetAutoRunDocTasksCallback(callback: ResetAutoRunDocTasksCallback): void {
@@ -806,8 +929,16 @@ export class WebServer {
 		this.callbackRegistry.setStopGroupChatCallback(callback);
 	}
 
+	setArchiveGroupChatCallback(callback: ArchiveGroupChatCallback): void {
+		this.callbackRegistry.setArchiveGroupChatCallback(callback);
+	}
+
 	setSendGroupChatMessageCallback(callback: SendGroupChatMessageCallback): void {
 		this.callbackRegistry.setSendGroupChatMessageCallback(callback);
+	}
+
+	setSteerGroupChatCallback(callback: SteerGroupChatCallback): void {
+		this.callbackRegistry.setSteerGroupChatCallback(callback);
 	}
 
 	setMergeContextCallback(callback: MergeContextCallback): void {
@@ -1044,6 +1175,12 @@ export class WebServer {
 	}
 
 	private setupRoutes(): void {
+		registerPairingRoutes(
+			this.server,
+			() => this.litePairing.host,
+			() => true,
+			app.getVersion()
+		);
 		// Setup static routes (web-desktop SPA, PWA files, health check). The
 		// desktop bundle is served at the token root and at /<token>/desktop -
 		// see StaticRoutes.registerRoutes.
@@ -1053,6 +1190,19 @@ export class WebServer {
 		// Registered before the API routes only for readability - they share no
 		// paths.
 		this.authRoutes.registerRoutes(this.server);
+		registerLiteRoutes(this.server, this.securityToken, async () => {
+			if (!this.getRemoteHostStatus) throw new Error('Remote host contract is not configured');
+			const status = await this.getRemoteHostStatus();
+			if (!this.webDesktopPath) {
+				return {
+					...status,
+					ready: false,
+					unavailableReason: 'Host web-desktop assets are not built',
+					capabilities: { sessions: false, terminal: false, files: false, browserRelay: false },
+				};
+			}
+			return status;
+		});
 
 		// Setup API routes callbacks and register routes
 		this.apiRoutes.setCallbacks({
@@ -1078,6 +1228,7 @@ export class WebServer {
 		// Session image store files for browser clients: the desktop loads them
 		// through the maestro-image:// protocol, which a browser cannot resolve.
 		this.imageRoutes.registerRoutes(this.server);
+		new FileRoutes(this.securityToken).registerRoutes(this.server);
 
 		// Setup WebSocket route callbacks and register route
 		this.wsRoute.setCallbacks({
@@ -1094,25 +1245,16 @@ export class WebServer {
 				logger.info(`Client connected: ${client.id} (total: ${this.webClients.size})`, LOG_CONTEXT);
 			},
 			onClientDisconnect: (clientId) => {
-				const client = this.webClients.get(clientId);
-				if (client?.subscribedSessionId) {
-					// Kill any terminal PTY spawned for this web client's session
-					const killed = this.killTerminalForWebCallback?.(client.subscribedSessionId);
-					if (killed) {
-						logger.info(
-							`Killed terminal PTY for disconnected client ${clientId} (session: ${client.subscribedSessionId})`,
-							LOG_CONTEXT
-						);
-					}
-				}
-				this.webClients.delete(clientId);
+				// Release only this connection's capture/input lease. Accepted host
+				// work and terminals survive disconnecting a browser or Lite.
+				void this.releaseWebClient(clientId);
 				logger.info(
 					`Client disconnected: ${clientId} (total: ${this.webClients.size})`,
 					LOG_CONTEXT
 				);
 			},
 			onClientError: (clientId) => {
-				this.webClients.delete(clientId);
+				void this.releaseWebClient(clientId);
 			},
 			handleMessage: (clientId, message) => {
 				this.handleWebClientMessage(clientId, message);
@@ -1123,6 +1265,40 @@ export class WebServer {
 				this.broadcastService.resumeBridgeClient(epoch, lastSeq, subscribedSessionId),
 		});
 		this.wsRoute.registerRoute(this.server);
+		registerLiteConnectionRoutes(this.server, {
+			getHost: () => this.litePairing.host,
+			webDesktopPath: this.webDesktopPath,
+			webAssetsPath: this.webAssetsPath,
+			apiRoutes: this.apiRoutes,
+			wsRoute: this.wsRoute,
+			getHostStatus: async () => {
+				if (!this.getRemoteHostStatus) throw new Error('Remote host contract is not configured');
+				const status = await this.getRemoteHostStatus();
+				return this.webDesktopPath
+					? status
+					: { ...status, ready: false, unavailableReason: 'Host web-desktop assets are not built' };
+			},
+		});
+	}
+
+	private async releaseWebClient(clientId: string): Promise<void> {
+		if (!this.webClients.delete(clientId)) return;
+		closeBrowserRelayClient(clientId);
+		try {
+			const [autorun, documentGraph] = await Promise.all([
+				import('../ipc/handlers/autorun'),
+				import('../ipc/handlers/documentGraph'),
+			]);
+			await Promise.all([
+				autorun.releaseAutorunClientWatchers(clientId),
+				documentGraph.releaseDocumentGraphClientWatchers(clientId),
+			]);
+		} catch (error) {
+			logger.warn(
+				`Remote view cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
+				LOG_CONTEXT
+			);
+		}
 	}
 
 	private handleWebClientMessage(clientId: string, message: WebClientMessage): void {
@@ -1134,6 +1310,7 @@ export class WebServer {
 	private setupMessageHandlerCallbacks(): void {
 		this.messageHandler.setCallbacks({
 			getSessionDetail: (sessionId: string) => this.callbackRegistry.getSessionDetail(sessionId),
+			getAutoRunState: (sessionId: string) => this.liveSessionManager.getAutoRunState(sessionId),
 			executeCommand: async (
 				sessionId: string,
 				command: string,
@@ -1168,6 +1345,12 @@ export class WebServer {
 				this.callbackRegistry.starTab(sessionId, tabId, starred),
 			snoozeCommand: async (request: SnoozeCommandRequest) =>
 				this.callbackRegistry.snoozeCommand(request),
+			autoRunSteeringCommand: async (request: SteeringCommandRequest) =>
+				this.callbackRegistry.autoRunSteeringCommand(request),
+			windowCommand: async (request: WindowCommandRequest) =>
+				this.callbackRegistry.windowCommand(request),
+			throughputGaugeCommand: async (request: ThroughputGaugeCommandRequest) =>
+				this.callbackRegistry.throughputGaugeCommand(request),
 			reorderTab: async (sessionId: string, fromIndex: number, toIndex: number) =>
 				this.callbackRegistry.reorderTab(sessionId, fromIndex, toIndex),
 			toggleBookmark: async (sessionId: string) => this.callbackRegistry.toggleBookmark(sessionId),
@@ -1175,6 +1358,7 @@ export class WebServer {
 				this.callbackRegistry.openFileTab(sessionId, filePath, options),
 			openDocumentGraph: async (params) => this.callbackRegistry.openDocumentGraph(params),
 			openModal: async (params) => this.callbackRegistry.openModal(params),
+			notificationInbox: (request) => this.callbackRegistry.notificationInbox(request),
 			refreshFileTree: async (sessionId: string) =>
 				this.callbackRegistry.refreshFileTree(sessionId),
 			openBrowserTab: async (sessionId: string, url: string, options?: { background?: boolean }) =>
@@ -1191,8 +1375,12 @@ export class WebServer {
 				this.callbackRegistry.listTerminalTabs(sessionId),
 			readTerminalTab: async (sessionId: string, payload: ReadTerminalTabPayload) =>
 				this.callbackRegistry.readTerminalTab(sessionId, payload),
-			newAITabWithPrompt: async (sessionId: string, prompt: string, background?: boolean) =>
-				this.callbackRegistry.newAITabWithPrompt(sessionId, prompt, background),
+			newAITabWithPrompt: async (
+				sessionId: string,
+				prompt: string,
+				background?: boolean,
+				hidden?: boolean
+			) => this.callbackRegistry.newAITabWithPrompt(sessionId, prompt, background, hidden),
 			consultAgent: async (params: ConsultAgentParams): Promise<ConsultAgentResult> =>
 				this.callbackRegistry.consultAgent(params),
 			noteAgentDelegation: (notice: Parameters<NoteAgentDelegationCallback>[0]) =>
@@ -1203,7 +1391,8 @@ export class WebServer {
 				inputMode?: 'ai' | 'terminal',
 				tabId?: string,
 				images?: string[],
-				background?: boolean
+				background?: boolean,
+				held?: boolean
 			) =>
 				this.callbackRegistry.enqueueCommand(
 					sessionId,
@@ -1211,11 +1400,18 @@ export class WebServer {
 					inputMode,
 					tabId,
 					images,
-					background
+					background,
+					held
 				),
 			listQueue: async (sessionId?: string) => this.callbackRegistry.listQueue(sessionId),
 			removeQueueItem: async (sessionId: string, itemId: string) =>
 				this.callbackRegistry.removeQueueItem(sessionId, itemId),
+			steerQueueItem: async (sessionId: string, itemId: string) =>
+				this.callbackRegistry.steerQueueItem(sessionId, itemId),
+			setQueueItemPaused: async (sessionId: string, itemId: string, paused: boolean) =>
+				this.callbackRegistry.setQueueItemPaused(sessionId, itemId, paused),
+			mergeQueueItem: async (sessionId: string, itemId: string) =>
+				this.callbackRegistry.mergeQueueItem(sessionId, itemId),
 			refreshAutoRunDocs: async (sessionId: string, background?: boolean) =>
 				this.callbackRegistry.refreshAutoRunDocs(sessionId, background),
 			configureAutoRun: async (
@@ -1311,8 +1507,12 @@ export class WebServer {
 			) => this.callbackRegistry.startGroupChat(topic, participantIds, options),
 			getGroupChatState: async (chatId: string) => this.callbackRegistry.getGroupChatState(chatId),
 			stopGroupChat: async (chatId: string) => this.callbackRegistry.stopGroupChat(chatId),
+			archiveGroupChat: async (chatId: string, archived: boolean) =>
+				this.callbackRegistry.archiveGroupChat(chatId, archived),
 			sendGroupChatMessage: async (chatId: string, message: string) =>
 				this.callbackRegistry.sendGroupChatMessage(chatId, message),
+			steerGroupChat: async (chatId: string, request: SteerGroupChatRequest) =>
+				this.callbackRegistry.steerGroupChat(chatId, request),
 			mergeContext: async (sourceSessionId: string, targetSessionId: string) =>
 				this.callbackRegistry.mergeContext(sourceSessionId, targetSessionId),
 			transferContext: async (sourceSessionId: string, targetSessionId: string) =>
@@ -1358,6 +1558,22 @@ export class WebServer {
 			removeCuePipeline: async (identifier: string) => {
 				const { removePipelineOnDisk } = await import('../cue/pipeline-layout-mutations');
 				return removePipelineOnDisk(identifier);
+			},
+			// Bundles: the same service the Cue modal's Bundles tab calls, with
+			// the app context its IPC handlers own (live agents, renderer hand-off).
+			exportCueBundle: async (request) => {
+				const { getCueBundleAppContext } = await import('../ipc/handlers/cue-bundle');
+				const { exportBundleFromApp } = await import('../cue-bundle-service');
+				const ctx = getCueBundleAppContext();
+				if (!ctx) throw new Error('Cue bundles are not ready yet');
+				return exportBundleFromApp(ctx, request);
+			},
+			importCueBundle: async (request) => {
+				const { getCueBundleAppContext } = await import('../ipc/handlers/cue-bundle');
+				const { importBundleIntoApp } = await import('../cue-bundle-service');
+				const ctx = getCueBundleAppContext();
+				if (!ctx) throw new Error('Cue bundles are not ready yet');
+				return importBundleIntoApp(ctx, request);
 			},
 			getUsageDashboard: async (timeRange: 'day' | 'week' | 'month' | 'all') =>
 				this.callbackRegistry.getUsageDashboard(timeRange),
@@ -1468,6 +1684,16 @@ export class WebServer {
 		return this.callbackRegistry.newTab(sessionId, background);
 	}
 
+	/** Resolve true only after the owning renderer confirms closure. */
+	requestCloseTab(sessionId: string, tabId: string): Promise<boolean> {
+		return this.callbackRegistry.closeTab(sessionId, tabId);
+	}
+
+	/** Reopen a browser-selected history entry using the desktop's tab identity. */
+	requestReopenTab(sessionId: string, tabId: string): Promise<{ tabId: string } | null> {
+		return this.callbackRegistry.reopenTab(sessionId, tabId);
+	}
+
 	broadcastThemeChange(theme: Theme): void {
 		this.broadcastService.broadcastThemeChange(theme);
 	}
@@ -1570,7 +1796,8 @@ export class WebServer {
 			const store = getWebUserStore();
 			this.unsubscribeWebUsers = store.onChange(() => {
 				for (const client of this.webClients.values()) {
-					if (!client.user) continue;
+					// Device-authorized sockets have no account session; their own verifier enforces revocation.
+					if (!client.user || !client.sessionId) continue;
 					if (store.resolveSession(client.sessionId)) continue;
 					logger.info(
 						`Closing ${client.id}: session for "${client.user.username}" was revoked`,
@@ -1594,6 +1821,7 @@ export class WebServer {
 		}
 	}
 
+	/** Reuse a running server; otherwise bind the configured exposure interface before restoring private access consent. */
 	async start(): Promise<{ port: number; token: string; url: string }> {
 		if (this.isRunning) {
 			return {
@@ -1638,6 +1866,29 @@ export class WebServer {
 
 			this.isRunning = true;
 			if (this.lanAccess) this.startAddressWatcher();
+			if (this.getRemoteHostStatus) {
+				try {
+					const status = await this.getRemoteHostStatus();
+					await this.litePairing.initialize(status.instanceId, {
+						name: status.hostName,
+						appVersion: status.appVersion,
+						parent: this.getPairingParent,
+						backendPort: () => (this.lanAccess ? this.port : undefined),
+						listenTailnet: (address) => listenTailnet(this.server, address),
+						listenLan: (address) => listenLan(this.server, address),
+						endpoints: () => {
+							const tunnel = tunnelManager.getStatus();
+							return tunnel.isRunning && tunnel.url ? [tunnel.url] : [];
+						},
+					});
+				} catch (error) {
+					logger.error(
+						'Device pairing is unavailable; the core web server remains running',
+						LOG_CONTEXT,
+						error
+					);
+				}
+			}
 
 			return {
 				port: this.port,
@@ -1675,6 +1926,7 @@ export class WebServer {
 		this.addressWatcher = createNetworkAddressWatcher({
 			initialAddress: this.localIpAddress,
 			onChange: ({ address }) => {
+				this.litePairing.stop();
 				this.localIpAddress = address;
 				this.onLocalAddressChanged?.(this.getSecureUrl());
 			},
@@ -1687,6 +1939,7 @@ export class WebServer {
 	}
 
 	async stop(): Promise<void> {
+		await this.litePairing.close();
 		if (!this.isRunning) {
 			return;
 		}
@@ -1710,6 +1963,9 @@ export class WebServer {
 		}
 
 		try {
+			await Promise.all(
+				[...this.webClients.keys()].map((clientId) => this.releaseWebClient(clientId))
+			);
 			await this.server.close();
 			this.isRunning = false;
 			logger.info('Server stopped', LOG_CONTEXT);

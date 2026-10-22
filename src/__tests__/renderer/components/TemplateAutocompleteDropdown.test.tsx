@@ -9,6 +9,7 @@ import React from 'react';
 import { TemplateAutocompleteDropdown } from '../../../renderer/components/TemplateAutocompleteDropdown';
 import type { Theme } from '../../../renderer/types';
 import type { AutocompleteState } from '../../../renderer/hooks';
+import { getElevatedSurfaceColors } from '../../../renderer/utils/elevatedSurface';
 
 // Create a mock theme for testing
 const createMockTheme = (): Theme => ({
@@ -209,9 +210,10 @@ describe('TemplateAutocompleteDropdown', () => {
 			);
 
 			const dropdown = container.firstChild as HTMLElement;
+			const elevated = getElevatedSurfaceColors(mockTheme.colors);
 			expect(dropdown).toHaveStyle({
-				backgroundColor: mockTheme.colors.bgSidebar,
-				borderColor: mockTheme.colors.border,
+				backgroundColor: elevated.background,
+				borderColor: elevated.border,
 			});
 		});
 

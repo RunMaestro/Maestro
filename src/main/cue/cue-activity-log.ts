@@ -6,8 +6,7 @@
  */
 
 import type { CueRunResult } from './cue-types';
-
-const ACTIVITY_LOG_MAX = 1000;
+import { CUE_ACTIVITY_LOG_MAX } from './cue-activity-entries';
 
 export interface CueActivityLog {
 	push(result: CueRunResult): void;
@@ -21,7 +20,7 @@ export interface CueActivityLog {
 	clear(): void;
 }
 
-export function createCueActivityLog(maxSize: number = ACTIVITY_LOG_MAX): CueActivityLog {
+export function createCueActivityLog(maxSize: number = CUE_ACTIVITY_LOG_MAX): CueActivityLog {
 	let log: CueRunResult[] = [];
 
 	return {

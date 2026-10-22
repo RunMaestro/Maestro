@@ -140,7 +140,7 @@ export const HistoryFilterToggle = memo(function HistoryFilterToggle({
 					ref={mirrorRef}
 					aria-hidden="true"
 					data-testid="history-filter-pill-mirror"
-					className="absolute left-0 top-0 whitespace-nowrap font-bold uppercase pointer-events-none"
+					className="absolute left-0 top-0 whitespace-nowrap font-bold pointer-events-none"
 					style={{ ...PILL_TYPE_STYLE, visibility: 'hidden' }}
 				>
 					{visibleTypes.join('')}
@@ -155,7 +155,7 @@ export const HistoryFilterToggle = memo(function HistoryFilterToggle({
 					<button
 						key={type}
 						onClick={() => onToggleFilter(type)}
-						className={`flex items-center gap-1.5 py-1.5 rounded-full font-bold uppercase whitespace-nowrap transition-all ${
+						className={`flex items-center gap-1.5 py-1.5 rounded-full font-bold whitespace-nowrap transition-all ${type === 'RELAY' ? '' : 'uppercase'} ${
 							isActive ? 'opacity-100' : 'opacity-40'
 						}`}
 						style={{

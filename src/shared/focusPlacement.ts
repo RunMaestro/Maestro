@@ -131,6 +131,14 @@ export const CLI_BACKGROUND_DEFAULTS = {
 	snooze: false,
 	/** maestro-cli snooze dismiss - raises the "Snooze dismissed" toast today. */
 	'snooze-dismiss': false,
+	/**
+	 * maestro-cli steer-auto-run send - flashes "Steering note queued".
+	 *
+	 * Nothing is created and no selection moves; the flash is the only thing on
+	 * screen. `--background` suppresses it and nothing else: the note is parked
+	 * for the next task either way.
+	 */
+	'steer-auto-run': false,
 } as const;
 
 /** A CLI verb whose placement can be negotiated. */
@@ -213,6 +221,9 @@ export const ALREADY_QUIET_VERBS = [
 	'snooze-wake',
 	'snooze-reschedule',
 	'snooze-history',
+	// Reading the notes and taking one back render nothing.
+	'steer-auto-run-list',
+	'steer-auto-run-cancel',
 ] as const;
 
 /** A verb that accepts `--background` purely so the flag is always safe to pass. */

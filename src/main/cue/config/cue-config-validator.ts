@@ -9,6 +9,8 @@ import {
 	type CueScheduleDay,
 	normalizeWebhookPath,
 } from '../../../shared/cue';
+import { parseCueAutoRunWorktree } from '../../../shared/cue/autorun-worktree';
+import { TIER_LEVELS, asTierLevel } from '../../../shared/modelTiers';
 
 function validateGlobPattern(pattern: string, prefix: string, errors: string[]): void {
 	// Path-traversal guard: the watcher resolves `watchGlob` against `projectRoot`
@@ -51,7 +53,7 @@ function validateGlobPattern(pattern: string, prefix: string, errors: string[]):
 /**
  * Validate a `command` field, required when `action === 'command'`. Accepts:
  *   { mode: 'shell', shell: <non-empty string> }
- *   { mode: 'cli', cli: { command: 'send', target: <non-empty string>, message?: string } }
+ *   { mode: 'cli', cli: { command: 'send', target: <non-empty string>, message?: string, new_tab?: boolean } }
  */
 function validateCommandField(value: unknown, prefix: string, errors: string[]): void {
 	if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -86,8 +88,94 @@ function validateCommandField(value: unknown, prefix: string, errors: string[]):
 		if (cliRecord.message !== undefined && typeof cliRecord.message !== 'string') {
 			errors.push(`${prefix}: "command.cli.message" must be a string when provided`);
 		}
+		if (cliRecord.new_tab !== undefined && typeof cliRecord.new_tab !== 'boolean') {
+			errors.push(`${prefix}: "command.cli.new_tab" must be a boolean when provided`);
+		}
 	} else {
 		errors.push(`${prefix}: "command.mode" must be "shell" or "cli"`);
+	}
+}
+
+/**
+ * Validate an `auto_run` field, required when `action === 'autorun'`.
+ *
+ * `documents` carries the absolute paths captured when the run was scheduled.
+ * It is validated as non-empty because an autorun subscription with nothing to
+ * run is indistinguishable at fire time from a run that silently did nothing,
+ * and the whole point of a scheduled Auto Run is that nobody is watching when
+ * it fires.
+ */
+function validateAutoRunField(value: unknown, prefix: string, errors: string[]): void {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) {
+		errors.push(`${prefix}: "auto_run" is required and must be an object when action is "autorun"`);
+		return;
+	}
+	const cfg = value as Record<string, unknown>;
+
+	const docs = cfg.documents;
+	if (!Array.isArray(docs) || docs.length === 0) {
+		errors.push(`${prefix}: "auto_run.documents" is required and must be a non-empty array`);
+	} else if (!docs.every((d: unknown) => typeof d === 'string' && d.trim().length > 0)) {
+		errors.push(`${prefix}: "auto_run.documents" must contain only non-empty strings`);
+	}
+
+	const resets = cfg.reset_on_completion;
+	if (resets !== undefined) {
+		if (!Array.isArray(resets) || !resets.every((r: unknown) => typeof r === 'boolean')) {
+			errors.push(
+				`${prefix}: "auto_run.reset_on_completion" must be an array of booleans when provided`
+			);
+		} else if (Array.isArray(docs) && resets.length !== docs.length) {
+			// Misaligned flags would silently reset the wrong document.
+			errors.push(
+				`${prefix}: "auto_run.reset_on_completion" must have one entry per "auto_run.documents" entry`
+			);
+		}
+	}
+
+	for (const key of ['prompt', 'model', 'effort'] as const) {
+		if (cfg[key] !== undefined && typeof cfg[key] !== 'string') {
+			errors.push(`${prefix}: "auto_run.${key}" must be a string when provided`);
+		}
+	}
+
+	for (const key of ['loop_enabled', 'ignore_model_hints', 'auto_resume_on_error'] as const) {
+		if (cfg[key] !== undefined && typeof cfg[key] !== 'boolean') {
+			errors.push(`${prefix}: "auto_run.${key}" must be a boolean when provided`);
+		}
+	}
+
+	// Rejected rather than defaulted: a typo here would silently run a
+	// per-document schedule one task at a time, with nobody watching.
+	if (
+		cfg.task_selection_mode !== undefined &&
+		cfg.task_selection_mode !== 'task' &&
+		cfg.task_selection_mode !== 'document'
+	) {
+		errors.push(
+			`${prefix}: "auto_run.task_selection_mode" must be "task" or "document" when provided`
+		);
+	}
+
+	if (cfg.max_loops !== undefined) {
+		if (
+			typeof cfg.max_loops !== 'number' ||
+			!Number.isInteger(cfg.max_loops) ||
+			cfg.max_loops < 1
+		) {
+			errors.push(`${prefix}: "auto_run.max_loops" must be a positive integer when provided`);
+		}
+	}
+
+	for (const key of ['auto_resume_after_min', 'max_auto_resumes'] as const) {
+		if (cfg[key] !== undefined && (typeof cfg[key] !== 'number' || !Number.isFinite(cfg[key]))) {
+			errors.push(`${prefix}: "auto_run.${key}" must be a number when provided`);
+		}
+	}
+
+	if (cfg.worktree !== undefined) {
+		const worktree = parseCueAutoRunWorktree(cfg.worktree);
+		if (!worktree.ok) errors.push(`${prefix}: "auto_run.worktree" ${worktree.error}`);
 	}
 }
 
@@ -126,12 +214,21 @@ export function validateSubscription(sub: unknown, prefix: string): string[] {
 	}
 
 	const action = subRecord.action;
-	if (action !== undefined && action !== 'prompt' && action !== 'command' && action !== 'notify') {
-		errors.push(`${prefix}: "action" must be "prompt", "command", or "notify" when provided`);
+	if (
+		action !== undefined &&
+		action !== 'prompt' &&
+		action !== 'command' &&
+		action !== 'notify' &&
+		action !== 'autorun'
+	) {
+		errors.push(
+			`${prefix}: "action" must be "prompt", "command", "notify", or "autorun" when provided`
+		);
 	}
 
 	const isCommand = action === 'command';
 	const isNotify = action === 'notify';
+	const isAutoRun = action === 'autorun';
 
 	if (isCommand) {
 		validateCommandField(subRecord.command, prefix, errors);
@@ -171,6 +268,25 @@ export function validateSubscription(sub: unknown, prefix: string): string[] {
 		}
 		if (Array.isArray(subRecord.fan_out) && subRecord.fan_out.length > 0) {
 			errors.push(`${prefix}: "fan_out" is not supported when action is "notify"`);
+		}
+	} else if (isAutoRun) {
+		// Autorun launches an Auto Run in the owning agent - no prompt, no
+		// command, no fan-out. The document set travels with the subscription
+		// so the run is pinned to what the user picked when they scheduled it.
+		validateAutoRunField(subRecord.auto_run, prefix, errors);
+		if (typeof subRecord.agent_id !== 'string' || subRecord.agent_id.trim().length === 0) {
+			errors.push(
+				`${prefix}: "agent_id" is required and must be a non-empty string when action is "autorun"`
+			);
+		}
+		if (subRecord.command !== undefined) {
+			errors.push(`${prefix}: "command" is not supported when action is "autorun"`);
+		}
+		// One Auto Run belongs to one agent: fanning it out would launch the
+		// same document set concurrently in several agents against the same
+		// working tree.
+		if (Array.isArray(subRecord.fan_out) && subRecord.fan_out.length > 0) {
+			errors.push(`${prefix}: "fan_out" is not supported when action is "autorun"`);
 		}
 	} else {
 		// `fan_out_ids` is the rename-stable id mirror of `fan_out`. When
@@ -232,6 +348,7 @@ export function validateSubscription(sub: unknown, prefix: string): string[] {
 	}
 
 	validateEventSpecificFields(subRecord, prefix, errors);
+	validateTurnSettings(subRecord, prefix, errors);
 
 	if (subRecord.fan_in_timeout_minutes !== undefined) {
 		// Same bounds as `settings.timeout_minutes`. A value of `0` makes
@@ -275,6 +392,41 @@ export function validateSubscription(sub: unknown, prefix: string): string[] {
 	}
 
 	return errors;
+}
+
+/**
+ * `tier` / `model` / `effort` pick the model an agent run uses. A typo here is
+ * an error rather than a silent fallback: the run would otherwise happen on
+ * the agent's default model while the YAML claims the top tier.
+ */
+function validateTurnSettings(
+	subRecord: Record<string, unknown>,
+	prefix: string,
+	errors: string[]
+): void {
+	const levels = TIER_LEVELS.join(', ');
+	if (subRecord.tier !== undefined && !asTierLevel(subRecord.tier)) {
+		errors.push(`${prefix}: "tier" must be one of: ${levels}`);
+	}
+	if (subRecord.effort !== undefined && !asTierLevel(subRecord.effort)) {
+		errors.push(`${prefix}: "effort" must be one of: ${levels}`);
+	}
+	if (
+		subRecord.model !== undefined &&
+		(typeof subRecord.model !== 'string' || subRecord.model.trim().length === 0)
+	) {
+		errors.push(`${prefix}: "model" must be a non-empty string when provided`);
+	}
+	if (subRecord.tier !== undefined && subRecord.model !== undefined) {
+		errors.push(`${prefix}: set "tier" or "model", not both`);
+	}
+	const hasAny =
+		subRecord.tier !== undefined || subRecord.model !== undefined || subRecord.effort !== undefined;
+	if (hasAny && (subRecord.action === 'command' || subRecord.action === 'notify')) {
+		errors.push(
+			`${prefix}: "tier", "model", and "effort" apply to agent runs and are not supported when action is "${subRecord.action}"`
+		);
+	}
 }
 
 function validateEventSpecificFields(
@@ -539,6 +691,16 @@ function validateEventSpecificFields(
 				);
 			}
 		}
+		// Optional: a GitHub trigger may also take webhook deliveries.
+		if (sub.webhook !== undefined) {
+			validateWebhookConfig(
+				sub.webhook,
+				typeof sub.name === 'string' ? sub.name : '',
+				prefix,
+				errors,
+				event
+			);
+		}
 	} else if (event === 'github.pull_request' || event === 'github.issue') {
 		if (sub.repo !== undefined && typeof sub.repo !== 'string') {
 			errors.push(`${prefix}: "repo" must be a string (e.g., "owner/repo") for ${event} events`);
@@ -582,6 +744,16 @@ function validateEventSpecificFields(
 				);
 			}
 		}
+		// Optional: a GitHub trigger may also take webhook deliveries.
+		if (sub.webhook !== undefined) {
+			validateWebhookConfig(
+				sub.webhook,
+				typeof sub.name === 'string' ? sub.name : '',
+				prefix,
+				errors,
+				event
+			);
+		}
 	} else if (event === 'app.startup') {
 		// No additional required fields for the startup trigger.
 	} else if (event === 'cli.trigger') {
@@ -591,7 +763,8 @@ function validateEventSpecificFields(
 			sub.webhook,
 			typeof sub.name === 'string' ? sub.name : '',
 			prefix,
-			errors
+			errors,
+			event
 		);
 	} else if (
 		sub.event &&
@@ -617,14 +790,15 @@ function validateWebhookConfig(
 	rawWebhook: unknown,
 	subName: string,
 	prefix: string,
-	errors: string[]
+	errors: string[],
+	event: string
 ): void {
 	if (rawWebhook === undefined || rawWebhook === null) {
-		errors.push(`${prefix}: "webhook" is required for webhook.received events`);
+		errors.push(`${prefix}: "webhook" is required for ${event} events`);
 		return;
 	}
 	if (typeof rawWebhook !== 'object' || Array.isArray(rawWebhook)) {
-		errors.push(`${prefix}: "webhook" must be an object for webhook.received events`);
+		errors.push(`${prefix}: "webhook" must be an object for ${event} events`);
 		return;
 	}
 
@@ -640,7 +814,7 @@ function validateWebhookConfig(
 		typeof webhook.secret_env === 'string' && webhook.secret_env.trim().length > 0;
 	if (!hasSecret && !hasSecretEnv) {
 		errors.push(
-			`${prefix}: "webhook.secret" or "webhook.secret_env" is required for webhook.received events - an unauthenticated webhook would let any local process trigger this agent`
+			`${prefix}: "webhook.secret" or "webhook.secret_env" is required for ${event} events - an unauthenticated webhook would let any local process trigger this agent`
 		);
 	} else if (hasSecret && hasSecretEnv) {
 		errors.push(
@@ -658,7 +832,8 @@ function validateWebhookConfig(
 	}
 }
 
-function validateSettings(rawSettings: unknown): string[] {
+/** Validates a settings block, including its shape and optional owner identifier. */
+export function validateSettings(rawSettings: unknown): string[] {
 	const errors: string[] = [];
 	if (rawSettings === undefined) return errors;
 	if (typeof rawSettings !== 'object' || rawSettings === null || Array.isArray(rawSettings)) {

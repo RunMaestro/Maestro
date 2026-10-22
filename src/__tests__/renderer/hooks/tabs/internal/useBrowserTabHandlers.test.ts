@@ -1,5 +1,5 @@
 import { renderHook, act, cleanup } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useBrowserTabHandlers } from '../../../../../renderer/hooks/tabs/internal/useBrowserTabHandlers';
 import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';
 import {
@@ -9,10 +9,19 @@ import {
 	resetTabHandlerStores,
 	setupSession,
 } from './testUtils';
+import { updateSessionWith } from '../../../../../renderer/stores/sessionStore';
+import { useUIStore } from '../../../../../renderer/stores/uiStore';
+import type { BrowserTab } from '../../../../../shared/browserPage';
+import { isWebDesktop } from '../../../../../renderer/utils/runtimeContext';
+
+vi.mock('../../../../../renderer/utils/runtimeContext', () => ({
+	isWebDesktop: vi.fn(() => false),
+}));
 
 describe('useBrowserTabHandlers', () => {
 	beforeEach(() => {
 		resetTabHandlerStores();
+		vi.mocked(isWebDesktop).mockReturnValue(false);
 	});
 
 	afterEach(() => {
@@ -140,5 +149,45 @@ describe('useBrowserTabHandlers', () => {
 			url: 'https://example.com/docs',
 			title: 'example.com',
 		});
+	});
+	it('does not create a client tab before host acknowledgement or duplicate a preceding host snapshot', async () => {
+		vi.mocked(isWebDesktop).mockReturnValue(true);
+		const sessionId = setupSession({ activeGroupId: 'client-group' });
+		const acknowledged = Promise.withResolvers<BrowserTab>();
+		const originalApi = window.maestro.browserSession;
+		window.maestro.browserSession = { ...originalApi, createTab: () => acknowledged.promise };
+		const hostTab = createMockBrowserTab({
+			id: 'host-incognito',
+			partition: 'maestro-ephemeral-host-12345678',
+			ephemeral: true,
+		});
+		try {
+			const { result } = renderHook(() => useBrowserTabHandlers());
+			act(() => result.current.handleNewBrowserTab({ ephemeral: true }));
+			expect(getSession().browserTabs).toEqual([]);
+			expect(getSession().activeGroupId).toBe('client-group');
+			act(() =>
+				updateSessionWith(sessionId, (session) => ({
+					...session,
+					browserTabs: [hostTab],
+					unifiedTabOrder: [...session.unifiedTabOrder, { type: 'browser', id: hostTab.id }],
+				}))
+			);
+			await act(async () => {
+				acknowledged.resolve(hostTab);
+				await acknowledged.promise;
+			});
+			expect(getSession().browserTabs).toEqual([hostTab]);
+			expect(getSession().unifiedTabOrder.filter((ref) => ref.type === 'browser')).toEqual([
+				{ type: 'browser', id: hostTab.id },
+			]);
+			expect(getSession().activeBrowserTabId).toBe(hostTab.id);
+			expect(getSession().activeGroupId).toBeNull();
+			expect(useUIStore.getState().focusRequest).toEqual({
+				tab: { type: 'browser', id: hostTab.id },
+			});
+		} finally {
+			window.maestro.browserSession = originalApi;
+		}
 	});
 });

@@ -144,15 +144,15 @@ describe('shortcutFormatter', () => {
 
 		describe('formatShortcutKeys()', () => {
 			it('uses space as default separator', () => {
-				expect(formatShortcutKeys(['Meta', 'k'])).toBe('⌘ K');
+				expect(formatShortcutKeys(['Meta', 'k'])).toBe('⌘\u00A0K');
 			});
 
 			it('formats Meta+Shift+k correctly', () => {
-				expect(formatShortcutKeys(['Meta', 'Shift', 'k'])).toBe('⌘ ⇧ K');
+				expect(formatShortcutKeys(['Meta', 'Shift', 'k'])).toBe('⌘\u00A0⇧\u00A0K');
 			});
 
 			it('formats Alt+Meta+ArrowRight correctly', () => {
-				expect(formatShortcutKeys(['Alt', 'Meta', 'ArrowRight'])).toBe('⌥ ⌘ →');
+				expect(formatShortcutKeys(['Alt', 'Meta', 'ArrowRight'])).toBe('⌥\u00A0⌘\u00A0→');
 			});
 
 			it('accepts custom separator', () => {
@@ -168,11 +168,11 @@ describe('shortcutFormatter', () => {
 			});
 
 			it('formats complex shortcuts', () => {
-				expect(formatShortcutKeys(['Control', 'Alt', 'Delete'])).toBe('⌃ ⌥ ⌦');
+				expect(formatShortcutKeys(['Control', 'Alt', 'Delete'])).toBe('⌃\u00A0⌥\u00A0⌦');
 			});
 
 			it('formats function key shortcuts', () => {
-				expect(formatShortcutKeys(['Alt', 'F4'])).toBe('⌥ F4');
+				expect(formatShortcutKeys(['Alt', 'F4'])).toBe('⌥\u00A0F4');
 			});
 		});
 
@@ -200,7 +200,7 @@ describe('shortcutFormatter', () => {
 			});
 
 			it('returns ⌘ + Enter when enterToSend is false', () => {
-				expect(formatEnterToSend(false)).toBe('⌘ + Enter');
+				expect(formatEnterToSend(false)).toBe('⌘\u00A0+\u00A0Enter');
 			});
 		});
 
@@ -387,7 +387,7 @@ describe('shortcutFormatter', () => {
 			});
 
 			it('returns Ctrl + Enter when enterToSend is false', () => {
-				expect(formatEnterToSend(false)).toBe('Ctrl + Enter');
+				expect(formatEnterToSend(false)).toBe('Ctrl\u00A0+\u00A0Enter');
 			});
 		});
 

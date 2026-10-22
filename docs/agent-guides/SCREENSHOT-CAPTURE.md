@@ -82,6 +82,19 @@ loaded out of `src/shared/typographyPresets.ts` rather than copied into the seed
 JSON, so retuning the Default face moves the published set on the next run.
 Pass `--typography hacker` to shoot the monospace look deliberately.
 
+**A one-off shot taken outside this pipeline follows the same rule.** Every
+screenshot in `docs/` is in the Default preset, including the single-surface
+ones taken by hand against a fresh `MAESTRO_DEMO_DIR` profile (a floating
+window, a dialog the showcase set does not cover). A fresh profile boots into
+the store default, which is the monospace look, so apply the preset before
+shooting. Write the fonts AND the sizes, the same twelve values `setup.js`
+writes: `applyTypographyPreset('default')` in the settings store sets only the
+fonts, which leaves the interface at the historical 14px instead of Default's
+15px. Check the result on the surface itself (`getComputedStyle(document.body)
+.fontFamily` should start with `Inter`) rather than on the store, because a
+secondary window that does not run `useWindowSettingsSync()` ignores the store
+entirely; that is how the first Quick Chat screenshot shipped in monospace.
+
 **The seed widens both side panels, deliberately.** `leftSidebarWidth` and
 `rightPanelWidth` in the seed settings are 470 and 575 against app defaults of
 256 and 384. The app's defaults are the MINIMUM each panel supports, and at the

@@ -1,0 +1,27 @@
+{
+	"provider": "opencode",
+	"providerVersion": "1.18.23",
+	"capturedOn": "2026-09-28",
+	"platform": "darwin",
+	"command": [
+		"opencode",
+		"run",
+		"--format",
+		"json",
+		"--model",
+		"opencode/big-pickle",
+		"--session",
+		"ses_f16769d8cffe7rc1MP406tiARM",
+		"<prompt>"
+	],
+	"prompt": "Which city did you just name? Reply with only the city name.",
+	"stop": null,
+	"chunks": [
+		"{\"type\":\"step_start\",\"timestamp\":1790624509313,\"sessionID\":\"ses_f16769d8cffe7rc1MP406tiARM\",\"part\":{\"id\":\"prt_0e989ad6d001LDzkRlDJblPOng\",\"messageID\":\"msg_0e9898e07001YqqutzlTZbLm0L\",\"sessionID\":\"ses_f16769d8cffe7rc1MP406tiARM\",\"type\":\"step-start\"}}\n{\"type\":\"text\",\"timestamp\":1790624509313,\"sessionID\":\"ses_f16769d8cffe7rc1MP406tiARM\",\"part\":{\"id\":\"prt_0e989ad6f001wdQ85O7aP1XCdS\",\"messageID\":\"msg_0e9898e07001YqqutzlTZbLm0L\",\"sessionID\":\"ses_f16769d8cffe7rc1MP406tiARM\",\"type\":\"text\",\"text\":\"Paris\",\"time\":{\"start\":1790624509295,\"end\":1790624509298}}}\n{\"type\":\"step_finish\",\"timestamp\":1790624509313,\"sessionID\":\"ses_f16769d8cffe7rc1MP406tiARM\",\"part\":{\"id\":\"prt_0e989ad76001txwHmXr6fWfkB0\",\"reason\":\"stop\",\"messageID\":\"msg_0e9898e07001YqqutzlTZbLm0L\",\"sessionID\":\"ses_f16769d8cffe7rc1MP406tiARM\",\"type\":\"step-finish\",\"tokens\":{\"total\":9930,\"input\":27,\"output\":2,\"reasoning\":0,\"cache\":{\"write\":0,\"read\":9901}},\"cost\":0}}\n"
+	],
+	"stderr": "",
+	"close": {
+		"code": 0,
+		"signal": null
+	}
+}

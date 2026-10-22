@@ -44,11 +44,15 @@ function createStorageMock(): { storage: Storage; store: Map<string, string> } {
 
 function installStorage(name: 'localStorage' | 'sessionStorage'): Map<string, string> {
 	const { storage, store } = createStorageMock();
-	Object.defineProperty(window, name, {
-		configurable: true,
-		writable: true,
-		value: storage,
-	});
+	// Install on the global too: Node ships its own (inert) `localStorage`, so a
+	// bare `localStorage` reference can resolve to it rather than to `window`'s.
+	for (const target of new Set<object>([window, globalThis])) {
+		Object.defineProperty(target, name, {
+			configurable: true,
+			writable: true,
+			value: storage,
+		});
+	}
 	return store;
 }
 

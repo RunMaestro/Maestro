@@ -16,6 +16,8 @@
 
 import { useEffect, useRef, useCallback } from 'react';
 import { useSessionStore } from '../../stores/sessionStore';
+import { useSettingsStore } from '../../stores/settingsStore';
+import { filterLiveAgents, isAgentDormant } from '../../../shared/agentVisibility';
 import { notifyToast } from '../../stores/notificationStore';
 import { useEventListener } from '../utils/useEventListener';
 import {
@@ -64,6 +66,7 @@ export function useSnoozeScheduler(): void {
 	const applyWakes = useCallback((unrestorable: Set<string>) => {
 		const now = Date.now();
 		const { setSessions } = useSessionStore.getState();
+		const { encoreFeatures } = useSettingsStore.getState();
 
 		const pending: PendingWake[] = [];
 		/** Entries dropped entirely because the one thing they held is gone. */
@@ -71,6 +74,8 @@ export function useSnoozeScheduler(): void {
 
 		setSessions((prev: Session[]) =>
 			prev.map((session) => {
+				// A dormant Pianola (flag off) keeps its snoozes until it is live again.
+				if (isAgentDormant(session, encoreFeatures)) return session;
 				const due = getDueSnoozes(session, now).filter((entry) => !wokenRef.current.has(entry.id));
 				if (due.length === 0) return session;
 
@@ -198,7 +203,11 @@ export function useSnoozeScheduler(): void {
 
 	const sweep = useCallback(() => {
 		const now = Date.now();
-		const { sessions } = useSessionStore.getState();
+		// Live agents only: a dormant Pianola (flag off) wakes nothing.
+		const sessions = filterLiveAgents(
+			useSessionStore.getState().sessions,
+			useSettingsStore.getState().encoreFeatures
+		);
 
 		// Nothing due? Bail before touching the store at all - this runs every
 		// 15s for the entire life of the app.

@@ -61,6 +61,28 @@ describe('Process TabRemote Preload API', () => {
 		});
 	});
 
+	it('round-trips close confirmation on the per-request response channel', () => {
+		const callback = vi.fn();
+		const unsubscribe = api.onRemoteCloseTab(callback);
+		const handler = mockOn.mock.calls.find(([channel]) => channel === 'remote:closeTab')?.[1];
+		handler({}, 'session-1', 'tab-1', 'close-response');
+		expect(callback).toHaveBeenCalledWith('session-1', 'tab-1', 'close-response');
+		api.sendRemoteCloseTabResponse('close-response', false);
+		expect(mockSend).toHaveBeenCalledWith('close-response', false);
+		unsubscribe();
+		expect(mockRemoveListener).toHaveBeenCalledWith('remote:closeTab', handler);
+	});
+
+	it('round-trips the canonical reopen id', () => {
+		const callback = vi.fn();
+		api.onRemoteReopenTab(callback);
+		const handler = mockOn.mock.calls.find(([channel]) => channel === 'remote:reopenTab')?.[1];
+		handler({}, 'session-1', 'tab-1', 'reopen-response');
+		expect(callback).toHaveBeenCalledWith('session-1', 'tab-1', 'reopen-response');
+		api.sendRemoteReopenTabResponse('reopen-response', { tabId: 'restored' });
+		expect(mockSend).toHaveBeenCalledWith('reopen-response', { tabId: 'restored' });
+	});
+
 	describe('remote rename tab', () => {
 		it('forwards responseChannel with rename events', () => {
 			const callback = vi.fn();

@@ -25,6 +25,10 @@ import {
 } from './wizardErrorDetection';
 import { wizardDebugLogger } from './phaseGenerator';
 import { extractGrokTextFromJsonl, GROK_WIZARD_DISCOVERY_ARGS } from '../../../utils/grokWizard';
+import {
+	getClaudeTokenSourceFields,
+	type ClaudeTokenSourceFields,
+} from '../../../../shared/claudeTokenMode';
 
 /**
  * Configuration for starting a conversation
@@ -49,6 +53,8 @@ export interface ConversationConfig {
 		remoteId: string | null;
 		workingDirOverride?: string;
 	};
+	/** The Claude token source picked for the new agent, so a TUI pick plans through maestro-p */
+	claudeTokenSource?: ClaudeTokenSourceFields;
 }
 
 /**
@@ -134,6 +140,8 @@ interface ConversationSession {
 		remoteId: string | null;
 		workingDirOverride?: string;
 	};
+	/** The Claude token source picked for the new agent, so a TUI pick plans through maestro-p */
+	claudeTokenSource?: ClaudeTokenSourceFields;
 }
 
 /**
@@ -186,6 +194,7 @@ class ConversationManager {
 			systemPrompt,
 			outputBuffer: '',
 			sshRemoteConfig: config.sshRemoteConfig,
+			claudeTokenSource: config.claudeTokenSource,
 		};
 
 		// Log conversation start
@@ -631,6 +640,8 @@ class ConversationManager {
 					// line length limits for large prompts.
 					// Pass SSH configuration for remote execution
 					sessionSshRemoteConfig: this.session!.sshRemoteConfig,
+					// The wizard's process id names no agent, so the TUI pick travels inline.
+					...getClaudeTokenSourceFields(this.session!.claudeTokenSource),
 				})
 				.then(() => {
 					wizardDebugLogger.log('spawn', 'Agent process spawned successfully', {

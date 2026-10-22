@@ -95,4 +95,45 @@ describe('MediaPlaybackHost', () => {
 		render(<MediaPlaybackHost theme={mockTheme} />);
 		expect(screen.queryByTestId('floating-media-player')).toBeNull();
 	});
+
+	// The desktop app plays media in the widget window, so this window's store is
+	// a replica: it draws nothing and forwards commands.
+	describe('in the desktop app', () => {
+		let sendCommand: ReturnType<typeof vi.fn>;
+
+		beforeEach(() => {
+			sendCommand = vi.fn();
+			(window as unknown as { maestro?: unknown }).maestro = {
+				settings: { set: vi.fn() },
+				floatingWidgets: {
+					sendCommand,
+					onState: vi.fn(() => () => {}),
+					getState: vi.fn().mockResolvedValue(null),
+				},
+			};
+		});
+
+		it('draws no player, even with a track loaded', () => {
+			render(<MediaPlaybackHost theme={mockTheme} />);
+			expect(screen.queryByTestId('floating-media-player')).toBeNull();
+			expect(mountCount).not.toHaveBeenCalled();
+		});
+
+		it('forwards commands while mounted and restores them on unmount', () => {
+			const { unmount } = render(<MediaPlaybackHost theme={mockTheme} />);
+
+			useMediaPlaybackStore.getState().dismiss();
+			expect(sendCommand).toHaveBeenCalledWith('media-player', {
+				type: 'action',
+				action: 'dismiss',
+				args: [],
+			});
+			expect(useMediaPlaybackStore.getState().dismissed).toBe(false);
+
+			unmount();
+			useMediaPlaybackStore.getState().dismiss();
+			expect(useMediaPlaybackStore.getState().dismissed).toBe(true);
+			expect(sendCommand).toHaveBeenCalledTimes(1);
+		});
+	});
 });

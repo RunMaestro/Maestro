@@ -11,7 +11,8 @@
  * through integration testing and manual testing.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, afterAll } from 'vitest';
+import * as os from 'os';
 import * as path from 'path';
 import { createZipPackage, PackageContents } from '../../../main/debug-package/packager';
 import { extractZipTo, readZipArchive } from '../../../main/utils/zip-archive';
@@ -22,8 +23,10 @@ import { execFileSync } from 'node:child_process';
 
 const fs = nodeFs;
 
-// Create a temporary directory for test output
-const TEST_OUTPUT_DIR = '/tmp/maestro-debug-package-tests';
+// A unique directory per run: a fixed path is shared by every suite on the
+// machine, so two concurrent runs (another worktree's pre-push) wipe each
+// other's zips mid-test.
+const TEST_OUTPUT_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-debug-package-tests-'));
 
 function extractWithCli(zipPath: string, outputDir: string): void {
 	try {
@@ -71,6 +74,10 @@ describe('Debug Package Packager', () => {
 	afterEach(() => {
 		// Clean up test files
 		cleanupDir(TEST_OUTPUT_DIR);
+	});
+
+	afterAll(() => {
+		fs.rmSync(TEST_OUTPUT_DIR, { recursive: true, force: true });
 	});
 
 	describe('createZipPackage', () => {

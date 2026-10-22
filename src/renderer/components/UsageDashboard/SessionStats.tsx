@@ -15,9 +15,15 @@ import React, { memo, useMemo } from 'react';
 import { Monitor, GitBranch, Folder, Laptop } from 'lucide-react';
 import type { Theme, Session, ToolType } from '../../types';
 import type { StatsAggregation } from '../../../shared/stats-types';
-import { COLORBLIND_AGENT_PALETTE } from '../../constants/colorblindPalettes';
 import { countActiveAgents } from '../../../shared/statsActiveAgents';
-import { isWorktreeAgent, resolveAgentDisplayName, barChartLabelWidth } from './chartUtils';
+import {
+	isWorktreeAgent,
+	resolveAgentDisplayName,
+	BAR_CHART_GRID_CLASS,
+	BAR_CHART_GRID_STYLE,
+	BAR_CHART_ROW_STYLE,
+	getSeriesColor,
+} from './chartUtils';
 
 interface SessionStatsProps {
 	/** Array of all sessions */
@@ -66,29 +72,6 @@ function StatCard({ label, value, icon, theme, subValue }: StatCardProps) {
 			</div>
 		</div>
 	);
-}
-
-/**
- * Get color for an agent type
- */
-function getAgentColor(index: number, theme: Theme, colorBlindMode?: boolean): string {
-	if (colorBlindMode) {
-		return COLORBLIND_AGENT_PALETTE[index % COLORBLIND_AGENT_PALETTE.length];
-	}
-	if (index === 0) {
-		return theme.colors.accent;
-	}
-	const additionalColors = [
-		'#10b981',
-		'#8b5cf6',
-		'#ef4444',
-		'#06b6d4',
-		'#ec4899',
-		'#f59e0b',
-		'#84cc16',
-		'#6366f1',
-	];
-	return additionalColors[(index - 1) % additionalColors.length];
 }
 
 export const SessionStats = memo(function SessionStats({
@@ -199,19 +182,10 @@ export const SessionStats = memo(function SessionStats({
 				.map(([agent, count], index) => ({
 					agent: agent as ToolType,
 					count,
-					color: getAgentColor(index, theme, colorBlindMode),
+					color: getSeriesColor(index, theme, colorBlindMode),
 					displayName: resolveAgentDisplayName(agent, agentSessions).name,
 				})),
 		[stats.byAgent, theme, colorBlindMode, agentSessions]
-	);
-
-	const labelWidth = useMemo(
-		() =>
-			barChartLabelWidth(
-				sortedAgents.map((a) => a.displayName),
-				{ withSwatch: true }
-			),
-		[sortedAgents]
 	);
 
 	if (agentSessions.length === 0) {
@@ -297,15 +271,15 @@ export const SessionStats = memo(function SessionStats({
 				>
 					By Agent Type
 				</h4>
-				<div className="space-y-2">
+				<div className={BAR_CHART_GRID_CLASS} style={BAR_CHART_GRID_STYLE}>
 					{sortedAgents.map((agent) => {
 						const percentage = stats.total > 0 ? (agent.count / stats.total) * 100 : 0;
 						return (
-							<div key={agent.agent} className="flex items-center gap-3">
+							<div key={agent.agent} style={BAR_CHART_ROW_STYLE}>
 								{/* Agent name */}
 								<div
-									className="text-sm flex-shrink-0 flex items-center gap-2"
-									style={{ width: labelWidth, color: theme.colors.textDim }}
+									className="text-sm min-w-0 flex items-center gap-2"
+									style={{ color: theme.colors.textDim }}
 									title={agent.displayName}
 									data-testid="bar-chart-label"
 								>
@@ -318,7 +292,7 @@ export const SessionStats = memo(function SessionStats({
 
 								{/* Bar */}
 								<div
-									className="flex-1 h-6 rounded overflow-hidden"
+									className="h-6 rounded overflow-hidden"
 									style={{ backgroundColor: `${theme.colors.border}30` }}
 								>
 									<div
@@ -342,10 +316,7 @@ export const SessionStats = memo(function SessionStats({
 								</div>
 
 								{/* Count */}
-								<div
-									className="w-12 text-xs text-right flex-shrink-0"
-									style={{ color: theme.colors.textDim }}
-								>
+								<div className="w-12 text-xs text-right" style={{ color: theme.colors.textDim }}>
 									{agent.count}
 								</div>
 							</div>

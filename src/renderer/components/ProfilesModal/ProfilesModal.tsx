@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom';
 import { X, Users, Plus, Trash2, RefreshCw } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { AgentProfile } from '../../../shared/profiles/types';
+import { useResizableModal } from '../../hooks/ui/useResizableModal';
+import { ResizeHandles } from '../ui/ResizeHandles';
 import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
@@ -160,6 +162,11 @@ export function ProfilesModal({ theme, onClose }: ProfilesModalProps) {
 		color: theme.colors.textMain,
 	} as const;
 
+	const resizing = useResizableModal({
+		resizeKey: 'profiles',
+		defaultSize: { width: 720, height: 820 },
+		minSize: { width: 400, height: 320 },
+	});
 	return createPortal(
 		<div
 			className="fixed inset-0 flex items-center justify-center select-none"
@@ -171,19 +178,23 @@ export function ProfilesModal({ theme, onClose }: ProfilesModalProps) {
 			<div className="absolute inset-0 bg-black/50" />
 
 			<div
+				ref={resizing.modalRef}
 				role="dialog"
 				aria-modal="true"
 				aria-labelledby={TITLE_ID}
 				className="relative rounded-xl shadow-2xl flex flex-col"
 				style={{
-					width: '92vw',
-					maxWidth: 720,
-					height: '86vh',
-					maxHeight: 820,
+					...resizing.style,
 					backgroundColor: theme.colors.bgMain,
 					border: `1px solid ${theme.colors.border}`,
 				}}
 			>
+				<ResizeHandles
+					onResizeStart={resizing.onResizeStart}
+					onResetSize={resizing.onResetSize}
+					canReset={resizing.canReset}
+					accentColor={theme.colors.accent}
+				/>
 				{/* Header */}
 				<div
 					className="shrink-0 flex items-center justify-between px-5 py-4 border-b"

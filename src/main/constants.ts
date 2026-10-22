@@ -15,40 +15,16 @@ import { DEFAULT_MODEL_PRICING } from '../shared/modelPricing';
 // These patterns are used in hot paths (process data handlers) that fire hundreds
 // of times per second. Pre-compiling them avoids repeated regex compilation overhead.
 
-// Group chat session ID patterns
-//
-// groupChatId is ALWAYS a uuidv4() (see group-chat-storage.ts:createGroupChat()),
-// so we anchor the group-chat-id capture on the UUID format instead of a greedy
-// (.+). This matters because participant display names are user-supplied and may
-// contain literal "-participant-" substrings; the old greedy capture would
-// backtrack to the LAST occurrence and parse to the wrong (groupChatId,
-// participantName) pair, which could cause output chunks buffered in
-// group-chat/output-buffer.ts to be flushed against the wrong owner - the
-// suspected root cause for group-chat content leaking into Cue pipeline output.
-const UUID_PATTERN = '[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}';
-
-export const REGEX_MODERATOR_SESSION = new RegExp(`^group-chat-(${UUID_PATTERN})-moderator-`, 'i');
-export const REGEX_MODERATOR_SESSION_TIMESTAMP = new RegExp(
-	`^group-chat-(${UUID_PATTERN})-moderator-\\d+$`,
-	'i'
-);
-// Participant name capture is lazy ((.+?)) so the UUID/timestamp tail anchor
-// determines the split rather than greedy backtracking.
-export const REGEX_PARTICIPANT_UUID = new RegExp(
-	`^group-chat-(${UUID_PATTERN})-participant-(.+?)-(${UUID_PATTERN})$`,
-	'i'
-);
-export const REGEX_PARTICIPANT_TIMESTAMP = new RegExp(
-	`^group-chat-(${UUID_PATTERN})-participant-(.+?)-(\\d{13,})$`,
-	'i'
-);
-// Fallback only kicks in when neither UUID nor timestamp tail matches. It still
-// requires a UUID groupChatId so we never silently parse a non-group-chat
-// sessionId as one.
-export const REGEX_PARTICIPANT_FALLBACK = new RegExp(
-	`^group-chat-(${UUID_PATTERN})-participant-([^-]+)-`,
-	'i'
-);
+// Group chat session ID patterns live in the library next to the parsers that use them
+// (`src/shared/maestro-lib/groupchat/session-ids.ts`); re-exported so every import of
+// this module keeps resolving.
+export {
+	REGEX_MODERATOR_SESSION,
+	REGEX_MODERATOR_SESSION_TIMESTAMP,
+	REGEX_PARTICIPANT_UUID,
+	REGEX_PARTICIPANT_TIMESTAMP,
+	REGEX_PARTICIPANT_FALLBACK,
+} from '../shared/maestro-lib/groupchat/session-ids';
 
 // Web broadcast session ID patterns
 // Tab IDs may contain dashes (e.g., UUIDs), so we match everything after the -ai- delimiter
@@ -98,6 +74,23 @@ export const DEMO_MODE = process.argv.includes('--demo') || !!process.env.MAESTR
  */
 export const DEMO_DATA_PATH =
 	process.env.MAESTRO_DEMO_DIR || path.join(os.tmpdir(), 'maestro-demo');
+
+/**
+ * Directory of the stores every build on this machine shares (provider configs
+ * and detected capabilities), so a development build reuses the binary paths
+ * and env vars already set up in the installed app.
+ *
+ * A demo profile is the exception. It is a sealed, throwaway directory, and
+ * through the shared path a demo instance both read the user's real provider
+ * config and wrote back into it: a custom binary path set while testing in a
+ * demo became the binary the installed app spawned.
+ */
+export function resolveSharedDataPath(
+	userDataPath: string,
+	demo: { enabled: boolean; path: string } = { enabled: DEMO_MODE, path: DEMO_DATA_PATH }
+): string {
+	return demo.enabled ? demo.path : userDataPath;
+}
 
 /**
  * Token divisor for converting to millions (used in cost calculations)

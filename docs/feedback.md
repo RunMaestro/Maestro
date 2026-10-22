@@ -31,7 +31,7 @@ Maestro picks the account for you. It looks at the accounts your own agents run 
 
 If the first account cannot answer (for example, its login expired), the chat sends your message to the next account instead of failing. The account that answered is remembered for next time.
 
-The **Running as** menu under the progress bar shows the account in use. Pick another one there to override it.
+The **Running as** menu at the very bottom of the window, under the message box, shows the account in use. Pick another one there to override it.
 
 ### 3. Describe Your Issue
 
@@ -51,7 +51,11 @@ A confidence bar at the top tracks how well the AI understands your issue. As yo
 
 ### Live Diagnostics
 
-The feedback agent runs on your own machine, so it can look at the problem instead of asking you to describe it. While it thinks, it may check your Maestro version, read the tail of the debug log, or query the running app with `maestro-cli` (`status`, `doctor`, `list agents`, and other read-only verbs). What it finds is folded into the issue as context you would otherwise have to gather by hand.
+The feedback agent runs on your own machine, so it can look at the problem instead of asking you to describe it.
+
+When the chat opens, Maestro reads its own live state and hands it to the agent: every agent that is busy, errored, paused on a usage limit, retrying, holding queued messages, or running Auto Run, the auto-resume settings, and the recent warnings and errors from the log (renderer console errors included). If that already shows what you are about to describe, such as an Auto Run still parked after its limit reset, the agent says so in its first reply instead of asking. Paths and secrets are redacted the same way the support package redacts them.
+
+While it thinks, it may check your Maestro version, read the tail of the debug log, or query the running app with `maestro-cli` (`status`, `doctor`, `list agents`, and other read-only verbs). What it finds is folded into the issue as context you would otherwise have to gather by hand.
 
 Two guarantees:
 
@@ -62,7 +66,11 @@ The agent is told to stay inside Maestro's own logs and configuration. Your sour
 
 ### 4. Review and Submit
 
-Once understanding reaches **80%**, a green **Submit Feedback** button appears. The AI presents a structured summary of what it will submit. Review the summary, tweak anything by continuing the conversation, then click **Submit**.
+You never have to finish the interview. As soon as you have said anything, a **Submit now** button sits beside the progress bar. It files the issue with whatever has been gathered so far, even while the agent is still thinking: your own words fill any field the agent has not, and the issue notes it was submitted early. Your screenshots, performance trace, and support package (if checked) go with it.
+
+Once understanding reaches **80%**, the button turns into a green **Submit Feedback**. The AI presents a structured summary of what it will submit. Review the summary, tweak anything by continuing the conversation, then click **Submit**.
+
+Every filed issue carries a **Live Diagnosis** section when something in the app looked wrong at the time: each affected agent's provider, state, error type, Auto Run progress, and pause or retry status, plus the auto-resume settings. It never includes agent names, error text, or paths.
 
 ![Submit feedback](./screenshots/feedback-3.png)
 
@@ -97,6 +105,7 @@ Agents and scripts can file the same issue through `maestro-cli`, with no modal:
 maestro-cli feedback auth                          # gh installed, logged in, and allowed to file? (--fresh skips the cache)
 maestro-cli feedback login                         # sign gh in (device code + browser)
 maestro-cli feedback accounts                      # which account the chat runs as (--use <key> to pick)
+maestro-cli feedback diagnose                      # the live app state the chat starts from (read-only)
 maestro-cli feedback search "tab closes on escape" # find duplicates first
 maestro-cli feedback submit -c bug -s "..." -e "..." -a "..." --attach shot.png --support-package
 maestro-cli feedback subscribe 1234 --comment "Same on Linux"

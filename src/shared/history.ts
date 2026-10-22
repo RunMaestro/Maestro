@@ -18,6 +18,7 @@
  */
 
 import type { HistoryEntry, HistoryEntryType } from './types';
+import { stripJsonBom } from './jsonUtils';
 
 /**
  * Every history entry type, in the order filter UIs display them.
@@ -30,6 +31,7 @@ import type { HistoryEntry, HistoryEntryType } from './types';
 export const ALL_HISTORY_ENTRY_TYPES: readonly HistoryEntryType[] = [
 	'USER',
 	'AGENT',
+	'RELAY',
 	'AUTO',
 	'CUE',
 ] as const;
@@ -56,10 +58,11 @@ export function visibleHistoryEntryTypes(maestroCueEnabled: boolean): HistoryEnt
  * `AGENT`; this coerces the entries already on disk so no history file has to be
  * rewritten.
  *
- * `sourceAgentName` is the discriminator: it is set ONLY by the consult writer
- * (`recordConsultHistory`), so an `AUTO` entry carrying one is unambiguously a
- * consult. Applied at both read chokepoints - `HistoryManager.getEntries` (app)
- * and `readSessionHistory` (CLI) - so every consumer sees the corrected type.
+ * `sourceAgentName` is the discriminator: only writers of `AGENT` entries set
+ * it (`recordConsultHistory`, and `maestro-cli send` run by another agent), so
+ * an `AUTO` entry carrying one is unambiguously a legacy consult. Applied at every
+ * read chokepoint - `HistoryManager.getEntries` (app), `readSessionHistory` (CLI),
+ * and `readHistory` (maestro-lib) - so every consumer sees the corrected type.
  */
 export function normalizeHistoryEntryType(entry: HistoryEntry): HistoryEntryType {
 	if (entry.type === 'AUTO' && entry.sourceAgentName) return 'AGENT';
@@ -92,8 +95,12 @@ export const HISTORY_VERSION = 1;
  * Default maximum number of history entries stored per session.
  * Used as fallback when maxLogBuffer setting is not available.
  * The actual limit is controlled by the maxLogBuffer user setting.
+ *
+ * This is also the `maxLogBuffer` default itself: the renderer store and the
+ * settings metadata both read it, so the value a fresh install shows in
+ * Settings is the value every writer falls back to.
  */
-export const MAX_ENTRIES_PER_SESSION = 5000;
+export const MAX_ENTRIES_PER_SESSION = 10000;
 
 /**
  * Session ID used for history entries that don't have an associated session.
@@ -107,9 +114,9 @@ export const ORPHANED_SESSION_ID = '_orphaned';
  * Every writer (main process, Cue, CLI) MUST run the setting through this so a
  * single writer can't quietly trim a file the others are allowed to grow: the
  * trim is destructive, so the smallest cap in play wins on disk. A busy Auto
- * Run agent hit exactly this - its Cue writes used the 5,000 fallback and
- * truncated a history the user had raised to 25,000, leaving only the last
- * few days visible.
+ * Run agent hit exactly this - its Cue writes used the built-in fallback (then
+ * 5,000) and truncated a history the user had raised to 25,000, leaving only
+ * the last few days visible.
  *
  * @param value - Raw setting value (may be undefined, a string, or garbage)
  * @returns A positive integer cap, or MAX_ENTRIES_PER_SESSION when unusable
@@ -302,4 +309,73 @@ export function parseHistoryJsonl(raw: string): ParsedHistoryJsonl {
 export function trimHistoryEntriesToLimit(entries: HistoryEntry[], limit: number): HistoryEntry[] {
 	if (limit < 1 || entries.length <= limit) return entries;
 	return entries.slice(entries.length - limit);
+}
+
+// ─── Legacy single-object format ────────────────────────────────────────────
+
+function findFirstJsonObjectEnd(raw: string): number | null {
+	const start = raw.search(/\S/);
+	if (start === -1 || raw[start] !== '{') return null;
+
+	let depth = 0;
+	let inString = false;
+	let escaped = false;
+
+	for (let i = start; i < raw.length; i++) {
+		const char = raw[i];
+
+		if (inString) {
+			if (escaped) {
+				escaped = false;
+			} else if (char === '\\') {
+				escaped = true;
+			} else if (char === '"') {
+				inString = false;
+			}
+			continue;
+		}
+
+		if (char === '"') {
+			inString = true;
+			continue;
+		}
+
+		if (char === '{') {
+			depth++;
+		} else if (char === '}') {
+			depth--;
+			if (depth === 0) {
+				return i + 1;
+			}
+		}
+	}
+
+	return null;
+}
+
+/**
+ * Parse a legacy single-object history file (`<sessionId>.json`).
+ *
+ * Tolerates one specific kind of damage: a complete object followed by
+ * trailing bytes (a second, torn write appended after the first). The first
+ * object is returned with `recovered: true`. Anything else that is not JSON
+ * throws the original `SyntaxError`, so the caller decides whether to
+ * quarantine (the desktop) or report (a read-only client).
+ */
+export function parseHistoryFileData(raw: string): { data: HistoryFileData; recovered: boolean } {
+	const normalized = stripJsonBom(raw);
+	try {
+		return { data: JSON.parse(normalized) as HistoryFileData, recovered: false };
+	} catch (error) {
+		if (!(error instanceof SyntaxError)) throw error;
+
+		const firstObjectEnd = findFirstJsonObjectEnd(normalized);
+		if (firstObjectEnd === null) throw error;
+
+		const trailing = normalized.slice(firstObjectEnd).trim();
+		if (trailing.length === 0) throw error;
+
+		const data = JSON.parse(normalized.slice(0, firstObjectEnd)) as HistoryFileData;
+		return { data, recovered: true };
+	}
 }

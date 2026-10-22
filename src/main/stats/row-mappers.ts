@@ -5,11 +5,12 @@
  * Centralizes the mapping logic that was previously duplicated across CRUD methods.
  */
 
-import type {
-	QueryEvent,
-	AutoRunSession,
-	AutoRunTask,
-	SessionLifecycleEvent,
+import {
+	normalizeAutoRunKind,
+	type QueryEvent,
+	type AutoRunSession,
+	type AutoRunTask,
+	type SessionLifecycleEvent,
 } from '../../shared/stats-types';
 import type { MigrationRecord } from './types';
 
@@ -46,6 +47,8 @@ export interface AutoRunSessionRow {
 	tasks_total: number | null;
 	tasks_completed: number | null;
 	project_path: string | null;
+	/** Added in v14; null only if a row somehow bypassed the column DEFAULT. */
+	kind: string | null;
 }
 
 export interface AutoRunTaskRow {
@@ -118,6 +121,7 @@ export function mapAutoRunSessionRow(row: AutoRunSessionRow): AutoRunSession {
 		tasksTotal: row.tasks_total ?? undefined,
 		tasksCompleted: row.tasks_completed ?? undefined,
 		projectPath: row.project_path ?? undefined,
+		kind: normalizeAutoRunKind(row.kind),
 	};
 }
 

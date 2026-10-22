@@ -157,6 +157,33 @@ describe('useInputAreaTextChange', () => {
 		expect(textarea.scrollTop).toBe(96);
 	});
 
+	it('coalesces a burst of keystrokes into one resize frame', () => {
+		const handlers = createHandlers();
+		const frames: FrameRequestCallback[] = [];
+		const requestFrame = vi.fn((callback: FrameRequestCallback): number => {
+			frames.push(callback);
+			return frames.length;
+		});
+		vi.stubGlobal('requestAnimationFrame', requestFrame);
+		render(<Harness handlers={handlers} />);
+		const textarea = screen.getByLabelText('input') as HTMLTextAreaElement;
+		Object.defineProperty(textarea, 'scrollHeight', { value: 640, configurable: true });
+
+		// Three keystrokes before the browser paints: each resize forces a layout,
+		// so they must share the one pending frame rather than queue three.
+		for (const value of ['a', 'ab', 'abc']) {
+			fireEvent.change(textarea, { target: { value, selectionStart: value.length } });
+		}
+		expect(requestFrame).toHaveBeenCalledTimes(1);
+
+		frames[0](0);
+		expect(textarea.style.height).toBe('176px');
+
+		// Once the frame has run, the next keystroke schedules a fresh one.
+		fireEvent.change(textarea, { target: { value: 'abcd', selectionStart: 4 } });
+		expect(requestFrame).toHaveBeenCalledTimes(2);
+	});
+
 	it('leaves the scroll position alone when editing an earlier line', () => {
 		const handlers = createHandlers();
 		const runAnimationFrame = vi.fn((callback: FrameRequestCallback): number => {

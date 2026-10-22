@@ -9,7 +9,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
-import type { Session, Group, BatchRunConfig } from '../../../../renderer/types';
+import type { AgentError, Session, Group, BatchRunConfig } from '../../../../renderer/types';
 import { useBatchProcessor } from '../../../../renderer/hooks';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
@@ -277,6 +277,7 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 				completedTasks: 100,
 				totalTasks: 100,
 				wasStopped: false,
+				kind: 'goal-driven',
 			})
 		);
 
@@ -664,6 +665,9 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 		await waitFor(() => {
 			expect(window.maestro.stats.startAutoRun).toHaveBeenCalled();
 		});
+		expect(window.maestro.stats.startAutoRun).toHaveBeenCalledWith(
+			expect.objectContaining({ kind: 'goal-driven' })
+		);
 		expect(mockPowerAddReason).toHaveBeenCalledWith(`autorun:${SESSION_ID}`);
 
 		const running = result.current.getBatchState(SESSION_ID);
@@ -871,6 +875,64 @@ describe('useGoalRunner (Goal-Driven Auto Run engine)', () => {
 		);
 
 		useSessionStore.setState({ sessions: [] } as any);
+	});
+
+	it('pauses on a limit error parked only on the batch state (#1804)', async () => {
+		// A `-batch-` failure never reaches the session's own agentError: the
+		// listener parks the batch with pauseBatchOnError and leaves the chat alone.
+		useSessionStore.setState({ sessions: [] } as any);
+
+		let pause: ((err: AgentError) => void) | undefined;
+		let spawnCalls = 0;
+		mockOnSpawnAgent.mockImplementation(async () => {
+			spawnCalls++;
+			if (spawnCalls === 1) {
+				pause?.({
+					type: 'rate_limited',
+					message: 'Usage limit reached',
+					recoverable: true,
+					agentId: 'claude-code',
+					timestamp: Date.now(),
+				});
+				return { success: false, error: 'Usage limit reached' };
+			}
+			return {
+				success: true,
+				agentSessionId: 'goal-agent',
+				response: progressResponse(100, 'done'),
+			};
+		});
+
+		const { result } = renderProcessor([createMockSession()], [createMockGroup()]);
+		pause = (err) => result.current.pauseBatchOnError(SESSION_ID, err, 0);
+
+		let finished = false;
+		act(() => {
+			void result.current
+				.startBatchRun(SESSION_ID, goalConfig('Ship it', 'Done when X', null), '/test/folder')
+				.then(() => {
+					finished = true;
+				});
+		});
+
+		await waitFor(() => {
+			expect(mockOnSpawnAgent).toHaveBeenCalledTimes(1);
+		});
+		expect(finished).toBe(false);
+		expect(result.current.getBatchState(SESSION_ID).errorPaused).toBe(true);
+
+		act(() => {
+			result.current.resumeAfterError(SESSION_ID);
+		});
+
+		await waitFor(() => {
+			expect(finished).toBe(true);
+		});
+		expect(mockOnSpawnAgent).toHaveBeenCalledTimes(2);
+		const progressEntries = mockOnAddHistoryEntry.mock.calls
+			.map((c) => c[0])
+			.filter((e) => typeof e?.summary === 'string' && e.summary.startsWith('Goal progress:'));
+		expect(progressEntries).toHaveLength(1);
 	});
 
 	it('does not start when Auto Run is globally disabled', async () => {

@@ -19,6 +19,8 @@ import { ClaudePlanUsage } from '../../../../renderer/components/UsageDashboard/
 import { useClaudeUsageStore } from '../../../../renderer/stores/claudeUsageStore';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import { useUIStore } from '../../../../renderer/stores/uiStore';
+import { selectModalData, useModalStore } from '../../../../renderer/stores/modalStore';
+import { useAuthOutageStore } from '../../../../renderer/stores/authOutageStore';
 import { THEMES } from '../../../../shared/themes';
 
 const theme = THEMES['dracula'];
@@ -39,7 +41,10 @@ beforeEach(() => {
 			refreshClaudeUsageSnapshots: refreshClaudeUsageSnapshotsMock,
 			getCustomEnvVars: getCustomEnvVarsMock,
 		},
+		fs: { homeDir: vi.fn().mockResolvedValue('/Users/me') },
 	};
+	useModalStore.getState().closeAll();
+	useAuthOutageStore.setState({ outages: {} });
 
 	useClaudeUsageStore.getState().__resetForTests();
 	useSessionStore.setState({ sessions: [] } as any);
@@ -331,6 +336,27 @@ describe('ClaudePlanUsage - unauthenticated row', () => {
 		expect(screen.queryAllByRole('progressbar')).toHaveLength(0);
 		expect(screen.getByText(/Not logged in/i)).toBeInTheDocument();
 		expect(screen.getByText(/\/login/i)).toBeInTheDocument();
+	});
+
+	it('offers a login pinned to the logged-out config dir', async () => {
+		seedSnapshots({
+			'/Users/me/.claude-0din': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				configDirKey: '/Users/me/.claude-0din',
+				authState: 'unauthenticated',
+				session: { percent: 0, resetsAt: '2026-05-15T00:00:00.000Z' },
+				weekAllModels: { percent: 0, resetsAt: '2026-05-15T00:00:00.000Z' },
+				weekSonnetOnly: { percent: 0, resetsAt: '2026-05-15T00:00:00.000Z' },
+			},
+		});
+
+		render(<ClaudePlanUsage theme={theme} autoRefresh={false} />);
+		fireEvent.click(screen.getByTestId('claude-plan-row-0din-unauthenticated-login'));
+
+		await waitFor(() => expect(selectModalData('reauth')(useModalStore.getState())).toBeDefined());
+		const data = selectModalData('reauth')(useModalStore.getState())!;
+		expect(data.providerKey).toBe('claude-code');
+		expect(data.host?.customEnvVars).toEqual({ CLAUDE_CONFIG_DIR: '/Users/me/.claude-0din' });
 	});
 
 	it('renders the unauthenticated CTA when its tab is selected', () => {

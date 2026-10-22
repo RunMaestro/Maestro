@@ -28,6 +28,7 @@ node_modules
 # Build outputs
 dist/
 release/
+native/maestro-computer-history/target/
 *.log
 # Showcase Mode's seeded group-chat transcript is source data, not a log file.
 # Without this the blanket *.log above swallows it and the demo chat ships empty.
@@ -72,3 +73,6 @@ yarn-error.log*
 
 # Bundled-plugin signing artifact (release-time build output; dev signs locally)
 examples/plugins/*/signature.json
+
+# Superseded local-only Lite prototype and visual verification artifacts
+src/main/lite/discovery-pairing-prototype/

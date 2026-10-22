@@ -28,7 +28,7 @@ interface ElectronTestFixtures {
  * Get the path to the main entry point
  */
 function getMainPath(): string {
-	return path.join(__dirname, '../../dist/main/index.js');
+	return path.join(__dirname, '../../dist/main/bootstrap.js');
 }
 
 /**

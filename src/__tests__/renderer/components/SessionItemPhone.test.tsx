@@ -59,6 +59,10 @@ const defaultProps = {
 };
 
 describe('SessionItem on a phone', () => {
+	const initialWorktreeSettings = {
+		showWorktreeProvider: useSettingsStore.getState().showWorktreeProvider,
+		showWorktreeBranchName: useSettingsStore.getState().showWorktreeBranchName,
+	};
 	beforeEach(() => {
 		useSettingsStore.setState({
 			showLeftPanelLocationPills: true,
@@ -68,6 +72,22 @@ describe('SessionItem on a phone', () => {
 
 	afterEach(() => {
 		mockedUsePhoneLayout.mockReturnValue(false);
+		useSettingsStore.setState(initialWorktreeSettings);
+	});
+
+	it('hides worktree providers on a phone while preserving the branch setting', () => {
+		mockedUsePhoneLayout.mockReturnValue(true);
+		useSettingsStore.setState({ showWorktreeProvider: true, showWorktreeBranchName: true });
+		render(
+			<SessionItem
+				{...defaultProps}
+				variant="worktree"
+				session={createMockSession({ toolType: 'codex', worktreeBranch: 'feat/x' })}
+			/>
+		);
+		expect(screen.queryByText('Codex')).not.toBeInTheDocument();
+		expect(screen.getByTitle('feat/x')).toBeInTheDocument();
+		expect(screen.queryByText('·')).not.toBeInTheDocument();
 	});
 
 	it('keeps the adornments on desktop', () => {

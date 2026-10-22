@@ -7,6 +7,7 @@ import prettierConfig from 'eslint-config-prettier';
 import globals from 'globals';
 import maestroPlugin from './eslint-rules/no-em-dash-in-comments.mjs';
 import fontSizesPlugin from './eslint-rules/no-arbitrary-font-sizes.mjs';
+import sharedBoundaryPlugin from './eslint-rules/no-shared-to-main-imports.mjs';
 
 export default tseslint.config(
 	// Ignore patterns
@@ -24,6 +25,7 @@ export default tseslint.config(
 			'src/web/public/**', // Service worker and static assets
 			'src/renderer/public/**', // Static browser scripts (splash, devtools)
 			'.cue-migration-backup-*/**', // Git-ignored migration backup snapshots
+			'src/shared/dataview/vendor/**', // Vendored Dataview source; upstream style, see docs/agent-guides/DATAVIEW.md
 		],
 	},
 
@@ -119,6 +121,37 @@ export default tseslint.config(
 			react: {
 				version: 'detect',
 			},
+		},
+	},
+
+	// Boundary guard: src/shared/** (maestro-lib included) must not import
+	// src/main/**. No exceptions; host services go through maestro-lib/host.ts.
+	{
+		files: ['src/shared/**/*.ts', 'src/shared/**/*.tsx'],
+		plugins: { 'shared-boundary': sharedBoundaryPlugin },
+		rules: {
+			'shared-boundary/no-shared-to-main-imports': 'error',
+		},
+	},
+
+	// Dataview boundary: src/shared/dataview/index.ts is the one import site for the
+	// vendored Dataview core. Only src/shared/dataview/** may reach into vendor/.
+	{
+		files: ['src/**/*.ts', 'src/**/*.tsx'],
+		ignores: ['src/shared/dataview/**'],
+		rules: {
+			'no-restricted-imports': [
+				'error',
+				{
+					patterns: [
+						{
+							regex: 'dataview/vendor(/|$)',
+							message:
+								"Import Dataview from 'src/shared/dataview' (index.ts), never from its vendor/ folder. See docs/agent-guides/DATAVIEW.md.",
+						},
+					],
+				},
+			],
 		},
 	}
 );

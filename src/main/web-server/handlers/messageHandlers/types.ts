@@ -1,12 +1,20 @@
+import type { TranslationReport } from '../../../../shared/maestro-lib/translation/types';
+import type {
+	NotificationInboxRequest,
+	NotificationInboxResult,
+} from '../../../../shared/notificationInbox';
 /**
  * Shared types for WebSocket message handlers.
  *
  * Extracted from messageHandlers.ts.
  */
 
-import { WebSocket } from 'ws';
+import type { QueueSteerResult } from '../../../../shared/chatSteering';
+import type { GroupChatSteerResult } from '../../../../shared/groupChatSteering';
 import type {
+	WebClient,
 	AutoRunDocument,
+	AutoRunState,
 	WebSettings,
 	SettingValue,
 	GroupData,
@@ -18,6 +26,7 @@ import type {
 	GroupChatState,
 	StartGroupChatOptions,
 	StartGroupChatResult,
+	SteerGroupChatRequest,
 	CueSubscriptionInfo,
 	CueActivityEntry,
 	UsageDashboardData,
@@ -40,9 +49,18 @@ import type {
 	ConsultAgentResult,
 	RenameTabResult,
 	SnoozeCommandCallback,
+	AutoRunSteeringCommandCallback,
+	WindowCommandCallback,
+	ThroughputGaugeCommandCallback,
 	OpenFileTabOptions,
 } from '../../types';
 import type { DebugPackageDependencies } from '../../../debug-package';
+import type {
+	CueBundleExportOutcome,
+	CueBundleExportRequest,
+	CueBundleImportOutcome,
+	CueBundleImportRequest,
+} from '../../../cue-bundle-service';
 import type { MediaOpenMode } from '../../../../shared/mediaTypes';
 import type { AgentDelegationNotice } from '../../../../shared/agentDelegation';
 import type { GroupAppearance, GroupUpdateRequest } from '../../../../shared/groupAppearance';
@@ -75,15 +93,7 @@ export interface WebClientMessage {
 	[key: string]: unknown;
 }
 
-/**
- * Web client connection info
- */
-export interface WebClient {
-	socket: WebSocket;
-	id: string;
-	connectedAt: number;
-	subscribedSessionId?: string;
-}
+export type { WebClient } from '../../types';
 
 /**
  * Session detail for command validation
@@ -112,6 +122,12 @@ export interface LiveSessionInfo {
  */
 export interface MessageHandlerCallbacks {
 	getSessionDetail: (sessionId: string) => SessionDetailForHandler | null;
+	/**
+	 * The live Auto Run state the desktop last broadcast for an agent (what the
+	 * Auto Run panel shows), or undefined when none is running. The session detail
+	 * does not carry it.
+	 */
+	getAutoRunState?: (sessionId: string) => AutoRunState | undefined;
 	executeCommand: (
 		sessionId: string,
 		command: string,
@@ -138,6 +154,12 @@ export interface MessageHandlerCallbacks {
 	starTab: (sessionId: string, tabId: string, starred: boolean) => Promise<boolean>;
 	/** `maestro-cli snooze` - park, list, wake, dismiss, reschedule, history. */
 	snoozeCommand: SnoozeCommandCallback;
+	/** `maestro-cli steer-auto-run` - send a note, list notes and replies, cancel. */
+	autoRunSteeringCommand: AutoRunSteeringCommandCallback;
+	/** `maestro-cli window` - list windows, move an agent or a group between them. */
+	windowCommand: WindowCommandCallback;
+	/** `maestro-cli throughput-gauge` - show, hide, toggle, set, reset-peak, status. */
+	throughputGaugeCommand: ThroughputGaugeCommandCallback;
 	reorderTab: (sessionId: string, fromIndex: number, toIndex: number) => Promise<boolean>;
 	toggleBookmark: (sessionId: string) => Promise<boolean>;
 	openFileTab: (
@@ -153,6 +175,7 @@ export interface MessageHandlerCallbacks {
 	) => Promise<{ success: boolean; tabId?: string }>;
 	closeBrowserTab: (tabId: string) => Promise<boolean>;
 	/** Open a modal/dashboard by `UiSurface.id`, optionally on a validated tab id. */
+	notificationInbox?: (request: NotificationInboxRequest) => Promise<NotificationInboxResult>;
 	openModal: (params: { surface: string; tab?: string }) => Promise<boolean>;
 	/** Render the Document Graph over an explicit file set or directory. */
 	openDocumentGraph: (params: {
@@ -163,7 +186,13 @@ export interface MessageHandlerCallbacks {
 	}) => Promise<boolean>;
 	openTerminalTab: (
 		sessionId: string,
-		config: { cwd?: string; shell?: string; name?: string | null; command?: string },
+		config: {
+			cwd?: string;
+			shell?: string;
+			name?: string | null;
+			command?: string;
+			inputRequired?: boolean;
+		},
 		options?: { background?: boolean }
 	) => Promise<{ success: boolean; tabId?: string }>;
 	writeTerminalTab: (
@@ -178,7 +207,8 @@ export interface MessageHandlerCallbacks {
 	newAITabWithPrompt: (
 		sessionId: string,
 		prompt: string,
-		background?: boolean
+		background?: boolean,
+		hidden?: boolean
 	) => Promise<{ success: boolean; tabId?: string; queued?: boolean; error?: string }>;
 	/** Consult another agent and return its answer (`maestro-cli ask`). */
 	consultAgent: (params: ConsultAgentParams) => Promise<ConsultAgentResult>;
@@ -190,7 +220,8 @@ export interface MessageHandlerCallbacks {
 		inputMode?: 'ai' | 'terminal',
 		tabId?: string,
 		images?: string[],
-		background?: boolean
+		background?: boolean,
+		held?: boolean
 	) => Promise<EnqueueCommandResult>;
 	listQueue: (sessionId?: string) => Promise<{
 		success: boolean;
@@ -201,6 +232,19 @@ export interface MessageHandlerCallbacks {
 		sessionId: string,
 		itemId: string
 	) => Promise<{ success: boolean; removed: boolean; error?: string }>;
+	steerQueueItem: (
+		sessionId: string,
+		itemId: string
+	) => Promise<{ success: boolean; result?: QueueSteerResult; error?: string }>;
+	setQueueItemPaused: (
+		sessionId: string,
+		itemId: string,
+		paused: boolean
+	) => Promise<{ success: boolean; found: boolean; paused?: boolean; error?: string }>;
+	mergeQueueItem: (
+		sessionId: string,
+		itemId: string
+	) => Promise<{ success: boolean; merged: boolean; mergedIntoId?: string; error?: string }>;
 	refreshAutoRunDocs: (sessionId: string, background?: boolean) => Promise<boolean>;
 	configureAutoRun: (
 		sessionId: string,
@@ -334,7 +378,7 @@ export interface MessageHandlerCallbacks {
 	updateSessionConfig: (
 		sessionId: string,
 		configPatch: Record<string, unknown>
-	) => Promise<{ success: boolean; error?: string }>;
+	) => Promise<TranslationReport>;
 	getGitStatus: (sessionId: string) => Promise<GitStatusResult>;
 	getGitDiff: (sessionId: string, filePath?: string) => Promise<GitDiffResult>;
 	getGitBranchesForSession: (sessionId: string) => Promise<GitBranchesResult>;
@@ -347,7 +391,12 @@ export interface MessageHandlerCallbacks {
 	) => Promise<StartGroupChatResult | null>;
 	getGroupChatState: (chatId: string) => Promise<GroupChatState | null>;
 	stopGroupChat: (chatId: string) => Promise<boolean>;
+	archiveGroupChat: (chatId: string, archived: boolean) => Promise<boolean>;
 	sendGroupChatMessage: (chatId: string, message: string) => Promise<boolean>;
+	steerGroupChat?: (
+		chatId: string,
+		request: SteerGroupChatRequest
+	) => Promise<GroupChatSteerResult>;
 	mergeContext: (sourceSessionId: string, targetSessionId: string) => Promise<boolean>;
 	transferContext: (sourceSessionId: string, targetSessionId: string) => Promise<boolean>;
 	summarizeContext: (sessionId: string) => Promise<boolean>;
@@ -375,6 +424,10 @@ export interface MessageHandlerCallbacks {
 	removeCuePipeline: (
 		identifier: string
 	) => Promise<{ ok: true } | { ok: false; code: string; message: string }>;
+	/** Same function as the Cue modal's Bundles tab. */
+	exportCueBundle: (request: CueBundleExportRequest) => Promise<CueBundleExportOutcome>;
+	/** Same function as the Cue modal's Bundles tab; agents land in the running app. */
+	importCueBundle: (request: CueBundleImportRequest) => Promise<CueBundleImportOutcome>;
 	getUsageDashboard: (timeRange: 'day' | 'week' | 'month' | 'all') => Promise<UsageDashboardData>;
 	getAchievements: () => Promise<AchievementData[]>;
 	generateDirectorNotesSynopsis: (

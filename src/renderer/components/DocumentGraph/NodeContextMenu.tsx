@@ -13,6 +13,7 @@ import type { Theme } from '../../types';
 import type { GraphNodeData } from './graphDataBuilder';
 import { useClickOutside, useContextMenuPosition } from '../../hooks/ui';
 import { safeClipboardWrite } from '../../utils/clipboard';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 /**
  * Props for the NodeContextMenu component
@@ -115,7 +116,7 @@ export function NodeContextMenu({
 	return (
 		<div
 			ref={menuRef}
-			className="fixed z-[10000] py-1 rounded-md shadow-xl border whitespace-nowrap"
+			className="fixed z-[10000] py-1 rounded-md whitespace-nowrap"
 			style={{
 				left,
 				top,
@@ -125,8 +126,7 @@ export function NodeContextMenu({
 				maxHeight,
 				overflowY: 'auto',
 				opacity: ready ? 1 : 0,
-				backgroundColor: theme.colors.bgSidebar,
-				borderColor: theme.colors.border,
+				...elevatedSurfaceStyle(theme),
 				minWidth: '10rem',
 			}}
 		>

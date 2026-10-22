@@ -12,7 +12,7 @@
  * would not catch this: the pre-guard effect-based reset cleared the grant a tick
  * later, so the transient stale render still happened but left no lasting trace.
  */
-import { act, cleanup, render, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import React from 'react';
 import { ExtensionDetails } from '../../../../../renderer/components/Settings/Extensions/ExtensionDetails';
@@ -107,6 +107,8 @@ describe('ExtensionDetails dispatch allow-list - cross-plugin stale-grant guard'
 		const { rerender } = render(
 			<ExtensionDetails {...baseProps()} ext={pluginTile('plugin-a')} getGrants={getGrants} />
 		);
+		// The allow-list editor lives on the Permissions tab.
+		fireEvent.click(screen.getByTestId('extension-subtab-permissions'));
 
 		// A's editor renders with A's scope once its grant loads.
 		await waitFor(() =>
@@ -119,6 +121,9 @@ describe('ExtensionDetails dispatch allow-list - cross-plugin stale-grant guard'
 		rerender(
 			<ExtensionDetails {...baseProps()} ext={pluginTile('plugin-b')} getGrants={getGrants} />
 		);
+		// Switching extensions resets the tab; go back to Permissions while B's
+		// grant is still pending, which is the window the guard has to close.
+		fireEvent.click(screen.getByTestId('extension-subtab-permissions'));
 
 		// The stale pairing (B's id + A's scope) must NEVER be rendered.
 		expect(allowlistRenders.some((r) => r.pluginId === 'plugin-b' && r.scope === 'agent-A')).toBe(

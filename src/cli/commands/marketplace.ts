@@ -9,8 +9,7 @@
  */
 
 import { withMaestroClient } from '../services/maestro-client';
-import { failCommand, resolveAgentOrFail } from '../services/session-command';
-import { exitCodeForError, exitWith } from '../exit-codes';
+import { failCommand, failFromError, resolveAgentOrFail } from '../services/session-command';
 import { generateDefaultFolderName } from '../../shared/marketplaceFolderName';
 import type { MarketplaceManifest, MarketplacePlaybook } from '../../shared/marketplace-types';
 
@@ -31,13 +30,6 @@ interface ListOptions extends JsonOption {
 interface ImportOptions extends JsonOption {
 	agent: string;
 	folder?: string;
-}
-
-function failFromError(error: unknown, json?: boolean): never {
-	const message = error instanceof Error ? error.message : String(error);
-	if (json) console.log(JSON.stringify({ success: false, error: message }));
-	else console.error(`Error: ${message}`);
-	return exitWith(exitCodeForError(error));
 }
 
 async function fetchManifest(refresh: boolean): Promise<MarketplaceManifest> {

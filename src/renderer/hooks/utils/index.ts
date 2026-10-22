@@ -8,6 +8,15 @@
 // Identity-stable callback (keeps a rebuilt callback from remounting a subtree)
 export { useStableCallback } from './useStableCallback';
 
+// Stale-while-revalidate data cache that survives a surface unmounting
+export {
+	useCachedResource,
+	readCachedResource,
+	revalidateCachedResource,
+	clearCachedResources,
+} from './useCachedResource';
+export type { UseCachedResourceOptions, UseCachedResourceResult } from './useCachedResource';
+
 // Debounce and throttle utilities
 export { useDebouncedValue, useThrottledCallback, useDebouncedCallback } from './useThrottle';
 

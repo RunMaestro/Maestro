@@ -16,7 +16,7 @@
 		     violation whenever the renderer boots under Vite. -->
 		<meta
 			http-equiv="Content-Security-Policy"
-			content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' http://localhost:8097; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: https: blob: maestro-image:; connect-src 'self' https: wss: ws:; frame-src 'self' maestro-concerto:; worker-src 'self' blob:; media-src 'self' blob: maestro-media:;"
+			content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' http://localhost:8097; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: https: blob: maestro-image:; connect-src 'self' https: wss: ws:; frame-src 'self' maestro-concerto:; worker-src 'self' blob:; media-src 'self' blob: maestro-media: https: http:;"
 		/>
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 		<title>Maestro - Agent Orchestration Command Center</title>
@@ -37,6 +37,10 @@
 			type="font/woff2"
 			crossorigin
 		/>
+
+		<!-- Tags <html> as the Quick Chat or HUD window before the first paint,
+		     so the splash below never shows there (external for CSP compliance) -->
+		<script src="./window-mode.js"></script>
 
 		<!-- Critical CSS for splash screen - inline to prevent FOUC -->
 		<style>
@@ -80,6 +84,17 @@
 			#initial-splash.hidden {
 				opacity: 0;
 				pointer-events: none;
+			}
+
+			/* Quick Chat and the cadenza HUD (tagged by window-mode.js) never show
+			   the splash, and stay transparent until index.css loads. */
+			html.quick-chat-window #initial-splash,
+			html.cadenza-hud #initial-splash {
+				display: none;
+			}
+			html.quick-chat-window body,
+			html.cadenza-hud body {
+				background-color: transparent;
 			}
 
 			.splash-container {

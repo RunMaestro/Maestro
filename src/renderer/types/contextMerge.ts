@@ -8,6 +8,7 @@
 
 import type { ToolType, UsageStats } from '../../shared/types';
 import type { LogEntry } from './index';
+import type { ClaudeTokenSourceFields } from '../../shared/claudeTokenMode';
 
 /**
  * Represents a source of context data that can be merged.
@@ -143,6 +144,8 @@ export interface SummarizeRequest {
 	customArgs?: string;
 	/** Custom environment variables for the agent */
 	customEnvVars?: Record<string, string>;
+	/** The agent's Claude token source, so a TUI agent summarizes through maestro-p */
+	claudeTokenSource?: ClaudeTokenSourceFields;
 }
 
 /**

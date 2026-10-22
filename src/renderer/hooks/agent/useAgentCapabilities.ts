@@ -55,7 +55,8 @@ const capabilitiesCache = new Map<string, AgentCapabilities>();
  * ```
  */
 export function useAgentCapabilities(
-	agentId: string | ToolType | null | undefined
+	agentId: string | ToolType | null | undefined,
+	projectKnowledgeDirectory?: string
 ): UseAgentCapabilitiesReturn {
 	const [capabilities, setCapabilities] = useState<AgentCapabilities>(
 		agentId && capabilitiesCache.has(agentId)
@@ -109,9 +110,11 @@ export function useAgentCapabilities(
 	// Helper to check a specific capability
 	const hasCapability = useCallback(
 		(capability: keyof AgentCapabilities): boolean => {
-			return !!capabilities[capability];
+			return capability === 'supportsProjectMemory' && projectKnowledgeDirectory
+				? true
+				: !!capabilities[capability];
 		},
-		[capabilities]
+		[capabilities, projectKnowledgeDirectory]
 	);
 
 	return {

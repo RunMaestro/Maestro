@@ -8,9 +8,9 @@
  * in `cue-integration-test-helpers.ts`), which means no test has ever run a
  * real WHERE clause against the real schema.
  *
- * Node 22+ bundles SQLite as `node:sqlite`. This shim maps the three
- * better-sqlite3 methods `cue-db.ts` uses (`pragma`, `prepare`, `close`) onto
- * it, so a test can do:
+ * Node 22+ bundles SQLite as `node:sqlite`. This shim maps the four
+ * better-sqlite3 methods `cue-db.ts` uses (`pragma`, `prepare`, `transaction`,
+ * `close`) onto it, so a test can do:
  *
  *   vi.mock('better-sqlite3', () => nodeSqliteBetterSqlite3Mock());
  *
@@ -22,6 +22,7 @@
  * `cue-db.test.ts` is still the lighter tool.
  */
 
+import { existsSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 
 /**
@@ -46,8 +47,22 @@ export function canLoadNodeSqlite(): boolean {
 class NodeSqliteDatabaseShim {
 	private readonly db: DatabaseSync;
 
-	constructor(filename: string) {
-		this.db = new DatabaseSync(filename);
+	/**
+	 * Honors the better-sqlite3 options whose behavior a caller can depend on:
+	 * `readonly` (a read-only open of a WAL store is observably different, it
+	 * can create sidecar files it cannot remove), `fileMustExist`, and
+	 * `timeout` as the busy timeout.
+	 */
+	constructor(
+		filename: string,
+		options: { readonly?: boolean; fileMustExist?: boolean; timeout?: number } = {}
+	) {
+		const inMemory = filename === '' || filename === ':memory:';
+		if (options.fileMustExist && !inMemory && !existsSync(filename)) {
+			throw Object.assign(new Error('unable to open database file'), { code: 'SQLITE_CANTOPEN' });
+		}
+		this.db = new DatabaseSync(filename, { readOnly: options.readonly === true });
+		if (options.timeout !== undefined) this.db.exec(`PRAGMA busy_timeout = ${options.timeout}`);
 	}
 
 	/**
@@ -66,6 +81,26 @@ class NodeSqliteDatabaseShim {
 
 	prepare(sql: string): ReturnType<DatabaseSync['prepare']> {
 		return this.db.prepare(sql);
+	}
+
+	/**
+	 * better-sqlite3's `transaction(fn)` returns a wrapper that runs `fn`
+	 * between BEGIN and COMMIT, rolling back and rethrowing if it throws.
+	 */
+	transaction<Args extends unknown[], Result>(
+		fn: (...args: Args) => Result
+	): (...args: Args) => Result {
+		return (...args) => {
+			this.db.exec('BEGIN');
+			try {
+				const result = fn(...args);
+				this.db.exec('COMMIT');
+				return result;
+			} catch (err) {
+				this.db.exec('ROLLBACK');
+				throw err;
+			}
+		};
 	}
 
 	close(): void {

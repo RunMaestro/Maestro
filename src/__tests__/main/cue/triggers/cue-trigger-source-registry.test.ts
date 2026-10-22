@@ -84,6 +84,7 @@ const NULL_CASES: Array<{
 	{ event: 'task.pending', overrides: {}, reason: 'missing watch' },
 	{ event: 'github.pull_request', overrides: {}, reason: 'missing repo' },
 	{ event: 'github.issue', overrides: {}, reason: 'missing repo' },
+	{ event: 'github.label', overrides: {}, reason: 'missing repo' },
 	{ event: 'app.startup', overrides: {}, reason: 'handled by the runtime' },
 	{ event: 'agent.completed', overrides: {}, reason: 'handled by the completion service' },
 ];

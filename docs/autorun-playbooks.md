@@ -77,6 +77,44 @@ Auto Run supports running multiple documents in sequence:
 5. Enable **Loop Mode** to cycle back to the first document after completing the last
 6. Click **Go** to start running documents
 
+## Scheduling a Run
+
+By default an Auto Run starts as soon as you press **Go**. The **Start** control
+in the Auto Run window switches that to a specific date and time:
+
+| Option            | Description                                                                 |
+| ----------------- | --------------------------------------------------------------------------- |
+| **Now**           | The default. Press Go and the run starts immediately.                       |
+| **At a set time** | Pick a date and time; the run fires once, and a run that starts is removed. |
+
+When a time is set the **Go** button becomes **Schedule**. The most common use
+is starting a run after your provider's token limit resets, so you wake up to
+finished work rather than a run that stalled at 2am.
+
+A few things worth knowing:
+
+- The time is your local time, and the schedule survives quitting and reopening
+  Maestro.
+- The documents are pinned when you schedule, not when the run fires. Repointing
+  the agent's Auto Run folder afterwards will not swap out what runs.
+- You can schedule while the agent is busy. Readiness is checked when the run
+  actually fires, not when you schedule it.
+- Scheduling is one-shot. For a run that repeats, use a recurring
+  [Maestro Cue](./maestro-cue) task instead.
+- A run that fails to start is kept, not removed. It stays under Scheduled Tasks
+  in the Cue window so you can see why it did not start and trigger it again.
+- A scheduled run keeps its **Run in Worktree** choice. A new worktree is
+  created when the run fires, not when you schedule it. If the worktree agent or
+  path you picked is gone by then, the run does not start and the schedule is
+  kept; it never falls back to the agent's own checkout.
+- The auto-resume settings travel with the schedule too.
+- A script or another agent can schedule the same run with
+  `maestro-cli cue schedule --at <time> --agent <id> --auto-run <documents...>`.
+
+Scheduled runs are stored as Maestro Cue tasks, so **Start** requires the
+Maestro Cue Encore Feature. Pending runs appear under **Scheduled Tasks** in the
+Cue window, which is also where you cancel one.
+
 ## Model Override
 
 The run configuration modal has **Model** and **Effort** pickers, both defaulting to **Use agent default**. Picking a value runs _this Auto Run only_ on that model: every task spawn in the run uses it, the agent's own configured model is left alone (its interactive tabs keep using the default), and the override is forgotten when the run ends. The pickers reset to the default each time the modal opens, and are hidden for providers that expose no model or effort options. Worktree runs honor the override too, without changing the child worktree agent's own configured model.
@@ -253,7 +291,7 @@ Capture is in-memory only - it does not survive an app restart, and it is bounde
 
 ## Steering a Run in Flight
 
-You do not have to stop a run to change its direction. Open the **Thought Stream** for the running agent, click the **compass** button in its header, type what you want changed, and press Enter: the message becomes a **steering note** and is delivered at the start of the next task.
+You do not have to stop a run to change its direction. Open the **Thought Stream** for the running agent, click **Steer Auto Run** in the bar under its header, type what you want changed, and press Enter: the message becomes a **steering note** and is delivered at the start of the next task.
 
 Steering lives in the Thought Stream and nowhere else. The agent's chat composer keeps its ordinary meaning during a run: a message you type there is a message to the agent, queued for when the run finishes.
 
@@ -265,13 +303,19 @@ Use it for the things you notice while watching:
 - `The API changed. Use the v3 endpoint for the rest of these tasks.`
 - `Do not commit anything else until I say so.`
 
-**Where to see it.** Notes are listed in the Thought Stream just under the search box: amber with a compass while a note is waiting, green with a check once a task has picked it up. The `x` on a waiting note takes it back. The Auto Run pill above the composer also shows how many notes are still waiting, so you can see one is pending without opening the panel.
+**The bar.** While a run can be steered, the bar under the Thought Stream header holds two buttons, **Search thought stream** and **Steer Auto Run**. Clicking either swaps the whole bar for that input; sending a note, clearing a search, or pressing Escape brings the buttons back. A search that is still filtering the stream keeps the bar on the search box, with a small compass at its right edge so you can steer without dropping the filter. The Steer button counts the notes that are still waiting.
+
+**Where to see it.** Notes are listed in the Thought Stream just under that bar: amber with a compass while a note is waiting, green with a check once a task has picked it up. The `x` on a waiting note takes it back.
+
+**What came back.** Under a delivered note sits the reply of the task that took it: one line while collapsed, the task's whole response when you click it. It reads "still working" until that task finishes, and it is marked in red if the task failed. Notes that one task picked up together share a single reply. The Auto Run pill above the composer also shows how many notes are still waiting, so you can see one is pending without opening the panel.
 
 **What it applies to.** The note goes to the next task and stays in force for the rest of the run wherever it still makes sense. It is delivered once - a later task does not get a repeat - so if the change is permanent, also edit the document.
 
-**When the compass is not there.** The button only appears while a run this copy of Maestro started is in flight. Nothing is running, the run already finished, or the run belongs to another Maestro client watching the same agent: there is no next task to hand a note to, so no button.
+**From the command line.** `maestro-cli steer-auto-run send "<note>" -a <agent-id>` sends a note exactly as the button does, `steer-auto-run list` reads back the notes and each task's reply, and `steer-auto-run cancel <note-id>` takes back a waiting one. See [Steering a Running Auto Run](cli.md#steering-a-running-auto-run).
 
-Notes belong to the run they were typed during. Anything still waiting when the run ends is discarded rather than ambushing a later run, and the delivered list is cleared with it.
+**When the Steer button is not there.** It only appears while a run this copy of Maestro started is in flight. Nothing is running, the run already finished, or the run belongs to another Maestro client watching the same agent: there is no next task to hand a note to, so the bar is the search box alone.
+
+Notes belong to the run they were typed during. Anything still waiting when the run ends is discarded rather than ambushing a later run. Delivered notes and their replies stay readable after the run finishes, since the reply to a run's last note arrives as it ends, and are cleared when the next run starts.
 
 ## Session Isolation
 
@@ -283,7 +327,7 @@ Each task executes in a completely fresh AI session with its own unique session 
 
 This isolation is critical for playbooks with `Reset on Completion` documents that loop indefinitely. Each loop creates a fresh working copy from the original document, and the AI approaches it without memory of previous iterations.
 
-> **Note:** [Nudge messages](./general-usage#creating-agents) configured on an agent do not apply to Auto Run tasks. Nudge messages are only appended to interactive AI messages typed by the user. If you need persistent instructions for Auto Run tasks, include them directly in your task document or use environment variables.
+> **Note:** An agent's [New Session Message](./general-usage#when-each-message-is-sent) is prefixed to every Auto Run task, because each task starts a new provider session. Its Nudge Message is not: nudge messages are only appended to messages you type to the agent. For persistent instructions in Auto Run, use the New Session Message or include them in your task document.
 
 ## Environment Variables
 
@@ -454,11 +498,13 @@ The three levels mean the floor, the middle, and the ceiling of whatever that pr
 
 | You write         | Claude Code sends | Codex sends |
 | ----------------- | ----------------- | ----------- |
-| `effort="low"`    | `low`             | `minimal`   |
+| `effort="low"`    | `low`             | `low`       |
 | `effort="medium"` | `high`            | `medium`    |
 | `effort="high"`   | `max`             | `xhigh`     |
 
 Write the Maestro level, not the provider's word. A playbook that says `effort="high"` asks for the most that provider offers, whatever it happens to be called, and keeps working when a provider adds a rung.
+
+Providers also retire rungs. If a provider rejects the value a level maps to, Maestro runs that task once more at the agent's configured effort, stops asking for the value until it restarts, and tells you which value was rejected.
 
 ### Provider support
 
@@ -595,7 +641,7 @@ In the desktop app the run **pauses** there, surfaces the reason (and the option
 
 A headless CLI run has no human to wait for, so `maestro run-playbook` reports the gate as a `document_gated` event naming the reason and the line, then moves to the next document. The marker means the same thing on both surfaces; only the response differs.
 
-A gate is the right answer whenever the blocker is a person. Reaching for the halt marker instead throws away every remaining task in every remaining document because one task needed a signature.
+Use a gate sparingly. Auto Runs are meant to run unattended, so human work (review, sign-off, a visual check, a real API key) belongs in a trailing **Manual Follow-Up (not executed by Auto Run)** section by default, where it never stops the run. A gate earns its place only when you want the run to stop at that point, or the next tasks cannot execute at all without something only you can supply. Reaching for the halt marker instead is worse still: it throws away every remaining task in every remaining document because one task needed a signature.
 
 ## Stalled Documents
 
@@ -630,7 +676,7 @@ Halting should be **rare**. Agents are told to reserve it for the case where con
 
 | Situation                                                              | Right mechanism                                        |
 | ---------------------------------------------------------------------- | ------------------------------------------------------ |
-| A task needs a person                                                  | HITL gate - pauses until you click Done, Resume        |
+| A task needs a person                                                  | Manual Follow-Up bullet; a HITL gate only to stop here |
 | A task the agent cannot do                                             | Leave it unchecked; the stall guard skips the document |
 | One task failed, others are independent                                | Nothing; the run continues                             |
 | Everything downstream is now invalid, or continuing would cause damage | Halt                                                   |

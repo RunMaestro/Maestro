@@ -19,12 +19,14 @@ import { CARD_PRIORITIES, CARD_STATUSES } from '../../shared/board/types';
 import { getBlockers, hasCycle } from '../../shared/board/graph';
 import { isPathWithin } from '../../shared/board/pool';
 import { buildCardWorktreeRef } from '../../shared/board/worktree';
+import { useResizableModal } from '../hooks/ui/useResizableModal';
+import { ResizeHandles } from './ui/ResizeHandles';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { useFocusAfterRender } from '../hooks/utils/useFocusAfterRender';
 import { ConfirmModal } from './ConfirmModal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
-import { useSessionStore, selectActiveSession, updateSessionWith } from '../stores/sessionStore';
-import { aiTabFocusFields } from '../utils/tabHelpers';
+import { useSessionStore, selectActiveSession } from '../stores/sessionStore';
+import { jumpToAgent } from '../services/agentNavigation';
 import { getModalActions } from '../stores/modalStore';
 import { notifyToast } from '../stores/notificationStore';
 import { generateUUID } from '../../shared/uuid';
@@ -159,8 +161,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 	// in useSessionSwitchCallbacks).
 	const handleJumpToAgent = useCallback(
 		(agentId: string) => {
-			useSessionStore.getState().setActiveSessionId(agentId);
-			updateSessionWith(agentId, (s) => ({ ...s, ...aiTabFocusFields() }));
+			jumpToAgent(agentId);
 			onClose();
 		},
 		[onClose]
@@ -791,6 +792,12 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 		[cardsByStatus]
 	);
 
+	const resizing = useResizableModal({
+		resizeKey: 'board',
+		defaultSize: { width: 1200, height: 860 },
+		minSize: { width: 400, height: 320 },
+		externalRef: dialogRef,
+	});
 	return createPortal(
 		<div
 			className="fixed inset-0 flex items-center justify-center select-none"
@@ -810,14 +817,17 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 				tabIndex={-1}
 				className="relative rounded-xl shadow-2xl flex flex-col outline-none"
 				style={{
-					width: '94vw',
-					maxWidth: 1200,
-					height: '88vh',
-					maxHeight: 860,
+					...resizing.style,
 					backgroundColor: theme.colors.bgMain,
 					border: `1px solid ${theme.colors.border}`,
 				}}
 			>
+				<ResizeHandles
+					onResizeStart={resizing.onResizeStart}
+					onResetSize={resizing.onResetSize}
+					canReset={resizing.canReset}
+					accentColor={theme.colors.accent}
+				/>
 				{/* Header */}
 				<div
 					className="shrink-0 flex items-center justify-between px-5 py-4 border-b gap-3"

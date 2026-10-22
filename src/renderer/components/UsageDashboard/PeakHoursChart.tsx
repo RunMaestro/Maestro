@@ -19,6 +19,7 @@ import { formatDurationCompact as formatDuration } from '../../../shared/formatt
 import { MetricModeToggle, type ChartMetricMode } from './MetricModeToggle';
 import { useTokenSeries } from './TokenSeriesContext';
 import { ChartLoadingOverlay } from './ChartLoadingOverlay';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 type MetricMode = ChartMetricMode;
 
@@ -172,10 +173,8 @@ export const PeakHoursChart = memo(function PeakHoursChart({
 										<div
 											className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 rounded text-xs whitespace-nowrap z-10"
 											style={{
-												backgroundColor: theme.colors.bgActivity,
+												...elevatedSurfaceStyle(theme),
 												color: theme.colors.textMain,
-												border: `1px solid ${theme.colors.border}`,
-												boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
 											}}
 										>
 											<div className="font-medium">{formatHour(h.hour)}</div>

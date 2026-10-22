@@ -82,6 +82,18 @@ describe('wireMultiWindowTelemetry', () => {
 		expect(db.recordWindowOpened).toHaveBeenNthCalledWith(2, expect.any(Number), 3);
 	});
 
+	it('ignores feature windows: a floating widget is neither recorded nor counted', () => {
+		const db = makeStatsDb();
+		wireMultiWindowTelemetry(registry, { getStatsDb: () => db });
+
+		registry.create({ windowId: 'main', browserWindow: makeWindow(), isMain: true });
+		registry.create({ windowId: 'gauge', browserWindow: makeWindow(), kind: 'floating-widget' });
+		registry.create({ windowId: 'w2', browserWindow: makeWindow(), isMain: false });
+
+		expect(db.recordWindowOpened).toHaveBeenCalledTimes(1);
+		expect(db.recordWindowOpened).toHaveBeenCalledWith(expect.any(Number), 2);
+	});
+
 	it('records nothing when statsCollectionEnabled is false', () => {
 		const db = makeStatsDb();
 		const settingsStore = { get: vi.fn(() => false) };
@@ -91,6 +103,19 @@ describe('wireMultiWindowTelemetry', () => {
 		registry.create({ windowId: 'w2', browserWindow: makeWindow(), isMain: false });
 
 		expect(settingsStore.get).toHaveBeenCalledWith('statsCollectionEnabled');
+		expect(db.recordWindowOpened).not.toHaveBeenCalled();
+	});
+
+	it('records nothing when the Usage & Stats Encore Feature is off', () => {
+		const db = makeStatsDb();
+		const settingsStore = {
+			get: vi.fn((key: string) => (key === 'encoreFeatures' ? { usageStats: false } : undefined)),
+		};
+		wireMultiWindowTelemetry(registry, { getStatsDb: () => db, settingsStore });
+
+		registry.create({ windowId: 'main', browserWindow: makeWindow(), isMain: true });
+		registry.create({ windowId: 'w2', browserWindow: makeWindow(), isMain: false });
+
 		expect(db.recordWindowOpened).not.toHaveBeenCalled();
 	});
 

@@ -16,6 +16,7 @@ import { Search, X } from 'lucide-react';
 import { GhostIconButton } from '../ui/GhostIconButton';
 import type { Theme } from '../../types';
 import { searchSettings, type SearchableSetting } from './searchableSettings';
+import { useSettingsStore } from '../../stores/settingsStore';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 
 export interface SettingsSearchProps {
@@ -29,13 +30,16 @@ export function useSettingsSearch({
 	isOpen,
 	onSearchActiveChange,
 	onNavigate,
+	additionalSettings = [],
 }: Pick<SettingsSearchProps, 'isOpen' | 'onSearchActiveChange'> & {
+	additionalSettings?: SearchableSetting[];
 	onNavigate?: (tab: SearchableSetting['tab'], settingId: string) => void;
 }) {
 	const [query, setQuery] = useState('');
 	const [selectedIndex, setSelectedIndex] = useState(0);
 	const inputRef = useRef<HTMLInputElement>(null);
-	const results = searchSettings(query);
+	const encoreFeatures = useSettingsStore((s) => s.encoreFeatures);
+	const results = searchSettings(query, additionalSettings, encoreFeatures);
 	const isActive = query.length > 0;
 
 	// Notify parent when search active state changes

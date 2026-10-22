@@ -334,4 +334,22 @@ describe('remarkCodexDirectives', () => {
 		const on = buildMarkdownPlugins({ codexDirectives: true });
 		expect(directives(transform(markdown, on.remarkPlugins, on.rehypePlugins))).toHaveLength(1);
 	});
+
+	it('turns a visualize content reference into a directive with no private-use residue', () => {
+		const markdown = 'Mocks:\n\n\uE200visualize\uE202{"path":"/Users/p/dropdown-hints.html"}\uE201';
+		const tree = transform(markdown);
+		expect(directives(tree)).toEqual([
+			expect.objectContaining({
+				name: 'visualize',
+				attributes: { path: '/Users/p/dropdown-hints.html' },
+			}),
+		]);
+		expect(toHtml(tree)).not.toMatch(/[\uE200-\uE202]/);
+	});
+
+	it('drops a cite reference and keeps the sentence around it', () => {
+		const tree = transform('Ships Tuesday.\uE200cite\uE202turn0view0\uE201 Done.');
+		expect(directives(tree)).toHaveLength(0);
+		expect(textNodes(tree).join('')).toBe('Ships Tuesday. Done.');
+	});
 });

@@ -56,6 +56,8 @@ interface GroupChatPanelProps {
 	/** The chat's pending sends as MAIN reports them. Undefined until loaded. */
 	queueState?: GroupChatQueueState;
 	onResumeQueue?: () => void;
+	/** Steer a queued message into the round that is running. */
+	onSteerQueuedItem?: (itemId: string) => void;
 	onRemoveQueuedItem?: (itemId: string) => void;
 	onReorderQueuedItems?: (fromIndex: number, toIndex: number) => void;
 	// Markdown toggle (Cmd+E)
@@ -110,6 +112,7 @@ export function GroupChatPanel({
 	onOpenLightbox,
 	queueState,
 	onResumeQueue,
+	onSteerQueuedItem,
 	onRemoveQueuedItem,
 	onReorderQueuedItems,
 	markdownEditMode,
@@ -260,6 +263,7 @@ export function GroupChatPanel({
 				onOpenLightbox={onOpenLightbox}
 				queueState={queueState}
 				onResumeQueue={onResumeQueue}
+				onSteerQueuedItem={onSteerQueuedItem}
 				onRemoveQueuedItem={onRemoveQueuedItem}
 				onReorderQueuedItems={onReorderQueuedItems}
 				enterToSendAI={enterToSendAI}

@@ -8,11 +8,13 @@ import {
 	Pencil,
 	Smile,
 	Ungroup,
+	X,
 } from 'lucide-react';
 import type { TabGroup, Theme } from '../../types';
 import { useTabHoverOverlay } from '../../hooks/tabs/useTabHoverOverlay';
 import { useFocusAfterRender } from '../../hooks/utils/useFocusAfterRender';
-import { useModalStore } from '../../stores/modalStore';
+import { requestBreakApartTabGroup, requestCloseTabGroup } from '../../services/tabGroupConfirm';
+import { collectLeafTabRefs } from '../../utils/panelLayout';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { EmojiPickerOverlay } from '../ui';
 import { LongPressable } from '../shared/LongPressable';
@@ -33,6 +35,8 @@ export interface GroupTabChipProps {
 	onSetEmoji?: (groupId: string, emoji: string) => void;
 	/** Break the group apart into standalone tabs (gated by this chip's confirm dialog). */
 	onBreakApart?: (groupId: string) => void;
+	/** Close every tab in the group (gated by this chip's confirm dialog). */
+	onClose?: (groupId: string) => void;
 	// --- Drag-to-reorder (identical contract to the other tab items) ---
 	onDragStart?: (tabId: string, e: React.DragEvent) => void;
 	onDragOver?: (tabId: string, e: React.DragEvent) => void;
@@ -52,7 +56,7 @@ export interface GroupTabChipProps {
 /**
  * A tiled tab group rendered as a single chip in the tab strip. Mirrors the other
  * tab items: a split/grid glyph, the group's (truncated) name, a hover overlay
- * menu (Rename group / Break apart), and double-click-to-rename inline editing.
+ * menu (Rename group / Break apart / Close group), and double-click-to-rename inline editing.
  *
  * Rename reuses the existing tab-rename interaction shape (double-click the chip,
  * or the "Rename group" overlay item) and is backed by the group-rename action.
@@ -70,6 +74,7 @@ export const GroupTabChip = memo(function GroupTabChip({
 	onSnooze,
 	onSetEmoji,
 	onBreakApart,
+	onClose,
 	onDragStart,
 	onDragOver,
 	onDragEnd,
@@ -156,19 +161,24 @@ export const GroupTabChip = memo(function GroupTabChip({
 		[commitRename, cancelRename]
 	);
 
-	// Break apart: gate behind the shared modal-store confirm dialog (no em/en-dashes
-	// in the copy). On confirm, the group splits back into standalone tabs. Reuses
-	// the same programmatic confirm path as tab-close confirmations.
+	// Break apart and Close group both gate behind the shared confirm dialog
+	// (Enter confirms). Break apart returns the panes to the strip; Close group
+	// closes every tab in it.
 	const requestBreakApart = useCallback(() => {
 		if (!onBreakApart) return;
 		setOverlayOpen(false);
-		useModalStore.getState().openModal('confirm', {
-			title: 'Break apart group?',
-			message: `Break apart "${group.name}"? Its panes return to the tab bar as individual tabs. The tabs are not closed, and you can tile them again later.`,
-			destructive: false,
-			onConfirm: () => onBreakApart(group.id),
-		});
-	}, [onBreakApart, group.id, group.name, setOverlayOpen]);
+		requestBreakApartTabGroup(group, () => onBreakApart(group.id));
+	}, [onBreakApart, group, setOverlayOpen]);
+
+	const handleCloseGroupClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			if (!onClose) return;
+			setOverlayOpen(false);
+			requestCloseTabGroup(group, collectLeafTabRefs(group.layout).length, () => onClose(group.id));
+		},
+		[onClose, group, setOverlayOpen]
+	);
 
 	const handleBreakApartClick = useCallback(
 		(e: React.MouseEvent) => {
@@ -300,10 +310,10 @@ export const GroupTabChip = memo(function GroupTabChip({
 				</span>
 			)}
 
-			{/* Hover / long-press overlay menu (Rename group / Change icon / Break
-			    apart) - a portal (anchored popover on desktop, bottom sheet on a phone) */}
+			{/* Hover / long-press overlay menu (Rename group / Change icon / Snooze /
+			    Break apart / Close group) - a portal (anchored popover on desktop, bottom sheet on a phone) */}
 			<TabOverlayPortal
-				open={overlayOpen && !!(onRename || onSetEmoji || onBreakApart || onSnooze)}
+				open={overlayOpen && !!(onRename || onSetEmoji || onBreakApart || onClose || onSnooze)}
 				position={overlayPosition}
 				positionReady={positionReady}
 				setOverlayRef={setOverlayRef}
@@ -335,7 +345,10 @@ export const GroupTabChip = memo(function GroupTabChip({
 								style={{ color: theme.colors.textMain }}
 							>
 								<Pencil className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
-								Rename group
+								Rename Tab Group
+								{tabShortcuts.renameTabGroup && (
+									<ShortcutHint keys={tabShortcuts.renameTabGroup.keys} theme={theme} />
+								)}
 							</button>
 						)}
 						{onSetEmoji && (
@@ -369,6 +382,16 @@ export const GroupTabChip = memo(function GroupTabChip({
 							>
 								<Ungroup className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 								Break apart
+							</button>
+						)}
+						{onClose && (
+							<button
+								onClick={handleCloseGroupClick}
+								className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+								style={{ color: theme.colors.textMain }}
+							>
+								<X className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+								Close group
 							</button>
 						)}
 

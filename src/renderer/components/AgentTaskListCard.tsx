@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import type { Theme } from '../types';
-import type { AgentTask, AgentTaskList } from '../utils/agentTaskList';
+import type { AgentTaskList } from '../utils/agentTaskList';
 import { summarizeAgentTaskList } from '../utils/agentTaskList';
+import { AgentTaskItems } from './AgentTaskItems';
 
 /**
  * Inline task list card for the chat history.
@@ -13,18 +14,15 @@ import { summarizeAgentTaskList } from '../utils/agentTaskList';
  * tool log has always shown. Clicking it expands the individual task items with
  * their states - the GUI equivalent of Claude Code's Ctrl+T overlay, kept inline
  * with the agent rather than in a separate panel.
+ *
+ * This is the historical, scroll-with-the-conversation view. `AgentTaskListBar`
+ * is its docked counterpart above the composer, for following the current list
+ * without scrolling back to find it.
  */
 
 interface AgentTaskListCardProps {
 	theme: Theme;
 	taskList: AgentTaskList;
-}
-
-/** Status glyph + color for a single task row. */
-function taskGlyph(task: AgentTask, theme: Theme): { glyph: string; color: string } {
-	if (task.status === 'completed') return { glyph: '✓', color: theme.colors.success };
-	if (task.status === 'in_progress') return { glyph: '▸', color: theme.colors.warning };
-	return { glyph: '○', color: theme.colors.textDim };
 }
 
 export function AgentTaskListCard({ theme, taskList }: AgentTaskListCardProps) {
@@ -54,36 +52,7 @@ export function AgentTaskListCard({ theme, taskList }: AgentTaskListCardProps) {
 					/>
 				</span>
 			</button>
-			{isExpanded && (
-				<ul className="mt-1 space-y-0.5">
-					{tasks.map((task, index) => {
-						const { glyph, color } = taskGlyph(task, theme);
-						return (
-							<li
-								key={`${index}-${task.content}`}
-								className="flex items-start gap-2 break-words"
-								style={{
-									color: theme.colors.textMain,
-									opacity: task.status === 'completed' ? 0.45 : 0.8,
-								}}
-							>
-								<span className="shrink-0" style={{ color }} aria-hidden="true">
-									{glyph}
-								</span>
-								<span
-									style={{
-										textDecoration: task.status === 'completed' ? 'line-through' : undefined,
-									}}
-								>
-									{task.status === 'in_progress' && task.activeForm
-										? task.activeForm
-										: task.content}
-								</span>
-							</li>
-						);
-					})}
-				</ul>
-			)}
+			{isExpanded && <AgentTaskItems theme={theme} tasks={tasks} className="mt-1 space-y-0.5" />}
 		</div>
 	);
 }

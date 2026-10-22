@@ -462,13 +462,15 @@ export function handleGetAutoRunState(
 		return;
 	}
 
-	if (!ctx.callbacks.getSessionDetail) {
-		ctx.sendError(client, 'Session detail not configured', { requestId: message.requestId });
+	if (!ctx.callbacks.getAutoRunState) {
+		ctx.sendError(client, 'Auto Run state not configured', { requestId: message.requestId });
 		return;
 	}
 
-	const detail = ctx.callbacks.getSessionDetail(sessionId);
-	const state: AutoRunState | null = ((detail as any)?.autoRunState as AutoRunState | null) ?? null;
+	// The live state the desktop broadcasts, the same record a newly connected web
+	// client is handed. Session detail never carried it, which made every read
+	// answer "not running" while a run was in progress.
+	const state: AutoRunState | null = ctx.callbacks.getAutoRunState(sessionId) ?? null;
 
 	ctx.send(client, {
 		type: 'auto_run_state',

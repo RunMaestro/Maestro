@@ -88,6 +88,7 @@ An earlier build step compiled these templates into `src/generated/prompts.ts`. 
 | -------------------------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | `maestro-system-prompt.md` | `maestroSystemPrompt` | Base system prompt injected into all agent sessions. Provides agent name, tool type, conductor profile, and Maestro context. |
 | `tab-naming.md`            | `tabNamingPrompt`     | Prompt for automatic tab naming based on conversation content                                                                |
+| `quick-chat-route.md`      | (loaded by id)        | Quick Chat routing: picks which existing conversation a new message continues, or NEW. Answer is one token, read by code     |
 | `director-notes.md`        | `directorNotesPrompt` | Prompt for Director's Notes (unified history + synopsis generation)                                                          |
 
 <!-- prettier-ignore -->
@@ -108,17 +109,19 @@ Defined in `src/shared/templateVariables.ts`. Variables use `{{VARIABLE_NAME}}` 
 
 #### Agent Variables
 
-| Variable                 | Description                                                      |
-| ------------------------ | ---------------------------------------------------------------- |
-| `{{AGENT_ID}}`           | Agent UUID (Maestro agent identifier, for CLI targeting)         |
-| `{{AGENT_NAME}}`         | Agent display name                                               |
-| `{{AGENT_PATH}}`         | Agent home directory path (full path to project)                 |
-| `{{AGENT_GROUP}}`        | Agent's group name (if grouped)                                  |
-| `{{AGENT_SESSION_ID}}`   | Agent session ID (for conversation continuity)                   |
-| `{{AGENT_HISTORY_PATH}}` | Path to agent's history JSON file                                |
-| `{{TAB_ID}}`             | This conversation's AI tab ID (empty on headless CLI/Cue spawns) |
-| `{{TAB_NAME}}`           | Custom tab name (alias: `SESSION_NAME`)                          |
-| `{{TOOL_TYPE}}`          | Agent type (`claude-code`, `codex`, `opencode`, `factory-droid`) |
+| Variable                   | Description                                                      |
+| -------------------------- | ---------------------------------------------------------------- |
+| `{{AGENT_ID}}`             | Agent UUID (Maestro agent identifier, for CLI targeting)         |
+| `{{AGENT_NAME}}`           | Agent display name                                               |
+| `{{AGENT_PATH}}`           | Agent home directory path (full path to project)                 |
+| `{{AGENT_GROUP}}`          | Agent's group name (if grouped)                                  |
+| `{{AGENT_SESSION_ID}}`     | Agent session ID (for conversation continuity)                   |
+| `{{AGENT_HISTORY_PATH}}`   | Path to agent's history JSON file                                |
+| `{{COMPUTER_HISTORY_DIR}}` | `<userData>/computer-history` (empty for SSH-remote agents)      |
+| `{{MAESTRO_RUN_PATH}}`     | The MaestroRun launcher (empty until installed and granted)      |
+| `{{TAB_ID}}`               | This conversation's AI tab ID (empty on headless CLI/Cue spawns) |
+| `{{TAB_NAME}}`             | Custom tab name (alias: `SESSION_NAME`)                          |
+| `{{TOOL_TYPE}}`            | Agent type (`claude-code`, `codex`, `opencode`, `factory-droid`) |
 
 #### Path Variables
 

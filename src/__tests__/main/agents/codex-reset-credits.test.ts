@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync } from 'fs';
 import fs from 'fs/promises';
+import os from 'os';
 import path from 'path';
 
 const { captureMessageMock } = vi.hoisted(() => ({
@@ -15,7 +17,8 @@ import {
 	fetchCodexResetCredits,
 } from '../../../main/agents/codex-reset-credits';
 
-const TEST_ROOT = path.join(process.cwd(), '.tmp-codex-reset-credits');
+// Unique per run: a fixed path collides with a concurrent suite in the same checkout.
+const TEST_ROOT = mkdtempSync(path.join(os.tmpdir(), 'maestro-codex-reset-credits-'));
 
 /** The shape the live endpoint actually returns, trimmed to what we parse. */
 const LIVE_CREDIT = {

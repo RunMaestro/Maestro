@@ -11,11 +11,16 @@ import {
 	useComposerInputStore,
 	selectAiComposerValue,
 	selectTerminalComposerValue,
+	selectMentionRoutingOverride,
 } from '../../../renderer/stores/composerInputStore';
 
 describe('composerInputStore', () => {
 	beforeEach(() => {
-		useComposerInputStore.setState({ aiValue: '', terminalValue: '' });
+		useComposerInputStore.setState({
+			aiValue: '',
+			terminalValue: '',
+			mentionRoutingOverride: null,
+		});
 	});
 
 	it('initializes both slices empty', () => {
@@ -53,6 +58,17 @@ describe('composerInputStore', () => {
 		const s = useComposerInputStore.getState();
 		expect(selectAiComposerValue(s)).toBe('a');
 		expect(selectTerminalComposerValue(s)).toBe('t');
+	});
+
+	it("drops a picked mention routing when another tab's draft loads", () => {
+		// The pick qualified the mentions in THIS draft; the next tab's draft has
+		// its own wording and must not inherit it.
+		useComposerInputStore.getState().setMentionRoutingOverride('handoff');
+		expect(selectMentionRoutingOverride(useComposerInputStore.getState())).toBe('handoff');
+
+		useComposerInputStore.getState().loadAiDraft('tab-2', 'ask @Backend', 'off');
+
+		expect(selectMentionRoutingOverride(useComposerInputStore.getState())).toBeNull();
 	});
 
 	it('notifies subscribers only when a slice actually changes', () => {

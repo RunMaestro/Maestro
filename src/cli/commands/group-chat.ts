@@ -10,6 +10,9 @@ import * as fs from 'fs';
 import { withMaestroClient, type MaestroClient } from '../services/maestro-client';
 import { resolveAgentId } from '../services/storage';
 import type { RemoteGroupChatState } from '../../shared/groupChatRemote';
+import { exitIfMaestroNotRunning } from '../services/session-command';
+import { QUEUE_STEER_ROUND_TRIP_TIMEOUT_MS } from '../../shared/chatSteering';
+import type { GroupChatSteerResult } from '../../shared/groupChatSteering';
 
 // Starting a chat spawns a moderator and every participant before the app
 // answers; the desktop allows itself 60s, so the CLI waits a little longer.
@@ -30,12 +33,22 @@ interface SendOptions extends JsonOption {
 	messageFile?: string;
 }
 
+interface SteerOptions extends JsonOption {
+	messageFile?: string;
+	item?: string;
+	readOnly?: boolean;
+}
+
 interface StatusOptions extends JsonOption {
 	tail?: string;
 }
 
 interface ListOptions extends JsonOption {
 	all?: boolean;
+}
+
+interface ArchiveOptions extends JsonOption {
+	restore?: boolean;
 }
 
 type BridgeReply = { type: string; success?: boolean; error?: string; message?: string };
@@ -141,6 +154,7 @@ export async function groupChatStart(name: string, options: StartOptions): Promi
 			console.log(`  ID: ${reply.chatId}`);
 		}
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		fail(error instanceof Error ? error.message : String(error), options.json);
 	}
 }
@@ -175,6 +189,63 @@ export async function groupChatSend(
 		if (options.json) console.log(JSON.stringify({ success: true, chatId }));
 		else console.log(`Sent to group chat ${chatId}`);
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
+		fail(error instanceof Error ? error.message : String(error), options.json);
+	}
+}
+
+/**
+ * `maestro-cli group-chat steer <chat> [message]` - type a message into the round
+ * running in a chat instead of waiting for it to end. `--item <id>` steers a
+ * message already in the chat's queue (ids are in `status`), exactly like the
+ * Steer button on a queued card; both reach the same main-process function.
+ *
+ * Nothing is queued on failure: a refused steer leaves new text with the caller,
+ * and a queued item exactly where it was.
+ */
+export async function groupChatSteer(
+	chatRef: string,
+	inline: string | undefined,
+	options: SteerOptions
+): Promise<void> {
+	const message = readMessage(inline, options.messageFile, options.json);
+	const hasText = !!message && message.trim().length > 0;
+	if (hasText === !!options.item) {
+		fail('Pass a message or --item <queued-id>, not both', options.json);
+	}
+	if (options.item && options.readOnly) {
+		fail('--read-only applies to new text; a queued item keeps its own setting', options.json);
+	}
+
+	try {
+		const { chatId, reply } = await withMaestroClient(async (client) => {
+			const id = resolveChatRef(chatRef, await listChats(client));
+			const res = await client.sendCommand<BridgeReply & { result?: GroupChatSteerResult }>(
+				{
+					type: 'steer_group_chat',
+					chatId: id,
+					...(options.item ? { itemId: options.item } : { message }),
+					...(options.readOnly && { readOnly: true }),
+				},
+				'steer_group_chat_result',
+				QUEUE_STEER_ROUND_TRIP_TIMEOUT_MS
+			);
+			return { chatId: id, reply: res };
+		});
+		const error = bridgeError(reply);
+		if (error || !reply.result) fail(error ?? 'The desktop did not answer', options.json);
+		const result = reply.result;
+		const taken = result.outcome === 'delivered' || result.outcome === 'settled';
+
+		if (options.json) {
+			console.log(JSON.stringify({ success: taken, chatId, ...result }));
+		} else if (taken) {
+			console.log(`Steered into ${chatId}: ${(result.targets ?? []).join(', ')}`);
+		} else {
+			console.error(`Error: ${result.outcome}${result.detail ? `: ${result.detail}` : ''}`);
+		}
+		if (!taken) process.exit(1);
+	} catch (error) {
 		fail(error instanceof Error ? error.message : String(error), options.json);
 	}
 }
@@ -205,11 +276,26 @@ export async function groupChatStatus(chatRef: string, options: StatusOptions): 
 		console.log(`  State: ${stateLabel(chat)}`);
 		console.log(`  Participants: ${chat.participants.map((p) => p.name).join(', ') || '(none)'}`);
 		console.log(`  Messages: ${chat.messages.length}`);
+		if (chat.queue && chat.queue.length > 0) {
+			console.log(`  Queued: ${chat.queue.length}${chat.queuePaused ? ' (paused)' : ''}`);
+			for (const item of chat.queue) {
+				const flags = [
+					item.sending && 'sending',
+					item.failed && 'failed',
+					item.hasImages && 'images',
+				]
+					.filter(Boolean)
+					.join(', ');
+				const preview = item.text.replace(/\s+/g, ' ').slice(0, 60);
+				console.log(`    ${item.id}  ${preview}${flags ? `  [${flags}]` : ''}`);
+			}
+		}
 		for (const m of messages) {
 			const when = m.timestamp ? new Date(m.timestamp).toISOString() : '';
 			console.log(`\n--- ${m.participantName}  ${when}\n${m.content}`);
 		}
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		fail(error instanceof Error ? error.message : String(error), options.json);
 	}
 }
@@ -235,6 +321,7 @@ export async function groupChatList(options: ListOptions): Promise<void> {
 			);
 		}
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		fail(error instanceof Error ? error.message : String(error), options.json);
 	}
 }
@@ -257,6 +344,33 @@ export async function groupChatStop(chatRef: string, options: JsonOption): Promi
 		}
 		if (options.json) console.log(JSON.stringify({ success: true, chatId }));
 		else console.log(`Stopped group chat ${chatId}`);
+	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
+		fail(error instanceof Error ? error.message : String(error), options.json);
+	}
+}
+
+export async function groupChatArchive(chatRef: string, options: ArchiveOptions): Promise<void> {
+	const archived = !options.restore;
+	try {
+		const { chatId, reply } = await withMaestroClient(async (client) => {
+			const id = resolveChatRef(chatRef, await listChats(client));
+			const res = await client.sendCommand<BridgeReply>(
+				{ type: 'archive_group_chat', chatId: id, archived },
+				'archive_group_chat_result'
+			);
+			return { chatId: id, reply: res };
+		});
+		const error =
+			bridgeError(reply) ??
+			(reply.success ? undefined : `Failed to ${archived ? 'archive' : 'restore'} group chat`);
+		if (error) {
+			if (options.json) console.log(JSON.stringify({ success: false, error, chatId }));
+			else console.error(`Error: ${error}`);
+			process.exit(1);
+		}
+		if (options.json) console.log(JSON.stringify({ success: true, chatId, archived }));
+		else console.log(`${archived ? 'Archived' : 'Restored'} group chat ${chatId}`);
 	} catch (error) {
 		fail(error instanceof Error ? error.message : String(error), options.json);
 	}

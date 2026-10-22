@@ -434,6 +434,8 @@ Manages merging multiple conversation contexts across agents.
 4. Parse groomed output via `parseGroomedOutput` (from contextExtractor utils)
 5. Report token savings
 
+**Cancelling:** `cancelGrooming()` calls `window.maestro.context.cancelGrooming()`, the same call `cancelSummarization()` makes. The grooming turn runs in the main process, so that is the only place a cancel can reach it: main kills the process and the waiting `groomContext()` call rejects. It is sent only while this service has a call out (`isGroomingActive()`), because the main-side cancel stops every grooming turn in the app.
+
 Shared utilities imported from `renderer/utils/contextExtractor`:
 
 - `formatLogsForGrooming` - Formats LogEntry arrays into text

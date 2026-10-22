@@ -22,6 +22,7 @@ import { memo, useEffect, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import type { Theme } from '../../../types';
 import { clampTooltipToViewport } from './tooltipGeometry';
+import { elevatedSurfaceStyle } from '../../../utils/elevatedSurface';
 
 interface ChartTooltipProps {
 	/** Anchor point in viewport coords - typically the mouse cursor. `null` hides the tooltip. */
@@ -76,14 +77,13 @@ export const ChartTooltip = memo(function ChartTooltip({
 
 	return createPortal(
 		<div
-			className="fixed px-3 py-2 rounded text-xs whitespace-nowrap pointer-events-none shadow-lg"
+			className="fixed px-3 py-2 rounded text-xs whitespace-nowrap pointer-events-none"
 			style={{
 				left,
 				top,
 				zIndex: 10000,
-				backgroundColor: theme.colors.bgActivity,
+				...elevatedSurfaceStyle(theme),
 				color: theme.colors.textMain,
-				border: `1px solid ${theme.colors.border}`,
 			}}
 			data-testid={testId}
 		>

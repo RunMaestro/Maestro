@@ -158,8 +158,12 @@ describe('cue-heartbeat-trigger-source', () => {
 		expect(emit.mock.calls[0][0].payload.missedCount).toBe(3);
 		expect(onLog).toHaveBeenCalledWith(
 			'warn',
-			expect.stringContaining('missed 3 heartbeat interval(s)'),
-			expect.objectContaining({ type: 'triggerHealthWarning', sessionId: 'session-1' })
+			expect.stringContaining('missed 3 heartbeat interval(s)')
+		);
+		// A missed heartbeat (sleep/wake) must not carry the payload that raises
+		// the sticky "Cue trigger health" toast.
+		expect(onLog.mock.calls.some(([, , data]) => data?.type === 'triggerHealthWarning')).toBe(
+			false
 		);
 		source.stop();
 	});

@@ -5,16 +5,9 @@
  * Zustand modules so per-listener hooks can pull just the types they need.
  */
 
-import type {
-	ToolType,
-	LogEntry,
-	QueuedItem,
-	BatchRunState,
-	AgentError,
-	UsageStats,
-} from '../../../types';
+import type { LogEntry, QueuedItem, BatchRunState, AgentError, UsageStats } from '../../../types';
 import type { HistoryEntryInput } from '../useAgentSessionManagement';
-import type { AgentSpawnResult } from '../useAgentExecution';
+import type { UseAgentExecutionReturn } from '../useAgentExecution';
 import type { RightPanelHandle } from '../../../components/RightPanel';
 
 export type ToolProgressState = NonNullable<LogEntry['metadata']>['toolState'];
@@ -49,26 +42,7 @@ export interface UseAgentListenersDeps {
 	addHistoryEntryRef: React.RefObject<((entry: HistoryEntryInput) => Promise<void>) | null>;
 	/** Background synopsis spawner (from useAgentExecution) */
 	spawnBackgroundSynopsisRef: React.RefObject<
-		| ((
-				sessionId: string,
-				cwd: string,
-				resumeAgentSessionId: string,
-				prompt: string,
-				toolType?: ToolType,
-				sessionConfig?: {
-					customPath?: string;
-					customArgs?: string;
-					customEnvVars?: Record<string, string>;
-					customModel?: string;
-					customContextWindow?: number;
-					sessionSshRemoteConfig?: {
-						enabled: boolean;
-						remoteId: string | null;
-						workingDirOverride?: string;
-					};
-				}
-		  ) => Promise<AgentSpawnResult>)
-		| null
+		UseAgentExecutionReturn['spawnBackgroundSynopsis'] | null
 	>;
 	/** Batch state lookup for Auto Run integration */
 	getBatchStateRef: React.RefObject<((sessionId: string) => BatchRunState) | null>;

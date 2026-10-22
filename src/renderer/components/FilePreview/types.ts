@@ -60,6 +60,11 @@ export interface FilePreviewProps {
 	onOpenInBrowser?: () => void;
 	/** SSH remote ID for remote file operations */
 	sshRemoteId?: string;
+	/**
+	 * The agent that owns the file. Dataview blocks need it to pick the vault
+	 * root and host (D7); without it the preview renders them as plain code.
+	 */
+	sessionId?: string;
 	/** Current edit content (used for file tab persistence) - if provided, overrides internal state */
 	externalEditContent?: string;
 	/** Callback when edit content changes (used for file tab persistence) */

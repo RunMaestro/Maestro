@@ -6,6 +6,7 @@
  */
 
 import { logger } from './logger';
+import { setMaestroLibErrorReporter } from '../../shared/maestro-lib/host';
 
 /** Sentry severity levels */
 export type SentrySeverityLevel = 'fatal' | 'error' | 'warning' | 'log' | 'info' | 'debug';
@@ -184,3 +185,8 @@ export function startMemoryMonitoring(thresholdMB: number = 500, intervalMs: num
 		'Memory'
 	);
 }
+
+// maestro-lib reports through its host (src/shared/maestro-lib/host.ts).
+// Registered where these reporters are defined, so any process that loads them
+// has the library's crash reports go to the same place as its own.
+setMaestroLibErrorReporter({ captureException, captureMessage });

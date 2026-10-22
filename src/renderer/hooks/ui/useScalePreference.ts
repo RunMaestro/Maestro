@@ -17,22 +17,11 @@
  */
 
 import { useCallback, useMemo, useState } from 'react';
+import { clampScale, stepScale, type ScaleRange } from '../../../shared/scaleRange';
 import { safeStorageGet, safeStorageSet } from '../../utils/safeLocalStorage';
 
-export interface ScaleRange {
-	min: number;
-	max: number;
-	step: number;
-	/** Value used when nothing is stored, and the target of a reset. */
-	initial: number;
-}
-
-/** Clamp into `range` and round to two decimals. */
-export function clampScale(value: number, range: ScaleRange): number {
-	if (!Number.isFinite(value)) return range.initial;
-	const clamped = Math.min(range.max, Math.max(range.min, value));
-	return Math.round(clamped * 100) / 100;
-}
+// The arithmetic is shared with the main process (see shared/scaleRange.ts).
+export { clampScale, type ScaleRange };
 
 function loadScale(storageKey: string, range: ScaleRange): number {
 	const raw = safeStorageGet(storageKey);
@@ -79,7 +68,7 @@ export function useScalePreference(
 
 	const adjustScale = useCallback(
 		(direction: -1 | 1) => {
-			setScale((prev) => persist(clampScale(prev + direction * bounds.step, bounds)));
+			setScale((prev) => persist(stepScale(prev, direction, bounds)));
 		},
 		[persist, bounds]
 	);

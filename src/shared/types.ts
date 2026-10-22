@@ -4,6 +4,7 @@
 // Re-export agent ID constants and types from the single source of truth
 export { AGENT_IDS, isValidAgentId } from './agentIds';
 export type { AgentId } from './agentIds';
+import type { CodexTransport } from './codexTransport';
 
 /**
  * Union type of all valid agent IDs.
@@ -153,8 +154,10 @@ export interface AgentCapabilities {
 	supportsAppendSystemPrompt: boolean;
 
 	/**
-	 * Agent maintains a per-project persistent memory store on disk that Maestro
-	 * can browse and edit. Claude Code does this at ~/.claude/projects/<path>/memory/.
+	 * Agent maintains a persistent memory store on disk that Maestro can browse
+	 * and edit in the Memory Viewer. Claude Code keeps one per project
+	 * (`~/.claude/projects/<path>/memory/`), Codex one per account
+	 * (`$CODEX_HOME/memories/`). Layouts live in `src/main/memory-manager.ts`.
 	 */
 	supportsProjectMemory: boolean;
 
@@ -222,6 +225,14 @@ export interface Group {
 	color?: string;
 	parentGroupId?: string;
 	collapsed: boolean;
+	/**
+	 * Parked out of the Left Bar. A middle ground between keeping a group on
+	 * screen and deleting it: hiding SUPPRESSES the group from the list, it
+	 * never restricts access, so the agents inside stay reachable through
+	 * search, the Cmd+O switcher, and every other surface. Optional because
+	 * every group written before this field existed reads back as visible.
+	 */
+	hidden?: boolean;
 }
 
 export function isWorktreeGroup(group: Group): boolean {
@@ -253,6 +264,8 @@ export interface SessionInfo {
 	toolType: ToolType;
 	cwd: string;
 	projectRoot: string;
+	/** The agent's original working directory, persisted by the desktop app. Older records may lack it. */
+	fullPath?: string;
 	autoRunFolderPath?: string;
 	/** Extra directories granted beyond the working directory (prompt-level grants). */
 	additionalDirectories?: AdditionalDirectory[];
@@ -263,6 +276,8 @@ export interface SessionInfo {
 	worktreeConfig?: SessionWorktreeConfig;
 	/** Left Bar bookmark - pins the agent to the Bookmarks section at the top. */
 	bookmarked?: boolean;
+	/** The pinned Pianola manager agent; its system prompt gets the Pianola role section. */
+	isPianola?: boolean;
 	/** Per-session model override (wins over agent-level `model` config option). */
 	customModel?: string;
 	/** Per-session effort/reasoning override (wins over agent-level config). */
@@ -279,6 +294,15 @@ export interface SessionInfo {
 	 * can be turned back on without retyping its value.
 	 */
 	customEnvVarsDisabled?: Record<string, string>;
+	/**
+	 * Secret env var NAMES this agent needs but whose values are never stored:
+	 * written by bundle import from the bundle's `env.required`. The CLI and
+	 * Cue resolve each one at launch from `$CREDENTIALS_DIRECTORY/<NAME>`,
+	 * `/run/secrets/<NAME>` or the environment (`src/shared/serverSecrets.ts`)
+	 * and hand it to this agent alone. The desktop carries the field unchanged
+	 * and never reads it; bundle export writes it back into `env.required`.
+	 */
+	requiredSecrets?: string[];
 	/** Prefixed to the first message of every new session (not shown in chat). */
 	newSessionMessage?: string;
 	/** Appended to every message sent to the agent (not shown in chat). */
@@ -293,6 +317,12 @@ export interface SessionInfo {
 	maestroPMode?: 'interactive' | 'dynamic';
 	/** Per-session override of the maestro-p binary path. */
 	maestroPPath?: string;
+	/**
+	 * Codex transport opt-in: `'app-server'` runs local interactive chat turns on
+	 * `codex app-server` so they can be steered mid-turn. Absent means `'exec'`.
+	 * Resolve with `resolveCodexTransport` in shared/codexTransport.
+	 */
+	codexTransport?: CodexTransport;
 	/**
 	 * Agent Resilience: auto-resend the failed prompt on transient upstream
 	 * availability errors (Overloaded / 529 / 5xx / throttling) using exponential
@@ -406,6 +436,19 @@ export interface UsageStats {
 }
 
 /**
+ * Tokens one internal API call spent that no earlier event of its turn
+ * reported (`process:call-usage`). A live progress signal for tokens per
+ * second, never a usage report: the turn's `UsageStats` still counts the whole
+ * turn, these included. Only claude-code sends it today.
+ */
+export interface CallUsage {
+	inputTokens: number;
+	outputTokens: number;
+	cacheReadInputTokens: number;
+	cacheCreationInputTokens: number;
+}
+
+/**
  * History entry types for the History panel.
  *
  * - `USER`  - an interactive turn the user typed themselves.
@@ -421,7 +464,7 @@ export interface UsageStats {
  * Adding a member here? `ALL_HISTORY_ENTRY_TYPES` (shared/history.ts) is the
  * single list every filter/validator iterates - update it, not a local copy.
  */
-export type HistoryEntryType = 'AUTO' | 'USER' | 'CUE' | 'AGENT';
+export type HistoryEntryType = 'AUTO' | 'USER' | 'CUE' | 'AGENT' | 'RELAY';
 
 export interface HistoryEntry {
 	id: string;
@@ -619,6 +662,8 @@ export interface WorktreeConfig {
 	branchName: string;
 	createPROnCompletion: boolean;
 	prTargetBranch: string;
+	/** Custom GitHub CLI binary used for this run's pull request. */
+	ghPath?: string;
 }
 
 // Per-agent worktree settings, stored on parent sessions as `worktreeConfig`.
@@ -657,6 +702,16 @@ export interface BatchRunConfig {
 	taskSelectionMode?: TaskSelectionMode;
 	worktree?: WorktreeConfig;
 	worktreeTarget?: WorktreeRunTarget;
+	/** Per-run overrides; never change the session's interactive settings. */
+	model?: string;
+	effort?: string;
+	ignoreModelHints?: boolean;
+	/** Missing auto-resume fields use resolveAutoResumePolicy's defaults. */
+	autoResumeOnError?: boolean;
+	autoResumeAfterMin?: number;
+	maxAutoResumes?: number;
+	/** Presence selects goal-driven rather than document/task-driven mode. */
+	goalConfig?: import('./goalDriven/types').GoalRunConfig;
 }
 
 // ============================================================================

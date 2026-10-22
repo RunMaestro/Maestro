@@ -14,6 +14,12 @@ export interface UseSessionPaginationDeps {
 	onStarredSessionsLoaded?: (starredIds: Set<string>) => void;
 	/** Optional SSH remote ID for accessing sessions on a remote host */
 	sshRemoteId?: string;
+	/**
+	 * The Maestro agent doing the browsing. Its provider account decides which
+	 * transcript pool is listed and totalled, since that is the only pool the
+	 * agent can resume from.
+	 */
+	ownerAgentId?: string;
 }
 
 /**
@@ -74,6 +80,7 @@ export function useSessionPagination({
 	agentId = 'claude-code',
 	onStarredSessionsLoaded,
 	sshRemoteId,
+	ownerAgentId,
 }: UseSessionPaginationDeps): UseSessionPaginationReturn {
 	// Session list state
 	const [sessions, setSessions] = useState<ClaudeSession[]>([]);
@@ -90,7 +97,7 @@ export function useSessionPagination({
 
 	// Store origins map for merging into paginated results
 	const originsMapRef = useRef<
-		Map<string, { origin?: string; sessionName?: string; starred?: boolean }>
+		Map<string, { origin?: ClaudeSession['origin']; sessionName?: string; starred?: boolean }>
 	>(new Map());
 
 	// Load sessions on mount or when projectPath/agentId changes
@@ -111,7 +118,7 @@ export function useSessionPagination({
 				// Load session metadata (starred status, sessionName) from session origins
 				const originsMap = new Map<
 					string,
-					{ origin?: string; sessionName?: string; starred?: boolean }
+					{ origin?: ClaudeSession['origin']; sessionName?: string; starred?: boolean }
 				>();
 				const starredFromOrigins = new Set<string>();
 
@@ -149,7 +156,7 @@ export function useSessionPagination({
 				const result = await window.maestro.agentSessions.listPaginated(
 					agentId,
 					projectPath,
-					{ limit: 100 },
+					{ limit: 100, ownerAgentId },
 					sshRemoteId
 				);
 
@@ -161,7 +168,7 @@ export function useSessionPagination({
 						...session,
 						sessionName: originData?.sessionName || session.sessionName,
 						starred: originData?.starred || session.starred,
-						origin: (originData?.origin || session.origin) as 'user' | 'auto' | undefined,
+						origin: originData?.origin || session.origin,
 					};
 				});
 
@@ -173,7 +180,7 @@ export function useSessionPagination({
 				// Start fetching aggregate stats for ALL sessions (runs in background with progressive updates)
 				// Note: Stats tracking is currently Claude-specific; other agents will need their own implementation
 				if (agentId === 'claude-code') {
-					window.maestro.claude.getProjectStats(projectPath);
+					window.maestro.claude.getProjectStats(projectPath, ownerAgentId);
 				}
 			} catch (error) {
 				logger.error('Failed to load sessions:', undefined, error);
@@ -183,7 +190,7 @@ export function useSessionPagination({
 		};
 
 		loadSessions();
-	}, [projectPath, agentId, onStarredSessionsLoaded, sshRemoteId]);
+	}, [projectPath, agentId, onStarredSessionsLoaded, sshRemoteId, ownerAgentId]);
 
 	// Load more sessions when scrolling near bottom
 	const loadMoreSessions = useCallback(async () => {
@@ -199,6 +206,7 @@ export function useSessionPagination({
 				{
 					cursor: nextCursorRef.current,
 					limit: 100,
+					ownerAgentId,
 				},
 				sshRemoteId
 			);
@@ -211,7 +219,7 @@ export function useSessionPagination({
 					...session,
 					sessionName: originData?.sessionName || session.sessionName,
 					starred: originData?.starred || session.starred,
-					origin: (originData?.origin || session.origin) as 'user' | 'auto' | undefined,
+					origin: originData?.origin || session.origin,
 				};
 			});
 
@@ -228,7 +236,7 @@ export function useSessionPagination({
 		} finally {
 			setIsLoadingMoreSessions(false);
 		}
-	}, [projectPath, agentId, hasMoreSessions, isLoadingMoreSessions, sshRemoteId]);
+	}, [projectPath, agentId, hasMoreSessions, isLoadingMoreSessions, sshRemoteId, ownerAgentId]);
 
 	// Handle scroll for sessions list pagination - load more at 70% scroll
 	const handleSessionsScroll = useCallback(() => {

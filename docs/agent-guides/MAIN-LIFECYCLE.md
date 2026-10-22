@@ -160,7 +160,7 @@ Intercepts `before-quit` to check for busy agents and run cleanup.
 ```typescript
 const logLevel = store.get('logLevel', 'info');
 logger.setLogLevel(logLevel);
-const maxLogBuffer = store.get('maxLogBuffer', 1000);
+const maxLogBuffer = store.get('maxLogBuffer', MAX_ENTRIES_PER_SESSION);
 logger.setMaxLogBuffer(maxLogBuffer);
 ```
 
@@ -512,7 +512,7 @@ Each file contains a `HistoryFileData` object with version info and an array of 
 
 ### Benefits Over Legacy Format
 
-- Higher limits: 5,000 entries per session (up from 1,000 global)
+- Higher limits: a per-session cap set by the `maxLogBuffer` setting (default 10,000, up from 1,000 global)
 - Context passing: History files can be passed directly to AI agents via `{{AGENT_HISTORY_PATH}}`
 - Better isolation: Sessions don't pollute each other's history
 - Simpler queries: No filtering needed when reading a session's history

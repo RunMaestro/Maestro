@@ -69,15 +69,17 @@ Before writing any `- [ ]`, ask: _can an AI agent with shell, file, and network 
 
 **Never checkbox these:** manual action ("manually test", "by hand"), visual judgment ("visually verify", "confirm it looks right"), waiting on a person ("ask the user", "confirm with the team"), approval gates ("get sign-off", "human review"), credentials or accounts a person must obtain ("sign up for an API key"), or physical/out-of-band work.
 
-**Use one of these two instead:**
+**Auto Runs are unattended - the user starts one so they can walk away.** Work down this ladder and stop at the first rung that fits:
 
-1. **The run must pause for a person** - emit a HITL gate marker on its own line above the dependent tasks. The engine pauses there, shows the reason in the Auto Run panel, and waits for the user to resume - a deliberate, visible pause instead of a silent stall:
+1. **Make it agent work.** Verification becomes a test, a Playwright or CDP check, or a captured screenshot. A precondition is a command the agent runs and fixes if it fails. A missing credential becomes a mocked client, so the code and its tests still land.
+
+2. **The default for real human work: Manual Follow-Up.** Visual polish, device testing, sign-off, review of finished work, a real API key. List it as plain `-` bullets under a trailing `## Manual Follow-Up (not executed by Auto Run)` section the engine never reads.
+
+3. **A HITL gate - rare.** Only when the user explicitly asked the run to stop at that point, or the very next tasks cannot execute at all without something only a person can supply and rungs 1 and 2 cannot absorb it. Never gate for review, approval, or a visual check of work already done. The default is zero gates. Write it on its own line above the dependent tasks:
 
    ```markdown
-   <!-- MAESTRO:HITL reason="Add STRIPE_SECRET_KEY to .env before the billing tasks run" artifact=".env" -->
+   <!-- MAESTRO:HITL reason="You asked to review the migration before the backfill runs" artifact="db/migrations/0042_split_accounts.sql" -->
    ```
-
-2. **The work simply isn't the engine's job** - list it as plain `-` bullets under a trailing `## Manual Follow-Up (not executed by Auto Run)` section the engine never reads.
 
 Note the difference from a legitimate verification task: "Run `npm run lint` and `npm test`, fix any failures" is a checkbox. "Visually confirm the layout looks polished" is not.
 

@@ -71,6 +71,12 @@ export interface CreateHandlerOptions {
 	logSuccess?: boolean;
 	/** Additional data to log on success */
 	successLogData?: Record<string, unknown>;
+	/**
+	 * Runs before the handler; throw to refuse the call (e.g. a switched-off
+	 * Encore Feature). The throw is reported like any handler failure. Honored
+	 * by every `create*Handler` wrapper in this file.
+	 */
+	precondition?: () => void;
 }
 
 /**
@@ -97,10 +103,11 @@ export function createHandler<TArgs extends unknown[], TResult extends Record<st
 	options: CreateHandlerOptions,
 	handler: (...args: TArgs) => Promise<TResult>
 ): (...args: TArgs) => Promise<IpcCustomResponse<TResult>> {
-	const { context, operation, logSuccess = true, successLogData } = options;
+	const { context, operation, logSuccess = true, successLogData, precondition } = options;
 
 	return async (...args: TArgs): Promise<IpcCustomResponse<TResult>> => {
 		try {
+			precondition?.();
 			const result = await handler(...args);
 
 			if (logSuccess) {
@@ -137,10 +144,11 @@ export function createDataHandler<TArgs extends unknown[], TData>(
 	options: CreateHandlerOptions,
 	handler: (...args: TArgs) => Promise<TData>
 ): (...args: TArgs) => Promise<IpcResponse<TData>> {
-	const { context, operation, logSuccess = true, successLogData } = options;
+	const { context, operation, logSuccess = true, successLogData, precondition } = options;
 
 	return async (...args: TArgs): Promise<IpcResponse<TData>> => {
 		try {
+			precondition?.();
 			const data = await handler(...args);
 
 			if (logSuccess) {
@@ -252,10 +260,11 @@ export function createIpcHandler<TArgs extends unknown[], TResult extends Record
 	options: CreateHandlerOptions,
 	handler: (...args: TArgs) => Promise<TResult>
 ): (_event: unknown, ...args: TArgs) => Promise<IpcCustomResponse<TResult>> {
-	const { context, operation, logSuccess = true, successLogData } = options;
+	const { context, operation, logSuccess = true, successLogData, precondition } = options;
 
 	return async (_event: unknown, ...args: TArgs): Promise<IpcCustomResponse<TResult>> => {
 		try {
+			precondition?.();
 			const result = await handler(...args);
 
 			if (logSuccess) {
@@ -282,10 +291,11 @@ export function createIpcDataHandler<TArgs extends unknown[], TData>(
 	options: CreateHandlerOptions,
 	handler: (...args: TArgs) => Promise<TData>
 ): (_event: unknown, ...args: TArgs) => Promise<IpcResponse<TData>> {
-	const { context, operation, logSuccess = true, successLogData } = options;
+	const { context, operation, logSuccess = true, successLogData, precondition } = options;
 
 	return async (_event: unknown, ...args: TArgs): Promise<IpcResponse<TData>> => {
 		try {
+			precondition?.();
 			const data = await handler(...args);
 
 			if (logSuccess) {

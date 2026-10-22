@@ -115,6 +115,35 @@ describe('shouldRunSynopsisOnExit', () => {
 		).toBe(false);
 	});
 
+	it('ignores work queued for OTHER tabs', () => {
+		// The queue is agent-wide; a synopsis resumes one tab's provider session.
+		// Another tab's queued message must not drop this tab's History entry.
+		const other = { id: 'q1', timestamp: 0, tabId: 'tab-b', type: 'message' as const };
+		const otherHold = {
+			id: 'q2',
+			timestamp: 0,
+			tabId: 'tab-c',
+			type: 'message' as const,
+			awaitingConsult: { pending: [], replies: [] },
+		};
+		expect(
+			shouldRunSynopsisOnExit(
+				{ executionQueue: [other, otherHold] as any, agentSessionId: 'a' },
+				{ id: 'tab-a', agentSessionId: 'a', saveToHistory: true }
+			)
+		).toBe(true);
+	});
+
+	it('still defers when the completed tab has its own queued follow-up', () => {
+		const own = { id: 'q1', timestamp: 0, tabId: 'tab-a', type: 'message' as const };
+		expect(
+			shouldRunSynopsisOnExit(
+				{ executionQueue: [own] as any, agentSessionId: 'a' },
+				{ id: 'tab-a', agentSessionId: 'a', saveToHistory: true }
+			)
+		).toBe(false);
+	});
+
 	it('returns true when tab has saveToHistory and agentSessionId', () => {
 		expect(
 			shouldRunSynopsisOnExit(

@@ -8,10 +8,11 @@
 
 import { logger } from '../utils/logger';
 import { backupRegistryBeforeWipe } from './registry-backup';
+import { GROUPS_BACKUP_FILENAME } from '../../shared/maestro-lib/store/io';
 import type { Group } from '../../shared/types';
 
-/** Filename written beside the live store when a non-empty registry is replaced by an empty one. */
-export const GROUPS_BACKUP_FILENAME = 'maestro-groups.backup.json';
+// The file name is shared with the headless runtime, which writes the same backup.
+export { GROUPS_BACKUP_FILENAME };
 
 /** Minimal surface this module needs, so tests can pass a plain object. */
 export interface GroupsBackupStore {

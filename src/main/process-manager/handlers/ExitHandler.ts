@@ -6,7 +6,9 @@ import { matchSshErrorPattern } from '../../parsers/error-patterns';
 import { aggregateModelUsage } from '../../parsers/usage-aggregator';
 import { cleanupTempFiles } from '../utils/imageUtils';
 import { settleProvisionalAgentError } from '../utils/provisionalAgentError';
-import type { ManagedProcess, AgentError } from '../types';
+import { emitAgentErrorAfterOutput } from '../utils/agentErrorEmit';
+import { emitParsedEvent } from '../utils/parsedEvent';
+import type { ManagedProcess, AgentError, TurnSettlement } from '../types';
 import type { ParsedEvent } from '../../parsers/agent-output-parser';
 import type { DataBufferManager } from './DataBufferManager';
 import type { SshRemoteConfig } from '../../../shared/types';
@@ -19,7 +21,12 @@ import {
 	type CopilotShutdownWaitResult,
 } from '../CopilotShutdownWaiter';
 import { FALLBACK_CONTEXT_WINDOW } from '../../../shared/agentConstants';
+import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import { isSupersededGeneration } from '../generation';
+import {
+	resolveTurnOutcome,
+	type TurnFacts,
+} from '../../../shared/maestro-lib/streaming/turn-outcome';
 
 interface ExitHandlerDependencies {
 	processes: Map<string, ManagedProcess>;
@@ -53,7 +60,9 @@ export class ExitHandler {
 	async handleExit(
 		sessionId: string,
 		code: number,
-		exitingProcess?: ManagedProcess
+		exitingProcess?: ManagedProcess,
+		signal?: NodeJS.Signals | null,
+		stdinError?: Error
 	): Promise<void> {
 		const managedProcess = exitingProcess ?? this.processes.get(sessionId);
 		if (!managedProcess) {
@@ -129,7 +138,9 @@ export class ExitHandler {
 		if (managedProcess.interrupted) {
 			managedProcess.provisionalError = undefined;
 		}
-		settleProvisionalAgentError(this.emitter, sessionId, managedProcess);
+		settleProvisionalAgentError(this.emitter, this.bufferManager, sessionId, managedProcess, {
+			flushStreamedText: isStreamJsonMode,
+		});
 
 		// Handle regular batch mode (not stream-json)
 		if (isBatchMode && !isStreamJsonMode && managedProcess.jsonBuffer) {
@@ -169,6 +180,9 @@ export class ExitHandler {
 			// supposed to continue. StdoutHandler does this for mid-stream lines; the
 			// flush is the same event arriving without a trailing newline.
 			if (event) {
+				// The flushed line never went through StdoutHandler, so this is where
+				// it is handed on as a parsed event, like every line before it.
+				emitParsedEvent(this.emitter, sessionId, event);
 				const eventSessionId = outputParser.extractSessionId(event);
 				if (eventSessionId) {
 					managedProcess.agentSessionId = eventSessionId;
@@ -188,21 +202,36 @@ export class ExitHandler {
 			// retry or recovery handling ever fires.
 			// `interrupted` (the user pressed Stop) suppresses this the same way it
 			// does in StdoutHandler: a terminal envelope flushed on the way out of a
-			// deliberate stop is not a turn failure.
-			if (event?.type === 'error' && !managedProcess.errorEmitted && !managedProcess.interrupted) {
-				const agentError = outputParser.detectErrorFromParsed((event.raw as unknown) ?? event);
+			// deliberate stop is not a turn failure. Detection runs on every flushed
+			// envelope, as StdoutHandler runs it on every line, because a failure is
+			// not always typed `error`: Claude Code's failed turn ends on a `result`
+			// flagged `is_error: true`, which would otherwise render as the answer.
+			const flushedError =
+				event && !managedProcess.errorEmitted && !managedProcess.interrupted
+					? outputParser.detectErrorFromParsed((event.raw as unknown) ?? event)
+					: null;
+			if (event?.type === 'error' || flushedError) {
+				const agentError = flushedError;
 				if (agentError) {
-					managedProcess.errorEmitted = true;
 					agentError.sessionId = sessionId;
 					if (managedProcess.sshRemoteId) {
 						agentError.sshRemoteId = managedProcess.sshRemoteId;
 					}
-					this.emitter.emit('agent-error', sessionId, agentError);
+					emitAgentErrorAfterOutput(
+						this.emitter,
+						this.bufferManager,
+						sessionId,
+						managedProcess,
+						agentError,
+						{ flushStreamedText: true }
+					);
 				}
 			} else if (event && outputParser.isResultMessage(event) && !managedProcess.resultEmitted) {
 				managedProcess.resultEmitted = true;
 				const resultText = event.text || managedProcess.streamedText || '';
 				if (resultText) {
+					// Record the answer so the exit settlement knows one was captured
+					managedProcess.streamedText = resultText;
 					this.bufferManager.emitDataBuffered(sessionId, resultText, managedProcess);
 				}
 			}
@@ -223,138 +252,205 @@ export class ExitHandler {
 			this.bufferManager.emitDataBuffered(sessionId, managedProcess.streamedText, managedProcess);
 		}
 
-		// Check for errors using the parser (if not already emitted)
-		if (outputParser && !managedProcess.errorEmitted) {
-			const agentError = outputParser.detectErrorFromExit(
-				code,
-				managedProcess.stderrBuffer || '',
-				managedProcess.stdoutBuffer || managedProcess.streamedText || ''
-			);
-			if (agentError) {
-				managedProcess.errorEmitted = true;
-				agentError.sessionId = sessionId;
-				if (managedProcess.sshRemoteId) {
-					agentError.sshRemoteId = managedProcess.sshRemoteId;
-				}
-				logger.debug('[ProcessManager] Error detected from exit', 'ProcessManager', {
-					sessionId,
-					exitCode: code,
-					errorType: agentError.type,
-					errorMessage: agentError.message,
-				});
-				this.emitter.emit('agent-error', sessionId, agentError);
-			}
-		}
+		// Turn-completion classification, routed through maestro-lib's shared
+		// resolveTurnOutcome (Plans/maestro-lib-turn-contract.md, section 1)
+		// instead of the three independent checks this block used to run
+		// (detectErrorFromExit, then an SSH-pattern fallback, then omp's
+		// silent-exit override). Skipped entirely once managedProcess.interrupted
+		// is true or an error was already emitted upstream (the terminal-envelope-
+		// flush branch above) - matching the original per-check errorEmitted
+		// guards, plus a stricter rule approved for this migration: a user-
+		// requested stop skips this whole cascade (detectErrorFromExit and the
+		// SSH match included, not just the omp override), so a stopped turn can
+		// never surface as a crash.
+		let settlement: TurnSettlement | undefined;
 
-		// Check for SSH-specific errors at exit (only when running via SSH remote)
-		if (
-			!managedProcess.errorEmitted &&
-			managedProcess.sshRemoteId &&
-			(code !== 0 || managedProcess.stderrBuffer)
-		) {
-			// Only check stderr for SSH errors - NOT stdout.
-			// Stdout contains structured JSONL agent output whose text content (e.g.,
-			// assistant messages quoting shell commands) can false-positive match SSH
-			// error patterns like "command not found". Real SSH transport errors appear
-			// on stderr (shell init failures, connection drops, missing binaries).
-			const stderrToCheck = managedProcess.stderrBuffer || '';
+		if (managedProcess.interrupted) {
+			settlement = {
+				outcome: 'interrupted',
+				answerCaptured: Boolean(managedProcess.streamedText?.trim()),
+			};
+		} else if (managedProcess.errorEmitted) {
+			settlement = {
+				outcome: 'crashed',
+				answerCaptured: Boolean(managedProcess.streamedText?.trim()),
+			};
+		} else {
+			// SSH transport-error matching only runs when the provider's own
+			// exit heuristic found nothing - matches the original precedence
+			// (detectErrorFromExit checked first, SSH gated on `!errorEmitted`).
+			// Only stderr is checked, never stdout: stdout carries structured
+			// JSONL agent output whose text (e.g. an assistant message quoting
+			// a shell command) can false-positive match an SSH error pattern
+			// like "command not found". Real SSH transport errors appear on
+			// stderr (shell init failures, connection drops, missing binaries).
+			// `outputParser` can be undefined (e.g. a spawn that failed before
+			// a parser was resolved) - the original code ran the SSH check
+			// independently of whether a parser exists, so `providerError`
+			// stays `null` (nothing found) rather than gating this whole block
+			// on `outputParser`.
+			let sshExplicitError: AgentError | undefined;
+			const providerError = outputParser
+				? outputParser.detectErrorFromExit(
+						code,
+						managedProcess.stderrBuffer || '',
+						managedProcess.stdoutBuffer || managedProcess.streamedText || ''
+					)
+				: null;
 
-			// Log detailed info before SSH error check to help debug shell parse errors
-			logger.info('[ProcessManager] Checking for SSH errors at exit', 'ProcessManager', {
-				sessionId,
-				exitCode: code,
-				sshRemoteId: managedProcess.sshRemoteId,
-				stderrLength: stderrToCheck.length,
-				stderrPreview: stderrToCheck.substring(0, 300),
-			});
-
-			const sshError = matchSshErrorPattern(stderrToCheck);
-			if (sshError) {
-				managedProcess.errorEmitted = true;
-				const agentError: AgentError = {
-					type: sshError.type,
-					message: sshError.message,
-					recoverable: sshError.recoverable,
-					agentId: toolType,
-					sessionId,
-					sshRemoteId: managedProcess.sshRemoteId,
-					timestamp: Date.now(),
-					raw: {
-						exitCode: code,
-						stderr: stderrToCheck,
-					},
-				};
-				// Log at INFO level so it's visible in system logs
-				logger.info('[ProcessManager] SSH error detected at exit', 'ProcessManager', {
-					sessionId,
-					exitCode: code,
-					errorType: sshError.type,
-					errorMessage: sshError.message,
-					stderrPreview: stderrToCheck.substring(0, 500),
-				});
-				this.emitter.emit('agent-error', sessionId, agentError);
-			} else if (code !== 0) {
-				// Log SSH failures even if no pattern matched, to help debug
-				logger.warn(
-					'[ProcessManager] SSH command failed without matching error pattern',
-					'ProcessManager',
-					{
+			if (providerError === null && managedProcess.sshRemoteId) {
+				const stderrToCheck = managedProcess.stderrBuffer || '';
+				if (code !== 0 || stderrToCheck) {
+					logger.info('[ProcessManager] Checking for SSH errors at exit', 'ProcessManager', {
 						sessionId,
 						exitCode: code,
 						sshRemoteId: managedProcess.sshRemoteId,
-						stderrPreview: stderrToCheck.substring(0, 500),
+						stderrLength: stderrToCheck.length,
+						stderrPreview: stderrToCheck.substring(0, 300),
+					});
+
+					const sshError = matchSshErrorPattern(stderrToCheck);
+					if (sshError) {
+						sshExplicitError = {
+							type: sshError.type,
+							message: sshError.message,
+							recoverable: sshError.recoverable,
+							agentId: toolType,
+							sessionId,
+							sshRemoteId: managedProcess.sshRemoteId,
+							timestamp: Date.now(),
+							raw: { exitCode: code, stderr: stderrToCheck },
+						};
+						logger.info('[ProcessManager] SSH error detected at exit', 'ProcessManager', {
+							sessionId,
+							exitCode: code,
+							errorType: sshError.type,
+							errorMessage: sshError.message,
+							stderrPreview: stderrToCheck.substring(0, 500),
+						});
+					} else if (code !== 0) {
+						logger.warn(
+							'[ProcessManager] SSH command failed without matching error pattern',
+							'ProcessManager',
+							{
+								sessionId,
+								exitCode: code,
+								sshRemoteId: managedProcess.sshRemoteId,
+								stderrPreview: stderrToCheck.substring(0, 500),
+							}
+						);
 					}
-				);
+				}
+			}
+
+			const facts: TurnFacts = {
+				exitCode: code,
+				// The close event's signal. `code` arrives here as `code || 0`, so a
+				// process killed from outside would otherwise look like a clean exit
+				// and its partial text like a finished answer. A stop Maestro asked
+				// for never gets this far: it sets `interrupted` (see above).
+				signal: signal ?? null,
+				interrupted: false, // already gated above; resolver's rule 1 is moot here
+				stderrText: managedProcess.stderrBuffer || '',
+				stdoutText: managedProcess.stdoutBuffer || managedProcess.streamedText || '',
+				explicitError: sshExplicitError,
+				stdinError,
+				capturedAnswerText: managedProcess.streamedText || undefined,
+				resultMessageSeen: Boolean(managedProcess.resultEmitted),
+			};
+
+			// generalizeEmptyAnswerRule stays false: broadening the omp-only
+			// "clean exit with nothing captured is a crash" rule to every
+			// provider is a real, unreviewed behavior change (Open Question 2
+			// in the turn contract) and is explicitly out of scope here.
+			// `providerError` is reused rather than letting the resolver call
+			// `detectErrorFromExit` a second time - it's already computed above
+			// to decide whether the SSH fallback should even run.
+			const result = resolveTurnOutcome(
+				facts,
+				{ detectErrorFromExit: () => providerError },
+				{ providerId: toolType, sessionId },
+				{ generalizeEmptyAnswerRule: false }
+			);
+
+			settlement = {
+				outcome: result.outcome,
+				answerCaptured: Boolean(managedProcess.streamedText?.trim()),
+			};
+
+			if (result.outcome === 'crashed') {
+				let agentError = result.error;
+
+				// resolveTurnOutcome flags omp's silent-clean-exit case as
+				// `crashed` with no `error` payload (the message is provider-
+				// specific, not something a generic resolver should author).
+				// isStreamJsonMode is re-checked here because it isn't part of
+				// TurnFacts - the original omp override required it too.
+				if (!agentError && toolType === 'omp' && isStreamJsonMode) {
+					agentError = {
+						type: 'agent_crashed',
+						message:
+							'Oh My Pi exited without producing a response. The agent process ended early (for example right after startup) before sending any output. Please send your message again.',
+						recoverable: true,
+						agentId: toolType,
+						sessionId,
+						sshRemoteId: managedProcess.sshRemoteId,
+						timestamp: Date.now(),
+						raw: { exitCode: code },
+					};
+					logger.warn(
+						'[ProcessManager] omp exited with no result, error, or output - surfacing recoverable error',
+						'ProcessManager',
+						{ sessionId, exitCode: code }
+					);
+				} else if (!agentError && signal) {
+					// Killed by a signal nobody in Maestro sent. Whatever streamed before
+					// it is a truncated answer, so the turn fails visibly instead of
+					// settling as a finished one. Recoverable: sending again starts a
+					// fresh process.
+					agentError = {
+						type: 'agent_crashed',
+						message: `${getAgentDisplayName(toolType)} was terminated by ${signal} before it finished. Please send your message again.`,
+						recoverable: true,
+						agentId: toolType,
+						sessionId,
+						sshRemoteId: managedProcess.sshRemoteId,
+						timestamp: Date.now(),
+						raw: { exitCode: code, stderr: managedProcess.stderrBuffer || undefined },
+					};
+					logger.warn('[ProcessManager] Agent killed by an unrequested signal', 'ProcessManager', {
+						sessionId,
+						signal,
+						answerCaptured: settlement.answerCaptured,
+					});
+				} else if (agentError) {
+					logger.debug('[ProcessManager] Error detected from exit', 'ProcessManager', {
+						sessionId,
+						exitCode: code,
+						errorType: agentError.type,
+						errorMessage: agentError.message,
+					});
+				}
+
+				if (agentError) {
+					agentError.sessionId = sessionId;
+					if (managedProcess.sshRemoteId) {
+						agentError.sshRemoteId = managedProcess.sshRemoteId;
+					}
+					emitAgentErrorAfterOutput(
+						this.emitter,
+						this.bufferManager,
+						sessionId,
+						managedProcess,
+						agentError
+					);
+				}
 			}
 		}
 
-		// omp silent-exit hardening. Oh My Pi can exit cleanly (code 0) right after
-		// startup / TTSR-rule registration having emitted NO `agent_end`, no result,
-		// and no streamed text (observed: the main-turn process went silent while
-		// the paired tab-namer turn completed normally). Every branch above then
-		// no-ops - `detectErrorFromExit` returns null on code 0, and the streamed-
-		// text fallback has nothing to flush - so the tab clears its busy pill to an
-		// empty "done" state with no answer and no error, indistinguishable from
-		// success. That is the reported "started, never went busy, appeared done,
-		// no answer" turn. Surface a recoverable, non-auto-retrying `agent_crashed`
-		// (see NON_RETRYABLE_TYPES) so the turn visibly fails and the user can
-		// resend. Scoped to omp to avoid tripping legitimate empty helper turns of
-		// other agents. User stops are excluded: `kill()` removes the process before
-		// `close` (early return above), and `interrupt()` sets `interrupted`.
-		if (
-			toolType === 'omp' &&
-			isStreamJsonMode &&
-			!managedProcess.resultEmitted &&
-			!managedProcess.errorEmitted &&
-			!managedProcess.interrupted &&
-			!managedProcess.streamedText?.trim() &&
-			!sessionId.endsWith('-terminal') &&
-			!sessionId.includes('-synopsis-') &&
-			!sessionId.startsWith('tab-naming-')
-		) {
-			managedProcess.errorEmitted = true;
-			const agentError: AgentError = {
-				type: 'agent_crashed',
-				message:
-					'Oh My Pi exited without producing a response. The agent process ended early (for example right after startup) before sending any output. Please send your message again.',
-				recoverable: true,
-				agentId: toolType,
-				sessionId,
-				sshRemoteId: managedProcess.sshRemoteId,
-				timestamp: Date.now(),
-				raw: { exitCode: code },
-			};
-			logger.warn(
-				'[ProcessManager] omp exited with no result, error, or output - surfacing recoverable error',
-				'ProcessManager',
-				{ sessionId, exitCode: code }
-			);
-			this.emitter.emit('agent-error', sessionId, agentError);
-		}
-
-		// Clean up temp image files if any
-		if (managedProcess.tempImageFiles && managedProcess.tempImageFiles.length > 0) {
-			cleanupTempFiles(managedProcess.tempImageFiles);
+		// Remove temporary CLI attachments, including Windows prompt files.
+		if (managedProcess.tempFiles && managedProcess.tempFiles.length > 0) {
+			cleanupTempFiles(managedProcess.tempFiles);
 		}
 
 		// Emit query-complete for batch mode processes. Listeners flush buffered data
@@ -404,7 +500,7 @@ export class ExitHandler {
 		if (this.processes.get(sessionId) === managedProcess) {
 			this.processes.delete(sessionId);
 		}
-		this.emitter.emit('exit', sessionId, code);
+		this.emitter.emit('exit', sessionId, code, undefined, settlement);
 	}
 
 	/**
@@ -550,6 +646,8 @@ export class ExitHandler {
 			// Emit the result text (only once per process)
 			if (jsonResponse.result && !managedProcess.resultEmitted) {
 				managedProcess.resultEmitted = true;
+				// Record the answer so the exit settlement knows one was captured
+				managedProcess.streamedText = jsonResponse.result;
 				this.emitter.emit('data', sessionId, jsonResponse.result);
 			}
 
@@ -621,13 +719,16 @@ export class ExitHandler {
 			this.emitter.emit('agent-error', sessionId, agentError);
 		}
 
-		// Clean up temp image files if any
-		if (managedProcess?.tempImageFiles && managedProcess.tempImageFiles.length > 0) {
-			cleanupTempFiles(managedProcess.tempImageFiles);
+		// Remove temporary CLI attachments on process errors as well.
+		if (managedProcess?.tempFiles && managedProcess.tempFiles.length > 0) {
+			cleanupTempFiles(managedProcess.tempFiles);
 		}
 
 		this.emitter.emit('data', sessionId, `[error] ${error.message}`);
-		this.emitter.emit('exit', sessionId, 1);
+		this.emitter.emit('exit', sessionId, 1, undefined, {
+			outcome: 'crashed',
+			answerCaptured: false,
+		});
 		this.processes.delete(sessionId);
 	}
 }

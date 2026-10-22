@@ -36,6 +36,7 @@ import { renderHook, act, cleanup } from '@testing-library/react';
 // ============================================================================
 
 const mockAgentStoreProcessQueuedItem = vi.fn();
+vi.mock('../../../renderer/utils/runtimeContext', () => ({ isWebDesktop: vi.fn(() => false) }));
 
 const mockLoggerError = vi.fn();
 
@@ -140,8 +141,13 @@ vi.mock('../../../renderer/utils/tabHelpers', () => ({
 // ============================================================================
 
 import { useQueueProcessing } from '../../../renderer/hooks/agent/useQueueProcessing';
+import {
+	noteSpawnCollision,
+	resetSpawnCollisionsForTest,
+} from '../../../renderer/utils/executionQueue';
 import type { UseQueueProcessingDeps } from '../../../renderer/hooks/agent/useQueueProcessing';
 import type { Session, AITab, QueuedItem } from '../../../renderer/types';
+import { isWebDesktop } from '../../../renderer/utils/runtimeContext';
 
 // ============================================================================
 // Mutable store state (mutated in each test)
@@ -242,6 +248,7 @@ function createDeps(overrides: Partial<UseQueueProcessingDeps> = {}): UseQueuePr
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	vi.mocked(isWebDesktop).mockReturnValue(false);
 
 	mockSessionStoreState.sessionsLoaded = false;
 	mockSessionStoreState.sessions = [];
@@ -269,6 +276,7 @@ beforeEach(() => {
 
 afterEach(() => {
 	vi.useRealTimers();
+	resetSpawnCollisionsForTest();
 	cleanup();
 });
 
@@ -1705,6 +1713,60 @@ describe('stuck-queue watchdog', () => {
 		});
 
 		expect(mockSetSessions.mock.calls.length).toBe(callsAfterDrain);
+		expect(mockAgentStoreProcessQueuedItem).not.toHaveBeenCalled();
+	});
+});
+
+// ============================================================================
+// Spawn-collision back-off
+// ============================================================================
+
+describe('dispatch — spawn-collision back-off', () => {
+	// A refused dispatch restores the exact state this poll fires on. Without a
+	// wait it re-dispatched into the same refusal on every render (2026-10-12,
+	// ~14 attempts a second against an SSH tab whose old entry never cleared).
+	it('waits out the cooldown, then dispatches on the next look back', () => {
+		vi.useFakeTimers();
+		noteSpawnCollision('queued-1');
+		mockSessionStoreState.sessionsLoaded = true;
+		mockSessionStoreState.sessions = [
+			createSession({
+				id: 'session-1',
+				state: 'idle',
+				aiTabs: [createTab({ id: 'tab-1', state: 'idle' })],
+				activeTabId: 'tab-1',
+				executionQueue: [createQueuedItem({ id: 'queued-1', tabId: 'tab-1' })],
+			}),
+		];
+
+		renderHook(() => useQueueProcessing(createDeps()));
+		act(() => {
+			vi.advanceTimersByTime(600);
+		});
+		expect(mockAgentStoreProcessQueuedItem).not.toHaveBeenCalled();
+
+		act(() => {
+			vi.advanceTimersByTime(4000);
+		});
+		expect(mockAgentStoreProcessQueuedItem).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe('remote observer queue ownership', () => {
+	it('leaves accepted shared queue work to the owning host renderer even after idle recovery', async () => {
+		vi.useFakeTimers();
+		vi.mocked(isWebDesktop).mockReturnValue(true);
+		const item = createQueuedItem();
+		const session = createSession({ id: 'remote-shared', state: 'idle', executionQueue: [item] });
+		mockSessionStoreState.sessionsLoaded = true;
+		mockSessionStoreState.sessions = [session];
+		const { result } = renderHook(() => useQueueProcessing(createDeps()));
+		await act(async () => {
+			vi.advanceTimersByTime(5000);
+			await result.current.processQueuedItem(session.id, item);
+		});
+		expect(session.executionQueue).toEqual([item]);
+		expect(mockSetSessions).not.toHaveBeenCalled();
 		expect(mockAgentStoreProcessQueuedItem).not.toHaveBeenCalled();
 	});
 });

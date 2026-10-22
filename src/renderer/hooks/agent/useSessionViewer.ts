@@ -32,7 +32,7 @@ export interface AgentSession {
 	cacheReadTokens: number;
 	cacheCreationTokens: number;
 	durationSeconds: number;
-	origin?: 'user' | 'auto';
+	origin?: 'user' | 'auto' | 'relay';
 	sessionName?: string;
 }
 

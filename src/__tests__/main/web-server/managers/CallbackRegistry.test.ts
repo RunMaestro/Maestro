@@ -684,6 +684,23 @@ describe('CallbackRegistry', () => {
 		});
 	});
 
+	describe('setSteerGroupChatCallback / steerGroupChat()', () => {
+		it('answers unavailable when no callback is registered', async () => {
+			expect(await registry.steerGroupChat('chat-1', { message: 'hi' })).toMatchObject({
+				outcome: 'unavailable',
+			});
+		});
+
+		it('passes the chat id and request through and returns the result', async () => {
+			const result = { outcome: 'delivered' as const, targets: ['Moderator'] };
+			const callback = vi.fn().mockResolvedValue(result);
+			registry.setSteerGroupChatCallback(callback);
+
+			expect(await registry.steerGroupChat('chat-1', { itemId: 'item-1' })).toBe(result);
+			expect(callback).toHaveBeenCalledWith('chat-1', { itemId: 'item-1' });
+		});
+	});
+
 	// =========================================================================
 	// Callback replacement
 	// =========================================================================

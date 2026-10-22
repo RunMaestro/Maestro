@@ -16,7 +16,14 @@ import type { Theme } from '../../types';
 interface ModalResizeGripProps {
 	/** Omit on surfaces that render without a theme; the grip falls back to a dim white. */
 	theme?: Theme;
-	onResizeStart: (e: React.MouseEvent) => void;
+	/** Start a mouse-driven resize (the surface tracks window `mousemove`). */
+	onResizeStart?: (e: React.MouseEvent) => void;
+	/**
+	 * Start a pointer-driven resize instead, for surfaces that drag through
+	 * `usePointerDrag` (which needs the pointer id to capture). Takes precedence
+	 * over `onResizeStart`.
+	 */
+	onResizePointerDown?: (e: React.PointerEvent<HTMLDivElement>) => void;
 	onReset: () => void;
 	/** True once the surface carries a user-chosen size, so reset does something */
 	canReset: boolean;
@@ -27,6 +34,7 @@ interface ModalResizeGripProps {
 export function ModalResizeGrip({
 	theme,
 	onResizeStart,
+	onResizePointerDown,
 	onReset,
 	canReset,
 	label = 'Resize modal',
@@ -37,7 +45,8 @@ export function ModalResizeGrip({
 			aria-label={label}
 			aria-orientation="horizontal"
 			title={canReset ? 'Drag to resize, double-click to reset' : 'Drag to resize'}
-			onMouseDown={onResizeStart}
+			onMouseDown={onResizePointerDown ? undefined : onResizeStart}
+			onPointerDown={onResizePointerDown}
 			onDoubleClick={onReset}
 			className="absolute bottom-0 right-0 w-4 h-4 z-10 opacity-40 hover:opacity-100 transition-opacity"
 			style={{ cursor: 'nwse-resize' }}

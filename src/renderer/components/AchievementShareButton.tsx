@@ -27,6 +27,7 @@ import { notifyToast } from '../stores/notificationStore';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { useClickOutside } from '../hooks/ui/useClickOutside';
+import { elevatedSurfaceStyle } from '../utils/elevatedSurface';
 
 const GITHUB_LOGO_URL = 'https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png';
 
@@ -70,6 +71,13 @@ export interface AchievementShareButtonProps {
 }
 
 const GOLD_COLOR = '#FFD700';
+
+/** How long a share waits for the cross-provider stats scan to finish. The
+ * scan stats every transcript on disk (~5s for 30k Claude sessions) before it
+ * reports anything, so a Share clicked right after opening the Usage Dashboard
+ * used to bake "-" into Sessions and Total Tokens. Past this, the image is
+ * drawn with whatever has arrived. */
+const GLOBAL_STATS_WAIT_MS = 20_000;
 
 /**
  * Word-wrap a string to a max pixel width using the canvas's current font.
@@ -164,6 +172,36 @@ export function AchievementShareButton({
 		if (prewarmGithubUsername) void loadRemoteImage(githubAvatarUrl(prewarmGithubUsername));
 	}, [shareMenuOpen, prewarmGithubUsername, loadRemoteImage]);
 
+	// The image must be drawn from the stats as they are when it is drawn, not
+	// as they were when Share was clicked: the stats stream in over seconds, and
+	// a closure over the prop froze the click-time value (usually null).
+	const globalStatsRef = useRef(globalStats);
+	globalStatsRef.current = globalStats;
+	const globalStatsWaitersRef = useRef<Array<() => void>>([]);
+	useEffect(() => {
+		if (!globalStats?.isComplete) return;
+		const waiters = globalStatsWaitersRef.current;
+		globalStatsWaitersRef.current = [];
+		waiters.forEach((resolve) => resolve());
+	}, [globalStats]);
+
+	// `undefined` means this surface supplies no stats at all (the Playground),
+	// so there is nothing to wait for. `null` or a partial result means a scan
+	// is in flight.
+	const waitForGlobalStats = useCallback(async () => {
+		if (globalStatsRef.current === undefined || globalStatsRef.current?.isComplete) {
+			return globalStatsRef.current;
+		}
+		await new Promise<void>((resolve) => {
+			const timer = setTimeout(resolve, GLOBAL_STATS_WAIT_MS);
+			globalStatsWaitersRef.current.push(() => {
+				clearTimeout(timer);
+				resolve();
+			});
+		});
+		return globalStatsRef.current;
+	}, []);
+
 	const generateShareImage = useCallback(async (): Promise<HTMLCanvasElement> => {
 		const canvas = document.createElement('canvas');
 		const ctx = canvas.getContext('2d')!;
@@ -198,9 +236,10 @@ export function AchievementShareButton({
 		ctx.imageSmoothingEnabled = true;
 		ctx.imageSmoothingQuality = 'high';
 
-		const [avatarImage, githubLogoImage] = await Promise.all([
+		const [avatarImage, githubLogoImage, globalStats] = await Promise.all([
 			githubUsername ? loadRemoteImage(githubAvatarUrl(githubUsername)) : Promise.resolve(null),
 			loadRemoteImage(GITHUB_LOGO_URL),
+			waitForGlobalStats(),
 		]);
 
 		const wandIconImage = await new Promise<HTMLImageElement | null>((resolve) => {
@@ -585,11 +624,11 @@ export function AchievementShareButton({
 		currentBadge,
 		autoRunStats.cumulativeTimeMs,
 		autoRunStats.longestRunMs,
-		globalStats,
 		usageStats,
 		handsOnTimeMs,
 		leaderboardRegistration,
 		loadRemoteImage,
+		waitForGlobalStats,
 	]);
 
 	const copyToClipboard = useCallback(async (): Promise<boolean> => {
@@ -695,10 +734,9 @@ export function AchievementShareButton({
 
 			{shareMenuOpen && (
 				<div
-					className="absolute right-0 top-full mt-1 p-1.5 rounded-lg shadow-xl z-50"
+					className="absolute right-0 top-full mt-1 p-1.5 rounded-lg z-50"
 					style={{
-						backgroundColor: theme.colors.bgSidebar,
-						border: `1px solid ${theme.colors.border}`,
+						...elevatedSurfaceStyle(theme),
 					}}
 				>
 					<button

@@ -70,7 +70,28 @@ describe('autoRunStatsUtils', () => {
 			successRate: 67,
 			avgSessionDuration: 90000,
 			avgTaskDuration: 45000,
+			totalDuration: 180000,
+			goalDrivenDuration: 0,
+			specDrivenDuration: 180000,
 		});
+	});
+
+	it('splits Auto Run time by kind, counting unlabeled runs as spec-driven', () => {
+		const metrics = computeAutoRunMetrics([
+			makeSession({ duration: 60000, kind: 'goal-driven' }),
+			makeSession({ duration: 30000, kind: 'spec-driven' }),
+			// Pre-migration row: no kind at all.
+			makeSession({ duration: 20000 }),
+			// Unknown value from a newer build.
+			makeSession({ duration: 5000, kind: 'loop-driven' as never }),
+			// A goal-looking path is still spec-driven unless the kind says otherwise.
+			makeSession({ duration: 1000, documentPath: `${GOAL_RUN_DOCUMENT_PREFIX}ship it` }),
+		]);
+
+		expect(metrics.goalDrivenDuration).toBe(60000);
+		expect(metrics.specDrivenDuration).toBe(56000);
+		expect(metrics.totalDuration).toBe(116000);
+		expect(metrics.totalDuration).toBe(metrics.goalDrivenDuration + metrics.specDrivenDuration);
 	});
 
 	it('groups sessions by local date and keeps completion-only days', () => {

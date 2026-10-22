@@ -3,7 +3,7 @@
  *
  * Switches between two modes:
  *   - shell: arbitrary shell command (PATH-aware, runs in owning session's project root)
- *   - cli: structured maestro-cli call (currently only `send`)
+ *   - cli: agent message or slash command, optionally in a fresh AI tab
  *
  * The owning session is either pre-bound (when dragged from a session row) or
  * chosen via a dropdown on the node itself (when dragged from the standalone
@@ -117,17 +117,22 @@ export function CommandConfigPanel({
 	// Sort sessions alphabetically by name (case-insensitive) so the picker
 	// list is scannable. The leading "Select an agent…" placeholder stays
 	// pinned at the top regardless of sort order.
-	const ownerSelectOptions = useMemo(() => {
+	const { ownerSelectOptions, targetSelectOptions } = useMemo(() => {
 		const sorted = [...(sessions ?? [])].sort((a, b) =>
 			a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
 		);
-		return [
+		const ownerSelectOptions = [
 			{ value: '', label: 'Select an agent…' },
 			...sorted.map((s) => ({
 				value: s.id,
 				label: `${s.name} · ${s.toolType}`,
 			})),
 		];
+		const terminalIds = new Set(sorted.filter((s) => s.toolType === 'terminal').map((s) => s.id));
+		return {
+			ownerSelectOptions,
+			targetSelectOptions: ownerSelectOptions.filter((option) => !terminalIds.has(option.value)),
+		};
 	}, [sessions]);
 
 	const handleNameChange = useCallback(
@@ -161,12 +166,31 @@ export function CommandConfigPanel({
 
 	const setMode = useCallback(
 		(mode: CueCommandMode) => {
+			if (mode === data.mode) return;
 			onUpdateNode(node.id, {
 				mode,
 				cliCommand: mode === 'cli' ? 'send' : undefined,
+				...(mode === 'cli'
+					? {
+							cliTarget:
+								localCliTarget ||
+								(targetSelectOptions.some((option) => option.value === data.owningSessionId)
+									? data.owningSessionId
+									: ''),
+							cliNewTab: data.cliNewTab ?? (localCliTarget ? undefined : true),
+						}
+					: {}),
 			});
 		},
-		[node.id, onUpdateNode]
+		[
+			node.id,
+			onUpdateNode,
+			localCliTarget,
+			data.mode,
+			data.owningSessionId,
+			data.cliNewTab,
+			targetSelectOptions,
+		]
 	);
 
 	const ModeButton = ({
@@ -303,6 +327,7 @@ export function CommandConfigPanel({
 						Pick one to continue.
 					</span>
 					<CueSelect
+						aria-label="Owning agent"
 						value={data.owningSessionId}
 						onChange={(v) => setOwningSession(v)}
 						options={ownerSelectOptions}
@@ -316,7 +341,7 @@ export function CommandConfigPanel({
 			{/* Mode toggle */}
 			<div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
 				<ModeButton mode="shell" label="Shell command" Icon={Terminal} />
-				<ModeButton mode="cli" label="maestro-cli" Icon={Send} />
+				<ModeButton mode="cli" label="Agent message" Icon={Send} />
 			</div>
 
 			{/* Name */}
@@ -380,32 +405,25 @@ export function CommandConfigPanel({
 					}}
 				>
 					<div style={{ display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
-						<label style={themedLabelStyle}>maestro-cli sub-command</label>
-						<input
-							type="text"
-							value="send"
-							readOnly
-							disabled
-							style={{
-								...themedInputStyle,
-								fontFamily: 'monospace',
-								opacity: 0.7,
+						<label style={themedLabelStyle}>Target agent</label>
+						<CueSelect
+							aria-label="Target agent"
+							value={localCliTarget}
+							onChange={(target) => {
+								setLocalCliTarget(target);
+								debouncedSetTarget(target);
 							}}
+							options={targetSelectOptions}
+							theme={theme}
+							filterable
+							filterPlaceholder="Filter target agents…"
 						/>
-						<span
-							style={{
-								color: theme.colors.textDim,
-								fontSize: 10,
-								marginTop: 2,
-							}}
-						>
-							Only `send` is supported today; more sub-commands may be added later.
-						</span>
 					</div>
 					<div style={{ display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
-						<label style={themedLabelStyle}>Target session ID</label>
+						<label style={themedLabelStyle}>Agent ID or template</label>
 						<input
 							type="text"
+							aria-label="Agent ID or template"
 							value={localCliTarget}
 							onChange={handleTargetChange}
 							placeholder="{{CUE_FROM_AGENT}}"
@@ -420,6 +438,29 @@ export function CommandConfigPanel({
 						>
 							Use {'{{CUE_FROM_AGENT}}'} for the triggering agent (works for both agent.completed
 							and cli.trigger events), or paste a literal session ID.
+						</span>
+					</div>
+					<div style={{ display: 'flex', flexDirection: 'column', gap: 4, flexShrink: 0 }}>
+						<label
+							style={{
+								display: 'flex',
+								alignItems: 'center',
+								gap: 8,
+								color: theme.colors.textMain,
+								fontSize: 11,
+							}}
+						>
+							<input
+								type="checkbox"
+								checked={data.cliNewTab ?? false}
+								onChange={(e) => onUpdateNode(node.id, { cliNewTab: e.target.checked })}
+								style={{ accentColor: CUE_COLOR }}
+							/>
+							Run in a new agent tab
+						</label>
+						<span style={{ color: theme.colors.textDim, fontSize: 10 }}>
+							Enable to create a fresh background conversation on every run. Requires the desktop
+							app.
 						</span>
 					</div>
 					<div
@@ -440,11 +481,17 @@ export function CommandConfigPanel({
 								marginBottom: 0,
 							}}
 						>
-							<span style={{ marginBottom: 4 }}>Message body (optional)</span>
+							<span style={{ marginBottom: 4 }}>
+								{data.cliNewTab ? 'Slash command or message (optional)' : 'Message (optional)'}
+							</span>
 							<textarea
 								value={localCliMessage}
 								onChange={handleMessageChange}
-								placeholder="Defaults to {{CUE_SOURCE_OUTPUT}}"
+								placeholder={
+									data.cliNewTab
+										? 'e.g. /triage {{CUE_GH_NUMBER}}'
+										: 'Defaults to {{CUE_SOURCE_OUTPUT}}'
+								}
 								spellCheck={false}
 								style={{
 									...themedInputStyle,
@@ -463,8 +510,11 @@ export function CommandConfigPanel({
 								marginTop: 4,
 							}}
 						>
-							Leave blank to forward the upstream agent&apos;s output verbatim. Template variables
-							are substituted before sending.
+							{data.cliNewTab
+								? 'Send a slash command with arguments or a message directly to the agent.'
+								: 'Enable a new agent tab to run custom or project slash commands with arguments.'}{' '}
+							Leave blank to forward {'{{CUE_SOURCE_OUTPUT}}'}. Template variables are substituted
+							before sending.
 						</span>
 					</div>
 				</div>

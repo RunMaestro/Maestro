@@ -1,5 +1,5 @@
 import type React from 'react';
-import type { ForceSendEligibility } from '../../utils/executionQueue';
+import type { ForceSendEligibility, SteerEligibility } from '../../utils/executionQueue';
 import type {
 	Session,
 	Theme,
@@ -103,6 +103,12 @@ export interface LogItemProps {
 	 */
 	responseDurationMs?: number;
 	/**
+	 * The entry right below this one is a steered message stitched to the same
+	 * turn (`steerJoinsRunningTurn`), so a stitched steer draws its connector on
+	 * down to it instead of ending at its own header.
+	 */
+	steerRunContinues?: boolean;
+	/**
 	 * Draw Codex's assistant directives (`:codex-followup[...]{...}`) as chips
 	 * on this entry's markdown body. True only for a Codex agent: the syntax is
 	 * Codex's own emitting convention, so the same string from any other
@@ -162,12 +168,16 @@ export interface TerminalOutputProps {
 	onDeleteLog?: (logId: string) => number | null; // Returns the index to scroll to after deletion
 	onRemoveQueuedItem?: (itemId: string) => void; // Callback to remove a queued item from execution queue
 	onTogglePauseQueuedItem?: (itemId: string) => void; // Callback to toggle held/paused state of a queued item
+	onMergeQueuedItem?: (itemId: string) => void; // Fold a queued message into the one above it
 	onEditQueuedItem?: (itemId: string, patch: QueuedItemEditPatch) => void; // Edit a queued message's text, images and turn settings
 	onReorderQueuedItem?: (fromIndex: number, toIndex: number, tabId?: string) => void; // Reorder a queued item within the active tab's queue
 	onForceSendQueuedItem?: (itemId: string) => void; // Callback to Force Send a queued item (parallel execution)
 	forcedParallelEnabled?: boolean; // Whether forcedParallelExecution setting is on (gates Force Send button)
 	/** Full Force Send eligibility for a queued item - see QueuedItemsList. */
 	getForceSendContext?: (item: QueuedItem) => ForceSendEligibility | null;
+	/** Chat steering: eligibility for injecting a queued item into the running turn. */
+	getSteerContext?: (item: QueuedItem) => SteerEligibility | null;
+	onSteerQueuedItem?: (itemId: string) => void;
 	/**
 	 * Whether this chat view answers the global Force Send keyboard shortcut
 	 * (`maestro:triggerForceSendQueued`). The single view is the only chat on

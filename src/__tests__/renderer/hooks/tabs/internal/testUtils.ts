@@ -1,11 +1,6 @@
 import { vi } from 'vitest';
-import type {
-	AITab,
-	BrowserTab,
-	FilePreviewTab,
-	Session,
-	TerminalTab,
-} from '../../../../../renderer/types';
+import type { AITab, FilePreviewTab, Session, TerminalTab } from '../../../../../renderer/types';
+import type { BrowserTab } from '../../../../../shared/browserPage';
 import { useModalStore } from '../../../../../renderer/stores/modalStore';
 import { useSessionStore } from '../../../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';

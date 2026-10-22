@@ -28,6 +28,7 @@ export const CUE_YAML_TEMPLATE = `# .maestro/cue.yaml
 #
 #   - name: "review new PRs"
 #     event: github.pull_request
+#     repo: owner/name             # required: set your repository; never runs without it
 #     poll_minutes: 5
 #     # retrigger_on_comments: true   # re-fire when a PR receives new activity
 #     # max_notifications: 10         # per-PR cap on re-fires (0 = unlimited)
@@ -36,6 +37,7 @@ export const CUE_YAML_TEMPLATE = `# .maestro/cue.yaml
 #
 #   - name: "triage issues"
 #     event: github.issue
+#     repo: owner/name             # required: set your repository; never runs without it
 #     poll_minutes: 10
 #     # retrigger_on_comments: true   # re-fire when an issue receives new activity
 #     # max_notifications: 10         # per-issue cap on re-fires (0 = unlimited)
@@ -44,6 +46,7 @@ export const CUE_YAML_TEMPLATE = `# .maestro/cue.yaml
 #
 #   - name: "work labeled PRs"
 #     event: github.label
+#     repo: owner/name             # required: set your repository; never runs without it
 #     gh_label_target: pr          # pr | issue | both (default both)
 #     gh_labels: ["ready-to-merge"] # omit to fire on any label
 #     poll_minutes: 2

@@ -21,6 +21,8 @@ import {
 	LINE_LENGTH_GIANT_THRESHOLD,
 	canScaleFontForView,
 	isGistPublishableFile,
+	resolvePreviewScroller,
+	PREVIEW_SCROLLER_ATTR,
 	type FontScaleTargetView,
 } from '../../../../renderer/components/FilePreview/filePreviewUtils';
 import { buildParquetPreviewMarker } from '../../../../shared/parquet/preview';
@@ -516,6 +518,28 @@ describe('filePreviewUtils', () => {
 
 		it('returns true for any other non-empty language identifier', () => {
 			expect(isCodeFile('whatever')).toBe(true);
+		});
+	});
+
+	describe('resolvePreviewScroller', () => {
+		it('returns null when there is no content column', () => {
+			expect(resolvePreviewScroller(null)).toBeNull();
+		});
+
+		it('falls back to the content column when no view owns a scroller', () => {
+			const content = document.createElement('div');
+			content.appendChild(document.createElement('pre'));
+			expect(resolvePreviewScroller(content)).toBe(content);
+		});
+
+		it("returns a table view's own tagged scroller", () => {
+			const content = document.createElement('div');
+			const pane = document.createElement('div');
+			const scroller = document.createElement('div');
+			scroller.setAttribute(PREVIEW_SCROLLER_ATTR, 'true');
+			pane.appendChild(scroller);
+			content.appendChild(pane);
+			expect(resolvePreviewScroller(content)).toBe(scroller);
 		});
 	});
 

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { buildBrowserInputs } from '../../../../renderer/hooks/coworking/useCoworkingRegistrySync';
-import type { BrowserTab, Session } from '../../../../renderer/types';
+import type { Session } from '../../../../renderer/types';
+import type { BrowserTab } from '../../../../shared/browserPage';
 
 function sessionWith(tabs: Array<Partial<BrowserTab>>): Session {
 	// buildBrowserInputs only reads session.browserTabs; a minimal stand-in suffices.

@@ -2,7 +2,7 @@
  * Tests for cue-cli-executor.
  *
  * Verifies that subscriptions with `action: command` + `command.mode: 'cli'`
- * shell out to `node maestro-cli.js send <target> <message> --live`, with
+ * shell out to `node maestro-cli.js dispatch <target> <message> --background`, with
  * template substitution applied to both target and (optional) message.
  */
 
@@ -147,6 +147,14 @@ describe('cue-cli-executor', () => {
 		mockIsWindows.mockReturnValue(false);
 	});
 
+	it('spawns nothing for a run already stopped', async () => {
+		const controller = new AbortController();
+		controller.abort();
+		const result = await executeCueCli(createConfig({ signal: controller.signal }) as any);
+		expect(mockSpawn).not.toHaveBeenCalled();
+		expect(result).toMatchObject({ status: 'stopped', exitCode: null, stderr: '' });
+	});
+
 	it('substitutes {{CUE_FROM_AGENT}} in target before invoking maestro-cli dispatch', async () => {
 		const config = createConfig();
 		const promise = executeCueCli(config as any);
@@ -164,8 +172,53 @@ describe('cue-cli-executor', () => {
 		expect(args[1]).toBe('dispatch');
 		expect(args[2]).toBe('session-research'); // CUE_FROM_AGENT resolved from sourceSessionId
 		expect(args[3]).toBe('computed answer = 42');
-		expect(args).toHaveLength(4);
+		expect(args).toHaveLength(5);
+		expect(args[4]).toBe('--background');
+		expect(args).not.toContain('--new-tab');
+		expect(args).not.toContain('--visible');
 		expect(result.status).toBe('completed');
+	});
+
+	it('dispatches a substituted provider slash command into a fresh visible background tab', async () => {
+		const config = createConfig({
+			event: { ...createEvent({ number: 42 }), type: 'github.issue' },
+			cli: {
+				command: 'send' as const,
+				target: '{{CUE_FROM_AGENT}}',
+				message: '/mattpocock-skills:triage {{CUE_GH_NUMBER}}',
+				new_tab: true,
+			},
+		});
+		const promise = executeCueCli(config as any);
+		await Promise.resolve();
+		mockChild.emit('close', 0);
+		const result = await promise;
+
+		const args = mockSpawn.mock.calls[0][1] as string[];
+		expect(args.slice(1)).toEqual([
+			'dispatch',
+			'session-research',
+			'/mattpocock-skills:triage 42',
+			'--background',
+			'--new-tab',
+			'--visible',
+		]);
+		expect(result.status).toBe('completed');
+	});
+
+	it('keeps explicit new_tab: false on the existing-tab delivery path', async () => {
+		const config = createConfig({
+			cli: { command: 'send' as const, target: 'session-A', message: '/triage', new_tab: false },
+		});
+		const promise = executeCueCli(config as any);
+		await Promise.resolve();
+		mockChild.emit('close', 0);
+		await promise;
+
+		const args = mockSpawn.mock.calls[0][1] as string[];
+		expect(args).toContain('--background');
+		expect(args).not.toContain('--new-tab');
+		expect(args).not.toContain('--visible');
 	});
 
 	it('caps argv message length to stay under the platform spawn limit', async () => {

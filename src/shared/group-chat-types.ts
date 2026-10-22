@@ -123,14 +123,15 @@ export function mentionMatches(mentionedName: string, actualName: string): boole
 export function findUniqueMentionMatch<T>(
 	mentionedName: string,
 	items: readonly T[],
-	getName: (item: T) => string
+	getName: (item: T) => string,
+	minPriority = 1
 ): T | undefined {
 	let bestPriority = 0;
 	let bestMatches: T[] = [];
 
 	for (const item of items) {
 		const priority = getMentionMatchPriority(mentionedName, getName(item));
-		if (priority === 0) continue;
+		if (priority === 0 || priority < minPriority) continue;
 
 		if (priority > bestPriority) {
 			bestPriority = priority;
@@ -144,6 +145,28 @@ export function findUniqueMentionMatch<T>(
 	}
 
 	return bestMatches.length === 1 ? bestMatches[0] : undefined;
+}
+
+/**
+ * Find the agent a persisted participant name came from.
+ *
+ * This receives a persisted participant name, not a user-typed mention, so it
+ * matches the originating agent conservatively. Priority-1 ("safe folded")
+ * matches collapse bracket styles (e.g. "Review Bot [Linux]" vs
+ * "Review Bot (Linux)") and could borrow the wrong agent's cwd, custom args, or
+ * SSH config. Only exact (4), legacy (3), or safe-normalized (2) matches are
+ * accepted, and a tie returns undefined so an ambiguous lookup never silently
+ * picks one.
+ *
+ * The group chat router uses it to pick the agent a participant runs as, and
+ * the chain of thought export uses it to decide whose log a participant's turn
+ * belongs in. Both must reach the same answer, so both call this.
+ */
+export function findSessionForParticipantName<T extends { name: string }>(
+	participantName: string,
+	sessions: readonly T[]
+): T | undefined {
+	return findUniqueMentionMatch(participantName, sessions, (session) => session.name, 2);
 }
 
 /**
@@ -339,6 +362,8 @@ export interface GroupChatMessage {
 	readOnly?: boolean;
 	/** Base64 data URLs of images attached to this message */
 	images?: string[];
+	/** Set on a user message that was steered into a running round: the turns that took it. */
+	steeredTo?: string[];
 }
 
 /**

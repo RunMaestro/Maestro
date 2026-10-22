@@ -8,6 +8,7 @@
  */
 
 import { ipcRenderer } from 'electron';
+import type { GroupChatSteerResult } from '../../shared/groupChatSteering';
 
 /**
  * Moderator configuration
@@ -137,6 +138,9 @@ export function createGroupChatApi() {
 		queueReorder: (id: string, itemId: string, toIndex: number) =>
 			ipcRenderer.invoke('groupChat:queueReorder', id, itemId, toIndex),
 		queueResume: (id: string) => ipcRenderer.invoke('groupChat:queueResume', id),
+		/** Steer a queued message into the running round. Resolves a GroupChatSteerResult. */
+		queueSteer: (id: string, itemId: string): Promise<GroupChatSteerResult> =>
+			ipcRenderer.invoke('groupChat:queueSteer', id, itemId),
 		onQueueState: (callback: (groupChatId: string, state: unknown) => void) => {
 			const handler = (_e: unknown, groupChatId: string, state: unknown) =>
 				callback(groupChatId, state);

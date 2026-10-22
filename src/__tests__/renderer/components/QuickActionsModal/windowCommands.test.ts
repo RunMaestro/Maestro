@@ -150,4 +150,51 @@ describe('buildWindowCommands', () => {
 			expect(commands.map((c) => c.id)).toEqual(['rename-current-window']);
 		});
 	});
+
+	describe('group moves', () => {
+		const group = { id: 'g1', name: 'Council', emoji: '🏛️' };
+
+		it("moves the active agent's group, skipping the window that holds all of it", () => {
+			const moveGroupToNewWindow = vi.fn();
+			const moveGroupToWindow = vi.fn();
+			const setQuickActionOpen = vi.fn();
+			const commands = buildWindowCommands({
+				activeSession: makeSession({ id: 'a', name: 'Alpha' }),
+				windowTargets: [],
+				moveToNewWindow: vi.fn(),
+				moveToWindow: vi.fn(),
+				activeGroup: group,
+				groupWindowTargets: [
+					makeTarget({ windowId: 'p', isMain: true, label: 'Main Window', isCurrentOwner: true }),
+					makeTarget({ windowId: 'w2', label: 'Window 2' }),
+				],
+				moveGroupToNewWindow,
+				moveGroupToWindow,
+				setQuickActionOpen,
+			});
+			expect(commands.map((c) => c.label)).toEqual([
+				'Move Group to New Window: 🏛️ Council',
+				'Move Group to Window 2: 🏛️ Council',
+			]);
+			commands[1].action();
+			expect(moveGroupToWindow).toHaveBeenCalledWith('g1', 'w2');
+			expect(setQuickActionOpen).toHaveBeenCalledWith(false);
+			commands[0].action();
+			expect(moveGroupToNewWindow).toHaveBeenCalledWith('g1');
+		});
+
+		it('offers no group moves for an ungrouped agent', () => {
+			const commands = buildWindowCommands({
+				activeSession: makeSession({ id: 'a', name: 'Alpha' }),
+				windowTargets: [],
+				moveToNewWindow: vi.fn(),
+				moveToWindow: vi.fn(),
+				groupWindowTargets: [makeTarget({ windowId: 'w2' })],
+				moveGroupToNewWindow: vi.fn(),
+				moveGroupToWindow: vi.fn(),
+				setQuickActionOpen: () => {},
+			});
+			expect(commands).toEqual([]);
+		});
+	});
 });

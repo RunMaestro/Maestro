@@ -14,6 +14,36 @@ Maestro can update itself automatically! This feature was introduced in **v0.8.7
 
 ---
 
+## v1.0.x - Press Run
+
+**Latest: v1.0.2** | Released October 21, 2026
+
+# 1.0.2 Highlights
+
+▶️ **Shell blocks in an agent's reply have a Run button.** When an agent answers with a `bash`, `sh`, `zsh`, or `console` block, click Run beside the copy button and the command runs exactly as if you had typed it after `!`, with the same card, working directory, and recall history. Alt-click drops it into the composer in command mode so you can edit it first, and hovering the button shows the full command line. A block written as a terminal session runs only its `$` lines, so sample output is never executed.
+
+📊 **Re-reading your usage history no longer freezes the app.** When an update changes how tokens or cost are counted, Maestro reads your session history again once, and that work now happens off the window's thread. A progress window shows transcripts done, data left, and time remaining. Continue in background shrinks it to a corner card, progress is saved as it goes so a quit picks up where it stopped, Show Usage Data Scan Progress in the command palette brings it back, and `maestro-cli stats-indexing --wait` follows it from a terminal.
+
+🗺️ **The Cue Pipeline Graph groups pipelines by agent.** All Pipelines files each pipeline under the agent that owns it and draws a labeled box around each agent's cards, and Arrange packs every agent's cards into one tidy cluster. The pipeline picker is one filterable list with Pipelines and Agents sections: pick an agent to see only the pipelines it belongs to, with a back crumb when you open one of them. Escape in the picker clears the filter first instead of closing the whole Cue window.
+
+🧙 **Both wizards draw everything the chat draws.** Mermaid diagrams, SVG, images, and math in a wizard reply render the same way they do in an agent's tab, so asking the wizard for a mockup or a flow diagram gets you a picture instead of raw source.
+
+## Also in 1.0.2
+
+- 🧊 **An Auto Run folder that holds a project checkout no longer stalls Maestro.** On Windows the window could go Not Responding for minutes while it watched every file in `node_modules`, and READMEs from dependency folders no longer show up as playbooks.
+- 🗑️ **Close a whole tab group** from its chip menu or with Close Tab Group in the command palette. It asks first, and closed AI tabs can be reopened like any other.
+- ✏️ **Rename Tab Group** is now the label on the group chip menu, matching the command palette, and it has its own bindable shortcut that renames the active group directly.
+- 🚪 **Closing an agent's last file, browser, or terminal tab lands you on a fresh chat**, instead of an empty tab strip or a conversation you never opened.
+- 🖥️ **Resumed Claude conversations in TUI mode keep your prompt intact.** A prompt could sit unsent in Claude's editor and later go out with `/quit` glued to its end, which then failed the next turn.
+- 🗄️ **`maestro-cli group-chat archive`** archives a group chat (or restores it with `--restore`), the same as the Archive action in the Left Bar.
+
+### Previous Releases in this Series
+
+- **v1.0.1** (October 20, 2026) - Full Orchestra
+- **v1.0.0** (October 9, 2026) - Full Orchestra
+
+---
+
 ## v0.17.x - Security Release
 
 **Latest: v0.17.8** | Released October 4, 2026
@@ -29,7 +59,7 @@ Maestro can update itself automatically! This feature was introduced in **v0.8.7
 ## Also in 0.17.8
 
 - 🔁 **Running Maestro behind a reverse proxy?** Have it forward the original `Host` header (nginx: `proxy_set_header Host $host;`, Caddy does this already), or browser requests through it will be refused.
-- 🙏 **Thank you to CopperKoi and YoAm**, who found these problems and reported them responsibly. The full write-up is in advisory [GHSA-q8p2-cpg2-fhpc](https://github.com/RunMaestro/Maestro/security/advisories/GHSA-q8p2-cpg2-fhpc).
+- 🙏 **Thank you to CopperKoi and YoAm**, who found these problems and reported them responsibly, and to notwo1f, CopperKoi's mentor, who guided the audit. The full write-up is in advisory [GHSA-q8p2-cpg2-fhpc](https://github.com/RunMaestro/Maestro/security/advisories/GHSA-q8p2-cpg2-fhpc).
 
 ### Previous Releases in this Series
 
@@ -492,10 +522,6 @@ Plus the pre-release ALPHA...
 
 - **v0.1.5** (November 27, 2025)
 - **v0.1.4** (November 27, 2025)
-- **v0.1.3** (November 27, 2025)
-- **v0.1.2** (November 27, 2025)
-- **v0.1.1** (November 27, 2025)
-- **v0.1.0** (November 27, 2025)
 
 ---
 

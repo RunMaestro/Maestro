@@ -10,6 +10,11 @@
  * `window.maestro.windows.*`, debounced. Panel collapse is therefore per-window,
  * not a single global setting shared across windows.
  *
+ * A web-desktop client has no window of its own: main resolves its reads to the
+ * primary window and refuses its writes, and the bridge does not expose
+ * `windows:setPanelState` at all. So a browser hydrates from the primary but
+ * never persists; a toggle there stays local to that page.
+ *
  * Mapping: a collapsed panel is "not open", so
  * `leftPanelCollapsed = !leftSidebarOpen` and `rightPanelCollapsed =
  * !rightPanelOpen`. The left sidebar's third "hidden" state has no slot in the
@@ -23,6 +28,7 @@ import { useEffect, useRef } from 'react';
 import type { WindowPanelState } from '../../../shared/window-types';
 import { useUIStore } from '../../stores/uiStore';
 import { useDebouncedCallback } from '../utils/useThrottle';
+import { isWebDesktop } from '../../utils/runtimeContext';
 
 /**
  * How long to wait after the last panel toggle before persisting. Collapsing a
@@ -82,7 +88,7 @@ export function useWindowState(): void {
 	// equality check skips the no-op write that hydration's own state update would
 	// otherwise trigger, so only genuine user toggles reach the main process.
 	useEffect(() => {
-		if (!hydratedRef.current) return;
+		if (!hydratedRef.current || isWebDesktop()) return;
 		const next: WindowPanelState = {
 			leftPanelCollapsed: !leftSidebarOpen,
 			rightPanelCollapsed: !rightPanelOpen,

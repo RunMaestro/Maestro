@@ -41,6 +41,7 @@ To add support for a new agent, follow this checklist. The agent completeness te
 12. **If `supportsSessionStorage: true`**: Create session storage extending `BaseSessionStorage` at `src/main/storage/{agent}-session-storage.ts`, register in `src/main/storage/index.ts`
 13. **If `supportsAdditionalDirectories: true`**: Add `additionalDirArgs` to the agent's definition in `src/main/agents/definitions.ts` - see [Step 3.5](#step-35-additional-directories)
 14. **If the agent needs binary probing beyond `$PATH`**: Add install locations to `src/main/agents/path-prober.ts` (both the Windows and the POSIX tables)
+15. **Declare translation support or explicit limitations**: follow the [Provider Translation Contract](#provider-translation-contract). Native History browsing, native resume, and cross-provider context translation are separate capabilities; do not infer one from another. This contract is an onboarding requirement, not an additional completeness-test check today.
 
 #### CI Enforcement
 
@@ -64,6 +65,7 @@ See detailed instructions below.
 - [Architecture Overview](#architecture-overview)
 - [Agent Capability Model](#agent-capability-model)
 - [Step-by-Step: Adding a New Agent](#step-by-step-adding-a-new-agent)
+- [Provider Translation Contract](#provider-translation-contract)
 - [Implementation Details](#implementation-details)
 - [Error Handling](#error-handling)
 - [Testing Your Agent](#testing-your-agent)
@@ -186,33 +188,39 @@ interface AgentCapabilities {
 
 ### Capability-to-UI Feature Mapping
 
-| Capability                      | UI Feature                                        | Hidden When False                                                |
-| ------------------------------- | ------------------------------------------------- | ---------------------------------------------------------------- |
-| `supportsResume`                | Resume button                                     | Button disabled                                                  |
-| `supportsReadOnlyMode`          | Read-only toggle                                  | Toggle hidden                                                    |
-| `supportsJsonOutput`            | Output parsing                                    | Raw text fallback                                                |
-| `supportsSessionId`             | Session ID pill                                   | Pill hidden                                                      |
-| `supportsImageInput`            | Image attachment button                           | Button hidden                                                    |
-| `supportsImageInputOnResume`    | Image attach on resume                            | Button hidden on resume                                          |
-| `supportsSlashCommands`         | Slash command autocomplete                        | Autocomplete disabled                                            |
-| `supportsStreamJsonInput`       | Image via stdin (stream-json)                     | Uses file path fallback                                          |
-| `supportsPromptViaStdin`        | Windows sends long prompts over stdin             | Prompt always stays in argv (~32K limit applies)                 |
-| `supportsSessionStorage`        | Sessions browser tab                              | Tab hidden                                                       |
-| `supportsCostTracking`          | Cost widget                                       | Widget hidden                                                    |
-| `supportsUsageStats`            | Token usage display                               | Display hidden                                                   |
-| `supportsBatchMode`             | Batch processing                                  | Persistent process mode                                          |
-| `requiresPromptToStart`         | Eager spawn on create                             | Agent spawns immediately                                         |
-| `supportsStreaming`             | Real-time display                                 | Waits for full response                                          |
-| `supportsModelSelection`        | Model dropdown                                    | Dropdown hidden                                                  |
-| `supportsResultMessages`        | Show only final result                            | Shows all messages                                               |
-| `supportsThinkingDisplay`       | Thinking/reasoning panel                          | Panel hidden                                                     |
-| `supportsContextMerge`          | Receive merged context                            | Merge option hidden                                              |
-| `supportsAdditionalDirectories` | Additional Directories: native `--add-dir` grants | Section still shown; grants are prompt-only and the copy says so |
-| `supportsContextExport`         | Export context                                    | Export option hidden                                             |
-| `supportsWizard`                | Wizard agent selection                            | Agent excluded                                                   |
-| `supportsGroupChatModeration`   | Moderator dropdown                                | Agent excluded                                                   |
-| `usesJsonLineOutput`            | CLI batch parsing strategy                        | Uses JSON fallback                                               |
-| `usesCombinedContextWindow`     | Context bar display                               | Separate bars                                                    |
+| Capability                      | UI Feature                                        | Hidden When False                                                          |
+| ------------------------------- | ------------------------------------------------- | -------------------------------------------------------------------------- |
+| `supportsResume`                | Resume button                                     | Button disabled                                                            |
+| `supportsReadOnlyMode`          | Read-only toggle                                  | Toggle hidden                                                              |
+| `supportsJsonOutput`            | Output parsing                                    | Raw text fallback                                                          |
+| `supportsSessionId`             | Session ID pill                                   | Pill hidden                                                                |
+| `supportsImageInput`            | Image attachment button                           | Button hidden                                                              |
+| `supportsImageInputOnResume`    | Image attach on resume                            | Button hidden on resume                                                    |
+| `supportsSlashCommands`         | Slash command autocomplete                        | Autocomplete disabled                                                      |
+| `supportsStreamJsonInput`       | Image via stdin (stream-json)                     | Uses file path fallback                                                    |
+| `supportsPromptViaStdin`        | Windows sends long prompts over stdin             | Uses provider `promptFileArgs` when available; otherwise argv limits apply |
+| `supportsSessionStorage`        | Sessions browser tab                              | Tab hidden                                                                 |
+| `supportsCostTracking`          | Cost widget                                       | Widget hidden                                                              |
+| `supportsUsageStats`            | Token usage display                               | Display hidden                                                             |
+| `supportsBatchMode`             | Batch processing                                  | Persistent process mode                                                    |
+| `requiresPromptToStart`         | Eager spawn on create                             | Agent spawns immediately                                                   |
+| `supportsStreaming`             | Real-time display                                 | Waits for full response                                                    |
+| `supportsModelSelection`        | Model dropdown                                    | Dropdown hidden                                                            |
+| `supportsResultMessages`        | Show only final result                            | Shows all messages                                                         |
+| `supportsThinkingDisplay`       | Thinking/reasoning panel                          | Panel hidden                                                               |
+| `supportsContextMerge`          | Receive merged context                            | Merge option hidden                                                        |
+| `supportsAdditionalDirectories` | Additional Directories: native `--add-dir` grants | Section still shown; grants are prompt-only and the copy says so           |
+| `supportsContextExport`         | Export context                                    | Export option hidden                                                       |
+| `supportsWizard`                | Wizard agent selection                            | Agent excluded                                                             |
+| `supportsGroupChatModeration`   | Moderator dropdown                                | Agent excluded                                                             |
+| `usesJsonLineOutput`            | CLI batch parsing strategy                        | Uses JSON fallback                                                         |
+| `usesCombinedContextWindow`     | Context bar display                               | Separate bars                                                              |
+
+On Windows, OMP uses its provider-defined `promptFileArgs` to receive the complete
+effective UTF-8 prompt as an `@file` attachment instead of exceeding command-line
+limits. The attachment must not follow `--`, which disables OMP attachment
+expansion. OMP does not advertise bare-stdin prompt support. Temporary prompt and
+image files are cleaned up on exit and on failed or superseded launches.
 
 ### Context Window Configuration
 
@@ -652,6 +660,105 @@ export class YourAgentSessionStorage implements AgentSessionStorage {
 	// ... other methods
 }
 ```
+
+### Provider Translation Contract
+
+Every provider integration must document whether sessions, memories, instructions, skills, and custom subagents can be translated in each direction, including unsupported cases. Claude Code and Codex use the shared implementation in `src/shared/maestro-lib/translation/`; [the implementation and evidence ledger](Plans/provider-translation-layer.md) and [native mapping](Plans/provider-translation-native-formats.md) describe its limits. Until an adapter has native resume evidence, keep its direction unverified and retain the switching warning.
+
+Implement translation in `src/shared/maestro-lib/`, with thin desktop and CLI callers using the same migration operation. Search existing storage parsers, memory operations, RPC clients, path/account resolvers, atomic writers, and launch helpers before adding code. Extract environment-neutral pieces with compatibility wrappers; do not make the library import Electron, renderer, or main modules.
+
+#### Implemented entry points and registration
+
+| Surface                     | Entry point                                                                         | Responsibility                                                                                                    |
+| --------------------------- | ----------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Node library                | `translation/index.ts`: `planTranslation`, `applyTranslation`, `recoverTranslation` | Portable plan, durable staging/readback, mappings, recovery                                                       |
+| Provider adapters           | `translation/adapters.ts`: `createTranslationRegistry`                              | Register `TranslationAdapter` and explicit `TranslationDirection` pairs                                           |
+| Desktop host                | `src/main/provider-translation-service.ts`: `ProviderTranslationService.run`        | Resolve effective accounts, native ownership, live processes, scope, private storage, atomic agent mapping commit |
+| IPC/preload                 | `agents:translateProvider` / `window.maestro.agents.translateProvider`              | Typed `TranslationRequest` and `TranslationReport`; actions `plan`, `apply`, `status`, `recover`, `rollback`      |
+| Renderer and remote callers | `src/renderer/services/providerTranslation.ts`                                      | Preserve local drafts/tabs and defer accepted operations until source turns settle                                |
+| CLI                         | `update-agent --provider <id>`                                                      | Same remote service; `--dry-run`, `--migration <action>`, `--json`, repeatable `--translation-resource <path>`    |
+
+`--accept-translation-limitations` accepts the displayed warnings; `--force` is a compatibility alias. Neither bypasses blocking conflicts. Refused, failed, and deferred applies do not report a completed switch. Provider migration is separate from changing the working directory, provider binary, account, or environment.
+
+CLI migration uses the dedicated WebSocket request/result `provider_translation` / `provider_translation_result`, forwarded to the existing migration callback. Older desktops reject that verb; there is no fallback to a legacy destructive `toolType` settings patch. `--migration-plan <id>` carries a reviewed operation ID through apply, status, recovery or rollback, preserving preflight fingerprint checks. Cue invokes the command through an existing shell Command node, with JSON output and nonzero refusal/failure status; see [Starting Translation from Cue](docs/provider-notes.md#starting-translation-from-cue). This switches the active provider and does not claim independent two-agent or non-switching replica synchronization.
+
+The registered versions are **Claude Code 2.1.296/2.1.302 ↔ Codex 0.162.1/0.163.0**, both directions **unverified**. Unknown versions/providers block. Neither `supportsResume` nor `supportsSessionStorage` certifies translation. Registry certification requires native-resume, repeated-round-trip, resource-discovery evidence and covered payload classes; selected unsupported classes keep warnings even for a certified pair. Isolated live QA on 2.1.302/0.163.0 verified conversation recall in both providers and access to carried project resource definitions; execution continuity and repeated incremental synchronization remain uncertified. See the [evidence ledger](Plans/provider-translation-layer.md).
+
+The renderer-safe declarations in `src/shared/maestro-lib/translation/support.ts` are shared by native registration and the Edit Agent provider picker. Destinations with a declared direction from the agent's current provider show `→ Memory + history (preview)` while unverified. This is an adapter discovery hint; preflight still checks the installed versions and actual contents before allowing a switch. Adding a provider requires updating these declarations and registering its native adapter, rather than maintaining a separate UI support list.
+
+To switch, select the destination in Edit Agent, review the automatically read conversion plan and any limitations, then click Save Changes. Saving runs the same migration operation as the CLI. Reading and translation use the shared Spinner with status text; an active source turn shows a waiting status. There is no percentage bar because the migration API does not expose measured completion units. Project memory is carried automatically; additional user-level resources must be selected explicitly.
+
+Minimal adapter registration, using the actual contract (replace `grok` and its schema reader/writer with the provider being integrated):
+
+```typescript
+import { TranslationRegistry, type TranslationAdapter } from './src/shared/maestro-lib/translation';
+
+// These provider-specific functions must implement the declared native mapping.
+declare const readGrokNative: TranslationAdapter['extract'];
+declare const stageGrokNative: TranslationAdapter['stage'];
+const grok: TranslationAdapter = {
+	provider: 'grok',
+	versions: ['documented-schema-version'],
+	extract: readGrokNative,
+	stage: stageGrokNative,
+};
+const registry = new TranslationRegistry();
+registry.register(grok);
+registry.declareDirection({
+	source: 'claude-code',
+	destination: 'grok',
+	sourceVersions: ['2.1.296'],
+	destinationVersions: grok.versions,
+	verification: 'unverified',
+});
+// Register the source adapter too before calling planTranslation.
+```
+
+`extract` accepts a host-resolved `TranslationIdentity`, tab ID, native session ID and original bytes. It returns ordered `PortableRecord`s, byte/hash artifacts and exact limitations. `stage` receives the destination identity, operation ID, shared RPC connection and `recordIntent`; journal ownership before every native mutation, return fresh native IDs, ownership/readback hashes and original-record lineage. Reuse `assertTranslationTarget` before native writes or history injection to refuse parent symlink escapes from the selected account. Add the adapter and both independently supported directions to `createTranslationRegistry`. The library must not import Electron, main, or renderer code.
+
+#### Native history and identity
+
+- Declare supported provider versions, native formats, account roots, project/worktree identity, and import/export mechanisms. Prefer provider-supported imports to internal database writes.
+- Preserve ordered messages and roles, content blocks, attachments, tool call/result linkage, branches, timestamps, compaction boundaries, and source provenance. Flattened History display messages are not a lossless transport.
+- Block missing or duplicate tool linkage, results preceding their calls, and invalid tool message roles before staging. Keep parallel calls and their independently ordered results intact; never reorder or replay tools to repair native history.
+- Retain original bytes and unknown records in a recoverable archive. Signed or encrypted reasoning is native evidence, not valid foreign reasoning; do not forge signatures or replay tool execution.
+- Track native session IDs separately per provider and keep the active resume ID bound to the active provider. Import only intervening records on a return switch, using stable source identity and checkpoints rather than text deduplication.
+
+#### Memory and resource discovery
+
+- Document the memory root, account/config overrides, indexing, evidence links, and how the destination discovers imported knowledge. Copying a memory file does not prove the provider loads it.
+- Use three-way memory/resource synchronization. Preserve conflicting edits and deletion tombstones instead of overwriting by timestamp. Scope migration to owned conversations and selected knowledge; do not copy unrelated account data or credentials.
+- Share portable instruction and skill bodies where discovery rules permit it. Preserve existing symlinks and relative resources; project instructions must not be loaded twice.
+- Translate provider-specific skill/subagent metadata into the destination's supported format. Record unsupported hooks, tool restrictions, runtime dependencies, and model settings; symlinking different definition formats does not provide equivalent behavior.
+
+The current bridge archives project instruction bodies, project memories (including linked topics and subagent memory), skill scripts/assets and custom subagent definitions, plus exact selected user-level resources. Effective `CLAUDE_CONFIG_DIR`/`CODEX_HOME`, settings overrides and Git repository/worktree memory identity are resolved by the host. Account-global generated summaries, credentials, hooks, MCP and account-wide databases are excluded. A shared account-level memory directory requires an explicit resource selection.
+
+Imported knowledge lives under `.maestro/provider-knowledge/<agent-hash>/<operation-id>/`; its discovery index is bound on every shared launch, including native resume, through `MAESTRO_TRANSLATION_KNOWLEDGE`. Claude also receives per-launch `--settings` for the managed memory directory. The existing Memory Viewer resolves the stored agent binding and remains unavailable for an unbridged unsupported provider. Discovery bindings are implemented; actual recall remains unverified.
+
+Compatible project instructions share an existing body through a relative alias when safe; distinct instruction files block. Portable skills use `.agents/skills` for Codex or `.claude/skills` for Claude. Supported subagents become `.codex/agents/*.toml` or `.claude/agents/*.md`; YAML/TOML are parsed, not split with regex. Preserve original metadata and bytes; unsupported execution/model/tool/memory/hook settings prevent native installation of that definition and its skill assets. Owner execute bits are retained for scripts. Symlink directory contents require explicit selection, and target escapes/conflicts block.
+
+#### Switching, recovery, and certification
+
+Nested file links outside the project or selected resource subtree retain link evidence with a limitation; their unselected bodies are not imported. Explicit user-resource selections must resolve inside the approved resource category, so a skill alias cannot import account credentials. Missing explicit resources block rather than silently disappearing from the selected payload.
+
+Native transcript reads and their pre-commit rechecks use `assertTranslationTarget` against the selected source, parked destination or checkpoint account root. Matching bytes do not authorize a link outside that account. Return-trip knowledge directories must remain inside the project; managed resource reads stay inside that directory, and owned native projections stay inside the project. Managed memory links cannot import unselected account knowledge, and collection limitations remain in the return-trip plan.
+
+- Stage all selected tabs/resources, read back the destination, and commit provider/session mappings only after successful migration. `commitTranslationSession` rechecks each tab's native source ID against its staged mapping, including closed tabs and the saved inventory; changed IDs refuse the commit. Already applied destination mappings remain idempotent for lifecycle/IPC delivery. Keep the source active on failure and retain a recoverable operation journal.
+- Defer migration commit until active source turns settle. The shared renderer client resumes saved deferrals after reload, retaining the original warning acceptance and verification state. Store complete accepted limitations using `canonicalJson`, including tab, artifact, severity and message; a matching warning code alone does not authorize changed evidence. Legacy code/artifact-only acceptance requires renewed review when warnings remain. Clean plans require no acceptance flag; newly discovered limitations require another review before apply. Preserve final events, queued messages, tab IDs, closed histories, drafts, and file tabs; never delete them to avoid an invalid resume ID.
+- Treat support as directional, versioned, and specific to the selected payload. Suppress warnings only for a validated complete conversion; unsupported directions, missing attachments, memory conflicts, capability differences, and context limits require an accurate limitation report.
+- Update adapter, sync, recovery, and CLI/UI parity tests with implementation changes. Native resume and repeated round-trip evidence are required before declaring a direction verified; lint or authored tests alone do not certify conversion. Follow the user's authorization for test execution.
+
+The local archive is `app.getPath('userData')/provider-translations`, separate from synced Session data. Journals retain original bytes, backups, hashes, lineage, tombstones, scoped account roots and owned native artifacts. Cross-process agent/project migration locks and source liveness/hash rechecks precede mutation; arbitrary outside provider processes are not locked by Maestro. Claude writes exclusively created linked transcripts. Codex uses `thread/start` plus persisted `thread/inject_items`, refuses tools/approvals, and requires matching rollout readback; it does not write SQLite or fall back to context-free `exec`. The scoped native importer and paginated history reader are reusable utilities; a paginated-only projection without a complete native rollout blocks conversion.
+
+Keep queued messages, drafts, file tabs and closed/snoozed History. Queued source-provider model/effort captures remain stored but destination defaults apply to those messages, since model names are not portable. Native source IDs are parked using the existing `providerSessions` invariant. Original History IDs, including those attached to open tabs, follow the new native mappings on later hops. An entry with unresolved native ownership remains recorded and refuses resume under the wrong provider. Recovery can finalize an already staged/committed operation without replaying an uncertain RPC. Rollback before commit restores only unchanged owned files/backups; Codex threads/indexes remain for inspection. Committed operations and later native work cannot be deleted by rollback. Use a new reverse migration to switch back.
+
+Journals persist `destinationObserved` hashes during staged readback, before mapping commit. Recovery uses this saved baseline instead of treating later native edits or turns as already synchronized; an already committed journal missing that baseline requires inspection. An unfinished or failed operation must be recovered or rolled back before a new plan/apply. The library also guards direct apply retries: a committed journal returns its saved result without native writes, while any other non-planned journal or existing mapping/write requires recovery or rollback without replacing its evidence. Status/recovery default to the persisted agent operation ID. An explicit `planId` may inspect historical journals with status; recovery/rollback cannot replace a different current operation. A committed journal remains ineligible for rollback after later switches replace its active ID.
+
+The Codex import channel uses `buildAgentEnvironment` with destination provider defaults, global settings and destination environment overrides, then pins the planned `CODEX_HOME`. It must use the same configured credentials and launch environment as the destination provider, without carrying source-specific session overrides into the import. The host opens it for a ready plan with no limitations or explicitly accepted warnings; blocked, deferred, no-op and unaccepted-warning plans do not start the channel. A certified complete plan does not require an acceptance flag.
+
+The host preserves a reviewed `planId` after refreshing and matching its fingerprint, rather than allocating a second operation on apply. A retry with that ID reads the durable journal before opening an import channel. Only the current, settled committed operation returns its saved result; a historical commit requires status inspection, and unfinished staging, mappings or write intents require recovery/rollback. A commit whose persisted agent state still needs settlement also requires recovery.
+
+Creation intents keep `created: false` until exclusive file or alias creation succeeds. Resource bodies and discovery indexes use the same journaled writer in maestro-lib; rollback refuses unproved ownership even for matching bytes or dangling links. Archive writes and journal reloads validate backup hashes from projections, resource writes and native mappings; retain their original bytes separately. Direct library rollback also checks every backup hash before restoring or deleting any target. Validate rollback targets against their selected roots even when the files are absent. A backup may restore an absent file only when the journal records its deletion; a file removed after staging requires inspection. CLI and its web response bridge allow migration staging to finish beyond the ordinary settings timeout. A response timeout is uncertain completion, so inspect `--migration status` before retrying.
 
 ### Step 8: Test Your Integration
 
@@ -1124,23 +1231,23 @@ codex exec --json resume <thread_id> "continue"
 - ✅ Output Parser: `src/main/parsers/grok-output-parser.ts`
 - ✅ Session Storage: `src/main/storage/grok-session-storage.ts` (Copilot-style directory-per-session layout; parses `summary.json` + `chat_history.jsonl`, local and SSH-remote)
 - ✅ Error Patterns: `src/main/parsers/error-patterns.ts` (auth, rate limit, context exhaustion, network, invalid model)
-- ✅ Capabilities: resume, read-only, session storage, streaming, thinking display, result messages, model selection, batch mode, inline wizard (`supportsWizard`); `supportsUsageStats` and `supportsCostTracking` are false because the stream carries neither
+- ✅ Capabilities: resume, read-only, session storage, streaming, thinking display, result messages, model selection, batch mode, inline wizard (`supportsWizard`), usage stats and cost tracking (grok 1.x reports both; 0.x reported neither)
 
 **JSON Event Types:**
 
-Exactly four event types appear on stdout with `--output-format streaming-json`:
+These event types appear on stdout with `--output-format streaming-json`:
 
 - `thought` → reasoning delta (routed to the thinking panel via `isReasoning: true`)
 - `text` → assistant text delta (partial; deltas concatenate directly)
-- `end` → final result (`stopReason`, `sessionId`, `requestId`); the only place the session ID appears; carries no usage and no cost
+- `tool_call` / `tool_call_update` (grok 1.x) → tool badge, correlated by `toolCallId`. The readable result is in the ACP `content` blocks (text, or a `diff` for edits); `rawOutput` is a per-tool object whose shell `output` is a byte array, so the parser never hands it to the badge as-is. A shell command that exits non-zero still settles `completed`; `rawOutput.exit_code` is the failure signal (verified on 1.0.41)
+- `end` → final result (`stopReason`, `sessionId`, `requestId`); the only place the session ID appears
 - `error` → failure (`message`); duplicated on stderr as `Error: <message>`, process exits 1
 
 **Known Limitations:**
 
-- **No tool events on stdout:** tool activity is recorded only in the on-disk session files (`events.jsonl` / `chat_history.jsonl`), so live tool display is not possible from the stream
-- **No token usage or cost anywhere in the stream:** the context usage widget shows nothing for Grok until xAI adds usage fields
+- **Usage and cost (grok 1.x):** a `usage` line arrives per model call and `end` carries the turn's totals plus `total_cost_usd` (verified on 1.0.41; a resumed turn reports only itself). Every usage event Maestro sees is ADDED to the session totals, so only `end` reports usage, with the last call attached as `absoluteUsage` for the context gauge. Session History reads the same totals from the session's `usage.json`, whose `inputTokens` INCLUDES cached reads (the stream's excludes them), so storage subtracts them
 - **Interactive PTY mode is not wired:** Maestro drives Grok in batch mode only, like Codex
-- **No image input:** no image flag observed in `grok --help`
+- **Images ride in the prompt, not a flag:** there is no attachment flag, and `--prompt-json` takes base64 image blocks only as one argv string (a screenshot overruns ARG_MAX) and cannot be combined with `-p`. `imagePromptBuilder` names each temp image path in the prompt and grok opens it with `read_file` (verified on 1.0.41, fresh and resumed). Each image costs one tool call
 - **No `noToolsArgs` / all-tools-off flag:** verified on v0.2.93 - `--tools ""` is treated as unset, and a hard-coded `--disallowed-tools` list would rot. Tab naming uses plan mode (`readOnlyArgs`) only. Do not add `noToolsArgs` until Grok ships a verified all-off flag.
 - **Wizard discovery is always-approve (not plan):** discovery needs read/fetch (package.json, GitHub). Spawns use `--always-approve --max-turns 8 --no-subagents` via `GROK_WIZARD_DISCOVERY_ARGS` in `src/renderer/utils/grokWizard.ts`. Residual: the model can still write under cwd within the turn budget (no Claude-style tool allowlist on Grok CLI yet). Prefer a tool allowlist if/when the CLI supports one.
 - **History is not a scrubbed vault:** transcripts under `$GROK_HOME/sessions/` (default `~/.grok/sessions/`) are plain JSONL. Maestro reads them for History without redacting user-pasted secrets - same OS-user confidentiality model as Claude/Codex.
@@ -1182,14 +1289,15 @@ Google's terminal coding agent, and the successor to the Gemini CLI effort above
 | Auto-approve tools | `--dangerously-skip-permissions`                             |
 | Terminal sandbox   | `--sandbox`                                                  |
 | Headless timeout   | `--print-timeout` (CLI default 5m; Maestro defaults to 30m)  |
-| Session Storage    | ❌ On-disk conversation format is undocumented               |
+| Session Storage    | ✅ `conversation_summaries.db` + `conversations/<id>.db`     |
 
 **Implementation Status:**
 
 - ✅ Output Parser: `src/main/parsers/antigravity-output-parser.ts`
+- ✅ Step store reader: `src/main/parsers/antigravity-step-store.ts` (thinking and tool results, see below)
 - ✅ Error Patterns: `src/main/parsers/error-patterns.ts` (`ANTIGRAVITY_ERROR_PATTERNS`)
-- ❌ Session Storage: not implemented; `supportsSessionStorage` is false
-- ⏳ Capabilities: derived from the published headless contract, not from a captured live run
+- ✅ Session Storage: `src/main/storage/antigravity-session-storage.ts` (local only; SSH remotes show no history)
+- ⏳ Capabilities: mostly from the published headless contract; tool events, thinking, and images were checked against live agy 1.2.16 runs
 
 **Stream-JSON Event Types:**
 
@@ -1207,6 +1315,37 @@ Usage fields are snake_case: `input_tokens`, `output_tokens`, `thinking_tokens`,
 `cache_read_tokens`, `total_tokens`. No context window is reported, so the configured
 window drives the context meter.
 
+Tool steps carry PascalCase parameters (`CommandLine`, `AbsolutePath`, `TargetFile`). Two
+things the stream leaves out are read from agy's own conversation store,
+`~/.gemini/antigravity-cli/conversations/<conversation_id>.db` (SQLite, table `steps`, row
+`idx` = `step_index`, protobuf `step_payload`):
+
+- **Thinking text.** The stream reports thinking only as `thinking_tokens`. A model step's
+  summary is at payload field 20 → 3, already written when the step first appears, and is
+  emitted through `ParsedEvent.reasoningText`. agy writes a summary only for longer thinking.
+- **Command exit codes.** Every tool step settles `DONE`; a failed `run_command` is only
+  visible in the result text stored for the model (field 140 → 2 → 1, "The command exited
+  with code N"). Edits take their diff from the same field.
+
+The store is optional: an SSH-remote agy keeps it on the remote host, and a missing or
+unreadable store just means no thinking text and no exit codes.
+
+**Usage:** agy reports usage per model step AND as the turn total on `result` (the sum of the
+steps). Maestro adds every usage event to the session totals, so only the result reports
+usage, with the last model step attached as `absoluteUsage` (the context gauge's occupancy).
+
+**History** (`AntigravitySessionStorage`) lists from `conversation_summaries.db`, agy's
+own index, which also covers headless runs. Many rows carry no `workspace_uris` (519 of 650
+on one machine, Maestro-spawned runs among them), so a row's project falls back to
+`cache/last_conversations.json` (folder -> last conversation) and then to the `Cwd` of the
+conversation's first `run_command`. Subagent conversations (a parent id) are left out.
+Every store is opened through `openAntigravityDb()`: read-only when agy's WAL sidecars
+exist, read-write with `query_only` when they do not. A plain read-only open of a finished
+store CREATES sidecars it cannot remove (one listing left 397 pairs), and a plain
+read-write close would checkpoint a WAL agy left behind into its `.db`.
+`getSessionPath()` returns `null`, which keeps Antigravity out of the starred-transcript
+mirror: the mirror copies one file, and a WAL store's newest steps can still sit in `-wal`.
+
 **Known Limitations:**
 
 - **No true read-only mode.** Headless mode auto-allows reading _and writing_ files inside the
@@ -1216,7 +1355,10 @@ window drives the context meter.
   agentic run, but the CLI has no tool-disabling flag to put there, so a naming run can still
   touch workspace files. (`noToolsArgs` is Claude-only today, so this is shared with every
   other non-Claude agent - Antigravity is just the one that also lacks CLI read-only.)
-- **No image input.** No documented attachment flag, so `supportsImageInput` is false.
+- **Images ride in the prompt.** There is no attachment flag, and `--input-format stream-json`
+  rejects any block that is not text. `imagePromptBuilder` names each temp image path in the
+  prompt and agy opens it with `view_file` (verified on 1.2.16, fresh and with
+  `--conversation`). Each image costs one tool call.
 - **No slash commands in headless mode.** They are a TUI-only affordance.
 - **Batch runs pass `--dangerously-skip-permissions`.** Without it, headless mode soft-denies
   shell commands and a run stalls on its first terminal tool call.

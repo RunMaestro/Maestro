@@ -1,3 +1,5 @@
+import { FIRST_PARTY_PLUGINS } from './plugins/first-party';
+
 /**
  * Default Encore Feature flags - the one copy.
  *
@@ -24,6 +26,11 @@ export const ENCORE_FEATURE_DEFAULTS = {
 	concerto: false,
 	groupsPlus: false,
 	webLogin: false,
+	computerHistory: false,
+	quickChat: true,
+	maestroRun: false,
+	throughputGauge: false,
+	dataview: false,
 } as const satisfies Readonly<Record<string, boolean>>;
 
 /** The flag shape these defaults describe, derived so the two cannot drift. */
@@ -54,4 +61,51 @@ export function resolveEncoreFeatures(raw: unknown): EncoreFeatureDefaults {
 		}
 	}
 	return resolved as EncoreFeatureDefaults;
+}
+
+/** The slice of a settings store an Encore gate reads. */
+export interface EncoreSettingsReader {
+	get(key: string): unknown;
+}
+
+/** Whether one Encore Feature is on, read live from a settings store. */
+export function isEncoreFeatureEnabled(
+	settingsStore: EncoreSettingsReader,
+	flag: keyof EncoreFeatureDefaults
+): boolean {
+	return resolveEncoreFeatures(settingsStore.get('encoreFeatures'))[flag];
+}
+
+/**
+ * Refuse a request for a switched-off feature: throws `new Error(code)`, the
+ * `PluginsDisabled` / `PianolaDisabled` convention, so the caller's IPC error
+ * wrapper reports it like any other refusal. A disabled feature must have no
+ * effect at all, so every write path of a gated feature calls this first,
+ * whoever the caller is (the UI, `maestro-cli`, a web client).
+ */
+export function requireEncoreFeature(
+	settingsStore: EncoreSettingsReader,
+	flag: keyof EncoreFeatureDefaults,
+	code: string
+): void {
+	if (!isEncoreFeatureEnabled(settingsStore, flag)) throw new Error(code);
+}
+
+/** The name the Plugins tab shows for a feature. */
+export function encoreFeatureName(flag: keyof EncoreFeatureDefaults): string {
+	return flag === 'plugins' ? 'Community Plugins' : FIRST_PARTY_PLUGINS[flag].name;
+}
+
+/** `computerHistory` -> `computer-history`, a spelling `maestro-cli encore enable` accepts. */
+export function encoreFeatureCliName(flag: keyof EncoreFeatureDefaults): string {
+	return flag.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
+}
+
+/**
+ * What a request for a switched-off feature says, in every process: the CLI's
+ * gated verbs and a main-process service that refuses with readable text
+ * rather than a `XDisabled` code.
+ */
+export function encoreDisabledMessage(flag: keyof EncoreFeatureDefaults): string {
+	return `${encoreFeatureName(flag)} is turned off. Turn it on in Settings > Plugins, or run: maestro-cli encore enable ${encoreFeatureCliName(flag)}`;
 }

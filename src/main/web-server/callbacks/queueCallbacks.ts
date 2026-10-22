@@ -4,6 +4,11 @@ import type { WebServer } from '../WebServer';
 import type { WebServerFactoryDependencies } from '../web-server-factory';
 import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
+import {
+	parseQueueSteerResult,
+	QUEUE_STEER_RENDERER_TIMEOUT_MS,
+	type QueueSteerResult,
+} from '../../../shared/chatSteering';
 import type {
 	QueueSessionSnapshot,
 	EnqueueCommandResult,
@@ -30,9 +35,14 @@ function parseEnqueueFailureReason(raw: unknown): EnqueueCommandFailureReason | 
 
 export function registerQueueCallbacks(
 	server: WebServer,
-	deps: Pick<WebServerFactoryDependencies, 'getMainWindow'>
+	deps: Pick<WebServerFactoryDependencies, 'getMainWindow' | 'getWindowForSession'>
 ): void {
-	const { getMainWindow } = deps;
+	const { getMainWindow, getWindowForSession } = deps;
+	// Each window owns its own agents' queues, so a request about ONE agent has to
+	// reach the window that owns it. The primary would answer from a queue that
+	// does not hold the item.
+	const resolveSessionWindow = (sessionId: string) =>
+		getWindowForSession?.(sessionId) ?? getMainWindow();
 
 	// Round-trip the CLI's `dispatch --queue` into the renderer, which owns
 	// the authoritative execution queue. The renderer decides (busy -> queue,
@@ -46,9 +56,10 @@ export function registerQueueCallbacks(
 			inputMode?: 'ai' | 'terminal',
 			tabId?: string,
 			images?: string[],
-			background?: boolean
+			background?: boolean,
+			held?: boolean
 		) => {
-			const mainWindow = getMainWindow();
+			const mainWindow = resolveSessionWindow(sessionId);
 			if (!mainWindow) {
 				logger.warn('mainWindow is null for enqueueCommand', 'WebServer');
 				return { success: false, error: 'Desktop window unavailable' };
@@ -94,7 +105,8 @@ export function registerQueueCallbacks(
 					inputMode,
 					tabId,
 					images,
-					background
+					background,
+					held
 				);
 
 				const timeoutId = setTimeout(() => {
@@ -156,7 +168,7 @@ export function registerQueueCallbacks(
 
 	// Round-trip `maestro-cli queue remove <itemId>` into the renderer.
 	server.setRemoveQueueItemCallback(async (sessionId: string, itemId: string) => {
-		const mainWindow = getMainWindow();
+		const mainWindow = resolveSessionWindow(sessionId);
 		if (!mainWindow) {
 			logger.warn('mainWindow is null for removeQueueItem', 'WebServer');
 			return { success: false, removed: false, error: 'Desktop window unavailable' };
@@ -193,5 +205,152 @@ export function registerQueueCallbacks(
 				resolve({ success: false, removed: false, error: 'Renderer did not respond' });
 			}, 5000);
 		});
+	});
+
+	// Round-trip `maestro-cli queue hold|resume <itemId>` into the renderer, which
+	// sets the same `paused` flag the queued card's Hold / Resume button flips.
+	server.setSetQueueItemPausedCallback(
+		async (sessionId: string, itemId: string, paused: boolean) => {
+			const mainWindow = resolveSessionWindow(sessionId);
+			if (!mainWindow) {
+				logger.warn('mainWindow is null for setQueueItemPaused', 'WebServer');
+				return { success: false, found: false, error: 'Desktop window unavailable' };
+			}
+			return new Promise<{ success: boolean; found: boolean; paused?: boolean; error?: string }>(
+				(resolve) => {
+					const responseChannel = `remote:setQueueItemPaused:response:${randomUUID()}`;
+					let resolved = false;
+					const handleResponse = (_event: Electron.IpcMainEvent, result: unknown) => {
+						if (resolved) return;
+						resolved = true;
+						clearTimeout(timeoutId);
+						if (typeof result === 'object' && result !== null) {
+							const r = result as Record<string, unknown>;
+							resolve({
+								success: r.success === true,
+								found: r.found === true,
+								paused: typeof r.paused === 'boolean' ? r.paused : undefined,
+								error: typeof r.error === 'string' ? r.error : undefined,
+							});
+						} else {
+							resolve({ success: false, found: false });
+						}
+					};
+					ipcMain.once(responseChannel, handleResponse);
+					if (!isWebContentsAvailable(mainWindow)) {
+						ipcMain.removeListener(responseChannel, handleResponse);
+						resolve({ success: false, found: false, error: 'Desktop window unavailable' });
+						return;
+					}
+					mainWindow.webContents.send(
+						'remote:setQueueItemPaused',
+						sessionId,
+						itemId,
+						paused,
+						responseChannel
+					);
+					const timeoutId = setTimeout(() => {
+						if (resolved) return;
+						resolved = true;
+						ipcMain.removeListener(responseChannel, handleResponse);
+						resolve({ success: false, found: false, error: 'Renderer did not respond' });
+					}, 5000);
+				}
+			);
+		}
+	);
+
+	// Round-trip `maestro-cli queue merge <itemId>` into the renderer, which runs
+	// the same merge the queued card's Merge button does.
+	server.setMergeQueueItemCallback(async (sessionId: string, itemId: string) => {
+		const mainWindow = resolveSessionWindow(sessionId);
+		if (!mainWindow) {
+			logger.warn('mainWindow is null for mergeQueueItem', 'WebServer');
+			return { success: false, merged: false, error: 'Desktop window unavailable' };
+		}
+		return new Promise<{
+			success: boolean;
+			merged: boolean;
+			mergedIntoId?: string;
+			error?: string;
+		}>((resolve) => {
+			const responseChannel = `remote:mergeQueueItem:response:${randomUUID()}`;
+			let resolved = false;
+			const handleResponse = (_event: Electron.IpcMainEvent, result: unknown) => {
+				if (resolved) return;
+				resolved = true;
+				clearTimeout(timeoutId);
+				if (typeof result === 'object' && result !== null) {
+					const r = result as Record<string, unknown>;
+					resolve({
+						success: r.success === true,
+						merged: r.merged === true,
+						mergedIntoId: typeof r.mergedIntoId === 'string' ? r.mergedIntoId : undefined,
+						error: typeof r.error === 'string' ? r.error : undefined,
+					});
+				} else {
+					resolve({ success: false, merged: false });
+				}
+			};
+			ipcMain.once(responseChannel, handleResponse);
+			if (!isWebContentsAvailable(mainWindow)) {
+				ipcMain.removeListener(responseChannel, handleResponse);
+				resolve({ success: false, merged: false, error: 'Desktop window unavailable' });
+				return;
+			}
+			mainWindow.webContents.send('remote:mergeQueueItem', sessionId, itemId, responseChannel);
+			const timeoutId = setTimeout(() => {
+				if (resolved) return;
+				resolved = true;
+				ipcMain.removeListener(responseChannel, handleResponse);
+				resolve({ success: false, merged: false, error: 'Renderer did not respond' });
+			}, 5000);
+		});
+	});
+
+	// Round-trip `maestro-cli queue steer <itemId>` into the renderer, which runs
+	// the same steerQueuedItem() the Steer button does. Waits longer than the
+	// remove round trip because the renderer itself waits on maestro-p's socket.
+	server.setSteerQueueItemCallback(async (sessionId: string, itemId: string) => {
+		const mainWindow = resolveSessionWindow(sessionId);
+		if (!mainWindow) {
+			logger.warn('mainWindow is null for steerQueueItem', 'WebServer');
+			return { success: false, error: 'Desktop window unavailable' };
+		}
+		return new Promise<{ success: boolean; result?: QueueSteerResult; error?: string }>(
+			(resolve) => {
+				const responseChannel = `remote:steerQueueItem:response:${randomUUID()}`;
+				let resolved = false;
+				const handleResponse = (_event: Electron.IpcMainEvent, raw: unknown) => {
+					if (resolved) return;
+					resolved = true;
+					clearTimeout(timeoutId);
+					const r = (raw ?? {}) as Record<string, unknown>;
+					const result = parseQueueSteerResult(r.result);
+					if (r.success === true && result) {
+						resolve({ success: true, result });
+					} else {
+						resolve({
+							success: false,
+							error: typeof r.error === 'string' ? r.error : 'Renderer returned no steer result',
+						});
+					}
+				};
+				ipcMain.once(responseChannel, handleResponse);
+				if (!isWebContentsAvailable(mainWindow)) {
+					ipcMain.removeListener(responseChannel, handleResponse);
+					resolve({ success: false, error: 'Desktop window unavailable' });
+					return;
+				}
+				mainWindow.webContents.send('remote:steerQueueItem', sessionId, itemId, responseChannel);
+				// Outlasts the renderer's own wait on the steering socket.
+				const timeoutId = setTimeout(() => {
+					if (resolved) return;
+					resolved = true;
+					ipcMain.removeListener(responseChannel, handleResponse);
+					resolve({ success: false, error: 'Renderer did not respond' });
+				}, QUEUE_STEER_RENDERER_TIMEOUT_MS);
+			}
+		);
 	});
 }

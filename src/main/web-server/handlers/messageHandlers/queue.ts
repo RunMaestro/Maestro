@@ -2,7 +2,8 @@
  * Queue domain WebSocket message handlers.
  *
  * Extracted from WebSocketMessageHandler.ts. Handles: enqueue_command,
- * list_queue, remove_queue_item.
+ * list_queue, remove_queue_item, steer_queue_item, set_queue_item_paused,
+ * merge_queue_item.
  */
 
 import { logger } from '../../../utils/logger';
@@ -31,6 +32,8 @@ export function handleEnqueueCommand(
 	const clientInputMode = message.inputMode as 'ai' | 'terminal' | undefined;
 	const requestedTabId = typeof message.tabId === 'string' ? message.tabId : undefined;
 	const background = message.background === true;
+	// Queue Held (`dispatch --queue --held`): queue it paused, even on an idle agent.
+	const held = message.held === true;
 	const images = Array.isArray(message.images)
 		? (message.images as unknown[]).filter((v): v is string => typeof v === 'string')
 		: undefined;
@@ -92,7 +95,15 @@ export function handleEnqueueCommand(
 	};
 
 	ctx.callbacks
-		.enqueueCommand(sessionId, command ?? '', clientInputMode, requestedTabId, images, background)
+		.enqueueCommand(
+			sessionId,
+			command ?? '',
+			clientInputMode,
+			requestedTabId,
+			images,
+			background,
+			held
+		)
 		.then((result) => {
 			if (!result.success) cancelArmedCallback();
 			ctx.send(client, {
@@ -224,6 +235,162 @@ export function handleRemoveQueueItem(
 				removed: false,
 				error: `Failed to remove queue item: ${error.message}`,
 				requestId: message.requestId,
+			});
+		});
+}
+
+/**
+ * Handle steer_queue_item message - steer a queued message into the turn running
+ * on its tab, through the SAME renderer path the Steer button uses (the renderer
+ * owns the queue removal and the later re-queue). Used by `maestro-cli queue steer`.
+ */
+export function handleSteerQueueItem(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const sessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
+	const itemId = typeof message.itemId === 'string' ? message.itemId : '';
+	if (!sessionId || !itemId) {
+		ctx.send(client, {
+			type: 'steer_queue_item_result',
+			success: false,
+			error: 'Missing sessionId or itemId',
+			requestId: message.requestId,
+		});
+		return;
+	}
+	if (!ctx.callbacks.steerQueueItem) {
+		ctx.send(client, {
+			type: 'steer_queue_item_result',
+			success: false,
+			error: 'Steer queue item not configured',
+			requestId: message.requestId,
+		});
+		return;
+	}
+	ctx.callbacks
+		.steerQueueItem(sessionId, itemId)
+		.then((result) => {
+			ctx.send(client, {
+				type: 'steer_queue_item_result',
+				success: result.success,
+				...(result.result ? { result: result.result } : {}),
+				...(result.error ? { error: result.error } : {}),
+				requestId: message.requestId,
+			});
+		})
+		.catch((error) => {
+			captureException(error instanceof Error ? error : new Error(String(error)), {
+				extra: { area: 'web-server', handler: 'steer_queue_item', sessionId, itemId },
+			});
+			ctx.send(client, {
+				type: 'steer_queue_item_result',
+				success: false,
+				error: `Failed to steer queue item: ${error.message}`,
+				requestId: message.requestId,
+			});
+		});
+}
+
+/**
+ * Handle set_queue_item_paused message - hold or resume a queued item, the same
+ * flag the queued card's Hold / Resume button flips. Used by
+ * `maestro-cli queue hold` and `queue resume`.
+ */
+export function handleSetQueueItemPaused(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const sessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
+	const itemId = typeof message.itemId === 'string' ? message.itemId : '';
+	const reply = (result: { success: boolean; found: boolean; paused?: boolean; error?: string }) =>
+		ctx.send(client, {
+			type: 'set_queue_item_paused_result',
+			...result,
+			requestId: message.requestId,
+		});
+	if (!sessionId || !itemId || typeof message.paused !== 'boolean') {
+		reply({ success: false, found: false, error: 'Missing sessionId, itemId, or paused' });
+		return;
+	}
+	if (!ctx.callbacks.setQueueItemPaused) {
+		reply({ success: false, found: false, error: 'Set queue item paused not configured' });
+		return;
+	}
+	const paused = message.paused;
+	ctx.callbacks
+		.setQueueItemPaused(sessionId, itemId, paused)
+		.then((result) =>
+			reply({
+				success: result.success,
+				found: result.found,
+				...(result.paused !== undefined ? { paused: result.paused } : {}),
+				...(result.error ? { error: result.error } : {}),
+			})
+		)
+		.catch((error) => {
+			captureException(error instanceof Error ? error : new Error(String(error)), {
+				extra: { area: 'web-server', handler: 'set_queue_item_paused', sessionId, itemId },
+			});
+			reply({
+				success: false,
+				found: false,
+				error: `Failed to set queue item paused: ${error.message}`,
+			});
+		});
+}
+
+/**
+ * Handle merge_queue_item message - fold a queued message into the message above
+ * it on the same tab, the same thing the queued card's Merge button does. Used
+ * by `maestro-cli queue merge`.
+ */
+export function handleMergeQueueItem(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const sessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
+	const itemId = typeof message.itemId === 'string' ? message.itemId : '';
+	const reply = (result: {
+		success: boolean;
+		merged: boolean;
+		mergedIntoId?: string;
+		error?: string;
+	}) =>
+		ctx.send(client, {
+			type: 'merge_queue_item_result',
+			...result,
+			requestId: message.requestId,
+		});
+	if (!sessionId || !itemId) {
+		reply({ success: false, merged: false, error: 'Missing sessionId or itemId' });
+		return;
+	}
+	if (!ctx.callbacks.mergeQueueItem) {
+		reply({ success: false, merged: false, error: 'Merge queue item not configured' });
+		return;
+	}
+	ctx.callbacks
+		.mergeQueueItem(sessionId, itemId)
+		.then((result) =>
+			reply({
+				success: result.success,
+				merged: result.merged,
+				...(result.mergedIntoId ? { mergedIntoId: result.mergedIntoId } : {}),
+				...(result.error ? { error: result.error } : {}),
+			})
+		)
+		.catch((error) => {
+			captureException(error instanceof Error ? error : new Error(String(error)), {
+				extra: { area: 'web-server', handler: 'merge_queue_item', sessionId, itemId },
+			});
+			reply({
+				success: false,
+				merged: false,
+				error: `Failed to merge queue item: ${error.message}`,
 			});
 		});
 }

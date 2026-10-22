@@ -3,14 +3,18 @@
  *
  * A plugin panel renders in an Electron `<webview>` guest with a per-plugin
  * in-memory session (partition `plugin:<pluginId>`). This module is the ONE
- * place that session and its guest webContents get hardened:
+ * place that session and its guest webContents get hardened. The lockdown
+ * itself is the shared isolated-guest one (`src/main/utils/isolated-guest.ts`,
+ * which the DataviewJS sandbox uses too); this module supplies the panel
+ * scheme, preload, and grant-gated documents:
  *
  * - **Web preferences** (`hardenPluginPanelWebPreferences`, applied in
  *   `will-attach-webview`): no Node, contextIsolation ON, OS sandbox ON,
  *   renderer-supplied preload stripped and replaced with the broker-only
- *   panel preload (`plugin-panel-preload.js`) whose entire surface is a
- *   one-way forward of the panel's `maestro:invokeCommand` postMessage to the
- *   embedder - the message contract of the old srcdoc iframe, unchanged.
+ *   panel preload (`plugin-panel-preload.js`), which forwards the panel's
+ *   `maestro:invokeCommand` postMessage to the embedder and applies only the
+ *   host-approved theme palette sent into the guest. The command contract of
+ *   the old srcdoc iframe is unchanged.
  * - **Session** (`hardenPluginPanelSession`): a per-session protocol handler
  *   serves ONLY that plugin's own panel documents (grant-gated via the
  *   injected provider) with a restrictive CSP header + meta; `webRequest`
@@ -37,14 +41,27 @@
 import { session } from 'electron';
 import { logger } from '../utils/logger';
 import {
+	attachIsolatedGuestSecurity,
+	hardenIsolatedGuestSession,
+	hardenIsolatedGuestWebPreferences,
+	isIsolatedGuestSession,
+	isolatedGuestDocument,
+	isolatedGuestNotFound,
+	type IsolatedGuestContents,
+	type IsolatedGuestSessionLike,
+	type IsolatedGuestWebPreferences,
+} from '../utils/isolated-guest';
+import {
 	PLUGIN_PANEL_SCHEME,
 	PANEL_CSP_CONTENT,
 	pluginIdFromPanelPartition,
 	panelIdFromPluginPanelUrl,
-	withPanelCsp,
 } from '../../shared/plugins/panel-host';
 
 const LOG_CONTEXT = 'PluginPanelHost';
+
+/** How the shared isolated-guest lockdown names panels in its log lines. */
+const GUEST_LABEL = 'panel';
 
 /** Grant-gated panel HTML source; wired from the plugins IPC registration. */
 export type PanelHtmlProvider = (panelId: string) => string | null;
@@ -56,34 +73,14 @@ export function setPanelHtmlProvider(provider: PanelHtmlProvider): void {
 	panelHtmlProvider = provider;
 }
 
-/** Minimal structural view of Electron.Session - keeps this testable. */
-interface PanelSessionLike {
-	protocol: {
-		handle(scheme: string, handler: (request: { url: string }) => Response): void;
-	};
-	webRequest: {
-		onBeforeRequest(
-			listener: (
-				details: { url: string },
-				callback: (response: { cancel: boolean }) => void
-			) => void
-		): void;
-	};
-	setPermissionRequestHandler(handler: ((...args: unknown[]) => void) | null): void;
-	setPermissionCheckHandler(handler: ((...args: unknown[]) => boolean) | null): void;
-}
-
-/** Sessions this module has hardened; identity marks a session as panel-owned. */
-const hardenedPanelSessions = new WeakSet<object>();
-
 /** Is this (guest webContents') session one of ours? Drives the
  * `did-attach-webview` branch between panel lockdown and browser-tab rules. */
 export function isPluginPanelSession(ses: unknown): boolean {
-	return typeof ses === 'object' && ses !== null && hardenedPanelSessions.has(ses);
+	return isIsolatedGuestSession(ses, PLUGIN_PANEL_SCHEME);
 }
 
 /** Webview webPreferences as mutated inside `will-attach-webview`. */
-export type PanelWebPreferences = Record<string, unknown>;
+export type PanelWebPreferences = IsolatedGuestWebPreferences;
 
 /**
  * Force the locked-down web preferences for a plugin panel guest. Runs inside
@@ -95,17 +92,7 @@ export function hardenPluginPanelWebPreferences(
 	webPreferences: PanelWebPreferences,
 	panelPreloadPath: string
 ): void {
-	delete webPreferences.preloadURL;
-	webPreferences.preload = panelPreloadPath;
-	webPreferences.nodeIntegration = false;
-	webPreferences.nodeIntegrationInSubFrames = false;
-	webPreferences.nodeIntegrationInWorker = false;
-	webPreferences.contextIsolation = true;
-	webPreferences.sandbox = true;
-	webPreferences.webSecurity = true;
-	webPreferences.allowRunningInsecureContent = false;
-	webPreferences.webviewTag = false;
-	webPreferences.plugins = false;
+	hardenIsolatedGuestWebPreferences(webPreferences, panelPreloadPath);
 }
 
 /**
@@ -116,65 +103,32 @@ export function hardenPluginPanelWebPreferences(
  */
 export function hardenPluginPanelSession(
 	partition: string,
-	sessionFactory: (partition: string) => PanelSessionLike = (p) =>
-		session.fromPartition(p) as unknown as PanelSessionLike
+	sessionFactory: (partition: string) => IsolatedGuestSessionLike = (p) =>
+		session.fromPartition(p) as unknown as IsolatedGuestSessionLike
 ): void {
 	const pluginId = pluginIdFromPanelPartition(partition);
 	if (pluginId === null) return;
-	const ses = sessionFactory(partition);
-	if (hardenedPanelSessions.has(ses as unknown as object)) return;
-	hardenedPanelSessions.add(ses as unknown as object);
-
-	// Serve ONLY this plugin's own panel documents on this session.
-	ses.protocol.handle(PLUGIN_PANEL_SCHEME, (request) => {
-		const panelId = panelIdFromPluginPanelUrl(request.url);
-		if (panelId === null || !panelId.startsWith(`${pluginId}/`)) {
-			logger.warn(`Refused foreign/malformed panel document: ${request.url}`, LOG_CONTEXT);
-			return new Response(null, { status: 404 });
-		}
-		const html = panelHtmlProvider(panelId);
-		if (html === null) {
+	hardenIsolatedGuestSession(sessionFactory(partition), {
+		scheme: PLUGIN_PANEL_SCHEME,
+		label: GUEST_LABEL,
+		logContext: LOG_CONTEXT,
+		// Serve ONLY this plugin's own panel documents on this session.
+		serve: (request) => {
+			const panelId = panelIdFromPluginPanelUrl(request.url);
+			if (panelId === null || !panelId.startsWith(`${pluginId}/`)) {
+				logger.warn(`Refused foreign/malformed panel document: ${request.url}`, LOG_CONTEXT);
+				return isolatedGuestNotFound();
+			}
+			const html = panelHtmlProvider(panelId);
 			// Unknown panel, plugins flag off, or ui:panel not granted - deny.
-			return new Response(null, { status: 404 });
-		}
-		return new Response(withPanelCsp(html), {
-			status: 200,
-			headers: {
-				'Content-Type': 'text/html; charset=utf-8',
-				'Content-Security-Policy': PANEL_CSP_CONTENT,
-			},
-		});
+			if (html === null) return isolatedGuestNotFound();
+			return isolatedGuestDocument(html, PANEL_CSP_CONTENT);
+		},
 	});
-
-	// Session-level egress denial: the ONLY requests this session may make are
-	// its own panel-document fetches. Everything else (http/https/ws/file/...)
-	// is cancelled before it leaves the app, regardless of CSP.
-	ses.webRequest.onBeforeRequest((details, callback) => {
-		const cancel = !details.url.startsWith(`${PLUGIN_PANEL_SCHEME}://`);
-		if (cancel) {
-			logger.warn(`Blocked panel egress attempt: ${details.url}`, LOG_CONTEXT);
-		}
-		callback({ cancel });
-	});
-
-	// No web permission (camera, mic, geolocation, clipboard, ...) is ever
-	// grantable inside a panel.
-	ses.setPermissionRequestHandler((...args: unknown[]) => {
-		const callback = args[2];
-		if (typeof callback === 'function') (callback as (granted: boolean) => void)(false);
-	});
-	ses.setPermissionCheckHandler(() => false);
 }
 
 /** Guest webContents surface used by the panel lockdown (structural). */
-export interface PluginPanelGuestContents {
-	session?: unknown;
-	setWindowOpenHandler(handler: ({ url }: { url: string }) => { action: 'deny' }): void;
-	on(
-		event: 'will-navigate' | 'will-redirect' | 'will-frame-navigate',
-		handler: (event: { preventDefault: () => void; url?: string }, url?: string) => void
-	): void;
-}
+export type PluginPanelGuestContents = IsolatedGuestContents;
 
 /**
  * Lock down an attached panel guest: no popups, no navigation of any kind.
@@ -184,21 +138,5 @@ export interface PluginPanelGuestContents {
  * exfil channel is closed in the main process, not just mitigated by CSP.
  */
 export function attachPluginPanelGuestSecurity(guestContents: PluginPanelGuestContents): void {
-	guestContents.setWindowOpenHandler(({ url }) => {
-		logger.warn(`Blocked panel popup: ${url}`, LOG_CONTEXT);
-		return { action: 'deny' };
-	});
-
-	const denyNavigation = (
-		eventName: string,
-		event: { preventDefault: () => void; url?: string },
-		url?: string
-	) => {
-		event.preventDefault();
-		logger.warn(`Blocked panel ${eventName}: ${url ?? event.url ?? '<unknown>'}`, LOG_CONTEXT);
-	};
-
-	guestContents.on('will-navigate', (event, url) => denyNavigation('will-navigate', event, url));
-	guestContents.on('will-redirect', (event, url) => denyNavigation('will-redirect', event, url));
-	guestContents.on('will-frame-navigate', (event) => denyNavigation('will-frame-navigate', event));
+	attachIsolatedGuestSecurity(guestContents, { label: GUEST_LABEL, logContext: LOG_CONTEXT });
 }

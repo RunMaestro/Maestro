@@ -123,6 +123,31 @@ export function requeueFailedAtFront(
 }
 
 /**
+ * Put a message back at the FRONT, live, without pausing.
+ *
+ * For a steer the running turn never took (it ended first): the user's words
+ * were not answered, and they were sent before anything queued since, so they
+ * go next - the re-send the turn's `dropped` verdict asks for.
+ */
+export function requeueAtFront(
+	state: GroupChatQueueState,
+	item: GroupChatQueuedItem
+): GroupChatQueueState {
+	return { ...state, items: [item, ...state.items] };
+}
+
+/**
+ * Take back an item's in-flight mark, BY ID, when the hand-over it was claimed
+ * for did not happen. Leaves it where it was and the queue as it was.
+ */
+export function unmarkSending(state: GroupChatQueueState, itemId: string): GroupChatQueueState {
+	return {
+		...state,
+		items: state.items.map((item) => (item.id === itemId ? { ...item, sending: undefined } : item)),
+	};
+}
+
+/**
  * Record that a specific item could not be sent, BY ID.
  *
  * Same reasoning as `completeItem`: marking by position would blame an item that

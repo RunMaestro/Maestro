@@ -1,3 +1,8 @@
+import {
+	NOTIFICATION_INBOX_ACTIONS,
+	type NotificationInboxRequest,
+	type NotificationInboxResult,
+} from '../../../../shared/notificationInbox';
 /**
  * Notifications domain WebSocket message handlers.
  *
@@ -153,7 +158,8 @@ export function handleNotifyToast(
 			message: body,
 			color,
 			dismissible,
-			duration,
+			// Normalize the legacy seconds wire contract once, before renderer delivery.
+			duration: duration === undefined ? undefined : duration * 1000,
 			sessionId,
 			sourceAgent,
 			tabId,
@@ -240,4 +246,35 @@ export function handleNotifyCenterFlash(
 		.notifyCenterFlash({ message: body, detail, color, duration })
 		.then((success) => sendResult(success, success ? undefined : 'Failed to show flash'))
 		.catch((error) => sendResult(false, `Failed to show flash: ${error.message}`));
+}
+
+/** Validate inbox requests, then return the renderer's resulting history snapshot. */
+export async function handleNotificationInbox(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	let result: NotificationInboxResult;
+	if (
+		!NOTIFICATION_INBOX_ACTIONS.includes(message.action as NotificationInboxRequest['action']) ||
+		(message.id !== undefined && typeof message.id !== 'string') ||
+		(message.unread !== undefined && typeof message.unread !== 'boolean')
+	) {
+		result = { success: false, error: 'Invalid notification inbox request' };
+	} else {
+		try {
+			result = (await ctx.callbacks.notificationInbox?.({
+				action: message.action as NotificationInboxRequest['action'],
+				id: message.id as string | undefined,
+				unread: message.unread as boolean | undefined,
+			})) ?? { success: false, error: 'Notification inbox unavailable' };
+		} catch (error) {
+			result = { success: false, error: error instanceof Error ? error.message : String(error) };
+		}
+	}
+	ctx.send(client, {
+		type: 'notification_inbox_result',
+		requestId: message.requestId,
+		...result,
+	});
 }

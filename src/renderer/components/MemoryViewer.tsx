@@ -1,9 +1,11 @@
 /**
- * MemoryViewer - full-panel overlay for browsing/editing Claude Code per-project memory.
+ * MemoryViewer - full-panel overlay for browsing/editing an agent's persistent memory.
  *
  * Mirrors the Claude Sessions browser shell (same header pattern, close button) and reuses the
  * shared DualPaneFileEditor for the list + markdown editor layout. Gated by the
- * `supportsProjectMemory` capability on the active agent; today only Claude Code qualifies.
+ * `supportsProjectMemory` capability on the active agent: Claude Code (one flat store per
+ * project) and Codex (one nested store per account). The provider differences arrive with
+ * the list as a `MemoryLayoutInfo`, so nothing below branches on the provider id.
  *
  * Chrome layout, top to bottom: a title header, a TOOLBAR that carries every
  * control (filter, unlinked chip, Graph, the Edit/Preview switch), the split
@@ -40,6 +42,16 @@ import { eventMatchesShortcutKeys } from '../utils/shortcutMatch';
 import { formatMetaKey } from '../utils/shortcutFormatter';
 import { isTextInputTarget } from '../utils/messageScrollNavigation';
 import { useModalStore } from '../stores/modalStore';
+import {
+	MEMORY_INDEX_FILE,
+	memoryEntryGroup,
+	memoryEntryLabel,
+	memoryGroupDisplay,
+	type MemoryEntry,
+	type MemoryLayoutInfo,
+	type MemoryStats,
+	type MemoryTarget,
+} from '../../shared/agentMemory';
 
 /** Which half of the Edit/Preview switch is showing. */
 type MemoryViewMode = 'preview' | 'edit';
@@ -53,20 +65,6 @@ interface MemoryViewerProps {
 	theme: Theme;
 	activeSession: Session | undefined;
 	onClose: () => void;
-}
-
-interface MemoryEntry {
-	name: string;
-	size: number;
-	createdAt: string;
-	modifiedAt: string;
-}
-
-interface MemoryStats {
-	fileCount: number;
-	firstCreatedAt: string | null;
-	lastModifiedAt: string | null;
-	totalBytes: number;
 }
 
 const INDEX_STARTER_CONTENT = `# Memory index
@@ -85,8 +83,31 @@ type: user
 Write the memory body here.
 `;
 
-function starterContentFor(filename: string): string {
-	return filename === 'MEMORY.md' ? INDEX_STARTER_CONTENT : ENTRY_STARTER_CONTENT;
+/**
+ * A note dropped where the agent folds hand-written notes into its own memory
+ * (Codex's ad-hoc notes). Plain markdown: the agent reads it as information,
+ * so there is no frontmatter contract to satisfy.
+ */
+const NOTE_STARTER_CONTENT = `# Note title
+
+Write what the agent should remember here.
+`;
+
+/**
+ * Groups this large start collapsed. A nested store can hold a hundred
+ * generated summaries in one directory, which would otherwise bury the index
+ * and the user's own notes below a wall of rows.
+ */
+const COLLAPSE_GROUPS_OVER = 20;
+
+function starterContentFor(filename: string, layout: MemoryLayoutInfo | null): string {
+	if (layout?.newEntryDir) return NOTE_STARTER_CONTENT;
+	return filename === MEMORY_INDEX_FILE ? INDEX_STARTER_CONTENT : ENTRY_STARTER_CONTENT;
+}
+
+/** Where a filename typed in the New Memory dialog lands, relative to the memory root. */
+function newEntryPath(filename: string, layout: MemoryLayoutInfo | null): string {
+	return layout?.newEntryDir ? `${layout.newEntryDir}/${filename}` : filename;
 }
 
 /**
@@ -100,13 +121,15 @@ function nextSelectionAfterDelete(visibleNames: string[], deleted: string): stri
 	return visibleNames[index + 1] ?? visibleNames[index - 1] ?? null;
 }
 
-function suggestNewFilename(existing: Set<string>): string {
-	// First file should always be MEMORY.md (the index that points at every other entry).
-	if (existing.size === 0) return 'MEMORY.md';
-	const base = 'new-memory';
+function suggestNewFilename(existing: Set<string>, layout: MemoryLayoutInfo | null): string {
+	// A flat store's first file should always be MEMORY.md (the index that points
+	// at every other entry). A store with a notes directory has its index
+	// written by the agent, so the user only ever adds notes.
+	if (existing.size === 0 && !layout?.newEntryDir) return MEMORY_INDEX_FILE;
+	const base = layout?.newEntryDir ? 'new-note' : 'new-memory';
 	let candidate = `${base}.md`;
 	let n = 2;
-	while (existing.has(candidate)) {
+	while (existing.has(newEntryPath(candidate, layout))) {
 		candidate = `${base}-${n}.md`;
 		n += 1;
 	}
@@ -115,7 +138,14 @@ function suggestNewFilename(existing: Set<string>): string {
 
 export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProps): JSX.Element {
 	const projectPath = activeSession?.projectRoot || activeSession?.cwd || '';
-	const agentId = activeSession?.toolType || 'claude-code';
+	const toolType = activeSession?.toolType || 'claude-code';
+	const agentId = activeSession?.id;
+	// Keyed on the primitives so a fresh session object for the same agent does
+	// not re-run every load effect.
+	const target = useMemo<MemoryTarget>(
+		() => ({ projectPath, toolType, agentId }),
+		[projectPath, toolType, agentId]
+	);
 
 	const [entries, setEntries] = useState<MemoryEntry[]>([]);
 	const [stats, setStats] = useState<MemoryStats>({
@@ -125,6 +155,10 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 		totalBytes: 0,
 	});
 	const [directoryPath, setDirectoryPath] = useState<string | null>(null);
+	const [layout, setLayout] = useState<MemoryLayoutInfo | null>(null);
+	// Collapsed list groups of a nested store; null until the first list arrives
+	// so the large-group default is decided once, from real counts.
+	const [collapsedGroups, setCollapsedGroups] = useState<Set<string> | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -315,7 +349,7 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 		async (name: string) => {
 			if (!projectPath) return;
 			try {
-				const result = await window.maestro.memory.read(projectPath, name, agentId);
+				const result = await window.maestro.memory.read(target, name);
 				if (!result.success) {
 					setActionError(result.error || `Failed to read ${name}`);
 					return;
@@ -329,7 +363,7 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 				setActionError(String(err));
 			}
 		},
-		[projectPath, agentId]
+		[projectPath, target]
 	);
 
 	const reloadList = useCallback(
@@ -341,12 +375,13 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 			}
 			setLoading(true);
 			try {
-				const result = await window.maestro.memory.list(projectPath, agentId);
+				const result = await window.maestro.memory.list(target);
 				if (!result.success) {
 					setLoadError(result.error || 'Failed to load memory');
 					return;
 				}
 				setDirectoryPath(result.directoryPath || null);
+				setLayout(result.layout ?? null);
 				setEntries(result.entries || []);
 				setStats(
 					result.stats || {
@@ -360,13 +395,13 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 
 				// Pick a selection: prefer the passed name, fall back to MEMORY.md, then first entry.
 				const list = result.entries || [];
-				const target =
+				const landing =
 					(preferName && list.find((e) => e.name === preferName)) ||
-					list.find((e) => e.name === 'MEMORY.md') ||
+					list.find((e) => e.name === MEMORY_INDEX_FILE) ||
 					list[0] ||
 					null;
-				if (target) {
-					await loadEntry(target.name);
+				if (landing) {
+					await loadEntry(landing.name);
 				} else {
 					setSelectedName(null);
 					setOriginalContent('');
@@ -379,7 +414,7 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 				setLoading(false);
 			}
 		},
-		[projectPath, agentId, loadEntry]
+		[projectPath, target, loadEntry]
 	);
 
 	useEffect(() => {
@@ -397,7 +432,7 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 		let cancelled = false;
 		void (async () => {
 			try {
-				const result = await window.maestro.memory.search(projectPath, query, agentId);
+				const result = await window.maestro.memory.search(target, query);
 				if (cancelled) return;
 				if (!result.success) {
 					setActionError(result.error || 'Failed to search memory');
@@ -413,7 +448,7 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 		return () => {
 			cancelled = true;
 		};
-	}, [debouncedFilter, projectPath, agentId, entries]);
+	}, [debouncedFilter, projectPath, target, entries]);
 
 	const orphanSet = useMemo(() => new Set(orphans), [orphans]);
 
@@ -450,7 +485,7 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 		let cancelled = false;
 		void (async () => {
 			try {
-				const result = await window.maestro.memory.orphans(projectPath, agentId);
+				const result = await window.maestro.memory.orphans(target);
 				if (cancelled || !result.success) return;
 				setOrphans(result.orphans ?? []);
 			} catch {
@@ -463,7 +498,7 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 		return () => {
 			cancelled = true;
 		};
-	}, [projectPath, agentId, entries]);
+	}, [projectPath, target, entries]);
 
 	const handleSelect = useCallback(
 		async (name: string) => {
@@ -482,12 +517,7 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 		setIsSaving(true);
 		setActionError(null);
 		try {
-			const result = await window.maestro.memory.write(
-				projectPath,
-				selectedName,
-				editedContent,
-				agentId
-			);
+			const result = await window.maestro.memory.write(target, selectedName, editedContent);
 			if (!result.success) {
 				setActionError(result.error || 'Failed to save memory');
 				return;
@@ -500,7 +530,7 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 		} finally {
 			setIsSaving(false);
 		}
-	}, [selectedName, hasUnsavedChanges, editedContent, projectPath, agentId, reloadList]);
+	}, [selectedName, hasUnsavedChanges, editedContent, target, reloadList]);
 
 	const performDelete = useCallback(
 		async (name: string) => {
@@ -508,7 +538,7 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 			setIsDeleting(true);
 			setActionError(null);
 			try {
-				const result = await window.maestro.memory.delete(projectPath, name, agentId);
+				const result = await window.maestro.memory.delete(target, name);
 				if (!result.success) {
 					setActionError(result.error || `Failed to delete ${name}`);
 					return;
@@ -520,7 +550,7 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 				setListFocusToken((t) => t + 1);
 			}
 		},
-		[projectPath, agentId, reloadList]
+		[target, reloadList]
 	);
 
 	/**
@@ -528,11 +558,16 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 	 * Both go through the shared destructive confirm modal so the two paths
 	 * cannot drift on what they warn about.
 	 */
+	const protectedNames = useMemo(
+		() => new Set(entries.filter((e) => e.protected).map((e) => e.name)),
+		[entries]
+	);
+
 	const requestDelete = useCallback(
 		(name: string) => {
 			if (!name) return;
-			if (name === 'MEMORY.md') {
-				setActionError('MEMORY.md is the index and cannot be deleted from the viewer');
+			if (protectedNames.has(name)) {
+				setActionError(`${name} is managed by the agent and cannot be deleted from the viewer`);
 				return;
 			}
 			useModalStore.getState().openModal('confirm', {
@@ -544,15 +579,15 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 				},
 			});
 		},
-		[performDelete]
+		[performDelete, protectedNames]
 	);
 
 	/**
 	 * Graph how the memories link to each other.
 	 *
 	 * Scoped to the memory directory and rooted there explicitly: memory lives
-	 * under `~/.claude/projects/<encoded>/memory/`, outside the project, so the
-	 * graph's usual project root would resolve every path to nothing.
+	 * under the provider's account dir, outside the project, so the graph's
+	 * usual project root would resolve every path to nothing.
 	 *
 	 * The viewer closes on the way out. Both are full-window views on the same
 	 * agent, so leaving this one mounted underneath would strand it behind a
@@ -565,7 +600,7 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 			rootPath: directoryPath,
 			// Center on MEMORY.md when it exists - it is the index every other
 			// entry hangs off, so it is the hub a reader expects in the middle.
-			focusPath: entries.some((e) => e.name === 'MEMORY.md') ? 'MEMORY.md' : undefined,
+			focusPath: entries.some((e) => e.name === MEMORY_INDEX_FILE) ? MEMORY_INDEX_FILE : undefined,
 			// Escape out of that graph comes back HERE rather than to an empty
 			// workspace. The viewer closes on the way out (both are full-window
 			// views), so without this the trip is one-way.
@@ -605,10 +640,10 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 			if (!discard) return;
 		}
 		const existing = new Set(entries.map((e) => e.name));
-		setCreateName(suggestNewFilename(existing));
+		setCreateName(suggestNewFilename(existing, layout));
 		setCreateError(null);
 		setCreateModalOpen(true);
-	}, [projectPath, entries, hasUnsavedChanges]);
+	}, [projectPath, entries, hasUnsavedChanges, layout]);
 
 	const closeCreateModal = useCallback(() => {
 		setCreateModalOpen(false);
@@ -625,8 +660,9 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 			return;
 		}
 		if (!filename.toLowerCase().endsWith('.md')) filename += '.md';
+		const fullName = newEntryPath(filename, layout);
 		const existing = new Set(entries.map((e) => e.name));
-		if (existing.has(filename)) {
+		if (existing.has(fullName)) {
 			setCreateError(`A memory file named "${filename}" already exists`);
 			return;
 		}
@@ -634,10 +670,9 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 		setCreateError(null);
 		try {
 			const result = await window.maestro.memory.create(
-				projectPath,
-				filename,
-				starterContentFor(filename),
-				agentId
+				target,
+				fullName,
+				starterContentFor(filename, layout)
 			);
 			if (!result.success) {
 				setCreateError(result.error || `Failed to create ${filename}`);
@@ -645,11 +680,11 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 			}
 			setSuccessMessage(`Created ${filename}`);
 			closeCreateModal();
-			await reloadList(filename);
+			await reloadList(fullName);
 		} finally {
 			setIsCreating(false);
 		}
-	}, [projectPath, createName, entries, agentId, reloadList, closeCreateModal]);
+	}, [projectPath, createName, entries, layout, target, reloadList, closeCreateModal]);
 
 	const items = useMemo<DualPaneFileEditorItem[]>(
 		() =>
@@ -661,13 +696,71 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 				const description = orphaned ? `${meta}\nunlinked - nothing points at this` : meta;
 				return {
 					id: e.name,
-					label: e.name,
+					label: layout?.nested ? memoryEntryLabel(e.name, layout.newEntryDir) : e.name,
 					description: snippet ? `${description}\nmatch: ${snippet}` : description,
+					category: layout?.nested ? memoryEntryGroup(e.name) : undefined,
 					isModified: isCurrent && hasUnsavedChanges,
 				};
 			}),
-		[filteredEntries, matches, selectedName, hasUnsavedChanges, orphanSet]
+		[filteredEntries, matches, selectedName, hasUnsavedChanges, orphanSet, layout]
 	);
+
+	// Group headers for a nested store; a flat store renders one plain list.
+	const categories = useMemo(() => {
+		if (!layout?.nested) return undefined;
+		const result: Record<string, { label: string; order?: number }> = {};
+		for (const e of entries) {
+			const group = memoryEntryGroup(e.name);
+			if (!result[group]) result[group] = memoryGroupDisplay(group, layout.newEntryDir);
+		}
+		return result;
+	}, [entries, layout]);
+
+	// Decide the large-group default once, from the first real list. The group
+	// holding the selection is never collapsed, whichever arrived first.
+	useEffect(() => {
+		if (collapsedGroups || !layout?.nested || entries.length === 0) return;
+		const selectedGroup = selectedName ? memoryEntryGroup(selectedName) : null;
+		const counts = new Map<string, number>();
+		for (const e of entries) {
+			const group = memoryEntryGroup(e.name);
+			counts.set(group, (counts.get(group) ?? 0) + 1);
+		}
+		setCollapsedGroups(
+			new Set(
+				[...counts]
+					.filter(
+						([group, count]) =>
+							group !== '' && group !== selectedGroup && count > COLLAPSE_GROUPS_OVER
+					)
+					.map(([group]) => group)
+			)
+		);
+	}, [collapsedGroups, layout, entries, selectedName]);
+
+	// Landing on an entry inside a collapsed group (a filter hit, a new note)
+	// opens that group, so the selection is never a row the user cannot see.
+	// Keyed on the selection alone: collapsing the group the selection is in
+	// afterwards is the user's call and must stick.
+	useEffect(() => {
+		if (!selectedName) return;
+		const group = memoryEntryGroup(selectedName);
+		setCollapsedGroups((prev) => {
+			if (!prev?.has(group)) return prev;
+			const next = new Set(prev);
+			next.delete(group);
+			return next;
+		});
+	}, [selectedName]);
+
+	const toggleGroup = useCallback((group: string) => {
+		setCollapsedGroups((prev) => {
+			const next = new Set(prev ?? []);
+			if (next.has(group)) next.delete(group);
+			else next.add(group);
+			return next;
+		});
+	}, []);
 
 	const editorTokenCount = useMemo(
 		() => (selectedName ? estimateTokenCount(editedContent) : undefined),
@@ -753,7 +846,9 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 	// Cheap estimate: ~4 bytes/token for English text (matches estimateTokenCount from shared/formatters).
 	const estimatedTokens = useMemo(() => Math.ceil(stats.totalBytes / 4), [stats.totalBytes]);
 
-	const agentDisplayName = getAgentDisplayName(agentId);
+	const agentDisplayName = getAgentDisplayName(toolType);
+	const accountScoped = layout?.scope === 'account';
+	const selectedEntry = entries.find((e) => e.name === selectedName);
 	// Never hard-code the glyph: the same tooltip has to read "Ctrl+G" on
 	// Windows and Linux.
 	const metaKey = formatMetaKey();
@@ -771,8 +866,14 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 			>
 				<div className="flex items-center gap-3 min-w-0">
 					<Brain className="w-5 h-5 shrink-0" style={{ color: theme.colors.textDim }} />
-					<span className="text-sm font-medium truncate" style={{ color: theme.colors.textMain }}>
-						{agentDisplayName} Memories for {activeSession?.name || 'Agent'}
+					<span
+						className="text-sm font-medium truncate"
+						style={{ color: theme.colors.textMain }}
+						title={directoryPath ?? undefined}
+					>
+						{accountScoped
+							? `${agentDisplayName} Memories (shared by every project on this account)`
+							: `${agentDisplayName} Memories for ${activeSession?.name || 'Agent'}`}
 					</span>
 				</div>
 				<div className="flex items-center gap-2">
@@ -879,7 +980,11 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 						style={{ color: theme.colors.textDim }}
 					>
 						<Brain className="w-10 h-10 opacity-30" />
-						<div>No memory files yet for this project.</div>
+						<div>
+							{accountScoped
+								? `${agentDisplayName} has not written any memories on this account yet.`
+								: 'No memory files yet for this project.'}
+						</div>
 						<HeaderActionButton theme={theme} onClick={handleCreate} icon={<Plus />}>
 							Create first memory
 						</HeaderActionButton>
@@ -890,6 +995,9 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 						items={items}
 						selectedId={selectedName}
 						onSelect={handleSelect}
+						categories={categories}
+						collapsedCategories={matches ? undefined : (collapsedGroups ?? undefined)}
+						onToggleCategory={toggleGroup}
 						emptyStateMessage={
 							filteredEntries.length === 0 && showOnlyOrphans
 								? 'No unlinked memories match'
@@ -915,7 +1023,7 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 							onClick: handleSave,
 						}}
 						secondaryAction={
-							selectedName && selectedName !== 'MEMORY.md'
+							selectedName && !selectedEntry?.protected
 								? {
 										label: isDeleting ? 'Deleting…' : 'Delete',
 										loading: isDeleting,
@@ -1003,9 +1111,13 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 							if (createError) setCreateError(null);
 						}}
 						onSubmit={handleConfirmCreate}
-						placeholder="memory-name.md"
+						placeholder={layout?.newEntryDir ? 'note-name.md' : 'memory-name.md'}
 						label="Filename"
-						helperText="The .md extension is added automatically if omitted."
+						helperText={
+							layout?.newEntryDir
+								? `Saved in ${layout.newEntryDir}/, which ${agentDisplayName} folds into its memories. The .md extension is added automatically if omitted.`
+								: 'The .md extension is added automatically if omitted.'
+						}
 						error={createError ?? undefined}
 						monospace
 					/>

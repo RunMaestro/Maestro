@@ -24,6 +24,7 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { getTerminalTabDisplayName } from '../../utils/terminalTabHelpers';
 import { captureException } from '../../utils/sentry';
+import { isWebDesktop } from '../../utils/runtimeContext';
 import type { Session } from '../../types';
 import { DEFAULT_BROWSER_CONFIRM_POLICY } from '../../../shared/coworkingBrowser';
 
@@ -119,7 +120,10 @@ export function useCoworkingRegistrySync(): void {
 		// harnesses that mock `window.maestro` without the namespace, or in older
 		// preload bundles before this PR shipped). The hook is best-effort -
 		// without the bridge there's nothing to sync to.
-		const bridge = window.maestro?.coworking;
+		// The desktop renderer owns the registry. A browser client mirrors the
+		// same agents, so its pushes would only duplicate the host's, and the
+		// bridge refuses the sync channels anyway.
+		const bridge = isWebDesktop() ? undefined : window.maestro?.coworking;
 		if (!bridge) {
 			lastPayloadRef.current = '';
 			lastSessionIdsRef.current = new Set();

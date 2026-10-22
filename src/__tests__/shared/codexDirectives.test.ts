@@ -13,6 +13,7 @@ import { describe, it, expect } from 'vitest';
 import {
 	DEFAULT_CODEX_DIRECTIVE_BUDGET,
 	KNOWN_CODEX_DIRECTIVES,
+	findCodexContentReferences,
 	findCodexDirectives,
 	isKnownCodexDirective,
 	parseCodexDirective,
@@ -266,5 +267,44 @@ describe('findCodexDirectives', () => {
 		expect(findCodexDirectives(source)).toHaveLength(1);
 		// In 'literal' mode the same source is malformed, so nothing matches.
 		expect(findCodexDirectives(source, { escaping: 'literal' })).toEqual([]);
+	});
+});
+
+describe('content references (U+E200 grammar)', () => {
+	const ref = (name: string, payload: string) => `\uE200${name}\uE202${payload}\uE201`;
+
+	it('parses the visualize reference Codex emitted in the field', () => {
+		const raw = ref('visualize', '{"path":"/Users/p/designs/dropdown-hints.html","mode":"wide"}');
+		const source = `Mocks below.\n\n${raw}`;
+		const [match] = findCodexDirectives(source);
+		expect(match).toMatchObject({
+			name: 'visualize',
+			attributes: { path: '/Users/p/designs/dropdown-hints.html', mode: 'wide' },
+			raw,
+		});
+		expect(source.slice(match.start, match.end)).toBe(raw);
+	});
+
+	it('keeps a non-JSON payload whole as ref', () => {
+		expect(findCodexContentReferences(`Fact.${ref('cite', 'turn0view0')}`)).toEqual([
+			expect.objectContaining({ name: 'cite', attributes: { ref: 'turn0view0' } }),
+		]);
+	});
+
+	it('keeps only string fields of a JSON payload', () => {
+		const [match] = findCodexContentReferences(ref('visualize', '{"path":"/a.html","n":3}'));
+		expect(match.attributes).toEqual({ path: '/a.html' });
+	});
+
+	it('rejects unknown names, malformed JSON, newlines and a missing terminator', () => {
+		expect(findCodexContentReferences(ref('mystery', '{}'))).toEqual([]);
+		expect(findCodexContentReferences(ref('visualize', '{"path":'))).toEqual([]);
+		expect(findCodexContentReferences(ref('visualize', '{"path":\n"/a"}'))).toEqual([]);
+		expect(findCodexContentReferences('\uE200visualize\uE202{"path":"/a"}')).toEqual([]);
+	});
+
+	it('orders references among colon directives and ignores colons inside a payload', () => {
+		const source = `${ref('visualize', '{"path":"/a.html"}')} then :codex-followup[Go]{prompt="go"}`;
+		expect(findCodexDirectives(source).map((m) => m.name)).toEqual(['visualize', 'codex-followup']);
 	});
 });

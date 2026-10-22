@@ -12,7 +12,14 @@ import * as path from 'path';
 import * as zlib from 'zlib';
 import * as vm from 'vm';
 
-import { pluginInit, pluginValidate, pluginSign, pluginPack } from '../../../cli/commands/plugin';
+import {
+	pluginInit,
+	pluginValidate,
+	pluginSign,
+	pluginPack,
+	pluginRuntime,
+} from '../../../cli/commands/plugin';
+import * as maestroClient from '../../../cli/services/maestro-client';
 import { validatePluginManifest } from '../../../shared/plugins/plugin-manifest';
 import { verifyPluginSignature } from '../../../main/plugins/plugin-signature';
 
@@ -370,5 +377,39 @@ describe('plugin sign + pack + host verify agree on one file set', () => {
 		// is gone end to end.
 		const check = verifyPluginSignature(installDir, [publicKey]);
 		expect(check.status).toBe('trusted');
+	});
+});
+
+describe('installed plugin operations', () => {
+	it.each(['update', 'list'] as const)(
+		'routes %s through the desktop handler and returns its snapshot',
+		async (action) => {
+			const snapshot = { plugins: [{ id: 'relay', enabled: false }] };
+			const sendCommand = vi.fn().mockResolvedValue({ ok: true, result: snapshot });
+			vi.spyOn(maestroClient, 'withMaestroClient').mockImplementation(async (fn) =>
+				fn({ sendCommand } as unknown as maestroClient.MaestroClient)
+			);
+			await pluginRuntime(action, './plugin-package', { json: true });
+			expect(sendCommand).toHaveBeenCalledWith(
+				{
+					type: 'bridge.invoke',
+					channel: action === 'update' ? 'plugins:update' : 'plugins:list',
+					args: action === 'update' ? [path.resolve('./plugin-package')] : [],
+				},
+				'bridge.response',
+				60_000
+			);
+			expect(lastJson()).toEqual({ success: true, snapshot });
+		}
+	);
+
+	it('reports a refused update as failure without claiming success', async () => {
+		vi.spyOn(maestroClient, 'withMaestroClient').mockResolvedValue({
+			ok: false,
+			error: 'PluginNotAuthorized',
+		});
+		await pluginRuntime('update', './plugin-package', { json: true });
+		expect(lastJson()).toEqual({ success: false, error: 'PluginNotAuthorized' });
+		expect(exitSpy).toHaveBeenCalledWith(1);
 	});
 });

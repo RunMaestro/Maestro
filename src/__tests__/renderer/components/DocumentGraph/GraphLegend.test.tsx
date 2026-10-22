@@ -7,6 +7,7 @@
  * The panel is always shown (no collapsed state) and can be closed via onClose callback.
  */
 
+import { getShortcutKeys } from '../../../helpers/shortcutKeys';
 import { describe, it, expect, vi } from 'vitest';
 import React from 'react';
 import { render, screen, fireEvent, within } from '@testing-library/react';
@@ -15,7 +16,6 @@ import {
 	type GraphLegendProps,
 } from '../../../../renderer/components/DocumentGraph/GraphLegend';
 import type { Theme } from '../../../../renderer/types';
-import { formatShortcutKeys } from '../../../../renderer/utils/shortcutFormatter';
 
 import { mockTheme } from '../../../helpers/mockTheme';
 // Mock theme for testing
@@ -169,7 +169,7 @@ describe('GraphLegend', () => {
 		it('displays search shortcut', () => {
 			render(<GraphLegend {...defaultProps} />);
 
-			expect(screen.getByText(formatShortcutKeys(['Meta', 'f']))).toBeInTheDocument();
+			expect(getShortcutKeys(['Meta', 'f'])).toBeInTheDocument();
 			expect(screen.getByText('Focus search')).toBeInTheDocument();
 		});
 

@@ -13,6 +13,7 @@
  * - `isAgentBusy()`          - is ANY tab of this agent running a turn? (may I engage it?)
  */
 
+import { hasHeadlessAgentActivity } from './headless-agent-activity';
 import { isSessionBusyWithCli } from '../../shared/cli-activity';
 
 /**
@@ -61,9 +62,14 @@ export function isAiTabProcessActive(
  */
 export function isAgentBusy(
 	session: AgentBusyProbeSession,
-	processManager: ProcessLivenessProbe | null | undefined
+	processManager: ProcessLivenessProbe | null | undefined,
+	cliBusySessionIds?: ReadonlySet<string>
 ): boolean {
-	if (isSessionBusyWithCli(session.id)) return true;
+	if (
+		hasHeadlessAgentActivity(session.id) ||
+		(cliBusySessionIds ? cliBusySessionIds.has(session.id) : isSessionBusyWithCli(session.id))
+	)
+		return true;
 	if (!processManager) return false;
 
 	const aiTabs = session.aiTabs ?? [];

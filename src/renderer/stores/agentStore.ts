@@ -1,3 +1,4 @@
+import { migrationHoldsTurns } from '../../shared/maestro-lib/translation/session';
 /**
  * agentStore - Zustand store for agent lifecycle orchestration
  *
@@ -25,7 +26,6 @@ import type {
 	SpecKitCommand,
 	OpenSpecCommand,
 	BmadCommand,
-	ConsultHoldTarget,
 } from '../types';
 import type {
 	AgentCapabilitiesSnapshot,
@@ -33,24 +33,44 @@ import type {
 } from '../../shared/agentCapabilities';
 import { buildSnapshotKey } from '../../shared/agentCapabilities';
 import { resolveTabPermissionMode } from '../../shared/agentMetadata';
+import { prependNewSessionMessageOnFirstTurn } from '../../shared/newSessionMessage';
 import { isAgentAlreadyRunningError } from '../../shared/processErrors';
 import { createTab, getActiveTab } from '../utils/tabHelpers';
 import { codifyQueuedTurnSettings } from '../utils/providerTabSessions';
 import { prepareMaestroSystemPrompt } from '../utils/spawnHelpers';
 import { generateId } from '../utils/ids';
-import { useSessionStore, selectSessionById, takePendingMergedContext } from './sessionStore';
+import {
+	useSessionStore,
+	selectSessionById,
+	takePendingMergedContext,
+	updateSessionWith,
+} from './sessionStore';
+import { probeSessionAiProcesses } from '../services/process';
 // Agent Resilience: snapshot dispatched prompts for auto-retry. Import cycle
 // with retryStore is safe - both sides only touch each other inside runtime
 // callbacks, never at module-eval time.
 import { noteDispatch } from './retryStore';
+import { expandCommandArguments } from '../../shared/maestro-lib/turns/prompt';
 import { DEFAULT_IMAGE_ONLY_PROMPT } from '../hooks/input/useInputProcessing';
 import { substituteTemplateVariables } from '../utils/templateVariables';
 import { gitService } from '../services/git';
-import { dispatchCrossAgentMentionsForMessage } from '../services/crossAgentMentions';
-import { withConsultPendingNote } from '../services/crossAgentConsultHold';
+import {
+	dispatchCrossAgentMentionsForMessage,
+	withMentionTurnNotes,
+	type CrossAgentMentionDispatch,
+} from '../services/crossAgentMentions';
 import { filterYoloArgs } from '../utils/agentArgs';
-import { applyQueuedItemDispatchFailure, applyQueuedItemRelease } from '../utils/executionQueue';
+import {
+	applyQueuedItemAbort,
+	applyQueuedItemDispatchFailure,
+	applyQueuedItemRelease,
+	clearSpawnCollision,
+	noteSpawnCollision,
+	queuedItemOwnerTabId,
+	SPAWN_COLLISION_MAX_ATTEMPTS,
+} from '../utils/executionQueue';
 import { logger } from '../utils/logger';
+import { requestTabAutoNameForMessage } from '../services/tabAutoNaming';
 
 // ============================================================================
 // Store Types
@@ -169,6 +189,12 @@ export interface ProcessQueuedItemDeps {
 	speckitCommands: SpecKitCommand[];
 	openspecCommands: OpenSpecCommand[];
 	bmadCommands?: BmadCommand[];
+	/**
+	 * Checked right before the spawn, after every await that prepares it. An
+	 * auto-retry resend passes "Stop has not ended me": Stop can land while the
+	 * agent and system prompt load, when there is no process yet to interrupt.
+	 */
+	isCancelled?: () => boolean;
 }
 
 export type AgentStore = AgentStoreState & AgentStoreActions;
@@ -333,12 +359,20 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 		const session = getSession(sessionId);
 		if (!session) return;
 
+		// Turns run per tab (`{id}-ai-{tabId}`), so the bare `{id}-ai` this used to
+		// kill matched nothing and a hung turn survived the restart. Restart the
+		// tab that failed; another tab's healthy turn is left alone. Read before
+		// clearing the error, which drops `agentErrorTabId`.
+		const errorTabId = session.agentErrorTabId;
+
 		// Clear the error state
 		get().clearAgentError(sessionId);
 
 		// Kill any existing AI process
 		try {
-			await window.maestro.process.kill(`${sessionId}-ai`);
+			await window.maestro.process.kill(
+				errorTabId ? `${sessionId}-ai-${errorTabId}` : `${sessionId}-ai`
+			);
 		} catch {
 			// Process may not exist
 		}
@@ -363,6 +397,8 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 			return false;
 		}
 
+		if (migrationHoldsTurns(session.providerMigration)) return false;
+
 		// Find the TARGET tab for this queued item (NOT the active tab!)
 		// The item carries its intended tabId from when it was queued. A tab that
 		// was closed while it still had queued work lives on in orphanedThinkingTabs
@@ -378,17 +414,14 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				undefined,
 				{ sessionId, itemTabId: item.tabId }
 			);
-			// Reset session to idle since we're aborting this queued item
-			useSessionStore.getState().setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== sessionId) return s;
-					return {
-						...s,
-						state: 'idle' as SessionState,
-						busySource: undefined,
-						thinkingStartTime: undefined,
-					};
-				})
+			// Release the tab the dequeue marked, unless a live turn owns it (a
+			// read-only or forced-parallel item can land beside one).
+			const ownerTabId = queuedItemOwnerTabId(session, item);
+			const ownerRunning = ownerTabId
+				? (await probeSessionAiProcesses(sessionId, ownerTabId)).targetTabActive
+				: false;
+			updateSessionWith(sessionId, (s) =>
+				applyQueuedItemAbort(s, item, ownerRunning ? undefined : ownerTabId)
 			);
 			return false;
 		}
@@ -406,15 +439,41 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 
 		const targetSessionId = `${sessionId}-ai-${targetTab.id}`;
 
+		// Name the tab from the message it is about to run. The composer names at
+		// submit time, but `dispatch --queue`, a busy `dispatch --new-tab`, a snooze
+		// wake prompt and other external producers only reach a tab through this
+		// drain, so without it a tab fed only by the queue stays unnamed forever. A
+		// tab that is already named (or mid-naming) is left alone by the helper's
+		// guards, so composer-queued items cost nothing. Runs ahead of the mention
+		// dispatch so a leading-mention (`crossAgentOnly`) item names its tab the
+		// way the composer does. A released consult hold (`agentContext`) is
+		// skipped: its text is Maestro's own "X replied" note, not something the
+		// user asked for, and the message it continues was named when it was sent.
+		if (
+			item.type === 'message' &&
+			item.text?.trim() &&
+			!item.agentContext &&
+			!item.awaitingConsult
+		) {
+			requestTabAutoNameForMessage(session, targetTab.id, item.text, 'queue');
+		}
+
 		// Cross-agent `@mentions` inside a QUEUED message fire HERE, as the message
 		// becomes this agent's turn - not when the user typed it. Deferring is the
 		// whole point: consulting at submit time pulls the mentioned agent into a
 		// question that is still sitting behind other queued work.
 		// When this agent answers too, the dispatch also holds the turn open until
-		// the consult replies; `consultTargets` is who it is waiting on.
-		let consultTargets: ConsultHoldTarget[] = [];
+		// the consult replies, or arms a hand-off of its answer; `mentionDispatch`
+		// is what the turn's prompt has to be told about either.
+		let mentionDispatch: CrossAgentMentionDispatch | undefined;
 		if (item.crossAgentMention && item.type === 'message' && item.text?.trim()) {
-			consultTargets = dispatchCrossAgentMentionsForMessage(item.text, session, targetTab.id) ?? [];
+			mentionDispatch = dispatchCrossAgentMentionsForMessage(
+				item.text,
+				session,
+				targetTab.id,
+				item.images,
+				item.mentionRouting
+			);
 
 			// Addressed ONLY at the mentioned agent(s): the consult above IS the whole
 			// dispatch. Return before spawning - and before `noteDispatch`, since there
@@ -477,13 +536,20 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				const messagePrompt = isImageOnlyMessage ? DEFAULT_IMAGE_ONLY_PROMPT : item.text!;
 				// `agentContext` is agent-only text the transcript never shows (a
 				// released consult hold carries the replies verbatim in it).
-				const effectivePrompt = withConsultPendingNote(
+				// A queued message that is the tab's FIRST turn opens a new provider
+				// session, so it carries the New Session Message like a typed one does.
+				// A message queued behind a running turn resumes, and gets nothing.
+				const effectivePrompt = withMentionTurnNotes(
 					takePendingMergedContext(
 						sessionId,
 						targetTab.id,
-						item.agentContext ? `${item.agentContext}\n\n---\n\n${messagePrompt}` : messagePrompt
+						prependNewSessionMessageOnFirstTurn(
+							item.agentContext ? `${item.agentContext}\n\n---\n\n${messagePrompt}` : messagePrompt,
+							session.newSessionMessage,
+							tabAgentSessionId
+						)
 					),
-					consultTargets
+					mentionDispatch
 				);
 
 				// NOTE: The user-visible log entry for this message is appended by the
@@ -510,6 +576,10 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					args: spawnArgs,
 				});
 
+				if (deps.isCancelled?.()) {
+					updateSessionWith(sessionId, (s) => applyQueuedItemRelease(s, targetTab.id));
+					return false;
+				}
 				await window.maestro.process.spawn({
 					sessionId: targetSessionId,
 					toolType: session.toolType,
@@ -562,17 +632,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					}
 
 					// Substitute $ARGUMENTS with command arguments, or append args if no placeholder
-					let promptWithArgs = matchingCommand.prompt;
-					if (item.commandArgs) {
-						if (/\$ARGUMENTS/g.test(promptWithArgs)) {
-							promptWithArgs = promptWithArgs.replace(/\$ARGUMENTS/g, item.commandArgs);
-						} else {
-							// No $ARGUMENTS placeholder - append trailing text after the prompt
-							promptWithArgs = `${promptWithArgs}\n\n${item.commandArgs}`;
-						}
-					} else {
-						promptWithArgs = promptWithArgs.replace(/\$ARGUMENTS/g, '');
-					}
+					const promptWithArgs = expandCommandArguments(matchingCommand.prompt, item.commandArgs);
 
 					// Substitute {{TEMPLATE_VARIABLES}}
 					const substitutedPrompt = substituteTemplateVariables(promptWithArgs, {
@@ -614,13 +674,23 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					}));
 
 					// Spawn agent with the prompt
+					if (deps.isCancelled?.()) {
+						updateSessionWith(sessionId, (s) => applyQueuedItemRelease(s, targetTab.id));
+						return false;
+					}
 					await window.maestro.process.spawn({
 						sessionId: targetSessionId,
 						toolType: session.toolType,
 						cwd: session.cwd,
 						command: commandToUse,
 						args: spawnArgs,
-						prompt: substitutedPrompt,
+						// Agent-only, like the message branch: the log entry above keeps
+						// the bare command prompt.
+						prompt: prependNewSessionMessageOnFirstTurn(
+							substitutedPrompt,
+							session.newSessionMessage,
+							tabAgentSessionId
+						),
 						appendSystemPrompt: appendSystemPromptForCommand,
 						agentSessionId: tabAgentSessionId ?? undefined,
 						readOnlyMode: isReadOnly,
@@ -644,32 +714,14 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 						},
 						item.tabId
 					);
-					useSessionStore.getState().setSessions((prev) =>
-						prev.map((s) => {
-							if (s.id !== sessionId) return s;
-							const updatedAiTabs = s.aiTabs?.map((tab) =>
-								tab.id === item.tabId
-									? {
-											...tab,
-											state: 'idle' as const,
-											thinkingStartTime: undefined,
-										}
-									: tab
-							);
-							return {
-								...s,
-								state: 'idle' as SessionState,
-								busySource: undefined,
-								thinkingStartTime: undefined,
-								aiTabs: updatedAiTabs,
-							};
-						})
-					);
 					// Nothing spawned and nothing will: the command does not exist, so
-					// no exit is coming to settle this turn.
+					// no exit is coming to settle this turn. Release the tab it was
+					// marked on and keep the agent busy if another tab is mid-turn.
+					updateSessionWith(sessionId, (s) => applyQueuedItemRelease(s, targetTab.id));
 					return false;
 				}
 			}
+			clearSpawnCollision(item.id);
 			return true;
 		} catch (error: any) {
 			logger.error('[processQueuedItem] Failed to process queued item:', undefined, error);
@@ -693,7 +745,16 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 			// retry card already explaining the wait. Any other failure would repeat
 			// identically on the next tick, so the item comes back HELD: preserved,
 			// visible, one click from Force Send, and unable to spin the queue.
+			//
+			// "Self-corrects" assumes the old process actually goes away. When its
+			// entry never clears, the runnable item re-triggers the drain that just
+			// failed, so collisions are counted: the drain backs off between them
+			// (see noteSpawnCollision), and past the cap the item is held with an
+			// error frame like any other failure rather than spinning forever.
 			const isSpawnCollision = isAgentAlreadyRunningError(error);
+			const isTransientCollision =
+				isSpawnCollision && noteSpawnCollision(item.id) < SPAWN_COLLISION_MAX_ATTEMPTS;
+			if (!isTransientCollision) clearSpawnCollision(item.id);
 			const errorLogEntry: LogEntry = {
 				id: generateId(),
 				timestamp: Date.now(),
@@ -703,8 +764,10 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 			useSessionStore.getState().setSessions((prev) =>
 				prev.map((s) => {
 					if (s.id !== sessionId) return s;
-					const recovered = applyQueuedItemDispatchFailure(s, item, { hold: !isSpawnCollision });
-					if (isSpawnCollision) return recovered;
+					const recovered = applyQueuedItemDispatchFailure(s, item, {
+						collision: isTransientCollision,
+					});
+					if (isTransientCollision) return recovered;
 
 					const resolvedTabId = item.tabId ?? s.activeTabId;
 					const targetTabExists = recovered.aiTabs?.some((tab) => tab.id === resolvedTabId);

@@ -6,10 +6,11 @@
  */
 
 import { useRef, type RefObject } from 'react';
-import { render, fireEvent } from '@testing-library/react';
+import { render, fireEvent, screen, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NotificationPopover } from '../../../renderer/components/NotificationPopover';
 import { mockTheme } from '../../helpers/mockTheme';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { spyOnListeners, expectAllListenersRemoved } from '../../helpers/listenerLeakAssertions';
 
 // useClickOutside also attaches listeners; stub it so we only measure the
@@ -98,5 +99,88 @@ describe('NotificationPopover', () => {
 			// next test in this worker.
 			spies.restore();
 		}
+	});
+	it('grows up from the anchor so it stays on screen near the bottom of the window', async () => {
+		// The bell sits in the composer at the bottom-right of the window. Pinning
+		// the popover's TOP to the anchor pushed most of it off the bottom edge.
+		const rect = (left: number, top: number, width: number, height: number) => ({
+			left,
+			top,
+			right: left + width,
+			bottom: top + height,
+			width,
+			height,
+			x: left,
+			y: top,
+			toJSON: () => ({}),
+		});
+		const anchorBottom = window.innerHeight - 20;
+		HTMLElement.prototype.getBoundingClientRect = vi.fn(function (this: HTMLElement) {
+			if (this.dataset.testid === 'anchor') return rect(900, anchorBottom - 40, 40, 40);
+			return rect(0, 0, 220, 110);
+		}) as never;
+
+		render(<Harness onClose={onClose} />);
+		const popover = document.body.querySelector<HTMLElement>('[tabindex="-1"]')!;
+		await waitFor(() => expect(popover.style.opacity).toBe('1'));
+
+		const top = parseFloat(popover.style.top);
+		expect(top + 110).toBe(anchorBottom);
+		expect(top + 110).toBeLessThanOrEqual(window.innerHeight);
+		expect(parseFloat(popover.style.left)).toBe(900 - 8 - 220);
+	});
+
+	describe('In-App Toasts toggle', () => {
+		// The shared Harness attaches its anchor ref during the same render, so the
+		// popover sees a null ref and renders nothing. In the app the bell button
+		// is mounted before the popover opens, so mount against a live anchor.
+		let anchor: HTMLButtonElement;
+		const renderOpen = () =>
+			render(
+				<NotificationPopover
+					theme={mockTheme}
+					anchorRef={{ current: anchor } as RefObject<HTMLElement | null>}
+					onClose={onClose}
+				/>
+			);
+
+		beforeEach(() => {
+			anchor = document.createElement('button');
+			document.body.appendChild(anchor);
+		});
+
+		afterEach(() => {
+			anchor.remove();
+		});
+
+		it('reads as on while toasts have a duration', () => {
+			useSettingsStore.setState({ toastDuration: 20 });
+			renderOpen();
+			expect(screen.getByRole('switch', { name: 'In-App Toasts' })).toHaveAttribute(
+				'aria-checked',
+				'true'
+			);
+		});
+
+		it('reads as off while the duration is Off', () => {
+			useSettingsStore.setState({ toastDuration: -1 });
+			renderOpen();
+			expect(screen.getByRole('switch', { name: 'In-App Toasts' })).toHaveAttribute(
+				'aria-checked',
+				'false'
+			);
+		});
+
+		it('switches toasts off and back on at the previous duration', () => {
+			useSettingsStore.setState({ toastDuration: 5, toastDurationBeforeOff: 20 });
+			renderOpen();
+			const toggle = screen.getByRole('switch', { name: 'In-App Toasts' });
+			fireEvent.click(toggle);
+			expect(useSettingsStore.getState().toastDuration).toBe(-1);
+			fireEvent.click(toggle);
+			expect(useSettingsStore.getState().toastDuration).toBe(5);
+			// Toggling never closes the popover.
+			expect(onClose).not.toHaveBeenCalled();
+		});
 	});
 });

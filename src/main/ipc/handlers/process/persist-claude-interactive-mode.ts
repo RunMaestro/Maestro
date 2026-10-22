@@ -22,7 +22,7 @@ export function persistClaudeInteractiveMode(
 ): void {
 	const {
 		isClaudeCode,
-		baseSessionId,
+		tokenSourceSessionId,
 		claudeResolvedMode,
 		claudeResolvedReason,
 		resolvedConfigDirKey,
@@ -44,7 +44,7 @@ export function persistClaudeInteractiveMode(
 		const allSessions = deps.sessionsStore.get('sessions', []) as Array<Record<string, unknown>>;
 		let mutated = false;
 		const nextSessions = allSessions.map((s) => {
-			if (s?.id !== baseSessionId) return s;
+			if (s?.id !== tokenSourceSessionId) return s;
 			const current = s.claudeInteractive as
 				| {
 						mode?: string;

@@ -61,6 +61,12 @@ describe('BrowserTabView', () => {
 		return screen.getByTestId('browser-tab-host').querySelector('webview') as MockWebview;
 	}
 
+	it('keeps a native webview for local tabs without starting a frame stream', () => {
+		render(<BrowserTabView tab={mockTab} theme={mockTheme} onUpdateTab={vi.fn()} />);
+		expect(getWebview().tagName.toLowerCase()).toBe('webview');
+		expect(document.querySelector('img[alt="Host browser page"]')).toBeNull();
+	});
+
 	it('waits for dom-ready before reading webview navigation state', async () => {
 		const onUpdateTab = vi.fn();
 
@@ -1055,66 +1061,6 @@ describe('BrowserTabView', () => {
 			fireEvent.click(afterSwitch);
 			expect(clearSessionData).not.toHaveBeenCalled();
 			expect(afterSwitch).toHaveAttribute('aria-pressed', 'true');
-		});
-	});
-
-	describe('web-desktop placeholder', () => {
-		it('renders a link-out placeholder instead of the inert webview', () => {
-			vi.mocked(isWebDesktop).mockReturnValue(true);
-
-			render(<BrowserTabView tab={mockTab} theme={mockTheme} onUpdateTab={vi.fn()} />);
-
-			// The Electron <webview> is inert in a real browser and must not render.
-			expect(screen.getByTestId('browser-tab-host').querySelector('webview')).toBeNull();
-
-			const placeholder = screen.getByTestId('browser-tab-web-placeholder');
-			expect(placeholder).toHaveTextContent('Browser tabs are available in the desktop app');
-
-			const link = screen.getByRole('link', { name: 'https://example.com' });
-			expect(link).toHaveAttribute('href', 'https://example.com');
-			expect(link).toHaveAttribute('target', '_blank');
-			expect(link).toHaveAttribute('rel', 'noopener noreferrer');
-		});
-
-		it('does not render an anchor for a non-http (e.g. javascript:) URL', () => {
-			vi.mocked(isWebDesktop).mockReturnValue(true);
-
-			render(
-				<BrowserTabView
-					// eslint-disable-next-line no-script-url
-					tab={{ ...mockTab, url: 'javascript:alert(1)' }}
-					theme={mockTheme}
-					onUpdateTab={vi.fn()}
-				/>
-			);
-
-			// The placeholder still renders, but the dangerous scheme must not become
-			// a clickable href (XSS-on-click guard).
-			expect(screen.getByTestId('browser-tab-web-placeholder')).toBeInTheDocument();
-			expect(screen.queryByRole('link')).toBeNull();
-		});
-
-		it('omits the clickable link for a blank browser tab', () => {
-			vi.mocked(isWebDesktop).mockReturnValue(true);
-
-			render(
-				<BrowserTabView
-					tab={{ ...mockTab, url: DEFAULT_BROWSER_TAB_URL }}
-					theme={mockTheme}
-					onUpdateTab={vi.fn()}
-				/>
-			);
-
-			expect(screen.getByTestId('browser-tab-web-placeholder')).toBeInTheDocument();
-			expect(screen.queryByRole('link')).toBeNull();
-		});
-
-		it('still renders the webview on desktop (non-web)', () => {
-			// isWebDesktop defaults to false via beforeEach.
-			render(<BrowserTabView tab={mockTab} theme={mockTheme} onUpdateTab={vi.fn()} />);
-
-			expect(screen.getByTestId('browser-tab-host').querySelector('webview')).toBeTruthy();
-			expect(screen.queryByTestId('browser-tab-web-placeholder')).toBeNull();
 		});
 	});
 

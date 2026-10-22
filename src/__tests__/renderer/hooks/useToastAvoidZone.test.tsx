@@ -48,8 +48,8 @@ describe('toastBottomInset', () => {
 	});
 });
 
-function Harness() {
-	const ref = useToastAvoidZone();
+function Harness({ remeasureKey }: { remeasureKey?: unknown }) {
+	const ref = useToastAvoidZone(remeasureKey);
 	return <div ref={ref} data-testid="zone" />;
 }
 
@@ -99,6 +99,23 @@ describe('useToastAvoidZone', () => {
 		fireEvent(window, new Event('resize'));
 		expect(useToastAvoidZoneStore.getState().zones).toBe(before);
 		unmount();
+		spy.mockRestore();
+	});
+
+	it('re-measures a surface that moved when its remeasure key changes', () => {
+		const spy = vi
+			.spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+			.mockReturnValue({ left: 10, top: 700, right: 210, bottom: 900 } as DOMRect);
+
+		const { rerender, unmount } = render(<Harness remeasureKey="10,700" />);
+		spy.mockReturnValue({ left: 300, top: 600, right: 500, bottom: 800 } as DOMRect);
+		rerender(<Harness remeasureKey="300,600" />);
+
+		expect(Object.values(useToastAvoidZoneStore.getState().zones)).toEqual([
+			rect(300, 600, 500, 800),
+		]);
+		unmount();
+		expect(useToastAvoidZoneStore.getState().zones).toEqual({});
 		spy.mockRestore();
 	});
 });

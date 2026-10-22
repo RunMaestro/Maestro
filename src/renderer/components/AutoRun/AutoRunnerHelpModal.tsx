@@ -26,7 +26,7 @@ import {
 import type { Theme } from '../../types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { Modal } from '../ui/Modal';
-import { formatShortcutKeys } from '../../utils/shortcutFormatter';
+import { ShortcutKeys } from '../ui/ShortcutHint';
 import { openUrl } from '../../utils/openUrl';
 import { buildMaestroUrl } from '../../utils/buildMaestroUrl';
 
@@ -286,16 +286,8 @@ export function AutoRunnerHelpModal({ theme, onClose, zIndex = 50 }: AutoRunnerH
 							<Keyboard className="w-4 h-4" style={{ color: theme.colors.accent }} />
 							<span>
 								<strong style={{ color: theme.colors.textMain }}>Quick Insert:</strong> Press{' '}
-								<kbd
-									className="px-1.5 py-0.5 rounded text-2xs font-mono font-bold"
-									style={{
-										backgroundColor: theme.colors.bgActivity,
-										border: `1px solid ${theme.colors.border}`,
-									}}
-								>
-									{formatShortcutKeys(['Meta', 'l'])}
-								</kbd>{' '}
-								to insert a new checkbox at your cursor.
+								<ShortcutKeys theme={theme} keys={['Meta', 'l']} className="align-middle" /> to
+								insert a new checkbox at your cursor.
 							</span>
 						</div>
 						<p>
@@ -791,8 +783,10 @@ export function AutoRunnerHelpModal({ theme, onClose, zIndex = 50 }: AutoRunnerH
 							the panel.
 						</p>
 						<p>
-							When the run genuinely must wait on a person, use a HITL (human-in-the-loop) gate
-							marker on its own line, above the tasks that depend on the human:
+							Auto Runs are meant to run unattended, so human steps belong in the Manual Follow-Up
+							section below by default. Only when the run must stop and wait on a person at a
+							specific point, use a HITL (human-in-the-loop) gate marker on its own line, above the
+							tasks that depend on the human:
 						</p>
 						<div
 							className="font-mono text-xs p-2 rounded border"
@@ -866,63 +860,48 @@ export function AutoRunnerHelpModal({ theme, onClose, zIndex = 50 }: AutoRunnerH
 					<div className="text-sm pl-7" style={{ color: theme.colors.textDim }}>
 						<div className="space-y-2">
 							<div className="flex items-center gap-3">
-								<kbd
-									className="px-2 py-1 rounded text-xs font-mono font-bold min-w-[80px] text-center"
-									style={{
-										backgroundColor: theme.colors.bgActivity,
-										border: `1px solid ${theme.colors.border}`,
-									}}
-								>
-									{formatShortcutKeys(['Meta', 'Shift', '1'])}
-								</kbd>
+								<ShortcutKeys
+									theme={theme}
+									keys={['Meta', 'Shift', '1']}
+									size="md"
+									className="min-w-[80px] justify-center"
+								/>
 								<span>Open Auto Run tab</span>
 							</div>
 							<div className="flex items-center gap-3">
-								<kbd
-									className="px-2 py-1 rounded text-xs font-mono font-bold min-w-[80px] text-center"
-									style={{
-										backgroundColor: theme.colors.bgActivity,
-										border: `1px solid ${theme.colors.border}`,
-									}}
-								>
-									{formatShortcutKeys(['Meta', 'e'])}
-								</kbd>
+								<ShortcutKeys
+									theme={theme}
+									keys={['Meta', 'e']}
+									size="md"
+									className="min-w-[80px] justify-center"
+								/>
 								<span>Toggle Edit/Preview mode</span>
 							</div>
 							<div className="flex items-center gap-3">
-								<kbd
-									className="px-2 py-1 rounded text-xs font-mono font-bold min-w-[80px] text-center"
-									style={{
-										backgroundColor: theme.colors.bgActivity,
-										border: `1px solid ${theme.colors.border}`,
-									}}
-								>
-									{formatShortcutKeys(['Meta', 'l'])}
-								</kbd>
+								<ShortcutKeys
+									theme={theme}
+									keys={['Meta', 'l']}
+									size="md"
+									className="min-w-[80px] justify-center"
+								/>
 								<span>Insert checkbox at cursor</span>
 							</div>
 							<div className="flex items-center gap-3">
-								<kbd
-									className="px-2 py-1 rounded text-xs font-mono font-bold min-w-[80px] text-center"
-									style={{
-										backgroundColor: theme.colors.bgActivity,
-										border: `1px solid ${theme.colors.border}`,
-									}}
-								>
-									{formatShortcutKeys(['Meta', 'z'])}
-								</kbd>
+								<ShortcutKeys
+									theme={theme}
+									keys={['Meta', 'z']}
+									size="md"
+									className="min-w-[80px] justify-center"
+								/>
 								<span>Undo</span>
 							</div>
 							<div className="flex items-center gap-3">
-								<kbd
-									className="px-2 py-1 rounded text-xs font-mono font-bold min-w-[80px] text-center"
-									style={{
-										backgroundColor: theme.colors.bgActivity,
-										border: `1px solid ${theme.colors.border}`,
-									}}
-								>
-									{formatShortcutKeys(['Meta', 'Shift', 'z'])}
-								</kbd>
+								<ShortcutKeys
+									theme={theme}
+									keys={['Meta', 'Shift', 'z']}
+									size="md"
+									className="min-w-[80px] justify-center"
+								/>
 								<span>Redo</span>
 							</div>
 						</div>

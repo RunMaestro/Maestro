@@ -3,6 +3,7 @@
  * @description Tests for the ShortcutsHelpModal component
  */
 
+import { getShortcutKeys } from '../../helpers/shortcutKeys';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, within } from '@testing-library/react';
 import React from 'react';
@@ -11,7 +12,6 @@ import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext
 import type { Theme, Shortcut, KeyboardMasteryStats } from '../../../renderer/types';
 
 import { createMockTheme } from '../../helpers/mockTheme';
-import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 
 // Create mock shortcuts for testing
 const createMockShortcuts = (): Record<string, Shortcut> => ({
@@ -863,9 +863,7 @@ describe('ShortcutsHelpModal', () => {
 					.closest('div.justify-between') as HTMLElement;
 				expect(row).not.toBeNull();
 				expect(within(row).queryByText('Unassigned')).toBeNull();
-				expect(
-					within(row).getByText(formatShortcutKeys(['Alt', 'Meta', 'ArrowUp']))
-				).toBeInTheDocument();
+				expect(getShortcutKeys(['Alt', 'Meta', 'ArrowUp'], row)).toBeInTheDocument();
 				expect(within(row).getByText('twice')).toBeInTheDocument();
 			});
 

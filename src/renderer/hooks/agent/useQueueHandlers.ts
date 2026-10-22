@@ -6,6 +6,7 @@
  *   - Switch to a session that has queued items
  *   - Reorder queued items within a session
  *   - Force send a queued item out of turn
+ *   - Merge a queued message into the earlier message for its tab
  *
  * Reads from: sessionStore (setSessions, setActiveSessionId)
  */
@@ -13,14 +14,16 @@
 import { useCallback } from 'react';
 import type { QueuedItem, QueuedItemEditPatch } from '../../types';
 import { aiTabFocusFields } from '../../utils/tabHelpers';
-import {
-	applyQueuedItemDispatch,
-	applyQueuedItemEdit,
-	getQueueBusyContext,
-} from '../../utils/executionQueue';
+import { steerQueuedItem } from '../../services/chatSteering';
+import type { QueueSteerResult } from '../../../shared/chatSteering';
+import { applyQueuedItemEdit } from '../../utils/executionQueue';
 import { useSessionStore } from '../../stores/sessionStore';
 import { planCrossAgentMentions } from '../../services/crossAgentMentions';
-import { logger } from '../../utils/logger';
+import {
+	mergeQueuedItemIntoAbove,
+	sendQueuedItemNow,
+	toggleQueuedItemPaused,
+} from '../../services/queuedPrompt';
 
 // ============================================================================
 // Dependencies interface
@@ -48,6 +51,14 @@ export interface UseQueueHandlersReturn {
 	handleEditQueueItem: (sessionId: string, itemId: string, patch: QueuedItemEditPatch) => void;
 	/** Dispatch one queued item immediately, out of queue order */
 	handleForceSendQueueItem: (sessionId: string, itemId: string) => void;
+	/**
+	 * Steer a queued message into the turn ALREADY RUNNING on its tab, rather than
+	 * waiting for that turn to finish. Claude-interactive turns only - see
+	 * getSteerEligibility.
+	 */
+	handleSteerQueueItem: (sessionId: string, itemId: string) => Promise<QueueSteerResult>;
+	/** Fold a queued message into the earlier message for its tab (Execution Queue browser) */
+	handleMergeQueueItem: (sessionId: string, itemId: string) => void;
 }
 
 // ============================================================================
@@ -111,17 +122,7 @@ export function useQueueHandlers({
 	);
 
 	const handleTogglePauseQueueItem = useCallback((sessionId: string, itemId: string) => {
-		setSessions((prev) =>
-			prev.map((s) => {
-				if (s.id !== sessionId) return s;
-				return {
-					...s,
-					executionQueue: s.executionQueue.map((item) =>
-						item.id === itemId ? { ...item, paused: !item.paused } : item
-					),
-				};
-			})
-		);
+		toggleQueuedItemPaused(sessionId, itemId);
 	}, []);
 
 	const handleEditQueueItem = useCallback(
@@ -135,10 +136,18 @@ export function useQueueHandlers({
 			// edit can move it: `@Codex do X` -> `do X, and @Codex too` must go back to
 			// spawning locally, and the reverse must stop spawning. Leaving
 			// `crossAgentOnly` behind silently discards half of what the user edited.
-			const mentionPlan = planCrossAgentMentions(patch.text, sessionId);
+			//
+			// A routing the user PICKED when queuing it survives the edit; the plan
+			// drops it only when the edit removes every mention.
+			const pickedRouting = useSessionStore
+				.getState()
+				.sessions.find((s) => s.id === sessionId)
+				?.executionQueue.find((item) => item.id === itemId)?.mentionRouting;
+			const mentionPlan = planCrossAgentMentions(patch.text, sessionId, pickedRouting);
 			const crossAgent = {
 				crossAgentMention: !!mentionPlan,
 				crossAgentOnly: mentionPlan?.suppressLocal ?? false,
+				mentionRouting: mentionPlan?.routingSource === 'explicit' ? mentionPlan.routing : undefined,
 			};
 			setSessions((prev) =>
 				prev.map((s) =>
@@ -157,36 +166,30 @@ export function useQueueHandlers({
 	// Force Send: run this exact item now instead of waiting for its turn. Used by
 	// the Execution Queue browser (any agent, any tab) and by the inline chat
 	// list's Force Send button, so both surfaces share one dispatch path.
+	// The rules (never over an in-flight turn, forceParallel beside another tab's,
+	// who owns a failed dispatch) live in `sendQueuedItemNow`.
 	const handleForceSendQueueItem = useCallback(
 		(sessionId: string, itemId: string) => {
-			const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
-			const item = session?.executionQueue?.find((i) => i.id === itemId);
-			if (!session || !item) return;
-
-			// A tab runs one turn at a time - never spawn over an in-flight one.
-			const { targetTabBusy, otherBusyTabs } = getQueueBusyContext(session, item);
-			if (targetTabBusy) return;
-
-			// Stamp forceParallel when another tab is mid-turn: it badges the chat log
-			// entry and tells the on-exit dequeue guard this turn was a deliberate
-			// override rather than a normal sequential dispatch.
-			const dispatchItem: QueuedItem =
-				otherBusyTabs.length > 0 ? { ...item, forceParallel: true } : item;
-
-			setSessions((prev) =>
-				prev.map((s) => (s.id === sessionId ? applyQueuedItemDispatch(s, dispatchItem) : s))
-			);
-
-			// Recovery (release the tab, take the card back, re-queue the prompt) is
-			// owned by `agentStore.processQueuedItem`'s catch, which is the only place
-			// that knows WHY the dispatch failed. This rejection still needs an owner
-			// so it does not surface as an unhandled promise crash report.
-			processQueuedItem(sessionId, dispatchItem).catch((err) => {
-				logger.error('[ForceSend] Dispatch failed, item returned to queue', undefined, err);
-			});
+			sendQueuedItemNow(sessionId, itemId, processQueuedItem);
 		},
 		[processQueuedItem]
 	);
+
+	// Steering: hand this message to the turn already in flight so claude can change
+	// course mid-task. The inverse of Force Send above - that one needs the tab IDLE
+	// and spawns a turn, this one needs it BUSY and types into the live TUI. The
+	// whole flow, including what happens when the transcript answers later, lives in
+	// services/chatSteering.ts.
+	const handleSteerQueueItem = useCallback(
+		(sessionId: string, itemId: string) => steerQueuedItem(sessionId, itemId),
+		[]
+	);
+
+	// Merge: the same service the inline card's Merge button and
+	// `maestro-cli queue merge` reach, so the rules cannot differ by surface.
+	const handleMergeQueueItem = useCallback((sessionId: string, itemId: string) => {
+		mergeQueuedItemIntoAbove(sessionId, itemId);
+	}, []);
 
 	return {
 		handleRemoveQueueItem,
@@ -195,5 +198,7 @@ export function useQueueHandlers({
 		handleTogglePauseQueueItem,
 		handleEditQueueItem,
 		handleForceSendQueueItem,
+		handleSteerQueueItem,
+		handleMergeQueueItem,
 	};
 }

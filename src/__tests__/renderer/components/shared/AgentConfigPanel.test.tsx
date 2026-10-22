@@ -651,6 +651,82 @@ describe('AgentConfigPanel', () => {
 });
 
 // =============================================================================
+// CODEX TRANSPORT SELECTOR TESTS
+// =============================================================================
+
+describe('AgentConfigPanel - Codex Transport selector', () => {
+	const codexAgent = () =>
+		createMockAgent({
+			id: 'codex',
+			name: 'Codex',
+			path: '/usr/local/bin/codex',
+			binaryName: 'codex',
+		});
+
+	it('is hidden for a non-Codex agent even when the handler is supplied', () => {
+		render(<AgentConfigPanel {...createDefaultProps({ onCodexTransportChange: vi.fn() })} />);
+
+		expect(screen.queryByTestId('codex-transport-option')).not.toBeInTheDocument();
+		expect(screen.queryByText('codex exec')).not.toBeInTheDocument();
+	});
+
+	it('is hidden for a Codex agent when no surface persists the value', () => {
+		render(<AgentConfigPanel {...createDefaultProps({ agent: codexAgent() })} />);
+
+		expect(screen.queryByTestId('codex-transport-option')).not.toBeInTheDocument();
+	});
+
+	it('defaults a Codex agent to codex exec', () => {
+		render(
+			<AgentConfigPanel
+				{...createDefaultProps({ agent: codexAgent(), onCodexTransportChange: vi.fn() })}
+			/>
+		);
+
+		expect(screen.getByText('Codex Transport')).toBeInTheDocument();
+		const standard = screen.getByText('codex exec').closest('button');
+		const appServer = screen.getByText('codex app-server').closest('button');
+		expect(standard?.className).toContain('ring-2');
+		expect(appServer?.className).not.toContain('ring-2');
+		// The help text names the experimental status and the turns that stay on exec.
+		expect(screen.getByText(/codex app-server is experimental/)).toBeInTheDocument();
+		expect(
+			screen.getByText(/SSH, image, Auto Run, and Cue turns keep using codex exec/)
+		).toBeInTheDocument();
+	});
+
+	it('reports app-server when the user picks it', () => {
+		const onCodexTransportChange = vi.fn();
+		render(
+			<AgentConfigPanel {...createDefaultProps({ agent: codexAgent(), onCodexTransportChange })} />
+		);
+
+		fireEvent.click(screen.getByText('codex app-server'));
+
+		expect(onCodexTransportChange).toHaveBeenCalledWith('app-server');
+	});
+
+	it('shows a stored app-server choice as selected and notes that SSH overrides it', () => {
+		render(
+			<AgentConfigPanel
+				{...createDefaultProps({
+					agent: codexAgent(),
+					codexTransport: 'app-server',
+					onCodexTransportChange: vi.fn(),
+					isSshEnabled: true,
+				})}
+			/>
+		);
+
+		const appServer = screen.getByText('codex app-server').closest('button');
+		expect(appServer?.className).toContain('ring-2');
+		expect(
+			screen.getByText(/This agent runs over SSH, so its turns use codex exec/)
+		).toBeInTheDocument();
+	});
+});
+
+// =============================================================================
 // DETECTED INSTALLATION CHOOSER TESTS
 // =============================================================================
 

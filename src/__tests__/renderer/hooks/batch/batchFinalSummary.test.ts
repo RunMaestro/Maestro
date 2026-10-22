@@ -406,6 +406,59 @@ describe('buildFinalSummary', () => {
 		expect(totals?.entryCount).toBe(2);
 	});
 
+	it('treats the CLI operator-stop summary as the previous-run boundary', () => {
+		const totals = aggregateAutoRunHistoryTotals([
+			{
+				type: 'AUTO',
+				timestamp: 1,
+				summary: 'first task',
+				completedTaskCount: 1,
+				elapsedTimeMs: 100,
+			},
+			{
+				type: 'AUTO',
+				timestamp: 2,
+				summary: 'Auto Run stopped: by operator',
+				elapsedTimeMs: 200,
+			},
+			{
+				type: 'AUTO',
+				timestamp: 3,
+				summary: 'second task',
+				completedTaskCount: 2,
+				elapsedTimeMs: 150,
+			},
+		]);
+
+		expect(totals?.totalCompletedTasks).toBe(2);
+		expect(totals?.entryCount).toBe(1);
+	});
+
+	it('excludes the CLI goal-run final summaries from task totals', () => {
+		const totals = aggregateAutoRunHistoryTotals([
+			{
+				type: 'AUTO',
+				timestamp: 1,
+				summary: 'Goal run stopped (40%)',
+				elapsedTimeMs: 100,
+			},
+			{
+				type: 'AUTO',
+				timestamp: 2,
+				summary: 'Goal run deadlocked (60%)',
+				elapsedTimeMs: 100,
+			},
+			{
+				type: 'AUTO',
+				timestamp: 3,
+				summary: 'Goal run hit iteration limit (80%)',
+				elapsedTimeMs: 100,
+			},
+		]);
+
+		expect(totals).toBeNull();
+	});
+
 	it('merges final summary totals using persisted history as an upper-bound source', () => {
 		const merged = mergeFinalSummaryTotals(
 			{

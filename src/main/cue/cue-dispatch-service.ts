@@ -1,7 +1,15 @@
 import * as crypto from 'crypto';
 import type { MainLogLevel } from '../../shared/logger-types';
-import type { CueCommand, CueEvent, CueNotifyConfig, CueSubscription } from './cue-types';
+import type {
+	CueAutoRunConfig,
+	CueCommand,
+	CueEvent,
+	CueNotifyConfig,
+	CueSubscription,
+} from './cue-types';
 import { recordTriggerFired } from './cue-telemetry';
+import { findFanOutTarget } from '../../shared/cue/fan-out-target';
+import { cueTurnSettingsOf, type CueTurnSettings } from '../../shared/cue/turn-settings';
 
 export interface CueDispatchServiceDeps {
 	getSessions: () => Array<{ id: string; name: string }>;
@@ -18,7 +26,9 @@ export interface CueDispatchServiceDeps {
 		command?: CueCommand,
 		chainRootId?: string,
 		parentEventId?: string,
-		notify?: CueNotifyConfig
+		notify?: CueNotifyConfig,
+		autoRun?: CueAutoRunConfig,
+		turnSettings?: CueTurnSettings
 	) => void;
 	onLog: (level: MainLogLevel, message: string, data?: unknown) => void;
 	/**
@@ -91,6 +101,9 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 			// Surface `cue.fired` to subscribed plugins (type only, no prompt text).
 			deps.onTriggerFired?.(event.type);
 
+			// One model choice per subscription: every fan-out target shares it.
+			const turnSettings = cueTurnSettingsOf(sub);
+
 			if (sub.fan_out && sub.fan_out.length > 0) {
 				const targetNames = sub.fan_out.join(', ');
 				deps.onLog('cue', `[CUE] Fan-out: "${sub.name}" → ${targetNames}`);
@@ -100,13 +113,8 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 				const skippedTargets: string[] = [];
 				for (let i = 0; i < sub.fan_out.length; i++) {
 					const targetName = sub.fan_out[i];
-					// Prefer the stable id when present so a renamed agent still
-					// resolves. Falls back to name-or-id match for legacy YAML
-					// written before `fan_out_ids` existed.
-					const targetId = sub.fan_out_ids?.[i];
-					const targetSession =
-						(targetId ? allSessions.find((s) => s.id === targetId) : undefined) ??
-						allSessions.find((s) => s.name === targetName || s.id === targetName);
+					// Stable id first, then name-or-id (see findFanOutTarget).
+					const targetSession = findFanOutTarget(allSessions, targetName, sub.fan_out_ids?.[i]);
 
 					if (!targetSession) {
 						deps.onLog('cue', `[CUE] Fan-out target not found: "${targetName}" - skipping`);
@@ -147,7 +155,10 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 						sub.action,
 						sub.command,
 						chainRootId,
-						parentEventId
+						parentEventId,
+						undefined, // notify: a fan-out branch is always a prompt run
+						undefined, // autoRun: same
+						turnSettings
 					);
 					dispatched++;
 				}
@@ -169,10 +180,26 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 			// from the notify config + fallback chain.
 			let prompt: string;
 			let resolvedNotify: CueNotifyConfig | undefined;
+			let resolvedAutoRun: CueAutoRunConfig | undefined;
 			if (sub.action === 'notify') {
 				const message = resolveNotifyMessage(sub);
 				prompt = message;
 				resolvedNotify = { ...(sub.notify ?? {}), message };
+			} else if (sub.action === 'autorun') {
+				// An autorun subscription's work is its document list, not a
+				// prompt. Bail loudly rather than dispatching a run that would
+				// reach the executor with nothing to launch - a scheduled run
+				// fires when nobody is watching, so a silent no-op looks
+				// exactly like a run that never fired at all.
+				if (!sub.auto_run || sub.auto_run.documents.length === 0) {
+					deps.onLog(
+						'error',
+						`[CUE] "${sub.name}" has action='autorun' but no documents - skipping dispatch`
+					);
+					return 0;
+				}
+				resolvedAutoRun = sub.auto_run;
+				prompt = sub.prompt?.trim() || sub.auto_run.documents.join(', ');
 			} else {
 				prompt = promptOverride ?? sub.prompt;
 				if (!prompt) {
@@ -193,7 +220,9 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 				sub.command,
 				chainRootId,
 				parentEventId,
-				resolvedNotify
+				resolvedNotify,
+				resolvedAutoRun,
+				turnSettings
 			);
 			return 1;
 		},

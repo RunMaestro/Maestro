@@ -59,6 +59,20 @@ vi.mock('fs', () => ({
 		const key = String(filePath);
 		mockFs.files.set(key, `${mockFs.files.get(key) ?? ''}${content}`);
 	}),
+	// The store caches parsed files keyed on this signature. Derive it from the
+	// content so a test that rewrites a file directly invalidates the cache, the
+	// way a real write changes size/mtime.
+	statSync: vi.fn((filePath: string) => {
+		const content = mockFs.files.get(String(filePath));
+		if (content === undefined) {
+			throw Object.assign(new Error('File not found'), { code: 'ENOENT' });
+		}
+		let hash = 0n;
+		for (let index = 0; index < content.length; index += 1) {
+			hash = (hash * 31n + BigInt(content.charCodeAt(index))) % 2n ** 61n;
+		}
+		return { ino: 1n, size: BigInt(Buffer.byteLength(content)), mtimeNs: hash };
+	}),
 }));
 
 vi.mock('../../../cli/services/storage', () => ({
@@ -633,12 +647,113 @@ describe('agent-run-store', () => {
 			]);
 			expect(mockFs.files.has(archivePath)).toBe(true);
 			vi.mocked(fs.readFileSync).mockClear();
+			vi.mocked(fs.statSync).mockClear();
 
 			expect(findActiveRunBySession('agent-1')?.id).toBe('run-live');
 
-			const readPaths = vi.mocked(fs.readFileSync).mock.calls.map(([target]) => String(target));
-			expect(readPaths).toContain(runsPath);
-			expect(readPaths).not.toContain(archivePath);
+			// The live file was just written, so it is served from the cache (a stat,
+			// no read). The archive must not be touched in either way.
+			const touched = [
+				...vi.mocked(fs.readFileSync).mock.calls,
+				...vi.mocked(fs.statSync).mock.calls,
+			].map(([target]) => String(target));
+			expect(touched).toContain(runsPath);
+			expect(touched).not.toContain(archivePath);
+		});
+	});
+
+	// The runs ledger is rewritten on every agent spawn and exit, on the Electron
+	// main thread. These pin the in-memory cache that keeps that cheap without
+	// ever serving another process's stale data.
+	describe('process-local cache', () => {
+		it('serves an unchanged runs file without reading it again', () => {
+			upsertAgentRun(run({ id: 'run-a' }));
+			vi.mocked(fs.readFileSync).mockClear();
+
+			expect(readAgentRuns().map((entry) => entry.id)).toEqual(['run-a']);
+			expect(getAgentRun('run-a')?.id).toBe('run-a');
+
+			const reads = vi.mocked(fs.readFileSync).mock.calls.map(([target]) => String(target));
+			expect(reads).not.toContain(runsPath);
+		});
+
+		it('picks up a write made by another process', () => {
+			upsertAgentRun(run({ id: 'run-a' }));
+			expect(readAgentRuns().map((entry) => entry.id)).toEqual(['run-a']);
+
+			// Another process (maestro-cli) replaces the file behind our back.
+			mockFs.files.set(runsPath, JSON.stringify({ runs: [run({ id: 'run-from-cli' })] }));
+
+			expect(readAgentRuns().map((entry) => entry.id)).toEqual(['run-from-cli']);
+			upsertAgentRun(run({ id: 'run-b' }));
+			expect(
+				JSON.parse(mockFs.files.get(runsPath) ?? '{}').runs.map((entry: AgentRun) => entry.id)
+			).toEqual(['run-from-cli', 'run-b']);
+		});
+
+		it('writes the same bytes as a plain tab-indented stringify', () => {
+			upsertAgentRun(run({ id: 'run-a', prompt: 'first' }));
+			upsertAgentRun(run({ id: 'run-b', prompt: 'second' }));
+			upsertAgentRun(run({ id: 'run-a', prompt: 'first, edited', updatedAt: 300 }));
+
+			const written = mockFs.files.get(runsPath) ?? '';
+			expect(written).toBe(`${JSON.stringify(JSON.parse(written), null, '\t')}\n`);
+			expect(readAgentRuns().find((entry) => entry.id === 'run-a')?.prompt).toBe('first, edited');
+		});
+
+		it('caches what a re-read would produce, not the object it was handed', () => {
+			// An explicit `undefined` field is dropped by JSON. If the cache held the
+			// caller's object instead, the next strict validation would disagree
+			// with the file on disk.
+			upsertAgentRun({ ...run({ id: 'run-a' }), model: undefined });
+			upsertAgentRun(run({ id: 'run-b' }));
+
+			expect(readAgentRuns().map((entry) => entry.id)).toEqual(['run-a', 'run-b']);
+			expect(Object.keys(readAgentRuns()[0])).not.toContain('model');
+		});
+
+		it('skips the runs rewrite when an event changes nothing on its run', () => {
+			upsertAgentRun(run({ id: 'run-1', status: 'running', updatedAt: 200 }));
+			vi.mocked(fs.writeFileSync).mockClear();
+
+			appendAgentRunEvent(event({ timestamp: 200, status: 'running' }));
+
+			// The store lock writes its holder file; the runs file must not be touched.
+			const writes = vi.mocked(fs.writeFileSync).mock.calls.map(([target]) => String(target));
+			expect(writes.filter((target) => target.includes('maestro-agent-runs'))).toEqual([]);
+			expect(readAgentRunEvents('run-1')).toHaveLength(1);
+		});
+
+		it('still rewrites the run when an event moves it forward', () => {
+			upsertAgentRun(run({ id: 'run-1', status: 'running', updatedAt: 200 }));
+
+			appendAgentRunEvent(event({ timestamp: 300, status: 'completed' }));
+
+			expect(getAgentRun('run-1')).toMatchObject({ status: 'completed', updatedAt: 300 });
+		});
+
+		it('keeps the cached events log in step with its own appends and foreign ones', () => {
+			appendAgentRunEvent(event({ id: 'event-1' }));
+			appendAgentRunEvent(event({ id: 'event-2', timestamp: 201 }));
+			expect(readAgentRunEvents('run-1').map((entry) => [entry.id, entry.seq])).toEqual([
+				['event-1', 1],
+				['event-2', 2],
+			]);
+
+			// A CLI process appends directly to the log.
+			mockFs.files.set(
+				eventsPath,
+				`${mockFs.files.get(eventsPath)}${JSON.stringify(event({ id: 'event-cli', seq: 3, timestamp: 202 }))}\n`
+			);
+			const next = appendAgentRunEvent(event({ id: 'event-4', timestamp: 203 }));
+
+			expect(next.seq).toBe(4);
+			expect(readAgentRunEvents('run-1').map((entry) => entry.id)).toEqual([
+				'event-1',
+				'event-2',
+				'event-cli',
+				'event-4',
+			]);
 		});
 	});
 });

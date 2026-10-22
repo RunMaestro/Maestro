@@ -26,6 +26,7 @@ import { captureException } from '../../utils/sentry';
 import { resolveFileReference } from '../../utils/fileLinks/resolve';
 import { getBasename } from '../../../shared/formatters';
 import { isTextInputTarget } from '../../utils/messageScrollNavigation';
+import { readPathForOpen, revealPathInFileTree } from '../../services/fileTreeReveal';
 
 // ============================================================================
 // Dependencies interface
@@ -158,20 +159,17 @@ export function useFileExplorerEffects(
 			}
 
 			try {
-				// Fetch content and stat in parallel for efficiency
-				const [content, stat] = await Promise.all([
-					window.maestro.fs.readFile(fullPath, sshRemoteId),
-					window.maestro.fs.stat(fullPath, sshRemoteId).catch((err) => {
-						// ENOENT is expected (file may have been deleted between listing and open)
-						if (err?.code === 'ENOENT') return null;
-						captureException(err, {
-							extra: { fullPath, operation: 'file-stat', sshRemoteId },
-						});
-						return null;
-					}),
-				]);
-				if (content === null) return;
-				const lastModified = stat?.modifiedAt ? new Date(stat.modifiedAt).getTime() : undefined;
+				const target = await readPathForOpen(fullPath, sshRemoteId);
+				if (!target) return;
+				if (target.kind === 'directory') {
+					// A folder has no preview: take the user to it in the Files panel.
+					// One outside the tree can't be shown there, so hand it to the OS.
+					if (!revealPathInFileTree(currentSession.id, fullPath, { focus: true }) && !sshRemoteId) {
+						void window.maestro.shell.openPath(fullPath);
+					}
+					return;
+				}
+				const { content, lastModified } = target;
 				handleOpenFileTab(
 					{
 						path: fullPath,
@@ -255,28 +253,29 @@ export function useFileExplorerEffects(
 	}, [fileExplorerExpanded, filteredFileTree, showHiddenFiles]);
 
 	// ====================================================================
-	// Effect: Handle pending jump path from /jump command
+	// Effect: Select the row a reveal asked for (revealPathInFileTree)
 	// ====================================================================
 
 	useEffect(() => {
 		if (pendingJumpPath === undefined || flatFileList.length === 0 || !activeSessionId) return;
 
-		const jumpPath = pendingJumpPath;
-		let targetIndex = 0;
-
-		if (jumpPath === '') {
-			targetIndex = 0;
-		} else {
-			const folderIndex = flatFileList.findIndex(
-				(item) => item.fullPath === jumpPath && item.isFolder
-			);
-			if (folderIndex !== -1) {
-				targetIndex = folderIndex;
-			}
-		}
+		const targetIndex =
+			pendingJumpPath === ''
+				? 0
+				: flatFileList.findIndex((item) => item.fullPath === pendingJumpPath);
+		// Not in the list yet: the reveal just expanded its ancestors, and a folder
+		// past the scan depth cap only appears once the rescan that expansion
+		// triggers lands. Keep the request until the row exists.
+		if (targetIndex === -1) return;
 
 		fileTreeKeyboardNavRef.current = true;
 		setSelectedFileIndex(targetIndex);
+		// A reveal that moved the app's focus to the Files tab moves real DOM focus
+		// with it, so arrow keys and Enter drive the tree rather than the chat.
+		const ui = useUIStore.getState();
+		if (ui.activeFocus === 'right' && ui.activeRightTab === 'files') {
+			requestAnimationFrame(() => fileTreeContainerRef.current?.focus());
+		}
 
 		// Clear the pending jump path
 		setSessions((prev) =>

@@ -17,6 +17,7 @@ vi.mock('../../../renderer/utils/groupChatAutoRunRegistry', () => ({
 }));
 
 import {
+	archiveGroupChat,
 	getRemoteGroupChatState,
 	listRemoteGroupChats,
 	sendRemoteGroupChatMessage,
@@ -44,8 +45,10 @@ const mockGroupChat = {
 	list: vi.fn(),
 	load: vi.fn(),
 	getMessages: vi.fn(),
+	getQueue: vi.fn(),
 	sendToModerator: vi.fn(),
 	stopAll: vi.fn(),
+	archive: vi.fn(),
 };
 
 function seedAgents(names: Array<[id: string, name: string, toolType?: string]>) {
@@ -63,8 +66,13 @@ beforeEach(() => {
 	mockGroupChat.list.mockResolvedValue([createdChat]);
 	mockGroupChat.load.mockResolvedValue(createdChat);
 	mockGroupChat.getMessages.mockResolvedValue([]);
+	mockGroupChat.getQueue.mockResolvedValue({ items: [], paused: false });
 	mockGroupChat.sendToModerator.mockResolvedValue(undefined);
 	mockGroupChat.stopAll.mockResolvedValue(undefined);
+	mockGroupChat.archive.mockImplementation(async (_id: string, archived: boolean) => ({
+		...createdChat,
+		archived,
+	}));
 	(window.maestro as any).groupChat = { ...(window.maestro as any).groupChat, ...mockGroupChat };
 
 	useGroupChatStore.setState({
@@ -192,6 +200,17 @@ describe('list and state', () => {
 		mockGroupChat.load.mockResolvedValue(null);
 		expect(await getRemoteGroupChatState('gone')).toBeNull();
 	});
+
+	it('includes the chat queue in a single chat state', async () => {
+		mockGroupChat.getQueue.mockResolvedValue({
+			items: [{ id: 'q1', text: 'waiting', timestamp: 5 }],
+			paused: true,
+		});
+		const state = await getRemoteGroupChatState('gc-new');
+		expect(mockGroupChat.getQueue).toHaveBeenCalledWith('gc-new');
+		expect(state?.queue).toEqual([{ id: 'q1', text: 'waiting', timestamp: 5 }]);
+		expect(state?.queuePaused).toBe(true);
+	});
 });
 
 describe('stopGroupChatWork', () => {
@@ -204,5 +223,31 @@ describe('stopGroupChatWork', () => {
 			sessionId: 'agent-with-batch',
 		});
 		expect(mockGroupChat.stopAll).toHaveBeenCalledWith('gc-new');
+	});
+});
+
+describe('archiveGroupChat', () => {
+	it("ends the chat's Auto Run batches, archives it in main, and updates the Left Bar list", async () => {
+		useGroupChatStore.setState({ groupChats: [createdChat] } as never);
+		const dispatchBatch = vi.spyOn(useBatchStore.getState(), 'dispatchBatch');
+
+		await archiveGroupChat('gc-new', true);
+
+		expect(dispatchBatch).toHaveBeenCalledWith({
+			type: 'COMPLETE_BATCH',
+			sessionId: 'agent-with-batch',
+		});
+		expect(mockGroupChat.archive).toHaveBeenCalledWith('gc-new', true);
+		expect(useGroupChatStore.getState().groupChats[0]).toMatchObject({ archived: true });
+	});
+
+	it('restores a chat without touching any Auto Run batch', async () => {
+		useGroupChatStore.setState({ groupChats: [{ ...createdChat, archived: true }] } as never);
+		const dispatchBatch = vi.spyOn(useBatchStore.getState(), 'dispatchBatch');
+
+		await archiveGroupChat('gc-new', false);
+
+		expect(dispatchBatch).not.toHaveBeenCalled();
+		expect(useGroupChatStore.getState().groupChats[0]).toMatchObject({ archived: false });
 	});
 });

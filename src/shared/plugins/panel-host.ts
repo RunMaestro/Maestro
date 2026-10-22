@@ -20,6 +20,8 @@
  * unit-testable without Electron.
  */
 
+import { withCspMetaTag } from '../cspMeta';
+
 /** Scheme the main process serves panel documents on (per plugin session). */
 export const PLUGIN_PANEL_SCHEME = 'plugin-panel';
 
@@ -150,12 +152,10 @@ export function isAllowedPluginPanelAttachment(partition: string, src: string): 
  * document is ever rendered through a path that drops response headers.
  */
 export function withPanelCsp(html: string): string {
-	const meta = `<meta http-equiv="Content-Security-Policy" content="${PANEL_CSP_CONTENT}">`;
-	if (/<head[^>]*>/i.test(html)) {
-		return html.replace(/<head[^>]*>/i, (m) => `${m}${meta}`);
-	}
-	if (/<html[^>]*>/i.test(html)) {
-		return html.replace(/<html[^>]*>/i, (m) => `${m}<head>${meta}</head>`);
-	}
-	return `${meta}${html}`;
+	return withCspMetaTag(html, PANEL_CSP_CONTENT);
+}
+
+/** Stable settings destination shared by search, host navigation and SDK openPanel. */
+export function pluginSettingsId(panelId: string): `plugin-settings:${string}` {
+	return `plugin-settings:${panelId}`;
 }

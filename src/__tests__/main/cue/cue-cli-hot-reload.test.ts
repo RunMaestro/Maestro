@@ -44,7 +44,7 @@ vi.mock('chokidar', async (importOriginal) => {
 		},
 	};
 });
-vi.mock('../../../cli/services/storage', () => ({ readSessions }));
+vi.mock('../../../cli/services/storage', () => ({ readSessions, readLiveSessions: readSessions }));
 vi.mock('../../../main/cue/cue-db', () => ({ clearGitHubSeenForSubscription: vi.fn() }));
 vi.mock('../../../main/utils/sentry', () => ({ captureException: vi.fn() }));
 
@@ -92,6 +92,7 @@ describe('CLI interval hot reload in a running desktop runtime', () => {
 			onLog,
 			dispatchSubscription: dispatch,
 			clearQueue: vi.fn(),
+			retainQueue: vi.fn(() => 0),
 			clearFanInState: vi.fn(),
 		});
 		vi.spyOn(console, 'log').mockImplementation(() => {});

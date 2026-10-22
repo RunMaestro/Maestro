@@ -263,9 +263,68 @@ describe('extractCueOutputExcerpt', () => {
 		expect(extractCueOutputExcerpt(stdout, { maxChars: 50 })).toBe('Done.');
 	});
 
-	it('returns undefined when even the first sentence exceeds the cap', () => {
+	it('clips the first sentence on a word boundary when even it exceeds the cap', () => {
+		// Undefined here used to be stored as a NULL excerpt, which History reads
+		// as "this run printed nothing" and hides the row.
 		const stdout = `${'word '.repeat(80).trim()}.`;
-		expect(extractCueOutputExcerpt(stdout, { maxChars: 50 })).toBeUndefined();
+		const out = extractCueOutputExcerpt(stdout, { maxChars: 50 });
+		expect(out).toBe(`${'word '.repeat(10).trim()}…`);
+		expect(out!.length).toBeLessThanOrEqual(50);
+	});
+
+	it('hard-cuts a single unbroken token that exceeds the cap', () => {
+		const out = extractCueOutputExcerpt('x'.repeat(300), { maxChars: 50 });
+		expect(out).toBe(`${'x'.repeat(49)}…`);
+	});
+
+	it('never ends a hard cut on half of a surrogate pair', () => {
+		// 48 ASCII chars put the emoji's high surrogate at index 48, the last
+		// code unit a 49-unit head would keep.
+		const out = extractCueOutputExcerpt(`${'x'.repeat(48)}😀${'y'.repeat(40)}`, { maxChars: 50 });
+		expect(out).toBe(`${'x'.repeat(48)}…`);
+	});
+
+	it('flattens a fenced table into cell text when it is the whole answer', () => {
+		const stdout = '```\n| billing-api | 2.7.0 | raza |\n```';
+		expect(extractCueOutputExcerpt(stdout)).toBe('billing-api · 2.7.0 · raza');
+	});
+
+	it('flattens a bare table, dropping its separator row', () => {
+		const stdout = [
+			'| Service | Version | Owner |',
+			'|---------|:-------:|-------|',
+			'| billing-api | 2.7.0 | raza |',
+		].join('\n');
+		const out = extractCueOutputExcerpt(stdout);
+		expect(out).toBe('Service · Version · Owner billing-api · 2.7.0 · raza');
+		expect(out).not.toContain('|');
+	});
+
+	it('keeps an escaped pipe inside a flattened cell as a literal pipe', () => {
+		// GFM writes a pipe inside a cell as `\|`; it is not a cell boundary.
+		const stdout = '| grep | a \\| b |';
+		expect(extractCueOutputExcerpt(stdout)).toBe('grep · a | b');
+	});
+
+	it('flattens a table row wrapped in inline code', () => {
+		// Seen on the Cue playground server: one row in single backticks. The
+		// row only starts with a pipe once the inline code is unwrapped.
+		const stdout = '`| reload-test | 1.0.0 | fix-check |`';
+		expect(extractCueOutputExcerpt(stdout)).toBe('reload-test · 1.0.0 · fix-check');
+	});
+
+	it('flattens a table row wrapped in emphasis', () => {
+		const stdout = '**| web | 3.0.1 | you |**';
+		expect(extractCueOutputExcerpt(stdout)).toBe('web · 3.0.1 · you');
+	});
+
+	it('returns the raw text when stripping markdown leaves nothing and there is no table', () => {
+		// An empty fence is still output, so it must not read as a silent run.
+		expect(extractCueOutputExcerpt('```\n```')).toBe('``` ```');
+	});
+
+	it('treats ANSI-only output as silent', () => {
+		expect(extractCueOutputExcerpt('\x1b[0m\x1b[2K\n')).toBeUndefined();
 	});
 
 	it('strips markdown formatting before counting', () => {

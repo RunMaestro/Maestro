@@ -1570,6 +1570,25 @@ describe('useModalHandlers', () => {
 	// ======================================================================
 
 	describe('Effects', () => {
+		it('cancels pending LogViewer focus restoration when unmounted or reopened', () => {
+			const input = document.createElement('textarea');
+			document.body.appendChild(input);
+			const inputRef = { current: input };
+			const terminalRef = { current: null };
+			const { unmount } = renderHook(() => useModalHandlers(inputRef, terminalRef));
+			try {
+				act(() => getModalActions().setLogViewerOpen(true));
+				act(() => vi.advanceTimersByTime(50));
+				expect(document.activeElement).not.toBe(input);
+				act(() => getModalActions().setLogViewerOpen(false));
+				unmount();
+				act(() => vi.advanceTimersByTime(50));
+				expect(document.activeElement).not.toBe(input);
+			} finally {
+				unmount();
+				input.remove();
+			}
+		});
 		it('LogViewer close effect focuses input when logViewer closes', () => {
 			// Start with logViewer open
 			getModalActions().setLogViewerOpen(true);

@@ -60,6 +60,7 @@ export function AchievementCard({
 				cueTimeFormatted={viewModel.cueTimeFormatted}
 				autoRunTimeFormatted={viewModel.autoRunTimeFormatted}
 				cueSharePercent={viewModel.cueSharePercent}
+				hasCueTime={viewModel.hasCueTime}
 				longestRunFormatted={viewModel.longestRunFormatted}
 				totalRuns={viewModel.totalRuns}
 			/>

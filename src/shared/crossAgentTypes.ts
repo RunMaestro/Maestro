@@ -43,6 +43,22 @@ export const AGENT_COLOR = '#ec4899';
 export const CROSS_AGENT_SESSION_PREFIX = 'cross-agent-';
 
 /**
+ * Stand-in source tab id for a consult nobody typed (`maestro-cli ask`). The consult
+ * tab on the target is keyed by (source agent, source tab), so a constant here means
+ * one consult tab per CALLING AGENT rather than one per tab the agent happened to have
+ * selected - which is what makes a follow-up `ask` resume the earlier conversation
+ * instead of starting over. It matches no real tab on purpose: the answer belongs to
+ * the caller's tool result, not to its transcript.
+ */
+export const CROSS_AGENT_ASK_TAB_ID = 'cli-ask';
+
+/**
+ * Stand-in source agent id used when the caller does not name itself. Consults from
+ * unattributed callers share one consult tab on each target.
+ */
+export const CROSS_AGENT_ASK_SESSION_ID = 'cli-ask';
+
+/**
  * Whether a ProcessManager session id belongs to a cross-agent consult.
  */
 export function isCrossAgentSessionId(sessionId: string): boolean {
@@ -121,6 +137,14 @@ export interface CrossAgentRequest {
 	 * older payloads (and tests) stay valid.
 	 */
 	sourceCwd?: string;
+	/**
+	 * Set when this is a HAND-OFF rather than a consult: the source agent did the
+	 * work the user asked for and this is its final answer, forwarded because
+	 * the message said to pass the result on ("then send what you find to @X").
+	 * The router tells the target it is receiving a result to act on, not a
+	 * question to answer. Absent for a consult.
+	 */
+	handoffAnswer?: string;
 	/** When the request was created (epoch ms). */
 	createdAt: number;
 }

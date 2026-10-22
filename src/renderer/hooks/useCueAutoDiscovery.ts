@@ -5,6 +5,7 @@ import { selectCueDiscoverySignature } from '../stores/sessionEquality';
 import { notifyToast } from '../stores/notificationStore';
 import { captureException } from '../utils/sentry';
 import { logger } from '../utils/logger';
+import { filterLiveAgents } from '../../shared/agentVisibility';
 
 /**
  * useCueAutoDiscovery - auto-discovers .maestro/cue.yaml files for sessions.
@@ -18,9 +19,9 @@ import { logger } from '../utils/logger';
  * 5. When the maestroCue encore feature is toggled on, starts the engine
  * 6. When the maestroCue encore feature is toggled off, stops the engine
  *
- * Session discovery always runs so the Cue indicator shows in the Left Bar
- * whenever a .maestro/cue.yaml exists. The encore feature flag only gates
- * engine execution (start/stop), not config discovery.
+ * Session discovery runs only while the encore feature is on: a disabled
+ * feature has no footprint, so no cue.yaml is scanned and the Left Bar shows
+ * no Cue indicator. Switching it back on rescans every agent (point 5).
  *
  * PERF: Subscribes to a compact id+projectRoot signature (not the full
  * sessions array) so streaming log/token updates do not re-render App.
@@ -53,14 +54,23 @@ export function useCueAutoDiscovery(encoreFeatures: EncoreFeatureFlags, isLifecy
 		};
 	}, [isLifecycleOwner]);
 
-	// Track session additions, removals, and projectRoot moves - always runs
-	// regardless of encore flag
+	// Track session additions, removals, and projectRoot moves while Cue is on.
 	useEffect(() => {
 		if (!isLifecycleOwner || !sessionsLoaded) return;
 
-		const sessions = useSessionStore.getState().sessions;
+		// Live agents only: a dormant Pianola (flag off) is never registered.
+		const sessions = filterLiveAgents(useSessionStore.getState().sessions, encoreFeatures);
 		const currentRoots = new Map(sessions.map((s) => [s.id, s.projectRoot ?? '']));
 		const prevRoots = prevSessionRootsRef.current;
+
+		// --- Cue off: no IPC at all ---
+		// Record the roots so nothing reads as "new" once Cue comes back on; the
+		// enable path in the toggle effect below rescans every agent itself.
+		if (!encoreFeatures.maestroCue) {
+			initialScanDoneRef.current = true;
+			prevSessionRootsRef.current = currentRoots;
+			return;
+		}
 
 		// --- Initial scan after sessions are loaded ---
 		if (!initialScanDoneRef.current) {
@@ -121,7 +131,13 @@ export function useCueAutoDiscovery(encoreFeatures: EncoreFeatureFlags, isLifecy
 		}
 
 		prevSessionRootsRef.current = currentRoots;
-	}, [cueDiscoverySignature, isLifecycleOwner, sessionsLoaded]);
+	}, [
+		cueDiscoverySignature,
+		isLifecycleOwner,
+		sessionsLoaded,
+		encoreFeatures.maestroCue,
+		encoreFeatures.pianola,
+	]);
 
 	// Track encore feature toggle. Queues enable/disable calls on a single
 	// chain so rapid ON/OFF/ON toggles always apply in the order the user
@@ -135,9 +151,10 @@ export function useCueAutoDiscovery(encoreFeatures: EncoreFeatureFlags, isLifecy
 
 		if (wasEnabled === isEnabled) return;
 
-		const sessionsSnapshot = useSessionStore
-			.getState()
-			.sessions.filter((session) => !!session.projectRoot);
+		const sessionsSnapshot = filterLiveAgents(
+			useSessionStore.getState().sessions,
+			encoreFeatures
+		).filter((session) => !!session.projectRoot);
 		const lifecycleGeneration = lifecycleGenerationRef.current;
 		const canRun = () =>
 			lifecycleOwnerRef.current && lifecycleGenerationRef.current === lifecycleGeneration;
@@ -170,7 +187,7 @@ export function useCueAutoDiscovery(encoreFeatures: EncoreFeatureFlags, isLifecy
 						message:
 							err instanceof Error
 								? err.message
-								: 'Re-toggle Maestro Cue in Settings → Encore Features to retry.',
+								: 'Re-toggle Maestro Cue in Settings → Plugins to retry.',
 					});
 				}
 			} else {

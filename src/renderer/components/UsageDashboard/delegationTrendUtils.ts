@@ -9,6 +9,8 @@
  */
 
 import type { DelegationDay, DelegationSlice } from '../../../shared/delegation';
+import { parseLocalYmd as parseYmd, toLocalYmd as toYmd } from '../../../shared/localDay';
+import { chunkIntoEqualGroups } from './chartUtils';
 
 /** One drawn bar. `days` is how many calendar days it covers (1 unless grouped). */
 export interface DelegationBucket {
@@ -45,33 +47,18 @@ function addInto(target: DelegationSlice, source: DelegationSlice): void {
 	target.durationMs += source.durationMs;
 }
 
-/** Parse a local YYYY-MM-DD into a local-midnight Date. */
-export function parseYmd(value: string): Date | null {
-	const parts = value.split('-').map(Number);
-	if (parts.length !== 3 || parts.some((n) => !Number.isFinite(n))) return null;
-	return new Date(parts[0], parts[1] - 1, parts[2]);
-}
-
-/** Format a local Date as YYYY-MM-DD. Never `toISOString`, which shifts to UTC. */
-export function toYmd(date: Date): string {
-	return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(
-		date.getDate()
-	).padStart(2, '0')}`;
-}
+// Local day keys live in `src/shared/localDay.ts`; these names are kept for
+// the chart components that already import them from here.
+export { parseLocalYmd as parseYmd, toLocalYmd as toYmd } from '../../../shared/localDay';
 
 /**
- * Densify a sparse per-day series and group it down to at most `maxBars` bars.
- *
- * Grouping is by a fixed number of consecutive days rather than by calendar
- * week: the buckets stay equal width, which is what makes neighbouring bars
- * comparable, and a partial week at either end can't render as a dip that never
- * happened.
+ * Densify a sparse per-day series and group it down to at most `maxBars` bars
+ * (see `chunkIntoEqualGroups` for why groups are equal runs of days).
  */
 export function buildDelegationSeries(
 	days: DelegationDay[],
 	options: BuildDelegationSeriesOptions = {}
 ): DelegationBucket[] {
-	const maxBars = Math.max(1, options.maxBars ?? 120);
 	if (days.length === 0) return [];
 
 	const sorted = [...days].sort((a, b) => a.date.localeCompare(b.date));
@@ -95,12 +82,8 @@ export function buildDelegationSeries(
 		dense.push(bucket);
 	}
 
-	if (dense.length <= maxBars) return dense;
-
-	const groupSize = Math.ceil(dense.length / maxBars);
-	const grouped: DelegationBucket[] = [];
-	for (let i = 0; i < dense.length; i += groupSize) {
-		const slice = dense.slice(i, i + groupSize);
+	return chunkIntoEqualGroups(dense, options.maxBars ?? 120).map((slice) => {
+		if (slice.length === 1) return slice[0];
 		const bucket = emptyBucket(slice[0].date);
 		bucket.endDate = slice[slice.length - 1].date;
 		bucket.days = slice.length;
@@ -109,9 +92,8 @@ export function buildDelegationSeries(
 			addInto(bucket.autoRun, day.autoRun);
 			addInto(bucket.cue, day.cue);
 		}
-		grouped.push(bucket);
-	}
-	return grouped;
+		return bucket;
+	});
 }
 
 /** Interactive value for a bucket in the chart's current metric. */

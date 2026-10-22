@@ -382,6 +382,63 @@ describe('useFileExplorerEffects', () => {
 
 			expect(handleOpenFileTab).not.toHaveBeenCalled();
 		});
+
+		it('reveals a folder link in the Files panel instead of opening a tab', async () => {
+			const useFileExplorerEffects = await loadHook();
+			(window.maestro.fs.stat as ReturnType<typeof vi.fn>).mockResolvedValue({
+				isDirectory: true,
+			});
+			(window.maestro.fs.readFile as ReturnType<typeof vi.fn>).mockRejectedValue(
+				Object.assign(new Error('EISDIR'), { code: 'EISDIR' })
+			);
+			useUIStore.setState({ rightPanelOpen: false, activeRightTab: 'history' });
+
+			const session = createMockSession({ fileExplorerExpanded: [] });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const handleOpenFileTab = vi.fn();
+			const deps = createDeps({
+				sessionsRef: { current: [session] },
+				activeSessionIdRef: { current: 'session-1' },
+				handleOpenFileTab,
+			});
+			const { result } = renderHook(() => useFileExplorerEffects(deps));
+
+			await act(async () => {
+				await result.current.handleMainPanelFileClick('Course Content/_beta');
+			});
+
+			expect(handleOpenFileTab).not.toHaveBeenCalled();
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.fileExplorerExpanded).toEqual(['Course Content', 'Course Content/_beta']);
+			expect(updated.pendingJumpPath).toBe('Course Content/_beta');
+			const ui = useUIStore.getState();
+			expect(ui.rightPanelOpen).toBe(true);
+			expect(ui.activeRightTab).toBe('files');
+			expect(ui.activeFocus).toBe('right');
+		});
+
+		it('hands a folder outside the file tree to the OS', async () => {
+			const useFileExplorerEffects = await loadHook();
+			(window.maestro.fs.stat as ReturnType<typeof vi.fn>).mockResolvedValue({
+				isDirectory: true,
+			});
+
+			const session = createMockSession();
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+			const deps = createDeps({
+				sessionsRef: { current: [session] },
+				activeSessionIdRef: { current: 'session-1' },
+			});
+			const { result } = renderHook(() => useFileExplorerEffects(deps));
+
+			await act(async () => {
+				await result.current.handleMainPanelFileClick('/elsewhere/folder');
+			});
+
+			expect(window.maestro.shell.openPath).toHaveBeenCalledWith('/elsewhere/folder');
+			expect(useSessionStore.getState().sessions[0].pendingJumpPath).toBeUndefined();
+		});
 	});
 
 	// ====================================================================
@@ -595,6 +652,41 @@ describe('useFileExplorerEffects', () => {
 			// The effect should have cleared pendingJumpPath
 			const updatedSession = useSessionStore.getState().sessions[0];
 			expect(updatedSession?.pendingJumpPath).toBeUndefined();
+		});
+
+		it('selects a file row, not only folders', async () => {
+			const useFileExplorerEffects = await loadHook();
+			const { flattenTree } = await import('../../../renderer/utils/fileExplorer');
+			vi.mocked(flattenTree).mockReturnValue([
+				{ name: 'src', fullPath: 'src', isFolder: true, type: 'folder' as const },
+				{ name: 'index.ts', fullPath: 'src/index.ts', isFolder: false, type: 'file' as const },
+			]);
+
+			const tree: FileNode[] = [{ name: 'src', type: 'folder', children: [] }];
+			const session = createMockSession({ pendingJumpPath: 'src/index.ts', fileTree: tree });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			renderHook(() => useFileExplorerEffects(createDeps({ filteredFileTree: tree })));
+
+			expect(useFileExplorerStore.getState().selectedFileIndex).toBe(1);
+		});
+
+		it('keeps pendingJumpPath until the target row is in the list', async () => {
+			const useFileExplorerEffects = await loadHook();
+			const { flattenTree } = await import('../../../renderer/utils/fileExplorer');
+			vi.mocked(flattenTree).mockReturnValue([
+				{ name: 'src', fullPath: 'src', isFolder: true, type: 'folder' as const },
+			]);
+			useFileExplorerStore.setState({ selectedFileIndex: 0 });
+
+			const tree: FileNode[] = [{ name: 'src', type: 'folder', children: [] }];
+			const session = createMockSession({ pendingJumpPath: 'src/deep/folder', fileTree: tree });
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			renderHook(() => useFileExplorerEffects(createDeps({ filteredFileTree: tree })));
+
+			expect(useSessionStore.getState().sessions[0].pendingJumpPath).toBe('src/deep/folder');
+			expect(useFileExplorerStore.getState().selectedFileIndex).toBe(0);
 		});
 	});
 

@@ -17,6 +17,7 @@ import type {
 	TokenUsageTimeBucket,
 	TokenUsageTotals,
 } from '../../../../shared/tokenUsage';
+import { emptyTokenSpeedSummary } from '../../../../shared/tokenSpeed';
 
 // In-memory stand-in for localStorage: the local jsdom build ships without a
 // Storage implementation, so asserting persistence against the real one only
@@ -76,6 +77,7 @@ const aggregate: TokenUsageAggregate = {
 		byAgentByDay: {},
 		bySessionByDay: {},
 	} as TokenUsageAggregate['series'],
+	speed: emptyTokenSpeedSummary(),
 	coverageByAgent: {},
 	generatedAtMs: 1_700_086_400_000,
 };

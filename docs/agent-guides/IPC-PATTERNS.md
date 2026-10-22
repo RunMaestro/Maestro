@@ -377,66 +377,29 @@ setupLoggerEventForwarding(deps.getMainWindow);
 
 ## Browser Tab Shortcut Forwarding
 
-Electron `<webview>` elements run guest content in a separate Chromium process. When the webview has keyboard focus, keydown events are routed directly to the guest - the host renderer's `window` keydown listener never fires. This requires a dedicated forwarding pipeline for app shortcuts.
+Browser tabs use a canonical offscreen page owned by `HostBrowserPages` in the
+main process, not a renderer-owned `<webview>`. Native and Lite views display
+frames from the same page. Switching the host's selected session or disconnecting
+Lite does not recreate the page or lose its in-memory state.
 
-### Event Flow
+### Input and Shortcut Flow
 
-```text
-User presses Cmd+Shift+] in webview
-         │
-         ▼
-┌─────────────────────────────────────────────────────┐
-│  Guest Chromium process                             │
-│  before-input-event fires on WebContents            │
-│  (src/main/app-lifecycle/window-manager.ts:303)     │
-│  → event.preventDefault() blocks page from seeing   │
-│    the keydown                                      │
-│  → sends IPC: browser-tab:shortcutKey               │
-└─────────────────────┬───────────────────────────────┘
-                      │ IPC (main → renderer)
-                      ▼
-┌─────────────────────────────────────────────────────┐
-│  Preload bridge                                     │
-│  (src/main/preload/system.ts:226-229)               │
-│  ipcRenderer.on('browser-tab:shortcutKey', handler) │
-│  → exposes as window.maestro.app.                   │
-│    onBrowserTabShortcutKey(callback)                │
-└─────────────────────┬───────────────────────────────┘
-                      │
-                      ▼
-┌─────────────────────────────────────────────────────┐
-│  Renderer IPC listener                              │
-│  (useMainKeyboardHandler.ts, useEffect)             │
-│  → blurs webview element (document.activeElement)   │
-│  → window.dispatchEvent(new KeyboardEvent(...))     │
-└─────────────────────┬───────────────────────────────┘
-                      │ synthetic keydown on window
-                      ▼
-┌─────────────────────────────────────────────────────┐
-│  Main keyboard handler (useMainKeyboardHandler.ts)  │
-│  Processes the shortcut normally (tab cycling,      │
-│  Cmd+L address bar focus, etc.)                     │
-└─────────────────────────────────────────────────────┘
-```
+- The native presentation in `browserPageView.ts` keeps DOM focus on a local
+  keyboard input and sends ordered pointer, key, text, and composition input to
+  the host page. App shortcuts remain available to the renderer's keyboard
+  handler; ordinary page input is forwarded to the guest.
+- Lite's `RemoteBrowserTabView.tsx` uses the authenticated browser relay. Native
+  `browser:page*` methods and guest-creation responses are not remotely exposed.
+- Shared guest hardening in `guest-webview-security.ts` retains
+  `before-input-event` interception and the injected `__MAESTRO_KEY__` fallback.
+  These forward app shortcuts over `browser-tab:shortcutKey` through preload's
+  `onBrowserTabShortcutKey` to `useMainKeyboardHandler`.
+- `BrowserTabView.tsx` still injects scroll observation into the host page;
+  `__MAESTRO_SCROLL__` events control the native address bar's auto-hide state.
 
-### Defense-in-Depth: Guest JS Injection
-
-A secondary forwarding path exists via JavaScript injection into the guest page. The main process injects a capture-phase keydown listener on `dom-ready` and `did-navigate` (`window-manager.ts:326-350`). This listener calls `console.log('__MAESTRO_KEY__...')`, which the main process picks up via `console-message` and forwards over the same `browser-tab:shortcutKey` IPC channel.
-
-This path is **redundant** when `before-input-event` is active (which blocks the keydown from reaching the page). It serves as a fallback for the narrow window between webview mount and guest attachment.
-
-`BrowserTabView.tsx` also injects a similar listener for scroll-based address bar auto-hide (`__MAESTRO_SCROLL__` messages).
-
-### Focus-Steal Prevention
-
-Pages with autofocus elements (search bars, login forms) or that call `window.focus()` can pull keyboard focus to the webview without user interaction. `BrowserTabView.tsx` prevents this:
-
-```typescript
-// pointerdown on host container → mark as intentional
-// focusin without preceding pointerdown → blur immediately
-```
-
-This ensures the webview only captures keyboard input after an explicit user click, keeping app shortcuts flowing through the window handler for keyboard-driven tab navigation.
+The guest's autofocus is distinct from the visible presentation's DOM focus.
+An explicit pointer interaction focuses the local keyboard input; the page is
+not mounted and remounted as the user navigates the host UI.
 
 ### Tab Navigation Pitfall
 
@@ -444,10 +407,14 @@ The `showUnreadOnly` filter in `tabHelpers` (`navigateToNextUnifiedTab` / `navig
 
 ### Key Files
 
-| File                                                    | Role                                                                           |
-| ------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `src/main/app-lifecycle/window-manager.ts`              | `before-input-event` handler, guest JS injection, `console-message` forwarding |
-| `src/main/preload/system.ts`                            | `onBrowserTabShortcutKey` IPC bridge                                           |
-| `src/renderer/hooks/keyboard/useMainKeyboardHandler.ts` | IPC → blur + dispatch KeyboardEvent                                            |
-| `src/renderer/components/MainPanel/BrowserTabView.tsx`  | Focus-steal guard, scroll injection                                            |
-| `src/renderer/utils/tabHelpers`                         | Tab navigation with browser tab handling                                       |
+| File                                                         | Role                                                     |
+| ------------------------------------------------------------ | -------------------------------------------------------- |
+| `src/main/browser/browser-pages.ts`                          | Canonical page lifetime, frames, and ordered guest input |
+| `src/main/browser/browser-relay.ts`                          | Remote leases and validated frame/input requests         |
+| `src/main/app-lifecycle/guest-webview-security.ts`           | Guest hardening and shortcut forwarding                  |
+| `src/main/preload/system.ts`                                 | `onBrowserTabShortcutKey` IPC bridge                     |
+| `src/renderer/hooks/keyboard/useMainKeyboardHandler.ts`      | Forwarded shortcut dispatch                              |
+| `src/renderer/utils/browserPageView.ts`                      | Native presentation and local input handling             |
+| `src/renderer/components/MainPanel/BrowserTabView.tsx`       | Native browser controls and scroll observation           |
+| `src/renderer/components/MainPanel/RemoteBrowserTabView.tsx` | Lite frame presentation and input relay                  |
+| `src/renderer/utils/tabHelpers`                              | Unified tab navigation                                   |

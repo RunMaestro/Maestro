@@ -25,6 +25,7 @@ import {
 } from '../../utils/ipcHandler';
 import { getPrompt } from '../../prompt-manager';
 import { groomContext } from '../../utils/context-groomer';
+import { createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
 import { resolveConfiguredShell } from '../../stores/defaults';
 import {
 	AI_COMMAND_HISTORY_LIMIT,
@@ -37,6 +38,7 @@ import type { AgentConfigsData } from '../../stores/types';
 import type { ProcessManager } from '../../process-manager';
 import type { AgentDetector } from '../../agents';
 import type { MaestroSettings } from './persistence';
+import type { ClaudeTokenSourceFields } from '../../../shared/claudeTokenMode';
 
 const LOG_CONTEXT = '[AICommand]';
 
@@ -79,6 +81,8 @@ export interface AiCommandSuggestRequest {
 	/** The tab's current model and effort, resolved by the caller. */
 	customModel?: string;
 	customEffort?: string;
+	/** The agent's Claude token source, so a TUI agent suggests through maestro-p. */
+	claudeTokenSource?: ClaudeTokenSourceFields;
 	/**
 	 * Commands already run in this tab, oldest first, so a follow-up like
 	 * "actually just the count" can refine the last one instead of guessing at a
@@ -170,11 +174,17 @@ export function registerAiCommandHandlers(deps: AiCommandHandlerDependencies): v
 							disableTools: true,
 							timeoutMs: AI_COMMAND_TIMEOUT_MS,
 							sessionSshRemoteConfig: config.sessionSshRemoteConfig,
+							// Where groomContext looks the remote up. It refuses an SSH agent
+							// that comes without one rather than run the prompt on this
+							// machine, so leaving it out fails every suggestion for an agent
+							// on a remote.
+							sshStore: isRemote ? createSshRemoteStoreAdapter(settingsStore) : undefined,
 							sessionCustomPath: config.customPath,
 							sessionCustomArgs: config.customArgs,
 							sessionCustomEnvVars: config.customEnvVars,
 							sessionCustomModel: config.customModel,
 							sessionCustomEffort: config.customEffort,
+							claudeTokenSource: config.claudeTokenSource,
 							agentConfigValues,
 						},
 						processManager,

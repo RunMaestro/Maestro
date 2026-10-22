@@ -31,6 +31,10 @@ vi.mock('../../../cli/services/maestro-client', () => ({
 vi.mock('../../../cli/commands/dispatch', () => ({ runDispatch: runDispatchMock }));
 
 import { pianolaRules, pianolaLog, pianolaWatch } from '../../../cli/commands/pianola';
+import {
+	PIANOLA_WATCH_RETIRED_EXIT_CODE,
+	WATCH_TAB_GONE_GRACE_MS,
+} from '../../../shared/pianola/pianola-watcher';
 import { readSettingValue } from '../../../cli/services/storage';
 import {
 	readPianolaRules,
@@ -86,7 +90,7 @@ describe('pianola command gating', () => {
 	it('blocks rules when the pianola Encore flag is off', () => {
 		vi.mocked(readSettingValue).mockReturnValue({ pianola: false });
 		expect(() => pianolaRules({})).toThrow('__exit__');
-		expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('encore set pianola on'));
+		expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('encore enable pianola'));
 		expect(readPianolaRules).not.toHaveBeenCalled();
 		expect(exitSpy).toHaveBeenCalledWith(1);
 	});
@@ -166,6 +170,56 @@ describe('pianola watch', () => {
 		await pianolaWatch('tab-1', { once: true });
 		expect(appendPianolaDecision).not.toHaveBeenCalled();
 		expect(disconnectMock).toHaveBeenCalled();
+	});
+
+	it('retires with the retired exit code once the tab stays missing past the grace period', async () => {
+		vi.useFakeTimers();
+		try {
+			sendCommandMock.mockResolvedValue({
+				success: false,
+				error: 'Tab not found: tab-1',
+				code: 'TAB_NOT_FOUND',
+			});
+			const run = pianolaWatch('tab-1', { interval: '30' });
+			await vi.advanceTimersByTimeAsync(WATCH_TAB_GONE_GRACE_MS + 60_000);
+			await run;
+			expect(process.exitCode).toBe(PIANOLA_WATCH_RETIRED_EXIT_CODE);
+			// Polled through the grace period rather than retiring on the first miss.
+			expect(sendCommandMock.mock.calls.length).toBeGreaterThan(1);
+			expect(disconnectMock).toHaveBeenCalled();
+		} finally {
+			vi.useRealTimers();
+			process.exitCode = undefined;
+		}
+	});
+
+	it('does not retire on a transient tab miss', async () => {
+		sendCommandMock.mockResolvedValue({ success: false, code: 'TAB_NOT_FOUND' });
+		await pianolaWatch('tab-1', { once: true });
+		expect(process.exitCode).toBeUndefined();
+	});
+
+	it('retires an idle tab with nothing in flight', async () => {
+		sendCommandMock.mockResolvedValue(
+			questionResponse({
+				messages: [
+					{
+						id: 'm1',
+						role: 'user',
+						source: 'user',
+						content: 'thanks',
+						timestamp: '2026-01-01T00:00:00.000Z',
+					},
+				],
+			})
+		);
+		try {
+			// A 1-second idle window is already exceeded by a message from January.
+			await pianolaWatch('tab-1', { idleHours: String(1 / 3600) });
+			expect(process.exitCode).toBe(PIANOLA_WATCH_RETIRED_EXIT_CODE);
+		} finally {
+			process.exitCode = undefined;
+		}
 	});
 
 	it('exits when the connection cannot be established', async () => {

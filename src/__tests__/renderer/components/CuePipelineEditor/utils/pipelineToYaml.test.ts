@@ -7,12 +7,18 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+	parseCueConfigDocument,
+	materializeCueConfig,
+} from '../../../../../main/cue/config/cue-config-normalizer';
+import {
 	pipelineToYamlSubscriptions,
 	pipelinesToYaml,
 	pipelinesToYamlByOwnerCwd,
 	ensureSourceOutputVariable,
 } from '../../../../../renderer/components/CuePipelineEditor/utils/pipelineToYaml';
-import type { CuePipeline } from '../../../../../shared/cue-pipeline-types';
+import { subscriptionsToPipelines } from '../../../../../renderer/components/CuePipelineEditor/utils/yamlToPipeline';
+import type { CommandNodeData, CuePipeline } from '../../../../../shared/cue-pipeline-types';
+import type { SessionInfo } from '../../../../../shared/types';
 
 function makePipeline(overrides: Partial<CuePipeline> = {}): CuePipeline {
 	return {
@@ -1595,6 +1601,74 @@ describe('fan-out to fan-in pipeline', () => {
 });
 
 describe('command node serialization', () => {
+	it.each([true, false, undefined])(
+		'round-trips CLI new-tab choice %s through visual YAML',
+		(newTab) => {
+			const session: SessionInfo = {
+				id: 'sess-synapse',
+				name: 'Synapse-Server',
+				toolType: 'claude-code',
+				cwd: '/project',
+				projectRoot: '/project',
+			};
+			const pipeline = makePipeline({
+				name: 'issue-triage',
+				nodes: [
+					{
+						id: 't1',
+						type: 'trigger',
+						position: { x: 0, y: 0 },
+						data: {
+							eventType: 'time.heartbeat',
+							label: 'Scheduled',
+							config: { interval_minutes: 5 },
+						},
+					},
+					{
+						id: 'cmd1',
+						type: 'command',
+						position: { x: 300, y: 0 },
+						data: {
+							name: 'triage',
+							mode: 'cli',
+							cliCommand: 'send',
+							cliTarget: session.id,
+							cliMessage: '/triage',
+							...(newTab !== undefined ? { cliNewTab: newTab } : {}),
+							owningSessionId: session.id,
+							owningSessionName: session.name,
+						},
+					},
+				],
+				edges: [{ id: 'e1', source: 't1', target: 'cmd1', mode: 'pass' }],
+			});
+			const cli = {
+				command: 'send',
+				target: session.id,
+				message: '/triage',
+				...(newTab !== undefined ? { new_tab: newTab } : {}),
+			};
+			const sessionsById = new Map([[session.id, session]]);
+			const { byCwd, unresolved } = pipelinesToYamlByOwnerCwd([pipeline], undefined, sessionsById);
+			expect(unresolved).toEqual([]);
+			const outputs = [pipelinesToYaml([pipeline]).yaml, byCwd.get('/project')!.yaml];
+
+			for (const output of outputs) {
+				const document = parseCueConfigDocument(output, '/project');
+				const { config } = materializeCueConfig(document!);
+				expect(config.subscriptions[0].command).toEqual({ mode: 'cli', cli });
+
+				const restored = subscriptionsToPipelines(config.subscriptions, [session]);
+				const command = restored[0].nodes.find((node) => node.type === 'command')!;
+				expect((command.data as CommandNodeData).cliNewTab).toBe(newTab);
+				if (newTab === undefined) {
+					expect(command.data).not.toHaveProperty('cliNewTab');
+				}
+				expect(pipelineToYamlSubscriptions(restored[0])[0].command).toEqual({ mode: 'cli', cli });
+			}
+		}
+	);
+
 	it('emits action: command with shell mode for trigger -> command(shell)', () => {
 		const pipeline = makePipeline({
 			nodes: [

@@ -42,7 +42,7 @@ vi.mock('electron-store', () => {
 
 // Mock wrapSpawnWithSsh so we can verify it's called for SSH sessions
 const mockWrapSpawnWithSsh = vi.fn();
-vi.mock('../../../main/utils/ssh-spawn-wrapper', () => ({
+vi.mock('../../../shared/maestro-lib/launch/ssh-spawn-wrapper', () => ({
 	wrapSpawnWithSsh: (...args: unknown[]) => mockWrapSpawnWithSsh(...args),
 }));
 
@@ -50,6 +50,28 @@ const mockCaptureException = vi.fn();
 vi.mock('../../../main/utils/sentry', () => ({
 	captureException: (...args: unknown[]) => mockCaptureException(...args),
 }));
+
+// The main-process system prompt builders read the persisted stores; stub them
+// so the router tests can assert which spawn gets which prompt.
+const mockBuildMaestroSystemPromptForSession = vi.fn(
+	async (_sessionId: string): Promise<string | undefined> => undefined
+);
+const mockBuildPluginSystemPromptSections = vi.fn(
+	(_opts: { isSsh: boolean }): string | undefined => undefined
+);
+vi.mock('../../../main/utils/maestro-system-prompt', () => ({
+	buildMaestroSystemPromptForSession: (sessionId: string) =>
+		mockBuildMaestroSystemPromptForSession(sessionId),
+	buildPluginSystemPromptSections: (opts: { isSsh: boolean }) =>
+		mockBuildPluginSystemPromptSections(opts),
+}));
+
+// Real platform detection; `isWindows` is a spy so the system-prompt tests can
+// pin the inline-flag branch on a Windows CI host too.
+vi.mock('../../../shared/platformDetection', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../shared/platformDetection')>();
+	return { ...actual, isWindows: vi.fn(actual.isWindows) };
+});
 
 vi.mock('../../../main/prompt-manager', () => ({
 	getPrompt: vi.fn((id: string) => {
@@ -88,6 +110,7 @@ import {
 } from '../../../main/group-chat/group-chat-router';
 import {
 	spawnModerator,
+	killModerator,
 	clearAllModeratorSessions,
 	getModeratorSessionId,
 	type IProcessManager,
@@ -110,6 +133,12 @@ import { readLog } from '../../../main/group-chat/group-chat-log';
 import { AgentDetector } from '../../../main/agents';
 import { groupChatEmitters } from '../../../main/ipc/handlers/groupChat';
 import { getPrompt } from '../../../main/prompt-manager';
+import * as platformDetection from '../../../shared/platformDetection';
+
+// Captured at import, before any test installs fake timers, so a wait on it
+// still runs on the real clock while vi.useFakeTimers() is active.
+const realSetTimeout = globalThis.setTimeout;
+const realSleep = (ms: number) => new Promise<void>((resolve) => realSetTimeout(resolve, ms));
 
 describe('group-chat-router', () => {
 	let mockProcessManager: IProcessManager;
@@ -1604,13 +1633,20 @@ describe('group-chat-router', () => {
 
 		/**
 		 * Drives the queued-delegation poll loop forward under fake timers until
-		 * `done()` reports the handoff landed. Each pass advances one poll interval
-		 * and then flushes the microtasks the delivery chain resolves on.
+		 * `done()` reports the handoff landed. Each pass advances one poll interval,
+		 * then sleeps briefly on the REAL clock: every poll tick reads the chat from
+		 * disk and the delivery writes the log before it spawns, and that I/O only
+		 * completes on real event-loop turns. Flushing microtasks alone burned the
+		 * whole pass budget in a few milliseconds on a slow CI runner, before the
+		 * I/O finished, which is what made these tests flaky. A pass that misses
+		 * the I/O is not lost: the next one fires the timer the poller registers
+		 * late. 100 passes is 500s of fake time, inside the 15 minute wait budget,
+		 * so a give-up can never stand in for a delivery.
 		 */
-		async function runPollsUntil(done: () => boolean, passes = 10): Promise<void> {
+		async function runPollsUntil(done: () => boolean, passes = 100): Promise<void> {
 			for (let i = 0; i < passes && !done(); i++) {
 				await vi.advanceTimersByTimeAsync(5000);
-				await vi.advanceTimersByTimeAsync(0);
+				await realSleep(20);
 			}
 		}
 
@@ -1707,6 +1743,44 @@ describe('group-chat-router', () => {
 				clearPendingParticipants(chat.id);
 			} finally {
 				groupChatEmitters.emitMessage = previousEmitMessage;
+				vi.useRealTimers();
+			}
+		});
+
+		it('releases a held delegation when the chat opts out mid-wait', async () => {
+			vi.useFakeTimers();
+			try {
+				const chat = await createTestChatWithModerator('Busy Opt Out Mid Wait Test');
+				await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+				setGetSessionsCallback(() => [busyClientSession]);
+				mockProcessManager.spawn.mockClear();
+
+				await routeModeratorResponse(
+					chat.id,
+					'@Client: Please implement this feature',
+					mockProcessManager,
+					mockAgentDetector
+				);
+				await runPollsUntil(() => false, 2);
+				expect(participantSpawnsFor(chat.id)).toHaveLength(0);
+
+				// The user flips the toggle off in Edit Group Chat while the agent is
+				// still busy: the waiting delegation must go in on the next poll
+				// rather than sit out the rest of the wait budget.
+				await updateGroupChat(chat.id, { requireIdleParticipants: false });
+
+				// The release path writes its "No longer waiting" line to the log file
+				// before it spawns; runPollsUntil gives that real I/O time to land.
+				await runPollsUntil(() => participantSpawnsFor(chat.id).length > 0);
+				expect(participantSpawnsFor(chat.id)).toHaveLength(1);
+
+				const messages = await readLog(chat.logPath);
+				expect(
+					messages.some((m) => m.from === 'system' && m.content.includes('No longer waiting'))
+				).toBe(true);
+
+				clearPendingParticipants(chat.id);
+			} finally {
 				vi.useRealTimers();
 			}
 		});
@@ -1891,6 +1965,107 @@ describe('group-chat-router', () => {
 	// ===========================================================================
 	// Test 5.7: SSH remote execution for group chat participants
 	// ===========================================================================
+	describe('Maestro system prompt', () => {
+		const nativeAgent = () =>
+			vi.mocked(mockAgentDetector.getAgent).mockResolvedValue({
+				id: 'claude-code',
+				name: 'Claude Code',
+				binaryName: 'claude',
+				command: 'claude',
+				args: ['--print'],
+				available: true,
+				path: '/usr/local/bin/claude',
+				capabilities: { supportsAppendSystemPrompt: true },
+			} as any);
+
+		beforeEach(() => {
+			vi.mocked(platformDetection.isWindows).mockReturnValue(false);
+		});
+
+		afterEach(async () => {
+			const actual = await vi.importActual<typeof import('../../../shared/platformDetection')>(
+				'../../../shared/platformDetection'
+			);
+			vi.mocked(platformDetection.isWindows).mockImplementation(actual.isWindows);
+			mockBuildMaestroSystemPromptForSession.mockReset();
+			mockBuildMaestroSystemPromptForSession.mockResolvedValue(undefined);
+			mockBuildPluginSystemPromptSections.mockReset();
+			mockBuildPluginSystemPromptSections.mockReturnValue(undefined);
+		});
+
+		it('gives the moderator only the plugin sections (no Maestro agent behind it)', async () => {
+			const chat = await createTestChatWithModerator('Moderator Sections Test');
+			nativeAgent();
+			mockBuildPluginSystemPromptSections.mockReturnValue('PLUGIN SECTIONS');
+
+			await routeUserMessage(chat.id, 'Hello', mockProcessManager, mockAgentDetector);
+
+			expect(mockBuildPluginSystemPromptSections).toHaveBeenCalledWith({ isSsh: false });
+			expect(mockBuildMaestroSystemPromptForSession).not.toHaveBeenCalled();
+			const moderatorSpawn = vi
+				.mocked(mockProcessManager.spawn)
+				.mock.calls.find((call) => call[0]?.sessionId?.includes('-moderator-'));
+			const args = moderatorSpawn?.[0].args as string[];
+			expect(args[args.indexOf('--append-system-prompt') + 1]).toBe('PLUGIN SECTIONS');
+		});
+
+		it('passes nothing to the moderator when no plugin section applies', async () => {
+			const chat = await createTestChatWithModerator('Moderator No Sections Test');
+			nativeAgent();
+
+			await routeUserMessage(chat.id, 'Hello', mockProcessManager, mockAgentDetector);
+
+			const moderatorSpawn = vi
+				.mocked(mockProcessManager.spawn)
+				.mock.calls.find((call) => call[0]?.sessionId?.includes('-moderator-'));
+			expect(moderatorSpawn?.[0].args).not.toContain('--append-system-prompt');
+		});
+
+		it("gives a participant its own agent's full Maestro system prompt", async () => {
+			const chat = await createTestChatWithModerator('Participant Prompt Test');
+			setGetSessionsCallback(() => [
+				{ id: 'agent-client', name: 'Client', toolType: 'claude-code', cwd: '/tmp/client' },
+			]);
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+			nativeAgent();
+			mockBuildMaestroSystemPromptForSession.mockResolvedValue('FULL PROMPT FOR CLIENT');
+
+			await routeModeratorResponse(
+				chat.id,
+				'@Client: Please implement the login form',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			expect(mockBuildMaestroSystemPromptForSession).toHaveBeenCalledWith('agent-client');
+			const participantSpawn = vi
+				.mocked(mockProcessManager.spawn)
+				.mock.calls.find((call) => call[0]?.prompt?.includes('login form'));
+			const args = participantSpawn?.[0].args as string[];
+			expect(args[args.indexOf('--append-system-prompt') + 1]).toBe('FULL PROMPT FOR CLIENT');
+		});
+
+		it('falls back to plugin sections for a participant with no matching agent', async () => {
+			const chat = await createTestChatWithModerator('Participant Fallback Test');
+			await addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager);
+			nativeAgent();
+			mockBuildPluginSystemPromptSections.mockReturnValue('PLUGIN ONLY');
+
+			await routeModeratorResponse(
+				chat.id,
+				'@Client: Please implement the login form',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			const participantSpawn = vi
+				.mocked(mockProcessManager.spawn)
+				.mock.calls.find((call) => call[0]?.prompt?.includes('login form'));
+			const args = participantSpawn?.[0].args as string[];
+			expect(args[args.indexOf('--append-system-prompt') + 1]).toBe('PLUGIN ONLY');
+		});
+	});
+
 	describe('SSH remote participant support', () => {
 		const sshRemoteConfig = {
 			enabled: true,
@@ -2219,6 +2394,25 @@ describe('group-chat-router', () => {
 			);
 			// The participant's own session, never the moderator's or the user's agent.
 			expect(mockProcessManager.kill).toHaveBeenCalledWith(sessionId);
+		});
+	});
+
+	// ===========================================================================
+	// Stopping a running moderator (GD23 a)
+	// ===========================================================================
+	describe('stopping a running moderator', () => {
+		it('kills the running turn by its full session id, not the per-chat prefix', async () => {
+			const chat = await createTestChatWithModerator('Stop Moderator Test');
+			await routeUserMessage(chat.id, 'Start the work', mockProcessManager, mockAgentDetector);
+			const spawnedId = vi.mocked(mockProcessManager.spawn).mock.calls.at(-1)![0].sessionId;
+			const prefix = getModeratorSessionId(chat.id);
+			// ProcessManager.kill matches exact keys: the prefix names no running process
+			expect(spawnedId).not.toBe(prefix);
+			vi.mocked(mockProcessManager.kill).mockClear();
+
+			await killModerator(chat.id, mockProcessManager);
+
+			expect(mockProcessManager.kill).toHaveBeenCalledWith(spawnedId);
 		});
 	});
 });

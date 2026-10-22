@@ -79,6 +79,10 @@ function hasContent(doc: ExistingDocument): doc is ExistingDocumentWithContent {
 	return 'content' in doc && typeof doc.content === 'string';
 }
 import { substituteTemplateVariables, type TemplateContext } from '../utils/templateVariables';
+import {
+	getClaudeTokenSourceFields,
+	type ClaudeTokenSourceFields,
+} from '../../shared/claudeTokenMode';
 
 /**
  * Structured response format expected from the agent.
@@ -151,6 +155,8 @@ export interface InlineWizardConversationConfig {
 	sessionCustomEnvVars?: Record<string, string>;
 	/** Custom model ID (overrides agent-level) */
 	sessionCustomModel?: string;
+	/** The agent's Claude token source, so a TUI agent's wizard runs through maestro-p */
+	sessionClaudeTokenSource?: ClaudeTokenSourceFields;
 }
 
 /**
@@ -183,6 +189,8 @@ export interface InlineWizardConversationSession {
 	sessionCustomEnvVars?: Record<string, string>;
 	/** Custom model ID */
 	sessionCustomModel?: string;
+	/** The agent's Claude token source, so a TUI agent's wizard runs through maestro-p */
+	sessionClaudeTokenSource?: ClaudeTokenSourceFields;
 }
 
 /**
@@ -339,6 +347,7 @@ export function startInlineWizardConversation(
 		sessionCustomArgs: config.sessionCustomArgs,
 		sessionCustomEnvVars: config.sessionCustomEnvVars,
 		sessionCustomModel: config.sessionCustomModel,
+		sessionClaudeTokenSource: config.sessionClaudeTokenSource,
 	};
 }
 
@@ -870,6 +879,9 @@ export async function sendWizardMessage(
 					sessionCustomArgs: session.sessionCustomArgs,
 					sessionCustomEnvVars: session.sessionCustomEnvVars,
 					sessionCustomModel: session.sessionCustomModel,
+					// The wizard's process id carries no agent id, so the TUI setting
+					// travels inline.
+					...getClaudeTokenSourceFields(session.sessionClaudeTokenSource),
 				} as ProcessConfig)
 				.then(() => {
 					callbacks?.onReceiving?.();

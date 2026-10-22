@@ -8,6 +8,7 @@ import { useAnchoredMenuPosition } from '../../hooks/ui/useAnchoredMenuPosition'
 import { useFocusOnMount } from '../../hooks/utils/useFocusAfterRender';
 import { formatMediaTime, type MediaItem } from '../../utils/mediaItems';
 import type { Theme } from '../../types';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 /** Design height for the menu, matching the former `max-h-80` utility. */
 const MEDIA_LIST_MENU_MAX_HEIGHT_PX = 320;
@@ -99,7 +100,7 @@ export const MediaListMenu = memo(function MediaListMenu({
 			onKeyDown={handleKeyDown}
 			// Above the player (60), far below modals (9999) so it can never cover
 			// an overlay.
-			className="fixed z-[100] py-1 rounded shadow-xl border overflow-y-auto select-none outline-none min-w-[16rem] max-w-[24rem]"
+			className="fixed z-[100] py-1 rounded overflow-y-auto select-none outline-none min-w-[16rem] max-w-[24rem]"
 			style={{
 				left,
 				top,
@@ -109,8 +110,7 @@ export const MediaListMenu = memo(function MediaListMenu({
 				// phone in landscape), and there is no page behind a menu to scroll.
 				maxHeight: Math.min(maxHeight, MEDIA_LIST_MENU_MAX_HEIGHT_PX),
 				opacity: ready ? 1 : 0,
-				backgroundColor: theme.colors.bgActivity,
-				borderColor: theme.colors.border,
+				...elevatedSurfaceStyle(theme),
 			}}
 		>
 			<div className="flex items-center gap-2 px-3 py-1">

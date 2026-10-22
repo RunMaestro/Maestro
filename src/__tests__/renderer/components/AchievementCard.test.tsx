@@ -6,6 +6,7 @@ import type { Theme } from '../../../renderer/types';
 import type { AutoRunStats } from '../../../renderer/types';
 
 import { mockTheme } from '../../helpers/mockTheme';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 // Mock the MaestroSilhouette component
 vi.mock('../../../renderer/components/MaestroSilhouette', () => ({
 	MaestroSilhouette: ({
@@ -291,6 +292,31 @@ describe('AchievementCard', () => {
 			expect(screen.getByText('Cue Time (0%)')).toBeInTheDocument();
 			expect(screen.getByText('Longest Run')).toBeInTheDocument();
 			expect(screen.getByText('Total Runs')).toBeInTheDocument();
+		});
+
+		// A zero for a feature the user never turned on is a trace of it. Time
+		// recorded while it was on stays visible after a disable.
+		it('leaves the Cue tile out while Maestro Cue is off and has no time', () => {
+			const previous = useSettingsStore.getState().encoreFeatures;
+			useSettingsStore.setState({ encoreFeatures: { ...previous, maestroCue: false } });
+			try {
+				const { unmount } = render(
+					<AchievementCard theme={mockTheme} autoRunStats={firstBadgeStats} />
+				);
+				expect(screen.queryByText(/Cue Time/)).not.toBeInTheDocument();
+				expect(screen.getByText('Total Time')).toBeInTheDocument();
+				unmount();
+
+				render(
+					<AchievementCard
+						theme={mockTheme}
+						autoRunStats={{ ...firstBadgeStats, cumulativeTimeMs: 60000, cueTimeMs: 15000 }}
+					/>
+				);
+				expect(screen.getByText('Cue Time (25%)')).toBeInTheDocument();
+			} finally {
+				useSettingsStore.setState({ encoreFeatures: previous });
+			}
 		});
 
 		it('shows the Cue share of total time', () => {

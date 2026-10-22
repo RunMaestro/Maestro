@@ -29,8 +29,10 @@ interface StagedImageTileProps {
 	dropBefore: boolean;
 	dropAfter: boolean;
 	dragHandlers: StagedImageTileDragHandlers;
-	onOpen: () => void;
-	onAnnotate: () => void;
+	/** Open the image large; handed the thumbnail, for a viewer that zooms from it. */
+	onOpen: (thumbnail: HTMLImageElement | null) => void;
+	/** Omit where no annotator is available (the Quick Chat window): no pen is shown. */
+	onAnnotate?: () => void;
 	onRemove: () => void;
 }
 
@@ -71,11 +73,11 @@ export const StagedImageTile = memo(function StagedImageTile({
 				minWidth: '64px',
 				opacity: isDragging ? 0.4 : isDimmed ? 0.65 : 1,
 			}}
-			onClick={onOpen}
+			onClick={(e) => onOpen(e.currentTarget.querySelector('img'))}
 			onKeyDown={(e) => {
 				if (e.key !== 'Enter' && e.key !== ' ') return;
 				e.preventDefault();
-				onOpen();
+				onOpen(e.currentTarget.querySelector('img'));
 			}}
 			{...dragHandlers}
 		>
@@ -98,19 +100,21 @@ export const StagedImageTile = memo(function StagedImageTile({
 				}}
 			/>
 
-			<button
-				type="button"
-				draggable={false}
-				onClick={(e) => {
-					e.stopPropagation();
-					onAnnotate();
-				}}
-				title="Annotate image"
-				aria-label="Annotate image"
-				className="absolute top-0.5 left-0.5 bg-black/60 text-white rounded-full p-1 shadow-md hover:bg-black/80 transition-colors opacity-90 hover:opacity-100 outline-none focus-visible:ring-2 focus-visible:ring-white"
-			>
-				<PenLine className="w-3 h-3" />
-			</button>
+			{onAnnotate && (
+				<button
+					type="button"
+					draggable={false}
+					onClick={(e) => {
+						e.stopPropagation();
+						onAnnotate();
+					}}
+					title="Annotate image"
+					aria-label="Annotate image"
+					className="absolute top-0.5 left-0.5 bg-black/60 text-white rounded-full p-1 shadow-md hover:bg-black/80 transition-colors opacity-90 hover:opacity-100 outline-none focus-visible:ring-2 focus-visible:ring-white"
+				>
+					<PenLine className="w-3 h-3" />
+				</button>
+			)}
 
 			<button
 				type="button"

@@ -35,10 +35,13 @@ import { gitService } from '../../../services/git';
 import { logger } from '../../../utils/logger';
 import { notifyToast } from '../../../stores/notificationStore';
 import { useSessionStore, selectSessionById } from '../../../stores/sessionStore';
+import { useBatchStore } from '../../../stores/batchStore';
 import { useSettingsStore } from '../../../stores/settingsStore';
+import { extractGoalSynopsis } from '../../../../shared/maestro-lib/autorun/synopsis';
 import type { BatchAction } from '../batchReducer';
 import type { ErrorResolutionAction, ErrorResolutionEntry } from './useBatchControlActions';
 import { claimFlushState, type AutoRunFlushStateRefs } from './batchFlushState';
+import { getClientInstanceId } from '../../../utils/clientInstance';
 import type { BatchCompleteInfo } from '../useBatchProcessor';
 import type { UseTimeTrackingReturn } from '../useTimeTracking';
 
@@ -134,36 +137,6 @@ export interface UseGoalRunnerDeps {
 
 export interface UseGoalRunnerReturn {
 	startGoalRun: (sessionId: string, config: BatchRunConfig, folderPath: string) => Promise<void>;
-}
-
-/**
- * Extract a concise, human-readable synopsis from an agent's iteration output.
- *
- * Mirrors the first-paragraph heuristic in `useDocumentProcessor.processTask`:
- * the goal prompt instructs the agent to start with a synopsis, so we take the
- * first paragraph's first sentence (stripping the progress marker and markdown
- * noise) rather than making a separate summarization call.
- */
-function extractGoalSynopsis(response: string | undefined, iteration: number): string {
-	const fallback = `Iteration ${iteration} completed`;
-	if (!response) return fallback;
-
-	// Drop the maestro markers so they never leak into the synopsis line.
-	const withoutMarkers = response.replace(/<!--\s*maestro:[\s\S]*?-->/g, '').trim();
-	if (!withoutMarkers) return fallback;
-
-	const firstParagraph = withoutMarkers.split(/\n\n+/)[0]?.trim() ?? '';
-	const cleaned = firstParagraph
-		.replace(/^\*\*Summary:\*\*\s*/i, '')
-		.replace(/^#+\s*/, '')
-		.replace(/\*\*/g, '')
-		.trim();
-
-	if (cleaned.length <= 10) return fallback;
-
-	const firstSentence = cleaned.match(/^.+?[.!?](?=\s+[A-Z]|\s*\n|\s*$)/);
-	if (firstSentence) return firstSentence[0].trim();
-	return cleaned.length > 150 ? `${cleaned.slice(0, 150)}...` : cleaned;
 }
 
 /**
@@ -321,7 +294,13 @@ export function useGoalRunner({
 			// run and a goal run racing in different clients cannot both start.
 			let claimedStart = false;
 			try {
-				claimedStart = await window.maestro.web.claimAutoRunStart(sessionId);
+				// The owner record is what lets this tab pick the run back up if the
+				// page reloads mid-run (#1470).
+				claimedStart = await window.maestro.web.claimAutoRunStart(sessionId, {
+					instanceId: getClientInstanceId(),
+					config,
+					folderPath,
+				});
 			} catch (error) {
 				window.maestro.logger.log('error', 'Failed to claim Auto Run start', 'GoalRunner', {
 					sessionId,
@@ -472,6 +451,7 @@ export function useGoalRunner({
 					startTime: goalStartTime,
 					tasksTotal: 100,
 					projectPath: session.cwd,
+					kind: 'goal-driven',
 				});
 			} catch (statsError) {
 				logger.warn('[GoalRunner] Failed to start stats tracking:', undefined, statsError);
@@ -489,6 +469,7 @@ export function useGoalRunner({
 				getOutputTokens: () => totalOutputTokens,
 				getTotalCost: () => totalCost,
 				getDocumentsProcessed: () => 0,
+				kind: 'goal-driven',
 			};
 
 			const history: GoalIterationRecord[] = [];
@@ -555,8 +536,9 @@ export function useGoalRunner({
 
 				// Limit pause: if this iteration's spawn hit a token/API/credit or rate
 				// limit, do NOT consume the iteration. The agent-error listener has
-				// already stamped the session into the paused state (agentError +
-				// agentErrorPaused); here we mirror the spec-driven runner by awaiting an
+				// already parked the batch on the error (`batchRunStates[id].error`; a
+				// `-batch-` failure is kept off the session's own `agentError` so it
+				// cannot block the chat tab); here we mirror the spec-driven runner by awaiting an
 				// unblock signal on the shared errorResolution promise. On resume we retry
 				// the SAME iteration with the same prompt. Restart durability is out of
 				// scope (Phase 4): the loop is still alive in memory, it just parks here.
@@ -570,9 +552,11 @@ export function useGoalRunner({
 					// spawn's failure. Bounded so a genuine non-limit failure still falls
 					// through quickly to regular failure handling.
 					const readLimitError = () => {
-						const paused = selectSessionById(sessionId)(useSessionStore.getState());
-						const err = paused?.agentError;
-						return err && isLimitError(err) && err.timestamp >= iterationStart ? err : undefined;
+						const batchErr = useBatchStore.getState().batchRunStates[sessionId]?.error;
+						const sessionErr = selectSessionById(sessionId)(useSessionStore.getState())?.agentError;
+						return [batchErr, sessionErr].find(
+							(err) => err && isLimitError(err) && err.timestamp >= iterationStart
+						);
 					};
 					let pausedError = readLimitError();
 					for (let attempt = 0; !pausedError && attempt < 5; attempt++) {
@@ -910,6 +894,7 @@ export function useGoalRunner({
 					outputTokens: totalOutputTokens,
 					totalCostUsd: totalCost,
 					documentsProcessed: 0,
+					kind: 'goal-driven',
 				});
 			}
 

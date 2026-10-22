@@ -50,6 +50,8 @@ import {
 } from '../constants/rightPanel';
 import { PluginUiItemsSlot } from './plugins/PluginUiItemsSlot';
 import { autoRunActiveElapsedMs } from '../hooks/batch/useTimeTracking';
+import { AutoRunProgressStats } from './AutoRun/AutoRunProgressStats';
+import { autoRunProgressPercent } from '../../shared/autorunProgress';
 import {
 	MIRRORED_RUN_CONTROL_TITLE,
 	useIsMirroredBatchRun,
@@ -275,7 +277,7 @@ export const RightPanel = memo(
 		});
 
 		// Elapsed time for Auto Run display - active run time, excluding sleep and pauses
-		const [elapsedTime, setElapsedTime] = useState<string>('');
+		const [elapsedMs, setElapsedMs] = useState<number | null>(null);
 
 		// Kill confirmation modal for force-killing during Auto Run stop
 		const [showKillConfirm, setShowKillConfirm] = useState(false);
@@ -380,21 +382,6 @@ export const RightPanel = memo(
 			});
 		}, []);
 
-		// Format elapsed time from milliseconds
-		const formatElapsed = useCallback((ms: number) => {
-			const seconds = Math.floor(ms / 1000);
-			const minutes = Math.floor(seconds / 60);
-			const hours = Math.floor(minutes / 60);
-
-			if (hours > 0) {
-				return `${hours}h ${minutes % 60}m`;
-			} else if (minutes > 0) {
-				return `${minutes}m ${seconds % 60}s`;
-			} else {
-				return `${seconds}s`;
-			}
-		}, []);
-
 		// Update elapsed time display from the run's tracker fields, so the live
 		// counter matches the duration the run actually records: machine sleep and
 		// paused spans (error, HITL gate) are excluded, and a paused run's clock stops.
@@ -404,31 +391,26 @@ export const RightPanel = memo(
 		const runActiveSince = currentSessionBatchState?.lastActiveTimestamp;
 		useEffect(() => {
 			if (!currentSessionBatchState?.isRunning || !runStartTime) {
-				setElapsedTime('');
+				setElapsedMs(null);
 				return;
 			}
 
 			// Calculate elapsed immediately
 			const updateElapsed = () => {
-				const elapsed = autoRunActiveElapsedMs({
-					startTime: runStartTime,
-					accumulatedElapsedMs: runAccumulatedMs,
-					lastActiveTimestamp: runActiveSince,
-				});
-				setElapsedTime(formatElapsed(elapsed));
+				setElapsedMs(
+					autoRunActiveElapsedMs({
+						startTime: runStartTime,
+						accumulatedElapsedMs: runAccumulatedMs,
+						lastActiveTimestamp: runActiveSince,
+					})
+				);
 			};
 
 			updateElapsed();
 			const interval = setInterval(updateElapsed, 1000);
 
 			return () => clearInterval(interval);
-		}, [
-			currentSessionBatchState?.isRunning,
-			runStartTime,
-			runAccumulatedMs,
-			runActiveSince,
-			formatElapsed,
-		]);
+		}, [currentSessionBatchState?.isRunning, runStartTime, runAccumulatedMs, runActiveSince]);
 
 		// Expose methods to parent
 		useImperativeHandle(
@@ -778,16 +760,33 @@ export const RightPanel = memo(
 									</button>
 								)}
 							</div>
-							{/* Elapsed time - wall clock time since run started */}
-							{elapsedTime && (
-								<span
-									className="text-xs font-mono"
-									style={{ color: theme.colors.textDim }}
-									title="Total elapsed time"
-								>
-									{elapsedTime}
-								</span>
-							)}
+						</div>
+
+						{/* Progress / Elapsed / Remaining. Elapsed lived in this header row
+						    before; it moved into the strip beside the ETA it feeds. */}
+						<AutoRunProgressStats
+							theme={theme}
+							batchState={currentSessionBatchState}
+							elapsedMs={elapsedMs}
+							halted={currentSessionBatchState.isStopping || errorPaused}
+							errorPaused={errorPaused}
+						/>
+
+						{/* Overall progress bar - same percent as the strip above it */}
+						<div
+							className="h-1.5 rounded-full overflow-hidden mb-2"
+							style={{ backgroundColor: theme.colors.border }}
+						>
+							<div
+								className="h-full transition-all duration-500 ease-out"
+								style={{
+									width: `${autoRunProgressPercent(currentSessionBatchState)}%`,
+									backgroundColor:
+										currentSessionBatchState.isStopping || errorPaused
+											? theme.colors.error
+											: theme.colors.warning,
+								}}
+							/>
 						</div>
 
 						{/* Live playbook status from .maestro/STATUS.json */}
@@ -847,7 +846,7 @@ export const RightPanel = memo(
 						{/* Current document name - for single document runs */}
 						{currentSessionBatchState.documents &&
 							currentSessionBatchState.documents.length === 1 && (
-								<div className="mb-2">
+								<div>
 									<span
 										className="text-xs overflow-hidden text-ellipsis whitespace-nowrap block"
 										style={{
@@ -865,7 +864,7 @@ export const RightPanel = memo(
 						{/* Document progress with inline progress bar - only for multi-document runs */}
 						{currentSessionBatchState.documents &&
 							currentSessionBatchState.documents.length > 1 && (
-								<div className="mb-2">
+								<div>
 									{/* Document name with progress bar */}
 									<div className="flex items-center gap-2 min-w-0">
 										<span
@@ -909,80 +908,45 @@ export const RightPanel = memo(
 								</div>
 							)}
 
-						{/* Overall progress bar */}
-						<div
-							className="h-1.5 rounded-full overflow-hidden"
-							style={{ backgroundColor: theme.colors.border }}
-						>
-							<div
-								className="h-full transition-all duration-500 ease-out"
-								style={{
-									width: `${
-										// Goal mode drives the bar straight from the self-reported percent.
-										// (Phase 02 also mirrors progress into completedTasksAcrossAllDocs/100,
-										// so the task ratio below would coincide - but branch explicitly so
-										// the value is unambiguous and the label below reads "Goal: N%".)
-										currentSessionBatchState.goalMode
-											? Math.min(100, Math.max(0, currentSessionBatchState.goalProgress ?? 0))
-											: currentSessionBatchState.totalTasksAcrossAllDocs > 0
-												? (currentSessionBatchState.completedTasksAcrossAllDocs /
-														currentSessionBatchState.totalTasksAcrossAllDocs) *
-													100
-												: currentSessionBatchState.totalTasks > 0
-													? (currentSessionBatchState.completedTasks /
-															currentSessionBatchState.totalTasks) *
-														100
-													: 0
-									}%`,
-									backgroundColor:
-										currentSessionBatchState.isStopping || errorPaused
-											? theme.colors.error
-											: theme.colors.warning,
-								}}
-							/>
-						</div>
-
 						{/* Status line on its own row so it can use the full card width and
 						    truncate cleanly, without competing with the controls row below
-						    (which must always show "View History" / "View Thoughts" intact). */}
-						<div className="mt-2">
-							<span
-								className="block text-2xs truncate"
-								style={{
-									color: errorPaused ? theme.colors.error : theme.colors.textDim,
-								}}
-								// The inline line is kept terse (percent + rationale) because it
-								// shares the row with the Capturing/View History controls. The
-								// full context - iteration count + complete rationale - lives on
-								// hover so nothing is lost to truncation.
-								title={
-									currentSessionBatchState.goalMode
-										? [
-												currentSessionBatchState.goalIteration
-													? `Iteration ${currentSessionBatchState.goalIteration}`
-													: undefined,
-												currentSessionBatchState.goalRationale || undefined,
-											]
-												.filter(Boolean)
-												.join(' - ') || undefined
-										: undefined
-								}
-							>
-								{errorPaused
-									? batchError?.message || 'Paused due to error'
-									: currentSessionBatchState.isStopping
-										? 'Waiting for current task to complete before stopping...'
-										: currentSessionBatchState.goalMode
-											? `Goal: ${currentSessionBatchState.goalProgress ?? 0}%${
-													currentSessionBatchState.goalRationale
-														? ` · ${currentSessionBatchState.goalRationale}`
-														: ''
-												}`
-											: currentSessionBatchState.totalTasksAcrossAllDocs > 0
-												? `${currentSessionBatchState.completedTasksAcrossAllDocs} of ${currentSessionBatchState.totalTasksAcrossAllDocs} tasks completed`
-												: `${currentSessionBatchState.completedTasks} of ${currentSessionBatchState.totalTasks} tasks completed`}
-							</span>
-						</div>
+						    (which must always show "View History" / "View Thoughts" intact).
+						    Counts and percent live in the stat strip, so this row only
+						    appears when there is something the strip cannot say: an error,
+						    a pending stop, or the goal agent's rationale. */}
+						{(errorPaused ||
+							currentSessionBatchState.isStopping ||
+							(currentSessionBatchState.goalMode && currentSessionBatchState.goalRationale)) && (
+							<div className="mt-2">
+								<span
+									className="block text-2xs truncate"
+									style={{
+										color: errorPaused ? theme.colors.error : theme.colors.textDim,
+									}}
+									// The inline line is kept terse (one row). The full context -
+									// iteration count + complete rationale - lives on hover so
+									// nothing is lost to truncation.
+									title={
+										currentSessionBatchState.goalMode
+											? [
+													currentSessionBatchState.goalIteration
+														? `Iteration ${currentSessionBatchState.goalIteration}`
+														: undefined,
+													currentSessionBatchState.goalRationale || undefined,
+												]
+													.filter(Boolean)
+													.join(' - ') || undefined
+											: undefined
+									}
+								>
+									{errorPaused
+										? batchError?.message || 'Paused due to error'
+										: currentSessionBatchState.isStopping
+											? 'Waiting for current task to complete before stopping...'
+											: currentSessionBatchState.goalRationale}
+								</span>
+							</div>
+						)}
 
 						{/* Action row - left: the (spec-only) follow-task toggle; right: the
 						    action links + Stop, all on one plane to keep the card compact.

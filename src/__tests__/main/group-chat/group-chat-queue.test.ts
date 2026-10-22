@@ -39,10 +39,14 @@ import {
 	reorderQueue,
 	resetGroupChatQueueForTests,
 	resumeQueueFor,
+	returnSteeredMessage,
+	steerNewMessage,
+	steerQueuedItem,
 	submitMessage,
 	waitForQueueSettledForTests,
 } from '../../../main/group-chat/group-chat-queue';
 import type { GroupChatQueueState } from '../../../shared/group-chat-types';
+import type { GroupChatSteerResult } from '../../../shared/groupChatSteering';
 
 const item = (id: string, text = `msg-${id}`) => ({ id, timestamp: Date.now(), text });
 
@@ -794,5 +798,360 @@ describe('T20 (F15): a failed direct send keeps its place at the front', () => {
 			await settle();
 		}
 		expect(h.sends).toEqual(['sent first', 'queued during', 'queued during too']);
+	});
+});
+
+describe('steering into the running round', () => {
+	type Steer = (
+		groupChatId: string,
+		text: string,
+		readOnly?: boolean
+	) => Promise<GroupChatSteerResult>;
+
+	/** `install()` plus a steer channel; the room starts BUSY, since a steer needs a running round. */
+	function installSteer(steer?: Steer) {
+		const h = {
+			broadcasts: [],
+			sends: [],
+			systemMessages: [],
+			idle: false,
+			steer: vi.fn<Steer>(
+				steer ?? (async () => ({ outcome: 'delivered' }) as GroupChatSteerResult)
+			),
+		} satisfies Harness & { steer: unknown };
+		installGroupChatQueue({
+			broadcast: (id, state) => h.broadcasts.push({ id, state }),
+			send: async (_id, text) => {
+				h.sends.push(text);
+			},
+			postSystemMessage: async (_id, content) => {
+				h.systemMessages.push(content);
+			},
+			isIdle: () => h.idle,
+			steer: h.steer,
+		});
+		return h as Harness & { steer: typeof h.steer };
+	}
+
+	/** Queue an item and let the drain that `addToQueue` schedules finish. */
+	const enqueue = async (entry: Parameters<typeof addToQueue>[1]) => {
+		await addToQueue(CHAT_ID, entry);
+		await settle();
+	};
+
+	const delivered: GroupChatSteerResult = {
+		outcome: 'delivered',
+		verdict: 'delivered',
+		targets: ['Moderator'],
+	};
+
+	describe('steerQueuedItem', () => {
+		it('removes the item once a turn took it', async () => {
+			const h = installSteer(async () => delivered);
+			await enqueue(item('1', 'steer me'));
+			await enqueue(item('2', 'wait your turn'));
+
+			const result = await steerQueuedItem(CHAT_ID, '1');
+
+			expect(result).toEqual(delivered);
+			expect(h.steer).toHaveBeenCalledExactlyOnceWith(CHAT_ID, 'steer me', undefined);
+			expect((await getQueue(CHAT_ID)).items.map((i) => i.id)).toEqual(['2']);
+			expect(h.sends).toEqual([]);
+		});
+
+		it('removes the item on a settled steer, and passes its read-only flag', async () => {
+			const h = installSteer(async () => ({ outcome: 'settled', verdict: 'absorbed' }));
+			await enqueue({ ...item('1', 'look only'), readOnlyMode: true });
+
+			const result = await steerQueuedItem(CHAT_ID, '1');
+
+			expect(result.outcome).toBe('settled');
+			expect(h.steer).toHaveBeenCalledWith(CHAT_ID, 'look only', true);
+			expect((await getQueue(CHAT_ID)).items).toHaveLength(0);
+		});
+
+		it('marks the item in flight while it is typed', async () => {
+			let seen: GroupChatQueueState | undefined;
+			installSteer(async () => {
+				seen = await getQueue(CHAT_ID);
+				return delivered;
+			});
+			await enqueue(item('1'));
+
+			await steerQueuedItem(CHAT_ID, '1');
+
+			expect(seen?.items[0].sending).toBe(true);
+		});
+
+		it.each([
+			['refused', { outcome: 'refused', verdict: 'refused', detail: 'a dialog' }],
+			['not-steerable', { outcome: 'not-steerable', blockedReason: 'mention-not-working' }],
+		] as const)('leaves the item where it was, unmarked, when %s', async (_label, answer) => {
+			installSteer(async () => answer as GroupChatSteerResult);
+			await enqueue(item('1', 'first'));
+			await enqueue(item('2', 'second'));
+
+			const result = await steerQueuedItem(CHAT_ID, '1');
+
+			expect(result).toEqual(answer);
+			const state = await getQueue(CHAT_ID);
+			expect(state.items.map((i) => i.id)).toEqual(['1', '2']);
+			expect(state.items[0].sending).toBeUndefined();
+			expect(state.items[0].failed).toBeUndefined();
+			expect(state.paused).toBe(false);
+		});
+
+		it('holds the item, pauses, and says so when the result is unconfirmed', async () => {
+			const h = installSteer(async () => ({
+				outcome: 'unconfirmed',
+				verdict: 'unknown',
+				detail: 'socket timed out',
+			}));
+			await enqueue(item('1', 'maybe typed'));
+
+			const result = await steerQueuedItem(CHAT_ID, '1');
+
+			expect(result.outcome).toBe('unconfirmed');
+			const state = await getQueue(CHAT_ID);
+			expect(state.items).toHaveLength(1);
+			expect(state.items[0]).toMatchObject({ id: '1', failed: true });
+			expect(state.items[0].sending).toBeUndefined();
+			expect(state.items[0].failureReason).toContain('socket timed out');
+			expect(state.paused).toBe(true);
+			expect(h.systemMessages.at(-1)).toContain('queue is paused');
+
+			// Held, not retried: the next idle sends nothing.
+			h.idle = true;
+			onModeratorStateChanged(CHAT_ID, true);
+			await settle();
+			expect(h.sends).toEqual([]);
+		});
+
+		it('treats a steer that throws as unconfirmed and holds the item', async () => {
+			const h = installSteer(async () => {
+				throw new Error('bridge went away');
+			});
+			await enqueue(item('1', 'maybe typed'));
+
+			const result = await steerQueuedItem(CHAT_ID, '1');
+
+			expect(result).toEqual({
+				outcome: 'unconfirmed',
+				verdict: 'unknown',
+				detail: 'bridge went away',
+			});
+			const state = await getQueue(CHAT_ID);
+			expect(state.items[0].failed).toBe(true);
+			expect(state.paused).toBe(true);
+			expect(h.systemMessages).toHaveLength(1);
+		});
+
+		it('answers unavailable when the host cannot steer', async () => {
+			const h = install();
+			h.idle = false;
+			await enqueue(item('1'));
+
+			const result = await steerQueuedItem(CHAT_ID, '1');
+
+			expect(result.outcome).toBe('unavailable');
+			expect((await getQueue(CHAT_ID)).items[0].sending).toBeUndefined();
+		});
+
+		it('answers not-found for an item that is not in the queue', async () => {
+			const h = installSteer();
+			await enqueue(item('1'));
+
+			const result = await steerQueuedItem(CHAT_ID, 'missing');
+
+			expect(result.outcome).toBe('not-found');
+			expect(h.steer).not.toHaveBeenCalled();
+		});
+
+		it('answers room-idle when nothing is running', async () => {
+			const h = installSteer();
+			await enqueue(item('1'));
+			h.idle = true;
+
+			const result = await steerQueuedItem(CHAT_ID, '1');
+
+			expect(result).toMatchObject({ outcome: 'not-steerable', blockedReason: 'room-idle' });
+			expect(h.steer).not.toHaveBeenCalled();
+		});
+
+		it('answers has-images for an item with images', async () => {
+			const h = installSteer();
+			await enqueue({ ...item('1'), images: ['data:image/png;base64,AA'] });
+
+			const result = await steerQueuedItem(CHAT_ID, '1');
+
+			expect(result).toMatchObject({ outcome: 'not-steerable', blockedReason: 'has-images' });
+			expect(h.steer).not.toHaveBeenCalled();
+		});
+
+		it('is not refused by the drain a fresh add schedules in a busy room', async () => {
+			// A busy room cannot drain, so that drain must not take the send latch.
+			// It used to, and a Steer clicked right after queueing answered
+			// steer-in-flight for no reason the user could act on.
+			installSteer(async () => delivered);
+			await addToQueue(CHAT_ID, item('1', 'steer me now'));
+
+			const result = await steerQueuedItem(CHAT_ID, '1');
+
+			expect(result).toEqual(delivered);
+			expect((await getQueue(CHAT_ID)).items).toHaveLength(0);
+		});
+
+		it('answers held for an item a failed send or steer left marked, typing nothing', async () => {
+			const h = installSteer();
+			// A turn that exited without answering puts its steer back exactly like this.
+			await returnSteeredMessage(CHAT_ID, { text: 'maybe sent' }, true);
+			await settle();
+			const heldId = (await getQueue(CHAT_ID)).items[0].id;
+
+			const result = await steerQueuedItem(CHAT_ID, heldId);
+
+			expect(result).toMatchObject({ outcome: 'not-steerable', blockedReason: 'held' });
+			expect(h.steer).not.toHaveBeenCalled();
+			const state = await getQueue(CHAT_ID);
+			expect(state.items[0]).toMatchObject({ id: heldId, failed: true });
+			expect(state.items[0].sending).toBeUndefined();
+			expect(state.paused).toBe(true);
+		});
+
+		it('answers command-prefix for a queued slash or bang command', async () => {
+			const h = installSteer();
+			await enqueue(item('1', '!commit'));
+
+			expect(await steerQueuedItem(CHAT_ID, '1')).toMatchObject({
+				blockedReason: 'command-prefix',
+			});
+			expect(h.steer).not.toHaveBeenCalled();
+		});
+
+		it('answers steer-in-flight while another steer holds the send latch', async () => {
+			let release!: () => void;
+			const gate = new Promise<void>((r) => {
+				release = r;
+			});
+			const h = installSteer(async () => {
+				await gate;
+				return delivered;
+			});
+			await enqueue(item('1', 'first'));
+			await enqueue(item('2', 'second'));
+
+			const first = steerQueuedItem(CHAT_ID, '1');
+			const second = await steerQueuedItem(CHAT_ID, '2');
+
+			expect(second).toMatchObject({ outcome: 'not-steerable', blockedReason: 'steer-in-flight' });
+			release();
+			expect((await first).outcome).toBe('delivered');
+			expect(h.steer).toHaveBeenCalledTimes(1);
+			expect((await getQueue(CHAT_ID)).items.map((i) => i.id)).toEqual(['2']);
+		});
+
+		it('keeps the drain from sending the item while it is being typed', async () => {
+			let release!: () => void;
+			const gate = new Promise<void>((r) => {
+				release = r;
+			});
+			const h = installSteer(async () => {
+				await gate;
+				return delivered;
+			});
+			await enqueue(item('1', 'only once'));
+
+			const steering = steerQueuedItem(CHAT_ID, '1');
+			await new Promise((r) => setTimeout(r, 0));
+			// The round ends while the text is being typed.
+			h.idle = true;
+			onModeratorStateChanged(CHAT_ID, true);
+			await new Promise((r) => setTimeout(r, 0));
+			expect(h.sends).toEqual([]);
+
+			release();
+			await steering;
+			await settle();
+			expect(h.sends).toEqual([]);
+			expect((await getQueue(CHAT_ID)).items).toHaveLength(0);
+		});
+	});
+
+	describe('steerNewMessage', () => {
+		it('hands new text to the steer channel and queues nothing', async () => {
+			const h = installSteer(async () => delivered);
+
+			const result = await steerNewMessage(CHAT_ID, 'new words', true);
+
+			expect(result).toEqual(delivered);
+			expect(h.steer).toHaveBeenCalledExactlyOnceWith(CHAT_ID, 'new words', true);
+			expect((await getQueue(CHAT_ID)).items).toHaveLength(0);
+		});
+
+		it('queues nothing when the steer is refused', async () => {
+			installSteer(async () => ({ outcome: 'refused', verdict: 'refused' }));
+
+			const result = await steerNewMessage(CHAT_ID, 'refused words');
+
+			expect(result.outcome).toBe('refused');
+			expect((await getQueue(CHAT_ID)).items).toHaveLength(0);
+		});
+
+		it('blocks an idle room and empty text without typing', async () => {
+			const h = installSteer();
+			expect(await steerNewMessage(CHAT_ID, '   ')).toMatchObject({
+				blockedReason: 'nothing-to-type',
+			});
+			h.idle = true;
+			expect(await steerNewMessage(CHAT_ID, 'hello')).toMatchObject({
+				blockedReason: 'room-idle',
+			});
+			expect(h.steer).not.toHaveBeenCalled();
+		});
+
+		it('answers unavailable when the host cannot steer', async () => {
+			install();
+			expect((await steerNewMessage(CHAT_ID, 'hello')).outcome).toBe('unavailable');
+		});
+	});
+
+	describe('returnSteeredMessage', () => {
+		it('puts a dropped steer back at the front, live, and sends it next', async () => {
+			const h = installSteer();
+			await enqueue(item('1', 'queued later'));
+
+			await returnSteeredMessage(CHAT_ID, { text: 'came back', readOnly: true }, false);
+
+			const state = await getQueue(CHAT_ID);
+			expect(state.items.map((i) => i.text)).toEqual(['came back', 'queued later']);
+			expect(state.items[0].readOnlyMode).toBe(true);
+			expect(state.items[0].failed).toBeUndefined();
+			expect(state.paused).toBe(false);
+			expect(h.systemMessages.at(-1)).toContain('back at the front of the queue');
+
+			h.idle = true;
+			onModeratorStateChanged(CHAT_ID, true);
+			await settle();
+			expect(h.sends[0]).toBe('came back');
+		});
+
+		it('holds an unsettled steer: front, marked failed, queue paused', async () => {
+			const h = installSteer();
+			await enqueue(item('1', 'queued later'));
+
+			await returnSteeredMessage(CHAT_ID, { text: 'nobody knows' }, true);
+
+			const state = await getQueue(CHAT_ID);
+			expect(state.items.map((i) => i.text)).toEqual(['nobody knows', 'queued later']);
+			expect(state.items[0].failed).toBe(true);
+			expect(state.items[0].readOnlyMode).toBeUndefined();
+			expect(state.paused).toBe(true);
+			expect(h.systemMessages.at(-1)).toContain('paused');
+
+			h.idle = true;
+			onModeratorStateChanged(CHAT_ID, true);
+			await settle();
+			expect(h.sends).toEqual([]);
+		});
 	});
 });

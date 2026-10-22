@@ -173,6 +173,143 @@ export function deriveConsultSubject(userPrompt: string, maxLen = 60): string {
 }
 
 // ============================================================================
+// MENTION TIMING INFERENCE
+// ============================================================================
+
+/**
+ * WHEN a mid-message mention runs relative to the source agent's own turn.
+ *
+ * - `parallel`      - both start now; the source agent waits for the reply
+ *                     before it finishes ("what does @Backend think too").
+ * - `consult-first` - the mentioned agent answers first, and the source agent
+ *                     only starts once the reply is in hand ("check with
+ *                     @Backend first", "based on what @Backend says").
+ * - `handoff`       - the source agent does the work, and its final answer is
+ *                     forwarded to the mentioned agent, one way ("then send
+ *                     what you find to @Backend", "let @Backend know").
+ */
+export type MentionTiming = 'parallel' | 'consult-first' | 'handoff';
+
+/**
+ * How a message with resolved mentions is routed: a LEADING mention (`only`)
+ * is answered by the mentioned agents alone; anything else carries a timing.
+ */
+export type MentionRouting = 'only' | MentionTiming;
+
+/** Where a clause ends, for scoping the words around one mention. */
+const CLAUSE_BREAK = /[.!?\n;]/;
+
+/** Words that say a step comes after another one. */
+const SEQUENCE_CUE =
+	/\b(?:then|afterwards?|after (?:that|this|you(?:'re| are)? (?:done|finished)|you finish)|once (?:you(?:'re| are)|that(?:'s| is)|it(?:'s| is)) (?:done|finished)|when (?:you(?:'re| are)) (?:done|finished)|finally|at the end)\b/;
+
+/** Phrases naming the source agent's OUTPUT as the thing to pass on. */
+const RESULTS_CUE =
+	/\b(?:what(?:ever)? (?:you|we) (?:find|found|learn|learned|learnt|discover|discovered|come up with|figure out|figured out|conclude|get|got)|the results?|(?:your|our|the) (?:findings|results|answer|summary|conclusions?|outcome|output|report)|what comes? back)\b/;
+
+/**
+ * A relay verb right before the mention, with its destination preposition:
+ * "feed whatever we learn over to @X", "hand it off to @X". These verbs mean
+ * "pass the result on" by themselves, so no other cue is needed.
+ */
+const STRONG_RELAY_BEFORE =
+	/\b(?:feed|forward|relay|pass|hand|report|funnel|pipe|route)\b[^.!?\n;]{0,80}?\b(?:to|over to|along to|on to|off to|back to)\s*$/;
+
+/**
+ * Weaker relay verbs ("send it to @X", "share this with @X") also describe
+ * handing over WORK, so they mean a hand-off only beside a results or
+ * sequence cue somewhere in the message.
+ */
+const WEAK_RELAY_BEFORE =
+	/\b(?:send|give|share|post|ship|deliver|email|message|dm)\b[^.!?\n;]{0,80}?\b(?:to|with|over to|along to|on to)\s*$/;
+
+/** "let @X know", "keep @X posted", "loop @X in on what you find". */
+const NOTIFY_BEFORE = /\b(?:let|keep|tell|notify|brief|update|inform|loop|ping)\s*$/;
+const NOTIFY_AFTER =
+	/^\s*(?:know\b|posted\b|updated\b|in the loop\b|informed\b|in on\b|on (?:what|the results?|your findings)\b|what (?:you|we)\b|about (?:it|this|that|the results?|what)\b)/;
+
+/** "check with @X first", "ask @X before you start". */
+const FIRST_AFTER =
+	/^\W{0,3}(?:first\b|before (?:you|we|answering|starting|doing|replying|responding|writing|touching)\b)/;
+/** "first ask @X, then ...". */
+const FIRST_BEFORE =
+	/\bfirst,?\s+(?:ask|check with|consult|run (?:it|this) by|get|see what|find out what)\s*$/;
+/** "based on what @X says". */
+const DEPENDS_BEFORE = /\b(?:based on|according to|depending on|guided by)(?: what)?\s*$/;
+/** "once @X replies", "wait for @X". */
+const AWAIT_BEFORE = /\b(?:wait for|wait on|after|once|when)\s*$/;
+const AWAIT_AFTER =
+	/^\W{0,3}(?:replies|answers|responds|weighs in|gets back|has answered|has replied|says|is done|comes back)\b/;
+/** "ask @X about the schema, then write the migration". */
+const CONSULT_VERB_BEFORE =
+	/\b(?:ask|check with|consult|run (?:it|this) by|get|see what|find out what|hear what|confirm with)\s*$/;
+
+/** The timing one mention asks for, judged from its own clause. */
+function mentionTimingAt(lower: string, mention: CrossAgentMention): MentionTiming {
+	const clauseStart = lastIndexOfPattern(lower.slice(0, mention.startIndex), CLAUSE_BREAK) + 1;
+	const afterSlice = lower.slice(mention.endIndex);
+	const nextBreak = afterSlice.search(CLAUSE_BREAK);
+	const before = lower.slice(clauseStart, mention.startIndex);
+	const after = nextBreak < 0 ? afterSlice : afterSlice.slice(0, nextBreak);
+	// The rest of the SENTENCE after the mention, so "ask @X about it, then
+	// write the code" sees its `then` across the comma.
+	const sentenceRest = afterSlice.split(/[.!?\n]/, 1)[0] ?? '';
+
+	// Consult-first: the mentioned agent's answer is an INPUT to this turn.
+	if (FIRST_AFTER.test(after) || FIRST_BEFORE.test(before) || DEPENDS_BEFORE.test(before)) {
+		return 'consult-first';
+	}
+	if (AWAIT_BEFORE.test(before) && AWAIT_AFTER.test(after)) return 'consult-first';
+	if (CONSULT_VERB_BEFORE.test(before) && SEQUENCE_CUE.test(sentenceRest)) {
+		return 'consult-first';
+	}
+
+	// Hand-off: this turn's answer is the mentioned agent's input.
+	if (STRONG_RELAY_BEFORE.test(before)) return 'handoff';
+	if (NOTIFY_BEFORE.test(before) && NOTIFY_AFTER.test(after)) return 'handoff';
+	if (WEAK_RELAY_BEFORE.test(before) && (RESULTS_CUE.test(lower) || SEQUENCE_CUE.test(before))) {
+		return 'handoff';
+	}
+	return 'parallel';
+}
+
+/** Index of the LAST match of `pattern` in `text`, or -1. */
+function lastIndexOfPattern(text: string, pattern: RegExp): number {
+	for (let i = text.length - 1; i >= 0; i--) {
+		if (pattern.test(text[i])) return i;
+	}
+	return -1;
+}
+
+/**
+ * Infer WHEN a message's mid-message mentions should run, from the user's own
+ * wording. Deterministic and pure: the same message always routes the same
+ * way, so the composer can show the decision before the user hits send.
+ *
+ * Each mention is judged from the words around it (its clause). When mentions
+ * disagree, `consult-first` wins over `handoff`, which wins over `parallel`:
+ * waiting for an answer that turns out not to be needed costs a little time,
+ * while running before a needed answer arrives produces the wrong work. A
+ * message carries ONE timing - "ask @A first, then send it to @B" consults
+ * both agents first.
+ *
+ * @param knownMentionNames - see {@link parseAgentMentions}; pass it so a
+ *   file-shaped agent name is still found.
+ */
+export function inferMentionTiming(
+	message: string,
+	knownMentionNames?: ReadonlySet<string>
+): MentionTiming {
+	const mentions = parseAgentMentions(message, knownMentionNames);
+	if (mentions.length === 0) return 'parallel';
+	const lower = message.toLowerCase();
+	const timings = mentions.map((mention) => mentionTimingAt(lower, mention));
+	if (timings.includes('consult-first')) return 'consult-first';
+	if (timings.includes('handoff')) return 'handoff';
+	return 'parallel';
+}
+
+// ============================================================================
 // CONTEXT STRATEGY INFERENCE
 // ============================================================================
 

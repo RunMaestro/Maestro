@@ -5,7 +5,6 @@
 
 import type { ProcessManager } from '../process-manager';
 import { GROUP_CHAT_PREFIX, type ProcessListenerDependencies } from './types';
-import { groupChatEmitters } from '../ipc/handlers/groupChat';
 
 /**
  * Maximum buffer size per session (10MB).
@@ -37,6 +36,18 @@ const DATA_FLUSH_SIZE = 64 * 1024;
 const MSG_ID_RANDOM_LENGTH = 9;
 
 /**
+ * What a listener that sends its own renderer event needs from this one.
+ *
+ * `process:data` waits up to {@link DATA_FLUSH_INTERVAL_MS} in the coalescing
+ * buffer, so any event sent straight to the renderer overtakes the output that
+ * preceded it unless the sender releases that output first.
+ */
+export interface DataListenerHandle {
+	/** Send this session's buffered `process:data` now. No-op when nothing is held. */
+	flushPendingData: (sessionId: string) => void;
+}
+
+/**
  * Sets up the data listener for process output.
  * Handles:
  * - Group chat moderator/participant output buffering
@@ -47,10 +58,24 @@ export function setupDataListener(
 	processManager: ProcessManager,
 	deps: Pick<
 		ProcessListenerDependencies,
-		'safeSend' | 'getWebServer' | 'outputBuffer' | 'outputParser' | 'debugLog' | 'patterns'
+		| 'safeSend'
+		| 'getWebServer'
+		| 'outputBuffer'
+		| 'outputParser'
+		| 'groupChatEngine'
+		| 'debugLog'
+		| 'patterns'
 	>
-): void {
-	const { safeSend, getWebServer, outputBuffer, outputParser, debugLog, patterns } = deps;
+): DataListenerHandle {
+	const {
+		safeSend,
+		getWebServer,
+		outputBuffer,
+		outputParser,
+		groupChatEngine,
+		debugLog,
+		patterns,
+	} = deps;
 	const {
 		REGEX_MODERATOR_SESSION,
 		REGEX_AI_SUFFIX,
@@ -134,14 +159,7 @@ export function setupDataListener(
 	// so we need raw-stdout to stream chunks in real time during agent work.
 	processManager.on('raw-stdout', (sessionId: string, chunk: string) => {
 		if (!sessionId.startsWith(GROUP_CHAT_PREFIX)) return;
-		const participantInfo = outputParser.parseParticipantSessionId(sessionId);
-		if (participantInfo) {
-			groupChatEmitters.emitParticipantLiveOutput?.(
-				participantInfo.groupChatId,
-				participantInfo.participantName,
-				chunk
-			);
-		}
+		groupChatEngine.liveOutput(sessionId, chunk);
 	});
 
 	processManager.on('data', (sessionId: string, data: string) => {
@@ -274,4 +292,6 @@ export function setupDataListener(
 			});
 		}
 	});
+
+	return { flushPendingData: flushData };
 }

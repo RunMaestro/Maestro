@@ -82,6 +82,12 @@ describe('classifyBlockedAddress', () => {
 });
 
 describe('createEgressGuard.assertUrlAllowed', () => {
+	it('builds a real connection-pinning dispatcher by default', () => {
+		const guard = createEgressGuard();
+		expect(guard.dispatcher).toBeDefined();
+		expect(guard.dispatcher).toHaveProperty('dispatch', expect.any(Function));
+	});
+
 	const guard = (addrs: string[], blockedPorts: number[] = []) =>
 		createEgressGuard({
 			resolve: async () => addrs,

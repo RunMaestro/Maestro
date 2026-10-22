@@ -6,6 +6,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+	findSessionForParticipantName,
 	findUniqueMentionMatch,
 	getMentionNameForContext,
 	getMentionMatchPriority,
@@ -377,5 +378,54 @@ describe('GroupChatHistoryEntry type', () => {
 		};
 		expect(entry.elapsedTimeMs).toBe(5000);
 		expect(entry.cost).toBe(0.01);
+	});
+});
+
+// ============================================================================
+// findSessionForParticipantName
+// ============================================================================
+
+describe('findSessionForParticipantName', () => {
+	const agents = [
+		{ id: 'a', name: 'Backend' },
+		{ id: 'b', name: 'Review Bot [Linux]' },
+	];
+
+	it('matches an exact name', () => {
+		expect(findSessionForParticipantName('Backend', agents)).toBe(agents[0]);
+	});
+
+	it('matches the safe-normalized form of a name with spaces and brackets', () => {
+		expect(findSessionForParticipantName('Review-Bot-Linux', agents)).toBe(agents[1]);
+	});
+
+	it('refuses a weak (safe-folded) match that a typed mention would accept', () => {
+		expect(findSessionForParticipantName('Review Bot (Linux)', agents)).toBeUndefined();
+		expect(findUniqueMentionMatch('Review Bot (Linux)', agents, (a) => a.name)).toBe(agents[1]);
+	});
+
+	it('returns undefined on a tie', () => {
+		const tied = [
+			{ id: 'a', name: 'Backend' },
+			{ id: 'b', name: 'Backend' },
+		];
+		expect(findSessionForParticipantName('Backend', tied)).toBeUndefined();
+	});
+
+	it('returns undefined when nothing matches', () => {
+		expect(findSessionForParticipantName('Nobody', agents)).toBeUndefined();
+	});
+});
+
+describe('findUniqueMentionMatch minPriority', () => {
+	const items = [{ name: 'Review Bot [Linux]' }];
+
+	it('keeps the default of accepting any non-zero priority', () => {
+		expect(findUniqueMentionMatch('Review Bot (Linux)', items, (i) => i.name)).toBe(items[0]);
+	});
+
+	it('drops matches below the floor', () => {
+		expect(findUniqueMentionMatch('Review Bot (Linux)', items, (i) => i.name, 2)).toBeUndefined();
+		expect(findUniqueMentionMatch('Review-Bot-Linux', items, (i) => i.name, 2)).toBe(items[0]);
 	});
 });

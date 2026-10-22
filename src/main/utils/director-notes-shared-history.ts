@@ -37,14 +37,15 @@ import * as fs from 'fs/promises';
 import { app } from 'electron';
 import { logger } from './logger';
 import { captureException } from './sentry';
-import { getSessionsStore } from '../stores';
+import { getSessionsStore, getSettingsStore } from '../stores';
+import { filterLiveAgents } from '../../shared/agentVisibility';
 import { getSshRemoteById } from '../stores/getters';
 import {
 	hasLocalSharedHistory,
 	readRemoteEntriesLocal,
 	readRemoteEntriesSsh,
 } from '../shared-history-manager';
-import { MAX_ENTRIES_PER_SESSION } from '../../shared/history';
+import { resolveHistoryEntryLimit } from '../../shared/history';
 import type { HistoryEntry } from '../../shared/types';
 
 const LOG_CONTEXT = '[DirectorNotes:SharedHistory]';
@@ -190,7 +191,11 @@ export function sharedEntryAgentName(entry: HistoryEntry): string {
  * SSH'd INTO this machine writes its mirror.
  */
 function collectScopes(): SharedHistoryScope[] {
-	const storedSessions = getSessionsStore().get('sessions', []);
+	// Live agents only: a dormant Pianola (flag off) contributes no location.
+	const storedSessions = filterLiveAgents(
+		getSessionsStore().get('sessions', []),
+		getSettingsStore().get('encoreFeatures')
+	);
 	const scopes = new Map<string, SharedHistoryScope>();
 
 	for (const session of storedSessions) {
@@ -240,9 +245,12 @@ export function hasSharedHistorySources(): boolean {
  *
  * Never throws: a shared-history read failing (remote down, dir missing, SSH
  * key rotated) must degrade Director's Notes to local-only, not break it.
+ *
+ * @param maxEntriesPerFile - Defaults to the user's `maxLogBuffer`, the same
+ *   cap the History panel reads these files with.
  */
 export async function collectSharedHistoryEntries(
-	maxEntriesPerFile: number = MAX_ENTRIES_PER_SESSION
+	maxEntriesPerFile: number = resolveHistoryEntryLimit(getSettingsStore().get('maxLogBuffer'))
 ): Promise<SharedHistoryCollection> {
 	const scopes = collectScopes();
 	if (scopes.length === 0) return EMPTY_COLLECTION;

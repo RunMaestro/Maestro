@@ -70,6 +70,11 @@ import { isAutoRunRunDocument } from '../../utils/autoRunDraft';
 import { useAutoRunErrorPaused } from '../../hooks/batch/useAutoRunPause';
 import { useAutoRunContentSync } from '../../hooks/batch/useAutoRunContentSync';
 import { useAutoRunSearch } from '../../hooks/batch/useAutoRunSearch';
+import type { DataviewDocumentScope } from '../Markdown/components/DataviewDocumentContext';
+import { DataviewDocumentProvider } from '../Markdown/components/DataviewDocumentProvider';
+import { useDataviewEnabled } from '../Markdown/components/dataviewSurface';
+import { normalizeWorktreePath } from '../../../shared/worktreePaths';
+import { joinPath } from '../../../shared/formatters';
 import { useAutoRunKeyboard } from '../../hooks/batch/useAutoRunKeyboard';
 import { useAutoRunMarkdown } from '../../hooks/batch/useAutoRunMarkdown';
 import { useAutoRunScrollSync } from '../../hooks/batch/useAutoRunScrollSync';
@@ -589,6 +594,9 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 				const checkboxes = previewRef.current.querySelectorAll('input[type="checkbox"]');
 				if (checkboxes.length === 0) return;
 				for (const checkbox of checkboxes) {
+					// A Dataview result lists tasks from other notes; the run's next
+					// task is always one of this document's own.
+					if ((checkbox as HTMLElement).closest('[data-dataview-block]')) continue;
 					if (!(checkbox as HTMLInputElement).checked) {
 						const li = (checkbox as HTMLElement).closest('li');
 						if (li) {
@@ -679,6 +687,43 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 			// checkboxes read-only, matching the disabled editor.
 			onTaskToggle: isLocked ? undefined : handleToggleTask,
 		});
+
+	// Dataview (D7): the document on screen and this panel's own link and task
+	// paths, read by `dataview` blocks and `= expr` spans through context. A link
+	// to a playbook in this folder selects it, anything else opens as a project
+	// file. Null while the Encore Feature is off, so nothing of Dataview mounts.
+	const dataviewEnabled = useDataviewEnabled();
+	const dataviewScope = useMemo<DataviewDocumentScope | null>(() => {
+		if (!dataviewEnabled || !sessionId || !folderPath || !selectedFile) return null;
+		// A remote path keeps its backslashes; a local Windows path folds them.
+		const posix = !!sshRemoteId;
+		const folder = normalizeWorktreePath(folderPath, posix);
+		return {
+			filePath: joinPath(folderPath, `${selectedFile}.md`),
+			agentId: sessionId,
+			sshRemoteId: sshRemoteId ?? null,
+			openLink: (absolutePath, options) => {
+				const target = normalizeWorktreePath(absolutePath, posix);
+				if (target.startsWith(`${folder}/`) && /\.md$/i.test(target)) {
+					onSelectDocument(target.slice(folder.length + 1).replace(/\.md$/i, ''));
+					return;
+				}
+				onOpenProjectFile?.(absolutePath, options);
+			},
+			// Locked documents belong to the running Auto Run, as above.
+			toggleOwnTask: isLocked ? undefined : handleToggleTask,
+		};
+	}, [
+		dataviewEnabled,
+		sessionId,
+		folderPath,
+		selectedFile,
+		sshRemoteId,
+		onSelectDocument,
+		onOpenProjectFile,
+		isLocked,
+		handleToggleTask,
+	]);
 
 	// Keep the document selector badge in sync with the bottom-panel counter.
 	// The file watcher's refresh path can be stale (debounced/missed events, SSH poll lag),
@@ -927,11 +972,15 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 							}}
 						>
 							<style>{proseStyles}</style>
-							<MemoizedMarkdownPreview
-								remarkPlugins={remarkPlugins}
-								components={markdownComponents}
-								content={localContent || '*No content yet. Switch to Edit mode to start writing.*'}
-							/>
+							<DataviewDocumentProvider value={dataviewScope}>
+								<MemoizedMarkdownPreview
+									remarkPlugins={remarkPlugins}
+									components={markdownComponents}
+									content={
+										localContent || '*No content yet. Switch to Edit mode to start writing.*'
+									}
+								/>
+							</DataviewDocumentProvider>
 						</div>
 					)}
 				</div>

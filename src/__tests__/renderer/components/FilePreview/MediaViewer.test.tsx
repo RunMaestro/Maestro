@@ -19,7 +19,7 @@ beforeEach(() => {
 	vi.clearAllMocks();
 	(window as any).maestro = {
 		fs: { readFile, stat },
-		shell: { openPath: vi.fn() },
+		shell: { openPath: vi.fn(), openExternal: vi.fn() },
 	};
 });
 
@@ -84,6 +84,35 @@ describe('MediaViewer failure states', () => {
 		renderViewer('/tmp/remote.mp3');
 
 		expect(await screen.findByText('Cannot Play This File')).toBeInTheDocument();
+	});
+});
+
+describe('MediaViewer remote URLs', () => {
+	const url = 'https://cdn.example.com/clip.mp3?sig=1';
+
+	it('loads an http(s) URL straight into the element, without touching the disk', async () => {
+		const { container } = renderViewer(url);
+
+		await waitFor(() => {
+			expect(container.querySelector('audio')?.getAttribute('src')).toBe(url);
+		});
+		expect(readFile).not.toHaveBeenCalled();
+	});
+
+	it('words a failed stream as a stream and offers the browser, not the disk', async () => {
+		const { container } = renderViewer(url);
+		const audio = await waitFor(() => {
+			const el = container.querySelector('audio');
+			expect(el).not.toBeNull();
+			return el as HTMLAudioElement;
+		});
+		audio.dispatchEvent(new Event('error'));
+
+		expect(await screen.findByText('Cannot Play This Stream')).toBeInTheDocument();
+		expect(stat).not.toHaveBeenCalled();
+		fireEvent.click(screen.getByText('Open in Browser'));
+		expect((window as any).maestro.shell.openExternal).toHaveBeenCalledWith(url);
+		expect((window as any).maestro.shell.openPath).not.toHaveBeenCalled();
 	});
 });
 

@@ -45,6 +45,7 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 		setEnableMaestroP,
 		setMaestroPMode,
 		setMaestroPPath,
+		setCodexTransport,
 		setSessionSshRemoteConfig: setWizardSessionSshRemoteConfig,
 		nextStep,
 		canProceedToNext,
@@ -321,6 +322,8 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 					maestroPPath={state.maestroPPath ?? ''}
 					onMaestroPPathChange={setMaestroPPath}
 					detectedMaestroPPath={configPanel.detectedMaestroPPath}
+					codexTransport={state.codexTransport}
+					onCodexTransportChange={setCodexTransport}
 				/>
 			</>
 		);

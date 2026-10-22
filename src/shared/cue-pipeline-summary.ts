@@ -80,6 +80,7 @@ export function summarizeCommandNode(data: CommandNodeData): string {
 		return '$ ' + (firstLine.length > 36 ? firstLine.slice(0, 33) + '…' : firstLine);
 	}
 	const target = data.cliTarget?.trim() || '(no target)';
+	if (data.cliNewTab) return `agent message → ${target} (new tab)`;
 	return `cli send → ${target}`;
 }
 

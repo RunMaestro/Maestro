@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { StatsAggregation } from '../../../../shared/stats-types';
+import { emptyPromptCadence } from '../../../../shared/promptCadence';
 import { THEMES } from '../../../../shared/themes';
 import type { Session } from '../../../../renderer/types';
 import {
@@ -149,6 +150,7 @@ const data: StatsAggregation = {
 		parent: { count: 4, duration: 2000 },
 	},
 	imageAnnotations: 0,
+	prompts: emptyPromptCadence(),
 };
 
 const session = {

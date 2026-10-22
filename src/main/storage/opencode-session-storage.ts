@@ -882,12 +882,15 @@ export class OpenCodeSessionStorage extends BaseSessionStorage {
 
 			// Also include global project sessions that match by directory field
 			if (hasGlobalProject) {
-				const escapedPath = normalizedPath.replace(/[%_\\]/g, '\\$&');
+				// Escape the separator too: on Windows it IS the LIKE escape
+				// character, so a raw `\` before the `%` would turn the wildcard
+				// into a literal percent and match no subdirectory at all.
+				const escapedPrefix = (normalizedPath + path.sep).replace(/[%_\\]/g, '\\$&');
 				const globalSessions = db
 					.prepare(
 						"SELECT id, project_id, directory, title, version, time_created, time_updated, summary_additions, summary_deletions, summary_files FROM session WHERE project_id = 'global' AND (directory = ? OR directory LIKE ? ESCAPE '\\') ORDER BY time_updated DESC"
 					)
-					.all(normalizedPath, escapedPath + path.sep + '%') as SqliteSessionRow[];
+					.all(normalizedPath, escapedPrefix + '%') as SqliteSessionRow[];
 				if (globalSessions.length > 0) {
 					const existingIds = new Set(sessions.map((s) => s.id));
 					for (const gs of globalSessions) {

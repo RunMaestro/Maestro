@@ -618,6 +618,7 @@ describe('useBatchProcessor hook', () => {
 	let mockCreatePR: ReturnType<typeof vi.fn>;
 
 	beforeEach(() => {
+		useSettingsStore.setState({ notificationHistoryAutoRunTasks: false });
 		// Reset mocks
 		mockOnUpdateSession = vi.fn();
 		mockOnSpawnAgent = vi.fn().mockResolvedValue({
@@ -1164,6 +1165,7 @@ describe('useBatchProcessor hook', () => {
 				expect.objectContaining({
 					sessionId: 'test-session-id',
 					sessionName: 'Test Session',
+					kind: 'spec-driven',
 				})
 			);
 		});
@@ -1515,6 +1517,9 @@ describe('useBatchProcessor hook', () => {
 			await waitFor(() => {
 				expect(window.maestro.stats.startAutoRun).toHaveBeenCalled();
 			});
+			expect(window.maestro.stats.startAutoRun).toHaveBeenCalledWith(
+				expect.objectContaining({ kind: 'spec-driven' })
+			);
 			await waitFor(() => {
 				expect(mockOnSpawnAgent).toHaveBeenCalled();
 			});
@@ -1531,6 +1536,8 @@ describe('useBatchProcessor hook', () => {
 			expect(completeArg.wasStopped).toBe(true);
 			expect(completeArg.elapsedTimeMs).toBeGreaterThan(0);
 			expect(completeArg.sessionId).toBe('test-session-id');
+			// The kill path reads the kind from the runner's flush-state registration.
+			expect(completeArg.kind).toBe('spec-driven');
 
 			// Let the held processTask resolve so the loop's natural cleanup can run.
 			resolveAgent!({ success: true, agentSessionId: 'test-session' });
@@ -1632,7 +1639,14 @@ describe('useBatchProcessor hook', () => {
 
 			// Should not have spawned agent due to worktree failure
 			expect(mockOnSpawnAgent).not.toHaveBeenCalled();
-			expect(window.maestro.web.claimAutoRunStart).toHaveBeenCalledWith('test-session-id');
+			expect(window.maestro.web.claimAutoRunStart).toHaveBeenCalledWith(
+				'test-session-id',
+				expect.objectContaining({
+					instanceId: expect.any(String),
+					folderPath: '/test/folder',
+					config: expect.objectContaining({ prompt: expect.any(String) }),
+				})
+			);
 			expect(window.maestro.web.releaseAutoRunStartClaim).toHaveBeenCalledWith('test-session-id');
 		});
 
@@ -1847,62 +1861,71 @@ describe('useBatchProcessor hook', () => {
 	});
 
 	describe('loop mode', () => {
-		it('should stop at max loops', async () => {
-			const sessions = [createMockSession()];
-			const groups = [createMockGroup()];
+		it.each([false, true])(
+			'should stop at max loops with per-task notification history enabled=%s',
+			async (enabled) => {
+				useSettingsStore.setState({ notificationHistoryAutoRunTasks: enabled });
+				const sessions = [createMockSession()];
+				const groups = [createMockGroup()];
 
-			// Mock document that properly simulates task completion cycle
-			// The batch processor calls readDoc at multiple points - we need to simulate
-			// tasks being completed after the agent runs
-			let callCount = 0;
-			mockReadDoc.mockImplementation(async () => {
-				callCount++;
-				// Calls 1-3: initial count, doc start, template - show unchecked
-				// Call 4: after agent runs - show checked (task completed)
-				// The reset-on-completion will uncheck, but since we hit maxLoops=1, we exit
-				if (callCount <= 3) {
-					return { success: true, content: '- [ ] Task 1' };
-				} else {
-					return { success: true, content: '- [x] Task 1' };
-				}
-			});
+				// Mock document that properly simulates task completion cycle
+				// The batch processor calls readDoc at multiple points - we need to simulate
+				// tasks being completed after the agent runs
+				let callCount = 0;
+				mockReadDoc.mockImplementation(async () => {
+					callCount++;
+					// Calls 1-3: initial count, doc start, template - show unchecked
+					// Call 4: after agent runs - show checked (task completed)
+					// The reset-on-completion will uncheck, but since we hit maxLoops=1, we exit
+					if (callCount <= 3) {
+						return { success: true, content: '- [ ] Task 1' };
+					} else {
+						return { success: true, content: '- [x] Task 1' };
+					}
+				});
 
-			// Track agent calls
-			let spawnCount = 0;
-			mockOnSpawnAgent.mockImplementation(async () => {
-				spawnCount++;
-				return { success: true, agentSessionId: `session-${spawnCount}` };
-			});
+				// Track agent calls
+				let spawnCount = 0;
+				mockOnSpawnAgent.mockImplementation(async () => {
+					spawnCount++;
+					return { success: true, agentSessionId: `session-${spawnCount}` };
+				});
 
-			useSessionStore.setState({ sessions: sessions, activeSessionId: sessions[0]?.id ?? '' });
-			const { result } = renderHook(() =>
-				useBatchProcessor({
-					groups,
-					onUpdateSession: mockOnUpdateSession,
-					onSpawnAgent: mockOnSpawnAgent,
-					onAddHistoryEntry: mockOnAddHistoryEntry,
-					onComplete: mockOnComplete,
-				})
-			);
-
-			await act(async () => {
-				await result.current.startBatchRun(
-					'test-session-id',
-					{
-						documents: [{ filename: 'tasks', resetOnCompletion: true }],
-						prompt: 'Test',
-						loopEnabled: true,
-						maxLoops: 1,
-					},
-					'/test/folder'
+				useSessionStore.setState({ sessions, activeSessionId: sessions[0]?.id ?? '' });
+				const { result } = renderHook(() =>
+					useBatchProcessor({
+						groups,
+						onUpdateSession: mockOnUpdateSession,
+						onSpawnAgent: mockOnSpawnAgent,
+						onAddHistoryEntry: mockOnAddHistoryEntry,
+						onComplete: mockOnComplete,
+					})
 				);
-			});
 
-			// Should complete after max loops reached
-			expect(mockOnComplete).toHaveBeenCalled();
-			// Should have spawned at least one agent
-			expect(spawnCount).toBeGreaterThanOrEqual(1);
-		});
+				await act(async () => {
+					await result.current.startBatchRun(
+						'test-session-id',
+						{
+							documents: [{ filename: 'tasks', resetOnCompletion: true }],
+							prompt: 'Test',
+							loopEnabled: true,
+							maxLoops: 1,
+						},
+						'/test/folder'
+					);
+				});
+
+				// Should complete after max loops reached
+				expect(mockOnComplete).toHaveBeenCalled();
+				// Should have spawned at least one agent
+				expect(spawnCount).toBeGreaterThanOrEqual(1);
+				const taskNotifications = mockNotifyToast.mock.calls.filter(
+					([entry]) => entry.title === 'Auto Run task complete'
+				);
+				expect(taskNotifications).toHaveLength(enabled ? spawnCount : 0);
+				for (const [entry] of taskNotifications) expect(entry.historyOnly).toBe(true);
+			}
+		);
 	});
 
 	describe('reset on completion', () => {

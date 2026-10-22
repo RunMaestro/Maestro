@@ -6,12 +6,13 @@
  * legacy postMessage bridge shape ({ type: 'maestro:invokeCommand',
  * commandId, args }) to the embedder via ipcRenderer.sendToHost, and ignores
  * everything else: wrong source (not the panel's own window), wrong type,
- * non-string commandId, and non-object data. It also relays EXACTLY the one
- * inbound channel (maestro:panelData) into the page as a window message.
+ * non-string commandId, and non-object data. Panel data is the only inbound
+ * channel relayed to the page; the theme channel writes approved root styles.
  * Nothing is exposed on window.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { PANEL_THEME_CHANNEL, PANEL_THEME_COLOR_TOKENS } from '../../../shared/plugins/panel-theme';
 
 const { sendToHost, ipcOn } = vi.hoisted(() => ({ sendToHost: vi.fn(), ipcOn: vi.fn() }));
 vi.mock('electron', () => ({
@@ -84,5 +85,45 @@ describe('plugin-panel preload bridge', () => {
 		expect(posted).toContainEqual({ type: 'maestro:panelData', data: { nodes: [1, 2, 3] } });
 		// The inbound relay must never turn into an outbound call.
 		expect(sendToHost).not.toHaveBeenCalled();
+	});
+
+	it('applies only validated theme tokens and clears invalid values on a later update', () => {
+		const themeCalls = ipcOn.mock.calls.filter((c) => c[0] === PANEL_THEME_CHANNEL);
+		expect(themeCalls).toHaveLength(1);
+		const handler = themeCalls[0][1] as (event: unknown, data: unknown) => void;
+		const style = document.documentElement.style;
+		const keys = Object.keys(PANEL_THEME_COLOR_TOKENS);
+		handler(
+			{},
+			{
+				colorScheme: 'dark',
+				colors: Object.fromEntries(keys.map((key) => [key, '#123456'])),
+			}
+		);
+		for (const key of keys) expect(style.getPropertyValue(key)).toBe('#123456');
+		expect(style.getPropertyValue('background-color')).toBe('rgb(18, 52, 86)');
+		expect(style.getPropertyValue('color-scheme')).toBe('dark');
+
+		handler(
+			{},
+			{
+				colorScheme: 'light',
+				colors: {
+					'--maestro-bg-main': '#fafafa',
+					'--maestro-accent': 'red; background: black',
+					'--maestro-evil': 'red',
+				},
+			}
+		);
+		expect(style.getPropertyValue('--maestro-bg-main')).toBe('#fafafa');
+		expect(style.getPropertyValue('background-color')).toBe('rgb(250, 250, 250)');
+		expect(style.getPropertyValue('--maestro-accent')).toBe('');
+		expect(style.getPropertyValue('--maestro-border')).toBe('');
+		expect(style.getPropertyValue('--maestro-evil')).toBe('');
+		expect(style.getPropertyValue('color-scheme')).toBe('light');
+		expect(sendToHost).not.toHaveBeenCalled();
+
+		handler({}, { colorScheme: 'javascript:evil', colors: { '--maestro-bg-main': 'red' } });
+		expect(style.getPropertyValue('--maestro-bg-main')).toBe('#fafafa');
 	});
 });

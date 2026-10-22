@@ -1,3 +1,4 @@
+import { migrationHoldsTurns } from '../../../../shared/maestro-lib/translation/session';
 import { app, BrowserWindow } from 'electron';
 import Store from 'electron-store';
 import * as os from 'os';
@@ -8,11 +9,17 @@ import { AgentDetector } from '../../../agents';
 import { checkBinaryExists, checkCustomPath } from '../../../agents/path-prober';
 import { resolveMaestroCliScriptPath } from '../../../cue/cue-cli-executor';
 import {
+	pluginToolRunIdentity,
+	createPluginRunProofFile,
+	removePluginRunProofFile,
+} from '../../../plugins/plugin-tool-run-identity';
+import {
 	getActivePluginManager,
 	isPluginsFeatureEnabled,
 } from '../../../plugins/plugin-manager-singleton';
 import {
 	buildMcpInjection,
+	mergeMcpInjectionArgs,
 	MCP_CONFIG_BY_AGENT,
 } from '../../../../shared/plugins/mcp-agent-config';
 import type { InteractiveReplayController } from '../../../agents/claude-interactive-replay';
@@ -20,7 +27,10 @@ import type { ProcessConfig as ProcessSpawnConfig } from '../../../process-manag
 import type { AgentConfigsData } from '../../../stores/types';
 import { logger } from '../../../utils/logger';
 import { isWindows } from '../../../../shared/platformDetection';
-import { embedSystemPromptInPrompt } from '../../../../shared/embeddedSystemPrompt';
+import {
+	applySystemPromptDelivery,
+	redactSystemPromptArg,
+} from '../../../utils/system-prompt-delivery';
 import {
 	buildCallerIdentityEnv,
 	withoutCallerIdentityEnv,
@@ -30,6 +40,11 @@ import { getActingUser } from '../../../web-server/auth/acting-user';
 import { noteTurnActor } from '../../../web-server/auth/turn-attribution';
 import { REGEX_AI_SUFFIX } from '../../../constants';
 import { addBreadcrumb, captureException } from '../../../utils/sentry';
+import {
+	DORMANT_PIANOLA_MESSAGE,
+	isAgentDormant,
+	isPianolaEnabled,
+} from '../../../../shared/agentVisibility';
 import { isWebContentsAvailable } from '../../../utils/safe-send';
 import {
 	buildAgentArgs,
@@ -39,6 +54,9 @@ import {
 import { requireProcessManager, requireDependency } from '../../../utils/ipcHandler';
 import { getPrompt } from '../../../prompt-manager';
 import { getWindowsShellForAgentExecution } from '../../../process-manager/utils/shellEscape';
+import { buildChildProcessEnv } from '../../../process-manager/utils/envBuilder';
+import { awaitSynopsisWriters } from '../../../process-manager/utils/synopsisWriterGate';
+import { probeClaudeSlashCommandsCached } from '../../../agents/claude-slash-command-probe';
 import { buildExpandedEnv } from '../../../../shared/pathUtils';
 import type { SshRemoteConfig } from '../../../../shared/types';
 import { powerManager } from '../../../power-manager';
@@ -46,9 +64,15 @@ import { MaestroSettings } from '../persistence';
 import { getDefaultShell } from '../../../stores/defaults';
 import { sanitizeClaudeTranscriptBeforeApiResume } from './claude-transcript-sanitize';
 import { resolveClaudeSpawnContext } from './resolve-claude-spawn-context';
+import { resolveCodexSpawnTransport } from './resolve-codex-spawn-transport';
+import type { ClaudeSpawnEnvLayers } from '../../../agents/claudeSpawnCore';
 import { applyLocalInteractiveSpawnDecision } from './apply-local-interactive-spawn';
 import { persistClaudeInteractiveMode } from './persist-claude-interactive-mode';
 import { wrapSpawnForSsh } from './wrap-spawn-for-ssh';
+import { createSshRemoteStoreAdapter } from '../../../utils/ssh-remote-resolver';
+import { sshUnresolvedRemoteMessage } from '../../../utils/ssh-spawn-wrapper';
+import { buildAgentLaunchPlan } from '../../../../shared/maestro-lib/launch/launch-plan';
+import { resolvePromptDelivery } from '../../../../shared/maestro-lib/launch/prompt-delivery';
 import { preparePermissionRelayArgs } from '../../../permission-relay';
 import {
 	primeOmpModelCatalog,
@@ -79,6 +103,27 @@ export async function handleProcessSpawn(
 	config: SpawnProcessConfig,
 	deps: SpawnHandlerDependencies
 ) {
+	const proofCleanup: { release?: () => void } = {};
+	try {
+		return await handleProcessSpawnImpl(config, deps, proofCleanup);
+	} catch (error) {
+		try {
+			proofCleanup.release?.();
+		} catch (cleanupError) {
+			captureException(
+				cleanupError instanceof Error ? cleanupError : new Error(String(cleanupError)),
+				{ context: 'plugin run proof cleanup', sessionId: config.sessionId }
+			);
+		}
+		throw error;
+	}
+}
+
+async function handleProcessSpawnImpl(
+	config: SpawnProcessConfig,
+	deps: SpawnHandlerDependencies,
+	proofCleanup: { release?: () => void }
+) {
 	const {
 		getProcessManager,
 		getAgentDetector,
@@ -90,6 +135,25 @@ export async function handleProcessSpawn(
 
 	const processManager = requireProcessManager(getProcessManager);
 	const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
+	const migrationAgentId = config.sessionId.replace(/-ai(?:-.+)?$/, '');
+	const migrationAgent = (
+		deps.sessionsStore.get('sessions', []) as Array<{
+			id: string;
+			isPianola?: boolean;
+			providerMigration?: import('../../../../shared/maestro-lib/translation/types').ProviderMigrationState;
+		}>
+	).find((s) => s.id === migrationAgentId);
+	// A dormant agent (Pianola with its Encore flag off) never runs: it stays in
+	// the store only so turning the feature back on restores it.
+	const encoreFeatures = settingsStore.get('encoreFeatures');
+	if (isAgentDormant(migrationAgent, encoreFeatures)) {
+		throw new Error(DORMANT_PIANOLA_MESSAGE);
+	}
+	if (config.toolType !== 'terminal' && migrationHoldsTurns(migrationAgent?.providerMigration)) {
+		throw new Error(
+			'Provider migration is pending; the next turn remains queued until migration settles'
+		);
+	}
 
 	// Get agent definition to access config options and argument builders
 	const agent = await agentDetector.getAgent(config.toolType);
@@ -149,9 +213,31 @@ export async function handleProcessSpawn(
 			: null,
 	});
 
+	// An SSH remote that was deleted or disabled is refused by the launch plan
+	// below, before anything with a side effect. resolveClaudeSpawnContext
+	// persists nothing and skips the remote probe and the transcript sanitizer
+	// for such a spawn, so running it first is safe.
+
+	// Env layers the spawned process receives beyond its own custom vars:
+	// the provider-level config (`agentConfigValues.customEnvVars`) and the
+	// global Shell Configuration vars. Read once here because the Claude
+	// config-dir lookups in resolveClaudeSpawnContext (spawn-mode resolution
+	// and the API-resume sanitizer) must see the same env the child will, and
+	// both layers are applied again at spawn further down.
+	const allConfigs = agentConfigsStore.get('configs', {});
+	const agentConfigValues = allConfigs[config.toolType] || {};
+	const globalShellEnvVars = settingsStore.get('shellEnvVars', {}) as Record<string, string>;
+	const claudeEnvLayers: ClaudeSpawnEnvLayers = {
+		agentDefaultEnvVars: agent?.defaultEnvVars,
+		globalShellEnvVars,
+		agentCustomEnvVars: agentConfigValues.customEnvVars as Record<string, string> | undefined,
+		sessionCustomEnvVars: config.sessionCustomEnvVars,
+	};
+
 	const claudeContext = await resolveClaudeSpawnContext(config, agent, {
 		sessionsStore: deps.sessionsStore,
 		settingsStore,
+		envLayers: claudeEnvLayers,
 	});
 	const {
 		baseSessionId,
@@ -161,6 +247,10 @@ export async function handleProcessSpawn(
 		isClaudeCode,
 		isSshEnabled,
 	} = claudeContext;
+	// Codex transport (exec default, app-server opt-in), read from the persisted
+	// agent record so a stale renderer cannot route the turn differently from
+	// what is saved. Handed to ProcessManager.spawn() below.
+	const codexTransport = resolveCodexSpawnTransport(config, baseSessionId, deps.sessionsStore);
 
 	let finalArgs = buildAgentArgs(agent, {
 		baseArgs: config.args,
@@ -178,8 +268,6 @@ export async function handleProcessSpawn(
 	// Apply agent config options and session overrides
 	// Session-level overrides take precedence over agent-level config
 	// ========================================================================
-	const allConfigs = agentConfigsStore.get('configs', {});
-	const agentConfigValues = allConfigs[config.toolType] || {};
 	const configResolution = applyAgentConfigOverrides(agent, finalArgs, {
 		agentConfigValues,
 		sessionCustomModel: config.sessionCustomModel,
@@ -202,32 +290,6 @@ export async function handleProcessSpawn(
 		);
 	}
 
-	// ========================================================================
-	// Prompt delivery: argv vs stdin. Decided HERE, never by the caller.
-	//
-	// Windows spawns hand the prompt to the child over stdin instead of argv to
-	// stay under the ~32K CreateProcess command-line limit. That is a property of
-	// the machine that runs the CLI and of the CLI itself, so the renderer must
-	// not decide it: a web-desktop client is a browser that can sit on a
-	// completely different OS than the host (`window.maestro.platform` there is
-	// derived from the browser's user agent), so a Windows browser driving a Linux
-	// host used to request stdin delivery. Agents that only accept a positional
-	// prompt then started with no prompt at all - omp emitted its session line and
-	// exited 0, which left the tab holding an agent session id omp never persisted,
-	// so every later turn failed to resume it too.
-	// ========================================================================
-	// An agent that has not declared the capability keeps its prompt in argv: an
-	// over-long command line fails loudly at spawn, while stdin delivery to a CLI
-	// that ignores stdin fails silently and poisons the tab's session id.
-	const hostDeliversPromptViaStdin =
-		isWindows() && !isSshEnabled && (agent?.capabilities?.supportsPromptViaStdin ?? false);
-	const promptHasImages = !!config.images?.length;
-	const supportsStreamJsonInput = agent?.capabilities?.supportsStreamJsonInput ?? false;
-	const sendPromptViaStdin =
-		hostDeliversPromptViaStdin && supportsStreamJsonInput && promptHasImages;
-	const sendPromptViaStdinRaw =
-		hostDeliversPromptViaStdin && (!supportsStreamJsonInput || !promptHasImages);
-
 	// Derive effective read-only state, honoring the legacy boolean flag only
 	// when permissionMode wasn't explicitly set (back-compat for older configs).
 	const hasExplicitPermissionMode = config.permissionMode !== undefined;
@@ -235,14 +297,54 @@ export async function handleProcessSpawn(
 		config.permissionMode === 'readonly' ||
 		(!hasExplicitPermissionMode && config.readOnlyMode === true);
 
-	// In read-only mode, apply agent-specific env var overrides to strip blanket
-	// permission grants.
-	let effectiveCustomEnvVars = configResolution.effectiveCustomEnvVars;
-	if (isReadOnly && agent?.readOnlyEnvOverrides) {
-		effectiveCustomEnvVars = {
-			...(effectiveCustomEnvVars || {}),
-			...agent.readOnlyEnvOverrides,
-		};
+	// Settings -> Environment (`globalShellEnvVars`, read above before
+	// resolveClaudeSpawnContext). Loaded for every process type: terminals get it
+	// through buildPtyTerminalEnv(), agents through the launch plan below.
+
+	// ========================================================================
+	// Launch plan (shared with Cue and the CLI): where this agent runs and the
+	// env vars Maestro sets on it:
+	//   provider defaults < (agent's own ?? provider-level) < read-only overrides.
+	// The global Settings vars are not in that record. For a local process they
+	// are handed to the process manager separately (`shellEnvVars`), which
+	// applies them BENEATH it. For an SSH remote, `wrapSpawnForSsh` merges them
+	// beneath the record into the remote environment, as `rc` does.
+	// Planned BEFORE anything with a side effect (MCP temp dirs, the permission
+	// relay, system prompt files), so an SSH remote that cannot be resolved fails
+	// the spawn up front instead of silently running the agent on this machine.
+	// The prompt delivery the plan reports is decided again at spawn time from
+	// the FINAL prompt (system prompt and preambles folded in), with the same
+	// shared function.
+	// ========================================================================
+	let effectiveCustomEnvVars: Record<string, string> | undefined;
+	if (config.toolType !== 'terminal') {
+		const planResult = buildAgentLaunchPlan({
+			surface: 'desktop',
+			agent: agent ?? undefined,
+			command: config.sessionCustomPath || agent?.path || config.command,
+			args: finalArgs,
+			cwd: config.cwd,
+			prompt: config.prompt,
+			hasImages: !!config.images?.length,
+			globalShellEnvVars,
+			agentCustomEnvVars: agentConfigValues.customEnvVars as Record<string, string> | undefined,
+			sessionCustomEnvVars: config.sessionCustomEnvVars,
+			readOnlyMode: isReadOnly,
+			sshRemoteConfig: config.sessionSshRemoteConfig,
+			sshStore: createSshRemoteStoreAdapter(settingsStore),
+		});
+		if (!planResult.ok) {
+			logger.error('SSH remote could not be resolved; not spawning', LOG_CONTEXT, {
+				sessionId: config.sessionId,
+				remoteId: config.sessionSshRemoteConfig?.remoteId,
+				reason: planResult.reason,
+			});
+			reportSpawnRefusal(deps, config.sessionId, planResult.error);
+			return { success: false, pid: 0 };
+		}
+		effectiveCustomEnvVars = planResult.plan.envVars;
+	} else {
+		effectiveCustomEnvVars = configResolution.effectiveCustomEnvVars;
 	}
 	if (configResolution.customEnvSource !== 'none' && effectiveCustomEnvVars) {
 		logger.debug(
@@ -258,9 +360,11 @@ export async function handleProcessSpawn(
 	// and tell it its own id (MAESTRO_AGENT_ID) so it never acts on itself.
 	// Injected into effectiveCustomEnvVars so it flows through both the local
 	// and SSH env-merge paths below.
-	const isPianolaSession = (
-		deps.sessionsStore.get('sessions', []) as Array<{ id?: string; isPianola?: boolean }>
-	).some((s) => s?.id === baseSessionId && s?.isPianola === true);
+	const isPianolaSession =
+		isPianolaEnabled(encoreFeatures) &&
+		(deps.sessionsStore.get('sessions', []) as Array<{ id?: string; isPianola?: boolean }>).some(
+			(s) => s?.id === baseSessionId && s?.isPianola === true
+		);
 	if (isPianolaSession) {
 		effectiveCustomEnvVars = {
 			...(effectiveCustomEnvVars || {}),
@@ -309,6 +413,27 @@ export async function handleProcessSpawn(
 	// only - the bridge reaches the app over a localhost WebSocket + discovery
 	// file an SSH-remote agent cannot see. Best-guess (unverified) agents are
 	// intentionally skipped to avoid breaking their startup with a wrong shape.
+	let pluginRunToken: string | undefined;
+	let pluginRunProofFile: string | undefined;
+	const exitListener: { current?: (sessionId: string) => void } = {};
+	const cleanupPluginRunProof = (): void => {
+		const token = pluginRunToken;
+		const file = pluginRunProofFile;
+		pluginRunToken = undefined;
+		pluginRunProofFile = undefined;
+		if (exitListener.current) processManager.off('exit', exitListener.current);
+		if (token) pluginToolRunIdentity.revoke(token);
+		if (file) {
+			try {
+				removePluginRunProofFile(file);
+			} catch (error) {
+				logger.warn('Could not remove plugin run proof file', LOG_CONTEXT, {
+					error: String(error),
+				});
+			}
+		}
+	};
+	proofCleanup.release = cleanupPluginRunProof;
 	const mcpCap = MCP_CONFIG_BY_AGENT[config.toolType];
 	if (
 		mcpCap?.verified &&
@@ -321,12 +446,23 @@ export async function handleProcessSpawn(
 		!(claudeResolvedMode === 'interactive' && resolvedMaestroPBinPath)
 	) {
 		const mcpTools = getActivePluginManager()?.getContributions().tools ?? [];
-		if (mcpTools.length > 0) {
+		const storedAgent = (deps.sessionsStore.get('sessions', []) as Array<{ id?: string }>).some(
+			(session) => session?.id === baseSessionId
+		);
+		if (mcpTools.length > 0 && storedAgent) {
+			pluginRunToken = pluginToolRunIdentity.issue(baseSessionId);
+			try {
+				pluginRunProofFile = createPluginRunProofFile(pluginRunToken);
+			} catch (error) {
+				cleanupPluginRunProof();
+				throw error;
+			}
 			const mcpSpec = {
 				command: process.execPath,
 				args: [resolveMaestroCliScriptPath(), 'mcp', 'serve', '--tab', baseSessionId],
 				env: {
 					ELECTRON_RUN_AS_NODE: '1',
+					MAESTRO_PLUGIN_RUN_TOKEN_FILE: pluginRunProofFile,
 					// The agent's MCP client forwards only a sanitized env subset to
 					// the spawned bridge; forward the data-dir overrides the app
 					// itself honors so the bridge resolves the SAME discovery file
@@ -365,7 +501,7 @@ export async function handleProcessSpawn(
 					});
 				}, 30_000);
 			}
-			finalArgs = [...mcpInjection.globalArgs, ...finalArgs];
+			finalArgs = mergeMcpInjectionArgs(mcpCap, finalArgs, mcpInjection.globalArgs);
 			effectiveCustomEnvVars = {
 				...(effectiveCustomEnvVars || {}),
 				...mcpInjection.env,
@@ -397,15 +533,13 @@ export async function handleProcessSpawn(
 			logger.error('Claude Code standard permission mode is not supported over SSH', LOG_CONTEXT, {
 				sessionId: config.sessionId,
 			});
-			const win = getMainWindow();
-			if (win && isWebContentsAvailable(win)) {
-				win.webContents.send(
-					'process:data',
-					config.sessionId,
-					'\r\n[Maestro] Standard permission mode is not available for Claude Code over SSH. ' +
-						'Switch this agent to Full Access or Read-Only, or disable SSH.\r\n'
-				);
-			}
+			reportSpawnRefusal(
+				deps,
+				config.sessionId,
+				'Standard permission mode is not available for Claude Code over SSH. ' +
+					'Switch this agent to Full Access or Read-Only, or disable SSH.'
+			);
+			cleanupPluginRunProof();
 			return { success: false, pid: 0 };
 		}
 		try {
@@ -423,122 +557,36 @@ export async function handleProcessSpawn(
 				sessionId: config.sessionId,
 				error: e instanceof Error ? e.message : String(e),
 			});
-			const win = getMainWindow();
-			if (win && isWebContentsAvailable(win)) {
-				win.webContents.send(
-					'process:data',
-					config.sessionId,
-					'\r\n[Maestro] Could not start the permission relay for Standard mode. ' +
-						'Switch to Full Access or Read-Only to continue.\r\n'
-				);
-			}
+			reportSpawnRefusal(
+				deps,
+				config.sessionId,
+				'Could not start the permission relay for Standard mode. ' +
+					'Switch to Full Access or Read-Only to continue.'
+			);
+			cleanupPluginRunProof();
 			return { success: false, pid: 0 };
 		}
 	}
 
 	// ========================================================================
-	// System prompt delivery: use --append-system-prompt for supported agents,
-	// otherwise embed in the user prompt as fallback.
-	// On Windows local execution, use --append-system-prompt-file with a temp
-	// file to avoid exceeding the ~32K CreateProcess command-line length limit.
-	// SSH sessions are exempt (the command runs inside a stdin script, not the
-	// OS command line) and always use inline --append-system-prompt.
-	//
-	// Resume behavior: for agents WITHOUT native --append-system-prompt support,
-	// the fallback path embeds the system prompt into the first user turn. That
-	// turn is preserved in the agent's session transcript, so on resume we skip
-	// re-embedding to avoid polluting every subsequent user message with the
-	// full system prompt (which would be redundant context and waste tokens).
-	// Agents with native support re-send per invocation - that flag is metadata,
-	// not conversation content, and some agents (e.g. Claude Code) require it
-	// every turn because it isn't persisted into the session transcript.
+	// System prompt delivery (flag / Windows temp file / embed / resume skip).
+	// The rules live in applySystemPromptDelivery so Cue and Group Chat spawns
+	// deliver the prompt exactly the way an interactive tab does.
 	// ========================================================================
-	let effectivePrompt = config.prompt;
-	let systemPromptTempFile: string | undefined;
-	const isSshSession = config.sessionSshRemoteConfig?.enabled;
-	const isResume = !!config.agentSessionId;
-	if (config.appendSystemPrompt) {
-		if (agent?.capabilities?.supportsAppendSystemPrompt) {
-			if (isWindows() && !isSshSession) {
-				// Windows local: write to temp file to avoid CLI length limits
-				const tmpDir = os.tmpdir();
-				systemPromptTempFile = path.join(
-					tmpDir,
-					`maestro-sysprompt-${config.sessionId}-${Date.now()}.txt`
-				);
-				await fsp.writeFile(systemPromptTempFile, config.appendSystemPrompt, 'utf-8');
-				// Schedule cleanup early so the file is removed even if spawn fails.
-				// 30s gives the agent plenty of time to read it after spawning.
-				// Fire-and-forget unlink mirrors process-manager/utils/imageUtils.cleanupTempFiles:
-				// silence ENOENT (file already gone), capture other codes via Sentry.
-				const tempFileToClean = systemPromptTempFile;
-				setTimeout(() => {
-					fsp.unlink(tempFileToClean).catch((cleanupErr: unknown) => {
-						if ((cleanupErr as NodeJS.ErrnoException).code !== 'ENOENT') {
-							captureException(
-								cleanupErr instanceof Error ? cleanupErr : new Error(String(cleanupErr)),
-								{
-									context: 'systemPromptTempFile cleanup (safety)',
-									file: tempFileToClean,
-								}
-							);
-						}
-					});
-				}, 30_000);
-				finalArgs = [...finalArgs, '--append-system-prompt-file', systemPromptTempFile];
-				logger.debug(
-					'Using --append-system-prompt-file for system prompt delivery (Windows)',
-					LOG_CONTEXT,
-					{
-						agentId: agent?.id,
-						systemPromptLength: config.appendSystemPrompt.length,
-						tempFile: systemPromptTempFile,
-					}
-				);
-			} else {
-				// Non-Windows or SSH: pass inline (no command-line length concern)
-				finalArgs = [...finalArgs, '--append-system-prompt', config.appendSystemPrompt];
-				logger.debug('Using --append-system-prompt for system prompt delivery', LOG_CONTEXT, {
-					agentId: agent?.id,
-					systemPromptLength: config.appendSystemPrompt.length,
-				});
-			}
-		} else if (isResume) {
-			// Resume path for agents without native --append-system-prompt:
-			// the system prompt was embedded in the first user turn at initial
-			// spawn and is preserved in the agent's session transcript. Skip
-			// re-embedding to avoid polluting every subsequent user message.
-			logger.debug(
-				'Skipping system prompt re-injection on resume (already in transcript)',
-				LOG_CONTEXT,
-				{
-					agentId: agent?.id,
-					systemPromptLength: config.appendSystemPrompt.length,
-				}
-			);
-		} else if (effectivePrompt) {
-			// Fallback: embed system prompt in user message. The envelope is
-			// built by the shared helper because the transcript renderer has
-			// to take it back apart again when a tab is hydrated from disk
-			// (see src/shared/embeddedSystemPrompt.ts).
-			effectivePrompt = embedSystemPromptInPrompt(config.appendSystemPrompt, effectivePrompt);
-			logger.debug('Embedding system prompt in user message (fallback)', LOG_CONTEXT, {
-				agentId: agent?.id,
-				systemPromptLength: config.appendSystemPrompt.length,
-			});
-		} else {
-			// No user message to embed into - send system prompt as sole content
-			effectivePrompt = config.appendSystemPrompt;
-			logger.warn(
-				'appendSystemPrompt provided without a user prompt; using as sole prompt',
-				LOG_CONTEXT,
-				{
-					agentId: agent?.id,
-					systemPromptLength: config.appendSystemPrompt.length,
-				}
-			);
-		}
-	}
+	const delivered = await applySystemPromptDelivery({
+		args: finalArgs,
+		prompt: config.prompt,
+		systemPrompt: config.appendSystemPrompt,
+		supportsAppendSystemPrompt: !!agent?.capabilities?.supportsAppendSystemPrompt,
+		isResume: !!config.agentSessionId,
+		isSshSession: !!config.sessionSshRemoteConfig?.enabled,
+		sessionId: config.sessionId,
+		agentId: agent?.id,
+		logContext: LOG_CONTEXT,
+	});
+	finalArgs = delivered.args;
+	let effectivePrompt = delivered.prompt;
+	const systemPromptTempFile = delivered.tempFile;
 
 	// Copilot-CLI batch-mode preamble.
 	//
@@ -585,20 +633,6 @@ export async function handleProcessSpawn(
 			: undefined);
 	let shellArgsStr: string | undefined;
 
-	// Load global shell environment variables for ALL process types (terminals and agents)
-	//
-	// IMPORTANT: These are the user-defined global env vars from Settings → General → Shell Configuration.
-	// They apply to BOTH terminal sessions AND agent processes. This allows users to set API keys,
-	// proxy settings, and other environment variables once and have them apply everywhere.
-	//
-	// Precedence order (highest to lowest):
-	// 1. Session-level overrides (config.sessionCustomEnvVars)
-	// 2. Global vars (shellEnvVars from Settings) - loaded here
-	// 3. Process defaults (with Electron/IDE vars stripped for agents)
-	//
-	// The actual merging happens in buildChildProcessEnv() or buildPtyTerminalEnv().
-	const globalShellEnvVars = settingsStore.get('shellEnvVars', {}) as Record<string, string>;
-
 	// Debug logging when global env vars are configured
 	if (Object.keys(globalShellEnvVars).length > 0) {
 		logger.debug(
@@ -634,15 +668,7 @@ export async function handleProcessSpawn(
 				: config.agentSessionId;
 
 	// Redact system prompt content from logged args (can be large and sensitive)
-	const appendPromptIdx = finalArgs.indexOf('--append-system-prompt');
-	const argsToLog =
-		appendPromptIdx !== -1
-			? [
-					...finalArgs.slice(0, appendPromptIdx + 1),
-					`<${finalArgs[appendPromptIdx + 1]?.length ?? 0} chars>`,
-					...finalArgs.slice(appendPromptIdx + 2),
-				]
-			: finalArgs;
+	const argsToLog = redactSystemPromptArg(finalArgs);
 
 	logger.info(`Spawning process: ${config.command}`, LOG_CONTEXT, {
 		sessionId: config.sessionId,
@@ -662,11 +688,7 @@ export async function handleProcessSpawn(
 			prompt: config.prompt.length > 500 ? config.prompt.substring(0, 500) + '...' : config.prompt,
 		}),
 		...(config.appendSystemPrompt && {
-			systemPromptDelivery: agent?.capabilities?.supportsAppendSystemPrompt
-				? systemPromptTempFile
-					? 'file'
-					: 'cli-arg'
-				: 'embedded',
+			systemPromptDelivery: delivered.delivery,
 			...(systemPromptTempFile && { systemPromptFile: systemPromptTempFile }),
 			effectivePromptLength: effectivePrompt?.length ?? 0,
 		}),
@@ -705,14 +727,16 @@ export async function handleProcessSpawn(
 	let sshRemoteUsed: SshRemoteConfig | null = null;
 	let customEnvVarsToPass: Record<string, string> | undefined = effectiveCustomEnvVars;
 
-	({ commandToSpawn, argsToSpawn, customEnvVarsToPass } = applyLocalInteractiveSpawnDecision({
+	const interactiveSpawn = applyLocalInteractiveSpawnDecision({
 		config,
 		agent,
 		claudeContext,
 		commandToSpawn,
 		argsToSpawn,
 		customEnvVarsToPass,
-	}));
+	});
+	({ commandToSpawn, argsToSpawn, customEnvVarsToPass } = interactiveSpawn);
+	const interactiveClaudeBinPath = interactiveSpawn.claudeBinPath;
 
 	persistClaudeInteractiveMode(config, claudeContext, {
 		sessionsStore: deps.sessionsStore,
@@ -733,9 +757,22 @@ export async function handleProcessSpawn(
 	if (isWindows() && !config.sessionSshRemoteConfig?.enabled) {
 		// Use expanded environment with custom env vars to ensure PATH includes all binary locations
 		const expandedEnv = buildExpandedEnv(customEnvVarsToPass);
-		// Filter out undefined values to match Record<string, string> type
+		// The expanded env carries every INHERITED variable, and custom vars are
+		// applied after the global shell layer. An inherited copy of a key the
+		// global layer sets would therefore beat it, which no other platform
+		// does (and which sent the API-resume sanitizer, keyed off the global
+		// CLAUDE_CONFIG_DIR, to a different transcript than claude used). Drop
+		// those inherited copies so the global value wins. PATH stays expanded.
+		const explicitKeys = new Set(
+			Object.keys(customEnvVarsToPass ?? {}).map((k) => k.toUpperCase())
+		);
+		const globalKeys = new Set(Object.keys(globalShellEnvVars).map((k) => k.toUpperCase()));
 		customEnvVarsToPass = Object.fromEntries(
-			Object.entries(expandedEnv).filter(([_, value]) => value !== undefined)
+			Object.entries(expandedEnv).filter(([key, value]) => {
+				if (value === undefined) return false;
+				const upper = key.toUpperCase();
+				return upper === 'PATH' || explicitKeys.has(upper) || !globalKeys.has(upper);
+			})
 		) as Record<string, string>;
 
 		// Get the preferred shell for Windows (custom -> current -> PowerShell)
@@ -771,6 +808,7 @@ export async function handleProcessSpawn(
 		useShell,
 		shellToUse,
 		settingsStore,
+		codexTransport,
 	});
 	const sshStdinScript = sshWrap.sshStdinScript;
 	const sshRemoteCommand = sshWrap.sshRemoteCommand;
@@ -780,6 +818,18 @@ export async function handleProcessSpawn(
 	customEnvVarsToPass = sshWrap.customEnvVarsToPass;
 	useShell = sshWrap.useShell;
 	shellToUse = sshWrap.shellToUse;
+
+	// The launch plan resolved this remote above; if the wrapper could not use it
+	// after all, fail rather than run the agent locally against the remote's cwd.
+	if (config.toolType !== 'terminal' && config.sessionSshRemoteConfig?.enabled && !sshRemoteUsed) {
+		const message = sshUnresolvedRemoteMessage(config.sessionSshRemoteConfig);
+		logger.error('SSH remote was lost between planning and wrapping; not spawning', LOG_CONTEXT, {
+			sessionId: config.sessionId,
+			remoteId: config.sessionSshRemoteConfig.remoteId,
+		});
+		reportSpawnRefusal(deps, config.sessionId, message);
+		return { success: false, pid: 0 };
+	}
 
 	// Debug logging for shell configuration
 	logger.info(`Shell configuration before spawn`, LOG_CONTEXT, {
@@ -899,6 +949,54 @@ export async function handleProcessSpawn(
 		}
 	}
 
+	exitListener.current = (sessionId: string): void => {
+		if (sessionId !== config.sessionId || !pluginRunToken) return;
+		cleanupPluginRunProof();
+	};
+	if (pluginRunToken && exitListener.current) processManager.on('exit', exitListener.current);
+	// ========================================================================
+	// Prompt delivery: argv vs stdin, decided HERE by the host, never by the
+	// caller, and from the FINAL prompt (system prompt and preambles folded in).
+	//
+	// Windows spawns hand the prompt to the child over stdin instead of argv to
+	// stay under the ~32K CreateProcess command-line limit. That is a property of
+	// the machine that runs the CLI and of the CLI itself, so the renderer must
+	// not decide it: a web-desktop client is a browser that can sit on a
+	// completely different OS than the host (`window.maestro.platform` there is
+	// derived from the browser's user agent), so a Windows browser driving a Linux
+	// host used to request stdin delivery. Agents that only accept a positional
+	// prompt then started with no prompt at all - omp emitted its session line and
+	// exited 0, which left the tab holding an agent session id omp never persisted,
+	// so every later turn failed to resume it too. The rule itself lives in the
+	// shared resolvePromptDelivery, which Cue and the CLI use too.
+	// ========================================================================
+	const promptDelivery = resolvePromptDelivery({
+		agent,
+		prompt: effectivePrompt,
+		isWindowsHost: isWindows(),
+		sshRemote: !!sshRemoteUsed,
+		hasImages: !!config.images?.length,
+	});
+	const sendPromptViaStdin =
+		promptDelivery.via === 'stdin' && promptDelivery.format === 'stream-json';
+	const sendPromptViaStdinRaw = promptDelivery.via === 'stdin' && promptDelivery.format === 'raw';
+
+	// A background synopsis may still be writing the provider session this
+	// spawn resumes. Two writers on one session fail the turn on Codex and
+	// interleave the transcript on Claude, so wait it out (see the helper).
+	if (agentSessionId) {
+		const gate = await awaitSynopsisWriters(processManager, agentSessionId);
+		if (gate.waitedFor.length > 0) {
+			logger.info('Spawn waited for a synopsis writing the same provider session', LOG_CONTEXT, {
+				sessionId: config.sessionId,
+				agentSessionId,
+				waitedFor: gate.waitedFor,
+				killed: gate.killed,
+				elapsedMs: gate.elapsedMs,
+			});
+		}
+	}
+
 	const result = processManager.spawn({
 		...config,
 		command: commandToSpawn,
@@ -938,7 +1036,13 @@ export async function handleProcessSpawn(
 		sshRemoteCommand,
 		// Extra dirs to prepend to spawn PATH (local non-SSH only)
 		extraPathDirs: localAgentBinDir ? [localAgentBinDir] : undefined,
+		// Host-authoritative (see above): overrides whatever the caller sent.
+		codexTransport,
+		// SSH app-server launch, when this Codex turn wants app-server.
+		codexAppServerSsh: sshWrap.codexAppServerSsh,
 	});
+	if (!result.success && pluginRunToken) exitListener.current?.(config.sessionId);
+	if (result.success) proofCleanup.release = undefined;
 
 	// The prime outran the spawn cap, so the process started without a usable
 	// catalog and its first usage event carries the 200k fallback. Close the loop:
@@ -972,6 +1076,31 @@ export async function handleProcessSpawn(
 			}),
 		}
 	);
+	if (!result.success) {
+		throw new Error(
+			result.error || `Failed to spawn ${config.toolType}: agent process did not start`
+		);
+	}
+
+	// A `claude --print` turn names the folder's slash commands in its init
+	// event; a maestro-p turn drives the TUI, which names none. Probe for them
+	// (cached, so once per folder in a while, not once per turn) and hand them
+	// to the renderer on the same channel the init event uses. Local only: the
+	// probe would run this machine's claude, not the remote host's.
+	if (interactiveClaudeBinPath && !sshRemoteUsed && safeSend) {
+		// The probe runs claude itself, never maestro-p driving claude, so the
+		// wrapper's pointer is stripped from the FINAL env: it can arrive through
+		// the user's custom vars or be inherited from whatever launched Maestro.
+		const probeEnv = buildChildProcessEnv(customEnvVarsToPass, false, globalShellEnvVars);
+		delete probeEnv.MAESTRO_CLAUDE_BIN;
+		void probeClaudeSlashCommandsCached(interactiveClaudeBinPath, config.cwd, probeEnv).then(
+			(commands) => {
+				if (commands && commands.length > 0) {
+					safeSend('process:slash-commands', config.sessionId, commands);
+				}
+			}
+		);
+	}
 
 	// Arm the interactive-mode replay controller when this turn ran
 	// through maestro-p. If the wrapper exits with code 2 (Max-plan
@@ -991,6 +1120,10 @@ export async function handleProcessSpawn(
 		const originalEffectivePrompt = effectivePrompt;
 		const originalCustomEnvVars = effectiveCustomEnvVars;
 		const originalContextWindow = contextWindow;
+		// Snapshot the global shell vars at registration time so the replay
+		// spawn uses the same environment as the original turn even if settings
+		// change before the quota retry fires.
+		const originalGlobalShellEnvVars = globalShellEnvVars;
 
 		deps.interactiveReplayController.registerInteractiveReplay(config.sessionId, {
 			configDirKey: resolvedConfigDirKey,
@@ -1067,6 +1200,7 @@ export async function handleProcessSpawn(
 					noPromptSeparator: originalAgent.noPromptSeparator,
 					projectPath: originalConfig.cwd,
 					querySource: originalConfig.querySource,
+					shellEnvVars: originalGlobalShellEnvVars,
 					tabId: originalConfig.tabId,
 				};
 			},
@@ -1111,4 +1245,20 @@ export async function handleProcessSpawn(
 				}
 			: undefined,
 	};
+}
+
+/**
+ * Tell the tab why a spawn was refused, in its own output. Used for failures
+ * found before a process exists (an unresolvable SSH remote, the permission
+ * relay), which therefore have no exit to report them.
+ */
+function reportSpawnRefusal(
+	deps: SpawnHandlerDependencies,
+	sessionId: string,
+	message: string
+): void {
+	const win = deps.getMainWindow();
+	if (win && isWebContentsAvailable(win)) {
+		win.webContents.send('process:data', sessionId, `\r\n[Maestro] ${message}\r\n`);
+	}
 }

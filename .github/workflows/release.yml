@@ -147,6 +147,19 @@ jobs:
         with:
           python-version: '3.11'
 
+      # Rust for the Computer History helper (native/maestro-computer-history). macOS
+      # builds both arches on the one runner; every other runner builds for its
+      # own arch, so the host target is enough there.
+      - name: Setup Rust (macOS, both arches)
+        if: matrix.platform == 'mac'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin,aarch64-apple-darwin
+
+      - name: Setup Rust
+        if: matrix.platform != 'mac'
+        uses: dtolnay/rust-toolchain@stable
+
       # Extract version from git tag for use in build steps
       - name: Set version from tag
         id: version
@@ -257,6 +270,111 @@ jobs:
         run: npm run verify:provenance
         env:
           MAESTRO_SENTRY_DSN: ${{ secrets.MAESTRO_SENTRY_DSN }}
+
+      # Sign every bundled plugin with the publisher key so the baked
+      # MAESTRO_PUBLISHER_KEYS anchor resolves them "trusted" at seed time and
+      # their main.js is allowed to run. Must land after "Build application"
+      # (which produces dist/cli/maestro-cli.js) and before any electron-builder
+      # packaging step, since extraResources copies examples/plugins/* - including
+      # the freshly written signature.json - into the packaged resources.
+      # Runs on every matrix leg; signing is deterministic given the same files
+      # and key, so per-leg signing is safe. Looping over examples/plugins/*/
+      # signs future bundled plugins for free; extraResources selects which
+      # signed examples actually ship in the package.
+      - name: Sign bundled plugins
+        env:
+          MAESTRO_PLUGIN_SIGNING_KEY: ${{ secrets.MAESTRO_PLUGIN_SIGNING_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Create any temp files (the private key below) with restrictive
+          # permissions so the key is never group/world-readable.
+          umask 077
+
+          # Read the baked publisher anchor first: signing and the drift guard
+          # only make sense once a public key exists to validate against.
+          ANCHOR=$(node -e "console.log(require('./dist/shared/plugins/publisher-keys.js').MAESTRO_PUBLISHER_KEYS.join(','))")
+
+          # Skip signing only when the committed publisher anchor was deliberately emptied.
+          # There is nothing to validate a signature against, so skip signing and
+          # ship the bundled plugins unsigned rather than breaking every release
+          # target. Unsigned bundled plugins are simply not seeded at runtime
+          # (seedBundledPlugins() only installs a "trusted" plugin), so this
+          # degrades gracefully and stays fail-closed where it matters.
+          if [ -z "$ANCHOR" ]; then
+            echo "::warning::No publisher key baked (MAESTRO_PUBLISHER_KEYS empty); shipping unsigned bundled plugins. They will not be seeded at runtime until a key is baked."
+            exit 0
+          fi
+
+          # Anchor baked but no signing secret: that is a MISCONFIGURED release,
+          # not a degraded one, so fail instead of quietly shipping unsigned
+          # plugins. This branch is reachable only by removing or renaming
+          # MAESTRO_PLUGIN_SIGNING_KEY after a key was baked - at which point the
+          # anchor promises a trust guarantee the artifact cannot honour, and
+          # bundled plugins would silently stop being seeded in a shipped build.
+          # Grouped with the drift guard below: both exist so a key/secret
+          # mismatch fails at release time rather than in users' hands.
+          if [ -z "${MAESTRO_PLUGIN_SIGNING_KEY:-}" ]; then
+            echo "::error::MAESTRO_PUBLISHER_KEYS is baked but the MAESTRO_PLUGIN_SIGNING_KEY secret is absent, so bundled plugins cannot be signed and would ship unseedable. Restore the secret (it must be the private counterpart of the baked anchor) or empty the anchor deliberately." >&2
+            exit 1
+          fi
+
+          KEYFILE="$RUNNER_TEMP/maestro-publisher.pem"
+          # Remove the private key on any exit, including a signing failure that
+          # trips set -e before we reach the end of the step.
+          trap 'rm -f "$KEYFILE"' EXIT
+          printf '%s' "$MAESTRO_PLUGIN_SIGNING_KEY" > "$KEYFILE"
+          for dir in examples/plugins/*/; do
+            [ -f "$dir/plugin.json" ] || continue
+            node dist/cli/maestro-cli.js plugin sign "$dir" --key "$KEYFILE" --json
+            # Anchor/secret drift guard: each freshly written signature must
+            # resolve "trusted" against the baked publisher anchor. Fail here
+            # if the signing secret and publisher-keys.ts have drifted.
+            VALIDATION=$(node dist/cli/maestro-cli.js plugin validate "$dir" --trusted-key "$ANCHOR" --json)
+            if ! grep -q '"status":"trusted"' <<< "$VALIDATION"; then
+              echo "::error::$dir signature does not resolve 'trusted' against the baked MAESTRO_PUBLISHER_KEYS anchor. The CI signing key (MAESTRO_PLUGIN_SIGNING_KEY) and the baked public key have drifted." >&2
+              exit 1
+            fi
+          done
+
+      # Computer History helper. Not part of `npm run build` (contributors
+      # without Rust must still be able to build), so it is built here, after
+      # the vite steps that empty their own dist/ subfolders. electron-builder
+      # copies dist/native/<platform>-${arch}/ into resources/native/.
+      # macOS packages x64 and arm64 separately below, so it needs both.
+      - name: Build Computer History helper
+        if: matrix.platform != 'win'
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          if [ "$PLATFORM" = "mac" ]; then
+            node scripts/build-maestro-computer-history.mjs --arch x64
+            node scripts/build-maestro-computer-history.mjs --arch arm64
+            file dist/native/darwin-x64/maestro-computer-history | grep 'x86_64' >/dev/null
+            file dist/native/darwin-arm64/maestro-computer-history | grep 'arm64' >/dev/null
+            dist/native/darwin-arm64/maestro-computer-history --version
+          else
+            node scripts/build-maestro-computer-history.mjs --arch "$ARCH"
+            "dist/native/linux-$ARCH/maestro-computer-history" --version
+          fi
+
+      # Windows builds the helper in PowerShell, not Git Bash. Git Bash puts
+      # Git's usr/bin first on PATH, and its coreutils `link` shadowed MSVC's
+      # link.exe, so cargo failed to link (v1.1.0-RC). The PATH filter keeps that
+      # `link` out even if the runner image ever adds usr/bin to the machine PATH.
+      - name: Build Computer History helper (Windows)
+        if: matrix.platform == 'win'
+        shell: pwsh
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -notmatch '\\Git\\usr\\bin\\?$' }) -join ';'
+          node scripts/build-maestro-computer-history.mjs --arch $env:ARCH
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & dist/native/win32-x64/maestro-computer-history.exe --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # List release directory before packaging for debugging
       - name: Create release directory
@@ -442,7 +560,10 @@ jobs:
       # and runs regardless of which image built the package.
       - name: Verify GLIBC floor (Linux x64)
         if: matrix.platform == 'linux'
-        run: .github/scripts/verify-glibc-floor.sh 2.35 release/linux-unpacked/resources/app.asar.unpacked
+        run: |
+          .github/scripts/verify-glibc-floor.sh 2.35 \
+            release/linux-unpacked/resources/app.asar.unpacked \
+            release/linux-unpacked/resources/native/maestro-computer-history
 
       # Verify native modules are correctly included in unpacked resources (Linux ARM64)
       - name: Verify native modules in package (Linux ARM64)
@@ -484,6 +605,44 @@ jobs:
             find "$UNPACKED_DIR" -name "*.node" 2>/dev/null || echo "Directory not found"
             exit 1
           fi
+
+      # The Computer History helper must land in resources/native/ of every
+      # package: the main process spawns it from process.resourcesPath/native/.
+      - name: Verify Computer History helper in package
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          check() {
+            local bin="$1" arch_pattern="$2"
+            if [ ! -f "$bin" ]; then
+              echo "ERROR: $bin not found in the package"
+              exit 1
+            fi
+            file "$bin"
+            file "$bin" | grep -E "$arch_pattern" >/dev/null || { echo "ERROR: wrong architecture: $bin"; exit 1; }
+          }
+          case "$PLATFORM" in
+            mac)
+              check release/mac/Maestro.app/Contents/Resources/native/maestro-computer-history 'x86_64'
+              check release/mac-arm64/Maestro.app/Contents/Resources/native/maestro-computer-history 'arm64'
+              release/mac-arm64/Maestro.app/Contents/Resources/native/maestro-computer-history --version
+              ;;
+            win)
+              # Running it is the architecture check (`file` is not on every
+              # Windows image).
+              test -f release/win-unpacked/resources/native/maestro-computer-history.exe
+              release/win-unpacked/resources/native/maestro-computer-history.exe --version
+              ;;
+            linux)
+              check release/linux-unpacked/resources/native/maestro-computer-history 'x86-64'
+              release/linux-unpacked/resources/native/maestro-computer-history --version
+              ;;
+            linux-arm64)
+              check release/linux-arm64-unpacked/resources/native/maestro-computer-history 'aarch64|ARM aarch64'
+              release/linux-arm64-unpacked/resources/native/maestro-computer-history --version
+              ;;
+          esac
 
       # List what was built for debugging
       - name: List release artifacts

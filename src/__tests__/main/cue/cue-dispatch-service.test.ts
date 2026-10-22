@@ -87,8 +87,41 @@ describe('createCueDispatchService', () => {
 				undefined,
 				undefined, // chainRootId
 				undefined, // parentEventId
-				undefined // notify
+				undefined, // notify
+				undefined, // autoRun
+				undefined // turnSettings
 			);
+		});
+	});
+
+	describe('action: autorun', () => {
+		it('threads the captured auto_run payload to executeRun', () => {
+			const { deps, executeRun } = makeDeps();
+			const svc = createCueDispatchService(deps);
+			const autoRun = { documents: ['/proj/a.md'] };
+			const sub = makeSub({ prompt: '', action: 'autorun', auto_run: autoRun });
+			const event = createCueEvent('time.once', 'my-sub');
+
+			expect(svc.dispatchSubscription('owner', sub, event, 'src')).toBe(1);
+			// autoRun rides in the trailing positional slot, after notify.
+			const call = executeRun.mock.calls[0];
+			expect(call[13]).toEqual(autoRun);
+			// The prompt slot is back-filled so the "no prompt -> skip" gate
+			// cannot silently drop a scheduled run.
+			expect(call[1]).toBe('/proj/a.md');
+		});
+
+		it('refuses to dispatch an autorun subscription with no documents', () => {
+			const { deps, executeRun, logs } = makeDeps();
+			const svc = createCueDispatchService(deps);
+			const sub = makeSub({ prompt: '', action: 'autorun', auto_run: { documents: [] } });
+			const event = createCueEvent('time.once', 'my-sub');
+
+			expect(svc.dispatchSubscription('owner', sub, event, 'src')).toBe(0);
+			expect(executeRun).not.toHaveBeenCalled();
+			// A scheduled run fires unattended, so a silent no-op is
+			// indistinguishable from never having fired at all.
+			expect(logs.some(([level, msg]) => level === 'error' && /no documents/.test(msg))).toBe(true);
 		});
 	});
 
@@ -203,7 +236,10 @@ describe('createCueDispatchService', () => {
 				undefined,
 				undefined,
 				undefined, // chainRootId
-				undefined // parentEventId
+				undefined, // parentEventId
+				undefined, // notify
+				undefined, // autoRun
+				undefined // turnSettings
 			);
 		});
 
@@ -231,7 +267,10 @@ describe('createCueDispatchService', () => {
 				undefined,
 				undefined,
 				undefined, // chainRootId
-				undefined // parentEventId
+				undefined, // parentEventId
+				undefined, // notify
+				undefined, // autoRun
+				undefined // turnSettings
 			);
 		});
 	});
@@ -319,6 +358,44 @@ describe('createCueDispatchService', () => {
 			expect(dispatched).toBe(1);
 			expect(executeRun).toHaveBeenCalledTimes(1);
 			expect(logs.some(([level, msg]) => level === 'warn' && /no prompt/.test(msg))).toBe(false);
+		});
+	});
+
+	describe('turn settings (tier / model / effort)', () => {
+		it("threads a single-target sub's model choice as the last executeRun arg", () => {
+			const { deps, executeRun } = makeDeps();
+			const svc = createCueDispatchService(deps);
+			const sub = makeSub({ prompt: 'hello', tier: 'high', effort: 'low' });
+
+			svc.dispatchSubscription('owner', sub, createCueEvent('time.heartbeat', 'my-sub'), 'src');
+
+			expect(executeRun.mock.calls[0][14]).toEqual({ tier: 'high', effort: 'low' });
+		});
+
+		it('gives every fan-out target the same model choice', () => {
+			const { deps, executeRun } = makeDeps();
+			const svc = createCueDispatchService(deps);
+			const sub = makeSub({ fan_out: ['alpha', 'bravo'], prompt: 'p', model: 'gpt-5.5-codex' });
+
+			svc.dispatchSubscription('owner', sub, createCueEvent('time.heartbeat', 'my-sub'), 'src');
+
+			expect(executeRun).toHaveBeenCalledTimes(2);
+			expect(executeRun.mock.calls[0][14]).toEqual({ model: 'gpt-5.5-codex' });
+			expect(executeRun.mock.calls[1][14]).toEqual({ model: 'gpt-5.5-codex' });
+		});
+
+		it('passes undefined when the sub sets no model choice', () => {
+			const { deps, executeRun } = makeDeps();
+			const svc = createCueDispatchService(deps);
+
+			svc.dispatchSubscription(
+				'owner',
+				makeSub({ prompt: 'hello' }),
+				createCueEvent('time.heartbeat', 'my-sub'),
+				'src'
+			);
+
+			expect(executeRun.mock.calls[0][14]).toBeUndefined();
 		});
 	});
 

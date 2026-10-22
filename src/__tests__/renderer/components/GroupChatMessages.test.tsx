@@ -150,6 +150,24 @@ describe('GroupChatMessages auto-scroll setting', () => {
 		expect(scrollTo).toHaveBeenCalled();
 	});
 
+	it('focuses the scrolling transcript through the handle', () => {
+		const ref = createRef<GroupChatMessagesHandle>();
+		const result = render(
+			<GroupChatMessages
+				ref={ref}
+				theme={mockTheme}
+				messages={[{ timestamp: '1700000000000', from: 'Alice', content: 'hello' }]}
+				participants={participants}
+				state="idle"
+			/>
+		);
+		const container = result.container.querySelector('[role="region"]') as HTMLElement;
+
+		act(() => ref.current?.focus());
+
+		expect(document.activeElement).toBe(container);
+	});
+
 	it('retries highlighting until an offscreen target row mounts', async () => {
 		const ref = createRef<GroupChatMessagesHandle>();
 		const timestamp = 1700000000000;
@@ -340,5 +358,24 @@ describe('GroupChatMessages empty state', () => {
 
 		expect(getByText(/messages you send go directly to the/i)).toBeTruthy();
 		expect(queryByText(/^Beta$/)).toBeNull();
+	});
+});
+
+describe('GroupChatMessages steered user messages', () => {
+	it('marks a steered user message with the turns that took it, and only that one', async () => {
+		const { findAllByTestId, getByText } = renderChat([
+			{ timestamp: new Date(1700000000000).toISOString(), from: 'user', content: 'start' },
+			{
+				timestamp: new Date(1700000001000).toISOString(),
+				from: 'user',
+				content: 'also check the docs',
+				steeredTo: ['Alice'],
+			},
+		]);
+
+		const headers = await findAllByTestId('steered-message-header');
+		expect(headers).toHaveLength(1);
+		expect(headers[0].textContent).toContain('Steered to Alice');
+		expect(getByText('also check the docs')).toBeTruthy();
 	});
 });

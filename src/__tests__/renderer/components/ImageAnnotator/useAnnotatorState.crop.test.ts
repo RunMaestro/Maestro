@@ -99,8 +99,52 @@ describe('useAnnotatorState crop', () => {
 		expect(result.current.image).toBe(ORIGINAL);
 		expect(result.current.cropCount).toBe(0);
 		expect(result.current.strokes[0].points).toEqual([[100, 60, 0.5]]);
-		// The rect comes back armed so the user can nudge it and re-apply.
+		// The rect comes back armed so the user can nudge it and re-apply, and
+		// the crop tool comes back with it - a rect under any other tool is
+		// never drawn.
 		expect(result.current.cropRect).toEqual({ x: 40, y: 20, w: 200, h: 200 });
+		expect(result.current.tool).toBe('crop');
+	});
+
+	it('leaves the crop tool once a crop is applied', () => {
+		const { result } = renderAnnotator();
+
+		act(() => result.current.setTool('arrow'));
+		act(() => result.current.setTool('crop'));
+		act(() => result.current.applyCrop(CROPPED, { x: 10, y: 10, w: 100, h: 100 }));
+
+		// Back on the tool the user came from, so no frame is drawn over the
+		// result and cropping again takes a second press of the crop tool.
+		expect(result.current.tool).toBe('arrow');
+		expect(result.current.cropRect).toBeNull();
+	});
+
+	it('returns to the same tool after a second crop', () => {
+		const { result } = renderAnnotator();
+
+		act(() => result.current.setTool('crop'));
+		act(() => result.current.applyCrop(CROPPED, { x: 10, y: 10, w: 100, h: 100 }));
+		expect(result.current.tool).toBe('pen');
+
+		// Re-selecting crop while already on it must not record crop as the
+		// tool to return to.
+		act(() => result.current.setTool('crop'));
+		act(() => result.current.setTool('crop'));
+		act(() => result.current.applyCrop(ORIGINAL, { x: 5, y: 5, w: 50, h: 50 }));
+		expect(result.current.tool).toBe('pen');
+	});
+
+	it('hands back the tool in use when an undone crop is re-applied', () => {
+		const { result } = renderAnnotator();
+
+		act(() => result.current.setTool('crop'));
+		act(() => result.current.applyCrop(CROPPED, { x: 10, y: 10, w: 100, h: 100 }));
+		act(() => result.current.setTool('rect'));
+		act(() => result.current.undo());
+		expect(result.current.tool).toBe('crop');
+
+		act(() => result.current.applyCrop(CROPPED, { x: 12, y: 12, w: 90, h: 90 }));
+		expect(result.current.tool).toBe('rect');
 	});
 
 	it('undoes a stroke drawn after the crop before undoing the crop itself', () => {

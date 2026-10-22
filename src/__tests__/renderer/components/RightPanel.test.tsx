@@ -1115,7 +1115,7 @@ describe('RightPanel', () => {
 			expect(screen.getByText('doc1.md')).toBeInTheDocument();
 		});
 
-		it('should show total tasks completed', () => {
+		it('should show total tasks completed in the progress stat', () => {
 			const currentSessionBatchState: BatchRunState = {
 				isRunning: true,
 				isStopping: false,
@@ -1133,7 +1133,67 @@ describe('RightPanel', () => {
 			const props = createDefaultProps({ currentSessionBatchState });
 			render(<RightPanel {...props} />);
 
-			expect(screen.getByText('7 of 20 tasks completed')).toBeInTheDocument();
+			expect(screen.getByTestId('autorun-stat-progress-value')).toHaveTextContent('35%');
+			expect(screen.getByTestId('autorun-stat-progress-sub')).toHaveTextContent('7 / 20 tasks');
+			// Counts moved into the strip, so the old status line is gone.
+			expect(screen.queryByText(/tasks completed/)).not.toBeInTheDocument();
+		});
+
+		it('should show the ETA from the pace of tasks done in this run', () => {
+			const currentSessionBatchState: BatchRunState = {
+				isRunning: true,
+				isStopping: false,
+				documents: ['doc1', 'doc2'],
+				currentDocumentIndex: 0,
+				totalTasks: 10,
+				completedTasks: 6,
+				currentDocTasksTotal: 10,
+				currentDocTasksCompleted: 6,
+				totalTasksAcrossAllDocs: 10,
+				completedTasksAcrossAllDocs: 6,
+				initialCompletedTasks: 0,
+				loopEnabled: false,
+				loopIteration: 0,
+				startTime: Date.now() - 60 * 60_000,
+				// Paused clock (no lastActiveTimestamp): exactly 60 minutes of active time.
+				accumulatedElapsedMs: 60 * 60_000,
+			};
+			const props = createDefaultProps({ currentSessionBatchState });
+			render(<RightPanel {...props} />);
+
+			expect(screen.getByTestId('autorun-stat-progress-value')).toHaveTextContent('60%');
+			expect(screen.getByTestId('autorun-stat-elapsed-value')).toHaveTextContent('1h 0m');
+			expect(screen.getByTestId('autorun-stat-elapsed-sub')).toHaveTextContent('≈ 10m 0s / task');
+			expect(screen.getByTestId('autorun-stat-remaining-value')).toHaveTextContent('~40m');
+			expect(screen.getByTestId('autorun-stat-remaining-sub')).toHaveTextContent(/^done ≈ /);
+		});
+
+		it('should hold the ETA until enough tasks have completed in this run', () => {
+			const currentSessionBatchState: BatchRunState = {
+				isRunning: true,
+				isStopping: false,
+				documents: ['doc1'],
+				currentDocumentIndex: 0,
+				totalTasks: 10,
+				completedTasks: 5,
+				currentDocTasksTotal: 10,
+				currentDocTasksCompleted: 5,
+				totalTasksAcrossAllDocs: 10,
+				completedTasksAcrossAllDocs: 5,
+				// Four of the five were checked before the run started.
+				initialCompletedTasks: 4,
+				loopEnabled: false,
+				loopIteration: 0,
+				startTime: Date.now() - 10 * 60_000,
+				accumulatedElapsedMs: 10 * 60_000,
+			};
+			const props = createDefaultProps({ currentSessionBatchState });
+			render(<RightPanel {...props} />);
+
+			expect(screen.getByTestId('autorun-stat-remaining-value')).toHaveTextContent('-');
+			expect(screen.getByTestId('autorun-stat-remaining-sub')).toHaveTextContent(
+				'after 2 more tasks'
+			);
 		});
 
 		it('should show single document task count when totalTasksAcrossAllDocs is 0', () => {
@@ -1154,7 +1214,8 @@ describe('RightPanel', () => {
 			const props = createDefaultProps({ currentSessionBatchState });
 			render(<RightPanel {...props} />);
 
-			expect(screen.getByText('5 of 10 tasks completed')).toBeInTheDocument();
+			expect(screen.getByTestId('autorun-stat-progress-value')).toHaveTextContent('50%');
+			expect(screen.getByTestId('autorun-stat-progress-sub')).toHaveTextContent('5 / 10 tasks');
 		});
 
 		it('should show loading spinner during batch run', () => {

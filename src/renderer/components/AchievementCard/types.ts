@@ -47,6 +47,8 @@ export interface AchievementCardViewModel {
 	autoRunTimeFormatted: string;
 	/** Cue share of the cumulative time, 0-100 */
 	cueSharePercent: number;
+	/** Whether any Cue time has been recorded at all */
+	hasCueTime: boolean;
 	longestRunFormatted: string;
 	totalRuns: number;
 	unlockedCountLabel: string;

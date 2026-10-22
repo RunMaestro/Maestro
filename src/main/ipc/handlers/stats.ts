@@ -42,6 +42,13 @@ import type { DelegationDay, DelegationTotals } from '../../../shared/delegation
 import { getTimeRangeStart } from '../../stats/utils';
 import type { TokenUsageAggregate, TokenUsageQuery } from '../../../shared/tokenUsage';
 import { getTokenUsageAggregate } from '../../stats/token-usage/token-usage-accessor';
+import { resolveEncoreFeatures } from '../../../shared/encoreFeatureDefaults';
+import {
+	STATS_INDEXING_CHANNEL,
+	getStatsIndexingState,
+	setStatsIndexingBroadcaster,
+} from '../../stats/stats-indexing';
+import type { StatsIndexingState } from '../../../shared/statsIndexing';
 
 const LOG_CONTEXT = '[Stats]';
 
@@ -82,6 +89,11 @@ function broadcastStatsUpdate(safeSend: SafeSendFn): void {
 export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 	const { getMainWindow, settingsStore } = deps;
 	const safeSend = createSafeSend(getMainWindow);
+
+	// Indexing progress reaches every window (and web-desktop clients): a scan
+	// started from one window's dashboard blocks the same caches for all of them.
+	const broadcastToAllWindows = createSafeSend(() => BrowserWindow.getAllWindows());
+	setStatsIndexingBroadcaster((state) => broadcastToAllWindows(STATS_INDEXING_CHANNEL, state));
 
 	// PR-B 1.5: flush any buffered query events synchronously before the app
 	// exits so we don't drop them. The handler is fire-and-forget - if it
@@ -168,6 +180,7 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 				logger.info(`Started Auto Run session: ${id}`, LOG_CONTEXT, {
 					sessionId: session.sessionId,
 					documentPath: session.documentPath,
+					kind: session.kind,
 				});
 				broadcastStatsUpdate(safeSend);
 				return id;
@@ -336,6 +349,16 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 		)
 	);
 
+	// Progress of the long transcript scans behind the usage caches (version
+	// upgrades and first indexing). Pushed on `stats:indexingUpdate` as it moves;
+	// this read is for a surface that mounts mid-scan.
+	ipcMain.handle(
+		'stats:get-indexing-state',
+		withIpcErrorLogging(handlerOpts('getIndexingState'), async (): Promise<StatsIndexingState> => {
+			return getStatsIndexingState();
+		})
+	);
+
 	// Token & cost usage aggregate for the Cost & Tokens dashboard. Reads each
 	// agent's on-disk session storage (not the stats DB), served through a
 	// per-session incremental cache. `force` bypasses the in-memory memo.
@@ -372,8 +395,9 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 
 				// Same gate as the Cue stats handler: the dashboard only shows Cue
 				// data when both flags are on.
-				const ef = (settingsStore?.get('encoreFeatures') ?? {}) as Record<string, unknown>;
-				const cueEnabled = ef.usageStats === true && ef.maestroCue === true;
+				// No settings store means the flags cannot be read: leave Cue out.
+				const ef = resolveEncoreFeatures(settingsStore?.get('encoreFeatures'));
+				const cueEnabled = !!settingsStore && ef.usageStats && ef.maestroCue;
 				const cueEvents = cueEnabled ? getRecentCueEvents(sinceMs) : null;
 				if (!cueEnabled) {
 					notes.push('Cue runs are not included because Maestro Cue is off.');

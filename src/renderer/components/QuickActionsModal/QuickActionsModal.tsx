@@ -1,4 +1,5 @@
 import React, { memo, useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { collectHiddenGroupIds } from '../../utils/sidebarMembership';
 import { useShallow } from 'zustand/react/shallow';
 import type { QuickAction, QuickActionsModalProps } from './types';
 import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
@@ -6,13 +7,20 @@ import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { useResizableModal } from '../../hooks/ui/useResizableModal';
 import { useFocusAfterRender } from '../../hooks/utils/useFocusAfterRender';
 import { usePluginContributions } from '../../hooks/usePluginContributions';
-import { notifyToast, useNotificationStore } from '../../stores/notificationStore';
+import {
+	notifyToast,
+	selectUnreadNotificationCount,
+	useNotificationStore,
+} from '../../stores/notificationStore';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import { captureException } from '../../utils/sentry';
 import { getModalActions, selectModalOpen, useModalStore } from '../../stores/modalStore';
 import { toggleAllCadenzas, useCadenzaStore } from '../../stores/cadenzaStore';
 import { buildConcertoCommands } from './commands/concertoCommands';
+import { buildThroughputGaugeCommands } from './commands/throughputGaugeCommands';
+import { useThroughputGaugeStore } from '../../stores/throughputGaugeStore';
+import { applyThroughputGaugeSettingsPatch } from '../../../shared/throughputGauge';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { Z_LAYERS } from '../../constants/zLayers';
 import { gitService } from '../../services/git';
@@ -27,7 +35,12 @@ import { visibleAiTabs } from '../../utils/tabHelpers';
 import { useListNavigation } from '../../hooks';
 import { useUIStore } from '../../stores/uiStore';
 import { useSidebarNavStore } from '../../stores/sidebarNavStore';
-import { useSettingsStore, selectIsLeaderboardRegistered } from '../../stores/settingsStore';
+import {
+	useSettingsStore,
+	selectGroupsPlusEnabled,
+	selectIsLeaderboardRegistered,
+} from '../../stores/settingsStore';
+import { canOpenComputerHistory } from '../../utils/computerHistoryAvailability';
 import { useBatchStore, selectActiveBatchSessionIds } from '../../stores/batchStore';
 import { useFileExplorerStore } from '../../stores/fileExplorerStore';
 import { useFeedbackDraftStore } from '../../stores/feedbackDraftStore';
@@ -48,10 +61,15 @@ import { ResizeHandles } from '../ui/ResizeHandles';
 import { buildAgentPanelCommands } from './commands/agentPanelCommands';
 import { buildAgentSwitcherCommands } from './commands/agentSwitcherCommands';
 import { buildMediaPlayerCommands } from './commands/mediaPlayerCommands';
+import { buildQuickChatCommands } from './commands/quickChatCommands';
+import { isWebDesktop } from '../../utils/runtimeContext';
+import { buildStatsIndexingCommands } from './commands/statsIndexingCommands';
 import { selectCanOpenMediaPlayer, useMediaPlaybackStore } from '../../stores/mediaPlaybackStore';
+import { selectStatsIndexingActive, useStatsIndexingStore } from '../../stores/statsIndexingStore';
 import { buildActiveTabContextCommands } from './commands/contextCommands';
 import { buildDebugCommands } from './commands/debugCommands';
 import { buildFeatureCommands } from './commands/featureCommands';
+import { areToastsEnabled } from '../../../shared/toastDuration';
 import { buildGitWorktreeCommands } from './commands/gitWorktreeCommands';
 import {
 	buildGroupChatCommands,
@@ -70,12 +88,20 @@ import {
 	buildSessionJumpCommands,
 	buildSessionManagementCommands,
 } from './commands/sessionCommands';
+import { buildStarredSessionCommands } from './commands/starredSessionCommands';
 import { buildSupportCommands } from './commands/supportCommands';
 import { buildNewTabCommands, buildTabCommands } from './commands/tabCommands';
 import { buildTabGroupCommands } from './commands/tabGroupCommands';
 import { buildTileCommands } from './commands/tileCommands';
 import { buildWindowCommands } from './commands/windowCommands';
-import { buildWindowMoveTargets } from '../../utils/windowTargets';
+import {
+	buildGroupWindowMoveTargets,
+	buildWindowMoveTargets,
+	collectGroupAgentIds,
+} from '../../utils/windowTargets';
+
+/** Stable fallback so the selector never hands React a fresh array. */
+const NO_QUICK_CHAT_HOTKEY: string[] = [];
 
 export const QuickActionsModal = memo(function QuickActionsModal(props: QuickActionsModalProps) {
 	const {
@@ -159,6 +185,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		onCloseOtherTabs,
 		onCloseTabsLeft,
 		onCloseTabsRight,
+		onCloseTabGroup,
 		onCloseCurrentTab,
 		onMoveTabToFirst,
 		onMoveTabToLast,
@@ -219,6 +246,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const storeSetSessionFilterOpen = useUIStore((s) => s.setSessionFilterOpen);
 	const storeSetOutputSearchOpen = useUIStore((s) => s.setOutputSearchOpen);
 	const storeSetFileTreeFilterOpen = useFileExplorerStore((s) => s.setFileTreeFilterOpen);
+	const groupsPlusEnabled = useSettingsStore(selectGroupsPlusEnabled);
+	const toastsEnabled = useSettingsStore((s) => areToastsEnabled(s.toastDuration));
 	const audioFeedbackEnabled = useSettingsStore((s) => s.audioFeedbackEnabled);
 	const setAudioFeedbackEnabled = useSettingsStore((s) => s.setAudioFeedbackEnabled);
 	const idleNotificationEnabled = useSettingsStore((s) => s.idleNotificationEnabled);
@@ -249,14 +278,35 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const setGroupChatsExpanded = useSettingsStore((s) => s.setGroupChatsExpanded);
 	const isLeaderboardRegistered = useSettingsStore(selectIsLeaderboardRegistered);
 	const activeBatchSessionIds = useBatchStore(useShallow(selectActiveBatchSessionIds));
+	const batchRunStates = useBatchStore((s) => s.batchRunStates);
 	// Concerto's two surfaces are store-owned toggles, so read their live state
 	// here: the palette entries name what the keypress will actually do.
 	const concertoEnabled = useSettingsStore((s) => s.encoreFeatures.concerto === true);
+	// Quick Chat is on by default, and only the Electron app has its window.
+	const quickChatAvailable =
+		useSettingsStore((s) => s.encoreFeatures.quickChat !== false) && !isWebDesktop();
+	const quickChatHotkey =
+		useSettingsStore((s) => s.quickChatSettings?.hotkey) ?? NO_QUICK_CHAT_HOTKEY;
 	const concertoStageOpen = useModalStore(selectModalOpen('concertoStage'));
 	const cadenzasHidden = useCadenzaStore((s) => s.hidden);
 	const concertoStageFloating = useSettingsStore((s) => s.concertoStageFloating);
 	const setConcertoStageFloating = useSettingsStore((s) => s.setConcertoStageFloating);
 	const toggleConcertoStage = useCallback(() => getModalActions().toggleConcertoStage(), []);
+	const throughputGaugeEnabled = useSettingsStore((s) => s.encoreFeatures.throughputGauge === true);
+	const throughputGaugeVisible = useThroughputGaugeStore((s) => s.visible);
+	const throughputGaugeSettings = useSettingsStore((s) => s.throughputGaugeSettings);
+	const setThroughputGaugeSettings = useSettingsStore((s) => s.setThroughputGaugeSettings);
+	const applyThroughputGaugeSettings = useCallback(
+		(patch: Partial<typeof throughputGaugeSettings>) => {
+			const result = applyThroughputGaugeSettingsPatch(throughputGaugeSettings, patch);
+			if (result.ok) setThroughputGaugeSettings(result.settings);
+		},
+		[throughputGaugeSettings, setThroughputGaugeSettings]
+	);
+	const computerHistoryAvailable = useSettingsStore((s) =>
+		canOpenComputerHistory(s.encoreFeatures)
+	);
+	const openComputerHistory = useCallback(() => getModalActions().setComputerHistoryOpen(true), []);
 	const toggleConcertoStageFloating = useCallback(
 		() => setConcertoStageFloating(!concertoStageFloating),
 		[concertoStageFloating, setConcertoStageFloating]
@@ -266,8 +316,12 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	// sit open while a queued file advances, and landing on a stale id would open
 	// the player on something the user already finished.
 	const openMediaPlayer = useCallback(() => useMediaPlaybackStore.getState().openPlayer(), []);
+	const statsIndexingActive = useStatsIndexingStore(selectStatsIndexingActive);
+	const showStatsIndexingProgress = useStatsIndexingStore((s) => s.bringToFront);
 	const visibleToastCount = useNotificationStore((s) => s.toasts.length);
 	const clearToasts = useNotificationStore((s) => s.clearToasts);
+	const unreadNotificationCount = useNotificationStore(selectUnreadNotificationCount);
+	const notificationCenterEnabled = useSettingsStore((s) => s.notificationCenterEnabled);
 	const toastPosition = useSettingsStore((s) => s.toastPosition);
 	const setToastPosition = useSettingsStore((s) => s.setToastPosition);
 	// Which group chat rooms are running. Only the chat list and the active id
@@ -378,8 +432,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		}
 	}, [setProfilingActive, setProfilingBufferPercent]);
 	// Stopping is slow (flush + zip compression can take tens of seconds), so we
-	// hand off to the ProfilingCaptureModal, which owns the whole stop-and-bundle
-	// flow, shows live progress, and clears the wand indicator when it finishes.
+	// hand off to the profilingCapture service, which owns the stop-and-bundle
+	// flow and clears the wand indicator when it finishes. The modal only shows it.
 	const handleStopProfiling = useCallback(() => {
 		openModal('profilingCapture');
 	}, [openModal]);
@@ -392,6 +446,14 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const resetSelectionToFirstRef = useRef<() => void>(() => {});
 	const resetSelectionToFirst = useCallback(() => resetSelectionToFirstRef.current(), []);
 	const activeSession = sessions.find((s) => s.id === activeSessionId);
+	// The group a "Move Group to ..." command carries: a worktree child is filed
+	// under its parent's group, the same unit the window move relocates.
+	const activeWindowGroupId = activeSession?.parentSessionId
+		? sessions.find((s) => s.id === activeSession.parentSessionId)?.groupId
+		: activeSession?.groupId;
+	const activeWindowGroup = activeWindowGroupId
+		? groups.find((g) => g.id === activeWindowGroupId)
+		: undefined;
 	// The palette is the third surface for the git action set, after the header
 	// branch pill and the Left Bar right-click menu.
 	const gitActions = useGitAgentActions(activeSession);
@@ -504,12 +566,18 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	);
 
 	const sessionActions = buildSessionJumpCommands({
-		sessions,
+		sessions: switchableSessions,
 		setActiveSessionId,
 		revealJumpTarget,
 		getSessionWindow,
 		jumpSlots,
 	});
+
+	// Starred Sessions: the Left Bar's list (open tabs + closed starred sessions),
+	// published to sidebarNavStore and activated exactly like clicking the row.
+	const starredItems = useSidebarNavStore((s) => s.starredItems);
+	const activateStarredItem = useSidebarNavStore((s) => s.activateStarredItem);
+	const starredActions = buildStarredSessionCommands({ starredItems, activateStarredItem });
 
 	const groupChatActions = buildGroupChatJumpCommands({
 		groupChats,
@@ -519,11 +587,23 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 
 	const mainActions: QuickAction[] = [
 		...sessionActions,
+		...starredActions,
 		...groupChatActions,
 		...buildMediaPlayerCommands({
 			canOpenMediaPlayer,
 			openMediaPlayer,
 			openMediaPlayerShortcut: shortcuts.openMediaPlayer,
+			setQuickActionOpen,
+		}),
+		...buildQuickChatCommands({
+			quickChatAvailable,
+			hotkey: quickChatHotkey,
+			openQuickChat: () => void window.maestro.quickChat.window('show'),
+			setQuickActionOpen,
+		}),
+		...buildStatsIndexingCommands({
+			scanActive: statsIndexingActive,
+			showScanProgress: showStatsIndexingProgress,
 			setQuickActionOpen,
 		}),
 		...buildConcertoCommands({
@@ -540,10 +620,28 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				toggleCadenzas: shortcuts.toggleCadenzas,
 			},
 		}),
+		...buildThroughputGaugeCommands({
+			gaugeEnabled: throughputGaugeEnabled,
+			gaugeVisible: throughputGaugeVisible,
+			settings: throughputGaugeSettings,
+			toggleGauge: () => useThroughputGaugeStore.getState().toggle(),
+			showGauge: () => useThroughputGaugeStore.getState().show(),
+			resetPeak: () => useThroughputGaugeStore.getState().resetPeak(),
+			applySettings: applyThroughputGaugeSettings,
+			setQuickActionOpen,
+			toggleShortcut: shortcuts.toggleThroughputGauge,
+		}),
 		...buildNotificationCommands({
 			visibleToastCount,
 			clearToasts,
+			unreadNotificationCount,
+			openNotificationCenter: notificationCenterEnabled
+				? () => useNotificationStore.getState().setNotificationCenterOpen(true)
+				: undefined,
 			clearAllNotificationsShortcut: shortcuts.clearAllNotifications,
+			openNotificationCenterShortcut: shortcuts.openNotificationCenter,
+			toastsEnabled,
+			toggleInAppToastsShortcut: shortcuts.toggleInAppToasts,
 			toastPosition,
 			setToastPosition,
 			setQuickActionOpen,
@@ -628,6 +726,17 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 					: [],
 			moveToNewWindow: (id) => windowCtx?.moveSessionToNewWindow(id),
 			moveToWindow: (id, targetWindowId) => windowCtx?.moveSessionToWindow(id, targetWindowId),
+			activeGroup: activeWindowGroup,
+			groupWindowTargets:
+				windowCtx && activeWindowGroup
+					? buildGroupWindowMoveTargets(
+							windowCtx.windows,
+							collectGroupAgentIds(sessions, groups, activeWindowGroup.id, groupsPlusEnabled)
+						)
+					: [],
+			moveGroupToNewWindow: (groupId) => windowCtx?.moveGroupToNewWindow(groupId),
+			moveGroupToWindow: (groupId, targetWindowId) =>
+				windowCtx?.moveGroupToWindow(groupId, targetWindowId),
 			setQuickActionOpen,
 			canRenameCurrentWindow: isSecondaryWindow,
 			beginRenameCurrentWindow,
@@ -694,6 +803,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		...buildTabGroupCommands({
 			activeSession,
 			setQuickActionOpen,
+			renameTabGroupShortcut: tabShortcuts?.renameTabGroup,
+			onCloseTabGroup,
 		}),
 		...buildTileCommands({
 			activeSession,
@@ -734,6 +845,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			onOpenBoard,
 			onOpenProfiles,
 			onOpenPianola,
+			onOpenComputerHistory: computerHistoryAvailable ? openComputerHistory : undefined,
 			onConfigureCue,
 			onOpenLastDocumentGraph,
 			onOpenCurrentFileInGraph,
@@ -752,9 +864,11 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				openMemoryViewer: shortcuts.openMemoryViewer,
 				executionQueue: shortcuts.executionQueue,
 				editLastQueuedMessage: shortcuts.editLastQueuedMessage,
+				steerSend: shortcuts.steerSend,
 				openSymphony: shortcuts.openSymphony,
 				directorNotes: shortcuts.directorNotes,
 				openCue: shortcuts.openCue,
+				computerHistory: shortcuts.computerHistory,
 				fuzzyFileSearch: shortcuts.fuzzyFileSearch,
 				editClipboardImage: shortcuts.editClipboardImage,
 			},
@@ -859,7 +973,9 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			searchAllTabsShortcut: shortcuts.searchAllTabs,
 		}),
 		...buildGroupChatCommands({
-			sessions,
+			// The "2+ agents" rule counts only live agents: a dormant Pianola must
+			// not make New Group Chat appear.
+			sessions: switchableSessions,
 			groupChats,
 			activeGroupChatId,
 			onNewGroupChat,
@@ -927,14 +1043,22 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		resetSelectionToFirst,
 	});
 
+	// The RAW hidden set, not the Left Bar's resolved one: the switcher always
+	// lists a hidden agent (that is how you reach one), so what it needs to know
+	// is whether the group is hidden at all - never whether "Show Hidden"
+	// happens to be revealing it in the sidebar right now.
+	const hiddenGroupIds = useMemo(() => collectHiddenGroupIds(groups), [groups]);
+
 	const agentActions = [
 		...buildAgentSwitcherCommands({
 			sessions: switchableSessions,
 			activeBatchSessionIds,
+			batchRunStates,
 			setActiveSessionId,
 			revealJumpTarget,
 			getSessionWindow,
 			jumpSlots,
+			hiddenGroupIds,
 		}),
 		...buildGroupChatSwitcherCommands({
 			groupChats,
@@ -952,8 +1076,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const filteredRef = useRef(filtered);
 	filteredRef.current = filtered;
 
-	// LIVE/IDLE bucket headers only earn their pixels in agents mode when both
-	// buckets are present - a single-bucket list doesn't need a label above it.
+	// LIVE/IDLE/HIDDEN bucket headers only earn their pixels in agents mode when
+	// more than one bucket is present - a single-bucket list needs no label.
 	const showBucketHeaders = shouldShowAgentBucketHeaders(filtered, mode);
 
 	// Callback for when an item is selected (by Enter key or number hotkey)

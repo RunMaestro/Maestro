@@ -30,6 +30,7 @@ import { subscribeToInAppDeepLinks } from '../../utils/openMaestroLink';
 import type { ParsedDeepLink } from '../../../shared/types';
 import { isWebDesktop } from '../../utils/runtimeContext';
 import { noteDesktopAiTabSelection } from '../../utils/desktopTabSelectionSync';
+import { dispatchToastClickAction } from '../../services/toastClickActions';
 
 // ============================================================================
 // Dependencies interface
@@ -187,6 +188,15 @@ export function useSessionSwitchCallbacks(
 		},
 		[setActiveSessionId]
 	);
+
+	// Native notifications use the same navigation as their in-app toast.
+	useEffect(() => {
+		// Native notification clicks are owned by host windows, not remote renderers.
+		if (isWebDesktop()) return;
+		return window.maestro?.notification?.onClickAction?.((action) =>
+			dispatchToastClickAction(action, { onSessionClick: handleToastSessionClick })
+		);
+	}, [handleToastSessionClick]);
 
 	// Deep link navigation handler - processes maestro:// URLs from OS notifications,
 	// external apps, CLI commands, AND in-renderer markdown link clicks.

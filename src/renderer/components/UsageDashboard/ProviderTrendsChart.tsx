@@ -10,10 +10,14 @@ import React, { memo, useMemo, useState, useCallback } from 'react';
 import { format, parseISO } from 'date-fns';
 import type { Theme, Session } from '../../types';
 import type { StatsTimeRange, StatsAggregation } from '../../hooks/stats/useStats';
-import { COLORBLIND_AGENT_PALETTE } from '../../constants/colorblindPalettes';
 import { formatDurationHuman as formatDuration, formatNumber } from '../../../shared/formatters';
 import { humanizeDuration, DURATION_LADDER_HOURS } from '../../../shared/duration';
-import { buildNameMap, computeAxisLabelIndices, PHONE_AXIS_LABELS } from './chartUtils';
+import {
+	buildNameMap,
+	computeAxisLabelIndices,
+	PHONE_AXIS_LABELS,
+	getSeriesColor,
+} from './chartUtils';
 import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 import { ChartTooltip } from './ChartTooltip';
 import { ChartLoadingOverlay } from './ChartLoadingOverlay';
@@ -26,26 +30,6 @@ interface ProviderTrendsChartProps {
 	theme: Theme;
 	colorBlindMode?: boolean;
 	sessions?: Session[];
-}
-
-// Mirrors `getAgentColor` in AgentComparisonChart so the two charts use the
-// same color per provider - important when reading them side-by-side.
-function getProviderColor(index: number, theme: Theme, colorBlindMode: boolean): string {
-	if (colorBlindMode) {
-		return COLORBLIND_AGENT_PALETTE[index % COLORBLIND_AGENT_PALETTE.length];
-	}
-	if (index === 0) return theme.colors.accent;
-	const palette = [
-		'#10b981',
-		'#8b5cf6',
-		'#ef4444',
-		'#06b6d4',
-		'#ec4899',
-		'#f59e0b',
-		'#84cc16',
-		'#6366f1',
-	];
-	return palette[(index - 1) % palette.length];
 }
 
 function formatXAxisDate(dateStr: string, timeRange: StatsTimeRange): string {
@@ -101,7 +85,7 @@ export const ProviderTrendsChart = memo(function ProviderTrendsChart({
 		const colors: Record<string, string> = {};
 		sorted.forEach((p, i) => {
 			names[p] = nameMap.get(p)?.name ?? p;
-			colors[p] = getProviderColor(i, theme, colorBlindMode);
+			colors[p] = getSeriesColor(i, theme, colorBlindMode);
 		});
 
 		const dateSet = new Set<string>();

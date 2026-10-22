@@ -1,4 +1,4 @@
-import type { Session } from '../../../types';
+import type { Group, Session } from '../../../types';
 import type { QuickAction } from '../types';
 import type { WindowMoveTarget } from '../../../utils/windowTargets';
 
@@ -10,8 +10,17 @@ interface BuildWindowCommandsArgs {
 	 * hydrated), which suppresses all move-to-window commands.
 	 */
 	windowTargets: WindowMoveTarget[];
-	moveToNewWindow: (sessionId: string) => void | Promise<void>;
-	moveToWindow: (sessionId: string, targetWindowId: string) => void | Promise<void>;
+	moveToNewWindow: (sessionId: string) => void | Promise<unknown>;
+	moveToWindow: (sessionId: string, targetWindowId: string) => void | Promise<unknown>;
+	/**
+	 * The group the active agent is filed in (a worktree child answers with its
+	 * parent's group). Absent for an ungrouped agent, which hides the group moves.
+	 */
+	activeGroup?: Pick<Group, 'id' | 'name' | 'emoji'>;
+	/** `buildGroupWindowMoveTargets` for `activeGroup`. */
+	groupWindowTargets?: WindowMoveTarget[];
+	moveGroupToNewWindow?: (groupId: string) => void | Promise<unknown>;
+	moveGroupToWindow?: (groupId: string, targetWindowId: string) => void | Promise<unknown>;
 	setQuickActionOpen: (open: boolean) => void;
 	/**
 	 * True only when the palette is running in a SECONDARY window (Cmd+K outside
@@ -35,6 +44,9 @@ interface BuildWindowCommandsArgs {
  * Move-to-Window submenu so both surfaces stay in lockstep. Labels contain
  * "Window" / "Move Agent" / "Rename" so keyword search surfaces them.
  *
+ * Also moves the active agent's whole group ("Move Group to ..."), mirroring
+ * the Left Bar group menu.
+ *
  * Returns `[]` when nothing applies (no rename affordance AND no active agent /
  * no enumerated windows), so a single-window app shows no window commands.
  */
@@ -43,6 +55,10 @@ export function buildWindowCommands({
 	windowTargets,
 	moveToNewWindow,
 	moveToWindow,
+	activeGroup,
+	groupWindowTargets = [],
+	moveGroupToNewWindow,
+	moveGroupToWindow,
 	setQuickActionOpen,
 	canRenameCurrentWindow,
 	beginRenameCurrentWindow,
@@ -80,6 +96,33 @@ export function buildWindowCommands({
 				label: `Move Agent to ${target.label}`,
 				action: () => {
 					void moveToWindow(sessionId, target.windowId);
+					setQuickActionOpen(false);
+				},
+			});
+		}
+	}
+
+	// Move the active agent's whole GROUP - the palette twin of the Left Bar group
+	// menu's "Move Group to Window...". A window already holding the entire group
+	// is skipped; one holding part of it stays, since moving there gathers it.
+	if (activeGroup && groupWindowTargets.length > 0 && moveGroupToNewWindow && moveGroupToWindow) {
+		const groupId = activeGroup.id;
+		const groupLabel = `${activeGroup.emoji ? `${activeGroup.emoji} ` : ''}${activeGroup.name}`;
+		commands.push({
+			id: 'move-group-to-new-window',
+			label: `Move Group to New Window: ${groupLabel}`,
+			action: () => {
+				void moveGroupToNewWindow(groupId);
+				setQuickActionOpen(false);
+			},
+		});
+		for (const target of groupWindowTargets) {
+			if (target.isCurrentOwner) continue;
+			commands.push({
+				id: `move-group-to-window-${target.windowId}`,
+				label: `Move Group to ${target.label}: ${groupLabel}`,
+				action: () => {
+					void moveGroupToWindow(groupId, target.windowId);
 					setQuickActionOpen(false);
 				},
 			});

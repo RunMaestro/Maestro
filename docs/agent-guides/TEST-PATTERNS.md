@@ -36,6 +36,19 @@ npm run test          # Unit tests (excludes integration/e2e/performance)
 npm run test:watch    # Watch mode
 ```
 
+### maestro-p Live Suite
+
+The maestro-p unit tests (`src/__tests__/maestro-p/`) mock the PTY. The behavior that breaks in the field (envelopes, exit codes, slash commands, trust dialogs, `--continue`, process cleanup) only shows against a real `claude` TUI, so `scripts/maestro-p-suite.mjs` runs the binary end to end. Each case runs a real turn on the account it runs as. Run it after any change to `src/maestro-p/`, and add a case when you fix a bug only a live run can see.
+
+```bash
+npm run test:maestro-p:live -- --local                          # build this checkout and test it
+npm run test:maestro-p:live -- --local --only T18,T20           # a subset
+npm run test:maestro-p:live -- --config-dir ~/.claude-work      # another account
+npm run test:maestro-p:live -- --cli <Resources>/maestro-cli.js --cli-agent <id>   # adds T22, the CLI send path
+```
+
+Test folders go under `.maestro/scratch/maestro-p-suite` (override with `--root`), which must sit inside a folder claude already trusts on that account. Exit code: `0` all pass, `2` only known-issue failures (`KNOWN` in the script), `1` anything unexpected. Raw stdout and stderr of every failing run are kept under `<root>/logs/`.
+
 ---
 
 ## File Organization
@@ -321,9 +334,10 @@ vi.mock('../../../cli/services/agent-spawner', () => ({
 
 ### Isolating a Test From the Developer's Shell (`isolateAgentEnv`)
 
-Agent env defaults are **shell-wins by design**: `applyEnvLayers` in
-`src/cli/services/agent-spawner.ts` layers an agent's `defaultEnvVars` /
-`batchModeEnvVars` UNDER `process.env`, so a user who exported a value keeps it.
+Agent env defaults are **shell-wins by design** on the CLI: the `cli` surface
+of `buildAgentEnvironment()` (`src/shared/maestro-lib/launch/env.ts`) layers an
+agent's `defaultEnvVars` / `batchModeEnvVars` UNDER `process.env`, so a user who
+exported a value keeps it.
 That means any assertion about a DEFAULT value is really an assertion about
 whatever the test runner's shell happened to export, and it fails on that
 machine only.
@@ -658,6 +672,49 @@ it('syncs sessions across providers', async () => {
 });
 ```
 
+### Turn Recordings (one turn, three pipelines)
+
+`src/__tests__/main/process-manager/recordings/` holds whole agent turns: the
+stdout chunks as they arrived, the stderr, and how the process closed. Every
+recording in `RECORDINGS` (`fixtures.ts`) is replayed through all three places
+that run an agent, so a change that breaks a provider's turn fails in each:
+
+| Harness                                                          | What it replays through                                      |
+| ---------------------------------------------------------------- | ------------------------------------------------------------ |
+| `recordings/turn-recordings.test.ts`                             | desktop: `StdoutHandler` + `ExitHandler`                     |
+| `src/__tests__/cli/services/turn-recordings.cli.test.ts`         | the CLI: `spawnAgent`, with an `EXPECTED` entry per turn     |
+| `src/__tests__/shared/maestro-lib/run/run-to-completion.test.ts` | the library: a real process (`fake-agent.mjs`) vs in-process |
+
+Three kinds of recording, and the difference matters when one fails:
+
+- **Synthetic** (`fixtures.ts`): hand-written Claude Code turns, one per edge
+  case (a cut stream, a bad exit with an answer, an in-band error).
+- **Captured** (`captured.ts`, `captured/*.json`): real turns from a real
+  binary, byte for byte. Claude Code and OpenCode today.
+- **Documented-format** (`documented.ts`): one normal turn per remaining
+  provider, written from the wire format its parser documents. They prove the
+  pipeline handles a well-formed turn for that provider. They do NOT prove the
+  provider's current release still writes that format; only a capture does.
+
+To capture a real turn on a machine where the provider is installed and logged
+in:
+
+```bash
+node scripts/record-provider-turn.mjs --agent codex --out codex-normal.json
+```
+
+The tool starts the provider with Maestro's own arguments (planned by
+`planSessionTurn`), in a clean environment, and records every chunk. `--resume
+<session id>` records a resumed turn; `--stop SIGINT --stop-after <text>`
+records a stopped one (SIGINT is the desktop Stop button, SIGTERM a CLI stop);
+`--keep-env <NAME>` lets an API key or a config directory through. It trims a
+Claude-style init event, points the working directory at `/project`, and
+refuses to write a file that still contains a home directory path, the local
+user name or an email address. Move the file into `captured/`, register it in
+`captured.ts` with `fromCapture()`, and delete that provider's entry from
+`documented.ts`. The CLI harness fails until the new recording has an
+`EXPECTED` entry, on purpose.
+
 ---
 
 ## Test Skeleton Template
@@ -915,12 +972,13 @@ describe('myStore', () => {
 ## Key Testing Conventions
 
 1. **Always wrap modal components** in `<LayerStackProvider>`.
-2. **Use `vi.clearAllMocks()`** in `beforeEach` and `vi.restoreAllMocks()` in `afterEach`.
+2. **Isolate mock calls, implementations, and spies.** Use `vi.clearAllMocks()` in `beforeEach` and `vi.restoreAllMocks()` in `afterEach`. Clearing calls does not reset mock implementations; use `mockReset()` for a mock whose per-test implementation must not leak. Restore spies on shared adapter objects even when each test creates a new registry.
+   Native ESM namespace exports are read-only. Before spying on a Node built-in, register a pass-through `vi.mock` factory that spreads `importOriginal()` into a mutable object, preserving real filesystem behavior (see `provider-translation-service.test.ts`).
 3. **Reset Zustand stores** with `resetAllStores()` (or `resetStore` / `resetStores`) from `src/__tests__/helpers` since stores persist across tests.
 4. **Use `vi.useFakeTimers()`** when testing timeouts, intervals, or debouncing.
 5. **Mock `window.maestro`** at the setup level; override specific methods per test.
 6. **Use `data-testid`** for elements that lack accessible roles.
 7. **Prefer `screen.getByRole`** and `screen.getByText` for queries (follows Testing Library best practices).
-8. **Use `waitFor`** for async assertions and `act` for state updates.
+8. **Use `waitFor`** for async assertions and `act` for state updates. Wait for the observable boundary being asserted: group-chat `idle` can precede its asynchronous history append, so poll the persisted history and all expected entry/usage assertions together rather than reading once after `idle`.
 9. **Mock external libraries** (react-markdown, lucide-react) to avoid rendering complexity.
 10. **Test file naming**: `ComponentName.test.tsx` for components, `useHookName.test.ts` for hooks, `storeName.test.ts` for stores.

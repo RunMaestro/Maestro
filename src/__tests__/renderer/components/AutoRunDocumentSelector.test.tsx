@@ -11,6 +11,7 @@ import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
 import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext';
 
 import { mockTheme } from '../../helpers/mockTheme';
+import { getElevatedSurfaceColors } from '../../../renderer/utils/elevatedSurface';
 
 // Wrap render with LayerStackProvider so useModalLayer (used by the doc
 // selector dropdown to own Escape) has the context it expects.
@@ -1084,7 +1085,9 @@ describe('AutoRunDocumentSelector', () => {
 			const docButton = docText.closest('button');
 			const scrollList = docButton?.parentElement;
 			const menu = scrollList?.parentElement;
-			expect(menu).toHaveStyle({ backgroundColor: mockTheme.colors.bgSidebar });
+			expect(menu).toHaveStyle({
+				backgroundColor: getElevatedSurfaceColors(mockTheme.colors).background,
+			});
 		});
 
 		it('applies theme colors to create modal', () => {

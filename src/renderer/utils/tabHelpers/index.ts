@@ -1,12 +1,12 @@
 // Tab helper functions for AI multi-tab support
 // These helpers manage AITab state within Maestro sessions
 
+import type { BrowserTab } from '../../../shared/browserPage';
 import {
 	Session,
 	AITab,
 	ClosedTab,
 	ClosedTabEntry,
-	BrowserTab,
 	FilePreviewTab,
 	UnifiedTab,
 	UnifiedTabRef,
@@ -18,10 +18,17 @@ import {
 	ThinkingMode,
 	QueuedItem,
 } from '../../types';
+import {
+	formatSessionId,
+	getTabDisplayName as libGetTabDisplayName,
+} from '../../../shared/maestro-lib/store/tab-display';
 import { generateId } from '../ids';
 import { getAutoRunFolderPath } from '../existingDocsDetector';
 import { createTerminalTab, nextTerminalCoworkingId } from '../terminalTabHelpers';
 import {
+	agentHasVisibleTab,
+	createBlankAiTab,
+	ensureAgentHasVisibleTab,
 	findActiveUnifiedTabIndex,
 	getNavigableUnifiedTabOrder,
 	hasUnreadVisibleTab,
@@ -56,7 +63,15 @@ import {
 // Both live in unifiedTabOrderUtils so terminalTabHelpers can reach them without a
 // circular import; re-exported here because tabHelpers is where callers look for
 // tab visibility rules.
-export { getNavigableUnifiedTabOrder, hasUnreadVisibleTab, isAiTabHidden, visibleAiTabs };
+export {
+	agentHasVisibleTab,
+	createBlankAiTab,
+	ensureAgentHasVisibleTab,
+	getNavigableUnifiedTabOrder,
+	hasUnreadVisibleTab,
+	isAiTabHidden,
+	visibleAiTabs,
+};
 export {
 	aiTabFocusFields,
 	fileTabFocusFields,
@@ -399,13 +414,9 @@ export function moveUnifiedTabToTarget(
  * @returns The name to pre-fill in the rename input (empty for auto-generated names)
  */
 /**
- * Get the display name for a tab. Strictly per-tab - the title only reflects
- * THIS tab's own state, never another tab's id from the session level.
- *
- * Resolution order:
- *   1. `tab.name` if set (auto-rename or manual rename)
- *   2. `tab.agentSessionId` formatted (e.g. `SES_4BCD`, `THR_ABC1`, first UUID octet)
- *   3. "New Session"
+ * Get the display name for a tab: its name, else its formatted provider session
+ * id, else "New Session". The rule lives in `maestro-lib` so the TUI's tab
+ * switcher labels an unnamed tab the same way.
  *
  * The `sessionAgentSessionId` parameter is accepted for signature compatibility
  * but intentionally ignored: borrowing it caused freshly-created sibling tabs
@@ -413,34 +424,10 @@ export function moveUnifiedTabToTarget(
  * displaying the same `SES_XXXX`).
  */
 export function getTabDisplayName(tab: AITab, _sessionAgentSessionId?: string | null): string {
-	if (tab.name) {
-		return tab.name;
-	}
-	if (tab.agentSessionId) {
-		return formatSessionId(tab.agentSessionId);
-	}
-	return 'New Session';
+	return libGetTabDisplayName(tab);
 }
 
-/**
- * Format a session/tab ID into a short display label.
- */
-export function formatSessionId(id: string): string {
-	// OpenCode format: ses_XXXX... or SES_XXXX...
-	if (id.toLowerCase().startsWith('ses_')) {
-		return `SES_${id.slice(4, 8).toUpperCase()}`;
-	}
-	// Codex format: thread_XXXX...
-	if (id.toLowerCase().startsWith('thread_')) {
-		return `THR_${id.slice(7, 11).toUpperCase()}`;
-	}
-	// UUID format: has dashes, return first octet
-	if (id.includes('-')) {
-		return id.split('-')[0].toUpperCase();
-	}
-	// Generic fallback: first 8 chars uppercase
-	return id.slice(0, 8).toUpperCase();
-}
+export { formatSessionId };
 
 /**
  * Whether a name is really just the id label {@link getTabDisplayName} falls back
@@ -992,9 +979,114 @@ export function settleTabThinkingState(session: Session, tabId: string): Session
 }
 
 /**
+ * The agent's state once something other than an AI turn stops occupying it: a
+ * terminal-mode command, or a `maestro-cli` playbook run.
+ *
+ * Both take over the agent-level `state` while they run, but an AI tab can be
+ * mid-turn underneath. Ending them hands the agent back to that turn rather
+ * than to idle: going straight to idle (a failed command, `clear`, a playbook
+ * finishing) painted a working agent "Ready" and hid its Thinking pill. A tab
+ * closed mid-turn counts too, and `error` stays, as in `settleTabThinkingState`.
+ * The elapsed timer restarts from the earliest running turn, not from the
+ * command that just ended.
+ */
+export function settleAgentStateFromTabs(session: Session): Session {
+	const running = [
+		...(session.aiTabs?.filter((tab) => tab.state === 'busy') ?? []),
+		...(session.orphanedThinkingTabs ?? []),
+	];
+	const stillThinking = running.length > 0;
+	const starts = running.flatMap((tab) => tab.thinkingStartTime ?? []);
+	return {
+		...session,
+		state: session.state === 'error' ? 'error' : stillThinking ? 'busy' : 'idle',
+		busySource: stillThinking ? 'ai' : undefined,
+		thinkingStartTime: !stillThinking
+			? undefined
+			: starts.length > 0
+				? Math.min(...starts)
+				: session.thinkingStartTime,
+	};
+}
+
+/**
+ * A tab's own process produced output (text, a thinking chunk, a tool call),
+ * which proves its turn is running: mark it busy if this client did not know.
+ *
+ * Event-driven, so it needs no polling, and it covers every path that starts a
+ * turn without telling this client - a web-desktop browser drains its own
+ * queue and nothing broadcasts that send to the desktop, whose tab inventory
+ * then painted the live turn idle on every other client. It cannot strand a
+ * tab: the main process emits a turn's output before its exit, and that exit
+ * settles the tab. Returns the session itself when the tab is unknown or
+ * already busy, so the common case writes nothing.
+ */
+export function markTabBusyFromOutput(session: Session, tabId: string): Session {
+	const tab = session.aiTabs.find((t) => t.id === tabId);
+	if (!tab || tab.state === 'busy') return session;
+
+	const now = Date.now();
+	const aiTabs = session.aiTabs.map((t) =>
+		t.id === tabId ? { ...t, state: 'busy' as const, thinkingStartTime: now } : t
+	);
+	// The blocking error state and a running shell command own the agent-level
+	// state; the tab still shows what it is doing.
+	if (
+		session.state === 'error' ||
+		(session.state === 'busy' && session.busySource === 'terminal')
+	) {
+		return { ...session, aiTabs };
+	}
+	return {
+		...session,
+		aiTabs,
+		state: 'busy',
+		busySource: 'ai',
+		thinkingStartTime: (session.state === 'busy' && session.thinkingStartTime) || now,
+	};
+}
+
+/**
+ * Bring the agent's AI busy state in line with tab states this client learned
+ * from somewhere else: a web-desktop browser applying the desktop's tab
+ * inventory. That snapshot carries each tab's state but not the agent's, and
+ * the Left Bar dot and the Thinking pill read the agent's, so a phone drew a
+ * tab mid-turn under a green "Ready" agent.
+ *
+ * Leaves alone what the tabs do not decide: the blocking `error` state, a
+ * connecting agent, a running shell command, and a CLI playbook run. Returns
+ * the session itself when nothing changes, so a steady snapshot writes nothing.
+ */
+export function syncAgentStateToTabs(session: Session): Session {
+	if (session.state === 'error' || session.state === 'connecting' || session.cliActivity) {
+		return session;
+	}
+	if (session.state === 'busy' && session.busySource === 'terminal') return session;
+
+	const busyTabs = [
+		...session.aiTabs.filter((tab) => tab.state === 'busy'),
+		...(session.orphanedThinkingTabs ?? []).filter((tab) => tab.state === 'busy'),
+	];
+	if (busyTabs.length > 0) {
+		if (session.state === 'busy' && session.busySource === 'ai') return session;
+		const starts = busyTabs.map((tab) => tab.thinkingStartTime).filter((t): t is number => !!t);
+		return {
+			...session,
+			state: 'busy',
+			busySource: 'ai',
+			thinkingStartTime:
+				session.thinkingStartTime ?? (starts.length > 0 ? Math.min(...starts) : Date.now()),
+		};
+	}
+	if (session.state !== 'busy') return session;
+	return { ...session, state: 'idle', busySource: undefined, thinkingStartTime: undefined };
+}
+
+/**
  * Options for creating a new AI tab.
  */
 export interface CreateTabOptions {
+	origin?: AITab['origin'];
 	agentSessionId?: string | null; // Claude Code session UUID (null for new tabs)
 	logs?: LogEntry[]; // Initial conversation history
 	name?: string | null; // User-defined name (null = show UUID octet)
@@ -1006,6 +1098,10 @@ export interface CreateTabOptions {
 	 *  The current active tab/file/browser/terminal/group and inputMode are all
 	 *  preserved so the user's visible view never changes. Default true. */
 	activate?: boolean;
+	/** Create the tab with no chip in the strip (see `AITab.hidden`). A hidden
+	 *  tab is never activated: focusing a tab the strip does not draw strands the
+	 *  user on it, so this overrides `activate`. Default false. */
+	hidden?: boolean;
 	/** Adopt an id minted elsewhere instead of generating one. The only caller
 	 *  is a web-desktop client drawing the tab the DESKTOP just created for it
 	 *  (see `createNewAITab`): the id has to match, or the inventory broadcast
@@ -1053,6 +1149,7 @@ export function createTab(
 	}
 
 	const {
+		origin,
 		agentSessionId = null,
 		logs = [],
 		name = null,
@@ -1060,13 +1157,16 @@ export function createTab(
 		usageStats,
 		saveToHistory = true,
 		showThinking = 'off',
-		activate = true,
+		activate: activateOption = true,
+		hidden = false,
 		id,
 	} = options;
+	const activate = activateOption && !hidden;
 
 	// Create the new tab with default values
 	const newTab: AITab = {
 		id: id ?? generateId(),
+		...(origin ? { origin } : {}),
 		agentSessionId,
 		name,
 		starred,
@@ -1078,6 +1178,7 @@ export function createTab(
 		state: 'idle',
 		saveToHistory,
 		showThinking,
+		...(hidden ? { hidden: true } : {}),
 	};
 
 	// Update the session with the new tab added. When `activate` is true (the
@@ -1251,17 +1352,7 @@ export function closeTab(
 	let createdFreshTab = false;
 	let freshTabId = '';
 	if (visibleUpdatedTabs.length === 0 && otherTabCount === 0) {
-		const freshTab: AITab = {
-			id: generateId(),
-			agentSessionId: null,
-			name: null,
-			starred: false,
-			logs: [],
-			inputValue: '',
-			stagedImages: [],
-			createdAt: Date.now(),
-			state: 'idle',
-		};
+		const freshTab = createBlankAiTab();
 		// Hidden consult tabs survive alongside the replacement - they are the
 		// user's data, and revealing one later is still their call.
 		updatedTabs = [...updatedTabs, freshTab];
@@ -1628,6 +1719,8 @@ export interface CloseFileTabResult {
 /**
  * Close a file preview tab and add it to the unified closed tab history.
  * When the closed tab was active, selects the next tab in unifiedTabOrder.
+ * Closing the agent's last visible tab lands on a fresh AI chat
+ * (see ensureAgentHasVisibleTab).
  *
  * @param session - The Maestro session containing the file tab
  * @param tabId - The ID of the file tab to close
@@ -1747,7 +1840,8 @@ export function closeFileTab(session: Session, tabId: string): CloseFileTabResul
 				newInputMode = 'ai';
 			}
 		} else {
-			// No tabs left - shouldn't happen as AI tabs should always exist
+			// Nothing left in the strip: ensureAgentHasVisibleTab below mints the
+			// blank AI chat and focuses it.
 			newActiveFileTabId = null;
 			newActiveBrowserTabId = null;
 			newActiveTerminalTabId = null;
@@ -1763,7 +1857,7 @@ export function closeFileTab(session: Session, tabId: string): CloseFileTabResul
 
 	return {
 		closedTabEntry,
-		session: {
+		session: ensureAgentHasVisibleTab({
 			...session,
 			filePreviewTabs: updatedFilePreviewTabs,
 			unifiedTabOrder: updatedUnifiedTabOrder,
@@ -1773,7 +1867,7 @@ export function closeFileTab(session: Session, tabId: string): CloseFileTabResul
 			activeTabId: newActiveTabId,
 			inputMode: newInputMode,
 			unifiedClosedTabHistory: updatedUnifiedHistory,
-		},
+		}),
 	};
 }
 
@@ -1854,7 +1948,7 @@ export function closeBrowserTab(session: Session, tabId: string): CloseBrowserTa
 
 	return {
 		closedTabEntry,
-		session: {
+		session: ensureAgentHasVisibleTab({
 			...session,
 			browserTabs: updatedBrowserTabs,
 			unifiedTabOrder: updatedUnifiedTabOrder,
@@ -1864,7 +1958,7 @@ export function closeBrowserTab(session: Session, tabId: string): CloseBrowserTa
 			activeTerminalTabId: nextActiveTerminalTabId,
 			inputMode: nextInputMode,
 			unifiedClosedTabHistory: updatedUnifiedHistory,
-		},
+		}),
 	};
 }
 
@@ -1928,15 +2022,17 @@ export interface ReopenUnifiedClosedTabResult {
 function restoreClosedAiTab(
 	session: Session,
 	tabToRestore: AITab,
-	unifiedIndex: number
+	unifiedIndex: number,
+	restoredTabId?: string
 ): ReopenUnifiedClosedTabResult {
 	// If this closed tab is still tracked as an orphan, restore the orphan
 	// (preserving its original ID so the still-running agent re-attaches)
 	// instead of creating a duplicate tab with a fresh ID.
 	const matchingOrphan = session.orphanedThinkingTabs?.find(
 		(t) =>
-			t.id === tabToRestore.id ||
-			(t.agentSessionId !== null && t.agentSessionId === tabToRestore.agentSessionId)
+			(!restoredTabId || t.id === restoredTabId) &&
+			(t.id === tabToRestore.id ||
+				(t.agentSessionId !== null && t.agentSessionId === tabToRestore.agentSessionId))
 	);
 	if (matchingOrphan) {
 		const restored = restoreOrphanedTab(session, matchingOrphan.id);
@@ -1951,9 +2047,9 @@ function restoreClosedAiTab(
 	}
 
 	// Check for duplicate: does a tab with the same agentSessionId already exist?
-	if (tabToRestore.agentSessionId !== null) {
-		const existingTab = session.aiTabs.find(
-			(tab) => tab.agentSessionId === tabToRestore.agentSessionId
+	if (restoredTabId || tabToRestore.agentSessionId !== null) {
+		const existingTab = session.aiTabs.find((tab) =>
+			restoredTabId ? tab.id === restoredTabId : tab.agentSessionId === tabToRestore.agentSessionId
 		);
 
 		if (existingTab) {
@@ -1975,7 +2071,7 @@ function restoreClosedAiTab(
 	// No duplicate - restore the tab
 	const restoredTab: AITab = {
 		...tabToRestore,
-		id: generateId(),
+		id: restoredTabId ?? generateId(),
 	};
 
 	// Calculate insert position in aiTabs based on unified index
@@ -2031,10 +2127,12 @@ function restoreClosedAiTab(
  *
  * @param session - The Maestro session that owned the tab
  * @param tabId - The original AITab.id recorded on the toast
+ * @param restoredTabId - Desktop-minted id when adopting a confirmed browser reopen.
  */
 export function reopenClosedAiTabById(
 	session: Session,
-	tabId: string
+	tabId: string,
+	restoredTabId?: string
 ): ReopenUnifiedClosedTabResult | null {
 	// Prefer the unified history (the current closed-tab store).
 	const unifiedHistory = session.unifiedClosedTabHistory || [];
@@ -2045,7 +2143,7 @@ export function reopenClosedAiTabById(
 			...unifiedHistory.slice(0, unifiedIdx),
 			...unifiedHistory.slice(unifiedIdx + 1),
 		];
-		const result = restoreClosedAiTab(session, entry.tab, entry.unifiedIndex);
+		const result = restoreClosedAiTab(session, entry.tab, entry.unifiedIndex, restoredTabId);
 		return {
 			...result,
 			session: { ...result.session, unifiedClosedTabHistory: remainingHistory },
@@ -2062,7 +2160,12 @@ export function reopenClosedAiTabById(
 			...legacyHistory.slice(0, legacyIdx),
 			...legacyHistory.slice(legacyIdx + 1),
 		];
-		const result = restoreClosedAiTab(session, entry.tab, session.unifiedTabOrder.length);
+		const result = restoreClosedAiTab(
+			session,
+			entry.tab,
+			session.unifiedTabOrder.length,
+			restoredTabId
+		);
 		return {
 			...result,
 			session: { ...result.session, closedTabHistory: remainingLegacy },

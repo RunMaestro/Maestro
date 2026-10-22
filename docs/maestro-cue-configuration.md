@@ -40,6 +40,9 @@ subscriptions:
     output_prompt_file: string # Optional. Path to a .md file for the output prompt
     label: string # Optional. Human-readable label displayed in the Cue dashboard
     agent_id: string # Optional. UUID of the target agent
+    tier: string # Optional. Model tier for the run: low | medium | high. Not with model
+    model: string # Optional. Exact model id for the run. Not with tier
+    effort: string # Optional. Effort for the run: low | medium | high
 
     # Event-specific fields
     interval_minutes: number # Required for time.heartbeat
@@ -55,15 +58,16 @@ subscriptions:
     fan_out: list # Optional. Target agent display names for fan-out
     fan_out_ids: list # Optional companion to fan_out - agent UUIDs (parallel array). Preferred at runtime; survives renames
     filter: object # Optional. Payload field conditions
-    repo: string # Optional for github.* (auto-detected if omitted)
+    repo: string # Required for github.* (never detected; the trigger does not run without it)
     poll_minutes: number # Optional for github.*, task.pending
     gh_label_target: string # Optional for github.label. "pr" | "issue" | "both" (default "both")
     gh_labels: list # Optional for github.label. Labels to watch (omit to fire on any label)
 
     # Action-specific fields
-    action: string # Optional. One of "prompt" (default), "notify", "command"
+    action: string # Optional. One of "prompt" (default), "notify", "command", "autorun"
     notify: object # Optional. Notify payload when action is "notify" (message, sticky, etc.)
     command: object # Optional. Command spec when action is "command" (mode, shell, cli, etc.)
+    auto_run: object # Optional. Auto Run payload when action is "autorun" (documents, prompt, etc.)
 
 # Global settings (all optional - sensible defaults applied)
 settings:
@@ -128,34 +132,38 @@ Either `prompt` or `prompt_file` must be provided. If both are present, `prompt_
 
 ### Optional Fields
 
-| Field                      | Type              | Default  | Description                                                                                                                                                                                                                               |
-| -------------------------- | ----------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `enabled`                  | boolean           | `true`   | Set to `false` to pause a subscription without removing it                                                                                                                                                                                |
-| `agent_id`                 | string (UUID)     | -        | UUID of the target agent. Auto-assigned by the Pipeline Graph                                                                                                                                                                             |
-| `prompt_file`              | string            | -        | Path to a `.md` file containing the prompt (alternative to inline `prompt`)                                                                                                                                                               |
-| `interval_minutes`         | number            | -        | Timer interval. Required for `time.heartbeat`                                                                                                                                                                                             |
-| `schedule_times`           | list of strings   | -        | Times in `HH:MM` format. Required for `time.scheduled`                                                                                                                                                                                    |
-| `schedule_days`            | list of strings   | -        | Days of week (`mon`-`sun`). Optional for `time.scheduled`                                                                                                                                                                                 |
-| `fire_at`                  | string (ISO-8601) | -        | Wall-clock fire moment with timezone offset. Required for `time.once`. Authored via `maestro-cli cue schedule`                                                                                                                            |
-| `grace_minutes`            | number            | `360`    | Missed-fire grace window in minutes. Optional for `time.once`                                                                                                                                                                             |
-| `self_destruct_on_failure` | boolean           | `true`   | Whether to remove the sub from `cue.yaml` on a `failed` or `timeout` outcome. Optional for `time.once`                                                                                                                                    |
-| `watch`                    | string (glob)     | -        | File glob pattern. Required for `file.changed`, `task.pending`                                                                                                                                                                            |
-| `source_session`           | string or list    | -        | Source agent display name(s). Required for `agent.completed`                                                                                                                                                                              |
-| `source_session_ids`       | string or list    | -        | Companion UUID(s) for `source_session`. Same shape (string ↔ string, list ↔ list). Preferred by the dispatcher at lookup time; falls back to `source_session` names when absent. Set this alongside `source_session` for rename stability |
-| `source_sub`               | string or list    | -        | Upstream subscription name(s) that narrow chain matching. **Required** when `action: command` on `agent.completed`. When `source_session` is an array, `source_sub` must be a same-length array (positional pairing)                      |
-| `fan_out`                  | list of strings   | -        | Target agent display names to fan out to                                                                                                                                                                                                  |
-| `fan_out_ids`              | list of strings   | -        | Companion UUID array for `fan_out` (one entry per fan-out target). Preferred by the dispatcher at lookup time; falls back to `fan_out` names when absent. Set this alongside `fan_out` for rename stability                               |
-| `filter`                   | object            | -        | Payload conditions (see [Filtering](./maestro-cue-advanced#filtering))                                                                                                                                                                    |
-| `repo`                     | string            | -        | GitHub repo (`owner/repo`). Auto-detected from git remote                                                                                                                                                                                 |
-| `poll_minutes`             | number            | varies   | Poll interval for `github.*` (default 5) and `task.pending` (default 1)                                                                                                                                                                   |
-| `gh_label_target`          | string            | `both`   | `github.label` only. Which kind of item to watch: `pr`, `issue`, or `both`                                                                                                                                                                |
-| `gh_labels`                | list of strings   | -        | `github.label` only. Labels that fire the trigger, matched case-insensitively. Omit to fire on any label                                                                                                                                  |
-| `output_prompt`            | string            | -        | Follow-up prompt sent after the main run completes successfully                                                                                                                                                                           |
-| `output_prompt_file`       | string            | -        | Path to a `.md` file for the output prompt (alternative to inline)                                                                                                                                                                        |
-| `label`                    | string            | -        | Human-readable label displayed in the Cue dashboard and pipeline editor                                                                                                                                                                   |
-| `action`                   | string            | `prompt` | Action to dispatch when the event fires: `prompt` (run the agent), `notify` (surface a toast through the owning agent - clicking it jumps there), or `command` (shell/cli call)                                                           |
-| `notify`                   | object            | -        | Notify payload when `action: notify`. Fields: `message` (string, required), `sticky` (boolean), `level` (`info` \| `success` \| `warning` \| `error`). The toast renders through the owning agent; clicking it jumps there                |
-| `command`                  | object            | -        | Command spec when `action: command`. Fields include `mode` (`shell` \| `cli`), `shell`/`cli` invocation, and related options (see [Command Nodes](./maestro-cue-advanced))                                                                |
+| Field                      | Type              | Default  | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| -------------------------- | ----------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `enabled`                  | boolean           | `true`   | Set to `false` to pause a subscription without removing it                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `agent_id`                 | string (UUID)     | -        | UUID of the target agent. Auto-assigned by the Pipeline Graph                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `prompt_file`              | string            | -        | Path to a `.md` file containing the prompt (alternative to inline `prompt`)                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `interval_minutes`         | number            | -        | Timer interval. Required for `time.heartbeat`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `schedule_times`           | list of strings   | -        | Times in `HH:MM` format. Required for `time.scheduled`                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `schedule_days`            | list of strings   | -        | Days of week (`mon`-`sun`). Optional for `time.scheduled`                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `fire_at`                  | string (ISO-8601) | -        | Wall-clock fire moment with timezone offset. Required for `time.once`. Authored via `maestro-cli cue schedule`                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `grace_minutes`            | number            | `360`    | Missed-fire grace window in minutes. Optional for `time.once`                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `self_destruct_on_failure` | boolean           | `true`   | Whether to remove the sub from `cue.yaml` on a `failed` or `timeout` outcome. Optional for `time.once`                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `watch`                    | string (glob)     | -        | File glob pattern. Required for `file.changed`, `task.pending`                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `source_session`           | string or list    | -        | Source agent display name(s). Required for `agent.completed`                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `source_session_ids`       | string or list    | -        | Companion UUID(s) for `source_session`. Same shape (string ↔ string, list ↔ list). Preferred by the dispatcher at lookup time; falls back to `source_session` names when absent. Set this alongside `source_session` for rename stability                                                                                                                                                                                                                                                                                       |
+| `source_sub`               | string or list    | -        | Upstream subscription name(s) that narrow chain matching. **Required** when `action: command` on `agent.completed`. When `source_session` is an array, `source_sub` must be a same-length array (positional pairing)                                                                                                                                                                                                                                                                                                            |
+| `fan_out`                  | list of strings   | -        | Target agent display names to fan out to                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `fan_out_ids`              | list of strings   | -        | Companion UUID array for `fan_out` (one entry per fan-out target). Preferred by the dispatcher at lookup time; falls back to `fan_out` names when absent. Set this alongside `fan_out` for rename stability                                                                                                                                                                                                                                                                                                                     |
+| `filter`                   | object            | -        | Payload conditions (see [Filtering](./maestro-cue-advanced#filtering))                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `repo`                     | string            | -        | GitHub repo (`owner/repo`). Required for `github.*`: without it the trigger never runs (it is not detected from the git remote)                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `poll_minutes`             | number            | varies   | Poll interval for `github.*` (default 5) and `task.pending` (default 1)                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `gh_label_target`          | string            | `both`   | `github.label` only. Which kind of item to watch: `pr`, `issue`, or `both`                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `gh_labels`                | list of strings   | -        | `github.label` only. Labels that fire the trigger, matched case-insensitively. Omit to fire on any label                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `output_prompt`            | string            | -        | Follow-up prompt sent after the main run completes successfully                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `output_prompt_file`       | string            | -        | Path to a `.md` file for the output prompt (alternative to inline)                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `label`                    | string            | -        | Human-readable label displayed in the Cue dashboard and pipeline editor                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `action`                   | string            | `prompt` | Action to dispatch when the event fires: `prompt` (run the agent), `notify` (surface a toast through the owning agent - clicking it jumps there), `command` (shell/cli call), or `autorun` (launch an Auto Run in the owning agent)                                                                                                                                                                                                                                                                                             |
+| `notify`                   | object            | -        | Notify payload when `action: notify`. Fields: `message` (string, required), `sticky` (boolean), `level` (`info` \| `success` \| `warning` \| `error`). The toast renders through the owning agent; clicking it jumps there                                                                                                                                                                                                                                                                                                      |
+| `command`                  | object            | -        | Command spec when `action: command`. Fields include `mode` (`shell` \| `cli`), `shell`/`cli` invocation, and related options (see [Command Nodes](./maestro-cue-advanced))                                                                                                                                                                                                                                                                                                                                                      |
+| `auto_run`                 | object            | -        | Auto Run payload when `action: autorun`. Fields: `documents` (list of absolute `.md` paths, required), `reset_on_completion` (list of booleans, one per document), `prompt`, `loop_enabled`, `max_loops`, `model`, `effort`, `task_selection_mode` (`task` or `document`), `ignore_model_hints`, `auto_resume_on_error`, `auto_resume_after_min`, `max_auto_resumes`, `worktree` (`mode` of `create-new` with `branch`, `existing-open` with `agent_id`, or `existing-closed` with `path`; optional `base_branch`, `create_pr`) |
+| `tier`                     | string            | -        | Model tier for the run: `low`, `medium`, or `high`, mapped per provider. Not with `model`. See [Model and Effort](#model-and-effort)                                                                                                                                                                                                                                                                                                                                                                                            |
+| `model`                    | string            | -        | Exact model id for the run, passed to the agent as-is. Not with `tier`                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `effort`                   | string            | -        | Effort for the run: `low`, `medium`, or `high`, mapped to the provider's own effort ladder                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 
 ### Prompt Field
 
@@ -208,6 +216,47 @@ subscriptions:
 <Note>
 The output prompt only fires when the main run completes successfully. If the main run times out or fails, the output phase is skipped.
 </Note>
+
+### Model and Effort
+
+By default a subscription runs on the agent's own configured model and effort. Set `tier` (or an exact `model`) and `effort` to give one pipeline step a different model without changing the agent:
+
+```yaml
+subscriptions:
+  - name: triage-issues
+    event: github.issue
+    repo: owner/name
+    tier: low # cheap, fast model for sorting
+    effort: low
+    prompt: Label and prioritize {{CUE_GH_URL}}.
+
+  - name: nightly-architecture-review
+    event: time.scheduled
+    schedule_times: ['02:00']
+    tier: high # the provider's top model
+    effort: high
+    prompt_file: .maestro/prompts/architecture-review.md
+```
+
+`tier` and `effort` use one vocabulary for every provider. Maestro maps each level to that provider's own models and effort ladder, using the same tables as Auto Run's `MAESTRO:MODEL` markers:
+
+| Provider      | `tier` low / medium / high            | `effort` low / medium / high |
+| ------------- | ------------------------------------- | ---------------------------- |
+| Claude Code   | haiku / sonnet / opus                 | low / high / max             |
+| Factory Droid | Claude Haiku / Sonnet / Opus model id | low / medium / high          |
+| Codex         | not mapped: use `model`               | low / medium / xhigh         |
+| Copilot-CLI   | not mapped: use `model`               | low / medium / xhigh         |
+| OpenCode      | not mapped: use `model`               | not supported                |
+
+Rules:
+
+- Set `tier` or `model`, never both. Use `model` for a provider with no tier table, or for a model a tier cannot name.
+- If the provider cannot honor a `tier` or `effort`, the run still happens on the agent's own value, and the Cue log records a warning.
+- A fan-out subscription applies one setting to every target. In the Pipeline Graph, agents with different settings get their own subscription each.
+- An `output_prompt` follow-up runs on the same model as its main run.
+- `tier`, `model`, and `effort` apply only to agent runs. The validator rejects them on `action: command` and `action: notify`.
+
+In the Pipeline Graph, set these with the **Model** and **Effort** selectors on an agent node. The Scheduled Tasks form has the same two selectors. From the CLI, `maestro-cli cue model <subscription>` shows or changes them on any subscription, and `maestro-cli cue schedule` accepts `--tier`, `--model`, and `--effort` when it creates a task.
 
 ### Pipelines
 
@@ -295,6 +344,7 @@ subscriptions:
   - name: pr-review
     label: 'PR Review Bot'
     event: github.pull_request
+    repo: owner/name
     prompt: Review the PR at {{CUE_GH_URL}}.
 ```
 
@@ -364,6 +414,8 @@ settings:
   queue_size: 1024 # Buffer up to 1024 events
 ```
 
+Saving `cue.yaml` while events wait (by hand, from the Pipeline Graph, or with `maestro-cli cue model`) keeps every queued event whose subscription is still in the file and switched on. It runs with the prompt and settings it was fired with. A queued event for a subscription the save removed, renamed or switched off is dropped, logged, and shown in the activity log as never run. A save that fails to parse keeps the queue until the next good save. A heartbeat whose timing changed fires on load, so its waiting tick is dropped the same way.
+
 ## Validation
 
 The engine validates your YAML on every load. Common validation errors:
@@ -425,6 +477,7 @@ subscriptions:
   - name: DevOps-chain-2
     label: PR Review
     event: github.pull_request
+    repo: owner/name
     poll_minutes: 3
     filter:
       draft: false

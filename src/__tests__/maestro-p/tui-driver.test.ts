@@ -72,12 +72,18 @@ vi.mock('../../shared/platformDetection', async (importOriginal) => ({
 
 import {
 	chunkPromptForPty,
+	CLAUDE_PASTE_THRESHOLD_CHARS,
+	expandPromptTabs,
+	normalizeInjectedText,
 	MACOS_PTY_INPUT_QUEUE_BYTES,
 	PROMPT_CHUNK_DRAIN_TIMEOUT_MS,
 	PROMPT_CHUNK_INTERVAL_MS,
 	PROMPT_CHUNK_MAX_BYTES,
+	PROMPT_MAX_UNDRAINED_CHUNKS,
+	PROMPT_STALL_DRAIN_TIMEOUT_MS,
 	PROMPT_SETTLE_MAX_MS,
 	PROMPT_SETTLE_QUIET_MS,
+	PROMPT_TAB_SPACES,
 	QUIT_GRACE_MS,
 	READY_MAX_TAPS,
 	READY_TAP_INTERVAL_MS,
@@ -265,7 +271,21 @@ describe('TuiDriver', () => {
 			const driver = await makeDriver();
 			const trustHandler = vi.fn();
 			driver.on('trust-accepted', trustHandler);
-			feed('Yes, I trust this folder\n');
+			feed('❯ 1. Yes, I trust this folder\n  2. No, exit\n');
+			expect(trustHandler).toHaveBeenCalledTimes(1);
+			expect(mockPtyProcess.write).toHaveBeenCalledWith('\r');
+		});
+
+		it('waits for the selector to paint before answering', async () => {
+			const driver = await makeDriver();
+			const trustHandler = vi.fn();
+			driver.on('trust-accepted', trustHandler);
+			// The dialog text can land a chunk ahead of the `❯` line; an Enter sent
+			// now would confirm whichever option the selector turns out to be on.
+			feed('Quick safety check: Is this a project you created or one you trust?\n');
+			feed('  1. Yes, I trust this folder\n');
+			expect(mockPtyProcess.write).not.toHaveBeenCalled();
+			feed('❯ 1. Yes, I trust this folder\n  2. No, exit\n');
 			expect(trustHandler).toHaveBeenCalledTimes(1);
 			expect(mockPtyProcess.write).toHaveBeenCalledWith('\r');
 		});
@@ -447,11 +467,66 @@ describe('TuiDriver', () => {
 			feed('\r❯ Try "edit <filepath>"\n');
 			expect(readyHandler).toHaveBeenCalledTimes(1);
 		});
+	});
 
-		it('keeps the plain Enter without the opt-in', async () => {
-			await makeDriver();
+	describe('\'workspace-untrusted\' event (trust prompt on "No, exit", no opt-in)', () => {
+		// The home dir and the system temp dir: claude highlights "No, exit".
+		const PROMPT_ON_NO =
+			'Quicksafetycheck:Isthisaprojectyoucreatedoroneyoutrust?\n1.Yes,Itrustthisfolder\n❯2.No,exit\n';
+		const writes = () => mockPtyProcess.write.mock.calls.map((call) => call[0]);
+
+		beforeEach(() => {
+			vi.useFakeTimers();
+		});
+		afterEach(() => {
+			vi.useRealTimers();
+		});
+
+		it('emits workspace-untrusted instead of pressing Enter on "No, exit"', async () => {
+			const driver = await makeDriver();
+			const untrusted = vi.fn();
+			const trustHandler = vi.fn();
+			driver.on('workspace-untrusted', untrusted);
+			driver.on('trust-accepted', trustHandler);
 			feed(PROMPT_ON_NO);
-			expect(writes()).toEqual(['\r']);
+			expect(untrusted).toHaveBeenCalledTimes(1);
+			expect(trustHandler).not.toHaveBeenCalled();
+			expect(writes()).toEqual([]);
+		});
+
+		it('never presses Enter afterwards, and neither ready nor ready-timeout fires', async () => {
+			const driver = await makeDriver();
+			const untrusted = vi.fn();
+			const readyHandler = vi.fn();
+			const readyTimeout = vi.fn();
+			driver.on('workspace-untrusted', untrusted);
+			driver.on('ready', readyHandler);
+			driver.on('ready-timeout', readyTimeout);
+			feed('Quick safety check\n  1. Yes, I trust this folder\n❯ 2. No, exit\n');
+			// A redraw of the same dialog is not a second event.
+			feed('❯ 2. No, exit\n');
+			await vi.advanceTimersByTimeAsync(READY_TIMEOUT_MS * 2);
+			expect(untrusted).toHaveBeenCalledTimes(1);
+			// The dialog's own `❯ ` is not claude's input prompt.
+			expect(readyHandler).not.toHaveBeenCalled();
+			expect(readyTimeout).not.toHaveBeenCalled();
+			expect(writes()).toEqual([]);
+		});
+
+		it('is not raised when acceptWorkspaceTrust is set', async () => {
+			const driver = new TuiDriver({
+				binPath: 'claude',
+				args: [],
+				cwd: '/tmp',
+				env: {},
+				acceptWorkspaceTrust: true,
+			});
+			await driver.start();
+			const untrusted = vi.fn();
+			driver.on('workspace-untrusted', untrusted);
+			feed(PROMPT_ON_NO);
+			expect(untrusted).not.toHaveBeenCalled();
+			expect(writes()).toEqual(['\x1b[B']);
 		});
 	});
 
@@ -515,6 +590,23 @@ describe('TuiDriver', () => {
 			await vi.advanceTimersByTimeAsync(READY_TIMEOUT_MS - 1);
 			expect(timeoutHandler).not.toHaveBeenCalled();
 			await vi.advanceTimersByTimeAsync(1);
+			expect(timeoutHandler).toHaveBeenCalledTimes(1);
+		});
+
+		it('honors a caller-supplied readyTimeoutMs instead of READY_TIMEOUT_MS', async () => {
+			const driver = new TuiDriver({
+				binPath: 'claude',
+				args: [],
+				cwd: '/tmp',
+				env: { HOME: '/home/test' },
+				readyTimeoutMs: 30_000,
+			});
+			await driver.start();
+			const timeoutHandler = vi.fn();
+			driver.on('ready-timeout', timeoutHandler);
+			await vi.advanceTimersByTimeAsync(READY_TIMEOUT_MS * 2);
+			expect(timeoutHandler).not.toHaveBeenCalled();
+			await vi.advanceTimersByTimeAsync(30_000 - READY_TIMEOUT_MS * 2);
 			expect(timeoutHandler).toHaveBeenCalledTimes(1);
 		});
 
@@ -736,12 +828,58 @@ describe('TuiDriver', () => {
 		});
 	});
 
+	describe('normalizeInjectedText()', () => {
+		it('turns CRLF and lone CR into LF, then expands tabs', () => {
+			expect(normalizeInjectedText('a\r\nb\rc\td')).toBe('a\nb\nc    d');
+		});
+
+		it('leaves plain text untouched', () => {
+			expect(normalizeInjectedText('go left\nthen right')).toBe('go left\nthen right');
+		});
+
+		it('drops escape sequences and control keystrokes, keeping only newlines', () => {
+			// Each of these is a KEY to the TUI: ESC interrupts the running turn, DEL
+			// is Backspace, Ctrl+C quits, Ctrl+U clears the composer. A sequence goes
+			// whole, so no `[31m` debris is left once its ESC is removed.
+			expect(
+				normalizeInjectedText('a\u001b[31mred\u001b[0m\u0003\u007fb\u0015\nc\u001b\u0000\u009b')
+			).toBe('aredb\nc');
+		});
+	});
+
+	describe('expandPromptTabs()', () => {
+		it('replaces every tab with PROMPT_TAB_SPACES spaces, matching what claude does on paste', () => {
+			expect(PROMPT_TAB_SPACES).toBe(4);
+			expect(expandPromptTabs('a\tb\tc\nline two\twith tab')).toBe(
+				'a    b    c\nline two    with tab'
+			);
+		});
+
+		it('leaves a prompt without tabs untouched', () => {
+			const text = 'no tabs here\n  indented with spaces';
+			expect(expandPromptTabs(text)).toBe(text);
+		});
+	});
+
 	describe('send()', () => {
 		beforeEach(() => {
 			vi.useFakeTimers();
 		});
 		afterEach(() => {
 			vi.useRealTimers();
+		});
+
+		it('never types a raw tab, which claude would read as the Tab key', async () => {
+			const driver = await makeDriver();
+			feed('❯ \n');
+			mockPtyProcess.write.mockClear();
+			const sending = driver.send('a\tb');
+			await vi.advanceTimersByTimeAsync(PROMPT_SETTLE_QUIET_MS);
+			await sending;
+			expect(mockPtyProcess.write).toHaveBeenNthCalledWith(1, 'a    b');
+			for (const [chunk] of mockPtyProcess.write.mock.calls) {
+				expect(chunk).not.toContain('\t');
+			}
 		});
 
 		it('writes text first, then \\r at SEND_ENTER_DELAY_MS, then retry taps', async () => {
@@ -825,6 +963,25 @@ describe('TuiDriver', () => {
 		// The point of drain-aware pacing: a chunk is held until claude has
 		// actually read the last one, so a slow editor render cannot let chunks
 		// pile up in the queue the way a fixed interval did.
+		it('cancelSubmitRetries() drops every submit tap that has not fired yet', async () => {
+			// The steer gate opens on the first transcript entry, about a second in,
+			// while the taps run to ~3s; a stray one would submit half a steer.
+			const driver = await makeDriver();
+			feed('❯ \n');
+			mockPtyProcess.write.mockClear();
+			const sending = driver.send('hello world');
+			await vi.advanceTimersByTimeAsync(PROMPT_SETTLE_QUIET_MS);
+			await sending;
+			await vi.advanceTimersByTimeAsync(SEND_ENTER_DELAY_MS);
+			expect(mockPtyProcess.write).toHaveBeenLastCalledWith('\r');
+			const before = mockPtyProcess.write.mock.calls.length;
+
+			driver.cancelSubmitRetries();
+			await vi.advanceTimersByTimeAsync(SUBMIT_ENTER_RETRIES * SUBMIT_ENTER_RETRY_INTERVAL_MS);
+
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(before);
+		});
+
 		it('holds the next chunk until claude paints, however long that takes', async () => {
 			const driver = await makeDriver();
 			feed('❯ \n');
@@ -854,6 +1011,67 @@ describe('TuiDriver', () => {
 			await vi.advanceTimersByTimeAsync(PROMPT_CHUNK_DRAIN_TIMEOUT_MS + PROMPT_CHUNK_INTERVAL_MS);
 			await sending;
 			expect(mockPtyProcess.write).toHaveBeenCalledTimes(2);
+		});
+
+		// claude reads more than 800 characters in one batch as a paste and tags
+		// it as text the user may not have written. A paint already in flight can
+		// stand in for one chunk's drain signal, so the queue may hold one chunk
+		// more than the count send() holds at.
+		it("keeps the unread backlog under claude's paste threshold and the PTY queue", () => {
+			const worstCaseBytes = (PROMPT_MAX_UNDRAINED_CHUNKS + 1) * PROMPT_CHUNK_MAX_BYTES;
+			expect(worstCaseBytes).toBeLessThanOrEqual(CLAUDE_PASTE_THRESHOLD_CHARS);
+			expect(worstCaseBytes).toBeLessThan(MACOS_PTY_INPUT_QUEUE_BYTES);
+		});
+
+		// The field failure: claude stalled for about a second, the short wait
+		// timed out chunk after chunk, and a full 1,022-byte queue was read at
+		// once. Past the undrained limit only a paint releases the next chunk.
+		it('stops typing into a stalled claude once the undrained limit is reached', async () => {
+			const driver = await makeDriver();
+			feed('❯ \n');
+			mockPtyProcess.write.mockClear();
+			const sending = driver.send('s'.repeat(PROMPT_CHUNK_MAX_BYTES * 4));
+			await vi.advanceTimersByTimeAsync(PROMPT_SETTLE_QUIET_MS);
+			// No paint: the short wait lets chunks through up to the limit.
+			for (let typed = 1; typed < PROMPT_MAX_UNDRAINED_CHUNKS; typed += 1) {
+				expect(mockPtyProcess.write).toHaveBeenCalledTimes(typed);
+				await vi.advanceTimersByTimeAsync(PROMPT_CHUNK_DRAIN_TIMEOUT_MS + PROMPT_CHUNK_INTERVAL_MS);
+			}
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(PROMPT_MAX_UNDRAINED_CHUNKS);
+			// Many short waits later the stalled claude still has not painted.
+			await vi.advanceTimersByTimeAsync(PROMPT_CHUNK_DRAIN_TIMEOUT_MS * 20);
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(PROMPT_MAX_UNDRAINED_CHUNKS);
+			// claude wakes and repaints: it read the backlog. Typing resumes.
+			feed('redraw');
+			await vi.advanceTimersByTimeAsync(PROMPT_CHUNK_INTERVAL_MS);
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(PROMPT_MAX_UNDRAINED_CHUNKS + 1);
+			feed('redraw');
+			await vi.advanceTimersByTimeAsync(PROMPT_CHUNK_INTERVAL_MS);
+			await sending;
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(4);
+		});
+
+		// A screen that never paints must not strand the prompt: one long wait is
+		// the whole cost, then typing carries on at the short ceiling.
+		it('pays the long stall wait once, then types on at the short ceiling', async () => {
+			const driver = await makeDriver();
+			feed('❯ \n');
+			mockPtyProcess.write.mockClear();
+			const chunkCount = PROMPT_MAX_UNDRAINED_CHUNKS + 3;
+			const sending = driver.send('n'.repeat(PROMPT_CHUNK_MAX_BYTES * chunkCount));
+			await vi.advanceTimersByTimeAsync(PROMPT_SETTLE_QUIET_MS);
+			await vi.advanceTimersByTimeAsync(
+				(PROMPT_CHUNK_DRAIN_TIMEOUT_MS + PROMPT_CHUNK_INTERVAL_MS) *
+					(PROMPT_MAX_UNDRAINED_CHUNKS - 1)
+			);
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(PROMPT_MAX_UNDRAINED_CHUNKS);
+			await vi.advanceTimersByTimeAsync(PROMPT_STALL_DRAIN_TIMEOUT_MS + PROMPT_CHUNK_INTERVAL_MS);
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(PROMPT_MAX_UNDRAINED_CHUNKS + 1);
+			await vi.advanceTimersByTimeAsync(
+				(PROMPT_CHUNK_DRAIN_TIMEOUT_MS + PROMPT_CHUNK_INTERVAL_MS) * 2
+			);
+			await sending;
+			expect(mockPtyProcess.write).toHaveBeenCalledTimes(chunkCount);
 		});
 
 		// send() parks on a paint that a dead PTY will never send; exit has to
@@ -1049,6 +1267,31 @@ describe('TuiDriver', () => {
 			expect(mockPtyProcess.kill).toHaveBeenCalledWith('SIGTERM');
 		});
 
+		it('terminates instead of typing /quit onto a prompt that was never submitted', async () => {
+			const driver = await makeDriver();
+			feed('❯ \n');
+			const sending = driver.send('summarize the session');
+			await vi.advanceTimersByTimeAsync(PROMPT_SETTLE_QUIET_MS);
+			await sending;
+			mockPtyProcess.write.mockClear();
+			const promise = driver.quit({ discardTypedInput: true });
+			// "/quit\r" would land after the parked prompt and submit both.
+			await vi.advanceTimersByTimeAsync(QUIT_GRACE_MS);
+			await promise;
+			expect(mockPtyProcess.write).not.toHaveBeenCalledWith('/quit\r');
+			expect(mockPtyProcess.kill).toHaveBeenCalledWith('SIGTERM');
+		});
+
+		it('still types /quit when nothing was typed, even if asked to discard', async () => {
+			const driver = await makeDriver();
+			const promise = driver.quit({ discardTypedInput: true });
+			await vi.advanceTimersByTimeAsync(0);
+			expect(mockPtyProcess.write).toHaveBeenCalledWith('/quit\r');
+			triggerExit(0);
+			await promise;
+			expect(mockPtyProcess.kill).not.toHaveBeenCalled();
+		});
+
 		it('is a no-op when called before start()', async () => {
 			const driver = new TuiDriver({ binPath: 'claude', args: [], cwd: '/tmp', env: {} });
 			await driver.quit();
@@ -1136,6 +1379,397 @@ describe('TuiDriver', () => {
 			feed('\u001b[2J\u001b[H23% used');
 			expect(driver.getScreenCapture()).toContain('\u001b[2J');
 			expect(driver.getScreenCapture()).toContain('23% used');
+		});
+	});
+	// ── inject() / chat steering ───────────────────────────────────────────────
+	describe('inject (chat steering)', () => {
+		const RULE = '\u2500'.repeat(120);
+		// A screen with the input editor drawn. Steering types only when this is
+		// what the replayed grid shows.
+		const EDITOR_FRAME = `\u001b[2J\u001b[H${RULE}\r\n\u276f\r\n${RULE}\r\n`;
+		// A permission prompt. Note the editor box is gone, which is what the gate
+		// keys on.
+		const DIALOG_FRAME =
+			`\u001b[2J\u001b[H Do you want to create x.txt?\r\n \u276f 1. Yes\r\n   3. No\r\n` +
+			` Esc to cancel \u00b7 Tab to amend\r\n`;
+
+		// The global beforeEach only clears CALLS, not the implementation, so the echo
+		// simulator below would otherwise leak into every later test in the file.
+		afterEach(() => {
+			mockPtyProcess.write.mockImplementation(() => {});
+		});
+
+		/**
+		 * Make the mocked PTY behave like the real TUI for the one behaviour inject()
+		 * depends on: claude REPAINTS the composer with whatever has been typed. Without
+		 * an echo the injection correctly refuses with `echo-missing`, so a test that
+		 * expects a submit has to simulate the repaint.
+		 */
+		function simulateEditorEcho(): void {
+			let typed = '';
+			mockPtyProcess.write.mockImplementation((chunk: string) => {
+				if (chunk === '\r') return;
+				typed += chunk;
+				feed(`\u001b[2J\u001b[H${RULE}\r\n\u276f ${typed}\r\n${RULE}\r\n`);
+			});
+		}
+
+		async function makeSteerableDriver(): Promise<TuiDriver> {
+			const driver = new TuiDriver({
+				binPath: 'claude',
+				args: [],
+				cwd: '/tmp',
+				env: { HOME: '/home/test' },
+				captureScreen: true,
+			});
+			await driver.start();
+			return driver;
+		}
+
+		it('types the text and submits with exactly ONE Enter', async () => {
+			// The retry burst send() uses is safe on a cold start and dangerous here:
+			// mid-turn a dialog can be on screen and each extra tap is another chance
+			// to accept it.
+			const driver = await makeSteerableDriver();
+			feed(EDITOR_FRAME);
+			mockPtyProcess.write.mockClear();
+			simulateEditorEcho();
+
+			const outcome = await driver.inject('go left');
+
+			expect(outcome).toEqual({ submitted: true, typed: 'go left' });
+			const writes = mockPtyProcess.write.mock.calls.map((c) => c[0] as string);
+			expect(writes.filter((w) => w === '\r')).toHaveLength(1);
+			expect(writes.join('')).toContain('go left');
+		});
+
+		it('serializes concurrent injections so two steers never share one editor', async () => {
+			// Measured live: two steers sent together were typed back to back before
+			// either Enter, and claude received ONE merged message.
+			const driver = await makeSteerableDriver();
+			feed(EDITOR_FRAME);
+			mockPtyProcess.write.mockClear();
+			simulateEditorEcho();
+
+			const [first, second] = await Promise.all([
+				driver.inject('first steer'),
+				driver.inject('second steer'),
+			]);
+
+			expect(first.submitted).toBe(true);
+			expect(second.submitted).toBe(true);
+			// Ordering, not an exact list: earlier send() tests leave retry-Enter timers
+			// that can still tap the shared mock PTY.
+			const writes = mockPtyProcess.write.mock.calls.map((c) => c[0] as string);
+			expect(writes.filter((w) => w !== '\r')).toEqual(['first steer', 'second steer']);
+			const firstAt = writes.indexOf('first steer');
+			const secondAt = writes.indexOf('second steer');
+			const firstEnterAt = writes.indexOf('\r', firstAt);
+			expect(firstEnterAt).toBeGreaterThan(firstAt);
+			expect(firstEnterAt).toBeLessThan(secondAt);
+		});
+
+		it('types normalized text: CR/CRLF become LF and tabs become spaces', async () => {
+			// A `\r` in the body is the Enter key and would submit half the message;
+			// a `\t` is the Tab key. Measured live: claude records a tab as four
+			// spaces, so `typed` is also what the verdict has to be matched against.
+			const driver = await makeSteerableDriver();
+			feed(EDITOR_FRAME);
+			mockPtyProcess.write.mockClear();
+			simulateEditorEcho();
+
+			const outcome = await driver.inject('line one\r\nline two\rcol1\tcol2');
+
+			expect(outcome).toEqual({ submitted: true, typed: 'line one\nline two\ncol1    col2' });
+			const writes = mockPtyProcess.write.mock.calls.map((c) => c[0] as string);
+			// The only CR written is the single submitting Enter.
+			expect(writes.filter((w) => w.includes('\r'))).toEqual(['\r']);
+			expect(writes.join('')).not.toContain('\t');
+		});
+
+		it('refuses without typing anything when a dialog owns the keyboard', async () => {
+			// Measured consequence of getting this wrong: one Enter on a live
+			// permission prompt selected "1. Yes" and wrote the file, and the user's
+			// message never reached the transcript at all.
+			const driver = await makeSteerableDriver();
+			feed(DIALOG_FRAME);
+			mockPtyProcess.write.mockClear();
+
+			const outcome = await driver.inject('rename it instead');
+
+			expect(outcome.submitted).toBe(false);
+			expect(outcome.refusal).toBe('blocking-dialog');
+			expect(outcome.detail).toBe('a permission prompt');
+			expect(mockPtyProcess.write).not.toHaveBeenCalled();
+		});
+
+		it('refuses an unknown screen with no editor box and no known dialog', async () => {
+			const driver = await makeSteerableDriver();
+			feed('\u001b[2J\u001b[H Something new entirely\r\n');
+			mockPtyProcess.write.mockClear();
+
+			const outcome = await driver.inject('anything');
+
+			expect(outcome.submitted).toBe(false);
+			expect(outcome.refusal).toBe('editor-unavailable');
+			expect(mockPtyProcess.write).not.toHaveBeenCalled();
+		});
+
+		it('refuses without captureScreen rather than typing blind', async () => {
+			const driver = new TuiDriver({ binPath: 'claude', args: [], cwd: '/tmp', env: {} });
+			await driver.start();
+			feed(EDITOR_FRAME);
+			mockPtyProcess.write.mockClear();
+
+			const outcome = await driver.inject('go left');
+
+			expect(outcome.submitted).toBe(false);
+			expect(outcome.refusal).toBe('editor-unavailable');
+			expect(mockPtyProcess.write).not.toHaveBeenCalled();
+		});
+
+		it('refuses after the PTY has exited', async () => {
+			const driver = await makeSteerableDriver();
+			feed(EDITOR_FRAME);
+			triggerExit(0);
+			mockPtyProcess.write.mockClear();
+
+			const outcome = await driver.inject('go left');
+
+			expect(outcome).toEqual({ submitted: false, refusal: 'tui-exited' });
+			expect(mockPtyProcess.write).not.toHaveBeenCalled();
+		});
+
+		it('does NOT wait for a quiet screen', async () => {
+			// send() waits for PROMPT_SETTLE_QUIET_MS of silence, which mid-response
+			// never arrives - it would burn the full PROMPT_SETTLE_MAX_MS and then type
+			// anyway. Constant output here would hang that path.
+			const driver = await makeSteerableDriver();
+			feed(EDITOR_FRAME);
+			simulateEditorEcho();
+			const noisy = setInterval(() => feed('\u001b[K'), 5);
+			try {
+				const started = Date.now();
+				const outcome = await driver.inject('go left');
+				expect(outcome.submitted).toBe(true);
+				expect(Date.now() - started).toBeLessThan(PROMPT_SETTLE_MAX_MS);
+			} finally {
+				clearInterval(noisy);
+			}
+		});
+
+		it('refuses at the Enter when a dialog replaced the editor mid-type, even with the text in scrollback', async () => {
+			// The gate passed, then a permission prompt opened while the steer was
+			// being typed. The transcript above it already quotes the steer, so a
+			// whole-screen echo search "finds" it - and the Enter would select
+			// "1. Yes".
+			const driver = await makeSteerableDriver();
+			feed(EDITOR_FRAME);
+			mockPtyProcess.write.mockClear();
+			mockPtyProcess.write.mockImplementation((chunk: string) => {
+				if (chunk === '\r') return;
+				feed(`\u001b[2J\u001b[H\u276f yes go ahead\r\n${DIALOG_FRAME.slice(7)}`);
+			});
+
+			const outcome = await driver.inject('yes go ahead');
+
+			expect(outcome.submitted).toBe(false);
+			expect(outcome.refusal).toBe('blocking-dialog');
+		});
+
+		it('looks for the echo INSIDE the editor box, not anywhere on screen', async () => {
+			// A short steer is usually in the transcript already. If the editor box
+			// itself stayed empty, the keystrokes went somewhere else.
+			const driver = await makeSteerableDriver();
+			feed(EDITOR_FRAME);
+			mockPtyProcess.write.mockClear();
+			mockPtyProcess.write.mockImplementation((chunk: string) => {
+				if (chunk === '\r') return;
+				feed(
+					`\u001b[2J\u001b[H\u276f stop\r\n\u23fa Stopping.\r\n${RULE}\r\n\u276f\r\n${RULE}\r\n`
+				);
+			});
+
+			const outcome = await driver.inject('stop');
+
+			// Refused means no Enter was pressed: inject() only reports a submit after
+			// writing it. (The shared mock PTY also collects stray taps from other
+			// tests' drivers, so a raw '\r' count would be noise.)
+			expect(outcome).toMatchObject({ submitted: false, refusal: 'echo-missing' });
+		});
+
+		it('clears an earlier refused steer from the editor before typing the next one', async () => {
+			// A refusal after typing leaves the text in the editor; typing behind it
+			// would submit both as one message.
+			const driver = await makeSteerableDriver();
+			feed(EDITOR_FRAME);
+			mockPtyProcess.write.mockClear();
+			let editor = '';
+			let echo = false;
+			mockPtyProcess.write.mockImplementation((chunk: string) => {
+				if (chunk === '\r') return;
+				if (chunk.startsWith('\u0015')) editor = '';
+				else editor += chunk;
+				feed(`\u001b[2J\u001b[H${RULE}\r\n\u276f ${echo ? editor : ''}\r\n${RULE}\r\n`);
+			});
+
+			const first = await driver.inject('go left');
+			expect(first).toMatchObject({ submitted: false, refusal: 'echo-missing' });
+
+			echo = true;
+			const second = await driver.inject('go right');
+
+			expect(second).toEqual({ submitted: true, typed: 'go right' });
+			const writes = mockPtyProcess.write.mock.calls.map((c) => c[0] as string);
+			const clearAt = writes.findIndex((w) => w.startsWith('\u0015'));
+			const typeAt = writes.findIndex((w) => w.includes('go right'));
+			expect(clearAt).toBeGreaterThan(-1);
+			expect(clearAt).toBeLessThan(typeAt);
+		});
+
+		it('submits a multi-line steer that grows the editor box', async () => {
+			// The pre-Enter check re-requires the box, and a steer with a newline makes
+			// it taller than one row. A one-row-only box check would refuse every one.
+			const driver = await makeSteerableDriver();
+			feed(EDITOR_FRAME);
+			mockPtyProcess.write.mockClear();
+			simulateEditorEcho();
+
+			const outcome = await driver.inject('first do this\nthen do that');
+
+			expect(outcome).toEqual({ submitted: true, typed: 'first do this\nthen do that' });
+		});
+
+		it('never types an escape or control key, and reports what it did type', async () => {
+			// ESC mid-turn interrupts claude. The typed text is also what the verdict
+			// is matched against, so it must be the cleaned text.
+			const driver = await makeSteerableDriver();
+			feed(EDITOR_FRAME);
+			mockPtyProcess.write.mockClear();
+			simulateEditorEcho();
+
+			const outcome = await driver.inject('go\u001b[A left\u001b');
+
+			expect(outcome).toEqual({ submitted: true, typed: 'go left' });
+			const writes = mockPtyProcess.write.mock.calls.map((c) => c[0] as string);
+			expect(writes.join('')).not.toContain('\u001b');
+		});
+
+		it('refuses a steer with nothing printable left, without typing or pressing Enter', async () => {
+			const driver = await makeSteerableDriver();
+			feed(EDITOR_FRAME);
+			mockPtyProcess.write.mockClear();
+
+			const outcome = await driver.inject('\u001b[A\u0003 ');
+
+			expect(outcome).toMatchObject({ submitted: false, refusal: 'echo-missing' });
+			expect(mockPtyProcess.write).not.toHaveBeenCalled();
+		});
+
+		it("cancels send()'s pending submit taps before typing", async () => {
+			const driver = await makeSteerableDriver();
+			feed(EDITOR_FRAME);
+			const cancel = vi.spyOn(driver, 'cancelSubmitRetries');
+			simulateEditorEcho();
+
+			await driver.inject('go left');
+
+			expect(cancel).toHaveBeenCalled();
+		});
+
+		it('refuses as not-running once shutdown has begun, without typing', async () => {
+			const driver = await makeSteerableDriver();
+			feed(EDITOR_FRAME);
+			mockPtyProcess.write.mockClear();
+			driver.beginShutdown();
+
+			const outcome = await driver.inject('go left');
+
+			expect(outcome).toMatchObject({ submitted: false, refusal: 'not-running' });
+			expect(mockPtyProcess.write).not.toHaveBeenCalled();
+		});
+
+		it('quit() stops an in-flight steer before its Enter and clears it before typing /quit', async () => {
+			// Without this, `/quit\r` is appended to the half-typed steer and claude
+			// receives "<steer>/quit" as one message.
+			const driver = await makeSteerableDriver();
+			feed(EDITOR_FRAME);
+			mockPtyProcess.write.mockClear();
+			let typed = '';
+			mockPtyProcess.write.mockImplementation((chunk: string) => {
+				if (chunk === '\r' || chunk === '/quit\r') return;
+				typed = chunk.startsWith('\u0015') ? '' : typed + chunk;
+				feed(`\u001b[2J\u001b[H${RULE}\r\n\u276f ${typed}\r\n${RULE}\r\n`);
+			});
+
+			const steering = driver.inject('b'.repeat(PROMPT_CHUNK_MAX_BYTES * 4));
+			// Quit once the steer is partway in, which is the race being fixed.
+			await vi.waitFor(() => expect(typed.length).toBeGreaterThan(0));
+			const quitting = driver.quit();
+			const outcome = await steering;
+			await vi.waitFor(() => expect(mockPtyProcess.write).toHaveBeenCalledWith('/quit\r'));
+			triggerExit(0);
+			await quitting;
+
+			expect(outcome).toMatchObject({ submitted: false, refusal: 'not-running' });
+			const writes = mockPtyProcess.write.mock.calls.map((c) => c[0] as string);
+			const clearAt = writes.findIndex((w) => w.startsWith('\u0015'));
+			const quitAt = writes.indexOf('/quit\r');
+			expect(clearAt).toBeGreaterThanOrEqual(0);
+			expect(quitAt).toBeGreaterThan(clearAt);
+		});
+
+		it('quit() terminates instead of typing /quit when an unsent steer will not clear', async () => {
+			const driver = await makeSteerableDriver();
+			feed(EDITOR_FRAME);
+			mockPtyProcess.write.mockClear();
+			// An editor that ignores Ctrl+U: the steer stays on screen.
+			let typed = '';
+			mockPtyProcess.write.mockImplementation((chunk: string) => {
+				if (chunk === '\r' || chunk.startsWith('\u0015')) return;
+				typed += chunk;
+				feed(`\u001b[2J\u001b[H${RULE}\r\n\u276f ${typed}\r\n${RULE}\r\n`);
+			});
+
+			const steering = driver.inject('c'.repeat(PROMPT_CHUNK_MAX_BYTES * 4));
+			await vi.waitFor(() => expect(typed.length).toBeGreaterThan(0));
+			const quitting = driver.quit();
+			await steering;
+			await vi.waitFor(() => {
+				expect(mockPtyProcess.write.mock.calls.some((c) => String(c[0]).startsWith('\u0015'))).toBe(
+					true
+				);
+			});
+			// Give the clear time to be read back and the /quit decision to be made.
+			await new Promise((resolve) => setTimeout(resolve, 600));
+			triggerExit(0);
+			await quitting;
+
+			const writes = mockPtyProcess.write.mock.calls.map((c) => c[0] as string);
+			expect(writes).not.toContain('/quit\r');
+		});
+
+		it('types a multi-KB steer in paced chunks, never one write', async () => {
+			// Not a startup concern: a macOS PTY holds 1,022 unread bytes and claude
+			// discards what is queued at a flush, so a single large write loses whole
+			// queues whenever it happens.
+			const driver = await makeSteerableDriver();
+			feed(EDITOR_FRAME);
+			mockPtyProcess.write.mockClear();
+			simulateEditorEcho();
+			const long = 'a'.repeat(3000);
+
+			const outcome = await driver.inject(long);
+
+			expect(outcome.submitted).toBe(true);
+			const bodyWrites = mockPtyProcess.write.mock.calls
+				.map((c) => c[0] as string)
+				.filter((w) => w !== '\r');
+			expect(bodyWrites.length).toBeGreaterThan(1);
+			for (const w of bodyWrites) {
+				expect(Buffer.byteLength(w, 'utf8')).toBeLessThanOrEqual(PROMPT_CHUNK_MAX_BYTES);
+			}
+			expect(bodyWrites.join('')).toBe(long);
 		});
 	});
 });

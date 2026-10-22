@@ -28,10 +28,10 @@ vi.mock('../../../main/agents/resolveClaudeSpawnMode', async () => {
 // SSH: stub the wrapper so we can hand back either a resolved remote or the
 // silent local-fallback shape it produces when the remote can't be found.
 const mockWrapSpawnWithSsh = vi.fn();
-vi.mock('../../../main/utils/ssh-spawn-wrapper', async () => {
-	const actual = await vi.importActual<typeof import('../../../main/utils/ssh-spawn-wrapper')>(
-		'../../../main/utils/ssh-spawn-wrapper'
-	);
+vi.mock('../../../shared/maestro-lib/launch/ssh-spawn-wrapper', async () => {
+	const actual = await vi.importActual<
+		typeof import('../../../shared/maestro-lib/launch/ssh-spawn-wrapper')
+	>('../../../shared/maestro-lib/launch/ssh-spawn-wrapper');
 	return {
 		...actual,
 		wrapSpawnWithSsh: (...args: unknown[]) => mockWrapSpawnWithSsh(...args),
@@ -40,11 +40,19 @@ vi.mock('../../../main/utils/ssh-spawn-wrapper', async () => {
 vi.mock('../../../main/agents/probeRemoteMaestroP', () => ({
 	ensureRemoteMaestroPProbed: vi.fn().mockResolvedValue(undefined),
 }));
-vi.mock('../../../main/utils/ssh-remote-resolver', () => ({
+vi.mock('../../../shared/maestro-lib/launch/ssh-remote-resolver', () => ({
 	getSshRemoteConfig: vi.fn(() => ({ config: null, source: 'session' })),
 }));
 
+// Pin the non-Windows branch so the system-prompt flag is passed inline on
+// every CI host (the Windows temp-file branch is covered by the delivery tests).
+vi.mock('../../../shared/platformDetection', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../shared/platformDetection')>();
+	return { ...actual, isWindows: () => false };
+});
+
 import { spawnGroupChatAgent } from '../../../main/group-chat/spawnGroupChatAgent';
+import { embedSystemPromptInPrompt } from '../../../shared/embeddedSystemPrompt';
 import type { AgentConfig } from '../../../main/agents/definitions';
 import type { IProcessManager } from '../../../main/group-chat/group-chat-moderator';
 
@@ -212,6 +220,97 @@ describe('spawnGroupChatAgent', () => {
 			expect(spawnSpy).toHaveBeenCalledTimes(1);
 			const spawned = spawnSpy.mock.calls[0][0] as { command: string };
 			expect(spawned.command).toBe('ssh');
+		});
+	});
+
+	describe('appendSystemPrompt', () => {
+		const apiDecision = { mode: 'api', reason: 'auto' };
+		const agentWith = (supportsAppendSystemPrompt: boolean) =>
+			({
+				...makeAgent(),
+				capabilities: { supportsAppendSystemPrompt },
+			}) as unknown as AgentConfig;
+
+		it('passes the native flag for agents that support it', async () => {
+			mockResolve.mockReturnValue(apiDecision);
+			await spawnGroupChatAgent({
+				sessionId: 's',
+				agentId: 'claude-code',
+				agent: agentWith(true),
+				args: ['--print'],
+				cwd: '/tmp/work',
+				prompt: 'hello',
+				appendSystemPrompt: 'SYS',
+				processManager,
+			});
+			const spawned = spawnSpy.mock.calls[0][0] as { args: string[]; prompt: string };
+			expect(spawned.args).toEqual(['--print', '--append-system-prompt', 'SYS']);
+			expect(spawned.prompt).toBe('hello');
+		});
+
+		it('re-sends the native flag on resume', async () => {
+			mockResolve.mockReturnValue(apiDecision);
+			await spawnGroupChatAgent({
+				sessionId: 's',
+				agentId: 'claude-code',
+				agent: agentWith(true),
+				args: ['--print'],
+				cwd: '/tmp/work',
+				prompt: 'hello',
+				appendSystemPrompt: 'SYS',
+				isResume: true,
+				processManager,
+			});
+			const spawned = spawnSpy.mock.calls[0][0] as { args: string[] };
+			expect(spawned.args).toContain('--append-system-prompt');
+		});
+
+		it('embeds into the prompt for agents without the flag, and not on resume', async () => {
+			mockResolve.mockReturnValue(apiDecision);
+			const base = {
+				sessionId: 's',
+				agentId: 'codex',
+				agent: agentWith(false),
+				args: ['exec'],
+				cwd: '/tmp/work',
+				prompt: 'hello',
+				appendSystemPrompt: 'SYS',
+				processManager,
+			};
+
+			await spawnGroupChatAgent(base);
+			expect((spawnSpy.mock.calls[0][0] as { prompt: string }).prompt).toBe(
+				embedSystemPromptInPrompt('SYS', 'hello')
+			);
+
+			await spawnGroupChatAgent({ ...base, isResume: true });
+			expect((spawnSpy.mock.calls[1][0] as { prompt: string }).prompt).toBe('hello');
+		});
+
+		it('hands the embedded prompt to the SSH wrapper', async () => {
+			mockResolve.mockReturnValue(apiDecision);
+			mockWrapSpawnWithSsh.mockResolvedValue({
+				command: 'ssh',
+				args: ['host'],
+				cwd: '/remote',
+				prompt: undefined,
+				customEnvVars: undefined,
+				sshRemoteUsed: { id: 'r1', name: 'R', host: 'h' },
+			});
+			await spawnGroupChatAgent({
+				sessionId: 's',
+				agentId: 'codex',
+				agent: agentWith(false),
+				args: ['exec'],
+				cwd: '/tmp/work',
+				prompt: 'hello',
+				appendSystemPrompt: 'SYS',
+				sshRemoteConfig: { enabled: true, remoteId: 'r1' },
+				sshStore: { getSshRemotes: () => [] } as any,
+				processManager,
+			});
+			const wrapConfig = mockWrapSpawnWithSsh.mock.calls[0][0] as { prompt: string };
+			expect(wrapConfig.prompt).toBe(embedSystemPromptInPrompt('SYS', 'hello'));
 		});
 	});
 });

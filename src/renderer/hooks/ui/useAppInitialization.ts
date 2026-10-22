@@ -44,6 +44,7 @@ import {
 } from '../../services/leaderboard';
 import { useWindowContextOptional } from '../../contexts/WindowContext';
 import { logger } from '../../utils/logger';
+import { isWebDesktop } from '../../utils/runtimeContext';
 
 // ============================================================================
 // Return type
@@ -92,6 +93,7 @@ export function useAppInitialization(): AppInitializationReturn {
 	const osNotificationsEnabled = useSettingsStore((s) => s.osNotificationsEnabled);
 	const idleNotificationEnabled = useSettingsStore((s) => s.idleNotificationEnabled);
 	const idleNotificationCommand = useSettingsStore((s) => s.idleNotificationCommand);
+	const notificationCenterEnabled = useSettingsStore((s) => s.notificationCenterEnabled);
 	const speckitEnabled = useSettingsStore((s) => s.speckitEnabled);
 	const openspecEnabled = useSettingsStore((s) => s.openspecEnabled);
 	const bmadEnabled = useSettingsStore((s) => s.bmadEnabled);
@@ -153,6 +155,7 @@ export function useAppInitialization(): AppInitializationReturn {
 	// --- Windows warning modal ---
 	const windowsWarningShownRef = useRef(false);
 	useEffect(() => {
+		if (isWebDesktop()) return;
 		const { setWindowsWarningModalOpen } = getModalActions();
 		exposeWindowsWarningModalDebug(setWindowsWarningModalOpen);
 
@@ -185,6 +188,8 @@ export function useAppInitialization(): AppInitializationReturn {
 	// second window does not ask the same questions again.
 	const onboardingSeriesStartedRef = useRef(false);
 	useEffect(() => {
+		// Attaching to a host is not a new native installation. Host setup stays on the host.
+		if (isWebDesktop()) return;
 		exposeOnboardingSeriesDebug();
 
 		if (!settingsLoaded || !sessionsLoaded) return;
@@ -238,14 +243,14 @@ export function useAppInitialization(): AppInitializationReturn {
 
 	// --- Sync beta updates setting to electron-updater ---
 	useEffect(() => {
-		if (settingsLoaded) {
+		if (settingsLoaded && !isWebDesktop()) {
 			window.maestro.updates.setAllowPrerelease(enableBetaUpdates);
 		}
 	}, [settingsLoaded, enableBetaUpdates]);
 
 	// --- Check for updates on startup, then daily for long-running sessions ---
 	useEffect(() => {
-		if (!settingsLoaded || !checkForUpdatesOnStartup) return;
+		if (isWebDesktop() || !settingsLoaded || !checkForUpdatesOnStartup) return;
 
 		const runCheck = async () => {
 			// Fire the anonymous DAU/MAU check-in ping alongside the update check.
@@ -450,6 +455,10 @@ export function useAppInitialization(): AppInitializationReturn {
 			.getState()
 			.setIdleNotification(idleNotificationEnabled, idleNotificationCommand);
 	}, [idleNotificationEnabled, idleNotificationCommand]);
+
+	useEffect(() => {
+		useNotificationStore.getState().setHistoryEnabled(notificationCenterEnabled);
+	}, [notificationCenterEnabled]);
 
 	// --- Playground debug function ---
 	useEffect(() => {

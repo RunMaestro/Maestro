@@ -1,3 +1,4 @@
+import { useHeadlessActivityStore } from '../../stores/headlessActivityStore';
 /**
  * cycleSession - Cmd+Shift+[/] agent / group-chat cycling.
  *
@@ -292,6 +293,7 @@ export function cycleSession(dir: 'next' | 'prev', deps: CycleSessionDeps): void
 	// active agent so you don't get lost.
 	if (showUnreadAgentsOnly) {
 		const attentionCtx: AttentionContext = {
+			headlessCounts: useHeadlessActivityStore.getState().counts,
 			batchSessionIds:
 				deps.batchSessionIds ?? new Set(selectActiveBatchSessionIds(useBatchStore.getState())),
 			stuckOutageIds: deps.stuckOutageIds ?? getActiveOutageSessionIds(),

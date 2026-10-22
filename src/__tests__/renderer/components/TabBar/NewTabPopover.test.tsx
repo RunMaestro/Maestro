@@ -32,7 +32,7 @@ describe('NewTabPopover', () => {
 		renderPopover();
 		fireEvent.click(screen.getByTitle('New tab…'));
 		expect(screen.getByText('New Terminal')).toBeInTheDocument();
-		const badges = document.querySelectorAll('span.ml-auto.text-xs');
+		const badges = document.querySelectorAll('[data-shortcut-keys]');
 		expect(badges.length).toBeGreaterThanOrEqual(3);
 		for (const badge of badges) {
 			expect(badge).toHaveAttribute('data-shortcut-hint');

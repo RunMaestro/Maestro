@@ -29,6 +29,9 @@ import { createCueSessionRegistry } from '../../../../main/cue/cue-session-regis
 let susFactorAllows = true;
 vi.mock('../../../../main/cue/cue-susfactor', () => ({
 	guardGitHubEvent: vi.fn(async () => susFactorAllows),
+	extractGitHubScorableText: () => 'third-party text',
+	// Scoring "would run", so every event goes through the async guard above.
+	wouldScoreText: () => true,
 }));
 import type { CueEvent, CueEventType, CueSubscription } from '../../../../main/cue/cue-types';
 import type { SessionInfo } from '../../../../shared/types';
@@ -191,7 +194,7 @@ describe('cue-github-poller-trigger-source', () => {
 
 		source.start();
 		const config = mockCreateCueGitHubPoller.mock.calls[0][0] as {
-			onEvent: (event: CueEvent) => void;
+			onEvent: (event: CueEvent, onOutcome?: (outcome: string) => void) => void;
 		};
 		config.onEvent(makeEvent('github.pull_request'));
 
@@ -216,7 +219,7 @@ describe('cue-github-poller-trigger-source', () => {
 
 		source.start();
 		const config = mockCreateCueGitHubPoller.mock.calls[0][0] as {
-			onEvent: (event: CueEvent) => void;
+			onEvent: (event: CueEvent, onOutcome?: (outcome: string) => void) => void;
 		};
 		config.onEvent(makeEvent('github.pull_request'));
 
@@ -241,7 +244,7 @@ describe('cue-github-poller-trigger-source', () => {
 
 		source.start();
 		const config = mockCreateCueGitHubPoller.mock.calls[0][0] as {
-			onEvent: (event: CueEvent) => void;
+			onEvent: (event: CueEvent, onOutcome?: (outcome: string) => void) => void;
 		};
 		config.onEvent(makeEvent('github.pull_request')); // payload has number: 42, not 99
 

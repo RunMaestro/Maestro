@@ -149,6 +149,11 @@ describe('first-party plugin registry', () => {
 			['board', 'com.maestro.board'],
 			['groupsPlus', 'com.maestro.groups-plus'],
 			['webLogin', 'com.maestro.web-login'],
+			['computerHistory', 'com.maestro.computer-history'],
+			['quickChat', 'com.maestro.quick-chat'],
+			['maestroRun', 'com.maestro.maestro-run'],
+			['throughputGauge', 'com.maestro.throughput-gauge'],
+			['dataview', 'com.maestro.dataview'],
 		]);
 	});
 

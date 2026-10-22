@@ -1,4 +1,5 @@
 export { AccessibilitySection } from './AccessibilitySection';
+export { AgentTaskListSection } from './AgentTaskListSection';
 export { BionifyInfoModal } from './BionifyInfoModal';
 export { ContextWarningsSection } from './ContextWarningsSection';
 export { DocumentGraphSection } from './DocumentGraphSection';

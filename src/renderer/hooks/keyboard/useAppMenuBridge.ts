@@ -3,6 +3,7 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { FIXED_SHORTCUTS } from '../../constants/shortcuts';
 import { buildEventFromKeys } from '../../utils/shortcutRecorder';
 import type { Shortcut } from '../../types';
+import { isWebDesktop } from '../../utils/runtimeContext';
 
 /**
  * Two-way bridge between the native macOS application menu and the renderer.
@@ -23,13 +24,14 @@ import type { Shortcut } from '../../types';
  * Same synthetic-event technique the codebase already uses to route keystrokes
  * out of a focused webview (onBrowserTabShortcutKey) and out of xterm (Cmd+F).
  *
- * No-ops when the app menu bridge isn't present (web-desktop build).
+ * Native menus belong to this desktop window, never to a remote host view.
  */
 export function useAppMenuBridge(): void {
 	const shortcuts = useSettingsStore((s) => s.shortcuts);
 	const tabShortcuts = useSettingsStore((s) => s.tabShortcuts);
 
 	useEffect(() => {
+		if (isWebDesktop()) return;
 		const app = window.maestro?.app;
 		if (!app?.setMenuShortcutKeys) return;
 
@@ -49,6 +51,7 @@ export function useAppMenuBridge(): void {
 	}, [shortcuts, tabShortcuts]);
 
 	useEffect(() => {
+		if (isWebDesktop()) return;
 		const app = window.maestro?.app;
 		if (!app?.onMenuCommand) return;
 

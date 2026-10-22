@@ -16,6 +16,7 @@ import {
 	reportResult,
 	failCommand,
 	resolveAgentOrFail,
+	exitIfMaestroNotRunning,
 } from '../services/session-command';
 
 interface BookmarkOptions {
@@ -44,6 +45,7 @@ export async function setBookmark(
 			jsonExtra: { agentId: sessionId, bookmarked },
 		});
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		failCommand(error instanceof Error ? error.message : String(error), options.json);
 	}
 }

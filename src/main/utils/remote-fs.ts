@@ -10,6 +10,7 @@
  */
 
 import { spawn } from 'child_process';
+import * as path from 'path';
 import { SshRemoteConfig } from '../../shared/types';
 import { execFileNoThrow, ExecResult } from './execFile';
 import { shellEscape, shellEscapeRemotePath } from './shell-escape';
@@ -603,6 +604,65 @@ export async function readFileRemote(
 	};
 }
 
+/** Exit codes of the {@link readFileInRootRemote} script, past the ones `sh` and ssh use for themselves. */
+const IN_ROOT_EXIT = { missing: 3, outside: 4, tooLarge: 5, noRealpath: 6, excluded: 7 } as const;
+
+/**
+ * Read a text file inside a root on a remote host, in ONE SSH round trip, only if its REAL path stays inside
+ * the root's real path: the remote's `realpath` resolves both, so a symlink inside the root that points out
+ * of it is refused, and the file read is the resolved one. A real path with a segment that starts with `.` or
+ * is `node_modules` is refused too, so a symlink cannot lead into `.obsidian/` or `.git/` (Dataview's
+ * `isIndexedVaultPath()` rule; untrusted code is the only caller). `relPath` must already be a normalized,
+ * root-relative POSIX path (`normalizeRootRelativePath()`); this adds the symlink check the lexical one cannot
+ * make. Answers null for a path with no regular file behind it, and an error for a path outside the root or
+ * in an excluded folder, a file over `maxBytes`, or a remote without `realpath`.
+ *
+ * @example
+ * const text = await readFileInRootRemote('/home/u/vault', 'views/x/view.js', 1 << 20, sshConfig);
+ */
+export async function readFileInRootRemote(
+	root: string,
+	relPath: string,
+	maxBytes: number,
+	sshRemote: SshRemoteConfig,
+	deps: RemoteFsDeps = defaultDeps
+): Promise<RemoteFsResult<string | null>> {
+	const rootArg = shellEscapeRemotePath(root);
+	const fileArg = shellEscapeRemotePath(path.posix.join(root, relPath));
+	const { missing, outside, tooLarge, noRealpath, excluded } = IN_ROOT_EXIT;
+	const remoteCommand =
+		`command -v realpath >/dev/null 2>&1 || exit ${noRealpath}; ` +
+		`r=$(realpath ${rootArg}) || exit 1; ` +
+		`f=$(realpath ${fileArg} 2>/dev/null) || exit ${missing}; ` +
+		`[ "$r" = / ] || case "$f" in "$r"/*) ;; *) exit ${outside} ;; esac; ` +
+		`rel=\${f#"$r"}; case "/$rel/" in */.*|*/node_modules/*) exit ${excluded} ;; esac; ` +
+		`[ -f "$f" ] || exit ${missing}; ` +
+		`s=$(wc -c < "$f" | tr -d ' ') || exit 1; ` +
+		`[ "$s" -le ${Math.max(0, Math.floor(maxBytes))} ] || exit ${tooLarge}; ` +
+		`cat "$f"`;
+
+	const result = await execRemoteCommand(sshRemote, remoteCommand, deps);
+	switch (result.exitCode) {
+		case 0:
+			return { success: true, data: result.stdout };
+		case missing:
+			return { success: true, data: null };
+		case outside:
+			return { success: false, error: `Path resolves outside ${root}: ${relPath}` };
+		case tooLarge:
+			return { success: false, error: `File is larger than ${maxBytes} bytes: ${relPath}` };
+		case excluded:
+			return {
+				success: false,
+				error: `Path resolves into a hidden folder or node_modules: ${relPath}`,
+			};
+		case noRealpath:
+			return { success: false, error: 'The remote host has no realpath command' };
+		default:
+			return { success: false, error: result.stderr || `Failed to read file: ${relPath}` };
+	}
+}
+
 /**
  * Read a remote binary file (image, PDF, archive, etc.) as base64 via SSH.
  *
@@ -942,6 +1002,54 @@ export async function statRemote(
 			mtime: mtimeSeconds * 1000, // Convert to milliseconds
 		},
 	};
+}
+
+/**
+ * Find the nearest ancestor of a remote directory (the directory itself
+ * included) that contains a child directory named `markerDir`, in ONE SSH
+ * round trip. One `stat` per ancestor would cost a round trip each.
+ *
+ * The remote `sh` loop walks up with `dirname` until it finds the marker or
+ * reaches the filesystem root.
+ *
+ * @param startDir Directory on the remote host to start from
+ * @param markerDir Name of the child directory to look for (e.g. `.obsidian`)
+ * @param sshRemote SSH remote configuration
+ * @param deps Optional dependencies for testing
+ * @returns The matching ancestor, or `null` when no ancestor has the marker
+ *
+ * @example
+ * const root = await findAncestorWithDirRemote('/home/u/vault/notes', '.obsidian', sshConfig);
+ * // => { success: true, data: '/home/u/vault' }
+ */
+export async function findAncestorWithDirRemote(
+	startDir: string,
+	markerDir: string,
+	sshRemote: SshRemoteConfig,
+	deps: RemoteFsDeps = defaultDeps
+): Promise<RemoteFsResult<string | null>> {
+	const remoteCommand =
+		`d=${shellEscapeRemotePath(startDir)}; m=${shellEscape(markerDir)}; ` +
+		`while :; do ` +
+		`if [ -d "$d/$m" ]; then printf '%s' "$d"; exit 0; fi; ` +
+		`p=$(dirname "$d"); ` +
+		`if [ "$p" = "$d" ]; then exit 0; fi; ` +
+		`d=$p; ` +
+		`done`;
+
+	const result = await execRemoteCommand(sshRemote, remoteCommand, deps);
+
+	if (result.exitCode !== 0) {
+		return {
+			success: false,
+			error: result.stderr || `Failed to search ancestors of: ${startDir}`,
+		};
+	}
+
+	// printf adds no newline; strip only line endings so a path that ends in
+	// a space survives.
+	const found = result.stdout.replace(/[\r\n]+$/, '');
+	return { success: true, data: found === '' ? null : found };
 }
 
 /**
@@ -1528,10 +1636,15 @@ export async function listTreeRemote(
 		return { success: false, error: `Directory not found or not accessible: ${rootPath}` };
 	}
 
+	// A root with no subdirectories prints the separator as the FIRST line, with
+	// no newline before it. Prefix one so the separator is always found;
+	// otherwise every file lands in the directory section and the file list is
+	// empty (a flat Auto Run playbook folder showed no documents over SSH).
+	const output = `\n${result.stdout}`;
 	const sepLine = `\n${SEP}\n`;
-	const sepIdx = result.stdout.indexOf(sepLine);
-	const dirSection = sepIdx >= 0 ? result.stdout.slice(0, sepIdx) : result.stdout;
-	const fileSection = sepIdx >= 0 ? result.stdout.slice(sepIdx + sepLine.length) : '';
+	const sepIdx = output.indexOf(sepLine);
+	const dirSection = sepIdx >= 0 ? output.slice(0, sepIdx) : output;
+	const fileSection = sepIdx >= 0 ? output.slice(sepIdx + sepLine.length) : '';
 
 	const stripPrefix = (line: string): string => (line.startsWith('./') ? line.slice(2) : line);
 
@@ -1547,6 +1660,88 @@ export async function listTreeRemote(
 	const files = fileLines.map(stripPrefix).filter(Boolean);
 
 	return { success: true, data: { directories, files, truncated } };
+}
+
+/** One regular file from {@link listFilesWithStatsRemote}. Times are milliseconds. */
+export interface RemoteFileWithStats {
+	/** Path relative to the listed root, `/`-separated, with no leading `./`. */
+	path: string;
+	size: number;
+	mtime: number;
+	/** Creation time, or 0 when the remote filesystem does not record one. */
+	birthtime: number;
+	/** Inode change time (the fallback when `birthtime` is 0). */
+	ctime: number;
+}
+
+/**
+ * List every regular file under a remote directory with its size, mtime,
+ * birth time, and change time, in ONE SSH round trip. `statRemote()` per file
+ * would cost a round trip each.
+ *
+ * Directories whose base name matches one of `pruneNames` (a `find -name`
+ * pattern such as `.*` or `node_modules`) are skipped with everything under
+ * them, and so are files with a matching name. Symlinks are followed, as in
+ * {@link listTreeRemote}. GNU `stat -c` is tried first, then BSD `stat -f`
+ * (macOS), the same dual form `statRemote()` uses. Both print a birth time of
+ * 0 when the filesystem has none. Unreadable subdirectories are skipped.
+ *
+ * @param rootPath Directory on the remote host to list
+ * @param pruneNames `find -name` patterns to skip
+ * @param sshRemote SSH remote configuration
+ * @param deps Optional dependencies for testing
+ */
+export async function listFilesWithStatsRemote(
+	rootPath: string,
+	pruneNames: string[],
+	sshRemote: SshRemoteConfig,
+	deps: RemoteFsDeps = defaultDeps
+): Promise<RemoteFsResult<RemoteFileWithStats[]>> {
+	const pruneTerms = pruneNames
+		.filter((name) => name && !name.includes('/'))
+		.map((name) => `-name ${shellEscape(name)}`);
+	const pruneClause = pruneTerms.length > 0 ? `\\( ${pruneTerms.join(' -o ')} \\) -prune -o ` : '';
+
+	// Space-separated fields: the four numbers never contain a space, so the
+	// path is everything after the fourth one, spaces included.
+	const remoteCommand =
+		`cd ${shellEscapeRemotePath(rootPath)} 2>/dev/null || { echo "__CD_ERROR__"; exit 0; }; ` +
+		`if stat -c %s . >/dev/null 2>&1; then o=-c; f='%s %Y %W %Z %n'; ` +
+		`else o=-f; f='%z %m %B %c %N'; fi; ` +
+		`find -L . -mindepth 1 ${pruneClause}-type f -exec stat -L "$o" "$f" {} + 2>/dev/null; ` +
+		`exit 0`;
+
+	const result = await execRemoteCommand(sshRemote, remoteCommand, deps);
+
+	if (result.exitCode !== 0) {
+		return {
+			success: false,
+			error: result.stderr || `Failed to list files under: ${rootPath}`,
+		};
+	}
+	if (result.stdout.startsWith('__CD_ERROR__')) {
+		return { success: false, error: `Directory not found or not accessible: ${rootPath}` };
+	}
+
+	const toMs = (field: string): number => {
+		const seconds = parseInt(field, 10);
+		return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 0;
+	};
+	const files: RemoteFileWithStats[] = [];
+	for (const line of result.stdout.split('\n')) {
+		const match = /^(\d+) (\d+) (-?\d+|-) (\d+) (.+)$/.exec(line.replace(/\r$/, ''));
+		if (!match) continue;
+		const filePath = match[5].startsWith('./') ? match[5].slice(2) : match[5];
+		if (!filePath) continue;
+		files.push({
+			path: filePath,
+			size: parseInt(match[1], 10),
+			mtime: toMs(match[2]),
+			birthtime: toMs(match[3]),
+			ctime: toMs(match[4]),
+		});
+	}
+	return { success: true, data: files };
 }
 
 /**

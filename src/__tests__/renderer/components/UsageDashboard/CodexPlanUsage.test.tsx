@@ -16,6 +16,8 @@ import { CodexPlanUsage } from '../../../../renderer/components/UsageDashboard/C
 import { useCodexUsageStore } from '../../../../renderer/stores/codexUsageStore';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import { useUIStore } from '../../../../renderer/stores/uiStore';
+import { selectModalData, useModalStore } from '../../../../renderer/stores/modalStore';
+import { useAuthOutageStore } from '../../../../renderer/stores/authOutageStore';
 import { THEMES } from '../../../../shared/themes';
 
 const theme = THEMES['dracula'];
@@ -36,11 +38,14 @@ beforeEach(() => {
 			refreshCodexUsageSnapshots: refreshCodexUsageSnapshotsMock,
 			getCustomEnvVars: getCustomEnvVarsMock,
 		},
+		fs: { homeDir: vi.fn().mockResolvedValue('/Users/me') },
 	};
 
 	useCodexUsageStore.getState().__resetForTests();
 	useSessionStore.setState({ sessions: [] } as any);
 	useUIStore.setState({ hiddenQuotaAccounts: {} });
+	useModalStore.getState().closeAll();
+	useAuthOutageStore.setState({ outages: {} });
 	cleanup();
 });
 
@@ -263,6 +268,53 @@ describe('CodexPlanUsage - non-authenticated row', () => {
 		expect(screen.getByTestId('codex-plan-row-work-error')).toBeInTheDocument();
 		expect(screen.queryAllByRole('progressbar')).toHaveLength(0);
 		expect(screen.getByText(/HTTP 500/i)).toBeInTheDocument();
+		// A server error is not fixed by logging in, so no login is offered.
+		expect(screen.queryByTestId('codex-plan-row-work-error-login')).toBeNull();
+	});
+
+	it('opens the re-auth login for a logged-out account with no agents, then re-samples on close', async () => {
+		seedSnapshots({
+			'/Users/me/.codex-banaco': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				codexHomeKey: '/Users/me/.codex-banaco',
+				authState: 'unauthenticated',
+				error: 'Codex auth token was rejected. Run `codex login` for this CODEX_HOME.',
+			},
+		});
+
+		render(<CodexPlanUsage theme={theme} autoRefresh={false} />);
+		fireEvent.click(screen.getByTestId('codex-plan-row-banaco-unauthenticated-login'));
+
+		await waitFor(() => expect(selectModalData('reauth')(useModalStore.getState())).toBeDefined());
+		const data = selectModalData('reauth')(useModalStore.getState())!;
+		expect(data.providerKey).toBe('codex');
+		// The login is pinned to THIS account, not to whichever agent failed first.
+		expect(data.host?.toolType).toBe('codex');
+		expect(data.host?.customEnvVars).toEqual({ CODEX_HOME: '/Users/me/.codex-banaco' });
+		expect(useAuthOutageStore.getState().outages.codex?.initiatedBy).toBe('user');
+		expect(refreshCodexUsageSnapshotsMock).not.toHaveBeenCalled();
+
+		useModalStore.getState().closeModal('reauth');
+		await waitFor(() => expect(refreshCodexUsageSnapshotsMock).toHaveBeenCalledTimes(1));
+	});
+
+	it('leaves CODEX_HOME unset when logging in to the default account', async () => {
+		seedSnapshots({
+			'/Users/me/.codex': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				codexHomeKey: '/Users/me/.codex',
+				authState: 'missing_auth',
+				error: 'No Codex auth.json found.',
+			},
+		});
+
+		render(<CodexPlanUsage theme={theme} autoRefresh={false} />);
+		fireEvent.click(screen.getByTestId('codex-plan-row-default-missing_auth-login'));
+
+		await waitFor(() => expect(selectModalData('reauth')(useModalStore.getState())).toBeDefined());
+		expect(
+			selectModalData('reauth')(useModalStore.getState())!.host?.customEnvVars
+		).toBeUndefined();
 	});
 });
 

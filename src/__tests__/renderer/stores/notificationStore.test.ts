@@ -14,17 +14,21 @@ import { logger } from '../../../renderer/utils/logger';
 import {
 	useNotificationStore,
 	notifyToast,
-	resetToastIdCounter,
 	getNotificationState,
 	getNotificationActions,
 	selectToasts,
 	selectToastCount,
 	selectConfig,
 	triggerCustomNotification,
+	selectUnreadNotificationCount,
+	loadNotificationHistory,
+	NOTIFICATION_HISTORY_LIMIT,
+	NOTIFICATION_HISTORY_STORAGE_KEY,
 } from '../../../renderer/stores/notificationStore';
 import type { Toast } from '../../../renderer/stores/notificationStore';
 import { showOsNotification } from '../../../renderer/stores/notificationStore';
 import { isWebDesktop } from '../../../renderer/utils/runtimeContext';
+import { installLocalStorageMock } from '../../helpers/mockLocalStorage';
 
 // runtimeContext is mocked so tests can flip between the Electron desktop path
 // (default false) and the web-desktop browser path.
@@ -53,6 +57,8 @@ beforeEach(() => {
 			osNotificationsEnabled: true,
 			idleNotificationEnabled: false,
 			idleNotificationCommand: '',
+			// The Notification Center is on for these tests; the gate has its own cases.
+			historyEnabled: true,
 		},
 	});
 
@@ -260,21 +266,13 @@ describe('notificationStore', () => {
 		describe('ID generation', () => {
 			it('returns generated toast ID with expected shape', () => {
 				const id = notifyToast({ type: 'success', title: 'Test', message: 'msg' });
-				expect(id).toMatch(/^toast-\d+-\d+$/);
+				expect(id).toMatch(/^toast-[0-9a-f-]{36}$/);
 			});
 
 			it('generates unique IDs', () => {
 				const id1 = notifyToast({ type: 'success', title: 'A', message: 'a' });
 				const id2 = notifyToast({ type: 'success', title: 'B', message: 'b' });
 				expect(id1).not.toBe(id2);
-			});
-
-			it('counter portion increments between consecutive calls', () => {
-				const id1 = notifyToast({ type: 'success', title: 'A', message: 'a' });
-				const id2 = notifyToast({ type: 'success', title: 'B', message: 'b' });
-				const counter1 = Number(id1.split('-').pop());
-				const counter2 = Number(id2.split('-').pop());
-				expect(counter2).toBe(counter1 + 1);
 			});
 		});
 
@@ -479,6 +477,15 @@ describe('notificationStore', () => {
 				expect(triggerCustomNotification('')).toBe(false);
 				expect(triggerCustomNotification('   ')).toBe(false);
 				expect(triggerCustomNotification(undefined)).toBe(false);
+				expect(mockSpeak).not.toHaveBeenCalled();
+			});
+
+			it('never fires from a web-desktop client (the host owns the spoken cue)', () => {
+				// The bridge refuses notification:speak, so firing here raised a
+				// "Submission rejected" notice on every toast in the browser.
+				mockIsWebDesktop.mockReturnValue(true);
+				useNotificationStore.getState().setAudioFeedback(true, 'say');
+				expect(triggerCustomNotification('Task complete')).toBe(false);
 				expect(mockSpeak).not.toHaveBeenCalled();
 			});
 		});
@@ -937,6 +944,29 @@ describe('notificationStore', () => {
 	// ==========================================================================
 
 	describe('notifyToast OS notification body variants', () => {
+		it('passes terminal navigation to the native notification without navigating yet', () => {
+			const clickAction = {
+				kind: 'open-terminal' as const,
+				sessionId: 'agent-1',
+				tabRef: 'term-1',
+			};
+			notifyToast({
+				title: 'Terminal needs your input',
+				message: 'Waiting for a password.',
+				project: 'MyAgent',
+				tabName: 'Sudo',
+				sessionId: 'agent-1',
+				clickAction,
+			});
+			expect(mockShow).toHaveBeenCalledWith(
+				'MyAgent',
+				'Sudo: Waiting for a password.',
+				'agent-1',
+				undefined,
+				clickAction
+			);
+		});
+
 		it('builds body with group + project + tabName', () => {
 			notifyToast({
 				type: 'success',
@@ -1112,5 +1142,243 @@ describe('notificationStore', () => {
 			// defaultDuration -1 disables the entire queue
 			expect(useNotificationStore.getState().toasts).toHaveLength(0);
 		});
+	});
+
+	// ==========================================================================
+	// Notification history (the notification center's backing list)
+	// ==========================================================================
+
+	describe('notification history', () => {
+		const history = () => useNotificationStore.getState().history;
+
+		beforeEach(() => {
+			installLocalStorageMock();
+			useNotificationStore.setState({ history: [], notificationCenterOpen: false });
+		});
+
+		it('records every toast as unread, newest first', () => {
+			notifyToast({ type: 'info', title: 'First', message: 'a' });
+			notifyToast({ type: 'error', title: 'Second', message: 'b' });
+
+			expect(history().map((n) => n.title)).toEqual(['Second', 'First']);
+			expect(history().every((n) => !n.read)).toBe(true);
+			expect(selectUnreadNotificationCount(useNotificationStore.getState())).toBe(2);
+		});
+
+		it('keeps the entry after the toast leaves the screen', () => {
+			const id = notifyToast({ type: 'info', title: 'Gone', message: 'msg', duration: 1000 });
+			vi.advanceTimersByTime(1000);
+
+			expect(useNotificationStore.getState().toasts).toHaveLength(0);
+			expect(history().map((n) => n.id)).toEqual([id]);
+			expect(history()[0].read).toBe(false);
+		});
+
+		it('still records when toasts are turned off, so the inbox is the only surface', () => {
+			useNotificationStore.getState().setDefaultDuration(-1);
+			notifyToast({ type: 'info', title: 'Inbox only', message: 'msg' });
+
+			expect(useNotificationStore.getState().toasts).toHaveLength(0);
+			expect(history()).toHaveLength(1);
+		});
+
+		it('records nothing while the Notification Center is off, but still shows the toast', () => {
+			useNotificationStore.getState().setHistoryEnabled(false);
+			notifyToast({ type: 'info', title: 'Unrecorded', message: 'msg' });
+			notifyToast({ type: 'info', title: 'History only', message: 'msg', historyOnly: true });
+
+			expect(useNotificationStore.getState().toasts.map((t) => t.title)).toEqual(['Unrecorded']);
+			expect(history()).toHaveLength(0);
+		});
+
+		it('closes the inbox when the Notification Center turns off, keeping its history', () => {
+			notifyToast({ type: 'info', title: 'Kept', message: 'msg' });
+			useNotificationStore.setState({
+				notificationCenterOpen: true,
+				notificationCenterExpandedId: history()[0].id,
+			});
+
+			useNotificationStore.getState().setHistoryEnabled(false);
+
+			const state = useNotificationStore.getState();
+			expect(state.config.historyEnabled).toBe(false);
+			expect(state.notificationCenterOpen).toBe(false);
+			expect(state.notificationCenterExpandedId).toBeNull();
+			expect(history().map((n) => n.title)).toEqual(['Kept']);
+		});
+
+		it('leaves a skipHistory toast out', () => {
+			notifyToast({ type: 'info', title: 'Preview', message: 'msg', skipHistory: true });
+
+			expect(useNotificationStore.getState().toasts).toHaveLength(1);
+			expect(history()).toHaveLength(0);
+		});
+
+		it('drops the oldest entries past the limit', () => {
+			for (let i = 0; i < NOTIFICATION_HISTORY_LIMIT + 5; i++) {
+				notifyToast({ type: 'info', title: `n${i}`, message: 'msg' });
+			}
+
+			expect(history()).toHaveLength(NOTIFICATION_HISTORY_LIMIT);
+			expect(history()[0].title).toBe(`n${NOTIFICATION_HISTORY_LIMIT + 4}`);
+			expect(history().at(-1)!.title).toBe('n5');
+		});
+
+		it('bulk dismissal marks only visible entries read and persists that state', () => {
+			const expired = notifyToast({ title: 'Expired', message: '', duration: 1000 });
+			vi.advanceTimersByTime(1000);
+			const visible = notifyToast({ title: 'Visible', message: '', dismissible: true });
+			useNotificationStore.getState().clearToasts();
+			expect(history().find((n) => n.id === expired)!.read).toBe(false);
+			expect(history().find((n) => n.id === visible)!.read).toBe(true);
+			expect(loadNotificationHistory().find((n) => n.id === visible)!.read).toBe(true);
+		});
+
+		it('drops malformed persisted action and identity fields', () => {
+			notifyToast({
+				title: 'Valid',
+				message: '',
+				clickAction: { kind: 'open-url', url: 'https://example.com' },
+			});
+			const valid = history()[0];
+			localStorage.setItem(
+				NOTIFICATION_HISTORY_STORAGE_KEY,
+				JSON.stringify([
+					{ ...valid, id: 'bad-action', clickAction: { kind: 'open-file' } },
+					{ ...valid, id: 'bad-source', sessionId: {} },
+					{ ...valid, id: 'bad-callback', onClick: 'not a function' },
+					valid,
+				])
+			);
+			expect(loadNotificationHistory()).toEqual([valid]);
+		});
+
+		it('marks one entry read and leaves the rest', () => {
+			const first = notifyToast({ type: 'info', title: 'First', message: 'a' });
+			notifyToast({ type: 'info', title: 'Second', message: 'b' });
+
+			useNotificationStore.getState().markNotificationRead(first);
+
+			expect(history().find((n) => n.id === first)!.read).toBe(true);
+			expect(selectUnreadNotificationCount(useNotificationStore.getState())).toBe(1);
+		});
+
+		it('keeps the same array when marking read changes nothing', () => {
+			const id = notifyToast({ type: 'info', title: 'First', message: 'a' });
+			useNotificationStore.getState().markNotificationRead(id);
+			const before = history();
+
+			useNotificationStore.getState().markNotificationRead(id);
+			useNotificationStore.getState().markNotificationRead('missing');
+			useNotificationStore.getState().markAllNotificationsRead();
+
+			expect(history()).toBe(before);
+		});
+
+		it('marks everything read and clears', () => {
+			notifyToast({ type: 'info', title: 'First', message: 'a' });
+			notifyToast({ type: 'info', title: 'Second', message: 'b' });
+
+			useNotificationStore.getState().markAllNotificationsRead();
+			expect(selectUnreadNotificationCount(useNotificationStore.getState())).toBe(0);
+			expect(history()).toHaveLength(2);
+
+			useNotificationStore.getState().clearNotificationHistory();
+			expect(history()).toHaveLength(0);
+		});
+
+		it('clearing the history leaves visible toasts alone', () => {
+			notifyToast({ type: 'info', title: 'Sticky', message: 'a', duration: 0 });
+			useNotificationStore.getState().clearNotificationHistory();
+
+			expect(useNotificationStore.getState().toasts).toHaveLength(1);
+		});
+
+		it('persists the history without its onClick callback and reads it back', () => {
+			const id = notifyToast({
+				type: 'info',
+				title: 'Saved',
+				message: 'msg',
+				sessionId: 'agent-1',
+				onClick: () => {},
+			});
+			useNotificationStore.getState().markNotificationRead(id);
+
+			const restored = loadNotificationHistory();
+			expect(restored).toHaveLength(1);
+			expect(restored[0]).toMatchObject({ id, title: 'Saved', sessionId: 'agent-1', read: true });
+			expect(restored[0].onClick).toBeUndefined();
+		});
+
+		it('normalizes optional click-action fields with the canonical parser', () => {
+			notifyToast({ title: 'Source', message: '' });
+			localStorage.setItem(
+				NOTIFICATION_HISTORY_STORAGE_KEY,
+				JSON.stringify([
+					{
+						...history()[0],
+						clickAction: {
+							kind: 'jump-session',
+							sessionId: 'agent-1',
+							tabId: {},
+							unexpected: true,
+						},
+					},
+				])
+			);
+			expect(loadNotificationHistory()[0].clickAction).toEqual({
+				kind: 'jump-session',
+				sessionId: 'agent-1',
+				tabId: undefined,
+			});
+		});
+
+		it('reports failed durable clearing and recovers after a successful write', () => {
+			notifyToast({ title: 'Saved', message: '' });
+			const setItem = vi.spyOn(localStorage, 'setItem').mockImplementation(() => {
+				throw new Error('Storage denied');
+			});
+			useNotificationStore.getState().clearNotificationHistory();
+			expect(history()).toEqual([]);
+			expect(useNotificationStore.getState().historyPersistenceFailed).toBe(true);
+			expect(loadNotificationHistory()).toHaveLength(1);
+			setItem.mockRestore();
+			useNotificationStore.getState().clearNotificationHistory();
+			expect(useNotificationStore.getState().historyPersistenceFailed).toBe(false);
+			expect(loadNotificationHistory()).toEqual([]);
+		});
+
+		it('ignores a stored value that is not a list of records', () => {
+			localStorage.setItem(NOTIFICATION_HISTORY_STORAGE_KEY, '{not json');
+			expect(loadNotificationHistory()).toEqual([]);
+
+			localStorage.setItem(
+				NOTIFICATION_HISTORY_STORAGE_KEY,
+				JSON.stringify([{ id: 'x' }, null, 'nope'])
+			);
+			expect(loadNotificationHistory()).toEqual([]);
+		});
+	});
+});
+
+describe('history-only completion recording', () => {
+	beforeEach(() => {
+		installLocalStorageMock();
+	});
+
+	it('persists an entry without a popup, audio, OS notification, or expiry timer', () => {
+		useNotificationStore.setState({ history: [] });
+		useNotificationStore.getState().setAudioFeedback(true, 'say');
+		const timeout = vi.spyOn(globalThis, 'setTimeout');
+		const id = notifyToast({ title: 'Complete', message: 'Reply finished', historyOnly: true });
+		expect(useNotificationStore.getState().history).toEqual([
+			expect.objectContaining({ id, read: false }),
+		]);
+		expect(useNotificationStore.getState().toasts).toEqual([]);
+		expect(mockSpeak).not.toHaveBeenCalled();
+		expect(mockShow).not.toHaveBeenCalled();
+		expect(timeout.mock.calls.some(([, delay]) => Number(delay) > 0)).toBe(false);
+		expect(loadNotificationHistory()).toEqual([expect.objectContaining({ id })]);
+		timeout.mockRestore();
 	});
 });

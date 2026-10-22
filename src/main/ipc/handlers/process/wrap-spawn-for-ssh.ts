@@ -11,6 +11,12 @@ import { buildSshCommandWithStdin } from '../../../utils/ssh-command-builder';
 import { DEFAULT_QUERY_SOURCE, QUERY_SOURCE_ENV_VAR } from '../../../../shared/querySource';
 import { buildStreamJsonMessage } from '../../../process-manager/utils/streamJsonBuilder';
 import type { SshRemoteConfig } from '../../../../shared/types';
+import type { CodexTransport } from '../../../../shared/codexTransport';
+import { wantsCodexAppServer } from '../../../codex-app-server/invocation';
+import {
+	buildCodexAppServerSshLaunch,
+	type CodexAppServerSshLaunch,
+} from '../../../codex-app-server/ssh-launch';
 import { MaestroSettings } from '../persistence';
 import type { ClaudeSpawnContext } from './resolve-claude-spawn-context';
 import type { SpawnProcessConfig } from './spawn-types';
@@ -32,6 +38,8 @@ export interface SshSpawnWrapInput {
 	useShell: boolean;
 	shellToUse: string | undefined;
 	settingsStore: Store<MaestroSettings>;
+	/** Resolved Codex transport for this turn; `app-server` adds an app-server launch. */
+	codexTransport?: CodexTransport;
 }
 
 export interface SshSpawnWrapResult {
@@ -43,6 +51,8 @@ export interface SshSpawnWrapResult {
 	sshRemoteCommand: string | undefined;
 	useShell: boolean;
 	shellToUse: string | undefined;
+	/** The app-server launch for a Codex turn that wants it, beside the exec wrapper. */
+	codexAppServerSsh: CodexAppServerSshLaunch | undefined;
 }
 
 /**
@@ -63,6 +73,7 @@ export async function wrapSpawnForSsh(input: SshSpawnWrapInput): Promise<SshSpaw
 		useShell: initialUseShell,
 		shellToUse: initialShellToUse,
 		settingsStore,
+		codexTransport,
 	} = input;
 
 	let commandToSpawn = initialCommand;
@@ -73,6 +84,7 @@ export async function wrapSpawnForSsh(input: SshSpawnWrapInput): Promise<SshSpaw
 	let customEnvVarsToPass = initialCustomEnvVars;
 	let sshStdinScript: string | undefined;
 	let sshRemoteCommand: string | undefined;
+	let codexAppServerSsh: CodexAppServerSshLaunch | undefined;
 
 	const {
 		isClaudeCode,
@@ -135,6 +147,7 @@ export async function wrapSpawnForSsh(input: SshSpawnWrapInput): Promise<SshSpaw
 							},
 							interactiveModeArgs: agent?.interactiveModeArgs,
 							remoteClaudeBin: claudeDecisionRealBinPath,
+							maxWaitSeconds: config.maestroPMaxWaitSeconds,
 						})
 					: null;
 
@@ -240,6 +253,27 @@ export async function wrapSpawnForSsh(input: SshSpawnWrapInput): Promise<SshSpaw
 			sshStdinScript = sshCommand.stdinScript;
 			sshRemoteCommand = sshCommand.remoteCommandLine;
 
+			// A Codex turn on app-server needs its own launch: the script above
+			// ends in `codex exec` with the prompt behind it. Built from the same
+			// remote, binary, cwd and env; the exec wrapper stays as the fallback.
+			if (
+				wantsCodexAppServer({
+					toolType: config.toolType,
+					codexTransport,
+					querySource: config.querySource,
+				})
+			) {
+				codexAppServerSsh =
+					(await buildCodexAppServerSshLaunch(sshResult.config, {
+						remoteCommand,
+						execArgs: headlessArgs,
+						cwd: config.cwd,
+						env: mergedSshEnvVars,
+						prompt: effectivePrompt,
+						images: config.images,
+					})) ?? undefined;
+			}
+
 			// For SSH, env vars are passed in the stdin script, not locally
 			customEnvVarsToPass = undefined;
 
@@ -273,5 +307,6 @@ export async function wrapSpawnForSsh(input: SshSpawnWrapInput): Promise<SshSpaw
 		sshRemoteCommand,
 		useShell,
 		shellToUse,
+		codexAppServerSsh,
 	};
 }

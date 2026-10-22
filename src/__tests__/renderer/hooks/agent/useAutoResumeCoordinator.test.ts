@@ -284,6 +284,79 @@ describe('runAutoResumeTick', () => {
 		expect(useNotificationStore.getState().toasts).toHaveLength(1);
 	});
 
+	it('resumes an Auto Run whose limit pause lives only on the batch state (#1804)', async () => {
+		// A `-batch-` failure is kept off the session (no agentError, no error
+		// state) so the chat tab stays usable; the limit sits on the batch alone.
+		setSessions([createMockSession({ id: 'sess-batch', toolType: 'opencode', state: 'idle' })]);
+		useBatchStore.setState({
+			batchRunStates: {
+				'sess-batch': {
+					...DEFAULT_BATCH_STATE,
+					isRunning: true,
+					errorPaused: true,
+					error: makeLimitError({ agentId: 'opencode' }),
+				} as BatchRunState,
+			},
+			customPrompts: {},
+		});
+		const resumeAutoRun = vi.fn();
+
+		await runAutoResumeTick(new Set(), resumeAutoRun);
+		await flush();
+
+		expect(resumeAutoRun).toHaveBeenCalledWith('sess-batch');
+		expect(useNotificationStore.getState().toasts).toHaveLength(1);
+	});
+
+	it('leaves a batch-only pause alone when its error is not a limit', async () => {
+		setSessions([createMockSession({ id: 'sess-batch', toolType: 'opencode', state: 'idle' })]);
+		useBatchStore.setState({
+			batchRunStates: {
+				'sess-batch': {
+					...DEFAULT_BATCH_STATE,
+					isRunning: true,
+					errorPaused: true,
+					error: makeLimitError({ type: 'auth_expired' }),
+				} as BatchRunState,
+			},
+			customPrompts: {},
+		});
+		const resumeAutoRun = vi.fn();
+
+		await runAutoResumeTick(new Set(), resumeAutoRun);
+		await flush();
+
+		expect(resumeAutoRun).not.toHaveBeenCalled();
+	});
+
+	it('does not resume a batch-only pause the user resolved while the probe was pending', async () => {
+		setSessions([createMockSession({ id: 'sess-batch', toolType: 'opencode', state: 'idle' })]);
+		useBatchStore.setState({
+			batchRunStates: {
+				'sess-batch': {
+					...DEFAULT_BATCH_STATE,
+					isRunning: true,
+					errorPaused: true,
+					error: makeLimitError({ agentId: 'opencode' }),
+				} as BatchRunState,
+			},
+			customPrompts: {},
+		});
+		const resumeAutoRun = vi.fn();
+
+		const tick = runAutoResumeTick(new Set(), resumeAutoRun);
+		useBatchStore.setState({
+			batchRunStates: {
+				'sess-batch': { ...DEFAULT_BATCH_STATE, isRunning: true } as BatchRunState,
+			},
+			customPrompts: {},
+		});
+		await tick;
+		await flush();
+
+		expect(resumeAutoRun).not.toHaveBeenCalled();
+	});
+
 	it('does not resume when the run becomes mirrored while its probe is pending', async () => {
 		setSessions([makeLimitPausedSession({ id: 'sess-batch', toolType: 'opencode' })]);
 		const resumeAutoRun = vi.fn();

@@ -150,6 +150,38 @@ describe('CLI prompt-loader', () => {
 		expect(content).toBe('hello {{REF:not-a-real-prompt-id}} world');
 	});
 
+	// The CLI used to expand REF but not INCLUDE, so the first prompt to use an
+	// include reached every CLI-spawned agent as the literal directive.
+	it('inlines {{INCLUDE:name}} recursively, the same as the desktop loader', async () => {
+		const files: Record<string, string> = {
+			'maestro-system-prompt.md': 'Intro\n{{INCLUDE:_wizard-rich-replies}}\nOutro',
+			'_wizard-rich-replies.md': 'Draw it.\n{{INCLUDE:_rich-chat-rendering}}',
+			'_rich-chat-rendering.md': 'Mermaid renders.',
+		};
+		mockReadFile.mockImplementation(async (file: string) => {
+			const body = files[path.basename(file)];
+			if (body === undefined) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+			return body;
+		});
+		vi.mocked(fsSync.accessSync).mockReturnValue(undefined);
+
+		const content = await getCliPrompt('maestro-system-prompt');
+
+		expect(content).toBe('Intro\nDraw it.\nMermaid renders.\nOutro');
+	});
+
+	it('leaves an unknown {{INCLUDE:...}} directive in place', async () => {
+		const customizationErr = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+		mockReadFile
+			.mockRejectedValueOnce(customizationErr)
+			.mockResolvedValueOnce('a {{INCLUDE:not-a-real-include}} b');
+		vi.mocked(fsSync.accessSync).mockReturnValue(undefined);
+
+		const content = await getCliPrompt('autorun-default');
+
+		expect(content).toBe('a {{INCLUDE:not-a-real-include}} b');
+	});
+
 	it('throws when no candidate file can be loaded', async () => {
 		const enoent = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
 		// Every readFile call (customizations + every bundled candidate) fails

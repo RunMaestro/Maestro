@@ -49,6 +49,14 @@ describe('useAgentCapabilities', () => {
 		clearCapabilitiesCache();
 	});
 
+	it('exposes translated project memory per agent without changing the provider cache', () => {
+		setCapabilitiesCache('codex', baseCapabilities);
+		const { result } = renderHook(() =>
+			useAgentCapabilities('codex', '/project/.maestro/provider-knowledge/managed')
+		);
+		expect(result.current.hasCapability('supportsProjectMemory')).toBe(true);
+		expect(hasCapabilityCached('codex', 'supportsProjectMemory')).toBe(false);
+	});
 	it('loads capabilities and caches results', async () => {
 		vi.mocked(window.maestro.agents.getCapabilities).mockResolvedValueOnce(baseCapabilities);
 

@@ -68,6 +68,15 @@ describe('ai-command.md', () => {
 		expect(prompt).toMatch(/Asked" line/i);
 	});
 
+	test('forbids commands that wait for typed input', () => {
+		// Command mode has no stdin: a sudo password or [y/N] prompt hangs the
+		// command until the user cancels it, so the prompt must steer the model
+		// to non-interactive forms and to a comment when none exists.
+		expect(prompt).toMatch(/cannot receive keyboard input/);
+		expect(prompt).toContain('sudo -n');
+		expect(prompt).toContain('# run in a terminal tab:');
+	});
+
 	test('still reads as one-command-only instructions', () => {
 		// The whole contract with the caller: exactly one line comes back, and it
 		// is pasted straight into a shell.

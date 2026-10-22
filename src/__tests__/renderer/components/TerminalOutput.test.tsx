@@ -305,6 +305,130 @@ describe('TerminalOutput', () => {
 			expect(screen.queryByTitle('Sent in read-only mode')).not.toBeInTheDocument();
 		});
 
+		it('heads a steered message with what the agent did with it', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ text: 'first', source: 'user' }),
+				createLogEntry({
+					text: 'go left instead',
+					source: 'user',
+					steered: true,
+					steerState: 'absorbed',
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
+				activeTabId: 'tab-1',
+			});
+
+			const props = createDefaultProps({ session });
+			render(<TerminalOutput {...props} />);
+
+			const header = screen.getByTestId('steered-message-header');
+			expect(header).toHaveAttribute('data-steer-state', 'absorbed');
+			expect(header).toHaveTextContent('Steered into the running turn');
+			// Stitched to the turn it joined.
+			expect(screen.getByTestId('steer-turn-connector')).toBeInTheDocument();
+		});
+
+		it('does not stitch a steer the agent took as a follow-up', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ text: 'first', source: 'user' }),
+				createLogEntry({
+					text: 'go left instead',
+					source: 'user',
+					steered: true,
+					steerState: 'queued',
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
+				activeTabId: 'tab-1',
+			});
+
+			const props = createDefaultProps({ session });
+			render(<TerminalOutput {...props} />);
+
+			expect(screen.getByTestId('steered-message-header')).toHaveTextContent('Sent as a follow-up');
+			expect(screen.queryByTestId('steer-turn-connector')).not.toBeInTheDocument();
+		});
+
+		it('runs the connector on through consecutive stitched steers', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ text: 'first', source: 'user' }),
+				createLogEntry({
+					text: 'steer one',
+					source: 'user',
+					steered: true,
+					steerState: 'absorbed',
+				}),
+				createLogEntry({ text: 'steer two', source: 'user', steered: true, steerState: 'pending' }),
+			];
+
+			const session = createDefaultSession({
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
+				activeTabId: 'tab-1',
+			});
+
+			const props = createDefaultProps({ session });
+			render(<TerminalOutput {...props} />);
+
+			// A junction is two lines (the run carries on); the last steer is one elbow.
+			const [first, last] = screen.getAllByTestId('steer-turn-connector');
+			expect(first.children).toHaveLength(2);
+			expect(last.children).toHaveLength(1);
+		});
+
+		it('still marks a message steered before the outcome was recorded', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ text: 'go left instead', source: 'user', steered: true }),
+			];
+
+			const session = createDefaultSession({
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
+				activeTabId: 'tab-1',
+			});
+
+			const props = createDefaultProps({ session });
+			render(<TerminalOutput {...props} />);
+
+			expect(
+				screen.getByTitle('Sent as a steer into the turn that was already running')
+			).toBeInTheDocument();
+		});
+
+		it('does not show the steer indicator for a message that started its own turn', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ text: 'Regular message', source: 'user', forceParallel: true }),
+			];
+
+			const session = createDefaultSession({
+				tabs: [
+					{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false, showThinking: 'on' },
+				],
+				activeTabId: 'tab-1',
+			});
+
+			const props = createDefaultProps({ session });
+			render(<TerminalOutput {...props} />);
+
+			expect(screen.queryByTestId('steered-message-header')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('steer-turn-connector')).not.toBeInTheDocument();
+			// The two marks are separate: a force-sent message keeps its hammer.
+			expect(
+				screen.getByTitle('Sent via forced parallel execution (bypassed queue)')
+			).toBeInTheDocument();
+		});
+
 		it('renders error log entries through the markdown renderer to preserve line breaks', () => {
 			// Issue #775: agent error messages contain status + explanation separated by
 			// newlines; rendering them inside a plain <p> collapsed the whitespace, so
@@ -624,6 +748,46 @@ describe('TerminalOutput', () => {
 			]);
 
 			expect(screen.queryByText('<1m')).not.toBeInTheDocument();
+		});
+	});
+
+	describe('agent delegation pills', () => {
+		const renderDelegation = (timestamp: number) => {
+			const logs = [
+				createLogEntry({
+					text: 'Asked Worker: check the build',
+					source: 'system',
+					timestamp,
+					delegation: {
+						kind: 'ask',
+						toSessionId: 'worker',
+						toAgentName: 'Worker',
+						toToolType: 'claude-code',
+						subject: 'check the build',
+					},
+				}),
+			];
+			const tabs = [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }];
+			const session = createDefaultSession({ tabs, aiTabs: tabs, activeTabId: 'tab-1' } as never);
+			return render(<TerminalOutput {...createDefaultProps({ session })} />);
+		};
+
+		it('shows when a hand-off happened today in the timestamp gutter', () => {
+			const at = new Date();
+			at.setHours(9, 5, 0, 0);
+			renderDelegation(at.getTime());
+
+			const gutter = screen.getByTestId('agent-delegation-timestamp');
+			expect(gutter).toHaveTextContent(
+				at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+			);
+			expect(screen.getByTestId('agent-delegation-card')).toBeInTheDocument();
+		});
+
+		it('adds the date for a hand-off from another day', () => {
+			renderDelegation(new Date(2024, 0, 15, 14, 30).getTime());
+
+			expect(screen.getByTestId('agent-delegation-timestamp')).toHaveTextContent('2024-01-15');
 		});
 	});
 
@@ -3218,9 +3382,15 @@ describe('TerminalOutput', () => {
 			const props = createDefaultProps({ session });
 			render(<TerminalOutput {...props} />);
 
-			// Header pill still renders, body goes through the markdown stack
-			// (react-markdown is mocked to a div with this testid).
+			// Collapsed by default: only the first line shows, as plain text.
 			expect(screen.getByText('/archive-playbooks:')).toBeInTheDocument();
+			expect(screen.queryByTestId('react-markdown')).not.toBeInTheDocument();
+			expect(screen.getByText(/## Step 1/)).toBeInTheDocument();
+			expect(screen.queryByText(/what moved/)).not.toBeInTheDocument();
+
+			// Clicking the header expands the body through the markdown stack
+			// (react-markdown is mocked to a div with this testid).
+			fireEvent.click(screen.getByText('/archive-playbooks:'));
 			expect(screen.getByTestId('react-markdown')).toHaveTextContent('Step 1');
 		});
 
@@ -3246,6 +3416,7 @@ describe('TerminalOutput', () => {
 
 			const props = createDefaultProps({ session, markdownEditMode: true });
 			render(<TerminalOutput {...props} />);
+			fireEvent.click(screen.getByText('/pr-review:'));
 
 			expect(screen.queryByTestId('react-markdown')).not.toBeInTheDocument();
 

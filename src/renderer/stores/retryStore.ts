@@ -8,6 +8,11 @@
  *   - availability  → exponential backoff 30s→30m, then every 30m.
  *   - token-exhaustion → wait until the parsed reset time, else 1h, then hourly.
  *
+ * A third recovery has no schedule at all: a turn refused because the
+ * conversation no longer fits the model's context window is not waited out, it
+ * is fixed. The provider session is compacted and the prompt resent, with a
+ * small pill in the transcript as the only trace (see `scheduleContextCompaction`).
+ *
  * Design notes:
  *   - Keyed per `${sessionId}:${tabId}` so parallel tabs retry independently.
  *   - The prompt to resend is the exact `QueuedItem` + `ProcessQueuedItemDeps`
@@ -40,6 +45,15 @@ import { generateId } from '../utils/ids';
 import { captureQueuedTurnSettings } from '../utils/providerTabSessions';
 import { applyReplayDispatch, type ReplayBlockedReason } from '../utils/executionQueue';
 import { settleTabThinkingState } from '../utils/tabHelpers';
+import { getContextCompactCommand } from '../../shared/contextCompaction';
+import {
+	canCompactTabContext,
+	compactTabContext,
+	recordContextCompaction,
+	settleContextCompaction,
+	type ContextCompactionRef,
+} from '../services/contextCompaction';
+import { dropRecoveredOutageNotices } from '../utils/logEntries';
 import { logger } from '../utils/logger';
 import { useSessionStore, selectSessionById, updateSessionWith } from './sessionStore';
 import { notifyToast } from './notificationStore';
@@ -63,14 +77,37 @@ export type RetryStatus = 'scheduled' | 'in-flight';
  */
 export type RetryMode = 'resend' | 'batch-resume';
 
+/**
+ * What drives an entry: one of the backoff strategies, or `context-compaction`,
+ * which waits for nothing but the failed turn's own process to exit.
+ */
+export type RetryEntryStrategy = RetryStrategy | 'context-compaction';
+
+/** The state a `context-compaction` entry carries. */
+export interface ContextCompactionRecovery {
+	/** The transcript pill, or null when the tab had nowhere to put one. */
+	pill: ContextCompactionRef | null;
+	/**
+	 * The context-limit error being masked. It is shown nowhere while the
+	 * recovery runs, and surfaced unchanged if the compaction cannot land.
+	 */
+	error: AgentError;
+	/** True once the session is compacted, so a re-fired resend does not compact twice. */
+	compacted: boolean;
+}
+
 export interface RetryEntry {
 	sessionId: string;
 	tabId: string;
 	/** `${sessionId}:${tabId}` */
 	key: string;
-	/** Links this active retry to its persistent `OutageRecord` (transcript card). */
+	/**
+	 * Links this active retry to its persistent `OutageRecord` (transcript card).
+	 * A `context-compaction` entry has an id but writes no record under it: an
+	 * outage card describes a wait, and that recovery has none.
+	 */
 	outageId: string;
-	strategy: RetryStrategy;
+	strategy: RetryEntryStrategy;
 	mode: RetryMode;
 	status: RetryStatus;
 	/** 0-indexed count of the NEXT resend (0 = first retry). */
@@ -87,6 +124,8 @@ export interface RetryEntry {
 	 * item as the pending resend rather than a second copy of the message.
 	 */
 	heldItemId?: string;
+	/** Present on a `context-compaction` entry. */
+	compaction?: ContextCompactionRecovery;
 }
 
 /**
@@ -296,6 +335,15 @@ export function registerDispatchDepsProvider(fn: (() => ProcessQueuedItemDeps) |
 }
 
 /**
+ * The deps a dispatch needs right now, or null before `useQueueProcessing` has
+ * registered them (app still mounting, or a test). For a service that runs a
+ * queued item itself, outside the hook that normally owns the dispatch.
+ */
+export function getDispatchDeps(): ProcessQueuedItemDeps | null {
+	return dispatchDepsProvider ? dispatchDepsProvider() : null;
+}
+
+/**
  * Snapshot a prompt that is being spawned DIRECTLY rather than through
  * `agentStore.processQueuedItem` (which calls `noteDispatch` itself).
  *
@@ -320,6 +368,25 @@ export function noteDirectDispatch(sessionId: string, item: QueuedItem): void {
 		return;
 	}
 	noteDispatch(sessionId, { ...item, crossAgentMention: undefined }, dispatchDepsProvider());
+}
+
+/**
+ * Re-raises an agent error through the listener that owns error UI
+ * (`useAgentErrorListener` registers its own handler). Null until registered.
+ *
+ * A context-limit error taken over by compaction is shown nowhere. When the
+ * compaction cannot land, that error has to appear exactly as it would have -
+ * same transcript entry, same blocking state, same modal - and the only code
+ * that knows how is the listener that swallowed it. Handing the error back
+ * avoids a second, drifting copy of that logic here.
+ */
+let agentErrorSurfacer: ((processSessionId: string, error: AgentError) => void) | null = null;
+
+/** Wire the handler a failed recovery hands its original error back to. */
+export function registerAgentErrorSurfacer(
+	fn: ((processSessionId: string, error: AgentError) => void) | null
+): void {
+	agentErrorSurfacer = fn;
 }
 
 function keyFor(sessionId: string, tabId: string): string {
@@ -501,6 +568,18 @@ export function useIsHeldRetryItem(itemId: string): boolean {
 }
 
 /**
+ * The same question outside React. For a service deciding whether a queued item
+ * is WAITING (it has not run) or HELD (it ran, failed, and a recovery parked it
+ * at the head of its tab's queue until the resend). The two look alike in the
+ * queue and are not alike: taking a held item out of the queue does not stop
+ * its resend, which fires from the recovery's own snapshot.
+ */
+export function isHeldByRecovery(itemId: string | null | undefined): boolean {
+	if (!itemId) return false;
+	return Object.values(useRetryStore.getState().retries).some((e) => e.heldItemId === itemId);
+}
+
+/**
  * Whether the given agent+error should be auto-retried, honoring the per-agent
  * resilience toggles. Returns the strategy, or null to fall back to the modal.
  */
@@ -532,6 +611,9 @@ export function scheduleRetryForError(
 	error: AgentError,
 	opts?: { batch?: boolean }
 ): boolean {
+	// An Auto Run task is not compacted: the batch owns that turn and its error.
+	if (!opts?.batch && scheduleContextCompaction(sessionId, tabId, error)) return true;
+
 	const strategy = resolveStrategy(sessionId, error);
 	if (!strategy) return false;
 
@@ -549,7 +631,12 @@ export function scheduleRetryForError(
 		return false;
 	}
 
-	const existing = useRetryStore.getState().retries[key];
+	// A compaction entry still here means its resend came back with THIS error,
+	// which is a new outage and not a continuation of one: it has no outage
+	// record and no card, so counting from its attempt would schedule a retry
+	// the transcript never shows.
+	const prior = useRetryStore.getState().retries[key];
+	const existing = prior?.compaction ? undefined : prior;
 	// Continue the existing backoff when a resend failed again; otherwise start
 	// at attempt 0. `existing.attempt` was the attempt we just tried, so +1.
 	const attempt = existing ? existing.attempt + 1 : 0;
@@ -791,6 +878,32 @@ function reportUndeliverableRetry(entry: RetryEntry, item: QueuedItem): void {
 	});
 }
 
+/**
+ * A resend `applyReplayDispatch` refused to start. Each refusal means the turn
+ * is accounted for somewhere else, so the entry must not stay `'in-flight'`:
+ *  - the tab is gone: say what was not sent, as when the dispatch finds no tab;
+ *  - the tab is mid-turn: our own collision, so put the prompt back and try
+ *    again shortly, without counting an attempt;
+ *  - the user re-sent the same prompt: their queued copy replaces this one, and
+ *    ending the outage releases the queue so it drains.
+ */
+function endBlockedResend(entry: RetryEntry, item: QueuedItem, reason: ReplayBlockedReason): void {
+	if (reason === 'no-target-tab') {
+		reportUndeliverableRetry(entry, item);
+		return;
+	}
+	if (reason === 'target-tab-busy') {
+		holdFailedItemInQueue(entry.sessionId, entry.tabId, item);
+		rescheduleAfterFailedDispatch(entry.key, 'target tab is mid-turn');
+		return;
+	}
+	logger.info('[retry] The same prompt is already queued; ending outage', undefined, {
+		key: entry.key,
+	});
+	resolveOutage(entry.outageId, 'stopped');
+	removeEntry(entry.key);
+}
+
 /** Fire a scheduled retry now: mark in-flight and re-run the failed work. */
 async function fireRetry(key: string): Promise<void> {
 	const entry = useRetryStore.getState().retries[key];
@@ -821,6 +934,10 @@ async function fireRetry(key: string): Promise<void> {
 			else removeEntry(key);
 			return;
 		}
+		if (entry.compaction && !entry.compaction.compacted) {
+			const compacted = await compactBeforeResend(key, entry);
+			if (!compacted) return;
+		}
 		const snapshot = snapshots.get(key);
 		if (!snapshot) {
 			// No prompt to replay. The queue copy is the only remaining record of
@@ -830,14 +947,49 @@ async function fireRetry(key: string): Promise<void> {
 			return;
 		}
 		// Take the held copy out of the queue in the same beat as the resend, so
-		// the prompt exists in exactly one place at a time. Done BEFORE the await:
-		// the dispatch marks the tab busy, and a queue drain that read the item
-		// while it was in flight would send it twice.
+		// the prompt exists in exactly one place at a time.
 		releaseHeldItemFromQueue(entry.sessionId, snapshot.item.id);
+
+		// Mark the tab running BEFORE the spawn, and before the await: a queue
+		// drain that read this tab as free while the resend was in flight would
+		// send behind it. `processQueuedItem` leaves the busy transition to its
+		// callers, and the failed attempt's exit already idled the tab, so without
+		// this the resend was a GHOST TURN - a live process under a green "Ready"
+		// dot, no Thinking pill, and no Stop button reaching it, for as long as the
+		// turn ran. Same transition the re-auth replay takes (`dispatchReplay`).
+		const item = replayItem(entry, snapshot.item);
+		// Cast so TS does not narrow to `undefined`: the updater runs synchronously
+		// inside the store's `set`, which control-flow analysis cannot see.
+		let blocked = undefined as ReplayBlockedReason | undefined;
+		// A finished compaction left the tab busy on purpose (see
+		// `compactBeforeResend`), and its process is gone: that busy is this turn's.
+		const targetBusyIsOurs = !!useRetryStore.getState().retries[key]?.compaction?.compacted;
+		updateSessionWith(entry.sessionId, (session) => {
+			const result = applyReplayDispatch(session, item, undefined, { targetBusyIsOurs });
+			blocked = result.blocked;
+			return result.session;
+		});
+		if (blocked) {
+			endBlockedResend(entry, snapshot.item, blocked);
+			return;
+		}
+
+		// Stop (`stopRetriesForAgent`) removes this entry. It can land while the
+		// resend loads the agent and system prompt, before any process exists to
+		// interrupt, so the spawn checks for it last.
+		const stopped = () => useRetryStore.getState().retries[key]?.outageId !== entry.outageId;
 		const dispatched = await useAgentStore
 			.getState()
-			.processQueuedItem(entry.sessionId, replayItem(entry, snapshot.item), snapshot.deps);
-		if (!dispatched) reportUndeliverableRetry(entry, snapshot.item);
+			.processQueuedItem(entry.sessionId, item, { ...snapshot.deps, isCancelled: stopped });
+		if (dispatched) return;
+		if (!stopped()) {
+			reportUndeliverableRetry(entry, snapshot.item);
+		} else if (useRetryStore.getState().outages[entry.outageId]?.status === 'stopped') {
+			// Stop found nothing to hold: the prompt left the queue when this resend
+			// began. Park it the way Stop parks a queued one, paused and one click
+			// from Force Send. Another resolution (a re-auth replay) is sending it.
+			holdFailedItemInQueue(entry.sessionId, entry.tabId, { ...snapshot.item, paused: true });
+		}
 	} catch (error) {
 		// The resend never reached the provider (a spawn refusal, a bad config, a
 		// thrown dep). That is not an outcome the agent-error path will ever
@@ -849,6 +1001,248 @@ async function fireRetry(key: string): Promise<void> {
 		const snapshot = snapshots.get(key);
 		if (snapshot) holdFailedItemInQueue(entry.sessionId, entry.tabId, snapshot.item);
 		rescheduleAfterFailedDispatch(key, 'dispatch threw');
+	}
+}
+
+// ============================================================================
+// Context compaction (a full context window is fixed, not waited out)
+// ============================================================================
+
+/**
+ * How long a compaction waits for the failed turn's exit before checking for
+ * itself. The exit normally arrives within moments of the error; this only
+ * covers one that never does.
+ */
+const COMPACTION_EXIT_WAIT_MS = 30 * 1000;
+
+/**
+ * Take over a context-limit failure: compact the provider session, then resend
+ * the prompt. Returns true when the recovery was scheduled, and the caller must
+ * then show no error at all.
+ *
+ * Unlike the backoff strategies this is not gated on the per-agent resilience
+ * toggles. Those decide whether Maestro waits out a provider; this waits for
+ * nothing, and the alternative is an error whose only advice is to abandon the
+ * conversation.
+ *
+ * The entry reuses the retry machinery for everything a recovery needs and an
+ * outage already has: the failed turn parked at the head of its tab's queue, the
+ * queue frozen behind it, no synopsis or completion toast for the turn that
+ * died, and the resend tracked to its outcome.
+ *
+ * Nothing starts here. The compaction resumes the provider session, and the
+ * process that just failed still has that session open until it exits, so the
+ * work waits for `noteFailedTurnExited`.
+ */
+function scheduleContextCompaction(sessionId: string, tabId: string, error: AgentError): boolean {
+	if (error.type !== 'token_exhaustion') return false;
+
+	const key = keyFor(sessionId, tabId);
+	// One recovery per failed turn. An entry already here is another outage's, or
+	// this compaction's own resend refused again - and compacting a second time
+	// would loop on a prompt that cannot fit.
+	if (useRetryStore.getState().retries[key]) return false;
+
+	const snapshot = snapshots.get(key);
+	if (!snapshot) return false;
+	if (!canCompactTabContext(sessionId, tabId)) return false;
+
+	// The turn that failed WAS a compaction the user asked for.
+	const session = selectSessionById(sessionId)(useSessionStore.getState());
+	const sent = snapshot.item.type === 'command' ? snapshot.item.command : snapshot.item.text;
+	if (sent?.trim() === getContextCompactCommand(session?.toolType)) return false;
+
+	const now = Date.now();
+	const entry: RetryEntry = {
+		sessionId,
+		tabId,
+		key,
+		outageId: generateId(),
+		strategy: 'context-compaction',
+		mode: 'resend',
+		status: 'scheduled',
+		attempt: 0,
+		startedAt: now,
+		nextRetryAt: now,
+		lastMessage: error.message,
+		heldItemId: snapshot.item.id,
+		compaction: { pill: recordContextCompaction(sessionId, tabId), error, compacted: false },
+	};
+	useRetryStore.getState().setEntry(key, entry);
+	holdFailedItemInQueue(sessionId, tabId, snapshot.item);
+
+	logger.info('[retry] Context limit hit; compacting before resend', undefined, { key });
+	armCompactionExitTimer(key);
+	return true;
+}
+
+function armCompactionExitTimer(key: string): void {
+	clearTimer(key);
+	timers.set(
+		key,
+		setTimeout(() => {
+			timers.delete(key);
+			void fireCompactionAfterMissedExit(key);
+		}, COMPACTION_EXIT_WAIT_MS)
+	);
+}
+
+/** Whether this entry is a compaction still waiting for the failed turn to exit. */
+function isWaitingToCompact(entry: RetryEntry | undefined): entry is RetryEntry {
+	return !!entry?.compaction && !entry.compaction.compacted && entry.status === 'scheduled';
+}
+
+/**
+ * Called from the process-exit listener once it has finished settling the tab.
+ * If the turn that just exited is one a compaction is waiting on, start it.
+ *
+ * Tied to the exit rather than to a timer for two reasons. The compaction is a
+ * second process on the same provider session, and the first must be gone. And
+ * the exit listener reads an in-flight entry on exit as a resend that settled:
+ * firing any earlier would have the failed turn's own exit clear the recovery.
+ */
+export function noteFailedTurnExited(sessionId: string, tabId: string): void {
+	const key = keyFor(sessionId, tabId);
+	if (!isWaitingToCompact(useRetryStore.getState().retries[key])) return;
+	clearTimer(key);
+	void fireRetry(key);
+}
+
+/**
+ * The failed turn's exit never reached us. Start the compaction if its process
+ * is in fact gone; keep waiting if it is still alive.
+ */
+async function fireCompactionAfterMissedExit(key: string): Promise<void> {
+	const entry = useRetryStore.getState().retries[key];
+	if (!isWaitingToCompact(entry)) return;
+
+	const processSessionId = `${entry.sessionId}-ai-${entry.tabId}`;
+	let stillRunning = true;
+	try {
+		const active = await window.maestro.process.getActiveProcesses();
+		stillRunning = active.some((p) => p.sessionId === processSessionId);
+	} catch (error) {
+		logger.warn('[retry] Could not check for the failed turn; still waiting', undefined, error);
+	}
+
+	if (!isWaitingToCompact(useRetryStore.getState().retries[key])) return;
+	if (stillRunning) {
+		armCompactionExitTimer(key);
+		return;
+	}
+	void fireRetry(key);
+}
+
+/**
+ * Whether output arriving on this tab belongs to a turn that already failed on
+ * the context limit and is about to be re-run.
+ *
+ * Claude prints its failure text ("Prompt is too long") on the result envelope
+ * as ordinary output, after the error that started the recovery. Until that
+ * turn's process exits it is the only writer on the tab, so anything it still
+ * sends is that residue: rendered, it would put the masked failure straight
+ * back into the transcript.
+ */
+export function isAwaitingContextCompaction(sessionId: string, tabId: string): boolean {
+	return isWaitingToCompact(useRetryStore.getState().retries[keyFor(sessionId, tabId)]);
+}
+
+/** Reactive: whether a compaction pill is driven by a live recovery. */
+export function useIsContextCompactionLive(entryId: string): boolean {
+	return useRetryStore((s) =>
+		Object.values(s.retries).some((e) => e.compaction?.pill?.entryId === entryId)
+	);
+}
+
+/**
+ * Compact the provider session ahead of a resend. Returns true when the resend
+ * should go ahead.
+ */
+async function compactBeforeResend(key: string, entry: RetryEntry): Promise<boolean> {
+	// The exit listener idled the tab when the failed turn's process went away.
+	// From the user's side the turn is still running, so say so: without this the
+	// tab reads idle for as long as the provider takes to summarize.
+	const startedAt = Date.now();
+	updateSessionWith(entry.sessionId, (s) => ({
+		...s,
+		state: 'busy' as const,
+		busySource: 'ai' as const,
+		thinkingStartTime: startedAt,
+		aiTabs: s.aiTabs.map((tab) =>
+			tab.id === entry.tabId
+				? { ...tab, state: 'busy' as const, thinkingStartTime: startedAt }
+				: tab
+		),
+	}));
+
+	const result = await compactTabContext(entry.sessionId, entry.tabId);
+
+	// Stop, or anything else that ended this recovery while the provider was
+	// compacting, has already settled the pill and the tab.
+	const current = useRetryStore.getState().retries[key];
+	if (!current?.compaction || current.outageId !== entry.outageId) return false;
+
+	if (!result.success) {
+		abandonContextCompaction(key, result.error);
+		return false;
+	}
+
+	if (current.compaction.pill) settleContextCompaction(current.compaction.pill, { status: 'done' });
+	useRetryStore
+		.getState()
+		.setEntry(key, { ...current, compaction: { ...current.compaction, compacted: true } });
+	return true;
+}
+
+/**
+ * The compaction could not land, so the turn failed after all: show the error
+ * this recovery was masking.
+ */
+function abandonContextCompaction(key: string, reason?: string): void {
+	const entry = useRetryStore.getState().retries[key];
+	if (!entry?.compaction) return;
+	const { pill, error } = entry.compaction;
+	logger.warn('[retry] Context compaction failed; surfacing the original error', undefined, {
+		key,
+		reason,
+	});
+
+	if (pill) settleContextCompaction(pill, { status: 'error', error: reason });
+	// Nothing is running behind this entry, so its busy state is ours to clear.
+	updateSessionWith(entry.sessionId, (s) => settleTabThinkingState(s, entry.tabId));
+	// Not left parked for a later drain: the prompt does not fit, and resending
+	// it into the same full context only fails the same way.
+	if (entry.heldItemId) releaseHeldItemFromQueue(entry.sessionId, entry.heldItemId);
+
+	// Surfaced while the entry still exists, on purpose: `scheduleContextCompaction`
+	// declines while one does, so the error is shown rather than compacted again.
+	agentErrorSurfacer?.(`${entry.sessionId}-ai-${entry.tabId}`, error);
+	removeEntry(key);
+}
+
+/**
+ * The user pressed Stop on this agent. End any compaction that has not finished,
+ * quietly: Stop means stop, so the prompt is not resent and no error is raised.
+ *
+ * A recovery already past its compaction is an ordinary turn in flight, and the
+ * interrupt that follows this call ends it like any other.
+ *
+ * `tabId` narrows it to one tab's recovery, for a caller that stopped a single
+ * turn rather than the whole agent (see `cancelRecoveryForTab`).
+ */
+export function cancelContextCompaction(sessionId: string, tabId?: string): void {
+	for (const entry of Object.values(useRetryStore.getState().retries)) {
+		if (entry.sessionId !== sessionId || !entry.compaction || entry.compaction.compacted) continue;
+		// A caller that stopped ONE tab's turn leaves the agent's other tabs alone.
+		if (tabId && entry.tabId !== tabId) continue;
+		logger.info('[retry] Stop pressed; cancelling context compaction', undefined, {
+			key: entry.key,
+		});
+		if (entry.compaction.pill) {
+			settleContextCompaction(entry.compaction.pill, { status: 'canceled' });
+		}
+		if (entry.heldItemId) releaseHeldItemFromQueue(sessionId, entry.heldItemId);
+		removeEntry(entry.key);
 	}
 }
 
@@ -1047,6 +1441,25 @@ export function replayAfterAuth(sessionId: string, tabIds: string[]): void {
 }
 
 /**
+ * End whatever automatic recovery ONE tab has pending, because the turn it would
+ * resend was withdrawn by the user (Quick Chat's Stop). A context compaction
+ * that has not finished is cancelled quietly, as Stop does for the whole agent;
+ * anything else is an outage retry, cancelled the way its card's button does.
+ *
+ * Without this a withdrawn turn comes back: the recovery resends from its own
+ * snapshot, whatever happened to the queue item it parked.
+ */
+export function cancelRecoveryForTab(sessionId: string, tabId: string): void {
+	const entry = useRetryStore.getState().retries[keyFor(sessionId, tabId)];
+	if (!entry) return;
+	if (entry.compaction && !entry.compaction.compacted) {
+		cancelContextCompaction(sessionId, tabId);
+	} else {
+		cancelRetry(sessionId, tabId);
+	}
+}
+
+/**
  * User cancelled the auto-retry. Stops retrying and surfaces the original error
  * through the normal recovery path so they can act on it manually.
  */
@@ -1088,6 +1501,45 @@ export function cancelRetry(sessionId: string, tabId: string): void {
 
 	resolveOutage(entry.outageId, 'stopped');
 	removeEntry(key);
+}
+
+/**
+ * The agent's Stop button was pressed: end every outage it has open.
+ *
+ * Stop is agent-level and meant to leave nothing running, but a pending retry
+ * is work the agent WILL do - a countdown resent the stopped prompt half a
+ * minute later, which read as Stop not working. Unlike `cancelRetry` (the
+ * card's own Stop), this raises no error state: the user stopped the agent,
+ * not the outage's recovery, and there is nothing left for them to act on.
+ *
+ * A failed prompt the outage parked at the head of the queue is HELD rather
+ * than released, so Stop's own queue drain does not send it straight back out;
+ * it stays visible and one click from Force Send. An in-flight resend is a
+ * live process, which Stop is signalling separately.
+ */
+export function stopRetriesForAgent(sessionId: string): void {
+	const entries = Object.values(useRetryStore.getState().retries).filter(
+		(entry) => entry.sessionId === sessionId
+	);
+	if (entries.length === 0) return;
+
+	const heldIds = new Set(entries.map((entry) => entry.heldItemId).filter(Boolean));
+	updateSessionWith(sessionId, (s) =>
+		s.executionQueue?.some((item) => heldIds.has(item.id))
+			? {
+					...s,
+					executionQueue: s.executionQueue.map((item) =>
+						heldIds.has(item.id) ? { ...item, paused: true } : item
+					),
+				}
+			: s
+	);
+
+	for (const entry of entries) {
+		logger.info('[retry] Stop ended the auto-retry', undefined, { key: entry.key });
+		resolveOutage(entry.outageId, 'stopped');
+		removeEntry(entry.key);
+	}
 }
 
 /**
@@ -1189,6 +1641,34 @@ function recoverInFlightRetry(sessionId: string, tabId: string, reason: string):
 	resolveOutage(entry.outageId, 'recovered');
 	removeEntry(key);
 	clearTabAgentError(sessionId, tabId, entry.lastMessage);
+	dropRecoveredFailureText(sessionId, tabId, entry.outageId);
+}
+
+/**
+ * Take the provider's "you've hit your limit" bubble out of the transcript once
+ * the outage it reported has recovered. The green card above it already says
+ * the limit was hit and cleared; leaving the banner as the bottom-most message
+ * reads as the quota still being gone.
+ */
+function dropRecoveredFailureText(sessionId: string, tabId: string, outageId: string): void {
+	const outage = useRetryStore.getState().outages[outageId];
+	if (outage?.status !== 'recovered' || outage.resolvedAt === undefined) return;
+	const scope = {
+		outageId,
+		lastMessage: outage.lastMessage,
+		resolvedAt: outage.resolvedAt,
+	};
+	updateSessionWith(sessionId, (s) => {
+		let changed = false;
+		const aiTabs = s.aiTabs.map((t) => {
+			if (t.id !== tabId) return t;
+			const logs = dropRecoveredOutageNotices(t.logs, scope);
+			if (logs === t.logs) return t;
+			changed = true;
+			return { ...t, logs };
+		});
+		return changed ? { ...s, aiTabs } : s;
+	});
 }
 
 /**

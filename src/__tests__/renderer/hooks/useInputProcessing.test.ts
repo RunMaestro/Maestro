@@ -33,6 +33,7 @@ vi.mock('../../../renderer/services/aiCommand', () => ({
 
 import { useInputProcessing } from '../../../renderer/hooks/input/useInputProcessing';
 import { dispatchShellCommand } from '../../../renderer/services/shellCommand';
+import * as runtimeContext from '../../../renderer/utils/runtimeContext';
 import { requestAiCommand } from '../../../renderer/services/aiCommand';
 import { useAiCommandStore } from '../../../renderer/stores/aiCommandStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
@@ -415,24 +416,32 @@ describe('useInputProcessing', () => {
 			expect(dispatchShellCommand).not.toHaveBeenCalled();
 		});
 
-		it('sends an escaped bang to the agent as a literal message', async () => {
-			const deps = createDeps({ inputValue: '\\!important note' });
-			const { result } = renderHook(() => useInputProcessing(deps));
-
-			await act(async () => {
-				await result.current.processInput();
-			});
-
-			expect(dispatchShellCommand).not.toHaveBeenCalled();
-
-			// The message is logged (and sent) without the escape backslash.
-			let sessions = [deps.activeSession!];
-			for (const [updater] of mockSetSessions.mock.calls) {
-				sessions = typeof updater === 'function' ? updater(sessions) : updater;
+		it.each([false, true])(
+			'sends an escaped bang once and clears its original draft (remote: %s)',
+			async (remote) => {
+				const runtime = vi.spyOn(runtimeContext, 'isWebDesktop').mockReturnValue(remote);
+				try {
+					let draft = '\\!important note';
+					const deps = createDeps({
+						getInputValue: () => draft,
+						setInputValue: (value) => {
+							draft = value;
+						},
+					});
+					const { result } = renderHook(() => useInputProcessing(deps));
+					await act(async () => {
+						await result.current.processInput();
+					});
+					const logs = useSessionStore.getState().sessions[0].aiTabs.flatMap((tab) => tab.logs);
+					expect(logs.filter((log) => log.source === 'user').map((log) => log.text)).toEqual([
+						'!important note',
+					]);
+					expect(draft).toBe('');
+				} finally {
+					runtime.mockRestore();
+				}
 			}
-			const logs = sessions[0].aiTabs.flatMap((t) => t.logs);
-			expect(logs.some((l) => l.source === 'user' && l.text === '!important note')).toBe(true);
-		});
+		);
 	});
 
 	describe('built-in /history command', () => {
@@ -1234,6 +1243,44 @@ describe('useInputProcessing', () => {
 			expect(updatedSession.executionQueue[0].waitingForConnection).toBe(true);
 		});
 
+		it.each([false, true])(
+			'keeps an unsubmitted Lite draft without a host queue item (mention-only: %s)',
+			async (mentionOnly) => {
+				const runtime = vi.spyOn(runtimeContext, 'isWebDesktop').mockReturnValue(true);
+				try {
+					let draft = 'preserve this unsent Lite message';
+					const session = createMockSession({ state: 'idle' });
+					vi.mocked(window.maestro.process.getActiveProcesses).mockRejectedValue(
+						new Error('host connection is unavailable')
+					);
+					const deps = createDeps({
+						activeSession: session,
+						sessionsRef: { current: [session] },
+						getInputValue: () => draft,
+						setInputValue: (value) => {
+							draft = value;
+						},
+						stagedImages: ['data:image/png;base64,unsent'],
+						onPlanCrossAgentMentions: mentionOnly
+							? () => ({ targetSessionIds: ['backend'], suppressLocal: true })
+							: undefined,
+					});
+					const { result } = renderHook(() => useInputProcessing(deps));
+
+					await act(async () => {
+						await result.current.processInput();
+					});
+
+					expect(useSessionStore.getState().sessions[0].executionQueue).toEqual([]);
+					expect(draft).toBe('preserve this unsent Lite message');
+					expect(mockSetStagedImages).not.toHaveBeenCalled();
+					expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+				} finally {
+					runtime.mockRestore();
+				}
+			}
+		);
+
 		it('keeps a new message behind an existing connection-held message', async () => {
 			const session = createMockSession({
 				state: 'idle',
@@ -1540,33 +1587,114 @@ describe('useInputProcessing', () => {
 				expect(live.executionQueue.map((queued) => queued.text)).toEqual(['B']);
 			});
 
-			it('does not wipe a draft the user started while the probe was out', async () => {
-				const resolveProbe = pendingProbe();
-				const session = createMockSession({ state: 'idle' });
-				const { composer, getInputValue, setInputValue } = liveComposer('sent');
-				const deps = createDeps({
-					activeSession: session,
-					sessionsRef: { current: [session] },
-					getInputValue,
-					setInputValue,
-				});
-				const { result } = renderHook(() => useInputProcessing(deps));
+			it.each([false, true])(
+				'does not wipe a draft typed during readiness (remote: %s)',
+				async (remote) => {
+					const runtime = vi.spyOn(runtimeContext, 'isWebDesktop').mockReturnValue(remote);
+					try {
+						const resolveProbe = pendingProbe();
+						const session = createMockSession({ state: 'idle' });
+						const { composer, getInputValue, setInputValue } = liveComposer('sent');
+						const deps = createDeps({
+							activeSession: session,
+							sessionsRef: { current: [session] },
+							getInputValue,
+							setInputValue,
+						});
+						const { result } = renderHook(() => useInputProcessing(deps));
+						let send!: Promise<void>;
+						act(() => {
+							send = result.current.processInput();
+						});
+						composer.draft = 'still typing';
+						await act(async () => {
+							resolveProbe();
+							await send;
+						});
+						expect(userLogs()).toEqual(['sent']);
+						expect(composer.draft).toBe('still typing');
+					} finally {
+						runtime.mockRestore();
+					}
+				}
+			);
 
-				let send!: Promise<void>;
-				act(() => {
-					send = result.current.processInput();
-				});
-				composer.draft = 'still typing';
-				await act(async () => {
-					resolveProbe();
-					await send;
-				});
-
-				expect(userLogs()).toEqual(['sent']);
-				expect(composer.draft).toBe('still typing');
-				expect(setInputValue).toHaveBeenCalledTimes(1);
-			});
-
+			it.each(['tab', 'agent', 'edited', 'text', 'images'] as const)(
+				'clears only the accepted original draft after switching (%s)',
+				async (switchTo) => {
+					const runtime = vi.spyOn(runtimeContext, 'isWebDesktop').mockReturnValue(true);
+					try {
+						const resolveProbe = pendingProbe();
+						const images = ['data:image/png;base64,AAAA'];
+						const submittedTab = createMockTab({
+							id: 'submitted-tab',
+							inputValue: 'sent',
+							stagedImages: images,
+						});
+						const otherTab = createMockTab({ id: 'other-tab', inputValue: 'other draft' });
+						const session = createMockSession({
+							id: 'sending-agent',
+							state: 'idle',
+							aiTabs: [submittedTab, otherTab],
+							activeTabId: submittedTab.id,
+						});
+						const { composer, getInputValue, setInputValue } = liveComposer('sent');
+						const deps = createDeps({
+							activeSession: session,
+							activeSessionId: session.id,
+							sessionsRef: { current: [session] },
+							getInputValue,
+							setInputValue,
+							stagedImages: images,
+						});
+						const { result } = renderHook(() => useInputProcessing(deps));
+						let send!: Promise<void>;
+						act(() => {
+							send = result.current.processInput();
+						});
+						const editedText = switchTo === 'edited' || switchTo === 'text';
+						const editedImages = switchTo === 'edited' || switchTo === 'images';
+						const switched = {
+							...session,
+							activeTabId: otherTab.id,
+							aiTabs: [
+								{
+									...submittedTab,
+									inputValue: editedText ? 'new original draft' : submittedTab.inputValue,
+									stagedImages: editedImages ? ['data:image/png;base64,BBBB'] : [...images],
+								},
+								otherTab,
+							],
+						};
+						const otherAgent = createMockSession({
+							id: 'other-agent',
+							aiTabs: [otherTab],
+							activeTabId: otherTab.id,
+						});
+						act(() =>
+							useSessionStore.setState({
+								sessions: switchTo === 'agent' ? [session, otherAgent] : [switched],
+								activeSessionId: switchTo === 'agent' ? otherAgent.id : session.id,
+							})
+						);
+						composer.draft = 'other draft';
+						await act(async () => {
+							resolveProbe();
+							await send;
+						});
+						const original = useSessionStore.getState().sessions[0].aiTabs[0];
+						expect(original.inputValue).toBe(editedText ? 'new original draft' : '');
+						expect(original.stagedImages).toEqual(
+							editedImages ? ['data:image/png;base64,BBBB'] : []
+						);
+						expect(composer.draft).toBe('other draft');
+						expect(mockSetStagedImages).not.toHaveBeenCalled();
+						expect(window.maestro.process.spawn).toHaveBeenCalledTimes(1);
+					} finally {
+						runtime.mockRestore();
+					}
+				}
+			);
 			it('releases the tab once the probe settles, so the next press sends normally', async () => {
 				const session = createMockSession({ state: 'idle' });
 				const { composer, getInputValue, setInputValue } = liveComposer('one');
@@ -1676,6 +1804,42 @@ describe('useInputProcessing', () => {
 			expect(mockSetSessions).toHaveBeenCalled();
 			const updatedSessions = mockSetSessions.mock.calls[0][0]([session]);
 			expect(updatedSessions[0].executionQueue[0].text).toBe('change course');
+		});
+	});
+
+	describe('Queue Held (hold option)', () => {
+		it('queues a message paused even when the agent is idle', async () => {
+			const session = createMockSession({ state: 'idle' });
+			const deps = createDeps({ activeSession: session, inputValue: 'later please' });
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput(undefined, { hold: true });
+			});
+
+			expect(mockProcessQueuedItemRef.current).not.toHaveBeenCalled();
+			const updatedSessions = mockSetSessions.mock.calls[0][0]([session]);
+			expect(updatedSessions[0].executionQueue).toHaveLength(1);
+			expect(updatedSessions[0].executionQueue[0]).toMatchObject({
+				text: 'later please',
+				paused: true,
+			});
+		});
+
+		it('leaves a plain queued message unpaused', async () => {
+			const busySession = createMockSession({
+				state: 'busy',
+				aiTabs: [createMockTab({ state: 'busy' })],
+			});
+			const deps = createDeps({ activeSession: busySession, inputValue: 'next' });
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			const updatedSessions = mockSetSessions.mock.calls[0][0]([busySession]);
+			expect(updatedSessions[0].executionQueue[0].paused).toBeUndefined();
 		});
 	});
 
@@ -2930,7 +3094,10 @@ describe('useInputProcessing', () => {
 				{ targetSessionIds: ['backend'], suppressLocal: true },
 				'@Backend does this look right?',
 				session,
-				session.activeTabId
+				session.activeTabId,
+				// The message's images ride along: a consult-first hold carries them
+				// into the turn that eventually answers it.
+				[]
 			);
 
 			// Local dispatch is suppressed: no spawn/write to the source agent.

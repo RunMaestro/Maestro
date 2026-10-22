@@ -1,3 +1,5 @@
+import { NotificationCenterHost } from './NotificationCenter';
+import { useSettingsStore } from '../stores/settingsStore';
 import { lazy, memo, Suspense, useMemo } from 'react';
 import { useModalActions, useModalStore } from '../stores/modalStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
@@ -5,6 +7,7 @@ import { useTabStore } from '../stores/tabStore';
 import { useMessageGistStore } from '../stores/messageGistStore';
 import { useActiveSession } from '../hooks/session/useActiveSession';
 import { useSessionStore } from '../stores/sessionStore';
+import { filterLiveAgents } from '../../shared/agentVisibility';
 import { notifyToast } from '../stores/notificationStore';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { THEMES } from '../constants/themes';
@@ -29,6 +32,8 @@ import { MaestroWizard, WizardResumeModal } from './Wizard';
 import { TourOverlay } from './Wizard/tour';
 import type { SymphonyContributionData } from './SymphonyModal';
 import type { MindMapLayoutType } from './DocumentGraph/mindMapLayouts';
+import { HostFolderPicker } from './HostFolderPicker';
+import { AgentBundleModals } from './Bundles/AgentBundleModals';
 
 import type {
 	Theme,
@@ -45,6 +50,7 @@ import { openUrl } from '../utils/openUrl';
 import { logger } from '../utils/logger';
 import { resolveFileReference } from '../utils/fileLinks/resolve';
 import { getBasename } from '../../shared/formatters';
+import { canOpenComputerHistory } from '../utils/computerHistoryAvailability';
 
 // Lazy-loaded components (rarely-used heavy modals)
 const SettingsModal = lazy(() =>
@@ -70,6 +76,9 @@ const CueYamlEditor = lazy(() =>
 );
 const PianolaModal = lazy(() =>
 	import('./PianolaModal').then((m) => ({ default: m.PianolaModal }))
+);
+const ComputerHistoryViewer = lazy(() =>
+	import('./ComputerHistory').then((m) => ({ default: m.ComputerHistoryViewer }))
 );
 const BoardModal = lazy(() => import('./BoardModal').then((m) => ({ default: m.BoardModal })));
 const ProfilesModal = lazy(() =>
@@ -237,6 +246,7 @@ function AppStandaloneModalsInner({
 	recordTourComplete,
 	recordTourSkip,
 }: AppStandaloneModalsProps) {
+	const notificationCenterEnabled = useSettingsStore((s) => s.notificationCenterEnabled);
 	// Ends a performance capture before its trace buffer overflows. Lives here
 	// because it has to be mounted for the whole life of the app - a recording
 	// runs with the command palette closed.
@@ -267,6 +277,8 @@ function AppStandaloneModalsInner({
 		setCueModalOpen,
 		pianolaModalOpen,
 		setPianolaModalOpen,
+		computerHistoryOpen,
+		setComputerHistoryOpen,
 		boardModalOpen,
 		setBoardModalOpen,
 		profilesModalOpen,
@@ -281,6 +293,7 @@ function AppStandaloneModalsInner({
 		settingsTab,
 		settingsPromptId,
 		settingsSettingId,
+		settingsNavigationRequest,
 		wizardResumeModalOpen,
 		wizardResumeState,
 		tourOpen,
@@ -306,7 +319,11 @@ function AppStandaloneModalsInner({
 	// returning user from a fresh install, and it is the only signal that needs
 	// no new persisted state. A returning user with every agent deleted gets the
 	// new-user copy, which offers the same two choices - harmless either way.
-	const hasAnySession = useSessionStore((s) => s.sessions.length > 0);
+	// Live agents only, like the empty state: a dormant Pianola does not count.
+	const pianolaEnabled = useSettingsStore((s) => s.encoreFeatures.pianola);
+	const hasAnySession = useSessionStore(
+		(s) => filterLiveAgents(s.sessions, { pianola: pianolaEnabled }).length > 0
+	);
 	// Merge plugin-contributed themes into the picker list through the shared
 	// contribution registry (built-in always wins an id collision). Identical to
 	// THEMES when the plugins Encore flag is off (no contributions).
@@ -318,6 +335,9 @@ function AppStandaloneModalsInner({
 
 	return (
 		<>
+			<HostFolderPicker theme={theme} />
+			<AgentBundleModals theme={theme} />
+			{notificationCenterEnabled && <NotificationCenterHost theme={theme} />}
 			{/* --- DEBUG PACKAGE MODAL --- */}
 			<DebugPackageModal
 				theme={theme}
@@ -470,6 +490,13 @@ function AppStandaloneModalsInner({
 			{encoreFeatures.pianola && pianolaModalOpen && (
 				<Suspense fallback={null}>
 					<PianolaModal theme={theme} onClose={() => setPianolaModalOpen(false)} />
+				</Suspense>
+			)}
+
+			{/* --- COMPUTER HISTORY VIEWER (lazy-loaded, Encore Feature, desktop only) --- */}
+			{canOpenComputerHistory(encoreFeatures) && computerHistoryOpen && (
+				<Suspense fallback={null}>
+					<ComputerHistoryViewer theme={theme} onClose={() => setComputerHistoryOpen(false)} />
 				</Suspense>
 			)}
 
@@ -710,6 +737,7 @@ function AppStandaloneModalsInner({
 						initialTab={settingsTab}
 						initialSelectedPromptId={settingsPromptId}
 						initialSettingId={settingsSettingId}
+						initialNavigationRequest={settingsNavigationRequest}
 						hasNoAgents={hasNoAgents}
 						onThemeImportError={(msg) => setFlashNotification(msg)}
 						onThemeImportSuccess={(msg) => setFlashNotification(msg)}

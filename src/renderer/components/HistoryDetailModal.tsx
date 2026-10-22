@@ -3,7 +3,6 @@ import { createPortal } from 'react-dom';
 import {
 	X,
 	Copy,
-	Check,
 	CheckCircle,
 	XCircle,
 	Trash2,
@@ -16,6 +15,7 @@ import {
 	AlertTriangle,
 	Server,
 	User,
+	Check,
 } from 'lucide-react';
 import type { Theme, HistoryEntry, ToolType } from '../types';
 import type { FileNode } from '../types/fileTree';
@@ -37,6 +37,7 @@ import { getContextColor } from '../utils/theme';
 import { DoubleCheck, getPillColor, getEntryIcon, hasRunOutcome } from './History';
 import { HoverTooltip } from './ui/HoverTooltip';
 import { safeClipboardWrite } from '../utils/clipboard';
+import { flashCopiedToClipboard } from '../utils/flashCopiedToClipboard';
 import { ResizeHandles } from './ui/ResizeHandles';
 import { useSettingsStore } from '../stores/settingsStore';
 
@@ -91,7 +92,6 @@ export function HistoryDetailModal({
 	const showProviderModePill = useSettingsStore((s) => s.showProviderModePill);
 	const onCloseRef = useRef(onClose);
 	onCloseRef.current = onClose;
-	const [copiedSessionId, setCopiedSessionId] = useState(false);
 	const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 	const deleteButtonRef = useRef<HTMLButtonElement>(null);
 
@@ -381,9 +381,9 @@ export function HistoryDetailModal({
 									{/* Copy button */}
 									<button
 										onClick={async () => {
-											await safeClipboardWrite(entry.agentSessionId!);
-											setCopiedSessionId(true);
-											setTimeout(() => setCopiedSessionId(false), 2000);
+											if (await safeClipboardWrite(entry.agentSessionId!)) {
+												flashCopiedToClipboard(entry.agentSessionId!, 'Session ID Copied');
+											}
 										}}
 										className="flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-mono font-bold uppercase transition-colors hover:opacity-80"
 										style={{
@@ -394,11 +394,7 @@ export function HistoryDetailModal({
 										title={`Copy session ID: ${entry.agentSessionId}`}
 									>
 										{entry.agentSessionId.split('-')[0].toUpperCase()}
-										{copiedSessionId ? (
-											<Check className="w-2.5 h-2.5" />
-										) : (
-											<Copy className="w-2.5 h-2.5" />
-										)}
+										<Copy className="w-2.5 h-2.5" />
 									</button>
 									{/* Resume button - styled with same padding as other pills */}
 									{onResumeSession && (

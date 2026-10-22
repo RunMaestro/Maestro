@@ -100,4 +100,41 @@ describe('FontScaleControl', () => {
 		expect(screen.getByLabelText('Increase preview font size')).toBeInTheDocument();
 		expect(screen.getByLabelText('Decrease preview font size')).toBeInTheDocument();
 	});
+
+	it('overlay tooltips replace the native title and name the key', () => {
+		render(
+			<FontScaleControl
+				theme={mockTheme}
+				control={makeControl({ fontScale: 1.2 })}
+				variant="ghost"
+				tooltips="overlay"
+				target="text"
+				shortcutHint={{ increase: '⌘=', decrease: '⌘-', reset: '⌘0' }}
+			/>
+		);
+		const increase = screen.getByLabelText('Increase text font size');
+		expect(increase).not.toHaveAttribute('title');
+		fireEvent.mouseEnter(increase.parentElement!);
+		expect(screen.getByRole('tooltip')).toHaveTextContent('Increase text font size⌘=');
+	});
+
+	it('keeps native titles with the key by default', () => {
+		render(
+			<FontScaleControl
+				theme={mockTheme}
+				control={makeControl()}
+				target="preview"
+				shortcutHint={{ increase: '+' }}
+			/>
+		);
+		expect(screen.getByLabelText('Increase preview font size')).toHaveAttribute(
+			'title',
+			'Increase preview font size (+)'
+		);
+	});
+
+	it('the ghost look has no border, matching borderless icon buttons beside it', () => {
+		render(<FontScaleControl theme={mockTheme} control={makeControl()} variant="ghost" />);
+		expect(screen.getByLabelText('Increase font size').style.border).not.toMatch(/solid/);
+	});
 });

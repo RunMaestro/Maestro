@@ -356,10 +356,8 @@ export function applyMovementPayload(p: MovementPayload): void {
 	const isBegin = p.op === 'begin';
 	const viewType = isBegin ? 'html' : (p.viewType ?? existing?.viewType ?? 'view');
 	const step = (cascadeIndex++ % 6) * 32;
-	// A newly-added panel should surface immediately, raising the stage with it.
-	// Updates intentionally do not raise the stage, so a live tracker cannot
-	// reopen a window the user just closed.
-	openConcertoStage();
+	// Agent-authored panels are created in the background. The user opens the
+	// stage through a chat chip, shortcut, or menu when ready to view them.
 	const taskbarOrder =
 		existing?.taskbarOrder ??
 		Math.max(
@@ -371,7 +369,7 @@ export function applyMovementPayload(p: MovementPayload): void {
 		id: p.id,
 		viewType,
 		preparing: isBegin,
-		minimized: isBegin ? false : (existing?.minimized ?? false),
+		minimized: existing?.minimized ?? false,
 		taskbarOrder,
 		...clampPosition(
 			p.x ?? existing?.x ?? 24 + step,
@@ -405,7 +403,6 @@ export function applyMovementPayload(p: MovementPayload): void {
 				? p.revision
 				: Date.now(),
 	});
-	if (isBegin) store.surfaceItem(p.id);
 }
 
 /** Build the snapshot returned to `maestro-cli movement state` (agent awareness). */

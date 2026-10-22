@@ -1,7 +1,7 @@
 /**
  * @file usePluginKeybindings.test.ts
  * @description The keyboard half of the summon path: a contributed chord must
- * reach the plugin command that calls `ui.togglePanel`. Uses the agent-flow
+ * reach the plugin command that calls `ui.togglePanel`. Uses a contributed
  * overlay chord (Alt+Shift+F) as the fixture, and pins the conflict policy the
  * hook's module doc promises - app shortcuts win, typing is never hijacked.
  */
@@ -9,6 +9,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, waitFor, cleanup, act } from '@testing-library/react';
 import { usePluginKeybindings } from '../../../renderer/hooks/usePluginKeybindings';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type { AggregatedContributions } from '../../../shared/plugins/contributions';
 
 const EMPTY: AggregatedContributions = {
@@ -30,9 +31,9 @@ const EMPTY: AggregatedContributions = {
 };
 
 const OVERLAY_CHORD = {
-	id: 'acme.flow/toggle-overlay',
+	id: 'acme.panel/toggle-overlay',
 	localId: 'toggle-overlay',
-	pluginId: 'acme.flow',
+	pluginId: 'acme.panel',
 	key: 'Alt+Shift+F',
 	command: 'overlay',
 };
@@ -64,7 +65,13 @@ async function mountWithChords(keybindings = [OVERLAY_CHORD]) {
 	return view;
 }
 
+const setPluginsEnabled = (plugins: boolean) =>
+	useSettingsStore.setState({
+		encoreFeatures: { ...useSettingsStore.getState().encoreFeatures, plugins },
+	});
+
 beforeEach(() => {
+	setPluginsEnabled(true);
 	window.maestro.plugins = pluginBridge as unknown as typeof window.maestro.plugins;
 	pluginBridge.contributions.mockReset().mockResolvedValue(EMPTY);
 	pluginBridge.onChanged.mockClear();
@@ -80,7 +87,7 @@ describe('usePluginKeybindings - overlay summon chord', () => {
 		const event = press({ key: 'F', altKey: true, shiftKey: true });
 
 		expect(pluginBridge.invokeCommand).toHaveBeenCalledTimes(1);
-		expect(pluginBridge.invokeCommand).toHaveBeenCalledWith('acme.flow/overlay');
+		expect(pluginBridge.invokeCommand).toHaveBeenCalledWith('acme.panel/overlay');
 		// Claimed, so the browser default (and any later listener) is suppressed.
 		expect(event.defaultPrevented).toBe(true);
 	});
@@ -91,7 +98,7 @@ describe('usePluginKeybindings - overlay summon chord', () => {
 		// macOS turns Alt+f into "ƒ"; the physical key still names the chord.
 		press({ key: 'ƒ', code: 'KeyF', altKey: true, shiftKey: true });
 
-		expect(pluginBridge.invokeCommand).toHaveBeenCalledWith('acme.flow/overlay');
+		expect(pluginBridge.invokeCommand).toHaveBeenCalledWith('acme.panel/overlay');
 	});
 
 	it('ignores a near-miss chord (wrong modifiers)', async () => {
@@ -123,15 +130,122 @@ describe('usePluginKeybindings - overlay summon chord', () => {
 		expect(pluginBridge.invokeCommand).not.toHaveBeenCalled();
 	});
 
-	it('never hijacks typing in an input', async () => {
-		await mountWithChords();
+	it('never hijacks typing in a textarea (bare chord)', async () => {
+		// A plugin that bound a bare letter must stay inert while the user types.
+		await mountWithChords([{ ...OVERLAY_CHORD, key: 'F' }]);
 
-		const input = document.createElement('input');
-		document.body.appendChild(input);
-		press({ key: 'F', altKey: true, shiftKey: true, target: input });
-		input.remove();
+		const textarea = document.createElement('textarea');
+		document.body.appendChild(textarea);
+		const bare = press({ key: 'F', target: textarea });
+		const shifted = press({ key: 'F', shiftKey: true, target: textarea }); // Shift+letter is typing too
+		textarea.remove();
 
 		expect(pluginBridge.invokeCommand).not.toHaveBeenCalled();
+		// Not calling the command is only half of it: a preventDefault() would
+		// swallow the keystroke and the character would never reach the textarea.
+		expect(bare.defaultPrevented).toBe(false);
+		expect(shifted.defaultPrevented).toBe(false);
+	});
+
+	// Greptile P1 on PR #1354: narrowing the input-focus skip to bare keys made
+	// contributed chords usable from the composer, but it also handed plugins
+	// every Ctrl/Cmd and Alt combination the app does not bind. Since a match
+	// calls preventDefault(), a plugin binding Ctrl+Z would silently break undo
+	// while the user is editing.
+	it.each([
+		['ctrl+z (undo)', { key: 'z', ctrlKey: true }],
+		['meta+z (undo, mac)', { key: 'z', metaKey: true }],
+		['ctrl+shift+z (redo)', { key: 'z', ctrlKey: true, shiftKey: true }],
+		['ctrl+a (select all)', { key: 'a', ctrlKey: true }],
+		['ctrl+v (paste)', { key: 'v', ctrlKey: true }],
+		['ctrl+arrowleft (word motion)', { key: 'ArrowLeft', ctrlKey: true }],
+		['alt+backspace (delete word)', { key: 'Backspace', altKey: true }],
+	])('leaves the reserved native editing chord %s alone in a textarea', async (_label, init) => {
+		// Bind the plugin to exactly that chord, so only the reserved-chord guard
+		// can stop it from firing.
+		await mountWithChords([
+			{
+				...OVERLAY_CHORD,
+				key: `${init.ctrlKey || init.metaKey ? 'Ctrl+' : ''}${init.altKey ? 'Alt+' : ''}${init.shiftKey ? 'Shift+' : ''}${init.key}`,
+			},
+		]);
+
+		const textarea = document.createElement('textarea');
+		document.body.appendChild(textarea);
+		const event = press({ ...init, target: textarea });
+		textarea.remove();
+
+		expect(pluginBridge.invokeCommand).not.toHaveBeenCalled();
+		expect(event.defaultPrevented).toBe(false);
+	});
+
+	// CodeRabbit on PR #1354: AltGr is text entry, not a chord. On the layouts
+	// that have it the browser sets ctrlKey AND altKey, so `AltGr+Q` - the `@` on
+	// a German keyboard - is indistinguishable from a `Ctrl+Alt+Q` plugin chord
+	// unless getModifierState('AltGraph') is consulted. Swallowing it would make
+	// the composer unable to type `@` or `€`.
+	it.each([
+		['@ (AltGr+Q on a German layout)', { key: '@', code: 'KeyQ' }],
+		['€ (AltGr+E on a German layout)', { key: '€', code: 'KeyE' }],
+	])('lets AltGr text entry %s through to a textarea', async (_label, init) => {
+		await mountWithChords([{ ...OVERLAY_CHORD, key: `Ctrl+Alt+${init.code.replace('Key', '')}` }]);
+
+		const textarea = document.createElement('textarea');
+		document.body.appendChild(textarea);
+		const event = press({
+			...init,
+			// Exactly what a browser reports for AltGr on Windows/Linux.
+			ctrlKey: true,
+			altKey: true,
+			modifierAltGraph: true,
+			target: textarea,
+		});
+		textarea.remove();
+
+		// Guard the premise: if jsdom ever stops honouring modifierAltGraph this
+		// test would pass for the wrong reason.
+		expect(event.getModifierState('AltGraph')).toBe(true);
+		expect(pluginBridge.invokeCommand).not.toHaveBeenCalled();
+		expect(event.defaultPrevented).toBe(false);
+	});
+
+	it('still fires an AltGr-looking chord when NO text surface has focus', async () => {
+		// The AltGr skip is scoped to editable targets for the same reason the
+		// reserved-chord skip is: outside a text surface there is no character to
+		// swallow, so the chord stays usable.
+		await mountWithChords([{ ...OVERLAY_CHORD, key: 'Ctrl+Alt+Q' }]);
+
+		press({ key: '@', code: 'KeyQ', ctrlKey: true, altKey: true, modifierAltGraph: true });
+
+		expect(pluginBridge.invokeCommand).toHaveBeenCalledWith(
+			`${OVERLAY_CHORD.pluginId}/${OVERLAY_CHORD.command}`
+		);
+	});
+
+	it('still fires a reserved-looking chord when NO text surface has focus', async () => {
+		// The guard is scoped to editable targets. Outside one, Ctrl+Z is fair game.
+		await mountWithChords([{ ...OVERLAY_CHORD, key: 'Ctrl+z' }]);
+
+		press({ key: 'z', ctrlKey: true });
+
+		expect(pluginBridge.invokeCommand).toHaveBeenCalledWith(
+			`${OVERLAY_CHORD.pluginId}/${OVERLAY_CHORD.command}`
+		);
+	});
+
+	it('still fires a modifier-bearing chord while a textarea has focus', async () => {
+		// The composer textarea is Maestro's resting focus state, so Alt+Shift+F
+		// must work there or the chord is inert in the default state (finding AA1).
+		await mountWithChords();
+
+		const textarea = document.createElement('textarea');
+		document.body.appendChild(textarea);
+		const event = press({ key: 'F', altKey: true, shiftKey: true, target: textarea });
+		textarea.remove();
+
+		expect(pluginBridge.invokeCommand).toHaveBeenCalledTimes(1);
+		expect(pluginBridge.invokeCommand).toHaveBeenCalledWith('acme.panel/overlay');
+		expect(event.defaultPrevented).toBe(true);
 	});
 
 	it('stops matching once the chord is unmounted', async () => {
@@ -140,6 +254,32 @@ describe('usePluginKeybindings - overlay summon chord', () => {
 
 		press({ key: 'F', altKey: true, shiftKey: true });
 
+		expect(pluginBridge.invokeCommand).not.toHaveBeenCalled();
+	});
+
+	it('installs no keydown listener when no chord is contributed', async () => {
+		const addSpy = vi.spyOn(window, 'addEventListener');
+		renderHook(() => usePluginKeybindings());
+		await waitFor(() => expect(pluginBridge.contributions).toHaveBeenCalled());
+		await act(async () => {});
+
+		expect(addSpy.mock.calls.some(([type]) => type === 'keydown')).toBe(false);
+		addSpy.mockRestore();
+	});
+
+	it('has no footprint while the plugins Encore Feature is off', async () => {
+		setPluginsEnabled(false);
+		pluginBridge.contributions.mockResolvedValue({ ...EMPTY, keybindings: [OVERLAY_CHORD] });
+		const addSpy = vi.spyOn(window, 'addEventListener');
+		renderHook(() => usePluginKeybindings());
+		await act(async () => {});
+
+		expect(pluginBridge.contributions).not.toHaveBeenCalled();
+		expect(pluginBridge.onChanged).not.toHaveBeenCalled();
+		expect(addSpy.mock.calls.some(([type]) => type === 'keydown')).toBe(false);
+		addSpy.mockRestore();
+
+		press({ key: 'F', altKey: true, shiftKey: true });
 		expect(pluginBridge.invokeCommand).not.toHaveBeenCalled();
 	});
 });

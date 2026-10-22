@@ -18,9 +18,11 @@ describe('Data Listener', () => {
 	let mockOutputParser: ProcessListenerDependencies['outputParser'];
 	let mockDebugLog: ProcessListenerDependencies['debugLog'];
 	let mockPatterns: ProcessListenerDependencies['patterns'];
+	let mockLiveOutput: ReturnType<typeof vi.fn>;
 	let eventHandlers: Map<string, (...args: unknown[]) => void>;
 
 	beforeEach(() => {
+		mockLiveOutput = vi.fn();
 		vi.clearAllMocks();
 		eventHandlers = new Map();
 
@@ -41,7 +43,6 @@ describe('Data Listener', () => {
 		mockDebugLog = vi.fn();
 		mockPatterns = {
 			REGEX_MODERATOR_SESSION: /^group-chat-(.+)-moderator-/,
-			REGEX_MODERATOR_SESSION_TIMESTAMP: /^group-chat-(.+)-moderator-\d+$/,
 			REGEX_AI_SUFFIX: /-ai-.+$/,
 			REGEX_AI_TAB_ID: /-ai-(.+?)(?:-fp-\d+)?$/,
 			REGEX_BATCH_SESSION: /-batch-\d+$/,
@@ -61,6 +62,7 @@ describe('Data Listener', () => {
 			getWebServer: mockGetWebServer,
 			outputBuffer: mockOutputBuffer,
 			outputParser: mockOutputParser,
+			groupChatEngine: { liveOutput: mockLiveOutput } as never,
 			debugLog: mockDebugLog,
 			patterns: mockPatterns,
 		});
@@ -70,6 +72,29 @@ describe('Data Listener', () => {
 		it('should register the data event listener', () => {
 			setupListener();
 			expect(mockProcessManager.on).toHaveBeenCalledWith('data', expect.any(Function));
+		});
+	});
+
+	describe('Raw stdout (live output)', () => {
+		it('hands a group chat chunk to the engine, which shows participants only', () => {
+			setupListener();
+			const handler = eventHandlers.get('raw-stdout');
+
+			handler?.('group-chat-test-chat-123-participant-TestAgent-abc123', 'chunk');
+
+			expect(mockLiveOutput).toHaveBeenCalledWith(
+				'group-chat-test-chat-123-participant-TestAgent-abc123',
+				'chunk'
+			);
+		});
+
+		it('skips the engine for a session that is not a group chat (prefix check)', () => {
+			setupListener();
+			const handler = eventHandlers.get('raw-stdout');
+
+			handler?.('regular-session-123', 'chunk');
+
+			expect(mockLiveOutput).not.toHaveBeenCalled();
 		});
 	});
 

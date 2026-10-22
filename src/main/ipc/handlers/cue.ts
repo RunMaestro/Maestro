@@ -35,10 +35,14 @@ import {
 	updateScheduledTask,
 	type ScheduledTaskAgent,
 } from '../../cue/cue-scheduled-tasks';
-import { getSessionsStore } from '../../stores';
+import { getLiveSessions } from '../../stores';
 import { loadPipelineLayout, savePipelineLayout } from '../../cue/pipeline-layout-store';
 import { renamePipelineOnDisk, type RenamePipelineResult } from '../../cue/cue-pipeline-rename';
 import { captureException } from '../../utils/sentry';
+import {
+	requireEncoreFeature,
+	type EncoreSettingsReader,
+} from '../../../shared/encoreFeatureDefaults';
 import type { CueEngine } from '../../cue/cue-engine';
 import type {
 	CueGraphSession,
@@ -65,10 +69,11 @@ const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 
  * Every agent, in the shape the scheduled-task module wants. Read straight
  * from the sessions store rather than from `CueEngine.getStatus()`: creating a
  * task must work for an agent that has no cue.yaml yet, and `getStatus()` only
- * knows about agents that already have one.
+ * knows about agents that already have one. Live agents only: a dormant
+ * Pianola (flag off) cannot be given a scheduled task.
  */
 function readTaskAgents(): ScheduledTaskAgent[] {
-	const stored = getSessionsStore().get('sessions', []);
+	const stored = getLiveSessions();
 	return stored
 		.filter((session) => session.toolType !== 'terminal')
 		.map((session) => ({
@@ -84,6 +89,8 @@ function readTaskAgents(): ScheduledTaskAgent[] {
  */
 export interface CueHandlerDependencies {
 	getCueEngine: () => CueEngine | null;
+	/** Read for the `maestroCue` Encore flag: every write refuses while it is off. */
+	settingsStore: EncoreSettingsReader;
 }
 
 /**
@@ -105,6 +112,13 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 		}
 		return engine;
 	};
+
+	// A switched-off Cue has no effect: nothing starts the engine, fires a
+	// subscription, arms a session's triggers, or writes a cue.yaml, prompt,
+	// scheduled task, or layout. `maestro-cli cue` reaches these same channels.
+	// Reads, stop/disable, and session removal stay open.
+	const requireCue = (): void =>
+		requireEncoreFeature(deps.settingsStore, 'maestroCue', 'CueDisabled');
 
 	// Get global Cue settings (merged from engine state)
 	ipcMain.handle(
@@ -178,6 +192,7 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 	ipcMain.handle(
 		'cue:enable',
 		withIpcErrorLogging(handlerOpts('enable'), async (): Promise<void> => {
+			requireCue();
 			requireEngine().start('system-boot');
 		})
 	);
@@ -240,6 +255,7 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 				prompt?: string;
 				sourceAgentId?: string;
 			}): Promise<boolean> => {
+				requireCue();
 				return requireEngine().triggerSubscription(
 					options.subscriptionName,
 					options.prompt,
@@ -287,6 +303,7 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 		withIpcErrorLogging(
 			handlerOpts('refreshSession'),
 			async (options: { sessionId: string; projectRoot: string }): Promise<void> => {
+				requireCue();
 				requireEngine().refreshSession(options.sessionId, options.projectRoot);
 			}
 		)
@@ -332,6 +349,7 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 		withIpcErrorLogging(
 			handlerOpts('createScheduledTask'),
 			async (options: { input: ScheduledTaskCreateInput }): Promise<{ names: string[] }> => {
+				requireCue();
 				const agent = readTaskAgents().find((entry) => entry.id === options.input.agentId);
 				if (!agent) throw new Error(`Agent ${options.input.agentId} not found`);
 				const { names } = createScheduledTask(agent, options.input);
@@ -349,6 +367,7 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 				name: string;
 				patch: ScheduledTaskUpdateInput;
 			}): Promise<{ updated: boolean; reason?: string }> => {
+				requireCue();
 				return updateScheduledTask(options.projectRoot, options.name, options.patch);
 			}
 		)
@@ -362,6 +381,7 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 				projectRoot: string;
 				name: string;
 			}): Promise<{ removed: boolean; reason?: string }> => {
+				requireCue();
 				return cancelScheduledTask(options.projectRoot, options.name);
 			}
 		)
@@ -390,6 +410,7 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 				content: string;
 				promptFiles?: Record<string, string>;
 			}): Promise<{ changed: boolean }> => {
+				requireCue();
 				cueDebugLog('main:writeYaml:received', {
 					projectRoot: options.projectRoot,
 					yamlBytes: options.content.length,
@@ -597,6 +618,7 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 		withIpcErrorLogging(
 			handlerOpts('deleteYaml'),
 			async (options: { projectRoot: string }): Promise<boolean> => {
+				requireCue();
 				const deleted = deleteCueConfigFile(options.projectRoot);
 				// Run prompt cleanup regardless of whether the yaml file was
 				// present - if the user deleted cue.yaml by hand and then
@@ -621,6 +643,7 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 		withIpcErrorLogging(
 			handlerOpts('renamePipeline'),
 			async (options: { oldName: string; newName: string }): Promise<RenamePipelineResult> => {
+				requireCue();
 				const roots = requireEngine()
 					.getStatus()
 					.map((s) => s.projectRoot)
@@ -653,6 +676,7 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 		withIpcErrorLogging(
 			handlerOpts('savePipelineLayout'),
 			async (options: { layout: PipelineLayoutState }): Promise<void> => {
+				requireCue();
 				savePipelineLayout(options.layout);
 			}
 		)

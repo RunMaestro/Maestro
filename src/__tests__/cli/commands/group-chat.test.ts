@@ -1,6 +1,6 @@
 /**
  * @file group-chat.test.ts
- * @description Tests for the group-chat CLI commands (start, send, status, list, stop)
+ * @description Tests for the group-chat CLI commands (start, send, steer, status, list, stop)
  */
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
@@ -23,12 +23,15 @@ import {
 	groupChatList,
 	groupChatSend,
 	groupChatStart,
+	groupChatSteer,
 	groupChatStatus,
 	groupChatStop,
+	groupChatArchive,
 	resolveChatRef,
 } from '../../../cli/commands/group-chat';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import type { RemoteGroupChatState } from '../../../shared/groupChatRemote';
+import { QUEUE_STEER_ROUND_TRIP_TIMEOUT_MS } from '../../../shared/chatSteering';
 
 function chat(id: string, topic: string, extra: Partial<RemoteGroupChatState> = {}) {
 	return {
@@ -206,6 +209,120 @@ describe('group-chat commands', () => {
 		});
 	});
 
+	describe('steer', () => {
+		const chats = { type: 'group_chats_list', chats: [chat('abc123', 'Release')] };
+		const taken = {
+			type: 'steer_group_chat_result',
+			success: true,
+			chatId: 'abc123',
+			result: { outcome: 'delivered', verdict: 'delivered', targets: ['Alice'] },
+		};
+
+		it('steers new text into the resolved chat with the steer round-trip timeout', async () => {
+			const { sent, timeouts } = mockBridge({
+				get_group_chats: chats,
+				steer_group_chat: taken,
+			});
+
+			await groupChatSteer('release', 'also check the docs', {});
+
+			expect(sent[1]).toEqual({
+				type: 'steer_group_chat',
+				chatId: 'abc123',
+				message: 'also check the docs',
+			});
+			expect(timeouts[1]).toBe(QUEUE_STEER_ROUND_TRIP_TIMEOUT_MS);
+			expect(logSpy).toHaveBeenCalledWith('Steered into abc123: Alice');
+			expect(exitSpy).not.toHaveBeenCalled();
+		});
+
+		it('steers a queued item by id', async () => {
+			const { sent } = mockBridge({ get_group_chats: chats, steer_group_chat: taken });
+
+			await groupChatSteer('abc123', undefined, { item: 'item-1' });
+
+			expect(sent[1]).toEqual({ type: 'steer_group_chat', chatId: 'abc123', itemId: 'item-1' });
+		});
+
+		it('passes --read-only with new text', async () => {
+			const { sent } = mockBridge({ get_group_chats: chats, steer_group_chat: taken });
+
+			await groupChatSteer('abc123', 'look only', { readOnly: true });
+
+			expect(sent[1]).toEqual({
+				type: 'steer_group_chat',
+				chatId: 'abc123',
+				message: 'look only',
+				readOnly: true,
+			});
+		});
+
+		it('refuses --read-only with --item, before contacting the app', async () => {
+			await expect(
+				groupChatSteer('abc123', undefined, { item: 'item-1', readOnly: true })
+			).rejects.toThrow('process.exit');
+			expect(errorSpy).toHaveBeenCalledWith(
+				'Error: --read-only applies to new text; a queued item keeps its own setting'
+			);
+			expect(withMaestroClient).not.toHaveBeenCalled();
+		});
+
+		it('prints the result as JSON', async () => {
+			mockBridge({ get_group_chats: chats, steer_group_chat: taken });
+
+			await groupChatSteer('abc123', 'go', { json: true });
+
+			expect(JSON.parse(logSpy.mock.calls[0][0])).toEqual({
+				success: true,
+				chatId: 'abc123',
+				outcome: 'delivered',
+				verdict: 'delivered',
+				targets: ['Alice'],
+			});
+		});
+
+		it('reports a refusal with its detail and exits non-zero', async () => {
+			mockBridge({
+				get_group_chats: chats,
+				steer_group_chat: {
+					type: 'steer_group_chat_result',
+					success: false,
+					chatId: 'abc123',
+					result: {
+						outcome: 'not-steerable',
+						blockedReason: 'room-idle',
+						detail: 'Nothing is running in this room',
+					},
+				},
+			});
+
+			await expect(groupChatSteer('abc123', 'go', {})).rejects.toThrow('process.exit');
+			expect(errorSpy).toHaveBeenCalledWith(
+				'Error: not-steerable: Nothing is running in this room'
+			);
+			expect(exitSpy).toHaveBeenCalledWith(1);
+		});
+
+		it('surfaces a bridge validation error', async () => {
+			mockBridge({
+				get_group_chats: chats,
+				steer_group_chat: { type: 'error', message: 'Missing chatId' },
+			});
+
+			await expect(groupChatSteer('abc123', 'go', {})).rejects.toThrow('process.exit');
+			expect(errorSpy).toHaveBeenCalledWith('Error: Missing chatId');
+		});
+
+		it('requires exactly one of a message and --item, before contacting the app', async () => {
+			await expect(groupChatSteer('abc123', undefined, {})).rejects.toThrow('process.exit');
+			await expect(groupChatSteer('abc123', '   ', {})).rejects.toThrow('process.exit');
+			await expect(groupChatSteer('abc123', 'go', { item: 'item-1' })).rejects.toThrow(
+				'process.exit'
+			);
+			expect(withMaestroClient).not.toHaveBeenCalled();
+		});
+	});
+
 	describe('status', () => {
 		it('prints the state and only the last --tail messages', async () => {
 			const messages = [1, 2, 3].map((n) => ({
@@ -229,6 +346,44 @@ describe('group-chat commands', () => {
 			const out = JSON.parse(logSpy.mock.calls[0][0]);
 			expect(out.chat.state).toBe('agent-working');
 			expect(out.chat.messages.map((m: { content: string }) => m.content)).toEqual(['msg 3']);
+		});
+
+		it('lists the queue with each item id and its flags', async () => {
+			mockBridge({
+				get_group_chats: { type: 'group_chats_list', chats: [chat('abc123', 'Release')] },
+				get_group_chat_state: {
+					type: 'group_chat_state',
+					state: chat('abc123', 'Release', {
+						state: 'moderator-thinking',
+						queue: [
+							{ id: 'q1', text: 'first\n  message', timestamp: 1 },
+							{ id: 'q2', text: 'second', timestamp: 2, failed: true, hasImages: true },
+						],
+						queuePaused: true,
+					}),
+				},
+			});
+
+			await groupChatStatus('abc123', {});
+
+			const lines = logSpy.mock.calls.map((c) => c[0]);
+			expect(lines).toContain('  Queued: 2 (paused)');
+			expect(lines).toContain('    q1  first message');
+			expect(lines).toContain('    q2  second  [failed, images]');
+		});
+
+		it('prints no queue section for an empty queue', async () => {
+			mockBridge({
+				get_group_chats: { type: 'group_chats_list', chats: [chat('abc123', 'Release')] },
+				get_group_chat_state: {
+					type: 'group_chat_state',
+					state: chat('abc123', 'Release', { queue: [], queuePaused: false }),
+				},
+			});
+
+			await groupChatStatus('abc123', {});
+
+			expect(logSpy.mock.calls.some((c) => String(c[0]).includes('Queued'))).toBe(false);
 		});
 
 		it('rejects a non-numeric --tail', async () => {
@@ -266,6 +421,50 @@ describe('group-chat commands', () => {
 
 			expect(sent[1]).toEqual({ type: 'stop_group_chat', chatId: 'abc123' });
 			expect(logSpy).toHaveBeenCalledWith('Stopped group chat abc123');
+		});
+	});
+
+	describe('archive', () => {
+		it('archives the resolved chat', async () => {
+			const { sent } = mockBridge({
+				get_group_chats: { type: 'group_chats_list', chats: [chat('abc123', 'Release')] },
+				archive_group_chat: { type: 'archive_group_chat_result', success: true },
+			});
+
+			await groupChatArchive('Release', {});
+
+			expect(sent[1]).toEqual({ type: 'archive_group_chat', chatId: 'abc123', archived: true });
+			expect(logSpy).toHaveBeenCalledWith('Archived group chat abc123');
+		});
+
+		it('restores an archived chat by ID with --restore', async () => {
+			const { sent } = mockBridge({
+				get_group_chats: {
+					type: 'group_chats_list',
+					chats: [chat('abc123', 'Release', { archived: true })],
+				},
+				archive_group_chat: { type: 'archive_group_chat_result', success: true },
+			});
+
+			await groupChatArchive('abc123', { restore: true, json: true });
+
+			expect(sent[1]).toEqual({ type: 'archive_group_chat', chatId: 'abc123', archived: false });
+			expect(JSON.parse(logSpy.mock.calls[0][0])).toEqual({
+				success: true,
+				chatId: 'abc123',
+				archived: false,
+			});
+		});
+
+		it('exits 1 when the app could not archive the chat', async () => {
+			mockBridge({
+				get_group_chats: { type: 'group_chats_list', chats: [chat('abc123', 'Release')] },
+				archive_group_chat: { type: 'archive_group_chat_result', success: false },
+			});
+
+			await expect(groupChatArchive('Release', {})).rejects.toThrow('process.exit');
+			expect(errorSpy).toHaveBeenCalledWith('Error: Failed to archive group chat');
+			expect(exitSpy).toHaveBeenCalledWith(1);
 		});
 	});
 });

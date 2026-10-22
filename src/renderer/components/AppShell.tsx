@@ -20,9 +20,11 @@ import { CenterFlash } from './CenterFlash';
 import { ImageContextMenuHost } from './ImageContextMenuHost';
 import { ZoomViewerHost } from './ZoomViewer';
 import { MediaPlaybackHost } from './MediaPlayback';
+import { ThroughputGaugeHost } from './ThroughputGauge';
 import { ThoughtStreamPanel } from './ThoughtStreamPanel';
 import { ContextTimelinePanel } from './ContextTimelinePanel';
 import { PermissionPrompt } from './PermissionPrompt';
+import { StatsIndexingHost } from './StatsIndexing/StatsIndexingHost';
 import { CadenzaLayer } from './Cadenza';
 import { ConcertoStageModal } from './Concerto/ConcertoStageModal';
 import { useCadenzaStore } from '../stores/cadenzaStore';
@@ -308,11 +310,19 @@ export function AppShell({
 			    floating player, which the user can drag anywhere. See
 			    MediaPlaybackHost. */}
 			<MediaPlaybackHost theme={theme} />
+			{/* --- THROUGHPUT GAUGE (single, app-wide; Encore Feature) ---
+			    Floating tokens/sec dial. Renders nothing and listens to nothing
+			    while the throughputGauge flag is off. See ThroughputGaugeHost. */}
+			<ThroughputGaugeHost theme={theme} />
 			<ThoughtStreamPanel theme={theme} />
 			{/* --- CONTEXT TIMELINE (single, app-wide; opened from the header gauge) --- */}
 			<ContextTimelinePanel theme={theme} />
 			{/* --- PERMISSION PROMPT (Claude Code standard mode; portal) --- */}
 			<PermissionPrompt theme={theme} />
+			{/* --- USAGE DATA SCAN PROGRESS (single, app-wide) ---
+			    A version upgrade re-reads all session history once; this shows it
+			    as a modal, then a corner card, instead of a silent stall. */}
+			<StatsIndexingHost theme={theme} />
 			{/* --- CONCERTO ---
 			    Cadenzas float over the app; the movement stage lives in its own
 			    resizable window (Alt+C / command palette / hamburger menu). Both stay

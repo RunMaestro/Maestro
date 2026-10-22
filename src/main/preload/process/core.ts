@@ -1,6 +1,8 @@
+import type { HeadlessAgentActivity } from '../../../shared/headlessAgentActivity';
 import { ipcRenderer } from 'electron';
-import type { UsageStats } from '../../../shared/types';
+import type { CallUsage, UsageStats } from '../../../shared/types';
 import type { ParsedQuestion } from '../../permission-relay/types';
+import type { SteeringResultFrame } from '../../../shared/chatSteering';
 
 /**
  * Configuration for spawning a process
@@ -169,7 +171,7 @@ export function createProcessCoreApi() {
 				remoteId: string | null;
 				workingDirOverride?: string;
 			};
-		}): Promise<{ pid: number; success: boolean }> =>
+		}): Promise<{ pid: number; success: boolean; attached?: boolean }> =>
 			ipcRenderer.invoke('process:spawnTerminalTab', config),
 
 		/**
@@ -177,6 +179,18 @@ export function createProcessCoreApi() {
 		 */
 		write: (sessionId: string, data: string): Promise<boolean> =>
 			ipcRenderer.invoke('process:write', sessionId, data),
+
+		/**
+		 * Steer a Claude turn that is already running: type `text` into the live TUI so
+		 * claude can fold it into the loop in flight.
+		 *
+		 * Resolves with a verdict rather than a boolean, and the distinction matters to
+		 * the caller - only `absorbed` means the running turn changed course, `queued`
+		 * means it will run as a follow-up turn, and `refused` means the message was NOT
+		 * delivered and is still the caller's to send. See SteeringResultFrame.
+		 */
+		steer: (sessionId: string, text: string): Promise<SteeringResultFrame> =>
+			ipcRenderer.invoke('process:steer', sessionId, text),
 
 		broadcastUserInput: (payload: ProcessUserInputBroadcast): Promise<void> =>
 			ipcRenderer.invoke('process:broadcast-user-input', payload),
@@ -215,6 +229,16 @@ export function createProcessCoreApi() {
 		/**
 		 * Get all active processes from ProcessManager
 		 */
+		getHeadlessActivity: (): Promise<HeadlessAgentActivity> =>
+			ipcRenderer.invoke('process:getHeadlessActivity'),
+		onHeadlessActivity: (handler: (activity: HeadlessAgentActivity) => void): (() => void) => {
+			const listener = (_event: Electron.IpcRendererEvent, activity: HeadlessAgentActivity) =>
+				handler(activity);
+			ipcRenderer.on('process:headlessActivity', listener);
+			return () => {
+				ipcRenderer.removeListener('process:headlessActivity', listener);
+			};
+		},
 		getActiveProcesses: (options?: {
 			includeChildProcesses?: boolean;
 		}): Promise<ActiveProcess[]> =>
@@ -315,6 +339,19 @@ export function createProcessCoreApi() {
 		},
 
 		/**
+		 * Subscribe to the transcript-observed outcome of a steer (absorbed, queued,
+		 * dropped). Arrives after `steer()` resolved `delivered`; see SteeringVerdict.
+		 */
+		onSteeringVerdict: (
+			callback: (sessionId: string, verdict: SteeringResultFrame) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, verdict: SteeringResultFrame) =>
+				callback(sessionId, verdict);
+			ipcRenderer.on('process:steering-verdict', handler);
+			return () => ipcRenderer.removeListener('process:steering-verdict', handler);
+		},
+
+		/**
 		 * Subscribe to thinking/streaming content chunks from AI agents
 		 * Emitted when agents produce partial text events (isPartial: true)
 		 * Renderer decides whether to display based on tab's showThinking setting
@@ -407,6 +444,17 @@ export function createProcessCoreApi() {
 				callback(sessionId, usageStats);
 			ipcRenderer.on('process:usage', handler);
 			return () => ipcRenderer.removeListener('process:usage', handler);
+		},
+
+		/**
+		 * Subscribe to one API call's new spend, sent mid-turn (claude-code only).
+		 * A live progress signal; the turn's `onUsage` still reports the whole turn.
+		 */
+		onCallUsage: (callback: (sessionId: string, usage: CallUsage) => void): (() => void) => {
+			const handler = (_: unknown, sessionId: string, usage: CallUsage) =>
+				callback(sessionId, usage);
+			ipcRenderer.on('process:call-usage', handler);
+			return () => ipcRenderer.removeListener('process:call-usage', handler);
 		},
 
 		/**

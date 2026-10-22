@@ -24,6 +24,7 @@ import {
 	Plus,
 	Pencil,
 	Check,
+	PackageOpen,
 } from 'lucide-react';
 import type { Group, Session, Theme } from '../../types';
 import { useAnchoredMenuPosition, useClickOutside, useContextMenuPosition } from '../../hooks';
@@ -36,6 +37,7 @@ import { safeClipboardWrite } from '../../utils/clipboard';
 import { flashCopiedToClipboard } from '../../utils/flashCopiedToClipboard';
 import type { WindowMoveTarget } from '../../utils/windowTargets';
 import { PluginUiItemsSlot } from '../plugins/PluginUiItemsSlot';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 interface SessionContextMenuProps {
 	x: number;
@@ -47,6 +49,8 @@ interface SessionContextMenuProps {
 	onRename: () => void;
 	onEdit: () => void;
 	onDuplicate: () => void;
+	/** Export this agent to a bundle. Omitted for agents that cannot be exported. */
+	onExport?: () => void;
 	onToggleBookmark: () => void;
 	onMoveToGroup: (groupId: string) => void;
 	onDelete: () => void;
@@ -173,15 +177,14 @@ function ContextMenuFlyout({
 			data-testid="session-context-flyout"
 			// Above the z-50 context menu it hangs off: portaled to body, it no
 			// longer inherits that menu's stacking position.
-			className="fixed z-[60] py-1 rounded-md shadow-xl border whitespace-nowrap"
+			className="fixed z-[60] py-1 rounded-md whitespace-nowrap"
 			style={{
 				left,
 				top,
 				maxHeight,
 				overflowY: 'auto',
 				opacity: ready ? 1 : 0,
-				backgroundColor: theme.colors.bgSidebar,
-				borderColor: theme.colors.border,
+				...elevatedSurfaceStyle(theme),
 				minWidth: '8.75rem',
 			}}
 			onMouseEnter={onKeepOpen}
@@ -205,6 +208,7 @@ export function SessionContextMenu({
 	onRename,
 	onEdit,
 	onDuplicate,
+	onExport,
 	onToggleBookmark,
 	onMoveToGroup,
 	onDelete,
@@ -308,7 +312,7 @@ export function SessionContextMenu({
 		<div
 			ref={menuRef}
 			data-testid="session-context-menu"
-			className="fixed z-50 py-1 rounded-md shadow-xl border whitespace-nowrap"
+			className="fixed z-50 py-1 rounded-md whitespace-nowrap"
 			style={{
 				left,
 				top,
@@ -318,8 +322,7 @@ export function SessionContextMenu({
 				maxHeight,
 				overflowY: 'auto',
 				opacity: ready ? 1 : 0,
-				backgroundColor: theme.colors.bgSidebar,
-				borderColor: theme.colors.border,
+				...elevatedSurfaceStyle(theme),
 				minWidth: '10rem',
 			}}
 		>
@@ -375,6 +378,21 @@ export function SessionContextMenu({
 				>
 					<Copy className="w-3.5 h-3.5" />
 					Duplicate...
+				</button>
+			)}
+
+			{onExport && (
+				<button
+					type="button"
+					onClick={() => {
+						onExport();
+						onDismiss();
+					}}
+					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+					style={{ color: theme.colors.textMain }}
+				>
+					<PackageOpen className="w-3.5 h-3.5" />
+					Export Agent...
 				</button>
 			)}
 

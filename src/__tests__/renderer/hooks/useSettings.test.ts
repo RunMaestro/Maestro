@@ -59,7 +59,7 @@ describe('useSettings', () => {
 			fileExplorerIconTheme: 'rich',
 			terminalWidth: 100,
 			logLevel: 'info',
-			maxLogBuffer: 5000,
+			maxLogBuffer: 10000,
 			maxOutputLines: Infinity,
 			osNotificationsEnabled: true,
 			audioFeedbackEnabled: false,
@@ -110,7 +110,7 @@ describe('useSettings', () => {
 		vi.mocked(window.maestro.settings.getAll).mockResolvedValue({});
 		vi.mocked(window.maestro.settings.get).mockResolvedValue(undefined);
 		vi.mocked(window.maestro.logger.getLogLevel).mockResolvedValue('info');
-		vi.mocked(window.maestro.logger.getMaxLogBuffer).mockResolvedValue(5000);
+		vi.mocked(window.maestro.logger.getMaxLogBuffer).mockResolvedValue(10000);
 	});
 
 	afterEach(() => {
@@ -163,7 +163,7 @@ describe('useSettings', () => {
 			await waitForSettingsLoaded(result);
 
 			expect(result.current.logLevel).toBe('info');
-			expect(result.current.maxLogBuffer).toBe(5000);
+			expect(result.current.maxLogBuffer).toBe(10000);
 		});
 
 		it('should have correct default values for output settings', async () => {
@@ -411,13 +411,13 @@ describe('useSettings', () => {
 
 		it('should load log level and max buffer from logger API', async () => {
 			vi.mocked(window.maestro.logger.getLogLevel).mockResolvedValue('debug');
-			vi.mocked(window.maestro.logger.getMaxLogBuffer).mockResolvedValue(10000);
+			vi.mocked(window.maestro.logger.getMaxLogBuffer).mockResolvedValue(25000);
 
 			const { result } = renderHook(() => useSettings());
 			await waitForSettingsLoaded(result);
 
 			expect(result.current.logLevel).toBe('debug');
-			expect(result.current.maxLogBuffer).toBe(10000);
+			expect(result.current.maxLogBuffer).toBe(25000);
 		});
 
 		it('should load rendering settings from saved values', async () => {
@@ -601,11 +601,11 @@ describe('useSettings', () => {
 			await waitForSettingsLoaded(result);
 
 			await act(async () => {
-				await result.current.setMaxLogBuffer(10000);
+				await result.current.setMaxLogBuffer(25000);
 			});
 
-			expect(result.current.maxLogBuffer).toBe(10000);
-			expect(window.maestro.logger.setMaxLogBuffer).toHaveBeenCalledWith(10000);
+			expect(result.current.maxLogBuffer).toBe(25000);
+			expect(window.maestro.logger.setMaxLogBuffer).toHaveBeenCalledWith(25000);
 		});
 	});
 

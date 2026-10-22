@@ -9,10 +9,11 @@
  */
 
 import { backupRegistryBeforeWipe } from './registry-backup';
+import { SESSIONS_BACKUP_FILENAME } from '../../shared/maestro-lib/store/io';
 import type { StoredSession } from './types';
 
-/** Filename written beside the live store when a non-empty registry is replaced by an empty one. */
-export const SESSIONS_BACKUP_FILENAME = 'maestro-sessions.backup.json';
+// The file name is shared with the headless runtime, which writes the same backup.
+export { SESSIONS_BACKUP_FILENAME };
 
 /**
  * Snapshot the stored session registry when it is about to be replaced by an

@@ -18,13 +18,23 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { spawn, execFile, execFileSync, type ChildProcess, type SpawnOptions } from 'child_process';
+import { spawn, type ChildProcess, type SpawnOptions } from 'child_process';
 import { resolveMaestroCliScriptPath } from '../cue/cue-cli-executor';
 import { captureException } from '../utils/sentry';
 import { logger } from '../utils/logger';
-import { isWindows } from '../../shared/platformDetection';
-import { readSupervisorTargets, supervisorFilePath } from './pianola-store-main';
+import {
+	stopProcess,
+	BACKGROUND_STOP_GRACE_MS,
+} from '../../shared/maestro-lib/control/termination';
+import {
+	readSupervisorTargets,
+	removeSupervisorTarget,
+	writeSupervisorTargets,
+	supervisorFilePath,
+} from './pianola-store-main';
+import { PIANOLA_WATCH_RETIRED_EXIT_CODE } from '../../shared/pianola/pianola-watcher';
 import type { PianolaSupervisedTarget, PianolaSupervisedKind } from '../../shared/pianola/storage';
+import { generateUUID } from '../../shared/uuid';
 
 const LOG_CONTEXT = '[PianolaSupervisor]';
 
@@ -42,8 +52,6 @@ const BACKOFF_CAP_MS = 30_000;
 const WATCH_DEBOUNCE_MS = 250;
 /** A child that ran at least this long is treated as recovered (restart count resets). */
 const STABLE_RUN_MS = 60_000;
-/** Grace period before escalating SIGTERM to SIGKILL on POSIX (non-shutdown path). */
-const SIGKILL_DELAY_MS = 5000;
 
 /** Health state of one supervised target. */
 export type PianolaSupervisedState = 'running' | 'backing-off' | 'stopped' | 'failed';
@@ -92,8 +100,19 @@ export interface PianolaSupervisorDeps {
 	isEnabled: () => boolean;
 	/** Resolves the isPianola session id, injected as MAESTRO_AGENT_ID for handoffs. */
 	getPianolaAgentId: () => string | undefined;
+	/** Stored sessions at startup, used to retire auto-watches left behind by a crash. */
+	getStoredSessions?: () => readonly AutoWatchSession[];
 	/** Spawns a supervised child; defaults to node:child_process spawn. Injectable for tests. */
 	spawnChild?: PianolaChildSpawner;
+}
+
+/** Only fields needed to register a newly persisted agent's first AI tab. */
+export interface AutoWatchSession {
+	id: string;
+	isPianola?: boolean;
+	parentSessionId?: string;
+	activeTabId?: string;
+	aiTabs?: Array<{ id: string }>;
 }
 
 /**
@@ -116,6 +135,12 @@ export function staleTargets(
 export class PianolaSupervisor {
 	private readonly deps: PianolaSupervisorDeps;
 	private readonly children = new Map<string, SupervisedChild>();
+	/**
+	 * Defensive same-process retry for incomplete writes. All supported creation
+	 * paths (modal, wizard, CLI/remote, plugin) persist their initial AI tab with
+	 * the agent, so no supported creation path relies on this set across restart.
+	 */
+	private readonly pendingAutoWatchIds = new Set<string>();
 	private watcher: fs.FSWatcher | null = null;
 	private reconcileTimer: ReturnType<typeof setTimeout> | undefined;
 	private started = false;
@@ -126,9 +151,86 @@ export class PianolaSupervisor {
 		this.spawnChild = deps.spawnChild ?? ((command, args, opts) => spawn(command, args, opts));
 	}
 
+	/** Register future top-level agents and retire their watches when they close. */
+	autoWatchNewSessions(
+		added: readonly AutoWatchSession[],
+		current: readonly AutoWatchSession[],
+		autoWatchEnabled: boolean,
+		removedIds: readonly string[] = []
+	): void {
+		const canAdd = autoWatchEnabled && this.deps.isEnabled();
+		if (!canAdd) {
+			this.pendingAutoWatchIds.clear();
+		} else {
+			for (const session of added) {
+				if (session.id && !session.isPianola && !session.parentSessionId) {
+					this.pendingAutoWatchIds.add(session.id);
+				}
+			}
+		}
+		if (this.pendingAutoWatchIds.size === 0 && removedIds.length === 0) return;
+
+		const sessionsById = new Map(current.map((session) => [session.id, session]));
+		const targets = readSupervisorTargets();
+		const removed = new Set(removedIds.filter((id) => !sessionsById.has(id)));
+		const next = targets.filter(
+			(target) =>
+				!(target.kind === 'watch' && target.autoCreated && removed.has(target.agentId ?? ''))
+		);
+		const changed = next.length !== targets.length;
+		const watchedIds = new Set(
+			next.filter((target) => target.kind === 'watch').map((target) => target.agentId)
+		);
+		const registered: string[] = [];
+		for (const id of this.pendingAutoWatchIds) {
+			const session = sessionsById.get(id);
+			if (!session || session.isPianola || session.parentSessionId || watchedIds.has(id)) {
+				this.pendingAutoWatchIds.delete(id);
+				continue;
+			}
+			const aiTabIds = Array.isArray(session.aiTabs)
+				? session.aiTabs.flatMap((tab) => (typeof tab?.id === 'string' && tab.id ? [tab.id] : []))
+				: [];
+			const tabId =
+				session.activeTabId && aiTabIds.includes(session.activeTabId)
+					? session.activeTabId
+					: aiTabIds[0];
+			if (!tabId) continue;
+			next.push({
+				id: generateUUID(),
+				kind: 'watch',
+				agentId: id,
+				tabId,
+				enabled: true,
+				createdAt: Date.now(),
+				autoCreated: true,
+			});
+			watchedIds.add(id);
+			registered.push(id);
+		}
+		if (!changed && registered.length === 0) return;
+		writeSupervisorTargets(next);
+		for (const id of registered) this.pendingAutoWatchIds.delete(id);
+		this.reconcile();
+	}
+
 	/** Begin watching the store file and reconcile immediately. Idempotent. */
 	start(): void {
 		if (this.started) return;
+		if (this.deps.getStoredSessions) {
+			try {
+				const storedIds = new Set(this.deps.getStoredSessions().map((session) => session.id));
+				const targets = readSupervisorTargets();
+				const retained = targets.filter(
+					(target) =>
+						!(target.kind === 'watch' && target.autoCreated && !storedIds.has(target.agentId ?? ''))
+				);
+				if (retained.length !== targets.length) writeSupervisorTargets(retained);
+			} catch (error) {
+				// Cleanup must not prevent retained/manual targets from starting.
+				void captureException(error, { operation: 'pianola:supervisor:pruneAutoWatches' });
+			}
+		}
 		this.started = true;
 		this.startWatching();
 		this.reconcile();
@@ -306,7 +408,7 @@ export class PianolaSupervisor {
 	private buildArgs(target: PianolaSupervisedTarget): string[] | null {
 		if (target.kind === 'watch') {
 			if (!target.tabId || !target.agentId) return null;
-			return [
+			const args = [
 				'pianola',
 				'watch',
 				target.tabId,
@@ -315,6 +417,8 @@ export class PianolaSupervisor {
 				'--interval',
 				String(target.intervalSeconds ?? 5),
 			];
+			if (target.idleHours !== undefined) args.push('--idle-hours', String(target.idleHours));
+			return args;
 		}
 		if (!target.planId) return null;
 		return [
@@ -414,6 +518,13 @@ export class PianolaSupervisor {
 			if (entry.startedAt && Date.now() - entry.startedAt >= STABLE_RUN_MS) {
 				entry.restarts = 0;
 			}
+			// A watcher retired itself (tab gone, or idle past its timeout): drop the
+			// target from the store so it is neither restarted nor relaunched on the
+			// next app start.
+			if (code === PIANOLA_WATCH_RETIRED_EXIT_CODE && entry.target.kind === 'watch') {
+				this.retireTarget(entry);
+				return;
+			}
 			// Clean exit (code 0): success. An orchestrate run finishing its plan is
 			// expected; do not restart.
 			if (code === 0) {
@@ -459,6 +570,21 @@ export class PianolaSupervisor {
 		}, delay);
 	}
 
+	/** Forget a watch target that retired itself and remove it from the store. */
+	private retireTarget(entry: SupervisedChild): void {
+		entry.state = 'stopped';
+		this.children.delete(entry.target.id);
+		logger.info(`Supervised watch ${entry.target.id} retired; removing target`, LOG_CONTEXT);
+		try {
+			removeSupervisorTarget(entry.target.id);
+		} catch (error) {
+			void captureException(error, {
+				operation: 'pianola:supervisor:retire',
+				id: entry.target.id,
+			});
+		}
+	}
+
 	/** Append child output to the bounded ring buffer. */
 	private appendLog(entry: SupervisedChild, data: string): void {
 		for (const line of data.split('\n')) {
@@ -495,42 +621,21 @@ export class PianolaSupervisor {
 	}
 
 	/**
-	 * Kill a child process and its tree. On Windows uses taskkill /t so the node
-	 * process and any descendants are reaped. On POSIX sends SIGTERM then escalates
-	 * to SIGKILL - immediately on the shutdown path (the event loop may drain before
-	 * a deferred timer fires), or after a grace period otherwise.
+	 * Stop a child and its tree through the shared stop ladder: SIGTERM, then
+	 * SIGKILL for the tree after a grace period, or `taskkill /t /f` on Windows.
+	 * `sync` is the shutdown path: every stage runs at once, since the event loop
+	 * may drain before a deferred timer fires.
 	 */
 	private killProcess(child: ChildProcess, sync: boolean): void {
-		if (isWindows() && child.pid) {
-			if (sync) {
-				try {
-					execFileSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], { timeout: 5000 });
-				} catch {
-					// taskkill exits non-zero when the process is already gone - fine.
-				}
-			} else {
-				execFile('taskkill', ['/pid', String(child.pid), '/t', '/f'], (error) => {
-					if (!error) return;
-					if (child.exitCode !== null || child.signalCode !== null) return;
-					void captureException(error, {
-						operation: 'pianola:supervisor:taskkill',
-						pid: child.pid,
-					});
-				});
+		stopProcess(
+			{ child },
+			{
+				from: 'terminate',
+				graceMs: BACKGROUND_STOP_GRACE_MS,
+				immediate: sync,
+				blocking: sync,
+				label: 'pianola',
 			}
-			return;
-		}
-		child.kill('SIGTERM');
-		if (sync) {
-			if (child.exitCode === null && child.signalCode === null) {
-				child.kill('SIGKILL');
-			}
-			return;
-		}
-		setTimeout(() => {
-			if (child.exitCode === null && child.signalCode === null) {
-				child.kill('SIGKILL');
-			}
-		}, SIGKILL_DELAY_MS);
+		);
 	}
 }

@@ -1,3 +1,4 @@
+import type { CodexTransport } from '../../../shared/codexTransport';
 import { memo, useMemo } from 'react';
 import type React from 'react';
 import type { MainPanelHandle } from '../MainPanel/types';
@@ -151,10 +152,13 @@ export interface AppModalsProps {
 		additionalDirectories?: AdditionalDirectory[],
 		/** Provenance of `customContextWindow` (finding AD1). */
 		contextWindowSource?: 'user-edited',
+		/** Env vars parked with the eye button: kept, but never handed to a spawn. */
 		customEnvVarsDisabled?: Record<string, string>,
 		workingDirectory?: string,
+		/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
 		codexAutoResetOnExhaustion?: boolean,
-		boardWorker?: boolean
+		/** Codex only: which transport chat turns use. `undefined` means `exec`. */
+		codexTransport?: CodexTransport
 	) => void;
 	editAgentSession: Session | null;
 	renameSessionValue: string;
@@ -245,6 +249,7 @@ export interface AppModalsProps {
 	onCloseOtherTabs?: (pivotTabId?: string) => void;
 	onCloseTabsLeft?: (pivotTabId?: string) => void;
 	onCloseTabsRight?: (pivotTabId?: string) => void;
+	onCloseTabGroup?: (groupId: string) => void;
 	setPlaygroundOpen?: (open: boolean) => void;
 	onQuickActionsRefreshGitFileState: () => Promise<void>;
 	onQuickActionsDebugReleaseQueuedItem: () => void;
@@ -390,6 +395,7 @@ export interface AppModalsProps {
 	onTogglePauseQueueItem: (sessionId: string, itemId: string) => void;
 	onEditQueueItem: (sessionId: string, itemId: string, patch: QueuedItemEditPatch) => void;
 	onForceSendQueueItem: (sessionId: string, itemId: string) => void;
+	onMergeQueueItem: (sessionId: string, itemId: string) => void;
 	// New tab creation (for QuickActionsModal)
 	onQuickActionsNewTab?: () => void;
 	onQuickActionsNewFileTab?: () => void;
@@ -741,6 +747,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onCloseOtherTabs,
 		onCloseTabsLeft,
 		onCloseTabsRight,
+		onCloseTabGroup,
 		setPlaygroundOpen,
 		onQuickActionsRefreshGitFileState,
 		onQuickActionsDebugReleaseQueuedItem,
@@ -863,6 +870,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onTogglePauseQueueItem,
 		onEditQueueItem,
 		onForceSendQueueItem,
+		onMergeQueueItem,
 		onQuickActionsNewTab,
 		onQuickActionsNewFileTab,
 		onQuickActionsNewBrowserTab,
@@ -1113,6 +1121,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onCloseOtherTabs={onCloseOtherTabs}
 				onCloseTabsLeft={onCloseTabsLeft}
 				onCloseTabsRight={onCloseTabsRight}
+				onCloseTabGroup={onCloseTabGroup}
 				setPlaygroundOpen={setPlaygroundOpen}
 				onRefreshGitFileState={onQuickActionsRefreshGitFileState}
 				onDebugReleaseQueuedItem={onQuickActionsDebugReleaseQueuedItem}
@@ -1249,6 +1258,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onTogglePauseQueueItem={onTogglePauseQueueItem}
 				onEditQueueItem={onEditQueueItem}
 				onForceSendQueueItem={onForceSendQueueItem}
+				onMergeQueueItem={onMergeQueueItem}
 			/>
 
 			{/* Group Chat Modals */}

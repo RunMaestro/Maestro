@@ -7,6 +7,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ipcMain, BrowserWindow } from 'electron';
+import { rm } from 'fs/promises';
 import {
 	registerGroupChatHandlers,
 	GroupChatHandlerDependencies,
@@ -84,6 +85,7 @@ vi.mock('../../../../main/group-chat/group-chat-router', () => ({
 	routeAgentResponse: vi.fn(),
 	markParticipantResponded: vi.fn(),
 	spawnModeratorSynthesis: vi.fn(),
+	steerRunningRound: vi.fn(),
 }));
 
 // Mock agent-detector
@@ -212,6 +214,7 @@ describe('groupChat IPC handlers', () => {
 				'groupChat:queueRemove',
 				'groupChat:queueReorder',
 				'groupChat:queueResume',
+				'groupChat:queueSteer',
 				'groupChat:stopModerator',
 				'groupChat:stopAll',
 				'groupChat:reportAutoRunComplete',
@@ -1411,6 +1414,81 @@ describe('groupChat IPC handlers', () => {
 
 			const after = (await getQueueHandler({} as never, chatId)) as { items: unknown[] };
 			expect(after.items).toHaveLength(0);
+		});
+	});
+
+	describe('groupChat:queueSteer', () => {
+		// The queue writes under the mocked chat dir on the real disk, so each test
+		// gets a chat of its own and removes it, or a rerun reads the last run's items.
+		const chatIds: string[] = [];
+		const freshChatId = (label: string) => {
+			const id = `gc-steer-${label}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+			chatIds.push(id);
+			return id;
+		};
+
+		afterEach(async () => {
+			await waitForQueueSettledForTests();
+			for (const id of chatIds.splice(0)) {
+				await rm(groupChatStorage.getGroupChatDir(id), { recursive: true, force: true });
+			}
+		});
+
+		async function queueWhileBusy(chatId: string, itemId: string, text: string) {
+			groupChatEmitters.emitStateChange?.(chatId, 'moderator-thinking');
+			await handlers.get('groupChat:queueAdd')!({} as never, chatId, {
+				id: itemId,
+				timestamp: Date.now(),
+				text,
+			});
+			await waitForQueueSettledForTests();
+		}
+
+		it('steers a queued item through the process manager and removes it once taken', async () => {
+			const chatId = freshChatId('taken');
+			const pmSteer = vi
+				.fn()
+				.mockResolvedValue({ type: 'steering', id: 's', verdict: 'delivered' });
+			(mockProcessManager as Record<string, unknown>).steer = pmSteer;
+			vi.mocked(groupChatRouter.steerRunningRound).mockResolvedValue({
+				outcome: 'delivered',
+				verdict: 'delivered',
+				targets: ['Moderator'],
+			});
+			await queueWhileBusy(chatId, 'steer-item', 'also check the docs');
+
+			const result = await handlers.get('groupChat:queueSteer')!({} as never, chatId, 'steer-item');
+
+			expect(result).toMatchObject({ outcome: 'delivered', targets: ['Moderator'] });
+			expect(groupChatRouter.steerRunningRound).toHaveBeenCalledWith(
+				chatId,
+				{ text: 'also check the docs', readOnly: undefined },
+				expect.objectContaining({ steer: expect.any(Function) })
+			);
+			// The channel is the process manager's own steer.
+			const channel = vi.mocked(groupChatRouter.steerRunningRound).mock.calls[0][2];
+			await channel.steer('proc-1', 'typed');
+			expect(pmSteer).toHaveBeenCalledWith('proc-1', 'typed');
+
+			const queue = (await handlers.get('groupChat:getQueue')!({} as never, chatId)) as {
+				items: unknown[];
+			};
+			expect(queue.items).toHaveLength(0);
+		});
+
+		it('answers unavailable, and keeps the item, when the process manager cannot steer', async () => {
+			const chatId = freshChatId('unavailable');
+			await queueWhileBusy(chatId, 'kept-item', 'stay queued');
+
+			const result = await handlers.get('groupChat:queueSteer')!({} as never, chatId, 'kept-item');
+
+			expect(result).toMatchObject({ outcome: 'unavailable' });
+			expect(groupChatRouter.steerRunningRound).not.toHaveBeenCalled();
+			const queue = (await handlers.get('groupChat:getQueue')!({} as never, chatId)) as {
+				items: Array<{ id: string; sending?: boolean }>;
+			};
+			expect(queue.items).toEqual([expect.objectContaining({ id: 'kept-item' })]);
+			expect(queue.items[0].sending).toBeUndefined();
 		});
 	});
 });

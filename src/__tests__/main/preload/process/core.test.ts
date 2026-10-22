@@ -8,14 +8,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mockInvoke = vi.fn();
 const mockOn = vi.fn();
 const mockRemoveListener = vi.fn();
-const mockSend = vi.fn();
 
 vi.mock('electron', () => ({
 	ipcRenderer: {
 		invoke: (...args: unknown[]) => mockInvoke(...args),
 		on: (...args: unknown[]) => mockOn(...args),
 		removeListener: (...args: unknown[]) => mockRemoveListener(...args),
-		send: (...args: unknown[]) => mockSend(...args),
 	},
 }));
 
@@ -292,6 +290,33 @@ describe('Process Core Preload API', () => {
 			registeredHandler!({}, 'session-123', usageStats);
 
 			expect(callback).toHaveBeenCalledWith('session-123', usageStats);
+		});
+	});
+
+	describe('onCallUsage', () => {
+		it('should register event listener for process:call-usage and unsubscribe it', () => {
+			const callback = vi.fn();
+			let registeredHandler: (event: unknown, sessionId: string, usage: unknown) => void;
+
+			mockOn.mockImplementation((channel: string, handler: typeof registeredHandler) => {
+				if (channel === 'process:call-usage') {
+					registeredHandler = handler;
+				}
+			});
+
+			const cleanup = api.onCallUsage(callback);
+
+			const usage = {
+				inputTokens: 2,
+				outputTokens: 300,
+				cacheReadInputTokens: 160000,
+				cacheCreationInputTokens: 1000,
+			};
+			registeredHandler!({}, 'session-123', usage);
+
+			expect(callback).toHaveBeenCalledWith('session-123', usage);
+			cleanup();
+			expect(mockRemoveListener).toHaveBeenCalledWith('process:call-usage', registeredHandler!);
 		});
 	});
 

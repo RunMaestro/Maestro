@@ -13,6 +13,8 @@ import type { GroupChatMessage, GroupChatState } from '../../shared/group-chat-t
 import type { ParticipantState } from '../ipc/handlers/groupChat';
 import type { SshRemoteConfig } from '../../shared/types';
 import type { PluginEvent } from '../../shared/plugins/events';
+import type { GroupChatLauncher, GroupChatTurnEnd } from '../../shared/maestro-lib/groupchat/types';
+import type { UsageStats } from '../process-manager/types';
 
 // ==========================================================================
 // Constants
@@ -79,39 +81,25 @@ export interface ProcessListenerDependencies {
 		) => void;
 		emitMessage?: (groupChatId: string, message: GroupChatMessage) => void;
 	};
-	/** Group chat router functions */
-	groupChatRouter: {
-		routeModeratorResponse: (
-			groupChatId: string,
-			text: string,
-			processManager: ProcessManager | undefined,
-			agentDetector: AgentDetector | undefined,
-			readOnly: boolean
-		) => Promise<void>;
-		routeAgentResponse: (
-			groupChatId: string,
-			participantName: string,
-			text: string,
-			processManager: ProcessManager | undefined
-		) => Promise<void>;
-		markParticipantResponded: (groupChatId: string, participantName: string) => boolean;
-		/** Clears the room's running state and releases its power block. */
-		settleGroupChatToIdle: (groupChatId: string) => void;
-		spawnModeratorSynthesis: (
-			groupChatId: string,
-			processManager: ProcessManager,
-			agentDetector: AgentDetector
-		) => Promise<void>;
-		getGroupChatReadOnlyState: (groupChatId: string) => boolean;
-		respawnParticipantWithRecovery: (
-			groupChatId: string,
-			participantName: string,
-			processManager: ProcessManager,
-			agentDetector: AgentDetector
-		) => Promise<void>;
-		clearActiveParticipantTaskSession: (groupChatId: string, participantName: string) => void;
-		clearModeratorResponseTimeout: (groupChatId: string) => void;
+	/** The group chat engine: a surface reports each finished turn here and it decides what follows */
+	groupChatEngine: {
+		turnEnded: (end: GroupChatTurnEnd, launcher?: GroupChatLauncher) => Promise<void>;
+		/** A group chat process announced its provider session id (stored and shown). */
+		sessionAnnounced: (processId: string, agentSessionId: string) => Promise<void>;
+		/** A group chat process reported usage (the turn's ledger and the cards). */
+		usageReported: (processId: string, usage: UsageStats) => void;
+		/** A participant's output as it streams. */
+		liveOutput: (processId: string, chunk: string) => void;
 	};
+	/**
+	 * Builds the launcher a turn starts its successors with, from the process manager
+	 * and agent detector. Undefined when either is missing: the engine then settles the
+	 * round instead of starting anything.
+	 */
+	groupChatLauncherFor: (
+		processManager: ProcessManager | null,
+		agentDetector: AgentDetector | null
+	) => GroupChatLauncher | undefined;
 	/** Group chat storage functions */
 	groupChatStorage: {
 		loadGroupChat: (groupChatId: string) => Promise<GroupChat | null>;
@@ -121,11 +109,6 @@ export interface ProcessListenerDependencies {
 			participantName: string,
 			updates: Record<string, unknown>
 		) => Promise<GroupChat>;
-	};
-	/** Session recovery functions */
-	sessionRecovery: {
-		needsSessionRecovery: (output: string, agentType?: string) => boolean;
-		initiateSessionRecovery: (groupChatId: string, participantName: string) => Promise<boolean>;
 	};
 	/** Output buffer functions */
 	outputBuffer: {
@@ -138,21 +121,11 @@ export interface ProcessListenerDependencies {
 		extractTextFromStreamJson: (output: string, agentType?: string) => string;
 		parseParticipantSessionId: (sessionId: string) => ParticipantInfo | null;
 	};
-	/** Usage aggregator functions */
-	usageAggregator: {
-		calculateContextTokens: (usageStats: {
-			inputTokens: number;
-			outputTokens: number;
-			cacheReadInputTokens: number;
-			cacheCreationInputTokens: number;
-		}) => number;
-	};
 	/** Debug log function */
 	debugLog: (prefix: string, message: string, ...args: unknown[]) => void;
 	/** Regex patterns */
 	patterns: {
 		REGEX_MODERATOR_SESSION: RegExp;
-		REGEX_MODERATOR_SESSION_TIMESTAMP: RegExp;
 		REGEX_AI_SUFFIX: RegExp;
 		REGEX_AI_TAB_ID: RegExp;
 		/** Matches batch session IDs: {id}-batch-{timestamp} */

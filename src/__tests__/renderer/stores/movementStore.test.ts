@@ -99,6 +99,7 @@ describe('applyMovementPayload', () => {
 			x: 80,
 			y: 40,
 		});
+		expect(stageOpen()).toBe(false);
 		expect(useMovementStore.getState().items[0]).toMatchObject({
 			id: 'mockup',
 			viewType: 'html',
@@ -211,15 +212,39 @@ describe('applyMovementPayload', () => {
 		expect(useMovementStore.getState().items[0]).toMatchObject({ x: 10, y: 10, title: 'new' });
 	});
 
-	it('raises the stage for a new panel but leaves a closed stage closed on updates', () => {
+	it('keeps the stage closed when an agent creates or updates panels', () => {
 		applyMovementPayload({ op: 'add', id: 'a', body: '{"blocks":[]}' });
-		setStageOpen(false);
+		expect(stageOpen()).toBe(false);
 
 		applyMovementPayload({ op: 'update', id: 'a', body: '{"blocks":[]}' });
 		expect(stageOpen()).toBe(false);
 
 		applyMovementPayload({ op: 'add', id: 'b', body: '{"blocks":[]}' });
+		expect(stageOpen()).toBe(false);
+		expect(useMovementStore.getState().items.map((item) => item.id)).toEqual(['a', 'b']);
+	});
+
+	it('keeps an open stage open when an agent creates panels', () => {
+		setStageOpen(true);
+		applyMovementPayload({ op: 'begin', id: 'mockup', title: 'Mockup' });
+		applyMovementPayload({ op: 'add', id: 'metrics' });
+
 		expect(stageOpen()).toBe(true);
+		expect(useMovementStore.getState().items).toHaveLength(2);
+	});
+
+	it('preserves a minimized panel when an agent begins and fills a new revision', () => {
+		applyMovementPayload({ op: 'add', id: 'mockup', viewType: 'html', body: '<main>Old</main>' });
+		useMovementStore.getState().setItemMinimized('mockup', true);
+		applyMovementPayload({ op: 'begin', id: 'mockup', title: 'Updated mockup' });
+		expect(useMovementStore.getState().items[0].minimized).toBe(true);
+		applyMovementPayload({ op: 'add', id: 'mockup', viewType: 'html', body: '<main>New</main>' });
+
+		expect(stageOpen()).toBe(false);
+		expect(useMovementStore.getState().items[0]).toMatchObject({
+			minimized: true,
+			html: '<main>New</main>',
+		});
 	});
 
 	it('move clamps negative coordinates to zero', () => {

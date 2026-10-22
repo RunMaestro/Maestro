@@ -50,10 +50,10 @@ export const AutoRunHumanStepBanner = memo(function AutoRunHumanStepBanner({
 			}
 		>
 			<div className="mb-1.5">
-				Auto Run will hand these to an agent that cannot complete them. Use a{' '}
+				Auto Run will hand these to an agent that cannot complete them. Move the step to plain{' '}
+				<code>-</code> bullets at the end of the document so the run finishes without you. Add a{' '}
 				<code style={{ color: theme.colors.warning }}>{'<!-- MAESTRO:HITL reason="..." -->'}</code>{' '}
-				marker to pause for review, or move the step to plain <code>-</code> bullets at the end of
-				the document.
+				marker only if the run must stop and wait for you at that point.
 			</div>
 			<ul className="space-y-1">
 				{listed.map((task) => {

@@ -41,6 +41,9 @@ const mockGetSessionsStore = vi.fn().mockReturnValue({
 });
 vi.mock('../../../../main/stores', () => ({
 	getSessionsStore: (...args: any[]) => mockGetSessionsStore(...args),
+	// The stats read is capped at the configured history entry limit. An unset
+	// `maxLogBuffer` resolves to the default, which is far above any corpus here.
+	getSettingsStore: () => ({ get: () => undefined }),
 }));
 
 // Mock the logger to keep the suite quiet.

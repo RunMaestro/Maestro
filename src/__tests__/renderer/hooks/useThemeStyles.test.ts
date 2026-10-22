@@ -230,25 +230,27 @@ describe('useThemeStyles', () => {
 		it('derives all three from the palette when the theme declares none', () => {
 			// Every built-in theme omits these, so the derivation is what the app
 			// actually renders. bgHover blends textMain into bgMain, accentHover
-			// brightens the accent on a dark theme, surfaceElevated lifts bgMain.
+			// brightens the accent on a dark theme, surfaceElevated steps one past
+			// bgActivity toward textMain (see getElevatedSurfaceColors).
 			renderHook(() =>
 				useThemeStyles({ themeColors: DARK_COLORS, themeMode: 'dark', glossLevel: 'off' })
 			);
 
 			expect(getCssVar('--bg-hover')).toBe('#373843');
 			expect(getCssVar('--accent-hover')).toBe('#d7adff');
-			expect(getCssVar('--surface-elevated')).toBe('#323440');
+			expect(getCssVar('--surface-elevated')).toBe('#3e414f');
 		});
 
 		it('flips the accent and surface derivations on a light theme', () => {
 			// A light theme has no "brighter than white" to reach for, so both go
-			// the other way: the accent darkens and the raised surface sinks.
+			// the other way: the accent darkens, and the raised surface sinks
+			// because blending toward a dark textMain darkens without a mode branch.
 			renderHook(() =>
 				useThemeStyles({ themeColors: LIGHT_COLORS, themeMode: 'light', glossLevel: 'off' })
 			);
 
 			expect(getCssVar('--accent-hover')).toBe('#0055c6');
-			expect(getCssVar('--surface-elevated')).toBe('#f7f7f7');
+			expect(getCssVar('--surface-elevated')).toBe('#ebedf0');
 		});
 
 		it('darkens rather than lightens the hover on a light theme, with no mode branch', () => {
@@ -268,7 +270,7 @@ describe('useThemeStyles', () => {
 			);
 
 			expect(getCssVar('--accent-hover')).toBe('#d7adff');
-			expect(getCssVar('--surface-elevated')).toBe('#323440');
+			expect(getCssVar('--surface-elevated')).toBe('#3e414f');
 		});
 
 		it('lets a theme that declares a slot win over the derivation', () => {

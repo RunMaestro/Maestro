@@ -1040,4 +1040,144 @@ describe('WindowContext', () => {
 			expect(result.current.windowId).toBeNull();
 		});
 	});
+
+	describe('group moves', () => {
+		const GROUP = { id: 'g1', name: 'Council', emoji: '🏛️', collapsed: false };
+
+		/**
+		 * Primary owns g1a (+ its worktree child wt) and an ungrouped `other`;
+		 * win-2 owns g1b. So group g1 is split across two windows.
+		 */
+		function seedSplitGroup(extraPrimary: string[] = ['other']): void {
+			useSessionStore.setState({
+				sessions: [
+					createMockSession({ id: 'g1a', groupId: 'g1' }),
+					createMockSession({ id: 'wt', parentSessionId: 'g1a', groupId: 'g1' }),
+					createMockSession({ id: 'g1b', groupId: 'g1' }),
+					...extraPrimary.map((id) => createMockSession({ id })),
+				],
+				groups: [GROUP],
+			} as unknown as Parameters<typeof useSessionStore.setState>[0]);
+			vi.mocked(windows().getState).mockResolvedValue(makeState({ id: 'primary-1' }));
+			vi.mocked(windows().list).mockResolvedValue([
+				makeInfo({ id: 'primary-1', isMain: true }),
+				makeInfo({ id: 'win-2', sessionIds: ['g1b'] }),
+			]);
+		}
+
+		it('gathers a split group into ONE new window, each member leaving its own owner', async () => {
+			seedSplitGroup();
+			vi.mocked(windows().create).mockResolvedValue(makeInfo({ id: 'win-3' }));
+			const { result } = renderHook(() => useWindowContext(), { wrapper });
+			await waitFor(() => expect(result.current.windows).toHaveLength(2));
+
+			let outcome: Awaited<ReturnType<typeof result.current.moveGroupToNewWindow>> | undefined;
+			await act(async () => {
+				outcome = await result.current.moveGroupToNewWindow('g1');
+			});
+
+			expect(windows().create).toHaveBeenCalledWith(['g1a', 'wt', 'g1b'], undefined);
+			expect(windows().moveSession).toHaveBeenCalledWith('g1a', 'primary-1', 'win-3');
+			expect(windows().moveSession).toHaveBeenCalledWith('wt', 'primary-1', 'win-3');
+			expect(windows().moveSession).toHaveBeenCalledWith('g1b', 'win-2', 'win-3');
+			expect(outcome).toEqual({
+				moved: true,
+				windowId: 'win-3',
+				movedAgentIds: ['g1a', 'wt', 'g1b'],
+			});
+		});
+
+		it('moves into an existing window, skipping members already there', async () => {
+			seedSplitGroup();
+			const { result } = renderHook(() => useWindowContext(), { wrapper });
+			await waitFor(() => expect(result.current.windows).toHaveLength(2));
+
+			await act(async () => {
+				await result.current.moveGroupToWindow('g1', 'win-2');
+			});
+
+			expect(windows().moveSession).toHaveBeenCalledTimes(2);
+			expect(windows().moveSession).toHaveBeenCalledWith('g1a', 'primary-1', 'win-2');
+			expect(windows().moveSession).toHaveBeenCalledWith('wt', 'primary-1', 'win-2');
+		});
+
+		it('blocks a group move that would empty the primary window', async () => {
+			seedSplitGroup([]);
+			const { result } = renderHook(() => useWindowContext(), { wrapper });
+			await waitFor(() => expect(result.current.windows).toHaveLength(2));
+
+			let outcome: Awaited<ReturnType<typeof result.current.moveGroupToWindow>> | undefined;
+			await act(async () => {
+				outcome = await result.current.moveGroupToWindow('g1', 'win-2');
+			});
+
+			expect(outcome?.moved).toBe(false);
+			expect(outcome?.error).toMatch(/last agent/);
+			expect(notifyToast).toHaveBeenCalled();
+			expect(windows().moveSession).not.toHaveBeenCalled();
+		});
+
+		it('refuses an empty group without touching the registry', async () => {
+			seedSplitGroup();
+			useSessionStore.setState({
+				groups: [GROUP, { id: 'empty', name: 'Empty', emoji: '', collapsed: false }],
+			} as unknown as Parameters<typeof useSessionStore.setState>[0]);
+			const { result } = renderHook(() => useWindowContext(), { wrapper });
+			await waitFor(() => expect(result.current.windows).toHaveLength(2));
+
+			let outcome: Awaited<ReturnType<typeof result.current.moveGroupToNewWindow>> | undefined;
+			await act(async () => {
+				outcome = await result.current.moveGroupToNewWindow('empty');
+			});
+
+			expect(outcome).toEqual({ moved: false, error: 'This group has no agents to move' });
+			expect(windows().create).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('maestro-cli window (remote command)', () => {
+		it('only the primary window answers, through the same move methods', async () => {
+			useSessionStore.setState({
+				sessions: [createMockSession({ id: 'a', name: 'Alpha' })],
+				groups: [],
+			} as unknown as Parameters<typeof useSessionStore.setState>[0]);
+			vi.mocked(windows().getState).mockResolvedValue(makeState({ id: 'primary-1' }));
+			vi.mocked(windows().list).mockResolvedValue([makeInfo({ id: 'primary-1', isMain: true })]);
+			let handler: ((request: unknown, channel: string) => void) | undefined;
+			vi.mocked(windows().onRemoteCommand).mockImplementation((cb) => {
+				handler = cb as typeof handler;
+				return () => {};
+			});
+
+			const { result } = renderHook(() => useWindowContext(), { wrapper });
+			await waitFor(() => expect(result.current.windows).toHaveLength(1));
+			expect(handler).toBeDefined();
+
+			await act(async () => {
+				handler?.({ action: 'list' }, 'reply-1');
+			});
+			await waitFor(() =>
+				expect(windows().sendRemoteCommandResponse).toHaveBeenCalledWith('reply-1', {
+					success: true,
+					windows: [
+						{
+							windowId: 'primary-1',
+							windowNumber: 1,
+							isMain: true,
+							label: 'Main Window',
+							agents: [{ id: 'a', name: 'Alpha' }],
+						},
+					],
+				})
+			);
+		});
+
+		it('a secondary window does not subscribe', async () => {
+			setUrl('/?windowId=win-2');
+			vi.mocked(windows().getState).mockResolvedValue(makeState({ id: 'win-2' }));
+			renderHook(() => useWindowContext(), { wrapper });
+			await waitFor(() => expect(windows().getState).toHaveBeenCalled());
+			expect(windows().onRemoteCommand).not.toHaveBeenCalled();
+		});
+	});
 });

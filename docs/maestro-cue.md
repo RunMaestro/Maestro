@@ -100,15 +100,17 @@ An agent "owns" a pipeline in either of two senses, and both count for the
 
 **View in Graph** then does one of three things:
 
-| The agent owns... | What you get                                                                                                    |
-| ----------------- | --------------------------------------------------------------------------------------------------------------- |
-| One pipeline      | That pipeline, selected and fitted                                                                              |
-| Several           | The All Pipelines view narrowed to just that agent's, with a chip in the toolbar naming the agent and the count |
-| None              | The unfiltered All Pipelines view                                                                               |
+| The agent owns... | What you get                                                                                           |
+| ----------------- | ------------------------------------------------------------------------------------------------------ |
+| One pipeline      | That pipeline, selected and fitted                                                                     |
+| Several           | The All Pipelines view narrowed to just that agent's, with the selector naming the agent and the count |
+| None              | The unfiltered All Pipelines view                                                                      |
 
-Click the `x` on the chip, or pick any pipeline from the selector, to widen back
-out to every pipeline. The scope only changes what the canvas draws - it never
-edits a pipeline, and the All Pipelines view stays read-only either way.
+Click the `x` beside the selector, or pick **All Pipelines** from it, to widen
+back out to every pipeline. Opening one of the agent's pipelines keeps a back
+button to the agent's view; picking a pipeline that is not the agent's drops the
+scope. The scope only changes what the canvas draws - it never edits a pipeline,
+and the narrowed view is read-only like All Pipelines.
 
 Below the sessions table, the **Active Runs** section lists subscriptions that are currently executing, with a **Stop** button for each.
 
@@ -159,11 +161,22 @@ The Pipeline Graph tab visualizes your Cue subscriptions as a node graph - trigg
 
 Each pipeline is color-coded and labeled. Trigger nodes show the event type and configuration (glob patterns, schedule times, etc.), while agent nodes show the provider type. Pipelines from all agents are displayed together so you can see cross-agent relationships at a glance.
 
+In the **All Pipelines** view, pipelines are grouped by the agent that owns them, with a labeled box around each agent's group. A pipeline can involve several agents but sits in only one place on the map: its home is the agent whose `cue.yaml` declares it (or, for an unsaved pipeline, its first agent).
+
+### Picking What to Show
+
+The selector in the top bar is one filterable list with two sections. Type to narrow both at once:
+
+- **Pipelines** - opens that one pipeline for editing.
+- **Agents** - narrows All Pipelines to every pipeline that agent belongs to, including ones that live in another agent's group. The narrowed view packs those pipelines together, in the same grouping and order they have in All Pipelines, so nothing floats in empty space where the hidden pipelines were.
+
+Press <kbd>Enter</kbd> to take the first match, <kbd>Esc</kbd> once to clear the filter and again to close the list.
+
 A pipeline can contain **multiple trigger lines** - for example, a daily scan and a weekly review grouped under a single "Monitoring" pipeline. Use the `# Pipeline:` comment and `-chain-N` naming convention in your YAML to group subscriptions. See [Pipelines](./maestro-cue-configuration#pipelines) in the Configuration Reference for details.
 
 ### Inspecting a Pipeline
 
-Pick a pipeline from the **All Pipelines** dropdown in the top bar, or click any node, to drill into a single pipeline. The **Triggers** drawer (left) and **Agents** drawer (right) toggle from the toolbar and show full configuration details. Selecting a node reveals its details inline at the bottom - including the prompt text for an agent node.
+Pick a pipeline from the selector in the top bar, or click its name in the legend, to drill into a single pipeline. The **Triggers** drawer (left) and **Agents** drawer (right) toggle from the toolbar and show full configuration details. Selecting a node reveals its details inline at the bottom - including the prompt text for an agent node.
 
 ![Pipeline Detail](./screenshots/cue-pipeline.png)
 
@@ -176,7 +189,13 @@ Two layout buttons in the top-right corner clean up a messy canvas. Both snap no
 - **Tidy** keeps each column's current top-to-bottom order, so it only aligns what you already have and leaves any crossing edges as-is.
 - **Arrange** additionally reorders nodes within each column to untangle crossing edges. Reach for it after importing a pipeline or whenever the wiring looks tangled.
 
-In the **All Pipelines** view there are no edges between pipeline cards to cross, so only **Arrange** appears there and it packs the cards into a balanced grid. Either button previews as a confirmation first, and the result can be undone with **Discard** before you save.
+In the **All Pipelines** view there are no edges between pipeline cards to cross, so only **Arrange** appears there: it groups the cards by agent and packs each group, then the groups, into a balanced grid. An agent-narrowed view is laid out on the fly and never saved, so it shows neither button and nothing done there changes the All Pipelines layout. Either button previews as a confirmation first, and the result can be undone with **Discard** before you save.
+
+### Sending a Slash Command to a New Agent Tab
+
+Add a command node, choose **Agent message**, and select the target agent. Enter the message or slash command, for example `/triage {{CUE_GH_NUMBER}}`, then enable **Run in a new agent tab** and connect the trigger. Every dispatch creates a fresh AI tab in that agent without changing your current view. Existing custom and project/provider prompt commands expand with their arguments as they do in the composer; the command must already exist for the target agent.
+
+The desktop app must be running. The command node completes when the message is delivered, so a downstream node starts after delivery rather than waiting for the AI's answer. See [Command Nodes](./maestro-cue-advanced#command-nodes) for the YAML equivalent.
 
 ## Pipeline List
 
@@ -372,3 +391,4 @@ Filter by CUE entries in the History panel or in Director's Notes (when both Enc
 - **Prompt files vs inline** - For complex prompts, point the `prompt` field at a `.md` file instead of inlining YAML
 - **Hot reload** - The engine watches `.maestro/cue.yaml` for changes and reloads automatically - no need to restart Maestro
 - **Template variables** - Use `{{CUE_TRIGGER_NAME}}` in prompts so the agent knows which automation triggered it
+- **Standing instructions** - Every Cue run starts a new provider session, so the target agent's New Session Message is prefixed to each run's prompt. Its Nudge Message is not sent. See [When Each Message Is Sent](./general-usage#when-each-message-is-sent)

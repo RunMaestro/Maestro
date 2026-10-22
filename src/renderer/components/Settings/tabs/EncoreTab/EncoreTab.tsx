@@ -4,9 +4,14 @@ import type { EncoreFeatureFlags } from '../../../../types';
 import { ExtensionsView } from '../../Extensions/ExtensionsView';
 import { CoworkingSetup } from '../../CoworkingSetup';
 import {
+	ComputerHistorySection,
+	MaestroRunSection,
 	CueSettingsSection,
+	DataviewSection,
 	DirectorNotesSection,
+	QuickChatSection,
 	SymphonyRegistrySection,
+	ThroughputGaugeSection,
 	UsageStatsSection,
 } from './components';
 import {
@@ -27,7 +32,7 @@ export type { EncoreTabProps } from './types';
  * marketplace a `settingsBodies` map keyed by Encore flag; ExtensionDetails
  * renders the matching body in its Settings sub-tab.
  */
-export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
+export function EncoreTab({ theme, isOpen, tileRequest }: EncoreTabProps) {
 	const settings = useSettings();
 
 	const wakatimeState = useWakatimeSettingsState({
@@ -89,11 +94,28 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 				<CoworkingSetup theme={theme} />
 			</div>
 		),
+		computerHistory: <ComputerHistorySection theme={theme} />,
+		maestroRun: <MaestroRunSection theme={theme} />,
+		quickChat: (
+			<QuickChatSection
+				theme={theme}
+				quickChatSettings={settings.quickChatSettings}
+				setQuickChatSettings={settings.setQuickChatSettings}
+			/>
+		),
+		throughputGauge: (
+			<ThroughputGaugeSection
+				theme={theme}
+				throughputGaugeSettings={settings.throughputGaugeSettings}
+				setThroughputGaugeSettings={settings.setThroughputGaugeSettings}
+			/>
+		),
+		dataview: <DataviewSection theme={theme} />,
 	};
 
 	return (
 		<div className="space-y-5">
-			<ExtensionsView theme={theme} settingsBodies={settingsBodies} />
+			<ExtensionsView theme={theme} settingsBodies={settingsBodies} tileRequest={tileRequest} />
 		</div>
 	);
 }

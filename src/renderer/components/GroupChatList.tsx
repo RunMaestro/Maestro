@@ -25,6 +25,7 @@ import { useOptionalLabelFits } from '../hooks/ui/useOptionalLabelFits';
 import { getStatusColor } from '../utils/theme';
 import { isGroupChatBusy, type GroupChatBusySnapshot } from '../utils/groupChatStatus';
 import { CornerDot } from './ui/CornerDot';
+import { elevatedSurfaceStyle } from '../utils/elevatedSurface';
 
 // ============================================================================
 // GroupChatContextMenu - Right-click context menu for group chat items
@@ -73,7 +74,7 @@ function GroupChatContextMenu({
 	return (
 		<div
 			ref={menuRef}
-			className="fixed z-50 py-1 rounded-md shadow-xl border"
+			className="fixed z-50 py-1 rounded-md"
 			style={{
 				left,
 				top,
@@ -83,8 +84,7 @@ function GroupChatContextMenu({
 				maxHeight,
 				overflowY: 'auto',
 				opacity: ready ? 1 : 0,
-				backgroundColor: theme.colors.bgSidebar,
-				borderColor: theme.colors.border,
+				...elevatedSurfaceStyle(theme),
 				minWidth: '120px',
 			}}
 		>

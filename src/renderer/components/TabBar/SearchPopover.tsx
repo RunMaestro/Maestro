@@ -1,10 +1,11 @@
 import { useState, useRef, useCallback, useEffect, memo } from 'react';
 import { createPortal } from 'react-dom';
 import { Search, Clock, Layers } from 'lucide-react';
+import { ShortcutHint } from '../ui/ShortcutHint';
 import type { Theme } from '../../types';
-import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 interface SearchPopoverProps {
 	theme: Theme;
@@ -187,12 +188,11 @@ export const SearchPopover = memo(function SearchPopover({
 					<div
 						ref={popoverRef}
 						tabIndex={0}
-						className="fixed z-50 rounded-lg shadow-xl overflow-hidden outline-none"
+						className="fixed z-50 rounded-lg overflow-hidden outline-none"
 						style={{
 							top: popoverPos.top,
 							left: popoverPos.left,
-							backgroundColor: theme.colors.bgSidebar,
-							border: `1px solid ${theme.colors.border}`,
+							...elevatedSurfaceStyle(theme),
 							minWidth: 220,
 						}}
 						onKeyDown={(e) => {
@@ -216,9 +216,7 @@ export const SearchPopover = memo(function SearchPopover({
 									ariaLabel={`${popoverCount} open tabs`}
 								/>
 							)}
-							<span className="ml-auto text-xs" style={{ color: theme.colors.textDim }}>
-								{formatShortcutKeys(tabSwitcherKeys)}
-							</span>
+							<ShortcutHint theme={theme} keys={tabSwitcherKeys} />
 						</button>
 						<button
 							className="flex items-center gap-2 w-full px-3 py-2 text-sm text-left hover:bg-white/10 transition-colors"
@@ -227,9 +225,7 @@ export const SearchPopover = memo(function SearchPopover({
 						>
 							<Clock className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 							Search Messages (this tab)
-							<span className="ml-auto text-xs" style={{ color: theme.colors.textDim }}>
-								{formatShortcutKeys(searchOutputKeys)}
-							</span>
+							<ShortcutHint theme={theme} keys={searchOutputKeys} />
 						</button>
 						{onSearchAllTabs && (
 							<button
@@ -239,11 +235,7 @@ export const SearchPopover = memo(function SearchPopover({
 							>
 								<Layers className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 								Search Messages (all agent tabs)
-								{searchAllTabsKeys && (
-									<span className="ml-auto text-xs" style={{ color: theme.colors.textDim }}>
-										{formatShortcutKeys(searchAllTabsKeys)}
-									</span>
-								)}
+								{searchAllTabsKeys && <ShortcutHint theme={theme} keys={searchAllTabsKeys} />}
 							</button>
 						)}
 

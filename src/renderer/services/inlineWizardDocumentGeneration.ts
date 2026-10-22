@@ -58,6 +58,10 @@ function getWizardInlineIterateGenerationPrompt(): string {
 	return cachedWizardInlineIterateGenerationPrompt;
 }
 import { deriveSshRemoteId } from '../components/Wizard/services/phaseGenerator';
+import {
+	getClaudeTokenSourceFields,
+	type ClaudeTokenSourceFields,
+} from '../../shared/claudeTokenMode';
 
 /**
  * Generation timeout in milliseconds (20 minutes).
@@ -190,6 +194,8 @@ export interface DocumentGenerationConfig {
 	sessionCustomEnvVars?: Record<string, string>;
 	/** Custom model ID (overrides agent-level) */
 	sessionCustomModel?: string;
+	/** The agent's Claude token source, so a TUI agent's wizard runs through maestro-p */
+	sessionClaudeTokenSource?: ClaudeTokenSourceFields;
 }
 
 /**
@@ -1160,6 +1166,7 @@ export async function generateInlineDocuments(
 						sessionCustomArgs: config.sessionCustomArgs,
 						sessionCustomEnvVars: config.sessionCustomEnvVars,
 						sessionCustomModel: config.sessionCustomModel,
+						...getClaudeTokenSourceFields(config.sessionClaudeTokenSource),
 					})
 					.then(() => {
 						logger.debug('Document generation agent spawned successfully', '[InlineWizardDocGen]', {

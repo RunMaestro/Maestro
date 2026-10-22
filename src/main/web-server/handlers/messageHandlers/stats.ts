@@ -2,14 +2,37 @@
  * Stats domain WebSocket message handlers.
  *
  * Extracted from WebSocketMessageHandler.ts. Handles: get_usage_dashboard,
- * get_stats_aggregation, stats_query, get_achievements,
+ * get_stats_aggregation, get_token_usage, get_stats_indexing, stats_query, get_achievements,
  * generate_director_notes_synopsis.
  */
 
 import { getStatsDB } from '../../../stats/singleton';
 import { runReadonlyStatsQuery } from '../../../stats/readonly-query';
 import type { StatsTimeRange } from '../../../../shared/stats-types';
+import { tokenUsageQueryForRange } from '../../../../shared/tokenUsage';
+import { getTokenUsageAggregate } from '../../../stats/token-usage/token-usage-accessor';
+import { getSettingsStore } from '../../../stores';
+import { isEncoreFeatureEnabled } from '../../../../shared/encoreFeatureDefaults';
+import { getStatsIndexingState } from '../../../stats/stats-indexing';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
+
+/**
+ * Refuse a stats read while Usage & Stats is off, the way the desktop never
+ * opens the dashboard then. Returns true when the request was refused.
+ */
+function refuseWhenUsageStatsOff(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): boolean {
+	if (isEncoreFeatureEnabled(getSettingsStore(), 'usageStats')) return false;
+	ctx.sendError(
+		client,
+		'Usage & Stats is turned off. Run `maestro-cli encore enable usageStats` first.',
+		{ requestId: message.requestId }
+	);
+	return true;
+}
 
 /**
  * Handle get_usage_dashboard message - fetch usage analytics data
@@ -57,6 +80,7 @@ export function handleGetStatsAggregation(
 	client: WebClient,
 	message: WebClientMessage
 ): void {
+	if (refuseWhenUsageStatsOff(ctx, client, message)) return;
 	const range = (message.range as string) || 'week';
 	const validRanges = new Set(['day', 'week', 'month', 'quarter', 'year', 'all']);
 
@@ -82,6 +106,60 @@ export function handleGetStatsAggregation(
 }
 
 /**
+ * Handle get_token_usage message - the Usage Dashboard's Tokens payload (totals,
+ * breakdowns, and per-call token speed) for a time range, read from the
+ * agents' transcripts by the same accessor the Tokens tab uses.
+ */
+export function handleGetTokenUsage(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	if (refuseWhenUsageStatsOff(ctx, client, message)) return;
+	const range = (message.range as string) || 'week';
+	const validRanges = new Set(['day', 'week', 'month', 'quarter', 'year', 'all']);
+
+	if (!validRanges.has(range)) {
+		ctx.sendError(client, 'Invalid range. Must be one of: day, week, month, quarter, year, all');
+		return;
+	}
+
+	getTokenUsageAggregate(tokenUsageQueryForRange(range as StatsTimeRange), message.force === true)
+		.then((data) => {
+			ctx.send(client, {
+				type: 'token_usage',
+				data,
+				requestId: message.requestId,
+				timestamp: Date.now(),
+			});
+		})
+		.catch((error) => {
+			ctx.sendError(
+				client,
+				`Failed to get token usage: ${error instanceof Error ? error.message : String(error)}`
+			);
+		});
+}
+
+/**
+ * Handle get_stats_indexing message - the progress of the long transcript
+ * scans behind the usage caches (`maestro-cli stats-indexing`). State lives in
+ * the main process, so this answers with no renderer round trip.
+ */
+export function handleGetStatsIndexing(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	ctx.send(client, {
+		type: 'stats_indexing',
+		data: getStatsIndexingState(),
+		requestId: message.requestId,
+		timestamp: Date.now(),
+	});
+}
+
+/**
  * Handle stats_query message - run a single read-only SQL statement against
  * the stats database and return the rows. Read-only enforcement lives in
  * runReadonlyStatsQuery (dedicated readonly connection + single-statement +
@@ -92,6 +170,7 @@ export function handleStatsQuery(
 	client: WebClient,
 	message: WebClientMessage
 ): void {
+	if (refuseWhenUsageStatsOff(ctx, client, message)) return;
 	const sql = message.sql as string | undefined;
 	const params = Array.isArray(message.params) ? (message.params as unknown[]) : [];
 

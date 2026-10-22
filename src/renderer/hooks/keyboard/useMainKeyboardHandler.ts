@@ -12,9 +12,12 @@ import {
 } from '../../utils/panelLayout';
 import { DESTINATION_SHORTCUT_IDS, getModalActions, useModalStore } from '../../stores/modalStore';
 import { toggleAllCadenzas } from '../../stores/cadenzaStore';
+import { useThroughputGaugeStore } from '../../stores/throughputGaugeStore';
+import { reopenDesktopTabIfNeeded } from '../../services/desktopTabClose';
 import { requestEditLastQueuedMessage } from '../../services/editQueuedMessage';
 import { requestOpenStagedImagesOrganizer } from '../../services/stagedImagesOrganizer';
 import { toggleAllUnreadFilters } from '../../services/unreadFilters';
+import { toggleInAppToasts } from '../../services/inAppToasts';
 import { requestSidebarReveal } from '../../utils/sidebarReveal';
 import { getGitShortcutActions } from '../../services/gitShortcutActions';
 import { useNotificationStore } from '../../stores/notificationStore';
@@ -31,10 +34,13 @@ import { toggleGroupChatRightTab } from '../../utils/groupChatRightTab';
 import { OUTPUT_SEARCH_INPUT_SELECTOR } from '../ui/useOutputSearchLayer';
 import { tileNewTabInSession } from '../../services/tileNewTabAction';
 import type { TileableTabKind } from '../tabs/tileNewTab';
-import { isMacOSPlatform } from '../../utils/platformUtils';
+import { isMacOSKeyboard } from '../../utils/platformUtils';
 import { editClipboardImage } from '../../components/ImageAnnotator/editClipboardImage';
 import { FORCED_PARALLEL_SEND_EVENT } from '../input/useInputKeyDown';
+import { requestSteerSend } from '../../services/chatSteering';
 import { isWebDesktop } from '../../utils/runtimeContext';
+import { canOpenComputerHistory } from '../../utils/computerHistoryAvailability';
+import { openUiSurface } from '../../utils/openUiSurface';
 import { noteDesktopAiTabSelection } from '../../utils/desktopTabSelectionSync';
 
 /**
@@ -240,7 +246,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			// On Windows/Linux, Ctrl doubles as the modifier for Maestro shortcuts (Ctrl+F, Ctrl+W, etc.)
 			// so we only bypass for macOS to avoid breaking cross-platform app shortcuts.
 			// Exception: Ctrl+Shift+` always creates a new terminal tab regardless of mode/platform.
-			const isMac = isMacOSPlatform();
+			const isMac = isMacOSKeyboard();
 			if (
 				isMac &&
 				activeSession?.inputMode === 'terminal' &&
@@ -758,6 +764,17 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				useModalStore.getState().openModal('leaderboard');
 				trackShortcut('openLeaderboard');
+			} else if (
+				ctx.isShortcut(e, 'openNotificationCenter') &&
+				useSettingsStore.getState().notificationCenterEnabled
+			) {
+				e.preventDefault();
+				useNotificationStore.getState().setNotificationCenterOpen(true);
+				trackShortcut('openNotificationCenter');
+			} else if (ctx.isShortcut(e, 'toggleInAppToasts')) {
+				e.preventDefault();
+				toggleInAppToasts();
+				trackShortcut('toggleInAppToasts');
 			} else if (ctx.isShortcut(e, 'clearAllNotifications')) {
 				e.preventDefault();
 				useNotificationStore.getState().clearToasts();
@@ -846,11 +863,15 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				}
 			} else if (ctx.isShortcut(e, 'openImageOrganizer')) {
 				e.preventDefault();
-				// The expanded organizer is InputArea-only, and only has a job with
-				// more than one image. The strip guards both conditions itself; we
-				// mirror the count check here so the shortcut is a clean no-op (not a
-				// tracked event) when there is nothing to organize.
-				if (ctx.stagedImages && ctx.stagedImages.length > 1) {
+				// The organizer belongs to whichever composer's StagedImagesStrip is
+				// mounted: the room's while a group chat is open (MainPanel, and with
+				// it InputArea, is unmounted then), the AI composer's otherwise. It
+				// only has a job with more than one image. The strip guards that
+				// itself; we mirror the count check against the same composer's
+				// images so the shortcut is a clean no-op (not a tracked event) when
+				// there is nothing to organize.
+				const images = ctx.activeGroupChatId ? ctx.groupChatStagedImages : ctx.stagedImages;
+				if (images && images.length > 1) {
 					requestOpenStagedImagesOrganizer();
 					trackShortcut('openImageOrganizer');
 				}
@@ -895,22 +916,33 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				trackShortcut('openWizard');
 			} else if (ctx.isShortcut(e, 'focusInput')) {
 				e.preventDefault();
-				// In terminal mode, Cmd+. focuses the active xterm instance so the user
-				// can resume typing shell commands - mirrors AI mode's input focus toggle.
-				if (activeSession?.inputMode === 'terminal') {
+				if (ctx.activeGroupChatId) {
+					// A room toggles between its own composer and its own transcript,
+					// the same pair Escape uses. The agent selected under the room is
+					// not on screen, so its input mode has no say here.
+					const roomInput = ctx.groupChatInputRef?.current;
+					if (roomInput && document.activeElement === roomInput) {
+						roomInput.blur();
+						ctx.groupChatMessagesRef?.current?.focus();
+					} else {
+						ctx.setActiveFocus('main');
+						setTimeout(() => ctx.groupChatInputRef?.current?.focus(), 0);
+					}
+				} else if (activeSession?.inputMode === 'terminal') {
+					// In terminal mode, Cmd+. focuses the active xterm instance so the user
+					// can resume typing shell commands - mirrors AI mode's input focus toggle.
 					ctx.setActiveFocus('main');
 					ctx.mainPanelRef?.current?.focusActiveTerminal();
 				} else {
 					// AI mode: toggle between input textarea and main panel output
-					const targetInputRef = ctx.activeGroupChatId ? ctx.groupChatInputRef : ctx.inputRef;
-					if (document.activeElement === targetInputRef?.current) {
+					if (document.activeElement === ctx.inputRef?.current) {
 						// Input is focused - blur and focus main panel output
-						targetInputRef?.current?.blur();
+						ctx.inputRef?.current?.blur();
 						ctx.terminalOutputRef.current?.focus();
 					} else {
 						// Main panel output (or elsewhere) - focus input
 						ctx.setActiveFocus('main');
-						setTimeout(() => targetInputRef?.current?.focus(), 0);
+						setTimeout(() => ctx.inputRef?.current?.focus(), 0);
 					}
 				}
 				trackShortcut('focusInput');
@@ -1035,6 +1067,22 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				ctx.handleOpenQueueBrowser();
 				trackShortcut('executionQueue');
+			} else if (
+				ctx.isShortcut(e, 'openBoard') &&
+				ctx.encoreFeatures?.board &&
+				ctx.encoreFeatures?.maestroCue
+			) {
+				e.preventDefault();
+				openUiSurface('board');
+				trackShortcut('openBoard');
+			} else if (
+				ctx.isShortcut(e, 'openProfiles') &&
+				ctx.encoreFeatures?.board &&
+				ctx.encoreFeatures?.maestroCue
+			) {
+				e.preventDefault();
+				openUiSurface('profiles');
+				trackShortcut('openProfiles');
 			} else if (ctx.isShortcut(e, 'openSymphony') && ctx.encoreFeatures?.symphony) {
 				e.preventDefault();
 				ctx.setSymphonyModalOpen(true);
@@ -1043,6 +1091,15 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				ctx.setDirectorNotesOpen?.(true);
 				trackShortcut('directorNotes');
+			} else if (
+				// A Ctrl+Cmd chord: isShortcut folds the two modifiers into one and
+				// would fire this on plain Cmd+H (macOS Hide) and Ctrl+H.
+				ctx.isPaneShortcut(e, 'computerHistory') &&
+				canOpenComputerHistory(ctx.encoreFeatures)
+			) {
+				e.preventDefault();
+				getModalActions().setComputerHistoryOpen(true);
+				trackShortcut('computerHistory');
 			} else if (ctx.isShortcut(e, 'openCue') && ctx.encoreFeatures?.maestroCue) {
 				e.preventDefault();
 				ctx.setCueModalOpen?.(true);
@@ -1057,6 +1114,15 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				toggleAllCadenzas();
 				trackShortcut('toggleCadenzas');
+			} else if (
+				ctx.isShortcut(e, 'toggleThroughputGauge') &&
+				ctx.encoreFeatures?.throughputGauge
+			) {
+				// Toggle the visibility latch only. Showing the card never moves focus,
+				// so the composer keeps the caret.
+				e.preventDefault();
+				useThroughputGaugeStore.getState().toggle();
+				trackShortcut('toggleThroughputGauge');
 			} else if (ctx.isShortcut(e, 'nextUnreadTab')) {
 				e.preventDefault();
 				ctx.goToNextUnreadTab();
@@ -1084,11 +1150,26 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				// broken from the one place the user was actually looking at the thing
 				// it acts on. The composer decides what to do with it (see
 				// runForcedParallelSend); this branch only says the chord fired.
-				const composerRef = ctx.activeGroupChatId ? ctx.groupChatInputRef : ctx.inputRef;
-				const cameFromComposer = !!composerRef?.current && e.target === composerRef.current;
-				if (!cameFromComposer && useSettingsStore.getState().forcedParallelExecution) {
+				// A group chat has no Forced Parallel Send, and the listener reads the
+				// agent still selected under the room, so the chord stays out of rooms.
+				const cameFromComposer = !!ctx.inputRef?.current && e.target === ctx.inputRef.current;
+				if (
+					!cameFromComposer &&
+					!ctx.activeGroupChatId &&
+					useSettingsStore.getState().forcedParallelExecution
+				) {
 					e.preventDefault();
 					window.dispatchEvent(new CustomEvent(FORCED_PARALLEL_SEND_EVENT));
+				}
+			} else if (ctx.isShortcut(e, 'steerSend')) {
+				// Same split as forcedParallelSend above: the composer answers the chord
+				// itself while the caret is in it, and everywhere else the chord still
+				// has to work, because the queued message it steers is drawn in the
+				// transcript. A group chat has no running turn of this agent on screen.
+				const cameFromComposer = !!ctx.inputRef?.current && e.target === ctx.inputRef.current;
+				if (!cameFromComposer && !ctx.activeGroupChatId) {
+					e.preventDefault();
+					requestSteerSend();
 				}
 			} else if (ctx.isShortcut(e, 'jumpToBottom')) {
 				e.preventDefault();
@@ -1267,6 +1348,17 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					trackShortcut(ctx.isTabShortcut(e, 'nextTab') ? 'nextTab' : 'prevTab');
 					return;
 				}
+				// The read-only chord acts on the room's own flag. The tab shortcuts
+				// below are skipped while a room is open, so this cannot also flip the
+				// hidden AI tab or reload a browser tab. Handled here rather than in
+				// the composer so it honours the live binding and works wherever focus
+				// sits in the room, as it does in AI chat.
+				if (ctx.isTabShortcut(e, 'toggleReadOnlyMode')) {
+					e.preventDefault();
+					useGroupChatStore.getState().setGroupChatReadOnlyMode((prev) => !prev);
+					trackShortcut('toggleReadOnlyMode');
+					return;
+				}
 			}
 
 			// Unified tab shortcuts - works across ALL tab types (AI, file preview, terminal).
@@ -1434,12 +1526,16 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				}
 				if (ctx.isTabShortcut(e, 'reopenClosedTab')) {
 					e.preventDefault();
-					const result = ctx.reopenUnifiedClosedTab(activeSession);
-					if (result) {
-						ctx.setSessions((prev: Session[]) =>
-							prev.map((s: Session) => (s.id === activeSession!.id ? result.session : s))
-						);
+					if (reopenDesktopTabIfNeeded(activeSession)) {
 						trackShortcut('reopenClosedTab');
+					} else {
+						const result = ctx.reopenUnifiedClosedTab(activeSession);
+						if (result) {
+							ctx.setSessions((prev: Session[]) =>
+								prev.map((s: Session) => (s.id === activeSession!.id ? result.session : s))
+							);
+							trackShortcut('reopenClosedTab');
+						}
 					}
 				}
 				if (ctx.isTabShortcut(e, 'renameTab')) {
@@ -1454,6 +1550,20 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						ctx.setRenameTabInitialName(renameValue);
 						ctx.setRenameTabModalOpen(true);
 						trackShortcut('renameTab');
+					}
+				}
+				if (ctx.isTabShortcut(e, 'renameTabGroup')) {
+					e.preventDefault();
+					// Targets the GROUP, not its focused pane. Rename commits route through
+					// handleRenameTab, which recognizes a group id and renames the group.
+					const group = activeSession.activeGroupId
+						? activeSession.tabGroups?.find((g) => g.id === activeSession.activeGroupId)
+						: undefined;
+					if (group) {
+						ctx.setRenameTabId(group.id);
+						ctx.setRenameTabInitialName(group.name);
+						ctx.setRenameTabModalOpen(true);
+						trackShortcut('renameTabGroup');
 					}
 				}
 				// AI-tab-specific metadata toggles (read-only, save-to-history,

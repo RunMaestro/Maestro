@@ -15,6 +15,7 @@ import {
 	resolveAgentOrFail,
 	resolveTabEntry,
 	type SimpleResult,
+	exitIfMaestroNotRunning,
 } from '../services/session-command';
 import { formatSuccess } from '../output/formatter';
 import { isQuiet } from '../output/verbosity';
@@ -54,6 +55,7 @@ async function sendSnooze(request: SnoozeCommandRequest, json?: boolean): Promis
 		if (!result.success) failCommand(result.error || 'Snooze command failed', json);
 		return result;
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json });
 		return failCommand(error instanceof Error ? error.message : String(error), json);
 	}
 }
@@ -139,6 +141,7 @@ export async function snoozeTabCommand(
 		sessionId = entry.agentId;
 		targetId = entry.tabId;
 	} catch (error) {
+		exitIfMaestroNotRunning(error, { json: options.json });
 		if (!options.agent) {
 			return failCommand(
 				`${error instanceof Error ? error.message : String(error)}. Pass --agent <id> to snooze a file, terminal, browser, or group tab.`,

@@ -14,7 +14,6 @@
  */
 
 import { updateAiTab, useSessionStore } from '../stores/sessionStore';
-import { getActiveTab } from '../utils/tabHelpers';
 import { generateId } from '../utils/ids';
 import { truncateText } from '../../shared/formatters';
 import type { AgentDelegationNotice } from '../../shared/agentDelegation';
@@ -41,22 +40,21 @@ export interface DelegationOutcome {
 const DELEGATION_SUBJECT_MAX_CHARS = 120;
 
 /**
- * The tab whose turn ran the command.
+ * The tab whose turn ran the command, or nothing when that is not known.
  *
- * A named tab is authoritative: if it has since closed, the conversation that
- * delegated is gone and the pill has nowhere true to go, so nothing is returned
- * rather than guessing a different tab. Without a name (a shell spawned before
- * the identity was stamped, or an explicit `ask --from`), the command ran during
- * a turn, so a lone busy tab is the one that ran it; failing that, the active tab.
+ * Only the tab the spawn stamped counts. If it has since closed, the
+ * conversation that delegated is gone and the pill has nowhere true to go.
+ * Without a stamp (a Cue run, which has no tab, or an explicit `ask --from`
+ * typed outside any turn) the caller's tab is unknowable, and guessing is worse
+ * than no pill: a Cue run's consult once landed in whatever tab the user had
+ * open, claiming a conversation about something else had delegated.
  */
 export function resolveDelegationSourceTab(
 	session: Session,
 	fromTabId?: string
 ): AITab | undefined {
-	if (fromTabId) return session.aiTabs.find((tab) => tab.id === fromTabId);
-	const busy = session.aiTabs.filter((tab) => tab.state === 'busy');
-	if (busy.length === 1) return busy[0];
-	return getActiveTab(session) ?? undefined;
+	if (!fromTabId) return undefined;
+	return session.aiTabs.find((tab) => tab.id === fromTabId);
 }
 
 /** Pure: the transcript entry for one hand-off. Exported for unit testing. */

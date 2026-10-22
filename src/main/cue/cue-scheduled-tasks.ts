@@ -20,6 +20,7 @@ import { CUE_CONFIG_PATH, LEGACY_CUE_CONFIG_PATH, MAESTRO_DIR } from '../../shar
 import {
 	DEFAULT_SCHEDULED_TASK_PIPELINE,
 	MAX_SCHEDULE_MINUTES,
+	autoRunTaskLabel,
 	eventForKind,
 	isScheduledTaskEvent,
 	kindForEvent,
@@ -29,8 +30,11 @@ import {
 	type ScheduledTaskCreateInput,
 	type ScheduledTaskUpdateInput,
 } from '../../shared/cue/scheduled-tasks';
+import { parseCueAutoRunWorktree } from '../../shared/cue/autorun-worktree';
 import type { CueAction, CueSubscription } from '../../shared/cue/contracts';
-import { loadCueConfigDetailed, resolveCueConfigPath } from './cue-yaml-loader';
+import { applyCueTurnSettingsPatch, cueTurnSettingsOf } from '../../shared/cue/turn-settings';
+import { patchSubscriptionInYaml } from './cue-subscription-edit';
+import { loadCueConfigDetailed } from './cue-yaml-loader';
 import { extractLeadingCommentBlock, writeCueYamlAtomicSync } from './cue-yaml-write';
 import { removeSubscriptionFromYaml } from './cue-self-destruct';
 import { calculateNextScheduledTime } from './triggers/cue-schedule-utils';
@@ -90,6 +94,113 @@ function existingCueConfigPath(projectRoot: string): string | null {
 	return null;
 }
 
+export interface CueYamlMergeOptions {
+	/**
+	 * Replace an existing subscription that shares a name with a new one, in
+	 * place. Without it a shared name is reported in `conflicts` and the new
+	 * subscription is left out.
+	 */
+	replaceExisting?: boolean;
+	/** Settings to add. Only keys the file does not set are written. */
+	settings?: Record<string, unknown>;
+}
+
+export interface CueYamlMergeResult {
+	/** The whole new file: the original leading comment block, then the YAML. */
+	content: string;
+	/** Names appended to the end of `subscriptions`. */
+	added: string[];
+	/** Names replaced in place (`replaceExisting` only). */
+	replaced: string[];
+	/** Names already present and not replaced. */
+	conflicts: string[];
+	/** Settings keys the file did not set, which were added. */
+	settingsAdded: string[];
+	/** Settings keys the file already set to a different value, which were kept. */
+	settingsKept: string[];
+}
+
+function subscriptionName(entry: unknown): string | undefined {
+	return entry &&
+		typeof entry === 'object' &&
+		typeof (entry as { name?: unknown }).name === 'string'
+		? (entry as { name: string }).name
+		: undefined;
+}
+
+/**
+ * Merge subscriptions (and optionally settings) into a cue.yaml's text, without
+ * touching the disk. `raw` is the current file, or null when there is none.
+ * Every existing subscription keeps its place; the leading comment block (the
+ * `# Pipeline: ...` header) is preserved. Comments elsewhere in the body do not
+ * survive, since js-yaml has no comment model.
+ *
+ * Throws when `raw` is not valid YAML.
+ */
+export function mergeSubscriptionsIntoCueYaml(
+	raw: string | null,
+	newSubs: Record<string, unknown>[],
+	options: CueYamlMergeOptions = {}
+): CueYamlMergeResult {
+	let parsed: Record<string, unknown> = { subscriptions: [] };
+	let header = '';
+	if (raw !== null) {
+		header = extractLeadingCommentBlock(raw);
+		const loaded = yaml.load(raw);
+		if (loaded && typeof loaded === 'object' && !Array.isArray(loaded)) {
+			parsed = loaded as Record<string, unknown>;
+		}
+	}
+
+	const settingsAdded: string[] = [];
+	const settingsKept: string[] = [];
+	if (options.settings && Object.keys(options.settings).length > 0) {
+		const current =
+			parsed.settings && typeof parsed.settings === 'object' && !Array.isArray(parsed.settings)
+				? (parsed.settings as Record<string, unknown>)
+				: {};
+		const merged: Record<string, unknown> = { ...current };
+		for (const [key, value] of Object.entries(options.settings)) {
+			if (!(key in current)) {
+				merged[key] = value;
+				settingsAdded.push(key);
+			} else if (JSON.stringify(current[key]) !== JSON.stringify(value)) settingsKept.push(key);
+		}
+		parsed.settings = merged;
+	}
+
+	const subs = Array.isArray(parsed.subscriptions) ? [...(parsed.subscriptions as unknown[])] : [];
+	const indexByName = new Map<string, number>();
+	subs.forEach((entry, i) => {
+		const name = subscriptionName(entry);
+		if (name !== undefined && !indexByName.has(name)) indexByName.set(name, i);
+	});
+
+	const added: string[] = [];
+	const replaced: string[] = [];
+	const conflicts: string[] = [];
+	for (const sub of newSubs) {
+		const name = subscriptionName(sub);
+		const existing = name !== undefined ? indexByName.get(name) : undefined;
+		if (existing === undefined) {
+			subs.push(sub);
+			if (name !== undefined) {
+				indexByName.set(name, subs.length - 1);
+				added.push(name);
+			}
+		} else if (options.replaceExisting) {
+			subs[existing] = sub;
+			replaced.push(name!);
+		} else {
+			conflicts.push(name!);
+		}
+	}
+	parsed.subscriptions = subs;
+
+	const dumped = yaml.dump(parsed, { lineWidth: -1, noRefs: true, sortKeys: false });
+	return { content: header + dumped, added, replaced, conflicts, settingsAdded, settingsKept };
+}
+
 /**
  * Append `newSubs` to `<projectRoot>/.maestro/cue.yaml`, creating the file and
  * `.maestro/` directory when either is missing. A legacy `maestro-cue.yaml` is
@@ -107,39 +218,14 @@ export function appendSubscriptionsToYaml(
 	const canonicalPath = path.join(projectRoot, CUE_CONFIG_PATH);
 	const existing = existingCueConfigPath(projectRoot);
 
-	let parsed: Record<string, unknown> = { subscriptions: [] };
-	let header = '';
-
-	if (existing) {
-		const raw = fs.readFileSync(existing, 'utf-8');
-		header = extractLeadingCommentBlock(raw);
-		const loaded = yaml.load(raw);
-		if (loaded && typeof loaded === 'object' && !Array.isArray(loaded)) {
-			parsed = loaded as Record<string, unknown>;
-		}
-	}
-
-	const existingSubs = Array.isArray(parsed.subscriptions)
-		? (parsed.subscriptions as unknown[])
-		: [];
-
-	const existingNames = new Set(
-		existingSubs.flatMap((entry) =>
-			entry && typeof entry === 'object' && typeof (entry as { name?: unknown }).name === 'string'
-				? [(entry as { name: string }).name]
-				: []
-		)
+	const merge = mergeSubscriptionsIntoCueYaml(
+		existing ? fs.readFileSync(existing, 'utf-8') : null,
+		newSubs
 	);
-	for (const newSub of newSubs) {
-		if (typeof newSub.name === 'string' && existingNames.has(newSub.name)) {
-			throw new Error(`subscription "${newSub.name}" already exists in ${canonicalPath}`);
-		}
+	if (merge.conflicts.length > 0) {
+		throw new Error(`subscription "${merge.conflicts[0]}" already exists in ${canonicalPath}`);
 	}
-
-	parsed.subscriptions = [...existingSubs, ...newSubs];
-
-	const dumped = yaml.dump(parsed, { lineWidth: -1, noRefs: true, sortKeys: false });
-	const output = header + dumped;
+	const output = merge.content;
 
 	const maestroDir = path.join(projectRoot, MAESTRO_DIR);
 	if (!fs.existsSync(maestroDir)) {
@@ -201,6 +287,8 @@ function toScheduledTask(sub: CueSubscription, agent: ScheduledTaskAgent): Sched
 		graceMinutes: sub.grace_minutes,
 		notifyMessage: sub.notify?.message,
 		notifySticky: sub.notify?.sticky,
+		autoRun: sub.auto_run,
+		...cueTurnSettingsOf(sub),
 		nextFireAtMs: projectNextFire(sub),
 	};
 }
@@ -255,8 +343,22 @@ export function buildScheduledTaskSubscriptions(
 	const promptText = input.prompt ?? '';
 	const hasPrompt = promptText.length > 0;
 	const hasNotify = input.notify !== undefined && input.notify.message.length > 0;
-	if (!hasPrompt && !hasNotify) {
-		throw new Error('a scheduled task needs a prompt, a notification, or both');
+	const hasAutoRun = (input.autoRun?.documents.length ?? 0) > 0;
+	if (!hasPrompt && !hasNotify && !hasAutoRun) {
+		throw new Error('a scheduled task needs a prompt, a notification, or an Auto Run');
+	}
+	// An Auto Run already carries its own prompt box and drives the agent for
+	// the whole run, so pairing it with a sibling prompt/notify sub would fire
+	// two competing jobs at the same instant in the same agent.
+	if (hasAutoRun && (hasPrompt || hasNotify)) {
+		throw new Error('an Auto Run task cannot also carry a prompt or a notification');
+	}
+	const turnSettings = cueTurnSettingsOf(input);
+	if (turnSettings?.tier && turnSettings.model) {
+		throw new Error('set a model tier or an exact model, not both');
+	}
+	if (turnSettings && !hasPrompt) {
+		throw new Error('a model tier, model, or effort needs a prompt to run');
 	}
 
 	const timing: Record<string, unknown> = {};
@@ -299,6 +401,7 @@ export function buildScheduledTaskSubscriptions(
 		input.label ??
 		(hasPrompt ? promptText : undefined) ??
 		input.notify?.message ??
+		(hasAutoRun ? autoRunTaskLabel(input.autoRun!.documents) : undefined) ??
 		`Task ${baseName}`;
 	const label = truncateTaskLabel(labelSource);
 
@@ -312,6 +415,7 @@ export function buildScheduledTaskSubscriptions(
 			enabled: true,
 			action: 'prompt',
 			prompt: promptText,
+			...turnSettings,
 			...timing,
 			agent_id: agent.id,
 			pipeline_name: pipelineName,
@@ -332,6 +436,49 @@ export function buildScheduledTaskSubscriptions(
 			pipeline_name: pipelineName,
 			label,
 			notify: notifyConfig,
+		});
+	}
+
+	if (hasAutoRun) {
+		const autoRunConfig: Record<string, unknown> = { documents: input.autoRun!.documents };
+		const resets = input.autoRun!.reset_on_completion;
+		if (resets && resets.some(Boolean)) autoRunConfig.reset_on_completion = resets;
+		if (input.autoRun!.prompt) autoRunConfig.prompt = input.autoRun!.prompt;
+		if (input.autoRun!.loop_enabled) autoRunConfig.loop_enabled = true;
+		if (input.autoRun!.max_loops !== undefined) autoRunConfig.max_loops = input.autoRun!.max_loops;
+		if (input.autoRun!.model) autoRunConfig.model = input.autoRun!.model;
+		if (input.autoRun!.effort) autoRunConfig.effort = input.autoRun!.effort;
+		// `task` is what an absent field means, so only the non-default is written.
+		if (input.autoRun!.task_selection_mode === 'document') {
+			autoRunConfig.task_selection_mode = 'document';
+		}
+		if (input.autoRun!.ignore_model_hints) autoRunConfig.ignore_model_hints = true;
+		// Auto-resume is ON when absent, so only the opt-out is written; the two
+		// numbers are written whenever the caller chose them.
+		if (input.autoRun!.auto_resume_on_error === false) autoRunConfig.auto_resume_on_error = false;
+		if (input.autoRun!.auto_resume_after_min !== undefined) {
+			autoRunConfig.auto_resume_after_min = input.autoRun!.auto_resume_after_min;
+		}
+		if (input.autoRun!.max_auto_resumes !== undefined) {
+			autoRunConfig.max_auto_resumes = input.autoRun!.max_auto_resumes;
+		}
+		if (input.autoRun!.worktree) {
+			// Refused here, not at fire time: a block that cannot be resolved would
+			// otherwise be found out hours later, by a run nobody is watching.
+			const worktree = parseCueAutoRunWorktree(input.autoRun!.worktree);
+			if (!worktree.ok) throw new Error(`auto_run.worktree ${worktree.error}`);
+			autoRunConfig.worktree = worktree.value;
+		}
+		subs.push({
+			name: baseName,
+			event,
+			enabled: true,
+			action: 'autorun',
+			...timing,
+			agent_id: agent.id,
+			pipeline_name: pipelineName,
+			label,
+			auto_run: autoRunConfig,
 		});
 	}
 
@@ -371,89 +518,55 @@ export async function updateScheduledTask(
 	name: string,
 	patch: ScheduledTaskUpdateInput
 ): Promise<{ updated: boolean; reason?: string }> {
-	const configPath = resolveCueConfigPath(projectRoot);
-	if (!configPath) return { updated: false, reason: 'cue.yaml not found' };
-
-	let raw: string;
-	try {
-		raw = await fs.promises.readFile(configPath, 'utf-8');
-	} catch (err) {
-		return { updated: false, reason: `read failed: ${errText(err)}` };
-	}
-
-	let parsed: unknown;
-	try {
-		parsed = yaml.load(raw);
-	} catch (err) {
-		return { updated: false, reason: `yaml parse failed: ${errText(err)}` };
-	}
-	if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-		return { updated: false, reason: 'cue.yaml root is not a mapping' };
-	}
-
-	const root = parsed as Record<string, unknown>;
-	const subs = root.subscriptions;
-	if (!Array.isArray(subs)) return { updated: false, reason: 'cue.yaml has no subscriptions list' };
-
-	const target = subs.find(
-		(entry) =>
-			entry && typeof entry === 'object' && (entry as Record<string, unknown>).name === name
-	) as Record<string, unknown> | undefined;
-	if (!target) return { updated: false, reason: `subscription "${name}" not found` };
-
-	const event = typeof target.event === 'string' ? target.event : '';
-	if (!isScheduledTaskEvent(event)) {
-		return { updated: false, reason: `"${name}" is not a scheduled task (event: ${event})` };
-	}
-	const kind = kindForEvent(event);
-
-	if (patch.fireAt !== undefined) {
-		if (kind !== 'once') return { updated: false, reason: 'only a one-shot task has a fire time' };
-		const ms = Date.parse(patch.fireAt);
-		if (!Number.isFinite(ms)) return { updated: false, reason: `unparseable fire time` };
-		target.fire_at = new Date(ms).toISOString();
-	}
-	if (patch.scheduleTimes !== undefined) {
-		if (kind !== 'daily') return { updated: false, reason: 'only a daily task has schedule times' };
-		try {
-			target.schedule_times = normalizeTimes(patch.scheduleTimes);
-		} catch (err) {
-			return { updated: false, reason: errText(err) };
+	return patchSubscriptionInYaml(projectRoot, name, (target) => {
+		const event = typeof target.event === 'string' ? target.event : '';
+		if (!isScheduledTaskEvent(event)) {
+			return `"${name}" is not a scheduled task (event: ${event})`;
 		}
-	}
-	if (patch.scheduleDays !== undefined) {
-		if (kind !== 'daily') return { updated: false, reason: 'only a daily task has schedule days' };
-		if (patch.scheduleDays.length > 0) target.schedule_days = patch.scheduleDays;
-		else delete target.schedule_days;
-	}
-	if (patch.intervalMinutes !== undefined) {
-		if (kind !== 'interval') {
-			return { updated: false, reason: 'only a repeating task has an interval' };
-		}
-		try {
-			assertMinutes(patch.intervalMinutes, 'interval minutes', 1);
-		} catch (err) {
-			return { updated: false, reason: errText(err) };
-		}
-		target.interval_minutes = patch.intervalMinutes;
-	}
-	if (patch.prompt !== undefined) target.prompt = patch.prompt;
-	if (patch.label !== undefined) target.label = truncateTaskLabel(patch.label);
-	if (patch.enabled !== undefined) target.enabled = patch.enabled;
-	if (patch.notify !== undefined) {
-		const notifyConfig: Record<string, unknown> = { message: patch.notify.message };
-		if (patch.notify.sticky === true) notifyConfig.sticky = true;
-		target.notify = notifyConfig;
-	}
+		const kind = kindForEvent(event);
 
-	const header = extractLeadingCommentBlock(raw);
-	const dumped = yaml.dump(root, { lineWidth: -1, noRefs: true, sortKeys: false });
-	try {
-		writeCueYamlAtomicSync(configPath, header + dumped);
-	} catch (err) {
-		return { updated: false, reason: `write failed: ${errText(err)}` };
-	}
-	return { updated: true };
+		if (patch.fireAt !== undefined) {
+			if (kind !== 'once') return 'only a one-shot task has a fire time';
+			const ms = Date.parse(patch.fireAt);
+			if (!Number.isFinite(ms)) return `unparseable fire time`;
+			target.fire_at = new Date(ms).toISOString();
+		}
+		if (patch.scheduleTimes !== undefined) {
+			if (kind !== 'daily') return 'only a daily task has schedule times';
+			try {
+				target.schedule_times = normalizeTimes(patch.scheduleTimes);
+			} catch (err) {
+				return errText(err);
+			}
+		}
+		if (patch.scheduleDays !== undefined) {
+			if (kind !== 'daily') return 'only a daily task has schedule days';
+			if (patch.scheduleDays.length > 0) target.schedule_days = patch.scheduleDays;
+			else delete target.schedule_days;
+		}
+		if (patch.intervalMinutes !== undefined) {
+			if (kind !== 'interval') return 'only a repeating task has an interval';
+			try {
+				assertMinutes(patch.intervalMinutes, 'interval minutes', 1);
+			} catch (err) {
+				return errText(err);
+			}
+			target.interval_minutes = patch.intervalMinutes;
+		}
+		if (patch.prompt !== undefined) target.prompt = patch.prompt;
+		if (patch.label !== undefined) target.label = truncateTaskLabel(patch.label);
+		if (patch.enabled !== undefined) target.enabled = patch.enabled;
+		if (patch.notify !== undefined) {
+			const notifyConfig: Record<string, unknown> = { message: patch.notify.message };
+			if (patch.notify.sticky === true) notifyConfig.sticky = true;
+			target.notify = notifyConfig;
+		}
+		if (patch.turnSettings !== undefined) {
+			const refusal = applyCueTurnSettingsPatch(target, patch.turnSettings);
+			if (refusal !== null) return refusal;
+		}
+		return null;
+	});
 }
 
 function normalizeTimes(times: string[] | undefined): string[] {

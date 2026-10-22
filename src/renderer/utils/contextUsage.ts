@@ -114,6 +114,47 @@ export function calculateContextTokens(
 	);
 }
 
+/** Token fields a context gauge measures occupancy from. */
+export interface GaugeTokenStats {
+	inputTokens?: number;
+	outputTokens?: number;
+	cacheReadInputTokens?: number;
+	cacheCreationInputTokens?: number;
+}
+
+/**
+ * Pick the token fields a context GAUGE should measure from a stored usage record.
+ *
+ * A tab's top-level usage fields are not occupancy for Claude Code: its result
+ * message sums every internal API call of the turn, so a turn that made seven
+ * calls of ~75k input reports ~526k. The overflow guards in
+ * `estimateContextUsage` / `calculateContextDisplay` only catch that sum once it
+ * EXCEEDS the window, which a 200k window does within a few calls and a 1M
+ * window almost never does - so the sum was rendered as if it were the context
+ * size and climbed with every request (issue #1782). The parser attaches the
+ * LAST internal call's usage as `absoluteUsage`, and a single call's input is
+ * what was physically sent to the model, so that snapshot is the reading.
+ *
+ * Combined-context providers (Codex, Copilot) keep their top-level fields: the
+ * gauge has always read those for them, and Codex's snapshot is its CLI's
+ * running session total rather than one call's input. A record with no snapshot
+ * (older persisted tabs, providers that never attach one) also falls through to
+ * the top-level fields, where the overflow guards still apply.
+ *
+ * @param stats - Stored usage for a tab, optionally carrying an occupancy snapshot
+ * @param agentId - The agent identifier for agent-specific semantics
+ * @returns The token fields to hand to `calculateContextDisplay`
+ */
+export function resolveGaugeTokenStats(
+	stats: GaugeTokenStats & { absoluteUsage?: GaugeTokenStats },
+	agentId?: ToolType | string
+): GaugeTokenStats {
+	if (stats.absoluteUsage && !(agentId && COMBINED_CONTEXT_AGENTS.has(agentId as ToolType))) {
+		return stats.absoluteUsage;
+	}
+	return stats;
+}
+
 /**
  * Estimate context usage percentage when the agent doesn't provide it directly.
  * Uses agent-specific default context window sizes for accurate estimation.

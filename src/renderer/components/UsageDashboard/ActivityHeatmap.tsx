@@ -31,6 +31,7 @@ import {
 import { MetricModeToggle, metricModeNoun } from './MetricModeToggle';
 import { useTokenSeries } from './TokenSeriesContext';
 import { useElementWidth } from '../../hooks/ui/useElementWidth';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 /** Gap between day columns in the 4-hour-block grid (the `gap-[3px]` below). */
 const BLOCK_COLUMN_GAP_PX = 3;
@@ -886,10 +887,8 @@ export const ActivityHeatmap = memo(function ActivityHeatmap({
 							style={{
 								left: `${left}px`,
 								top: `${top}px`,
-								backgroundColor: theme.colors.bgActivity,
+								...elevatedSurfaceStyle(theme),
 								color: theme.colors.textMain,
-								border: `1px solid ${theme.colors.border}`,
-								boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
 							}}
 						>
 							<div className="font-medium mb-0.5">

@@ -35,6 +35,52 @@ export const CONNECTIVITY_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: 20,
 		category: 'notifications',
 	},
+	notificationCenterEnabled: {
+		description:
+			'Keep every toast in the notification center inbox, with a bell in the Left Bar header. Off records nothing and hides the bell.',
+		type: 'boolean',
+		default: false,
+		category: 'notifications',
+	},
+	toastDurationBeforeOff: {
+		description:
+			'Toast duration in effect before toasts were last switched off from the bell popover or command palette; restored when they are switched back on.',
+		type: 'number',
+		default: 20,
+		category: 'internal',
+	},
+	notificationCenterLarge: {
+		description: 'Use a wider, taller inbox while keeping it within the window.',
+		type: 'boolean',
+		default: false,
+		category: 'notifications',
+	},
+	notificationCenterDetails: {
+		description: 'Read full source names, titles, and messages inside the inbox.',
+		type: 'boolean',
+		default: false,
+		category: 'notifications',
+	},
+	notificationCenterKeyboardNavigation: {
+		description: 'Focus the inbox when it opens and navigate entries with arrow keys.',
+		type: 'boolean',
+		default: false,
+		category: 'notifications',
+	},
+	notificationHistoryQueuedReplies: {
+		description:
+			'Keep every completed queued reply in notification history. By default, only the final reply is recorded.',
+		type: 'boolean',
+		default: false,
+		category: 'notifications',
+	},
+	notificationHistoryAutoRunTasks: {
+		description:
+			'Keep each completed Auto Run task in notification history. By default, run outcomes, warnings, and errors are recorded.',
+		type: 'boolean',
+		default: false,
+		category: 'notifications',
+	},
 	idleNotificationEnabled: {
 		description:
 			'Run a custom command when all agents and Auto Runs finish and Maestro becomes idle.',

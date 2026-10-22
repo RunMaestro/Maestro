@@ -7,6 +7,7 @@ import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { gitService } from '../../services/git';
 import { notifyToast } from '../../stores/notificationStore';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 interface BranchSwitcherDropdownProps {
 	cwd: string;
@@ -170,15 +171,14 @@ export function BranchSwitcherDropdown({
 	const dropdown = (
 		<div
 			ref={containerRef}
-			className="rounded shadow-xl"
+			className="rounded"
 			style={{
 				position: 'fixed',
 				top: pos.top,
 				left: pos.left,
 				width: DROPDOWN_WIDTH,
 				zIndex: 9999,
-				backgroundColor: theme.colors.bgSidebar,
-				border: `1px solid ${theme.colors.border}`,
+				...elevatedSurfaceStyle(theme),
 			}}
 			role="dialog"
 			aria-label="Switch branch"

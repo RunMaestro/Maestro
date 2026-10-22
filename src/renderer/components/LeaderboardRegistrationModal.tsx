@@ -41,6 +41,8 @@ import {
 	countUsedBoundShortcuts,
 } from '../constants/keyboardMastery';
 import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS, FIXED_SHORTCUTS } from '../constants/shortcuts';
+import { availableShortcuts } from '../utils/encoreShortcuts';
+import { useSettingsStore } from '../stores/settingsStore';
 import { generateId } from '../utils/ids';
 import { buildMaestroUrl } from '../utils/buildMaestroUrl';
 import { openUrl } from '../utils/openUrl';
@@ -205,8 +207,14 @@ export function LeaderboardRegistrationModal({
 		KEYBOARD_MASTERY_LEVELS[keyboardMasteryStats.currentLevel]?.name || 'Beginner';
 	// Same denominator the mastery ring and the help modal use: shortcuts with no
 	// chord bound are excluded, so the figure reported to the leaderboard can
-	// actually reach 100%.
-	const boundShortcuts = collectBoundShortcuts(DEFAULT_SHORTCUTS, TAB_SHORTCUTS, FIXED_SHORTCUTS);
+	// actually reach 100%. The chords of a switched-off Encore Feature are
+	// excluded for the same reason: the keyboard handler refuses them.
+	const encoreFeatures = useSettingsStore((s) => s.encoreFeatures);
+	const boundShortcuts = collectBoundShortcuts(
+		availableShortcuts(DEFAULT_SHORTCUTS, encoreFeatures),
+		TAB_SHORTCUTS,
+		availableShortcuts(FIXED_SHORTCUTS, encoreFeatures)
+	);
 	const keyboardKeysUnlocked = countUsedBoundShortcuts(
 		boundShortcuts,
 		keyboardMasteryStats.usedShortcuts

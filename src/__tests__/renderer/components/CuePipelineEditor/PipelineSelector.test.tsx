@@ -1,11 +1,20 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render as rtlRender, screen, fireEvent, within } from '@testing-library/react';
+import type { ReactElement } from 'react';
 import {
 	PipelineSelector,
 	pipelineMenuDefaultSize,
 } from '../../../../renderer/components/CuePipelineEditor/PipelineSelector';
+import { LayerStackProvider } from '../../../../renderer/contexts/LayerStackContext';
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { PIPELINE_COLORS, type CuePipeline } from '../../../../shared/cue-pipeline-types';
+import { mockTheme } from '../../../helpers/mockTheme';
+
+// The open menu registers with the layer stack (so Escape closes the menu, not
+// the Cue modal around it), which needs the provider the app mounts at its root.
+function render(ui: ReactElement) {
+	return rtlRender(<LayerStackProvider>{ui}</LayerStackProvider>);
+}
 
 const mockPipelines: CuePipeline[] = [
 	{
@@ -199,10 +208,10 @@ describe('PipelineSelector', () => {
 			return screen.getByTestId('pipeline-selector-menu');
 		}
 
-		it('opens tall enough for ten pipelines plus the two fixed rows', () => {
-			// 11 rows of 32 (ten pipelines + All Pipelines), two 1px rules, and the
-			// 32px New Pipeline footer.
-			expect(openMenu()).toHaveStyle({ height: '386px' });
+		it('opens tall enough for ten pipelines plus the fixed rows', () => {
+			// The 44px filter row, 11 rows of 32 (ten pipelines + All Pipelines),
+			// two 1px rules, and the 32px New Pipeline footer.
+			expect(openMenu()).toHaveStyle({ height: '430px' });
 		});
 
 		it('opens at the floor width when every name is short', () => {
@@ -225,13 +234,13 @@ describe('PipelineSelector', () => {
 
 			// Anchored at its top-left, so the menu grows by exactly the drag delta.
 			expect(menu.style.width).toBe('280px');
-			expect(menu.style.height).toBe('426px');
+			expect(menu.style.height).toBe('470px');
 
 			fireEvent.mouseUp(document);
 
 			expect(useSettingsStore.getState().modalSizes['cue-pipeline-selector']).toEqual({
 				width: 280,
-				height: 426,
+				height: 470,
 			});
 		});
 
@@ -263,7 +272,7 @@ describe('PipelineSelector', () => {
 			fireEvent.doubleClick(screen.getByTestId('modal-resize-grip'));
 
 			expect(useSettingsStore.getState().modalSizes['cue-pipeline-selector']).toBeUndefined();
-			expect(menu).toHaveStyle({ width: '220px', height: '386px' });
+			expect(menu).toHaveStyle({ width: '220px', height: '430px' });
 		});
 	});
 	describe('pipelineMenuDefaultSize', () => {
@@ -284,6 +293,170 @@ describe('PipelineSelector', () => {
 
 		it('is the same height regardless of how many pipelines exist', () => {
 			expect(pipelineMenuDefaultSize([]).height).toBe(pipelineMenuDefaultSize(['a', 'b']).height);
+		});
+
+		it('adds room for the Pipelines and Agents labels once agents are listed', () => {
+			expect(pipelineMenuDefaultSize(['a'], ['Agent']).height).toBe(
+				pipelineMenuDefaultSize(['a']).height + 48
+			);
+		});
+
+		it('sizes the width to the longest agent name too', () => {
+			const longAgent = 'Nightly Dependency Audit And Report';
+			expect(pipelineMenuDefaultSize(['a'], [longAgent]).width).toBe(
+				pipelineMenuDefaultSize([longAgent]).width
+			);
+		});
+	});
+
+	describe('filter and agents', () => {
+		const agents = [
+			{ sessionId: 's1', sessionName: 'Deploy Bot', pipelineIds: ['p1'] },
+			{ sessionId: 's2', sessionName: 'Reviewer', pipelineIds: ['p1', 'p2'] },
+		];
+
+		function openWithAgents(props: Partial<React.ComponentProps<typeof PipelineSelector>> = {}) {
+			render(
+				<PipelineSelector
+					{...defaultProps}
+					theme={mockTheme}
+					agents={agents}
+					onSelectAgent={vi.fn()}
+					{...props}
+				/>
+			);
+			fireEvent.click(screen.getByRole('button', { name: /All Pipelines/i }));
+			return screen.getByTestId('pipeline-selector-menu');
+		}
+
+		it('lists pipelines and agents in labeled sections', () => {
+			const menu = openWithAgents();
+			expect(within(menu).getByText('Pipelines')).toBeInTheDocument();
+			expect(within(menu).getByText('Agents')).toBeInTheDocument();
+			expect(screen.getByTestId('pipeline-selector-agent-s1')).toHaveTextContent('Deploy Bot');
+			expect(screen.getByTestId('pipeline-selector-agent-s2')).toHaveTextContent('2');
+		});
+
+		it('hides the Agents section without an agent handler', () => {
+			const menu = openWithAgents({ onSelectAgent: undefined });
+			expect(within(menu).queryByText('Agents')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('pipeline-selector-agent-s1')).not.toBeInTheDocument();
+		});
+
+		it('filters pipelines and agents by one query', () => {
+			openWithAgents();
+			fireEvent.change(screen.getByPlaceholderText('Filter pipelines and agents...'), {
+				target: { value: 'deploy' },
+			});
+
+			// "Deploy Pipeline" and the "Deploy Bot" agent match; "Review Pipeline"
+			// and the "Reviewer" agent do not.
+			expect(screen.getByTestId('pipeline-selector-agent-s1')).toBeInTheDocument();
+			expect(screen.queryByTestId('pipeline-selector-agent-s2')).not.toBeInTheDocument();
+			expect(screen.queryByText('Review Pipeline')).not.toBeInTheDocument();
+		});
+
+		it('says so when nothing matches', () => {
+			openWithAgents();
+			fireEvent.change(screen.getByPlaceholderText('Filter pipelines and agents...'), {
+				target: { value: 'zzz' },
+			});
+			expect(screen.getByText('No pipelines or agents match "zzz"')).toBeInTheDocument();
+		});
+
+		it('selects an agent and closes the menu', () => {
+			const onSelectAgent = vi.fn();
+			openWithAgents({ onSelectAgent });
+			fireEvent.click(screen.getByTestId('pipeline-selector-agent-s2'));
+			expect(onSelectAgent).toHaveBeenCalledWith(agents[1]);
+			expect(screen.queryByTestId('pipeline-selector-menu')).not.toBeInTheDocument();
+		});
+
+		it('takes the first match on Enter, pipelines before agents', () => {
+			const onSelect = vi.fn();
+			const onSelectAgent = vi.fn();
+			openWithAgents({ onSelect, onSelectAgent });
+			const input = screen.getByPlaceholderText('Filter pipelines and agents...');
+
+			fireEvent.change(input, { target: { value: 'review' } });
+			fireEvent.keyDown(input, { key: 'Enter' });
+
+			expect(onSelect).toHaveBeenCalledWith('p2');
+			expect(onSelectAgent).not.toHaveBeenCalled();
+		});
+
+		it('takes the first agent on Enter when no pipeline matches', () => {
+			const onSelectAgent = vi.fn();
+			openWithAgents({ onSelectAgent });
+			const input = screen.getByPlaceholderText('Filter pipelines and agents...');
+
+			fireEvent.change(input, { target: { value: 'bot' } });
+			fireEvent.keyDown(input, { key: 'Enter' });
+
+			expect(onSelectAgent).toHaveBeenCalledWith(agents[0]);
+		});
+
+		it('names the active agent on the trigger', () => {
+			render(
+				<PipelineSelector
+					{...defaultProps}
+					theme={mockTheme}
+					agents={agents}
+					activeAgent={agents[1]}
+					onSelectAgent={vi.fn()}
+				/>
+			);
+			const trigger = screen.getByRole('button', { name: /Reviewer/ });
+			expect(trigger).toHaveTextContent('2 pipelines');
+		});
+
+		it('lets a selected pipeline win over a stale agent on the trigger', () => {
+			render(
+				<PipelineSelector
+					{...defaultProps}
+					theme={mockTheme}
+					selectedPipelineId="p1"
+					agents={agents}
+					activeAgent={agents[1]}
+					onSelectAgent={vi.fn()}
+				/>
+			);
+			expect(screen.getByRole('button', { name: /Deploy Pipeline/ })).toBeInTheDocument();
+			expect(screen.queryByText('Reviewer')).not.toBeInTheDocument();
+		});
+
+		it('clears the filter on the first Escape and closes on the second', () => {
+			openWithAgents();
+			const input = screen.getByPlaceholderText('Filter pipelines and agents...');
+			fireEvent.change(input, { target: { value: 'deploy' } });
+
+			fireEvent.keyDown(input, { key: 'Escape' });
+			expect(input).toHaveValue('');
+			expect(screen.getByTestId('pipeline-selector-menu')).toBeInTheDocument();
+
+			fireEvent.keyDown(input, { key: 'Escape' });
+			expect(screen.queryByTestId('pipeline-selector-menu')).not.toBeInTheDocument();
+		});
+
+		it('starts with an empty filter every time it opens', () => {
+			render(
+				<PipelineSelector
+					{...defaultProps}
+					theme={mockTheme}
+					agents={agents}
+					onSelectAgent={vi.fn()}
+				/>
+			);
+			// Grab the trigger while it is the only "All Pipelines" button; the
+			// open menu adds a second one (the All Pipelines row).
+			const trigger = screen.getByRole('button', { name: /All Pipelines/i });
+			fireEvent.click(trigger);
+			fireEvent.change(screen.getByPlaceholderText('Filter pipelines and agents...'), {
+				target: { value: 'deploy' },
+			});
+			fireEvent.click(trigger);
+			fireEvent.click(trigger);
+			expect(screen.getByPlaceholderText('Filter pipelines and agents...')).toHaveValue('');
 		});
 	});
 });

@@ -11,10 +11,9 @@
  * - Theme-aware styling
  */
 
-import { memo, useState, useEffect, useMemo, useCallback } from 'react';
+import { memo, useState, useMemo } from 'react';
 import type { Theme } from '../../types';
 import type { StatsTimeRange, AutoRunTask } from '../../../shared/stats-types';
-import { captureException } from '../../utils/sentry';
 import {
 	buildHourlyTaskData,
 	formatHourFull,
@@ -22,6 +21,8 @@ import {
 	getMaxHourlyTaskCount,
 	getPeakHours,
 } from './tasksByHourUtils';
+import { useDashboardResource } from './useDashboardResource';
+import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 interface TasksByHourChartProps {
 	/** Current time range for filtering */
@@ -30,48 +31,33 @@ interface TasksByHourChartProps {
 	theme: Theme;
 }
 
+const NO_TASKS: AutoRunTask[] = [];
+
 export const TasksByHourChart = memo(function TasksByHourChart({
 	timeRange,
 	theme,
 }: TasksByHourChartProps) {
-	const [tasks, setTasks] = useState<AutoRunTask[]>([]);
-	const [loading, setLoading] = useState(true);
-	const [error, setError] = useState<string | null>(null);
-	const [hoveredHour, setHoveredHour] = useState<number | null>(null);
-
-	// Fetch Auto Run tasks
-	const fetchTasks = useCallback(async () => {
-		setLoading(true);
-		setError(null);
-
-		try {
-			// Get all Auto Run sessions for the time range
+	const {
+		data,
+		loading,
+		error: fetchError,
+		refresh: fetchTasks,
+	} = useDashboardResource(
+		`autorun-tasks:${timeRange}`,
+		async () => {
+			// Every Auto Run session in the range, then each one's tasks.
 			const sessions = await window.maestro.stats.getAutoRunSessions(timeRange);
-
-			// Fetch tasks for all sessions
-			const taskPromises = sessions.map((session) =>
-				window.maestro.stats.getAutoRunTasks(session.id)
+			const taskResults = await Promise.all(
+				sessions.map((session) => window.maestro.stats.getAutoRunTasks(session.id))
 			);
-			const taskResults = await Promise.all(taskPromises);
-			setTasks(taskResults.flat());
-		} catch (err) {
-			captureException(err);
-			setError(err instanceof Error ? err.message : 'Failed to load tasks');
-		} finally {
-			setLoading(false);
-		}
-	}, [timeRange]);
-
-	useEffect(() => {
-		fetchTasks();
-
-		// Subscribe to stats updates
-		const unsubscribe = window.maestro.stats.onStatsUpdate(() => {
-			fetchTasks();
-		});
-
-		return () => unsubscribe();
-	}, [fetchTasks]);
+			return taskResults.flat();
+		},
+		'fetchTasksByHour'
+	);
+	const tasks = data ?? NO_TASKS;
+	// A failed refresh keeps the last good data on screen.
+	const error = data ? null : fetchError;
+	const [hoveredHour, setHoveredHour] = useState<number | null>(null);
 
 	// Group tasks by hour
 	const hourlyData = useMemo(() => {
@@ -175,15 +161,14 @@ export const TasksByHourChart = memo(function TasksByHourChart({
 				{/* Tooltip */}
 				{hoveredData && (
 					<div
-						className="absolute z-10 px-3 py-2 rounded text-xs whitespace-nowrap pointer-events-none shadow-lg"
+						className="absolute z-10 px-3 py-2 rounded text-xs whitespace-nowrap pointer-events-none"
 						style={{
 							left: `${(hoveredHour! / 24) * 100}%`,
 							bottom: '100%',
 							transform: 'translateX(-50%)',
 							marginBottom: '8px',
-							backgroundColor: theme.colors.bgActivity,
+							...elevatedSurfaceStyle(theme),
 							color: theme.colors.textMain,
-							border: `1px solid ${theme.colors.border}`,
 						}}
 					>
 						<div className="font-medium mb-1">{formatHourFull(hoveredHour!)}</div>

@@ -51,6 +51,7 @@ vi.mock('../../../renderer/contexts/InputContext', () => ({
 import {
 	useInputKeyDown,
 	FORCED_PARALLEL_SEND_EVENT,
+	HOLD_SEND_EVENT,
 } from '../../../renderer/hooks/input/useInputKeyDown';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
@@ -58,6 +59,18 @@ import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import type { InputKeyDownDeps } from '../../../renderer/hooks/input/useInputKeyDown';
 import { useAiCommandStore } from '../../../renderer/stores/aiCommandStore';
 import { acceptAiCommand, dismissAiCommand } from '../../../renderer/services/aiCommand';
+
+import {
+	STEER_SEND_EVENT,
+	steerNewestQueuedMessage,
+} from '../../../renderer/services/chatSteering';
+import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
+
+// The empty-draft steer is a service; assert the routing, not the steer.
+vi.mock('../../../renderer/services/chatSteering', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/services/chatSteering')>()),
+	steerNewestQueuedMessage: vi.fn().mockResolvedValue({ outcome: 'delivered' }),
+}));
 
 // The proposal card's two outcomes are services; assert the routing, not the run.
 vi.mock('../../../renderer/services/aiCommand', () => ({
@@ -1182,6 +1195,239 @@ describe('Forced parallel send shortcut', () => {
 			result.current.handleInputKeyDown(e2);
 		});
 		expect(deps.processInput).toHaveBeenCalledWith(undefined, { forceParallel: true });
+	});
+});
+
+// ============================================================================
+// Steer Running Turn shortcut
+// ============================================================================
+
+describe('Steer Running Turn shortcut', () => {
+	beforeEach(() => {
+		vi.mocked(steerNewestQueuedMessage).mockClear();
+	});
+
+	it('Opt+Cmd+Enter sends the draft flagged to steer', () => {
+		setActiveSession({ inputMode: 'ai' });
+		const deps = createMockDeps({ inputValue: 'go left instead' });
+		const { result } = renderHook(() => useInputKeyDown(deps));
+		const e = createKeyEvent('Enter', { metaKey: true, altKey: true, code: 'Enter' } as any);
+
+		act(() => {
+			result.current.handleInputKeyDown(e);
+		});
+
+		expect(e.preventDefault).toHaveBeenCalled();
+		// Exactly once: the Enter rules below the chord must not also send it plain.
+		expect(deps.processInput).toHaveBeenCalledTimes(1);
+		expect(deps.processInput).toHaveBeenCalledWith(undefined, { steer: true });
+		expect(steerNewestQueuedMessage).not.toHaveBeenCalled();
+	});
+
+	it('steers the newest queued message on the active tab when the draft is empty', () => {
+		setActiveSession({ inputMode: 'ai', activeTabId: 'tab-7' });
+		const deps = createMockDeps({ inputValue: '   ' });
+		const { result } = renderHook(() => useInputKeyDown(deps));
+		const e = createKeyEvent('Enter', { metaKey: true, altKey: true, code: 'Enter' } as any);
+
+		act(() => {
+			result.current.handleInputKeyDown(e);
+		});
+
+		expect(e.preventDefault).toHaveBeenCalled();
+		expect(steerNewestQueuedMessage).toHaveBeenCalledWith('session-1', 'tab-7');
+		expect(deps.processInput).not.toHaveBeenCalled();
+	});
+
+	it('treats staged images as a draft, never steering an older message instead', () => {
+		// A steer does not ask first and cannot be taken back, so an image-only
+		// draft must go down the send path (which then says images cannot steer).
+		setActiveSession({
+			inputMode: 'ai',
+			activeTabId: 'tab-7',
+			aiTabs: [{ id: 'tab-7', stagedImages: ['data:image/png;base64,AA'] }],
+		});
+		const deps = createMockDeps({ inputValue: '' });
+		const { result } = renderHook(() => useInputKeyDown(deps));
+
+		act(() => {
+			result.current.handleInputKeyDown(
+				createKeyEvent('Enter', { metaKey: true, altKey: true, code: 'Enter' } as any)
+			);
+		});
+
+		expect(deps.processInput).toHaveBeenCalledWith(undefined, { steer: true });
+		expect(steerNewestQueuedMessage).not.toHaveBeenCalled();
+	});
+
+	it('does nothing while a group chat covers the agent', () => {
+		setActiveSession({ inputMode: 'ai' });
+		useGroupChatStore.setState({ activeGroupChatId: 'room-1' } as any);
+		const deps = createMockDeps({ inputValue: 'hello' });
+		renderHook(() => useInputKeyDown(deps));
+
+		try {
+			act(() => {
+				window.dispatchEvent(new CustomEvent(STEER_SEND_EVENT));
+			});
+			expect(deps.processInput).not.toHaveBeenCalled();
+			expect(steerNewestQueuedMessage).not.toHaveBeenCalled();
+		} finally {
+			useGroupChatStore.setState({ activeGroupChatId: null } as any);
+		}
+	});
+
+	it('ignores the chord while an IME is composing', () => {
+		setActiveSession({ inputMode: 'ai' });
+		const deps = createMockDeps({ inputValue: 'hello' });
+		const { result } = renderHook(() => useInputKeyDown(deps));
+
+		act(() => {
+			result.current.handleInputKeyDown(
+				createKeyEvent('Enter', {
+					metaKey: true,
+					altKey: true,
+					code: 'Enter',
+					nativeEvent: { isComposing: true },
+				} as any)
+			);
+		});
+
+		// Not steered, and not passed on to the Enter rules as a plain send either.
+		expect(deps.processInput).not.toHaveBeenCalled();
+	});
+
+	it('needs no feature flag, unlike Forced Parallel Send', () => {
+		setActiveSession({ inputMode: 'ai' });
+		useSettingsStore.setState({ forcedParallelExecution: false } as any);
+		const deps = createMockDeps({ inputValue: 'hello' });
+		const { result } = renderHook(() => useInputKeyDown(deps));
+
+		act(() => {
+			result.current.handleInputKeyDown(
+				createKeyEvent('Enter', { metaKey: true, altKey: true, code: 'Enter' } as any)
+			);
+		});
+
+		expect(deps.processInput).toHaveBeenCalledWith(undefined, { steer: true });
+	});
+
+	it('records steerSend shortcut usage', () => {
+		setActiveSession({ inputMode: 'ai' });
+		useSettingsStore.setState({
+			keyboardMasteryStats: {
+				usedShortcuts: [],
+				currentLevel: 0,
+				lastLevelUpTimestamp: 0,
+				lastAcknowledgedLevel: 0,
+			},
+		} as any);
+		const deps = createMockDeps({ inputValue: 'hello' });
+		const { result } = renderHook(() => useInputKeyDown(deps));
+
+		act(() => {
+			result.current.handleInputKeyDown(
+				createKeyEvent('Enter', { metaKey: true, altKey: true, code: 'Enter' } as any)
+			);
+		});
+
+		expect(useSettingsStore.getState().keyboardMasteryStats.usedShortcuts).toContain('steerSend');
+	});
+
+	it('does nothing in terminal mode', () => {
+		setActiveSession({ inputMode: 'terminal' });
+		const deps = createMockDeps({ inputValue: 'ls' });
+		const { result } = renderHook(() => useInputKeyDown(deps));
+
+		act(() => {
+			result.current.handleInputKeyDown(
+				createKeyEvent('Enter', { metaKey: true, altKey: true, code: 'Enter' } as any)
+			);
+		});
+
+		expect(deps.processInput).not.toHaveBeenCalledWith(undefined, { steer: true });
+		expect(steerNewestQueuedMessage).not.toHaveBeenCalled();
+	});
+
+	it('is off when the binding is cleared', () => {
+		// "Optional": an empty binding turns the chord off, and the keystroke falls
+		// through to the ordinary Enter rules.
+		setActiveSession({ inputMode: 'ai' });
+		useSettingsStore.setState({
+			shortcuts: {
+				...useSettingsStore.getState().shortcuts,
+				steerSend: { id: 'steerSend', label: 'Steer Running Turn', keys: [] },
+			},
+		} as any);
+		const deps = createMockDeps({ inputValue: 'hello' });
+		const { result } = renderHook(() => useInputKeyDown(deps));
+
+		act(() => {
+			result.current.handleInputKeyDown(
+				createKeyEvent('Enter', { metaKey: true, altKey: true, code: 'Enter' } as any)
+			);
+		});
+
+		expect(deps.processInput).not.toHaveBeenCalledWith(undefined, { steer: true });
+	});
+
+	it('honors a rebind to a key that is not Enter', () => {
+		setActiveSession({ inputMode: 'ai' });
+		useSettingsStore.setState({
+			shortcuts: {
+				...useSettingsStore.getState().shortcuts,
+				steerSend: { id: 'steerSend', label: 'Steer Running Turn', keys: ['Meta', 'Shift', 'u'] },
+			},
+		} as any);
+		const deps = createMockDeps({ inputValue: 'hello' });
+		const { result } = renderHook(() => useInputKeyDown(deps));
+
+		act(() => {
+			result.current.handleInputKeyDown(createKeyEvent('u', { metaKey: true, shiftKey: true }));
+		});
+
+		expect(deps.processInput).toHaveBeenCalledWith(undefined, { steer: true });
+	});
+
+	it('runs from the window event, for the global handler and the palette', () => {
+		setActiveSession({ inputMode: 'ai', activeTabId: 'tab-7' });
+		const deps = createMockDeps({ inputValue: 'hello' });
+		renderHook(() => useInputKeyDown(deps));
+
+		act(() => {
+			window.dispatchEvent(new CustomEvent(STEER_SEND_EVENT));
+		});
+		expect(deps.processInput).toHaveBeenCalledWith(undefined, { steer: true });
+
+		const emptyDeps = createMockDeps({ inputValue: '' });
+		renderHook(() => useInputKeyDown(emptyDeps));
+		act(() => {
+			window.dispatchEvent(new CustomEvent(STEER_SEND_EVENT));
+		});
+		expect(steerNewestQueuedMessage).toHaveBeenCalledWith('session-1', 'tab-7');
+		expect(emptyDeps.processInput).not.toHaveBeenCalled();
+	});
+});
+
+describe('Queue Held (window event)', () => {
+	it('queues the draft held', () => {
+		setActiveSession({ inputMode: 'ai', activeTabId: 'tab-7' });
+		const deps = createMockDeps({ inputValue: 'hello' });
+		renderHook(() => useInputKeyDown(deps));
+		act(() => {
+			window.dispatchEvent(new CustomEvent(HOLD_SEND_EVENT));
+		});
+		expect(deps.processInput).toHaveBeenCalledWith(undefined, { hold: true });
+	});
+
+	it('does nothing with an empty draft', () => {
+		setActiveSession({ inputMode: 'ai', activeTabId: 'tab-7' });
+		const deps = createMockDeps({ inputValue: '   ' });
+		renderHook(() => useInputKeyDown(deps));
+		act(() => {
+			window.dispatchEvent(new CustomEvent(HOLD_SEND_EVENT));
+		});
+		expect(deps.processInput).not.toHaveBeenCalled();
 	});
 });
 

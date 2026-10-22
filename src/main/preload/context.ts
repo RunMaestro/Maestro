@@ -7,6 +7,7 @@
  */
 
 import { ipcRenderer } from 'electron';
+import type { ClaudeTokenSourceFields } from '../../shared/claudeTokenMode';
 
 /**
  * Message structure from stored sessions
@@ -66,24 +67,19 @@ export function createContextApi() {
 				// silently. The caller decides because only the caller knows which of
 				// the three it is - the handler just sees a prompt string.
 				cheapTurn?: boolean;
+				// For a turn that only answers (a classification): no tools, no
+				// writes, and a deadline shorter than the grooming default.
+				readOnly?: boolean;
+				disableTools?: boolean;
+				timeoutMs?: number;
+				// The agent's Claude token source: a TUI agent runs this turn through maestro-p.
+				claudeTokenSource?: ClaudeTokenSourceFields;
 			}
 		): Promise<string> =>
 			ipcRenderer.invoke('context:groomContext', projectRoot, agentType, prompt, options),
 
 		// Cancel all active grooming sessions
 		cancelGrooming: (): Promise<void> => ipcRenderer.invoke('context:cancelGrooming'),
-
-		// DEPRECATED: Create a temporary session for context grooming
-		createGroomingSession: (projectRoot: string, agentType: string): Promise<string> =>
-			ipcRenderer.invoke('context:createGroomingSession', projectRoot, agentType),
-
-		// DEPRECATED: Send grooming prompt to a session and get response
-		sendGroomingPrompt: (sessionId: string, prompt: string): Promise<string> =>
-			ipcRenderer.invoke('context:sendGroomingPrompt', sessionId, prompt),
-
-		// Clean up a temporary grooming session
-		cleanupGroomingSession: (sessionId: string): Promise<void> =>
-			ipcRenderer.invoke('context:cleanupGroomingSession', sessionId),
 	};
 }
 

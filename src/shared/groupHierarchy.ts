@@ -66,6 +66,27 @@ export function setGroupParent(
 }
 
 /**
+ * Park a group out of the Left Bar, or bring it back.
+ *
+ * The one write behind both the Left Bar's Hide/Show Group action and
+ * `maestro-cli update-group --hide/--show`. A visible group stores NO `hidden`
+ * key rather than `false`, matching every group written before the field
+ * existed. Returns the input unchanged when the group already reads that way,
+ * so a caller can tell a no-op from a write by identity.
+ */
+export function setGroupHidden(groups: Group[], groupId: string, hidden: boolean): Group[] {
+	const target = groups.find((group) => group.id === groupId);
+	if (!target || !!target.hidden === hidden) return groups;
+	return groups.map((group) => {
+		if (group.id !== groupId) return group;
+		const next: Group = { ...group };
+		if (hidden) next.hidden = true;
+		else delete next.hidden;
+		return next;
+	});
+}
+
+/**
  * Repairs persisted hierarchy data that predates nesting validation or was
  * written by an external client. Invalid relationships are promoted to root
  * rather than discarded so no group is lost.

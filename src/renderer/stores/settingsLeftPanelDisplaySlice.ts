@@ -16,8 +16,10 @@ export interface LeftPanelDisplayState {
 	showProviderModePill: boolean;
 	showWorktreePill: boolean;
 	showWorktreeBranchName: boolean;
+	showWorktreeProvider: boolean;
 	showStarredSessionsSection: boolean;
 	showLeftPanelGroupMemberCount: boolean;
+	showLeftPanelCollapsedInitials: boolean;
 	leftPanelCollapsedPillsPerRow: number;
 	showLeftPanelLocationPills: boolean;
 	showLeftPanelGitIndicator: boolean;
@@ -34,8 +36,10 @@ export interface LeftPanelDisplayActions {
 	setShowProviderModePill: (value: boolean) => void;
 	setShowWorktreePill: (value: boolean) => void;
 	setShowWorktreeBranchName: (value: boolean) => void;
+	setShowWorktreeProvider: (value: boolean) => void;
 	setShowStarredSessionsSection: (value: boolean) => void;
 	setShowLeftPanelGroupMemberCount: (value: boolean) => void;
+	setShowLeftPanelCollapsedInitials: (value: boolean) => void;
 	setLeftPanelCollapsedPillsPerRow: (value: number) => void;
 	setShowLeftPanelLocationPills: (value: boolean) => void;
 	setShowLeftPanelGitIndicator: (value: boolean) => void;
@@ -59,8 +63,10 @@ export const createLeftPanelDisplaySlice: StateCreator<
 	showProviderModePill: false,
 	showWorktreePill: false,
 	showWorktreeBranchName: false,
+	showWorktreeProvider: false,
 	showStarredSessionsSection: true,
 	showLeftPanelGroupMemberCount: false,
+	showLeftPanelCollapsedInitials: true,
 	leftPanelCollapsedPillsPerRow: 20,
 	showLeftPanelLocationPills: true,
 	showLeftPanelGitIndicator: true,
@@ -99,6 +105,11 @@ export const createLeftPanelDisplaySlice: StateCreator<
 		window.maestro.settings.set('showWorktreeBranchName', value);
 	},
 
+	setShowWorktreeProvider: (value) => {
+		set({ showWorktreeProvider: value });
+		window.maestro.settings.set('showWorktreeProvider', value);
+	},
+
 	setShowStarredSessionsSection: (value) => {
 		set({ showStarredSessionsSection: value });
 		window.maestro.settings.set('showStarredSessionsSection', value);
@@ -107,6 +118,11 @@ export const createLeftPanelDisplaySlice: StateCreator<
 	setShowLeftPanelGroupMemberCount: (value) => {
 		set({ showLeftPanelGroupMemberCount: value });
 		window.maestro.settings.set('showLeftPanelGroupMemberCount', value);
+	},
+
+	setShowLeftPanelCollapsedInitials: (value) => {
+		set({ showLeftPanelCollapsedInitials: value });
+		window.maestro.settings.set('showLeftPanelCollapsedInitials', value);
 	},
 
 	setLeftPanelCollapsedPillsPerRow: (value) => {
@@ -169,11 +185,17 @@ export function hydrateLeftPanelDisplaySettings(
 	if (allSettings['showWorktreeBranchName'] !== undefined)
 		patch.showWorktreeBranchName = allSettings['showWorktreeBranchName'] as boolean;
 
+	if (allSettings['showWorktreeProvider'] !== undefined)
+		patch.showWorktreeProvider = allSettings['showWorktreeProvider'] as boolean;
+
 	if (allSettings['showStarredSessionsSection'] !== undefined)
 		patch.showStarredSessionsSection = allSettings['showStarredSessionsSection'] as boolean;
 
 	if (allSettings['showLeftPanelGroupMemberCount'] !== undefined)
 		patch.showLeftPanelGroupMemberCount = allSettings['showLeftPanelGroupMemberCount'] as boolean;
+
+	if (allSettings['showLeftPanelCollapsedInitials'] !== undefined)
+		patch.showLeftPanelCollapsedInitials = allSettings['showLeftPanelCollapsedInitials'] as boolean;
 
 	if (allSettings['leftPanelCollapsedPillsPerRow'] !== undefined) {
 		const perRow = allSettings['leftPanelCollapsedPillsPerRow'] as number;

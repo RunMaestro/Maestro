@@ -13,6 +13,11 @@ vi.mock('../../../main/utils/sentry', () => ({
 
 import { OmpSessionStorage } from '../../../main/storage/omp-session-storage';
 import type { SshRemoteConfig } from '../../../shared/types';
+import { embedSystemPromptInPrompt } from '../../../shared/embeddedSystemPrompt';
+import {
+	selectOlderEntries,
+	transcriptMessagesToLogEntries,
+} from '../../../renderer/utils/transcriptMessages';
 
 /**
  * These tests exercise OmpSessionStorage against REAL temp transcript files
@@ -157,6 +162,82 @@ describe('OmpSessionStorage', () => {
 		expect(roles).toEqual(['user', 'user', 'assistant']);
 		const assistant = result.messages.find((m) => m.role === 'assistant');
 		expect(assistant?.content).toBe('Done, fixed it.'); // thinking block excluded
+	});
+
+	it('matches prompt-file history to a live turn instead of prepending its greeting again', async () => {
+		const prompt = embedSystemPromptInPrompt('# Maestro System Context', 'Hello!');
+		const wrapped =
+			'<file name="C:/Temp/maestro-prompt-193d3119-8a93-4b08-8d1f-d59d57cff686.txt">\n' +
+			prompt +
+			'\n</file>\n';
+		await writeTranscript('-code-proj', 'a_sess-1.jsonl', [
+			{ type: 'session', id: 'sess-1', cwd: projectPath },
+			{
+				type: 'message',
+				id: 'disk-user',
+				timestamp: '2026-10-05T20:13:39.141Z',
+				message: { role: 'user', content: [{ type: 'text', text: wrapped }] },
+			},
+			{
+				type: 'message',
+				id: 'disk-answer',
+				timestamp: '2026-10-05T20:13:41.302Z',
+				message: { role: 'assistant', content: 'Hello! What would you like to work on?' },
+			},
+		]);
+		const history = await storage.readSessionMessages(projectPath, 'sess-1');
+		const loaded = transcriptMessagesToLogEntries(history.messages);
+		const visible = [
+			{
+				id: 'live-user',
+				source: 'user' as const,
+				text: 'Hello!',
+				timestamp: Date.parse('2026-10-05T20:13:55.870Z'),
+			},
+			{
+				id: 'live-answer',
+				source: 'stdout' as const,
+				text: 'Hello! What would you like to work on?',
+				timestamp: Date.parse('2026-10-05T20:13:44.653Z'),
+			},
+		];
+		expect(selectOlderEntries(loaded, visible)).toEqual([]);
+		expect(loaded[0].text).toBe('Hello!');
+	});
+
+	it.each([
+		[
+			'Windows resume wrapper',
+			'user',
+			'<file name="C:\\Temp\\maestro-prompt-193d3119-8a93-4b08-8d1f-d59d57cff686.txt">\r\ncontinue\r\n</file>\r\n',
+			'continue',
+		],
+		[
+			'nested user markup',
+			'user',
+			'<file name="/tmp/maestro-prompt-193d3119-8a93-4b08-8d1f-d59d57cff686.txt">\nKeep <file>example</file>\n</file>\n',
+			'Keep <file>example</file>',
+		],
+		[
+			'ordinary attachment',
+			'user',
+			'<file name="/tmp/example.txt">\nHello!\n</file>\n',
+			'<file name="/tmp/example.txt">\nHello!\n</file>\n',
+		],
+		[
+			'assistant quotation',
+			'assistant',
+			'<file name="/tmp/maestro-prompt-193d3119-8a93-4b08-8d1f-d59d57cff686.txt">\nHello!\n</file>\n',
+			'<file name="/tmp/maestro-prompt-193d3119-8a93-4b08-8d1f-d59d57cff686.txt">\nHello!\n</file>\n',
+		],
+		['literal closing tag', 'user', 'Keep this\n</file>\n', 'Keep this\n</file>\n'],
+	])('preserves user content when reading %s', async (_label, role, content, expected) => {
+		await writeTranscript('-code-proj', 'a_sess-1.jsonl', [
+			{ type: 'session', id: 'sess-1', cwd: projectPath },
+			{ type: 'message', id: 'message', message: { role, content } },
+		]);
+		const result = await storage.readSessionMessages(projectPath, 'sess-1');
+		expect(result.messages.map((message) => message.content)).toEqual([expected]);
 	});
 
 	it('deletes a user message and its following assistant turn, stopping at the next user', async () => {
