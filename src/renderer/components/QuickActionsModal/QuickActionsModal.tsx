@@ -868,6 +868,8 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				openSymphony: shortcuts.openSymphony,
 				directorNotes: shortcuts.directorNotes,
 				openCue: shortcuts.openCue,
+				openBoard: shortcuts.openBoard,
+				openProfiles: shortcuts.openProfiles,
 				computerHistory: shortcuts.computerHistory,
 				fuzzyFileSearch: shortcuts.fuzzyFileSearch,
 				editClipboardImage: shortcuts.editClipboardImage,

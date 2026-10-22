@@ -66,6 +66,8 @@ interface BuildFeatureCommandsArgs {
 		openSymphony?: QuickAction['shortcut'];
 		directorNotes?: QuickAction['shortcut'];
 		openCue?: QuickAction['shortcut'];
+		openBoard?: QuickAction['shortcut'];
+		openProfiles?: QuickAction['shortcut'];
 		computerHistory?: QuickAction['shortcut'];
 		fuzzyFileSearch?: QuickAction['shortcut'];
 		editClipboardImage?: QuickAction['shortcut'];
@@ -390,6 +392,7 @@ export function buildFeatureCommands({
 		commands.push({
 			id: 'board',
 			label: 'Board',
+			shortcut: shortcuts.openBoard,
 			subtext: 'Card DAG kanban dispatched on the Cue tick',
 			action: () => {
 				onOpenBoard();
@@ -402,6 +405,7 @@ export function buildFeatureCommands({
 		commands.push({
 			id: 'agent-profiles',
 			label: 'Agent Profiles',
+			shortcut: shortcuts.openProfiles,
 			subtext: 'Manage the assignees board cards dispatch to',
 			action: () => {
 				onOpenProfiles();
