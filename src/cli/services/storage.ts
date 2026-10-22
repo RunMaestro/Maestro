@@ -41,12 +41,15 @@ export function getSyncDir(): string {
 /**
  * Store files the desktop opens under the sync directory. Must match the
  * stores `initializeStores()` (src/main/stores/instances.ts) gives
- * `cwd: _syncPath`; anything not listed is read from the config directory.
+ * `cwd: _syncPath`, for every one of them the CLI reads; anything not listed
+ * is read from the config directory. `maestro-agent-session-origins` is synced
+ * too, but nothing in the CLI reads it yet: list it here when something does.
  */
 const SYNCED_STORE_FILES: ReadonlySet<string> = new Set([
 	'maestro-sessions.json',
 	'maestro-groups.json',
 	'maestro-settings.json',
+	'maestro-claude-session-origins.json',
 ]);
 
 function getStoreFileDir(filename: string): string {
@@ -54,11 +57,20 @@ function getStoreFileDir(filename: string): string {
 }
 
 /**
+ * Absolute path of a desktop store file, in the directory the desktop keeps
+ * it in (see `SYNCED_STORE_FILES`). For readers outside this module that need
+ * their own error handling around the read.
+ */
+export function getStoreFilePath(filename: string): string {
+	return path.join(getStoreFileDir(filename), filename);
+}
+
+/**
  * Read and parse an Electron Store JSON file
  * Returns undefined if file doesn't exist
  */
 function readStoreFile<T>(filename: string): T | undefined {
-	const filePath = path.join(getStoreFileDir(filename), filename);
+	const filePath = getStoreFilePath(filename);
 
 	try {
 		const content = fs.readFileSync(filePath, 'utf-8');
