@@ -109,7 +109,8 @@ export interface SessionLifecycleReturn {
 		selectedUserResources?: string[],
 		migrationPlanId?: string,
 		/** On a provider change: convert memory and session history (opt-in) or switch plainly. */
-		convertProviderHistory?: boolean
+		convertProviderHistory?: boolean,
+		boardWorker?: boolean
 	) => void | Promise<void>;
 	/** Rename the currently-selected tab (persists to agent session storage + history) */
 	handleRenameTab: (newName: string) => void;
@@ -207,7 +208,8 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			selectedUserResources?: string[],
 			migrationPlanId?: string,
 			/** On a provider change: convert memory and session history (opt-in) or switch plainly. */
-			convertProviderHistory?: boolean
+			convertProviderHistory?: boolean,
+			boardWorker?: boolean
 		) => {
 			const before = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
 			const switchingProvider = !!toolType && !!before && toolType !== before.toolType;
@@ -289,6 +291,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 					// the preference so moving back does not silently lose it, and the
 					// flag is inert for any provider without reset credits.
 					codexAutoResetOnExhaustion,
+					...(boardWorker === undefined ? {} : { boardWorker }),
 					// Same provider-switch rule as the reset flag: kept, and inert off
 					// Codex because `resolveCodexTransport` ignores it there. Only the
 					// opt-in is stored, so choosing Standard clears the field.

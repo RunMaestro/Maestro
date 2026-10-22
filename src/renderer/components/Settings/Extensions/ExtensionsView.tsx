@@ -46,6 +46,7 @@ interface ExtensionsViewProps {
 export function ExtensionsView({ theme, settingsBodies, tileRequest }: ExtensionsViewProps) {
 	const {
 		extensions,
+		encoreFeatures,
 		contributions,
 		pluginsSubsystemEnabled,
 		busyId,
@@ -214,6 +215,7 @@ export function ExtensionsView({ theme, settingsBodies, tileRequest }: Extension
 				<ExtensionDetails
 					theme={theme}
 					ext={selected}
+					encoreFeatures={encoreFeatures}
 					contributions={contributions}
 					busy={busyId === selected.id}
 					onTogglePlugin={togglePlugin}
