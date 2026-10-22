@@ -28,7 +28,7 @@ import {
 	safeUpdateCueEventStatus,
 	type CueEventCompletionInfo,
 } from './cue-db';
-import type { CueQueuePersistence } from './cue-queue-persistence';
+import type { CueQueuePersistence, PersistableQueueEntry } from './cue-queue-persistence';
 import { SOURCE_OUTPUT_MAX_CHARS } from './cue-fan-in-tracker';
 import { buildCuePersistedOutput, sliceHeadByChars } from './cue-text-utils';
 import { captureException } from '../utils/sentry';
@@ -382,6 +382,49 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 
 	function getSessionName(sessionId: string): string {
 		return deps.getSessions().find((s) => s.id === sessionId)?.name ?? sessionId;
+	}
+
+	/**
+	 * Drop the whole queue, persisted rows included. Per row rather than a
+	 * table wipe: cue.db is shared by every engine on the data dir, and an
+	 * engine that has lost its lock (or never held it) must not delete the
+	 * queue of the engine that holds it.
+	 */
+	function forgetQueue(): void {
+		for (const queue of eventQueue.values()) {
+			for (const entry of queue) {
+				if (entry.persistId) deps.queuePersistence?.remove(entry.persistId);
+			}
+		}
+		eventQueue.clear();
+	}
+
+	/**
+	 * The row a queued entry is persisted as. Both writers use it, the enqueue
+	 * in `execute()` and the drain's `persistQueueForRestart()`, so they cannot
+	 * drift: the drain used to rewrite the row without `autoRun`, `notify` and
+	 * `turnSettings`, and the entry came back as an Auto Run with no documents,
+	 * a notify with no config, and a run on the agent's default model.
+	 * `pipelineName` is not persisted (no column; see CLAUDE-CUE.md).
+	 */
+	function toPersistableEntry(entry: QueuedEvent, drainedAt?: number): PersistableQueueEntry {
+		return {
+			event: entry.event,
+			subscriptionName: entry.subscriptionName,
+			prompt: entry.prompt,
+			outputPrompt: entry.outputPrompt,
+			cliOutput: entry.cliOutput,
+			action: entry.action,
+			command: entry.command,
+			chainDepth: entry.chainDepth,
+			queuedAt: entry.queuedAt,
+			chainRootId: entry.chainRootId,
+			parentEventId: entry.parentEventId,
+			autoRun: entry.autoRun,
+			notify: entry.notify,
+			turnSettings: entry.turnSettings,
+			...(drainedAt !== undefined ? { drainedAt } : {}),
+		};
 	}
 
 	/**
@@ -1076,22 +1119,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 				// entries that actually made it into the live queue. Safe
 				// wrappers mean a persist failure cannot break the live queue.
 				if (deps.queuePersistence && persistId) {
-					deps.queuePersistence.persist(sessionId, persistId, {
-						event,
-						subscriptionName,
-						prompt,
-						outputPrompt,
-						cliOutput,
-						action,
-						command,
-						chainDepth,
-						queuedAt,
-						chainRootId,
-						parentEventId,
-						autoRun,
-						notify,
-						turnSettings,
-					});
+					deps.queuePersistence.persist(sessionId, persistId, toPersistableEntry(queuedEntry));
 				}
 
 				deps.onLog(
@@ -1188,8 +1216,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			// function returns there are zero active runs AND zero queued
 			// events - the contract callers (engine shutdown / Cue toggle
 			// off) actually need.
-			eventQueue.clear();
-			deps.queuePersistence?.clearAll();
+			forgetQueue();
 			for (const runId of [...activeRuns.keys()]) {
 				this.stopRun(runId);
 			}
@@ -1219,20 +1246,7 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			for (const [sessionId, queue] of eventQueue) {
 				for (const entry of queue) {
 					if (!entry.persistId) entry.persistId = crypto.randomUUID();
-					persistence.persist(sessionId, entry.persistId, {
-						event: entry.event,
-						subscriptionName: entry.subscriptionName,
-						prompt: entry.prompt,
-						outputPrompt: entry.outputPrompt,
-						cliOutput: entry.cliOutput,
-						action: entry.action,
-						command: entry.command,
-						chainDepth: entry.chainDepth,
-						queuedAt: entry.queuedAt,
-						chainRootId: entry.chainRootId,
-						parentEventId: entry.parentEventId,
-						drainedAt,
-					});
+					persistence.persist(sessionId, entry.persistId, toPersistableEntry(entry, drainedAt));
 					count++;
 				}
 			}
@@ -1355,10 +1369,9 @@ export function createCueRunManager(deps: CueRunManagerDeps): CueRunManager {
 			activeRuns.clear();
 			activeRunCount.clear();
 			activeRootKeys.clear();
-			eventQueue.clear();
-			// Reset tears down everything - persisted copies too. Any re-enqueue
-			// after reset() will generate fresh persist IDs.
-			deps.queuePersistence?.clearAll();
+			// Reset tears down persisted copies too. Any re-enqueue after reset()
+			// will generate fresh persist IDs.
+			forgetQueue();
 			notifyIfIdle();
 		},
 	};

@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { CLI_SECRET_HEADER } from '../../../webLogin';
 import { DEFAULT_TAB_DEFAULTS } from '../../agents/rules';
+import { BridgeConnection, UnsupportedCommandError } from '../../client/bridge-connection';
 import { writeCliServerInfoTo } from '../../client/discovery';
 import { requestHostStatus, requestHostStop } from '../../client/host-control';
 import type { ClientResult, MaestroClient, MaestroEvent } from '../../client/types';
@@ -50,6 +51,8 @@ describe('runtime server', () => {
 	let inFlight: { turns: number };
 	/** Cue runs the host process says are in flight; undefined for a host that reports none. */
 	let cueRuns: number | undefined;
+	/** What the host process answers beyond the runtime (Cue's messages, in `maestro-cli host`). */
+	let hostAnswer: (message: Record<string, unknown>) => Record<string, unknown> | undefined;
 
 	const watchDirectory: WatchDirectory = () => ({ close: () => undefined });
 
@@ -118,6 +121,7 @@ describe('runtime server', () => {
 		});
 		stopRequests = 0;
 		cueRuns = undefined;
+		hostAnswer = () => undefined;
 		server = await startRuntimeServer({
 			runtime,
 			token: TOKEN,
@@ -130,6 +134,7 @@ describe('runtime server', () => {
 				version: '9.9.9',
 				...(cueRuns !== undefined ? { cueRuns } : {}),
 			}),
+			answer: (message) => hostAnswer(message),
 		});
 		publish();
 		client = createWsMaestroClient({
@@ -284,6 +289,41 @@ describe('runtime server', () => {
 				});
 			});
 			expect(reply).toMatchObject({ originalType: 'no_such_message', originalRequestId: 'r1' });
+		});
+	});
+
+	describe("the host process's own answers", () => {
+		/** One request through the CLI's own connection, as `cue activity` sends it. */
+		async function ask(message: Record<string, unknown>, expected: string): Promise<unknown> {
+			const connection = new BridgeConnection({ userDataDir: dir });
+			await connection.connect();
+			try {
+				return await connection.sendCommand(message, expected);
+			} finally {
+				connection.disconnect();
+			}
+		}
+
+		it('answers a message the runtime declines, under its request id', async () => {
+			hostAnswer = (message) =>
+				message.type === 'get_cue_activity' ? { type: 'cue_activity', entries: [] } : undefined;
+			await expect(ask({ type: 'get_cue_activity', limit: 5 }, 'cue_activity')).resolves.toEqual(
+				expect.objectContaining({ type: 'cue_activity', entries: [] })
+			);
+		});
+
+		it('echoes what the host leaves unanswered, which the CLI reads as a headless host', async () => {
+			const failure = await ask({ type: 'get_cue_activity' }, 'cue_activity').catch(
+				(error: unknown) => error
+			);
+			expect(failure).toBeInstanceOf(UnsupportedCommandError);
+			expect(failure).toMatchObject({ commandType: 'get_cue_activity', hostKind: 'headless' });
+		});
+
+		it("never shadows the runtime's own answer", async () => {
+			hostAnswer = () => ({ type: 'shadowed' });
+			await expect(client.connection.connect()).resolves.toMatchObject({ ok: true });
+			expect(value(await client.agents.list()).map((agent) => agent.name)).toEqual(['Alpha']);
 		});
 	});
 

@@ -8,7 +8,8 @@ import * as os from 'os';
 import * as path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { HostCue } from '../../../cli/services/host-cue';
+import { cueEngineLockOwnerToken, type CueEngineLockInfo } from '../../../main/cue/cue-engine-lock';
+import { startHostCue, type HostCue, type HostCueEngine } from '../../../cli/services/host-cue';
 import {
 	HostPromptsMissingError,
 	HostStartError,
@@ -22,6 +23,7 @@ import {
 	requestHostStop,
 	writeCliServerInfoTo,
 } from '../../../shared/maestro-lib';
+import { BridgeConnection } from '../../../shared/maestro-lib/client/bridge-connection';
 
 describe('startRuntimeHost', () => {
 	let dir: string;
@@ -43,7 +45,10 @@ describe('startRuntimeHost', () => {
 	const idleCue = (): HostCue => ({
 		state: () => ({ state: 'disabled' as const }),
 		activeRuns: () => 0,
+		drain: async () => undefined,
+		forceStop: () => undefined,
 		stop: async () => undefined,
+		answer: async () => undefined,
 	});
 	// The temp directory is no bundle, so the prompt probe is answered for it.
 	const noCue = { startCue: async () => idleCue(), promptsLoad: () => true };
@@ -91,6 +96,8 @@ describe('startRuntimeHost', () => {
 			pid: process.pid,
 			version: '1.2.3',
 			hostKind: 'headless',
+			// What `cue trigger` compares with the Cue lock to find this host's own engine.
+			cueLockToken: cueEngineLockOwnerToken(),
 		});
 		expect(info?.cliSecret).toBeTruthy();
 		if (process.platform !== 'win32') {
@@ -114,6 +121,34 @@ describe('startRuntimeHost', () => {
 			version: '1.2.3',
 			cue: { state: 'disabled' },
 		});
+	});
+
+	it('serves the Cue answers of the engine it runs, and echoes the ones it cannot give', async () => {
+		const host = await startRuntimeHost(options(), {
+			...noCue,
+			startCue: async () => ({
+				...idleCue(),
+				state: () => ({ state: 'running' as const }),
+				answer: async (message) =>
+					message.type === 'get_cue_subscriptions'
+						? { type: 'cue_subscriptions', subscriptions: [{ id: 'a1::beat::beat' }] }
+						: undefined,
+			}),
+		});
+		running.push(host);
+
+		const connection = new BridgeConnection({ userDataDir: dir });
+		await connection.connect();
+		try {
+			await expect(
+				connection.sendCommand({ type: 'get_cue_subscriptions' }, 'cue_subscriptions')
+			).resolves.toMatchObject({ subscriptions: [{ id: 'a1::beat::beat' }] });
+			await expect(
+				connection.sendCommand({ type: 'get_cue_activity' }, 'cue_activity')
+			).rejects.toMatchObject({ name: 'UnsupportedCommandError', hostKind: 'headless' });
+		} finally {
+			connection.disconnect();
+		}
 	});
 
 	it('unpublishes first on stop, releases the lock, and closes the port', async () => {
@@ -254,6 +289,75 @@ describe('startRuntimeHost', () => {
 			await host.stopped;
 			expect(fs.existsSync(path.join(dir, 'maestro-runtime.lock'))).toBe(false);
 			expect(lines[lines.length - 1]).toBe('Host stopped.');
+		});
+
+		/** The real host Cue over a fake engine that holds the lock, to see what a host stop does to it. */
+		function engineCue() {
+			const held: CueEngineLockInfo = {
+				pid: process.pid,
+				mode: 'standalone',
+				startedAt: '2026-10-19T12:00:00.000Z',
+			};
+			const engine: HostCueEngine = {
+				start: vi.fn(),
+				stop: vi.fn(),
+				triggerSubscription: vi.fn(() => true),
+				getActiveRuns: vi.fn(() => []),
+				stopAll: vi.fn(),
+				drain: vi.fn(async () => ({})),
+				forceStop: vi.fn(),
+				refreshSession: vi.fn(),
+				removeSession: vi.fn(),
+			};
+			const startCue: typeof startHostCue = (context) =>
+				startHostCue(context, {
+					isEnabled: async () => true,
+					readLock: () => held,
+					createEngine: async () => engine,
+					startInbox: () => () => undefined,
+					waitForRunsToEnd: async () => 0,
+					pid: process.pid,
+				});
+			return { engine, startCue };
+		}
+
+		it('on `host stop` drains Cue with no wait, so the queue survives, and never stops the engine', async () => {
+			const { engine, startCue } = engineCue();
+			const host = await startRuntimeHost(options(), { ...noCue, startCue });
+			running.push(host);
+			expect(host.cue.state()).toEqual({ state: 'running' });
+
+			expect(await requestHostStop(dir, {})).toEqual({ stopping: true });
+			await host.stopped;
+			expect(engine.drain).toHaveBeenCalledTimes(1);
+			expect(engine.drain).toHaveBeenCalledWith({ timeoutMs: 0 });
+			// `stop()` deletes the persisted queue the drain just wrote.
+			expect(engine.stop).not.toHaveBeenCalled();
+			expect(engine.stopAll).not.toHaveBeenCalled();
+		});
+
+		it('after a signal, the host stop joins the drain the signal started instead of starting another', async () => {
+			const { engine, startCue } = engineCue();
+			let finishDrain!: () => void;
+			(engine.drain as ReturnType<typeof vi.fn>).mockImplementation(
+				() =>
+					new Promise((resolve) => {
+						finishDrain = () => resolve({});
+					})
+			);
+			const host = await startRuntimeHost(options(), { ...noCue, startCue });
+			running.push(host);
+
+			const drained = host.cue.drain(30_000);
+			await vi.waitFor(() => expect(engine.drain).toHaveBeenCalledWith({ timeoutMs: 30_000 }));
+			const stopping = host.stop();
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			// Still draining: the runtime keeps the directory until Cue is done.
+			expect(fs.existsSync(path.join(dir, 'maestro-runtime.lock'))).toBe(true);
+			finishDrain();
+			await Promise.all([drained, stopping]);
+			expect(engine.drain).toHaveBeenCalledTimes(1);
+			expect(engine.stop).not.toHaveBeenCalled();
 		});
 
 		it('finishes stopping when Cue fails to stop, and says so', async () => {

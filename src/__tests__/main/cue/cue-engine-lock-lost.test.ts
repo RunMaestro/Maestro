@@ -13,10 +13,23 @@ const acquire = vi.hoisted(() =>
 	}))
 );
 
+/**
+ * `cue_event_queue` as one table every engine in the process writes, the way
+ * cue.db is shared by every engine on a data directory.
+ */
+const queueTable = vi.hoisted(() => new Map<string, { id: string; sessionId: string }>());
+let loadedConfig: CueConfig | null = null;
+
 vi.mock('../../../main/cue/cue-yaml-loader', () => ({
-	loadCueConfig: () => null,
-	loadCueConfigDetailed: () => ({ ok: false as const, reason: 'missing' as const }),
+	loadCueConfig: () => loadedConfig,
+	loadCueConfigDetailed: () =>
+		loadedConfig
+			? { ok: true as const, config: loadedConfig, warnings: [] }
+			: { ok: false as const, reason: 'missing' as const },
 	watchCueYaml: () => () => {},
+}));
+vi.mock('../../../main/cue/cue-file-watcher', () => ({
+	createCueFileWatcher: () => () => {},
 }));
 vi.mock('../../../main/cue/cue-engine-lock', () => ({
 	acquireCueEngineLock: acquire,
@@ -39,16 +52,28 @@ vi.mock('../../../main/cue/cue-db', () => ({
 	updateCueEventStatus: vi.fn(),
 	safeRecordCueEvent: vi.fn(),
 	safeUpdateCueEventStatus: vi.fn(),
+	updateHeartbeat: vi.fn(),
+	getLastHeartbeat: vi.fn(() => null),
 	persistQueuedEvent: vi.fn(),
 	removeQueuedEvent: vi.fn(),
-	getQueuedEvents: vi.fn(() => []),
-	clearPersistedQueue: vi.fn(),
-	safePersistQueuedEvent: vi.fn(),
-	safeRemoveQueuedEvent: vi.fn(),
+	getQueuedEvents: vi.fn(() => [...queueTable.values()]),
+	clearPersistedQueue: vi.fn((sessionId?: string) => {
+		for (const [id, row] of queueTable) {
+			if (sessionId === undefined || row.sessionId === sessionId) queueTable.delete(id);
+		}
+	}),
+	safePersistQueuedEvent: vi.fn((row: { id: string; sessionId: string }) => {
+		queueTable.set(row.id, row);
+	}),
+	safeRemoveQueuedEvent: vi.fn((id: string) => {
+		queueTable.delete(id);
+	}),
+	clearGitHubSeenForSubscription: vi.fn(),
 }));
 
 import { CueEngine } from '../../../main/cue/cue-engine';
-import { createMockDeps } from './cue-test-helpers';
+import type { CueConfig, CueRunResult } from '../../../main/cue/cue-types';
+import { createMockConfig, createMockDeps } from './cue-test-helpers';
 
 describe('CueEngine lock heartbeat', () => {
 	beforeEach(() => {
@@ -105,5 +130,93 @@ describe('CueEngine lock heartbeat', () => {
 		);
 		expect(engine.isEnabled()).toBe(false);
 		expect(touch).not.toHaveBeenCalled();
+	});
+});
+
+/**
+ * Two engines on one data directory: the old holder was suspended past the
+ * stale window, a second engine took the lock over, and the old one notices on
+ * its next heartbeat. The persisted queue is shared, so the old engine's stop
+ * must take only its own rows with it.
+ */
+describe('CueEngine lock loss and the shared persisted queue', () => {
+	const engines: CueEngine[] = [];
+
+	/** An engine whose runs never finish, so its one slot stays taken. */
+	function startEngine(onLockLost?: () => void): CueEngine {
+		const deps = createMockDeps({
+			onCueRun: vi.fn(() => new Promise<CueRunResult>(() => {})),
+			onLockLost,
+		});
+		const engine = new CueEngine(deps);
+		engine.start();
+		engines.push(engine);
+		return engine;
+	}
+
+	function rowsOf(ids: Iterable<string>): string[] {
+		return [...ids].filter((id) => queueTable.has(id));
+	}
+
+	beforeEach(() => {
+		vi.useFakeTimers();
+		queueTable.clear();
+		touch.mockReset();
+		touch.mockReturnValue('held');
+		acquire.mockReset();
+		acquire.mockReturnValue({ acquired: true });
+		loadedConfig = createMockConfig({
+			subscriptions: ['first', 'second', 'third'].map((name) => ({
+				name,
+				event: 'cli.trigger' as const,
+				enabled: true,
+				prompt: `run ${name}`,
+			})),
+		});
+	});
+
+	afterEach(() => {
+		for (const engine of engines.splice(0)) engine.stop();
+		loadedConfig = null;
+		vi.useRealTimers();
+	});
+
+	// `maestro-cli host` ends the runs in flight from `onLockLost` (stopAll)
+	// before the engine stops itself; both orders must spare the holder's rows.
+	it.each([
+		['the engine stops itself', false],
+		['onLockLost first stops the runs in flight, as maestro-cli host does', true],
+	])('leaves the new holder its queued rows and drops only its own: %s', (_, stopsRuns) => {
+		// The old holder: one run in the slot, one queued (persisted).
+		const old: CueEngine = startEngine(stopsRuns ? () => old.stopAll() : undefined);
+		expect(old.triggerSubscription('first')).toBe(true);
+		expect(old.triggerSubscription('second')).toBe(true);
+		expect(queueTable.size).toBe(1);
+
+		// Ten seconds later another engine takes the lock over. Its start
+		// restores the old holder's row as its own work, and it queues more.
+		vi.advanceTimersByTime(10_000);
+		const beforeTakeover = new Set(queueTable.keys());
+		const holder = startEngine();
+		expect(rowsOf(beforeTakeover)).toEqual([]);
+		expect(holder.triggerSubscription('first')).toBe(true);
+		const holderRows = new Set(queueTable.keys());
+		expect(holderRows.size).toBeGreaterThan(0);
+
+		// Before it notices, the old engine queues one more of its own.
+		old.triggerSubscription('third');
+		const oldRows = [...queueTable.keys()].filter((id) => !holderRows.has(id));
+		expect(oldRows).toHaveLength(1);
+
+		// Only the old engine's heartbeat is due in the next twenty seconds.
+		touch.mockReturnValue('lost');
+		vi.advanceTimersByTime(20_000);
+		touch.mockReturnValue('held');
+		expect(old.isEnabled()).toBe(false);
+		expect(holder.isEnabled()).toBe(true);
+
+		expect(rowsOf(holderRows)).toEqual([...holderRows]);
+		expect(rowsOf(oldRows)).toEqual([]);
+		expect(holder.getQueueStatus().get('session-1')).toBe(holderRows.size);
 	});
 });

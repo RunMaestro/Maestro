@@ -1549,7 +1549,6 @@ describe('createCueRunManager', () => {
 				persist: vi.fn(),
 				remove: vi.fn(),
 				clearSession: vi.fn(),
-				clearAll: vi.fn(),
 				persistedIds: vi.fn(() => new Set<string>()),
 				restoreAll: vi.fn(() => new Map()),
 			};
@@ -1774,28 +1773,32 @@ describe('createCueRunManager', () => {
 			expect(onLog).not.toHaveBeenCalled();
 		});
 
-		it('calls queuePersistence.clearAll on stopAll', () => {
-			const persistence = makeMockPersistence();
-			const deps = createDeps({
-				onCueRun: vi.fn(() => new Promise(() => {})),
-				queuePersistence: persistence,
-			});
-			const manager = createCueRunManager(deps);
-			manager.execute('session-1', 'p1', createEvent(), 'sub-1');
-			manager.stopAll();
-			expect(persistence.clearAll).toHaveBeenCalled();
-		});
-
-		it('calls queuePersistence.clearAll on reset', () => {
-			const persistence = makeMockPersistence();
-			const deps = createDeps({
-				onCueRun: vi.fn(() => new Promise(() => {})),
-				queuePersistence: persistence,
-			});
-			const manager = createCueRunManager(deps);
-			manager.reset();
-			expect(persistence.clearAll).toHaveBeenCalled();
-		});
+		// cue.db is shared by every engine on the data dir, so both teardowns
+		// (stopAll: Cue switched off or Stop All; reset: a stop, including one
+		// after a lost lock) delete this manager's queued rows one by one and
+		// never touch another engine's.
+		it.each(['stopAll', 'reset'] as const)(
+			'removes exactly its own queued rows on %s',
+			(teardown) => {
+				const persistence = makeMockPersistence();
+				const deps = createDeps({
+					onCueRun: vi.fn(() => new Promise(() => {})),
+					queuePersistence: persistence,
+				});
+				const manager = createCueRunManager(deps);
+				manager.execute('session-1', 'p1', createEvent(), 'sub-1'); // dispatched
+				manager.execute('session-1', 'p2', createEvent(), 'sub-2'); // queued
+				manager.execute('session-2', 'p3', createEvent(), 'sub-3'); // dispatched
+				manager.execute('session-2', 'p4', createEvent(), 'sub-4'); // queued
+				const queuedIds = persistence.persist.mock.calls.map((call) => call[1]);
+				expect(queuedIds).toHaveLength(2);
+				manager[teardown]();
+				expect(manager.getQueueStatus().size).toBe(0);
+				expect(persistence.remove.mock.calls.map((call) => call[0]).sort()).toEqual(
+					[...queuedIds].sort()
+				);
+			}
+		);
 
 		it('works without queuePersistence dep (back-compat)', () => {
 			const deps = createDeps({ onCueRun: vi.fn(() => new Promise(() => {})) });
@@ -1928,7 +1931,6 @@ describe('createCueRunManager', () => {
 				persist: vi.fn(),
 				remove: vi.fn(),
 				clearSession: vi.fn(),
-				clearAll: vi.fn(),
 				persistedIds: vi.fn(() => new Set<string>()),
 				restoreAll: vi.fn(() => new Map()),
 			};
@@ -1983,17 +1985,16 @@ describe('createCueRunManager', () => {
 			]);
 		});
 
-		it('discardInMemory forgets the queue without deleting persisted rows; reset() deletes them', () => {
+		it('discardInMemory forgets the queue without deleting persisted rows, and a later reset() leaves them too', () => {
 			const queuePersistence = persistenceSpy();
 			const manager = createCueRunManager(createDeps({ queuePersistence }));
 			manager.setDraining(true);
 			manager.execute('session-1', 'p', createEvent(), 'a');
 			manager.discardInMemory();
 			expect(manager.getQueueStatus().size).toBe(0);
-			expect(queuePersistence.clearAll).not.toHaveBeenCalled();
 			expect(queuePersistence.remove).not.toHaveBeenCalled();
 			manager.reset();
-			expect(queuePersistence.clearAll).toHaveBeenCalledTimes(1);
+			expect(queuePersistence.remove).not.toHaveBeenCalled();
 		});
 
 		it('whenIdle resolves after the last active run finishes and its successors are queued', async () => {

@@ -11,16 +11,28 @@
  * The engine reads its agents once, when it starts, and the host outlives that moment. So the host
  * tells it what the runtime did afterwards: an agent added, removed, or pointed at another
  * directory, and Cue switched on or off in the settings. It is also what gives the engine a runtime
- * to run an `action: autorun` subscription in, and the one that stops the engine's runs before the
- * process goes away, because the engine's own `stop()` forgets its runs without ending them.
+ * to run an `action: autorun` subscription in.
+ *
+ * A host that shuts down drains Cue the way `maestro-cli cue engine start` does (`CueEngine.drain`):
+ * triggers disarm at once, runs in flight get the grace period, and queued events and partial
+ * fan-ins are persisted for the next start. Nothing calls the engine's `stop()` after a drain,
+ * because `stop()` deletes the persisted queue the drain just wrote. Switching Cue off in the
+ * settings is not a shutdown and still clears the queue, as it does on the desktop.
+ *
+ * The lock can also be taken from under a running engine (this process was suspended past the stale
+ * window, say). The engine notices on its heartbeat and stops itself; the host then gives up what it
+ * built around it, ends the runs the engine would otherwise orphan, and reports the new holder.
  */
 
+import { toCueActivityEntries } from '../../main/cue/cue-activity-entries';
 import type { CueAutoRunLaunchParams } from '../../main/cue/cue-autorun-executor';
 import {
 	isCueEngineLockOwnedByThisProcess,
 	readCueEngineLock,
 	type CueEngineLockInfo,
 } from '../../main/cue/cue-engine-lock';
+import { toCueSubscriptionInfos } from '../../main/cue/cue-subscription-entries';
+import type { CueGraphSession, CueRunResult } from '../../shared/cue/contracts';
 import { resolveEncoreFeatures } from '../../shared/encoreFeatureDefaults';
 import type { HostCueState } from '../../shared/maestro-lib/client/host-control';
 import type {
@@ -43,8 +55,15 @@ import { startCueTriggerInbox } from './cue-trigger-inbox';
 /** The part of `CueEngine` the host drives. */
 export interface HostCueEngine {
 	start(reason: 'system-boot'): void;
-	/** Clears every timer, watcher, and queue. Ends no run: `stopAll()` does that. */
+	/** Clears every timer, watcher, and queue, the persisted queue included. Ends no run: `stopAll()` does that. */
 	stop(): void;
+	/**
+	 * Disarm every trigger, let the runs in flight finish for up to `timeoutMs`, stop the rest, and
+	 * persist the queue and partial fan-ins for the next start. Calling it again returns the same promise.
+	 */
+	drain(options: { timeoutMs: number }): Promise<unknown>;
+	/** Cut a drain short, or start one with no wait: every run stopped and killed now, the queue still persisted. */
+	forceStop(): void;
 	triggerSubscription(name: string, prompt?: string, sourceAgentId?: string): boolean;
 	/** The runs in flight. */
 	getActiveRuns(): readonly unknown[];
@@ -53,6 +72,12 @@ export interface HostCueEngine {
 	/** Re-read one agent's `cue.yaml` from `projectRoot` and rebuild its subscriptions. */
 	refreshSession(sessionId: string, projectRoot: string): void;
 	removeSession(sessionId: string): void;
+	/** The activity log: runs in flight and the window restored from cue.db, oldest first. */
+	getActivityLog(): CueRunResult[];
+	/** Every agent's subscriptions, as the desktop's `cue list` reads them. */
+	getGraphData(): CueGraphSession[];
+	/** Write one subscription's `enabled` flag into its cue.yaml, as the dashboard switch does. */
+	setSubscriptionEnabled(subscriptionId: string, enabled: boolean): Promise<boolean>;
 }
 
 /** The part of the in-process runtime Cue uses: Auto Runs to launch, and the events that say what changed. */
@@ -70,7 +95,7 @@ export interface HostCueDeps {
 	isEnabled(settingsFile: string): Promise<boolean>;
 	readLock(dataDir: string): CueEngineLockInfo | null;
 	createEngine(
-		options: Pick<StandaloneCueEngineOptions, 'onLog' | 'runAutoRun'>
+		options: Pick<StandaloneCueEngineOptions, 'onLog' | 'runAutoRun' | 'onLockLost'>
 	): Promise<HostCueEngine>;
 	/** Serve `maestro-cli cue trigger`, which has no desktop WebSocket to reach this process by. Returns the stop. */
 	startInbox(engine: HostCueEngine, dataDir: string): () => void;
@@ -89,8 +114,21 @@ export interface HostCue {
 	state(): HostCueState;
 	/** Cue runs in flight in this host's engine: work a stop would cut off. */
 	activeRuns(): number;
-	/** Stop every run in flight, wait for their processes to exit, then stop the engine. Idempotent. */
+	/**
+	 * Shut Cue down for good: disarm every trigger now, give the runs in flight up to `timeoutMs`,
+	 * stop the rest, and persist what is queued. The first call starts it; later calls return the
+	 * same promise. The host calls it on its first stop signal, so nothing new starts while it waits.
+	 */
+	drain(timeoutMs: number): Promise<void>;
+	/** A second stop signal: cut the drain short, or start one with no wait. The queue is still persisted. */
+	forceStop(): void;
+	/** Shut Cue down: the drain already under way, or one with no wait. Idempotent. */
 	stop(): Promise<void>;
+	/**
+	 * Answer a desktop bridge Cue message from this host's engine, with the desktop's reply type and
+	 * shape, or `undefined` for a message that is not Cue's. See {@link answerCueMessage}.
+	 */
+	answer(message: Record<string, unknown>): Promise<Record<string, unknown> | undefined>;
 }
 
 async function encoreCueEnabled(settingsFile: string): Promise<boolean> {
@@ -264,6 +302,142 @@ async function followAgents(runtime: HostCueRuntime, engine: HostCueEngine): Pro
 }
 
 // ---------------------------------------------------------------------------
+// Answering the CLI's Cue verbs
+// ---------------------------------------------------------------------------
+
+/** The messages `cue list` and `cue activity` send: a read the CLI can also make from disk. */
+const CUE_READ_MESSAGES = new Set(['get_cue_subscriptions', 'get_cue_activity']);
+/** The messages `cue enable|disable` and `cue trigger` send: a change only a running engine can make. */
+const CUE_WRITE_MESSAGES = new Set(['toggle_cue_subscription', 'trigger_cue_subscription']);
+
+/** Why a Cue change cannot be made here, and what to do instead. */
+export function cueUnavailableMessage(state: HostCueState): string {
+	switch (state.state) {
+		case 'disabled':
+			return "Maestro Cue is off in this data directory's settings, so this host runs no Cue engine. Turn it on in Encore Features.";
+		case 'held':
+			return (
+				`This host does not run Cue: a ${state.mode} Cue engine (pid ${state.pid}) holds the Cue lock for this data directory. ` +
+				'Make the change where that engine runs, or stop it and restart the host so the host runs Cue.'
+			);
+		case 'failed':
+			// Also a lock lost to an engine whose lock cannot be read, so not "did not start".
+			return `This host is not running Cue: ${state.reason}`;
+		case 'running':
+			return 'This host is still starting its Cue engine. Retry in a moment.';
+	}
+}
+
+/**
+ * Why a Cue change is refused while the host drains Cue for a shutdown. A toggle would write cue.yaml
+ * for an engine that is going away, and a trigger could only be queued and persisted for whichever
+ * engine starts next, which is not what someone asking to run a subscription now expects.
+ */
+export const CUE_SHUTTING_DOWN_MESSAGE =
+	'This host is shutting down Cue: its runs in flight are finishing and nothing new is accepted. ' +
+	'Make the change once Cue runs again (the next `maestro-cli host start`, the desktop app, or `maestro-cli cue engine start`).';
+
+export interface CueAnswerContext {
+	/** A drain for a shutdown was asked for: the engine finishes what it runs and takes no changes. */
+	shuttingDown?: boolean;
+}
+
+/**
+ * The desktop's Cue answers (`messageHandlers/cue.ts` over `cueCallbacks.ts`), from the engine this
+ * host runs: the same reply types, the same mappings, the same validation.
+ *
+ * Without a running engine a READ is left unanswered (`undefined`), which the server echoes and the
+ * CLI reads as "this host cannot answer": it then reads cue.yaml or cue.db itself, which is right
+ * whatever the reason (Cue held by another engine, failed, or just being switched). A WRITE has no
+ * such fallback, so it is refused with the reason and what to do about it.
+ *
+ * The engine answers only while the state says `running`. A drain keeps it `running`, so reads go on
+ * answering while the runs finish (they are real data), but writes are refused with
+ * {@link CUE_SHUTTING_DOWN_MESSAGE}. After a lock loss the state names the new holder even while the
+ * old engine is still winding down, so reads fall back to disk and a refused write names the holder,
+ * which is where the change has to be made. Errors are the desktop's
+ * `{ type: 'error', message }` frame, which the CLI's `errorFrameMessage` reads.
+ */
+export async function answerCueMessage(
+	message: Record<string, unknown>,
+	liveEngine: HostCueEngine | undefined,
+	state: HostCueState,
+	context: CueAnswerContext = {}
+): Promise<Record<string, unknown> | undefined> {
+	const type = message.type;
+	if (typeof type !== 'string') return undefined;
+	if (!CUE_READ_MESSAGES.has(type) && !CUE_WRITE_MESSAGES.has(type)) return undefined;
+	const sessionId = typeof message.sessionId === 'string' ? message.sessionId : undefined;
+	const error = (text: string): Record<string, unknown> => ({ type: 'error', message: text });
+
+	const engine = state.state === 'running' ? liveEngine : undefined;
+	if (CUE_WRITE_MESSAGES.has(type)) {
+		// A lost lock is the more useful answer: it says who to ask instead.
+		if (context.shuttingDown && state.state !== 'held' && state.state !== 'failed') {
+			return error(CUE_SHUTTING_DOWN_MESSAGE);
+		}
+		if (!engine) return error(cueUnavailableMessage(state));
+	} else if (!engine) {
+		return undefined;
+	}
+
+	switch (type) {
+		case 'get_cue_subscriptions':
+			return {
+				type: 'cue_subscriptions',
+				subscriptions: toCueSubscriptionInfos(engine.getGraphData(), sessionId),
+				timestamp: Date.now(),
+			};
+		case 'get_cue_activity': {
+			const limit = typeof message.limit === 'number' ? message.limit : 50;
+			return {
+				type: 'cue_activity',
+				entries: toCueActivityEntries(engine.getActivityLog(), { sessionId, limit }),
+				timestamp: Date.now(),
+			};
+		}
+		case 'toggle_cue_subscription': {
+			const { subscriptionId, enabled } = message;
+			if (typeof subscriptionId !== 'string' || subscriptionId === '') {
+				return error('Missing subscriptionId');
+			}
+			if (typeof enabled !== 'boolean') return error('Missing or invalid enabled flag');
+			try {
+				const success = await engine.setSubscriptionEnabled(subscriptionId, enabled);
+				return {
+					type: 'toggle_cue_subscription_result',
+					success,
+					subscriptionId,
+					enabled,
+					timestamp: Date.now(),
+				};
+			} catch (caught) {
+				return error(`Failed to toggle Cue subscription: ${errorText(caught)}`);
+			}
+		}
+		default: {
+			// trigger_cue_subscription
+			const { subscriptionName, prompt, sourceAgentId } = message;
+			if (typeof subscriptionName !== 'string' || subscriptionName.trim() === '') {
+				return error('Missing subscriptionName');
+			}
+			if (prompt !== undefined && typeof prompt !== 'string') {
+				return error('Invalid prompt: must be a string when provided');
+			}
+			if (sourceAgentId !== undefined && typeof sourceAgentId !== 'string') {
+				return error('Invalid sourceAgentId: must be a string when provided');
+			}
+			return {
+				type: 'trigger_cue_subscription_result',
+				success: engine.triggerSubscription(subscriptionName, prompt, sourceAgentId),
+				subscriptionName,
+				timestamp: Date.now(),
+			};
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
 // The engine's lifetime in this host
 // ---------------------------------------------------------------------------
 
@@ -303,7 +477,85 @@ export async function startHostCue(
 	const { runtime } = host;
 	let current: HostCueState = { state: 'disabled' };
 	let live: LiveEngine | undefined;
+	/** Set once the host is shutting Cue down: no settings change applies after it. */
 	let closed = false;
+	let unwatchSettings: Unsubscribe = () => undefined;
+	/** The shutdown drain, once asked for. */
+	let draining: Promise<void> | undefined;
+	/** The engine whose drain is under way: its lock loss is the drain's to finish. */
+	let drainingEngine: HostCueEngine | undefined;
+	let forceRequested = false;
+
+	// One change at a time: a toggle that arrives while the engine is still stopping waits for it.
+	let pending: Promise<void> = Promise.resolve();
+	const inOrder = (change: () => Promise<void>): Promise<void> => {
+		pending = pending.then(change, change);
+		return pending;
+	};
+
+	/** Who holds the lock now that this host lost it. */
+	const stateAfterLoss = (): HostCueState => {
+		try {
+			const holder = deps.readLock(host.userDataDir);
+			if (holder && !ownsLock(holder)) return { state: 'held', mode: holder.mode, pid: holder.pid };
+		} catch {
+			// Unreadable is reported below, the same as absent.
+		}
+		return {
+			state: 'failed',
+			reason:
+				'another Cue engine took the Cue lock over, so Cue stopped here, and the lock cannot be read now to say whose it is (see the host log)',
+		};
+	};
+
+	/**
+	 * The engine's heartbeat found another engine holding the lock. It calls this from a timer, then
+	 * stops itself, so this runs outside `inOrder` and must not throw: a throw would skip that stop.
+	 *
+	 * Its runs are ended here rather than left to finish. The engine's `stop()` forgets them without
+	 * ending them, so a run left going would keep editing files and pushing beside the new holder,
+	 * which owns the same triggers and may fire the same subscription again, while its row says
+	 * `running` for good. Ending it records `stopped`, which says what happened.
+	 */
+	const lockLost = (lost: HostCueEngine): void => {
+		// The engine cuts its own drain short on a loss (`forceStop`), which still persists the queue.
+		// Ending the runs here would also clear that queue, so only the report changes.
+		if (drainingEngine === lost) {
+			current = stateAfterLoss();
+			return;
+		}
+		const was = live;
+		// A bring-down already under way has taken the engine out of `live` and ends its runs itself.
+		// A stop still queued has not, and the engine forgets its runs as soon as this returns, so
+		// they are ended here even then.
+		if (!was || was.engine !== lost) return;
+		live = undefined;
+		current = stateAfterLoss();
+		const steps: Array<[string, () => void]> = [
+			['stop the trigger inbox', was.stopInbox],
+			['stop following agents', was.unfollowAgents],
+			['stop the runs in flight', () => was.engine.stopAll()],
+		];
+		for (const [step, run] of steps) {
+			try {
+				run();
+			} catch (error) {
+				consoleCueLog(
+					'error',
+					`[CUE] After losing the Cue lock, could not ${step}: ${errorText(error)}`
+				);
+			}
+		}
+		// A stop or a toggle queued from here on waits for those processes to exit.
+		inOrder(async () => {
+			await deps.waitForRunsToEnd();
+		}).catch((error: unknown) => {
+			consoleCueLog(
+				'error',
+				`[CUE] Waiting for the stopped runs to exit failed: ${errorText(error)}`
+			);
+		});
+	};
 
 	const bringUp = async (): Promise<void> => {
 		let engine: HostCueEngine | undefined;
@@ -328,6 +580,9 @@ export async function startHostCue(
 					consoleCueLog(level, message);
 				},
 				...(runtime ? { runAutoRun: runAutoRunInRuntime(runtime) } : {}),
+				onLockLost: () => {
+					if (engine) lockLost(engine);
+				},
 			});
 			if (runtime) unfollowAgents = await followAgents(runtime, engine);
 			engine.start('system-boot');
@@ -350,6 +605,12 @@ export async function startHostCue(
 		}
 	};
 
+	/**
+	 * Cue switched off in the settings while the host keeps running. Not a shutdown, so not a drain:
+	 * the queue is cleared, as switching Cue off on the desktop clears it. A drain stamps what it
+	 * persists, which exempts it from the stale drop at restore, so a queue kept here would replay
+	 * whenever someone switched Cue back on, however old it was by then.
+	 */
 	const bringDown = async (): Promise<void> => {
 		const was = live;
 		if (!was) return;
@@ -367,17 +628,10 @@ export async function startHostCue(
 		}
 	};
 
-	// One change at a time: a toggle that arrives while the engine is still stopping waits for it.
-	let pending: Promise<void> = Promise.resolve();
-	const inOrder = (change: () => Promise<void>): Promise<void> => {
-		pending = pending.then(change, change);
-		return pending;
-	};
-
 	await inOrder(bringUp);
 
 	// Cue switched on or off in the settings while the host runs: the same rules, applied again.
-	const unwatchSettings =
+	unwatchSettings =
 		runtime?.events.subscribe(
 			(event) => {
 				if (event.type !== 'settings.changed') return;
@@ -399,15 +653,50 @@ export async function startHostCue(
 			{ types: ['settings.changed'] }
 		) ?? (() => undefined);
 
+	const drain = (timeoutMs: number): Promise<void> => {
+		if (draining) return draining;
+		closed = true;
+		unwatchSettings();
+		// In order: a settings change under way finishes first, and its engine is the one drained.
+		draining = inOrder(async () => {
+			const was = live;
+			if (!was) return;
+			// Nothing new comes in while the runs finish: no `cue trigger`, no yaml re-read.
+			was.stopInbox();
+			was.unfollowAgents();
+			drainingEngine = was.engine;
+			try {
+				if (forceRequested) was.engine.forceStop();
+				await was.engine.drain({ timeoutMs });
+			} catch (error) {
+				// As `cue engine start` does: a drain that failed is forced, which still persists.
+				consoleCueLog('error', `[CUE] Drain failed: ${errorText(error)}`);
+				was.engine.forceStop();
+			} finally {
+				drainingEngine = undefined;
+				// Never `engine.stop()` here: it would delete the queue the drain persisted.
+				if (live === was) live = undefined;
+				// A loss during the drain already said who holds Cue now.
+				if (current.state === 'running') current = { state: 'disabled' };
+			}
+		});
+		return draining;
+	};
+
 	return {
 		state: () => current,
+		// Runs a drain is still waiting for count, so the host waits for them too.
 		activeRuns: () => live?.engine.getActiveRuns().length ?? 0,
-		stop: () => {
-			if (!closed) {
-				closed = true;
-				unwatchSettings();
-			}
-			return inOrder(bringDown);
+		answer: (message) =>
+			answerCueMessage(message, live?.engine, current, { shuttingDown: draining !== undefined }),
+		drain,
+		forceStop: () => {
+			forceRequested = true;
+			if (drainingEngine) drainingEngine.forceStop();
+			// Not started yet: start one, which sees the request.
+			else void drain(0);
 		},
+		// Then whatever a lock loss queued behind it: the wait for the runs it ended.
+		stop: () => drain(0).then(() => pending),
 	};
 }

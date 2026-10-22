@@ -82,7 +82,6 @@ export interface CueQueuePersistence {
 	persist(sessionId: string, persistId: string, entry: PersistableQueueEntry): void;
 	remove(persistId: string): void;
 	clearSession(sessionId: string): void;
-	clearAll(): void;
 	/**
 	 * Ids of every row currently persisted. The engine snapshots this BEFORE
 	 * it initializes sessions, because initializing one can enqueue (and so
@@ -158,18 +157,6 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 			deps.onLog(
 				'warn',
 				`[CUE] Failed to clear persisted queue for session ${sessionId}: ${err instanceof Error ? err.message : String(err)}`
-			);
-		}
-	}
-
-	function clearAll(): void {
-		try {
-			clearPersistedQueue();
-		} catch (err) {
-			void captureException(err, { operation: 'cueQueuePersistence.clearAll' });
-			deps.onLog(
-				'warn',
-				`[CUE] Failed to clear all persisted queue: ${err instanceof Error ? err.message : String(err)}`
 			);
 		}
 	}
@@ -386,5 +373,5 @@ export function createCueQueuePersistence(deps: CueQueuePersistenceDeps): CueQue
 		return restored;
 	}
 
-	return { persist, remove, clearSession, clearAll, persistedIds, restoreAll };
+	return { persist, remove, clearSession, persistedIds, restoreAll };
 }
