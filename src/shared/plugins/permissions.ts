@@ -275,6 +275,8 @@ export interface PermissionGrant {
 	 * user clicks must not thereby dispatch on a timer. Revocable like any grant.
 	 */
 	unattended?: boolean;
+	/** Host-stamped separate original-audio export consent; never inferred from a legacy scope. */
+	originalAudioExport?: boolean;
 }
 
 export interface PermissionParseResult {
@@ -491,6 +493,12 @@ export function isPermitted(
 	const scopeKind = CAPABILITY_SCOPE_KIND[capability];
 	for (const grant of grants) {
 		if (grant.capability !== capability) continue;
+		if (
+			capability === 'media:tools' &&
+			target === 'discord-original-audio' &&
+			grant.originalAudioExport !== true
+		)
+			continue;
 		if (scopeKind === 'none') return true;
 		if (scopeKind === 'allowlist') {
 			// Service pairs must also be valid when read from persisted grants;

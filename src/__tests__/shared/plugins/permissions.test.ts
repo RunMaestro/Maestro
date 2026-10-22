@@ -441,3 +441,38 @@ describe('services:call exact provider/service allowlists', () => {
 		}
 	);
 });
+
+describe('original audio requires explicit host-minted export provenance', () => {
+	it.each([undefined, false, true])(
+		'requires the marker on the exact matching grant (%s)',
+		(originalAudioExport) => {
+			const grants: PermissionGrant[] = [
+				{
+					capability: 'media:tools',
+					scope: 'discord-voice,discord-original-audio',
+					grantedAt: 1,
+					originalAudioExport,
+				},
+			];
+			expect(isPermitted(grants, 'media:tools', 'discord-voice')).toBe(true);
+			expect(isPermitted(grants, 'media:tools', 'discord-original-audio')).toBe(
+				originalAudioExport === true
+			);
+		}
+	);
+	it('cannot combine a marked voice grant with an old unmarked original grant', () => {
+		const grants: PermissionGrant[] = [
+			{
+				capability: 'media:tools',
+				scope: 'discord-voice',
+				grantedAt: 1,
+				originalAudioExport: true,
+			},
+			{ capability: 'media:tools', scope: 'discord-original-audio', grantedAt: 1 },
+		];
+		expect(isPermitted(grants, 'media:tools', 'discord-original-audio')).toBe(false);
+		expect(
+			grantsFromRequests([{ capability: 'media:tools', scope: 'discord-original-audio' }], 1)[0]
+		).not.toHaveProperty('originalAudioExport');
+	});
+});

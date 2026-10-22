@@ -616,3 +616,38 @@ describe('Dispatch allowlist during renewed consent', () => {
 		expect(f.confirm()).toEqual({ ok: false, reason: 'offer-changed' });
 	});
 });
+
+describe('original audio export consent', () => {
+	it.each([false, true])('requires an independent export acceptance (%s)', async (accepted) => {
+		const { minter, captured, mints } = setup({
+			requested: [{ capability: 'media:tools', scope: 'discord-voice,discord-original-audio' }],
+		});
+		await minter.requestConsent('p');
+		expect(
+			minter.confirm(SENDER, {
+				pluginId: 'p',
+				nonce: captured.nonce!,
+				approved: ['media:tools'],
+				originalAudioExport: accepted,
+			}).ok
+		).toBe(true);
+		expect(mints[0].caps[0].scope).toBe(
+			accepted ? 'discord-voice,discord-original-audio' : 'discord-voice'
+		);
+		expect(mints[0].caps[0].originalAudioExport).toBe(accepted ? true : undefined);
+	});
+	it('does not upgrade an existing voice-only offer even with export checked', async () => {
+		const { minter, captured, mints } = setup({
+			requested: [{ capability: 'media:tools', scope: 'discord-voice' }],
+		});
+		await minter.requestConsent('p');
+		minter.confirm(SENDER, {
+			pluginId: 'p',
+			nonce: captured.nonce!,
+			approved: ['media:tools'],
+			originalAudioExport: true,
+		});
+		expect(mints[0].caps[0].scope).toBe('discord-voice');
+		expect(mints[0].caps[0]).not.toHaveProperty('originalAudioExport');
+	});
+});

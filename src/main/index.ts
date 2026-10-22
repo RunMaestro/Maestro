@@ -2517,7 +2517,11 @@ app
 				(getLiveSessions() as SessionInfo[]).find((session) => session.id === agentId),
 			detectAgent: async (type) => {
 				const detected = await agentDetector?.getAgent(type);
-				return { available: detected?.available === true, path: detected?.path };
+				return {
+					available: detected?.available === true,
+					path: detected?.path,
+					customPath: detected?.customPath,
+				};
 			},
 			getAgentConfig: getAgentConfigForAgent,
 			getGlobalEnvVars: () => store.get('shellEnvVars', {}),
@@ -2744,24 +2748,31 @@ app
 					);
 				},
 				providerSessions: pluginProviderSessions,
-				recordRelayTurn: async (agentId, prompt, result) => {
+				recordRelayTurn: async (agentId, prompt, result, beforeWrite) => {
+					beforeWrite?.();
 					const agent = (sessionsStore.get('sessions', []) as SessionInfo[]).find(
 						(session) => session.id === agentId
 					);
 					if (!agent) return;
 					if (result.sessionId) markRelaySession(agent, result.sessionId);
 					const projectPath = relayProjectPath(agent);
-					await getHistoryManager().addEntry(agent.id, projectPath, {
-						id: crypto.randomUUID(),
-						type: 'RELAY',
-						timestamp: Date.now(),
-						summary: (result.response || result.error || prompt).slice(0, 500),
-						fullResponse: result.response || undefined,
+					await getHistoryManager().addEntry(
+						agent.id,
 						projectPath,
-						sessionId: agent.id,
-						agentSessionId: result.sessionId || undefined,
-						success: result.success,
-					});
+						{
+							id: crypto.randomUUID(),
+							type: 'RELAY',
+							timestamp: Date.now(),
+							summary: (result.response || result.error || prompt).slice(0, 500),
+							fullResponse: result.response || undefined,
+							projectPath,
+							sessionId: agent.id,
+							agentSessionId: result.sessionId || undefined,
+							success: result.success,
+						},
+						undefined,
+						beforeWrite
+					);
 				},
 				// Direct plugin dispatch is never user-present, so it requires the
 				// separate unattended consent on TOP of the interactive allowlist grant
@@ -2984,6 +2995,7 @@ app
 				approved?: unknown;
 				approvedHighRisk?: unknown;
 				unattended?: unknown;
+				originalAudioExport?: unknown;
 			};
 			const pluginId = typeof p.pluginId === 'string' ? p.pluginId : '';
 			const nonce = typeof p.nonce === 'string' ? p.nonce : '';
@@ -3001,6 +3013,7 @@ app
 				approved,
 				approvedHighRisk,
 				unattended,
+				originalAudioExport: p.originalAudioExport === true,
 			});
 			closeConsentWindow();
 			if (outcome.ok) {

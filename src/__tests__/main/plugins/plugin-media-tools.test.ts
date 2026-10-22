@@ -1,9 +1,12 @@
+import { createHash } from 'node:crypto';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { PluginMediaTools, resolveMediaRuntime } from '../../../main/plugins/plugin-media-tools';
 import { MEDIA_LIMITS } from '../../../shared/plugins/media-tools';
+import { createPluginHeadlessAgentRunner } from '../../../main/plugins/plugin-headless-agent-runner';
+import type { SessionInfo } from '../../../shared/types';
 import { PluginServiceHost } from '../../../main/plugins/plugin-service-host';
 import {
 	validatePluginManifest,
@@ -142,6 +145,286 @@ async function download(jobId: string): Promise<string> {
 }
 
 describe('media tools boundary', () => {
+	it.each([
+		'local',
+		'ssh',
+		'routed',
+		'auto',
+		'provider-auto',
+		'provider-auto-spaced',
+		'provider-model',
+		'custom',
+		'provider-custom',
+		'cached-custom',
+		'sandbox',
+	] as const)(
+		'prepares the final runner prompt only for an accessible destination: %s',
+		async (destination) => {
+			const jobId = await open();
+			const audioId = await download(jobId);
+			const spawn = vi.fn(async (_type, _cwd, prompt) => {
+				const metadata = JSON.parse(
+					prompt
+						.split('[Host original audio attachment - staging receipt only]\n')[1]
+						.split('\n')[0]
+				);
+				expect(await fs.readFile(metadata.path)).toEqual(Buffer.from([79, 103, 103, 83, 255]));
+				expect(path.dirname(path.dirname(metadata.path))).toBe(root);
+				expect(metadata.bytes).toBe(5);
+				expect(prompt).not.toContain('https://');
+				return {
+					success: true,
+					response: 'fixture provider answer',
+					agentSessionId: 'fixture-session',
+				};
+			});
+			const runner = createPluginHeadlessAgentRunner({
+				getAgent: () =>
+					({
+						id: 'a',
+						toolType: 'codex',
+						cwd: root,
+						...(destination === 'ssh' ? { sessionSshRemoteConfig: { enabled: true } } : {}),
+						...(destination === 'routed' ? { runOn: { source: 'remote', model: 'model' } } : {}),
+						...(destination === 'auto' ? { customModel: 'auto' } : {}),
+						...(destination === 'custom' ? { customPath: '/unproven/custom' } : {}),
+					}) as SessionInfo,
+				getAgentConfig: () =>
+					destination === 'provider-custom'
+						? { customPath: '/provider/wrapper' }
+						: destination === 'sandbox'
+							? { customArgs: '--sandbox' }
+							: destination === 'provider-auto'
+								? { model: 'auto' }
+								: destination === 'provider-auto-spaced'
+									? { model: ' Auto ' }
+									: destination === 'provider-model'
+										? { model: 'gpt-5.4' }
+										: {},
+				detectAgent: async () => ({
+					available: true,
+					path: '/fixture/codex',
+					...(destination === 'cached-custom' ? { customPath: '/cached/wrapper' } : {}),
+				}),
+				hasPluginTools: () => false,
+				spawn,
+				prepareSystemPrompt: async () => 'fixture system prompt',
+				issueRunToken: vi.fn(),
+				revokeRunToken: vi.fn(),
+				cliScriptPath: () => '/fixture/cli',
+				audit: vi.fn(),
+			});
+			const result = tools.forwardOriginal(
+				'p',
+				{ jobId, audioId },
+				() => {},
+				(lease) =>
+					runner(
+						'a',
+						'Analyze this recording.',
+						undefined,
+						lease.signal,
+						'relay',
+						undefined,
+						undefined,
+						false,
+						{ originalAttachment: lease }
+					)
+			);
+			if (destination === 'local' || destination === 'provider-model') {
+				await expect(result).resolves.toMatchObject({
+					success: true,
+					originalAttachments: [
+						{
+							bytes: 5,
+							filename: expect.stringMatching(/\.ogg$/),
+							sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+						},
+					],
+				});
+				expect(spawn).toHaveBeenCalledOnce();
+			} else {
+				await expect(result).rejects.toMatchObject({ code: 'MediaUnavailable' });
+				expect(spawn).not.toHaveBeenCalled();
+			}
+			expect(await fs.readdir(root)).toEqual([]);
+		}
+	);
+
+	it('keeps a staged original out of a normal git add while its provider lease is live', async () => {
+		const { execFileSync } =
+			await vi.importActual<typeof import('node:child_process')>('node:child_process');
+		const cwd = path.join(root, 'project');
+		await fs.mkdir(cwd);
+		execFileSync('git', ['init', '--quiet', cwd]);
+		await fs.writeFile(path.join(cwd, 'README.md'), 'synthetic project');
+		const jobId = await open(),
+			audioId = await download(jobId);
+		await tools.forwardOriginal(
+			'p',
+			{ jobId, audioId },
+			() => {},
+			async (lease) => {
+				const staged = await lease.prepare(cwd);
+				const relative = path.relative(cwd, staged.path).split(path.sep).join('/');
+				expect(
+					execFileSync('git', ['check-ignore', '--', relative], { cwd, encoding: 'utf8' }).trim()
+				).toBe(relative);
+				expect(await fs.readFile(path.join(path.dirname(staged.path), '.gitignore'), 'utf8')).toBe(
+					'*\n'
+				);
+				if (process.platform !== 'win32')
+					expect(
+						(await fs.stat(path.join(path.dirname(staged.path), '.gitignore'))).mode & 0o777
+					).toBe(0o600);
+				execFileSync('git', ['add', '-A'], { cwd });
+				expect(execFileSync('git', ['ls-files'], { cwd, encoding: 'utf8' }).trim()).toBe(
+					'README.md'
+				);
+				expect(await fs.readFile(staged.path)).toEqual(Buffer.from([79, 103, 103, 83, 255]));
+			}
+		);
+	});
+
+	it.each(['foreign', 'incomplete', 'decoded', 'alias'] as const)(
+		'rejects %s handles before staging',
+		async (mode) => {
+			const jobId = await open();
+			const audioId = mode === 'incomplete' ? 'not-downloaded' : await download(jobId);
+			const ref =
+				mode === 'decoded'
+					? ((await tools.call('p', 'media.decode', { jobId, audioId })) as { audioId: string })
+							.audioId
+					: mode === 'alias'
+						? 'opaque-service-alias'
+						: audioId;
+			const run = vi.fn();
+			await expect(
+				tools.forwardOriginal(
+					mode === 'foreign' ? 'other' : 'p',
+					{ jobId, audioId: ref },
+					() => {},
+					run
+				)
+			).rejects.toMatchObject({ code: 'MediaInvalid' });
+			expect(run).not.toHaveBeenCalled();
+		}
+	);
+
+	it.each(['close', 'revoke'] as const)(
+		'cancels a quiet run on %s, drains real work and suppresses late success',
+		async (mode) => {
+			const jobId = await open();
+			const audioId = await download(jobId);
+			let finish!: () => void;
+			let ready!: () => void;
+			const started = new Promise<void>((resolve) => {
+				ready = resolve;
+			});
+			const completion = new Promise<void>((resolve) => {
+				finish = resolve;
+			});
+			let signal!: AbortSignal;
+			let staged = '';
+			const pending = tools.forwardOriginal(
+				'p',
+				{ jobId, audioId },
+				() => {},
+				async (lease) => {
+					staged = (await lease.prepare(root)).path;
+					lease.handoff();
+					signal = lease.signal;
+					ready();
+					await completion; // a runner that takes time to terminate after cancellation
+					return 'late text';
+				}
+			);
+			const rejection = expect(pending).rejects.toMatchObject({
+				code: mode === 'close' ? 'MediaCancelled' : 'MediaDenied',
+			});
+			await started;
+			let closed = false;
+			const closing =
+				mode === 'close'
+					? tools.call('p', 'media.close', { jobId }).then(() => {
+							closed = true;
+						})
+					: undefined;
+			if (mode === 'revoke') {
+				grant = false;
+				await vi.waitFor(() => expect(signal.aborted).toBe(true));
+			}
+			expect(signal.aborted).toBe(true);
+			expect(closed).toBe(false);
+			expect((await fs.stat(staged)).size).toBe(5);
+			finish();
+			await rejection;
+			await closing;
+			await expect(fs.stat(staged)).rejects.toMatchObject({ code: 'ENOENT' });
+			await tools.call('p', 'media.close', { jobId });
+		}
+	);
+
+	it('retains accounting and replaces the media deadline only after validated staging handoff', async () => {
+		vi.useFakeTimers();
+		const jobId = await open();
+		const audioId = await download(jobId);
+		await tools.forwardOriginal(
+			'p',
+			{ jobId, audioId },
+			() => {},
+			async (lease) => {
+				await lease.prepare(root);
+				lease.handoff();
+				vi.useFakeTimers();
+				// The original watchdog was disarmed; quiet-run revocation still polls.
+				await vi.advanceTimersByTimeAsync(MEDIA_LIMITS.jobTimeoutMs + 1);
+				expect(lease.signal.aborted).toBe(false);
+				expect(tools.ownsCloseRequest('p', { jobId })).toBe(true);
+				vi.useRealTimers();
+			}
+		);
+	});
+
+	it('stages only the byte-identical original under a generated name and drains before cleanup', async () => {
+		const jobId = await open();
+		const audioId = await download(jobId);
+		let staged = '';
+		const result = await tools.forwardOriginal(
+			'p',
+			{ jobId, audioId },
+			() => {},
+			async (lease) => {
+				const attachment = await lease.prepare(root);
+				staged = attachment.path;
+				expect(path.basename(staged)).toMatch(/^[a-f0-9-]+\.ogg$/);
+				expect(await fs.readFile(staged)).toEqual(Buffer.from([79, 103, 103, 83, 255]));
+				expect(attachment.receipt).toMatchObject({
+					bytes: 5,
+					sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+				});
+				lease.handoff();
+				await expect(
+					tools.forwardOriginal(
+						'p',
+						{ jobId, audioId },
+						() => {},
+						async () => {}
+					)
+				).rejects.toMatchObject({ code: 'MediaBusy' });
+				return attachment.receipt;
+			}
+		);
+		expect(result.bytes).toBe(5);
+		expect(result.sha256).toBe(
+			createHash('sha256')
+				.update(Buffer.from([79, 103, 103, 83, 255]))
+				.digest('hex')
+		);
+		await expect(fs.stat(staged)).rejects.toMatchObject({ code: 'ENOENT' });
+		await tools.call('p', 'media.close', { jobId });
+	});
+
 	it('requires an exact grant, rejects broad/network/spawn substitutes, and supports release after revoke', async () => {
 		for (const caps of [
 			[],

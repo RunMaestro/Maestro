@@ -16,6 +16,7 @@ import {
 	type HostHandlerDeps,
 	type PluginSessionMetadata,
 } from '../../../main/plugins/plugin-host-handlers';
+import { PluginMediaTools } from '../../../main/plugins/plugin-media-tools';
 import { ActionGuard } from '../../../main/plugins/action-guard';
 import { PluginKvStore } from '../../../main/plugins/plugin-kv-store';
 import { PluginAgentSessionBindings } from '../../../main/plugins/plugin-agent-session-bindings';
@@ -2988,3 +2989,190 @@ describe('host media configuration', () => {
 		}
 	});
 });
+
+describe('agents.send original audio gate', () => {
+	const ref = {
+		jobId: '00000000-0000-0000-0000-000000000001',
+		audioId: '00000000-0000-0000-0000-000000000002',
+	};
+	it.each([
+		{ originalAttachments: [] },
+		{ originalAttachments: [ref, ref] },
+		{ originalAttachments: [{ ...ref, filename: '../../injection.ogg' }] },
+		{ originalAttachments: [{ jobId: ref.jobId, audioId: 'service-alias' }] },
+	])(
+		'rejects malformed or more than one original before any runner',
+		async ({ originalAttachments }) => {
+			const sendAgent = vi.fn();
+			const handlers = buildHostCallHandlers(
+				makeDeps({ sendAgent, dispatchUnattendedAllowed: () => true })
+			);
+			await expect(
+				handlers['agents.send']!('p', {
+					agentId: 'a',
+					prompt: 'hello',
+					opts: { originalAttachments },
+				})
+			).rejects.toMatchObject({ code: 'MediaInvalid' });
+			expect(sendAgent).not.toHaveBeenCalled();
+		}
+	);
+	it.each(['discord-voice', 'discord-voice,discord-original-audio'])(
+		'rejects an unmarked legacy grant %s before consuming the handle',
+		async (scope) => {
+			const forward = vi.spyOn(PluginMediaTools.prototype, 'forwardOriginal');
+			try {
+				const grants: PermissionGrant[] = [
+					{ capability: 'agents:dispatch', scope: 'a', grantedAt: 1 },
+					{ capability: 'media:tools', scope, grantedAt: 1 },
+				];
+				const sendAgent = vi.fn();
+				const handlers = buildHostCallHandlers(
+					makeDeps({
+						broker: brokerFor(() => grants),
+						sendAgent,
+						isPluginTrusted: () => true,
+						dispatchUnattendedAllowed: () => true,
+						serviceAllowed: (id, capability, target) => isPermitted(grants, capability, target),
+					})
+				);
+				await expect(
+					handlers['agents.send']!('p', {
+						agentId: 'a',
+						prompt: 'hello',
+						opts: { originalAttachments: [ref] },
+					})
+				).rejects.toMatchObject({ code: 'MediaDenied' });
+				expect(forward).not.toHaveBeenCalled();
+				expect(sendAgent).not.toHaveBeenCalled();
+			} finally {
+				forward.mockRestore();
+			}
+		}
+	);
+});
+
+it.each(['recording', 'cleanup'])(
+	'does not mint original-send ownership when export is revoked during asynchronous %s',
+	async (phase) => {
+		let exportAllowed = true;
+		const forward = vi
+			.spyOn(PluginMediaTools.prototype, 'forwardOriginal')
+			.mockImplementation(async (_plugin, _ref, authorize, run) => {
+				const value = await run({
+					signal: new AbortController().signal,
+					check: authorize,
+					waitFor: async (value) => value,
+					prepare: vi.fn(),
+					handoff: vi.fn(),
+				});
+				authorize();
+				if (phase === 'cleanup') exportAllowed = false;
+				return value;
+			});
+		try {
+			const deps = makeDeps({
+				serviceAllowed: () => exportAllowed,
+				dispatchUnattendedAllowed: () => true,
+				sendAgent: async () => ({
+					success: true,
+					response: 'must be withheld',
+					sessionId: 'late-original-owner',
+				}),
+				recordRelayTurn: async () => {
+					await Promise.resolve();
+					if (phase === 'recording') exportAllowed = false;
+				},
+			});
+			const handlers = buildHostCallHandlers(deps);
+			await expect(
+				handlers['agents.send']!('sh.maestro.relay', {
+					agentId: 'a',
+					prompt: 'hello',
+					opts: {
+						originalAttachments: [
+							{
+								jobId: '00000000-0000-0000-0000-000000000001',
+								audioId: '00000000-0000-0000-0000-000000000002',
+							},
+						],
+					},
+				})
+			).rejects.toMatchObject({ code: 'MediaDenied' });
+			expect(deps.providerSessions!.isOwned('sh.maestro.relay', 'a', 'late-original-owner')).toBe(
+				false
+			);
+		} finally {
+			forward.mockRestore();
+		}
+	}
+);
+
+it.each([true, false])(
+	'publishes original ownership with the final response guard only (authorized: %s)',
+	async (authorized) => {
+		let allowed = true;
+		let publish!: () => void;
+		const forward = vi
+			.spyOn(PluginMediaTools.prototype, 'forwardOriginal')
+			.mockImplementation(async (_id, _ref, authorize, run) => {
+				return run({
+					signal: new AbortController().signal,
+					check: authorize,
+					waitFor: async (value) => value,
+					prepare: vi.fn(),
+					handoff: vi.fn(),
+				});
+			});
+		try {
+			const deps = makeDeps({
+				serviceAllowed: () => allowed,
+				dispatchUnattendedAllowed: () => true,
+				sendAgent: async () => ({
+					success: true,
+					response: 'fixture',
+					sessionId: 'publication-session',
+				}),
+			});
+			const handlers = buildHostCallHandlers(deps);
+			await handlers['agents.send']!(
+				'sh.maestro.relay',
+				{
+					agentId: 'a',
+					prompt: 'hello',
+					opts: {
+						originalAttachments: [
+							{
+								jobId: '00000000-0000-0000-0000-000000000001',
+								audioId: '00000000-0000-0000-0000-000000000002',
+							},
+						],
+					},
+				},
+				{
+					onProgress: () => {},
+					setResponseGuard: (guard) => {
+						publish = guard;
+					},
+				}
+			);
+			expect(deps.providerSessions!.isOwned('sh.maestro.relay', 'a', 'publication-session')).toBe(
+				false
+			);
+			allowed = authorized;
+			if (authorized) {
+				publish();
+				expect(deps.providerSessions!.isOwned('sh.maestro.relay', 'a', 'publication-session')).toBe(
+					true
+				);
+			} else {
+				expect(publish).toThrow('MediaDenied');
+				expect(deps.providerSessions!.isOwned('sh.maestro.relay', 'a', 'publication-session')).toBe(
+					false
+				);
+			}
+		} finally {
+			forward.mockRestore();
+		}
+	}
+);

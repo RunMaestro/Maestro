@@ -188,3 +188,60 @@ End-to-end voice still needs the Relay production adapter, permitted/signed plug
 identity, model-directory configuration, a valid multilingual model and a voice
 message in an authorized bound thread. A source/unit/native smoke check does not
 prove live Discord delivery.
+
+## Original Discord audio forwarding (API 1.30 / SDK 0.24)
+
+`agents.send(agentId, prompt, {sessionId?, originalAttachments: [{jobId, audioId}]})`
+accepts exactly one completed original OGG handle from the caller's own job. It
+consumes that handle once; decoded handles, service aliases, foreign jobs and
+concurrent reuse fail closed. Continue to close the job in `finally`.
+
+The manifest must request `media:tools` scope
+`discord-voice,discord-original-audio`. Local voice processing still requires
+`discord-voice`. Original export additionally requires the explicit, unchecked
+Host consent checkbox disclosing sharing with the permitted agent and configured
+provider. Old bundled approvals mint only voice authority. Re-consent with export
+unchecked removes export authority while retaining voice processing; it does not
+upgrade old grants. Exact agent dispatch, Unattended, signature, provider-session
+ownership and the existing prompt risk policy apply unchanged.
+
+The Host probes the original and stages a byte-identical copy in a private random
+directory under the actual agent cwd, with a random `.ogg` basename. A private
+`.gitignore` containing `*` is written before any original bytes, excluding staging
+from ordinary Git adds. This is accidental-commit protection, not a restriction
+on a deliberately forced add by the already permitted agent. The final
+prompt receives the generated local path, byte count and SHA-256. No uploader
+filename or CDN URL is copied into this block. The result's optional
+`originalAttachments: [{filename,bytes,sha256}]` proves staging only, never model
+inspection or audio quality. Failures reject with an allowlisted `Media*` code;
+provider/network diagnostics are not returned by this forwarding path.
+
+Only local standard Codex and Claude API harness destinations are supported.
+SSH, Run on/Auto routing, custom launchers or custom arguments, and other provider
+harnesses fail `MediaUnavailable`; the Host never changes the selected model or
+routes a turn elsewhere to accommodate an attachment.
+
+The existing 8 MiB download ceiling and 120 second total media deadline cover
+download, probe and staging. Validated handoff replaces that deadline with the
+existing bounded headless runner lease, while preserving original job accounting
+and the 250 ms live authorization checks. Each forwarded job holds at most one
+additional 8 MiB snapshot. `media.close` aborts the associated send, waits for the
+actual runner termination, then removes both original and staged artifacts. It
+remains release-only after revocation and idempotent after successful cleanup.
+The send wrapper never waits on itself during close. Native voice keeps its
+existing media deadline and transcription behavior.
+
+Original-bearing sends opt into the production spawner's `requireProcessExit`
+contract. Its normal forced-stop timer still requests SIGKILL and closes output,
+but does not confirm termination. These sends retain their job, source, snapshot
+and directory reservations until the supervisor observes `exit`/`close`, an
+already recorded exit status, or a failed spawn with no PID. An error on a process
+that started is not exit evidence. If termination cannot be observed, cleanup and
+`media.close` remain pending and those bounded resources stay reserved; the Host
+must not claim successful cleanup. A late observed exit resumes normal cleanup.
+Generic text and native voice keep the existing timely forced-stop behavior.
+
+This extraction retains the current `rc` 60-minute runner bound (61-minute proof
+completion bound); original-audio preflight consumes that budget. Ordinary sends
+retain their existing full runner budget after preflight. The silence-based
+watchdog in upstream PR #1847 is a separate change.

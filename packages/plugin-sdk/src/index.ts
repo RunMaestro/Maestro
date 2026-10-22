@@ -441,7 +441,9 @@ export function describeCapability(capability: PluginCapability): string {
 // --- Host API version (from shared/plugins/host-api.ts) ---------------------
 
 /**
- * The host API version this Maestro build implements. 1.25.0 adds resumable
+ * The host API version this Maestro build implements. 1.30.0 adds separately
+ * consented bounded original-audio staging for supported local agent sends.
+ * 1.25.0 adds resumable
  * agents.send with public progress, verified plugin-tool caller identity, and
  * isolated agents.generateTitle. 1.24.0 added host-mediated services.
  * 1.23.0 adds independent
@@ -477,7 +479,7 @@ export function describeCapability(capability: PluginCapability): string {
  * `ui:contribute` / `ui:panel` / `ui:render-unsafe`; 1.3.0 added `tools` +
  * `keybindings`; 1.2.0 added `transcripts:read`.
  */
-export const HOST_API_VERSION = '1.25.0';
+export const HOST_API_VERSION = '1.30.0';
 
 /** Result of checking a plugin's declared host-API requirement. */
 export interface HostApiCompatibility {
@@ -1550,6 +1552,18 @@ export type AgentSendProgressEvent =
 			summary?: string;
 	  };
 
+/** One completed original from the authenticated plugin's own media job. */
+export interface OriginalAttachmentRef {
+	jobId: string;
+	audioId: string;
+}
+/** Staging evidence only; does not prove provider inspection of audio. */
+export interface OriginalAttachmentReceipt {
+	filename: string;
+	bytes: number;
+	sha256: string;
+}
+
 export interface MaestroAgentsApi {
 	list(): Promise<unknown>;
 	get(agentId: string): Promise<unknown>;
@@ -1560,12 +1574,17 @@ export interface MaestroAgentsApi {
 	send(
 		agentId: string,
 		prompt: string,
-		opts?: { sessionId?: string; onProgress?: (event: AgentSendProgressEvent) => void }
+		opts?: {
+			sessionId?: string;
+			onProgress?: (event: AgentSendProgressEvent) => void;
+			originalAttachments?: readonly [OriginalAttachmentRef];
+		}
 	): Promise<{
 		success: boolean;
 		response: string | null;
 		sessionId: string | null;
 		error?: string;
+		originalAttachments?: readonly [OriginalAttachmentReceipt];
 	}>;
 }
 

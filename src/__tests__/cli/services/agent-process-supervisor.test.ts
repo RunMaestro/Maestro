@@ -12,39 +12,59 @@ afterEach(() => {
 });
 
 describe('headless process supervision', () => {
-	it.each(['startup', 'lifetime', 'abort'] as const)(
-		'terminates %s and releases the caller even when close never arrives',
-		async (cause) => {
-			vi.useFakeTimers();
-			const child = Object.assign(new EventEmitter(), {
-				kill: vi.fn(),
-				exitCode: null,
-				signalCode: null,
-				stdout: { destroy: vi.fn() },
-				stderr: { destroy: vi.fn() },
-			}) as unknown as ChildProcess;
-			const controller = new AbortController();
-			const onStop = vi.fn();
-			const onForcedStop = vi.fn(() => supervision.dispose());
-			const supervision = superviseAgentProcess(child, {
-				startupMs: cause === 'startup' ? 120_000 : undefined,
-				timeoutMs: 3_600_000,
-				signal: controller.signal,
-				onStop,
-				onForcedStop,
-			});
-			if (cause === 'abort') controller.abort();
-			else await vi.advanceTimersByTimeAsync(cause === 'startup' ? 120_000 : 3_600_000);
-			expect(onStop).toHaveBeenCalledTimes(1);
-			expect(child.kill).toHaveBeenCalledWith('SIGKILL');
-			expect(onForcedStop).not.toHaveBeenCalled();
-			await vi.advanceTimersByTimeAsync(HEADLESS_PROCESS_CLOSE_TIMEOUT_MS);
-			expect(child.kill).toHaveBeenLastCalledWith('SIGKILL');
-			expect(onForcedStop).toHaveBeenCalledTimes(1);
-			expect(child.stdout?.destroy).toHaveBeenCalled();
-			expect(vi.getTimerCount()).toBe(0);
-		}
-	);
+	it('does not confuse a failed kill with process exit, and observes a late exit after forced stop', async () => {
+		vi.useFakeTimers();
+		const child = Object.assign(new EventEmitter(), {
+			pid: undefined as number | undefined,
+			kill: vi.fn(),
+			exitCode: null,
+			signalCode: null,
+			stdout: { destroy: vi.fn() },
+			stderr: { destroy: vi.fn() },
+		});
+		const controller = new AbortController();
+		const onForcedStop = vi.fn();
+		const supervision = superviseAgentProcess(child as unknown as ChildProcess, {
+			signal: controller.signal,
+			onStop: vi.fn(),
+			onForcedStop,
+		});
+		let exited = false;
+		void supervision.processExited.then(() => {
+			exited = true;
+		});
+		controller.abort();
+		await vi.advanceTimersByTimeAsync(10_000);
+		expect(onForcedStop).toHaveBeenCalledOnce();
+		expect(child.stdout.destroy).toHaveBeenCalledOnce();
+		expect(child.stderr.destroy).toHaveBeenCalledOnce();
+		expect(vi.getTimerCount()).toBe(0);
+		expect(exited).toBe(false);
+		child.pid = 123;
+		child.emit('error', new Error('synthetic kill failure'));
+		await Promise.resolve();
+		expect(exited).toBe(false);
+		child.emit('exit', null, 'SIGKILL');
+		await supervision.processExited;
+		expect(exited).toBe(true);
+		supervision.dispose();
+		expect(child.listenerCount('error')).toBe(0);
+	});
+
+	it('confirms a failed spawn without waiting for an exit from a process that never existed', async () => {
+		const child = Object.assign(new EventEmitter(), {
+			pid: undefined,
+			exitCode: null,
+			signalCode: null,
+		});
+		const supervision = superviseAgentProcess(child as unknown as ChildProcess, {
+			onStop: vi.fn(),
+			onForcedStop: vi.fn(),
+		});
+		child.emit('error', new Error('synthetic ENOENT'));
+		await supervision.processExited;
+		supervision.dispose();
+	});
 
 	it('uses the shared ownership-aware stop ladder before waiting for close', () => {
 		vi.useFakeTimers();

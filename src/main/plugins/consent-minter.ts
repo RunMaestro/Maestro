@@ -257,6 +257,8 @@ export class ConsentMinter {
 			approvedHighRisk?: readonly PluginCapability[];
 			/** Act verbs whose nested unattended consent the user also checked. */
 			unattended?: readonly PluginCapability[];
+			/** Explicit unchecked export consent, independent of local media processing. */
+			originalAudioExport?: boolean;
 		}
 	): MintOutcome {
 		const open = this.open;
@@ -306,13 +308,32 @@ export class ConsentMinter {
 		)
 			return { ok: false, reason: 'offer-changed' };
 		const approvedSet = new Set(allApproved);
-		const toGrant = currentRequests.filter((r) => approvedSet.has(r.capability));
+		const toGrant = currentRequests
+			.filter((r) => approvedSet.has(r.capability))
+			.map((request) => {
+				if (request.capability !== 'media:tools' || req.originalAudioExport === true)
+					return request;
+				// An old bundled approval can never mint export authority. Re-consent
+				// with this unchecked removes export while retaining the voice scope.
+				const members = parseAllowlistScope(request.scope);
+				return {
+					...request,
+					scope:
+						members?.filter((member) => member !== 'discord-original-audio').join(',') || undefined,
+				};
+			})
+			.filter((request) => request.capability !== 'media:tools' || !!request.scope);
 		const unattendedSet = new Set(unattended);
 		// The separate, revocable unattended flag is minted ONLY from the
 		// explicit unattended acceptance - never inferred from the grant itself.
-		const grants = grantsFromRequests(toGrant, this.now()).map((g) =>
-			unattendedSet.has(g.capability) ? { ...g, unattended: true } : g
-		);
+		const grants = grantsFromRequests(toGrant, this.now()).map((g) => {
+			const grant = unattendedSet.has(g.capability) ? { ...g, unattended: true } : g;
+			return g.capability === 'media:tools' &&
+				req.originalAudioExport === true &&
+				parseAllowlistScope(g.scope)?.includes('discord-original-audio')
+				? { ...grant, originalAudioExport: true }
+				: grant;
+		});
 		const conflict = transcriptReadEgressConflict(grants, {
 			trusted: identity.signatureStatus === 'trusted',
 		});

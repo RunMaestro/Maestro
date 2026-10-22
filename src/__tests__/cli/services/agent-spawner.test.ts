@@ -2023,6 +2023,38 @@ Some text with [x] in it that's not a checkbox
 			}
 		);
 
+		it.each(['claude-code', 'codex'] as const)(
+			'retains an original-bearing %s call through forced return until a late exit',
+			async (type) => {
+				vi.useFakeTimers();
+				let settled = false;
+				const controller = new AbortController();
+				const pending = spawnAgent(type, '/project', 'original-bearing prompt', undefined, {
+					signal: controller.signal,
+					...{ requireProcessExit: true },
+				}).then((result) => {
+					settled = true;
+					return result;
+				});
+				try {
+					await vi.advanceTimersByTimeAsync(0);
+					expect(mockSpawn).toHaveBeenCalledOnce();
+					controller.abort();
+					await vi.advanceTimersByTimeAsync(10_000);
+					expect(mockKill).toHaveBeenLastCalledWith('SIGKILL');
+					expect(mockChild.exitCode).toBeNull();
+					expect(mockChild.signalCode).toBeNull();
+					expect(settled).toBe(false);
+					mockChild.emit('exit', null, 'SIGKILL');
+					expect(await pending).toMatchObject({ success: false });
+				} finally {
+					mockChild.emit('close', null, 'SIGKILL');
+					await pending;
+					vi.useRealTimers();
+				}
+			}
+		);
+
 		it('does not report a partial JSON-line answer as success after timeout or cancellation', async () => {
 			const controller = new AbortController();
 			const pending = spawnAgent('codex', '/project', 'prompt', undefined, {

@@ -97,3 +97,11 @@ expectTypeOf<MediaProbe>().toEqualTypeOf<SrcMediaProbe>();
 expectTypeOf<MediaRunOptions>().toEqualTypeOf<SrcMediaOptions>();
 expectTypeOf<MediaToolStatus>().toEqualTypeOf<SrcMediaStatus>();
 expectTypeOf<MediaFailure>().toEqualTypeOf<SrcMediaFailure>();
+
+import type { OriginalAttachmentRef, OriginalAttachmentReceipt } from '../index';
+import type {
+	OriginalAttachmentRef as SrcOriginalAttachmentRef,
+	OriginalAttachmentReceipt as SrcOriginalAttachmentReceipt,
+} from '../../../../src/shared/plugins/media-tools';
+expectTypeOf<OriginalAttachmentRef>().toEqualTypeOf<SrcOriginalAttachmentRef>();
+expectTypeOf<OriginalAttachmentReceipt>().toEqualTypeOf<SrcOriginalAttachmentReceipt>();

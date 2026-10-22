@@ -1,4 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
+import {
+	HEADLESS_RUN_TIMEOUT_MS,
+	HEADLESS_RUN_COMPLETION_TIMEOUT_MS,
+} from '../../../shared/plugins/headless-agent-timeouts';
 import * as fs from 'fs';
 import * as pathProber from '../../../main/agents/path-prober';
 import * as runIdentity from '../../../main/plugins/plugin-tool-run-identity';
@@ -22,6 +26,48 @@ const agent = {
 } as SessionInfo;
 
 describe('plugin headless agent runner', () => {
+	it('keeps ordinary sends bounded when preflight consumes the initial deadline', async () => {
+		let now = 1_000;
+		const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+		const spawn = vi.fn<PluginHeadlessRunnerDeps['spawn']>(async () => ({
+			success: true,
+			response: 'done',
+		}));
+		const issueRunToken = vi.fn(() => 'fixture-token');
+		const proof = vi
+			.spyOn(runIdentity, 'createPluginRunProofFile')
+			.mockReturnValue('/fixture/proof');
+		const removeProof = vi
+			.spyOn(runIdentity, 'removePluginRunProofFile')
+			.mockImplementation(() => {});
+		try {
+			const run = createPluginHeadlessAgentRunner({
+				getAgent: () => agent,
+				detectAgent: async () => ({ available: true }),
+				hasPluginTools: () => true,
+				spawn,
+				prepareSystemPrompt: async () => {
+					now += HEADLESS_RUN_TIMEOUT_MS + 1;
+					return undefined;
+				},
+				issueRunToken,
+				revokeRunToken: vi.fn(),
+				cliScriptPath: () => '/cli.js',
+				audit: vi.fn(),
+			});
+			await expect(run(agent.id, 'hello')).resolves.toMatchObject({ success: true });
+			expect(spawn.mock.calls[0][4]?.timeoutMs).toBe(HEADLESS_RUN_TIMEOUT_MS);
+			expect(issueRunToken).toHaveBeenCalledWith(
+				agent.id,
+				HEADLESS_RUN_COMPLETION_TIMEOUT_MS,
+				undefined
+			);
+		} finally {
+			clock.mockRestore();
+			proof.mockRestore();
+			removeProof.mockRestore();
+		}
+	});
 	it.each([true, false])(
 		'validates the selected agent binary before dispatch (valid: %s)',
 		async (valid) => {

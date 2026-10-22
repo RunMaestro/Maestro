@@ -497,3 +497,49 @@ describe('AuthorizationStore - verify (refresh-time gate)', () => {
 		});
 	});
 });
+
+describe('legacy original export grant migration', () => {
+	it('strips unmarked export members on load without changing voice consent or writing during a read', () => {
+		const holder = { value: null as Anchor | null };
+		const seal = fakeSeal(),
+			anchor = fakeAnchor(holder);
+		const store = makeStore(seal, anchor);
+		store.mint(
+			'relay',
+			[{ capability: 'media:tools', scope: 'discord-voice,discord-original-audio', grantedAt: 1 }],
+			ident('old-hash')
+		);
+		const originalBytes = fs.readFileSync(ledgerPath);
+		const reopened = makeStore(seal, anchor);
+		expect(reopened.readGrants('relay')).toEqual([
+			{ capability: 'media:tools', scope: 'discord-voice', grantedAt: 1 },
+		]);
+		expect(fs.readFileSync(ledgerPath)).toEqual(originalBytes);
+		reopened.mint('other', caps('fs:read', '/data'), ident('other-hash'));
+		expect(JSON.parse(seal.unseal(fs.readFileSync(ledgerPath))).entries.relay.caps[0].scope).toBe(
+			'discord-voice'
+		);
+	});
+	it('retains a separately consented marked scope through persistence', () => {
+		const holder = { value: null as Anchor | null };
+		const seal = fakeSeal(),
+			anchor = fakeAnchor(holder);
+		const store = makeStore(seal, anchor);
+		store.mint(
+			'relay',
+			[
+				{
+					capability: 'media:tools',
+					scope: 'discord-voice,discord-original-audio',
+					grantedAt: 1,
+					originalAudioExport: true,
+				},
+			],
+			ident('new-hash')
+		);
+		const reopened = makeStore(seal, anchor);
+		expect(isPermitted(reopened.readGrants('relay'), 'media:tools', 'discord-original-audio')).toBe(
+			true
+		);
+	});
+});
