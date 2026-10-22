@@ -110,6 +110,27 @@ describe('project root authority', () => {
 		}
 		expect(fs.readdirSync(projectRoot)).toEqual([]);
 	});
+	it.each(['ttsr:writeRule', 'ttsr:deleteRule', 'ttsr:writeProjectSettings'])(
+		'notifies each registered logical root after %s through a physical alias',
+		async (channel) => {
+			const alias = path.join(projectRoot, 'project-alias');
+			fs.symlinkSync(projectRoot, alias, 'junction');
+			registerTtsrHandlers({
+				getSessions: () => [{ projectRoot: alias, cwd: projectRoot }, { projectRoot: alias }],
+				onRulesChanged,
+			});
+			if (channel === 'ttsr:deleteRule') writeRuleFile('no-force-push.md', RULE);
+			await call(channel, {
+				projectRoot: fs.realpathSync(projectRoot),
+				path: `${TTSR_RULES_DIR}/no-force-push.md`,
+				content: RULE,
+				settings: { enabled: false },
+			});
+			expect(onRulesChanged.mock.calls.map(([root]) => root).sort()).toEqual(
+				[alias, projectRoot].sort()
+			);
+		}
+	);
 	it('fails closed without host sessions and for remote-only paths', async () => {
 		registerTtsrHandlers({});
 		await expect(call('ttsr:listRules', { projectRoot })).rejects.toThrow('not authorized');
