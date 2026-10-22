@@ -124,6 +124,7 @@ export class PiOutputParser implements AgentOutputParser {
 					return {
 						type: 'usage',
 						sessionId,
+						...(event.id ? { usageEventId: event.id } : {}),
 						usage: this.extractUsageFromMessage(event.message),
 						raw: event,
 					};

@@ -13,10 +13,14 @@ import { checkCustomPath } from '../agents/path-prober';
 
 import {
 	HEADLESS_RUN_TIMEOUT_MS,
+	HEADLESS_IDLE_PROFILE,
+	type HeadlessIdleProfile,
 	HEADLESS_RUN_COMPLETION_TIMEOUT_MS,
+	HEADLESS_RUN_CLEANUP_MARGIN_MS,
 } from '../../shared/plugins/headless-agent-timeouts';
 
 export interface PluginHeadlessRunnerDeps {
+	idleProfile?: Readonly<HeadlessIdleProfile>;
 	getAgent: (agentId: string) => SessionInfo | undefined;
 	detectAgent: (type: SessionInfo['toolType']) => Promise<{ available: boolean; path?: string }>;
 	getAgentConfig?: (type: SessionInfo['toolType']) => Record<string, unknown>;
@@ -56,6 +60,9 @@ export function createPluginHeadlessAgentRunner(
 		receiptToolId,
 		requirePluginTools = false
 	) => {
+		// Detection and prompt preparation consume the same host ceiling as spawn;
+		// a slow preflight must not outlive the CLI's absolute reply wait.
+		const deadlineAt = Date.now() + HEADLESS_RUN_TIMEOUT_MS;
 		const agent = deps.getAgent(agentId);
 		if (!agent) throw new Error(`agents.send: no agent "${agentId}"`);
 		const local = !agent.sessionSshRemoteConfig?.enabled;
@@ -91,9 +98,16 @@ export function createPluginHeadlessAgentRunner(
 				error: `Agent CLI unavailable: ${agent.toolType}`,
 			};
 		}
+		// Complete asynchronous preparation before issuing time-bounded run authority.
+		const systemPrompt = signal?.aborted ? undefined : await deps.prepareSystemPrompt(agent);
+		const remainingMs = Math.max(0, deadlineAt - Date.now());
+		const completionTtlMs = Math.min(
+			HEADLESS_RUN_COMPLETION_TIMEOUT_MS,
+			remainingMs + HEADLESS_RUN_CLEANUP_MARGIN_MS
+		);
 		const runToken =
-			local && deps.hasPluginTools()
-				? deps.issueRunToken(agent.id, HEADLESS_RUN_COMPLETION_TIMEOUT_MS, receiptToolId)
+			local && deps.hasPluginTools() && !signal?.aborted && remainingMs > 0
+				? deps.issueRunToken(agent.id, completionTtlMs, receiptToolId)
 				: undefined;
 		let pluginRunProofFile: string | undefined;
 		let releaseActivity: (() => void) | undefined;
@@ -101,15 +115,17 @@ export function createPluginHeadlessAgentRunner(
 		let conversationId = providerSessionId;
 		try {
 			pluginRunProofFile = runToken
-				? createPluginRunProofFile(runToken, HEADLESS_RUN_COMPLETION_TIMEOUT_MS)
+				? createPluginRunProofFile(runToken, completionTtlMs)
 				: undefined;
 			deps.audit(agent.id, !!providerSessionId);
-			if (signal?.aborted) {
+			if (signal?.aborted || remainingMs === 0) {
 				return {
 					success: false,
 					response: null,
 					sessionId: null,
-					error: 'Agent run timed out or was cancelled',
+					error: signal?.aborted
+						? 'Agent run cancelled'
+						: 'Agent run stopped: absolute runtime ceiling exceeded',
 				};
 			}
 			const result = await deps.spawn(agent.toolType, agent.cwd, prompt, providerSessionId, {
@@ -122,14 +138,15 @@ export function createPluginHeadlessAgentRunner(
 				agentCommand: detection?.path,
 				additionalDirectories: agent.additionalDirectories,
 				sshRemoteConfig: agent.sessionSshRemoteConfig,
-				appendSystemPrompt: await deps.prepareSystemPrompt(agent),
+				appendSystemPrompt: systemPrompt,
 				enableMaestroP: agent.enableMaestroP,
 				maestroPMode: agent.maestroPMode,
 				maestroPPath: agent.maestroPPath,
 				querySource: origin === 'relay' ? 'auto' : origin,
 				pluginRunProofFile,
 				mcpCliScriptPath: deps.cliScriptPath(),
-				timeoutMs: HEADLESS_RUN_TIMEOUT_MS,
+				timeoutMs: remainingMs,
+				idle: deps.idleProfile ?? HEADLESS_IDLE_PROFILE,
 				signal,
 				onProcessStarted: (pid) => {
 					if (pid && !signal?.aborted && !settled && !releaseActivity) {

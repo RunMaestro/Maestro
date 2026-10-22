@@ -34,13 +34,13 @@ describe('PluginToolRunIdentity', () => {
 		}
 	});
 
-	it('keeps headless identity and proof through 60 minutes and expires both at 61', () => {
+	it('keeps headless identity and proof through six hours and expires both at six hours plus cleanup', () => {
 		vi.useFakeTimers();
 		const runs = new PluginToolRunIdentity();
 		const token = runs.issue('relay-agent', HEADLESS_RUN_COMPLETION_TIMEOUT_MS);
 		const file = createPluginRunProofFile(token, HEADLESS_RUN_COMPLETION_TIMEOUT_MS);
 		try {
-			vi.advanceTimersByTime(60 * 60_000);
+			vi.advanceTimersByTime(6 * 60 * 60_000);
 			expect(runs.resolve(token)).toEqual({ callerAgentId: 'relay-agent' });
 			expect(fs.existsSync(file)).toBe(true);
 			vi.advanceTimersByTime(60_000);

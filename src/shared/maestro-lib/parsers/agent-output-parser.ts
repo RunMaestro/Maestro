@@ -95,9 +95,10 @@ export interface ParsedEvent {
 	 */
 	parentToolUseId?: string;
 
-	/**
-	 * Token usage statistics (for 'usage' type)
-	 */
+	/** Stable provider model-step identity; distinguishes equal per-step usage from replay. */
+	usageEventId?: string;
+
+	/** Token usage statistics. */
 	usage?: {
 		inputTokens: number;
 		outputTokens: number;
