@@ -56,6 +56,12 @@ describe('encoreShortcuts', () => {
 		).toBe(DEFAULT_SHORTCUTS.toggleThroughputGauge);
 	});
 
+	it.each(['openBoard', 'openProfiles'])('lists %s only with Board and Cue enabled', (id) => {
+		expect(isShortcutAvailable(id, { ...ALL_ON, board: false })).toBe(false);
+		expect(isShortcutAvailable(id, { ...ALL_ON, maestroCue: false })).toBe(false);
+		expect(isShortcutAvailable(id, ALL_ON)).toBe(true);
+	});
+
 	it('treats a missing flag map as everything off', () => {
 		expect(isShortcutAvailable('openCue', undefined)).toBe(false);
 		expect(isShortcutAvailable('quickAction', undefined)).toBe(true);
