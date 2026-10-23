@@ -1,3 +1,4 @@
+import { applyRelayConversationRuntime } from '../../services/relayConversations';
 /**
  * useSessionRestoration - extracted from App.tsx (Phase 2E)
  *
@@ -687,8 +688,14 @@ export function useSessionRestoration(): SessionRestorationReturn {
 			// Reset all tab states to idle - processes don't survive app restart
 			const resetAiTabs = correctedSession.aiTabs.map((tab) => ({
 				...tab,
-				state: 'idle' as const,
-				thinkingStartTime: undefined,
+				state:
+					tab.relayConversation?.status === 'running' || tab.relayConversation?.status === 'queued'
+						? ('busy' as const)
+						: ('idle' as const),
+				thinkingStartTime:
+					tab.relayConversation?.status === 'running'
+						? tab.relayConversation.lastActivityAt
+						: undefined,
 				// Clear any stranded naming-in-flight flag. The promise that would
 				// reset it lives in the renderer and cannot survive a reload/restart,
 				// so a tab whose generateTabName() call was interrupted would otherwise
@@ -802,42 +809,44 @@ export function useSessionRestoration(): SessionRestorationReturn {
 			// round-trips untouched. An agent saved with only hidden consult tabs (an
 			// older build let the last file/terminal/browser close strand it there)
 			// comes back with a blank AI chat instead of a chipless conversation.
-			return ensureAgentHasVisibleTab(
-				normalizeTabGroups({
-					...restoredSession,
-					aiPid: 0,
-					terminalPid: 0,
-					state: isLimitPause ? ('error' as SessionState) : ('idle' as SessionState),
-					busySource: undefined,
-					thinkingStartTime: undefined,
-					currentCycleTokens: undefined,
-					currentCycleBytes: undefined,
-					statusMessage: undefined,
-					isGitRepo,
-					gitBranches,
-					gitTags,
-					gitRefsCacheTime,
-					isLive: false,
-					liveUrl: undefined,
-					aiLogs: [],
-					aiTabs: resetAiTabs,
-					shellLogs: correctedSession.shellLogs,
-					// A cold desktop start kills every consult process, so a turn still
-					// waiting on one would hold its tab forever: release it with an
-					// "interrupted" reply. A web-desktop reload is different - main kept
-					// running and the consult with it, so the hold settles normally.
-					executionQueue: isWebDesktop()
-						? correctedSession.executionQueue || []
-						: interruptConsultHolds(correctedSession.executionQueue || []),
-					activeTimeMs: correctedSession.activeTimeMs || 0,
-					// Keep a limit pause live so auto-resume re-attaches; clear anything else.
-					// `agentErrorTabId` rides through the spread above (persistence only keeps
-					// it for limit pauses, so it's already undefined for everything else).
-					agentError: isLimitPause ? correctedSession.agentError : undefined,
-					agentErrorPaused: isLimitPause ? true : false,
-					closedTabHistory: [],
-					unifiedTabOrder: repairedUnifiedTabOrder,
-				})
+			return applyRelayConversationRuntime(
+				ensureAgentHasVisibleTab(
+					normalizeTabGroups({
+						...restoredSession,
+						aiPid: 0,
+						terminalPid: 0,
+						state: isLimitPause ? ('error' as SessionState) : ('idle' as SessionState),
+						busySource: undefined,
+						thinkingStartTime: undefined,
+						currentCycleTokens: undefined,
+						currentCycleBytes: undefined,
+						statusMessage: undefined,
+						isGitRepo,
+						gitBranches,
+						gitTags,
+						gitRefsCacheTime,
+						isLive: false,
+						liveUrl: undefined,
+						aiLogs: [],
+						aiTabs: resetAiTabs,
+						shellLogs: correctedSession.shellLogs,
+						// A cold desktop start kills every consult process, so a turn still
+						// waiting on one would hold its tab forever: release it with an
+						// "interrupted" reply. A web-desktop reload is different - main kept
+						// running and the consult with it, so the hold settles normally.
+						executionQueue: isWebDesktop()
+							? correctedSession.executionQueue || []
+							: interruptConsultHolds(correctedSession.executionQueue || []),
+						activeTimeMs: correctedSession.activeTimeMs || 0,
+						// Keep a limit pause live so auto-resume re-attaches; clear anything else.
+						// `agentErrorTabId` rides through the spread above (persistence only keeps
+						// it for limit pauses, so it's already undefined for everything else).
+						agentError: isLimitPause ? correctedSession.agentError : undefined,
+						agentErrorPaused: isLimitPause ? true : false,
+						closedTabHistory: [],
+						unifiedTabOrder: repairedUnifiedTabOrder,
+					})
+				)
 			);
 		} catch (error) {
 			logger.error(`Error restoring session ${session.id}:`, undefined, error);

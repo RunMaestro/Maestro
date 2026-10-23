@@ -142,6 +142,8 @@ export interface UseSettingsReturn {
 	setEnterToSendAI: (value: boolean) => void;
 	enterToSendAIExpanded: boolean;
 	setEnterToSendAIExpanded: (value: boolean) => void;
+	relayArchiveHours: number;
+	setRelayArchiveHours: (value: number) => void;
 	defaultSaveToHistory: boolean;
 	setDefaultSaveToHistory: (value: boolean) => void;
 	synopsisDebounceSeconds: number;

@@ -1,3 +1,4 @@
+import type { RelayConversations, RelaySendOptions } from './relay-conversations';
 /**
  * Host-call handlers: the actual implementations behind each brokered RPC.
  *
@@ -340,6 +341,7 @@ export interface HostHandlerDeps {
 	) => Promise<string | null>;
 	/** Host-only persistent ownership ledger for resumable provider sessions. */
 	providerSessions?: PluginAgentSessionBindings;
+	relayConversations?: RelayConversations;
 	/** Host-owned persistence for a turn from the authenticated Relay plugin. */
 	recordRelayTurn?: (
 		agentId: string,
@@ -1561,7 +1563,16 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 				throw new Error('agents.send: opts must be an object');
 			}
 			const opts = p.opts === undefined ? {} : asObject(p.opts);
-			assertClosedSchema('agents.send opts', opts, { sessionId: true });
+			assertClosedSchema('agents.send opts', opts, {
+				sessionId: true,
+				conversationId: true,
+				messageId: true,
+			});
+			const hasConversation = opts.conversationId !== undefined || opts.messageId !== undefined;
+			if (hasConversation && (!isOpaqueId(opts.conversationId) || !isOpaqueId(opts.messageId)))
+				throw new Error(
+					'agents.send: conversationId and messageId must be supplied together (1-256 characters)'
+				);
 			const agentId = p.agentId;
 			const prompt = p.prompt;
 			if (
@@ -1597,6 +1608,8 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 				pluginId,
 				deps.getPluginSignature?.(pluginId)
 			);
+			if (hasConversation && (!relayConversation || !deps.relayConversations))
+				throw new Error('Relay conversation transport unavailable for this caller');
 			if (!relayConversation) assertLowOrMediumRisk(prompt);
 			const providerSessions = deps.providerSessions;
 			if (!providerSessions) {
@@ -1630,14 +1643,33 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 							}
 							context?.onProgress(event);
 						};
-						const { success, response, sessionId, error } = await sendAgent(
-							agentId,
-							prompt,
-							opts.sessionId as string | undefined,
-							controller.signal,
-							pluginId === RELAY_PLUGIN_ID ? 'relay' : 'auto',
-							onProgress
-						);
+						const authorize = () => {
+							assertBrokerAllowed(deps, pluginId, 'agents.send', p);
+							assertTrustedActVerb(deps, pluginId);
+							if (
+								!deps.dispatchUnattendedAllowed?.(pluginId, agentId) ||
+								!isRelayConversationIdentity(pluginId, deps.getPluginSignature?.(pluginId))
+							)
+								throw new Error('Relay conversation authorization revoked');
+						};
+						const result = hasConversation
+							? await deps.relayConversations!.send(
+									agentId,
+									prompt,
+									opts as unknown as RelaySendOptions,
+									controller.signal,
+									onProgress,
+									authorize
+								)
+							: await sendAgent(
+									agentId,
+									prompt,
+									opts.sessionId as string | undefined,
+									controller.signal,
+									pluginId === RELAY_PLUGIN_ID ? 'relay' : 'auto',
+									onProgress
+								);
+						const { success, response, sessionId, error } = result;
 						// Stop/uninstall may have purged this plugin's bindings while the
 						// provider was closing. A late successful result must not restore them.
 						if (controller.signal.aborted) {
@@ -1664,7 +1696,7 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 						if (success && sessionId) {
 							providerSessions.remember(pluginId, agentId, sessionId);
 						}
-						if (pluginId === RELAY_PLUGIN_ID) {
+						if (pluginId === RELAY_PLUGIN_ID && !('replayed' in result && result.replayed)) {
 							try {
 								await deps.recordRelayTurn?.(agentId, prompt, {
 									success,
@@ -1676,13 +1708,100 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 								logger.error(`Could not record Relay turn: ${String(recordError)}`, '[Plugins]');
 							}
 						}
-						return { success, response, sessionId, ...(error ? { error } : {}) };
+						return {
+							success,
+							response,
+							sessionId,
+							...(error ? { error } : {}),
+							...(relayConversation && {
+								conversationId: 'conversationId' in result ? result.conversationId : undefined,
+								tabId: 'tabId' in result ? result.tabId : undefined,
+								...('replayed' in result && result.replayed ? { replayed: true } : {}),
+							}),
+						};
 					} finally {
 						runs.delete(controller);
 						if (runs.size === 0 && activeRuns.get(pluginId) === runs) {
 							activeRuns.delete(pluginId);
 						}
 					}
+				}
+			);
+		};
+	}
+	if (deps.relayConversations) {
+		handlers['agents.restoreConversation'] = async (pluginId, params) => {
+			const p = asObject(params);
+			assertClosedSchema('agents.restoreConversation', p, {
+				agentId: true,
+				conversationId: true,
+				sessionId: true,
+			});
+			if (!isOpaqueId(p.agentId) || !isOpaqueId(p.conversationId) || !isOpaqueId(p.sessionId))
+				throw new Error('Invalid Relay conversation restore identity');
+			const authorize = () => {
+				assertBrokerAllowed(deps, pluginId, 'agents.restoreConversation', p);
+				assertTrustedActVerb(deps, pluginId);
+				if (
+					!isRelayConversationIdentity(pluginId, deps.getPluginSignature?.(pluginId)) ||
+					!deps.dispatchUnattendedAllowed?.(pluginId, p.agentId as string)
+				)
+					throw new Error('Relay conversation authorization required');
+				deps.providerSessions?.assertOwned(pluginId, p.agentId as string, p.sessionId as string);
+				if (!deps.providerSessions) throw new Error('Provider ownership unavailable');
+			};
+			authorize();
+			return underGuard(
+				deps.actionGuard,
+				pluginId,
+				'agents:dispatch',
+				`agent:${p.agentId}`,
+				async () => {
+					authorize();
+					const restored = await deps.relayConversations!.restore(
+						p.agentId as string,
+						p.conversationId as string,
+						p.sessionId as string,
+						authorize
+					);
+					authorize();
+					return restored;
+				}
+			);
+		};
+		handlers['agents.completeConversation'] = async (pluginId, params) => {
+			const p = asObject(params);
+			assertClosedSchema('agents.completeConversation', p, {
+				agentId: true,
+				conversationId: true,
+				messageId: true,
+			});
+			if (!isOpaqueId(p.agentId) || !isOpaqueId(p.conversationId) || !isOpaqueId(p.messageId))
+				throw new Error('Invalid Relay conversation completion identity');
+			const authorize = () => {
+				assertBrokerAllowed(deps, pluginId, 'agents.completeConversation', p);
+				assertTrustedActVerb(deps, pluginId);
+				if (
+					!isRelayConversationIdentity(pluginId, deps.getPluginSignature?.(pluginId)) ||
+					!deps.dispatchUnattendedAllowed?.(pluginId, p.agentId as string)
+				)
+					throw new Error('Relay conversation authorization required');
+			};
+			authorize();
+			return underGuard(
+				deps.actionGuard,
+				pluginId,
+				'agents:dispatch',
+				`agent:${p.agentId}`,
+				async () => {
+					await deps.relayConversations!.complete(
+						p.agentId as string,
+						p.conversationId as string,
+						p.messageId as string,
+						authorize
+					);
+					authorize();
+					return { success: true };
 				}
 			);
 		};
@@ -2116,4 +2235,8 @@ export function purgePluginData(
 	deps.settingsDeleteNamespace(`plugins.${pluginId}.`);
 	deps.eventBus.clear(pluginId);
 	deps.hostViews?.purge(pluginId);
+}
+
+function isOpaqueId(value: unknown): value is string {
+	return typeof value === 'string' && /^[^\x00-\x1f\x7f]{1,256}$/.test(value);
 }

@@ -351,6 +351,8 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
 					}
 					return hostCall('agents.send', { agentId: agentId, prompt: prompt, opts: wireOpts }, opts && opts.onProgress);
 				},
+				restoreConversation: function (agentId, opts) { return hostCall('agents.restoreConversation', { agentId: agentId, conversationId: opts && opts.conversationId, sessionId: opts && opts.sessionId }); },
+				completeConversation: function (agentId, opts) { return hostCall('agents.completeConversation', { agentId: agentId, conversationId: opts && opts.conversationId, messageId: opts && opts.messageId }); },
 				generateTitle: function (agentId, firstMessage) { return hostCall('agents.generateTitle', { agentId: agentId, firstMessage: firstMessage }); }
 			}),
 			history: Object.freeze({

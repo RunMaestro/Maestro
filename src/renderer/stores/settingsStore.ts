@@ -387,6 +387,7 @@ export interface SettingsStoreState
 	/** When true, agents consulted via @-mention may write; when false (default), consults are read-only. */
 	crossAgentMentionsWritable: boolean;
 	crossAgentHandoffsWritable: boolean;
+	relayArchiveHours: number;
 	defaultSaveToHistory: boolean;
 	synopsisDebounceSeconds: number;
 	defaultShowThinking: ThinkingMode;
@@ -529,6 +530,7 @@ export interface SettingsStoreActions
 	setSendButtonMenu: (value: boolean) => void;
 	setCrossAgentMentionsWritable: (value: boolean) => void;
 	setCrossAgentHandoffsWritable: (value: boolean) => void;
+	setRelayArchiveHours: (value: number) => void;
 	setDefaultSaveToHistory: (value: boolean) => void;
 	setSynopsisDebounceSeconds: (value: number) => void;
 	setDefaultShowThinking: (value: ThinkingMode) => void;
@@ -784,6 +786,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		sendButtonMenu: true,
 		crossAgentMentionsWritable: false,
 		crossAgentHandoffsWritable: true,
+		relayArchiveHours: 24,
 		defaultSaveToHistory: true,
 		synopsisDebounceSeconds: 0,
 		defaultShowThinking: 'off',
@@ -990,6 +993,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 			window.maestro.settings.set('crossAgentHandoffsWritable', value);
 		},
 
+		setRelayArchiveHours: (value) => {
+			const hours = Number.isFinite(value) ? Math.max(0, Math.min(8760, value)) : 24;
+			set({ relayArchiveHours: hours });
+			window.maestro.settings.set('relayArchiveHours', hours);
+		},
 		setDefaultSaveToHistory: (value) => {
 			set({ defaultSaveToHistory: value });
 			window.maestro.settings.set('defaultSaveToHistory', value);
@@ -2136,6 +2144,11 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['crossAgentHandoffsWritable'] !== undefined)
 			patch.crossAgentHandoffsWritable = allSettings['crossAgentHandoffsWritable'] as boolean;
 
+		if (
+			typeof allSettings['relayArchiveHours'] === 'number' &&
+			Number.isFinite(allSettings['relayArchiveHours'])
+		)
+			patch.relayArchiveHours = Math.max(0, Math.min(8760, allSettings['relayArchiveHours']));
 		if (allSettings['defaultSaveToHistory'] !== undefined)
 			patch.defaultSaveToHistory = allSettings['defaultSaveToHistory'] as boolean;
 

@@ -1,3 +1,4 @@
+import { applyRelayConversationRuntime } from '../../services/relayConversations';
 import { resumeDeferredProviderTranslations } from '../../services/providerTranslation';
 /**
  * useSessionLifecycleSync.ts
@@ -122,7 +123,10 @@ export function useSessionLifecycleSync(
 					const update = updateMap.get(session.id);
 					const baseline = baselineMap.get(session.id);
 					if (!update || !baseline) return session;
-					let merged = mergeSessionPersistenceChanges(update, session, baseline, true, true);
+					let merged = applyRelayConversationRuntime(
+						mergeSessionPersistenceChanges(update, session, baseline, true, true),
+						session
+					);
 					if (isWebDesktop()) {
 						const previousIds = new Set(session.aiTabs.map((tab) => tab.id));
 						const tabIds = [

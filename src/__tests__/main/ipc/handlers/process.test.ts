@@ -1,3 +1,31 @@
+import { nodeSqliteBetterSqlite3Mock } from '../../../helpers/nodeSqlite';
+vi.mock('better-sqlite3', () => nodeSqliteBetterSqlite3Mock());
+import { fakeAnchor } from '../../../helpers/mockAnchor';
+import { createPluginHeadlessAgentRunner } from '../../../../main/plugins/plugin-headless-agent-runner';
+import { RelayConversations } from '../../../../main/plugins/relay-conversations';
+import fs from 'node:fs';
+import { EventEmitter } from 'node:events';
+const writerGate = vi.hoisted(() => ({ enabled: false }));
+vi.mock('../../../../main/utils/provider-session-writer', async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import('../../../../main/utils/provider-session-writer')>();
+	return {
+		...actual,
+		acquireProviderSessionWriter: (
+			...args: Parameters<typeof actual.acquireProviderSessionWriter>
+		) =>
+			writerGate.enabled ? actual.acquireProviderSessionWriter(...args) : Promise.resolve(() => {}),
+	};
+});
+
+import { acquireProviderSessionWriter } from '../../../../main/utils/provider-session-writer';
+import { preparePermissionRelayArgs, cleanupSessionRelay } from '../../../../main/permission-relay';
+vi.mock('../../../../main/permission-relay', () => ({
+	initPermissionRelay: vi.fn(),
+	preparePermissionRelayArgs: vi.fn().mockResolvedValue([]),
+	cleanupSessionRelay: vi.fn(),
+	resolvePermissionResponse: vi.fn(),
+}));
 /**
  * Tests for the process IPC handlers
  *
@@ -38,6 +66,7 @@ import {
 
 // Mock electron's ipcMain
 vi.mock('electron', () => ({
+	app: { getPath: vi.fn(() => '/test-data') },
 	ipcMain: {
 		handle: vi.fn(),
 		on: vi.fn(),
@@ -309,6 +338,8 @@ describe('process IPC handlers', () => {
 		resize: ReturnType<typeof vi.fn>;
 		getAll: ReturnType<typeof vi.fn>;
 		get: ReturnType<typeof vi.fn>;
+		on: ReturnType<typeof vi.fn>;
+		off: ReturnType<typeof vi.fn>;
 		runCommand: ReturnType<typeof vi.fn>;
 		spawnTerminalTab: ReturnType<typeof vi.fn>;
 	};
@@ -330,6 +361,7 @@ describe('process IPC handlers', () => {
 	let deps: ProcessHandlerDependencies;
 
 	beforeEach(() => {
+		writerGate.enabled = false;
 		// Clear mocks
 		vi.clearAllMocks();
 		vi.mocked(checkCustomPath).mockImplementation(async (customPath) => ({
@@ -346,6 +378,8 @@ describe('process IPC handlers', () => {
 			resize: vi.fn(),
 			getAll: vi.fn().mockReturnValue([]),
 			get: vi.fn(),
+			on: vi.fn(),
+			off: vi.fn(),
 			runCommand: vi.fn(),
 			spawnTerminalTab: vi.fn(),
 		};
@@ -476,6 +510,289 @@ describe('process IPC handlers', () => {
 	});
 
 	describe('process:spawn', () => {
+		it('binds an announced first desktop provider id before a CLI resume can start', async () => {
+			writerGate.enabled = true;
+			const events = new EventEmitter();
+			Object.assign(mockProcessManager, {
+				on: events.on.bind(events),
+				off: events.off.bind(events),
+			});
+			mockAgentDetector.getAgent.mockResolvedValue({
+				id: 'codex',
+				path: '/usr/bin/codex',
+				requiresPty: false,
+			});
+			mockProcessManager.spawn.mockReturnValue({ success: true, pid: 123 });
+			const processId = 'first-agent-ai-first-tab';
+			await handlers.get('process:spawn')!(
+				{},
+				{ sessionId: processId, toolType: 'codex', cwd: '/test', command: 'codex', args: [] }
+			);
+			events.emit('session-id', processId, 'newly-announced-provider');
+			const spawn = vi.fn(async () => ({
+				success: true,
+				response: 'cli answer',
+				agentSessionId: 'newly-announced-provider',
+			}));
+			const run = createPluginHeadlessAgentRunner({
+				getAgent: () => ({
+					id: 'first-agent',
+					toolType: 'codex',
+					cwd: '/test',
+					projectRoot: '/test',
+					name: 'fixture',
+				}),
+				detectAgent: async () => ({ available: true, path: '/usr/bin/codex' }),
+				hasPluginTools: () => false,
+				spawn,
+				prepareSystemPrompt: async () => undefined,
+				issueRunToken: vi.fn(),
+				revokeRunToken: vi.fn(),
+				cliScriptPath: () => '/cli.js',
+				audit: vi.fn(),
+			});
+			const pending = run('first-agent', 'cli followup', 'newly-announced-provider');
+			await new Promise(setImmediate);
+			expect(spawn).not.toHaveBeenCalled();
+			events.emit('exit', processId, 0);
+			await pending;
+			expect(spawn).toHaveBeenCalledTimes(1);
+		});
+		it('protects a running unmarked desktop conversation when Relay first adopts it', async () => {
+			writerGate.enabled = true;
+			const events = new EventEmitter();
+			Object.assign(mockProcessManager, {
+				on: events.on.bind(events),
+				off: events.off.bind(events),
+			});
+			let owner: any = {
+				id: 'legacy-agent',
+				toolType: 'codex',
+				aiTabs: [{ id: 'legacy-tab', agentSessionId: 'legacy-provider', logs: [] }],
+				unifiedTabOrder: [],
+			};
+			mockSessionsStore.get.mockImplementation((key, fallback) =>
+				key === 'sessions' ? [owner] : fallback
+			);
+			mockAgentDetector.getAgent.mockResolvedValue({
+				id: 'codex',
+				path: '/usr/bin/codex',
+				requiresPty: false,
+			});
+			mockProcessManager.spawn.mockReturnValue({ success: true, pid: 123 });
+			const processId = 'legacy-agent-ai-legacy-tab';
+			await handlers.get('process:spawn')!(
+				{},
+				{
+					sessionId: processId,
+					agentSessionId: 'legacy-provider',
+					toolType: 'codex',
+					cwd: '/test',
+					command: 'codex',
+					args: [],
+				}
+			);
+			const root = path.join(process.cwd(), '.maestro', 'scratch');
+			fs.mkdirSync(root, { recursive: true });
+			const baseDir = fs.mkdtempSync(path.join(root, 'adopt-writer-'));
+			const run = vi.fn(async () => ({
+				success: true,
+				response: 'answer',
+				sessionId: 'legacy-provider',
+			}));
+			const service = new RelayConversations({
+				baseDir,
+				receiptAnchor: fakeAnchor({ value: null }),
+				getAgent: () => owner,
+				updateAgent: (_id, update) => {
+					owner = update(owner);
+				},
+				run,
+			});
+			try {
+				const pending = service.send(
+					'legacy-agent',
+					'relay',
+					{ conversationId: 'thread', messageId: 'message', sessionId: 'legacy-provider' },
+					new AbortController().signal,
+					undefined,
+					() => {}
+				);
+				await vi.waitFor(() => expect(owner.aiTabs[0].relayConversation?.status).toBe('queued'));
+				expect(run).not.toHaveBeenCalled();
+				mockProcessManager.get.mockReturnValue({ id: processId });
+				mockProcessManager.interrupt.mockReturnValue(true);
+				expect(await handlers.get('process:interrupt')!({}, processId)).toBe(true);
+				expect(mockProcessManager.interrupt).toHaveBeenCalledWith(processId);
+				expect(owner.aiTabs[0].relayConversation?.status).toBe('queued');
+				events.emit('exit', processId, 0);
+				await pending;
+				expect(run).toHaveBeenCalledTimes(1);
+			} finally {
+				events.emit('exit', processId, 0);
+				fs.rmSync(baseDir, { recursive: true, force: true });
+			}
+		});
+		it.each(['process:interrupt', 'process:kill'])(
+			'cancels a desktop writer wait on %s before any provider spawn',
+			async (verb) => {
+				writerGate.enabled = true;
+				const processId = `cancel-wait-${verb}`;
+				const release = await acquireProviderSessionWriter(
+					'codex',
+					'independent-cli',
+					'held-provider'
+				);
+				const pending = handlers.get('process:spawn')!(
+					{},
+					{
+						sessionId: processId,
+						agentSessionId: 'held-provider',
+						toolType: 'codex',
+						cwd: '/test',
+						command: 'codex',
+						args: [],
+					}
+				);
+				const outcome = pending.then(
+					() => null,
+					(error: Error) => error
+				);
+				await new Promise(setImmediate);
+				expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+				expect(await handlers.get(verb)!({}, processId)).toBe(true);
+				release();
+				await outcome;
+				expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+				(await acquireProviderSessionWriter('codex', processId, 'held-provider'))();
+			}
+		);
+		it('cancels a desktop turn stopped during asynchronous preflight', async () => {
+			const actor = { id: 'u1', username: 'prior-user', displayName: 'Prior User' };
+			noteTurnActor('cancel-preflight', undefined, actor);
+			let resolveAgent!: (agent: unknown) => void;
+			mockAgentDetector.getAgent.mockImplementationOnce(
+				() =>
+					new Promise((resolve) => {
+						resolveAgent = resolve;
+					})
+			);
+			const pending = handlers.get('process:spawn')!(
+				{},
+				{
+					sessionId: 'cancel-preflight',
+					toolType: 'codex',
+					cwd: '/test',
+					command: 'codex',
+					args: [],
+				}
+			);
+			const outcome = pending.then(
+				() => null,
+				(error: Error) => error
+			);
+			await vi.waitFor(() => expect(resolveAgent).toBeDefined());
+			expect(await handlers.get('process:interrupt')!({}, 'cancel-preflight')).toBe(true);
+			resolveAgent({ id: 'codex', path: '/usr/bin/codex', requiresPty: false });
+			await outcome;
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+			expect(resolveTurnActor('cancel-preflight', undefined)).toEqual(actor);
+		});
+		it('cleans a permission relay prepared while the desktop turn is cancelled', async () => {
+			let finishRelay!: (args: string[]) => void;
+			vi.mocked(preparePermissionRelayArgs).mockImplementationOnce(
+				() =>
+					new Promise((resolve) => {
+						finishRelay = resolve;
+					})
+			);
+			mockAgentDetector.getAgent.mockResolvedValue({
+				id: 'claude-code',
+				path: '/usr/bin/claude',
+				interactiveCommand: 'maestro-p',
+				interactiveModeArgs: [],
+				requiresPty: false,
+			});
+			const pending = handlers.get('process:spawn')!(
+				{},
+				{
+					sessionId: 'cancel-relay',
+					toolType: 'claude-code',
+					cwd: '/test',
+					command: 'claude',
+					args: [],
+					permissionMode: 'standard',
+				}
+			).then(
+				() => null,
+				(error: Error) => error
+			);
+			await vi.waitFor(() => expect(finishRelay).toBeDefined());
+			expect(await handlers.get('process:interrupt')!({}, 'cancel-relay')).toBe(true);
+			finishRelay([]);
+			expect(await pending).toBeInstanceOf(Error);
+			expect(cleanupSessionRelay).toHaveBeenCalledWith('cancel-relay');
+			expect(mockSessionsStore.set).not.toHaveBeenCalled();
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+		});
+		it('waits for Relay, resumes its first provider id and retains the lease through close', async () => {
+			writerGate.enabled = true;
+			const events = new EventEmitter();
+			Object.assign(mockProcessManager, {
+				on: events.on.bind(events),
+				off: events.off.bind(events),
+			});
+			const tab = {
+				id: 'relay-tab',
+				agentSessionId: null as string | null,
+				relayConversation: { conversationId: 'thread' },
+			};
+			mockSessionsStore.get.mockImplementation((key, fallback) =>
+				key === 'sessions' ? [{ id: 'relay-agent', aiTabs: [tab] }] : fallback
+			);
+			mockAgentDetector.getAgent.mockResolvedValue({
+				id: 'claude-code',
+				path: '/usr/bin/claude',
+				requiresPty: false,
+			});
+			mockProcessManager.spawn.mockReturnValue({ success: true, pid: 123 });
+			const processId = 'relay-agent-ai-relay-tab';
+			const releaseRelay = await acquireProviderSessionWriter('claude-code', processId);
+			const pending = handlers.get('process:spawn')!(
+				{},
+				{
+					sessionId: processId,
+					toolType: 'claude-code',
+					cwd: '/test',
+					command: 'claude',
+					args: [],
+					prompt: 'desktop followup',
+				}
+			);
+			await new Promise(setImmediate);
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+			tab.agentSessionId = 'relay-first-provider';
+			releaseRelay();
+			await pending;
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({ agentSessionId: 'relay-first-provider' })
+			);
+			let nextStarted = false;
+			const next = acquireProviderSessionWriter(
+				'claude-code',
+				'independent-other-tab',
+				tab.agentSessionId
+			).then((release) => {
+				nextStarted = true;
+				release();
+			});
+			await new Promise(setImmediate);
+			expect(nextStarted).toBe(false);
+			events.emit('exit', processId, 0);
+			await next;
+			expect(nextStarted).toBe(true);
+		});
+
 		it('should spawn PTY process with correct args', async () => {
 			const mockAgent = {
 				id: 'claude-code',

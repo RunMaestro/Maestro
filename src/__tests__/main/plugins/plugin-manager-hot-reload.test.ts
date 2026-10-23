@@ -408,6 +408,24 @@ describe('PluginManager hot reload with asynchronous sandbox shutdown', () => {
 		expect(forkMock).toHaveBeenCalledTimes(1);
 	});
 
+	it('retires cached admission even when asynchronous uninstall cleanup rejects', async () => {
+		const target = manager as unknown as {
+			deps: { purgePluginData?: (id: string) => Promise<void> };
+		};
+		target.deps.purgePluginData = async () => {
+			await Promise.resolve();
+			writeCodePlugin('demo');
+			throw Error('receipt cleanup failed');
+		};
+		const removal = manager.uninstall('demo');
+		const rejected = expect(removal).rejects.toThrow(/receipt cleanup failed/);
+		forkMock.mock.results[0].value.emit('exit', 0);
+		finishCleanup();
+		await rejected;
+		expect(manager.getRegistry().records).toEqual([]);
+		expect(sandbox.isRunning('demo')).toBe(false);
+		expect(forkMock).toHaveBeenCalledTimes(1);
+	});
 	it('does not restart while the plugins feature is disabled during the drain', async () => {
 		writeCodePlugin('demo', { version: '1.0.1' });
 		manager.refresh();

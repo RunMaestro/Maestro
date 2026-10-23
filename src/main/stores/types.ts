@@ -51,6 +51,7 @@ export interface BootstrapSettings {
 // ============================================================================
 
 export interface MaestroSettings {
+	relayArchiveHours: number;
 	activeThemeId: string;
 	shortcuts: Record<string, any>;
 	fontSize: number;

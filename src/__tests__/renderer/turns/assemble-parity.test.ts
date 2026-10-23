@@ -29,6 +29,7 @@ import { renderHook, act } from '@testing-library/react';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { EventEmitter } from 'node:events';
 
 const mocks = vi.hoisted(() => ({
 	isWindows: vi.fn(() => false),
@@ -333,23 +334,29 @@ describe('assembleTurn parity with the desktop', () => {
 
 	/** Run the desktop's main half on that config and return what the process manager was handed. */
 	async function runMain(fixture: Fixture, config: SpawnProcessConfig) {
-		const processManager = {
+		const processManager = Object.assign(new EventEmitter(), {
 			spawn: vi.fn((_config: unknown) => ({ success: true, pid: 4242 })),
 			get: vi.fn(),
 			// The synopsis-writer gate scans running processes before every spawn.
 			getAll: vi.fn(() => []),
-		};
-		const configs = fixture.providerConfig ? { [fixture.toolType]: fixture.providerConfig } : {};
-		await handleProcessSpawn(config, {
-			getProcessManager: () => processManager as never,
-			getAgentDetector: () => ({ getAgent: async () => detectedAgent(fixture.toolType) }) as never,
-			agentConfigsStore: {
-				get: (_key: string, fallback: unknown) => (_key === 'configs' ? configs : fallback),
-			} as never,
-			settingsStore: { get: (_key: string, fallback: unknown) => fallback } as never,
-			getMainWindow: () => null,
-			sessionsStore: { get: (_key: string, fallback: unknown) => fallback } as never,
 		});
+		const configs = fixture.providerConfig ? { [fixture.toolType]: fixture.providerConfig } : {};
+		try {
+			await handleProcessSpawn(config, {
+				getProcessManager: () => processManager as never,
+				getAgentDetector: () =>
+					({ getAgent: async () => detectedAgent(fixture.toolType) }) as never,
+				agentConfigsStore: {
+					get: (_key: string, fallback: unknown) => (_key === 'configs' ? configs : fallback),
+				} as never,
+				settingsStore: { get: (_key: string, fallback: unknown) => fallback } as never,
+				getMainWindow: () => null,
+				sessionsStore: { get: (_key: string, fallback: unknown) => fallback } as never,
+			});
+		} finally {
+			// Model process close so the shared provider writer is released between fixtures.
+			processManager.emit('exit', config.sessionId, 0);
+		}
 		expect(processManager.spawn).toHaveBeenCalledTimes(1);
 		return processManager.spawn.mock.calls[0][0] as unknown as {
 			args: string[];

@@ -78,6 +78,7 @@ export function resolveConfiguredShell(store: ShellSettingsReader): string {
 // ============================================================================
 
 export const SETTINGS_DEFAULTS: MaestroSettings = {
+	relayArchiveHours: 24,
 	activeThemeId: 'dracula',
 	shortcuts: {},
 	fontSize: 14,

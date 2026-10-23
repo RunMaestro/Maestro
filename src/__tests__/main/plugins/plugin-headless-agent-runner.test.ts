@@ -1,3 +1,4 @@
+import { acquireProviderSessionWriter } from '../../../main/utils/provider-session-writer';
 import { describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as pathProber from '../../../main/agents/path-prober';
@@ -22,6 +23,37 @@ const agent = {
 } as SessionInfo;
 
 describe('plugin headless agent runner', () => {
+	it('serializes CLI and legacy plugin resumes behind a Relay provider writer', async () => {
+		const spawn = vi.fn(async () => ({
+			success: true,
+			response: 'done',
+			agentSessionId: 'relay-provider',
+		}));
+		const run = createPluginHeadlessAgentRunner({
+			getAgent: () => agent,
+			detectAgent: async () => ({ available: true, path: '/usr/bin/codex' }),
+			hasPluginTools: () => false,
+			spawn,
+			prepareSystemPrompt: async () => undefined,
+			issueRunToken: vi.fn(),
+			revokeRunToken: vi.fn(),
+			cliScriptPath: () => '/cli.js',
+			audit: vi.fn(),
+		});
+		const release = await acquireProviderSessionWriter(
+			'codex',
+			'relay-tab-process',
+			'relay-provider'
+		);
+		const cli = run('agent-a', 'cli followup', 'relay-provider');
+		const legacy = run('agent-a', 'legacy followup', 'relay-provider');
+		await new Promise(setImmediate);
+		expect(spawn).not.toHaveBeenCalled();
+		release();
+		await Promise.all([cli, legacy]);
+		expect(spawn).toHaveBeenCalledTimes(2);
+	});
+
 	it.each([true, false])(
 		'validates the selected agent binary before dispatch (valid: %s)',
 		async (valid) => {
@@ -768,6 +800,7 @@ it.each(['success', 'error', 'throw', 'cancel-before-spawn'] as const)(
 					response: null,
 					sessionId: null,
 					error: 'Agent run timed out or was cancelled',
+					executionStarted: false,
 				});
 				expect(spawn).not.toHaveBeenCalled();
 			} else {

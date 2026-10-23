@@ -891,6 +891,7 @@ export class CallbackRegistry {
 			theme: 'dracula',
 			fontSize: 14,
 			enterToSendAI: false,
+			relayArchiveHours: 24,
 			defaultSaveToHistory: true,
 			defaultShowThinking: 'off',
 			autoScroll: true,

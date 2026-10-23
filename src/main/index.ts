@@ -1,3 +1,7 @@
+import { flushPendingSessionWrites } from './stores/instances';
+import { RelayConversations } from './plugins/relay-conversations';
+import { broadcastSessionLifecycle } from './ipc/handlers/persistence';
+import { transcriptMessagesToLogEntries, stripSynopsisTurns } from '../shared/transcriptMessages';
 import {
 	app,
 	BrowserWindow,
@@ -2537,6 +2541,56 @@ app
 					'[PluginAudit]'
 				),
 		});
+		const updateRelayAgent = (
+			agentId: string,
+			update: (
+				agent: import('./stores/types').StoredSession
+			) => import('./stores/types').StoredSession
+		): void => {
+			const sessions = sessionsStore.get('sessions', []);
+			const baseline = sessions.find((agent) => agent.id === agentId);
+			if (!baseline) throw new Error('Relay agent no longer exists');
+			const updated = update(baseline);
+			sessionsStore.set(
+				'sessions',
+				sessions.map((agent) => (agent.id === agentId ? updated : agent))
+			);
+			broadcastSessionLifecycle(undefined, {
+				added: [],
+				removedIds: [],
+				updated: [updated],
+				baselines: [baseline],
+			});
+		};
+		const relayConversations = new RelayConversations({
+			baseDir: path.join(app.getPath('userData'), 'relay-conversations'),
+			getAgent: (id) => sessionsStore.get('sessions', []).find((agent) => agent.id === id),
+			updateAgent: updateRelayAgent,
+			flush: flushPendingSessionWrites,
+			run: runHeadlessAgent,
+			loadTranscript: async (agentId, providerSessionId) => {
+				const agent = (sessionsStore.get('sessions', []) as unknown as SessionInfo[]).find(
+					(candidate) => candidate.id === agentId
+				);
+				if (!agent) throw new Error('Relay agent not found');
+				const storage = getSessionStorage(agent.toolType);
+				if (!storage) throw new Error('Relay provider transcript unavailable');
+				const remoteId = agent.sessionSshRemoteConfig?.enabled
+					? agent.sessionSshRemoteConfig.remoteId
+					: null;
+				const ssh = remoteId ? getSshRemoteById(remoteId) : undefined;
+				const transcript = await storage.readSessionMessages(
+					relayProjectPath(agent),
+					providerSessionId,
+					{ offset: 0, limit: 500 },
+					ssh
+				);
+				return transcriptMessagesToLogEntries(stripSynopsisTurns(transcript.messages));
+			},
+		});
+		await relayConversations
+			.reconcileInterrupted()
+			.catch(() => logger.warn('Relay receipts unavailable; continuity remains closed', 'Plugins'));
 		onHeadlessAgentActivityChange(() => {
 			safeSend('process:headlessActivity', getHeadlessAgentActivity());
 		});
@@ -2744,6 +2798,7 @@ app
 					);
 				},
 				providerSessions: pluginProviderSessions,
+				relayConversations,
 				recordRelayTurn: async (agentId, prompt, result) => {
 					const agent = (sessionsStore.get('sessions', []) as SessionInfo[]).find(
 						(session) => session.id === agentId
@@ -2864,16 +2919,21 @@ app
 			},
 			// Complete uninstall (invariant #8): purge the plugin's KV store, its
 			// plugins.<id>.* settings, and its event subscriptions.
-			purgePluginData: (id) => {
-				pluginProviderSessions.purge(id);
-				purgePluginData(id, {
-					kvStore: pluginKvStore,
-					settingsDeleteNamespace: pluginSettingsDeleteNamespace,
-					eventBus,
-					hostViews: pluginHostViews,
-				});
-				groupingRegistry.removePlugin(id);
-				backgroundSupervisor.teardown(id);
+			purgePluginData: async (id) => {
+				authStore.uninstall(id);
+				try {
+					if (id === RELAY_PLUGIN_ID) await relayConversations.purge();
+				} finally {
+					pluginProviderSessions.purge(id);
+					purgePluginData(id, {
+						kvStore: pluginKvStore,
+						settingsDeleteNamespace: pluginSettingsDeleteNamespace,
+						eventBus,
+						hostViews: pluginHostViews,
+					});
+					groupingRegistry.removePlugin(id);
+					backgroundSupervisor.teardown(id);
+				}
 			},
 			onChange: (registry) => {
 				serviceReconcile?.();

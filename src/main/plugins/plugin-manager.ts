@@ -98,7 +98,7 @@ export interface PluginManagerDeps {
 	 * to plugin-host-handlers' purgePluginData so uninstall leaves nothing behind
 	 * (invariant #8). Separate from forgetPlugin/forgetGrants below, which handle
 	 * the enable-state and grants files. */
-	purgePluginData?: (pluginId: string) => void;
+	purgePluginData?: (pluginId: string) => void | Promise<void>;
 	/**
 	 * Source of a plugin's VERIFIED granted capabilities, used to gate
 	 * capability-scoped contributions. Defaults to the on-disk grants store;
@@ -784,7 +784,7 @@ export class PluginManager {
 			// event subscriptions - so uninstall leaves nothing behind (invariant #8).
 			await this.stopAndDrain(id);
 			fs.rmSync(resolved, { recursive: true, force: true });
-			this.purgeUninstalledPlugin(id);
+			await this.purgeUninstalledPlugin(id);
 			return { success: true };
 		});
 	}
@@ -814,20 +814,25 @@ export class PluginManager {
 			authorization.uninstall(id);
 			const recoveryPath =
 				inspection.kind === 'bundle' ? archiveRetiredAgentFlow(inspection.path) : undefined;
-			this.purgeUninstalledPlugin(id);
+			await this.purgeUninstalledPlugin(id);
 			return { recoveryPath };
 		});
 	}
 
-	private purgeUninstalledPlugin(id: string): void {
+	private async purgeUninstalledPlugin(id: string): Promise<void> {
 		forgetPlugin(id);
 		forgetGrants(id);
-		this.deps.purgePluginData?.(id);
+		// Retire cached admission before cleanup yields or rejects. Failed cleanup
+		// must never let mutatePlugin's finally restart an enabled cached record.
 		this.pluginFingerprints.delete(id);
 		this.waitingForServiceDependencies.delete(id);
 		this.registry = removeRecord(this.registry, id);
-		this.syncPluginWatchers();
-		this.deps.onChange?.(this.registry);
+		try {
+			await this.deps.purgePluginData?.(id);
+		} finally {
+			this.syncPluginWatchers();
+			this.deps.onChange?.(this.registry);
+		}
 	}
 
 	/** Serialize file mutations and suppress all automatic starts until queued work is complete. */

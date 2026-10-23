@@ -791,6 +791,7 @@ export interface OnboardingStats {
 // AI Tab for multi-tab support within a Maestro session
 // Each tab represents a separate AI agent conversation (Claude Code, OpenCode, etc.)
 export interface AITab {
+	relayConversation?: import('../../shared/relayConversation').RelayConversationState;
 	/** Durable conversation provenance, independent of whether a turn is running. */
 	origin?: 'user' | 'auto' | 'relay';
 	id: string; // Unique tab ID (generated UUID)

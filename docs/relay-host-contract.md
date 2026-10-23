@@ -1,4 +1,56 @@
-# Relay host contract (Host API 1.25.0)
+# Relay host contract (Host API 1.31.0)
+
+## Desktop conversation continuity (1.31.0)
+
+Version allocation follows the open API1.29 generic-platform PR1881 and API1.30
+bounded-audio PR1883. This focused rc diff does not implement those preceding
+contracts. Integrate and qualify their documented prerequisites before releasing
+an API1.31 host; semver comparison alone is not runtime completeness enforcement.
+No installer or live archive activation is part of this change.
+
+The trusted, pinned Relay may call `agents.send(agentId, prompt, { conversationId,
+messageId, sessionId?, onProgress? })`. `conversationId` is its persistent real
+transport thread identity; `messageId` is the incoming transport message identity.
+Both are opaque strings of 1–256 characters and must be supplied together.
+`agentId` names the Maestro agent, `sessionId` remains the opaque provider session,
+and the returned `tabId` names the real desktop tab. None is an outbound grant.
+
+The host owns the persistent conversation→tab/provider mapping and execution
+receipts, separate from plugin-writable storage. Each conversation has one real
+background tab with user/assistant text, durable Relay origin, and queued/running/
+idle/error state. It does not change navigation. Desktop and Relay turns share a
+host writer reservation through process close; the renderer's normal queue still
+decides desktop ordering. A duplicate message returns the saved result with
+`replayed: true`; the plugin **must not send another transport response**. An
+interrupted receipt fails closed, because tools may already have run. A changed
+prompt under the same message identity is rejected. No automatic retry is safe.
+
+At activation, Relay can register its explicitly stored real thread bindings with
+`agents.restoreConversation(agentId, { conversationId, sessionId })`. The host
+requires existing private provider ownership, the pinned Relay signer, exact-agent
+grant and unattended consent. This reads the provider transcript and creates a
+background tab without a provider turn. Existing archived tabs and deliberate
+manual closes stay closed. Generic automation, consults and ambiguous old
+provider bindings are never materialized by this API. Without the new identity
+options, `agents.send` retains its existing headless behavior.
+
+`agents.completeConversation(agentId, { conversationId, messageId })` records an
+**explicit task completion** only for the latest successfully finished message,
+with no pending Relay/desktop work or newer desktop input. An idle provider is
+not completion evidence. A later message clears completion and reveals the same
+tab. Relay must only invoke this method from a verified task completion source
+(for example an authorized user's explicit `/done`), never from assistant prose.
+
+Settings → General → Relay conversation archive controls the inactivity period
+(`relayArchiveHours`, default 24, 0 disables). The owning desktop hides a tab only
+after explicit task completion and inactivity, protecting running/queued work,
+bookmarks, stars, saved selection, unread messages, drafts and tiled tabs. Hiding
+retains the tab, transcript and provider history; History/Resume reveals it again.
+An app restart marks interrupted work as an error rather than completed. No
+existing desktop or automation tab is eligible without explicit Relay mapping.
+
+Tests are synthetic source-level acceptance. They do not establish live Discord,
+installed-host/plugin compatibility, or authorization for production activation.
 
 This is the Maestro host half of the Relay Discord integration. The Discord gateway, token UI, channel ownership, per-thread session mapping, and Pianola exceptions belong to the Relay plugin, not the host. The host never receives the bot token as a setting or agent environment variable.
 

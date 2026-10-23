@@ -1064,6 +1064,7 @@ export type SettingValue = string | number | boolean | null;
  * Curated subset of settings exposed to the web interface.
  */
 export interface WebSettings {
+	relayArchiveHours: number;
 	theme: string;
 	fontSize: number;
 	enterToSendAI: boolean;
