@@ -1,3 +1,5 @@
+import { blockReplyRetries, canSynthesizeReplies } from '../group-chat/reply-failure';
+import { appendToLog } from '../group-chat/group-chat-log';
 /**
  * Process exit listener.
  * Handles process exit events, including group chat moderator/participant exits.
@@ -187,13 +189,17 @@ export function setupExitListener(
 						debugLog('GroupChat:Debug', ` Chat loaded for parsing: ${chat?.name || 'null'}`);
 						const agentType = chat?.moderatorAgentId;
 						debugLog('GroupChat:Debug', ` Agent type for parsing: ${agentType}`);
-						const parsedText = outputParser.extractTextFromStreamJson(bufferedOutput, agentType);
+						const parsedText = outputParser.extractTextFromStreamJson(
+							bufferedOutput,
+							agentType,
+							true
+						);
 						debugLog('GroupChat:Debug', ` Parsed text length: ${parsedText.length}`);
 						debugLog(
 							'GroupChat:Debug',
 							` Parsed text preview: "${parsedText.substring(0, 300)}${parsedText.length > 300 ? '...' : ''}"`
 						);
-						if (parsedText.trim()) {
+						if (parsedText.trim() && !parsedText.startsWith('Reply capture failed:')) {
 							debugLog('GroupChat:Debug', ` Routing moderator response...`);
 							logger.info(
 								`[GroupChat] Routing moderator response (${parsedText.length} chars)`,
@@ -229,7 +235,11 @@ export function setupExitListener(
 						}
 					} catch (err) {
 						debugLog('GroupChat:Debug', ` ERROR in moderator response processing:`, err);
-						const parsedTextForLog = outputParser.extractTextFromStreamJson(bufferedOutput);
+						const parsedTextForLog = outputParser.extractTextFromStreamJson(
+							bufferedOutput,
+							undefined,
+							true
+						);
 						logger.error('[GroupChat] Failed to process moderator response', 'ProcessListener', {
 							error: String(err),
 							groupChatId,
@@ -309,6 +319,25 @@ export function setupExitListener(
 			const bufferedOutput = outputBuffer.getGroupChatBufferedOutput(sessionId);
 			debugLog('GroupChat:Debug', ` Buffered output length: ${bufferedOutput?.length ?? 0}`);
 
+			// Exhausted capture recovery is a transport failure, never an empty success.
+			// Settle without synthesis, so the moderator cannot redispatch the same task forever.
+			const failReply = async () => {
+				blockReplyRetries(groupChatId);
+				const content = `⚠️ ${participantName}: reply capture failed after bounded recovery. Automatic retries stopped; inspect the saved provider session before retrying.`;
+				try {
+					const chat = await groupChatStorage.loadGroupChat(groupChatId);
+					if (chat) await appendToLog(chat.logPath, 'system', content);
+					groupChatEmitters.emitMessage?.(groupChatId, {
+						timestamp: new Date().toISOString(),
+						from: 'system',
+						content,
+					});
+				} finally {
+					groupChatRouter.markParticipantResponded(groupChatId, participantName);
+					groupChatRouter.settleGroupChatToIdle(groupChatId);
+				}
+			};
+
 			// Helper function to mark participant and potentially trigger synthesis
 			const markAndMaybeSynthesize = () => {
 				const isLastParticipant = groupChatRouter.markParticipantResponded(
@@ -318,6 +347,10 @@ export function setupExitListener(
 				debugLog('GroupChat:Debug', ` Is last participant to respond: ${isLastParticipant}`);
 				const pm = getProcessManager();
 				const ad = getAgentDetector();
+				if (isLastParticipant && !canSynthesizeReplies(groupChatId)) {
+					groupChatRouter.settleGroupChatToIdle(groupChatId);
+					return;
+				}
 				if (isLastParticipant) {
 					// "Can synthesis run?" is a different question from "is the room
 					// still working?". Gating both on one condition meant a missing
@@ -463,7 +496,11 @@ export function setupExitListener(
 							` Chat loaded for participant parsing: ${chat?.name || 'null'}`
 						);
 						debugLog('GroupChat:Debug', ` Agent type for parsing: ${agentType}`);
-						const parsedText = outputParser.extractTextFromStreamJson(bufferedOutput, agentType);
+						const parsedText = outputParser.extractTextFromStreamJson(
+							bufferedOutput,
+							agentType,
+							true
+						);
 						debugLog('GroupChat:Debug', ` Parsed text length: ${parsedText.length}`);
 						debugLog(
 							'GroupChat:Debug',
@@ -487,8 +524,8 @@ export function setupExitListener(
 							markAndMaybeSynthesize();
 						} else {
 							debugLog('GroupChat:Debug', ` WARNING: Parsed text is empty for ${participantName}!`);
-							// No response to route, mark participant as done
-							markAndMaybeSynthesize();
+							// Persist the failure and stop this automatic round.
+							await failReply();
 						}
 					} catch (err) {
 						if (!isDeletedGroupChatFailure(err)) void captureException(err);
@@ -499,7 +536,11 @@ export function setupExitListener(
 							{ error: String(err), participant: participantName }
 						);
 						try {
-							const parsedText = outputParser.extractTextFromStreamJson(bufferedOutput);
+							const parsedText = outputParser.extractTextFromStreamJson(
+								bufferedOutput,
+								undefined,
+								true
+							);
 							if (parsedText.trim()) {
 								const pm = getProcessManager();
 								await groupChatRouter.routeAgentResponse(
@@ -537,8 +578,8 @@ export function setupExitListener(
 					'GroupChat:Debug',
 					` WARNING: No buffered output for participant ${participantName}!`
 				);
-				// No output to log, so mark participant as responded immediately
-				markAndMaybeSynthesize();
+				// No output after disk reconciliation: do not silently launch another reminder.
+				void failReply().catch((err) => logger.error(String(err), 'ProcessListener'));
 			}
 			debugLog('GroupChat:Debug', ` ===============================================`);
 			// Don't send to regular exit handler

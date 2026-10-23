@@ -1,3 +1,4 @@
+import { readCompletedOpenCodeReply } from '../../storage/opencode-session-storage';
 // src/main/process-manager/handlers/ExitHandler.ts
 
 import { EventEmitter } from 'events';
@@ -101,6 +102,42 @@ export class ExitHandler {
 		// disk so the rendered text matches what Copilot truly finished
 		// with (not the stale planning narration our parent saw last).
 		await this.awaitCopilotShutdown(sessionId, managedProcess);
+
+		// OpenCode 1.15 can persist a finished answer while stdout only contains step_start.
+		// Re-read twice at most; never rerun the task or recover stopped/remote turns locally.
+		if (
+			toolType === 'opencode' &&
+			!managedProcess.interrupted &&
+			!managedProcess.sshRemoteId &&
+			managedProcess.agentSessionId &&
+			!this.isSuperseded(sessionId, managedProcess)
+		) {
+			for (let attempt = 0; attempt < 2; attempt++) {
+				try {
+					const reply = readCompletedOpenCodeReply(
+						managedProcess.agentSessionId,
+						managedProcess.startTime,
+						undefined,
+						managedProcess.openCodeMessageId
+					);
+					if (reply) {
+						managedProcess.streamedText = reply.text;
+						if (!managedProcess.resultEmitted) {
+							managedProcess.resultEmitted = true;
+							this.bufferManager.emitDataBuffered(sessionId, reply.text, managedProcess);
+						}
+						break;
+					}
+				} catch (error) {
+					logger.warn('[ProcessManager] OpenCode reply reconciliation failed', 'ProcessManager', {
+						sessionId,
+						error: String(error),
+					});
+				}
+				if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 100));
+				if (this.isSuperseded(sessionId, managedProcess)) return;
+			}
+		}
 
 		// The main guard. `awaitCopilotShutdown` is the only suspension point in
 		// this method, so it is the only place a replacement can claim the session

@@ -1,3 +1,4 @@
+import { clearReplyFailure } from './reply-failure';
 /**
  * @file group-chat-router.ts
  * @description Message routing for Group Chat feature.
@@ -823,6 +824,7 @@ export async function routeUserMessage(
 	images?: string[],
 	routingRetry?: ModeratorRoutingRetry
 ): Promise<void> {
+	if (!routingRetry) clearReplyFailure(groupChatId);
 	logger.debug(`[GroupChat:Debug] ========== ROUTE USER MESSAGE ==========`);
 	logger.debug(`[GroupChat:Debug] Group Chat ID: ${groupChatId}`);
 	logger.debug(`[GroupChat:Debug] Message length: ${message.length}`);
