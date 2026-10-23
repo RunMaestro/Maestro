@@ -21,9 +21,11 @@ import {
 	isLocalModelOfferedForTask,
 	tasksForSystem,
 	type LocalModelTaskId,
+	type LocalModelAssignment,
 } from '../../../../../shared/local-models/tasks';
 import {
 	BGE_SMALL_EN_ID,
+	PARAKEET_TDT_V2_ID,
 	GEMMA_4_E4B_ID,
 	LOCAL_MODEL_CATALOG,
 	PROMPT_GUARD_2_22M_ID,
@@ -65,6 +67,21 @@ function listing(id: string): LocalModelListing {
 		installPaths: [],
 	};
 }
+
+/** A catalog listing that reads as installed, whatever the shared set says. */
+const installed = (id: string): LocalModelListing => {
+	const entry = getLocalModel(id)!;
+	return {
+		entry,
+		status: {
+			id,
+			status: 'installed',
+			manifest: { installedAt: 1, verifiedAt: 1 } as never,
+			bytesOnDisk: entry.bytes,
+		},
+		installPaths: [],
+	};
+};
 
 const ollama: LocalModelEndpoint = {
 	id: 'ep-ollama',
@@ -206,6 +223,56 @@ describe('LocalModelsAssignmentsSection', () => {
 		expect(optionLabels('Prompt-injection screen')).toEqual(['Off']);
 	});
 
+	it('persists the Dictation language in the existing assignment and preserves it on remount', async () => {
+		useSettingsStore.setState({
+			localModelAssignments: {
+				dictation: { type: 'local', modelId: 'whisper-base', language: 'en' },
+			},
+		});
+		const view = render(<Section />);
+		const row = screen.getByTestId('local-models-task-dictation');
+		fireEvent.click(within(row).getByRole('button', { name: 'Deutsch' }));
+		expect(useSettingsStore.getState().localModelAssignments.dictation).toEqual({
+			type: 'local',
+			modelId: 'whisper-base',
+			language: 'de',
+		});
+		expect(window.maestro.settings.set).toHaveBeenCalledWith('localModelAssignments', {
+			dictation: { type: 'local', modelId: 'whisper-base', language: 'de' },
+		});
+		view.unmount();
+		render(<Section />);
+		expect(screen.getByLabelText('Dictation')).toHaveValue('local:whisper-base?language=de');
+		expect(
+			within(screen.getByTestId('local-models-task-dictation')).getByRole('button', {
+				name: 'Deutsch',
+			})
+		).toBeEnabled();
+	});
+
+	it('preserves German when switching installed Dictation models', async () => {
+		api().list.mockResolvedValue(['whisper-base', 'whisper-small'].map(installed));
+		useSettingsStore.setState({
+			localModelAssignments: {
+				dictation: { type: 'local', modelId: 'whisper-base', language: 'de' },
+			},
+		});
+		render(<Section />);
+		const select = screen.getByLabelText('Dictation');
+		const small = await within(select).findByRole('option', {
+			name: getLocalModel('whisper-small')!.displayName,
+		});
+		fireEvent.change(select, { target: { value: (small as HTMLOptionElement).value } });
+		expect(useSettingsStore.getState().localModelAssignments.dictation).toEqual({
+			type: 'local',
+			modelId: 'whisper-small',
+			language: 'de',
+		});
+		expect(window.maestro.settings.set).toHaveBeenCalledWith('localModelAssignments', {
+			dictation: { type: 'local', modelId: 'whisper-small', language: 'de' },
+		});
+	});
+
 	it('saves a pick through the shared assignment writer', async () => {
 		render(<Section />);
 		await waitFor(() => expect(optionLabels('Semantic search')).toContain(bgeName));
@@ -297,6 +364,45 @@ describe('buildAssignmentOptionGroups', () => {
 			'ep-off': { ok: true as const, models: [{ id: 'hidden' }] },
 		},
 	};
+
+	it.each([
+		[
+			{ type: 'local', modelId: 'whisper-base', language: 'de' },
+			'whisper-small',
+			'local:whisper-small?language=de',
+		],
+		[
+			{ type: 'local', modelId: 'whisper-base', language: 'en' },
+			'whisper-small',
+			'local:whisper-small?language=en',
+		],
+		[
+			{ type: 'local', modelId: 'whisper-base', language: 'de' },
+			PARAKEET_TDT_V2_ID,
+			`local:${PARAKEET_TDT_V2_ID}`,
+		],
+		[
+			{ type: 'local', modelId: 'whisper-base', language: 'en' },
+			PARAKEET_TDT_V2_ID,
+			`local:${PARAKEET_TDT_V2_ID}?language=en`,
+		],
+		[{ type: 'local', modelId: 'whisper-base' }, 'whisper-small', 'local:whisper-small'],
+		[{ type: 'off' }, 'whisper-small', 'local:whisper-small'],
+	] satisfies [LocalModelAssignment, string, string][])(
+		'carries only a supported explicit language from %j to %s',
+		(current, target, expected) => {
+			const groups = buildAssignmentOptionGroups(LOCAL_MODEL_TASKS.dictation, current, {
+				listings: ['whisper-base', 'whisper-small', PARAKEET_TDT_V2_ID].map(installed),
+				endpoints: [],
+				endpointModels: {},
+			});
+			expect(
+				groups
+					.flatMap((group) => group.options)
+					.find((option) => option.label === getLocalModel(target)!.displayName)?.value
+			).toBe(expected);
+		}
+	);
 
 	it('groups local models and each enabled endpoint, skipping disabled ones', () => {
 		const groups = buildAssignmentOptionGroups(
@@ -494,20 +600,7 @@ describe('buildAssignmentOptionGroups', () => {
 describe('the model routing picker (a local-first task)', () => {
 	const ROUTING = LOCAL_MODEL_TASKS['model-routing'];
 	const name = (id: string) => getLocalModel(id)!.displayName;
-	/** A catalog listing that reads as installed, whatever the shared set says. */
-	const installed = (id: string): LocalModelListing => {
-		const entry = getLocalModel(id)!;
-		return {
-			entry,
-			status: {
-				id,
-				status: 'installed',
-				manifest: { installedAt: 1, verifiedAt: 1 } as never,
-				bytesOnDisk: entry.bytes,
-			},
-			installPaths: [],
-		};
-	};
+
 	const sources = {
 		// Listed largest first, so the order below is the picker's and not the input's.
 		listings: [GEMMA_4_E4B_ID, QWEN3_5_4B_ID, QWEN3_1_7B_ID, BGE_SMALL_EN_ID].map(installed),

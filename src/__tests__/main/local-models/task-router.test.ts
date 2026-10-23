@@ -1012,6 +1012,14 @@ describe('runSpeechToTextTask', () => {
 		expect(stats.recordLocalModelRun).not.toHaveBeenCalled();
 	});
 
+	it('preserves the Dictation language from persisted settings to the shared STT call', async () => {
+		const selected = { type: 'local', modelId: 'whisper-base', language: 'de' } as const;
+		assign('dictation', selected);
+		speech.transcribeSpeech.mockResolvedValue({ text: 'synthetic fixture', audioMs: 1000 });
+		await runSpeechToTextTask('dictation', { audio: clip, sampleRate: 16000 });
+		expect(speech.transcribeSpeech).toHaveBeenCalledWith(selected, clip, 16000, {});
+	});
+
 	it('transcribes on the assigned local model and records the run', async () => {
 		assign('dictation', PARAKEET);
 		speech.transcribeSpeech.mockResolvedValue({ text: 'Ship it.', audioMs: 1000 });

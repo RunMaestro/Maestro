@@ -35,6 +35,8 @@ import {
 	QWEN3_CODER_30B_A3B_ID,
 	QWEN3_CODER_NEXT_ID,
 	WHISPER_BASE_EN_ID,
+	WHISPER_BASE_ID,
+	WHISPER_SMALL_ID,
 	defineModel,
 	getLocalModel,
 	ggufSplitPart,
@@ -78,6 +80,8 @@ describe('local model catalog', () => {
 				PARAKEET_TDT_V2_ID,
 				QWEN3_1_7B_ID,
 				WHISPER_BASE_EN_ID,
+				WHISPER_BASE_ID,
+				WHISPER_SMALL_ID,
 				...CURATED_TEXT_IDS,
 				...EMBEDDING_IDS,
 				...CLASSIFIER_IDS,
@@ -296,18 +300,53 @@ describe('local model catalog', () => {
 				OPENWAKEWORD_BASE_ID,
 				PARAKEET_TDT_V2_ID,
 				WHISPER_BASE_EN_ID,
+				WHISPER_BASE_ID,
+				WHISPER_SMALL_ID,
 				...EMBEDDING_IDS,
 				...CLASSIFIER_IDS,
 			].sort()
 		);
 	});
 
-	it('marks no model pending: every catalog entry runs in this build', () => {
-		// `pending` is for weights nothing here can read, and it hides a model from
-		// every surface. Both models that carried it now run and are measured on
-		// real hardware, so the catalog has no such entry. The field stays for the
-		// next model that lands ahead of its engine.
-		expect(LOCAL_MODEL_CATALOG.filter((entry) => entry.pending)).toEqual([]);
+	it('pins optional Small assets without adding it to any default voice model set', () => {
+		const small = getLocalModel(WHISPER_SMALL_ID)!;
+		expect(small.source).toEqual({
+			repo: 'onnx-community/whisper-small',
+			revision: '36050c46d777d46dc4b5f43f6d90574fc38f8732',
+		});
+		expect(small.pending).toBeUndefined();
+		expect(small.speechToText?.languages).toEqual(['de', 'en']);
+		expect(small.files.map(({ path, bytes, sha256 }) => ({ path, bytes, sha256 }))).toEqual([
+			{
+				path: 'onnx/encoder_model.onnx',
+				bytes: 352825870,
+				sha256: 'b37cd6625dc36f9178ec7539a1876b9680ea26a910097e092be39dc766320c7b',
+			},
+			{
+				path: 'onnx/decoder_model_merged_q4.onnx',
+				bytes: 233149327,
+				sha256: '795c61b344576719c2b249cc9911c78b4cc552c8c6a5407be21a3380a0791b13',
+			},
+			{
+				path: 'tokenizer.json',
+				bytes: 2480466,
+				sha256: '27fc476bfe7f17299480be2273fc0608e4d5a99aba2ab5dec5374b4482d1a566',
+			},
+		]);
+		expect(small.bytes).toBe(588455663);
+		expect(JSON.stringify(MODEL_SETS)).not.toContain(WHISPER_SMALL_ID);
+	});
+
+	it('attributes multilingual Whisper weights to the pinned upstream MIT license', () => {
+		expect(getLocalModel(WHISPER_BASE_ID)?.license).toEqual({
+			spdx: 'MIT',
+			url: 'https://github.com/openai/whisper/blob/86098128c0b4f24f0e2aa2994de830614b474227/LICENSE',
+		});
+	});
+
+	it('offers the explicitly qualified multilingual checkpoint alongside English-only models', () => {
+		expect(getLocalModel(WHISPER_BASE_ID)?.pending).toBeUndefined();
+		expect(getLocalModel(WHISPER_BASE_ID)?.speechToText?.languages).toEqual(['de', 'en']);
 		for (const id of [
 			// Speaks since its phoneme front end shipped (`kokoro-e2e.test.ts`).
 			KOKORO_82M_ID,

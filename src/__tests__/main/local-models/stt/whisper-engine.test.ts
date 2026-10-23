@@ -19,20 +19,33 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
+import generation from '../../../fixtures/whisper-base-generation-config.json';
+import { readFile } from 'node:fs/promises';
+
+vi.mock('node:fs/promises', async (importOriginal) => ({
+	...(await importOriginal<typeof import('node:fs/promises')>()),
+	readFile: vi.fn(),
+}));
+vi.mock('../../../../main/local-models/model-store', () => ({
+	isInstalled: vi.fn(async () => true),
+	modelFilePath: (id: string, relative: string) => `/models/${id}/${relative}`,
+}));
+
+import { resolveInstalledSpeechToTextModel } from '../../../../main/local-models/stt/engines';
 
 import {
 	WhisperEngine,
 	WHISPER_BASE_GEOMETRY,
 	type OnnxModule,
+	type WhisperEngineOptions,
 	type OnnxSession,
 	type OnnxTensor,
 } from '../../../../main/local-models/stt/whisper/engine';
 import {
 	WHISPER_EN_SPECIAL_TOKENS,
 	WhisperTokenizer,
+	WHISPER_MULTILINGUAL_SPECIAL_TOKENS,
 } from '../../../../main/local-models/stt/whisper/tokenizer';
-
-const { layers, heads, headDim } = WHISPER_BASE_GEOMETRY;
 
 /** Minimal stand-in for `onnxruntime-node`'s Tensor. */
 class FakeTensor implements OnnxTensor {
@@ -68,11 +81,16 @@ interface DecodeCall {
  * length-1 placeholder for `present.*.encoder.*`, exactly as the real graph does.
  * An engine that trusts it will be caught by the assertions below.
  */
-function fakeOnnx(tokenSequence: number[]): {
+function fakeOnnx(
+	tokenSequence: number[],
+	alternatives: readonly (readonly [number, number])[][] = [],
+	geometry = WHISPER_BASE_GEOMETRY
+): {
 	module: OnnxModule;
 	calls: DecodeCall[];
 	released: number;
 } {
+	const { layers, heads, headDim } = geometry;
 	const calls: DecodeCall[] = [];
 	const state = { released: 0 };
 	const ENCODER_FRAMES = 1500;
@@ -107,6 +125,19 @@ function fakeOnnx(tokenSequence: number[]): {
 			const idTensor = feeds.input_ids.data as BigInt64Array;
 			const inputIds = Array.from(idTensor, (value) => Number(value));
 			const useCache = (feeds.use_cache_branch.data as Uint8Array)[0] === 1;
+			// The actual factory must supply every layer with the checkpoint shape.
+			expect(Object.keys(feeds).filter((key) => key.startsWith('past_key_values.'))).toHaveLength(
+				layers * 4
+			);
+			for (let layer = 0; layer < layers; layer++) {
+				for (const attention of ['encoder', 'decoder']) {
+					for (const part of ['key', 'value']) {
+						const tensor = feeds[`past_key_values.${layer}.${attention}.${part}`];
+						expect(tensor.dims).toEqual([1, heads, expect.any(Number), headDim]);
+						if (attention === 'encoder') expect(tensor.dims[2]).toBe(useCache ? ENCODER_FRAMES : 0);
+					}
+				}
+			}
 			calls.push({
 				inputIds,
 				useCache,
@@ -124,6 +155,8 @@ function fakeOnnx(tokenSequence: number[]): {
 			const positions = inputIds.length;
 			const wide = new Float32Array(positions * vocabSize);
 			wide[(positions - 1) * vocabSize + next] = 10;
+			for (const [id, score] of alternatives[step] ?? [])
+				wide[(positions - 1) * vocabSize + id] = score;
 
 			const outputs: Record<string, OnnxTensor> = {
 				logits: new FakeTensor('float32', wide, [1, positions, vocabSize]),
@@ -160,12 +193,32 @@ function fakeOnnx(tokenSequence: number[]): {
 	};
 }
 
-function engineFor(pieces: string[]): WhisperEngine {
+function tokenizerFor(pieces: string[], options: Partial<WhisperEngineOptions> = {}): string {
+	return JSON.stringify({
+		model: { vocab: vocabFor(pieces) },
+		...(options.specialTokens?.languages
+			? {
+					added_tokens: [
+						{ content: '<|startoftranscript|>', id: 50258 },
+						{ content: '<|endoftext|>', id: 50257 },
+						{ content: '<|notimestamps|>', id: 50363 },
+						{ content: '<|startofprev|>', id: 50361 },
+						{ content: '<|transcribe|>', id: 50359 },
+						{ content: '<|de|>', id: 50261 },
+						{ content: '<|en|>', id: 50259 },
+					],
+				}
+			: {}),
+	});
+}
+
+function engineFor(pieces: string[], options: Partial<WhisperEngineOptions> = {}): WhisperEngine {
 	return new WhisperEngine({
 		encoderPath: '/models/onnx/encoder_model.onnx',
 		decoderPath: '/models/onnx/decoder_model_merged_q4.onnx',
-		tokenizerJson: JSON.stringify({ model: { vocab: vocabFor(pieces) } }),
+		tokenizerJson: tokenizerFor(pieces, options),
 		consumerId: 'whisper-local',
+		...options,
 	});
 }
 
@@ -195,6 +248,343 @@ describe('WhisperEngine', () => {
 			encode.mockRestore();
 		}
 	});
+	it.each([
+		['whisper-base', WHISPER_BASE_GEOMETRY],
+		['whisper-small', { layers: 12, heads: 12, headDim: 64 }],
+	] as const)(
+		'preserves name hints with both languages through the %s factory',
+		async (modelId, geometry) => {
+			const encode = vi.spyOn(WhisperTokenizer.prototype, 'encode').mockReturnValue([33, 34]);
+			try {
+				for (const [language, languageToken] of [
+					['de', 50261],
+					['en', 50259],
+				] as const) {
+					vi.mocked(readFile).mockResolvedValue(
+						tokenizerFor([' hello', ' unused', ' other', ' there'], {
+							specialTokens: WHISPER_MULTILINGUAL_SPECIAL_TOKENS,
+						})
+					);
+					const model = await resolveInstalledSpeechToTextModel(modelId, 'dictation');
+					const engine = await model.createEngine();
+					const fake = fakeOnnx([0, 3, 50257], [], geometry);
+					await engine.load(fake.module);
+					try {
+						await expect(
+							engine.transcribe(AUDIO, { language, vocabulary: ['🏢 Pedro Sidián'] })
+						).resolves.toBe('hello there');
+						expect(fake.calls[0].inputIds).toEqual([
+							generation.prev_sot_token_id,
+							33,
+							34,
+							50258,
+							languageToken,
+							50359,
+							50363,
+						]);
+						expect(encode).toHaveBeenLastCalledWith(' Pedro Sidián');
+					} finally {
+						await engine.unload();
+					}
+				}
+			} finally {
+				encode.mockRestore();
+			}
+		}
+	);
+	it.each([
+		['whisper-base-en', WHISPER_BASE_GEOMETRY, 'en', [50257, 50362], 50256],
+		['whisper-base', WHISPER_BASE_GEOMETRY, 'de', [50258, 50261, 50359, 50363], 50257],
+		[
+			'whisper-small',
+			{ layers: 12, heads: 12, headDim: 64 },
+			'de',
+			[50258, 50261, 50359, 50363],
+			50257,
+		],
+	] as const)(
+		'loads %s through the factory with its geometry and language rules',
+		async (modelId, geometry, language, prompt, eos) => {
+			const multilingual = modelId !== 'whisper-base-en';
+			vi.mocked(readFile).mockResolvedValue(
+				tokenizerFor(
+					[' hello', ' unused', ' other', ' there'],
+					multilingual ? { specialTokens: WHISPER_MULTILINGUAL_SPECIAL_TOKENS } : {}
+				)
+			);
+			const model = await resolveInstalledSpeechToTextModel(modelId, 'dictation');
+			const engine = await model.createEngine();
+			const fake = fakeOnnx(
+				[0, 3, eos],
+				multilingual
+					? [
+							[
+								[220, 30],
+								[50257, 29],
+								[50358, 28],
+							],
+							[[50358, 29]],
+						]
+					: [],
+				geometry
+			);
+			const create = vi.spyOn(fake.module.InferenceSession, 'create');
+			await engine.load(fake.module);
+			try {
+				await expect(engine.transcribe(AUDIO, { language })).resolves.toBe('hello there');
+				expect(fake.calls[0].inputIds).toEqual(prompt);
+				expect(fake.calls.map((call) => call.useCache)).toEqual([false, true, true]);
+				expect(create.mock.calls.map((call) => call[0])).toEqual([
+					`/models/${modelId}/onnx/encoder_model.onnx`,
+					`/models/${modelId}/onnx/decoder_model_merged_q4.onnx`,
+				]);
+			} finally {
+				await engine.unload();
+			}
+			expect(fake.released).toBe(2);
+		}
+	);
+
+	it.each(['repeat', 'budget', 'cancel'] as const)(
+		'enforces %s through the Small factory and permits reuse',
+		async (boundary) => {
+			const pieces = Array.from({ length: 5060 }, (_, i) => ` word${i}`);
+			vi.mocked(readFile).mockResolvedValue(
+				tokenizerFor(pieces, { specialTokens: WHISPER_MULTILINGUAL_SPECIAL_TOKENS })
+			);
+			const model = await resolveInstalledSpeechToTextModel('whisper-small', 'dictation');
+			const engine = await model.createEngine();
+			const sequence =
+				boundary === 'budget'
+					? Array.from({ length: 60 }, (_, i) => 5000 + i)
+					: boundary === 'cancel'
+						? [5000, 5000, 5000, 50257]
+						: Array(12).fill(5000);
+			const fake = fakeOnnx(sequence, [], { layers: 12, heads: 12, headDim: 64 });
+			const controller = new AbortController();
+			let finish!: () => void;
+			let cancelBoundaryHeld = false;
+			let entered!: () => void;
+			const inFlight = new Promise<void>((resolve) => {
+				entered = resolve;
+			});
+			const create = fake.module.InferenceSession.create;
+			fake.module.InferenceSession.create = async (file, options) => {
+				const session = await create(file, options);
+				if (boundary === 'cancel' && file.includes('decoder')) {
+					const run = session.run.bind(session);
+					session.run = async (feeds) => {
+						const output = await run(feeds);
+						if ((feeds.use_cache_branch.data as Uint8Array)[0] === 1 && !cancelBoundaryHeld) {
+							cancelBoundaryHeld = true;
+							entered();
+							await new Promise<void>((resolve) => {
+								finish = resolve;
+							});
+						}
+						return output;
+					};
+				}
+				return session;
+			};
+			await engine.load(fake.module);
+			try {
+				const decoding = engine.transcribe(AUDIO, { language: 'de', signal: controller.signal });
+				if (boundary === 'cancel') {
+					const rejection = expect(decoding).rejects.toMatchObject({ code: 'cancelled' });
+					await inFlight;
+					controller.abort();
+					let settled = false;
+					void decoding.then(
+						() => {
+							settled = true;
+						},
+						() => {
+							settled = true;
+						}
+					);
+					await Promise.resolve();
+					expect(settled).toBe(false);
+					finish();
+					await rejection;
+					expect(fake.calls).toHaveLength(2);
+					// A new invocation resets caches and does not inherit the cancelled signal.
+					await expect(engine.transcribe(AUDIO, { language: 'en' })).resolves.toBe('word5000');
+					expect(fake.calls[2].inputIds).toEqual([50258, 50259, 50359, 50363]);
+					expect(fake.calls[2].useCache).toBe(false);
+				} else {
+					await expect(decoding).resolves.toContain('word5000');
+					expect(fake.calls).toHaveLength(boundary === 'repeat' ? 8 : 36);
+				}
+			} finally {
+				await engine.unload();
+			}
+			expect(fake.released).toBe(2);
+		}
+	);
+
+	it('lets cancellation run during mel preparation before opening native inference', async () => {
+		const fake = fakeOnnx([0, WHISPER_EN_SPECIAL_TOKENS.endOfText]);
+		const create = fake.module.InferenceSession.create;
+		const encoderRun = vi.fn();
+		fake.module.InferenceSession.create = async (file, options) => {
+			const session = await create(file, options);
+			if (file.includes('encoder')) {
+				const run = session.run.bind(session);
+				session.run = async (feeds) => {
+					encoderRun();
+					return run(feeds);
+				};
+			}
+			return session;
+		};
+		const engine = engineFor([' test']);
+		await engine.load(fake.module);
+		const controller = new AbortController();
+		const cancellation = setImmediate(() => controller.abort());
+		try {
+			await expect(engine.transcribe(AUDIO, { signal: controller.signal })).rejects.toMatchObject({
+				code: 'cancelled',
+			});
+			expect(encoderRun).not.toHaveBeenCalled();
+		} finally {
+			clearImmediate(cancellation);
+			await engine.unload();
+		}
+	});
+
+	it('primes multilingual German transcription with the checkpoint tokens, never translation', async () => {
+		// Independently pinned generation_config.json: onnx-community/whisper-base
+		// 1846881b6b3a3024392c1eea3ad983695bc23925 (not the .en checkpoint).
+		const fake = fakeOnnx([0, 50257]);
+		const engine = engineFor([' GrÃ¼ÃŁe'], {
+			specialTokens: {
+				startOfTranscript: 50258,
+				endOfText: 50257,
+				noTimestamps: 50363,
+				transcribe: 50359,
+				languages: { de: 50261, en: 50259 },
+			},
+		});
+		await engine.load(fake.module);
+		await expect(engine.transcribe(AUDIO, { language: 'de' })).resolves.toBe('Grüße');
+		expect(fake.calls[0].inputIds).toEqual([50258, 50261, 50359, 50363]);
+		expect(fake.calls[0].inputIds).not.toContain(50358);
+	});
+
+	it('uses the exact pinned multilingual generation exclusions', () => {
+		// Exporter fixture@1846881b; original bytes SHA25661070cf8de25b1e9… (formatted).
+		expect(WHISPER_MULTILINGUAL_SPECIAL_TOKENS.suppressTokens).toEqual(generation.suppress_tokens);
+		expect(WHISPER_MULTILINGUAL_SPECIAL_TOKENS.beginSuppressTokens).toEqual(
+			generation.begin_suppress_tokens
+		);
+		expect(WHISPER_MULTILINGUAL_SPECIAL_TOKENS.startOfPrevious).toBe(generation.prev_sot_token_id);
+	});
+
+	it('rejects mismatched multilingual vocabulary-context tokens before opening graphs', async () => {
+		const definition = JSON.parse(
+			tokenizerFor([' hello'], { specialTokens: WHISPER_MULTILINGUAL_SPECIAL_TOKENS })
+		);
+		definition.added_tokens.find(
+			(token: { content: string }) => token.content === '<|startofprev|>'
+		).id = 50360;
+		const fake = fakeOnnx([0]);
+		const create = vi.spyOn(fake.module.InferenceSession, 'create');
+		const engine = engineFor([' hello'], {
+			specialTokens: WHISPER_MULTILINGUAL_SPECIAL_TOKENS,
+			tokenizerJson: JSON.stringify(definition),
+		});
+		await expect(engine.load(fake.module)).rejects.toMatchObject({ code: 'generation-failed' });
+		expect(create).not.toHaveBeenCalled();
+	});
+
+	it('honors the pinned multilingual suppression rules at the transcription boundary', async () => {
+		// generation_config.json@1846881b: blank220 and EOS50257 only at begin;
+		// punctuation1 and translate50358 are forbidden on every generated step.
+		// Blank and EOS must become legal after the first generated token.
+		const fake = fakeOnnx(
+			[220, 1, 50257],
+			[
+				[
+					[220, 30],
+					[50257, 29],
+					[1, 28],
+					[0, 20],
+				],
+				[
+					[1, 30],
+					[50358, 29],
+					[220, 20],
+				],
+			]
+		);
+		const engine = engineFor([' hello', ' unwanted'], {
+			specialTokens: WHISPER_MULTILINGUAL_SPECIAL_TOKENS,
+		});
+		await engine.load(fake.module);
+		try {
+			await expect(engine.transcribe(AUDIO, { language: 'de' })).resolves.toBe('hello');
+			expect(fake.calls.map((call) => call.inputIds)).toEqual([
+				[50258, 50261, 50359, 50363],
+				[0],
+				[220],
+			]);
+		} finally {
+			await engine.unload();
+		}
+	});
+
+	it('refuses German on an English checkpoint before inference', async () => {
+		const fake = fakeOnnx([0]);
+		const engine = engineFor([' hello']);
+		await engine.load(fake.module);
+		await expect(engine.transcribe(AUDIO, { language: 'de' })).rejects.toMatchObject({
+			code: 'model-unsupported',
+		});
+		expect(fake.calls).toHaveLength(0);
+	});
+
+	it('bounds native Whisper sessions to two CPU threads', async () => {
+		const fake = fakeOnnx([0]);
+		const create = vi.spyOn(fake.module.InferenceSession, 'create');
+		await engineFor([' hello']).load(fake.module);
+		for (const call of create.mock.calls)
+			expect(call[1]).toEqual({
+				intraOpNumThreads: 2,
+				interOpNumThreads: 1,
+				executionMode: 'sequential',
+			});
+	});
+
+	it('rejects a multilingual checkpoint with English special-token numbering before opening graphs', async () => {
+		const fake = fakeOnnx([0]);
+		const create = vi.spyOn(fake.module.InferenceSession, 'create');
+		const engine = engineFor([' hello'], {
+			tokenizerJson: JSON.stringify({ model: { vocab: { '<|startoftranscript|>': 50257 } } }),
+			specialTokens: {
+				startOfTranscript: 50258,
+				endOfText: 50257,
+				noTimestamps: 50363,
+				transcribe: 50359,
+				languages: { de: 50261, en: 50259 },
+			},
+		});
+		await expect(engine.load(fake.module)).rejects.toMatchObject({ code: 'generation-failed' });
+		expect(create).not.toHaveBeenCalled();
+	});
+
+	it('does not decode when already cancelled', async () => {
+		const fake = fakeOnnx([0]);
+		const engine = engineFor([' hello']);
+		await engine.load(fake.module);
+		const abort = new AbortController();
+		abort.abort();
+		await expect(engine.transcribe(AUDIO, { signal: abort.signal })).rejects.toMatchObject({
+			code: 'cancelled',
+		});
+		expect(fake.calls).toHaveLength(0);
+	});
+
 	it('keeps the cross-attention cache from the first pass and never overwrites it', async () => {
 		// The regression test. Every pass after the first must still see the full
 		// 1500-frame encoder cache; seeing the length-1 placeholder means the audio

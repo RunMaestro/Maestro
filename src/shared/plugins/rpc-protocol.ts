@@ -54,6 +54,8 @@ export const HOST_API = {
 	'services.media.decode': { capability: 'media:tools' },
 	'services.media.run': { capability: 'media:tools' },
 	'media.status': { capability: 'media:tools' },
+	'media.transcriptionStatus': { capability: 'media:tools' },
+	'media.transcribe': { capability: 'media:tools' },
 	'media.open': { capability: 'media:tools' },
 	'media.download': { capability: 'media:tools' },
 	'media.probe': { capability: 'media:tools' },
@@ -225,6 +227,8 @@ export function extractTarget(method: HostMethod, params: unknown): string | und
 		case 'fs.write':
 		case 'fs.watch':
 			return typeof p.path === 'string' ? p.path : undefined;
+		case 'media.transcriptionStatus':
+		case 'media.transcribe':
 		case 'media.status':
 		case 'media.open':
 		case 'media.download':

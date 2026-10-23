@@ -19,6 +19,17 @@ import os from 'os';
 import path from 'path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+const localClip = vi.hoisted(() => ({
+	assignments: {} as Record<string, unknown>,
+	transcribe: vi.fn(),
+}));
+vi.mock('../../../main/local-models/sources', () => ({
+	readLocalModelAssignments: () => localClip.assignments,
+}));
+vi.mock('../../../main/local-models/speech-to-text', () => ({
+	transcribeSpeech: localClip.transcribe,
+}));
+
 const router = vi.hoisted(() => ({ runSpeechToTextTask: vi.fn() }));
 const readiness = vi.hoisted(() => ({ resolveTaskReadiness: vi.fn() }));
 const correction = vi.hoisted(() => ({ run: vi.fn() }));
@@ -43,6 +54,7 @@ import {
 	stopDictation,
 	transcribeAudioFileRequest,
 	transcribeClip,
+	resolveLocalClipTranscriber,
 	type DictationClip,
 	type DictationMicrophone,
 } from '../../../main/local-models/dictation';
@@ -86,6 +98,8 @@ function fakeMicrophone(
 beforeEach(() => {
 	__resetDictation();
 	correction.run.mockReset().mockImplementation(async (text: string) => text);
+	localClip.assignments = {};
+	localClip.transcribe.mockReset().mockResolvedValue({ text: 'synthetic fixture', audioMs: 1000 });
 	router.runSpeechToTextTask.mockReset().mockResolvedValue({
 		status: 'ok',
 		text: 'Ship it.',
@@ -467,4 +481,43 @@ describe('transcribeAudioFileRequest', () => {
 		);
 		expect(router.runSpeechToTextTask).not.toHaveBeenCalled();
 	});
+});
+
+describe('local-only Dictation snapshot', () => {
+	it.each(['whisper-base', 'whisper-small'])(
+		'keeps selected %s across settings changes while readiness is pending',
+		async (modelId) => {
+			const gate = deferred<{ state: string; reason?: string }>();
+			localClip.assignments = {
+				dictation: { type: 'local', modelId, language: 'de' },
+			};
+			readiness.resolveTaskReadiness.mockReturnValueOnce(gate.promise);
+			const pending = resolveLocalClipTranscriber();
+			localClip.assignments.dictation = { type: 'endpoint', endpointId: 'cloud', model: 'paid' };
+			gate.resolve({ state: 'ready' });
+			const snapshot = await pending;
+			expect(snapshot.modelId).toBe(modelId);
+			expect(snapshot.language).toBe('de');
+			await snapshot.transcribe(CLIP.audio, CLIP.sampleRate, { language: 'de' });
+			expect(localClip.transcribe).toHaveBeenCalledWith(
+				{ type: 'local', modelId, language: 'de' },
+				CLIP.audio,
+				CLIP.sampleRate,
+				{ language: 'de' }
+			);
+		}
+	);
+	it.each([{ type: 'off' }, { type: 'endpoint', endpointId: 'cloud', model: 'paid' }])(
+		'refuses $type without probing or invoking it',
+		async (assignment) => {
+			localClip.assignments = { dictation: assignment };
+			const snapshot = await resolveLocalClipTranscriber();
+			expect(snapshot.reason).toBe(assignment.type === 'off' ? 'off' : 'local-required');
+			expect(readiness.resolveTaskReadiness).not.toHaveBeenCalled();
+			await expect(
+				snapshot.transcribe(CLIP.audio, CLIP.sampleRate, { language: 'de' })
+			).rejects.toMatchObject({ code: 'model-unsupported' });
+			expect(localClip.transcribe).not.toHaveBeenCalled();
+		}
+	);
 });

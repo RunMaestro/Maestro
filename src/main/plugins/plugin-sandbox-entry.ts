@@ -324,6 +324,8 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
    }),
 			media: Object.freeze({
 				status: function () { return hostCall('media.status', {}); },
+				transcriptionStatus: function () { return hostCall('media.transcriptionStatus', {}); },
+				transcribe: function (jobId, audioId, options) { return hostCall('media.transcribe', { jobId: jobId, audioId: audioId, options: options }); },
 				open: function () { return hostCall('media.open', {}); },
 				download: function (jobId, url) { return hostCall('media.download', { jobId: jobId, url: url }); },
 				probe: function (jobId, audioId) { return hostCall('media.probe', { jobId: jobId, audioId: audioId }); },

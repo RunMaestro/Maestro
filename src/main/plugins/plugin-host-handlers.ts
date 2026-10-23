@@ -1940,6 +1940,8 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 
 	for (const method of [
 		'media.status',
+		'media.transcriptionStatus',
+		'media.transcribe',
 		'media.open',
 		'media.download',
 		'media.probe',
@@ -1950,7 +1952,15 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 		handlers[method] = (pluginId, params) => {
 			// Per-job serialization bounds download/probe/decode; close uses reserved
 			// cancellation slots. Only status/open/run need the ActionGuard as well.
-			if (!['media.status', 'media.open', 'media.run'].includes(method))
+			if (
+				![
+					'media.status',
+					'media.transcriptionStatus',
+					'media.open',
+					'media.run',
+					'media.transcribe',
+				].includes(method)
+			)
 				return mediaTools.call(pluginId, method, params);
 			return underGuard(deps.actionGuard, pluginId, 'media:tools', 'discord-voice', () =>
 				mediaTools.call(pluginId, method, params)

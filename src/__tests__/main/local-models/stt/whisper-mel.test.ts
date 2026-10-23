@@ -167,10 +167,11 @@ describe('whisper mel extractor', () => {
 			const extractor = new WhisperMelExtractor();
 			const mel = extractor.extract(Float32Array.from(testSignal(16000)));
 
+			// Check every bin with one assertion rather than 240,000 matcher calls.
+			expect(mel.every(Number.isFinite)).toBe(true);
 			let min = Infinity;
 			let max = -Infinity;
 			for (const value of mel) {
-				expect(Number.isFinite(value)).toBe(true);
 				if (value < min) min = value;
 				if (value > max) max = value;
 			}

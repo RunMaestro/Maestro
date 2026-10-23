@@ -14,6 +14,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import * as localModelCatalog from '../../../shared/local-models/model-catalog';
 
 const settings = vi.hoisted(() => new Map<string, unknown>());
 
@@ -144,6 +145,19 @@ describe('resolveTaskReadiness', () => {
 			)
 		).toMatchObject({ state: 'unavailable', reason: 'model-not-installed' });
 	});
+	it.each(['de', 'en'])(
+		'accepts an installed qualified Base with explicit %s',
+		async (language) => {
+			const verdict = await resolveTaskReadiness(
+				'dictation',
+				healthy({
+					assignments: { dictation: { type: 'local', modelId: 'whisper-base', language } },
+				})
+			);
+			expect(verdict.state).toBe('ready');
+			expect(isTaskRunnable(verdict)).toBe(true);
+		}
+	);
 
 	it('reports the default assignment when nothing is stored', async () => {
 		const tabNaming = await resolveTaskReadiness('tab-naming', healthy());
@@ -305,11 +319,29 @@ describe('resolveTaskReadiness', () => {
 
 	const cases: Array<{
 		reason: LocalModelTaskUnreadyReason;
-		taskId: 'semantic-search' | 'injection-screen' | 'cue-gate';
+		taskId: 'semantic-search' | 'injection-screen' | 'cue-gate' | 'dictation';
 		options: ResolveTaskReadinessOptions;
 		detail: RegExp;
 		action: RegExp;
 	}> = [
+		{
+			reason: 'model-language-unsupported',
+			taskId: 'dictation',
+			options: healthy({
+				assignments: { dictation: { type: 'local', modelId: 'whisper-base-en', language: 'de' } },
+			}),
+			detail: /does not support.*language/,
+			action: /^Choose a compatible language/,
+		},
+		{
+			reason: 'model-pending',
+			taskId: 'dictation',
+			options: healthy({
+				assignments: { dictation: { type: 'local', modelId: 'whisper-base', language: 'de' } },
+			}),
+			detail: /real-runtime acceptance/,
+			action: /^Choose a qualified model/,
+		},
 		{
 			reason: 'model-unknown',
 			taskId: 'semantic-search',
@@ -462,12 +494,29 @@ describe('resolveTaskReadiness', () => {
 	it.each(cases)(
 		'reports $reason with a recovery',
 		async ({ reason, taskId, options, detail, action }) => {
-			const verdict = await resolveTaskReadiness(taskId, options);
-			expect(verdict.state).toBe('unavailable');
-			expect(verdict.reason).toBe(reason);
-			expect(verdict.detail).toMatch(detail);
-			expect(verdict.suggestedAction).toMatch(action);
-			expect(isTaskRunnable(verdict)).toBe(false);
+			// Keep the generic pending guard covered after real qualification of Base.
+			const original = localModelCatalog.getLocalModel;
+			const pending =
+				reason === 'model-pending'
+					? vi.spyOn(localModelCatalog, 'getLocalModel').mockImplementation((id) =>
+							id === 'whisper-base'
+								? {
+										...original(id)!,
+										pending: 'Candidate real-runtime acceptance is still required.',
+									}
+								: original(id)
+						)
+					: undefined;
+			try {
+				const verdict = await resolveTaskReadiness(taskId, options);
+				expect(verdict.state).toBe('unavailable');
+				expect(verdict.reason).toBe(reason);
+				expect(verdict.detail).toMatch(detail);
+				expect(verdict.suggestedAction).toMatch(action);
+				expect(isTaskRunnable(verdict)).toBe(false);
+			} finally {
+				pending?.mockRestore();
+			}
 		}
 	);
 
@@ -634,5 +683,18 @@ describe('endpointListsModel', () => {
 		expect(endpointListsModel(models, 'llama3.2:3b')).toBe(true);
 		expect(endpointListsModel(models, 'llama3.2')).toBe(false);
 		expect(endpointListsModel(models, 'qwen3:8b')).toBe(false);
+	});
+});
+
+describe('local-only Dictation readiness', () => {
+	it('does not probe a configured endpoint for a local-only consumer', async () => {
+		const options = healthy({
+			assignments: { dictation: { type: 'endpoint', endpointId: 'ep-1', model: 'paid' } },
+			localOnly: true,
+		});
+		const verdict = await resolveTaskReadiness('dictation', options);
+		expect(verdict).toMatchObject({ state: 'unavailable', reason: 'endpoint-unsupported' });
+		expect(options.findEndpoint).not.toHaveBeenCalled();
+		expect(options.listEndpointModels).not.toHaveBeenCalled();
 	});
 });

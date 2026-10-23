@@ -19,6 +19,11 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+const dictation = vi.hoisted(() => ({ resolve: vi.fn() }));
+vi.mock('../../../../main/local-models/dictation', () => ({
+	resolveLocalClipTranscriber: dictation.resolve,
+}));
+
 vi.mock('electron', () => ({ app: { getPath: () => '/tmp/maestro-test' } }));
 vi.mock('../../../../main/utils/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -28,6 +33,7 @@ import {
 	WhisperSttProvider,
 	sanitizeTranscript,
 } from '../../../../main/acappella/providers/local/whisper-stt';
+import { DictationSttProvider } from '../../../../main/acappella/providers/local/dictation-stt';
 import { ParakeetSttProvider } from '../../../../main/acappella/providers/local/parakeet-stt';
 import {
 	KokoroTtsProvider,
@@ -743,5 +749,41 @@ describe('sanitizeTranscript', () => {
 		expect(sanitizeTranscript('thank you for the update, now deploy it')).toBe(
 			'thank you for the update, now deploy it'
 		);
+	});
+});
+
+describe('DictationSttProvider shared source', () => {
+	it('leases the same multilingual model with the configured language and preserves other leases', async () => {
+		dictation.resolve.mockResolvedValue({
+			modelId: 'whisper-base',
+			language: 'de',
+			languages: ['de', 'en'],
+			reason: null,
+		});
+		const { pool, engine, resolved } = sharedPool({ text: 'synthetic fixture' });
+		const other = await pool.acquire('whisper-base', 'file-clip');
+		const provider = new DictationSttProvider({ pool });
+		await provider.start(recorder().callbacks);
+		provider.setVocabulary(['🏢 Pedro Sidián']);
+		for (let i = 0; i < 20; i++) provider.feed(frame());
+		await provider.flush();
+		expect(engine.transcribe).toHaveBeenCalledWith(expect.any(Float32Array), {
+			language: 'de',
+			vocabulary: ['Pedro Sidián'],
+		});
+		expect(resolved).toEqual(['whisper-base']);
+		await provider.stop();
+		expect(engine.unload).not.toHaveBeenCalled();
+		await other.release();
+		expect(engine.unload).toHaveBeenCalledTimes(1);
+	});
+	it('refuses unavailable Dictation without opening a second engine or choosing English', async () => {
+		dictation.resolve.mockResolvedValue({ modelId: null, languages: [], reason: 'off' });
+		const { pool, engine, resolved } = sharedPool();
+		await expect(
+			new DictationSttProvider({ pool }).start(recorder().callbacks)
+		).rejects.toMatchObject({ name: 'VoiceProviderError', providerId: 'dictation-local' });
+		expect(resolved).toEqual([]);
+		expect(engine.load).not.toHaveBeenCalled();
 	});
 });

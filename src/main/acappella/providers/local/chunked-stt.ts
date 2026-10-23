@@ -112,6 +112,8 @@ export type LocalSttEngine = SpeechToTextEngine;
 
 export interface ChunkedLocalSttOptions {
 	partialIntervalMs?: number;
+	/** A fixed source per live session, resolved from the core Dictation setting. */
+	resolveSource?: () => Promise<{ modelId: string; language: string }>;
 	/** Injected in tests. Production shares the app-wide pool. */
 	pool?: SpeechToTextPool;
 	/**
@@ -153,6 +155,8 @@ export abstract class ChunkedLocalSttProvider implements SttProvider {
 	private readonly pool?: SpeechToTextPool;
 	private readonly loadRuntime: typeof loadVoiceRuntime;
 	private readonly injectedEngine?: LocalSttEngine;
+	private readonly resolveSource?: ChunkedLocalSttOptions['resolveSource'];
+	private sharedMaxSamples?: number;
 
 	private callbacks: SttCallbacks | null = null;
 	private vocabulary: string[] = [];
@@ -177,6 +181,7 @@ export abstract class ChunkedLocalSttProvider implements SttProvider {
 		this.pool = options.pool;
 		this.loadRuntime = options.loadRuntime ?? loadVoiceRuntime;
 		this.injectedEngine = options.engine;
+		this.resolveSource = options.resolveSource;
 	}
 
 	async start(callbacks: SttCallbacks): Promise<void> {
@@ -268,7 +273,18 @@ export abstract class ChunkedLocalSttProvider implements SttProvider {
 	 */
 	private async openShared(): Promise<HeldRecogniser> {
 		try {
-			return await (this.pool ?? getSpeechToTextPool()).acquire(this.modelId, this.id);
+			const source = await this.resolveSource?.();
+			const lease = await (this.pool ?? getSpeechToTextPool()).acquire(
+				source?.modelId ?? this.modelId,
+				this.id
+			);
+			this.sharedMaxSamples = lease.maxSamples;
+			if (!source) return lease;
+			return {
+				transcribe: (audio, options) =>
+					lease.transcribe(audio, { ...options, language: source.language }),
+				release: () => lease.release(),
+			};
 		} catch (error) {
 			if (isLocalModelError(error)) throw voiceErrorFromLocalModel(error, this.id);
 			throw error;
@@ -305,10 +321,9 @@ export abstract class ChunkedLocalSttProvider implements SttProvider {
 		if (samples.length === 0) return;
 
 		try {
+			const maxSamples = this.sharedMaxSamples ?? this.maxSamples;
 			const windowed =
-				samples.length > this.maxSamples
-					? samples.subarray(samples.length - this.maxSamples)
-					: samples;
+				samples.length > maxSamples ? samples.subarray(samples.length - maxSamples) : samples;
 			const decodeStartedAt = Date.now();
 			const raw = await engine.transcribe(windowed, { vocabulary: this.vocabulary });
 			const text = sanitizeTranscript(raw);
