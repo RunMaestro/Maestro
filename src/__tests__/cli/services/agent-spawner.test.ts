@@ -2445,6 +2445,44 @@ Some text with [x] in it that's not a checkbox
 			expect(result.success).toBe(false);
 			expect(mockSpawn).toHaveBeenCalledTimes(1);
 		});
+
+		it('keeps a successful answer and effort when a warning contains a refusal message', async () => {
+			const message = JSON.parse(REFUSAL_LINE).message;
+			const output = [
+				{ type: 'item.completed', item: { type: 'error', message } },
+				{ type: 'item.completed', item: { type: 'agent_message', text: 'Finished normally' } },
+				{ type: 'turn.completed', usage: { input_tokens: 1, output_tokens: 2 } },
+			]
+				.map((event) => JSON.stringify(event))
+				.join('\n');
+			const p = spawnAgent('codex', '/p', 'hi', undefined, { customEffort: 'low' });
+			const result = await driveSpawnToCompletion(p, 0, output);
+
+			expect(result.success).toBe(true);
+			expect(result.response).toBe('Finished normally');
+			expect(result.error).toBeUndefined();
+			expect(errorSpy).toHaveBeenCalledWith(`Codex warning: ${message}`);
+			expect(mockSpawn).toHaveBeenCalledTimes(1);
+			expect(resolveEffortLevel('codex', 'low')).toBe('low');
+		});
+
+		it.each([
+			['Reasoning summaries are unavailable', 'Codex warning: Reasoning summaries are unavailable'],
+			[undefined, 'Codex warning'],
+		])(
+			'prints warning %s without treating it as an answer or failure',
+			async (message, diagnostic) => {
+				const output = JSON.stringify({ type: 'item.completed', item: { type: 'error', message } });
+				const p = spawnAgent('codex', '/p', 'hi');
+				const result = await driveSpawnToCompletion(p, 0, output);
+
+				expect(result.success).toBe(true);
+				expect(result.response).toBeUndefined();
+				expect(result.error).toBeUndefined();
+				expect(errorSpy).toHaveBeenCalledWith(diagnostic);
+				expect(mockSpawn).toHaveBeenCalledTimes(1);
+			}
+		);
 	});
 
 	describe('spawnAgent: SSH integration', () => {

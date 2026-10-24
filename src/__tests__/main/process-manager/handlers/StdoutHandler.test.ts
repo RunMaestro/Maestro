@@ -63,6 +63,7 @@ import {
 	matchSshErrorPattern,
 } from '../../../../main/parsers/error-patterns';
 import { ClaudeOutputParser } from '../../../../main/parsers/claude-output-parser';
+import { CodexOutputParser } from '../../../../main/parsers/codex-output-parser';
 import { CopilotOutputParser } from '../../../../main/parsers/copilot-output-parser';
 import { OmpOutputParser } from '../../../../main/parsers/omp-output-parser';
 import type { ManagedProcess } from '../../../../main/process-manager/types';
@@ -1106,6 +1107,181 @@ describe('StdoutHandler', () => {
 				sessionId,
 				'{"confidence":55,"ready":false,"message":"README.md"}'
 			);
+		});
+	});
+
+	describe('Codex nonfatal item warnings', () => {
+		const warning = {
+			type: 'item.completed',
+			item: {
+				id: 'warning_1',
+				type: 'error',
+				message: 'Model does not support reasoning summaries; continuing without them.',
+			},
+		};
+
+		it('emits a completed warning on stderr without a thinking subscriber', () => {
+			const { handler, bufferManager, emitter, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'codex',
+				outputParser: new CodexOutputParser(),
+			});
+			const stderrSpy = vi.fn();
+			const errorSpy = vi.fn();
+			emitter.on('stderr', stderrSpy);
+			emitter.on('agent-error', errorSpy);
+			const emitSpy = vi.spyOn(emitter, 'emit');
+
+			// Show Thinking is a renderer preference. Diagnostics must not depend
+			// on a listener for that optional channel being installed.
+			expect(emitter.listenerCount('thinking-chunk')).toBe(0);
+			sendJsonLine(handler, sessionId, { ...warning, type: 'item.started' });
+			expect(stderrSpy).not.toHaveBeenCalled();
+
+			sendJsonLine(handler, sessionId, warning);
+
+			expect(stderrSpy).toHaveBeenCalledTimes(1);
+			expect(stderrSpy).toHaveBeenCalledWith(sessionId, `Codex warning: ${warning.item.message}\n`);
+			expect(emitSpy).not.toHaveBeenCalledWith(
+				'thinking-chunk',
+				expect.anything(),
+				expect.anything()
+			);
+			expect(bufferManager.emitDataBuffered).not.toHaveBeenCalled();
+			expect(errorSpy).not.toHaveBeenCalled();
+			expect(proc.streamedText).toBe('');
+			expect(proc.errorEmitted).toBe(false);
+			expect(proc.resultEmitted).toBe(false);
+		});
+
+		it('delimits consecutive warning messages before stderr chunks are batched', () => {
+			const { handler, emitter, sessionId } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'codex',
+				outputParser: new CodexOutputParser(),
+			});
+			const stderrChunks: string[] = [];
+			emitter.on('stderr', (_sessionId: string, text: string) => stderrChunks.push(text));
+
+			for (const message of ['First notice', 'Second notice']) {
+				sendJsonLine(handler, sessionId, {
+					type: 'item.completed',
+					item: { type: 'error', message },
+				});
+			}
+
+			expect(stderrChunks.join('')).toBe(
+				'Codex warning: First notice\nCodex warning: Second notice\n'
+			);
+		});
+
+		it('keeps warnings separate from reasoning and the final answer through turn completion', () => {
+			const { handler, bufferManager, emitter, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'codex',
+				outputParser: new CodexOutputParser(),
+			});
+			const stderrSpy = vi.fn();
+			const thinkingSpy = vi.fn();
+			const errorSpy = vi.fn();
+			emitter.on('stderr', stderrSpy);
+			emitter.on('thinking-chunk', thinkingSpy);
+			emitter.on('agent-error', errorSpy);
+
+			sendJsonLine(handler, sessionId, warning);
+			sendJsonLine(handler, sessionId, {
+				type: 'item.completed',
+				item: { id: 'reasoning_1', type: 'reasoning', text: 'Checking the requested file.' },
+			});
+			expect(thinkingSpy).toHaveBeenCalledTimes(1);
+			expect(thinkingSpy).toHaveBeenCalledWith(sessionId, 'Checking the requested file.');
+			expect(proc.streamedText).toBe('');
+
+			sendJsonLine(handler, sessionId, {
+				type: 'item.completed',
+				item: { id: 'answer_1', type: 'agent_message', text: 'The file is valid.' },
+			});
+			sendJsonLine(handler, sessionId, {
+				...warning,
+				item: { ...warning.item, id: 'warning_2' },
+			});
+			expect(proc.streamedText).toBe('The file is valid.');
+			expect(proc.resultEmitted).toBe(false);
+			expect(bufferManager.emitDataBuffered).not.toHaveBeenCalled();
+
+			sendJsonLine(handler, sessionId, {
+				type: 'turn.completed',
+				usage: { input_tokens: 100, output_tokens: 50 },
+			});
+
+			expect(stderrSpy).toHaveBeenCalledTimes(2);
+			expect(thinkingSpy).toHaveBeenCalledTimes(1);
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledTimes(1);
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(sessionId, 'The file is valid.');
+			expect(errorSpy).not.toHaveBeenCalled();
+			expect(proc.errorEmitted).toBe(false);
+			expect(proc.resultEmitted).toBe(true);
+		});
+
+		it('does not turn a warning-only completed turn into an assistant answer', () => {
+			const { handler, bufferManager, emitter, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'codex',
+				outputParser: new CodexOutputParser(),
+			});
+			const stderrSpy = vi.fn();
+			const thinkingSpy = vi.fn();
+			const errorSpy = vi.fn();
+			emitter.on('stderr', stderrSpy);
+			emitter.on('thinking-chunk', thinkingSpy);
+			emitter.on('agent-error', errorSpy);
+
+			sendJsonLine(handler, sessionId, warning);
+			sendJsonLine(handler, sessionId, { type: 'turn.completed' });
+
+			expect(stderrSpy).toHaveBeenCalledWith(sessionId, `Codex warning: ${warning.item.message}\n`);
+			expect(thinkingSpy).not.toHaveBeenCalled();
+			expect(bufferManager.emitDataBuffered).not.toHaveBeenCalled();
+			expect(errorSpy).not.toHaveBeenCalled();
+			expect(proc.streamedText).toBe('');
+			expect(proc.errorEmitted).toBe(false);
+			expect(proc.resultEmitted).toBe(false);
+		});
+
+		it.each([
+			{ type: 'error', message: 'The request could not be completed.' },
+			{ type: 'turn.failed', error: { message: 'The request could not be completed.' } },
+		])('still emits a terminal $type after a nonfatal warning', (terminalError) => {
+			const { handler, bufferManager, emitter, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'codex',
+				outputParser: new CodexOutputParser(),
+			});
+			const stderrSpy = vi.fn();
+			const errorSpy = vi.fn();
+			emitter.on('stderr', stderrSpy);
+			emitter.on('agent-error', errorSpy);
+
+			sendJsonLine(handler, sessionId, warning);
+			expect(proc.errorEmitted).toBe(false);
+			expect(errorSpy).not.toHaveBeenCalled();
+
+			sendJsonLine(handler, sessionId, terminalError);
+
+			expect(stderrSpy).toHaveBeenCalledTimes(1);
+			expect(errorSpy).toHaveBeenCalledTimes(1);
+			expect(errorSpy).toHaveBeenCalledWith(
+				sessionId,
+				expect.objectContaining({
+					agentId: 'codex',
+					message: 'The request could not be completed.',
+					sessionId,
+				})
+			);
+			expect(proc.errorEmitted).toBe(true);
+			expect(proc.resultEmitted).toBe(false);
+			expect(proc.streamedText).toBe('');
+			expect(bufferManager.emitDataBuffered).not.toHaveBeenCalled();
 		});
 	});
 

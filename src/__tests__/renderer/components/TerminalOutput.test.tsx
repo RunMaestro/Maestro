@@ -17,6 +17,7 @@ import {
 	TerminalOutput,
 	collapseAiResponseLogs,
 } from '../../../renderer/components/TerminalOutput';
+import { computeTurnDurations } from '../../../renderer/components/TerminalOutput/utils/turnDurations';
 import { useCenterFlashStore } from '../../../renderer/stores/centerFlashStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useUIStore } from '../../../renderer/stores/uiStore';
@@ -605,6 +606,69 @@ describe('TerminalOutput', () => {
 			expect(screen.getAllByText('10m')).toHaveLength(1);
 			expect(screen.queryByText('1m')).not.toBeInTheDocument();
 		});
+
+		it.each([
+			{
+				name: 'before the answer',
+				entries: [
+					['warning', 'stderr', 1],
+					['answer', 'stdout', 10],
+				],
+				replyId: 'answer',
+				elapsedMinutes: 10,
+			},
+			{
+				name: 'the only output',
+				entries: [['warning', 'stderr', 1]],
+				replyId: null,
+				elapsedMinutes: 1,
+			},
+			{
+				name: 'between answer fragments',
+				entries: [
+					['opening', 'stdout', 1],
+					['warning', 'stderr', 5],
+					['answer', 'stdout', 10],
+					['answer-part', 'stdout', 12],
+				],
+				replyId: 'answer',
+				elapsedMinutes: 12,
+			},
+			{
+				name: 'after the answer',
+				entries: [
+					['answer', 'stdout', 5],
+					['answer-part', 'stdout', 7],
+					['warning', 'stderr', 10],
+				],
+				replyId: 'answer',
+				elapsedMinutes: 10,
+			},
+		] as const)(
+			'keeps the duration badge off stderr when a warning is $name',
+			({ entries, replyId, elapsedMinutes }) => {
+				const sentAt = Date.now() - 30 * MINUTE;
+				const logs = [
+					createLogEntry({ id: 'user', text: 'Go', source: 'user', timestamp: sentAt }),
+					...entries.map(([id, source, minutes]) =>
+						createLogEntry({ id, source, text: id, timestamp: sentAt + minutes * MINUTE })
+					),
+				];
+				const durations = computeTurnDurations(logs);
+				const renderedAnswerIds = collapseAiResponseLogs(logs)
+					.filter((log) => log.source === 'stdout')
+					.map((log) => log.id);
+				expect([...durations]).toEqual(replyId ? [[replyId, elapsedMinutes * MINUTE]] : []);
+				expect([...durations.keys()]).toEqual(renderedAnswerIds.slice(-1));
+
+				const { container } = renderTurn(logs);
+				const badges = Array.from(container.querySelectorAll('[title^="Agent took "]'));
+				expect(
+					badges.map((badge) => badge.closest('[data-log-id]')?.getAttribute('data-log-id'))
+				).toEqual(replyId ? [replyId] : []);
+				if (replyId) expect(badges[0]).toHaveTextContent(`${elapsedMinutes}m`);
+			}
+		);
 
 		it('reads as instant when the agent answered inside a minute', () => {
 			const sentAt = Date.now() - 5 * MINUTE;
@@ -4768,6 +4832,49 @@ describe('collapseAiResponseLogs', () => {
 		]);
 		expect(out.map((l) => l.id)).toEqual(['u', 'a']);
 		expect(out[1].text).toBe('part 1 part 2');
+	});
+
+	it.each([true, false])(
+		'keeps a stderr diagnostic separate with warningFirst=%s',
+		(warningFirst) => {
+			const warning = mk({
+				id: 'warning',
+				source: 'stderr',
+				text: 'Codex warning: ignored setting\n',
+			});
+			const answer = mk({ id: 'answer', source: 'stdout', text: 'The answer.' });
+			const logs = warningFirst ? [warning, answer] : [answer, warning];
+
+			expect(collapseAiResponseLogs(logs)).toEqual(logs);
+		}
+	);
+
+	it('keeps diagnostic boundaries while collapsing assistant chunks on either side', () => {
+		const warning = mk({
+			id: 'warning',
+			source: 'stderr',
+			text: 'Codex warning: ignored setting\n',
+		});
+		const nextWarning = mk({
+			id: 'warning-2',
+			source: 'stderr',
+			text: 'Codex warning: another setting\n',
+		});
+		const out = collapseAiResponseLogs([
+			mk({ id: 'before', text: 'Before ' }),
+			mk({ id: 'before-2', text: 'warning.' }),
+			warning,
+			nextWarning,
+			mk({ id: 'answer', text: 'The ' }),
+			mk({ id: 'answer-2', text: 'answer.' }),
+		]);
+
+		expect(out.map(({ id, source, text }) => ({ id, source, text }))).toEqual([
+			{ id: 'before', source: 'stdout', text: 'Before warning.' },
+			{ id: 'warning', source: 'stderr', text: warning.text },
+			{ id: 'warning-2', source: 'stderr', text: nextWarning.text },
+			{ id: 'answer', source: 'stdout', text: 'The answer.' },
+		]);
 	});
 
 	it('keeps each cross-agent reply as its own standalone bubble', () => {

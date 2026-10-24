@@ -393,7 +393,7 @@ interface AgentOutputParser {
 
 ```typescript
 interface ParsedEvent {
-	type: 'init' | 'text' | 'tool_use' | 'result' | 'error' | 'usage' | 'system';
+	type: 'init' | 'text' | 'tool_use' | 'result' | 'error' | 'warning' | 'usage' | 'system';
 	sessionId?: string;
 	text?: string;
 	toolName?: string;
@@ -419,6 +419,13 @@ interface ParsedEvent {
 
 ### Thinking / Tool Log Contract (REQUIRED for new parsers)
 
+Nonfatal provider diagnostics use `type: 'warning'` with `text`, not reasoning
+or errors. `StdoutHandler` forwards them through the existing `stderr` channel,
+so they remain visible with Thinking off and do not enter the final-answer
+buffer or trigger error recovery. The CLI prints them to stderr without failing
+the run. Codex `item.completed` items whose nested type is `error` use this path;
+top-level errors and `turn.failed` remain failures.
+
 Maestro renders reasoning and tool-execution activity as ephemeral cells whose
 lifecycle is governed by the tab's `ThinkingMode` (`'off' | 'on' | 'sticky'`,
 defined in `src/shared/types.ts`). **Every parser that surfaces reasoning or
@@ -434,17 +441,18 @@ Concretely:
 2. **Tool execution**: Emit tool-use events normally. The renderer appends
    them as `LogEntry { source: 'tool' }`.
 3. **Final answer text**: Emit non-reasoning text events. The renderer
-   appends them as `LogEntry { source: 'stdout' | 'stderr' }`.
+   appends them as `LogEntry { source: 'stdout' }`. Nonfatal diagnostics
+   use `source: 'stderr'` and remain separate from the answer.
 
 The renderer enforces the lifecycle in three coordinated places - parser
 authors do **not** need to implement clearing logic, only the correct
 `source` tagging:
 
-| Clear point | Where                                               | Trigger                             | Effect (when `showThinking !== 'sticky'`) |
-| ----------- | --------------------------------------------------- | ----------------------------------- | ----------------------------------------- |
-| Inline      | `useBatchedSessionUpdates.ts`                       | New `stdout`/`stderr` chunk arrives | Drops prior `thinking`/`tool` entries     |
-| On exit     | `useAgentListeners.ts` → `cleanupExitedTabLogs`     | Process `exit` event                | Drops remaining `thinking`/`tool` entries |
-| Manual      | `useTabHandlers.ts` → `handleToggleTabShowThinking` | User cycles mode to `'off'`         | Wipes `thinking`/`tool` entries           |
+| Clear point | Where                                               | Trigger                     | Effect (when `showThinking !== 'sticky'`) |
+| ----------- | --------------------------------------------------- | --------------------------- | ----------------------------------------- |
+| Inline      | `useBatchedSessionUpdates.ts`                       | New `stdout` chunk arrives  | Drops prior `thinking`/`tool` entries     |
+| On exit     | `useAgentListeners.ts` → `cleanupExitedTabLogs`     | Process `exit` event        | Drops remaining `thinking`/`tool` entries |
+| Manual      | `useTabHandlers.ts` → `handleToggleTabShowThinking` | User cycles mode to `'off'` | Wipes `thinking`/`tool` entries           |
 
 Sticky mode (`'sticky'`) opts out of all three clear points. Off mode
 suppresses appending in the first place at the renderer's `onThinkingChunk`

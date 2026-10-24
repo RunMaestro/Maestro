@@ -1248,6 +1248,11 @@ maestro-cli settings agent reset codex model
 | `reasoningEffort`  | string | Reasoning effort level (`low`, `medium`, `high`)                                                                  |
 | `reasoningSummary` | string | Codex only: reasoning shown in Thinking (`auto`, `concise`, `detailed`, `none`); empty inherits the Codex default |
 
+Codex configuration notices, such as an ignored setting, appear as `Codex warning:`
+diagnostics in the desktop transcript even with Thinking off. Headless CLI runs
+print them to stderr. These notices do not stop the turn or become part of the
+assistant's answer; actual turn failures still use normal error handling.
+
 <Info>
 Settings and agent config changes made via the CLI are automatically detected by the running Maestro desktop app. The app watches for file changes and reloads immediately - it's as if you toggled the setting in the Settings modal yourself.
 </Info>

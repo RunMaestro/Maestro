@@ -111,6 +111,26 @@ For [SSH remote agents](/ssh-remote-execution), maestro-p must be installed on t
 - Codex's **built-in** [slash commands](https://developers.openai.com/codex/cli/slash-commands) (`/compact`, `/diff`, `/model`, etc.) are still unavailable: they are implemented inside the interactive TUI and have no on-disk prompt to expand.
 - Codex commands on an SSH remote agent are not discovered yet, since the skills live on the remote host.
 
+### Nonfatal notices
+
+Codex can report configuration notices as item-level `error` events without
+failing the turn. In standard desktop agent chats, Maestro displays these as
+separate **STDERR** diagnostics even when **Thinking** is off. They are not
+assistant answers and do not trigger failure or reasoning-effort retries.
+Top-level errors and `turn.failed` events still use normal error handling.
+
+These examples show a synthetic warning followed by a successful answer, with
+Thinking off, in dark and light themes:
+
+<Tabs>
+  <Tab title="Dark">
+    ![Codex warning separate from the successful answer in Dracula](./screenshots/codex-nonfatal-notice.dracula.png)
+  </Tab>
+  <Tab title="Light">
+    ![Codex warning separate from the successful answer in Catppuccin Latte](./screenshots/codex-nonfatal-notice.catppuccin-latte.png)
+  </Tab>
+</Tabs>
+
 ## OpenCode
 
 | Feature            | Support                        |

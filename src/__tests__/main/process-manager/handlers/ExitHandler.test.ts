@@ -22,6 +22,8 @@ vi.mock('../../../../main/utils/logger', () => ({
 }));
 
 vi.mock('../../../../main/parsers/error-patterns', () => ({
+	getErrorPatterns: vi.fn(() => ({})),
+	matchErrorPattern: vi.fn(() => null),
 	matchSshErrorPattern: vi.fn(() => null),
 }));
 
@@ -70,6 +72,7 @@ vi.mock('../../../../main/utils/remote-fs', () => ({
 // ── Imports (after mocks) ──────────────────────────────────────────────────
 
 import { ExitHandler } from '../../../../main/process-manager/handlers/ExitHandler';
+import { CodexOutputParser } from '../../../../main/parsers/codex-output-parser';
 import {
 	nextSpawnGeneration,
 	resetSpawnGenerationsForTest,
@@ -159,6 +162,94 @@ describe('ExitHandler', () => {
 	});
 
 	describe('stream-json jsonBuffer processing at exit', () => {
+		it.each([
+			{ streamedText: '', resultEmitted: false },
+			{ streamedText: 'The final answer.', resultEmitted: false },
+			{ streamedText: 'The final answer.', resultEmitted: true },
+		])(
+			'emits a trailing warning without changing answer handling: %j',
+			async ({ streamedText, resultEmitted }) => {
+				const proc = createMockProcess({
+					isStreamJsonMode: true,
+					toolType: 'codex',
+					jsonBuffer: JSON.stringify({
+						type: 'item.completed',
+						item: { type: 'error', message: 'Ignored setting' },
+					}),
+					outputParser: new CodexOutputParser(),
+					streamedText,
+					resultEmitted,
+				});
+				processes.set('test-session', proc);
+				const stderrSpy = vi.fn();
+				const dataSpy = vi.fn();
+				const thinkingSpy = vi.fn();
+				const errorSpy = vi.fn();
+				emitter.on('stderr', stderrSpy);
+				emitter.on('data', dataSpy);
+				emitter.on('thinking-chunk', thinkingSpy);
+				emitter.on('agent-error', errorSpy);
+
+				await exitHandler.handleExit('test-session', 0);
+
+				expect(stderrSpy).toHaveBeenCalledExactlyOnceWith(
+					'test-session',
+					'Codex warning: Ignored setting\n'
+				);
+				if (streamedText && !resultEmitted) {
+					expect(dataSpy).toHaveBeenCalledExactlyOnceWith('test-session', streamedText);
+				} else {
+					expect(dataSpy).not.toHaveBeenCalled();
+				}
+				expect(thinkingSpy).not.toHaveBeenCalled();
+				expect(errorSpy).not.toHaveBeenCalled();
+				expect(proc.errorEmitted).toBe(false);
+				expect(proc.resultEmitted).toBe(Boolean(streamedText));
+				expect(proc.streamedText).toBe(streamedText);
+				expect(proc.stderrBuffer).toBe('');
+				expect(proc.stdoutBuffer).toBe('');
+				expect(proc.jsonBuffer).toBe('');
+			}
+		);
+
+		it('still reports a nonzero exit after displaying a trailing warning', async () => {
+			const parser = new CodexOutputParser();
+			const detectExitSpy = vi.spyOn(parser, 'detectErrorFromExit');
+			const proc = createMockProcess({
+				isStreamJsonMode: true,
+				toolType: 'codex',
+				jsonBuffer: JSON.stringify({
+					type: 'item.completed',
+					item: { type: 'error', message: 'Optional integration is unavailable' },
+				}),
+				stderrBuffer: 'Underlying process diagnostic',
+				outputParser: parser,
+			});
+			processes.set('test-session', proc);
+			const stderrSpy = vi.fn();
+			const errorSpy = vi.fn();
+			const dataSpy = vi.fn();
+			emitter.on('stderr', stderrSpy);
+			emitter.on('agent-error', errorSpy);
+			emitter.on('data', dataSpy);
+
+			await exitHandler.handleExit('test-session', 1);
+
+			expect(stderrSpy).toHaveBeenCalledExactlyOnceWith(
+				'test-session',
+				'Codex warning: Optional integration is unavailable\n'
+			);
+			expect(detectExitSpy).toHaveBeenCalledWith(1, 'Underlying process diagnostic', '');
+			expect(errorSpy).toHaveBeenCalledExactlyOnceWith(
+				'test-session',
+				expect.objectContaining({ type: 'agent_crashed', message: 'Agent exited with code 1' })
+			);
+			expect(dataSpy).not.toHaveBeenCalled();
+			expect(proc.errorEmitted).toBe(true);
+			expect(proc.resultEmitted).toBe(false);
+			expect(proc.stderrBuffer).toBe('Underlying process diagnostic');
+		});
+
 		it('should process remaining jsonBuffer content as a result message', async () => {
 			const resultJson = '{"type":"result","result":"Auth Bug Fix","session_id":"abc"}';
 			const mockParser = createMockOutputParser({

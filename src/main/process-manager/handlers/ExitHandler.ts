@@ -192,7 +192,15 @@ export class ExitHandler {
 			// `interrupted` (the user pressed Stop) suppresses this the same way it
 			// does in StdoutHandler: a terminal envelope flushed on the way out of a
 			// deliberate stop is not a turn failure.
-			if (event?.type === 'error' && !managedProcess.errorEmitted && !managedProcess.interrupted) {
+			if (event?.type === 'warning') {
+				// Match StdoutHandler when the last diagnostic has no trailing newline.
+				// This is display-only: do not add it to stderrBuffer or the answer.
+				if (event.text) this.emitter.emit('stderr', sessionId, `${event.text}\n`);
+			} else if (
+				event?.type === 'error' &&
+				!managedProcess.errorEmitted &&
+				!managedProcess.interrupted
+			) {
 				const agentError = outputParser.detectErrorFromParsed((event.raw as unknown) ?? event);
 				if (agentError) {
 					agentError.sessionId = sessionId;
