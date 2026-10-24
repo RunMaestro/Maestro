@@ -80,13 +80,149 @@ describe('resolveUserDataDir', () => {
 				homedir: home,
 				isPackaged: true,
 			})
-		).toBe(path.join('/home/tester/.config-custom', 'Maestro'));
+		).toBe(path.join('/home/tester/.config-custom', 'maestro'));
 	});
 
 	it('falls back to the platform default when the env var is absent', () => {
 		expect(
 			resolveUserDataDir({ env: {}, platform: 'linux', homedir: home, isPackaged: true })
-		).toBe(path.join(home, '.config', 'Maestro'));
+		).toBe(path.join(home, '.config', 'maestro'));
+	});
+
+	it('keeps the capitalized guess for a packaged Windows install', () => {
+		expect(
+			resolveUserDataDir({ env: {}, platform: 'win32', homedir: home, isPackaged: true })
+		).toBe(path.join(home, 'AppData', 'Roaming', 'Maestro'));
+	});
+
+	describe('checks the guessed spelling against the disk', () => {
+		const scratch: string[] = [];
+
+		afterEach(() => {
+			while (scratch.length) fs.rmSync(scratch.pop() as string, { recursive: true, force: true });
+		});
+
+		function linuxRoot(...existing: string[]): string {
+			const root = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-xdg-'));
+			scratch.push(root);
+			for (const name of existing) fs.mkdirSync(path.join(root, name));
+			return root;
+		}
+
+		/** Put a file only the desktop app writes into `root/name`. */
+		function writeAppState(root: string, name: string, marker = 'maestro-sessions.json'): void {
+			fs.writeFileSync(path.join(root, name, marker), '{"sessions":[]}');
+		}
+
+		/**
+		 * Both spellings as two directories. Only a case-sensitive volume can hold
+		 * them; elsewhere this returns null and the caller skips.
+		 */
+		function bothSpellings(): string | null {
+			const root = linuxRoot('maestro');
+			if (fs.existsSync(path.join(root, 'Maestro'))) return null;
+			fs.mkdirSync(path.join(root, 'Maestro'));
+			return root;
+		}
+
+		function resolveIn(root: string, isPackaged: boolean): string {
+			return resolveUserDataDir({
+				env: { XDG_CONFIG_HOME: root },
+				platform: 'linux',
+				homedir: home,
+				isPackaged,
+				isDevelopment: false,
+			});
+		}
+
+		// A case-insensitive volume (macOS, Windows) answers for both spellings, so
+		// compare what the result opens on disk rather than the string.
+		const onDisk = (candidate: string) => fs.realpathSync.native(candidate);
+
+		it('takes the lowercase directory a packaged Linux app actually wrote (#1813)', () => {
+			const root = linuxRoot('maestro');
+			expect(onDisk(resolveIn(root, true))).toBe(onDisk(path.join(root, 'maestro')));
+		});
+
+		it('takes the capitalized directory when only that one exists', () => {
+			const root = linuxRoot('Maestro');
+			expect(onDisk(resolveIn(root, true))).toBe(onDisk(path.join(root, 'Maestro')));
+		});
+
+		it('resolves to lowercase on Linux when neither spelling exists yet', () => {
+			// So a CLI write before the app's first launch creates the directory the
+			// app will use, not a capitalized twin.
+			const root = linuxRoot();
+			expect(resolveIn(root, true)).toBe(path.join(root, 'maestro'));
+		});
+
+		it('ignores a regular file with the other spelling', () => {
+			const root = linuxRoot();
+			fs.writeFileSync(path.join(root, 'Maestro'), '');
+			if (!fs.existsSync(path.join(root, 'maestro'))) {
+				expect(resolveIn(root, true)).toBe(path.join(root, 'maestro'));
+			}
+		});
+
+		describe('with both spellings present', () => {
+			// The #1813 shape: the app wrote one spelling, a CLI write created the
+			// other. Skipped where the volume folds the two names together.
+			const caseSensitive = (() => {
+				const probe = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-case-'));
+				try {
+					fs.mkdirSync(path.join(probe, 'maestro'));
+					return !fs.existsSync(path.join(probe, 'Maestro'));
+				} finally {
+					fs.rmSync(probe, { recursive: true, force: true });
+				}
+			})();
+
+			it.skipIf(!caseSensitive)('takes lowercase when only it holds the app state', () => {
+				const root = bothSpellings() as string;
+				writeAppState(root, 'maestro');
+				expect(resolveIn(root, true)).toBe(path.join(root, 'maestro'));
+			});
+
+			it.skipIf(!caseSensitive)(
+				'takes the capitalized directory when only it holds the app state',
+				() => {
+					const root = bothSpellings() as string;
+					writeAppState(root, 'Maestro');
+					expect(resolveIn(root, true)).toBe(path.join(root, 'Maestro'));
+				}
+			);
+
+			it.skipIf(!caseSensitive)(
+				'recognizes the window state left behind by a custom Storage Location',
+				() => {
+					const root = bothSpellings() as string;
+					writeAppState(root, 'Maestro', 'maestro-window-state.json');
+					expect(resolveIn(root, true)).toBe(path.join(root, 'Maestro'));
+				}
+			);
+
+			it.skipIf(!caseSensitive)('keeps the guess when both hold the app state', () => {
+				const root = bothSpellings() as string;
+				writeAppState(root, 'maestro');
+				writeAppState(root, 'Maestro');
+				expect(resolveIn(root, true)).toBe(path.join(root, 'maestro'));
+			});
+
+			it.skipIf(!caseSensitive)('keeps the guess when neither holds the app state', () => {
+				const root = bothSpellings() as string;
+				expect(resolveIn(root, true)).toBe(path.join(root, 'maestro'));
+			});
+
+			it.skipIf(!caseSensitive)(
+				'does not count settings or agent configs, which the CLI writes too',
+				() => {
+					const root = bothSpellings() as string;
+					writeAppState(root, 'Maestro', 'maestro-settings.json');
+					writeAppState(root, 'Maestro', 'maestro-agent-configs.json');
+					expect(resolveIn(root, true)).toBe(path.join(root, 'maestro'));
+				}
+			);
+		});
 	});
 });
 
