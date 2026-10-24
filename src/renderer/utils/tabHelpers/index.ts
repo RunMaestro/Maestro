@@ -900,6 +900,25 @@ export function resolveQueuedItemTarget(
 }
 
 /**
+ * True when the tab a queued item would run on is already mid-turn.
+ *
+ * The agent process is keyed per tab (`${sessionId}-ai-${tabId}`), so an agent can
+ * read idle - or a parallel `-batch-` Auto Run task can exit - while that exact tab
+ * is still running its own turn. Dispatching onto it makes main refuse the spawn
+ * ("Agent process already running for session ...-ai-<tabId>", MAESTRO-ZS). Every
+ * drain path checks this first and leaves the item queued; the busy tab's own exit
+ * drains it.
+ */
+export function isQueuedItemTargetBusy(session: Session, item: Pick<QueuedItem, 'tabId'>): boolean {
+	const target = resolveQueuedItemTarget(session, item);
+	if (!target) return false;
+	const tab =
+		session.aiTabs?.find((candidate) => candidate.id === target.tabId) ??
+		session.orphanedThinkingTabs?.find((candidate) => candidate.id === target.tabId);
+	return tab?.state === 'busy';
+}
+
+/**
  * Mark a tab as running a dequeued queue item: set it busy/thinking and, for message
  * items, append the user-visible log entry. Shared by every dispatch path so the
  * busy-state + log construction stays identical (and lands on the resolved target tab,

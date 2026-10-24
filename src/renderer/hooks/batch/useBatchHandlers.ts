@@ -31,7 +31,7 @@ import { collectActiveOperations } from '../../utils/collectActiveOperations';
 import { useFeedbackDraftStore } from '../../stores/feedbackDraftStore';
 import { notifyToast } from '../../stores/notificationStore';
 import { CONDUCTOR_BADGES, getBadgeForTime } from '../../constants/conductorBadges';
-import { resolveQueuedItemTarget } from '../../utils/tabHelpers';
+import { isQueuedItemTargetBusy, resolveQueuedItemTarget } from '../../utils/tabHelpers';
 import { generateId } from '../../utils/ids';
 import { takeNextRunnableQueueItem } from '../../utils/executionQueue';
 import { useBatchProcessor, type UseBatchProcessorProps } from './useBatchProcessor';
@@ -624,6 +624,11 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 			const { item: nextItem, remaining: remainingQueue } = session
 				? takeNextRunnableQueueItem(session.executionQueue)
 				: { item: null, remaining: [] };
+			// The run's own `-batch-` process just exited, but the item's target tab
+			// can still be running a turn the user started in parallel. Dispatching
+			// onto it collides with that live process (MAESTRO-ZS), so leave the item
+			// queued: that tab's own exit drains it.
+			if (session && nextItem && isQueuedItemTargetBusy(session, nextItem)) return;
 			if (session && nextItem && processQueuedItemRef.current) {
 				useSessionStore.getState().setSessions((prev) =>
 					prev.map((s) => {

@@ -8,6 +8,7 @@ import {
 	getActiveTab,
 	markTabRunningQueuedItem,
 	resolveQueuedItemTarget,
+	isQueuedItemTargetBusy,
 } from '../../utils/tabHelpers';
 import { filterYoloArgs } from '../../utils/agentArgs';
 import { prepareMaestroSystemPrompt } from '../../utils/spawnHelpers';
@@ -427,19 +428,22 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 
 								// Check for queued items BEFORE updating state (using sessionsRef for latest state)
 								const currentSession = sessionsRef.current.find((s) => s.id === sessionId);
-								let queuedItemToProcess: { sessionId: string; item: QueuedItem } | null = null;
 								// Skip paused items: only a runnable (non-held) item triggers dispatch.
 								const nextRunnable = currentSession
 									? nextRunnableQueueItem(currentSession.executionQueue)
 									: undefined;
 								const hasQueuedItems = !!nextRunnable;
-
-								if (nextRunnable) {
-									queuedItemToProcess = {
-										sessionId: sessionId,
-										item: nextRunnable,
-									};
-								}
+								// This `-batch-` process exiting says nothing about the item's target
+								// tab, which can be mid-turn on a prompt the user sent in parallel.
+								// Dispatching there collides with that live process (MAESTRO-ZS), so
+								// the item stays queued and the busy tab's own exit drains it. The
+								// update below applies the same check, so it dequeues nothing either.
+								const queuedItemToProcess: { sessionId: string; item: QueuedItem } | null =
+									currentSession &&
+									nextRunnable &&
+									!isQueuedItemTargetBusy(currentSession, nextRunnable)
+										? { sessionId, item: nextRunnable }
+										: null;
 
 								// Update state - if there are queued items, keep busy and process next
 								setSessions((prev) =>
@@ -449,7 +453,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 										const { item: nextItem, remaining: remainingQueue } = takeNextRunnableQueueItem(
 											s.executionQueue
 										);
-										if (nextItem) {
+										if (nextItem && !isQueuedItemTargetBusy(s, nextItem)) {
 											const target = resolveQueuedItemTarget(s, nextItem);
 
 											if (!target) {
@@ -534,10 +538,18 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 								// Process queued item AFTER state update
 								if (queuedItemToProcess && processQueuedItemRef.current) {
 									setTimeout(() => {
-										processQueuedItemRef.current!(
-											queuedItemToProcess!.sessionId,
-											queuedItemToProcess!.item
-										);
+										// `processQueuedItem` rejects on a dispatch failure after putting
+										// the prompt back in the queue; unowned, that rejection surfaced
+										// as an unhandled crash report instead of a logged failure.
+										processQueuedItemRef
+											.current?.(queuedItemToProcess.sessionId, queuedItemToProcess.item)
+											.catch((err) => {
+												logger.error(
+													'[useAgentExecution] Queued dispatch after batch task failed, item returned to queue',
+													undefined,
+													err
+												);
+											});
 									}, 0);
 								}
 
