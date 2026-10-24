@@ -243,77 +243,21 @@ describe('group-chat/output-buffer', () => {
 			clearGroupChatBuffer(sessionId);
 		});
 
-		it('should truncate when exceeding max buffer size', () => {
-			const sessionId = getUniqueSessionId();
-
-			// Create a chunk that will exceed the buffer when added multiple times
-			// Using 1MB chunks for faster test execution
-			const oneMB = 1024 * 1024;
-			const largeChunk = 'x'.repeat(oneMB);
-
-			// Add 11MB worth of data (exceeds 10MB limit)
-			for (let i = 0; i < 11; i++) {
-				appendToGroupChatBuffer(sessionId, largeChunk);
-			}
-
-			// Should be truncated
-			expect(isGroupChatBufferTruncated(sessionId)).toBe(true);
-
-			// Output should contain truncation marker
-			const output = getGroupChatBufferedOutput(sessionId);
-			expect(output).toContain('[output truncated due to size limit]');
-
-			// Clean up
-			clearGroupChatBuffer(sessionId);
+		it('preserves a full reply and its ending beyond the memory cap', () => {
+			const id = getUniqueSessionId();
+			const text = 'x'.repeat(MAX_GROUP_CHAT_BUFFER_SIZE + 100) + 'END ✅';
+			appendToGroupChatBuffer(id, text);
+			appendToGroupChatBuffer(id, '\nfinal');
+			expect(getGroupChatBufferedOutput(id)).toBe(text + '\nfinal');
+			expect(isGroupChatBufferTruncated(id)).toBe(false);
+			clearGroupChatBuffer(id);
+			expect(hasGroupChatBuffer(id)).toBe(false);
 		});
-
-		it('should stop accepting data after truncation', () => {
-			const sessionId = getUniqueSessionId();
-
-			// Fill buffer to capacity
-			const oneMB = 1024 * 1024;
-			const largeChunk = 'x'.repeat(oneMB);
-
-			for (let i = 0; i < 11; i++) {
-				appendToGroupChatBuffer(sessionId, largeChunk);
-			}
-
-			// Get length after truncation
-			const lengthAfterTruncation = appendToGroupChatBuffer(sessionId, '');
-
-			// Try to add more data
-			const newLength = appendToGroupChatBuffer(sessionId, 'This should be dropped');
-
-			// Length should not increase (data was dropped)
-			expect(newLength).toBe(lengthAfterTruncation);
-
-			// Clean up
-			clearGroupChatBuffer(sessionId);
-		});
-
-		it('should add truncation marker only once', () => {
-			const sessionId = getUniqueSessionId();
-
-			// Exceed buffer limit
-			const oneMB = 1024 * 1024;
-			const largeChunk = 'x'.repeat(oneMB);
-
-			for (let i = 0; i < 11; i++) {
-				appendToGroupChatBuffer(sessionId, largeChunk);
-			}
-
-			// Try to add more data multiple times
-			appendToGroupChatBuffer(sessionId, 'Extra 1');
-			appendToGroupChatBuffer(sessionId, 'Extra 2');
-			appendToGroupChatBuffer(sessionId, 'Extra 3');
-
-			// Output should contain truncation marker only once
-			const output = getGroupChatBufferedOutput(sessionId);
-			const markerCount = (output!.match(/\[output truncated due to size limit\]/g) || []).length;
-			expect(markerCount).toBe(1);
-
-			// Clean up
-			clearGroupChatBuffer(sessionId);
+		it('reports an explicit failure beyond the bounded disk budget', () => {
+			const id = getUniqueSessionId();
+			appendToGroupChatBuffer(id, 'x'.repeat(64 * 1024 * 1024 + 1));
+			expect(getGroupChatBufferedOutput(id)).toMatch(/^Reply capture failed:/);
+			clearGroupChatBuffer(id);
 		});
 	});
 

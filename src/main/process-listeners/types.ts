@@ -135,7 +135,11 @@ export interface ProcessListenerDependencies {
 	};
 	/** Output parser functions */
 	outputParser: {
-		extractTextFromStreamJson: (output: string, agentType?: string) => string;
+		extractTextFromStreamJson: (
+			output: string,
+			agentType?: string,
+			alreadyParsed?: boolean
+		) => string;
 		parseParticipantSessionId: (sessionId: string) => ParticipantInfo | null;
 	};
 	/** Usage aggregator functions */

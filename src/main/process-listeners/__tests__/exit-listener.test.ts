@@ -5,6 +5,11 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { setupExitListener } from '../exit-listener';
+import { clearReplyFailure } from '../../group-chat/reply-failure';
+vi.mock('../../group-chat/group-chat-log', () => ({
+	appendToLog: vi.fn().mockResolvedValue(undefined),
+}));
+
 import type { ProcessManager } from '../../process-manager';
 import type { ProcessListenerDependencies } from '../types';
 
@@ -35,6 +40,7 @@ describe('Exit Listener', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		clearReplyFailure('test-chat-123');
 		eventHandlers = new Map();
 
 		mockProcessManager = {
@@ -370,6 +376,15 @@ describe('Exit Listener', () => {
 			await new Promise((resolve) => setTimeout(resolve, 50));
 
 			expect(mockDeps.groupChatRouter.routeAgentResponse).not.toHaveBeenCalled();
+			expect(mockDeps.groupChatEmitters.emitMessage).toHaveBeenCalledWith(
+				'test-chat-123',
+				expect.objectContaining({
+					from: 'system',
+					content: expect.stringContaining('Automatic retries stopped'),
+				})
+			);
+			expect(mockDeps.groupChatRouter.spawnModeratorSynthesis).not.toHaveBeenCalled();
+			expect(mockDeps.groupChatRouter.settleGroupChatToIdle).toHaveBeenCalledWith('test-chat-123');
 		});
 
 		it('should not route when parsed text is empty', async () => {
@@ -384,6 +399,15 @@ describe('Exit Listener', () => {
 			await new Promise((resolve) => setTimeout(resolve, 50));
 
 			expect(mockDeps.groupChatRouter.routeAgentResponse).not.toHaveBeenCalled();
+			expect(mockDeps.groupChatEmitters.emitMessage).toHaveBeenCalledWith(
+				'test-chat-123',
+				expect.objectContaining({
+					from: 'system',
+					content: expect.stringContaining('Automatic retries stopped'),
+				})
+			);
+			expect(mockDeps.groupChatRouter.spawnModeratorSynthesis).not.toHaveBeenCalled();
+			expect(mockDeps.groupChatRouter.settleGroupChatToIdle).toHaveBeenCalledWith('test-chat-123');
 		});
 	});
 
