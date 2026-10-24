@@ -75,6 +75,12 @@ export default defineConfig(({ mode }) => ({
 	build: {
 		outDir: path.join(__dirname, 'dist/renderer'),
 		emptyOutDir: true,
+		// Release CI sets MAESTRO_RENDERER_SOURCEMAPS=1 so it can upload the maps
+		// to Sentry (renderer frames otherwise arrive as minified
+		// `app://app/assets/index-XXXX.js` columns). 'hidden' writes the .map files
+		// without a sourceMappingURL comment, and the workflow deletes them before
+		// packaging, so no map ships inside the app. Local and fork builds skip it.
+		sourcemap: process.env.MAESTRO_RENDERER_SOURCEMAPS === '1' ? 'hidden' : false,
 		// TODO(vite-css): revisit this pin once one of these is true:
 		//   1) lightningcss tolerates xterm's malformed selectors (see
 		//      `[-:\s|]`-style class on or near style.css line ~2801)

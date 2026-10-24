@@ -251,12 +251,55 @@ jobs:
           # See src/shared/buildProvenance.ts.
           MAESTRO_SENTRY_DSN: ${{ secrets.MAESTRO_SENTRY_DSN }}
           MAESTRO_OFFICIAL_BUILD: '1'
+          # Write hidden renderer source maps (no sourceMappingURL in the bundle)
+          # for the Sentry upload below. They are deleted before packaging.
+          MAESTRO_RENDERER_SOURCEMAPS: '1'
 
       # Fail loudly rather than shipping a release with crash reporting silently off.
       - name: Verify crash reporting was provisioned
         run: npm run verify:provenance
         env:
           MAESTRO_SENTRY_DSN: ${{ secrets.MAESTRO_SENTRY_DSN }}
+
+      # Renderer stack traces arrive minified (app://app/assets/index-XXXX.js), so
+      # upload the hidden source maps. `inject` stamps a debug id into each bundle
+      # and its map (deterministic from content, so every matrix leg agrees), and
+      # Sentry resolves frames by that id; --release/--url-prefix additionally key
+      # the artifacts to app.getVersion() and the app://app/ frame paths. Main
+      # process frames (app:///dist/main/*.js) are unminified tsc output and need
+      # no maps. Skipped when the SENTRY_AUTH_TOKEN secret is absent (forks), and
+      # never fails the release: a missing upload costs readable frames, not a
+      # build. Runs before packaging because inject rewrites the shipped bundles.
+      - name: Upload renderer source maps to Sentry
+        continue-on-error: true
+        shell: bash
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG || 'smash-labs' }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT || 'maestro' }}
+          VERSION: ${{ steps.version.outputs.VERSION }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SENTRY_AUTH_TOKEN:-}" ]; then
+            echo "SENTRY_AUTH_TOKEN is not set; skipping the source map upload."
+            exit 0
+          fi
+          npx --yes @sentry/cli@3.8.0 sourcemaps inject dist/renderer
+          npx --yes @sentry/cli@3.8.0 sourcemaps upload \
+            --release "$VERSION" \
+            --url-prefix 'app://app/' \
+            dist/renderer
+
+      # Source maps must never ship inside the app (they would expose the full
+      # renderer source and add tens of MB). Runs whether or not they were uploaded.
+      - name: Remove renderer source maps before packaging
+        shell: bash
+        run: |
+          find dist/renderer -type f -name '*.map' -delete
+          if find dist/renderer -type f -name '*.map' | grep -q .; then
+            echo "::error::renderer source maps are still present in dist/renderer"
+            exit 1
+          fi
 
       # List release directory before packaging for debugging
       - name: Create release directory
