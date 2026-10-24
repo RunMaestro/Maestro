@@ -302,7 +302,11 @@ export function runProcess(
 		// observe EOF. `'ignore'` gives the child /dev/null for stdin so it
 		// never tries to read - Claude already behaves correctly with either,
 		// so this is safe across all agents.
-		const needsStdinWrite = sshRemoteEnabled && (Boolean(sshStdinScript) || Boolean(stdinPrompt));
+		// A local run writes stdin only when the spec moved the prompt there (a
+		// Windows `.cmd` shim, see cue-spawn-builder).
+		const needsStdinWrite = sshRemoteEnabled
+			? Boolean(sshStdinScript) || Boolean(stdinPrompt)
+			: Boolean(stdinPrompt);
 		const stdinMode: 'pipe' | 'ignore' = needsStdinWrite ? 'pipe' : 'ignore';
 		try {
 			// maestro-p (interactive token mode) self-allocates its own PTY via
@@ -312,6 +316,9 @@ export function runProcess(
 			child = spawn(spec.command, spec.args, {
 				cwd: spec.cwd,
 				env: spec.env,
+				// cmd.exe for a Windows `.cmd` / `.bat` shim, which Node will not start
+				// directly (spawn EINVAL, MAESTRO-R0). The builder escaped the args.
+				shell: spec.shell ?? false,
 				stdio: [stdinMode, 'pipe', 'pipe'],
 			});
 		} catch (err) {
@@ -402,8 +409,9 @@ export function runProcess(
 				sshRemotePidFile ? withRemotePidRecord(sshStdinScript, sshRemotePidFile) : sshStdinScript
 			);
 			child.stdin?.end();
-		} else if (stdinPrompt && sshRemoteEnabled) {
-			// SSH small prompt mode - send raw prompt via stdin
+		} else if (stdinPrompt) {
+			// SSH small prompt mode, or a local Windows `.cmd` shim - send the raw
+			// prompt via stdin
 			child.stdin?.write(stdinPrompt);
 			child.stdin?.end();
 		} else {

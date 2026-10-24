@@ -7,6 +7,7 @@
  * the async SSH resolution.
  */
 
+import * as path from 'path';
 import type { CueExecutionConfig } from './cue-executor';
 import { getAgentDefinition, getAgentCapabilities } from '../agents';
 import { buildAgentArgs, applyAgentConfigOverrides } from '../utils/agent-args';
@@ -27,6 +28,8 @@ import {
 import { getClaudeTokenMode } from '../../shared/claudeTokenMode';
 import { QUERY_SOURCE_ENV_VAR } from '../../shared/querySource';
 import { buildSpawnPath } from '../utils/spawnPath';
+import { isWindows } from '../../shared/platformDetection';
+import { escapeCmdArgs } from '../process-manager/utils/shellEscape';
 
 // ─── Types ──────���────────────────────────────────────────────────────────────
 
@@ -40,10 +43,33 @@ export interface SpawnSpec {
 	sshStdinScript?: string;
 	/** Human-readable remote agent invocation (shown in Process Details for SSH spawns) */
 	sshRemoteCommand?: string;
-	/** For SSH small-prompt mode: raw prompt to send via stdin */
+	/**
+	 * Raw prompt to send via stdin: SSH small-prompt mode, or a local Windows
+	 * run of a `.cmd` / `.bat` shim (see {@link isWindowsBatchShim}).
+	 */
 	stdinPrompt?: string;
+	/**
+	 * Start the command through cmd.exe. Set only for a local Windows `.cmd` /
+	 * `.bat` shim; `command` and `args` are already quoted for that shell.
+	 */
+	shell?: boolean;
 	/** Whether SSH remote execution was actually used */
 	sshRemoteUsed?: { name?: string; host: string };
+}
+
+/**
+ * Whether a local command is a Windows batch-file shim (`claude.cmd`,
+ * `codex.cmd`, `opencode.cmd` - what an npm global install puts on PATH).
+ *
+ * Node refuses to start a `.cmd` / `.bat` without a shell (`spawn EINVAL`,
+ * since the CVE-2024-27980 fix), so a Cue run of such an agent failed before
+ * it started (MAESTRO-R0). Same rule ChildProcessSpawner applies to desktop
+ * spawns (MAESTRO-Q8).
+ */
+function isWindowsBatchShim(command: string): boolean {
+	if (!isWindows()) return false;
+	const ext = path.win32.extname(command.replace(/"/g, '')).toLowerCase();
+	return ext === '.cmd' || ext === '.bat';
 }
 
 /** Error result when the spawn spec cannot be built (e.g. unknown agent). */
@@ -253,10 +279,31 @@ export async function buildSpawnSpec(
 		sshRemoteUsed = sshResult.sshRemoteUsed;
 	}
 
+	// A local maestro-p run reads the prompt as its trailing positional (step 6).
+	const runsMaestroPLocally =
+		!sshRemoteUsed &&
+		claudeSpawnDecision.mode === 'interactive' &&
+		!!claudeSpawnDecision.maestroPBinPath;
+
 	// 5. Append prompt as a positional CLI argument when the SSH wrapper
 	// was NOT actually used. If sshRemoteConfig.enabled is true but sshStore
 	// was missing, SSH wrapping was skipped so we still need to append.
-	if (!sshRemoteUsed) {
+	//
+	// A Windows `.cmd` / `.bat` shim has to start through cmd.exe (below), and
+	// cmd.exe ends the command at the first line break, so a multi-line prompt
+	// in argv would arrive cut short. An agent that reads its prompt from stdin
+	// gets it there instead, as the desktop spawn does on Windows.
+	if (
+		!sshRemoteUsed &&
+		!runsMaestroPLocally &&
+		isWindowsBatchShim(command) &&
+		agentConfig.capabilities?.supportsPromptViaStdin
+	) {
+		if (agentDef.stdinPromptArgs) {
+			spawnArgs = [...spawnArgs, ...agentDef.stdinPromptArgs];
+		}
+		stdinPrompt = substitutedPrompt;
+	} else if (!sshRemoteUsed) {
 		if (agentDef.promptArgs) {
 			spawnArgs = [...spawnArgs, ...agentDef.promptArgs(substitutedPrompt)];
 		} else if (agentDef.noPromptSeparator) {
@@ -272,11 +319,7 @@ export async function buildSpawnSpec(
 	// forwards the rest to the claude TUI, and reads the trailing positional as
 	// the prompt). The injected MAESTRO_CLAUDE_BIN flows into the spec env below
 	// via spawnEnvVars. SSH was already handled above and resolves to `api`.
-	if (
-		!sshRemoteUsed &&
-		claudeSpawnDecision.mode === 'interactive' &&
-		claudeSpawnDecision.maestroPBinPath
-	) {
+	if (runsMaestroPLocally) {
 		const applied = applyClaudeSpawnDecision({
 			decision: claudeSpawnDecision,
 			interactiveModeArgs: agentDef.interactiveModeArgs,
@@ -293,6 +336,19 @@ export async function buildSpawnSpec(
 		command = applied.command;
 		spawnArgs = applied.args;
 		spawnEnvVars = applied.customEnvVars;
+	}
+
+	// 7. A local Windows `.cmd` / `.bat` shim starts through cmd.exe, with every
+	// argument escaped for it and a command path containing spaces quoted
+	// (cmd.exe would split "C:\Users\First Last\...\claude.cmd"), matching
+	// ChildProcessSpawner.
+	let shell: boolean | undefined;
+	if (!sshRemoteUsed && isWindowsBatchShim(command)) {
+		shell = true;
+		spawnArgs = escapeCmdArgs(spawnArgs);
+		if (/\s/.test(command) && !command.startsWith('"')) {
+			command = `"${command}"`;
+		}
 	}
 
 	return {
@@ -319,6 +375,7 @@ export async function buildSpawnSpec(
 			sshStdinScript,
 			sshRemoteCommand,
 			stdinPrompt,
+			shell,
 			sshRemoteUsed,
 		},
 	};

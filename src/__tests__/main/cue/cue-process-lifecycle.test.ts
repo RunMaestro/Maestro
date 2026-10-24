@@ -336,6 +336,46 @@ describe('cue-process-lifecycle', () => {
 				await resultPromise;
 			});
 
+			it('starts a Windows .cmd shim through the shell and writes its prompt on stdin (MAESTRO-R0)', async () => {
+				const spec = createSpec({
+					command: 'C:\\Users\\dev\\AppData\\Roaming\\npm\\codex.cmd',
+					args: ['exec', '--json'],
+					shell: true,
+					stdinPrompt: 'line one\nline two',
+				});
+				const resultPromise = runProcess(
+					'run-1',
+					spec,
+					createOptions({ stdinPrompt: 'line one\nline two' })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+
+				expect(mockSpawn).toHaveBeenCalledWith(
+					'C:\\Users\\dev\\AppData\\Roaming\\npm\\codex.cmd',
+					['exec', '--json'],
+					expect.objectContaining({ shell: true, stdio: ['pipe', 'pipe', 'pipe'] })
+				);
+				expect(mockChild.stdin.write).toHaveBeenCalledWith('line one\nline two');
+				expect(mockChild.stdin.end).toHaveBeenCalled();
+
+				mockChild.emit('close', 0);
+				await resultPromise;
+			});
+
+			it('spawns without a shell when the spec does not ask for one', async () => {
+				const resultPromise = runProcess('run-1', createSpec(), createOptions());
+				await vi.advanceTimersByTimeAsync(0);
+
+				expect(mockSpawn).toHaveBeenCalledWith(
+					'claude',
+					expect.any(Array),
+					expect.objectContaining({ shell: false })
+				);
+
+				mockChild.emit('close', 0);
+				await resultPromise;
+			});
+
 			it('writes stdinPrompt to stdin for SSH prompt mode', async () => {
 				const spec = createSpec({ stdinPrompt: 'large prompt' });
 				const resultPromise = runProcess(

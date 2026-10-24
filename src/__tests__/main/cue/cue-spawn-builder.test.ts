@@ -86,6 +86,13 @@ vi.mock('fs', async (importOriginal) => {
 	return { ...actual, existsSync: () => true };
 });
 
+// POSIX by default; the Windows `.cmd` shim tests flip it.
+const { mockIsWindows } = vi.hoisted(() => ({ mockIsWindows: vi.fn(() => false) }));
+vi.mock('../../../shared/platformDetection', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../../shared/platformDetection')>();
+	return { ...actual, isWindows: () => mockIsWindows() };
+});
+
 // Must import after mocks
 import { buildSpawnSpec } from '../../../main/cue/cue-spawn-builder';
 
@@ -137,6 +144,7 @@ function createConfig(overrides: Partial<CueExecutionConfig> = {}): CueExecution
 describe('cue-spawn-builder', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mockIsWindows.mockReturnValue(false);
 		mockGetAgentDefinition.mockReturnValue(defaultAgentDef);
 		// The spec env spreads process.env, so an ambient MAESTRO_CLAUDE_BIN
 		// (leaked when these tests run inside a maestro/claude agent) would bleed
@@ -221,6 +229,135 @@ describe('cue-spawn-builder', () => {
 				expect(args[args.length - 1]).toBe('Hello world');
 				expect(args[args.length - 2]).not.toBe('--');
 			}
+		});
+
+		describe('Windows .cmd shim (MAESTRO-R0)', () => {
+			const codexDef = {
+				id: 'codex',
+				name: 'Codex',
+				binaryName: 'codex',
+				command: 'codex',
+				args: ['exec'],
+			};
+			const shimPath = 'C:\\Users\\dev\\AppData\\Roaming\\npm\\codex.cmd';
+			const multiLinePrompt = 'Review the diff.\nThen summarize "what changed".';
+
+			function useStdinCapableCodex(stdin = true) {
+				mockGetAgentDefinition.mockReturnValue(codexDef);
+				mockBuildAgentArgs.mockReturnValueOnce(['exec', '--json']);
+				mockGetAgentCapabilities.mockReturnValueOnce({
+					...mockGetAgentCapabilities(),
+					supportsPromptViaStdin: stdin,
+				} as ReturnType<typeof mockGetAgentCapabilities>);
+			}
+
+			beforeEach(() => {
+				mockIsWindows.mockReturnValue(true);
+			});
+
+			it('starts the shim through cmd.exe and sends the prompt on stdin', async () => {
+				useStdinCapableCodex();
+
+				const result = await buildSpawnSpec(
+					createConfig({ toolType: 'codex', customPath: shimPath }),
+					multiLinePrompt
+				);
+
+				expect(result.ok).toBe(true);
+				if (result.ok) {
+					expect(result.spec.shell).toBe(true);
+					expect(result.spec.command).toBe(shimPath);
+					// cmd.exe ends a command at a line break, so the prompt must not ride argv.
+					expect(result.spec.args).toEqual(['exec', '--json']);
+					expect(result.spec.stdinPrompt).toBe(multiLinePrompt);
+				}
+			});
+
+			it('appends the stdin query args an agent declares', async () => {
+				useStdinCapableCodex();
+				mockGetAgentDefinition.mockReturnValue({
+					...codexDef,
+					stdinPromptArgs: ['--query-file', '-'],
+				});
+
+				const result = await buildSpawnSpec(
+					createConfig({ toolType: 'codex', customPath: shimPath }),
+					'prompt'
+				);
+
+				expect(result.ok).toBe(true);
+				if (result.ok) {
+					expect(result.spec.args).toEqual(['exec', '--json', '--query-file', '-']);
+					expect(result.spec.stdinPrompt).toBe('prompt');
+				}
+			});
+
+			it('quotes a shim path containing spaces for cmd.exe', async () => {
+				useStdinCapableCodex();
+				const spaced = 'C:\\Users\\First Last\\AppData\\Roaming\\npm\\codex.cmd';
+
+				const result = await buildSpawnSpec(
+					createConfig({ toolType: 'codex', customPath: spaced }),
+					'prompt'
+				);
+
+				expect(result.ok).toBe(true);
+				if (result.ok) {
+					expect(result.spec.command).toBe(`"${spaced}"`);
+					expect(result.spec.shell).toBe(true);
+				}
+			});
+
+			it('keeps the prompt in argv, escaped, for an agent that cannot read stdin', async () => {
+				useStdinCapableCodex(false);
+
+				const result = await buildSpawnSpec(
+					createConfig({ toolType: 'codex', customPath: shimPath }),
+					'fix the "auth" bug'
+				);
+
+				expect(result.ok).toBe(true);
+				if (result.ok) {
+					expect(result.spec.shell).toBe(true);
+					expect(result.spec.stdinPrompt).toBeUndefined();
+					expect(result.spec.args).toEqual(['exec', '--json', '--', '"fix the ""auth"" bug"']);
+				}
+			});
+
+			it('leaves a Windows .exe untouched: no shell, prompt in argv', async () => {
+				useStdinCapableCodex();
+				const exe = 'C:\\Users\\dev\\AppData\\Local\\OpenAI\\Codex\\bin\\codex.exe';
+
+				const result = await buildSpawnSpec(
+					createConfig({ toolType: 'codex', customPath: exe }),
+					multiLinePrompt
+				);
+
+				expect(result.ok).toBe(true);
+				if (result.ok) {
+					expect(result.spec.shell).toBeUndefined();
+					expect(result.spec.command).toBe(exe);
+					expect(result.spec.args).toEqual(['exec', '--json', '--', multiLinePrompt]);
+					expect(result.spec.stdinPrompt).toBeUndefined();
+				}
+			});
+
+			it('does nothing off Windows, even for a .cmd path', async () => {
+				mockIsWindows.mockReturnValue(false);
+				useStdinCapableCodex();
+
+				const result = await buildSpawnSpec(
+					createConfig({ toolType: 'codex', customPath: shimPath }),
+					'prompt'
+				);
+
+				expect(result.ok).toBe(true);
+				if (result.ok) {
+					expect(result.spec.shell).toBeUndefined();
+					expect(result.spec.args).toEqual(['exec', '--json', '--', 'prompt']);
+					expect(result.spec.stdinPrompt).toBeUndefined();
+				}
+			});
 		});
 
 		it('calls buildAgentArgs with yoloMode: true', async () => {

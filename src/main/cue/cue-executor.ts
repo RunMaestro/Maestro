@@ -270,7 +270,9 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 		timeoutMs,
 		sshRemoteEnabled: sshActuallyUsed,
 		sshStdinScript: sshActuallyUsed ? spec.sshStdinScript : undefined,
-		stdinPrompt: sshActuallyUsed ? spec.stdinPrompt : undefined,
+		// Set by the builder for SSH small-prompt mode and for a local Windows
+		// `.cmd` shim, which takes its prompt on stdin.
+		stdinPrompt: spec.stdinPrompt,
 		onLog,
 		onActivity: wakaHeartbeat,
 	});
