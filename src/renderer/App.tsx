@@ -150,6 +150,7 @@ import { useCapabilitiesPriming } from './hooks/agent/useCapabilitiesPriming';
 import { useSymphonyContribution } from './hooks/symphony/useSymphonyContribution';
 import { useCueAutoDiscovery } from './hooks/useCueAutoDiscovery';
 import { useCueVisibilityWiring } from './hooks/cue/useCueVisibilityWiring';
+import { useTtsr } from './hooks/useTtsr';
 import { useCueBundleAgentSync } from './hooks/cue/useCueBundleAgentSync';
 
 // Import contexts
@@ -217,7 +218,14 @@ import type {
 } from './types';
 import { useResolvedTheme } from './hooks/ui/useResolvedTheme';
 import { getActiveOutputSearchKey } from './utils/outputSearch';
-import { reorderQueueItem, applyQueuedItemEdit } from './utils/executionQueue';
+import {
+	reorderQueueItem,
+	applyQueuedItemEdit,
+	getForceSendEligibility,
+	getSteerEligibility,
+	type ForceSendEligibility,
+	type SteerEligibility,
+} from './utils/executionQueue';
 import { getContextColor } from './utils/theme';
 // safeClipboardWrite moved to AppStandaloneModals (GistPublishModal handler)
 // Tiling-aware Cmd+Shift+T: restores a pane back into its tiled group when the
@@ -241,12 +249,7 @@ import {
 	findUnreadSessionInDirection,
 	type UnreadNavDirection,
 } from './utils/tabHelpers';
-import {
-	getForceSendEligibility,
-	getSteerEligibility,
-	type ForceSendEligibility,
-	type SteerEligibility,
-} from './utils/executionQueue';
+
 // validateNewSession moved to useSymphonyContribution, useSessionCrud hooks
 // formatLogsForClipboard moved to useTabExportHandlers hook
 // getSlashCommandDescription moved to useWizardHandlers
@@ -1078,6 +1081,11 @@ function MaestroConsoleInner() {
 	// Ensures the single pinned Pianola agent exists once sessions are loaded and
 	// the pianola flag is on. Does not steal focus from the active agent.
 	usePianolaAgent(encoreFeatures);
+
+	// --- TTSR (Time-Traveling Stream Rules, gated by Encore Feature) ---
+	// Main matches rules against the live stream and aborts the turn on its own;
+	// this subscription performs the corrective respawn that continues it.
+	useTtsr(!!encoreFeatures.ttsr);
 
 	// --- CUE VISIBILITY WIRING (PR-B 1.4) ---
 	// Forwards document visibility to the main-process Cue scanner
@@ -3257,6 +3265,26 @@ function MaestroConsoleInner() {
 		handleDeleteAllArchivedGroupChats,
 	});
 
+	// TTSR rule authoring is delegated to the agent: the Rules tab composes a
+	// brief and this puts it in front of the active agent as a normal turn.
+	const handleSendPromptToAgent = useCallback(
+		(prompt: string) => {
+			// No input handler means no agent tab is mounted to receive the turn.
+			// Silently dropping the click would leave the user waiting for a rule
+			// nothing is writing.
+			if (!processInputRef.current) {
+				notifyToast({
+					color: 'yellow',
+					title: 'Maestro',
+					message: 'No active agent input to send this to. Open an agent tab and try again.',
+				});
+				return;
+			}
+			void processInputRef.current(prompt);
+		},
+		[processInputRef]
+	);
+
 	const rightPanelProps = useRightPanelProps({
 		// Theme (computed externally from settingsStore + themeId)
 		theme,
@@ -3307,6 +3335,7 @@ function MaestroConsoleInner() {
 
 		// File linking
 		handleMainPanelFileClick,
+		handleSendPromptToAgent,
 
 		// Document Graph handlers
 		handleFocusFileInGraph,

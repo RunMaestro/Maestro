@@ -16,6 +16,7 @@
 
 import { create } from 'zustand';
 import type { BrowserConfirmPolicy } from '../../shared/coworkingBrowser';
+import { isTtsrContextMode, type TtsrContextMode } from '../../shared/ttsr-types';
 import { isWindowsPlatform } from '../utils/platformUtils';
 import { isWebDesktop } from '../utils/runtimeContext';
 import type {
@@ -466,6 +467,9 @@ export interface SettingsStoreState
 	utilityModelId: string | null;
 	encoreFeatures: EncoreFeatureFlags;
 	symphonyRegistryUrls: string[];
+	ttsrEnabled: boolean;
+	ttsrDisabledRules: string[];
+	ttsrContextMode: TtsrContextMode;
 	coworkingBrowserInteraction: string[];
 	coworkingBrowserInteractionConfirm: Record<string, BrowserConfirmPolicy>;
 	coworkingBackgroundBrowsers: boolean;
@@ -591,6 +595,9 @@ export interface SettingsStoreActions
 	setUtilityModelId: (value: string | null) => void;
 	setEncoreFeatures: (value: EncoreFeatureFlags) => void;
 	setSymphonyRegistryUrls: (value: string[]) => void;
+	setTtsrEnabled: (value: boolean) => void;
+	setTtsrDisabledRules: (value: string[]) => void;
+	setTtsrContextMode: (value: TtsrContextMode) => void;
 	setCoworkingBrowserInteraction: (value: string[]) => void;
 	setCoworkingBrowserInteractionConfirm: (value: Record<string, BrowserConfirmPolicy>) => void;
 	setCoworkingBackgroundBrowsers: (value: boolean) => void;
@@ -853,6 +860,9 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		utilityModelId: null,
 		encoreFeatures: DEFAULT_ENCORE_FEATURES,
 		symphonyRegistryUrls: [],
+		ttsrEnabled: false,
+		ttsrDisabledRules: [],
+		ttsrContextMode: 'keep',
 		coworkingBrowserInteraction: [],
 		coworkingBrowserInteractionConfirm: {},
 		coworkingBackgroundBrowsers: false,
@@ -1396,6 +1406,21 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setSymphonyRegistryUrls: (value) => {
 			set({ symphonyRegistryUrls: value });
 			window.maestro.settings.set('symphonyRegistryUrls', value);
+		},
+
+		setTtsrEnabled: (value) => {
+			set({ ttsrEnabled: value });
+			window.maestro.settings.set('ttsrEnabled', value);
+		},
+
+		setTtsrDisabledRules: (value) => {
+			set({ ttsrDisabledRules: value });
+			window.maestro.settings.set('ttsrDisabledRules', value);
+		},
+
+		setTtsrContextMode: (value) => {
+			set({ ttsrContextMode: value });
+			window.maestro.settings.set('ttsrContextMode', value);
 		},
 
 		setCoworkingBrowserInteraction: (value) => {
@@ -2628,6 +2653,19 @@ export async function loadAllSettings(): Promise<void> {
 			patch.symphonyRegistryUrls = (allSettings['symphonyRegistryUrls'] as unknown[])
 				.filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
 				.map((v) => v.trim());
+		}
+
+		// TTSR (Time-Traveling Stream Rules)
+		if (typeof allSettings['ttsrEnabled'] === 'boolean') {
+			patch.ttsrEnabled = allSettings['ttsrEnabled'];
+		}
+		if (Array.isArray(allSettings['ttsrDisabledRules'])) {
+			patch.ttsrDisabledRules = (allSettings['ttsrDisabledRules'] as unknown[])
+				.filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
+				.map((v) => v.trim());
+		}
+		if (isTtsrContextMode(allSettings['ttsrContextMode'])) {
+			patch.ttsrContextMode = allSettings['ttsrContextMode'];
 		}
 
 		// Coworking browser interaction (agent ids allowed to use browser tools)

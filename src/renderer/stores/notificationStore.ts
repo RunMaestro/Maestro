@@ -15,6 +15,7 @@
  */
 
 import { create } from 'zustand';
+import type { TtsrToastMarker } from '../../shared/ttsr-types';
 import { logger } from '../utils/logger';
 import { isWebDesktop } from '../utils/runtimeContext';
 import type { ToastClickAction } from '../../shared/toastClickAction';
@@ -60,6 +61,8 @@ export type { ToastClickAction };
 export interface Toast extends ToastData {
 	/** Renderer-only activation callback. Durable actions use clickAction. */
 	onClick?: () => void;
+	/** Structured TTSR interrupt outcome, resolved for this client at display time. */
+	ttsr?: TtsrToastMarker;
 }
 
 /**

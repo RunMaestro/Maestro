@@ -456,6 +456,7 @@ describe('Claude Code resume on macOS', () => {
 				'--verbose',
 				'--output-format',
 				'stream-json',
+				'--include-partial-messages',
 				'--dangerously-skip-permissions',
 				'--resume',
 				SESSION_ID,

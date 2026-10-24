@@ -40,6 +40,16 @@ export type {
 
 // Re-export Symphony types for session metadata
 export type { SymphonySessionMetadata } from '../../shared/symphony-types';
+export type {
+	TtsrContextMode,
+	TtsrProjectSettings,
+	TtsrRule,
+	TtsrRuleListEntry,
+	TtsrRuleListResult,
+	TtsrRulesChangedPayload,
+	TtsrRuleValidation,
+	TtsrScope,
+} from '../../shared/ttsr-types';
 // Import Symphony types for use in this file
 import type { SymphonySessionMetadata } from '../../shared/symphony-types';
 import type { LogEntrySource } from '../../shared/maestro-lib/store/transcript';
@@ -81,7 +91,7 @@ import type { MindMapLayoutType } from '../components/DocumentGraph/layoutTypes'
 
 export type SessionState = 'idle' | 'busy' | 'waiting_input' | 'connecting' | 'error';
 export type FileChangeType = 'modified' | 'added' | 'deleted';
-export type RightPanelTab = 'files' | 'history' | 'autorun';
+export type RightPanelTab = 'files' | 'history' | 'autorun' | 'rules';
 /**
  * Tabs in the Usage Dashboard modal. Shared so the in-memory uiStore can
  * remember the last-selected tab across dashboard opens (resets on restart).
@@ -267,6 +277,12 @@ export interface LogEntry {
 	// each answer lands. Absent on a bubble steered before the state was recorded,
 	// which is drawn as steered with no outcome claimed.
 	steerState?: import('../../shared/chatSteering').SteerBubbleState;
+	// For the corrective turn TTSR respawns after a mid-turn abort: marks this
+	// user entry as the TTSR injection boundary. `rules` are the rule name(s) that
+	// fired (rendered as a badge); `mode` is how the turn was continued (`resume`
+	// re-attached to the aborted conversation, `fresh` restarted it). The entry's
+	// `text` holds the `<system-interrupt>` block, collapsed by default in LogItem.
+	ttsr?: { rules: string[]; mode: 'resume' | 'fresh' };
 	// For error entries - stores the full AgentError for "View Details" functionality
 	agentError?: AgentError;
 	// For tool execution entries - stores tool state and details
@@ -1690,6 +1706,10 @@ export interface ProcessConfig {
 	// NOTE: prompt delivery (argv vs stdin) is decided by the main process in
 	// handleProcessSpawn - it depends on the HOST platform and the agent's CLI,
 	// neither of which a renderer (possibly a browser on another OS) can know.
+	// Set only on a TTSR corrective respawn: the id from `ttsr:triggered`, echoed
+	// back so main recognises its own corrective turn by correlation rather than
+	// by inspecting the prompt.
+	ttsrCorrelationId?: string;
 	/** Who asked for this turn: a human ('user') or Auto Run ('auto'). Stamped into
 	 *  the spawned process env as MAESTRO_QUERY_SOURCE. Cue runs never come through
 	 *  this IPC path - they spawn in the main process and mark themselves 'cue'. */
@@ -1843,6 +1863,11 @@ export interface EncoreFeatureFlags {
 	// Groups+ - nested groups, standard folder icons, and label colors.
 	// Off by default. Optional so older fixtures and persisted settings remain valid.
 	groupsPlus?: boolean;
+	// TTSR (Time-Traveling Stream Rules) - watch agent output streams and
+	// interrupt a turn that violates a project rule. Off by default. Optional so
+	// existing literals (older test fixtures, persisted settings without the
+	// key) continue to type-check.
+	ttsr?: boolean;
 	// Web Login - require a username and password on the web interface, with
 	// per-account attribution on History and stats. Off by default. Optional so
 	// older fixtures and persisted settings remain valid.

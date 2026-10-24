@@ -435,6 +435,34 @@ describe('process IPC handlers', () => {
 		});
 	});
 
+	it('retains deferred TTSR guidance after a refused spawn and delivers it on successful retry', async () => {
+		let text = '<system-reminder>keep the guidance</system-reminder>';
+		const commit = vi.fn(() => {
+			text = '';
+		});
+		deps.peekTtsrReminders = () => ({ text, commit });
+		mockAgentDetector.getAgent.mockResolvedValue({
+			id: 'claude-code',
+			path: '/usr/bin/claude',
+			requiresPty: false,
+		});
+		mockProcessManager.spawn
+			.mockReturnValueOnce({ pid: -1, success: false })
+			.mockReturnValueOnce({ pid: 123, success: true });
+		const config = {
+			sessionId: 'agent-ai-tab',
+			toolType: 'claude-code',
+			cwd: '/test',
+			command: 'claude',
+			args: [],
+			prompt: 'continue',
+		};
+		await expect(handlers.get('process:spawn')!({}, config)).rejects.toThrow(/did not start/);
+		expect(commit).not.toHaveBeenCalled();
+		await handlers.get('process:spawn')!({}, config);
+		expect(mockProcessManager.spawn.mock.calls[1][0].prompt).toContain('keep the guidance');
+		expect(commit).toHaveBeenCalledTimes(1);
+	});
 	describe('process:getHeadlessActivity', () => {
 		it('reads independent live run counts without creating a desktop process', async () => {
 			const query = handlers.get('process:getHeadlessActivity')!;

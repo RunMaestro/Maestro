@@ -40,6 +40,7 @@ export type FirstPartyEncoreFlag =
 	| 'opencodeServer'
 	| 'concerto'
 	| 'groupsPlus'
+	| 'ttsr'
 	| 'webLogin'
 	| 'computerHistory'
 	| 'quickChat'
@@ -1460,6 +1461,70 @@ export const DATAVIEW_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 };
 
 /**
+ * Broker capabilities TTSR actually touches. The engine reads its own Encore
+ * flag + global settings, watches `.maestro/rules/*.md` and `.maestro/ttsr.yaml`
+ * under session project roots, reads the live parsed output stream to match
+ * rules, and toasts the user when a rule interrupts a turn.
+ */
+export const TTSR_FIRST_PARTY_PLUGIN_PERMISSIONS: readonly PermissionRequest[] = [
+	{
+		capability: 'settings:read',
+		reason: 'Re-read the TTSR Encore flag and global TTSR settings before observing a stream.',
+	},
+	{
+		// Unscoped by necessity: rule files live under whatever project roots the
+		// user's sessions use, which a static path scope cannot name.
+		capability: 'fs:watch',
+		reason: 'Watch .maestro/rules/*.md and .maestro/ttsr.yaml under session project roots.',
+	},
+	{
+		capability: 'agents:read',
+		reason: 'Resolve the agent id and project root of the session whose stream is being matched.',
+	},
+	{
+		capability: 'transcripts:read',
+		reason: "Match rule conditions against the agent's live prose, thinking, and tool content.",
+	},
+	{
+		capability: 'notifications:toast',
+		reason: 'Tell the user which rule interrupted a turn, with a jump back to that agent.',
+	},
+	// NOTE: `agents:dispatch` is deliberately ABSENT for the same reason it is on
+	// Pianola and Cue: the corrective reinject targets the dynamically-discovered
+	// session that was just interrupted, which a static FC2 allowlist scope
+	// cannot name. That authority stays HOST-OWNED (the main engine's interrupt +
+	// the renderer's existing spawn path, both gated by the Encore flag) until a
+	// runtime per-agent grant seam exists.
+] as const;
+
+/** TTSR: rule-driven stream interruption, gated by its own Encore flag. */
+export const TTSR_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
+	releaseDate: '2026-09-28',
+	id: 'com.maestro.ttsr',
+	name: 'Time-Traveling Stream Rules',
+	description:
+		"Watch an agent's live output and interrupt the turn with a corrective reminder when it breaks a project rule.",
+	firstParty: true,
+	category: 'automation',
+	usage: {
+		overview: [
+			'Watch parsed agent output against project rules and interrupt with corrective guidance.',
+		],
+		access: [{ label: 'Author project rules', commandPalette: 'Rules', menu: 'Right Bar > Rules' }],
+		agentCommands: [
+			{ label: 'Author a rule', command: 'Help me write a TTSR rule for this project' },
+		],
+	},
+	permissions: TTSR_FIRST_PARTY_PLUGIN_PERMISSIONS,
+	settingsNamespace: 'ttsr',
+	encoreFlag: 'ttsr',
+	// No supervised background service: the monitor is a synchronous tap on the
+	// agent output stream that already runs per turn. Disable = the tap
+	// short-circuits and nothing keeps running.
+	backgroundServices: [],
+};
+
+/**
  * Every first-party plugin definition, in marketplace display order (matches
  * the pre-lift BUILTIN_FEATURES tile order).
  */
@@ -1473,6 +1538,7 @@ export const FIRST_PARTY_PLUGIN_DEFINITIONS: readonly FirstPartyPluginDefinition
 	OPENCODE_SERVER_FIRST_PARTY_PLUGIN,
 	CONCERTO_FIRST_PARTY_PLUGIN,
 	GROUPS_PLUS_FIRST_PARTY_PLUGIN,
+	TTSR_FIRST_PARTY_PLUGIN,
 	WEB_LOGIN_FIRST_PARTY_PLUGIN,
 	COMPUTER_HISTORY_FIRST_PARTY_PLUGIN,
 	QUICK_CHAT_FIRST_PARTY_PLUGIN,
@@ -1499,6 +1565,7 @@ export const FIRST_PARTY_PLUGINS: Readonly<
 	opencodeServer: OPENCODE_SERVER_FIRST_PARTY_PLUGIN,
 	concerto: CONCERTO_FIRST_PARTY_PLUGIN,
 	groupsPlus: GROUPS_PLUS_FIRST_PARTY_PLUGIN,
+	ttsr: TTSR_FIRST_PARTY_PLUGIN,
 	webLogin: WEB_LOGIN_FIRST_PARTY_PLUGIN,
 	computerHistory: COMPUTER_HISTORY_FIRST_PARTY_PLUGIN,
 	quickChat: QUICK_CHAT_FIRST_PARTY_PLUGIN,

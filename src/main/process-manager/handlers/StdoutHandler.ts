@@ -13,7 +13,8 @@ import { FALLBACK_CONTEXT_WINDOW, COMBINED_CONTEXT_AGENTS } from '../../../share
 import { formatAgentLoginCommand, getAgentLoginCommand } from '../../../shared/agentMetadata';
 import { getOmpModelContextWindow } from '../../agents/omp-model-catalog';
 import { UsageAccumulator } from '../../../shared/maestro-lib/streaming/usage-accumulator';
-import type { ManagedProcess, UsageStats, AgentError } from '../types';
+import type { ManagedProcess, UsageStats, AgentError, ParsedEventObserver } from '../types';
+import { captureException } from '../../utils/sentry';
 import type { DataBufferManager } from './DataBufferManager';
 import type { ParsedEvent } from '../../parsers/agent-output-parser';
 import { parseSteeringResult } from '../../../shared/chatSteering';
@@ -301,11 +302,20 @@ export class StdoutHandler {
 	private processes: Map<string, ManagedProcess>;
 	private emitter: EventEmitter;
 	private bufferManager: DataBufferManager;
+	private parsedEventObserver: ParsedEventObserver | null = null;
 
 	constructor(deps: StdoutHandlerDependencies) {
 		this.processes = deps.processes;
 		this.emitter = deps.emitter;
 		this.bufferManager = deps.bufferManager;
+	}
+
+	/**
+	 * Install (or clear, with `null`) the parsed-event observer. Late-bound so
+	 * the consumer can be built after the process manager it observes.
+	 */
+	setParsedEventObserver(observer: ParsedEventObserver | null): void {
+		this.parsedEventObserver = observer;
 	}
 
 	/**
@@ -659,6 +669,23 @@ export class StdoutHandler {
 		event: ParsedEvent,
 		outputParser: NonNullable<ManagedProcess['outputParser']>
 	): void {
+		// Stream observation seam (Time-Traveling Stream Rules). The observer reads
+		// the feature gate live and returns before doing any work while TTSR is
+		// off, so this stays a null check plus one no-op call.
+		// A throwing observer must never take the agent's output stream down with
+		// it, so it is contained here and reported rather than propagated.
+		if (this.parsedEventObserver) {
+			try {
+				this.parsedEventObserver(sessionId, event);
+			} catch (error) {
+				logger.error('[StdoutHandler] Parsed-event observer threw', 'StdoutHandler', {
+					sessionId,
+					error: error instanceof Error ? error.message : String(error),
+				});
+				void captureException(error, { sessionId, operation: 'parsedEventObserver' });
+			}
+		}
+
 		const usage = outputParser.extractUsage(event);
 		if (usage) {
 			const usageStats = this.buildUsageStats(managedProcess, usage);
@@ -728,7 +755,14 @@ export class StdoutHandler {
 		}
 
 		// Handle streaming text events (OpenCode, Codex reasoning, Grok thought/text)
-		if (event.type === 'text' && event.isPartial && event.text) {
+		//
+		// Double-count guard: a complete claude-code `assistant` event stamped
+		// textAlreadyStreamed:true had its prose delivered token-by-token via
+		// stream_event text_delta partials that already fed both the streamedText
+		// append and the thinking-chunk emit below. Skip the whole block for that
+		// event so the same text is not ingested twice. The raw text_delta partials
+		// carry no such flag, so they still flow through normally.
+		if (event.type === 'text' && event.isPartial && event.text && !event.textAlreadyStreamed) {
 			// Thinking panel routing:
 			// - Copilot: never thinking-chunk (deltas accumulate in streamedText
 			//   and flush once at exit).

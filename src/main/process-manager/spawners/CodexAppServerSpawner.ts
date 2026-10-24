@@ -35,7 +35,7 @@ import { EventEmitter } from 'events';
 import { logger } from '../../utils/logger';
 import { createOutputParser } from '../../parsers';
 import { captureException } from '../../utils/sentry';
-import type { ProcessConfig, ManagedProcess, SpawnResult } from '../types';
+import type { ProcessConfig, ManagedProcess, SpawnResult, ParsedEventObserver } from '../types';
 import type { DataBufferManager } from '../handlers/DataBufferManager';
 import { StdoutHandler } from '../handlers/StdoutHandler';
 import { StderrHandler } from '../handlers/StderrHandler';
@@ -152,6 +152,10 @@ export class CodexAppServerSpawner {
 			fallbackToCli,
 			clientVersion: options.clientVersion ?? '0.0.0',
 		};
+	}
+
+	setParsedEventObserver(observer: ParsedEventObserver | null): void {
+		this.context.stdoutHandler.setParsedEventObserver(observer);
 	}
 
 	spawn(config: ProcessConfig): SpawnResult {
