@@ -1,4 +1,4 @@
-import React, { memo, useEffect, useRef, useState } from 'react';
+import React, { memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { Theme } from '../types';
 import {
@@ -19,9 +19,11 @@ import {
 	isTopToastPosition,
 	TOAST_BOTTOM_OFFSET,
 	TOAST_STACK_GAP,
+	TOAST_TAB_STRIP_CLEARANCE,
 	TOAST_TOP_OFFSET,
 	toastSidePanel,
 } from '../../shared/toastPosition';
+import { useUIStore } from '../stores/uiStore';
 import { useElementWidth } from '../hooks/ui/useElementWidth';
 import { toastBottomInset, useToastAvoidZoneStore } from '../hooks/ui/useToastAvoidZone';
 import { Z_LAYERS } from '../constants/zLayers';
@@ -486,6 +488,35 @@ export const ToastContainer = memo(function ToastContainer({
 	// applies, so a bare picker name can't fall through to serif.
 	const fontFamily = useSettingsStore((s) => withMonoFallback(s.fontFamily));
 
+	// Keep the stack off the Right Bar's Files / History / Auto Run tab strip
+	// (#1628). A top-right stack over an open Right Bar starts below the strip
+	// instead of on it. A bottom stack is capped so it never grows into the
+	// band at all, and toasts past the cap scroll inside the stack. Interactive
+	// toasts over the strip swallowed the clicks meant for its tabs.
+	const rightPanelOpen = useUIStore((s) => s.rightPanelOpen);
+	const topOffset =
+		stackAtTop && !stackAtLeft && rightPanelOpen ? TOAST_TAB_STRIP_CLEARANCE : TOAST_TOP_OFFSET;
+	const bottomOffset = TOAST_BOTTOM_OFFSET + Math.max(bottomInset, playerLift);
+	// The scroller is padded (one stack gap above and below, the gutter at the
+	// sides) and pulled back out by the same negative margin, so the toasts sit
+	// exactly where they did while their shadows and the slide-in clip at the
+	// window edge rather than at the toast. The cap is a border-box height that
+	// includes that padding, so the toasts themselves never rise into the
+	// clearance band (bottom stack) or run past the bottom offset (top stack).
+	const maxHeight = stackAtTop
+		? `calc(100vh - ${topOffset - TOAST_STACK_GAP}px)`
+		: `calc(100vh - ${bottomOffset + TOAST_TAB_STRIP_CLEARANCE - 2 * TOAST_STACK_GAP}px)`;
+
+	// A bottom stack puts the newest toast last, so once it overflows, scroll
+	// to the end to keep that toast in view. A top stack renders reversed, so
+	// its newest toast is already at the scroll origin.
+	const scrollRef = useRef<HTMLDivElement>(null);
+	const newestToastId = toasts[toasts.length - 1]?.id;
+	useLayoutEffect(() => {
+		const scroller = scrollRef.current;
+		if (scroller && !stackAtTop) scroller.scrollTop = scroller.scrollHeight;
+	}, [newestToastId, stackAtTop]);
+
 	if (toasts.length === 0) return null;
 
 	// The stack grows away from its corner with the newest toast nearest the
@@ -493,16 +524,27 @@ export const ToastContainer = memo(function ToastContainer({
 	// stack renders reversed.
 	return createPortal(
 		<div
-			className="fixed"
+			ref={scrollRef}
+			className="fixed scrollbar-thin"
 			style={{
 				...(stackAtTop
-					? { top: TOAST_TOP_OFFSET }
+					? { top: topOffset }
 					: {
 							// Whichever obstacle reaches higher wins: the composer or the
 							// floating media player. Both are measured from the window bottom.
-							bottom: TOAST_BOTTOM_OFFSET + Math.max(bottomInset, playerLift),
+							bottom: bottomOffset,
 							transition: 'bottom 200ms ease-out',
 						}),
+				maxHeight,
+				overflowX: 'hidden',
+				overflowY: 'auto',
+				paddingTop: TOAST_STACK_GAP,
+				paddingLeft: stackGutter,
+				paddingRight: stackGutter,
+				marginTop: -TOAST_STACK_GAP,
+				marginBottom: -TOAST_STACK_GAP,
+				marginLeft: -stackGutter,
+				marginRight: -stackGutter,
 				...(phone
 					? { left: TOAST_PHONE_GUTTER, right: TOAST_PHONE_GUTTER }
 					: stackAtLeft
@@ -511,7 +553,9 @@ export const ToastContainer = memo(function ToastContainer({
 				pointerEvents: 'none',
 				zIndex: Z_LAYERS.TOAST,
 				fontFamily,
-				paddingBottom: phone ? 'env(safe-area-inset-bottom, 0px)' : undefined,
+				paddingBottom: phone
+					? `calc(env(safe-area-inset-bottom, 0px) + ${TOAST_STACK_GAP}px)`
+					: TOAST_STACK_GAP,
 			}}
 			data-testid="toast-stack"
 			data-position={toastPosition}
