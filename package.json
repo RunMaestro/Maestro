@@ -389,7 +389,7 @@
 		"js-tiktoken": "^1.0.21",
 		"js-yaml": "^4.2.0",
 		"katex": "^0.19.0",
-		"markdown-it": "^14.3.2",
+		"markdown-it": "^14.3.3",
 		"marked": "^17.0.1",
 		"mermaid": "^11.12.1",
 		"node-pty": "1.2.0-beta.12",
@@ -469,7 +469,7 @@
 		"tailwindcss": "^3.4.1",
 		"typescript": "^6.0.3",
 		"typescript-eslint": "^8.59.2",
-		"vite": "^8.0.11",
+		"vite": "^8.3.4",
 		"vitest": "^4.1.11"
 	},
 	"overrides": {
