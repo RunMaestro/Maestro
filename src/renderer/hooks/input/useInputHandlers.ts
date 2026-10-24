@@ -60,6 +60,7 @@ import { formatFileMention, stripMentionQuotes } from '../../../shared/mentionPa
 import { IMAGE_EXTENSIONS } from '../../utils/fileExplorerIcons/shared';
 import { screenshotReferenceLabel } from '../../utils/stagedImageOrder';
 import { STAGED_IMAGE_MIME } from '../../components/InputArea/components/stagedImageDrag';
+import { applyTrimmedTextPaste, clipboardHasImage } from '../../components/ChatComposer/pasteTrim';
 import {
 	normalizeComposerCommandMode,
 	type ComposerCommandMode,
@@ -834,26 +835,12 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 			const isDirectAIMode = activeSession && activeSession.inputMode === 'ai';
 
 			const items = e.clipboardData.items;
-			const hasImage = Array.from(items).some((item) => item.type.startsWith('image/'));
+			const hasImage = clipboardHasImage(e.clipboardData);
 
-			// Handle text paste with whitespace trimming
+			// Handle text paste with whitespace trimming. A room's composer trims its
+			// own text pastes (GroupChatInput's wrapper) and only hands images here.
 			if (!hasImage && !isGroupChatActive) {
-				const text = e.clipboardData.getData('text/plain');
-				if (text) {
-					const trimmedText = text.trim();
-					if (trimmedText !== text) {
-						e.preventDefault();
-						const target = e.target as HTMLTextAreaElement;
-						const start = target.selectionStart ?? 0;
-						const end = target.selectionEnd ?? 0;
-						const currentValue = target.value;
-						const newValue = currentValue.slice(0, start) + trimmedText + currentValue.slice(end);
-						setInputValue(newValue);
-						requestAnimationFrame(() => {
-							target.selectionStart = target.selectionEnd = start + trimmedText.length;
-						});
-					}
-				}
+				applyTrimmedTextPaste(e, (e.target as HTMLTextAreaElement).value, setInputValue);
 				return;
 			}
 
