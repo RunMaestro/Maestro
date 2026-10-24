@@ -10,6 +10,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Captured callbacks from process events
 let capturedDataCallback: ((sessionId: string, data: string) => void) | null = null;
 let capturedExitCallback: ((sessionId: string, code: number) => void) | null = null;
+let capturedAgentErrorCallback:
+	| ((sessionId: string, error: { type: string; message: string }) => void)
+	| null = null;
 let capturedFileChangedCallback:
 	| ((data: { filename: string; eventType: string; folderPath: string }) => void)
 	| null = null;
@@ -28,6 +31,10 @@ const mockMaestro = {
 		}),
 		onExit: vi.fn((cb) => {
 			capturedExitCallback = cb;
+			return vi.fn(); // cleanup function
+		}),
+		onAgentError: vi.fn((cb) => {
+			capturedAgentErrorCallback = cb;
 			return vi.fn(); // cleanup function
 		}),
 	},
@@ -369,5 +376,44 @@ CONTENT:
 				'test-remote-id' // sshRemoteId
 			);
 		});
+	});
+});
+
+describe('phaseGenerator - agent errors at exit', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		capturedExitCallback = null;
+		capturedAgentErrorCallback = null;
+	});
+
+	// Cursor's stderr never reaches onData, so the buffer is empty when generation
+	// fails. The error main classified arrives on agent-error, ahead of the exit.
+	it('reports the error the main process sent when generation fails', async () => {
+		mockMaestro.agents.get.mockResolvedValue({
+			id: 'cursor-cli',
+			available: true,
+			command: 'agent',
+			args: [],
+		});
+		mockMaestro.process.spawn.mockImplementation(async (config: { sessionId: string }) => {
+			setTimeout(() => {
+				capturedAgentErrorCallback?.(config.sessionId, {
+					type: 'auth_expired',
+					message: 'Not authenticated with Cursor. Sign in again to continue.',
+				});
+				capturedExitCallback?.(config.sessionId, 1);
+			}, 10);
+			return { sessionId: config.sessionId };
+		});
+
+		const result = await phaseGenerator.generateDocuments({
+			agentType: 'cursor-cli',
+			directoryPath: '/local/path',
+			projectName: 'Test Project',
+			conversationHistory: [],
+		});
+
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('Not authenticated with Cursor');
 	});
 });

@@ -138,6 +138,7 @@ describe('goal-runner (runGoal)', () => {
 		expect(spawnAgent).toHaveBeenCalledTimes(1);
 		// Fresh agent each iteration: no agentSessionId passed in.
 		expect(vi.mocked(spawnAgent).mock.calls[0][3]).toBeUndefined();
+		expect(vi.mocked(spawnAgent).mock.calls[0][4]?.permissionMode).toBe('full');
 
 		const complete = events.find((e) => e.type === 'goal_complete');
 		expect(complete?.success).toBe(true);

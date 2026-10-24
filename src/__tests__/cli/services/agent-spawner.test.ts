@@ -72,6 +72,11 @@ vi.mock('../../../shared/maestro-lib/launch/path-prober', async (importOriginal)
 	return {
 		...actual,
 		checkBinaryExists: (binary: string) => mockCheckBinaryExists(binary),
+		// Cursor's identity check runs the candidate with `--help`. That probe would
+		// go through the mocked child_process and be read as the agent's own spawn,
+		// so here every candidate is the right binary; path-prober.test.ts covers
+		// the real check.
+		validateAgentBinaryIdentity: async () => true,
 	};
 });
 
@@ -2163,6 +2168,221 @@ Some text with [x] in it that's not a checkbox
 			expect(result.response).toBe('ok');
 		});
 
+		it('spawns Cursor standard mode without --force, with the prompt on argv', async () => {
+			const prompt = 'Hello cursor';
+			const resultPromise = spawnAgent('cursor-cli', '/project', prompt, undefined, {
+				permissionMode: 'standard',
+			});
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			const [, args] = mockSpawn.mock.calls[0] as [string, string[]];
+			expect(args).toContain('--trust');
+			expect(args).not.toContain('--force');
+			expect(args).toContain('--output-format');
+			expect(args).toContain('stream-json');
+			expect(args).toContain('--workspace');
+			expect(args).toContain('/project');
+			expect(args).toContain('-p');
+			// The shared launch plan's contract: the prompt is the last argument and
+			// nothing is written to stdin, the same as every other agent.
+			expect(args[args.length - 1]).toBe(prompt);
+			expect(mockStdin.end).not.toHaveBeenCalledWith(prompt);
+			expect(args).not.toContain('--mode');
+
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					'{"type":"system","subtype":"init","session_id":"cursor-sess-1"}\n' +
+						'{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"READY"}]},"session_id":"cursor-sess-1"}\n' +
+						'{"type":"result","subtype":"success","result":"READY","session_id":"cursor-sess-1","usage":{"inputTokens":10,"outputTokens":2,"cacheReadTokens":0,"cacheWriteTokens":0}}\n'
+				)
+			);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+
+			const result = await resultPromise;
+			expect(result.success).toBe(true);
+			expect(result.response).toBe('READY');
+			expect(result.agentSessionId).toBe('cursor-sess-1');
+		});
+
+		it('spawns Cursor full mode with --force for unattended write runs', async () => {
+			const resultPromise = spawnAgent('cursor-cli', '/project', 'write the files', undefined, {
+				permissionMode: 'full',
+			});
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			const [, args] = mockSpawn.mock.calls[0] as [string, string[]];
+			expect(args).toContain('--trust');
+			expect(args).toContain('--force');
+			expect(args).not.toContain('--mode');
+
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					'{"type":"result","subtype":"success","result":"written","session_id":"cursor-full"}\n'
+				)
+			);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+
+			await expect(resultPromise).resolves.toMatchObject({ success: true, response: 'written' });
+		});
+
+		it('lets explicit Cursor full permission override the legacy read-only flag', async () => {
+			const resultPromise = spawnAgent('cursor-cli', '/project', 'write the files', undefined, {
+				readOnlyMode: true,
+				permissionMode: 'full',
+			});
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			const [, args] = mockSpawn.mock.calls[0] as [string, string[]];
+			expect(args).toContain('--force');
+			expect(args).not.toContain('--mode');
+
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					'{"type":"result","subtype":"success","result":"written","session_id":"cursor-full-legacy-conflict"}\n'
+				)
+			);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+
+			await expect(resultPromise).resolves.toMatchObject({ success: true, response: 'written' });
+		});
+
+		it('should run cursor-cli read-only with --mode plan and without --force', async () => {
+			const resultPromise = spawnAgent('cursor-cli', '/project', 'look around', undefined, {
+				readOnlyMode: true,
+			});
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			const [, args] = mockSpawn.mock.calls[0] as [string, string[]];
+			expect(args).toContain('--trust');
+			expect(args).not.toContain('--force');
+			expect(args.filter((a) => a === '--mode')).toHaveLength(1);
+			expect(args[args.indexOf('--mode') + 1]).toBe('plan');
+
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					'{"type":"result","subtype":"success","result":"ok","session_id":"cursor-sess-2"}\n'
+				)
+			);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+
+			const result = await resultPromise;
+			expect(result.success).toBe(true);
+			expect(result.response).toBe('ok');
+		});
+
+		it('should resume cursor-cli with --resume and preserve the returned session id', async () => {
+			const resultPromise = spawnAgent(
+				'cursor-cli',
+				'/project',
+				'continue cursor',
+				'cursor-resume-1'
+			);
+			// A local spawn awaits `resolveLocalAgentCommand` before it spawns, so
+			// the call is not on the mock until the microtask queue drains.
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			const [, args] = mockSpawn.mock.calls[0] as [string, string[]];
+			const resumeIndex = args.indexOf('--resume');
+			expect(resumeIndex).toBeGreaterThanOrEqual(0);
+			expect(args[resumeIndex + 1]).toBe('cursor-resume-1');
+
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					'{"type":"result","subtype":"success","result":"continued","session_id":"cursor-resume-1"}\n'
+				)
+			);
+			mockChild.emit('close', 0);
+
+			await expect(resultPromise).resolves.toEqual(
+				expect.objectContaining({
+					success: true,
+					response: 'continued',
+					agentSessionId: 'cursor-resume-1',
+				})
+			);
+		});
+
+		it('should not duplicate Cursor partial output when the result event is absent', async () => {
+			const resultPromise = spawnAgent('cursor-cli', '/project', 'stream cursor');
+			// The stdout listeners are attached after `resolveLocalAgentCommand`
+			// resolves, so emitting in the same tick would fire into nothing.
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					'{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"RE"}]},"session_id":"cursor-sess-3","timestamp_ms":1}\n' +
+						'{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ADY"}]},"session_id":"cursor-sess-3","timestamp_ms":2}\n' +
+						'{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"READY"}]},"session_id":"cursor-sess-3"}\n'
+				)
+			);
+			mockChild.emit('close', 0);
+
+			await expect(resultPromise).resolves.toEqual(
+				expect.objectContaining({
+					success: true,
+					response: 'READY',
+					agentSessionId: 'cursor-sess-3',
+				})
+			);
+		});
+
+		it('should fail cursor-cli when a structured is_error result is emitted', async () => {
+			const resultPromise = spawnAgent('cursor-cli', '/project', 'fail cursor');
+			// The stdout listeners are attached after `resolveLocalAgentCommand`
+			// resolves, so emitting in the same tick would fire into nothing.
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					'{"type":"result","subtype":"error","is_error":true,"result":"Unexpected Cursor failure","session_id":"cursor-sess-4"}\n'
+				)
+			);
+			mockChild.emit('close', 1);
+
+			await expect(resultPromise).resolves.toEqual(
+				expect.objectContaining({
+					success: false,
+					error: 'Unexpected Cursor failure',
+					agentSessionId: 'cursor-sess-4',
+				})
+			);
+		});
+
+		it('should fail cursor-cli on a non-zero exit even after partial assistant output', async () => {
+			const resultPromise = spawnAgent('cursor-cli', '/project', 'fail after partial');
+			// The stdout listeners are attached after `resolveLocalAgentCommand`
+			// resolves, so emitting in the same tick would fire into nothing.
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					'{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"partial answer"}]},"session_id":"cursor-sess-5","timestamp_ms":1}\n'
+				)
+			);
+			mockStderr.emit('data', Buffer.from('Cursor request failed\n'));
+			mockChild.emit('close', 1);
+
+			await expect(resultPromise).resolves.toEqual(
+				expect.objectContaining({
+					success: false,
+					error: 'Cursor request failed\n',
+					agentSessionId: 'cursor-sess-5',
+				})
+			);
+		});
+
 		it('should resume a grok session via --resume <sessionId> and round-trip the id', async () => {
 			const resultPromise = spawnAgent('grok', '/project', 'follow-up', 'grok-resume-1');
 			await new Promise((resolve) => setTimeout(resolve, 0));
@@ -3458,6 +3678,54 @@ Some text with [x] in it that's not a checkbox
 				{ customEnvVars?: Record<string, string> },
 			];
 			expect(wrapConfig.customEnvVars).toBeDefined();
+			expect(wrapConfig.customEnvVars!.OPENCODE_CONFIG_CONTENT).toContain('"permission"');
+		});
+
+		// An explicit permissionMode outranks the legacy readOnlyMode flag, and
+		// every LOCAL decision in spawnJsonLineAgent already honors that
+		// (`effectiveReadOnly`: args, overrides, local env layers). The SSH env
+		// builder was handed the RAW flag, so a session set to full permissions
+		// still shipped the agent's `readOnlyEnvOverrides` to the remote - and
+		// those overwrite the user's own customEnvVars - so the remote rejected
+		// writes the user had explicitly authorized. Silent, and only over SSH.
+		// `opencode` is the agent used here because it is the only definition that
+		// declares `readOnlyEnvOverrides`; with any other agent the mapping has
+		// nothing to observe. The two cases pin both directions of it.
+		const OPENCODE_SSH_READONLY_PROBE = 'user-authorized-writes';
+
+		async function sshWrapConfigForOpencode(
+			options: Parameters<typeof spawnAgent>[4]
+		): Promise<{ customEnvVars?: Record<string, string> }> {
+			mockWrapSpawnWithSsh.mockResolvedValue(sshWrapResult({ args: ['remotehost'] }));
+			const p = spawnAgent('opencode', '/p', 'hi', undefined, options);
+			await driveSpawnToCompletion(p, 0);
+			return (
+				mockWrapSpawnWithSsh.mock.calls[0] as [{ customEnvVars?: Record<string, string> }]
+			)[0];
+		}
+
+		it('keeps readOnlyEnvOverrides off the remote when permissionMode is full', async () => {
+			const wrapConfig = await sshWrapConfigForOpencode({
+				sshRemoteConfig: { enabled: true, remoteId: 'r1' },
+				readOnlyMode: true,
+				permissionMode: 'full',
+				customEnvVars: { OPENCODE_CONFIG_CONTENT: OPENCODE_SSH_READONLY_PROBE },
+			});
+
+			expect(wrapConfig.customEnvVars!.OPENCODE_CONFIG_CONTENT).toBe(OPENCODE_SSH_READONLY_PROBE);
+		});
+
+		it('applies readOnlyEnvOverrides to the remote when permissionMode is readonly', async () => {
+			const wrapConfig = await sshWrapConfigForOpencode({
+				sshRemoteConfig: { enabled: true, remoteId: 'r1' },
+				readOnlyMode: false,
+				permissionMode: 'readonly',
+				customEnvVars: { OPENCODE_CONFIG_CONTENT: OPENCODE_SSH_READONLY_PROBE },
+			});
+
+			expect(wrapConfig.customEnvVars!.OPENCODE_CONFIG_CONTENT).not.toBe(
+				OPENCODE_SSH_READONLY_PROBE
+			);
 			expect(wrapConfig.customEnvVars!.OPENCODE_CONFIG_CONTENT).toContain('"permission"');
 		});
 	});

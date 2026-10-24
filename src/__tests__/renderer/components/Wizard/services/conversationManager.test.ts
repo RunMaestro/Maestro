@@ -18,6 +18,7 @@ const mockMaestro = {
 		onExit: vi.fn(() => vi.fn()),
 		onThinkingChunk: vi.fn(() => vi.fn()),
 		onToolExecution: vi.fn(() => vi.fn()),
+		onAgentError: vi.fn(() => vi.fn()),
 		kill: vi.fn(),
 	},
 	autorun: {
@@ -73,6 +74,47 @@ describe('conversationManager (Onboarding Wizard)', () => {
 			await conversationManager.endConversation();
 		});
 
+		it('consumes restored session overrides for onboarding conversation spawns', async () => {
+			mockMaestro.agents.get.mockResolvedValue({
+				id: 'cursor-cli',
+				available: true,
+				command: 'agent',
+				path: '/detected/agent',
+				args: [],
+			});
+			mockMaestro.process.spawn.mockResolvedValue(undefined);
+			const sessionId = await conversationManager.startConversation({
+				agentType: 'cursor-cli',
+				directoryPath: '/test/project',
+				projectName: 'Restored Project',
+				customPath: '/restored/cursor-agent',
+				customArgs: '--header "X-Test: one"',
+				customEnvVars: { CURSOR_API_KEY: 'key' },
+				agentConfigValues: {
+					model: 'gpt-5.3-codex',
+					reasoningEffort: 'high',
+					contextWindow: 300000,
+				},
+			});
+
+			const messagePromise = conversationManager.sendMessage('Hello', [], {});
+			await vi.waitFor(() => expect(mockMaestro.process.spawn).toHaveBeenCalled());
+			expect(mockMaestro.process.spawn.mock.calls[0][0]).toEqual(
+				expect.objectContaining({
+					command: '/restored/cursor-agent',
+					sessionCustomPath: '/restored/cursor-agent',
+					sessionCustomArgs: '--header "X-Test: one"',
+					sessionCustomEnvVars: { CURSOR_API_KEY: 'key' },
+					sessionCustomModel: 'gpt-5.3-codex',
+					sessionCustomEffort: 'high',
+					sessionCustomContextWindow: 300000,
+				})
+			);
+
+			mockMaestro.process.onExit.mock.calls[0][0](sessionId, 0);
+			await messagePromise;
+			await conversationManager.endConversation();
+		});
 		it('should fall back to agent.command when agent.path is not available', async () => {
 			// When path detection fails but agent is still available (e.g., through PATH)
 			const mockAgent = {
@@ -436,6 +478,99 @@ describe('conversationManager (Onboarding Wizard)', () => {
 			expect(result.response?.structured?.message).toContain('Onboarding ready');
 
 			await conversationManager.endConversation();
+		});
+
+		it('marks Cursor wizard spawns read-only so batch mode does not add --force', async () => {
+			const mockAgent = {
+				id: 'cursor-cli',
+				available: true,
+				command: 'agent',
+				args: [],
+				jsonOutputArgs: ['--output-format', 'stream-json', '--stream-partial-output'],
+				readOnlyArgs: ['--mode', 'plan'],
+			};
+			mockMaestro.agents.get.mockResolvedValue(mockAgent);
+			mockMaestro.process.spawn.mockResolvedValue(undefined);
+
+			const sessionId = await conversationManager.startConversation({
+				agentType: 'cursor-cli',
+				directoryPath: '/test/project',
+				projectName: 'Test Project',
+			});
+			const messagePromise = conversationManager.sendMessage('Hello', [], {});
+			await vi.waitFor(() => expect(mockMaestro.process.spawn).toHaveBeenCalled());
+
+			const spawnCall = mockMaestro.process.spawn.mock.calls[0][0];
+			expect(spawnCall.readOnlyMode).toBe(true);
+			expect(spawnCall.args).toEqual([]);
+
+			const dataCallback = mockMaestro.process.onData.mock.calls[0][0];
+			dataCallback(sessionId, '{"confidence":90,"ready":true,"message":"Cursor discovery ready"}');
+			const exitCallback = mockMaestro.process.onExit.mock.calls[0][0];
+			exitCallback(sessionId, 0);
+
+			await expect(messagePromise).resolves.toEqual(
+				expect.objectContaining({
+					success: true,
+					response: expect.objectContaining({
+						parseSuccess: true,
+						structured: expect.objectContaining({ message: 'Cursor discovery ready' }),
+					}),
+				})
+			);
+			await conversationManager.endConversation();
+		});
+	});
+
+	// Cursor's stderr never reaches onData and a failed `result` leaves through
+	// the error path, so the buffer is empty when the turn fails. The error main
+	// classified arrives on agent-error, ahead of the exit.
+	describe('agent errors at exit', () => {
+		const CURSOR_AUTH_MESSAGE = 'Not authenticated with Cursor. Sign in again to continue.';
+
+		async function failCursorTurn(errorSessionId: (sessionId: string) => string) {
+			mockMaestro.agents.get.mockResolvedValue({
+				id: 'cursor-cli',
+				available: true,
+				command: 'agent',
+				args: [],
+			});
+			mockMaestro.process.spawn.mockResolvedValue(undefined);
+			const sessionId = await conversationManager.startConversation({
+				agentType: 'cursor-cli',
+				directoryPath: '/test/project',
+				projectName: 'Test Project',
+			});
+			const messagePromise = conversationManager.sendMessage('Hello', [], {});
+			await vi.waitFor(() => expect(mockMaestro.process.spawn).toHaveBeenCalled());
+
+			const agentErrorCallback = mockMaestro.process.onAgentError.mock.calls[0][0] as (
+				sessionId: string,
+				error: { type: string; message: string }
+			) => void;
+			agentErrorCallback(errorSessionId(sessionId), {
+				type: 'auth_expired',
+				message: CURSOR_AUTH_MESSAGE,
+			});
+			mockMaestro.process.onExit.mock.calls[0][0](sessionId, 1);
+
+			const result = await messagePromise;
+			await conversationManager.endConversation();
+			return result;
+		}
+
+		it('shows the error main reported when the output says nothing', async () => {
+			const result = await failCursorTurn((sessionId) => sessionId);
+			expect(result.success).toBe(false);
+			expect(result.detectedError?.type).toBe('auth_expired');
+			expect(result.detectedError?.message).toBe(CURSOR_AUTH_MESSAGE);
+		});
+
+		it("ignores another session's error and keeps the generic message", async () => {
+			const result = await failCursorTurn((sessionId) => `${sessionId}-other`);
+			expect(result.success).toBe(false);
+			expect(result.detectedError).toBeUndefined();
+			expect(result.error).toBe('Agent exited with code 1. Check the terminal for details.');
 		});
 	});
 });

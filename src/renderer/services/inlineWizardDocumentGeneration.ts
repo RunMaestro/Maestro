@@ -59,6 +59,12 @@ function getWizardInlineIterateGenerationPrompt(): string {
 }
 import { deriveSshRemoteId } from '../components/Wizard/services/phaseGenerator';
 import {
+	captureAgentError,
+	formatWizardError,
+	wizardErrorFromAgentError,
+	type AgentErrorCapture,
+} from '../components/Wizard/services/wizardErrorDetection';
+import {
 	getClaudeTokenSourceFields,
 	type ClaudeTokenSourceFields,
 } from '../../shared/claudeTokenMode';
@@ -978,6 +984,7 @@ export async function generateInlineDocuments(
 				let outputBuffer = '';
 				let dataListenerCleanup: (() => void) | undefined;
 				let exitListenerCleanup: (() => void) | undefined;
+				let agentErrorCapture: AgentErrorCapture | undefined;
 				let fileWatcherCleanup: (() => void) | undefined;
 				let pollIntervalId: ReturnType<typeof setInterval> | undefined;
 
@@ -1032,6 +1039,8 @@ export async function generateInlineDocuments(
 						exitListenerCleanup();
 						exitListenerCleanup = undefined;
 					}
+					// Unsubscribe only: the exit handler reads `latest()` after this runs.
+					agentErrorCapture?.cleanup();
 					if (fileWatcherCleanup) {
 						fileWatcherCleanup();
 						fileWatcherCleanup = undefined;
@@ -1112,6 +1121,7 @@ export async function generateInlineDocuments(
 						}
 					}
 				);
+				agentErrorCapture = captureAgentError(sessionId);
 
 				// Set up exit listener
 				exitListenerCleanup = window.maestro.process.onExit(
@@ -1128,10 +1138,15 @@ export async function generateInlineDocuments(
 									rawOutput: outputBuffer,
 								});
 							} else {
+								// The error main classified for this spawn, when there is one (stderr
+								// and error events never reach the output buffer).
+								const reported = agentErrorCapture?.latest();
 								resolve({
 									success: false,
 									rawOutput: outputBuffer,
-									error: `Agent exited with code ${code}`,
+									error: reported
+										? formatWizardError(wizardErrorFromAgentError(reported, agentType))
+										: `Agent exited with code ${code}`,
 								});
 							}
 						}
@@ -1161,6 +1176,7 @@ export async function generateInlineDocuments(
 						prompt,
 						// Pass SSH config for remote execution
 						sessionSshRemoteConfig: config.sessionSshRemoteConfig,
+						permissionMode: agentType === 'cursor-cli' ? 'full' : undefined,
 						// Pass session-level overrides
 						sessionCustomPath: config.sessionCustomPath,
 						sessionCustomArgs: config.sessionCustomArgs,

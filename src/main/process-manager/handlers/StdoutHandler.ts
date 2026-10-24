@@ -431,6 +431,12 @@ export class StdoutHandler {
 			return;
 		}
 
+		// The line's one normalized event, shared by the held-notice decision, the
+		// error branch and the event pipeline below. Parsers can carry state (tool
+		// names, step boundaries), so normalizing the same line twice is not free.
+		const parsedEvent =
+			parsed !== null && outputParser ? outputParser.parseJsonObject(parsed) : null;
+
 		if (parsed !== null && toolType === 'copilot-cli') {
 			this.emitSessionIdIfNeeded(sessionId, managedProcess, extractCopilotSessionId(parsed));
 		}
@@ -449,7 +455,7 @@ export class StdoutHandler {
 			!managedProcess.interrupted &&
 			parsed !== null &&
 			!!outputParser &&
-			this.resolveProvisionalError(sessionId, managedProcess, parsed, outputParser);
+			this.resolveProvisionalError(sessionId, managedProcess, parsedEvent, outputParser);
 
 		// ── Error detection from parser ──
 		// `interrupted` means the USER pressed Stop, and `interrupt()` sets it
@@ -484,21 +490,18 @@ export class StdoutHandler {
 				// The same envelope can also carry the turn's usage (a failed Claude
 				// `result` reports what the turn spent before it failed), and that
 				// spend is real, so it is counted rather than dropped with the line.
-				let errorLineEvent: ParsedEvent | null = null;
-				if (parsed !== null) {
-					errorLineEvent = outputParser.parseJsonObject(parsed);
-					if (errorLineEvent) {
-						// This branch returns without reaching `handleParsedEvent`, so
-						// it is the line's one chance to be seen as a parsed event. It
-						// is not only an error: a failed result carries the turn's
-						// usage, and a held notice is an assistant line with content.
-						emitParsedEvent(this.emitter, sessionId, errorLineEvent);
-						this.emitSessionIdIfNeeded(
-							sessionId,
-							managedProcess,
-							outputParser.extractSessionId(errorLineEvent)
-						);
-					}
+				const errorLineEvent = parsedEvent;
+				if (errorLineEvent) {
+					// This branch returns without reaching `handleParsedEvent`, so
+					// it is the line's one chance to be seen as a parsed event. It
+					// is not only an error: a failed result carries the turn's
+					// usage, and a held notice is an assistant line with content.
+					emitParsedEvent(this.emitter, sessionId, errorLineEvent);
+					this.emitSessionIdIfNeeded(
+						sessionId,
+						managedProcess,
+						outputParser.extractSessionId(errorLineEvent)
+					);
 				}
 				agentError.sessionId = sessionId;
 				// Tag the error with the remote UUID so downstream listeners
@@ -547,7 +550,10 @@ export class StdoutHandler {
 					managedProcess,
 					agentError,
 					{
-						flushStreamedText: !!errorLineEvent && outputParser.isResultMessage(errorLineEvent),
+						flushStreamedText:
+							!!errorLineEvent &&
+							(outputParser.isResultMessage(errorLineEvent) ||
+								outputParser.isFailedResultMessage?.(errorLineEvent) === true),
 					}
 				);
 				if (errorLineEvent) {
@@ -597,7 +603,9 @@ export class StdoutHandler {
 		// ── Process parsed data ──
 		if (parsed !== null) {
 			if (outputParser) {
-				this.handleParsedEvent(sessionId, managedProcess, parsed, outputParser);
+				if (parsedEvent) {
+					this.handleParsedEvent(sessionId, managedProcess, parsedEvent, outputParser);
+				}
 				// After the result, not before it: the renderer reads output that
 				// arrives after an error as recovery and erases the error card.
 				if (settleHeldErrorAfterResult) {
@@ -631,10 +639,9 @@ export class StdoutHandler {
 	private resolveProvisionalError(
 		sessionId: string,
 		managedProcess: ManagedProcess,
-		parsed: unknown,
+		event: ParsedEvent | null,
 		outputParser: NonNullable<ManagedProcess['outputParser']>
 	): boolean {
-		const event = outputParser.parseJsonObject(parsed);
 		if (!event) return false;
 
 		if (outputParser.isResultMessage(event)) {
@@ -680,19 +687,30 @@ export class StdoutHandler {
 		}
 	}
 
-	/** Handle a parsed JSON event: extract usage, session IDs, tool executions, and result data. */
-	private handleParsedEvent(
+	/**
+	 * Handle a normalized event: extract usage, session IDs, tool executions, and
+	 * result data.
+	 *
+	 * Public because ExitHandler dispatches the trailing no-newline record through
+	 * it. That record is an ordinary event that merely arrived without its
+	 * delimiter, so it must produce the same parsed-event, usage, session-id and
+	 * result emissions as any other - ExitHandler used to re-implement a subset
+	 * inline and silently dropped the usage of a run whose whole output was that
+	 * one envelope.
+	 */
+	handleParsedEvent(
 		sessionId: string,
 		managedProcess: ManagedProcess,
-		parsed: unknown,
+		event: ParsedEvent,
 		outputParser: NonNullable<ManagedProcess['outputParser']>
 	): void {
-		const event = outputParser.parseJsonObject(parsed);
-
-		if (!event) return;
-
 		// Ahead of every early return below, so a subscriber sees each line once.
 		emitParsedEvent(this.emitter, sessionId, event);
+
+		// Cursor keeps streaming after Stop and then exits 0, so text that arrives
+		// once the user stopped the turn must not be finalized as its answer.
+		const interruptedCursor =
+			managedProcess.toolType === 'cursor-cli' && managedProcess.interrupted === true;
 
 		// OpenCode emits multiple steps: step_start → text → tool_use → step_finish(tool-calls) → repeat
 		// Each step may have a text event. Only the final text (before reason:"stop") is the real result.
@@ -753,14 +771,15 @@ export class StdoutHandler {
 					toolType === 'codex' ||
 					toolType === 'opencode' ||
 					toolType === 'omp' ||
-					toolType === 'antigravity';
+					toolType === 'antigravity' ||
+					toolType === 'cursor-cli';
 				if (!requiresReasoningTag || event.isReasoning) {
 					this.emitter.emit('thinking-chunk', sessionId, event.text);
 				}
 			}
 			// Reasoning content is internal thinking - don't include it in the
 			// final response text. Only message content should be in streamedText.
-			if (!event.isReasoning) {
+			if (!event.isReasoning && !interruptedCursor) {
 				managedProcess.streamedText = (managedProcess.streamedText || '') + event.text;
 				if (managedProcess.toolType === 'grok') {
 					managedProcess.resultEmitted = true;
@@ -852,7 +871,7 @@ export class StdoutHandler {
 			const resultText = managedProcess.streamedText || '';
 			if (resultText) {
 				managedProcess.resultEmitted = true;
-				this.bufferManager.emitDataBuffered(sessionId, resultText);
+				this.bufferManager.emitDataBuffered(sessionId, resultText, managedProcess);
 			}
 		}
 
@@ -899,7 +918,8 @@ export class StdoutHandler {
 			managedProcess.toolType !== 'codex' &&
 			outputParser.isResultMessage(event) &&
 			!managedProcess.resultEmitted &&
-			!copilotIntermediate
+			!copilotIntermediate &&
+			!interruptedCursor
 		) {
 			managedProcess.resultEmitted = true;
 			// For most agents, prefer the result event's text. Fall back to
@@ -926,7 +946,7 @@ export class StdoutHandler {
 					hasEventText: !!event.text,
 					hasStreamedText: !!managedProcess.streamedText,
 				});
-				this.bufferManager.emitDataBuffered(sessionId, resultText);
+				this.bufferManager.emitDataBuffered(sessionId, resultText, managedProcess);
 			} else if (sessionId.includes('-synopsis-')) {
 				logger.warn(
 					'[ProcessManager] Synopsis result is empty - no text to emit',

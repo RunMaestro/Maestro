@@ -24,6 +24,7 @@ import {
 const CLAUDE_ERROR_PATTERNS = getErrorPatterns('claude-code');
 const OPENCODE_ERROR_PATTERNS = getErrorPatterns('opencode');
 const CODEX_ERROR_PATTERNS = getErrorPatterns('codex');
+const CURSOR_CLI_ERROR_PATTERNS = getErrorPatterns('cursor-cli');
 
 describe('error-patterns', () => {
 	describe('CLAUDE_ERROR_PATTERNS', () => {
@@ -226,6 +227,43 @@ describe('error-patterns', () => {
 				expect(result).not.toBeNull();
 				expect(result?.type).toBe('session_not_found');
 			});
+		});
+	});
+
+	describe('CURSOR_CLI_ERROR_PATTERNS', () => {
+		it('matches contextual HTTP 429 failures', () => {
+			expect(matchErrorPattern(CURSOR_CLI_ERROR_PATTERNS, 'HTTP 429 from Cursor API')?.type).toBe(
+				'rate_limited'
+			);
+			expect(
+				matchErrorPattern(CURSOR_CLI_ERROR_PATTERNS, 'Request failed with status code 429')?.type
+			).toBe('rate_limited');
+		});
+
+		it('does not treat a bare 429 identifier as a rate-limit failure', () => {
+			expect(
+				matchErrorPattern(CURSOR_CLI_ERROR_PATTERNS, 'Build artifact 429 was written successfully')
+			).toBeNull();
+		});
+
+		it('matches the logged-out "Authentication required" message as a sign-in error', () => {
+			const result = matchErrorPattern(
+				CURSOR_CLI_ERROR_PATTERNS,
+				"Authentication required. Run 'agent login', pass --api-key/--auth-token, or set CURSOR_API_KEY/CURSOR_AUTH_TOKEN."
+			);
+			expect(result?.type).toBe('auth_expired');
+			expect(result?.message).toBe('Not authenticated with Cursor. Sign in again to continue.');
+		});
+
+		it('explains the Free-plan named-model error ahead of the generic model entry', () => {
+			const result = matchErrorPattern(
+				CURSOR_CLI_ERROR_PATTERNS,
+				'ActionRequiredError: Named models unavailable Free plans can only use Auto. Switch to Auto or upgrad'
+			);
+			expect(result?.type).toBe('agent_crashed');
+			expect(result?.message).toBe(
+				"Cursor's Free plan only allows the Auto model. Set this agent's model to auto, or upgrade your Cursor plan."
+			);
 		});
 	});
 

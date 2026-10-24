@@ -101,7 +101,13 @@ async function runRecording(recording: TurnRecording): Promise<CapturedEvents> {
 	const emitter = new EventEmitter();
 	const bufferManager = new DataBufferManager(processes, emitter);
 	const stdoutHandler = new StdoutHandler({ processes, emitter, bufferManager });
-	const exitHandler = new ExitHandler({ processes, emitter, bufferManager });
+	const exitHandler = new ExitHandler({
+		processes,
+		emitter,
+		bufferManager,
+		dispatchParsedEvent: (sessionId, managedProcess, event, outputParser) =>
+			stdoutHandler.handleParsedEvent(sessionId, managedProcess, event, outputParser),
+	});
 
 	const sessionId = recording.name;
 	const managedProcess = createManagedProcess(sessionId, recording);

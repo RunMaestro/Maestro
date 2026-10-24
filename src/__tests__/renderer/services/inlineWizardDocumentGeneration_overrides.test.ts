@@ -16,6 +16,7 @@ const mockMaestro = {
 		spawn: vi.fn(),
 		onData: vi.fn(() => vi.fn()),
 		onExit: vi.fn(() => vi.fn()),
+		onAgentError: vi.fn(() => vi.fn()),
 	},
 	autorun: {
 		watchFolder: vi.fn().mockResolvedValue({ success: true }),
@@ -129,5 +130,65 @@ describe('inlineWizardDocumentGeneration - Session Overrides', () => {
 		} catch (e) {
 			// Ignore
 		}
+	});
+
+	it('requests explicit full permission for Cursor document generation only', async () => {
+		mockMaestro.agents.get.mockResolvedValue({
+			id: 'cursor-cli',
+			available: true,
+			command: 'agent',
+			args: [],
+		});
+		mockMaestro.process.spawn.mockResolvedValue(undefined);
+		const generationPromise = generateInlineDocuments({
+			agentType: 'cursor-cli',
+			directoryPath: '/test/project',
+			projectName: 'Cursor Project',
+			conversationHistory: [],
+			mode: 'new',
+			autoRunFolderPath: '/test/project/.maestro/playbooks',
+		});
+		await vi.waitFor(() => expect(mockMaestro.process.spawn).toHaveBeenCalled());
+
+		const spawnCall = mockMaestro.process.spawn.mock.calls[0][0];
+		expect(spawnCall.permissionMode).toBe('full');
+		mockMaestro.process.onExit.mock.calls[0][0](spawnCall.sessionId, 0);
+		await generationPromise;
+	});
+
+	// Cursor's stderr never reaches onData, so the buffer is empty when generation
+	// fails. The error main classified arrives on agent-error, ahead of the exit.
+	it('reports the error the main process sent when generation fails', async () => {
+		mockMaestro.agents.get.mockResolvedValue({
+			id: 'cursor-cli',
+			available: true,
+			command: 'agent',
+			args: [],
+		});
+		mockMaestro.process.spawn.mockResolvedValue(undefined);
+		const generationPromise = generateInlineDocuments({
+			agentType: 'cursor-cli',
+			directoryPath: '/test/project',
+			projectName: 'Cursor Project',
+			conversationHistory: [],
+			mode: 'new',
+			autoRunFolderPath: '/test/project/.maestro/playbooks',
+		});
+		await vi.waitFor(() => expect(mockMaestro.process.spawn).toHaveBeenCalled());
+
+		const spawnSessionId = mockMaestro.process.spawn.mock.calls[0][0].sessionId;
+		const agentErrorCallback = mockMaestro.process.onAgentError.mock.calls[0][0] as (
+			sessionId: string,
+			error: { type: string; message: string }
+		) => void;
+		agentErrorCallback(spawnSessionId, {
+			type: 'auth_expired',
+			message: 'Not authenticated with Cursor. Sign in again to continue.',
+		});
+		mockMaestro.process.onExit.mock.calls[0][0](spawnSessionId, 1);
+
+		const result = await generationPromise;
+		expect(result.success).toBe(false);
+		expect(result.error).toContain('Not authenticated with Cursor');
 	});
 });

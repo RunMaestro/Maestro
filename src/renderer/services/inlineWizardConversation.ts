@@ -18,6 +18,12 @@ import {
 	parseStructuredOutput,
 	getConfidenceColor,
 } from '../components/Wizard/services/wizardPrompts';
+import {
+	captureAgentError,
+	formatWizardError,
+	wizardErrorFromAgentError,
+	type AgentErrorCapture,
+} from '../components/Wizard/services/wizardErrorDetection';
 
 let cachedWizardInlineIteratePrompt: string | null = null;
 let cachedWizardInlineNewPrompt: string | null = null;
@@ -364,7 +370,8 @@ export function startInlineWizardConversation(
 function buildPromptWithContext(
 	session: InlineWizardConversationSession,
 	userMessage: string,
-	conversationHistory: InlineWizardMessage[]
+	conversationHistory: InlineWizardMessage[],
+	currentImages: string[]
 ): string {
 	const parts: string[] = [session.systemPrompt, ''];
 
@@ -373,13 +380,21 @@ function buildPromptWithContext(
 		parts.push('## Previous Conversation', '');
 		const historyLines = conversationHistory
 			.filter((msg) => msg.role === 'user' || msg.role === 'assistant')
-			.map((msg) => `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`);
+			.map((msg) => {
+				const imageNote = msg.images?.length
+					? ` [${msg.images.length} attached image${msg.images.length === 1 ? '' : 's'}]`
+					: '';
+				return `${msg.role === 'user' ? 'User' : 'Assistant'}${imageNote}: ${msg.content}`;
+			});
 		parts.push(...historyLines, '');
 	}
 
 	// Add the current user message with structured output suffix
 	parts.push('## Current Message', '');
-	parts.push(userMessage + STRUCTURED_OUTPUT_SUFFIX);
+	const currentImageNote = currentImages.length
+		? `[${currentImages.length} attached image${currentImages.length === 1 ? '' : 's'}]\n`
+		: '';
+	parts.push(currentImageNote + userMessage + STRUCTURED_OUTPUT_SUFFIX);
 
 	return parts.join('\n');
 }
@@ -610,6 +625,11 @@ function buildArgsForAgent(agent: any): string[] {
 			return args;
 		}
 
+		case 'cursor-cli':
+			// The main process adds stream JSON + plan-mode flags from the
+			// definition when readOnlyMode is set on the spawn request.
+			return [...(agent.args || [])];
+
 		default: {
 			return [...(agent.args || [])];
 		}
@@ -632,7 +652,8 @@ export async function sendWizardMessage(
 	session: InlineWizardConversationSession,
 	userMessage: string,
 	conversationHistory: InlineWizardMessage[],
-	callbacks?: ConversationCallbacks
+	callbacks?: ConversationCallbacks,
+	images: string[] = []
 ): Promise<InlineWizardSendResult> {
 	if (!session.isActive) {
 		return {
@@ -661,6 +682,9 @@ export async function sendWizardMessage(
 			};
 		}
 
+		const retainedImages = conversationHistory.flatMap((message) => message.images || []);
+		const allImages = [...new Set([...retainedImages, ...images])];
+
 		logger.info(
 			`Sending wizard message for remote execution: ${isRemoteSession}`,
 			'[InlineWizardConversation]',
@@ -668,22 +692,23 @@ export async function sendWizardMessage(
 				sessionId: session.sessionId,
 				agentType: session.agentType,
 				isRemote: isRemoteSession,
-				promptLength: buildPromptWithContext(session, userMessage, conversationHistory).length,
+				promptLength: buildPromptWithContext(session, userMessage, conversationHistory, images)
+					.length,
 				agentAvailable: agent?.available ?? false,
 			}
 		);
 
 		// Build the full prompt with conversation context
-		const fullPrompt = buildPromptWithContext(session, userMessage, conversationHistory);
+		const fullPrompt = buildPromptWithContext(session, userMessage, conversationHistory, images);
 
 		// Build args for the agent
 		const argsForSpawn = agent ? buildArgsForAgent(agent) : [];
-
 		// Spawn agent and collect output
 		const result = await new Promise<InlineWizardSendResult>((resolve) => {
 			let outputBuffer = '';
 			let dataListenerCleanup: (() => void) | undefined;
 			let exitListenerCleanup: (() => void) | undefined;
+			let agentErrorCapture: AgentErrorCapture | undefined;
 
 			// Activity-based timeout: resets whenever the agent produces output.
 			// This prevents false timeouts on complex prompts where the agent is
@@ -738,6 +763,8 @@ export async function sendWizardMessage(
 					exitListenerCleanup();
 					exitListenerCleanup = undefined;
 				}
+				// Unsubscribe only: the exit handler reads `latest()` after this runs.
+				agentErrorCapture?.cleanup();
 				if (thinkingListenerCleanup) {
 					thinkingListenerCleanup();
 					thinkingListenerCleanup = undefined;
@@ -758,6 +785,7 @@ export async function sendWizardMessage(
 					}
 				}
 			);
+			agentErrorCapture = captureAgentError(session.sessionId);
 
 			// Set up thinking chunk listener - uses the dedicated event from process-manager
 			// This receives parsed thinking content (isPartial text) that's already extracted
@@ -835,9 +863,14 @@ export async function sendWizardMessage(
 								agentSessionId: agentSessionId || undefined,
 							});
 						} else {
+							// The error main classified for this spawn, when there is one (stderr
+							// and error events never reach the output buffer).
+							const reported = agentErrorCapture?.latest();
 							resolve({
 								success: false,
-								error: `Agent exited with code ${code}`,
+								error: reported
+									? formatWizardError(wizardErrorFromAgentError(reported, session.agentType))
+									: `Agent exited with code ${code}`,
 								rawOutput: outputBuffer,
 								agentSessionId: agentSessionId || undefined,
 							});
@@ -872,6 +905,8 @@ export async function sendWizardMessage(
 					command: commandToUse,
 					args: argsForSpawn,
 					prompt: fullPrompt,
+					images: allImages.length > 0 ? allImages : undefined,
+					readOnlyMode: session.agentType === 'cursor-cli',
 					// Pass SSH config for remote execution
 					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 					// Pass session-level overrides

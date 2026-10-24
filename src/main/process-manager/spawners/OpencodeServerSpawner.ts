@@ -100,6 +100,8 @@ export class OpencodeServerSpawner {
 			processes: this.processes,
 			emitter: this.emitter,
 			bufferManager,
+			dispatchParsedEvent: (sessionId, managedProcess, event, outputParser) =>
+				this.stdoutHandler.handleParsedEvent(sessionId, managedProcess, event, outputParser),
 		});
 	}
 

@@ -2224,6 +2224,15 @@ describe('useWizardHandlers', () => {
 						selectedAgent: 'claude-code',
 						availableAgents: [],
 						agentName: 'My Project',
+						customPath: '/opt/cursor/agent',
+						customArgs: '--header "X-Test: one"',
+						customEnvVars: { CURSOR_API_KEY: 'key' },
+						agentConfigValues: {
+							model: 'gpt-5.3-codex',
+							reasoningEffort: 'high',
+							providerPath: '/providers/cursor',
+							contextWindow: 300000,
+						},
 						directoryPath: '/projects/my-app',
 						isGitRepo: false,
 						detectedAgentPath: null,
@@ -2265,6 +2274,16 @@ describe('useWizardHandlers', () => {
 			expect(newSession.cwd).toBe('/projects/my-app');
 			expect(newSession.autoRunFolderPath).toBe('/projects/my-app/.maestro/playbooks');
 			expect(newSession.autoRunSelectedFile).toBe('phase-1');
+			expect(newSession.customPath).toBe('/opt/cursor/agent');
+			expect(newSession.customArgs).toBe('--header "X-Test: one"');
+			expect(newSession.customEnvVars).toEqual({ CURSOR_API_KEY: 'key' });
+			// The config panel saves every edit to the agent's own config, so the
+			// session follows it instead of pinning a copy of whatever the config
+			// said when the panel was opened.
+			expect(newSession.customModel).toBeUndefined();
+			expect(newSession.customEffort).toBeUndefined();
+			expect(newSession.customProviderPath).toBeUndefined();
+			expect(newSession.customContextWindow).toBeUndefined();
 
 			// Should have been set as active
 			expect(useSessionStore.getState().activeSessionId).toBe(newSession.id);

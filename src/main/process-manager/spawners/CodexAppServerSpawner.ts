@@ -143,12 +143,19 @@ export class CodexAppServerSpawner {
 		private readonly fallbackToCli: (config: ProcessConfig) => SpawnResult,
 		options: CodexAppServerSpawnerOptions = {}
 	) {
+		const stdoutHandler = new StdoutHandler({ processes, emitter, bufferManager });
 		this.context = {
 			processes,
 			emitter,
-			stdoutHandler: new StdoutHandler({ processes, emitter, bufferManager }),
+			stdoutHandler,
 			stderrHandler: new StderrHandler({ processes, emitter }),
-			exitHandler: new ExitHandler({ processes, emitter, bufferManager }),
+			exitHandler: new ExitHandler({
+				processes,
+				emitter,
+				bufferManager,
+				dispatchParsedEvent: (sessionId, managedProcess, event, outputParser) =>
+					stdoutHandler.handleParsedEvent(sessionId, managedProcess, event, outputParser),
+			}),
 			fallbackToCli,
 			clientVersion: options.clientVersion ?? '0.0.0',
 		};
