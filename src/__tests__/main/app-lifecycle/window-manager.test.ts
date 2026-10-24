@@ -2174,6 +2174,52 @@ describe('app-lifecycle/window-manager', () => {
 					vi.advanceTimersByTime(1000);
 					expect(mockWebContents.reload).not.toHaveBeenCalled();
 				});
+
+				// MAESTRO-164/165: a renderer that can never start (`launch-failed`,
+				// exit 1002) made every reload fail again, and the unbounded loop
+				// spawned and reported 248 dead renderers in 25 seconds.
+				it('shares one queued reload between exits that arrive before it fires', async () => {
+					await fireRenderProcessGone('launch-failed', 1002, () => false);
+					const handler = webContentsEventHandlers.get('render-process-gone');
+					handler?.({}, { reason: 'launch-failed', exitCode: 1002 });
+					handler?.({}, { reason: 'launch-failed', exitCode: 1002 });
+					vi.advanceTimersByTime(1000);
+					expect(mockWebContents.reload).toHaveBeenCalledTimes(1);
+				});
+
+				it('stops reloading a renderer that keeps failing to launch', async () => {
+					await fireRenderProcessGone('launch-failed', 1002, () => false);
+					const handler = webContentsEventHandlers.get('render-process-gone');
+					for (let i = 0; i < 10; i++) {
+						await vi.advanceTimersByTimeAsync(1000);
+						handler?.({}, { reason: 'launch-failed', exitCode: 1002 });
+					}
+					await vi.advanceTimersByTimeAsync(1000);
+					expect(mockWebContents.reload).toHaveBeenCalledTimes(3);
+					await vi.waitFor(() =>
+						expect(sentryCaptureMessageMock).toHaveBeenCalledWith(
+							'Renderer reload loop stopped',
+							expect.objectContaining({ level: 'error' })
+						)
+					);
+				});
+
+				it('reloads again once the earlier reloads age out of the window', async () => {
+					await fireRenderProcessGone('crashed', 5, () => false);
+					const handler = webContentsEventHandlers.get('render-process-gone');
+					for (let i = 0; i < 3; i++) {
+						vi.advanceTimersByTime(1000);
+						handler?.({}, { reason: 'crashed', exitCode: 5 });
+					}
+					vi.advanceTimersByTime(1000);
+					expect(mockWebContents.reload).toHaveBeenCalledTimes(3);
+
+					// A crash a minute later is a new incident, not the same loop.
+					vi.advanceTimersByTime(60_000);
+					handler?.({}, { reason: 'crashed', exitCode: 5 });
+					vi.advanceTimersByTime(1000);
+					expect(mockWebContents.reload).toHaveBeenCalledTimes(4);
+				});
 			});
 
 			it('reports Sentry for a genuine renderer crash', async () => {

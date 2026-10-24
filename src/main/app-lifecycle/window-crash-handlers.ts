@@ -15,6 +15,13 @@ interface SentryModule {
 /** Cached Sentry module reference */
 let sentryModule: SentryModule | null = null;
 
+/** Delay before reloading a renderer that exited, so the exit can settle. */
+export const RENDERER_RELOAD_DELAY_MS = 1000;
+/** Window over which automatic renderer reloads are counted. */
+export const RENDERER_RELOAD_WINDOW_MS = 60_000;
+/** Automatic reloads allowed per window before the handler stops reloading. */
+export const MAX_RENDERER_RELOADS_PER_WINDOW = 3;
+
 /**
  * Reports a crash event to Sentry from the main process.
  * Lazily loads Sentry to avoid module initialization issues.
@@ -73,16 +80,53 @@ export function attachWindowCrashHandlers(
 		// `pkill -f` whose pattern hits Chromium's `--lang=en-US` flag is
 		// enough), and without a reload the window stays black for good.
 		if (details.reason !== 'clean-exit' && !getIsQuitting?.()) {
-			logger.info('Attempting to reload renderer after it exited', 'Window', {
-				reason: details.reason,
-			});
-			setTimeout(() => {
-				if (!mainWindow.isDestroyed() && !getIsQuitting?.()) {
-					mainWindow.webContents.reload();
-				}
-			}, 1000);
+			scheduleRendererReload(details.reason, details.exitCode);
 		}
 	});
+
+	// The reload above is the only thing that relaunches a dead renderer, so it
+	// is also what turns a renderer that can never start into a loop. When the
+	// cause is environmental (no fork headroom: `launch-failed` exit 1002; a
+	// macOS bundle whose helper app is gone, so every child CHECK-fails at
+	// start) each reload just fails again, and an unbounded loop spawned and
+	// reported hundreds of dead renderers per minute (MAESTRO-164/165: 248
+	// launch failures in 25 seconds from one install). Two guards: exits that
+	// arrive while a reload is already queued share it, and only a few reloads
+	// are allowed per window of time before the loop stops for good.
+	let pendingReload: ReturnType<typeof setTimeout> | null = null;
+	const recentReloads: number[] = [];
+
+	function scheduleRendererReload(reason: string, exitCode: number): void {
+		if (pendingReload) {
+			return;
+		}
+		const now = Date.now();
+		while (recentReloads.length > 0 && now - recentReloads[0] > RENDERER_RELOAD_WINDOW_MS) {
+			recentReloads.shift();
+		}
+		if (recentReloads.length >= MAX_RENDERER_RELOADS_PER_WINDOW) {
+			logger.error('Renderer keeps exiting; giving up on automatic reloads', 'Window', {
+				reason,
+				exitCode,
+				reloads: recentReloads.length,
+			});
+			reportCrashToSentry('Renderer reload loop stopped', 'error', {
+				reason,
+				exitCode,
+				reloads: recentReloads.length,
+				windowMs: RENDERER_RELOAD_WINDOW_MS,
+			});
+			return;
+		}
+		recentReloads.push(now);
+		logger.info('Attempting to reload renderer after it exited', 'Window', { reason });
+		pendingReload = setTimeout(() => {
+			pendingReload = null;
+			if (!mainWindow.isDestroyed() && !getIsQuitting?.()) {
+				mainWindow.webContents.reload();
+			}
+		}, RENDERER_RELOAD_DELAY_MS);
+	}
 
 	// Handle window becoming unresponsive (frozen renderer)
 	mainWindow.on('unresponsive', () => {
