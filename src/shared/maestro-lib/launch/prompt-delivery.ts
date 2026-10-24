@@ -36,6 +36,35 @@ export function buildPromptArgv(
 	return ['--', prompt];
 }
 
+/**
+ * Longest prompt (in UTF-16 code units) left on a Windows command line.
+ * CreateProcess caps the WHOLE command line at 32,767 characters and fails
+ * with ERROR_FILENAME_EXCED_RANGE, which Node reports as `spawn ENAMETOOLONG`;
+ * this leaves room for the binary path and the rest of the argv.
+ */
+export const WINDOWS_PROMPT_ARGV_MAX_CHARS = 30_000;
+
+/**
+ * Longest prompt (in UTF-8 bytes) left in argv on Linux and macOS. Linux caps
+ * a SINGLE argument at 128 KiB (MAX_ARG_STRLEN) and macOS caps argv plus the
+ * environment at 1 MiB; either overrun fails with `spawn E2BIG`.
+ */
+export const POSIX_PROMPT_ARGV_MAX_BYTES = 100_000;
+
+/**
+ * Whether `prompt` is too long to ride the command line of a process started
+ * on this kind of machine. Such a spawn cannot succeed, so moving the prompt
+ * to stdin is never a behavior change for a turn that would have worked.
+ */
+export function promptExceedsArgvLimit(prompt: string, windowsHost: boolean): boolean {
+	if (windowsHost) return prompt.length > WINDOWS_PROMPT_ARGV_MAX_CHARS;
+	// Cheap reject first: a UTF-8 encoding is never shorter than the code-unit
+	// count, and never more than three bytes per code unit.
+	if (prompt.length > POSIX_PROMPT_ARGV_MAX_BYTES) return true;
+	if (prompt.length * 3 <= POSIX_PROMPT_ARGV_MAX_BYTES) return false;
+	return new TextEncoder().encode(prompt).length > POSIX_PROMPT_ARGV_MAX_BYTES;
+}
+
 /** Where the user prompt goes. */
 export type PromptDelivery =
 	/** Nothing to deliver. */
@@ -64,6 +93,13 @@ export interface ResolvePromptDeliveryInput {
 	sshRemote: boolean;
 	/** The turn carries images. */
 	hasImages?: boolean;
+	/**
+	 * The OS of the machine that starts the process, for the command-line size
+	 * limit only. Defaults to `isWindowsHost`. It differs on surfaces that keep
+	 * a short Windows prompt in argv on purpose (Cue, the CLI): they pass
+	 * `isWindowsHost: false` but still hit the Windows cap.
+	 */
+	hostIsWindows?: boolean;
 }
 
 /**
@@ -73,6 +109,9 @@ export interface ResolvePromptDeliveryInput {
  * - On a Windows host, an agent that declared `supportsPromptViaStdin` gets it
  *   over stdin, to stay under the CreateProcess command-line limit. With images
  *   and stream-json input it is one stream-json message; otherwise raw text.
+ * - On any host, a prompt too long for the command line
+ *   (`promptExceedsArgvLimit`) goes over stdin too, for such an agent: left in
+ *   argv it fails the spawn with ENAMETOOLONG (Windows) or E2BIG (Linux, macOS).
  * - Everywhere else it goes on the command line. An agent that has NOT
  *   declared stdin support keeps its prompt in argv even on Windows: an
  *   over-long command line fails loudly at spawn, while stdin delivery to a CLI
@@ -83,7 +122,10 @@ export function resolvePromptDelivery(input: ResolvePromptDeliveryInput): Prompt
 	if (!prompt) return { via: 'none' };
 	if (input.sshRemote) return { via: 'ssh' };
 
-	const viaStdin = input.isWindowsHost && (agent?.capabilities?.supportsPromptViaStdin ?? false);
+	const viaStdin =
+		(agent?.capabilities?.supportsPromptViaStdin ?? false) &&
+		(input.isWindowsHost ||
+			promptExceedsArgvLimit(prompt, input.hostIsWindows ?? input.isWindowsHost));
 	if (viaStdin) {
 		const streamJson = !!input.hasImages && (agent?.capabilities?.supportsStreamJsonInput ?? false);
 		return streamJson

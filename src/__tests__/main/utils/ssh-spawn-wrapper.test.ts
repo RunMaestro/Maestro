@@ -25,6 +25,7 @@ vi.mock('../../../main/utils/logger', () => ({
 import {
 	wrapSpawnWithSsh,
 	sshUnresolvedRemoteMessage,
+	SSH_INLINE_COMMAND_MAX_CHARS,
 } from '../../../main/utils/ssh-spawn-wrapper';
 import type { SshRemoteSettingsStore } from '../../../main/utils/ssh-remote-resolver';
 
@@ -149,6 +150,39 @@ describe('wrapSpawnWithSsh', () => {
 			expect(mockBuildSshCommand).toHaveBeenCalledTimes(1);
 			expect(mockBuildSshCommandWithStdin).not.toHaveBeenCalled();
 			expect(result.sshStdinScript).toBeUndefined();
+		});
+
+		// MAESTRO-172/173/16C: a group chat participant or consult with a short
+		// prompt still carries Maestro's whole system prompt inline
+		// (`--append-system-prompt`, tens of KB) over SSH. Inline, that rides the
+		// LOCAL ssh command line and a Windows host refuses it with ENAMETOOLONG.
+		it('switches to the stdin script when the inline command line is too long', async () => {
+			const systemPrompt = 'x'.repeat(SSH_INLINE_COMMAND_MAX_CHARS);
+			mockBuildSshCommand.mockImplementation(async (_remote, options: { args: string[] }) => ({
+				command: 'ssh',
+				args: ['jennifer.local', `claude ${options.args.join(' ')}`],
+				remoteCommandLine: 'claude',
+			}));
+
+			const result = await wrapSpawnWithSsh(
+				{
+					...baseConfig,
+					args: ['--print', '--append-system-prompt', systemPrompt],
+					prompt: 'short question',
+				},
+				{ enabled: true, remoteId: 'jennifer-box' },
+				sshStore
+			);
+
+			expect(mockBuildSshCommandWithStdin).toHaveBeenCalledTimes(1);
+			const options = mockBuildSshCommandWithStdin.mock.calls[0][1] as {
+				args: string[];
+				stdinInput?: string;
+			};
+			expect(options.args).toContain(systemPrompt);
+			expect(options.args).toContain('short question');
+			expect(result.sshStdinScript).toBe('#!/bin/bash');
+			expect(result.args).toEqual(['jennifer.local']);
 		});
 	});
 

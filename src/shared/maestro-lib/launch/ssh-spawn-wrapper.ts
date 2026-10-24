@@ -14,7 +14,7 @@ import * as os from 'os';
 import type { SshRemoteConfig, AgentSshRemoteConfig } from '../../types';
 import { getSshRemoteConfig, SshRemoteSettingsStore } from './ssh-remote-resolver';
 import { buildSshCommand, buildSshCommandWithStdin } from './ssh-command-builder';
-import { buildPromptArgv } from './prompt-delivery';
+import { buildPromptArgv, WINDOWS_PROMPT_ARGV_MAX_CHARS } from './prompt-delivery';
 import { logger } from '../host';
 import { DEFAULT_QUERY_SOURCE, QUERY_SOURCE_ENV_VAR, type QuerySource } from '../../querySource';
 import { stripBlankEnvVars } from '../../agentEnvironment';
@@ -56,6 +56,18 @@ export function sshUnresolvedRemoteMessage(sshConfig: AgentSshRemoteConfig): str
 		`could not be resolved. Check that the remote exists, is enabled, and that the ` +
 		`session's remoteId points at a valid SSH remote.`
 	);
+}
+
+/**
+ * Longest local ssh command line (in characters) launched inline. Past it the
+ * launch goes through the stdin script. The Windows CreateProcess cap is the
+ * tightest limit on the machine running ssh, so it sets the number.
+ */
+export const SSH_INLINE_COMMAND_MAX_CHARS = WINDOWS_PROMPT_ARGV_MAX_CHARS;
+
+/** Characters a command line takes: the command, each argument, and a separator between them. */
+function commandLineLength(command: string, args: string[]): number {
+	return args.reduce((total, arg) => total + 1 + arg.length, command.length);
 }
 
 /**
@@ -231,7 +243,36 @@ export async function wrapSpawnWithSsh(
 		? [...config.args, ...buildPromptArgv(config, config.prompt)]
 		: [...config.args];
 
-	if (config.launchViaStdinScript) {
+	// The inline form carries every argument on the LOCAL ssh command line. A
+	// small prompt is no guarantee it fits: an agent with the native system
+	// prompt flag gets Maestro's whole system prompt inline over SSH (tens of
+	// KB), which overruns the Windows CreateProcess cap and fails the spawn with
+	// ENAMETOOLONG. Such a launch goes through the stdin script instead, which
+	// carries the same command line to the remote shell with no local limit.
+	const inlineSshCommand = config.launchViaStdinScript
+		? undefined
+		: await buildSshCommand(sshResult.config, {
+				command: remoteCommand,
+				args: sshArgs,
+				cwd: config.cwd,
+				env: withQuerySource(config.customEnvVars, config.querySource),
+			});
+	const inlineLength = inlineSshCommand
+		? commandLineLength(inlineSshCommand.command, inlineSshCommand.args)
+		: 0;
+	const inlineTooLong = inlineLength > SSH_INLINE_COMMAND_MAX_CHARS;
+	if (inlineTooLong) {
+		logger.info(
+			'Using the stdin script for an SSH command line too long to pass inline',
+			LOG_CONTEXT,
+			{
+				commandLineLength: inlineLength,
+				reason: 'avoid-command-line-length-limit',
+			}
+		);
+	}
+
+	if (!inlineSshCommand || inlineTooLong) {
 		const sshCommand = await buildSshCommandWithStdin(sshResult.config, {
 			command: remoteCommand,
 			args: sshArgs,
@@ -251,12 +292,7 @@ export async function wrapSpawnWithSsh(
 		};
 	}
 
-	const sshCommand = await buildSshCommand(sshResult.config, {
-		command: remoteCommand,
-		args: sshArgs,
-		cwd: config.cwd,
-		env: withQuerySource(config.customEnvVars, config.querySource),
-	});
+	const sshCommand = inlineSshCommand;
 
 	logger.debug('SSH command built', LOG_CONTEXT, {
 		sshBinary: sshCommand.command,
