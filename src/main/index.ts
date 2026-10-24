@@ -26,6 +26,7 @@ import { WebServer } from './web-server';
 import { AgentDetector } from './agents';
 import { createAgentConfigLookup } from './agents/agent-config-lookup';
 import { shouldDropSentryEvent } from '../shared/sentryFilters';
+import { v8OomFingerprint } from '../shared/sentryGrouping';
 import { getBuildProvenance } from './utils/build-provenance';
 import {
 	initGlobalHotkey,
@@ -402,6 +403,10 @@ if (crashReportingEnabled && !isDevelopment && buildProvenance.sentryDsn) {
 						delete event.user.ip_address;
 						delete event.user.email;
 					}
+					// One issue per process type for V8 OOMs, not one per failing
+					// allocation site. See src/shared/sentryGrouping.ts.
+					const oomFingerprint = v8OomFingerprint(event);
+					if (oomFingerprint) event.fingerprint = oomFingerprint;
 					return event;
 				},
 			});
@@ -424,6 +429,22 @@ if (crashReportingEnabled && !isDevelopment && buildProvenance.sentryDsn) {
 				})
 				.catch((err) => {
 					logger.warn('Failed to start memory monitoring', 'Startup', { error: String(err) });
+				});
+			// Tag the scope with heap, agent and Auto Run load so a main-process
+			// OOM minidump says what the app was carrying when it died (#1862).
+			import('./utils/heap-guard')
+				.then(({ startCrashContextSampling, countActiveAutoRuns }) => {
+					startCrashContextSampling(() => ({
+						agents: getSessionsStore().get('sessions', []).length,
+						activeAutoRuns: countActiveAutoRuns(
+							(processManager?.getAll() ?? []).map((p) => p.sessionId)
+						),
+					}));
+				})
+				.catch((err) => {
+					logger.warn('Failed to start crash context sampling', 'Startup', {
+						error: String(err),
+					});
 				});
 		})
 		.catch((err) => {

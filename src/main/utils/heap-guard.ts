@@ -6,13 +6,14 @@
  * takes the whole app with it. That has two consequences worth stating plainly,
  * because both are counter-intuitive:
  *
- *  1. **Sentry cannot report the crash itself.** There is no exception to
- *     capture and no moment after it to capture one in.
- *  2. **Breadcrumbs are useless here.** They live in memory and are attached to
- *     a future event; if the process aborts, they die with it. The existing
- *     memory monitor leaves breadcrumbs every 60 seconds, which is both too
- *     slow to observe a 2-second blowup and, for this failure mode, discarded
- *     anyway.
+ *  1. **Sentry cannot report the crash as a JS error.** There is no exception
+ *     to capture and no moment after it to capture one in. It arrives only as
+ *     a native minidump on the next launch, with unsymbolicated JS frames.
+ *  2. **Breadcrumbs are too coarse here.** @sentry/electron persists the main
+ *     scope and attaches it to the minidump sent at the next launch, so they
+ *     do arrive, but the memory monitor leaves one every 60 seconds, which is
+ *     far too slow to observe a 2-second blowup. `startCrashContextSampling`
+ *     below keeps a fresher sample on the scope for that reason.
  *
  * So the only thing that works is reporting BEFORE the abort: sample the heap
  * during risky work, and when it crosses a fraction of the real ceiling, send
@@ -27,7 +28,8 @@
 
 import v8 from 'v8';
 
-import { captureMessage } from './sentry';
+import { captureMessage, setScopeContext } from './sentry';
+import { REGEX_BATCH_SESSION } from '../constants';
 import { logger } from './logger';
 
 /** How often the heap is sampled while an operation is guarded. */
@@ -140,3 +142,72 @@ export async function withHeapGuard<T>(
 
 /** Test seam: the fraction at which a report fires. */
 export const HEAP_DANGER_FRACTION = DANGER_FRACTION;
+
+/** How often the crash context is refreshed. */
+const CRASH_CONTEXT_INTERVAL_MS = 15_000;
+
+/** What the app is carrying, as counted by the caller. */
+export interface CrashContextCounts {
+	/** Agents in the Left Bar. */
+	agents: number;
+	/** Agents running an Auto Run task right now. */
+	activeAutoRuns: number;
+}
+
+let crashContextTimer: NodeJS.Timeout | null = null;
+
+/**
+ * Keep the main-process Sentry scope describing the load the process is under,
+ * so a native heap OOM report explains itself.
+ *
+ * The OOM itself is an abort and runs no code, but the scope set before it is
+ * persisted and rides on the minidump uploaded at the next launch (see
+ * `setScopeContext`). The once-a-minute memory breadcrumbs are too coarse for
+ * this: the #1862 field crash read 1665MB nine seconds before it died at the
+ * 4GB limit. A 15-second sample of heap, agents and Auto Runs is cheap and
+ * names the load at the moment of death.
+ */
+export function startCrashContextSampling(getCounts: () => CrashContextCounts): void {
+	if (crashContextTimer) return;
+	const sample = () => {
+		let counts: CrashContextCounts | undefined;
+		try {
+			counts = getCounts();
+		} catch {
+			// The stores may be mid-teardown; heap numbers are still worth recording.
+		}
+		const heap = sampleHeap();
+		const tags: Record<string, string> = { 'main.heapMB': String(heap.heapUsedMB) };
+		if (counts) {
+			tags['main.agents'] = String(counts.agents);
+			tags['main.autoRuns'] = String(counts.activeAutoRuns);
+		}
+		void setScopeContext(tags, 'mainRuntime', {
+			...heap,
+			...counts,
+			sampledAt: new Date().toISOString(),
+		});
+	};
+	sample();
+	crashContextTimer = setInterval(sample, CRASH_CONTEXT_INTERVAL_MS);
+	crashContextTimer.unref?.();
+}
+
+/** Test seam: stop the sampler started by `startCrashContextSampling`. */
+export function stopCrashContextSampling(): void {
+	if (crashContextTimer) clearInterval(crashContextTimer);
+	crashContextTimer = null;
+}
+
+/**
+ * How many agents are running an Auto Run task, from the live process table.
+ * A task runs as `{agentId}-batch-{timestamp}`; one agent runs one task at a
+ * time, but count distinct agents anyway so a respawn overlap is not doubled.
+ */
+export function countActiveAutoRuns(sessionIds: Iterable<string>): number {
+	const agents = new Set<string>();
+	for (const id of sessionIds) {
+		if (REGEX_BATCH_SESSION.test(id)) agents.add(id.replace(REGEX_BATCH_SESSION, ''));
+	}
+	return agents.size;
+}

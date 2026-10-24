@@ -34,8 +34,9 @@ import type {
 	SessionMessage,
 } from '../agents';
 import type { ToolType, SshRemoteConfig } from '../../shared/types';
-import { BaseSessionStorage } from './base-session-storage';
+import { BaseSessionStorage, MessagePageCollector } from './base-session-storage';
 import type { SearchableMessage } from './base-session-storage';
+import { forEachJsonlLine } from '../utils/jsonl-stream';
 import { ModelUsageAccumulator } from '../../shared/modelUsage';
 import { CodexTokenCounts } from '../../shared/codexTokenUsage';
 import { CodexTokenSpeedTracker } from '../../shared/tokenSpeed';
@@ -1007,8 +1008,180 @@ export class CodexSessionStorage extends BaseSessionStorage {
 		options?: SessionReadOptions,
 		sshConfig?: SshRemoteConfig
 	): Promise<SessionMessagesResult> {
-		// Get session file content either locally or via SSH
-		let content: string;
+		// Only the requested page is held; see MessagePageCollector.
+		const page = new MessagePageCollector(options);
+		// A tool's output is merged into its call, the FIRST message carrying that
+		// uuid and a toolUse. Positions are tracked so the merge still finds the
+		// call when it is in the window, and still knows the call EXISTS (rather
+		// than emitting a standalone output) when it is older than the page.
+		const toolCallPositions = new Map<string, number>();
+		let messageIndex = 0;
+		const push = (message: SessionMessage) => {
+			const position = page.push(message);
+			if (message.toolUse && !toolCallPositions.has(message.uuid)) {
+				toolCallPositions.set(message.uuid, position);
+			}
+			messageIndex++;
+		};
+
+		const collect = (line: string) => {
+			try {
+				const entry = JSON.parse(line);
+
+				// Handle direct message entries
+				if (entry.type === 'message' && (entry.role === 'user' || entry.role === 'assistant')) {
+					const textContent = extractTextFromContent(entry.content);
+
+					if (textContent) {
+						push({
+							type: entry.role,
+							role: entry.role,
+							content: textContent,
+							timestamp: entry.timestamp || '',
+							uuid: `codex-msg-${messageIndex}`,
+						});
+					}
+				}
+
+				// Handle response_item messages (current Codex format)
+				if (entry.type === 'response_item' && entry.payload?.type === 'message') {
+					if (entry.payload.role === 'user' || entry.payload.role === 'assistant') {
+						const textContent = extractTextFromContent(entry.payload.content);
+
+						if (textContent) {
+							push({
+								type: entry.payload.role,
+								role: entry.payload.role,
+								content: textContent,
+								timestamp: entry.timestamp || '',
+								uuid: entry.payload.id || `codex-msg-${messageIndex}`,
+							});
+						}
+					}
+				}
+
+				// Handle response_item function_call / custom_tool_call (current Codex format)
+				if (
+					entry.type === 'response_item' &&
+					(entry.payload?.type === 'function_call' || entry.payload?.type === 'custom_tool_call')
+				) {
+					let parsedInput: unknown;
+					try {
+						parsedInput = JSON.parse(entry.payload.arguments || '{}');
+					} catch {
+						parsedInput = entry.payload.arguments || {};
+					}
+					const toolInfo: CodexToolUseEntry = {
+						tool: entry.payload.name,
+						args: entry.payload.arguments,
+						state: {
+							status: 'running',
+							input: parsedInput,
+						},
+					};
+					push({
+						type: 'assistant',
+						role: 'assistant',
+						content: `Tool: ${entry.payload.name}`,
+						timestamp: entry.timestamp || '',
+						uuid: entry.payload.call_id || `codex-msg-${messageIndex}`,
+						toolUse: [toolInfo],
+					});
+				}
+
+				// Handle response_item function_call_output / custom_tool_call_output (current Codex format)
+				// Merge output into the preceding tool call message instead of creating a new message
+				if (
+					entry.type === 'response_item' &&
+					(entry.payload?.type === 'function_call_output' ||
+						entry.payload?.type === 'custom_tool_call_output')
+				) {
+					const callId = entry.payload.call_id;
+					const outputText = entry.payload.output || '';
+					// Find the matching tool call message by call_id and merge the output
+					const matchingPosition = callId ? toolCallPositions.get(callId) : undefined;
+					if (matchingPosition !== undefined) {
+						page.update(matchingPosition, (matchingMsg) => {
+							const toolEntries = matchingMsg.toolUse as CodexToolUseEntry[] | undefined;
+							const firstEntry = toolEntries?.[0];
+							if (!firstEntry?.state) return matchingMsg;
+							// Replace the message immutably with updated tool state
+							const updatedEntry: CodexToolUseEntry = {
+								...firstEntry,
+								state: {
+									...firstEntry.state,
+									status: 'completed',
+									output: outputText,
+								},
+							};
+							return {
+								...matchingMsg,
+								toolUse: [updatedEntry, ...(toolEntries?.slice(1) || [])],
+							};
+						});
+					} else {
+						// No matching tool call found - create a standalone message
+						push({
+							type: 'assistant',
+							role: 'assistant',
+							content: outputText || '[Tool result]',
+							timestamp: entry.timestamp || '',
+							uuid: callId || `codex-msg-${messageIndex}`,
+						});
+					}
+				}
+
+				// Handle item.completed agent_message events (legacy format)
+				if (entry.type === 'item.completed' && entry.item?.type === 'agent_message') {
+					push({
+						type: 'assistant',
+						role: 'assistant',
+						content: entry.item.text || '',
+						timestamp: entry.timestamp || '',
+						uuid: entry.item.id || `codex-msg-${messageIndex}`,
+					});
+				}
+
+				// Handle item.completed tool_call events (legacy format)
+				if (entry.type === 'item.completed' && entry.item?.type === 'tool_call') {
+					const toolInfo = {
+						tool: entry.item.tool,
+						args: entry.item.args,
+					};
+					push({
+						type: 'assistant',
+						role: 'assistant',
+						content: `Tool: ${entry.item.tool}`,
+						timestamp: entry.timestamp || '',
+						uuid: entry.item.id || `codex-msg-${messageIndex}`,
+						toolUse: [toolInfo],
+					});
+				}
+
+				// Handle item.completed tool_result events (legacy format)
+				if (entry.type === 'item.completed' && entry.item?.type === 'tool_result') {
+					let resultContent = '';
+					if (entry.item.output) {
+						// Output may be a byte array that needs decoding
+						if (Array.isArray(entry.item.output)) {
+							resultContent = Buffer.from(entry.item.output).toString('utf-8');
+						} else {
+							resultContent = String(entry.item.output);
+						}
+					}
+
+					push({
+						type: 'assistant',
+						role: 'assistant',
+						content: resultContent || '[Tool result]',
+						timestamp: entry.timestamp || '',
+						uuid: entry.item.id || `codex-msg-${messageIndex}`,
+					});
+				}
+			} catch {
+				// Skip malformed lines
+			}
+		};
 
 		if (sshConfig) {
 			// For SSH, find the session file remotely
@@ -1025,199 +1198,23 @@ export class CodexSessionStorage extends BaseSessionStorage {
 				);
 				return { messages: [], total: 0, hasMore: false };
 			}
-			content = result.data;
-		} else {
-			// Find the session file by sessionId locally
-			const sessionFilePath = await this.findSessionFile(sessionId);
-
-			if (!sessionFilePath) {
-				logger.warn(`Codex session file not found: ${sessionId}`, LOG_CONTEXT);
-				return { messages: [], total: 0, hasMore: false };
+			for (const line of result.data.split('\n')) {
+				if (line.trim()) collect(line);
 			}
-
-			content = await fs.readFile(sessionFilePath, 'utf-8');
+			return page.result();
 		}
 
-		try {
-			const lines = content.split('\n').filter((l) => l.trim());
+		// Find the session file by sessionId locally
+		const sessionFilePath = await this.findSessionFile(sessionId);
 
-			const messages: SessionMessage[] = [];
-			let messageIndex = 0;
-
-			for (const line of lines) {
-				try {
-					const entry = JSON.parse(line);
-
-					// Handle direct message entries
-					if (entry.type === 'message' && (entry.role === 'user' || entry.role === 'assistant')) {
-						const textContent = extractTextFromContent(entry.content);
-
-						if (textContent) {
-							messages.push({
-								type: entry.role,
-								role: entry.role,
-								content: textContent,
-								timestamp: entry.timestamp || '',
-								uuid: `codex-msg-${messageIndex}`,
-							});
-							messageIndex++;
-						}
-					}
-
-					// Handle response_item messages (current Codex format)
-					if (entry.type === 'response_item' && entry.payload?.type === 'message') {
-						if (entry.payload.role === 'user' || entry.payload.role === 'assistant') {
-							const textContent = extractTextFromContent(entry.payload.content);
-
-							if (textContent) {
-								messages.push({
-									type: entry.payload.role,
-									role: entry.payload.role,
-									content: textContent,
-									timestamp: entry.timestamp || '',
-									uuid: entry.payload.id || `codex-msg-${messageIndex}`,
-								});
-								messageIndex++;
-							}
-						}
-					}
-
-					// Handle response_item function_call / custom_tool_call (current Codex format)
-					if (
-						entry.type === 'response_item' &&
-						(entry.payload?.type === 'function_call' || entry.payload?.type === 'custom_tool_call')
-					) {
-						let parsedInput: unknown;
-						try {
-							parsedInput = JSON.parse(entry.payload.arguments || '{}');
-						} catch {
-							parsedInput = entry.payload.arguments || {};
-						}
-						const toolInfo: CodexToolUseEntry = {
-							tool: entry.payload.name,
-							args: entry.payload.arguments,
-							state: {
-								status: 'running',
-								input: parsedInput,
-							},
-						};
-						messages.push({
-							type: 'assistant',
-							role: 'assistant',
-							content: `Tool: ${entry.payload.name}`,
-							timestamp: entry.timestamp || '',
-							uuid: entry.payload.call_id || `codex-msg-${messageIndex}`,
-							toolUse: [toolInfo],
-						});
-						messageIndex++;
-					}
-
-					// Handle response_item function_call_output / custom_tool_call_output (current Codex format)
-					// Merge output into the preceding tool call message instead of creating a new message
-					if (
-						entry.type === 'response_item' &&
-						(entry.payload?.type === 'function_call_output' ||
-							entry.payload?.type === 'custom_tool_call_output')
-					) {
-						const callId = entry.payload.call_id;
-						const outputText = entry.payload.output || '';
-						// Find the matching tool call message by call_id and merge the output
-						const matchingIdx = callId
-							? messages.findIndex((m) => m.uuid === callId && m.toolUse)
-							: -1;
-						if (matchingIdx >= 0) {
-							const matchingMsg = messages[matchingIdx];
-							const toolEntries = matchingMsg.toolUse as CodexToolUseEntry[] | undefined;
-							const firstEntry = toolEntries?.[0];
-							if (firstEntry?.state) {
-								// Replace the message immutably with updated tool state
-								const updatedEntry: CodexToolUseEntry = {
-									...firstEntry,
-									state: {
-										...firstEntry.state,
-										status: 'completed',
-										output: outputText,
-									},
-								};
-								messages[matchingIdx] = {
-									...matchingMsg,
-									toolUse: [updatedEntry, ...(toolEntries?.slice(1) || [])],
-								};
-							}
-						} else {
-							// No matching tool call found - create a standalone message
-							messages.push({
-								type: 'assistant',
-								role: 'assistant',
-								content: outputText || '[Tool result]',
-								timestamp: entry.timestamp || '',
-								uuid: callId || `codex-msg-${messageIndex}`,
-							});
-							messageIndex++;
-						}
-					}
-
-					// Handle item.completed agent_message events (legacy format)
-					if (entry.type === 'item.completed' && entry.item?.type === 'agent_message') {
-						messages.push({
-							type: 'assistant',
-							role: 'assistant',
-							content: entry.item.text || '',
-							timestamp: entry.timestamp || '',
-							uuid: entry.item.id || `codex-msg-${messageIndex}`,
-						});
-						messageIndex++;
-					}
-
-					// Handle item.completed tool_call events (legacy format)
-					if (entry.type === 'item.completed' && entry.item?.type === 'tool_call') {
-						const toolInfo = {
-							tool: entry.item.tool,
-							args: entry.item.args,
-						};
-						messages.push({
-							type: 'assistant',
-							role: 'assistant',
-							content: `Tool: ${entry.item.tool}`,
-							timestamp: entry.timestamp || '',
-							uuid: entry.item.id || `codex-msg-${messageIndex}`,
-							toolUse: [toolInfo],
-						});
-						messageIndex++;
-					}
-
-					// Handle item.completed tool_result events (legacy format)
-					if (entry.type === 'item.completed' && entry.item?.type === 'tool_result') {
-						let resultContent = '';
-						if (entry.item.output) {
-							// Output may be a byte array that needs decoding
-							if (Array.isArray(entry.item.output)) {
-								resultContent = Buffer.from(entry.item.output).toString('utf-8');
-							} else {
-								resultContent = String(entry.item.output);
-							}
-						}
-
-						messages.push({
-							type: 'assistant',
-							role: 'assistant',
-							content: resultContent || '[Tool result]',
-							timestamp: entry.timestamp || '',
-							uuid: entry.item.id || `codex-msg-${messageIndex}`,
-						});
-						messageIndex++;
-					}
-				} catch {
-					// Skip malformed lines
-				}
-			}
-
-			return BaseSessionStorage.applyMessagePagination(messages, options);
-		} catch (error) {
-			logger.error(`Error reading Codex session: ${sessionId}`, LOG_CONTEXT, error);
-			captureException(error, { operation: 'codexStorage:readSessionMessages', sessionId });
+		if (!sessionFilePath) {
+			logger.warn(`Codex session file not found: ${sessionId}`, LOG_CONTEXT);
 			return { messages: [], total: 0, hasMore: false };
 		}
+
+		// Streamed, never read whole: a rollout can be hundreds of MB (#1862).
+		await forEachJsonlLine(sessionFilePath, collect);
+		return page.result();
 	}
 
 	protected async getSearchableMessages(

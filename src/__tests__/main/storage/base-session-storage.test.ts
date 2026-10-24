@@ -5,7 +5,11 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { BaseSessionStorage, SearchableMessage } from '../../../main/storage/base-session-storage';
+import {
+	BaseSessionStorage,
+	MessagePageCollector,
+	SearchableMessage,
+} from '../../../main/storage/base-session-storage';
 import type { ToolType, SshRemoteConfig } from '../../../shared/types';
 import type {
 	AgentSessionInfo,
@@ -218,6 +222,78 @@ describe('BaseSessionStorage', () => {
 			const result = BaseSessionStorage.applyMessagePagination(small, { limit: 100 });
 			expect(result.messages).toHaveLength(5);
 			expect(result.hasMore).toBe(false);
+		});
+	});
+
+	// ---- MessagePageCollector ----
+
+	describe('MessagePageCollector', () => {
+		/** The page math over a fully materialized list - the collector's contract. */
+		function referencePage(all: SessionMessage[], offset: number, limit: number) {
+			if (offset >= all.length) return { messages: [], total: all.length, hasMore: false };
+			const end = all.length - offset;
+			const start = Math.max(0, end - limit);
+			return { messages: all.slice(start, end), total: all.length, hasMore: start > 0 };
+		}
+
+		it('matches the full-list page for every offset and limit, past the trim threshold', () => {
+			// 400 messages with a small window forces the collector to drop old
+			// messages many times over, which is the case a bug would hide in.
+			for (const length of [0, 1, 7, 90, 400]) {
+				const all = Array.from({ length }, (_, i) => makeMessage('user', `m${i}`, i));
+				for (const offset of [0, 1, 5, 20, 89, 399, 500]) {
+					for (const limit of [0, 1, 3, 20, 250]) {
+						const page = new MessagePageCollector({ offset, limit });
+						for (const message of all) page.push(message);
+						expect(page.result()).toEqual(referencePage(all, offset, limit));
+					}
+				}
+			}
+		});
+
+		it('defaults to the newest 20 messages', () => {
+			const page = new MessagePageCollector();
+			for (let i = 0; i < 300; i++) page.push(makeMessage('user', `m${i}`, i));
+			const result = page.result();
+			expect(result.messages.map((m) => m.content)).toEqual(
+				Array.from({ length: 20 }, (_, i) => `m${280 + i}`)
+			);
+			expect(result.total).toBe(300);
+			expect(result.hasMore).toBe(true);
+		});
+
+		it('holds a bounded window, not the whole transcript', () => {
+			const page = new MessagePageCollector({ offset: 0, limit: 10 });
+			for (let i = 0; i < 100_000; i++) page.push(makeMessage('user', `m${i}`, i));
+			// The window is private; what matters is that pushing 100k messages
+			// leaves only the page reachable. Reach in to prove the bound.
+			const window = (page as unknown as { window: SessionMessage[] }).window;
+			expect(window.length).toBeLessThanOrEqual(10 * 2 + 64);
+			expect(page.result().messages.map((m) => m.content)).toEqual(
+				Array.from({ length: 10 }, (_, i) => `m${99_990 + i}`)
+			);
+		});
+
+		it('updates a message by position while it is still in the window', () => {
+			const page = new MessagePageCollector({ limit: 5 });
+			const positions = Array.from({ length: 5 }, (_, i) =>
+				page.push(makeMessage('assistant', `m${i}`, i))
+			);
+			page.update(positions[2], (m) => ({ ...m, content: 'patched' }));
+			expect(page.result().messages[2].content).toBe('patched');
+		});
+
+		it('ignores an update for a message already dropped from the window', () => {
+			const page = new MessagePageCollector({ limit: 2 });
+			const first = page.push(makeMessage('assistant', 'oldest', 0));
+			for (let i = 1; i < 200; i++) page.push(makeMessage('user', `m${i}`, i));
+			let called = false;
+			page.update(first, (m) => {
+				called = true;
+				return m;
+			});
+			expect(called).toBe(false);
+			expect(page.result().messages.map((m) => m.content)).toEqual(['m198', 'm199']);
 		});
 	});
 

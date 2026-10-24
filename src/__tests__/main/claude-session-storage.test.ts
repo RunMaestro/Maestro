@@ -93,6 +93,11 @@ vi.mock('fs/promises', () => ({
 	},
 }));
 
+// Transcript reads stream; feed them from the readFile stub above.
+vi.mock('../../main/utils/jsonl-stream', async () =>
+	(await import('../helpers/mockJsonlStream')).jsonlStreamFromReadFileMock()
+);
+
 // listSessions now serves unchanged transcripts from the on-disk parse cache,
 // which resolves its location through electron's userData path.
 vi.mock('electron', () => ({
