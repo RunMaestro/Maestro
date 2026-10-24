@@ -354,6 +354,8 @@ An OpenAI-compatible gateway cannot back Claude Code directly. OpenRouter, Toget
 
 [API Route](https://www.api-route.com/docs/quickstart) also serves the Anthropic Messages API. For a Claude Code agent, set `ANTHROPIC_BASE_URL=https://global.api-route.com` (no `/v1` suffix) and `ANTHROPIC_AUTH_TOKEN` to your API Route key. Set `ANTHROPIC_MODEL` to a Claude model ID available to that key, such as `claude-haiku-4-5`; the authenticated `GET https://global.api-route.com/v1/models` endpoint lists the available IDs. These variables use the same per-agent environment settings above and do not require a translating proxy.
 
+[Cheaper Inference](https://cheaperinference.com/docs) also serves the Anthropic Messages API. For a Claude Code agent, set `ANTHROPIC_BASE_URL=https://api.cheaperinference.com` (no `/v1` suffix) and `ANTHROPIC_AUTH_TOKEN` to your Cheaper Inference key. Set `ANTHROPIC_MODEL` to a model ID such as `claude-sonnet-5`; the authenticated `GET https://api.cheaperinference.com/v1/models` endpoint lists the available IDs. Codex and OpenCode point at `https://api.cheaperinference.com/v1` as usual.
+
 Two more things that surprise people:
 
 - **A per-agent variable replaces the provider-level set, it does not merge with it.** An agent that sets only `ANTHROPIC_BASE_URL` stops receiving a provider-level `CLAUDE_CONFIG_DIR`. Set both on the agent if it needs both.
