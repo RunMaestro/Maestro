@@ -424,6 +424,71 @@ describe('remarkFileLinks', () => {
 				'[/Users/pedram/Project/SomeOther/NonExistent File.md](<maestro-file://SomeOther/NonExistent File.md>)'
 			);
 		});
+
+		// MAESTRO-176 / MAESTRO-175: an agent brief written as prose, with a bare
+		// alias `P=` for a project folder and `P/...` references. The old pattern
+		// matched from the first `/` to the last `name.md` in the paragraph, and
+		// clicking the link sent the whole paragraph to fs:stat (ENAMETOOLONG).
+		it('does not turn a paragraph of prose into one absolute path', async () => {
+			const brief =
+				'Status /handoff checked; no output found. You are the worker, do not delegate. ' +
+				'P=/Users/someone/Documents/Drafts (long form notes)/.collab. ' +
+				'Read P/drafts/one/abc-PREP.md and manifest P/requests/abc-rewrite.md. ' +
+				'Read /Users/someone/.tools/skills/voice/SKILL.md INCLUDING references/style.md. ' +
+				'Write the report to P/drafts/two/task-PROPOSAL.md';
+			const result = await processMarkdown(brief, sampleFileTree, '', '/Users/pedram/Project');
+			expect(result).not.toContain('handoff checked](');
+			expect(result).not.toMatch(/\]\(<?file:\/\/\/handoff/);
+			expect(result).not.toMatch(/\]\(<?file:\/\/\/(drafts|requests|one|two)\//);
+			// The one genuine absolute path in the paragraph still links.
+			expect(result).toContain(
+				'[/Users/someone/.tools/skills/voice/SKILL.md](file:///Users/someone/.tools/skills/voice/SKILL.md)'
+			);
+		});
+
+		// MAESTRO-16F / MAESTRO-16G: a run report in a non-Latin script, where `/`
+		// is used as "or" between words. Nothing in it is an absolute path.
+		it('does not link slash-separated prose that ends in a file name', async () => {
+			for (const lead of ['Итог: ok', 'Итог: ok ']) {
+				const report =
+					`${lead}/[INF]/пустых/повторов), pass 2 (100% новых, 0 совпадений; 5/6 частей - ` +
+					'часть 3 rc=143@600s; s3=995/st=148). Список: docs/analysis/issues.md - ' +
+					'11 пунктов (3 high / 4 medium / 4 low). Разница: compare-v1/run-notes.md';
+				const result = await processMarkdown(report, sampleFileTree, '', '/Users/pedram/Project');
+				expect(result).not.toContain('file://');
+			}
+		});
+
+		it('does not start an absolute path inside a word', async () => {
+			const result = await processMarkdown(
+				'Read C/bozze/codex/notes.md and and/or/other.md next.',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project'
+			);
+			expect(result).not.toContain('file://');
+		});
+
+		it('still links an absolute path right after an opening bracket or quote', async () => {
+			const result = await processMarkdown(
+				'Saved ("/other/place/report.md") and [/other/place/two.md].',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project'
+			);
+			expect(result).toContain('(file:///other/place/report.md)');
+			expect(result).toContain('(file:///other/place/two.md)');
+		});
+
+		it('keeps a multi-dot file name whole', async () => {
+			const result = await processMarkdown(
+				'Backup at /other/place/archive.tar.gz is ready.',
+				sampleFileTree,
+				'',
+				'/Users/pedram/Project'
+			);
+			expect(result).toContain('[/other/place/archive.tar.gz](file:///other/place/archive.tar.gz)');
+		});
 	});
 
 	describe('markdown links with absolute path hrefs', () => {

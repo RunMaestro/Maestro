@@ -54,10 +54,25 @@ export const PATH_PATTERN = new RegExp(
  * a recognized file extension. Lookahead allows whitespace, end-of-string,
  * or common punctuation as terminator. Case-insensitive so `.MD` / `.Ts`
  * still match the lowercase-only LINKABLE_EXTENSIONS list.
+ *
+ * Segments admit spaces (`/Users/me/Meeting Notes/a.md` is a real path), which
+ * is exactly what lets a careless pattern swallow prose: the leftmost `/` in a
+ * paragraph plus the last `name.md` in it reads as one "path", and clicking it
+ * sent a whole paragraph to `fs:stat` (ENAMETOOLONG, MAESTRO-176 / MAESTRO-16F).
+ * Three rules keep a match on one path:
+ *  - it starts at a token boundary, never inside a word (`C/bozze/x.md`,
+ *    `and/or`), in any script;
+ *  - no segment holds a sentence break (`.`, `;`, `!` or `?` followed by
+ *    whitespace), which a directory or file name essentially never does;
+ *  - no segment exceeds 255 characters, the NAME_MAX of every platform we ship.
+ * The directory run is lazy, so the match ends at the FIRST file name that
+ * closes a path (`/a/SKILL.md and refs/b.md` stops at `SKILL.md`), while the
+ * file name itself stays greedy so `/a/archive.tar.gz` keeps its full name.
  */
+const ABSOLUTE_PATH_SEGMENT = `(?:(?![.;!?]\\s)[^/\\n]){1,255}`;
 export const ABSOLUTE_PATH_PATTERN = new RegExp(
-	`\\/(?:[^/\\n]+\\/)+[^/\\n]+\\.(?:${LINKABLE_EXTENSIONS})(?=\\s|$|[.,;:!?\`'"\\)\\]}>])`,
-	'gi'
+	`(?<![\\p{L}\\p{N}_])\\/(?:${ABSOLUTE_PATH_SEGMENT}\\/)+?${ABSOLUTE_PATH_SEGMENT}\\.(?:${LINKABLE_EXTENSIONS})(?=\\s|$|[.,;:!?\`'"\\)\\]}>])`,
+	'giu'
 );
 
 /**
