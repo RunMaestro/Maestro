@@ -2,6 +2,7 @@ import type {
 	TranslationRequest,
 	TranslationReport,
 } from '../shared/maestro-lib/translation/types';
+import type { GitRefsSnapshot } from '../shared/gitUtils';
 /* eslint-disable @typescript-eslint/no-unused-vars */
 /**
  * Global type declarations for the renderer process.
@@ -1543,6 +1544,7 @@ interface MaestroAPI {
 			remoteCwd?: string
 		) => Promise<{ stdout: string; stderr: string }>;
 		isRepo: (cwd: string, sshRemoteId?: string, remoteCwd?: string) => Promise<boolean>;
+		refs: (cwd: string, sshRemoteId?: string, remoteCwd?: string) => Promise<GitRefsSnapshot>;
 		init: (
 			cwd: string,
 			sshRemoteId?: string,

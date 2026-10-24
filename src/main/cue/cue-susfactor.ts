@@ -29,7 +29,7 @@
  */
 
 import * as crypto from 'crypto';
-import { mapWithConcurrency } from '../utils/concurrency';
+import { mapWithConcurrency } from '../../shared/concurrency';
 import { fetchWithTimeout } from '../utils/fetchWithTimeout';
 
 const ACCESS_TOKEN_URL = 'https://0din.ai/api/v1/access_tokens';

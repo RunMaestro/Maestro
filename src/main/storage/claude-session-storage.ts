@@ -21,7 +21,8 @@ import { captureException } from '../utils/sentry';
 import { isExpectedSessionReadError } from '../utils/session-read-errors';
 import { encodeClaudeProjectPath } from '../utils/statsCache';
 import { readFileRemote, listDirWithStatsRemote } from '../utils/remote-fs';
-import { mapWithConcurrency, REMOTE_SESSION_READ_CONCURRENCY } from '../utils/concurrency';
+import { REMOTE_SESSION_READ_CONCURRENCY } from '../utils/concurrency';
+import { mapWithConcurrency } from '../../shared/concurrency';
 import { getSessionInfoCache, fileFingerprint, type SessionFileRef } from './session-info-cache';
 import { runTranscriptParse } from '../transcript-parse/transcript-parse-pool';
 import {

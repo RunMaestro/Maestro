@@ -19,6 +19,7 @@ import {
 import { isWindows, isMacOS } from '../../shared/platformDetection';
 import { setMaestroLibLogger } from '../../shared/maestro-lib/host';
 import { formatJsonLogLine } from '../../shared/jsonLogLine';
+import { setMainStallReporter } from '../../shared/stallDiagnostics';
 
 type ConsoleMethod = 'log' | 'debug' | 'info' | 'warn' | 'error';
 
@@ -575,3 +576,6 @@ export const logger = new Logger();
 // created, means every process that loads the desktop logger - the Electron
 // main process and the CLI - routes the library's lines to it.
 setMaestroLibLogger(logger);
+setMainStallReporter((report) => {
+	logger.warn('Background stall diagnostic', '[StallMonitor]', report);
+});

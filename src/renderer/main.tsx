@@ -18,6 +18,9 @@ import { LayerStackProvider } from './contexts/LayerStackContext';
 import { WizardProvider } from './components/Wizard';
 import { logger } from './utils/logger';
 import './index.css';
+import { startRendererStallMonitoring } from './utils/stallMonitor';
+
+startRendererStallMonitoring();
 
 // Initialize Sentry for renderer process
 // Uses IPCMode.Classic in main process to avoid "sentry-ipc://" protocol conflicts

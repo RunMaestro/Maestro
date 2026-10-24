@@ -16,7 +16,8 @@ import { walkLocalFileTree, type LocalTreeNode } from '../utils/file-tree-walk';
 import { listFilesWithStatsRemote, readFileInRootRemote, readFileRemote } from '../utils/remote-fs';
 import { resolvePathInRealRoot } from '../utils/real-path-containment';
 import { WINDOWS_LOCKED_SYSTEM_FILES } from '../utils/watcher-ignore';
-import { mapWithConcurrency, LOCAL_SESSION_READ_CONCURRENCY } from '../utils/concurrency';
+import { LOCAL_SESSION_READ_CONCURRENCY } from '../utils/concurrency';
+import { mapWithConcurrency } from '../../shared/concurrency';
 
 /**
  * Names pruned from every vault walk, local and remote. `.*` covers `.obsidian`, `.trash`, `.git`, and

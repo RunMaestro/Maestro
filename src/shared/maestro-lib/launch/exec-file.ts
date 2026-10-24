@@ -5,6 +5,43 @@ import { isWindows } from '../../platformDetection';
 // Cycle-safe: processTree only reaches back into this module from inside its
 // own function bodies, so neither module's top level depends on the other.
 import { killProcessTreeNow } from '../control/process-tree';
+import { mainStallDiagnostics } from '../../stallDiagnostics';
+
+const DIAGNOSTIC_BINARIES = new Set([
+	'git',
+	'gh',
+	'node',
+	'npm',
+	'npx',
+	'pnpm',
+	'yarn',
+	'python',
+	'python3',
+	'cmd',
+	'powershell',
+	'pwsh',
+	'ssh',
+	'bash',
+	'where',
+	'which',
+	'claude',
+	'codex',
+	'gemini',
+	'opencode',
+	'omp',
+]);
+
+function measureLaunch<T>(command: string, launch: () => T): T {
+	if (!mainStallDiagnostics.enabled) return launch();
+	const executable =
+		command
+			.split(/[\\/]/)
+			.pop()
+			?.toLowerCase()
+			.replace(/\.(exe|cmd|bat)$/, '') ?? '';
+	const label = DIAGNOSTIC_BINARIES.has(executable) ? executable : 'other';
+	return mainStallDiagnostics.measureSynchronous('spawn', label, launch);
+}
 
 const execFileAsync = promisify(execFile);
 
@@ -169,14 +206,16 @@ export async function execFileNoThrow(
 		// This is safe because we're executing a specific file path, not user input
 		const useShell = isWindows() && needsWindowsShell(command);
 
-		const { stdout, stderr } = await execFileAsync(command, args, {
-			cwd,
-			env,
-			encoding: 'utf8',
-			maxBuffer: EXEC_MAX_BUFFER,
-			shell: useShell,
-			timeout,
-		});
+		const { stdout, stderr } = await measureLaunch(command, () =>
+			execFileAsync(command, args, {
+				cwd,
+				env,
+				encoding: 'utf8',
+				maxBuffer: EXEC_MAX_BUFFER,
+				shell: useShell,
+				timeout,
+			})
+		);
 
 		return {
 			stdout,
@@ -229,12 +268,14 @@ export async function execFileBufferNoThrow(
 	try {
 		const useShell = isWindows() && needsWindowsShell(command);
 
-		const { stdout, stderr } = await execFileAsync(command, args, {
-			cwd,
-			encoding: 'buffer',
-			maxBuffer,
-			shell: useShell,
-		});
+		const { stdout, stderr } = await measureLaunch(command, () =>
+			execFileAsync(command, args, {
+				cwd,
+				encoding: 'buffer',
+				maxBuffer,
+				shell: useShell,
+			})
+		);
 
 		return {
 			// With `encoding: 'buffer'` Node returns Buffers at runtime even though
@@ -285,12 +326,14 @@ export function execFileStreaming(
 	const { cwd, env, onChunk } = options;
 	const useShell = isWindows() && needsWindowsShell(command);
 
-	const child = spawn(command, args, {
-		cwd,
-		env,
-		shell: useShell,
-		stdio: ['ignore', 'pipe', 'pipe'],
-	});
+	const child = measureLaunch(command, () =>
+		spawn(command, args, {
+			cwd,
+			env,
+			shell: useShell,
+			stdio: ['ignore', 'pipe', 'pipe'],
+		})
+	);
 
 	let stdout = '';
 	let stderr = '';
@@ -380,12 +423,14 @@ async function execFileWithInput(
 	return new Promise((resolve) => {
 		const useShell = isWindows() && needsWindowsShell(command);
 
-		const child = spawn(command, args, {
-			cwd,
-			env,
-			shell: useShell,
-			stdio: ['pipe', 'pipe', 'pipe'],
-		});
+		const child = measureLaunch(command, () =>
+			spawn(command, args, {
+				cwd,
+				env,
+				shell: useShell,
+				stdio: ['pipe', 'pipe', 'pipe'],
+			})
+		);
 
 		let stdout = '';
 		let stderr = '';
@@ -446,7 +491,9 @@ async function execFileWithInput(
  */
 export function execFileSyncNoThrow(command: string, args: string[] = [], timeout = 2000): string {
 	try {
-		return execFileSync(command, args, { timeout, encoding: 'utf-8' }).toString();
+		return measureLaunch(command, () =>
+			execFileSync(command, args, { timeout, encoding: 'utf-8' })
+		).toString();
 	} catch {
 		return '';
 	}

@@ -9,9 +9,15 @@ import {
 	countUncommittedChanges,
 	isImageFile,
 	getImageMimeType,
+	isNotAGitRepositoryError,
+	parseGitBranches,
+	parseGitTags,
+	type GitRefsSnapshot,
 } from '../../../../shared/gitUtils';
 import { getRepoRootRemote } from '../../../utils/remote-git';
 import { LOG_CONTEXT, handlerOpts, readOnlyGitReply } from './shared';
+
+const BACKGROUND_REFS_TIMEOUT_MS = 5000;
 
 /**
  * Register read-only Git IPC handlers: status, diff, isRepo, numstat, remote,
@@ -20,6 +26,61 @@ import { LOG_CONTEXT, handlerOpts, readOnlyGitReply } from './shared';
 export function registerReadHandlers(): void {
 	// Basic Git operations
 	// All handlers accept optional sshRemoteId and remoteCwd for remote execution
+
+	ipcMain.handle(
+		'git:refs',
+		withIpcErrorLogging(
+			handlerOpts('refs'),
+			async (cwd: string, sshRemoteId?: string, remoteCwd?: string): Promise<GitRefsSnapshot> => {
+				const sshRemote = sshRemoteId ? getSshRemoteById(sshRemoteId) : undefined;
+				if (sshRemoteId && !sshRemote) {
+					return { state: 'unknown', timedOut: false, error: 'SSH remote not found' };
+				}
+				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
+				const started = performance.now();
+				const query = (args: string[]) =>
+					execGitReadOnly(
+						args,
+						cwd,
+						sshRemote,
+						effectiveRemoteCwd,
+						Math.max(1, Math.ceil(BACKGROUND_REFS_TIMEOUT_MS - (performance.now() - started)))
+					);
+				const repository = await query(['rev-parse', '--is-inside-work-tree']);
+				if (repository.exitCode !== 0) {
+					if (isNotAGitRepositoryError(repository.stderr)) {
+						return { state: 'ready', isRepo: false, branches: [], tags: [] };
+					}
+					return {
+						state: 'unknown',
+						timedOut: isGitTimeout(repository),
+						error: repository.stderr || 'Git repository check failed',
+					};
+				}
+				if (performance.now() - started >= BACKGROUND_REFS_TIMEOUT_MS) {
+					return { state: 'unknown', timedOut: true };
+				}
+				const [branches, tags] = await Promise.all([
+					query(['branch', '-a', '--format=%(refname:short)']),
+					query(['tag', '--list']),
+				]);
+				const failed = [branches, tags].find((result) => result.exitCode !== 0);
+				if (failed) {
+					return {
+						state: 'unknown',
+						timedOut: isGitTimeout(failed),
+						error: failed.stderr || 'Git reference query failed',
+					};
+				}
+				return {
+					state: 'ready',
+					isRepo: true,
+					branches: parseGitBranches(branches.stdout),
+					tags: parseGitTags(tags.stdout),
+				};
+			}
+		)
+	);
 
 	// --- FIX: Always pass cwd as remoteCwd for remote git operations ---
 	ipcMain.handle(

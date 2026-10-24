@@ -517,6 +517,92 @@ This occurs because Electron 28 doesn't fully support the File System Access API
 
 3. **Right-click context menu** - Right-click on the flame graph and select "Save profile..." which may use a different code path.
 
+### Windows Startup: Measure Readiness, Not Just the Splash
+
+Startup work spans both processes. Capture the main-process CPU profile and
+event-loop delay, renderer CPU/long tasks, IPC durations and roots, and child
+process counts. A slow `fs:readDirTree` request can be a victim of synchronous
+Windows process creation elsewhere, not a slow directory reader.
+
+- Bound worktree discovery, provider detection, and sidebar Git-status polling.
+  Share the platform-independent mapper in `src/shared/concurrency.ts`; keep
+  Node-only event-loop yielding and main-process limits out of renderer imports.
+  Give the active agent a polling worker before background agents, and publish
+  its completed data without waiting for the background batch.
+  `execFile` is asynchronous after launch, but Windows process creation still
+  blocks the main thread.
+  Worktree identity paths can be queried in one `git rev-parse` invocation;
+  ordinary directories without `.git` need no Git process.
+- Watch worktree roots and non-repository branch-group directories, not files
+  inside existing worktrees. Preserve root-removal and nested-branch events.
+  Remove a deleted repository root from the exclusion set so its path can be
+  reused as a branch-group directory.
+- Publish the restored selection before publishing restored sessions. Otherwise
+  the default first agent starts scans before the saved agent replaces it.
+- Restore cached Git state immediately. Revalidate agents sequentially after the
+  initial tree is usable, rather than awaiting probes for every saved agent.
+  Use `git.refs` with its shared five-second budget; an unknown result preserves
+  cached refs and must not prevent the next agent's validation.
+  Discard replies if the directory or effective SSH target changed in flight.
+- Start recursive size statistics after the visible tree. Share pending scans,
+  and start the result-cache TTL when a scan completes, not when it begins.
+  Stat files with bounded concurrency; discard transient tree-cap state when
+  persisting/restoring sessions, including corruption/error recovery, so the
+  first tree is actually scanned.
+
+Exercise clean, restored, service-enabled, broad-root, and Lite startup in
+disposable profiles. Measure launch-to-tree readiness and a real UI action as
+well as splash dismissal. Keep production profiles, credentials, scheduled
+automation, and the running application out of the experiment. Broad-root
+statistics remain a full background walk; a responsive tree does not mean its
+exact byte count is already available.
+
+### Automatic Background Stall Diagnostics
+
+The full desktop app starts a lightweight monitor before loading its main
+backend, and each desktop renderer observes long tasks before mounting React.
+No inspector or continuous CPU profiler is enabled. Web-desktop and attached
+Lite clients do not start this monitor; Lite's separate local attachment runtime
+is intentionally unchanged.
+
+Find warning entries with context **`[StallMonitor]`** in the Log Viewer or,
+on Windows, `%APPDATA%\\Maestro\\logs\\maestro-debug-YYYY-MM-DD.log`.
+Normal warning-level filtering and existing log retention still apply.
+
+- Main event-loop sampling: 50 ms resolution, checked each second; delays of
+  at least 250 ms are reportable.
+- Renderer tasks: at least 250 ms. Where Chromium provides long-animation-frame
+  script timing, reports include an app-owned script basename, function name,
+  and character offset. Full URLs, query strings, and external scripts are omitted.
+  Some Chromium custom-scheme windows expose an empty script list even when the
+  API is supported. In that case, task duration and window surface are available,
+  but no script/function attribution is reported.
+- IPC requests: code-owned channel name, synchronous handler-prefix time, and
+  elapsed request time. Requests taking at least two seconds are slow operations,
+  not automatically main-thread stalls. An outstanding slow request is reported
+  once; completion does not log it again.
+- Shared exec helpers: synchronous process-launch time, or the complete blocking
+  duration of a synchronous exec. Only allowlisted executable families are named;
+  custom executables are grouped as `other`. Arguments, environment, stdin/stdout,
+  credentials, and working-directory paths are never collected.
+
+Reports are batched at most once every five seconds per process/window and only
+emitted when there is a stall or slow operation. Timing-label and active-request
+storage is bounded; reports contain the five largest timing groups and five oldest
+active requests. `untrackedOperations` identifies incomplete request coverage.
+Main monitoring resets across suspend/resume; renderer monitoring discards hidden
+window observations and resets when visibility changes. Shutdown removes timers
+and observers; diagnostic sink failures do not replace application results/errors.
+
+`attribution: correlated-timings` is deliberate: synchronous timings and active
+requests describe work in the reporting window, not a causal CPU stack trace.
+Nested IPC/spawn timings overlap and must not be added together. `stallSamples`
+counts observations, not unique freezes. Uninstrumented synchronous work still
+produces event-loop-delay warnings but may have no named culprit. An in-process
+monitor reports only after the blocked thread runs again; a permanent deadlock
+or abrupt crash can prevent the report. Use the explicit performance capture
+below when exact call stacks are needed.
+
 ### Field Performance Traces (Cmd+K capture)
 
 Maestro can capture a Chromium performance trace from any install (dev or

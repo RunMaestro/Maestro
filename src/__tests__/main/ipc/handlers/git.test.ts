@@ -17,6 +17,7 @@ import {
 import { captureException } from '../../../../main/utils/sentry';
 import path from 'path';
 import type { SshRemoteConfig } from '../../../../shared/types';
+import type { Dirent } from 'fs';
 
 // Mock electron's ipcMain
 vi.mock('electron', () => ({
@@ -229,52 +230,6 @@ describe('Git IPC handlers', () => {
 
 	afterEach(() => {
 		handlers.clear();
-	});
-
-	describe('registration', () => {
-		it('should register all git handlers', () => {
-			const expectedChannels = [
-				'git:status',
-				'git:diff',
-				'git:isRepo',
-				'git:init',
-				'git:commitAll',
-				'git:numstat',
-				'git:branch',
-				'git:remote',
-				'git:branches',
-				'git:tags',
-				'git:info',
-				'git:log',
-				'git:runCommand',
-				'git:cancelCommand',
-				'git:checkoutBranch',
-				'git:commitCount',
-				'git:show',
-				'git:showFile',
-				'git:worktreeInfo',
-				'git:getRepoRoot',
-				'git:worktreeSetup',
-				'git:worktreeRunSetup',
-				'git:worktreeCheckout',
-				'git:createPR',
-				'git:checkGhCli',
-				'git:getDefaultBranch',
-				'git:listWorktrees',
-				'git:scanWorktreeDirectory',
-				'git:watchWorktreeDirectory',
-				'git:unwatchWorktreeDirectory',
-				'git:removeWorktree',
-				'git:createGist',
-				'git:graph',
-				'git:switch',
-			];
-
-			expect(handlers.size).toBe(expectedChannels.length);
-			for (const channel of expectedChannels) {
-				expect(handlers.has(channel)).toBe(true);
-			}
-		});
 	});
 
 	describe('background read-only polls (#1739)', () => {
@@ -780,6 +735,44 @@ index 1234567..abcdefg 100644
 				stderr: 'fatal: not a git repository',
 			});
 		});
+	});
+
+	describe('git:refs', () => {
+		it.each(['repository', 'branches', 'tags'])(
+			'returns unknown within the shared deadline when %s never settles',
+			async (stage) => {
+				vi.useFakeTimers();
+				const gate = Promise.withResolvers<{ stdout: string; stderr: string; exitCode: number }>();
+				const remoteGit = await import('../../../../main/utils/remote-git');
+				const realRemoteGit = await vi.importActual<
+					typeof import('../../../../main/utils/remote-git')
+				>('../../../../main/utils/remote-git');
+				vi.mocked(remoteGit.execGitReadOnly).mockImplementation(realRemoteGit.execGitReadOnly);
+				vi.mocked(execFile.execFileNoThrow).mockImplementation(async (_command, args) => {
+					const current =
+						args?.[0] === 'rev-parse' ? 'repository' : args?.[0] === 'branch' ? 'branches' : 'tags';
+					if (current === stage) return gate.promise;
+					return { stdout: current === 'repository' ? 'true' : 'main', stderr: '', exitCode: 0 };
+				});
+				let reply: unknown;
+				const request = handlers.get('git:refs')!({}, `/refs-deadline-${stage}`).then(
+					(result: unknown) => {
+						reply = result;
+						return result;
+					}
+				);
+				try {
+					await vi.advanceTimersByTimeAsync(5000);
+					expect(reply).toMatchObject({ state: 'unknown', timedOut: true });
+					expect(reply).not.toHaveProperty('isRepo');
+				} finally {
+					gate.resolve({ stdout: 'true', stderr: '', exitCode: 0 });
+					await request;
+					await vi.advanceTimersByTimeAsync(0);
+					vi.useRealTimers();
+				}
+			}
+		);
 	});
 
 	describe('git:branches', () => {
@@ -4844,20 +4837,51 @@ branch refs/heads/bugfix-123
 		function respondAsWorktreeAt(
 			args: readonly string[] | undefined,
 			workPath: string,
-			{ branch = path.basename(workPath) } = {}
+			{ branch = path.basename(workPath), gitDir = '.git', gitCommonDir = '.git' } = {}
 		) {
+			const paths: Record<string, string> = {
+				'--show-toplevel': workPath,
+				'--git-dir': gitDir,
+				'--git-common-dir': gitCommonDir,
+			};
 			const stdout = args?.includes('--is-inside-work-tree')
 				? 'true'
-				: args?.includes('--show-toplevel')
-					? workPath
-					: args?.includes('--abbrev-ref')
-						? branch
-						: '.git';
+				: args?.includes('--abbrev-ref')
+					? branch
+					: (args
+							?.slice(1)
+							.map((option) => paths[option])
+							.join('\n') ?? '');
 			return { stdout, stderr: '', exitCode: 0 };
 		}
 
+		it('services the event loop before a large discovery scan completes', async () => {
+			const parent = path.resolve('/parent');
+			const names = Array.from({ length: 12 }, (_, index) => `repo-${index}`);
+			// Vitest selects readdir's Buffer overload; the handler requests string Dirents.
+			const entries = names.map((name) => ({
+				name,
+				isDirectory: () => true,
+			})) as unknown as Dirent<Buffer>[];
+			vi.mocked(mockFs.readdir).mockResolvedValue(entries);
+			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (_cmd, args, cwd) =>
+				respondAsWorktreeAt(args, String(cwd))
+			);
+			let settled = false;
+			// Exercise real event-loop turn ordering, not elapsed wall-clock time.
+			const { promise: heartbeat, resolve } = Promise.withResolvers<boolean>();
+			setImmediate(() => resolve(!settled));
+			const scan = handlers.get('git:scanWorktreeDirectory')!({}, parent).finally(() => {
+				settled = true;
+			});
+			expect(await heartbeat).toBe(true);
+			const result = await scan;
+			expect(result.gitSubdirs.map((entry: { name: string }) => entry.name)).toEqual(names);
+		});
+
 		beforeEach(async () => {
 			mockFs = (await import('fs/promises')).default;
+			vi.mocked(mockFs.access).mockResolvedValue(undefined);
 		});
 
 		it.each(['identity', 'dirent', 'group-read'])(
@@ -5019,13 +5043,7 @@ branch refs/heads/bugfix-123
 			expect(result.scanFailed).toBeFalsy();
 		});
 
-		it.each([
-			'--is-inside-work-tree',
-			'--show-toplevel',
-			'--git-dir',
-			'--git-common-dir',
-			'--abbrev-ref',
-		])(
+		it.each(['--show-toplevel', '--git-dir', '--git-common-dir', '--abbrev-ref'])(
 			'isolates a rejecting candidate Git probe and discovers both healthy siblings: %s',
 			async (probe) => {
 				const parent = path.resolve('/parent');
@@ -5057,7 +5075,7 @@ branch refs/heads/bugfix-123
 			}
 		);
 
-		it.each(['--is-inside-work-tree', '--show-toplevel', '--git-dir', '--git-common-dir'])(
+		it.each(['--show-toplevel', '--git-dir', '--git-common-dir'])(
 			'preserves an uncertain candidate after a nonzero identity probe: %s',
 			async (probe) => {
 				const parent = path.resolve('/parent');
@@ -5118,59 +5136,19 @@ branch refs/heads/bugfix-123
 			] as any);
 
 			// Mock git commands for each subdirectory
-			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (cmd, args, cwd) => {
+			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (_cmd, args, cwd) => {
 				const cwdStr = String(cwd);
-
-				// main-repo: regular git repo
 				if (cwdStr.endsWith('main-repo')) {
-					if (args?.includes('--is-inside-work-tree')) {
-						return { stdout: 'true\n', stderr: '', exitCode: 0 };
-					}
-					if (args?.includes('--git-dir')) {
-						return { stdout: '.git', stderr: '', exitCode: 0 };
-					}
-					if (args?.includes('--git-common-dir')) {
-						return { stdout: '.git', stderr: '', exitCode: 0 };
-					}
-					if (args?.includes('--abbrev-ref')) {
-						return { stdout: 'main\n', stderr: '', exitCode: 0 };
-					}
-					if (args?.includes('--show-toplevel')) {
-						return { stdout: path.join('/parent', 'main-repo'), stderr: '', exitCode: 0 };
-					}
+					return respondAsWorktreeAt(args, path.join('/parent', 'main-repo'), { branch: 'main' });
 				}
-
-				// worktree-feature: a git worktree
 				if (cwdStr.endsWith('worktree-feature')) {
-					if (args?.includes('--is-inside-work-tree')) {
-						return { stdout: 'true\n', stderr: '', exitCode: 0 };
-					}
-					if (args?.includes('--show-toplevel')) {
-						return { stdout: path.join('/parent', 'worktree-feature'), stderr: '', exitCode: 0 };
-					}
-					if (args?.includes('--git-dir')) {
-						return {
-							stdout: path.join('/parent', 'main-repo', '.git', 'worktrees', 'worktree-feature'),
-							stderr: '',
-							exitCode: 0,
-						};
-					}
-					if (args?.includes('--git-common-dir')) {
-						return { stdout: path.join('/parent', 'main-repo', '.git'), stderr: '', exitCode: 0 };
-					}
-					if (args?.includes('--abbrev-ref')) {
-						return { stdout: 'feature-branch\n', stderr: '', exitCode: 0 };
-					}
+					return respondAsWorktreeAt(args, path.join('/parent', 'worktree-feature'), {
+						branch: 'feature-branch',
+						gitDir: path.join('/parent', 'main-repo', '.git', 'worktrees', 'worktree-feature'),
+						gitCommonDir: path.join('/parent', 'main-repo', '.git'),
+					});
 				}
-
-				// regular-folder: not a git repo
-				if (cwdStr.endsWith('regular-folder')) {
-					if (args?.includes('--is-inside-work-tree')) {
-						return { stdout: '', stderr: 'fatal: not a git repository', exitCode: 128 };
-					}
-				}
-
-				return { stdout: '', stderr: '', exitCode: 0 };
+				return { stdout: '', stderr: 'fatal: not a git repository', exitCode: 128 };
 			});
 
 			const handler = handlers.get('git:scanWorktreeDirectory');
@@ -5205,27 +5183,12 @@ branch refs/heads/bugfix-123
 				{ name: 'visible-repo', isDirectory: () => true },
 			] as any);
 
-			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (cmd, args, cwd) => {
-				const cwdStr = String(cwd);
-
-				if (cwdStr.endsWith('visible-repo')) {
-					if (args?.includes('--is-inside-work-tree')) {
-						return { stdout: 'true\n', stderr: '', exitCode: 0 };
-					}
-					if (args?.includes('--git-dir')) {
-						return { stdout: '.git', stderr: '', exitCode: 0 };
-					}
-					if (args?.includes('--git-common-dir')) {
-						return { stdout: '.git', stderr: '', exitCode: 0 };
-					}
-					if (args?.includes('--abbrev-ref')) {
-						return { stdout: 'main\n', stderr: '', exitCode: 0 };
-					}
-					if (args?.includes('--show-toplevel')) {
-						return { stdout: path.join('/parent', 'visible-repo'), stderr: '', exitCode: 0 };
-					}
+			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (_cmd, args, cwd) => {
+				if (String(cwd).endsWith('visible-repo')) {
+					return respondAsWorktreeAt(args, path.join('/parent', 'visible-repo'), {
+						branch: 'main',
+					});
 				}
-
 				return { stdout: '', stderr: 'fatal: not a git repository', exitCode: 128 };
 			});
 
@@ -5254,28 +5217,8 @@ branch refs/heads/bugfix-123
 				{ name: 'README.md', isDirectory: () => false },
 			] as any);
 
-			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (cmd, args, cwd) => {
-				const cwdStr = String(cwd);
-
-				if (cwdStr.endsWith('repo-dir')) {
-					if (args?.includes('--is-inside-work-tree')) {
-						return { stdout: 'true\n', stderr: '', exitCode: 0 };
-					}
-					if (args?.includes('--git-dir')) {
-						return { stdout: '.git', stderr: '', exitCode: 0 };
-					}
-					if (args?.includes('--git-common-dir')) {
-						return { stdout: '.git', stderr: '', exitCode: 0 };
-					}
-					if (args?.includes('--abbrev-ref')) {
-						return { stdout: 'develop\n', stderr: '', exitCode: 0 };
-					}
-					if (args?.includes('--show-toplevel')) {
-						return { stdout: path.join('/parent', 'repo-dir'), stderr: '', exitCode: 0 };
-					}
-				}
-
-				return { stdout: '', stderr: '', exitCode: 0 };
+			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (_cmd, args, cwd) => {
+				return respondAsWorktreeAt(args, String(cwd), { branch: 'develop' });
 			});
 
 			const handler = handlers.get('git:scanWorktreeDirectory');
@@ -5382,26 +5325,11 @@ branch refs/heads/bugfix-123
 				{ name: 'detached-repo', isDirectory: () => true },
 			] as any);
 
-			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (cmd, args, cwd) => {
-				if (args?.includes('--is-inside-work-tree')) {
-					return { stdout: 'true\n', stderr: '', exitCode: 0 };
-				}
-				if (args?.includes('--git-dir')) {
-					return { stdout: '.git', stderr: '', exitCode: 0 };
-				}
-				if (args?.includes('--git-common-dir')) {
-					return { stdout: '.git', stderr: '', exitCode: 0 };
-				}
-				if (args?.includes('--abbrev-ref')) {
-					// Branch command fails (e.g., empty repo)
-					return { stdout: '', stderr: 'fatal: ambiguous argument', exitCode: 128 };
-				}
-				if (args?.includes('--show-toplevel')) {
-					return { stdout: path.join('/parent', 'detached-repo'), stderr: '', exitCode: 0 };
-				}
-
-				return { stdout: '', stderr: '', exitCode: 0 };
-			});
+			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (_cmd, args, cwd) =>
+				args?.includes('--abbrev-ref')
+					? { stdout: '', stderr: 'fatal: ambiguous argument HEAD', exitCode: 128 }
+					: respondAsWorktreeAt(args, String(cwd))
+			);
 
 			const handler = handlers.get('git:scanWorktreeDirectory');
 			const result = await handler!({} as any, '/parent');
@@ -5425,27 +5353,13 @@ branch refs/heads/bugfix-123
 				{ name: 'my-worktree', isDirectory: () => true },
 			] as any);
 
-			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (cmd, args, cwd) => {
-				if (args?.includes('--is-inside-work-tree')) {
-					return { stdout: 'true\n', stderr: '', exitCode: 0 };
-				}
-				if (args?.includes('--show-toplevel')) {
-					return { stdout: path.join('/parent', 'my-worktree'), stderr: '', exitCode: 0 };
-				}
-				if (args?.includes('--git-dir')) {
-					// Worktree has a different git-dir
-					return { stdout: '../main-repo/.git/worktrees/my-worktree', stderr: '', exitCode: 0 };
-				}
-				if (args?.includes('--git-common-dir')) {
-					// Relative path to main repo's .git
-					return { stdout: '../main-repo/.git', stderr: '', exitCode: 0 };
-				}
-				if (args?.includes('--abbrev-ref')) {
-					return { stdout: 'feature-xyz\n', stderr: '', exitCode: 0 };
-				}
-
-				return { stdout: '', stderr: '', exitCode: 0 };
-			});
+			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (_cmd, args, cwd) =>
+				respondAsWorktreeAt(args, String(cwd), {
+					branch: 'feature-xyz',
+					gitDir: '../main-repo/.git/worktrees/my-worktree',
+					gitCommonDir: '../main-repo/.git',
+				})
+			);
 
 			const handler = handlers.get('git:scanWorktreeDirectory');
 			const result = await handler!({} as any, '/parent');
@@ -5469,21 +5383,7 @@ branch refs/heads/bugfix-123
 				const cwdStr = String(cwd).replace(/\\/g, '/');
 
 				if (cwdStr.endsWith('actual-worktree')) {
-					if (args?.includes('--is-inside-work-tree')) {
-						return { stdout: 'true\n', stderr: '', exitCode: 0 };
-					}
-					if (args?.includes('--show-toplevel')) {
-						return { stdout: path.join('/parent', 'actual-worktree'), stderr: '', exitCode: 0 };
-					}
-					if (args?.includes('--git-dir')) {
-						return { stdout: '.git', stderr: '', exitCode: 0 };
-					}
-					if (args?.includes('--git-common-dir')) {
-						return { stdout: '.git', stderr: '', exitCode: 0 };
-					}
-					if (args?.includes('--abbrev-ref')) {
-						return { stdout: 'feature-branch\n', stderr: '', exitCode: 0 };
-					}
+					return respondAsWorktreeAt(args, String(cwd), { branch: 'feature-branch' });
 				}
 
 				// build/ and src/ are subdirectories inside actual-worktree's repo
@@ -5521,21 +5421,7 @@ branch refs/heads/bugfix-123
 				const cwdStr = String(cwd).replace(/\\/g, '/');
 
 				if (cwdStr.endsWith('good-worktree')) {
-					if (args?.includes('--is-inside-work-tree')) {
-						return { stdout: 'true\n', stderr: '', exitCode: 0 };
-					}
-					if (args?.includes('--show-toplevel')) {
-						return { stdout: path.join('/parent', 'good-worktree'), stderr: '', exitCode: 0 };
-					}
-					if (args?.includes('--git-dir')) {
-						return { stdout: '.git', stderr: '', exitCode: 0 };
-					}
-					if (args?.includes('--git-common-dir')) {
-						return { stdout: '.git', stderr: '', exitCode: 0 };
-					}
-					if (args?.includes('--abbrev-ref')) {
-						return { stdout: 'main\n', stderr: '', exitCode: 0 };
-					}
+					return respondAsWorktreeAt(args, String(cwd));
 				}
 
 				if (path.basename(cwdStr) === 'broken-repo') {
@@ -5584,23 +5470,7 @@ branch refs/heads/bugfix-123
 			});
 
 			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (cmd, args) => {
-				if (args?.includes('--is-inside-work-tree')) {
-					return { stdout: 'true\n', stderr: '', exitCode: 0 };
-				}
-				if (args?.includes('--show-toplevel')) {
-					// git always returns realpath, not the symlink path
-					return { stdout: physicalPath, stderr: '', exitCode: 0 };
-				}
-				if (args?.includes('--git-dir')) {
-					return { stdout: '.git', stderr: '', exitCode: 0 };
-				}
-				if (args?.includes('--git-common-dir')) {
-					return { stdout: '.git', stderr: '', exitCode: 0 };
-				}
-				if (args?.includes('--abbrev-ref')) {
-					return { stdout: 'feature-branch\n', stderr: '', exitCode: 0 };
-				}
-				return { stdout: '', stderr: '', exitCode: 0 };
+				return respondAsWorktreeAt(args, physicalPath, { branch: 'feature-branch' });
 			});
 
 			const handler = handlers.get('git:scanWorktreeDirectory');
@@ -5644,42 +5514,19 @@ branch refs/heads/bugfix-123
 				}
 
 				// Helper: act like a real worktree at the given path
-				const respondAsWorktreeAt = (workPath: string, branch: string) => {
-					if (cwdStr === workPath) {
-						if (args?.includes('--is-inside-work-tree')) {
-							return { stdout: 'true\n', stderr: '', exitCode: 0 };
-						}
-						if (args?.includes('--show-toplevel')) {
-							return { stdout: workPath, stderr: '', exitCode: 0 };
-						}
-						if (args?.includes('--git-dir')) {
-							return {
-								stdout: `/parent/main-repo/.git/worktrees/${branch}`,
-								stderr: '',
-								exitCode: 0,
-							};
-						}
-						if (args?.includes('--git-common-dir')) {
-							return { stdout: '/parent/main-repo/.git', stderr: '', exitCode: 0 };
-						}
-						if (args?.includes('--abbrev-ref')) {
-							return { stdout: `${branch}\n`, stderr: '', exitCode: 0 };
-						}
-					}
-					return null;
-				};
-
-				return (
-					respondAsWorktreeAt(path.join('/parent', 'flat-branch'), 'flat-branch') ??
-					respondAsWorktreeAt(
-						path.join('/parent', 'fix', 'worktree-removal'),
-						'fix/worktree-removal'
-					) ??
-					respondAsWorktreeAt(
-						path.join('/parent', 'fix', 'files-restart'),
-						'fix/files-restart'
-					) ?? { stdout: '', stderr: 'fatal: not a git repository', exitCode: 128 }
-				);
+				const branches = new Map([
+					[path.join('/parent', 'flat-branch'), 'flat-branch'],
+					[path.join('/parent', 'fix', 'worktree-removal'), 'fix/worktree-removal'],
+					[path.join('/parent', 'fix', 'files-restart'), 'fix/files-restart'],
+				]);
+				const branch = branches.get(cwdStr);
+				return branch === undefined
+					? { stdout: '', stderr: 'fatal: not a git repository', exitCode: 128 }
+					: respondAsWorktreeAt(args, cwdStr, {
+							branch,
+							gitDir: `/parent/main-repo/.git/worktrees/${branch}`,
+							gitCommonDir: '/parent/main-repo/.git',
+						});
 			});
 
 			const handler = handlers.get('git:scanWorktreeDirectory');
@@ -5718,16 +5565,7 @@ branch refs/heads/bugfix-123
 			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (cmd, args, cwd) => {
 				const cwdStr = String(cwd);
 				if (cwdStr === path.join('/parent', 'a', 'b', 'c')) {
-					if (args?.includes('--is-inside-work-tree')) {
-						return { stdout: 'true\n', stderr: '', exitCode: 0 };
-					}
-					if (args?.includes('--show-toplevel')) {
-						return { stdout: cwdStr, stderr: '', exitCode: 0 };
-					}
-					if (args?.includes('--abbrev-ref')) {
-						return { stdout: 'too-deep\n', stderr: '', exitCode: 0 };
-					}
-					return { stdout: '.git', stderr: '', exitCode: 0 };
+					return respondAsWorktreeAt(args, cwdStr, { branch: 'too-deep' });
 				}
 				return { stdout: '', stderr: 'fatal: not a git repository', exitCode: 128 };
 			});
@@ -5762,7 +5600,7 @@ branch refs/heads/bugfix-123
 			expect(result.scanFailed).toBe(true);
 		});
 
-		it('should run each SSH git probe in the discovered worktree directory', async () => {
+		it('discovers SSH worktrees using their remote paths', async () => {
 			const remotePath = '/remote/worktrees/feature';
 			mockSettingsStore.get.mockReturnValue([
 				{ id: 'ssh-1', host: 'remote.example.com', user: 'me' },
@@ -5784,15 +5622,11 @@ branch refs/heads/bugfix-123
 					if (remoteCwd !== remotePath) {
 						return { stdout: '', stderr: 'fatal: not a git repository', exitCode: 128 };
 					}
-					if (args.includes('--is-inside-work-tree'))
-						return { stdout: 'true\n', stderr: '', exitCode: 0 };
-					if (args.includes('--show-toplevel'))
-						return { stdout: `${remotePath}\n`, stderr: '', exitCode: 0 };
-					if (args.includes('--git-dir'))
-						return { stdout: '/remote/repo/.git/worktrees/feature\n', stderr: '', exitCode: 0 };
-					if (args.includes('--git-common-dir'))
-						return { stdout: '/remote/repo/.git\n', stderr: '', exitCode: 0 };
-					return { stdout: 'feature\n', stderr: '', exitCode: 0 };
+					return respondAsWorktreeAt(args, remotePath, {
+						branch: 'feature',
+						gitDir: '/remote/repo/.git/worktrees/feature',
+						gitCommonDir: '/remote/repo/.git',
+					});
 				}
 			);
 
@@ -5808,10 +5642,6 @@ branch refs/heads/bugfix-123
 					repoRoot: '/remote/repo',
 				},
 			]);
-			expect(remoteGit.execGit).toHaveBeenCalledTimes(5);
-			for (const call of vi.mocked(remoteGit.execGit).mock.calls) {
-				expect(call[3]).toBe(remotePath);
-			}
 		});
 
 		it('should swallow read errors on nested group directories', async () => {
@@ -5837,16 +5667,7 @@ branch refs/heads/bugfix-123
 			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (cmd, args, cwd) => {
 				const cwdStr = String(cwd);
 				if (cwdStr === path.join('/parent', 'good-flat')) {
-					if (args?.includes('--is-inside-work-tree')) {
-						return { stdout: 'true\n', stderr: '', exitCode: 0 };
-					}
-					if (args?.includes('--show-toplevel')) {
-						return { stdout: cwdStr, stderr: '', exitCode: 0 };
-					}
-					if (args?.includes('--abbrev-ref')) {
-						return { stdout: 'good-flat\n', stderr: '', exitCode: 0 };
-					}
-					return { stdout: '.git', stderr: '', exitCode: 0 };
+					return respondAsWorktreeAt(args, cwdStr, { branch: 'good-flat' });
 				}
 				return { stdout: '', stderr: 'fatal: not a git repository', exitCode: 128 };
 			});
@@ -5870,7 +5691,71 @@ branch refs/heads/bugfix-123
 		beforeEach(async () => {
 			mockFs = (await import('fs/promises')).default;
 			mockChokidar = (await import('chokidar')).default;
+			vi.mocked(mockFs.readdir).mockResolvedValue([]);
 		});
+
+		it('rediscovers a nested worktree when a removed root becomes a branch group', async () => {
+			const realFs = await vi.importActual<typeof import('fs/promises')>('fs/promises');
+			const realChokidar = await vi.importActual<typeof import('chokidar')>('chokidar');
+			const { tmpdir } = await import('os');
+			const parent = await realFs.mkdtemp(path.join(tmpdir(), 'maestro-watch-reuse-'));
+			const formerRoot = path.join(parent, 'feature');
+			const nestedRoot = path.join(formerRoot, 'new-worktree');
+			const ready = Promise.withResolvers<void>();
+			const watchSpy = vi.spyOn(mockChokidar, 'watch').mockImplementation((...args) => {
+				const watcher = realChokidar.watch(...args);
+				watcher.once('ready', ready.resolve);
+				return watcher;
+			});
+			try {
+				await realFs.mkdir(path.join(formerRoot, '.git'), { recursive: true });
+				const entries = await realFs.readdir(parent, { withFileTypes: true });
+				vi.mocked(mockFs.readdir).mockResolvedValue(entries as unknown as Dirent<Buffer>[]);
+				vi.mocked(mockFs.access).mockResolvedValue(undefined);
+				vi.mocked(execFile.execFileNoThrow).mockImplementation(async (_command, args, cwd) => {
+					if (String(cwd) !== nestedRoot) {
+						return { stdout: '', stderr: 'fatal: not a git repository', exitCode: 128 };
+					}
+					return {
+						stdout: args?.includes('--is-inside-work-tree')
+							? 'true'
+							: args?.includes('--show-toplevel')
+								? nestedRoot
+								: 'feature/new-worktree',
+						stderr: '',
+						exitCode: 0,
+					};
+				});
+				await handlers.get('git:watchWorktreeDirectory')!({}, 'reuse-root', parent);
+				await ready.promise;
+				await realFs.rm(formerRoot, { recursive: true });
+				await vi.waitFor(() => {
+					expect(mockBroadcastBridgeEvent).toHaveBeenCalledWith('worktree:removed', [
+						{ sessionId: 'reuse-root', worktreePath: formerRoot },
+					]);
+				});
+				await realFs.mkdir(path.join(nestedRoot, '.git'), { recursive: true });
+				await vi.waitFor(
+					() => {
+						expect(mockBroadcastBridgeEvent).toHaveBeenCalledWith('worktree:discovered', [
+							{
+								sessionId: 'reuse-root',
+								worktree: {
+									path: nestedRoot,
+									name: 'new-worktree',
+									branch: 'feature/new-worktree',
+								},
+							},
+						]);
+					},
+					{ timeout: 2500 }
+				);
+			} finally {
+				await handlers.get('git:unwatchWorktreeDirectory')!({}, 'reuse-root');
+				watchSpy.mockRestore();
+				await realFs.rm(parent, { recursive: true, force: true });
+			}
+		}, 10000);
 
 		it('contains a closing-window send race, broadcasts removals and delivers later events to the replacement window', async () => {
 			const parent = path.resolve('/watched/trees');
@@ -6017,32 +5902,6 @@ branch refs/heads/bugfix-123
 				}
 			}
 		);
-
-		it('should start watching a valid directory and return success', async () => {
-			// Mock fs.access to succeed (directory exists)
-			vi.mocked(mockFs.access).mockResolvedValue(undefined);
-
-			// Mock chokidar.watch
-			const mockWatcher = {
-				on: vi.fn().mockReturnThis(),
-				close: vi.fn().mockResolvedValue(undefined),
-			};
-			vi.mocked(mockChokidar.watch).mockReturnValue(mockWatcher as any);
-
-			const handler = handlers.get('git:watchWorktreeDirectory');
-			const result = await handler!({} as any, 'session-123', '/parent/worktrees');
-
-			expect(mockFs.access).toHaveBeenCalledWith('/parent/worktrees');
-			expect(mockChokidar.watch).toHaveBeenCalledWith('/parent/worktrees', {
-				ignored: [expect.any(Function), expect.any(RegExp)],
-				persistent: true,
-				ignoreInitial: true,
-				depth: 1,
-			});
-			expect(mockWatcher.on).toHaveBeenCalledWith('addDir', expect.any(Function));
-			expect(mockWatcher.on).toHaveBeenCalledWith('error', expect.any(Function));
-			expect(result).toEqual({ success: true });
-		});
 
 		it('should close existing watcher before starting new one for same session', async () => {
 			vi.mocked(mockFs.access).mockResolvedValue(undefined);

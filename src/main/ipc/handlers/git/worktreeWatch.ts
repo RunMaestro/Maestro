@@ -15,6 +15,8 @@ import { captureException } from '../../../utils/sentry';
 import { markStaleForDeletedWorktreeUsingStore } from '../../../agent-run/worktree-stale';
 import { LOG_CONTEXT, handlerOpts, GitHandlerDependencies } from './shared';
 import { isWorktreeCreatedByMaestro } from './worktreeCreationMarks';
+import { yieldToEventLoop } from '../../../utils/concurrency';
+import { mapWithConcurrency } from '../../../../shared/concurrency';
 
 /**
  * Directory-scan failures that are environmental rather than bugs: the path was
@@ -45,7 +47,7 @@ export function registerWorktreeWatchHandlers(deps: GitHandlerDependencies): voi
 
 	// Scan a directory for subdirectories that are git repositories or worktrees
 	// This is used for auto-discovering worktrees in a parent directory
-	// PERFORMANCE: Parallelized git operations to avoid blocking UI (was sequential before)
+	// Windows process creation blocks even through execFile; bound candidate fan-out.
 	// Supports SSH remote execution via optional sshRemoteId parameter
 	//
 	// Recurses one level into non-git subdirectories so worktrees created from
@@ -168,36 +170,67 @@ export function registerWorktreeWatchHandlers(deps: GitHandlerDependencies): voi
 					name: string
 				): Promise<ScanEntry | null> => {
 					try {
-						const isInsideWorkTree = await execGit(
-							['rev-parse', '--is-inside-work-tree'],
-							subdirPath,
-							sshRemote,
-							subdirPath
-						);
-						if (isInsideWorkTree.exitCode !== 0) {
-							if (isNotAGitRepositoryError(isInsideWorkTree.stderr)) return null;
-							throw new Error(
-								isInsideWorkTree.stderr || 'Could not inspect candidate Git repository'
+						if (!sshRemote) {
+							try {
+								// Repositories and linked worktrees both have a .git marker.
+								// Ordinary grouping folders need no Git subprocess at all.
+								await fs.access(path.join(subdirPath, '.git'));
+							} catch (err) {
+								const code = (err as NodeJS.ErrnoException).code;
+								if (code === 'ENOENT' || code === 'ENOTDIR') return null;
+								throw err;
+							}
+						} else {
+							const inside = await execGit(
+								['rev-parse', '--is-inside-work-tree'],
+								subdirPath,
+								sshRemote,
+								subdirPath
 							);
-						}
-						if (isInsideWorkTree.stdout.trim() === 'false') return null;
-						if (isInsideWorkTree.stdout.trim() !== 'true') {
-							throw new Error('Invalid candidate Git repository response');
+							if (inside.exitCode !== 0) {
+								if (isNotAGitRepositoryError(inside.stderr)) return null;
+								throw new Error(inside.stderr || 'Could not inspect candidate Git repository');
+							}
+							if (inside.stdout.trim() === 'false') return null;
+							if (inside.stdout.trim() !== 'true') {
+								throw new Error('Invalid candidate Git repository response');
+							}
 						}
 
-						// Verify this directory IS a worktree/repo root, not just a subdirectory inside one.
-						// Without this check, subdirectories like "build/" or "src/" inside a worktree
-						// would pass --is-inside-work-tree and be incorrectly treated as separate worktrees.
-						const toplevelResult = await execGit(
-							['rev-parse', '--show-toplevel'],
+						// Obtain all path fields with one process per candidate.
+						const pathOptions = ['--show-toplevel', '--git-dir', '--git-common-dir'];
+						const metadata = await execGit(
+							['rev-parse', ...pathOptions],
 							subdirPath,
 							sshRemote,
 							subdirPath
 						);
-						if (toplevelResult.exitCode !== 0 || !toplevelResult.stdout.trim()) {
-							throw new Error(toplevelResult.stderr || 'Could not resolve candidate Git root');
+						if (metadata.exitCode !== 0) {
+							if (isNotAGitRepositoryError(metadata.stderr)) return null;
+							throw new Error(metadata.stderr || 'Could not read candidate Git identity');
 						}
-						const toplevel = toplevelResult.stdout.trim();
+						let fields = metadata.stdout.trim().split(/\r?\n/);
+						if (fields.length > pathOptions.length) {
+							// POSIX pathnames can contain newlines. Query separately
+							// rather than interpreting part of a pathname as another field.
+							fields = [];
+							for (const option of pathOptions) {
+								const result = await execGit(
+									['rev-parse', option],
+									subdirPath,
+									sshRemote,
+									subdirPath
+								);
+								if (result.exitCode !== 0 || !result.stdout.trim()) {
+									throw new Error(result.stderr || 'Could not read candidate Git identity');
+								}
+								fields.push(result.stdout.trim());
+							}
+						}
+						if (fields.length !== pathOptions.length || fields.some((field) => !field)) {
+							throw new Error('Invalid candidate Git identity response');
+						}
+						const [toplevel, gitDir, gitCommonDir] = fields;
 						// For local paths, canonicalize via realpath so that symlinked base
 						// paths (common on Linux: /home → /data/home; Windows junctions) match
 						// what git rev-parse --show-toplevel returns. path.resolve alone does
@@ -209,27 +242,13 @@ export function registerWorktreeWatchHandlers(deps: GitHandlerDependencies): voi
 							return null; // Subdirectory inside a repo, not a repo/worktree root
 						}
 
-						// Run remaining git commands in parallel for each subdirectory (SSH-aware via execGit)
-						const [gitDirResult, gitCommonDirResult, branchResult] = await Promise.all([
-							execGit(['rev-parse', '--git-dir'], subdirPath, sshRemote, subdirPath),
-							execGit(['rev-parse', '--git-common-dir'], subdirPath, sshRemote, subdirPath),
-							execGit(['rev-parse', '--abbrev-ref', 'HEAD'], subdirPath, sshRemote, subdirPath),
-						]);
-
-						if (
-							gitDirResult.exitCode !== 0 ||
-							gitCommonDirResult.exitCode !== 0 ||
-							!gitDirResult.stdout.trim() ||
-							!gitCommonDirResult.stdout.trim()
-						) {
-							throw new Error(
-								gitDirResult.stderr ||
-									gitCommonDirResult.stderr ||
-									'Could not read candidate Git identity'
-							);
-						}
-						const gitDir = gitDirResult.stdout.trim();
-						const gitCommonDir = gitCommonDirResult.stdout.trim();
+						// An unborn repository has no HEAD, but remains discoverable.
+						const branchResult = await execGit(
+							['rev-parse', '--abbrev-ref', 'HEAD'],
+							subdirPath,
+							sshRemote,
+							subdirPath
+						);
 						const isWorktree = gitDir !== gitCommonDir;
 						const branch = branchResult.exitCode === 0 ? branchResult.stdout.trim() : null;
 
@@ -279,27 +298,26 @@ export function registerWorktreeWatchHandlers(deps: GitHandlerDependencies): voi
 				const scanLevel = async (dir: string, depthRemaining: number): Promise<ScanEntry[]> => {
 					const subdirs = await readSubdirs(dir);
 
-					const results = await Promise.all(
-						subdirs.map(async (subdir) => {
-							let subdirPath = dir;
-							try {
-								subdirPath = joinPath(dir, subdir.name);
-								const entry = await inspectSubdir(subdirPath, subdir.name);
-								if (entry) return [entry];
-								if (unresolvedPaths.has(subdirPath)) return [];
-								if (depthRemaining > 0) {
-									return await scanLevel(subdirPath, depthRemaining - 1);
-								}
-							} catch (err) {
-								await markUnresolvedPath(subdirPath);
-								const code = (err as NodeJS.ErrnoException | undefined)?.code;
-								if (!isExpectedScanError(code)) {
-									logger.warn(`${LOG_CONTEXT} Failed to inspect directory ${subdirPath}: ${err}`);
-								}
+					const results = await mapWithConcurrency(subdirs, 2, async (subdir) => {
+						await yieldToEventLoop();
+						let subdirPath = dir;
+						try {
+							subdirPath = joinPath(dir, subdir.name);
+							const entry = await inspectSubdir(subdirPath, subdir.name);
+							if (entry) return [entry];
+							if (unresolvedPaths.has(subdirPath)) return [];
+							if (depthRemaining > 0) {
+								return await scanLevel(subdirPath, depthRemaining - 1);
 							}
-							return [];
-						})
-					);
+						} catch (err) {
+							await markUnresolvedPath(subdirPath);
+							const code = (err as NodeJS.ErrnoException | undefined)?.code;
+							if (!isExpectedScanError(code)) {
+								logger.warn(`${LOG_CONTEXT} Failed to inspect directory ${subdirPath}: ${err}`);
+							}
+						}
+						return [];
+					});
 
 					return results.flat();
 				};
@@ -376,6 +394,28 @@ export function registerWorktreeWatchHandlers(deps: GitHandlerDependencies): voi
 				try {
 					// Verify directory exists
 					await fs.access(worktreePath);
+					// Discovery needs repository-root add/remove events, not watches
+					// for every file inside every existing worktree. On Windows those
+					// native watcher registrations otherwise stall the main process.
+					const repositoryRoots = new Set<string>();
+					const entries = await fs.readdir(worktreePath, { withFileTypes: true });
+					await mapWithConcurrency(entries, 16, async (entry) => {
+						if (entry.name.startsWith('.') || (!entry.isDirectory() && !entry.isSymbolicLink())) {
+							return;
+						}
+						const candidate = path.resolve(worktreePath, entry.name);
+						try {
+							await fs.access(path.join(candidate, '.git'));
+							repositoryRoots.add(candidate);
+						} catch (err) {
+							const code = (err as NodeJS.ErrnoException).code;
+							if (code !== 'ENOENT' && code !== 'ENOTDIR') {
+								logger.warn(
+									`${LOG_CONTEXT} Could not inspect watched directory ${candidate}: ${err}`
+								);
+							}
+						}
+					});
 
 					// Watch one level deep so worktrees from slash-named branches
 					// (e.g. "fix/worktree-removal" → <basePath>/fix/worktree-removal)
@@ -387,6 +427,7 @@ export function registerWorktreeWatchHandlers(deps: GitHandlerDependencies): voi
 						ignored: [
 							ignoreDotfilesUnder(worktreePath), // Ignore dotfiles below the root, not above it
 							WINDOWS_LOCKED_SYSTEM_FILES,
+							(candidate: string) => repositoryRoots.has(path.dirname(path.resolve(candidate))),
 						],
 						persistent: true,
 						ignoreInitial: true,
@@ -524,6 +565,7 @@ export function registerWorktreeWatchHandlers(deps: GitHandlerDependencies): voi
 					// no-op, not a session removal. See useWorktreeHandlers.ts.
 					watcher.on('unlinkDir', (dirPath: string) => {
 						if (dirPath === worktreePath) return;
+						repositoryRoots.delete(path.resolve(dirPath));
 
 						logger.warn(`[WT-DEBUG] unlinkDir event: ${dirPath}`);
 						logger.info(`${LOG_CONTEXT} Worktree directory removed: ${dirPath}`);

@@ -29,6 +29,7 @@ The `window.maestro` API exposes the following namespaces:
 ## Git Integration
 
 - `git` - Status, diff, isRepo, numstat, branches, tags, info
+- `git.refs(cwd, sshRemoteId?, remoteCwd?)` - Background repository/branches/tags snapshot with one five-second budget. A `ready` result includes `isRepo`, `branches`, and `tags`; `unknown` means retain cached state, not "not a repository". Uses the existing read-only single-flight runner; foreground query contracts are unchanged.
 - `git` - Worktree support: worktreeInfo, getRepoRoot, worktreeSetup, worktreeRunSetup, worktreeCheckout
 - `git` - PR creation: createPR, checkGhCli, getDefaultBranch
 - `git` - Remote sync: runCommand/cancelCommand/onCommandOutput (streaming pull/push/fetch), checkoutBranch

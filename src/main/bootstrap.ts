@@ -12,7 +12,14 @@ if (process.argv.includes('--lite')) {
 			app.exit(1);
 		});
 } else {
-	void import('./index');
+	void import('./profiling/stall-monitor')
+		.then(({ startStallMonitoring }) => {
+			startStallMonitoring();
+		})
+		.catch(() => {
+			console.warn('[StallMonitor] Background diagnostics could not start');
+		})
+		.then(() => import('./index'));
 }
 
 export {};

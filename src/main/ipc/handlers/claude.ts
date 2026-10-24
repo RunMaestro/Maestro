@@ -42,7 +42,8 @@ import {
 	STATS_CACHE_VERSION,
 } from '../../utils/statsCache';
 import { createCacheCheckpointer } from '../../utils/cache-checkpointer';
-import { mapWithConcurrency, LOCAL_SESSION_PARSE_CONCURRENCY } from '../../utils/concurrency';
+import { LOCAL_SESSION_PARSE_CONCURRENCY } from '../../utils/concurrency';
+import { mapWithConcurrency } from '../../../shared/concurrency';
 import { runTranscriptParse } from '../../transcript-parse/transcript-parse-pool';
 import { extractClaudeTextFromContent } from '../../transcript-parse/transcript-parse-tasks';
 import { withStatsIndexing } from '../../stats/stats-indexing';

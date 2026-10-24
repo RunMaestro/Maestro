@@ -763,7 +763,8 @@ export function useFileTreeManagement(
 		// restored from persistence or left over from a previous failed load, the auto-loader
 		// should get a fresh attempt so the current code path can try (and either clear or
 		// update the error). Otherwise a stale error permanently blocks the panel.
-		const hasLoadedOnce = session.fileTreeStats !== undefined;
+		const hasLoadedOnce =
+			session.fileTreeStats !== undefined || session.fileTreeLoadedCap !== undefined;
 		if (
 			(!session.fileTree || session.fileTree.length === 0) &&
 			!session.fileTreeLoading &&
@@ -914,18 +915,20 @@ export function useFileTreeManagement(
 				},
 			});
 
-			// Fetch stats independently - a directorySize failure (e.g., `du` timeout
-			// on large repos over SSH) should not prevent the file tree from loading.
-			// Stats update the UI asynchronously after the tree is already displayed.
-			window.maestro.fs
-				.directorySize(
-					treeRoot,
-					sshContext?.sshRemoteId,
-					localOptions?.ignorePatterns,
-					localOptions?.honorGitignore
-				)
+			// The footer needs every file's size; the visible tree does not.
+			// Let the tree finish before competing for the filesystem threadpool.
+			treePromise
+				.then(() => {
+					if (isStale(sessionId, seq)) return undefined;
+					return window.maestro.fs.directorySize(
+						treeRoot,
+						sshContext?.sshRemoteId,
+						localOptions?.ignorePatterns,
+						localOptions?.honorGitignore
+					);
+				})
 				.then((stats) => {
-					if (isStale(sessionId, seq)) return;
+					if (!stats || isStale(sessionId, seq)) return;
 					setSessions((prev) =>
 						prev.map((s) =>
 							s.id === sessionId && stillAtRoot(s)

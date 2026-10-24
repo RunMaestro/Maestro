@@ -24,10 +24,10 @@ import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { readFileRemote, readDirRemote, statRemote } from '../utils/remote-fs';
 import {
-	mapWithConcurrency,
 	LOCAL_SESSION_READ_CONCURRENCY,
 	REMOTE_SESSION_READ_CONCURRENCY,
 } from '../utils/concurrency';
+import { mapWithConcurrency } from '../../shared/concurrency';
 import type {
 	AgentSessionInfo,
 	SessionMessagesResult,

@@ -13,6 +13,7 @@ import type {
 	GitCommandOutputChunk,
 	GitRunCommandResult,
 	GitStreamingOperation,
+	GitRefsSnapshot,
 } from '../../shared/gitUtils';
 import { createIpcMethod } from './ipcWrapper';
 
@@ -79,6 +80,14 @@ export const gitService = {
 		});
 	},
 
+	/** Unlike legacy convenience reads, an unknown snapshot never means an empty repository. */
+	async getRefs(cwd: string, sshRemoteId?: string): Promise<GitRefsSnapshot> {
+		return createIpcMethod<GitRefsSnapshot>({
+			call: () => window.maestro.git.refs(cwd, sshRemoteId),
+			errorContext: 'Git refs',
+			defaultValue: { state: 'unknown', timedOut: false, error: 'Git reference query failed' },
+		});
+	},
 	/**
 	 * Initialize a new git repository at the given directory.
 	 * @param cwd Working directory path

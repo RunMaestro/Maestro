@@ -61,7 +61,11 @@ import { walkLocalFileTree } from '../../utils/file-tree-walk';
 import { getDragOutIcon } from '../../utils/drag-out-icon';
 import { getSshRemoteById } from '../../stores';
 import { captureException } from '../../utils/sentry';
-import { mapWithConcurrency, LOCAL_FILE_DELETE_CONCURRENCY } from '../../utils/concurrency';
+import {
+	LOCAL_FILE_DELETE_CONCURRENCY,
+	LOCAL_SESSION_READ_CONCURRENCY,
+} from '../../utils/concurrency';
+import { mapWithConcurrency } from '../../../shared/concurrency';
 import { getHostDirectoryInfo } from '../../utils/host-directory';
 
 /**
@@ -613,7 +617,7 @@ export function registerFilesystemHandlers(): void {
 	// the registration rather than the module so a re-registration starts clean.
 	const directorySizeCache = new Map<
 		string,
-		{ startedAt: number; result: Promise<DirectorySizeResult> }
+		{ settledAt?: number; result: Promise<DirectorySizeResult> }
 	>();
 
 	// Calculate total size of a directory recursively
@@ -659,21 +663,36 @@ export function registerFilesystemHandlers(): void {
 				ignorePatterns ?? LOCAL_IGNORE_DEFAULTS
 			).join('\u0001')}`;
 			const cached = directorySizeCache.get(cacheKey);
-			if (cached && Date.now() - cached.startedAt < DIRECTORY_SIZE_CACHE_MS) {
+			if (
+				cached &&
+				(cached.settledAt === undefined || Date.now() - cached.settledAt < DIRECTORY_SIZE_CACHE_MS)
+			) {
 				return cached.result;
 			}
 
 			const pending = computeDirectorySize();
-			const now = Date.now();
-			// Prune while we are here so a long-lived session cannot accumulate one
-			// entry per directory the user ever opened.
-			for (const [key, entry] of directorySizeCache) {
-				if (now - entry.startedAt >= DIRECTORY_SIZE_CACHE_MS) directorySizeCache.delete(key);
+			const entry: { settledAt?: number; result: Promise<DirectorySizeResult> } = {
+				result: pending,
+			};
+			// Never expire an in-flight walk. A large tree can exceed the settled
+			// cache TTL by minutes; expiring it starts duplicate full-disk scans.
+			for (const [key, value] of directorySizeCache) {
+				if (
+					value.settledAt !== undefined &&
+					Date.now() - value.settledAt >= DIRECTORY_SIZE_CACHE_MS
+				) {
+					directorySizeCache.delete(key);
+				}
 			}
-			directorySizeCache.set(cacheKey, { startedAt: now, result: pending });
-			// A failed walk must not be cached: the next caller should retry, not
-			// inherit the rejection for the rest of the TTL.
-			pending.catch(() => directorySizeCache.delete(cacheKey));
+			directorySizeCache.set(cacheKey, entry);
+			void pending.then(
+				() => {
+					entry.settledAt = Date.now();
+				},
+				() => {
+					if (directorySizeCache.get(cacheKey) === entry) directorySizeCache.delete(cacheKey);
+				}
+			);
 			return pending;
 
 			async function computeDirectorySize(): Promise<DirectorySizeResult> {
@@ -734,15 +753,15 @@ export function registerFilesystemHandlers(): void {
 							}
 						}
 
-						const sizes = await Promise.all(
-							filePaths.map((filePath) =>
-								// A file we cannot stat (permissions, a race with a delete)
-								// contributes nothing rather than failing the whole walk.
+						const sizes = await mapWithConcurrency(
+							filePaths,
+							LOCAL_SESSION_READ_CONCURRENCY,
+							(filePath) =>
+								// A vanished or unreadable file contributes no bytes.
 								fs.stat(filePath).then(
 									(stats) => stats.size,
 									() => 0
 								)
-							)
 						);
 						for (const size of sizes) totalSize += size;
 					} catch {

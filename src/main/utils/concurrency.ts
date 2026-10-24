@@ -47,32 +47,6 @@ export const LOCAL_SESSION_PARSE_CONCURRENCY = 4;
 export const LOCAL_FILE_DELETE_CONCURRENCY = 16;
 
 /**
- * Map `items` with a bounded concurrency.
- *
- * Spawns up to `limit` workers that pull from a shared cursor; results are
- * placed back into the original index positions so the output matches the
- * input ordering even when individual tasks finish out of order.
- */
-export async function mapWithConcurrency<T, R>(
-	items: T[],
-	limit: number,
-	fn: (item: T, index: number) => Promise<R>
-): Promise<R[]> {
-	const results: R[] = new Array(items.length);
-	let cursor = 0;
-	const workerCount = Math.min(Math.max(1, limit), items.length);
-	const workers = Array.from({ length: workerCount }, async () => {
-		while (true) {
-			const index = cursor++;
-			if (index >= items.length) return;
-			results[index] = await fn(items[index], index);
-		}
-	});
-	await Promise.all(workers);
-	return results;
-}
-
-/**
  * Yield to the event loop once. Long synchronous work in the main process (a
  * parse loop, a scan over many stores) calls this between batches so IPC and
  * timers get a turn and the app stays responsive.

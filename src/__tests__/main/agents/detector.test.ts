@@ -2022,7 +2022,8 @@ describe('agent-detector', () => {
 
 	describe('model cache TTL', () => {
 		it('should invalidate model cache after TTL expires', async () => {
-			vi.useFakeTimers();
+			let now = Date.now();
+			vi.spyOn(Date, 'now').mockImplementation(() => now);
 
 			// Setup: opencode is available
 			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
@@ -2062,7 +2063,7 @@ describe('agent-detector', () => {
 			);
 
 			// Advance time past TTL
-			vi.advanceTimersByTime(150);
+			now += 150;
 
 			// Setup new response for after cache expires
 			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
@@ -2085,8 +2086,6 @@ describe('agent-detector', () => {
 				undefined,
 				expect.any(Object)
 			);
-
-			vi.useRealTimers();
 		});
 
 		it('should accept custom cache TTL in constructor', () => {
