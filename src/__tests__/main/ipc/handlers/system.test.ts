@@ -157,6 +157,7 @@ import { setAllowPrerelease } from '../../../../main/auto-updater';
 import { tunnelManager } from '../../../../main/tunnel-manager';
 import { powerManager } from '../../../../main/power-manager';
 import * as fsSync from 'fs';
+import { INSTALL_DIR_SYNC_PATH_ERROR } from '../../../../shared/syncPath';
 
 describe('system IPC handlers', () => {
 	let handlers: Map<string, Function>;
@@ -1819,6 +1820,22 @@ describe('system IPC handlers', () => {
 				success: false,
 				error: 'Cannot create directory: /protected/path',
 			});
+		});
+
+		it('should reject a path inside the install directory (#1875)', async () => {
+			mockBootstrapStore.get.mockReturnValue(null);
+			const exe = path.join(path.resolve('/apps/Maestro'), 'Maestro.exe');
+			mockApp.getPath.mockImplementation((name: string) =>
+				name === 'exe' ? exe : '/default/path'
+			);
+
+			const handler = handlers.get('sync:setCustomPath');
+			const result = await handler!({} as any, path.join(path.dirname(exe), 'storage'));
+
+			expect(result).toEqual({ success: false, error: INSTALL_DIR_SYNC_PATH_ERROR });
+			expect(fsSync.mkdirSync).not.toHaveBeenCalled();
+			expect(fsSync.copyFileSync).not.toHaveBeenCalled();
+			expect(mockBootstrapStore.set).not.toHaveBeenCalled();
 		});
 
 		it('should migrate settings files to new location', async () => {
