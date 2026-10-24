@@ -278,6 +278,18 @@ describe('broadcastBridgeEvent', () => {
 		uninstallWebContentsBridgeHook();
 	});
 
+	it('fans out notification:historyChanged so a browser inbox follows the host', () => {
+		const broadcastToAll = vi.fn();
+		installWebContentsBridgeHook({
+			broadcastToAll,
+		} as unknown as Parameters<typeof installWebContentsBridgeHook>[0]);
+
+		broadcastBridgeEvent('notification:historyChanged', [{ success: true, revision: 1 }]);
+		expect(broadcastToAll).toHaveBeenCalledTimes(1);
+
+		uninstallWebContentsBridgeHook();
+	});
+
 	it('stops broadcasting after uninstall', () => {
 		const broadcastToAll = vi.fn();
 		installWebContentsBridgeHook({
@@ -469,6 +481,27 @@ describe('handleBridgeInvoke denied channels', () => {
 			ok: true,
 			result: '/opt/maestro-run',
 		});
+	});
+
+	// #1862: a browser starts, reclaims and abandons its own Auto Runs, and
+	// marks its inbox read, through these. Refusing them broke all four.
+	it.each([
+		'web:claimAutoRunStart',
+		'web:releaseAutoRunStartClaim',
+		'web:takeOrphanedAutoRuns',
+		'web:abandonAutoRunReclaim',
+		'notification:changeHistory',
+	])('answers %s, which a browser client calls on its own', async (channel) => {
+		const handler = vi.fn(async () => 'ok');
+		invokeHandlers.set(channel, handler);
+		const send = vi.fn();
+		await handleBridgeInvoke(
+			makeClient(),
+			{ type: 'bridge.invoke', requestId: 13, channel, args: ['agent-1'] },
+			send
+		);
+		expect(handler).toHaveBeenCalledTimes(1);
+		expect(send.mock.calls[0][1]).toMatchObject({ requestId: 13, ok: true, result: 'ok' });
 	});
 
 	it('refuses a denied send-style channel too', async () => {
