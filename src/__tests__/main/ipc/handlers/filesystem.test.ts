@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ipcMain } from 'electron';
+import type { Dirent, Stats } from 'fs';
 import {
 	isParquetPreviewMarker,
 	parseParquetPreviewMarker,
@@ -1264,6 +1265,38 @@ describe('filesystem handlers', () => {
 			expect(b).toEqual(a);
 			expect(c).toEqual(a);
 			expect(vi.mocked(mockFs.readdir)).toHaveBeenCalledTimes(1);
+		});
+
+		it('shares a long-running scan beyond the settled TTL and expires only its completed answer', async () => {
+			const mockFs = (await import('fs/promises')).default;
+			let now = 10_000;
+			vi.spyOn(Date, 'now').mockImplementation(() => now);
+			// Vitest selects readdir's Buffer overload; the real call requests string Dirents.
+			const entries = [
+				{ name: 'file.txt', isDirectory: () => false, isFile: () => true },
+			] as unknown as Dirent<Buffer>[];
+			const { promise: listing, resolve: finishListing } =
+				Promise.withResolvers<Dirent<Buffer>[]>();
+			vi.mocked(mockFs.readdir).mockReturnValueOnce(listing).mockResolvedValue(entries);
+			// The directory-size handler reads only size from the native stat result.
+			const originalStat = { size: 7 } as Stats;
+			vi.mocked(mockFs.stat).mockResolvedValue(originalStat);
+			const handler = registeredHandlers.get('fs:directorySize')!;
+			const first = handler({}, '/slow-tree');
+			now += 5_000;
+			const late = handler({}, '/slow-tree');
+			finishListing(entries);
+			const expected = { totalSize: 7, fileCount: 1, folderCount: 0 };
+			expect(await first).toEqual(expected);
+			expect(await late).toEqual(expected);
+			expect(mockFs.readdir).toHaveBeenCalledTimes(1);
+
+			now += 1_999;
+			expect(await handler({}, '/slow-tree')).toEqual(expected);
+			const changedStat = { size: 11 } as Stats;
+			vi.mocked(mockFs.stat).mockResolvedValue(changedStat);
+			now += 2;
+			expect(await handler({}, '/slow-tree')).toEqual({ ...expected, totalSize: 11 });
 		});
 
 		it('does not reuse one directory answer for a different request', async () => {

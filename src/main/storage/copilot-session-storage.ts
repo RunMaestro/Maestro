@@ -9,7 +9,8 @@ import {
 	directorySizeRemote,
 	bulkStatFileInSubdirsRemote,
 } from '../utils/remote-fs';
-import { mapWithConcurrency, REMOTE_SESSION_READ_CONCURRENCY } from '../utils/concurrency';
+import { REMOTE_SESSION_READ_CONCURRENCY } from '../utils/concurrency';
+import { mapWithConcurrency } from '../../shared/concurrency';
 import type {
 	AgentSessionInfo,
 	PaginatedSessionsResult,

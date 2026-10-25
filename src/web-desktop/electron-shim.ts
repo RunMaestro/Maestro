@@ -48,6 +48,7 @@ const READ_ONLY_CHANNELS = new Set([
 	'git:info',
 	'git:log',
 	'git:numstat',
+	'git:refs',
 	'git:remote',
 	'git:scanWorktreeDirectory',
 	'git:show',

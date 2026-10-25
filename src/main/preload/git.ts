@@ -14,6 +14,7 @@ import type {
 	GitCommandOutputChunk,
 	GitRunCommandResult,
 	GitStreamingOperation,
+	GitRefsSnapshot,
 } from '../../shared/gitUtils';
 
 /**
@@ -184,6 +185,10 @@ export function createGitApi() {
 		 */
 		isRepo: (cwd: string, sshRemoteId?: string, remoteCwd?: string): Promise<boolean> =>
 			ipcRenderer.invoke('git:isRepo', cwd, sshRemoteId, remoteCwd),
+
+		/** Bounded background repository/ref snapshot; unknown preserves cached state. */
+		refs: (cwd: string, sshRemoteId?: string, remoteCwd?: string): Promise<GitRefsSnapshot> =>
+			ipcRenderer.invoke('git:refs', cwd, sshRemoteId, remoteCwd),
 
 		/**
 		 * Initialize a new git repository at the given directory.

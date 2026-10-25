@@ -125,6 +125,8 @@ export interface SessionRestorationReturn {
 
 export function useSessionRestoration(): SessionRestorationReturn {
 	// --- Store actions (stable, non-reactive) ---
+	const sessionsLoaded = useSessionStore((s) => s.sessionsLoaded);
+	const initialFileTreeReady = useSessionStore((s) => s.initialFileTreeReady);
 	// Extract action references once via useMemo so they can be called inside
 	// useCallback/useEffect without appearing in dependency arrays. Zustand
 	// store actions returned by getState() are stable singletons that never
@@ -192,7 +194,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					logger.error(`[validateAgentInBackground] Agent not found for toolType: ${toolType}`);
 					setSessions((prev) =>
 						prev.map((s) =>
-							s.id === sessionId
+							s.id === sessionId && s.toolType === toolType
 								? {
 										...s,
 										aiPid: -1,
@@ -406,22 +408,21 @@ export function useSessionRestoration(): SessionRestorationReturn {
 	const fetchGitInfoInBackground = useCallback(
 		async (sessionId: string, cwd: string, sshRemoteId: string | undefined) => {
 			try {
-				const isGitRepo = await gitService.isRepo(cwd, sshRemoteId);
-
-				let gitBranches: string[] | undefined;
-				let gitTags: string[] | undefined;
-				let gitRefsCacheTime: number | undefined;
-				if (isGitRepo) {
-					[gitBranches, gitTags] = await Promise.all([
-						gitService.getBranches(cwd, sshRemoteId),
-						gitService.getTags(cwd, sshRemoteId),
-					]);
-					gitRefsCacheTime = Date.now();
-				}
+				const refs = await gitService.getRefs(cwd, sshRemoteId);
+				if (refs.state === 'unknown') return;
+				const isGitRepo = refs.isRepo;
+				const gitBranches = isGitRepo ? refs.branches : undefined;
+				const gitTags = isGitRepo ? refs.tags : undefined;
+				const gitRefsCacheTime = isGitRepo ? Date.now() : undefined;
 
 				setSessions((prev) =>
 					prev.map((s) =>
-						s.id === sessionId
+						s.id === sessionId &&
+						s.cwd === cwd &&
+						(s.sshRemoteId ||
+							(s.sessionSshRemoteConfig?.enabled
+								? s.sessionSshRemoteConfig.remoteId || undefined
+								: undefined)) === sshRemoteId
 							? {
 									...s,
 									isGitRepo,
@@ -440,13 +441,57 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					error
 				);
 				setSessions((prev) =>
-					prev.map((s) => (s.id === sessionId ? { ...s, sshConnectionFailed: true } : s))
+					prev.map((s) =>
+						s.id === sessionId &&
+						s.cwd === cwd &&
+						sshRemoteId &&
+						(s.sshRemoteId ||
+							(s.sessionSshRemoteConfig?.enabled
+								? s.sessionSshRemoteConfig.remoteId || undefined
+								: undefined)) === sshRemoteId
+							? { ...s, sshConnectionFailed: true }
+							: s
+					)
 				);
 			}
 		},
 		[]
 	);
 
+	// Revalidate restored agents without letting one slow/inaccessible directory
+	// delay the first usable window or spawning probes for every agent at once.
+	useEffect(() => {
+		if (!sessionsLoaded || !initialFileTreeReady) return;
+		let cancelled = false;
+		const timer = setTimeout(() => {
+			void (async () => {
+				const state = useSessionStore.getState();
+				const sessions = [...state.sessions].sort(
+					(a, b) => Number(b.id === state.activeSessionId) - Number(a.id === state.activeSessionId)
+				);
+				for (const saved of sessions) {
+					if (cancelled) break;
+					const session = useSessionStore.getState().sessions.find((s) => s.id === saved.id);
+					if (!session || isAgentDormant(session, useSettingsStore.getState().encoreFeatures)) {
+						continue;
+					}
+					const sshRemoteId =
+						session.sshRemoteId ||
+						(session.sessionSshRemoteConfig?.enabled
+							? session.sessionSshRemoteConfig.remoteId || undefined
+							: undefined);
+					await Promise.all([
+						validateAgentInBackground(session.id, session.toolType, sshRemoteId),
+						fetchGitInfoInBackground(session.id, session.cwd, sshRemoteId),
+					]);
+				}
+			})();
+		}, 0);
+		return () => {
+			cancelled = true;
+			clearTimeout(timer);
+		};
+	}, [sessionsLoaded, initialFileTreeReady, validateAgentInBackground, fetchGitInfoInBackground]);
 	// --- restoreSession ---
 	const restoreSession = useCallback(async (session: Session): Promise<Session> => {
 		try {
@@ -524,6 +569,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				const defaultTabId = generateId();
 				return {
 					...session,
+					fileTreeLoadedCap: undefined,
 					aiPid: -1,
 					terminalPid: 0,
 					state: 'error' as SessionState,
@@ -617,64 +663,12 @@ export function useSessionRestoration(): SessionRestorationReturn {
 			// AI processes are NOT started during restore anyway - aiPid stays
 			// at 0 until the user sends their first message.
 
-			// Get SSH remote ID for remote git operations
-			const sshRemoteId =
-				correctedSession.sshRemoteId ||
-				(correctedSession.sessionSshRemoteConfig?.enabled
-					? correctedSession.sessionSshRemoteConfig.remoteId
-					: undefined) ||
-				undefined;
-
-			const isRemoteSession = !!sshRemoteId;
-			// A dormant Pianola (flag off) runs no git in its folder: it keeps the
-			// persisted values until the flag comes back on.
-			const isDormant = isAgentDormant(
-				correctedSession,
-				useSettingsStore.getState().encoreFeatures
-			);
-
-			// For local sessions, fetch git info with a timeout to prevent
-			// slow/unreachable filesystems from blocking the splash screen.
-			// For remote sessions, use persisted values and update in background.
-			let isGitRepo = correctedSession.isGitRepo ?? false;
-			let gitBranches = correctedSession.gitBranches;
-			let gitTags = correctedSession.gitTags;
-			let gitRefsCacheTime = correctedSession.gitRefsCacheTime;
-
-			if (!isRemoteSession && !isDormant) {
-				const GIT_TIMEOUT_MS = 5000;
-				// NOTE: On timeout, the inner git operations continue running in the
-				// background until the OS/filesystem eventually resolves/rejects them.
-				// This is a known trade-off of Promise.race - Promises are not cancellable.
-				try {
-					const gitResult = await Promise.race([
-						(async () => {
-							const repoCheck = await gitService.isRepo(correctedSession.cwd, undefined);
-							if (!repoCheck) return { isGitRepo: false } as const;
-							const [branches, tags] = await Promise.all([
-								gitService.getBranches(correctedSession.cwd, undefined),
-								gitService.getTags(correctedSession.cwd, undefined),
-							]);
-							return { isGitRepo: true, branches, tags } as const;
-						})(),
-						new Promise<null>((resolve) => setTimeout(() => resolve(null), GIT_TIMEOUT_MS)),
-					]);
-					if (gitResult) {
-						isGitRepo = gitResult.isGitRepo;
-						if (gitResult.isGitRepo) {
-							gitBranches = gitResult.branches;
-							gitTags = gitResult.tags;
-							gitRefsCacheTime = Date.now();
-						}
-					} else {
-						logger.warn(
-							`[restoreSession] Git info timed out after ${GIT_TIMEOUT_MS}ms for ${correctedSession.cwd}, using persisted values`
-						);
-					}
-				} catch (err) {
-					logger.warn('[restoreSession] Git info failed, using persisted values:', undefined, err);
-				}
-			}
+			// Restore persisted Git state immediately. Filesystem/process probes run
+			// after the active tree is usable, not once per agent on the critical path.
+			const isGitRepo = correctedSession.isGitRepo ?? false;
+			const gitBranches = correctedSession.gitBranches;
+			const gitTags = correctedSession.gitTags;
+			const gitRefsCacheTime = correctedSession.gitRefsCacheTime;
 
 			// Migration: ensure terminalTabs exists (may be empty - terminals are created on demand)
 			if (!correctedSession.terminalTabs) {
@@ -838,6 +832,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					thinkingStartTime: undefined,
 					currentCycleTokens: undefined,
 					currentCycleBytes: undefined,
+					fileTreeLoadedCap: undefined,
 					statusMessage: undefined,
 					isGitRepo,
 					gitBranches,
@@ -870,6 +865,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 			logger.error(`Error restoring session ${session.id}:`, undefined, error);
 			return {
 				...session,
+				fileTreeLoadedCap: undefined,
 				aiPid: -1,
 				terminalPid: 0,
 				state: 'error' as SessionState,
@@ -905,7 +901,6 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				// Handle sessions
 				if (savedSessions && savedSessions.length > 0) {
 					const restoredSessions = await Promise.all(savedSessions.map((s) => restoreSession(s)));
-					setSessions(restoredSessions);
 
 					// Restore persisted active session ID, falling back to first session.
 					// Read through the helper: a web-desktop client remembers its OWN
@@ -920,6 +915,10 @@ export function useSessionRestoration(): SessionRestorationReturn {
 						// doesn't retry the invalid ID on next launch
 						setActiveSessionId(restoredSessions[0].id);
 					}
+					// Publish sessions only after their restored selection is known.
+					// Otherwise selectActiveSession briefly picks the first agent and
+					// starts a second project's tree/stat scans before switching away.
+					setSessions(restoredSessions);
 					// A partial browser bootstrap is safe only because the main write
 					// boundary preserves every field marked deferred.
 					setSessionsReadOk(true);
@@ -929,28 +928,6 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					// that paints an agent idle for one frame before correcting itself is
 					// far better than one that waits on an IPC round trip to paint at all.
 					void reattachLiveAiTurns();
-
-					// Background tasks: agent validation + SSH git info.
-					// These run after splash hides so they never block startup.
-					const { encoreFeatures } = useSettingsStore.getState();
-					for (const session of restoredSessions) {
-						// A dormant Pianola (flag off) is neither validated nor polled.
-						if (isAgentDormant(session, encoreFeatures)) continue;
-						const sshRemoteId =
-							session.sshRemoteId ||
-							(session.sessionSshRemoteConfig?.enabled
-								? session.sessionSshRemoteConfig.remoteId
-								: undefined) ||
-							undefined;
-
-						// Validate agent availability in background (SSH-aware)
-						validateAgentInBackground(session.id, session.toolType, sshRemoteId);
-
-						// For remote sessions, also fetch git info in background
-						if (sshRemoteId) {
-							fetchGitInfoInBackground(session.id, session.cwd, sshRemoteId);
-						}
-					}
 				} else {
 					setSessions([]);
 					setSessionsReadOk(true);

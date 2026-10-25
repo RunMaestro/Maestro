@@ -304,6 +304,7 @@ export const prepareSessionForPersistence = (session: Session): Session => {
 		fileTree: [],
 		fileTreeStats: undefined,
 		fileTreeTruncated: undefined,
+		fileTreeLoadedCap: undefined,
 		fileTreeLoading: undefined,
 		fileTreeLoadingProgress: undefined,
 		fileTreeLastScanTime: undefined,

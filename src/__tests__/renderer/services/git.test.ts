@@ -10,6 +10,7 @@ import { logger } from '../../../renderer/utils/logger';
 // Mock the window.maestro.git object
 const mockGit = {
 	isRepo: vi.fn(),
+	refs: vi.fn(),
 	status: vi.fn(),
 	branch: vi.fn(),
 	diff: vi.fn(),
@@ -38,6 +39,15 @@ beforeEach(() => {
 });
 
 describe('gitService', () => {
+	describe('getRefs', () => {
+		test('keeps a failed background query unknown instead of declaring an empty repository', async () => {
+			mockGit.refs.mockRejectedValueOnce(new Error('Connection unavailable'));
+			const result = await gitService.getRefs('/repo', 'remote');
+			expect(result).toMatchObject({ state: 'unknown', timedOut: false });
+			expect(result).not.toHaveProperty('isRepo');
+		});
+	});
+
 	describe('isRepo', () => {
 		test('returns true when directory is a git repository', async () => {
 			mockGit.isRepo.mockResolvedValue(true);

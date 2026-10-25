@@ -40,6 +40,8 @@ import {
 	buildOmpPrimeEnv,
 } from './omp-model-catalog';
 import { isBlankEnvValue } from '../../shared/agentEnvironment';
+import { yieldToEventLoop } from '../utils/concurrency';
+import { mapWithConcurrency } from '../../shared/concurrency';
 
 const LOG_CONTEXT = 'AgentDetector';
 
@@ -385,12 +387,12 @@ export class AgentDetector {
 	 * Internal method that performs the actual agent detection
 	 */
 	private async doDetectAgents(): Promise<AgentConfig[]> {
-		const agents: AgentConfig[] = [];
 		const expandedEnv = getExpandedEnv();
 
 		logger.info(`Agent detection starting. PATH: ${expandedEnv.PATH}`, LOG_CONTEXT);
 
-		for (const agentDef of AGENT_DEFINITIONS) {
+		const agents = await mapWithConcurrency(AGENT_DEFINITIONS, 2, async (agentDef) => {
+			await yieldToEventLoop();
 			const customPath = this.customPaths[agentDef.id];
 			let detection: { exists: boolean; path?: string };
 			let resolvedCustomPath: string | undefined;
@@ -467,14 +469,14 @@ export class AgentDetector {
 				}
 			}
 
-			agents.push({
+			const agent: AgentConfig = {
 				...agentDef,
 				available: detection.exists,
 				path: detection.path,
 				customPath: resolvedCustomPath,
 				allPaths,
 				capabilities: getAgentCapabilities(agentDef.id),
-			});
+			};
 
 			// Mirror detection into the capability snapshot store so the
 			// renderer has a persisted readiness pill for every agent. Skip
@@ -518,7 +520,8 @@ export class AgentDetector {
 					computeOmpCatalogKey(detection.path, undefined)
 				);
 			}
-		}
+			return agent;
+		});
 
 		const availableAgents = agents.filter((a) => a.available);
 

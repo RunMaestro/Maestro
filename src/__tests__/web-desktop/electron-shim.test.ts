@@ -505,7 +505,7 @@ describe('web-desktop electron-shim bridge reconnect', () => {
 		sessionStorage.removeItem('maestro:web-desktop:uncertain-submission');
 		const socket = InertWebSocket.instances.at(-1)!;
 		socket.readyState = InertWebSocket.OPEN;
-		const query = ipcRenderer.invoke('sessions:getBootstrap');
+		const query = ipcRenderer.invoke('git:refs', '/repo');
 		const queryRejected = expect(query).rejects.toThrow('bridge disconnected');
 		await Promise.resolve();
 		const next = reconnect(socket);

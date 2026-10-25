@@ -17,6 +17,11 @@
  */
 export type GitStreamingOperation = 'pull' | 'push' | 'fetch';
 
+/** A bounded background read: unknown must not replace cached repository state. */
+export type GitRefsSnapshot =
+	| { state: 'ready'; isRepo: boolean; branches: string[]; tags: string[] }
+	| { state: 'unknown'; timedOut: boolean; error?: string };
+
 /** One chunk of output from a streaming git command. */
 export interface GitCommandOutputChunk {
 	/** Correlates the chunk with the `runCommand` call that produced it. */

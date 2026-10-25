@@ -37,11 +37,8 @@ import {
 	type PageParseWarning,
 	type SandboxIndexSnapshot,
 } from '../../shared/dataview';
-import {
-	LOCAL_SESSION_READ_CONCURRENCY,
-	mapWithConcurrency,
-	yieldToEventLoop,
-} from '../utils/concurrency';
+import { LOCAL_SESSION_READ_CONCURRENCY, yieldToEventLoop } from '../utils/concurrency';
+import { mapWithConcurrency } from '../../shared/concurrency';
 import { logger } from '../utils/logger';
 import {
 	dataviewCacheFilePath,

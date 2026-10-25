@@ -4,6 +4,7 @@ import { gitService } from '../../services/git';
 import { updateSessionWith } from '../../stores/sessionStore';
 import { subscribeToActivity } from '../../utils/activityBus';
 import { captureException } from '../../utils/sentry';
+import { mapWithConcurrency } from '../../../shared/concurrency';
 
 /**
  * Extended git status data for a session.
@@ -174,25 +175,21 @@ function gitStatusMapsEqual(
  * `isGitRepo` flag and warm the branches/tags cache so worktree creation
  * and other git-gated features become available without an app restart.
  *
- * Per-session failures (via `allSettled`) are isolated so one bad session
- * doesn't block the rest, and unexpected exceptions are reported to Sentry
- * - `gitService` already swallows IPC errors and returns defaults, so
- * anything that reaches us here is a real bug worth seeing.
+ * Per-session failures are isolated so one bad session doesn't block the rest,
+ * and unexpected exceptions are reported to Sentry. gitService already converts
+ * IPC failures to defaults, so exceptions that reach us are unexpected.
  */
 async function detectGitRepoTransitions(sessions: Session[]): Promise<void> {
-	const results = await Promise.allSettled(
-		sessions.map(async (session) => {
+	await mapWithConcurrency(sessions, 2, async (session) => {
+		try {
 			const cwd = session.inputMode === 'terminal' ? session.shellCwd || session.cwd : session.cwd;
 			const sshRemoteId =
 				session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined;
 
-			const isRepo = await gitService.isRepo(cwd, sshRemoteId);
-			if (!isRepo) return;
-
-			const [gitBranches, gitTags] = await Promise.all([
-				gitService.getBranches(cwd, sshRemoteId),
-				gitService.getTags(cwd, sshRemoteId),
-			]);
+			const refs = await gitService.getRefs(cwd, sshRemoteId);
+			if (refs.state === 'unknown' || !refs.isRepo) return;
+			const gitBranches = refs.branches;
+			const gitTags = refs.tags;
 
 			updateSessionWith(session.id, (s) =>
 				s.isGitRepo
@@ -205,15 +202,11 @@ async function detectGitRepoTransitions(sessions: Session[]): Promise<void> {
 							gitRefsCacheTime: Date.now(),
 						}
 			);
-		})
-	);
-
-	results.forEach((result, idx) => {
-		if (result.status === 'rejected') {
-			captureException(result.reason, {
+		} catch (error) {
+			captureException(error, {
 				extra: {
 					context: 'detectGitRepoTransitions',
-					sessionId: sessions[idx]?.id,
+					sessionId: session.id,
 				},
 			});
 		}
@@ -329,6 +322,13 @@ export function useGitStatusPolling(
 				? [sessionId, previous.data, queryKey]
 				: null;
 		};
+		const isCurrentQuery = (sessionId: string, queryKey: string): boolean => {
+			const current = sessionsRef.current.find((session) => session.id === sessionId);
+			if (!current?.isGitRepo) return false;
+			const cwd = current.inputMode === 'terminal' ? current.shellCwd || current.cwd : current.cwd;
+			const remote = current.sshRemoteId || current.sessionSshRemoteConfig?.remoteId || undefined;
+			return queryKey === `${remote ?? ''}\0${cwd}`;
+		};
 		const gitSessions = allSessions.filter((s) => s.isGitRepo);
 		const nonGitSessions = allSessions.filter((s) => !s.isGitRepo);
 
@@ -354,10 +354,18 @@ export function useGitStatusPolling(
 		try {
 			const currentActiveSessionId = activeSessionIdRef.current;
 
-			// Parallelize git status calls for better performance
-			// Sequential calls with 10 sessions = 1-2s, parallel = 200-300ms
-			const results = await Promise.all(
-				gitSessions.map(async (session): Promise<PollResult | null> => {
+			// The active agent gets a worker first. Bound background status
+			// launches too: Windows process creation still blocks Electron.
+			const activeIndex = gitSessions.findIndex((session) => session.id === currentActiveSessionId);
+			if (activeIndex > 0) {
+				const active = gitSessions[activeIndex];
+				gitSessions[activeIndex] = gitSessions[0];
+				gitSessions[0] = active;
+			}
+			const results = await mapWithConcurrency(
+				gitSessions,
+				2,
+				async (session): Promise<PollResult | null> => {
 					try {
 						const cwd =
 							session.inputMode === 'terminal' ? session.shellCwd || session.cwd : session.cwd;
@@ -465,11 +473,23 @@ export function useGitStatusPolling(
 							lastUpdated: Date.now(),
 						};
 
+						// Do not hold the selected agent's completed data behind slow background reads.
+						if (activeSessionIdRef.current === session.id && isCurrentQuery(session.id, queryKey)) {
+							lastGoodRef.current.set(session.id, { queryKey, data: statusData });
+							setGitStatusMap((previous) => {
+								const old = previous.get(session.id);
+								if (old && gitStatusDataEqual(old, statusData)) return previous;
+								const next = new Map(previous);
+								next.set(session.id, statusData);
+								return next;
+							});
+						}
+
 						return [session.id, statusData, queryKey] as const;
 					} catch {
 						return null;
 					}
-				})
+				}
 			);
 
 			const newStatusMap = new Map<string, GitStatusData>();
@@ -477,6 +497,7 @@ export function useGitStatusPolling(
 			for (const result of results) {
 				if (result) {
 					const [sessionId, data, queryKey] = result;
+					if (!isCurrentQuery(sessionId, queryKey)) continue;
 					newStatusMap.set(sessionId, data);
 					newLastGood.set(sessionId, { queryKey, data });
 				}

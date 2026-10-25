@@ -61,10 +61,11 @@ import {
 } from '../../storage/starred-transcript-mirror';
 import { getHistoryManager } from '../../history-manager';
 import {
-	mapWithConcurrency,
 	LOCAL_SESSION_READ_CONCURRENCY,
 	LOCAL_SESSION_PARSE_CONCURRENCY,
 } from '../../utils/concurrency';
+import { mapWithConcurrency } from '../../../shared/concurrency';
+
 import { resolveAgentAccountDir } from '../../agents/provider-account-dirs';
 
 // Re-export for backwards compatibility
