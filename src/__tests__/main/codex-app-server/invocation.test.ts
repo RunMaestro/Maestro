@@ -134,6 +134,47 @@ describe('parseCodexAppServerInvocation', () => {
 		});
 	});
 
+	// Codex 0.164.0 rejects named profiles for app-server, including the legacy
+	// `-c profile=...` workaround. Keep the flag on exec until a native profile
+	// input exists; accepting and dropping it would lose the user's config layer.
+	it.each([
+		['--profile', 'synthetic-manager'],
+		['-p', 'synthetic-manager'],
+		['--profile=synthetic-manager'],
+		['-p=synthetic-manager'],
+		['-psynthetic-manager'],
+	])('keeps a named profile out of app-server rather than discarding %j', (...profileArgs) => {
+		const args = [
+			...EXEC,
+			'-c',
+			'model_reasoning_effort="low"',
+			...profileArgs,
+			'--config=model_reasoning_effort="high"',
+		];
+		const originalArgs = [...args];
+
+		expect(parseCodexAppServerInvocation(config(args))).toEqual({
+			ok: false,
+			reason: `unsupported argument: ${profileArgs[0]}`,
+		});
+		expect(args).toEqual(originalArgs);
+	});
+
+	it('preserves override ordering and last explicit effort when no profile is selected', () => {
+		const result = parseCodexAppServerInvocation(
+			config([
+				...EXEC,
+				'-c',
+				'model_reasoning_effort="low"',
+				'--config=model_reasoning_effort="high"',
+			])
+		);
+		expect(result.ok && result.invocation).toMatchObject({
+			effort: 'high',
+			configArgs: ['-c', 'model_reasoning_effort="low"', '-c', 'model_reasoning_effort="high"'],
+		});
+	});
+
 	it('refuses an invocation that is not codex exec', () => {
 		expect(parseCodexAppServerInvocation(config(['--json']))).toEqual({
 			ok: false,

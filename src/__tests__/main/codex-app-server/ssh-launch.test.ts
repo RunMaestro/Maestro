@@ -76,6 +76,21 @@ describe('buildCodexAppServerSshLaunch', () => {
 		expect(mockBuildSshCommandWithStdin).not.toHaveBeenCalled();
 	});
 
+	it('leaves a named profile and ordered config overrides to the exec wrapper', async () => {
+		const execArgs = [
+			...EXEC_ARGS,
+			'--profile',
+			'synthetic-manager',
+			'--config=model_reasoning_effort="low"',
+		];
+		const options = { ...OPTIONS, execArgs: [...execArgs] };
+
+		expect(await buildCodexAppServerSshLaunch(REMOTE, options)).toBeNull();
+
+		expect(options.execArgs).toEqual(execArgs);
+		expect(mockBuildSshCommandWithStdin).not.toHaveBeenCalled();
+	});
+
 	it('returns null when the builder produced no script', async () => {
 		mockBuildSshCommandWithStdin.mockResolvedValue({ command: 'ssh', args: [] });
 		expect(await buildCodexAppServerSshLaunch(REMOTE, OPTIONS)).toBeNull();

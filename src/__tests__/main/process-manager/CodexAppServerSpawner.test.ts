@@ -230,7 +230,7 @@ function createHarness(server: FakeAppServer | (() => FakeAppServer)) {
 	const processes = new Map<string, ManagedProcess>();
 	const emitter = new EventEmitter();
 	const bufferManager = new DataBufferManager(processes, emitter);
-	const fallbackToCli = vi.fn(() => ({ pid: 999, success: true }));
+	const fallbackToCli = vi.fn((_config: ProcessConfig) => ({ pid: 999, success: true }));
 	const spawner = new CodexAppServerSpawner(processes, emitter, bufferManager, fallbackToCli, {
 		clientVersion: '1.2.3',
 	});
@@ -535,6 +535,36 @@ describe('CodexAppServerSpawner', () => {
 
 		expect(h.fallbackToCli).toHaveBeenCalledTimes(2);
 		expect(mockSpawn).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		{ profileArgs: ['--profile', 'synthetic-manager'] },
+		{ profileArgs: ['-p', 'synthetic-manager'] },
+		{ profileArgs: ['--profile=synthetic-manager'] },
+		{ profileArgs: ['-p=synthetic-manager'] },
+		{ profileArgs: ['-psynthetic-manager'] },
+	])('preserves profile arguments $profileArgs on exec fallback', ({ profileArgs }) => {
+		const server = new FakeAppServer(() => {});
+		const h = createHarness(server);
+		const args = [
+			...BYPASS_ARGS,
+			'-c',
+			'model_reasoning_effort="low"',
+			...profileArgs,
+			'--config=model_reasoning_effort="high"',
+		];
+		const config = h.config({ args: [...args] });
+
+		h.spawner.spawn(config);
+
+		expect(h.fallbackToCli).toHaveBeenCalledTimes(1);
+		expect(h.fallbackToCli.mock.calls[0][0]).toBe(config);
+		expect(config.args).toEqual(args);
+		expect(mockSpawn).not.toHaveBeenCalled();
+		expect(server.written).toEqual([]);
+		expect(h.processes.has(h.sessionId)).toBe(false);
+		expect(h.data).toEqual([]);
+		expect(h.errors).toEqual([]);
 	});
 });
 
