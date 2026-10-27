@@ -4916,6 +4916,7 @@ interface MaestroAPI {
 	// Pianola API (autonomous manager: rules + decision log)
 	// All channels reject with 'PianolaDisabled' when the Encore flag is off.
 	pianola: {
+		memory: (request: import('../shared/pianola/memory').MemoryRequest) => Promise<unknown>;
 		getRules: () => Promise<RulesLoadResult>;
 		saveRules: (rules: PianolaRule[]) => Promise<PianolaRule[]>;
 		getDecisions: (limit?: number) => Promise<PianolaDecisionRecord[]>;
@@ -4938,6 +4939,15 @@ interface MaestroAPI {
 		) => Promise<import('../shared/pianola/pianola-programs').PianolaAsk>;
 		dismissAsk: (id: string) => Promise<import('../shared/pianola/pianola-programs').PianolaAsk>;
 		getBrief: () => Promise<import('../shared/pianola/pianola-programs').PianolaBrief>;
+		revisePlanTask: (
+			planId: string,
+			taskId: string,
+			prompt?: string
+		) => Promise<import('../shared/pianola/pianola-tasks').PianolaPlan>;
+		skipPlanTask: (
+			planId: string,
+			taskId: string
+		) => Promise<import('../shared/pianola/pianola-tasks').PianolaPlan>;
 		getSuggestions: () => Promise<PianolaSuggestionsFile>;
 		confirmDesktopOwner: () => Promise<void>;
 		reviewSuggestion: (

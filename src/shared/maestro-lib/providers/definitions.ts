@@ -613,7 +613,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		modelArgs: (modelId: string) => ['--model', modelId],
 		workingDirArgs: (dir: string) => ['--cwd', dir],
 		imageArgs: (imagePath: string) => [`@${imagePath}`],
-		promptFileArgs: (promptFilePath: string) => ['--', `@${promptFilePath}`],
+		promptFileArgs: (promptFilePath: string) => [`@${promptFilePath}`],
 		configOptions: [
 			{
 				key: 'model',

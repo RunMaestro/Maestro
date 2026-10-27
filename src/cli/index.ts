@@ -233,6 +233,7 @@ import {
 	pianolaLog,
 	pianolaResolveDecision,
 } from './commands/pianola';
+import { pianolaMemory } from './commands/pianola-memory';
 import { pianolaLearn } from './commands/pianola-learn';
 import { pianolaProfile, pianolaSetProfile } from './commands/pianola-profile';
 import {
@@ -2808,13 +2809,17 @@ const pianola = encoreCommand(program, 'pianola', 'pianola', encoreFlags).descri
 );
 
 pianola
-	.command('resolve <decision-id>')
-	.description('Resolve a persisted manager handoff after recipient and pending-ask revalidation')
+	.command('resolve <id>')
+	.description('Resolve a persisted manager handoff or founder ask after revalidation')
 	.option('--answer <text>', 'Answer the requesting agent exactly once')
 	.option('--escalation <text>', 'Ask the human to decide, with a concrete recommendation')
+	.option('--option <text>', 'Resolve a founder ask with this option')
+	.option('--note <text>', 'Add a note to a founder-ask resolution')
 	.option('--background', 'Preserve the active agent and tab')
 	.option('--json', 'Output as JSON')
-	.action((decisionId, options) => pianolaResolveDecision(decisionId, options));
+	.action((id, options) =>
+		options.option !== undefined ? pianolaResolve(id, options) : pianolaResolveDecision(id, options)
+	);
 
 pianola
 	.command('watch-scope <scope-id>')
@@ -2900,6 +2905,41 @@ pianola
 	.action((options) => pianolaSetProfile(options));
 
 pianola
+	.command('memory [action] [value...]')
+	.description('Backfill and retrieve evidence-backed user and project memory')
+	.option('--project <path>', 'Project scope')
+	.option('--provider <id>', 'Historical provider for a custom root')
+	.option('--root <path>', 'Custom account/data root')
+	.option('--mine', 'Explicitly attribute selected pools to your human-authored history')
+	.option('--mode <mode>', 'local, hosted, or batch')
+	.option('--hosted-provider <id>', 'Hosted extraction provider: openai or nan')
+	.option('--model <model>', 'Extraction model')
+	.option('--endpoint <url>', 'Loopback local extraction endpoint')
+	.option(
+		'--qualify-model <model>',
+		'Recall qualification model (default: qwen3:8b; glm5.3-flash measured equal quality at 66% less latency)'
+	)
+	.option('--qualify-provider <id>', 'Recall qualification provider: local or hosted')
+	.option('--qualify-endpoint <url>', 'Qualification endpoint (loopback for local)')
+	.option('--rerank-model <model>', 'Hosted recall reranker model (default: rerank)')
+	.option('--rerank-endpoint <url>', 'Hosted reranker endpoint')
+	.option('--tokens <n>', 'Total token cap including reservations')
+	.option('--dollars <n>', 'Total cost cap including reservations')
+	.option('--exclude <paths...>', 'Exclude absolute roots/projects/files before reads')
+	.option('--consent-hosted', 'Consent to off-device processing of selected excerpts')
+	.option('--kind <kind>', 'preference, project, decision, episode, commitment, or context')
+	.option('--history', 'List-only: browse all lifecycle statuses and dates')
+	.option(
+		'--intent <mode>',
+		'Recall: current, as-of, previous, proposed, contested, or history (default: current; --qualify may infer)'
+	)
+	.option('--at <date>', 'Required instant for --intent as-of')
+	.option('--qualify', 'Opt into slower, fallible local model review; not a correctness guarantee')
+	.option('--rerank', 'Opt into hosted reranking; sends the question and shortlisted assertions')
+	.option('--out <file>', 'Write JSON output to a file')
+	.option('--json', 'JSON output')
+	.action((action, values, options) => pianolaMemory(action ?? 'status', values ?? [], options));
+pianola
 	.command('log')
 	.description('Show recent Pianola decisions from the audit log')
 	.option('--limit <n>', 'Maximum number of records to show (default 20)')
@@ -2945,12 +2985,6 @@ pianola
 	.command('needs-me')
 	.option('--json')
 	.action((options) => pianolaNeedsMe(options));
-pianola
-	.command('resolve <askId>')
-	.requiredOption('--option <text>')
-	.option('--note <text>')
-	.option('--json')
-	.action((askId, options) => pianolaResolve(askId, options));
 pianola
 	.command('dismiss <askId>')
 	.option('--json')

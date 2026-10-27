@@ -26,6 +26,7 @@ const {
 	upsertAgentRunMock,
 	appendAgentRunEventMock,
 	getAgentRunMock,
+	memoryRequestMock,
 	findActiveRunBySessionMock,
 	readAgentRunsMock,
 } = vi.hoisted(() => ({
@@ -36,6 +37,7 @@ const {
 	upsertAgentRunMock: vi.fn(),
 	appendAgentRunEventMock: vi.fn(),
 	getAgentRunMock: vi.fn(),
+	memoryRequestMock: vi.fn(),
 	findActiveRunBySessionMock: vi.fn(),
 	readAgentRunsMock: vi.fn(),
 }));
@@ -59,6 +61,9 @@ vi.mock('../../../cli/services/maestro-client', () => ({
 	},
 }));
 vi.mock('../../../cli/commands/dispatch', () => ({ runDispatch: vi.fn() }));
+vi.mock('../../../cli/commands/pianola-memory', () => ({
+	requestPianolaMemory: memoryRequestMock,
+}));
 vi.mock('../../../shared/pianola/pianola-orchestrator', () => ({
 	runOrchestratorIteration: runIterationMock,
 	initialOrchestratorState: (plan: PianolaPlan): OrchestratorState => ({ plan, prevStates: {} }),
@@ -133,6 +138,7 @@ describe('pianolaOrchestrate - iteration error resilience', () => {
 		readAgentRunsMock.mockReturnValue([]);
 		upsertAgentRunMock.mockImplementation((run) => run);
 		appendAgentRunEventMock.mockImplementation((event) => event);
+		memoryRequestMock.mockResolvedValue({ context: '', memories: [] });
 	});
 
 	it('dispatches the persisted founder revision instead of its startup snapshot', async () => {
@@ -435,6 +441,60 @@ describe('pianolaOrchestrate - iteration error resilience', () => {
 				type: 'pianola.dispatched',
 				status: 'running',
 			})
+		);
+	});
+
+	it('starts a fresh dispatch with no checks or reviews from the previous attempt', async () => {
+		const previousRun: AgentRun = {
+			id: 'pianola:plan-2:task-1',
+			createdAt: 100,
+			updatedAt: 100,
+			provider: 'claude-code',
+			status: 'needs_review',
+			artifacts: [],
+			touchedFiles: [],
+			checks: [{ name: 'independent-validation', status: 'failed' }],
+			reviews: [{ severity: 'high', category: 'security', message: 'old issue', status: 'open' }],
+		};
+		getAgentRunMock.mockReturnValue(previousRun);
+		findActiveRunBySessionMock.mockReturnValue(previousRun);
+		const plan: PianolaPlan = {
+			id: 'plan-2',
+			title: 'Ship',
+			createdAt: 100,
+			tasks: [
+				{ id: 'task-1', title: 'Build', prompt: 'corrected', dependsOn: [], status: 'pending' },
+			],
+		};
+		const runningPlan: PianolaPlan = {
+			...plan,
+			tasks: [
+				{
+					...plan.tasks[0],
+					status: 'running',
+					agentId: 'agent-1',
+					agentType: 'claude-code',
+					tabId: 'tab-1',
+				},
+			],
+		};
+		vi.mocked(getPianolaPlan).mockReturnValue(plan);
+		runIterationMock.mockResolvedValue({
+			state: { plan: runningPlan, prevStates: { 'task-1': 'connecting' } },
+			progress: { ...DONE_PROGRESS, total: 1, pending: 0, running: 1, complete: false },
+			completedTaskIds: [],
+			failedTaskIds: [],
+			dispatchedTaskIds: ['task-1'],
+			done: false,
+		});
+
+		await pianolaOrchestrate('plan-2', { once: true });
+
+		expect(upsertAgentRunMock).toHaveBeenCalledWith(
+			expect.objectContaining({ id: previousRun.id, status: 'running', checks: [], reviews: [] })
+		);
+		expect(appendAgentRunEventMock).toHaveBeenCalledWith(
+			expect.objectContaining({ runId: previousRun.id, type: 'pianola.dispatched' })
 		);
 	});
 

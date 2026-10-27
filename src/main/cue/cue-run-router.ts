@@ -54,7 +54,11 @@ export interface CueRunSessionRecord {
 	projectRoot?: string;
 	fullPath?: string;
 	autoRunFolderPath?: string;
-	sessionSshRemoteConfig?: { enabled: boolean; remoteId: string | null; workingDirOverride?: string };
+	sessionSshRemoteConfig?: {
+		enabled: boolean;
+		remoteId: string | null;
+		workingDirOverride?: string;
+	};
 	customPath?: string;
 	customArgs?: string;
 	customEnvVars?: Record<string, string>;
@@ -425,7 +429,6 @@ export async function executeCueRunAction(
 	// the whole board goes quietly red until someone types a message. The
 	// remote id is forwarded only while SSH is enabled: a disabled config
 	// still carries its old id, and the run happened locally.
-	const ssh = storedSession.sessionSshRemoteConfig;
 	await deps.reportAuthFailure?.(
 		result,
 		storedSession.toolType,

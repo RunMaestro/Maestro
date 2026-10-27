@@ -75,6 +75,7 @@ export const upsertPlan = store.upsertPlan;
 export const writePlansAsync = store.writePlansAsync;
 export const updatePlansAsync = store.updatePlansAsync;
 export const upsertPlanAsync = store.upsertPlanAsync;
+export const withPlanLock = store.withPlanLock;
 export const readPrograms = store.readPrograms;
 export const writePrograms = store.writePrograms;
 export const upsertProgram = store.upsertProgram;

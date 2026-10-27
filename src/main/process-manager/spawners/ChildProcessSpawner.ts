@@ -2,9 +2,7 @@
 
 import { EventEmitter } from 'events';
 import * as path from 'path';
-import * as fs from 'fs';
 import * as os from 'os';
-import { randomUUID } from 'crypto';
 import { logger } from '../../utils/logger';
 import { createOutputParser } from '../../parsers';
 import { getAgentCapabilities } from '../../agents';
@@ -149,15 +147,16 @@ export class ChildProcessSpawner {
 		// inside bash -c), skip the appending paths below and treat it as already-added.
 		let promptAddedToArgs = !!config.promptAlreadyInArgs;
 
+		const deliverPromptFile = promptFileArgs ?? getAgentDefinition(toolType)?.promptFileArgs;
 		const appendPromptArgs = (text: string): void => {
 			// File-backed delivery avoids Windows' argv limit, including image turns.
 			const promptFilePath =
-				isWindows() && promptFileArgs && text.length > PROMPT_FILE_THRESHOLD_CHARS
+				isWindows() && deliverPromptFile && text.length > PROMPT_FILE_THRESHOLD_CHARS
 					? savePromptToTempFile(text)
 					: null;
-			if (promptFilePath && promptFileArgs) {
-				tempImageFiles.push(promptFilePath);
-				finalArgs = [...finalArgs, ...promptFileArgs(promptFilePath)];
+			if (promptFilePath && deliverPromptFile) {
+				tempFiles.push(promptFilePath);
+				finalArgs = [...finalArgs, ...deliverPromptFile(promptFilePath)];
 				logger.info(
 					'[ProcessManager] Delivering long prompt through a temp file',
 					'ProcessManager',
@@ -282,29 +281,6 @@ export class ChildProcessSpawner {
 		});
 
 		try {
-			// OMP expands @file attachments, including on resume. Keep its full prompt
-			// out of the Windows command line without assuming stdin support.
-			const promptFileArgs = getAgentDefinition(toolType)?.promptFileArgs;
-			if (
-				isWindows() &&
-				effectivePrompt &&
-				promptAddedToArgs &&
-				promptFileArgs &&
-				!config.sshStdinScript &&
-				!config.promptAlreadyInArgs
-			) {
-				const promptFile = path.join(os.tmpdir(), 'maestro-prompt-' + randomUUID() + '.txt');
-				tempFiles.push(promptFile);
-				fs.writeFileSync(promptFile, effectivePrompt, {
-					encoding: 'utf8',
-					mode: 0o600,
-					flag: 'wx',
-				});
-				// `--` makes OMP treat @file as a literal message, not an attachment.
-				const promptOffset = finalArgs.at(-2) === '--' ? 2 : 1;
-				finalArgs = [...finalArgs.slice(0, -promptOffset), ...promptFileArgs(promptFile)];
-			}
-
 			// Build environment
 			const isResuming = argsResumeSession(args);
 			const env = buildChildProcessEnv(
@@ -735,10 +711,6 @@ export class ChildProcessSpawner {
 						};
 				if (isSuperseded()) {
 					// Release only this generation's files, never the current map entry's.
-					if (managedProcess.tempImageFiles) {
-						cleanupTempFiles(managedProcess.tempImageFiles);
-						managedProcess.tempImageFiles = undefined;
-					}
 					logger.warn('[ProcessManager] Ignoring exit from superseded process', 'ProcessManager', {
 						sessionId,
 						pid: childProcess.pid,
@@ -746,6 +718,7 @@ export class ChildProcessSpawner {
 						error: exit.spawnError ? String(exit.spawnError) : undefined,
 					});
 					cleanupTempFiles(managedProcess.tempFiles ?? []);
+					managedProcess.tempFiles = undefined;
 					return;
 				}
 				if (exit.spawnError) {
@@ -852,12 +825,11 @@ export class ChildProcessSpawner {
 
 			return { pid: childProcess.pid || -1, success: !!childProcess.pid };
 		} catch (error) {
-			cleanupTempFiles(tempImageFiles);
+			cleanupTempFiles(tempFiles);
 			void captureException(error);
 			logger.error('[ProcessManager] Failed to spawn process', 'ProcessManager', {
 				error: String(error),
 			});
-			cleanupTempFiles(tempFiles);
 			return {
 				pid: -1,
 				success: false,

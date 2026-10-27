@@ -527,4 +527,3 @@ def test_parent_replacement_cannot_escape_trusted_root(tmp_path, monkeypatch):
     monkeypatch.setattr(subprocess, "Popen", forbidden_launch)
     with pytest.raises(sandbox_runner.PolicyViolation, match="target changed"):
         sandbox_runner.run_isolated_cli(["true"], workspace, [], trusted_root=trusted)
-

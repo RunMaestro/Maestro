@@ -941,3 +941,24 @@ describe('Dataview over the bridge', () => {
 		expect(isRemoteSettingWritable('dataviewJsTrustedRoots')).toBe(false);
 	});
 });
+
+describe('Pianola memory over the bridge', () => {
+	it('allows CLI memory requests to reach the desktop IPC handler', async () => {
+		const status = { config: { enabled: false }, progress: {} };
+		const handler = vi.fn(async () => status);
+		invokeHandlers.set('pianola:memory', handler);
+		const send = vi.fn();
+		await handleBridgeInvoke(
+			makeClient(),
+			{
+				type: 'bridge.invoke',
+				requestId: 22,
+				channel: 'pianola:memory',
+				args: [{ action: 'status' }],
+			},
+			send
+		);
+		expect(handler).toHaveBeenCalledOnce();
+		expect(send.mock.calls[0][1]).toMatchObject({ requestId: 22, ok: true, result: status });
+	});
+});

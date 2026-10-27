@@ -4811,13 +4811,17 @@ Some text with [x] in it that's not a checkbox
 			});
 		});
 
-		it('keeps long prompts inline for agents without file-delivery support', async () => {
+		it('delivers oversized prompts over stdin for agents without file-delivery support', async () => {
 			await withPlatform('win32', async () => {
 				const p = spawnAgent('codex', 'C:\\proj', 'task', undefined, {
 					appendSystemPrompt: longSystemPrompt,
 				});
 				await driveSpawnToCompletion(p, 0, CODEX_INIT());
-				expect(spawnCall().args.at(-1)).toContain(longSystemPrompt);
+				expect(spawnCall().args.join(' ')).not.toContain(longSystemPrompt);
+				expect(mockChild.stdin.write).toHaveBeenCalledWith(
+					expect.stringContaining(longSystemPrompt),
+					expect.any(Function)
+				);
 				expect(fs.writeFileSync).not.toHaveBeenCalled();
 			});
 		});

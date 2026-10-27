@@ -133,6 +133,17 @@ interface PianolaDashboardProps {
 	onJumpToAgent: (sessionId: string, tabId?: string) => void;
 }
 
+interface SectionProps {
+	theme: Theme;
+	icon: React.ReactNode;
+	title: string;
+	count: number;
+	emptyLabel: React.ReactNode;
+	headerAction?: React.ReactNode;
+	controlRow?: React.ReactNode;
+	children: React.ReactNode;
+}
+
 /** A titled, icon-led section with a count, an empty-state line, and an optional
  * right-aligned header action. */
 function Section({
@@ -143,38 +154,93 @@ function Section({
 	emptyLabel,
 	headerAction,
 	controlRow,
-	collapsed = false,
 	children,
-}: {
-	theme: Theme;
-	icon: React.ReactNode;
-	title: string;
-	count: number;
-	emptyLabel: React.ReactNode;
-	headerAction?: React.ReactNode;
-	controlRow?: React.ReactNode;
-	collapsed?: boolean;
-	children: React.ReactNode;
-}): React.ReactElement {
+}: SectionProps): React.ReactElement {
 	return (
-		<div className="mb-5">
+		<div>
 			<div
-				className="flex items-center gap-2 mb-2 text-xs font-bold uppercase tracking-wider"
-				style={{ color: theme.colors.textDim }}
+				className="flex items-center gap-2 mb-3 text-sm font-semibold"
+				style={{ color: theme.colors.textMain }}
 			>
 				{icon}
-				<span>{title}</span>
-				<span className="opacity-60">({count})</span>
+				<h3>{title}</h3>
+				<span className="text-xs font-normal" style={{ color: theme.colors.textDim }}>
+					{count}
+				</span>
 				{headerAction && <div className="ml-auto">{headerAction}</div>}
 			</div>
 			{controlRow}
 			{count === 0 ? (
-				<div className="text-sm italic px-3 py-2" style={{ color: theme.colors.textDim }}>
+				<div className="text-sm px-1 py-4" style={{ color: theme.colors.textDim }}>
 					{emptyLabel}
 				</div>
-			) : collapsed ? null : (
-				<div className="flex flex-col gap-1.5">{children}</div>
+			) : (
+				<div className="flex flex-col gap-2">{children}</div>
 			)}
+		</div>
+	);
+}
+
+function DashboardPanel({
+	theme,
+	accent,
+	className = '',
+	children,
+}: {
+	theme: Theme;
+	accent?: string;
+	className?: string;
+	children: React.ReactNode;
+}): React.ReactElement {
+	return (
+		<section
+			className={`rounded-xl p-4 ${className}`}
+			style={{
+				backgroundColor: theme.colors.bgSidebar,
+				border: `1px solid ${theme.colors.border}`,
+				borderTop: `2px solid ${accent ?? theme.colors.border}`,
+			}}
+		>
+			{children}
+		</section>
+	);
+}
+
+function MetricCard({
+	theme,
+	icon,
+	label,
+	value,
+	accent,
+}: {
+	theme: Theme;
+	icon: React.ReactNode;
+	label: string;
+	value: number;
+	accent: string;
+}): React.ReactElement {
+	return (
+		<div
+			className="rounded-lg px-3 py-2.5 flex items-center gap-3"
+			style={{
+				backgroundColor: theme.colors.bgSidebar,
+				border: `1px solid ${theme.colors.border}`,
+			}}
+		>
+			<span
+				className="w-8 h-8 rounded-md flex items-center justify-center shrink-0"
+				style={{ backgroundColor: theme.colors.bgMain, color: accent }}
+			>
+				{icon}
+			</span>
+			<div>
+				<div className="text-lg font-semibold leading-6" style={{ color: theme.colors.textMain }}>
+					{value}
+				</div>
+				<div className="text-xs" style={{ color: theme.colors.textDim }}>
+					{label}
+				</div>
+			</div>
 		</div>
 	);
 }
@@ -584,62 +650,199 @@ const NEEDS_META: Record<
 };
 
 /** An escalation, a task awaiting review, or a failed task from the brief. */
+function FailedTaskActions({
+	theme,
+	row,
+	onChanged,
+}: {
+	theme: Theme;
+	row: DashboardNeedsRow & { planId: string; taskId: string };
+	onChanged: () => void;
+}): React.ReactElement {
+	const [revising, setRevising] = React.useState(false);
+	const [confirmSkip, setConfirmSkip] = React.useState(false);
+	const [revision, setRevision] = React.useState('');
+	const { busy, error, settle } = usePianolaAction(onChanged);
+	const revise = () => {
+		if (!revision.trim() || busy) return;
+		void settle(() =>
+			window.maestro.pianola.revisePlanTask(row.planId, row.taskId, revision.trim())
+		);
+	};
+
+	return (
+		<div className="flex flex-col gap-2">
+			{revising ? (
+				<div className="flex flex-col gap-2" role="group" aria-label={`Revise ${row.title}`}>
+					<FormInput
+						theme={theme}
+						value={revision}
+						onChange={setRevision}
+						onSubmit={revise}
+						submitEnabled={revision.trim().length > 0 && !busy}
+						placeholder="Revision instructions"
+						disabled={busy}
+						autoFocus
+						testId={`pianola-revision-${row.taskId}`}
+					/>
+					<div className="flex gap-2">
+						<button
+							type="button"
+							onClick={revise}
+							disabled={busy || !revision.trim()}
+							className="text-xs px-2 py-1 rounded font-medium disabled:opacity-40"
+							style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
+						>
+							Revise & restart
+						</button>
+						<button
+							type="button"
+							onClick={() => setRevising(false)}
+							disabled={busy}
+							className="text-xs px-2 py-1 rounded hover:bg-white/5"
+							style={{ color: theme.colors.textDim }}
+						>
+							Cancel
+						</button>
+					</div>
+				</div>
+			) : confirmSkip ? (
+				<div
+					className="flex flex-wrap items-center gap-2 text-xs"
+					style={{ color: theme.colors.textDim }}
+				>
+					<span>Skip this task? Dependents remain blocked.</span>
+					<button
+						type="button"
+						onClick={() =>
+							void settle(() => window.maestro.pianola.skipPlanTask(row.planId, row.taskId))
+						}
+						disabled={busy}
+						className="px-2 py-1 rounded font-medium hover:bg-white/5"
+						style={{ color: theme.colors.error, border: `1px solid ${theme.colors.border}` }}
+					>
+						Confirm skip
+					</button>
+					<button
+						type="button"
+						onClick={() => setConfirmSkip(false)}
+						disabled={busy}
+						className="px-2 py-1 rounded hover:bg-white/5"
+						style={{ color: theme.colors.textDim }}
+					>
+						Cancel
+					</button>
+				</div>
+			) : (
+				<div className="flex flex-wrap gap-2">
+					<button
+						type="button"
+						onClick={() =>
+							void settle(() => window.maestro.pianola.revisePlanTask(row.planId, row.taskId))
+						}
+						disabled={busy}
+						className="text-xs px-2 py-1 rounded font-medium hover:bg-white/5 disabled:opacity-40"
+						style={{ color: theme.colors.accent, border: `1px solid ${theme.colors.border}` }}
+					>
+						Restart
+					</button>
+					<button
+						type="button"
+						onClick={() => setRevising(true)}
+						disabled={busy}
+						className="text-xs px-2 py-1 rounded hover:bg-white/5 disabled:opacity-40"
+						style={{ color: theme.colors.textDim }}
+					>
+						Revise
+					</button>
+					<button
+						type="button"
+						onClick={() => setConfirmSkip(true)}
+						disabled={busy}
+						className="text-xs px-2 py-1 rounded hover:bg-white/5 disabled:opacity-40"
+						style={{ color: theme.colors.textDim }}
+					>
+						Skip task
+					</button>
+				</div>
+			)}
+			{error && (
+				<div className="text-xs" style={{ color: theme.colors.error }}>
+					{error}
+				</div>
+			)}
+		</div>
+	);
+}
+
+/** An escalation, a task awaiting review, or a failed task from the brief. */
 function NeedsRow({
 	theme,
 	row,
 	onJump,
+	onChanged,
 }: {
 	theme: Theme;
 	row: DashboardNeedsRow;
 	onJump?: (sessionId: string) => void;
+	onChanged?: () => void;
 }): React.ReactElement {
 	const meta = NEEDS_META[row.kind];
 	const color = meta.color(theme);
 	return (
 		<div
-			className="rounded px-3 py-2 flex items-center gap-2"
+			className="rounded px-3 py-2 flex flex-col gap-2"
 			style={{ backgroundColor: theme.colors.bgSidebar, borderLeft: `2px solid ${color}` }}
 			title={row.detail}
 		>
-			<MiniBadge theme={theme} label={meta.label} color={color} />
-			{row.programTitle && (
-				<span
-					className="text-xs shrink-0 max-w-[30%] truncate"
-					style={{ color: theme.colors.textDim }}
-				>
-					{row.programTitle}
+			<div className="flex items-center gap-2">
+				<MiniBadge theme={theme} label={meta.label} color={color} />
+				{row.programTitle && (
+					<span
+						className="text-xs shrink-0 max-w-[30%] truncate"
+						style={{ color: theme.colors.textDim }}
+					>
+						{row.programTitle}
+					</span>
+				)}
+				{row.kind === 'escalation' && row.sessionId && onJump ? (
+					<button
+						type="button"
+						onClick={() => {
+							const sessionId = row.sessionId;
+							if (!sessionId) return;
+							useSessionStore
+								.getState()
+								.setSessions((sessions) =>
+									sessions.map((session) =>
+										session.id === sessionId && session.aiTabs.some((tab) => tab.id === row.tabId)
+											? focusAiTabInSession(session, row.tabId)
+											: session
+									)
+								);
+							onJump(sessionId);
+						}}
+						className="text-sm truncate flex-1 text-left hover:underline"
+						style={{ color: theme.colors.textMain }}
+					>
+						{row.title}
+					</button>
+				) : (
+					<span className="text-sm truncate flex-1" style={{ color: theme.colors.textMain }}>
+						{row.title}
+					</span>
+				)}
+				<span className="text-xs shrink-0" style={{ color: theme.colors.textDim }}>
+					{formatRelativeTime(row.since)}
 				</span>
+			</div>
+			{row.kind === 'failed' && row.planId && row.taskId && onChanged && (
+				<FailedTaskActions
+					theme={theme}
+					row={{ ...row, planId: row.planId, taskId: row.taskId }}
+					onChanged={onChanged}
+				/>
 			)}
-			{row.kind === 'escalation' && row.sessionId && onJump ? (
-				<button
-					type="button"
-					onClick={() => {
-						const sessionId = row.sessionId;
-						if (!sessionId) return;
-						useSessionStore
-							.getState()
-							.setSessions((sessions) =>
-								sessions.map((session) =>
-									session.id === sessionId && session.aiTabs.some((tab) => tab.id === row.tabId)
-										? focusAiTabInSession(session, row.tabId)
-										: session
-								)
-							);
-						onJump(sessionId);
-					}}
-					className="text-sm truncate flex-1 text-left hover:underline"
-					style={{ color: theme.colors.textMain }}
-				>
-					{row.title}
-				</button>
-			) : (
-				<span className="text-sm truncate flex-1" style={{ color: theme.colors.textMain }}>
-					{row.title}
-				</span>
-			)}
-			<span className="text-xs shrink-0" style={{ color: theme.colors.textDim }}>
-				{formatRelativeTime(row.since)}
-			</span>
 		</div>
 	);
 }
@@ -813,7 +1016,7 @@ function WatchedSection({
 			icon={<Eye className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />}
 			title="Watched by Pianola"
 			count={watched.length}
-			emptyLabel="No legacy watches registered."
+			emptyLabel="No agents watched yet. Add one and Pianola babysits its questions."
 			collapsed={collapsed}
 			headerAction={
 				<div className="flex items-center gap-1">
@@ -842,6 +1045,7 @@ function WatchedSection({
 							{collapsed ? 'Show agents' : 'Hide agents'}
 						</button>
 					)}
+					{addButton}
 				</div>
 			}
 			controlRow={
@@ -858,7 +1062,7 @@ function WatchedSection({
 				</label>
 			}
 		>
-			{watched.map((row) => (
+			{watched.slice(0, collapsed ? 5 : undefined).map((row) => (
 				<div
 					key={row.targetId}
 					className="rounded px-3 py-2 flex items-center gap-3"
@@ -910,9 +1114,27 @@ function WatchedSection({
 					</button>
 				</div>
 			))}
+			{canCollapse && (
+				<button
+					type="button"
+					aria-expanded={!collapsed}
+					onClick={() => setExpanded((value) => !value)}
+					className="flex items-center gap-1 self-start text-xs px-2 py-1 rounded hover:bg-white/5 normal-case"
+					style={{ color: theme.colors.textDim }}
+				>
+					{collapsed ? (
+						<ChevronRight className="w-3.5 h-3.5" />
+					) : (
+						<ChevronDown className="w-3.5 h-3.5" />
+					)}
+					{collapsed ? 'Show agents' : 'Hide agents'}
+				</button>
+			)}
 		</Section>
 	);
 }
+type SecondaryView = 'programs' | 'outcomes' | 'watched' | 'activity';
+
 export function PianolaDashboard({
 	theme,
 	onJumpToAgent,
@@ -920,190 +1142,332 @@ export function PianolaDashboard({
 	const { data, portfolio, decisions, refresh } = usePianolaDashboardData();
 	const supervisor = usePianolaSupervisor();
 	const lifecycleDecisions = decisions.filter((record) => record.lifecycle);
+	const [secondaryView, setSecondaryView] = React.useState<SecondaryView>('programs');
 	const needsCount =
 		portfolio.asks.length +
 		portfolio.escalations.length +
 		data.needsInput.length +
 		portfolio.needsReview.length +
 		portfolio.failed.length;
+	const workingCount = groupedCount(portfolio.working);
+	const verifiedCount = groupedCount(portfolio.results);
+	const supervisedPrograms = portfolio.programs.filter((program) => program.loop.supervised).length;
 	const renderAgentRow = (accent: string) => (row: DashboardAgentRow) => (
 		<AgentRow key={row.key} theme={theme} row={row} accent={accent} onJump={onJumpToAgent} />
 	);
+	const secondaryTabs: { id: SecondaryView; label: string; count: number }[] = [
+		{ id: 'programs', label: 'Programs', count: portfolio.programs.length },
+		{ id: 'outcomes', label: 'Outcomes', count: groupedCount(portfolio.finished) + verifiedCount },
+		{ id: 'watched', label: 'Watched', count: supervisor.watched.length },
+		{ id: 'activity', label: 'Activity', count: data.activity.length },
+	];
 
 	return (
 		<div
-			className="flex-1 min-h-0 overflow-y-auto scrollbar-thin px-4 py-4"
+			className="flex-1 min-h-0 overflow-y-auto scrollbar-thin px-5 py-5"
 			style={{ backgroundColor: theme.colors.bgMain }}
 		>
-			<div className="flex items-center justify-between mb-4">
-				<h2 className="text-base font-bold" style={{ color: theme.colors.textMain }}>
-					Agent Dashboard
-				</h2>
-				<button
-					type="button"
-					onClick={() => {
-						refresh();
-						supervisor.refresh();
-					}}
-					className="flex items-center gap-1.5 text-xs px-2 py-1 rounded hover:bg-white/5 transition-colors"
-					style={{ color: theme.colors.textDim }}
-					title="Refresh"
+			<div className="max-w-[1600px] mx-auto">
+				<header className="flex items-start justify-between gap-4 mb-4">
+					<div>
+						<h2 className="text-xl font-semibold" style={{ color: theme.colors.textMain }}>
+							Command center
+						</h2>
+						<p className="text-sm mt-1" style={{ color: theme.colors.textDim }}>
+							{needsCount === 0
+								? 'Nothing needs your attention'
+								: `${needsCount} ${needsCount === 1 ? 'item needs' : 'items need'} your attention`}
+						</p>
+					</div>
+					<button
+						type="button"
+						onClick={() => {
+							refresh();
+							supervisor.refresh();
+						}}
+						className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-md hover:bg-white/5 transition-colors shrink-0"
+						style={{ color: theme.colors.textDim, border: `1px solid ${theme.colors.border}` }}
+						title="Refresh dashboard"
+					>
+						<RefreshCw className="w-3.5 h-3.5" />
+						Refresh
+					</button>
+				</header>
+
+				<PianolaScopeControls theme={theme} supervisor={supervisor} />
+
+				<Section
+					theme={theme}
+					icon={<ShieldQuestion className="w-3.5 h-3.5" />}
+					title="Pianola decisions"
+					count={lifecycleDecisions.length}
+					emptyLabel="No scope decisions recorded yet."
 				>
-					<RefreshCw className="w-3.5 h-3.5" />
-					Refresh
-				</button>
-			</div>
-
-			<PianolaScopeControls theme={theme} supervisor={supervisor} />
-			<WatchedSection theme={theme} onJumpToAgent={onJumpToAgent} supervisor={supervisor} />
-			{portfolio.programs.length > 0 && (
-				<div className="flex flex-wrap gap-2 mb-5" data-testid="pianola-program-strip">
-					{portfolio.programs.map((program) => (
-						<ProgramCard key={program.id} theme={theme} program={program} onChanged={refresh} />
-					))}
-				</div>
-			)}
-
-			<Section
-				theme={theme}
-				icon={<ShieldQuestion className="w-3.5 h-3.5" />}
-				title="Pianola decisions"
-				count={lifecycleDecisions.length}
-				emptyLabel="No scope decisions recorded yet."
-			>
-				{lifecycleDecisions.map((record) => {
-					const life = record.lifecycle!;
-					return (
-						<div
-							key={record.id}
-							className="rounded px-3 py-2"
-							style={{ backgroundColor: theme.colors.bgSidebar }}
-						>
-							<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
-								{DECISION_STATUS[life.status]} · {record.classification.topic}
-							</div>
-							<div className="text-xs" style={{ color: theme.colors.textDim }}>
-								{DECISION_ACTOR[life.nextActor]}: {life.nextAction}
-							</div>
-							{life.status === 'waiting_human' && (
-								<div className="text-sm select-text">
-									{record.classification.questionText ?? record.classification.topic} ·{' '}
-									{record.decision.reason}
+					{lifecycleDecisions.map((record) => {
+						const life = record.lifecycle!;
+						return (
+							<div
+								key={record.id}
+								className="rounded px-3 py-2"
+								style={{ backgroundColor: theme.colors.bgSidebar }}
+							>
+								<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+									{DECISION_STATUS[life.status]} · {record.classification.topic}
 								</div>
-							)}
-							{life.status === 'waiting_human' &&
-								life.nextActor === 'human' &&
-								!record.dryRun &&
-								!life.acknowledgedAt &&
-								!(
-									life.phase === 'answer' &&
-									record.deliveryStatus === 'admitted' &&
-									life.delivery !== 'rejected'
-								) &&
-								!(
-									life.phase === 'answer' &&
-									life.delivery !== 'not_sent' &&
-									life.delivery !== 'rejected'
-								) && <HumanDecision record={record} refresh={refresh} />}
-						</div>
-					);
-				})}
-			</Section>
+								<div className="text-xs" style={{ color: theme.colors.textDim }}>
+									{DECISION_ACTOR[life.nextActor]}: {life.nextAction}
+								</div>
+								{life.status === 'waiting_human' && (
+									<div className="text-sm select-text">
+										{record.classification.questionText ?? record.classification.topic} ·{' '}
+										{record.decision.reason}
+									</div>
+								)}
+								{life.status === 'waiting_human' &&
+									life.nextActor === 'human' &&
+									!record.dryRun &&
+									!life.acknowledgedAt &&
+									!(
+										life.phase === 'answer' &&
+										record.deliveryStatus === 'admitted' &&
+										life.delivery !== 'rejected'
+									) &&
+									!(
+										life.phase === 'answer' &&
+										life.delivery !== 'not_sent' &&
+										life.delivery !== 'rejected'
+									) && <HumanDecision record={record} refresh={refresh} />}
+							</div>
+						);
+					})}
+				</Section>
 
-			<Section
-				theme={theme}
-				icon={<AlertCircle className="w-3.5 h-3.5" style={{ color: theme.colors.warning }} />}
-				title="Needs your input"
-				count={needsCount}
-				emptyLabel="No agents are waiting on you."
-			>
-				{portfolio.asks.map((ask) => (
-					<AskRow key={ask.id} theme={theme} ask={ask} onSettled={refresh} />
-				))}
-				{portfolio.escalations.map((row) => (
-					<NeedsRow key={row.key} theme={theme} row={row} onJump={onJumpToAgent} />
-				))}
-				{data.needsInput.map(renderAgentRow(theme.colors.warning))}
-				{portfolio.needsReview.map((row) => (
-					<NeedsRow key={row.key} theme={theme} row={row} />
-				))}
-				{portfolio.failed.map((row) => (
-					<NeedsRow key={row.key} theme={theme} row={row} />
-				))}
-			</Section>
+				<div className="grid grid-cols-2 xl:grid-cols-4 gap-3 mb-4">
+					<MetricCard
+						theme={theme}
+						icon={<AlertCircle className="w-4 h-4" />}
+						label="Needs you"
+						value={needsCount}
+						accent={needsCount > 0 ? theme.colors.warning : theme.colors.success}
+					/>
+					<MetricCard
+						theme={theme}
+						icon={<Loader2 className="w-4 h-4" />}
+						label="Working now"
+						value={workingCount}
+						accent={theme.colors.accent}
+					/>
+					<MetricCard
+						theme={theme}
+						icon={<BadgeCheck className="w-4 h-4" />}
+						label="Verified results"
+						value={verifiedCount}
+						accent={theme.colors.success}
+					/>
+					<MetricCard
+						theme={theme}
+						icon={<Repeat className="w-4 h-4" />}
+						label="Supervised programs"
+						value={supervisedPrograms}
+						accent={theme.colors.accent}
+					/>
+				</div>
 
-			<Section
-				theme={theme}
-				icon={<Loader2 className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />}
-				title="Working now"
-				count={groupedCount(portfolio.working)}
-				emptyLabel="No agents are working right now."
-			>
-				<ProgramGroups
-					theme={theme}
-					groups={portfolio.working}
-					renderRow={renderAgentRow(theme.colors.accent)}
-				/>
-			</Section>
-
-			<Section
-				theme={theme}
-				icon={<CheckCircle2 className="w-3.5 h-3.5" style={{ color: theme.colors.success }} />}
-				title="Recently done"
-				count={groupedCount(portfolio.finished)}
-				emptyLabel="Nothing finished recently."
-			>
-				<ProgramGroups
-					theme={theme}
-					groups={portfolio.finished}
-					renderRow={renderAgentRow(theme.colors.success)}
-				/>
-			</Section>
-
-			<Section
-				theme={theme}
-				icon={<BadgeCheck className="w-3.5 h-3.5" style={{ color: theme.colors.success }} />}
-				title="Results"
-				count={groupedCount(portfolio.results)}
-				emptyLabel={
-					<>
-						<div>Nothing verified yet.</div>
-						<div className="not-italic text-xs">
-							A task counts once it is done and its independent-validation check passed.
-						</div>
-					</>
-				}
-			>
-				<ProgramGroups
-					theme={theme}
-					groups={portfolio.results}
-					renderRow={(row) => <ResultRow key={row.key} theme={theme} row={row} />}
-				/>
-			</Section>
-
-			<WatchedSection theme={theme} onJumpToAgent={onJumpToAgent} supervisor={supervisor} />
-
-			<Section
-				theme={theme}
-				icon={<ListChecks className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />}
-				title="Recent decisions"
-				count={data.activity.length}
-				emptyLabel="No decisions recorded yet."
-			>
-				{data.activity.map((row) =>
-					row.loop ? (
-						<LoopActivityRow
-							key={row.id}
+				<div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.6fr)_minmax(300px,1fr)] gap-4 items-start">
+					<DashboardPanel
+						theme={theme}
+						accent={needsCount > 0 ? theme.colors.warning : theme.colors.success}
+					>
+						<Section
 							theme={theme}
-							row={row}
-							loop={row.loop}
-							onJump={onJumpToAgent}
-						/>
-					) : (
-						<ActivityRow key={row.id} theme={theme} row={row} onJump={onJumpToAgent} />
-					)
-				)}
-			</Section>
+							icon={
+								<AlertCircle
+									className="w-4 h-4"
+									style={{ color: needsCount > 0 ? theme.colors.warning : theme.colors.success }}
+								/>
+							}
+							title="Needs you"
+							count={needsCount}
+							emptyLabel="You're clear. No decisions or failures need attention."
+						>
+							<div className="max-h-[62vh] overflow-y-auto pr-1 flex flex-col gap-2">
+								{portfolio.asks.map((ask) => (
+									<AskRow key={ask.id} theme={theme} ask={ask} onSettled={refresh} />
+								))}
+								{portfolio.escalations.map((row) => (
+									<NeedsRow key={row.key} theme={theme} row={row} onJump={onJumpToAgent} />
+								))}
+								{data.needsInput.map(renderAgentRow(theme.colors.warning))}
+								{portfolio.needsReview.map((row) => (
+									<NeedsRow key={row.key} theme={theme} row={row} />
+								))}
+								{portfolio.failed.map((row) => (
+									<NeedsRow key={row.key} theme={theme} row={row} onChanged={refresh} />
+								))}
+							</div>
+						</Section>
+					</DashboardPanel>
+
+					<DashboardPanel theme={theme} accent={theme.colors.accent}>
+						<Section
+							theme={theme}
+							icon={<Loader2 className="w-4 h-4" style={{ color: theme.colors.accent }} />}
+							title="Working now"
+							count={workingCount}
+							emptyLabel="No agents are working right now."
+						>
+							<div className="max-h-[62vh] overflow-y-auto pr-1">
+								<ProgramGroups
+									theme={theme}
+									groups={portfolio.working}
+									renderRow={renderAgentRow(theme.colors.accent)}
+								/>
+							</div>
+						</Section>
+					</DashboardPanel>
+				</div>
+
+				<div className="mt-5">
+					<div
+						className="flex flex-wrap gap-1 p-1 rounded-lg w-fit max-w-full"
+						role="tablist"
+						aria-label="Dashboard workspace"
+						style={{
+							backgroundColor: theme.colors.bgSidebar,
+							border: `1px solid ${theme.colors.border}`,
+						}}
+					>
+						{secondaryTabs.map((tab) => {
+							const selected = secondaryView === tab.id;
+							return (
+								<button
+									key={tab.id}
+									type="button"
+									role="tab"
+									aria-selected={selected}
+									aria-controls="dashboard-secondary-panel"
+									onClick={() => setSecondaryView(tab.id)}
+									className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
+									style={{
+										backgroundColor: selected ? theme.colors.bgMain : 'transparent',
+										color: selected ? theme.colors.textMain : theme.colors.textDim,
+									}}
+								>
+									{tab.label}
+									<span className="opacity-60">{tab.count}</span>
+								</button>
+							);
+						})}
+					</div>
+
+					<div id="dashboard-secondary-panel" role="tabpanel" className="mt-3">
+						{secondaryView === 'programs' && (
+							<DashboardPanel theme={theme}>
+								<Section
+									theme={theme}
+									icon={<ListChecks className="w-4 h-4" style={{ color: theme.colors.textDim }} />}
+									title="Programs"
+									count={portfolio.programs.length}
+									emptyLabel="No programs configured."
+								>
+									<div className="flex flex-wrap gap-2" data-testid="pianola-program-strip">
+										{portfolio.programs.map((program) => (
+											<ProgramCard
+												key={program.id}
+												theme={theme}
+												program={program}
+												onChanged={refresh}
+											/>
+										))}
+									</div>
+								</Section>
+							</DashboardPanel>
+						)}
+
+						{secondaryView === 'outcomes' && (
+							<div className="grid grid-cols-1 2xl:grid-cols-2 gap-4">
+								<DashboardPanel theme={theme} accent={theme.colors.success}>
+									<Section
+										theme={theme}
+										icon={
+											<CheckCircle2 className="w-4 h-4" style={{ color: theme.colors.success }} />
+										}
+										title="Recently done"
+										count={groupedCount(portfolio.finished)}
+										emptyLabel="Nothing finished recently."
+									>
+										<ProgramGroups
+											theme={theme}
+											groups={portfolio.finished}
+											renderRow={renderAgentRow(theme.colors.success)}
+										/>
+									</Section>
+								</DashboardPanel>
+								<DashboardPanel theme={theme} accent={theme.colors.success}>
+									<Section
+										theme={theme}
+										icon={
+											<BadgeCheck className="w-4 h-4" style={{ color: theme.colors.success }} />
+										}
+										title="Verified results"
+										count={verifiedCount}
+										emptyLabel={
+											<>
+												<div>Nothing verified yet.</div>
+												<div className="text-xs mt-1">
+													A task counts once it is done and its independent-validation check passed.
+												</div>
+											</>
+										}
+									>
+										<ProgramGroups
+											theme={theme}
+											groups={portfolio.results}
+											renderRow={(row) => <ResultRow key={row.key} theme={theme} row={row} />}
+										/>
+									</Section>
+								</DashboardPanel>
+							</div>
+						)}
+
+						{secondaryView === 'watched' && (
+							<DashboardPanel theme={theme}>
+								<WatchedSection
+									theme={theme}
+									onJumpToAgent={onJumpToAgent}
+									supervisor={supervisor}
+								/>
+							</DashboardPanel>
+						)}
+
+						{secondaryView === 'activity' && (
+							<DashboardPanel theme={theme}>
+								<Section
+									theme={theme}
+									icon={<ListChecks className="w-4 h-4" style={{ color: theme.colors.textDim }} />}
+									title="Recent decisions"
+									count={data.activity.length}
+									emptyLabel="No decisions recorded yet."
+								>
+									{data.activity.map((row) =>
+										row.loop ? (
+											<LoopActivityRow
+												key={row.id}
+												theme={theme}
+												row={row}
+												loop={row.loop}
+												onJump={onJumpToAgent}
+											/>
+										) : (
+											<ActivityRow key={row.id} theme={theme} row={row} onJump={onJumpToAgent} />
+										)
+									)}
+								</Section>
+							</DashboardPanel>
+						)}
+					</div>
+				</div>
+			</div>
 		</div>
 	);
 }

@@ -1003,11 +1003,11 @@ describe('ExitHandler', () => {
 		};
 
 		it('cleans only predecessor files after replacement during shutdown reconciliation, once', async () => {
-			const predecessor = registerPredecessor({ tempImageFiles: ['/tmp/old-prompt.md'] });
+			const predecessor = registerPredecessor({ tempFiles: ['/tmp/old-prompt.md'] });
 			vi.mocked(waitForCopilotShutdown).mockImplementation(async () => {
 				// kill() releases the key before the replacement registers its generation.
 				processes.delete('test-session');
-				successor = createMockProcess({ pid: 4321, tempImageFiles: ['/tmp/new-prompt.md'] });
+				successor = createMockProcess({ pid: 4321, tempFiles: ['/tmp/new-prompt.md'] });
 				successor.spawnGeneration = nextSpawnGeneration('test-session');
 				processes.set('test-session', successor);
 				return 'timeout';
@@ -1017,8 +1017,8 @@ describe('ExitHandler', () => {
 			await exitHandler.handleExit('test-session', 143, predecessor);
 
 			expect(cleanupTempFiles).toHaveBeenCalledExactlyOnceWith(['/tmp/old-prompt.md']);
-			expect(predecessor.tempImageFiles).toBeUndefined();
-			expect(successor!.tempImageFiles).toEqual(['/tmp/new-prompt.md']);
+			expect(predecessor.tempFiles).toBeUndefined();
+			expect(successor!.tempFiles).toEqual(['/tmp/new-prompt.md']);
 			expect(processes.get('test-session')).toBe(successor);
 		});
 

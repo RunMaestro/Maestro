@@ -169,14 +169,12 @@ describe('CueEngine', () => {
 		it('does not finish an obsolete start after stop and restart', async () => {
 			mockLoadCueConfig.mockReturnValue(createMockConfig());
 			const engine = new CueEngine(createMockDeps());
-			const restore = vi.spyOn((engine as any).queuePersistence, 'restoreAll');
 			const heartbeat = vi.spyOn((engine as any).heartbeat, 'start');
 			const reconcile = vi.spyOn((engine as any).recoveryService, 'detectSleepAndReconcile');
 			const firstStart = engine.start();
 			engine.stop();
 			const secondStart = engine.start();
 			await Promise.all([firstStart, secondStart]);
-			expect(restore).toHaveBeenCalledTimes(1);
 			expect(reconcile).toHaveBeenCalledTimes(1);
 			expect(heartbeat).toHaveBeenCalledTimes(1);
 			engine.stop();

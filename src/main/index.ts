@@ -61,11 +61,11 @@ import {
 } from './global-hotkey-manager';
 import { CueEngine } from './cue/cue-engine';
 import { hostVisibleProjectRoot } from '../shared/hostVisibleProjectRoot';
-import { projectCueEventPaths } from './cue/cue-template-context-builder';
 import type { SshRemoteConfig } from '../shared/types';
 import { createCueSupervisorHooks } from './cue/cue-first-party';
 import { PianolaSupervisor, type AutoWatchSession } from './pianola/pianola-supervisor';
 import { PianolaRelearnScheduler } from './pianola/pianola-relearn-scheduler';
+import type { PianolaMemoryHost } from './pianola/memory-host';
 import { createPianolaLifecycle } from './pianola/pianola-lifecycle';
 import {
 	getComputerHistoryService,
@@ -618,6 +618,7 @@ let agentDetector: AgentDetector | null = null;
 let cueEngine: CueEngine | null = null;
 let pianolaSupervisor: PianolaSupervisor | null = null;
 let pianolaRelearnScheduler: PianolaRelearnScheduler | null = null;
+let pianolaMemoryHost: PianolaMemoryHost | null = null;
 let pluginManager: PluginManager | null = null;
 let pluginStartupToken: object = {};
 let pluginScheduler: PluginSchedulerHost | null = null;
@@ -778,6 +779,7 @@ registerCadenzaIpcHandlers({ getMainWindow: () => mainWindow, settingsStore: sto
 // (Stopping the community-plugin runtime when `plugins` turns off is the
 // plugins hook of the Encore lifecycle below.)
 store.onDidChange('encoreFeatures', (encoreFeatures) => {
+	pianolaMemoryHost?.reconcile();
 	if (!resolveEncoreFeatures(encoreFeatures).concerto) closeCadenzaHudWindow();
 	// A switched-off Throughput Gauge leaves no widget window behind.
 	if (!resolveEncoreFeatures(encoreFeatures).throughputGauge) {
@@ -1660,6 +1662,13 @@ app
 		});
 		pianolaSupervisor = pianolaLifecycle.supervisor;
 		pianolaRelearnScheduler = pianolaLifecycle.relearnScheduler;
+		pianolaMemoryHost = pianolaLifecycle.memoryHost;
+		// Resume a configured durable queue at boot without waiting for the Memory UI.
+		if (resolveEncoreFeatures(store.get('encoreFeatures')).pianola) {
+			void pianolaMemoryHost
+				.request({ action: 'status' })
+				.catch((error) => logger.error(`Pianola memory failed to resume: ${error}`, 'Startup'));
+		}
 
 		// Computer History: construct the one service (IPC, the CLI's WS writes,
 		// and the first-party hooks all reach it). Started below at boot when its
@@ -1874,6 +1883,7 @@ app
 				stopAll: () => {
 					pianolaSupervisor?.stopAll();
 					pianolaRelearnScheduler?.stop();
+					void pianolaMemoryHost?.stop();
 				},
 			},
 			// [L3MaestroCue] cue engine lifecycle: reconcile (re)starts when the
@@ -4083,6 +4093,7 @@ quitHandler = createQuitHandler({
 		pianolaSupervisor?.stopAll();
 		// Stop the Pianola re-learn cadence.
 		pianolaRelearnScheduler?.stop();
+		void pianolaMemoryHost?.stop();
 		// Stop the Computer History helper (it also exits on stdin EOF) and close
 		// the open segment. If quit outruns the close, the next start indexes it.
 		void getComputerHistoryService()

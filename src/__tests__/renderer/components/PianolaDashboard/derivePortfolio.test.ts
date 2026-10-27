@@ -199,6 +199,7 @@ describe('derivePortfolio', () => {
 							taskTitle: 'Build form',
 							status: 'fixing',
 							agentId: 'dev',
+							tabId: 'dev-tab',
 						},
 					],
 				}),
@@ -216,6 +217,7 @@ describe('derivePortfolio', () => {
 		expect(working[0].rows[0]).toMatchObject({
 			sessionId: 'dev',
 			agentName: 'Dev',
+			tabId: 'dev-tab',
 			description: 'Build form · Plan A · fixing',
 		});
 		expect(working[1].rows.map((r) => r.sessionId)).toEqual(['lead']);

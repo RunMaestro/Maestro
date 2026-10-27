@@ -68,6 +68,8 @@ const store = vi.hoisted(() => ({
 		async (update: (targets: PianolaSupervisedTarget[]) => PianolaSupervisedTarget[]) => update([])
 	),
 	readPlans: vi.fn(() => [] as PianolaPlan[]),
+	updatePlansAsync: vi.fn(),
+	withPlanLock: vi.fn((_planId: string, operation: () => Promise<unknown>) => operation()),
 	readAsks: vi.fn(() => [] as PianolaAsk[]),
 	writeAsksAsync: vi.fn(async (asks: PianolaAsk[]) => asks),
 	updateAsksAsync: vi.fn(async (update: (asks: PianolaAsk[]) => PianolaAsk[]) => update([])),
@@ -139,6 +141,7 @@ beforeEach(() => {
 	store.writeSuggestions.mockImplementation((suggestions) => suggestions);
 	store.readSupervisorTargets.mockReturnValue([]);
 	store.readPlans.mockReturnValue([]);
+	store.updatePlansAsync.mockImplementation(async (update) => update(store.readPlans()));
 	store.readAsks.mockReturnValue([]);
 	store.readPrograms.mockReturnValue([]);
 	store.updateProgramsAsync.mockImplementation(async (update) => update(store.readPrograms()));
@@ -960,5 +963,91 @@ describe('program controls IPC', () => {
 		await expect(
 			handlers.get('pianola:set-program-status')!({}, 'product', 'invalid')
 		).rejects.toThrow('InvalidProgramStatus');
+	});
+});
+
+describe('failed task recovery IPC', () => {
+	const failedPlan: PianolaPlan = {
+		id: 'plan-1',
+		title: 'Recovery',
+		createdAt: 1,
+		tasks: [
+			{
+				id: 'task-1',
+				title: 'Broken deploy',
+				prompt: 'Deploy the service',
+				dependsOn: [],
+				status: 'failed',
+				runId: 'run-old',
+				error: 'exit 1',
+			},
+			{
+				id: 'task-2',
+				title: 'Notify',
+				prompt: 'Notify the team',
+				dependsOn: ['task-1'],
+				status: 'pending',
+			},
+		],
+	};
+
+	it('restarts a failed task with its original instructions', async () => {
+		store.readPlans.mockReturnValue([failedPlan]);
+		registerPianolaHandlers({ settingsStore: settingsStore(true), supervisor });
+		const result = (await handlers.get('pianola:revise-plan-task')!(
+			{},
+			'plan-1',
+			'task-1'
+		)) as PianolaPlan;
+		expect(result.tasks[0]).toMatchObject({ status: 'pending', prompt: 'Deploy the service' });
+		expect(result.tasks[0].runId).toBeUndefined();
+		expect(store.withPlanLock).toHaveBeenCalledWith('plan-1', expect.any(Function), {
+			waitForTurn: true,
+		});
+		expect(supervisor.reconcile).toHaveBeenCalledOnce();
+	});
+
+	it('accepts replacement instructions for a revision', async () => {
+		store.readPlans.mockReturnValue([failedPlan]);
+		registerPianolaHandlers({ settingsStore: settingsStore(true), supervisor });
+		const result = (await handlers.get('pianola:revise-plan-task')!(
+			{},
+			'plan-1',
+			'task-1',
+			'Deploy to staging first'
+		)) as PianolaPlan;
+		expect(result.tasks[0].prompt).toBe('Deploy to staging first');
+	});
+
+	it('skips failed work and leaves its dependents blocked', async () => {
+		store.readPlans.mockReturnValue([failedPlan]);
+		registerPianolaHandlers({ settingsStore: settingsStore(true), supervisor });
+		const result = (await handlers.get('pianola:skip-plan-task')!(
+			{},
+			'plan-1',
+			'task-1'
+		)) as PianolaPlan;
+		expect(result.tasks.map((task) => [task.id, task.status])).toEqual([
+			['task-1', 'skipped'],
+			['task-2', 'blocked'],
+		]);
+		expect(supervisor.reconcile).toHaveBeenCalledOnce();
+	});
+
+	it('rejects skipping active work and gates both mutations when disabled', async () => {
+		store.readPlans.mockReturnValue([
+			{ ...failedPlan, tasks: [{ ...failedPlan.tasks[0], status: 'running' }] },
+		]);
+		registerPianolaHandlers({ settingsStore: settingsStore(true), supervisor });
+		await expect(handlers.get('pianola:skip-plan-task')!({}, 'plan-1', 'task-1')).rejects.toThrow(
+			'Only failed tasks can be skipped.'
+		);
+		registerPianolaHandlers({ settingsStore: settingsStore(false), supervisor });
+		await expect(handlers.get('pianola:revise-plan-task')!({}, 'plan-1', 'task-1')).rejects.toThrow(
+			'PianolaDisabled'
+		);
+		await expect(handlers.get('pianola:skip-plan-task')!({}, 'plan-1', 'task-1')).rejects.toThrow(
+			'PianolaDisabled'
+		);
 	});
 });

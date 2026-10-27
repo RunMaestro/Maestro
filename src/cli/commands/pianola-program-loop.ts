@@ -38,8 +38,10 @@ export async function pianolaProgramLoop(
 	const client = new MaestroClient();
 	await client.connect();
 	let stopped = false;
+	let cancelSleep: (() => void) | undefined;
 	const onSignal = () => {
 		stopped = true;
+		cancelSleep?.();
 	};
 	process.on('SIGINT', onSignal);
 	try {
@@ -210,8 +212,13 @@ export async function pianolaProgramLoop(
 			}
 			if (options.once || stopped) break;
 			const { promise, resolve } = Promise.withResolvers<void>();
-			setTimeout(resolve, seconds * 1000);
+			const timer = setTimeout(resolve, seconds * 1000);
+			cancelSleep = () => {
+				clearTimeout(timer);
+				resolve();
+			};
 			await promise;
+			cancelSleep = undefined;
 		}
 	} finally {
 		process.off('SIGINT', onSignal);

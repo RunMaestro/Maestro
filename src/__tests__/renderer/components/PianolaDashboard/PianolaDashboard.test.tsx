@@ -75,6 +75,10 @@ function mockHook(data: DashboardData, portfolio: PortfolioData = portfolioFor(d
 	hookMock.usePianolaDashboardData.mockReturnValue({ data, portfolio, decisions: [], refresh });
 }
 
+function selectWorkspaceTab(label: string): void {
+	fireEvent.click(screen.getByRole('tab', { name: new RegExp(`^${label}\\s*\\d*$`) }));
+}
+
 function populatedData(): DashboardData {
 	return {
 		needsInput: [
@@ -147,13 +151,20 @@ describe('PianolaDashboard data mapping', () => {
 			})),
 		});
 		render(<PianolaDashboard theme={theme} onJumpToAgent={vi.fn()} />);
+		expect(screen.queryByText('Watched by Pianola')).not.toBeInTheDocument();
+		expect(screen.queryByText('Agent 0')).not.toBeInTheDocument();
+		selectWorkspaceTab('Watched');
 		expect(screen.getByText('Watched by Pianola')).toBeInTheDocument();
+		expect(screen.getByText('Watch an agent')).toBeInTheDocument();
 		expect(screen.queryByText('Agent 0')).not.toBeInTheDocument();
 		expect(screen.getByRole('button', { name: '+ Add selection' })).toBeInTheDocument();
 		fireEvent.click(screen.getByRole('button', { name: 'Show agents' }));
 		expect(screen.getByText('Agent 0')).toBeInTheDocument();
+		expect(screen.queryByText('Agent 5')).not.toBeInTheDocument();
+		fireEvent.click(screen.getByRole('button', { name: 'Show agents' }));
+		expect(screen.getByText('Agent 5')).toBeInTheDocument();
 		fireEvent.click(screen.getByRole('button', { name: 'Hide agents' }));
-		expect(screen.queryByText('Agent 0')).not.toBeInTheDocument();
+		expect(screen.queryByText('Agent 5')).not.toBeInTheDocument();
 	});
 
 	it('shows failures and backing-off watches while the watch list is collapsed', () => {
@@ -169,6 +180,7 @@ describe('PianolaDashboard data mapping', () => {
 		});
 		render(<PianolaDashboard theme={theme} onJumpToAgent={vi.fn()} />);
 		expect(screen.queryByText('Agent 0')).not.toBeInTheDocument();
+		selectWorkspaceTab('Watched');
 		expect(screen.getByRole('status')).toHaveTextContent('2 failing');
 	});
 
@@ -179,21 +191,26 @@ describe('PianolaDashboard data mapping', () => {
 			setAutoWatchNewAgents,
 		});
 		render(<PianolaDashboard theme={theme} onJumpToAgent={vi.fn()} />);
+		selectWorkspaceTab('Watched');
 		fireEvent.click(screen.getByRole('checkbox', { name: 'Automatically watch new agents' }));
 		expect(setAutoWatchNewAgents).toHaveBeenCalledWith(true);
 	});
 	it('renders each status bucket and the agents in it', () => {
 		render(<PianolaDashboard theme={theme} onJumpToAgent={vi.fn()} />);
 
-		expect(screen.getByText('Needs your input')).toBeInTheDocument();
+		expect(screen.getByRole('heading', { name: 'Needs you' })).toBeInTheDocument();
 		expect(screen.getByText('pick a name')).toBeInTheDocument();
 		expect(screen.getByText('refactor parser')).toBeInTheDocument();
+		expect(screen.queryByText('shipped feature')).not.toBeInTheDocument();
+		selectWorkspaceTab('Outcomes');
 		expect(screen.getByText('shipped feature')).toBeInTheDocument();
 		expect(screen.getByText('Beta')).toBeInTheDocument();
 	});
 
 	it('maps activity actions to their display labels', () => {
 		render(<PianolaDashboard theme={theme} onJumpToAgent={vi.fn()} />);
+		expect(screen.queryByText('Auto-answered')).not.toBeInTheDocument();
+		selectWorkspaceTab('Activity');
 
 		expect(screen.getByText('Auto-answered')).toBeInTheDocument();
 		expect(screen.getByText('Handed to Pianola')).toBeInTheDocument();
@@ -231,7 +248,7 @@ describe('PianolaDashboard data mapping', () => {
 						},
 					]
 				: [busyRow];
-			hookMock.usePianolaDashboardData.mockReturnValue({ data, decisions: [], refresh });
+			mockHook(data);
 			const onJump = vi.fn();
 			render(<PianolaDashboard theme={theme} onJumpToAgent={onJump} />);
 
@@ -243,6 +260,7 @@ describe('PianolaDashboard data mapping', () => {
 
 	it('disables an activity row that has no owning agent', () => {
 		render(<PianolaDashboard theme={theme} onJumpToAgent={vi.fn()} />);
+		selectWorkspaceTab('Activity');
 
 		const ghostRow = screen.getByText('orphan ask').closest('button');
 		expect(ghostRow).toBeDisabled();
@@ -259,11 +277,15 @@ describe('PianolaDashboard data mapping', () => {
 		mockHook(emptyData(), emptyPortfolio());
 		render(<PianolaDashboard theme={theme} onJumpToAgent={vi.fn()} />);
 
-		expect(screen.getByText('No agents are waiting on you.')).toBeInTheDocument();
+		expect(
+			screen.getByText("You're clear. No decisions or failures need attention.")
+		).toBeInTheDocument();
 		expect(screen.getByText('No agents are working right now.')).toBeInTheDocument();
+		selectWorkspaceTab('Outcomes');
 		expect(screen.getByText('Nothing finished recently.')).toBeInTheDocument();
-		expect(screen.getByText('No decisions recorded yet.')).toBeInTheDocument();
 		expect(screen.getByText('Nothing verified yet.')).toBeInTheDocument();
+		selectWorkspaceTab('Activity');
+		expect(screen.getByText('No decisions recorded yet.')).toBeInTheDocument();
 		expect(screen.queryByTestId('pianola-program-strip')).not.toBeInTheDocument();
 	});
 });
@@ -325,6 +347,66 @@ describe('PianolaDashboard portfolio', () => {
 		expect(window.maestro.pianola.resolveAsk).toHaveBeenCalledWith('context', 'Stripe', undefined);
 	});
 
+	it('offers restart and skip actions for failed tasks', () => {
+		mockHook(emptyData(), {
+			...emptyPortfolio(),
+			failed: [
+				{
+					key: 'failed:plan-1:task-1',
+					kind: 'failed',
+					title: 'Broken deploy',
+					planId: 'plan-1',
+					taskId: 'task-1',
+					since: now,
+				},
+			],
+		});
+		render(<PianolaDashboard theme={theme} onJumpToAgent={vi.fn()} />);
+
+		expect(screen.getByRole('button', { name: 'Restart' })).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Revise' })).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Skip task' })).toBeInTheDocument();
+	});
+
+	it('restarts, revises, and skips failed tasks through IPC', async () => {
+		const revise = vi.fn().mockResolvedValue(undefined);
+		const skip = vi.fn().mockResolvedValue(undefined);
+		Object.assign(window.maestro.pianola, { revisePlanTask: revise, skipPlanTask: skip });
+		mockHook(emptyData(), {
+			...emptyPortfolio(),
+			failed: [
+				{
+					key: 'failed:plan-1:task-1',
+					kind: 'failed',
+					title: 'Broken deploy',
+					planId: 'plan-1',
+					taskId: 'task-1',
+					since: now,
+				},
+			],
+		});
+		render(<PianolaDashboard theme={theme} onJumpToAgent={vi.fn()} />);
+
+		fireEvent.click(screen.getByRole('button', { name: 'Restart' }));
+		await waitFor(() => expect(revise).toHaveBeenCalledWith('plan-1', 'task-1'));
+		expect(refresh).toHaveBeenCalledTimes(1);
+
+		fireEvent.click(screen.getByRole('button', { name: 'Revise' }));
+		fireEvent.change(screen.getByPlaceholderText('Revision instructions'), {
+			target: { value: 'Deploy to staging first' },
+		});
+		fireEvent.click(screen.getByRole('button', { name: 'Revise & restart' }));
+		await waitFor(() =>
+			expect(revise).toHaveBeenCalledWith('plan-1', 'task-1', 'Deploy to staging first')
+		);
+		expect(refresh).toHaveBeenCalledTimes(2);
+		fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+		fireEvent.click(screen.getByRole('button', { name: 'Skip task' }));
+		fireEvent.click(screen.getByRole('button', { name: 'Confirm skip' }));
+		await waitFor(() => expect(skip).toHaveBeenCalledWith('plan-1', 'task-1'));
+		expect(refresh).toHaveBeenCalledTimes(3);
+	});
 	it('shows the program strip, a founder ask, and verified results grouped by program', () => {
 		mockHook(emptyData(), {
 			...emptyPortfolio(),
@@ -369,11 +451,13 @@ describe('PianolaDashboard portfolio', () => {
 			],
 		});
 		render(<PianolaDashboard theme={theme} onJumpToAgent={vi.fn()} />);
+		selectWorkspaceTab('Programs');
 
 		const strip = screen.getByTestId('pianola-program-strip');
 		expect(strip).toHaveTextContent('Plan: One-page checkout');
 		expect(strip).toHaveTextContent('1 open ask · 2 running · 3 verified (7d)');
 		expect(screen.getByText('Pick Stripe or keep Adyen')).toBeInTheDocument();
+		selectWorkspaceTab('Outcomes');
 		expect(screen.getByText('Address form')).toBeInTheDocument();
 		expect(screen.getByText('independent-validation')).toBeInTheDocument();
 		expect(screen.queryByText('Nothing verified yet.')).not.toBeInTheDocument();
@@ -643,6 +727,7 @@ describe('PianolaDashboard program loop', () => {
 	it('shows each program loop state with Supervise only on an unsupervised program', () => {
 		mockHook(emptyData(), programsPortfolio());
 		render(<PianolaDashboard theme={theme} onJumpToAgent={vi.fn()} />);
+		selectWorkspaceTab('Programs');
 
 		const supervised = screen.getByTestId('pianola-program-p1');
 		expect(screen.getByTestId('pianola-program-loop-p1')).toHaveTextContent(
@@ -660,6 +745,7 @@ describe('PianolaDashboard program loop', () => {
 	it('supervises a program by id, then refreshes', async () => {
 		mockHook(emptyData(), programsPortfolio());
 		render(<PianolaDashboard theme={theme} onJumpToAgent={vi.fn()} />);
+		selectWorkspaceTab('Programs');
 
 		fireEvent.click(within(screen.getByTestId('pianola-program-p2')).getByText('Supervise'));
 
@@ -670,6 +756,7 @@ describe('PianolaDashboard program loop', () => {
 	it('pauses an active program and resumes a paused one, refreshing after each', async () => {
 		mockHook(emptyData(), programsPortfolio());
 		render(<PianolaDashboard theme={theme} onJumpToAgent={vi.fn()} />);
+		selectWorkspaceTab('Programs');
 
 		fireEvent.click(within(screen.getByTestId('pianola-program-p1')).getByText('Pause'));
 		await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
@@ -686,6 +773,7 @@ describe('PianolaDashboard program loop', () => {
 		);
 		mockHook(emptyData(), programsPortfolio());
 		render(<PianolaDashboard theme={theme} onJumpToAgent={vi.fn()} />);
+		selectWorkspaceTab('Programs');
 
 		fireEvent.click(within(screen.getByTestId('pianola-program-p1')).getByText('Pause'));
 
@@ -719,6 +807,7 @@ describe('PianolaDashboard program loop', () => {
 			],
 		});
 		render(<PianolaDashboard theme={theme} onJumpToAgent={vi.fn()} />);
+		selectWorkspaceTab('Activity');
 
 		const loopRow = screen.getByTestId('pianola-loop-row-loop1:intent');
 		expect(loopRow).toHaveTextContent('Checkout');

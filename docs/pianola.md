@@ -46,6 +46,36 @@ The audit trail, and the most important tab in the feature. For every decision i
 
 Pianola can read your own past CLI transcripts and propose rules and a decision profile that match how you already answer. Proposals sit here until you approve them. Approving only writes config, and an approved rule still goes through every safety check at runtime.
 
+### Memory
+
+The **Memory** tab contains **Backfill & privacy**, **Memory bank**, and **Coverage & usage**. Enable memory separately, select native history roots, and explicitly attribute your human-authored pools. Unattributed roots stay out of learning. Inspect the original evidence, support label, scope, and current/proposed/contested/superseded status before relying on a claim.
+
+Memory retains preferences, project knowledge, decisions and rejected alternatives, episodes, commitments, and broader context. It uses a desktop-owned SQLite bank with lexical search and a pinned local semantic embedding model. The manager, watchers, and dispatched tasks receive bounded, relevant context, not the whole bank.
+
+You can explicitly remember information, correct a claim while retaining earlier decision history, pin or unpin a record, forget it, and export the bank. Native transcripts and external backups are not deleted by forgetting. Forgetting deletes the bank's linked evidence and indexes and persists suppression against learning the same evidence again.
+
+## Backfilling historical memory
+
+Keep the desktop running. Memory operations use its existing host transport; the CLI does not open the database directly.
+
+```bash
+maestro-cli pianola memory configure --mine --mode local --model qwen3:8b --endpoint http://127.0.0.1:11434 --tokens 1000000 --dollars 0
+maestro-cli pianola memory discover
+maestro-cli pianola memory start
+maestro-cli pianola memory status --json
+maestro-cli pianola memory recall "storage decisions" --project /path/to/project
+```
+
+`--mine` explicitly attributes selected history pools to you. Do not use it for shared accounts. Native automation origins and delegated sessions remain automated; their prompts cannot become human preferences or approved decisions. Unknown authorship cannot establish human preferences.
+
+Discovery supports Claude Code, Codex, OpenCode, Factory Droid, Copilot CLI, OMP, and Grok. Select custom roots with `--provider` and `--root`; exclude roots, projects, or files with `--exclude`. Exclusions include descendants and linked Git worktrees and are enforced before evidence extraction or hosted submission.
+
+Local extraction uses a loopback Ollama endpoint; embeddings also remain local. Hosted and Batch modes require explicit off-device consent, credentials, and configured budgets. Changing provider clears consent unless it is explicitly supplied again. Pause stops ingestion without deleting the bank; resume retains checkpoints and budget reservations.
+
+Assertions require exact citations and independent evidence verification. Default recall returns a bounded advisory shortlist and does not assess answerability. Use `--intent current|previous|proposed|contested|history`, or `--intent as-of --at <date>` for lifecycle-specific recall. Optional `--qualify` applies model review; optional `--rerank` sends the question and shortlisted assertions to the configured hosted reranker. Neither feature grants authority or overrides exclusions, evidence status, or validity dates.
+
+Use `memory remember`, `memory correct`, `memory evidence`, `memory pin`, `memory unpin`, and `memory forget` for explicit bank operations. `memory list --history` browses lifecycle history, while `memory export --out <file>` writes a JSON export. `memory retry` explicitly retries uncertain work and may incur another provider charge.
+
 ## Putting a watch on an agent
 
 On the Dashboard, open the Watching section and press **+**, then pick one of your agents. From the terminal:
@@ -124,7 +154,13 @@ maestro-cli pianola program-loop <program-id> --once --json
 maestro-cli pianola program pause <program-id>
 ```
 
+Ctrl+C stops an interactive program loop immediately, including while it waits for the next interval.
+
 Loop memo state is stored in maestro-pianola-program-loop.json in the Maestro data directory. Program-loop actions appear in Recent decisions without creating a Needs you escalation; no-op ticks are not recorded. The brief reports whether each program is supervised and its last wake reason and time.
+
+In the dashboard, clicking an in-flight task opens the tab running that task, not merely the agent's currently active tab.
+
+The command-center dashboard leads with a compact status summary, then puts **Needs you** beside **Working now** so pending decisions and active work are visible without scanning audit history. Programs, outcomes, watched agents, and recent decisions share one tabbed workspace; only the selected workspace appears below the main panels. Clicking an in-flight task opens the tab running that task.
 
 Applying a program also writes Cue routines into a local Windows root's `.maestro/cue.yaml`. Product programs get a weekday 08:30 standup and a weekday 17:00 marketing draft sweep over verified work from the last day. The portfolio program gets Monday CTO and CMO reviews and a Wednesday social draft sweep. These write drafts and reviews only, never publish. Re-apply replaces only that program's marked generated block, preserving other programs and hand-written subscriptions; existing legacy Cue configuration migrates without losing its subscriptions or settings. For a remote root, the CLI writes through `remoteRootOnHost` and skips the Cue file when that value is unset. Mounted remote Cue files use host-visible roots for storage and remote POSIX roots for execution and prompt path variables.
 
@@ -170,6 +206,10 @@ The controller persists a claim before dispatch and the confirmed tab afterward.
 
 Use Cue for triggers and technical monitoring, dispatch callbacks for worker return, Pianola watchers for waiting questions, and explicit acceptance evidence for dependency release. A heartbeat can detect stale runs and missing callbacks; deduplicate it against the controller and avoid answering the same question concurrently with a watcher. Completion callbacks report execution ending and are not acceptance evidence.
 After a founder resolves blocked work, the lead uses `plan revise` to correct a task in `needs_review` or `failed`. It requeues only that task and unblocks eligible descendants, preserving the plan ID, completed tasks, dependencies, role agent, and validation oracle. Prior execution bindings and corrective-attempt counters are cleared; the supervised orchestrator dispatches the revised instructions. Revision and complete orchestrator ticks share per-plan ownership, and each tick reloads the saved plan so a running supervisor cannot overwrite the correction. Active or completed tasks cannot be revised; a terminal plan cannot reopen while another unfinished plan belongs to the same program. `plan set` still refuses to replace any started plan.
+
+Failed tasks in the command center offer **Restart**, **Revise**, and **Skip task**. Restart reuses the original instructions; Revise replaces them before reopening the task. Skip requires confirmation, clears the failed item from the attention queue, and leaves dependent tasks blocked rather than pretending they succeeded.
+
+Each fresh dispatch starts with an empty attempt-scoped check and review ledger, so findings from a rejected attempt cannot send the correction back to review. Earlier dispatch and validation events remain in the AgentRun audit history.
 
 Founder revision yields while an in-flight orchestration/validation tick holds the plan lock. Plan owners renew their lock every ten seconds; a revision can wait through a long validation while those heartbeats continue, but returns a timeout after thirty seconds without lock progress. A live PID alone does not permit indefinite waiting, and a timed-out revision neither changes the plan nor steals the lock. Other mutation waits retain their five-second deadline; dead-owner recovery remains enabled. If revision reopens a completed plan with an enabled supervised target, reconciliation automatically starts its stopped orchestrator again, including when revision races with the prior child's clean exit. Completed plans without new work, disabled targets, and paused programs remain stopped.
 

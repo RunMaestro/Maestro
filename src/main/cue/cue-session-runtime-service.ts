@@ -3,7 +3,7 @@ import type { CueQueueDropReason } from '../../shared/cue-log-types';
 import type { SessionInfo } from '../../shared/types';
 import type { QueuedEvent } from './cue-run-manager';
 import { loadCueConfigDetailed, watchCueYaml } from './cue-yaml-loader';
-import type { readCueConfigFile } from './config/cue-config-repository';
+import { resolveCueConfigPath, type readCueConfigFile } from './config/cue-config-repository';
 import {
 	createCueEvent,
 	DEFAULT_CUE_SETTINGS,
@@ -21,7 +21,6 @@ import {
 import type { CueSessionRegistry } from './cue-session-registry';
 import { createTriggerSource } from './triggers/cue-trigger-source-registry';
 import { passesFilter } from './triggers/cue-trigger-filter';
-import { isDurableCueEvent } from './triggers/cue-plugin-trigger-source';
 import type { CueScheduleCarry, CueTriggerSource } from './triggers/cue-trigger-source';
 import { triggerGroupKey } from '../../shared/cue/trigger-group-key';
 import { removeSubscriptionFromYaml, type SelfDestructResult } from './cue-self-destruct';
@@ -584,11 +583,7 @@ export function createCueSessionRuntimeService(
 	 * Can retain the YAML watcher for refresh, and hold the queue for a reload to
 	 * settle (`holdQueue`); startup dedup keys remain intact.
 	 */
-	function teardownSession(
-		sessionId: string,
-		preserveRuntime = false,
-		holdQueue = false
-	): void {
+	function teardownSession(sessionId: string, preserveRuntime = false, holdQueue = false): void {
 		if (!preserveRuntime) {
 			const projectRoot = yamlWatchers.get(sessionId)?.projectRoot;
 			yamlWatchers.get(sessionId)?.cleanup();
@@ -671,8 +666,6 @@ export function createCueSessionRuntimeService(
 		// leaves the queue alone: what waits there was restored at start and
 		// checked then.
 		const holdQueue = hadSession || heldQueues.delete(sessionId);
-
-
 
 		const outcome = await initSession(
 			{ ...session, projectRoot },

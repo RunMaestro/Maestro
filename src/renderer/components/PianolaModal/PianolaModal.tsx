@@ -19,6 +19,7 @@ import { RuleEditor } from './RuleEditor';
 import { DecisionsView } from './DecisionsView';
 import { RulesView } from './RulesView';
 import { SuggestionsView } from './SuggestionsView';
+import { MemoryView } from './MemoryView';
 import type { PianolaTab, DecisionFilter } from './shared';
 
 // Shared helpers live in ./shared (one source for the views and RuleEditor); the
@@ -286,6 +287,7 @@ export function PianolaModal({ theme, onClose }: PianolaModalProps) {
 						[
 							['decisions', `Decisions${escalationCount ? ` (${escalationCount} escalated)` : ''}`],
 							['rules', `Rules (${rules.length})`],
+							['memory', 'Memory'],
 							[
 								'suggestions',
 								`Suggestions${suggestions?.proposals.length ? ` (${suggestions.proposals.length})` : ''}`,
@@ -308,6 +310,7 @@ export function PianolaModal({ theme, onClose }: PianolaModalProps) {
 
 				{/* Body */}
 				<div className="flex-1 overflow-y-auto scrollbar-thin">
+					{tab === 'memory' && <MemoryView theme={theme} />}
 					{tab === 'decisions' && (
 						<DecisionsView
 							theme={theme}

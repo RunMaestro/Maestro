@@ -121,6 +121,8 @@ describe('pianolaSuperviseWatch --idle-hours', () => {
 			pianolaSuperviseWatch('tab-1', { agent: 'agent-1', idleHours: '-1', json: true })
 		).toThrow('__exit__');
 		expect(readPianolaSupervisorTargets()).toHaveLength(0);
+	});
+});
 describe('pianolaSuperviseProgram', () => {
 	it('reuses a program target while updating the interval', () => {
 		pianolaSuperviseProgram('product', { json: true });
@@ -227,5 +229,32 @@ describe('program-loop target registration', () => {
 		expect(readPianolaSupervisorTargets()).toEqual([
 			expect.objectContaining({ tabId: 'old-tab', enabled: true }),
 		]);
+	});
+
+	it('resolves the interval sleep immediately on SIGINT', async () => {
+		vi.useFakeTimers();
+		try {
+			upsertPianolaProgram(program);
+			writePianolaProgramLoopMemo({
+				product: { notifiedTaskIds: [], lastWakeAt: new Date().toISOString() },
+			});
+			sendCommand.mockResolvedValue({ sessions: [] });
+			const timerSpy = vi.spyOn(global, 'setTimeout');
+			const running = pianolaProgramLoop('product', { interval: '120' });
+			let settled = false;
+			const tracked = running.then(() => {
+				settled = true;
+			});
+			await vi.advanceTimersByTimeAsync(0);
+			expect(timerSpy).toHaveBeenCalledWith(expect.any(Function), 120_000);
+
+			process.emit('SIGINT');
+			await vi.advanceTimersByTimeAsync(0);
+			expect(settled).toBe(true);
+			await vi.advanceTimersByTimeAsync(120_000);
+			await tracked;
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });

@@ -7,6 +7,7 @@
  * 'PianolaDisabled', which callers treat as "feature off".
  */
 
+import type { MemoryRequest } from '../../shared/pianola/memory';
 import { ipcRenderer } from 'electron';
 import type { PianolaRule } from '../../shared/pianola/types';
 import type {
@@ -15,6 +16,7 @@ import type {
 	PianolaSupervisedTarget,
 	PianolaSuggestionsFile,
 	PianolaSuggestionReview,
+	PianolaPlan,
 } from '../../shared/pianola/storage';
 import type { PianolaSupervisorSnapshot } from '../ipc/handlers/pianola';
 import type { PianolaDecisionResolution } from '../../shared/pianola/pianola-decision-lifecycle';
@@ -31,6 +33,8 @@ import type {
  */
 export function createPianolaApi() {
 	return {
+		memory: (request: MemoryRequest): Promise<unknown> =>
+			ipcRenderer.invoke('pianola:memory', request),
 		/**
 		 * Read auto-answer rules. Returns { rules, malformed }: `malformed` is true
 		 * when the rules file exists but is unparseable, so the UI can warn instead
@@ -59,6 +63,10 @@ export function createPianolaApi() {
 			ipcRenderer.invoke('pianola:resolve-ask', id, option, note),
 		dismissAsk: (id: string): Promise<PianolaAsk> => ipcRenderer.invoke('pianola:dismiss-ask', id),
 		getBrief: (): Promise<PianolaBrief> => ipcRenderer.invoke('pianola:get-brief'),
+		revisePlanTask: (planId: string, taskId: string, prompt?: string): Promise<PianolaPlan> =>
+			ipcRenderer.invoke('pianola:revise-plan-task', planId, taskId, prompt),
+		skipPlanTask: (planId: string, taskId: string): Promise<PianolaPlan> =>
+			ipcRenderer.invoke('pianola:skip-plan-task', planId, taskId),
 
 		/** An explicit human answer, guarded against stale asks and duplicate delivery. */
 		resolveDecision: (resolution: PianolaDecisionResolution): Promise<PianolaScopeDeliveryResult> =>

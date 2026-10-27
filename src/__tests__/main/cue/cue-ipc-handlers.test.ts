@@ -21,7 +21,9 @@ const hostState = vi.hoisted(() => ({
 }));
 vi.mock('../../../main/stores', () => ({
 	getSessionsStore: () => ({ get: () => hostState.sessions }),
+	getLiveSessions: () => hostState.sessions,
 	getSettingsStore: () => ({ get: () => hostState.remotes }),
+	getAgentConfigsStore: () => ({ get: () => storedReadiness.configs }),
 }));
 vi.mock('../../../main/cue/cue-scheduled-tasks', () => ({
 	collectScheduledTasks: vi.fn(() => ({ tasks: [], warnings: [] })),
@@ -61,6 +63,27 @@ vi.mock('../../../main/cue/cue-yaml-loader', () => ({
 	loadCueConfigDetailed: vi.fn(),
 }));
 
+// The readiness check itself is covered in cue-readiness.test.ts; here only
+// what the handler hands it (the real input assembly) and what it returns.
+vi.mock('../../../main/cue/cue-readiness', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../main/cue/cue-readiness')>()),
+	checkCueReadiness: vi.fn(),
+}));
+
+const storedReadiness = vi.hoisted(() => ({
+	sessions: [] as unknown[],
+	configs: {} as Record<string, unknown>,
+}));
+vi.mock('../../../main/stores', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../main/stores')>()),
+	getSessionsStore: () => ({
+		get: () =>
+			storedReadiness.sessions.length > 0 ? storedReadiness.sessions : hostState.sessions,
+	}),
+	getLiveSessions: () => hostState.sessions,
+	getSettingsStore: () => ({ get: () => hostState.remotes }),
+	getAgentConfigsStore: () => ({ get: () => storedReadiness.configs }),
+}));
 vi.mock('../../../main/cue/config/cue-config-repository', () => ({
 	readCueConfigFile: vi.fn(),
 	readCuePromptFile: vi.fn(),

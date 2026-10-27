@@ -28,8 +28,7 @@ import {
 } from '../../shared/maestro-lib/control/termination';
 import {
 	readSupervisorTargets,
-	removeSupervisorTarget,
-	writeSupervisorTargets,
+	removeSupervisorTargetAsync,
 	updateSupervisorTargetsAsync,
 	readPrograms,
 	readPlans,
@@ -637,7 +636,7 @@ export class PianolaSupervisor {
 			// target from the store so it is neither restarted nor relaunched on the
 			// next app start.
 			if (code === PIANOLA_WATCH_RETIRED_EXIT_CODE && entry.target.kind === 'watch') {
-				this.retireTarget(entry);
+				void this.retireTarget(entry);
 				return;
 			}
 			// Clean exit (code 0): success. An orchestrate run finishing its plan is
@@ -688,12 +687,12 @@ export class PianolaSupervisor {
 	}
 
 	/** Forget a watch target that retired itself and remove it from the store. */
-	private retireTarget(entry: SupervisedChild): void {
+	private async retireTarget(entry: SupervisedChild): Promise<void> {
 		entry.state = 'stopped';
 		this.children.delete(entry.target.id);
 		logger.info(`Supervised watch ${entry.target.id} retired; removing target`, LOG_CONTEXT);
 		try {
-			removeSupervisorTarget(entry.target.id);
+			await removeSupervisorTargetAsync(entry.target.id);
 		} catch (error) {
 			void captureException(error, {
 				operation: 'pianola:supervisor:retire',

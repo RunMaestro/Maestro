@@ -9,11 +9,16 @@
  * live in the canonical `redactSecrets()` (src/shared/redactSecrets.ts).
  */
 
-import { redactSecrets } from '../redactSecrets';
+import { redactSecrets as redactCanonicalSecrets } from '../redactSecrets';
 
 const MAX_PROMPT_CHARS = 4000;
 
 const PLACEHOLDER = '[redacted]';
+
+/** Redact secrets from memory evidence without the ledger's prompt-length cap. */
+export function redactSecrets(text: string): string {
+	return redactCanonicalSecrets(text, { placeholder: PLACEHOLDER, hexBlobs: true }).text;
+}
 
 /**
  * Tokens shaped like a known credential: OpenAI and Anthropic (`sk-`, `rk-`,
@@ -51,7 +56,7 @@ export function redactCredentialTokens(text: string): { text: string; redacted: 
  */
 export function redactPrompt(prompt: string | undefined): string | undefined {
 	if (!prompt) return undefined;
-	let out = redactSecrets(prompt, { placeholder: PLACEHOLDER, hexBlobs: true }).text;
+	let out = redactCanonicalSecrets(prompt, { placeholder: PLACEHOLDER, hexBlobs: true }).text;
 	if (out.length > MAX_PROMPT_CHARS) {
 		out = `${out.slice(0, MAX_PROMPT_CHARS)}...[truncated ${out.length - MAX_PROMPT_CHARS} chars]`;
 	}

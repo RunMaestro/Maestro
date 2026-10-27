@@ -297,6 +297,8 @@ export interface DashboardNeedsRow {
 	/** The original live conversation, for escalation click-to-jump. */
 	sessionId?: string;
 	tabId?: string;
+	planId?: string;
+	taskId?: string;
 	since: number;
 }
 
@@ -500,6 +502,8 @@ export function derivePortfolio(
 				detail: item.detail,
 				sessionId: item.agentId,
 				tabId: item.tabId,
+				planId: item.planId,
+				taskId: item.taskId,
 				programTitle: item.programId
 					? (titleById.get(item.programId) ?? (item.programTitle || item.programId))
 					: undefined,
@@ -522,6 +526,7 @@ export function derivePortfolio(
 			row: {
 				key: `task:${t.planId}:${t.taskId}`,
 				sessionId: agentName ? t.agentId : undefined,
+				tabId: t.tabId,
 				agentName: agentName ?? t.taskTitle,
 				description: `${agentName ? `${t.taskTitle} · ` : ''}${t.planTitle}${fixing}`,
 				timestamp: t.since ? ms(t.since) : undefined,

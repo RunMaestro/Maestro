@@ -19,8 +19,7 @@ import type { ChildProcess } from 'child_process';
 // target list without touching electron, fs, or a real watcher.
 vi.mock('../../../main/pianola/pianola-store-main', () => ({
 	readSupervisorTargets: vi.fn(() => []),
-	writeSupervisorTargets: vi.fn(),
-	removeSupervisorTarget: vi.fn(() => []),
+	removeSupervisorTargetAsync: vi.fn(async () => []),
 	updateSupervisorTargetsAsync: vi.fn(),
 	supervisorFilePath: vi.fn(() => '/fake/maestro-pianola-supervisor.json'),
 	readPrograms: vi.fn(() => []),
@@ -48,8 +47,7 @@ vi.mock('../../../shared/platformDetection', () => ({
 import { PianolaSupervisor, type AutoWatchSession } from '../../../main/pianola/pianola-supervisor';
 import {
 	readSupervisorTargets,
-	removeSupervisorTarget,
-	writeSupervisorTargets,
+	removeSupervisorTargetAsync,
 	updateSupervisorTargetsAsync,
 	readPrograms,
 	readPlans,
@@ -351,13 +349,12 @@ describe('PianolaSupervisor spawn + exit lifecycle', () => {
 });
 
 describe('PianolaSupervisor watch retirement', () => {
-	it('removes a watch target that exits with the retired code and never relaunches it', () => {
+	it('removes a watch target that exits with the retired code and never relaunches it', async () => {
 		setTargets([watchTarget()]);
 		sup.reconcile();
 
 		spawned[0].exit(PIANOLA_WATCH_RETIRED_EXIT_CODE);
-
-		expect(removeSupervisorTarget).toHaveBeenCalledWith('w1');
+		await vi.waitFor(() => expect(removeSupervisorTargetAsync).toHaveBeenCalledWith('w1'));
 		expect(sup.getHealth()).toHaveLength(0);
 		// The store write is what keeps it gone; simulate the file now lacking it.
 		setTargets([]);
@@ -372,7 +369,7 @@ describe('PianolaSupervisor watch retirement', () => {
 
 		spawned[0].exit(PIANOLA_WATCH_RETIRED_EXIT_CODE);
 
-		expect(removeSupervisorTarget).not.toHaveBeenCalled();
+		expect(removeSupervisorTargetAsync).not.toHaveBeenCalled();
 		expect(sup.getHealth()[0].state).toBe('backing-off');
 	});
 

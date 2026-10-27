@@ -15,6 +15,9 @@
  */
 
 import { ipcMain, type BrowserWindow } from 'electron';
+import type { MemoryRequest } from '../../../shared/pianola/memory';
+import { getPianolaMemory } from '../../pianola/memory-host';
+import { ipcMain } from 'electron';
 import { withIpcErrorLogging, type CreateHandlerOptions } from '../../utils/ipcHandler';
 import {
 	readRulesResult,
@@ -39,6 +42,8 @@ import {
 	readAsks,
 	updateAsksAsync,
 	readPlans,
+	updatePlansAsync,
+	withPlanLock,
 	readProgramLoopMemo,
 } from '../../pianola/pianola-store-main';
 import { readAgentRuns } from '../../../cli/services/agent-run-store';
@@ -50,7 +55,14 @@ import {
 	type PianolaAsk,
 	type PianolaAskStatus,
 	type PianolaBrief,
+	assertOneActivePlanPerProgram,
 } from '../../../shared/pianola/pianola-programs';
+import {
+	markTaskStatus,
+	propagateBlocked,
+	revisePlanTask,
+	type PianolaPlan,
+} from '../../../shared/pianola/pianola-tasks';
 import {
 	validatePianolaSupervisedTarget,
 	type PianolaDecisionRecord,
@@ -141,6 +153,10 @@ export function registerPianolaHandlers(deps: PianolaHandlerDependencies): void 
 			);
 		});
 	};
+	ipcMain.handle('pianola:memory', async (_event, request: MemoryRequest) => {
+		if (!isPianolaEnabled(settingsStore)) throw new Error('PianolaDisabled');
+		return getPianolaMemory().request(request);
+	});
 
 	/** Current persisted targets + live health, returned by every supervisor channel. */
 	const snapshot = (): PianolaSupervisorSnapshot => {
@@ -719,6 +735,64 @@ export function registerPianolaHandlers(deps: PianolaHandlerDependencies): void 
 		if (!updated) throw new Error('OpenAskNotFound');
 		return updated;
 	});
+	ipcMain.handle(
+		'pianola:revise-plan-task',
+		async (_event, planId: unknown, taskId: unknown, prompt?: unknown): Promise<PianolaPlan> => {
+			if (!isPianolaEnabled(settingsStore)) throw new Error('PianolaDisabled');
+			if (
+				typeof planId !== 'string' ||
+				!planId ||
+				typeof taskId !== 'string' ||
+				!taskId ||
+				(prompt !== undefined && (typeof prompt !== 'string' || !prompt.trim()))
+			)
+				throw new Error('InvalidPlanTaskRevision');
+			let revised: PianolaPlan | undefined;
+			await withPlanLock(
+				planId,
+				async () => {
+					await updatePlansAsync((plans) => {
+						const plan = plans.find((entry) => entry.id === planId);
+						if (!plan) throw new Error(`No Pianola plan with id "${planId}".`);
+						const task = plan.tasks.find((entry) => entry.id === taskId);
+						if (!task) throw new Error(`No task with id "${taskId}" in plan "${planId}".`);
+						revised = revisePlanTask(plan, taskId, (prompt as string | undefined) ?? task.prompt);
+						assertOneActivePlanPerProgram(revised, plans);
+						return plans.map((entry) => (entry.id === planId ? revised! : entry));
+					});
+				},
+				{ waitForTurn: true }
+			);
+			supervisor.reconcile();
+			return revised!;
+		}
+	);
+	ipcMain.handle(
+		'pianola:skip-plan-task',
+		async (_event, planId: unknown, taskId: unknown): Promise<PianolaPlan> => {
+			if (!isPianolaEnabled(settingsStore)) throw new Error('PianolaDisabled');
+			if (typeof planId !== 'string' || !planId || typeof taskId !== 'string' || !taskId)
+				throw new Error('InvalidPlanTaskSkip');
+			let skipped: PianolaPlan | undefined;
+			await withPlanLock(
+				planId,
+				async () => {
+					await updatePlansAsync((plans) => {
+						const plan = plans.find((entry) => entry.id === planId);
+						if (!plan) throw new Error(`No Pianola plan with id "${planId}".`);
+						const task = plan.tasks.find((entry) => entry.id === taskId);
+						if (!task) throw new Error(`No task with id "${taskId}" in plan "${planId}".`);
+						if (task.status !== 'failed') throw new Error('Only failed tasks can be skipped.');
+						skipped = propagateBlocked(markTaskStatus(plan, taskId, 'skipped'));
+						return plans.map((entry) => (entry.id === planId ? skipped! : entry));
+					});
+				},
+				{ waitForTurn: true }
+			);
+			supervisor.reconcile();
+			return skipped!;
+		}
+	);
 	ipcMain.handle('pianola:get-brief', async (): Promise<PianolaBrief> => {
 		if (!isPianolaEnabled(settingsStore)) throw new Error('PianolaDisabled');
 		const plans = readPlans();

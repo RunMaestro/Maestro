@@ -37,6 +37,8 @@ import {
 	readAgentRuns,
 } from '../services/agent-run-store';
 import { MaestroClient } from '../services/maestro-client';
+import { requestPianolaMemory } from './pianola-memory';
+import type { MemoryPacket } from '../../shared/pianola/memory';
 import { runDispatch } from './dispatch';
 import {
 	runOrchestratorIteration,
@@ -656,6 +658,8 @@ function upsertPianolaTaskRun(
 		cwd: task.cwd,
 		prompt: task.prompt,
 		source: campaignIdForPianolaPlan(planId),
+		checks: eventType === 'pianola.dispatched' ? [] : (existing?.checks ?? []),
+		reviews: eventType === 'pianola.dispatched' ? [] : (existing?.reviews ?? []),
 		metadata: {
 			...(existing?.metadata ?? {}),
 			pianola: {
@@ -1177,7 +1181,13 @@ export async function pianolaOrchestrate(
 		},
 		dispatch: async (task, agentId) => {
 			if (programPausedNow()) return { success: false, error: 'program paused' };
-			const res = await runDispatch(agentId, task.prompt, { newTab: true, background: true });
+			if (!task.tabId) return { success: false, error: 'no target tab bound' };
+			const packet = await requestPianolaMemory<MemoryPacket>({
+				action: 'recall',
+				query: { query: task.prompt, projectPath: task.cwd || process.cwd() },
+			});
+			const prompt = packet.context ? `${task.prompt}\n\n${packet.context}` : task.prompt;
+			const res = await runDispatch(agentId, prompt, { newTab: true, background: true });
 			// Dispatch success is delivery, not a run receipt. Never retry a delivered
 			// but unaddressable prompt: that could duplicate work. The engine parks it.
 			const tabId = res.tabId ?? res.sessionId ?? undefined;

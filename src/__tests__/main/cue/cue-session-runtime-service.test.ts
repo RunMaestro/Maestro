@@ -32,6 +32,7 @@ function createRuntime() {
 		registry,
 		dispatchSubscription: vi.fn(() => 0),
 		clearQueue: vi.fn(),
+		retainQueue: vi.fn(),
 		clearFanInState: vi.fn(),
 	};
 	return { session, registry, deps, runtime: createCueSessionRuntimeService(deps) };
@@ -81,10 +82,11 @@ describe('CueSessionRuntimeService missing-config retry', () => {
 		expect(resolveCueConfigPath).toHaveBeenCalledTimes(2);
 		await vi.advanceTimersByTimeAsync(150);
 		expect(await refresh).toMatchObject({ reloaded: true, configRemoved: false, activeCount: 1 });
-		expect(resolveCueConfigPath).toHaveBeenCalledTimes(4);
+		expect(resolveCueConfigPath).toHaveBeenCalledTimes(3);
 		expect(registry.get(session.id)).not.toBe(state);
 		expect(registry.get(session.id)!.config).toBe(config);
-		expect(deps.clearQueue).toHaveBeenCalledExactlyOnceWith(session.id, true);
+		expect(deps.retainQueue).toHaveBeenCalledOnce();
+		expect(deps.clearQueue).not.toHaveBeenCalled();
 		runtime.clearAll();
 	});
 
