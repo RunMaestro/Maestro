@@ -89,7 +89,7 @@ export const HarnessInteractionPrompt = memo(function HarnessInteractionPrompt({
 
 	const questions = request.questions ?? [];
 	const questionsComplete = questions.every((question) => {
-		if (question.required !== true || question.default !== undefined) return true;
+		if (question.required === false || question.default !== undefined) return true;
 		const value = questionAnswers[question.id];
 		return Array.isArray(value)
 			? value.length > 0
