@@ -314,6 +314,14 @@ it('normalizes an entire long native OMP turn before chunking and retains only t
 	for (let attempt = 0; attempt < 4 && extract.mock.calls.length === 0; attempt++) {
 		await engine.tick();
 	}
+	console.log(
+		'[DEBUG-provenance]',
+		JSON.stringify({
+			sources: engine.database.db.prepare('SELECT * FROM sources').all(),
+			jobs: engine.database.db.prepare('SELECT * FROM ingestion_queue').all(),
+			extractCalls: extract.mock.calls.length,
+		})
+	);
 	engine.stop();
 	const jobs = engine.database.db.prepare('SELECT data FROM ingestion_queue').all() as {
 		data: string;
