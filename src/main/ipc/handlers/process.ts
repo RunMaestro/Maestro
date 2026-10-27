@@ -36,6 +36,11 @@ import {
 	resolvePermissionResponse,
 	type PermissionDecision,
 } from '../../permission-relay';
+import {
+	initHarnessControl,
+	pendingHarnessInteractions,
+	resolveHarnessInteractionResponse,
+} from '../../harness-control/integration';
 import { releaseConcertoHtmlDocument, restoreConcertoHtmlDocument } from '../../concerto-html';
 
 const LOG_CONTEXT = '[ProcessManager]';
@@ -84,6 +89,7 @@ export interface ProcessHandlerDependencies {
 	settingsStore: Store<MaestroSettings>;
 	getMainWindow: () => BrowserWindow | null;
 	safeSend?: (channel: string, ...args: unknown[]) => void;
+	getWindowForSession?: (sessionId: string) => BrowserWindow | null;
 	sessionsStore: Store<{ sessions: any[] }>;
 	/** Optional callback to get active Cue run processes for Process Monitor */
 	getCueProcesses?: () => CueProcessEntry[];
@@ -123,6 +129,13 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 	// Wire the Claude Code permission relay: surface requests to the renderer
 	// and clean up per-spawn bindings when a process exits.
 	initPermissionRelay(getMainWindow, getProcessManager());
+	initHarnessControl(
+		{
+			getMainWindow,
+			getWindowForSession: deps.getWindowForSession,
+		},
+		getProcessManager()
+	);
 
 	// Manual renderer closes are ownership events, not remote Movement/Cadenza
 	// mutations. Release their isolated documents explicitly so closed mockups do
@@ -160,6 +173,12 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 		(_event, requestId: string, decision: PermissionDecision) => {
 			return resolvePermissionResponse(requestId, decision);
 		}
+	);
+	ipcMain.handle('harnessControl:listPending', (event) =>
+		pendingHarnessInteractions(event.sender.id)
+	);
+	ipcMain.handle('harnessControl:respond', (event, response: unknown) =>
+		resolveHarnessInteractionResponse(response, event.sender.id)
 	);
 
 	// Spawn a new process for a session
@@ -275,6 +294,11 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 			return processManager.kill(sessionId);
 		})
 	);
+	ipcMain.handle('process:closeAgent', (_event, agentId: string) => {
+		const processManager = requireProcessManager(getProcessManager);
+		processManager.closeAgent(agentId);
+		return true;
+	});
 
 	// Resize PTY dimensions
 	ipcMain.handle(

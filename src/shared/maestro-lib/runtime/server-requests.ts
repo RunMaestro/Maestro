@@ -89,6 +89,7 @@ export function agentPatchFromConfig(config: Record<string, unknown>): AgentPatc
 	take('maestroPPath', 'maestroPPath');
 	// Passed as sent: `applyAgentConfigPatch` is what refuses a transport it does not know.
 	take('codexTransport', 'codexTransport');
+	take('harnessControlMode', 'harnessControlMode');
 	return patch as AgentPatch;
 }
 

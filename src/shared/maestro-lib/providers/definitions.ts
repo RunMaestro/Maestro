@@ -96,6 +96,8 @@ export interface AgentConfig extends BaseAgentConfig {
 	// These are optional - agents that don't have them use hardcoded behavior
 	batchModePrefix?: string[]; // Args added before base args for batch mode (e.g., ['run'] for OpenCode)
 	batchModeArgs?: string[]; // Args only applied in batch mode (e.g., ['--skip-git-repo-check'] for Codex exec)
+	/** Batch args that would bypass native approval prompts are omitted in Standard mode. */
+	skipBatchModeArgsInStandardMode?: boolean;
 	jsonOutputArgs?: string[]; // Args for JSON output format (e.g., ['--format', 'json'])
 	resumeArgs?: (sessionId: string) => string[]; // Function to build resume args
 	readOnlyArgs?: string[]; // Args for read-only/plan mode (e.g., ['--agent', 'plan'])
@@ -285,6 +287,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		//   - Read-only: --sandbox read-only (can only read files)
 		batchModePrefix: ['exec'], // Codex uses 'exec' subcommand for batch mode
 		batchModeArgs: ['--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check'], // Args only valid on 'exec' subcommand
+		skipBatchModeArgsInStandardMode: true,
 		jsonOutputArgs: ['--json'], // JSON output format (must come before resume subcommand)
 		resumeArgs: (sessionId: string) => ['resume', sessionId], // Resume with session/thread ID
 		// Read-only/plan mode. Do NOT add --dangerously-bypass-approvals-and-sandbox

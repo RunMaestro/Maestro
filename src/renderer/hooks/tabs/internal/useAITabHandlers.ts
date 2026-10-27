@@ -134,6 +134,11 @@ export function useAITabHandlers(
 				.sessions.find((s) => s.id === activeSessionId);
 			const tabBeforeClose = sessionBeforeClose?.aiTabs.find((t) => t.id === tabId);
 			const wasWizardTab = !!tabBeforeClose && hasActiveWizard(tabBeforeClose);
+			void window.maestro.process
+				.kill(`${activeSessionId}-ai-${tabId}`)
+				.catch((error) =>
+					logger.warn('[useAITabHandlers] Failed to kill tab process', undefined, error)
+				);
 
 			if (isWebDesktop()) {
 				void requestDesktopTabClose(activeSessionId, tabId, endInlineWizard);

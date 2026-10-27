@@ -2,6 +2,12 @@ import type {
 	TranslationRequest,
 	TranslationReport,
 } from '../shared/maestro-lib/translation/types';
+import type {
+	HarnessInteractionRequest,
+	HarnessInteractionResolveResult,
+	HarnessInteractionResponse,
+	HarnessInteractionSettledEvent,
+} from '../shared/harness-control/types';
 /* eslint-disable @typescript-eslint/no-unused-vars */
 /**
  * Global type declarations for the renderer process.
@@ -69,6 +75,8 @@ interface ProcessConfig {
 	modelId?: string;
 	yoloMode?: boolean;
 	permissionMode?: 'full' | 'standard' | 'readonly';
+	/** Optional provider-native protocol mode for this turn. */
+	harnessControlMode?: import('../shared/maestro-lib/providers/native-control').HarnessControlMode;
 	// Per-session overrides (take precedence over agent-level config)
 	sessionCustomPath?: string;
 	sessionCustomArgs?: string;
@@ -442,6 +450,7 @@ interface MaestroAPI {
 		}) => Promise<void>;
 		interrupt: (sessionId: string) => Promise<boolean>;
 		kill: (sessionId: string) => Promise<boolean>;
+		closeAgent: (agentId: string) => Promise<boolean>;
 		resize: (sessionId: string, cols: number, rows: number) => Promise<boolean>;
 		runCommand: (config: {
 			sessionId: string;
@@ -533,6 +542,16 @@ interface MaestroAPI {
 				| { behavior: 'allow'; updatedInput?: Record<string, unknown> }
 				| { behavior: 'deny'; message: string }
 		) => Promise<boolean>;
+		onHarnessInteractionRequest: (
+			callback: (request: HarnessInteractionRequest) => void
+		) => () => void;
+		onHarnessInteractionSettled: (
+			callback: (event: HarnessInteractionSettledEvent) => void
+		) => () => void;
+		listHarnessInteractions: () => Promise<HarnessInteractionRequest[]>;
+		respondHarnessInteraction: (
+			response: HarnessInteractionResponse
+		) => Promise<HarnessInteractionResolveResult>;
 		onSessionId: (callback: (sessionId: string, agentSessionId: string) => void) => () => void;
 		onSlashCommands: (callback: (sessionId: string, slashCommands: string[]) => void) => () => void;
 		/** The later, transcript-observed outcome of a steer that `steer()` reported `delivered`. */

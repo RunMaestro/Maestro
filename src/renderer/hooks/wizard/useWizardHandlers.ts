@@ -1239,6 +1239,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				maestroPMode,
 				maestroPPath,
 				codexTransport,
+				harnessControlMode,
 				sessionSshRemoteConfig,
 				autoRunMode,
 			} = wizardState;
@@ -1383,6 +1384,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				// Only the opt-in is stored; `exec` is the default.
 				codexTransport:
 					selectedAgent === 'codex' && codexTransport === 'app-server' ? 'app-server' : undefined,
+				harnessControlMode: harnessControlMode === 'native' ? 'native' : undefined,
 				claudeInteractive:
 					selectedAgent === 'claude-code' ? { mode: 'api', modeReason: 'auto' } : undefined,
 			};

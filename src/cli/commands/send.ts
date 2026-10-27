@@ -449,26 +449,33 @@ export async function send(
 						};
 					}
 				}
+				const nativeControl = agent.harnessControlMode === 'native';
 				const appendSystemPrompt =
 					options.systemPrompt !== false ? await prepareMaestroSystemPromptCli(agent) : undefined;
 				return spawnAgent(agent.toolType, agent.cwd, agentPrompt, agentSessionId, {
 					signal: interrupt.signal,
 					readOnlyMode: options.readOnly,
+					appendSystemPrompt,
 					// A send Cue started is still Cue's turn on this agent. Left
 					// unset otherwise, so the turn keeps the default origin.
 					...(origin.kind === 'cue' ? { querySource: 'cue' as const } : {}),
-					customModel: agent.customModel,
-					customEffort: agent.customEffort,
-					customArgs: agent.customArgs,
-					additionalDirectories: agent.additionalDirectories,
-					customEnvVars: agent.customEnvVars,
-					requiredSecrets: agent.requiredSecrets,
-					sshRemoteConfig: agent.sessionSshRemoteConfig,
-					appendSystemPrompt,
-					// Honor the agent's Claude token source for `maestro-cli send` turns.
-					enableMaestroP: agent.enableMaestroP,
-					maestroPMode: agent.maestroPMode,
-					maestroPPath: agent.maestroPPath,
+					...(nativeControl
+						? {
+								harnessControlMode: 'native' as const,
+								nativeSessionId: agent.id,
+								customModel: agent.customModel,
+								customEffort: agent.customEffort,
+								customArgs: agent.customArgs,
+								additionalDirectories: agent.additionalDirectories,
+								customEnvVars: agent.customEnvVars,
+								requiredSecrets: agent.requiredSecrets,
+								sshRemoteConfig: agent.sessionSshRemoteConfig,
+								// Honor the agent's Claude token source for native CLI turns.
+								enableMaestroP: agent.enableMaestroP,
+								maestroPMode: agent.maestroPMode,
+								maestroPPath: agent.maestroPPath,
+							}
+						: {}),
 					// The turn runs in the agent's own cwd (#1872).
 					acceptWorkspaceTrust: true,
 				});

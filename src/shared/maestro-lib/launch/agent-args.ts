@@ -207,7 +207,10 @@ export function buildAgentArgs(
 		// when in read-only mode. Batch mode args grant write/approval permissions
 		// that conflict with read-only intent, regardless of whether the agent has
 		// CLI-enforced read-only mode or prompt-only enforcement.
-		if (!isReadOnly) {
+		if (
+			!isReadOnly &&
+			!(options.permissionMode === 'standard' && agent.skipBatchModeArgsInStandardMode)
+		) {
 			finalArgs = [...finalArgs, ...agent.batchModeArgs];
 		}
 	}

@@ -320,6 +320,19 @@ describe('buildAgentArgs', () => {
 		expect(result).not.toContain('--plan');
 	});
 
+	it('omits Codex batch bypass args in Standard mode', () => {
+		const codex = makeAgent({
+			batchModeArgs: ['--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check'],
+			skipBatchModeArgsInStandardMode: true,
+		});
+		const result = buildAgentArgs(codex, {
+			baseArgs: ['--json'],
+			prompt: 'fix bug',
+			permissionMode: 'standard',
+		});
+		expect(result).toEqual(['--json']);
+	});
+
 	it('adds readOnlyArgs when permissionMode is readonly', () => {
 		const agent = makeAgent({ readOnlyArgs: ['--permission-mode', 'plan'] });
 		const result = buildAgentArgs(agent, {
