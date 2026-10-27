@@ -1,6 +1,10 @@
 import type { BrowserWindow } from 'electron';
 import type { EventEmitter } from 'events';
 import { InteractionBroker } from './InteractionBroker';
+import {
+	broadcastBridgeEventToSessionSubscribers,
+	isBridgeSessionOwner,
+} from '../web-server/handlers/bridgeHandlers';
 import type {
 	HarnessInteractionRequest,
 	HarnessInteractionResolveResult,
@@ -15,24 +19,37 @@ export interface HarnessControlIntegrationDependencies {
 	getWindowForSession?: (sessionId: string) => BrowserWindow | null;
 }
 
+interface HarnessInteractionOwner {
+	webContentsId?: number;
+	bridgeClientId?: string;
+}
+
 let dependencies: HarnessControlIntegrationDependencies | null = null;
 let initialized = false;
 
+function canonicalSessionId(sessionId: string): string {
+	return sessionId.replace(/-ai(?:-.+)?$/, '');
+}
+
 function ownerWindow(sessionId: string): BrowserWindow | null {
-	const canonicalSessionId = sessionId.replace(/-ai(?:-.+)?$/, '');
+	const canonical = canonicalSessionId(sessionId);
 	if (dependencies?.getWindowForSession) {
-		return dependencies.getWindowForSession(canonicalSessionId);
+		return dependencies.getWindowForSession(canonical);
 	}
 	return dependencies?.getMainWindow() ?? null;
 }
 
-function isOwner(sessionId: string, webContentsId: number): boolean {
+function isOwner(sessionId: string, owner: HarnessInteractionOwner): boolean {
+	if (owner.bridgeClientId !== undefined) {
+		return isBridgeSessionOwner(owner.bridgeClientId, canonicalSessionId(sessionId));
+	}
+	if (owner.webContentsId === undefined) return false;
 	const win = ownerWindow(sessionId);
 	return (
 		!!win &&
 		!win.isDestroyed() &&
 		!win.webContents.isDestroyed() &&
-		win.webContents.id === webContentsId
+		win.webContents.id === owner.webContentsId
 	);
 }
 
@@ -41,14 +58,20 @@ function sendToOwner(
 	channel: string,
 	payload: HarnessInteractionRequest | HarnessInteractionSettledEvent
 ): boolean {
+	let delivered = false;
 	const win = ownerWindow(sessionId);
-	if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return false;
-	try {
-		win.webContents.send(channel, payload);
-		return true;
-	} catch {
-		return false;
+	if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+		try {
+			win.webContents.send(channel, payload);
+			delivered = true;
+		} catch {
+			// A browser subscriber can still receive the request below.
+		}
 	}
+	return (
+		broadcastBridgeEventToSessionSubscribers(channel, [payload], canonicalSessionId(sessionId)) ||
+		delivered
+	);
 }
 
 export const harnessInteractionBroker = new InteractionBroker({
@@ -72,25 +95,27 @@ export function initHarnessControl(
 	});
 }
 
+/** Resolve a response only when its desktop window or browser client owns the request. */
 export function resolveHarnessInteractionResponse(
 	raw: unknown,
-	ownerWebContentsId?: number
+	owner?: HarnessInteractionOwner
 ): HarnessInteractionResolveResult {
-	if (ownerWebContentsId !== undefined && raw && typeof raw === 'object' && 'requestId' in raw) {
+	if (owner !== undefined && raw && typeof raw === 'object' && 'requestId' in raw) {
 		const requestId = raw.requestId;
 		const pending = harnessInteractionBroker
 			.pendingRequests()
 			.find((request) => request.requestId === requestId);
-		if (!pending || !isOwner(pending.sessionId, ownerWebContentsId)) return 'not-found';
+		if (!pending || !isOwner(pending.sessionId, owner)) return 'not-found';
 	}
 	return harnessInteractionBroker.resolve(raw);
 }
 
+/** List pending requests visible to this owner; omitted owner is main-process-only access. */
 export function pendingHarnessInteractions(
-	ownerWebContentsId?: number
+	owner?: HarnessInteractionOwner
 ): HarnessInteractionRequest[] {
-	if (ownerWebContentsId === undefined) return harnessInteractionBroker.pendingRequests();
+	if (owner === undefined) return harnessInteractionBroker.pendingRequests();
 	return harnessInteractionBroker
 		.pendingRequests()
-		.filter((request) => isOwner(request.sessionId, ownerWebContentsId));
+		.filter((request) => isOwner(request.sessionId, owner));
 }

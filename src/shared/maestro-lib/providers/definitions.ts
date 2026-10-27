@@ -497,6 +497,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		args: [],
 		batchModePrefix: [],
 		batchModeArgs: ['-y'],
+		skipBatchModeArgsInStandardMode: true,
 		jsonOutputArgs: ['--output-format', 'stream-json'],
 		resumeArgs: (sessionId: string) => ['--resume', sessionId],
 		// Qwen Code (qwen-code v0.19.x) ships a first-class `--approval-mode plan` that denies
@@ -538,6 +539,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		args: [],
 		batchModePrefix: ['chat'],
 		batchModeArgs: ['-Q', '--yolo'],
+		skipBatchModeArgsInStandardMode: true,
 		yoloModeArgs: ['--yolo'],
 		promptArgs: (prompt: string) => ['-q', prompt],
 		stdinPromptArgs: ['--query-file', '-'],
@@ -713,6 +715,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		// Always skip permissions in batch mode (like Claude Code's --dangerously-skip-permissions)
 		// Maestro requires full access to work properly
 		batchModeArgs: ['--skip-permissions-unsafe'],
+		skipBatchModeArgsInStandardMode: true,
 
 		// JSON output for parsing
 		jsonOutputArgs: ['-o', 'stream-json'],
@@ -891,6 +894,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		//    boolean flag dedups cleanly.
 		// Keep batchModeArgs === yoloModeArgs so the CLI read-only filter strips it.
 		batchModeArgs: ['--always-approve'],
+		skipBatchModeArgsInStandardMode: true,
 		jsonOutputArgs: ['--output-format', 'streaming-json'], // JSONL event stream on stdout
 		promptArgs: (prompt: string) => ['-p', prompt], // Single-turn headless prompt
 		resumeArgs: (sessionId: string) => ['--resume', sessionId], // Resume by session UUID

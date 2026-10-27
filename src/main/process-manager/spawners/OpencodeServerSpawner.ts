@@ -22,6 +22,7 @@ import { EventEmitter } from 'events';
 import { logger } from '../../utils/logger';
 import { createOutputParser } from '../../parsers';
 import { captureException } from '../../utils/sentry';
+import { fetchWithTimeout } from '../../utils/fetchWithTimeout';
 import type { ProcessConfig, ManagedProcess, SpawnResult } from '../types';
 import type { DataBufferManager } from '../handlers/DataBufferManager';
 import { StdoutHandler } from '../handlers/StdoutHandler';
@@ -268,7 +269,7 @@ export class OpencodeServerSpawner {
 					const response = opencodePermissionResponse(resolution);
 					if (currentProtocol) {
 						const query = new URLSearchParams({ directory: managedProcess.cwd });
-						const result = await fetch(
+						const result = await fetchWithTimeout(
 							`${serverUrl}/permission/${encodeURIComponent(permission.id)}/reply?${query}`,
 							{
 								method: 'POST',

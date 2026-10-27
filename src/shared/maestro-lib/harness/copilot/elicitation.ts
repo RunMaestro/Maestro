@@ -4,10 +4,14 @@ import type {
 	ElicitationResult,
 	ElicitationSchemaField,
 } from '@github/copilot-sdk';
-import type { HarnessInteractionResolution } from '../../../harness-control/types';
+import type {
+	HarnessInteractionQuestion,
+	HarnessInteractionResolution,
+} from '../../../harness-control/types';
 
 const INVALID = Symbol('invalid-elicitation');
 
+/** Enforce enum/oneOf choices before accepting any string answer. */
 function choiceAllowed(field: ElicitationSchemaField, value: string): boolean {
 	if ('enum' in field && Array.isArray(field.enum) && !field.enum.includes(value)) return false;
 	if (
@@ -20,6 +24,7 @@ function choiceAllowed(field: ElicitationSchemaField, value: string): boolean {
 	return true;
 }
 
+/** Apply string choice, length, and format constraints from the provider schema. */
 function validString(field: ElicitationSchemaField, value: string): boolean {
 	if (!choiceAllowed(field, value)) return false;
 	if ('minLength' in field && field.minLength !== undefined && value.length < field.minLength) {
@@ -43,6 +48,50 @@ function validString(field: ElicitationSchemaField, value: string): boolean {
 	return true;
 }
 
+/** Convert schema defaults to the string-based answers used by the shared prompt contract. */
+function defaultAnswer(field: ElicitationSchemaField): string | string[] | undefined {
+	const value = field.default;
+	if (typeof value === 'string') return value;
+	if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+	if (Array.isArray(value) && value.every((item) => typeof item === 'string')) return value;
+	return undefined;
+}
+
+/** Translate the provider schema without losing optionality, defaults, or field guidance. */
+export function copilotElicitationQuestions(
+	request: ElicitationContext
+): HarnessInteractionQuestion[] {
+	const required = new Set(request.requestedSchema?.required ?? []);
+	return Object.entries(request.requestedSchema?.properties ?? {}).map(([id, field]) => {
+		const choices =
+			'enum' in field && Array.isArray(field.enum)
+				? field.enum
+				: 'oneOf' in field && Array.isArray(field.oneOf)
+					? field.oneOf.map((item) => item.const)
+					: field.type === 'array' && 'enum' in field.items
+						? field.items.enum
+						: field.type === 'array' && 'anyOf' in field.items
+							? field.items.anyOf.map((item) => item.const)
+							: [];
+		const defaultValue = defaultAnswer(field);
+		return {
+			id,
+			question: field.title ?? id,
+			description: field.description,
+			required: required.has(id),
+			...(defaultValue !== undefined ? { default: defaultValue } : {}),
+			multiSelect: field.type === 'array',
+			allowCustom: choices.length === 0,
+			options: choices.map((choice, index) => ({
+				optionId: `choice-${index}`,
+				label: choice,
+				kind: 'choice' as const,
+			})),
+		};
+	});
+}
+
+/** Coerce one answer to its schema type, rejecting blanks and invalid provider content. */
 function coerce(
 	field: ElicitationSchemaField,
 	answer: unknown
@@ -64,9 +113,13 @@ function coerce(
 		return answer;
 	}
 	if (field.type === 'boolean') {
+		if (typeof answer === 'boolean') return answer;
 		return answer === 'true' ? true : answer === 'false' ? false : INVALID;
 	}
 	if (field.type === 'number' || field.type === 'integer') {
+		if (typeof answer === 'string' ? answer.trim() === '' : typeof answer !== 'number') {
+			return INVALID;
+		}
 		const value = Number(answer);
 		if (!Number.isFinite(value) || (field.type === 'integer' && !Number.isInteger(value))) {
 			return INVALID;

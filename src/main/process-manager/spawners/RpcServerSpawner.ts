@@ -318,6 +318,7 @@ class RpcTurn {
 				new Error(`Native prompt failed: ${String(record.error ?? record.status)}`)
 			);
 			this.finish(1);
+			this.turn.child.stdin?.end();
 			return;
 		}
 		this.forwardLine(JSON.stringify(record));

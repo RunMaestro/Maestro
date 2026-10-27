@@ -8,6 +8,7 @@ export class AcpOutputParser implements AgentOutputParser {
 		private readonly delegate?: AgentOutputParser
 	) {}
 
+	/** Parse one translated JSONL line, ignoring blank or malformed provider output. */
 	parseJsonLine(line: string): ParsedEvent | null {
 		if (!line.trim()) return null;
 		try {
@@ -17,6 +18,7 @@ export class AcpOutputParser implements AgentOutputParser {
 		}
 	}
 
+	/** Normalize ACP text, tools, commands, usage, results, and errors into Maestro events. */
 	parseJsonObject(raw: unknown): ParsedEvent | null {
 		if (!raw || typeof raw !== 'object') return null;
 		const event = raw as Record<string, unknown>;
@@ -106,30 +108,37 @@ export class AcpOutputParser implements AgentOutputParser {
 		}
 	}
 
+	/** Identify terminal result events without treating provider errors as successful results. */
 	isResultMessage(event: ParsedEvent): boolean {
 		return event.type === 'result';
 	}
 
+	/** Extract the provider session identifier when the event carries one. */
 	extractSessionId(event: ParsedEvent): string | null {
 		return event.sessionId ?? null;
 	}
 
+	/** Extract normalized token, context, and cost usage from an event. */
 	extractUsage(event: ParsedEvent): ParsedEvent['usage'] | null {
 		return event.usage ?? null;
 	}
 
+	/** Extract dynamically discovered slash commands from an ACP init event. */
 	extractSlashCommands(event: ParsedEvent): string[] | null {
 		return event.slashCommands ?? null;
 	}
 
+	/** Delegate provider-specific stderr heuristics to the fallback parser when present. */
 	detectErrorFromLine(line: string): AgentError | null {
 		return this.delegate?.detectErrorFromLine(line) ?? null;
 	}
 
+	/** Delegate provider-specific structured error detection to the fallback parser. */
 	detectErrorFromParsed(parsed: unknown): AgentError | null {
 		return this.delegate?.detectErrorFromParsed(parsed) ?? null;
 	}
 
+	/** Delegate exit-code classification to the fallback parser when present. */
 	detectErrorFromExit(exitCode: number, stderr: string, stdout: string): AgentError | null {
 		return this.delegate?.detectErrorFromExit(exitCode, stderr, stdout) ?? null;
 	}

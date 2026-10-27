@@ -7,7 +7,7 @@ Maestro keeps the current CLI/PTY transport as the default for every agent. **Na
 `ProcessManager` owns turn lifecycle. A `HarnessControlHandle` exposes only negotiated capabilities and control operations. `InteractionBroker` owns permission, question, and elicitation requests and settles each request once, including cancellation, withdrawal, timeout, and competing responses.
 
 - Desktop requests go to the window that owns the session.
-- Web/Lite responses use the existing authenticated owner route.
+- Web-desktop requests go only to authorized clients subscribed to the owning session; bridge list/respond calls verify the same client/session ownership.
 - CLI native turns accept an `onHarnessInteraction` callback with a stable `nativeSessionId`.
 - CLI `standard` mode without an owner denies immediately. It never waits for a prompt that nobody owns.
 - CLI non-readonly native turns preserve the existing full-access default. `standard` and `readonly` must be selected explicitly per turn.
@@ -42,14 +42,14 @@ Hermes, Copilot, and Antigravity native transports currently accept text-only pr
 - A lease is rejected if the previous turn is still active.
 - Every lease replaces interaction handlers and every turn unsubscribes its event listener.
 - Natural completion releases the lease without disconnecting the session.
-- Tab close, identity change, and app shutdown close the owned SDK runtime.
+- Natural process exit, identity change, agent deletion, and app shutdown close the owned SDK runtime; closing a busy tab leaves its orphaned turn alive.
 - A retained session is never shared across tabs, workspaces, accounts, or remote hosts.
 
 The 100-turn smoke test covers repeated lease/release and shutdown with a fake SDK. It is not a claim that 100 live provider turns were run.
 
 ## CLI-native scope
 
-`spawnAgent` honors `harnessControlMode` from the agent record. CLI-owned native runners cover Claude, Copilot, ACP providers, Pi/OMP, Hermes, and Antigravity. Unsupported providers return an explicit `Native CLI control is not available` error rather than silently downgrading or hanging. Native SSH also fails explicitly. One supervisor applies `timeoutMs` and external cancellation through startup, provider settlement, and teardown.
+`spawnAgent` resolves `harnessControlMode` against provider support before routing. Stale or imported native values on unsupported providers use the current transport, matching desktop behavior. Native SSH fails explicitly before spawn. One supervisor applies `timeoutMs` and external cancellation through startup, provider settlement, and teardown.
 
 Useful API fields on `SpawnAgentOptions`:
 

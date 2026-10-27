@@ -21,13 +21,24 @@ const ACP_PROVIDERS: Record<string, true> = {
 	'factory-droid': true,
 };
 
+const NATIVE_STEERING_PROVIDERS: Record<string, true> = {
+	'claude-code': true,
+	'copilot-cli': true,
+	hermes: true,
+	pi: true,
+	omp: true,
+};
+
+/** Narrow persisted/IPC input to the two supported harness-control modes. */
 export function isHarnessControlMode(value: unknown): value is HarnessControlMode {
 	return value === 'current' || value === 'native';
 }
+/** True for providers launched through the Agent Client Protocol stdio adapter. */
 export function supportsAcpNativeControl(toolType: string): boolean {
 	return ACP_PROVIDERS[toolType] === true;
 }
 
+/** True when any implemented native adapter can replace the provider's current transport. */
 export function supportsNativeControl(toolType: string): boolean {
 	return (
 		ACP_PROVIDERS[toolType] === true ||
@@ -36,10 +47,17 @@ export function supportsNativeControl(toolType: string): boolean {
 	);
 }
 
+/** Select the Pi/OMP JSON-RPC launch protocol, or null for non-RPC providers. */
 export function nativeRpcProtocol(toolType: string): NativeRpcProtocol | null {
 	return RPC_PROVIDERS[toolType] ?? null;
 }
 
+/** True only when the selected native adapter accepts input during a running turn. */
+export function supportsNativeSteering(toolType: string): boolean {
+	return NATIVE_STEERING_PROVIDERS[toolType] === true;
+}
+
+/** Resolve an untrusted saved mode, falling back to Current for unsupported providers. */
 export function resolveHarnessControlMode(source: {
 	toolType: string;
 	harnessControlMode?: unknown;
@@ -73,6 +91,7 @@ export function buildNativeAcpBaseArgs(
 	}
 }
 
+/** Build the base Pi/OMP RPC launch args, including read-only enforcement when requested. */
 export function buildNativeRpcBaseArgs(
 	agent: AgentConfig,
 	permissionMode?: 'full' | 'standard' | 'readonly'

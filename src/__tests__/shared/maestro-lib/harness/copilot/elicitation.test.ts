@@ -1,8 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { ElicitationContext } from '@github/copilot-sdk';
-import { copilotElicitationResult } from '../../../../../shared/maestro-lib/harness/copilot/elicitation';
+import {
+	copilotElicitationQuestions,
+	copilotElicitationResult,
+} from '../../../../../shared/maestro-lib/harness/copilot/elicitation';
 
-function request(required?: string[]): ElicitationContext {
+function request(
+	required?: string[],
+	defaults?: { count?: number; enabled?: boolean }
+): ElicitationContext {
 	return {
 		sessionId: 'session-a',
 		message: 'Values',
@@ -10,9 +16,17 @@ function request(required?: string[]): ElicitationContext {
 			type: 'object',
 			required,
 			properties: {
-				count: { type: 'number', title: 'Count' },
-				enabled: { type: 'boolean', title: 'Enabled' },
-				optional: { type: 'string', title: 'Optional' },
+				count: {
+					type: 'number',
+					title: 'Count',
+					...(defaults?.count !== undefined ? { default: defaults.count } : {}),
+				},
+				enabled: {
+					type: 'boolean',
+					title: 'Enabled',
+					...(defaults?.enabled !== undefined ? { default: defaults.enabled } : {}),
+				},
+				optional: { type: 'string', title: 'Optional', description: 'Leave blank if unknown' },
 				withDefault: { type: 'string', default: 'default' },
 			},
 		},
@@ -48,5 +62,43 @@ describe('copilotElicitationResult', () => {
 				answers: { count: '2.5', enabled: 'true' },
 			})
 		).toEqual({ action: 'accept', content: { count: 2.5, enabled: true, withDefault: 'default' } });
+	});
+
+	it('accepts boolean defaults and rejects blank or array numeric answers', () => {
+		expect(
+			copilotElicitationResult(request([], { enabled: true }), {
+				outcome: 'answers',
+				answers: {},
+			})
+		).toEqual({
+			action: 'accept',
+			content: { enabled: true, withDefault: 'default' },
+		});
+		for (const count of ['', '  ', ['5']]) {
+			expect(
+				copilotElicitationResult(request(), {
+					outcome: 'answers',
+					answers: { count },
+				})
+			).toEqual({ action: 'decline' });
+		}
+	});
+
+	it('preserves required state, defaults, descriptions, and choices for the prompt', () => {
+		const questions = copilotElicitationQuestions(request(['count'], { enabled: true }));
+		expect(questions.find((question) => question.id === 'count')).toMatchObject({
+			required: true,
+		});
+		expect(questions.find((question) => question.id === 'enabled')).toMatchObject({
+			required: false,
+			default: 'true',
+		});
+		expect(questions.find((question) => question.id === 'optional')).toMatchObject({
+			required: false,
+			description: 'Leave blank if unknown',
+		});
+		expect(questions.find((question) => question.id === 'withDefault')).toMatchObject({
+			default: 'default',
+		});
 	});
 });

@@ -59,6 +59,14 @@ function hasValidOptionalBooleans(raw: Record<string, unknown>, keys: string[]):
 	return keys.every((key) => raw[key] === undefined || typeof raw[key] === 'boolean');
 }
 
+function hasValidDefault(raw: Record<string, unknown>): boolean {
+	return (
+		raw.default === undefined ||
+		typeof raw.default === 'string' ||
+		(Array.isArray(raw.default) && raw.default.every((item) => typeof item === 'string'))
+	);
+}
+
 function parseOptions(raw: unknown): HarnessInteractionOption[] | null {
 	if (!Array.isArray(raw)) return null;
 	const options: HarnessInteractionOption[] = [];
@@ -98,8 +106,9 @@ function parseQuestions(raw: unknown): HarnessInteractionQuestion[] | null | und
 			!isNonEmptyString(value.id) ||
 			!isNonEmptyString(value.question) ||
 			ids.has(value.id) ||
-			!hasValidOptionalStrings(value, ['header']) ||
-			!hasValidOptionalBooleans(value, ['multiSelect', 'secret', 'allowCustom'])
+			!hasValidOptionalStrings(value, ['header', 'description']) ||
+			!hasValidOptionalBooleans(value, ['multiSelect', 'secret', 'allowCustom', 'required']) ||
+			!hasValidDefault(value)
 		) {
 			return null;
 		}
@@ -112,6 +121,10 @@ function parseQuestions(raw: unknown): HarnessInteractionQuestion[] | null | und
 			options,
 		};
 		if (typeof value.header === 'string') question.header = value.header;
+		if (typeof value.description === 'string') question.description = value.description;
+		if (typeof value.required === 'boolean') question.required = value.required;
+		if (typeof value.default === 'string') question.default = value.default;
+		if (Array.isArray(value.default)) question.default = [...value.default];
 		if (typeof value.multiSelect === 'boolean') question.multiSelect = value.multiSelect;
 		if (typeof value.allowCustom === 'boolean') question.allowCustom = value.allowCustom;
 		if (typeof value.secret === 'boolean') question.secret = value.secret;
@@ -120,6 +133,7 @@ function parseQuestions(raw: unknown): HarnessInteractionQuestion[] | null | und
 	return questions;
 }
 
+/** Validate negotiated adapter capabilities without accepting unknown protocol modes. */
 export function parseHarnessControlCapabilities(raw: unknown): HarnessControlCapabilities | null {
 	if (!isObject(raw)) return null;
 	if (
@@ -167,6 +181,7 @@ export function parseHarnessControlCapabilities(raw: unknown): HarnessControlCap
 	return capabilities;
 }
 
+/** Parse an untrusted interaction request, including scoped options and elicitation fields. */
 export function parseHarnessInteractionRequest(raw: unknown): HarnessInteractionRequest | null {
 	if (!isObject(raw)) return null;
 	if (
@@ -210,6 +225,7 @@ export function parseHarnessInteractionRequest(raw: unknown): HarnessInteraction
 	return request;
 }
 
+/** Parse a user decision while rejecting malformed or approval-shaped answer payloads. */
 export function parseHarnessInteractionResponse(raw: unknown): HarnessInteractionResponse | null {
 	if (!isObject(raw) || !isNonEmptyString(raw.requestId)) return null;
 	if (raw.outcome === 'selected' && isNonEmptyString(raw.optionId)) {

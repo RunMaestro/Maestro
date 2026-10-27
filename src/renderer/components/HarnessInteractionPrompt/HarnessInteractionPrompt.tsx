@@ -10,6 +10,7 @@ import {
 	useHarnessInteractionStore,
 } from '../../stores/harnessInteractionStore';
 
+/** Render useful tool detail while bounding display to existing request metadata. */
 function detailText(request: HarnessInteractionRequest | undefined): string {
 	if (!request) return '';
 	if (request.detail) return request.detail;
@@ -25,6 +26,7 @@ function detailText(request: HarnessInteractionRequest | undefined): string {
 	}
 }
 
+/** Display the active owner-scoped approval or elicitation and submit its resolution. */
 export const HarnessInteractionPrompt = memo(function HarnessInteractionPrompt({
 	theme,
 }: {
@@ -57,7 +59,12 @@ export const HarnessInteractionPrompt = memo(function HarnessInteractionPrompt({
 
 	useEffect(() => {
 		setAnswer('');
-		setQuestionAnswers({});
+		const defaults = Object.fromEntries(
+			(request?.questions ?? [])
+				.filter((question) => question.default !== undefined)
+				.map((question) => [question.id, question.default!])
+		);
+		setQuestionAnswers(defaults);
 	}, [request?.requestId]);
 
 	const cancel = () => {
@@ -82,6 +89,7 @@ export const HarnessInteractionPrompt = memo(function HarnessInteractionPrompt({
 
 	const questions = request.questions ?? [];
 	const questionsComplete = questions.every((question) => {
+		if (question.required !== true || question.default !== undefined) return true;
 		const value = questionAnswers[question.id];
 		return Array.isArray(value)
 			? value.length > 0
@@ -141,6 +149,11 @@ export const HarnessInteractionPrompt = memo(function HarnessInteractionPrompt({
 										{question.header ? `${question.header}: ` : ''}
 										{question.question}
 									</legend>
+									{question.description && (
+										<p className="text-xs mb-2" style={{ color: theme.colors.textDim }}>
+											{question.description}
+										</p>
+									)}
 									{question.options.map((option) => {
 										const checked = Array.isArray(value)
 											? value.includes(option.label)

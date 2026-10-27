@@ -490,6 +490,27 @@ describe('BroadcastService', () => {
 			expect(dashboardClient.socket.send).toHaveBeenCalledTimes(1);
 			expect(sessionClient.socket.send).toHaveBeenCalledTimes(1);
 		});
+
+		it('keeps private interactions away from dashboards, other sessions, and revoked clients', () => {
+			const owner = createMockClient('owner', { subscribedSessionId: 'session-1' });
+			const other = createMockClient('other', { subscribedSessionId: 'session-2' });
+			const dashboard = createMockClient('dashboard');
+			const revoked = createMockClient('revoked', { subscribedSessionId: 'session-1' });
+			revoked.isAuthorized = () => false;
+			clients.set('owner', owner);
+			clients.set('other', other);
+			clients.set('dashboard', dashboard);
+			clients.set('revoked', revoked);
+
+			expect(service.broadcastToSubscribers('session-1', { type: 'private' })).toBe(true);
+			expect(owner.socket.send).toHaveBeenCalledTimes(1);
+			expect(other.socket.send).not.toHaveBeenCalled();
+			expect(dashboard.socket.send).not.toHaveBeenCalled();
+			expect(revoked.socket.send).not.toHaveBeenCalled();
+			expect(service.isClientSubscribed('owner', 'session-1')).toBe(true);
+			expect(service.isClientSubscribed('owner', 'session-2')).toBe(false);
+			expect(service.isClientSubscribed('revoked', 'session-1')).toBe(false);
+		});
 	});
 
 	describe('Concurrent Client Handling', () => {

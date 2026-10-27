@@ -88,7 +88,10 @@ export interface HarnessInteractionOption {
 export interface HarnessInteractionQuestion {
 	id: string;
 	question: string;
+	description?: string;
 	header?: string;
+	required?: boolean;
+	default?: string | string[];
 	options: HarnessInteractionOption[];
 	multiSelect?: boolean;
 	allowCustom?: boolean;

@@ -12,6 +12,7 @@ const OPTION_KINDS: Record<string, HarnessInteractionOptionKind> = {
 	reject_always: 'reject-always',
 };
 
+/** Convert ACP tool-call permission options without losing their stable protocol IDs. */
 export function acpPermissionOpenRequest(
 	request: RequestPermissionRequest,
 	context: { sessionId: string; tabId?: string; spawnGeneration: number; provider: string }
@@ -34,6 +35,7 @@ export function acpPermissionOpenRequest(
 	};
 }
 
+/** Resolve the exact ACP option selected by the owner, defaulting cancellation to reject. */
 export function acpPermissionResponse(
 	resolution: HarnessInteractionResolution
 ): RequestPermissionResponse {

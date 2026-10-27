@@ -24,11 +24,14 @@ export interface NdJsonConnectionOptions {
 	onReady?: (record: NdJsonRecord) => void;
 	negotiateV2?: boolean;
 	maxReassembledFrameBytes?: number;
+	maxLineBytes?: number;
 }
 
+const DEFAULT_MAX_LINE_BYTES = 64 * 1024 * 1024 + 64 * 1024;
 /** Stateful JSONL client for Pi/OMP commands and JSON-RPC gateway traffic. */
 export class NdJsonConnection {
 	private buffer = '';
+	private bufferBytes = 0;
 	private nextId = 0;
 	private readonly pending = new Map<string, PendingRequest>();
 	private chunk: {
@@ -48,12 +51,14 @@ export class NdJsonConnection {
 		const stdout = child.stdout;
 		const stdin = child.stdin;
 		if (!stdout || !stdin) throw new Error('Native RPC child requires piped stdin and stdout');
+		stdout.setEncoding('utf8');
 		stdout.on('data', (chunk: unknown) => this.onData(chunk));
 		stdout.once('end', () => this.close(new Error('native transport closed')));
 		stdout.once('error', (error) => this.close(error));
 		stdin.on('error', (error) => this.close(error));
 	}
 
+	/** Send a correlated request and reject immediately once the transport is closed. */
 	request(method: string, params: Record<string, unknown> = {}): Promise<unknown> {
 		if (this.closed) return Promise.reject(new Error('native transport is closed'));
 		const id = `req-${++this.nextId}`;
@@ -67,11 +72,13 @@ export class NdJsonConnection {
 		return promise;
 	}
 
+	/** Emit a JSON-RPC notification, which has no request ID or response to correlate. */
 	notify(method: string, params: Record<string, unknown>): void {
 		if (this.options.protocol !== 'jsonrpc') throw new Error('notifications require JSON-RPC');
 		this.write({ jsonrpc: '2.0', method, params });
 	}
 
+	/** Reject every pending request once; repeated close/error events are harmless. */
 	close(error = new Error('native transport is closed')): void {
 		if (this.closed) return;
 		this.closed = true;
@@ -79,17 +86,29 @@ export class NdJsonConnection {
 		this.pending.clear();
 	}
 
+	/** Decode complete lines while preserving UTF-8 and bounding an unterminated buffer. */
 	private onData(chunk: unknown): void {
-		this.buffer += String(chunk);
+		const text = String(chunk);
+		this.buffer += text;
+		this.bufferBytes += Buffer.byteLength(text);
 		let index = this.buffer.indexOf('\n');
 		while (index !== -1) {
 			const line = this.buffer.slice(0, index);
+			this.bufferBytes -= Buffer.byteLength(this.buffer.slice(0, index + 1));
 			this.buffer = this.buffer.slice(index + 1);
 			if (line.trim()) this.onLine(line);
 			index = this.buffer.indexOf('\n');
 		}
+		if (this.bufferBytes > (this.options.maxLineBytes ?? DEFAULT_MAX_LINE_BYTES)) {
+			this.buffer = '';
+			this.bufferBytes = 0;
+			this.chunk = null;
+			this.options.onNotification({ type: 'transport_error', error: 'RPC line exceeds limit' });
+			this.close(new Error('native transport line exceeds limit'));
+		}
 	}
 
+	/** Parse one JSONL record without echoing malformed provider payloads into diagnostics. */
 	private onLine(line: string): void {
 		let record: NdJsonRecord;
 		try {
@@ -105,6 +124,7 @@ export class NdJsonConnection {
 		this.onRecord(record);
 	}
 
+	/** Route responses, server requests, and notifications according to the negotiated protocol. */
 	private onRecord(record: NdJsonRecord): void {
 		if (record.type === 'ready') {
 			this.options.onReady?.(record);
@@ -139,30 +159,45 @@ export class NdJsonConnection {
 			return;
 		}
 		if (id && typeof record.method === 'string') {
-			void this.options.onServerRequest(record).then((response) => {
-				if (response.kind === 'ignore') return;
-				if (response.kind === 'extension') {
-					this.write({ type: 'extension_ui_response', id: record.id, ...response.value });
-				} else if (response.kind === 'error') {
+			void this.options
+				.onServerRequest(record)
+				.then((response) => {
+					if (response.kind === 'ignore') return;
+					if (response.kind === 'extension') {
+						this.write({ type: 'extension_ui_response', id: record.id, ...response.value });
+					} else if (response.kind === 'error') {
+						this.write({
+							jsonrpc: '2.0',
+							id: record.id,
+							error: { code: response.code, message: response.message },
+						});
+					} else {
+						this.write({ jsonrpc: '2.0', id: record.id, result: response.value });
+					}
+				})
+				.catch(() => {
+					if (this.options.protocol === 'pi') {
+						this.write({ type: 'extension_ui_response', id: record.id, cancelled: true });
+						return;
+					}
 					this.write({
 						jsonrpc: '2.0',
 						id: record.id,
-						error: { code: response.code, message: response.message },
+						error: { code: -32603, message: 'Internal error' },
 					});
-				} else {
-					this.write({ jsonrpc: '2.0', id: record.id, result: response.value });
-				}
-			});
+				});
 			return;
 		}
 		this.options.onNotification(record);
 	}
 
+	/** Write one JSONL record unless the connection has already closed. */
 	private write(record: NdJsonRecord): void {
 		if (this.closed) return;
 		this.child.stdin!.write(JSON.stringify(record) + '\n');
 	}
 
+	/** Validate and reassemble v2 chunks with sequence and byte-budget enforcement. */
 	private onChunk(record: NdJsonRecord): void {
 		const max = this.options.maxReassembledFrameBytes ?? 64 * 1024 * 1024;
 		const id = record.chunkId;

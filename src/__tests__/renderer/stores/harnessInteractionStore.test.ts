@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useHarnessInteractionStore } from '../../../renderer/stores/harnessInteractionStore';
 import type { HarnessInteractionRequest } from '../../../shared/harness-control/types';
+import { captureException } from '../../../renderer/utils/sentry';
+
+vi.mock('../../../renderer/utils/sentry', () => ({ captureException: vi.fn() }));
+vi.mock('../../../renderer/utils/logger', () => ({ logger: { warn: vi.fn() } }));
 
 const request: HarnessInteractionRequest = {
 	requestId: 'request-a',
@@ -16,6 +20,7 @@ const request: HarnessInteractionRequest = {
 describe('harnessInteractionStore', () => {
 	beforeEach(() => {
 		useHarnessInteractionStore.setState({ queue: [], responding: {}, settledIds: {} });
+		vi.mocked(captureException).mockClear();
 	});
 
 	it('deduplicates live and restored requests and removes settled requests', () => {
@@ -70,6 +75,28 @@ describe('harnessInteractionStore', () => {
 		expect(useHarnessInteractionStore.getState().queue.map((item) => item.requestId)).toEqual([
 			'request-b',
 		]);
+		vi.unstubAllGlobals();
+	});
+
+	it('reports unexpected response failures but treats disconnects as expected', async () => {
+		const unexpected = new Error('broker invariant failed');
+		vi.stubGlobal('window', {
+			maestro: {
+				process: {
+					respondHarnessInteraction: vi.fn().mockRejectedValue(unexpected),
+					listHarnessInteractions: vi.fn().mockRejectedValue(new Error('WebSocket is closed')),
+				},
+			},
+		});
+		await useHarnessInteractionStore.getState().respond({
+			requestId: request.requestId,
+			outcome: 'selected',
+			optionId: 'allow',
+		});
+		await useHarnessInteractionStore.getState().loadPending();
+		expect(captureException).toHaveBeenCalledExactlyOnceWith(unexpected, {
+			extra: { operation: 'respond-interaction', requestId: request.requestId },
+		});
 		vi.unstubAllGlobals();
 	});
 });

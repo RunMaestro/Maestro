@@ -27,6 +27,7 @@ import {
 	steeringTextTooLong,
 } from '../../shared/chatSteering';
 import { resolveCodexTransport } from '../../shared/codexTransport';
+import { supportsNativeSteering } from '../../shared/maestro-lib/providers/native-control';
 import { isSessionRemote } from './sessionHelpers';
 import {
 	getBusyTabs,
@@ -815,7 +816,12 @@ export function getSteerEligibility(
 	if (!getQueueBusyContext(session, item).targetTabBusy) {
 		return { canSteer: false, blockedReason: 'tab-not-working' };
 	}
-	if (session.toolType === 'codex') {
+	const nativeSteering =
+		session.harnessControlMode === 'native' && supportsNativeSteering(session.toolType);
+	if (nativeSteering) {
+		// Native control is local-only; its adapter owns the in-turn protocol channel.
+		if (isSessionRemote(session)) return { canSteer: false, blockedReason: 'ssh-remote' };
+	} else if (session.toolType === 'codex') {
 		// A Codex turn is steerable only on the opt-in app-server transport, which
 		// accepts `turn/steer` while a turn runs, locally or over SSH (the protocol
 		// rides the ssh client's stdio). `codex exec` (the default) accepts nothing
@@ -846,7 +852,11 @@ export function getSteerEligibility(
 	// leading `!` switches the editor to bash mode. Neither is the message the user
 	// queued, so it waits and dispatches normally. Codex receives `turn/steer` as
 	// plain input, so it is unaffected.
-	if (session.toolType === 'claude-code' && startsWithTuiCommandPrefix(item.text)) {
+	if (
+		session.toolType === 'claude-code' &&
+		!nativeSteering &&
+		startsWithTuiCommandPrefix(item.text)
+	) {
 		return { canSteer: false, blockedReason: 'tui-command-prefix' };
 	}
 	if (item.waitingForConnection) {

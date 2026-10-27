@@ -46,6 +46,7 @@ export class InteractionBroker {
 		private readonly defaultTimeoutMs = HARNESS_INTERACTION_TIMEOUT_MS
 	) {}
 
+	/** Register and deliver one request, cancelling immediately when no owner can display it. */
 	open(
 		raw: HarnessInteractionOpenRequest,
 		timeoutMs = this.defaultTimeoutMs
@@ -75,6 +76,7 @@ export class InteractionBroker {
 		return { request, completion };
 	}
 
+	/** Validate and settle a user response exactly once, including option membership checks. */
 	resolve(raw: unknown): HarnessInteractionResolveResult {
 		const response = parseHarnessInteractionResponse(raw);
 		if (!response) return 'invalid-response';
@@ -94,10 +96,12 @@ export class InteractionBroker {
 		return 'resolved';
 	}
 
+	/** Cancel a pending request when its provider withdraws the underlying tool call. */
 	withdraw(requestId: string, reason: HarnessInteractionCancelReason = 'withdrawn'): boolean {
 		return this.settle(requestId, { outcome: 'cancelled', reason });
 	}
 
+	/** Cancel requests owned by a process, optionally restricted to one spawn generation. */
 	closeSession(
 		sessionId: string,
 		spawnGeneration?: number,
@@ -116,16 +120,19 @@ export class InteractionBroker {
 		return closed;
 	}
 
+	/** Cancel every request when the native transport has closed. */
 	closeAll(reason: HarnessInteractionCancelReason = 'transport-closed'): void {
 		for (const requestId of [...this.pending.keys()]) {
 			this.settle(requestId, { outcome: 'cancelled', reason });
 		}
 	}
 
+	/** Return snapshots for owner-filtered restoration without exposing completion callbacks. */
 	pendingRequests(): HarnessInteractionRequest[] {
 		return [...this.pending.values()].map((pending) => pending.request);
 	}
 
+	/** Settle, notify, and forget a request while keeping answer values out of settlement events. */
 	private settle(requestId: string, resolution: HarnessInteractionResolution): boolean {
 		const pending = this.pending.get(requestId);
 		if (!pending) return false;

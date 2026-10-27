@@ -408,9 +408,11 @@ async function handleProcessSpawnImpl(
 		sessionCustomEnvVars: config.sessionCustomEnvVars,
 	});
 	finalArgs = configResolution.args;
+	const effectivePermissionMode =
+		config.permissionMode ?? (config.readOnlyMode === true ? 'readonly' : undefined);
 	const nativeAcpBaseArgs =
 		harnessControlMode === 'native' && agent
-			? buildNativeAcpBaseArgs(agent, config.permissionMode)
+			? buildNativeAcpBaseArgs(agent, effectivePermissionMode)
 			: null;
 	const nativeAcpArgs = nativeAcpBaseArgs
 		? applyAgentConfigOverrides(agent, nativeAcpBaseArgs, {
@@ -419,13 +421,13 @@ async function handleProcessSpawnImpl(
 				sessionCustomEffort: config.sessionCustomEffort,
 				sessionCustomEnvVars: config.sessionCustomEnvVars,
 				sessionCustomArgs: config.sessionCustomArgs,
-				readOnlyMode: config.permissionMode === 'readonly' || config.readOnlyMode === true,
+				readOnlyMode: effectivePermissionMode === 'readonly',
 			}).args
 		: undefined;
 	const nativeRpcProtocolId =
 		(harnessControlMode === 'native' && agent ? nativeRpcProtocol(agent.id) : null) ?? undefined;
 	const nativeRpcBaseArgs =
-		nativeRpcProtocolId && agent ? buildNativeRpcBaseArgs(agent, config.permissionMode) : null;
+		nativeRpcProtocolId && agent ? buildNativeRpcBaseArgs(agent, effectivePermissionMode) : null;
 	const nativeRpcArgs = nativeRpcBaseArgs
 		? applyAgentConfigOverrides(agent, nativeRpcBaseArgs, {
 				agentConfigValues,
@@ -433,7 +435,7 @@ async function handleProcessSpawnImpl(
 				sessionCustomEffort: config.sessionCustomEffort,
 				sessionCustomArgs: config.sessionCustomArgs,
 				sessionCustomEnvVars: config.sessionCustomEnvVars,
-				readOnlyMode: config.permissionMode === 'readonly' || config.readOnlyMode === true,
+				readOnlyMode: effectivePermissionMode === 'readonly',
 			}).args
 		: undefined;
 
@@ -450,12 +452,8 @@ async function handleProcessSpawnImpl(
 		);
 	}
 
-	// Derive effective read-only state, honoring the legacy boolean flag only
-	// when permissionMode wasn't explicitly set (back-compat for older configs).
-	const hasExplicitPermissionMode = config.permissionMode !== undefined;
-	const isReadOnly =
-		config.permissionMode === 'readonly' ||
-		(!hasExplicitPermissionMode && config.readOnlyMode === true);
+	// Native adapters consume the same effective read-only decision as CLI args.
+	const isReadOnly = effectivePermissionMode === 'readonly';
 
 	// Settings -> Environment (`globalShellEnvVars`, read above before
 	// resolveClaudeSpawnContext). Loaded for every process type: terminals get it
@@ -1252,6 +1250,13 @@ async function handleProcessSpawnImpl(
 		nativeRpcProtocol: nativeRpcProtocolId,
 		nativeRpcArgs,
 		effort: config.sessionCustomEffort,
+		...(harnessControlMode === 'native'
+			? {
+					modelId: configResolution.modelId ?? config.modelId,
+					effort: configResolution.effort ?? config.sessionCustomEffort,
+					permissionMode: effectivePermissionMode,
+				}
+			: {}),
 		promptArgs: agent?.promptArgs, // Function to build prompt args (e.g., ['-p', prompt] for OpenCode)
 		promptFileArgs: agent?.promptFileArgs, // Prompt-in-a-file delivery for CLIs that accept it (omp @path)
 		noPromptSeparator: agent?.noPromptSeparator, // Some agents don't support '--' before prompt

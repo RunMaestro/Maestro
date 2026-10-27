@@ -17,6 +17,7 @@ export interface OpencodeCurrentPermissionRequest {
 export type OpencodePermissionRequest = Permission | OpencodeCurrentPermissionRequest;
 export type OpencodePermissionResponse = 'once' | 'always' | 'reject';
 
+/** Convert either OpenCode permission protocol into one owner-scoped broker request. */
 export function opencodePermissionOpenRequest(
 	permission: OpencodePermissionRequest,
 	context: { sessionId: string; tabId?: string; spawnGeneration: number }
@@ -45,6 +46,7 @@ export function opencodePermissionOpenRequest(
 	};
 }
 
+/** Map a broker decision to OpenCode's once/always/reject reply vocabulary. */
 export function opencodePermissionResponse(
 	resolution: HarnessInteractionResolution
 ): OpencodePermissionResponse {

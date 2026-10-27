@@ -459,22 +459,19 @@ export async function send(
 					// A send Cue started is still Cue's turn on this agent. Left
 					// unset otherwise, so the turn keeps the default origin.
 					...(origin.kind === 'cue' ? { querySource: 'cue' as const } : {}),
+					customModel: agent.customModel,
+					customEffort: agent.customEffort,
+					customArgs: agent.customArgs,
+					additionalDirectories: agent.additionalDirectories,
+					customEnvVars: agent.customEnvVars,
+					requiredSecrets: agent.requiredSecrets,
+					sshRemoteConfig: agent.sessionSshRemoteConfig,
+					// Honor the agent's Claude token source for every CLI transport.
+					enableMaestroP: agent.enableMaestroP,
+					maestroPMode: agent.maestroPMode,
+					maestroPPath: agent.maestroPPath,
 					...(nativeControl
-						? {
-								harnessControlMode: 'native' as const,
-								nativeSessionId: agent.id,
-								customModel: agent.customModel,
-								customEffort: agent.customEffort,
-								customArgs: agent.customArgs,
-								additionalDirectories: agent.additionalDirectories,
-								customEnvVars: agent.customEnvVars,
-								requiredSecrets: agent.requiredSecrets,
-								sshRemoteConfig: agent.sessionSshRemoteConfig,
-								// Honor the agent's Claude token source for native CLI turns.
-								enableMaestroP: agent.enableMaestroP,
-								maestroPMode: agent.maestroPMode,
-								maestroPPath: agent.maestroPPath,
-							}
+						? { harnessControlMode: 'native' as const, nativeSessionId: agent.id }
 						: {}),
 					// The turn runs in the agent's own cwd (#1872).
 					acceptWorkspaceTrust: true,

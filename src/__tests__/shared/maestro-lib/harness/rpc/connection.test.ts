@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'events';
 import { PassThrough, Writable } from 'stream';
 import {
@@ -8,13 +8,15 @@ import {
 
 function childFixture() {
 	const stdout = new PassThrough();
+	const writes: string[] = [];
 	const stdin = new Writable({
 		write(chunk, _encoding, callback) {
+			writes.push(String(chunk));
 			callback();
 		},
 	});
 	const child = Object.assign(new EventEmitter(), { stdin, stdout });
-	return { child: child as never, stdout };
+	return { child: child as never, stdout, writes };
 }
 
 describe('NdJsonConnection', () => {
@@ -101,5 +103,72 @@ describe('NdJsonConnection', () => {
 		);
 		expect(notifications[0].type).toBe('rpc_frame_error');
 		connection.close();
+	});
+
+	it('preserves UTF-8 characters split across stdout chunks', async () => {
+		const { child, stdout } = childFixture();
+		const notifications: NdJsonRecord[] = [];
+		new NdJsonConnection(child, {
+			protocol: 'jsonrpc',
+			onNotification: (record) => notifications.push(record),
+			onServerRequest: async () => ({ kind: 'ignore' }),
+		});
+		const bytes = Buffer.from(JSON.stringify({ type: 'text', text: 'hello 😀' }) + '\n');
+		const emoji = bytes.indexOf(Buffer.from('😀'));
+		stdout.write(bytes.subarray(0, emoji + 2));
+		stdout.write(bytes.subarray(emoji + 2));
+		await vi.waitFor(() => expect(notifications).toHaveLength(1));
+		expect(notifications[0].text).toBe('hello 😀');
+	});
+
+	it('closes on an oversized unterminated line without echoing its payload', async () => {
+		const { child, stdout } = childFixture();
+		const notifications: NdJsonRecord[] = [];
+		const connection = new NdJsonConnection(child, {
+			protocol: 'jsonrpc',
+			maxLineBytes: 16,
+			onNotification: (record) => notifications.push(record),
+			onServerRequest: async () => ({ kind: 'ignore' }),
+		});
+		const pending = connection.request('status');
+		stdout.write('{"type":"unterminated-secret-payload');
+		expect(notifications).toEqual([{ type: 'transport_error', error: 'RPC line exceeds limit' }]);
+		await expect(pending).rejects.toThrow('native transport line exceeds limit');
+	});
+
+	it('answers rejected server requests for JSON-RPC and Pi peers', async () => {
+		const json = childFixture();
+		new NdJsonConnection(json.child, {
+			protocol: 'jsonrpc',
+			onNotification: () => undefined,
+			onServerRequest: async () => {
+				throw new Error('handler failed');
+			},
+		});
+		json.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: 7, method: 'status' }) + '\n');
+		await vi.waitFor(() => expect(json.writes).toHaveLength(1));
+		expect(JSON.parse(json.writes[0])).toMatchObject({
+			jsonrpc: '2.0',
+			id: 7,
+			error: { code: -32603, message: 'Internal error' },
+		});
+
+		const pi = childFixture();
+		new NdJsonConnection(pi.child, {
+			protocol: 'pi',
+			onNotification: () => undefined,
+			onServerRequest: async () => {
+				throw new Error('handler failed');
+			},
+		});
+		pi.stdout.write(
+			JSON.stringify({ type: 'extension_ui_request', id: 'ui-1', method: 'confirm' }) + '\n'
+		);
+		await vi.waitFor(() => expect(pi.writes).toHaveLength(1));
+		expect(JSON.parse(pi.writes[0])).toMatchObject({
+			type: 'extension_ui_response',
+			id: 'ui-1',
+			cancelled: true,
+		});
 	});
 });

@@ -46,6 +46,33 @@ describe('harness-control validators', () => {
 		expect(parseHarnessInteractionRequest({ ...permissionRequest, options: [] })).toBeNull();
 	});
 
+	it('preserves question descriptions, required flags, and defaults', () => {
+		const question = {
+			id: 'enabled',
+			question: 'Enable it?',
+			description: 'Defaults to the provider setting',
+			required: false,
+			default: 'true',
+			options: [],
+		};
+		expect(
+			parseHarnessInteractionRequest({
+				...permissionRequest,
+				kind: 'elicitation',
+				options: [],
+				questions: [question],
+			})?.questions
+		).toEqual([question]);
+		expect(
+			parseHarnessInteractionRequest({
+				...permissionRequest,
+				kind: 'elicitation',
+				options: [],
+				questions: [{ ...question, default: 1 }],
+			})
+		).toBeNull();
+	});
+
 	it('validates selected, answer, and cancellation responses', () => {
 		expect(
 			parseHarnessInteractionResponse({

@@ -4,6 +4,25 @@ import type {
 	HarnessInteractionResponse,
 	HarnessInteractionSettledEvent,
 } from '../../shared/harness-control/types';
+import { captureException } from '../utils/sentry';
+import { logger } from '../utils/logger';
+
+/** Expected transport loss is not a Sentry event; all other failures remain reportable. */
+function isExpectedConnectionFailure(error: unknown): boolean {
+	const message = error instanceof Error ? error.message : String(error);
+	return /No ipcMain handler registered|not connected|connection (?:is )?(?:closed|lost)|ECONNREFUSED|WebSocket|destroyed|disposed/i.test(
+		message
+	);
+}
+
+/** Log expected disconnects locally and capture unexpected broker/IPC failures. */
+function reportInteractionFailure(error: unknown, operation: string, requestId?: string): void {
+	if (isExpectedConnectionFailure(error)) {
+		logger.warn(`[harnessInteractionStore] ${operation} unavailable`, undefined, error);
+		return;
+	}
+	captureException(error, { extra: { operation, requestId } });
+}
 
 interface HarnessInteractionState {
 	queue: HarnessInteractionRequest[];
@@ -46,7 +65,7 @@ export const useHarnessInteractionStore = create<HarnessInteractionState>((set, 
 			const pending = await api.listHarnessInteractions();
 			for (const request of pending) get().enqueue(request);
 		} catch (error) {
-			console.error('[harnessInteractionStore] Failed to restore pending interactions', error);
+			reportInteractionFailure(error, 'restore-pending-interactions');
 		}
 	},
 	respond: async (response) => {
@@ -61,7 +80,7 @@ export const useHarnessInteractionStore = create<HarnessInteractionState>((set, 
 				get().settle({ requestId });
 			}
 		} catch (error) {
-			console.error('[harnessInteractionStore] Interaction response failed', requestId, error);
+			reportInteractionFailure(error, 'respond-interaction', requestId);
 		} finally {
 			set((state) => {
 				const responding = { ...state.responding };
@@ -72,6 +91,7 @@ export const useHarnessInteractionStore = create<HarnessInteractionState>((set, 
 	},
 }));
 
+/** Select the oldest unanswered interaction so requests settle in arrival order. */
 export function selectActiveHarnessInteraction(
 	state: HarnessInteractionState
 ): HarnessInteractionRequest | undefined {

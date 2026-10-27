@@ -42,6 +42,8 @@ class FakeRpcAgent extends EventEmitter {
 	stderr = new PassThrough();
 	stdin: Writable;
 	written: RpcRecord[] = [];
+	stdinEnded = false;
+	failPrompt = false;
 
 	constructor(
 		private readonly dialog = false,
@@ -62,6 +64,7 @@ class FakeRpcAgent extends EventEmitter {
 				callback();
 			},
 			final: (callback) => {
+				this.stdinEnded = true;
 				callback();
 				this.exit(0);
 			},
@@ -92,6 +95,10 @@ class FakeRpcAgent extends EventEmitter {
 				return;
 			case 'prompt':
 				this.respond(request, { disposition: 'started' });
+				if (this.failPrompt) {
+					this.send({ type: 'prompt_result', status: 'failed', error: 'boom' });
+					return;
+				}
 				if (this.dialog) {
 					this.send({
 						type: 'extension_ui_request',
@@ -218,5 +225,13 @@ describe('RpcServerSpawner', () => {
 				(record) => record.type === 'extension_ui_response' && record.confirmed === true
 			)
 		).toBe(true);
+	});
+
+	it('closes stdin when the provider rejects a prompt', async () => {
+		const agent = new FakeRpcAgent();
+		agent.failPrompt = true;
+		const h = harness(agent);
+		h.spawner.spawn(h.config);
+		await vi.waitFor(() => expect(agent.stdinEnded).toBe(true));
 	});
 });

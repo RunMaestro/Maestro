@@ -18,13 +18,13 @@ import { nextSpawnGeneration, isSupersededGeneration } from '../generation';
 import { harnessInteractionBroker } from '../../harness-control/integration';
 import { CopilotConnectionManager, type CopilotConnectionLease } from './CopilotConnectionManager';
 import { AcpOutputParser } from '../../../shared/maestro-lib/harness/acp/output-parser';
-import type {
-	HarnessControlCapabilities,
-	HarnessInteractionQuestion,
-} from '../../../shared/harness-control/types';
+import type { HarnessControlCapabilities } from '../../../shared/harness-control/types';
 import type { SteeringResultFrame } from '../../../shared/chatSteering';
 import type { ToolType } from '../../../shared/types';
-import { copilotElicitationResult } from '../../../shared/maestro-lib/harness/copilot/elicitation';
+import {
+	copilotElicitationQuestions,
+	copilotElicitationResult,
+} from '../../../shared/maestro-lib/harness/copilot/elicitation';
 
 const LOG_CONTEXT = 'CopilotSdk';
 interface CopilotUserInputRequest {
@@ -354,32 +354,7 @@ class CopilotTurn {
 	}
 
 	private async answerElicitation(request: ElicitationContext) {
-		const questions: HarnessInteractionQuestion[] = Object.entries(
-			request.requestedSchema?.properties ?? {}
-		).map(([id, field]) => {
-			const choices =
-				'enum' in field && Array.isArray(field.enum)
-					? field.enum
-					: 'oneOf' in field && Array.isArray(field.oneOf)
-						? field.oneOf.map((item) => item.const)
-						: field.type === 'array' && 'enum' in field.items
-							? field.items.enum
-							: field.type === 'array' && 'anyOf' in field.items
-								? field.items.anyOf.map((item) => item.const)
-								: [];
-			return {
-				id,
-				question: field.title ?? id,
-				description: field.description,
-				multiSelect: field.type === 'array',
-				allowCustom: choices.length === 0,
-				options: choices.map((choice, index) => ({
-					optionId: `choice-${index}`,
-					label: choice,
-					kind: 'choice' as const,
-				})),
-			};
-		});
+		const questions = copilotElicitationQuestions(request);
 		const opened = harnessInteractionBroker.open({
 			sessionId: this.config.sessionId,
 			tabId: this.config.tabId,

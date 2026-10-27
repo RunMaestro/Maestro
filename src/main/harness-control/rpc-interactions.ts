@@ -13,6 +13,7 @@ const DIALOG_METHODS: Record<string, true> = {
 	editor: true,
 };
 
+/** Broker a Pi/OMP extension UI request through the process-wide interaction owner. */
 export function answerRpcExtensionRequest(
 	record: NdJsonRecord,
 	context: { sessionId: string; tabId?: string; spawnGeneration: number; provider: string }
@@ -20,6 +21,7 @@ export function answerRpcExtensionRequest(
 	return answerRpcExtensionRequestWithBroker(record, context, harnessInteractionBroker);
 }
 
+/** Translate extension dialogs with an injectable broker for isolated protocol tests. */
 export async function answerRpcExtensionRequestWithBroker(
 	record: NdJsonRecord,
 	context: { sessionId: string; tabId?: string; spawnGeneration: number; provider: string },

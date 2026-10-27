@@ -9,14 +9,17 @@ export class AcpEventTranslator {
 	private assistantText = '';
 	private thoughtText = '';
 
+	/** Aggregated assistant text across all message chunks in the turn. */
 	get finalText(): string {
 		return this.assistantText;
 	}
 
+	/** Aggregated reasoning text across all thought chunks in the turn. */
 	get finalThought(): string {
 		return this.thoughtText;
 	}
 
+	/** Translate one ACP session update into the renderer's existing JSONL event vocabulary. */
 	handle(notification: SessionNotification): AcpTranslationResult {
 		const { sessionId, update } = notification;
 		switch (update.sessionUpdate) {

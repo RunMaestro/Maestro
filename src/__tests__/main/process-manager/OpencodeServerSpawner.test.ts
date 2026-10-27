@@ -165,6 +165,7 @@ describe('OpencodeServerSpawner permissions', () => {
 			method: 'POST',
 			body: JSON.stringify({ reply: 'once' }),
 		});
+		expect(fetchMock.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
 		expect(postSessionIdPermissionsPermissionId).not.toHaveBeenCalled();
 		vi.unstubAllGlobals();
 	});

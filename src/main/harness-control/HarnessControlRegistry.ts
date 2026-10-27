@@ -16,6 +16,7 @@ interface RegisteredHandle {
 export class HarnessControlRegistry {
 	private readonly handles = new Map<string, RegisteredHandle>();
 
+	/** Replace a session handle and close the superseded adapter without blocking registration. */
 	register(sessionId: string, generation: number, handle: HarnessControlHandle): void {
 		const previous = this.handles.get(sessionId);
 		this.handles.set(sessionId, { generation, handle });
@@ -27,6 +28,7 @@ export class HarnessControlRegistry {
 		}
 	}
 
+	/** Remove only the exact handle registered by the caller, never a newer replacement. */
 	unregister(sessionId: string, handle: HarnessControlHandle): boolean {
 		const current = this.handles.get(sessionId);
 		if (!current || current.handle !== handle) return false;
@@ -34,13 +36,16 @@ export class HarnessControlRegistry {
 		return true;
 	}
 
+	/** Forget a session without closing it; process teardown remains the owner of that work. */
 	forget(sessionId: string): void {
 		this.handles.delete(sessionId);
 	}
 
+	/** Report whether a live native control channel exists for this process ID. */
 	has(sessionId: string): boolean {
 		return this.handles.has(sessionId);
 	}
+	/** Read adapter capabilities, returning null for missing or failed channels. */
 	getCapabilities(sessionId: string): HarnessControlCapabilities | null {
 		const current = this.handles.get(sessionId);
 		if (!current) return null;
@@ -51,6 +56,7 @@ export class HarnessControlRegistry {
 		}
 	}
 
+	/** Forward in-turn text and convert adapter failure into an explicit unknown verdict. */
 	async steer(sessionId: string, text: string): Promise<SteeringResultFrame> {
 		const id = randomUUID();
 		const current = this.handles.get(sessionId);
@@ -75,6 +81,7 @@ export class HarnessControlRegistry {
 		}
 	}
 
+	/** Interrupt a running native turn, returning false when no adapter accepts it. */
 	async interrupt(sessionId: string): Promise<boolean> {
 		const current = this.handles.get(sessionId);
 		if (!current) return false;
@@ -86,6 +93,7 @@ export class HarnessControlRegistry {
 		}
 	}
 
+	/** Close and forget a native adapter while protecting newer registrations. */
 	async close(sessionId: string, options?: HarnessControlCloseOptions): Promise<boolean> {
 		const current = this.handles.get(sessionId);
 		if (!current) return false;

@@ -22,6 +22,10 @@ import { StringDecoder } from 'string_decoder';
 import { DEFAULT_STDERR_TAIL_LIMIT } from '../../../shared/maestro-lib/run/start-turn';
 
 // Create mock spawn function at module level
+const mockSpawnNativeSdkAgent = vi.hoisted(() => vi.fn());
+vi.mock('../../../cli/services/native-sdk-agent', () => ({
+	spawnNativeSdkAgent: mockSpawnNativeSdkAgent,
+}));
 const mockSpawn = vi.fn();
 const mockStdin = {
 	end: vi.fn(),
@@ -3867,6 +3871,15 @@ Some text with [x] in it that's not a checkbox
 	describe('spawnAgent: regression', () => {
 		beforeEach(() => {
 			mockSpawn.mockReturnValue(mockChild);
+		});
+
+		it('uses the current transport for a stale native value on an unsupported provider', async () => {
+			const pending = spawnAgent('codex', '/p', 'hi', undefined, {
+				harnessControlMode: 'native',
+			});
+			await driveSpawnToCompletion(pending, 0, CODEX_INIT());
+			expect(mockSpawnNativeSdkAgent).not.toHaveBeenCalled();
+			expect(mockSpawn).toHaveBeenCalled();
 		});
 
 		it('returns only the latest phase-less Codex answer after interim text and a tool', async () => {

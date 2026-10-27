@@ -352,6 +352,7 @@ class HermesTurn {
 			case 'run.interrupted':
 				this.forwardLine(JSON.stringify({ type: 'acp.error', message: params.error ?? method }));
 				this.finish(1);
+				this.turn.child.stdin?.end();
 				return;
 			default:
 				this.forwardLine(JSON.stringify({ type: 'acp.system', update: record }));

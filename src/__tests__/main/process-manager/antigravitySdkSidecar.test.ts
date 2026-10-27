@@ -2,8 +2,12 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'child_process';
 import { ANTIGRAVITY_SDK_SIDECAR } from '../../../main/process-manager/spawners/antigravitySdkSidecar';
 
-const PYTHON = process.env.ANTIGRAVITY_PYTHON || 'python';
-const PYTHON_AVAILABLE = spawnSync(PYTHON, ['--version'], { stdio: 'ignore' }).status === 0;
+const PYTHON =
+	[process.env.ANTIGRAVITY_PYTHON, 'python', 'python3'].find(
+		(candidate): candidate is string =>
+			!!candidate && spawnSync(candidate, ['--version'], { stdio: 'ignore' }).status === 0
+	) ?? '';
+const PYTHON_AVAILABLE = PYTHON !== '';
 
 const STUB = String.raw`
 import sys, types

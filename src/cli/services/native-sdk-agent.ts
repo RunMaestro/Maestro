@@ -55,7 +55,10 @@ import { isClaudeReadOnlyTool } from '../../shared/maestro-lib/providers/claude-
 import { ANTIGRAVITY_SDK_SIDECAR } from '../../main/process-manager/spawners/antigravitySdkSidecar';
 import { resolveHermesGatewayLaunch } from '../../shared/maestro-lib/providers/hermes-launch';
 import type { AgentConfig } from '../../main/agents';
-import { copilotElicitationResult } from '../../shared/maestro-lib/harness/copilot/elicitation';
+import {
+	copilotElicitationQuestions,
+	copilotElicitationResult,
+} from '../../shared/maestro-lib/harness/copilot/elicitation';
 
 function launchDefinition(
 	definition: NonNullable<ReturnType<typeof getAgentDefinition>>
@@ -249,6 +252,7 @@ function settleNativeResult(
 	});
 }
 
+/** Execute one local native turn with owner-scoped approvals, usage capture, and bounded cleanup. */
 export async function spawnNativeSdkAgent(
 	toolType: ToolType,
 	cwd: string,
@@ -672,7 +676,6 @@ async function answerCopilotElicitation(
 	broker: InteractionBroker,
 	options: SpawnAgentOptions
 ) {
-	const fields = Object.entries(request.requestedSchema?.properties ?? {});
 	const opened = broker.open({
 		sessionId: options.nativeSessionId ?? `cli-copilot-${Date.now()}`,
 		tabId: options.nativeTabId,
@@ -681,14 +684,7 @@ async function answerCopilotElicitation(
 		provider: 'copilot-cli',
 		title: request.message,
 		options: [],
-		questions: fields.map(([id, field]) => ({
-			id,
-			question: field.title ?? id,
-			description: field.description,
-			allowCustom: true,
-			multiSelect: field.type === 'array',
-			options: [],
-		})),
+		questions: copilotElicitationQuestions(request),
 	});
 	const resolution = await opened.completion;
 	return copilotElicitationResult(request, resolution);
