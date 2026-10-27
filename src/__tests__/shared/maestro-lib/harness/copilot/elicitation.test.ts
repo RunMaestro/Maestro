@@ -92,6 +92,11 @@ describe('copilotElicitationResult', () => {
 		expect(questions.find((question) => question.id === 'enabled')).toMatchObject({
 			required: false,
 			default: 'true',
+			allowCustom: false,
+			options: [
+				{ label: 'true', kind: 'choice' },
+				{ label: 'false', kind: 'choice' },
+			],
 		});
 		expect(questions.find((question) => question.id === 'optional')).toMatchObject({
 			required: false,

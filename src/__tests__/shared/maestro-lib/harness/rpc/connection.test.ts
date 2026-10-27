@@ -124,16 +124,21 @@ describe('NdJsonConnection', () => {
 	it('closes on an oversized unterminated line without echoing its payload', async () => {
 		const { child, stdout } = childFixture();
 		const notifications: NdJsonRecord[] = [];
+		const onServerRequest = vi.fn(async () => ({ kind: 'ignore' as const }));
 		const connection = new NdJsonConnection(child, {
 			protocol: 'jsonrpc',
 			maxLineBytes: 16,
 			onNotification: (record) => notifications.push(record),
-			onServerRequest: async () => ({ kind: 'ignore' }),
+			onServerRequest,
 		});
 		const pending = connection.request('status');
 		stdout.write('{"type":"unterminated-secret-payload');
 		expect(notifications).toEqual([{ type: 'transport_error', error: 'RPC line exceeds limit' }]);
 		await expect(pending).rejects.toThrow('native transport line exceeds limit');
+		stdout.write(JSON.stringify({ jsonrpc: '2.0', id: 99, method: 'status' }) + '\n');
+		stdout.write(JSON.stringify({ type: 'text', text: 'late' }) + '\n');
+		expect(notifications).toHaveLength(1);
+		expect(onServerRequest).not.toHaveBeenCalled();
 	});
 
 	it('answers rejected server requests for JSON-RPC and Pi peers', async () => {

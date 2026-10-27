@@ -68,11 +68,13 @@ export function copilotElicitationQuestions(
 				? field.enum
 				: 'oneOf' in field && Array.isArray(field.oneOf)
 					? field.oneOf.map((item) => item.const)
-					: field.type === 'array' && 'enum' in field.items
-						? field.items.enum
-						: field.type === 'array' && 'anyOf' in field.items
-							? field.items.anyOf.map((item) => item.const)
-							: [];
+					: field.type === 'boolean'
+						? ['true', 'false']
+						: field.type === 'array' && 'enum' in field.items
+							? field.items.enum
+							: field.type === 'array' && 'anyOf' in field.items
+								? field.items.anyOf.map((item) => item.const)
+								: [];
 		const defaultValue = defaultAnswer(field);
 		return {
 			id,

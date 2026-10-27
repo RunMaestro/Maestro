@@ -50,6 +50,7 @@ describe('HarnessInteractionPrompt', () => {
 	});
 
 	it('renders descriptions and defaults without requiring optional answers', () => {
+		const respondHarnessInteraction = vi.fn().mockResolvedValue('resolved');
 		window.maestro = {
 			...window.maestro,
 			process: {
@@ -57,7 +58,7 @@ describe('HarnessInteractionPrompt', () => {
 				onHarnessInteractionSettled: vi.fn(() => vi.fn()),
 				onExit: vi.fn(() => vi.fn()),
 				listHarnessInteractions: vi.fn().mockResolvedValue([]),
-				respondHarnessInteraction: vi.fn().mockResolvedValue('resolved'),
+				respondHarnessInteraction,
 			},
 		};
 		useHarnessInteractionStore.setState({ queue: [optionalRequest] });
@@ -70,6 +71,15 @@ describe('HarnessInteractionPrompt', () => {
 		expect(screen.getByText('Optional guidance')).toBeInTheDocument();
 		expect(screen.getByDisplayValue('true')).toBeInTheDocument();
 		expect(screen.getByRole('button', { name: 'Answer' })).toBeEnabled();
+		const optionalInput = screen.getAllByRole('textbox')[0];
+		fireEvent.change(optionalInput, { target: { value: 'temporary' } });
+		fireEvent.change(optionalInput, { target: { value: '' } });
+		fireEvent.click(screen.getByRole('button', { name: 'Answer' }));
+		expect(respondHarnessInteraction).toHaveBeenCalledWith({
+			requestId: 'request-optional',
+			outcome: 'answers',
+			answers: { enabled: 'true' },
+		});
 	});
 
 	it('keeps legacy questions without an optional flag blocked until answered', () => {

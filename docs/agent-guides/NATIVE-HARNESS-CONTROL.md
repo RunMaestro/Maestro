@@ -1,6 +1,6 @@
 # Native Harness Control
 
-Maestro keeps the current CLI/PTY transport as the default for every agent. **Native** is an explicit per-agent transport selection in the agent configuration. It is local-only; SSH sessions stay on the current transport.
+Maestro keeps the current CLI/PTY transport as the default for every agent. **Native** is an explicit per-agent transport selection in the agent configuration. It is local-only: selecting Native for an SSH session is rejected before spawn, so SSH sessions must use the current transport.
 
 ## Control plane
 

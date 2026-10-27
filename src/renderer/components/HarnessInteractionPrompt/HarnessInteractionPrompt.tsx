@@ -98,7 +98,12 @@ export const HarnessInteractionPrompt = memo(function HarnessInteractionPrompt({
 	const submitQuestions = (event: FormEvent) => {
 		event.preventDefault();
 		if (!questionsComplete) return;
-		void respond({ requestId: request.requestId, outcome: 'answers', answers: questionAnswers });
+		const answers = Object.fromEntries(
+			Object.entries(questionAnswers).filter(([, value]) =>
+				Array.isArray(value) ? value.length > 0 : value.trim().length > 0
+			)
+		);
+		void respond({ requestId: request.requestId, outcome: 'answers', answers });
 	};
 
 	return createPortal(

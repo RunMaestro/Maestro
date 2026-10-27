@@ -88,6 +88,7 @@ export class NdJsonConnection {
 
 	/** Decode complete lines while preserving UTF-8 and bounding an unterminated buffer. */
 	private onData(chunk: unknown): void {
+		if (this.closed) return;
 		const text = String(chunk);
 		this.buffer += text;
 		this.bufferBytes += Buffer.byteLength(text);
