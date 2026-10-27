@@ -158,6 +158,22 @@ describe('TtsrSpawnRegistry', () => {
 		runtime.dispose();
 	});
 
+	it.each([true, false])(
+		'clears stale local authority on remote replacement (gate enabled: %s)',
+		(enabled) => {
+			const options = { enabled: true };
+			const { runtime, source } = setup(options);
+			source.emit('spawn', spawnConfig());
+			// ProcessManager may reclaim a dead PID without receiving/emitting exit.
+			options.enabled = enabled;
+			source.emit('spawn', spawnConfig({ sshRemoteId: 'remote-1', projectPath: ROOT }));
+			expect(runtime.registry.size).toBe(0);
+			options.enabled = true;
+			expect(runtime.observe('sess-ai-tab-1', textEvent('console.log(x)'))).toEqual([]);
+			runtime.dispose();
+		}
+	);
+
 	it('registers a forced-parallel AI tab spawn', () => {
 		const registry = new TtsrSpawnRegistry();
 		const meta = registry.noteSpawn({

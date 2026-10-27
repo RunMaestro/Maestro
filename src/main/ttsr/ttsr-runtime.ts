@@ -228,6 +228,11 @@ export class TtsrRuntime {
 		this.detach?.();
 
 		const onSpawn = (config: TtsrSpawnConfigLike) => {
+			// A reclaimed process ID may have no preceding exit. Revoke any old
+			// authority even while disabled; this creates no new TTSR state.
+			this.registry.clear(config.sessionId);
+			this.manager.dispose(config.sessionId);
+			this.steeringOffers.delete(config.sessionId);
 			// The gate comes first: with TTSR off, registering the turn would create
 			// conversation state and advance counters (and so schedule a write of
 			// `ttsr-state.json`) for a feature that can never fire. A turn spawned

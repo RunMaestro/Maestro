@@ -63,6 +63,9 @@ export class TtsrSpawnRegistry {
 
 	 */
 	noteSpawn(config: TtsrSpawnConfigLike): TtsrSpawnMeta | null {
+		// A dead process ID can be reclaimed without an exit event. Unsupported
+		// replacements (especially SSH) must revoke the previous local authority.
+		this.entries.delete(config.sessionId);
 		if (!isValidAgentId(config.toolType) || config.toolType === 'terminal' || config.sshRemoteId)
 			return null;
 
