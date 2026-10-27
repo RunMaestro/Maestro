@@ -43,6 +43,7 @@ export const HarnessInteractionPrompt = memo(function HarnessInteractionPrompt({
 	const loadPending = useHarnessInteractionStore((state) => state.loadPending);
 	const [answer, setAnswer] = useState('');
 	const [questionAnswers, setQuestionAnswers] = useState<Record<string, string | string[]>>({});
+	const [touchedQuestions, setTouchedQuestions] = useState<Record<string, true>>({});
 
 	useEffect(() => {
 		const process = window.maestro?.process;
@@ -65,6 +66,7 @@ export const HarnessInteractionPrompt = memo(function HarnessInteractionPrompt({
 				.map((question) => [question.id, question.default!])
 		);
 		setQuestionAnswers(defaults);
+		setTouchedQuestions({});
 	}, [request?.requestId]);
 
 	const cancel = () => {
@@ -95,13 +97,18 @@ export const HarnessInteractionPrompt = memo(function HarnessInteractionPrompt({
 			? value.length > 0
 			: typeof value === 'string' && value.trim().length > 0;
 	});
+	const markQuestionTouched = (questionId: string) =>
+		setTouchedQuestions((current) => ({ ...current, [questionId]: true }));
 	const submitQuestions = (event: FormEvent) => {
 		event.preventDefault();
 		if (!questionsComplete) return;
 		const answers = Object.fromEntries(
-			Object.entries(questionAnswers).filter(([, value]) =>
-				Array.isArray(value) ? value.length > 0 : value.trim().length > 0
-			)
+			Object.entries(questionAnswers).filter(([id, value]) => {
+				const answered = Array.isArray(value) ? value.length > 0 : value.trim().length > 0;
+				const emptyAllowed =
+					touchedQuestions[id] && questions.find((question) => question.id === id)?.allowEmpty;
+				return answered || emptyAllowed;
+			})
 		);
 		void respond({ requestId: request.requestId, outcome: 'answers', answers });
 	};
@@ -175,6 +182,7 @@ export const HarnessInteractionPrompt = memo(function HarnessInteractionPrompt({
 													checked={checked}
 													disabled={responding}
 													onChange={() => {
+														markQuestionTouched(question.id);
 														setQuestionAnswers((current) => {
 															if (!question.multiSelect)
 																return { ...current, [question.id]: option.label };
@@ -200,12 +208,13 @@ export const HarnessInteractionPrompt = memo(function HarnessInteractionPrompt({
 											type={question.secret ? 'password' : 'text'}
 											value={typeof value === 'string' ? value : ''}
 											disabled={responding}
-											onChange={(event) =>
+											onChange={(event) => {
+												markQuestionTouched(question.id);
 												setQuestionAnswers((current) => ({
 													...current,
 													[question.id]: event.target.value,
-												}))
-											}
+												}));
+											}}
 											className="w-full text-xs px-3 py-2 rounded-md"
 											style={{
 												backgroundColor: theme.colors.bgMain,

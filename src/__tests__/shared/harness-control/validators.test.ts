@@ -53,6 +53,7 @@ describe('harness-control validators', () => {
 			description: 'Defaults to the provider setting',
 			required: false,
 			default: 'true',
+			allowEmpty: true,
 			options: [],
 		};
 		expect(

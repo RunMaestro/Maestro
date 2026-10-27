@@ -133,6 +133,27 @@ describe('CopilotConnectionManager', () => {
 		expect(state.stops).toBe(2);
 	});
 
+	it('reuses a connection when environment insertion order differs', async () => {
+		const manager = new CopilotConnectionManager();
+		const first = await manager.acquire(
+			config({
+				customEnvVars: { B: '2', A: '1' },
+				shellEnvVars: { Z: 'last', Y: 'first' },
+			}),
+			handlers()
+		);
+		manager.release(first);
+		const reordered = await manager.acquire(
+			config({
+				customEnvVars: { A: '1', B: '2' },
+				shellEnvVars: { Y: 'first', Z: 'last' },
+			}),
+			handlers()
+		);
+		expect(reordered.session.sessionId).toBe(first.session.sessionId);
+		await manager.closeAll();
+	});
+
 	it('reserves replacement during shutdown and disposes retained leases by agent', async () => {
 		const manager = new CopilotConnectionManager();
 		const first = await manager.acquire(config(), handlers());

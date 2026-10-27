@@ -57,6 +57,15 @@ function defaultAnswer(field: ElicitationSchemaField): string | string[] | undef
 	return undefined;
 }
 
+/** Empty strings and arrays stay distinct from unanswered only when the schema permits them. */
+function allowsEmpty(field: ElicitationSchemaField): boolean {
+	if (field.type === 'array') return field.minItems === undefined || field.minItems === 0;
+	if (field.type === 'string') {
+		return !('minLength' in field) || field.minLength === undefined || field.minLength === 0;
+	}
+	return false;
+}
+
 /** Translate the provider schema without losing optionality, defaults, or field guidance. */
 export function copilotElicitationQuestions(
 	request: ElicitationContext
@@ -84,6 +93,7 @@ export function copilotElicitationQuestions(
 			...(defaultValue !== undefined ? { default: defaultValue } : {}),
 			multiSelect: field.type === 'array',
 			allowCustom: choices.length === 0,
+			allowEmpty: allowsEmpty(field),
 			options: choices.map((choice, index) => ({
 				optionId: `choice-${index}`,
 				label: choice,

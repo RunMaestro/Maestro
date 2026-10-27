@@ -96,6 +96,7 @@ export interface HarnessInteractionQuestion {
 	multiSelect?: boolean;
 	allowCustom?: boolean;
 	secret?: boolean;
+	allowEmpty?: boolean;
 }
 
 export interface HarnessInteractionRequest {

@@ -107,7 +107,13 @@ function parseQuestions(raw: unknown): HarnessInteractionQuestion[] | null | und
 			!isNonEmptyString(value.question) ||
 			ids.has(value.id) ||
 			!hasValidOptionalStrings(value, ['header', 'description']) ||
-			!hasValidOptionalBooleans(value, ['multiSelect', 'secret', 'allowCustom', 'required']) ||
+			!hasValidOptionalBooleans(value, [
+				'multiSelect',
+				'secret',
+				'allowCustom',
+				'allowEmpty',
+				'required',
+			]) ||
 			!hasValidDefault(value)
 		) {
 			return null;
@@ -127,6 +133,7 @@ function parseQuestions(raw: unknown): HarnessInteractionQuestion[] | null | und
 		if (Array.isArray(value.default)) question.default = [...value.default];
 		if (typeof value.multiSelect === 'boolean') question.multiSelect = value.multiSelect;
 		if (typeof value.allowCustom === 'boolean') question.allowCustom = value.allowCustom;
+		if (typeof value.allowEmpty === 'boolean') question.allowEmpty = value.allowEmpty;
 		if (typeof value.secret === 'boolean') question.secret = value.secret;
 		questions.push(question);
 	}

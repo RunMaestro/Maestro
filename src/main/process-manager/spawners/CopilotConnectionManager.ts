@@ -10,6 +10,7 @@ import {
 import type { ProcessConfig } from '../types';
 import { buildChildProcessEnv } from '../utils/envBuilder';
 import { resolveCopilotRuntimeExecutable } from '../../../shared/maestro-lib/providers/copilot-runtime';
+import { canonicalJson } from '../../../shared/canonicalJson';
 
 export interface CopilotInteractionHandlers {
 	onPermissionRequest: PermissionHandler;
@@ -35,14 +36,14 @@ export interface CopilotConnectionLease {
 }
 
 function connectionIdentity(config: ProcessConfig): string {
-	return JSON.stringify({
+	return canonicalJson({
 		cwd: config.cwd,
 		command: config.command,
 		model: config.modelId,
 		effort: config.effort,
 		appendSystemPrompt: config.appendSystemPrompt,
-		env: Object.entries(config.customEnvVars ?? {}).sort(([a], [b]) => a.localeCompare(b)),
-		shellEnv: Object.entries(config.shellEnvVars ?? {}).sort(([a], [b]) => a.localeCompare(b)),
+		env: config.customEnvVars,
+		shellEnv: config.shellEnvVars,
 	});
 }
 
