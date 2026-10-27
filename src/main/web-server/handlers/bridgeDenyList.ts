@@ -80,7 +80,7 @@ const METHODS: Record<string, string> = {
 	tabNaming: 'generateTabName',
 	tabs: 'aiTabClosed',
 	tempfile: 'delete read write',
-	web: 'broadcastSessionState broadcastTabsChange broadcastUserInput requestNewTab startAutoRun controlAutoRun',
+	web: 'broadcastSessionState broadcastTabsChange broadcastUserInput requestNewTab requestCloseTab requestReopenTab startAutoRun controlAutoRun',
 	windows: 'getForSession getState list',
 	// floatingWidgets:* is absent on purpose: the browser build never opens widget windows.
 };
