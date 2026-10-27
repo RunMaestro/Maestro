@@ -54,13 +54,16 @@ respawn mechanism.
 ## Budgets and compatibility
 
 At most `MAX_TTSR_INTERRUPTS` (5) automatic correction handoffs are accepted per
-conversation. The persisted `interruptCount` field retains its old name. An
+provider conversation once provider identity is known; unknown-provider
+forced-parallel aliases share the pending conversation budget. The persisted `interruptCount` field retains its old name. An
 unclaimed offer does not spend budget; once claimed the native queue owns its
 correction, including refusal/fallback. Additional matches remain reminders.
 Stream buffers, provider identities and AST deduplication belong to each raw
-turn ID. Forced-parallel aliases share bounded conversation reminders and repeat
-budgets. AST passes collect candidates before synchronously rechecking the live
-turn, current provider identity and repeat eligibility.
+turn ID. Forced-parallel aliases share bounded conversation reminders.
+Unknown-provider aliases share repeat eligibility; once provider session IDs are
+known, repeat history is provider-specific. The automatic correction budget
+follows the same scope. AST passes collect candidates before synchronously
+rechecking the live turn, current provider identity and repeat eligibility.
 
 Prompt preparation reserves exact match identities across all intersecting live
 offers and parallel preparations. Every failed or abandoned spawn releases its
