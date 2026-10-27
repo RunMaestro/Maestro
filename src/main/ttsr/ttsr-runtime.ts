@@ -17,20 +17,16 @@ import { captureException } from '../utils/sentry';
 import { logger } from '../utils/logger';
 import type {
 	LoadedTtsrRule,
-	TtsrAbortClearedPayload,
-	TtsrAbortPendingPayload,
-	TtsrContextMode,
-	TtsrCorrectiveResult,
 	TtsrMatchedPayload,
 	TtsrProjectSettings,
 	TtsrRulesChangedPayload,
 	TtsrTriggeredPayload,
 } from '../../shared/ttsr-types';
-import { DEFAULT_TTSR_CONTEXT_MODE, DEFAULT_TTSR_PROJECT_SETTINGS } from '../../shared/ttsr-types';
+import { DEFAULT_TTSR_PROJECT_SETTINGS } from '../../shared/ttsr-types';
 import type { ParsedEvent } from '../parsers/agent-output-parser';
 import { loadTtsrConfigDetailed, type LoadTtsrConfigResult } from './config/ttsr-config-loader';
-import { renderTtsrReminder } from './ttsr-injection';
-import { TtsrInterruptDriver, type TtsrInterruptTarget } from './ttsr-interrupt-driver';
+import { renderTtsrInterrupt, renderTtsrReminder } from './ttsr-injection';
+import { generateUUID } from '../../shared/uuid';
 import { TtsrManager, type TtsrMatch, type TtsrObserveContext } from './ttsr-manager';
 import type { TtsrStatePersistence } from './ttsr-state-persistence';
 import { TtsrStateStore } from './ttsr-state-store';
@@ -43,16 +39,6 @@ import {
 
 const LOG_CONTEXT = 'TTSR';
 
-/**
- * The corrective-ack surface the runtime holds. Structural rather than the
- * concrete `TtsrCorrectiveAckTracker`, so the runtime keeps knowing nothing
- * about toasts.
- */
-export interface TtsrCorrectiveAckLike {
-	resolve(result: TtsrCorrectiveResult): void;
-	dispose(): void;
-}
-
 export interface TtsrRuntimeDeps {
 	/**
 	 * The global gate: `settings.ttsrEnabled && encoreFeatures.ttsr`. Read live
@@ -63,46 +49,14 @@ export interface TtsrRuntimeDeps {
 	/** Rule names the user disabled globally (`ttsrDisabledRules` setting). */
 	getDisabledRules?(): string[];
 	/**
-	 * The global `ttsrContextMode` setting, used as the teardown mode for any
-	 * project whose `.maestro/ttsr.yaml` does not name one of its own. A project
-	 * that does name one still wins - it is the more specific statement.
-	 */
-	getContextMode?(): TtsrContextMode;
-	/**
 	 * Observability sink for `ttsr:matched`. Wired to `safeSend`; every renderer
 	 * counts the push into its TTSR store and the Right Bar Rules panel shows it
 	 * as the per-rule match line, which is the only trace a non-interrupting
 	 * match leaves.
 	 */
 	onMatched?(payload: TtsrMatchedPayload): void;
-	/**
-	 * The process manager's abort surface. Omit it and the runtime stays
-	 * detection-only (Phase 2 behaviour) - matches are reported but no turn is
-	 * ever interrupted.
-	 */
-	interruptTarget?: TtsrInterruptTarget;
-	/**
-	 * Sink for `ttsr:triggered`. Required alongside `interruptTarget`: aborting a
-	 * turn without telling the renderer to respawn it would strand the agent.
-	 */
+	/** Offers guidance to the existing renderer queue/Steer owner; never stops a process. */
 	onTriggered?(payload: TtsrTriggeredPayload): void;
-	/**
-	 * Watchdog for the corrective spawn, armed by the `onTriggered` sink and
-	 * acked over `ttsr:correctiveResult`. Held here only so shutdown drops its
-	 * timers with everything else the runtime owns; the runtime never arms it.
-	 */
-	correctiveAck?: TtsrCorrectiveAckLike;
-	/**
-	 * Sink for `ttsr:abortPending`, fired the moment a turn is signalled so the
-	 * renderer stops treating the imminent exit as a failed turn.
-	 */
-	onAbortPending?(payload: TtsrAbortPendingPayload): void;
-	/**
-	 * Sink for `ttsr:abortCleared`, fired when an announced abort will not
-	 * produce a corrective turn after all, so the renderer stops suppressing
-	 * that turn's exit handling.
-	 */
-	onAbortCleared?(payload: TtsrAbortClearedPayload): void;
 	/**
 	 * Sink for `ttsr:rulesChanged`, fired whenever a project's cached rules are
 	 * dropped (watcher event or a write through the IPC handlers). The Rules panel
@@ -110,8 +64,6 @@ export interface TtsrRuntimeDeps {
 	 * agent finishes authoring a rule - the one moment the user is watching it.
 	 */
 	onRulesChanged?(payload: TtsrRulesChangedPayload): void;
-	/** Test override for how long an abort waits on the turn's `exit`. */
-	exitTimeoutMs?: number;
 	/** Swappable for tests; defaults to the real disk loader. */
 	loadConfig?(projectRoot: string): LoadTtsrConfigResult;
 	/**
@@ -172,8 +124,11 @@ export class TtsrRuntime {
 	readonly manager: TtsrManager;
 	/** Main-authoritative repeat/injection state (Gate B), persisted when wired. */
 	readonly stateStore: TtsrStateStore;
-	/** Null while no abort surface was injected (detection-only runtime). */
-	readonly driver: TtsrInterruptDriver | null;
+	/** Unclaimed guidance stays in the manager's deferred queue. One offer per live turn. */
+	private readonly steeringOffers = new Map<
+		string,
+		{ requestId: string; meta: TtsrSpawnMeta; matches: TtsrMatch[] }
+	>();
 
 	private readonly cache = new Map<string, RuleCacheEntry>();
 	/** One rule-file watcher per project root, closed on {@link dispose}. */
@@ -182,38 +137,9 @@ export class TtsrRuntime {
 	private detach: (() => void) | null = null;
 	/** In-flight `astCondition` passes, awaited by {@link flushAst}. */
 	private readonly pendingAst = new Set<Promise<TtsrMatch[]>>();
-	/** In-flight aborts, awaited by {@link flushInterrupts}. */
-	private readonly pendingInterrupts = new Set<Promise<unknown>>();
 
 	constructor(private readonly deps: TtsrRuntimeDeps) {
 		this.loadConfig = deps.loadConfig ?? loadTtsrConfigDetailed;
-		const onTriggered = deps.onTriggered;
-		this.driver =
-			deps.interruptTarget && onTriggered
-				? new TtsrInterruptDriver({
-						target: deps.interruptTarget,
-						onTriggered: (payload, matches) => {
-							// Registered before the renderer is told to respawn, so the
-							// corrective turn is recognised however fast it comes back, and
-							// so a spawn that is NOT it can hand the guidance back.
-							this.registry.noteCorrectiveTurn(payload.sessionId, {
-								originalPrompt: payload.originalGoal,
-								correlationId: payload.ttsrCorrelationId,
-								injectionPrompt: payload.injectionPrompt,
-								matches,
-							});
-							onTriggered(payload);
-						},
-						onAbortPending: deps.onAbortPending
-							? (payload) => deps.onAbortPending?.(payload)
-							: undefined,
-						onAbortCleared: deps.onAbortCleared
-							? (payload) => deps.onAbortCleared?.(payload)
-							: undefined,
-						onWithdrawn: (sessionId, matches) => this.refundWithdrawn(sessionId, matches),
-						exitTimeoutMs: deps.exitTimeoutMs,
-					})
-				: null;
 		// Repeat bookkeeping is loaded from disk before the first event is observed,
 		// so a rule that already fired in a previous run stays fired (plan 3d).
 		const persistence = deps.persistence;
@@ -235,7 +161,7 @@ export class TtsrRuntime {
 
 	/**
 	 * The callback handed to `ProcessManager.setParsedEventObserver`. Returns
-	 * the matches so tests (and Phase 3's interrupt driver) can act on them;
+	 * the matches for tests;
 	 * the process manager ignores the return value.
 	 *
 	 * Short-circuits before any work when TTSR is off or when the turn was not
@@ -254,6 +180,7 @@ export class TtsrRuntime {
 			agentId: meta.agentId,
 			cwd: meta.projectRoot,
 			providerSessionId: meta.providerSessionId,
+			isCurrent: () => this.registry.get(sessionId) === meta && this.deps.isGloballyEnabled(),
 			resolved: { enabled: entry.settings.enabled, rules: entry.rules },
 		};
 		const matches = this.manager.observe(sessionId, event, observeCtx);
@@ -304,17 +231,7 @@ export class TtsrRuntime {
 			const meta = this.registry.noteSpawn(config);
 			if (!meta) return;
 			this.manager.beginTurn(meta.sessionId, meta.providerSessionId);
-			// This spawn is not the corrective turn TTSR announced, so that turn is
-			// never coming and its `<system-interrupt>` block is lost. Re-file the
-			// guidance as deferred reminders: it then rides the conversation's next
-			// prompt instead of vanishing with the rules left on cooldown.
-			if (meta.lostCorrective?.length) {
-				logger.warn('TTSR corrective turn never spawned, deferring its guidance', LOG_CONTEXT, {
-					sessionId: meta.sessionId,
-					rules: meta.lostCorrective.map((match) => match.rule.name),
-				});
-				this.manager.deferMatches(meta.sessionId, meta.lostCorrective);
-			}
+			this.steeringOffers.delete(meta.sessionId);
 			// Warm the rule cache here, off the stdout hot path: loading is
 			// synchronous disk I/O (readdir + read + YAML parse + regex compile per
 			// rule file), and doing it lazily would put that first read inside
@@ -329,11 +246,7 @@ export class TtsrRuntime {
 		const onExit = (sessionId: string) => {
 			const meta = this.registry.get(sessionId);
 			if (!meta) return;
-			// Unblocks a driver waiting on this abort. Runs before the gate check so
-			// an abort announced while TTSR was on still completes rather than
-			// leaving the renderer with an orphaned `ttsr:abortPending`, and before
-			// the registry entry is dropped so the corrective payload keeps its meta.
-			this.driver?.noteExit(sessionId);
+			this.steeringOffers.delete(sessionId);
 			// Turned off mid-turn: release the turn without advancing the counter or
 			// otherwise touching persisted state.
 			if (!this.deps.isGloballyEnabled()) {
@@ -367,21 +280,12 @@ export class TtsrRuntime {
 	/**
 	 * Settle every in-flight structural match.
 	 *
-	 * Test-support surface, deliberately kept: the AST pass and the abort it can
-	 * trigger are the only asynchronous things the runtime does, and there is no
-	 * other signal a test can await for them. Production never calls either
-	 * flush - the driver resolves on `exit`.
+	 * Test-support surface for asynchronous structural matching; correction
+	 * handoff itself uses the existing renderer queue and native Steer lifecycle.
 	 */
 	async flushAst(): Promise<void> {
 		while (this.pendingAst.size > 0) {
 			await Promise.all([...this.pendingAst]);
-		}
-	}
-
-	/** Settle every in-flight abort. Test-support, like {@link flushAst}. */
-	async flushInterrupts(): Promise<void> {
-		while (this.pendingInterrupts.size > 0) {
-			await Promise.all([...this.pendingInterrupts]);
 		}
 	}
 
@@ -425,6 +329,9 @@ export class TtsrRuntime {
 		if (!this.deps.isGloballyEnabled()) return NO_REMINDERS;
 		const matches = this.manager.peekDeferred(sessionId);
 		if (matches.length === 0) return NO_REMINDERS;
+		// A spawn is preparing this exact guidance. Do not also hand it to Steer
+		// while that prompt is between its non-destructive read and commit.
+		this.steeringOffers.delete(sessionId);
 
 		let committed = false;
 		return {
@@ -449,21 +356,10 @@ export class TtsrRuntime {
 		this.deps.persistence?.flush();
 	}
 
-	/**
-	 * The corrective-spawn watchdog, when one was wired. The IPC handler for
-	 * `ttsr:correctiveResult` reaches it through here - the runtime is the object
-	 * main already holds.
-	 */
-	get correctiveAck(): TtsrCorrectiveAckLike | null {
-		return this.deps.correctiveAck ?? null;
-	}
-
 	/** Detach from the process manager and persist whatever is still pending. */
 	dispose(): void {
 		this.detach?.();
-		// Pending watchdogs would otherwise fire a "did not start" toast at a
-		// renderer that is on its way out with the rest of the app.
-		this.deps.correctiveAck?.dispose();
+		this.steeringOffers.clear();
 		for (const close of this.watchers.values()) close();
 		this.watchers.clear();
 		this.cache.clear();
@@ -487,89 +383,55 @@ export class TtsrRuntime {
 	// ── internals ──
 
 	/**
-	 * Drain the manager's interrupt bucket into the driver. Called after every
-	 * synchronous observation and after each structural pass settles, so a rule
-	 * that fires mid-stream aborts the turn without waiting for it to end.
+	 * Transfer one offer to a HELD native queue item. Until this succeeds the
+	 * original matches remain deferred, so a missing/reloading renderer loses no
+	 * guidance. The renderer persists its held item before claiming, then hands it
+	 * to steerQueuedItem(), which owns delivery, refusal, exits and reloads.
 	 */
+	claimSteeringRequest(sessionId: string, requestId: string): boolean {
+		const offer = this.steeringOffers.get(sessionId);
+		if (!offer || offer.requestId !== requestId) return false;
+		if (!this.deps.isGloballyEnabled() || this.registry.get(sessionId) !== offer.meta) return false;
+		const entry = this.entry(offer.meta.projectRoot);
+		if (
+			!entry.settings.enabled ||
+			!offer.matches.every((match) => entry.rules.includes(match.rule)) ||
+			!this.manager.canInterrupt(sessionId)
+		)
+			return false;
+		this.steeringOffers.delete(sessionId);
+		if (!this.manager.claimDeferred(sessionId, offer.matches)) return false;
+		this.manager.noteInterrupt(sessionId);
+		return true;
+	}
+
+	/** Offer matching guidance through native Steer, retaining it until claimed. */
 	private drive(sessionId: string, meta: TtsrSpawnMeta): void {
-		if (!this.driver) return;
+		if (this.registry.get(sessionId) !== meta) return;
 		const matches = this.manager.takeInterrupts(sessionId);
 		if (matches.length === 0) return;
-
-		// A SIGINT'd process keeps streaming for up to 2s, so late matches drain
-		// through here while the abort is still in flight. The driver folds them
-		// into the same corrective turn rather than starting a second abort, so
-		// they must not be gated or charged either: the budget counts aborts, and
-		// charging per folded match would spend it on aborts that never happen.
-		if (!this.driver.isAbortPending(sessionId)) {
-			// Every abort costs a whole turn, and the agent may simply keep tripping
-			// the rule. Past the budget the guidance still lands - as a reminder on the
-			// next prompt - but the conversation is left to run to completion.
-			if (!this.manager.canInterrupt(sessionId)) {
-				logger.warn('TTSR interrupt budget spent, deferring instead', LOG_CONTEXT, {
-					sessionId,
-					rules: matches.map((match) => match.rule.name),
-				});
-				this.manager.deferMatches(sessionId, matches);
-				return;
-			}
-			this.manager.noteInterrupt(sessionId);
-		}
-
-		const pending = this.driver
-			.trigger({
-				sessionId,
-				meta,
-				matches,
-				contextMode: this.contextModeFor(meta.projectRoot),
-			})
-			// The corrective turn respawns through the normal spawn path; the registry
-			// is told which prompt to expect from the driver's `onTriggered`, which
-			// runs before the renderer ever sees the payload.
-			.catch((err: unknown) => {
-				captureException(err, { operation: 'ttsr:interrupt', sessionId });
-				logger.error('TTSR interrupt failed', LOG_CONTEXT, {
-					sessionId,
-					error: err instanceof Error ? err.message : String(err),
-				});
-				return null;
-			})
-			.finally(() => this.pendingInterrupts.delete(pending));
-		this.pendingInterrupts.add(pending);
-	}
-
-	/**
-	 * Undo an abort that was announced and then withdrawn (the signal threw, so
-	 * the turn is still running and no corrective respawn is coming).
-	 *
-	 * Three things have to be given back or the guidance is lost twice over: the
-	 * budget charge, the rules' eligibility (their firing was recorded at match
-	 * time, starting a cooldown for advice never delivered), and the matches
-	 * themselves, which ride the conversation's next prompt as reminders instead.
-	 */
-	private refundWithdrawn(sessionId: string, matches: TtsrMatch[]): void {
-		this.manager.refundInterrupt(sessionId);
-		this.manager.clearInjections(
-			sessionId,
-			matches.map((match) => match.rule.name)
-		);
 		this.manager.deferMatches(sessionId, matches);
-		logger.info('TTSR abort withdrawn, guidance re-deferred', LOG_CONTEXT, {
-			sessionId,
-			rules: matches.map((match) => match.rule.name),
-		});
-	}
-
-	/**
-	 * Teardown mode for a project: its own `.maestro/ttsr.yaml` first, then the
-	 * global `ttsrContextMode` setting, then the conservative default.
-	 */
-	private contextModeFor(projectRoot: string): TtsrContextMode {
-		return (
-			this.entry(projectRoot).settings.contextMode ??
-			this.deps.getContextMode?.() ??
-			DEFAULT_TTSR_CONTEXT_MODE
-		);
+		if (
+			!this.deps.onTriggered ||
+			this.steeringOffers.has(sessionId) ||
+			!this.manager.canInterrupt(sessionId)
+		)
+			return;
+		const requestId = generateUUID();
+		this.steeringOffers.set(sessionId, { requestId, meta, matches });
+		try {
+			this.deps.onTriggered({
+				sessionId,
+				tabId: meta.tabId,
+				agentId: meta.agentId,
+				rules: matches.map(({ rule }) => ({ name: rule.name, path: rule.path })),
+				injectionPrompt: renderTtsrInterrupt(matches),
+				requestId,
+			});
+		} catch (error) {
+			this.steeringOffers.delete(sessionId);
+			captureException(error, { operation: 'ttsr:offerSteering', sessionId });
+		}
 	}
 
 	/**

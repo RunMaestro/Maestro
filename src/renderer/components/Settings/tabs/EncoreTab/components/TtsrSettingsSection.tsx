@@ -1,6 +1,5 @@
-import { ChevronDown, Plus, X } from 'lucide-react';
+import { Plus, X } from 'lucide-react';
 import { TTSR_RULES_DIR } from '../../../../../../shared/maestro-paths';
-import type { TtsrContextMode } from '../../../../../../shared/ttsr-types';
 import type { Theme } from '../../../../../types';
 import type { TtsrSettingsState } from '../types';
 
@@ -8,8 +7,6 @@ interface TtsrSettingsSectionProps {
 	theme: Theme;
 	ttsrEnabled: boolean;
 	setTtsrEnabled: (value: boolean) => void;
-	ttsrContextMode: TtsrContextMode;
-	setTtsrContextMode: (value: TtsrContextMode) => void;
 	ttsrDisabledRules: string[];
 	ttsrState: TtsrSettingsState;
 }
@@ -24,8 +21,6 @@ export function TtsrSettingsSection({
 	theme,
 	ttsrEnabled,
 	setTtsrEnabled,
-	ttsrContextMode,
-	setTtsrContextMode,
 	ttsrDisabledRules,
 	ttsrState,
 }: TtsrSettingsSectionProps) {
@@ -51,41 +46,10 @@ export function TtsrSettingsSection({
 				</label>
 			</div>
 
-			<div>
-				<label
-					htmlFor="ttsr-context-mode"
-					className="block text-xs-plus font-medium mb-1"
-					style={{ color: theme.colors.textDim }}
-				>
-					When a rule interrupts a turn
-				</label>
-				<div className="relative">
-					<select
-						id="ttsr-context-mode"
-						value={ttsrContextMode}
-						onChange={(event) => setTtsrContextMode(event.target.value as TtsrContextMode)}
-						className="w-full px-3 py-2 pr-10 rounded-lg border outline-none appearance-none cursor-pointer text-sm"
-						style={{
-							backgroundColor: theme.colors.bgMain,
-							borderColor: theme.colors.border,
-							color: theme.colors.textMain,
-						}}
-					>
-						<option value="keep">Keep partial output (interrupt)</option>
-						<option value="discard">Discard partial output (kill)</option>
-					</select>
-					<ChevronDown
-						className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none"
-						style={{ color: theme.colors.textDim }}
-					/>
-				</div>
-				<p className="text-2xs mt-1 opacity-70">
-					&quot;Keep&quot; sends an interrupt so the agent commits what it already wrote before the
-					corrective turn. &quot;Discard&quot; kills the process immediately to try to drop the
-					partial turn. Discard is best-effort: Maestro cannot edit an external provider&apos;s
-					transcript.
-				</p>
-			</div>
+			<p className="text-xs" style={{ color: theme.colors.textDim }}>
+				Corrective guidance uses Steer on a compatible running turn. Otherwise it remains a reminder
+				for the next prompt. Existing output and conversation context are kept.
+			</p>
 
 			<div>
 				<label

@@ -55,14 +55,14 @@ const LEGACY_PROSE_BLOCK =
 	'</system-interrupt>';
 
 describe('renderTtsrInterrupt', () => {
-	it('warns that a tool-sourced write already landed and names the file', () => {
+	it('asks for actual tool results without claiming cancellation or completed side effects', () => {
 		const block = renderTtsrInterrupt([makeMatch('tool:write', 'src/a.ts')]);
-		expect(block).toContain('already run');
-		expect(block).toContain('already applied on disk');
-		expect(block).toContain('must be disregarded');
+		expect(block).toContain('may already have run');
+		expect(block).toContain('inspect its actual result');
+		expect(block).toContain('does not cancel the tool');
 		expect(block).toContain('affected-files="src/a.ts"');
 		// The preamble sits above the blocks so the agent reads it first.
-		expect(block.indexOf('already applied on disk')).toBeLessThan(
+		expect(block.indexOf('inspect its actual result')).toBeLessThan(
 			block.indexOf('<system-interrupt')
 		);
 	});
@@ -89,7 +89,7 @@ describe('renderTtsrInterrupt', () => {
 
 	it('gives a bash match the preamble but no affected-files attribute', () => {
 		const block = renderTtsrInterrupt([makeMatch('tool:bash')]);
-		expect(block).toContain('already applied on disk');
+		expect(block).toContain('inspect its actual result');
 		// The preamble names the attribute in prose; the tag must not carry it.
 		expect(block).not.toContain('affected-files=');
 	});

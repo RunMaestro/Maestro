@@ -1706,10 +1706,6 @@ export interface ProcessConfig {
 	// NOTE: prompt delivery (argv vs stdin) is decided by the main process in
 	// handleProcessSpawn - it depends on the HOST platform and the agent's CLI,
 	// neither of which a renderer (possibly a browser on another OS) can know.
-	// Set only on a TTSR corrective respawn: the id from `ttsr:triggered`, echoed
-	// back so main recognises its own corrective turn by correlation rather than
-	// by inspecting the prompt.
-	ttsrCorrelationId?: string;
 	/** Who asked for this turn: a human ('user') or Auto Run ('auto'). Stamped into
 	 *  the spawned process env as MAESTRO_QUERY_SOURCE. Cue runs never come through
 	 *  this IPC path - they spawn in the main process and mark themselves 'cue'. */

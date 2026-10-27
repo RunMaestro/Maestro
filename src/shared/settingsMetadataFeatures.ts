@@ -126,7 +126,7 @@ export const FEATURES_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	},
 	ttsrEnabled: {
 		description:
-			'Time-Traveling Stream Rules: watch agent output streams and interrupt turns that match a rule. AND-gated with the ttsr Encore feature flag.',
+			'Time-Traveling Stream Rules: watch agent output streams and deliver corrective guidance through native Steer or a deferred reminder. AND-gated with the ttsr Encore feature flag.',
 		type: 'boolean',
 		default: false,
 		category: 'advanced',
@@ -140,7 +140,7 @@ export const FEATURES_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	},
 	ttsrContextMode: {
 		description:
-			"How an interrupted turn is torn down: 'keep' (SIGINT, let the provider commit the partial turn) or 'discard' (hard kill, best-effort pre-commit). Applies to projects whose .maestro/ttsr.yaml does not set its own contextMode. Validated in the TTSR normalizer.",
+			'Legacy TTSR setting accepted for compatibility and ignored. Corrections use native Steer and retain the running conversation and output.',
 		type: 'string',
 		default: 'keep',
 		category: 'advanced',

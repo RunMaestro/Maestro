@@ -92,8 +92,6 @@ export function EncoreTab({ theme, isOpen, tileRequest }: EncoreTabProps) {
 				theme={theme}
 				ttsrEnabled={settings.ttsrEnabled}
 				setTtsrEnabled={settings.setTtsrEnabled}
-				ttsrContextMode={settings.ttsrContextMode}
-				setTtsrContextMode={settings.setTtsrContextMode}
 				ttsrDisabledRules={settings.ttsrDisabledRules}
 				ttsrState={ttsrState}
 			/>

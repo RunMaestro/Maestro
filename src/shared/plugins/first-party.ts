@@ -1464,7 +1464,7 @@ export const DATAVIEW_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
  * Broker capabilities TTSR actually touches. The engine reads its own Encore
  * flag + global settings, watches `.maestro/rules/*.md` and `.maestro/ttsr.yaml`
  * under session project roots, reads the live parsed output stream to match
- * rules, and toasts the user when a rule interrupts a turn.
+ * rules, and offers corrective guidance to the native Steer queue.
  */
 export const TTSR_FIRST_PARTY_PLUGIN_PERMISSIONS: readonly PermissionRequest[] = [
 	{
@@ -1487,28 +1487,25 @@ export const TTSR_FIRST_PARTY_PLUGIN_PERMISSIONS: readonly PermissionRequest[] =
 	},
 	{
 		capability: 'notifications:toast',
-		reason: 'Tell the user which rule interrupted a turn, with a jump back to that agent.',
+		reason: 'Report native steering outcomes and held guidance, with a jump back to the agent.',
 	},
-	// NOTE: `agents:dispatch` is deliberately ABSENT for the same reason it is on
-	// Pianola and Cue: the corrective reinject targets the dynamically-discovered
-	// session that was just interrupted, which a static FC2 allowlist scope
-	// cannot name. That authority stays HOST-OWNED (the main engine's interrupt +
-	// the renderer's existing spawn path, both gated by the Encore flag) until a
-	// runtime per-agent grant seam exists.
+	// Dynamic-target guidance is host-owned: matching offers a request token,
+	// and the owning renderer uses the existing queue + Steer lifecycle. TTSR
+	// owns no process interruption, dispatch or spawn implementation.
 ] as const;
 
-/** TTSR: rule-driven stream interruption, gated by its own Encore flag. */
+/** TTSR: rule-driven stream guidance, gated by its own Encore flag. */
 export const TTSR_FIRST_PARTY_PLUGIN: FirstPartyPluginDefinition = {
 	releaseDate: '2026-09-28',
 	id: 'com.maestro.ttsr',
 	name: 'Time-Traveling Stream Rules',
 	description:
-		"Watch an agent's live output and interrupt the turn with a corrective reminder when it breaks a project rule.",
+		"Watch an agent's live output and steer a compatible running turn with corrective project guidance.",
 	firstParty: true,
 	category: 'automation',
 	usage: {
 		overview: [
-			'Watch parsed agent output against project rules and interrupt with corrective guidance.',
+			'Watch parsed agent output against project rules and deliver corrective guidance through Steer or a deferred reminder.',
 		],
 		access: [{ label: 'Author project rules', commandPalette: 'Rules', menu: 'Right Bar > Rules' }],
 		agentCommands: [

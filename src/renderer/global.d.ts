@@ -4880,27 +4880,18 @@ interface MaestroAPI {
 
 	// TTSR API (Time-Traveling Stream Rules - main-authoritative, push events only)
 	ttsr: {
-		onAbortPending: (
-			callback: (payload: import('../shared/ttsr-types').TtsrAbortPendingPayload) => void
-		) => () => void;
 		onTriggered: (
 			callback: (payload: import('../shared/ttsr-types').TtsrTriggeredPayload) => void
 		) => () => void;
-		onAbortCleared: (
-			callback: (payload: import('../shared/ttsr-types').TtsrAbortClearedPayload) => void
-		) => () => void;
+		claimSteeringRequest: (
+			request: import('../shared/ttsr-types').TtsrSteeringClaim
+		) => Promise<boolean>;
 		onMatched: (
 			callback: (payload: import('../shared/ttsr-types').TtsrMatchedPayload) => void
 		) => () => void;
 		onRulesChanged: (
 			callback: (payload: import('../shared/ttsr-types').TtsrRulesChangedPayload) => void
 		) => () => void;
-		// Ack for a corrective turn; cancels main's "did not start" watchdog.
-		// Optional: older preloads and some web-desktop shims lack it, and TTSR
-		// degrades to the timeout rather than crashing the caller.
-		reportCorrectiveResult?: (
-			result: import('../shared/ttsr-types').TtsrCorrectiveResult
-		) => Promise<void>;
 		// Rule management. Project-scoped: rules live in each project's
 		// .maestro/rules/, so every call names the project it acts on.
 		listRules: (projectRoot: string) => Promise<import('../shared/ttsr-types').TtsrRuleListResult>;

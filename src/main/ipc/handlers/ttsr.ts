@@ -3,7 +3,7 @@
  *
  * Thin transport over `src/main/ttsr/config/`, which already owns every
  * filesystem concern (path containment, `mkdir -p`, YAML). The runtime itself
- * stays push-only: matching and interrupting are main-authoritative (Gate B),
+ * stays push-only: matching and repeat policy are main-authoritative (Gate B),
  * so nothing here touches the live stream. These handlers exist purely so the
  * Right Bar can show a project its rules instead of the user hand-writing files
  * they have no way to discover.
@@ -32,7 +32,7 @@ import { createTtsrAstMatcher } from '../../ttsr/ttsr-ast';
 import { parseTtsrRule } from '../../ttsr/config/ttsr-config-normalizer';
 import { ttsrRuleFilePath } from '../../../shared/maestro-paths';
 import type {
-	TtsrCorrectiveResult,
+	TtsrSteeringClaim,
 	TtsrProjectSettings,
 	TtsrRule,
 	TtsrRuleListEntry,
@@ -56,12 +56,10 @@ export interface TtsrHandlerDependencies {
 	 * user just clicked something - the list must not lie in the meantime.
 	 */
 	onRulesChanged?: (projectRoot: string) => void;
-	/**
-	 * The renderer reporting whether it managed to spawn a corrective turn.
-	 * Cancels main's "did not start" watchdog; omitted in hosts that never armed
-	 * one, where the report is simply dropped.
-	 */
-	onCorrectiveResult?: (result: TtsrCorrectiveResult) => void;
+	/** Transfer a live offer only after the owning renderer holds the queued guidance. */
+	claimSteeringRequest?: (request: TtsrSteeringClaim) => boolean;
+	/** Canonical main-store durability barrier before consuming main guidance. */
+	flushSessionWrites?: () => Promise<void>;
 }
 
 /** Strip the compiled regexes so the rule survives structured cloning. */
@@ -242,23 +240,16 @@ export function registerTtsrHandlers(deps: TtsrHandlerDependencies = {}): void {
 		)
 	);
 
-	// The one call that reports back INTO the runtime rather than reading rules:
-	// the renderer that owns the interrupted turn says whether the corrective
-	// spawn started. Main raised the interrupt toast optimistically, so without
-	// this ack a corrective turn that never began leaves every client - the web
-	// ones especially, since they never spawn and never see the desktop's local
-	// failure toast - believing the turn is being fixed.
+	// A request token can be claimed only once for its still-running turn.
 	ipcMain.handle(
-		'ttsr:correctiveResult',
+		'ttsr:claimSteeringRequest',
 		withIpcErrorLogging(
-			handlerOpts('correctiveResult'),
-			async (args: TtsrCorrectiveResult): Promise<void> => {
-				if (!args || typeof args.sessionId !== 'string') return;
-				deps.onCorrectiveResult?.({
-					sessionId: args.sessionId,
-					ok: args.ok === true,
-					error: typeof args.error === 'string' ? args.error : undefined,
-				});
+			handlerOpts('claimSteeringRequest'),
+			async (args: TtsrSteeringClaim): Promise<boolean> => {
+				if (!args || typeof args.sessionId !== 'string' || typeof args.requestId !== 'string')
+					return false;
+				await deps.flushSessionWrites?.();
+				return deps.claimSteeringRequest?.(args) ?? false;
 			}
 		)
 	);

@@ -42,22 +42,14 @@ export interface TtsrConversationState {
 	/** Completed turns in this conversation. Drives `after-gap` eligibility. */
 	messageCount: number;
 	rules: Record<string, TtsrRuleState>;
-	/** Turns TTSR has aborted here. Bounded by {@link MAX_TTSR_INTERRUPTS}. */
+	/** Automatic correction handoffs here. Bounded by {@link MAX_TTSR_INTERRUPTS}. */
 	interruptCount: number;
 	/** Epoch ms of the last mutation. Drives the persistence layer's TTL prune. */
 	updatedAt: number;
 }
 
-/**
- * Hard ceiling on how many turns TTSR may abort in one conversation.
- *
- * Every abort costs a full turn's tokens and the agent is not obliged to comply,
- * so a rule the agent keeps tripping would otherwise interrupt forever (the
- * default `after-gap` policy re-arms every few turns, and each aborted turn
- * advances that counter itself). Past the budget, matches still fire - they just
- * degrade to deferred `<system-reminder>`s that ride the next prompt instead of
- * killing the process.
- */
+/** Maximum automatic correction handoffs per conversation. The persisted name
+ * remains compatible with older TTSR state; remaining guidance is deferred. */
 export const MAX_TTSR_INTERRUPTS = 5;
 
 /**
@@ -154,12 +146,12 @@ export class TtsrStateStore {
 		this.touch(state);
 	}
 
-	/** Turns TTSR has already aborted in this conversation. */
+	/** Automatic correction handoffs in this conversation. */
 	getInterruptCount(key: string): number {
 		return this.conversations.get(key)?.interruptCount ?? 0;
 	}
 
-	/** Whether this conversation may still be interrupted (budget not spent). */
+	/** Whether another automatic correction handoff is allowed. */
 	canInterrupt(key: string): boolean {
 		return this.getInterruptCount(key) < MAX_TTSR_INTERRUPTS;
 	}

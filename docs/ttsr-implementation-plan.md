@@ -1,3 +1,8 @@
+> Implementation update (2026-10-27): the original abort/respawn design below is historical.
+> TTSR now offers guidance through the existing native queue and Steer service.
+> It never interrupts, kills or respawns a process. Legacy contextMode values are ignored.
+> See [current acceptance](ttsr-acceptance-matrix.md) for availability, ownership and test boundaries.
+
 # Time-Traveling Stream Rules (TTSR) - Maestro Implementation Plan
 
 Port OMP's Time-Traveling Stream Rules into Maestro for **all agent types**. TTSR watches an agent's live output stream and, when a rule's `condition` (regex) or `astCondition` (ast-grep) matches, interrupts the in-flight turn, injects a corrective `<system-interrupt>` reminder, and retries the turn (or folds a deferred `<system-reminder>` into the next prompt for non-interrupting matches).

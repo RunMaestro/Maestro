@@ -24,7 +24,6 @@ import { matchKey, useTtsrStore } from '../../stores/ttsrStore';
 import { logger } from '../../utils/logger';
 import type {
 	Theme,
-	TtsrContextMode,
 	TtsrProjectSettings,
 	TtsrRule,
 	TtsrRuleListEntry,
@@ -269,32 +268,10 @@ export function TtsrRulesPanel({
 					</span>
 				</label>
 
-				<div className="flex items-center gap-2">
-					<span className="text-2xs shrink-0" style={{ color: theme.colors.textDim }}>
-						On interrupt
-					</span>
-					<select
-						aria-label="On interrupt"
-						value={settings.contextMode ?? ''}
-						onChange={(e) =>
-							void patchSettings({
-								// Empty means "say nothing here", which hands the choice back
-								// to the global Settings default rather than pinning it.
-								contextMode: e.target.value ? (e.target.value as TtsrContextMode) : undefined,
-							})
-						}
-						className="flex-1 px-2 py-1 rounded text-xs-plus outline-none border"
-						style={{
-							backgroundColor: theme.colors.bgMain,
-							borderColor: theme.colors.border,
-							color: theme.colors.textMain,
-						}}
-					>
-						<option value="">Use global default</option>
-						<option value="keep">Keep partial output</option>
-						<option value="discard">Discard partial output</option>
-					</select>
-				</div>
+				<p className="text-2xs" style={{ color: theme.colors.textDim }}>
+					Guidance uses Steer when the running turn supports it; otherwise it is deferred to the
+					next prompt.
+				</p>
 			</div>
 
 			{/* Authoring hand-off */}
@@ -432,7 +409,7 @@ export function TtsrRulesPanel({
 												title={MATCH_COUNT_HINT}
 											>
 												{stats.count} match{stats.count === 1 ? '' : 'es'} · last{' '}
-												{stats.lastWillInterrupt ? 'interrupted ' : ''}
+												{stats.lastWillInterrupt ? 'correction requested ' : ''}
 												{formatRelativeTime(stats.lastMatchedAt)}
 											</div>
 										)}

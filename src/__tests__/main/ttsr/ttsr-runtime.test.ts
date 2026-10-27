@@ -17,7 +17,6 @@ import {
 	DEFAULT_TTSR_PROJECT_SETTINGS,
 	type LoadedTtsrRule,
 	type TtsrMatchedPayload,
-	type TtsrTriggeredPayload,
 } from '../../../shared/ttsr-types';
 
 const ROOT = '/repo';
@@ -106,7 +105,7 @@ const spawnConfig = (overrides: Record<string, unknown> = {}) => ({
 const textEvent = (text: string): ParsedEvent => ({ type: 'text', text });
 
 describe('TtsrSpawnRegistry', () => {
-	it('records the original prompt, prefers projectPath over cwd, and parses the tab', () => {
+	it('prefers projectPath over cwd and parses the owning tab', () => {
 		const registry = new TtsrSpawnRegistry();
 		const meta = registry.noteSpawn({
 			sessionId: 'sess-ai-t1',
@@ -118,7 +117,6 @@ describe('TtsrSpawnRegistry', () => {
 
 		expect(meta).not.toBeNull();
 		expect(meta?.projectRoot).toBe('/repo');
-		expect(meta?.originalPrompt).toBe('do the thing');
 		expect(meta?.agentId).toBe('codex');
 		// Read out of the spawn id: no spawn caller sets `config.tabId`.
 		expect(registry.get('sess-ai-t1')?.tabId).toBe('t1');
@@ -160,115 +158,6 @@ describe('TtsrSpawnRegistry', () => {
 		});
 
 		expect(meta?.tabId).toBe('tab-1');
-	});
-
-	it('carries the original goal across a corrective respawn', () => {
-		const registry = new TtsrSpawnRegistry();
-		registry.noteSpawn({ ...spawnConfig(), prompt: 'Refactor the auth module' });
-		registry.noteCorrectiveTurn('sess-ai-tab-1', {
-			originalPrompt: 'Refactor the auth module',
-			injectionPrompt: '<system-interrupt rule="no-console-log">Use the logger.</system-interrupt>',
-			matches: [],
-		});
-
-		// The corrective turn respawns with the injection as its prompt; without the
-		// hand-off the registry would record THAT as the goal, and a second
-		// interrupt would restate the injection instead of the user's request.
-		const corrective = registry.noteSpawn({
-			...spawnConfig(),
-			prompt: '<system-interrupt rule="no-console-log">Use the logger.</system-interrupt>',
-		});
-		expect(corrective?.originalPrompt).toBe('Refactor the auth module');
-	});
-
-	// Correlation is the primary match: main builds the payload AND observes the
-	// spawn, so the renderer only has to hand the id back. Recognising the turn
-	// by its prompt made goal carry-over depend on nothing ever appending to the
-	// prompt after the injection block.
-	it('recognises the corrective turn by correlation id, however the prompt was decorated', () => {
-		const registry = new TtsrSpawnRegistry();
-		registry.noteCorrectiveTurn('sess-ai-tab-1', {
-			originalPrompt: 'Refactor the auth module',
-			correlationId: 'corr-1',
-			injectionPrompt: '<system-interrupt>x</system-interrupt>',
-			matches: [],
-		});
-
-		const corrective = registry.noteSpawn({
-			...spawnConfig(),
-			// Decorated on both ends: the `endsWith` check would miss this.
-			prompt: '<system-interrupt>x</system-interrupt>\n\nRespond in English.',
-			ttsrCorrelationId: 'corr-1',
-		});
-
-		expect(corrective?.originalPrompt).toBe('Refactor the auth module');
-		expect(corrective?.lostCorrective).toBeUndefined();
-	});
-
-	it('treats a spawn carrying a different correlation id as an unrelated turn', () => {
-		const registry = new TtsrSpawnRegistry();
-		registry.noteCorrectiveTurn('sess-ai-tab-1', {
-			originalPrompt: 'Refactor the auth module',
-			correlationId: 'corr-1',
-			injectionPrompt: '<system-interrupt>x</system-interrupt>',
-			matches: [],
-		});
-
-		const next = registry.noteSpawn({
-			...spawnConfig(),
-			prompt: 'Now write the tests',
-			ttsrCorrelationId: 'corr-2',
-		});
-
-		expect(next?.originalPrompt).toBe('Now write the tests');
-	});
-
-	it('falls back to the injection-block check for a spawn with no correlation id', () => {
-		const registry = new TtsrSpawnRegistry();
-		registry.noteCorrectiveTurn('sess-ai-tab-1', {
-			originalPrompt: 'Refactor the auth module',
-			correlationId: 'corr-1',
-			injectionPrompt: '<system-interrupt>x</system-interrupt>',
-			matches: [],
-		});
-
-		// An older renderer, or a caller that rebuilt the spawn config from
-		// scratch: the id is gone but the prompt is still the injection.
-		const corrective = registry.noteSpawn({
-			...spawnConfig(),
-			prompt: '<system-interrupt>x</system-interrupt>',
-		});
-
-		expect(corrective?.originalPrompt).toBe('Refactor the auth module');
-	});
-
-	it('still recognises the corrective turn behind prepended deferred reminders', () => {
-		const registry = new TtsrSpawnRegistry();
-		registry.noteCorrectiveTurn('sess-ai-tab-1', {
-			originalPrompt: 'Refactor the auth module',
-			injectionPrompt: '<system-interrupt>x</system-interrupt>',
-			matches: [],
-		});
-
-		const corrective = registry.noteSpawn({
-			...spawnConfig(),
-			prompt: '<system-reminder>y</system-reminder>\n\n<system-interrupt>x</system-interrupt>',
-		});
-		expect(corrective?.originalPrompt).toBe('Refactor the auth module');
-	});
-
-	it('does not attribute an unrelated later turn to the carried-over goal', () => {
-		const registry = new TtsrSpawnRegistry();
-		registry.noteCorrectiveTurn('sess-ai-tab-1', {
-			originalPrompt: 'Refactor the auth module',
-			injectionPrompt: '<system-interrupt>x</system-interrupt>',
-			matches: [],
-		});
-
-		// The corrective turn never arrived (tab closed); the user's next prompt
-		// must own its own goal.
-		const next = registry.noteSpawn({ ...spawnConfig(), prompt: 'Now write the tests' });
-		expect(next?.originalPrompt).toBe('Now write the tests');
 	});
 
 	it('seeds the provider session id from a resume spawn and updates it later', () => {
@@ -578,7 +467,10 @@ describe('TtsrRuntime tap', () => {
 
 		expect(matched).toHaveLength(1);
 		expect(matched[0].source).toBe('tool:write');
-		expect(runtime.manager.takeInterrupts('sess-ai-tab-1')).toHaveLength(1);
+		expect(runtime.manager.takeInterrupts('sess-ai-tab-1')).toHaveLength(0);
+		expect(runtime.peekDeferredReminders('sess-ai-tab-1').text).toContain(
+			'Use the project logger.'
+		);
 	});
 
 	it('does no AST work when no rule declares an astCondition', async () => {
@@ -632,14 +524,13 @@ describe('TtsrRuntime deferred reminders (Phase 3c)', () => {
 		expect(runtime.takeDeferredReminders('sess-ai-tab-1')).toBe('');
 	});
 
-	it('does not queue reminders for interrupting matches', () => {
+	it('retains correction guidance as a reminder until a native queue claims it', () => {
 		const { runtime, source } = setup();
 		source.emit('spawn', spawnConfig());
 		runtime.observe('sess-ai-tab-1', textEvent('console.log(x)'));
 
-		// interruptMode: always -> the rule aborts the turn instead, so its
-		// guidance travels in the `<system-interrupt>` prompt, not here.
-		expect(runtime.takeDeferredReminders('sess-ai-tab-1')).toBe('');
+		// Without a native queue claim, the next prompt still owns this guidance.
+		expect(runtime.takeDeferredReminders('sess-ai-tab-1')).toContain('Use the project logger.');
 	});
 
 	it('returns nothing while the feature gate is off', () => {
@@ -736,139 +627,5 @@ describe('TtsrRuntime lifecycle wiring', () => {
 		detach();
 		source.emit('spawn', spawnConfig());
 		expect(runtime.registry.size).toBe(0);
-	});
-});
-
-describe('TtsrRuntime interrupt budget accounting', () => {
-	// A SIGINT'd process keeps streaming for up to 2s. Every late match that
-	// drains through `drive` in that window is folded into the abort already in
-	// flight, so it must not be charged: the budget counts aborts, not matches.
-	it('charges the budget once for an abort that folds a later match', async () => {
-		const ruleA = makeRule();
-		const ruleB = makeRule({
-			name: 'no-any',
-			condition: ['\\bany\\b'],
-			compiledCondition: [/\bany\b/],
-			content: 'Do not use `any`.',
-			path: '.maestro/rules/no-any.md',
-		});
-		const target = { interrupt: vi.fn(() => true), kill: vi.fn(() => true) };
-		const triggered: TtsrTriggeredPayload[] = [];
-		const runtime = new TtsrRuntime({
-			isGloballyEnabled: () => true,
-			loadConfig: () => result([ruleA, ruleB]),
-			interruptTarget: target,
-			onTriggered: (payload) => triggered.push(payload),
-			exitTimeoutMs: 50,
-		});
-		const source = new EventEmitter();
-		runtime.attach(source as unknown as TtsrProcessEventSource);
-
-		source.emit('spawn', spawnConfig());
-		runtime.observe('sess-ai-tab-1', textEvent('adding console.log(x)'));
-		expect(runtime.driver?.isAbortPending('sess-ai-tab-1')).toBe(true);
-
-		// The tail of the aborted turn's stream trips a second, uncooled rule.
-		runtime.observe('sess-ai-tab-1', textEvent('and an any type too'));
-
-		expect(target.interrupt).toHaveBeenCalledTimes(1);
-		expect(runtime.stateStore.getInterruptCount('sess-ai-tab-1|-')).toBe(1);
-
-		source.emit('exit', 'sess-ai-tab-1', 0);
-		await runtime.flushInterrupts();
-
-		expect(triggered).toHaveLength(1);
-		expect(triggered[0].rules.map((rule) => rule.name)).toEqual(['no-console-log', 'no-any']);
-		expect(triggered[0].injectionPrompt).toContain('Do not use `any`.');
-	});
-});
-
-// Two AI tabs working at once is the normal case, and every piece of TTSR state
-// - registry entry, buffers, repeat counters, interrupt budget, pending abort -
-// is keyed by session id. A leak between two live turns would reinject one tab's
-// guidance into the other tab's conversation.
-describe('TtsrRuntime concurrent sessions', () => {
-	function setupInterrupting(rules: LoadedTtsrRule[]) {
-		const target = { interrupt: vi.fn(() => true), kill: vi.fn(() => true) };
-		const triggered: TtsrTriggeredPayload[] = [];
-		const runtime = new TtsrRuntime({
-			isGloballyEnabled: () => true,
-			loadConfig: () => result(rules),
-			interruptTarget: target,
-			onTriggered: (payload) => triggered.push(payload),
-			exitTimeoutMs: 50,
-		});
-		const source = new EventEmitter();
-		runtime.attach(source as unknown as TtsrProcessEventSource);
-		return { runtime, source, target, triggered };
-	}
-
-	const secondTab = spawnConfig({ sessionId: 'sess-ai-tab-2', prompt: 'Write the tests' });
-
-	it('drives two aborts in flight at once without crossing their payloads', async () => {
-		const { runtime, source, target, triggered } = setupInterrupting([makeRule()]);
-
-		source.emit('spawn', spawnConfig());
-		source.emit('session-id', 'sess-ai-tab-1', 'prov-1');
-		source.emit('spawn', secondTab);
-		source.emit('session-id', 'sess-ai-tab-2', 'prov-2');
-
-		runtime.observe('sess-ai-tab-1', textEvent('console.log(a)'));
-		runtime.observe('sess-ai-tab-2', textEvent('console.log(b)'));
-
-		expect(target.interrupt).toHaveBeenCalledTimes(2);
-		expect(runtime.driver?.isAbortPending('sess-ai-tab-1')).toBe(true);
-		expect(runtime.driver?.isAbortPending('sess-ai-tab-2')).toBe(true);
-		// One abort charged per conversation, not two against whichever fired first.
-		expect(runtime.stateStore.getInterruptCount('sess-ai-tab-1|prov-1')).toBe(1);
-		expect(runtime.stateStore.getInterruptCount('sess-ai-tab-2|prov-2')).toBe(1);
-
-		// Exits land in the reverse order of the aborts.
-		source.emit('exit', 'sess-ai-tab-2', 0);
-		source.emit('exit', 'sess-ai-tab-1', 0);
-		await runtime.flushInterrupts();
-
-		const byId = new Map(triggered.map((payload) => [payload.sessionId, payload]));
-		expect(byId.size).toBe(2);
-		expect(byId.get('sess-ai-tab-1')).toMatchObject({
-			tabId: 'tab-1',
-			mode: 'resume',
-			providerSessionId: 'prov-1',
-			originalGoal: 'Refactor the auth module',
-		});
-		expect(byId.get('sess-ai-tab-2')).toMatchObject({
-			tabId: 'tab-2',
-			mode: 'resume',
-			providerSessionId: 'prov-2',
-			originalGoal: 'Write the tests',
-		});
-	});
-
-	it('leaves a normally streaming session alone while another one aborts', async () => {
-		const { runtime, source, target, triggered } = setupInterrupting([makeRule()]);
-
-		source.emit('spawn', spawnConfig());
-		source.emit('spawn', secondTab);
-
-		runtime.observe('sess-ai-tab-1', textEvent('console.log(a)'));
-		// Tab 2 keeps streaming clean output through the whole abort.
-		expect(runtime.observe('sess-ai-tab-2', textEvent('all good here'))).toEqual([]);
-		expect(runtime.observe('sess-ai-tab-2', textEvent('still fine'))).toEqual([]);
-
-		expect(target.interrupt).toHaveBeenCalledTimes(1);
-		expect(target.interrupt).toHaveBeenCalledWith('sess-ai-tab-1');
-		expect(runtime.driver?.isAbortPending('sess-ai-tab-2')).toBe(false);
-
-		// Tab 2 finishes on its own terms: an ordinary exit, no corrective payload,
-		// nothing deferred, and no interrupt charged against its budget.
-		source.emit('exit', 'sess-ai-tab-2', 0);
-		expect(runtime.driver?.isAbortPending('sess-ai-tab-1')).toBe(true);
-		expect(runtime.stateStore.getInterruptCount('sess-ai-tab-2|-')).toBe(0);
-		expect(runtime.takeDeferredReminders('sess-ai-tab-2')).toBe('');
-
-		source.emit('exit', 'sess-ai-tab-1', 0);
-		await runtime.flushInterrupts();
-
-		expect(triggered.map((payload) => payload.sessionId)).toEqual(['sess-ai-tab-1']);
 	});
 });

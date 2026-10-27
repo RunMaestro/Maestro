@@ -51,20 +51,11 @@ export type TtsrInterruptMode = (typeof TTSR_INTERRUPT_MODES)[number];
 export const TTSR_REPEAT_MODES = ['once', 'after-gap'] as const;
 export type TtsrRepeatMode = (typeof TTSR_REPEAT_MODES)[number];
 
-/**
- * What happens to the aborted turn's partial output.
- * - `keep`: SIGINT the process, let the provider commit the partial turn
- * - `discard`: hard-kill before commit (best-effort; Maestro cannot edit an
- *   external provider's transcript, see the plan's fidelity gaps)
- */
+/** Legacy configuration accepted for compatibility. Native Steer always retains context; these modes are ignored. */
 export const TTSR_CONTEXT_MODES = ['keep', 'discard'] as const;
 export type TtsrContextMode = (typeof TTSR_CONTEXT_MODES)[number];
 
-/**
- * Teardown used when neither the project's `.maestro/ttsr.yaml` nor the global
- * `ttsrContextMode` setting names one. `keep` is the faithful mode; `discard`
- * can only ever be best-effort against an external provider's transcript.
- */
+/** Legacy default retained for reading older settings. */
 export const DEFAULT_TTSR_CONTEXT_MODE: TtsrContextMode = 'keep';
 
 /** Narrow an unknown (persisted setting, IPC payload) to a {@link TtsrContextMode}. */
@@ -210,122 +201,29 @@ export interface TtsrMatchedPayload {
 	/** Stream the match came from. */
 	source: TtsrScope;
 	rules: TtsrRuleRef[];
-	/** True when at least one fired rule's `interruptMode` permits aborting. */
+	/** True when a fired rule requests a live correction; native Steer availability is checked separately. */
 	willInterrupt: boolean;
 	/** Edited file path, for tool-source matches. */
 	filePath?: string;
 }
 
-/**
- * Payload of the `ttsr:abortPending` push event, emitted the instant main
- * signals the in-flight process and before it has exited.
- *
- * This is the renderer's `ttsrAbortPending` flag from the plan: the exit that
- * follows is a TTSR abort, not a failed or completed turn, so exit handling
- * must not fail the turn, dispatch the next queued item, or clear the tab's
- * busy state. The corrective spawn arrives moments later on `ttsr:triggered`.
- */
-export interface TtsrAbortPendingPayload {
-	/** Maestro process/session id, `${session.id}-ai-${tabId}`. */
-	sessionId: string;
-	/** AI tab the aborted turn belonged to, when the spawn carried one. */
-	tabId?: string;
-	agentId: AgentId;
-	/** Rules that forced the abort. */
-	rules: TtsrRuleRef[];
-	/** `keep` interrupted (SIGINT); `discard` hard-killed. */
-	contextMode: TtsrContextMode;
-}
-
-/**
- * Payload of the `ttsr:abortCleared` push event: an announced abort will not
- * produce a corrective turn after all.
- *
- * Every `ttsr:abortPending` must be answered by exactly one of `ttsr:triggered`
- * or this event. Without it, a failed signal would leave the renderer
- * suppressing that turn's exit forever, wedging the tab as permanently busy.
- */
-export interface TtsrAbortClearedPayload {
-	/** Maestro process/session id, `${session.id}-ai-${tabId}`. */
-	sessionId: string;
-	tabId?: string;
-	agentId: AgentId;
-	/** Why no corrective turn is coming, for the log and the transcript notice. */
-	reason: string;
-}
-
-/**
- * Payload of the `ttsr:triggered` push event: everything the renderer needs to
- * spawn the corrective turn without re-deriving main-process state (Gate B).
- *
- * The main engine owns `providerSessionId` (captured from the agent's
- * `session-id` event) and `originalGoal` (the prompt recorded by the TTSR spawn
- * registry - `ManagedProcess` keeps none), so both travel in the payload.
- */
+/** A correction offered to the owning desktop renderer's native Steer queue. */
 export interface TtsrTriggeredPayload {
-	/** Maestro process/session id, `${session.id}-ai-${tabId}`. */
 	sessionId: string;
-	/** AI tab the aborted turn belonged to, when the spawn carried one. */
-	tabId?: string;
-	/** Drives `resumeArgs` shape and the tier/degradation choice. */
+	tabId: string;
 	agentId: AgentId;
-	/** Rules that fired, for the injection template and the activity log. */
 	rules: TtsrRuleRef[];
-	/** Rendered `<system-interrupt>` block(s) - the corrective turn's prompt. */
 	injectionPrompt: string;
-	/**
-	 * `resume` re-attaches to the aborted conversation; `fresh` is the degraded
-	 * path for agents that only emit their session id on the final event.
-	 */
-	mode: 'resume' | 'fresh';
-	/** Required when `mode === 'resume'`; passed as `agentSessionId` on respawn. */
-	providerSessionId?: string;
-	/** Prompt that started the aborted turn. Restated verbatim on `fresh`. */
-	originalGoal: string;
-	/** Teardown that was used: `keep` interrupted, `discard` hard-killed. */
-	contextMode: TtsrContextMode;
-	/**
-	 * Opaque id the respawn passes straight back on its spawn config, so main
-	 * recognises its own corrective turn by correlation rather than by inspecting
-	 * the prompt.
-	 *
-	 * Optional because every unrelated spawn path leaves it unset; the registry
-	 * still falls back to matching the injection block when it is missing (an
-	 * older renderer, or a respawn that rebuilt the config from scratch).
-	 */
-	ttsrCorrelationId?: string;
+	/** Claimed once before guidance leaves main's deferred reminder queue. */
+	requestId: string;
 }
 
-/**
- * Payload of the `ttsr:correctiveResult` ack, sent by the renderer that spawned
- * (or failed to spawn) the corrective turn.
- *
- * Main raises the interrupt toast optimistically, before any renderer has done
- * the work. This ack is what turns that promise into a checked one: an `ok`
- * result cancels main's watchdog, and a failure - or silence past the timeout -
- * broadcasts the "did not start" toast to EVERY client, including web-desktop
- * ones that never spawn and would otherwise be left with an orange toast that
- * quietly became a lie.
- */
-export interface TtsrCorrectiveResult {
-	/** Maestro process/session id, `${session.id}-ai-${tabId}`. */
+export interface TtsrSteeringClaim {
 	sessionId: string;
-	/** True once the corrective spawn returned. */
-	ok: boolean;
-	/** Why it did not start, for the toast detail and the log. */
-	error?: string;
+	requestId: string;
 }
 
-/**
- * Structured marker carried on a TTSR interrupt toast.
- *
- * The broadcast toast describes only the *detection* (which rule fired, that the
- * turn was interrupted). The client-specific outcome line is resolved at display
- * time from `mode`, so one payload can read correctly on both the desktop
- * renderer (which spawns the corrective turn) and web-desktop clients (which do
- * not). `resume` re-attaches to the aborted conversation; `fresh` is the
- * degraded path that restarts the turn from the original goal.
- */
+/** Legacy persisted toast marker; current corrections use native Steer notifications. */
 export interface TtsrToastMarker {
 	mode: 'resume' | 'fresh';
 }
@@ -342,9 +240,6 @@ export type TtsrTier = 'A' | 'B' | 'C';
 
 /** How much edit content the agent's parser surfaces for AST matching. */
 export type TtsrAstSupport = 'full' | 'partial' | 'none';
-
-/** Whether an aborted turn can be resumed against the same provider session. */
-export type TtsrResumeSupport = 'clean' | 'degraded' | 'none';
 
 export interface TtsrAgentCapability {
 	tier: TtsrTier;
@@ -364,14 +259,8 @@ export interface TtsrAgentCapability {
 	shellEvents: boolean;
 	/** Edit/write content available for ast-grep. */
 	ast: TtsrAstSupport;
-	/** The in-flight process can be interrupted. */
+	/** Structured detection supports a live-correction offer; transport eligibility is separate. */
 	interrupt: boolean;
-	/**
-	 * `clean` - provider session id is emitted early, so the corrective turn
-	 * can `--resume`. `degraded` - id only lands on the final event, so the
-	 * corrective turn respawns fresh with the original goal restated.
-	 */
-	resume: TtsrResumeSupport;
 }
 
 const UNSUPPORTED: TtsrAgentCapability = {
@@ -383,7 +272,6 @@ const UNSUPPORTED: TtsrAgentCapability = {
 	shellEvents: false,
 	ast: 'none',
 	interrupt: false,
-	resume: 'none',
 };
 
 /**
@@ -396,8 +284,8 @@ const UNSUPPORTED: TtsrAgentCapability = {
  * and the parser emits per-token `text` deltas from `stream_event`
  * content_block_delta objects, so prose partials reach `handleParsedEvent`
  * mid-turn instead of only as one complete assistant message at end of turn.
- * That makes prose-only turns preventable (real mid-turn abort), not just
- * corrective. The closing complete assistant event is stamped
+ * Those deltas make live detection possible; native Steer separately decides
+ * whether the running transport can accept corrective guidance. The closing complete assistant event is stamped
  * `textAlreadyStreamed` so downstream consumers do not double-count the prose.
  *
  * claude-code `toolEvents: true` and `ast: 'full'` are honest but coarser than
@@ -407,9 +295,9 @@ const UNSUPPORTED: TtsrAgentCapability = {
  * `src/main/parsers/claude-output-parser.ts`); the full `{ file_path, content }`
  * payload only reaches TTSR on the complete assistant message that closes the
  * block. That is still PRE-execution - the matching `tool_result` arrives later
- * on a separate user message - so mid-turn `tool:write` / `tool:edit`
- * interrupts and full ast-grep matching over the written content are real, they
- * just fire once per tool call rather than as the arguments are typed.
+ * on a separate user message - so `tool:write` / `tool:edit` detection and full ast-grep matching are
+ * possible once per tool call. Steering remains corrective and cannot cancel
+ * a tool or undo its effects.
  *
  * Agents absent from the plan's scope table (gemini-cli, qwen3-coder, hermes,
  * pi, omp, antigravity) are marked unsupported rather than guessed at; they gain support
@@ -425,7 +313,6 @@ export const TTSR_AGENT_CAPABILITIES: Record<AgentId, TtsrAgentCapability> = {
 		shellEvents: true,
 		ast: 'full',
 		interrupt: true,
-		resume: 'clean',
 	},
 	codex: {
 		tier: 'A',
@@ -436,7 +323,6 @@ export const TTSR_AGENT_CAPABILITIES: Record<AgentId, TtsrAgentCapability> = {
 		shellEvents: true,
 		ast: 'partial',
 		interrupt: true,
-		resume: 'clean',
 	},
 	opencode: {
 		tier: 'B',
@@ -447,7 +333,6 @@ export const TTSR_AGENT_CAPABILITIES: Record<AgentId, TtsrAgentCapability> = {
 		shellEvents: true,
 		ast: 'full',
 		interrupt: true,
-		resume: 'clean',
 	},
 	'factory-droid': {
 		tier: 'A',
@@ -458,7 +343,6 @@ export const TTSR_AGENT_CAPABILITIES: Record<AgentId, TtsrAgentCapability> = {
 		shellEvents: false,
 		ast: 'none',
 		interrupt: true,
-		resume: 'clean',
 	},
 	'copilot-cli': {
 		tier: 'A',
@@ -469,7 +353,6 @@ export const TTSR_AGENT_CAPABILITIES: Record<AgentId, TtsrAgentCapability> = {
 		shellEvents: true,
 		ast: 'full',
 		interrupt: true,
-		resume: 'degraded',
 	},
 	grok: {
 		tier: 'A',
@@ -480,7 +363,6 @@ export const TTSR_AGENT_CAPABILITIES: Record<AgentId, TtsrAgentCapability> = {
 		shellEvents: false,
 		ast: 'none',
 		interrupt: true,
-		resume: 'degraded',
 	},
 	// Raw PTY only, and not a resumable conversation. Excluded from v1.
 	terminal: UNSUPPORTED,

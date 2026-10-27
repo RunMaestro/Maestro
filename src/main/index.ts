@@ -54,11 +54,6 @@ import {
 } from './global-hotkey-manager';
 import { CueEngine } from './cue/cue-engine';
 import { installTtsrRuntime, type TtsrRuntime } from './ttsr';
-import {
-	DEFAULT_TTSR_CONTEXT_MODE,
-	isTtsrContextMode,
-	type TtsrContextMode,
-} from '../shared/ttsr-types';
 import { createCueSupervisorHooks } from './cue/cue-first-party';
 import { PianolaSupervisor, type AutoWatchSession } from './pianola/pianola-supervisor';
 import { PianolaRelearnScheduler } from './pianola/pianola-relearn-scheduler';
@@ -748,7 +743,7 @@ store.onDidChange('encoreFeatures', (encoreFeatures) => {
 });
 
 // ── TTSR gate snapshot ──
-// These four values are read from the stdout hot path: `TtsrRuntime.observe`
+// These values are read from the stdout hot path: `TtsrRuntime.observe`
 // consults the gate for EVERY parsed event of EVERY agent, and the enabled path
 // re-reads the rest several times per event. electron-store (conf 10.x) re-reads
 // and re-parses the whole settings JSON file on every `get`, so reading them live
@@ -758,14 +753,6 @@ store.onDidChange('encoreFeatures', (encoreFeatures) => {
 let ttsrEnabledSetting = store.get('ttsrEnabled', false) === true;
 let ttsrEncoreFlag = (store.get('encoreFeatures', {}) as Record<string, boolean>).ttsr === true;
 let ttsrDisabledRuleNames = readTtsrDisabledRules(store.get('ttsrDisabledRules', []));
-let ttsrContextModeSetting: TtsrContextMode = readTtsrContextMode(
-	store.get('ttsrContextMode', DEFAULT_TTSR_CONTEXT_MODE)
-);
-
-function readTtsrContextMode(value: unknown): TtsrContextMode {
-	return isTtsrContextMode(value) ? value : DEFAULT_TTSR_CONTEXT_MODE;
-}
-
 function readTtsrDisabledRules(value: unknown): string[] {
 	return Array.isArray(value) ? (value as string[]) : [];
 }
@@ -779,9 +766,7 @@ store.onDidChange('encoreFeatures', (value) => {
 store.onDidChange('ttsrDisabledRules', (value) => {
 	ttsrDisabledRuleNames = readTtsrDisabledRules(value);
 });
-store.onDidChange('ttsrContextMode', (value) => {
-	ttsrContextModeSetting = readTtsrContextMode(value);
-});
+
 // Every Encore Feature's background services follow its flag through ONE path:
 // this store change, which the Extensions toggle, `maestro-cli encore
 // enable|disable` (a plain set_setting that never reaches the first-party
@@ -1210,9 +1195,6 @@ app
 			// parsed event.
 			isGloballyEnabled: () => ttsrEnabledSetting && ttsrEncoreFlag,
 			getDisabledRules: () => ttsrDisabledRuleNames,
-			// Fallback teardown mode for projects whose `.maestro/ttsr.yaml` does
-			// not name one; a project that does still wins.
-			getContextMode: () => ttsrContextModeSetting,
 			safeSend,
 		});
 		// Note: webServer is created on-demand when user enables web interface (see setupWebServerCallbacks)

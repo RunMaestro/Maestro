@@ -220,9 +220,9 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	registerTtsrHandlers({
 		getSessions: () => deps.sessionsStore.get('sessions', []) as Array<Record<string, unknown>>,
 		onRulesChanged: (projectRoot: string) => deps.getTtsrRuntime()?.invalidateRules(projectRoot),
-		// The spawning renderer's ack for a corrective turn, which cancels the
-		// "did not start" watchdog armed when the interrupt was broadcast.
-		onCorrectiveResult: (result) => deps.getTtsrRuntime()?.correctiveAck?.resolve(result),
+		flushSessionWrites: flushPendingSessionWrites,
+		claimSteeringRequest: ({ sessionId, requestId }) =>
+			deps.getTtsrRuntime()?.claimSteeringRequest(sessionId, requestId) ?? false,
 	});
 
 	// Agent management operations - extracted to src/main/ipc/handlers/agents.ts

@@ -107,7 +107,7 @@ interface TurnResult {
 	/** Every `ttsr:matched` observation, for asserting source and file path. */
 	matched: TtsrMatchedPayload[];
 	/** `interrupt` for contextMode keep, `kill` for discard, null when nothing fired. */
-	signal: 'interrupt' | 'kill' | null;
+	signal: 'steer' | null;
 	/** Index of the raw line the abort was signalled on, or -1. */
 	abortedAt: number;
 	/** How many raw lines the fixture carried. */
@@ -134,7 +134,6 @@ async function runTurn(
 	let readRules = false;
 
 	const source = new EventEmitter();
-	const scheduleExit = () => setTimeout(() => source.emit('exit', SESSION, 130), 0);
 	const runtime = new TtsrRuntime({
 		isGloballyEnabled: () => options.enabled !== false,
 		loadConfig: (): LoadTtsrConfigResult => {
@@ -147,19 +146,10 @@ async function runTurn(
 				settings: { ...DEFAULT_TTSR_PROJECT_SETTINGS },
 			};
 		},
-		interruptTarget: {
-			interrupt: () => {
-				signal = 'interrupt';
-				scheduleExit();
-				return true;
-			},
-			kill: () => {
-				signal = 'kill';
-				scheduleExit();
-				return true;
-			},
+		onTriggered: (payload) => {
+			signal = 'steer';
+			triggered.push(payload);
 		},
-		onTriggered: (payload) => triggered.push(payload),
 		onMatched: (payload) => matched.push(payload),
 	});
 	runtime.attach(source as unknown as TtsrProcessEventSource);
@@ -187,7 +177,6 @@ async function runTurn(
 	}
 
 	await runtime.flushAst();
-	await runtime.flushInterrupts();
 	runtime.dispose();
 
 	return { triggered, matched, signal, abortedAt, lineCount: lines.length, readRules };
@@ -370,32 +359,29 @@ const FIXTURES: AgentFixture[] = [
 type ProseAxis = 'live' | 'end-of-turn' | 'none';
 type AstAxis = 'full' | 'partial' | 'none';
 type ShellAxis = 'yes' | 'none';
-type ResumeAxis = 'clean' | 'degraded' | 'none';
 type Status = 'pass' | 'degraded' | 'excluded';
 
 interface MatrixRow {
 	prose: ProseAxis;
 	ast: AstAxis;
 	shell: ShellAxis;
-	resume: ResumeAxis;
 	status: Status;
 }
 
 /** The plan's scope summary table, as the acceptance criteria. */
 const EXPECTED_MATRIX: Record<string, MatrixRow> = {
-	'claude-code': { prose: 'live', ast: 'full', shell: 'yes', resume: 'clean', status: 'pass' },
-	codex: { prose: 'live', ast: 'partial', shell: 'yes', resume: 'clean', status: 'pass' },
-	opencode: { prose: 'end-of-turn', ast: 'full', shell: 'yes', resume: 'clean', status: 'pass' },
-	'factory-droid': { prose: 'live', ast: 'none', shell: 'none', resume: 'clean', status: 'pass' },
+	'claude-code': { prose: 'live', ast: 'full', shell: 'yes', status: 'pass' },
+	codex: { prose: 'live', ast: 'partial', shell: 'yes', status: 'pass' },
+	opencode: { prose: 'end-of-turn', ast: 'full', shell: 'yes', status: 'pass' },
+	'factory-droid': { prose: 'live', ast: 'none', shell: 'none', status: 'pass' },
 	'copilot-cli': {
 		prose: 'live',
 		ast: 'full',
 		shell: 'yes',
-		resume: 'degraded',
-		status: 'degraded',
+		status: 'pass',
 	},
-	grok: { prose: 'live', ast: 'none', shell: 'none', resume: 'degraded', status: 'degraded' },
-	terminal: { prose: 'none', ast: 'none', shell: 'none', resume: 'none', status: 'excluded' },
+	grok: { prose: 'live', ast: 'none', shell: 'none', status: 'pass' },
+	terminal: { prose: 'none', ast: 'none', shell: 'none', status: 'excluded' },
 };
 
 /** Measure the ast axis from what the extractor actually recovers. */
@@ -421,10 +407,10 @@ describe('TTSR Gate A acceptance matrix', () => {
 	const recorded: Record<string, MatrixRow> = {};
 
 	describe.each(FIXTURES)('$agentId', (fixture) => {
-		it('interrupts the turn and emits a corrective payload', async () => {
+		it('offers guidance to native Steer without stopping the turn', async () => {
 			const turn = await runTurn(fixture.agentId, fixture.parser(), fixture.prose, [PROSE_RULE]);
 
-			expect(turn.signal).toBe('interrupt');
+			expect(turn.signal).toBe('steer');
 			expect(turn.abortedAt).toBeGreaterThanOrEqual(0);
 			expect(turn.triggered).toHaveLength(1);
 
@@ -432,28 +418,14 @@ describe('TTSR Gate A acceptance matrix', () => {
 			expect(payload.agentId).toBe(fixture.agentId);
 			expect(payload.rules.map((ref) => ref.name)).toEqual(['no-console-log']);
 			expect(payload.injectionPrompt).toContain('Use the project logger instead of console.log.');
-			expect(payload.originalGoal).toBe(GOAL);
-			expect(payload.contextMode).toBe('keep');
 
-			if (fixture.providerSessionId) {
-				// Clean resume: the corrective turn re-attaches to the conversation, so
-				// the goal does not need restating.
-				expect(payload.mode).toBe('resume');
-				expect(payload.providerSessionId).toBe(fixture.providerSessionId);
-			} else {
-				// Degraded: no id was published before the abort, so the corrective
-				// turn respawns fresh and has to carry the goal itself.
-				expect(payload.mode).toBe('fresh');
-				expect(payload.providerSessionId).toBeUndefined();
-				expect(payload.injectionPrompt).toContain(GOAL);
-			}
+			expect(payload.requestId).toEqual(expect.any(String));
 
 			recorded[fixture.agentId] = {
 				prose: turn.abortedAt < turn.lineCount - 1 ? 'live' : 'end-of-turn',
 				ast: measureAst(fixture),
 				shell: measureShell(fixture),
-				resume: payload.mode === 'resume' ? 'clean' : 'degraded',
-				status: payload.mode === 'resume' ? 'pass' : 'degraded',
+				status: 'pass',
 			};
 		});
 
@@ -474,7 +446,7 @@ describe('TTSR Gate A acceptance matrix', () => {
 				return;
 			}
 
-			expect(turn.signal).toBe('interrupt');
+			expect(turn.signal).toBe('steer');
 			expect(turn.triggered).toHaveLength(1);
 			expect(turn.triggered[0].rules.map((ref) => ref.name)).toEqual(['no-console-log-ast']);
 		});
@@ -496,7 +468,7 @@ describe('TTSR Gate A acceptance matrix', () => {
 				return;
 			}
 
-			expect(turn.signal).toBe('interrupt');
+			expect(turn.signal).toBe('steer');
 			expect(turn.triggered).toHaveLength(1);
 			expect(turn.triggered[0].rules.map((ref) => ref.name)).toEqual(['no-force-push']);
 		});
@@ -529,7 +501,6 @@ describe('TTSR Gate A acceptance matrix', () => {
 			prose: 'none',
 			ast: 'none',
 			shell: 'none',
-			resume: 'none',
 			status: 'excluded',
 		};
 	});
@@ -542,7 +513,6 @@ describe('TTSR Gate A acceptance matrix', () => {
 		for (const [agentId, row] of Object.entries(recorded)) {
 			const cap = TTSR_AGENT_CAPABILITIES[agentId as AgentId];
 			expect({ agentId, ast: row.ast }).toEqual({ agentId, ast: cap.ast });
-			expect({ agentId, resume: row.resume }).toEqual({ agentId, resume: cap.resume });
 			// `shellEvents` is what the loader defaults a tool:bash rule's agents
 			// from, so a parser that stops surfacing commands must fail here rather
 			// than leave those rules silently inert.
@@ -641,11 +611,11 @@ describe('TTSR claude-code tool scope under live stream framing', () => {
 		];
 	}
 
-	it('interrupts mid-turn on an in-project absolute Write path', async () => {
+	it('offers mid-turn guidance on an in-project absolute Write path', async () => {
 		const lines = writeTurn(`${ROOT}/src/probe.ts`);
 		const turn = await runTurn('claude-code', new ClaudeOutputParser(), lines, [TOOL_RULE]);
 
-		expect(turn.signal).toBe('interrupt');
+		expect(turn.signal).toBe('steer');
 		// Mid-turn, not on the closing `result` line: the abort lands on the
 		// assistant message carrying the tool_use, before the turn ends.
 		expect(turn.abortedAt).toBe(lines.length - 2);

@@ -1,29 +1,8 @@
-/**
- * Preload API for Time-Traveling Stream Rules (TTSR).
- *
- * TTSR is main-authoritative (Gate B): matching, repeat policy and the abort
- * all happen in main with no renderer round-trip. The renderer only listens and,
- * once, reports back (`reportCorrectiveResult`) - it never asks main to match or
- * interrupt anything.
- *
- * - `ttsr:abortPending` - a turn is being signalled; the exit that follows is a
- *   TTSR abort, not a failure.
- * - `ttsr:triggered` - the aborted turn has exited; here is the corrective
- *   prompt to respawn it with.
- * - `ttsr:abortCleared` - the announced abort is off; no corrective turn is
- *   coming, so resume normal exit handling.
- * - `ttsr:matched` - observability only (a rule matched, interrupting or not).
- * - `ttsr:correctiveResult` - the renderer's ack that the corrective turn did
- *   (or did not) start, which cancels main's watchdog toast.
- * - `ttsr:rulesChanged` - a project's rules were edited on disk or through the
- *   handlers below, so any list of them is now stale.
- */
+/** TTSR matching and rule management; corrections use the native Steer queue. */
 
 import { ipcRenderer } from 'electron';
 import type {
-	TtsrAbortClearedPayload,
-	TtsrAbortPendingPayload,
-	TtsrCorrectiveResult,
+	TtsrSteeringClaim,
 	TtsrMatchedPayload,
 	TtsrProjectSettings,
 	TtsrRuleListResult,
@@ -33,9 +12,7 @@ import type {
 } from '../../shared/ttsr-types';
 
 export type {
-	TtsrAbortClearedPayload,
-	TtsrAbortPendingPayload,
-	TtsrCorrectiveResult,
+	TtsrSteeringClaim,
 	TtsrMatchedPayload,
 	TtsrProjectSettings,
 	TtsrRule,
@@ -51,34 +28,10 @@ export type {
  */
 export function createTtsrApi() {
 	return {
-		// A TTSR abort was just signalled for this turn. Arrives BEFORE the
-		// process exit, so exit handling can suppress the normal failure path.
-		onAbortPending: (callback: (payload: TtsrAbortPendingPayload) => void): (() => void) => {
-			const handler = (_e: unknown, payload: TtsrAbortPendingPayload) => callback(payload);
-			ipcRenderer.on('ttsr:abortPending', handler);
-			return () => {
-				ipcRenderer.removeListener('ttsr:abortPending', handler);
-			};
-		},
-
-		// The aborted turn has exited; the payload carries everything needed to
-		// spawn the corrective turn (injection prompt, resume mode, provider id).
 		onTriggered: (callback: (payload: TtsrTriggeredPayload) => void): (() => void) => {
 			const handler = (_e: unknown, payload: TtsrTriggeredPayload) => callback(payload);
 			ipcRenderer.on('ttsr:triggered', handler);
-			return () => {
-				ipcRenderer.removeListener('ttsr:triggered', handler);
-			};
-		},
-
-		// The announced abort was withdrawn (the process could not be signalled),
-		// so no corrective turn is coming and exit handling must resume.
-		onAbortCleared: (callback: (payload: TtsrAbortClearedPayload) => void): (() => void) => {
-			const handler = (_e: unknown, payload: TtsrAbortClearedPayload) => callback(payload);
-			ipcRenderer.on('ttsr:abortCleared', handler);
-			return () => {
-				ipcRenderer.removeListener('ttsr:abortCleared', handler);
-			};
+			return () => ipcRenderer.removeListener('ttsr:triggered', handler);
 		},
 
 		// Observability: a rule matched. Non-interrupting matches only ever
@@ -101,12 +54,8 @@ export function createTtsrApi() {
 			};
 		},
 
-		// The renderer that spawned (or failed to spawn) the corrective turn
-		// reporting back, which cancels main's "did not start" watchdog. The one
-		// non-push call in this namespace: it reports an outcome, it does not ask
-		// main to do anything.
-		reportCorrectiveResult: (result: TtsrCorrectiveResult): Promise<void> =>
-			ipcRenderer.invoke('ttsr:correctiveResult', result),
+		claimSteeringRequest: (request: TtsrSteeringClaim): Promise<boolean> =>
+			ipcRenderer.invoke('ttsr:claimSteeringRequest', request),
 
 		// ── Rule management (project-scoped; every call names its project) ──
 

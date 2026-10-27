@@ -129,25 +129,10 @@ describe('TtsrRulesPanel', () => {
 		expect(window.maestro.settings.set).not.toHaveBeenCalled();
 	});
 
-	it('clears contextMode back to the global default when set to empty', async () => {
-		window.maestro.ttsr.listRules = vi
-			.fn()
-			.mockResolvedValue(
-				listResult({ settings: { enabled: true, disabledRules: [], contextMode: 'discard' } })
-			);
-
+	it('explains native steering and removes legacy kill/discard choices', async () => {
 		render(<TtsrRulesPanel theme={theme} projectRoot={PROJECT} />);
-		await waitFor(() => expect(window.maestro.ttsr.listRules).toHaveBeenCalled());
-
-		fireEvent.change(screen.getByRole('combobox', { name: 'On interrupt' }), {
-			target: { value: '' },
-		});
-
-		// Undefined, not 'keep': the project stops stating an opinion so the global
-		// setting applies again.
-		expect(window.maestro.ttsr.writeProjectSettings).toHaveBeenCalledWith(PROJECT, {
-			contextMode: undefined,
-		});
+		expect(await screen.findByText(/Guidance uses Steer/)).toBeInTheDocument();
+		expect(screen.queryByRole('combobox', { name: 'On interrupt' })).not.toBeInTheDocument();
 	});
 
 	it('hands rule authoring to the agent with the request folded in', async () => {
@@ -454,7 +439,9 @@ describe('TtsrRulesPanel', () => {
 
 			render(<TtsrRulesPanel theme={theme} projectRoot={PROJECT} />);
 
-			expect(await screen.findByText(/1 match · last interrupted just now/)).toBeInTheDocument();
+			expect(
+				await screen.findByText(/1 match · last correction requested just now/)
+			).toBeInTheDocument();
 		});
 
 		// "0 matches" on every rule would bury the one that actually fired.

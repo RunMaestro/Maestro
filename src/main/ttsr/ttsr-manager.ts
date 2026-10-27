@@ -81,6 +81,8 @@ export interface TtsrObserveContext {
 	cwd: string;
 	/** Provider conversation id, once the `session-id` event has landed. */
 	providerSessionId?: string;
+	/** Reject async structural work whose observed turn has ended or been replaced. */
+	isCurrent?(): boolean;
 	/**
 	 * Pre-resolved gate + rules for this event. Callers on the hot path (the
 	 * runtime) always pass it; without it the manager falls back to its
@@ -342,6 +344,7 @@ export class TtsrManager {
 					snapshot.content,
 					snapshot.filePath
 				);
+				if (ctx.isCurrent && !ctx.isCurrent()) return [];
 				if (matchedText === null) continue;
 
 				this.store.noteInjection(key, rule.name);
@@ -450,6 +453,15 @@ export class TtsrManager {
 		const state = this.stateOf(sessionId);
 		if (!state || count <= 0) return;
 		state.deferred = state.deferred.slice(count);
+	}
+
+	/** Atomically hand these exact deferred matches to the native queue owner. */
+	claimDeferred(sessionId: string, matches: readonly TtsrMatch[]): boolean {
+		const state = this.stateOf(sessionId);
+		if (!state || !matches.every((match) => state.deferred.includes(match))) return false;
+		const claimed = new Set(matches);
+		state.deferred = state.deferred.filter((match) => !claimed.has(match));
+		return true;
 	}
 
 	/** True while this conversation still owes its next prompt a reminder. */
