@@ -26,7 +26,7 @@ import { DEFAULT_TTSR_PROJECT_SETTINGS } from '../../shared/ttsr-types';
 import type { ParsedEvent } from '../parsers/agent-output-parser';
 import { loadTtsrConfigDetailed, type LoadTtsrConfigResult } from './config/ttsr-config-loader';
 import { renderTtsrInterrupt, renderTtsrReminder } from './ttsr-injection';
-import { canonicalJson } from '../../shared/canonicalJson';
+import { sameTtsrRuleDefinition } from './ttsr-matcher';
 import { generateUUID } from '../../shared/uuid';
 import { TtsrManager, type TtsrMatch, type TtsrObserveContext } from './ttsr-manager';
 import type { TtsrStatePersistence } from './ttsr-state-persistence';
@@ -440,13 +440,7 @@ export class TtsrRuntime {
 		if (!match.projectRoot) return true;
 		const entry = this.entry(match.projectRoot);
 		return (
-			entry.settings.enabled &&
-			entry.rules.some(
-				(rule) =>
-					rule === match.rule ||
-					canonicalJson({ ...rule, compiledCondition: undefined }) ===
-						canonicalJson({ ...match.rule, compiledCondition: undefined })
-			)
+			entry.settings.enabled && entry.rules.some((rule) => sameTtsrRuleDefinition(rule, match.rule))
 		);
 	}
 

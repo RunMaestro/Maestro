@@ -9,6 +9,7 @@
 
 import * as path from 'path';
 import picomatch from 'picomatch';
+import { canonicalJson } from '../../shared/canonicalJson';
 import type { AgentId } from '../../shared/agentIds';
 import {
 	ttsrScopeCarriesPath,
@@ -16,6 +17,15 @@ import {
 	type TtsrInterruptMode,
 	type TtsrScope,
 } from '../../shared/ttsr-types';
+
+/** Rule reloads rebuild compiled regexes; compare their source definition, not object identity. */
+export function sameTtsrRuleDefinition(a: LoadedTtsrRule, b: LoadedTtsrRule): boolean {
+	return (
+		a === b ||
+		canonicalJson({ ...a, compiledCondition: undefined }) ===
+			canonicalJson({ ...b, compiledCondition: undefined })
+	);
+}
 
 /** Which stream a candidate match came from. Same vocabulary as `scope`. */
 export type TtsrMatchSource = TtsrScope;

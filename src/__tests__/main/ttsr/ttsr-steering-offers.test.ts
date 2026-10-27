@@ -428,6 +428,50 @@ describe('TTSR AST transaction regressions', () => {
 			runtime.stateStore.getRuleState(ttsrConversationKey(sessionId, 'provider-1'), rule.name)
 		).toBeNull();
 	});
+	it('accepts unchanged rule definitions reloaded during an AST await', async () => {
+		let release!: (value: string | null) => void;
+		findAst.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					release = resolve;
+				})
+		);
+		const rules = [{ ...astRule }];
+		const { runtime } = setup(rules);
+		runtime.observe(sessionId, event('reload'));
+		rules[0] = { ...astRule, compiledCondition: [] };
+		runtime.invalidateRules('/project');
+		release('console.log(x)');
+		await runtime.flushAst();
+		expect(runtime.manager.peekDeferred(sessionId)).toHaveLength(1);
+	});
+	it.each(['edited', 'disabled'] as const)(
+		'rejects %s rules during an AST await without charging history',
+		async (change) => {
+			let release!: (value: string | null) => void;
+			findAst.mockImplementationOnce(
+				() =>
+					new Promise((resolve) => {
+						release = resolve;
+					})
+			);
+			const rules = [{ ...astRule }];
+			const state = setup(rules);
+			state.runtime.observe(sessionId, event(change));
+			if (change === 'edited') rules[0] = { ...astRule, content: 'Changed guidance.' };
+			else state.disableRule();
+			state.runtime.invalidateRules('/project');
+			release('console.log(x)');
+			await state.runtime.flushAst();
+			expect(state.runtime.manager.peekDeferred(sessionId)).toEqual([]);
+			expect(
+				state.runtime.stateStore.getRuleState(
+					ttsrConversationKey(sessionId, 'provider-1'),
+					rule.name
+				)
+			).toBeNull();
+		}
+	);
 	it('does not charge earlier AST hits when a later rule finishes after turn replacement', async () => {
 		let release!: (value: string | null) => void;
 		findAst.mockResolvedValueOnce('console.log(x)').mockImplementationOnce(

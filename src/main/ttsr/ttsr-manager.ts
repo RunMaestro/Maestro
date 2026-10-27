@@ -26,6 +26,7 @@ import {
 	findRegexMatch,
 	interruptModeAllows,
 	ruleAppliesToContext,
+	sameTtsrRuleDefinition,
 	type TtsrDisposition,
 	type TtsrMatchSource,
 } from './ttsr-matcher';
@@ -408,7 +409,9 @@ export class TtsrManager {
 		const key = this.keyFor(sessionId);
 		const matches: TtsrMatch[] = [];
 		for (const match of candidates) {
-			if (!current.rules.includes(match.rule) || !this.isEligible(sessionId, match.rule)) continue;
+			const rule = current.rules.find((candidate) => sameTtsrRuleDefinition(candidate, match.rule));
+			if (!rule || !this.isEligible(sessionId, rule)) continue;
+			match.rule = rule;
 			this.injections.set(
 				match,
 				this.store.reserveInjection(key, match.rule.name, this.messageCountFor(sessionId))
