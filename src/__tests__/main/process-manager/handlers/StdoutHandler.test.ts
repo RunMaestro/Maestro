@@ -3606,6 +3606,42 @@ describe('StdoutHandler - single JSON parse per line', () => {
 			expect(proc.streamedText).toBe('Answer.');
 		});
 
+		it.each([
+			['thinking', 'text'],
+			['text', 'thinking'],
+		])(
+			'does not duplicate separate %s and %s closing events after interleaved deltas',
+			(first, second) => {
+				const { handler, emitter, sessionId, proc } = createTestContext({
+					isStreamJsonMode: true,
+					toolType: 'claude-code',
+					outputParser: new ClaudeOutputParser(),
+				});
+				const thinkingSpy = vi.fn();
+				emitter.on('thinking-chunk', thinkingSpy);
+				sendJsonLine(handler, sessionId, thinkingDelta('Reason '));
+				sendJsonLine(handler, sessionId, textDelta('Answer.'));
+				sendJsonLine(handler, sessionId, thinkingDelta('done.'));
+				sendJsonLine(handler, sessionId, {
+					type: 'assistant',
+					message: { content: [{ type: 'tool_use', id: 'tool', name: 'Read', input: {} }] },
+				});
+				for (const kind of [first, second])
+					sendJsonLine(handler, sessionId, {
+						type: 'assistant',
+						message: {
+							content: [
+								kind === 'thinking'
+									? { type: 'thinking', thinking: 'Reason done.' }
+									: { type: 'text', text: 'Answer.' },
+							],
+						},
+					});
+				expect(proc.streamedText).toBe('Answer.');
+				expect(thinkingSpy.mock.calls.map((c) => c[1])).toEqual(['Reason ', 'Answer.', 'done.']);
+			}
+		);
+
 		it('appends the assistant text normally when no deltas preceded it (old CLI / flag absent)', () => {
 			const { handler, emitter, sessionId, proc } = createTestContext({
 				isStreamJsonMode: true,

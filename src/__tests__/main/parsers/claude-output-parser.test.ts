@@ -1041,6 +1041,49 @@ describe('ClaudeOutputParser', () => {
 			});
 
 		it.each([
+			['thinking', 'text'],
+			['text', 'thinking'],
+		])('consumes only each streamed content kind when closing %s then %s', (first, second) => {
+			const p = new ClaudeOutputParser();
+			for (const kind of ['thinking', 'text'])
+				p.parseJsonLine(
+					streamEvent({
+						type: 'content_block_delta',
+						delta:
+							kind === 'text'
+								? { type: 'text_delta', text: 'answer' }
+								: { type: 'thinking_delta', thinking: 'reason' },
+					})
+				);
+			const close = (kind: string, parent: string | null = null) =>
+				p.parseJsonLine(
+					JSON.stringify({
+						type: 'assistant',
+						parent_tool_use_id: parent,
+						message: {
+							content: [
+								kind === 'text'
+									? { type: 'text', text: 'answer' }
+									: { type: 'thinking', thinking: 'reason' },
+							],
+						},
+					})
+				);
+			expect(close(first, 'other-parent')?.textAlreadyStreamed).toBeUndefined();
+			const tools = p.parseJsonLine(
+				JSON.stringify({
+					type: 'assistant',
+					message: { content: [{ type: 'tool_use', id: 'tool', name: 'Read', input: {} }] },
+				})
+			);
+			expect(tools?.toolUseBlocks).toHaveLength(1);
+			expect(close(first)?.textAlreadyStreamed).toBe(true);
+			expect(close(second)?.textAlreadyStreamed).toBe(true);
+			expect(close('text')?.textAlreadyStreamed).toBeUndefined();
+			expect(close('thinking')?.textAlreadyStreamed).toBeUndefined();
+		});
+
+		it.each([
 			['text_delta', 'task-parent'],
 			['thinking_delta', 'task-parent'],
 			['text_delta', null],

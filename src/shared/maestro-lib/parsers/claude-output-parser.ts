@@ -197,14 +197,11 @@ function isSubagentMessage(msg: ClaudeRawMessage): boolean {
 export class ClaudeOutputParser implements AgentOutputParser {
 	readonly agentId: ToolType = 'claude-code';
 
-	/**
-	 * Set to true when a prose (text_delta / thinking_delta) stream_event has been
-	 * emitted for the in-flight assistant message. When the complete 'assistant'
-	 * event for that message arrives, it is stamped textAlreadyStreamed: true and
-	 * this marker resets. This is how the parser avoids downstream double-counting
-	 * of prose that was already delivered token-by-token.
+	/** Streamed text and reasoning are completed by separate assistant events.
+	 * Consume only the kind present in a closing event, scoped to its parent.
 	 */
-	private readonly streamedProseParents = new Set<string | undefined>();
+	private readonly streamedTextParents = new Set<string | undefined>();
+	private readonly streamedThinkingParents = new Set<string | undefined>();
 
 	/**
 	 * Correlates a tool_use id (from an assistant message) with its tool name so
@@ -372,7 +369,8 @@ export class ClaudeOutputParser implements AgentOutputParser {
 			// snapshot rather than inheriting this one.
 			this.lastCallOccupancy = undefined;
 			this.callUsageSeen.clear();
-			this.streamedProseParents.clear();
+			this.streamedTextParents.clear();
+			this.streamedThinkingParents.clear();
 
 			return event;
 		}
@@ -392,11 +390,18 @@ export class ClaudeOutputParser implements AgentOutputParser {
 			const contentToEmit = thinkingText || text;
 			const callUsage = this.newCallUsage(msg);
 
-			// If prose deltas already streamed for this message via stream_event,
-			// its text reached downstream consumers token-by-token. Stamp the flag
-			// so they skip re-ingesting, then reset the marker for the next message.
+			// A tool-only event must not consume another content block's marker.
+			// Mixed closing events emit reasoning first, as before; consume both kinds
+			// they contain while preserving a separate pending text/thinking closure.
+			const parent = normalizeParentToolUseId(msg);
 			const textAlreadyStreamed =
-				this.streamedProseParents.delete(normalizeParentToolUseId(msg)) || undefined;
+				(thinkingText
+					? this.streamedThinkingParents.has(parent)
+					: text
+						? this.streamedTextParents.has(parent)
+						: false) || undefined;
+			if (text) this.streamedTextParents.delete(parent);
+			if (thinkingText) this.streamedThinkingParents.delete(parent);
 
 			return {
 				type: 'text',
@@ -476,7 +481,7 @@ export class ClaudeOutputParser implements AgentOutputParser {
 		const delta = event.delta;
 
 		if (delta.type === 'text_delta' && delta.text) {
-			this.streamedProseParents.add(normalizeParentToolUseId(msg));
+			this.streamedTextParents.add(normalizeParentToolUseId(msg));
 			return {
 				type: 'text',
 				text: delta.text,
@@ -488,7 +493,7 @@ export class ClaudeOutputParser implements AgentOutputParser {
 		}
 
 		if (delta.type === 'thinking_delta' && delta.thinking) {
-			this.streamedProseParents.add(normalizeParentToolUseId(msg));
+			this.streamedThinkingParents.add(normalizeParentToolUseId(msg));
 			return {
 				type: 'text',
 				text: delta.thinking,
