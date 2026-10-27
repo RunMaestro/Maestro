@@ -1012,7 +1012,7 @@ describe('CueEngine session lifecycle', () => {
 });
 
 describe('plugin source runtime dispatch acknowledgement', () => {
-	it('finishes initialization after dispatching every startup subscription', () => {
+	it('finishes initialization after dispatching every startup subscription', async () => {
 		const session = createMockSession();
 		mockDetailedResult = null;
 		mockLoadCueConfig.mockReturnValue(
@@ -1038,7 +1038,7 @@ describe('plugin source runtime dispatch acknowledgement', () => {
 			clearFanInState: vi.fn(),
 		});
 		try {
-			expect(service.initSession(session, { reason: 'system-boot' })).toMatchObject({
+			expect(await service.initSession(session, { reason: 'system-boot' })).toMatchObject({
 				kind: 'loaded',
 			});
 			expect(dispatch).toHaveBeenCalledTimes(2);
@@ -1047,7 +1047,7 @@ describe('plugin source runtime dispatch acknowledgement', () => {
 		}
 	});
 
-	it('continues initializing subscriptions after one plugin consumer registration fails', () => {
+	it('continues initializing subscriptions after one plugin consumer registration fails', async () => {
 		const session = createMockSession();
 		const subscription = {
 			name: 'failed-plugin',
@@ -1083,7 +1083,7 @@ describe('plugin source runtime dispatch acknowledgement', () => {
 			clearFanInState: vi.fn(),
 		});
 		try {
-			expect(service.initSession(session, { reason: 'system-boot' })).toMatchObject({
+			expect(await service.initSession(session, { reason: 'system-boot' })).toMatchObject({
 				kind: 'loaded',
 			});
 			expect(register).toHaveBeenCalledTimes(2);
@@ -1096,7 +1096,7 @@ describe('plugin source runtime dispatch acknowledgement', () => {
 		expect(unregister).toHaveBeenCalledTimes(1);
 	});
 
-	it('holds acknowledged plugin queue entries when a YAML refresh loses only live owner visibility', () => {
+	it('holds acknowledged plugin queue entries when a YAML refresh loses only live owner visibility', async () => {
 		const session = createMockSession();
 		mockLoadCueConfig.mockReturnValue(createMockConfig({ subscriptions: [] }));
 		mockDetailedResult = null;
@@ -1116,9 +1116,9 @@ describe('plugin source runtime dispatch acknowledgement', () => {
 			clearFanInState: vi.fn(),
 		});
 		try {
-			service.initSession(session, { reason: 'system-boot' });
+			await service.initSession(session, { reason: 'system-boot' });
 			visible = false;
-			expect(service.refreshSession(session.id, session.projectRoot)).toMatchObject({
+			expect(await service.refreshSession(session.id, session.projectRoot)).toMatchObject({
 				reloaded: false,
 				configRemoved: false,
 			});

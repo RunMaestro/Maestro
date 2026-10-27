@@ -363,13 +363,14 @@ describe('CueEngine standalone: catch-up after the host slept or paused', () => 
 		vi.useRealTimers();
 	});
 
-	it('reconciles once over the slept window when the heartbeat fires first after the jump', () => {
+	it('reconciles once over the slept window when the heartbeat fires first after the jump', async () => {
 		const engine = startEngine();
+		await vi.advanceTimersByTimeAsync(0);
 		const sleptAt = storedHeartbeat;
 		expect(sleptAt).toBe(Date.now());
 
 		jumpWallClock(10 * 60_000);
-		vi.advanceTimersByTime(30_000);
+		await vi.advanceTimersByTimeAsync(30_000);
 
 		expect(mockReconcileMissedTimeEvents).toHaveBeenCalledTimes(1);
 		expect(mockReconcileMissedTimeEvents.mock.calls[0][0]).toMatchObject({
@@ -380,19 +381,20 @@ describe('CueEngine standalone: catch-up after the host slept or paused', () => 
 		// The wake restarted the heartbeat, which wrote the new time.
 		expect(storedHeartbeat).toBe(Date.now());
 
-		for (let i = 0; i < 5; i++) vi.advanceTimersByTime(30_000);
+		for (let i = 0; i < 5; i++) await vi.advanceTimersByTimeAsync(30_000);
 		expect(mockReconcileMissedTimeEvents).toHaveBeenCalledTimes(1);
 
 		engine.stop();
 	});
 
-	it('logs the gap once through the engine logger', () => {
+	it('logs the gap once through the engine logger', async () => {
 		const deps = createMockDeps({ runnerMode: 'standalone' });
 		const engine = new CueEngine(deps);
 		engine.start();
+		await vi.advanceTimersByTimeAsync(0);
 
 		jumpWallClock(10 * 60_000);
-		vi.advanceTimersByTime(30_000);
+		await vi.advanceTimersByTimeAsync(30_000);
 
 		const sleepLines = vi
 			.mocked(deps.onLog)
@@ -422,16 +424,17 @@ describe('CueEngine standalone: catch-up after the host slept or paused', () => 
 		engine.stop();
 	});
 
-	it('does nothing while a drain is in progress', () => {
-		const engine = startEngine();
+	it('does nothing while a drain is in progress', async () => {
+		const engine = new CueEngine(createMockDeps({ runnerMode: 'standalone' }));
+		await engine.start();
 		void engine.drain({ timeoutMs: 60_000 });
 		mockUpdateHeartbeat.mockClear();
 
 		jumpWallClock(10 * 60_000);
-		vi.advanceTimersByTime(30_000);
+		await vi.advanceTimersByTimeAsync(30_000);
 
-		// The tick ran (and wrote), but the drain suppressed the catch-up.
-		expect(mockUpdateHeartbeat).toHaveBeenCalledTimes(1);
+		// A drain suppresses both heartbeat writes and missed-event catch-up.
+		expect(mockUpdateHeartbeat).not.toHaveBeenCalled();
 		expect(mockReconcileMissedTimeEvents).not.toHaveBeenCalled();
 		engine.forceStop();
 	});

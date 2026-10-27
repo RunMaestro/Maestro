@@ -1,10 +1,14 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
 	LocalMemoryRelevance,
 	MEMORY_RELEVANCE_DIGEST,
 } from '../../../main/pianola/memory-relevance';
 import type { MemoryCandidate } from '../../../main/pianola/memory-candidates';
 import type { fetchWithTimeout } from '../../../main/utils/fetchWithTimeout';
+
+afterEach(() => {
+	vi.unstubAllEnvs();
+});
 
 const candidates: MemoryCandidate[] = [
 	{
@@ -392,6 +396,7 @@ describe('local memory semantic qualification contract', () => {
 		expect(heads).toBe(2);
 	});
 	it('drops a cached decomposition when the model changes', async () => {
+		vi.stubEnv('NAN_API_KEY', 'synthetic-hosted-key');
 		let heads = 0;
 		const request: typeof fetchWithTimeout = async (url, options) => {
 			const body = options?.body

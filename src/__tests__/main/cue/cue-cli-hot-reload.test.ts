@@ -263,17 +263,19 @@ describe('CLI interval hot reload in a running desktop runtime', () => {
 			name: 'completion',
 			json: true,
 		});
-		runtime.initSession(readSessions()[1], { reason: 'system-boot' });
+		await runtime.initSession(readSessions()[1], { reason: 'system-boot' });
 		await Promise.all(watcherReady);
 		expect(dispatch).toHaveBeenCalledTimes(1);
 		const previous = registry.get('target');
+		const refresh = vi.spyOn(runtime, 'refreshSession');
 		ioFaults.failedReads = 1;
 		await expect(runtime.refreshSession('target', root)).rejects.toMatchObject({ code: 'EIO' });
 		expect(registry.get('target')).toBe(previous);
 		for (const [callback, delay] of intervals.mock.calls) {
 			if (delay === 30_000) (callback as () => void)();
 		}
-		await vi.waitFor(() => expect(dispatch).toHaveBeenCalledTimes(2), { timeout: 4000 });
+		await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(2), { timeout: 4000 });
+		expect(dispatch).toHaveBeenCalledTimes(1);
 		expect(registry.get('target')?.triggerSources).toHaveLength(1);
 		expect(watcherReady).toHaveLength(1);
 	});

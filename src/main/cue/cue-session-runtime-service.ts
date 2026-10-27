@@ -647,9 +647,16 @@ export function createCueSessionRuntimeService(
 		sessionName?: string;
 		activeCount?: number;
 	}> {
-		const session = getSession(sessionId);
-		if (!session) return { reloaded: false, configRemoved: false };
 		const hadSession = registry.has(sessionId);
+		const session = getSession(sessionId);
+		if (!session) {
+			if (hadSession) {
+				deps.retainQueue(sessionId, (entry) =>
+					entry.event.type === 'time.heartbeat' ? 'session-missing' : null
+				);
+			}
+			return { reloaded: false, configRemoved: false };
+		}
 		// Snapshot GitHub-seen IDs BEFORE teardown so we can diff against the
 		// post-reload set and clear seen rows for removed GitHub subscriptions.
 		const oldGitHubIds = collectGitHubSubIds(sessionId);
@@ -681,7 +688,7 @@ export function createCueSessionRuntimeService(
 				heldQueues.add(sessionId);
 			} else {
 				deps.retainQueue(sessionId, (entry) =>
-					entry.event.type === 'app.startup' ? null : 'subscription-missing'
+					entry.event.type === 'time.heartbeat' ? 'subscription-missing' : null
 				);
 			}
 		}
