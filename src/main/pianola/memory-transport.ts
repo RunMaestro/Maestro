@@ -244,9 +244,13 @@ export class MemoryTransport {
 					gate.state !== 'active' &&
 					this.count('SELECT COUNT(*) n FROM memory_transport_permits WHERE ' + ACTIVE) === 0 &&
 					(gate.state === 'bootstrap' ||
-						this.count(
-							'SELECT COUNT(*) n FROM memory_transport_owners WHERE drain_fence IS NOT (SELECT fence FROM memory_transport_gate WHERE id=1)'
-						) === 0)
+						(
+							this.db
+								.prepare(
+									'SELECT COUNT(*) n FROM memory_transport_owners WHERE id<>? AND drain_fence IS NOT (SELECT fence FROM memory_transport_gate WHERE id=1)'
+								)
+								.get(runtime) as { n: number }
+						).n === 0)
 				) {
 					const epoch = crypto.randomUUID();
 					this.db

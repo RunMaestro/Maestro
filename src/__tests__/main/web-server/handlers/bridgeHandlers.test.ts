@@ -961,4 +961,20 @@ describe('Pianola memory over the bridge', () => {
 		expect(handler).toHaveBeenCalledOnce();
 		expect(send.mock.calls[0][1]).toMatchObject({ requestId: 22, ok: true, result: status });
 	});
+
+	it('allows the portfolio read and recovery channels', () => {
+		for (const channel of [
+			'pianola:get-programs',
+			'pianola:get-asks',
+			'pianola:get-brief',
+			'pianola:supervise-program',
+			'pianola:set-program-status',
+			'pianola:resolve-ask',
+			'pianola:dismiss-ask',
+			'pianola:revise-plan-task',
+			'pianola:skip-plan-task',
+		]) {
+			expect(isRemoteMethodAllowed(channel)).toBe(true);
+		}
+	});
 });

@@ -243,18 +243,16 @@ it.each(['fence', 'abort'])('does not send a retry after %s during backoff', asy
 	release(f.db, item);
 });
 
-it('keeps previously drained owners retired across repeated tracked-bank restarts', async () => {
+it('lets newly registered idle owners resume a fully drained bank immediately', async () => {
 	const f = await fixture(0);
 	expect(f.db.transport.ready(f.runtime)).toBe(true);
 	f.db.transport.fence();
 	f.db.transport.drainOwner(f.runtime);
 	const second = f.db.transport.registerOwner();
-	f.db.transport.drainOwner(second);
 	expect(f.db.transport.ready(second)).toBe(true);
 	f.db.transport.fence();
 	f.db.transport.drainOwner(second);
 	const third = f.db.transport.registerOwner();
-	f.db.transport.drainOwner(third);
 	expect(f.db.transport.ready(third)).toBe(true);
 });
 

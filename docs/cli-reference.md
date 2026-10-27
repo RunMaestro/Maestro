@@ -1975,7 +1975,7 @@ Test an SSH remote connection and report what the remote answered
 | Option                  | Description                                          | Default |
 | ----------------------- | ---------------------------------------------------- | ------- |
 | `-a, --agent <command>` | Also check whether this binary is on the remote PATH | -       |
-| `--timeout <seconds>`   | Give up after this many seconds (default: 60)        | -       |
+| `--timeout <seconds>`   | Give up after this many seconds                      | `60`    |
 | `--json`                | Output as JSON (for scripting)                       | -       |
 
 `test-ssh-remote` uses the same connection options as agent spawning and prints the remote hostname, so tunnel and `ProxyCommand` errors can be caught during setup. It also works while the desktop is closed.
@@ -2423,6 +2423,38 @@ Save a learned decision profile from --file or stdin (per-project or global)
 | `--pair-count <n>` | How many decision pairs this profile was synthesized from      | -       |
 | `--json`           | Output as JSON (for scripting)                                 | -       |
 
+## `maestro-cli pianola memory [action] [value]`
+
+Backfill and retrieve evidence-backed user and project memory
+
+| Option                     | Description                                                                                               | Default |
+| -------------------------- | --------------------------------------------------------------------------------------------------------- | ------- |
+| `--project <path>`         | Project scope                                                                                             | -       |
+| `--provider <id>`          | Historical provider for a custom root                                                                     | -       |
+| `--root <path>`            | Custom account/data root                                                                                  | -       |
+| `--mine`                   | Explicitly attribute selected pools to your human-authored history                                        | -       |
+| `--mode <mode>`            | local, hosted, or batch                                                                                   | -       |
+| `--hosted-provider <id>`   | Hosted extraction provider: openai or nan                                                                 | -       |
+| `--model <model>`          | Extraction model                                                                                          | -       |
+| `--endpoint <url>`         | Loopback local extraction endpoint                                                                        | -       |
+| `--qualify-model <model>`  | Recall qualification model (default: qwen3:8b; glm5.3-flash measured equal quality at 66% less latency)   | -       |
+| `--qualify-provider <id>`  | Recall qualification provider: local or hosted                                                            | -       |
+| `--qualify-endpoint <url>` | Qualification endpoint (loopback for local)                                                               | -       |
+| `--rerank-model <model>`   | Hosted recall reranker model (default: rerank)                                                            | -       |
+| `--rerank-endpoint <url>`  | Hosted reranker endpoint                                                                                  | -       |
+| `--tokens <n>`             | Total token cap including reservations                                                                    | -       |
+| `--dollars <n>`            | Total cost cap including reservations                                                                     | -       |
+| `--exclude <paths...>`     | Exclude absolute roots/projects/files before reads                                                        | -       |
+| `--consent-hosted`         | Consent to off-device processing of selected excerpts                                                     | -       |
+| `--kind <kind>`            | preference, project, decision, episode, commitment, or context                                            | -       |
+| `--history`                | List-only: browse all lifecycle statuses and dates                                                        | -       |
+| `--intent <mode>`          | Recall: current, as-of, previous, proposed, contested, or history (default: current; --qualify may infer) | -       |
+| `--at <date>`              | Required instant for --intent as-of                                                                       | -       |
+| `--qualify`                | Opt into slower, fallible local model review; not a correctness guarantee                                 | -       |
+| `--rerank`                 | Opt into hosted reranking; sends the question and shortlisted assertions                                  | -       |
+| `--out <file>`             | Write JSON output to a file                                                                               | -       |
+| `--json`                   | JSON output                                                                                               | -       |
+
 ## `maestro-cli pianola log`
 
 Show recent Pianola decisions from the audit log
@@ -2519,6 +2551,23 @@ Save a plan from --file or piped stdin (validated before write)
 | --------------- | ---------------------------------------------------- | ------- |
 | `--file <path>` | Read the plan JSON from this file (else reads stdin) | -       |
 | `--json`        | Output as JSON (for scripting)                       | -       |
+
+## `maestro-cli pianola plan revise <planId> <taskId>`
+
+Revise a reviewed or failed task and queue it again without replacing its plan
+
+| Option            | Description                                                       | Default |
+| ----------------- | ----------------------------------------------------------------- | ------- |
+| `--prompt <text>` | Corrected implementation instructions; validation stays unchanged | -       |
+| `--json`          | Output as JSON (for scripting)                                    | -       |
+
+## `maestro-cli pianola plan skip <planId> <taskId>`
+
+Skip a failed task while keeping its dependents blocked
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
 
 ## `maestro-cli pianola plan list`
 
@@ -2962,7 +3011,7 @@ Show the window state, the agent, the mode, and the current conversation
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
-## `maestro-cli quick-chat send [message...]`
+## `maestro-cli quick-chat send [message]`
 
 Send a message in the current Quick Chat (starts a chat if none is open); --image attaches images
 

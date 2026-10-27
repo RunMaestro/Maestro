@@ -522,10 +522,16 @@ export async function runWatchIteration(
 		const profile = deps.resolveProfile?.(target.projectPath) ?? null;
 		const relevant = messageId ? messages.find((m) => m.id === messageId) : undefined;
 		const question = relevant?.awaitingInput?.prompt ?? relevant?.content;
-		const context =
-			question?.trim() && deps.resolveContext
-				? await deps.resolveContext(question, target.projectPath)
-				: null;
+		let context: string | null = null;
+		if (question?.trim() && deps.resolveContext) {
+			try {
+				context = await deps.resolveContext(question, target.projectPath);
+			} catch (error) {
+				deps.log(
+					`memory recall failed; continuing without advisory context: ${error instanceof Error ? error.message : String(error)}`
+				);
+			}
+		}
 		if (profile || context) {
 			const handoffDecision: PianolaDecision = {
 				action: 'escalate',

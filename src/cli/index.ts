@@ -239,6 +239,7 @@ import { pianolaProfile, pianolaSetProfile } from './commands/pianola-profile';
 import {
 	pianolaPlanSet,
 	pianolaPlanRevise,
+	pianolaPlanSkip,
 	pianolaPlanList,
 	pianolaPlanShow,
 	pianolaOrchestrate,
@@ -3014,6 +3015,12 @@ pianolaPlan
 	)
 	.option('--json', 'Output as JSON (for scripting)')
 	.action((planId, taskId, options) => pianolaPlanRevise(planId, taskId, options));
+
+pianolaPlan
+	.command('skip <planId> <taskId>')
+	.description('Skip a failed task while keeping its dependents blocked')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action((planId, taskId, options) => pianolaPlanSkip(planId, taskId, options));
 
 pianolaPlan
 	.command('list')

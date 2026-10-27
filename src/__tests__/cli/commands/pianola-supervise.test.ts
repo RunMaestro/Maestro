@@ -97,6 +97,14 @@ describe('pianolaSuperviseWatch dedupe', () => {
 		expect(exitSpy).not.toHaveBeenCalled();
 	});
 
+	it('rejects invalid idle hours without retaining the store lock', () => {
+		expect(() =>
+			pianolaSuperviseWatch('tab-1', { agent: 'agent-1', idleHours: 'invalid', json: true })
+		).toThrow('__exit__');
+		pianolaSuperviseWatch('tab-1', { agent: 'agent-1', idleHours: '2', json: true });
+		expect(readPianolaSupervisorTargets()[0].idleHours).toBe(2);
+	});
+
 	it('keeps separate targets for a different tab or agent', () => {
 		pianolaSuperviseWatch('tab-1', { agent: 'agent-1', json: true });
 		pianolaSuperviseWatch('tab-2', { agent: 'agent-1', json: true });

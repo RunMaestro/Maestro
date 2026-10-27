@@ -142,6 +142,30 @@ describe('memory qualification configuration', () => {
 	});
 });
 
+describe('memory root attribution', () => {
+	it('attributes only enabled roots without re-enabling disabled history', async () => {
+		const disabled = {
+			provider: 'codex',
+			path: '/disabled',
+			userId: null,
+			authorship: 'unknown' as const,
+			enabled: false,
+		};
+		const enabled = { ...disabled, provider: 'omp', path: '/enabled', enabled: true };
+		sendCommandMock.mockImplementation(async (command: { args: unknown[] }) => {
+			const request = command.args[0] as { action: string };
+			if (request.action === 'status')
+				return { ok: true, result: { config: { ...baseConfig, roots: [disabled, enabled] } } };
+			return { ok: true, result: {} };
+		});
+		await pianolaMemory('configure', [], { mine: true });
+		expect(sentConfigure().roots).toEqual([
+			disabled,
+			{ ...enabled, userId: 'owner', authorship: 'human' },
+		]);
+	});
+});
+
 describe('memory rerank configuration', () => {
 	it('sets the hosted reranker without changing extraction consent', async () => {
 		await pianolaMemory('configure', [], {

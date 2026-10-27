@@ -128,12 +128,9 @@ export async function pianolaMemory(action: string, words: string[], options: Me
 					},
 				];
 			} else if (options.mine)
-				config.roots = state.config.roots.map((r) => ({
-					...r,
-					userId: state.config.userId,
-					authorship: 'human',
-					enabled: true,
-				}));
+				config.roots = state.config.roots.map((r) =>
+					r.enabled ? { ...r, userId: state.config.userId, authorship: 'human' } : r
+				);
 			request = { action: 'configure', config };
 			break;
 		}

@@ -80,6 +80,7 @@ import {
 	pianolaOrchestrate,
 	pianolaPlanSet,
 	pianolaPlanRevise,
+	pianolaPlanSkip,
 	pianolaValidate,
 	sandboxLaunchOptions,
 	resolveExistingPianolaAgentType,
@@ -92,6 +93,7 @@ import {
 	upsertPianolaPlan,
 	updatePianolaPlans,
 	readPianolaPrograms,
+	withPianolaPlanLock,
 } from '../../../cli/services/pianola-store';
 import { runDispatch } from '../../../cli/commands/dispatch';
 
@@ -303,6 +305,24 @@ describe('pianolaOrchestrate - iteration error resilience', () => {
 		);
 		await pianolaOrchestrate('plan-1', { once: true });
 		expect(errorSpy).not.toHaveBeenCalled();
+	});
+
+	it('bounds recall and dispatches the original task when memory is unavailable', async () => {
+		const prompt = 'x'.repeat(16_001);
+		memoryRequestMock.mockRejectedValue(new Error('memory offline'));
+		vi.mocked(runDispatch).mockResolvedValue({ success: true, sessionId: 'target-tab' });
+		runIterationMock.mockImplementation(
+			async (state: OrchestratorState, deps: OrchestratorDeps) => {
+				await deps.dispatch(
+					{ id: 't', title: 'T', prompt, dependsOn: [], status: 'pending', tabId: 'target-tab' },
+					'agent-1'
+				);
+				return doneResult(state);
+			}
+		);
+		await pianolaOrchestrate('plan-1', { once: true });
+		expect(runDispatch).toHaveBeenCalledWith('agent-1', prompt, { tab: 'target-tab' });
+		expect(memoryRequestMock.mock.calls[0][0].query.query).toHaveLength(16_000);
 	});
 	it('surfaces runner configuration changes during an iteration instead of swallowing them', async () => {
 		const oldExitCode = process.exitCode;
@@ -1004,6 +1024,9 @@ describe('pianola validate CLI', () => {
 						',timedOut:false,error:null}))'
 				);
 				await pianolaValidate('plan-1', 'task-1', { json: true });
+				expect(withPianolaPlanLock).toHaveBeenCalledWith('plan-1', expect.any(Function), {
+					waitForTurn: true,
+				});
 				const result = JSON.parse(log.mock.lastCall![0] as string);
 				expect(result.verdict).toBe(verdict);
 				expect(result.runId).toBeDefined();
@@ -1207,6 +1230,32 @@ describe('pianola plan revise', () => {
 		} finally {
 			process.exitCode = exitCode;
 		}
+	});
+});
+
+describe('pianola plan skip', () => {
+	it('skips a failed task and leaves its dependents blocked', async () => {
+		vi.mocked(readSettingValue).mockReturnValue({ pianola: true });
+		const original: PianolaPlan = {
+			...PLAN,
+			tasks: [
+				{ id: 'failed', title: 'Failed', prompt: 'Old', dependsOn: [], status: 'failed' },
+				{
+					id: 'dependent',
+					title: 'Dependent',
+					prompt: 'Later',
+					dependsOn: ['failed'],
+					status: 'pending',
+				},
+			],
+		};
+		let saved = [original];
+		vi.mocked(updatePianolaPlans).mockImplementationOnce((update) => (saved = update(saved)));
+		await pianolaPlanSkip(PLAN.id, 'failed', { json: true });
+		expect(saved[0].tasks.map((task) => task.status)).toEqual(['skipped', 'blocked']);
+		expect(withPianolaPlanLock).toHaveBeenCalledWith(PLAN.id, expect.any(Function), {
+			waitForTurn: true,
+		});
 	});
 });
 

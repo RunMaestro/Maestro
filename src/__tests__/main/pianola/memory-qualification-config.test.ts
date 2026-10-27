@@ -44,6 +44,35 @@ describe('recall qualification configuration', () => {
 		).toThrow('loopback');
 	});
 
+	it('requires hosted HTTPS and does not send the NaN fallback to another provider', async () => {
+		expect(() =>
+			resolveQualification({ provider: 'hosted', model: 'q', endpoint: 'http://example.com' })
+		).toThrow('HTTPS');
+		const primary = process.env.NAN_API_KEY;
+		const fallback = process.env.NAN_BUILDERS_API_KEY;
+		const other = process.env.OTHER_PROVIDER_KEY;
+		delete process.env.NAN_API_KEY;
+		delete process.env.OTHER_PROVIDER_KEY;
+		process.env.NAN_BUILDERS_API_KEY = 'synthetic-nan-key';
+		try {
+			const gate = new LocalMemoryRelevance(vi.fn());
+			gate.configure({
+				provider: 'hosted',
+				model: 'qwen3.6',
+				endpoint: 'https://example.com',
+				apiKeyEnv: 'OTHER_PROVIDER_KEY',
+			});
+			await expect(gate.assertAvailable()).rejects.toThrow('OTHER_PROVIDER_KEY');
+		} finally {
+			if (primary === undefined) delete process.env.NAN_API_KEY;
+			else process.env.NAN_API_KEY = primary;
+			if (fallback === undefined) delete process.env.NAN_BUILDERS_API_KEY;
+			else process.env.NAN_BUILDERS_API_KEY = fallback;
+			if (other === undefined) delete process.env.OTHER_PROVIDER_KEY;
+			else process.env.OTHER_PROVIDER_KEY = other;
+		}
+	});
+
 	it('refuses an unsupported provider or a missing model', () => {
 		expect(() =>
 			resolveQualification({

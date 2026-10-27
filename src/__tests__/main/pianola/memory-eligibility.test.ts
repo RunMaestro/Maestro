@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { MemoryDatabase } from '../../../main/pianola/memory-database';
 import {
 	memoryIsEligible,
@@ -18,9 +19,7 @@ let dir: string;
 beforeEach(() => {
 	vi.useFakeTimers({ toFake: ['Date'] });
 	vi.setSystemTime(new Date(now));
-	const root = path.resolve('.verification/lifecycle-tests');
-	fs.mkdirSync(root, { recursive: true });
-	dir = fs.mkdtempSync(path.join(root, 'case-'));
+	dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pianola-lifecycle-'));
 	db = new MemoryDatabase(path.join(dir, 'memory.sqlite'));
 });
 afterEach(() => {

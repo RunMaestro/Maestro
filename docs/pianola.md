@@ -209,6 +209,8 @@ After a founder resolves blocked work, the lead uses `plan revise` to correct a 
 
 Failed tasks in the command center offer **Restart**, **Revise**, and **Skip task**. Restart reuses the original instructions; Revise replaces them before reopening the task. Skip requires confirmation, clears the failed item from the attention queue, and leaves dependent tasks blocked rather than pretending they succeeded.
 
+From the terminal, use `maestro-cli pianola plan revise <plan-id> <task-id> --prompt "<corrected instructions>"` to revise, or `maestro-cli pianola plan skip <plan-id> <task-id>` to skip with the same dependent-blocking behavior.
+
 Each fresh dispatch starts with an empty attempt-scoped check and review ledger, so findings from a rejected attempt cannot send the correction back to review. Earlier dispatch and validation events remain in the AgentRun audit history.
 
 Founder revision yields while an in-flight orchestration/validation tick holds the plan lock. Plan owners renew their lock every ten seconds; a revision can wait through a long validation while those heartbeats continue, but returns a timeout after thirty seconds without lock progress. A live PID alone does not permit indefinite waiting, and a timed-out revision neither changes the plan nor steals the lock. Other mutation waits retain their five-second deadline; dead-owner recovery remains enabled. If revision reopens a completed plan with an enabled supervised target, reconciliation automatically starts its stopped orchestrator again, including when revision races with the prior child's clean exit. Completed plans without new work, disabled targets, and paused programs remain stopped.

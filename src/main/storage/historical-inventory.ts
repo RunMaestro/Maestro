@@ -477,7 +477,18 @@ export async function* discoverHistoricalSources(
 				cwd = workspace?.cwd ?? workspace?.git_root ?? null;
 			} else if (root.provider === 'grok') {
 				sessionId = path.basename(path.dirname(file));
-				cwd = (await metadataFields(path.join(path.dirname(file), 'summary.json'))).cwd;
+				const summary = JSON.parse(
+					await fs.readFile(path.join(path.dirname(file), 'summary.json'), 'utf8')
+				) as { info?: { cwd?: unknown } };
+				const folder = path.basename(path.dirname(path.dirname(file)));
+				let decoded: string | null = null;
+				try {
+					decoded = decodeURIComponent(folder);
+				} catch {
+					decoded = null;
+				}
+				cwd = typeof summary.info?.cwd === 'string' ? summary.info.cwd : decoded;
+				if (!cwd) throw new Error(`Cannot attribute historical project: ${file}`);
 				if (await policy.excludesProject(cwd)) continue;
 			} else {
 				const stat = await fs.stat(file);

@@ -175,6 +175,8 @@ export function resolveQualification(
 		!['127.0.0.1', 'localhost', '[::1]', '::1'].includes(endpoint.hostname)
 	)
 		throw new MemoryRelevanceError('local qualification requires a loopback endpoint');
+	if (resolved.provider === 'hosted' && endpoint.protocol !== 'https:')
+		throw new MemoryRelevanceError('hosted qualification requires HTTPS');
 	return { ...resolved, endpoint: endpoint.origin };
 }
 
@@ -182,7 +184,8 @@ export function resolveQualification(
 function qualificationKey(config: MemoryQualificationConfig): string | null {
 	if (config.provider !== 'hosted') return null;
 	const name = config.apiKeyEnv ?? 'NAN_API_KEY';
-	const value = process.env[name] ?? process.env.NAN_BUILDERS_API_KEY;
+	const value =
+		process.env[name] ?? (name === 'NAN_API_KEY' ? process.env.NAN_BUILDERS_API_KEY : undefined);
 	if (!value) throw new MemoryRelevanceError(`${name} is required for hosted qualification`);
 	return value;
 }

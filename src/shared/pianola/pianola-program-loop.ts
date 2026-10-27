@@ -200,6 +200,18 @@ export async function runProgramLoopTick(
 		ensured = true;
 	}
 	if (!program.leadAgentId) return result('no-op (no lead)');
+	const reopenedTaskKeys = new Set(
+		plans.flatMap((plan) =>
+			plan.tasks
+				.filter((task) => task.status === 'pending' || task.status === 'running')
+				.map((task) => plan.id + ':' + task.id)
+		)
+	);
+	const retainedNotifications = memo.notifiedTaskIds.filter((key) => !reopenedTaskKeys.has(key));
+	if (retainedNotifications.length !== memo.notifiedTaskIds.length) {
+		memo.notifiedTaskIds = retainedNotifications;
+		await deps.persistMemo(memo);
+	}
 	let intent = memo.pendingWake;
 	const receipt = intent ? await deps.findWake(program.leadAgentId, intent.id) : undefined;
 	if (!receipt && state.leadSession?.state === 'busy') return result('no-op (busy lead)');

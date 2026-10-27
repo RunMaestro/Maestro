@@ -130,7 +130,7 @@ function extractText(content: OmpContentBlock[] | string | undefined, role?: str
 	// or an assistant quotation. Keep the payload intact, including nested tags.
 	if (role === 'user') {
 		const promptFile =
-			/^<file name="[^"\r\n]*[\\/]maestro-prompt-[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}\.txt">\r?\n([\s\S]*?)\r?\n<\/file>\r?\n?$/i.exec(
+			/^<file name="[^"\r\n]*[\\/]maestro-prompt-(?:\d+-\d+-)?[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}\.(?:txt|md)">\r?\n([\s\S]*?)\r?\n<\/file>\r?\n?$/i.exec(
 				text
 			);
 		if (promptFile) return promptFile[1];

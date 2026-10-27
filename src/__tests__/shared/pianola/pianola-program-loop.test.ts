@@ -103,6 +103,24 @@ describe('program loop', () => {
 			io.wake.mock.calls.filter(([, prompt]) => prompt.includes('task-needs-attention'))
 		).toHaveLength(1);
 	});
+
+	it('wakes again when a revised task fails a new attempt', async () => {
+		const state = blank();
+		state.plans = [{ ...plan, tasks: [{ ...plan.tasks[0], status: 'failed' }] }];
+		const io = deps();
+		io.persistMemo.mockImplementation((memo) => {
+			state.memo = JSON.parse(JSON.stringify(memo));
+		});
+		await runProgramLoopTick(state, io);
+		expect(state.memo.notifiedTaskIds).toEqual(['plan:task']);
+		state.plans = [{ ...plan, tasks: [{ ...plan.tasks[0], status: 'pending' }] }];
+		await runProgramLoopTick(state, io);
+		expect(state.memo.notifiedTaskIds).toEqual([]);
+		state.plans = [{ ...plan, tasks: [{ ...plan.tasks[0], status: 'needs_review' }] }];
+		await runProgramLoopTick(state, io);
+		expect(io.wake).toHaveBeenCalledTimes(2);
+		expect(state.memo.notifiedTaskIds).toEqual(['plan:task']);
+	});
 	it('does not resurrect manually disabled plan or lead-watch targets', async () => {
 		const state = blank();
 		state.plans = [{ ...plan, tasks: [{ ...plan.tasks[0], status: 'needs_review' }] }];

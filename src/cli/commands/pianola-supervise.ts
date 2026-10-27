@@ -113,6 +113,14 @@ export function pianolaSuperviseWatch(tabId: string, options: PianolaSuperviseWa
 	}
 
 	// Reuse an existing watcher for the same (kind, tabId, agentId) so registering
+	let parsedIdleHours: number | undefined;
+	if (options.idleHours !== undefined) {
+		const parsed = Number(options.idleHours.trim());
+		if (options.idleHours.trim() === '' || !Number.isFinite(parsed) || parsed < 0) {
+			fail('--idle-hours must be a number of hours (0 = never)', options.json);
+		}
+		parsedIdleHours = parsed;
+	}
 	// the same tab twice replaces it in place instead of spawning a second watcher
 	// that would double-answer the same prompt.
 	let target!: PianolaSupervisedTarget;
@@ -131,14 +139,7 @@ export function pianolaSuperviseWatch(tabId: string, options: PianolaSuperviseWa
 		const interval = parsePositiveInt(options.interval, 1);
 		if (interval !== undefined) target.intervalSeconds = interval;
 		// Keep a previously chosen idle timeout when re-registering without the flag.
-		let idleHours = existing?.idleHours;
-		if (options.idleHours !== undefined) {
-			const parsed = Number(options.idleHours.trim());
-			if (options.idleHours.trim() === '' || !Number.isFinite(parsed) || parsed < 0) {
-				fail('--idle-hours must be a number of hours (0 = never)', options.json);
-			}
-			idleHours = parsed;
-		}
+		const idleHours = parsedIdleHours ?? existing?.idleHours;
 		if (idleHours !== undefined) target.idleHours = idleHours;
 		return existing
 			? current.map((entry) => (entry.id === existing.id ? target : entry))

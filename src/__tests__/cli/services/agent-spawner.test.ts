@@ -4858,7 +4858,8 @@ Some text with [x] in it that's not a checkbox
 				const { args } = spawnCall();
 				const fileArg = args.find((a) => /^@.*maestro-prompt-/.test(a));
 				expect(fileArg).toBeDefined();
-				expect(args[args.indexOf(fileArg!) - 1]).toBe('--');
+				expect(args.at(-1)).toBe(fileArg);
+				expect(args[args.indexOf(fileArg!) - 1]).not.toBe('--');
 				expect(args.some((a) => a.includes('user msg'))).toBe(false);
 				expect(fs.writeFileSync).toHaveBeenCalledWith(
 					expect.stringMatching(/maestro-prompt-/),

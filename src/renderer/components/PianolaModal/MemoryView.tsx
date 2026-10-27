@@ -14,6 +14,7 @@ import type {
 import { Pager } from '../ui/Pager';
 import { usePagination } from '../../hooks/ui/usePagination';
 import { FilterInput } from '../ui/FilterInput';
+import { ipcErrorMessage } from '../../utils/ipcErrorMessage';
 
 export function MemoryView({ theme }: { theme: Theme }) {
 	const [state, setState] = useState<MemoryState | null>(null);
@@ -68,7 +69,7 @@ export function MemoryView({ theme }: { theme: Theme }) {
 		let live = true;
 		const load = () =>
 			refresh().catch((e) => {
-				if (live) setError(String(e));
+				if (live) setError(ipcErrorMessage(e));
 			});
 		void load();
 		const timer = setInterval(() => {
@@ -86,7 +87,7 @@ export function MemoryView({ theme }: { theme: Theme }) {
 			await operation();
 			await refresh();
 		} catch (e) {
-			setError(e instanceof Error ? e.message : String(e));
+			setError(ipcErrorMessage(e));
 		} finally {
 			setBusy(false);
 		}

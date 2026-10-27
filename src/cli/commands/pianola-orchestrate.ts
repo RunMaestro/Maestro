@@ -52,6 +52,8 @@ import {
 	validatePlan,
 	revisePlanTask,
 	planProgress,
+	markTaskStatus,
+	propagateBlocked,
 	type PianolaPlan,
 	type PianolaTask,
 } from '../../shared/pianola/pianola-tasks';
@@ -485,38 +487,44 @@ export async function pianolaValidate(
 	options: { json?: boolean }
 ): Promise<void> {
 	ensurePianolaEnabled(options.json);
-	const plan = getPianolaPlan(planId);
-	const task = plan?.tasks.find((entry) => entry.id === taskId);
-	if (!task?.validation) {
-		const error = !plan
-			? 'Plan not found: ' + planId
-			: !task
-				? 'Task not found: ' + taskId
-				: 'Task has no validation spec: ' + taskId;
-		if (options.json) console.log(JSON.stringify({ success: false, error }));
-		else console.error(error);
-		process.exitCode = 1;
-		return;
-	}
-	let result;
-	try {
-		result = await validateTask(planId, task);
-	} catch (error) {
-		if (!(error instanceof SandboxRunnerConfigurationError)) throw error;
-		if (options.json)
-			console.log(
-				JSON.stringify({
-					success: false,
-					code: 'PIANOLA_SANDBOX_CONFIGURATION',
-					error: error.message,
-				})
-			);
-		else console.error(error.message);
-		process.exitCode = 1;
-		return;
-	}
-	console.log(options.json ? JSON.stringify(result) : JSON.stringify(result, null, 2));
-	process.exitCode = result.verdict === 'verified' ? 0 : result.verdict === 'failed' ? 2 : 3;
+	return withPianolaPlanLock(
+		planId,
+		async () => {
+			const plan = getPianolaPlan(planId);
+			const task = plan?.tasks.find((entry) => entry.id === taskId);
+			if (!task?.validation) {
+				const error = !plan
+					? 'Plan not found: ' + planId
+					: !task
+						? 'Task not found: ' + taskId
+						: 'Task has no validation spec: ' + taskId;
+				if (options.json) console.log(JSON.stringify({ success: false, error }));
+				else console.error(error);
+				process.exitCode = 1;
+				return;
+			}
+			let result;
+			try {
+				result = await validateTask(planId, task);
+			} catch (error) {
+				if (!(error instanceof SandboxRunnerConfigurationError)) throw error;
+				if (options.json)
+					console.log(
+						JSON.stringify({
+							success: false,
+							code: 'PIANOLA_SANDBOX_CONFIGURATION',
+							error: error.message,
+						})
+					);
+				else console.error(error.message);
+				process.exitCode = 1;
+				return;
+			}
+			console.log(options.json ? JSON.stringify(result) : JSON.stringify(result, null, 2));
+			process.exitCode = result.verdict === 'verified' ? 0 : result.verdict === 'failed' ? 2 : 3;
+		},
+		{ waitForTurn: true }
+	);
 }
 
 /** Parse `--interval` as seconds ("5" or "5s"); defaults to 5, minimum 1. */
@@ -836,6 +844,41 @@ export async function pianolaPlanRevise(
 	if (options.json)
 		console.log(JSON.stringify({ success: true, planId, taskId, status: 'pending' }));
 	else console.log(`Revised Pianola task ${planId}/${taskId}; awaiting supervised dispatch.`);
+}
+
+/** Skip a failed task and leave its dependents blocked rather than pretending success. */
+export async function pianolaPlanSkip(
+	planId: string,
+	taskId: string,
+	options: { json?: boolean }
+): Promise<void> {
+	ensurePianolaEnabled(options.json);
+	try {
+		await withPianolaPlanLock(
+			planId,
+			async () => {
+				updatePianolaPlans((plans) => {
+					const plan = plans.find((entry) => entry.id === planId);
+					if (!plan) throw new Error(`No Pianola plan with id "${planId}".`);
+					const task = plan.tasks.find((entry) => entry.id === taskId);
+					if (!task) throw new Error(`No task with id "${taskId}" in plan "${planId}".`);
+					if (task.status !== 'failed') throw new Error('Only failed tasks can be skipped.');
+					const skipped = propagateBlocked(markTaskStatus(plan, taskId, 'skipped'));
+					return plans.map((entry) => (entry.id === planId ? skipped : entry));
+				});
+			},
+			{ waitForTurn: true }
+		);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		if (options.json) console.log(JSON.stringify({ success: false, error: message }));
+		else console.error(message);
+		process.exitCode = 1;
+		return;
+	}
+	if (options.json)
+		console.log(JSON.stringify({ success: true, planId, taskId, status: 'skipped' }));
+	else console.log(`Skipped Pianola task ${planId}/${taskId}; dependents remain blocked.`);
 }
 
 export interface PianolaPlanListOptions {
@@ -1182,11 +1225,19 @@ export async function pianolaOrchestrate(
 		dispatch: async (task, agentId) => {
 			if (programPausedNow()) return { success: false, error: 'program paused' };
 			if (!task.tabId) return { success: false, error: 'no target tab bound' };
-			const packet = await requestPianolaMemory<MemoryPacket>({
-				action: 'recall',
-				query: { query: task.prompt, projectPath: task.cwd || process.cwd() },
-			});
-			const prompt = packet.context ? `${task.prompt}\n\n${packet.context}` : task.prompt;
+			let context = '';
+			try {
+				const packet = await requestPianolaMemory<MemoryPacket>({
+					action: 'recall',
+					query: { query: task.prompt.slice(0, 16000), projectPath: task.cwd || process.cwd() },
+				});
+				context = packet.context ?? '';
+			} catch (error) {
+				console.error(
+					`[orchestrator] memory recall skipped: ${error instanceof Error ? error.message : String(error)}`
+				);
+			}
+			const prompt = context ? `${task.prompt}\n\n${context}` : task.prompt;
 			const res = await runDispatch(agentId, prompt, { newTab: true, background: true });
 			// Dispatch success is delivery, not a run receipt. Never retry a delivered
 			// but unaddressable prompt: that could duplicate work. The engine parks it.

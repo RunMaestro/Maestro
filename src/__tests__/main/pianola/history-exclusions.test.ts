@@ -111,6 +111,28 @@ it('discovers OMP sessions whose title precedes the session header', async () =>
 	]);
 });
 
+it('discovers Grok sessions from nested summary cwd', async () => {
+	const dir = await fixture();
+	const root = path.join(dir, 'grok');
+	const project = path.join(dir, 'project');
+	const file = path.join(root, 'sessions', 'session-id', 'chat_history.jsonl');
+	await put(file, JSON.stringify({ role: 'user', content: 'Prefer SQLite' }) + '\n');
+	await put(
+		path.join(root, 'sessions', 'session-id', 'summary.json'),
+		JSON.stringify({ info: { cwd: project } })
+	);
+	const policy = await HistoryExclusions.create([]);
+	const sources = [];
+	for await (const source of discoverHistoricalSources(
+		{ provider: 'grok', path: root, userId: 'owner', authorship: 'human', enabled: true },
+		policy
+	))
+		sources.push(source);
+	expect(sources).toEqual([
+		expect.objectContaining({ sessionId: 'session-id', projectPath: project, state: 'pending' }),
+	]);
+});
+
 it('never opens a protected transcript when reading a previously inventoried source', async () => {
 	const dir = await fixture();
 	const protectedProject = path.join(dir, 'Software', 'rca');
