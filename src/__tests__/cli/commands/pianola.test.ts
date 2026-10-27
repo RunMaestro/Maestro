@@ -4,7 +4,7 @@
  * and the watch loop (with the WebSocket client and dispatch mocked).
  */
 
-import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
+import { describe, it, expect, vi, beforeEach, onTestFinished, type MockInstance } from 'vitest';
 import type { PianolaRule } from '../../../shared/pianola/types';
 
 const { connectMock, sendCommandMock, disconnectMock, runDispatchMock } = vi.hoisted(() => ({
@@ -20,6 +20,7 @@ vi.mock('../../../cli/services/pianola-store', () => ({
 	readPianolaRulesResult: vi.fn(() => ({ rules: [], malformed: false })),
 	appendPianolaDecision: vi.fn(),
 	readPianolaDecisions: vi.fn(() => []),
+	getPianolaProfile: vi.fn(() => ({ source: 'none', entry: null })),
 }));
 vi.mock('../../../cli/services/maestro-client', () => ({
 	MaestroClient: class {
@@ -139,13 +140,18 @@ describe('pianola watch', () => {
 		expect(connectMock).not.toHaveBeenCalled();
 	});
 
-	it('escalates a question with no matching rule and records it, without dispatching', async () => {
-		sendCommandMock.mockResolvedValue(questionResponse());
-		await pianolaWatch('tab-1', { once: true });
-		expect(appendPianolaDecision).toHaveBeenCalledTimes(1);
-		expect(runDispatchMock).not.toHaveBeenCalled();
-		expect(disconnectMock).toHaveBeenCalled();
-	});
+	it.each([undefined, 'fixture-manager'])(
+		'escalates a question with no matching rule without dispatching (manager: %s)',
+		async (manager) => {
+			vi.stubEnv('MAESTRO_AGENT_ID', manager);
+			onTestFinished(() => vi.unstubAllEnvs());
+			sendCommandMock.mockResolvedValue(questionResponse());
+			await pianolaWatch('tab-1', { once: true });
+			expect(appendPianolaDecision).toHaveBeenCalledTimes(1);
+			expect(runDispatchMock).not.toHaveBeenCalled();
+			expect(disconnectMock).toHaveBeenCalled();
+		}
+	);
 
 	it('auto-answers via runDispatch when a rule matches', async () => {
 		vi.mocked(readPianolaRules).mockReturnValue([autoAnswerRule()]);
