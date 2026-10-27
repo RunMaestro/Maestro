@@ -25,6 +25,7 @@ const LOG_CONTEXT = '[ProcessManager]';
 export interface TtsrReminderPeek {
 	text: string;
 	commit(): void;
+	rollback?(): void;
 }
 
 export interface TtsrReminderApplication {
@@ -37,6 +38,7 @@ export interface TtsrReminderApplication {
 	 * second batch.
 	 */
 	commit(): void;
+	rollback(): void;
 }
 
 const NOOP_COMMIT = () => {};
@@ -47,14 +49,19 @@ export function applyTtsrReminders(
 ): TtsrReminderApplication {
 	// A promptless spawn (terminal, interactive shell) has nothing to prepend to,
 	// and draining there would throw the reminder away.
-	if (!peekReminders || !config.prompt) return { config, commit: NOOP_COMMIT };
+	if (!peekReminders || !config.prompt || config.sessionSshRemoteConfig?.enabled)
+		return { config, commit: NOOP_COMMIT, rollback: NOOP_COMMIT };
 
-	const { text, commit } = peekReminders(config.sessionId);
-	if (!text) return { config, commit: NOOP_COMMIT };
+	const { text, commit, rollback } = peekReminders(config.sessionId);
+	if (!text) return { config, commit: NOOP_COMMIT, rollback: NOOP_COMMIT };
 
 	logger.info('Prepended TTSR deferred reminders to prompt', LOG_CONTEXT, {
 		sessionId: config.sessionId,
 		reminderLength: text.length,
 	});
-	return { config: { ...config, prompt: `${text}\n\n${config.prompt}` }, commit };
+	return {
+		config: { ...config, prompt: `${text}\n\n${config.prompt}` },
+		commit,
+		rollback: rollback ?? NOOP_COMMIT,
+	};
 }

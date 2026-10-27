@@ -149,6 +149,15 @@ describe('TtsrSpawnRegistry', () => {
 		expect(registry.size).toBe(0);
 	});
 
+	it('never loads or watches local rules for a remote spawn with the same project path', () => {
+		const { runtime, source, loadConfig } = setup();
+		source.emit('spawn', spawnConfig({ sshRemoteId: 'remote-1', projectPath: ROOT }));
+		expect(runtime.registry.size).toBe(0);
+		expect(loadConfig).not.toHaveBeenCalled();
+		expect(runtime.observe('sess-ai-tab-1', textEvent('console.log(x)'))).toEqual([]);
+		runtime.dispose();
+	});
+
 	it('registers a forced-parallel AI tab spawn', () => {
 		const registry = new TtsrSpawnRegistry();
 		const meta = registry.noteSpawn({

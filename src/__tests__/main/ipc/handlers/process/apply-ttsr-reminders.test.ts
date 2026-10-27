@@ -82,6 +82,13 @@ describe('applyTtsrReminders', () => {
  * matters: a forced-parallel turn spawns as `…-fp-{timestamp}`, so a queue keyed
  * on the raw id would never be read by the tab's next turn.
  */
+it('does not prepend local guidance to a remote prompt with the same path', () => {
+	const peek = vi.fn();
+	const remote = config({ sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-1' } });
+	expect(applyTtsrReminders(remote, peek).config).toBe(remote);
+	expect(peek).not.toHaveBeenCalled();
+});
+
 describe('applyTtsrReminders against a live runtime', () => {
 	const RULE: LoadedTtsrRule = {
 		name: 'no-console-log',
@@ -163,7 +170,8 @@ describe('applyTtsrReminders against a live runtime', () => {
 
 		const failed = applyTtsrReminders(config({ sessionId: 'sess-ai-tab-1' }), peek);
 		expect(failed.config.prompt).toContain('Use the project logger.');
-		// The spawn threw, so `commit` is never reached.
+		// The spawn owner releases reservations on every failure/early return.
+		failed.rollback();
 
 		const retry = applyTtsrReminders(config({ sessionId: 'sess-ai-tab-1' }), peek);
 		expect(retry.config.prompt).toContain('Use the project logger.');

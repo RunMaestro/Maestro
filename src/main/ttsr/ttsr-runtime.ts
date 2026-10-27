@@ -26,6 +26,7 @@ import { DEFAULT_TTSR_PROJECT_SETTINGS } from '../../shared/ttsr-types';
 import type { ParsedEvent } from '../parsers/agent-output-parser';
 import { loadTtsrConfigDetailed, type LoadTtsrConfigResult } from './config/ttsr-config-loader';
 import { renderTtsrInterrupt, renderTtsrReminder } from './ttsr-injection';
+import { canonicalJson } from '../../shared/canonicalJson';
 import { generateUUID } from '../../shared/uuid';
 import { TtsrManager, type TtsrMatch, type TtsrObserveContext } from './ttsr-manager';
 import type { TtsrStatePersistence } from './ttsr-state-persistence';
@@ -104,10 +105,12 @@ export interface TtsrReminderDrain {
 	text: string;
 	/** Clear the queue. Safe to call more than once; a no-op when `text` is `''`. */
 	commit(): void;
+	/** Release this preparation on every failed/abandoned spawn. */
+	rollback(): void;
 }
 
 /** Shared empty drain, so the common "nothing queued" path allocates nothing. */
-const NO_REMINDERS: TtsrReminderDrain = { text: '', commit: () => {} };
+const NO_REMINDERS: TtsrReminderDrain = { text: '', commit: () => {}, rollback: () => {} };
 
 /** Cheap equality for the disabled-rule list: same reference, else same names. */
 function sameDisabledList(a: readonly string[], b: readonly string[]): boolean {
@@ -129,6 +132,8 @@ export class TtsrRuntime {
 		string,
 		{ requestId: string; meta: TtsrSpawnMeta; matches: TtsrMatch[] }
 	>();
+
+	private readonly preparing = new Set<TtsrMatch>();
 
 	private readonly cache = new Map<string, RuleCacheEntry>();
 	/** One rule-file watcher per project root, closed on {@link dispose}. */
@@ -327,23 +332,42 @@ export class TtsrRuntime {
 	 */
 	peekDeferredReminders(sessionId: string): TtsrReminderDrain {
 		if (!this.deps.isGloballyEnabled()) return NO_REMINDERS;
-		const matches = this.manager.peekDeferred(sessionId);
+		const queued = this.manager.peekDeferred(sessionId);
+		const inactive = queued.filter((match) => !this.isActiveMatch(match));
+		this.manager.discardDeferred(sessionId, inactive);
+		const matches = queued.filter(
+			(match) => !inactive.includes(match) && !this.preparing.has(match)
+		);
 		if (matches.length === 0) return NO_REMINDERS;
-		// A spawn is preparing this exact guidance. Do not also hand it to Steer
-		// while that prompt is between its non-destructive read and commit.
-		this.steeringOffers.delete(sessionId);
-
-		let committed = false;
+		for (const match of matches) this.preparing.add(match);
+		this.manager.holdDeferred(matches);
+		// Offers use raw turn IDs, reminders use the tab conversation. Revoke
+		// every intersecting offer, including canonical/forced-parallel aliases.
+		for (const [id, offer] of this.steeringOffers) {
+			if (offer.matches.some((match) => this.preparing.has(match))) this.steeringOffers.delete(id);
+		}
+		let settled = false;
+		const release = () => {
+			for (const match of matches) this.preparing.delete(match);
+			this.manager.releaseDeferred(matches);
+		};
 		return {
 			text: renderTtsrReminder(matches),
 			commit: () => {
-				if (committed) return;
-				committed = true;
-				this.manager.commitDeferred(sessionId, matches.length);
+				if (settled) return;
+				settled = true;
+				this.manager.commitDeferred(sessionId, matches);
+				release();
+				this.deps.persistence?.flush();
 				logger.info('TTSR reminders folded into next prompt', LOG_CONTEXT, {
 					sessionId,
 					rules: matches.map((match) => match.rule.name),
 				});
+			},
+			rollback: () => {
+				if (settled) return;
+				settled = true;
+				release();
 			},
 		};
 	}
@@ -395,20 +419,38 @@ export class TtsrRuntime {
 		const entry = this.entry(offer.meta.projectRoot);
 		if (
 			!entry.settings.enabled ||
-			!offer.matches.every((match) => entry.rules.includes(match.rule)) ||
+			!offer.matches.every((match) => !this.preparing.has(match) && this.isActiveMatch(match)) ||
 			!this.manager.canInterrupt(sessionId)
 		)
 			return false;
 		this.steeringOffers.delete(sessionId);
 		if (!this.manager.claimDeferred(sessionId, offer.matches)) return false;
 		this.manager.noteInterrupt(sessionId);
+		this.deps.persistence?.flush();
 		return true;
+	}
+
+	/** Rule edits invalidate old guidance; a fresh match uses the new definition. */
+	private isActiveMatch(match: TtsrMatch): boolean {
+		if (!match.projectRoot) return true;
+		const entry = this.entry(match.projectRoot);
+		return (
+			entry.settings.enabled &&
+			entry.rules.some(
+				(rule) =>
+					rule === match.rule ||
+					canonicalJson({ ...rule, compiledCondition: undefined }) ===
+						canonicalJson({ ...match.rule, compiledCondition: undefined })
+			)
+		);
 	}
 
 	/** Offer matching guidance through native Steer, retaining it until claimed. */
 	private drive(sessionId: string, meta: TtsrSpawnMeta): void {
 		if (this.registry.get(sessionId) !== meta) return;
-		const matches = this.manager.takeInterrupts(sessionId);
+		const matches = this.manager
+			.takeInterrupts(sessionId)
+			.filter((match) => !this.preparing.has(match));
 		if (matches.length === 0) return;
 		this.manager.deferMatches(sessionId, matches);
 		if (

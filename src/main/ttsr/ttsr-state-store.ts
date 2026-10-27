@@ -26,8 +26,12 @@ export const TTSR_PENDING_PROVIDER_ID = '-';
  * keying on the raw id would mint one dead conversation record per turn. The
  * manager normalizes before it ever reaches here.
  */
-export function ttsrConversationKey(maestroSessionId: string, providerSessionId?: string): string {
-	return `${maestroSessionId}|${providerSessionId || TTSR_PENDING_PROVIDER_ID}`;
+export function ttsrConversationKey(
+	maestroSessionId: string,
+	providerSessionId?: string,
+	pendingTurnId?: string
+): string {
+	return `${maestroSessionId}|${providerSessionId || (pendingTurnId ? `-turn:${pendingTurnId}` : TTSR_PENDING_PROVIDER_ID)}`;
 }
 
 /** Per-rule firing history within one conversation. */
@@ -80,9 +84,17 @@ function emptyConversation(): TtsrConversationState {
 	return { messageCount: 0, rules: {}, interruptCount: 0, updatedAt: Date.now() };
 }
 
+/** In-memory repeat reservation. Only accepted guidance enters the durable history. */
+export interface TtsrInjectionReservation {
+	key: string;
+	ruleName: string;
+	messageCount: number;
+}
+
 export class TtsrStateStore {
 	private readonly conversations = new Map<string, TtsrConversationState>();
 	private readonly onChange?: () => void;
+	private readonly reservations = new Map<string, Set<TtsrInjectionReservation>>();
 
 	constructor(options: TtsrStateStoreOptions = {}) {
 		this.onChange = options.onChange;
@@ -112,7 +124,7 @@ export class TtsrStateStore {
 
 		const now = Date.now();
 		for (const [key, state] of this.conversations) {
-			if (now - state.updatedAt > TTSR_STATE_TTL_MS) this.conversations.delete(key);
+			if (now - state.updatedAt > TTSR_STATE_TTL_MS) this.clearConversation(key);
 		}
 		if (this.conversations.size <= MAX_PERSISTED_CONVERSATIONS) return;
 
@@ -120,7 +132,7 @@ export class TtsrStateStore {
 		// newest, so it can never evict itself.
 		const byAge = [...this.conversations.entries()].sort((a, b) => a[1].updatedAt - b[1].updatedAt);
 		const excess = this.conversations.size - MAX_PERSISTED_CONVERSATIONS;
-		for (let i = 0; i < excess; i += 1) this.conversations.delete(byAge[i][0]);
+		for (let i = 0; i < excess; i += 1) this.clearConversation(byAge[i][0]);
 	}
 
 	/** Stamp the conversation as freshly touched and notify the persistence layer. */
@@ -136,7 +148,16 @@ export class TtsrStateStore {
 
 	/** Firing history for one rule, or `null` when it has never fired here. */
 	getRuleState(key: string, ruleName: string): TtsrRuleState | null {
-		return this.conversations.get(key)?.rules[ruleName] ?? null;
+		const delivered = this.conversations.get(key)?.rules[ruleName];
+		let pendingCount = 0;
+		let lastInjectedAt = delivered?.lastInjectedAt ?? 0;
+		for (const item of this.reservations.get(key) ?? []) {
+			if (item.ruleName !== ruleName) continue;
+			pendingCount += 1;
+			lastInjectedAt = Math.max(lastInjectedAt, item.messageCount);
+		}
+		if (pendingCount === 0) return delivered ?? null;
+		return { lastInjectedAt, injectionCount: (delivered?.injectionCount ?? 0) + pendingCount };
 	}
 
 	/** Advance the turn counter. Called once per completed turn. */
@@ -185,6 +206,9 @@ export class TtsrStateStore {
 	 */
 	clearInjection(key: string, ruleName: string): void {
 		const state = this.conversations.get(key);
+		for (const reservation of this.reservations.get(key) ?? []) {
+			if (reservation.ruleName === ruleName) this.releaseInjection(reservation);
+		}
 		if (!state?.rules[ruleName]) return;
 		delete state.rules[ruleName];
 		this.touch(state);
@@ -201,6 +225,40 @@ export class TtsrStateStore {
 		this.touch(state);
 	}
 
+	/** Reserve repeat eligibility while the guidance still has no durable owner. */
+	reserveInjection(
+		key: string,
+		ruleName: string,
+		messageCount = this.getMessageCount(key)
+	): TtsrInjectionReservation {
+		this.ensure(key);
+		const reservation = { key, ruleName, messageCount };
+		let pending = this.reservations.get(key);
+		if (!pending) this.reservations.set(key, (pending = new Set()));
+		pending.add(reservation);
+		return reservation;
+	}
+
+	/** Native held queue or successful prompt spawn now owns this guidance. */
+	acceptInjection(reservation: TtsrInjectionReservation): void {
+		if (!this.reservations.get(reservation.key)?.has(reservation)) return;
+		this.releaseInjection(reservation);
+		const state = this.ensure(reservation.key);
+		const existing = state.rules[reservation.ruleName];
+		state.rules[reservation.ruleName] = {
+			lastInjectedAt: Math.max(existing?.lastInjectedAt ?? 0, reservation.messageCount),
+			injectionCount: (existing?.injectionCount ?? 0) + 1,
+		};
+		this.touch(state);
+	}
+
+	/** Undelivered/evicted guidance must not silence its rule. */
+	releaseInjection(reservation: TtsrInjectionReservation): void {
+		const pending = this.reservations.get(reservation.key);
+		pending?.delete(reservation);
+		if (pending?.size === 0) this.reservations.delete(reservation.key);
+	}
+
 	/**
 	 * Whether the rule's repeat policy permits another firing right now.
 	 *
@@ -210,13 +268,13 @@ export class TtsrStateStore {
 	 */
 	isEligible(
 		rule: Pick<LoadedTtsrRule, 'name' | 'repeatMode' | 'repeatGap'>,
-		key: string
+		key: string,
+		messageCount = this.getMessageCount(key)
 	): boolean {
-		const state = this.conversations.get(key);
-		const ruleState = state?.rules[rule.name];
+		const ruleState = this.getRuleState(key, rule.name);
 		if (!ruleState || ruleState.lastInjectedAt === null) return true;
 		if (rule.repeatMode === 'once') return false;
-		return (state?.messageCount ?? 0) - ruleState.lastInjectedAt >= rule.repeatGap;
+		return messageCount - ruleState.lastInjectedAt >= rule.repeatGap;
 	}
 
 	/**
@@ -226,19 +284,50 @@ export class TtsrStateStore {
 	 */
 	adoptProviderSessionId(maestroSessionId: string, providerSessionId: string): void {
 		if (!providerSessionId || providerSessionId === TTSR_PENDING_PROVIDER_ID) return;
-		const pendingKey = ttsrConversationKey(maestroSessionId);
+		this.moveConversation(
+			ttsrConversationKey(maestroSessionId),
+			ttsrConversationKey(maestroSessionId, providerSessionId)
+		);
+	}
+
+	/** Transfer only one turn's unknown-provider history, never its live siblings'. */
+	adoptPendingTurn(maestroSessionId: string, turnId: string, providerSessionId?: string): void {
+		this.moveConversation(
+			ttsrConversationKey(maestroSessionId, undefined, turnId),
+			ttsrConversationKey(maestroSessionId, providerSessionId),
+			!!providerSessionId
+		);
+	}
+
+	private moveConversation(pendingKey: string, targetKey: string, notify = true): void {
+		if (pendingKey === targetKey) return;
 		const pending = this.conversations.get(pendingKey);
 		if (!pending) return;
 		this.conversations.delete(pendingKey);
+		const reservations = this.reservations.get(pendingKey);
+		if (reservations) {
+			this.reservations.delete(pendingKey);
+			let target = this.reservations.get(targetKey);
+			if (!target) this.reservations.set(targetKey, (target = new Set()));
+			for (const reservation of reservations) {
+				reservation.key = targetKey;
+				target.add(reservation);
+			}
+		}
 
-		const targetKey = ttsrConversationKey(maestroSessionId, providerSessionId);
 		const target = this.conversations.get(targetKey);
 		if (!target) {
 			this.conversations.set(targetKey, pending);
-			this.touch(pending);
+			if (notify) this.touch(pending);
 			return;
 		}
 
+		this.mergeState(target, pending);
+		if (notify) this.touch(target);
+	}
+
+	/** Same merge policy for adoption and normalized durable snapshots. */
+	private mergeState(target: TtsrConversationState, pending: TtsrConversationState): void {
 		target.messageCount = Math.max(target.messageCount, pending.messageCount);
 		// Summed, not maxed: aborts recorded before the provider id landed were
 		// really spent, and the budget must not be refunded by the adoption.
@@ -252,11 +341,12 @@ export class TtsrStateStore {
 					}
 				: pendingRule;
 		}
-		this.touch(target);
+		target.updatedAt = Math.max(target.updatedAt, pending.updatedAt);
 	}
 
 	/** Forget one conversation (session deleted, rules reloaded from scratch). */
 	clearConversation(key: string): void {
+		this.reservations.delete(key);
 		if (this.conversations.delete(key)) this.onChange?.();
 	}
 
@@ -264,12 +354,17 @@ export class TtsrStateStore {
 	snapshot(): TtsrStateSnapshot {
 		const out: TtsrStateSnapshot = {};
 		for (const [key, state] of this.conversations) {
-			out[key] = {
+			// Pending raw turn IDs are only live ownership. Persist their accepted
+			// history in the stable pending bucket, so fp timestamps cannot accrete.
+			const stableKey = key.replace(/\|-turn:.*$/, `|${TTSR_PENDING_PROVIDER_ID}`);
+			const copied = {
 				messageCount: state.messageCount,
 				rules: { ...state.rules },
 				interruptCount: state.interruptCount,
 				updatedAt: state.updatedAt,
 			};
+			if (out[stableKey]) this.mergeState(out[stableKey], copied);
+			else out[stableKey] = copied;
 		}
 		return out;
 	}
@@ -285,6 +380,7 @@ export class TtsrStateStore {
 	 */
 	hydrate(snapshot: TtsrStateSnapshot): void {
 		this.conversations.clear();
+		this.reservations.clear();
 		const now = Date.now();
 		for (const [key, state] of Object.entries(snapshot ?? {})) {
 			if (!state || typeof state !== 'object') continue;

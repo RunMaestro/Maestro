@@ -447,7 +447,15 @@ describe('process IPC handlers', () => {
 		const commit = vi.fn(() => {
 			text = '';
 		});
-		deps.peekTtsrReminders = () => ({ text, commit });
+		let reserved = false;
+		const rollback = vi.fn(() => {
+			reserved = false;
+		});
+		deps.peekTtsrReminders = () => {
+			const available = reserved ? '' : text;
+			reserved = true;
+			return { text: available, commit, rollback };
+		};
 		mockAgentDetector.getAgent.mockResolvedValue({
 			id: 'claude-code',
 			path: '/usr/bin/claude',
@@ -466,6 +474,7 @@ describe('process IPC handlers', () => {
 		};
 		await expect(handlers.get('process:spawn')!({}, config)).rejects.toThrow(/did not start/);
 		expect(commit).not.toHaveBeenCalled();
+		expect(rollback).toHaveBeenCalledOnce();
 		await handlers.get('process:spawn')!({}, config);
 		expect(mockProcessManager.spawn.mock.calls[1][0].prompt).toContain('keep the guidance');
 		expect(commit).toHaveBeenCalledTimes(1);

@@ -35,6 +35,8 @@ export interface TtsrSpawnConfigLike {
 	prompt?: string;
 	projectPath?: string;
 	agentSessionId?: string;
+	/** Remote files cannot be loaded by the local rule repository. */
+	sshRemoteId?: string;
 }
 
 /** Minimal event surface the registry attaches to (ProcessManager in prod). */
@@ -61,16 +63,15 @@ export class TtsrSpawnRegistry {
 
 	 */
 	noteSpawn(config: TtsrSpawnConfigLike): TtsrSpawnMeta | null {
-		if (!isValidAgentId(config.toolType) || config.toolType === 'terminal') return null;
+		if (!isValidAgentId(config.toolType) || config.toolType === 'terminal' || config.sshRemoteId)
+			return null;
 
 		const parsedId = parseAiTabSpawnId(config.sessionId);
 		if (!parsedId) return null;
 		const meta: TtsrSpawnMeta = {
 			sessionId: config.sessionId,
 			agentId: config.toolType,
-			// SSH spawns run the local ssh client from the user's home dir, so `cwd`
-			// is not the project. `projectPath` carries the real workspace root and
-			// is what `.maestro/rules` must be resolved against.
+			// Remote spawns are excluded until the rule repository can read remotely.
 			projectRoot: config.projectPath || config.cwd,
 			// Parsed from the spawn id rather than read from `config.tabId`, which
 			// no spawn caller currently sets.

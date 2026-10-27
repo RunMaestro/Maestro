@@ -111,7 +111,7 @@ export async function handleProcessSpawn(
 	config: SpawnProcessConfig,
 	deps: SpawnHandlerDependencies
 ) {
-	const proofCleanup: { release?: () => void } = {};
+	const proofCleanup: { release?: () => void; releaseReminders?: () => void } = {};
 	try {
 		return await handleProcessSpawnImpl(config, deps, proofCleanup);
 	} catch (error) {
@@ -124,13 +124,15 @@ export async function handleProcessSpawn(
 			);
 		}
 		throw error;
+	} finally {
+		proofCleanup.releaseReminders?.();
 	}
 }
 
 async function handleProcessSpawnImpl(
 	config: SpawnProcessConfig,
 	deps: SpawnHandlerDependencies,
-	proofCleanup: { release?: () => void }
+	proofCleanup: { release?: () => void; releaseReminders?: () => void }
 ) {
 	const {
 		getProcessManager,
@@ -195,6 +197,7 @@ async function handleProcessSpawnImpl(
 	// would otherwise destroy the guidance.
 	const ttsrReminders = applyTtsrReminders(config, deps.peekTtsrReminders);
 	config = ttsrReminders.config;
+	proofCleanup.releaseReminders = ttsrReminders.rollback;
 
 	// Use INFO level on Windows for better visibility in logs
 

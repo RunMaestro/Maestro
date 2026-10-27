@@ -31,13 +31,14 @@ successful claim falls back to that same queue, preserving the accepted guidance
 
 ## Availability
 
-| Agent or transport                                     | Live correction                                                 | Other matched guidance                      |
-| ------------------------------------------------------ | --------------------------------------------------------------- | ------------------------------------------- |
-| Claude Code, local maestro-p interactive turn          | Native Steer, subject to its editor/dialog/read-only/size gates | Deferred reminder                           |
-| Codex, opt-in app-server transport                     | Native `turn/steer`, local or SSH                               | Deferred reminder                           |
-| Claude API/SSH, Codex exec, other structured providers | Unavailable                                                     | Deferred reminder on the next normal prompt |
-| Forced-parallel process id                             | Deferred, to avoid steering another process on the same tab     | Deferred reminder                           |
-| Terminal and non-AI-tab spawn                          | Excluded                                                        | No TTSR registration                        |
+| Agent or transport                                       | Live correction                                                 | Other matched guidance                      |
+| -------------------------------------------------------- | --------------------------------------------------------------- | ------------------------------------------- |
+| Claude Code, local maestro-p interactive turn            | Native Steer, subject to its editor/dialog/read-only/size gates | Deferred reminder                           |
+| Codex, local opt-in app-server transport                 | Native `turn/steer`                                             | Deferred reminder                           |
+| Local Claude API, Codex exec, other structured providers | Unavailable                                                     | Deferred reminder on the next normal prompt |
+| Forced-parallel process id                               | Deferred, to avoid steering another process on the same tab     | Deferred reminder                           |
+| SSH remote spawn                                         | Excluded until remote rule loading exists                       | No local rule reads or reminder prepend     |
+| Terminal and non-AI-tab spawn                            | Excluded                                                        | No TTSR registration                        |
 
 A `delivered` verdict means the provider received the text. Only its observed
 `absorbed` verdict proves the running turn changed course. `queued` means the
@@ -56,6 +57,24 @@ At most `MAX_TTSR_INTERRUPTS` (5) automatic correction handoffs are accepted per
 conversation. The persisted `interruptCount` field retains its old name. An
 unclaimed offer does not spend budget; once claimed the native queue owns its
 correction, including refusal/fallback. Additional matches remain reminders.
+Stream buffers, provider identities and AST deduplication belong to each raw
+turn ID. Forced-parallel aliases share bounded conversation reminders and repeat
+budgets. AST passes collect candidates before synchronously rechecking the live
+turn, current provider identity and repeat eligibility.
+
+Prompt preparation reserves exact match identities across all intersecting live
+offers and parallel preparations. Every failed or abandoned spawn releases its
+reservation; a successful spawn commits only its captured matches, even after
+queue trimming. Deferred guidance checks its original project's current enablement
+and active rule definition after process exit. Changed or disabled rules discard
+the old guidance and release its reservation; unchanged reloaded rules remain valid.
+
+Matching reserves repeat eligibility in memory. Only acceptance by the durably
+held native queue or a successful normal prompt spawn commits and flushes repeat
+history through the existing TTSR state backend. On restart, unclaimed guidance
+can match again; accepted guidance retains its cooldown. The deferred queue itself
+is not persisted. Queue eviction releases undelivered repeat reservations.
+
 Repeat policies, bounded regex windows, regex rejection, project authorization,
 config self-write suppression and transactional reminder draining remain intact.
 
@@ -70,7 +89,9 @@ conversation and output. The old keep/discard controls have been removed.
   tool snapshots, AST and project-relative glob containment.
 - `ttsr-steering-offers.test.ts`: deferred ownership, claim token, current
   enable/rule gates, consumed reminders, exit/replacement races, concurrent
-  conversations and budget.
+  conversations, forced-parallel streams, pending provider adoption and budget.
+- `ttsr-state-persistence.test.ts`: restart before ownership, after a durable held
+  native claim and after successful normal prompt delivery.
 - `useTtsr.test.ts`: real canonical queue/Steer service with synthetic IPC;
   held persistence ordering/readback, native delivery/refusal/unconfirmed/exit
   restoration, duplicate offers, ownership, unsupported transports and unmount.

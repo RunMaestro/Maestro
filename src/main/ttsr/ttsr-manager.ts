@@ -8,8 +8,8 @@
  * deferred reminder.
  *
  * This phase is detection only: matches are returned, reported via
- * `onMatched`, and deferred ones are queued. Aborting the in-flight process and
- * reinjecting the corrective turn is Phase 3, which consumes
+ * `onMatched`, and deferred ones are queued. Preparing and
+ * handing guidance to native Steer is handled by the runtime, which consumes
  * {@link TtsrManager.takeInterrupts} / {@link TtsrManager.takeDeferred}.
  *
  * Dependencies are injected (rules, enablement, reporting) so the process
@@ -29,7 +29,12 @@ import {
 	type TtsrDisposition,
 	type TtsrMatchSource,
 } from './ttsr-matcher';
-import { TtsrStateStore, ttsrConversationKey } from './ttsr-state-store';
+import {
+	TtsrStateStore,
+	MAX_TTSR_INTERRUPTS,
+	ttsrConversationKey,
+	type TtsrInjectionReservation,
+} from './ttsr-state-store';
 import { extractToolSnapshots } from './ttsr-tool-extract';
 
 /**
@@ -99,6 +104,8 @@ export interface TtsrMatch {
 	/** The substring that tripped the rule. */
 	matchedText: string;
 	filePath?: string;
+	/** Workspace authority retained after the producing process exits. */
+	projectRoot?: string;
 }
 
 export interface TtsrManagerDeps {
@@ -131,12 +138,15 @@ interface SessionState {
 	buffers: Map<TtsrMatchSource, StreamBuffer>;
 	providerSessionId?: string;
 	interrupts: TtsrMatch[];
-	deferred: TtsrMatch[];
 	/**
 	 * Last AST-scanned content per `${source}:${filePath}`, so a re-emitted or
 	 * repeated tool payload is not re-parsed (the plan's AST throttle).
 	 */
 	astSeen: Map<string, string>;
+}
+
+interface ConversationState {
+	deferred: TtsrMatch[];
 }
 
 function toRuleRef(rule: LoadedTtsrRule): TtsrRuleRef {
@@ -147,9 +157,8 @@ function toRuleRef(rule: LoadedTtsrRule): TtsrRuleRef {
  * The conversation a spawn id belongs to: `{maestroSessionId}-ai-{tabId}`.
  *
  * Spawn ids are not stable across turns - a forced-parallel turn spawns as
- * `{maestroSessionId}-ai-{tabId}-fp-{timestamp}` - while everything this manager
- * tracks (repeat policy, interrupt budget, queued reminders) belongs to the
- * conversation, which is the tab. Keying on the raw id would mint a fresh
+ * `{maestroSessionId}-ai-{tabId}-fp-{timestamp}` - while repeat policy, interrupt budget and queued reminders belong to the
+ * conversation, which is the tab. Stream and AST state remain per raw turn ID. Keying on the raw id would mint a fresh
  * conversation per such turn: a `once` rule would re-fire every turn, the store
  * would accrete a dead record per turn, and a reminder queued under one id would
  * never be drained under the next.
@@ -165,6 +174,9 @@ function conversationIdFor(spawnSessionId: string): string {
 
 export class TtsrManager {
 	private readonly sessions = new Map<string, SessionState>();
+	private readonly conversations = new Map<string, ConversationState>();
+	private readonly held = new Set<TtsrMatch>();
+	private readonly injections = new WeakMap<TtsrMatch, TtsrInjectionReservation>();
 	readonly store: TtsrStateStore;
 	private readonly astMatcher: TtsrAstMatcher;
 
@@ -173,42 +185,42 @@ export class TtsrManager {
 		this.astMatcher = deps.astMatcher ?? createTtsrAstMatcher();
 	}
 
-	/**
-	 * Live state for the conversation this spawn id belongs to, created on first
-	 * use. Every entry point normalizes through {@link conversationIdFor} here and
-	 * in {@link TtsrManager.stateOf} / {@link TtsrManager.keyFor}, so no caller has
-	 * to know that spawn ids are per-turn.
-	 */
+	/** Per-turn stream state, keyed by the raw process ID, including forced-parallel suffixes. */
 	private session(spawnSessionId: string): SessionState {
-		const sessionId = conversationIdFor(spawnSessionId);
+		const sessionId = spawnSessionId;
 		let state = this.sessions.get(sessionId);
 		if (!state) {
-			state = { buffers: new Map(), interrupts: [], deferred: [], astSeen: new Map() };
+			state = { buffers: new Map(), interrupts: [], astSeen: new Map() };
 			this.sessions.set(sessionId, state);
-			this.evictOldestSessions(sessionId);
 		}
 		return state;
 	}
 
 	/** Read-only counterpart to {@link TtsrManager.session}: no entry is created. */
 	private stateOf(spawnSessionId: string): SessionState | undefined {
-		return this.sessions.get(conversationIdFor(spawnSessionId));
+		return this.sessions.get(spawnSessionId);
 	}
 
-	/** Keep the tracked-conversation map bounded, never evicting the live one. */
-	private evictOldestSessions(keep: string): void {
-		for (const key of this.sessions.keys()) {
-			if (this.sessions.size <= MAX_RETAINED_SESSIONS) return;
-			if (key !== keep) this.sessions.delete(key);
+	/** Shared, bounded reminder history; stream/AST state stays under the raw turn ID. */
+	private conversation(sessionId: string): ConversationState {
+		const id = conversationIdFor(sessionId);
+		let state = this.conversations.get(id);
+		if (!state) {
+			state = { deferred: [] };
+			this.conversations.set(id, state);
+			while (this.conversations.size > MAX_RETAINED_SESSIONS) {
+				const oldest = this.conversations.keys().next().value!;
+				for (const match of this.conversations.get(oldest)!.deferred) this.releaseMatch(match);
+				this.conversations.delete(oldest);
+			}
 		}
+		return state;
 	}
 
 	/** Reset per-turn buffers. Called when a turn is spawned. */
 	beginTurn(sessionId: string, providerSessionId?: string): void {
-		const state = this.session(sessionId);
-		state.buffers.clear();
-		state.astSeen.clear();
-		state.interrupts = [];
+		this.sessions.delete(sessionId);
+		this.session(sessionId);
 		if (providerSessionId) this.setProviderSessionId(sessionId, providerSessionId);
 	}
 
@@ -221,6 +233,9 @@ export class TtsrManager {
 		const state = this.session(sessionId);
 		if (state.providerSessionId === providerSessionId) return;
 		state.providerSessionId = providerSessionId;
+		this.store.adoptPendingTurn(conversationIdFor(sessionId), sessionId, providerSessionId);
+		// The stable pending bucket contains only finished turns/restart history;
+		// live unknown siblings retain their own raw pending buckets.
 		this.store.adoptProviderSessionId(conversationIdFor(sessionId), providerSessionId);
 	}
 
@@ -228,8 +243,36 @@ export class TtsrManager {
 	private keyFor(sessionId: string): string {
 		return ttsrConversationKey(
 			conversationIdFor(sessionId),
-			this.stateOf(sessionId)?.providerSessionId
+			this.stateOf(sessionId)?.providerSessionId,
+			this.stateOf(sessionId) ? sessionId : undefined
 		);
+	}
+
+	private messageCountFor(sessionId: string): number {
+		return this.store.getMessageCount(
+			this.stateOf(sessionId)?.providerSessionId
+				? this.keyFor(sessionId)
+				: ttsrConversationKey(conversationIdFor(sessionId))
+		);
+	}
+
+	/** Unknown siblings share repeat eligibility, but adoption moves only their own tokens. */
+	private isEligible(sessionId: string, rule: LoadedTtsrRule): boolean {
+		const count = this.messageCountFor(sessionId);
+		if (!this.store.isEligible(rule, this.keyFor(sessionId), count)) return false;
+		if (this.stateOf(sessionId)?.providerSessionId) return true;
+		const conversation = conversationIdFor(sessionId);
+		if (!this.store.isEligible(rule, ttsrConversationKey(conversation), count)) return false;
+		for (const [id, state] of this.sessions) {
+			if (
+				id !== sessionId &&
+				!state.providerSessionId &&
+				conversationIdFor(id) === conversation &&
+				!this.store.isEligible(rule, this.keyFor(id), count)
+			)
+				return false;
+		}
+		return true;
 	}
 
 	/**
@@ -240,6 +283,7 @@ export class TtsrManager {
 	observe(sessionId: string, event: ParsedEvent, ctx: TtsrObserveContext): TtsrMatch[] {
 		const { enabled, rules } = this.resolve(ctx);
 		if (!enabled || rules.length === 0) return [];
+		this.session(sessionId);
 
 		if (event.type === 'init' && event.sessionId) {
 			this.setProviderSessionId(sessionId, event.sessionId);
@@ -317,7 +361,7 @@ export class TtsrManager {
 		if (astRules.length === 0) return [];
 
 		const state = this.session(sessionId);
-		const matches: TtsrMatch[] = [];
+		const candidates: TtsrMatch[] = [];
 
 		for (const snapshot of extractToolSnapshots(event, ctx.cwd)) {
 			if (!this.astMatcher.supports(snapshot.filePath)) continue;
@@ -334,21 +378,19 @@ export class TtsrManager {
 				filePath: snapshot.filePath,
 				cwd: ctx.cwd,
 			};
-			const key = this.keyFor(sessionId);
 
 			for (const rule of astRules) {
 				if (!ruleAppliesToContext(rule, matchCtx)) continue;
-				if (!this.store.isEligible(rule, key)) continue;
+				if (!this.isEligible(sessionId, rule)) continue;
 				const matchedText = await this.astMatcher.find(
 					rule.astCondition,
 					snapshot.content,
 					snapshot.filePath
 				);
-				if (ctx.isCurrent && !ctx.isCurrent()) return [];
+				if (this.stateOf(sessionId) !== state || (ctx.isCurrent && !ctx.isCurrent())) return [];
 				if (matchedText === null) continue;
 
-				this.store.noteInjection(key, rule.name);
-				matches.push({
+				candidates.push({
 					rule,
 					source: snapshot.source,
 					disposition: classifyMatch(rule, snapshot.source),
@@ -358,6 +400,21 @@ export class TtsrManager {
 			}
 		}
 
+		// No await from here through record: eligibility and current provider key
+		// are resolved together, after the entire structural pass succeeds.
+		if (this.stateOf(sessionId) !== state || (ctx.isCurrent && !ctx.isCurrent())) return [];
+		const current = this.resolve({ ...ctx, resolved: undefined });
+		if (!current.enabled) return [];
+		const key = this.keyFor(sessionId);
+		const matches: TtsrMatch[] = [];
+		for (const match of candidates) {
+			if (!current.rules.includes(match.rule) || !this.isEligible(sessionId, match.rule)) continue;
+			this.injections.set(
+				match,
+				this.store.reserveInjection(key, match.rule.name, this.messageCountFor(sessionId))
+			);
+			matches.push(match);
+		}
 		if (matches.length > 0) this.record(sessionId, ctx, matches);
 		return matches;
 	}
@@ -372,15 +429,24 @@ export class TtsrManager {
 	 * ordinary path, not a special case here.
 	 */
 	endTurn(sessionId: string): void {
-		this.store.noteTurnEnd(this.keyFor(sessionId));
-		const state = this.session(sessionId);
-		state.buffers.clear();
-		state.astSeen.clear();
+		if (!this.stateOf(sessionId)?.providerSessionId) {
+			this.store.adoptPendingTurn(conversationIdFor(sessionId), sessionId);
+			this.store.noteTurnEnd(ttsrConversationKey(conversationIdFor(sessionId)));
+		} else this.store.noteTurnEnd(this.keyFor(sessionId));
+		this.sessions.delete(sessionId);
 	}
 
 	/** Whether this conversation may still abort a turn (interrupt budget). */
 	canInterrupt(sessionId: string): boolean {
-		return this.store.canInterrupt(this.keyFor(sessionId));
+		if (this.stateOf(sessionId)?.providerSessionId)
+			return this.store.canInterrupt(this.keyFor(sessionId));
+		const conversation = conversationIdFor(sessionId);
+		let count = this.store.getInterruptCount(ttsrConversationKey(conversation));
+		for (const [id, state] of this.sessions) {
+			if (!state.providerSessionId && conversationIdFor(id) === conversation)
+				count += this.store.getInterruptCount(this.keyFor(id));
+		}
+		return count < MAX_TTSR_INTERRUPTS;
 	}
 
 	/** Charge one abort against this conversation's interrupt budget. */
@@ -408,7 +474,7 @@ export class TtsrManager {
 	 * reaches the agent, on its next prompt instead of by force.
 	 */
 	deferMatches(sessionId: string, matches: TtsrMatch[]): void {
-		const state = this.session(sessionId);
+		const state = this.conversation(sessionId);
 		state.deferred.push(...matches);
 		this.trimDeferred(state);
 	}
@@ -427,10 +493,11 @@ export class TtsrManager {
 	 * survive turn boundaries until the next prompt consumes them (Phase 3c).
 	 */
 	takeDeferred(sessionId: string): TtsrMatch[] {
-		const state = this.stateOf(sessionId);
+		const state = this.conversations.get(conversationIdFor(sessionId));
 		if (!state) return [];
 		const out = state.deferred;
 		state.deferred = [];
+		for (const match of out) this.acceptMatch(match);
 		return out;
 	}
 
@@ -441,37 +508,73 @@ export class TtsrManager {
 	 * read there would destroy the guidance whenever the spawn threw.
 	 */
 	peekDeferred(sessionId: string): TtsrMatch[] {
-		return this.stateOf(sessionId)?.deferred.slice() ?? [];
+		return this.conversations.get(conversationIdFor(sessionId))?.deferred.slice() ?? [];
 	}
 
-	/**
-	 * Drop the oldest `count` reminders: exactly the ones the matching
-	 * {@link TtsrManager.peekDeferred} returned. Anything queued between the peek
-	 * and the commit is at the tail and survives to the following prompt.
-	 */
-	commitDeferred(sessionId: string, count: number): void {
-		const state = this.stateOf(sessionId);
-		if (!state || count <= 0) return;
-		state.deferred = state.deferred.slice(count);
+	/** Commit the captured identities, even if the queue was trimmed while preparing. */
+	commitDeferred(sessionId: string, matches: readonly TtsrMatch[]): void {
+		const state = this.conversations.get(conversationIdFor(sessionId));
+		const claimed = new Set(matches);
+		if (state) state.deferred = state.deferred.filter((match) => !claimed.has(match));
+		for (const match of matches) this.acceptMatch(match);
 	}
 
 	/** Atomically hand these exact deferred matches to the native queue owner. */
 	claimDeferred(sessionId: string, matches: readonly TtsrMatch[]): boolean {
-		const state = this.stateOf(sessionId);
-		if (!state || !matches.every((match) => state.deferred.includes(match))) return false;
-		const claimed = new Set(matches);
-		state.deferred = state.deferred.filter((match) => !claimed.has(match));
+		const queued = this.peekDeferred(sessionId);
+		if (!matches.every((match) => queued.includes(match))) return false;
+		this.commitDeferred(sessionId, matches);
 		return true;
+	}
+
+	/** Discard disabled/edited guidance and release only its own repeat reservation. */
+	discardDeferred(sessionId: string, matches: readonly TtsrMatch[]): void {
+		const state = this.conversations.get(conversationIdFor(sessionId));
+		if (!state) return;
+		const discarded = new Set(matches);
+		state.deferred = state.deferred.filter((match) => !discarded.has(match));
+		for (const match of matches) this.releaseMatch(match);
+	}
+
+	/** Pin repeat reservations until a preparing spawn commits or rolls back. */
+	holdDeferred(matches: readonly TtsrMatch[]): void {
+		for (const match of matches) this.held.add(match);
+	}
+
+	releaseDeferred(matches: readonly TtsrMatch[]): void {
+		for (const match of matches) {
+			this.held.delete(match);
+			if (![...this.conversations.values()].some((state) => state.deferred.includes(match)))
+				this.releaseMatch(match);
+		}
+	}
+
+	private acceptMatch(match: TtsrMatch): void {
+		const reservation = this.injections.get(match);
+		if (reservation) this.store.acceptInjection(reservation);
+		this.injections.delete(match);
+	}
+
+	private releaseMatch(match: TtsrMatch): void {
+		if (this.held.has(match)) return;
+		const reservation = this.injections.get(match);
+		if (reservation) this.store.releaseInjection(reservation);
+		this.injections.delete(match);
 	}
 
 	/** True while this conversation still owes its next prompt a reminder. */
 	hasDeferred(sessionId: string): boolean {
-		return (this.stateOf(sessionId)?.deferred.length ?? 0) > 0;
+		return (this.conversations.get(conversationIdFor(sessionId))?.deferred.length ?? 0) > 0;
 	}
 
 	/** Drop all per-session state (session closed). */
 	dispose(sessionId: string): void {
-		this.sessions.delete(conversationIdFor(sessionId));
+		// A disabled exit still owes queued guidance, but must not advance turns
+		// or write state. Folding to pending changes no durable snapshot content.
+		if (!this.stateOf(sessionId)?.providerSessionId)
+			this.store.adoptPendingTurn(conversationIdFor(sessionId), sessionId);
+		this.sessions.delete(sessionId);
+		if (!this.hasDeferred(sessionId)) this.conversations.delete(conversationIdFor(sessionId));
 	}
 
 	// ── internals ──
@@ -525,20 +628,24 @@ export class TtsrManager {
 
 		for (const rule of rules) {
 			if (!ruleAppliesToContext(rule, ctx)) continue;
-			if (!this.store.isEligible(rule, key)) continue;
+			if (!this.isEligible(sessionId, rule)) continue;
 			const matchedText = findRegexMatch(rule, text);
 			if (matchedText === null) continue;
 
 			// Recording the firing here starts the repeat cooldown, so a rule
 			// cannot re-fire on every subsequent delta of the same turn.
-			this.store.noteInjection(key, rule.name);
-			matches.push({
+			const match: TtsrMatch = {
 				rule,
 				source: ctx.source,
 				disposition: classifyMatch(rule, ctx.source),
 				matchedText,
 				filePath: ctx.filePath,
-			});
+			};
+			this.injections.set(
+				match,
+				this.store.reserveInjection(key, rule.name, this.messageCountFor(sessionId))
+			);
+			matches.push(match);
 		}
 
 		return matches;
@@ -549,8 +656,10 @@ export class TtsrManager {
 	 * the one the agent just committed, and the block is prepended to a real user
 	 * prompt, so an unbounded queue would cost more context than it is worth.
 	 */
-	private trimDeferred(state: SessionState): void {
+	private trimDeferred(state: ConversationState): void {
 		if (state.deferred.length > MAX_DEFERRED_PER_SESSION) {
+			for (const match of state.deferred.slice(0, -MAX_DEFERRED_PER_SESSION))
+				this.releaseMatch(match);
 			state.deferred = state.deferred.slice(-MAX_DEFERRED_PER_SESSION);
 		}
 	}
@@ -558,11 +667,13 @@ export class TtsrManager {
 	/** Queue matches into their Phase 3 buckets and report them. */
 	private record(sessionId: string, ctx: TtsrObserveContext, matches: TtsrMatch[]): void {
 		const state = this.session(sessionId);
+		const conversation = this.conversation(sessionId);
 		for (const match of matches) {
+			match.projectRoot = ctx.cwd;
 			if (match.disposition === 'interrupt') state.interrupts.push(match);
-			else state.deferred.push(match);
+			else conversation.deferred.push(match);
 		}
-		this.trimDeferred(state);
+		this.trimDeferred(conversation);
 
 		if (!this.deps.onMatched) return;
 		// One payload per source so the renderer can label the stream that fired.

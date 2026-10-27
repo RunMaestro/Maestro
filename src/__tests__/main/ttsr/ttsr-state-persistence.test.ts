@@ -247,6 +247,7 @@ describe('TtsrRuntime state persistence', () => {
 		first.source.emit('spawn', spawnConfig);
 		first.source.emit('session-id', 'sess-ai-1', 'prov-1');
 		expect(first.runtime.observe('sess-ai-1', textEvent('console.log(x)'))).toHaveLength(1);
+		expect(first.runtime.takeDeferredReminders('sess-ai-1')).toContain('Use the project logger.');
 		first.source.emit('exit', 'sess-ai-1', 0);
 		first.runtime.dispose();
 
@@ -256,6 +257,46 @@ describe('TtsrRuntime state persistence', () => {
 		const second = bootRuntime(backend);
 		second.source.emit('spawn', { ...spawnConfig, agentSessionId: 'prov-1' });
 		expect(second.runtime.observe('sess-ai-1', textEvent('console.log(y)'))).toHaveLength(0);
+		second.runtime.dispose();
+	});
+});
+
+describe('TTSR guidance ownership across restart', () => {
+	it('re-arms an observed once rule when shutdown precedes any durable handoff', () => {
+		const backend = fakeBackend();
+		const first = bootRuntime(backend);
+		first.source.emit('spawn', { ...spawnConfig, agentSessionId: 'prov-1' });
+		expect(first.runtime.observe('sess-ai-1', textEvent('console.log(x)'))).toHaveLength(1);
+		// Even an end-turn save must not turn unclaimed guidance into delivery history.
+		first.source.emit('exit', 'sess-ai-1', 0);
+		first.runtime.dispose();
+		const second = bootRuntime(backend);
+		second.source.emit('spawn', { ...spawnConfig, agentSessionId: 'prov-1' });
+		expect(second.runtime.observe('sess-ai-1', textEvent('console.log(x)'))).toHaveLength(1);
+		second.runtime.dispose();
+	});
+	it('keeps a once rule spent after the durable held native queue claims it', () => {
+		const backend = fakeBackend();
+		let requestId = '';
+		const persistence = createTtsrStatePersistence({ backend });
+		const first = new TtsrRuntime({
+			isGloballyEnabled: () => true,
+			loadConfig: () => loadResult([makeRule({ interruptMode: 'always' })]),
+			persistence,
+			onTriggered: (offer) => {
+				requestId = offer.requestId;
+			},
+		});
+		const source = new EventEmitter();
+		first.attach(source as unknown as TtsrProcessEventSource);
+		source.emit('spawn', { ...spawnConfig, agentSessionId: 'prov-1' });
+		first.observe('sess-ai-1', textEvent('console.log(x)'));
+		expect(first.claimSteeringRequest('sess-ai-1', requestId)).toBe(true);
+		// Claim flushes its accepted history without waiting for shutdown/debounce.
+		const second = bootRuntime(backend);
+		second.source.emit('spawn', { ...spawnConfig, agentSessionId: 'prov-1' });
+		expect(second.runtime.observe('sess-ai-1', textEvent('console.log(y)'))).toEqual([]);
+		first.dispose();
 		second.runtime.dispose();
 	});
 });
