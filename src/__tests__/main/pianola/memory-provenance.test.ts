@@ -317,6 +317,7 @@ it('normalizes an entire long native OMP turn before chunking and retains only t
 	console.log(
 		'[DEBUG-provenance]',
 		JSON.stringify({
+			config: engine.database.config(),
 			sources: engine.database.db.prepare('SELECT * FROM sources').all(),
 			jobs: engine.database.db.prepare('SELECT * FROM ingestion_queue').all(),
 			extractCalls: extract.mock.calls.length,
