@@ -310,9 +310,10 @@ it('normalizes an entire long native OMP turn before chunking and retains only t
 		captured.push({ user: input.user, system: input.system });
 		return { pending: false, records: [], inputTokens: 0, outputTokens: 0 };
 	});
-	await engine.tick();
-	// The first bounded window contains only the session header; the next holds the oversized complete turn.
-	await engine.tick();
+	// Wait for the extraction outcome, not a startup-specific tick count.
+	for (let attempt = 0; attempt < 4 && extract.mock.calls.length === 0; attempt++) {
+		await engine.tick();
+	}
 	engine.stop();
 	const jobs = engine.database.db.prepare('SELECT data FROM ingestion_queue').all() as {
 		data: string;

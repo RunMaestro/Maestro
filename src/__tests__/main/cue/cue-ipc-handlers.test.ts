@@ -19,12 +19,6 @@ const hostState = vi.hoisted(() => ({
 	sessions: [] as Array<Record<string, any>>,
 	remotes: [] as Array<{ id: string; hostMountRoot?: string }>,
 }));
-vi.mock('../../../main/stores', () => ({
-	getSessionsStore: () => ({ get: () => hostState.sessions }),
-	getLiveSessions: () => hostState.sessions,
-	getSettingsStore: () => ({ get: () => hostState.remotes }),
-	getAgentConfigsStore: () => ({ get: () => storedReadiness.configs }),
-}));
 vi.mock('../../../main/cue/cue-scheduled-tasks', () => ({
 	collectScheduledTasks: vi.fn(() => ({ tasks: [], warnings: [] })),
 	createScheduledTask: vi.fn(() => ({ names: ['scheduled'] })),
