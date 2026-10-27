@@ -259,7 +259,11 @@ export class TtsrManager {
 			!event.textAlreadyStreamed
 		) {
 			const source: TtsrMatchSource = event.isReasoning ? 'thinking' : 'text';
-			const scanText = this.appendToBuffer(sessionId, source, event.text);
+			// A final result is a complete snapshot, not another stream delta.
+			// Scan it independently so echoes or divergent final answers cannot
+			// fabricate a boundary with prose already observed during this turn.
+			const scanText =
+				event.type === 'result' ? event.text : this.appendToBuffer(sessionId, source, event.text);
 			matches.push(...this.evaluate(sessionId, rules, scanText, { agentId: ctx.agentId, source }));
 		}
 

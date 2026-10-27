@@ -239,6 +239,42 @@ describe('TtsrManager streamed-prose double-count guard', () => {
 	});
 });
 
+describe('TtsrManager final result snapshots', () => {
+	it.each([true, false])(
+		'does not concatenate an echoed result after prose (partial=%s)',
+		(isPartial) => {
+			const { manager } = setup([makeRule({ condition: ['foofoo'] })]);
+			const agent = ctx('claude-code');
+			manager.observe('s1', { type: 'text', text: 'foo', isPartial }, agent);
+			expect(manager.observe('s1', { type: 'result', text: 'foo' }, agent)).toEqual([]);
+		}
+	);
+
+	it('does not invent a boundary between divergent streamed and final answers', () => {
+		const { manager } = setup([makeRule({ condition: ['foobar'] })]);
+		const agent = ctx('claude-code');
+		manager.observe('s1', { type: 'text', text: 'foo', isPartial: true }, agent);
+		expect(manager.observe('s1', { type: 'result', text: 'bar' }, agent)).toEqual([]);
+	});
+
+	it.each(['foobar', 'x'.repeat(40_000) + 'foobar'])(
+		'scans genuine final-answer boundaries',
+		(text) => {
+			const { manager } = setup([makeRule({ condition: ['obar'] })]);
+			const agent = ctx('claude-code');
+			manager.observe('s1', { type: 'text', text: 'foo', isPartial: true }, agent);
+			expect(manager.observe('s1', { type: 'result', text }, agent)).toHaveLength(1);
+		}
+	);
+
+	it('preserves result-only detection and repeat eligibility for echoed matches', () => {
+		const { manager } = setup([makeRule({ condition: ['foofoo'] })]);
+		const agent = ctx('opencode');
+		expect(manager.observe('s1', { type: 'result', text: 'foofoo' }, agent)).toHaveLength(1);
+		expect(manager.observe('s1', { type: 'result', text: 'foofoo' }, agent)).toEqual([]);
+	});
+});
+
 describe('TtsrManager gating', () => {
 	it('is a complete no-op when TTSR is disabled', () => {
 		const { manager, matched, getRules } = setup([makeRule()], { enabled: false });
