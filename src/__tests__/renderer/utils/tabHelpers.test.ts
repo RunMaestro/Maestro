@@ -44,6 +44,7 @@ import {
 	focusAiTabInSession,
 	getWriteModeTab,
 	getBusyTabs,
+	getRunningJumpTab,
 	getNavigableTabs,
 	navigateToNextTab,
 	navigateToPrevTab,
@@ -1682,6 +1683,50 @@ describe('tabHelpers', () => {
 	});
 
 	// Shared jump transform behind toasts, deep links, and the thinking status pill.
+	describe('getRunningJumpTab', () => {
+		it('prefers the active tab when it is the busy one', () => {
+			const session = createMockSession({
+				aiTabs: [
+					createMockTab({ id: 'tab-1', state: 'busy' }),
+					createMockTab({ id: 'tab-2', state: 'busy' }),
+				],
+				activeTabId: 'tab-2',
+			});
+			expect(getRunningJumpTab(session)?.id).toBe('tab-2');
+		});
+
+		it('picks the first busy open tab when the active tab is idle', () => {
+			const session = createMockSession({
+				aiTabs: [createMockTab({ id: 'tab-1' }), createMockTab({ id: 'tab-2', state: 'busy' })],
+				activeTabId: 'tab-1',
+			});
+			expect(getRunningJumpTab(session)?.id).toBe('tab-2');
+		});
+
+		it('falls back to a busy tab the user closed mid-turn', () => {
+			const session = createMockSession({
+				aiTabs: [createMockTab({ id: 'tab-1' })],
+				activeTabId: 'tab-1',
+				orphanedThinkingTabs: [
+					createMockTab({ id: 'parked', state: 'idle' }),
+					createMockTab({ id: 'orphan-1', state: 'busy' }),
+				],
+			});
+			expect(getRunningJumpTab(session)?.id).toBe('orphan-1');
+		});
+
+		it('skips hidden consult tabs and returns undefined when nothing runs', () => {
+			const session = createMockSession({
+				aiTabs: [
+					createMockTab({ id: 'tab-1' }),
+					createMockTab({ id: 'consult', state: 'busy', hidden: true }),
+				],
+				activeTabId: 'tab-1',
+			});
+			expect(getRunningJumpTab(session)).toBeUndefined();
+		});
+	});
+
 	describe('focusAiTabInSession', () => {
 		it('lands on an open tab and clears every non-AI view', () => {
 			const session = createMockSession({
@@ -1729,6 +1774,28 @@ describe('tabHelpers', () => {
 
 			expect(next.aiTabs).toHaveLength(2);
 			expect(next.activeTabId).not.toBe('tab-1');
+			expect(next.inputMode).toBe('ai');
+		});
+
+		it('reopens a busy tab closed mid-turn that is no longer in the closed-tab history', () => {
+			const orphan = createMockTab({ id: 'orphan-1', state: 'busy' });
+			const session = createMockSession({
+				aiTabs: [createMockTab({ id: 'tab-1' })],
+				activeTabId: 'tab-1',
+				unifiedTabOrder: [{ type: 'ai', id: 'tab-1' }],
+				unifiedClosedTabHistory: [],
+				closedTabHistory: [],
+				orphanedThinkingTabs: [orphan],
+				activeGroupId: 'group-1',
+			});
+
+			const next = focusAiTabInSession(session, 'orphan-1');
+
+			expect(next.aiTabs.map((t) => t.id)).toEqual(['tab-1', 'orphan-1']);
+			expect(next.activeTabId).toBe('orphan-1');
+			expect(next.orphanedThinkingTabs).toBeUndefined();
+			expect(next.unifiedTabOrder).toContainEqual({ type: 'ai', id: 'orphan-1' });
+			expect(next.activeGroupId).toBeNull();
 			expect(next.inputMode).toBe('ai');
 		});
 
@@ -3526,6 +3593,38 @@ describe('tabHelpers', () => {
 			expect(reopenUnifiedClosedTab(session)).toBeNull();
 		});
 
+		it('reopens a deeper entry by index and keeps the others in order (tab reopen --index)', () => {
+			const entry = (id: string) => ({
+				type: 'file' as const,
+				tab: createMockFileTab({ id, path: `/test/${id}.ts` }),
+				unifiedIndex: 1,
+				closedAt: 1,
+			});
+			const session = createMockSession({
+				aiTabs: [createMockTab({ id: 'ai-1' })],
+				activeTabId: 'ai-1',
+				filePreviewTabs: [],
+				unifiedTabOrder: [{ type: 'ai', id: 'ai-1' }],
+				unifiedClosedTabHistory: [entry('a'), entry('b'), entry('c')],
+			});
+
+			const result = reopenUnifiedClosedTab(session, 1)!;
+
+			expect(result.session.filePreviewTabs[0].path).toBe('/test/b.ts');
+			expect(result.session.unifiedClosedTabHistory.map((e) => e.tab.id)).toEqual(['a', 'c']);
+			expect(reopenUnifiedClosedTab(session, 3)).toBeNull();
+			expect(reopenUnifiedClosedTab(session, -1)).toBeNull();
+		});
+
+		it('does not fall back to the legacy stack for a non-zero index', () => {
+			const session = createMockSession({
+				unifiedClosedTabHistory: [],
+				closedTabHistory: [{ tab: createMockTab({ id: 'legacy' }), index: 0, closedAt: 1 }],
+			});
+			expect(reopenUnifiedClosedTab(session, 1)).toBeNull();
+			expect(reopenUnifiedClosedTab(session)).not.toBeNull();
+		});
+
 		it('reopens file tab from unified history', () => {
 			const aiTab = createMockTab({ id: 'ai-1' });
 			const closedFileTab = createMockFileTab({ id: 'closed-file', path: '/test/closed.ts' });
@@ -3553,6 +3652,50 @@ describe('tabHelpers', () => {
 			expect(result!.session.filePreviewTabs[0].path).toBe('/test/closed.ts');
 			expect(result!.session.activeFileTabId).toBe(result!.tabId);
 			expect(result!.session.unifiedClosedTabHistory).toHaveLength(0);
+		});
+
+		it('rehydrates a durable browser tab and keeps an incognito one in memory', () => {
+			const browserEntry = (tab: Record<string, unknown>) => ({
+				type: 'browser' as const,
+				tab: {
+					id: 'closed-browser',
+					url: 'https://example.com/',
+					title: 'Example',
+					createdAt: 0,
+					canGoBack: true,
+					canGoForward: true,
+					isLoading: true,
+					webContentsId: 9,
+					...tab,
+				},
+				unifiedIndex: Number.MAX_SAFE_INTEGER,
+				closedAt: 1,
+			});
+			const sessionWith = (entry: ReturnType<typeof browserEntry>) =>
+				createMockSession({
+					id: 'agent-1',
+					aiTabs: [createMockTab({ id: 'ai-1' })],
+					activeTabId: 'ai-1',
+					unifiedTabOrder: [{ type: 'ai', id: 'ai-1' }],
+					unifiedClosedTabHistory: [entry as any],
+				});
+
+			// An entry stored by an earlier run, with a partition this build no longer mints.
+			const durable = reopenUnifiedClosedTab(sessionWith(browserEntry({ partition: 'bogus' })))!;
+			const restored = durable.session.browserTabs.find((tab) => tab.id === durable.tabId)!;
+			expect(restored.partition).toBe('persist:maestro-browser-session-agent-1');
+			expect(restored).toMatchObject({ canGoBack: false, isLoading: false });
+			expect(restored.webContentsId).toBeUndefined();
+			expect(durable.session.unifiedTabOrder[durable.session.unifiedTabOrder.length - 1]).toEqual({
+				type: 'browser',
+				id: durable.tabId,
+			});
+
+			const partition = 'maestro-ephemeral-agent-1-abcd1234';
+			const incognito = reopenUnifiedClosedTab(
+				sessionWith(browserEntry({ ephemeral: true, partition }))
+			)!;
+			expect(incognito.session.browserTabs[0].partition).toBe(partition);
 		});
 
 		it('resets navigation history when restoring file tab', () => {

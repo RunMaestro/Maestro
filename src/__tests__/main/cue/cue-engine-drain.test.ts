@@ -11,8 +11,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import type { CueConfig, CueRunResult } from '../../../main/cue/cue-types';
+import type { CueConfig, CueEvent, CueRunResult } from '../../../main/cue/cue-types';
 import type { CueEngineDeps } from '../../../main/cue/cue-engine';
+import type { LoadCueConfigDetailedResult } from '../../../main/cue/cue-yaml-loader';
 import {
 	createInMemoryCueDb,
 	buildCueDbModuleMock,
@@ -39,7 +40,7 @@ vi.mock('../../../main/cue/cue-db', () => buildCueDbModuleMock(() => getSharedDb
 
 const configsByProject = new Map<string, CueConfig>();
 const mockWatchCueYaml = vi.fn<(projectRoot: string, onChange: () => void) => () => void>();
-const mockLoadDetailed = vi.fn((root: string) => {
+const mockLoadDetailed = vi.fn((root: string): LoadCueConfigDetailedResult => {
 	const cfg = configsByProject.get(root);
 	return cfg
 		? { ok: true as const, config: cfg, warnings: [] as string[] }
@@ -61,6 +62,7 @@ vi.mock('../../../main/cue/cue-task-scanner', () => ({
 }));
 
 import { CueEngine } from '../../../main/cue/cue-engine';
+import { configurePluginCueHost } from '../../../main/cue/triggers/cue-plugin-trigger-source';
 import { BACKGROUND_STOP_GRACE_MS } from '../../../shared/maestro-lib/control/termination';
 import { createMockSession, createMockDeps } from './cue-test-helpers';
 
@@ -191,6 +193,7 @@ describe('CueEngine.drain', () => {
 	});
 
 	afterEach(() => {
+		configurePluginCueHost(undefined);
 		vi.useRealTimers();
 	});
 
@@ -208,6 +211,324 @@ describe('CueEngine.drain', () => {
 		engine.start();
 		return { engine, exec, onLog, deps };
 	}
+
+	it.each([
+		{ action: 'remove', snapshotFailure: false },
+		{ action: 'clear', snapshotFailure: false },
+		{ action: 'clear-startup', snapshotFailure: false },
+		{ action: 'stop-all', snapshotFailure: false },
+		{ action: 'remove', snapshotFailure: true },
+		{ action: 'clear', snapshotFailure: true },
+		{ action: 'clear-startup', snapshotFailure: true },
+		{ action: 'stop-all', snapshotFailure: true },
+		{ action: 'remove-owner', snapshotFailure: true },
+		{ action: 'revoke', snapshotFailure: true },
+	])(
+		'retries only detached durable rows after $action (snapshot=$snapshotFailure)',
+		async ({ action, snapshotFailure }) => {
+			let emit: ((event: CueEvent) => number | void) | undefined;
+			let allowed = true;
+			configurePluginCueHost({
+				register(ctx) {
+					emit = ctx.emit;
+					return () => {};
+				},
+				authorize: () => allowed,
+				prepare: async () => allowed,
+			});
+			configsByProject.set('/p/a', {
+				subscriptions: [
+					{
+						name: 'plugin-sub',
+						event: 'plugin.event',
+						enabled: true,
+						prompt: 'work',
+						plugin: { pluginId: 'example.plugin', topic: 'mail', config: {} },
+					},
+				],
+				settings: { ...settings, queue_size: 4 },
+			});
+			const db = getSharedDb();
+			const read = db.getQueuedEvents.bind(db);
+			let blocked = snapshotFailure;
+			vi.spyOn(db, 'getQueuedEvents').mockImplementation((id) => {
+				if (blocked && id === undefined) throw Error('synthetic snapshot failure');
+				return read(id);
+			});
+			let stored = true;
+			const getSessions = vi.fn(() => [alpha]);
+			const { engine, exec } = boot({ getSessions, hasStoredSession: () => stored });
+			try {
+				for (const id of ['first-live', 'second-live'])
+					expect(
+						emit!({
+							id,
+							type: 'plugin.event',
+							timestamp: new Date().toISOString(),
+							triggerName: 'plugin-sub',
+							payload: { id },
+						})
+					).toBe(1);
+				await flush();
+				expect(exec.calls).toHaveLength(1);
+				expect(read()).toHaveLength(2);
+				if (action === 'stop-all') {
+					engine.stopAll();
+					expect(engine.getActiveRuns()).toEqual([]);
+					expect([...engine.getQueueStatus().values()]).toEqual([]);
+					await flush();
+					expect(exec.calls).toHaveLength(1); // No synchronous/microtask undo of Stop All.
+				} else if (action === 'remove' || action === 'remove-owner') {
+					if (action === 'remove-owner') {
+						stored = false;
+						getSessions.mockReturnValue([]);
+					}
+					engine.removeSession(alpha.id);
+				} else engine.clearQueue(alpha.id, action === 'clear-startup');
+				if (action === 'revoke') allowed = false;
+				blocked = false;
+				if (action === 'remove') engine.refreshSession(alpha.id, '/p/a');
+				else engine.retryPendingPluginEvents();
+				exec.finish('plugin-sub');
+				await flush();
+				await vi.advanceTimersByTimeAsync(30_000);
+				if (action === 'remove-owner' || action === 'revoke') {
+					expect(exec.calls).toHaveLength(1);
+					return;
+				}
+				expect(exec.calls).toHaveLength(2);
+				expect(exec.onCueRun.mock.calls.map(([r]) => r.event.id)).toEqual([
+					'first-live',
+					'second-live',
+				]);
+				exec.finish('plugin-sub');
+				await flush();
+				engine.retryPendingPluginEvents();
+				expect(exec.calls).toHaveLength(2);
+				expect(read()).toEqual([]);
+			} finally {
+				engine.stop();
+			}
+		}
+	);
+
+	it.each([
+		{ queueSize: 0, failure: 'none' },
+		{ queueSize: 1, failure: 'none' },
+		{ queueSize: 1, failure: 'snapshot' },
+		{ queueSize: 1, failure: 'restore' },
+		{ queueSize: 1, failure: 'terminal' },
+		{ queueSize: 1, failure: 'remove' },
+		{ queueSize: 1, failure: 'late-owner' },
+		{ queueSize: 1, failure: 'late-config' },
+		{ queueSize: 1, failure: 'teardown' },
+		{ queueSize: 1, failure: 'hidden-before-teardown' },
+		{ queueSize: 1, failure: 'live-watch-refresh' },
+		{ queueSize: 1, failure: 'live-watch-completion' },
+		{ queueSize: 1, failure: 'live-watch-revoke' },
+		{ queueSize: 1, failure: 'live-watch-remove' },
+		{ queueSize: 1, failure: 'live-watch-stop' },
+		{ queueSize: 1, failure: 'removed-source' },
+		{ queueSize: 1, failure: 'removed-config' },
+	])(
+		'retries acknowledged plugin rows after activation without duplicates ($queueSize/$failure)',
+		async ({ queueSize, failure }) => {
+			let available = false;
+			configurePluginCueHost({
+				register: () => () => {},
+				authorize: () => available,
+				prepare: async () => available,
+			});
+			configsByProject.set('/p/a', {
+				subscriptions: [
+					{
+						name: 'plugin-sub',
+						event: 'plugin.event',
+						enabled: true,
+						prompt: 'current config',
+						plugin: { pluginId: 'example.plugin', topic: 'mail', config: {} },
+					},
+				],
+				settings: { ...settings, queue_size: queueSize },
+			});
+			const queuedAt = Date.now() - 86_400_000;
+			getSharedDb().initCueDb();
+			for (const id of ['first', 'second']) {
+				getSharedDb().persistQueuedEvent({
+					id,
+					sessionId: alpha.id,
+					subscriptionName: 'plugin-sub',
+					eventJson: JSON.stringify({
+						id,
+						type: 'plugin.event',
+						timestamp: new Date().toISOString(),
+						payload: { receipt: id },
+					}),
+					prompt: `stored ${id}`,
+					outputPrompt: null,
+					cliOutputJson: null,
+					action: null,
+					commandJson: null,
+					chainDepth: 2,
+					queuedAt,
+					chainRootId: 'original-root',
+					parentEventId: 'original-parent',
+					turnSettingsJson: JSON.stringify({ model: 'stored-model' }),
+				});
+			}
+			let blockedReads = failure === 'snapshot' || failure === 'restore',
+				reads = 0;
+			const db = getSharedDb(),
+				read = db.getQueuedEvents.bind(db);
+			vi.spyOn(db, 'getQueuedEvents').mockImplementation((id) => {
+				reads++;
+				if (blockedReads && (failure === 'snapshot' || reads > 1))
+					throw Error('synthetic read failure');
+				return read(id);
+			});
+			let storedOwner = true;
+			const getSessions = vi.fn(() => (failure === 'late-owner' ? [] : [alpha]));
+			if (failure === 'late-config')
+				mockLoadDetailed.mockReturnValueOnce({
+					ok: false,
+					reason: 'parse-error',
+					message: 'synthetic mid-edit YAML',
+				});
+			const { engine, exec } = boot({ getSessions, hasStoredSession: () => storedOwner });
+			blockedReads = false;
+			const retry = () =>
+				(
+					engine as unknown as {
+						retryPendingPluginEvents?: () => void;
+					}
+				).retryPendingPluginEvents?.();
+			try {
+				expect(exec.calls).toEqual([]);
+				retry(); // Unavailable plugins keep both original durable rows.
+				expect(queueRows().map((row) => row.id)).toEqual(['first', 'second']);
+				if (
+					failure === 'terminal' ||
+					failure === 'removed-source' ||
+					failure === 'removed-config'
+				) {
+					if (failure === 'terminal') {
+						storedOwner = false;
+						getSessions.mockReturnValue([]);
+						engine.removeSession(alpha.id);
+					} else {
+						if (failure === 'removed-source')
+							configsByProject.set('/p/a', { subscriptions: [], settings });
+						else configsByProject.delete('/p/a');
+						engine.refreshSession(alpha.id, '/p/a');
+					}
+					retry();
+					expect(queueRows()).toEqual([]);
+					const lastReadCount = reads;
+					await vi.advanceTimersByTimeAsync(30_000);
+					expect(reads).toBe(lastReadCount);
+					return;
+				}
+				if (failure === 'remove') {
+					const remove = db.safeRemoveQueuedEvent.bind(db);
+					vi.spyOn(db, 'safeRemoveQueuedEvent').mockImplementation((id) => {
+						if (id !== 'first') remove(id); // Simulate one failed old-row removal.
+					});
+				}
+				const discoveredLater = [
+					'late-owner',
+					'late-config',
+					'teardown',
+					'hidden-before-teardown',
+				].includes(failure);
+				if (failure === 'hidden-before-teardown') {
+					getSessions.mockReturnValue([]);
+					available = true; // Registry still exists; the live owner has disappeared.
+					retry();
+					expect(exec.calls).toEqual([]);
+					expect(queueRows().map((row) => row.id)).toEqual(['first', 'second']);
+				}
+				if (failure === 'teardown') {
+					engine.removeSession(alpha.id); // Root moves/live filtering keep the stored owner.
+					retry();
+					expect(queueRows().map((row) => row.id)).toEqual(['first', 'second']);
+				}
+				if (discoveredLater) {
+					const lastReadCount = reads;
+					await vi.advanceTimersByTimeAsync(30_000);
+					expect(reads).toBe(lastReadCount); // Deferred owners do not cause full-queue polling.
+				}
+				available = true;
+				if (discoveredLater) {
+					getSessions.mockReturnValue([alpha]);
+					engine.refreshSession(alpha.id, '/p/a');
+				} else retry();
+				await flush();
+				expect(exec.calls).toEqual(['plugin-sub']);
+				expect(exec.onCueRun.mock.calls[0][0]).toMatchObject({ prompt: 'stored first' });
+				const queued = queueRows();
+				expect(queued).toHaveLength(failure === 'remove' ? 3 : 2);
+				expect(queued.some((row) => row.id === 'first')).toBe(failure === 'remove');
+				expect(queued.find((row) => row.prompt === 'stored second')).toMatchObject({
+					queuedAt,
+					chainRootId: 'original-root',
+					parentEventId: 'original-parent',
+					turnSettingsJson: JSON.stringify({ model: 'stored-model' }),
+				});
+				if (failure.startsWith('live-watch-')) {
+					getSessions.mockReturnValue([]);
+					engine.refreshSession(alpha.id, '/p/a');
+					expect(queueRows()).toEqual(queued);
+					if (failure !== 'live-watch-refresh') {
+						exec.finish('plugin-sub');
+						await flush();
+						expect(exec.calls).toHaveLength(1);
+						expect(queueRows()).toHaveLength(1);
+					}
+					getSessions.mockReturnValue([alpha]);
+					engine.refreshSession(alpha.id, '/p/a');
+					if (['live-watch-revoke', 'live-watch-remove', 'live-watch-stop'].includes(failure)) {
+						if (failure === 'live-watch-revoke') available = false;
+						else if (failure === 'live-watch-remove') {
+							storedOwner = false;
+							getSessions.mockReturnValue([]);
+							engine.removeSession(alpha.id);
+						} else engine.stop();
+						await flush();
+						expect(exec.calls).toHaveLength(1);
+						expect(queueRows()).toHaveLength(failure === 'live-watch-stop' ? 1 : 0);
+						return;
+					}
+					if (failure !== 'live-watch-refresh') {
+						await flush();
+						expect(exec.calls).toHaveLength(2);
+						expect(exec.onCueRun.mock.calls[1][0]).toMatchObject({ prompt: 'stored second' });
+						exec.finish('plugin-sub');
+						await flush();
+						expect(queueRows()).toEqual([]);
+						return;
+					}
+					expect(queueRows()).toEqual(queued);
+				}
+				retry();
+				expect(queueRows()).toEqual(queued);
+				exec.finish('plugin-sub');
+				await flush();
+				// Capacity-rejected restore rows also retry on the existing heartbeat.
+				await vi.advanceTimersByTimeAsync(30_000);
+				expect(exec.calls).toEqual(['plugin-sub', 'plugin-sub']);
+				expect(exec.onCueRun.mock.calls[1][0]).toMatchObject({ prompt: 'stored second' });
+				exec.finish('plugin-sub');
+				await flush();
+				expect(queueRows().map((row) => row.id)).toEqual(failure === 'remove' ? ['first'] : []);
+				retry();
+				expect(exec.calls).toHaveLength(2);
+			} finally {
+				engine.stop();
+			}
+			retry();
+			expect(exec.calls).toHaveLength(2);
+		}
+	);
 
 	it('lets runs finish and defers their successors (single chain and fan-in) to the queue', async () => {
 		const { engine, exec, onLog } = boot();

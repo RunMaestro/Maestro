@@ -24,20 +24,41 @@ import { fallbackFontResult, type FontDetectionResult } from '../../../shared/fo
 import { logger } from '../../utils/logger';
 import { detectShells } from '../../utils/shellDetector';
 import { isCloudflaredInstalled } from '../../utils/cliDetection';
-import { tunnelManager as tunnelManagerInstance } from '../../tunnel-manager';
 import { checkForUpdates } from '../../update-checker';
 import { sendCheckin } from '../../checkin';
 import { setAllowPrerelease } from '../../auto-updater';
-import { WebServer } from '../../web-server';
+import { getLiveModeController } from '../../web-server/live-mode';
 import { powerManager } from '../../power-manager';
 import { setMenuShortcutKeys } from '../../app-menu';
 import { MaestroSettings } from './persistence';
 import { captureException } from '../../utils/sentry';
 import { createSafeSend } from '../../utils/safe-send';
 import type { BootstrapSettings } from '../../stores/types';
+import { isLinux } from '../../../shared/platformDetection';
 
-// Type for tunnel manager instance
-type TunnelManagerType = typeof tunnelManagerInstance;
+/**
+ * `shell.openPath` that always settles.
+ *
+ * On Linux, Electron's `platform_util::OpenPath` launches `xdg-open` with
+ * `wait_for_exit = false` and never runs its completion callback, so the promise
+ * `shell.openPath` returns there never resolves (Electron 41,
+ * `shell/common/platform_util_linux.cc`). An IPC handler that awaits it never
+ * replies; once the pending invoke is garbage-collected the renderer gets
+ * "Error invoking remote method 'shell:openPath': reply was never sent"
+ * (MAESTRO-QH, Linux only). Linux reports nothing either way, so there it is
+ * fired and reported as launched; macOS and Windows still return the real
+ * error message.
+ */
+function openPathSettled(target: string): Promise<string> {
+	if (isLinux()) {
+		void shell.openPath(target);
+		return Promise.resolve('');
+	}
+	return shell.openPath(target);
+}
+
+/** Answered while startup has not registered the Live mode controller yet. */
+const LIVE_MODE_NOT_READY = 'Live mode is not available yet. Try again in a moment.';
 
 /**
  * Dependencies required for system handlers
@@ -46,8 +67,6 @@ export interface SystemHandlerDependencies {
 	getMainWindow: () => BrowserWindow | null;
 	app: App;
 	settingsStore: Store<MaestroSettings>;
-	tunnelManager: TunnelManagerType;
-	getWebServer: () => WebServer | null;
 	bootstrapStore?: Store<BootstrapSettings>;
 }
 
@@ -81,7 +100,7 @@ function decodeClipboardImage(dataUrl: string): Electron.NativeImage {
  * Register all system-related IPC handlers.
  */
 export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
-	const { getMainWindow, app, settingsStore, tunnelManager, getWebServer } = deps;
+	const { getMainWindow, app, settingsStore } = deps;
 
 	// ============ Dialog Handlers ============
 
@@ -246,7 +265,7 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 			// Detect absolute file paths and redirect to openPath - Fixes MAESTRO-FN/FA/F4
 			if (path.isAbsolute(url)) {
 				if (fsSync.existsSync(url)) {
-					const errorMessage = await shell.openPath(url);
+					const errorMessage = await openPathSettled(url);
 					if (errorMessage) {
 						throw new Error(errorMessage);
 					}
@@ -264,7 +283,7 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 			if (!fsSync.existsSync(filePath)) {
 				throw new Error(`Path does not exist: ${filePath}`);
 			}
-			const errorMessage = await shell.openPath(filePath);
+			const errorMessage = await openPathSettled(filePath);
 			if (errorMessage) {
 				throw new Error(errorMessage);
 			}
@@ -347,7 +366,7 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 			logger.warn(`shell:openPath - path does not exist: ${absolutePath}`, 'Shell');
 			return;
 		}
-		const errorMessage = await shell.openPath(absolutePath);
+		const errorMessage = await openPathSettled(absolutePath);
 		if (errorMessage) {
 			logger.warn(`shell:openPath failed for ${absolutePath}: ${errorMessage}`, 'Shell');
 		}
@@ -423,56 +442,30 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 		return await isCloudflaredInstalled();
 	});
 
+	// Remote Control start/stop/status go through the Live mode controller, the
+	// same object `maestro-cli live tunnel` reaches, so the panel and the CLI
+	// share one implementation and one switch queue.
 	ipcMain.handle('tunnel:start', async () => {
-		const webServer = getWebServer();
-		// Get web server URL (includes the security token)
-		const serverUrl = webServer?.getSecureUrl();
-		if (!serverUrl) {
-			return { success: false, error: 'Web server not running' };
-		}
-
-		// Parse the URL to get port and token path
-		const parsedUrl = new URL(serverUrl);
-		const port = parseInt(parsedUrl.port, 10);
-		const tokenPath = parsedUrl.pathname; // e.g., "/7d7f7162-614c-43e2-bb8a-8a8123c2f56a"
-
-		const result = await tunnelManager.start(port);
-
-		if (result.success && result.url) {
-			// Append the token path to the tunnel URL for security
-			// e.g., "https://xyz.trycloudflare.com" + "/TOKEN" = "https://xyz.trycloudflare.com/TOKEN"
-			const fullTunnelUrl = result.url + tokenPath;
-			return { success: true, url: fullTunnelUrl };
-		}
-
-		return result;
+		const liveMode = getLiveModeController();
+		if (!liveMode) return { success: false, error: LIVE_MODE_NOT_READY };
+		const { success, url, error } = await liveMode.startRemoteControl();
+		return { success, ...(url ? { url } : {}), ...(error ? { error } : {}) };
 	});
 
 	ipcMain.handle('tunnel:stop', async () => {
-		await tunnelManager.stop();
-		return { success: true };
+		const liveMode = getLiveModeController();
+		if (!liveMode) return { success: false, error: LIVE_MODE_NOT_READY };
+		const { success, error } = await liveMode.stopRemoteControl();
+		return { success, ...(error ? { error } : {}) };
 	});
 
 	ipcMain.handle('tunnel:getStatus', async () => {
-		const status = tunnelManager.getStatus();
-		if (!status.isRunning || !status.url) return status;
-
-		// Append the web server's token path so the URL stays usable.
-		// tunnelManager itself is token-agnostic - composition happens here,
-		// matching tunnel:start above.
-		const webServer = getWebServer();
-		const serverUrl = webServer?.getSecureUrl();
-		if (!serverUrl) return status;
-
-		try {
-			const tokenPath = new URL(serverUrl).pathname;
-			if (tokenPath && tokenPath !== '/' && !status.url.endsWith(tokenPath)) {
-				return { ...status, url: status.url + tokenPath };
-			}
-		} catch {
-			// Malformed server URL - fall back to bare tunnel URL
-		}
-		return status;
+		const status = getLiveModeController()?.getStatus();
+		return {
+			isRunning: status?.remoteControl ?? false,
+			url: status?.remoteControlUrl ?? null,
+			error: status?.remoteControlError ?? null,
+		};
 	});
 
 	// ============ DevTools Handlers ============

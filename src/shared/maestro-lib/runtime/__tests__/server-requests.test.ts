@@ -431,6 +431,26 @@ describe('dispatch messages', () => {
 			expect(callback).not.toHaveProperty('callbackId');
 			expect(host.calls).toEqual([]);
 		});
+
+		it('refuses a mention routing it has no consults to apply to, on every dispatch path', async () => {
+			const host = recordingClient({ activeTabId: 't-active' });
+			for (const message of [
+				{ ...base, command: 'tell @b', mentionRouting: 'handoff' },
+				{ type: 'enqueue_command', sessionId: 'a1', command: 'tell @b', mentionRouting: 'only' },
+				{
+					type: 'new_ai_tab_with_prompt',
+					sessionId: 'a1',
+					prompt: 'tell @b',
+					mentionRouting: 'parallel',
+				},
+			]) {
+				const reply = await host.handle(message);
+				expect(reply).toMatchObject({ success: false });
+				expect(String(reply?.error)).toContain('--routing');
+			}
+			// Nothing was sent and no tab was created.
+			expect(host.calls).toEqual([]);
+		});
 	});
 
 	describe('new_ai_tab_with_prompt', () => {

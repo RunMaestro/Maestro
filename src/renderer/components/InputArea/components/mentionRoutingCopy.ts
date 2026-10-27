@@ -8,7 +8,7 @@
  */
 
 import { ArrowLeftToLine, ArrowRightFromLine, AtSign, Split, type LucideIcon } from 'lucide-react';
-import type { MentionRouting } from '../../../../shared/crossAgentContext';
+import { MENTION_ROUTINGS, type MentionRouting } from '../../../../shared/crossAgentContext';
 
 export interface MentionRoutingCopy {
 	label: string;
@@ -27,12 +27,7 @@ export interface MentionRoutingCopy {
 }
 
 /** Menu and hint order: the default first, then consult before, hand off after, leave out. */
-export const MENTION_ROUTING_ORDER: readonly MentionRouting[] = [
-	'parallel',
-	'consult-first',
-	'handoff',
-	'only',
-];
+export const MENTION_ROUTING_ORDER: readonly MentionRouting[] = MENTION_ROUTINGS;
 
 export const MENTION_ROUTING_COPY: Record<MentionRouting, MentionRoutingCopy> = {
 	only: {

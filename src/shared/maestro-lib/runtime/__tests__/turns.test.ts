@@ -24,7 +24,7 @@ import {
 import { DEFAULT_TAB_DEFAULTS } from '../../agents/rules';
 import type { ClientResult, TurnEvent } from '../../client/types';
 import { readHistory } from '../../store/read-history';
-import { runAgentTurn } from '../../turns/run-agent-turn';
+import { runAgentTurn, type RunAgentTurnOptions } from '../../turns/run-agent-turn';
 import { createMaestroRuntime, type MaestroRuntime, type RuntimeDeps } from '../index';
 import type { WatchDirectory } from '../settings-watch';
 
@@ -49,6 +49,8 @@ describe('runtime turns', () => {
 	/** Keep the fake agent running after its replay, until it is stopped. */
 	let hold: boolean;
 	let argvFiles: string[];
+	/** The options each turn was started with. */
+	let turnOptions: RunAgentTurnOptions[];
 	let binaryExists: boolean;
 
 	const watchDirectory: WatchDirectory = () => ({ close: () => undefined });
@@ -56,6 +58,7 @@ describe('runtime turns', () => {
 	const fakeProvider: RuntimeDeps['turns']['runAgentTurn'] = (turn, options) => {
 		const argvOut = path.join(work, `argv-${argvFiles.length + 1}.json`);
 		argvFiles.push(argvOut);
+		turnOptions.push(options);
 		return runAgentTurn(
 			{
 				...turn,
@@ -184,6 +187,7 @@ describe('runtime turns', () => {
 		open = [];
 		hold = false;
 		argvFiles = [];
+		turnOptions = [];
 		binaryExists = true;
 		recordings = {
 			'claude-code': writeFakeTurn(
@@ -221,6 +225,16 @@ describe('runtime turns', () => {
 				providerSessionId: CAPTURED_CLAUDE_CODE_SESSION_ID,
 			});
 			expect(turn.outcomes()).toEqual(['completed']);
+		});
+
+		it("lets the turn accept claude's folder trust, since it runs in the agent's own cwd (#1872)", async () => {
+			const runtime = await start();
+			const turn = watch(runtime);
+
+			value(await runtime.turns.send('a1', 't1', { text: 'hello' }));
+			await turn.outcome();
+
+			expect(turnOptions[0]?.acceptWorkspaceTrust).toBe(true);
 		});
 
 		it('writes the message, the answer, the session id, and the folded usage the desktop will show', async () => {

@@ -5,6 +5,7 @@ import type { WebServerFactoryDependencies } from '../web-server-factory';
 import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
 import type { TerminalTabInfo, ReadTerminalTabResult, NewAITabWithPromptResult } from '../types';
+import type { MentionRouting } from '../../../shared/crossAgentContext';
 
 export function registerBrowserTabCallbacks(
 	server: WebServer,
@@ -315,7 +316,13 @@ export function registerBrowserTabCallbacks(
 	});
 
 	server.setNewAITabWithPromptCallback(
-		async (sessionId: string, prompt: string, background?: boolean, hidden?: boolean) => {
+		async (
+			sessionId: string,
+			prompt: string,
+			background?: boolean,
+			hidden?: boolean,
+			mentionRouting?: MentionRouting
+		) => {
 			const mainWindow = getMainWindow();
 			if (!mainWindow) {
 				logger.warn('mainWindow is null for newAITabWithPrompt', 'WebServer');
@@ -365,7 +372,8 @@ export function registerBrowserTabCallbacks(
 					prompt,
 					responseChannel,
 					background,
-					hidden
+					hidden,
+					mentionRouting
 				);
 
 				const timeoutId = setTimeout(() => {

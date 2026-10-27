@@ -38,7 +38,7 @@ import {
 import { QUERY_USER_ENV_VAR } from '../../../../shared/webLogin';
 import { getActingUser } from '../../../web-server/auth/acting-user';
 import { noteTurnActor } from '../../../web-server/auth/turn-attribution';
-import { REGEX_AI_SUFFIX } from '../../../constants';
+import { REGEX_AI_SUFFIX, REGEX_AI_TAB_ID } from '../../../constants';
 import { addBreadcrumb, captureException } from '../../../utils/sentry';
 import {
 	DORMANT_PIANOLA_MESSAGE,
@@ -395,11 +395,15 @@ async function handleProcessSpawnImpl(
 	// runs can be marked in its own transcript (see shared/agentDelegation.ts).
 	// Same injection point as Pianola's id, for the same reason: it has to reach
 	// both the local and the SSH env-merge paths. A terminal is a shell the user
-	// drives, not an agent turn, so it is never stamped.
+	// drives, not an agent turn, so it is never stamped. Desktop turns do not
+	// send `tabId`; the tab lives in the compound `{agentId}-ai-{tabId}` process
+	// id instead. Without it the shell had no tab, and a `dispatch
+	// --notify-on-complete` woke whichever tab the user happened to be viewing.
 	if (config.toolType !== 'terminal') {
+		const callerTabId = config.tabId ?? config.sessionId.match(REGEX_AI_TAB_ID)?.[1];
 		effectiveCustomEnvVars = {
 			...(effectiveCustomEnvVars || {}),
-			...buildCallerIdentityEnv(baseSessionId, config.tabId),
+			...buildCallerIdentityEnv(baseSessionId, callerTabId),
 		};
 
 		// Who asked for this turn, when the spawn came from a logged-in browser.

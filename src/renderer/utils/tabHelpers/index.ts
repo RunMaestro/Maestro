@@ -23,6 +23,7 @@ import {
 	getTabDisplayName as libGetTabDisplayName,
 } from '../../../shared/maestro-lib/store/tab-display';
 import { generateId } from '../ids';
+import { MAX_CLOSED_TAB_HISTORY } from '../../../shared/closedTabHistory';
 import { getAutoRunFolderPath } from '../existingDocsDetector';
 import { createTerminalTab, nextTerminalCoworkingId } from '../terminalTabHelpers';
 import {
@@ -39,7 +40,12 @@ import {
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
 import { isWindowsPlatform } from '../platformUtils';
-import { DEFAULT_BROWSER_TAB_URL, getBrowserTabTitle } from '../browserTabPersistence';
+import {
+	DEFAULT_BROWSER_TAB_URL,
+	getBrowserTabTitle,
+	isEphemeralBrowserTab,
+	rehydrateBrowserTab,
+} from '../browserTabPersistence';
 import { getLiveDraft } from '../liveDraftStore';
 import { codifyQueuedTurnSettings } from '../providerTabSessions';
 import {
@@ -521,9 +527,6 @@ export function extractQuickTabName(message: string): string | null {
 	return null;
 }
 
-// Maximum number of closed tabs to keep in history
-const MAX_CLOSED_TAB_HISTORY = 25;
-
 /**
  * Check if a tab has draft content (unsent input or staged images).
  * Used for determining if a tab should be shown in "unread only" filter mode.
@@ -873,6 +876,25 @@ export function resolveQueuedItemTarget(
 	}
 	const active = getActiveTab(session);
 	return active ? { tabId: active.id, location: 'active' } : null;
+}
+
+/**
+ * True when the tab a queued item would run on is already mid-turn.
+ *
+ * The agent process is keyed per tab (`${sessionId}-ai-${tabId}`), so an agent can
+ * read idle - or a parallel `-batch-` Auto Run task can exit - while that exact tab
+ * is still running its own turn. Dispatching onto it makes main refuse the spawn
+ * ("Agent process already running for session ...-ai-<tabId>", MAESTRO-ZS). Every
+ * drain path checks this first and leaves the item queued; the busy tab's own exit
+ * drains it.
+ */
+export function isQueuedItemTargetBusy(session: Session, item: Pick<QueuedItem, 'tabId'>): boolean {
+	const target = resolveQueuedItemTarget(session, item);
+	if (!target) return false;
+	const tab =
+		session.aiTabs?.find((candidate) => candidate.id === target.tabId) ??
+		session.orphanedThinkingTabs?.find((candidate) => candidate.id === target.tabId);
+	return tab?.state === 'busy';
 }
 
 /**
@@ -2201,13 +2223,20 @@ export function reopenClosedAiTabById(
 /**
  * Reopen the most recently closed tab into the standalone tab strip.
  *
+ * `index` picks a deeper entry of the stack (`maestro-cli tab reopen --index`);
+ * the default 0 is the Cmd+Shift+T head. An index past the end returns null.
+ *
  * Tiling-aware callers should use `reopenClosedTabWithTiling` in panelLayout.ts,
  * which layers the tile restore on top of this (the dependency only works that
  * way round - panelLayout imports from this module, never the reverse).
  */
-export function reopenUnifiedClosedTab(session: Session): ReopenUnifiedClosedTabResult | null {
+export function reopenUnifiedClosedTab(
+	session: Session,
+	index = 0
+): ReopenUnifiedClosedTabResult | null {
 	// Check if there's anything in the unified history
 	if (!session.unifiedClosedTabHistory || session.unifiedClosedTabHistory.length === 0) {
+		if (index !== 0) return null;
 		// Fall back to legacy closedTabHistory for backwards compatibility
 		const legacyResult = reopenClosedTab(session);
 		if (legacyResult) {
@@ -2221,8 +2250,11 @@ export function reopenUnifiedClosedTab(session: Session): ReopenUnifiedClosedTab
 		return null;
 	}
 
-	// Pop the most recently closed tab from unified history
-	const [closedEntry, ...remainingHistory] = session.unifiedClosedTabHistory;
+	// Take the chosen entry (the most recently closed one by default) off the stack
+	const history = session.unifiedClosedTabHistory;
+	if (!Number.isInteger(index) || index < 0 || index >= history.length) return null;
+	const closedEntry = history[index];
+	const remainingHistory = [...history.slice(0, index), ...history.slice(index + 1)];
 
 	if (closedEntry.type === 'ai') {
 		// Restoring an AI tab. The shared helper handles orphan re-attach and
@@ -2297,16 +2329,22 @@ export function reopenUnifiedClosedTab(session: Session): ReopenUnifiedClosedTab
 		};
 	} else if (closedEntry.type === 'browser') {
 		const closedBrowserTab = closedEntry.tab as BrowserTab;
-		const restoredTab: BrowserTab = {
-			...closedBrowserTab,
-			id: generateId(),
-			url: closedBrowserTab.url || DEFAULT_BROWSER_TAB_URL,
-			title: getBrowserTabTitle(
-				closedBrowserTab.url || DEFAULT_BROWSER_TAB_URL,
-				closedBrowserTab.title
-			),
-			webContentsId: undefined,
-		};
+		// A durable tab comes back through the same rehydration a restart uses, so
+		// an entry stored by an earlier run gets a valid partition and clean page
+		// state. An incognito tab (closed in this run; it is never stored) keeps
+		// its in-memory partition rather than being moved to the durable one.
+		const restoredTab: BrowserTab = isEphemeralBrowserTab(closedBrowserTab)
+			? {
+					...closedBrowserTab,
+					id: generateId(),
+					url: closedBrowserTab.url || DEFAULT_BROWSER_TAB_URL,
+					title: getBrowserTabTitle(
+						closedBrowserTab.url || DEFAULT_BROWSER_TAB_URL,
+						closedBrowserTab.title
+					),
+					webContentsId: undefined,
+				}
+			: { ...rehydrateBrowserTab(closedBrowserTab, session.id), id: generateId() };
 
 		const updatedBrowserTabs = [...(session.browserTabs || []), restoredTab];
 		const targetUnifiedIndex = Math.min(closedEntry.unifiedIndex, session.unifiedTabOrder.length);
@@ -2387,7 +2425,10 @@ export function reopenUnifiedClosedTab(session: Session): ReopenUnifiedClosedTab
  *      tab living inside a tiled group focuses its pane instead of being orphaned.
  *   2. The tab was closed - restore it from the closed-tab history so the jump
  *      lands on that conversation rather than whatever tab happens to be active.
- *   3. No tabId (or it aged out of history) - just force the AI view.
+ *      A tab closed mid-turn that aged out of that history is still parked in
+ *      `orphanedThinkingTabs` while its process runs, so it is restored from
+ *      there (same id, so the running process re-attaches to the visible tab).
+ *   3. No tabId (or it is gone everywhere) - just force the AI view.
  *
  * @param session - The session to update
  * @param tabId - The AI tab to land on. Omit to force the AI view only.
@@ -2401,6 +2442,10 @@ export function focusAiTabInSession(session: Session, tabId?: string): Session {
 		const reopened = reopenClosedAiTabById(session, tabId);
 		if (reopened) {
 			return { ...reopened.session, ...aiTabFocusFields(reopened.tabId) };
+		}
+		const restored = restoreOrphanedTab(session, tabId);
+		if (restored) {
+			return { ...restored.session, ...aiTabFocusFields(restored.tab.id) };
 		}
 	}
 	return { ...session, ...aiTabFocusFields() };
@@ -2584,6 +2629,24 @@ export function getBusyTabs(session: Session, options: { includeOrphans?: boolea
 		: (session.aiTabs ?? []);
 
 	return tabs.filter((tab) => tab.state === 'busy');
+}
+
+/**
+ * The AI tab a "jump to this running agent" lands on: the tab doing the work.
+ * Prefers the active tab when it is the busy one (the jump then changes nothing
+ * but the agent), then the first busy tab in the strip, then a busy tab the user
+ * closed mid-turn (`orphanedThinkingTabs`), which the jump reopens through
+ * `focusAiTabInSession`. Hidden consult tabs are skipped: they answer in the
+ * background, and a palette jump must not surface one.
+ *
+ * @returns undefined when no tab is busy (idle agent, or legacy agent-level busy).
+ */
+export function getRunningJumpTab(session: Session): AITab | undefined {
+	const isRunning = (tab: AITab) => tab.state === 'busy' && !isAiTabHidden(tab);
+	const openTabs = session.aiTabs ?? [];
+	const activeTab = openTabs.find((tab) => tab.id === session.activeTabId);
+	if (activeTab && isRunning(activeTab)) return activeTab;
+	return openTabs.find(isRunning) ?? (session.orphanedThinkingTabs ?? []).find(isRunning);
 }
 
 /**

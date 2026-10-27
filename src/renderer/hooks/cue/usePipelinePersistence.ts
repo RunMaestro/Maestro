@@ -140,9 +140,18 @@ export function usePipelinePersistence({
 		// by each panel's debounced callback synchronously, so the composition
 		// hook's render-time `pipelinesRef.current = …` assignment has run by
 		// the time we read it on the next line.
+		let draftsValid = true;
 		flushSync(() => {
-			flushAllPendingEdits();
+			draftsValid = flushAllPendingEdits();
 		});
+		if (!draftsValid) {
+			notifyToast({
+				type: 'warning',
+				title: 'Fix invalid configuration before saving',
+				message: 'A configuration field contains invalid JSON. Correct it and save again.',
+			});
+			return;
+		}
 		const currentPipelines = pipelinesRef.current;
 
 		cueDebugLog('save:intent', {

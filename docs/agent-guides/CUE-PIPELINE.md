@@ -62,6 +62,7 @@ The central coordinator. Manages session lifecycle, wires up all event sources, 
 Constructor dependencies (`CueEngineDeps`):
 
 - `getSessions()` - Returns all active sessions
+- `hasStoredSession(id)` - Checks the raw persisted owner independently of active/dormant filtering; only an explicitly removed stored owner permits terminal durable-row cleanup.
 - `onCueRun()` - Spawns a Cue execution
 - `onStopCueRun()` - Stops a running execution
 - `onLog()` - Logging callback
@@ -70,8 +71,9 @@ Constructor dependencies (`CueEngineDeps`):
 Key public methods:
 
 - `start(reason?)` / `stop()` - Enable/disable the engine; `reason` (`'system-boot'` vs `'user-toggle'`) gates whether `app.startup` fires
+- `retryPendingPluginEvents()` - Re-admit only rejected durable startup rows after plugin discovery/service activation and on the existing heartbeat; preserve original payload/age, recheck authority, and remove old rows only after acceptance. Accepted live rows are excluded from retries. Unknown owners and initially invalid/unavailable configurations park durable rows until refresh establishes their source; a watcher losing live-owner visibility also holds accepted in-memory durable work, including when an active run finishes while hidden. `canDrainSession` pauses only readiness; retained durable queues retry in a microtask after synchronous source registration and still recheck current authority. The heartbeat does not repeatedly read parked rows. A valid configuration that removed a source, an observed removal of a previously valid config, or explicit stored-owner deletion is terminal.
 - `refreshSession(sessionId, projectRoot)` - Hot-reloads YAML via `sessionRuntimeService` (tears down old, re-initializes)
-- `removeSession(sessionId)` - Delegates to `sessionRuntimeService` to tear down all subscriptions and clear queue
+- `removeSession(sessionId)` - Delegates to `sessionRuntimeService` to tear down subscriptions and clear ordinary queue rows; durable rows remain parked across root moves/temporary filtering unless the raw persisted owner is actually absent. `onDurableRowsDetached` reports only detached queued rows to the engine after map mutation; it never retries synchronously. If the startup snapshot failed, these IDs are merged into the eventual snapshot without replaying still-active current-start writes. Stop All clears live state immediately; retained queued durable rows can retry on a later refresh/heartbeat while Cue remains enabled, with fresh authority. Active stopped runs are not included.
 - `notifyAgentCompleted(sessionId, completionData?)` - Handles `agent.completed` triggers; routes to `completionService`
 - `getStatus()` / `getActiveRuns()` / `getActivityLog()` / `getQueueStatus()` / `getSettings()` / `getGraphData()` - Read-only projections via `queryService`
 - `stopRun(runId)` / `stopAll()` / `isEnabled()` / `clearQueue()` / `clearFanInState()` / `hasCompletionSubscribers()` - Run/state control
@@ -577,3 +579,5 @@ settings:
   max_concurrent: 2
   queue_size: 10
 ```
+
+Plugin receipt admission uses `pluginEventReceiptCapacityAvailable(id, { stableFormatOnly: true })`: unresolved own-plugin legacy keys throw sanitized `PLUGIN_UNAVAILABLE` before dispatch; the transactional writer repeats this check. No automatic pruning or migration is performed.

@@ -623,6 +623,71 @@ describe('handleBridgeInvoke desktop-only channels', () => {
 	});
 });
 
+describe('notification history over the bridge', () => {
+	it.each([
+		{ action: 'migrate', records: [] },
+		{ action: 'read', ids: ['host-notification'] },
+	])('returns the host history snapshot for a $action change', async (change) => {
+		const snapshot = {
+			success: true,
+			records: [
+				{
+					id: 'host-notification',
+					title: 'Completed',
+					message: 'Done',
+					timestamp: 1,
+					read: change.action === 'read',
+					color: 'green',
+					type: 'success',
+				},
+			],
+			revision: 1,
+		};
+		const handler = vi.fn(async () => snapshot);
+		invokeHandlers.set('notification:changeHistory', handler);
+		const send = vi.fn();
+
+		await handleBridgeInvoke(
+			makeClient(),
+			{
+				type: 'bridge.invoke',
+				requestId: 22,
+				channel: 'notification:changeHistory',
+				args: [change],
+			},
+			send
+		);
+
+		expect(handler).toHaveBeenCalledWith(expect.objectContaining({ type: 'bridge' }), change);
+		expect(send.mock.calls[0][1]).toMatchObject({ requestId: 22, ok: true, result: snapshot });
+	});
+
+	it('fans committed history snapshots out to browsers', () => {
+		const broadcastToAll = vi.fn();
+		installWebContentsBridgeHook({
+			broadcastToAll,
+		} as unknown as Parameters<typeof installWebContentsBridgeHook>[0]);
+		const snapshot = { success: true, records: [], revision: 2 };
+		try {
+			broadcastBridgeEvent('notification:historyChanged', [snapshot]);
+			expect(broadcastToAll.mock.calls[0][0]).toMatchObject({
+				type: 'bridge.event',
+				channel: 'notification:historyChanged',
+				args: [snapshot],
+			});
+		} finally {
+			uninstallWebContentsBridgeHook();
+		}
+	});
+
+	it('keeps host notification delivery and trusted renderer activation private', () => {
+		for (const operation of ['show', 'speak', 'stopSpeak', 'ready', 'navigateToSource']) {
+			expect(isRemoteMethodAllowed(`notification:${operation}`)).toBe(false);
+		}
+		expect(isRemoteEventAllowed('notification:activateAction')).toBe(false);
+	});
+});
+
 /**
  * Dataview DQL runs in the browser build too (DV-14): its four channels and the change push are on the
  * remote allowlist, while the DataviewJS settings stay out of a browser's reach.

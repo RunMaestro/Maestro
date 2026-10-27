@@ -295,8 +295,6 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		getMainWindow: deps.getMainWindow,
 		app: deps.app,
 		settingsStore: deps.settingsStore,
-		tunnelManager: deps.tunnelManager,
-		getWebServer: deps.getWebServer,
 	});
 	registerClaudeHandlers({
 		claudeSessionOriginsStore: deps.claudeSessionOriginsStore,

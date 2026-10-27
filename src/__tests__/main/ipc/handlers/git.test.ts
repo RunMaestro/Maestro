@@ -1430,6 +1430,29 @@ COMMIT_STARTdef987654321|Jane Smith|2024-01-14T09:00:00+00:00||Add feature
 			});
 		});
 
+		// MAESTRO-14Y: a pull or push started from a web-desktop browser reaches
+		// this handler through the bridge, whose synthetic event has no `sender`.
+		it('streams chunks to bridge clients when the invoker has no WebContents', async () => {
+			mockStreaming([['Fetching origin\n', 'stderr']], { exitCode: 0 });
+			mockBroadcastBridgeEvent.mockClear();
+
+			const handler = handlers.get('git:runCommand');
+			const result = await handler!(
+				{ senderFrame: null, frameId: -1, processId: -1, type: 'bridge' } as any,
+				{ runId: 'run-web', operation: 'pull', cwd: '/test/repo' }
+			);
+
+			expect(mockBroadcastBridgeEvent).toHaveBeenCalledWith('git:commandOutput', [
+				{ runId: 'run-web', stream: 'stderr', chunk: 'Fetching origin\n' },
+			]);
+			expect(result).toEqual({
+				success: true,
+				exitCode: 0,
+				cancelled: false,
+				error: undefined,
+			});
+		});
+
 		it('holds branch switches for a push, releases on failure, and skips fetch', async () => {
 			const release = vi.fn();
 			mockBeginRemoteSync.mockResolvedValue(release);

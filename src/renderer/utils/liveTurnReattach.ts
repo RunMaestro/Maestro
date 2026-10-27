@@ -97,6 +97,8 @@ function earliestStart(turns: LiveAiTurn[], now: number): number {
  * `state === 'error'` is left alone: a limit pause is deliberately restored as
  * a live error so auto-resume re-finds it, and overwriting that with 'busy'
  * would hide the pause the coordinator is waiting on.
+ * A live process can also be blocked on user input: preserve the host's
+ * `waiting_input` signal until it explicitly resolves that request.
  */
 export function applyLiveAiTurns(
 	sessions: Session[],
@@ -134,7 +136,7 @@ export function applyLiveAiTurns(
 		changed = true;
 		return {
 			...session,
-			state: 'busy' as SessionState,
+			state: session.state === 'waiting_input' ? session.state : ('busy' as SessionState),
 			busySource: 'ai' as const,
 			thinkingStartTime: earliestStart(sessionTurns, now),
 			aiPid: sessionTurns[0].pid,

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 import { HEADLESS_RUN_COMPLETION_TIMEOUT_MS } from '../../../shared/plugins/headless-agent-timeouts';
 import {
 	PluginToolRunIdentity,
@@ -71,6 +72,19 @@ describe('PluginToolRunIdentity', () => {
 		}
 	});
 
+	it('does not arm arbitrary tool receipts when issuing a host authority proof', () => {
+		const runs = new PluginToolRunIdentity();
+		const controller = new AbortController();
+		const proof = runs.issue('agent-a', { signal: controller.signal, assertActive() {} });
+		try {
+			runs.recordReceipt(proof, 'sh.maestro.relay/send', { messageIds: ['123'] });
+			expect(runs.getReceipts(proof)).toEqual([]);
+			expect(runs.hasReceiptOverflowed(proof)).toBe(false);
+			expect(runs.resolveVerified(proof).callerAgentId).toBe('agent-a');
+		} finally {
+			runs.revoke(proof);
+		}
+	});
 	it('records only validated IDs from the exact armed tool and run', () => {
 		const runs = new PluginToolRunIdentity();
 		const a = runs.issue('agent-a', 60_000, 'sh.maestro.relay/send');
@@ -145,6 +159,18 @@ describe('PluginToolRunIdentity', () => {
 			expect(runs.getReceipts(token)).toEqual([]);
 		} finally {
 			vi.useRealTimers();
+		}
+	});
+
+	it('preserves an unregistered lookalike proof directory during cleanup', () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-plugin-run-'));
+		const file = path.join(dir, 'proof');
+		try {
+			fs.writeFileSync(file, 'foreign fixture');
+			removePluginRunProofFile(file);
+			expect(fs.readFileSync(file, 'utf8')).toBe('foreign fixture');
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
 		}
 	});
 

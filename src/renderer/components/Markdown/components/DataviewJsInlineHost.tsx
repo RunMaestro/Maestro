@@ -15,8 +15,10 @@
  * `query.dql` and `io.load` are answered only while a run is in flight. Links and tasks have no visible output
  * here, so `open.link` and `toggle.task` are dropped.
  *
- * The watchdog. Each expression gets {@link DATAVIEW_JS_RUN_TIMEOUT_MS} of wall clock: the watchdog is armed when
- * the run starts and armed afresh after each answer, never touched. The expression that runs out of time (the
+ * The watchdog. Each expression gets {@link DATAVIEW_JS_RUN_TIMEOUT_MS} of wall clock: the watchdog is armed with
+ * {@link DATAVIEW_JS_INDEX_TIMEOUT_MS} when the run starts (the guest builds the index first), again with the
+ * script budget on the run's first `index.ready` (a later one is ignored), and afresh after each answer, never
+ * touched. The expression that runs out of time (the
  * first one without an answer), or that is running when the guest process dies, shows the error and stops until
  * its span remounts or its source changes; the guest is destroyed (a new key remounts the tag) and the rest of
  * the run goes to the new guest.
@@ -37,6 +39,7 @@ import {
 } from 'react';
 import {
 	DATAVIEW_GUEST_URL,
+	DATAVIEW_JS_INDEX_TIMEOUT_MS,
 	DATAVIEW_JS_RUN_TIMEOUT_MS,
 	SANDBOX_TO_GUEST_CHANNEL,
 	SANDBOX_TO_HOST_CHANNEL,
@@ -262,6 +265,8 @@ interface InlineRun {
 	next: number;
 	/** Answered, failed, timed out, or replaced. Requests are refused after. */
 	settled: boolean;
+	/** The index phase is over (`index.ready` or a first answer): only answers re-arm the watchdog now. */
+	indexed: boolean;
 	watchdog: IdleWatchdog | null;
 }
 
@@ -371,12 +376,12 @@ function DataviewJsInlineGuest({
 		[settleRun, store]
 	);
 
-	/** A fresh wall-clock budget for the expression the run is on. */
+	/** A fresh wall-clock budget for the expression the run is on, or for the index build before the first. */
 	const armWatchdog = useCallback(
-		(run: InlineRun) => {
+		(run: InlineRun, idleMs: number = DATAVIEW_JS_RUN_TIMEOUT_MS) => {
 			run.watchdog?.disarm();
 			run.watchdog = createIdleWatchdog({
-				idleMs: DATAVIEW_JS_RUN_TIMEOUT_MS,
+				idleMs,
 				onIdle: () => {
 					if (runRef.current !== run || run.settled) return;
 					logger.warn(`An inline DataviewJS query in ${doc.filePath} timed out`, LOG_CONTEXT);
@@ -433,10 +438,11 @@ function DataviewJsInlineGuest({
 			expressions: new Map(order.map((id, index) => [id, pending[index]])),
 			next: 0,
 			settled: false,
+			indexed: false,
 			watchdog: null,
 		};
 		runRef.current = run;
-		armWatchdog(run);
+		armWatchdog(run, DATAVIEW_JS_INDEX_TIMEOUT_MS);
 		const sent = pushToGuest(webview, SANDBOX_TO_GUEST_CHANNEL, {
 			type: 'eval',
 			runId,
@@ -468,6 +474,7 @@ function DataviewJsInlineGuest({
 				// The guest answers in order; anything else is not the answer the run waits for.
 				if (message.id !== run.order[run.next]) return;
 				const answered = run.expressions.get(message.id)!;
+				run.indexed = true;
 				run.next += 1;
 				if (run.next >= run.order.length) {
 					settleRun(run);
@@ -483,6 +490,12 @@ function DataviewJsInlineGuest({
 				);
 				return;
 			}
+			case 'index.ready':
+				if (!run || run.settled || run.indexed || run.guest !== guest) return;
+				if (message.runId !== run.runId) return;
+				run.indexed = true;
+				armWatchdog(run);
+				return;
 			case 'query.dql':
 			case 'io.load':
 				requests.enqueue(run && !run.settled ? run.runId : null, guest, message.requestId, () =>

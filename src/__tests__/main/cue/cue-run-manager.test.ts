@@ -1,3 +1,5 @@
+import { configurePluginCueHost } from '../../../main/cue/triggers/cue-plugin-trigger-source';
+import type { CueQueuePersistence } from '../../../main/cue/cue-queue-persistence';
 /**
  * Tests for the Cue Run Manager - direct unit tests for concurrency control,
  * phase state machine, queue management, and run lifecycle.
@@ -1867,6 +1869,7 @@ describe('createCueRunManager', () => {
 					sessionId: 'session-1',
 					sessionName: 'Test Session',
 					subscriptionName: 'sub-2', // oldest queued
+					outcome: 'oldest-evicted',
 				})
 			);
 		});
@@ -1916,7 +1919,7 @@ describe('createCueRunManager', () => {
 			expect(() => manager.execute('session-1', 'p2', createEvent(), 'sub-incoming')).not.toThrow();
 			// Overflow fires for the INCOMING subscription, not a non-existent oldest.
 			expect(onQueueOverflow).toHaveBeenCalledWith(
-				expect.objectContaining({ subscriptionName: 'sub-incoming' })
+				expect.objectContaining({ subscriptionName: 'sub-incoming', outcome: 'incoming-rejected' })
 			);
 			expect(manager.getQueueStatus().size).toBe(0);
 		});
@@ -2188,4 +2191,382 @@ describe('createCueRunManager', () => {
 			await launch.openGate();
 		});
 	});
+});
+
+describe('durable plugin admission and revocation', () => {
+	afterEach(() => configurePluginCueHost(undefined));
+	function harness(persisted = true) {
+		let allowed = true;
+		configurePluginCueHost({
+			register: () => () => {},
+			authorize: () => allowed,
+			prepare: async () => allowed,
+		});
+		const queue = {
+			persist: vi.fn(() => persisted),
+			remove: vi.fn(),
+			clearSession: vi.fn(),
+			clearAll: vi.fn(),
+			beginRestoreEpoch: () => {},
+			persistedIds: () => new Set<string>(),
+			restoreAll: () => new Map(),
+		} satisfies CueQueuePersistence;
+		const completion = Promise.withResolvers<CueRunResult>();
+		const deps = createDeps({ queuePersistence: queue, onCueRun: vi.fn(() => completion.promise) });
+		const manager = createCueRunManager(deps);
+		const mail = createEvent({ type: 'plugin.event' });
+		return {
+			queue,
+			completion,
+			deps,
+			manager,
+			mail,
+			revoke: () => {
+				allowed = false;
+			},
+		};
+	}
+	it('settles stopped-run bookkeeping when stopped during final fresh verification', async () => {
+		const h = harness();
+		let calls = 0;
+		const finalScan = Promise.withResolvers<boolean>();
+		configurePluginCueHost({
+			register: () => () => {},
+			authorize: () => true,
+			prepare: async () => (++calls === 4 ? finalScan.promise : true),
+		});
+		h.manager.execute('session-1', 'mail', h.mail, 'mail-sub');
+		await vi.waitFor(() => expect(h.deps.onCueRun).toHaveBeenCalledTimes(1));
+		h.completion.resolve(makeResult());
+		await vi.waitFor(() => expect(calls).toBe(4));
+		let idle = false;
+		void h.manager.whenIdle().then(() => {
+			idle = true;
+		});
+		await Promise.resolve();
+		expect(idle).toBe(false);
+		h.manager.stopRun(h.manager.getActiveRuns()[0].runId);
+		expect(h.manager.getUnsettledStoppedRunCount()).toBe(1);
+		finalScan.resolve(true);
+		await vi.waitFor(() => expect(h.manager.getUnsettledStoppedRunCount()).toBe(0));
+		expect(h.deps.onRunCompleted).not.toHaveBeenCalled();
+	});
+	it('keeps a mixed startup and durable queue paused until the refreshed owner is ready', async () => {
+		const h = harness();
+		let ready = false;
+		h.deps.canDrainSession = () => ready;
+		h.manager.setDraining(true);
+		h.manager.execute('session-1', 'durable', h.mail, 'mail-sub');
+		h.manager.execute('session-1', 'startup', createEvent({ type: 'app.startup' }), 'startup-sub');
+		h.manager.setDraining(false);
+		try {
+			h.manager.retainQueue('session-1', () => null);
+			await Promise.resolve();
+			expect(h.deps.onCueRun).not.toHaveBeenCalled();
+			expect(h.manager.getQueueStatus().get('session-1')).toBe(2);
+			expect(h.queue.remove).not.toHaveBeenCalled();
+			ready = true;
+			h.manager.retainQueue('session-1', () => null);
+			await vi.waitFor(() => expect(h.deps.onCueRun).toHaveBeenCalledTimes(1));
+			h.completion.resolve(makeResult());
+			await vi.waitFor(() => expect(h.manager.getQueueStatus().get('session-1') ?? 0).toBe(0));
+			expect(h.deps.onCueRun).toHaveBeenCalledTimes(2);
+		} finally {
+			h.manager.discardInMemory();
+			h.completion.resolve(makeResult());
+		}
+	});
+	it('persists an immediately admitted event until its terminal result', async () => {
+		const h = harness();
+		expect(h.manager.execute('session-1', 'mail', h.mail, 'mail-sub')).toBe(true);
+		expect(h.queue.persist).toHaveBeenCalledTimes(1);
+		await vi.waitFor(() => expect(h.deps.onCueRun).toHaveBeenCalledTimes(1));
+		expect(h.queue.remove).not.toHaveBeenCalled();
+		h.completion.resolve(makeResult());
+		await vi.waitFor(() => expect(h.queue.remove).toHaveBeenCalledTimes(1));
+	});
+	it.each([true, false])(
+		'drains an old durable event only with live authority=%s',
+		async (allowed) => {
+			const h = harness();
+			h.manager.execute('session-1', 'first', createEvent(), 'first-sub');
+			h.manager.execute('session-1', 'durable', h.mail, 'mail-sub');
+			const now = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 86_400_000);
+			try {
+				if (!allowed) h.revoke();
+				h.completion.resolve(makeResult());
+				await vi.waitFor(() => expect(h.manager.getQueueStatus().get('session-1') ?? 0).toBe(0));
+				expect(h.deps.onCueRun).toHaveBeenCalledTimes(allowed ? 2 : 1);
+			} finally {
+				now.mockRestore();
+				h.manager.discardInMemory();
+			}
+		}
+	);
+
+	it.each(['incoming', 'queued'] as const)(
+		'reports refused queue overflow when the %s event is durable',
+		(durable) => {
+			const h = harness();
+			h.deps.getSessionSettings = vi.fn(() => ({
+				...defaultSettings,
+				max_concurrent: 1,
+				queue_size: 1,
+			}));
+			h.deps.onQueueOverflow = vi.fn();
+			h.manager.execute('session-1', 'first', createEvent(), 'first-sub');
+			expect(
+				h.manager.execute(
+					'session-1',
+					'queued',
+					durable === 'queued' ? h.mail : createEvent(),
+					'queued-sub'
+				)
+			).toBe(true);
+			const writesBefore = h.queue.persist.mock.calls.length;
+			expect(
+				h.manager.execute(
+					'session-1',
+					'incoming',
+					durable === 'incoming' ? h.mail : createEvent(),
+					'incoming-sub',
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					undefined,
+					123
+				)
+			).toBe(false);
+			expect(h.deps.onQueueOverflow).toHaveBeenCalledWith({
+				sessionId: 'session-1',
+				sessionName: 'Test Session',
+				subscriptionName: 'incoming-sub',
+				queuedAt: 123,
+				outcome: 'incoming-rejected',
+			});
+			expect(h.deps.onLog).toHaveBeenCalledWith(
+				'cue',
+				expect.stringMatching(/Queue full.*dropping incoming event/)
+			);
+			expect(h.queue.persist).toHaveBeenCalledTimes(writesBefore);
+			expect(h.queue.remove).not.toHaveBeenCalled();
+			expect(h.manager.getQueueStatus().get('session-1')).toBe(1);
+			h.manager.discardInMemory();
+		}
+	);
+	it('rejects a failed durable write before starting work', () => {
+		const h = harness(false);
+		expect(h.manager.execute('session-1', 'mail', h.mail, 'mail-sub')).toBe(false);
+		expect(h.deps.onCueRun).not.toHaveBeenCalled();
+		expect(h.manager.getActiveRunMap().size).toBe(0);
+	});
+	it('does not consume a queued revoked event or wedge the concurrency slot', async () => {
+		const h = harness();
+		h.manager.execute('session-1', 'ordinary', createEvent(), 'ordinary-sub');
+		expect(h.manager.execute('session-1', 'mail', h.mail, 'mail-sub')).toBe(true);
+		h.revoke();
+		h.completion.resolve(makeResult());
+		await vi.waitFor(() => expect(h.queue.remove).toHaveBeenCalledTimes(1));
+		expect(h.deps.onCueRun).toHaveBeenCalledTimes(1);
+		expect(h.manager.getQueueStatus().get('session-1') ?? 0).toBe(0);
+	});
+
+	it.each(['before', 'main', 'output'] as const)(
+		'stops revoked authority at the %s boundary without CLI or completion propagation',
+		async (phase) => {
+			mockRunMaestroCliSend.mockClear();
+			const h = harness();
+			const output = Promise.withResolvers<CueRunResult>();
+			if (phase === 'before') h.deps.onRunStarted = () => h.revoke();
+			if (phase === 'output')
+				vi.mocked(h.deps.onCueRun)
+					.mockImplementationOnce(() => h.completion.promise)
+					.mockImplementationOnce(() => output.promise);
+			h.manager.execute(
+				'session-1',
+				'mail',
+				h.mail,
+				'mail-sub',
+				phase === 'output' ? 'Summarize output' : undefined,
+				0,
+				{ target: 'agent-target' }
+			);
+			if (phase === 'output') {
+				h.completion.resolve(makeResult({ stdout: 'synthetic private main output' }));
+				await vi.waitFor(() => expect(h.deps.onCueRun).toHaveBeenCalledTimes(2));
+				h.revoke();
+				output.resolve(
+					makeResult({
+						stdout: 'synthetic private output summary',
+						stderr: 'synthetic private output diagnostic',
+					})
+				);
+			} else {
+				h.revoke();
+				h.completion.resolve(makeResult({ stdout: 'synthetic private main output' }));
+			}
+			await vi.waitFor(() => expect(h.deps.onRunStopped).toHaveBeenCalledTimes(1));
+			expect(h.deps.onRunCompleted).not.toHaveBeenCalled();
+			expect(mockRunMaestroCliSend).not.toHaveBeenCalled();
+			expect(JSON.stringify(vi.mocked(updateCueEventStatus).mock.calls)).not.toContain(
+				'synthetic private output'
+			);
+			expect(h.deps.onRunStopped).toHaveBeenCalledWith(
+				expect.objectContaining({ status: 'stopped', stdout: '' })
+			);
+			expect(
+				vi.mocked(updateCueEventStatus).mock.calls.some(([, status]) => status === 'stopped')
+			).toBe(true);
+			expect(h.manager.getActiveRunCount('session-1')).toBe(0);
+		}
+	);
+	it.each([false, true])(
+		'keeps a queued durable row when clearQueue preservesStartup=%s',
+		(preserveStartup) => {
+			const h = harness();
+			h.manager.execute('session-1', 'ordinary', createEvent(), 'ordinary-sub');
+			h.manager.execute('session-1', 'mail', h.mail, 'mail-sub');
+			h.manager.clearQueue('session-1', preserveStartup);
+			expect(h.queue.remove).not.toHaveBeenCalled();
+			expect(h.manager.getQueueStatus().size).toBe(0);
+			h.manager.discardInMemory();
+		}
+	);
+	it.each(['cli-await', 'cli-reject', 'release-callback', 'drain-callback'] as const)(
+		'rechecks authority before the first terminal write after %s',
+		async (phase) => {
+			vi.mocked(updateCueEventStatus).mockClear();
+			const h = harness();
+			if (phase.startsWith('cli'))
+				mockRunMaestroCliSend.mockImplementationOnce(async () => {
+					h.revoke();
+					if (phase === 'cli-reject') throw Error('private CLI diagnostic');
+					return { ok: true, exitCode: 0, stdout: '{}', stderr: '', resolvedTarget: 'target' };
+				});
+			if (phase === 'release-callback') h.deps.onAllowSleep = () => h.revoke();
+			if (phase === 'drain-callback')
+				vi.mocked(h.deps.onCueRun)
+					.mockImplementationOnce(() => h.completion.promise)
+					.mockImplementationOnce(async () => {
+						h.revoke();
+						return makeResult();
+					});
+			h.manager.execute(
+				'session-1',
+				'mail',
+				h.mail,
+				'mail-sub',
+				undefined,
+				0,
+				phase.startsWith('cli') ? { target: 'target' } : undefined
+			);
+			const runId = h.manager.getActiveRuns()[0].runId;
+			if (phase === 'drain-callback')
+				h.manager.execute('session-1', 'ordinary', createEvent(), 'ordinary-sub');
+			h.completion.resolve(makeResult({ stdout: 'private terminal payload' }));
+			await vi.waitFor(() => expect(h.deps.onRunStopped).toHaveBeenCalledTimes(1));
+			const terminal = vi.mocked(updateCueEventStatus).mock.calls.filter(([id]) => id === runId);
+			expect(terminal[0]).toEqual([
+				runId,
+				'stopped',
+				undefined,
+				expect.objectContaining({ fullOutput: null, outputExcerpt: null, errorMessage: null }),
+			]);
+			expect(JSON.stringify(terminal)).not.toContain('private terminal payload');
+			const finished = vi
+				.mocked(h.deps.onLog)
+				.mock.calls.find(
+					([, , data]) =>
+						(data as { type?: string; runId?: string })?.type === 'runFinished' &&
+						(data as { runId?: string }).runId === runId
+				);
+			expect(finished?.[2]).toMatchObject({ status: 'stopped' });
+			expect(JSON.stringify(vi.mocked(h.deps.onLog).mock.calls)).not.toContain(
+				'private CLI diagnostic'
+			);
+		}
+	);
+
+	it('discards private late results after the active run was forgotten and authority revoked', async () => {
+		const h = harness();
+		h.manager.execute('session-1', 'mail', h.mail, 'mail-sub');
+		h.manager.discardInMemory();
+		h.revoke();
+		h.completion.resolve(
+			makeResult({ stdout: 'private late discarded result', stderr: 'private late diagnostic' })
+		);
+		await vi.waitFor(() => expect(h.queue.remove).toHaveBeenCalledTimes(1));
+		expect(h.deps.onRunCompleted).not.toHaveBeenCalled();
+		expect(JSON.stringify(vi.mocked(safeUpdateCueEventStatus).mock.calls)).not.toContain(
+			'private late'
+		);
+		expect(safeUpdateCueEventStatus).toHaveBeenCalledWith(
+			expect.any(String),
+			'stopped',
+			undefined,
+			expect.objectContaining({ outputExcerpt: null, fullOutput: null, errorMessage: null })
+		);
+	});
+	it('refuses a plugin event when durable persistence is absent', () => {
+		const h = harness();
+		const manager = createCueRunManager(createDeps());
+		expect(manager.execute('session-1', 'mail', h.mail, 'mail-sub')).toBe(false);
+	});
+});
+
+describe('plugin output-prompt boundary', () => {
+	afterEach(() => configurePluginCueHost(undefined));
+	it.each([false, true])(
+		'preserves metadata and rechecks output delivery after revoke=%s',
+		async (revoke) => {
+			let allowed = true;
+			configurePluginCueHost({
+				register: () => () => {},
+				authorize: () => allowed,
+				prepare: async () => allowed,
+			});
+			const event = createEvent({
+				type: 'plugin.event',
+				payload: {
+					reference: 'r',
+					accountId: 'a',
+					folder: 'INBOX',
+					uidValidity: '7',
+					uid: '2',
+					receivedAt: 1,
+					sizeBytes: 42,
+				},
+			});
+			const done = Promise.withResolvers<CueRunResult>();
+			const queue = {
+				persist: vi.fn(() => true),
+				remove: vi.fn(),
+				clearSession: vi.fn(),
+				clearAll: vi.fn(),
+				beginRestoreEpoch: () => {},
+				persistedIds: () => new Set<string>(),
+				restoreAll: () => new Map(),
+			} satisfies CueQueuePersistence;
+			const onCueRun = vi
+				.fn()
+				.mockImplementationOnce(() => done.promise)
+				.mockResolvedValue(makeResult());
+			const manager = createCueRunManager(createDeps({ queuePersistence: queue, onCueRun }));
+			expect(manager.execute('session-1', 'metadata', event, 'mail-sub', 'Summarize output')).toBe(
+				true
+			);
+			await vi.waitFor(() => expect(onCueRun).toHaveBeenCalledTimes(1));
+			allowed = !revoke;
+			done.resolve(makeResult({ stdout: 'synthetic private agent output' }));
+			await vi.waitFor(() => expect(queue.remove).toHaveBeenCalledTimes(1));
+			expect(onCueRun).toHaveBeenCalledTimes(revoke ? 1 : 2);
+			if (!revoke) {
+				const outputEvent = onCueRun.mock.calls[1][0].event;
+				expect(outputEvent).toBe(event);
+				expect(Object.keys(outputEvent.payload)).toHaveLength(7);
+				expect(JSON.stringify(outputEvent)).not.toContain('synthetic private agent output');
+			}
+		}
+	);
 });

@@ -87,6 +87,23 @@ export function setGroupHidden(groups: Group[], groupId: string, hidden: boolean
 }
 
 /**
+ * Fold a group in the Left Bar, or unfold it.
+ *
+ * The one write behind the group header's chevron (`toggleGroup` in
+ * `useGroupManagement`), the store's `setGroupCollapsed` /
+ * `toggleGroupCollapsed`, and
+ * `maestro-cli update-group --collapse/--expand`. Nested groups use the same
+ * `collapsed` flag, so this covers them too. Returns the input unchanged when
+ * the group is missing or already reads that way, so a caller can tell a no-op
+ * from a write by identity.
+ */
+export function setGroupCollapsed(groups: Group[], groupId: string, collapsed: boolean): Group[] {
+	const target = groups.find((group) => group.id === groupId);
+	if (!target || !!target.collapsed === collapsed) return groups;
+	return groups.map((group) => (group.id === groupId ? { ...group, collapsed } : group));
+}
+
+/**
  * Repairs persisted hierarchy data that predates nesting validation or was
  * written by an external client. Invalid relationships are promoted to root
  * rather than discarded so no group is lost.

@@ -170,6 +170,38 @@ describe('PianolaDashboard data mapping', () => {
 		expect(onJump).toHaveBeenCalledWith('a');
 	});
 
+	it.each([false, true])(
+		'forwards the working tab when clicking a row (worktree: %s)',
+		(isChild) => {
+			const busyRow = {
+				key: 'busy-agent',
+				sessionId: 'busy-agent',
+				tabId: 'busy-tab',
+				agentName: 'Busy agent',
+				description: 'Working task',
+			};
+			const data = emptyData();
+			data.working = isChild
+				? [
+						{
+							key: 'parent',
+							sessionId: 'parent',
+							agentName: 'Parent',
+							description: '1 worktree working',
+							worktreeChildren: [busyRow],
+						},
+					]
+				: [busyRow];
+			hookMock.usePianolaDashboardData.mockReturnValue({ data, refresh });
+			const onJump = vi.fn();
+			render(<PianolaDashboard theme={theme} onJumpToAgent={onJump} />);
+
+			fireEvent.click(screen.getByText('Working task'));
+
+			expect(onJump).toHaveBeenCalledWith('busy-agent', 'busy-tab');
+		}
+	);
+
 	it('disables an activity row that has no owning agent', () => {
 		render(<PianolaDashboard theme={theme} onJumpToAgent={vi.fn()} />);
 

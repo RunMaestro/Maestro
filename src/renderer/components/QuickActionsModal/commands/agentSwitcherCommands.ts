@@ -4,7 +4,7 @@ import {
 } from '../../../../shared/autorunProgress';
 import type { Session } from '../../../types';
 import { sessionJumpShortcut } from '../../../utils/sessionJumpSlots';
-import { getTabDisplayName } from '../../../utils/tabHelpers';
+import { getRunningJumpTab, getTabDisplayName } from '../../../utils/tabHelpers';
 import type { QuickAction } from '../types';
 import { alphabetizeKey } from '../utils/quickActionSorting';
 import { makeAgentJumpAction, type GetSessionWindow } from './agentJumpAction';
@@ -46,9 +46,11 @@ export function buildAgentSwitcherCommands({
 		const isInBatch = batchSessionIdSet.has(session.id);
 		const isSessionBusy = session.state !== 'idle';
 		const isRunningAgent = isSessionBusy || isInBatch;
+		// The tab doing the work, even one the user closed mid-turn; the jump lands
+		// there and reopens it, so the subtext names the tab the jump opens.
+		const runningTab = getRunningJumpTab(session);
 		const busyTab = isSessionBusy
-			? (session.aiTabs?.find((tab) => tab.state === 'busy') ??
-				session.aiTabs?.find((tab) => tab.id === session.activeTabId))
+			? (runningTab ?? session.aiTabs?.find((tab) => tab.id === session.activeTabId))
 			: undefined;
 		const runningInfo = isSessionBusy
 			? {
@@ -78,6 +80,7 @@ export function buildAgentSwitcherCommands({
 				setActiveSessionId,
 				revealJumpTarget,
 				getSessionWindow,
+				tabId: runningTab?.id,
 			}),
 			subtext: undefined,
 			isRunningAgent,

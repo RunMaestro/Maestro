@@ -13,6 +13,7 @@ import {
 	describeSteerBlocked,
 	getSteerEligibility,
 	shouldOfferSteer,
+	getSteerTitle,
 	applyQueuedItemEdit,
 	applyQueuedItemDispatchFailure,
 	isSameQueuedPrompt,
@@ -1082,7 +1083,7 @@ describe('getSteerEligibility', () => {
 });
 
 describe('shouldOfferSteer', () => {
-	it('hides the control for every blocked reason', () => {
+	it('hides the control for every blocked reason the card cannot fix', () => {
 		// None of them is actionable from a queued card, so a dimmed button would just
 		// be a dead control.
 		for (const blockedReason of [
@@ -1092,7 +1093,6 @@ describe('shouldOfferSteer', () => {
 			'codex-exec',
 			'api-token-source',
 			'nothing-to-type',
-			'has-images',
 			'awaiting-consult',
 			'cross-agent-mention',
 			'has-agent-context',
@@ -1107,9 +1107,27 @@ describe('shouldOfferSteer', () => {
 		}
 	});
 
+	it('keeps a dimmed control for an item blocked only by its images', () => {
+		// The card looks steerable, and Edit can drop the image, so the button stays
+		// and its tooltip explains instead of vanishing.
+		expect(shouldOfferSteer({ canSteer: false, blockedReason: 'has-images' })).toBe(true);
+	});
+
 	it('handles a missing eligibility', () => {
 		expect(shouldOfferSteer(null)).toBe(false);
 		expect(shouldOfferSteer(undefined)).toBe(false);
+	});
+});
+
+describe('getSteerTitle', () => {
+	it('describes the steer when it can run', () => {
+		expect(getSteerTitle({ canSteer: true })).toMatch(/turn that is running now/);
+	});
+
+	it('explains the image block and names the remedy', () => {
+		const title = getSteerTitle({ canSteer: false, blockedReason: 'has-images' });
+		expect(title).toBe(describeSteerBlocked('has-images'));
+		expect(title).toContain('Remove the image');
 	});
 });
 

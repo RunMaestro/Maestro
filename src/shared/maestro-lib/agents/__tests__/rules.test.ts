@@ -3,6 +3,7 @@ import {
 	activeAgentAfterRemoval,
 	addTabRecord,
 	agentsMovingWithParent,
+	withAgentInGroup,
 	applyAgentConfigPatch,
 	applyTabPatch,
 	buildAgentConfigPatch,
@@ -651,6 +652,26 @@ describe('which agent is active, and who moves with a parent', () => {
 			agent({ id: 'c2', parentSessionId: 'other' }),
 		];
 		expect([...agentsMovingWithParent(agents, 'p')].sort()).toEqual(['c1', 'p']);
+	});
+
+	it('moves an agent and its worktree children into a group, and back to Ungrouped', () => {
+		const agents = [{ id: 'p' }, { id: 'c1', parentSessionId: 'p' }, { id: 'x', groupId: 'g0' }];
+		const moved = withAgentInGroup(agents, 'p', 'g1');
+		expect(moved.map((a) => a.groupId)).toEqual(['g1', 'g1', 'g0']);
+		expect(moved[2]).toBe(agents[2]);
+
+		const ungrouped = withAgentInGroup(moved, 'p', '');
+		expect(ungrouped.slice(0, 2).every((a) => !('groupId' in a))).toBe(true);
+		expect(withAgentInGroup(moved, 'p', null)).toEqual(ungrouped);
+	});
+
+	it('returns the same list when nothing moves', () => {
+		const agents = [
+			{ id: 'p', groupId: 'g1' },
+			{ id: 'c1', parentSessionId: 'p', groupId: 'g1' },
+		];
+		expect(withAgentInGroup(agents, 'p', 'g1')).toBe(agents);
+		expect(withAgentInGroup(agents, 'missing', 'g2')).toBe(agents);
 	});
 });
 

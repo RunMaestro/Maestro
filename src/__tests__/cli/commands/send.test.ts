@@ -435,7 +435,7 @@ describe('send command', () => {
 			'/path/to/project',
 			'Hello world',
 			undefined,
-			{ readOnlyMode: undefined, signal: expect.any(AbortSignal) }
+			{ readOnlyMode: undefined, signal: expect.any(AbortSignal), acceptWorkspaceTrust: true }
 		);
 
 		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
@@ -484,7 +484,7 @@ describe('send command', () => {
 			'/path/to/project',
 			'Continue from before',
 			'session-xyz-789',
-			{ readOnlyMode: undefined, signal: expect.any(AbortSignal) }
+			{ readOnlyMode: undefined, signal: expect.any(AbortSignal), acceptWorkspaceTrust: true }
 		);
 
 		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
@@ -552,7 +552,7 @@ describe('send command', () => {
 			'/custom/project/path',
 			'Do something',
 			undefined,
-			{ readOnlyMode: undefined, signal: expect.any(AbortSignal) }
+			{ readOnlyMode: undefined, signal: expect.any(AbortSignal), acceptWorkspaceTrust: true }
 		);
 	});
 
@@ -574,6 +574,7 @@ describe('send command', () => {
 		expect(spawnAgent).toHaveBeenCalledWith('codex', expect.any(String), 'Use codex', undefined, {
 			signal: expect.any(AbortSignal),
 			readOnlyMode: undefined,
+			acceptWorkspaceTrust: true,
 		});
 	});
 
@@ -594,7 +595,7 @@ describe('send command', () => {
 			'/path/to/project',
 			'Analyze this code',
 			undefined,
-			{ readOnlyMode: true, signal: expect.any(AbortSignal) }
+			{ readOnlyMode: true, signal: expect.any(AbortSignal), acceptWorkspaceTrust: true }
 		);
 	});
 

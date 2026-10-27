@@ -1,3 +1,7 @@
+import { PluginAuthorityError } from './plugin-authority';
+import { PLUGIN_PRIMITIVE_ERRORS } from '../../shared/plugins/primitives';
+import { PLUGIN_PRIMITIVE_METHODS } from './plugin-primitives';
+import type { PluginPrimitiveLifetime } from './plugin-tls';
 /**
  * Plugin sandbox host (main process).
  *
@@ -17,6 +21,7 @@ import { MEDIA_ERROR_CODES, MEDIA_LIMITS } from '../../shared/plugins/media-tool
 import { utilityProcess, type UtilityProcess } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
+import { randomBytes } from 'crypto';
 import { logger } from '../utils/logger';
 import { PermissionBroker } from './permission-broker';
 import {
@@ -29,6 +34,11 @@ import {
 	type AgentSendProgressEvent,
 } from '../../shared/plugins/rpc-protocol';
 import type { PluginEvent } from '../../shared/plugins/events';
+import {
+	PluginToolRunIdentity,
+	type PluginToolInvocationContext,
+	type PluginToolCallerContext,
+} from './plugin-tool-run-identity';
 
 export interface SandboxControlEvent {
 	topic: string;
@@ -41,7 +51,10 @@ export interface SandboxControlEvent {
 export type HostCallHandler = ((
 	pluginId: string,
 	params: unknown,
-	context?: { onProgress: (event: AgentSendProgressEvent) => void }
+	context?: {
+		onProgress: (event: AgentSendProgressEvent) => void;
+		setResponseGuard?: (guard: () => void) => void;
+	}
 ) => Promise<unknown>) & {
 	/** Host-only ownership query for active release requests. */
 	ownsReleaseResource?: (pluginId: string, params: unknown) => boolean;
@@ -51,6 +64,11 @@ export type HostCallHandlers = Partial<Record<HostMethod, HostCallHandler>>;
 export interface PluginSandboxHostDeps {
 	broker: PermissionBroker;
 	handlers: HostCallHandlers;
+	/** Host-private verified tool path. Both dependencies are mandatory for that path. */
+	toolIdentity?: PluginToolRunIdentity;
+	/** Recheck exact plugin identity/consent/feature generation; never supplied by a child. */
+	assertToolPluginActive?: (pluginId: string) => void;
+	prepareToolPluginActive?: (pluginId: string) => Promise<void>;
 	/** Forward plugin console/log lines somewhere visible. */
 	onLog?: (pluginId: string, level: string, message: string) => void;
 	/** Notified on an unexpected exit (including code zero), or a non-zero crash. */
@@ -115,6 +133,7 @@ interface PendingTool {
 }
 
 interface RunningPlugin {
+	readonly generation: string;
 	exited: Promise<void>;
 	markExited: () => void;
 	stopping?: boolean;
@@ -125,6 +144,8 @@ interface RunningPlugin {
 	mediaClosingJobs: Set<string>;
 	mediaCloseWindowCount: number;
 	proc: UtilityProcess;
+	/** Stops invocation authority synchronously, before shutdown/exit callbacks. */
+	lifetime: AbortController;
 	shutdownTimer?: NodeJS.Timeout;
 	inFlight: number;
 	windowStart: number;
@@ -160,6 +181,9 @@ function toActivitySnapshot(a: Activity): ActivitySnapshot {
 }
 
 export class PluginSandboxHost {
+	private readonly toolIdentity?: PluginToolRunIdentity;
+	private readonly assertToolPluginActive?: (pluginId: string) => void;
+	prepareToolPluginActive?: (pluginId: string) => Promise<void>;
 	/** Retain failed drains: a cleanup failure must never authorize a fresh process. */
 	private readonly drains = new Map<string, Promise<void>>();
 	private readonly failedDrains = new Map<string, () => void | Promise<void>>();
@@ -168,16 +192,62 @@ export class PluginSandboxHost {
 	 *  it survives a crashed child (crash counts must persist). */
 	private activity = new Map<string, Activity>();
 
-	constructor(private readonly deps: PluginSandboxHostDeps) {}
+	constructor(private readonly deps: PluginSandboxHostDeps) {
+		this.toolIdentity = deps.toolIdentity;
+		this.assertToolPluginActive =
+			typeof deps.assertToolPluginActive === 'function'
+				? deps.assertToolPluginActive.bind(deps)
+				: undefined;
+	}
 
 	isRunning(pluginId: string): boolean {
 		return this.running.has(pluginId);
+	}
+
+	/** Host-private exact-child assertion; conveys no run/account authority. */
+	captureToolLifetime(pluginId: string): () => void {
+		const record = this.running.get(pluginId);
+		return () => {
+			if (!record || this.running.get(pluginId) !== record || record.lifetime.signal.aborted)
+				throw new PluginAuthorityError('PLUGIN_DENIED');
+		};
+	}
+
+	capturePrimitiveLifetime(pluginId: string): PluginPrimitiveLifetime {
+		const record = this.running.get(pluginId);
+		if (!record || record.stopping || !this.assertToolPluginActive)
+			throw new PluginAuthorityError('PLUGIN_DENIED');
+		const assertActive = () => {
+			this.captureToolLifetime(pluginId)();
+			if (record.stopping || this.running.get(pluginId) !== record)
+				throw new PluginAuthorityError('PLUGIN_DENIED');
+			this.assertToolPluginActive!(pluginId);
+			this.captureToolLifetime(pluginId)();
+		};
+		assertActive();
+		return {
+			generation: record.generation,
+			signal: record.lifetime.signal,
+			assertActive,
+			prepare: async () => {
+				assertActive();
+				if (!this.deps.prepareToolPluginActive) throw new PluginAuthorityError('PLUGIN_DENIED');
+				await this.deps.prepareToolPluginActive(pluginId);
+				assertActive();
+			},
+		};
 	}
 
 	/** False as soon as shutdown starts, before child exit, so stopping plugins cannot acquire new service work. */
 	isAcceptingServiceCalls(pluginId: string): boolean {
 		const record = this.running.get(pluginId);
 		return !!record && !record.stopping;
+	}
+	getToolGeneration(pluginId: string): string {
+		const record = this.running.get(pluginId);
+		if (!record || record.stopping || record.lifetime.signal.aborted)
+			throw new PluginAuthorityError('PLUGIN_DENIED');
+		return record.generation;
 	}
 
 	runningIds(): string[] {
@@ -258,9 +328,11 @@ export class PluginSandboxHost {
 			markExited = resolve;
 		});
 		const record: RunningPlugin = {
+			generation: randomBytes(16).toString('hex'),
 			exited,
 			markExited,
 			proc,
+			lifetime: new AbortController(),
 			inFlight: 0,
 			windowStart: Date.now(),
 			windowCount: 0,
@@ -281,18 +353,16 @@ export class PluginSandboxHost {
 			void this.handleChildMessage(pluginId, proc, data);
 		});
 		proc.on('exit', (code: number) => {
-			const existing = this.running.get(pluginId);
-			if (existing !== record) return;
-			if (existing?.shutdownTimer) clearTimeout(existing.shutdownTimer);
-			// Fail every outstanding tool round-trip: the child that owed a reply
-			// is gone, so the awaiting caller must reject rather than hang.
-			if (existing)
-				this.rejectPendingTools(existing, 'plugin exited before returning a tool result');
+			if (record.shutdownTimer) clearTimeout(record.shutdownTimer);
+			record.lifetime.abort();
+			this.rejectPendingTools(record, 'plugin exited before returning a tool result');
+			// An old child's delayed exit must never remove a replacement sandbox.
+			if (this.running.get(pluginId) !== record) return;
 			this.running.delete(pluginId);
-			existing?.markExited();
+			record.markExited();
 			const act = this.activity.get(pluginId);
 			if (act) act.inFlight = 0;
-			if (code !== 0 || !existing?.stopping) {
+			if (code !== 0 || !record.stopping) {
 				if (act && code !== 0) act.crashCount += 1;
 				logger.warn(`[Plugins] sandbox "${pluginId}" exited with code ${code}`, '[Plugins]');
 				let cleanup: void | Promise<void>;
@@ -301,7 +371,7 @@ export class PluginSandboxHost {
 				} catch {
 					cleanup = Promise.reject(new Error('ServiceFailed'));
 				}
-				if (existing?.stopping) {
+				if (record.stopping) {
 					void Promise.resolve(cleanup).catch(() => {});
 				} else if (cleanup) {
 					const drain = Promise.resolve(cleanup).then(() => {
@@ -356,8 +426,9 @@ export class PluginSandboxHost {
 	 * plugin is not running, the args cannot be serialized or exceed the size cap,
 	 * too many tool calls are already in flight, the round-trip exceeds
 	 * {@link TOOL_INVOKE_TIMEOUT_MS}, or the child exits before replying.
-	 * Reserved service: commands require the host broker marker and its lease AbortSignal.
-	 * Missing broker context throws ServiceDenied; stopping providers throw ServiceUnavailable.
+	 * A fourth, host-private registry-issued run context enables a nested handle.
+	 * The verified manager supplies it; production issuance remains unwired.
+	 * Args never confer caller authority, and an explicit invalid context denies.
 	 */
 	invokeTool(
 		pluginId: string,
@@ -365,6 +436,7 @@ export class PluginSandboxHost {
 		args?: unknown,
 		options?: {
 			callerAgentId?: string | null;
+			runContext?: PluginToolCallerContext;
 			signal?: AbortSignal;
 			timeoutMs?: number;
 			service?: true;
@@ -378,7 +450,6 @@ export class PluginSandboxHost {
 			if (record.stopping) return Promise.reject(new Error('ServiceUnavailable'));
 		}
 		if (record.stopping) return Promise.reject(new Error(`plugin "${pluginId}" is not running`));
-		const context = { callerAgentId: options?.callerAgentId ?? null };
 		// Bound the host->child payload exactly like invokeCommand / HostRequest.
 		let serialized: string;
 		try {
@@ -393,6 +464,28 @@ export class PluginSandboxHost {
 			return Promise.reject(new Error('too many concurrent tool invocations'));
 		}
 		if (options?.signal?.aborted) return Promise.reject(new Error('ServiceCancelled'));
+		let handle: string | undefined;
+		let invocation: PluginToolInvocationContext | undefined;
+		if (options?.runContext) {
+			try {
+				if (!this.toolIdentity || !this.assertToolPluginActive)
+					throw new PluginAuthorityError('PLUGIN_DENIED');
+				handle = this.toolIdentity.issueInvocation(options.runContext, pluginId, {
+					signal: record.lifetime.signal,
+					assertActive: () => {
+						this.captureToolLifetime(pluginId)();
+						this.assertToolPluginActive!(pluginId);
+					},
+				});
+				invocation = this.toolIdentity.resolveInvocation(pluginId, handle);
+			} catch {
+				return Promise.reject(new PluginAuthorityError('PLUGIN_DENIED'));
+			}
+		}
+		const context = {
+			callerAgentId: invocation?.callerAgentId ?? options?.callerAgentId ?? null,
+			...(handle ? { invocationId: handle } : {}),
+		};
 		const timeoutMs = Math.min(
 			options?.timeoutMs ?? TOOL_INVOKE_TIMEOUT_MS,
 			MEDIA_LIMITS.jobTimeoutMs
@@ -408,8 +501,11 @@ export class PluginSandboxHost {
 			}, timeoutMs);
 			// Never let a pending tool timer keep the process alive on shutdown.
 			if (typeof timer.unref === 'function') timer.unref();
-			const signal = options?.signal;
-			const detach = () => signal?.removeEventListener('abort', abort);
+			const signal = invocation?.signal ?? options?.signal;
+			const detach = () => {
+				signal?.removeEventListener('abort', abort);
+				if (handle) this.toolIdentity?.releaseInvocation(handle);
+			};
 			/** Reject and detach the pending provider RPC on abort; native/media draining remains host-owned. */
 			const abort = () => {
 				record.pendingTools.delete(id);
@@ -421,6 +517,13 @@ export class PluginSandboxHost {
 			record.pendingTools.set(id, {
 				service: commandId.startsWith('service:'),
 				resolve: (value) => {
+					try {
+						invocation?.assertActive();
+					} catch {
+						detach();
+						reject(new PluginAuthorityError('PLUGIN_DENIED'));
+						return;
+					}
 					detach();
 					resolve(value);
 				},
@@ -431,7 +534,14 @@ export class PluginSandboxHost {
 				timer,
 			});
 			try {
-				record.proc.postMessage({ kind: 'invokeTool', id, commandId, args, context });
+				record.proc.postMessage({
+					kind: 'invokeTool',
+					id,
+					commandId,
+					args: JSON.parse(serialized),
+					context,
+					...(handle ? { invocationId: handle } : {}),
+				});
 			} catch (err) {
 				record.pendingTools.delete(id);
 				clearTimeout(timer);
@@ -448,7 +558,7 @@ export class PluginSandboxHost {
 	/** Reject and clear every outstanding tool round-trip for a plugin (called
 	 *  when the child exits so awaiting callers never hang). */
 	private rejectPendingTools(record: RunningPlugin, reason: string): void {
-		for (const pending of record.pendingTools.values()) {
+		for (const pending of [...record.pendingTools.values()]) {
 			clearTimeout(pending.timer);
 			pending.reject(new Error(reason));
 		}
@@ -504,6 +614,8 @@ export class PluginSandboxHost {
 		const record = this.running.get(pluginId);
 		if (!record) return Promise.resolve();
 		record.stopping = true;
+		record.lifetime.abort();
+		this.rejectPendingTools(record, 'plugin stopped before returning a tool result');
 		let cleanup: void | Promise<void>;
 		try {
 			cleanup = this.deps.onStop?.(pluginId);
@@ -548,6 +660,8 @@ export class PluginSandboxHost {
 		proc: UtilityProcess,
 		data: unknown
 	): Promise<void> {
+		const current = this.running.get(pluginId);
+		if (!current || current.proc !== proc) return;
 		if (typeof data !== 'object' || data === null) return;
 		const msg = data as Record<string, unknown>;
 
@@ -572,6 +686,23 @@ export class PluginSandboxHost {
 
 		/** Sanitize media/service failures to public codes and send the matching request id; tolerate child exit. */
 		const respond = (res: Omit<HostResponse, 'id'>): void => {
+			if (PLUGIN_PRIMITIVE_METHODS.includes(request.method) && !res.ok) {
+				const code = Object.prototype.hasOwnProperty.call(
+					PLUGIN_PRIMITIVE_ERRORS,
+					res.errorCode ?? ''
+				)
+					? res.errorCode!
+					: /rate limit|concurrent|concurrency|size limit/.test(res.error ?? '')
+						? 'PLUGIN_LIMIT'
+						: /not implemented/.test(res.error ?? '')
+							? 'PLUGIN_UNAVAILABLE'
+							: 'PLUGIN_DENIED';
+				res = {
+					ok: false,
+					error: PLUGIN_PRIMITIVE_ERRORS[code as keyof typeof PLUGIN_PRIMITIVE_ERRORS],
+					errorCode: code,
+				};
+			}
 			if (request.method.startsWith('media.') && !res.ok) {
 				const code = (MEDIA_ERROR_CODES as readonly string[]).includes(res.error ?? '')
 					? res.error!
@@ -766,10 +897,41 @@ export class PluginSandboxHost {
 		act.lastActivity = Date.now();
 		if (act.inFlight > act.peakInFlight) act.peakInFlight = act.inFlight;
 		try {
-			const result = await handler(pluginId, request.params, { onProgress });
+			let responseGuard: (() => void) | undefined;
+			const result = await handler(pluginId, request.params, {
+				onProgress,
+				setResponseGuard: (guard) => {
+					responseGuard = guard;
+				},
+			});
+			if (PLUGIN_PRIMITIVE_METHODS.includes(method) && method !== 'net.tlsClose') {
+				if (
+					record.stopping ||
+					this.running.get(pluginId) !== record ||
+					!this.deps.broker.authorize(pluginId, method, request.params, { audit: false }).allowed
+				) {
+					throw new PluginAuthorityError('PLUGIN_DENIED');
+				}
+				responseGuard?.();
+			}
+			if (PLUGIN_PRIMITIVE_METHODS.includes(method) && method !== 'net.tlsClose') {
+				if (!this.deps.prepareToolPluginActive) throw new PluginAuthorityError('PLUGIN_DENIED');
+				await this.deps.prepareToolPluginActive(pluginId);
+				if (
+					record.stopping ||
+					this.running.get(pluginId) !== record ||
+					!this.deps.broker.authorize(pluginId, method, request.params, { audit: false }).allowed
+				)
+					throw new PluginAuthorityError('PLUGIN_DENIED');
+				responseGuard?.();
+			}
 			respond({ ok: true, result });
 		} catch (err) {
-			respond({ ok: false, error: err instanceof Error ? err.message : String(err) });
+			respond({
+				ok: false,
+				...(err instanceof PluginAuthorityError ? { errorCode: err.code } : {}),
+				error: err instanceof Error ? err.message : String(err),
+			});
 		} finally {
 			active = false;
 			record.inFlightIds.delete(request.id);

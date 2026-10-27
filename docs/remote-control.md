@@ -420,6 +420,8 @@ To access Maestro from outside your local network (e.g., on mobile data or from 
 The Remote tab automatically activates when the tunnel connects successfully.
 </Tip>
 
+You can also do all of this from a terminal: `maestro-cli live on --tunnel` starts the web interface and the tunnel, `maestro-cli live status` prints both URLs, and `maestro-cli live off` stops them. The LIVE panel follows whatever the CLI does. See [CLI: Live Mode](./cli#live-mode-live).
+
 ## Custom Port Configuration
 
 By default, Maestro assigns a **random port** each time the web server starts. The URL token and optional Web Login provide authentication; an unpredictable port is not a substitute for access control.

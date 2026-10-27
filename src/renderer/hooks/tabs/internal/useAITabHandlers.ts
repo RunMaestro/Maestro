@@ -22,6 +22,7 @@ import {
 	cycleShowThinkingFields,
 	getActiveTab,
 	getInitialRenameValue,
+	getRepairedUnifiedTabOrder,
 	hasActiveWizard,
 	hasDraft,
 	hasWizardInteraction,
@@ -216,15 +217,32 @@ export function useAITabHandlers(
 
 		updateSessionWith(activeSessionId, (s) => {
 			let updatedSession = s;
+			// Record each closed tab in the unified history at its pre-close
+			// position, as every other close path does. Cmd+Shift+T pops only the
+			// unified stack while it holds anything, and that stack is the one that
+			// persists, so a tab recorded only in the legacy history is unreachable.
+			const unifiedIndexById = new Map<string, number>();
+			getRepairedUnifiedTabOrder(s).forEach((ref, i) => {
+				if (ref.type === 'ai') unifiedIndexById.set(ref.id, i);
+			});
 			const tabIds = visibleAiTabs(s.aiTabs).map((t) => t.id);
 			for (const tabId of tabIds) {
 				const tab = updatedSession.aiTabs.find((t) => t.id === tabId);
+				const isWizardTab = tab ? hasActiveWizard(tab) : false;
 				// Filter state is irrelevant: no tab survives to be selected.
 				const result = closeTab(updatedSession, tabId, false, {
-					skipHistory: tab ? hasActiveWizard(tab) : false,
+					skipHistory: isWizardTab,
 				});
 				if (result) {
 					updatedSession = result.session;
+					// Wizard tabs are intentionally not restorable.
+					if (tab && !isWizardTab) {
+						updatedSession = addAiTabToUnifiedHistory(
+							updatedSession,
+							tab,
+							unifiedIndexById.get(tabId) ?? 0
+						);
+					}
 				}
 			}
 			return updatedSession;

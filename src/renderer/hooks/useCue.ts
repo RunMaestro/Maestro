@@ -156,7 +156,10 @@ export function useCue(options?: UseCueOptions): UseCueReturn {
 				notifyToast({
 					type: 'warning',
 					title: `Cue queue overflow: ${payload.sessionName} (${stamp})`,
-					message: `Oldest queued "${payload.subscriptionName}" event was dropped - raise queue_size or max_concurrent to avoid loss.`,
+					message:
+						payload.outcome === 'incoming-rejected'
+							? `Incoming "${payload.subscriptionName}" event was not admitted - existing queued events were kept. Increase queue_size or max_concurrent to allow more work.`
+							: `Oldest queued "${payload.subscriptionName}" event was dropped - raise queue_size or max_concurrent to avoid loss.`,
 				});
 			}
 			refresh();

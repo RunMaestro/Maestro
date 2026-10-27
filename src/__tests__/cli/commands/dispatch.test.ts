@@ -25,11 +25,18 @@ vi.mock('../../../cli/services/maestro-client', async (importOriginal) => {
 vi.mock('../../../cli/services/storage', () => ({
 	resolveAgentId: vi.fn(),
 	readSettingValue: vi.fn(),
+	readLiveSessions: vi.fn(() => []),
+	readGroups: vi.fn(() => []),
 }));
 
 import { dispatch, runDispatch } from '../../../cli/commands/dispatch';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
-import { resolveAgentId, readSettingValue } from '../../../cli/services/storage';
+import {
+	resolveAgentId,
+	readSettingValue,
+	readLiveSessions,
+	readGroups,
+} from '../../../cli/services/storage';
 import { isolateAgentEnv } from '../../helpers/agentEnvIsolation';
 import { CALLER_AGENT_ID_ENV_VAR, CALLER_TAB_ID_ENV_VAR } from '../../../shared/agentDelegation';
 
@@ -852,6 +859,102 @@ describe('dispatch command', () => {
 
 			expect(sendCommand.mock.calls[0][0]).not.toHaveProperty('fromSessionId');
 			expect(sendCommand.mock.calls[0][0]).not.toHaveProperty('fromTabId');
+		});
+	});
+
+	describe('--routing', () => {
+		/** Wire a client that answers every command with `response`. */
+		const stubClient = (response: Record<string, unknown>) => {
+			const sendCommand = vi.fn().mockResolvedValue(response);
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({ sendCommand } as never)
+			);
+			return sendCommand;
+		};
+
+		beforeEach(() => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+			// The roster a mention resolves against: the target and one other agent.
+			vi.mocked(readLiveSessions).mockReturnValue([
+				{ id: 'agent-abc-123', name: 'Frontend', toolType: 'claude-code' },
+				{ id: 'agent-backend', name: 'Backend', toolType: 'codex' },
+			] as never);
+			vi.mocked(readGroups).mockReturnValue([]);
+		});
+
+		it.each(['parallel', 'consult-first', 'handoff', 'only'])(
+			'sends --routing %s as the mentionRouting the composer strip sets',
+			async (mode) => {
+				const sendCommand = stubClient({ success: true, tabId: 'tab-1' });
+
+				const result = await runDispatch('agent-abc', 'look at this, @Backend', {
+					routing: mode,
+				});
+
+				expect(result.success).toBe(true);
+				expect(sendCommand.mock.calls[0][0]).toMatchObject({
+					type: 'send_command',
+					mentionRouting: mode,
+				});
+			}
+		);
+
+		it('rejects an unknown mode before sending anything', async () => {
+			const sendCommand = stubClient({ success: true });
+
+			const result = await runDispatch('agent-abc', 'hi @Backend', { routing: 'sideways' });
+
+			expect(result).toMatchObject({ success: false, code: 'INVALID_OPTIONS' });
+			expect(result.error).toContain('--routing');
+			expect(result.error).toContain('parallel, consult-first, handoff, only');
+			expect(sendCommand).not.toHaveBeenCalled();
+		});
+
+		it('rejects --routing when the message mentions no other agent', async () => {
+			const sendCommand = stubClient({ success: true });
+
+			for (const message of ['no mention here', 'only myself, @Frontend', 'ask @Nobody']) {
+				const result = await runDispatch('agent-abc', message, { routing: 'handoff' });
+				expect(result).toMatchObject({ success: false, code: 'INVALID_OPTIONS' });
+				expect(result.error).toContain('nothing to route');
+			}
+			expect(sendCommand).not.toHaveBeenCalled();
+		});
+
+		it('carries the routing on the --queue path', async () => {
+			const sendCommand = stubClient({ success: true, queued: true, itemId: 'q1' });
+
+			await runDispatch('agent-abc', 'then tell @Backend', { queue: true, routing: 'handoff' });
+
+			expect(sendCommand.mock.calls[0][0]).toMatchObject({
+				type: 'enqueue_command',
+				mentionRouting: 'handoff',
+			});
+		});
+
+		it('carries the routing on the --new-tab path', async () => {
+			const sendCommand = stubClient({ success: true, tabId: 'tab-new' });
+
+			await runDispatch('agent-abc', '@Backend look', { newTab: true, routing: 'only' });
+
+			expect(sendCommand.mock.calls[0][0]).toMatchObject({
+				type: 'new_ai_tab_with_prompt',
+				mentionRouting: 'only',
+			});
+		});
+
+		it('sends no mentionRouting without the flag, so the wording decides', async () => {
+			const sendCommand = stubClient({ success: true });
+
+			await runDispatch('agent-abc', 'look, @Backend', {});
+			await runDispatch('agent-abc', 'look, @Backend', { queue: true });
+			await runDispatch('agent-abc', 'look, @Backend', { newTab: true });
+
+			for (const [message] of sendCommand.mock.calls) {
+				expect(message).not.toHaveProperty('mentionRouting');
+			}
+			// Without the flag the roster is never read.
+			expect(readLiveSessions).not.toHaveBeenCalled();
 		});
 	});
 });

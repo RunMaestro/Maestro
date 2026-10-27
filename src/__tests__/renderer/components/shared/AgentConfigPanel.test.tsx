@@ -957,3 +957,39 @@ describe('AgentConfigPanel - detected installation chooser', () => {
 		});
 	});
 });
+
+// =============================================================================
+// BLUR CALLBACK ARGUMENTS (MAESTRO-11C)
+// =============================================================================
+
+describe('AgentConfigPanel blur callbacks', () => {
+	// The blur props are typed as no-argument callbacks, and Director's Notes hands
+	// one persist function (whose optional first parameter is a path) to all of
+	// them. Forwarding the FocusEvent stored the event as customPath, and the
+	// settings IPC write threw "An object could not be cloned".
+	it('calls onCustomArgsBlur with no arguments', () => {
+		const onCustomArgsBlur = vi.fn();
+		render(<AgentConfigPanel {...createDefaultProps({ onCustomArgsBlur })} />);
+
+		fireEvent.blur(screen.getByPlaceholderText('--flag value --another-flag'));
+
+		expect(onCustomArgsBlur).toHaveBeenCalledTimes(1);
+		expect(onCustomArgsBlur).toHaveBeenCalledWith();
+	});
+
+	it('calls onEnvVarsBlur with no arguments when an env var value blurs', () => {
+		const onEnvVarsBlur = vi.fn();
+		render(
+			<AgentConfigPanel
+				{...createDefaultProps({ onEnvVarsBlur, customEnvVars: { MY_FLAG: 'on' } })}
+			/>
+		);
+
+		fireEvent.blur(screen.getByDisplayValue('on'));
+
+		expect(onEnvVarsBlur).toHaveBeenCalled();
+		for (const call of onEnvVarsBlur.mock.calls) {
+			expect(call).toEqual([]);
+		}
+	});
+});

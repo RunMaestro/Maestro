@@ -19,6 +19,10 @@
  * size cap, snapshot paths are taken as the index spells them (the guest never touches the file system),
  * and opaque payloads (page data, query results) pass through by reference.
  *
+ * The snapshot travels as JSON text ({@link SandboxSnapshotPayload}): main encodes it once per index state
+ * ({@link encodeSandboxSnapshot}), every hop copies one string, and only the guest decodes it
+ * ({@link decodeSandboxSnapshot}), with the same shape check.
+ *
  * Paths are vault-relative POSIX paths, as the index spells them (`People/Pedram Amini.md`). The host joins
  * them onto the root, and main checks containment again with `realpath` before it reads a file. See
  * docs/agent-guides/DATAVIEW.md (D4).
@@ -26,10 +30,14 @@
 
 import { serializedJsonByteLength } from '../jsonUtils';
 import { normalizeRootRelativePath } from '../pathContainment';
+import { dataviewJsonReplacer, dataviewJsonReviver } from './json';
 import type { DataviewResult, DataviewWireValue } from './types';
 
 /** The largest message a guest may send, as UTF-8 JSON (1 MB). */
 export const SANDBOX_MAX_GUEST_MESSAGE_BYTES = 1024 * 1024;
+
+/** Pages {@link encodeSandboxSnapshot} stringifies between two pauses. */
+export const SNAPSHOT_ENCODE_BATCH_PAGES = 256;
 
 /** Who sent a message: the guest page, where note scripts run, or the host that embeds it. */
 export type SandboxSender = 'guest' | 'host';
@@ -121,6 +129,18 @@ export interface SandboxRenderDoneMessage {
 	height: number;
 }
 
+/**
+ * The run's index is built from its snapshot and the script starts now. The host gives a run
+ * `DATAVIEW_JS_INDEX_TIMEOUT_MS` until this message and the script `DATAVIEW_JS_RUN_TIMEOUT_MS` after it, so a
+ * large vault's index build never counts against the script. The host honors it once per run: a script that
+ * posts it again cannot buy itself more time.
+ */
+export interface SandboxIndexReadyMessage {
+	type: 'index.ready';
+	/** The run (`run` or `eval`) whose index is ready. */
+	runId: string;
+}
+
 /** A run failed: the script threw, or did not compile. */
 export interface SandboxRenderErrorMessage {
 	type: 'render.error';
@@ -155,6 +175,7 @@ export type SandboxGuestMessage =
 	| SandboxToggleTaskMessage
 	| SandboxRenderDoneMessage
 	| SandboxRenderErrorMessage
+	| SandboxIndexReadyMessage
 	| SandboxEvalResultMessage;
 
 // ---------------------------------------------------------------------------------------------------------
@@ -179,6 +200,23 @@ export interface SandboxIndexSnapshot {
 	/** Starred pages (`file.starred`). */
 	stars: string[];
 	pages: SandboxSnapshotPage[];
+	/** Pages whose tasks and lists were left out to bound the snapshot's size; absent when none were. */
+	omittedListPages?: number;
+}
+
+/**
+ * A snapshot as it travels from main to a guest: its JSON text (`dataviewJsonReplacer`), plus what the host
+ * shows without decoding it. A large vault's snapshot is tens of megabytes of small objects. As an object
+ * graph, structured clone rebuilt it on every hop (main, the renderer, main again, the guest), and the two
+ * renderer hops froze the window for up to 1.5 s per block. As one string, each hop is a copy.
+ */
+export interface SandboxSnapshotPayload {
+	/** The snapshot's `revision`. */
+	revision: number;
+	/** The snapshot's `omittedListPages`; absent when none were left out. */
+	omittedListPages?: number;
+	/** `SandboxIndexSnapshot` as JSON text. Decode with {@link decodeSandboxSnapshot}. */
+	json: string;
 }
 
 /** Run one block's script against a snapshot. */
@@ -189,7 +227,7 @@ export interface SandboxRunMessage {
 	source: string;
 	/** The note the block sits in: `dv.current()`, and the origin of relative links and paths. */
 	thisPath: string;
-	snapshot: SandboxIndexSnapshot;
+	snapshot: SandboxSnapshotPayload;
 }
 
 /** One inline `$=` expression of an `eval` run. */
@@ -208,7 +246,7 @@ export interface SandboxEvalMessage {
 	runId: string;
 	/** The note the spans sit in: `dv.current()`, and the origin of relative links and paths. */
 	thisPath: string;
-	snapshot: SandboxIndexSnapshot;
+	snapshot: SandboxSnapshotPayload;
 	expressions: SandboxEvalExpression[];
 }
 
@@ -383,8 +421,18 @@ function readArray<T>(
 }
 
 function readSnapshot(value: unknown, what: string): SandboxIndexSnapshot {
-	const fields = readFields(value, what, ['revision', 'files', 'folders', 'stars', 'pages']);
+	const fields = readFields(
+		value,
+		what,
+		['revision', 'files', 'folders', 'stars', 'pages'],
+		['omittedListPages']
+	);
 	return {
+		...(fields.omittedListPages === undefined
+			? {}
+			: {
+					omittedListPages: readInteger(fields.omittedListPages, `${what}.omittedListPages`, 0),
+				}),
 		revision: readInteger(fields.revision, `${what}.revision`, 0),
 		files: readArray(fields.files, `${what}.files`, readString),
 		folders: readArray(fields.folders, `${what}.folders`, readString),
@@ -397,6 +445,64 @@ function readSnapshot(value: unknown, what: string): SandboxIndexSnapshot {
 			};
 		}),
 	};
+}
+
+function readSnapshotPayload(value: unknown, what: string): SandboxSnapshotPayload {
+	const fields = readFields(value, what, ['revision', 'json'], ['omittedListPages']);
+	return {
+		...(fields.omittedListPages === undefined
+			? {}
+			: {
+					omittedListPages: readInteger(fields.omittedListPages, `${what}.omittedListPages`, 0),
+				}),
+		revision: readInteger(fields.revision, `${what}.revision`, 0),
+		json: readString(fields.json, `${what}.json`),
+	};
+}
+
+/**
+ * Encode a snapshot as the payload that travels to a guest. `pause` runs between batches of
+ * {@link SNAPSHOT_ENCODE_BATCH_PAGES} pages, so main can yield to its event loop while a large vault encodes.
+ * The text parses to the same value as `JSON.stringify(snapshot, dataviewJsonReplacer)`.
+ */
+export async function encodeSandboxSnapshot(
+	snapshot: SandboxIndexSnapshot,
+	pause?: () => Promise<void>
+): Promise<SandboxSnapshotPayload> {
+	const { pages, ...rest } = snapshot;
+	// `rest` always holds `revision`, so its text ends in a field and `}`: the pages go in before the brace.
+	const parts = [`${JSON.stringify(rest, dataviewJsonReplacer).slice(0, -1)},"pages":[`];
+	for (let start = 0; start < pages.length; start += SNAPSHOT_ENCODE_BATCH_PAGES) {
+		const batch = pages.slice(start, start + SNAPSHOT_ENCODE_BATCH_PAGES);
+		const text = batch.map((page) => JSON.stringify(page, dataviewJsonReplacer)).join(',');
+		parts.push(start > 0 ? `,${text}` : text);
+		if (pause && start + SNAPSHOT_ENCODE_BATCH_PAGES < pages.length) await pause();
+	}
+	parts.push(']}');
+	return {
+		revision: snapshot.revision,
+		...(snapshot.omittedListPages === undefined
+			? {}
+			: { omittedListPages: snapshot.omittedListPages }),
+		json: parts.join(''),
+	};
+}
+
+/** Decode a payload in the guest, with the same shape check a snapshot always had. Throws when it fails. */
+export function decodeSandboxSnapshot(payload: SandboxSnapshotPayload): SandboxIndexSnapshot {
+	let decoded: unknown;
+	try {
+		decoded = JSON.parse(payload.json, dataviewJsonReviver);
+	} catch (error) {
+		reject(
+			`snapshot.json does not parse: ${error instanceof Error ? error.message : String(error)}`
+		);
+	}
+	const snapshot = readSnapshot(decoded, 'snapshot');
+	if (snapshot.revision !== payload.revision) {
+		reject(`snapshot.json is revision ${snapshot.revision}, not ${payload.revision}`);
+	}
+	return snapshot;
 }
 
 /**
@@ -490,6 +596,10 @@ function parseGuestMessage(raw: unknown): SandboxGuestMessage {
 				text: readString(fields.text, `${type}.text`),
 			};
 		}
+		case 'index.ready': {
+			const fields = readFields(raw, type, ['type', 'runId']);
+			return { type, runId: readId(fields.runId, `${type}.runId`) };
+		}
 		case 'render.done': {
 			const fields = readFields(raw, type, ['type', 'blockId', 'runId', 'height']);
 			const height = fields.height;
@@ -544,7 +654,7 @@ function parseHostMessage(raw: unknown): SandboxHostMessage {
 				blockId: readId(fields.blockId, `${type}.blockId`),
 				source: readString(fields.source, `${type}.source`),
 				thisPath: readVaultPath(fields.thisPath, `${type}.thisPath`),
-				snapshot: readSnapshot(fields.snapshot, `${type}.snapshot`),
+				snapshot: readSnapshotPayload(fields.snapshot, `${type}.snapshot`),
 			};
 		}
 		case 'eval': {
@@ -559,7 +669,7 @@ function parseHostMessage(raw: unknown): SandboxHostMessage {
 				type,
 				runId: readId(fields.runId, `${type}.runId`),
 				thisPath: readVaultPath(fields.thisPath, `${type}.thisPath`),
-				snapshot: readSnapshot(fields.snapshot, `${type}.snapshot`),
+				snapshot: readSnapshotPayload(fields.snapshot, `${type}.snapshot`),
 				expressions: readArray(fields.expressions, `${type}.expressions`, (item, itemWhat) => {
 					const expression = readFields(item, itemWhat, ['id', 'source']);
 					return {

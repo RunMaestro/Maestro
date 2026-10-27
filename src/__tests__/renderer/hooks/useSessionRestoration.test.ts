@@ -30,6 +30,7 @@ vi.mock('../../../renderer/utils/ids', () => ({
 }));
 
 import { useSessionRestoration } from '../../../renderer/hooks/session/useSessionRestoration';
+import { buildUnifiedTabs } from '../../../renderer/utils/tabHelpers';
 import {
 	updateAiTab,
 	updateSessionWith,
@@ -41,6 +42,10 @@ import type { Session } from '../../../renderer/types';
 import type { BrowserTab } from '../../../shared/browserPage';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { WEB_BRIDGE_RECONCILE_EVENT } from '../../../shared/webClientConfig';
+import { MAX_CLOSED_TAB_HISTORY } from '../../../shared/closedTabHistory';
+import { addAiTabToUnifiedHistory, closeTab } from '../../../renderer/utils/tabHelpers';
+import { reopenClosedTabWithTiling } from '../../../renderer/utils/panelLayout';
+import { prepareSessionForPersistence } from '../../../renderer/hooks/utils/useDebouncedPersistence';
 
 // Cast to access mock methods
 const mockGitService = gitService as {
@@ -631,6 +636,47 @@ describe('restoreSession - Corruption recovery', () => {
 		expect(log.source).toBe('system');
 	});
 
+	// MAESTRO-16B: a tabGroups persisted as an object (not an array) slipped past
+	// every `?? []` / `|| []` default, threw inside restoreSession, and the error
+	// fallback put the raw session in the store, where the tab strip's
+	// `(session.tabGroups || []).map` threw on every render.
+	it('coerces a non-array tabGroups to an empty array instead of failing the restore', async () => {
+		const session = createMockSession({ tabGroups: { 0: 'not-a-group' } as any });
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.tabGroups).toEqual([]);
+		expect(restored!.state).not.toBe('error');
+		expect(restored!.aiTabs.map((t) => t.id)).toEqual(['tab-1']);
+		expect(() => buildUnifiedTabs(restored!)).not.toThrow();
+		expect(buildUnifiedTabs(restored!).map((t) => t.id)).toEqual(['tab-1']);
+	});
+
+	it('coerces non-array tab collections on the error fallback too', async () => {
+		const session = createMockSession({
+			tabGroups: {} as any,
+			unifiedTabOrder: { ai: 'tab-1' } as any,
+			// A null tab with no createdAt makes the createdAt backfill throw, which
+			// sends restoreSession down its error fallback.
+			createdAt: undefined,
+			aiTabs: [null] as any,
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.state).toBe('error');
+		expect(restored!.tabGroups).toEqual([]);
+		expect(restored!.unifiedTabOrder).toEqual([]);
+	});
+
 	it('creates default tab when aiTabs is undefined', async () => {
 		const session = createMockSession({ aiTabs: undefined as any, activeTabId: null });
 		const { result } = renderHook(() => useSessionRestoration());
@@ -1139,6 +1185,100 @@ describe('restoreSession - Runtime state reset', () => {
 		});
 
 		expect(restored!.closedTabHistory).toEqual([]);
+	});
+
+	it('restores the stored closed-tab stack in stored form, dropping malformed entries', async () => {
+		const session = createMockSession({
+			unifiedClosedTabHistory: [
+				{
+					type: 'ai',
+					tab: { id: 'closed-1', agentSessionId: 'provider-1', logs: [{ id: 'l1' }] },
+					unifiedIndex: -1,
+					closedAt: 5,
+				},
+				{ type: 'mystery', tab: { id: 'x' } },
+				null,
+			] as any,
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.unifiedClosedTabHistory).toHaveLength(1);
+		const [entry] = restored!.unifiedClosedTabHistory;
+		expect(entry.tab.id).toBe('closed-1');
+		// A Claude tab with a provider session id is stored without its logs.
+		expect((entry.tab as { logs: unknown[] }).logs).toEqual([]);
+		expect(entry.unifiedIndex).toBe(Number.MAX_SAFE_INTEGER);
+	});
+
+	it('starts with an empty closed-tab stack for a store written before it persisted', async () => {
+		const session = createMockSession();
+		delete (session as Partial<Session>).unifiedClosedTabHistory;
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.unifiedClosedTabHistory).toEqual([]);
+	});
+
+	it('round-trips closed tabs through the store: capped, stripped, and reopenable', async () => {
+		const closing = Array.from({ length: MAX_CLOSED_TAB_HISTORY + 3 }, (_, i) => ({
+			id: `closed-${i}`,
+			agentSessionId: `provider-${i}`,
+			name: null,
+			state: 'idle',
+			logs: [{ id: `log-${i}`, text: `turn ${i}`, source: 'user', timestamp: i }],
+			starred: false,
+			inputValue: '',
+			stagedImages: [],
+			createdAt: i,
+		}));
+		let session = createMockSession({
+			aiTabs: [{ ...closing[0], id: 'keep', agentSessionId: 'provider-keep' }, ...closing] as any,
+			unifiedTabOrder: [
+				{ type: 'ai', id: 'keep' },
+				...closing.map((t) => ({ type: 'ai' as const, id: t.id })),
+			],
+			activeTabId: 'keep',
+			unifiedClosedTabHistory: [],
+		});
+		// The close path the tab handlers take: closeTab, then the unified stack.
+		for (const tab of closing) {
+			const unifiedIndex = session.unifiedTabOrder.findIndex((ref) => ref.id === tab.id);
+			const closed = closeTab(session, tab.id, false)!;
+			session = addAiTabToUnifiedHistory(closed.session, closed.closedTab.tab, unifiedIndex);
+		}
+		// In memory the stack holds whole tabs, transcripts included.
+		expect(session.unifiedClosedTabHistory[0].tab.id).toBe(`closed-${closing.length - 1}`);
+		expect((session.unifiedClosedTabHistory[0].tab as { logs: unknown[] }).logs).toHaveLength(1);
+
+		const onDisk = JSON.parse(JSON.stringify(prepareSessionForPersistence(session))) as Session;
+		expect(onDisk.unifiedClosedTabHistory).toHaveLength(MAX_CLOSED_TAB_HISTORY);
+		expect(
+			onDisk.unifiedClosedTabHistory.every((e) => (e.tab as { logs: unknown[] }).logs.length === 0)
+		).toBe(true);
+		expect(onDisk).not.toHaveProperty('closedTabHistory');
+
+		const { result } = renderHook(() => useSessionRestoration());
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(onDisk);
+		});
+		expect(restored!.unifiedClosedTabHistory).toEqual(onDisk.unifiedClosedTabHistory);
+
+		const reopened = reopenClosedTabWithTiling(restored!)!;
+		expect(reopened.tabType).toBe('ai');
+		const tab = reopened.session.aiTabs.find((t) => t.id === reopened.tabId)!;
+		// The pointer survives; the transcript comes back through loadResumableSession().
+		expect(tab.agentSessionId).toBe(`provider-${closing.length - 1}`);
+		expect(reopened.session.unifiedClosedTabHistory).toHaveLength(MAX_CLOSED_TAB_HISTORY - 1);
 	});
 });
 

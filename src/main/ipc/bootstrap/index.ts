@@ -119,6 +119,7 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		setWebServer: deps.setWebServer,
 		createWebServer: deps.createWebServer,
 		settingsStore: deps.settingsStore,
+		tunnelManager,
 	});
 
 	// Web Login account management - desktop-only, the bridge refuses every
@@ -308,8 +309,6 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		getMainWindow: deps.getMainWindow,
 		app: deps.app,
 		settingsStore: deps.settingsStore,
-		tunnelManager,
-		getWebServer: deps.getWebServer,
 		bootstrapStore: deps.bootstrapStore, // For iCloud/sync settings
 	});
 

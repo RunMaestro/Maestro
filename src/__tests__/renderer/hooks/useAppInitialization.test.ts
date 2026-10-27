@@ -149,8 +149,10 @@ vi.mock('../../../renderer/services/leaderboard', () => ({
 }));
 
 // No WindowProvider in these tests; the hook treats that as the main window.
+let mockIsLifecycleOwner = true;
 vi.mock('../../../renderer/contexts/WindowContext', () => ({
 	useWindowContextOptional: () => null,
+	useIsLifecycleOwner: () => mockIsLifecycleOwner,
 }));
 
 vi.mock('../../../renderer/services/openspec', () => ({
@@ -259,6 +261,7 @@ beforeEach(() => {
 	vi.useRealTimers();
 	vi.clearAllMocks();
 	resetStores();
+	mockIsLifecycleOwner = true;
 	mockCheckGhCli.mockResolvedValue({ installed: false, authenticated: false });
 	mockGetStatus.mockResolvedValue({ platform: 'darwin' });
 	mockSettingsGet.mockResolvedValue(null);
@@ -761,6 +764,27 @@ describe('useAppInitialization', () => {
 				authToken: 'token123',
 			});
 			expect(mockSettingsState.setAutoRunStats).toHaveBeenCalled();
+		});
+
+		// A web-desktop client reads as the main window too, and shares the same
+		// leaderboard outbox; a second flush would submit every queued delta twice.
+		it('should not sync or flush outside the lifecycle owner', async () => {
+			vi.useFakeTimers();
+			mockIsLifecycleOwner = false;
+			mockSettingsState.settingsLoaded = true;
+			mockSettingsState.leaderboardRegistration = {
+				authToken: 'token123',
+				email: 'user@example.com',
+			};
+
+			renderHook(() => useAppInitialization());
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(3500);
+			});
+
+			expect(mockFlushOutbox).not.toHaveBeenCalled();
+			expect(mockLeaderboardSync).not.toHaveBeenCalled();
 		});
 
 		it('should not sync when no auth token', async () => {

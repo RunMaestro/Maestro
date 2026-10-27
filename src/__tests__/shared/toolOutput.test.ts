@@ -50,4 +50,28 @@ describe('tool output compaction', () => {
 		);
 		expect(session.aiTabs[0].logs[0].metadata.toolState.output).toBe(output);
 	});
+
+	it('compacts tool results in closed AI tabs kept with their logs', () => {
+		const output = 'x'.repeat(MAX_PERSISTED_TOOL_OUTPUT_CHARS + 100);
+		const terminal = { type: 'terminal', tab: { id: 't' }, unifiedIndex: 0, closedAt: 1 };
+		const session = {
+			aiTabs: [],
+			unifiedClosedTabHistory: [
+				{
+					type: 'ai',
+					tab: { id: 'closed', logs: [{ metadata: { toolState: { output } } }] },
+					unifiedIndex: 0,
+					closedAt: 1,
+				},
+				terminal,
+			],
+		};
+
+		const result = compactSessionToolOutputs(session);
+		expect(result.compacted).toBe(1);
+		const closed = result.session.unifiedClosedTabHistory;
+		expect(closed[0].tab.logs[0].metadata.toolState.output).toContain('[tool output truncated');
+		expect(closed[1]).toBe(terminal);
+		expect(session.unifiedClosedTabHistory[0].tab.logs[0].metadata.toolState.output).toBe(output);
+	});
 });

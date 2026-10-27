@@ -4,7 +4,7 @@ import type { AdditionalDirectory, AgentConfig, Session, ToolType } from '../../
 import type { SshRemoteConfig, AgentSshRemoteConfig } from '../../../shared/types';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { validateNewSession } from '../../utils/sessionValidation';
-import { isAdaptiveModeDefaultOn, resilienceEnabled } from '../../../shared/agentConstants';
+import { isAdaptiveModeDefaultOn } from '../../../shared/agentConstants';
 import { normalizeAdditionalDirectories } from '../../../shared/additionalDirectories';
 import { getBasename } from '../../../shared/formatters';
 import { FormInput } from '../ui/FormInput';
@@ -30,6 +30,7 @@ import type { CodexTransport } from '../../../shared/codexTransport';
 import { getEffortConfigKey, readEffortFromConfig } from '../../utils/agentEffort';
 import { gitService } from '../../services/git';
 import { withBlankEnvVarRow } from '../../../shared/envVarCatalog';
+import { buildDuplicateAgentInput } from '../../../shared/newAgentRecord';
 
 export function NewInstanceModal({
 	isOpen,
@@ -254,26 +255,30 @@ export function NewInstanceModal({
 				}
 			}
 
+			// What a duplicate inherits is decided by the shared carry-over rules,
+			// the same ones `maestro-cli duplicate-agent` uses.
+			const duplicate = source ? buildDuplicateAgentInput(source) : undefined;
+
 			// If duplicating, merge source session config values into loaded configs
-			if (source) {
-				const sourceConfig: Record<string, any> = { ...configs[source.toolType] };
-				if (source.customModel) {
-					sourceConfig.model = source.customModel;
+			if (duplicate) {
+				const sourceConfig: Record<string, any> = { ...configs[duplicate.toolType] };
+				if (duplicate.customModel) {
+					sourceConfig.model = duplicate.customModel;
 				}
-				if (source.customContextWindow) {
-					sourceConfig.contextWindow = source.customContextWindow;
+				if (duplicate.customContextWindow) {
+					sourceConfig.contextWindow = duplicate.customContextWindow;
 				}
-				if (source.customProviderPath) {
-					sourceConfig.providerPath = source.customProviderPath;
+				if (duplicate.customProviderPath) {
+					sourceConfig.providerPath = duplicate.customProviderPath;
 				}
-				if (source.customEffort) {
+				if (duplicate.customEffort) {
 					// Agents use either `effort` (Claude Code) or `reasoningEffort` (Codex,
 					// Copilot-CLI, Factory Droid). Pick whichever key the source agent
 					// actually defines so the value round-trips through the modal.
-					const sourceAgent = detectedAgents.find((a: AgentConfig) => a.id === source.toolType);
-					sourceConfig[getEffortConfigKey(sourceAgent)] = source.customEffort;
+					const sourceAgent = detectedAgents.find((a: AgentConfig) => a.id === duplicate.toolType);
+					sourceConfig[getEffortConfigKey(sourceAgent)] = duplicate.customEffort;
 				}
-				configs[source.toolType] = sourceConfig;
+				configs[duplicate.toolType] = sourceConfig;
 			}
 
 			setAgentConfigs(configs);
@@ -283,8 +288,8 @@ export function NewInstanceModal({
 
 			// Select first available non-hidden agent (or source agent if duplicating)
 			// (hidden agents like 'terminal' should never be auto-selected)
-			if (source) {
-				setSelectedAgent(source.toolType);
+			if (duplicate) {
+				setSelectedAgent(duplicate.toolType);
 			} else if (!sshRemoteId) {
 				// Only auto-select on initial load, not on SSH remote re-detection
 				const firstAvailable = detectedAgents.find((a: AgentConfig) => a.available && !a.hidden);
@@ -294,89 +299,59 @@ export function NewInstanceModal({
 			}
 
 			// Pre-fill form fields AFTER agents are loaded (ensures no race condition)
-			if (source) {
-				// For an SSH agent the field must show the REMOTE directory the agent
-				// actually runs in. A CLI-created agent (`create-agent --ssh-cwd`) keeps
-				// a local placeholder in `cwd` and the real path in the override, so the
-				// override is what the copy should start from. The value on screen is
-				// then the single source for the new agent's cwd AND its override.
-				handleWorkingDirChange(
-					(source.sessionSshRemoteConfig?.enabled &&
-						source.sessionSshRemoteConfig.workingDirOverride) ||
-						source.cwd
-				);
-				// Clone the grants, don't alias them - the rows are edited in place and
-				// would otherwise mutate the source agent's persisted array.
-				setAdditionalDirectories((source.additionalDirectories ?? []).map((d) => ({ ...d })));
-				setInstanceName(`${source.name} (Copy)`);
-				setNudgeMessage(source.nudgeMessage || '');
-				setNewSessionMessage(source.newSessionMessage || '');
+			if (duplicate) {
+				const toolType = duplicate.toolType;
+				// For an SSH agent this is the REMOTE directory it runs in; the value on
+				// screen is then the single source for the copy's cwd AND its override.
+				handleWorkingDirChange(duplicate.cwd);
+				// Already a clone: the rows are edited in place.
+				setAdditionalDirectories(duplicate.additionalDirectories);
+				setInstanceName(duplicate.name);
+				setNudgeMessage(duplicate.nudgeMessage ?? '');
+				setNewSessionMessage(duplicate.newSessionMessage ?? '');
 
 				// Pre-fill custom agent configuration
-				setCustomAgentPaths((prev) => ({
-					...prev,
-					[source.toolType]: source.customPath || '',
-				}));
-				setCustomAgentArgs((prev) => ({
-					...prev,
-					[source.toolType]: source.customArgs || '',
-				}));
-				setCustomAgentEnvVars((prev) => ({
-					...prev,
-					[source.toolType]: source.customEnvVars || {},
-				}));
-				// Mirror the source agent's EXPLICIT Adaptive Mode choice so a duplicate
-				// inherits it. When the source never configured a token source, leave the
-				// entry unset so the duplicate falls through to the same default path as a
-				// fresh agent (see agentEnableMaestroP below) instead of pinning a falsy
-				// default as if it were an explicit "API" choice.
+				setCustomAgentPaths((prev) => ({ ...prev, [toolType]: duplicate.customPath ?? '' }));
+				setCustomAgentArgs((prev) => ({ ...prev, [toolType]: duplicate.customArgs ?? '' }));
+				setCustomAgentEnvVars((prev) => ({ ...prev, [toolType]: duplicate.customEnvVars ?? {} }));
+				// Only an EXPLICIT Adaptive Mode choice is pinned. Unset stays unset so
+				// submit falls through to the same default path as a fresh agent (see
+				// agentEnableMaestroP below) instead of pinning a falsy default as if it
+				// were an explicit "API" choice.
 				setEnableMaestroPByAgent((prev) => {
 					const next = { ...prev };
-					if (source.enableMaestroP === undefined) {
-						delete next[source.toolType];
+					if (duplicate.enableMaestroP === undefined) {
+						delete next[toolType];
 					} else {
-						next[source.toolType] = source.enableMaestroP;
+						next[toolType] = duplicate.enableMaestroP;
 					}
 					return next;
 				});
 				setMaestroPModeByAgent((prev) => ({
 					...prev,
-					[source.toolType]: source.maestroPMode ?? 'dynamic',
+					[toolType]: duplicate.maestroPMode ?? 'dynamic',
 				}));
-				setMaestroPPathByAgent((prev) => ({
-					...prev,
-					[source.toolType]: source.maestroPPath || '',
-				}));
-				// Mirror the source agent's Agent Resilience toggles (default ON).
+				setMaestroPPathByAgent((prev) => ({ ...prev, [toolType]: duplicate.maestroPPath ?? '' }));
 				setRetryAvailabilityByAgent((prev) => ({
 					...prev,
-					[source.toolType]: resilienceEnabled(source.retryOnAvailabilityErrors),
+					[toolType]: duplicate.retryOnAvailabilityErrors,
 				}));
-				setRetryTokenByAgent((prev) => ({
-					...prev,
-					[source.toolType]: resilienceEnabled(source.retryOnTokenExhaustion),
-				}));
-				// Duplicating an agent carries its automatic-reset preference too, so a
-				// copy does not silently start spending credits the original never did
-				// (and vice versa).
+				setRetryTokenByAgent((prev) => ({ ...prev, [toolType]: duplicate.retryOnTokenExhaustion }));
 				setCodexAutoResetByAgent((prev) => ({
 					...prev,
-					[source.toolType]: source.codexAutoResetOnExhaustion === true,
+					[toolType]: duplicate.codexAutoResetOnExhaustion,
 				}));
-				// A copy runs its chat turns on the same transport as the original.
-				setCodexTransportByAgent((prev) => ({
-					...prev,
-					[source.toolType]: source.codexTransport === 'app-server' ? 'app-server' : 'exec',
-				}));
+				setCodexTransportByAgent((prev) => ({ ...prev, [toolType]: duplicate.codexTransport }));
 
 				// Pre-fill SSH remote configuration if source session has it
-				if (source.sessionSshRemoteConfig?.enabled && source.sessionSshRemoteConfig?.remoteId) {
+				const ssh = duplicate.sessionSshRemoteConfig;
+				if (ssh.enabled) {
 					setAgentSshRemoteConfigs((prev) => ({
 						...prev,
-						[source.toolType]: {
+						[toolType]: {
 							enabled: true,
-							remoteId: source.sessionSshRemoteConfig!.remoteId!,
-							workingDirOverride: source.sessionSshRemoteConfig!.workingDirOverride,
+							remoteId: ssh.remoteId,
+							workingDirOverride: ssh.workingDirOverride,
 						},
 					}));
 				}

@@ -437,15 +437,15 @@ describe('assembleTurn parity with the desktop', () => {
 			expect(turn.settings.model).toBe(config.sessionCustomModel);
 			expect(turn.settings.effort).toBe(config.sessionCustomEffort);
 
-			// The environment the desktop hands the process, less the two vars the TUI states
-			// on purpose: the tab id (F8) and the data dir (PA8). A Windows host is skipped: its
+			// The environment the desktop hands the process, less the data dir the TUI states on
+			// purpose (PA8). The tab id (F8) is compared: the desktop now stamps it from the
+			// `{agentId}-ai-{tabId}` process id, as the library does. A Windows host is skipped: its
 			// spawn path folds the whole host environment into `customEnvVars`, which is the
 			// process manager's doing and not part of assembly.
 			if (!fixture.windows) {
 				const plan = buildAgentLaunchPlan({ ...turn.launch, isWindowsHost: false });
 				if (!plan.ok) throw new Error(plan.error);
 				const stated = { ...plan.plan.envVars };
-				delete stated.MAESTRO_CALLER_TAB_ID;
 				delete stated.MAESTRO_USER_DATA;
 				expect(stated).toEqual(recorded.customEnvVars ?? {});
 			}

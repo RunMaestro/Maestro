@@ -442,6 +442,21 @@ describe('cancelForSource', () => {
 		expect(chunks).toHaveLength(0);
 	});
 
+	it("with a tab, stops only the consults that tab's turn started", async () => {
+		// `maestro-cli interrupt --tab` stops one turn; a consult another tab of the
+		// same agent fanned out keeps answering.
+		const { service, dispatch, runner } = harness();
+		await dispatch(request({ requestId: 'r1', sourceTabId: 'tab-a' }));
+		await dispatch(request({ requestId: 'r2', sourceTabId: 'tab-b' }));
+
+		expect(service.cancelForSource('src', 'tab-b')).toBe(1);
+		expect(runner.stopped).toEqual(['cross-agent-r2']);
+		expect(service.activeCount()).toBe(1);
+
+		expect(service.cancelForSource('src')).toBe(1);
+		expect(runner.stopped).toEqual(['cross-agent-r2', 'cross-agent-r1']);
+	});
+
 	it('is a no-op for a consult that already finished', async () => {
 		const { service, dispatch, runner, chunks } = harness();
 		await dispatch();

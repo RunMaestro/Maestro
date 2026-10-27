@@ -5,6 +5,7 @@ import {
 	DEFAULT_DEBOUNCE_DELAY,
 	SESSION_PERSISTENCE_BASELINE_EVENT,
 } from '../../../../renderer/hooks/utils/useDebouncedPersistence';
+import { MAX_CLOSED_TAB_HISTORY } from '../../../../shared/closedTabHistory';
 import type {
 	Session,
 	AITab,
@@ -227,6 +228,63 @@ describe('useDebouncedPersistence', () => {
 			hook.unmount();
 
 			expect(window.maestro.sessions.setAll).not.toHaveBeenCalled();
+		});
+	});
+
+	// -----------------------------------------------------------------------
+	// flushNow resolves when the write is done (maestro-cli tab reopen awaits it)
+	// -----------------------------------------------------------------------
+	describe('flushNow promise', () => {
+		function gateWrites() {
+			const releases: Array<() => void> = [];
+			const write = () => new Promise<boolean>((resolve) => releases.push(() => resolve(true)));
+			vi.mocked(window.maestro.sessions.setAll).mockImplementation(write);
+			vi.mocked(window.maestro.sessions.setMany).mockImplementation(write);
+			return releases;
+		}
+
+		afterEach(() => {
+			// clearAllMocks keeps implementations; put the setup defaults back.
+			vi.mocked(window.maestro.sessions.setAll).mockResolvedValue(undefined as never);
+			vi.mocked(window.maestro.sessions.setMany).mockResolvedValue(undefined as never);
+		});
+
+		it('resolves only after the write has finished', async () => {
+			const releases = gateWrites();
+			const hook = renderPersistence(makeInitialLoadRef(true));
+			let done = false;
+
+			const flushed = hook.result.current.flushNow([makeSession()]).then(() => {
+				done = true;
+			});
+			await vi.waitFor(() => expect(releases).toHaveLength(1));
+			expect(done).toBe(false);
+
+			releases[0]();
+			await flushed;
+			expect(done).toBe(true);
+		});
+
+		it('a flush asked for mid-write resolves after the rerun, not the older write', async () => {
+			const releases = gateWrites();
+			const hook = renderPersistence(makeInitialLoadRef(true));
+			const session = makeSession();
+
+			const first = hook.result.current.flushNow([session]);
+			await vi.waitFor(() => expect(releases).toHaveLength(1));
+			let secondDone = false;
+			const second = hook.result.current.flushNow([{ ...session, name: 'Renamed' }]).then(() => {
+				secondDone = true;
+			});
+
+			releases[0]();
+			await first;
+			await vi.waitFor(() => expect(releases).toHaveLength(2));
+			expect(secondDone).toBe(false);
+
+			releases[1]();
+			await second;
+			expect(secondDone).toBe(true);
 		});
 	});
 
@@ -592,7 +650,9 @@ describe('useDebouncedPersistence', () => {
 				seedSessions([session]);
 				const { result } = renderPersistence(initialLoadRef);
 
-				act(() => result.current.flushNow(useSessionStore.getState().sessions));
+				act(() => {
+					result.current.flushNow(useSessionStore.getState().sessions);
+				});
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
 				expect(persisted[0].executionQueue[0].waitingForConnection).toBe(true);
@@ -800,6 +860,44 @@ describe('useDebouncedPersistence', () => {
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
 				expect(persisted[0].closedTabHistory).toBeUndefined();
+			});
+
+			it('should persist the closed-tab stack as pointers, capped, and omit it when empty', () => {
+				const history = Array.from({ length: MAX_CLOSED_TAB_HISTORY + 3 }, (_, i) => ({
+					type: 'ai' as const,
+					tab: makeTab({
+						id: `closed-${i}`,
+						agentSessionId: `provider-${i}`,
+						logs: [{ id: `l${i}`, timestamp: 1, source: 'user', text: 'hi' }],
+						state: 'busy',
+					}),
+					unifiedIndex: i,
+					closedAt: i,
+				}));
+				const withStack = makeSession({ id: 'with-stack', unifiedClosedTabHistory: history });
+				const empty = makeSession({ id: 'empty-stack', unifiedClosedTabHistory: [] });
+
+				const initialLoadRef = makeInitialLoadRef(true);
+				seedSessions([withStack, empty]);
+				const { result } = renderPersistence(initialLoadRef);
+
+				act(() => {
+					result.current.flushNow(useSessionStore.getState().sessions);
+				});
+
+				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
+				const stored = persisted.find((s) => s.id === 'with-stack')!.unifiedClosedTabHistory;
+				expect(stored).toHaveLength(MAX_CLOSED_TAB_HISTORY);
+				expect(stored[0].tab.id).toBe('closed-0');
+				expect((stored[0].tab as { logs: unknown[] }).logs).toEqual([]);
+				expect((stored[0].tab as { state: string }).state).toBe('idle');
+				// The in-memory stack keeps the full tab for an in-run reopen.
+				expect(
+					(useSessionStore.getState().sessions[0].unifiedClosedTabHistory[0].tab as any).logs
+				).toHaveLength(1);
+				expect(persisted.find((s) => s.id === 'empty-stack')).not.toHaveProperty(
+					'unifiedClosedTabHistory'
+				);
 			});
 
 			it('should remove session-level agentError', () => {

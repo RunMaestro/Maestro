@@ -33,9 +33,19 @@ interface AppToolEntry {
 	inputSchema?: Record<string, unknown>;
 }
 
+/** Private desktop reply; the proof is never part of a result. */
+interface AppToolCallResponse {
+	ok?: boolean;
+	result?: unknown;
+	error?: string;
+	blocked?: boolean;
+	reason?: string;
+}
+
 export interface McpBridgeDeps {
 	serverInfo: { name: string; version: string };
-	runToken?: string;
+	/** Host-only bearer proof, outside tool args; explicit invalid values deny. */
+	runToken?: string | null;
 	/** Send a command to the running app and await its typed response. */
 	request: <T>(
 		message: Record<string, unknown>,
@@ -54,6 +64,11 @@ export interface McpBridge {
 }
 
 export function createMcpBridge(deps: McpBridgeDeps): McpBridge {
+	// Capture once: subsequent dependency mutations cannot change this run.
+	const proofConfigured = Object.prototype.hasOwnProperty.call(deps, 'runToken');
+	const runToken = deps.runToken;
+	const proofValid =
+		typeof runToken === 'string' && runToken.length === 64 && /^[0-9a-f]{64}$/.test(runToken);
 	// MCP name -> namespaced toolId, rebuilt on every tools/list. MCP clients list
 	// before they call, so this is always fresh for a subsequent tools/call.
 	const nameToId = new Map<string, string>();
@@ -69,7 +84,11 @@ export function createMcpBridge(deps: McpBridgeDeps): McpBridge {
 		} catch (e) {
 			// App unreachable / not running: advertise zero tools rather than failing
 			// the agent's MCP handshake.
-			deps.log(`[mcp] tools/list unavailable: ${e instanceof Error ? e.message : String(e)}`);
+			deps.log(
+				proofConfigured
+					? '[mcp] tools/list unavailable'
+					: `[mcp] tools/list unavailable: ${e instanceof Error ? e.message : String(e)}`
+			);
 			return [];
 		}
 
@@ -96,43 +115,49 @@ export function createMcpBridge(deps: McpBridgeDeps): McpBridge {
 	}
 
 	async function callTool(name: string, args: unknown): Promise<McpToolCallResult> {
+		if (proofConfigured && !proofValid)
+			return { content: [{ type: 'text', text: 'Error: PLUGIN_DENIED' }], isError: true };
 		// Reject any name not in the current tools/list map - never guess a toolId,
 		// which could resolve to a non-tool command handler in the sandbox's map.
 		const toolId = nameToId.get(name);
 		if (!toolId) {
 			return {
-				content: [{ type: 'text', text: `Unknown tool: ${name}` }],
+				content: [
+					{ type: 'text', text: proofConfigured ? 'Unknown tool' : `Unknown tool: ${name}` },
+				],
 				isError: true,
 			};
 		}
-		const res = await deps.request<{
-			ok?: boolean;
-			result?: unknown;
-			error?: string;
-			blocked?: boolean;
-			reason?: string;
-		}>(
-			{
-				type: 'plugins_call_tool',
-				toolId,
-				args,
-				...(deps.runToken ? { runToken: deps.runToken } : {}),
-			},
-			'plugins_call_tool_result',
-			MCP_CALL_TIMEOUT_MS
-		);
+		const res = await deps
+			.request<AppToolCallResponse>(
+				{ type: 'plugins_call_tool', toolId, args, ...(proofConfigured ? { runToken } : {}) },
+				'plugins_call_tool_result',
+				MCP_CALL_TIMEOUT_MS
+			)
+			.catch((error: unknown): AppToolCallResponse => {
+				if (proofConfigured) return { ok: false, error: 'PLUGIN_DENIED' };
+				throw error;
+			});
 
 		if (res.blocked) {
 			return {
 				content: [
-					{ type: 'text', text: `Blocked by Maestro risk gate: ${res.reason ?? 'high-risk'}` },
+					{
+						type: 'text',
+						text: `Blocked by Maestro risk gate: ${proofConfigured ? 'high-risk' : (res.reason ?? 'high-risk')}`,
+					},
 				],
 				isError: true,
 			};
 		}
 		if (!res.ok) {
 			return {
-				content: [{ type: 'text', text: `Error: ${res.error ?? 'tool call failed'}` }],
+				content: [
+					{
+						type: 'text',
+						text: `Error: ${proofConfigured ? 'PLUGIN_DENIED' : (res.error ?? 'tool call failed')}`,
+					},
+				],
 				isError: true,
 			};
 		}
@@ -144,7 +169,12 @@ export function createMcpBridge(deps: McpBridgeDeps): McpBridge {
 		serverInfo: deps.serverInfo,
 		listTools,
 		callTool,
-		onError: (e, ctx) => deps.log(`[mcp] ${ctx}: ${e instanceof Error ? e.message : String(e)}`),
+		onError: (e, ctx) =>
+			deps.log(
+				proofConfigured
+					? '[mcp] request failed'
+					: `[mcp] ${ctx}: ${e instanceof Error ? e.message : String(e)}`
+			),
 	});
 
 	return { server, listTools, callTool };

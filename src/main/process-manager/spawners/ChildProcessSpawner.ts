@@ -20,6 +20,7 @@ import { DEFAULT_QUERY_SOURCE } from '../../../shared/querySource';
 import { readClaudeTurnBaseline } from '../../../shared/claudeCostTracker';
 import { saveImageToTempFile, buildImagePromptPrefix, cleanupTempFiles } from '../utils/imageUtils';
 import { buildStreamJsonMessage } from '../utils/streamJsonBuilder';
+import { stripNulBytesFromArgs } from '../utils/argvNulBytes';
 import { isPowerShellShell } from '../utils/shellEscape';
 import { planSpawnShell } from '../utils/windowsSpawnShell';
 import { argsResumeSession } from '../utils/resumeArgs';
@@ -219,6 +220,17 @@ export class ChildProcessSpawner {
 		) {
 			const stdinPromptArgs = getAgentDefinition(toolType)?.stdinPromptArgs;
 			if (stdinPromptArgs) finalArgs = [...finalArgs, ...stdinPromptArgs];
+		}
+
+		// A NUL byte anywhere in argv makes Node refuse the spawn outright (MAESTRO-153).
+		const nulSafe = stripNulBytesFromArgs(finalArgs);
+		if (nulSafe.stripped > 0) {
+			finalArgs = nulSafe.args;
+			logger.warn('[ProcessManager] Dropped NUL bytes from agent arguments', 'ProcessManager', {
+				sessionId,
+				toolType,
+				strippedCount: nulSafe.stripped,
+			});
 		}
 
 		// Log metadata only: prompts and argv can contain private user or playbook text.

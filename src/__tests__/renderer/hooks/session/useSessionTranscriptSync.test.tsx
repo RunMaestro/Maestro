@@ -1,3 +1,4 @@
+import * as permissionRegistry from '../../../../main/permission-relay/registry';
 import { act, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useSessionTranscriptSync } from '../../../../renderer/hooks/session/useSessionTranscriptSync';
@@ -367,5 +368,99 @@ describe('owning host transcript identities', () => {
 		]);
 		expect(current.terminalDraftInput).toBe('client draft');
 		mirror.unmount();
+	});
+});
+
+describe('real permission relay runtime producer', () => {
+	it('projects a real pending request into host runtime until the last decision resolves', async () => {
+		const first = permissionRegistry.registerSpawn({ sessionId: 'agent-ai-tab-1', tabId: 'tab-1' });
+		const second = permissionRegistry.registerSpawn({
+			sessionId: 'agent-ai-tab-2',
+			tabId: 'tab-2',
+		});
+		window.maestro.process.getPendingPermissions = vi.fn(async () =>
+			permissionRegistry.getPendingPermissionSnapshot()
+		);
+		window.maestro.process.onPendingPermissionsChanged = (handler) =>
+			permissionRegistry.subscribePendingPermissions(handler);
+		useSessionStore.setState({
+			sessions: [
+				createMockSession({
+					id: 'agent',
+					state: 'busy',
+					aiTabs: [
+						createMockAITab({ id: 'tab-1', state: 'busy' }),
+						createMockAITab({ id: 'tab-2', state: 'busy' }),
+					],
+				}),
+			],
+		});
+		const view = renderHook(() => useSessionTranscriptSync(ready));
+		try {
+			await act(async () => {
+				void permissionRegistry.createPending('real-first', first.token);
+			});
+			expect(useSessionStore.getState().sessions[0].state).toBe('waiting_input');
+			expect(published.some((patch) => patch.runtime?.state === 'waiting_input')).toBe(true);
+			act(() => useSessionStore.getState().updateSession('agent', { state: 'busy' }));
+			expect(useSessionStore.getState().sessions[0].state).toBe('waiting_input');
+			expect(published.filter((patch) => patch.field === 'shellLogs').at(-1)?.runtime?.state).toBe(
+				'waiting_input'
+			);
+
+			await act(async () => {
+				void permissionRegistry.createPending('real-second', second.token);
+			});
+			await act(async () => {
+				permissionRegistry.resolvePending('real-first', { behavior: 'allow' });
+			});
+			expect(useSessionStore.getState().sessions[0].state).toBe('waiting_input');
+			await act(async () => {
+				permissionRegistry.resolvePending('real-second', { behavior: 'deny', message: 'No' });
+			});
+			expect(useSessionStore.getState().sessions[0].state).toBe('busy');
+		} finally {
+			view.unmount();
+			first.cleanup();
+			second.cleanup();
+			delete (window.maestro.process as any).getPendingPermissions;
+			delete (window.maestro.process as any).onPendingPermissionsChanged;
+		}
+	});
+	it('ignores an initial registry snapshot that arrives after a newer request', async () => {
+		const spawn = permissionRegistry.registerSpawn({ sessionId: 'agent-ai-tab-1', tabId: 'tab-1' });
+		const before = permissionRegistry.getPendingPermissionSnapshot();
+		let finish!: (snapshot: typeof before) => void;
+		window.maestro.process.getPendingPermissions = vi.fn(
+			() =>
+				new Promise((resolve) => {
+					finish = resolve;
+				})
+		);
+		window.maestro.process.onPendingPermissionsChanged =
+			permissionRegistry.subscribePendingPermissions;
+		useSessionStore.setState({
+			sessions: [
+				createMockSession({
+					id: 'agent',
+					state: 'busy',
+					aiTabs: [createMockAITab({ id: 'tab-1', state: 'busy' })],
+				}),
+			],
+		});
+		const view = renderHook(() => useSessionTranscriptSync(ready));
+		try {
+			await act(async () => {
+				void permissionRegistry.createPending('registry-race', spawn.token);
+			});
+			expect(useSessionStore.getState().sessions[0].state).toBe('waiting_input');
+			await act(async () => finish(before));
+			expect(useSessionStore.getState().sessions[0].state).toBe('waiting_input');
+		} finally {
+			view.unmount();
+			spawn.cleanup();
+			delete (window.maestro.process as any).getPendingPermissions;
+			delete (window.maestro.process as any).onPendingPermissionsChanged;
+		}
 	});
 });

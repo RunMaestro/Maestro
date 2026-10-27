@@ -102,6 +102,7 @@ import { Wordmark } from '../ui/Wordmark';
 import { usePluginContributions } from '../../hooks/usePluginContributions';
 import { usePluginGroupings } from '../../hooks/usePluginGroupings';
 import { buildVirtualGrouping } from '../../utils/pluginGroupings';
+import { withAgentInGroup } from '../../../shared/maestro-lib/agents/rules';
 
 /**
  * Sidebar widths at which the header's two pills can afford their text labels.
@@ -884,15 +885,7 @@ function SessionListInner(props: SessionListProps) {
 
 	const handleMoveToGroup = useCallback(
 		(sessionId: string, groupId: string) => {
-			const normalizedGroupId = groupId || undefined;
-			setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id === sessionId) return { ...s, groupId: normalizedGroupId };
-					// Also update worktree children to keep groupId in sync
-					if (s.parentSessionId === sessionId) return { ...s, groupId: normalizedGroupId };
-					return s;
-				})
-			);
+			setSessions((prev) => withAgentInGroup(prev, sessionId, groupId));
 		},
 		[setSessions]
 	);

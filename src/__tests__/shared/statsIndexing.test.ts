@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
 	STATS_INDEXING_ETA_MIN_ELAPSED_MS,
+	STATS_INDEXING_VISIBLE_AFTER_MS,
 	STATS_INDEXING_VISIBLE_MIN_FILES,
+	STATS_INDEXING_VISIBLE_MIN_REMAINING_MS,
 	estimateRemainingMs,
+	shouldSurfaceIndexingJob,
 	statsIndexingExplanation,
 	statsIndexingTitle,
 	summarizeStatsIndexing,
@@ -20,14 +23,53 @@ const job = (overrides: Partial<StatsIndexingJob> = {}): StatsIndexingJob => ({
 	totalBytes: 1000,
 	startedAt: 0,
 	updatedAt: 0,
+	surfaced: true,
 	...overrides,
 });
 
 describe('visibleIndexingJobs', () => {
-	it('hides a scan too small to be worth a modal', () => {
-		const small = job({ totalFiles: STATS_INDEXING_VISIBLE_MIN_FILES - 1 });
-		expect(visibleIndexingJobs({ jobs: [small] })).toEqual([]);
-		expect(summarizeStatsIndexing({ jobs: [small] }, 0)).toBeNull();
+	it('shows only the jobs main has surfaced', () => {
+		const quiet = job({ surfaced: undefined });
+		const shown = job({ id: 'session-index' });
+		expect(visibleIndexingJobs({ jobs: [quiet, shown] })).toEqual([shown]);
+		expect(summarizeStatsIndexing({ jobs: [quiet] }, 0)).toBeNull();
+	});
+});
+
+describe('shouldSurfaceIndexingJob', () => {
+	const after = STATS_INDEXING_VISIBLE_AFTER_MS;
+
+	it('hides a scan too small to be worth a modal, however slow', () => {
+		const small = job({ totalFiles: STATS_INDEXING_VISIBLE_MIN_FILES - 1, surfaced: undefined });
+		expect(shouldSurfaceIndexingJob(small, after * 10)).toBe(false);
+	});
+
+	it('stays silent through the first seconds of any scan', () => {
+		// Many files, barely started: a cache upgrade, but it has not run long yet.
+		const big = job({ totalFiles: 40_000, doneBytes: 1, totalBytes: 1000, surfaced: undefined });
+		expect(shouldSurfaceIndexingJob(big, after - 1)).toBe(false);
+	});
+
+	it('leaves a scan that is about to finish alone', () => {
+		// 90% done after the silent window: well under the remaining-time cut.
+		const nearlyDone = job({ doneBytes: 900, totalBytes: 1000, surfaced: undefined });
+		expect(shouldSurfaceIndexingJob(nearlyDone, after)).toBe(false);
+		expect(shouldSurfaceIndexingJob(job({ doneBytes: 1000, surfaced: undefined }), after)).toBe(
+			false
+		);
+	});
+
+	it('shows a scan projected to run on', () => {
+		// 20% in the silent window -> 4x as long again left.
+		const slow = job({ doneBytes: 200, totalBytes: 1000, surfaced: undefined });
+		expect(after * 4).toBeGreaterThanOrEqual(STATS_INDEXING_VISIBLE_MIN_REMAINING_MS);
+		expect(shouldSurfaceIndexingJob(slow, after)).toBe(true);
+	});
+
+	it('shows a scan too slow to project yet', () => {
+		// Under 5% done after ten seconds is itself a long scan.
+		const crawling = job({ doneBytes: 10, totalBytes: 1000, surfaced: undefined });
+		expect(shouldSurfaceIndexingJob(crawling, after)).toBe(true);
 	});
 });
 

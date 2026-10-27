@@ -4,9 +4,10 @@ import { startNotificationHistorySync } from '../../stores/notificationStore';
 import { performNotificationInboxAction } from '../../services/notificationInbox';
 import { useEffect, useRef } from 'react';
 import { flushSync } from 'react-dom';
-import type { Session, SessionState, ThinkingMode, QueuedItem, CustomAICommand } from '../../types';
+import type { Session, ThinkingMode, QueuedItem, CustomAICommand } from '../../types';
 import type { GroupAppearance, GroupUpdateRequest } from '../../../shared/groupAppearance';
 import type { MediaOpenMode } from '../../../shared/mediaTypes';
+import type { MentionRouting } from '../../../shared/crossAgentContext';
 import { cueService } from '../../services/cue';
 import { captureException } from '../../utils/sentry';
 import {
@@ -31,9 +32,13 @@ import {
 } from '../../services/queuedPrompt';
 import { runCrossAgentAsk } from '../../services/crossAgentAsk';
 import { runRemoteSnoozeCommand } from '../../services/snoozeActions';
+import { runRemoteClosedTabCommand } from '../../services/closedTabCommands';
 import { runRemoteThroughputGaugeCommand } from '../../services/throughputGaugeCommands';
 import { runRemoteSteeringCommand } from '../../services/autoRunSteering';
 import type { SnoozeCommandResult } from '../../../shared/snoozeCommands';
+import type { ClosedTabCommandResult } from '../../../shared/closedTabCommands';
+import type { TabContextOpRequest, TabContextOpResult } from '../../../shared/tabContextOps';
+import { TAB_CONTEXT_OP_EVENT, type TabContextOpEventDetail } from '../../services/tabContextOps';
 import type { ThroughputGaugeCommandResult } from '../../../shared/throughputGaugeCommands';
 import type { SteeringCommandResult } from '../../../shared/autoRunSteeringCommands';
 import { recordAgentDelegation } from '../../services/agentDelegation';
@@ -54,6 +59,8 @@ import {
 import { openUiSurface } from '../../utils/openUiSurface';
 import { notifyCenterFlash } from '../../stores/centerFlashStore';
 import { steerQueuedItem } from '../../services/chatSteering';
+import { interruptTurn } from '../../services/turnInterrupt';
+import { interruptTurnFailure, type InterruptTurnResult } from '../../../shared/turnInterrupt';
 import { updateAiTab, updateSessionWith, useSessionStore } from '../../stores/sessionStore';
 import { createKeyedWriteQueue } from '../../../shared/keyedWriteQueue';
 import { useConcertoCreationActivityStore } from '../../stores/concertoCreationActivityStore';
@@ -350,6 +357,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				force?: boolean,
 				images?: string[],
 				background?: boolean,
+				mentionRouting?: MentionRouting,
 				receiptChannel?: string
 			) => {
 				// Delivery receipt for the web server's `executeCommand` promise.
@@ -456,7 +464,16 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				);
 				window.dispatchEvent(
 					new CustomEvent('maestro:remoteCommand', {
-						detail: { sessionId, command, inputMode, tabId, force, images, receiptChannel },
+						detail: {
+							sessionId,
+							command,
+							inputMode,
+							tabId,
+							force,
+							images,
+							mentionRouting,
+							receiptChannel,
+						},
 					})
 				);
 				logger.info('[useRemoteIntegration] Event dispatched successfully');
@@ -502,35 +519,35 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		};
 	}, [sessionsRef]);
 
-	// Handle remote interrupts from web interface
-	// This allows web interrupts to go through the same code path as desktop (handleInterrupt)
+	// Handle remote interrupts (REST `POST /api/session/:id/interrupt` and
+	// `maestro-cli interrupt`). Runs the same `interruptTurn()` the desktop Stop
+	// pill runs, scoped to one tab when the caller named one, and answers main
+	// with the result so the caller learns what stopped. Main sends this to the
+	// window that owns the agent, so no ownership check is needed here.
 	useEffect(() => {
 		const unsubscribeInterrupt = window.maestro.process.onRemoteInterrupt(
-			async (sessionId: string) => {
-				// Find the session
-				const session = sessionsRef.current.find((s) => s.id === sessionId);
-				if (!session) {
-					return;
-				}
-
-				// Use the same logic as handleInterrupt
-				const currentMode = session.inputMode;
-				const targetSessionId =
-					currentMode === 'ai' ? `${session.id}-ai` : `${session.id}-terminal`;
-
+			async (sessionId, tabId, responseChannel) => {
+				let result: InterruptTurnResult;
 				try {
-					// Send interrupt signal (Ctrl+C)
-					await window.maestro.process.interrupt(targetSessionId);
-
-					// Set state to idle (same as handleInterrupt)
-					updateSessionWith(session.id, (s) => ({
-						...s,
-						state: 'idle' as SessionState,
-						busySource: undefined,
-						thinkingStartTime: undefined,
-					}));
+					result = await interruptTurn(sessionId, { tabId });
 				} catch (error) {
-					logger.error('[Remote] Failed to interrupt session:', undefined, error);
+					// Answer before rethrowing, so the caller is not left waiting for
+					// the timeout, and the bug still reaches Sentry.
+					if (responseChannel) {
+						window.maestro.process.sendRemoteInterruptResponse(
+							responseChannel,
+							interruptTurnFailure(
+								sessionId,
+								tabId ?? null,
+								'SIGNAL_FAILED',
+								error instanceof Error ? error.message : String(error)
+							)
+						);
+					}
+					throw error;
+				}
+				if (responseChannel) {
+					window.maestro.process.sendRemoteInterruptResponse(responseChannel, result);
 				}
 			}
 		);
@@ -538,7 +555,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		return () => {
 			unsubscribeInterrupt();
 		};
-	}, [sessionsRef]);
+	}, []);
 
 	// Handle remote session selection from web interface
 	// This allows web clients to switch the active session in the desktop app
@@ -731,7 +748,8 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				prompt: string,
 				responseChannel: string,
 				background?: boolean,
-				hidden?: boolean
+				hidden?: boolean,
+				mentionRouting?: MentionRouting
 			) => {
 				const ack = (result: {
 					success: boolean;
@@ -818,6 +836,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						tabId: createdTabId,
 						text: prompt,
 						slashCommand: isSlashCommand,
+						mentionRouting,
 					});
 					if (!queued) {
 						logger.warn(
@@ -846,6 +865,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 							tabId: createdTabId,
 							// Unexpanded provider commands go to the provider as typed.
 							literalPrompt: commandName.startsWith('/'),
+							mentionRouting,
 						},
 					})
 				);
@@ -1112,6 +1132,52 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			}
 		);
 
+		// `maestro-cli tab closed` / `tab reopen`. This window owns the agent's
+		// live closed-tab stack, so it lists and reopens through the same
+		// function Cmd+Shift+T calls. Async: a reopen answers after the tab's
+		// content is read back and the change is flushed.
+		const unsubscribeClosedTabCommand = window.maestro.process.onRemoteClosedTabCommand(
+			(request, responseChannel) => {
+				const reply = (result: ClosedTabCommandResult) =>
+					window.maestro.process.sendRemoteClosedTabCommandResponse(responseChannel, result);
+				runRemoteClosedTabCommand(request, { selectAgent: setActiveSessionId })
+					.then(reply)
+					.catch((error) => {
+						logger.error('[useRemoteIntegration] Closed-tab command failed', undefined, error);
+						reply({
+							success: false,
+							error: error instanceof Error ? error.message : String(error),
+						});
+					});
+			}
+		);
+
+		// `maestro-cli tab compact|merge|transfer`: the overlay menu's Context
+		// items. Their handlers live in App's hooks, so the request crosses to
+		// useAppRemoteEventListeners (mounted after them), which answers on the
+		// same response channel. The three preload replies are the same send.
+		const forwardTabContextOp =
+			(respond: (responseChannel: string, result: TabContextOpResult) => void) =>
+			(request: TabContextOpRequest, responseChannel: string) => {
+				window.dispatchEvent(
+					new CustomEvent<TabContextOpEventDetail>(TAB_CONTEXT_OP_EVENT, {
+						detail: {
+							request,
+							reply: (result) => respond(responseChannel, result),
+						},
+					})
+				);
+			};
+		const unsubscribeSummarizeContext = window.maestro.process.onRemoteSummarizeContext(
+			forwardTabContextOp(window.maestro.process.sendRemoteSummarizeContextResponse)
+		);
+		const unsubscribeMergeContext = window.maestro.process.onRemoteMergeContext(
+			forwardTabContextOp(window.maestro.process.sendRemoteMergeContextResponse)
+		);
+		const unsubscribeTransferContext = window.maestro.process.onRemoteTransferContext(
+			forwardTabContextOp(window.maestro.process.sendRemoteTransferContextResponse)
+		);
+
 		// Handle remote reorder tab from web interface
 		const unsubscribeReorderTab = window.maestro.process.onRemoteReorderTab(
 			(sessionId: string, fromIndex: number, toIndex: number) => {
@@ -1150,7 +1216,8 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				tabId?: string,
 				images?: string[],
 				background?: boolean,
-				held?: boolean
+				held?: boolean,
+				mentionRouting?: MentionRouting
 			) => {
 				const reply = (result: {
 					success: boolean;
@@ -1198,7 +1265,14 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						}
 						window.dispatchEvent(
 							new CustomEvent('maestro:remoteCommand', {
-								detail: { sessionId, command, inputMode: 'ai', tabId: resolvedTabId, images },
+								detail: {
+									sessionId,
+									command,
+									inputMode: 'ai',
+									tabId: resolvedTabId,
+									images,
+									mentionRouting,
+								},
 							})
 						);
 						reply({ success: true, tabId: resolvedTabId, queued: false });
@@ -1216,6 +1290,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 							tab: targetTab,
 							text: command,
 							images,
+							mentionRouting,
 						}),
 						...(held && { paused: true }),
 					};
@@ -1274,6 +1349,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 							...(item.commandArgs !== undefined ? { commandArgs: item.commandArgs } : {}),
 							...(item.tabName !== undefined ? { tabName: item.tabName } : {}),
 							...(item.paused !== undefined ? { paused: item.paused } : {}),
+							...(item.mentionRouting ? { mentionRouting: item.mentionRouting } : {}),
 						})),
 					}));
 					window.maestro.process.sendRemoteListQueueResponse(responseChannel, {
@@ -1403,6 +1479,10 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			unsubscribeRenameTab();
 			unsubscribeStarTab();
 			unsubscribeSnoozeCommand();
+			unsubscribeClosedTabCommand();
+			unsubscribeSummarizeContext();
+			unsubscribeMergeContext();
+			unsubscribeTransferContext();
 			unsubscribeReorderTab();
 			unsubscribeToggleBookmark();
 			unsubscribeEnqueueCommand();

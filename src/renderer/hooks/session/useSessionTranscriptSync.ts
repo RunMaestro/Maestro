@@ -10,7 +10,9 @@ import {
 	type SessionRuntimeSnapshot,
 } from '../../../shared/sessionTranscript';
 import { mergeSessionPersistenceChanges } from '../../../shared/sessionPersistenceMerge';
-import { getRepairedUnifiedTabOrder } from '../../utils/tabHelpers';
+import { getRepairedUnifiedTabOrder, settleAgentStateFromTabs } from '../../utils/tabHelpers';
+import { getBaseSessionId } from '../../utils/sessionIdParser';
+import type { PendingPermissionSnapshot } from '../../../shared/pendingPermissions';
 import { isAiTabHidden } from '../../utils/unifiedTabOrderUtils';
 
 const runtimeFields = [
@@ -91,6 +93,7 @@ export function useSessionTranscriptSync(whenSessionsLoaded: () => Promise<void>
 		if (!api.onTranscriptSync || !api.publishTranscript) return;
 		let disposed = false;
 		let queue = Promise.resolve();
+
 		const unsubscribeSync = api.onTranscriptSync((patch) => {
 			if (ownsTranscript.current?.(patch.sessionId)) return;
 			queue = queue
@@ -144,6 +147,48 @@ export function useSessionTranscriptSync(whenSessionsLoaded: () => Promise<void>
 				disposed = true;
 				unsubscribeSync();
 			};
+
+		let pendingVersion = -1;
+		let pendingAgents = new Set<string>();
+		const projectPendingPermissions = () => {
+			if (disposed || pendingVersion < 0) return;
+			useSessionStore.getState().setSessions((sessions) => {
+				let changed = false;
+				const next = sessions.map((session) => {
+					if (pendingAgents.has(session.id)) {
+						if (session.state === 'waiting_input' || session.state === 'error') return session;
+						changed = true;
+						return { ...session, state: 'waiting_input' as const };
+					}
+					if (session.state !== 'waiting_input') return session;
+					changed = true;
+					return settleAgentStateFromTabs(session);
+				});
+				return changed ? next : sessions;
+			});
+		};
+		const acceptPendingPermissions = (snapshot: PendingPermissionSnapshot) => {
+			queue = queue
+				.then(async () => {
+					await whenSessionsLoaded();
+					if (disposed || snapshot.version <= pendingVersion) return;
+					pendingVersion = snapshot.version;
+					pendingAgents = new Set(snapshot.processIds.map(getBaseSessionId));
+					projectPendingPermissions();
+				})
+				.catch((error) =>
+					logger.error('Failed to apply pending permission runtime', 'Sessions', error)
+				);
+		};
+		const unsubscribePending =
+			window.maestro.process.onPendingPermissionsChanged?.(acceptPendingPermissions);
+		const unsubscribeProjection = useSessionStore.subscribe((state, previous) => {
+			if (state.sessions !== previous.sessions) projectPendingPermissions();
+		});
+		void window.maestro.process
+			.getPendingPermissions?.()
+			.then(acceptPendingPermissions)
+			.catch((error) => logger.warn('Pending permission runtime unavailable', 'Sessions', error));
 
 		const publish = (
 			session: Session,
@@ -207,6 +252,8 @@ export function useSessionTranscriptSync(whenSessionsLoaded: () => Promise<void>
 			}
 		);
 		const unsubscribeStore = useSessionStore.subscribe((state, previousState) => {
+			// A prior runtime projection subscriber may have superseded this frame.
+			if (state.sessions !== useSessionStore.getState().sessions) return;
 			if (state.sessions === previousState.sessions) return;
 			const previousById = new Map(previousState.sessions.map((session) => [session.id, session]));
 			for (const session of state.sessions) {
@@ -226,6 +273,8 @@ export function useSessionTranscriptSync(whenSessionsLoaded: () => Promise<void>
 			disposed = true;
 			unsubscribeSync();
 			unsubscribeRequest?.();
+			unsubscribePending?.();
+			unsubscribeProjection();
 			unsubscribeStore();
 		};
 	}, [ownsTranscript, whenSessionsLoaded]);

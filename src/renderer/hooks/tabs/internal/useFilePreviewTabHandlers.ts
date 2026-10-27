@@ -24,6 +24,7 @@ import {
 	buildReplacementNavigationHistory,
 	createUntitledFileTab,
 	getFileNameParts,
+	readFilePreviewContent,
 } from './filePreviewTabHelpers';
 import type { FilePreviewTabHandlersReturn, FileTabOpenParams, MediaOpenMode } from './types';
 
@@ -333,17 +334,13 @@ export function useFilePreviewTabHandlers(): FilePreviewTabHandlersReturn {
 		if (!fileTab) return;
 
 		try {
-			const [content, stat] = await Promise.all([
-				window.maestro.fs.readFile(fileTab.path, fileTab.sshRemoteId),
-				window.maestro.fs.stat(fileTab.path, fileTab.sshRemoteId),
-			]);
-			if (content === null) return;
-			const newMtime = stat?.modifiedAt ? new Date(stat.modifiedAt).getTime() : Date.now();
+			const disk = await readFilePreviewContent(fileTab.path, fileTab.sshRemoteId);
+			if (!disk) return;
 
 			updateFileTab(useSessionStore.getState().activeSessionId, tabId, (tab) => ({
 				...tab,
-				content,
-				lastModified: newMtime,
+				content: disk.content,
+				lastModified: disk.lastModified,
 				editContent: undefined,
 			}));
 		} catch (error) {

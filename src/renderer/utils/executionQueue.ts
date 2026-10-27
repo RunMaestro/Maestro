@@ -888,32 +888,41 @@ export function getSteerEligibility(
 /**
  * Whether a Steer control should be RENDERED at all, given its eligibility.
  *
- * Same split as {@link shouldOfferForceSend}, for the same reason, and here EVERY
- * blocked reason hides the control rather than dimming it. None of them is
- * something the user can act on from a queued card: a tab that is not working has
- * no turn to steer (and will start this very message shortly), a non-Claude agent
- * can never steer, a Codex agent on `codex exec` cannot be reached mid-turn (the
- * transport is an agent setting, not something to flip from a queued card), and an
- * API-source turn has no PTY. A dimmed button whose
- * tooltip amounts to "not right now" is exactly the dead control the Force Send
- * work was fixing.
+ * Same split as {@link shouldOfferForceSend}, for the same reason: a blocked
+ * reason the user cannot act on from a queued card hides the control rather than
+ * dimming it. A tab that is not working has no turn to steer (and will start this
+ * very message shortly), a non-Claude agent can never steer, a Codex agent on
+ * `codex exec` cannot be reached mid-turn, and an API-source turn has no PTY. A
+ * dimmed button whose tooltip amounts to "not right now" is a dead control.
  *
- * So there is no `visible-but-disabled` case today. Keep this function anyway:
- * it is the seam a future reason with an actionable remedy (the way
- * `needs-forced-parallel` names a setting) would hook into, and both surfaces
- * already call it.
+ * `has-images` is the one exception, and it stays visible (dimmed): it is the
+ * only reason that leaves a card looking exactly like a steerable one, so a
+ * hidden button reads as a bug, and it has a remedy on the card itself (Edit, to
+ * drop the image). It is checked after every agent- and turn-level reason in
+ * {@link getSteerEligibility}, so the dimmed button appears only where removing
+ * the image is all that stands between the user and a steer.
  */
 export function shouldOfferSteer(eligibility: SteerEligibility | null | undefined): boolean {
-	return !!eligibility?.canSteer;
+	if (!eligibility) return false;
+	return eligibility.canSteer || eligibility.blockedReason === 'has-images';
+}
+
+/**
+ * The tooltip a Steer control shows, given its eligibility. Lives with the
+ * decision, like {@link getForceSendTitle}, so a dimmed button always says why.
+ */
+export function getSteerTitle(eligibility: SteerEligibility): string {
+	return eligibility.canSteer
+		? 'Send this into the turn that is running now, so the agent can change course mid-task'
+		: describeSteerBlocked(eligibility.blockedReason);
 }
 
 /**
  * Why a steer was declined, as a sentence for the user. A Record rather than a
  * switch so a new {@link SteerBlockedReason} fails to compile until it is worded.
  *
- * The Steer button never needs this: it is hidden for every blocked reason (see
- * {@link shouldOfferSteer}). A keyboard steer has no control to hide, so it has
- * to say why nothing happened.
+ * Also the tooltip of a dimmed Steer button (see {@link getSteerTitle}). A
+ * keyboard steer has no control to hide, so it has to say why nothing happened.
  */
 const STEER_BLOCKED_DETAILS: Record<SteerBlockedReason, string> = {
 	'no-target-tab': 'The tab this message was queued on is gone.',
@@ -924,7 +933,8 @@ const STEER_BLOCKED_DETAILS: Record<SteerBlockedReason, string> = {
 	'api-token-source':
 		'This turn is running on the API token source, which takes no input until it ends.',
 	'nothing-to-type': 'The message has no text to steer with.',
-	'has-images': 'Images cannot be attached to a turn that is already running.',
+	'has-images':
+		'Images cannot be attached to a turn that is already running. Remove the image to steer the text alone.',
 	'awaiting-consult': 'The message is waiting on a consult reply.',
 	'cross-agent-mention': 'An @mention only reaches the other agent on a normal send.',
 	'has-agent-context': 'The message carries consult replies that only a normal send delivers.',

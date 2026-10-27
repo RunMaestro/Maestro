@@ -3541,11 +3541,14 @@ describe('StdoutHandler - single JSON parse per line', () => {
 			};
 		}
 		// The complete assistant message the CLI sends after the deltas.
-		function assistantMessage(text: string) {
+		function assistantMessage(text: string, thinking?: string) {
 			return {
 				type: 'assistant',
 				session_id: 'prov-1',
-				message: { role: 'assistant', content: [{ type: 'text', text }] },
+				message: {
+					role: 'assistant',
+					content: [...(thinking ? [{ type: 'thinking', thinking }] : []), { type: 'text', text }],
+				},
 			};
 		}
 
@@ -3594,7 +3597,11 @@ describe('StdoutHandler - single JSON parse per line', () => {
 
 			// The flagged assistant event (deltas were seen) is skipped: no extra
 			// thinking-chunk, no extra streamedText.
-			sendJsonLine(handler, sessionId, assistantMessage('Answer.'));
+			const closing = assistantMessage('Answer.', 'Let me reason.');
+			expect(new ClaudeOutputParser().parseJsonLine(JSON.stringify(closing))).toMatchObject({
+				isReasoning: true,
+			});
+			sendJsonLine(handler, sessionId, closing);
 			expect(thinkingSpy).toHaveBeenCalledTimes(3);
 			expect(proc.streamedText).toBe('Answer.');
 		});

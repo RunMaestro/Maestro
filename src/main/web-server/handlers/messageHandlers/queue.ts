@@ -12,6 +12,7 @@ import { getDispatchCallbackRegistry } from '../../../dispatch-callbacks';
 import { armDispatchCallback } from './dispatchCallbacks';
 import { noteDispatchDelegation } from './agentDelegation';
 import { LOG_CONTEXT } from './shared';
+import { parseMentionRoutingField } from '../../../../shared/crossAgentContext';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
 
 /**
@@ -69,6 +70,14 @@ export function handleEnqueueCommand(
 		return;
 	}
 
+	// `dispatch --queue --routing`: refuse a routing that is not one rather than
+	// queue the prompt on the wording's routing.
+	const routingField = parseMentionRoutingField(message.mentionRouting);
+	if (!routingField.ok) {
+		sendErrorResult(routingField.error);
+		return;
+	}
+
 	// Same pre-arm rationale as send_command. A queued prompt can sit behind a
 	// predecessor turn for minutes; the entry stays `pending` until OUR
 	// process spawns, so the predecessor's exit cannot fire it.
@@ -102,7 +111,8 @@ export function handleEnqueueCommand(
 			requestedTabId,
 			images,
 			background,
-			held
+			held,
+			routingField.routing
 		)
 		.then((result) => {
 			if (!result.success) cancelArmedCallback();

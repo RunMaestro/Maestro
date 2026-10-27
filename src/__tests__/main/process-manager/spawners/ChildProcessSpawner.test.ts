@@ -364,6 +364,35 @@ describe('ChildProcessSpawner', () => {
 		});
 	});
 
+	// MAESTRO-153: a wizard prompt carrying a NUL byte made Node refuse the spawn
+	// ("The argument 'args[4]' must be a string without null bytes").
+	describe('NUL bytes in arguments', () => {
+		it('drops them from the prompt and every other argument before spawning', () => {
+			const { spawner } = createTestContext();
+
+			const result = spawner.spawn(
+				createBaseConfig({
+					args: ['--print', '--append-system-prompt', 'sys\0tem'],
+					prompt: 'Conductor\0 Profile\0',
+				})
+			);
+
+			expect(result.success).toBe(true);
+			const spawnedArgs = mockSpawn.mock.calls[0][1] as string[];
+			expect(spawnedArgs.some((arg) => arg.includes('\0'))).toBe(false);
+			expect(spawnedArgs).toContain('system');
+			expect(spawnedArgs).toContain('Conductor Profile');
+		});
+
+		it('leaves arguments without NUL bytes untouched', () => {
+			const { spawner } = createTestContext();
+
+			spawner.spawn(createBaseConfig({ args: ['--print'], prompt: 'plain' }));
+
+			expect(mockSpawn.mock.calls[0][1]).toEqual(['--print', '--', 'plain']);
+		});
+	});
+
 	describe('SSH remote context', () => {
 		it('should store sshRemoteId on managed process', () => {
 			const { processes, spawner } = createTestContext();

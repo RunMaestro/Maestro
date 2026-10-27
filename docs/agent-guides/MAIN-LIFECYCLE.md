@@ -273,15 +273,15 @@ The `createWindowManager()` factory returns a `WindowManager` with a `createWind
 
 The window manager sets up multiple crash detection handlers:
 
-| Event                       | Action                                                                             |
-| --------------------------- | ---------------------------------------------------------------------------------- |
-| `render-process-gone`       | Logs, reports to Sentry, auto-reloads (unless intentionally killed)                |
-| `unresponsive`              | Warns, reports to Sentry with memory usage                                         |
-| `responsive`                | Logs recovery                                                                      |
-| `crashed`                   | Logs, reports to Sentry                                                            |
-| `did-fail-load`             | Logs, reports to Sentry (ignores aborted loads)                                    |
-| `preload-error`             | Logs, reports to Sentry as fatal                                                   |
-| `console-message` (level 3) | Forwards renderer errors to main process logger; reports critical errors to Sentry |
+| Event                       | Action                                                                                                                                                                                                                                                                                                     |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `render-process-gone`       | Logs; reports to Sentry unless the renderer was `killed` or exited cleanly; reloads it after 1 s unless it exited cleanly or the app is quitting. Bounded per window: at most 3 reloads in 60 s, exits during a pending reload share it, then it stops reloading and reports the crash loop to Sentry once |
+| `unresponsive`              | Warns, reports to Sentry with memory usage                                                                                                                                                                                                                                                                 |
+| `responsive`                | Logs recovery                                                                                                                                                                                                                                                                                              |
+| `crashed`                   | Logs, reports to Sentry                                                                                                                                                                                                                                                                                    |
+| `did-fail-load`             | Logs, reports to Sentry (ignores aborted loads)                                                                                                                                                                                                                                                            |
+| `preload-error`             | Logs, reports to Sentry as fatal                                                                                                                                                                                                                                                                           |
+| `console-message` (level 3) | Forwards renderer errors to main process logger; reports critical errors to Sentry                                                                                                                                                                                                                         |
 
 ### Auto-Updater Initialization
 

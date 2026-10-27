@@ -31,7 +31,8 @@ import {
 	mergeQueuedItemIntoPrevious,
 } from '../utils/executionQueue';
 import { captureQueuedTurnSettings } from '../utils/providerTabSessions';
-import { planCrossAgentMentions } from './crossAgentMentions';
+import { planCrossAgentMentions, queuedMentionFields } from './crossAgentMentions';
+import type { MentionRouting } from '../../shared/crossAgentContext';
 import { generateId } from '../utils/ids';
 import { logger } from '../utils/logger';
 
@@ -45,6 +46,12 @@ export interface QueuedPromptOptions {
 	images?: string[];
 	/** Resolve a slash command through the command queue when this item drains. */
 	slashCommand?: boolean;
+	/**
+	 * A routing picked for the message's `@mentions` (`dispatch --routing`), the
+	 * way the composer's routing strip picks one. Stamped on the item, because the
+	 * drain re-plans from the text and the text alone would route it by wording.
+	 */
+	mentionRouting?: MentionRouting;
 }
 
 /**
@@ -67,10 +74,13 @@ export function buildQueuedMessageItem({
 	text,
 	images,
 	slashCommand,
+	mentionRouting,
 }: QueuedPromptOptions): QueuedItem {
 	const commandText = slashCommand ? text.trim() : undefined;
 	const firstWhitespace = commandText?.search(/\s/) ?? -1;
-	const mentionPlan = slashCommand ? null : planCrossAgentMentions(text, session.id);
+	const mentionPlan = slashCommand
+		? null
+		: planCrossAgentMentions(text, session.id, mentionRouting);
 	return {
 		id: generateId(),
 		timestamp: Date.now(),
@@ -86,10 +96,8 @@ export function buildQueuedMessageItem({
 		tabName: getTabDisplayName(tab, session.agentSessionId),
 		readOnlyMode: tab.readOnlyMode === true || tab.permissionMode === 'readonly',
 		turnSettings: captureQueuedTurnSettings(tab, session),
-		...(mentionPlan && {
-			crossAgentMention: true,
-			crossAgentOnly: mentionPlan.suppressLocal,
-		}),
+		...queuedMentionFields(mentionPlan),
+		...(mentionPlan && { crossAgentOnly: mentionPlan.suppressLocal }),
 	};
 }
 
@@ -138,15 +146,23 @@ export function enqueuePromptForTab(options: {
 	images?: string[];
 	slashCommand?: boolean;
 	expandCommands?: boolean;
+	mentionRouting?: MentionRouting;
 }): QueuedItem | null {
-	const { sessionId, tabId, text, images, slashCommand, expandCommands } = options;
+	const { sessionId, tabId, text, images, slashCommand, expandCommands, mentionRouting } = options;
 	const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
 	if (!session) return null;
 
 	const tab = session.aiTabs?.find((t) => t.id === tabId) ?? getActiveTab(session);
 	if (!tab) return null;
 
-	const message = buildQueuedMessageItem({ session, tab, text, images, slashCommand });
+	const message = buildQueuedMessageItem({
+		session,
+		tab,
+		text,
+		images,
+		slashCommand,
+		mentionRouting,
+	});
 	const command = expandCommands && !slashCommand ? matchSlashCommand(session, text) : null;
 	const item: QueuedItem = command
 		? {

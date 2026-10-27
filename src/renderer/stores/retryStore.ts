@@ -1229,8 +1229,12 @@ function abandonContextCompaction(key: string, reason?: string): void {
  *
  * `tabId` narrows it to one tab's recovery, for a caller that stopped a single
  * turn rather than the whole agent (see `cancelRecoveryForTab`).
+ *
+ * @returns How many compactions were ended, so a Stop can tell whether it had
+ *   anything to stop.
  */
-export function cancelContextCompaction(sessionId: string, tabId?: string): void {
+export function cancelContextCompaction(sessionId: string, tabId?: string): number {
+	let ended = 0;
 	for (const entry of Object.values(useRetryStore.getState().retries)) {
 		if (entry.sessionId !== sessionId || !entry.compaction || entry.compaction.compacted) continue;
 		// A caller that stopped ONE tab's turn leaves the agent's other tabs alone.
@@ -1243,7 +1247,9 @@ export function cancelContextCompaction(sessionId: string, tabId?: string): void
 		}
 		if (entry.heldItemId) releaseHeldItemFromQueue(sessionId, entry.heldItemId);
 		removeEntry(entry.key);
+		ended++;
 	}
+	return ended;
 }
 
 /**
@@ -1516,12 +1522,18 @@ export function cancelRetry(sessionId: string, tabId: string): void {
  * than released, so Stop's own queue drain does not send it straight back out;
  * it stays visible and one click from Force Send. An in-flight resend is a
  * live process, which Stop is signalling separately.
+ *
+ * `tabId` narrows it to one tab's outage, for a Stop aimed at a single turn
+ * (`maestro-cli interrupt --tab`): the agent's other tabs keep their retries.
+ *
+ * @returns How many outages were ended, so a Stop can tell whether it had
+ *   anything to stop.
  */
-export function stopRetriesForAgent(sessionId: string): void {
+export function stopRetriesForAgent(sessionId: string, tabId?: string): number {
 	const entries = Object.values(useRetryStore.getState().retries).filter(
-		(entry) => entry.sessionId === sessionId
+		(entry) => entry.sessionId === sessionId && (!tabId || entry.tabId === tabId)
 	);
-	if (entries.length === 0) return;
+	if (entries.length === 0) return 0;
 
 	const heldIds = new Set(entries.map((entry) => entry.heldItemId).filter(Boolean));
 	updateSessionWith(sessionId, (s) =>
@@ -1540,6 +1552,7 @@ export function stopRetriesForAgent(sessionId: string): void {
 		resolveOutage(entry.outageId, 'stopped');
 		removeEntry(entry.key);
 	}
+	return entries.length;
 }
 
 /**

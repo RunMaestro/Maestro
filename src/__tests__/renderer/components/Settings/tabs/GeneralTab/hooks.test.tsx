@@ -187,6 +187,26 @@ describe('GeneralTab hooks', () => {
 				extra: { context: 'GeneralTab: Maestro CLI install/update' },
 			});
 		});
+		it('tells the user which path is not writable and keeps it out of Sentry (MAESTRO-15R)', async () => {
+			installMaestroCliMock({
+				installOrUpdate: vi
+					.fn()
+					.mockRejectedValue(
+						new Error(
+							"Error invoking remote method 'maestroCli:installOrUpdate': Error: EACCES: permission denied, mkdir '/Users/someone/.local/bin'"
+						)
+					),
+			});
+			const { result } = renderHook(() => useMaestroCliState({ isOpen: false }));
+
+			await act(async () => {
+				await result.current.installOrUpdate();
+			});
+
+			expect(result.current.statusError).toContain('/Users/someone/.local/bin');
+			expect(result.current.installing).toBe(false);
+			expect(captureException).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('useSyncStorageState', () => {

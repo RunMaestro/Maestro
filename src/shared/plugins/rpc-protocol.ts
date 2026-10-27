@@ -13,6 +13,7 @@
  * plugin SDK so all three agree byte-for-byte.
  */
 
+import { pluginEndpointScope } from './primitives';
 import type { PluginCapability } from './permissions';
 
 /** Maximum length of a public tool action sent to a plugin. */
@@ -40,6 +41,20 @@ export type AgentSendProgressEvent =
  * never be called - the broker denies it and no handler is registered for it.
  */
 export const HOST_API = {
+	'net.requestTlsConsent': { capability: 'net:tls' },
+	'secrets.remove': { capability: 'secrets:use' },
+	'invocations.inspect': { capability: 'invocations:inspect' },
+	'net.tlsOpen': { capability: 'net:tls' },
+	'net.tlsRead': { capability: 'net:tls' },
+	'net.tlsWrite': { capability: 'net:tls' },
+	'net.tlsClose': { capability: 'net:tls' },
+	'secrets.requestSetup': { capability: 'secrets:use' },
+	'records.read': { capability: 'records:read' },
+	'records.requestCommit': { capability: 'records:confirm' },
+	'events.consumers': { capability: 'events:publish' },
+	'events.begin': { capability: 'events:publish' },
+	'events.publish': { capability: 'events:publish' },
+
 	'fs.read': { capability: 'fs:read' },
 	'fs.write': { capability: 'fs:write' },
 	'services.register': { capability: 'services:provide' },
@@ -143,6 +158,12 @@ export const HANDLER_REAUTHORIZED_METHODS: ReadonlySet<HostMethod> = new Set<Hos
 	'services.openSettings',
 	'services.start',
 	'services.result',
+	'net.requestTlsConsent',
+	'secrets.remove',
+	'net.tlsRead',
+	'net.tlsWrite',
+	'events.begin',
+	'events.publish',
 	'net.send',
 	'net.close',
 ]);
@@ -174,6 +195,8 @@ export type HostControlMessage =
 			id: number;
 			commandId: string;
 			args?: unknown;
+			/** Internal host-issued nested handle; never an agent ID or model argument. */
+			invocationId?: string | null;
 			context: PluginToolCallerContext;
 	  }
 	| { kind: 'event'; topic: string; at: string; payload: unknown }
@@ -213,6 +236,17 @@ export function extractTarget(method: HostMethod, params: unknown): string | und
 		unknown
 	>;
 	switch (method) {
+		case 'net.tlsOpen':
+			return pluginEndpointScope(p.host, p.port);
+		case 'secrets.requestSetup': {
+			const endpoint = p.endpoint as Record<string, unknown> | undefined;
+			return endpoint && pluginEndpointScope(endpoint.host, endpoint.port);
+		}
+		case 'records.read':
+		case 'records.requestCommit':
+			return typeof p.key === 'string' ? p.key : undefined;
+		case 'events.consumers':
+			return typeof p.topic === 'string' ? p.topic : undefined;
 		case 'services.register':
 		case 'services.unregister':
 		case 'services.readiness':

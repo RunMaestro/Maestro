@@ -1,3 +1,4 @@
+import { canonicalJson } from '../../shared/canonicalJson';
 /**
  * Plugin manager (main process).
  *
@@ -14,11 +15,11 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import * as crypto from 'crypto';
 import semver from 'semver';
 import { HOST_API_VERSION } from '../../shared/plugins/host-api';
 import {
 	buildRecord,
+	getRecord,
 	emptyRegistry,
 	listActive,
 	removeRecord,
@@ -30,6 +31,7 @@ import {
 import { validatePluginManifest, type PluginManifest } from '../../shared/plugins/plugin-manifest';
 import {
 	aggregateContributions,
+	collectContributions,
 	type AggregatedContributions,
 } from '../../shared/plugins/contributions';
 import { isPermitted, type PermissionGrant } from '../../shared/plugins/permissions';
@@ -46,7 +48,8 @@ import {
 import { createKeyedWriteQueue } from '../utils/atomic-json-store';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
-import { verifyPluginSignature } from './plugin-signature';
+import { scanPluginFiles } from './plugin-scan';
+import type { AuthIdentity } from './authorization-ledger';
 import type { AuthorizationStore } from './authorization-ledger';
 import {
 	RETIRED_AGENT_FLOW_ID,
@@ -58,6 +61,14 @@ import {
 	isPackedPluginArchivePath,
 	type ExtractedPluginArchive,
 } from '../../shared/plugins/plugin-archive';
+import {
+	PluginToolRunIdentity,
+	type PluginToolCallerContext,
+	type PluginToolRunAuthority,
+} from './plugin-tool-run-identity';
+import { PluginToolRunProofFiles, type PluginToolRunProofFile } from './plugin-tool-run-proof-file';
+import { assertPluginAuthority } from './plugin-authority';
+import { PluginAuthorityError } from './plugin-authority';
 
 const MANIFEST_FILENAME = 'plugin.json';
 
@@ -74,12 +85,14 @@ export interface PluginSandboxLifecycle {
 	stopAll: () => void | Promise<void>;
 	isRunning: (pluginId: string) => boolean;
 	runningIds: () => string[];
+	/** Required for verified tools; captures the exact child, not just a running ID. */
+	captureToolLifetime?: (pluginId: string) => () => void;
 	invokeCommand: (pluginId: string, commandId: string, args?: unknown) => boolean;
 	invokeTool: (
 		pluginId: string,
 		commandId: string,
 		args?: unknown,
-		context?: { callerAgentId: string | null }
+		options?: { callerAgentId?: string | null; runContext?: PluginToolCallerContext }
 	) => Promise<unknown>;
 }
 
@@ -93,6 +106,16 @@ export interface PluginManagerDeps {
 	trustedKeys?: () => string[];
 	/** Optional sandbox controller for running tier-1 plugin code. */
 	sandbox?: PluginSandboxLifecycle;
+	/** Host-private verified ingress only; never a model/plugin-supplied registry. */
+	toolIdentity?: PluginToolRunIdentity;
+	/** Host-private resource owner bound to exactly toolIdentity. No implicit fallback. */
+	toolProofFiles?: PluginToolRunProofFiles;
+	/** Required only for hardened file issuance: live host storage policy, never plugin input. */
+	assertToolProofStorageActive?: () => void;
+	/** Required for verified tools: live sealed consent/on-disk identity and generation.
+	 * Refresh-time verifyRecord and plain-JSON grants are not substitutes. */
+	assertToolRecordActive?: (record: PluginRecord) => void;
+	prepareToolRecordActive?: (record: PluginRecord) => Promise<void>;
 	/** Optional: purge a plugin's host-owned data (KV store, plugins.<id>.*
 	 * settings, live event subscriptions) on uninstall. The integrator wires this
 	 * to plugin-host-handlers' purgePluginData so uninstall leaves nothing behind
@@ -114,7 +137,7 @@ export interface PluginManagerDeps {
 	 * `verify()` + `pluginIdentity()`; absent => no extra gate (the enable toggle and
 	 * consent govern). It only ever force-disables - never force-enables.
 	 */
-	verifyRecord?: (record: PluginRecord) => { disable: boolean };
+	verifyRecord?: (record: PluginRecord, identity: AuthIdentity | null) => { disable: boolean };
 	/** Optional sink for plugin hot-reload watcher/refresh failures. */
 	onWatchError?: (error: unknown) => void;
 }
@@ -141,12 +164,66 @@ export class PluginManager {
 	private watchedPluginDirs = new Map<string, fs.FSWatcher>();
 	private watchRefreshTimer: NodeJS.Timeout | undefined;
 	private watchDebounceMs = HOT_RELOAD_DEBOUNCE_MS;
+	private toolLifetime: object = {};
+	private toolRunLifetime = new AbortController();
+	private toolStopping = false;
+	private toolAuthorityStopped = false;
+	private readonly toolIdentity?: PluginToolRunIdentity;
+	private readonly toolProofFiles?: PluginToolRunProofFiles;
+	private readonly assertToolProofStorageActive?: () => void;
+	private readonly toolSandbox?: PluginSandboxLifecycle;
+	private readonly assertToolRecordActive?: (record: PluginRecord) => void;
+	private readonly isToolFeatureEnabled: () => boolean;
 
-	constructor(private readonly deps: PluginManagerDeps) {}
+	constructor(private readonly deps: PluginManagerDeps) {
+		this.toolIdentity = deps.toolIdentity;
+		this.toolProofFiles = deps.toolProofFiles;
+		this.assertToolProofStorageActive =
+			typeof deps.assertToolProofStorageActive === 'function'
+				? deps.assertToolProofStorageActive.bind(deps)
+				: undefined;
+		this.toolSandbox = deps.sandbox;
+		this.isToolFeatureEnabled = deps.isEnabled.bind(deps);
+		this.assertToolRecordActive =
+			typeof deps.assertToolRecordActive === 'function'
+				? deps.assertToolRecordActive.bind(deps)
+				: undefined;
+	}
 
 	/** The last discovered registry (call refresh() to rebuild from disk). */
 	getRegistry(): PluginRegistry {
 		return this.registry;
+	}
+
+	/** Host-private verified policy seam. Reuse the reconciled child fingerprint:
+	 * re-consenting changed disk bytes cannot authorize an older running child. */
+	assertToolRecordCurrent(record: PluginRecord): void {
+		try {
+			const expected = this.pluginFingerprints.get(record.id);
+			if (
+				getRecord(this.registry, record.id) !== record ||
+				!this.isRunnable(record) ||
+				!expected ||
+				getRecord(this.registry, record.id) !== record
+			)
+				throw new PluginAuthorityError('PLUGIN_DENIED');
+		} catch {
+			throw new PluginAuthorityError('PLUGIN_DENIED');
+		}
+	}
+
+	async prepareToolRecordCurrent(record: PluginRecord): Promise<AuthIdentity> {
+		this.assertToolRecordCurrent(record);
+		const keys = this.deps.trustedKeys?.() ?? [];
+		const scan = await scanPluginFiles(record.source, keys);
+		this.assertToolRecordCurrent(record);
+		if (
+			!scan.identity ||
+			scan.fingerprint !== this.pluginFingerprints.get(record.id) ||
+			canonicalJson(keys) !== canonicalJson(this.deps.trustedKeys?.() ?? [])
+		)
+			throw new PluginAuthorityError('PLUGIN_DENIED');
+		return scan.identity;
 	}
 
 	/** Records the host should activate (enabled AND loadable). Empty when the
@@ -207,12 +284,13 @@ export class PluginManager {
 	 * enabled), and host-compatibility-check. Returns the new registry. When the
 	 * Encore flag is off this returns an empty registry without touching disk.
 	 */
-	refresh(): PluginRegistry {
+	async refresh(): Promise<PluginRegistry> {
 		return this.refreshRegistry();
 	}
 
 	/** A completed hot reload must not restart unrelated crashed sandboxes. */
-	private refreshRegistry(onlyPluginId?: string): PluginRegistry {
+	private async refreshRegistry(onlyPluginId?: string): Promise<PluginRegistry> {
+		const before = this.registry;
 		if (!this.deps.isEnabled()) {
 			this.registry = emptyRegistry();
 			this.pluginFingerprints.clear();
@@ -281,8 +359,13 @@ export class PluginManager {
 			if (onlyPluginId !== undefined && record.id !== onlyPluginId) continue;
 			// Attach signature trust (the pure builder cannot read files).
 			let signed = record;
+			let scannedIdentity: AuthIdentity | null = null;
+			let fingerprint: string | undefined;
 			try {
-				const check = verifyPluginSignature(source, trustedKeys);
+				const fileScan = await scanPluginFiles(source, trustedKeys);
+				const check = fileScan.signature;
+				scannedIdentity = fileScan.identity;
+				fingerprint = fileScan.fingerprint;
 				signed = {
 					...record,
 					signature: {
@@ -309,14 +392,20 @@ export class PluginManager {
 					!!signed.manifest &&
 					signed.manifest.tier >= 1 &&
 					!!signed.manifest.entry;
-				if (eligibleCode && this.deps.verifyRecord(signed).disable) {
+				if (eligibleCode && this.deps.verifyRecord(signed, scannedIdentity).disable) {
 					gated = { ...signed, enabled: false };
 				}
 			}
 			next = upsertRecord(next, gated);
-			nextFingerprints.set(gated.id, this.fingerprintPluginDir(source));
+			if (fingerprint) nextFingerprints.set(gated.id, fingerprint);
 		}
 
+		if (
+			this.registry !== before ||
+			!this.deps.isEnabled() ||
+			canonicalJson(trustedKeys) !== canonicalJson(this.deps.trustedKeys?.() ?? [])
+		)
+			return this.registry;
 		this.registry = next;
 		this.reconcileSandboxes(previousFingerprints, nextFingerprints, onlyPluginId);
 		this.pluginFingerprints = nextFingerprints;
@@ -329,17 +418,26 @@ export class PluginManager {
 	 * sandbox. Code-tier activation must verify the current on-disk identity
 	 * against its consented authorization before persisting or starting code;
 	 * refresh() applies the same gate to previously enabled plugins. */
-	setEnabled(id: string, enabled: boolean): PluginRegistry {
+	async setEnabled(id: string, enabled: boolean): Promise<PluginRegistry> {
 		if (!this.deps.isEnabled()) return this.registry;
 		const record = this.registry.records.find((item) => item.id === id);
+		const trustedKeys = this.deps.trustedKeys?.() ?? [];
 		if (
 			enabled &&
 			record?.manifest &&
 			record.manifest.tier >= 1 &&
-			this.deps.verifyRecord?.(record).disable
+			this.deps.verifyRecord?.(record, (await scanPluginFiles(record.source, trustedKeys)).identity)
+				.disable
 		) {
 			throw new Error('PluginNotAuthorized');
 		}
+		if (
+			enabled &&
+			(!this.deps.isEnabled() ||
+				this.registry.records.find((r) => r.id === id) !== record ||
+				canonicalJson(trustedKeys) !== canonicalJson(this.deps.trustedKeys?.() ?? []))
+		)
+			throw new PluginAuthorityError('PLUGIN_DENIED');
 		setPluginEnabled(id, enabled);
 		this.registry = setEnabled(this.registry, id, enabled);
 		this.reconcileSandboxes(this.pluginFingerprints, this.pluginFingerprints);
@@ -458,7 +556,7 @@ export class PluginManager {
 						this.pendingReloads.delete(record.id);
 						// Re-read identity, enable state and entry after the wait: disable,
 						// uninstall, edits or permission changes may have happened meanwhile.
-						this.refreshRegistry(record.id);
+						await this.refreshRegistry(record.id);
 					} catch (error) {
 						if (this.pendingReloads.get(record.id) === reload)
 							this.pendingReloads.delete(record.id);
@@ -525,10 +623,10 @@ export class PluginManager {
 
 	private scheduleWatchedRefresh(): void {
 		clearTimeout(this.watchRefreshTimer);
-		this.watchRefreshTimer = setTimeout(() => {
+		this.watchRefreshTimer = setTimeout(async () => {
 			this.watchRefreshTimer = undefined;
 			try {
-				this.refresh();
+				await this.refresh();
 			} catch (error) {
 				this.deps.onWatchError?.(error);
 			}
@@ -578,50 +676,11 @@ export class PluginManager {
 		return dirs;
 	}
 
-	private fingerprintPluginDir(source: string): string {
-		const hash = crypto.createHash('sha256');
-		const visit = (dir: string, relDir: string): void => {
-			let entries: fs.Dirent[];
-			try {
-				entries = fs
-					.readdirSync(dir, { withFileTypes: true })
-					.sort((a, b) => a.name.localeCompare(b.name));
-			} catch {
-				return;
-			}
-			for (const entry of entries) {
-				const abs = path.join(dir, entry.name);
-				const rel = relDir ? path.join(relDir, entry.name) : entry.name;
-				hash.update(rel.split(path.sep).join('/'));
-				hash.update('\0');
-				try {
-					const stat = fs.lstatSync(abs);
-					hash.update(`${stat.mode}:${stat.size}:`);
-					if (entry.isDirectory() && !entry.isSymbolicLink()) {
-						hash.update('dir\n');
-						visit(abs, rel);
-					} else if (entry.isFile()) {
-						hash.update('file\n');
-						hash.update(fs.readFileSync(abs));
-					} else if (entry.isSymbolicLink()) {
-						hash.update(`link:${fs.readlinkSync(abs)}\n`);
-					} else {
-						hash.update('other\n');
-					}
-				} catch {
-					hash.update('unreadable\n');
-				}
-			}
-		};
-		visit(source, '');
-		return hash.digest('hex');
-	}
-
 	/**
 	 * Copy a validated plugin source directory into the plugins dir under the
 	 * manifest id. Refuses an invalid manifest, id collision, or symlinked tree.
 	 */
-	private installDirectory(sourceDir: string): InstallResult {
+	private async installDirectory(sourceDir: string): Promise<InstallResult> {
 		const rawManifest = this.readManifest(sourceDir);
 		const { manifest, errors } = validatePluginManifest(rawManifest);
 		if (!manifest) {
@@ -642,7 +701,7 @@ export class PluginManager {
 		fs.mkdirSync(pluginsDir(), { recursive: true });
 		// dereference:false keeps the copy faithful; we already rejected symlinks.
 		fs.cpSync(sourceDir, dest, { recursive: true });
-		this.refresh();
+		await this.refresh();
 		const record = this.registry.records.find((r) => r.id === manifest.id);
 		return { success: true, ...(record ? { record } : {}) };
 	}
@@ -653,7 +712,7 @@ export class PluginManager {
 	 * reject traversal/link entries before writing, then use the same directory
 	 * install path so manifest validation and symlink checks stay centralized.
 	 */
-	install(sourcePath: string): InstallResult {
+	async install(sourcePath: string): Promise<InstallResult> {
 		if (!this.deps.isEnabled()) return { success: false, error: 'plugins feature is disabled' };
 		const resolvedSource = path.resolve(sourcePath);
 		if (!isPackedPluginArchivePath(resolvedSource)) {
@@ -662,7 +721,7 @@ export class PluginManager {
 		let extracted: ExtractedPluginArchive | null = null;
 		try {
 			extracted = extractPluginArchive(resolvedSource);
-			return this.installDirectory(extracted.root);
+			return await this.installDirectory(extracted.root);
 		} catch (error) {
 			return { success: false, error: error instanceof Error ? error.message : String(error) };
 		} finally {
@@ -759,7 +818,7 @@ export class PluginManager {
 			// refresh() re-reads the NEW bytes: re-validates the manifest and recomputes
 			// signature trust from scratch. The enable toggle survives because we never
 			// touched the persisted state, so an enabled plugin stays enabled.
-			return this.refresh();
+			return await this.refresh();
 		});
 	}
 
@@ -853,7 +912,121 @@ export class PluginManager {
 	stopAllSandboxes(): void {
 		this.pendingReloads.clear();
 		this.waitingForServiceDependencies.clear();
-		this.deps.sandbox?.stopAll();
+		// Invalidate before stop callbacks, including a reentrant stop/restart.
+		this.toolLifetime = {};
+		const lifetime = this.toolRunLifetime;
+		this.toolRunLifetime = new AbortController();
+		const wasStopping = this.toolStopping;
+		this.toolStopping = true;
+		try {
+			// Registry abort synchronously revokes proofs/handles and disposes files.
+			lifetime.abort();
+			this.deps.sandbox?.stopAll();
+		} finally {
+			this.toolStopping = wasStopping;
+		}
+	}
+
+	/** Replacement requires fresh authority owners. Sharing them would permanently
+	 * retire the candidate while stopping its predecessor. Reject before either changes. */
+	assertIndependentToolAuthority(replacement: PluginManager): void {
+		if (
+			(this.toolIdentity && this.toolIdentity === replacement.toolIdentity) ||
+			(this.toolProofFiles && this.toolProofFiles === replacement.toolProofFiles)
+		)
+			throw new PluginAuthorityError('PLUGIN_CONFLICT');
+	}
+
+	/** Host replacement/shutdown only. Ordinary plugin tools remain independent.
+	 * Fence permanently before callbacks; repeated calls retry bounded file cleanup
+	 * without ever restoring proof authority. Feature toggles use stopAllSandboxes. */
+	stopToolAuthority(): void {
+		this.toolAuthorityStopped = true;
+		this.toolLifetime = {};
+		let failed = false;
+		try {
+			// The registry stops admission before aborting any run/nested handle.
+			this.toolIdentity?.stop();
+		} catch {
+			failed = true;
+		}
+		try {
+			this.toolRunLifetime.abort();
+		} catch {
+			failed = true;
+		}
+		try {
+			// Attempt cleanup even if another retirement step failed; retain its latch.
+			this.toolProofFiles?.stop();
+		} catch {
+			failed = true;
+		}
+		if (failed) throw new PluginAuthorityError('PLUGIN_UNAVAILABLE');
+	}
+
+	/** Host spawn lifecycle only; never expose via IPC/RPC or accept model authority.
+	 * Production must inject the same registry used by invokeVerifiedTool. */
+	createToolRunProofFile(
+		agentId: unknown,
+		authority: PluginToolRunAuthority,
+		ttlMs?: number
+	): PluginToolRunProofFile {
+		let resource: PluginToolRunProofFile | undefined;
+		try {
+			const identity = this.toolIdentity;
+			const files = this.toolProofFiles;
+			const sandbox = this.toolSandbox;
+			const assertStorage = this.assertToolProofStorageActive;
+			if (
+				!(identity instanceof PluginToolRunIdentity) ||
+				!(files instanceof PluginToolRunProofFiles) ||
+				!sandbox ||
+				typeof sandbox.captureToolLifetime !== 'function' ||
+				!this.assertToolRecordActive ||
+				!assertStorage ||
+				!(authority?.signal instanceof AbortSignal) ||
+				typeof authority.assertActive !== 'function'
+			)
+				throw new PluginAuthorityError('PLUGIN_DENIED');
+			const source = authority.signal;
+			const checkRun = authority.assertActive.bind(authority);
+			const lifetime = this.toolRunLifetime;
+			const signal = AbortSignal.any([source, lifetime.signal]);
+			const assertCurrent = () => {
+				if (
+					this.toolAuthorityStopped ||
+					this.toolStopping ||
+					signal.aborted ||
+					this.toolRunLifetime !== lifetime ||
+					this.deps.toolIdentity !== identity ||
+					this.deps.toolProofFiles !== files ||
+					this.deps.sandbox !== sandbox
+				)
+					throw new PluginAuthorityError('PLUGIN_DENIED');
+			};
+			const assertActive = () => {
+				assertCurrent();
+				if (!this.isToolFeatureEnabled()) throw new PluginAuthorityError('PLUGIN_DENIED');
+				assertCurrent();
+				files.assertIdentity(identity);
+				assertPluginAuthority(assertStorage);
+				assertCurrent();
+				assertPluginAuthority(checkRun);
+				assertCurrent();
+				if (!this.isToolFeatureEnabled()) throw new PluginAuthorityError('PLUGIN_DENIED');
+				assertCurrent();
+			};
+			assertActive();
+			resource = files.create(agentId, Object.freeze({ signal, assertActive }), ttlMs);
+			resource.assertActive();
+			return resource;
+		} catch (error) {
+			// Dispose revokes first and latches cleanup failures without disclosing paths.
+			resource?.dispose();
+			throw new PluginAuthorityError(
+				error instanceof PluginAuthorityError ? error.code : 'PLUGIN_DENIED'
+			);
+		}
 	}
 
 	/** The permissions a plugin's manifest requests (empty for tier 0 / unknown). */
@@ -898,6 +1071,93 @@ export class PluginManager {
 		if (localId.startsWith('service:')) return Promise.reject(new Error('ServiceDenied'));
 		if (!this.deps.sandbox) return Promise.reject(new Error('sandbox not available'));
 		return this.deps.sandbox.invokeTool(pluginId, localId, args, context);
+	}
+
+	/** Host-only ingress. The opaque run proof is outside args and never reaches
+	 * the child. A trusted synchronous publisher can check retained authority at
+	 * the actual send boundary, without another awaited continuation. */
+	async invokeVerifiedTool(
+		toolId: string,
+		args: unknown,
+		runProof: unknown,
+		publish?: (result: unknown, assertActive: () => void) => void
+	): Promise<unknown> {
+		try {
+			if (publish !== undefined && typeof publish !== 'function')
+				throw new PluginAuthorityError('PLUGIN_DENIED');
+			const identity = this.toolIdentity;
+			const sandbox = this.toolSandbox;
+			const assertRecord = this.assertToolRecordActive;
+			if (
+				!(identity instanceof PluginToolRunIdentity) ||
+				!sandbox ||
+				typeof sandbox.captureToolLifetime !== 'function' ||
+				typeof assertRecord !== 'function'
+			)
+				throw new PluginAuthorityError('PLUGIN_DENIED');
+			if (typeof toolId !== 'string') throw new PluginAuthorityError('PLUGIN_INVALID');
+			const sep = toolId.indexOf('/');
+			if (sep <= 0 || sep === toolId.length - 1) throw new PluginAuthorityError('PLUGIN_INVALID');
+			const pluginId = toolId.slice(0, sep);
+			const localId = toolId.slice(sep + 1);
+			const lifetime = this.toolLifetime;
+			const record = getRecord(this.registry, pluginId);
+			const assertChild = sandbox.captureToolLifetime(pluginId);
+			if (typeof assertChild !== 'function') throw new PluginAuthorityError('PLUGIN_DENIED');
+			const assertCurrent = () => {
+				if (
+					this.toolAuthorityStopped ||
+					this.toolStopping ||
+					this.toolLifetime !== lifetime ||
+					this.deps.sandbox !== sandbox ||
+					!record ||
+					getRecord(this.registry, pluginId) !== record ||
+					!this.isRunnable(record)
+				)
+					throw new PluginAuthorityError('PLUGIN_DENIED');
+			};
+			const assertRuntime = () => {
+				assertCurrent();
+				if (!this.isToolFeatureEnabled()) throw new PluginAuthorityError('PLUGIN_DENIED');
+				assertCurrent();
+				if (!sandbox.isRunning(pluginId)) throw new PluginAuthorityError('PLUGIN_DENIED');
+				assertCurrent();
+				assertChild();
+				assertCurrent();
+				// Canonical pure declaration parser; never fall back to commands or disk grants.
+				if (!collectContributions(record!.manifest!).tools.some((tool) => tool.id === toolId))
+					throw new PluginAuthorityError('PLUGIN_DENIED');
+				assertCurrent();
+			};
+			assertRuntime();
+			// resolve rejects forged/expired proofs without inspecting caller-supplied IDs.
+			const context = identity.resolveVerified(runProof);
+			const assertActive = () => {
+				assertRuntime();
+				context.assertActive();
+				assertRuntime();
+				assertRecord(record!);
+				assertRuntime();
+				context.assertActive();
+				assertRuntime();
+			};
+			if (!this.deps.prepareToolRecordActive) throw new PluginAuthorityError('PLUGIN_DENIED');
+			await this.deps.prepareToolRecordActive(record!);
+			assertActive();
+			// The sandbox owns bounded args snapshotting and exact-child handle cleanup.
+			const result = await sandbox.invokeTool(pluginId, localId, args, { runContext: context });
+			if (!this.deps.prepareToolRecordActive) throw new PluginAuthorityError('PLUGIN_DENIED');
+			await this.deps.prepareToolRecordActive(record!);
+			assertActive();
+			// Host callback only, never plugin/serialized input. Its send must be
+			// synchronous and follow its own transport check + this live assertion.
+			publish?.(result, assertActive);
+			return result;
+		} catch (error) {
+			throw new PluginAuthorityError(
+				error instanceof PluginAuthorityError ? error.code : 'PLUGIN_DENIED'
+			);
+		}
 	}
 
 	/**

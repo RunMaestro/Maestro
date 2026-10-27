@@ -65,6 +65,8 @@ export type CueLogPayload =
 	  }
 	| {
 			type: 'queueOverflow';
+			/** Absent on older activity payloads, which described oldest-entry eviction. */
+			outcome?: 'incoming-rejected' | 'oldest-evicted';
 			sessionId: string;
 			sessionName: string;
 			subscriptionName: string;

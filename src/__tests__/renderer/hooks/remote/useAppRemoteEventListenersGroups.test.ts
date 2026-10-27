@@ -13,6 +13,7 @@ import { renderHook } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import { useAppRemoteEventListeners } from '../../../../renderer/hooks/remote/useAppRemoteEventListeners';
 import type { Group } from '../../../../shared/types';
+import type { Session } from '../../../../renderer/types';
 
 const storeState: { groups: Group[] } = { groups: [] };
 
@@ -36,17 +37,19 @@ vi.mock('../../../../renderer/utils/ids', () => ({ generateId: () => 'new-group'
 
 const createAck = vi.fn();
 const updateAck = vi.fn();
+const moveAck = vi.fn();
 const setAll = vi.fn().mockResolvedValue(undefined);
 
 const DEFAULT_EMOJI = '\u{1F4C2}';
 
-function setup() {
+function setup(sessions: Session[] = []) {
 	const setGroups = vi.fn();
+	const setSessions = vi.fn();
 	renderHook(() =>
 		useAppRemoteEventListeners({
-			sessionsRef: { current: [] },
+			sessionsRef: { current: sessions },
 			setActiveSessionId: vi.fn(),
-			setSessions: vi.fn(),
+			setSessions,
 			setGroups,
 			handleOpenFileTab: vi.fn(),
 			refreshFileTree: vi.fn(),
@@ -58,7 +61,7 @@ function setup() {
 			abortBatchOnError: vi.fn(),
 		} as any)
 	);
-	return { setGroups };
+	return { setGroups, setSessions };
 }
 
 /** The group list the handler asked the store to hold. */
@@ -96,6 +99,7 @@ beforeEach(() => {
 		process: {
 			sendRemoteCreateGroupResponse: createAck,
 			sendRemoteUpdateGroupResponse: updateAck,
+			sendRemoteMoveSessionToGroupResponse: moveAck,
 			kill: vi.fn().mockResolvedValue(undefined),
 		},
 		groups: { setAll },
@@ -294,5 +298,74 @@ describe('maestro:remoteUpdateGroup', () => {
 
 		expect(resultingGroups(setGroups, storeState.groups)[0]).not.toHaveProperty('hidden');
 		expect(updateAck).toHaveBeenCalledWith('ch', true);
+	});
+
+	it('collapses a group and writes it to disk before acking', async () => {
+		storeState.groups = [group({ id: 'g1', collapsed: false })];
+		const { setGroups } = setup();
+
+		dispatchUpdate('g1', { collapsed: true });
+		await flush();
+
+		expect(resultingGroups(setGroups, storeState.groups)[0]).toMatchObject({ collapsed: true });
+		expect(setAll).toHaveBeenCalledWith([expect.objectContaining({ id: 'g1', collapsed: true })]);
+		// `list groups --json` read right after the ack must see the new value.
+		expect(setAll.mock.invocationCallOrder[0]).toBeLessThan(updateAck.mock.invocationCallOrder[0]);
+		expect(updateAck).toHaveBeenCalledWith('ch', true);
+	});
+
+	it('expands a collapsed group', async () => {
+		storeState.groups = [group({ id: 'g1', collapsed: true })];
+		const { setGroups } = setup();
+
+		dispatchUpdate('g1', { collapsed: false });
+		await flush();
+
+		expect(resultingGroups(setGroups, storeState.groups)[0]).toMatchObject({ collapsed: false });
+		expect(updateAck).toHaveBeenCalledWith('ch', true);
+	});
+});
+
+describe('maestro:remoteMoveSessionToGroup', () => {
+	const agent = (id: string, extra: Partial<Session> = {}) => ({ id, ...extra }) as Session;
+	const dispatchMove = (sessionId: string, groupId: string | null) =>
+		window.dispatchEvent(
+			new CustomEvent('maestro:remoteMoveSessionToGroup', {
+				detail: { sessionId, groupId, responseChannel: 'ch' },
+			})
+		);
+
+	it('moves the worktree children with their parent, the same write as a Left Bar drag', () => {
+		const sessions = [
+			agent('p', { groupId: 'g1' }),
+			agent('wt', { parentSessionId: 'p', groupId: 'g1' }),
+			agent('other', { groupId: 'g1' }),
+		];
+		const { setSessions } = setup(sessions);
+		dispatchMove('p', 'g2');
+
+		const updater = setSessions.mock.calls[0][0] as (prev: Session[]) => Session[];
+		const next = updater(sessions);
+		expect(next.map((s) => s.groupId)).toEqual(['g2', 'g2', 'g1']);
+		expect(moveAck).toHaveBeenCalledWith('ch', true);
+	});
+
+	it('ungroups with a null group and stores no groupId key', () => {
+		const sessions = [
+			agent('p', { groupId: 'g1' }),
+			agent('wt', { parentSessionId: 'p', groupId: 'g1' }),
+		];
+		const { setSessions } = setup(sessions);
+		dispatchMove('p', null);
+
+		const next = (setSessions.mock.calls[0][0] as (prev: Session[]) => Session[])(sessions);
+		expect(next.every((s) => !('groupId' in s))).toBe(true);
+	});
+
+	it('refuses an unknown agent without writing', () => {
+		const { setSessions } = setup([agent('p')]);
+		dispatchMove('missing', 'g1');
+		expect(setSessions).not.toHaveBeenCalled();
+		expect(moveAck).toHaveBeenCalledWith('ch', false);
 	});
 });

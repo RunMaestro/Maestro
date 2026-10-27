@@ -18,7 +18,12 @@ import {
 	resolveConfigDirKeyFromEnv,
 	mergeClaudeSpawnEnvLayers,
 	defaultSelectMode,
+	applyClaudeSpawnDecision,
+	buildRemoteInteractiveSpawn,
+	isAgentOwnWorkingDirectory,
+	MAESTRO_P_ACCEPT_WORKSPACE_TRUST_ENV,
 	type ClaudeSpawnCoreDeps,
+	type ClaudeSpawnDecision,
 } from '../../../main/agents/claudeSpawnCore';
 
 const CLAUDE_AGENT = {
@@ -281,5 +286,55 @@ describe('findPackagedAppHost (#1770)', () => {
 		expect(
 			findPackagedAppHost(resources, 'darwin', existsAmong(path.join(resources, 'app.asar')))
 		).toBeNull();
+	});
+});
+
+describe("workspace trust for the agent's own cwd (#1872)", () => {
+	const localDecision: ClaudeSpawnDecision = {
+		mode: 'interactive',
+		reason: 'auto',
+		maestroPBinPath: '/app/maestro-p.js',
+		claudeRealBinPath: '/usr/local/bin/claude',
+	};
+	const remoteDecision: ClaudeSpawnDecision = {
+		mode: 'interactive',
+		reason: 'auto',
+		maestroPBinPath: null,
+		remote: true,
+	};
+	const applyLocal = (acceptWorkspaceTrust?: boolean) =>
+		applyClaudeSpawnDecision({
+			decision: localDecision,
+			command: 'claude',
+			args: ['--print', '--', 'hi'],
+			execPath: '/usr/bin/node',
+			resourcesPath: '',
+			acceptWorkspaceTrust,
+		});
+
+	it('matches the agent cwd or project root, ignoring trailing and doubled separators', () => {
+		const agent = { cwd: '/Users/me/project/', projectRoot: '/Users/me/root' };
+		expect(isAgentOwnWorkingDirectory('/Users/me/project', agent)).toBe(true);
+		expect(isAgentOwnWorkingDirectory('/Users/me//root', agent)).toBe(true);
+	});
+
+	it('does not match another folder, a sibling prefix, or a missing agent', () => {
+		const agent = { cwd: '/Users/me/project' };
+		expect(isAgentOwnWorkingDirectory('/Users/me', agent)).toBe(false);
+		expect(isAgentOwnWorkingDirectory('/Users/me/project-two', agent)).toBe(false);
+		expect(isAgentOwnWorkingDirectory('/Users/me/project', undefined)).toBe(false);
+		expect(isAgentOwnWorkingDirectory(undefined, agent)).toBe(false);
+	});
+
+	it('local maestro-p spawn gets the opt-in only when asked', () => {
+		expect(applyLocal(true).customEnvVars?.[MAESTRO_P_ACCEPT_WORKSPACE_TRUST_ENV]).toBe('1');
+		expect(applyLocal().customEnvVars).not.toHaveProperty(MAESTRO_P_ACCEPT_WORKSPACE_TRUST_ENV);
+	});
+
+	it('remote maestro-p spawn gets the opt-in only when asked', () => {
+		expect(
+			buildRemoteInteractiveSpawn({ decision: remoteDecision, acceptWorkspaceTrust: true })?.env
+		).toEqual({ [MAESTRO_P_ACCEPT_WORKSPACE_TRUST_ENV]: '1' });
+		expect(buildRemoteInteractiveSpawn({ decision: remoteDecision })?.env).toEqual({});
 	});
 });

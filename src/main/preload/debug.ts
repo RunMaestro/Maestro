@@ -7,7 +7,11 @@
  */
 
 import { ipcRenderer } from 'electron';
-import type { DebugPackageOptions } from '../../shared/debugPackage';
+import {
+	AUTO_RUN_SNAPSHOT_REQUEST_CHANNEL,
+	type AutoRunSnapshotReply,
+	type DebugPackageOptions,
+} from '../../shared/debugPackage';
 
 export type { DebugPackageOptions };
 
@@ -189,6 +193,22 @@ export function createDebugApi() {
 				handler(data);
 			ipcRenderer.on('debug:profilingProgress', wrapped);
 			return () => ipcRenderer.removeListener('debug:profilingProgress', wrapped);
+		},
+
+		/**
+		 * Answer main's request for this window's Auto Run snapshots, made when a
+		 * package is built with no renderer in the loop (`maestro-cli
+		 * support-package`, Feedback's support package). Returns the unsubscribe.
+		 */
+		onAutoRunSnapshotRequest: (callback: (responseChannel: string) => void): (() => void) => {
+			const handler = (_event: Electron.IpcRendererEvent, responseChannel: string) =>
+				callback(responseChannel);
+			ipcRenderer.on(AUTO_RUN_SNAPSHOT_REQUEST_CHANNEL, handler);
+			return () => ipcRenderer.removeListener(AUTO_RUN_SNAPSHOT_REQUEST_CHANNEL, handler);
+		},
+
+		sendAutoRunSnapshotResponse: (responseChannel: string, reply: AutoRunSnapshotReply): void => {
+			ipcRenderer.send(responseChannel, reply);
 		},
 
 		/**

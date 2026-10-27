@@ -48,6 +48,7 @@ import {
 import { getClaudeTokenMode } from '../../claudeTokenMode';
 import type { UsageStats } from '../../types';
 import { buildAgentArgs, applyAgentConfigOverrides } from '../launch/agent-args';
+import { isAgentOwnWorkingDirectory } from '../launch/interactive-mode';
 import { calculateContextTokens } from '../parsers/usage-aggregator';
 import { logger, captureException } from '../host';
 import { appendToLog, readLog, saveImage } from './log';
@@ -2220,6 +2221,9 @@ ${readOnly ? 'READ-ONLY MODE is active. You and all participants can only inspec
 						maestroPPath: matchingSession?.maestroPPath,
 						readOnlyMode: readOnly ?? false, // Propagate read-only mode from caller
 						debugLabel: `participant: ${participantName}`,
+						// A participant runs in its own agent's cwd (the home-dir fallback is not),
+						// so a TUI participant may accept claude's folder-trust prompt there (#1872).
+						acceptWorkspaceTrust: isAgentOwnWorkingDirectory(cwd, matchingSession),
 						// Match maestro-p's idle budget to the participant supervising timeout
 						// so a still-working participant isn't killed at maestro-p's 300s default.
 						maxWaitSeconds: Math.ceil(PARTICIPANT_RESPONSE_TIMEOUT_MS / 1000),
@@ -2849,6 +2853,9 @@ Review the agent responses above. Either:
 			maestroPPath: matchingSession?.maestroPPath,
 			readOnlyMode: readOnly ?? false,
 			debugLabel: `recovery of ${participantName}`,
+			// A participant runs in its own agent's cwd (the home-dir fallback is not),
+			// so a TUI participant may accept claude's folder-trust prompt there (#1872).
+			acceptWorkspaceTrust: isAgentOwnWorkingDirectory(cwd, matchingSession),
 			// Match maestro-p's idle budget to the participant supervising timeout
 			// so a still-working recovery turn isn't killed at maestro-p's 300s default.
 			maxWaitSeconds: Math.ceil(PARTICIPANT_RESPONSE_TIMEOUT_MS / 1000),

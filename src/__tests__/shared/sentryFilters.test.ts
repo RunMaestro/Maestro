@@ -144,6 +144,39 @@ describe('shouldDropSentryEvent', () => {
 			).toBe(true);
 		});
 
+		// MAESTRO-15T: the Linux wording of the same refusal.
+		it('drops the Linux trash failure through shell:trashItem', () => {
+			expect(
+				shouldDropSentryEvent(
+					exceptionEvent(
+						'Error',
+						"Error invoking remote method 'shell:trashItem': Error: Failed to move item to trash"
+					)
+				)
+			).toBe(true);
+		});
+
+		// MAESTRO-16F/16G/176: agent prose linked as a path is too long to stat.
+		it('drops ENAMETOOLONG through fs:stat and fs:readFile', () => {
+			for (const [method, op] of [
+				['fs:stat', 'Failed to get file stats: Error: ENAMETOOLONG: name too long, stat'],
+				['fs:readFile', 'Failed to read file: Error: ENAMETOOLONG: name too long, open'],
+			]) {
+				expect(
+					shouldDropSentryEvent(
+						exceptionEvent(
+							'Error',
+							`Error invoking remote method '${method}': Error: ${op} '/consegna verificata; nessun output trovato...'`
+						)
+					)
+				).toBe(true);
+			}
+		});
+
+		it('keeps ENAMETOOLONG from a spawn, which is our own argv', () => {
+			expect(shouldDropSentryEvent(exceptionEvent('Error', 'spawn ENAMETOOLONG'))).toBe(false);
+		});
+
 		it('keeps a generic delete failure that did NOT come from shell:trashItem', () => {
 			// The rule is scoped to the one IPC channel we know shows a toast -
 			// the same words arriving from anywhere else are still signal.

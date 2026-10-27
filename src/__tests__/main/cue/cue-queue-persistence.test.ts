@@ -78,6 +78,70 @@ describe('cue-queue-persistence', () => {
 		});
 	}
 
+	it('acknowledges durable persistence without reading unrelated sessions', () => {
+		const p = makePersistence();
+		const db = getSharedDb(),
+			originalRead = db.getQueuedEvents.bind(db);
+		const read = vi.spyOn(db, 'getQueuedEvents').mockImplementation((id) => {
+			if (id === undefined) throw Error('synthetic unrelated backlog unavailable');
+			return originalRead(id);
+		});
+		try {
+			expect(
+				p.persist('s-1', 'bounded-readback', makeEntry({ event: makeEvent('plugin.event') }))
+			).toBe(true);
+		} finally {
+			read.mockRestore();
+		}
+	});
+
+	it('recovers a failed startup snapshot without including new writes and resets exclusions next start', () => {
+		const p = makePersistence();
+		p.persist('s-1', 'old', makeEntry({ event: makeEvent('plugin.event') }));
+		p.beginRestoreEpoch();
+		const read = vi.spyOn(getSharedDb(), 'getQueuedEvents');
+		read.mockImplementationOnce(() => {
+			throw Error('synthetic snapshot read failure');
+		});
+		expect(p.persistedIds(true)).toBeNull();
+		p.persist('s-1', 'current', makeEntry({ event: makeEvent('plugin.event') }));
+		expect(p.persistedIds(true)).toEqual(new Set(['old']));
+		p.beginRestoreEpoch();
+		expect(p.persistedIds(true)).toEqual(new Set(['old', 'current']));
+		read.mockImplementationOnce(() => {
+			throw Error('synthetic restore read failure');
+		});
+		expect(p.restoreAll(new Set(['old']))).toBeNull();
+		expect(
+			p
+				.restoreAll(new Set(['old']))!
+				.get('s-1')!
+				.map((entry) => entry.persistId)
+		).toEqual(['old']);
+	});
+
+	it('parks unsupported historical rows without stale/session cleanup or execution', () => {
+		const p = makePersistence({ known: [], now: NOW + 999999999 });
+		const event = { ...makeEvent('app.startup'), type: 'retired.source' } as unknown as CueEvent;
+		p.persist('s-1', 'historical-parked', makeEntry({ event }));
+		expect(p.restoreAll()!.size).toBe(0);
+		p.clearSession('s-1');
+		p.clearAll();
+		expect(p.persistedIds()!.has('historical-parked')).toBe(true);
+	});
+	it('acknowledges plugin events only after a matching durable row can be read back', () => {
+		const p = makePersistence();
+		const event = makeEvent('plugin.event');
+		expect(p.persist('s-1', 'mail-row', makeEntry({ event }))).toBe(true);
+		expect(p.restoreAll()!.get('s-1')![0].event).toEqual(event);
+		const write = vi.spyOn(getSharedDb(), 'persistQueuedEvent').mockImplementation(() => {});
+		expect(p.persist('s-1', 'no-op-row', makeEntry({ event }))).toBe(false);
+		write.mockImplementation(() => {
+			throw new Error('Synthetic disk failure');
+		});
+		expect(p.persist('s-1', 'failed-row', makeEntry({ event }))).toBe(false);
+		write.mockRestore();
+	});
 	describe('restoring only what a previous run left behind', () => {
 		// The engine snapshots persistedIds() before sessions initialize. A row
 		// persisted after that (this boot's own app.startup queued behind a
@@ -85,19 +149,19 @@ describe('cue-queue-persistence', () => {
 		it('restores only the ids in the snapshot and leaves later rows alone', () => {
 			const p = makePersistence();
 			p.persist('s-1', 'from-last-run', makeEntry({ subscriptionName: 'old' }));
-			const before = p.persistedIds();
+			const before = p.persistedIds()!;
 			p.persist('s-1', 'queued-this-boot', makeEntry({ subscriptionName: 'startup' }));
 
-			const restored = p.restoreAll(before).get('s-1')!;
+			const restored = p.restoreAll(before)!.get('s-1')!;
 			expect(restored.map((e) => e.persistId)).toEqual(['from-last-run']);
-			expect(p.persistedIds()).toEqual(new Set(['from-last-run', 'queued-this-boot']));
+			expect(p.persistedIds()!).toEqual(new Set(['from-last-run', 'queued-this-boot']));
 		});
 
 		it('restores every row when no snapshot is given', () => {
 			const p = makePersistence();
 			p.persist('s-1', 'a', makeEntry());
 			p.persist('s-1', 'b', makeEntry());
-			expect(p.restoreAll().get('s-1')).toHaveLength(2);
+			expect(p.restoreAll()!.get('s-1')).toHaveLength(2);
 		});
 	});
 
@@ -114,7 +178,7 @@ describe('cue-queue-persistence', () => {
 			});
 			p.persist('s-1', 'pid-1', entry);
 
-			const restored = p.restoreAll();
+			const restored = p.restoreAll()!;
 			expect(restored.size).toBe(1);
 			const entries = restored.get('s-1')!;
 			expect(entries).toHaveLength(1);
@@ -135,7 +199,7 @@ describe('cue-queue-persistence', () => {
 			p.persist('s-1', 'pid-model', makeEntry({ turnSettings: { model: 'gpt-5.5-codex' } }));
 			p.persist('s-1', 'pid-none', makeEntry());
 
-			const entries = p.restoreAll().get('s-1')!;
+			const entries = p.restoreAll()!.get('s-1')!;
 			const byId = new Map(entries.map((e) => [e.persistId, e]));
 			expect(byId.get('pid-tier')!.turnSettings).toEqual({ tier: 'high', effort: 'low' });
 			expect(byId.get('pid-model')!.turnSettings).toEqual({ model: 'gpt-5.5-codex' });
@@ -161,7 +225,7 @@ describe('cue-queue-persistence', () => {
 				parentEventId: null,
 			});
 
-			const entries = p.restoreAll().get('s-1')!;
+			const entries = p.restoreAll()!.get('s-1')!;
 			expect(entries).toHaveLength(1);
 			expect(entries[0].turnSettings).toBeUndefined();
 		});
@@ -187,7 +251,7 @@ describe('cue-queue-persistence', () => {
 				})
 			);
 
-			const restored = p.restoreAll().get('s-1')!;
+			const restored = p.restoreAll()!.get('s-1')!;
 			const root = restored.find((e) => e.subscriptionName === 'root')!;
 			const child = restored.find((e) => e.subscriptionName === 'child')!;
 			// Root rows persisted without lineage come back undefined (matches
@@ -216,7 +280,7 @@ describe('cue-queue-persistence', () => {
 			p.persist('s-1', 'pid-autorun', makeEntry({ action: 'autorun', autoRun }));
 			p.persist('s-1', 'pid-prompt', makeEntry({ subscriptionName: 'plain' }));
 
-			const restored = p.restoreAll().get('s-1')!;
+			const restored = p.restoreAll()!.get('s-1')!;
 			expect(restored.find((e) => e.action === 'autorun')!.autoRun).toEqual(autoRun);
 			expect(restored.find((e) => e.subscriptionName === 'plain')!.autoRun).toBeUndefined();
 		});
@@ -230,7 +294,7 @@ describe('cue-queue-persistence', () => {
 			p.persist('s-1', 'pid-notify', makeEntry({ action: 'notify', notify }));
 			p.persist('s-1', 'pid-prompt', makeEntry({ subscriptionName: 'plain' }));
 
-			const restored = p.restoreAll().get('s-1')!;
+			const restored = p.restoreAll()!.get('s-1')!;
 			expect(restored.find((e) => e.action === 'notify')!.notify).toEqual(notify);
 			expect(restored.find((e) => e.subscriptionName === 'plain')!.notify).toBeUndefined();
 		});
@@ -254,7 +318,7 @@ describe('cue-queue-persistence', () => {
 				autoRunJson: '{not json',
 			});
 
-			expect(p.restoreAll().size).toBe(0);
+			expect(p.restoreAll()!.size).toBe(0);
 			expect(getSharedDb().getQueuedEvents()).toHaveLength(0);
 		});
 
@@ -264,7 +328,7 @@ describe('cue-queue-persistence', () => {
 			p.persist('s-2', 'b', makeEntry({ subscriptionName: 'B', queuedAt: NOW - 150 }));
 			p.persist('s-1', 'c', makeEntry({ subscriptionName: 'C', queuedAt: NOW - 50 }));
 
-			const restored = p.restoreAll();
+			const restored = p.restoreAll()!;
 			expect(restored.get('s-1')?.map((e) => e.subscriptionName)).toEqual(['A', 'C']);
 			expect(restored.get('s-2')?.map((e) => e.subscriptionName)).toEqual(['B']);
 		});
@@ -276,7 +340,7 @@ describe('cue-queue-persistence', () => {
 			p.persist('s-1', 'pid-1', makeEntry());
 			p.persist('s-1', 'pid-2', makeEntry());
 			p.remove('pid-1');
-			expect(p.restoreAll().get('s-1')).toHaveLength(1);
+			expect(p.restoreAll()!.get('s-1')).toHaveLength(1);
 		});
 
 		it('is a no-op for unknown ids', () => {
@@ -286,12 +350,33 @@ describe('cue-queue-persistence', () => {
 	});
 
 	describe('clear', () => {
+		it.each(['all', 'session'])(
+			'preserves acknowledged plugin rows across %s lifecycle clearing, then restores once',
+			(scope) => {
+				const p = makePersistence({ known: ['s-1', 's-2'] });
+				const event = makeEvent('plugin.event');
+				expect(p.persist('s-1', 'durable', makeEntry({ event }))).toBe(true);
+				p.persist('s-1', 'ordinary', makeEntry());
+				p.persist('s-2', 'other', makeEntry());
+				if (scope === 'all') p.clearAll();
+				else p.clearSession('s-1');
+				expect(p.persistedIds()!.has('durable')).toBe(true);
+				expect(p.persistedIds()!.has('ordinary')).toBe(false);
+				expect(p.persistedIds()!.has('other')).toBe(scope !== 'all');
+				expect(p.restoreAll()!.get('s-1')).toEqual([
+					expect.objectContaining({ persistId: 'durable', event }),
+				]);
+				p.remove('durable');
+				expect(p.restoreAll()!.has('s-1')).toBe(false);
+			}
+		);
+
 		it("clearSession drops only that session's rows", () => {
 			const p = makePersistence({ known: ['s-1', 's-2'] });
 			p.persist('s-1', 'a', makeEntry());
 			p.persist('s-2', 'b', makeEntry());
 			p.clearSession('s-1');
-			const restored = p.restoreAll();
+			const restored = p.restoreAll()!;
 			expect(restored.has('s-1')).toBe(false);
 			expect(restored.get('s-2')).toHaveLength(1);
 		});
@@ -301,7 +386,7 @@ describe('cue-queue-persistence', () => {
 			p.persist('s-1', 'a', makeEntry());
 			p.persist('s-2', 'b', makeEntry());
 			p.clearAll();
-			expect(p.restoreAll().size).toBe(0);
+			expect(p.restoreAll()!.size).toBe(0);
 		});
 	});
 
@@ -310,7 +395,7 @@ describe('cue-queue-persistence', () => {
 			const p = makePersistence({ known: ['s-1'] });
 			p.persist('s-1', 'alive', makeEntry());
 			p.persist('s-ghost', 'ghost', makeEntry());
-			const restored = p.restoreAll();
+			const restored = p.restoreAll()!;
 			expect(restored.size).toBe(1);
 			expect(restored.has('s-ghost')).toBe(false);
 			// Warn was logged with queueDropped payload (no sessionId for aggregate)
@@ -337,7 +422,7 @@ describe('cue-queue-persistence', () => {
 			p.persist('s-1', 'alive', makeEntry({ subscriptionName: 'kept' }));
 			p.persist('s-1', 'orphan', makeEntry({ subscriptionName: 'removed-by-import' }));
 
-			const restored = p.restoreAll();
+			const restored = p.restoreAll()!;
 
 			expect(restored.get('s-1')?.map((e) => e.persistId)).toEqual(['alive']);
 			expect(
@@ -370,7 +455,7 @@ describe('cue-queue-persistence', () => {
 
 			expect(
 				p
-					.restoreAll()
+					.restoreAll()!
 					.get('s-target')
 					?.map((e) => e.persistId)
 			).toEqual(['fanout']);
@@ -380,14 +465,32 @@ describe('cue-queue-persistence', () => {
 			const p = makePersistence({ known: ['s-1'] });
 			p.persist('s-1', 'any', makeEntry({ subscriptionName: 'whatever' }));
 
-			expect(p.restoreAll().get('s-1')).toHaveLength(1);
+			expect(p.restoreAll()!.get('s-1')).toHaveLength(1);
+		});
+
+		it('restores an acknowledged old plugin row while ordinary rows still expire', () => {
+			const p = makePersistence({ timeoutMs: 60_000, now: NOW });
+			p.persist(
+				's-1',
+				'durable-old',
+				makeEntry({ event: makeEvent('plugin.event'), queuedAt: NOW - 86_400_000 })
+			);
+			p.persist('s-1', 'ordinary-old', makeEntry({ queuedAt: NOW - 86_400_000 }));
+			expect(
+				p
+					.restoreAll()!
+					.get('s-1')
+					?.map((entry) => entry.persistId)
+			).toEqual(['durable-old']);
+			expect(p.persistedIds()!.has('durable-old')).toBe(true);
+			expect(p.persistedIds()!.has('ordinary-old')).toBe(false);
 		});
 
 		it('drops stale rows whose age exceeds session timeout, records timeout event', () => {
 			const p = makePersistence({ timeoutMs: 10 * 60 * 1000, now: NOW });
 			// Queued 20 minutes ago
 			p.persist('s-1', 'stale', makeEntry({ queuedAt: NOW - 20 * 60 * 1000 }));
-			const restored = p.restoreAll();
+			const restored = p.restoreAll()!;
 			expect(restored.size).toBe(0);
 			// cue_events has a timeout row for the dropped entry. Status is
 			// 'timeout' (a valid CueRunStatus); reason goes in the payload.
@@ -422,7 +525,7 @@ describe('cue-queue-persistence', () => {
 				chainRootId: null,
 				parentEventId: null,
 			});
-			const restored = p.restoreAll();
+			const restored = p.restoreAll()!;
 			expect(restored.size).toBe(0);
 			// Live queue row removed; cue_events audit row recorded.
 			expect(
@@ -448,7 +551,7 @@ describe('cue-queue-persistence', () => {
 			p.persist('s-1', 'a', makeEntry());
 			p.persist('s-1', 'b', makeEntry());
 			p.persist('s-2', 'c', makeEntry());
-			p.restoreAll();
+			p.restoreAll()!;
 			const restoredLogs = onLog.mock.calls.filter(
 				(c) => c[2] && (c[2] as { type?: string }).type === 'queueRestored'
 			);
@@ -458,7 +561,7 @@ describe('cue-queue-persistence', () => {
 
 		it('returns empty map when no rows exist', () => {
 			const p = makePersistence();
-			expect(p.restoreAll().size).toBe(0);
+			expect(p.restoreAll()!.size).toBe(0);
 		});
 	});
 
@@ -471,7 +574,7 @@ describe('cue-queue-persistence', () => {
 			const drainedAt = NOW - 5 * 60 * 60 * 1000;
 			p.persist('s-1', 'deferred', makeEntry({ queuedAt: drainedAt - 5 * 60_000, drainedAt }));
 
-			const [entry] = p.restoreAll().get('s-1')!;
+			const [entry] = p.restoreAll()!.get('s-1')!;
 			expect(entry.persistId).toBe('deferred');
 			expect(entry.drainedAt).toBe(drainedAt);
 			expect(entry.queuedAt).toBe(NOW - 5 * 60_000);
@@ -483,13 +586,13 @@ describe('cue-queue-persistence', () => {
 			const p = makePersistence({ timeoutMs });
 			const drainedAt = NOW - 60_000;
 			p.persist('s-1', 'old', makeEntry({ queuedAt: drainedAt - 31 * 60_000, drainedAt }));
-			expect(p.restoreAll().size).toBe(0);
+			expect(p.restoreAll()!.size).toBe(0);
 		});
 
 		it('keeps the wall-clock rule for an unstamped row of the same age', () => {
 			const p = makePersistence({ timeoutMs });
 			p.persist('s-1', 'crash', makeEntry({ queuedAt: NOW - 5 * 60 * 60 * 1000 - 5 * 60_000 }));
-			expect(p.restoreAll().size).toBe(0);
+			expect(p.restoreAll()!.size).toBe(0);
 		});
 	});
 });

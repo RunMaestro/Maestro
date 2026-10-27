@@ -1,3 +1,4 @@
+import type { PluginJson } from '../plugins/primitives';
 /**
  * Shared Cue contracts used across main, preload, and renderer.
  *
@@ -34,7 +35,8 @@ export type CueEventType =
 	| 'github.label'
 	| 'task.pending'
 	| 'cli.trigger'
-	| 'webhook.received';
+	| 'webhook.received'
+	| 'plugin.event';
 
 /** All valid event type values */
 export const CUE_EVENT_TYPES: CueEventType[] = [
@@ -50,6 +52,7 @@ export const CUE_EVENT_TYPES: CueEventType[] = [
 	'task.pending',
 	'cli.trigger',
 	'webhook.received',
+	'plugin.event',
 ];
 
 /**
@@ -251,7 +254,26 @@ export type CueCommand = { mode: 'shell'; shell: string } | { mode: 'cli'; cli: 
  * are NOT part of the runtime contract. See `CueSubscriptionDocument` in the
  * config normalizer if you need to know whether the prompt came from a file.
  */
+export interface CuePluginSource {
+	pluginId: string;
+	topic: string;
+	config: PluginJson;
+}
+export interface CuePluginEnvelope {
+	/** Host-owned durable admission identity, bound by the event proof. */
+	receiptId?: string;
+	receiptKey?: string;
+	recordRevision: string;
+	pluginId: string;
+	topic: string;
+	consumerId: string;
+	ownerAgentId: string;
+	sourceGeneration: string;
+	eventId: string;
+	proof: string;
+}
 export interface CueSubscription {
+	plugin?: CuePluginSource;
 	name: string;
 	event: CueEventType;
 	enabled: boolean;
@@ -499,6 +521,7 @@ export interface CueConfig {
 
 /** An event instance produced by a trigger */
 export interface CueEvent {
+	pluginSource?: CuePluginEnvelope;
 	id: string;
 	type: CueEventType;
 	timestamp: string;
@@ -511,6 +534,8 @@ export type CueRunStatus = 'running' | 'completed' | 'failed' | 'timeout' | 'sto
 
 /** Result of a completed (or failed/timed-out) Cue run */
 export interface CueRunResult {
+	/** False only when the real executor proves no child was launched. */
+	executionStarted?: boolean;
 	runId: string;
 	sessionId: string;
 	sessionName: string;

@@ -1,3 +1,5 @@
+import { PLUGIN_PRIMITIVE_METHODS, type PluginPrimitives } from './plugin-primitives';
+import { PluginAuthorityError } from './plugin-authority';
 /**
  * Host-call handlers: the actual implementations behind each brokered RPC.
  *
@@ -130,6 +132,7 @@ export interface PluginSessionMetadata {
 }
 
 export interface HostHandlerDeps {
+	primitives?: PluginPrimitives;
 	serviceManifest?: (pluginId: string) => PluginManifest | undefined;
 	serviceRunning?: (pluginId: string) => boolean;
 	serviceAllowed?: (
@@ -279,8 +282,14 @@ export interface HostHandlerDeps {
 		action: 'open' | 'close' | 'toggle'
 	) => void;
 
-	/** Read-only agent listing (no secrets): id/name/cwd/toolType only. */
-	listAgents: () => Array<{ id: string; name: string; cwd?: string; toolType?: string }>;
+	/** Read-only agent metadata; parentSessionId identifies an existing worktree child. */
+	listAgents: () => Array<{
+		id: string;
+		name: string;
+		cwd?: string;
+		toolType?: string;
+		parentSessionId?: string;
+	}>;
 	/** Optional path for per-plugin private SQLite databases. */
 	storageSqlBaseDir?: string;
 	runStorageSql?: (
@@ -2054,6 +2063,7 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 	const cleanupPluginResources = (pluginId: string): Promise<void> => {
 		const drain = Promise.all([
 			services.cleanupPlugin(pluginId),
+			deps.primitives?.cleanupPlugin(pluginId),
 			mediaTools.cleanupPlugin(pluginId),
 		]).then(() => {});
 		void drain.catch(() => {});
@@ -2093,6 +2103,19 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 		return drain;
 	};
 	deps.registerResourceCleanup?.(cleanupPluginResources);
+
+	for (const method of PLUGIN_PRIMITIVE_METHODS) {
+		handlers[method] = async (pluginId, params, context) => {
+			if (!deps.primitives) throw new PluginAuthorityError('PLUGIN_UNAVAILABLE');
+			try {
+				return await deps.primitives.call(pluginId, method, params, context?.setResponseGuard);
+			} catch (error) {
+				throw error instanceof PluginAuthorityError
+					? error
+					: new PluginAuthorityError('PLUGIN_UNAVAILABLE');
+			}
+		};
+	}
 
 	return handlers;
 }

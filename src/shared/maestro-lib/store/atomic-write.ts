@@ -21,6 +21,24 @@ import { assertSerializedJsonIsSafe } from '../../jsonUtils';
 const RENAME_MAX_RETRIES = 3;
 const RENAME_BASE_DELAY_MS = 100;
 
+let tempSequence = 0;
+
+/**
+ * A temp path no other write can be using: unique per process (pid) and per
+ * call (sequence), so two writers aimed at the same target never share one.
+ *
+ * A fixed `${filePath}.tmp` is NOT safe for concurrent writers. Two callers
+ * both write the same temp file, the first `rename` moves it into place, and
+ * the second `rename` finds nothing to move and throws ENOENT. That is what
+ * the history JSONL migration did in the field (MAESTRO-15K): two overlapping
+ * `getAllEntriesPaginated` calls each migrated every legacy session at once.
+ * The second process matters too: `maestro-cli` writes the same files. Same
+ * naming as `tempPathFor` in `src/main/stores/deferred-writes.ts`.
+ */
+function uniqueTempPath(filePath: string): string {
+	return `${filePath}.${process.pid}.${++tempSequence}.tmp`;
+}
+
 /**
  * Atomically write JSON to `filePath` via a temp file + rename. Retries the
  * rename on EPERM/EBUSY (transient Windows file locks from OneDrive/antivirus).
@@ -53,25 +71,33 @@ export async function atomicWriteFile(
 	contents: string | Buffer,
 	options?: { mode?: number; durable?: boolean }
 ): Promise<void> {
-	const tmp = `${filePath}.tmp`;
-	await fs.writeFile(
-		tmp,
-		contents,
-		options?.mode !== undefined || options?.durable
-			? { encoding: 'utf-8', mode: options.mode, flush: options.durable ?? false }
-			: 'utf-8'
-	);
-	for (let attempt = 0; attempt <= RENAME_MAX_RETRIES; attempt++) {
-		try {
-			await fs.rename(tmp, filePath);
-			return;
-		} catch (err) {
-			const code = (err as NodeJS.ErrnoException).code;
-			if ((code === 'EPERM' || code === 'EBUSY') && attempt < RENAME_MAX_RETRIES) {
-				await new Promise((resolve) => setTimeout(resolve, RENAME_BASE_DELAY_MS * 2 ** attempt));
-				continue;
+	const tmp = uniqueTempPath(filePath);
+	try {
+		await fs.writeFile(
+			tmp,
+			contents,
+			options?.mode !== undefined || options?.durable
+				? { encoding: 'utf-8', mode: options.mode, flush: options.durable ?? false }
+				: 'utf-8'
+		);
+		for (let attempt = 0; attempt <= RENAME_MAX_RETRIES; attempt++) {
+			try {
+				await fs.rename(tmp, filePath);
+				return;
+			} catch (err) {
+				const code = (err as NodeJS.ErrnoException).code;
+				if ((code === 'EPERM' || code === 'EBUSY') && attempt < RENAME_MAX_RETRIES) {
+					await new Promise((resolve) => setTimeout(resolve, RENAME_BASE_DELAY_MS * 2 ** attempt));
+					continue;
+				}
+				throw err;
 			}
-			throw err;
 		}
+	} catch (err) {
+		// A unique name is never reused, so a temp file left behind by a failed
+		// write would sit there forever. Best effort: the original error is the
+		// one worth reporting.
+		await fs.unlink(tmp).catch(() => {});
+		throw err;
 	}
 }

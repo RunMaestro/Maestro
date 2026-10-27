@@ -186,6 +186,7 @@ import type { CueLogPayload } from '../shared/cue-log-types';
 import type { CueStatsAggregation, CueStatsTimeRange } from '../shared/cue-stats-types';
 import type { AutoRunKind, QueryEvent, StatsAggregation } from '../shared/stats-types';
 import type { MaestroCliStatus, MaestroCliInstallResult } from '../shared/maestro-cli';
+import type { LiveModeSetResult, LiveModeStateEvent, LiveModeStatus } from '../shared/liveMode';
 import type {
 	CotAgentConfig,
 	CotAgentStatus,
@@ -193,7 +194,7 @@ import type {
 	CotFolderValidation,
 	CotSetResult,
 } from '../shared/cotExport/types';
-import type { DebugPackageOptions } from '../shared/debugPackage';
+import type { AutoRunSnapshotReply, DebugPackageOptions } from '../shared/debugPackage';
 import type { QueueSteerResult, SteeringResultFrame } from '../shared/chatSteering';
 import type {
 	ParquetFetchProgress,
@@ -233,6 +234,8 @@ import type { MemoryApi } from '../main/preload/memory';
 import type { BrowserOp } from '../shared/coworkingBrowser';
 import type { HistoryEntry } from '../shared/types';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../shared/snoozeCommands';
+import type { ClosedTabCommandRequest, ClosedTabCommandResult } from '../shared/closedTabCommands';
+import type { TabContextOpRequest, TabContextOpResult } from '../shared/tabContextOps';
 import type {
 	ThroughputGaugeCommandRequest,
 	ThroughputGaugeCommandResult,
@@ -297,7 +300,11 @@ interface MaestroAPI {
 	};
 	sessions: {
 		getAll: () => Promise<any[]>;
-		getBootstrap: () => Promise<any[]>;
+		getBootstrap: () => Promise<
+			(import('./types').Session & {
+				transcriptSnapshots?: import('../shared/sessionTranscript').SessionRuntimeSnapshot[];
+			})[]
+		>;
 		getDeferredContent: (
 			sessionId: string,
 			tabId: string | null,
@@ -492,6 +499,12 @@ interface MaestroAPI {
 		) => () => void;
 		/** `signal` is set only when the process was killed by a signal, never on a clean exit. */
 		onExit: (callback: (sessionId: string, code: number, signal?: number) => void) => () => void;
+		getPendingPermissions: () => Promise<
+			import('../shared/pendingPermissions').PendingPermissionSnapshot
+		>;
+		onPendingPermissionsChanged: (
+			callback: (snapshot: import('../shared/pendingPermissions').PendingPermissionSnapshot) => void
+		) => () => void;
 		onPermissionRequest: (
 			callback: (request: {
 				requestId: string;
@@ -553,6 +566,7 @@ interface MaestroAPI {
 				force?: boolean,
 				images?: string[],
 				background?: boolean,
+				mentionRouting?: import('../shared/crossAgentContext').MentionRouting,
 				receiptChannel?: string
 			) => void
 		) => () => void;
@@ -563,7 +577,15 @@ interface MaestroAPI {
 		onRemoteSwitchMode: (
 			callback: (sessionId: string, mode: 'ai' | 'terminal', background?: boolean) => void
 		) => () => void;
-		onRemoteInterrupt: (callback: (sessionId: string) => void) => () => void;
+		/** A remote stop. `tabId` narrows it to one tab; answer `responseChannel` when given. */
+		onRemoteInterrupt: (
+			callback: (sessionId: string, tabId?: string, responseChannel?: string) => void
+		) => () => void;
+		/** Answer a `remote:interrupt` channel with what the stop did. */
+		sendRemoteInterruptResponse: (
+			responseChannel: string,
+			result: import('../shared/turnInterrupt').InterruptTurnResult
+		) => void;
 		onRemoteSelectSession: (callback: (sessionId: string) => void) => () => void;
 		onRemoteSelectTab: (
 			callback: (
@@ -601,6 +623,34 @@ interface MaestroAPI {
 			callback: (request: SnoozeCommandRequest, responseChannel: string) => void
 		) => () => void;
 		sendRemoteSnoozeCommandResponse: (responseChannel: string, result: SnoozeCommandResult) => void;
+		// `maestro-cli tab closed` / `tab reopen` requests; returns unsubscribe.
+		onRemoteClosedTabCommand: (
+			callback: (request: ClosedTabCommandRequest, responseChannel: string) => void
+		) => () => void;
+		sendRemoteClosedTabCommandResponse: (
+			responseChannel: string,
+			result: ClosedTabCommandResult
+		) => void;
+		// `maestro-cli tab compact|merge|transfer` (the overlay menu's Context items);
+		// each returns unsubscribe and is answered with a TabContextOpResult.
+		onRemoteSummarizeContext: (
+			callback: (request: TabContextOpRequest, responseChannel: string) => void
+		) => () => void;
+		sendRemoteSummarizeContextResponse: (
+			responseChannel: string,
+			result: TabContextOpResult
+		) => void;
+		onRemoteMergeContext: (
+			callback: (request: TabContextOpRequest, responseChannel: string) => void
+		) => () => void;
+		sendRemoteMergeContextResponse: (responseChannel: string, result: TabContextOpResult) => void;
+		onRemoteTransferContext: (
+			callback: (request: TabContextOpRequest, responseChannel: string) => void
+		) => () => void;
+		sendRemoteTransferContextResponse: (
+			responseChannel: string,
+			result: TabContextOpResult
+		) => void;
 		// `maestro-cli throughput-gauge` requests (primary window only); returns unsubscribe.
 		onRemoteThroughputGaugeCommand: (
 			callback: (request: ThroughputGaugeCommandRequest, responseChannel: string) => void
@@ -862,7 +912,8 @@ interface MaestroAPI {
 				prompt: string,
 				responseChannel: string,
 				background?: boolean,
-				hidden?: boolean
+				hidden?: boolean,
+				mentionRouting?: import('../shared/crossAgentContext').MentionRouting
 			) => void
 		) => () => void;
 		sendRemoteNewAITabWithPromptResponse: (
@@ -907,7 +958,8 @@ interface MaestroAPI {
 				tabId?: string,
 				images?: string[],
 				background?: boolean,
-				held?: boolean
+				held?: boolean,
+				mentionRouting?: import('../shared/crossAgentContext').MentionRouting
 			) => void
 		) => () => void;
 		sendRemoteEnqueueCommandResponse: (
@@ -1930,12 +1982,18 @@ interface MaestroAPI {
 		>;
 		broadcastActiveSession: (sessionId: string) => Promise<void>;
 		disableAll: () => Promise<{ success: boolean; count: number }>;
+		/** Live mode as main sees it. */
+		getState: () => Promise<LiveModeStatus>;
+		/** Turn Live mode on or off (idempotent). */
+		set: (live: boolean) => Promise<LiveModeSetResult>;
 		startServer: () => Promise<{ success: boolean; url?: string; error?: string }>;
 		stopServer: () => Promise<{ success: boolean; error?: string }>;
 		persistCurrentToken: () => Promise<{ success: boolean; message?: string }>;
 		clearPersistentToken: () => Promise<{ success: boolean; message?: string }>;
 		/** Fires when a network change moves the LAN address in the web URL. */
 		onUrlChanged: (handler: (data: { url: string }) => void) => () => void;
+		/** Fires after every Live or Remote Control switch, wherever it came from. */
+		onStateChanged: (handler: (state: LiveModeStateEvent) => void) => () => void;
 	};
 	/**
 	 * Web Login accounts. Desktop-only: the web-desktop bridge refuses every
@@ -3302,6 +3360,9 @@ interface MaestroAPI {
 		}>;
 		// Delete an abandoned temp trace zip from stopProfilingToFile
 		discardTrace: (filePath: string) => Promise<{ success: boolean }>;
+		// Answer main's request for this window's Auto Run snapshots (CLI-built packages)
+		onAutoRunSnapshotRequest: (callback: (responseChannel: string) => void) => () => void;
+		sendAutoRunSnapshotResponse: (responseChannel: string, reply: AutoRunSnapshotReply) => void;
 		onProfilingProgress: (
 			handler: (event: {
 				phase: 'stopping' | 'awaiting-save' | 'compressing' | 'done' | 'cancelled' | 'error';
@@ -3368,8 +3429,8 @@ interface MaestroAPI {
 		send: (
 			request: import('../shared/crossAgentTypes').CrossAgentSendRequest
 		) => Promise<{ requestId: string }>;
-		/** Stop every consult this source agent still has in flight (Stop button). */
-		cancel: (sourceSessionId: string) => Promise<{ canceled: number }>;
+		/** Stop every consult this source agent (or one of its tabs) still has in flight (Stop button). */
+		cancel: (sourceSessionId: string, sourceTabId?: string) => Promise<{ canceled: number }>;
 		/** Subscribe to streamed cross-agent response chunks. Returns a cleanup fn. */
 		onChunk: (
 			handler: (chunk: import('../shared/crossAgentTypes').CrossAgentResponseChunk) => void
@@ -4755,6 +4816,8 @@ interface MaestroAPI {
 		getRunLiveOutput: (runId: string) => Promise<{ stdout: string; stderr: string } | null>;
 		getActivityLog: (limit?: number) => Promise<CueRunResult[]>;
 		getEventCount: () => Promise<number>;
+		/** Can this data directory run Cue unattended? Same report as `maestro-cli cue engine check`. */
+		checkReadiness: () => Promise<import('../shared/cue/readiness').CueReadinessReport>;
 		enable: () => Promise<void>;
 		disable: () => Promise<void>;
 		/**

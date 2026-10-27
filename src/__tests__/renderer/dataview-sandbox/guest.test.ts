@@ -32,7 +32,7 @@ import {
 import { compileInlineScript } from '../../../renderer/dataview-sandbox/inlineScript';
 import { renderMarkdown } from '../../../renderer/dataview-sandbox/markdownDom';
 import { OBSIDIAN_API_UNAVAILABLE } from '../../../renderer/dataview-sandbox/dvApi';
-import { fixtureSnapshot, fixtureText } from '../../helpers/dataviewFixtureVault';
+import { fixtureSnapshot, fixtureText, snapshotPayload } from '../../helpers/dataviewFixtureVault';
 import { dataviewGuestRealm, type DataviewGuestRealm } from '../../helpers/dataviewGuestRealm';
 
 /** The `dv` members D5 lists, top level (`io` holds `load`, `csv`, and `normalize`). */
@@ -96,6 +96,7 @@ interface Harness {
 function createHarness(readText: (relPath: string) => string = fixtureText): Harness {
 	const snapshot: SandboxIndexSnapshot = fixtureSnapshot();
 	const hostIndex = PageIndex.fromSnapshot(snapshot, async (relPath) => readText(relPath));
+	const payload = snapshotPayload(snapshot);
 	const root = document.createElement('div');
 	document.body.append(root);
 	const sent: SandboxGuestMessage[] = [];
@@ -121,7 +122,14 @@ function createHarness(readText: (relPath: string) => string = fixtureText): Har
 		realm,
 		async run(source, { thisPath = 'Scripts/JS Demo.md', blockId = 'block-1', runId } = {}) {
 			const id = runId ?? `run-${++runCount}`;
-			await guest.receive({ type: 'run', runId: id, blockId, source, thisPath, snapshot });
+			await guest.receive({
+				type: 'run',
+				runId: id,
+				blockId,
+				source,
+				thisPath,
+				snapshot: payload,
+			});
 			const block = root.querySelector(`[data-block-id="${blockId}"]`) as HTMLElement;
 			const outcome = sent.find(
 				(message) =>
@@ -133,7 +141,7 @@ function createHarness(readText: (relPath: string) => string = fixtureText): Har
 		async evaluate(sources, { thisPath = 'Scripts/JS Demo.md' } = {}) {
 			const runId = `inline-run-${++runCount}`;
 			const expressions = sources.map((source, index) => ({ id: `expr-${index + 1}`, source }));
-			await guest.receive({ type: 'eval', runId, thisPath, snapshot, expressions });
+			await guest.receive({ type: 'eval', runId, thisPath, snapshot: payload, expressions });
 			return sent.filter(
 				(message): message is SandboxEvalResultMessage =>
 					message.type === 'eval.result' && message.runId === runId
@@ -534,9 +542,13 @@ describe('runs', () => {
 		(harness.realm.__releaseStale as () => void)();
 		await stale;
 		expect(fresh.outcome).toMatchObject({ type: 'render.done', runId: 'fresh' });
-		expect(harness.sent.some((message) => 'runId' in message && message.runId === 'stale')).toBe(
-			false
-		);
+		// Its index was built before the newer run arrived; nothing after that goes out.
+		expect(
+			harness.sent.some(
+				(message) =>
+					'runId' in message && message.runId === 'stale' && message.type !== 'index.ready'
+			)
+		).toBe(false);
 		expect(texts(fresh.block.querySelectorAll('p'))).toEqual(['fresh']);
 		delete harness.realm.__releaseStale;
 	});
@@ -574,14 +586,13 @@ describe('startDataviewGuest', () => {
 			OBSIDIAN_API_UNAVAILABLE
 		);
 
-		const snapshot = fixtureSnapshot();
 		const message = {
 			type: 'run',
 			runId: 'r1',
 			blockId: 'b1',
 			source: "dv.paragraph('hi');",
 			thisPath: 'Scripts/JS Demo.md',
-			snapshot,
+			snapshot: snapshotPayload(fixtureSnapshot()),
 		};
 		// Its own posts and other channels are not host messages.
 		for (const listener of listeners)
@@ -594,6 +605,7 @@ describe('startDataviewGuest', () => {
 		await new Promise((resolve) => setTimeout(resolve, 0));
 		expect(root.querySelector('p')!.textContent).toBe('hi');
 		expect(posted).toEqual([
+			sandboxEnvelope(SANDBOX_TO_HOST_CHANNEL, { type: 'index.ready', runId: 'r1' }),
 			sandboxEnvelope(SANDBOX_TO_HOST_CHANNEL, {
 				type: 'render.done',
 				blockId: 'b1',

@@ -13,9 +13,11 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import {
+	buildCueReadinessInputs,
 	checkCueReadiness,
 	formatCueReadiness,
 	type CueReadinessInputs,
+	type CueReadinessSource,
 } from '../../../main/cue/cue-readiness';
 import { planSessionTurn } from '../../../shared/maestro-lib/run/session';
 import type { SessionInfo } from '../../../shared/types';
@@ -690,5 +692,37 @@ describe('checkCueReadiness', () => {
 			);
 			expect(report.gaps.map((g) => g.kind).sort()).toEqual(['nothing-to-run', 'unknown-agent']);
 		});
+	});
+});
+
+describe('buildCueReadinessInputs', () => {
+	const coder = { id: 'a1', name: 'Coder', toolType: 'codex', projectRoot: '/p' } as SessionInfo;
+	const pianola = { ...coder, id: 'pi', name: 'Pianola', isPianola: true } as SessionInfo;
+	const source = (overrides: Partial<CueReadinessSource> = {}): CueReadinessSource => ({
+		sessions: () => [coder, pianola],
+		encoreFeatures: () => undefined,
+		agentConfigs: () => ({ codex: { customPath: '/opt/codex' } }),
+		sshRemotes: () => [],
+		...overrides,
+	});
+
+	it('checks live agents only: a dormant Pianola runs nothing', () => {
+		expect(buildCueReadinessInputs(source()).sessions).toEqual([coder]);
+		expect(
+			buildCueReadinessInputs(source({ encoreFeatures: () => ({ pianola: true }) })).sessions
+		).toEqual([coder, pianola]);
+	});
+
+	it('passes the provider configs through as stored', () => {
+		expect(buildCueReadinessInputs(source()).agentConfigs).toEqual({
+			codex: { customPath: '/opt/codex' },
+		});
+	});
+
+	it('reads a malformed sshRemotes setting as no remotes, and skips junk entries', () => {
+		expect(buildCueReadinessInputs(source({ sshRemotes: () => 'oops' })).sshRemotes).toEqual([]);
+		expect(
+			buildCueReadinessInputs(source({ sshRemotes: () => [null, 'r', { id: 'r1' }] })).sshRemotes
+		).toEqual([{ id: 'r1' }]);
 	});
 });
