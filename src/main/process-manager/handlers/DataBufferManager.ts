@@ -63,4 +63,18 @@ export class DataBufferManager {
 			managedProcess.dataBuffer = undefined;
 		}
 	}
+
+	/**
+	 * Drop a process's pending output without emitting it, and cancel the timer
+	 * that would have flushed it. For a process whose session was re-spawned:
+	 * its last output belongs to a turn that is over and must not land in the
+	 * replacement's.
+	 */
+	discardDataBuffer(managedProcess: ManagedProcess): void {
+		if (managedProcess.dataBufferTimeout) {
+			clearTimeout(managedProcess.dataBufferTimeout);
+			managedProcess.dataBufferTimeout = undefined;
+		}
+		managedProcess.dataBuffer = undefined;
+	}
 }

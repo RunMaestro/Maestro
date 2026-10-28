@@ -30,7 +30,11 @@ import {
 	type SystemPromptDelivery,
 } from '../../shared/maestro-lib/launch/prompt-delivery';
 import { buildChildProcessEnv } from '../../shared/maestro-lib/launch/env';
-import { checkBinaryExists, checkCustomPath } from '../../shared/maestro-lib/launch/path-prober';
+import {
+	checkBinaryExists,
+	checkCustomPath,
+	validateAgentBinaryIdentity,
+} from '../../shared/maestro-lib/launch/path-prober';
 import { BACKGROUND_STOP_GRACE_MS } from '../../shared/maestro-lib/control/termination';
 import {
 	startTurn,
@@ -627,12 +631,16 @@ export async function detectAgent(toolType: ToolType): Promise<DetectResult> {
 
 	const def = getAgentDefinition(toolType);
 	const defaultCommand = def?.binaryName || toolType;
+	// A generic binary name (Cursor's `agent`) can belong to an unrelated tool,
+	// so every candidate must also prove its identity. A no-op for other agents.
+	const validateIdentity = (candidatePath: string) =>
+		validateAgentBinaryIdentity(toolType, candidatePath);
 
 	// 1. Check for custom path in settings
 	const customPath = getAgentCustomPath(toolType);
 	if (customPath) {
 		const resolvedCustomPath = await resolveExecutablePath(customPath);
-		if (resolvedCustomPath) {
+		if (resolvedCustomPath && (await validateIdentity(resolvedCustomPath))) {
 			cachedPaths.set(toolType, resolvedCustomPath);
 			return { available: true, path: resolvedCustomPath, source: 'settings' };
 		}
@@ -645,7 +653,7 @@ export async function detectAgent(toolType: ToolType): Promise<DetectResult> {
 	// install locations first, and on Windows picks the runnable .exe or .cmd
 	// over the extensionless sh shim an npm install puts first on PATH, which
 	// CreateProcess cannot run (#1718).
-	const detection = await checkBinaryExists(defaultCommand);
+	const detection = await checkBinaryExists(defaultCommand, validateIdentity);
 	if (detection.exists && detection.path) {
 		cachedPaths.set(toolType, detection.path);
 		return { available: true, path: detection.path, source: 'path' };
@@ -1262,21 +1270,52 @@ function applySshWrapResult(wrapped: SshSpawnWrapResult): {
 	};
 }
 
-/** Select batch-mode args without carrying permission grants or duplicates into read-only. */
+type CliPermissionMode = 'full' | 'standard' | 'readonly';
+
+/** Read-only unless an explicit permission mode says otherwise. */
+function resolveEffectiveReadOnly(
+	readOnlyMode?: boolean,
+	permissionMode?: CliPermissionMode
+): boolean {
+	return permissionMode === undefined ? !!readOnlyMode : permissionMode === 'readonly';
+}
+
+/**
+ * Select batch-mode args without carrying permission grants or duplicates into read-only.
+ *
+ * An explicit `permissionMode` outranks `readOnlyMode`. `'standard'` strips the
+ * agent's unattended-write grants the same way read-only does, and `'full'`
+ * appends any grant `batchModeArgs` does not already carry (Cursor keeps
+ * `--force` out of its defaults, so full access is the only way it appears).
+ */
 export function resolveCliBatchModeArgs(
 	def: ReturnType<typeof getAgentDefinition>,
-	readOnlyMode?: boolean
+	readOnlyMode?: boolean,
+	permissionMode?: CliPermissionMode
 ): string[] {
-	if (!def?.batchModeArgs) {
-		return [];
+	const readOnly = resolveEffectiveReadOnly(readOnlyMode, permissionMode);
+	const stripGrants = readOnly || permissionMode === 'standard';
+	let args: string[] = [];
+
+	if (def?.batchModeArgs) {
+		if (!stripGrants || def.readOnlyCliEnforced === false) {
+			args = [...def.batchModeArgs];
+		} else {
+			const excludedArgs = new Set([
+				...(def.yoloModeArgs ?? []),
+				...(readOnly ? (def.readOnlyArgs ?? []) : []),
+			]);
+			args = def.batchModeArgs.filter((arg) => !excludedArgs.has(arg));
+		}
 	}
 
-	if (!readOnlyMode || def.readOnlyCliEnforced === false) {
-		return [...def.batchModeArgs];
+	if (permissionMode === 'full' && def?.yoloModeArgs) {
+		for (const arg of def.yoloModeArgs) {
+			if (!args.includes(arg)) args.push(arg);
+		}
 	}
 
-	const excludedArgs = new Set([...(def.yoloModeArgs ?? []), ...(def.readOnlyArgs ?? [])]);
-	return def.batchModeArgs.filter((arg) => !excludedArgs.has(arg));
+	return args;
 }
 
 /**
@@ -1293,10 +1332,15 @@ async function spawnJsonLineAgent(
 	prompt: string,
 	agentSessionId?: string,
 	readOnlyMode?: boolean,
+	permissionMode?: CliPermissionMode,
 	sshRemoteConfig?: AgentSshRemoteConfig,
 	overrides: SpawnOverrides = {}
 ): Promise<AgentResult> {
 	const def = getAgentDefinition(toolType);
+	// Every read-only decision below (flags, env overrides, the launch plan,
+	// local and SSH alike) uses this, so an explicit mode cannot be undone by
+	// the raw `readOnlyMode` flag on one path only.
+	const effectiveReadOnly = resolveEffectiveReadOnly(readOnlyMode, permissionMode);
 
 	// Build args from agent definition (without the prompt or model/customArgs -
 	// those come from applyAgentConfigOverrides via configOptions).
@@ -1315,10 +1359,18 @@ async function spawnJsonLineAgent(
 
 	if (def?.batchModePrefix) preOverrideArgs.push(...def.batchModePrefix);
 
-	preOverrideArgs.push(...resolveCliBatchModeArgs(def, readOnlyMode));
+	preOverrideArgs.push(...resolveCliBatchModeArgs(def, readOnlyMode, permissionMode));
 
 	if (def?.jsonOutputArgs) preOverrideArgs.push(...def.jsonOutputArgs);
-	if (readOnlyMode && def?.readOnlyArgs) preOverrideArgs.push(...def.readOnlyArgs);
+	if (effectiveReadOnly && def?.readOnlyArgs) preOverrideArgs.push(...def.readOnlyArgs);
+
+	// Working-directory flags (Cursor `--workspace`, `--cwd`, ...). The child
+	// still inherits `cwd` without one; agents that expose a native flag get it
+	// so CLI/playbook spawns match the desktop's buildAgentArgs. Codex's `-C`
+	// is already placed before its `exec` prefix above.
+	if (toolType !== 'codex' && def?.workingDirArgs) {
+		preOverrideArgs.push(...def.workingDirArgs(cwd));
+	}
 
 	// Native Additional Directories grants (e.g. `--add-dir`). Shares the exact
 	// mapping the desktop uses via `buildAgentArgs`, so a CLI/playbook spawn and
@@ -1339,7 +1391,7 @@ async function spawnJsonLineAgent(
 		def,
 		preOverrideArgs,
 		overrides,
-		readOnlyMode
+		effectiveReadOnly
 	);
 
 	// System prompt delivery for JSON-line agents:
@@ -1394,7 +1446,9 @@ async function spawnJsonLineAgent(
 		args: baseArgs,
 		cwd,
 		prompt: effectivePrompt,
-		readOnlyMode,
+		// The launch plan applies readOnlyEnvOverrides to the local AND the remote
+		// env, so a `permissionMode: 'full'` run must not hand it the raw flag.
+		readOnlyMode: effectiveReadOnly,
 		agentCustomEnvVars,
 		globalEnvVars: overrides.globalEnvVars,
 		sessionCustomEnvVars: overrides.customEnvVars,
@@ -1638,9 +1692,12 @@ async function spawnJsonLineAgent(
 		agentSessionId: capture.sessionId,
 		usageStats: capture.usage,
 		// This path has always accepted a clean exit with no answer, and a
-		// non-zero exit after a full answer (Grok with `--max-turns`).
+		// non-zero exit after a full answer (Grok with `--max-turns`). Cursor's
+		// contract is the opposite: every non-zero exit is a failure written to
+		// stderr, and its stream can stop after partial text with no result, so
+		// that partial output must never pass as a finished answer.
 		strictEmptyAnswer: toolType === 'codex' || overrides.timeoutMs !== undefined,
-		answerOutranksBareExit: true,
+		answerOutranksBareExit: toolType !== 'cursor-cli',
 		droppedOutputBytes: exit.droppedOutputBytes,
 	});
 }
@@ -1665,6 +1722,8 @@ export interface SpawnAgentOptions {
 	agentSessionId?: string;
 	/** Run in read-only/plan mode (uses centralized agent definitions for provider-specific flags) */
 	readOnlyMode?: boolean;
+	/** Explicit access level; outranks `readOnlyMode`. Full mode applies the agent's unattended-write flags. */
+	permissionMode?: CliPermissionMode;
 	/** Per-session model override (wins over agent-level model). */
 	customModel?: string;
 	/** Per-session effort/reasoning override (wins over agent-level). */
@@ -1838,6 +1897,7 @@ async function spawnAgentOnce(
 	if (options?.signal?.aborted) return interruptedResult();
 
 	const readOnly = options?.readOnlyMode;
+	const permissionMode = options?.permissionMode;
 	const sshRemoteConfig = options?.sshRemoteConfig;
 	const overrides: SpawnOverrides = {
 		signal: options?.signal,
@@ -1884,6 +1944,7 @@ async function spawnAgentOnce(
 			prompt,
 			agentSessionId,
 			readOnly,
+			permissionMode,
 			sshRemoteConfig,
 			overrides
 		);

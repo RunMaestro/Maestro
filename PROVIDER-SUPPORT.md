@@ -513,14 +513,15 @@ write UI copy or docs that claim otherwise.
 
 Current support:
 
-| Agent           | Flag                              | Grant means               |
-| --------------- | --------------------------------- | ------------------------- |
-| `claude-code`   | `--add-dir <dir>` (repeatable)    | Tool access (read+write)  |
-| `codex`         | `--add-dir <dir>` (repeatable)    | Writable sandbox root     |
-| `copilot-cli`   | `--add-dir <dir>` (repeatable)    | Allowed list (read+write) |
-| `opencode`      | none (`--dir` only moves the cwd) | Prompt-only               |
-| `factory-droid` | unverified                        | Prompt-only               |
-| `gemini-cli`    | unverified                        | Prompt-only               |
+| Agent           | Flag                              | Grant means                 |
+| --------------- | --------------------------------- | --------------------------- |
+| `claude-code`   | `--add-dir <dir>` (repeatable)    | Tool access (read+write)    |
+| `codex`         | `--add-dir <dir>` (repeatable)    | Writable sandbox root       |
+| `copilot-cli`   | `--add-dir <dir>` (repeatable)    | Allowed list (read+write)   |
+| `cursor-cli`    | `--add-dir <dir>` (repeatable)    | Workspace root (read+write) |
+| `opencode`      | none (`--dir` only moves the cwd) | Prompt-only                 |
+| `factory-droid` | unverified                        | Prompt-only                 |
+| `gemini-cli`    | unverified                        | Prompt-only                 |
 
 Emit the flag **once per directory** (`repeatDirFlag`) rather than as a single
 variadic list. A variadic option swallows the positional that follows it, and the
@@ -1368,3 +1369,53 @@ mirror: the mirror copies one file, and a WAL store's newest steps can still sit
 - [Antigravity CLI overview](https://antigravity.google/docs/cli/overview)
 - [Headless mode](https://antigravity.google/docs/cli/headless)
 - [Installation & auth](https://antigravity.google/docs/cli/install)
+
+---
+
+### Cursor CLI ✅ Implemented (beta, verified against Cursor CLI 2026.07.16-899851b)
+
+**Status:** Beta (marked via `BETA_AGENTS` in `src/shared/agentMetadata.ts`). Facts below verified against Cursor CLI `2026.07.16-899851b`, live stream output, and the official CLI reference.
+
+Re-checked live on Cursor CLI `2026.10.16-e3cb207` during the PR's round-2 review: detection, headless turns through the CLI and desktop spawn paths, plan mode, and resume.
+
+| Item            | Value                                                                                                    |
+| --------------- | -------------------------------------------------------------------------------------------------------- |
+| Binary          | `agent`; the native Windows installer also provides `cursor-agent.cmd`                                   |
+| Batch Mode      | `-p` / `--print` with `--trust`; full access adds `--force`                                              |
+| JSON Output     | `--output-format stream-json --stream-partial-output` (JSONL init/thinking/assistant/tool/result events) |
+| Resume          | `--resume <chatId>`; verified continuation preserves the session ID                                      |
+| Read-Only       | `--mode plan` (Plan-Mode in UI)                                                                          |
+| Working Dir     | `--workspace <path>`                                                                                     |
+| Additional Dirs | `--add-dir <path>` (repeatable)                                                                          |
+| Images          | Saved image paths are prepended to the prompt, per Cursor's official headless guidance                   |
+| Session Storage | Deferred (`~/.cursor/chats/` SQLite `store.db` not wired)                                                |
+| Context Window  | 200K conservative default; varies by model and parameterized models may advertise larger contexts        |
+| Model Selection | `--model`; dynamic discovery from `agent --list-models` / `agent models`; Free plans accept only `auto`  |
+| Tool Events     | `tool_call` started/completed events mapped to Maestro tool execution state, correlated by `call_id`     |
+
+**Implementation files:**
+
+- ✅ Output Parser: `src/shared/maestro-lib/parsers/cursor-cli-output-parser.ts` (re-exported from `src/main/parsers/cursor-cli-output-parser.ts`)
+- ❌ Session Storage: deferred (`supportsSessionStorage: false`)
+
+**Known limitations:**
+
+- **Generic binary name:** PATH detection for bare `agent` can collide with unrelated tools. Direct probing and expanded PATH prefer the official native install directories, and every candidate (custom path included) must pass `validateAgentBinaryIdentity`, which runs `agent --help` and looks for `CURSOR_API_KEY`. That match is version-coupled: it depends on Cursor's help text, so if Cursor stops being detected after a Cursor update, check that function first.
+- **Group chat moderation:** capability left false until exercised
+
+**Provider translation:** none registered (see the [Provider Translation Contract](#provider-translation-contract)). Sessions, memories, instructions, skills, and custom subagents are all unsupported in both directions, to and from Cursor CLI: there is no `TranslationAdapter` for it, and its sessions are not read from `~/.cursor/chats/`. Switching an agent to or from Cursor CLI keeps the switching warning.
+
+**Example invocations:**
+
+```bash
+# Batch mode
+agent --workspace /path/to/project --trust --output-format stream-json --stream-partial-output -p "prompt"
+
+# Resume a session
+agent --workspace /path/to/project --trust --output-format stream-json --stream-partial-output --resume <session-id> -p "continue"
+
+# Read-only plan mode
+agent --workspace /path/to/project --trust --output-format stream-json --stream-partial-output --mode plan -p "prompt"
+```
+
+Full-access mode appends `--force` to the first two; read-only mode never carries it.

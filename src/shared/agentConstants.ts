@@ -26,6 +26,7 @@ export const DEFAULT_CONTEXT_WINDOWS: Partial<Record<AgentId, number>> = {
 	omp: 200000, // Oh My Pi (fallback until runtime-specific reporting lands)
 	grok: 500000, // Grok CLI (grok-4.5 default, per ~/.grok/models_cache.json)
 	antigravity: 1048576, // Antigravity CLI drives Gemini 3.x models (1M token window)
+	'cursor-cli': 200000, // Cursor CLI (varies by model; Composer default is conservative)
 	terminal: 0, // Terminal has no context window
 };
 

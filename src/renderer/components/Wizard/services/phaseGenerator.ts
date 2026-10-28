@@ -12,6 +12,7 @@ import {
 	substituteTemplateVariables,
 	type TemplateContext,
 } from '../../../utils/templateVariables';
+import { readEffortFromConfig } from '../../../utils/agentEffort';
 
 let cachedPhaseGenDocPrompt: string | null = null;
 let phaseGeneratorPromptsLoaded = false;
@@ -48,6 +49,11 @@ export interface GenerationConfig {
 	conversationHistory: WizardMessage[];
 	/** Optional subfolder within Auto Run Docs (e.g., "Initiation") */
 	subfolder?: string;
+	/** Session-level agent overrides selected in the onboarding wizard. */
+	customPath?: string;
+	customArgs?: string;
+	customEnvVars?: Record<string, string>;
+	agentConfigValues?: Record<string, unknown>;
 	/**
 	 * Model to write the playbook with, overriding the agent's configured model
 	 * for this run. Undefined leaves the agent's configuration in charge.
@@ -174,6 +180,12 @@ interface ParsedDocument {
 import { PLAYBOOKS_DIR } from '../../../../shared/maestro-paths';
 import { logger } from '../../../utils/logger';
 import { createPlaybookDocumentEmitter } from '../../../services/inlineWizardDocumentGeneration';
+import {
+	captureAgentError,
+	formatWizardError,
+	wizardErrorFromAgentError,
+	type AgentErrorCapture,
+} from './wizardErrorDetection';
 import {
 	getClaudeTokenSourceFields,
 	type ClaudeTokenSourceFields,
@@ -589,6 +601,7 @@ class PhaseGenerator {
 	private outputBuffer = '';
 	private dataListenerCleanup?: () => void;
 	private exitListenerCleanup?: () => void;
+	private agentErrorCapture?: AgentErrorCapture;
 	private currentWatchPath?: string;
 	private pollIntervalId?: ReturnType<typeof setInterval>;
 
@@ -956,6 +969,7 @@ class PhaseGenerator {
 					}
 				}
 			});
+			this.agentErrorCapture = captureAgentError(sessionId);
 
 			// Set up exit listener
 			this.exitListenerCleanup = window.maestro.process.onExit((sid: string, code: number) => {
@@ -1009,14 +1023,20 @@ class PhaseGenerator {
 							this.outputBuffer.slice(0, 500)
 						);
 
+						// The error main classified for this spawn, when there is one (stderr
+						// and error events never reach the output buffer).
+						const reported = this.agentErrorCapture?.latest();
 						wizardDebugLogger.log('error', `Agent failed with exit code ${code}`, {
 							exitCode: code,
 							bufferPreview: this.outputBuffer.slice(0, 1000),
+							reportedErrorType: reported?.type,
 						});
 
 						resolve({
 							success: false,
-							error: `Agent exited with code ${code}`,
+							error: reported
+								? formatWizardError(wizardErrorFromAgentError(reported, config.agentType))
+								: `Agent exited with code ${code}`,
 							rawOutput: this.outputBuffer,
 						});
 					}
@@ -1141,9 +1161,8 @@ class PhaseGenerator {
 				}
 			}
 
-			// Use the agent's resolved path if available, falling back to command name
-			// This is critical for packaged Electron apps where PATH may not include agent locations
-			const commandToUse = agent.path || agent.command;
+			// A wizard custom path is session-scoped and wins over global detection.
+			const commandToUse = config.customPath || agent.path || agent.command;
 
 			wizardDebugLogger.log('spawn', 'Calling process.spawn', {
 				sessionId,
@@ -1165,10 +1184,28 @@ class PhaseGenerator {
 					command: commandToUse,
 					args: argsForSpawn,
 					prompt,
-					// Planning model for this run (see applyAgentConfigOverrides).
-					sessionCustomModel: config.model,
 					// Pass SSH configuration for remote execution
 					sessionSshRemoteConfig: config.sshRemoteConfig,
+					permissionMode: config.agentType === 'cursor-cli' ? 'full' : undefined,
+					sessionCustomPath: config.customPath,
+					sessionCustomArgs: config.customArgs,
+					sessionCustomEnvVars: config.customEnvVars,
+					// Planning model for this run. `config.model` is the wizard's explicit
+					// planner-model pick and outranks the agent's own configured model,
+					// which is what `agentConfigValues.model` carries; undefined on both
+					// leaves the agent's configuration in charge (see
+					// applyAgentConfigOverrides). Both sources land on this ONE key -
+					// emitting it twice would silently let whichever came last win.
+					sessionCustomModel:
+						config.model ??
+						(typeof config.agentConfigValues?.model === 'string'
+							? config.agentConfigValues.model
+							: undefined),
+					sessionCustomEffort: readEffortFromConfig(config.agentConfigValues),
+					sessionCustomContextWindow:
+						typeof config.agentConfigValues?.contextWindow === 'number'
+							? config.agentConfigValues.contextWindow
+							: undefined,
 					...getClaudeTokenSourceFields(config.claudeTokenSource),
 				})
 				.then(() => {
@@ -1268,6 +1305,8 @@ class PhaseGenerator {
 			this.exitListenerCleanup();
 			this.exitListenerCleanup = undefined;
 		}
+		// Unsubscribe only: the exit handler reads `latest()` after this runs.
+		this.agentErrorCapture?.cleanup();
 		// Stop watching the Auto Run folder
 		if (this.currentWatchPath) {
 			window.maestro.autorun

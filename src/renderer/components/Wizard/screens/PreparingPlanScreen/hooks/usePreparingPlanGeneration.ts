@@ -115,6 +115,10 @@ export function usePreparingPlanGeneration({
 					conversationHistory: state.conversationHistory,
 					subfolder: 'Initiation',
 					sshRemoteConfig: state.sessionSshRemoteConfig,
+					customPath: state.customPath,
+					customArgs: state.customArgs,
+					customEnvVars: state.customEnvVars,
+					agentConfigValues: state.agentConfigValues,
 					claudeTokenSource: getClaudeTokenSourceFields(state),
 				},
 				{
@@ -180,6 +184,10 @@ export function usePreparingPlanGeneration({
 		state.directoryPath,
 		state.conversationHistory,
 		state.sessionSshRemoteConfig,
+		state.customPath,
+		state.customArgs,
+		state.customEnvVars,
+		state.agentConfigValues,
 	]);
 
 	const handleRetry = useCallback(() => {

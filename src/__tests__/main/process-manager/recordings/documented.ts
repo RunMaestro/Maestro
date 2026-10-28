@@ -47,6 +47,7 @@ export const DOCUMENTED_SESSION_IDS: Record<string, string> = {
 	'documented-pi-normal': 'pi-session-5c07',
 	'documented-qwen3-coder-normal': 'qwen-session-a41e',
 	'documented-antigravity-normal': 'agy-conversation-93d2',
+	'documented-cursor-cli-normal': '160dac18-6ea0-43dd-8c25-5e82a2dc787d',
 };
 
 /** The answer every documented turn gives. */
@@ -245,6 +246,67 @@ export const DOCUMENTED_RECORDINGS: Record<string, TurnRecording> = {
 					num_turns: 1,
 					usage: { input_tokens: 7956, output_tokens: 8, total_tokens: 7964 },
 				},
+			}),
+		]
+	),
+
+	// Shapes: cursor-cli-output-parser.ts and the live `agent -p ... --output-format
+	// stream-json --stream-partial-output` lines pinned in its tests
+	// (cursor-cli-output-parser.test.ts). Partial assistant deltas carry
+	// `timestamp_ms`; the full message follows without it, then the result.
+	'documented-cursor-cli-normal': documented(
+		'documented-cursor-cli-normal',
+		'cursor-cli',
+		'Documented Cursor CLI stream-json turn: init, a thinking delta, the answer as partial assistant deltas, the full assistant message, a success result with usage. Exit 0.',
+		[
+			line({
+				type: 'system',
+				subtype: 'init',
+				apiKeySource: 'login',
+				cwd: '/project',
+				session_id: id('documented-cursor-cli-normal'),
+				model: 'Composer 2.5 Fast',
+				permissionMode: 'default',
+			}),
+			line({
+				type: 'thinking',
+				subtype: 'delta',
+				text: 'A one-line factual answer.',
+				session_id: id('documented-cursor-cli-normal'),
+				timestamp_ms: 1784174438858,
+			}),
+			line({
+				type: 'thinking',
+				subtype: 'completed',
+				session_id: id('documented-cursor-cli-normal'),
+			}),
+			line({
+				type: 'assistant',
+				message: { role: 'assistant', content: [{ type: 'text', text: 'The capital of France ' }] },
+				session_id: id('documented-cursor-cli-normal'),
+				timestamp_ms: 1784174438859,
+			}),
+			line({
+				type: 'assistant',
+				message: { role: 'assistant', content: [{ type: 'text', text: 'is Paris.' }] },
+				session_id: id('documented-cursor-cli-normal'),
+				timestamp_ms: 1784174438860,
+			}),
+			line({
+				type: 'assistant',
+				message: { role: 'assistant', content: [{ type: 'text', text: ANSWER }] },
+				session_id: id('documented-cursor-cli-normal'),
+			}),
+			line({
+				type: 'result',
+				subtype: 'success',
+				duration_ms: 2282,
+				duration_api_ms: 2282,
+				is_error: false,
+				result: ANSWER,
+				session_id: id('documented-cursor-cli-normal'),
+				request_id: 'f715cf78-b7ac-4075-883a-690908eeb16d',
+				usage: { inputTokens: 7956, outputTokens: 8, cacheReadTokens: 6528, cacheWriteTokens: 0 },
 			}),
 		]
 	),

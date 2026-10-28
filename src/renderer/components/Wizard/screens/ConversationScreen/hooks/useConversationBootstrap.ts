@@ -44,6 +44,10 @@ export function useConversationBootstrap({
 					model: state.plannerModel,
 					existingDocs: existingDocs.length > 0 ? existingDocs : undefined,
 					sshRemoteConfig: state.sessionSshRemoteConfig,
+					customPath: state.customPath,
+					customArgs: state.customArgs,
+					customEnvVars: state.customEnvVars,
+					agentConfigValues: state.agentConfigValues,
 					claudeTokenSource: getClaudeTokenSourceFields(state),
 				});
 
@@ -92,6 +96,10 @@ export function useConversationBootstrap({
 		state.conversationHistory.length,
 		state.existingDocsChoice,
 		state.sessionSshRemoteConfig,
+		state.customPath,
+		state.customArgs,
+		state.customEnvVars,
+		state.agentConfigValues,
 		conversationStarted,
 		setConversationStarted,
 		setShowInitialQuestion,

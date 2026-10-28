@@ -334,6 +334,15 @@ export interface AgentOutputParser {
 	isProvisionalErrorNotice?(parsed: unknown): boolean;
 
 	/**
+	 * True when this error event is the parser's mapping of a failed terminal result
+	 * envelope (for example Cursor's `{"type":"result","is_error":true}`). Text the
+	 * agent streamed before it is then the turn's last output and is flushed ahead of
+	 * the error, as it is for a result message. Parsers that keep a failed result as
+	 * `type: 'result'` (Claude) do not need this.
+	 */
+	isFailedResultMessage?(event: ParsedEvent): boolean;
+
+	/**
 	 * Tell a parser whose agent reports running SESSION totals which session this
 	 * process resumes, and the session's tracker as it stood when the turn
 	 * spawned, so the usage it emits is this turn's alone. Optional: only Claude

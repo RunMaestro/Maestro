@@ -18,6 +18,7 @@ const mockMaestro = {
 		onExit: vi.fn(() => vi.fn()),
 		onThinkingChunk: vi.fn(() => vi.fn()),
 		onToolExecution: vi.fn(() => vi.fn()),
+		onAgentError: vi.fn(() => vi.fn()),
 	},
 };
 
@@ -402,6 +403,50 @@ describe('inlineWizardConversation', () => {
 			);
 		});
 
+		it('marks Cursor inline wizard spawns read-only so batch mode does not add --force', async () => {
+			const mockAgent = {
+				id: 'cursor-cli',
+				available: true,
+				command: 'agent',
+				args: [],
+				readOnlyArgs: ['--mode', 'plan'],
+			};
+			mockMaestro.agents.get.mockResolvedValue(mockAgent);
+			mockMaestro.process.spawn.mockResolvedValue(undefined);
+
+			const session = await startInlineWizardConversation({
+				agentType: 'cursor-cli',
+				directoryPath: '/test/project',
+				projectName: 'Test Project',
+				mode: 'ask',
+			});
+			const messagePromise = sendWizardMessage(session, 'Hello', []);
+			await vi.waitFor(() => expect(mockMaestro.process.spawn).toHaveBeenCalled());
+
+			const spawnCall = mockMaestro.process.spawn.mock.calls[0][0];
+			expect(spawnCall.readOnlyMode).toBe(true);
+			expect(spawnCall.args).toEqual([]);
+
+			const dataCallback = mockMaestro.process.onData.mock.calls[0][0];
+			dataCallback(
+				session.sessionId,
+				'{"confidence":89,"ready":true,"message":"Cursor inline ready"}'
+			);
+			const exitCallback = mockMaestro.process.onExit.mock.calls[0][0];
+			exitCallback(session.sessionId, 0);
+
+			await expect(messagePromise).resolves.toEqual(
+				expect.objectContaining({
+					success: true,
+					response: expect.objectContaining({
+						confidence: 89,
+						ready: true,
+						message: 'Cursor inline ready',
+					}),
+				})
+			);
+		});
+
 		it('should accept a parseable Grok reply even when the process exits non-zero', async () => {
 			// --max-turns can exit 1 after useful structured text; do not drop it.
 			const mockAgent = {
@@ -443,6 +488,40 @@ describe('inlineWizardConversation', () => {
 					}),
 				})
 			);
+		});
+
+		// Cursor's stderr never reaches onData, so the buffer is empty when the turn
+		// fails. The error main classified arrives on agent-error, ahead of the exit.
+		it('should show the error the main process reported when a turn fails with no output', async () => {
+			const freePlanMessage =
+				"Cursor's Free plan only allows the Auto model. Set this agent's model to auto, or upgrade your Cursor plan.";
+			mockMaestro.agents.get.mockResolvedValue({
+				id: 'cursor-cli',
+				available: true,
+				command: 'agent',
+				args: [],
+			});
+			mockMaestro.process.spawn.mockResolvedValue(undefined);
+
+			const session = await startInlineWizardConversation({
+				agentType: 'cursor-cli',
+				directoryPath: '/test/project',
+				projectName: 'Test Project',
+				mode: 'ask',
+			});
+			const messagePromise = sendWizardMessage(session, 'Hello', []);
+			await vi.waitFor(() => expect(mockMaestro.process.spawn).toHaveBeenCalled());
+
+			const agentErrorCallback = mockMaestro.process.onAgentError.mock.calls[0][0] as (
+				sessionId: string,
+				error: { type: string; message: string }
+			) => void;
+			agentErrorCallback(session.sessionId, { type: 'agent_crashed', message: freePlanMessage });
+			mockMaestro.process.onExit.mock.calls[0][0](session.sessionId, 1);
+
+			const result = await messagePromise;
+			expect(result.success).toBe(false);
+			expect(result.error).toContain(freePlanMessage);
 		});
 	});
 
