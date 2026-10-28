@@ -74,6 +74,7 @@ import { registerDirectorNotesHandlers, DirectorNotesHandlerDependencies } from 
 import { registerCrossAgentHandlers } from './cross-agent';
 import { registerCueHandlers, CueHandlerDependencies } from './cue';
 import { registerCueBackupHandlers } from './cue-backup';
+import { registerTtsrHandlers } from './ttsr';
 import { registerCueBundleHandlers } from './cue-bundle';
 import { registerPianolaHandlers, PianolaHandlerDependencies } from './pianola';
 import { registerPluginsHandlers, PluginsHandlerDependencies } from './plugins';
@@ -164,6 +165,7 @@ export type { DirectorNotesHandlerDependencies };
 export { registerCueHandlers };
 export type { CueHandlerDependencies };
 export { registerCueBackupHandlers };
+export { registerTtsrHandlers };
 export { registerCueBundleHandlers };
 export { registerPianolaHandlers };
 export type { PianolaHandlerDependencies };
@@ -406,6 +408,8 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	registerCueBackupHandlers({
 		sessionsStore: deps.sessionsStore,
 	});
+	// Register TTSR rule/settings CRUD (Right Bar Rules tab)
+	registerTtsrHandlers({ getSessions: readSessionRecords });
 	// Cue bundles - export / import pipelines and agents (Cue modal Bundles tab)
 	registerCueBundleHandlers({
 		sessionsStore: deps.sessionsStore,

@@ -54,6 +54,25 @@ interface ClaudeContentBlock {
 }
 
 /**
+ * Raw SSE event carried inside a stream_event object.
+ *
+ * Emitted by claude-code when spawned with --include-partial-messages. The CLI
+ * wraps each raw Anthropic streaming (SSE) event as
+ * `{ type: 'stream_event', event: <raw SSE event>, session_id, parent_tool_use_id }`.
+ * Only content_block_delta carries token-level text/thinking; the other kinds
+ * (message_start, content_block_start, message_delta, message_stop, etc.) are
+ * control-plane framing.
+ */
+interface ClaudeStreamRawEvent {
+	type: string;
+	delta?: {
+		type?: string;
+		text?: string;
+		thinking?: string;
+	};
+}
+
+/**
  * Token usage as Claude reports it, both per API call (on `assistant` messages)
  * and as the turn total (on `result` messages).
  */
@@ -77,9 +96,10 @@ interface ClaudeRawMessage {
 	/**
 	 * Set on assistant/user messages produced by a Task subagent; references the
 	 * tool_use id of the Task call that spawned it. Absent on main-transcript
-	 * messages.
+	 * messages. Also carried on stream_event objects, where claude-code may emit
+	 * an explicit null - normalizeParentToolUseId collapses null to undefined.
 	 */
-	parent_tool_use_id?: string;
+	parent_tool_use_id?: string | null;
 	result?: string;
 	message?: {
 		id?: string;
@@ -98,6 +118,8 @@ interface ClaudeRawMessage {
 	modelUsage?: Record<string, ModelStats>;
 	usage?: ClaudeCallUsage;
 	total_cost_usd?: number;
+	// Present only on type:"stream_event" objects (--include-partial-messages)
+	event?: ClaudeStreamRawEvent;
 }
 
 /**
@@ -174,6 +196,12 @@ function isSubagentMessage(msg: ClaudeRawMessage): boolean {
  */
 export class ClaudeOutputParser implements AgentOutputParser {
 	readonly agentId: ToolType = 'claude-code';
+
+	/** Streamed text and reasoning are completed by separate assistant events.
+	 * Consume only the kind present in a closing event, scoped to its parent.
+	 */
+	private readonly streamedTextParents = new Set<string | undefined>();
+	private readonly streamedThinkingParents = new Set<string | undefined>();
 
 	/**
 	 * Correlates a tool_use id (from an assistant message) with its tool name so
@@ -295,9 +323,16 @@ export class ClaudeOutputParser implements AgentOutputParser {
 	}
 
 	/**
-	 * Transform a parsed Claude message into a normalized ParsedEvent
+	 * Transform a parsed Claude message into a normalized ParsedEvent.
+	 * Returns null for stream_event framing that should not reach downstream
+	 * consumers (everything except token-level text/thinking deltas).
 	 */
-	private transformMessage(msg: ClaudeRawMessage): ParsedEvent {
+	private transformMessage(msg: ClaudeRawMessage): ParsedEvent | null {
+		// Handle token-level streaming deltas (--include-partial-messages)
+		if (msg.type === 'stream_event') {
+			return this.transformStreamEvent(msg);
+		}
+
 		// Handle system/init messages
 		if (msg.type === 'system' && msg.subtype === 'init') {
 			return {
@@ -334,6 +369,8 @@ export class ClaudeOutputParser implements AgentOutputParser {
 			// snapshot rather than inheriting this one.
 			this.lastCallOccupancy = undefined;
 			this.callUsageSeen.clear();
+			this.streamedTextParents.clear();
+			this.streamedThinkingParents.clear();
 
 			return event;
 		}
@@ -353,12 +390,26 @@ export class ClaudeOutputParser implements AgentOutputParser {
 			const contentToEmit = thinkingText || text;
 			const callUsage = this.newCallUsage(msg);
 
+			// A tool-only event must not consume another content block's marker.
+			// Mixed closing events emit reasoning first, as before; consume both kinds
+			// they contain while preserving a separate pending text/thinking closure.
+			const parent = normalizeParentToolUseId(msg);
+			const textAlreadyStreamed =
+				(thinkingText
+					? this.streamedThinkingParents.has(parent)
+					: text
+						? this.streamedTextParents.has(parent)
+						: false) || undefined;
+			if (text) this.streamedTextParents.delete(parent);
+			if (thinkingText) this.streamedThinkingParents.delete(parent);
+
 			return {
 				type: 'text',
 				text: contentToEmit,
 				sessionId: msg.session_id,
 				isPartial: true,
 				isReasoning: thinkingText.length > 0 || undefined,
+				textAlreadyStreamed,
 				toolUseBlocks: toolUseBlocks.length > 0 ? toolUseBlocks : undefined,
 				parentToolUseId: normalizeParentToolUseId(msg),
 				...(callUsage ? { callUsage } : {}),
@@ -404,6 +455,58 @@ export class ClaudeOutputParser implements AgentOutputParser {
 			sessionId: msg.session_id,
 			raw: msg,
 		};
+	}
+
+	/**
+	 * Transform a stream_event object into a token-level partial text event.
+	 *
+	 * stream_event objects only appear with --include-partial-messages and wrap a
+	 * raw Anthropic SSE event. Only content_block_delta carries user-visible token
+	 * deltas:
+	 * - text_delta    -> partial 'text' event
+	 * - thinking_delta -> partial 'text' event with isReasoning: true
+	 *
+	 * Every other SSE kind (message_start, content_block_start, input_json_delta,
+	 * message_delta, message_stop, content_block_stop, signature_delta, and empty
+	 * deltas) returns null so it never spams downstream. Tool inputs continue to
+	 * arrive via the complete assistant event's toolUseBlocks, so input_json_delta
+	 * is intentionally dropped here.
+	 */
+	private transformStreamEvent(msg: ClaudeRawMessage): ParsedEvent | null {
+		const event = msg.event;
+		if (!event || event.type !== 'content_block_delta' || !event.delta) {
+			return null;
+		}
+
+		const delta = event.delta;
+
+		if (delta.type === 'text_delta' && delta.text) {
+			this.streamedTextParents.add(normalizeParentToolUseId(msg));
+			return {
+				type: 'text',
+				text: delta.text,
+				sessionId: msg.session_id,
+				parentToolUseId: normalizeParentToolUseId(msg),
+				isPartial: true,
+				raw: msg,
+			};
+		}
+
+		if (delta.type === 'thinking_delta' && delta.thinking) {
+			this.streamedThinkingParents.add(normalizeParentToolUseId(msg));
+			return {
+				type: 'text',
+				text: delta.thinking,
+				sessionId: msg.session_id,
+				parentToolUseId: normalizeParentToolUseId(msg),
+				isPartial: true,
+				isReasoning: true,
+				raw: msg,
+			};
+		}
+
+		// input_json_delta, signature_delta, or any other delta kind: drop it.
+		return null;
 	}
 
 	/**

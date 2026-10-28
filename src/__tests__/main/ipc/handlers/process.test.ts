@@ -442,6 +442,43 @@ describe('process IPC handlers', () => {
 		});
 	});
 
+	it('retains deferred TTSR guidance after a refused spawn and delivers it on successful retry', async () => {
+		let text = '<system-reminder>keep the guidance</system-reminder>';
+		const commit = vi.fn(() => {
+			text = '';
+		});
+		let reserved = false;
+		const rollback = vi.fn(() => {
+			reserved = false;
+		});
+		deps.peekTtsrReminders = () => {
+			const available = reserved ? '' : text;
+			reserved = true;
+			return { text: available, commit, rollback };
+		};
+		mockAgentDetector.getAgent.mockResolvedValue({
+			id: 'claude-code',
+			path: '/usr/bin/claude',
+			requiresPty: false,
+		});
+		mockProcessManager.spawn
+			.mockReturnValueOnce({ pid: -1, success: false })
+			.mockReturnValueOnce({ pid: 123, success: true });
+		const config = {
+			sessionId: 'agent-ai-tab',
+			toolType: 'claude-code',
+			cwd: '/test',
+			command: 'claude',
+			args: [],
+			prompt: 'continue',
+		};
+		await expect(handlers.get('process:spawn')!({}, config)).rejects.toThrow(/did not start/);
+		expect(commit).not.toHaveBeenCalled();
+		expect(rollback).toHaveBeenCalledOnce();
+		await handlers.get('process:spawn')!({}, config);
+		expect(mockProcessManager.spawn.mock.calls[1][0].prompt).toContain('keep the guidance');
+		expect(commit).toHaveBeenCalledTimes(1);
+	});
 	describe('process:getPendingPermissions', () => {
 		it('returns only authoritative pending process IDs and a version', async () => {
 			const spawn = registerSpawn({ sessionId: 'agent-ai-tab', tabId: 'tab' });

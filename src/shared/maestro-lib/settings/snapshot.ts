@@ -57,6 +57,7 @@ export const ENCORE_FEATURE_LABELS: Record<EncoreFlag, string> = {
 	symphony: 'Symphony',
 	maestroCue: 'Maestro Cue',
 	pianola: 'Pianola',
+	ttsr: 'Time-Traveling Stream Rules',
 	plugins: 'Plugins',
 	coworking: 'Coworking',
 	opencodeServer: 'OpenCode server',

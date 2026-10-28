@@ -25,6 +25,7 @@ export const ENCORE_FEATURE_DEFAULTS = {
 	concerto: false,
 	groupsPlus: false,
 	webLogin: false,
+	ttsr: false,
 	computerHistory: false,
 	quickChat: true,
 	maestroRun: false,

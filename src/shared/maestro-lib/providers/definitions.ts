@@ -207,9 +207,15 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		// desktop spawner (see `src/main/ipc/handlers/process.ts`) to pick a binary per turn
 		// based on per-tab Claude interactive mode state.
 		command: 'claude',
-		args: ['--print', '--verbose', '--output-format', 'stream-json'],
+		args: ['--print', '--verbose', '--output-format', 'stream-json', '--include-partial-messages'],
 		apiCommand: 'claude',
-		apiModeArgs: ['--print', '--verbose', '--output-format', 'stream-json'],
+		apiModeArgs: [
+			'--print',
+			'--verbose',
+			'--output-format',
+			'stream-json',
+			'--include-partial-messages',
+		],
 		interactiveCommand: 'maestro-p',
 		// maestro-p forwards these to the underlying claude TUI invocation.
 		interactiveModeArgs: [],

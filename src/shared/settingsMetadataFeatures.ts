@@ -124,6 +124,27 @@ export const FEATURES_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: true,
 		category: 'advanced',
 	},
+	ttsrEnabled: {
+		description:
+			'Time-Traveling Stream Rules: watch agent output streams and deliver corrective guidance through native Steer or a deferred reminder. AND-gated with the ttsr Encore feature flag.',
+		type: 'boolean',
+		default: false,
+		category: 'advanced',
+	},
+	ttsrDisabledRules: {
+		description:
+			'TTSR rule names disabled globally. Rules listed here are loaded but never matched.',
+		type: 'array',
+		default: [],
+		category: 'advanced',
+	},
+	ttsrContextMode: {
+		description:
+			'Legacy TTSR setting accepted for compatibility and ignored. Corrections use native Steer and retain the running conversation and output.',
+		type: 'string',
+		default: 'keep',
+		category: 'advanced',
+	},
 	coworkingBrowserInteraction: {
 		description:
 			'Agent ids (ToolType values) for which Coworking browser interaction tools are allowed. Empty array means all off.',

@@ -107,6 +107,7 @@ describe('extensionModel first-party projection (all Encore features)', () => {
 			'opencodeServer',
 			'concerto',
 			'groupsPlus',
+			'ttsr',
 			'webLogin',
 			'computerHistory',
 			'quickChat',

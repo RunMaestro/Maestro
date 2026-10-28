@@ -145,6 +145,11 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	annotatorTextFont: 'sans-serif',
 	annotatorTextBgColor: '',
 	globalShowHotkey: [],
+	// TTSR: master runtime switch (AND'd with the `ttsr` Encore flag), globally
+	// disabled rule names, interrupt teardown mode, and the built-in rule enable map
+	ttsrEnabled: false,
+	ttsrDisabledRules: [],
+	ttsrContextMode: 'keep',
 	// Quick Chat: the floating window's hotkey (Opt+Space), agent, and modes
 	quickChatSettings: {
 		...DEFAULT_QUICK_CHAT_SETTINGS,

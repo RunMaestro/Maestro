@@ -53,6 +53,7 @@ import {
 	registerCrossAgentHandlers,
 	registerCueHandlers,
 	registerCueBackupHandlers,
+	registerTtsrHandlers,
 	registerCueBundleHandlers,
 	registerWakatimeHandlers,
 	registerFeedbackHandlers,
@@ -214,6 +215,17 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		getMainWindow: deps.getMainWindow,
 	});
 
+	// TTSR rule + per-project settings CRUD (Right Bar Rules tab). A write from
+	// the UI drops the runtime's cached rules straight away; the file watcher
+	// would also catch it, a debounce later.
+	registerTtsrHandlers({
+		getSessions: () => deps.sessionsStore.get('sessions', []) as Array<Record<string, unknown>>,
+		onRulesChanged: (projectRoot: string) => deps.getTtsrRuntime()?.invalidateRules(projectRoot),
+		flushSessionWrites: flushPendingSessionWrites,
+		claimSteeringRequest: ({ sessionId, requestId }) =>
+			deps.getTtsrRuntime()?.claimSteeringRequest(sessionId, requestId) ?? false,
+	});
+
 	// Agent management operations - extracted to src/main/ipc/handlers/agents.ts
 	registerAgentsHandlers({
 		getAgentDetector: deps.getAgentDetector,
@@ -233,6 +245,12 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		safeSend: deps.safeSend,
 		sessionsStore: deps.sessionsStore,
 		interactiveReplayController: deps.getInteractiveReplayController() ?? undefined,
+		// TTSR folds any queued `<system-reminder>` into this conversation's next
+		// prompt, and clears the queue only once that prompt has really been
+		// spawned. Returns '' while the feature is off, so the spawn path is
+		// unchanged.
+		peekTtsrReminders: (sessionId: string) =>
+			deps.getTtsrRuntime()?.peekDeferredReminders(sessionId) ?? { text: '', commit: () => {} },
 		getCueProcesses: () => {
 			// Always query the executor's active process map - processes may still be
 			// running even if the engine has been disabled (in-flight runs complete

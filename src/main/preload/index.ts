@@ -61,6 +61,7 @@ import { createJourneyApi } from './journey';
 import { createAiCommandApi } from './aiCommand';
 import { createDirectorNotesApi } from './directorNotes';
 import { createCueApi } from './cue';
+import { createTtsrApi } from './ttsr';
 import { createCueBackupApi } from './cueBackup';
 import { createCueBundleApi } from './cueBundle';
 import { createPianolaApi } from './pianola';
@@ -271,6 +272,8 @@ contextBridge.exposeInMainWorld('maestro', {
 	// Cue Backup API (Cue modal Backup tab - snapshot/restore cue.yaml + prompts)
 	cueBackup: createCueBackupApi(),
 
+	// TTSR API (Time-Traveling Stream Rules - push events only)
+	ttsr: createTtsrApi(),
 	// Cue Bundle API (Cue modal Bundles tab - export / import pipelines and agents)
 	cueBundle: createCueBundleApi(),
 
@@ -677,6 +680,12 @@ export type {
 	CueEventType,
 	CueRunStatus,
 } from './cue';
+export type {
+	// From ttsr
+	TtsrApi,
+	TtsrMatchedPayload,
+	TtsrTriggeredPayload,
+} from './ttsr';
 export type {
 	// From pianola
 	PianolaApi,
