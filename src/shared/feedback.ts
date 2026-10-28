@@ -7,6 +7,8 @@
  * main process reject a payload the caller already spent an upload on.
  */
 
+import type { SecretScreenFields } from './secretScan';
+
 export type FeedbackCategory =
 	| 'bug_report'
 	| 'feature_request'
@@ -93,7 +95,11 @@ export interface FeedbackAuthResponse {
 	account?: { host: string; login: string };
 }
 
-export interface FeedbackSubmitResponse {
+/**
+ * A submit refused by the secret screen carries `secretFindings` (masked; see
+ * `src/shared/secretScan.ts`). Nothing was uploaded or filed in that case.
+ */
+export interface FeedbackSubmitResponse extends SecretScreenFields {
 	success: boolean;
 	error?: string;
 	issueUrl?: string;
@@ -122,6 +128,8 @@ export interface FeedbackSubmissionPayload {
 	agentProvider?: string;
 	sshRemoteEnabled?: boolean;
 	attachments?: FeedbackAttachmentPayload[];
+	/** File even when the secret screen finds a possible credential. */
+	allowSecrets?: boolean;
 }
 
 /** What the conversational modal and `maestro-cli feedback submit` file. */
@@ -143,6 +151,12 @@ export interface FeedbackConversationSubmitPayload {
 	 * issue body, then deleted.
 	 */
 	performanceTracePath?: string;
+	/**
+	 * File even when the secret screen finds a possible credential in the text
+	 * or the support package. Set by the modal's "Publish anyway" and the CLI's
+	 * `--allow-secrets`; only a literal `true` counts.
+	 */
+	allowSecrets?: boolean;
 }
 
 /** One possible duplicate returned by the issue search. */

@@ -50,10 +50,18 @@ const mockApplyOverrides = vi.fn((_agent: unknown, args: string[], _overrides: u
 	modelSource: 'default' as const,
 }));
 
-vi.mock('../../../shared/maestro-lib/launch/agent-args', () => ({
-	buildAgentArgs: (...args: unknown[]) => mockBuildAgentArgs(...args),
-	applyAgentConfigOverrides: (...args: unknown[]) => mockApplyOverrides(...args),
-}));
+vi.mock('../../../shared/maestro-lib/launch/agent-args', async () => {
+	const actual = await vi.importActual<
+		typeof import('../../../shared/maestro-lib/launch/agent-args')
+	>('../../../shared/maestro-lib/launch/agent-args');
+	return {
+		// The launch plan puts a Run on target's model on the arguments with this.
+		replaceModelArg: actual.replaceModelArg,
+		placeSubcommandArgs: actual.placeSubcommandArgs,
+		buildAgentArgs: (...args: unknown[]) => mockBuildAgentArgs(...args),
+		applyAgentConfigOverrides: (...args: unknown[]) => mockApplyOverrides(...args),
+	};
+});
 
 const mockWrapSpawnWithSsh = vi.fn();
 vi.mock('../../../shared/maestro-lib/launch/ssh-spawn-wrapper', async () => {
@@ -86,6 +94,24 @@ vi.mock('../../../main/agents/claude-usage-startup', () => ({
 vi.mock('../../../main/agents/probeRemoteMaestroP', () => ({
 	ensureRemoteMaestroPProbed: vi.fn(async () => true),
 }));
+// The token proxy's launch check reads its port from the data dir and can bind
+// a socket; these tests decide the answer instead.
+const mockEnsureTokenProxyForGateway = vi.hoisted(() =>
+	vi.fn(
+		async (_gatewayUrl: string): Promise<{ ok: true } | { ok: false; error: string }> => ({
+			ok: true,
+		})
+	)
+);
+// The launch URL is the stored gateway unless it is the Maestro proxy, which
+// only the service (it knows the port) can tell.
+const mockTokenProxyLaunchGatewayUrl = vi.hoisted(() =>
+	vi.fn(async (_agentId: string | undefined, gatewayUrl: string | undefined) => gatewayUrl)
+);
+vi.mock('../../../main/local-models/proxy/service', () => ({
+	ensureTokenProxyForGateway: mockEnsureTokenProxyForGateway,
+	tokenProxyLaunchGatewayUrl: mockTokenProxyLaunchGatewayUrl,
+}));
 vi.mock('../../../main/stores/claudeUsageStore', () => ({
 	getSnapshot: () => null,
 	resolveConfigDirKey: () => 'test-config-key',
@@ -106,6 +132,13 @@ vi.mock('../../../shared/platformDetection', async (importOriginal) => {
 
 // Must import after mocks
 import { buildSpawnSpec } from '../../../main/cue/cue-spawn-builder';
+import {
+	configureAgentRunOn,
+	resetAgentRunOnForTests,
+	type AgentRunOnDeps,
+} from '../../../main/local-models/run-on';
+import { MODEL_SERVER_ENDPOINT_ID } from '../../../shared/local-models/model-server';
+import { RUN_ON_PLACEHOLDER_KEY } from '../../../shared/local-models/run-on';
 import {
 	pluginToolRunIdentity,
 	removePluginRunProofFile,
@@ -415,6 +448,286 @@ describe('cue-spawn-builder', () => {
 			if (result.ok) {
 				expect(result.spec.env.MAESTRO_QUERY_SOURCE).toBe('cue');
 			}
+		});
+
+		describe("the agent's Local Models gateway", () => {
+			it('sets the base-URL variable on a local run', async () => {
+				const result = await buildSpawnSpec(
+					createConfig({ gatewayUrl: 'http://127.0.0.1:8787/anthropic' }),
+					'prompt'
+				);
+
+				expect(result.ok).toBe(true);
+				if (result.ok) {
+					expect(result.spec.env.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:8787/anthropic');
+				}
+			});
+
+			it("leaves the variable to the agent's own value", async () => {
+				const result = await buildSpawnSpec(
+					createConfig({
+						gatewayUrl: 'http://127.0.0.1:8787',
+						customEnvVars: { ANTHROPIC_BASE_URL: 'https://mine.example.com' },
+					}),
+					'prompt'
+				);
+
+				expect(result.ok).toBe(true);
+				if (result.ok) {
+					expect(result.spec.env.ANTHROPIC_BASE_URL).toBe('https://mine.example.com');
+				}
+			});
+
+			it('fails a run on an SSH remote whose gateway is loopback, without wrapping', async () => {
+				const result = await buildSpawnSpec(
+					createConfig({
+						gatewayUrl: 'http://127.0.0.1:8787',
+						sshRemoteConfig: { enabled: true, remoteId: 'r1' },
+						sshStore: sshStoreWithRemotes(),
+					}),
+					'prompt'
+				);
+
+				expect(result.ok).toBe(false);
+				if (!result.ok) {
+					expect(result.message).toContain('http://127.0.0.1:8787');
+					expect(result.message).toContain('"Remote r1"');
+				}
+				expect(mockWrapSpawnWithSsh).not.toHaveBeenCalled();
+			});
+
+			it('asks the token proxy to be up for the gateway in force', async () => {
+				await buildSpawnSpec(
+					createConfig({ gatewayUrl: 'http://127.0.0.1:8787/anthropic' }),
+					'prompt'
+				);
+
+				expect(mockEnsureTokenProxyForGateway).toHaveBeenCalledWith(
+					'http://127.0.0.1:8787/anthropic'
+				);
+			});
+
+			it("gives the run the agent's own base URL when the gateway is the token proxy", async () => {
+				const scoped = 'http://127.0.0.1:8787/agent/session-1/anthropic';
+				mockTokenProxyLaunchGatewayUrl.mockResolvedValueOnce(scoped);
+
+				const result = await buildSpawnSpec(
+					createConfig({ gatewayUrl: 'http://127.0.0.1:8787/anthropic' }),
+					'prompt'
+				);
+
+				expect(mockTokenProxyLaunchGatewayUrl).toHaveBeenCalledWith(
+					'session-1',
+					'http://127.0.0.1:8787/anthropic'
+				);
+				expect(result.ok).toBe(true);
+				if (result.ok) expect(result.spec.env.ANTHROPIC_BASE_URL).toBe(scoped);
+				expect(mockEnsureTokenProxyForGateway).toHaveBeenCalledWith(scoped);
+			});
+
+			it('does not ask the token proxy for a run with no gateway', async () => {
+				await buildSpawnSpec(createConfig(), 'prompt');
+
+				expect(mockEnsureTokenProxyForGateway).not.toHaveBeenCalled();
+			});
+
+			it('fails the run by name when the token proxy cannot start', async () => {
+				mockEnsureTokenProxyForGateway.mockResolvedValueOnce({
+					ok: false,
+					error: 'the Maestro token proxy, which could not start: port in use',
+				});
+
+				const result = await buildSpawnSpec(
+					createConfig({ gatewayUrl: 'http://127.0.0.1:8787/anthropic' }),
+					'prompt'
+				);
+
+				expect(result.ok).toBe(false);
+				if (!result.ok) {
+					expect(result.message).toContain('Maestro token proxy, which could not start');
+				}
+			});
+		});
+
+		describe("the agent's Run on target", () => {
+			const OLLAMA = {
+				id: 'ep-ollama',
+				name: 'Ollama',
+				kind: 'ollama' as const,
+				baseUrl: 'http://127.0.0.1:11434',
+				enabled: true,
+			};
+			const QWEN = { type: 'source', endpointId: OLLAMA.id, model: 'qwen3:latest' };
+			const ON_SERVER = {
+				type: 'source',
+				endpointId: MODEL_SERVER_ENDPOINT_ID,
+				model: 'gpt-oss-20b',
+			};
+			// The definition's own model flag is what carries the target's model.
+			const claudeWithModelFlag = {
+				...defaultAgentDef,
+				modelArgs: (model: string) => ['--model', model],
+			};
+			let runOnDeps: { [K in keyof Required<AgentRunOnDeps>]: ReturnType<typeof vi.fn> };
+
+			beforeEach(() => {
+				mockGetAgentDefinition.mockReturnValue(claudeWithModelFlag);
+				runOnDeps = {
+					sessions: vi.fn(() => []),
+					endpoints: vi.fn(() => [OLLAMA]),
+					shellEnvVars: vi.fn(() => ({})),
+					modelServer: vi.fn(async () => ({
+						ok: true,
+						baseUrl: 'http://127.0.0.1:52100',
+						key: 'sk-server',
+					})),
+					listModels: vi.fn(async () => [{ id: 'qwen3:latest' }]),
+				};
+				configureAgentRunOn(runOnDeps as unknown as AgentRunOnDeps);
+			});
+
+			afterEach(() => {
+				resetAgentRunOnForTests();
+			});
+
+			it('points a local run at the source, with the model in place of its own', async () => {
+				mockApplyOverrides.mockReturnValueOnce({
+					args: ['--print', '--model', 'opus'],
+					effectiveCustomEnvVars: undefined,
+					customArgsSource: 'none',
+					customEnvSource: 'none',
+					modelSource: 'session',
+				});
+
+				const result = await buildSpawnSpec(
+					createConfig({ runOn: QWEN, customModel: 'opus' }),
+					'prompt'
+				);
+
+				expect(result.ok).toBe(true);
+				if (!result.ok) return;
+				expect(result.spec.env).toMatchObject({
+					ANTHROPIC_BASE_URL: 'http://127.0.0.1:11434',
+					ANTHROPIC_AUTH_TOKEN: RUN_ON_PLACEHOLDER_KEY,
+					ANTHROPIC_DEFAULT_HAIKU_MODEL: 'qwen3:latest',
+					// Blank: the provider's own key does not go to the source.
+					ANTHROPIC_API_KEY: '',
+				});
+				expect(result.spec.args.slice(0, 3)).toEqual(['--print', '--model', 'qwen3:latest']);
+				expect(result.spec.args).not.toContain('opus');
+				expect(runOnDeps.listModels).toHaveBeenCalledTimes(1);
+			});
+
+			it('starts the Maestro model server for a target on it, and uses its address and key', async () => {
+				const result = await buildSpawnSpec(createConfig({ runOn: ON_SERVER }), 'prompt');
+
+				expect(runOnDeps.modelServer).toHaveBeenCalledWith('gpt-oss-20b');
+				expect(result.ok).toBe(true);
+				if (!result.ok) return;
+				expect(result.spec.env.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:52100');
+				expect(result.spec.env.ANTHROPIC_AUTH_TOKEN).toBe('sk-server');
+			});
+
+			it('takes the place of the gateway: the token proxy is not asked to be up', async () => {
+				const result = await buildSpawnSpec(
+					createConfig({ runOn: QWEN, gatewayUrl: 'http://127.0.0.1:8787/anthropic' }),
+					'prompt'
+				);
+
+				expect(result.ok).toBe(true);
+				if (result.ok) {
+					expect(result.spec.env.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:11434');
+				}
+				expect(mockEnsureTokenProxyForGateway).not.toHaveBeenCalled();
+			});
+
+			it("fails the run by name when the source cannot serve the model, and never runs it on the provider's", async () => {
+				runOnDeps.listModels.mockResolvedValue([{ id: 'some-other-model' }]);
+
+				const result = await buildSpawnSpec(createConfig({ runOn: QWEN }), 'prompt');
+
+				expect(result.ok).toBe(false);
+				if (!result.ok) {
+					expect(result.message).toContain('set to run on qwen3:latest on Ollama');
+					expect(result.message).toContain('does not serve "qwen3:latest"');
+				}
+			});
+
+			it('fails the run by name when the model server cannot serve the model', async () => {
+				runOnDeps.modelServer.mockResolvedValue({
+					ok: false,
+					error: 'the engine is not installed',
+				});
+
+				const result = await buildSpawnSpec(createConfig({ runOn: ON_SERVER }), 'prompt');
+
+				expect(result.ok).toBe(false);
+				if (!result.ok) expect(result.message).toContain('the engine is not installed');
+			});
+
+			it('fails a run on an SSH remote whose source is loopback, without starting or wrapping anything', async () => {
+				const result = await buildSpawnSpec(
+					createConfig({
+						runOn: ON_SERVER,
+						sshRemoteConfig: { enabled: true, remoteId: 'r1' },
+						sshStore: sshStoreWithRemotes(),
+					}),
+					'prompt'
+				);
+
+				expect(result.ok).toBe(false);
+				if (!result.ok) {
+					expect(result.message).toContain('loopback address');
+					expect(result.message).toContain('"Remote r1"');
+				}
+				expect(runOnDeps.modelServer).not.toHaveBeenCalled();
+				expect(mockWrapSpawnWithSsh).not.toHaveBeenCalled();
+			});
+
+			it('refuses an SSH remote that cannot be resolved before it looks the target up', async () => {
+				const result = await buildSpawnSpec(
+					createConfig({
+						runOn: ON_SERVER,
+						sshRemoteConfig: { enabled: true, remoteId: 'gone' },
+						sshStore: { getSshRemotes: vi.fn(() => []) },
+					}),
+					'prompt'
+				);
+
+				expect(result.ok).toBe(false);
+				if (!result.ok) expect(result.message).toContain('"gone" no longer exists');
+				expect(runOnDeps.modelServer).not.toHaveBeenCalled();
+			});
+
+			it('keeps the run on claude --print when the agent selected the TUI', async () => {
+				mockGetAgentDefinition.mockReturnValue({
+					...claudeWithModelFlag,
+					interactiveCommand: 'maestro-p',
+					interactiveModeArgs: ['--dangerously-skip-permissions'],
+				});
+
+				const result = await buildSpawnSpec(
+					createConfig({ runOn: QWEN, enableMaestroP: true, maestroPMode: 'interactive' }),
+					'prompt'
+				);
+
+				expect(result.ok).toBe(true);
+				if (!result.ok) return;
+				// Not rewritten to maestro-p: the recipe was measured on `claude --print`.
+				expect(result.spec.command).toBe('claude');
+				expect(result.spec.args).not.toContain('/bundled/maestro-p.js');
+			});
+
+			it('looks nothing up for an agent on its provider', async () => {
+				const result = await buildSpawnSpec(
+					createConfig({ runOn: { type: 'provider' } }),
+					'prompt'
+				);
+
+				expect(result.ok).toBe(true);
+				expect(runOnDeps.endpoints).not.toHaveBeenCalled();
+				if (result.ok) expect(result.spec.env.ANTHROPIC_BASE_URL).toBeUndefined();
+			});
 		});
 
 		describe('SSH execution', () => {

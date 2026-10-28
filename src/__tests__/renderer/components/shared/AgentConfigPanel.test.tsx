@@ -10,6 +10,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { AgentConfigPanel } from '../../../../renderer/components/shared/AgentConfigPanel';
 import type { AgentConfig, AgentCapabilities } from '../../../../renderer/types';
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 
 import { createMockTheme } from '../../../helpers/mockTheme';
 import { installLocalStorageMock } from '../../../helpers/mockLocalStorage';
@@ -406,6 +407,159 @@ describe('AgentConfigPanel', () => {
 		});
 	});
 
+	// Auto in the model field is opt-in (`autoModelFor`): only a surface whose
+	// agent has an Auto send path passes it, and even then only for an agent Auto
+	// can act on.
+	describe('Model field: the Auto choice', () => {
+		const modelOption = {
+			key: 'model',
+			label: 'Model',
+			type: 'text' as const,
+			description: 'Model to use',
+			default: '',
+		};
+		const capabilities = {
+			supportsModelSelection: true,
+		} as Partial<AgentCapabilities> as AgentCapabilities;
+		const claudeAgent = createMockAgent({ configOptions: [modelOption], capabilities });
+		const openCodeAgent = createMockAgent({
+			id: 'opencode',
+			name: 'OpenCode',
+			configOptions: [modelOption],
+			capabilities,
+		});
+		const MODELS = ['opus', 'sonnet'];
+		const BOTH_AXES = 'picks the model and the effort for each turn';
+
+		beforeEach(() => {
+			// The shipped defaults: no harness tier overrides, the model router off.
+			useSettingsStore.setState({
+				harnessTierDefaults: {},
+				localModelAssignments: {},
+				localModelEndpoints: [],
+			});
+		});
+
+		function renderModelField(overrides: Parameters<typeof createDefaultProps>[0] = {}) {
+			return render(
+				<AgentConfigPanel
+					{...createDefaultProps({
+						agent: claudeAgent,
+						agentConfig: { model: '' },
+						availableModels: MODELS,
+						...overrides,
+					})}
+				/>
+			);
+		}
+
+		/** Focus the model input, which opens its dropdown, and return the rows. */
+		function openModelDropdown(): HTMLElement[] {
+			const input = screen
+				.getByTestId('chevron-down-icon')
+				.closest('.relative')!
+				.querySelector('input')!;
+			fireEvent.focus(input);
+			const anchor = screen.queryByText('opus') ?? screen.queryByText('Auto');
+			return anchor
+				? Array.from(anchor.closest('button')!.parentElement!.querySelectorAll('button'))
+				: [];
+		}
+
+		it('lists Auto first, with what it acts on beside it', () => {
+			renderModelField({ autoModelFor: {} });
+
+			const rows = openModelDropdown();
+			expect(rows).toHaveLength(3);
+			expect(rows[0]).toHaveTextContent(`Auto${BOTH_AXES}`);
+			expect(rows[0].getAttribute('title')).toContain(`Auto: ${BOTH_AXES}.`);
+			expect(rows[1]).toHaveTextContent('opus');
+			// A named model carries no note and no tooltip.
+			expect(rows[1].textContent).toBe('opus');
+			expect(rows[1]).not.toHaveAttribute('title');
+			// The count line is about the provider's own models.
+			expect(screen.getByText('2 models available')).toBeInTheDocument();
+		});
+
+		it('commits the word when Auto is picked', () => {
+			const onConfigChange = vi.fn();
+			const onConfigBlur = vi.fn();
+			renderModelField({ autoModelFor: {}, onConfigChange, onConfigBlur });
+
+			fireEvent.click(openModelDropdown()[0]);
+
+			expect(onConfigChange).toHaveBeenCalledWith('model', 'auto');
+			expect(onConfigBlur).toHaveBeenCalledWith('model', 'auto');
+		});
+
+		it('says under the field what Auto does while the model is Auto', () => {
+			renderModelField({ autoModelFor: {}, agentConfig: { model: 'auto' } });
+
+			const note = screen.getByTestId('auto-model-note');
+			expect(note).toHaveTextContent(`Auto: ${BOTH_AXES}.`);
+			// The router is off by default, and the note says so.
+			expect(note).toHaveTextContent('The model router is off');
+		});
+
+		it('names the router in the note once one is assigned', () => {
+			useSettingsStore.setState({
+				localModelAssignments: { 'model-routing': { type: 'system-one' } },
+			});
+			renderModelField({ autoModelFor: {}, agentConfig: { model: 'auto' } });
+
+			expect(screen.getByTestId('auto-model-note')).toHaveTextContent('Decided by System One.');
+		});
+
+		it('shows no note on a named model', () => {
+			renderModelField({ autoModelFor: {}, agentConfig: { model: 'opus' } });
+
+			expect(screen.queryByTestId('auto-model-note')).not.toBeInTheDocument();
+		});
+
+		it('offers Auto alone when the provider lists no models', () => {
+			renderModelField({ autoModelFor: {}, availableModels: [] });
+
+			const rows = openModelDropdown();
+			expect(rows).toHaveLength(1);
+			expect(rows[0]).toHaveTextContent(`Auto${BOTH_AXES}`);
+			expect(screen.queryByText(/models? available/)).not.toBeInTheDocument();
+		});
+
+		it('offers no Auto when the surface does not opt in, even with models listed', () => {
+			renderModelField();
+
+			const rows = openModelDropdown();
+			expect(rows.map((row) => row.textContent)).toEqual(MODELS);
+			expect(screen.queryByText('Auto')).not.toBeInTheDocument();
+		});
+
+		it('shows no note when the surface does not opt in, whatever the value', () => {
+			renderModelField({ agentConfig: { model: 'auto' } });
+
+			expect(screen.queryByTestId('auto-model-note')).not.toBeInTheDocument();
+		});
+
+		it('offers no Auto for an agent it would change nothing for', () => {
+			// OpenCode has no effort ladder Maestro can name, and none of this
+			// agent's tiers is mapped to a model.
+			renderModelField({ agent: openCodeAgent, autoModelFor: {} });
+
+			expect(openModelDropdown().map((row) => row.textContent)).toEqual(MODELS);
+		});
+
+		it('offers Auto for that agent once the form maps one of its tiers', () => {
+			renderModelField({
+				agent: openCodeAgent,
+				autoModelFor: { tierTargets: { medium: { type: 'provider-model', model: 'opus' } } },
+			});
+
+			const rows = openModelDropdown();
+			expect(rows[0]).toHaveTextContent(
+				'Autopicks the model; this provider has no effort levels to pick'
+			);
+		});
+	});
+
 	describe('Agent configuration sections', () => {
 		it('should render path input pre-filled with detected path', () => {
 			render(<AgentConfigPanel {...createDefaultProps()} />);
@@ -436,6 +590,24 @@ describe('AgentConfigPanel', () => {
 			render(<AgentConfigPanel {...createDefaultProps()} />);
 
 			expect(screen.getByText('Environment Variables (optional)')).toBeInTheDocument();
+		});
+
+		it('should skip the environment variables section when hideEnvVars is set', () => {
+			render(
+				<AgentConfigPanel
+					{...createDefaultProps({
+						hideEnvVars: true,
+						showBuiltInEnvVars: true,
+						customEnvVars: { MY_VAR: 'x' },
+					})}
+				/>
+			);
+
+			// A tabbed form mounts AgentEnvVarsSection on its Environment tab instead.
+			expect(screen.queryByText('Environment Variables (optional)')).not.toBeInTheDocument();
+			expect(screen.queryByText('MAESTRO_SESSION_RESUMED')).not.toBeInTheDocument();
+			expect(screen.queryByDisplayValue('MY_VAR')).not.toBeInTheDocument();
+			expect(screen.getByText('Custom Arguments (optional)')).toBeInTheDocument();
 		});
 	});
 
@@ -1112,7 +1284,7 @@ describe('AgentConfigPanel blur callbacks', () => {
 
 		fireEvent.blur(screen.getByDisplayValue('on'));
 
-		expect(onEnvVarsBlur).toHaveBeenCalled();
+		expect(onEnvVarsBlur).toHaveBeenCalledTimes(1);
 		for (const call of onEnvVarsBlur.mock.calls) {
 			expect(call).toEqual([]);
 		}

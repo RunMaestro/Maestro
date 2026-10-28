@@ -338,9 +338,9 @@ describe('show-playbook command', () => {
 
 			expect(() => showPlaybook('amb', { json: true })).toThrow('process.exit(1)');
 
-			const errorOutput = consoleErrorSpy.mock.calls[0][0];
+			const errorOutput = consoleSpy.mock.calls[0][0];
 			const parsed = JSON.parse(errorOutput);
-			expect(parsed.error).toBe('Ambiguous playbook ID');
+			expect(parsed).toEqual({ success: false, error: 'Ambiguous playbook ID' });
 		});
 
 		it('should handle non-Error objects thrown', () => {

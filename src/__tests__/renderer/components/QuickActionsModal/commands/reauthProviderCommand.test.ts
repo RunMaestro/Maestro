@@ -48,7 +48,7 @@ describe('Re-authenticate Provider command', () => {
 	it('names the provider rather than the agent, because the login is shared', () => {
 		const session = createMockSession({ id: 's1', name: 'Atlas', toolType: 'codex' });
 
-		expect(find(build(session))?.label).toBe('Re-authenticate Provider: Codex');
+		expect(find(build(session))?.label).toBe('Re-authenticate Agent Default: Codex');
 	});
 
 	// The Terminal agent is a plain shell: there is no login flow to run, and
@@ -66,7 +66,12 @@ describe('Re-authenticate Provider command', () => {
 	// The dialog is keyed to the provider, so it can only open once the outage
 	// record exists for that key.
 	it('opens the re-authentication dialog on the agent provider', async () => {
-		const session = createMockSession({ id: 's1', name: 'Atlas', toolType: 'claude-code' });
+		const session = createMockSession({
+			id: 's1',
+			name: 'Atlas',
+			toolType: 'claude-code',
+			aiTabs: [{ id: 'tab', tabProvider: 'codex', agentSessionId: null, logs: [] } as never],
+		});
 		useSessionStore.setState({ sessions: [session] } as never);
 
 		await find(build(session))!.action();

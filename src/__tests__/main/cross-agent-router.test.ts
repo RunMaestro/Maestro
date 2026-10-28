@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import {
 	startCrossAgentRequest,
 	cancelCrossAgentRequestsForSource,
@@ -9,8 +12,19 @@ import {
 	getCrossAgentConsultParties,
 	type CrossAgentTargetSession,
 } from '../../main/cross-agent/cross-agent-router';
-import type { CrossAgentRequest, CrossAgentResponseChunk } from '../../shared/crossAgentTypes';
+import type {
+	CrossAgentRequest,
+	CrossAgentResponseChunk,
+	CrossAgentTranscriptEntry,
+} from '../../shared/crossAgentTypes';
+import {
+	CONSULT_BUDGET_FILE,
+	readConsultBudgetSpent,
+	spendConsultBudget,
+} from '../../main/peer-consults/consult-budget';
+import { describeConsultBudgetRefusal, isConsultChainId } from '../../shared/consultBudget';
 import { spawnGroupChatAgent } from '../../main/group-chat/spawnGroupChatAgent';
+import { extractTextFromStreamJson } from '../../main/group-chat/output-parser';
 import { buildMaestroSystemPromptForSession } from '../../main/utils/maestro-system-prompt';
 
 /**
@@ -65,9 +79,25 @@ const targetSession = (): CrossAgentTargetSession => ({
 	cwd: '/proj',
 });
 
+/**
+ * The consult budget counter for the test in progress. ALWAYS a temp directory:
+ * `MAESTRO_USER_DATA` is set in an agent's shell, so the router's default would
+ * be the live one.
+ */
+let budgetDir = '';
+beforeEach(() => {
+	budgetDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-router-budget-'));
+});
+afterEach(() => {
+	fs.rmSync(budgetDir, { recursive: true, force: true });
+});
+
 function harness(
-	sshStore: unknown = null,
 	overrides: {
+		sshStore?: unknown;
+		getTargetSession?: () => CrossAgentTargetSession | null;
+		writable?: boolean;
+		maxConsultationsPerTurn?: number;
 		request?: Partial<CrossAgentRequest>;
 		agent?: Record<string, unknown>;
 		target?: Partial<CrossAgentTargetSession>;
@@ -92,8 +122,12 @@ function harness(
 					...overrides.agent,
 				}),
 			} as never,
-			sshStore: sshStore as never,
-			getTargetSession: () => ({ ...targetSession(), ...overrides.target }),
+			sshStore: (overrides.sshStore ?? null) as never,
+			getTargetSession:
+				overrides.getTargetSession ?? (() => ({ ...targetSession(), ...overrides.target })),
+			writable: overrides.writable,
+			maxConsultationsPerTurn: overrides.maxConsultationsPerTurn ?? 25,
+			consultBudgetStore: { dataDir: budgetDir },
 			onChunk: (c) => chunks.push(c),
 		});
 	// The runner keys its listeners on `cross-agent-<requestId>`; request() uses 'r1'.
@@ -112,6 +146,20 @@ function harness(
 }
 
 describe('the desktop consult runner', () => {
+	it.each(['exit', 'stop'] as const)(
+		'parses %s output with the captured launch provider',
+		async (end) => {
+			const { dispatch, emitData, emitExit } = harness({
+				request: { targetProvider: 'codex' },
+				agent: { id: 'codex' },
+			});
+			await dispatch();
+			emitData('captured output');
+			if (end === 'exit') emitExit(0);
+			else cancelCrossAgentRequestsForSource('src');
+			expect(extractTextFromStreamJson).toHaveBeenCalledWith('captured output', 'codex');
+		}
+	);
 	beforeEach(() => {
 		vi.useFakeTimers();
 		vi.mocked(spawnGroupChatAgent).mockResolvedValue({ pid: 123, success: true });
@@ -127,18 +175,187 @@ describe('the desktop consult runner', () => {
 		expect(buildCrossAgentPrompt(request())).toContain('There is no prior conversation to read');
 	});
 
+	// `maestro-cli ask` spends in the CLI and sends the place the consulted agent
+	// takes. The router's part is to state it in the consult's environment, so a
+	// `maestro-cli ask` or `dispatch` the consulted agent runs spends the same chain.
+	it('states an admitted consult chain in the environment, over the agent env vars', async () => {
+		const { dispatch } = harness({
+			getTargetSession: () => ({ ...targetSession(), customEnvVars: { FOO: 'bar' } }),
+			request: { consultChain: { chainId: 'chain-a', depth: 2 } },
+		});
+		await dispatch();
+
+		const config = vi.mocked(spawnGroupChatAgent).mock.calls[0][0];
+		expect(config.customEnvVars).toMatchObject({
+			FOO: 'bar',
+			MAESTRO_CONSULT_CHAIN: 'chain-a',
+			MAESTRO_CONSULT_DEPTH: '2',
+		});
+	});
+
+	it('does not charge a consult that was admitted before it arrived', async () => {
+		const { dispatch } = harness({
+			request: {
+				consultChain: { chainId: 'chain-a', depth: 2 },
+				sourceConsultChain: { chainId: 'chain-a', depth: 1 },
+			},
+		});
+		await dispatch();
+
+		expect(spawnGroupChatAgent).toHaveBeenCalledTimes(1);
+		expect(readConsultBudgetSpent('chain-a', { dataDir: budgetDir })).toBe(0);
+	});
+
+	describe('the consult budget of an @mention', () => {
+		const spawnedEnv = () => vi.mocked(spawnGroupChatAgent).mock.calls[0][0].customEnvVars!;
+		const counterFile = () => path.join(budgetDir, CONSULT_BUDGET_FILE);
+
+		// The asymmetry the router states in its own comment: the user's mention is
+		// the user's message, so it is free and roots a chain; an agent's is a spend.
+		it('lets a mention the user typed through free, as the root of a new chain', async () => {
+			const { dispatch } = harness({
+				getTargetSession: () => ({ ...targetSession(), customEnvVars: { FOO: 'bar' } }),
+			});
+			await dispatch();
+
+			expect(spawnedEnv()).toMatchObject({ FOO: 'bar', MAESTRO_CONSULT_DEPTH: '0' });
+			expect(isConsultChainId(spawnedEnv().MAESTRO_CONSULT_CHAIN)).toBe(true);
+			// Nothing was spent, so the counter was never written.
+			expect(fs.existsSync(counterFile())).toBe(false);
+		});
+
+		it('lets a mention the user typed through even at a budget of 0', async () => {
+			const { dispatch, chunks } = harness({ maxConsultationsPerTurn: 0 });
+			await dispatch();
+
+			expect(spawnGroupChatAgent).toHaveBeenCalledTimes(1);
+			expect(chunks).toEqual([]);
+		});
+
+		it('roots a separate chain for each mention the user typed', async () => {
+			await harness().dispatch();
+			await harness().dispatch();
+
+			const [first, second] = vi
+				.mocked(spawnGroupChatAgent)
+				.mock.calls.map(([config]) => config.customEnvVars!.MAESTRO_CONSULT_CHAIN);
+			expect(first).not.toBe(second);
+		});
+
+		it('spends one from the chain of a mention an agent made, one hop further down', async () => {
+			spendConsultBudget('chain-a', 25, { dataDir: budgetDir });
+			const { dispatch } = harness({
+				request: { sourceConsultChain: { chainId: 'chain-a', depth: 1 } },
+			});
+			await dispatch();
+
+			expect(spawnedEnv()).toMatchObject({
+				MAESTRO_CONSULT_CHAIN: 'chain-a',
+				MAESTRO_CONSULT_DEPTH: '2',
+			});
+			expect(readConsultBudgetSpent('chain-a', { dataDir: budgetDir })).toBe(2);
+		});
+
+		// The prompt builder is told the chain the consult was just placed in, so
+		// the consulted agent reads what is left of the budget it now shares.
+		it('builds the consulted agent its prompt with the chain it was placed in', async () => {
+			spendConsultBudget('chain-a', 25, { dataDir: budgetDir });
+			const { dispatch } = harness({
+				request: { sourceConsultChain: { chainId: 'chain-a', depth: 1 } },
+			});
+			await dispatch();
+
+			expect(buildMaestroSystemPromptForSession).toHaveBeenCalledWith('tgt', {
+				activeTabId: undefined,
+				provider: 'claude-code',
+				consultChain: { chainId: 'chain-a', depth: 2 },
+				consultBudgetStore: { dataDir: budgetDir },
+			});
+		});
+
+		it('builds the prompt of a consult admitted in the CLI with the chain it carries', async () => {
+			const { dispatch } = harness({
+				request: { consultChain: { chainId: 'chain-b', depth: 3 } },
+			});
+			await dispatch();
+
+			expect(vi.mocked(buildMaestroSystemPromptForSession).mock.calls[0][1]).toMatchObject({
+				consultChain: { chainId: 'chain-b', depth: 3 },
+			});
+		});
+
+		it('refuses an agent mention once the chain has spent its budget', async () => {
+			spendConsultBudget('chain-a', 2, { dataDir: budgetDir });
+			spendConsultBudget('chain-a', 2, { dataDir: budgetDir });
+			const { dispatch, chunks, processManager } = harness({
+				maxConsultationsPerTurn: 2,
+				request: { sourceConsultChain: { chainId: 'chain-a', depth: 1 } },
+			});
+			await dispatch();
+
+			expect(spawnGroupChatAgent).not.toHaveBeenCalled();
+			// The same wording every CLI verb prints: the budget, the spend, the setting.
+			const refusal = describeConsultBudgetRefusal({ spent: 2, limit: 2 });
+			expect(chunks).toEqual([
+				expect.objectContaining({ done: true, chunk: '', error: refusal.message }),
+			]);
+			expect(refusal.message).toContain('maxConsultationsPerTurn');
+			// A refusal does not count, and leaves nothing behind to Stop or to leak.
+			expect(readConsultBudgetSpent('chain-a', { dataDir: budgetDir })).toBe(2);
+			expect(getCrossAgentConsultParties('r1')).toBeNull();
+			expect(processManager.listenerCount('exit')).toBe(0);
+			expect(processManager.listenerCount('data')).toBe(0);
+		});
+
+		it('refuses every agent mention at a budget of 0', async () => {
+			const { dispatch, chunks } = harness({
+				maxConsultationsPerTurn: 0,
+				request: { sourceConsultChain: { chainId: 'chain-a', depth: 0 } },
+			});
+			await dispatch();
+
+			expect(spawnGroupChatAgent).not.toHaveBeenCalled();
+			expect(chunks[0].error).toBe(describeConsultBudgetRefusal({ spent: 0, limit: 0 }).message);
+		});
+
+		it('fails closed, and says why, when the counter cannot be read', async () => {
+			fs.writeFileSync(counterFile(), '{ not json');
+			const { dispatch, chunks } = harness({
+				request: { sourceConsultChain: { chainId: 'chain-a', depth: 1 } },
+			});
+			await dispatch();
+
+			expect(spawnGroupChatAgent).not.toHaveBeenCalled();
+			expect(chunks[0].error).toContain('Consultation budget unavailable');
+			expect(chunks[0].error).toContain(counterFile());
+			// The damaged file is left as it is: resetting it would hand out a fresh budget.
+			expect(fs.readFileSync(counterFile(), 'utf-8')).toBe('{ not json');
+		});
+
+		it('spends nothing for a mention that was never going to start', async () => {
+			const { dispatch, chunks } = harness({
+				getTargetSession: () => null,
+				request: { sourceConsultChain: { chainId: 'chain-a', depth: 1 } },
+			});
+			await dispatch();
+
+			expect(chunks[0].error).toContain('Target agent not found');
+			expect(readConsultBudgetSpent('chain-a', { dataDir: budgetDir })).toBe(0);
+		});
+	});
+
 	it('hands the consulted agent its own Maestro system prompt (fresh session)', async () => {
 		const { dispatch } = harness();
 		await dispatch();
 
-		expect(buildMaestroSystemPromptForSession).toHaveBeenCalledWith('tgt');
+		expect(buildMaestroSystemPromptForSession).toHaveBeenCalledWith('tgt', expect.anything());
 		const config = vi.mocked(spawnGroupChatAgent).mock.calls[0][0];
 		expect(config.appendSystemPrompt).toBe('SYSTEM PROMPT FOR tgt');
 		expect(config.isResume).toBe(false);
 	});
 
 	it('marks a consult that resumes the pairing session as a resume', async () => {
-		const { dispatch } = harness(null, {
+		const { dispatch } = harness({
 			request: { resumeAgentSessionId: 'prov-1' },
 			agent: { resumeArgs: (id: string) => ['--resume', id] },
 		});
@@ -150,7 +367,7 @@ describe('the desktop consult runner', () => {
 	});
 
 	it('does not treat a resume id as a resume when the agent cannot resume', async () => {
-		const { dispatch } = harness(null, { request: { resumeAgentSessionId: 'prov-1' } });
+		const { dispatch } = harness({ request: { resumeAgentSessionId: 'prov-1' } });
 		await dispatch();
 
 		const config = vi.mocked(spawnGroupChatAgent).mock.calls[0][0];
@@ -186,7 +403,7 @@ describe('the desktop consult runner', () => {
 
 	it('spawns through the group chat spawn helper over this process manager and SSH store', async () => {
 		const sshStore = { getSshRemotes: () => [] };
-		const { dispatch, processManager } = harness(sshStore);
+		const { dispatch, processManager } = harness({ sshStore });
 		await dispatch();
 
 		const config = vi.mocked(spawnGroupChatAgent).mock.calls[0][0];
@@ -298,7 +515,7 @@ describe('the desktop consult runner', () => {
 	});
 
 	it('keeps the generic message for exit 7 from a non-Claude target', async () => {
-		const { chunks, dispatch, emitExit } = harness(null, { target: { toolType: 'codex' } });
+		const { chunks, dispatch, emitExit } = harness({ target: { toolType: 'codex' } });
 		await dispatch();
 
 		emitExit(7);

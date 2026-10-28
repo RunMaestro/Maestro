@@ -291,6 +291,9 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 						cwd: p.cwd,
 						isTerminal: p.isTerminal,
 						isBatchMode: p.isBatchMode || false,
+						...(p.toolType === 'codex' && {
+							codexTransport: p.codexAppServer ? 'app-server' : 'exec',
+						}),
 						startTime: p.startTime,
 						command: p.command,
 						args: p.args,

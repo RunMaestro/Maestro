@@ -367,6 +367,7 @@ describe('dispatchCrossAgentMentionsForMessage', () => {
 			source,
 			SOURCE_TAB,
 			undefined,
+			undefined,
 			'parallel'
 		);
 
@@ -388,5 +389,106 @@ describe('dispatchCrossAgentMentionsForMessage', () => {
 				userPrompt: 'ask @Backend to review',
 			})
 		);
+	});
+});
+
+// A message another agent sent with `maestro-cli dispatch` arrives in a consult
+// chain. Its mentions are that agent's consults, so the chain has to reach
+// everything the mention sets off, or the budget loses track of the tree there.
+describe('dispatchCrossAgentMentions consult chain', () => {
+	const chain = { chainId: 'chain-a', depth: 1 };
+	const sourceOf = () => useSessionStore.getState().sessions.find((s) => s.id === SOURCE_ID);
+
+	it('sends the turn chain with every consult of a dispatched message', () => {
+		const source = sourceSession({ executionQueue: [] });
+		seed([
+			source,
+			targetSession('session-backend', 'Backend'),
+			targetSession('session-api', 'API'),
+		]);
+		const message = '@Backend and @API look at this';
+		const plan = planCrossAgentMentions(message, SOURCE_ID)!;
+
+		dispatchCrossAgentMentions(plan, message, source, SOURCE_TAB, undefined, chain);
+
+		expect(sendCrossAgentRequest).toHaveBeenCalledTimes(2);
+		for (const [options] of sendCrossAgentRequest.mock.calls) {
+			// The SOURCE turn's place, unchanged: main spends and moves one hop down.
+			expect(options.sourceConsultChain).toEqual(chain);
+			// Never as an admitted chain, which main would not charge.
+			expect(options).not.toHaveProperty('consultChain');
+		}
+	});
+
+	it('sends no chain with a mention the user typed', () => {
+		const source = sourceSession({ executionQueue: [] });
+		seed([source, targetSession('session-backend', 'Backend')]);
+		const plan = planCrossAgentMentions('@Backend look at this', SOURCE_ID)!;
+
+		dispatchCrossAgentMentions(plan, '@Backend look at this', source, SOURCE_TAB);
+
+		expect(sendCrossAgentRequest.mock.calls[0][0]).not.toHaveProperty('sourceConsultChain');
+		expect(sendCrossAgentRequest.mock.calls[0][0]).not.toHaveProperty('consultChain');
+	});
+
+	it('keeps the turn a parallel hold releases into in the chain', () => {
+		const source = sourceSession({ executionQueue: [] });
+		seed([source, targetSession('session-backend', 'Backend')]);
+		const message = 'work with @Backend on this';
+		const plan = planCrossAgentMentions(message, SOURCE_ID)!;
+
+		dispatchCrossAgentMentions(plan, message, source, SOURCE_TAB, undefined, chain);
+
+		expect(sourceOf()?.executionQueue?.[0].consultChain).toEqual(chain);
+	});
+
+	it('keeps the turn a consult-first hold releases into in the chain', () => {
+		const source = sourceSession({ executionQueue: [] });
+		seed([source, targetSession('session-backend', 'Backend')]);
+		const message = 'check with @Backend first, then write the migration';
+		const plan = planCrossAgentMentions(message, SOURCE_ID)!;
+
+		dispatchCrossAgentMentions(plan, message, source, SOURCE_TAB, undefined, chain);
+
+		const [hold] = sourceOf()?.executionQueue ?? [];
+		expect(hold.consultChain).toEqual(chain);
+		expect(hold.awaitingConsult?.deferred).toEqual({ message });
+	});
+
+	it('puts no chain on the hold of a message the user typed', () => {
+		const source = sourceSession({ executionQueue: [] });
+		seed([source, targetSession('session-backend', 'Backend')]);
+		const plan = planCrossAgentMentions('work with @Backend on this', SOURCE_ID)!;
+
+		dispatchCrossAgentMentions(plan, 'work with @Backend on this', source, SOURCE_TAB);
+
+		expect(sourceOf()?.executionQueue?.[0]).not.toHaveProperty('consultChain');
+	});
+
+	it('arms a hand-off with the chain, to spend when the answer goes out', () => {
+		const source = sourceSession({ executionQueue: [] });
+		seed([source, targetSession('session-kensho', 'Kensho')]);
+		const message = 'research MNQ trading and feed whatever we learn over to @Kensho';
+		const plan = planCrossAgentMentions(message, SOURCE_ID)!;
+
+		dispatchCrossAgentMentions(plan, message, source, SOURCE_TAB, undefined, chain);
+
+		const handoff = sourceOf()?.aiTabs.find((t) => t.id === SOURCE_TAB)?.pendingMentionHandoff;
+		expect(handoff?.sourceConsultChain).toEqual(chain);
+	});
+
+	it('passes the chain of a queued item through the plan-and-dispatch step', () => {
+		const source = sourceSession();
+		seed([source, targetSession('session-backend', 'Backend')]);
+
+		dispatchCrossAgentMentionsForMessage(
+			'@Backend review this',
+			source,
+			SOURCE_TAB,
+			undefined,
+			chain
+		);
+
+		expect(sendCrossAgentRequest.mock.calls[0][0].sourceConsultChain).toEqual(chain);
 	});
 });

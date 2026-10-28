@@ -46,6 +46,25 @@ vi.mock('../../../../renderer/components/UsageDashboard/CueStats', () => ({
 	),
 }));
 
+// Same for the Models panel, which loads its own record (ModelUsageStats.test.tsx).
+vi.mock('../../../../renderer/components/UsageDashboard/ModelUsage', () => ({
+	ModelUsageStats: ({
+		timeRange,
+		colorBlindMode,
+	}: {
+		timeRange: string;
+		colorBlindMode?: boolean;
+	}) => (
+		<div
+			data-testid="model-usage-mock"
+			data-time-range={timeRange}
+			data-colorblind={String(Boolean(colorBlindMode))}
+		>
+			ModelUsageStats stub
+		</div>
+	),
+}));
+
 vi.mock('../../../../renderer/components/UsageDashboard/ClaudePlanUsage', () => ({
 	ClaudePlanUsage: () => <div data-testid="anthropic-usage-mock">Anthropic Usage stub</div>,
 }));
@@ -337,6 +356,58 @@ describe('UsageDashboardModal - tab ordering', () => {
 		expect(autoRunIdx).toBeGreaterThanOrEqual(0);
 		expect(cueIdx).toBe(autoRunIdx + 1);
 		expect(shortcutsIdx).toBe(cueIdx + 1);
+	});
+});
+
+describe('UsageDashboardModal - Models tab', () => {
+	it('sits right after Tokens and needs no Encore flag beyond the dashboard', async () => {
+		setEncoreFlags({ maestroCue: false, usageStats: true });
+
+		render(<UsageDashboardModal isOpen={true} onClose={() => {}} theme={mockTheme} />);
+
+		await waitFor(() => {
+			expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
+		});
+
+		const labels = screen.getAllByRole('tab').map((el) => el.textContent?.trim());
+		expect(labels.indexOf('Models')).toBe(labels.indexOf('Tokens') + 1);
+	});
+
+	it('renders the panel with the range and the colorblind setting', async () => {
+		setEncoreFlags({ maestroCue: false, usageStats: true });
+
+		render(
+			<UsageDashboardModal
+				isOpen={true}
+				onClose={() => {}}
+				theme={mockTheme}
+				colorBlindMode={true}
+				defaultTimeRange="month"
+			/>
+		);
+
+		await waitFor(() => {
+			expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
+		});
+		await act(async () => {
+			fireEvent.click(screen.getByRole('tab', { name: 'Models' }));
+		});
+
+		const stub = await screen.findByTestId('model-usage-mock');
+		expect(stub).toHaveAttribute('data-time-range', 'month');
+		expect(stub).toHaveAttribute('data-colorblind', 'true');
+		expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'tabpanel-models');
+	});
+
+	it('bypasses the AI-query empty state: a local model run leaves no query event', async () => {
+		setEncoreFlags({ maestroCue: false, usageStats: true });
+		useUIStore.getState().setUsageDashboardViewMode('models');
+		mockStats.getAggregation.mockResolvedValueOnce(emptyAggregation);
+
+		render(<UsageDashboardModal isOpen={true} onClose={() => {}} theme={mockTheme} />);
+
+		expect(await screen.findByTestId('model-usage-mock')).toBeInTheDocument();
+		expect(screen.queryByText(/No usage data yet/i)).not.toBeInTheDocument();
 	});
 });
 

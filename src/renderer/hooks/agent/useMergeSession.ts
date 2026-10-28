@@ -26,6 +26,7 @@ import type { Session, AITab, LogEntry } from '../../types';
 import type { MergeResult, GroomingProgress, MergeRequest } from '../../types/contextMerge';
 import type { MergeOptions } from '../../components/MergeSessionModal';
 import { ContextGroomingService, contextGroomingService } from '../../services/contextGroomer';
+import { resolveTabProvider } from '../../utils/providerTabSessions';
 import { extractTabContext } from '../../utils/contextExtractor';
 import { createMergedSession, getActiveTab } from '../../utils/tabHelpers';
 import { generateId } from '../../utils/ids';
@@ -361,8 +362,12 @@ export function useMergeSession(activeTabId?: string): UseMergeSessionResult {
 
 				const groomingRequest: MergeRequest = {
 					sources: [sourceContext, targetContext],
-					targetAgent: sourceSession.toolType,
-					targetProjectRoot: sourceSession.projectRoot,
+					targetAgent: options.createNewSession
+						? sourceSession.toolType
+						: resolveTabProvider(targetTab, targetSession),
+					targetProjectRoot: options.createNewSession
+						? sourceSession.projectRoot
+						: targetSession.projectRoot,
 				};
 
 				const groomingResult = await groomingServiceRef.current.groomContexts(

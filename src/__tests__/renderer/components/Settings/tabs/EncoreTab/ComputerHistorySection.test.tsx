@@ -4,7 +4,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ComputerHistorySection } from '../../../../../../renderer/components/Settings/tabs/EncoreTab/components';
 import { useSettingsStore } from '../../../../../../renderer/stores/settingsStore';
 import { useModalStore } from '../../../../../../renderer/stores/modalStore';
-import { defaultComputerHistoryConfig } from '../../../../../../shared/computer-history/config';
+import {
+	applyConfigPatch,
+	defaultComputerHistoryConfig,
+	type ComputerHistoryConfigPatch,
+} from '../../../../../../shared/computer-history/config';
 import { mockTheme } from '../../../../../helpers/mockTheme';
 
 function makeApi(
@@ -30,7 +34,9 @@ function makeApi(
 			currentSegment: null,
 		})),
 		getConfig: vi.fn(async () => config),
-		setConfig: vi.fn(async (patch: Record<string, unknown>) => ({ ...config, ...patch })),
+		// The service's own merge. A shallow spread would replace `digests` whole
+		// and hand the section a config with no digest writer.
+		setConfig: vi.fn(async (patch: ComputerHistoryConfigPatch) => applyConfigPatch(config, patch)),
 		pause: vi.fn(async () => ({})),
 		resume: vi.fn(async () => ({})),
 		listRules: vi.fn(async () => ({
@@ -178,11 +184,28 @@ describe('ComputerHistorySection', () => {
 		await waitFor(() => expect(api.clear).toHaveBeenCalledWith({ all: true }));
 	});
 
+	it('digests are written by the local model unless the config names an agent', async () => {
+		const api = makeApi('windows', null);
+		api.getConfig.mockResolvedValue({
+			...defaultComputerHistoryConfig(),
+			digests: { enabled: true, source: 'local', agentId: 'agent-1', rollup: true },
+		});
+		install(api);
+		render(<ComputerHistorySection theme={mockTheme} />);
+		expect(await screen.findByLabelText('Digest model')).toBeTruthy();
+		expect(screen.queryByLabelText('Digest agent')).toBeNull();
+		expect(screen.getByText(/written by the chosen local model after each window/)).toBeTruthy();
+		fireEvent.click(screen.getByTestId('computer-history-digest-source-agent'));
+		await waitFor(() =>
+			expect(api.setConfig).toHaveBeenCalledWith({ digests: { source: 'agent' } })
+		);
+	});
+
 	it('the 6-hour roll-up toggle saves through the service', async () => {
 		const api = makeApi('windows', null);
 		api.getConfig.mockResolvedValue({
 			...defaultComputerHistoryConfig(),
-			digests: { enabled: true, agentId: null, rollup: true },
+			digests: { enabled: true, source: 'local', agentId: null, rollup: true },
 		});
 		install(api);
 		render(<ComputerHistorySection theme={mockTheme} />);

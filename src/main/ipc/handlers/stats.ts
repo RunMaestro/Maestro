@@ -42,6 +42,7 @@ import type { DelegationDay, DelegationTotals } from '../../../shared/delegation
 import { getTimeRangeStart } from '../../stats/utils';
 import type { TokenUsageAggregate, TokenUsageQuery } from '../../../shared/tokenUsage';
 import { getTokenUsageAggregate } from '../../stats/token-usage/token-usage-accessor';
+import { readModelUsage } from '../../local-models/model-usage';
 import { resolveEncoreFeatures } from '../../../shared/encoreFeatureDefaults';
 import {
 	STATS_INDEXING_CHANNEL,
@@ -280,6 +281,15 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 		withIpcErrorLogging(handlerOpts('getAggregation'), async (range: StatsTimeRange) => {
 			const db = getStatsDB();
 			return db.getAggregatedStats(range);
+		})
+	);
+
+	// What every model other than a provider's own did in a range: the Models
+	// tab's one read, and the same record `maestro-cli stats models` prints.
+	ipcMain.handle(
+		'stats:get-model-usage',
+		withIpcErrorLogging(handlerOpts('getModelUsage'), async (range?: StatsTimeRange) => {
+			return readModelUsage(range);
 		})
 	);
 

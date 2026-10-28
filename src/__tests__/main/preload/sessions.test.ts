@@ -49,6 +49,11 @@ describe('Sessions Preload API', () => {
 			api = createClaudeApi();
 		});
 
+		it('forwards the selected account when discovering Claude commands', async () => {
+			await api.getCommands('/project', '/accounts/work');
+			expect(mockInvoke).toHaveBeenCalledWith('claude:getCommands', '/project', '/accounts/work');
+		});
+
 		describe('listSessions', () => {
 			it('should invoke claude:listSessions and log deprecation warning', async () => {
 				mockInvoke.mockResolvedValue([]);

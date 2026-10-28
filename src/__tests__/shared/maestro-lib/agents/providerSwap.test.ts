@@ -14,10 +14,15 @@
 import { describe, it, expect } from 'vitest';
 import {
 	PROVIDER_OVERRIDE_KEYS,
+	projectTabProvider,
 	providerOverridesFor,
+	resolveTabProvider,
+	resolveTabNativeProvider,
 	resolveTurnProvider,
+	resolveErrorProvider,
 	switchAgentProvider,
 	switchTabProvider,
+	switchTabProviderFor,
 	updateProviderSlot,
 	type ProviderAgentOverrides,
 	type ProviderSwitchAgent,
@@ -127,6 +132,7 @@ function tabSessionJson(tab: ProviderSwitchTab): string {
 		tab.usageStats ?? null,
 		tab.customModel ?? null,
 		tab.customEffort ?? null,
+		tab.runOn ?? null,
 	]);
 }
 
@@ -203,6 +209,189 @@ describe('switchTabProvider', () => {
 		const tab = makeTab({ agentSessionId: 'claude-abc' });
 
 		expect(switchTabProvider(tab, 'claude-code', 'claude-code')).toBe(tab);
+	});
+});
+
+describe('tab provider selection', () => {
+	it('preserves legacy Claude identities and overrides when the agent has no stored provider', () => {
+		const agent = makeAgent(undefined as unknown as ToolType, { customModel: 'sonnet' });
+		const tab = makeTab({ agentSessionId: 'legacy-claude' });
+		expect(resolveTabProvider(tab, agent)).toBe('claude-code');
+		const projected = projectTabProvider(agent, tab);
+		expect(projected.agent.toolType).toBe('claude-code');
+		expect(projected.agent.customModel).toBe('sonnet');
+		expect(projected.tab?.agentSessionId).toBe('legacy-claude');
+		expect(resolveTabProvider(makeTab({ tabProvider: 'codex' }), agent)).toBe('codex');
+	});
+
+	it('inherits an absent provider and keeps explicit pins independent of the agent', () => {
+		const agent = makeAgent('claude-code');
+		expect(resolveTabProvider(undefined, agent)).toBe('claude-code');
+		expect(resolveTabProvider(makeTab(), agent)).toBe('claude-code');
+		expect(resolveTabProvider(makeTab({ tabProvider: 'codex' }), agent)).toBe('codex');
+		expect(resolveTurnProvider(makeTab({ tabProvider: 'codex' }), agent)).toBe('codex');
+	});
+
+	it('parks the live native slot and restores Auto, Run on and usage after A to B to A', () => {
+		const agent = makeAgent('claude-code');
+		const tab = makeTab({
+			agentSessionId: 'claude-native',
+			customModel: 'auto',
+			customEffort: 'high',
+			usageStats: usage(8),
+			runOn: { type: 'source', endpointId: 'ollama', model: 'local-model', contextTokens: 64000 },
+			turnProvider: 'claude-code',
+			logs: [{ id: 'message', text: 'Keep the conversation' }],
+		});
+		const switched = switchTabProviderFor(tab, agent, 'codex');
+		expect(switched).toMatchObject({
+			tabProvider: 'codex',
+			agentSessionId: null,
+			pendingTranslation: 'claude-code',
+		});
+		expect(switched.runOn).toBeUndefined();
+		expect(switched.providerSessions?.['claude-code']).toMatchObject({
+			agentSessionId: 'claude-native',
+			customModel: 'auto',
+			customEffort: 'high',
+			usageStats: usage(8),
+			runOn: { type: 'source', endpointId: 'ollama', model: 'local-model', contextTokens: 64000 },
+		});
+		expect(switched.providerSessions?.codex).toBeUndefined();
+		const withCodexTurn = {
+			...switched,
+			agentSessionId: 'codex-native',
+			customModel: 'codex-model',
+			customEffort: 'low',
+			usageStats: usage(2),
+			runOn: { type: 'provider' as const },
+			pendingTranslation: undefined,
+			turnProvider: 'codex' as const,
+		};
+		const restored = switchTabProviderFor(withCodexTurn, agent, 'claude-code');
+		expect(tabSessionJson(restored)).toBe(tabSessionJson(tab));
+		expect(restored.providerSessions?.['claude-code']).toBeUndefined();
+		expect(restored.providerSessions?.codex?.agentSessionId).toBe('codex-native');
+		expect(restored.pendingTranslation).toBe('codex');
+		expect(restored.turnProvider).toBe('codex');
+		expect(restored.logs).toBe(tab.logs);
+		expect(tab.providerSessions).toBeUndefined();
+		expect(agent.toolType).toBe('claude-code');
+	});
+
+	it('retains the authoritative source over a stale destination and cancels an unsent hop', () => {
+		const agent = makeAgent('claude-code');
+		const tab = makeTab({
+			agentSessionId: 'latest-claude',
+			providerSessions: { codex: { agentSessionId: 'stale-codex' } },
+		});
+		const switched = switchTabProviderFor(tab, agent, 'codex');
+		expect(switched.agentSessionId).toBe('stale-codex');
+		expect(switched.pendingTranslation).toBe('claude-code');
+		const restored = switchTabProviderFor(switched, agent, undefined);
+		expect(restored.agentSessionId).toBe('latest-claude');
+		expect(restored.pendingTranslation).toBeUndefined();
+		expect(restored.tabProvider).toBeUndefined();
+	});
+
+	it('keeps a pending native source through further selections', () => {
+		const tab = makeTab({
+			tabProvider: 'codex',
+			agentSessionId: 'stale-codex',
+			pendingTranslation: 'claude-code',
+			providerSessions: { 'claude-code': { agentSessionId: 'latest-claude' } },
+		});
+		const switched = switchTabProviderFor(tab, makeAgent('claude-code'), 'opencode');
+		expect(switched.pendingTranslation).toBe('claude-code');
+		expect(switched.agentSessionId).toBeNull();
+	});
+
+	it('changes only inheritance metadata when the effective provider is unchanged', () => {
+		const agent = makeAgent('claude-code');
+		const tab = makeTab({ agentSessionId: 'native', awaitingSessionId: true });
+		const pinned = switchTabProviderFor(tab, agent, 'claude-code');
+		expect(pinned).toEqual({ ...tab, tabProvider: 'claude-code' });
+		expect(switchTabProviderFor(pinned, agent, 'claude-code')).toBe(pinned);
+		expect(switchTabProviderFor(pinned, agent, undefined)).toEqual({
+			...tab,
+			tabProvider: undefined,
+		});
+	});
+
+	it('retains a busy source before its first ID arrives and routes late events to its parked slot', () => {
+		const agent = makeAgent('claude-code');
+		const tab = makeTab({ state: 'busy', awaitingSessionId: true, turnProvider: 'claude-code' });
+		const switched = switchTabProviderFor(tab, agent, 'codex');
+		expect(switched.state).toBe('busy');
+		expect(switched.pendingTranslation).toBe('claude-code');
+		expect(resolveTurnProvider(switched, agent)).toBe('claude-code');
+		const updated = updateProviderSlot(switched, agent, 'claude-code', { agentSessionId: 'late' });
+		expect(updated.agentSessionId).toBeNull();
+		expect(updated.providerSessions?.['claude-code']?.agentSessionId).toBe('late');
+		const live = updateProviderSlot(updated, agent, 'codex', { agentSessionId: 'codex-new' });
+		expect(live.agentSessionId).toBe('codex-new');
+		expect(live.providerSessions?.codex).toBeUndefined();
+	});
+
+	it('leaves empty tabs without a pending native source', () => {
+		expect(
+			switchTabProviderFor(makeTab(), makeAgent('claude-code'), 'codex').pendingTranslation
+		).toBeUndefined();
+	});
+
+	it.each(['terminal', 'unknown-provider'])('rejects a non-chat target %s', (provider) => {
+		expect(() =>
+			switchTabProviderFor(makeTab(), makeAgent('claude-code'), provider as ToolType)
+		).toThrow('Provider cannot run an AI tab');
+	});
+
+	it('keeps explicit tabs pinned when the agent default changes', () => {
+		const pinned = makeTab({ tabProvider: 'claude-code', agentSessionId: 'pinned-native' });
+		const inherited = makeTab({ id: 'inheriting', agentSessionId: 'default-native' });
+		const agent = makeAgent('claude-code', { aiTabs: [pinned, inherited] });
+		const switched = switchAgentProvider(agent, 'codex').agent;
+		expect(switched.aiTabs[0]).toBe(pinned);
+		expect(resolveTabProvider(switched.aiTabs[0], switched)).toBe('claude-code');
+		expect(switched.aiTabs[1].providerSessions?.['claude-code']?.agentSessionId).toBe(
+			'default-native'
+		);
+	});
+
+	it('keeps retained tabs pinned while parking inherited tabs in the same containers', () => {
+		const pinned = makeTab({ tabProvider: 'claude-code', agentSessionId: 'pinned-native' });
+		const inherited = makeTab({ id: 'inheriting', agentSessionId: 'default-native' });
+		const agent = {
+			...makeAgent('claude-code'),
+			closedTabHistory: [
+				{ id: 'pinned', tab: pinned },
+				{ id: 'inherited', tab: inherited },
+			],
+			orphanedThinkingTabs: [pinned, inherited],
+			snoozedTabs: [
+				{
+					type: 'group',
+					members: [
+						{ type: 'ai', tab: pinned },
+						{ type: 'ai', tab: inherited },
+					],
+				},
+			],
+			providerTranslationTabInventory: [pinned, inherited],
+		};
+		const switched = switchAgentProvider(agent, 'codex').agent;
+		const retained = [
+			switched.closedTabHistory.map((entry) => entry.tab),
+			switched.orphanedThinkingTabs,
+			switched.snoozedTabs[0].members.map((entry) => entry.tab),
+			switched.providerTranslationTabInventory,
+		];
+		for (const [explicit, following] of retained) {
+			expect(explicit).toBe(pinned);
+			expect(following).toMatchObject({
+				agentSessionId: null,
+				providerSessions: { 'claude-code': { agentSessionId: 'default-native' } },
+			});
+		}
 	});
 });
 
@@ -561,7 +750,19 @@ describe('switchAgentProvider', () => {
 		expect(backOnClaude.aiTabs[0].agentSessionId).toBe('claude-late');
 	});
 
-	it('clears and reports the settings a queued message was frozen with', () => {
+	it('preserves provider-scoped queued settings when agent defaults change', () => {
+		const settings = { provider: 'claude-code' as const, model: 'opus', effort: 'high' };
+		const agent = makeAgent('claude-code', {
+			executionQueue: [
+				{ id: 'frozen', tabId: 'tab-1', text: 'keep my provider', turnSettings: settings },
+			],
+		});
+		const { agent: onCodex, unparked } = switchAgentProvider(agent, 'codex');
+		expect(onCodex.executionQueue[0].turnSettings).toBe(settings);
+		expect(unparked).toEqual([]);
+	});
+
+	it('clears and reports legacy queued settings with no provider snapshot', () => {
 		const agent = makeAgent('claude-code', {
 			executionQueue: [
 				{
@@ -671,5 +872,116 @@ describe('providerOverridesFor', () => {
 		preview.customModel = 'edited';
 
 		expect(onCodex.providerOverrides?.['claude-code']?.customModel).toBe('opus');
+	});
+});
+
+describe('one-tab launch projection', () => {
+	it('drops the default harness quota stamp from foreign provider projections', () => {
+		const agent = {
+			...makeAgent('codex'),
+			claudeInteractive: { lastUsageSnapshotKey: '/stale/account' },
+		};
+		const tab = makeTab({ tabProvider: 'claude-code' });
+		expect(projectTabProvider(agent, tab).agent.claudeInteractive).toBeUndefined();
+		expect(agent.claudeInteractive.lastUsageSnapshotKey).toBe('/stale/account');
+	});
+
+	it('uses the selected provider slot and overrides without changing the saved agent', () => {
+		const tab = makeTab({
+			tabProvider: 'codex',
+			agentSessionId: 'codex-native',
+			customModel: 'gpt-tab',
+			providerSessions: { 'claude-code': { agentSessionId: 'claude-native', customModel: 'opus' } },
+		});
+		const agent = {
+			...makeAgent('claude-code', {
+				aiTabs: [tab],
+				customPath: '/bin/claude',
+				customArgs: '--claude-only',
+			}),
+			gatewayUrl: 'http://default.invalid',
+			tierTargets: { high: { model: 'opus' } },
+			runOn: { type: 'provider' as const },
+			providerOverrides: {
+				codex: {
+					customPath: '/bin/codex',
+					customArgs: '--codex-only',
+					customEnvVars: { CODEX_HOME: '/accounts/codex' },
+				},
+			},
+		};
+		const selected = projectTabProvider(agent, tab);
+		expect(selected.agent).toMatchObject({
+			toolType: 'codex',
+			customPath: '/bin/codex',
+			customArgs: '--codex-only',
+			customEnvVars: { CODEX_HOME: '/accounts/codex' },
+		});
+		expect(selected.agent.gatewayUrl).toBeUndefined();
+		expect(selected.agent.tierTargets).toBeUndefined();
+		expect(selected.tab?.agentSessionId).toBe('codex-native');
+		const queued = projectTabProvider(agent, tab, 'claude-code');
+		expect(queued.tab).toMatchObject({ agentSessionId: 'claude-native', customModel: 'opus' });
+		expect(queued.agent.customPath).toBe('/bin/claude');
+		expect(agent.toolType).toBe('claude-code');
+		expect(tab.agentSessionId).toBe('codex-native');
+		expect(agent.aiTabs[0]).toBe(tab);
+	});
+
+	it('does not inherit the agent default model, environment or Run on into an unseen harness', () => {
+		const agent = {
+			...makeAgent('claude-code', {
+				customModel: 'opus',
+				customEnvVars: { CLAUDE_CONFIG_DIR: '/private/claude' },
+			}),
+			runOn: { type: 'source' as const, endpointId: 'local', model: 'local-model' },
+		};
+		const result = projectTabProvider(agent, makeTab({ tabProvider: 'codex' }));
+		expect(result.agent.customModel).toBeUndefined();
+		expect(result.agent.customEnvVars).toBeUndefined();
+		expect(result.agent.runOn).toBeUndefined();
+	});
+});
+
+it('marks a captured queued provider as the latest source after it runs behind another selection', () => {
+	const tab = makeTab({
+		tabProvider: 'codex',
+		agentSessionId: 'codex-live',
+		pendingTranslation: 'opencode',
+	});
+	const updated = updateProviderSlot(tab, makeAgent('claude-code'), 'claude-code', {
+		agentSessionId: 'fresh-claude',
+	});
+	expect(updated.pendingTranslation).toBe('claude-code');
+	expect(updated.agentSessionId).toBe('codex-live');
+});
+
+describe('native transcript owner', () => {
+	it('uses the selection until a pending source owns the latest transcript', () => {
+		const agent = { toolType: 'claude-code' as const };
+		expect(resolveTabNativeProvider(undefined, agent)).toBe('claude-code');
+		expect(resolveTabNativeProvider({ tabProvider: 'codex' }, agent)).toBe('codex');
+		expect(
+			resolveTabNativeProvider({ tabProvider: 'codex', pendingTranslation: 'opencode' }, agent)
+		).toBe('opencode');
+	});
+});
+
+describe('captured failure ownership', () => {
+	it('prefers the failure owner over selection and a later turn', () => {
+		expect(
+			resolveErrorProvider(
+				{ tabProvider: 'codex', turnProvider: 'codex' },
+				{ toolType: 'opencode' },
+				{ agentId: 'claude-code' }
+			)
+		).toBe('claude-code');
+		expect(
+			resolveErrorProvider(
+				{ tabProvider: 'codex' },
+				{ toolType: 'opencode' },
+				{ agentId: 'unknown' }
+			)
+		).toBe('codex');
 	});
 });

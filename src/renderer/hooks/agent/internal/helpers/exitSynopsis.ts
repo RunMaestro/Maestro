@@ -44,6 +44,7 @@ export interface SynopsisData {
 		customEnvVars?: Record<string, string>;
 		customModel?: string;
 		customContextWindow?: number;
+		runOnOverride?: import('../../../../../shared/local-models/run-on').RunOnTarget;
 		// Claude token-source selection, forwarded so the synopsis spawn honors
 		// the agent's TUI/Dynamic/API choice (it runs under a synthetic sessionId,
 		// so the spawn handler can't resolve it from the persisted session).

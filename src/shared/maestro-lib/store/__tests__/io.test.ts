@@ -30,7 +30,21 @@ const RC_SESSIONS = {
 			name: 'Maestro',
 			toolType: 'claude-code',
 			rcOnlyAgentField: ['x', { y: 1 }],
-			aiTabs: [{ id: 'tab-1', name: 'Main', rcOnlyTabField: 7, logs: [{ id: 'l1', text: 'hi' }] }],
+			aiTabs: [
+				{
+					id: 'tab-1',
+					name: 'Main',
+					rcOnlyTabField: 7,
+					logs: [{ id: 'l1', text: 'hi' }],
+					tabProvider: 'codex',
+					customModel: 'auto',
+					runOn: { type: 'provider' },
+					pendingTranslation: 'claude-code',
+					providerSessions: {
+						'claude-code': { agentSessionId: 'claude-native', customModel: 'opus' },
+					},
+				},
+			],
 		},
 		{ id: 'agent-2', name: 'Docs', toolType: 'codex', aiTabs: [] },
 	],
@@ -83,6 +97,7 @@ describe('store I/O', () => {
 			expect(reread.zebraDocumentKey).toEqual(RC_SESSIONS.zebraDocumentKey);
 			expect(reread.sessions[0].rcOnlyAgentField).toEqual(['x', { y: 1 }]);
 			expect(reread.sessions[0].aiTabs[0].rcOnlyTabField).toBe(7);
+			expect(reread.sessions[0].aiTabs[0]).toEqual(RC_SESSIONS.sessions[0].aiTabs[0]);
 			expect(Object.keys(reread)).toEqual(['zebraDocumentKey', 'sessions', 'alphaDocumentKey']);
 		});
 

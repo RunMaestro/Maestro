@@ -178,18 +178,18 @@ This allows you to develop and test different branches simultaneously without po
 
 ## Testing
 
-Run the test suite with Jest:
+Run the unit test suite with Vitest (integration, end-to-end, and performance suites use separate configurations):
 
 ```bash
-npm test                              # Run all tests
-npm test -- --watch                   # Watch mode (re-runs on file changes)
-npm test -- --testPathPattern="name"  # Run tests matching a pattern
-npm test -- --coverage                # Run with coverage report
+npm test                  # Run all unit tests once
+npm run test:watch        # Watch mode (re-runs on file changes)
+npm test -- path/to.test.ts # Run tests matching a file path
+npm run test:coverage     # Run with coverage report
 ```
 
 ### Watch Mode
 
-Watch mode keeps Jest running and automatically re-runs tests when you save changes:
+Watch mode keeps Vitest running and automatically re-runs tests when you save changes:
 
 - Watches source and test files for changes
 - Re-runs only tests affected by changed files

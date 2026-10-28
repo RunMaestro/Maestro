@@ -29,6 +29,13 @@ vi.mock('../../../cli/services/storage', () => ({
 	readGroups: vi.fn(() => []),
 }));
 
+// The consult budget is a file under the Maestro data directory. The real rule
+// runs against a temp directory in services/consult-budget-guard.test.ts; here
+// the guard is a mock, so no dispatch in this suite touches the live counter.
+vi.mock('../../../cli/services/consult-budget-guard', () => ({
+	admitCliConsult: vi.fn(),
+}));
+
 import { dispatch, runDispatch } from '../../../cli/commands/dispatch';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import {
@@ -37,8 +44,13 @@ import {
 	readLiveSessions,
 	readGroups,
 } from '../../../cli/services/storage';
+import { admitCliConsult } from '../../../cli/services/consult-budget-guard';
+import { CONSULT_BUDGET_EXHAUSTED_CODE } from '../../../shared/consultBudget';
 import { isolateAgentEnv } from '../../helpers/agentEnvIsolation';
 import { CALLER_AGENT_ID_ENV_VAR, CALLER_TAB_ID_ENV_VAR } from '../../../shared/agentDelegation';
+
+/** The place in the chain the guard hands the dispatch target by default. */
+const TARGET_CHAIN = { chainId: 'chain-under-test', depth: 1 };
 
 describe('dispatch command', () => {
 	// The caller identity is read from the environment, and the suite runs in
@@ -52,6 +64,7 @@ describe('dispatch command', () => {
 		vi.clearAllMocks();
 		consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 		processExitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+		vi.mocked(admitCliConsult).mockReturnValue({ allowed: true, chain: TARGET_CHAIN });
 	});
 
 	describe('default (active tab) flow', () => {
@@ -76,6 +89,7 @@ describe('dispatch command', () => {
 					command: 'Hello world',
 					inputMode: 'ai',
 					background: true,
+					consultChain: TARGET_CHAIN,
 				},
 				'command_result'
 			);
@@ -132,6 +146,7 @@ describe('dispatch command', () => {
 					// The dispatched tab is created in the background; the tabId we
 					// return is how the caller follows it without stealing the view.
 					background: true,
+					consultChain: TARGET_CHAIN,
 					// ...and hidden, so a hand-off adds no chip to the target's strip.
 					hidden: true,
 				},
@@ -248,6 +263,7 @@ describe('dispatch command', () => {
 					sessionId: 'agent-abc-123',
 					command: 'Hello world',
 					inputMode: 'ai',
+					consultChain: TARGET_CHAIN,
 				},
 				'command_result'
 			);
@@ -272,6 +288,7 @@ describe('dispatch command', () => {
 					type: 'new_ai_tab_with_prompt',
 					sessionId: 'agent-abc-123',
 					prompt: 'Open a new conversation',
+					consultChain: TARGET_CHAIN,
 				},
 				'new_ai_tab_with_prompt_result'
 			);
@@ -297,6 +314,7 @@ describe('dispatch command', () => {
 					sessionId: 'agent-abc-123',
 					prompt: 'Open a new conversation',
 					background: true,
+					consultChain: TARGET_CHAIN,
 				},
 				'new_ai_tab_with_prompt_result'
 			);
@@ -332,6 +350,7 @@ describe('dispatch command', () => {
 					command: 'Follow up',
 					inputMode: 'ai',
 					tabId: 'tab-xyz',
+					consultChain: TARGET_CHAIN,
 				},
 				'command_result'
 			);
@@ -380,6 +399,7 @@ describe('dispatch command', () => {
 					background: false,
 					tabId: 'tab-xyz',
 					background: true,
+					consultChain: TARGET_CHAIN,
 				},
 				'command_result'
 			);
@@ -518,6 +538,7 @@ describe('dispatch command', () => {
 					background: false,
 					force: true,
 					background: true,
+					consultChain: TARGET_CHAIN,
 				},
 				'command_result'
 			);
@@ -564,6 +585,7 @@ describe('dispatch command', () => {
 					inputMode: 'ai',
 					tabId: 'tab-1',
 					background: true,
+					consultChain: TARGET_CHAIN,
 				},
 				'enqueue_command_result'
 			);
@@ -862,6 +884,135 @@ describe('dispatch command', () => {
 		});
 	});
 
+	describe('the consult budget', () => {
+		const refusal = {
+			allowed: false as const,
+			code: CONSULT_BUDGET_EXHAUSTED_CODE,
+			message:
+				'Consultation budget exhausted, so nothing was sent: the agents working on this message have spent 25 of 25 consults and delegations. The budget is the maxConsultationsPerTurn setting.',
+		};
+
+		/** Wire a client that answers every command with `response`. */
+		const stubClient = (response: Record<string, unknown>) => {
+			const sendCommand = vi.fn().mockResolvedValue(response);
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({ sendCommand } as never)
+			);
+			return sendCommand;
+		};
+
+		beforeEach(() => {
+			vi.mocked(resolveAgentId).mockReturnValue('agent-abc-123');
+		});
+
+		it('refuses with the JSON error shape and a non-zero exit, and reaches nobody', async () => {
+			const sendCommand = stubClient({ success: true });
+			vi.mocked(admitCliConsult).mockReturnValue(refusal);
+
+			await dispatch('agent-abc', 'Take this over', {});
+
+			expect(consoleSpy).toHaveBeenCalledOnce();
+			expect(JSON.parse(consoleSpy.mock.calls[0][0])).toEqual({
+				success: false,
+				error: refusal.message,
+				code: CONSULT_BUDGET_EXHAUSTED_CODE,
+			});
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+			// Refused before the desktop is reached at all.
+			expect(withMaestroClient).not.toHaveBeenCalled();
+			expect(sendCommand).not.toHaveBeenCalled();
+		});
+
+		it('names the budget, the number spent and the setting in the error', async () => {
+			stubClient({ success: true });
+			vi.mocked(admitCliConsult).mockReturnValue(refusal);
+
+			const result = await runDispatch('agent-abc', 'Take this over', {});
+
+			expect(result.success).toBe(false);
+			expect(result.code).toBe(CONSULT_BUDGET_EXHAUSTED_CODE);
+			expect(result.error).toContain('Consultation budget');
+			expect(result.error).toContain('25 of 25');
+			expect(result.error).toContain('maxConsultationsPerTurn');
+		});
+
+		it('refuses on the --new-tab and --queue paths too', async () => {
+			const sendCommand = stubClient({ success: true, tabId: 'tab-new' });
+			vi.mocked(admitCliConsult).mockReturnValue(refusal);
+
+			const newTab = await runDispatch('agent-abc', 'Take this over', { newTab: true });
+			const queued = await runDispatch('agent-abc', 'Take this over', { queue: true });
+
+			expect(newTab).toEqual({ success: false, error: refusal.message, code: refusal.code });
+			expect(queued).toEqual({ success: false, error: refusal.message, code: refusal.code });
+			expect(sendCommand).not.toHaveBeenCalled();
+		});
+
+		it('spends once per dispatch, from the environment the command runs in', async () => {
+			stubClient({ success: true });
+
+			await runDispatch('agent-abc', 'Take this over', {});
+
+			expect(admitCliConsult).toHaveBeenCalledExactlyOnceWith();
+		});
+
+		// Checked last: a dispatch that was never going to start must not cost the
+		// chain one of its delegations.
+		it('spends nothing on options it rejects', async () => {
+			stubClient({ success: true });
+			// `--force` is refused unless the setting allows it.
+			vi.mocked(readSettingValue).mockReturnValue(false);
+
+			await runDispatch('agent-abc', 'x', { newTab: true, tab: 'tab-1' });
+			await runDispatch('agent-abc', 'x', { queue: true, force: true });
+			await runDispatch('agent-abc', 'x', { force: true });
+			await runDispatch('agent-abc', 'x', { notifyOnComplete: 'caller' });
+
+			expect(admitCliConsult).not.toHaveBeenCalled();
+		});
+
+		it('spends nothing on an agent it cannot resolve', async () => {
+			stubClient({ success: true });
+			vi.mocked(resolveAgentId).mockImplementation(() => {
+				throw new Error('Agent not found: nope');
+			});
+
+			const result = await runDispatch('nope', 'x', {});
+
+			expect(result.code).toBe('AGENT_NOT_FOUND');
+			expect(admitCliConsult).not.toHaveBeenCalled();
+		});
+
+		it("carries the target's place in the chain on all three message types", async () => {
+			const sendCommand = stubClient({ success: true, tabId: 'tab-new' });
+
+			await runDispatch('agent-abc', 'Take this over', {});
+			await runDispatch('agent-abc', 'Take this over', { newTab: true });
+			await runDispatch('agent-abc', 'Take this over', { queue: true });
+
+			expect(sendCommand.mock.calls.map(([message]) => message.type)).toEqual([
+				'send_command',
+				'new_ai_tab_with_prompt',
+				'enqueue_command',
+			]);
+			for (const [message] of sendCommand.mock.calls) {
+				expect(message.consultChain).toEqual(TARGET_CHAIN);
+			}
+		});
+
+		// Pianola's watch and orchestrate loops dispatch for hours under their own
+		// rules; they are not a delegation made while working on one user message.
+		it('skips the budget, and sends no chain, for a supervisor loop that opts out', async () => {
+			const sendCommand = stubClient({ success: true });
+			vi.mocked(admitCliConsult).mockReturnValue(refusal);
+
+			const result = await runDispatch('agent-abc', 'Use tabs.', { skipConsultBudget: true });
+
+			expect(result.success).toBe(true);
+			expect(admitCliConsult).not.toHaveBeenCalled();
+			expect(sendCommand.mock.calls[0][0]).not.toHaveProperty('consultChain');
+		});
+	});
 	describe('--routing', () => {
 		/** Wire a client that answers every command with `response`. */
 		const stubClient = (response: Record<string, unknown>) => {
@@ -895,6 +1046,7 @@ describe('dispatch command', () => {
 				expect(sendCommand.mock.calls[0][0]).toMatchObject({
 					type: 'send_command',
 					mentionRouting: mode,
+					consultChain: TARGET_CHAIN,
 				});
 			}
 		);
@@ -929,6 +1081,7 @@ describe('dispatch command', () => {
 			expect(sendCommand.mock.calls[0][0]).toMatchObject({
 				type: 'enqueue_command',
 				mentionRouting: 'handoff',
+				consultChain: TARGET_CHAIN,
 			});
 		});
 
@@ -940,6 +1093,7 @@ describe('dispatch command', () => {
 			expect(sendCommand.mock.calls[0][0]).toMatchObject({
 				type: 'new_ai_tab_with_prompt',
 				mentionRouting: 'only',
+				consultChain: TARGET_CHAIN,
 			});
 		});
 

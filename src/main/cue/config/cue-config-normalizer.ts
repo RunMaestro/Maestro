@@ -7,6 +7,7 @@ import {
 	type CueAutoRunConfig,
 	type CueCommand,
 	type CueConfig,
+	type CueGateOnUnavailable,
 	type CueGitHubLabelTarget,
 	type CueGitHubState,
 	type CueNotifyConfig,
@@ -14,10 +15,12 @@ import {
 	type CueSettings,
 	type CueSubscription,
 	type CueWebhookConfig,
+	CUE_GATE_ON_UNAVAILABLE,
 	CUE_GITHUB_LABEL_TARGETS,
 	CUE_GITHUB_STATES,
 	CUE_SCHEDULE_DAYS,
 	DEFAULT_CUE_SETTINGS,
+	cueInjectionThresholdProblem,
 } from '../../../shared/cue';
 import { parseCueAutoRunWorktree } from '../../../shared/cue/autorun-worktree';
 import { asTierLevel } from '../../../shared/modelTiers';
@@ -424,6 +427,22 @@ function normalizeSubscription(
 		fan_out_prompts: resolvedFanOutPrompts,
 		fan_out_prompt_files: fanOutPromptFiles,
 		filter: normalizeFilter(sub.filter),
+		// The dispatch service reads both off the normalized subscription. A
+		// blank gate is no gate: an empty condition has nothing to check.
+		gate: typeof sub.gate === 'string' && sub.gate.trim().length > 0 ? sub.gate.trim() : undefined,
+		gate_on_unavailable:
+			typeof sub.gate_on_unavailable === 'string' &&
+			(CUE_GATE_ON_UNAVAILABLE as readonly string[]).includes(sub.gate_on_unavailable)
+				? (sub.gate_on_unavailable as CueGateOnUnavailable)
+				: undefined,
+		// Absent stays absent: it is the "apply the default" value, which the
+		// dispatch service resolves per subscription (see
+		// `resolveCueInjectionScreen`), not a `false`.
+		screen_injection: typeof sub.screen_injection === 'boolean' ? sub.screen_injection : undefined,
+		injection_threshold:
+			cueInjectionThresholdProblem(sub.injection_threshold) === null
+				? (sub.injection_threshold as number)
+				: undefined,
 		repo: typeof sub.repo === 'string' ? sub.repo : undefined,
 		poll_minutes: typeof sub.poll_minutes === 'number' ? sub.poll_minutes : undefined,
 		gh_state:

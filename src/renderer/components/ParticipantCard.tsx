@@ -26,6 +26,7 @@ import { DURATION_MS } from '../../shared/duration';
 import { notifyToast } from '../stores/notificationStore';
 import { logger } from '../utils/logger';
 import { SshRemotePill } from './ui/SshRemotePill';
+import { GhostIconButton } from './ui/GhostIconButton';
 
 interface ParticipantCardProps {
 	theme: Theme;
@@ -151,7 +152,7 @@ export function ParticipantCard({
 
 	return (
 		<div
-			className="rounded-lg border p-3"
+			className="min-w-0 max-w-full rounded-lg border p-3"
 			style={{
 				backgroundColor: theme.colors.bgMain,
 				borderColor: theme.colors.border,
@@ -159,24 +160,20 @@ export function ParticipantCard({
 				borderLeftColor: color || theme.colors.accent,
 			}}
 		>
-			{/* Row 1: status dot + name (full width) */}
+			{/* Header: status dot + name, session ID aligned right */}
 			<div className="flex items-center gap-2">
 				<div
 					className={`w-2 h-2 rounded-full shrink-0 ${shouldPulse ? 'animate-pulse' : ''}`}
 					style={{ backgroundColor: getStatusColor(state, theme) }}
 					title={getStatusLabel()}
 				/>
-				<span className="font-medium" style={{ color: color || theme.colors.textMain }}>
+				<span
+					className="min-w-0 flex-1 truncate font-medium"
+					style={{ color: color || theme.colors.textMain }}
+					title={participant.name}
+				>
 					{participant.name}
 				</span>
-			</div>
-
-			{/* Row 2: Pills row - SSH pill + session ID pill */}
-			<div className="flex items-center gap-2 mt-1.5 flex-wrap">
-				{/* SSH Remote pill - shown when running on SSH remote */}
-				{participant.sshRemoteName && (
-					<SshRemotePill remoteName={participant.sshRemoteName} size="sm" />
-				)}
 				{/* Session ID pill */}
 				{isPending ? (
 					<span
@@ -206,12 +203,18 @@ export function ParticipantCard({
 				)}
 			</div>
 
+			{participant.sshRemoteName && (
+				<div className="flex mt-1.5">
+					<SshRemotePill remoteName={participant.sshRemoteName} size="sm" className="max-w-full" />
+				</div>
+			)}
+
 			{/* Stats row: message count + last time (left), agent type (right) */}
 			<div
-				className="text-xs mt-1 flex items-center justify-between"
+				className="text-xs mt-1 flex flex-wrap items-center justify-between gap-x-2 gap-y-1"
 				style={{ color: theme.colors.textDim }}
 			>
-				<div className="flex items-center gap-2">
+				<div className="min-w-0 flex flex-wrap items-center gap-x-2 gap-y-1">
 					{participant.messageCount !== undefined && participant.messageCount > 0 && (
 						<span className="flex items-center gap-1" title="Messages sent">
 							<MessageSquare className="w-3 h-3" />
@@ -222,22 +225,24 @@ export function ParticipantCard({
 						<span title="Last activity">{formatParticipantActivity(participant.lastActivity)}</span>
 					)}
 				</div>
-				<span>{participant.agentId}</span>
+				<span className="min-w-0 break-all">{participant.agentId}</span>
 			</div>
 
 			{/* Context gauge + optional cost */}
-			<div className="mt-2 flex items-center gap-2">
-				<div className="flex-1">
-					<div className="flex items-center justify-between mb-1">
-						<span className="text-2xs" style={{ color: theme.colors.textDim }}>
-							Context
-						</span>
+			<div className="mt-2 flex flex-wrap items-center gap-2">
+				<div className="min-w-[2.5rem] flex-1" title={`Context usage: ${contextUsage}%`}>
+					<div className="mb-1">
 						<span className="text-2xs" style={{ color: theme.colors.textDim }}>
 							{contextUsage}%
 						</span>
 					</div>
 					<div
 						className="h-1 rounded-full overflow-hidden"
+						role="meter"
+						aria-label="Context usage"
+						aria-valuenow={contextUsage}
+						aria-valuemin={0}
+						aria-valuemax={100}
 						style={{ backgroundColor: theme.colors.border }}
 					>
 						<div
@@ -252,22 +257,23 @@ export function ParticipantCard({
 				{/* Cost pill (optional) */}
 				{participant.totalCost !== undefined && participant.totalCost > 0 && (
 					<span
-						className="flex items-center gap-0.5 text-2xs px-1.5 py-0.5 rounded shrink-0"
+						className="max-w-full flex items-center gap-0.5 text-2xs px-1.5 py-0.5 rounded"
 						style={{
 							backgroundColor: `${theme.colors.success}20`,
 							color: theme.colors.success,
 						}}
 						title="Total cost"
 					>
-						<DollarSign className="w-3 h-3" />
-						{formatCost(participant.totalCost).slice(1)}
+						<DollarSign className="w-3 h-3 shrink-0" />
+						<span className="truncate">{formatCost(participant.totalCost).slice(1)}</span>
 					</span>
 				)}
 				{/* Reset button */}
 				{showResetButton && (
-					<button
+					<GhostIconButton
 						onClick={handleReset}
-						className="flex items-center gap-0.5 text-2xs px-1.5 py-0.5 rounded shrink-0 hover:opacity-80 transition-opacity cursor-pointer"
+						ariaLabel="Reset context"
+						className="shrink-0 hover:opacity-80 cursor-pointer"
 						style={{
 							backgroundColor: `${theme.colors.warning}20`,
 							color: theme.colors.warning,
@@ -276,27 +282,29 @@ export function ParticipantCard({
 						title="Reset context: Summarize current session and start fresh"
 					>
 						<RotateCcw className="w-3 h-3" />
-						Reset
-					</button>
+					</GhostIconButton>
 				)}
 				{/* Reset in progress indicator */}
 				{isResetting && (
 					<span
-						className="flex items-center gap-0.5 text-2xs px-1.5 py-0.5 rounded shrink-0 animate-pulse"
+						className="inline-flex items-center justify-center p-1 rounded shrink-0 animate-pulse"
+						role="status"
+						aria-label="Resetting context"
+						title="Resetting context..."
 						style={{
 							backgroundColor: `${theme.colors.warning}20`,
 							color: theme.colors.warning,
 						}}
 					>
 						<RotateCcw className="w-3 h-3 animate-spin" />
-						Resetting...
 					</span>
 				)}
 				{/* Remove button */}
 				{showRemoveButton && !confirmRemove && (
-					<button
+					<GhostIconButton
 						onClick={() => setConfirmRemove(true)}
-						className="flex items-center gap-0.5 text-2xs px-1.5 py-0.5 rounded shrink-0 hover:opacity-80 transition-opacity cursor-pointer"
+						ariaLabel="Remove participant"
+						className="shrink-0 hover:opacity-80 cursor-pointer"
 						style={{
 							backgroundColor: `${theme.colors.error}20`,
 							color: theme.colors.error,
@@ -305,12 +313,11 @@ export function ParticipantCard({
 						title="Remove participant from group chat"
 					>
 						<UserMinus className="w-3 h-3" />
-						Remove
-					</button>
+					</GhostIconButton>
 				)}
 				{/* Remove confirmation */}
 				{confirmRemove && !isRemoving && (
-					<span className="flex items-center gap-1 text-2xs shrink-0">
+					<span className="max-w-full flex flex-wrap items-center gap-1 text-2xs">
 						<button
 							onClick={handleRemove}
 							className="px-1.5 py-0.5 rounded cursor-pointer hover:opacity-80 transition-opacity"
@@ -337,20 +344,24 @@ export function ParticipantCard({
 				{/* Remove in progress indicator */}
 				{isRemoving && (
 					<span
-						className="flex items-center gap-0.5 text-2xs px-1.5 py-0.5 rounded shrink-0 animate-pulse"
+						className="inline-flex items-center justify-center p-1 rounded shrink-0 animate-pulse"
+						role="status"
+						aria-label="Removing participant"
+						title="Removing participant..."
 						style={{
 							backgroundColor: `${theme.colors.error}20`,
 							color: theme.colors.error,
 						}}
 					>
 						<UserMinus className="w-3 h-3" />
-						Removing...
 					</span>
 				)}
 				{/* Peek button - always visible */}
-				<button
+				<GhostIconButton
 					onClick={() => setPeekOpen((v) => !v)}
-					className="flex items-center gap-0.5 text-2xs px-1.5 py-0.5 rounded shrink-0 hover:opacity-80 transition-opacity cursor-pointer"
+					ariaLabel="Peek at live output"
+					pressed={peekOpen}
+					className="shrink-0 hover:opacity-80 cursor-pointer"
 					style={{
 						backgroundColor: peekOpen ? `${theme.colors.accent}25` : `${theme.colors.accent}10`,
 						color: peekOpen ? theme.colors.accent : theme.colors.textDim,
@@ -359,8 +370,7 @@ export function ParticipantCard({
 					title="Peek at live output"
 				>
 					{peekOpen ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-					Peek
-				</button>
+				</GhostIconButton>
 			</div>
 
 			{/* Live output peek panel */}

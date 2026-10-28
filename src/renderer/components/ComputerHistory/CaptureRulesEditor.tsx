@@ -18,7 +18,16 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, EyeOff, Globe, Lock, Plus, ShieldCheck, Trash2 } from 'lucide-react';
+import {
+	AlertTriangle,
+	ChevronRight,
+	EyeOff,
+	Globe,
+	Lock,
+	Plus,
+	ShieldCheck,
+	Trash2,
+} from 'lucide-react';
 import type { Theme } from '../../types';
 import { SegmentedControl } from '../ui/SegmentedControl';
 import { FilterInput } from '../ui/FilterInput';
@@ -504,11 +513,16 @@ export function CaptureRulesEditor({
 			</div>
 
 			{builtInApps.length > 0 && (
-				<details className="space-y-2" data-testid="computer-history-built-in">
+				<details className="group/built-in space-y-2" data-testid="computer-history-built-in">
 					<summary
-						className="flex items-center gap-1.5 text-sm font-medium cursor-pointer select-none"
+						className="flex items-center gap-1.5 text-sm font-medium cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden"
 						style={{ color: theme.colors.textMain }}
 					>
+						<ChevronRight
+							className="w-3 h-3 flex-shrink-0 transition-transform group-open/built-in:rotate-90"
+							style={{ color: theme.colors.textDim }}
+							aria-hidden="true"
+						/>
 						<ShieldCheck className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 						Always excluded ({builtInApps.length} apps)
 					</summary>

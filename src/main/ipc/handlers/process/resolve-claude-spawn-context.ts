@@ -1,3 +1,7 @@
+import {
+	providerOverridesFor,
+	type ProviderSwitchAgent,
+} from '../../../../shared/maestro-lib/agents/providerSwap';
 import Store from 'electron-store';
 import type { AgentConfig } from '../../../agents/definitions';
 import {
@@ -10,6 +14,7 @@ import {
 } from '../../../agents/claudeSpawnCore';
 import { ensureRemoteMaestroPProbed } from '../../../agents/probeRemoteMaestroP';
 import { getClaudeTokenMode } from '../../../../shared/claudeTokenMode';
+import { runOnHarnessMode } from '../../../../shared/local-models/run-on';
 import { resolveConfigDirKey } from '../../../stores/claudeUsageStore';
 import { REGEX_AI_SUFFIX } from '../../../constants';
 import {
@@ -46,6 +51,8 @@ export interface ClaudeSpawnContext {
 
 type PersistedSessionRecord = {
 	id?: string;
+	toolType?: import('../../../../shared/types').ToolType;
+	providerOverrides?: ProviderSwitchAgent['providerOverrides'];
 	cwd?: string;
 	projectRoot?: string;
 	enableMaestroP?: boolean;
@@ -97,6 +104,11 @@ export async function resolveClaudeSpawnContext(
 		 * key names a directory claude never writes to.
 		 */
 		envLayers: ClaudeSpawnEnvLayers;
+		/**
+		 * The agent's stored Run on target, as data. One that names a source
+		 * keeps the turn on `claude --print` (`runOnHarnessMode`).
+		 */
+		runOn?: unknown;
 	}
 ): Promise<ClaudeSpawnContext> {
 	const isClaudeCode =
@@ -143,11 +155,21 @@ export async function resolveClaudeSpawnContext(
 	// dynamic/interactive selection, the direct-maestro-p-Path power-user
 	// case, and stale `claudeInteractive` cleanup.
 	if (isClaudeCode) {
-		const persistedSession = findOwningSessionRecord(
+		const owner = findOwningSessionRecord(
 			deps.sessionsStore.get('sessions', []) as PersistedSessionRecord[],
 			config.sessionId,
 			baseSessionId
 		);
+		const persistedSession =
+			owner?.toolType && owner.toolType !== 'claude-code'
+				? {
+						id: owner.id,
+						...providerOverridesFor(
+							owner as PersistedSessionRecord & ProviderSwitchAgent,
+							'claude-code'
+						),
+					}
+				: owner;
 		if (persistedSession?.id) tokenSourceSessionId = persistedSession.id;
 		// The renderer persists agents on a debounce, so a just-created agent's
 		// first turn can spawn before its record lands. Token mode already falls
@@ -174,18 +196,22 @@ export async function resolveClaudeSpawnContext(
 			}
 		}
 
-		const tokenMode = getClaudeTokenMode(
-			{
-				enableMaestroP: persistedSession?.enableMaestroP ?? config.enableMaestroP,
-				// Fall back to the inline config when the persisted lookup misses
-				// (e.g. background synopsis spawns under a synthetic sessionId that
-				// won't match any persisted session, so they forward the token-mode
-				// fields explicitly on the spawn payload).
-				maestroPMode: persistedSession?.maestroPMode ?? config.maestroPMode,
-			},
-			// Remote agents default to the TUI when the user hasn't chosen,
-			// unless the remote has no maestro-p to run it (then API).
-			{ sshEnabled: isSshEnabled, sshMaestroPAvailable: remoteMaestroPAvailable }
+		const tokenMode = runOnHarnessMode(
+			deps.runOn,
+			getClaudeTokenMode(
+				{
+					enableMaestroP: persistedSession?.enableMaestroP ?? config.enableMaestroP,
+					// Fall back to the inline config when the persisted lookup misses
+					// (e.g. background synopsis spawns under a synthetic sessionId that
+					// won't match any persisted session, so they forward the token-mode
+					// fields explicitly on the spawn payload).
+					maestroPMode: persistedSession?.maestroPMode ?? config.maestroPMode,
+				},
+				// Remote agents default to the TUI when the user hasn't chosen,
+				// unless the remote has no maestro-p to run it (then API).
+				{ sshEnabled: isSshEnabled, sshMaestroPAvailable: remoteMaestroPAvailable }
+			),
+			'api'
 		);
 
 		const decision = resolveClaudeSpawnMode({

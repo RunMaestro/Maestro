@@ -1,4 +1,5 @@
 import { ipcRenderer } from 'electron';
+import type { ConsultChain } from '../../../shared/consultBudget';
 import type { MentionRouting } from '../../../shared/crossAgentContext';
 
 export function createBrowserTabRemoteApi() {
@@ -244,6 +245,7 @@ export function createBrowserTabRemoteApi() {
 				responseChannel: string,
 				background?: boolean,
 				hidden?: boolean,
+				consultChain?: ConsultChain,
 				mentionRouting?: MentionRouting
 			) => void
 		): (() => void) => {
@@ -254,10 +256,19 @@ export function createBrowserTabRemoteApi() {
 				responseChannel: string,
 				background?: boolean,
 				hidden?: boolean,
+				consultChain?: ConsultChain,
 				mentionRouting?: MentionRouting
 			) => {
 				try {
-					callback(sessionId, prompt, responseChannel, background, hidden, mentionRouting);
+					callback(
+						sessionId,
+						prompt,
+						responseChannel,
+						background,
+						hidden,
+						consultChain,
+						mentionRouting
+					);
 				} catch (error) {
 					ipcRenderer.send(responseChannel, false);
 					throw error;

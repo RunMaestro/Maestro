@@ -1,7 +1,8 @@
 /**
  * Tests for src/main/utils/agent-args.ts
  *
- * Covers buildAgentArgs, applyAgentConfigOverrides, and getContextWindowValue.
+ * Covers buildAgentArgs, applyAgentConfigOverrides, getContextWindowValue, and
+ * replaceModelArg.
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -9,6 +10,8 @@ import {
 	buildAgentArgs,
 	applyAgentConfigOverrides,
 	getContextWindowValue,
+	placeSubcommandArgs,
+	replaceModelArg,
 	placeResumeSelectorLast,
 } from '../../../main/utils/agent-args';
 import { AGENT_DEFINITIONS, getAgentDefinition } from '../../../main/agents/definitions';
@@ -1048,6 +1051,43 @@ describe('applyAgentConfigOverrides', () => {
 		expect(r3.modelSource).toBe('session');
 	});
 
+	// `auto` is Maestro's word for "route this turn". A launch that still
+	// carries it was not routed (a surface with no Auto path), and must run on
+	// the agent's default rather than be handed `--model auto`.
+	it('never hands a harness the word auto as a model', () => {
+		const agent = makeAgent({
+			configOptions: [
+				{
+					key: 'model',
+					type: 'text',
+					label: 'Model',
+					description: 'Model to use',
+					default: 'default-model',
+					argBuilder: (val: any) => (val ? ['--model', String(val)] : []),
+				},
+			],
+		});
+
+		for (const spelling of ['auto', 'Auto', ' AUTO ']) {
+			const unrouted = applyAgentConfigOverrides(agent, [], { sessionCustomModel: spelling });
+			expect(unrouted.args).toEqual(['--model', 'default-model']);
+			expect(unrouted.modelSource).toBe('default');
+		}
+
+		// The provider-level setting is the agent's default, so it applies.
+		const withAgentConfig = applyAgentConfigOverrides(agent, [], {
+			agentConfigValues: { model: 'agent-model' },
+			sessionCustomModel: 'auto',
+		});
+		expect(withAgentConfig.args).toEqual(['--model', 'agent-model']);
+		expect(withAgentConfig.modelSource).toBe('agent');
+
+		// A model that only contains the letters is a model.
+		expect(
+			applyAgentConfigOverrides(agent, [], { sessionCustomModel: 'automatic-1' }).args
+		).toEqual(['--model', 'automatic-1']);
+	});
+
 	// -- effort precedence --
 	// Effort follows the same rules as model, which is also what the effort pill
 	// shows (tab > agent override > agent config). An empty session override means
@@ -1763,5 +1803,92 @@ describe('buildAgentArgs with the Antigravity definition', () => {
 			'--print-timeout',
 			'30m',
 		]);
+	});
+});
+
+describe('replaceModelArg', () => {
+	const claude = getAgentDefinition('claude-code');
+	const codex = getAgentDefinition('codex');
+
+	it('replaces the value of the model flag where it stands', () => {
+		expect(
+			replaceModelArg(claude, ['--print', '--model', 'opus', '--effort', 'high'], 'qwen3:latest')
+		).toEqual(['--print', '--model', 'qwen3:latest', '--effort', 'high']);
+	});
+
+	it('appends the flag when the arguments name no model, after any subcommand', () => {
+		// Codex reads `-m` after `exec`; a root `-m` belongs to its TUI.
+		expect(replaceModelArg(codex, ['-C', '/project', 'exec', '--json'], 'gpt-oss-20b')).toEqual([
+			'-C',
+			'/project',
+			'exec',
+			'--json',
+			'-m',
+			'gpt-oss-20b',
+		]);
+	});
+
+	it('replaces every occurrence, so no stale model is left for the CLI to pick', () => {
+		// A tier model from buildAgentArgs and a stored model from the config option.
+		expect(
+			replaceModelArg(claude, ['--model', 'haiku', '--print', '--model', 'opus'], 'q')
+		).toEqual(['--model', 'q', '--print', '--model', 'q']);
+	});
+
+	it('replaces the joined form a user may have typed in custom arguments', () => {
+		expect(replaceModelArg(claude, ['--print', '--model=opus'], 'q')).toEqual([
+			'--print',
+			'--model=q',
+		]);
+	});
+
+	it('completes a flag that was left without a value', () => {
+		expect(replaceModelArg(codex, ['exec', '-m'], 'q')).toEqual(['exec', '-m', 'q']);
+	});
+
+	it('does not mutate the list it was given', () => {
+		const args = ['--model', 'opus'];
+		replaceModelArg(claude, args, 'q');
+
+		expect(args).toEqual(['--model', 'opus']);
+	});
+
+	it('answers null for a provider with no model flag', () => {
+		expect(replaceModelArg({}, ['--print'], 'q')).toBeNull();
+		expect(replaceModelArg(null, ['--print'], 'q')).toBeNull();
+	});
+});
+
+describe('placeSubcommandArgs', () => {
+	const openCode = getAgentDefinition('opencode');
+
+	it("puts them right after the provider's batch subcommand", () => {
+		expect(
+			placeSubcommandArgs(openCode, ['run', '--format', 'json', '--', 'prompt'], ['--standalone'])
+		).toEqual(['run', '--standalone', '--format', 'json', '--', 'prompt']);
+	});
+
+	it('puts them first for a launch with no subcommand', () => {
+		expect(placeSubcommandArgs(openCode, ['--session', 's1'], ['--standalone'])).toEqual([
+			'--standalone',
+			'--session',
+			's1',
+		]);
+		expect(placeSubcommandArgs({}, ['--print'], ['--flag'])).toEqual(['--flag', '--print']);
+		expect(placeSubcommandArgs(null, [], ['--flag'])).toEqual(['--flag']);
+	});
+
+	it('does not add an argument the launch already carries', () => {
+		const args = ['run', '--standalone', '--format', 'json'];
+
+		expect(placeSubcommandArgs(openCode, args, ['--standalone'])).toEqual(args);
+	});
+
+	it('hands back a copy when there is nothing to place', () => {
+		const args = ['run'];
+		const placed = placeSubcommandArgs(openCode, args, []);
+
+		expect(placed).toEqual(args);
+		expect(placed).not.toBe(args);
 	});
 });

@@ -38,8 +38,16 @@ import type { SessionInfo, ToolType } from '../../shared/types';
 import type { CueAutoRunConfig, CueEvent, CueSubscription } from './cue-types';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 import { isLaunchCancelled, stoppedBeforeLaunchResult } from './cue-launch-cancel';
-import { resolveCueTurnSettings } from '../../shared/cue/turn-settings';
-import { describeTurnSettings } from '../../shared/autorunTurnSettings';
+import {
+	cueAutoMarker,
+	cueRunIsAutoRouted,
+	cueTurnLaunch,
+	resolveCueTurnSettings,
+} from '../../shared/cue/turn-settings';
+import { describeTurnSettings, type ResolvedTurnSettings } from '../../shared/autorunTurnSettings';
+import type { HarnessTierDefaults, TierTargets } from '../../shared/modelTiers';
+import type { RunOnTarget } from '../../shared/local-models/run-on';
+import type { ModelHint } from '../../shared/autorunModelHints';
 
 /** What `CueEngine` hands its `onCueRun` dependency for one run. */
 export type OnCueRunParams = Parameters<CueEngineDeps['onCueRun']>[0];
@@ -59,6 +67,9 @@ export interface CueRunSessionRecord {
 	customEnvVars?: Record<string, string>;
 	/** Secret names this agent needs; resolved per launch (see `SessionInfo.requiredSecrets`). */
 	requiredSecrets?: string[];
+	gatewayUrl?: string;
+	runOn?: RunOnTarget;
+	tierTargets?: TierTargets;
 	customModel?: string;
 	customEffort?: string;
 	enableMaestroP?: boolean;
@@ -92,6 +103,12 @@ export interface CueRunActionDeps {
 	sshStore: SshRemoteSettingsStore;
 	getAgentConfigValues: (toolType: string) => Record<string, unknown>;
 	onLog: (level: string, message: string) => void;
+	getHarnessTierDefaults?: () => HarnessTierDefaults;
+	resolveAutoTurn?: (options: {
+		agent: CueRunSessionRecord;
+		prompt: string;
+		marker: ModelHint | null;
+	}) => Promise<ResolvedTurnSettings>;
 	/** Read on EVERY run, never cached at boot, so a profile edit applies to the next run. */
 	getConductorProfile?: () => string | undefined;
 	onNotify: (params: CueNotifyParams) => Promise<CueRunResult>;
@@ -364,14 +381,23 @@ export async function executeCueRunAction(
 		storedSession.toolType,
 		turnSettings,
 		storedSession.customModel,
-		storedSession.customEffort
+		storedSession.customEffort,
+		{
+			tierTargets: storedSession.tierTargets,
+			runOn: storedSession.runOn,
+			harnessDefaults: deps.getHarnessTierDefaults?.(),
+		}
 	);
-	const turnNote = describeTurnSettings(turn);
-	if (turnNote) {
-		const line = `[CUE] "${subscriptionName}" model: ${turnNote}`;
-		if (turn.warnings.length > 0) deps.onLog('warn', line);
-		else deps.onLog('cue', line);
-	}
+	const logCueTurn = (resolved: ResolvedTurnSettings) => {
+		const note = describeTurnSettings(resolved);
+		if (note)
+			deps.onLog(
+				resolved.warnings.length > 0 ? 'warn' : 'cue',
+				`[CUE] "${subscriptionName}" model: ${note}`
+			);
+	};
+	const routed = cueRunIsAutoRouted(turnSettings);
+	if (!routed || !deps.resolveAutoTurn) logCueTurn(turn);
 
 	const result = await deps.executeCuePrompt({
 		runId,
@@ -393,8 +419,21 @@ export async function executeCueRunAction(
 		customArgs: storedSession.customArgs,
 		customEnvVars: storedSession.customEnvVars,
 		requiredSecrets: storedSession.requiredSecrets,
-		customModel: turn.model,
-		customEffort: turn.effort,
+		gatewayUrl: storedSession.gatewayUrl,
+		...cueTurnLaunch(turn, storedSession.runOn),
+		...(routed && deps.resolveAutoTurn
+			? {
+					resolveLateTurn: async (routedPrompt: string) => {
+						const resolved = await deps.resolveAutoTurn!({
+							agent: storedSession,
+							prompt: routedPrompt,
+							marker: cueAutoMarker(turnSettings),
+						});
+						logCueTurn(resolved);
+						return cueTurnLaunch(resolved, storedSession.runOn);
+					},
+				}
+			: {}),
 		// Claude token-source selection (TUI / API / dynamic), read from
 		// the same persisted session record that supplies customModel
 		// above, so Cue runs honor the triggering agent's choice.

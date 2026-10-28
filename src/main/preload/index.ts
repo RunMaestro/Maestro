@@ -75,6 +75,9 @@ import { createCoworkingApi } from './coworking';
 import { createBrowserSessionApi } from './browserSession';
 import { createWindowsApi } from './windows';
 import { createImagesApi } from './images';
+import { createVoiceApi } from './acappella';
+import { createVoiceAudioHostApi } from './acappellaAudio';
+import { createLocalModelsApi } from './localModels';
 import { createCotExportApi } from './cotExport';
 import { createQuickChatApi } from './quickChat';
 import { createFloatingWidgetsApi } from './floatingWidgets';
@@ -304,6 +307,15 @@ contextBridge.exposeInMainWorld('maestro', {
 	// Session Images API (resolve maestro-image:// refs back to data URLs)
 	images: createImagesApi(),
 
+	// A Cappella Voice API (headless voice session in main; this is one client)
+	voice: createVoiceApi(),
+
+	// A Cappella audio host control link (only the hidden audio window uses it)
+	voiceAudioHost: createVoiceAudioHostApi(),
+
+	// Local Models API (core model + native runtime manager; ungated, voice is one consumer)
+	localModels: createLocalModelsApi(),
+
 	// Chain of thought export (desktop-only; the handlers refuse every other sender)
 	cotExport: createCotExportApi(),
 	// Quick Chat API (hotkey-summoned floating chat window + its engine)
@@ -428,6 +440,11 @@ export {
 	createWindowsApi,
 	// Session Images
 	createImagesApi,
+	// A Cappella Voice
+	createVoiceApi,
+	createVoiceAudioHostApi,
+	// Local Models
+	createLocalModelsApi,
 	// Chain of thought export
 	createCotExportApi,
 	// Quick Chat
@@ -729,6 +746,18 @@ export type {
 	// From images
 	ImagesApi,
 } from './images';
+export type {
+	// From acappella
+	VoiceApi,
+} from './acappella';
+export type {
+	// From acappellaAudio
+	VoiceAudioHostApi,
+} from './acappellaAudio';
+export type {
+	// From localModels
+	LocalModelsApi,
+} from './localModels';
 export type {
 	// From cotExport
 	CotExportApi,

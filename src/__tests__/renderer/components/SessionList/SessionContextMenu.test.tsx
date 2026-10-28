@@ -17,6 +17,7 @@ import {
 import { usePRCreationStore, prRunKey } from '../../../../renderer/stores/prCreationStore';
 import type { Session } from '../../../../renderer/types';
 import { mockTheme } from '../../../helpers/mockTheme';
+import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 
 const DEFAULT_BRANCH_INFO = { branch: 'feature/login', remote: '', ahead: 2, behind: 3 };
 const mockGetBranchInfo = vi.fn(() => DEFAULT_BRANCH_INFO);
@@ -96,6 +97,7 @@ function renderMenu(overrides: Partial<React.ComponentProps<typeof SessionContex
 describe('SessionContextMenu', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		useSessionStore.setState({ sessions: [] });
 		mockGetBranchInfo.mockReturnValue(DEFAULT_BRANCH_INFO);
 		mockGetFileDetails.mockReturnValue({
 			totalAdditions: 206,
@@ -103,6 +105,34 @@ describe('SessionContextMenu', () => {
 			modifiedCount: 5,
 		});
 		mockGetFileCount.mockReturnValue(5);
+	});
+
+	it.each(['incoming', 'outgoing'] as const)(
+		'opens the clicked agent cluster for %s delegations',
+		(direction) => {
+			const agent = makeSession({
+				id: 'a',
+				peerAgents: direction === 'outgoing' ? [{ sessionId: 'b', read: true, write: true }] : [],
+			});
+			const peer = makeSession({
+				id: 'b',
+				peerAgents: direction === 'incoming' ? [{ sessionId: 'a', read: true, write: true }] : [],
+			});
+			useSessionStore.setState({ sessions: [agent, peer] });
+			const props = renderMenu({ session: agent });
+			fireEvent.click(screen.getByRole('button', { name: 'View Delegation Graph' }));
+			expect(mockOpenModal).toHaveBeenCalledWith('delegationGraph', {
+				scope: { kind: 'agent', sessionId: 'a' },
+			});
+			expect(props.onDismiss).toHaveBeenCalledOnce();
+		}
+	);
+
+	it('hides the delegation graph action for an isolated agent', () => {
+		const agent = makeSession({ id: 'a' });
+		useSessionStore.setState({ sessions: [agent] });
+		renderMenu({ session: agent });
+		expect(screen.queryByRole('button', { name: 'View Delegation Graph' })).toBeNull();
 	});
 
 	it('offers Export Agent only when a handler is given, and fires it', () => {

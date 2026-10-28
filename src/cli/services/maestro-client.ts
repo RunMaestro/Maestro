@@ -33,6 +33,8 @@ export function resolveSessionId(options: { session?: string }): string {
 	const sessions = readLiveSessions();
 	if (sessions.length === 0) {
 		console.error('Error: No agents found. Create an agent in Maestro first.');
+		// A raw exit on purpose: exit-codes.ts imports this module for its error
+		// classes, so importing `exitWith` here would be a cycle.
 		process.exit(1);
 	}
 

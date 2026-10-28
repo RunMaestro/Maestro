@@ -218,6 +218,17 @@ describe('Files Preload API', () => {
 		});
 
 		describe('updateSessionName', () => {
+			it('carries the provider and owning agent scope', async () => {
+				await api.updateSessionName('native', 'Owned', 'codex', 'agent');
+				expect(mockInvoke).toHaveBeenCalledWith(
+					'history:updateSessionName',
+					'native',
+					'Owned',
+					'codex',
+					'agent'
+				);
+			});
+
 			it('should invoke history:updateSessionName', async () => {
 				mockInvoke.mockResolvedValue(true);
 
@@ -226,7 +237,9 @@ describe('Files Preload API', () => {
 				expect(mockInvoke).toHaveBeenCalledWith(
 					'history:updateSessionName',
 					'agent-session-123',
-					'New Session Name'
+					'New Session Name',
+					undefined,
+					undefined
 				);
 			});
 		});

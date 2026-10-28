@@ -27,6 +27,8 @@
  * Design: `Plans/maestro-tui-group-chat.md` section 7.
  */
 
+import { normalizeMaxConsultationsPerTurn } from '../../consultBudget';
+import { isValidAgentId } from '../../agentIds';
 import {
 	deriveConsultSubject,
 	inferContextStrategy,
@@ -42,6 +44,7 @@ import {
 import { createKeyedWriteQueue } from '../../keyedWriteQueue';
 import type { ToolType } from '../../types';
 import { createConsultService, type CrossAgentTargetSession } from '../agents/consult';
+import { resolveTabProvider, type ProviderSwitchTab } from '../agents/providerSwap';
 import {
 	buildConsultHistoryEntry,
 	buildConsultTabName,
@@ -63,7 +66,11 @@ import { readAgentConfigsStore, readSettingsStore } from '../store/read-stores';
 import type { AgentRecord } from '../store/records';
 import { transcriptOf, type LogEntryRecord } from '../store/transcript';
 import { loadStandInSystemPrompt, type SystemPromptSources } from '../turns/context';
-import { toTurnAgent } from '../turns/records';
+import { toTurnAgent, toTurnTab } from '../turns/records';
+import { prepareTabForSend } from '../translation/send';
+import type { TranslationServiceSession } from '../translation/service';
+import { createRuntimeTranslationService } from './translation';
+import type { ProcessRegistry } from './processes';
 import { createHistoryWriter, type HistoryWriter } from '../turns/history';
 import type { BackgroundTurns } from './background-turns';
 import type { DataDirVerdict } from './data-dir-lock';
@@ -84,6 +91,7 @@ export interface RuntimeConsultsOptions {
 	repository: AgentRepository;
 	fence(): DataDirVerdict;
 	background: BackgroundTurns;
+	registry: ProcessRegistry;
 	rules?: Partial<RuleContext>;
 	/** Test seam: where the target's History entry goes. Default: the library writer over the data directory. */
 	historyWriter?: HistoryWriter;
@@ -142,6 +150,16 @@ function toTargetSession(record: AgentRecord): CrossAgentTargetSession | undefin
 		name: agent.name,
 		toolType: agent.toolType as ToolType,
 		cwd: agent.cwd,
+		providerOverrides: record.providerOverrides as CrossAgentTargetSession['providerOverrides'],
+		aiTabs: record.aiTabs?.map((tab) => ({
+			...toTurnTab(tab),
+			agentSessionId: str(tab.agentSessionId) ?? null,
+			providerSessions: tab.providerSessions as ProviderSwitchTab['providerSessions'],
+			pendingTranslation:
+				typeof tab.pendingTranslation === 'string' && isValidAgentId(tab.pendingTranslation)
+					? tab.pendingTranslation
+					: undefined,
+		})),
 		customPath: agent.customPath,
 		customArgs: agent.customArgs,
 		customEnvVars: agent.customEnvVars,
@@ -160,6 +178,7 @@ export function createRuntimeConsults(options: RuntimeConsultsOptions): RuntimeC
 	const ctx: RuleContext = { ...DEFAULT_RULE_CONTEXT, ...options.rules };
 	const now = options.now ?? (() => Date.now());
 	const service = createConsultService();
+	const translation = createRuntimeTranslationService(paths, repository, options.registry);
 	const history = options.historyWriter ?? createHistoryWriter({ paths, fence: options.fence });
 
 	/** Consults that share a consult tab run one at a time; different tabs and agents run at once (GD18). */
@@ -304,6 +323,30 @@ export function createRuntimeConsults(options: RuntimeConsultsOptions): RuntimeC
 				});
 				if (!opened.ok) return opened;
 				const tabId = opened.value.tabId;
+				const stored = repository.getAgent(target.id);
+				const tab = repository.getTab(target.id, tabId);
+				if (!stored || !tab)
+					return fail<AnswerValue>(method, 'not-found', 'The consult tab no longer exists.');
+				const targetProvider = resolveTabProvider(toTurnTab(tab), {
+					toolType: stored.toolType as ToolType,
+				});
+				let resumeAgentSessionId: string | undefined;
+				try {
+					resumeAgentSessionId = await prepareTabForSend(tabId, targetProvider, {
+						getSession: () =>
+							repository.getAgent(target.id) as unknown as TranslationServiceSession,
+						translate: (request) => translation.run(request),
+						isBusy: () => options.registry.isBusy(target.id),
+					});
+				} catch (error) {
+					return fail<AnswerValue>(
+						method,
+						'rejected',
+						error instanceof Error ? error.message : String(error)
+					);
+				}
+				if (disposed)
+					return fail<AnswerValue>(method, 'host-unavailable', 'The runtime is closing.');
 				// The wait ran out while the question was being written: nothing is started for it.
 				if (timer.expired) {
 					return fail<AnswerValue>(
@@ -314,15 +357,15 @@ export function createRuntimeConsults(options: RuntimeConsultsOptions): RuntimeC
 				}
 
 				const request: CrossAgentRequest = {
+					...(input.consultChain ? { consultChain: input.consultChain } : {}),
 					requestId,
 					sourceSessionId: key.sourceSessionId,
 					sourceAgentName: sourceName,
 					sourceTabId: key.sourceTabId,
 					targetSessionId: target.id,
 					targetTabId: tabId,
-					...(opened.value.resumeAgentSessionId
-						? { resumeAgentSessionId: opened.value.resumeAgentSessionId }
-						: {}),
+					targetProvider,
+					...(resumeAgentSessionId ? { resumeAgentSessionId } : {}),
 					userPrompt: question,
 					transcript,
 					strategy,
@@ -332,6 +375,7 @@ export function createRuntimeConsults(options: RuntimeConsultsOptions): RuntimeC
 				};
 
 				const chunk = await new Promise<CrossAgentResponseChunk>((resolve) => {
+					const settings = readSettingsStore(paths.settingsFile);
 					void service.start(request, {
 						runner: background.consultRunner(),
 						resolveAgent: (providerId) => background.resolveAgent(providerId),
@@ -344,11 +388,17 @@ export function createRuntimeConsults(options: RuntimeConsultsOptions): RuntimeC
 							agentConfigs()[toolType]?.customEnvVars as Record<string, string> | undefined,
 						getAgentConfig: (toolType) => agentConfigs()[toolType],
 						writable: writableFor(isHandoff),
+						maxConsultationsPerTurn: normalizeMaxConsultationsPerTurn(
+							settings.status === 'ok' ? settings.data.maxConsultationsPerTurn : undefined
+						),
+						consultBudgetStore: { dataDir: paths.userDataDir },
 						// The target answers as itself: the system prompt its own chat turn carries.
 						getSystemPrompt: (consulted) => {
 							const stored = repository.getAgent(consulted.id);
 							return loadStandInSystemPrompt(
-								stored ? toTurnAgent(stored) : undefined,
+								stored
+									? toTurnAgent({ ...stored, ...consulted, aiTabs: stored.aiTabs })
+									: undefined,
 								promptSources,
 								{
 									isSsh: consulted.sshRemoteConfig?.enabled === true,
@@ -374,8 +424,9 @@ export function createRuntimeConsults(options: RuntimeConsultsOptions): RuntimeC
 						timestamp: now(),
 						source: chunk.error ? 'error' : 'ai',
 						text: shown,
+						turnProvider: chunk.targetToolType,
 					},
-					provider: target.toolType,
+					provider: chunk.targetToolType,
 					// The service sets this only for a consult that succeeded (B18).
 					...(chunk.targetAgentSessionId ? { agentSessionId: chunk.targetAgentSessionId } : {}),
 				});
@@ -398,8 +449,7 @@ export function createRuntimeConsults(options: RuntimeConsultsOptions): RuntimeC
 						accumulated: chunk.chunk,
 						error: chunk.error,
 						canceled: chunk.canceled,
-						agentSessionId:
-							chunk.targetAgentSessionId ?? str(consultTab?.agentSessionId) ?? undefined,
+						agentSessionId: chunk.targetAgentSessionId ?? resumeAgentSessionId,
 						consultTabName: consultTab?.name,
 						targetName: target.name,
 						historySessionId: target.id,
@@ -423,7 +473,11 @@ export function createRuntimeConsults(options: RuntimeConsultsOptions): RuntimeC
 						: fail(method, 'rejected', `The consult with ${target.name} was stopped.`);
 				}
 				if (chunk.error) return fail(method, 'failed', chunk.error);
-				return ok({ answer: chunk.chunk.trim(), agentName: target.name });
+				return ok({
+					answer: chunk.chunk.trim(),
+					agentName: target.name,
+					provider: chunk.targetToolType,
+				});
 			});
 		} finally {
 			inFlight -= 1;

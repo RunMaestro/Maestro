@@ -83,6 +83,64 @@ beforeEach(() => {
 });
 
 describe('routeQuickChatMessage', () => {
+	it('invalidates History cache when the same agent changes provider or native slot', async () => {
+		const session = agentWith([buildTab()]);
+		await routeQuickChatMessage(session, 'one', noChat);
+		await routeQuickChatMessage(
+			{ ...session, aiTabs: [{ ...session.aiTabs[0], tabProvider: 'codex' }] },
+			'two',
+			noChat
+		);
+		await routeQuickChatMessage({ ...session, toolType: 'codex' }, 'three', noChat);
+		expect(getAllPaginated).toHaveBeenCalledTimes(3);
+	});
+	it('uses the kept tab provider configuration for ambiguous model routing', async () => {
+		groomContext.mockResolvedValue('1');
+		const session = agentWith(
+			[
+				tab('delivery', {
+					name: 'Amazon Delivery',
+					logs: [said('amazon package')],
+					tabProvider: 'codex',
+				}),
+				tab('returns', { name: 'Amazon Returns', logs: [said('amazon package')] }),
+			],
+			{
+				customPath: '/claude',
+				providerOverrides: {
+					codex: { customPath: '/codex', customEnvVars: { CODEX_HOME: '/account' } },
+				},
+			}
+		);
+		await routeQuickChatMessage(session, 'amazon package', {
+			currentTabId: 'delivery',
+			ownedTabIds: new Set(),
+		});
+		expect(groomContext).toHaveBeenCalledWith(
+			'/test/project',
+			'codex',
+			expect.any(String),
+			expect.objectContaining({ customPath: '/codex', customEnvVars: { CODEX_HOME: '/account' } })
+		);
+	});
+	it('keeps new-chat model routing on the agent default', async () => {
+		groomContext.mockResolvedValue('new');
+		const session = agentWith([
+			tab('delivery', {
+				name: 'Amazon Delivery',
+				logs: [said('amazon package')],
+				tabProvider: 'codex',
+			}),
+			tab('returns', { name: 'Amazon Returns', logs: [said('amazon package')] }),
+		]);
+		await routeQuickChatMessage(session, 'amazon package', noChat);
+		expect(groomContext).toHaveBeenCalledWith(
+			'/test/project',
+			'claude-code',
+			expect.any(String),
+			expect.any(Object)
+		);
+	});
 	it('routes to the open tab that clearly matches, without a model call', async () => {
 		const session = agentWith([buildTab(), amazonTab()]);
 		expect(await routeQuickChatMessage(session, 'any news on my amazon package?', noChat)).toEqual({
@@ -161,6 +219,7 @@ describe('routeQuickChatMessage', () => {
 
 		expect(await routeQuickChatMessage(session, 'home office deduction limits?', noChat)).toEqual({
 			kind: 'closed',
+			provider: 'claude-code',
 			agentSessionId: 's-tax',
 			name: 'Tax Questions',
 		});
@@ -294,6 +353,44 @@ describe('routeQuickChatMessage', () => {
 });
 
 describe('reopenClosedConversation', () => {
+	it('reads and deduplicates a deferred History conversation without native translation', async () => {
+		const session = agentWith([], {
+			toolType: 'codex',
+			projectRoot: '/test/project',
+			providerTranslationTabInventory: [
+				{
+					id: 'history:closed-source',
+					agentSessionId: null,
+					providerSessions: { 'claude-code': { agentSessionId: 'closed-source' } },
+				},
+			],
+		});
+		vi.mocked(window.maestro.agentSessions.read).mockResolvedValue({
+			messages: [{ type: 'user', content: 'preserved' }],
+		} as any);
+		vi.mocked(window.maestro.claude.getSessionOrigins).mockResolvedValue({});
+		const id = await reopenClosedConversation(session.id, {
+			agentSessionId: 'closed-source',
+			name: 'Past conversation',
+		});
+		expect(id).toBeTruthy();
+		expect(window.maestro.agentSessions.read).toHaveBeenCalledWith(
+			'claude-code',
+			'/test/project',
+			'closed-source',
+			expect.any(Object),
+			undefined
+		);
+		expect(useSessionStore.getState().sessions[0].aiTabs[0]).toMatchObject({
+			agentSessionId: 'closed-source',
+			tabProvider: 'claude-code',
+			providerSessions: {},
+		});
+		expect(
+			await reopenClosedConversation(session.id, { agentSessionId: 'closed-source', name: null })
+		).toBe(id);
+		expect(useSessionStore.getState().sessions[0].aiTabs).toHaveLength(1);
+	});
 	const transcript = {
 		messages: [
 			{
@@ -318,6 +415,48 @@ describe('reopenClosedConversation', () => {
 		vi.mocked(window.maestro.agentSessions.read).mockReset().mockResolvedValue(transcript);
 	});
 
+	it.each([false, true])(
+		'deduplicates pinned native conversations including closed busy tabs (orphan=%s)',
+		async (orphan) => {
+			const target = tab('codex', {
+				tabProvider: 'codex',
+				agentSessionId: 'native',
+				state: orphan ? 'busy' : 'idle',
+			});
+			agentWith(orphan ? [buildTab()] : [target], {
+				orphanedThinkingTabs: orphan ? [target] : undefined,
+			});
+			expect(
+				await reopenClosedConversation('agent', {
+					provider: 'codex',
+					agentSessionId: 'native',
+					name: null,
+				})
+			).toBe(orphan ? null : 'codex');
+			expect(window.maestro.agentSessions.read).toHaveBeenCalledWith(
+				'codex',
+				'/test/project',
+				'native',
+				expect.any(Object),
+				undefined
+			);
+		}
+	);
+	it('preserves the explicit native owner through an awaited read and default change', async () => {
+		const session = agentWith([buildTab()]);
+		vi.mocked(window.maestro.agentSessions.read).mockImplementationOnce(async () => {
+			useSessionStore.setState({ sessions: [{ ...session, toolType: 'opencode' }] });
+			return transcript;
+		});
+		const id = await reopenClosedConversation('agent', {
+			provider: 'codex',
+			agentSessionId: 'native',
+			name: 'Kept',
+		});
+		const reopened = useSessionStore.getState().sessions[0].aiTabs.find((tab) => tab.id === id);
+		expect(reopened).toMatchObject({ tabProvider: 'codex', agentSessionId: 'native' });
+		expect(reopened?.providerSessions?.codex).toBeUndefined();
+	});
 	it('does not attempt a foreign native resume for an unresolved migration History entry', async () => {
 		agentWith([buildTab()], {
 			providerTranslationHistoryMappings: [

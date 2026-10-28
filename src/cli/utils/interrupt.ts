@@ -9,7 +9,11 @@
  * for SIGINT).
  */
 
-/** Conventional exit status for a process ended by SIGINT (128 + 2). */
+/**
+ * Conventional exit status for a process ended by SIGINT (128 + 2). The same
+ * number as `ExitCode.Interrupted`; this module stays free of the bridge
+ * imports `exit-codes.ts` carries, and a test holds the two together.
+ */
 export const SIGINT_EXIT_CODE = 130;
 
 export interface InterruptController {

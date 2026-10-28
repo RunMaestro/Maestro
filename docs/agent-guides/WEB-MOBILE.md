@@ -162,7 +162,13 @@ These rules keep the clients in sync:
 - **Browser bootstrap is thin.** `sessions:getBootstrap` returns agent metadata and tab structure without AI tab logs, legacy session logs, or command history. The selected conversation and legacy shell output load through `sessions:getDeferredContent`; later selected tabs and every visible pane in an active tiled group load when opened. A failed pane read does not block the other visible panes. The `deferredContent` marker tells both `sessions:setMany` and `sessions:setAll` to merge any unloaded fields from the main store before saving, including snoozed tabs. A tab closed by another client is dropped from a stale browser write, and a projected agent absent from main cannot be restored by an old browser copy. A failed initial read shows Retry and keeps persistence disabled; a bridge reconnect retries it. Desktop `sessions:getAll` still reads the full tree.
 - **Live content comes from the owning renderer.** Bootstrap requests set
   `metadataOnly` and return current incognito/browser/terminal inventory without
-  traversing or copying transcript rows. Deferred reads return the selected
+  traversing or copying transcript rows. Private `transcriptSnapshots` carry
+  agent runtime, including `waiting_input`, and apply after restoration resets
+  restart-only state; they never enter the stored session tree. Reconnect
+  refreshes this metadata for background agents with the same stale-turn guard.
+  The browser title uses `selectNeedsInputCount` to show `(N) Maestro` while
+  agents await input and `Maestro` otherwise; native window titles stay unchanged.
+  Deferred reads return the selected
   canonical transcript and its runtime snapshot (including errors and explicit
   cleared fields) only to their requester: request replies, including late
   replies, never fan out as `sessions:transcriptSync` events. Snapshot runtime

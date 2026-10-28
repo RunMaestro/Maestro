@@ -75,6 +75,16 @@ Available in all prompts:
 | `{{CONTEXT_USAGE}}`        | Context window usage percentage                                |
 | `{{MAESTRO_CLI_PATH}}`     | Path to the maestro-cli binary                                 |
 
+### System One Variables
+
+Used by the **System One** section of the system prompt (`system-one-system`). Maestro fills them only while a System One request from the agent would be answered. Everywhere else they are empty.
+
+| Variable                    | Description                                                      |
+| --------------------------- | ---------------------------------------------------------------- |
+| `{{SYSTEM_ONE_ENGINE}}`     | The engine that answers, for example `Jev (TypeSafe cloud)`      |
+| `{{SYSTEM_ONE_CALIBRATED}}` | Whether its numbers are calibrated, and what the agent should do |
+| `{{SYSTEM_ONE_BUDGET}}`     | The daily budget and roughly how much is left                    |
+
 ### Date & Time Variables
 
 | Variable         | Example Output      |

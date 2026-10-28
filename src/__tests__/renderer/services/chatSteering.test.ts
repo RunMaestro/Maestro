@@ -17,6 +17,7 @@ vi.mock('../../../renderer/stores/centerFlashStore', () => ({
 }));
 
 import {
+	applyCodexTransport,
 	applySteeringVerdict,
 	pendingSteerCount,
 	reconcilePendingSteers,
@@ -86,6 +87,31 @@ beforeEach(() => {
 afterEach(() => {
 	delete maestroProcess.steer;
 	delete maestroProcess.getActiveProcesses;
+});
+
+describe('applyCodexTransport', () => {
+	it('updates the target tab and an orphan without changing another tab', () => {
+		const session = steerableSession([]);
+		session.aiTabs.push(createMockAITab({ id: 'other-tab', turnCodexTransport: 'app-server' }));
+		session.orphanedThinkingTabs = [createMockAITab({ id: 'tab-1' })];
+		useSessionStore.setState({ sessions: [session] });
+
+		applyCodexTransport(PROCESS_KEY, 'exec');
+		const updated = useSessionStore.getState().sessions[0];
+		expect(updated.aiTabs[0].turnCodexTransport).toBe('exec');
+		expect(updated.orphanedThinkingTabs![0].turnCodexTransport).toBe('exec');
+		expect(updated.aiTabs[1].turnCodexTransport).toBe('app-server');
+
+		applyCodexTransport(PROCESS_KEY, undefined);
+		expect(useSessionStore.getState().sessions[0].aiTabs[0].turnCodexTransport).toBeUndefined();
+	});
+
+	it('does not overwrite the steering target with a forced parallel process', () => {
+		useSessionStore.setState({ sessions: [steerableSession([])] });
+		applyCodexTransport(PROCESS_KEY, 'app-server');
+		applyCodexTransport(`${PROCESS_KEY}-fp-123`, 'exec');
+		expect(useSessionStore.getState().sessions[0].aiTabs[0].turnCodexTransport).toBe('app-server');
+	});
 });
 
 describe('steerQueuedItem', () => {
@@ -266,6 +292,9 @@ describe('steerQueuedItem', () => {
 					...steerableSession([item()]),
 					toolType: 'codex',
 					codexTransport: 'app-server',
+					aiTabs: [
+						createMockAITab({ id: 'tab-1', state: 'busy', turnCodexTransport: 'app-server' }),
+					],
 				} as Session,
 			],
 		});
@@ -294,7 +323,9 @@ describe('steerQueuedItemOrExplain', () => {
 		expect(notifyToast).toHaveBeenCalledWith(
 			expect.objectContaining({
 				title: 'Could not steer this turn',
-				message: expect.stringMatching(/app server.*The message stays queued\.$/),
+				message: expect.stringMatching(
+					/no confirmed app-server transport.*The message stays queued\.$/
+				),
 				sessionId: 'sess-1',
 				tabId: 'tab-1',
 			})
@@ -594,5 +625,40 @@ describe('returnPendingSteersToQueue', () => {
 	it('is a no-op for ids that are not parked', () => {
 		const session = steerableSession([]);
 		expect(returnPendingSteersToQueue(session, new Set(['nope']), true)).toBe(session);
+	});
+});
+
+describe('Ensemble steering attribution', () => {
+	it('names the captured running provider in delivery and late verdict messages for a closed tab', async () => {
+		const session = steerableSession([item()]);
+		session.toolType = 'opencode';
+		session.providerOverrides = {
+			'claude-code': { enableMaestroP: true, maestroPMode: 'interactive' },
+		};
+		session.aiTabs[0] = { ...session.aiTabs[0], tabProvider: 'codex', turnProvider: 'claude-code' };
+		useSessionStore.setState({ sessions: [session] });
+		steer.mockResolvedValue({ type: 'steering', id: 'ensemble-steer', verdict: 'delivered' });
+		expect(await steerQueuedItem('sess-1', 'item-a')).toEqual({
+			outcome: 'delivered',
+			verdict: 'delivered',
+		});
+		expect(notifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({ message: expect.stringContaining('Claude Code has your message') })
+		);
+		useSessionStore.setState((state) => ({
+			sessions: state.sessions.map((s) => ({
+				...s,
+				orphanedThinkingTabs: s.aiTabs.map((tab) => ({ ...tab, turnProvider: 'codex' as const })),
+				aiTabs: [],
+			})),
+		}));
+		applySteeringVerdict(PROCESS_KEY, {
+			type: 'steering',
+			id: 'ensemble-steer',
+			verdict: 'queued',
+		});
+		expect(notifyToast).toHaveBeenLastCalledWith(
+			expect.objectContaining({ message: expect.stringContaining('Claude Code could not fold') })
+		);
 	});
 });

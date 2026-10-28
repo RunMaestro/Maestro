@@ -162,6 +162,28 @@ describe('CaptureRulesEditor', () => {
 		expect(within(builtIn).getByText('1Password')).toBeTruthy();
 	});
 
+	it('shows a disclosure chevron and toggles the built-in exclusions', async () => {
+		render(<CaptureRulesEditor theme={mockTheme} />);
+		const builtIn = await screen.findByTestId('computer-history-built-in');
+		const summary = within(builtIn).getByText('Always excluded (2 apps)');
+		const chevron = within(summary).getByTestId('chevronright-icon');
+		const app = within(builtIn).getByText('1Password');
+
+		expect(chevron).toHaveAttribute('aria-hidden', 'true');
+		expect(chevron).toHaveClass('group-open/built-in:rotate-90');
+		expect(builtIn).not.toHaveAttribute('open');
+		expect(app).not.toBeVisible();
+
+		fireEvent.click(summary);
+		expect(builtIn).toHaveAttribute('open');
+		expect(app).toBeVisible();
+
+		fireEvent.click(summary);
+		expect(builtIn).not.toHaveAttribute('open');
+		expect(app).not.toBeVisible();
+		expect(api.setConfig).not.toHaveBeenCalled();
+	});
+
 	it('switches the app mode through setConfig', async () => {
 		render(<CaptureRulesEditor theme={mockTheme} />);
 		fireEvent.click(await screen.findByText('Only these apps'));

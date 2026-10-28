@@ -49,11 +49,17 @@ vi.mock('../../../renderer/utils/sessionValidation', () => ({
 	validateNewSession: vi.fn(() => ({ valid: true, error: null })),
 }));
 
+// The token proxy half of a group seed has its own tests. Here only the call.
+vi.mock('../../../renderer/services/groupDefaultsPublish', () => ({
+	applySeededTokenProxy: vi.fn().mockResolvedValue(undefined),
+}));
+
 // ============================================================================
 // Imports (after mocks)
 // ============================================================================
 
 import { useSessionCrud } from '../../../renderer/hooks/session/useSessionCrud';
+import { applySeededTokenProxy } from '../../../renderer/services/groupDefaultsPublish';
 import type { UseSessionCrudDeps } from '../../../renderer/hooks/session/useSessionCrud';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
@@ -645,6 +651,165 @@ describe('useSessionCrud', () => {
 
 			expect(useSessionStore.getState().sessions[0].codexTransport).toBe(stored);
 		});
+
+		// The New Agent Models tab's gateway. The token proxy mode is not set at
+		// create, so a gateway that is the proxy's reads as passthrough.
+		it.each([
+			['http://127.0.0.1:8787', 'http://127.0.0.1:8787'],
+			['', undefined],
+			[undefined, undefined],
+		] as const)('stores gatewayUrl %s as %s', async (chosen, stored) => {
+			const deps = createDeps();
+			const { result } = renderHook(() => useSessionCrud(deps));
+
+			// gatewayUrl is the 23rd positional argument.
+			const args: unknown[] = ['claude-code', '/test/project', 'Gateway Session'];
+			args[22] = chosen;
+			const create = result.current.createNewSession as (...a: unknown[]) => Promise<void>;
+			await act(async () => {
+				await create(...args);
+			});
+
+			const session = useSessionStore.getState().sessions[0];
+			expect(session.gatewayUrl).toBe(stored);
+			expect(session.tokenProxyMode).toBeUndefined();
+		});
+
+		// The New Agent Models tab's Run on target. Absent means the provider's
+		// own model, which is how every agent created before it reads.
+		it.each([
+			[{ type: 'source', endpointId: 'ep-ollama', model: 'qwen3:latest', contextTokens: 40960 }],
+			[undefined],
+		] as const)('stores runOn %j as chosen', async (chosen) => {
+			const deps = createDeps();
+			const { result } = renderHook(() => useSessionCrud(deps));
+
+			// runOn is the 24th positional argument.
+			const args: unknown[] = ['claude-code', '/test/project', 'Run On Session'];
+			args[23] = chosen;
+			const create = result.current.createNewSession as (...a: unknown[]) => Promise<void>;
+			await act(async () => {
+				await create(...args);
+			});
+
+			expect(useSessionStore.getState().sessions[0].runOn).toEqual(chosen);
+		});
+
+		// The New Agent Peers tab's grants: the explicit rows, the group grant and
+		// the worktree grant, in one argument.
+		describe('Peer grants', () => {
+			const createWith = async (peerGrants: unknown) => {
+				const deps = createDeps();
+				const { result } = renderHook(() => useSessionCrud(deps));
+
+				// peerGrants is the 25th positional argument.
+				const args: unknown[] = ['claude-code', '/test/project', 'Peer Session'];
+				args[24] = peerGrants;
+				const create = result.current.createNewSession as (...a: unknown[]) => Promise<void>;
+				await act(async () => {
+					await create(...args);
+				});
+				return useSessionStore.getState().sessions[0];
+			};
+
+			it('stores the rows and both grants on the created agent', async () => {
+				const peerAgents = [
+					{ sessionId: 'agent-a', read: true, write: false, description: 'Owns the docs' },
+					// Neither bit lit: an exclusion, which must be stored as it is.
+					{ sessionId: 'agent-b', read: false, write: false },
+				];
+				const session = await createWith({
+					peerAgents,
+					groupPeerAccess: { read: true, write: false },
+					worktreePeerAccess: { read: true, write: true },
+				});
+
+				expect(session.peerAgents).toEqual(peerAgents);
+				expect(session.groupPeerAccess).toEqual({ read: true, write: false });
+				expect(session.worktreePeerAccess).toEqual({ read: true, write: true });
+			});
+
+			it('stores only the sources that are on', async () => {
+				const session = await createWith({
+					peerAgents: undefined,
+					groupPeerAccess: { read: true, write: false },
+					worktreePeerAccess: undefined,
+				});
+
+				expect(session.peerAgents).toBeUndefined();
+				expect(session.groupPeerAccess).toEqual({ read: true, write: false });
+				expect(session.worktreePeerAccess).toBeUndefined();
+			});
+
+			// Every caller that predates the Peers tab passes 24 arguments.
+			it('creates an agent with no peers when the argument is absent', async () => {
+				const session = await createWith(undefined);
+
+				expect(session.peerAgents).toBeUndefined();
+				expect(session.groupPeerAccess).toBeUndefined();
+				expect(session.worktreePeerAccess).toBeUndefined();
+			});
+		});
+	});
+
+	// ========================================================================
+	// createNewSession: the group defaults the New Agent form has no control for
+	// ========================================================================
+	describe('createNewSession with group seed extras', () => {
+		const createWith = async (seedExtras: unknown) => {
+			vi.mocked(applySeededTokenProxy).mockClear();
+			const deps = createDeps();
+			const { result } = renderHook(() => useSessionCrud(deps));
+
+			// seedExtras is the 26th positional argument.
+			const args: unknown[] = ['claude-code', '/test/project', 'Seeded Session'];
+			args[25] = seedExtras;
+			const create = result.current.createNewSession as (...a: unknown[]) => Promise<void>;
+			await act(async () => {
+				await create(...args);
+			});
+			return useSessionStore.getState().sessions[0];
+		};
+
+		it('stamps the tiers, the switched-off variables and the System One opt-out', async () => {
+			const tierTargets = { low: { type: 'provider-model', model: 'haiku' } };
+			const session = await createWith({
+				tierTargets,
+				customEnvVarsDisabled: { DEBUG: '1' },
+				systemOneOptOut: true,
+			});
+
+			expect(session.tierTargets).toEqual(tierTargets);
+			expect(session.customEnvVarsDisabled).toEqual({ DEBUG: '1' });
+			expect(session.systemOneOptOut).toBe(true);
+			// No proxy mode in the seed: the proxy writers are not called.
+			expect(applySeededTokenProxy).not.toHaveBeenCalled();
+		});
+
+		it('hands the token proxy mode to its writer and never stamps it', async () => {
+			const seedExtras = {
+				tokenProxyMode: 'compress',
+				backgroundRequests: {
+					target: { type: 'source', endpointId: 'ep-cloud', model: 'qwen3-coder' },
+				},
+			};
+			const session = await createWith(seedExtras);
+
+			// The mode alone does nothing on a record: the writer sets the gateway.
+			expect(session.tokenProxyMode).toBeUndefined();
+			expect(session.backgroundRequests).toBeUndefined();
+			expect(applySeededTokenProxy).toHaveBeenCalledWith(session.id, seedExtras);
+		});
+
+		// Every caller but a group-seeded form passes 25 arguments.
+		it('creates a plain agent when the argument is absent', async () => {
+			const session = await createWith(undefined);
+
+			expect(session.tierTargets).toBeUndefined();
+			expect(session.customEnvVarsDisabled).toBeUndefined();
+			expect(session.systemOneOptOut).toBeUndefined();
+			expect(applySeededTokenProxy).not.toHaveBeenCalled();
+		});
 	});
 
 	// ========================================================================
@@ -1053,6 +1218,43 @@ describe('useSessionCrud', () => {
 	});
 
 	describe('finishRenamingSession', () => {
+		it.each([false, true])(
+			'pairs the tab fallback with its native owner (pending %s)',
+			(pending) => {
+				const session = createSession({
+					id: 'sess-1',
+					toolType: 'claude-code',
+					agentSessionId: undefined,
+					projectRoot: '/my/project',
+					activeTabId: 'foreign',
+					aiTabs: [
+						{
+							...createSession().aiTabs[0],
+							id: 'foreign',
+							tabProvider: pending ? 'claude-code' : 'codex',
+							agentSessionId: pending ? null : 'native-codex',
+							...(pending
+								? {
+										pendingTranslation: 'codex' as const,
+										providerSessions: { codex: { agentSessionId: 'native-codex' } },
+									}
+								: {}),
+						},
+					],
+				});
+				useSessionStore.setState({ sessions: [session] });
+				const { result } = renderHook(() => useSessionCrud(createDeps()));
+				act(() => result.current.finishRenamingSession(session.id, 'Owned name'));
+				expect(mockMaestro.agentSessions.setSessionName).toHaveBeenCalledWith(
+					'codex',
+					'/my/project',
+					'native-codex',
+					'Owned name'
+				);
+				expect(mockMaestro.claude.updateSessionName).not.toHaveBeenCalled();
+			}
+		);
+
 		it('renames the session in store', () => {
 			useSessionStore.setState({
 				sessions: [createSession({ id: 'sess-1', name: 'Old Name' })],

@@ -96,7 +96,7 @@ function harness(
 	overrides: {
 		getTargetSession?: () => CrossAgentTargetSession | null;
 		writable?: boolean;
-		resolveAgent?: () => Promise<AgentConfig | null>;
+		resolveAgent?: (providerId: string) => Promise<AgentConfig | null>;
 		sshStore?: unknown;
 		request?: Partial<CrossAgentRequest>;
 	} = {}
@@ -119,6 +119,145 @@ function harness(
 describe('the consult service launch', () => {
 	beforeEach(() => vi.useFakeTimers());
 	afterEach(() => vi.useRealTimers());
+	it('resumes the destination consult provider and its settings instead of the agent default or active tab', async () => {
+		const resolveAgent = vi.fn(
+			async () =>
+				({
+					...claudeAgent(),
+					id: 'codex',
+					configOptions: [
+						{
+							key: 'model',
+							type: 'text',
+							label: 'Model',
+							description: '',
+							default: '',
+							argBuilder: (value: string) => ['--model', value],
+						},
+						{
+							key: 'effort',
+							type: 'text',
+							label: 'Effort',
+							description: '',
+							default: '',
+							argBuilder: (value: string) => ['--effort', value],
+						},
+					],
+				}) as AgentConfig
+		);
+		const { dispatch, runner, chunks } = harness({
+			request: { targetTabId: 'consult', resumeAgentSessionId: 'wrong-legacy-id' },
+			resolveAgent,
+			getTargetSession: () =>
+				targetSession({
+					customPath: '/claude',
+					customModel: 'opus',
+					customEnvVars: { CLAUDE_ONLY: 'yes' },
+					enableMaestroP: true,
+					providerOverrides: {
+						codex: {
+							customPath: '/codex',
+							customModel: 'default-codex',
+							customContextWindow: 200_000,
+						},
+					},
+					aiTabs: [
+						{ id: 'active', agentSessionId: 'active-claude' },
+						{
+							id: 'consult',
+							tabProvider: 'codex',
+							agentSessionId: 'consult-codex',
+							customModel: 'consult-model',
+							customEffort: 'high',
+						},
+					],
+				}),
+		});
+		await dispatch();
+		expect(resolveAgent).toHaveBeenCalledWith('codex');
+		expect(runner.spawns[0]).toMatchObject({
+			providerId: 'codex',
+			command: '/codex',
+			isResume: true,
+			agentConfigValues: { contextWindow: 200_000 },
+		});
+		expect(runner.spawns[0].args).toEqual(expect.arrayContaining(['--resume', 'consult-codex']));
+		expect(runner.spawns[0].args).not.toContain('wrong-legacy-id');
+		expect(runner.spawns[0].args).toEqual(
+			expect.arrayContaining(['--model', 'consult-model', '--effort', 'high'])
+		);
+		expect(runner.spawns[0].customEnvVars).not.toHaveProperty('CLAUDE_ONLY');
+		runner.observer!.onSessionId('new-codex-id');
+		runner.observer!.onEnd({ exitCode: 0, readText: () => 'answer' });
+		expect(chunks[0]).toMatchObject({
+			targetToolType: 'codex',
+			targetAgentSessionId: 'new-codex-id',
+		});
+	});
+
+	it('starts a new default consult independently of other tab overrides', async () => {
+		const { dispatch, runner } = harness({
+			request: { targetTabId: 'new-consult' },
+			getTargetSession: () =>
+				targetSession({
+					aiTabs: [{ id: 'active', tabProvider: 'codex', agentSessionId: 'codex-active' }],
+				}),
+		});
+		await dispatch();
+		expect(runner.spawns[0].providerId).toBe('claude-code');
+		expect(runner.spawns[0].isResume).toBe(false);
+	});
+
+	it('retains the captured launch provider and native ID across a later consult selection', async () => {
+		const { dispatch, runner, chunks } = harness({
+			request: {
+				targetTabId: 'consult',
+				targetProvider: 'claude-code',
+				resumeAgentSessionId: 'captured-claude',
+			},
+			getTargetSession: () =>
+				targetSession({
+					aiTabs: [
+						{
+							id: 'consult',
+							tabProvider: 'codex',
+							agentSessionId: 'current-codex',
+							pendingTranslation: 'claude-code',
+							providerSessions: { 'claude-code': { agentSessionId: 'captured-claude' } },
+						},
+					],
+				}),
+		});
+		await dispatch();
+		expect(runner.spawns[0].providerId).toBe('claude-code');
+		expect(runner.spawns[0].args).toContain('captured-claude');
+		runner.observer!.onEnd({ exitCode: 0, readText: () => 'answer' });
+		expect(chunks[0].targetToolType).toBe('claude-code');
+	});
+
+	it('refuses a consult with untranslated source context', async () => {
+		const { dispatch, runner, chunks } = harness({
+			request: { targetTabId: 'consult' },
+			getTargetSession: () =>
+				targetSession({
+					aiTabs: [
+						{
+							id: 'consult',
+							tabProvider: 'codex',
+							agentSessionId: null,
+							pendingTranslation: 'claude-code',
+						},
+					],
+				}),
+		});
+		await dispatch();
+		expect(runner.spawns).toHaveLength(0);
+		expect(chunks[0]).toMatchObject({
+			targetToolType: 'codex',
+			done: true,
+			error: expect.stringContaining('context translation'),
+		});
+	});
 
 	it('spawns the consult read-only and caps maestro-p idle wait to the idle budget', async () => {
 		const { dispatch, runner } = harness();

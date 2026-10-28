@@ -14,12 +14,16 @@
 
 import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
-import { useSettingsStore } from '../stores/settingsStore';
+import { notifyVoiceStartFailed, openVoiceMic } from '../services/voiceListening';
+import { useVoiceSessionStore } from '../stores/voiceSessionStore';
+import { useVoiceUiStore } from '../stores/voiceUiStore';
+import { isVoiceSessionActive } from '../../shared/acappella/session-state';
+import { selectACappellaEnabled, useSettingsStore } from '../stores/settingsStore';
 import type { GroupChatQueueState } from '../../shared/group-chat-types';
 import { useSessionStore } from '../stores/sessionStore';
 import { mentionSessionEquality } from '../stores/sessionEquality';
 import { filterLiveAgents } from '../../shared/agentVisibility';
-import { ImageIcon, Eye, Keyboard, PenLine } from 'lucide-react';
+import { ImageIcon, Eye, Keyboard, PenLine, Mic } from 'lucide-react';
 import type {
 	Theme,
 	GroupChatParticipant,
@@ -60,6 +64,8 @@ import { OUTPUT_SEARCH_INPUT_SELECTOR } from '../hooks/ui/useOutputSearchLayer';
 import { useAutosizeTextarea } from '../hooks/ui/useAutosizeTextarea';
 import { useToastAvoidZone } from '../hooks/ui/useToastAvoidZone';
 import { KEYSTROKE_TEXTAREA_MAX_HEIGHT } from '../utils/textareaSizing';
+import { controlledTextDictationTarget } from '../utils/dictationTargets';
+import { DictationButton } from './ui/DictationButton';
 import type { SteerEligibility } from '../utils/executionQueue';
 import { groupChatSteerBlockedReason } from '../../shared/groupChatSteering';
 import { buildKnownMentionNameSet } from '../hooks/input/useAgentMentionCompletion';
@@ -110,6 +116,7 @@ interface GroupChatInputProps {
 	participants: GroupChatParticipant[];
 	groups?: Group[];
 	groupChatId: string;
+	groupChatName?: string;
 	draftMessage?: string;
 	onDraftChange?: (draft: string, groupChatId: string) => void;
 	onOpenPromptComposer?: () => void;
@@ -152,6 +159,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 	participants: _participants,
 	groups,
 	groupChatId,
+	groupChatName,
 	draftMessage,
 	onDraftChange,
 	onOpenPromptComposer,
@@ -185,9 +193,46 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 	const [atMentionStartIndex, setAtMentionStartIndex] = useState(-1);
 	const [selectedAtMentionIndex, setSelectedAtMentionIndex] = useState(0);
 	// Use lifted state if provided, otherwise local state
+	const voiceEnabled = useSettingsStore(selectACappellaEnabled);
+	const voiceActive = useVoiceSessionStore(
+		(s) =>
+			isVoiceSessionActive(s.state) &&
+			s.scope?.kind === 'group-chat' &&
+			s.scope.groupChatId === groupChatId
+	);
 	const [localReadOnlyMode, setLocalReadOnlyMode] = useState(false);
 	const readOnlyMode = readOnlyModeProp ?? localReadOnlyMode;
 	const setReadOnlyMode = setReadOnlyModeProp ?? setLocalReadOnlyMode;
+	// Like a typed message, the next spoken turn follows the room's current read-only choice.
+	useEffect(() => {
+		if (!voiceActive) return;
+		const scope = useVoiceSessionStore.getState().scope;
+		if (
+			scope?.kind !== 'group-chat' ||
+			scope.groupChatId !== groupChatId ||
+			(scope.readOnly === true) === readOnlyMode
+		)
+			return;
+		void window.maestro.voice
+			.setScope({ ...scope, readOnly: readOnlyMode })
+			.catch(notifyVoiceStartFailed);
+	}, [voiceActive, groupChatId, readOnlyMode]);
+
+	const startGroupVoice = useCallback(() => {
+		useVoiceSessionStore.getState().setDismissed(false);
+		useVoiceUiStore.getState().setMinimized(false);
+		void useVoiceUiStore
+			.getState()
+			.load()
+			.then(() =>
+				openVoiceMic({
+					honorListenMode: true,
+					scope: { kind: 'group-chat', groupChatId, name: groupChatName, readOnly: readOnlyMode },
+				})
+			)
+			.catch(notifyVoiceStartFailed);
+	}, [groupChatId, groupChatName, readOnlyMode]);
+
 	// Use global setting if provided, otherwise fall back to local state (default false = Cmd+Enter to send)
 	const [localEnterToSend, setLocalEnterToSend] = useState(false);
 	const enterToSend = enterToSendAIProp ?? localEnterToSend;
@@ -343,6 +388,20 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 			persistDraft(value, groupChatId);
 		},
 		[persistDraft, groupChatId]
+	);
+
+	// Dictation writes through that same draft-persisting setter, so a dictated
+	// message survives a chat switch exactly like a typed one, and the mention
+	// picker (which lives in onChange) never opens for words nobody typed.
+	const setDictatedValueRef = useRef(setAtMentionInputValue);
+	setDictatedValueRef.current = setAtMentionInputValue;
+	const dictationTarget = useMemo(
+		() =>
+			controlledTextDictationTarget({
+				getElement: () => inputRef.current,
+				setValue: (value) => setDictatedValueRef.current(value),
+			}),
+		[inputRef]
 	);
 
 	const handleKeyDown = useCallback(
@@ -706,7 +765,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 					</div>
 
 					{/* Bottom toolbar row */}
-					<div className="flex justify-between items-center px-2 pb-2 pt-1">
+					<div className="mt-auto flex justify-between items-center px-2 pb-2 pt-1">
 						{/* Left side - action buttons */}
 						<div className="flex gap-1 items-center">
 							{onOpenPromptComposer && (
@@ -725,6 +784,11 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 							>
 								<ImageIcon className="w-4 h-4" />
 							</button>
+							<DictationButton
+								theme={theme}
+								target={dictationTarget}
+								testId="group-chat-dictation-button"
+							/>
 							<ImageAttachInput
 								ref={imageInputRef}
 								id="group-chat-image-input"
@@ -769,16 +833,33 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 					</div>
 				</div>
 
-				{/* Notifications & Send Button - Right Side. No Send menu: a busy
+				<div className="self-end flex flex-col gap-2">
+					{voiceEnabled && (
+						<button
+							type="button"
+							onClick={startGroupVoice}
+							aria-label="Talk to group chat"
+							aria-pressed={voiceActive}
+							className="p-2 rounded-lg border focus:outline-none focus-visible:ring-2"
+							style={{
+								borderColor: theme.colors.border,
+								color: voiceActive ? theme.colors.accent : theme.colors.textDim,
+							}}
+						>
+							<Mic className="w-4 h-4" />
+						</button>
+					)}
+					{/* Notifications & Send Button - Right Side. No Send menu: a busy
 				    room queues through main. */}
-				<ComposerSendColumn
-					theme={theme}
-					className="self-end"
-					onSend={handleSend}
-					sendTitle={isBusy ? 'Queue message' : 'Send message'}
-					sendDisabled={!message.trim()}
-					sendTone={isBusy ? 'warning' : 'accent'}
-				/>
+					<ComposerSendColumn
+						theme={theme}
+						className="self-end"
+						onSend={handleSend}
+						sendTitle={isBusy ? 'Queue message' : 'Send message'}
+						sendDisabled={!message.trim()}
+						sendTone={isBusy ? 'warning' : 'accent'}
+					/>
+				</div>
 			</div>
 		</div>
 	);

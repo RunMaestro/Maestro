@@ -292,6 +292,7 @@ describe('UsageDashboardModal hooks', () => {
 			'agents',
 			'groups',
 			'tokens',
+			'models',
 			'activity',
 			'autorun',
 			'shortcuts',

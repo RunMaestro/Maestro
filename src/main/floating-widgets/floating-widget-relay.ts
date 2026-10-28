@@ -42,6 +42,10 @@ export interface FloatingWidgetRelayDeps {
 	getAuthorityWindow(id: FloatingWidgetId): BrowserWindow | null;
 	/** Every window a state snapshot may reach (app windows and widget windows). */
 	getAllWindows(): BrowserWindow[];
+	/** Refuse stale show/hide requests when an app-owned widget changes authority. */
+	canControlVisibility?(id: FloatingWidgetId, senderId: number): boolean;
+	/** Drop a previous voice owner's trailing snapshot during an authority handoff. */
+	canPublishState?(id: FloatingWidgetId, senderId: number): boolean;
 }
 
 /** What happened to one command. */
@@ -181,18 +185,27 @@ export function createFloatingWidgetRelay(deps: FloatingWidgetRelayDeps): Floati
 
 		const controllerFor = (id: unknown) => deps.controllers[requireFloatingWidgetId(id)];
 
-		ipcMain.handle('floatingWidgets:show', (_event, id: unknown) => {
-			const controller = controllerFor(id);
+		ipcMain.handle('floatingWidgets:show', (event, id: unknown) => {
+			const widgetId = requireFloatingWidgetId(id);
+			const controller = controllerFor(widgetId);
+			if (deps.canControlVisibility?.(widgetId, event.sender.id) === false)
+				return controller.isVisible();
 			controller.show();
 			return controller.isVisible();
 		});
-		ipcMain.handle('floatingWidgets:hide', (_event, id: unknown) => {
-			const controller = controllerFor(id);
+		ipcMain.handle('floatingWidgets:hide', (event, id: unknown) => {
+			const widgetId = requireFloatingWidgetId(id);
+			const controller = controllerFor(widgetId);
+			if (deps.canControlVisibility?.(widgetId, event.sender.id) === false)
+				return controller.isVisible();
 			controller.hide();
 			return controller.isVisible();
 		});
-		ipcMain.handle('floatingWidgets:toggle', (_event, id: unknown) => {
-			const controller = controllerFor(id);
+		ipcMain.handle('floatingWidgets:toggle', (event, id: unknown) => {
+			const widgetId = requireFloatingWidgetId(id);
+			const controller = controllerFor(widgetId);
+			if (deps.canControlVisibility?.(widgetId, event.sender.id) === false)
+				return controller.isVisible();
 			controller.toggle();
 			return controller.isVisible();
 		});
@@ -222,6 +235,7 @@ export function createFloatingWidgetRelay(deps: FloatingWidgetRelayDeps): Floati
 				logger.warn(`Ignored state for an unknown floating widget: ${String(id)}`, LOG_CONTEXT);
 				return;
 			}
+			if (deps.canPublishState?.(id, event.sender.id) === false) return;
 			publishState(id, state, event.sender.id);
 		});
 		ipcMain.on(FLOATING_WIDGET_COMMAND_CHANNEL, (_event, id: unknown, command: unknown) => {

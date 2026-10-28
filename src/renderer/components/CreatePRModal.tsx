@@ -8,6 +8,7 @@ import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { openUrl } from '../utils/openUrl';
 import { usePRCreationStore, selectPRRun, prRunKey } from '../stores/prCreationStore';
+import { PullRequestDraftButton } from './PullRequestDraftButton';
 
 /**
  * Renders error text with URLs converted to clickable links
@@ -85,6 +86,8 @@ interface CreatePRModalProps {
  * - Branch selector with main/master as default
  * - Title input (auto-populated from branch name)
  * - Optional description
+ * - "Draft with local model" (when the Git drafts task is assigned a source):
+ *   fills the title and description, never submits
  * - gh CLI status checking
  * - Progress indicator during PR creation
  *
@@ -392,6 +395,19 @@ export function CreatePRModal({
 								</select>
 							</div>
 
+							{/* Draft the two fields below from the branch. Draws nothing while
+							    the Git drafts task is off, which is the default. */}
+							<PullRequestDraftButton
+								theme={theme}
+								cwd={worktreePath}
+								baseBranch={targetBranch}
+								disabled={isCreating}
+								onDraft={(draft) => {
+									setTitle(draft.title);
+									setDescription(draft.body);
+								}}
+							/>
+
 							{/* Title */}
 							<div>
 								<label
@@ -427,7 +443,9 @@ export function CreatePRModal({
 									onChange={(e) => setDescription(e.target.value)}
 									disabled={isCreating}
 									placeholder="Add a description..."
-									rows={3}
+									// Grows with the text (a drafted body is a paragraph and a
+									// list), so it can be read before it is submitted.
+									rows={Math.min(10, Math.max(3, description.split('\n').length))}
 									className="w-full px-3 py-2 rounded border bg-transparent outline-none text-sm resize-none disabled:opacity-60"
 									style={{
 										borderColor: theme.colors.border,

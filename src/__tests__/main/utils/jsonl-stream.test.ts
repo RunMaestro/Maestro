@@ -5,7 +5,10 @@ import type { FileHandle } from 'fs/promises';
 import type { ReadStream } from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { forEachJsonlLine, readFirstJsonlLine } from '../../../main/utils/jsonl-stream';
+import {
+	forEachJsonlLine,
+	readFirstJsonlLine,
+} from '../../../shared/maestro-lib/storage/jsonl-stream';
 
 describe('forEachJsonlLine', () => {
 	let dir: string;

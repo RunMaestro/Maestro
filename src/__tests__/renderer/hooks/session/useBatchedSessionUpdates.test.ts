@@ -255,7 +255,7 @@ describe('useBatchedSessionUpdates accumulator preserves resolved window', () =>
 
 	it('keeps the resolved window when a same-model fallback delta accumulates (session-level)', () => {
 		useSessionStore.setState({
-			sessions: [{ id: 's1' } as unknown as Session],
+			sessions: [createMockSession({ id: 's1', aiTabs: [] })],
 		} as never);
 
 		const { result } = renderHook(() => useBatchedSessionUpdates(10_000));

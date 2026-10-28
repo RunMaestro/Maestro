@@ -1,6 +1,7 @@
 import { ipcRenderer } from 'electron';
 import type { AITabData } from '../../web-server/types';
 import type { MediaOpenMode } from '../../../shared/mediaTypes';
+import type { OpenUiSurfaceRequest } from '../../../shared/uiSurfaces';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../../shared/snoozeCommands';
 import type {
 	ClosedTabCommandRequest,
@@ -45,6 +46,38 @@ export function createTabRemoteApi() {
 		 * Send response for remote new tab
 		 */
 		sendRemoteNewTabResponse: (responseChannel: string, result: { tabId: string } | null): void => {
+			ipcRenderer.send(responseChannel, result);
+		},
+
+		/**
+		 * Subscribe to a request to land on one specific AI tab.
+		 *
+		 * Separate from `onRemoteSelectTab` because this one ANSWERS: the caller
+		 * (A Cappella's dispatch executor) has to know whether the tab was simply
+		 * focused, woken out of a snooze, or reopened from the closed-tab history,
+		 * and only the renderer can tell it apart.
+		 */
+		onRemoteFocusAiTab: (
+			callback: (sessionId: string, tabId: string, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, tabId: string, responseChannel: string) =>
+				callback(sessionId, tabId, responseChannel);
+			ipcRenderer.on('remote:focusAiTab', handler);
+			return () => ipcRenderer.removeListener('remote:focusAiTab', handler);
+		},
+
+		/**
+		 * Send response for a remote AI tab focus
+		 */
+		sendRemoteFocusAiTabResponse: (
+			responseChannel: string,
+			result: {
+				ok: boolean;
+				tabId?: string;
+				action?: 'focused' | 'woke' | 'reopened';
+				reason?: string;
+			}
+		): void => {
 			ipcRenderer.send(responseChannel, result);
 		},
 
@@ -274,10 +307,8 @@ export function createTabRemoteApi() {
 		 * and `tab` (when present) has already been validated against it in
 		 * the main process.
 		 */
-		onRemoteOpenModal: (
-			callback: (params: { surface: string; tab?: string }) => void
-		): (() => void) => {
-			const handler = (_: unknown, params: { surface: string; tab?: string }) => callback(params);
+		onRemoteOpenModal: (callback: (params: OpenUiSurfaceRequest) => void): (() => void) => {
+			const handler = (_: unknown, params: OpenUiSurfaceRequest) => callback(params);
 			ipcRenderer.on('remote:openModal', handler);
 			return () => ipcRenderer.removeListener('remote:openModal', handler);
 		},

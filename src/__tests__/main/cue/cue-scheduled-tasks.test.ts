@@ -215,6 +215,62 @@ describe('cue-scheduled-tasks', () => {
 			expect(tasks[0].autoRun?.documents).toEqual(['/proj/Auto Run Docs/nightly.md']);
 		});
 
+		it('puts the gate on every subscription a task becomes', () => {
+			const subs = buildScheduledTaskSubscriptions(agent, {
+				agentId: agent.id,
+				kind: 'daily',
+				scheduleTimes: ['09:00'],
+				prompt: 'triage the queue',
+				notify: { message: 'triaged' },
+				name: 'triage',
+				gate: '  it is a working day  ',
+				gateOnUnavailable: 'skip',
+			});
+
+			// A prompt and its paired notification are skipped together.
+			expect(subs.map((sub) => [sub.name, sub.gate, sub.gate_on_unavailable])).toEqual([
+				['triage-prompt', 'it is a working day', 'skip'],
+				['triage-notify', 'it is a working day', 'skip'],
+			]);
+		});
+
+		it('writes no gate keys without a gate, and no policy at its default', () => {
+			const plain = buildScheduledTaskSubscriptions(agent, {
+				agentId: agent.id,
+				kind: 'interval',
+				intervalMinutes: 30,
+				prompt: 'ping',
+			})[0];
+			expect(plain).not.toHaveProperty('gate');
+			expect(plain).not.toHaveProperty('gate_on_unavailable');
+
+			const gated = buildScheduledTaskSubscriptions(agent, {
+				agentId: agent.id,
+				kind: 'interval',
+				intervalMinutes: 30,
+				prompt: 'ping',
+				gate: 'the build is red',
+				gateOnUnavailable: 'run',
+			})[0];
+			expect(gated.gate).toBe('the build is red');
+			expect(gated).not.toHaveProperty('gate_on_unavailable');
+		});
+
+		it('refuses a policy with no gate, and a gate the validator would reject', () => {
+			const base = {
+				agentId: agent.id,
+				kind: 'interval' as const,
+				intervalMinutes: 30,
+				prompt: 'ping',
+			};
+			expect(() =>
+				buildScheduledTaskSubscriptions(agent, { ...base, gateOnUnavailable: 'skip' })
+			).toThrow(/gate policy needs a gate condition/);
+			expect(() =>
+				buildScheduledTaskSubscriptions(agent, { ...base, gate: 'x'.repeat(1001) })
+			).toThrow(/at most 1000 characters/);
+		});
+
 		it('puts the model choice on the prompt sub only, never on the notify sub', () => {
 			const subs = buildScheduledTaskSubscriptions(agent, {
 				agentId: agent.id,
@@ -332,6 +388,33 @@ describe('cue-scheduled-tasks', () => {
 			expect(tasks[0].agentName).toBe('Alpha');
 		});
 
+		it('reads a gate back, so one written by either surface can be checked', () => {
+			createScheduledTask(agent, {
+				agentId: agent.id,
+				kind: 'interval',
+				intervalMinutes: 30,
+				prompt: 'ping',
+				name: 'gated',
+				gate: 'the build is red',
+				gateOnUnavailable: 'skip',
+			});
+			createScheduledTask(agent, {
+				agentId: agent.id,
+				kind: 'interval',
+				intervalMinutes: 45,
+				prompt: 'pong',
+				name: 'plain',
+			});
+
+			const byName = new Map(collectScheduledTasks([agent]).tasks.map((task) => [task.name, task]));
+			expect(byName.get('gated')).toMatchObject({
+				gate: 'the build is red',
+				gateOnUnavailable: 'skip',
+			});
+			expect(byName.get('plain')).not.toHaveProperty('gate');
+			expect(byName.get('plain')).not.toHaveProperty('gateOnUnavailable');
+		});
+
 		it('reports a broken config as a warning instead of throwing', () => {
 			fs.mkdirSync(path.join(projectRoot, '.maestro'), { recursive: true });
 			fs.writeFileSync(path.join(projectRoot, '.maestro', 'cue.yaml'), 'subscriptions: [oops\n');
@@ -396,6 +479,48 @@ describe('cue-scheduled-tasks', () => {
 			const result = await updateScheduledTask(projectRoot, 'on-push', { enabled: false });
 			expect(result.updated).toBe(false);
 			expect(result.reason).toMatch(/not a scheduled task/);
+		});
+
+		it('sets a gate, changes only its policy, and removes it', async () => {
+			expect(
+				await updateScheduledTask(projectRoot, 'standup', { gate: ' it is a working day ' })
+			).toEqual({ updated: true });
+			expect(readSubs(projectRoot)[0].gate).toBe('it is a working day');
+			expect(readSubs(projectRoot)[0]).not.toHaveProperty('gate_on_unavailable');
+
+			// A policy alone keeps the condition the task already has.
+			await updateScheduledTask(projectRoot, 'standup', { gateOnUnavailable: 'skip' });
+			expect(readSubs(projectRoot)[0]).toMatchObject({
+				gate: 'it is a working day',
+				gate_on_unavailable: 'skip',
+			});
+
+			// A new condition keeps the policy.
+			await updateScheduledTask(projectRoot, 'standup', { gate: 'the queue is not empty' });
+			expect(readSubs(projectRoot)[0]).toMatchObject({
+				gate: 'the queue is not empty',
+				gate_on_unavailable: 'skip',
+			});
+
+			// `null` is the one field an edit can remove, and it takes the policy too.
+			await updateScheduledTask(projectRoot, 'standup', { gate: null });
+			const cleared = readSubs(projectRoot)[0];
+			expect(cleared).not.toHaveProperty('gate');
+			expect(cleared).not.toHaveProperty('gate_on_unavailable');
+			expect(cleared.prompt).toBe('standup');
+		});
+
+		it('refuses a policy for a task with no gate, and a gate that cannot be saved', async () => {
+			const noGate = await updateScheduledTask(projectRoot, 'standup', {
+				gateOnUnavailable: 'skip',
+			});
+			expect(noGate.updated).toBe(false);
+			expect(noGate.reason).toMatch(/no gate to set a policy on/);
+
+			const blank = await updateScheduledTask(projectRoot, 'standup', { gate: '   ' });
+			expect(blank.updated).toBe(false);
+			expect(blank.reason).toMatch(/needs a condition/);
+			expect(readSubs(projectRoot)[0]).not.toHaveProperty('gate');
 		});
 
 		it('sets, swaps, and clears the prompt run model choice', async () => {

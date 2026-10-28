@@ -44,7 +44,7 @@ Run multiple agents in parallel with a Linear/Superhuman-level responsive interf
 - 🤖 **[Auto Run & Playbooks](https://docs.runmaestro.ai/autorun-playbooks)** - File-system-based task runner that batch-processes markdown checklists (Spec-Driven) or pursues a free-text objective (Goal-Driven) through AI agents. Create playbooks for repeatable workflows, run in loops, and track progress with full history. Each task gets its own AI session for clean conversation context, and you can open the live Thought Stream to watch the agent's reasoning as it works.
 - 💬 **[Group Chat](https://docs.runmaestro.ai/group-chat)** - Delegate the moderating. You appoint one agent as moderator and hand it the question; it routes to the right agents, follows up when an answer is thin, and keeps going for as many rounds as it takes before returning a synthesis. The multi-turn collaboration is the point, and it is what an inline `@mention` cannot do.
 - 📣 **[Cross-Agent Mentions](https://docs.runmaestro.ai/cross-agent-mentions)** - Type `@another-agent` in any chat to consult it inline. Maestro forwards the relevant slice of your conversation, runs the other agent in the background without blocking you, and streams its reply back attributed to who answered. Each mention is a single-turn consult and you stay the moderator, so reach for Group Chat when you want an agent to run the follow-ups instead.
-- 🌐 **[Mobile Remote Control](https://docs.runmaestro.ai/remote-access)** - Built-in web server with QR code access. Monitor and control all your agents from your phone. Supports local network access and remote tunneling via Cloudflare for access from anywhere.
+- 🌐 **[Mobile Remote Control](https://docs.runmaestro.ai/remote-access)** - Built-in web server with QR code access. Monitor and control all your agents from your phone. Supports local network access and remote tunneling via Cloudflare for access from anywhere. The browser tab title counts agents awaiting input, including background agents after reload or reconnect.
 - 💻 **[Command Line Interface](https://docs.runmaestro.ai/cli)** - Full CLI (`maestro-cli`) for headless operation. List agents/groups, run playbooks from cron jobs or CI/CD pipelines, with human-readable or JSONL output for scripting.
 - 🚀 **Multi-Agent Management** - Run unlimited agents and terminal sessions in parallel. Each agent has its own workspace, conversation history, and isolated context.
 - 📬 **Message Queueing** - Queue messages while AI is busy; they're sent automatically when the agent becomes ready. Never lose a thought.
@@ -52,11 +52,12 @@ Run multiple agents in parallel with a Linear/Superhuman-level responsive interf
 
 ### Core Features
 
+- 🔎 **Semantic Index** - Find past work by meaning across History, archived Director's Notes, and tab transcripts. In Settings > Models > System One, inspect disk usage, browse indexed sources by model and source type, or clear the cached vectors. Clearing keeps the original records; automatic indexing can rebuild the cache while Semantic search remains assigned a model.
 - 🔄 **Dual-Mode Sessions** - Each agent has both an AI Terminal and Command Terminal. Open a new terminal tab with `Cmd+J`, or jump to the nearest one with `Opt+Cmd+J`.
 - ⌨️ **[Keyboard-First Design](https://docs.runmaestro.ai/keyboard-shortcuts)** - Full keyboard control with customizable shortcuts and [mastery tracking](https://docs.runmaestro.ai/keyboard-shortcuts#keyboard-mastery) that rewards you for leveling up. `Cmd+K` quick actions, rapid agent switching, and focus management designed for flow state.
 - 📋 **Session Discovery** - Automatically discovers and imports existing sessions from all supported providers, including conversations from before Maestro was installed. Browse, search, star, rename, and resume any session.
 - 🔀 **Git Integration** - Automatic repo detection, branch display, diff viewer, commit logs, and git-aware file completion. Work with git without leaving the app.
-- 📁 **[File Explorer](https://docs.runmaestro.ai/general-usage#file-explorer-and-preview)** - Browse project files with syntax highlighting, markdown preview, and image viewing. Reference files in prompts with `@` mentions.
+- 📁 **[File Explorer](https://docs.runmaestro.ai/general-usage#file-explorer-and-preview)** - Browse project files with syntax highlighting, markdown preview, and image viewing. Reference files in prompts with `@` mentions. Chat about a document from its preview using text or the embedded microphone, attach images, and restore earlier conversations about that file.
 - 🗃️ **[File Formats](https://docs.runmaestro.ai/file-formats)** - Data files open in a viewer built for them, several with their own filtering language: jq over JSON and JSONL, sortable filtered tables for CSV and TSV, rendered Mermaid diagrams, a full-window pan and zoom view for any diagram or image, and audio and video in a floating player.
 - 🧮 **[Parquet Preview](https://docs.runmaestro.ai/parquet-preview)** - Parquet files open as a live, filterable table with a schema rail. A typed query language (`ts >= now-7d and price > 100`) runs against the whole file while Maestro skips the row groups it can prove cannot match, so a multi-gigabyte file filters instantly and never loads into memory.
 - 🔍 **[Powerful Output Filtering](https://docs.runmaestro.ai/general-usage#output-filtering)** - Search and filter AI output with include/exclude modes, regex support, and per-response local filters.
@@ -71,6 +72,7 @@ Run multiple agents in parallel with a Linear/Superhuman-level responsive interf
 
 - 📊 **Usage Dashboard** - Comprehensive analytics for tracking AI usage patterns across all sessions. View aggregated statistics with multiple time ranges (day, week, month, year, all time), compare agent performance, analyze user vs. Auto Run activity distribution, and explore activity heatmaps. Fuzzy-filter your agents, then click any one to drill into its stats and see the breakdown per AI tab, or jump straight from there to the agent itself or its settings. Includes CSV export, real-time updates, and configurable colorblind-friendly palettes. Access via `Opt+Cmd+U` (macOS) / `Alt+Ctrl+U` (Windows/Linux) or the Command K menu.
 - 🕸️ **Document Graph** - Visual knowledge graph of your markdown documentation. Automatically discovers internal `[[wiki-links]]` and `[markdown](links)`, visualizes document relationships with interactive nodes and edges. Toggle between force-directed and hierarchical layouts, search/filter documents, navigate via keyboard, and track external link references. Includes mini-map, legend, and pagination for large directories. Access from the File Explorer context menu or Command K menu.
+- 🔗 **[Delegation Graph](https://docs.runmaestro.ai/agent-delegation#the-delegation-graph)** - View agent relationships on the shared Document Graph canvas. The global view defaults to Lobes; right-click a linked agent to open its connected cluster, then choose **Show all agents** to return to the fleet. Includes layout choices, a **Hide unconnected** filter, and a relationship editor. Both modes support keyboard controls for layout, fit, scroll mode, and spacing. Open from Command K or the hamburger menu; its optional hotkey is unassigned by default.
 
 #### Keyboard Shortcuts for Analytics Features
 
@@ -119,6 +121,10 @@ cd Maestro
 npm install
 npm run dev
 ```
+
+### Development Builds
+
+**[Download Pedram's Build](https://pedramamini.com/dropbox/maestro.zip)**, an unofficial development build for **macOS on Apple Silicon only**. It may include unfinished features.
 
 ### Requirements
 

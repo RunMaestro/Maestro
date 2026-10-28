@@ -8,9 +8,10 @@
  * in `cue-integration-test-helpers.ts`), which means no test has ever run a
  * real WHERE clause against the real schema.
  *
- * Node 22+ bundles SQLite as `node:sqlite`. This shim maps the four
- * better-sqlite3 methods `cue-db.ts` uses (`pragma`, `prepare`, `transaction`,
- * `close`) onto it, so a test can do:
+ * Node 22+ bundles SQLite as `node:sqlite`. This shim maps the three
+ * better-sqlite3 methods `cue-db.ts` uses (`pragma`, `prepare`, `close`), plus
+ * `transaction` for the stores that batch their writes, onto it, so a test can
+ * do:
  *
  *   vi.mock('better-sqlite3', () => nodeSqliteBetterSqlite3Mock());
  *
@@ -41,8 +42,8 @@ export function canLoadNodeSqlite(): boolean {
 }
 
 /**
- * The subset of the better-sqlite3 `Database` surface that `cue-db.ts` calls,
- * backed by `node:sqlite`.
+ * The subset of the better-sqlite3 `Database` surface that Maestro's stores
+ * call, backed by `node:sqlite`.
  */
 class NodeSqliteDatabaseShim {
 	private readonly db: DatabaseSync;
@@ -88,22 +89,27 @@ class NodeSqliteDatabaseShim {
 		return this.db.prepare(sql);
 	}
 
+	exec(sql: string): void {
+		this.db.exec(sql);
+	}
+
 	/**
-	 * better-sqlite3's `transaction(fn)` returns a wrapper that runs `fn`
-	 * between BEGIN and COMMIT, rolling back and rethrowing if it throws.
+	 * better-sqlite3's `transaction(fn)` returns a function that runs `fn`
+	 * between BEGIN and COMMIT and rolls back when it throws. Nesting (which
+	 * better-sqlite3 turns into savepoints) is not modeled; no caller here nests.
 	 */
 	transaction<Args extends unknown[], Result>(
 		fn: (...args: Args) => Result
 	): (...args: Args) => Result {
-		return (...args) => {
+		return (...args: Args) => {
 			this.db.exec('BEGIN');
 			try {
 				const result = fn(...args);
 				this.db.exec('COMMIT');
 				return result;
-			} catch (err) {
+			} catch (error) {
 				this.db.exec('ROLLBACK');
-				throw err;
+				throw error;
 			}
 		};
 	}

@@ -21,6 +21,7 @@ vi.mock('../../../shared/maestro-lib/launch/ssh-command-builder', () => ({
 vi.mock('../../../main/utils/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() },
 }));
+vi.mock('../../../main/provider-translation-fs', () => ({ createSshTranslationFs: vi.fn() }));
 
 import {
 	wrapSpawnWithSsh,
@@ -32,6 +33,9 @@ import {
 	WINDOWS_PROMPT_ARGV_MAX_CHARS,
 } from '../../../shared/maestro-lib/launch/prompt-delivery';
 import type { SshRemoteSettingsStore } from '../../../main/utils/ssh-remote-resolver';
+import { createSshTranslationFs } from '../../../main/provider-translation-fs';
+import { resolveSshTranslationFs } from '../../../shared/maestro-lib/host';
+import { localTranslationFs } from '../../../shared/maestro-lib/translation/local-fs';
 
 const remote = {
 	id: 'jennifer-box',
@@ -71,6 +75,14 @@ describe('wrapSpawnWithSsh', () => {
 		cwd: '/remote/project',
 		agentBinaryName: 'claude',
 	};
+
+	it('registers the canonical SSH filesystem lazily for shared knowledge launches', async () => {
+		expect(createSshTranslationFs).not.toHaveBeenCalled();
+		vi.mocked(createSshTranslationFs).mockReturnValue(localTranslationFs);
+		const selected = sshStore.getSshRemotes()[0];
+		expect(await resolveSshTranslationFs(selected)).toBe(localTranslationFs);
+		expect(createSshTranslationFs).toHaveBeenCalledExactlyOnceWith(selected);
+	});
 
 	describe('blank env values', () => {
 		it('does not export blank values to the remote host', async () => {

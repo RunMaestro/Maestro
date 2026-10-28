@@ -60,6 +60,55 @@ describe('shouldOpenSendMenu', () => {
 });
 
 describe('getSteerSupport', () => {
+	it('uses the running provider for support even when the next provider differs', () => {
+		const session = workingSession({
+			toolType: 'opencode',
+			providerOverrides: { 'claude-code': { enableMaestroP: true, maestroPMode: 'interactive' } },
+			aiTabs: [
+				createMockAITab({
+					id: 'tab-1',
+					state: 'busy',
+					tabProvider: 'codex',
+					turnProvider: 'claude-code',
+				}),
+			],
+		});
+		const model = buildSendMenuModel(
+			session,
+			{ text: 'change course', imageCount: 0 },
+			{ forcedParallelEnabled: true }
+		);
+		expect(model.steerProvider).toBe('claude-code');
+		expect(model.steerSupport).toEqual({ kind: 'supported' });
+		expect(model.rows.find((row) => row.action === 'steer')).toMatchObject({
+			enabled: false,
+			reason: expect.stringContaining('another provider'),
+		});
+	});
+
+	it('does not borrow the agent default steering support for a foreign turn', () => {
+		const session = workingSession({
+			aiTabs: [
+				createMockAITab({
+					id: 'tab-1',
+					state: 'busy',
+					tabProvider: 'opencode',
+					turnProvider: 'opencode',
+				}),
+			],
+		});
+		const model = buildSendMenuModel(
+			session,
+			{ text: 'change course', imageCount: 0 },
+			{ forcedParallelEnabled: true }
+		);
+		expect(model.steerProvider).toBe('opencode');
+		expect(model.steerSupport).toMatchObject({
+			kind: 'unsupported',
+			detail: expect.stringContaining('OpenCode'),
+		});
+	});
+
 	it('supports a Claude agent on the TUI token source', () => {
 		expect(getSteerSupport(workingSession()).kind).toBe('supported');
 	});
@@ -120,6 +169,27 @@ describe('getSteerSupport', () => {
 });
 
 describe('buildSendMenuModel', () => {
+	it('blocks an image turn on exec even when the agent prefers app-server', () => {
+		const session = workingSession({
+			toolType: 'codex',
+			codexTransport: 'app-server',
+			aiTabs: [createMockAITab({ id: 'tab-1', state: 'busy', turnCodexTransport: 'exec' })],
+		});
+		expect(rowFor(session, 'steer')).toMatchObject({
+			enabled: false,
+			reason: expect.stringContaining('exec fallbacks'),
+		});
+	});
+
+	it('keeps steering available when the preference changes during an app-server turn', () => {
+		const session = workingSession({
+			toolType: 'codex',
+			codexTransport: 'exec',
+			aiTabs: [createMockAITab({ id: 'tab-1', state: 'busy', turnCodexTransport: 'app-server' })],
+		});
+		expect(rowFor(session, 'steer').enabled).toBe(true);
+	});
+
 	it('offers Steer, not Force Send, when the active tab is working', () => {
 		const session = workingSession();
 		expect(rowFor(session, 'steer').enabled).toBe(true);
@@ -160,7 +230,7 @@ describe('buildSendMenuModel', () => {
 	it('ghosts Steer with the harness reason on an unsteerable agent', () => {
 		const row = rowFor(workingSession({ toolType: 'codex' }), 'steer');
 		expect(row.enabled).toBe(false);
-		expect(row.reason).toMatch(/exec transport/);
+		expect(row.reason).toMatch(/exec fallbacks/);
 	});
 
 	it('ghosts Steer with the draft reason when the draft cannot be steered', () => {

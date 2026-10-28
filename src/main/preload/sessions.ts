@@ -147,9 +147,9 @@ export function createClaudeApi() {
 			logDeprecationWarning('searchSessions', 'search');
 			return ipcRenderer.invoke('claude:searchSessions', projectPath, query, searchMode);
 		},
-		getCommands: (projectPath: string) => {
+		getCommands: (projectPath: string, configDir?: string) => {
 			logDeprecationWarning('getCommands');
-			return ipcRenderer.invoke('claude:getCommands', projectPath);
+			return ipcRenderer.invoke('claude:getCommands', projectPath, configDir);
 		},
 		getSkills: (projectPath: string) => {
 			logDeprecationWarning('getSkills');

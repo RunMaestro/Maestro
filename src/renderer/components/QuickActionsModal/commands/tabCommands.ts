@@ -50,6 +50,7 @@ interface BuildTabCommandsArgs {
 	shortcuts: {
 		toggleMarkdownMode?: QuickAction['shortcut'];
 		showSnoozeList?: QuickAction['shortcut'];
+		tabCleanupSuggestions?: QuickAction['shortcut'];
 		focusActiveTab?: QuickAction['shortcut'];
 		clearTerminal?: QuickAction['shortcut'];
 		openModelEffort?: QuickAction['shortcut'];
@@ -384,6 +385,17 @@ export function buildTabCommands({
 		action: () => {
 			setQuickActionOpen(false);
 			useModalStore.getState().openModal('snoozedTabs');
+		},
+	});
+
+	commands.push({
+		id: 'tabCleanupSuggestions',
+		label: 'Tab Cleanup Suggestions',
+		subtext: 'Ask a local model which tabs to close, snooze, or wake',
+		shortcut: shortcuts.tabCleanupSuggestions,
+		action: () => {
+			setQuickActionOpen(false);
+			useModalStore.getState().openModal('tabCleanup');
 		},
 	});
 

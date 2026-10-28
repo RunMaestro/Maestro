@@ -15,6 +15,11 @@ import { renderHook } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { useAppRemoteEventListeners } from '../../../../renderer/hooks/remote/useAppRemoteEventListeners';
 import { createMockSession } from '../../../helpers/mockSession';
+import { requestDocumentChatPanel } from '../../../../renderer/services/documentChatPanel';
+
+vi.mock('../../../../renderer/services/documentChatPanel', () => ({
+	requestDocumentChatPanel: vi.fn(),
+}));
 
 vi.mock('../../../../renderer/stores/sessionStore', () => ({
 	useSessionStore: Object.assign(vi.fn(), { getState: vi.fn(() => ({})) }),
@@ -81,6 +86,28 @@ beforeEach(() => {
 });
 
 describe('maestro:openFileTab', () => {
+	it('opens the preview before requesting its embedded voice chat', async () => {
+		vi.mocked(window.maestro.fs.readFile).mockResolvedValue('# Document');
+		const { handleOpenFileTab } = setup();
+		dispatchOpen({ filePath: '/projects/pod/doc.md', documentChat: 'voice' });
+		await vi.waitFor(() => expect(requestDocumentChatPanel).toHaveBeenCalled());
+		expect(requestDocumentChatPanel).toHaveBeenCalledWith({
+			path: '/projects/pod/doc.md',
+			sessionId: 'session-1',
+			voice: true,
+		});
+		expect(handleOpenFileTab.mock.invocationCallOrder[0]).toBeLessThan(
+			vi.mocked(requestDocumentChatPanel).mock.invocationCallOrder[0]
+		);
+	});
+
+	it('does not start an embedded chat for a background file open', async () => {
+		const { handleOpenFileTab } = setup();
+		dispatchOpen({ filePath: '/projects/pod/doc.md', documentChat: 'voice', background: true });
+		await vi.waitFor(() => expect(handleOpenFileTab).toHaveBeenCalled());
+		expect(requestDocumentChatPanel).not.toHaveBeenCalled();
+	});
+
 	it('forwards mediaMode queue and does not switch agents', async () => {
 		const { setActiveSessionId, handleOpenFileTab } = setup();
 

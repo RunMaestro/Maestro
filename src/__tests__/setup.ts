@@ -485,6 +485,7 @@ const mockMaestro = {
 		}),
 		search: vi.fn().mockResolvedValue([]),
 		searchSessions: vi.fn().mockResolvedValue([]),
+		setSessionStarred: vi.fn().mockResolvedValue(undefined),
 		getPath: vi.fn().mockResolvedValue(null),
 		deleteMessagePair: vi.fn().mockResolvedValue({ success: true }),
 		hasStorage: vi.fn().mockResolvedValue(true),
@@ -645,6 +646,351 @@ const mockMaestro = {
 		onTtsCompleted: vi.fn().mockReturnValue(() => {}), // Legacy alias
 		show: vi.fn().mockResolvedValue(undefined),
 	},
+	voice: {
+		start: vi.fn().mockResolvedValue({
+			snapshot: {
+				sessionId: 'voice-1',
+				state: 'listening',
+				scope: { kind: 'conductor' },
+				seq: 2,
+				startedAt: 0,
+				providerIds: { stt: 'mock-stt', tts: 'mock-tts', brain: 'mock-brain' },
+			},
+			substitutions: [],
+		}),
+		stop: vi.fn().mockResolvedValue(undefined),
+		submitUtterance: vi.fn().mockResolvedValue(true),
+		interrupt: vi.fn().mockResolvedValue(true),
+		endUtterance: vi.fn().mockResolvedValue(undefined),
+		setScope: vi.fn().mockResolvedValue(true),
+		// True means "there was a live session to gate". A test that wants the
+		// start-a-session branch overrides it with false.
+		setListening: vi.fn().mockResolvedValue(true),
+		setForceSend: vi.fn().mockResolvedValue(true),
+		getSendWait: vi.fn().mockResolvedValue({
+			waitMs: 900,
+			defaultMs: 900,
+			overridden: false,
+			sendPhrases: ['go maestro'],
+		}),
+		setSendWait: vi.fn().mockImplementation(async (waitMs: number | null) => ({
+			waitMs: waitMs ?? 900,
+			defaultMs: 900,
+			overridden: waitMs !== null,
+			sendPhrases: ['go maestro'],
+		})),
+		stopWord: vi.fn().mockResolvedValue(undefined),
+		// The microphone picker. `system-default` is the shipped state: no explicit
+		// choice, follow the OS.
+		inputDevices: vi.fn().mockResolvedValue({ devices: [], selectedId: 'system-default' }),
+		setInputDevice: vi.fn().mockResolvedValue(true),
+		onInputDevices: vi.fn().mockReturnValue(() => {}),
+		submitAgentReply: vi.fn().mockResolvedValue(true),
+		getRoster: vi.fn().mockResolvedValue([]),
+		getState: vi.fn().mockResolvedValue(null),
+		openMicSettings: vi.fn().mockResolvedValue(true),
+		onEvent: vi.fn().mockReturnValue(() => {}),
+		applyProviders: vi.fn().mockResolvedValue({ status: 'swapped' }),
+		lastTurn: vi.fn().mockResolvedValue(null),
+		listVoices: vi.fn().mockResolvedValue([]),
+		voiceStudioStatus: vi.fn().mockResolvedValue({ connected: true, profiles: [] }),
+		previewVoice: vi.fn().mockResolvedValue(true),
+		setVolume: vi.fn().mockResolvedValue(true),
+		// Bound by default, because that is what a fresh install really does: main
+		// falls back to `defaultGlobalHotkeyKeys(id)` whenever the stored shortcuts
+		// map has no entry. A mock that reported nothing registered would let the
+		// settings row drift back to claiming an unbound hotkey.
+		hotkeyStatus: vi.fn().mockResolvedValue({
+			statuses: [
+				{
+					id: 'voiceConductor',
+					keys: ['Meta', 'Alt', 'v'],
+					accelerator: 'Command+Alt+V',
+					registered: true,
+				},
+				{
+					id: 'voiceCurrentAgent',
+					keys: ['Meta', 'Alt', 'a'],
+					accelerator: 'Command+Alt+A',
+					registered: true,
+				},
+			],
+			capability: 'tap-only',
+			note: 'Tap to toggle the microphone.',
+		}),
+		wakeTest: vi.fn().mockResolvedValue({ started: true }),
+		wakeTestStop: vi.fn().mockResolvedValue(undefined),
+		onWakeTest: vi.fn().mockReturnValue(() => {}),
+		wakeEnrollment: vi.fn().mockResolvedValue({ ok: true, status: null }),
+		onWakeEnrollment: vi.fn().mockReturnValue(() => {}),
+		credentials: {
+			list: vi.fn().mockResolvedValue([]),
+			set: vi.fn().mockResolvedValue({ ok: true }),
+			validate: vi.fn().mockResolvedValue({ service: 'openai', status: 'valid', message: 'ok' }),
+		},
+		models: {
+			list: vi.fn().mockResolvedValue([]),
+			download: vi.fn().mockResolvedValue({ modelId: '', status: 'complete' }),
+			pause: vi.fn().mockResolvedValue(true),
+			resume: vi.fn().mockResolvedValue({ modelId: '', status: 'complete' }),
+			cancel: vi.fn().mockResolvedValue(true),
+			verify: vi.fn().mockResolvedValue({ modelId: '', ok: true, status: 'installed' }),
+			remove: vi.fn().mockResolvedValue(0),
+			removeAll: vi.fn().mockResolvedValue(0),
+			footprint: vi.fn().mockResolvedValue({ bytes: 0, models: [] }),
+			readiness: vi.fn().mockResolvedValue({
+				canStartSession: true,
+				canRunHandsFree: true,
+				slots: [],
+				blocking: [],
+			}),
+			onProgress: vi.fn().mockReturnValue(() => {}),
+		},
+		// The native engines the local tier runs on. Present here for the same
+		// reason `models` is: any surface offering to make voice work has to fetch
+		// BOTH, so a component that lists models and omits the runtime mock throws
+		// on mount rather than rendering. Empty by default - a test that cares
+		// about a runtime says which one.
+		runtimes: {
+			list: vi.fn().mockResolvedValue([]),
+			install: vi.fn().mockResolvedValue(true),
+			footprint: vi.fn().mockResolvedValue(0),
+			removeAll: vi.fn().mockResolvedValue(undefined),
+			onProgress: vi.fn().mockReturnValue(() => {}),
+		},
+	},
+	// The core Local Models service (ungated). Same shape as `voice.models` and
+	// `voice.runtimes`, which front the same main-process service.
+	localModels: {
+		list: vi.fn().mockResolvedValue([]),
+		download: vi.fn().mockResolvedValue({ modelId: '', status: 'complete' }),
+		pause: vi.fn().mockResolvedValue(true),
+		resume: vi.fn().mockResolvedValue({ modelId: '', status: 'complete' }),
+		cancel: vi.fn().mockResolvedValue(true),
+		verify: vi.fn().mockResolvedValue({ modelId: '', ok: true, status: 'installed' }),
+		remove: vi.fn().mockResolvedValue(0),
+		removeAll: vi.fn().mockResolvedValue(0),
+		footprint: vi.fn().mockResolvedValue({ bytes: 0, models: [] }),
+		onProgress: vi.fn().mockReturnValue(() => {}),
+		// A machine every catalog model fits on, so a surface that hides what is
+		// too large shows the whole catalog unless a test says otherwise.
+		hardware: vi.fn().mockResolvedValue({
+			platform: 'darwin',
+			arch: 'arm64',
+			totalMemoryBytes: 128 * 1024 ** 3,
+			unifiedMemory: true,
+			gpus: [],
+		}),
+		huggingFace: {
+			preview: vi.fn().mockResolvedValue({ ok: false, message: 'not mocked' }),
+			add: vi.fn().mockResolvedValue({ ok: false, message: 'not mocked' }),
+			remove: vi.fn().mockResolvedValue({ ok: false, message: 'not mocked' }),
+			list: vi.fn().mockResolvedValue([]),
+			onChanged: vi.fn().mockReturnValue(() => {}),
+		},
+		runtimes: {
+			list: vi.fn().mockResolvedValue([]),
+			install: vi.fn().mockResolvedValue(true),
+			footprint: vi.fn().mockResolvedValue(0),
+			removeAll: vi.fn().mockResolvedValue(undefined),
+			onProgress: vi.fn().mockReturnValue(() => {}),
+		},
+		endpoints: {
+			detect: vi.fn().mockResolvedValue([]),
+			listModels: vi.fn().mockResolvedValue({ ok: true, models: [] }),
+			test: vi.fn().mockResolvedValue({ ok: true, model: '', latencyMs: 0 }),
+		},
+		runOn: {
+			test: vi.fn().mockResolvedValue({
+				ok: false,
+				code: 'run-on-test-not-startable',
+				message: 'not mocked',
+			}),
+		},
+		tiers: {
+			options: vi.fn().mockResolvedValue([]),
+		},
+		taskReadiness: vi.fn().mockResolvedValue([]),
+		search: vi.fn().mockResolvedValue({ status: 'off' }),
+		// Model routing is off unless a test assigns it a router: a turn on the
+		// Auto model then gets no decision and runs on the agent's default.
+		routeTurn: vi.fn().mockResolvedValue({
+			skipped: 'off',
+			detail: 'Model routing is off.',
+			latencyMs: 0,
+		}),
+		proxy: {
+			report: vi.fn().mockResolvedValue({
+				status: { port: null, running: false, agentIds: [], lastError: null, gatewayUrls: null },
+				agents: [],
+				usage: null,
+				recentCompressions: [],
+			}),
+			ensurePort: vi.fn().mockResolvedValue(48123),
+			block: vi.fn().mockResolvedValue(null),
+		},
+		server: {
+			report: vi.fn().mockResolvedValue({
+				status: {
+					state: 'stopped',
+					port: null,
+					bind: 'local',
+					host: '127.0.0.1',
+					baseUrl: null,
+					maxModels: 1,
+					pid: null,
+					startedAt: null,
+					restarts: 0,
+					lastError: null,
+					models: [],
+					loadedModels: [],
+					keyStorage: null,
+					logPath: '/tmp/maestro-test/logs/model-server.log',
+				},
+				engine: {
+					installed: false,
+					stale: false,
+					release: null,
+					choice: null,
+					label: null,
+					kind: null,
+					accelerator: null,
+					bytes: 0,
+					builds: [],
+				},
+				loaded: [],
+				installing: null,
+			}),
+			start: vi.fn().mockResolvedValue(undefined),
+			stop: vi.fn().mockResolvedValue(undefined),
+			set: vi.fn().mockResolvedValue(undefined),
+			key: vi.fn().mockResolvedValue('sk-maestro-test'),
+			installEngine: vi.fn().mockResolvedValue(undefined),
+			onChanged: vi.fn().mockReturnValue(() => {}),
+			onProgress: vi.fn().mockReturnValue(() => {}),
+		},
+		systemOne: {
+			report: vi.fn().mockResolvedValue({
+				settings: {
+					engine: 'off',
+					openJevUrl: null,
+					timeoutMs: 1500,
+					models: {},
+					failPolicies: {},
+					keepInputs: false,
+					agents: { enabled: true, dailyBudgetUsd: 1, perAgentBudgetUsd: null },
+				},
+				engineLabel: 'Off',
+				disclosure: 'System One is off. No task text is sent to an engine.',
+				baseUrl: null,
+				model: null,
+				modelLabel: null,
+				timeoutMs: null,
+				calibrated: null,
+				keys: { 'jev-cloud': { source: 'none' }, openjev: { source: 'none' } },
+				problem: null,
+				testPassedAt: null,
+				failPolicies: [
+					{ taskId: 'cue-gate', label: 'Cue gate', policy: 'open', defaultPolicy: 'open' },
+					{
+						taskId: 'injection-screen',
+						label: 'Prompt-injection screen',
+						policy: 'closed',
+						defaultPolicy: 'closed',
+					},
+				],
+			}),
+			set: vi.fn(),
+			setKey: vi.fn(),
+			clearKey: vi.fn(),
+			test: vi.fn(),
+			ledger: vi.fn().mockResolvedValue({
+				entries: [],
+				total: 0,
+				retentionDays: 30,
+				notice: null,
+			}),
+			// Off by default, so no spawn in a test carries the System One section
+			// unless the test turns it on.
+			agentAccess: vi.fn().mockResolvedValue({
+				allowed: false,
+				gate: 'engine-off',
+				message: 'System One is off: no engine is chosen. Continue without System One.',
+				reason: 'System One is off: no engine is chosen.',
+				engine: 'off',
+				engineLabel: 'Off',
+				calibrated: null,
+				budget: {
+					dayStartedAt: 0,
+					dailyBudgetUsd: 1,
+					spentTodayUsd: 0,
+					remainingTodayUsd: 1,
+				},
+			}),
+			usage: vi.fn().mockResolvedValue({
+				since: 0,
+				retentionDays: 30,
+				rows: [],
+				totals: { requests: 0, cachedRequests: 0, tokensIn: 0, tokensOut: 0, costUsd: 0 },
+				budget: {
+					dayStartedAt: 0,
+					dailyBudgetUsd: 1,
+					spentTodayUsd: 0,
+					remainingTodayUsd: 1,
+				},
+				engine: 'off',
+				engineLabel: 'Off',
+				notice: null,
+			}),
+			onChanged: vi.fn().mockReturnValue(() => {}),
+		},
+		semanticIndex: {
+			storage: vi
+				.fn()
+				.mockResolvedValue({ totalChunks: 0, models: [], sizeBytes: 0, diskBytes: 0 }),
+			browse: vi.fn().mockResolvedValue({ entries: [], total: 0, offset: 0, limit: 20 }),
+			clear: vi.fn().mockResolvedValue({ totalChunks: 0, models: [], sizeBytes: 0, diskBytes: 0 }),
+			status: vi.fn().mockResolvedValue({
+				state: 'off',
+				indexed: 0,
+				total: 0,
+				bySourceType: {
+					history: { indexed: 0, total: 0 },
+					'directors-notes': { indexed: 0, total: 0 },
+					transcript: { indexed: 0, total: 0 },
+				},
+			}),
+			onProgress: vi.fn().mockReturnValue(() => {}),
+		},
+		draftPullRequest: vi.fn().mockResolvedValue({
+			success: false,
+			status: 'off',
+			error: 'Git drafts is off.',
+		}),
+		suggestTabCleanup: vi.fn().mockResolvedValue({
+			success: false,
+			status: 'off',
+			error: 'Tab cleanup suggestions is off.',
+		}),
+		spokenNotices: {
+			agentFinished: vi.fn().mockResolvedValue({
+				spoken: false,
+				code: 'setting-off',
+				message: 'Speak when an agent finishes is off.',
+			}),
+			speak: vi.fn().mockResolvedValue({ spoken: true, text: 'Test', lineSource: 'given' }),
+		},
+		dictation: {
+			start: vi.fn().mockResolvedValue({
+				started: false,
+				code: 'task-off',
+				message: 'Dictation is off.',
+			}),
+			stop: vi.fn().mockResolvedValue({ status: 'idle' }),
+			cancel: vi.fn().mockResolvedValue(undefined),
+			onInterrupted: vi.fn().mockReturnValue(() => {}),
+		},
+	},
 	dialog: {
 		selectFolder: vi.fn().mockResolvedValue(null),
 		saveFile: vi.fn().mockResolvedValue(null),
@@ -715,6 +1061,49 @@ const mockMaestro = {
 			bySource: { user: 0, auto: 0 },
 			byDay: [],
 		}),
+		// The Models tab's record. Empty, so the tab renders its empty state.
+		getModelUsage: vi.fn().mockResolvedValue({
+			range: 'week',
+			since: 0,
+			totals: {
+				requests: 0,
+				otherModelRequests: 0,
+				onDeviceRequests: 0,
+				errors: 0,
+				tokensIn: 0,
+				tokensOut: 0,
+				onDeviceTokens: 0,
+			},
+			sources: [],
+			byTask: [],
+			byAgent: [],
+			systemOne: {
+				decisions: 0,
+				cached: 0,
+				outcomes: { ok: 0, 'failed-open': 0, 'failed-closed': 0, unavailable: 0, cancelled: 0 },
+				timeouts: 0,
+				tokensIn: 0,
+				tokensOut: 0,
+				costUsd: 0,
+				byTask: [],
+				byEngine: [],
+				routedTiers: { low: 0, medium: 0, high: 0 },
+				retentionDays: 30,
+				coversRange: true,
+			},
+			proxy: {
+				totals: {
+					requests: 0,
+					compressRequests: 0,
+					originalTokens: 0,
+					sentTokens: 0,
+					tokensSaved: 0,
+					avgAddedLatencyMs: 0,
+				},
+				routedRequests: 0,
+				byAgent: [],
+			},
+		}),
 		// Interactive vs autonomous split (delegation surfaces). Zeroed so the
 		// dashboard renders the "nothing tracked yet" state rather than throwing.
 		getDelegationTotals: vi.fn().mockResolvedValue({
@@ -773,6 +1162,9 @@ const mockMaestro = {
 		// Stop calls this for every interrupt (any input mode), so it has to exist or
 		// interruptTurn throws before it ever signals a process.
 		cancel: vi.fn().mockResolvedValue({ canceled: 0 }),
+		// Asked by prepareMaestroSystemPrompt for an agent that has peers. `null`
+		// is "cannot say", which leaves the budget sentence out.
+		consultBudget: vi.fn().mockResolvedValue(null),
 		onChunk: vi.fn().mockReturnValue(() => {}),
 	},
 	leaderboard: {

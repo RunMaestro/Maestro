@@ -197,4 +197,13 @@ describe('openAgentSettings', () => {
 
 		expect(openModal).toHaveBeenCalledWith('editAgent', { session });
 	});
+
+	it('carries the tab the caller is sending the user to', () => {
+		const session = seed();
+		const openModal = vi.spyOn(useModalStore.getState(), 'openModal');
+
+		openAgentSettings(session, { tab: 'peers' });
+
+		expect(openModal).toHaveBeenCalledWith('editAgent', { session, initialTab: 'peers' });
+	});
 });

@@ -321,6 +321,11 @@ export class ContextGroomingService {
 			// One call: the main process spawns a batch turn with the prompt and
 			// returns its response. Counted while it is out, so a cancel knows
 			// there is something to stop.
+			//
+			// No `cheapTurn`, so this never routes through the Local Models
+			// `tab-summary` assignment: grooming and transfer output becomes the
+			// context every later turn reads, so it stays on the agent's own
+			// model. A weak result here would silently degrade the whole tab.
 			this.groomingInFlight++;
 			let groomedText: string;
 			try {

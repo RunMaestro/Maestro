@@ -15,7 +15,7 @@ import {
 	sendSimpleCommand,
 	reportResult,
 	failCommand,
-	exitIfMaestroNotRunning,
+	failFromError,
 } from '../services/session-command';
 
 // Feature ID -> display name. Keys come from ENCORE_FEATURE_DEFAULTS, so every
@@ -29,6 +29,9 @@ const FEATURES: Record<string, string> = Object.fromEntries(
 // hyphens dropped (`groups-plus`, `web-login`). Group Chat is a core feature
 // with no Encore flag, so it has no alias here: mapping it to Symphony once
 // made `encore disable group-chat` turn off the wrong feature.
+
+/** Every feature id accepted by enable. */
+export const ENCORE_FEATURE_KEYS: readonly string[] = Object.keys(FEATURES);
 const ALIASES: Record<string, string> = {
 	'director-notes': 'directorNotes',
 	directornotes: 'directorNotes',
@@ -53,6 +56,10 @@ const ALIASES: Record<string, string> = {
 	quickchat: 'quickChat',
 	'maestro-run': 'maestroRun',
 	maestrorun: 'maestroRun',
+	'a-cappella': 'aCappella',
+	acappella: 'aCappella',
+	voice: 'aCappella',
+	'voice-mode': 'aCappella',
 	'throughput-gauge': 'throughputGauge',
 	throughputgauge: 'throughputGauge',
 	throughput: 'throughputGauge',
@@ -155,7 +162,6 @@ export async function encoreSet(
 			jsonExtra: { feature: key, enabled },
 		});
 	} catch (error) {
-		exitIfMaestroNotRunning(error, { json: options.json });
-		failCommand(error instanceof Error ? error.message : String(error), options.json);
+		failFromError(error, options.json);
 	}
 }

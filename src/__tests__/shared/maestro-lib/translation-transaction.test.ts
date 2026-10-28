@@ -4,26 +4,34 @@ import {
 	mkdtemp,
 	readFile,
 	readlink,
+	rename,
 	rm,
 	writeFile,
 	mkdir,
 	symlink,
 	readdir,
+	realpath,
 } from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { remapTranslationFs } from '../../helpers/translationFs';
 import { canonicalJson } from '../../../shared/canonicalJson';
+import { limitationsNeedingAcceptance } from '../../../shared/maestro-lib/translation/limitations';
 import {
 	TranslationArchive,
 	type TranslationJournal,
 } from '../../../shared/maestro-lib/translation/archive';
 import {
 	applyTranslation,
+	applyTabTranslation,
 	recoverTranslation,
 } from '../../../shared/maestro-lib/translation/transaction';
 import { createTranslationRegistry } from '../../../shared/maestro-lib/translation/adapters';
 import { extractNativeConversation } from '../../../shared/maestro-lib/translation/native-records';
-import { planTranslation } from '../../../shared/maestro-lib/translation/registry';
+import {
+	planTranslation,
+	planTabTranslation,
+} from '../../../shared/maestro-lib/translation/registry';
 import { reconcileConversation } from '../../../shared/maestro-lib/translation/reconcile';
 import {
 	nativeRecordKey,
@@ -85,6 +93,10 @@ async function scenario() {
 	};
 	let committed = false;
 	const host = {
+		knowledgeRoot: path.join(root, 'data', 'provider-knowledge'),
+		resolveProjectGit: vi.fn(
+			async (): Promise<{ root: string; commonDirectory: string } | undefined> => undefined
+		),
 		assertSourceUnchanged: vi.fn(async () => {}),
 		setMigration: vi.fn(async () => {}),
 		commit: vi.fn(async () => {
@@ -102,6 +114,574 @@ async function scenario() {
 }
 
 describe('all-tabs migration journal', () => {
+	it.each(['unknown', 'changed'] as const)(
+		'rolls back owned files while preserving a retained native artifact with a %s hash',
+		async (hashState) => {
+			const s = await scenario();
+			try {
+				s.host.commit.mockRejectedValueOnce(new Error('commit interrupted'));
+				expect((await applyTranslation(s.archive, s.registry, s.journal, s.host, true)).state).toBe(
+					'failed'
+				);
+				const durable = await s.archive.read('agent', s.journal.plan.id);
+				const retained = durable.mappings[0].artifacts[0];
+				retained.cleanup = 'retain';
+				if (hashState === 'unknown') retained.sha256 = '';
+				await writeFile(retained.path, 'provider-owned content after interruption');
+				await s.archive.write(durable);
+				expect((await recoverTranslation(s.archive, durable, s.host, true)).state).toBe(
+					'rolled-back'
+				);
+				expect(await readFile(retained.path, 'utf8')).toBe(
+					'provider-owned content after interruption'
+				);
+				await expect(readFile(durable.mappings[1].artifacts[0].path)).rejects.toMatchObject({
+					code: 'ENOENT',
+				});
+			} finally {
+				await rm(s.root, { recursive: true, force: true });
+			}
+		}
+	);
+	it.each(['commit', 'recover', 'rollback'] as const)(
+		'keeps the archive local and native writes on the injected port during %s',
+		async (action) => {
+			const s = await scenario();
+			try {
+				const virtualRoot = path.join(s.root, 'virtual');
+				const backingRoot = path.join(await realpath(s.root), 'backing');
+				const { nativeFs } = remapTranslationFs(virtualRoot, backingRoot);
+				s.journal.plan.destination.accountRoot = path.join(virtualRoot, 'claude');
+				s.journal.plan.destination.projectRoot = path.join(virtualRoot, 'project');
+				s.host.knowledgeRoot = path.join(virtualRoot, 'knowledge');
+				const host = { ...s.host, nativeFs };
+				const file = path.join(virtualRoot, 'project/.claude/skills/example/SKILL.md');
+				await nativeFs.mkdir(path.dirname(file), { recursive: true });
+				await nativeFs.mkdir(host.knowledgeRoot, { recursive: true });
+				await nativeFs.createExclusive(file, 'original');
+				s.journal.plan.scope.projectResourcesIntoRepo = true;
+				s.journal.projections = [
+					{
+						path: file,
+						sha256: translationHash('incoming'),
+						created: false,
+						expectedHash: translationHash('original'),
+						bytesBase64: Buffer.from('incoming').toString('base64'),
+						resourceKey: '.claude/skills/example/SKILL.md',
+						format: 'markdown',
+						backup: translationArtifact(
+							'skill',
+							file,
+							'.claude/skills/example/SKILL.md',
+							Buffer.from('original')
+						),
+					},
+				];
+				s.journal.resources = [
+					translationArtifact(
+						'memory',
+						'synthetic',
+						'memory/MEMORY.md',
+						Buffer.from('Remember exactly this.\r\n')
+					),
+				];
+				if (action !== 'commit') host.commit.mockRejectedValueOnce(new Error('commit interrupted'));
+				const result = await applyTranslation(s.archive, s.registry, s.journal, host, true);
+				expect(result.state).toBe(action === 'commit' ? 'committed' : 'failed');
+				const journal = await s.archive.read(s.journal.plan.agentId, s.journal.plan.id);
+				expect(journal.mappings).toHaveLength(2);
+				expect(journal.resourceWrites.length).toBeGreaterThan(1);
+				expect(await nativeFs.readFile(file)).toEqual(Buffer.from('incoming'));
+				await expect(
+					readFile(s.archive.operationPath(journal.plan.agentId, journal.plan.id))
+				).resolves.toBeInstanceOf(Buffer);
+				await expect(readFile(journal.mappings[0].artifacts[0].path)).rejects.toMatchObject({
+					code: 'ENOENT',
+				});
+				if (action !== 'commit') {
+					const recovered = await recoverTranslation(
+						s.archive,
+						journal,
+						host,
+						action === 'rollback'
+					);
+					expect(recovered.state).toBe(action === 'rollback' ? 'rolled-back' : 'committed');
+				}
+				if (action === 'rollback') {
+					expect(await nativeFs.readFile(file)).toEqual(Buffer.from('original'));
+					expect(await nativeFs.exists(journal.mappings[0].artifacts[0].path)).toBe(false);
+					expect(nativeFs.unlink).toHaveBeenCalledWith(journal.mappings[0].artifacts[0].path);
+				} else {
+					expect(
+						await nativeFs.readFile(path.join(journal.knowledgeDirectory!, 'memory/MEMORY.md'))
+					).toEqual(Buffer.from('Remember exactly this.\r\n'));
+				}
+				expect(nativeFs.atomicWrite).toHaveBeenCalled();
+				expect(nativeFs.realpath).toHaveBeenCalled();
+			} finally {
+				await rm(s.root, { recursive: true, force: true });
+			}
+		}
+	);
+	it('journals a native transport failure locally and never retries through local fs', async () => {
+		const s = await scenario();
+		try {
+			const { nativeFs } = remapTranslationFs(
+				path.join(s.root, 'virtual'),
+				path.join(s.root, 'backing')
+			);
+			nativeFs.lstat.mockRejectedValue(
+				Object.assign(new Error('transport disconnected'), { code: 'ECONNRESET' })
+			);
+			const result = await applyTranslation(
+				s.archive,
+				s.registry,
+				s.journal,
+				{ ...s.host, nativeFs },
+				true
+			);
+			expect(result).toMatchObject({ state: 'failed', error: 'transport disconnected' });
+			expect(nativeFs.createExclusive).not.toHaveBeenCalled();
+			expect((await s.archive.read(s.journal.plan.agentId, s.journal.plan.id)).error).toBe(
+				'transport disconnected'
+			);
+			expect(s.host.commit).not.toHaveBeenCalled();
+		} finally {
+			await rm(s.root, { recursive: true, force: true });
+		}
+	});
+	it.each([false, true])(
+		'retains deferred checkpoints and resources across sequential scopes (agent-wide: %s)',
+		async (agentWide) => {
+			const s = await scenario();
+			try {
+				const conversations = s.journal.conversations;
+				const resources = [
+					translationArtifact(
+						'memory',
+						'synthetic',
+						'memory/MEMORY.md',
+						Buffer.from('Remember exactly this')
+					),
+				];
+				const stage = vi.spyOn(s.registry.get('claude-code')!, 'stage');
+				for (const conversation of conversations) {
+					const checkpoint = await s.archive.checkpoint('agent');
+					const plan = planTabTranslation({
+						...s.journal.plan,
+						tabId: conversation.tabId,
+						conversations,
+						registry: s.registry,
+						resources,
+					});
+					if (agentWide) {
+						delete plan.tabId;
+						plan.deferredTabs = conversations
+							.filter((c) => c.tabId !== conversation.tabId)
+							.map((c) => ({ id: c.tabId, agentSessionId: c.nativeSessionId }));
+					}
+					s.journal = {
+						schemaVersion: 1,
+						plan,
+						state: 'planned',
+						conversations: [conversation],
+						resources,
+						checkpoint,
+						mappings: [],
+						resourceWrites: [],
+					};
+					const result = await (agentWide ? applyTranslation : applyTabTranslation)(
+						s.archive,
+						s.registry,
+						s.journal,
+						s.host,
+						true
+					);
+					expect(result.state).toBe('committed');
+					expect(result.mappings.map((mapping) => mapping.tabId)).toEqual([conversation.tabId]);
+					if (checkpoint) {
+						expect(s.journal.resourceWrites).toEqual([]);
+						expect(s.journal.resourceImport).toEqual(checkpoint.resourceImport);
+						const merged = (await s.archive.checkpoint('agent'))!;
+						expect(merged.conversations.map((c) => c.tabId)).toEqual(['one', 'two']);
+						expect(merged.lineage).toMatchObject(checkpoint.lineage);
+						const imported = extractNativeConversation(
+							plan.destination,
+							conversation.tabId,
+							s.journal.mappings[0].destinationSessionId!,
+							await readFile(s.journal.mappings[0].artifacts[0].path)
+						);
+						// Native lineage identities, not repeated text, prevent re-imported records.
+						expect(reconcileConversation(imported, merged).newRecords).toBe(0);
+					} else expect(s.journal.resourceWrites).toHaveLength(2);
+				}
+				expect(stage).toHaveBeenCalledTimes(2);
+				expect(
+					await readdir(path.join(s.host.knowledgeRoot, translationHash('agent')))
+				).toHaveLength(1);
+			} finally {
+				await rm(s.root, { recursive: true, force: true });
+			}
+		}
+	);
+	it('recovers a single-tab commit without restaging and refuses committed rollback', async () => {
+		const s = await scenario();
+		try {
+			s.journal.plan = planTabTranslation({
+				...s.journal.plan,
+				tabId: 'one',
+				conversations: s.journal.conversations,
+				registry: s.registry,
+			});
+			s.journal.conversations = s.journal.conversations.filter((c) => c.tabId === 'one');
+			vi.spyOn(s.archive, 'saveCheckpoint').mockRejectedValueOnce(
+				new Error('crash after host commit')
+			);
+			const stage = vi.spyOn(s.registry.get('claude-code')!, 'stage');
+			expect(
+				(await applyTabTranslation(s.archive, s.registry, s.journal, s.host, true)).state
+			).toBe('recovery-required');
+			const recovered = await recoverTranslation(
+				s.archive,
+				await s.archive.read('agent', s.journal.plan.id),
+				s.host
+			);
+			expect(recovered.state).toBe('committed');
+			expect(recovered.mappings.map((m) => m.tabId)).toEqual(['one']);
+			expect(stage).toHaveBeenCalledTimes(1);
+			await expect(recoverTranslation(s.archive, s.journal, s.host, true)).rejects.toThrow(
+				'Committed migration'
+			);
+		} finally {
+			await rm(s.root, { recursive: true, force: true });
+		}
+	});
+	it('refuses a scoped journal containing an unrelated conversation before mutation', async () => {
+		const s = await scenario();
+		try {
+			s.journal.plan = planTabTranslation({
+				...s.journal.plan,
+				tabId: 'one',
+				conversations: s.journal.conversations,
+				registry: s.registry,
+			});
+			await expect(
+				applyTabTranslation(s.archive, s.registry, s.journal, s.host, true)
+			).rejects.toThrow('unrelated conversation');
+			expect(s.host.commit).not.toHaveBeenCalled();
+			expect(s.host.setMigration).not.toHaveBeenCalled();
+		} finally {
+			await rm(s.root, { recursive: true, force: true });
+		}
+	});
+	it('rejects stale tab plans and rolls back a failed tab without deleting shared memory', async () => {
+		const s = await scenario();
+		try {
+			s.journal.resources = [
+				translationArtifact(
+					'memory',
+					'synthetic',
+					'memory/MEMORY.md',
+					Buffer.from('Shared memory survives rollback')
+				),
+			];
+			const all = s.journal.conversations;
+			const makePlan = (tabId: string) =>
+				planTabTranslation({ ...s.journal.plan, tabId, conversations: all, registry: s.registry });
+			const stale: TranslationJournal = {
+				...structuredClone(s.journal),
+				plan: makePlan('two'),
+				conversations: [all[1]],
+			};
+			s.journal.plan = makePlan('one');
+			s.journal.conversations = [all[0]];
+			expect(
+				(await applyTabTranslation(s.archive, s.registry, s.journal, s.host, true)).state
+			).toBe('committed');
+			const first = await s.archive.checkpoint('agent');
+			s.host.setMigration.mockClear();
+			expect((await applyTabTranslation(s.archive, s.registry, stale, s.host, true)).state).toBe(
+				'refused'
+			);
+			expect(s.host.setMigration).not.toHaveBeenCalled();
+			expect(await s.archive.checkpoint('agent')).toEqual(first);
+			stale.checkpoint = first;
+			s.host.commit.mockRejectedValueOnce(new Error('stop before commit'));
+			s.host.isCommitted.mockImplementation(async (id?: string) => id === s.journal.plan.id);
+			expect((await applyTabTranslation(s.archive, s.registry, stale, s.host, true)).state).toBe(
+				'failed'
+			);
+			expect(stale.resourceWrites).toEqual([]);
+			const rolledBack = await recoverTranslation(
+				s.archive,
+				await s.archive.read('agent', stale.plan.id),
+				s.host,
+				true
+			);
+			expect(rolledBack.state).toBe('rolled-back');
+			expect(
+				await readFile(path.join(s.journal.knowledgeDirectory!, 'memory/MEMORY.md'), 'utf8')
+			).toBe('Shared memory survives rollback');
+			await expect(readFile(stale.mappings[0].artifacts[0].path)).rejects.toMatchObject({
+				code: 'ENOENT',
+			});
+			expect(await readFile(s.journal.mappings[0].artifacts[0].path, 'utf8')).toContain(
+				'synthetic'
+			);
+			expect(await s.archive.checkpoint('agent')).toEqual(first);
+		} finally {
+			await rm(s.root, { recursive: true, force: true });
+		}
+	});
+	it('ignores another tab block but retains agent-wide limitations in a scoped plan', async () => {
+		const s = await scenario();
+		try {
+			const options = {
+				...s.journal.plan,
+				tabId: 'one',
+				conversations: s.journal.conversations,
+				registry: s.registry,
+			};
+			expect(
+				planTabTranslation({
+					...options,
+					limitations: [
+						{ code: 'blocked-tab', tabId: 'two', severity: 'block', message: 'Unrelated' },
+					],
+				}).status
+			).toBe('ready');
+			expect(
+				planTabTranslation({
+					...options,
+					limitations: [
+						{ code: 'blocked-resource', severity: 'block', message: 'Shared resource conflict' },
+					],
+				}).status
+			).toBe('blocked');
+		} finally {
+			await rm(s.root, { recursive: true, force: true });
+		}
+	});
+	it.each([false, true])('writes native files only with opt-in (enabled: %s)', async (enabled) => {
+		const s = await scenario();
+		try {
+			const file = path.join(
+				s.journal.plan.destination.projectRoot,
+				'.claude/skills/test/SKILL.md'
+			);
+			const bytes = Buffer.from('Synthetic skill');
+			s.journal.projections = [
+				{
+					path: file,
+					sha256: translationHash(bytes),
+					created: true,
+					expectedHash: null,
+					bytesBase64: bytes.toString('base64'),
+				},
+			];
+			s.journal.plan.scope.projectResourcesIntoRepo = enabled;
+			const result = await applyTranslation(s.archive, s.registry, s.journal, s.host, true);
+			expect(result.state).toBe('committed');
+			if (enabled) {
+				expect(await readFile(file, 'utf8')).toBe('Synthetic skill');
+				expect(result.plan.limitations).toContainEqual(
+					expect.objectContaining({ code: 'resource-git-exclude-unavailable', severity: 'info' })
+				);
+			} else
+				await expect(readdir(s.journal.plan.destination.projectRoot)).rejects.toMatchObject({
+					code: 'ENOENT',
+				});
+		} finally {
+			await rm(s.root, { recursive: true, force: true });
+		}
+	});
+	it.each([
+		{ existing: false, inside: false },
+		{ existing: true, inside: false },
+		{ existing: true, inside: true },
+	])(
+		'journals and rolls back only its git exclude lines ($existing, $inside)',
+		async ({ existing, inside }) => {
+			const s = await scenario();
+			try {
+				const project = s.journal.plan.destination.projectRoot;
+				const repo = path.dirname(project);
+				const commonDirectory = path.join(s.root, 'git-common');
+				const file = path.join(project, '.claude/skills/test [one]/SKILL.md');
+				const bytes = Buffer.from('Synthetic skill');
+				const exclude = path.join(commonDirectory, 'info/exclude');
+				await mkdir(path.dirname(exclude), { recursive: true });
+				const original = existing ? '# User rules\n/user-cache' : '';
+				if (existing) await writeFile(exclude, original);
+				s.journal.projections = [
+					{
+						path: file,
+						sha256: translationHash(bytes),
+						created: true,
+						expectedHash: null,
+						bytesBase64: bytes.toString('base64'),
+					},
+				];
+				s.journal.plan.scope.projectResourcesIntoRepo = true;
+				const host = {
+					...s.host,
+					resolveProjectGit: vi.fn(async () => ({ root: repo, commonDirectory })),
+				};
+				host.commit.mockRejectedValueOnce(new Error('Synthetic commit failure'));
+				const result = await applyTranslation(s.archive, s.registry, s.journal, host, true);
+				expect(result.state).toBe('failed');
+				expect(await readFile(file, 'utf8')).toBe('Synthetic skill');
+				const written = await readFile(exclude, 'utf8');
+				expect(written).toContain(`/project/.claude/skills/test\\ \\[one\\]/SKILL.md`);
+				expect(written).toContain(`# Maestro provider resources ${s.journal.plan.id} begin`);
+				const edited = inside
+					? written.replace(
+							`# Maestro provider resources ${s.journal.plan.id} end`,
+							`/inside-user-rule\n# Maestro provider resources ${s.journal.plan.id} end`
+						)
+					: written;
+				await writeFile(
+					exclude,
+					Buffer.concat([Buffer.from(edited + '/later-user-rule\n'), Buffer.from([0xff])])
+				);
+				const durable = await s.archive.read('agent', s.journal.plan.id);
+				expect(
+					durable.resourceWrites.find((w) => w.path === exclude)?.gitExcludeBlock
+				).toBeTruthy();
+				expect((await recoverTranslation(s.archive, durable, host, true)).state).toBe(
+					'rolled-back'
+				);
+				expect(await readFile(exclude)).toEqual(
+					Buffer.concat([
+						Buffer.from(original + (inside ? '\n/inside-user-rule\n' : '') + '/later-user-rule\n'),
+						Buffer.from([0xff]),
+					])
+				);
+				await expect(readFile(file)).rejects.toMatchObject({ code: 'ENOENT' });
+			} finally {
+				await rm(s.root, { recursive: true, force: true });
+			}
+		}
+	);
+	it('never removes an unowned exclude file that collides after the journal records intent', async () => {
+		const s = await scenario();
+		try {
+			const commonDirectory = path.join(s.root, 'git-common');
+			await mkdir(path.join(commonDirectory, 'info'), { recursive: true });
+			const exclude = path.join(commonDirectory, 'info/exclude');
+			const file = path.join(s.journal.plan.destination.projectRoot, 'CLAUDE.md');
+			const bytes = Buffer.from('Synthetic instructions');
+			s.journal.plan.scope.projectResourcesIntoRepo = true;
+			s.journal.projections = [
+				{
+					path: file,
+					sha256: translationHash(bytes),
+					created: true,
+					expectedHash: null,
+					bytesBase64: bytes.toString('base64'),
+				},
+			];
+			const host = {
+				...s.host,
+				resolveProjectGit: vi.fn(async () => ({ root: s.root, commonDirectory })),
+			};
+			const persist = s.archive.write.bind(s.archive);
+			let collision = '';
+			vi.spyOn(s.archive, 'write').mockImplementation(async (journal) => {
+				await persist(journal);
+				const intent = journal.resourceWrites.find((w) => w.gitExcludeBlock);
+				if (intent && !collision) {
+					collision = intent.gitExcludeBlock!;
+					await writeFile(exclude, collision, { flag: 'wx' });
+				}
+			});
+			expect((await applyTranslation(s.archive, s.registry, s.journal, host, true)).state).toBe(
+				'failed'
+			);
+			await expect(
+				recoverTranslation(s.archive, await s.archive.read('agent', s.journal.plan.id), host, true)
+			).rejects.toThrow('ownership is unproved');
+			expect(await readFile(exclude, 'utf8')).toBe(collision);
+		} finally {
+			await rm(s.root, { recursive: true, force: true });
+		}
+	});
+	it('refuses an exclude symlink outside git metadata before writing project resources', async () => {
+		const s = await scenario();
+		try {
+			const commonDirectory = path.join(s.root, 'git-common');
+			await mkdir(path.join(commonDirectory, 'info'), { recursive: true });
+			const external = path.join(s.root, 'user-exclude');
+			await writeFile(external, '/user-rule\n');
+			await symlink(external, path.join(commonDirectory, 'info/exclude'));
+			const file = path.join(s.journal.plan.destination.projectRoot, 'CLAUDE.md');
+			const bytes = Buffer.from('Synthetic instructions');
+			s.journal.plan.scope.projectResourcesIntoRepo = true;
+			s.journal.projections = [
+				{
+					path: file,
+					sha256: translationHash(bytes),
+					created: true,
+					expectedHash: null,
+					bytesBase64: bytes.toString('base64'),
+				},
+			];
+			const host = {
+				...s.host,
+				resolveProjectGit: vi.fn(async () => ({ root: s.root, commonDirectory })),
+			};
+			const result = await applyTranslation(s.archive, s.registry, s.journal, host, true);
+			expect(result.error).toContain('symlink');
+			expect(s.host.commit).not.toHaveBeenCalled();
+			expect(await readFile(external, 'utf8')).toBe('/user-rule\n');
+			await expect(readFile(file)).rejects.toMatchObject({ code: 'ENOENT' });
+		} finally {
+			await rm(s.root, { recursive: true, force: true });
+		}
+	});
+	it.each(['info', 'warning', 'block'] as const)(
+		'applies info without acceptance, while preserving the %s tier gate',
+		async (severity) => {
+			const s = await scenario();
+			try {
+				s.journal.plan.limitations = [
+					{ code: 'synthetic', severity, message: 'Synthetic limitation' },
+				];
+				s.journal.plan.status = severity === 'block' ? 'blocked' : 'ready';
+				expect(limitationsNeedingAcceptance(s.journal.plan.limitations)).toHaveLength(
+					severity === 'warning' ? 1 : 0
+				);
+				const result = await applyTranslation(s.archive, s.registry, s.journal, s.host);
+				expect(result.state).toBe(severity === 'info' ? 'committed' : 'refused');
+				expect(s.host.commit).toHaveBeenCalledTimes(severity === 'info' ? 1 : 0);
+			} finally {
+				await rm(s.root, { recursive: true, force: true });
+			}
+		}
+	);
+	it('stores only warnings when a mixed-tier plan is deferred', async () => {
+		const s = await scenario();
+		try {
+			s.journal.plan.status = 'deferred';
+			const warning = {
+				code: 'unverified-native-resume',
+				severity: 'warning' as const,
+				message: 'Unverified',
+			};
+			s.journal.plan.limitations = [
+				{ code: 'native-cwd-drift', severity: 'info', message: 'Source evidence' },
+				warning,
+			];
+			expect((await applyTranslation(s.archive, s.registry, s.journal, s.host, true)).state).toBe(
+				'deferred'
+			);
+			expect(s.host.setMigration).toHaveBeenCalledWith(
+				expect.objectContaining({ acceptedLimitationCodes: [canonicalJson(warning)] })
+			);
+		} finally {
+			await rm(s.root, { recursive: true, force: true });
+		}
+	});
 	it('returns a committed apply retry without changing mappings or later native work', async () => {
 		const s = await scenario();
 		try {
@@ -215,6 +795,9 @@ describe('all-tabs migration journal', () => {
 	it('stages and reads back every tab before committing one mapping update', async () => {
 		const s = await scenario();
 		try {
+			s.journal.resources.push(
+				translationArtifact('memory', 'synthetic', 'memory/MEMORY.md', Buffer.from('Selected fact'))
+			);
 			const result = await applyTranslation(s.archive, s.registry, s.journal, s.host, true);
 			expect(result.state).toBe('committed');
 			expect(result.mappings).toHaveLength(2);
@@ -230,9 +813,84 @@ describe('all-tabs migration journal', () => {
 				})
 			);
 			expect((await s.archive.checkpoint('agent'))?.lineage).toBeDefined();
+			const directory = path.join(s.host.knowledgeRoot, translationHash('agent'), result.plan.id);
+			expect(s.journal.knowledgeDirectory).toBe(directory);
+			expect(await readFile(path.join(directory, 'memory/MEMORY.md'), 'utf8')).toBe(
+				'Selected fact'
+			);
+			await expect(readdir(s.journal.plan.destination.projectRoot)).rejects.toMatchObject({
+				code: 'ENOENT',
+			});
 			expect(s.host.setMigration).toHaveBeenLastCalledWith(
 				expect.objectContaining({ state: 'committed' })
 			);
+		} finally {
+			await rm(s.root, { recursive: true, force: true });
+		}
+	});
+	it.each(['recover', 'rollback', 'rollback-symlink'] as const)(
+		'can %s an archived legacy in-repo knowledge journal',
+		async (action) => {
+			const s = await scenario();
+			try {
+				s.host.commit.mockRejectedValueOnce(new Error('interrupted commit'));
+				await applyTranslation(s.archive, s.registry, s.journal, s.host, true);
+				const oldDirectory = s.journal.knowledgeDirectory!;
+				const legacyDirectory = path.join(
+					s.journal.plan.destination.projectRoot,
+					'.maestro/provider-knowledge',
+					translationHash('agent'),
+					s.journal.plan.id
+				);
+				await mkdir(legacyDirectory, { recursive: true });
+				for (const write of s.journal.resourceWrites) {
+					const bytes = await readFile(write.path);
+					await rm(write.path);
+					write.path = path.join(legacyDirectory, path.relative(oldDirectory, write.path));
+					await writeFile(write.path, bytes);
+				}
+				s.journal.knowledgeDirectory = legacyDirectory;
+				await s.archive.write(s.journal);
+				const durable = await s.archive.read('agent', s.journal.plan.id);
+				expect(durable.knowledgeDirectory).toBe(legacyDirectory);
+				if (action === 'rollback-symlink') {
+					const legacyRoot = path.join(
+						s.journal.plan.destination.projectRoot,
+						'.maestro/provider-knowledge'
+					);
+					const external = path.join(s.root, 'external');
+					await rename(legacyRoot, external);
+					await symlink(external, legacyRoot, 'dir');
+					await expect(recoverTranslation(s.archive, durable, s.host, true)).rejects.toThrow(
+						'symlink'
+					);
+					expect(await readFile(path.join(legacyDirectory, 'knowledge-index.md'), 'utf8')).toBe('');
+					return;
+				}
+				const result = await recoverTranslation(s.archive, durable, s.host, action === 'rollback');
+				expect(result.state).toBe(action === 'rollback' ? 'rolled-back' : 'committed');
+				if (action === 'rollback')
+					await expect(
+						readFile(path.join(legacyDirectory, 'knowledge-index.md'))
+					).rejects.toMatchObject({ code: 'ENOENT' });
+				else expect(s.host.commit).toHaveBeenLastCalledWith(durable);
+			} finally {
+				await rm(s.root, { recursive: true, force: true });
+			}
+		}
+	);
+	it('refuses managed writes through a redirected agent directory', async () => {
+		const s = await scenario();
+		try {
+			const external = path.join(s.root, 'external');
+			await mkdir(s.host.knowledgeRoot, { recursive: true });
+			await mkdir(external);
+			await symlink(external, path.join(s.host.knowledgeRoot, translationHash('agent')), 'dir');
+			const result = await applyTranslation(s.archive, s.registry, s.journal, s.host, true);
+			expect(result.state).toBe('failed');
+			expect(result.error).toContain('symlink');
+			expect(s.host.commit).not.toHaveBeenCalled();
+			expect(await readdir(external)).toEqual([]);
 		} finally {
 			await rm(s.root, { recursive: true, force: true });
 		}
@@ -370,9 +1028,7 @@ describe('all-tabs migration journal', () => {
 			const s = await scenario();
 			try {
 				const directory = path.join(
-					s.journal.plan.destination.projectRoot,
-					'.maestro',
-					'provider-knowledge',
+					s.host.knowledgeRoot,
 					translationHash(s.journal.plan.agentId),
 					s.journal.plan.id
 				);
@@ -384,6 +1040,7 @@ describe('all-tabs migration journal', () => {
 								directory,
 								kind === 'managed resource' ? 'memory/MEMORY.md' : 'knowledge-index.md'
 							);
+				if (kind === 'native projection') s.journal.plan.scope.projectResourcesIntoRepo = true;
 				if (kind === 'native projection')
 					s.journal.projections = [
 						{

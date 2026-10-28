@@ -61,6 +61,23 @@ describe('useSessionSwitchCallbacks', () => {
 		return { result, setActiveSessionId, handleResumeSession, handleFileClick };
 	}
 
+	it('passes a named native session owner and path into resume options', () => {
+		setupSession();
+		const { result, handleResumeSession } = renderCallbacks();
+		act(() =>
+			result.current.handleNamedSessionSelect('native', '/other/project', 'Owned', true, 'codex')
+		);
+		expect(handleResumeSession).toHaveBeenCalledWith(
+			'native',
+			[],
+			'Owned',
+			true,
+			undefined,
+			'/other/project',
+			{ provider: 'codex' }
+		);
+	});
+
 	it('keeps Lite toast navigation local without declaring host notification readiness', () => {
 		vi.spyOn(runtimeContext, 'isWebDesktop').mockReturnValue(true);
 		const sessionId = setupSession({
@@ -193,6 +210,31 @@ describe('useSessionSwitchCallbacks', () => {
 		expect(ui.pendingLogJump).toEqual({ sessionId, tabId: 'ai-2', logId: 'log-42' });
 	});
 
+	it('handleCrossTabSearchJump leaves the Find bar alone for a semantic hit', () => {
+		const sessionId = setupSession({
+			aiTabs: [createMockAITab({ id: 'ai-1' }), createMockAITab({ id: 'ai-2' })],
+			activeTabId: 'ai-1',
+		});
+		const { result } = renderCallbacks();
+		// The store outlives a test, and the text-hit test above opened this bar.
+		useUIStore.setState({ outputSearchByKey: {} });
+
+		// A semantic hit matched by meaning, so it carries no text to find.
+		act(() => {
+			result.current.handleCrossTabSearchJump({
+				tabId: 'ai-2',
+				logId: 'turn-7',
+				query: '',
+				regex: false,
+			});
+		});
+
+		expect(getSession().activeTabId).toBe('ai-2');
+		const ui = useUIStore.getState();
+		expect(ui.outputSearchByKey[outputSearchKeyFor(sessionId, 'ai-2')]?.open ?? false).toBe(false);
+		expect(ui.pendingLogJump).toEqual({ sessionId, tabId: 'ai-2', logId: 'turn-7' });
+	});
+
 	it('handleNamedSessionSelect resumes the session and focuses the input', () => {
 		const { result, handleResumeSession } = renderCallbacks();
 
@@ -200,6 +242,14 @@ describe('useSessionSwitchCallbacks', () => {
 			result.current.handleNamedSessionSelect('agent-session-1', '/repo', 'My Session', true);
 		});
 
-		expect(handleResumeSession).toHaveBeenCalledWith('agent-session-1', [], 'My Session', true);
+		expect(handleResumeSession).toHaveBeenCalledWith(
+			'agent-session-1',
+			[],
+			'My Session',
+			true,
+			undefined,
+			'/repo',
+			{ provider: undefined }
+		);
 	});
 });

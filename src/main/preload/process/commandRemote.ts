@@ -1,5 +1,6 @@
 import { ipcRenderer } from 'electron';
 import type { AgentDelegationNotice } from '../../../shared/agentDelegation';
+import type { ConsultChain } from '../../../shared/consultBudget';
 import type { InterruptTurnResult } from '../../../shared/turnInterrupt';
 import type { MentionRouting } from '../../../shared/crossAgentContext';
 
@@ -23,6 +24,10 @@ export function createCommandRemoteApi() {
 		 * `success` reflects delivery rather than "an IPC send was issued". It is
 		 * undefined for senders that do not wait for a receipt (main's own
 		 * `remote:executeCommand` sends), so the renderer must tolerate that.
+		 *
+		 * `consultChain` is the place in a consult chain the turn this command
+		 * starts takes, set only when a `maestro-cli dispatch` admitted it. The
+		 * renderer hands it to the spawn as it is.
 		 */
 		onRemoteCommand: (
 			callback: (
@@ -33,6 +38,7 @@ export function createCommandRemoteApi() {
 				force?: boolean,
 				images?: string[],
 				background?: boolean,
+				consultChain?: ConsultChain,
 				mentionRouting?: MentionRouting,
 				receiptChannel?: string
 			) => void
@@ -47,6 +53,7 @@ export function createCommandRemoteApi() {
 				force?: boolean,
 				images?: string[],
 				background?: boolean,
+				consultChain?: ConsultChain,
 				mentionRouting?: MentionRouting,
 				receiptChannel?: string
 			) => {
@@ -70,6 +77,7 @@ export function createCommandRemoteApi() {
 						force,
 						images,
 						background,
+						consultChain,
 						mentionRouting,
 						receiptChannel
 					);
@@ -118,6 +126,7 @@ export function createCommandRemoteApi() {
 					fromSessionId?: string;
 					fromTabId?: string;
 					withContext?: boolean;
+					consultChain?: ConsultChain;
 				},
 				responseChannel: string
 			) => void
@@ -131,6 +140,7 @@ export function createCommandRemoteApi() {
 					fromSessionId?: string;
 					fromTabId?: string;
 					withContext?: boolean;
+					consultChain?: ConsultChain;
 				},
 				responseChannel: string
 			) => {

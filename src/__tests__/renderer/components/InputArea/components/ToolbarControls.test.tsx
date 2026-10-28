@@ -1,9 +1,26 @@
 import { fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ToolbarControls } from '../../../../../renderer/components/InputArea/components/ToolbarControls';
 import { usePhoneLayout } from '../../../../../renderer/hooks/ui/useViewportBreakpoint';
 import { createInputAreaSession, inputAreaTheme } from '../_fixtures';
 import { restorePointer, setCoarsePointer } from '../../../../helpers/mockPointer';
+import {
+	resetDictationStore,
+	useDictationStore,
+} from '../../../../../renderer/stores/dictationStore';
+import type { DictationTarget } from '../../../../../renderer/utils/dictationTargets';
+import { useSettingsStore } from '../../../../../renderer/stores/settingsStore';
+import { isWebDesktop } from '../../../../../renderer/utils/runtimeContext';
+import { useOptionalContentFits } from '../../../../../renderer/hooks/ui/useOptionalLabelFits';
+
+vi.mock('../../../../../renderer/hooks/ui/useOptionalLabelFits', () => ({
+	useOptionalContentFits: vi.fn(() => true),
+}));
+
+vi.mock('../../../../../renderer/utils/runtimeContext', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../../../renderer/utils/runtimeContext')>()),
+	isWebDesktop: vi.fn(() => false),
+}));
 
 const mockUpdateSessionWith = vi.fn();
 vi.mock('../../../../../renderer/stores/sessionStore', () => ({
@@ -24,6 +41,8 @@ describe('ToolbarControls', () => {
 		restorePointer();
 		mockUpdateSessionWith.mockClear();
 		mockedUsePhoneLayout.mockReturnValue(false);
+		vi.mocked(isWebDesktop).mockReturnValue(false);
+		vi.mocked(useOptionalContentFits).mockReturnValue(true);
 	});
 
 	function renderToolbar(overrides = {}) {
@@ -36,8 +55,6 @@ describe('ToolbarControls', () => {
 				canAttachImages
 				hasReadOnlyCapability
 				hasStandardCapability
-				enterToSend
-				setEnterToSend={vi.fn()}
 				setStagedImages={vi.fn()}
 				onOpenPromptComposer={vi.fn()}
 				shortcuts={{ openPromptComposer: { keys: ['Meta', 'p'], description: '' } as any }}
@@ -59,6 +76,71 @@ describe('ToolbarControls', () => {
 			/>
 		);
 	}
+
+	it.each([false, true])(
+		'omits provider switching with a legacy saved flag on phone=%s',
+		(phone) => {
+			mockedUsePhoneLayout.mockReturnValue(phone);
+			useSettingsStore.setState((state) => ({
+				encoreFeatures: { ...state.encoreFeatures, ensemble: true },
+			}));
+			renderToolbar();
+			if (phone) fireEvent.click(screen.getByRole('button', { name: 'More options' }));
+			expect(
+				screen.queryByRole('button', { name: /Provider for this tab/ })
+			).not.toBeInTheDocument();
+			expect(screen.queryByTestId('composer-options-provider')).not.toBeInTheDocument();
+		}
+	);
+
+	it('keeps Run on configuration out of the desktop quick model picker', () => {
+		renderToolbar({
+			modelMenuOpen: true,
+			availableModels: ['gpt-5'],
+			onModelChange: vi.fn(),
+		});
+		expect(screen.getByPlaceholderText('Filter models...')).toBeInTheDocument();
+		expect(screen.queryByTestId('composer-run-on')).not.toBeInTheDocument();
+		expect(screen.queryByText('Run on')).not.toBeInTheDocument();
+	});
+
+	it('uses the selected tab provider for permission labels', () => {
+		const session = createInputAreaSession();
+		session.toolType = 'claude-code';
+		session.aiTabs = [
+			{ ...session.aiTabs[0], id: session.activeTabId, tabProvider: 'codex', readOnlyMode: true },
+		];
+		renderToolbar({ session });
+		expect(screen.getByRole('button', { name: 'Read-Only' })).toBeInTheDocument();
+		expect(screen.getByText('Read-Only')).toBeInTheDocument();
+	});
+
+	describe('dictation', () => {
+		const dictationTarget: DictationTarget = { getElement: () => null, insert: () => true };
+
+		afterEach(() => resetDictationStore());
+
+		it('draws no dictation microphone while the dictation task is off', () => {
+			renderToolbar({ dictationTarget });
+			expect(screen.queryByTestId('composer-dictation-button')).toBeNull();
+		});
+
+		it('draws the dictation microphone once the task is ready', () => {
+			useDictationStore.setState({ availability: { state: 'ready', source: 'Parakeet' } });
+			renderToolbar({ dictationTarget });
+			expect(screen.getByTestId('composer-dictation-button')).toBeInTheDocument();
+		});
+
+		it('draws none in terminal mode, where the composer is a shell line', () => {
+			useDictationStore.setState({ availability: { state: 'ready', source: 'Parakeet' } });
+			renderToolbar({
+				dictationTarget,
+				isTerminalMode: true,
+				session: createInputAreaSession({ inputMode: 'terminal' }),
+			});
+			expect(screen.queryByTestId('composer-dictation-button')).toBeNull();
+		});
+	});
 
 	it('renders terminal cwd in terminal mode', () => {
 		renderToolbar({
@@ -85,27 +167,32 @@ describe('ToolbarControls', () => {
 		expect(click).toHaveBeenCalled();
 	});
 
-	it('toggles history, permission mode, thinking, and enter-to-send controls', () => {
+	it.each([true, false])('keeps toolbar actions available when labels fit=%s', (labelsFit) => {
+		vi.mocked(useOptionalContentFits).mockReturnValue(labelsFit);
 		const onToggleTabSaveToHistory = vi.fn();
 		const onToggleTabShowThinking = vi.fn();
-		const setEnterToSend = vi.fn();
 		const session = createInputAreaSession();
 		renderToolbar({
 			session,
 			onToggleTabSaveToHistory,
 			onToggleTabShowThinking,
-			setEnterToSend,
 		});
 
-		fireEvent.click(screen.getByTitle(/Save to History/));
+		const history = screen.getByRole('button', { name: 'Save to History: off' });
+		const thinking = screen.getByRole('button', { name: 'Thinking: off' });
+		expect(history).toHaveAttribute('aria-pressed', 'false');
+		expect(thinking).toHaveAttribute('aria-pressed', 'false');
+		fireEvent.click(history);
 		// Permission mode starts at 'full'; clicking cycles it to 'standard'.
-		fireEvent.click(screen.getByTitle(/^Full Access/));
-		fireEvent.click(screen.getByTitle(/Show Thinking/));
-		fireEvent.click(screen.getByTitle(/Switch to/));
+		fireEvent.click(screen.getByRole('button', { name: 'Full Access' }));
+		fireEvent.click(thinking);
 
 		expect(onToggleTabSaveToHistory).toHaveBeenCalled();
 		expect(onToggleTabShowThinking).toHaveBeenCalled();
-		expect(setEnterToSend).toHaveBeenCalledWith(false);
+		expect(!!screen.queryByText('History')).toBe(labelsFit);
+		expect(!!screen.queryByText('Full Access')).toBe(labelsFit);
+		expect(!!screen.queryByText('Thinking')).toBe(labelsFit);
+		expect(screen.queryByTitle(/Switch to/)).not.toBeInTheDocument();
 
 		expect(mockUpdateSessionWith).toHaveBeenCalledWith(session.id, expect.any(Function));
 		const updater = mockUpdateSessionWith.mock.calls[0][1];
@@ -113,6 +200,28 @@ describe('ToolbarControls', () => {
 		const updatedTab = updatedSession.aiTabs.find((t: { id: string }) => t.id === 'tab-1');
 		expect(updatedTab.permissionMode).toBe('standard');
 		expect(updatedTab.readOnlyMode).toBe(false);
+	});
+
+	it('exposes active history and sticky thinking states to assistive technology', () => {
+		renderToolbar({ tabSaveToHistory: true, tabShowThinking: 'sticky' });
+		expect(screen.getByRole('button', { name: 'Save to History: on' })).toHaveAttribute(
+			'aria-pressed',
+			'true'
+		);
+		expect(screen.getByRole('button', { name: 'Thinking: sticky' })).toHaveAttribute(
+			'aria-pressed',
+			'true'
+		);
+	});
+
+	it('keeps image attachment in the browser without a separate file upload control', () => {
+		vi.mocked(isWebDesktop).mockReturnValue(true);
+		renderToolbar();
+		expect(screen.getByTitle('Upload Image to Host')).toBeInTheDocument();
+		expect(screen.queryByLabelText('Upload local files to the host')).not.toBeInTheDocument();
+		expect(
+			screen.queryByLabelText('Choose local files to upload to the host')
+		).not.toBeInTheDocument();
 	});
 
 	it('hides AI-only controls in terminal mode', () => {
@@ -214,6 +323,106 @@ describe('ToolbarControls', () => {
 		});
 	});
 
+	// Auto is added here, where the agent is known, so the desktop pill and the
+	// phone sheet list the same thing.
+	describe('the Auto model choice', () => {
+		const AXES = 'Auto: picks the model and the effort for each turn.';
+
+		beforeEach(() => {
+			// The shipped defaults: no harness tier overrides, the model router off.
+			useSettingsStore.setState({
+				harnessTierDefaults: {},
+				localModelAssignments: {},
+				localModelEndpoints: [],
+			});
+		});
+
+		function renderWithModels(overrides = {}) {
+			return renderToolbar({
+				availableModels: ['', 'opus', 'sonnet'],
+				onModelChange: vi.fn(),
+				modelMenuOpen: true,
+				...overrides,
+			});
+		}
+
+		it('offers Auto after (default) in the model menu of a Claude Code agent', () => {
+			const onModelChange = vi.fn();
+			renderWithModels({ onModelChange });
+
+			const row = screen.getByText('Auto').closest('button')!;
+			expect(row.getAttribute('title')).toContain(AXES);
+			expect(row.getAttribute('title')).toContain('The model router is off');
+			// Right after the leading (default) row, ahead of the provider's models.
+			const rows = Array.from(row.parentElement!.querySelectorAll('button')).map(
+				(b) => b.textContent
+			);
+			expect(rows).toEqual(['(default)', 'Auto', 'opus', 'sonnet']);
+
+			fireEvent.click(row);
+			expect(onModelChange).toHaveBeenCalledWith('auto');
+		});
+
+		it('offers no Auto for an agent it would change nothing for', () => {
+			// OpenCode has no effort ladder Maestro can name, and none of this
+			// agent's tiers is mapped to a model.
+			renderWithModels({ session: createInputAreaSession({ toolType: 'opencode' }) });
+
+			expect(screen.getByText('opus')).toBeInTheDocument();
+			expect(screen.queryByText('Auto')).not.toBeInTheDocument();
+		});
+
+		it('offers Auto for that agent once one of its tiers is mapped', () => {
+			renderWithModels({
+				session: createInputAreaSession({
+					toolType: 'opencode',
+					tierTargets: { medium: { type: 'provider-model', model: 'opus' } },
+				}),
+			});
+
+			expect(screen.getByText('Auto')).toBeInTheDocument();
+		});
+
+		it('says on the pill who decides while Auto is the model', () => {
+			useSettingsStore.setState({
+				localModelAssignments: { 'model-routing': { type: 'system-one' } },
+			});
+			renderWithModels({ currentModel: 'auto', modelMenuOpen: false });
+
+			const pill = screen.getByText('Auto').closest('button')!;
+			expect(pill.getAttribute('title')).toContain(`${AXES} Decided by System One.`);
+		});
+
+		it('lists the same Auto in the phone options sheet', () => {
+			mockedUsePhoneLayout.mockReturnValue(true);
+			const onModelChange = vi.fn();
+			renderWithModels({ processInput: vi.fn(), onModelChange, modelMenuOpen: false });
+
+			fireEvent.click(screen.getByTestId('composer-options-button'));
+			fireEvent.click(screen.getByTestId('composer-options-model'));
+			const row = screen.getByRole('button', { name: /^Auto/ });
+			// The tooltip has no hover on a phone: it is the row's description.
+			expect(row).toHaveTextContent(AXES);
+
+			fireEvent.click(row);
+			expect(onModelChange).toHaveBeenCalledWith('auto');
+		});
+
+		it('lists no Auto in the phone options sheet for an agent it would change nothing for', () => {
+			mockedUsePhoneLayout.mockReturnValue(true);
+			renderWithModels({
+				processInput: vi.fn(),
+				modelMenuOpen: false,
+				session: createInputAreaSession({ toolType: 'opencode' }),
+			});
+
+			fireEvent.click(screen.getByTestId('composer-options-button'));
+			fireEvent.click(screen.getByTestId('composer-options-model'));
+			expect(screen.getByRole('button', { name: 'opus' })).toBeInTheDocument();
+			expect(screen.queryByRole('button', { name: /^Auto/ })).not.toBeInTheDocument();
+		});
+	});
+
 	describe('voice input mic button', () => {
 		it('shows the mic on coarse pointers when speech is supported and toggles it', () => {
 			setCoarsePointer(true);
@@ -250,6 +459,20 @@ describe('ToolbarControls', () => {
 			expect(screen.queryByRole('button', { name: /voice input/ })).not.toBeInTheDocument();
 		});
 
+		it('hides the mic when A Cappella owns it, so there is never a second one', () => {
+			// A Cappella's microphone lives under Send, where it shows on every
+			// pointer type. Without this gate a touch device with the Encore Feature
+			// on would draw two microphones wired to the same toggle.
+			setCoarsePointer(true);
+			renderToolbar({
+				voiceSupported: true,
+				onToggleVoiceInput: vi.fn(),
+				voiceHandledElsewhere: true,
+			});
+
+			expect(screen.queryByRole('button', { name: /voice input/ })).not.toBeInTheDocument();
+		});
+
 		it('hides the mic in terminal mode', () => {
 			setCoarsePointer(true);
 			renderToolbar({
@@ -260,6 +483,18 @@ describe('ToolbarControls', () => {
 			});
 
 			expect(screen.queryByRole('button', { name: /voice input/ })).not.toBeInTheDocument();
+		});
+	});
+
+	describe('layout', () => {
+		it('pins the pill row to the bottom of the composer box', () => {
+			// The A Cappella microphone makes the Send column taller than the
+			// textarea, so the composer box stretches and the pills would otherwise
+			// float mid-height with dead space beneath them. jsdom has no layout
+			// engine, so the margin class is the only thing there is to assert.
+			const { container } = renderToolbar();
+
+			expect(container.firstElementChild).toHaveClass('mt-auto');
 		});
 	});
 });

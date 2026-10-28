@@ -46,6 +46,8 @@ interface UseTocOverlayOptions {
 	 * (e.g. no entries to show, or the surface is in edit mode).
 	 */
 	enabled?: boolean;
+	/** Embedded panels stay open while the user interacts with the document. */
+	dismissOnClickOutside?: boolean;
 	/** Notified when the hotkey fires, for shortcut-usage telemetry. */
 	onShortcutUsed?: (id: string) => void;
 }
@@ -55,6 +57,7 @@ export function useTocOverlay({
 	containerRef,
 	shortcutId = 'toggleFilePreviewToc',
 	enabled = true,
+	dismissOnClickOutside = true,
 	onShortcutUsed,
 }: UseTocOverlayOptions) {
 	const { isShortcut } = useKeyboardShortcutHelpers({
@@ -73,9 +76,14 @@ export function useTocOverlay({
 	// Dismiss on a click outside the panel AND the toggle button. The delay
 	// keeps the click that opened it from immediately closing it again.
 	const closeOnClickOutside = useCallback(() => setOpen(false), []);
-	useClickOutside<HTMLElement>([overlayRef, buttonRef], closeOnClickOutside, open, {
-		delay: true,
-	});
+	useClickOutside<HTMLElement>(
+		[overlayRef, buttonRef],
+		closeOnClickOutside,
+		open && dismissOnClickOutside,
+		{
+			delay: true,
+		}
+	);
 
 	const toggle = useCallback(() => {
 		setOpen((v) => {

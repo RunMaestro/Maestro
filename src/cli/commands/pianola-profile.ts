@@ -13,6 +13,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { ensurePianolaEnabled } from './pianola';
 import { getPianolaProfile, setPianolaProfile } from '../services/pianola-store';
+import { ExitCode, exitWith } from '../exit-codes';
 
 export interface PianolaProfileReadOptions {
 	project?: string;
@@ -73,7 +74,7 @@ export function pianolaSetProfile(options: PianolaSetProfileOptions): void {
 	const fail = (message: string): never => {
 		if (options.json) console.log(JSON.stringify({ success: false, error: message }));
 		else console.error(message);
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	};
 
 	let profileText: string;

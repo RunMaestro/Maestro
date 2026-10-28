@@ -1,14 +1,16 @@
 /**
  * useAgentSlashCommandsListener - registers `window.maestro.process.onSlashCommands`
  *
- * Routes the discovered slash commands to the matching session via
+ * Routes commands from the captured turn owner to a matching discovery scope via
  * `parseSessionId` then writes them on `session.agentCommands` with
  * descriptions resolved via `getSlashCommandDescription`.
  *
- * No shared state with other listeners. Single setSessions write per event.
+ * Background scopes cannot overwrite the selected scope. Single setSessions write per event.
  * Performance: bails early when the session does not exist (orphan event).
  */
 
+import { agentCommandScope } from '../../../utils/agentCommands';
+import { projectTabProvider, resolveTurnProvider } from '../../../utils/providerTabSessions';
 import { useEffect } from 'react';
 import { useSessionStore } from '../../../stores/sessionStore';
 import { parseSessionId } from '../../../utils/sessionIdParser';
@@ -25,7 +27,7 @@ export function useAgentSlashCommandsListener(): void {
 			(sessionId: string, slashCommands: string[]) => {
 				// Window scoping: ignore agents this window doesn't own (broadcast events).
 				if (!ownedGate.current?.(sessionId)) return;
-				const actualSessionId = parseSessionId(sessionId).baseSessionId;
+				const { baseSessionId: actualSessionId, tabId } = parseSessionId(sessionId);
 
 				// Perf: orphan event - skip the no-op map.
 				if (!getSessions().some((s) => s.id === actualSessionId)) return;
@@ -33,11 +35,23 @@ export function useAgentSlashCommandsListener(): void {
 				setSessions((prev) =>
 					prev.map((s) => {
 						if (s.id !== actualSessionId) return s;
+						const tab = s.aiTabs.find((candidate) => candidate.id === (tabId ?? s.activeTabId));
+						if (tabId && !tab) return s;
+						const projected = projectTabProvider(s, tab, resolveTurnProvider(tab, s));
+						const selected = s.aiTabs.find((candidate) => candidate.id === s.activeTabId);
+						if (
+							agentCommandScope(projected.agent, projected.tab) !== agentCommandScope(s, selected)
+						)
+							return s;
 						const commands = slashCommands.map((cmd) => ({
 							command: cmd.startsWith('/') ? cmd : `/${cmd}`,
-							description: getSlashCommandDescription(cmd, s.toolType),
+							description: getSlashCommandDescription(cmd, projected.agent.toolType),
 						}));
-						return { ...s, agentCommands: commands };
+						return {
+							...s,
+							agentCommands: commands,
+							agentCommandsScope: agentCommandScope(projected.agent, projected.tab),
+						};
 					})
 				);
 			}

@@ -40,25 +40,39 @@ Uses WAL (Write-Ahead Logging) journal mode for better concurrent access.
 
 Tracks individual AI query/response cycles:
 
-| Column         | Type             | Description                     |
-| -------------- | ---------------- | ------------------------------- |
-| `id`           | TEXT PK          | UUID                            |
-| `session_id`   | TEXT NOT NULL    | Maestro session ID              |
-| `agent_type`   | TEXT NOT NULL    | Agent type (e.g. `claude-code`) |
-| `source`       | TEXT NOT NULL    | `'user'` or `'auto'` (Auto Run) |
-| `start_time`   | INTEGER NOT NULL | Unix timestamp (ms)             |
-| `duration`     | INTEGER NOT NULL | Duration in ms                  |
-| `project_path` | TEXT             | Normalized project path         |
-| `tab_id`       | TEXT             | AI tab that issued the query    |
-| `is_remote`    | INTEGER          | SSH remote flag (added in v2)   |
-| `is_worktree`  | INTEGER          | Worktree agent flag (v5)        |
-| `user_name`    | TEXT             | Web Login sender (v12)          |
+| Column            | Type             | Description                                                                      |
+| ----------------- | ---------------- | -------------------------------------------------------------------------------- |
+| `id`              | TEXT PK          | UUID                                                                             |
+| `session_id`      | TEXT NOT NULL    | Maestro session ID                                                               |
+| `agent_type`      | TEXT NOT NULL    | Agent type (e.g. `claude-code`)                                                  |
+| `source`          | TEXT NOT NULL    | `'user'` or `'auto'` (Auto Run)                                                  |
+| `start_time`      | INTEGER NOT NULL | Unix timestamp (ms)                                                              |
+| `duration`        | INTEGER NOT NULL | Duration in ms                                                                   |
+| `project_path`    | TEXT             | Normalized project path                                                          |
+| `tab_id`          | TEXT             | AI tab that issued the query                                                     |
+| `is_remote`       | INTEGER          | SSH remote flag (added in v2)                                                    |
+| `is_worktree`     | INTEGER          | Worktree agent flag (v5)                                                         |
+| `user_name`       | TEXT             | Web Login sender (v12)                                                           |
+| `run_on_endpoint` | TEXT             | Run on source the turn launched on: saved endpoint id, or `maestro-server` (v20) |
+| `run_on_model`    | TEXT             | The model that source ran, written WITH `run_on_endpoint` (v20)                  |
+| `routed_tier`     | TEXT             | Tier Auto's router chose: `low`, `medium` or `high` (v20)                        |
 
 `user_name` is the Web Login account that SENT the turn, and NULL means "nobody
 was signed in" - a turn typed at the desktop, which is every turn while Web
 Login is off. It is stamped by `stats:record-query` from what the spawn noted
 (`resolveTurnActor`), never from the acting user at write time: the row is
 written by the desktop renderer's exit listener even for a turn a browser sent.
+
+The three v20 columns are the Models tab's only record of where an agent turn ran, and
+`turnModelStatsFields({ runOn, auto })` in `src/shared/autoTurn.ts` shapes them for both writers of the
+row (the renderer's exit listener and the Auto Run spawn). They are frozen at SEND from the tab's
+`turnRunOnSource` and `turnAuto` stamps, never read from the live agent record, so a Run on target edited
+mid-turn does not refile the turn. `run_on_endpoint` and `run_on_model` are written together or not at
+all, and `routed_tier` is bound only when it is one of the three levels. NULL in all three means the turn
+ran on the provider's own cloud, which is what the Models tab compares everything else against.
+`routed_tier` is the router's ANSWER, not the launch: a session Auto kept on its model records the tier
+and the place it stayed. `query_events` has one writer, the renderer, so a Cue run and a headless
+`maestro-cli send` write no row on any model and are not counted there.
 
 **Indexes**: `start_time`, `agent_type`, `source`, `session_id`, `project_path`, `is_remote`, `is_worktree`, `user_name`, compound `(start_time, agent_type)`, `(start_time, project_path)`, `(start_time, source)`
 
@@ -151,6 +165,44 @@ Tracks session creation and closure for duration analytics:
 
 **Indexes**: `created_at`, `agent_type`
 
+#### `local_model_runs` (Migration v15, rebuilt v20)
+
+One row per run that reached a model other than a provider's own. Written by the task router
+(`src/main/stats/local-model-runs.ts`) and, for System One, by `recordSystemOneDecision()`:
+
+| Column        | Type             | Description                                                                                 |
+| ------------- | ---------------- | ------------------------------------------------------------------------------------------- |
+| `id`          | TEXT PK          | UUID                                                                                        |
+| `task_id`     | TEXT NOT NULL    | Local Models task (`agent:<verb>` for a request an agent sent System One)                   |
+| `source_type` | TEXT NOT NULL    | `'local'`, `'endpoint'`, `'server'` or `'system-one'` (CHECK, widened v20)                  |
+| `model_id`    | TEXT NOT NULL    | Catalog id, the server's model name, or the model a System One engine named                 |
+| `endpoint_id` | TEXT             | Saved endpoint id, or the System One engine id. NULL for `local` and `server`               |
+| `started_at`  | INTEGER NOT NULL | Unix timestamp (ms)                                                                         |
+| `duration_ms` | INTEGER NOT NULL | Duration in ms. A failed run's duration is its timeout, so latency reads answered runs only |
+| `outcome`     | TEXT NOT NULL    | `'ok'`, `'error'` or `'cancelled'`                                                          |
+| `error_code`  | TEXT             | Classified failure (`timeout`, `network`, ...), NULL on success                             |
+| `tokens_in`   | INTEGER          | Tokens read, when the source reports them                                                   |
+| `tokens_out`  | INTEGER          | Tokens written, when the source reports them                                                |
+| `agent_id`    | TEXT             | Agent the run was for, NULL when the caller knew none (v20)                                 |
+
+**Indexes**: `started_at`, compound `(task_id, started_at)`, compound `(agent_id, started_at)`
+
+`server` is one source however a run reached the Maestro model server: a task assigned to the
+`maestro-server` endpoint, and a task assigned to a local model the running server already holds. A
+`system-one` row exists for retention: `s1_decisions` is pruned at 30 days and the dashboard's ranges go
+to all time. A decision answered from the cache, with no engine chosen, or decided by a local router
+leaves no run, because the local model's own run is already filed under its real source.
+
+Rows written before v20 are not relabeled. A run on the model server recorded earlier stays
+`endpoint` with `endpoint_id = 'maestro-server'`, and `modelUsageRunSource()` in
+`src/shared/local-models/model-usage.ts` reads that as the server.
+
+The v20 migration rebuilds the table, because SQLite cannot alter a CHECK constraint. `rebuildLocalModelRuns`
+creates `local_model_runs_rebuild`, copies every row by named column, compares the two row counts and
+throws on a mismatch, drops the old table, renames the new one into place and recreates the indexes, all
+inside the runner's one transaction. `CREATE_LOCAL_MODEL_RUNS_SQL` is the current shape, so a fresh database
+has nothing to rebuild.
+
 #### `_migrations`
 
 Migration tracking table:
@@ -200,21 +252,28 @@ The singleton is lazy-initialized on first call to `getStatsDB()`. The `StatsDB`
 
 Defined in `src/main/stats/migrations.ts`. Migrations are sequential and recorded in the `_migrations` table. The current schema version is stored in SQLite's `user_version` pragma.
 
-| Version | Description                                                           |
-| ------- | --------------------------------------------------------------------- |
-| v1      | Initial schema: `query_events`, `auto_run_sessions`, `auto_run_tasks` |
-| v2      | Add `is_remote` column to `query_events` for SSH tracking             |
-| v3      | Add `session_lifecycle` table                                         |
-| v4      | Add compound indexes on `query_events` for dashboard performance      |
-| v5      | Add `is_worktree` column to `query_events` and `session_lifecycle`    |
-| v6      | Add `image_annotations` table                                         |
-| v7      | Add `shortcut_usage_daily` table                                      |
-| v8      | Add `multi_window_usage_daily` table                                  |
-| v9      | Add per-turn token and cost columns to `query_events`                 |
-| v10     | Add `resilience_events` table                                         |
-| v11     | Add `wizard_runs` table                                               |
-| v12     | Add `user_name` column to `query_events` for Web Login attribution    |
-| v13     | Add `active_ms` column to `wizard_runs`                               |
+| Version | Description                                                                                                          |
+| ------- | -------------------------------------------------------------------------------------------------------------------- |
+| v1      | Initial schema: `query_events`, `auto_run_sessions`, `auto_run_tasks`                                                |
+| v2      | Add `is_remote` column to `query_events` for SSH tracking                                                            |
+| v3      | Add `session_lifecycle` table                                                                                        |
+| v4      | Add compound indexes on `query_events` for dashboard performance                                                     |
+| v5      | Add `is_worktree` column to `query_events` and `session_lifecycle`                                                   |
+| v6      | Add `image_annotations` table                                                                                        |
+| v7      | Add `shortcut_usage_daily` table                                                                                     |
+| v8      | Add `multi_window_usage_daily` table                                                                                 |
+| v9      | Add per-turn token and cost columns to `query_events`                                                                |
+| v10     | Add `resilience_events` table                                                                                        |
+| v11     | Add `wizard_runs` table                                                                                              |
+| v12     | Add `user_name` column to `query_events` for Web Login attribution                                                   |
+| v13     | Add `active_ms` column to `wizard_runs`                                                                              |
+| v14     | Add `kind` column to `auto_run_sessions`                                                                             |
+| v15     | Add `local_model_runs` table for Local Models task router runs                                                       |
+| v16     | Add `proxy_requests` table for the Maestro token proxy                                                               |
+| v17     | Add `routed_to` column to `proxy_requests`                                                                           |
+| v18     | Add `s1_decisions` table for the System One decision ledger                                                          |
+| v19     | Add `tab_id` and `cached` columns to `s1_decisions`                                                                  |
+| v20     | Rebuild `local_model_runs` (wider `source_type`, `agent_id`); add Run on and `routed_tier` columns to `query_events` |
 
 To add a new migration:
 
@@ -336,6 +395,7 @@ Registered in `src/main/ipc/handlers/stats.ts`. All handlers check `statsCollect
 | `stats:get-aggregation`        | Get `StatsAggregation` for a time range (used by dashboard)            |
 | `stats:get-session-lifecycle`  | Get `SessionLifecycleEvent[]` within a time range                      |
 | `stats:get-earliest-timestamp` | Get the earliest recorded event timestamp (used for "all time" ranges) |
+| `stats:get-model-usage`        | Get the `ModelUsage` record for a range (the Models tab; see below)    |
 
 ### Data Management
 
@@ -346,6 +406,60 @@ Registered in `src/main/ipc/handlers/stats.ts`. All handlers check `statsCollect
 | `stats:get-database-size`           | Get the database file size in bytes                                                  |
 | `stats:get-initialization-result`   | Get the result of the one-shot DB initialization (used by the settings health panel) |
 | `stats:clear-initialization-result` | Clear the cached initialization result                                               |
+
+### Model usage (`getModelUsage`)
+
+What every model other than a provider's own did over a range. One record, one aggregation, three readers:
+the Usage Dashboard's **Models** tab, `maestro-cli stats models`, and the WS message `get_model_usage`.
+
+| Layer       | Symbol                                                                                                                                                      |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Aggregation | `getModelUsage(db, range, names)` in `src/main/stats/model-usage.ts` (`StatsDB.getModelUsage`)                                                              |
+| Service     | `readModelUsage(range)` in `src/main/local-models/model-usage.ts`                                                                                           |
+| Types       | `ModelUsage` and the naming rules in `src/shared/local-models/model-usage.ts`                                                                               |
+| IPC / WS    | `stats:get-model-usage`, `window.maestro.stats.getModelUsage(range)`, `get_model_usage` answered as `model_usage`                                           |
+| CLI         | `maestro-cli stats models [--range day\|week\|month\|quarter\|year\|all] [--json]`                                                                          |
+| Renderer    | `useModelUsage(range)` in `src/renderer/hooks/stats/useModelUsage.ts`, drawn by `<ModelUsageStats>` in `src/renderer/components/UsageDashboard/ModelUsage/` |
+
+`readModelUsage` is the one function the IPC channel and the WS message both call. It checks the range
+with `isStatsTimeRange()` (no range reads the week) and hands the aggregation the names only the app
+knows: the saved endpoints, the OpenJev URL and agent names. The record has six blocks:
+
+| Block       | Reads                                                | Holds                                                                  |
+| ----------- | ---------------------------------------------------- | ---------------------------------------------------------------------- |
+| `totals`    | the other blocks                                     | requests, tokens, errors, and the on-this-machine share                |
+| `sources`   | `local_model_runs`, `query_events`, `proxy_requests` | one row per source: kind, location, units, tokens, errors, latency     |
+| `byTask`    | `local_model_runs`                                   | per task, with where each ran                                          |
+| `byAgent`   | `local_model_runs`, `query_events`                   | any agent that used another model; the tab shows `turns > 0` as Run on |
+| `systemOne` | `s1_decisions`, `query_events`                       | outcome split per task and engine, Auto's `routedTiers`, `coversRange` |
+| `proxy`     | `proxy_requests`                                     | requests, tokens saved and added latency, marked as an estimate        |
+
+Rules a new reader of the record needs:
+
+- **Each table is scanned once.** SQLite has no percentile function, so each scan is `ORDER BY` its duration
+  column and every distribution (per source, task, agent and System One task) is sliced from that one pass
+  with `percentilesFromSorted()`. Do not add a second query for a new percentile.
+- **Three units, kept apart.** A source counts `runs` (one model call), `turns` (one agent turn) and `routed`
+  (one background request the proxy sent to a Local Models target). `requests` is their sum, so never
+  divide tokens by it. `modelUsageSourceLatency()` names the unit a latency is in: a request when the source
+  answered model calls, a turn only when it has none on record.
+- **Latency is answered work only.** A failed run's duration is its timeout.
+- **A provider's own cloud is a source kind** (`provider:<agent type>`) from `query_events` rows with no Run on
+  source. `errors` is always 0 there, because `query_events` records no outcome, and cache tokens are
+  `cachedTokensIn`, never folded into `tokensIn`.
+- **`onDevice` is three-valued.** The in-process engine and the model server are `true`. An endpoint is
+  `true` only when its URL is loopback. An endpoint that was removed, or OpenJev with no URL, is `null`
+  (shown as Unknown, never as remote) and `totals.onDeviceRequests` does not count it.
+- **The System One block reads the 30-day ledger.** `coversRange` is false for quarter, year and all, and the
+  tab says so. `routedTiers` comes from `query_events` and covers the whole range.
+- **There is no cost per source.** `systemOne.costUsd` is the only cost. There is no per-day block: a trend
+  chart adds a `byDay` to `ModelUsage`, not a second query.
+- **A WS failure replies under its own type with `success: false` and the request id.** `ctx.sendError`
+  sends an `error` message with no id, which the CLI client cannot match, so it would wait out its timeout.
+
+The tab renders above the dashboard's "no query yet" gate, with Tokens and Shortcuts, because a housekeeping
+run on a local model leaves no `query_events` row. `getSectionsForViewMode('models')` returns `[]` like Cue:
+the blocks come from the panel's own fetch, not the shared aggregation.
 
 ### Broadcast
 

@@ -5,6 +5,7 @@ import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
 import { requestFromRenderer } from './remoteRequest';
 import type { ConsultAgentResult } from '../types';
+import type { ConsultChain } from '../../../shared/consultBudget';
 import type { MentionRouting } from '../../../shared/crossAgentContext';
 import { snapshotAiTurnProcesses, waitForAiTurnsToExit } from '../../utils/agent-busy';
 import {
@@ -79,6 +80,7 @@ export function parseConsultAgentResult(raw: unknown): ConsultAgentResult {
 		canceled: r.canceled === true,
 		targetAgentName: str(r.targetAgentName),
 		targetTabId: str(r.targetTabId),
+		targetToolType: str(r.targetToolType),
 	};
 }
 
@@ -105,6 +107,7 @@ export function registerCommandCallbacks(
 			force?: boolean,
 			images?: string[],
 			background?: boolean,
+			consultChain?: ConsultChain,
 			mentionRouting?: MentionRouting
 		) => {
 			const targetWindow = resolveSessionWindow(sessionId);
@@ -149,7 +152,17 @@ export function registerCommandCallbacks(
 					fallback: { accepted: false, reason: 'renderer-timeout', timedOut: true },
 					timeoutMs: REMOTE_COMMAND_RECEIPT_TIMEOUT_MS,
 					parse: parseRemoteCommandReceipt,
-					args: [sessionId, command, inputMode, tabId, force, images, background, mentionRouting],
+					args: [
+						sessionId,
+						command,
+						inputMode,
+						tabId,
+						force,
+						images,
+						background,
+						consultChain,
+						mentionRouting,
+					],
 				}
 			);
 			if (!receipt.accepted) {
@@ -198,6 +211,7 @@ export function registerCommandCallbacks(
 					fromSessionId: params.fromSessionId,
 					fromTabId: params.fromTabId,
 					withContext: params.withContext,
+					...(params.consultChain ? { consultChain: params.consultChain } : {}),
 				},
 			],
 		});

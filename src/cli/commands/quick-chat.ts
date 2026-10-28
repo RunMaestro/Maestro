@@ -17,6 +17,8 @@ import {
 	type QuickChatRecentSummary,
 	type QuickChatStatus,
 } from '../../shared/quickChat';
+import { ExitCode, exitWith } from '../exit-codes';
+import { failCommand, failFromError } from '../services/session-command';
 import { FONT_SCALE_MAX, FONT_SCALE_MIN } from '../../shared/scaleRange';
 import { formatRelativeTime } from '../../shared/formatters';
 import { asThinkingMode, type ThinkingMode } from '../../shared/types';
@@ -122,15 +124,6 @@ export function describeQuickChatNextTarget(next: QuickChatNextTarget): string {
 	return `tab "${next.name}" (${next.tabId})${next.chosen ? ', chosen' : ''}`;
 }
 
-function fail(message: string, options: QuickChatOptions): void {
-	if (options.json) {
-		console.log(JSON.stringify({ success: false, error: message }));
-	} else {
-		console.error(`Error: ${message}`);
-	}
-	process.exit(1);
-}
-
 /** The recent chats, numbered as `quick-chat recall` takes them. */
 export function printRecents(
 	recents: QuickChatRecentSummary[],
@@ -149,7 +142,6 @@ export function printRecents(
 		);
 	});
 }
-
 /** Human-readable summary of the window and the chat in it. */
 function printStatus(status: QuickChatStatus): void {
 	const { snapshot } = status;
@@ -206,7 +198,7 @@ export async function quickChat(
 	if (action === 'send') {
 		const imagePaths = options.image ?? [];
 		if (!args.text?.trim() && imagePaths.length === 0) {
-			fail('message cannot be empty', options);
+			failCommand('message cannot be empty', options.json);
 			return;
 		}
 		message.text = args.text ?? '';
@@ -216,7 +208,7 @@ export async function quickChat(
 					(input) => readCliImageFile(input, MAX_QUICK_CHAT_IMAGE_BYTES).dataUrl
 				);
 			} catch (error) {
-				fail(error instanceof Error ? error.message : String(error), options);
+				failCommand(error instanceof Error ? error.message : String(error), options.json);
 				return;
 			}
 		}
@@ -229,7 +221,7 @@ export async function quickChat(
 			try {
 				on = parseCliBool(args.state, action);
 			} catch (error) {
-				fail(error instanceof Error ? error.message : String(error), options);
+				failFromError(error, options.json);
 				return;
 			}
 		}
@@ -240,7 +232,10 @@ export async function quickChat(
 	}
 	if (action === 'recall') {
 		if (!args.chatId?.trim()) {
-			fail('Give a chat number from `quick-chat history`, its id, or an id prefix', options);
+			failCommand(
+				'Give a chat number from `quick-chat history`, its id, or an id prefix',
+				options.json
+			);
 			return;
 		}
 		message.chatId = args.chatId.trim();
@@ -248,7 +243,7 @@ export async function quickChat(
 	if (action === 'tab' && args.state !== undefined) {
 		const choice = parseQuickChatTabChoice(args.state);
 		if (!choice) {
-			fail('Give a tab id, new, or auto', options);
+			failCommand('Give a tab id, new, or auto', options.json);
 			return;
 		}
 		message.tab = args.state.trim();
@@ -257,7 +252,7 @@ export async function quickChat(
 		try {
 			message.mode = parseQuickChatThinkingArg(args.state);
 		} catch (error) {
-			fail(error instanceof Error ? error.message : String(error), options);
+			failCommand(error instanceof Error ? error.message : String(error), options.json);
 			return;
 		}
 	}
@@ -265,7 +260,7 @@ export async function quickChat(
 		try {
 			message.fontScale = parseQuickChatFontArg(args.state);
 		} catch (error) {
-			fail(error instanceof Error ? error.message : String(error), options);
+			failFromError(error, options.json);
 			return;
 		}
 	}
@@ -277,7 +272,7 @@ export async function quickChat(
 		}
 		const invalid = validateQuickChatBoundsRequest(request);
 		if (invalid) {
-			fail(invalid, options);
+			failCommand(invalid, options.json);
 			return;
 		}
 		Object.assign(message, request);
@@ -286,7 +281,7 @@ export async function quickChat(
 		try {
 			message.agentId = resolveAgentId(args.agent ?? '');
 		} catch (error) {
-			fail(error instanceof Error ? error.message : String(error), options);
+			failFromError(error, options.json);
 			return;
 		}
 	}
@@ -299,11 +294,11 @@ export async function quickChat(
 			const payload =
 				action === 'history' ? { recents: result.recents ?? [] } : { ...result.status };
 			console.log(JSON.stringify({ success: result.success, error: result.error, ...payload }));
-			if (!result.success) process.exit(1);
+			if (!result.success) exitWith(ExitCode.GeneralError);
 			return;
 		}
 		if (!result.success) {
-			fail(result.error || `quick-chat ${action} failed`, options);
+			failCommand(result.error || `quick-chat ${action} failed`, options.json);
 			return;
 		}
 		if (action === 'history') {
@@ -330,6 +325,6 @@ export async function quickChat(
 			printStatus(result.status);
 		} else console.log(`Quick Chat: ${action} done`);
 	} catch (error) {
-		fail(error instanceof Error ? error.message : String(error), options);
+		failFromError(error, options.json);
 	}
 }

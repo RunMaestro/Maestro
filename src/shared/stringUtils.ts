@@ -163,3 +163,20 @@ export function processCarriageReturns(text: string): string {
 	});
 	return processedLines.join('\n');
 }
+
+/** 1 minus normalised Levenshtein distance. */
+export function normalizedEditSimilarity(a: string, b: string): number {
+	if (a === b) return 1;
+	const longest = Math.max(a.length, b.length);
+	if (longest === 0) return 1;
+	let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+	for (let i = 1; i <= a.length; i++) {
+		const current = [i];
+		for (let j = 1; j <= b.length; j++) {
+			const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+			current[j] = Math.min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + cost);
+		}
+		previous = current;
+	}
+	return 1 - previous[b.length] / longest;
+}

@@ -64,6 +64,8 @@ import { useWindowOwnsSession } from '../../contexts/WindowContext';
 import type { PaneFileActions, PaneTabActions } from './TiledLayout';
 import type { Theme, UnifiedTabRef } from '../../types';
 import type { MainPanelHandle, MainPanelProps } from './types';
+import { projectTabProvider, resolveTabNativeProvider } from '../../utils/providerTabSessions';
+import { getSessionSshRemoteId } from '../../utils/sessionHelpers';
 
 /**
  * Empty placeholder shown when this window has no agent to display - either no
@@ -408,10 +410,16 @@ export const MainPanel = React.memo(
 		// Git info (branch, status, ahead/behind)
 		const { gitInfo, refreshGitStatus } = useGitInfo(activeSession);
 
+		const composerProvider = useMemo(
+			() => (activeSession ? projectTabProvider(activeSession, activeTab ?? undefined) : undefined),
+			[activeSession, activeTab]
+		);
+
 		// Get agent capabilities for conditional feature rendering
 		const { hasCapability } = useAgentCapabilities(
-			activeSession?.toolType,
-			activeSession?.providerTranslationKnowledgeDirectory
+			composerProvider?.agent.toolType,
+			activeSession?.providerTranslationKnowledgeDirectory,
+			getSessionSshRemoteId(activeSession)
 		);
 
 		// Model/Effort pills: available options, current values, and agent-level
@@ -422,7 +430,10 @@ export const MainPanel = React.memo(
 			efforts: pillEfforts,
 			defaultModel: agentDefaultModel,
 			defaultEffort: agentDefaultEffort,
-		} = useAgentModelEffortOptions(activeSession?.toolType);
+		} = useAgentModelEffortOptions(
+			composerProvider?.agent.toolType,
+			getSessionSshRemoteId(activeSession)
+		);
 		const setSessions = useSessionStore((s) => s.setSessions);
 
 		// Navigate to agent/tab when clicking an agent pill in the log viewer
@@ -498,8 +509,8 @@ export const MainPanel = React.memo(
 
 		// Resolved current model/effort: tab override > session override > agent config > empty
 		const { model: resolvedModel, effort: resolvedEffort } = resolveModelEffort(
-			activeTab,
-			activeSession,
+			composerProvider?.tab,
+			composerProvider?.agent,
 			{ defaultModel: agentDefaultModel, defaultEffort: agentDefaultEffort }
 		);
 
@@ -1084,6 +1095,7 @@ export const MainPanel = React.memo(
 						style={{ backgroundColor: theme.colors.bgMain }}
 					>
 						<AgentSessionsBrowser
+							key={`${activeSession?.id}:${activeSession ? resolveTabNativeProvider(activeTab ?? undefined, activeSession) : ''}`}
 							theme={theme}
 							activeSession={activeSession || undefined}
 							activeAgentSessionId={activeAgentSessionId}

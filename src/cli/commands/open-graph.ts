@@ -17,6 +17,7 @@ import * as path from 'path';
 import { withMaestroClient } from '../services/maestro-client';
 import { getSessionById } from '../services/storage';
 import { resolveOwningAgent } from '../utils/owning-agent';
+import { ExitCode, exitWith, exitCodeForError } from '../exit-codes';
 import { exitIfMaestroNotRunning } from '../services/session-command';
 
 interface OpenGraphOptions {
@@ -72,7 +73,7 @@ function collectMarkdown(dir: string, depth = 0): string[] {
 export async function openGraph(paths: string[], options: OpenGraphOptions): Promise<void> {
 	if (!paths || paths.length === 0) {
 		console.error('Error: Give at least one markdown file or directory to graph.');
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 
 	const scope = resolveScope(paths, options);
@@ -112,14 +113,14 @@ export async function openGraph(paths: string[], options: OpenGraphOptions): Pro
 			const error = result.error || 'Failed to open document graph';
 			if (options.json) console.log(JSON.stringify({ success: false, error }));
 			else console.error(`Error: ${error}`);
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 	} catch (error) {
 		exitIfMaestroNotRunning(error, { json: options.json });
 		const msg = error instanceof Error ? error.message : String(error);
 		if (options.json) console.log(JSON.stringify({ success: false, error: msg }));
 		else console.error(`Error: ${msg}`);
-		process.exit(1);
+		exitWith(exitCodeForError(error));
 	}
 }
 
@@ -139,7 +140,7 @@ function resolveScope(paths: string[], options: OpenGraphOptions): ResolvedScope
 	for (const p of absolute) {
 		if (!fs.existsSync(p)) {
 			console.error(`Error: Not found: ${p}`);
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 	}
 
@@ -162,13 +163,13 @@ function resolveScope(paths: string[], options: OpenGraphOptions): ResolvedScope
 				collected.push(p);
 			} else {
 				console.error(`Error: Not a markdown document: ${p}`);
-				process.exit(1);
+				exitWith(ExitCode.GeneralError);
 			}
 		}
 		files = Array.from(new Set(collected));
 		if (files.length === 0) {
 			console.error('Error: No markdown documents found in the paths given.');
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 	}
 
@@ -193,7 +194,7 @@ function resolveSessionId(anchorPath: string, options: OpenGraphOptions): string
 		const session = getSessionById(options.agent);
 		if (!session) {
 			console.error(`Error: Agent not found: ${options.agent}`);
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 		return session.id;
 	}
@@ -203,7 +204,7 @@ function resolveSessionId(anchorPath: string, options: OpenGraphOptions): string
 		console.error(
 			`Error: ${anchorPath} is not inside any agent's working directory. Pick an agent with --agent <id>.`
 		);
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 
 	if (owned.others.length > 0) {

@@ -434,6 +434,43 @@ describe('describePipeline', () => {
 describe('derivePipelineHealth', () => {
 	const empty = { activeRuns: [], activityLog: [] };
 
+	// A gated entry is an event the gate skipped. It is not a run, so it can
+	// be neither the last run nor one of the runs that succeeded or failed.
+	it('ignores gated events when judging the last run', () => {
+		const failedThenGated = derivePipelineHealth(pipeline(), {
+			...empty,
+			activityLog: [
+				run({ status: 'gated', endedAt: '2026-10-11T12:05:00.000Z' }),
+				run({ status: 'failed', exitCode: 1, endedAt: '2026-10-11T12:00:00.000Z' }),
+			],
+		});
+		expect(failedThenGated.status).toBe('failing');
+		expect(failedThenGated.recentRunCount).toBe(1);
+
+		const onlyGated = derivePipelineHealth(pipeline(), {
+			...empty,
+			activityLog: [run({ status: 'gated' })],
+		});
+		expect(onlyGated.status).toBe('idle');
+		expect(onlyGated.lastRun).toBeUndefined();
+	});
+
+	// A blocked run was not spawned either, but the screen refusing a
+	// pipeline's events is a failure the pipeline row has to show.
+	it('counts a run the injection screen blocked as a failure', () => {
+		const blocked = derivePipelineHealth(pipeline(), {
+			...empty,
+			activityLog: [
+				run({ status: 'blocked-injection', exitCode: null, endedAt: '2026-10-11T12:05:00.000Z' }),
+				run({ endedAt: '2026-10-11T12:00:00.000Z' }),
+			],
+		});
+		expect(blocked.status).toBe('failing');
+		expect(blocked.detail).toBe('Last run was blocked by the injection screen');
+		expect(blocked.recentRunCount).toBe(2);
+		expect(blocked.recentFailureCount).toBe(1);
+	});
+
 	it('reports healthy when the most recent finished run completed', () => {
 		const health = derivePipelineHealth(pipeline(), { ...empty, activityLog: [run()] });
 		expect(health.status).toBe('healthy');

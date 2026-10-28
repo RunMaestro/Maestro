@@ -93,6 +93,22 @@ describe('update_session_config', () => {
 		return agent.value;
 	};
 
+	it('refuses tab-provider mutations through generic patches and the retired quick-switch verb', async () => {
+		for (const patch of [
+			{ tabId: 't1', tabProvider: 'claude-code', customModel: 'opus' },
+			{ tabId: 't1', tabProviderSelection: { provider: 'claude-code' } },
+		]) {
+			expect(await update(patch)).toMatchObject({
+				success: false,
+				error: expect.stringContaining('parking operation'),
+			});
+		}
+		expect(
+			await handle({ type: 'tab_provider', sessionId: 'a1', tabId: 't1', provider: 'claude-code' })
+		).toMatchObject({ success: false, error: expect.stringContaining('has been removed') });
+		expect((await stored()).toolType).toBe('codex');
+	});
+
 	/** A value each allowlisted key accepts. A key added to the allowlist without one fails the test below. */
 	const SAMPLE: Record<string, unknown> = {
 		nudgeMessage: 'keep going',

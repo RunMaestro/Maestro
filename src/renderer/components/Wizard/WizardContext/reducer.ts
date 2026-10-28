@@ -18,6 +18,9 @@ export const initialState: WizardState = {
 	sessionSshRemoteConfig: undefined,
 	directoryPath: '',
 	additionalDirectories: [],
+	peerAgents: [],
+	groupPeerAccess: undefined,
+	worktreePeerAccess: undefined,
 	isGitRepo: false,
 	detectedAgentPath: null,
 	directoryError: null,
@@ -86,6 +89,12 @@ export function wizardReducer(state: WizardState, action: WizardAction): WizardS
 			return { ...state, directoryPath: action.path, directoryError: null };
 		case 'SET_ADDITIONAL_DIRECTORIES':
 			return { ...state, additionalDirectories: action.directories };
+		case 'SET_PEER_AGENTS':
+			return { ...state, peerAgents: action.peers };
+		case 'SET_GROUP_PEER_ACCESS':
+			return { ...state, groupPeerAccess: action.access };
+		case 'SET_WORKTREE_PEER_ACCESS':
+			return { ...state, worktreePeerAccess: action.access };
 		case 'SET_IS_GIT_REPO':
 			return { ...state, isGitRepo: action.isGitRepo };
 		case 'SET_DETECTED_AGENT_PATH':

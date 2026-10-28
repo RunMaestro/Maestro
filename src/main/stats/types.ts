@@ -5,7 +5,7 @@
  * Shared types (QueryEvent, AutoRunSession, etc.) remain in src/shared/stats-types.ts.
  */
 
-import type Database from 'better-sqlite3';
+import type { SqliteMigration } from '../utils/sqlite-migrations';
 
 /**
  * Result of a database integrity check
@@ -44,22 +44,10 @@ export interface CorruptionRecoveryResult {
 }
 
 /**
- * Represents a single database migration
+ * Represents a single database migration. The shape is the shared runner's, so
+ * a stats migration and any other database's migration are the same thing.
  */
-export interface Migration {
-	/** Version number (must be sequential starting from 1) */
-	version: number;
-	/** Human-readable description of the migration */
-	description: string;
-	/** Function to apply the migration */
-	up: (db: Database.Database) => void;
-	/**
-	 * Whether the migration's schema is actually present. When set, a database
-	 * whose user_version already covers this migration but lacks its schema gets
-	 * `up` re-applied, so `up` must be idempotent.
-	 */
-	isApplied?: (db: Database.Database) => boolean;
-}
+export type Migration = SqliteMigration;
 
 /**
  * Record of an applied migration stored in the migrations table

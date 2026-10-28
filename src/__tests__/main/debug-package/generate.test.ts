@@ -58,7 +58,10 @@ const createZipPackage = vi.hoisted(() =>
 		sizeBytes: 1,
 	}))
 );
-vi.mock('../../../main/debug-package/packager', () => ({ createZipPackage }));
+vi.mock('../../../main/debug-package/packager', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../main/debug-package/packager')>()),
+	createZipPackage,
+}));
 
 import { generateDebugPackage, type DebugPackageDependencies } from '../../../main/debug-package';
 import type { BatchStateInfo } from '../../../main/debug-package/collectors/batch-state';

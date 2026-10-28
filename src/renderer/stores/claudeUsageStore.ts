@@ -26,8 +26,11 @@ import { getHomeDir, getHomeDirAsync } from '../utils/homeDir';
 import type { Session } from '../types';
 import {
 	effectiveAgentCustomEnvVars,
+	resolveAgentAccountKey,
 	resolveAgentBillingCredential,
 } from '../../shared/providerProfiles';
+import { projectTabProvider, resolveTurnProvider } from '../utils/providerTabSessions';
+import { isValidAgentId } from '../../shared/agentIds';
 
 /**
  * Snapshot shape mirrors `UsageSnapshot` in `src/main/agents/claude-mode-selector.ts`.
@@ -164,40 +167,60 @@ export function useClaudeUsageSnapshot(
  * auto-resume coordinator probes a paused session's account outside React).
  * Resolves the session's canonical `CLAUDE_CONFIG_DIR` key from the spawner's
  * stamped `lastUsageSnapshotKey` (or the session/agent env var as a fallback),
- * then applies the same forgiving lookup as the hook: exact key, then basename,
- * then the single-account fallback. Returns `null` for non-Claude sessions or
- * when no snapshot matches.
+ * using the failed tab's provider configuration. Recovery requires an exact
+ * account match; a basename or single-account fallback could resume work on
+ * another account's quota. Returns `null` for non-Claude or remote owners.
  */
 export function getClaudeUsageSnapshotForSession(
-	session: Pick<Session, 'toolType' | 'claudeInteractive' | 'customEnvVars'> | null | undefined
+	session:
+		| (Pick<Session, 'toolType' | 'claudeInteractive' | 'customEnvVars'> & Partial<Session>)
+		| null
+		| undefined,
+	tabId?: string
 ): ClaudeUsageSnapshot | null {
-	if (!session || session.toolType !== 'claude-code') return null;
+	if (!session) return null;
+	const targetTabId = tabId ?? session.agentErrorTabId;
+	const tab =
+		session.aiTabs?.find((candidate) => candidate.id === targetTabId) ??
+		session.orphanedThinkingTabs?.find((candidate) => candidate.id === targetTabId) ??
+		session.closedTabHistory?.find((entry) => entry.tab.id === targetTabId)?.tab;
+	if (targetTabId && !tab) return null;
+	const errorProvider =
+		tab?.agentError?.agentId ?? (tabId ? undefined : session.agentError?.agentId);
+	const provider =
+		errorProvider && isValidAgentId(errorProvider)
+			? errorProvider
+			: resolveTurnProvider(tab, session);
+	if (provider !== 'claude-code') return null;
+	session = projectTabProvider(session, tab, provider).agent;
+	if (session.sessionSshRemoteConfig?.enabled || session.sshRemoteId) return null;
+	if (session.customEnvVars === undefined && cachedClaudeAgentEnv === undefined) {
+		void fetchClaudeAgentEnv();
+		if (!session.claudeInteractive?.lastUsageSnapshotKey) return null;
+	}
+	const env = effectiveAgentCustomEnvVars(session.customEnvVars, cachedClaudeAgentEnv);
+	if (resolveAgentBillingCredential(provider, env)) return null;
 	const snapshots = useClaudeUsageStore.getState().snapshots;
 
 	const stamped = session.claudeInteractive?.lastUsageSnapshotKey;
-	const envKey = (session.customEnvVars as Record<string, string> | undefined)?.CLAUDE_CONFIG_DIR;
+	const envKey = env.CLAUDE_CONFIG_DIR;
 	const rawKey =
 		typeof stamped === 'string' && stamped.length > 0
 			? stamped
 			: typeof envKey === 'string' && envKey.length > 0
 				? envKey
 				: undefined;
-	const key = rawKey ? rawKey.replace(/\/+$/, '') : undefined;
+	const key = rawKey
+		? rawKey.replace(/\/+$/, '')
+		: resolveAgentAccountKey('claude-code', env, getHomeDir());
 
 	if (key) {
 		const exact = snapshots[key];
 		if (exact) return exact;
-		const targetBasename = key.slice(key.lastIndexOf('/') + 1);
-		if (targetBasename) {
-			for (const [k, v] of Object.entries(snapshots)) {
-				const basename = k.slice(k.lastIndexOf('/') + 1);
-				if (basename === targetBasename) return v;
-			}
-		}
+		// Recovery cannot use another account's quota as evidence to resume.
+		return null;
 	}
 
-	const entries = Object.values(snapshots);
-	if (entries.length === 1) return entries[0];
 	return null;
 }
 
@@ -225,7 +248,7 @@ function fetchClaudeAgentEnv(): Promise<Record<string, string>> {
 			return safe;
 		})
 		.catch(() => {
-			cachedClaudeAgentEnv = {};
+			// Display can degrade to empty; recovery must still treat the account as unknown.
 			return {};
 		});
 	return claudeAgentEnvPromise;
@@ -248,7 +271,7 @@ function resolveSessionConfigDirKey(
 	if (!session || session.toolType !== 'claude-code') return undefined;
 	// A remote agent's config dir holds the REMOTE host's login. This machine's
 	// snapshot of the same-named dir is a different account, so show no bars.
-	if (session.sessionSshRemoteConfig?.enabled) return undefined;
+	if (session.sessionSshRemoteConfig?.enabled || session.sshRemoteId) return undefined;
 	const env = effectiveAgentCustomEnvVars(
 		session.customEnvVars as Record<string, string> | undefined,
 		agentEnv

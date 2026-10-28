@@ -12,6 +12,8 @@
  * read them at call time and never capture one.
  */
 
+import { EventEmitter } from 'node:events';
+
 import type {
 	GroupChatHistoryEntry,
 	GroupChatMessage,
@@ -24,6 +26,22 @@ import type {
 } from '../../shared/maestro-lib/groupchat/types';
 
 export type { ModeratorUsage, ParticipantState };
+
+/** Same events sent to clients, available to in-process consumers such as voice. */
+export const groupChatEvents = new EventEmitter<{
+	message: [id: string, message: GroupChatMessage];
+	state: [id: string, state: GroupChatState];
+	/** A queued item's delivery is beginning, before its user message is emitted. */
+	submission: [id: string, itemId: string];
+}>();
+const roomStates = new Map<string, GroupChatState>();
+export function getGroupChatState(id: string): GroupChatState {
+	return roomStates.get(id) ?? 'idle';
+}
+export function publishGroupChatState(id: string, state: GroupChatState): void {
+	roomStates.set(id, state);
+	groupChatEvents.emit('state', id, state);
+}
 
 /**
  * Module-level object to store emitter functions after initialization.

@@ -1,3 +1,4 @@
+import { inspectTabProvider } from '../../desktopTabs';
 /**
  * The requests a detached host answers: the desktop bridge's typed messages, run against a
  * `MaestroClient`.
@@ -12,6 +13,7 @@
  * transport answers with the bridge's `echo`, the signal a client reads as "unsupported".
  */
 
+import { parseConsultChain } from '../../consultBudget';
 import type { AgentRecord } from '../store/records';
 import { parseProcessId } from '../client/bridge-frames';
 import type {
@@ -326,6 +328,7 @@ async function projectSessions(client: MaestroClient): Promise<Frame[]> {
 				...(typeof agent.activeTabId === 'string' ? { activeTabId: agent.activeTabId } : {}),
 				aiTabs: (tabs.ok ? tabs.value : []).map((tab) => ({
 					id: tab.id,
+					...inspectTabProvider(tab as never, agent as never),
 					agentSessionId: tab.agentSessionId ?? null,
 					name: tab.name ?? null,
 					...(tab.starred !== undefined ? { starred: tab.starred } : {}),
@@ -420,8 +423,23 @@ export function createRequestHandler(client: MaestroClient): RequestHandler {
 						ssh: (obj(message.sshPatch) ?? {}) as never,
 					})
 				);
+			case 'tab_provider':
+				return refusal(
+					'tab_provider_result',
+					'Per-tab provider switching has been removed. Change the provider in Edit Agent.'
+				);
 			case 'update_session_config': {
 				const config = obj(message.configPatch) ?? {};
+				if (
+					'tabProviderSelection' in config ||
+					'tabProvider' in config ||
+					'providerSessions' in config ||
+					'pendingTranslation' in config
+				)
+					return refusal(
+						'update_session_config_result',
+						'Use tab provider through the desktop parking operation.'
+					);
 				if ('migrationAction' in config) {
 					return refusal(
 						'update_session_config_result',
@@ -756,6 +774,9 @@ export function createRequestHandler(client: MaestroClient): RequestHandler {
 			case 'cross_agent_ask': {
 				const result = await client.consults.ask({
 					targetAgentId: sessionId(message),
+					...(parseConsultChain(message.consultChain)
+						? { consultChain: parseConsultChain(message.consultChain) }
+						: {}),
 					question: typeof message.question === 'string' ? message.question : '',
 					...(str(message.fromSessionId) ? { fromAgentId: str(message.fromSessionId) } : {}),
 					...(str(message.fromTabId) ? { fromTabId: str(message.fromTabId) } : {}),

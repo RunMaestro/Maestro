@@ -1,4 +1,28 @@
-import type { AITab, Session } from '../types';
+import type { AITab, PeerAccess, PeerAgent, Session } from '../types';
+
+// Parked token streaming does not change chrome. Compare the identity and
+// remembered selections so updates still reach provider-aware consumers.
+function providerTabSettingsEqual(
+	a: AITab['providerSessions'],
+	b: AITab['providerSessions']
+): boolean {
+	if (a === b) return true;
+	const providers = Object.keys(a ?? {}) as Array<keyof NonNullable<AITab['providerSessions']>>;
+	if (providers.length !== Object.keys(b ?? {}).length) return false;
+	return providers.every((provider) => {
+		const x = a?.[provider];
+		const y = b?.[provider];
+		return (
+			x === y ||
+			(!!x &&
+				!!y &&
+				x.agentSessionId === y.agentSessionId &&
+				x.customModel === y.customModel &&
+				x.customEffort === y.customEffort &&
+				x.runOn === y.runOn)
+		);
+	});
+}
 
 // Fields on Session that the sidebar (SessionList, useSessionCategories) actually
 // reads to render. Streaming-heavy fields (aiLogs, shellLogs, workLog, usageStats,
@@ -14,7 +38,11 @@ function aiTabEqual(a: AITab, b: AITab): boolean {
 		a.starred === b.starred &&
 		a.hasUnread === b.hasUnread &&
 		a.readOnlyMode === b.readOnlyMode &&
-		a.agentSessionId === b.agentSessionId
+		a.agentSessionId === b.agentSessionId &&
+		a.tabProvider === b.tabProvider &&
+		a.turnProvider === b.turnProvider &&
+		a.pendingTranslation === b.pendingTranslation &&
+		providerTabSettingsEqual(a.providerSessions, b.providerSessions)
 	);
 }
 
@@ -171,9 +199,14 @@ function aiTabChromeEqual(a: AITab, b: AITab): boolean {
 		a.showThinking === b.showThinking &&
 		a.enterToSend === b.enterToSend &&
 		a.agentSessionId === b.agentSessionId &&
+		a.tabProvider === b.tabProvider &&
+		a.pendingTranslation === b.pendingTranslation &&
+		providerTabSettingsEqual(a.providerSessions, b.providerSessions) &&
 		a.autoSendOnActivate === b.autoSendOnActivate &&
 		a.customModel === b.customModel &&
 		a.customEffort === b.customEffort &&
+		a.runOn === b.runOn &&
+		a.turnProvider === b.turnProvider &&
 		!!a.pendingMergedContext === !!b.pendingMergedContext &&
 		a.agentError?.timestamp === b.agentError?.timestamp &&
 		a.agentError?.message === b.agentError?.message
@@ -309,6 +342,7 @@ export function activeSessionChromeEquality(a: Session | null, b: Session | null
 		}
 	}
 
+	if (a.agentCommandsScope !== b.agentCommandsScope) return false;
 	if (a.agentCommands !== b.agentCommands) {
 		const ca = a.agentCommands;
 		const cb = b.agentCommands;
@@ -319,6 +353,59 @@ export function activeSessionChromeEquality(a: Session | null, b: Session | null
 					return false;
 				}
 			}
+		}
+	}
+
+	return true;
+}
+
+function peerAccessEqual(a: PeerAccess | undefined, b: PeerAccess | undefined): boolean {
+	if (a === b) return true;
+	if (!a || !b) return false;
+	return a.read === b.read && a.write === b.write;
+}
+
+function peerAgentsEqual(a: PeerAgent[] | undefined, b: PeerAgent[] | undefined): boolean {
+	if (a === b) return true;
+	if (!a || !b) return false;
+	if (a.length !== b.length) return false;
+	for (let i = 0; i < a.length; i++) {
+		const x = a[i];
+		const y = b[i];
+		if (x === y) continue;
+		if (x.sessionId !== y.sessionId || x.description !== y.description || !peerAccessEqual(x, y)) {
+			return false;
+		}
+	}
+	return true;
+}
+
+/**
+ * Fields the Delegation Graph is built from: exactly what `PeerRosterInput`
+ * (`shared/peerAgents.ts`) reads. Ignores logs, tokens, and other
+ * streaming-heavy fields, so a fleet that is busy talking does not rebuild the
+ * graph. The peer rows are compared by value: a store reload hands back equal
+ * rows in new arrays, and that must not read as an edit.
+ */
+export function delegationRosterEquality(a: Session[], b: Session[]): boolean {
+	if (a === b) return true;
+	if (a.length !== b.length) return false;
+
+	for (let i = 0; i < a.length; i++) {
+		const x = a[i];
+		const y = b[i];
+		if (x === y) continue;
+
+		if (
+			x.id !== y.id ||
+			x.name !== y.name ||
+			x.groupId !== y.groupId ||
+			x.parentSessionId !== y.parentSessionId ||
+			!peerAccessEqual(x.groupPeerAccess, y.groupPeerAccess) ||
+			!peerAccessEqual(x.worktreePeerAccess, y.worktreePeerAccess) ||
+			!peerAgentsEqual(x.peerAgents, y.peerAgents)
+		) {
+			return false;
 		}
 	}
 

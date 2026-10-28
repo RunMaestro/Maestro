@@ -9,8 +9,15 @@ import {
 	projectConversation,
 	createTranslationRegistry,
 	codexTranslationAdapter,
+	projectedOriginKeys,
 	claudeTranslationAdapter,
 } from '../../../shared/maestro-lib/translation/adapters';
+import {
+	activeContextRecords,
+	formatTranslationRecordCounts,
+} from '../../../shared/maestro-lib/translation/context-window';
+import { recordKey } from '../../../shared/maestro-lib/translation/identity';
+import { TranslationArchive } from '../../../shared/maestro-lib/translation/archive';
 import {
 	importSelectedCodexResources,
 	readCodexThreadItems,
@@ -29,11 +36,186 @@ const identity = {
 	projectRoot: '/isolated/project',
 };
 describe('destination native projections', () => {
+	it('counts user and assistant messages separately from native bookkeeping and tool events', () => {
+		const conversation = extractNativeConversation(
+			identity,
+			'tab',
+			'native',
+			Buffer.from(
+				[
+					{ type: 'user', uuid: 'user', message: { role: 'user', content: 'Question' } },
+					{
+						type: 'assistant',
+						uuid: 'tool',
+						message: {
+							role: 'assistant',
+							content: [{ type: 'tool_use', id: 'call', name: 'Read', input: { path: 'file' } }],
+						},
+					},
+					{
+						type: 'user',
+						uuid: 'result',
+						message: {
+							role: 'user',
+							content: [{ type: 'tool_result', tool_use_id: 'call', content: 'Result' }],
+						},
+					},
+					{ type: 'assistant', uuid: 'answer', message: { role: 'assistant', content: 'Answer' } },
+					{ type: 'progress', uuid: 'progress', message: 'Bookkeeping' },
+				]
+					.map((row) => JSON.stringify(row))
+					.join('\n')
+			)
+		);
+		const plan = planTranslation({
+			agentId: 'agent',
+			source: identity,
+			destination: { ...identity, provider: 'codex', version: '0.162.1' },
+			scope: { projectKnowledge: true, selectedUserResources: [] },
+			conversations: [conversation],
+			registry: createTranslationRegistry(),
+		});
+		expect(plan.counts.messages).toBe(2);
+		expect(plan.counts.records).toBeGreaterThan(plan.counts.messages!);
+	});
+
+	it.each([
+		['claude-compactions', 'claude-code', 7, 2],
+		['codex-compacted-replacement', 'codex', 4, 4],
+		['codex-compacted-message', 'codex', 4, 2],
+	] as const)(
+		'projects only the active %s window to both destinations and reports retained counts',
+		async (fixture, source, archivedCount, activeCount) => {
+			const sourceIdentity =
+				source === 'claude-code'
+					? identity
+					: { ...identity, provider: 'codex' as const, version: '0.162.1' };
+			const bytes = await fs.readFile(
+				path.resolve('src/__tests__/fixtures/provider-translation', `${fixture}.jsonl`)
+			);
+			const conversation = extractNativeConversation(
+				sourceIdentity,
+				'tab',
+				'synthetic-compacted',
+				bytes
+			);
+			const active = activeContextRecords(conversation.records);
+			expect(active).toHaveLength(activeCount);
+			for (const destination of ['claude-code', 'codex'] as const) {
+				const projected = projectConversation(conversation, destination, 'destination');
+				expect(projected).toHaveLength(activeCount);
+				expect(projectedOriginKeys(projected)).toEqual(active.map((r) => recordKey(r.origin)));
+				expect(JSON.stringify(projected)).not.toMatch(
+					/Archived request|Earlier provider summary|archived-call|Fallback summary/
+				);
+				expect(JSON.stringify(projected[0].item)).toContain(
+					'Latest provider summary: archived lookup resolved to alpha.'
+				);
+				if (destination === 'claude-code')
+					for (const [index, row] of projected.entries())
+						expect(row.item.parentUuid).toBe(index ? projected[index - 1].id : null);
+				const readback = extractNativeConversation(
+					{
+						...sourceIdentity,
+						provider: destination,
+						version: destination === 'codex' ? '0.162.1' : identity.version,
+					},
+					'tab',
+					'destination',
+					Buffer.from(
+						projected
+							.map((row) =>
+								JSON.stringify(
+									destination === 'codex' ? { type: 'response_item', payload: row.item } : row.item
+								)
+							)
+							.join('\n')
+					)
+				);
+				expect(readback.limitations.filter((limit) => limit.severity === 'block')).toEqual([]);
+				expect(readback.records[0].blocks).toEqual(active[0].blocks);
+				expect(readback.records.at(-1)?.blocks).toEqual(active.at(-1)?.blocks);
+				if (fixture === 'codex-compacted-replacement') {
+					expect(readback.records[1].blocks).toMatchObject([
+						{
+							kind: 'tool-call',
+							callId: 'active-call',
+							name: 'Read',
+							input: destination === 'codex' ? '{"path":"next.txt"}' : { path: 'next.txt' },
+						},
+					]);
+					expect(readback.records[2].blocks).toMatchObject([
+						{ kind: 'tool-result', callId: 'active-call', output: 'Synthetic next result.' },
+					]);
+				}
+			}
+			const plan = planTranslation({
+				agentId: 'agent',
+				source: sourceIdentity,
+				destination:
+					source === 'codex' ? identity : { ...identity, provider: 'codex', version: '0.162.1' },
+				scope: { projectKnowledge: true, selectedUserResources: [] },
+				conversations: [conversation],
+				registry: createTranslationRegistry(),
+			});
+			expect(plan.tabs[0]).toMatchObject({
+				records: activeCount + archivedCount,
+				activeRecords: activeCount,
+				archivedRecords: archivedCount,
+			});
+			expect(plan.counts.records).toBe(activeCount + archivedCount);
+			const root = await fs.mkdtemp(path.join(os.tmpdir(), 'translation-compaction-'));
+			try {
+				const archive = new TranslationArchive(root);
+				await archive.write({
+					schemaVersion: 1,
+					plan,
+					state: 'planned',
+					conversations: [conversation],
+					resources: [],
+					mappings: [],
+					resourceWrites: [],
+				});
+				const saved = await archive.read(plan.agentId, plan.id);
+				expect(saved.conversations[0].records).toEqual(conversation.records);
+				const artifact = saved.conversations[0].artifacts[0];
+				expect(Buffer.from(artifact.bytesBase64, 'base64')).toEqual(bytes);
+				expect(
+					await fs.readFile(
+						path.join(
+							path.dirname(archive.operationPath(plan.agentId, plan.id)),
+							`${artifact.sha256}.bytes`
+						)
+					)
+				).toEqual(bytes);
+			} finally {
+				await fs.rm(root, { recursive: true, force: true });
+			}
+		}
+	);
+	it('keeps legacy records active and renders both new and saved plan counts', () => {
+		const conversation = extractNativeConversation(
+			identity,
+			'tab',
+			'source',
+			Buffer.from(JSON.stringify({ type: 'user', uuid: 'old', message: { content: 'Legacy' } }))
+		);
+		delete conversation.records[0].window;
+		for (const destination of ['claude-code', 'codex'] as const)
+			expect(projectConversation(conversation, destination, 'destination')).toHaveLength(1);
+		expect(
+			formatTranslationRecordCounts({ records: 4492, activeRecords: 312, archivedRecords: 4180 })
+		).toBe('312 records carried, 4,180 archived before the last compaction');
+		expect(formatTranslationRecordCounts({ records: 12 })).toBe('12 records carried');
+	});
 	it('uses the picker declarations for native direction and version registration', () => {
 		const registry = createTranslationRegistry();
 		for (const direction of TRANSLATION_DIRECTIONS) {
-			for (const sourceVersion of direction.sourceVersions)
-				for (const destinationVersion of direction.destinationVersions)
+			for (const sourceVersion of [direction.sourceMinVersion, ...direction.sourceTestedVersions])
+				for (const destinationVersion of [
+					direction.destinationMinVersion,
+					...direction.destinationTestedVersions,
+				])
 					expect(
 						registry.direction(
 							{ ...identity, provider: direction.source, version: sourceVersion },
@@ -42,21 +224,77 @@ describe('destination native projections', () => {
 					).toEqual(direction);
 			expect(
 				registry.direction(
-					{ ...identity, provider: direction.source, version: direction.sourceVersions[0] },
+					{ ...identity, provider: direction.source, version: direction.sourceTestedVersions[0] },
 					{
 						...identity,
 						provider: direction.destination,
-						version: direction.destinationVersions[0],
+						version: direction.destinationTestedVersions[0],
 					}
 				)
 			).toEqual(getDeclaredTranslationDirection(direction.source, direction.destination));
-			expect(registry.get(direction.source)?.versions).toEqual(direction.sourceVersions);
+			expect(registry.get(direction.source)?.minVersion).toBe(direction.sourceMinVersion);
+			expect(registry.get(direction.source)?.testedVersions).toEqual(
+				direction.sourceTestedVersions
+			);
 			expect(direction.verification).toBe('unverified');
 		}
 		expect(getDeclaredTranslationDirection('opencode', 'codex')).toBeUndefined();
 		expect(getDeclaredTranslationDirection('claude-code', 'opencode')).toBeUndefined();
 		expect(getDeclaredTranslationDirection('codex', 'codex')).toBeUndefined();
 		expect(getDeclaredTranslationDirection('unknown-provider', 'codex')).toBeUndefined();
+	});
+	it.each([
+		['claude-code', '2.1.295', 'block'],
+		['claude-code', '2.1.296', undefined],
+		['claude-code', '2.1.302', undefined],
+		['claude-code', '2.1.297', 'warning'],
+		['claude-code', '2.1.301', 'warning'],
+		['claude-code', '3.0.0', 'warning'],
+		['claude-code', 'garbage', 'block'],
+		['claude-code', '', 'block'],
+		['codex', '0.162.0', 'block'],
+		['codex', '0.162.1', undefined],
+		['codex', '0.162.2', 'warning'],
+		['codex', '0.163.0', undefined],
+		['codex', 'garbage', 'block'],
+	] as const)('checks %s %s as source and destination', (provider, version, severity) => {
+		const registry = createTranslationRegistry();
+		const selected = { ...identity, provider, version };
+		const other = {
+			...identity,
+			provider: provider === 'codex' ? ('claude-code' as const) : ('codex' as const),
+			version: provider === 'codex' ? '2.1.296' : '0.162.1',
+		};
+		for (const [source, destination] of [
+			[selected, other],
+			[other, selected],
+		]) {
+			const plan = planTranslation({
+				agentId: 'a',
+				source,
+				destination,
+				scope: { projectKnowledge: true, selectedUserResources: [] },
+				conversations: [],
+				registry,
+			});
+			const versionLimits = plan.limitations.filter((limit) => limit.code.endsWith('-version'));
+			expect(plan.status).toBe(severity === 'block' ? 'blocked' : 'ready');
+			expect(Boolean(registry.direction(source, destination))).toBe(severity !== 'block');
+			if (severity) {
+				expect(versionLimits).toHaveLength(1);
+				expect(versionLimits[0]).toMatchObject({
+					code: severity === 'block' ? 'unknown-version' : 'untested-version',
+					severity,
+				});
+				expect(versionLimits[0].message).toContain(version || 'unknown');
+				if (severity === 'warning') {
+					expect(versionLimits[0].message).toContain(registry.get(provider)!.testedVersions[0]);
+					expect(plan.limitations.some((limit) => limit.code === 'unsupported-direction')).toBe(
+						false
+					);
+				}
+			} else expect(versionLimits).toEqual([]);
+		}
 	});
 	it.each([false, true])(
 		'uses provider-assigned IDs and checks persisted content (changed=%s)',
@@ -288,6 +526,100 @@ describe('destination native projections', () => {
 		expect(projected[3].item.call_id).toBe('c');
 		expect(projectConversation(bundle, 'codex', 'again')).toEqual(projected);
 	});
+	it.each(['claude-code', 'codex'] as const)(
+		'projects a stopped parallel tool tail from %s without replay or fabricated results',
+		(provider) => {
+			const calls = ['completed', 'stopped-one', 'stopped-two'];
+			const rows =
+				provider === 'claude-code'
+					? [
+							{
+								type: 'assistant',
+								uuid: 'calls',
+								message: {
+									role: 'assistant',
+									content: [
+										{ type: 'text', text: 'Keep this text' },
+										...calls.map((id) => ({ type: 'tool_use', id, name: 'Read', input: {} })),
+									],
+								},
+							},
+							{
+								type: 'user',
+								uuid: 'result',
+								message: {
+									role: 'user',
+									content: [{ type: 'tool_result', tool_use_id: 'completed', content: 'ok' }],
+								},
+							},
+						]
+					: [
+							{
+								type: 'response_item',
+								payload: {
+									type: 'message',
+									role: 'assistant',
+									content: [{ type: 'output_text', text: 'Keep this text' }],
+								},
+							},
+							...calls.map((call_id) => ({
+								type: 'response_item',
+								payload: {
+									type: 'custom_tool_call',
+									call_id,
+									name: 'Read',
+									input: 'synthetic',
+								},
+							})),
+							{
+								type: 'response_item',
+								payload: { type: 'custom_tool_call_output', call_id: 'completed', output: 'ok' },
+							},
+						];
+			const bundle = extractNativeConversation(
+				{ ...identity, provider },
+				't',
+				's',
+				Buffer.from(rows.map((row) => JSON.stringify(row)).join('\n'))
+			);
+			expect(bundle.limitations.some((l) => l.severity === 'block')).toBe(false);
+			expect(bundle.limitations.filter((l) => l.code === 'interrupted-tool-call-dropped')).toEqual([
+				expect.objectContaining({
+					severity: 'warning',
+					message: expect.stringContaining('stopped-one, stopped-two'),
+				}),
+			]);
+			for (const destination of ['claude-code', 'codex'] as const) {
+				const projected = projectConversation(bundle, destination, 'destination');
+				const serialized = JSON.stringify(projected);
+				expect(serialized).toContain('Keep this text');
+				expect(serialized).not.toContain('stopped-one');
+				expect(serialized).not.toContain('stopped-two');
+				if (destination === 'codex') {
+					expect(projected.map((r) => r.item.type)).toEqual([
+						'message',
+						provider === 'codex' ? 'custom_tool_call' : 'function_call',
+						provider === 'codex' ? 'custom_tool_call_output' : 'function_call_output',
+					]);
+					expect(projected[1].item.call_id).toBe('completed');
+					expect(projected[2].item.call_id).toBe('completed');
+				} else {
+					expect(
+						projected.flatMap((r) => (r.item.message as { content: unknown[] }).content)
+					).toEqual([
+						{ type: 'text', text: 'Keep this text' },
+						{
+							type: 'tool_use',
+							id: 'completed',
+							name: 'Read',
+							input: provider === 'codex' ? { input: 'synthetic' } : {},
+						},
+						{ type: 'tool_result', tool_use_id: 'completed', content: 'ok' },
+					]);
+				}
+			}
+		}
+	);
 	it('builds new Claude parent relationships without foreign reasoning signatures', () => {
 		const bytes = Buffer.from(
 			[

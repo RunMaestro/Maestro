@@ -29,6 +29,13 @@ export const CORE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 	// --- Utility Agent ---
 	// Auxiliary work (tab naming, context grooming) does not need the session's
 	// own agent. Both null keeps the previous behavior exactly.
+	utilitySource: {
+		description:
+			"Shared source for tasks assigned to Utility source. Use { type: 'utility-agent' } for the provider selected by utilityAgentId / utilityModelId, { type: 'local', modelId }, or { type: 'endpoint', endpointId, model }. Explicit task assignments take priority.",
+		type: 'object',
+		default: { type: 'utility-agent' },
+		category: 'advanced',
+	},
 	utilityAgentId: {
 		description:
 			'Agent to use for auxiliary tasks (tab naming, context grooming). When null, uses the session agent.',

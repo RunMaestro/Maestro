@@ -1,3 +1,4 @@
+import { agentCommandScope } from '../../../renderer/utils/agentCommands';
 /**
  * Tests for agentStore - Agent lifecycle orchestration store
  *
@@ -5,7 +6,7 @@
  * (kill, interrupt). The store orchestrates sessionStore mutations + IPC calls.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { logger } from '../../../renderer/utils/logger';
 import { renderHook, act } from '@testing-library/react';
 import { useAgentStore } from '../../../renderer/stores/agentStore';
@@ -16,6 +17,8 @@ import { createMockSession as baseCreateMockSession } from '../../helpers/mockSe
 import { dispatchCrossAgentMentionsForMessage } from '../../../renderer/services/crossAgentMentions';
 import { resetStores } from '../../helpers';
 import { requestTabAutoNameForMessage } from '../../../renderer/services/tabAutoNaming';
+import { resetAutoTurnForTests } from '../../../renderer/services/autoTurn';
+import { markTabRunningQueuedItem } from '../../../renderer/utils/tabHelpers';
 
 // ============================================================================
 // Helpers
@@ -69,12 +72,18 @@ const mockInterrupt = vi.fn().mockResolvedValue(true);
 const mockDetect = vi.fn().mockResolvedValue([]);
 const mockGetAgent = vi.fn().mockResolvedValue(null);
 const mockClearError = vi.fn().mockResolvedValue(undefined);
+// Model routing is off unless a test says otherwise, as it is in the app.
+const ROUTER_OFF = { skipped: 'off', detail: 'Model routing is off.', latencyMs: 0 };
+const mockRouteTurn = vi.fn().mockResolvedValue(ROUTER_OFF);
 
 (window as any).maestro = {
 	process: {
 		spawn: mockSpawn,
 		kill: mockKill,
 		interrupt: mockInterrupt,
+	},
+	localModels: {
+		routeTurn: mockRouteTurn,
 	},
 	agents: {
 		detect: mockDetect,
@@ -238,6 +247,62 @@ describe('agentStore', () => {
 	});
 
 	describe('clearAgentError', () => {
+		it('keeps another provider tab paused when clearing one recovered tab', () => {
+			const error = { type: 'auth_expired', agentId: 'codex', message: 'expired' } as any;
+			const session = createMockSession({
+				id: 'session-1',
+				state: 'error',
+				agentError: error,
+				agentErrorTabId: 'codex-tab',
+				agentErrorPaused: true,
+			});
+			session.aiTabs = [
+				{
+					...session.aiTabs[0],
+					id: 'claude-tab',
+					agentError: { ...error, agentId: 'claude-code' },
+				},
+				{ ...session.aiTabs[0], id: 'codex-tab', agentError: error },
+			];
+			useSessionStore.getState().setSessions([session]);
+			useAgentStore.getState().clearAgentError(session.id, 'claude-tab');
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.aiTabs[0].agentError).toBeUndefined();
+			expect(updated.agentError).toBe(error);
+			expect(updated.agentErrorTabId).toBe('codex-tab');
+			expect(updated.agentErrorPaused).toBe(true);
+			expect(updated.state).toBe('error');
+			expect(window.maestro.agentError.clearError).not.toHaveBeenCalled();
+		});
+
+		it('retains the remaining failed tab after the aggregate error is recovered', () => {
+			const error = { type: 'auth_expired', agentId: 'codex', message: 'expired' } as any;
+			const session = createMockSession({
+				id: 'session-1',
+				state: 'error',
+				agentError: error,
+				agentErrorTabId: 'codex-tab',
+				agentErrorPaused: true,
+			});
+			session.aiTabs = [
+				{
+					...session.aiTabs[0],
+					id: 'claude-tab',
+					agentError: { ...error, agentId: 'claude-code' },
+				},
+				{ ...session.aiTabs[0], id: 'codex-tab', agentError: error },
+			];
+			useSessionStore.getState().setSessions([session]);
+			useAgentStore.getState().clearAgentError(session.id, 'codex-tab');
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.aiTabs[1].agentError).toBeUndefined();
+			expect(updated.agentError?.agentId).toBe('claude-code');
+			expect(updated.agentErrorTabId).toBe('claude-tab');
+			expect(updated.agentErrorPaused).toBe(true);
+			expect(updated.state).toBe('error');
+			expect(window.maestro.agentError.clearError).not.toHaveBeenCalled();
+		});
+
 		it('clears session-level error fields and sets state to idle', () => {
 			const session = createMockSession({
 				id: 'session-1',
@@ -1261,6 +1326,115 @@ describe('agentStore', () => {
 			mockGetAgent.mockResolvedValue(mockAgent);
 		});
 
+		it('holds a pending translation message with its exact settings and a review toast', async () => {
+			const { useNotificationStore } = await import('../../../renderer/stores/notificationStore');
+			useNotificationStore.setState({ toasts: [] });
+			const session = createMockSession({ id: 'session-1', toolType: 'codex' });
+			session.aiTabs[0].providerSessions = { 'claude-code': { agentSessionId: 'source' } };
+			session.aiTabs[0].state = 'busy';
+			useSessionStore.setState({ sessions: [session] });
+			window.maestro.process.getActiveProcesses = vi.fn().mockResolvedValue([]);
+			window.maestro.sessions = {
+				...window.maestro.sessions,
+				setMany: vi.fn().mockResolvedValue(undefined),
+			};
+			window.maestro.agents.translateProvider = vi.fn().mockResolvedValue({
+				success: true,
+				plan: {
+					status: 'ready',
+					source: { provider: 'claude-code', version: '2.1.296' },
+					destination: { provider: 'codex', version: '0.162.1' },
+					limitations: [
+						{ code: 'new-warning', severity: 'warning', message: 'Review this change' },
+					],
+				},
+			});
+			const settings = { provider: 'codex' as const, model: 'frozen', effort: 'high' };
+			const item: QueuedItem = {
+				id: 'held',
+				tabId: 'default-tab',
+				type: 'message',
+				text: 'Do not lose this message',
+				timestamp: 1,
+				turnSettings: settings,
+			};
+			expect(await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps)).toBe(
+				false
+			);
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.executionQueue).toEqual([{ ...item, paused: true }]);
+			expect(updated.executionQueue[0].turnSettings).toBe(settings);
+			expect(updated.aiTabs[0].agentSessionId).toBeNull();
+			expect(updated.aiTabs[0].state).toBe('idle');
+			expect(mockSpawn).not.toHaveBeenCalled();
+			expect(useNotificationStore.getState().toasts.at(-1)?.clickAction).toEqual({
+				kind: 'review-translation',
+				sessionId: 'session-1',
+				tabId: 'default-tab',
+				provider: 'codex',
+			});
+		});
+
+		it('keeps a busy source alive and requeues the captured send until it settles', async () => {
+			const session = createMockSession({ id: 'session-1', toolType: 'codex' });
+			session.aiTabs[0].providerSessions = { 'claude-code': { agentSessionId: 'source' } };
+			session.aiTabs[0].state = 'busy';
+			useSessionStore.setState({ sessions: [session] });
+			window.maestro.process.getActiveProcesses = vi
+				.fn()
+				.mockResolvedValue([{ sessionId: 'session-1-ai-default-tab' }]);
+			const translate = vi.fn();
+			window.maestro.agents.translateProvider = translate;
+			const item = createQueuedItem({
+				turnSettings: { provider: 'codex', model: 'frozen', effort: 'high' },
+			});
+			expect(await useAgentStore.getState().processQueuedItem(session.id, item, defaultDeps)).toBe(
+				false
+			);
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.executionQueue).toEqual([item]);
+			expect(updated.aiTabs[0].state).toBe('busy');
+			expect(translate).not.toHaveBeenCalled();
+			expect(mockKill).not.toHaveBeenCalled();
+			expect(mockSpawn).not.toHaveBeenCalled();
+		});
+
+		it('drains a captured provider slot without reselecting a pinned tab', async () => {
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code',
+				customPath: '/bin/claude',
+			});
+			const tab = session.aiTabs[0];
+			tab.tabProvider = 'codex';
+			tab.agentSessionId = 'codex-live';
+			tab.providerSessions = { 'claude-code': { agentSessionId: 'claude-parked' } };
+			useSessionStore.setState({ sessions: [session] });
+			const item = createQueuedItem({
+				tabId: tab.id,
+				turnSettings: {
+					provider: 'claude-code',
+					model: 'opus',
+					effort: 'high',
+					runOn: { type: 'provider' },
+				},
+			});
+			await useAgentStore.getState().processQueuedItem(session.id, item, defaultDeps);
+			expect(mockSpawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					toolType: 'claude-code',
+					agentSessionId: 'claude-parked',
+					sessionCustomPath: '/bin/claude',
+					sessionCustomModel: 'opus',
+					runOnOverride: { type: 'provider' },
+				})
+			);
+			expect(useSessionStore.getState().sessions[0].aiTabs[0]).toMatchObject({
+				tabProvider: 'codex',
+				agentSessionId: 'codex-live',
+				turnProvider: 'claude-code',
+			});
+		});
 		it.each(['user', 'auto', undefined] as const)(
 			'preserves queued message and command provenance %s without promoting unknown callers',
 			async (querySource) => {
@@ -1326,6 +1500,50 @@ describe('agentStore', () => {
 					agentSessionId: 'existing-conv-id',
 				})
 			);
+		});
+
+		// An item another agent's `maestro-cli dispatch` queued carries the place in
+		// the consult chain its turn takes; the drain has to hand it to the spawn.
+		it('hands the spawn the consult chain a queued item carries, and none otherwise', async () => {
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'existing-conv-id',
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'idle',
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.getState().setSessions([session]);
+
+			await useAgentStore.getState().processQueuedItem(
+				'session-1',
+				createQueuedItem({
+					tabId: 'tab-1',
+					text: 'Take this over',
+					consultChain: { chainId: 'chain-a', depth: 2 },
+				}),
+				defaultDeps
+			);
+			await useAgentStore
+				.getState()
+				.processQueuedItem(
+					'session-1',
+					createQueuedItem({ id: 'item-2', tabId: 'tab-1', text: 'Carry on' }),
+					defaultDeps
+				);
+
+			expect(mockSpawn.mock.calls[0][0].consultChain).toEqual({ chainId: 'chain-a', depth: 2 });
+			expect(mockSpawn.mock.calls[1][0]).not.toHaveProperty('consultChain');
 		});
 
 		describe('New Session Message', () => {
@@ -1556,15 +1774,17 @@ describe('agentStore', () => {
 				expect.objectContaining({ id: 'session-1' }),
 				'tab-1',
 				undefined,
+				// The user queued it, so the mention is in no consult chain.
+				undefined,
 				undefined
 			);
 			// The local turn still runs: a trailing mention does not suppress it.
 			expect(mockSpawn).toHaveBeenCalledTimes(1);
 		});
 
-		// The routing the user PICKED when queuing must reach the drain: it re-plans
-		// from the text, which on its own would route the other way.
-		it("passes a queued item's picked mention routing to the dispatch", async () => {
+		// An item another agent's `maestro-cli dispatch` queued is in that agent's
+		// consult chain, and so is a mention inside it: main spends from the chain.
+		it('hands the consult chain and picked routing to queued mentions', async () => {
 			const session = createMockSession({
 				id: 'session-1',
 				toolType: 'claude-code',
@@ -1587,18 +1807,20 @@ describe('agentStore', () => {
 
 			const item = createQueuedItem({
 				tabId: 'tab-1',
-				text: 'fix it, then send the results to @Backend',
+				text: 'now ask @Backend to review',
 				crossAgentMention: true,
+				consultChain: { chainId: 'chain-a', depth: 1 },
 				mentionRouting: 'parallel',
 			});
 
 			await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
 
 			expect(dispatchCrossAgentMentionsForMessage).toHaveBeenCalledWith(
-				'fix it, then send the results to @Backend',
+				'now ask @Backend to review',
 				expect.objectContaining({ id: 'session-1' }),
 				'tab-1',
 				undefined,
+				{ chainId: 'chain-a', depth: 1 },
 				'parallel'
 			);
 		});
@@ -2170,6 +2392,7 @@ describe('agentStore', () => {
 						},
 					],
 				});
+				session.agentCommandsScope = agentCommandScope(session, session.aiTabs[0]);
 				useSessionStore.getState().setSessions([session]);
 
 				const item = createQueuedItem({
@@ -2560,6 +2783,189 @@ describe('agentStore', () => {
 					sessionCustomEffort: undefined,
 				})
 			);
+		});
+
+		// A turn on the Auto model: the tab takes it with a stamp, and the
+		// dispatch asks the router and launches on what it answers.
+		describe('an item on the Auto model', () => {
+			const ROUTED = {
+				tier: 'medium',
+				effort: 'low',
+				engine: { id: 'embedding-router', label: 'Embedding router', calibrated: false },
+				latencyMs: 20,
+			};
+			const STAMP = {
+				tier: 'medium',
+				effort: 'low',
+				engine: 'Embedding router',
+				calibrated: false,
+			};
+
+			/** Seed an agent, and mark its tab as running `item` the way every dispatch path does. */
+			function seedRunning(item: QueuedItem, overrides: Partial<Session> = {}): void {
+				const session = createMockSession({
+					id: 'session-1',
+					toolType: 'claude-code',
+					customModel: 'auto',
+					customEffort: 'high',
+					...overrides,
+				});
+				const tabId = session.aiTabs[0].id;
+				useSessionStore.getState().setSessions([
+					{
+						...session,
+						aiTabs: session.aiTabs.map((tab) =>
+							tab.id === tabId ? markTabRunningQueuedItem(tab, item, session) : tab
+						),
+					},
+				]);
+			}
+			const liveTab = () => useSessionStore.getState().sessions[0].aiTabs[0];
+
+			beforeEach(() => {
+				resetAutoTurnForTests();
+				mockSpawn.mockClear();
+				mockRouteTurn.mockReset();
+				mockRouteTurn.mockResolvedValue(ROUTED);
+			});
+
+			afterEach(() => {
+				mockRouteTurn.mockReset();
+				mockRouteTurn.mockResolvedValue(ROUTER_OFF);
+			});
+
+			it('asks the router about the message and launches on its tier and effort', async () => {
+				const item = createQueuedItem({
+					text: 'Rename the helper',
+					turnSettings: { model: 'auto', effort: 'high' },
+				});
+				seedRunning(item);
+				expect(liveTab().turnAuto).toEqual({ status: 'pending' });
+
+				await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
+
+				expect(mockRouteTurn).toHaveBeenCalledTimes(1);
+				expect(mockRouteTurn.mock.calls[0][0]).toMatchObject({
+					prompt: 'Rename the helper',
+					agentId: 'session-1',
+					tabId: 'default-tab',
+				});
+				const spawned = mockSpawn.mock.calls[0][0];
+				expect(spawned.sessionCustomModel).toBe('sonnet');
+				expect(spawned.sessionCustomEffort).toBe('low');
+				expect(spawned.runOnOverride).toEqual({ type: 'provider' });
+				expect(liveTab()).toMatchObject({
+					turnModel: 'sonnet',
+					turnEffort: 'low',
+					turnAuto: { status: 'routed', route: STAMP },
+				});
+			});
+
+			it('never hands the harness the word auto, whatever the router says', async () => {
+				mockRouteTurn.mockResolvedValue(ROUTER_OFF);
+				const item = createQueuedItem({ turnSettings: { model: 'auto', effort: 'high' } });
+				seedRunning(item);
+
+				await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
+
+				const spawned = mockSpawn.mock.calls[0][0];
+				expect(spawned.sessionCustomModel).toBeUndefined();
+				expect(spawned.sessionCustomEffort).toBe('high');
+				expect(liveTab().turnAuto?.status).toBe('router-off');
+			});
+
+			it('routed when it was queued: the drain asks nothing', async () => {
+				const item = createQueuedItem({
+					turnSettings: { model: 'auto', effort: 'high', route: STAMP },
+				});
+				seedRunning(item);
+				expect(liveTab().turnAuto?.status).toBe('routed');
+
+				await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
+
+				expect(mockRouteTurn).not.toHaveBeenCalled();
+				expect(mockSpawn.mock.calls[0][0]).toMatchObject({
+					sessionCustomModel: 'sonnet',
+					sessionCustomEffort: 'low',
+				});
+			});
+
+			it('stays on Auto when the agent has moved to a named model since it was queued', async () => {
+				const item = createQueuedItem({ turnSettings: { model: 'auto' } });
+				seedRunning(item, { customModel: 'opus' });
+
+				await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
+
+				expect(mockRouteTurn).toHaveBeenCalledTimes(1);
+				expect(mockSpawn.mock.calls[0][0].sessionCustomModel).toBe('sonnet');
+			});
+
+			it('an item queued on a named model is not routed by an agent now set to Auto', async () => {
+				const item = createQueuedItem({ turnSettings: { model: 'haiku', effort: 'low' } });
+				seedRunning(item);
+
+				await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
+
+				expect(mockRouteTurn).not.toHaveBeenCalled();
+				expect(mockSpawn.mock.calls[0][0]).toMatchObject({
+					sessionCustomModel: 'haiku',
+					sessionCustomEffort: 'low',
+				});
+				expect(liveTab().turnAuto).toBeUndefined();
+			});
+
+			it('launches a tier the agent maps to a source on that source', async () => {
+				const local = { type: 'source' as const, endpointId: 'ep-ollama', model: 'qwen3:latest' };
+				const item = createQueuedItem({ turnSettings: { model: 'auto' } });
+				seedRunning(item, { tierTargets: { medium: local } });
+
+				await useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps);
+
+				expect(mockSpawn.mock.calls[0][0]).toMatchObject({
+					sessionCustomModel: 'qwen3:latest',
+					runOnOverride: local,
+				});
+			});
+
+			it('does not launch when the tier names a target that cannot be used: the item is held', async () => {
+				const item = createQueuedItem({ turnSettings: { model: 'auto' } });
+				seedRunning(item, {
+					toolType: 'factory-droid',
+					tierTargets: { medium: { type: 'source', endpointId: 'ep-x', model: 'qwen3' } },
+				});
+				mockGetAgent.mockResolvedValue({ ...mockAgent, id: 'factory-droid' });
+
+				await expect(
+					useAgentStore.getState().processQueuedItem('session-1', item, defaultDeps)
+				).rejects.toThrow(/This agent's "medium" tier target/);
+
+				expect(mockSpawn).not.toHaveBeenCalled();
+				const session = useSessionStore.getState().sessions[0];
+				expect(session.executionQueue.map((queued) => queued.id)).toContain(item.id);
+				expect(session.executionQueue.find((queued) => queued.id === item.id)?.paused).toBe(true);
+			});
+
+			it('routes a command on the prompt it expands to', async () => {
+				const item = createQueuedItem({
+					type: 'command',
+					text: undefined,
+					command: '/review',
+					commandArgs: 'the auth module',
+					turnSettings: { model: 'auto' },
+				});
+				seedRunning(item);
+
+				await useAgentStore.getState().processQueuedItem('session-1', item, {
+					...defaultDeps,
+					customAICommands: [
+						{ id: 'c1', command: '/review', description: 'Review', prompt: 'Review $ARGUMENTS' },
+					] as any,
+				});
+
+				expect(mockRouteTurn).toHaveBeenCalledTimes(1);
+				expect(mockRouteTurn.mock.calls[0][0].prompt).toBe('Review the auth module');
+				expect(mockSpawn.mock.calls[0][0].sessionCustomModel).toBe('sonnet');
+			});
 		});
 
 		it('tracks pendingAICommandForSynopsis for command items', async () => {

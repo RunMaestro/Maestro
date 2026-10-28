@@ -6,6 +6,7 @@
 import { withMaestroClient, resolveSessionId } from '../services/maestro-client';
 import { resolveAgentId } from '../services/storage';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
+import { ExitCode, exitWith, exitCodeForError } from '../exit-codes';
 import { exitIfMaestroNotRunning } from '../services/session-command';
 
 interface OpenTerminalOptions {
@@ -27,7 +28,7 @@ export async function openTerminal(options: OpenTerminalOptions): Promise<void> 
 			sessionId = resolveAgentId(options.agent);
 		} catch (error) {
 			console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
-			process.exit(1);
+			exitWith(exitCodeForError(error));
 		}
 	} else {
 		sessionId = resolveSessionId({});
@@ -77,13 +78,13 @@ export async function openTerminal(options: OpenTerminalOptions): Promise<void> 
 			const error = result.error || 'Failed to open terminal tab';
 			if (options.json) console.log(JSON.stringify({ success: false, error }));
 			else console.error(`Error: ${error}`);
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 	} catch (error) {
 		exitIfMaestroNotRunning(error, { json: options.json });
 		const msg = error instanceof Error ? error.message : String(error);
 		if (options.json) console.log(JSON.stringify({ success: false, error: msg }));
 		else console.error(`Error: ${msg}`);
-		process.exit(1);
+		exitWith(exitCodeForError(error));
 	}
 }

@@ -51,9 +51,10 @@ import { sentryUserForInstallation } from '../shared/sentryContext';
 import { v8OomFingerprint } from '../shared/sentryGrouping';
 import { getBuildProvenance } from './utils/build-provenance';
 import {
+	disposeAllGlobalHotkeys,
+	getGlobalHotkeyRegistry,
 	initGlobalHotkey,
 	setGlobalShowHotkey,
-	disposeGlobalHotkey,
 } from './global-hotkey-manager';
 import { CueEngine } from './cue/cue-engine';
 import { createCueSupervisorHooks } from './cue/cue-first-party';
@@ -149,6 +150,7 @@ import { executeCueShell } from './cue/cue-shell-executor';
 import { executeCueCli, resolveMaestroCliScriptPath } from './cue/cue-cli-executor';
 import { spawnAgent } from '../cli/services/agent-spawner';
 import { prepareMaestroSystemPromptCli } from '../cli/services/system-prompt';
+import { localSystemOneAccess } from './utils/maestro-system-prompt';
 import { getSessionIdsBusyWithCli } from '../shared/cli-activity';
 import { isAgentBusy } from './utils/agent-busy';
 import {
@@ -156,6 +158,7 @@ import {
 	onHeadlessAgentActivityChange,
 } from './utils/headless-agent-activity';
 import { createPluginHeadlessAgentRunner } from './plugins/plugin-headless-agent-runner';
+import { noteAutoSessionLaunch, resolveAgentAutoTurn } from './local-models/auto-turn';
 import { generateTabName } from './ipc/handlers/tabNaming';
 import type { SessionInfo } from '../shared/types';
 import { executeCueNotify } from './cue/cue-notify-executor';
@@ -176,6 +179,7 @@ import { powerManager } from './power-manager';
 import { getHistoryManager } from './history-manager';
 import { initDispatchCallbacks } from './dispatch-callbacks';
 import { MAX_ENTRIES_PER_SESSION } from '../shared/history';
+import { parseHarnessTierDefaults } from '../shared/modelTiers';
 import { DEFAULT_CUE_HISTORY_RETENTION_DAYS } from '../shared/cue/retention';
 import {
 	isEncoreFeatureEnabled,
@@ -209,6 +213,22 @@ import {
 import { setupIpcHandlers } from './ipc/bootstrap';
 import { stopCoworkingBridge } from './coworking/coworking-bridge';
 import { initializeStatsDB, closeStatsDB } from './stats';
+import { evaluateCueGate } from './local-models/cue-gate';
+import { scoreCueInjectionText } from './local-models/cue-injection-screen';
+import { closeEmbeddingStore } from './local-models/embedding-store';
+import { refreshModelRouting, startModelRouting } from './local-models/route-turn';
+import { refreshSemanticIndexer, stopSemanticIndexer } from './local-models/semantic-indexer';
+import { startSemanticIndex } from './local-models/semantic-index-startup';
+import { configureTabCleanup } from './local-models/tab-cleanup';
+import { configureTokenProxy, syncTokenProxy } from './local-models/proxy/service';
+import { configureModelServer, stopModelServerNow } from './local-models/server/supervisor';
+import { configureAgentSystemOne } from './local-models/system-one/agent-service';
+import { configureSystemOne } from './local-models/system-one/service';
+import { configureAgentRunOn } from './local-models/run-on';
+import { configureRunOnTest } from './local-models/run-on-test';
+import { configureHarnessTierOptions } from './local-models/tier-options';
+import { getConfiguredLocalModelEndpoints } from './local-models/endpoint-service';
+import { modelServerForHarness } from './local-models/server/server-endpoint';
 import { createSshRemoteStoreAdapter } from './utils/ssh-remote-resolver';
 import { stopSessionCleanup } from './group-chat/group-chat-moderator';
 import { initializePrompts, getPrompt, savePrompt } from './prompt-manager';
@@ -254,6 +274,18 @@ import {
 	claimDataDirForDesktop,
 	type QuitHandler,
 } from './app-lifecycle';
+// A Cappella's hidden audio host window (created lazily on the first voice
+// session, closed here when the Encore Feature is switched off).
+import { getVoiceSessionService } from './acappella';
+import type { VoiceWidgetState } from '../shared/floatingWidgets';
+import { closeAcappellaAudioHostWindow } from './acappella/audio-host-window';
+import {
+	shutdownACappellaForDisable,
+	stopVoiceSessionForWindow,
+	syncACappellaAfterExternalSettingsChange,
+} from './ipc/handlers/acappella';
+import { migrateLegacyLocalModelStorage } from './local-models/storage-migration';
+import { hydrateUserLocalModels } from './local-models/user-models';
 // Multi-window registry (single source of truth for window<->session ownership)
 import { WindowRegistry } from './window-registry';
 import { createQuickChatController, closeQuickChatWindow } from './quick-chat';
@@ -261,7 +293,10 @@ import {
 	createFloatingWidgetWindow,
 	type FloatingWidgetController,
 } from './floating-widgets/floating-widget-window';
-import { createFloatingWidgetRelay } from './floating-widgets/floating-widget-relay';
+import {
+	createFloatingWidgetRelay,
+	type FloatingWidgetRelay,
+} from './floating-widgets/floating-widget-relay';
 import { restoreMediaWindowAtLaunch } from './floating-widgets/media-window-launch';
 import {
 	FLOATING_WIDGET_IDS,
@@ -687,6 +722,18 @@ const settingsWatcher = createSettingsWatcher({
 		// clear is unconditional because the previous value is not available
 		// here, and the only cost of an unnecessary one is a single `which`.
 		clearGhCache();
+		// `maestro-cli models assign semantic-search ...` and `settings set
+		// semanticIndexCue ...` edit the file directly. A no-op unless one of
+		// those two actually moved.
+		refreshSemanticIndexer();
+		// `maestro-cli models assign model-routing ...` moves the embedding router
+		// to another model, or off. A no-op unless that assignment moved.
+		refreshModelRouting();
+		// `maestro-cli settings set acappella...` and `voice wake-phrase` edit the
+		// A Cappella blob in the file. The always-on wake word and the voice
+		// hotkeys follow the store's change event, which an outside write never
+		// fires, so they are re-read here.
+		syncACappellaAfterExternalSettingsChange();
 	},
 });
 
@@ -749,6 +796,17 @@ const cadenzaHudDeps = {
 	windowRegistry,
 };
 
+// Same shape, different boot query: A Cappella's hidden audio host loads the
+// renderer bundle with `?acappellaAudio`. Nothing is created here - the window
+// is built on the first voice session start.
+const acappellaAudioHostDeps = {
+	isDevelopment,
+	preloadPath,
+	rendererProductionUrl,
+	devServerUrl,
+	windowRegistry,
+};
+
 // See src/main/cadenza-bridge/ and src/main/plugin-host-view-bridge/ for what
 // each of these does (Phase 5 refactoring).
 const { deliverCadenza } = createCadenzaDelivery({
@@ -772,6 +830,22 @@ registerCadenzaIpcHandlers({ getMainWindow: () => mainWindow, settingsStore: sto
 // plugins hook of the Encore lifecycle below.)
 store.onDidChange('encoreFeatures', (encoreFeatures) => {
 	if (!resolveEncoreFeatures(encoreFeatures).concerto) closeCadenzaHudWindow();
+	// Switching A Cappella off releases the microphone immediately rather than at
+	// quit: a hidden window holding an open capture device is exactly the thing a
+	// user turning the feature off is asking to be rid of.
+	if (!resolveEncoreFeatures(encoreFeatures).aCappella) {
+		floatingWidgetControllers['acappella-voice'].close();
+		// The full stand-down: session, audio bridge, inference pipeline, Bonjour
+		// advert, and every connected device. Awaited only for its own ordering -
+		// the window is closed after it, because the bridge stops capture through
+		// the window it is about to lose, and closing first would leave the pipeline
+		// counting frames from a device nobody owns any more.
+		void shutdownACappellaForDisable().finally(() => closeAcappellaAudioHostWindow());
+	}
+	if (!resolveEncoreFeatures(encoreFeatures).plugins) {
+		pluginSandboxHost?.stopAll();
+		pluginGroupingRegistry?.clearAll();
+	}
 	// A switched-off Throughput Gauge leaves no widget window behind.
 	if (!resolveEncoreFeatures(encoreFeatures).throughputGauge) {
 		floatingWidgetControllers['throughput-gauge'].close();
@@ -850,6 +924,9 @@ const quickChatController = createQuickChatController({
 			get: () => windowStateStore.get('quickChat'),
 			set: (bounds) => windowStateStore.set('quickChat', bounds),
 		},
+		// A voice session bound to Quick Chat has this window as its only surface,
+		// so putting the window away ends it.
+		onHidden: (windowId) => void stopVoiceSessionForWindow(windowId, 'hidden'),
 	},
 	getMainWindow: () => mainWindow,
 	getWindowForSession: resolveWindowForSession,
@@ -882,20 +959,55 @@ const floatingWidgetControllers = Object.fromEntries(
 			isEnabled:
 				id === 'throughput-gauge'
 					? () => resolveEncoreFeatures(store.get('encoreFeatures')).throughputGauge
-					: undefined,
+					: id === 'acappella-voice'
+						? () => resolveEncoreFeatures(store.get('encoreFeatures')).aCappella
+						: undefined,
 		}),
 	])
 ) as Record<FloatingWidgetId, FloatingWidgetController>;
 
-const floatingWidgetRelay = createFloatingWidgetRelay({
+const floatingWidgetRelay: FloatingWidgetRelay = createFloatingWidgetRelay({
 	controllers: floatingWidgetControllers,
 	// The gauge's rate engine runs in the primary app window; the media player
 	// owns its media element in its own window.
-	getAuthorityWindow: (id) =>
-		id === 'throughput-gauge'
-			? (windowRegistry.getPrimary()?.browserWindow ?? mainWindow)
-			: floatingWidgetControllers[id].getWindow(),
+	getAuthorityWindow: floatingWidgetRelayAuthority,
+	canPublishState: (id, senderId) =>
+		id !== 'acappella-voice' || floatingWidgetRelayAuthority(id)?.webContents.id === senderId,
+	canControlVisibility: (id, senderId) => {
+		if (id !== 'acappella-voice') return true;
+		const published = floatingWidgetRelay.getState(id) as VoiceWidgetState | null;
+		const ownerId = published?.session.windowId;
+		const owner = (ownerId ? windowRegistry.get(ownerId) : null) ?? windowRegistry.getPrimary();
+		return owner?.browserWindow.webContents.id === senderId;
+	},
 	getAllWindows: () => BrowserWindow.getAllWindows(),
+});
+
+function floatingWidgetRelayAuthority(id: FloatingWidgetId): BrowserWindow | null {
+	if (id === 'acappella-voice') {
+		// The protocol lives in main; HUD preferences and focus belong to the
+		// originating app window. Retain that owner after the service goes idle.
+		const published = floatingWidgetRelay.getState(id) as VoiceWidgetState | null;
+		const ownerId = getVoiceSessionService()?.getSnapshot().windowId ?? published?.session.windowId;
+		return (
+			(ownerId ? windowRegistry.get(ownerId)?.browserWindow : null) ??
+			windowRegistry.getPrimary()?.browserWindow ??
+			mainWindow
+		);
+	}
+	return id === 'throughput-gauge'
+		? (windowRegistry.getPrimary()?.browserWindow ?? mainWindow)
+		: floatingWidgetControllers[id].getWindow();
+}
+
+// Closing the originating app window also retires its HUD. The existing
+// registry bootstrap stops the voice session and releases its microphone.
+windowRegistry.onChange((change) => {
+	if (change.type !== 'removed') return;
+	const published = floatingWidgetRelay.getState('acappella-voice') as VoiceWidgetState | null;
+	if (published?.session.windowId === change.windowId) {
+		floatingWidgetControllers['acappella-voice'].close();
+	}
 });
 
 function closeFloatingWidgetWindows(): void {
@@ -932,6 +1044,14 @@ const createWebServer = createWebServerFactory({
 		requireEncoreFeature(store, 'maestroCue', CUE_DISABLED_MESSAGE);
 		if (!cueEngine) return false;
 		return cueEngine.setSubscriptionEnabled(subscriptionId, enabled);
+	},
+	setCueSubscriptionGate: async (subscriptionId, gate) => {
+		if (!cueEngine) return { ok: false, error: 'The Cue engine is not running.' };
+		return cueEngine.setSubscriptionGate(subscriptionId, gate);
+	},
+	setCueSubscriptionInjectionScreen: async (subscriptionId, setting) => {
+		if (!cueEngine) return { ok: false, error: 'The Cue engine is not running.' };
+		return cueEngine.setSubscriptionInjectionScreen(subscriptionId, setting);
 	},
 	getCueActivityLog: () => {
 		if (!cueEngine) return [];
@@ -1524,6 +1644,8 @@ app
 			sshStore: createSshRemoteStoreAdapter(store),
 			getAgentConfigValues: (toolType) => getAgentConfigForAgent(toolType),
 			onLog: cueRunLog,
+			getHarnessTierDefaults: () => parseHarnessTierDefaults(store.get('harnessTierDefaults')),
+			resolveAutoTurn: resolveAgentAutoTurn,
 			getConductorProfile: () => (store.get('conductorProfile', '') as string) || undefined,
 			onNotify: (params) => executeCueNotify({ ...params, mainWindow }),
 			onAutoRun: (params) => {
@@ -1553,6 +1675,25 @@ app
 
 		// Initialize Cue Engine for event-driven automation
 		const cueHealthToastAt = new Map<string, number>();
+		const cueGateToastAt = new Map<string, number>();
+		const cueScreenToastAt = new Map<string, number>();
+		const cueBlockToastAt = new Map<string, number>();
+		const CUE_HEALTH_NOTICE_INTERVAL_MS = 5 * DURATION_MS.minute;
+		const CUE_GATE_NOTICE_INTERVAL_MS = 30 * DURATION_MS.minute;
+		const CUE_BLOCK_NOTICE_INTERVAL_MS = 5 * DURATION_MS.minute;
+		/**
+		 * Whether a coalesced Cue notice for `key` is due. Every event is still
+		 * logged; this only keeps one stuck subscription from stacking a sticky
+		 * notice per event. Entries older than the interval are dropped first,
+		 * so the map stays bounded over a session that runs for days.
+		 */
+		const cueNoticeDue = (seen: Map<string, number>, key: string, intervalMs: number): boolean => {
+			const now = Date.now();
+			for (const [id, at] of seen) {
+				if (now - at >= intervalMs) seen.delete(id);
+			}
+			return !seen.has(key);
+		};
 		cueEngine = new CueEngine({
 			hasStoredSession: (id) => {
 				const stored = getSessionsStore().get('sessions', []);
@@ -1575,13 +1716,9 @@ app
 				logger.cue(message, 'Cue', data);
 				const payload = data as import('../shared/cue-log-types').CueLogPayload | undefined;
 				if (payload?.type === 'triggerHealthWarning') {
-					const now = Date.now();
-					for (const [id, at] of cueHealthToastAt) {
-						if (now - at >= 5 * DURATION_MS.minute) cueHealthToastAt.delete(id);
-					}
 					// Reach the always-mounted toast channel, even with Cue closed.
 					// Log every warning, but coalesce sticky notices per agent for 5m.
-					if (!cueHealthToastAt.has(payload.sessionId)) {
+					if (cueNoticeDue(cueHealthToastAt, payload.sessionId, CUE_HEALTH_NOTICE_INTERVAL_MS)) {
 						const delivered = emitCueNotifyToast(mainWindow, {
 							agentId: payload.sessionId,
 							title: 'Cue trigger health',
@@ -1589,7 +1726,62 @@ app
 							sticky: true,
 							color: 'orange',
 						});
-						if (delivered) cueHealthToastAt.set(payload.sessionId, now);
+						if (delivered) cueHealthToastAt.set(payload.sessionId, Date.now());
+					}
+				}
+				if (payload?.type === 'gateUnavailable') {
+					// A gate that could not be checked fails open by default, so
+					// this notice is the only thing that tells the user their gate
+					// is not saving the turns it was written to save (or, with
+					// `gate_on_unavailable: skip`, that events are being dropped).
+					// Every one is logged; the sticky notice is coalesced per
+					// agent, on a longer window than trigger health because a
+					// gate with no model fires on every event until it is fixed.
+					if (cueNoticeDue(cueGateToastAt, payload.sessionId, CUE_GATE_NOTICE_INTERVAL_MS)) {
+						const delivered = emitCueNotifyToast(mainWindow, {
+							agentId: payload.sessionId,
+							title: payload.ran ? 'Cue gate not checked' : 'Cue gate skipped a run',
+							message: payload.message,
+							sticky: true,
+							color: 'orange',
+						});
+						if (delivered) cueGateToastAt.set(payload.sessionId, Date.now());
+					}
+				}
+				if (payload?.type === 'injectionScreenUnavailable') {
+					// The subscription asked for the prompt-injection screen, it
+					// could not run, and the agent turn started anyway (a prompt
+					// fails open). Without this notice, text the user wanted
+					// screened reaches an agent with nothing saying so. Coalesced
+					// like the gate: it repeats on every event until it is fixed.
+					if (cueNoticeDue(cueScreenToastAt, payload.sessionId, CUE_GATE_NOTICE_INTERVAL_MS)) {
+						const delivered = emitCueNotifyToast(mainWindow, {
+							agentId: payload.sessionId,
+							title: 'Cue ran without the injection screen',
+							message: payload.message,
+							sticky: true,
+							color: 'orange',
+						});
+						if (delivered) cueScreenToastAt.set(payload.sessionId, Date.now());
+					}
+				}
+				if (payload?.type === 'injectionBlocked') {
+					// A refused run is a security decision the user has to
+					// acknowledge, so the notice is red and sticky. Every block
+					// is a row in the activity log; the notice is coalesced per
+					// subscription so a burst of hostile comments cannot bury
+					// the screen under one notice each.
+					const key = `${payload.sessionId}\u0000${payload.subscriptionName}`;
+					if (cueNoticeDue(cueBlockToastAt, key, CUE_BLOCK_NOTICE_INTERVAL_MS)) {
+						const delivered = emitCueNotifyToast(mainWindow, {
+							agentId: payload.sessionId,
+							sourceAgent: payload.sessionName,
+							title: 'Cue blocked a run',
+							message: `"${payload.subscriptionName}" was NOT started. ${payload.reason} Review the event in the Cue activity log.`,
+							sticky: true,
+							color: 'red',
+						});
+						if (delivered) cueBlockToastAt.set(key, Date.now());
 					}
 				}
 				// Push activity updates to renderer (and web-desktop bridge clients)
@@ -1614,6 +1806,13 @@ app
 			// subscribed plugins (events:subscribe). Metadata-only; null-safe.
 			emitPluginEvent: (event) => pluginEventBus?.emit(event),
 			getUsageStatsEnabled: () => resolveEncoreFeatures(store.get('encoreFeatures')).usageStats,
+			// A subscription's `gate` is answered by the `cue-gate` Local Models
+			// task. Passed in rather than imported by the engine, so the
+			// standalone runner never loads the model stack.
+			evaluateGate: evaluateCueGate,
+			// Untrusted text a subscription substitutes is scored by the
+			// `injection-screen` Local Models task, injected the same way.
+			scoreInjection: scoreCueInjectionText,
 			// How far back the engine-start prune keeps cue_events. Read on every
 			// start (not captured once) so changing the setting takes effect the
 			// next time Cue is enabled, without an app restart.
@@ -2760,7 +2959,15 @@ app
 			hasPluginTools: () => (pluginManager?.getContributions().tools.length ?? 0) > 0,
 			spawn: spawnAgent,
 			recordRelayOrigin: markRelaySession,
-			prepareSystemPrompt: prepareMaestroSystemPromptCli,
+			// This builder runs in the main process here, so it asks the System One
+			// service directly instead of the WS bridge the CLI goes through, and it
+			// reads the agent list from the store instead of the sessions file.
+			prepareSystemPrompt: (agent, consultChain) =>
+				prepareMaestroSystemPromptCli(agent, {
+					readSystemOneAccess: localSystemOneAccess,
+					readAgents: () => sessionsStore.get('sessions', []) as SessionInfo[],
+					consultChain,
+				}),
 			issueRunToken: (agentId, ttlMs, receiptToolId, unattended) =>
 				pluginToolRunIdentity.issue(agentId, ttlMs, receiptToolId, unattended),
 			getRunReceipts: (token) => pluginToolRunIdentity.getReceipts(token),
@@ -2772,6 +2979,8 @@ app
 					`agents.send -> agent ${agentId} providerSession=${resumed ? 'resume' : 'fresh'}`,
 					'[PluginAudit]'
 				),
+			resolveAutoTurn: resolveAgentAutoTurn,
+			noteAutoSessionLaunch,
 		});
 		onHeadlessAgentActivityChange(() => {
 			safeSend('process:headlessActivity', getHeadlessAgentActivity());
@@ -3651,6 +3860,27 @@ app
 			logger.warn('Continuing without stats - usage tracking will be unavailable', 'Startup');
 		}
 
+		// Move model and runtime installs out of the legacy A Cappella roots before
+		// any IPC handler can read the stores. Runs whether or not voice is enabled:
+		// the stores belong to the core Local Models service. A failure leaves the
+		// installs where they were (nothing is deleted), so startup continues.
+		try {
+			await migrateLegacyLocalModelStorage();
+		} catch (error) {
+			void captureException(error);
+			logger.error(`Local model storage migration failed: ${error}`, 'Migration');
+		}
+
+		// Put the models the user added from Hugging Face into the catalog before
+		// any handler lists, serves or loads one: every catalog lookup is
+		// synchronous. A file that cannot be read leaves the curated catalog alone.
+		try {
+			hydrateUserLocalModels();
+		} catch (error) {
+			void captureException(error);
+			logger.error(`Could not read the user's added models: ${error}`, 'Startup');
+		}
+
 		// Set up IPC handlers
 		logger.debug('Setting up IPC handlers', 'Startup');
 		setupIpcHandlers({
@@ -3687,6 +3917,7 @@ app
 			bootstrapStore,
 			safeSend,
 			windowRegistry,
+			acappellaAudioHostDeps,
 			windowManager,
 			createWebServer,
 			wakatimeManager,
@@ -3837,21 +4068,20 @@ app
 		// any) and re-register live when the setting changes from any source
 		// (settings UI, CLI, external file edit).
 		initGlobalHotkey(() => mainWindow);
+		// One failure path for every id, so a voice hotkey the OS refused reports
+		// itself the same way the "show Maestro" one always has.
+		getGlobalHotkeyRegistry().onFailure((status) => {
+			// intentionally not bridged: window-specific
+			if (mainWindow && isWebContentsAvailable(mainWindow)) {
+				mainWindow.webContents.send('globalHotkey:registrationFailed', status);
+			}
+		});
 		const initialHotkey = store.get('globalShowHotkey', []) as string[];
 		if (Array.isArray(initialHotkey) && initialHotkey.length > 0) {
-			const ok = setGlobalShowHotkey(initialHotkey);
-			// intentionally not bridged: window-specific
-			if (!ok && mainWindow && isWebContentsAvailable(mainWindow)) {
-				mainWindow.webContents.send('globalHotkey:registrationFailed', initialHotkey);
-			}
+			setGlobalShowHotkey(initialHotkey);
 		}
 		store.onDidChange('globalShowHotkey', (value) => {
-			const keys = Array.isArray(value) ? (value as string[]) : [];
-			const ok = setGlobalShowHotkey(keys);
-			// intentionally not bridged: window-specific
-			if (!ok && mainWindow && isWebContentsAvailable(mainWindow)) {
-				mainWindow.webContents.send('globalHotkey:registrationFailed', keys);
-			}
+			setGlobalShowHotkey(Array.isArray(value) ? (value as string[]) : []);
 		});
 		// Quick Chat registers its own hotkey through the same manager.
 		quickChatController.init();
@@ -3864,7 +4094,7 @@ app
 		);
 		// Electron auto-unregisters globalShortcuts on quit, but be explicit so the
 		// behavior survives any future change to that policy.
-		app.on('will-quit', disposeGlobalHotkey);
+		app.on('will-quit', disposeAllGlobalHotkeys);
 		// Release parquet file descriptors (and their cached scans) on the way
 		// out. The idle reaper would get to them eventually, but a preview tab
 		// left open otherwise holds a descriptor until the process dies.
@@ -3888,6 +4118,93 @@ app
 
 		// Start settings file watcher for external changes (e.g., maestro-cli settings set)
 		settingsWatcher.start();
+
+		// The semantic index's background indexer. Free to start: it arms its
+		// first pass for a minute from now, and only when Semantic search is
+		// assigned a source.
+		startSemanticIndex({
+			settingsStore: store,
+			sessionsStore,
+			historyManager: getHistoryManager(),
+		});
+
+		// Model routing notes which router is assigned and follows the setting.
+		// It loads nothing here: the embedding router is warmed on a change of
+		// assignment, never at a start.
+		startModelRouting(store);
+
+		// Tab cleanup suggestions read the tabs from the sessions store and ask
+		// the process manager which of them are running a turn. Wiring it reads
+		// nothing: the task is off until it is assigned a source.
+		configureTabCleanup({
+			sessions: () =>
+				(sessionsStore.get('sessions', []) as unknown as Array<Record<string, unknown>>).filter(
+					(record) => typeof record === 'object' && record !== null
+				),
+			processManager: () => processManager,
+		});
+
+		// The token proxy listens only while a local agent's gateway points at
+		// it. Wiring it reads one small file at most, and nothing at all for a
+		// user who has never asked for the proxy's address. After this first
+		// pass it is kept in step by every write of the sessions store.
+		configureTokenProxy({
+			sessions: () =>
+				(sessionsStore.get('sessions', []) as unknown as Array<Record<string, unknown>>).filter(
+					(record) => typeof record === 'object' && record !== null
+				),
+			safeSend,
+		});
+		void syncTokenProxy();
+
+		// The model server never starts itself: only Start, or a feature the user
+		// turned on that needs it. Wiring it starts nothing; app quit stops it.
+		configureModelServer({ safeSend });
+
+		// System One is off until the user chooses an engine. Wiring it reads no
+		// key and sends nothing: only a task assigned to it, or Test, asks.
+		configureSystemOne({ safeSend });
+
+		// An agent's own System One requests (`maestro-cli s1`) read one thing
+		// from the stores: whether that agent is switched off in its settings.
+		// Wiring it asks nothing; a request is answered only when one arrives.
+		configureAgentSystemOne({
+			sessions: () =>
+				(sessionsStore.get('sessions', []) as unknown as Array<Record<string, unknown>>).filter(
+					(record) => typeof record === 'object' && record !== null
+				),
+		});
+
+		// An agent's Run on target is resolved at each launch from these stores.
+		// Wiring it reads nothing and starts nothing: the model server starts
+		// only for a launch whose agent the user pointed at it.
+		configureAgentRunOn({
+			sessions: () =>
+				(sessionsStore.get('sessions', []) as unknown as Array<Record<string, unknown>>).filter(
+					(record) => typeof record === 'object' && record !== null
+				),
+			endpoints: getConfiguredLocalModelEndpoints,
+			shellEnvVars: () => store.get('shellEnvVars', {}) as Record<string, string>,
+			modelServer: modelServerForHarness,
+		});
+		// The Run on Test button and `maestro-cli agent test-run-on`. Wiring it
+		// spawns nothing: a test runs only when a person asks for one.
+		configureRunOnTest({
+			agentConfig: getAgentConfigForAgent,
+			detectedAgentPath: async (toolType) => {
+				const detected = await agentDetector?.getAgent(toolType);
+				return detected?.available ? detected.path : undefined;
+			},
+			sshStore: () => createSshRemoteStoreAdapter(store),
+			shellEnvVars: () => store.get('shellEnvVars', {}) as Record<string, string>,
+		});
+		// The Tier defaults table and `maestro-cli models tiers`. Wiring it asks
+		// no harness and no source: a listing runs only when one of them asks.
+		configureHarnessTierOptions({
+			installed: async (harness) => (await agentDetector?.getAgent(harness))?.available === true,
+			catalog: async (harness, forceRefresh) =>
+				(await agentDetector?.discoverModelCatalog(harness, forceRefresh)) ?? [],
+		});
 
 		// Start watching for system timezone changes (laptop crossing zones).
 		timeZoneWatcher.start();
@@ -3998,6 +4315,12 @@ quitHandler = createQuitHandler({
 	getHistoryManager,
 	tunnelManager,
 	closeStatsDB,
+	stopModelServer: stopModelServerNow,
+	// The indexer first, so no batch is mid-write when the file is released.
+	closeEmbeddingStore: () => {
+		stopSemanticIndexer();
+		closeEmbeddingStore();
+	},
 	stopCliWatcher: () => {
 		cliWatcher.stop();
 		// Tear down the discovery-file watchdog so it doesn't try to rewrite

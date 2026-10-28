@@ -22,6 +22,19 @@ import type { ClaudeTokenMode } from '../../shared/claudeTokenMode';
 import { prepareGroupChatSpawn } from '../../shared/maestro-lib/groupchat/spawn';
 import { applySystemPromptDelivery } from '../utils/system-prompt-delivery';
 import { steeringSocketPathFor } from '../process-manager/steering-client';
+import { resolveSshLaunchTarget } from '../../shared/maestro-lib/launch/ssh-remote-resolver';
+import { applyAgentGatewayToSpawn } from '../local-models/proxy/service';
+import { applyAgentRunOnToSpawn, logRunOnLaunch, storedAgentRunOn } from '../local-models/run-on';
+import { runOnHarnessMode } from '../../shared/local-models/run-on';
+
+/** The remote's display name for a refusal message; its id when it cannot be resolved. */
+function sshRemoteName(
+	store: SshRemoteSettingsStore | null | undefined,
+	config: AgentSshRemoteConfig
+): string {
+	const target = resolveSshLaunchTarget(store ?? undefined, config);
+	return target.kind === 'remote' ? target.remote.name : (config.remoteId ?? 'unknown');
+}
 
 export interface SpawnGroupChatAgentConfig {
 	/** Stable session id for the process manager */
@@ -40,6 +53,15 @@ export interface SpawnGroupChatAgentConfig {
 	prompt?: string;
 	/** Resolved custom env vars to inject */
 	customEnvVars?: Record<string, string>;
+	/**
+	 * The Left Bar agent this process runs AS, when there is one (a participant,
+	 * a cross-agent consult target). Its Run on target, or failing that its Local
+	 * Models gateway, is applied to the spawn, so the turn runs on the same model
+	 * by the same route as that agent's own tab. Omit for a process that is
+	 * nobody's agent (the moderator, synthesis): both are per-agent settings and
+	 * there is none to read.
+	 */
+	maestroAgentId?: string;
 	/** Agent config values (used for context window resolution) */
 	agentConfigValues?: Record<string, any>;
 	/** SSH remote config (from chat moderator or matching session); null/undefined = local */
@@ -108,6 +130,7 @@ export async function spawnGroupChatAgent(
 	config: SpawnGroupChatAgentConfig
 ): Promise<SpawnGroupChatAgentResult> {
 	const { processManager, sshStore } = config;
+	const { sessionId, agentId, agent, sshRemoteConfig } = config;
 
 	// System prompt first, so every later step (maestro-p rewrite, SSH wrap,
 	// Windows stdin) sees the final args and prompt.
@@ -122,6 +145,45 @@ export async function spawnGroupChatAgent(
 		agentId: config.agentId,
 		logContext: '[GroupChat:Spawn]',
 	});
+	// Where the agent's model runs, applied before anything below reads the
+	// arguments or the env, so the local, maestro-p and SSH paths all carry it:
+	// its Run on target first, and its Local Models gateway only when it has
+	// none (a Run on target takes the gateway's place, since the gateway routes
+	// to the provider). Either one that cannot be used (a source that is down, a
+	// loopback address for a remote host, a proxy that will not start) refuses
+	// the turn by name rather than running it somewhere the user did not choose.
+	let args = delivered.args;
+	let customEnvVars = config.customEnvVars;
+	if (config.maestroAgentId) {
+		const remote = sshRemoteConfig?.enabled
+			? { name: sshRemoteName(sshStore, sshRemoteConfig) }
+			: null;
+		const runOn = await applyAgentRunOnToSpawn({
+			agentId: config.maestroAgentId,
+			toolType: agentId,
+			agent,
+			args,
+			customEnvVars,
+			remote,
+		});
+		if (!runOn.ok) throw new Error(runOn.error);
+		args = runOn.args;
+		customEnvVars = runOn.customEnvVars;
+		if (runOn.runOn) {
+			logRunOnLaunch('[GroupChat:Spawn]', { sessionId, toolType: agentId }, runOn.runOn);
+		} else {
+			const gateway = await applyAgentGatewayToSpawn({
+				agentId: config.maestroAgentId,
+				toolType: agentId,
+				args,
+				customEnvVars,
+				remote,
+			});
+			if (!gateway.ok) throw new Error(gateway.error);
+			args = gateway.args;
+			customEnvVars = gateway.customEnvVars;
+		}
+	}
 
 	const prepared = await prepareGroupChatSpawn(
 		{
@@ -129,13 +191,17 @@ export async function spawnGroupChatAgent(
 			providerId: config.agentId,
 			agent: config.agent,
 			command: config.command,
-			args: delivered.args,
+			args,
 			cwd: config.cwd,
 			prompt: delivered.prompt,
-			customEnvVars: config.customEnvVars,
+			customEnvVars,
 			agentConfigValues: config.agentConfigValues,
 			sshRemoteConfig: config.sshRemoteConfig,
-			tokenMode: config.tokenMode,
+			tokenMode: runOnHarnessMode(
+				config.maestroAgentId ? storedAgentRunOn(config.maestroAgentId) : undefined,
+				config.tokenMode ?? 'api',
+				'api'
+			),
 			maestroPPath: config.maestroPPath,
 			readOnlyMode: config.readOnlyMode,
 			debugLabel: config.debugLabel,

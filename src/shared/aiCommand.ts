@@ -50,6 +50,15 @@ export interface AiCommandHost {
  */
 export const AI_COMMAND_HISTORY_LIMIT = 8;
 
+/**
+ * How many of those commands a Local Models source is shown.
+ *
+ * A local model reads a few thousand tokens in total, and a follow-up almost
+ * always refines the newest command, so the older half of the history is the
+ * first thing to give up.
+ */
+export const AI_COMMAND_LOCAL_HISTORY_LIMIT = 4;
+
 /** Longest command line carried into the history block, before ellipsis. */
 const MAX_HISTORY_COMMAND_LENGTH = 400;
 
@@ -69,7 +78,7 @@ const MAX_HISTORY_REQUEST_LENGTH = 200;
  * looks like a new list item, letting the user's own text forge entries in the
  * block above their request.
  */
-function flattenForHistory(value: string, maxLength: number): string {
+function flattenToLine(value: string, maxLength: number): string {
 	const flat = value.replace(/\s+/g, ' ').trim();
 	return flat.length > maxLength ? `${flat.slice(0, maxLength)}...` : flat;
 }
@@ -150,7 +159,7 @@ export function formatRecentCommands(entries: readonly AiCommandHistoryEntry[]):
 	if (entries.length === 0) return '';
 
 	const lines = entries.flatMap((entry) => {
-		const command = flattenForHistory(entry.command, MAX_HISTORY_COMMAND_LENGTH);
+		const command = flattenToLine(entry.command, MAX_HISTORY_COMMAND_LENGTH);
 
 		const note =
 			entry.status === 'running'
@@ -165,7 +174,7 @@ export function formatRecentCommands(entries: readonly AiCommandHistoryEntry[]):
 		// happened: the user asked, then this ran.
 		return entry.request
 			? [
-					`- Asked: ${flattenForHistory(entry.request, MAX_HISTORY_REQUEST_LENGTH)}`,
+					`- Asked: ${flattenToLine(entry.request, MAX_HISTORY_REQUEST_LENGTH)}`,
 					`  Ran: ${command}${note}`,
 				]
 			: [`- Ran: ${command}${note}`];
@@ -268,4 +277,63 @@ export function extractCommandLine(raw: string): string | null {
 	}
 
 	return null;
+}
+
+/** Longest explanation shown beside a proposed command, before ellipsis. */
+const MAX_EXPLANATION_LENGTH = 200;
+
+/**
+ * The reply shape `ai-command-local.md` asks a Local Models source for.
+ *
+ * A small model needs the structure: asked for a bare line it wraps the command
+ * in prose often enough to matter, and the grammar (or the endpoint's
+ * structured output) keeps the command in a field of its own. `command` comes
+ * first so a reply cut off at the token budget loses the explanation, not the
+ * command.
+ */
+export const AI_COMMAND_REPLY_SCHEMA: Record<string, unknown> = {
+	type: 'object',
+	properties: {
+		command: { type: 'string' },
+		explanation: { type: 'string', maxLength: MAX_EXPLANATION_LENGTH },
+	},
+	required: ['command', 'explanation'],
+	additionalProperties: false,
+};
+
+/** What a Local Models source answered, cleaned up. */
+export interface AiCommandReply {
+	command: string;
+	/** One sentence on what the command does, when the model gave one. */
+	explanation?: string;
+}
+
+/**
+ * Read a reply written against {@link AI_COMMAND_REPLY_SCHEMA}.
+ *
+ * `json` is the parsed reply when it parsed, else undefined, and `text` is the
+ * raw reply. The command goes through {@link extractCommandLine} either way:
+ * the schema keeps the SHAPE, not the content, so a fenced block or a `$`
+ * prompt inside the field is as likely as it is in an agent's reply.
+ *
+ * An endpoint that ignores the schema may answer with a bare line, which is
+ * still a usable command. A reply that opens a JSON object and never closes it
+ * (cut off at the token budget) is not: pasting `{"command": ...` into a shell
+ * is a syntax error, so that returns null like any other empty reply.
+ */
+export function parseAiCommandReply(json: unknown, text: string): AiCommandReply | null {
+	if (json && typeof json === 'object' && !Array.isArray(json)) {
+		const record = json as Record<string, unknown>;
+		const command = typeof record.command === 'string' ? extractCommandLine(record.command) : null;
+		if (!command) return null;
+		const explanation =
+			typeof record.explanation === 'string'
+				? flattenToLine(record.explanation, MAX_EXPLANATION_LENGTH)
+				: '';
+		return { command, ...(explanation && { explanation }) };
+	}
+
+	const command = extractCommandLine(text);
+	if (!command || command.startsWith('{')) return null;
+	return { command };
 }

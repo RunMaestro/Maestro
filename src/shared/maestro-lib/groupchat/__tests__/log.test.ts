@@ -14,7 +14,14 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
-import { escapeContent, unescapeContent, appendToLog, readLog, saveImage } from '../log';
+import {
+	formatChatHistoryForPrompt,
+	escapeContent,
+	unescapeContent,
+	appendToLog,
+	readLog,
+	saveImage,
+} from '../log';
 
 describe('group-chat-log', () => {
 	let testDir: string;
@@ -465,5 +472,33 @@ describe('group-chat-log', () => {
 			// All filenames should be unique
 			expect(filenames.size).toBe(5);
 		});
+	});
+});
+
+describe('formatChatHistoryForPrompt', () => {
+	const messages = [
+		{ timestamp: '1', from: 'user', content: 'first' },
+		{ timestamp: '2', from: 'moderator', content: 'second' },
+		{ timestamp: '3', from: 'Backend', content: 'abcdefghij' },
+	];
+
+	it('renders the most recent messages as [from]: content lines, oldest first', () => {
+		expect(formatChatHistoryForPrompt(messages, { last: 2 })).toBe(
+			'[moderator]: second\n[Backend]: abcdefghij'
+		);
+	});
+
+	it('keeps bodies whole unless a cap is given, and marks a cut body', () => {
+		expect(formatChatHistoryForPrompt(messages, { last: 1 })).toBe('[Backend]: abcdefghij');
+		expect(formatChatHistoryForPrompt(messages, { last: 1, maxContentChars: 4 })).toBe(
+			'[Backend]: abcd...'
+		);
+		expect(formatChatHistoryForPrompt(messages, { last: 1, maxContentChars: 10 })).toBe(
+			'[Backend]: abcdefghij'
+		);
+	});
+
+	it('returns an empty string for an empty log', () => {
+		expect(formatChatHistoryForPrompt([], { last: 5 })).toBe('');
 	});
 });

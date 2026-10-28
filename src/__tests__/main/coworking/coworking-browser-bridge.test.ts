@@ -76,7 +76,55 @@ describe('coworking-bridge browser dispatch', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		__testing.setResolveSessionFromPid(null);
+		__testing.setResolveCallerFromPid(null);
 		coworkingRegistry.reset();
+	});
+
+	it('binds browser policy to the PID-resolved launch rather than the agent default', async () => {
+		const caller = {
+			sessionId: 'sess-A',
+			processSessionId: 'sess-A-ai-t1',
+			provider: 'codex' as const,
+		};
+		__testing.setResolveCallerFromPid(async () => caller);
+		coworkingRegistry.syncSessionBrowsers('sess-A', [], false, 'claude-code', 'all', {
+			codex: { interactionEnabled: true, confirmPolicy: 'off' },
+			'claude-code': { interactionEnabled: false, confirmPolicy: 'all' },
+		});
+		const conn = newConn();
+		__testing.connections.set(conn, { sessionId: null });
+		await __testing.dispatch(conn, {
+			id: 1,
+			method: 'hello',
+			params: { sessionId: 'sess-A', ppid: 123 },
+		});
+		const result = await __testing.dispatch(conn, {
+			id: 2,
+			method: 'browserInteract',
+			params: { op: { kind: 'newTab' } },
+		});
+		expect(result.error).toBeUndefined();
+		expect(tools.browserInteract).toHaveBeenCalledWith(
+			'sess-A',
+			{ id: undefined, op: { kind: 'newTab' } },
+			{ caller }
+		);
+	});
+
+	it('rejects a PID-resolved caller from a different agent', async () => {
+		__testing.setResolveCallerFromPid(async () => ({
+			sessionId: 'sess-B',
+			processSessionId: 'sess-B-ai-t1',
+			provider: 'codex',
+		}));
+		const conn = newConn();
+		__testing.connections.set(conn, { sessionId: null });
+		const result = await __testing.dispatch(conn, {
+			id: 1,
+			method: 'hello',
+			params: { sessionId: 'sess-A', ppid: 123 },
+		});
+		expect(result.error?.message).toMatch(/does not match caller/);
 	});
 
 	it('listBrowsers after hello dispatches with the bound sessionId', async () => {

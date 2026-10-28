@@ -1000,6 +1000,310 @@ describe('CueEngine', () => {
 		});
 	});
 
+	describe('setSubscriptionGate', () => {
+		// Sets or removes `gate` / `gate_on_unavailable` in the owning session's
+		// cue.yaml. Backs `set_cue_subscription_gate` (`maestro-cli cue gate`),
+		// the CLI half of the Gate field on a trigger node in the editor.
+		const fanOutYaml = [
+			'subscriptions:',
+			'  - name: Triage',
+			'    event: github.issue',
+			'    repo: org/repo',
+			'    prompt: triage it',
+			'    pipeline_name: Triage',
+			'  - name: Triage-cmd-a',
+			'    event: github.issue',
+			'    repo: org/repo',
+			'    action: command',
+			'    pipeline_name: Triage',
+			'  - name: Triage-chain-1',
+			'    event: agent.completed',
+			'    source_session: Test Session',
+			'    prompt: follow up',
+			'    pipeline_name: Triage',
+			'  - name: Other',
+			'    event: github.issue',
+			'    repo: org/repo',
+			'    prompt: other',
+			'    pipeline_name: Other',
+		].join('\n');
+		const fanOutSubs = [
+			{
+				name: 'Triage',
+				event: 'github.issue' as const,
+				enabled: true,
+				repo: 'org/repo',
+				prompt: 'triage it',
+				pipeline_name: 'Triage',
+			},
+			{
+				name: 'Triage-cmd-a',
+				event: 'github.issue' as const,
+				enabled: true,
+				repo: 'org/repo',
+				prompt: '',
+				action: 'command' as const,
+				pipeline_name: 'Triage',
+			},
+			{
+				name: 'Triage-chain-1',
+				event: 'agent.completed' as const,
+				enabled: true,
+				source_session: 'Test Session',
+				prompt: 'follow up',
+				pipeline_name: 'Triage',
+			},
+			{
+				name: 'Other',
+				event: 'github.issue' as const,
+				enabled: true,
+				repo: 'org/repo',
+				prompt: 'other',
+				pipeline_name: 'Other',
+			},
+		];
+		const writtenSubs = () =>
+			(
+				yaml.load(mockWriteCueConfigFile.mock.calls[0][1] as string) as {
+					subscriptions: Array<Record<string, unknown>>;
+				}
+			).subscriptions;
+
+		beforeEach(() => {
+			mockReadCueConfigFile.mockReset();
+			mockWriteCueConfigFile.mockReset();
+			mockReadCueConfigFile.mockReturnValue({
+				filePath: '/projects/test/.maestro/cue.yaml',
+				raw: fanOutYaml,
+			});
+			mockWriteCueConfigFile.mockReturnValue('/projects/test/.maestro/cue.yaml');
+		});
+
+		it('refuses a malformed id and a condition that cannot be saved, without touching the file', async () => {
+			const engine = new CueEngine(createMockDeps());
+			expect(
+				await engine.setSubscriptionGate('no-separator', { condition: 'a bug' })
+			).toMatchObject({ ok: false });
+			const blank = await engine.setSubscriptionGate('session-1::Triage::Triage', {
+				condition: '   ',
+			});
+			expect(blank).toEqual({ ok: false, error: expect.stringMatching(/needs a condition/) });
+			expect(mockReadCueConfigFile).not.toHaveBeenCalled();
+			expect(mockWriteCueConfigFile).not.toHaveBeenCalled();
+		});
+
+		it('reports an unknown agent and an unknown subscription instead of writing', async () => {
+			const engine = new CueEngine(createMockDeps());
+			expect(
+				await engine.setSubscriptionGate('nobody::Triage::Triage', { condition: 'a bug' })
+			).toMatchObject({ ok: false, error: expect.stringMatching(/No agent owns/) });
+			expect(
+				await engine.setSubscriptionGate('session-1::Triage::Missing', { condition: 'a bug' })
+			).toMatchObject({ ok: false, error: expect.stringMatching(/was not found in cue.yaml/) });
+			expect(mockWriteCueConfigFile).not.toHaveBeenCalled();
+		});
+
+		it('gates every branch of the trigger, and nothing else', async () => {
+			mockLoadCueConfig.mockReturnValue(createMockConfig({ subscriptions: fanOutSubs }));
+			const engine = new CueEngine(createMockDeps());
+			engine.start();
+
+			const result = await engine.setSubscriptionGate('session-1::Triage::Triage', {
+				condition: '  the issue reports a bug  ',
+				onUnavailable: 'skip',
+			});
+			engine.stop();
+
+			expect(result).toEqual({ ok: true, updated: ['Triage', 'Triage-cmd-a'] });
+			const subs = writtenSubs();
+			const byName = (name: string) => subs.find((sub) => sub.name === name)!;
+			for (const name of ['Triage', 'Triage-cmd-a']) {
+				expect(byName(name)).toMatchObject({
+					gate: 'the issue reports a bug',
+					gate_on_unavailable: 'skip',
+				});
+			}
+			// The chain step is fed by an agent, not by this trigger, and the
+			// other pipeline's identical trigger is a different trigger.
+			expect(byName('Triage-chain-1')).not.toHaveProperty('gate');
+			expect(byName('Other')).not.toHaveProperty('gate');
+		});
+
+		it('writes only the named subscription when the engine has not loaded the config', async () => {
+			const engine = new CueEngine(createMockDeps());
+			const result = await engine.setSubscriptionGate('session-1::Triage::Triage', {
+				condition: 'the issue reports a bug',
+			});
+
+			expect(result).toEqual({ ok: true, updated: ['Triage'] });
+			const triage = writtenSubs().find((sub) => sub.name === 'Triage')!;
+			expect(triage.gate).toBe('the issue reports a bug');
+			// The default policy is not spelled out.
+			expect(triage).not.toHaveProperty('gate_on_unavailable');
+		});
+
+		it('removes the gate and its policy with a null gate', async () => {
+			mockReadCueConfigFile.mockReturnValue({
+				filePath: '/projects/test/.maestro/cue.yaml',
+				raw: [
+					'subscriptions:',
+					'  - name: Triage',
+					'    event: github.issue',
+					'    repo: org/repo',
+					'    prompt: triage it',
+					'    pipeline_name: Triage',
+					'    gate: the issue reports a bug',
+					'    gate_on_unavailable: skip',
+				].join('\n'),
+			});
+			const engine = new CueEngine(createMockDeps());
+
+			expect(await engine.setSubscriptionGate('session-1::Triage::Triage', null)).toEqual({
+				ok: true,
+				updated: ['Triage'],
+			});
+			const triage = writtenSubs()[0];
+			expect(triage).not.toHaveProperty('gate');
+			expect(triage).not.toHaveProperty('gate_on_unavailable');
+			expect(triage.prompt).toBe('triage it');
+		});
+	});
+
+	describe('setSubscriptionInjectionScreen', () => {
+		// Sets `screen_injection` / `injection_threshold` in the owning session's
+		// cue.yaml. Backs `set_cue_subscription_injection_screen`
+		// (`maestro-cli cue screen`), the CLI half of the screen field on a
+		// trigger node in the editor.
+		const triggerYaml = [
+			'subscriptions:',
+			'  - name: Triage',
+			'    event: github.issue',
+			'    repo: org/repo',
+			'    prompt: triage it',
+			'    pipeline_name: Triage',
+			'  - name: Triage-cmd-a',
+			'    event: github.issue',
+			'    repo: org/repo',
+			'    action: command',
+			'    pipeline_name: Triage',
+			'  - name: Other',
+			'    event: github.issue',
+			'    repo: org/repo',
+			'    prompt: other',
+			'    pipeline_name: Other',
+		].join('\n');
+		const triggerSubs = [
+			{
+				name: 'Triage',
+				event: 'github.issue' as const,
+				enabled: true,
+				repo: 'org/repo',
+				prompt: 'triage it',
+				pipeline_name: 'Triage',
+			},
+			{
+				name: 'Triage-cmd-a',
+				event: 'github.issue' as const,
+				enabled: true,
+				repo: 'org/repo',
+				prompt: '',
+				action: 'command' as const,
+				pipeline_name: 'Triage',
+			},
+			{
+				name: 'Other',
+				event: 'github.issue' as const,
+				enabled: true,
+				repo: 'org/repo',
+				prompt: 'other',
+				pipeline_name: 'Other',
+			},
+		];
+		const writtenSubs = () =>
+			(
+				yaml.load(mockWriteCueConfigFile.mock.calls.at(-1)![1] as string) as {
+					subscriptions: Array<Record<string, unknown>>;
+				}
+			).subscriptions;
+
+		beforeEach(() => {
+			mockReadCueConfigFile.mockReset();
+			mockWriteCueConfigFile.mockReset();
+			mockReadCueConfigFile.mockReturnValue({
+				filePath: '/projects/test/.maestro/cue.yaml',
+				raw: triggerYaml,
+			});
+			mockWriteCueConfigFile.mockReturnValue('/projects/test/.maestro/cue.yaml');
+		});
+
+		it('refuses a malformed id and a threshold that cannot be saved, without touching the file', async () => {
+			const engine = new CueEngine(createMockDeps());
+			expect(
+				await engine.setSubscriptionInjectionScreen('no-separator', { mode: 'on' })
+			).toMatchObject({ ok: false });
+			expect(
+				await engine.setSubscriptionInjectionScreen('session-1::Triage::Triage', {
+					mode: 'on',
+					threshold: 3,
+				})
+			).toEqual({ ok: false, error: expect.stringMatching(/above 0 and at most 1/) });
+			expect(mockReadCueConfigFile).not.toHaveBeenCalled();
+			expect(mockWriteCueConfigFile).not.toHaveBeenCalled();
+		});
+
+		it('reports an unknown agent and an unknown subscription instead of writing', async () => {
+			const engine = new CueEngine(createMockDeps());
+			expect(
+				await engine.setSubscriptionInjectionScreen('nobody::Triage::Triage', { mode: 'on' })
+			).toMatchObject({ ok: false, error: expect.stringMatching(/No agent owns/) });
+			expect(
+				await engine.setSubscriptionInjectionScreen('session-1::Triage::Missing', { mode: 'on' })
+			).toMatchObject({ ok: false, error: expect.stringMatching(/was not found in cue.yaml/) });
+			expect(mockWriteCueConfigFile).not.toHaveBeenCalled();
+		});
+
+		it('sets the screen on every branch of the trigger, and nothing else', async () => {
+			mockLoadCueConfig.mockReturnValue(createMockConfig({ subscriptions: triggerSubs }));
+			const engine = new CueEngine(createMockDeps());
+			engine.start();
+
+			const result = await engine.setSubscriptionInjectionScreen('session-1::Triage::Triage', {
+				mode: 'on',
+				threshold: 0.6,
+			});
+			engine.stop();
+
+			expect(result).toEqual({ ok: true, updated: ['Triage', 'Triage-cmd-a'] });
+			const byName = (name: string) => writtenSubs().find((sub) => sub.name === name)!;
+			for (const name of ['Triage', 'Triage-cmd-a']) {
+				expect(byName(name)).toMatchObject({ screen_injection: true, injection_threshold: 0.6 });
+			}
+			// The other pipeline's identical trigger is a different trigger.
+			expect(byName('Other')).not.toHaveProperty('screen_injection');
+		});
+
+		it('writes off as false, and the default as no keys', async () => {
+			const engine = new CueEngine(createMockDeps());
+
+			await engine.setSubscriptionInjectionScreen('session-1::Triage::Triage', { mode: 'off' });
+			expect(writtenSubs()[0]).toMatchObject({ screen_injection: false });
+			expect(writtenSubs()[0]).not.toHaveProperty('injection_threshold');
+
+			mockReadCueConfigFile.mockReturnValue({
+				filePath: '/projects/test/.maestro/cue.yaml',
+				raw: `${triggerYaml.split('\n').slice(0, 6).join('\n')}\n    screen_injection: true\n    injection_threshold: 0.6`,
+			});
+			await engine.setSubscriptionInjectionScreen('session-1::Triage::Triage', {
+				mode: 'auto',
+				threshold: 0.8,
+			});
+			const triage = writtenSubs()[0];
+			expect(triage).not.toHaveProperty('screen_injection');
+			expect(triage).not.toHaveProperty('injection_threshold');
+			expect(triage.prompt).toBe('triage it');
+		});
+	});
+
 	describe('setSubscriptionEnabled', () => {
 		// Flips the `enabled` flag on a single subscription in the owning
 		// session's cue.yaml and refreshes the session. Backs the web-server

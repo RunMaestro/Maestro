@@ -459,47 +459,56 @@ describe('web-desktop electron-shim bridge reconnect', () => {
 			'process:spawn'
 		);
 	});
-	it('preserves capability-read rejection without showing a submission banner while mutation rejection remains visible', async () => {
-		document.getElementById('maestro-submission-notice')?.remove();
-		sessionStorage.removeItem('maestro:web-desktop:uncertain-submission');
-		const socket = InertWebSocket.instances.at(-1)!;
-		socket.readyState = InertWebSocket.OPEN;
-		socket.emit('open');
-		socket.emit('message', frame({ type: 'connected', bridgeEpoch: 'run-2', resumed: true }));
-		const query = ipcRenderer.invoke('plugins:contributions');
-		const queryRejected = expect(query).rejects.toThrow('PluginsDisabled');
-		await Promise.resolve();
-		const queryRequest = JSON.parse(socket.sent.at(-1)!);
-		socket.emit(
-			'message',
-			frame({
-				type: 'bridge.response',
-				requestId: queryRequest.requestId,
-				ok: false,
-				error: 'PluginsDisabled',
-			})
-		);
-		await queryRejected;
-		expect(document.getElementById('maestro-submission-notice')).toBeNull();
-		expect(sessionStorage.getItem('maestro:web-desktop:uncertain-submission')).toBeNull();
-		const mutation = ipcRenderer.invoke('agentRun:event', { runId: 'rejected', type: 'note' });
-		const mutationRejected = expect(mutation).rejects.toThrow('Permission denied');
-		await Promise.resolve();
-		const mutationRequest = JSON.parse(socket.sent.at(-1)!);
-		socket.emit(
-			'message',
-			frame({
-				type: 'bridge.response',
-				requestId: mutationRequest.requestId,
-				ok: false,
-				error: 'Permission denied',
-			})
-		);
-		await mutationRejected;
-		expect(document.getElementById('maestro-submission-notice')?.textContent).toContain(
-			'Submission rejected for agentRun:event'
-		);
-	});
+	it.each([
+		['plugins:contributions', 'PluginsDisabled'],
+		[
+			'acappella:input-devices',
+			'Channel "acappella:input-devices" is not available over the web interface',
+		],
+	])(
+		'preserves %s read rejection without a submission banner while mutations remain visible',
+		async (channel, error) => {
+			document.getElementById('maestro-submission-notice')?.remove();
+			sessionStorage.removeItem('maestro:web-desktop:uncertain-submission');
+			const socket = InertWebSocket.instances.at(-1)!;
+			socket.readyState = InertWebSocket.OPEN;
+			socket.emit('open');
+			socket.emit('message', frame({ type: 'connected', bridgeEpoch: 'run-2', resumed: true }));
+			const query = ipcRenderer.invoke(channel);
+			const queryRejected = expect(query).rejects.toThrow(error);
+			await Promise.resolve();
+			const queryRequest = JSON.parse(socket.sent.at(-1)!);
+			socket.emit(
+				'message',
+				frame({
+					type: 'bridge.response',
+					requestId: queryRequest.requestId,
+					ok: false,
+					error,
+				})
+			);
+			await queryRejected;
+			expect(document.getElementById('maestro-submission-notice')).toBeNull();
+			expect(sessionStorage.getItem('maestro:web-desktop:uncertain-submission')).toBeNull();
+			const mutation = ipcRenderer.invoke('agentRun:event', { runId: 'rejected', type: 'note' });
+			const mutationRejected = expect(mutation).rejects.toThrow('Permission denied');
+			await Promise.resolve();
+			const mutationRequest = JSON.parse(socket.sent.at(-1)!);
+			socket.emit(
+				'message',
+				frame({
+					type: 'bridge.response',
+					requestId: mutationRequest.requestId,
+					ok: false,
+					error: 'Permission denied',
+				})
+			);
+			await mutationRejected;
+			expect(document.getElementById('maestro-submission-notice')?.textContent).toContain(
+				'Submission rejected for agentRun:event'
+			);
+		}
+	);
 
 	it('rejects disconnected reads without claiming a submission was lost and without replaying them', async () => {
 		document.getElementById('maestro-submission-notice')?.remove();

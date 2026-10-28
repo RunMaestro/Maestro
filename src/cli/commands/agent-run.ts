@@ -19,6 +19,7 @@ import {
 	upsertAgentRun,
 	upsertCampaign,
 } from '../services/agent-run-store';
+import { ExitCode, exitWith } from '../exit-codes';
 
 const CAMPAIGN_STATUSES = new Set([
 	'queued',
@@ -72,7 +73,7 @@ function emitJson(payload: Record<string, unknown>): void {
 
 function fail(error: string, code: string): void {
 	emitJson({ success: false, error, code });
-	process.exit(1);
+	exitWith(ExitCode.GeneralError);
 }
 
 function readJsonFile(

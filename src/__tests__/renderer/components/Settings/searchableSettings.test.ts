@@ -9,9 +9,14 @@ import { join, resolve } from 'node:path';
 import { describe, it, expect } from 'vitest';
 import {
 	searchSettings,
+	settingSubTab,
 	ALL_SEARCHABLE_SETTINGS,
 	encoreTileForSetting,
 } from '../../../../renderer/components/Settings/searchableSettings';
+import {
+	modelsSettingsPlaceLabel,
+	parseModelsSettingsSubTab,
+} from '../../../../shared/local-models/settings-location';
 
 const RENDERER_ROOT = resolve(__dirname, '../../../../renderer');
 
@@ -51,6 +56,21 @@ describe('searchableSettings', () => {
 	});
 
 	describe('ALL_SEARCHABLE_SETTINGS', () => {
+		it.each([
+			['hold while busy', 'encore-a-cappella-hud'],
+			['default voice mode', 'encore-a-cappella-hud'],
+			['listening mode', 'encore-a-cappella-hud'],
+			['hey jarvis', 'encore-a-cappella-wake-word'],
+			['detection light', 'encore-a-cappella-wake-word'],
+			['manage voice models', 'encore-a-cappella-models'],
+			['on this mac', 'encore-a-cappella-pipeline'],
+			['voice setup preset', 'encore-a-cappella-pipeline'],
+			['custom', 'encore-a-cappella-voice-providers'],
+			['voicestudio', 'encore-a-cappella-voice-providers'],
+		])('finds voice controls for %s', (query, id) => {
+			expect(searchSettings(query).some((setting) => setting.id === id)).toBe(true);
+		});
+
 		it('should contain entries from all tabs', () => {
 			const tabs = new Set(ALL_SEARCHABLE_SETTINGS.map((s) => s.tab));
 			expect(tabs).toContain('general');
@@ -62,6 +82,7 @@ describe('searchableSettings', () => {
 			expect(tabs).toContain('ssh');
 			expect(tabs).toContain('environment');
 			expect(tabs).toContain('encore');
+			expect(tabs).toContain('models');
 		});
 
 		it('should have unique ids', () => {
@@ -110,6 +131,13 @@ describe('searchableSettings', () => {
 			expect(searchSettings(query).some((s) => s.id === 'environment-host-media')).toBe(true);
 		});
 
+		it.each(['short label', 'pill label', 'abbreviation', 'badge'])(
+			'finds the Left Side Panel group label settings for %s',
+			(query) => {
+				expect(searchSettings(query).some((s) => s.id === 'display-left-side-panel')).toBe(true);
+			}
+		);
+
 		it('should be case insensitive', () => {
 			const lower = searchSettings('font');
 			const upper = searchSettings('FONT');
@@ -153,6 +181,12 @@ describe('searchableSettings', () => {
 
 			const on = searchSettings('cue', [], { maestroCue: true }).map((s) => s.id);
 			expect(on).toEqual(expect.arrayContaining(['general-power', 'display-left-side-panel']));
+			expect(
+				searchSettings('cue indicator', [], { maestroCue: false }).map((s) => s.id)
+			).not.toContain('display-left-side-panel');
+			expect(searchSettings('cue indicator', [], { maestroCue: true }).map((s) => s.id)).toContain(
+				'display-left-side-panel'
+			);
 
 			// The setting itself stays findable by its own terms either way.
 			expect(searchSettings('prevent sleep', [], { maestroCue: false }).map((s) => s.id)).toContain(
@@ -171,6 +205,11 @@ describe('searchableSettings', () => {
 			expect(on).toEqual(
 				expect.arrayContaining(['encore-throughput-gauge', 'encore-throughput-gauge-display'])
 			);
+		});
+
+		it('does not advertise the retired Ensemble plugin', () => {
+			expect(searchSettings('ensemble', []).map((s) => s.id)).not.toContain('encore-ensemble');
+			expect(encoreTileForSetting('encore-ensemble')).toBeUndefined();
 		});
 
 		it('hides the DataviewJS settings while Dataview is off, but keeps its tile', () => {
@@ -283,6 +322,10 @@ describe('searchableSettings', () => {
 			['consult or delegate', 'general-cross-agent-mentions'],
 			['delegation', 'general-cross-agent-mentions'],
 			['read-only consult', 'general-cross-agent-mentions'],
+			['consultation budget', 'general-consultation-budget'],
+			['peer consults and delegations per message', 'general-consultation-budget'],
+			['whole chain', 'general-consultation-budget'],
+			['maxConsultationsPerTurn', 'general-consultation-budget'],
 			['custom shell path', 'general-default-shell'],
 			['pwsh', 'general-default-shell'],
 			['worktree', 'general-gh-path'],
@@ -308,6 +351,10 @@ describe('searchableSettings', () => {
 			// Display tab. The single Small/Medium/Large global size was replaced
 			// by a per-surface stepper plus a global zoom, so "font size" now
 			// leads to Zoom and to the individual surface pickers.
+			// Group Settings links to this control from the pill label field.
+			['Show group label on bookmarked agents', 'display-left-panel-group-label'],
+			['group pill', 'display-left-panel-group-label'],
+			['pill label', 'display-left-panel-group-label'],
 			['zoom', 'display-font-zoom'],
 			['Show provider in subagent list', 'display-left-side-panel'],
 			['provider source', 'display-left-side-panel'],
@@ -371,6 +418,7 @@ describe('searchableSettings', () => {
 			['synopsis provider', 'encore-director-notes'],
 			['computer history', 'encore-computer-history'],
 			['digest agent', 'encore-computer-history'],
+			['digest model', 'encore-computer-history'],
 			['throughput gauge', 'encore-throughput-gauge'],
 			['tokens per second', 'encore-throughput-gauge'],
 			['tps', 'encore-throughput-gauge'],
@@ -396,6 +444,53 @@ describe('searchableSettings', () => {
 			// About tab
 			['about maestro', 'about-maestro'],
 			['version', 'about-maestro'],
+
+			// Local Models tab
+			['local models', 'local-models-models'],
+			['models overview', 'local-models-overview'],
+			['active tasks', 'local-models-overview'],
+			['download model', 'local-models-models'],
+			['hugging face', 'local-models-add-hf'],
+			['agent models', 'local-models-agents'],
+			['run on', 'local-models-agents'],
+			['runs agents', 'local-models-agents'],
+			['housekeeping', 'local-models-housekeeping'],
+			['whisper', 'local-models-speech'],
+			['wake word', 'local-models-speech'],
+			['embeddings', 'local-models-search'],
+			['prompt guard', 'local-models-search'],
+			['llama.cpp', 'local-models-engines'],
+			['onnx runtime', 'local-models-engines'],
+			['deepseek', 'local-models-endpoints'],
+			['model server', 'local-models-model-server'],
+			['llama-server', 'local-models-model-server'],
+			['rotate', 'local-models-model-server'],
+			['ollama', 'local-models-endpoints'],
+			['detect local servers', 'local-models-endpoints'],
+			['voicestudio', 'local-models-voice-studio'],
+			['sampling seed', 'local-models-voice-studio'],
+			['system one', 'local-models-system-one'],
+			['cue gate', 'local-models-system-one'],
+			['system two', 'local-models-system-two'],
+			['tab naming', 'local-models-system-two'],
+			['utility agent', 'local-models-utility-agent'],
+			['utility source', 'local-models-utility-agent'],
+			['context grooming', 'local-models-utility-agent'],
+			['semantic index', 'local-models-semantic-index'],
+			['explore index', 'local-models-semantic-index'],
+			['clear semantic index', 'local-models-semantic-index'],
+			['index storage', 'local-models-semantic-index'],
+			['jev', 'local-models-system-one-engine'],
+			['openjev', 'local-models-system-one-engine'],
+			['local judge', 'local-models-system-one-engine'],
+			['fail closed', 'local-models-system-one-fail-policy'],
+			['decision ledger', 'local-models-system-one-ledger'],
+			['keep inputs', 'local-models-system-one-ledger'],
+			['let agents use system one', 'local-models-system-one-agents'],
+			['daily budget', 'local-models-system-one-agents'],
+			['spent today', 'local-models-system-one-agents'],
+			['index cue runs', 'local-models-semantic-index'],
+			['search by meaning', 'local-models-semantic-index'],
 		])('should find "%s" and return id %s', (query, expectedId) => {
 			const results = searchSettings(query);
 			expect(
@@ -403,6 +498,60 @@ describe('searchableSettings', () => {
 				`Expected "${query}" to surface ${expectedId}. ` +
 					`Add the missing terms to that entry's keywords/label/description in searchableSettings.ts.`
 			).toBe(true);
+		});
+	});
+
+	describe('Models inner tabs', () => {
+		const modelsEntries = ALL_SEARCHABLE_SETTINGS.filter((s) => s.tab === 'models');
+
+		it('points every Models entry at a real place, named in its tab label', () => {
+			expect(modelsEntries.length).toBeGreaterThan(0);
+			for (const entry of modelsEntries) {
+				const place = parseModelsSettingsSubTab(entry.subTab ?? '');
+				expect(place, entry.id).not.toBeNull();
+				expect(entry.tabLabel, entry.id).toBe(
+					`Models > ${modelsSettingsPlaceLabel(place!.panel, place!.librarySection)}`
+				);
+			}
+		});
+
+		it('files each Models entry under the place that renders it', () => {
+			const panelOf = Object.fromEntries(modelsEntries.map((s) => [s.id, s.subTab]));
+			expect(panelOf).toEqual({
+				'local-models-overview': 'overview',
+				'local-models-models': 'library',
+				'local-models-agents': 'library/agents',
+				'local-models-housekeeping': 'library/housekeeping',
+				'local-models-speech': 'library/speech',
+				'local-models-search': 'library/search',
+				'local-models-engines': 'library/engines',
+				'local-models-add-hf': 'library/custom',
+				'local-models-model-server': 'sources',
+				'local-models-endpoints': 'sources',
+				'local-models-voice-studio': 'sources',
+				'local-models-system-one-engine': 'system-one',
+				'local-models-system-one-fail-policy': 'system-one',
+				'local-models-system-one-agents': 'system-one',
+				'local-models-system-one-ledger': 'system-one',
+				'local-models-system-one': 'system-one',
+				'local-models-semantic-index': 'system-one',
+				'local-models-system-two': 'system-two',
+				'local-models-utility-agent': 'system-two',
+				'models-tier-defaults': 'system-two',
+				'local-models-gateway': 'gateway',
+			});
+		});
+
+		it('reads an inner tab back by setting id, and none for a plain tab', () => {
+			expect(settingSubTab('local-models-utility-agent')).toBe('system-two');
+			expect(settingSubTab('local-models-download-source')).toBeUndefined();
+			expect(settingSubTab('general-tab-behavior')).toBeUndefined();
+			expect(settingSubTab('no-such-setting')).toBeUndefined();
+		});
+
+		it('gives no entry outside Models an inner tab', () => {
+			const stray = ALL_SEARCHABLE_SETTINGS.filter((s) => s.tab !== 'models' && s.subTab);
+			expect(stray.map((s) => s.id)).toEqual([]);
 		});
 	});
 

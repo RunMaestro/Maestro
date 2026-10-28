@@ -10,13 +10,28 @@ The `window.maestro` API exposes the following namespaces:
 
 - `settings` - Get/set app settings
 - `sessions` / `groups` - Agent and group persistence
-- `process` - Spawn, write, kill, resize, runCommand/cancelCommand (one-off commands); getHeadlessActivity/onHeadlessActivity (transient host process counts by target agent, versioned snapshots)
+- `process` - Spawn, write, kill, resize, runCommand/cancelCommand (one-off commands); getHeadlessActivity/onHeadlessActivity (transient host process counts by target agent, versioned snapshots); getPendingPermissions/onPendingPermissionsChanged (native-only permission relay status)
 - `fs` - readDir, readFile
 - `parquet` - Windowed reads over an open Parquet file (see Parquet API below)
 - `dialog` - Folder selection
 - `shells` - Detect available shells
 - `shell` - OS shell integration: openExternal, openPath, trashItem, showItemInFolder, clipboard image read/write, and `capturePage(rect?)`. `capturePage` screenshots the CALLING window as a PNG data URL (`window:capturePage` shoots `event.sender`, so a surface opened in a second window captures itself); pass a viewport-relative CSS-pixel rect to narrow the shot to one region, omit it for the whole page. Resolves null when there is nothing to capture.
 - `logger` - System logging
+
+`process.getPendingPermissions()` and `process.onPendingPermissionsChanged()` return
+`PendingPermissionSnapshot` (`src/shared/pendingPermissions.ts`): a monotonic
+`version` and deduplicated compound `processIds`. Requests, decisions, timeouts,
+and spawn cleanup update the snapshot. These channels stay native-only and carry
+no prompt bodies, tool inputs, or authentication tokens. The owning renderer
+projects this status into agent runtime; browser clients receive that runtime
+through the existing transcript synchronization and private bootstrap snapshots.
+
+`process.onCodexTransport(callback)` reports `(processKey, 'app-server' | 'exec')`
+at spawn and after an app-server fallback. `process.getActiveProcesses()` includes
+the actual `codexTransport` for running Codex processes. Steering uses this runtime
+evidence, never the agent's transport preference. The renderer clears saved
+`AITab.turnCodexTransport` before restoring active processes and on exit; live
+transport and exit events take precedence over an older snapshot.
 
 ## Agent & Provider Sessions
 
@@ -57,6 +72,19 @@ The `window.maestro` API exposes the following namespaces:
 - `stats` - Real-time updates via `stats:updated` event broadcast
 - `documentGraph` - File watching: watchFolder, unwatchFolder
 - `documentGraph` - Real-time updates via `documentGraph:filesChanged` event
+
+## Semantic Index API
+
+`window.maestro.localModels.semanticIndex` exposes the shared index behind Semantic search:
+
+| Method                                              | Result                                                                                                                                               |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `status()` / `onProgress(handler)`                  | The indexer's source counts and state; progress is broadcast to every window.                                                                        |
+| `storage()`                                         | Per-model chunk counts and disk bytes across the database, write-ahead log, and shared-memory file.                                                  |
+| `browse({ modelId, sourceType?, offset?, limit? })` | A page of indexed sources with readable previews when originals are available. Defaults to 20 sources, capped at 50. Loads no model.                 |
+| `clear()`                                           | Aborts and drains active indexing, clears all models' cached vectors, invalidates search memory, compacts SQLite, and returns updated storage usage. |
+
+Clearing preserves History, notes, and transcripts. The next full pass is deferred for 15 minutes; new records can still be indexed incrementally while Semantic search is assigned a model. Route clearing through `clearSemanticIndex()` so an in-flight batch cannot repopulate a cache just cleared.
 
 ## History API
 

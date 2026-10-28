@@ -18,6 +18,7 @@ import {
 	CueHistoryGroup,
 	HistoryEntry,
 	HistoryEntryType,
+	ToolType,
 	SshRemoteConfig,
 } from '../../../shared/types';
 import {
@@ -922,10 +923,17 @@ export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void 
 		'history:updateSessionName',
 		withIpcErrorLogging(
 			handlerOpts('updateSessionName'),
-			async (agentSessionId: string, sessionName: string) => {
+			async (
+				agentSessionId: string,
+				sessionName: string,
+				provider?: ToolType,
+				ownerSessionId?: string
+			) => {
 				const count = await historyManager.updateSessionNameByClaudeSessionId(
 					agentSessionId,
-					sessionName
+					sessionName,
+					provider,
+					ownerSessionId
 				);
 				logger.info(
 					`Updated sessionName for ${count} history entries with agentSessionId ${agentSessionId}`,

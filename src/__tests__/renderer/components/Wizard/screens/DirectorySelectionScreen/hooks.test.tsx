@@ -328,6 +328,55 @@ describe('DirectorySelectionScreen hooks', () => {
 		document.body.removeChild(browseButton);
 	});
 
+	it('leaves Enter and Escape to an open dropdown', () => {
+		const attemptNextStep = vi.fn();
+		const previousStep = vi.fn();
+		const { result } = renderHook(() =>
+			useDirectoryKeyboard({
+				browseButtonRef: React.createRef<HTMLButtonElement>(),
+				isBrowsing: false,
+				isValidating: false,
+				canProceedToNext: () => true,
+				handleBrowse: vi.fn(),
+				attemptNextStep,
+				previousStep,
+			})
+		);
+
+		// The peer picker's filter input sits inside its listbox.
+		const listbox = document.createElement('div');
+		listbox.setAttribute('role', 'listbox');
+		const filter = document.createElement('input');
+		listbox.appendChild(filter);
+		document.body.appendChild(listbox);
+
+		const enter = { key: 'Enter', target: filter, preventDefault: vi.fn() };
+		const escape = { key: 'Escape', target: filter, preventDefault: vi.fn() };
+		act(() => {
+			result.current(enter as any);
+			result.current(escape as any);
+		});
+
+		expect(attemptNextStep).not.toHaveBeenCalled();
+		expect(previousStep).not.toHaveBeenCalled();
+		// The dropdown decides what the key does, so the screen must not cancel it.
+		expect(enter.preventDefault).not.toHaveBeenCalled();
+		expect(escape.preventDefault).not.toHaveBeenCalled();
+
+		// The same keys from anywhere else on the screen still route.
+		const elsewhere = document.createElement('input');
+		document.body.appendChild(elsewhere);
+		act(() => {
+			result.current({ key: 'Enter', target: elsewhere, preventDefault: vi.fn() } as any);
+			result.current({ key: 'Escape', target: elsewhere, preventDefault: vi.fn() } as any);
+		});
+		expect(attemptNextStep).toHaveBeenCalledTimes(1);
+		expect(previousStep).toHaveBeenCalledTimes(1);
+
+		document.body.removeChild(listbox);
+		document.body.removeChild(elsewhere);
+	});
+
 	describe('useAutoAgentName', () => {
 		beforeEach(() => {
 			useSessionStore.setState({ sessions: [] } as any);

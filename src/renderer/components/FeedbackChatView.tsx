@@ -49,6 +49,7 @@ import {
 } from '../services/feedbackConversation';
 import { openUrl } from '../utils/openUrl';
 import { captureException } from '../utils/sentry';
+import { withSecretScreenConfirm } from '../services/secretScreen';
 import { useFeedbackDraftStore, type FeedbackDraft } from '../stores/feedbackDraftStore';
 import { useAutosizeTextarea } from '../hooks/ui/useAutosizeTextarea';
 import { KEYSTROKE_TEXTAREA_MAX_HEIGHT } from '../utils/textareaSizing';
@@ -597,19 +598,30 @@ export function FeedbackChatView({
 		setGhLoginRetry(null);
 
 		try {
-			const result = await window.maestro.feedback.submitConversation({
-				category: submission.category,
-				summary: submission.summary,
-				expectedBehavior: submission.structured.expectedBehavior,
-				actualBehavior: submission.structured.actualBehavior,
-				reproductionSteps: submission.structured.reproductionSteps || undefined,
-				additionalContext: submission.structured.additionalContext || undefined,
-				attachments: attachments.map((a) => ({ name: a.name, dataUrl: a.dataUrl })),
-				includeDebugPackage,
-				performanceTracePath: tracePath ?? undefined,
-			});
+			// The main process screens the issue text and the support package for
+			// secrets before it uploads anything, and refuses on a finding. The
+			// shared confirm lists them (masked); "Publish anyway" files it as is.
+			const { result, declined } = await withSecretScreenConfirm(
+				(allowSecrets) =>
+					window.maestro.feedback.submitConversation({
+						category: submission.category,
+						summary: submission.summary,
+						expectedBehavior: submission.structured.expectedBehavior,
+						actualBehavior: submission.structured.actualBehavior,
+						reproductionSteps: submission.structured.reproductionSteps || undefined,
+						additionalContext: submission.structured.additionalContext || undefined,
+						attachments: attachments.map((a) => ({ name: a.name, dataUrl: a.dataUrl })),
+						includeDebugPackage,
+						performanceTracePath: tracePath ?? undefined,
+						allowSecrets,
+					}),
+				{ subject: 'this feedback' }
+			);
 
-			if (result.success) {
+			if (declined) {
+				// Cancelled at the confirm: back to the chat to edit, no error.
+				setStep('chat');
+			} else if (result.success) {
 				// The main process consumed and deleted the temp trace on success;
 				// mark it so the unmount cleanup doesn't try to discard it again.
 				if (tracePath) submittedRef.current = true;
@@ -694,8 +706,14 @@ export function FeedbackChatView({
 					.filter(Boolean)
 					.join('\n');
 
-				const result = await window.maestro.feedback.subscribeIssue(issue.number, comment);
-				if (result.success) {
+				const { result, declined } = await withSecretScreenConfirm(
+					(allowSecrets) =>
+						window.maestro.feedback.subscribeIssue(issue.number, comment, { allowSecrets }),
+					{ subject: 'this comment' }
+				);
+				if (declined) {
+					// Cancelled at the confirm: nothing was posted, no error.
+				} else if (result.success) {
 					setStep('done');
 				} else {
 					setSubmitError(result.error || 'Failed to subscribe to issue.');

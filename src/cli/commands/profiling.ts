@@ -7,6 +7,7 @@
 
 import { withMaestroClient } from '../services/maestro-client';
 import { resolveCliPath } from '../utils/parse';
+import { ExitCode, exitWith, exitCodeForError } from '../exit-codes';
 import { exitIfMaestroNotRunning } from '../services/session-command';
 
 /**
@@ -62,7 +63,7 @@ export async function profilingStart(options: StartOptions): Promise<void> {
 			} else {
 				console.error(`Error: ${errMsg}`);
 			}
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 	} catch (error) {
 		exitIfMaestroNotRunning(error, { json: options.json });
@@ -72,14 +73,14 @@ export async function profilingStart(options: StartOptions): Promise<void> {
 		} else {
 			console.error(`Error: ${errMsg}`);
 		}
-		process.exit(1);
+		exitWith(exitCodeForError(error));
 	}
 }
 
 export async function profilingStop(options: StopOptions): Promise<void> {
 	if (!options.output || !options.output.trim()) {
 		console.error('Error: --output <path> is required (where the .zip bundle is written)');
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 
 	const outputPath = resolveCliPath(options.output);
@@ -137,7 +138,7 @@ export async function profilingStop(options: StopOptions): Promise<void> {
 			} else {
 				console.error(`Error: ${errMsg}`);
 			}
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 	} catch (error) {
 		exitIfMaestroNotRunning(error, { json: options.json });
@@ -147,7 +148,7 @@ export async function profilingStop(options: StopOptions): Promise<void> {
 		} else {
 			console.error(`Error: ${errMsg}`);
 		}
-		process.exit(1);
+		exitWith(exitCodeForError(error));
 	}
 }
 
@@ -197,6 +198,6 @@ export async function profilingStatus(options: StatusOptions): Promise<void> {
 		} else {
 			console.error(`Error: ${errMsg}`);
 		}
-		process.exit(1);
+		exitWith(exitCodeForError(error));
 	}
 }

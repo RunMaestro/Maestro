@@ -19,8 +19,8 @@
  */
 
 import { useCallback, useEffect, useRef } from 'react';
-import type { LogEntry, Session, ToolType } from '../../types';
-import { updateSessionWith, updateAiTab, useSessionStore } from '../../stores/sessionStore';
+import type { AITab, LogEntry, Session, ToolType } from '../../types';
+import { updateSessionWith, useSessionStore } from '../../stores/sessionStore';
 import { useCrossAgentInFlightStore } from '../../stores/crossAgentInFlightStore';
 import { createTab } from '../../utils/tabHelpers';
 import { generateId } from '../../utils/ids';
@@ -31,7 +31,14 @@ import {
 	selectContextWindow,
 } from '../../../shared/crossAgentContext';
 import { parseSynopsis } from '../../../shared/synopsis';
+import type { ConsultChain } from '../../../shared/consultBudget';
 import { settleConsultHold } from '../../services/crossAgentConsultHold';
+import { prepareProviderTranslationForSend } from '../../services/providerTranslation';
+import {
+	projectTabProvider,
+	resolveTabProvider,
+	updateProviderSlot,
+} from '../../utils/providerTabSessions';
 import {
 	buildConsultHistoryEntry,
 	buildConsultTabName,
@@ -54,9 +61,11 @@ export type SpawnBackgroundSynopsisFn = (
 	prompt: string,
 	toolType?: ToolType,
 	sessionConfig?: {
+		customPath?: string;
 		customArgs?: string;
 		customEnvVars?: Record<string, string>;
 		customModel?: string;
+		customEffort?: string;
 		customContextWindow?: number;
 		enableMaestroP?: boolean;
 		maestroPMode?: 'interactive' | 'dynamic';
@@ -112,6 +121,18 @@ export interface SendCrossAgentRequestOptions {
 	 */
 	handoffAnswer?: string;
 	/**
+	 * The consulted agent's place in a consult chain, when the consult was
+	 * already admitted by whoever asked for it (see `CrossAgentRequest.consultChain`).
+	 */
+	consultChain?: ConsultChain;
+	/**
+	 * The mentioning turn's own place in a consult chain, when another agent's
+	 * `maestro-cli dispatch` started that turn. Main spends one from it for this
+	 * consult; a mention the user typed carries none and goes through free (see
+	 * `CrossAgentRequest.sourceConsultChain`).
+	 */
+	sourceConsultChain?: ConsultChain;
+	/**
 	 * Called once with the finished answer. A typed `@mention` needs nothing here
 	 * (the streamed bubble IS the delivery), but a consult asked for over the CLI
 	 * has to hand the text back to a caller that is blocked waiting for it, so
@@ -138,6 +159,8 @@ export interface CrossAgentCompletion {
 	targetTabId?: string;
 	/** The target's provider session id, when one was captured. */
 	targetAgentSessionId?: string;
+	/** Captured launch owner, including when the consult tab changed providers meanwhile. */
+	targetToolType?: ToolType;
 }
 
 // The wording of a consult's end, and the target's History entry, are shared with the headless
@@ -229,7 +252,7 @@ export function ensureConsultTab(opts: {
 	sourceTabId: string;
 	sourceAgentName: string;
 	question: string;
-}): { targetTabId: string; resumeAgentSessionId?: string } | null {
+}): { targetTabId: string; targetProvider: ToolType; resumeAgentSessionId?: string } | null {
 	const questionEntry: LogEntry = {
 		id: generateId(),
 		timestamp: Date.now(),
@@ -239,6 +262,7 @@ export function ensureConsultTab(opts: {
 
 	let resolvedTabId: string | null = null;
 	let resumeAgentSessionId: string | undefined;
+	let targetProvider: ToolType | undefined;
 
 	updateSessionWith(opts.targetSessionId, (session) => {
 		const existing = session.aiTabs.find(
@@ -248,6 +272,7 @@ export function ensureConsultTab(opts: {
 		);
 		if (existing) {
 			resolvedTabId = existing.id;
+			targetProvider = resolveTabProvider(existing, session);
 			resumeAgentSessionId = existing.agentSessionId ?? undefined;
 			return {
 				...session,
@@ -270,6 +295,7 @@ export function ensureConsultTab(opts: {
 		});
 		if (!created) return session;
 		resolvedTabId = created.tab.id;
+		targetProvider = resolveTabProvider(created.tab, session);
 		resumeAgentSessionId = undefined;
 		return {
 			...created.session,
@@ -295,8 +321,8 @@ export function ensureConsultTab(opts: {
 		};
 	});
 
-	if (!resolvedTabId) return null;
-	return { targetTabId: resolvedTabId, resumeAgentSessionId };
+	if (!resolvedTabId || !targetProvider) return null;
+	return { targetTabId: resolvedTabId, targetProvider, resumeAgentSessionId };
 }
 
 /** Per-request tracking so streamed chunks land on one stable LogEntry. */
@@ -382,6 +408,7 @@ function recordConsultHistory(
 		state.sessions.find((s) => s.id === chunk.sourceSessionId)?.name ??
 		'another agent';
 	const consultTab = target.aiTabs.find((t) => t.id === tracked.targetTabId);
+	const projected = projectTabProvider(target, consultTab, chunk.targetToolType);
 
 	const entryId = generateId();
 	const historySessionId = chunk.targetSessionId;
@@ -396,7 +423,7 @@ function recordConsultHistory(
 				accumulated: tracked.accumulated,
 				error: chunk.error,
 				canceled: chunk.canceled,
-				agentSessionId: chunk.targetAgentSessionId ?? consultTab?.agentSessionId ?? undefined,
+				agentSessionId: chunk.targetAgentSessionId ?? projected.tab?.agentSessionId ?? undefined,
 				consultTabName: consultTab?.name,
 				targetName: target.name,
 				historySessionId,
@@ -409,7 +436,11 @@ function recordConsultHistory(
 
 	void enrichConsultDetail({
 		spawnBackgroundSynopsis,
-		target,
+		target: {
+			...projected.agent,
+			customModel: projected.tab?.customModel ?? projected.agent.customModel,
+			customEffort: projected.tab?.customEffort ?? projected.agent.customEffort,
+		},
 		resumeAgentSessionId: chunk.targetAgentSessionId,
 		success: !chunk.error,
 		entryId,
@@ -452,9 +483,11 @@ async function enrichConsultDetail(opts: {
 			CONSULT_SUMMARY_PROMPT,
 			target.toolType,
 			{
+				customPath: target.customPath,
 				customArgs: target.customArgs,
 				customEnvVars: target.customEnvVars,
 				customModel: target.customModel,
+				customEffort: target.customEffort,
 				customContextWindow: target.customContextWindow,
 				enableMaestroP: target.enableMaestroP,
 				maestroPMode: target.maestroPMode,
@@ -506,21 +539,38 @@ export function sendCrossAgentRequest(opts: SendCrossAgentRequestOptions): void 
 		question: opts.userPrompt,
 	});
 
-	// Fire-and-forget: never await before the caller clears the input.
-	void window.maestro.crossAgent
-		.send({
+	// Capture this consult's provider before any asynchronous translation or IPC.
+	// Reuse the normal send gate so an empty destination never drops its source context.
+	const send = () =>
+		window.maestro.crossAgent.send({
 			sourceSessionId: opts.sourceSessionId,
 			sourceAgentName: opts.sourceAgentName,
 			sourceTabId: opts.sourceTabId,
 			targetSessionId: opts.targetSessionId,
 			targetTabId: consult?.targetTabId,
+			targetProvider: consult?.targetProvider,
 			resumeAgentSessionId: consult?.resumeAgentSessionId,
 			userPrompt: opts.userPrompt,
 			transcript,
 			strategy,
 			sourceCwd: opts.sourceCwd,
 			...(opts.handoffAnswer !== undefined && { handoffAnswer: opts.handoffAnswer }),
-		})
+			...(opts.consultChain && { consultChain: opts.consultChain }),
+			...(opts.sourceConsultChain && { sourceConsultChain: opts.sourceConsultChain }),
+		});
+	// Fire-and-forget: never await before the caller clears the input.
+	void (
+		consult
+			? prepareProviderTranslationForSend(
+					opts.targetSessionId,
+					consult.targetTabId,
+					consult.targetProvider
+				).then((nativeId) => {
+					consult.resumeAgentSessionId = nativeId;
+					return send();
+				})
+			: send()
+	)
 		.then(({ requestId }) => {
 			// The terminal chunk already landed (fast failure/short response that
 			// beat this resolution) - don't resurrect a finished request, but DO
@@ -566,7 +616,7 @@ export function sendCrossAgentRequest(opts: SendCrossAgentRequestOptions): void 
 				// exact conversation processing this request.
 				targetTabId: consult?.targetTabId,
 				targetAgentName: target?.name ?? 'agent',
-				targetToolType: target?.toolType,
+				targetToolType: consult?.targetProvider ?? target?.toolType,
 				startedAt: Date.now(),
 			});
 		})
@@ -587,7 +637,12 @@ export function sendCrossAgentRequest(opts: SendCrossAgentRequestOptions): void 
 				text: '',
 				error,
 			});
-			opts.onComplete?.({ text: '', error });
+			opts.onComplete?.({
+				text: '',
+				error,
+				targetTabId: consult?.targetTabId,
+				targetToolType: consult?.targetProvider,
+			});
 		});
 }
 
@@ -655,26 +710,43 @@ export function useCrossAgentDispatch(
 		const targetTabId = tracked.targetTabId;
 		if (targetTabId) {
 			const answerId = tracked.targetLogEntryId;
-			updateAiTab(chunk.targetSessionId, targetTabId, (tab) => {
-				const existingIndex = tab.logs.findIndex((l) => l.id === answerId);
-				const timestamp = existingIndex >= 0 ? tab.logs[existingIndex].timestamp : Date.now();
-				const answer: LogEntry = {
-					id: answerId,
-					timestamp,
-					source: chunk.error ? 'error' : 'ai',
-					text: displayText,
+			updateSessionWith(chunk.targetSessionId, (session) => {
+				const updateTab = (tab: AITab): AITab => {
+					if (tab.id !== targetTabId) return tab;
+					const existingIndex = tab.logs.findIndex((l) => l.id === answerId);
+					const timestamp = existingIndex >= 0 ? tab.logs[existingIndex].timestamp : Date.now();
+					const answer: LogEntry = {
+						id: answerId,
+						timestamp,
+						source: chunk.error ? 'error' : 'ai',
+						text: displayText,
+						turnProvider: chunk.targetToolType,
+					};
+					const nextLogs =
+						existingIndex >= 0
+							? tab.logs.map((l, i) => (i === existingIndex ? answer : l))
+							: [...tab.logs, answer];
+					// On success, store the target's captured provider session id so the
+					// next mention from this source tab resumes it (continuity).
+					const updated = { ...tab, logs: nextLogs };
+					return chunk.done && chunk.targetAgentSessionId
+						? updateProviderSlot(updated, session, chunk.targetToolType, {
+								agentSessionId: chunk.targetAgentSessionId,
+							})
+						: updated;
 				};
-				const nextLogs =
-					existingIndex >= 0
-						? tab.logs.map((l, i) => (i === existingIndex ? answer : l))
-						: [...tab.logs, answer];
-				// On success, store the target's captured provider session id so the
-				// next mention from this source tab resumes it (continuity).
-				const agentSessionId =
-					chunk.done && chunk.targetAgentSessionId
-						? chunk.targetAgentSessionId
-						: tab.agentSessionId;
-				return { ...tab, logs: nextLogs, agentSessionId };
+				return {
+					...session,
+					aiTabs: session.aiTabs.map(updateTab),
+					orphanedThinkingTabs: session.orphanedThinkingTabs?.map(updateTab),
+					closedTabHistory: session.closedTabHistory?.map((entry) => ({
+						...entry,
+						tab: updateTab(entry.tab),
+					})),
+					unifiedClosedTabHistory: session.unifiedClosedTabHistory?.map((entry) =>
+						entry.type === 'ai' ? { ...entry, tab: updateTab(entry.tab) } : entry
+					),
+				};
 			});
 		}
 
@@ -689,6 +761,7 @@ export function useCrossAgentDispatch(
 				canceled: chunk.canceled,
 				targetTabId: tracked.targetTabId,
 				targetAgentSessionId: chunk.targetAgentSessionId,
+				targetToolType: chunk.targetToolType,
 			};
 			rememberCompletion(chunk.requestId, completion);
 			// Release the source turn's consult hold (when it has one) so the agent

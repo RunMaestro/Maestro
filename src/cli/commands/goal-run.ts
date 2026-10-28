@@ -20,9 +20,9 @@ import {
 	UnsupportedCommandError,
 	CommandTimeoutError,
 } from '../services/maestro-client';
-import { ExitCode } from '../exit-codes';
 import { MaestroNotRunningError } from '../services/maestro-not-running';
 import type { GoalRunConfig } from '../../shared/goalDriven/types';
+import { ExitCode, exitWith } from '../exit-codes';
 
 interface GoalRunOptions {
 	exitCriteria?: string;
@@ -62,7 +62,7 @@ function parseMaxIterations(raw: string | undefined, useJson: boolean): number |
 		} else {
 			console.error(formatError(message));
 		}
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 	return parsed;
 }
@@ -120,7 +120,7 @@ function failVisibleLaunch(
 	} else {
 		console.error(formatError(message));
 	}
-	process.exit(exitCode);
+	exitWith(exitCode);
 }
 
 /**
@@ -266,7 +266,7 @@ export async function goalRun(
 			} else {
 				console.error(formatError(message));
 			}
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 
 		const agent = getSessionById(agentId);
@@ -277,7 +277,7 @@ export async function goalRun(
 			} else {
 				console.error(formatError(message));
 			}
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 
 		// `--wait` polls for the agent to free up, which only the desktop handoff
@@ -291,7 +291,7 @@ export async function goalRun(
 			} else {
 				console.error(formatError(message));
 			}
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 
 		// `--visible` hands the run to the desktop, which spawns the agent itself.
@@ -313,7 +313,7 @@ export async function goalRun(
 			} else {
 				console.error(formatError(message));
 			}
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 
 		const detection = await detectAgent(agent.toolType);
@@ -325,7 +325,7 @@ export async function goalRun(
 			} else {
 				console.error(formatError(message));
 			}
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 
 		// One run per agent: refuse if busy in desktop or another CLI instance.
@@ -337,7 +337,7 @@ export async function goalRun(
 			} else {
 				console.error(formatError(message));
 			}
-			process.exit(1);
+			exitWith(ExitCode.GeneralError);
 		}
 
 		const goalConfig = buildGoalConfig(trimmedGoal, options, useJson);
@@ -388,7 +388,7 @@ export async function goalRun(
 					console.log(formatRunEvent(event as RunEvent, { debug: false }));
 				}
 			}
-			if (interrupt.signal.aborted) process.exitCode = 130;
+			if (interrupt.signal.aborted) process.exitCode = ExitCode.Interrupted;
 		} finally {
 			interrupt.dispose();
 		}
@@ -399,6 +399,6 @@ export async function goalRun(
 		} else {
 			console.error(formatError(`Failed to run goal: ${message}`));
 		}
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	}
 }

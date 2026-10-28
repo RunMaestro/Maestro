@@ -499,6 +499,7 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 												style={{
 													color: action.active ? theme.colors.accent : theme.colors.textDim,
 												}}
+												aria-pressed={action.pressed}
 												data-testid={action.testId}
 											>
 												<Icon className={headerIconClass} />

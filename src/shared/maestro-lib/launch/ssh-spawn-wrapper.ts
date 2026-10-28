@@ -20,7 +20,14 @@ import {
 	WINDOWS_PROMPT_ARGV_MAX_CHARS,
 	windowsCommandLineLength,
 } from './prompt-delivery';
-import { logger } from '../host';
+import { logger, resolveSshTranslationFs } from '../host';
+import {
+	bindTranslationKnowledge,
+	resolveTranslationKnowledgeBinding,
+	TRANSLATION_KNOWLEDGE_ENV_VAR,
+	TRANSLATION_KNOWLEDGE_REMOTE_ENV_VAR,
+} from '../translation/knowledge-binding';
+import { assertTranslationTarget } from '../translation/resource-projections';
 import { DEFAULT_QUERY_SOURCE, QUERY_SOURCE_ENV_VAR, type QuerySource } from '../../querySource';
 import { stripBlankEnvVars } from '../../agentEnvironment';
 import { isWindows } from '../../platformDetection';
@@ -169,6 +176,8 @@ export async function wrapSpawnWithSsh(
 ): Promise<SshSpawnWrapResult> {
 	// Check if SSH is enabled for this session
 	if (!sshConfig?.enabled) {
+		// A direct wrapper caller must not bypass the launch plan's host fence.
+		resolveTranslationKnowledgeBinding(config.customEnvVars, '');
 		// Local execution - return config unchanged
 		return {
 			command: config.command,
@@ -186,6 +195,11 @@ export async function wrapSpawnWithSsh(
 	});
 
 	if (!sshResult.config) {
+		if (
+			config.customEnvVars?.[TRANSLATION_KNOWLEDGE_ENV_VAR] ||
+			config.customEnvVars?.[TRANSLATION_KNOWLEDGE_REMOTE_ENV_VAR]
+		)
+			throw new Error(sshUnresolvedRemoteMessage(sshConfig));
 		// SSH config not found or disabled - fall back to local execution
 		logger.warn('SSH remote config not found, falling back to local execution', LOG_CONTEXT, {
 			remoteId: sshConfig.remoteId,
@@ -198,6 +212,26 @@ export async function wrapSpawnWithSsh(
 			customEnvVars: config.customEnvVars,
 			prompt: config.prompt,
 			sshRemoteUsed: null,
+		};
+	}
+
+	const knowledge = resolveTranslationKnowledgeBinding(config.customEnvVars, '', sshResult.config);
+	if (knowledge) {
+		const nativeFs = await resolveSshTranslationFs(sshResult.config);
+		// Validate the stored home against the login host, not the local user's home.
+		if ((await nativeFs.realpath('~')) !== (await nativeFs.realpath(knowledge.remoteHome!)))
+			throw new Error('Provider knowledge belongs to a different SSH home');
+		await assertTranslationTarget(knowledge.root, knowledge.remoteHome!, nativeFs);
+		config = {
+			...config,
+			prompt: await bindTranslationKnowledge(
+				config.prompt,
+				knowledge.directory,
+				knowledge.root,
+				nativeFs
+			),
+			// Knowledge is file content. Keep it off SSH argv even when the index is short.
+			launchViaStdinScript: config.prompt ? true : config.launchViaStdinScript,
 		};
 	}
 

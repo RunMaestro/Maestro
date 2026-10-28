@@ -18,9 +18,10 @@ import { describe, it, expect } from 'vitest';
 import {
 	sidebarSessionEquality,
 	activeSessionChromeEquality,
+	delegationRosterEquality,
 } from '../../../renderer/stores/sessionEquality';
 import { createMockSession } from '../../helpers/mockSession';
-import type { AITab, Session } from '../../../renderer/types';
+import type { AITab, PeerAgent, Session } from '../../../renderer/types';
 
 function tab(overrides: Partial<AITab> = {}): AITab {
 	return {
@@ -149,6 +150,13 @@ describe('sidebarSessionEquality', () => {
 });
 
 describe('activeSessionChromeEquality', () => {
+	it('invalidates command readouts when only their provider/account scope changes', () => {
+		const session = createMockSession({ agentCommandsScope: 'scope-a', agentCommands: [] });
+		expect(
+			activeSessionChromeEquality(session, { ...session, agentCommandsScope: 'scope-b' })
+		).toBe(false);
+	});
+
 	it('returns true when isGeneratingName flips (MainPanel owns naming spinner)', () => {
 		const a = createMockSession({ aiTabs: [tab({ id: 't1', isGeneratingName: false })] });
 		const b: Session = {
@@ -196,4 +204,122 @@ describe('activeSessionChromeEquality', () => {
 		};
 		expect(activeSessionChromeEquality(a, b)).toBe(true);
 	});
+});
+
+describe('delegationRosterEquality', () => {
+	const base = (overrides: Partial<Session> = {}): Session =>
+		createMockSession({ id: 'a', name: 'Alpha', ...overrides });
+
+	it('is true for the same array', () => {
+		const sessions = [base()];
+		expect(delegationRosterEquality(sessions, sessions)).toBe(true);
+	});
+
+	it('ignores a field the graph does not read', () => {
+		expect(delegationRosterEquality([base({ state: 'idle' })], [base({ state: 'busy' })])).toBe(
+			true
+		);
+	});
+
+	it('is false when an agent is added or removed', () => {
+		expect(delegationRosterEquality([base()], [base(), base({ id: 'b' })])).toBe(false);
+	});
+
+	it.each<[string, Partial<Session>]>([
+		['name', { name: 'Renamed' }],
+		['group', { groupId: 'g1' }],
+		['parent', { parentSessionId: 'p1' }],
+		['group grant', { groupPeerAccess: { read: true, write: false } }],
+		['worktree grant', { worktreePeerAccess: { read: true, write: true } }],
+		['peer rows', { peerAgents: [{ sessionId: 'b', read: true, write: false }] }],
+	])('is false when the %s changes', (_label, change) => {
+		expect(delegationRosterEquality([base()], [base(change)])).toBe(false);
+	});
+
+	it('compares peer rows by value, so equal rows in a new array are no change', () => {
+		const rows = () => [{ sessionId: 'b', read: true, write: false, description: 'Docs' }];
+		expect(
+			delegationRosterEquality([base({ peerAgents: rows() })], [base({ peerAgents: rows() })])
+		).toBe(true);
+	});
+
+	it.each<[string, Partial<PeerAgent>]>([
+		['target', { sessionId: 'c' }],
+		['consult bit', { read: false }],
+		['delegate bit', { write: true }],
+		['description', { description: 'Other' }],
+	])('is false when the %s of a peer row changes', (_label, change) => {
+		const row = { sessionId: 'b', read: true, write: false, description: 'Docs' };
+		expect(
+			delegationRosterEquality(
+				[base({ peerAgents: [row] })],
+				[base({ peerAgents: [{ ...row, ...change }] })]
+			)
+		).toBe(false);
+	});
+
+	it('compares a grant by its bits, so an equal grant in a new object is no change', () => {
+		expect(
+			delegationRosterEquality(
+				[base({ groupPeerAccess: { read: true, write: false } })],
+				[base({ groupPeerAccess: { read: true, write: false } })]
+			)
+		).toBe(true);
+	});
+});
+
+describe('Ensemble session equality', () => {
+	it.each([
+		{ tabProvider: 'codex' },
+		{ pendingTranslation: 'codex' },
+		{ providerSessions: { codex: { agentSessionId: 'parked' } } },
+	] as Partial<AITab>[])('invalidates native ownership consumers on %j', (patch) => {
+		const base = createMockSession({ aiTabs: [tab()] });
+		const next = { ...base, aiTabs: [tab(patch)] };
+		expect(sidebarSessionEquality([base], [next])).toBe(false);
+		expect(activeSessionChromeEquality(base, next)).toBe(false);
+	});
+	it.each([{ runOn: { type: 'provider' } }, { turnProvider: 'codex' }] as Partial<AITab>[])(
+		'invalidates composer chrome for %j',
+		(patch) => {
+			const base = createMockSession({ aiTabs: [tab()] });
+			expect(activeSessionChromeEquality(base, { ...base, aiTabs: [tab(patch)] })).toBe(false);
+		}
+	);
+});
+
+it('ignores parked token updates without hiding parked selections', () => {
+	const base = createMockSession({
+		aiTabs: [tab({ providerSessions: { codex: { agentSessionId: 'parked' } } })],
+	});
+	const next = {
+		...base,
+		aiTabs: [
+			tab({
+				providerSessions: {
+					codex: {
+						agentSessionId: 'parked',
+						usageStats: {
+							inputTokens: 20,
+							outputTokens: 10,
+							cacheReadInputTokens: 0,
+							cacheCreationInputTokens: 0,
+							totalCostUsd: 0,
+							contextWindow: 1000,
+						},
+					},
+				},
+			}),
+		],
+	};
+	expect(sidebarSessionEquality([base], [next])).toBe(true);
+	expect(activeSessionChromeEquality(base, next)).toBe(true);
+	expect(
+		activeSessionChromeEquality(base, {
+			...next,
+			aiTabs: [
+				tab({ providerSessions: { codex: { agentSessionId: 'parked', customModel: 'auto' } } }),
+			],
+		})
+	).toBe(false);
 });

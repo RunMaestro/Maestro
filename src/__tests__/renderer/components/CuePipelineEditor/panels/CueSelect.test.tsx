@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { ThemedSelect as CueSelect } from '../../../../../renderer/components/shared/ThemedSelect';
 import type { Theme } from '../../../../../renderer/types';
 
@@ -131,6 +131,29 @@ describe('CueSelect', () => {
 		expect(screen.getByText('unknown')).toBeInTheDocument();
 	});
 
+	it('shows a placeholder without adding it to the filterable options', () => {
+		render(
+			<CueSelect
+				value=""
+				placeholder="Add agent"
+				options={options}
+				onChange={onChange}
+				theme={theme}
+				filterable
+				filterPlaceholder="Filter agents..."
+			/>
+		);
+		fireEvent.click(screen.getByRole('button', { name: 'Add agent' }));
+		expect(screen.queryByRole('option', { name: 'Add agent' })).not.toBeInTheDocument();
+		fireEvent.change(screen.getByRole('textbox', { name: 'Filter agents...' }), {
+			target: { value: 'BETA' },
+		});
+		expect(screen.getAllByRole('option')).toHaveLength(1);
+		fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' });
+		expect(onChange).toHaveBeenCalledWith('b');
+		expect(screen.getByRole('button', { name: 'Add agent' })).toBeInTheDocument();
+	});
+
 	it('navigates options with arrow keys', () => {
 		render(<CueSelect value="a" options={options} onChange={onChange} theme={theme} />);
 		fireEvent.click(screen.getByText('Alpha').closest('button')!);
@@ -223,6 +246,75 @@ describe('CueSelect', () => {
 			// Case-insensitive
 			fireEvent.change(input, { target: { value: 'GAM' } });
 			expect(screen.getByRole('option', { name: 'Gamma' })).toBeInTheDocument();
+		});
+
+		it('preserves the query, focus and keyboard selection when options are recreated', async () => {
+			const { rerender } = render(
+				<CueSelect value="a" options={options} onChange={onChange} theme={theme} filterable />
+			);
+			fireEvent.click(screen.getByRole('button', { name: 'Alpha' }));
+			const input = screen.getByPlaceholderText('Filter…');
+			await waitFor(() => expect(input).toHaveFocus());
+			fireEvent.change(input, { target: { value: 'a' } });
+			fireEvent.keyDown(input, { key: 'ArrowDown' });
+			const activeOptionId = screen.getByRole('option', { name: 'Beta' }).id;
+
+			rerender(
+				<CueSelect
+					value="a"
+					options={options.map((option) => ({ ...option }))}
+					onChange={onChange}
+					theme={theme}
+					filterable
+				/>
+			);
+
+			expect(input).toHaveValue('a');
+			expect(input).toHaveFocus();
+			expect(screen.getByRole('listbox')).toBeInTheDocument();
+			expect(screen.getByRole('listbox')).toHaveAttribute('aria-activedescendant', activeOptionId);
+			fireEvent.change(input, { target: { value: 'be' } });
+			expect(screen.getAllByRole('option')).toHaveLength(1);
+			fireEvent.keyDown(input, { key: 'Enter' });
+			expect(onChange).toHaveBeenCalledWith('b');
+		});
+
+		it('updates live matches without clearing the query or moving focus back to the filter', async () => {
+			const { rerender } = render(
+				<CueSelect value="a" options={options} onChange={onChange} theme={theme} filterable />
+			);
+			fireEvent.click(screen.getByRole('button', { name: 'Alpha' }));
+			await waitFor(() => expect(screen.getByPlaceholderText('Filter…')).toHaveFocus());
+			fireEvent.change(screen.getByPlaceholderText('Filter…'), { target: { value: 'be' } });
+			const closeButton = screen.getByRole('button', { name: 'Close filter (Esc)' });
+			closeButton.focus();
+
+			rerender(
+				<CueSelect
+					value="a"
+					options={[
+						options[0],
+						{ value: 'c', label: 'Better Gamma' },
+						{ value: 'd', label: 'Beryl' },
+					]}
+					onChange={onChange}
+					theme={theme}
+					filterable
+				/>
+			);
+
+			expect(screen.getByPlaceholderText('Filter…')).toHaveValue('be');
+			await act(async () => {
+				await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+			});
+			expect(closeButton).toHaveFocus();
+			expect(screen.queryByRole('option', { name: 'Beta' })).not.toBeInTheDocument();
+			expect(screen.queryByRole('option', { name: 'Alpha' })).not.toBeInTheDocument();
+			expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
+				'Better Gamma',
+				'Beryl',
+			]);
+			expect(onChange).not.toHaveBeenCalled();
 		});
 
 		it('shows a "No matches" hint when the filter excludes everything', () => {

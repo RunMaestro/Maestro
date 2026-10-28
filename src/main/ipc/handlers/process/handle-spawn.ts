@@ -1,3 +1,8 @@
+import {
+	projectTabProvider,
+	type ProviderSwitchAgent,
+	type ProviderSwitchTab,
+} from '../../../../shared/maestro-lib/agents/providerSwap';
 import { migrationHoldsTurns } from '../../../../shared/maestro-lib/translation/session';
 import { app, BrowserWindow } from 'electron';
 import Store from 'electron-store';
@@ -35,10 +40,18 @@ import {
 	buildCallerIdentityEnv,
 	withoutCallerIdentityEnv,
 } from '../../../../shared/agentDelegation';
+import {
+	buildConsultChainEnv,
+	parseConsultChain,
+	withoutConsultChainEnv,
+} from '../../../../shared/consultBudget';
+import { hasPeerGrant } from '../../../../shared/peerAgents';
+import { newConsultChainId } from '../../../peer-consults/consult-budget';
 import { QUERY_USER_ENV_VAR } from '../../../../shared/webLogin';
 import { getActingUser } from '../../../web-server/auth/acting-user';
 import { noteTurnActor } from '../../../web-server/auth/turn-attribution';
 import { REGEX_AI_SUFFIX, REGEX_AI_TAB_ID } from '../../../constants';
+import { agentIdFromProcessId } from '../../../utils/process-ids';
 import { addBreadcrumb, captureException } from '../../../utils/sentry';
 import {
 	DORMANT_PIANOLA_MESSAGE,
@@ -58,7 +71,7 @@ import { buildChildProcessEnv } from '../../../process-manager/utils/envBuilder'
 import { awaitSynopsisWriters } from '../../../process-manager/utils/synopsisWriterGate';
 import { probeClaudeSlashCommandsCached } from '../../../agents/claude-slash-command-probe';
 import { buildExpandedEnv } from '../../../../shared/pathUtils';
-import type { SshRemoteConfig } from '../../../../shared/types';
+import type { PeerAccess, PeerAgent, SshRemoteConfig } from '../../../../shared/types';
 import { powerManager } from '../../../power-manager';
 import { MaestroSettings } from '../persistence';
 import { getDefaultShell } from '../../../stores/defaults';
@@ -71,8 +84,18 @@ import { persistClaudeInteractiveMode } from './persist-claude-interactive-mode'
 import { wrapSpawnForSsh } from './wrap-spawn-for-ssh';
 import { createSshRemoteStoreAdapter } from '../../../utils/ssh-remote-resolver';
 import { sshUnresolvedRemoteMessage } from '../../../utils/ssh-spawn-wrapper';
-import { buildAgentLaunchPlan } from '../../../../shared/maestro-lib/launch/launch-plan';
+import {
+	buildAgentLaunchPlan,
+	type LaunchPlanRunOn,
+} from '../../../../shared/maestro-lib/launch/launch-plan';
+import { turnRunOnTarget } from '../../../../shared/autorunTurnSettings';
+import { runOnHarnessMode } from '../../../../shared/local-models/run-on';
+import { logRunOnLaunch, prepareLaunchRunOn } from '../../../local-models/run-on';
 import { resolvePromptDelivery } from '../../../../shared/maestro-lib/launch/prompt-delivery';
+import {
+	ensureTokenProxyForGateway,
+	tokenProxyLaunchGatewayUrl,
+} from '../../../local-models/proxy/service';
 import { preparePermissionRelayArgs } from '../../../permission-relay';
 import {
 	primeOmpModelCatalog,
@@ -234,10 +257,51 @@ async function handleProcessSpawnImpl(
 		sessionCustomEnvVars: config.sessionCustomEnvVars,
 	};
 
+	// The agent this spawn runs AS, and the Run on target it launches on. Looked up by
+	// `agentIdFromProcessId`, which strips every process suffix: an Auto Run task
+	// (`{agentId}-batch-{ts}`) and the History synopsis (`{agentId}-synopsis-{ts}`)
+	// are the agent's own work and run where its typed turns run. The synopsis
+	// resumes the agent's conversation, so missing it here would send that
+	// conversation to the provider's cloud. Read from the store, not from the
+	// renderer's spawn request, for the reason the gateway is (see below).
+	// The one thing the request may say is `runOnOverride`: a tier's target for
+	// this turn (an Auto Run task on a tier the agent or the harness default
+	// sends elsewhere). A caller that leaves it out gets the agent's own target,
+	// and one that sets it is checked like a stored one, so it cannot name a
+	// place the Run on path would not launch on.
+	const launchAgentId = agentIdFromProcessId(config.sessionId);
+	const launchAgent = (
+		deps.sessionsStore.get('sessions', []) as Array<{
+			id?: string;
+			toolType?: import('../../../../shared/types').ToolType;
+			aiTabs?: Array<ProviderSwitchTab & { id: string }>;
+			providerOverrides?: ProviderSwitchAgent['providerOverrides'];
+			gatewayUrl?: string;
+			runOn?: unknown;
+			// The three sources of its peer roster (see the consult chain below).
+			peerAgents?: PeerAgent[];
+			groupPeerAccess?: PeerAccess;
+			worktreePeerAccess?: PeerAccess;
+		}>
+	).find((s) => s?.id === launchAgentId);
+	const launchTabId = config.sessionId.startsWith(`${launchAgentId}-ai-`)
+		? config.sessionId.slice(`${launchAgentId}-ai-`.length)
+		: undefined;
+	const launchTab = launchAgent?.aiTabs?.find((tab) => tab.id === launchTabId);
+	const providerAgent = launchAgent?.toolType
+		? projectTabProvider(
+				launchAgent as typeof launchAgent & ProviderSwitchAgent,
+				launchTab,
+				config.toolType as import('../../../../shared/types').ToolType
+			).agent
+		: launchAgent;
+	const launchRunOn = turnRunOnTarget({ runOn: config.runOnOverride }, providerAgent?.runOn);
+
 	const claudeContext = await resolveClaudeSpawnContext(config, agent, {
 		sessionsStore: deps.sessionsStore,
 		settingsStore,
 		envLayers: claudeEnvLayers,
+		runOn: launchRunOn,
 	});
 	const {
 		baseSessionId,
@@ -250,7 +314,13 @@ async function handleProcessSpawnImpl(
 	// Codex transport (exec default, app-server opt-in), read from the persisted
 	// agent record so a stale renderer cannot route the turn differently from
 	// what is saved. Handed to ProcessManager.spawn() below.
-	const codexTransport = resolveCodexSpawnTransport(config, baseSessionId, deps.sessionsStore);
+	// An agent that runs on a source keeps to `codex exec`, the transport its
+	// recipe was measured on.
+	const codexTransport = runOnHarnessMode(
+		launchRunOn,
+		resolveCodexSpawnTransport(config, baseSessionId, deps.sessionsStore),
+		'exec'
+	);
 
 	let finalArgs = buildAgentArgs(agent, {
 		baseArgs: config.args,
@@ -316,8 +386,63 @@ async function handleProcessSpawnImpl(
 	// the FINAL prompt (system prompt and preambles folded in), with the same
 	// shared function.
 	// ========================================================================
+	// The agent's stored record. Read here for the one thing only it can say
+	// under this id: whether it is Pianola (further down).
+	const storedAgent = (
+		deps.sessionsStore.get('sessions', []) as Array<{
+			id?: string;
+			isPianola?: boolean;
+		}>
+	).find((s) => s?.id === baseSessionId);
+
+	// The agent whose gateway this spawn uses: `launchAgent`, read above. NOT
+	// the record under `baseSessionId`, which strips only the `-ai-{tab}` suffix:
+	// an Auto Run task spawns as `{agentId}-batch-{ts}` and the History synopsis
+	// as `{agentId}-synopsis-{ts}`, so looking the gateway up by `baseSessionId`
+	// found no agent for either and sent both direct, while the agent's typed
+	// turns went through the gateway. The gateway is read from the store, not
+	// from the renderer's spawn request, because a dozen-odd renderer call sites
+	// build that request and one that forgot the field would send the agent's
+	// traffic direct with nothing to show for it. Every surface that edits a
+	// gateway flushes the agent to this store before reporting success.
+	const gatewayAgentId = launchAgentId;
+	const gatewayAgent = providerAgent;
+
 	let effectiveCustomEnvVars: Record<string, string> | undefined;
+	// What the agent's Run on target did to this launch, when it has one.
+	let appliedRunOn: LaunchPlanRunOn | undefined;
 	if (config.toolType !== 'terminal') {
+		const sshStore = createSshRemoteStoreAdapter(settingsStore);
+		const providerCustomEnvVars = agentConfigValues.customEnvVars as
+			| Record<string, string>
+			| undefined;
+		// The agent's Run on target: its source looked up and asked whether it
+		// can serve the model (starting the Maestro model server when the target
+		// is one of its models). A target that cannot run refuses the spawn by
+		// name; it never runs the turn on the provider's model.
+		const preparedRunOn = await prepareLaunchRunOn({
+			toolType: config.toolType,
+			target: launchRunOn,
+			userEnvVars: config.sessionCustomEnvVars ?? providerCustomEnvVars,
+			sshRemoteConfig: config.sessionSshRemoteConfig,
+			sshStore,
+		});
+		if (preparedRunOn.kind === 'refused') {
+			logger.error('Run on target cannot run; not spawning', LOG_CONTEXT, {
+				sessionId: config.sessionId,
+				reason: preparedRunOn.code,
+			});
+			reportSpawnRefusal(deps, config.sessionId, preparedRunOn.message);
+			return { success: false, pid: 0 };
+		}
+		// A gateway that is the Maestro token proxy is given to the process with
+		// this agent's id in its path, which is how the proxy knows whose request
+		// it carries and which mode (passthrough or compress) the agent chose.
+		// Any other gateway comes back unchanged.
+		const launchGatewayUrl = await tokenProxyLaunchGatewayUrl(
+			gatewayAgentId,
+			gatewayAgent?.gatewayUrl
+		);
 		const planResult = buildAgentLaunchPlan({
 			surface: 'desktop',
 			agent: agent ?? undefined,
@@ -327,14 +452,20 @@ async function handleProcessSpawnImpl(
 			prompt: config.prompt,
 			hasImages: !!config.images?.length,
 			globalShellEnvVars,
-			agentCustomEnvVars: agentConfigValues.customEnvVars as Record<string, string> | undefined,
+			agentCustomEnvVars: providerCustomEnvVars,
 			sessionCustomEnvVars: config.sessionCustomEnvVars,
 			readOnlyMode: isReadOnly,
+			gateway: { toolType: config.toolType, url: launchGatewayUrl },
+			runOn: preparedRunOn.kind === 'ready' ? preparedRunOn.runOn : undefined,
 			sshRemoteConfig: config.sessionSshRemoteConfig,
-			sshStore: createSshRemoteStoreAdapter(settingsStore),
+			sshStore,
 		});
 		if (!planResult.ok) {
-			logger.error('SSH remote could not be resolved; not spawning', LOG_CONTEXT, {
+			// The SSH remote could not be resolved, the agent's gateway cannot be
+			// used, or its Run on target cannot run; `reason` says which. Each
+			// refuses the spawn rather than run the turn somewhere the user did
+			// not choose.
+			logger.error('Launch plan refused; not spawning', LOG_CONTEXT, {
 				sessionId: config.sessionId,
 				remoteId: config.sessionSshRemoteConfig?.remoteId,
 				reason: planResult.reason,
@@ -343,6 +474,41 @@ async function handleProcessSpawnImpl(
 			return { success: false, pid: 0 };
 		}
 		effectiveCustomEnvVars = planResult.plan.envVars;
+		// This handler places the prompt itself, so it spawns from the plan's
+		// `launchArgs`: `finalArgs` with the gateway's config arguments in front
+		// (a provider whose base-URL variable is not enough, Codex), or with the
+		// Run on target's root arguments and its model. That model takes the
+		// place of the agent's own (its stored model, a tier model, the
+		// synopsis's cheap model): each names something the source does not serve.
+		finalArgs = planResult.plan.launchArgs;
+		if (planResult.plan.runOn) {
+			appliedRunOn = planResult.plan.runOn;
+			logRunOnLaunch(
+				LOG_CONTEXT,
+				{ sessionId: config.sessionId, toolType: config.toolType },
+				appliedRunOn
+			);
+		}
+		if (planResult.plan.gateway) {
+			logger.info(`Routing ${config.toolType} through its Local Models gateway`, LOG_CONTEXT, {
+				sessionId: config.sessionId,
+				envVar: planResult.plan.gateway.envVar,
+				gatewayUrl: planResult.plan.gateway.url,
+			});
+			// When that gateway is the Maestro token proxy, it has to be up before
+			// the turn is sent to its port. A proxy that cannot start (its port is
+			// held by another program) refuses the spawn by name: the agent's
+			// request, credentials included, must not go to whatever holds the port.
+			const proxy = await ensureTokenProxyForGateway(planResult.plan.gateway.url);
+			if (!proxy.ok) {
+				logger.error('Token proxy unavailable; not spawning', LOG_CONTEXT, {
+					sessionId: config.sessionId,
+					gatewayUrl: planResult.plan.gateway.url,
+				});
+				reportSpawnRefusal(deps, config.sessionId, proxy.error);
+				return { success: false, pid: 0 };
+			}
+		}
 	} else {
 		effectiveCustomEnvVars = configResolution.effectiveCustomEnvVars;
 	}
@@ -360,17 +526,40 @@ async function handleProcessSpawnImpl(
 	// and tell it its own id (MAESTRO_AGENT_ID) so it never acts on itself.
 	// Injected into effectiveCustomEnvVars so it flows through both the local
 	// and SSH env-merge paths below.
-	const isPianolaSession =
-		isPianolaEnabled(encoreFeatures) &&
-		(deps.sessionsStore.get('sessions', []) as Array<{ id?: string; isPianola?: boolean }>).some(
-			(s) => s?.id === baseSessionId && s?.isPianola === true
-		);
+	const isPianolaSession = isPianolaEnabled(encoreFeatures) && storedAgent?.isPianola === true;
 	if (isPianolaSession) {
 		effectiveCustomEnvVars = {
 			...(effectiveCustomEnvVars || {}),
 			MAESTRO_CLI_JS: resolveMaestroCliScriptPath(),
 			MAESTRO_AGENT_ID: baseSessionId,
 		};
+	}
+
+	// Consult chain: tell the agent's shell which user message its peer consults
+	// and delegations are counted against (MAESTRO_CONSULT_CHAIN) and how many
+	// hops from that message it is (MAESTRO_CONSULT_DEPTH), so a `maestro-cli
+	// ask` or `dispatch` it runs spends the one budget the whole chain shares
+	// (see shared/consultBudget.ts). A spawn that arrives carrying a chain is a
+	// descendant and keeps it whatever its own peer configuration: an agent
+	// with no roster in the middle of a chain must not hand what it starts a
+	// fresh budget. A spawn that carries none is the root of a user message. It
+	// mints a chain at depth 0, and only when the agent has a peer grant, so an
+	// agent with no roster carries no new environment. Injected into
+	// effectiveCustomEnvVars so it flows through both the local and SSH
+	// env-merge paths below. A terminal is a shell the user drives, not an
+	// agent turn, so it never carries a chain.
+	if (config.toolType !== 'terminal') {
+		const consultChain =
+			parseConsultChain(config.consultChain) ??
+			(launchAgent && hasPeerGrant({ ...launchAgent, id: launchAgentId })
+				? { chainId: newConsultChainId(), depth: 0 }
+				: undefined);
+		if (consultChain) {
+			effectiveCustomEnvVars = {
+				...(effectiveCustomEnvVars || {}),
+				...buildConsultChainEnv(consultChain),
+			};
+		}
 	}
 
 	// Tell the agent's shell who it is, so a `maestro-cli dispatch` or `ask` it
@@ -713,10 +902,11 @@ async function handleProcessSpawnImpl(
 
 	// Get contextWindow: session-level override takes priority over agent-level config
 	// Falls back to the agent's configOptions default (e.g., 400000 for Codex, 128000 for OpenCode)
+	// A Run on target states its own: the window the harness was told it has.
 	const contextWindow = getContextWindowValue(
 		agent,
 		agentConfigValues,
-		config.sessionCustomContextWindow
+		appliedRunOn?.contextTokens ?? config.sessionCustomContextWindow
 	);
 
 	// ========================================================================
@@ -918,9 +1108,10 @@ async function handleProcessSpawnImpl(
 			// env) so the same logical config maps to one catalog across platforms and
 			// matches the detector's default-identity warm-up. The caller identity is
 			// dropped for the same reason: it names the agent, not its configuration.
+			// So is the consult chain, whose id is new on every root spawn.
 			ompModelCatalogKey = computeOmpCatalogKey(
 				ompPrimeBinaryPath,
-				withoutCallerIdentityEnv(effectiveCustomEnvVars)
+				withoutConsultChainEnv(withoutCallerIdentityEnv(effectiveCustomEnvVars))
 			);
 			// Bounded await: block the spawn only briefly so the first turn resolves
 			// correctly on a warm/fast catalog, and proceed (letting the prime finish

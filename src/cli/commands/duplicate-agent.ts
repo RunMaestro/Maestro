@@ -78,6 +78,7 @@ export async function duplicateAgent(
 		toolType: input.toolType,
 		cwd: input.cwd,
 		groupId: input.groupId,
+		seedFromGroup: false,
 		background,
 		nudgeMessage: input.nudgeMessage,
 		newSessionMessage: input.newSessionMessage,

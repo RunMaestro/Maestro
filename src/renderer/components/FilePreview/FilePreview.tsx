@@ -53,6 +53,10 @@ import { hardBreakInlineFields } from '../Markdown/preprocess';
 import { REMARK_GFM_PLUGINS, createMarkdownComponents } from '../../utils/markdownConfig';
 import { remarkMaestroMarkers } from '../Markdown/remarkMaestroMarkers';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { startDocumentVoice } from '../../services/documentVoice';
+import { DocumentChatOverlay } from '../DocumentChat';
+import { useTocOverlay } from '../../hooks/ui/useTocOverlay';
+import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { useSurfaceTypography } from '../../hooks/ui/useSurfaceTypography';
 import { useSessionStore } from '../../stores/sessionStore';
 import { buildFileDeepLink } from '../../../shared/deep-link-urls';
@@ -64,12 +68,12 @@ import { openFileUrl } from '../../utils/openFileUrl';
 import { isImageFile } from '../../../shared/gitUtils';
 import { isParquetPreviewMarker } from '../../../shared/parquet/preview';
 import { ParquetViewer, type ParquetViewerHandle } from '../ParquetViewer';
+import { isBinaryExtension } from '../../../shared/fileKinds';
 import { getOpenedMediaKind } from '../../utils/mediaItems';
 import type { FilePreviewProps, FilePreviewHandle, FileStats, TocEntry } from './types';
 import {
 	getLanguageFromFilename,
 	isBinaryContent,
-	isBinaryExtension,
 	isGistPublishableFile,
 	formatFileSize,
 	countMarkdownTasks,
@@ -122,6 +126,10 @@ import { toggleTaskCheckboxAtLine } from '../../utils/markdownTasks';
 import { logger } from '../../utils/logger';
 import { useEventListener } from '../../hooks/utils/useEventListener';
 import { HEADING_PALETTE_EVENT } from '../../services/headingPalette';
+import {
+	DOCUMENT_CHAT_PANEL_EVENT,
+	consumeDocumentChatPanelRequest,
+} from '../../services/documentChatPanel';
 import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 
 /**
@@ -1053,6 +1061,42 @@ export const FilePreview = React.memo(
 		const headerBtnClass =
 			'inline-flex min-w-9 min-h-9 items-center justify-center p-2 rounded hover:bg-white/10 transition-colors outline-none focus-visible:ring-1 focus-visible:ring-white/30';
 
+		// The chat bubble is offered wherever there is text to talk about, whether or
+		// not A Cappella is on: typing needs no voice stack at all, and hiding the
+		// whole panel behind an Encore Feature would take text chat away from every
+		// install that has not turned voice on - which is all of them by default.
+		const canChatAboutThisFile = !!file && isEditableText;
+
+		// Reuse the preview's shortcut and focus handling, but keep the embedded
+		// chat open while the user selects or scrolls through the document.
+		const documentChat = useTocOverlay({
+			shortcuts,
+			containerRef,
+			shortcutId: 'toggleDocumentChat',
+			dismissOnClickOutside: false,
+			enabled: canChatAboutThisFile,
+			onShortcutUsed,
+		});
+
+		// The Cmd+K palette is a modal and cannot reach this component's state, so it
+		// asks over an app-level event - the same arrangement the heading palette
+		// uses. The guard mirrors the hotkey's: a request for a file with nothing to
+		// read is dropped rather than opening a chat about an image.
+		const openRequestedDocumentChat = useCallback(() => {
+			if (!canChatAboutThisFile || !file) return;
+			const agentSessionId = sessionId ?? useSessionStore.getState().activeSessionId;
+			const request = consumeDocumentChatPanelRequest(file.path, agentSessionId);
+			if (!request) return;
+			documentChat.setOpen(true);
+			if (request.voice) void startDocumentVoice({ path: file.path, sessionId: agentSessionId });
+		}, [canChatAboutThisFile, file?.path, sessionId, documentChat.setOpen]);
+
+		useEventListener(DOCUMENT_CHAT_PANEL_EVENT, (event) => {
+			if (!canChatAboutThisFile) return;
+			if ((event as CustomEvent).detail) openRequestedDocumentChat();
+			else documentChat.setOpen(true);
+		});
+
 		// Delete the previewed file. Shared with the command palette's
 		// "File: Delete" entry, so both raise the same confirmation.
 		const handleDeleteFile = useCallback(() => {
@@ -1549,12 +1593,28 @@ export const FilePreview = React.memo(
 			containerRef.current?.focus();
 			// Close TOC overlay when file changes
 			setShowTocOverlay(false);
+			// Same for the chat bubble: its conversation is bound to one document, so
+			// carrying the open panel across a navigation would show the previous
+			// file's chat over the new file's contents.
+			documentChat.setOpen(false);
 		}, [file?.path]); // Run on mount and when navigating to a different file
+
+		// A targeted request can arrive before this preview mounts. Consume it
+		// after the navigation reset, then use the panel's own microphone path.
+		useEffect(() => {
+			openRequestedDocumentChat();
+		}, [openRequestedDocumentChat]);
 
 		// Helper to handle escape key - shows confirmation modal if there are unsaved changes
 		// In tab mode: Escape only closes internal UI (search, TOC), not the tab itself
 		// Tabs close via Cmd+W or clicking the close button, not Escape
 		const handleEscapeRequest = useCallback(() => {
+			// Ordered innermost-first: a floating panel the user just opened is what
+			// Escape should take away, before it reaches the search bar or the
+			// preview itself. `closeIfOpen` reports whether it consumed the key.
+			if (documentChat.closeIfOpen()) {
+				return;
+			}
 			if (showTocOverlay) {
 				setShowTocOverlay(false);
 				containerRef.current?.focus();
@@ -1576,7 +1636,7 @@ export const FilePreview = React.memo(
 				}
 			}
 			// In tab mode with no internal UI open, Escape does nothing
-		}, [showTocOverlay, searchOpen, hasChanges, onClose, isTabMode]);
+		}, [documentChat.closeIfOpen, showTocOverlay, searchOpen, hasChanges, onClose, isTabMode]);
 
 		// Register layer on mount - only for overlay mode (not tab mode)
 		// Tab mode: File preview is part of the main panel content, not an overlay
@@ -1733,6 +1793,15 @@ export const FilePreview = React.memo(
 			// Handle Escape key - dismiss overlays in priority order
 			// In tab mode, layer system isn't registered, so we handle Escape directly here
 			if (e.key === 'Escape') {
+				// The chat bubble goes first: it is the innermost floating panel, and
+				// Escape pressed with the caret in its box has to take the panel away
+				// rather than the preview under it. In tab mode this chain is the ONLY
+				// Escape path - the layer system is not registered there.
+				if (documentChat.closeIfOpen()) {
+					e.preventDefault();
+					e.stopPropagation();
+					return;
+				}
 				if (showHeadingPalette) {
 					e.preventDefault();
 					e.stopPropagation();
@@ -1828,6 +1897,11 @@ export const FilePreview = React.memo(
 				// on top of each other is just clutter.
 				setShowTocOverlay(false);
 				setShowHeadingPalette(true);
+			} else if (documentChat.handleKeyDown(e)) {
+				// The chat panel's toggle hotkey. `handleKeyDown` has already
+				// prevented and stopped the event when it consumed one. Escape never
+				// reaches here - the block at the top of this handler owns it.
+				return;
 			} else if (
 				isShortcut(e, 'toggleFilePreviewToc') &&
 				isMarkdown &&
@@ -1958,7 +2032,7 @@ export const FilePreview = React.memo(
 		return (
 			<div
 				ref={containerRef}
-				className="flex flex-col h-full outline-none"
+				className="relative flex flex-col h-full outline-none"
 				style={{ backgroundColor: theme.colors.bgMain }}
 				tabIndex={0}
 				onKeyDown={handleKeyDown}
@@ -2123,7 +2197,7 @@ export const FilePreview = React.memo(
 							? 'flex-1 min-h-0 overflow-hidden'
 							: isTablePane
 								? 'flex-1 min-h-0 flex flex-col overflow-hidden px-6 pt-3 pb-6'
-								: 'flex-1 overflow-y-auto px-6 pt-3 pb-24 scrollbar-thin'
+								: 'flex-1 min-h-0 overflow-y-auto px-6 pt-3 pb-24 scrollbar-thin'
 					}
 					style={
 						{
@@ -2883,6 +2957,20 @@ export const FilePreview = React.memo(
 						/>
 					)}
 				</div>
+
+				{/* Embedded chat has its own scroll area, leaving the document readable. */}
+				{canChatAboutThisFile && file && (
+					<DocumentChatOverlay
+						theme={theme}
+						path={file.path}
+						sessionId={sessionId}
+						open={documentChat.open}
+						onOpenChange={documentChat.setOpen}
+						buttonRef={documentChat.buttonRef}
+						overlayRef={documentChat.overlayRef}
+						shortcutHint={formatShortcutKeys(shortcuts.toggleDocumentChat?.keys ?? [])}
+					/>
+				)}
 
 				{/* Copy / save flashes are now rendered globally by <CenterFlash /> */}
 

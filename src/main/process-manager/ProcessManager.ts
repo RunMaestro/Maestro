@@ -104,7 +104,11 @@ export class ProcessManager extends EventEmitter {
 			this.processes,
 			this,
 			this.bufferManager,
-			(config) => this.childProcessSpawner.spawn(config),
+			(config) => {
+				const result = this.childProcessSpawner.spawn(config);
+				if (result.success) this.emit('codex-transport', config.sessionId, 'exec');
+				return result;
+			},
 			{ clientVersion: options.appVersion }
 		);
 		this.localCommandRunner = new LocalCommandRunner(this);
@@ -327,6 +331,13 @@ export class ProcessManager extends EventEmitter {
 	 */
 	private emitSpawn(config: ProcessConfig): void {
 		try {
+			if (config.toolType === 'codex') {
+				this.emit(
+					'codex-transport',
+					config.sessionId,
+					this.processes.get(config.sessionId)?.codexAppServer ? 'app-server' : 'exec'
+				);
+			}
 			this.emit('spawn', config);
 		} catch {
 			// Capture is best-effort; never let it break process spawning.
@@ -416,6 +427,15 @@ export class ProcessManager extends EventEmitter {
 			return steerCodexAppServerTurn(process.codexAppServer, { id, text }, (verdict) =>
 				this.emit('steering-verdict', sessionId, verdict)
 			);
+		}
+		if (process.toolType === 'codex') {
+			return {
+				type: 'steering',
+				id,
+				verdict: 'refused',
+				refusal: 'unsupported-transport',
+				detail: 'This turn is running on Codex exec, which cannot accept steering.',
+			};
 		}
 		return sendSteeringRequest({ processKey: sessionId, text, id });
 	}

@@ -26,7 +26,7 @@ import {
 	type QuickChatStatus,
 	type QuickChatWindowAction,
 } from '../../shared/quickChat';
-import { setNamedGlobalHotkey, summonAppWindow } from '../global-hotkey-manager';
+import { setNamedGlobalHotkey, summonMainWindow } from '../global-hotkey-manager';
 import { logger } from '../utils/logger';
 import { isWebContentsAvailable } from '../utils/safe-send';
 import { requestFromRenderer } from '../web-server/callbacks/remoteRequest';
@@ -40,6 +40,7 @@ import {
 	getQuickChatWindow,
 	getQuickChatFontScale,
 	getQuickChatWindowBounds,
+	getQuickChatWindowId,
 	hideQuickChatWindow,
 	isQuickChatWindowPinned,
 	isQuickChatWindowVisible,
@@ -83,6 +84,20 @@ export interface QuickChatController {
 	setBounds(request: QuickChatBoundsRequest): QuickChatStatus;
 	/** Float the window above other windows, or let it fall behind them. */
 	setPinned(pinned: boolean): QuickChatStatus;
+	/**
+	 * Put the window on screen as the surface of a voice session bound to Quick
+	 * Chat, and return its window id (the session's owner). Null when Quick Chat
+	 * is turned off: the caller refuses the session instead of opening a
+	 * microphone with nothing to show it.
+	 */
+	showForVoice(): string | null;
+	/**
+	 * Hear every change of the chat's snapshot (a command's result, or the
+	 * engine's own push as a message is routed and answered). Main-process
+	 * callers only; the window gets the same snapshots over IPC. Returns the
+	 * function that stops listening.
+	 */
+	onSnapshot(listener: (snapshot: QuickChatSnapshot) => void): () => void;
 	/** Change the conversation's text zoom. */
 	setFontScale(request: QuickChatFontScaleRequest): QuickChatStatus;
 	getStatus(): QuickChatStatus;
@@ -108,9 +123,26 @@ export function createQuickChatController(deps: QuickChatControllerDeps): QuickC
 	const isEnabled = () => resolveEncoreFeatures(settingsStore.get('encoreFeatures')).quickChat;
 	const readSettings = () => resolveQuickChatSettings(settingsStore.get(QUICK_CHAT_SETTINGS_KEY));
 
+	const snapshotListeners = new Set<(snapshot: QuickChatSnapshot) => void>();
+
 	const pushSnapshotToWindow = () => {
 		const win = getQuickChatWindow();
 		if (win && isWebContentsAvailable(win)) win.webContents.send('quickChat:snapshot', snapshot);
+	};
+
+	/** Take a new snapshot: remember it, show it, and tell whoever is following it. */
+	const setSnapshot = (next: QuickChatSnapshot) => {
+		snapshot = next;
+		pushSnapshotToWindow();
+		// A copy: a listener may stop listening from inside its own call.
+		for (const listener of [...snapshotListeners]) listener(next);
+	};
+
+	const onSnapshot = (listener: (snapshot: QuickChatSnapshot) => void): (() => void) => {
+		snapshotListeners.add(listener);
+		return () => {
+			snapshotListeners.delete(listener);
+		};
 	};
 
 	/** The app window whose renderer runs the conversation. */
@@ -143,11 +175,10 @@ export function createQuickChatController(deps: QuickChatControllerDeps): QuickC
 			timeoutMs: COMMAND_TIMEOUT_MS,
 			fallback: { ok: false, error: 'Maestro did not answer', snapshot },
 		});
-		snapshot = result.snapshot;
-		pushSnapshotToWindow();
+		setSnapshot(result.snapshot);
 		// "Open in Maestro" is a deliberate trip to the main window: put the
 		// floating window away and bring the window showing the tab forward.
-		if (command.type === 'reveal' && result.ok) summonAppWindow(win);
+		if (command.type === 'reveal' && result.ok) summonMainWindow(win);
 		return result;
 	};
 
@@ -160,7 +191,7 @@ export function createQuickChatController(deps: QuickChatControllerDeps): QuickC
 		// app's windows. Works with the feature off too, like hide.
 		if (action === 'return') {
 			const main = deps.getMainWindow();
-			if (main) summonAppWindow(main);
+			if (main) summonMainWindow(main);
 			else hideQuickChatWindow();
 			return getStatus();
 		}
@@ -182,6 +213,14 @@ export function createQuickChatController(deps: QuickChatControllerDeps): QuickC
 	const setPinned = (pinned: boolean): QuickChatStatus => {
 		setQuickChatWindowPinned(pinned, windowDeps);
 		return getStatus();
+	};
+
+	const showForVoice = (): string | null => {
+		if (!isEnabled()) return null;
+		// Already on screen is the common case (the window's own microphone), and
+		// showing it again would refocus the composer mid-press.
+		if (!isQuickChatWindowVisible()) windowAction('show');
+		return getQuickChatWindowId();
 	};
 
 	const setFontScale = (request: QuickChatFontScaleRequest): QuickChatStatus => {
@@ -249,8 +288,7 @@ export function createQuickChatController(deps: QuickChatControllerDeps): QuickC
 		});
 		// The engine reports state as the conversation streams.
 		ipcMain.on('quickChat:snapshot', (_event, next: QuickChatSnapshot) => {
-			snapshot = next;
-			pushSnapshotToWindow();
+			setSnapshot(next);
 		});
 
 		syncHotkey();
@@ -268,6 +306,8 @@ export function createQuickChatController(deps: QuickChatControllerDeps): QuickC
 		windowAction,
 		setBounds,
 		setPinned,
+		showForVoice,
+		onSnapshot,
 		setFontScale,
 		getStatus,
 		getRecents,

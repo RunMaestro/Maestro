@@ -27,7 +27,7 @@ function Harness({
 	defaultSize?: { width: number; height: number };
 	minSize?: { width: number; height: number };
 	enabled?: boolean;
-	anchor?: 'center' | 'top-left';
+	anchor?: 'center' | 'top-left' | 'bottom-left';
 }) {
 	const modal = useResizableModal({
 		resizeKey,
@@ -114,6 +114,16 @@ describe('useResizableModal', () => {
 		// cursor; an anchored one only moves the dragged edge.
 		expect(modal.style.width).toBe('450px');
 		expect(modal.style.height).toBe('320px');
+	});
+
+	it('grows a bottom-left anchored menu upward and rightward 1:1', () => {
+		render(<Harness anchor="bottom-left" />);
+		fireEvent.mouseDown(screen.getByTestId('modal-resize-handle-ne'), {
+			clientX: 0,
+			clientY: 0,
+		});
+		fireEvent.mouseMove(document, { clientX: 50, clientY: -20 });
+		expect(screen.getByTestId('modal')).toHaveStyle({ width: '450px', height: '320px' });
 	});
 
 	it('cleans document drag listeners when unmounted during a drag', () => {

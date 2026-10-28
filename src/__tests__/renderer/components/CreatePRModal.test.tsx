@@ -11,6 +11,10 @@
  * agent whose branch the PR opens from is frequently not the highlighted one. Only
  * `cwd` and the branch reach this component, so the agent name has to be threaded
  * in from the host (`AppWorktreeModals`).
+ *
+ * A third: "Draft with local model" fills the title and description and stops.
+ * It must never create the pull request, and it must not exist while the Git
+ * drafts task is off, which is the default.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -31,6 +35,23 @@ const KEY = prRunKey(WORKTREE);
 const createPR = vi.fn();
 const checkGhCli = vi.fn();
 const status = vi.fn();
+const taskReadiness = vi.fn();
+const draftPullRequest = vi.fn();
+
+const GIT_DRAFTS_OFF = {
+	taskId: 'git-drafts',
+	label: 'Git drafts',
+	needs: 'text-gen',
+	assignment: { type: 'off' },
+	state: 'off',
+	detail: 'Git drafts is off.',
+};
+const GIT_DRAFTS_READY = {
+	...GIT_DRAFTS_OFF,
+	assignment: { type: 'local', modelId: 'qwen3-1.7b-instruct-q4km' },
+	state: 'ready',
+	detail: 'Runs Qwen3 1.7B Instruct (Q4_K_M) on this machine.',
+};
 
 function renderModal(overrides: Partial<React.ComponentProps<typeof CreatePRModal>> = {}) {
 	const props = {
@@ -60,9 +81,84 @@ describe('CreatePRModal', () => {
 		createPR.mockImplementation(() => new Promise(() => {}));
 		checkGhCli.mockResolvedValue({ installed: true, authenticated: true });
 		status.mockResolvedValue({ stdout: '' });
+		taskReadiness.mockResolvedValue([GIT_DRAFTS_OFF]);
 		(globalThis as unknown as { window: { maestro: unknown } }).window.maestro = {
 			git: { createPR, checkGhCli, status },
+			localModels: { taskReadiness, draftPullRequest },
 		};
+	});
+
+	it('offers no draft button while Git drafts is off', async () => {
+		renderModal();
+
+		await screen.findByRole('button', { name: /create pr/i });
+		await waitFor(() => expect(taskReadiness).toHaveBeenCalledWith('git-drafts'));
+		expect(screen.queryByTestId('pr-draft-button')).not.toBeInTheDocument();
+	});
+
+	it('fills the title and description from a draft without creating the PR', async () => {
+		taskReadiness.mockResolvedValue([GIT_DRAFTS_READY]);
+		draftPullRequest.mockResolvedValue({
+			success: true,
+			title: 'Polish the tab strip',
+			body: 'Tightens spacing.\n\n- Align the close button\n- Fix the active ring',
+			baseBranch: 'main',
+			commitCount: 3,
+			truncated: false,
+		});
+		renderModal();
+
+		fireEvent.click(await screen.findByTestId('pr-draft-button'));
+
+		expect(await screen.findByDisplayValue('Polish the tab strip')).toBeInTheDocument();
+		const description = screen.getByPlaceholderText('Add a description...') as HTMLTextAreaElement;
+		expect(description.value).toBe(
+			'Tightens spacing.\n\n- Align the close button\n- Fix the active ring'
+		);
+		// The body is four lines, so the box grows to show all of it for review.
+		expect(description.rows).toBe(4);
+		expect(draftPullRequest).toHaveBeenCalledWith({ cwd: WORKTREE, baseBranch: 'main' });
+		// Filling is all it does: the request is still the user's to send.
+		expect(createPR).not.toHaveBeenCalled();
+		expect(usePRCreationStore.getState().runs[KEY]).toBeUndefined();
+
+		await clickCreatePR();
+		expect(createPR).toHaveBeenCalledWith(
+			WORKTREE,
+			'main',
+			'Polish the tab strip',
+			'Tightens spacing.\n\n- Align the close button\n- Fix the active ring'
+		);
+	});
+
+	it('drafts against the target branch that is picked', async () => {
+		taskReadiness.mockResolvedValue([GIT_DRAFTS_READY]);
+		draftPullRequest.mockResolvedValue({
+			success: false,
+			status: 'no-changes',
+			error: 'nothing to draft from',
+		});
+		renderModal({ availableBranches: ['main', 'rc'] });
+
+		fireEvent.change(await screen.findByRole('combobox'), { target: { value: 'rc' } });
+		fireEvent.click(await screen.findByTestId('pr-draft-button'));
+
+		await waitFor(() =>
+			expect(draftPullRequest).toHaveBeenCalledWith({ cwd: WORKTREE, baseBranch: 'rc' })
+		);
+		expect(await screen.findByTestId('pr-draft-error')).toHaveTextContent('nothing to draft from');
+		// A failed draft leaves the branch-derived title alone.
+		expect(screen.getByDisplayValue('visual polish')).toBeInTheDocument();
+	});
+
+	it('locks the draft button while the pull request is being created', async () => {
+		taskReadiness.mockResolvedValue([GIT_DRAFTS_READY]);
+		renderModal();
+		await screen.findByTestId('pr-draft-button');
+
+		await clickCreatePR();
+
+		expect(screen.getByTestId('pr-draft-button')).toBeDisabled();
 	});
 
 	it('hands the request to the store instead of holding it', async () => {

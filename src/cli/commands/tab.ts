@@ -48,6 +48,7 @@ import {
 	type TabContextOpResult,
 } from '../../shared/tabContextOps';
 import { formatSuccess } from '../output/formatter';
+import { AUTO_MODEL, isAutoModel } from '../../shared/autoModel';
 import { nextThinkingMode, type ThinkingMode } from '../../shared/types';
 import type { DesktopTabEntry } from '../../shared/desktopTabs';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
@@ -98,8 +99,7 @@ export async function tabNew(options: TabNewOptions): Promise<void> {
 			if (tabId) console.log(`  Tab: ${tabId}`);
 		}
 	} catch (error) {
-		exitIfMaestroNotRunning(error, { json: options.json });
-		failCommand(error instanceof Error ? error.message : String(error), options.json);
+		failFromError(error, options.json);
 	}
 }
 
@@ -121,8 +121,7 @@ async function tabAction(
 	try {
 		owner = await resolveTabOwner(tabId, options.agent);
 	} catch (error) {
-		exitIfMaestroNotRunning(error, { json: options.json });
-		return failCommand(error instanceof Error ? error.message : String(error), options.json);
+		return failFromError(error, options.json);
 	}
 
 	const { type, responseType, successMessage, extraPayload } = build(owner);
@@ -137,8 +136,7 @@ async function tabAction(
 			jsonExtra: { tabId: owner.tabId, agentId: owner.agentId },
 		});
 	} catch (error) {
-		exitIfMaestroNotRunning(error, { json: options.json });
-		failCommand(error instanceof Error ? error.message : String(error), options.json);
+		failFromError(error, options.json);
 	}
 }
 
@@ -197,8 +195,7 @@ export async function tabMove(
 	try {
 		owner = await resolveTabOwner(tabId, options.agent);
 	} catch (error) {
-		exitIfMaestroNotRunning(error, { json: options.json });
-		return failCommand(error instanceof Error ? error.message : String(error), options.json);
+		return failFromError(error, options.json);
 	}
 
 	let fromIndex: number;
@@ -211,8 +208,7 @@ export async function tabMove(
 			return failCommand(`Tab ${owner.tabId} is no longer open`, options.json);
 		}
 	} catch (error) {
-		exitIfMaestroNotRunning(error, { json: options.json });
-		return failCommand(error instanceof Error ? error.message : String(error), options.json);
+		return failFromError(error, options.json);
 	}
 
 	const raw = (position ?? '').trim().toLowerCase();
@@ -254,8 +250,7 @@ export async function tabMove(
 			jsonExtra: { tabId: owner.tabId, agentId: owner.agentId, fromIndex, toIndex },
 		});
 	} catch (error) {
-		exitIfMaestroNotRunning(error, { json: options.json });
-		failCommand(error instanceof Error ? error.message : String(error), options.json);
+		failFromError(error, options.json);
 	}
 }
 
@@ -288,8 +283,7 @@ async function writeTabPatch(
 			jsonExtra: { tabId: owner.tabId, agentId: owner.agentId, ...patch },
 		});
 	} catch (error) {
-		exitIfMaestroNotRunning(error, { json: options.json });
-		failCommand(error instanceof Error ? error.message : String(error), options.json);
+		failFromError(error, options.json);
 	}
 }
 
@@ -303,8 +297,7 @@ async function tabFlag(
 	try {
 		owner = await resolveTabOwner(tabId, options.agent);
 	} catch (error) {
-		exitIfMaestroNotRunning(error, { json: options.json });
-		return failCommand(error instanceof Error ? error.message : String(error), options.json);
+		return failFromError(error, options.json);
 	}
 	await writeTabPatch(owner, patch, successMessage(owner), options);
 }
@@ -353,8 +346,7 @@ export async function tabThinking(
 	try {
 		entry = await resolveTabEntry(tabId, options.agent);
 	} catch (error) {
-		exitIfMaestroNotRunning(error, { json: options.json });
-		return failCommand(error instanceof Error ? error.message : String(error), options.json);
+		return failFromError(error, options.json);
 	}
 	const next = mode === 'cycle' ? nextThinkingMode(entry.thinking) : mode;
 	await writeTabPatch(
@@ -383,7 +375,8 @@ export async function tabReadOnly(
  * Override the model for one tab, or pass `null` to drop the override so the
  * tab inherits the agent's model again. Values are not validated against the
  * provider's model list - same as `update-agent --model`, which lets you name a
- * model the local install knows about before Maestro has probed for it.
+ * model the local install knows about before Maestro has probed for it. `auto`
+ * is the exception.
  */
 export async function tabModel(
 	tabId: string,
@@ -392,10 +385,10 @@ export async function tabModel(
 ): Promise<void> {
 	await tabFlag(
 		tabId,
-		{ customModel: model },
+		{ customModel: isAutoModel(model) ? AUTO_MODEL : model },
 		(owner) =>
 			model === null
-				? `Tab ${owner.tabId} now inherits the agent's model`
+				? `Tab ${owner.tabId} now inherits its provider's model`
 				: `Set tab ${owner.tabId} model to ${model}`,
 		options
 	);
@@ -449,8 +442,7 @@ export async function tabShow(tabId: string, options: TabMutateOptions): Promise
 	try {
 		entry = await resolveTabEntry(tabId, options.agent);
 	} catch (error) {
-		exitIfMaestroNotRunning(error, { json: options.json });
-		return failCommand(error instanceof Error ? error.message : String(error), options.json);
+		return failFromError(error, options.json);
 	}
 
 	if (options.json) {
@@ -469,7 +461,10 @@ export async function tabShow(tabId: string, options: TabMutateOptions): Promise
 		console.log(`  ${`${label}:`.padEnd(17)}${value}`);
 	console.log(`Tab ${entry.tabId}${entry.active ? ' (active)' : ''}`);
 	row('Agent', `${entry.agentName} (${entry.agentId})`);
-	row('Provider', entry.toolType);
+	row('Provider', entry.provider ?? entry.toolType);
+	row('Agent default', entry.agentProvider ?? entry.toolType);
+	row('Provider pin', entry.tabProvider ?? 'inherited');
+	row('Turn provider', entry.turnProvider ?? '(unknown)');
 	row('Name', entry.name ?? '(unnamed)');
 	row('State', entry.state);
 	row('Session', entry.agentSessionId ?? '(none yet)');

@@ -27,6 +27,7 @@ import { ResizeHandles } from './ui/ResizeHandles';
 import { EscCloseButton } from './ui/EscCloseButton';
 import { usePhoneLayout } from '../hooks/ui/useViewportBreakpoint';
 import { getTabKindColor } from './TabBar/tabBarUtils';
+import { projectTabProvider, resolveTabNativeProvider } from '../utils/providerTabSessions';
 
 /** Normalize a project path for comparison (strip trailing slashes) */
 function normalizePath(p: string): string {
@@ -81,7 +82,8 @@ interface TabSwitcherModalProps {
 		agentSessionId: string,
 		projectPath: string,
 		sessionName: string,
-		starred?: boolean
+		starred?: boolean,
+		provider?: ToolType
 	) => void;
 	onClose: () => void;
 	/** Whether colorblind-friendly colors should be used for extension badges */
@@ -300,7 +302,7 @@ function phoneRowFor(
 			};
 		case 'named':
 			return {
-				key: item.session.agentSessionId,
+				key: `${item.session.agentId}:${item.session.agentSessionId}`,
 				icon: <MessageSquare className={iconClass} style={{ color: theme.colors.textDim }} />,
 				name: item.session.sessionName,
 				isActive: false,
@@ -348,7 +350,18 @@ export function TabSwitcherModal({
 	// only when the user opens one from a response bubble. Listing one here offers a
 	// row with nothing to click back from, and syncing its generated `↩ Name` to the
 	// named-session store would invent a session name the user never chose.
-	const tabs = useMemo(() => visibleAiTabs(allTabs), [allTabs]);
+	const tabs = useMemo(
+		() =>
+			visibleAiTabs(allTabs).map(
+				(tab) =>
+					projectTabProvider(
+						{ toolType: agentId as ToolType },
+						tab,
+						resolveTabNativeProvider(tab, { toolType: agentId as ToolType })
+					).tab!
+			),
+		[allTabs, agentId]
+	);
 
 	// A tab running `/wizard` looks like any other row here, and its wizard is the one
 	// thing about it the user can't see from the tab strip once the strip overflows.
@@ -402,7 +415,8 @@ export function TabSwitcherModal({
 			const effectiveAgentId = agentId || 'claude-code';
 			await Promise.all(
 				namedTabs.map((tab) => {
-					if (effectiveAgentId === 'claude-code') {
+					const nativeProvider = tab.tabProvider ?? effectiveAgentId;
+					if (nativeProvider === 'claude-code') {
 						return window.maestro.claude
 							.updateSessionName(projectRoot, tab.agentSessionId!, tab.name!)
 							.catch((err) =>
@@ -410,7 +424,7 @@ export function TabSwitcherModal({
 							);
 					} else {
 						return window.maestro.agentSessions
-							.setSessionName(effectiveAgentId, projectRoot, tab.agentSessionId!, tab.name!)
+							.setSessionName(nativeProvider, projectRoot, tab.agentSessionId!, tab.name!)
 							.catch((err) =>
 								logger.warn('[TabSwitcher] Failed to sync tab name:', undefined, err)
 							);
@@ -419,7 +433,8 @@ export function TabSwitcherModal({
 			);
 			// Then load all named sessions (including the ones we just synced)
 			const sessions = await window.maestro.agentSessions.getAllNamedSessions();
-			setNamedSessions(sessions.filter((session) => session.agentId === effectiveAgentId));
+			const providers = new Set([effectiveAgentId, ...tabs.map((tab) => tab.tabProvider)]);
+			setNamedSessions(sessions.filter((session) => providers.has(session.agentId as ToolType)));
 			setNamedSessionsLoaded(true);
 		};
 
@@ -442,7 +457,9 @@ export function TabSwitcherModal({
 
 	// Get set of open tab claude session IDs for quick lookup
 	const openTabSessionIds = useMemo(() => {
-		return new Set(tabs.map((t) => t.agentSessionId).filter(Boolean));
+		return new Set(
+			tabs.filter((t) => t.agentSessionId).map((t) => `${t.tabProvider}:${t.agentSessionId}`)
+		);
 	}, [tabs]);
 
 	// Build the list items based on view mode
@@ -513,7 +530,7 @@ export function TabSwitcherModal({
 				if (
 					session.starred &&
 					normalizePath(session.projectPath) === normalizePath(projectRoot) &&
-					!openTabSessionIds.has(session.agentSessionId)
+					!openTabSessionIds.has(`${session.agentId}:${session.agentSessionId}`)
 				) {
 					items.push({ type: 'named' as const, session });
 				}
@@ -554,7 +571,7 @@ export function TabSwitcherModal({
 			for (const session of namedSessions) {
 				if (
 					normalizePath(session.projectPath) === normalizePath(projectRoot) &&
-					!openTabSessionIds.has(session.agentSessionId)
+					!openTabSessionIds.has(`${session.agentId}:${session.agentSessionId}`)
 				) {
 					// Skip sessions where the name is just the UUID or first octet of the UUID
 					const firstOctet = session.agentSessionId.split('-')[0].toUpperCase();
@@ -667,7 +684,8 @@ export function TabSwitcherModal({
 						item.session.agentSessionId,
 						item.session.projectPath,
 						item.session.sessionName,
-						item.session.starred
+						item.session.starred,
+						item.session.agentId as ToolType
 					);
 				}
 				onClose();
@@ -872,7 +890,7 @@ export function TabSwitcherModal({
 								namedSessions.filter((s) => {
 									if (
 										normalizePath(s.projectPath) !== normalizePath(projectRoot) ||
-										openTabSessionIds.has(s.agentSessionId)
+										openTabSessionIds.has(`${s.agentId}:${s.agentSessionId}`)
 									)
 										return false;
 									const firstOctet = s.agentSessionId.split('-')[0].toUpperCase();
@@ -901,7 +919,7 @@ export function TabSwitcherModal({
 									(s) =>
 										s.starred &&
 										s.projectPath === projectRoot &&
-										!openTabSessionIds.has(s.agentSessionId)
+										!openTabSessionIds.has(`${s.agentId}:${s.agentSessionId}`)
 								).length}
 							)
 						</button>
@@ -955,7 +973,7 @@ export function TabSwitcherModal({
 								const isActive = tab.id === activeTabId;
 								const displayName = getTabDisplayName(tab);
 								const uuidPill = getUuidPill(tab.agentSessionId);
-								const contextPct = getContextPercentage(tab, agentId as ToolType);
+								const contextPct = getContextPercentage(tab, tab.tabProvider);
 								const cost = tab.usageStats?.totalCostUsd || 0;
 								const wizardActivity = wizardActiveTabs.get(tab.id);
 
@@ -1030,7 +1048,7 @@ export function TabSwitcherModal({
 													<>
 														<span>
 															{formatTokensCompact(
-																calculateDisplayInputTokens(tab.usageStats, agentId) +
+																calculateDisplayInputTokens(tab.usageStats, tab.tabProvider) +
 																	tab.usageStats.outputTokens
 															)}{' '}
 															tokens
@@ -1297,7 +1315,7 @@ export function TabSwitcherModal({
 
 								return (
 									<button
-										key={session.agentSessionId}
+										key={`${session.agentId}:${session.agentSessionId}`}
 										ref={isSelected ? selectedItemRef : null}
 										onClick={() => handleSelectByIndex(i)}
 										className="w-full text-left px-4 py-3 flex items-center gap-3 row-hover"

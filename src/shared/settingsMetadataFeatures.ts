@@ -9,6 +9,7 @@
 import type { SettingMetadata } from './settingsMetadata';
 import { ENCORE_FEATURE_DEFAULTS } from './encoreFeatureDefaults';
 import { DEFAULT_CUE_HISTORY_RETENTION_DAYS } from './cue/retention';
+import { DEFAULT_DOWNLOAD_BASE } from './local-models/download-base';
 import { DEFAULT_QUICK_CHAT_SETTINGS } from './quickChat';
 import { DEFAULT_THROUGHPUT_GAUGE_SETTINGS } from './throughputGauge';
 
@@ -83,6 +84,48 @@ export const FEATURES_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		type: 'boolean',
 		default: false,
 		category: 'advanced',
+	},
+	localModelEndpoints: {
+		description:
+			'Local Models endpoints: model servers you run (Ollama, LM Studio, any OpenAI-compatible URL). Each entry is { id, name, kind, baseUrl, apiKeyEnvVar?, enabled }. API keys are never stored here: apiKeyEnvVar names a variable in Settings -> Environment.',
+		type: 'array',
+		default: [],
+		category: 'integrations',
+	},
+	localModelsDownloadBase: {
+		description:
+			'Where Local Models downloads model files from, and where Add from Hugging Face looks a repo up. Default https://huggingface.co. Point it at a mirror that serves the same /<repo>/resolve/<revision>/<file> and /api/models/<repo> paths when a network blocks Hugging Face. Every download is still checked against the catalog hash.',
+		type: 'string',
+		default: DEFAULT_DOWNLOAD_BASE,
+		category: 'integrations',
+	},
+	localModelAssignments: {
+		description:
+			"Local Models task assignments: which source each housekeeping task (tab naming, summaries, AI command mode, git drafts, semantic search, Cue gate, screens, dictation, spoken notices, voice routing, token proxy) runs on. Keyed by task id; each value is { type: 'off' }, { type: 'utility-agent' } (inherits utilitySource, whose provider path honors utilityAgentId / utilityModelId), { type: 'local', modelId }, { type: 'endpoint', endpointId, model }, or { type: 'system-one' } (the System One engine in force answers the task's typed questions; only a task that declares them accepts it). A task with no entry uses its default.",
+		type: 'object',
+		default: {},
+		category: 'integrations',
+	},
+	acappella: {
+		description:
+			'Everything A Cappella (voice) persists, as one object: providers.{stt,tts,brain,realtime} and pipeline (what runs each slot), voice.{voiceId,rate,volume}, speech.speakBackgroundCompletions, audio.inputDeviceId, controls.* (wake word, stop word, send phrases and the conversation timing), ui.* (the Voice HUD), and ice.* (how a paired device connects). Read or write one field by its path, for example acappella.controls.turnSettleMs; a write is checked against the bounds the Voice settings panels use, and an unset field reads as its default. Cloud keys are not here: they are in the OS keychain (maestro-cli voice credentials). A provider or voice written here reaches a running session through maestro-cli voice providers set and voice voices set, which also tell the app.',
+		type: 'object',
+		default: {},
+		category: 'integrations',
+	},
+	harnessTierDefaults: {
+		description:
+			"Tier defaults: where each harness launches a model tier for an agent that does not set the tier itself. Keyed by harness id (claude-code, codex, opencode, ...), then by tier (low, medium, high); each value is { type: 'provider-model', model } (a model on the harness's own provider), { type: 'provider' } (the provider, on the agent's own model), or { type: 'source', endpointId, model, contextTokens? } (a Run on target). A tier with no entry uses the built-in table. An agent's own tier target wins over this.",
+		type: 'object',
+		default: {},
+		category: 'integrations',
+	},
+	semanticIndexCue: {
+		description:
+			'Include Cue runs in the semantic index. Off by default: Cue runs are most of History by volume and mostly repeat. Only has an effect while the Semantic search task (localModelAssignments) is assigned a source. Turning it off drops Cue runs from the index at the next pass.',
+		type: 'boolean',
+		default: false,
+		category: 'integrations',
 	},
 	directorNotesSettings: {
 		description:

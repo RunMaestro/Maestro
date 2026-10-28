@@ -24,6 +24,8 @@ describe('dedicated provider translation transport', () => {
 	it('uses the existing migration callback and returns a correlated dedicated result', async () => {
 		const configPatch = {
 			toolType: 'codex',
+			tabId: 'selected-tab',
+			projectResourcesIntoRepo: true,
 			migrationAction: 'apply',
 			migrationPlanId: 'reviewed-plan',
 			acceptTranslationLimitations: true,
@@ -48,6 +50,9 @@ describe('dedicated provider translation transport', () => {
 	});
 
 	it.each([
+		{ migrationAction: 'plan', tabId: false },
+		{ migrationAction: 'plan', tabId: ' ' },
+		{ migrationAction: 'plan', projectResourcesIntoRepo: 'true' },
 		{ migrationAction: 'sync' },
 		{ migrationAction: 'apply', toolType: 'unknown' },
 		{ migrationAction: 'plan', toolType: 'codex', customPath: '/unrelated' },

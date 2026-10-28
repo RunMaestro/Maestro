@@ -52,7 +52,7 @@ function createOutage(overrides: Partial<AuthOutage> = {}): AuthOutage {
 }
 
 /** Modal registers itself with the layer stack, so it needs the provider. */
-const render = (ui: React.ReactElement) => rtlRender(<LayerStackProvider>{ui}</LayerStackProvider>);
+const render = (ui: React.ReactElement) => rtlRender(ui, { wrapper: LayerStackProvider });
 
 // The real XTerminal needs canvas/WebGL, which jsdom does not have.
 vi.mock('../../../renderer/components/XTerminal', () => {
@@ -133,6 +133,47 @@ async function flushSpawn() {
 }
 
 describe('ReauthModal', () => {
+	it('logs into the captured provider account despite a changed agent default', async () => {
+		const host = createMockSession({
+			id: 'sess-1',
+			toolType: 'codex',
+			customPath: '/custom/codex',
+			customEnvVars: { CODEX_HOME: '/accounts/failed' },
+		});
+		const session = createMockSession({
+			id: 'sess-1',
+			toolType: 'claude-code',
+			customPath: '/custom/claude',
+			customEnvVars: { CLAUDE_CONFIG_DIR: '/accounts/other' },
+			providerOverrides: {
+				codex: { customPath: host.customPath, customEnvVars: host.customEnvVars },
+			},
+		});
+		const outage = createOutage({ toolType: 'codex', host });
+		const { rerender } = render(
+			<ReauthModal theme={mockTheme} outage={outage} session={session} onClose={vi.fn()} />
+		);
+		await flushSpawn();
+		expect(mockGetCustomEnvVars).toHaveBeenCalledWith('codex');
+		expect(mockSpawnTerminalTab).toHaveBeenCalledWith(
+			expect.objectContaining({
+				toolType: 'codex',
+				sessionCustomEnvVars: { CODEX_HOME: '/accounts/failed' },
+			})
+		);
+		await emitShellOutput(mockSpawnTerminalTab.mock.calls[0][0].sessionId);
+		expect(mockWrite).toHaveBeenCalledWith(expect.any(String), '/custom/codex login\r');
+		rerender(
+			<ReauthModal
+				theme={mockTheme}
+				outage={outage}
+				session={{ ...session, toolType: 'opencode' }}
+				onClose={vi.fn()}
+			/>
+		);
+		expect(mockSpawnTerminalTab).toHaveBeenCalledTimes(1);
+	});
+
 	it('spawns one login shell and types the provider login command into it', async () => {
 		const session = createMockSession({ id: 'sess-1', toolType: 'claude-code' });
 		const outage = createOutage({ toolType: 'claude-code' });
@@ -162,7 +203,7 @@ describe('ReauthModal', () => {
 		await flushSpawn();
 
 		const ptySessionId: string = mockSpawnTerminalTab.mock.calls[0][0].sessionId;
-		expect(ptySessionId.startsWith('reauth-sess-1-terminal-')).toBe(true);
+		expect(ptySessionId.startsWith('reauth-sess-1-claude-code-terminal-')).toBe(true);
 		expect(ptySessionId.split('-terminal-')[0]).not.toBe('sess-1');
 		expect(screen.getByTestId('xterm-mock').getAttribute('data-session-id')).toBe(ptySessionId);
 	});

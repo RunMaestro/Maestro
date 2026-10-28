@@ -20,6 +20,20 @@ function open(ui: React.ReactElement) {
 }
 
 describe('HoverTooltip', () => {
+	it('reveals the explanation when its trigger receives keyboard focus', () => {
+		render(
+			<HoverTooltip theme={mockTheme} label="Fits on this computer. Needs 630 MB.">
+				<span tabIndex={0}>Fits</span>
+			</HoverTooltip>
+		);
+		const trigger = screen.getByText('Fits');
+		expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+		fireEvent.focus(trigger);
+		expect(screen.getByRole('tooltip')).toHaveTextContent('Fits on this computer. Needs 630 MB.');
+		fireEvent.blur(trigger);
+		expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+	});
+
 	it('keeps a short label on one line by default', () => {
 		const tip = open(
 			<HoverTooltip theme={mockTheme} label="Short">

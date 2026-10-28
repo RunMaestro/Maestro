@@ -234,6 +234,65 @@ Supports:
 - Dot-notation nested key access (`source.status`)
 - All conditions are AND'd
 
+### Gate (`gate` / `gate_on_unavailable`)
+
+A subscription's `gate` is a condition in plain language that a local model (the `cue-gate` Local
+Models task) answers against the event payload before a run starts. It is applied in
+`cue-dispatch-service.ts`, after the filter and before the run manager:
+
+- `src/shared/cue/gate.ts` holds everything pure: the reply schema, the event caps, the failure
+  policy (`resolveCueGateDecision`), and the record stamped on the event payload under `gate`.
+- The evaluator is injected (`CueEngineDeps.evaluateGate`); the engine never imports the model
+  stack. Desktop: `evaluateCueGate` in `src/main/local-models/cue-gate.ts`. Standalone runner: none,
+  which means "unavailable", not "no gate".
+- A "no" calls `onGated`: the run manager's `recordSkippedRun()` writes one `cue_events` row with
+  status `gated`, and the engine pushes it to the activity log. No slot, no completion, no chain.
+- Unavailable gate: fail OPEN with a `gateUnavailable` warning, unless `gate_on_unavailable: skip`.
+- Manual triggers (`payload.manual`) are never gated.
+- Both fields are in `triggerGroupKey()` and round-trip through the editor on the trigger node
+  (`TriggerNodeData.config.gate`). A gate hand-written on an `agent.completed` chain sub is honored
+  by the engine but is not carried by the editor's chain emission, the same as `filter` there.
+- Authoring: `<CueGateField>` (`CuePipelineEditor/panels/CueGateField.tsx`) is the one field, drawn by
+  `TriggerConfig` under every trigger that fires by itself (not `cli.trigger`, which is manual only)
+  and by `ScheduledTaskForm`. It shows the `cue-gate` task's readiness, because a condition with no
+  model checks nothing. `TriggerConfig` stores a blank gate as NO keys and never stores the default
+  policy; `triggerGroupKey` compares both keys as written.
+- CLI: `maestro-cli cue gate <sub>` (`set_cue_subscription_gate` -> `CueEngine.setSubscriptionGate()`,
+  which writes every member of the trigger group, see `isSameTriggerGroup`) and
+  `cue schedule --gate`. Every patch goes through `writeCueGateFields()`.
+
+Full design: [docs/architecture/local-models.md](../architecture/local-models.md#the-cue-gate-evaluatecuegate).
+
+### Injection screen (`screen_injection` / `injection_threshold`)
+
+Untrusted text a subscription substitutes (a comment, an issue body, a webhook payload) is scored by
+a local classifier (the `injection-screen` Local Models task) before a run starts. It is applied in
+`cue-dispatch-service.ts`, after the gate and before the run manager:
+
+- `src/shared/cue/injection-screen.ts` holds everything pure: when a subscription is screened
+  (`resolveCueInjectionScreen`), what is scored (`collectCueInjectionTargets`), the failure policy
+  (`resolveCueInjectionDecision`), the stored shape (`writeCueInjectionScreenFields`), and the record
+  stamped on the event payload under `injectionScreen`.
+- The untrusted variables are one list: `CUE_UNTRUSTED_TEMPLATE_VARIABLES` in
+  `src/shared/templateVariables.ts`.
+- The scorer is injected (`CueEngineDeps.scoreInjection`). Desktop: `scoreCueInjectionText` in
+  `src/main/local-models/cue-injection-screen.ts`. Standalone runner: none, which means `off`.
+- Default: an `action: command` subscription that substitutes an untrusted variable is screened.
+  `screen_injection: true | false` overrides it.
+- A score at or above the threshold calls `onInjectionBlocked`: `recordSkippedRun()` writes one
+  `cue_events` row with status `blocked-injection` and the reason, and the engine pushes it to the
+  activity log and emits `injectionBlocked` (the red toast). No slot, no completion, no chain.
+- Screen cannot run: a command that asked for it is blocked (fail CLOSED); any other action runs
+  with an `injectionScreenUnavailable` warning (fail OPEN).
+- Both fields are in `triggerGroupKey()` and round-trip through the editor on the trigger node
+  (`TriggerNodeData.config`).
+- Authoring: `<CueInjectionScreenField>` (`CuePipelineEditor/panels/`), drawn by `TriggerConfig`
+  only under triggers that carry untrusted text (`cueEventCarriesUntrustedText`).
+- CLI: `maestro-cli cue screen <sub>` (`set_cue_subscription_injection_screen` ->
+  `CueEngine.setSubscriptionInjectionScreen()`, which writes every member of the trigger group).
+
+Rules and reasoning: [CLAUDE-CUE.md](../../CLAUDE-CUE.md#prompt-injection-screen).
+
 ### cue-activity-log.ts (~40 lines)
 
 Simple in-memory ring buffer of completed run results (max 500). Used by the Cue Modal dashboard.

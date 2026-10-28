@@ -9,7 +9,7 @@
  */
 
 import { withMaestroClient } from '../services/maestro-client';
-import { failCommand, failFromError, resolveAgentOrFail } from '../services/session-command';
+import { failCommand, resolveAgentOrFail, failFromError } from '../services/session-command';
 import { generateDefaultFolderName } from '../../shared/marketplaceFolderName';
 import type { MarketplaceManifest, MarketplacePlaybook } from '../../shared/marketplace-types';
 

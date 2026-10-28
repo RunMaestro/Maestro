@@ -14,6 +14,7 @@
  */
 
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
+import { providerAuthKey } from '../../../../shared/providerAuthIdentity';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { ClaudePlanUsage } from '../../../../renderer/components/UsageDashboard/ClaudePlanUsage';
 import { useClaudeUsageStore } from '../../../../renderer/stores/claudeUsageStore';
@@ -355,7 +356,9 @@ describe('ClaudePlanUsage - unauthenticated row', () => {
 
 		await waitFor(() => expect(selectModalData('reauth')(useModalStore.getState())).toBeDefined());
 		const data = selectModalData('reauth')(useModalStore.getState())!;
-		expect(data.providerKey).toBe('claude-code');
+		expect(data.providerKey).toBe(
+			providerAuthKey('claude-code', undefined, '/Users/me/.claude-0din')
+		);
 		expect(data.host?.customEnvVars).toEqual({ CLAUDE_CONFIG_DIR: '/Users/me/.claude-0din' });
 	});
 

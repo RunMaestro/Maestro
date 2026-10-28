@@ -498,6 +498,40 @@ describe('firing the retry', () => {
 	// case that must NOT honor that freeze: the whole reason a user touches the
 	// model (or the agent's provider) during the countdown is to get out from
 	// behind the wall that just failed the turn.
+	it('retains the captured retry provider when another harness is selected', () => {
+		setupSession('s10', 't1', { customModel: 'opus' });
+		const session = useSessionStore.getState().sessions[0];
+		session.aiTabs[0] = {
+			...session.aiTabs[0],
+			tabProvider: 'codex',
+			agentSessionId: 'codex-native',
+			providerSessions: {
+				'claude-code': { agentSessionId: 'claude-native', customModel: 'sonnet' },
+			},
+		};
+		noteDispatch(
+			's10',
+			{
+				id: 'item-1',
+				timestamp: 1,
+				tabId: 't1',
+				type: 'message',
+				text: 'hi',
+				turnSettings: { provider: 'claude-code', model: 'opus' },
+			},
+			deps
+		);
+		scheduleRetryForError('s10', 't1', quota());
+		retryNow('s10', 't1');
+		expect(processQueuedItem).toHaveBeenCalledWith(
+			's10',
+			expect.objectContaining({
+				turnSettings: expect.objectContaining({ provider: 'claude-code', model: 'sonnet' }),
+			}),
+			withCancelCheck(deps)
+		);
+	});
+
 	it('resends under the model and effort the agent carries NOW, not the frozen ones', () => {
 		setupSession('s10', 't1', { customModel: 'fable', customEffort: 'low' });
 		noteDispatch(
@@ -520,7 +554,66 @@ describe('firing the retry', () => {
 			's10',
 			expect.objectContaining({
 				text: 'hi',
-				turnSettings: { model: 'fable', effort: 'low' },
+				turnSettings: expect.objectContaining({ model: 'fable', effort: 'low' }),
+			}),
+			withCancelCheck(deps)
+		);
+	});
+
+	// The router's answer is about the prompt, and the prompt resent is the one
+	// that was sent. So a resend on the Auto model keeps the answer rather than
+	// asking again, and a resend on a named model has no use for it.
+	it('resends a turn that went out on Auto with the answer the router gave it', () => {
+		const route = { tier: 'low', effort: 'low', engine: 'Embedding router', calibrated: false };
+		setupSession('s10a', 't1', { customModel: 'auto', customEffort: 'low' });
+		noteDispatch(
+			's10a',
+			{
+				id: 'item-1',
+				timestamp: 1,
+				tabId: 't1',
+				type: 'message',
+				text: 'hi',
+				turnSettings: { model: 'auto', effort: 'high', route },
+			},
+			deps
+		);
+		scheduleRetryForError('s10a', 't1', quota());
+
+		retryNow('s10a', 't1');
+
+		expect(processQueuedItem).toHaveBeenCalledWith(
+			's10a',
+			expect.objectContaining({
+				turnSettings: expect.objectContaining({ model: 'auto', effort: 'low', route }),
+			}),
+			withCancelCheck(deps)
+		);
+	});
+
+	it('drops the answer when the agent has been moved to a named model since', () => {
+		const route = { tier: 'low', effort: 'low', engine: 'Embedding router', calibrated: false };
+		setupSession('s10b', 't1', { customModel: 'opus' });
+		noteDispatch(
+			's10b',
+			{
+				id: 'item-1',
+				timestamp: 1,
+				tabId: 't1',
+				type: 'message',
+				text: 'hi',
+				turnSettings: { model: 'auto', route },
+			},
+			deps
+		);
+		scheduleRetryForError('s10b', 't1', quota());
+
+		retryNow('s10b', 't1');
+
+		expect(processQueuedItem).toHaveBeenCalledWith(
+			's10b',
+			expect.objectContaining({
+				turnSettings: expect.objectContaining({ model: 'opus', effort: undefined }),
 			}),
 			withCancelCheck(deps)
 		);
@@ -538,7 +631,9 @@ describe('firing the retry', () => {
 
 		expect(processQueuedItem).toHaveBeenCalledWith(
 			's11',
-			expect.objectContaining({ turnSettings: { model: 'sonnet', effort: 'medium' } }),
+			expect.objectContaining({
+				turnSettings: expect.objectContaining({ model: 'sonnet', effort: 'medium' }),
+			}),
 			withCancelCheck(deps)
 		);
 	});
@@ -887,6 +982,26 @@ describe('resilience event recording', () => {
 		(window as any).maestro.stats.recordResilience as ReturnType<typeof vi.fn>;
 
 	beforeEach(() => recordMock().mockClear());
+
+	it('records the failed provider after a selection or agent default change', () => {
+		setupSession('ensemble-stats', 't1');
+		noteDispatch(
+			'ensemble-stats',
+			{
+				id: 'stats-failed',
+				timestamp: 1,
+				tabId: 't1',
+				type: 'message',
+				text: 'retry',
+				turnSettings: { provider: 'codex' },
+			},
+			deps
+		);
+		scheduleRetryForError('ensemble-stats', 't1', quota());
+		updateSessionWith('ensemble-stats', (session) => ({ ...session, toolType: 'opencode' }));
+		cancelRetry('ensemble-stats', 't1');
+		expect(recordMock()).toHaveBeenCalledWith(expect.objectContaining({ agentType: 'codex' }));
+	});
 
 	it('records a recovered outage when the resend settles', () => {
 		setupSession('s20', 't1');
@@ -1542,6 +1657,74 @@ describe('queue durability across an outage', () => {
  * waiting out a reset that no longer applies to it.
  */
 describe('provider change during an outage', () => {
+	it('watches the captured provider slot without reacting to another tab or agent default', () => {
+		setupTabs('ensemble-retry', ['t1', 't2'], { toolType: 'claude-code' });
+		updateSessionWith('ensemble-retry', (session) => ({
+			...session,
+			aiTabs: session.aiTabs.map((tab) =>
+				tab.id === 't1' ? { ...tab, tabProvider: 'codex', customModel: 'gpt-a' } : tab
+			),
+		}));
+		noteDispatch(
+			'ensemble-retry',
+			{
+				id: 'ensemble-failed',
+				timestamp: 1,
+				tabId: 't1',
+				type: 'message',
+				text: 'retry',
+				turnSettings: { provider: 'codex', model: 'gpt-a' },
+			},
+			deps
+		);
+		scheduleRetryForError('ensemble-retry', 't1', quota());
+		updateSessionWith('ensemble-retry', (session) => ({
+			...session,
+			customModel: 'another-claude',
+			aiTabs: session.aiTabs.map((tab) =>
+				tab.id === 't2' ? { ...tab, customModel: 'sibling' } : tab
+			),
+		}));
+		expect(processQueuedItem).not.toHaveBeenCalled();
+		updateSessionWith('ensemble-retry', (session) => ({
+			...session,
+			aiTabs: session.aiTabs.map((tab) =>
+				tab.id === 't1' ? { ...tab, customModel: 'gpt-b' } : tab
+			),
+		}));
+		expect(processQueuedItem).toHaveBeenCalledTimes(1);
+		expect(processQueuedItem.mock.calls[0][1].turnSettings).toMatchObject({
+			provider: 'codex',
+			model: 'gpt-b',
+		});
+	});
+
+	it('retries when the captured provider account changes, including a parked provider', () => {
+		setupSession('ensemble-account', 't1', {
+			toolType: 'claude-code',
+			providerOverrides: { codex: { customEnvVars: { CODEX_HOME: '/accounts/old' } } },
+		});
+		noteDispatch(
+			'ensemble-account',
+			{
+				id: 'account-failed',
+				timestamp: 1,
+				tabId: 't1',
+				type: 'message',
+				text: 'retry',
+				turnSettings: { provider: 'codex' },
+			},
+			deps
+		);
+		scheduleRetryForError('ensemble-account', 't1', quota());
+		updateSessionWith('ensemble-account', (session) => ({
+			...session,
+			providerOverrides: { codex: { customEnvVars: { CODEX_HOME: '/accounts/new' } } },
+		}));
+		expect(processQueuedItem).toHaveBeenCalledTimes(1);
+		expect(processQueuedItem.mock.calls[0][1].turnSettings.provider).toBe('codex');
+	});
+
 	it('fires the waiting retry when the model changes', () => {
 		setupSession('p1', 't1', { customModel: 'opus' });
 		seedSnapshot('p1', 't1');

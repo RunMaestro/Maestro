@@ -22,7 +22,6 @@ import {
 	Eye,
 	EyeOff,
 	TimerReset,
-	XCircle,
 	Zap,
 } from 'lucide-react';
 // AlertTriangle still used by `DisabledNote`; CoverageWarningsBanner was removed.
@@ -57,6 +56,7 @@ import {
 	SummaryCardsSkeleton,
 } from './ChartSkeletons';
 import { MetricCard } from './SummaryCards';
+import { PanelErrorNote } from './PanelErrorNote';
 import { PercentilesCard } from './PercentilesCard';
 import { computeAxisLabelIndices, PHONE_AXIS_LABELS } from './chartUtils';
 import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
@@ -1291,40 +1291,6 @@ const DisabledNote = memo(function DisabledNote({ theme }: { theme: Theme }) {
 	);
 });
 
-const ErrorNote = memo(function ErrorNote({
-	theme,
-	message,
-	onRetry,
-}: {
-	theme: Theme;
-	message: string;
-	onRetry: () => void;
-}) {
-	return (
-		<div
-			className="p-6 rounded-lg flex flex-col items-center justify-center gap-3 text-center"
-			style={{ backgroundColor: theme.colors.bgMain }}
-			data-testid="cue-stats-error"
-		>
-			<XCircle className="w-6 h-6" style={{ color: theme.colors.error }} />
-			<div className="text-sm" style={{ color: theme.colors.textMain }}>
-				Failed to load Cue stats
-			</div>
-			<div className="text-xs" style={{ color: theme.colors.textDim, maxWidth: 420 }}>
-				{message}
-			</div>
-			<button
-				type="button"
-				onClick={onRetry}
-				className="px-4 py-1.5 rounded text-sm"
-				style={{ backgroundColor: theme.colors.accent, color: theme.colors.bgMain }}
-			>
-				Retry
-			</button>
-		</div>
-	);
-});
-
 /* -------------------------------- Component ------------------------------ */
 
 function isCueStatsDisabled(err: unknown): boolean {
@@ -1414,7 +1380,15 @@ export const CueStats = memo(function CueStats({
 		if (error === 'CueStatsDisabled') {
 			return <DisabledNote theme={theme} />;
 		}
-		return <ErrorNote theme={theme} message={error} onRetry={fetchAggregation} />;
+		return (
+			<PanelErrorNote
+				theme={theme}
+				title="Failed to load Cue stats"
+				message={error}
+				onRetry={fetchAggregation}
+				testId="cue-stats-error"
+			/>
+		);
 	}
 
 	if (!aggregation) {

@@ -14,6 +14,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { resolveErrorProvider } from '../../utils/providerTabSessions';
 import type { Session, LeaderboardRegistration, AgentError } from '../../types';
 import type { RecoveryAction } from '../../components/AgentErrorModal';
 import { getModalActions, useModalStore } from '../../stores/modalStore';
@@ -471,7 +472,13 @@ export function useModalHandlers(
 	// Historical errors get no recovery actions (they're read-only)
 	const { recoveryActions } = useAgentErrorRecovery({
 		error: effectiveError,
-		agentId: errorSession?.toolType || 'claude-code',
+		agentId: errorSession
+			? resolveErrorProvider(
+					errorSession.aiTabs.find((tab) => tab.id === errorSession.agentErrorTabId),
+					errorSession,
+					effectiveError
+				)
+			: 'claude-code',
 		sessionId: errorSession?.id || '',
 		onNewSession:
 			!isHistorical && errorSession

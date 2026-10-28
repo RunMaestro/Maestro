@@ -28,6 +28,7 @@ const MIGRATED_HEADING_SCOPES = [
 	join(SETTINGS_ROOT, 'tabs/GeneralTab'),
 	join(SETTINGS_ROOT, 'tabs/ThemeTab.tsx'),
 	join(SETTINGS_ROOT, 'tabs/ShortcutsTab.tsx'),
+	join(SETTINGS_ROOT, 'tabs/LocalModelsTab'),
 ];
 
 /** Every tab root owns the vertical rhythm between its sections, and it is `space-y-5`. */
@@ -216,6 +217,7 @@ describe('Settings style guide', () => {
 			['ShortcutsTab', 'tabs/ShortcutsTab.tsx'],
 			['EncoreTab', 'tabs/EncoreTab/EncoreTab.tsx'],
 			['EnvironmentTab', 'tabs/EnvironmentTab.tsx'],
+			['ModelsSettingsTab', 'tabs/LocalModelsTab/ModelsSettingsTab.tsx'],
 		];
 
 		it.each(TAB_ROOTS)('%s spaces its sections with space-y-5', (_name, relative) => {

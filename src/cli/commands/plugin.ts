@@ -18,7 +18,7 @@
 
 import * as fs from 'fs';
 import { withMaestroClient } from '../services/maestro-client';
-import { failCommand } from '../services/session-command';
+import { failFromError } from '../services/session-command';
 import { resolveCliPath } from '../utils/parse';
 import * as path from 'path';
 import {
@@ -45,6 +45,7 @@ import {
 } from '../../shared/plugins/signing';
 import type { SignatureManifest, SignatureStatus } from '../../shared/plugins/signing';
 import { collectPluginArchiveFiles, packPluginArchive } from '../../shared/plugins/plugin-archive';
+import { ExitCode, exitWith } from '../exit-codes';
 
 /** Version of @maestro/plugin-sdk the scaffold pins (kept in sync with the SDK). */
 const PLUGIN_SDK_VERSION = '0.2.0';
@@ -84,7 +85,7 @@ function makeFail(json?: boolean): (message: string) => never {
 	return (message: string): never => {
 		if (json) console.log(JSON.stringify({ success: false, error: message }));
 		else console.error(message);
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 	};
 }
 
@@ -487,7 +488,7 @@ export function pluginValidate(dir: string | undefined, options: PluginValidateO
 			console.error(`Invalid plugin.json in ${targetDir}:`);
 			for (const e of errors) console.error(`  - ${e}`);
 		}
-		process.exit(1);
+		exitWith(ExitCode.GeneralError);
 		return;
 	}
 
@@ -678,6 +679,6 @@ export async function pluginRuntime(
 			JSON.stringify({ success: true, snapshot: reply.result }, null, options.json ? 0 : 2)
 		);
 	} catch (error) {
-		failCommand(error instanceof Error ? error.message : String(error), options.json);
+		failFromError(error, options.json);
 	}
 }

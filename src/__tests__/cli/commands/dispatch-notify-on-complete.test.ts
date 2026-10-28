@@ -14,6 +14,16 @@ vi.mock('../../../cli/services/storage', () => ({
 	readSettingValue: vi.fn(() => undefined),
 }));
 
+// The consult budget is a file under the Maestro data directory: mock the guard
+// so no dispatch in this suite touches the live counter (the rule itself is
+// covered in services/consult-budget-guard.test.ts).
+vi.mock('../../../cli/services/consult-budget-guard', () => ({
+	admitCliConsult: vi.fn(() => ({
+		allowed: true,
+		chain: { chainId: 'chain-under-test', depth: 1 },
+	})),
+}));
+
 import { runDispatch } from '../../../cli/commands/dispatch';
 import { withMaestroClient } from '../../../cli/services/maestro-client';
 import { resolveAgentId } from '../../../cli/services/storage';

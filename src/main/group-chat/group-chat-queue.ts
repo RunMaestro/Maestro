@@ -19,6 +19,7 @@
  */
 
 import { randomUUID } from 'crypto';
+import { groupChatEvents } from './emitters';
 import { existsSync } from 'fs';
 import { mkdir, readFile, rename } from 'fs/promises';
 import path from 'path';
@@ -417,6 +418,7 @@ async function drainClaimed(groupChatId: string, active: GroupChatQueueDeps): Pr
 	}
 
 	try {
+		groupChatEvents.emit('submission', groupChatId, head.id);
 		await active.send(groupChatId, head.text, head.images, head.readOnlyMode);
 		const { state: after } = await mutate(groupChatId, (current) =>
 			completeItem(current, sendingId)
@@ -496,6 +498,7 @@ export async function submitMessage(
 	inFlight.add(groupChatId);
 
 	try {
+		groupChatEvents.emit('submission', groupChatId, item.id);
 		await active.send(groupChatId, item.text, item.images, item.readOnlyMode);
 		return current;
 	} catch (err) {

@@ -13,6 +13,10 @@ import { useModalStore, selectModalOpen, selectModalData } from '../../stores/mo
 import { useTabStore } from '../../stores/tabStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import type { CodexTransport } from '../../../shared/codexTransport';
+import type { RunOnSourceTarget } from '../../../shared/local-models/run-on';
+import type { TierTargets } from '../../../shared/modelTiers';
+import type { PeerGrants } from '../../../shared/peerAgents';
+import type { GroupDefaultsCreateExtras } from '../../../shared/groupAgentDefaults';
 
 /**
  * Props for the AppSessionModals component
@@ -54,7 +58,15 @@ export interface AppSessionModalsProps {
 		/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
 		codexAutoResetOnExhaustion?: boolean,
 		/** Codex only: which transport chat turns use. `undefined` means `exec`. */
-		codexTransport?: CodexTransport
+		codexTransport?: CodexTransport,
+		/** Local Models gateway URL, already validated; `undefined` sets none. */
+		gatewayUrl?: string,
+		/** Run on target, already validated; `undefined` means the provider's model. */
+		runOn?: RunOnSourceTarget,
+		/** Peer Agents: the explicit rows and the two grants. An absent field means that source is off. */
+		peerGrants?: PeerGrants,
+		/** Group defaults the create form has no control for; stamped onto the new agent. */
+		seedExtras?: GroupDefaultsCreateExtras
 	) => void;
 	existingSessions: Session[];
 	sourceSession?: Session; // For agent duplication
@@ -95,7 +107,15 @@ export interface AppSessionModalsProps {
 		/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
 		codexAutoResetOnExhaustion?: boolean,
 		/** Codex only: which transport chat turns use. `undefined` means `exec`. */
-		codexTransport?: CodexTransport
+		codexTransport?: CodexTransport,
+		/** Local Models gateway URL, already validated; `undefined` clears it. */
+		gatewayUrl?: string,
+		/** Run on target, already validated; `undefined` means the provider's model. */
+		runOn?: RunOnSourceTarget,
+		/** Tier targets, already validated; `undefined` means no tier is set on the agent. */
+		tierTargets?: TierTargets,
+		/** Peer Agents: the explicit rows and the two grants. An absent field clears that source. */
+		peerGrants?: PeerGrants
 	) => void;
 	editAgentSession: Session | null;
 

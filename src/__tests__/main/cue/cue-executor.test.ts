@@ -431,6 +431,97 @@ describe('cue-executor', () => {
 			expect(result.exitCode).toBeNull();
 		});
 
+		it('fails the run with the tier refusal it is handed, and spawns nothing', async () => {
+			const onLog = vi.fn();
+			const refusal = 'This agent\'s "low" tier target cannot be used: pick a target again.';
+			const result = await executeCuePrompt(
+				createExecutionConfig({ launchRefusal: refusal, onLog })
+			);
+
+			expect(result.status).toBe('failed');
+			expect(result.stderr).toBe(refusal);
+			expect(result.exitCode).toBeNull();
+			expect(onLog).toHaveBeenCalledWith('error', refusal);
+			expect(mockSpawn).not.toHaveBeenCalled();
+		});
+
+		// A subscription on the Auto model: its model, effort and place depend on
+		// the prompt, so the host decides them once there is one.
+		describe('settings that depend on the prompt (resolveLateTurn)', () => {
+			it('asks once, with the prompt after substitution, and launches on the answer', async () => {
+				mockSubstitute.mockReturnValueOnce('Review the diff of app.ts');
+				const resolveLateTurn = vi.fn().mockResolvedValue({
+					customModel: 'haiku',
+					customEffort: 'low',
+				});
+
+				const resultPromise = executeCuePrompt(
+					createExecutionConfig({
+						promptPath: 'Review the diff of {{CUE_FILE_PATH}}',
+						// What the run launches with when the router gives no decision.
+						customModel: undefined,
+						customEffort: 'high',
+						resolveLateTurn,
+					})
+				);
+				await vi.advanceTimersByTimeAsync(0);
+
+				expect(resolveLateTurn).toHaveBeenCalledTimes(1);
+				expect(resolveLateTurn).toHaveBeenCalledWith('Review the diff of app.ts');
+				expect(mockApplyOverrides).toHaveBeenCalledWith(
+					expect.anything(),
+					expect.anything(),
+					expect.objectContaining({ sessionCustomModel: 'haiku', sessionCustomEffort: 'low' })
+				);
+
+				mockChild.emit('close', 0);
+				await resultPromise;
+			});
+
+			it('fails the run by name, and spawns nothing, when the answer is a refusal', async () => {
+				const onLog = vi.fn();
+				const refusal = 'This agent\'s "low" tier target cannot be used: pick a target again.';
+				const result = await executeCuePrompt(
+					createExecutionConfig({
+						onLog,
+						resolveLateTurn: vi.fn().mockResolvedValue({ launchRefusal: refusal }),
+					})
+				);
+
+				expect(result.status).toBe('failed');
+				expect(result.stderr).toBe(refusal);
+				expect(onLog).toHaveBeenCalledWith('error', refusal);
+				expect(mockSpawn).not.toHaveBeenCalled();
+			});
+
+			it('is not asked for a run with no prompt, or one refused at dispatch', async () => {
+				const resolveLateTurn = vi.fn();
+
+				await executeCuePrompt(createExecutionConfig({ promptPath: '', resolveLateTurn }));
+				await executeCuePrompt(
+					createExecutionConfig({ launchRefusal: 'refused at dispatch', resolveLateTurn })
+				);
+
+				expect(resolveLateTurn).not.toHaveBeenCalled();
+			});
+
+			it('leaves a run that has none exactly as it was configured', async () => {
+				const resultPromise = executeCuePrompt(
+					createExecutionConfig({ customModel: 'opus', customEffort: 'max' })
+				);
+				await vi.advanceTimersByTimeAsync(0);
+
+				expect(mockApplyOverrides).toHaveBeenCalledWith(
+					expect.anything(),
+					expect.anything(),
+					expect.objectContaining({ sessionCustomModel: 'opus', sessionCustomEffort: 'max' })
+				);
+
+				mockChild.emit('close', 0);
+				await resultPromise;
+			});
+		});
+
 		it('should populate Cue event data in template context', async () => {
 			const event = createMockEvent({
 				type: 'file.changed',
@@ -1628,6 +1719,49 @@ describe('cue-executor', () => {
 			mockChild.emit('close', 0);
 			const result = await resultPromise;
 
+			expect(result.providerSessionId).toBe('sess-final');
+		});
+
+		it('still extracts the session id when the parser surfaces result text', async () => {
+			// Regression: `runProcess` hands back stdout that has ALREADY been
+			// through `extractCleanStdout`, which collapses a stream-json
+			// transcript down to its result text. Mining the session id out of
+			// that cleaned string finds nothing, because the JSON envelope
+			// carrying `session_id` is gone. The extraction must read the raw
+			// buffer instead.
+			//
+			// The sibling test above cannot catch this: its parser never sets
+			// `text`, so cleaning falls through and returns the raw NDJSON
+			// unchanged. A real agent parser DOES set `text` on the `result`
+			// event - which is exactly what erased the id in production and
+			// left `provider_session_id` NULL on every `cue_events` row.
+			mockGetOutputParser.mockReturnValue({
+				parseJsonLine: (line: string) => {
+					try {
+						return JSON.parse(line);
+					} catch {
+						return null;
+					}
+				},
+				extractSessionId: (event: any) => event?.session_id ?? null,
+			} as any);
+
+			const ndjson = [
+				JSON.stringify({ type: 'system', session_id: 'sess-init' }),
+				JSON.stringify({ type: 'result', session_id: 'sess-final', text: 'All done.' }),
+			].join('\n');
+
+			const config = createExecutionConfig({ toolType: 'claude-code' });
+			const resultPromise = executeCuePrompt(config);
+			await vi.advanceTimersByTimeAsync(0);
+
+			mockChild.stdout.emit('data', ndjson);
+			mockChild.emit('close', 0);
+			const result = await resultPromise;
+
+			// Cleaned stdout is just the result text - the id is only
+			// recoverable from the raw buffer.
+			expect(result.stdout).toBe('All done.');
 			expect(result.providerSessionId).toBe('sess-final');
 		});
 

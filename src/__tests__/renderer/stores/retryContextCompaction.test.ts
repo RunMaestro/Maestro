@@ -124,6 +124,40 @@ function failOnContextLimit(text = 'how are we looking?'): boolean {
 }
 
 describe('automatic context compaction', () => {
+	it('compacts and resends the captured Claude turn while Codex remains selected', async () => {
+		useSessionStore.setState({
+			sessions: [
+				{
+					...session(),
+					toolType: 'codex',
+					aiTabs: [
+						{
+							...tab(),
+							agentSessionId: 'codex-live',
+							turnProvider: 'claude-code',
+							providerSessions: { 'claude-code': { agentSessionId: PROVIDER_SESSION } },
+						},
+					],
+				},
+			],
+		});
+		const { spawner, finish } = deferredCompaction();
+		noteDispatch(
+			SESSION,
+			{ ...queuedItem('captured-claude', 'continue'), turnSettings: { provider: 'claude-code' } },
+			deps
+		);
+		expect(scheduleRetryForError(SESSION, TAB, contextLimitError())).toBe(true);
+		noteFailedTurnExited(SESSION, TAB);
+		expect(spawner.mock.calls[0][2]).toBe(PROVIDER_SESSION);
+		expect(spawner.mock.calls[0][4]).toBe('claude-code');
+		finish({ success: true });
+		await vi.advanceTimersByTimeAsync(0);
+		expect(processQueuedItem.mock.calls[0][1].turnSettings.provider).toBe('claude-code');
+		expect(session().toolType).toBe('codex');
+		expect(tab().agentSessionId).toBe('codex-live');
+	});
+
 	it('compacts the session, then resends the prompt', async () => {
 		const { spawner, finish } = deferredCompaction();
 

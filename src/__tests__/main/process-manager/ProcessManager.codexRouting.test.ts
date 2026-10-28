@@ -10,8 +10,8 @@
  *    agent opted in.
  *  - The transport field is ignored on a non-Codex agent.
  *  - `steer()` sends `turn/steer` for a process carrying a `codexAppServer`
- *    handle and emits its later verdict as `steering-verdict`; any other
- *    process goes to the maestro-p socket client.
+ *    handle and emits its later verdict as `steering-verdict`; an exec turn
+ *    is refused without contacting a maestro-p socket.
  *
  * The spawners are capture-only stubs, so nothing is launched.
  */
@@ -27,6 +27,7 @@ const captured = vi.hoisted(() => ({
 	appServer: [] as ProcessConfig[],
 	appServerOptions: [] as unknown[],
 	appServerProcesses: null as Map<string, unknown> | null,
+	fallbackToCli: null as ((config: ProcessConfig) => SpawnResult) | null,
 	socketSteers: [] as unknown[],
 }));
 
@@ -50,6 +51,11 @@ vi.mock('../../../main/process-manager/spawners/ChildProcessSpawner', () => ({
 	ChildProcessSpawner: class {
 		spawn(config: ProcessConfig): SpawnResult {
 			captured.child.push(config);
+			captured.appServerProcesses?.set(config.sessionId, {
+				sessionId: config.sessionId,
+				toolType: config.toolType,
+				pid: SPAWN_RESULT.pid,
+			});
 			return SPAWN_RESULT;
 		}
 	},
@@ -74,9 +80,16 @@ vi.mock('../../../main/process-manager/spawners/CodexAppServerSpawner', () => ({
 		constructor(...args: unknown[]) {
 			captured.appServerProcesses = args[0] as Map<string, unknown>;
 			captured.appServerOptions.push(args[4]);
+			captured.fallbackToCli = args[3] as (config: ProcessConfig) => SpawnResult;
 		}
 		spawn(config: ProcessConfig): SpawnResult {
 			captured.appServer.push(config);
+			captured.appServerProcesses!.set(config.sessionId, {
+				sessionId: config.sessionId,
+				toolType: 'codex',
+				pid: SPAWN_RESULT.pid,
+				codexAppServer: {},
+			});
 			return SPAWN_RESULT;
 		}
 	},
@@ -126,6 +139,25 @@ describe('ProcessManager Codex transport routing', () => {
 
 	it('hands the app version to the app-server spawner', () => {
 		expect(captured.appServerOptions).toEqual([{ clientVersion: '9.9.9' }]);
+	});
+
+	it('reports the actual transport at spawn and after an asynchronous fallback', () => {
+		const onTransport = vi.fn();
+		pm.on('codex-transport', onTransport);
+		const config = codexTurn();
+		pm.spawn(config);
+		expect(onTransport).toHaveBeenLastCalledWith(config.sessionId, 'app-server');
+
+		captured.fallbackToCli!(config);
+		expect(onTransport).toHaveBeenLastCalledWith(config.sessionId, 'exec');
+	});
+
+	it('reports exec for an image turn despite the app-server preference', () => {
+		const onTransport = vi.fn();
+		pm.on('codex-transport', onTransport);
+		const config = codexTurn({ images: ['data:image/png;base64,AA=='] });
+		pm.spawn(config);
+		expect(onTransport).toHaveBeenCalledWith(config.sessionId, 'exec');
 	});
 
 	it('runs a Codex turn with no transport on exec (the default)', () => {
@@ -301,7 +333,7 @@ describe('ProcessManager.steer on Codex', () => {
 		]);
 	});
 
-	it('sends a process without a codexAppServer handle (exec) to the socket client', async () => {
+	it('refuses a running exec turn with an accurate transport explanation', async () => {
 		captured.appServerProcesses!.set('codex-exec-ai-tab', {
 			sessionId: 'codex-exec-ai-tab',
 			toolType: 'codex',
@@ -309,7 +341,11 @@ describe('ProcessManager.steer on Codex', () => {
 
 		const result = await pm.steer('codex-exec-ai-tab', 'use tabs');
 
-		expect(captured.socketSteers).toHaveLength(1);
-		expect(result).toMatchObject({ verdict: 'refused', refusal: 'not-running' });
+		expect(captured.socketSteers).toHaveLength(0);
+		expect(result).toMatchObject({
+			verdict: 'refused',
+			refusal: 'unsupported-transport',
+			detail: expect.stringContaining('Codex exec'),
+		});
 	});
 });

@@ -8,6 +8,7 @@
 
 import { logger } from '../../../utils/logger';
 import { captureException } from '../../../utils/sentry';
+import { parseConsultChain } from '../../../../shared/consultBudget';
 import { getDispatchCallbackRegistry } from '../../../dispatch-callbacks';
 import { armDispatchCallback } from './dispatchCallbacks';
 import { noteDispatchDelegation } from './agentDelegation';
@@ -38,6 +39,10 @@ export function handleEnqueueCommand(
 	const images = Array.isArray(message.images)
 		? (message.images as unknown[]).filter((v): v is string => typeof v === 'string')
 		: undefined;
+	// The queued turn's place in a consult chain, admitted and paid for by
+	// `maestro-cli dispatch --queue` (see handleSendCommand). It rides the queue
+	// item, so the turn takes it whenever the queue reaches it.
+	const consultChain = parseConsultChain(message.consultChain);
 
 	logger.info(
 		`[Web] Received enqueue_command: session=${sessionId}, tab=${requestedTabId ?? 'active'}, commandLen=${command.length}, images=${images?.length ?? 0}`,
@@ -112,6 +117,7 @@ export function handleEnqueueCommand(
 			images,
 			background,
 			held,
+			consultChain,
 			routingField.routing
 		)
 		.then((result) => {

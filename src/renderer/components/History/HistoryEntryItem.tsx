@@ -10,7 +10,7 @@ import {
 	ChevronDown,
 	ChevronRight,
 } from 'lucide-react';
-import type { Theme, HistoryEntry } from '../../types';
+import type { Theme, HistoryEntry, ToolType } from '../../types';
 import { formatElapsedTime } from '../../utils/formatters';
 import { stripMarkdown } from '../../utils/textProcessing';
 import { DoubleCheck, getPillColor, getEntryIcon, hasRunOutcome } from './historyConstants';
@@ -27,7 +27,12 @@ export interface HistoryEntryItemProps {
 	isSelected: boolean;
 	theme: Theme;
 	onOpenDetailModal: (entry: HistoryEntry, index: number) => void;
-	onOpenSessionAsTab?: (agentSessionId: string, projectPath?: string, sessionName?: string) => void;
+	onOpenSessionAsTab?: (
+		agentSessionId: string,
+		projectPath?: string,
+		sessionName?: string,
+		provider?: ToolType
+	) => void;
 	onOpenAboutModal?: () => void;
 	/** When true, displays the agentName field prominently in the entry header (used in unified history view) */
 	showAgentName?: boolean;
@@ -139,7 +144,12 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 								e.stopPropagation();
 								// Hand the label on this pill to the restore: it IS the tab's name,
 								// and nothing downstream can recover it once the tab is closed.
-								onOpenSessionAsTab?.(entry.agentSessionId!, entry.projectPath, entry.sessionName);
+								onOpenSessionAsTab?.(
+									entry.agentSessionId!,
+									entry.projectPath,
+									entry.sessionName,
+									entry.provider
+								);
 							}}
 							className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-bold transition-colors hover:opacity-80 min-w-0 flex-shrink ${entry.sessionName ? '' : 'font-mono uppercase'}`}
 							style={{

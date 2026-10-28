@@ -17,6 +17,8 @@ function thinkingSessionEqual(a: Session, b: Session): boolean {
 	if (
 		a.id !== b.id ||
 		a.name !== b.name ||
+		a.toolType !== b.toolType ||
+		a.agentSessionId !== b.agentSessionId ||
 		a.state !== b.state ||
 		a.busySource !== b.busySource ||
 		a.thinkingStartTime !== b.thinkingStartTime ||
@@ -34,6 +36,11 @@ function thinkingSessionEqual(a: Session, b: Session): boolean {
 			const bt = bTabs[i];
 			if (
 				at.id !== bt.id ||
+				at.agentSessionId !== bt.agentSessionId ||
+				at.turnProvider !== bt.turnProvider ||
+				at.tabProvider !== bt.tabProvider ||
+				at.turnSessionId !== bt.turnSessionId ||
+				at.providerSessions !== bt.providerSessions ||
 				at.name !== bt.name ||
 				at.state !== bt.state ||
 				at.thinkingStartTime !== bt.thinkingStartTime
@@ -52,6 +59,11 @@ function thinkingSessionEqual(a: Session, b: Session): boolean {
 			const bo = bOrphans[i];
 			if (
 				ao.id !== bo.id ||
+				ao.agentSessionId !== bo.agentSessionId ||
+				ao.turnProvider !== bo.turnProvider ||
+				ao.tabProvider !== bo.tabProvider ||
+				ao.turnSessionId !== bo.turnSessionId ||
+				ao.providerSessions !== bo.providerSessions ||
 				ao.name !== bo.name ||
 				ao.state !== bo.state ||
 				ao.thinkingStartTime !== bo.thinkingStartTime

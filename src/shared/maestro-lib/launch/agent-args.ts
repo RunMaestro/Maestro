@@ -1,5 +1,6 @@
 import type { AgentConfig, AgentDefinition } from '../providers/definitions';
 import type { AdditionalDirectory } from '../../types';
+import { isAutoModel } from '../../autoModel';
 import { logger } from '../host';
 
 /** Fields applyAgentConfigOverrides actually reads. Accepting this narrower
@@ -365,8 +366,15 @@ export function applyAgentConfigOverrides(
 
 			let value: any;
 			if (option.key === 'model') {
-				if (overrides.sessionCustomModel !== undefined && overrides.sessionCustomModel !== '') {
-					value = overrides.sessionCustomModel;
+				// `auto` is Maestro's word for "route this turn", never a model a
+				// provider knows. A launch that arrives here still carrying it came
+				// from a surface with no Auto path, so it gets no session model and
+				// runs on the agent's default, the same as a turn with no decision.
+				const sessionModel = isAutoModel(overrides.sessionCustomModel)
+					? undefined
+					: overrides.sessionCustomModel;
+				if (sessionModel !== undefined && sessionModel !== '') {
+					value = sessionModel;
 					modelSource = 'session';
 				} else if (agentConfigValues[option.key] !== undefined) {
 					value = agentConfigValues[option.key];
@@ -462,6 +470,69 @@ export function applyAgentConfigOverrides(
 		customEnvSource: hasEnvVars ? customEnvSource : 'none',
 		modelSource,
 	};
+}
+
+/**
+ * `args` naming `model` with the provider's own model flag (`modelArgs`): the
+ * value of every such flag already in the list is replaced, and the flag is
+ * appended when the list has none. Appended is where `applyAgentConfigOverrides`
+ * puts a model, after any subcommand, which is where Codex reads `-m`.
+ *
+ * For a launch whose model is decided after its arguments were built (an agent's
+ * Run on target). Replacing matters: a second flag beside the agent's stored
+ * model leaves the CLI to pick one, and the stored model names something the
+ * target's server does not serve.
+ *
+ * Reads `modelArgs` as `[flag, value]`, which is what every provider with a
+ * model flag returns. Null for a provider that has none.
+ */
+export function replaceModelArg(
+	agent: Pick<AgentDefinition, 'modelArgs'> | null | undefined,
+	args: readonly string[],
+	model: string
+): string[] | null {
+	const built = agent?.modelArgs?.(model);
+	const flag = built?.[0];
+	if (!built || !flag) return null;
+
+	const next: string[] = [];
+	let replaced = false;
+	for (let index = 0; index < args.length; index++) {
+		const arg = args[index];
+		if (arg === flag) {
+			next.push(flag, model);
+			replaced = true;
+			// The value that followed the flag is dropped with it.
+			index++;
+		} else if (arg.startsWith(`${flag}=`)) {
+			next.push(`${flag}=${model}`);
+			replaced = true;
+		} else {
+			next.push(arg);
+		}
+	}
+	return replaced ? next : [...next, ...built];
+}
+
+/**
+ * `args` with `subcommandArgs` placed where the provider's batch subcommand
+ * reads its options: right after the subcommand (`batchModePrefix`) when the
+ * list starts with it, and at the front for a launch that has none. For a
+ * launch whose mode is decided after its arguments were built (an agent's Run
+ * on target), and never appended, so they cannot land behind a `--` separator.
+ * An argument the list already carries is not added a second time.
+ */
+export function placeSubcommandArgs(
+	agent: Pick<AgentDefinition, 'batchModePrefix'> | null | undefined,
+	args: readonly string[],
+	subcommandArgs: readonly string[]
+): string[] {
+	const added = subcommandArgs.filter((arg) => !args.includes(arg));
+	if (added.length === 0) return [...args];
+	const prefix = agent?.batchModePrefix ?? [];
+	const at =
+		prefix.length > 0 && prefix.every((part, index) => args[index] === part) ? prefix.length : 0;
+	return [...args.slice(0, at), ...added, ...args.slice(at)];
 }
 
 /** Resolve the effective context window size from session, agent config, or defaults. */

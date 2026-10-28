@@ -24,6 +24,8 @@ import { memo, useState } from 'react';
 import { Brain, Eye, Gauge, History, Sparkles } from 'lucide-react';
 import type { Theme, ThinkingMode } from '../../../types';
 import { getPermissionModeLabel } from '../../../../shared/agentMetadata';
+import { isAutoModel } from '../../../../shared/autoModel';
+import { modelChoiceLabel } from '../../../../shared/autoTurn';
 import { THINKING_MODES } from '../../../../shared/types';
 import { PhoneBottomSheet } from '../../ui/PhoneBottomSheet';
 import {
@@ -52,6 +54,8 @@ interface ComposerOptionsSheetProps {
 	onThinkingModeChange?: (mode: ThinkingMode) => void;
 	currentModel?: string;
 	availableModels: string[];
+	/** What the Auto row says for this agent. Auto itself is in `availableModels`. */
+	autoModelTitle?: string;
 	onModelChange?: (model: string) => void;
 	currentEffort?: string;
 	availableEfforts: string[];
@@ -80,6 +84,7 @@ export const ComposerOptionsSheet = memo(function ComposerOptionsSheet({
 	onThinkingModeChange,
 	currentModel,
 	availableModels,
+	autoModelTitle,
 	onModelChange,
 	currentEffort,
 	availableEfforts,
@@ -215,7 +220,7 @@ export const ComposerOptionsSheet = memo(function ComposerOptionsSheet({
 				<PhoneSheetSection
 					icon={Sparkles}
 					label="Model"
-					value={currentModel || 'default'}
+					value={currentModel ? modelChoiceLabel(currentModel) : 'default'}
 					accent={theme.colors.accent}
 					expanded={expanded === 'model'}
 					onToggle={() => toggle('model')}
@@ -225,7 +230,8 @@ export const ComposerOptionsSheet = memo(function ComposerOptionsSheet({
 					{modelOptions.map((model) => (
 						<PhoneSheetOptionRow
 							key={model || '__default__'}
-							label={model || '(default)'}
+							label={model ? modelChoiceLabel(model) : '(default)'}
+							description={isAutoModel(model) ? autoModelTitle : undefined}
 							selected={model === currentModel}
 							accent={theme.colors.accent}
 							onSelect={() => onModelChange(model)}

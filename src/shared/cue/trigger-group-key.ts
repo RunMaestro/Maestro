@@ -62,5 +62,43 @@ export function triggerGroupKey(sub: CueSubscription): string {
 		webhook_signature_header: sub.webhook?.signature_header ?? null,
 		label: sub.label ?? null,
 		filter,
+		// Two subs that differ only in their gate are different triggers: one
+		// fires on every event and the other on the events its condition
+		// admits. Collapsing them would let the next save rewrite both to
+		// whichever gate won, and would make Play fire a sub a real event
+		// would have gated.
+		gate: sub.gate ?? null,
+		gate_on_unavailable: sub.gate_on_unavailable ?? null,
+		// The same reasoning as the gate: two subs that differ in whether
+		// their untrusted text is screened, or at what score, are not one
+		// trigger. Collapsing them would let the next save turn a screen off
+		// on the branch that asked for it.
+		screen_injection: sub.screen_injection ?? null,
+		injection_threshold: sub.injection_threshold ?? null,
 	});
+}
+
+/**
+ * Whether `candidate` is the same visual trigger as `anchor`: the anchor
+ * itself, or a sibling subscription of the same pipeline that carries the same
+ * trigger config.
+ *
+ * Two anchors have no siblings and match only themselves. A chain step
+ * (`agent.completed`) is fed by an upstream agent, not by a trigger node, and
+ * a subscription without a `pipeline_name` predates grouping, so widening
+ * either would act on subscriptions the caller never named.
+ *
+ * Anything that acts on "the trigger the user named" rides this: Play fires
+ * every member so a manual run matches a real tick, and a gate set from the
+ * CLI lands on every member, as it does when it is set on the trigger node in
+ * the editor.
+ */
+export function isSameTriggerGroup(anchor: CueSubscription, candidate: CueSubscription): boolean {
+	if (candidate === anchor) return true;
+	if (anchor.event === 'agent.completed' || !anchor.pipeline_name) return false;
+	return (
+		candidate.pipeline_name === anchor.pipeline_name &&
+		candidate.event !== 'agent.completed' &&
+		triggerGroupKey(candidate) === triggerGroupKey(anchor)
+	);
 }

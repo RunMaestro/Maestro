@@ -1,3 +1,4 @@
+import fs from 'fs/promises';
 /**
  * Tests for the Claude Session IPC handlers
  *
@@ -212,6 +213,19 @@ describe('Claude IPC handlers', () => {
 
 	afterEach(() => {
 		handlers.clear();
+	});
+
+	it('reads custom command and plugin files from the supplied Claude account', async () => {
+		vi.mocked(fs.readdir).mockResolvedValue([]);
+		vi.mocked(fs.readFile).mockResolvedValue('{}');
+		await handlers.get('claude:getCommands')!({}, '/project', '/accounts/work');
+		expect(fs.readdir).toHaveBeenCalledWith('/accounts/work/commands', { withFileTypes: true });
+		expect(fs.readdir).toHaveBeenCalledWith('/project/.claude/commands', { withFileTypes: true });
+		expect(fs.readFile).toHaveBeenCalledWith('/accounts/work/settings.json', 'utf-8');
+		expect(fs.readFile).toHaveBeenCalledWith(
+			'/accounts/work/plugins/installed_plugins.json',
+			'utf-8'
+		);
 	});
 
 	describe('registration', () => {
