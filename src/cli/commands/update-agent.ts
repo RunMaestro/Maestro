@@ -11,13 +11,12 @@
 // Use `--ssh-remote none` to revert the agent to local execution. All of these
 // (like `--cwd`) are refused by the renderer while the agent process is alive.
 
-import * as path from 'path';
 import { withMaestroClient } from '../services/maestro-client';
 import { resolveAgentId, resolveGroupId, getSessionById } from '../services/storage';
 import { formatError, formatSuccess } from '../output/formatter';
 import { toClaudeTokenModeSource, type ClaudeTokenMode } from '../../shared/claudeTokenMode';
 import { AGENT_IDS } from '../../shared/agentIds';
-import { parseCliBool } from '../utils/parse';
+import { parseCliBool, resolveAgentCwdArg } from '../utils/parse';
 
 // Provider types a user can switch an agent to. Mirrors create-agent's set
 // (the internal `terminal` type is not user-selectable).
@@ -271,7 +270,7 @@ export async function updateAgent(agentId: string, options: UpdateAgentOptions):
 		}
 	}
 
-	const resolvedCwd = options.cwd !== undefined ? path.resolve(options.cwd) : undefined;
+	const resolvedCwd = options.cwd !== undefined ? resolveAgentCwdArg(options.cwd) : undefined;
 
 	const applied: {
 		group?: string | null;

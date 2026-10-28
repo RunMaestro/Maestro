@@ -7,6 +7,7 @@
 
 import * as path from 'path';
 import { expandTilde } from '../../shared/pathUtils';
+import { isWindows } from '../../shared/platformDetection';
 
 /** Values that read as `true` / `false` on the command line. */
 const TRUE_WORDS = new Set(['true', '1', 'yes', 'on']);
@@ -44,4 +45,20 @@ export function isInheritValue(value: string): boolean {
  */
 export function resolveCliPath(input: string): string {
 	return path.resolve(process.cwd(), expandTilde(input.trim()));
+}
+
+/**
+ * Resolve an agent working directory the user typed (`--cwd`). Same as
+ * `resolveCliPath()`, except on Windows a POSIX absolute path such as
+ * `/home/me/repo` is kept as typed: it names a directory on an SSH remote
+ * (Linux, WSL), and `path.resolve` would turn it into `C:\home\me\repo`.
+ * `--ssh-cwd` is already passed through verbatim for the same reason. A UNC
+ * path (`//server/share`) still resolves with the Windows rules.
+ */
+export function resolveAgentCwdArg(input: string): string {
+	const trimmed = input.trim();
+	if (isWindows() && trimmed.startsWith('/') && !trimmed.startsWith('//')) {
+		return path.posix.normalize(trimmed);
+	}
+	return resolveCliPath(trimmed);
 }

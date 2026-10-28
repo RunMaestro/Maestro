@@ -7,7 +7,7 @@ import * as path from 'path';
 import { withMaestroClient } from '../services/maestro-client';
 import { formatError, formatSuccess } from '../output/formatter';
 import { AGENT_IDS } from '../../shared/agentIds';
-import { parseCliBool } from '../utils/parse';
+import { parseCliBool, resolveAgentCwdArg } from '../utils/parse';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
 
 const VALID_TYPES: Set<string> = new Set(AGENT_IDS.filter((id) => id !== 'terminal'));
@@ -45,7 +45,7 @@ export async function createAgent(name: string, options: CreateAgentOptions): Pr
 		process.exit(1);
 	}
 
-	const cwd = path.resolve(options.cwd);
+	const cwd = resolveAgentCwdArg(options.cwd);
 
 	// Parse --env KEY=VALUE pairs into a Record
 	let customEnvVars: Record<string, string> | undefined;

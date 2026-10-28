@@ -101,16 +101,40 @@ describe('update-agent command', () => {
 			return action({ sendCommand } as never);
 		});
 
-		await updateAgent('agent-1', { cwd: '/tmp/some/path' });
+		await updateAgent('agent-1', { cwd: 'some/path' });
 
 		expect(sendCommand).toHaveBeenCalledWith(
 			expect.objectContaining({
 				type: 'update_session_cwd',
 				sessionId: 'full-session-id',
-				newCwd: path.resolve('/tmp/some/path'),
+				newCwd: path.resolve('some/path'),
 			}),
 			'update_session_cwd_result'
 		);
+	});
+
+	it('keeps a POSIX --cwd as typed on Windows (issue #1940)', async () => {
+		const originalPlatform = process.platform;
+		Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+		try {
+			vi.mocked(resolveAgentId).mockReturnValue('full-session-id');
+			const sendCommand = vi.fn().mockResolvedValue({
+				type: 'update_session_cwd_result',
+				success: true,
+			});
+			vi.mocked(withMaestroClient).mockImplementation(async (action) => {
+				return action({ sendCommand } as never);
+			});
+
+			await updateAgent('agent-1', { cwd: '/home/me/b' });
+
+			expect(sendCommand).toHaveBeenCalledWith(
+				expect.objectContaining({ type: 'update_session_cwd', newCwd: '/home/me/b' }),
+				'update_session_cwd_result'
+			);
+		} finally {
+			Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+		}
 	});
 
 	it('sends update_session_ssh enabling a remote with --ssh-remote and --ssh-cwd', async () => {

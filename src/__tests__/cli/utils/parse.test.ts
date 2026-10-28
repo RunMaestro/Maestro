@@ -1,7 +1,12 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import * as os from 'os';
 import * as path from 'path';
-import { parseCliBool, isInheritValue, resolveCliPath } from '../../../cli/utils/parse';
+import {
+	parseCliBool,
+	isInheritValue,
+	resolveCliPath,
+	resolveAgentCwdArg,
+} from '../../../cli/utils/parse';
 
 describe('parseCliBool', () => {
 	it('accepts the whole true vocabulary', () => {
@@ -48,5 +53,36 @@ describe('resolveCliPath', () => {
 		expect(resolveCliPath('~/out')).toBe(path.join(os.homedir(), 'out'));
 		expect(resolveCliPath(' rel/out ')).toBe(path.resolve(process.cwd(), 'rel/out'));
 		expect(resolveCliPath('/abs/out')).toBe(path.resolve('/abs/out'));
+	});
+});
+
+describe('resolveAgentCwdArg', () => {
+	const originalPlatform = process.platform;
+	const setPlatform = (value: string) =>
+		Object.defineProperty(process, 'platform', { value, configurable: true });
+
+	afterEach(() => setPlatform(originalPlatform));
+
+	it('keeps a POSIX path as typed on Windows (SSH remote / WSL directory)', () => {
+		setPlatform('win32');
+		expect(resolveAgentCwdArg('/home/me/repo')).toBe('/home/me/repo');
+		expect(resolveAgentCwdArg(' /home//me/./repo ')).toBe('/home/me/repo');
+	});
+
+	it('still resolves a relative path against the cwd on Windows', () => {
+		setPlatform('win32');
+		expect(resolveAgentCwdArg('rel/dir')).toBe(path.resolve(process.cwd(), 'rel/dir'));
+	});
+
+	it('does not treat a UNC path as POSIX on Windows', () => {
+		setPlatform('win32');
+		expect(resolveAgentCwdArg('//server/share')).toBe(path.resolve('//server/share'));
+	});
+
+	it('resolves exactly like resolveCliPath off Windows', () => {
+		setPlatform('linux');
+		for (const input of ['/abs/dir', 'rel/dir', '~/dir']) {
+			expect(resolveAgentCwdArg(input)).toBe(resolveCliPath(input));
+		}
 	});
 });
