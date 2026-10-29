@@ -35,33 +35,46 @@ describe('resolveMemoryLayout', () => {
 		fs.rmSync(tempDir, { recursive: true, force: true });
 	});
 
-	it("reads a Codex agent's store under its own CODEX_HOME", async () => {
-		const codexHome = path.join(tempDir, 'codex-b');
-		const projectPath = path.join(tempDir, 'project');
-		sessions = [
-			{
-				id: 'a1',
-				toolType: 'codex',
-				projectRoot: projectPath,
-				customEnvVars: { CODEX_HOME: codexHome },
-			},
-		];
-		const layout = await resolveMemoryLayout({ projectPath, toolType: 'codex', agentId: 'a1' });
-		expect(layout.directoryPath).toBe(path.join(codexHome, 'memories'));
-		expect(layout.scope).toBe('account');
-		const resolveSource = createCodexMemorySourceResolver(
-			(id) => sessions.find((s) => s.id === id) as unknown as SessionInfo,
-			resolveMemoryLayout
-		);
-		const source = await resolveSource('a1');
-		expect(source.codexHome).toBe(codexHome);
-		fs.mkdirSync(layout.directoryPath, { recursive: true });
-		fs.writeFileSync(path.join(layout.directoryPath, 'memory_summary.md'), 'Account B memory');
-		expect(await readCodexMemory(source, 'memory_summary.md')).toMatchObject({
-			content: 'Account B memory',
-			sourceRef: { sourceAgentId: 'a1', codexHome, memoryRoot: layout.directoryPath },
-		});
-	});
+	it.each(['direct', 'alias'])(
+		"reads a Codex agent's store under its own CODEX_HOME (%s)",
+		async (mode) => {
+			const codexHome = path.join(tempDir, 'codex-b');
+			if (mode === 'alias') {
+				const realHome = path.join(tempDir, 'Codex Account');
+				fs.mkdirSync(realHome);
+				fs.symlinkSync(realHome, codexHome, 'junction');
+			}
+			const projectPath = path.join(tempDir, 'project');
+			sessions = [
+				{
+					id: 'a1',
+					toolType: 'codex',
+					projectRoot: projectPath,
+					customEnvVars: { CODEX_HOME: codexHome },
+				},
+			];
+			const layout = await resolveMemoryLayout({ projectPath, toolType: 'codex', agentId: 'a1' });
+			expect(layout.directoryPath).toBe(path.join(codexHome, 'memories'));
+			expect(layout.scope).toBe('account');
+			const resolveSource = createCodexMemorySourceResolver(
+				(id) => sessions.find((s) => s.id === id) as unknown as SessionInfo,
+				resolveMemoryLayout
+			);
+			const source = await resolveSource('a1');
+			expect(source.codexHome).toBe(codexHome);
+			fs.mkdirSync(layout.directoryPath, { recursive: true });
+			fs.writeFileSync(path.join(layout.directoryPath, 'memory_summary.md'), 'Account B memory');
+			expect(await readCodexMemory(source, 'memory_summary.md')).toMatchObject({
+				content: 'Account B memory',
+				sourceRef: {
+					sourceAgentId: 'a1',
+					codexHome,
+					// The configured home can be an alias (including Windows short paths).
+					memoryRoot: fs.realpathSync(layout.directoryPath),
+				},
+			});
+		}
+	);
 
 	it('prefers the translation-managed knowledge directory over the native store', async () => {
 		const projectPath = path.join(tempDir, 'project');

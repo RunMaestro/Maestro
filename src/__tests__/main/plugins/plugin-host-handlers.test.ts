@@ -3215,7 +3215,8 @@ describe('request-bound memory command draft RPCs', () => {
 				provider: 'codex',
 				location: { kind: 'local' },
 				codexHome: memoryHome,
-				memoryRoot: path.join(memoryHome, 'memories'),
+				// Match the reader's canonical root even when the temp directory is an alias.
+				memoryRoot: fs.realpathSync(path.join(memoryHome, 'memories')),
 				relativePath: 'MEMORY.md',
 			},
 			textSnapshot: 'PRIVATE LEFT\r\n😀chosen\r\nPRIVATE RIGHT',

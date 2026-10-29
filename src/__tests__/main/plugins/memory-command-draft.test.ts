@@ -712,3 +712,142 @@ describe('host-bound memory command draft requests', () => {
 		expect(JSON.stringify([...retained().values()])).not.toContain(chosen);
 	});
 });
+
+describe('memory command source path identity', () => {
+	let realHome: string;
+	let aliasHome: string;
+	let realRoot: string;
+
+	beforeEach(async () => {
+		realHome = path.join(fixture, 'Codex Account');
+		aliasHome = path.join(fixture, 'CODEX~1');
+		const root = path.join(realHome, 'memories');
+		await fs.mkdir(path.join(root, 'rollout_summaries'), { recursive: true });
+		await fs.writeFile(path.join(root, 'rollout_summaries', 'note.md'), original);
+		// A directory alias exercises short/long root identity without faking the OS.
+		await fs.symlink(realHome, aliasHome, 'junction');
+		getSource.mockReturnValue({ sourceAgentId: 'source', codexHome: aliasHome });
+		service = new MemoryCommandDraftService({
+			getSource,
+			getGenerator,
+			isAllowed: allowed,
+			retainPreview: () => true,
+		});
+		selection.sourceRef = (
+			await codexMemory.readCodexMemory(getSource('source'), 'rollout_summaries/note.md')
+		).sourceRef;
+		realRoot = await fs.realpath(root);
+	});
+
+	it('registers and revalidates the reader identity through save using native nested paths', async () => {
+		expect(selection.sourceRef).toEqual({
+			sourceAgentId: 'source',
+			provider: 'codex',
+			location: { kind: 'local' },
+			codexHome: aliasHome,
+			memoryRoot: realRoot,
+			relativePath: 'rollout_summaries/note.md',
+		});
+		expect(realRoot).not.toBe(path.join(aliasHome, 'memories'));
+		const read = vi.mocked(fs.readFile).mockClear();
+		const id = await register();
+		await expect(service.get('foreign-plugin', id)).rejects.toThrow('MemoryCommandInvalid');
+		expect(await service.get(owner.pluginId, id)).toMatchObject({
+			sourceRef: selection.sourceRef,
+			text: chosen,
+		});
+		const { controller } = await service.start(owner.pluginId, id, generator.agentId);
+		expect(await service.complete(owner.pluginId, id, controller, draft)).toBe(true);
+		await service.preview(owner.pluginId, id, draft);
+		expect(await service.getPreview(owner, id)).toEqual(draft);
+		const persist = vi.fn(() => true);
+		expect(await service.save(owner, id, persist)).toBe(true);
+		expect(persist).toHaveBeenCalledOnce();
+		expect(service.getStatus(owner, id).status).toBe('saved');
+		expect(read).not.toHaveBeenCalled();
+	});
+
+	it('rejects a lexical alias in place of the confirmed root at registration', async () => {
+		selection.sourceRef.memoryRoot = path.join(aliasHome, 'memories');
+		await expect(register()).rejects.toThrow('MemoryCommandUnavailable');
+		expect(JSON.stringify([...retained().values()])).not.toContain(chosen);
+	});
+
+	it.each(['get', 'start', 'complete', 'preview', 'getPreview', 'save'] as const)(
+		'rejects an alias rebound to another account during %s',
+		async (stage) => {
+			const id = await register();
+			const controller =
+				stage === 'get' || stage === 'start'
+					? undefined
+					: (await service.start(owner.pluginId, id, generator.agentId)).controller;
+			if (stage === 'preview' || stage === 'getPreview' || stage === 'save')
+				await service.complete(owner.pluginId, id, controller!, draft);
+			if (stage === 'getPreview' || stage === 'save')
+				await service.preview(owner.pluginId, id, draft);
+
+			const otherHome = path.join(fixture, 'Other Account');
+			await fs.mkdir(path.join(otherHome, 'memories', 'rollout_summaries'), { recursive: true });
+			await fs.writeFile(
+				path.join(otherHome, 'memories', 'rollout_summaries', 'note.md'),
+				original
+			);
+			await fs.unlink(aliasHome);
+			await fs.symlink(otherHome, aliasHome, 'junction');
+			const persist = vi.fn(() => true);
+			if (stage === 'complete') {
+				expect(await service.complete(owner.pluginId, id, controller!, draft)).toBe(false);
+			} else {
+				const actions = {
+					get: () => service.get(owner.pluginId, id),
+					start: () => service.start(owner.pluginId, id, generator.agentId),
+					preview: () => service.preview(owner.pluginId, id, draft),
+					getPreview: () => service.getPreview(owner, id),
+					save: () => service.save(owner, id, persist),
+				};
+				await expect(actions[stage]()).rejects.toThrow('MemoryCommandUnavailable');
+			}
+			expect(service.getStatus(owner, id).status).toBe('error');
+			expect(persist).not.toHaveBeenCalled();
+			if (controller) expect(controller.signal.aborted).toBe(true);
+			expect(JSON.stringify([...retained().values()])).not.toContain(chosen);
+		}
+	);
+
+	it.each(['register', 'get'] as const)(
+		'rejects a different configured home sharing the same real root during %s',
+		async (stage) => {
+			const id = stage === 'get' ? await register() : undefined;
+			getSource.mockReturnValue({ sourceAgentId: 'source', codexHome: realHome });
+			expect(
+				(
+					await codexMemory.resolveCodexMemorySourceRef(
+						getSource('source'),
+						selection.sourceRef.relativePath
+					)
+				).memoryRoot
+			).toBe(realRoot);
+			await expect(id ? service.get(owner.pluginId, id) : register()).rejects.toThrow(
+				'MemoryCommandUnavailable'
+			);
+			expect(JSON.stringify([...retained().values()])).not.toContain(chosen);
+		}
+	);
+
+	it.each(['register', 'get'] as const)(
+		'rejects a nested alias escaping into a sibling-prefix root during %s',
+		async (stage) => {
+			const id = stage === 'get' ? await register() : undefined;
+			const outside = realRoot + '-other';
+			await fs.mkdir(outside);
+			await fs.writeFile(path.join(outside, 'note.md'), original);
+			const nested = path.join(realRoot, 'rollout_summaries');
+			await fs.rename(nested, path.join(realRoot, 'retained'));
+			await fs.symlink(outside, nested, 'junction');
+			await expect(id ? service.get(owner.pluginId, id) : register()).rejects.toThrow(
+				'MemoryCommandUnavailable'
+			);
+			expect(JSON.stringify([...retained().values()])).not.toContain(chosen);
+		}
+	);
+});
