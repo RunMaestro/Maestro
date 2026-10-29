@@ -224,6 +224,25 @@ export const HarnessInteractionPrompt = memo(function HarnessInteractionPrompt({
 											}}
 										/>
 									)}
+									{question.allowEmpty &&
+										question.required !== false &&
+										question.default === undefined && (
+											<button
+												type="button"
+												disabled={responding}
+												className="text-xs px-2 py-1 rounded-md cursor-pointer"
+												style={{ color: theme.colors.textDim }}
+												onClick={() => {
+													markQuestionTouched(question.id);
+													setQuestionAnswers((current) => ({
+														...current,
+														[question.id]: question.multiSelect ? [] : '',
+													}));
+												}}
+											>
+												Leave empty
+											</button>
+										)}
 								</fieldset>
 							);
 						})}
