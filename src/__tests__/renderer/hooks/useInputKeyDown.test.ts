@@ -970,6 +970,36 @@ describe('Forced parallel send shortcut', () => {
 		expect(deps.processInput).toHaveBeenCalledWith(undefined, { forceParallel: true });
 	});
 
+	it('leaves the chord to the IME mid-composition (Safari keyCode 229)', () => {
+		setActiveSession({ inputMode: 'ai' });
+		useSettingsStore.setState({
+			forcedParallelExecution: true,
+			shortcuts: {
+				...useSettingsStore.getState().shortcuts,
+				forcedParallelSend: {
+					id: 'forcedParallelSend',
+					label: 'Forced Parallel Send',
+					keys: ['Meta', 'Shift', 'Enter'],
+				},
+			},
+		} as any);
+		const deps = createMockDeps({ inputValue: 'hello' });
+		const { result } = renderHook(() => useInputKeyDown(deps));
+		const e = createKeyEvent('Enter', {
+			metaKey: true,
+			shiftKey: true,
+			keyCode: 229,
+			nativeEvent: { isComposing: false },
+		} as never);
+
+		act(() => {
+			result.current.handleInputKeyDown(e);
+		});
+
+		expect(e.preventDefault).not.toHaveBeenCalled();
+		expect(deps.processInput).not.toHaveBeenCalled();
+	});
+
 	it('records forcedParallelSend shortcut usage when the shortcut fires', () => {
 		setActiveSession({ inputMode: 'ai' });
 		useSettingsStore.setState({

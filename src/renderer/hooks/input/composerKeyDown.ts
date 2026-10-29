@@ -15,13 +15,34 @@
  * and `handleEscapeInMain` in `useKeyboardNavigation`, and the Cmd+F routing in
  * `useMainKeyboardHandler`) recognise only the AI composer. A composer they do
  * not know sets the flag, and every key handled here then stops propagating, so
- * a picker Tab cannot move panel focus and a picker Escape cannot blur the
- * composer the user is still typing in. The AI composer leaves it off.
+ * a picker Tab cannot move panel focus. The AI composer leaves it off.
+ *
+ * The picker's Escape stops propagating in every composer, isolated or not:
+ * the window's `handleEscapeInMain` blurs any composer it sees Escape in, and
+ * it cannot know a picker was open, so letting the key through took the caret
+ * away from a composer the user only meant to close the picker in. Escape with
+ * the picker closed is not touched and still reaches the window.
+ *
+ * IME composition: while a composition is active the keystroke belongs to the
+ * input method, which confirms a candidate with Enter, moves between candidates
+ * with the arrows or Tab, and cancels with Escape. The picker and send branches
+ * then act on nothing (they still claim the key, so a surface's own branches do
+ * not act on it either), and a half-composed draft is never sent or accepted.
  */
 
 import type React from 'react';
 import { useUIStore } from '../../stores/uiStore';
 import { OUTPUT_SEARCH_INPUT_SELECTOR } from '../ui/useOutputSearchLayer';
+
+/**
+ * Whether the key belongs to an active IME composition. `isComposing` alone
+ * misses Safari, which fires the Enter that confirms a candidate after
+ * `compositionend` (so `isComposing` is false) but still reports keyCode 229,
+ * the value every browser gives a key the input method processed.
+ */
+export function isImeComposing(e: React.KeyboardEvent): boolean {
+	return e.nativeEvent?.isComposing === true || e.keyCode === 229;
+}
 
 interface WindowIsolation {
 	/** See the module comment. Off for the AI composer. */
@@ -88,7 +109,8 @@ export interface ComposerPickerKeyOptions<T> extends WindowIsolation {
  * any modifier, Escape closes the picker. Gated on `open` alone, not on there
  * being rows, so Escape and Tab/Enter still close an empty picker. The selected
  * index is looked up rather than trusted: the rows can shrink under it, and a
- * stale index closes the picker with nothing inserted.
+ * stale index closes the picker with nothing inserted. Mid-composition every
+ * one of these keys is left to the IME.
  */
 export function handleComposerPickerKey<T>(
 	e: React.KeyboardEvent,
@@ -96,6 +118,11 @@ export function handleComposerPickerKey<T>(
 ): boolean {
 	const { open, items, selectedIndex, setSelectedIndex, accept, close, inputRef } = options;
 	if (!open) return false;
+	if (isImeComposing(e)) {
+		if (!PICKER_KEYS.has(e.key)) return false;
+		yieldToIme(e, options);
+		return true;
+	}
 	if (e.key === 'ArrowDown') {
 		consume(e, options);
 		if (items.length > 0) {
@@ -145,8 +172,9 @@ export interface ComposerSendKeyOptions extends WindowIsolation {
 /**
  * Enter-to-send on: Enter sends (with or without Cmd/Ctrl), Shift+Enter is a
  * newline. Off: only Cmd/Ctrl+Enter sends. An isolated composer also stops
- * every Cmd/Ctrl+Enter, sent or not, so no window chord acts on it. Escape
- * blurs the composer and focuses `escapeFocusTarget` when one is given.
+ * every Cmd/Ctrl+Enter, sent or not, so no window chord acts on it. An Enter
+ * that confirms an IME candidate never sends. Escape blurs the composer and
+ * focuses `escapeFocusTarget` when one is given.
  */
 export function handleComposerSendKey(
 	e: React.KeyboardEvent,
@@ -154,6 +182,10 @@ export function handleComposerSendKey(
 ): boolean {
 	const { enterToSend, send, inputRef, escapeFocusTarget, isolateFromWindowKeys } = options;
 	if (e.key === 'Enter') {
+		if (isImeComposing(e)) {
+			if (e.metaKey || e.ctrlKey) yieldToIme(e, options);
+			return true;
+		}
 		if (isolateFromWindowKeys && (e.metaKey || e.ctrlKey)) {
 			e.preventDefault();
 			e.stopPropagation();
@@ -176,7 +208,23 @@ export function handleComposerSendKey(
 	return false;
 }
 
+const PICKER_KEYS = new Set(['ArrowDown', 'ArrowUp', 'Tab', 'Enter', 'Escape']);
+
 function consume(e: React.KeyboardEvent, options: WindowIsolation): void {
 	e.preventDefault();
-	if (options.isolateFromWindowKeys) e.stopPropagation();
+	if (stopsAtComposer(e, options)) e.stopPropagation();
+}
+
+/** Whether a picker key must not reach the window handlers (see the module comment). */
+function stopsAtComposer(e: React.KeyboardEvent, options: WindowIsolation): boolean {
+	return options.isolateFromWindowKeys === true || e.key === 'Escape';
+}
+
+/**
+ * Claim a key the IME is using without acting on it. No preventDefault, which
+ * would keep the key from the input method; the window still does not see a
+ * key `consume` would have stopped.
+ */
+function yieldToIme(e: React.KeyboardEvent, options: WindowIsolation): void {
+	if (stopsAtComposer(e, options)) e.stopPropagation();
 }
