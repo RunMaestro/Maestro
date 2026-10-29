@@ -93,9 +93,10 @@ export const HarnessInteractionPrompt = memo(function HarnessInteractionPrompt({
 	const questionsComplete = questions.every((question) => {
 		if (question.required === false || question.default !== undefined) return true;
 		const value = questionAnswers[question.id];
-		return Array.isArray(value)
+		const answered = Array.isArray(value)
 			? value.length > 0
 			: typeof value === 'string' && value.trim().length > 0;
+		return answered || (touchedQuestions[question.id] && question.allowEmpty === true);
 	});
 	const markQuestionTouched = (questionId: string) =>
 		setTouchedQuestions((current) => ({ ...current, [questionId]: true }));

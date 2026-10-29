@@ -60,9 +60,7 @@ function defaultAnswer(field: ElicitationSchemaField): string | string[] | undef
 /** Empty strings and arrays stay distinct from unanswered only when the schema permits them. */
 function allowsEmpty(field: ElicitationSchemaField): boolean {
 	if (field.type === 'array') return field.minItems === undefined || field.minItems === 0;
-	if (field.type === 'string') {
-		return !('minLength' in field) || field.minLength === undefined || field.minLength === 0;
-	}
+	if (field.type === 'string') return validString(field, '');
 	return false;
 }
 

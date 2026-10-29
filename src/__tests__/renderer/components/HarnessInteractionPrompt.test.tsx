@@ -41,6 +41,12 @@ const requiredRequest: HarnessInteractionRequest = {
 	questions: [{ id: 'required', question: 'Required value', allowCustom: true, options: [] }],
 };
 
+const requiredEmptyRequest: HarnessInteractionRequest = {
+	...requiredRequest,
+	requestId: 'request-required-empty',
+	questions: [{ ...requiredRequest.questions![0], allowEmpty: true }],
+};
+
 const clearedRequest: HarnessInteractionRequest = {
 	...optionalRequest,
 	requestId: 'request-cleared',
@@ -156,5 +162,36 @@ describe('HarnessInteractionPrompt', () => {
 		expect(answer).toBeDisabled();
 		fireEvent.change(screen.getByRole('textbox'), { target: { value: 'typed answer' } });
 		expect(answer).toBeEnabled();
+	});
+
+	it('allows a required valid empty answer after the field is touched', () => {
+		const respondHarnessInteraction = vi.fn().mockResolvedValue('resolved');
+		window.maestro = {
+			...window.maestro,
+			process: {
+				onHarnessInteractionRequest: vi.fn(() => vi.fn()),
+				onHarnessInteractionSettled: vi.fn(() => vi.fn()),
+				onExit: vi.fn(() => vi.fn()),
+				listHarnessInteractions: vi.fn().mockResolvedValue([]),
+				respondHarnessInteraction,
+			},
+		};
+		useHarnessInteractionStore.setState({ queue: [requiredEmptyRequest] });
+		render(
+			<LayerStackProvider>
+				<HarnessInteractionPrompt theme={mockTheme} />
+			</LayerStackProvider>
+		);
+		const answer = screen.getByRole('button', { name: 'Answer' });
+		expect(answer).toBeDisabled();
+		fireEvent.change(screen.getByRole('textbox'), { target: { value: 'temporary' } });
+		fireEvent.change(screen.getByRole('textbox'), { target: { value: '' } });
+		expect(answer).toBeEnabled();
+		fireEvent.click(answer);
+		expect(respondHarnessInteraction).toHaveBeenCalledWith({
+			requestId: 'request-required-empty',
+			outcome: 'answers',
+			answers: { required: '' },
+		});
 	});
 });
