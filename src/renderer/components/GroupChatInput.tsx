@@ -681,28 +681,26 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 						backgroundColor: readOnlyMode ? `${theme.colors.warning}15` : theme.colors.bgMain,
 					}}
 				>
-					<div className="relative flex items-start">
-						<ComposerTextarea
-							theme={theme}
-							value={message}
-							inputRef={inputRef}
-							placeholder={
-								isBusy ? 'Type to queue message...' : 'Type a message... (@ to mention agent)'
-							}
-							spellCheck={spellCheckEnabled}
-							knownMentionNames={knownMentionNames}
-							rows={1}
-							onChange={handleChange}
-							onKeyDown={handleKeyDown}
-							onPaste={handlePasteWrapped}
-							onDrop={handleDropWrapped}
-							// The window Escape handler only acts while focus is in the main
-							// area, so claim it here the way the AI composer does. A click on
-							// the Left Bar leaves it on 'sidebar' otherwise.
-							onFocus={() => useUIStore.getState().setActiveFocus('main')}
-							onBlur={flushDraft}
-						/>
-					</div>
+					<ComposerTextarea
+						theme={theme}
+						value={message}
+						inputRef={inputRef}
+						placeholder={
+							isBusy ? 'Type to queue message...' : 'Type a message... (@ to mention agent)'
+						}
+						spellCheck={spellCheckEnabled}
+						knownMentionNames={knownMentionNames}
+						rows={1}
+						onChange={handleChange}
+						onKeyDown={handleKeyDown}
+						onPaste={handlePasteWrapped}
+						onDrop={handleDropWrapped}
+						// The window Escape handler only acts while focus is in the main
+						// area, so claim it here the way the AI composer does. A click on
+						// the Left Bar leaves it on 'sidebar' otherwise.
+						onFocus={() => useUIStore.getState().setActiveFocus('main')}
+						onBlur={flushDraft}
+					/>
 
 					<ToolbarControls
 						theme={theme}

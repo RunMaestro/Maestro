@@ -9,6 +9,11 @@
  * and `fontFamily`; autosize stays with the surface, since the AI composer
  * sizes on its own keystroke path.
  *
+ * Mount it as a direct child of the composer's column flex box, which
+ * stretches its row root to full width. Inside another row flex container the
+ * root is a flex item without `flex-1` and shrinks to the textarea's
+ * intrinsic width (about 200px).
+ *
  * It reads no store, so it renders exactly when its surface does. A surface
  * that gates its roster reads (the AI composer subscribes to the session list
  * only while the draft holds an `@`) keeps that gate in its own component.
