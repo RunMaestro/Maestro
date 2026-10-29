@@ -8,6 +8,7 @@
  * - disabled guard
  * - onend focus + onerror logging
  * - Cleanup (abort) on unmount
+ * - Cancel: abort, drop late events, mic back to idle; stop still delivers
  *
  * Drives a mock SpeechRecognition (see docs/agent-guides/TEST-PATTERNS.md).
  */
@@ -276,5 +277,103 @@ describe('useVoiceInput (renderer)', () => {
 		unmount();
 
 		expect(lastRecognitionInstance?.abort).toHaveBeenCalled();
+	});
+
+	describe('cancelVoiceInput', () => {
+		function deliver(instance: MockSpeechRecognition | null, transcript: string, isFinal = true) {
+			act(() => {
+				instance?.onresult?.call(instance, {
+					resultIndex: 0,
+					results: makeResults(transcript, isFinal),
+				} as SpeechRecognitionEvent);
+			});
+		}
+
+		it('aborts, returns the mic to idle, and drops every later event', () => {
+			const onTranscriptionChange = vi.fn();
+			const focus = vi.fn();
+			const focusRef = { current: { focus } as unknown as HTMLTextAreaElement };
+			const { result } = renderHook(() =>
+				useVoiceInput({ currentValue: 'draft', onTranscriptionChange, focusRef })
+			);
+
+			act(() => result.current.startVoiceInput());
+			const cancelled = lastRecognitionInstance;
+			act(() => result.current.cancelVoiceInput());
+
+			expect(cancelled?.abort).toHaveBeenCalled();
+			expect(cancelled?.stop).not.toHaveBeenCalled();
+			expect(result.current.isListening).toBe(false);
+
+			// A result the browser had already queued, then its error and end.
+			deliver(cancelled, 'late');
+			act(() => {
+				cancelled?.onerror?.call(cancelled, {
+					error: 'aborted',
+				} as SpeechRecognitionErrorEvent);
+				cancelled?.onend?.call(cancelled, new Event('end'));
+			});
+			expect(onTranscriptionChange).not.toHaveBeenCalled();
+			expect(focus).not.toHaveBeenCalled();
+			expect(result.current.isListening).toBe(false);
+		});
+
+		it('drops a final result still pending after a stop', () => {
+			const onTranscriptionChange = vi.fn();
+			const { result } = renderHook(() =>
+				useVoiceInput({ currentValue: '', onTranscriptionChange })
+			);
+			act(() => result.current.startVoiceInput());
+			const instance = lastRecognitionInstance;
+			act(() => result.current.stopVoiceInput());
+			act(() => result.current.cancelVoiceInput());
+
+			deliver(instance, 'after stop');
+			expect(onTranscriptionChange).not.toHaveBeenCalled();
+		});
+
+		it('does not touch a dictation started after it', () => {
+			const onTranscriptionChange = vi.fn();
+			const { result } = renderHook(() =>
+				useVoiceInput({ currentValue: '', onTranscriptionChange })
+			);
+			act(() => result.current.startVoiceInput());
+			const cancelled = lastRecognitionInstance;
+			act(() => result.current.cancelVoiceInput());
+			act(() => result.current.startVoiceInput());
+			const current = lastRecognitionInstance;
+
+			act(() => cancelled?.onend?.call(cancelled, new Event('end')));
+			expect(result.current.isListening).toBe(true);
+
+			deliver(current, 'fresh');
+			expect(onTranscriptionChange).toHaveBeenCalledWith('fresh');
+		});
+
+		it('is a no-op while idle', () => {
+			const { result } = renderHook(() =>
+				useVoiceInput({ currentValue: '', onTranscriptionChange: vi.fn() })
+			);
+			act(() => result.current.cancelVoiceInput());
+			expect(result.current.isListening).toBe(false);
+		});
+	});
+
+	it('still lands the final result after a stop (stop is not a cancel)', () => {
+		const onTranscriptionChange = vi.fn();
+		const { result } = renderHook(() =>
+			useVoiceInput({ currentValue: 'a', onTranscriptionChange })
+		);
+		act(() => result.current.startVoiceInput());
+		const instance = lastRecognitionInstance;
+		act(() => result.current.stopVoiceInput());
+
+		act(() => {
+			instance?.onresult?.call(instance, {
+				resultIndex: 0,
+				results: makeResults('b', true),
+			} as SpeechRecognitionEvent);
+		});
+		expect(onTranscriptionChange).toHaveBeenCalledWith('a b');
 	});
 });
