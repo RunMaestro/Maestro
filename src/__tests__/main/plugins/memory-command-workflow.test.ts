@@ -437,6 +437,90 @@ describe('local CLI memory command parity', () => {
 		return args;
 	}
 
+	describe.each(['IPC', 'CLI'] as const)('effective global commands through %s', (transport) => {
+		it.each([
+			{ name: 'uninitialized settings', saved: undefined },
+			{ name: 'an empty saved list', saved: [] },
+			{
+				name: 'saved overrides and legacy entries',
+				saved: [
+					{
+						id: 'commit',
+						command: '/record',
+						description: 'Edited built-in',
+						prompt: 'User commit prompt',
+						isBuiltIn: false,
+					},
+					{ id: 'kept', command: '/kept', description: 'Keep', prompt: 'User prompt' },
+					{ id: 'synopsis', command: '/retired', description: 'Old', prompt: 'Old' },
+					{ id: 'legacy', command: '/synopsis', description: 'Old', prompt: 'Old' },
+				],
+			},
+		])('preserves $name across collision, save, receipt and another save', async ({ saved }) => {
+			// The desktop store returns [] when the setting has never been written.
+			commands = saved ?? [];
+			mergeDefaults = true;
+			const original = JSON.stringify(commands);
+			const expected = saved?.length
+				? [{ ...saved[0], isBuiltIn: true }, saved[1]]
+				: [
+						{
+							id: 'commit',
+							command: '/commit',
+							description: 'Commit outstanding changes and push up',
+							prompt: 'effective prompt',
+							isBuiltIn: true,
+						},
+					];
+			const args =
+				transport === 'CLI'
+					? await cliPreview()
+					: { draftRequestId: (await call('generate', 'viewer', selection)).requestId };
+			const save = (fields: typeof draft) =>
+				transport === 'CLI'
+					? cli('save', { ...args, draft: fields })
+					: call('save', 'viewer', args.draftRequestId, fields);
+			for (const command of [expected[0].command, expected[0].command.slice(1)]) {
+				expect(await save({ ...draft, command })).toMatchObject({ status: 'collision' });
+			}
+			expect(saveCommands).not.toHaveBeenCalled();
+			expect(JSON.stringify(commands)).toBe(original);
+			const result = await save(draft);
+			expect(result).toMatchObject({ status: 'saved', commands });
+			expect(commands).toEqual([
+				...expected,
+				{ id: expect.any(String), ...draft, command: '/synthetic-command', isBuiltIn: false },
+			]);
+			expect(saveCommands).toHaveBeenCalledExactlyOnceWith(
+				commands,
+				transport === 'IPC' ? host.id : undefined
+			);
+			const next =
+				transport === 'CLI'
+					? await cliPreview()
+					: { draftRequestId: (await call('generate', 'viewer', selection)).requestId };
+			// A command deleted in Settings after generation must stay deleted on save.
+			commands = commands.filter((entry) => entry.id !== 'kept');
+			const firstSave = [...commands];
+			const edited = { ...draft, command: 'second-command' };
+			const second =
+				transport === 'CLI'
+					? await cli('save', { ...next, draft: edited })
+					: await call('save', 'viewer', next.draftRequestId, edited);
+			expect(second).toMatchObject({ status: 'saved', commands });
+			expect(commands).toEqual([
+				...firstSave,
+				{ id: expect.any(String), ...edited, command: '/second-command', isBuiltIn: false },
+			]);
+			expect(commands.filter((entry) => entry.id === 'commit')).toHaveLength(1);
+			expect(commands.some((entry) => ['synopsis', 'legacy', 'kept'].includes(entry.id))).toBe(
+				false
+			);
+			expect(JSON.stringify(saved ?? [])).toBe(original);
+			expect(saveCommands).toHaveBeenCalledTimes(2);
+		});
+	});
+
 	it('saves edited CLI fields once using the same writer as the native form and reads saved', async () => {
 		const args = await cliPreview();
 		expect(saveCommands).not.toHaveBeenCalled();

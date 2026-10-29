@@ -55,7 +55,10 @@ beforeEach(() => {
 		saveCommand: save,
 	} as typeof window.maestro.memory;
 });
-afterEach(cleanup);
+afterEach(() => {
+	cleanup();
+	vi.restoreAllMocks();
+});
 
 describe('CLI preview in the existing command editor', () => {
 	it('keeps an already open Settings section on background and foreground delivery', () => {
@@ -124,12 +127,22 @@ describe('CLI preview in the existing command editor', () => {
 	);
 
 	it('uses the real global create form for edited fields and a confirmed save without a follow-up cancel', async () => {
+		const defaults = useSettingsStore.getInitialState().customAICommands;
+		useSettingsStore.setState({ customAICommands: defaults });
+		save.mockImplementation(async (_viewer, requestId, fields) => ({
+			requestId,
+			status: 'saved',
+			commands: [...defaults, { id: 'saved-command', ...fields, isBuiltIn: false }],
+		}));
+		const settingsWrite = vi.spyOn(window.maestro.settings, 'set');
+		settingsWrite.mockClear();
 		function Editor({ visible = true }: { visible?: boolean }) {
 			const editor = useMemoryCommandEditor(true);
+			const commands = useSettingsStore((state) => state.customAICommands);
 			return visible ? (
 				<AICommandsPanel
 					theme={mockTheme}
-					customAICommands={[]}
+					customAICommands={commands}
 					setCustomAICommands={vi.fn()}
 					memoryCommandDraft={editor.preview ?? undefined}
 					stagedMemoryCommandDraft={editor.staged ?? undefined}
@@ -146,6 +159,12 @@ describe('CLI preview in the existing command editor', () => {
 		act(() => deliver(preview));
 		fireEvent.click(screen.getByRole('button', { name: 'Review draft' }));
 		expect(save).not.toHaveBeenCalled();
+		fireEvent.change(screen.getByPlaceholderText('/mycommand'), { target: { value: '/commit' } });
+		fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+		expect(
+			screen.getByText('A command with this name already exists. Choose another name.')
+		).toBeInTheDocument();
+		expect(save).not.toHaveBeenCalled();
 		fireEvent.change(screen.getByPlaceholderText('/mycommand'), { target: { value: '/edited' } });
 		fireEvent.change(screen.getByPlaceholderText('Short description for autocomplete'), {
 			target: { value: 'Edited description' },
@@ -160,6 +179,14 @@ describe('CLI preview in the existing command editor', () => {
 		rerender(<Editor />);
 		act(() => deliver({ ...preview, background: false }));
 		expect(screen.getByPlaceholderText('/mycommand')).toHaveValue('/edited');
+		expect(screen.getByPlaceholderText('Short description for autocomplete')).toHaveValue(
+			'Edited description'
+		);
+		expect(
+			screen.getByPlaceholderText(
+				'The actual prompt sent to the AI agent when this command is invoked... (type {{ for variables)'
+			)
+		).toHaveValue('Edited prompt');
 		fireEvent.click(screen.getByRole('button', { name: 'Create' }));
 		await waitFor(() =>
 			expect(save).toHaveBeenCalledExactlyOnceWith(preview.viewerId, preview.requestId, {
@@ -171,10 +198,18 @@ describe('CLI preview in the existing command editor', () => {
 		await waitFor(() =>
 			expect(screen.queryByRole('button', { name: 'Create' })).not.toBeInTheDocument()
 		);
-		expect(useSettingsStore.getState().customAICommands[0]).toMatchObject({
-			command: '/edited',
-			prompt: 'Edited prompt',
-		});
+		expect(useSettingsStore.getState().customAICommands).toEqual([
+			...defaults,
+			{
+				id: 'saved-command',
+				command: '/edited',
+				description: 'Edited description',
+				prompt: 'Edited prompt',
+				isBuiltIn: false,
+			},
+		]);
+		expect(defaults.some((entry) => entry.command === '/commit')).toBe(true);
+		expect(settingsWrite).not.toHaveBeenCalled();
 		expect(close).not.toHaveBeenCalled();
 	});
 

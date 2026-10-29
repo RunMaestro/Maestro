@@ -11,6 +11,7 @@ vi.mock('../../../cli/services/session-command', async (original) => ({
 vi.mock('../../../cli/services/storage', () => ({ readSettingValue: vi.fn() }));
 import { readSettingValue } from '../../../cli/services/storage';
 import { MaestroNotRunningError } from '../../../cli/services/maestro-not-running';
+import { listedSubcommands } from '../../../cli/utils/encore-gate';
 
 vi.mock('fs/promises', () => ({ readFile: vi.fn(), stat: vi.fn() }));
 const previousExitCode = process.exitCode;
@@ -206,20 +207,32 @@ it('preserves the stopped desktop JSON code and exit status', async () => {
 		code: 'MAESTRO_NOT_RUNNING',
 	});
 });
-it('hides and refuses memory commands while Plugins is off', async () => {
+it.each([
+	['select', '--file', 'selection.json'],
+	['generate', 'request'],
+	['status', 'request'],
+	['cancel', 'request'],
+	['preview', 'request', '--editor'],
+	['save', 'request', '--file', 'draft.json'],
+])('hides and refuses memory-command %s while Plugins is off', async (...args) => {
 	vi.mocked(readSettingValue).mockReturnValue({ plugins: false });
 	const program = new Command().exitOverride();
 	registerMemoryCommandCommands(program);
 	expect(program.helpInformation()).not.toContain('memory-command');
+	expect(listedSubcommands(program).map((command) => command.name())).not.toContain(
+		'memory-command'
+	);
 	const exit = vi.spyOn(process, 'exit').mockImplementation(() => {
 		throw new Error('exit');
 	});
 	await expect(
-		program.parseAsync(['memory-command', 'generate', 'request', '--json'], { from: 'user' })
+		program.parseAsync(['memory-command', ...args, '--json'], { from: 'user' })
 	).rejects.toThrow('exit');
 	expect(exit).toHaveBeenCalledWith(1);
 	expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toMatchObject({
 		code: 'PLUGINS_DISABLED',
+		error: expect.stringContaining('maestro-cli encore enable plugins'),
 	});
+	expect(readFile).not.toHaveBeenCalled();
 	expect(sendSimpleCommand).not.toHaveBeenCalled();
 });
