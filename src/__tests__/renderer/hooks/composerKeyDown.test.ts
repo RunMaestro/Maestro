@@ -4,6 +4,7 @@ import {
 	handleComposerFindKey,
 	handleComposerPickerKey,
 	handleComposerSendKey,
+	isImeComposing,
 } from '../../../renderer/hooks/input/composerKeyDown';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { OUTPUT_SEARCH_INPUT_SELECTOR } from '../../../renderer/hooks/ui/useOutputSearchLayer';
@@ -14,7 +15,13 @@ type KeyInit = {
 	ctrlKey?: boolean;
 	shiftKey?: boolean;
 	altKey?: boolean;
+	keyCode?: number;
+	nativeEvent?: { isComposing?: boolean };
 };
+
+/** An Enter as Chromium reports it mid-composition, and as Safari reports the confirming one. */
+const CHROMIUM_COMPOSING = { nativeEvent: { isComposing: true }, keyCode: 229 };
+const SAFARI_CONFIRM = { nativeEvent: { isComposing: false }, keyCode: 229 };
 
 function keyEvent(init: KeyInit) {
 	const preventDefault = vi.fn();
@@ -36,6 +43,18 @@ function textareaRef() {
 	document.body.appendChild(el);
 	return { current: el } as React.RefObject<HTMLTextAreaElement>;
 }
+
+describe('isImeComposing', () => {
+	it('reads isComposing and keyCode 229', () => {
+		expect(isImeComposing(keyEvent({ key: 'Enter', ...CHROMIUM_COMPOSING }).event)).toBe(true);
+		expect(isImeComposing(keyEvent({ key: 'Enter', ...SAFARI_CONFIRM }).event)).toBe(true);
+		expect(
+			isImeComposing(keyEvent({ key: 'Enter', nativeEvent: { isComposing: true } }).event)
+		).toBe(true);
+		expect(isImeComposing(keyEvent({ key: 'Enter', keyCode: 13 }).event)).toBe(false);
+		expect(isImeComposing(keyEvent({ key: 'Enter' }).event)).toBe(false);
+	});
+});
 
 describe('handleComposerFindKey', () => {
 	let setOutputSearchOpen: ReturnType<typeof vi.fn>;
@@ -191,6 +210,40 @@ describe('handleComposerPickerKey', () => {
 		expect(handleComposerPickerKey(keyEvent({ key: 'ArrowLeft' }).event, p.options)).toBe(false);
 	});
 
+	describe('during an IME composition', () => {
+		it.each([
+			{ key: 'Enter' },
+			{ key: 'Enter', metaKey: true },
+			{ key: 'Enter', ctrlKey: true },
+			{ key: 'Tab' },
+			{ key: 'ArrowDown' },
+			{ key: 'ArrowUp' },
+			{ key: 'Escape' },
+		])('leaves %o to the IME', (init) => {
+			for (const ime of [CHROMIUM_COMPOSING, SAFARI_CONFIRM]) {
+				const p = picker({ selectedIndex: 1 });
+				const { event, preventDefault } = keyEvent({ ...init, ...ime });
+				expect(handleComposerPickerKey(event, p.options)).toBe(true);
+				expect(preventDefault).not.toHaveBeenCalled();
+				expect(p.options.accept).not.toHaveBeenCalled();
+				expect(p.options.close).not.toHaveBeenCalled();
+				expect(p.options.setSelectedIndex).not.toHaveBeenCalled();
+			}
+		});
+
+		it('still keeps the key from the window when isolated', () => {
+			const { event, stopPropagation } = keyEvent({ key: 'Enter', ...CHROMIUM_COMPOSING });
+			handleComposerPickerKey(event, { ...picker().options, isolateFromWindowKeys: true });
+			expect(stopPropagation).toHaveBeenCalled();
+		});
+
+		it('passes other keys through', () => {
+			const p = picker();
+			const { event } = keyEvent({ key: 'a', ...CHROMIUM_COMPOSING });
+			expect(handleComposerPickerKey(event, p.options)).toBe(false);
+		});
+	});
+
 	it('stops handled keys only when isolated from the window keys', () => {
 		const shared = keyEvent({ key: 'Tab' });
 		handleComposerPickerKey(shared.event, picker().options);
@@ -295,5 +348,32 @@ describe('handleComposerSendKey', () => {
 
 	it('passes other keys through', () => {
 		expect(press({ key: 'a' }, true).handled).toBe(false);
+	});
+
+	describe('during an IME composition', () => {
+		it.each([true, false])('never sends on any Enter (enterToSend %s)', (enterToSend) => {
+			for (const ime of [CHROMIUM_COMPOSING, SAFARI_CONFIRM]) {
+				for (const mods of [{}, { metaKey: true }, { ctrlKey: true }, { shiftKey: true }]) {
+					const { handled, preventDefault } = press({ key: 'Enter', ...mods, ...ime }, enterToSend);
+					expect(handled).toBe(true);
+					expect(preventDefault).not.toHaveBeenCalled();
+				}
+			}
+			expect(send).not.toHaveBeenCalled();
+		});
+
+		it('still stops Cmd/Ctrl+Enter when isolated, and only that', () => {
+			const chord = press({ key: 'Enter', metaKey: true, ...CHROMIUM_COMPOSING }, true, true);
+			expect(chord.stopPropagation).toHaveBeenCalled();
+			const plain = press({ key: 'Enter', ...CHROMIUM_COMPOSING }, true, true);
+			expect(plain.stopPropagation).not.toHaveBeenCalled();
+			expect(send).not.toHaveBeenCalled();
+		});
+
+		it('sends again once the composition is over', () => {
+			press({ key: 'Enter', ...CHROMIUM_COMPOSING }, true);
+			press({ key: 'Enter', nativeEvent: { isComposing: false }, keyCode: 13 }, true);
+			expect(send).toHaveBeenCalledTimes(1);
+		});
 	});
 });
