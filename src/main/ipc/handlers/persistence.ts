@@ -214,10 +214,11 @@ export interface PersistenceHandlerDependencies {
 }
 
 /**
- * Handles exposed by {@link registerPersistenceHandlers} for callers that emit
- * `session.activated` outside the debounced `setActiveSessionId` flush.
+ * Shared settings persistence and session-activation receipts for host callers.
  */
 export interface PersistenceHandlers {
+	/** Shared settings writer, including confirmation and peer/web broadcasts. */
+	setSetting: (key: string, value: any, senderWebContentsId?: number) => Promise<boolean>;
 	/**
 	 * Record that a session was activated through a path OTHER than this module's
 	 * debounced flush - specifically the plugin focus verbs in index.ts, which
@@ -411,7 +412,7 @@ export function registerPersistenceHandlers(
 		getMediaToolStatus(await resolveMediaRuntime(settingsStore.get('mediaModelDirectory')))
 	);
 
-	ipcMain.handle('settings:set', async (event, key: string, value: any) => {
+	const setSetting: PersistenceHandlers['setSetting'] = async (key, value, senderWebContentsId) => {
 		if (key.startsWith('mediaModelDirectory.')) return false;
 		if (key === 'mediaModelDirectory') {
 			try {
@@ -456,7 +457,7 @@ export function registerPersistenceHandlers(
 		// This is the deterministic in-app path; the settings file watcher handles
 		// external (maestro-cli) edits. The sender is skipped deliberately - see
 		// notifyPeerWindows.
-		notifyPeerWindows(event?.sender?.id);
+		notifyPeerWindows(senderWebContentsId);
 
 		// Pointing at a different gh binary invalidates every cached gh fact:
 		// detection, resolved path, and auth status were all reached against the
@@ -503,7 +504,10 @@ export function registerPersistenceHandlers(
 		}
 
 		return true;
-	});
+	};
+	ipcMain.handle('settings:set', (event, key: string, value: any) =>
+		setSetting(key, value, event?.sender?.id)
+	);
 
 	ipcMain.handle('settings:getAll', async () => {
 		const settings = settingsStore.store;
@@ -1179,5 +1183,5 @@ export function registerPersistenceHandlers(
 		}
 	});
 
-	return { noteSessionActivated };
+	return { noteSessionActivated, setSetting };
 }

@@ -117,8 +117,8 @@ export interface DualPaneFileEditorProps {
 	 */
 	showDefaultDriftedBadge?: boolean;
 
-	/** Primary action button (e.g., Save). */
-	primaryAction: DualPaneFileEditorAction;
+	/** Optional primary action button (e.g., Save); omitted for read-only sources. */
+	primaryAction?: DualPaneFileEditorAction;
 
 	/** Optional secondary action button (e.g., Reset to Default, Delete). */
 	secondaryAction?: DualPaneFileEditorAction;
@@ -605,7 +605,7 @@ export function DualPaneFileEditor({
 								<div className="dual-pane-editor-body">{renderEditorBody()}</div>
 
 								<div className="dual-pane-editor-actions">
-									{renderActionButton(primaryAction, 'save-button')}
+									{primaryAction && renderActionButton(primaryAction, 'save-button')}
 									{secondaryAction && renderActionButton(secondaryAction, 'reset-button')}
 									<div className="flex-1" />
 									{openInFinderPath && (

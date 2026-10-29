@@ -11,6 +11,7 @@
 
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import type { MockInstance } from 'vitest';
+import { Command } from 'commander';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -68,6 +69,7 @@ vi.mock('../../cli/services/pianola-store', async (importOriginal) => {
 });
 
 import { MAESTRO_NOT_RUNNING_MESSAGE } from '../../cli/services/maestro-not-running';
+import { registerMemoryCommandCommands } from '../../cli/commands/memory-command';
 import { focusAgent, switchMode } from '../../cli/commands/agent-control';
 import { interrupt } from '../../cli/commands/interrupt';
 import {
@@ -196,6 +198,28 @@ const j = (json: boolean) => ({ json });
 let docPath = '';
 
 const rows: Row[] = [
+	...['select', 'generate', 'status', 'cancel', 'preview', 'save'].map(
+		(action): Row => ({
+			name: `memory-command ${action}`,
+			humanOnStdout: true, // This command always returns JSON, even without --json.
+			run: async (json) => {
+				const program = new Command().exitOverride();
+				registerMemoryCommandCommands(program);
+				await program.parseAsync(
+					[
+						'memory-command',
+						action,
+						...(action === 'select' ? [] : ['request-id']),
+						...(['select', 'save'].includes(action)
+							? ['--file', path.join(dataDir, `${action}.json`)]
+							: []),
+						...(json ? ['--json'] : []),
+					],
+					{ from: 'user' }
+				);
+			},
+		})
+	),
 	// runAgentCommand family
 	{ name: 'rename-agent', run: (json) => renameAgent('agent-1', 'New', j(json)) },
 	{ name: 'remove-playbook', run: (json) => removePlaybook('agent-1', 'pb-1', j(json)) },
@@ -366,10 +390,32 @@ describe('app-dependent verbs with no desktop app', () => {
 	beforeAll(() => {
 		docPath = path.join(dataDir, 'doc.md');
 		fs.writeFileSync(docPath, '- [ ] task\n');
-		// Two verbs sit behind Encore gates read from settings, ahead of the bridge.
+		// Encore gates are read from settings ahead of the bridge.
 		fs.writeFileSync(
 			path.join(dataDir, 'maestro-settings.json'),
-			JSON.stringify({ encoreFeatures: { directorNotes: true, pianola: true } })
+			JSON.stringify({ encoreFeatures: { directorNotes: true, pianola: true, plugins: true } })
+		);
+		fs.writeFileSync(
+			path.join(dataDir, 'select.json'),
+			JSON.stringify({
+				requestId: 'provisional',
+				status: 'selected',
+				dirty: false,
+				textSnapshot: 'Synthetic memory',
+				sourceRef: {
+					sourceAgentId: 'agent-1',
+					provider: 'codex',
+					location: { kind: 'local' },
+					codexHome: dataDir,
+					memoryRoot: path.join(dataDir, 'memories'),
+					relativePath: 'memory.md',
+				},
+				generator: { agentId: 'agent-1', provider: 'codex', model: '', effort: '' },
+			})
+		);
+		fs.writeFileSync(
+			path.join(dataDir, 'save.json'),
+			JSON.stringify({ command: 'synthetic', description: 'Synthetic', prompt: 'Synthetic prompt' })
 		);
 	});
 

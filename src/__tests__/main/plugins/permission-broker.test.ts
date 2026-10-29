@@ -7,6 +7,27 @@ function grant(capability: string, scope?: string): PermissionGrant {
 }
 
 describe('PermissionBroker', () => {
+	it('requires selected-memory and preview consent separately and exact-agent cancel grants', () => {
+		let grants = [grant('agents:dispatch', 'generator')];
+		const broker = new PermissionBroker({ getGrants: () => grants });
+		expect(broker.authorize('p', 'memory.getSelectedSnapshot', { requestId: 'id' }).allowed).toBe(
+			false
+		);
+		expect(broker.authorize('p', 'commands.openDraft', { requestId: 'id' }).allowed).toBe(false);
+		expect(
+			broker.authorize('p', 'agents.cancel', { agentId: 'generator', requestId: 'id' }).allowed
+		).toBe(true);
+		expect(
+			broker.authorize('p', 'agents.cancel', { agentId: 'other', requestId: 'id' }).allowed
+		).toBe(false);
+		expect(broker.authorize('p', 'agents.cancel', { requestId: 'id' }).allowed).toBe(false);
+		grants = [grant('memory:selected')];
+		expect(broker.authorize('p', 'memory.getSelectedSnapshot', { requestId: 'id' }).allowed).toBe(
+			true
+		);
+		expect(broker.authorize('p', 'commands.openDraft', { requestId: 'id' }).allowed).toBe(false);
+	});
+
 	it('denies by default when the plugin has no grants', () => {
 		const broker = new PermissionBroker({ getGrants: () => [] });
 		const d = broker.authorize('p', 'fs.read', { path: '/x' });

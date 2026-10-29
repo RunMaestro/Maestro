@@ -148,6 +148,42 @@ describe('plugin headless agent runner', () => {
 			}
 		}
 	);
+	it.each([
+		{ toolType: 'claude-code' },
+		{ toolType: 'codex', session: 'foreign-session' },
+		{ toolType: 'codex', receipt: 'some/tool' },
+		{ toolType: 'codex', tools: true },
+	])('rejects incompatible draft runtime before spawn or token issuance: %j', async (input) => {
+		const spawn = vi.fn();
+		const issueRunToken = vi.fn();
+		const run = createPluginHeadlessAgentRunner({
+			getAgent: () => ({ ...agent, toolType: input.toolType }) as SessionInfo,
+			detectAgent: async () => ({ available: true }),
+			hasPluginTools: () => true,
+			spawn,
+			prepareSystemPrompt: async () => undefined,
+			issueRunToken,
+			revokeRunToken: vi.fn(),
+			cliScriptPath: () => '/cli.js',
+			audit: vi.fn(),
+		});
+		expect(
+			await run(
+				agent.id,
+				'draft',
+				input.session,
+				undefined,
+				'auto',
+				undefined,
+				input.receipt,
+				input.tools,
+				{ mode: 'draft' }
+			)
+		).toMatchObject({ success: false, error: 'MemoryCommandInvalid' });
+		expect(spawn).not.toHaveBeenCalled();
+		expect(issueRunToken).not.toHaveBeenCalled();
+	});
+
 	it.each([true, false])(
 		'validates the selected agent binary before dispatch (valid: %s)',
 		async (valid) => {

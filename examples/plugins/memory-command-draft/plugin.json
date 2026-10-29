@@ -1,0 +1,26 @@
+{
+	"id": "example.memory-command-draft",
+	"name": "Memory command draft",
+	"version": "0.1.0",
+	"tier": 1,
+	"maestro": { "minHostApi": "1.31.0" },
+	"entry": "main.js",
+	"category": "automation",
+	"description": "Draft a global command from an explicitly selected Codex memory snapshot.",
+	"permissions": [
+		{
+			"capability": "memory:selected",
+			"reason": "Read only the snapshot released for this draft request."
+		},
+		{
+			"capability": "commands:preview",
+			"reason": "Hand the validated draft back to the host without saving it."
+		},
+		{
+			"capability": "agents:dispatch",
+			"scope": "REPLACE_WITH_CODEX_AGENT_ID",
+			"reason": "Run the user-selected Codex generator; consent must restrict this to exact agent IDs and separately allow unattended runs."
+		}
+	],
+	"contributes": { "commands": [{ "id": "generate", "title": "Generate memory command draft" }] }
+}

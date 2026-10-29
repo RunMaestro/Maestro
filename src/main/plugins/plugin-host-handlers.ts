@@ -31,6 +31,13 @@ import type { AgentSendProgressEvent, HostMethod } from '../../shared/plugins/rp
 import type { ActionGuard } from './action-guard';
 import type { PluginKvStore } from './plugin-kv-store';
 import type { PluginAgentSessionBindings } from './plugin-agent-session-bindings';
+import type { HeadlessAgentRunner } from './plugin-manager-singleton';
+import type { MemoryCommandDraftService } from './memory-command-draft';
+import {
+	MEMORY_COMMAND_MAX_BYTES,
+	parseMemoryCommandDraftResponse,
+	type MemoryCommandDraftStatus,
+} from '../../shared/memoryCommandDraft';
 import type { EgressGuard } from './net-egress-guard';
 import type { PluginBackgroundHealth } from './plugin-background-supervisor';
 import type { SpawnBinaryEntry } from './spawn-binary-registry';
@@ -309,6 +316,8 @@ export interface HostHandlerDeps {
 	 * so the sandbox can release wake locks and close fs watchers when a plugin
 	 * stops, crashes, or is uninstalled. Invoked once during handler construction. */
 	registerResourceCleanup?: (cleanup: (pluginId: string) => Promise<void>) => void;
+	/** Invalidate agent requests on partial grant changes without tearing down unrelated services. */
+	registerAgentRunCleanup?: (cleanup: (pluginId: string) => void) => void;
 	backgroundRegister?: (
 		pluginId: string,
 		service: PluginBackgroundService
@@ -328,7 +337,13 @@ export interface HostHandlerDeps {
 	 * calling; the sink resolves the agent id to a live session at call time. */
 	dispatch?: (agentId: string, prompt: string) => Promise<unknown>;
 	/** Headless, resumable provider turn. The host returns the provider session id. */
-	sendAgent?: import('./plugin-manager-singleton').HeadlessAgentRunner;
+	sendAgent?: HeadlessAgentRunner;
+	/** The same host-owned register used by native selection and cancellation. */
+	memoryCommandDraft?: MemoryCommandDraftService;
+	/** Routes an accepted preview to its authenticated owner; no settings write. */
+	previewMemoryCommandDraft?: (
+		preview: { requestId: string } & Awaited<ReturnType<MemoryCommandDraftService['preview']>>
+	) => void;
 	/** Host-owned tab naming turn; resolves provider, cwd and auth by agent id. */
 	generateTitle?: (
 		agentId: string,
@@ -1544,6 +1559,79 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 			);
 		};
 	}
+	const drafts = deps.memoryCommandDraft;
+	const cleanupAgentRuns = (pluginId: string): void => {
+		drafts?.cleanupPlugin(pluginId);
+		for (const controller of pluginRunControllers.get(pluginId) ?? []) controller.abort();
+		pluginRunControllers.delete(pluginId);
+	};
+	deps.registerAgentRunCleanup?.(cleanupAgentRuns);
+	// These checks are repeated after awaits and on progress, including silent provider completion.
+	const assertDraftAllowed = (
+		pluginId: string,
+		requestId: string,
+		state?: MemoryCommandDraftStatus['status']
+	): string => {
+		if (!drafts) throw new Error('MemoryCommandUnavailable');
+		const agentId = drafts.getGeneratorAgentId(pluginId, requestId, state);
+		assertBrokerAllowed(
+			deps,
+			pluginId,
+			'memory.getSelectedSnapshot',
+			{ requestId },
+			{ audit: false }
+		);
+		assertBrokerAllowed(deps, pluginId, 'agents.send', { agentId }, { audit: false });
+		if (!deps.dispatchUnattendedAllowed?.(pluginId, agentId))
+			throw new Error('MemoryCommandDenied');
+		assertTrustedActVerb(deps, pluginId);
+		return agentId;
+	};
+	const draftRequestId = (params: Record<string, unknown>): string => {
+		if (typeof params.requestId !== 'string' || !/^[a-f0-9-]{36}$/.test(params.requestId))
+			throw new Error('MemoryCommandInvalid');
+		return params.requestId;
+	};
+	if (drafts) {
+		handlers['memory.getSelectedSnapshot'] = async (pluginId, params) => {
+			const p = asObject(params);
+			assertClosedSchema('memory.getSelectedSnapshot', p, { requestId: true });
+			const requestId = draftRequestId(p);
+			assertDraftAllowed(pluginId, requestId, 'selected');
+			const snapshot = await drafts.get(pluginId, requestId);
+			assertDraftAllowed(pluginId, requestId, 'selected');
+			return snapshot;
+		};
+		handlers['agents.cancel'] = async (pluginId, params) => {
+			const p = asObject(params);
+			assertClosedSchema('agents.cancel', p, { agentId: true, requestId: true });
+			const requestId = draftRequestId(p);
+			if (typeof p.agentId !== 'string' || !p.agentId.trim())
+				throw new Error('MemoryCommandInvalid');
+			assertBrokerAllowed(deps, pluginId, 'agents.cancel', p);
+			return { cancelled: drafts.cancel(pluginId, requestId, p.agentId) };
+		};
+		if (deps.previewMemoryCommandDraft) {
+			handlers['commands.openDraft'] = async (pluginId, params) => {
+				const p = asObject(params);
+				assertClosedSchema('commands.openDraft', p, { requestId: true, draft: true });
+				const requestId = draftRequestId(p);
+				assertBrokerAllowed(deps, pluginId, 'commands.openDraft', p);
+				assertDraftAllowed(pluginId, requestId, 'ready');
+				const preview = await drafts.preview(pluginId, requestId, p.draft);
+				try {
+					assertBrokerAllowed(deps, pluginId, 'commands.openDraft', p);
+					assertDraftAllowed(pluginId, requestId, 'preview');
+					deps.previewMemoryCommandDraft!({ requestId, ...preview });
+				} catch {
+					// Routing failure is terminal, with no free-form draft text in the RPC error.
+					drafts.fail(preview.owner, requestId);
+					throw new Error('MemoryCommandUnavailable');
+				}
+				return { accepted: true };
+			};
+		}
+	}
 	if (deps.sendAgent) {
 		const sendAgent = deps.sendAgent;
 		const activeRuns = pluginRunControllers;
@@ -1559,7 +1647,14 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 				throw new Error('agents.send: opts must be an object');
 			}
 			const opts = p.opts === undefined ? {} : asObject(p.opts);
-			assertClosedSchema('agents.send opts', opts, { sessionId: true, originalAttachments: true });
+			const draftMode = opts.mode === 'draft';
+			assertClosedSchema(
+				'agents.send opts',
+				opts,
+				draftMode ? { mode: true, requestId: true } : { sessionId: true, originalAttachments: true }
+			);
+			if (draftMode && Object.prototype.hasOwnProperty.call(opts, 'sessionId'))
+				throw new Error('MemoryCommandInvalid');
 			const originals = opts.originalAttachments;
 			if (
 				originals !== undefined &&
@@ -1587,7 +1682,8 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 			if (
 				typeof prompt !== 'string' ||
 				!prompt.trim() ||
-				prompt.length > MAX_DISPATCH_PROMPT_CHARS
+				prompt.length > (draftMode ? MEMORY_COMMAND_MAX_BYTES * 2 : MAX_DISPATCH_PROMPT_CHARS) ||
+				(draftMode && new TextEncoder().encode(prompt).byteLength > MEMORY_COMMAND_MAX_BYTES * 2)
 			) {
 				throw new Error('agents.send: invalid prompt');
 			}
@@ -1596,6 +1692,88 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 				(typeof opts.sessionId !== 'string' || !/^[^\x00-\x1f\x7f]{1,256}$/.test(opts.sessionId))
 			) {
 				throw new Error('agents.send: invalid provider sessionId');
+			}
+			if (draftMode) {
+				const requestId = draftRequestId(opts);
+				if (!drafts) throw new Error('MemoryCommandUnavailable');
+				if (assertDraftAllowed(pluginId, requestId, 'selected') !== agentId)
+					throw new Error('MemoryCommandInvalid');
+				assertLowOrMediumRisk(prompt);
+				return underGuard(
+					deps.actionGuard,
+					pluginId,
+					'agents:dispatch',
+					`agent:${agentId}`,
+					async () => {
+						const { controller } = await drafts.start(pluginId, requestId, agentId);
+						const runs = activeRuns.get(pluginId) ?? new Set<AbortController>();
+						runs.add(controller);
+						activeRuns.set(pluginId, runs);
+						try {
+							assertDraftAllowed(pluginId, requestId, 'generating');
+							const onProgress = (event: AgentSendProgressEvent): void => {
+								if (controller.signal.aborted) return;
+								try {
+									assertDraftAllowed(pluginId, requestId, 'generating');
+									drafts.checkRunning(pluginId, requestId, controller);
+								} catch {
+									drafts.failRun(pluginId, requestId, controller);
+									controller.abort();
+									return;
+								}
+								// Provider commentary and summaries may repeat private source text.
+								if (
+									event.type === 'tool' &&
+									/^[a-zA-Z0-9_.:/-]{1,128}$/.test(event.tool) &&
+									['started', 'completed', 'failed'].includes(event.status)
+								) {
+									context?.onProgress({
+										type: 'tool',
+										tool: event.tool,
+										status: event.status,
+										at: new Date().toISOString(),
+									});
+								}
+							};
+							const result = await sendAgent(
+								agentId,
+								prompt,
+								undefined,
+								controller.signal,
+								'auto',
+								onProgress,
+								undefined,
+								false,
+								{ mode: 'draft' }
+							);
+							if (controller.signal.aborted)
+								return {
+									success: false,
+									response: null,
+									sessionId: null,
+									error: 'MemoryCommandCancelled',
+								};
+							assertDraftAllowed(pluginId, requestId, 'generating');
+							if (!result.success) throw new Error('MemoryCommandFailed');
+							const draft = parseMemoryCommandDraftResponse(result.response);
+							if (!(await drafts.complete(pluginId, requestId, controller, draft)))
+								throw new Error('MemoryCommandUnavailable');
+							assertDraftAllowed(pluginId, requestId, 'ready');
+							return { success: true, response: JSON.stringify({ draft }), sessionId: null };
+						} catch {
+							drafts.failRun(pluginId, requestId, controller);
+							return {
+								success: false,
+								response: null,
+								sessionId: null,
+								error: 'MemoryCommandFailed',
+							};
+						} finally {
+							runs.delete(controller);
+							if (runs.size === 0 && activeRuns.get(pluginId) === runs) activeRuns.delete(pluginId);
+						}
+					}
+				);
 			}
 			assertBrokerAllowed(deps, pluginId, 'agents.send', p);
 			if (!deps.dispatchUnattendedAllowed?.(pluginId, agentId)) {
@@ -2155,14 +2333,13 @@ export function buildHostCallHandlers(deps: HostHandlerDeps): HostCallHandlers {
 	 * Return the rejecting media/service drain barrier; mutation acknowledgments must await it.
 	 */
 	const cleanupPluginResources = (pluginId: string): Promise<void> => {
+		cleanupAgentRuns(pluginId);
 		const drain = Promise.all([
 			services.cleanupPlugin(pluginId),
 			deps.primitives?.cleanupPlugin(pluginId),
 			mediaTools.cleanupPlugin(pluginId),
 		]).then(() => {});
 		void drain.catch(() => {});
-		for (const controller of pluginRunControllers.get(pluginId) ?? []) controller.abort();
-		pluginRunControllers.delete(pluginId);
 		for (const [watchId, entry] of fsWatchers) {
 			if (entry.pluginId !== pluginId) continue;
 			try {

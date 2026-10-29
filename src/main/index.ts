@@ -1,3 +1,4 @@
+import { mergeCustomAICommands } from '../shared/customAICommands';
 import { canonicalJson } from '../shared/canonicalJson';
 import { realpathSync, lstatSync } from 'fs';
 import { PluginAuthorityError } from './plugins/plugin-authority';
@@ -18,6 +19,14 @@ import {
 	getPluginRunProofProtectedPaths,
 	pluginToolRunIdentity,
 } from './plugins/plugin-tool-run-identity';
+import { HEADLESS_RUN_COMPLETION_TIMEOUT_MS } from '../shared/plugins/headless-agent-timeouts';
+import {
+	registerMemoryCommandWorkflow,
+	MEMORY_COMMAND_PLUGIN,
+	MEMORY_COMMAND_ACTION,
+} from './plugins/memory-command-workflow';
+import { resolveMemoryLayout } from './memory-location';
+import { createCodexMemorySourceResolver } from './agents/codex-memory';
 import {
 	app,
 	BrowserWindow,
@@ -88,6 +97,7 @@ import {
 	setActivePluginManager,
 	stopActivePluginManager,
 	setHeadlessAgentRunner,
+	setMemoryCommandCli,
 	type HeadlessAgentRunner,
 } from './plugins/plugin-manager-singleton';
 import { PluginSchedulerHost } from './plugins/plugin-scheduler-host';
@@ -623,6 +633,9 @@ let pluginEventBus: PluginEventBusImpl | null = null;
 // focus verbs record into the persistence layer's `session.activated` dedupe so
 // the two emit paths never desync. Null before IPC setup / when unavailable.
 let noteSessionActivatedInPersistence: ((sessionId: string) => void) | null = null;
+let writeSettingInPersistence:
+	| import('./ipc/handlers/persistence').PersistenceHandlers['setSetting']
+	| undefined;
 let usageRefreshScheduler: UsageRefreshScheduler | null = null;
 let interactiveReplayController: InteractiveReplayController<ProcessSpawnConfig> | null = null;
 
@@ -2736,6 +2749,7 @@ app
 		let serviceReconcileQueued = false;
 		let serviceReconcile: (() => void) | undefined;
 		let pluginResourceCleanup: ((pluginId: string) => Promise<void>) | undefined;
+		let pluginAgentRunCleanup: ((pluginId: string) => void) | undefined;
 		const groupingRegistry = new PluginGroupingRegistry(() => {
 			try {
 				mainWindow?.webContents.send('plugins:groupings-changed');
@@ -2907,6 +2921,76 @@ app
 			capture: capturePrimitive,
 		});
 
+		const memoryCommandWorkflow = registerMemoryCommandWorkflow({
+			getHost: () => mainWindow?.webContents,
+			getCommands: () =>
+				mergeCustomAICommands(store.get('customAICommands', []), getPrompt('commit-command')),
+			saveCommands: (commands, senderWebContentsId) => {
+				if (!writeSettingInPersistence) throw new Error('MemoryCommandUnavailable');
+				return writeSettingInPersistence('customAICommands', commands, senderWebContentsId);
+			},
+			getSource: createCodexMemorySourceResolver(
+				(id) => (sessionsStore.get('sessions', []) as SessionInfo[]).find((s) => s.id === id),
+				resolveMemoryLayout
+			),
+			getGenerator: (id) => {
+				const session = (sessionsStore.get('sessions', []) as SessionInfo[]).find(
+					(s) => s.id === id
+				);
+				if (session?.toolType !== 'codex') return undefined;
+				return {
+					agentId: id,
+					provider: 'codex',
+					model: session.customModel ?? '',
+					effort: session.customEffort ?? '',
+				};
+			},
+			availability: (agentId) => {
+				const record = pluginManager
+					?.getActiveRecords()
+					.find((r) => r.id === MEMORY_COMMAND_PLUGIN);
+				if (
+					!record ||
+					!pluginSandboxHost?.isRunning(MEMORY_COMMAND_PLUGIN) ||
+					!pluginManager
+						?.getContributions()
+						.commands.some(
+							(c) => c.pluginId === MEMORY_COMMAND_PLUGIN && c.localId === MEMORY_COMMAND_ACTION
+						)
+				)
+					return 'plugin-unavailable';
+				if (
+					record.signature?.status !== 'trusted' ||
+					!pluginBroker.authorize(
+						MEMORY_COMMAND_PLUGIN,
+						'memory.getSelectedSnapshot',
+						{},
+						{ audit: false }
+					).allowed ||
+					!pluginBroker.authorize(MEMORY_COMMAND_PLUGIN, 'commands.openDraft', {}, { audit: false })
+						.allowed ||
+					!pluginBroker.authorize(
+						MEMORY_COMMAND_PLUGIN,
+						'agents.send',
+						{ agentId },
+						{ audit: false }
+					).allowed ||
+					!isPermittedUnattended(grantsOf(MEMORY_COMMAND_PLUGIN), 'agents:dispatch', agentId)
+				)
+					return 'permission-denied';
+				return 'available';
+			},
+			invoke: (requestId) =>
+				pluginSandboxHost
+					? pluginSandboxHost.invokeTool(
+							MEMORY_COMMAND_PLUGIN,
+							MEMORY_COMMAND_ACTION,
+							{ requestId },
+							{ timeoutMs: HEADLESS_RUN_COMPLETION_TIMEOUT_MS }
+						)
+					: Promise.reject(new Error('MemoryCommandUnavailable')),
+		});
+		setMemoryCommandCli(memoryCommandWorkflow.cli);
 		const sandboxHost = new PluginSandboxHost({
 			toolIdentity,
 			prepareToolPluginActive: async (id) => {
@@ -2921,6 +3005,8 @@ app
 			broker: pluginBroker,
 			handlers: buildHostCallHandlers({
 				primitives: pluginPrimitives,
+				memoryCommandDraft: memoryCommandWorkflow.service,
+				previewMemoryCommandDraft: memoryCommandWorkflow.preview,
 				serviceManifest: (id) =>
 					pluginManager
 						?.getActiveRecords()
@@ -3023,6 +3109,9 @@ app
 				powerReleaseSleep: (reason) => powerManager.removeBlockReason(reason),
 				registerResourceCleanup: (cleanup) => {
 					pluginResourceCleanup = cleanup;
+				},
+				registerAgentRunCleanup: (cleanup) => {
+					pluginAgentRunCleanup = cleanup;
 				},
 				backgroundRegister: async (pluginId, service) =>
 					backgroundSupervisor.register(pluginId, service),
@@ -3434,6 +3523,8 @@ app
 			});
 			closeConsentWindow();
 			if (outcome.ok) {
+				// Re-consent can narrow grants while an earlier headless request is active.
+				pluginAgentRunCleanup?.(pluginId);
 				logger.info(
 					`[Plugins] consent minted for "${pluginId}": ${outcome.grants.map((g) => g.capability).join(', ') || '(none)'}`,
 					'[Plugins]'
@@ -3453,7 +3544,7 @@ app
 			// silent. Surface why, and leave the plugin disabled (no setEnabled here).
 			const reasonMsg =
 				outcome.reason === 'conflict'
-					? `an untrusted plugin can't combine transcripts:read with net:fetch or process:spawn (only a trusted, signed plugin can).`
+					? `an untrusted plugin can't combine transcript or selected-memory access with network or process capabilities (only a trusted, signed plugin can).`
 					: outcome.reason === 'bad-nonce'
 						? `the consent request expired or was superseded - try again.`
 						: `consent was rejected (${outcome.reason}).`;
@@ -3531,6 +3622,8 @@ app
 				if (!authStore.setAllowlistScope(pluginId, 'agents:dispatch', members)) {
 					throw new Error('DispatchNotGranted');
 				}
+				// Invalidate requests immediately when the exact-agent grant changes.
+				pluginAgentRunCleanup?.(pluginId);
 				logger.info(
 					`[Plugins] agents:dispatch allowlist for "${pluginId}" set to ${members.length} agent(s): ${members.join(', ') || '(none)'}`,
 					'[PluginAudit]'
@@ -3675,6 +3768,9 @@ app
 			getInteractiveReplayController: () => interactiveReplayController,
 			setNoteSessionActivated: (fn) => {
 				noteSessionActivatedInPersistence = fn;
+			},
+			setSettingsWriter: (writer) => {
+				writeSettingInPersistence = writer;
 			},
 			app,
 			settingsStore: store,

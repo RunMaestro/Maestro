@@ -130,3 +130,12 @@ import type {
 } from '../../../../src/shared/plugins/media-tools';
 expectTypeOf<OriginalAttachmentRef>().toEqualTypeOf<SrcOriginalAttachmentRef>();
 expectTypeOf<OriginalAttachmentReceipt>().toEqualTypeOf<SrcOriginalAttachmentReceipt>();
+import type { AgentSendOptions, SelectedMemoryCommandSnapshot, MemoryCommandDraft } from '../index';
+import type { AgentSendOptions as SrcAgentSendOptions } from '../../../../src/shared/plugins/rpc-protocol';
+import type {
+	SelectedMemoryCommandSnapshot as SrcSelectedMemoryCommandSnapshot,
+	MemoryCommandDraft as SrcMemoryCommandDraft,
+} from '../../../../src/shared/memoryCommandDraft';
+expectTypeOf<AgentSendOptions>().toEqualTypeOf<SrcAgentSendOptions>();
+expectTypeOf<SelectedMemoryCommandSnapshot>().toEqualTypeOf<SrcSelectedMemoryCommandSnapshot>();
+expectTypeOf<MemoryCommandDraft>().toEqualTypeOf<SrcMemoryCommandDraft>();

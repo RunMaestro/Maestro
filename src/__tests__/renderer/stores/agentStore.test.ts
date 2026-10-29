@@ -11,6 +11,8 @@ import { renderHook, act } from '@testing-library/react';
 import { useAgentStore } from '../../../renderer/stores/agentStore';
 import type { ProcessQueuedItemDeps } from '../../../renderer/stores/agentStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { previewMemoryCommandDraft } from '../../../renderer/services/memoryCommandDraft';
 import type { Session, AgentConfig, QueuedItem } from '../../../renderer/types';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 import { dispatchCrossAgentMentionsForMessage } from '../../../renderer/services/crossAgentMentions';
@@ -71,6 +73,7 @@ const mockGetAgent = vi.fn().mockResolvedValue(null);
 const mockClearError = vi.fn().mockResolvedValue(undefined);
 
 (window as any).maestro = {
+	settings: { set: vi.fn().mockResolvedValue(true) },
 	process: {
 		spawn: mockSpawn,
 		kill: mockKill,
@@ -1941,6 +1944,70 @@ describe('agentStore', () => {
 			expect(updated.aiTabs[0].logs[0].source).toBe('user');
 			expect(updated.aiTabs[0].logs[0].aiCommand?.command).toBe('/commit');
 		});
+
+		it.each([
+			[null, 'Edited reusable prompt', undefined, 'Edited reusable prompt'],
+			['codex-conversation', 'Edited reusable prompt', undefined, 'Edited reusable prompt'],
+			[null, 'Review $ARGUMENTS', 'synthetic change', 'Review synthetic change'],
+			['codex-conversation', 'Review $ARGUMENTS', 'synthetic change', 'Review synthetic change'],
+		] as const)(
+			'uses a saved global memory draft on Codex session %s with prompt %s',
+			async (agentSessionId, editedPrompt, commandArgs, expandedPrompt) => {
+				resetStores(useSettingsStore);
+				const old = { id: 'old', command: '/old', description: 'Old', prompt: 'Keep me' };
+				useSettingsStore.setState({ customAICommands: [old] });
+				const preview = previewMemoryCommandDraft('synthetic-request', {
+					command: 'memory-review',
+					description: 'Synthetic draft',
+					prompt: 'Generated prompt',
+				});
+				const saved = {
+					id: 'saved-memory-command',
+					...preview.draft,
+					command: '/memory-review',
+					prompt: editedPrompt,
+					isBuiltIn: false,
+				};
+				expect(await useSettingsStore.getState().setCustomAICommands([old, saved])).toBe(true);
+				expect(mockSpawn).not.toHaveBeenCalled();
+				const session = createMockSession({
+					id: 'session-1',
+					toolType: 'codex',
+					newSessionMessage: 'Standing instructions',
+				});
+				session.aiTabs[0].agentSessionId = agentSessionId;
+				useSessionStore.getState().setSessions([session]);
+				mockGetAgent.mockResolvedValueOnce(
+					createMockAgentConfig({ id: 'codex', command: 'codex' })
+				);
+				await useAgentStore.getState().processQueuedItem(
+					session.id,
+					createQueuedItem({
+						type: 'command',
+						command: saved.command,
+						commandArgs,
+						text: undefined,
+					}),
+					{ ...defaultDeps, customAICommands: useSettingsStore.getState().customAICommands }
+				);
+				expect(mockSpawn).toHaveBeenCalledExactlyOnceWith(
+					expect.objectContaining({
+						toolType: 'codex',
+						command: 'codex',
+						agentSessionId: agentSessionId ?? undefined,
+						prompt: agentSessionId
+							? expandedPrompt
+							: `Standing instructions\n\n---\n\n${expandedPrompt}`,
+					})
+				);
+				const log = useSessionStore.getState().sessions[0].aiTabs[0].logs[0];
+				expect(log.text).toBe(expandedPrompt);
+				expect(log.aiCommand?.command).toBe(saved.command);
+				expect(preview.draft.prompt).toBe('Generated prompt');
+				expect(useSettingsStore.getState().customAICommands).toEqual([old, saved]);
+				resetStores(useSettingsStore);
+			}
+		);
 
 		it('substitutes $ARGUMENTS in command prompt', async () => {
 			const session = createMockSession({

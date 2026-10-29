@@ -55,7 +55,8 @@ const METHODS: Record<string, string> = {
 	// Read-only: a browser-spawned agent needs it to build the same system prompt.
 	maestroRun: 'readyPath',
 	marketplace: 'getDocument getManifest getReadme importPlaybook refreshManifest',
-	memory: 'create delete getPath list orphans read search write',
+	memory:
+		'create delete getPath list commandAvailability generateCommand commandStatus cancelCommand saveCommand closeCommandViewer orphans read search write',
 	notification: 'changeHistory',
 	openspec: 'getCommand getMetadata getPrompts refresh resetPrompt savePrompt',
 	parquet: 'close export open query',

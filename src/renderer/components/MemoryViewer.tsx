@@ -17,6 +17,24 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Brain, Plus, X, Database, FileText, Clock, Zap, Unlink, Network } from 'lucide-react';
+import type {
+	MemoryCommandSnapshot,
+	MemoryCommandPreview,
+	MemoryCommandSelection,
+} from '../../shared/memoryCommandDraft';
+import { generateId } from '../utils/ids';
+import { AICommandsPanel } from './AICommandsPanel';
+import {
+	selectMemoryCommandDraft,
+	previewMemoryCommandDraft,
+	saveMemoryCommandDraft,
+} from '../services/memoryCommandDraft';
+import { useSessionStore } from '../stores/sessionStore';
+import {
+	useAgentModelEffortOptions,
+	resolveModelEffort,
+} from '../hooks/agent/useAgentModelEffortOptions';
+import type { CodexMemorySourceRef } from '../../shared/codexMemory';
 import type { Session, Theme } from '../types';
 import { formatSize, formatRelativeTime, formatNumber } from '../utils/formatters';
 import { estimateTokenCount } from '../../shared/formatters';
@@ -66,6 +84,24 @@ interface MemoryViewerProps {
 	activeSession: Session | undefined;
 	onClose: () => void;
 }
+
+/** Captured on demand; rendered-preview selections never imply source offsets. */
+export interface MemoryViewerHandle {
+	getSnapshot(): MemoryCommandSnapshot;
+}
+
+// Each source owns its state and pending reads, even when the same viewer stays open.
+export const MemoryViewer = React.forwardRef<MemoryViewerHandle, MemoryViewerProps>(
+	function MemoryViewer(props, ref) {
+		return (
+			<MemoryViewerContent
+				key={`${props.activeSession?.id}:${props.activeSession?.toolType}:${props.activeSession?.cwd}`}
+				{...props}
+				ref={ref}
+			/>
+		);
+	}
+);
 
 const INDEX_STARTER_CONTENT = `# Memory index
 
@@ -136,7 +172,12 @@ function suggestNewFilename(existing: Set<string>, layout: MemoryLayoutInfo | nu
 	return candidate;
 }
 
-export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProps): JSX.Element {
+const MemoryViewerContent = React.forwardRef(MemoryViewerBody);
+
+function MemoryViewerBody(
+	{ theme, activeSession, onClose }: MemoryViewerProps,
+	ref: React.ForwardedRef<MemoryViewerHandle>
+): JSX.Element {
 	const projectPath = activeSession?.projectRoot || activeSession?.cwd || '';
 	const toolType = activeSession?.toolType || 'claude-code';
 	const agentId = activeSession?.id;
@@ -146,6 +187,134 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 		() => ({ projectPath, toolType, agentId }),
 		[projectPath, toolType, agentId]
 	);
+	const isCodex = toolType === 'codex';
+	const pluginsEnabled = useSettingsStore((state) => state.encoreFeatures.plugins === true);
+	const sourceAgentId = activeSession?.id;
+	const [sourceRef, setSourceRef] = useState<CodexMemorySourceRef | null>(null);
+	const sessions = useSessionStore((state) => state.sessions);
+	const [generatorId, setGeneratorId] = useState(activeSession?.id ?? '');
+	const generator =
+		sessions.find((session) => session.id === generatorId) ??
+		(activeSession?.id === generatorId ? activeSession : undefined);
+	const generatorOptions = useAgentModelEffortOptions(
+		isCodex && pluginsEnabled ? 'codex' : undefined
+	);
+	const generatorSettings = resolveModelEffort(undefined, generator, generatorOptions);
+	const [commandSelection, setCommandSelection] = useState<MemoryCommandSelection | null>(null);
+	const [draftError, setDraftError] = useState<string | null>(null);
+	const [viewerId] = useState(generateId);
+	const [draftAvailability, setDraftAvailability] = useState('plugin-unavailable');
+	const [generating, setGenerating] = useState(false);
+	const [validatedDraft, setValidatedDraft] = useState<MemoryCommandPreview | null>(null);
+	const customAICommands = useSettingsStore((state) => state.customAICommands);
+	const acceptedDraftViewer = useRef<string | null>(null);
+	const previewRequestId = useRef<string | null>(null);
+	const draftActive = useRef(false);
+	const draftVersion = useRef(0);
+	const activeDraftViewer = useRef<string | null>(null);
+	const discardDraft = useCallback(() => {
+		previewRequestId.current = null;
+		draftActive.current = false;
+		draftVersion.current++;
+		setGenerating(false);
+		setValidatedDraft(null);
+		setCommandSelection(null);
+		const target = activeDraftViewer.current;
+		activeDraftViewer.current = null;
+		if (target)
+			void window.maestro.memory.closeCommandViewer?.(target).catch(() => {
+				setDraftError('Could not cancel command draft');
+			});
+	}, []);
+	useEffect(() => {
+		if (!pluginsEnabled) {
+			discardDraft();
+			setDraftError(null);
+			setDraftAvailability('plugin-unavailable');
+		}
+	}, [pluginsEnabled, discardDraft]);
+	useEffect(() => {
+		if (!isCodex || !pluginsEnabled) return;
+		let disposed = false;
+		const refresh = () => {
+			void window.maestro.memory
+				.commandAvailability?.(generatorId)
+				.then((result) => {
+					if (!disposed) setDraftAvailability(result.status);
+				})
+				.catch(() => {
+					if (!disposed) setDraftAvailability('plugin-unavailable');
+				});
+		};
+		refresh();
+		const off = window.maestro.plugins?.onChanged?.(refresh);
+		return () => {
+			disposed = true;
+			off?.();
+		};
+	}, [isCodex, pluginsEnabled, generatorId]);
+	useEffect(() => {
+		if (!isCodex || !pluginsEnabled) return;
+		const off = window.maestro.memory.onCommandDraft?.((value) => {
+			if (
+				value.viewerId !== activeDraftViewer.current ||
+				!draftActive.current ||
+				acceptedDraftViewer.current === value.viewerId
+			)
+				return;
+			try {
+				const preview = previewMemoryCommandDraft(value.requestId, value.draft);
+				acceptedDraftViewer.current = value.viewerId;
+				previewRequestId.current = preview.requestId;
+				setValidatedDraft(preview);
+			} catch {
+				setDraftError('Invalid command preview');
+			}
+		});
+		return () => {
+			off?.();
+			discardDraft();
+		};
+	}, [isCodex, pluginsEnabled, viewerId, discardDraft]);
+	const generateDraft = async () => {
+		if (!pluginsEnabled || !commandSelection || draftActive.current) return;
+		const version = ++draftVersion.current;
+		const requestViewer = `${viewerId}-${version}`;
+		activeDraftViewer.current = requestViewer;
+		draftActive.current = true;
+		setGenerating(true);
+		setDraftError(null);
+		try {
+			const result = await window.maestro.memory.generateCommand(requestViewer, commandSelection);
+			if (version !== draftVersion.current) return;
+			if (result.status !== 'preview') {
+				setValidatedDraft(null);
+				setDraftError(
+					result.status === 'cancelled' ? 'Command draft cancelled' : 'Command draft failed'
+				);
+			}
+		} catch {
+			if (version === draftVersion.current) {
+				setValidatedDraft(null);
+				setDraftError('Command draft unavailable; check plugin and generator permissions');
+			}
+		} finally {
+			if (version === draftVersion.current) {
+				draftActive.current = false;
+				setGenerating(false);
+			}
+		}
+	};
+
+	const alive = useRef(true);
+	const readVersion = useRef(0);
+	useEffect(() => {
+		alive.current = true;
+		return () => {
+			alive.current = false;
+			readVersion.current++;
+		};
+	}, []);
 
 	const [entries, setEntries] = useState<MemoryEntry[]>([]);
 	const [stats, setStats] = useState<MemoryStats>({
@@ -345,11 +514,49 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 		return () => clearTimeout(t);
 	}, [successMessage]);
 
+	const getSnapshot = (): MemoryCommandSnapshot => {
+		if (!isCodex || !sourceRef || !selectedName || loading || actionError || loadError) {
+			throw new Error('No loaded Codex memory source');
+		}
+		const snapshot =
+			viewMode === 'edit'
+				? editorRef.current?.getSnapshot()
+				: { text: editedContent, selection: { start: 0, end: 0 } };
+		if (!snapshot) throw new Error('Memory editor is unavailable');
+		return {
+			sourceRef: { ...sourceRef, location: { ...sourceRef.location } },
+			textSnapshot: snapshot.text,
+			dirty: snapshot.text !== originalContent,
+			...(snapshot.selection.start !== snapshot.selection.end
+				? { selection: snapshot.selection }
+				: {}),
+		};
+	};
+	React.useImperativeHandle(ref, () => ({ getSnapshot }));
+
 	const loadEntry = useCallback(
 		async (name: string) => {
+			discardDraft();
+			setDraftError(null);
 			if (!projectPath) return;
+			const version = ++readVersion.current;
+			setSelectedName(null);
+			setSourceRef(null);
+			setEditedContent('');
+			setOriginalContent('');
+			setHasUnsavedChanges(false);
 			try {
 				const result = await window.maestro.memory.read(target, name);
+				if (!alive.current || version !== readVersion.current) return;
+				if (
+					result.sourceRef &&
+					(result.sourceRef.sourceAgentId !== target.agentId ||
+						result.sourceRef.relativePath !== name)
+				) {
+					setActionError('Codex memory source identity mismatch');
+					return;
+				}
+				setSourceRef(result.sourceRef ?? null);
 				if (!result.success) {
 					setActionError(result.error || `Failed to read ${name}`);
 					return;
@@ -357,13 +564,12 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 				setSelectedName(name);
 				setOriginalContent(result.content ?? '');
 				setEditedContent(result.content ?? '');
-				setHasUnsavedChanges(false);
 				setActionError(null);
 			} catch (err) {
-				setActionError(String(err));
+				if (alive.current && version === readVersion.current) setActionError(String(err));
 			}
 		},
-		[projectPath, target]
+		[projectPath, target, discardDraft]
 	);
 
 	const reloadList = useCallback(
@@ -380,15 +586,16 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 					setLoadError(result.error || 'Failed to load memory');
 					return;
 				}
+				if (!alive.current) return;
 				setDirectoryPath(result.directoryPath || null);
 				setLayout(result.layout ?? null);
 				setEntries(result.entries || []);
 				setStats(
-					result.stats || {
-						fileCount: 0,
+					('stats' in result ? result.stats : undefined) || {
+						fileCount: result.entries?.length ?? 0,
 						firstCreatedAt: null,
 						lastModifiedAt: null,
-						totalBytes: 0,
+						totalBytes: result.entries?.reduce((sum, entry) => sum + entry.size, 0) ?? 0,
 					}
 				);
 				setLoadError(null);
@@ -896,6 +1103,138 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 				</div>
 			</div>
 
+			{isCodex && (
+				<div className="px-6 py-2 text-xs" style={{ color: theme.colors.textDim }}>
+					Codex memory · Source agent: {sourceAgentId} · {directoryPath}
+					{sourceRef && <span> · {sourceRef.relativePath}</span>}
+				</div>
+			)}
+
+			{isCodex && pluginsEnabled && (
+				<div
+					className="px-6 py-2 flex flex-wrap items-center gap-3 text-xs"
+					style={{ color: theme.colors.textMain }}
+				>
+					<label>
+						Codex generator
+						<select
+							aria-label="Codex generator"
+							value={generatorId}
+							onChange={(event) => {
+								discardDraft();
+								setGeneratorId(event.target.value);
+							}}
+							style={{ backgroundColor: theme.colors.bgSidebar }}
+						>
+							{[
+								...(activeSession ? [activeSession] : []),
+								...sessions.filter((session) => session.id !== activeSession?.id),
+							]
+								.filter((session) => session.toolType === 'codex')
+								.map((session) => (
+									<option key={session.id} value={session.id}>
+										{session.name} ({session.id})
+									</option>
+								))}
+						</select>
+					</label>
+					<span>
+						Model: {generatorSettings.model || 'Provider default'} · Effort:{' '}
+						{generatorSettings.effort || 'Provider default'} ·{' '}
+						{generatorOptions.loaded ? 'Configured defaults' : 'Loading defaults'}
+					</span>
+					<HeaderActionButton
+						theme={theme}
+						disabled={
+							generating ||
+							!sourceRef ||
+							loading ||
+							!!actionError ||
+							!!loadError ||
+							generator?.toolType !== 'codex' ||
+							!generatorOptions.loaded
+						}
+						onClick={() => {
+							try {
+								discardDraft();
+								setCommandSelection(
+									selectMemoryCommandDraft(getSnapshot(), {
+										agentId: generator!.id,
+										provider: 'codex',
+										...generatorSettings,
+									})
+								);
+								setDraftError(null);
+							} catch (error) {
+								setCommandSelection(null);
+								setDraftError(
+									error instanceof Error ? error.message : 'Cannot capture memory snapshot'
+								);
+							}
+						}}
+					>
+						Prepare command draft
+					</HeaderActionButton>
+					{commandSelection && (
+						<div role="status">
+							Snapshot selected: {commandSelection.sourceRef.relativePath} · Source:{' '}
+							{commandSelection.sourceRef.sourceAgentId} · Generator:{' '}
+							{commandSelection.generator.agentId} · Model:{' '}
+							{commandSelection.generator.model || 'Provider default'} · Effort:{' '}
+							{commandSelection.generator.effort || 'Provider default'} ·{' '}
+							{commandSelection.selection ? 'Selected text' : 'Whole file'} ·{' '}
+							{commandSelection.dirty ? 'Local changes' : 'Loaded source'}
+							<HeaderActionButton
+								theme={theme}
+								onClick={generateDraft}
+								disabled={draftAvailability !== 'available' || generating || !!validatedDraft}
+							>
+								{generating ? 'Generating command…' : 'Generate command'}
+							</HeaderActionButton>
+							<HeaderActionButton theme={theme} variant="ghost" onClick={discardDraft}>
+								Discard command draft
+							</HeaderActionButton>
+						</div>
+					)}
+					{draftAvailability !== 'available' && (
+						<div role="status">
+							{draftAvailability === 'permission-denied'
+								? 'Memory command plugin needs trusted signing and generator permissions'
+								: 'Memory command plugin unavailable'}
+						</div>
+					)}
+					{validatedDraft && (
+						<div className="max-h-80 overflow-y-auto" aria-label="Global command preview">
+							<div role="status">
+								Validated command draft: {validatedDraft.draft.command} · Not saved
+							</div>
+							<AICommandsPanel
+								key={validatedDraft.requestId}
+								theme={theme}
+								customAICommands={customAICommands}
+								getCustomAICommands={() => useSettingsStore.getState().customAICommands}
+								setCustomAICommands={useSettingsStore.getState().setCustomAICommands}
+								memoryCommandDraft={validatedDraft}
+								saveMemoryCommandDraft={async (draft) => {
+									const target = activeDraftViewer.current;
+									if (!target || previewRequestId.current !== validatedDraft.requestId)
+										return false;
+									return saveMemoryCommandDraft(target, validatedDraft.requestId, draft);
+								}}
+								onDraftComplete={(status) => {
+									if (previewRequestId.current !== validatedDraft.requestId) return;
+									// The host has committed this request. Clear local state without sending cancel.
+									if (status === 'saved') activeDraftViewer.current = null;
+									discardDraft();
+									if (status === 'saved') setSuccessMessage('Command saved globally.');
+								}}
+							/>
+						</div>
+					)}
+					{draftError && <div role="alert">{draftError}</div>}
+				</div>
+			)}
+
 			{/* Toolbar: everything the user can act on, in one non-wrapping row.
 			    Filter first because it is what gets reached for most, then the
 			    two things that narrow or re-shape the same list, then the view
@@ -960,6 +1299,11 @@ export function MemoryViewer({ theme, activeSession, onClose }: MemoryViewerProp
 
 			{/* Body */}
 			<div className="flex-1 flex flex-col min-h-0 p-4">
+				{actionError && !selectedName && (
+					<div role="alert" style={{ color: theme.colors.error }}>
+						{actionError}
+					</div>
+				)}
 				{loadError ? (
 					<div
 						className="flex-1 flex items-center justify-center text-sm"

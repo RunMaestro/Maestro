@@ -6,7 +6,13 @@ import { logger } from '../host';
  * shape lets CLI callers pass AgentDefinition (no capabilities/available). */
 type AgentConfigOverridable = Pick<
 	AgentConfig,
-	'configOptions' | 'defaultEnvVars' | 'readOnlyArgs' | 'resumeArgs' | 'batchModePrefix'
+	| 'configOptions'
+	| 'defaultEnvVars'
+	| 'readOnlyArgs'
+	| 'resumeArgs'
+	| 'batchModePrefix'
+	| 'id'
+	| 'yoloModeArgs'
 >;
 
 const LOG_CONTEXT = '[AgentArgs]';
@@ -356,6 +362,16 @@ export function applyAgentConfigOverrides(
 		overrides.readOnlyMode
 			? classifyReadOnlyFlags(agent?.readOnlyArgs ?? [])
 			: { flags: new Set<string>(), valueTakingFlags: new Set<string>() };
+	// Codex's bypass flag defeats --sandbox read-only even when it is appended
+	// by a custom override rather than the batch defaults.
+	if (overrides.readOnlyMode && agent?.id === 'codex') {
+		for (const flag of agent.yoloModeArgs ?? []) readOnlyPinnedFlags.add(flag);
+		readOnlyPinnedFlags.add('--yolo');
+		readOnlyPinnedFlags.add('--full-auto');
+		// Codex also accepts -s as an alias for --sandbox.
+		readOnlyPinnedFlags.add('-s');
+		readOnlyValueTakingFlags.add('-s');
+	}
 
 	if (agent && agent.configOptions) {
 		for (const option of agent.configOptions) {
@@ -424,6 +440,38 @@ export function applyAgentConfigOverrides(
 		finalArgs = [...finalArgs, ...parsedCustomArgs];
 	} else {
 		customArgsSource = 'none';
+	}
+
+	if (overrides.readOnlyMode && agent?.id === 'codex') {
+		// Profiles and arbitrary TOML overrides can change the permission policy.
+		// Drop only those arguments so shared read-only launches can still proceed.
+		const safeArgs: string[] = [];
+		for (let i = 0; i < finalArgs.length; i++) {
+			const arg = finalArgs[i];
+			if (arg === '--profile' || arg === '-p') {
+				if (finalArgs[i + 1] && !finalArgs[i + 1].startsWith('-')) i++;
+				continue;
+			}
+			if (
+				arg.startsWith('--profile=') ||
+				(arg.startsWith('-p') && arg.length > 2) ||
+				/^-s.+/.test(arg)
+			)
+				continue;
+			let config: string | undefined;
+			const separateConfig = arg === '-c' || arg === '--config';
+			if (separateConfig) config = finalArgs[i + 1] ?? '';
+			else if (arg.startsWith('--config=')) config = arg.slice('--config='.length);
+			else if (arg.startsWith('-c') && arg.length > 2) config = arg.slice(2).replace(/^=/, '');
+			if (config !== undefined) {
+				const allowed =
+					/^\s*(model|model_reasoning_effort|model_reasoning_summary)\s*=/.test(config) &&
+					!/[\r\n]/.test(config);
+				if (separateConfig && finalArgs[i + 1] && !finalArgs[i + 1].startsWith('-')) i++;
+				if (allowed) safeArgs.push(arg, ...(separateConfig ? [config] : []));
+			} else safeArgs.push(arg);
+		}
+		finalArgs = safeArgs;
 	}
 
 	// Env vars: agent defaults (lowest), then ONE user-configured set on top. The

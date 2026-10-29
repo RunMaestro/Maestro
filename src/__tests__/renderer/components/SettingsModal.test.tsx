@@ -25,6 +25,8 @@ import {
 import { formatEnterToSend } from '../../../renderer/utils/shortcutFormatter';
 import { useModalStore } from '../../../renderer/stores/modalStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { useMemoryCommandEditor } from '../../../renderer/hooks/settings/useMemoryCommandEditor';
+import type { MemoryCommandEditorPreview } from '../../../shared/memoryCommandDraft';
 import { mockTheme } from '../../helpers/mockTheme';
 import type {
 	Theme,
@@ -90,10 +92,10 @@ vi.mock('../../../renderer/utils/jumpHighlight', async (importOriginal) => {
 import { jumpToElement } from '../../../renderer/utils/jumpHighlight';
 
 vi.mock('../../../renderer/components/AICommandsPanel', () => ({
-	AICommandsPanel: ({ theme }: { theme: Theme }) => (
-		<div data-testid="ai-commands-panel">AI Commands Panel</div>
-	),
+	AICommandsPanel: vi.fn(() => <div data-testid="ai-commands-panel">AI Commands Panel</div>),
 }));
+
+import { AICommandsPanel } from '../../../renderer/components/AICommandsPanel';
 
 // Mock SpecKitCommandsPanel
 vi.mock('../../../renderer/components/SpecKitCommandsPanel', () => ({
@@ -1659,6 +1661,222 @@ describe('SettingsModal', () => {
 	});
 
 	describe('AI Commands tab', () => {
+		describe('CLI delivery with the real command form', () => {
+			const commands = [
+				{
+					id: 'normal',
+					command: '/normal',
+					description: 'Normal description',
+					prompt: 'Normal prompt',
+				},
+			];
+			const delivered: MemoryCommandEditorPreview = {
+				requestId: 'incoming',
+				viewerId: 'alias',
+				background: true,
+				draft: {
+					command: '/incoming',
+					description: 'Incoming description',
+					prompt: 'Incoming prompt',
+				},
+			};
+			let deliver: (value: MemoryCommandEditorPreview) => void;
+			beforeEach(async () => {
+				const real = await vi.importActual<
+					typeof import('../../../renderer/components/AICommandsPanel')
+				>('../../../renderer/components/AICommandsPanel');
+				vi.mocked(AICommandsPanel).mockImplementation((props) => (
+					<real.AICommandsPanel {...props} customAICommands={commands} />
+				));
+				useSettingsStore.setState({
+					customAICommands: commands,
+					encoreFeatures: { ...useSettingsStore.getState().encoreFeatures, plugins: true },
+				});
+				window.maestro.memory = {
+					...window.maestro.memory,
+					onCommandEditor: vi.fn((callback) => {
+						deliver = callback;
+						return vi.fn();
+					}),
+					closeCommandViewer: vi.fn(async () => {}),
+				};
+			});
+			afterEach(() => {
+				vi.mocked(AICommandsPanel).mockImplementation(() => (
+					<div data-testid="ai-commands-panel">AI Commands Panel</div>
+				));
+			});
+			it.each(['create', 'edit'])(
+				'keeps the normal %s form when a staged draft is disabled and never restores the draft on enable',
+				(mode) => {
+					function SettingsEditor() {
+						const editor = useMemoryCommandEditor(true);
+						return (
+							<SettingsModal
+								{...createDefaultProps({ initialTab: 'aicommands' })}
+								memoryCommandEditor={editor}
+							/>
+						);
+					}
+					render(<SettingsEditor />);
+					if (mode === 'create')
+						fireEvent.click(screen.getByRole('button', { name: 'Add Command' }));
+					else {
+						fireEvent.click(screen.getByText('/normal'));
+						fireEvent.click(screen.getByTitle('Edit command'));
+					}
+					const command =
+						mode === 'create'
+							? screen.getByPlaceholderText('/mycommand')
+							: screen.getByDisplayValue('/normal');
+					fireEvent.change(command, { target: { value: '/keep-me' } });
+					act(() => deliver(delivered));
+					act(() =>
+						useSettingsStore.setState({
+							encoreFeatures: { ...useSettingsStore.getState().encoreFeatures, plugins: false },
+						})
+					);
+					expect(window.maestro.memory.closeCommandViewer).toHaveBeenCalledExactlyOnceWith(
+						delivered.viewerId
+					);
+					expect(command).toBeInTheDocument();
+					expect(command).toHaveValue('/keep-me');
+					expect(screen.queryByRole('button', { name: 'Review draft' })).not.toBeInTheDocument();
+					act(() =>
+						useSettingsStore.setState({
+							encoreFeatures: { ...useSettingsStore.getState().encoreFeatures, plugins: true },
+						})
+					);
+					act(() => deliver(delivered));
+					expect(command).toBeInTheDocument();
+					expect(command).toHaveValue('/keep-me');
+					expect(screen.queryByRole('button', { name: 'Review draft' })).not.toBeInTheDocument();
+				}
+			);
+			it.each(['create', 'edit'])(
+				'preserves unsaved normal %s fields and focus on background and foreground delivery',
+				(mode) => {
+					function SettingsEditor() {
+						const editor = useMemoryCommandEditor(true);
+						return (
+							<SettingsModal
+								{...createDefaultProps({ initialTab: 'aicommands' })}
+								memoryCommandEditor={editor}
+							/>
+						);
+					}
+					render(<SettingsEditor />);
+					if (mode === 'create')
+						fireEvent.click(screen.getByRole('button', { name: 'Add Command' }));
+					else {
+						fireEvent.click(screen.getByText('/normal'));
+						fireEvent.click(screen.getByTitle('Edit command'));
+					}
+					const command =
+						mode === 'create'
+							? screen.getByPlaceholderText('/mycommand')
+							: screen.getByDisplayValue('/normal');
+					const description =
+						mode === 'create'
+							? screen.getByPlaceholderText('Short description for autocomplete')
+							: screen.getByDisplayValue('Normal description');
+					const prompt =
+						mode === 'create'
+							? screen.getByPlaceholderText(
+									'The actual prompt sent to the AI agent when this command is invoked... (type {{ for variables)'
+								)
+							: screen.getByDisplayValue('Normal prompt');
+					fireEvent.change(command, { target: { value: '/unsaved' } });
+					fireEvent.change(description, { target: { value: 'Unsaved description' } });
+					fireEvent.change(prompt, { target: { value: 'Unsaved prompt' } });
+					prompt.focus();
+					for (const background of [true, true, false]) {
+						act(() => deliver({ ...delivered, background }));
+						expect(command).toBeInTheDocument();
+						expect(command).toHaveValue('/unsaved');
+						expect(description).toHaveValue('Unsaved description');
+						expect(prompt).toHaveValue('Unsaved prompt');
+						expect(prompt).toHaveFocus();
+					}
+					expect(screen.getByRole('button', { name: 'Review draft' })).toBeDisabled();
+					fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+					expect(window.maestro.memory.closeCommandViewer).not.toHaveBeenCalled();
+					fireEvent.click(screen.getByRole('button', { name: 'Review draft' }));
+					expect(screen.getByDisplayValue('Incoming prompt')).toBeInTheDocument();
+					fireEvent.change(screen.getByDisplayValue('Incoming prompt'), {
+						target: { value: 'Edited incoming' },
+					});
+					act(() => deliver(delivered));
+					expect(screen.getByDisplayValue('Edited incoming')).toBeInTheDocument();
+					act(() =>
+						useSettingsStore.setState({
+							encoreFeatures: { ...useSettingsStore.getState().encoreFeatures, plugins: false },
+						})
+					);
+					expect(screen.queryByDisplayValue('Edited incoming')).not.toBeInTheDocument();
+					expect(screen.queryByRole('button', { name: 'Review draft' })).not.toBeInTheDocument();
+					expect(screen.getByRole('button', { name: 'Add Command' })).toBeInTheDocument();
+				}
+			);
+		});
+		it('passes a staged CLI preview, shared save and completion to the existing command form', async () => {
+			const preview = {
+				viewerId: 'host-alias',
+				requestId: 'host-request',
+				background: true,
+				draft: { command: 'synthetic', description: 'Synthetic', prompt: 'Synthetic prompt' },
+			};
+			useSettingsStore.setState({
+				encoreFeatures: { ...useSettingsStore.getState().encoreFeatures, plugins: true },
+			});
+			const editor = {
+				preview,
+				staged: null,
+				activate: vi.fn(),
+				save: vi.fn(async () => true),
+				complete: vi.fn(),
+			};
+			render(
+				<SettingsModal
+					{...createDefaultProps({ initialTab: 'aicommands' })}
+					memoryCommandEditor={editor}
+				/>
+			);
+			const panel = vi.mocked(AICommandsPanel).mock.calls.at(-1)![0];
+			expect(panel.memoryCommandDraft).toBe(preview);
+			expect(panel.saveMemoryCommandDraft).toBe(editor.save);
+			panel.onDraftComplete!('saved');
+			expect(editor.complete).toHaveBeenCalledExactlyOnceWith('saved', preview.requestId);
+		});
+
+		it('hides preview, staged controls and save action when plugins are off while retaining global CRUD', () => {
+			const preview = {
+				requestId: 'request',
+				viewerId: 'alias',
+				background: true,
+				draft: { command: '/synthetic', description: 'Synthetic', prompt: 'Synthetic prompt' },
+			};
+			const editor = {
+				preview,
+				staged: preview,
+				activate: vi.fn(),
+				save: vi.fn(async () => true),
+				complete: vi.fn(),
+			};
+			render(
+				<SettingsModal
+					{...createDefaultProps({ initialTab: 'aicommands' })}
+					memoryCommandEditor={editor}
+				/>
+			);
+			const panel = vi.mocked(AICommandsPanel).mock.calls.at(-1)![0];
+			expect(panel.memoryCommandDraft).toBeUndefined();
+			expect(panel.stagedMemoryCommandDraft).toBeUndefined();
+			expect(panel.onReviewMemoryCommandDraft).toBeUndefined();
+			expect(panel.saveMemoryCommandDraft).toBeUndefined();
+			expect(panel.setCustomAICommands).toBe(mockSetCustomAICommands);
+		});
+
 		it('should render AICommandsPanel component', async () => {
 			render(<SettingsModal {...createDefaultProps({ initialTab: 'aicommands' })} />);
 

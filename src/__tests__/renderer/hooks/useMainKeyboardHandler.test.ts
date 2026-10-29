@@ -166,6 +166,28 @@ describe('useMainKeyboardHandler', () => {
 		(window as any).maestro = originalMaestro;
 	});
 
+	it.each([
+		['codex', false, true],
+		['claude-code', true, true],
+		['gemini-cli', false, false],
+	])('memory shortcut for %s', (toolType, capability, opens) => {
+		const { result } = renderHook(() => useMainKeyboardHandler());
+		const setMemoryViewerOpen = vi.fn();
+		result.current.keyboardHandlerRef.current = createMockContext({
+			activeSession: { id: 'memory-agent', toolType, inputMode: 'ai', aiTabs: [] },
+			activeSessionId: 'memory-agent',
+			isShortcut: (_event: KeyboardEvent, id: string) => id === 'openMemoryViewer',
+			hasActiveSessionCapability: () => capability,
+			setMemoryViewerOpen,
+		});
+		act(() =>
+			window.dispatchEvent(
+				new KeyboardEvent('keydown', { key: 'm', metaKey: true, shiftKey: true, bubbles: true })
+			)
+		);
+		expect(setMemoryViewerOpen).toHaveBeenCalledTimes(opens ? 1 : 0);
+	});
+
 	describe('hook initialization', () => {
 		it('should return keyboardHandlerRef and showSessionJumpNumbers', () => {
 			const { result } = renderHook(() => useMainKeyboardHandler());

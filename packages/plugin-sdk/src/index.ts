@@ -81,6 +81,8 @@ export type PluginCapability =
 	| 'media:tools' // fixed Discord voice media profiles, opaque jobs only
 	| 'net:fetch' // HTTP(S) fetch to a host scope
 	| 'net:connect' // hold an outbound persistent websocket to a host scope (Discord/Slack gateway)
+	| 'memory:selected' // read only an explicitly released, owned memory selection
+	| 'commands:preview' // request a host-owned global command preview
 	| 'agents:read' // list/read agents and their state
 	| 'agents:dispatch' // send a prompt to an agent
 	| 'notifications:toast' // raise a toast notification
@@ -126,6 +128,8 @@ export const PLUGIN_CAPABILITIES: readonly PluginCapability[] = [
 	'media:tools',
 	'net:fetch',
 	'net:connect',
+	'memory:selected',
+	'commands:preview',
 	'agents:read',
 	'agents:dispatch',
 	'notifications:toast',
@@ -170,6 +174,8 @@ const CAPABILITY_RISK: Record<PluginCapability, CapabilityRisk> = {
 
 	'notifications:toast': 'low',
 	'settings:read': 'low',
+	'memory:selected': 'high',
+	'commands:preview': 'medium',
 	'agents:read': 'low',
 	'storage:read': 'low',
 	'storage:write': 'low',
@@ -235,6 +241,8 @@ const CAPABILITY_SCOPE_KIND: Record<PluginCapability, ScopeKind> = {
 	'media:tools': 'allowlist',
 	'net:fetch': 'host',
 	'net:connect': 'host',
+	'memory:selected': 'none',
+	'commands:preview': 'none',
 	'agents:read': 'none',
 	// Phase-4 promotion (plugin-phase4-high-risk-verbs.md): a dispatch grant
 	// names the exact agent ids it may target; a spawn grant names the exact
@@ -422,6 +430,10 @@ export function describeCapability(capability: PluginCapability): string {
 			return 'Make network requests (unscoped includes localhost and your internal network)';
 		case 'net:connect':
 			return 'Hold an open, two-way network connection to a host (for example a chat gateway). Data can flow in and out continuously while the plugin runs.';
+		case 'memory:selected':
+			return 'Read only the memory text explicitly selected for one host-owned command draft';
+		case 'commands:preview':
+			return 'Open an editable global command preview (saving requires an explicit host action)';
 		case 'agents:read':
 			return 'See your agents and their status';
 		case 'agents:dispatch':
@@ -486,7 +498,9 @@ export function describeCapability(capability: PluginCapability): string {
 // --- Host API version (from shared/plugins/host-api.ts) ---------------------
 
 /**
- * The host API version this Maestro build implements. 1.30.0 adds separately
+ * The host API version this Maestro build implements. 1.31.0 adds selected-memory
+ * command drafts, request-bound cancellation and host previews.
+ * 1.30.0 adds separately
  * consented bounded original-audio staging for supported local agent sends.
  * 1.29.0 adds generic verified invocations, consented TLS, opaque secrets,
  * confirmed records, durable plugin Cue events and parentSessionId metadata.
@@ -526,7 +540,7 @@ export function describeCapability(capability: PluginCapability): string {
  * `ui:contribute` / `ui:panel` / `ui:render-unsafe`; 1.3.0 added `tools` +
  * `keybindings`; 1.2.0 added `transcripts:read`.
  */
-export const HOST_API_VERSION = '1.30.0';
+export const HOST_API_VERSION = '1.31.0';
 
 /** Result of checking a plugin's declared host-API requirement. */
 export interface HostApiCompatibility {
@@ -1449,6 +1463,9 @@ export const HOST_API = {
 	'agents.get': { capability: 'agents:read' },
 	'agents.dispatch': { capability: 'agents:dispatch' },
 	'agents.send': { capability: 'agents:dispatch' },
+	'agents.cancel': { capability: 'agents:dispatch' },
+	'memory.getSelectedSnapshot': { capability: 'memory:selected' },
+	'commands.openDraft': { capability: 'commands:preview' },
 	'agents.generateTitle': { capability: 'agents:dispatch' },
 	'notifications.toast': { capability: 'notifications:toast' },
 	'settings.get': { capability: 'settings:read' },
@@ -1638,7 +1655,43 @@ export interface OriginalAttachmentReceipt {
 	sha256: string;
 }
 
+export type AgentSendOptions =
+	| {
+			sessionId?: string;
+			originalAttachments?: readonly [OriginalAttachmentRef];
+			mode?: never;
+			requestId?: never;
+	  }
+	| { mode: 'draft'; requestId: string; sessionId?: never; originalAttachments?: never };
+
+export interface MemoryCommandDraft {
+	command: string;
+	description: string;
+	prompt: string;
+}
+
+export interface SelectedMemoryCommandSnapshot {
+	requestId: string;
+	sourceRef: {
+		sourceAgentId: string;
+		provider: 'codex';
+		location: { kind: 'local' };
+		codexHome: string;
+		memoryRoot: string;
+		relativePath: string;
+	};
+	text: string;
+	dirty: boolean;
+	generatorAgentId: string;
+}
+
+export interface MaestroMemoryApi {
+	getSelectedSnapshot(requestId: string): Promise<SelectedMemoryCommandSnapshot>;
+}
+
 export interface MaestroAgentsApi {
+	/** Cancels only this plugin's draft bound to this exact agent. */
+	cancel(agentId: string, requestId: string): Promise<{ cancelled: boolean }>;
 	list(): Promise<unknown>;
 	get(agentId: string): Promise<unknown>;
 	dispatch(agentId: string, prompt: string, opts?: unknown): Promise<unknown>;
@@ -1648,11 +1701,7 @@ export interface MaestroAgentsApi {
 	send(
 		agentId: string,
 		prompt: string,
-		opts?: {
-			sessionId?: string;
-			onProgress?: (event: AgentSendProgressEvent) => void;
-			originalAttachments?: readonly [OriginalAttachmentRef];
-		}
+		opts?: AgentSendOptions & { onProgress?: (event: AgentSendProgressEvent) => void }
 	): Promise<{
 		success: boolean;
 		response: string | null;
@@ -1818,6 +1867,7 @@ export interface MaestroEventsApi {
 
 /** Register handlers for commands the host dispatches to this plugin. */
 export interface MaestroCommandsApi {
+	openDraft(requestId: string, draft: MemoryCommandDraft): Promise<{ accepted: true }>;
 	register(commandId: string, handler: (args: unknown) => unknown): void;
 }
 
@@ -1977,6 +2027,7 @@ export interface MaestroSdk {
 	readonly fs: MaestroFsApi;
 	readonly net: MaestroNetApi;
 	readonly agents: MaestroAgentsApi;
+	readonly memory: MaestroMemoryApi;
 	readonly history: MaestroHistoryApi;
 	readonly notifications: MaestroNotificationsApi;
 	readonly settings: MaestroSettingsApi;

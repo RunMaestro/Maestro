@@ -76,6 +76,17 @@ export function createPluginHeadlessAgentRunner(
 		const deadlineAt = Date.now() + HEADLESS_RUN_TIMEOUT_MS;
 		const agent = deps.getAgent(agentId);
 		if (!agent) throw new Error(`agents.send: no agent "${agentId}"`);
+		const draft = turn?.mode === 'draft';
+		if (
+			draft &&
+			(agent.toolType !== 'codex' ||
+				providerSessionId !== undefined ||
+				receiptToolId !== undefined ||
+				requirePluginTools ||
+				turn?.originalAttachment)
+		) {
+			return { success: false, response: null, sessionId: null, error: 'MemoryCommandInvalid' };
+		}
 		const local = !agent.sessionSshRemoteConfig?.enabled;
 		const attachment = turn?.originalAttachment;
 		const config = deps.getAgentConfig?.(agent.toolType);
@@ -187,7 +198,7 @@ export function createPluginHeadlessAgentRunner(
 				remainingMs + HEADLESS_RUN_CLEANUP_MARGIN_MS
 			);
 			runToken =
-				local && deps.hasPluginTools() && !signal?.aborted && remainingMs > 0
+				!draft && local && deps.hasPluginTools() && !signal?.aborted && remainingMs > 0
 					? deps.issueRunToken(agent.id, completionTtlMs, receiptToolId, origin !== 'user')
 					: undefined;
 			pluginRunProofFile = runToken
@@ -239,9 +250,10 @@ export function createPluginHeadlessAgentRunner(
 				maestroPPath: agent.maestroPPath,
 				querySource: origin === 'relay' ? 'auto' : origin,
 				pluginRunProofFile,
-				mcpCliScriptPath: deps.cliScriptPath(),
+				mcpCliScriptPath: draft ? undefined : deps.cliScriptPath(),
 				timeoutMs: Math.max(1, deadlineAt - Date.now()),
 				idle: deps.idleProfile ?? HEADLESS_IDLE_PROFILE,
+				...(draft ? { readOnlyMode: true } : {}),
 				signal,
 				onProcessStarted: (pid) => {
 					if (pid && !signal?.aborted && !settled && !releaseActivity) {
@@ -264,7 +276,7 @@ export function createPluginHeadlessAgentRunner(
 			return {
 				success,
 				response: success ? result.response! : null,
-				sessionId: result.agentSessionId ?? null,
+				sessionId: draft ? null : (result.agentSessionId ?? null),
 				usageStats: result.usageStats,
 				...(attachmentReceipt ? { originalAttachments: [attachmentReceipt] as const } : {}),
 				...(receiptToolId && runToken ? { toolReceipts: deps.getRunReceipts!(runToken) } : {}),

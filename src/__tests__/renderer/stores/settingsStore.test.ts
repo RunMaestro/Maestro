@@ -794,7 +794,8 @@ describe('settingsStore', () => {
 				expect(window.maestro.settings.set).toHaveBeenCalledWith('tabShortcuts', newTabShortcuts);
 			});
 
-			it('setCustomAICommands updates state and persists', () => {
+			it('setCustomAICommands updates state only after successful persistence', async () => {
+				vi.mocked(window.maestro.settings.set).mockResolvedValueOnce(true);
 				const commands = [
 					...DEFAULT_AI_COMMANDS,
 					{
@@ -805,7 +806,7 @@ describe('settingsStore', () => {
 						isBuiltIn: false,
 					},
 				];
-				useSettingsStore.getState().setCustomAICommands(commands);
+				expect(await useSettingsStore.getState().setCustomAICommands(commands)).toBe(true);
 				expect(useSettingsStore.getState().customAICommands).toEqual(commands);
 				expect(window.maestro.settings.set).toHaveBeenCalledWith('customAICommands', commands);
 			});
@@ -3738,4 +3739,48 @@ describe('settingsStore', () => {
 			}
 		});
 	});
+});
+
+describe('confirmed command persistence', () => {
+	it.each([false, true])('commits only after the IPC result %s', async (result) => {
+		const before = useSettingsStore.getState().customAICommands;
+		let finish!: (saved: boolean) => void;
+		vi.mocked(window.maestro.settings.set).mockImplementationOnce(
+			() =>
+				new Promise<boolean>((resolve) => {
+					finish = resolve;
+				})
+		);
+		const pending = useSettingsStore.getState().setCustomAICommands([]);
+		expect(useSettingsStore.getState().customAICommands).toBe(before);
+		finish(result);
+		expect(await pending).toBe(result);
+		if (!result) expect(useSettingsStore.getState().customAICommands).toBe(before);
+		if (result) expect(useSettingsStore.getState().customAICommands).toEqual([]);
+	});
+	it('preserves current commands on rejection without a rollback of newer state', async () => {
+		vi.mocked(window.maestro.settings.set).mockRejectedValueOnce(new Error('synthetic error'));
+		const before = useSettingsStore.getState().customAICommands;
+		await expect(useSettingsStore.getState().setCustomAICommands([])).rejects.toThrow(
+			'synthetic error'
+		);
+		expect(useSettingsStore.getState().customAICommands).toBe(before);
+	});
+});
+
+it('reloads a confirmed global command through the existing settings loader', async () => {
+	const command = {
+		id: 'custom-synthetic',
+		command: '/synthetic',
+		description: 'Synthetic',
+		prompt: 'Synthetic prompt',
+		isBuiltIn: false,
+	};
+	vi.mocked(window.maestro.settings.set).mockResolvedValueOnce(true);
+	expect(await useSettingsStore.getState().setCustomAICommands([command])).toBe(true);
+	const persisted = vi.mocked(window.maestro.settings.set).mock.calls.at(-1)![1];
+	useSettingsStore.setState({ customAICommands: [] });
+	vi.mocked(window.maestro.settings.getAll).mockResolvedValueOnce({ customAICommands: persisted });
+	await loadAllSettings();
+	expect(useSettingsStore.getState().customAICommands).toContainEqual(command);
 });

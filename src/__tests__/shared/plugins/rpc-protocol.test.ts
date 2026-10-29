@@ -6,6 +6,14 @@ import {
 } from '../../../shared/plugins/rpc-protocol';
 
 describe('P0 host RPC contract additions', () => {
+	it('maps draft methods and extracts only the exact cancellation agent', () => {
+		expect(HOST_METHOD_CAPABILITY['memory.getSelectedSnapshot']).toBe('memory:selected');
+		expect(HOST_METHOD_CAPABILITY['commands.openDraft']).toBe('commands:preview');
+		expect(HOST_METHOD_CAPABILITY['agents.cancel']).toBe('agents:dispatch');
+		expect(extractTarget('agents.cancel', { agentId: 'exact', requestId: 'other' })).toBe('exact');
+		expect(extractTarget('agents.cancel', { requestId: 'other' })).toBeUndefined();
+	});
+
 	it('maps every new method to the expected capability', () => {
 		expect(HOST_METHOD_CAPABILITY['history.list']).toBe('history:read');
 		expect(HOST_METHOD_CAPABILITY['history.get']).toBe('history:read');

@@ -18,6 +18,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { EventEmitter } from 'events';
+import { createPluginHeadlessAgentRunner } from '../../../main/plugins/plugin-headless-agent-runner';
+import type { SessionInfo } from '../../../shared/types';
 import { StringDecoder } from 'string_decoder';
 import { DEFAULT_STDERR_TAIL_LIMIT } from '../../../shared/maestro-lib/run/start-turn';
 
@@ -3092,6 +3094,98 @@ Some text with [x] in it that's not a checkbox
 
 	const CLAUDE_OK = () => JSON.stringify({ type: 'result', result: 'ok' }) + '\n';
 	const CODEX_INIT = () => JSON.stringify({ type: 'task_started' }) + '\n';
+
+	describe('draft runner through the existing spawner', () => {
+		isolateAgentEnv();
+		it.each([false, true])(
+			'pins final Codex permissions and forwards model/environment (SSH: %s)',
+			async (remote) => {
+				mockSpawn.mockReturnValue(mockChild);
+				if (remote)
+					mockWrapSpawnWithSsh.mockImplementationOnce(async (input) => ({
+						...input,
+						command: 'ssh',
+						args: ['remotehost', ...input.args],
+						cwd: process.cwd(),
+						sshRemoteUsed: { id: 'r1', name: 'r1', host: 'remotehost' },
+					}));
+				const agent = {
+					id: 'generator',
+					toolType: 'codex',
+					cwd: '/synthetic-project',
+					customModel: 'selected-model',
+					customEffort: 'high',
+					customArgs:
+						'--sandbox=danger-full-access --full-auto --dangerously-bypass-approvals-and-sandbox -s danger-full-access',
+					customEnvVars: remote ? { CODEX_HOME: '/remote-account' } : {},
+					sessionSshRemoteConfig: remote ? { enabled: true, remoteId: 'r1' } : undefined,
+				} as SessionInfo;
+				const issueRunToken = vi.fn();
+				const run = createPluginHeadlessAgentRunner({
+					getAgent: () => agent,
+					detectAgent: async () => ({ available: true, path: '/selected/codex' }),
+					getGlobalEnvVars: () => ({ DRAFT_GLOBAL: 'global-value' }),
+					getAgentConfig: () => ({ customEnvVars: { DRAFT_PROVIDER_ONLY: 'must-not-leak' } }),
+					hasPluginTools: () => true,
+					spawn: spawnAgent,
+					prepareSystemPrompt: async () => undefined,
+					issueRunToken,
+					revokeRunToken: vi.fn(),
+					cliScriptPath: () => '/cli.js',
+					audit: vi.fn(),
+				});
+				const pending = run(
+					agent.id,
+					'synthetic draft',
+					undefined,
+					undefined,
+					'auto',
+					undefined,
+					undefined,
+					false,
+					{ mode: 'draft' }
+				);
+				await waitForSpawnCall();
+				const { command, args, options } = spawnCall();
+				expect(command).toBe(remote ? 'ssh' : '/selected/codex');
+				expect(args.filter((arg) => arg === '--sandbox')).toHaveLength(1);
+				expect(args[args.indexOf('--sandbox') + 1]).toBe('read-only');
+				expect(args).toContain('selected-model');
+				expect(args).toContain('model_reasoning_effort="high"');
+				expect(args.join(' ')).not.toMatch(
+					/danger-full-access|dangerously-bypass|full-auto|mcp_servers\.maestro/
+				);
+				if (!remote) expect(options.env.DRAFT_GLOBAL).toBe('global-value');
+				expect(options.env.DRAFT_PROVIDER_ONLY).toBeUndefined();
+				if (remote) {
+					expect(mockWrapSpawnWithSsh).toHaveBeenCalledWith(
+						expect.objectContaining({
+							args: expect.arrayContaining(['--sandbox', 'read-only']),
+							customEnvVars: { CODEX_HOME: '/remote-account' },
+						}),
+						agent.sessionSshRemoteConfig,
+						expect.anything()
+					);
+				}
+				mockStdout.emit(
+					'data',
+					Buffer.from(
+						JSON.stringify({
+							type: 'item.completed',
+							item: {
+								type: 'agent_message',
+								text: '{"draft":{"command":"check","description":"Check","prompt":"Review"}}',
+							},
+						}) + '\n'
+					)
+				);
+				await yieldTick();
+				mockChild.emit('close', 0);
+				expect(await pending).toMatchObject({ success: true, sessionId: null });
+				expect(issueRunToken).not.toHaveBeenCalled();
+			}
+		);
+	});
 
 	describe('spawnAgent: local config overrides', () => {
 		// Same reason as the `spawnAgent` suite above: this one asserts what an

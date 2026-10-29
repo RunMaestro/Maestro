@@ -1,3 +1,4 @@
+import { useSettingsStore } from '../../stores/settingsStore';
 import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, memo } from 'react';
 import {
 	X,
@@ -44,6 +45,7 @@ import type { SearchableSetting } from './searchableSettings';
 import { encoreTileForSetting } from './searchableSettings';
 import type { EncoreTileRequest } from './tabs/EncoreTab/types';
 import type { SettingsModalData } from '../../stores/modalStore';
+import type { useMemoryCommandEditor } from '../../hooks/settings/useMemoryCommandEditor';
 
 type SettingsTabId =
 	| 'about'
@@ -160,6 +162,7 @@ interface SettingsModalProps {
 	initialSettingId?: string;
 	/** The immutable modal data identifies each external navigation request. */
 	initialNavigationRequest?: SettingsModalData;
+	memoryCommandEditor?: ReturnType<typeof useMemoryCommandEditor>;
 	hasNoAgents?: boolean;
 	onThemeImportError?: (message: string) => void;
 	onThemeImportSuccess?: (message: string) => void;
@@ -175,6 +178,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		initialSelectedPromptId,
 		initialSettingId,
 		initialNavigationRequest,
+		memoryCommandEditor,
 		hasNoAgents,
 		onThemeImportError,
 		onThemeImportSuccess,
@@ -216,6 +220,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		sshRemoteHonorGitignore,
 		setSshRemoteHonorGitignore,
 	} = useSettings();
+	const pluginsEnabled = useSettingsStore((state) => state.encoreFeatures.plugins === true);
 
 	const contributions = usePluginContributions();
 	const settingsPanels = useMemo(
@@ -640,6 +645,22 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 										theme={theme}
 										customAICommands={customAICommands}
 										setCustomAICommands={setCustomAICommands}
+										getCustomAICommands={() => useSettingsStore.getState().customAICommands}
+										memoryCommandDraft={
+											pluginsEnabled ? (memoryCommandEditor?.preview ?? undefined) : undefined
+										}
+										stagedMemoryCommandDraft={
+											pluginsEnabled ? (memoryCommandEditor?.staged ?? undefined) : undefined
+										}
+										onReviewMemoryCommandDraft={
+											pluginsEnabled ? memoryCommandEditor?.activate : undefined
+										}
+										onMemoryCommandDraftChange={memoryCommandEditor?.updateDraft}
+										saveMemoryCommandDraft={pluginsEnabled ? memoryCommandEditor?.save : undefined}
+										onDraftComplete={(status) => {
+											const target = memoryCommandEditor?.preview;
+											if (target) memoryCommandEditor.complete(status, target.requestId);
+										}}
 									/>
 								</div>
 

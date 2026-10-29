@@ -1,3 +1,4 @@
+import { mergeCustomAICommands } from '../../shared/customAICommands';
 /**
  * settingsStore - Zustand store for all persistent application settings
  *
@@ -166,15 +167,7 @@ export async function loadSettingsStorePrompts(force = false): Promise<void> {
 	}
 
 	// Finalize after migration so DEFAULT_AI_COMMANDS reflects the final prompt value
-	DEFAULT_AI_COMMANDS = [
-		{
-			id: 'commit',
-			command: '/commit',
-			description: 'Commit outstanding changes and push up',
-			prompt: cachedCommitCommandPrompt,
-			isBuiltIn: true,
-		},
-	];
+	DEFAULT_AI_COMMANDS = mergeCustomAICommands([], cachedCommitCommandPrompt);
 	settingsStorePromptsLoaded = true;
 }
 
@@ -289,15 +282,7 @@ const DEFAULT_DIRECTOR_NOTES_SETTINGS: DirectorNotesSettings = {
 };
 
 // Uses `let` so the binding updates after loadSettingsStorePrompts() populates the cache
-let DEFAULT_AI_COMMANDS: CustomAICommand[] = [
-	{
-		id: 'commit',
-		command: '/commit',
-		description: 'Commit outstanding changes and push up',
-		prompt: getCommitCommandPrompt(),
-		isBuiltIn: true,
-	},
-];
+let DEFAULT_AI_COMMANDS: CustomAICommand[] = mergeCustomAICommands([], getCommitCommandPrompt());
 
 // ============================================================================
 // Helper Functions
@@ -559,7 +544,7 @@ export interface SettingsStoreActions
 	setEnableBetaUpdates: (value: boolean) => void;
 	setCrashReportingEnabled: (value: boolean) => void;
 	setLogViewerSelectedLevels: (value: string[]) => void;
-	setCustomAICommands: (value: CustomAICommand[]) => void;
+	setCustomAICommands: (value: CustomAICommand[]) => Promise<boolean>;
 	setUngroupedCollapsed: (value: boolean) => void;
 	setShowHiddenGroups: (value: boolean) => void;
 	setGroupChatsExpanded: (value: boolean) => void;
@@ -1161,9 +1146,10 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 			window.maestro.settings.set('logViewerSelectedLevels', value);
 		},
 
-		setCustomAICommands: (value) => {
-			set({ customAICommands: value });
-			window.maestro.settings.set('customAICommands', value);
+		setCustomAICommands: async (value) => {
+			const saved = await window.maestro.settings.set('customAICommands', value);
+			if (saved === true) set({ customAICommands: value });
+			return saved === true;
 		},
 
 		setUngroupedCollapsed: (value) => {
@@ -2260,47 +2246,13 @@ export async function loadAllSettings(): Promise<void> {
 			allSettings['customAICommands'] !== undefined &&
 			Array.isArray(allSettings['customAICommands'])
 		) {
-			const commandsById = new Map<string, CustomAICommand>();
-			DEFAULT_AI_COMMANDS.forEach((cmd) => commandsById.set(cmd.id, cmd));
-			(allSettings['customAICommands'] as CustomAICommand[]).forEach((cmd: CustomAICommand) => {
-				// The persisted array is whatever is on disk, not necessarily CustomAICommand[]:
-				// electron-store hands back hand-edited / sync-mangled / legacy-schema entries
-				// unchanged. Every consumer keys off `id` (edit, save, reset, delete, React keys),
-				// so an entry without one is unusable and would otherwise be stored under the
-				// Map key `undefined` and rendered anyway. Skip it instead of crashing later.
-				// `id`, `command` and `prompt` are all load-bearing: consumers key off
-				// `id` (edit, save, reset, delete, React keys), and the panel calls
-				// `command.startsWith('/')` and `prompt.substring(...)` directly, so a
-				// missing one is a crash rather than a cosmetic gap. `description` is
-				// only rendered, so default it instead of discarding a command the
-				// user may still want.
-				if (
-					!cmd ||
-					typeof cmd !== 'object' ||
-					typeof cmd.id !== 'string' ||
-					!cmd.id ||
-					typeof cmd.command !== 'string' ||
-					typeof cmd.prompt !== 'string'
-				) {
+			patch.customAICommands = mergeCustomAICommands(
+				allSettings['customAICommands'],
+				getCommitCommandPrompt(),
+				() => {
 					logger.warn('Skipping malformed customAICommands entry (missing id, command or prompt)');
-					return;
 				}
-				if (typeof cmd.description !== 'string') {
-					cmd = { ...cmd, description: '' };
-				}
-				// Migration: Skip old /synopsis command
-				if (cmd.command === '/synopsis' || cmd.id === 'synopsis') {
-					return;
-				}
-				// For built-in commands, merge to allow user edits but preserve isBuiltIn flag
-				if (commandsById.has(cmd.id)) {
-					const existing = commandsById.get(cmd.id)!;
-					commandsById.set(cmd.id, { ...cmd, isBuiltIn: existing.isBuiltIn });
-				} else {
-					commandsById.set(cmd.id, cmd);
-				}
-			});
-			patch.customAICommands = Array.from(commandsById.values());
+			);
 		}
 
 		// --- Stats objects (merge with defaults to pick up new fields) ---

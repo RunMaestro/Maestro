@@ -1096,8 +1096,11 @@ export const MainPanel = React.memo(
 				);
 			}
 
-			// Show memory viewer (only if agent supports per-project memory)
-			if (memoryViewerOpen && hasCapability('supportsProjectMemory')) {
+			// Codex reads native memory; Claude retains its project-memory capability.
+			if (
+				memoryViewerOpen &&
+				(activeSession?.toolType === 'codex' || hasCapability('supportsProjectMemory'))
+			) {
 				return (
 					<div
 						className="flex-1 flex flex-col min-w-0 relative"

@@ -32,6 +32,16 @@ export type AgentSendProgressEvent =
 			summary?: string;
 	  };
 
+/** Wire options cannot change the host-selected model, environment or permissions. */
+export type AgentSendOptions =
+	| {
+			sessionId?: string;
+			originalAttachments?: readonly [import('./media-tools').OriginalAttachmentRef];
+			mode?: never;
+			requestId?: never;
+	  }
+	| { mode: 'draft'; requestId: string; sessionId?: never; originalAttachments?: never };
+
 /**
  * The host API surface as ONE data-driven table: method -> { capability }. The
  * method-name union, the runtime method list, and the method->capability map are
@@ -83,6 +93,9 @@ export const HOST_API = {
 	'agents.get': { capability: 'agents:read' },
 	'agents.dispatch': { capability: 'agents:dispatch' },
 	'agents.send': { capability: 'agents:dispatch' },
+	'agents.cancel': { capability: 'agents:dispatch' },
+	'memory.getSelectedSnapshot': { capability: 'memory:selected' },
+	'commands.openDraft': { capability: 'commands:preview' },
 	'agents.generateTitle': { capability: 'agents:dispatch' },
 	'notifications.toast': { capability: 'notifications:toast' },
 	'settings.get': { capability: 'settings:read' },
@@ -298,6 +311,7 @@ export function extractTarget(method: HostMethod, params: unknown): string | und
 			return typeof p.projectPath === 'string' ? p.projectPath : undefined;
 		case 'agents.dispatch':
 		case 'agents.send':
+		case 'agents.cancel':
 		case 'agents.generateTitle':
 			// Allowlist scope target: the exact agent id the plugin wants to run.
 			// A missing/malformed id yields undefined, which an allowlist grant

@@ -44,6 +44,8 @@ export type PluginCapability =
 	| 'media:tools' // fixed Discord voice media profiles, opaque jobs only
 	| 'net:fetch' // HTTP(S) fetch to a host scope
 	| 'net:connect' // hold an outbound persistent websocket to a host scope (Discord/Slack gateway)
+	| 'memory:selected' // read only an explicitly released, owned memory selection
+	| 'commands:preview' // request a host-owned global command preview
 	| 'agents:read' // list/read agents and their state
 	| 'agents:dispatch' // send a prompt to an agent
 	| 'notifications:toast' // raise a toast notification
@@ -89,6 +91,8 @@ export const PLUGIN_CAPABILITIES: readonly PluginCapability[] = [
 	'media:tools',
 	'net:fetch',
 	'net:connect',
+	'memory:selected',
+	'commands:preview',
 	'agents:read',
 	'agents:dispatch',
 	'notifications:toast',
@@ -133,6 +137,8 @@ const CAPABILITY_RISK: Record<PluginCapability, CapabilityRisk> = {
 
 	'notifications:toast': 'low',
 	'settings:read': 'low',
+	'memory:selected': 'high',
+	'commands:preview': 'medium',
 	'agents:read': 'low',
 	'storage:read': 'low',
 	'storage:write': 'low',
@@ -198,6 +204,8 @@ const CAPABILITY_SCOPE_KIND: Record<PluginCapability, ScopeKind> = {
 	'media:tools': 'allowlist',
 	'net:fetch': 'host',
 	'net:connect': 'host',
+	'memory:selected': 'none',
+	'commands:preview': 'none',
 	'agents:read': 'none',
 	// Phase-4 promotion (plugin-phase4-high-risk-verbs.md): a dispatch grant
 	// names the exact agent ids it may target; a spawn grant names the exact
@@ -604,6 +612,10 @@ export function describeCapability(capability: PluginCapability): string {
 			return 'Make network requests (unscoped includes localhost and your internal network)';
 		case 'net:connect':
 			return 'Hold an open, two-way network connection to a host (for example a chat gateway). Data can flow in and out continuously while the plugin runs.';
+		case 'memory:selected':
+			return 'Read only the memory text explicitly selected for one host-owned command draft';
+		case 'commands:preview':
+			return 'Open an editable global command preview (saving requires an explicit host action)';
 		case 'agents:read':
 			return 'See your agents and their status';
 		case 'agents:dispatch':

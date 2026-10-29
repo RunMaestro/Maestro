@@ -274,6 +274,7 @@ import {
 } from './utils/encore-gate';
 import { logger } from '../main/utils/logger';
 
+import { registerMemoryCommandCommands } from './commands/memory-command';
 import { registerLiteCommands } from './commands/lite';
 // Injected at build time by scripts/build-cli.mjs via esbuild `define`.
 // The typeof guard keeps non-esbuild execution paths (ts-node, plain tsc output) from
@@ -304,6 +305,7 @@ program
 	.option('--verbose', 'Print extra detail where available');
 
 registerLiteCommands(program);
+registerMemoryCommandCommands(program);
 
 program.hook('preAction', (thisCommand) => {
 	const opts = thisCommand.opts();

@@ -249,7 +249,7 @@ export interface UseSettingsReturn {
 
 	// Custom AI Commands
 	customAICommands: CustomAICommand[];
-	setCustomAICommands: (value: CustomAICommand[]) => void;
+	setCustomAICommands: (value: CustomAICommand[]) => Promise<boolean>;
 
 	// Standalone active time (migrated from globalStats.totalActiveTimeMs)
 	totalActiveTimeMs: number;

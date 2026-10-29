@@ -1,4 +1,4 @@
-import { useMemo, useState, useRef } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import {
 	Plus,
 	Trash2,
@@ -11,6 +11,8 @@ import {
 	ChevronRight,
 	Variable,
 } from 'lucide-react';
+import type { MemoryCommandPreview, MemoryCommandDraft } from '../../shared/memoryCommandDraft';
+import { createCustomAICommand } from '../../shared/customAICommands';
 import type { Theme, CustomAICommand } from '../types';
 import { TEMPLATE_VARIABLES_GENERAL } from '../utils/templateVariables';
 import { useAvailableTemplateVariables } from '../hooks/input/useAvailableTemplateVariables';
@@ -28,7 +30,15 @@ import {
 interface AICommandsPanelProps {
 	theme: Theme;
 	customAICommands: CustomAICommand[];
-	setCustomAICommands: (commands: CustomAICommand[]) => void;
+	setCustomAICommands: (commands: CustomAICommand[]) => Promise<boolean> | boolean;
+	getCustomAICommands?: () => CustomAICommand[];
+	/** Active draft changes only after explicit adoption; keep the normal form mounted. */
+	memoryCommandDraft?: MemoryCommandPreview;
+	stagedMemoryCommandDraft?: MemoryCommandPreview;
+	onReviewMemoryCommandDraft?: (requestId: string) => void;
+	saveMemoryCommandDraft?: (draft: MemoryCommandDraft) => Promise<boolean>;
+	onMemoryCommandDraftChange?: (requestId: string, draft: MemoryCommandDraft) => void;
+	onDraftComplete?: (status: 'saved' | 'cancelled') => void;
 }
 
 interface EditingCommand {
@@ -79,19 +89,89 @@ export function AICommandsPanel({
 	theme,
 	customAICommands,
 	setCustomAICommands,
+	getCustomAICommands,
+	memoryCommandDraft,
+	stagedMemoryCommandDraft,
+	onReviewMemoryCommandDraft,
+	saveMemoryCommandDraft,
+	onDraftComplete,
+	onMemoryCommandDraftChange,
 }: AICommandsPanelProps) {
 	const templateVariables = useAvailableTemplateVariables(TEMPLATE_VARIABLES_GENERAL);
 	const [editingCommand, setEditingCommand] = useState<EditingCommand | null>(null);
 	const [filter, setFilter] = useState('');
-	const [isCreating, setIsCreating] = useState(false);
+	const [isCreating, setIsCreating] = useState(!!memoryCommandDraft);
 	const [variablesExpanded, setVariablesExpanded] = useState(false);
 	const [expandedCommands, setExpandedCommands] = useState<Set<string>>(new Set());
-	const [newCommand, setNewCommand] = useState<EditingCommand>({
+	const [newCommand, setNewCommandState] = useState<EditingCommand>({
 		id: '',
-		command: '/',
-		description: '',
-		prompt: '',
+		command: memoryCommandDraft?.draft.command ?? '/',
+		description: memoryCommandDraft?.draft.description ?? '',
+		prompt: memoryCommandDraft?.draft.prompt ?? '',
 	});
+
+	const setNewCommand = (value: EditingCommand) => {
+		setNewCommandState(value);
+		if (memoryCommandDraft)
+			onMemoryCommandDraftChange?.(memoryCommandDraft.requestId, {
+				command: value.command,
+				description: value.description,
+				prompt: value.prompt,
+			});
+	};
+
+	const saving = useRef(false);
+	const [isSaving, setIsSaving] = useState(false);
+	const [saveError, setSaveError] = useState<string | null>(null);
+	const currentDraftId = useRef(memoryCommandDraft?.requestId);
+	currentDraftId.current = memoryCommandDraft?.requestId;
+	const appliedDraftId = useRef(memoryCommandDraft?.requestId);
+	useEffect(() => {
+		const requestId = memoryCommandDraft?.requestId;
+		if (appliedDraftId.current === requestId) return;
+		appliedDraftId.current = requestId;
+		setNewCommandState({
+			id: '',
+			command: '/',
+			description: '',
+			prompt: '',
+			...memoryCommandDraft?.draft,
+		});
+		setIsCreating(!!memoryCommandDraft);
+		setSaveError(null);
+	}, [memoryCommandDraft]);
+	// Read on click, never from the snapshot captured when generation began.
+	const latestCommands = useRef(customAICommands);
+	latestCommands.current = customAICommands;
+	const currentCommands = () => getCustomAICommands?.() ?? latestCommands.current;
+	const persist = async (
+		commands: CustomAICommand[],
+		complete: () => void,
+		write = () => setCustomAICommands(commands),
+		isCurrent = () => true
+	) => {
+		if (saving.current) return;
+		saving.current = true;
+		setIsSaving(true);
+		setSaveError(null);
+		try {
+			const pending = write();
+			// Both synchronous adapters and IPC-backed writes must explicitly confirm success.
+			const result = typeof pending === 'boolean' ? pending : await pending;
+			if (result !== true) throw new Error('Persistence failed');
+			if (isCurrent()) complete();
+		} catch (error) {
+			if (isCurrent())
+				setSaveError(
+					error instanceof Error && error.message === 'MemoryCommandCollision'
+						? 'A command with this name already exists. Choose another name.'
+						: 'Could not save command. Your changes are still available; try again.'
+				);
+		} finally {
+			saving.current = false;
+			setIsSaving(false);
+		}
+	};
 
 	// Refs for textareas
 	const newCommandTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -165,14 +245,29 @@ export function AICommandsPanel({
 	};
 
 	const handleSaveEdit = () => {
-		if (!editingCommand) return;
+		if (!editingCommand || saving.current) return;
+		if (
+			!editingCommand.command.trim() ||
+			!editingCommand.description.trim() ||
+			!editingCommand.prompt.trim()
+		)
+			return;
 
 		// Ensure command starts with /
 		const command = editingCommand.command.startsWith('/')
 			? editingCommand.command
 			: `/${editingCommand.command}`;
 
-		const updated = customAICommands.map((cmd) =>
+		const commands = currentCommands();
+		if (commands.some((cmd) => cmd.id !== editingCommand.id && cmd.command === command)) {
+			setSaveError('A command with this name already exists. Choose another name.');
+			return;
+		}
+		if (!commands.some((cmd) => cmd.id === editingCommand.id)) {
+			setSaveError('This command no longer exists.');
+			return;
+		}
+		const updated = commands.map((cmd) =>
 			cmd.id === editingCommand.id
 				? {
 						...cmd,
@@ -182,58 +277,73 @@ export function AICommandsPanel({
 					}
 				: cmd
 		);
-		setCustomAICommands(updated);
-		setEditingCommand(null);
+		void persist(updated, () => setEditingCommand(null));
 	};
 
 	const handleCreate = () => {
-		if (!newCommand.command || !newCommand.description || !newCommand.prompt) return;
-
-		// Ensure command starts with /
-		const command = newCommand.command.startsWith('/')
-			? newCommand.command
-			: `/${newCommand.command}`;
-
-		// Generate ID from command name
-		const id = command
-			.slice(1)
-			.toLowerCase()
-			.replace(/[^a-z0-9]/g, '-');
+		if (
+			saving.current ||
+			!newCommand.command.trim() ||
+			!newCommand.description.trim() ||
+			!newCommand.prompt.trim()
+		)
+			return;
 
 		// Check for duplicate command
-		if (customAICommands.some((cmd) => cmd.command === command)) {
-			return; // Could show error toast here
+		const commands = currentCommands();
+		const newCmd = createCustomAICommand(newCommand, commands);
+		if (!newCmd) {
+			setSaveError('A command with this name already exists. Choose another name.');
+			return;
 		}
 
-		const newCmd: CustomAICommand = {
-			id: `custom-${id}-${Date.now()}`,
-			command,
-			description: newCommand.description,
-			prompt: newCommand.prompt,
-			isBuiltIn: false,
-		};
-
-		setCustomAICommands([...customAICommands, newCmd]);
-		setNewCommand({ id: '', command: '/', description: '', prompt: '' });
-		setIsCreating(false);
+		void persist(
+			[...commands, newCmd],
+			() => {
+				setNewCommand({ id: '', command: '/', description: '', prompt: '' });
+				setIsCreating(false);
+				onDraftComplete?.('saved');
+			},
+			memoryCommandDraft && saveMemoryCommandDraft
+				? () =>
+						saveMemoryCommandDraft({
+							command: newCmd.command,
+							description: newCmd.description,
+							prompt: newCmd.prompt,
+						})
+				: undefined,
+			() => currentDraftId.current === memoryCommandDraft?.requestId
+		);
 	};
 
 	const handleDelete = (id: string) => {
-		const cmd = customAICommands.find((c) => c.id === id);
+		if (saving.current) return;
+		const commands = currentCommands();
+		const cmd = commands.find((c) => c.id === id);
 		if (cmd?.isBuiltIn) return; // Can't delete built-in commands
-		setCustomAICommands(customAICommands.filter((c) => c.id !== id));
+		void persist(
+			commands.filter((c) => c.id !== id),
+			() => {}
+		);
 	};
 
 	const handleCancelEdit = () => {
+		if (saving.current) return;
+		setSaveError(null);
 		setEditingCommand(null);
 	};
 
 	const handleCancelCreate = () => {
+		if (saving.current) return;
+		setSaveError(null);
+		onDraftComplete?.('cancelled');
 		setNewCommand({ id: '', command: '/', description: '', prompt: '' });
 		setIsCreating(false);
 	};
 
-	const isCreateValid = Boolean(newCommand.command && newCommand.description && newCommand.prompt);
+	const isCreateValid = Boolean(
+		newCommand.command.trim() && newCommand.description.trim() && newCommand.prompt.trim()
+	);
 	useSaveShortcut(
 		() => {
 			if (editingCommand) handleSaveEdit();
@@ -244,6 +354,34 @@ export function AICommandsPanel({
 
 	return (
 		<div className="space-y-4">
+			{stagedMemoryCommandDraft && onReviewMemoryCommandDraft && (
+				<div
+					className="rounded-lg border p-3 space-y-2"
+					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+				>
+					<p className="text-sm" style={{ color: theme.colors.textMain }}>
+						Memory command draft ready
+					</p>
+					{(isCreating || editingCommand) && (
+						<p className="text-xs opacity-70">
+							Save or cancel your current command before reviewing this draft.
+						</p>
+					)}
+					<button
+						disabled={isSaving || isCreating || !!editingCommand}
+						onClick={() => {
+							if (!saving.current && !isCreating && !editingCommand)
+								onReviewMemoryCommandDraft(stagedMemoryCommandDraft.requestId);
+						}}
+						className="px-3 py-1.5 rounded text-xs font-medium disabled:opacity-50"
+						style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
+					>
+						Review draft
+					</button>
+				</div>
+			)}
+			{saveError && <div role="alert">{saveError}</div>}
+			{isSaving && <div role="status">Saving command...</div>}
 			<div>
 				<label className="block text-xs font-bold opacity-70 uppercase mb-1 flex items-center gap-2">
 					<Terminal className="w-3 h-3" />
@@ -408,6 +546,7 @@ export function AICommandsPanel({
 					<div className="flex justify-end gap-2">
 						<button
 							onClick={handleCancelCreate}
+							disabled={isSaving}
 							className="flex items-center gap-1 px-3 py-1.5 rounded text-xs font-medium transition-all"
 							style={{
 								backgroundColor: theme.colors.bgActivity,
@@ -420,7 +559,12 @@ export function AICommandsPanel({
 						</button>
 						<button
 							onClick={handleCreate}
-							disabled={!newCommand.command || !newCommand.description || !newCommand.prompt}
+							disabled={
+								isSaving ||
+								!newCommand.command.trim() ||
+								!newCommand.description.trim() ||
+								!newCommand.prompt.trim()
+							}
 							className="flex items-center gap-1 px-3 py-1.5 rounded text-xs font-medium transition-all disabled:opacity-50"
 							style={{
 								backgroundColor: theme.colors.success,
@@ -474,6 +618,7 @@ export function AICommandsPanel({
 										</button>
 										<button
 											onClick={handleSaveEdit}
+											disabled={isSaving}
 											className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-all"
 											style={{
 												backgroundColor: theme.colors.success,

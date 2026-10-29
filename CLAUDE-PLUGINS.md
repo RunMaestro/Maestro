@@ -11,7 +11,7 @@ A plugin is one folder under `<userData>/plugins/` containing a `plugin.json` ma
 - Entire system is gated on `encoreFeatures.plugins === true` (off by default), re-read per call.
 - Every `plugins:*` IPC channel throws the sentinel `'PluginsDisabled'` when the flag is off, so the renderer can distinguish "feature off" from "no plugins installed". The gate runs OUTSIDE `withIpcErrorLogging` so the sentinel is not logged as a real failure.
 - `PluginManager.getActiveRecords()`, `getContributions()`, and `getAgentRegistry()` all return empty when the flag is off, regardless of what is on disk.
-- `HOST_API_VERSION = '1.25.0'` (`src/shared/plugins/host-api.ts`) is the single source of truth for the host surface version.
+- `HOST_API_VERSION = '1.31.0'` (`src/shared/plugins/host-api.ts`) is the single source of truth for the host surface version.
 
 ## File map
 
@@ -212,7 +212,10 @@ Bundled plugins ship trusted via a build-time signature, not a committed one. Th
 
 `HOST_API_VERSION` is a permanent public contract once plugins ship. PATCH = host bug fix; MINOR = additive (new contribution point / manifest field / capability, older plugins keep working); MAJOR = remove or change the meaning of an existing one. A plugin pins `maestro.minHostApi`; the host loads it only when same-major and `host >= min`.
 
-The current host is `1.25.0`; it adds resumable `agents.send`, invocation-scoped
+The current host is `1.31.0`; it adds request-bound memory command drafts,
+selected-memory consent, cancellation and host previews. Earlier additions remain:
+`1.30.0` original-audio staging and `1.29.0` verified invocations, TLS, opaque
+secrets, confirmed records and durable Cue events. `1.25.0` added resumable `agents.send`, invocation-scoped
 public progress, verified plugin-tool caller context, and isolated `agents.generateTitle`.
 All sends and title generation require exact-agent Dispatch, unattended consent,
 trusted signatures, risk and action guards. See [the Relay contract](docs/relay-host-contract.md).

@@ -371,6 +371,10 @@ vi.mock('../../../renderer/contexts/GitStatusContext', () => ({
 	}),
 }));
 
+vi.mock('../../../renderer/components/MemoryViewer', () => ({
+	MemoryViewer: () => <div data-testid="memory-viewer" />,
+}));
+
 // Import MainPanel after mocks
 import { MainPanel } from '../../../renderer/components/MainPanel';
 
@@ -672,6 +676,20 @@ describe('MainPanel', () => {
 	afterEach(() => {
 		vi.useRealTimers();
 	});
+
+	it.each([
+		['codex', true],
+		['gemini-cli', false],
+	] as const)(
+		'renders memory overlay for %s without project-memory capability',
+		(toolType, visible) => {
+			renderMainPanel({
+				memoryViewerOpen: true,
+				activeSession: { ...defaultProps.activeSession!, toolType },
+			});
+			expect(!!screen.queryByTestId('memory-viewer')).toBe(visible);
+		}
+	);
 
 	describe('Render conditions', () => {
 		it.each([false, true])(

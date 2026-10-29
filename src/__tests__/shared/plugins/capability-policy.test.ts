@@ -59,3 +59,15 @@ describe('transcriptReadEgressConflict', () => {
 		expect(reason).toMatch(/net:fetch/);
 	});
 });
+
+it.each(['net:fetch', 'net:connect', 'process:spawn', 'media:tools'] as const)(
+	'applies the same egress policy to selected memory and %s',
+	(capability) => {
+		expect(
+			transcriptReadEgressConflict(hold('memory:selected', capability), { trusted: false })
+		).toMatch(/memory:selected/);
+		expect(
+			transcriptReadEgressConflict(hold('memory:selected', capability), { trusted: true })
+		).toBeNull();
+	}
+);

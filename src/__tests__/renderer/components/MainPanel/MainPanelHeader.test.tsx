@@ -207,6 +207,26 @@ describe('MainPanelHeader', () => {
 			.mockImplementation(() => {}) as ReturnType<typeof vi.spyOn>;
 	});
 
+	it.each([
+		['codex', false, true],
+		['claude-code', true, true],
+		['gemini-cli', false, false],
+	] as const)('memory entry for %s with capability %s', (toolType, capability, visible) => {
+		render(
+			<MainPanelHeader
+				{...defaultProps}
+				activeSession={makeSession({ toolType })}
+				hasCapability={() => capability}
+			/>
+		);
+		const button = screen.queryByTitle(/^Memory Viewer/);
+		expect(!!button).toBe(visible);
+		if (button) {
+			fireEvent.click(button);
+			expect(defaultProps.setMemoryViewerOpen).toHaveBeenCalledWith(true);
+		}
+	});
+
 	afterEach(() => {
 		mockOpenModal.mockRestore();
 	});

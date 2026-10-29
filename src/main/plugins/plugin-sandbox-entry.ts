@@ -353,7 +353,11 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
 				send: function (socketId, data) { return hostCall('net.send', { socketId: socketId, data: data }); },
 				close: function (socketId, opts) { return hostCall('net.close', { socketId: socketId, code: opts && opts.code, reason: opts && opts.reason }); }
 			}),
+			memory: Object.freeze({
+				getSelectedSnapshot: function (requestId) { return hostCall('memory.getSelectedSnapshot', { requestId: requestId }); }
+			}),
 			agents: Object.freeze({
+				cancel: function (agentId, requestId) { return hostCall('agents.cancel', { agentId: agentId, requestId: requestId }); },
 				list: function () { return hostCall('agents.list', {}); },
 				get: function (agentId) { return hostCall('agents.get', { agentId: agentId }); },
 				dispatch: function (agentId, prompt, opts) { return hostCall('agents.dispatch', { agentId: agentId, prompt: prompt, opts: opts }); },
@@ -434,6 +438,7 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
 				unsubscribe: function (topics) { return hostCall('events.unsubscribe', topics ? { topics: topics } : {}); }
 			}),
 			commands: Object.freeze({
+				openDraft: function (requestId, draft) { return hostCall('commands.openDraft', { requestId: requestId, draft: draft }); },
 				register: function (commandId, handler) {
 					if (typeof commandId === 'string' && typeof handler === 'function') {
 						commandHandlers.set(commandId, handler);

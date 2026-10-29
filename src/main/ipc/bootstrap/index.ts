@@ -286,6 +286,7 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 	// Wire the plugin focus verbs into the persistence layer's session.activated
 	// dedupe so the two emit paths share one last-emitted id.
 	deps.setNoteSessionActivated(persistenceHandlers.noteSessionActivated);
+	deps.setSettingsWriter?.(persistenceHandlers.setSetting);
 
 	// System operations - extracted to src/main/ipc/handlers/system.ts
 	registerSystemHandlers({

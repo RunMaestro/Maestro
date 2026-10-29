@@ -967,6 +967,77 @@ describe('applyAgentConfigOverrides', () => {
 			expect(args).toContain('read-only');
 		});
 
+		it('removes a custom bypass flag in read-only mode without consuming the next flag', () => {
+			const agent = codex();
+			const base = ['exec', '--sandbox', 'read-only'];
+			const custom = '--dangerously-bypass-approvals-and-sandbox --model example';
+			expect(
+				applyAgentConfigOverrides(agent, base, { readOnlyMode: true, sessionCustomArgs: custom })
+					.args
+			).toEqual([...base, '--model', 'example']);
+			expect(applyAgentConfigOverrides(agent, base, { sessionCustomArgs: custom }).args).toContain(
+				'--dangerously-bypass-approvals-and-sandbox'
+			);
+		});
+
+		it.each(['-s danger-full-access', '-s=danger-full-access'])(
+			'removes the Codex sandbox short alias in read-only mode: %s',
+			(custom) => {
+				const base = ['exec', '--sandbox', 'read-only'];
+				expect(
+					applyAgentConfigOverrides(codex(), base, {
+						readOnlyMode: true,
+						sessionCustomArgs: `${custom} --model example`,
+					}).args
+				).toEqual([...base, '--model', 'example']);
+				expect(
+					applyAgentConfigOverrides(codex(), base, { sessionCustomArgs: custom }).args
+				).toContain(custom.split(' ')[0]);
+			}
+		);
+
+		it.each([
+			'-sdanger-full-access',
+			'--profile unsafe',
+			'--profile=unsafe',
+			'-punsafe',
+			'-p unsafe',
+			'-c sandbox_mode="danger-full-access"',
+			'--config=sandbox_mode="danger-full-access"',
+			'-csandbox_mode="danger-full-access"',
+			'-c profiles.unsafe.sandbox_mode="danger-full-access"',
+		])('filters unsafe Codex read-only config without aborting the launch: %s', (custom) => {
+			expect(
+				applyAgentConfigOverrides(codex(), ['exec', '--sandbox', 'read-only'], {
+					readOnlyMode: true,
+					sessionCustomArgs: `${custom} --model selected -c model_reasoning_effort="high"`,
+				}).args
+			).toEqual([
+				'exec',
+				'--sandbox',
+				'read-only',
+				'--model',
+				'selected',
+				'-c',
+				'model_reasoning_effort="high"',
+			]);
+		});
+
+		it('keeps model and effort but strips full-auto and yolo overrides in read-only', () => {
+			const { args } = applyAgentConfigOverrides(codex(), ['exec', '--sandbox', 'read-only'], {
+				readOnlyMode: true,
+				sessionCustomModel: 'selected-model',
+				sessionCustomEffort: 'high',
+				sessionCustomArgs:
+					'--full-auto --yolo --sandbox=danger-full-access -c model_reasoning_summary="none"',
+			});
+			expect(args).toContain('selected-model');
+			expect(args).toContain('model_reasoning_effort="high"');
+			expect(args).not.toContain('--full-auto');
+			expect(args).not.toContain('--yolo');
+			expect(args).not.toContain('--sandbox=danger-full-access');
+		});
+
 		it('sends effort as model_reasoning_effort, the key Codex reads', () => {
 			const { args } = applyAgentConfigOverrides(codex(), baseArgs, {
 				agentConfigValues: { reasoningEffort: 'high', reasoningSummary: 'none' },

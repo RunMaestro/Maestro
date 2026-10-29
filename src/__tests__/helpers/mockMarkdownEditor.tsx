@@ -24,6 +24,8 @@
  */
 
 import React from 'react';
+import { EditorState } from '@codemirror/state';
+import { captureEditorSnapshot } from '../../renderer/components/FilePreview/markdownEditor/snapshot';
 
 interface MockEditorProps {
 	value: string;
@@ -107,6 +109,15 @@ export function markdownEditorModuleMock() {
 			getSelectionRange() {
 				const el = textareaRef.current;
 				return { from: el?.selectionStart ?? 0, to: el?.selectionEnd ?? 0 };
+			},
+			getSnapshot() {
+				const el = textareaRef.current;
+				if (!el) throw new Error('Editor unavailable');
+				const state = EditorState.create({
+					doc: el.value,
+					selection: { anchor: el.selectionStart, head: el.selectionEnd },
+				});
+				return captureEditorSnapshot(state, value);
 			},
 			coordsAtPos() {
 				return { top: 0, left: 0 };

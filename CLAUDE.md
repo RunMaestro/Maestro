@@ -264,6 +264,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 
 #### Composer, queue, and transcript
 
+- **Creating a global custom slash command:** `createCustomAICommand()`, `CustomAICommand` in `src/shared/customAICommands.ts`
 - **Command mode (`!`) is STATE, not a text prefix, and it is a LADDER:** the mode is STATE, never a leading `!`: `composerInputStore.aiCommandMode` (`'off' | 'shell' | 'ai'`), read through `isShellCommandMode()`, `isAiCommandMode()`, `normalizeComposerCommandMode()` in `src/renderer/utils/shellCommandInput.ts`
 - **Run a shell command from the chat:** `dispatchShellCommand()`, `runShellCommand()`, `cancelShellCommand()`, `resolveCommandCwd()` in `src/renderer/services/shellCommand.ts`
 - **Running a shell code fence from an agent's reply:** `requestCodeFenceCommand()` / `CODE_FENCE_COMMAND_EVENT` in `src/renderer/services/codeFenceCommand.ts`, `isRunnableShellLanguage()` / `commandFromShellFence()` in `src/renderer/utils/shellCommandInput.ts`, drawn by `<CodeRunButton>`
@@ -411,6 +412,9 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 
 - **Render markdown:** `<Markdown preset="chat | document | release-notes">` from `src/renderer/components/Markdown/`; document map `createMarkdownComponents()` in `src/renderer/utils/markdownConfig.ts`
 - **Markdown to plain text (list rows, previews):** `stripMarkdown()`, `flattenMarkdownTables()` in `src/shared/markdown.ts`
+- **Saving and editing a memory command draft:** `saveMemoryCommandDraft()` in `src/renderer/services/memoryCommandDraft.ts`, `useMemoryCommandEditor()` in `src/renderer/hooks/settings/useMemoryCommandEditor.ts`
+- **Memory command draft validation:** `validateMemoryCommandSnapshot()`, `validateMemoryCommandSelection()`, `isMemoryCommandDraft()`, `parseMemoryCommandDraftResponse()` in `src/shared/memoryCommandDraft.ts`
+
 - **Clickable task checkboxes in rendered markdown:** `toggleTaskCheckboxAtLine()` in `src/renderer/utils/markdownTasks.ts`, `rehypeSourceLine` in `src/renderer/components/Markdown/rehypeSourceLine.ts`, `onTaskToggle` on `createMarkdownComponents()`
 - **A pane that reads and edits a markdown document:** the File Preview stack, never a bare `<textarea>`: `<Markdown preset="document">` to read, `<MarkdownEditor>` from `src/renderer/components/FilePreview/markdownEditor` to write (`MemoryViewer` is the reference)
 - **Jumping a markdown preview to a heading:** `scrollToHeadingSlug()`, `headingLevelColor()` in `src/renderer/components/FilePreview/shared/headings.ts`
