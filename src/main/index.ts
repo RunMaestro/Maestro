@@ -1,3 +1,4 @@
+import { mergeCustomAICommands } from '../shared/customAICommands';
 import { canonicalJson } from '../shared/canonicalJson';
 import { realpathSync, lstatSync } from 'fs';
 import { PluginAuthorityError } from './plugins/plugin-authority';
@@ -2922,7 +2923,8 @@ app
 
 		const memoryCommandWorkflow = registerMemoryCommandWorkflow({
 			getHost: () => mainWindow?.webContents,
-			getCommands: () => store.get('customAICommands', []),
+			getCommands: () =>
+				mergeCustomAICommands(store.get('customAICommands', []), getPrompt('commit-command')),
 			saveCommands: (commands, senderWebContentsId) => {
 				if (!writeSettingInPersistence) throw new Error('MemoryCommandUnavailable');
 				return writeSettingInPersistence('customAICommands', commands, senderWebContentsId);

@@ -7,7 +7,10 @@ import type { SessionInfo } from '../../shared/types';
 
 vi.mock('fs/promises', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('fs/promises')>();
-	return { ...actual, readFile: vi.fn(actual.readFile) };
+	return {
+		...actual,
+		readFile: vi.fn(actual.readFile),
+	};
 });
 
 let fixture: string;
@@ -102,4 +105,23 @@ describe('Codex memory sources', () => {
 			'Remote Codex memory'
 		);
 	});
+});
+
+it('reads nested files with native separators and rejects sibling-prefix symlinks', async () => {
+	const home = path.join(fixture, 'account');
+	const root = path.join(home, 'memories');
+	await fs.mkdir(path.join(root, 'nested'), { recursive: true });
+	await fs.writeFile(path.join(root, 'nested', 'note.md'), 'synthetic');
+	expect(
+		(await readCodexMemory({ sourceAgentId: 'source', codexHome: home }, 'nested/note.md')).content
+	).toBe('synthetic');
+	// On POSIX a backslash is part of the filename, not a separator. Normalizing it
+	// would incorrectly accept this sibling; native containment must reject it.
+	const outside = root + (process.platform === 'win32' ? '-other' : '\\other');
+	await fs.mkdir(outside);
+	await fs.writeFile(path.join(outside, 'note.md'), 'outside');
+	await fs.symlink(path.join(outside, 'note.md'), path.join(root, 'escape.md'));
+	await expect(
+		readCodexMemory({ sourceAgentId: 'source', codexHome: home }, 'escape.md')
+	).rejects.toThrow('escapes root');
 });

@@ -739,8 +739,9 @@ describe('useSettings', () => {
 			const newCommands: CustomAICommand[] = [
 				{ id: 'test', command: '/test', description: 'Test', prompt: 'test prompt' },
 			];
-			act(() => {
-				result.current.setCustomAICommands(newCommands);
+			vi.mocked(window.maestro.settings.set).mockResolvedValueOnce(true);
+			await act(async () => {
+				expect(await result.current.setCustomAICommands(newCommands)).toBe(true);
 			});
 
 			expect(result.current.customAICommands).toEqual(newCommands);

@@ -4,7 +4,14 @@ import { registerMemoryCommandCommands } from '../../../cli/commands/memory-comm
 import { sendSimpleCommand } from '../../../cli/services/session-command';
 import { readFile, stat } from 'fs/promises';
 
-vi.mock('../../../cli/services/session-command', () => ({ sendSimpleCommand: vi.fn() }));
+vi.mock('../../../cli/services/session-command', async (original) => ({
+	...(await original<typeof import('../../../cli/services/session-command')>()),
+	sendSimpleCommand: vi.fn(),
+}));
+vi.mock('../../../cli/services/storage', () => ({ readSettingValue: vi.fn() }));
+import { readSettingValue } from '../../../cli/services/storage';
+import { MaestroNotRunningError } from '../../../cli/services/maestro-not-running';
+
 vi.mock('fs/promises', () => ({ readFile: vi.fn(), stat: vi.fn() }));
 const previousExitCode = process.exitCode;
 const selection = {
@@ -25,6 +32,7 @@ const selection = {
 let log: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
 	vi.clearAllMocks();
+	vi.mocked(readSettingValue).mockReturnValue({ plugins: true });
 	log = vi.spyOn(console, 'log').mockImplementation(() => {});
 	vi.mocked(stat).mockResolvedValue({ size: 200 } as any);
 	vi.mocked(readFile).mockResolvedValue(JSON.stringify(selection));
@@ -182,4 +190,36 @@ describe('registered memory-command CLI verbs', () => {
 		expect((await run(['status', 'request-id'])).success).toBe(false);
 		expect(process.exitCode).toBe(1);
 	});
+});
+
+it('preserves the stopped desktop JSON code and exit status', async () => {
+	vi.mocked(sendSimpleCommand).mockRejectedValueOnce(
+		new MaestroNotRunningError('no-discovery-file')
+	);
+	const exit = vi.spyOn(process, 'exit').mockImplementation(() => {
+		throw new Error('exit');
+	});
+	await expect(run(['status', 'request-id', '--json'])).rejects.toThrow('exit');
+	expect(exit).toHaveBeenCalledWith(3);
+	expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toMatchObject({
+		success: false,
+		code: 'MAESTRO_NOT_RUNNING',
+	});
+});
+it('hides and refuses memory commands while Plugins is off', async () => {
+	vi.mocked(readSettingValue).mockReturnValue({ plugins: false });
+	const program = new Command().exitOverride();
+	registerMemoryCommandCommands(program);
+	expect(program.helpInformation()).not.toContain('memory-command');
+	const exit = vi.spyOn(process, 'exit').mockImplementation(() => {
+		throw new Error('exit');
+	});
+	await expect(
+		program.parseAsync(['memory-command', 'generate', 'request', '--json'], { from: 'user' })
+	).rejects.toThrow('exit');
+	expect(exit).toHaveBeenCalledWith(1);
+	expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toMatchObject({
+		code: 'PLUGINS_DISABLED',
+	});
+	expect(sendSimpleCommand).not.toHaveBeenCalled();
 });

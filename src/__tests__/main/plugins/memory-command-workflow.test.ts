@@ -1,3 +1,4 @@
+import { mergeCustomAICommands } from '../../../shared/customAICommands';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
@@ -61,12 +62,14 @@ let send: ReturnType<typeof vi.fn>;
 let invoke: ReturnType<typeof vi.fn>;
 let workflow: ReturnType<typeof registerMemoryCommandWorkflow>;
 let commands: CustomAICommand[];
+let mergeDefaults = false;
 let saveCommands: ReturnType<typeof vi.fn>;
 const call = (verb: string, ...args: unknown[]) =>
 	channels.get(`memory:command:${verb}`)!(event, ...args);
 
 beforeEach(async () => {
 	channels.clear();
+	mergeDefaults = false;
 	host = Object.assign(new EventEmitter(), {
 		id: 42,
 		mainFrame: {},
@@ -91,7 +94,8 @@ beforeEach(async () => {
 		getHost: () => host,
 		availability,
 		invoke,
-		getCommands: () => commands,
+		getCommands: () =>
+			mergeDefaults ? mergeCustomAICommands(commands, 'effective prompt') : commands,
 		saveCommands,
 		getSource: async () => ({ sourceAgentId: 'source', codexHome: '/synthetic/home' }),
 		getGenerator: () => ({
@@ -155,6 +159,26 @@ describe('memory command workflow source package and authenticated host', () => 
 		expect(saveCommands).not.toHaveBeenCalled();
 	});
 
+	it('preserves defaults on first host save and rejects a built-in collision', async () => {
+		commands = [];
+		mergeDefaults = true;
+		const { requestId } = await call('generate', 'viewer', selection);
+		expect(await call('save', 'viewer', requestId, { ...draft, command: 'commit' })).toMatchObject({
+			status: 'collision',
+		});
+		expect(saveCommands).not.toHaveBeenCalled();
+		const result = await call('save', 'viewer', requestId, draft);
+		expect(result.status).toBe('saved');
+		expect(result.commands.map((entry: CustomAICommand) => entry.command)).toEqual([
+			'/commit',
+			'/synthetic-command',
+		]);
+		expect(result.commands[0]).toMatchObject({
+			id: 'commit',
+			prompt: 'effective prompt',
+			isBuiltIn: true,
+		});
+	});
 	it('saves edited fields once through global persistence and reports saved without cancellation', async () => {
 		const { requestId } = await call('generate', 'viewer', selection);
 		expect(saveCommands).not.toHaveBeenCalled();

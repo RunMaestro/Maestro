@@ -37,6 +37,7 @@ interface AICommandsPanelProps {
 	stagedMemoryCommandDraft?: MemoryCommandPreview;
 	onReviewMemoryCommandDraft?: (requestId: string) => void;
 	saveMemoryCommandDraft?: (draft: MemoryCommandDraft) => Promise<boolean>;
+	onMemoryCommandDraftChange?: (requestId: string, draft: MemoryCommandDraft) => void;
 	onDraftComplete?: (status: 'saved' | 'cancelled') => void;
 }
 
@@ -94,6 +95,7 @@ export function AICommandsPanel({
 	onReviewMemoryCommandDraft,
 	saveMemoryCommandDraft,
 	onDraftComplete,
+	onMemoryCommandDraftChange,
 }: AICommandsPanelProps) {
 	const templateVariables = useAvailableTemplateVariables(TEMPLATE_VARIABLES_GENERAL);
 	const [editingCommand, setEditingCommand] = useState<EditingCommand | null>(null);
@@ -101,12 +103,22 @@ export function AICommandsPanel({
 	const [isCreating, setIsCreating] = useState(!!memoryCommandDraft);
 	const [variablesExpanded, setVariablesExpanded] = useState(false);
 	const [expandedCommands, setExpandedCommands] = useState<Set<string>>(new Set());
-	const [newCommand, setNewCommand] = useState<EditingCommand>({
+	const [newCommand, setNewCommandState] = useState<EditingCommand>({
 		id: '',
 		command: memoryCommandDraft?.draft.command ?? '/',
 		description: memoryCommandDraft?.draft.description ?? '',
 		prompt: memoryCommandDraft?.draft.prompt ?? '',
 	});
+
+	const setNewCommand = (value: EditingCommand) => {
+		setNewCommandState(value);
+		if (memoryCommandDraft)
+			onMemoryCommandDraftChange?.(memoryCommandDraft.requestId, {
+				command: value.command,
+				description: value.description,
+				prompt: value.prompt,
+			});
+	};
 
 	const saving = useRef(false);
 	const [isSaving, setIsSaving] = useState(false);
@@ -118,7 +130,7 @@ export function AICommandsPanel({
 		const requestId = memoryCommandDraft?.requestId;
 		if (appliedDraftId.current === requestId) return;
 		appliedDraftId.current = requestId;
-		setNewCommand({
+		setNewCommandState({
 			id: '',
 			command: '/',
 			description: '',

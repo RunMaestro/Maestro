@@ -88,6 +88,14 @@ export function useMemoryCommandEditor(settingsOpen: boolean) {
 		current.current = target;
 		setPreview(target);
 	}, []);
+	const updateDraft = useCallback((requestId: string, draft: MemoryCommandDraft) => {
+		const target = current.current;
+		if (!target || target.requestId !== requestId) return;
+		const next = { ...target, draft: { ...draft } };
+		current.current = next;
+		setPreview(next);
+	}, []);
+
 	const save = useCallback(
 		async (draft: MemoryCommandDraft) => {
 			if (
@@ -104,6 +112,7 @@ export function useMemoryCommandEditor(settingsOpen: boolean) {
 		preview: pluginsEnabled ? preview : null,
 		staged: pluginsEnabled ? staged : null,
 		activate,
+		updateDraft,
 		save,
 		complete,
 	};

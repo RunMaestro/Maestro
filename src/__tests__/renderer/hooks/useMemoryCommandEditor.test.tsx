@@ -124,9 +124,9 @@ describe('CLI preview in the existing command editor', () => {
 	);
 
 	it('uses the real global create form for edited fields and a confirmed save without a follow-up cancel', async () => {
-		function Editor() {
+		function Editor({ visible = true }: { visible?: boolean }) {
 			const editor = useMemoryCommandEditor(true);
-			return (
+			return visible ? (
 				<AICommandsPanel
 					theme={mockTheme}
 					customAICommands={[]}
@@ -134,14 +134,15 @@ describe('CLI preview in the existing command editor', () => {
 					memoryCommandDraft={editor.preview ?? undefined}
 					stagedMemoryCommandDraft={editor.staged ?? undefined}
 					onReviewMemoryCommandDraft={editor.activate}
+					onMemoryCommandDraftChange={editor.updateDraft}
 					saveMemoryCommandDraft={editor.save}
 					onDraftComplete={(status) => {
 						if (editor.preview) editor.complete(status, editor.preview.requestId);
 					}}
 				/>
-			);
+			) : null;
 		}
-		render(<Editor />);
+		const { rerender } = render(<Editor />);
 		act(() => deliver(preview));
 		fireEvent.click(screen.getByRole('button', { name: 'Review draft' }));
 		expect(save).not.toHaveBeenCalled();
@@ -155,6 +156,8 @@ describe('CLI preview in the existing command editor', () => {
 			),
 			{ target: { value: 'Edited prompt' } }
 		);
+		rerender(<Editor visible={false} />);
+		rerender(<Editor />);
 		act(() => deliver({ ...preview, background: false }));
 		expect(screen.getByPlaceholderText('/mycommand')).toHaveValue('/edited');
 		fireEvent.click(screen.getByRole('button', { name: 'Create' }));

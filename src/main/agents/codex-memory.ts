@@ -3,7 +3,7 @@ import * as path from 'path';
 import type { MemoryTarget } from '../../shared/agentMemory';
 import type { MemoryLayout } from '../memory-manager';
 import { normalizeRootRelativePath } from '../../shared/pathContainment';
-import { isPathAtOrUnderRoot } from '../../shared/worktreePaths';
+import { isPathWithin, foldPathCase } from '../utils/real-path-containment';
 
 import type { CodexMemorySourceRef } from '../../shared/codexMemory';
 export type { CodexMemorySourceRef } from '../../shared/codexMemory';
@@ -71,7 +71,8 @@ async function resolveFile(source: CodexMemorySource, relativePath: string) {
 	const home = sourceHome(source);
 	const root = await resolveRoot(home);
 	const resolved = await fs.realpath(path.join(root, relativePath));
-	if (!isPathAtOrUnderRoot(resolved, root)) throw new Error('Codex memory path escapes root');
+	if (!isPathWithin(foldPathCase(resolved), foldPathCase(root)))
+		throw new Error('Codex memory path escapes root');
 	if (!(await fs.stat(resolved)).isFile()) throw new Error('Codex memory is not a file');
 	return { resolved, sourceRef: ref(source, home, root, relativePath) };
 }

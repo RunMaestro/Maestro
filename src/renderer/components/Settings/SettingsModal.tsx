@@ -655,6 +655,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 										onReviewMemoryCommandDraft={
 											pluginsEnabled ? memoryCommandEditor?.activate : undefined
 										}
+										onMemoryCommandDraftChange={memoryCommandEditor?.updateDraft}
 										saveMemoryCommandDraft={pluginsEnabled ? memoryCommandEditor?.save : undefined}
 										onDraftComplete={(status) => {
 											const target = memoryCommandEditor?.preview;

@@ -999,19 +999,28 @@ describe('applyAgentConfigOverrides', () => {
 		it.each([
 			'-sdanger-full-access',
 			'--profile unsafe',
+			'--profile=unsafe',
 			'-punsafe',
 			'-p unsafe',
 			'-c sandbox_mode="danger-full-access"',
 			'--config=sandbox_mode="danger-full-access"',
 			'-csandbox_mode="danger-full-access"',
 			'-c profiles.unsafe.sandbox_mode="danger-full-access"',
-		])('fails closed for ambiguous Codex read-only config: %s', (custom) => {
-			expect(() =>
+		])('filters unsafe Codex read-only config without aborting the launch: %s', (custom) => {
+			expect(
 				applyAgentConfigOverrides(codex(), ['exec', '--sandbox', 'read-only'], {
 					readOnlyMode: true,
-					sessionCustomArgs: custom,
-				})
-			).toThrow('CodexReadOnlyConfigUnsupported');
+					sessionCustomArgs: `${custom} --model selected -c model_reasoning_effort="high"`,
+				}).args
+			).toEqual([
+				'exec',
+				'--sandbox',
+				'read-only',
+				'--model',
+				'selected',
+				'-c',
+				'model_reasoning_effort="high"',
+			]);
 		});
 
 		it('keeps model and effort but strips full-auto and yolo overrides in read-only', () => {

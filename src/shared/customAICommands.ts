@@ -26,3 +26,45 @@ export function createCustomAICommand(
 		isBuiltIn: false,
 	};
 }
+
+/** Apply the same defaults and legacy cleanup at desktop and host save boundaries. */
+export function mergeCustomAICommands(
+	saved: unknown,
+	commitPrompt: string,
+	onMalformed?: () => void
+): CustomAICommand[] {
+	const commands = new Map<string, CustomAICommand>([
+		[
+			'commit',
+			{
+				id: 'commit',
+				command: '/commit',
+				description: 'Commit outstanding changes and push up',
+				prompt: commitPrompt,
+				isBuiltIn: true,
+			},
+		],
+	]);
+	if (Array.isArray(saved))
+		for (const value of saved) {
+			if (
+				!value ||
+				typeof value !== 'object' ||
+				typeof value.id !== 'string' ||
+				!value.id ||
+				typeof value.command !== 'string' ||
+				typeof value.prompt !== 'string'
+			) {
+				onMalformed?.();
+				continue;
+			}
+			if (value.command === '/synopsis' || value.id === 'synopsis') continue;
+			const command = {
+				...value,
+				description: typeof value.description === 'string' ? value.description : '',
+			};
+			const existing = commands.get(command.id);
+			commands.set(command.id, existing ? { ...command, isBuiltIn: existing.isBuiltIn } : command);
+		}
+	return Array.from(commands.values());
+}

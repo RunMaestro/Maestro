@@ -1,6 +1,7 @@
+import { encoreCommand, readEncoreFlagsForHelp } from '../utils/encore-gate';
 import type { Command } from 'commander';
 import { readFile, stat } from 'fs/promises';
-import { sendSimpleCommand } from '../services/session-command';
+import { sendSimpleCommand, exitIfMaestroNotRunning } from '../services/session-command';
 import { resolveCliPath } from '../utils/parse';
 import {
 	validateMemoryCommandSelection,
@@ -11,11 +12,14 @@ import { resolveBackgroundFlag } from '../../shared/focusPlacement';
 
 /** Every verb uses the authenticated desktop workflow; no source/settings writes or local runner. */
 export function registerMemoryCommandCommands(program: Command): void {
-	const memory = program
-		.command('memory-command')
-		.description(
-			'Draft, preview and explicitly save a global command from Codex memory (JSON output)'
-		);
+	const memory = encoreCommand(
+		program,
+		'memory-command',
+		'plugins',
+		readEncoreFlagsForHelp()
+	).description(
+		'Draft, preview and explicitly save a global command from Codex memory (JSON output)'
+	);
 	const run = async (action: string, command: Command, draftRequestId?: string) => {
 		try {
 			const options = command.opts();
@@ -52,7 +56,8 @@ export function registerMemoryCommandCommands(program: Command): void {
 			const { requestId: _correlation, type: _type, ...payload } = result;
 			console.log(JSON.stringify(payload, null, 2));
 			if (!result.success || (action === 'save' && result.status !== 'saved')) process.exitCode = 1;
-		} catch {
+		} catch (error) {
+			exitIfMaestroNotRunning(error, { json: true });
 			// JSON parse/provider/transport errors can echo supplied source text.
 			console.log(JSON.stringify({ success: false, error: 'MemoryCommandUnavailable' }));
 			process.exitCode = 1;
