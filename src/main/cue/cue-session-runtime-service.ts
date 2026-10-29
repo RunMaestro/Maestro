@@ -688,9 +688,7 @@ export function createCueSessionRuntimeService(
 				heldQueues.add(sessionId);
 			} else {
 				deps.retainQueue(sessionId, (entry) =>
-					entry.event.type === 'plugin.event' || entry.event.type === 'app.startup'
-						? null
-						: 'subscription-missing'
+					entry.event.type === 'app.startup' ? null : 'subscription-missing'
 				);
 			}
 		}

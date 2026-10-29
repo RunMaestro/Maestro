@@ -1096,6 +1096,44 @@ describe('plugin source runtime dispatch acknowledgement', () => {
 		expect(unregister).toHaveBeenCalledTimes(1);
 	});
 
+	it('drops acknowledged plugin queue entries when the YAML is confirmed missing', async () => {
+		const session = createMockSession();
+		mockWatchCueYaml.mockReturnValue(vi.fn());
+		mockCreateCueFileWatcher.mockReturnValue(vi.fn());
+		mockLoadCueConfig.mockReturnValue(createMockConfig({ subscriptions: [] }));
+		mockDetailedResult = null;
+		const retainQueue = vi.fn<Parameters<typeof createCueSessionRuntimeService>[0]['retainQueue']>(
+			() => 0
+		);
+		const service = createCueSessionRuntimeService({
+			enabled: () => true,
+			getSessions: () => [session],
+			onRefreshRequested: vi.fn(),
+			onLog: vi.fn(),
+			registry: createCueSessionRegistry(),
+			dispatchSubscription: vi.fn(),
+			clearQueue: vi.fn(),
+			retainQueue,
+			clearFanInState: vi.fn(),
+		});
+		try {
+			await service.initSession(session, { reason: 'system-boot' });
+			mockLoadCueConfig.mockReturnValue(null);
+			expect(await service.refreshSession(session.id, session.projectRoot)).toMatchObject({
+				reloaded: false,
+				configRemoved: true,
+			});
+			const decide = retainQueue.mock.calls[0][1] as (entry: {
+				event: { type: string };
+			}) => string | null;
+			expect(decide({ event: { type: 'plugin.event' } })).toBe('subscription-missing');
+			expect(decide({ event: { type: 'app.startup' } })).toBeNull();
+			expect(decide({ event: { type: 'time.heartbeat' } })).toBe('subscription-missing');
+		} finally {
+			service.teardownSession(session.id);
+		}
+	});
+
 	it('holds acknowledged plugin queue entries when a YAML refresh loses only live owner visibility', async () => {
 		const session = createMockSession();
 		mockLoadCueConfig.mockReturnValue(createMockConfig({ subscriptions: [] }));
