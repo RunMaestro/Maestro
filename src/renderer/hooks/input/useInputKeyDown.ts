@@ -34,6 +34,7 @@ import {
 	handleComposerFindKey,
 	handleComposerPickerKey,
 	handleComposerSendKey,
+	isImeComposing,
 } from './composerKeyDown';
 import { useEventListener } from '../utils/useEventListener';
 import { STEER_SEND_EVENT, steerNewestQueuedMessage } from '../../services/chatSteering';
@@ -433,7 +434,8 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 			// Handle unified @ mention picker (AI mode only)
 			if (atMentionOpen && activeSession?.inputMode === 'ai') {
 				// Left/Right cycle the category filter and MUST NOT move the caret.
-				if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+				// Mid-composition they move between IME segments instead.
+				if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && !isImeComposing(e)) {
 					e.preventDefault();
 					const cycle = MENTION_CATEGORY_CYCLE;
 					const currentIdx = cycle.indexOf(atMentionCategory);
@@ -533,7 +535,7 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 				// candidate with Enter. Return without acting: steering the
 				// half-composed text cannot be taken back, and falling through would
 				// let the Enter rules below send it as a plain message instead.
-				if (e.nativeEvent?.isComposing) return;
+				if (isImeComposing(e)) return;
 				e.preventDefault();
 				runSteerSend();
 				return;
@@ -545,7 +547,8 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 				// main key must be Enter. Non-Enter shortcuts are not supported by design.
 				if (settings.forcedParallelExecution && activeSession?.inputMode === 'ai') {
 					const fpShortcut = settings.shortcuts.forcedParallelSend;
-					if (fpShortcut && eventMatchesShortcutKeys(e, fpShortcut.keys)) {
+					// Mid-composition the Enter is the IME's; the send rules below leave it.
+					if (fpShortcut && eventMatchesShortcutKeys(e, fpShortcut.keys) && !isImeComposing(e)) {
 						e.preventDefault();
 						runForcedParallelSend();
 						return;
