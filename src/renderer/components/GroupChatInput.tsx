@@ -283,14 +283,38 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 		atMentionItems.length
 	);
 
+	// Set the draft and persist it, as typing does. AtMentionPopover's own
+	// click-to-accept path and voice dictation both write through this.
+	const setDraftValue = useCallback(
+		(value: string) => {
+			setMessage(value);
+			persistDraft(value, groupChatId);
+		},
+		[persistDraft, groupChatId]
+	);
+
+	// Voice dictation: interim results live-update the draft and persist it like
+	// typing. The hook is a no-op where the Web Speech API is unavailable.
+	// A dictation started in one room writes that room's text through that
+	// room's id, so it is cancelled when the room changes or its draft is sent:
+	// a late result would otherwise land in the next room's draft (saved under
+	// the old id) or put the sent text back.
+	const voice = useVoiceInput({
+		currentValue: message,
+		onTranscriptionChange: setDraftValue,
+		focusRef: inputRef,
+	});
+	const { cancelVoiceInput } = voice;
+
 	// Sync message state when switching to a different group chat
 	useEffect(() => {
 		if (groupChatId !== prevGroupChatIdRef.current) {
+			cancelVoiceInput();
 			flushDraft();
 			setMessage(draftMessage || '');
 			prevGroupChatIdRef.current = groupChatId;
 		}
-	}, [groupChatId, draftMessage, flushDraft]);
+	}, [groupChatId, draftMessage, flushDraft, cancelVoiceInput]);
 
 	// Sync message when draftMessage changes externally (e.g., from PromptComposer)
 	useEffect(() => {
@@ -308,12 +332,22 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 		// Allow sending even when busy - messages will be queued in App.tsx
 		if (message.trim()) {
 			onSend(message.trim(), stagedImages.length > 0 ? stagedImages : undefined, readOnlyMode);
+			cancelVoiceInput();
 			cancelDraft();
 			setMessage('');
 			setStagedImages([]);
 			onDraftChange?.('', groupChatId);
 		}
-	}, [message, onSend, readOnlyMode, cancelDraft, onDraftChange, groupChatId, stagedImages]);
+	}, [
+		message,
+		onSend,
+		readOnlyMode,
+		cancelVoiceInput,
+		cancelDraft,
+		onDraftChange,
+		groupChatId,
+		stagedImages,
+	]);
 
 	const closeAtMention = useCallback(() => {
 		setAtMentionOpen(false);
@@ -343,16 +377,6 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 			});
 		},
 		[message, atMentionStartIndex, atMentionFilter, persistDraft, groupChatId, closeAtMention]
-	);
-
-	// Set the draft and persist it, as typing does. AtMentionPopover's own
-	// click-to-accept path and voice dictation both write through this.
-	const setDraftValue = useCallback(
-		(value: string) => {
-			setMessage(value);
-			persistDraft(value, groupChatId);
-		},
-		[persistDraft, groupChatId]
 	);
 
 	// The shared composer keys, in the AI composer's order: Find, the `@`
@@ -465,13 +489,6 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 		[flushDraft, onUploadFiles]
 	);
 
-	// Voice dictation: interim results live-update the draft and persist it like
-	// typing. The hook is a no-op where the Web Speech API is unavailable.
-	const voice = useVoiceInput({
-		currentValue: message,
-		onTranscriptionChange: setDraftValue,
-		focusRef: inputRef,
-	});
 	// Both close over the live draft; stable identities keep the memoized
 	// toolbar from re-rendering on every keystroke.
 	const handleToggleVoiceInput = useStableCallback(voice.toggleVoiceInput);

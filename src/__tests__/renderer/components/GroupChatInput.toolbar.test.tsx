@@ -121,18 +121,23 @@ describe('GroupChatInput toolbar', () => {
 	});
 
 	describe('voice', () => {
-		it('offers the mic on a coarse pointer and writes dictation into the draft', () => {
-			vi.useFakeTimers();
-			let recognition: {
-				onstart?: () => void;
-				onresult?: (event: unknown) => void;
-			} = {};
+		interface FakeRecognitionInstance {
+			onstart?: () => void;
+			onresult?: (event: unknown) => void;
+			onend?: () => void;
+			abort: ReturnType<typeof vi.fn>;
+		}
+		let recognition: FakeRecognitionInstance | null = null;
+
+		/** A mock recognizer whose abort, like a real one, still lets a queued result and onend fire. */
+		function stubRecognition() {
 			class FakeRecognition {
 				start = vi.fn(() => this.onstart?.());
 				stop = vi.fn();
 				abort = vi.fn();
 				onstart?: () => void;
 				onresult?: (event: unknown) => void;
+				onend?: () => void;
 				constructor() {
 					// eslint-disable-next-line @typescript-eslint/no-this-alias
 					recognition = this;
@@ -140,20 +145,85 @@ describe('GroupChatInput toolbar', () => {
 			}
 			vi.stubGlobal('SpeechRecognition', FakeRecognition);
 			setCoarsePointer(true);
+		}
+
+		function speak(target: FakeRecognitionInstance | null, transcript: string) {
+			act(() =>
+				target?.onresult?.({
+					resultIndex: 0,
+					results: [Object.assign([{ transcript }], { isFinal: true })],
+				})
+			);
+		}
+
+		/** A result and onend arriving after the dictation was cancelled. */
+		function deliverLate(target: FakeRecognitionInstance | null, transcript: string) {
+			speak(target, transcript);
+			act(() => target?.onend?.());
+		}
+
+		it('offers the mic on a coarse pointer and writes dictation into the draft', () => {
+			vi.useFakeTimers();
+			stubRecognition();
 			const onDraftChange = vi.fn();
 			const { textarea } = renderRoom({ onDraftChange });
 
 			fireEvent.click(screen.getByRole('button', { name: 'Start voice input' }));
-			act(() =>
-				recognition.onresult?.({
-					resultIndex: 0,
-					results: [Object.assign([{ transcript: 'hello room' }], { isFinal: true })],
-				})
-			);
+			speak(recognition, 'hello room');
 
 			expect(textarea.value).toBe('hello room');
 			act(() => vi.advanceTimersByTime(300));
 			expect(onDraftChange).toHaveBeenLastCalledWith('hello room', 'room-1');
+			vi.useRealTimers();
+		});
+
+		it('ignores a result that arrives after a room switch', () => {
+			vi.useFakeTimers();
+			stubRecognition();
+			const onDraftChange = vi.fn();
+			const { textarea, props, rerender } = renderRoom({ onDraftChange, draftMessage: 'one' });
+
+			fireEvent.click(screen.getByRole('button', { name: 'Start voice input' }));
+			const dictation = recognition;
+			rerender(<GroupChatInput {...props} groupChatId="room-2" draftMessage="two" />);
+
+			expect(dictation?.abort).toHaveBeenCalled();
+			expect(screen.getByRole('button', { name: 'Start voice input' })).toBeInTheDocument();
+			deliverLate(dictation, 'late words');
+			act(() => vi.advanceTimersByTime(300));
+
+			expect(textarea.value).toBe('two');
+			expect(onDraftChange).not.toHaveBeenCalledWith(
+				expect.stringContaining('late words'),
+				'room-1'
+			);
+			expect(onDraftChange).not.toHaveBeenCalledWith(
+				expect.stringContaining('late words'),
+				'room-2'
+			);
+			vi.useRealTimers();
+		});
+
+		it('ignores a result that arrives after a send', () => {
+			vi.useFakeTimers();
+			stubRecognition();
+			const onDraftChange = vi.fn();
+			const onSend = vi.fn();
+			const { textarea } = renderRoom({ onDraftChange, onSend });
+
+			fireEvent.click(screen.getByRole('button', { name: 'Start voice input' }));
+			const dictation = recognition;
+			speak(dictation, 'send this');
+			fireEvent.keyDown(textarea, { key: 'Enter', metaKey: true });
+
+			expect(onSend).toHaveBeenCalledWith('send this', undefined, false);
+			expect(dictation?.abort).toHaveBeenCalled();
+			expect(screen.getByRole('button', { name: 'Start voice input' })).toBeInTheDocument();
+			deliverLate(dictation, ' and more');
+			act(() => vi.advanceTimersByTime(300));
+
+			expect(textarea.value).toBe('');
+			expect(onDraftChange).toHaveBeenLastCalledWith('', 'room-1');
 			vi.useRealTimers();
 		});
 
