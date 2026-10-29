@@ -7,7 +7,7 @@ import {
 
 function request(
 	required?: string[],
-	defaults?: { count?: number; enabled?: boolean }
+	defaults?: { count?: number; enabled?: boolean; formatted?: boolean }
 ): ElicitationContext {
 	return {
 		sessionId: 'session-a',
@@ -26,7 +26,12 @@ function request(
 					title: 'Enabled',
 					...(defaults?.enabled !== undefined ? { default: defaults.enabled } : {}),
 				},
-				optional: { type: 'string', title: 'Optional', description: 'Leave blank if unknown' },
+				optional: {
+					type: 'string',
+					title: 'Optional',
+					description: 'Leave blank if unknown',
+					...(defaults?.formatted ? { format: 'email' } : {}),
+				},
 				withDefault: { type: 'string', default: 'default' },
 			},
 		},
@@ -105,5 +110,11 @@ describe('copilotElicitationResult', () => {
 		expect(questions.find((question) => question.id === 'withDefault')).toMatchObject({
 			default: 'default',
 		});
+	});
+
+	it('rejects empty answers that violate formatted string constraints', () => {
+		const questions = copilotElicitationQuestions(request([], { formatted: true }));
+		expect(questions.find((question) => question.id === 'optional')?.allowEmpty).toBe(false);
+		expect(questions.find((question) => question.id === 'withDefault')?.allowEmpty).toBe(true);
 	});
 });
