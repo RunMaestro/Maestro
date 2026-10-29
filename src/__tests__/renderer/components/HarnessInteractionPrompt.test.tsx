@@ -164,7 +164,7 @@ describe('HarnessInteractionPrompt', () => {
 		expect(answer).toBeEnabled();
 	});
 
-	it('allows a required valid empty answer after the field is touched', () => {
+	it('allows a required valid empty answer through an explicit control', () => {
 		const respondHarnessInteraction = vi.fn().mockResolvedValue('resolved');
 		window.maestro = {
 			...window.maestro,
@@ -184,8 +184,7 @@ describe('HarnessInteractionPrompt', () => {
 		);
 		const answer = screen.getByRole('button', { name: 'Answer' });
 		expect(answer).toBeDisabled();
-		fireEvent.change(screen.getByRole('textbox'), { target: { value: 'temporary' } });
-		fireEvent.change(screen.getByRole('textbox'), { target: { value: '' } });
+		fireEvent.click(screen.getByRole('button', { name: 'Leave empty' }));
 		expect(answer).toBeEnabled();
 		fireEvent.click(answer);
 		expect(respondHarnessInteraction).toHaveBeenCalledWith({
