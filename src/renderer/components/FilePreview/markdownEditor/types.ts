@@ -9,6 +9,13 @@ import type { Theme } from '../../../constants/themes';
  * Everything below is what those call sites need to keep working - there's
  * no extra surface area for hypothetical future consumers.
  */
+export interface MarkdownEditorSnapshot {
+	/** Exact current text, including retained source line endings. */
+	text: string;
+	/** UTF-16 offsets into `text`; a caret has equal start and end. */
+	selection: { start: number; end: number };
+}
+
 export interface MarkdownEditorHandle {
 	focus(): void;
 	/**
@@ -33,6 +40,13 @@ export interface MarkdownEditorHandle {
 	 * hosts that rewrite a range (tab insert, list continuation, paste).
 	 */
 	getSelectionRange(): { from: number; to: number };
+	/**
+	 * Capture text and selection from one editor state. Throws if unavailable,
+	 * stale, or a selection boundary splits a UTF-16 surrogate pair.
+	 * Unlike getSelectionRange(), offsets refer to the returned text, including
+	 * CRLF. Existing editor edits emit LF; capturing never normalizes text.
+	 */
+	getSnapshot(): MarkdownEditorSnapshot;
 	/** Raw scroll offset of the editor's scroller, in px. */
 	getScrollTop(): number;
 	setScrollTop(px: number): void;

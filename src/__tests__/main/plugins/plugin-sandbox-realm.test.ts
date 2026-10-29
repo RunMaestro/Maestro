@@ -93,6 +93,31 @@ const WALKER_SOURCE = String.raw`
 `;
 
 describe('plugin sandbox realm - escape regression (FC1)', () => {
+	it('routes selected snapshot, draft send, cancellation and preview through their closed host methods', () => {
+		const bridge = makeBridge();
+		const realm = bootRealm(bridge);
+		realm.runScript(
+			`
+			maestro.memory.getSelectedSnapshot('req');
+			maestro.agents.send('agent', 'prompt', { mode: 'draft', requestId: 'req', onProgress: function () {} });
+			maestro.agents.cancel('agent', 'req');
+			maestro.commands.openDraft('req', { command: 'check', description: 'description', prompt: 'body' });
+		`,
+			'draft-rpc'
+		);
+		const calls = (bridge.send as ReturnType<typeof vi.fn>).mock.calls.map(([message]) =>
+			JSON.parse(message)
+		);
+		expect(calls.map((call) => call.method)).toEqual([
+			'memory.getSelectedSnapshot',
+			'agents.send',
+			'agents.cancel',
+			'commands.openDraft',
+		]);
+		expect(calls[1].params.opts).toEqual({ mode: 'draft', requestId: 'req' });
+		expect(calls[2].params).toEqual({ agentId: 'agent', requestId: 'req' });
+	});
+
 	it('routes generateTitle through the brokered host method', () => {
 		const bridge = makeBridge();
 		const realm = bootRealm(bridge);

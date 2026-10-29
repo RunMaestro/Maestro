@@ -86,6 +86,25 @@ function registryRegisterCallCount(): number {
 	return count;
 }
 
+it('wires the same agent-run invalidation into partial consent and allowlist changes', () => {
+	expect(depsObjectKeys()).toContain('registerAgentRunCleanup');
+	for (const channel of ['plugins:confirm-consent', 'plugins:set-agent-allowlist']) {
+		let callback: ts.ArrowFunction | undefined;
+		const visit = (node: ts.Node): void => {
+			if (
+				ts.isCallExpression(node) &&
+				node.arguments[0]?.getText(sf) === `'${channel}'` &&
+				node.arguments[1] &&
+				ts.isArrowFunction(node.arguments[1])
+			)
+				callback = node.arguments[1];
+			ts.forEachChild(node, visit);
+		};
+		visit(sf);
+		expect(callback?.getText(sf)).toContain('pluginAgentRunCleanup?.(pluginId)');
+	}
+});
+
 describe('production host-handler deps wiring (FC2 - wired and gated)', () => {
 	it.each(['missing', 'permission-error', 'overlap', 'appears'] as const)(
 		'keeps proof-location admission safe when registered project state is %s',

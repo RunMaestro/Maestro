@@ -1,4 +1,5 @@
 import type { App, BrowserWindow } from 'electron';
+import type { PersistenceHandlers } from '../handlers/persistence';
 import type { ProcessManager } from '../../process-manager';
 import type { WebServer } from '../../web-server';
 import type { AgentDetector } from '../../agents';
@@ -53,6 +54,7 @@ export interface IpcBootstrapDependencies {
 	// setters - out-params this module currently mutates back in index.ts
 	setWebServer: (server: WebServer | null) => void;
 	setNoteSessionActivated: (fn: (sessionId: string) => void) => void;
+	setSettingsWriter?: (writer: PersistenceHandlers['setSetting']) => void;
 
 	// plain values - stable consts in index.ts, never reassigned
 	app: App;

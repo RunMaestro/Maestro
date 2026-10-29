@@ -949,7 +949,7 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 				<PluginUiItemsSlot surface="toolbar" />
 
 				{/* Memory Viewer Button - only show if agent maintains per-project memory */}
-				{hasCapability('supportsProjectMemory') && (
+				{(activeSession?.toolType === 'codex' || hasCapability('supportsProjectMemory')) && (
 					<button
 						onClick={() => setMemoryViewerOpen(true)}
 						className="header-secondary-btn p-2 rounded hover:bg-white/5"

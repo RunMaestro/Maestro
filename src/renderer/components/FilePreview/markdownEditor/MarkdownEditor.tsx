@@ -4,6 +4,7 @@ import { EditorView } from '@codemirror/view';
 import { buildEditorTheme } from '../giantPreview/themeAdapter';
 import { loadLanguageExtension, hasLanguageSupport } from '../giantPreview/languageLoader';
 import { buildEditorExtensions } from './extensions';
+import { captureEditorSnapshot } from './snapshot';
 import { searchHighlightExtension, setSearchMatchesEffect } from './searchHighlight';
 import type { MarkdownEditorHandle, MarkdownEditorProps } from './types';
 
@@ -85,6 +86,9 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 	) {
 		const hostRef = useRef<HTMLDivElement | null>(null);
 		const viewRef = useRef<EditorView | null>(null);
+		// Paired with this view's document. Preserve original line endings until
+		// an edit emits the editor's LF text through the existing onChange path.
+		const snapshotTextRef = useRef(value);
 
 		// Refs to the latest callbacks so the long-lived CM6 view always sees
 		// fresh closures without us reconfiguring on every prop change.
@@ -142,7 +146,8 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 			const updateListener = EditorView.updateListener.of((update) => {
 				if (!update.docChanged) return;
 				if (applyingExternalRef.current) return;
-				onChangeRef.current?.(update.state.doc.toString());
+				snapshotTextRef.current = update.state.doc.toString();
+				onChangeRef.current?.(snapshotTextRef.current);
 			});
 
 			const state = EditorState.create({
@@ -185,10 +190,14 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 			const view = viewRef.current;
 			if (!view) return;
 			const current = view.state.doc.toString();
-			if (current === value) return;
+			snapshotTextRef.current = value;
+			// Diff in CM coordinates. Diffing LF text against raw CRLF can insert
+			// a standalone CR before an existing LF and create an extra line.
+			const next = view.state.toText(value).toString();
+			if (current === next) return;
 			applyingExternalRef.current = true;
 			try {
-				view.dispatch({ changes: minimalReplacement(current, value) });
+				view.dispatch({ changes: minimalReplacement(current, next) });
 			} finally {
 				applyingExternalRef.current = false;
 			}
@@ -319,6 +328,9 @@ export const MarkdownEditor = forwardRef<MarkdownEditorHandle, MarkdownEditorPro
 					if (!view) return { from: 0, to: 0 };
 					const { from, to } = view.state.selection.main;
 					return { from, to };
+				},
+				getSnapshot() {
+					return captureEditorSnapshot(viewRef.current?.state ?? null, snapshotTextRef.current);
 				},
 				getScrollTop() {
 					const view = viewRef.current;

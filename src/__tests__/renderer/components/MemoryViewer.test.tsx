@@ -13,7 +13,7 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, waitFor } from '@testing-library/react';
+import { render, screen, cleanup, waitFor, fireEvent, act } from '@testing-library/react';
 
 /**
  * The real edit surface is CodeMirror 6, which needs a layout engine jsdom does
@@ -21,20 +21,37 @@ import { render, screen, cleanup, waitFor } from '@testing-library/react';
  * viewer owns - which mode is showing, where focus lands - and matches how the
  * FilePreview suites stub the same module.
  */
-vi.mock('../../../renderer/components/FilePreview/markdownEditor', () => ({
-	MarkdownEditor: React.forwardRef<
-		{ focus(): void; setSearchMatches(m: unknown[], i: number): void },
-		{ value: string; onChange: (v: string) => void }
-	>(({ value, onChange }, ref) => {
-		const areaRef = React.useRef<HTMLTextAreaElement>(null);
-		React.useImperativeHandle(ref, () => ({
-			focus: () => areaRef.current?.focus(),
-			setSearchMatches: () => {},
-		}));
-		return <textarea ref={areaRef} value={value} onChange={(e) => onChange(e.target.value)} />;
+vi.mock('../../../renderer/components/FilePreview/markdownEditor', async () => {
+	const { markdownEditorModuleMock } = await import('../../helpers/mockMarkdownEditor');
+	return markdownEditorModuleMock();
+});
+
+vi.mock('../../../renderer/hooks/agent/useAgentModelEffortOptions', async (importOriginal) => ({
+	...(await importOriginal<
+		typeof import('../../../renderer/hooks/agent/useAgentModelEffortOptions')
+	>()),
+	useAgentModelEffortOptions: () => ({
+		defaultModel: 'synthetic-model',
+		defaultEffort: 'medium',
+		loaded: true,
+		models: [],
+		efforts: [],
 	}),
 }));
 
+import { selectMemoryCommandDraft } from '../../../renderer/services/memoryCommandDraft';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
+vi.mock('../../../renderer/services/memoryCommandDraft', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../../renderer/services/memoryCommandDraft')>()),
+	selectMemoryCommandDraft: vi.fn((...args: Parameters<typeof selectMemoryCommandDraft>) =>
+		actualSelect(...args)
+	),
+}));
+let actualSelect: typeof selectMemoryCommandDraft;
+
+import type { MemoryViewerHandle } from '../../../renderer/components/MemoryViewer';
+import type { CodexMemorySourceRef } from '../../../main/agents/codex-memory';
 import { MemoryViewer } from '../../../renderer/components/MemoryViewer';
 import { mockTheme } from '../../helpers/mockTheme';
 import { createMockSession } from '../../helpers/mockSession';
@@ -106,10 +123,38 @@ const CLAUDE_TARGET = expect.objectContaining({
 	toolType: 'claude-code',
 });
 
+const sourceRef: CodexMemorySourceRef = {
+	sourceAgentId: 'codex-source',
+	provider: 'codex',
+	location: { kind: 'local' },
+	codexHome: '/synthetic/codex',
+	memoryRoot: '/synthetic/codex/memories',
+	relativePath: '',
+};
+let draftListener:
+	| ((value: {
+			viewerId: string;
+			requestId: string;
+			draft: { command: string; description: string; prompt: string };
+	  }) => void)
+	| undefined;
 const memoryApi = {
+	commandAvailability: vi.fn(async () => ({ status: 'plugin-unavailable' })),
+	generateCommand: vi.fn(),
+	saveCommand: vi.fn(),
+	closeCommandViewer: vi.fn(async () => {}),
+	onCommandDraft: vi.fn((callback: typeof draftListener) => {
+		draftListener = callback;
+		return () => {
+			draftListener = undefined;
+		};
+	}),
 	list: vi.fn(async () => ({
 		success: true,
-		directoryPath: '/home/.claude/projects/-test-project/memory',
+		directoryPath:
+			layout.scope === 'account'
+				? sourceRef.memoryRoot
+				: '/home/.claude/projects/-test-project/memory',
 		exists: true,
 		entries: files.map((f) => ({
 			name: f.name,
@@ -129,6 +174,14 @@ const memoryApi = {
 	read: vi.fn(async (_target: unknown, name: string) => ({
 		success: true,
 		content: files.find((f) => f.name === name)?.body ?? '',
+		sourceRef:
+			(_target as { toolType?: string }).toolType === 'codex'
+				? {
+						...sourceRef,
+						sourceAgentId: (_target as { agentId: string }).agentId,
+						relativePath: name,
+					}
+				: undefined,
 	})),
 	// Mirrors searchMemoryEntries: name OR body, first matching line as snippet.
 	search: vi.fn(async (_target: unknown, query: string) => {
@@ -200,6 +253,576 @@ describe('MemoryViewer', () => {
 
 	afterEach(() => {
 		cleanup();
+	});
+
+	describe('Codex session memory', () => {
+		const session = createMockSession({
+			id: 'codex-source',
+			toolType: 'codex',
+			projectRoot: '/test/project',
+			cwd: '/test/project',
+		});
+		function renderCodex() {
+			const ref = React.createRef<MemoryViewerHandle>();
+			const result = render(
+				<MemoryViewer ref={ref} theme={mockTheme} activeSession={session} onClose={vi.fn()} />
+			);
+			return { ...result, ref };
+		}
+		beforeEach(async () => {
+			useSettingsStore.setState((state) => ({
+				encoreFeatures: { ...state.encoreFeatures, plugins: true },
+			}));
+			actualSelect = (
+				await vi.importActual<typeof import('../../../renderer/services/memoryCommandDraft')>(
+					'../../../renderer/services/memoryCommandDraft'
+				)
+			).selectMemoryCommandDraft;
+			useSessionStore.setState({ sessions: [] });
+			memoryApi.commandAvailability.mockResolvedValue({ status: 'plugin-unavailable' });
+			memoryApi.generateCommand.mockReset();
+			memoryApi.saveCommand.mockReset().mockImplementation(async (_viewer, requestId, fields) => ({
+				requestId,
+				status: 'saved',
+				commands: [
+					...useSettingsStore.getState().customAICommands,
+					{ id: 'host-created', ...fields, isBuiltIn: false },
+				],
+			}));
+			files = [
+				{ name: 'memory_summary.md', body: '# Synthetic summary\r\n😀 text' },
+				{ name: 'rollout_summaries/example.md', body: '# Native rollout' },
+			];
+			layout = CODEX_LAYOUT;
+			protectedNames = new Set(['memory_summary.md']);
+		});
+		it('hides draft controls and avoids draft subscriptions when plugins are disabled', async () => {
+			useSettingsStore.setState((state) => ({
+				encoreFeatures: { ...state.encoreFeatures, plugins: false },
+			}));
+			renderCodex();
+			await screen.findByTestId('memory-preview');
+			expect(screen.queryByLabelText('Codex generator')).toBeNull();
+			expect(screen.queryByText(/command plugin/i)).toBeNull();
+			expect(screen.queryByRole('button', { name: /command draft/i })).toBeNull();
+			expect(memoryApi.commandAvailability).not.toHaveBeenCalled();
+			expect(memoryApi.onCommandDraft).not.toHaveBeenCalled();
+			expect(selectMemoryCommandDraft).not.toHaveBeenCalled();
+			expect(memoryApi.generateCommand).not.toHaveBeenCalled();
+		});
+
+		it('cancels an active preview when plugins are disabled and allows a fresh draft when enabled', async () => {
+			memoryApi.commandAvailability.mockResolvedValue({ status: 'available' });
+			memoryApi.generateCommand.mockImplementation(async (viewerId) => {
+				draftListener?.({
+					viewerId,
+					requestId: 'preview',
+					draft: { command: '/test', description: 'Test', prompt: 'Test' },
+				});
+				return { requestId: 'preview', status: 'preview' };
+			});
+			renderCodex();
+			await screen.findByTestId('memory-preview');
+			fireEvent.click(screen.getByRole('button', { name: 'Prepare command draft' }));
+			await waitFor(() =>
+				expect(screen.getByRole('button', { name: 'Generate command' })).toBeEnabled()
+			);
+			fireEvent.click(screen.getByRole('button', { name: 'Generate command' }));
+			await screen.findByLabelText('Global command preview');
+			const viewerId = memoryApi.generateCommand.mock.calls[0][0];
+			act(() =>
+				useSettingsStore.setState((state) => ({
+					encoreFeatures: { ...state.encoreFeatures, plugins: false },
+				}))
+			);
+			expect(memoryApi.closeCommandViewer).toHaveBeenCalledWith(viewerId);
+			expect(screen.queryByLabelText('Global command preview')).toBeNull();
+			expect(draftListener).toBeUndefined();
+			act(() =>
+				useSettingsStore.setState((state) => ({
+					encoreFeatures: { ...state.encoreFeatures, plugins: true },
+				}))
+			);
+			expect(screen.getByRole('button', { name: 'Prepare command draft' })).toBeInTheDocument();
+			expect(screen.queryByText(/Snapshot selected:/)).toBeNull();
+		});
+		afterEach(() => {
+			// Preparing and generating a command never writes the source memory.
+			for (const key of ['write', 'create', 'delete'] as const)
+				expect(memoryApi[key]).not.toHaveBeenCalled();
+		});
+
+		it('captures explicit command input with a chosen Codex generator and never starts generation', async () => {
+			const other = createMockSession({
+				id: 'generator-2',
+				name: 'Second generator',
+				toolType: 'codex',
+				customModel: 'chosen-model',
+				customEffort: 'high',
+			});
+			useSessionStore.setState({
+				sessions: [
+					session,
+					other,
+					createMockSession({ id: 'claude-generator', toolType: 'claude-code' }),
+				],
+			});
+			renderCodex();
+			await screen.findByTestId('memory-preview');
+			expect(selectMemoryCommandDraft).not.toHaveBeenCalled();
+			expect(screen.queryByRole('option', { name: /claude-generator/ })).toBeNull();
+			fireEvent.change(screen.getByLabelText('Codex generator'), { target: { value: other.id } });
+			fireEvent.click(screen.getByTestId('memory-view-mode-edit'));
+			const area = document.querySelector('textarea') as HTMLTextAreaElement;
+			fireEvent.change(area, { target: { value: 'Local 😀 draft' } });
+			area.setSelectionRange(6, 8);
+			fireEvent.click(screen.getByRole('button', { name: 'Prepare command draft' }));
+			expect(selectMemoryCommandDraft).toHaveBeenCalledWith(
+				expect.objectContaining({
+					textSnapshot: 'Local 😀 draft',
+					dirty: true,
+					selection: { start: 6, end: 8 },
+				}),
+				{ agentId: other.id, provider: 'codex', model: 'chosen-model', effort: 'high' }
+			);
+			expect(screen.getByText(/Snapshot selected:/)).toHaveTextContent(
+				'Source: codex-source · Generator: generator-2 · Model: chosen-model · Effort: high · Selected text · Local changes'
+			);
+			expect(screen.getByRole('button', { name: 'Generate command' })).toBeDisabled();
+			expect(files[0].body).toBe('# Synthetic summary\r\n😀 text');
+			fireEvent.click(screen.getByRole('button', { name: 'Discard command draft' }));
+			expect(screen.queryByText(/Snapshot selected:/)).toBeNull();
+		});
+		it('invalidates a prepared snapshot on file change and reports snapshot limits', async () => {
+			renderCodex();
+			await screen.findByTestId('memory-preview');
+			fireEvent.click(screen.getByRole('button', { name: 'Prepare command draft' }));
+			expect(screen.getByText(/Snapshot selected:/)).toHaveTextContent('Whole file');
+			fireEvent.click(document.querySelector('[data-item-id="rollout_summaries/example.md"]')!);
+			await waitFor(() => expect(screen.queryByText(/Snapshot selected:/)).toBeNull());
+			fireEvent.click(screen.getByTestId('memory-view-mode-edit'));
+			fireEvent.change(document.querySelector('textarea')!, {
+				target: { value: 'é'.repeat(65537) },
+			});
+			fireEvent.click(screen.getByRole('button', { name: 'Prepare command draft' }));
+			expect(screen.getByRole('alert')).toHaveTextContent('Memory snapshot exceeds 128 KiB');
+			expect(screen.queryByText(/Snapshot selected:/)).toBeNull();
+		});
+		it('generates only on the explicit click, receives the host draft and never saves', async () => {
+			memoryApi.commandAvailability.mockResolvedValue({ status: 'available' });
+			memoryApi.generateCommand.mockImplementation(async (viewerId: string) => {
+				draftListener?.({
+					viewerId,
+					requestId: 'host-id',
+					draft: { command: 'synthetic', description: 'Synthetic', prompt: 'Reusable prompt' },
+				});
+				return { requestId: 'host-id', status: 'preview' };
+			});
+			renderCodex();
+			await screen.findByTestId('memory-preview');
+			fireEvent.click(screen.getByRole('button', { name: 'Prepare command draft' }));
+			expect(memoryApi.generateCommand).not.toHaveBeenCalled();
+			const button = screen.getByRole('button', { name: 'Generate command' });
+			await waitFor(() => expect(button).not.toBeDisabled());
+			fireEvent.click(button);
+			await screen.findByText('Validated command draft: synthetic · Not saved');
+			expect(memoryApi.generateCommand).toHaveBeenCalledOnce();
+			expect(memoryApi.generateCommand).toHaveBeenCalledWith(
+				expect.any(String),
+				expect.objectContaining({
+					textSnapshot: files[0].body,
+					generator: expect.objectContaining({ agentId: session.id }),
+				})
+			);
+			expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+			expect(memoryApi.write).not.toHaveBeenCalled();
+			fireEvent.click(screen.getByRole('button', { name: 'Discard command draft' }));
+			expect(memoryApi.closeCommandViewer).toHaveBeenCalledWith(
+				memoryApi.generateCommand.mock.calls[0][0]
+			);
+			expect(screen.queryByText(/Validated command draft:/)).toBeNull();
+		});
+		it('edits the existing global form and persists only on explicit create', async () => {
+			const beforeFiles = JSON.stringify(files);
+			const old = {
+				id: 'old',
+				command: '/old',
+				description: 'Old',
+				prompt: 'Old prompt',
+				isBuiltIn: false,
+			};
+			useSettingsStore.setState({ customAICommands: [old] });
+			vi.mocked(window.maestro.settings.set).mockClear().mockResolvedValue(true);
+			memoryApi.commandAvailability.mockResolvedValue({ status: 'available' });
+			let event: Parameters<NonNullable<typeof draftListener>>[0];
+			memoryApi.generateCommand.mockImplementation(async (viewerId: string) => {
+				event = {
+					viewerId,
+					requestId: 'host-preview',
+					draft: { command: '/synthetic', description: 'Synthetic', prompt: 'Reusable prompt' },
+				};
+				draftListener?.(event);
+				// A replay cannot replace an already accepted preview.
+				draftListener?.({ ...event, draft: { ...event.draft, prompt: 'Replayed prompt' } });
+				return { requestId: 'host-preview', status: 'preview' };
+			});
+			renderCodex();
+			await screen.findByTestId('memory-preview');
+			fireEvent.click(screen.getByRole('button', { name: 'Prepare command draft' }));
+			await waitFor(() =>
+				expect(screen.getByRole('button', { name: 'Generate command' })).not.toBeDisabled()
+			);
+			fireEvent.click(screen.getByRole('button', { name: 'Generate command' }));
+			await screen.findByDisplayValue('Reusable prompt');
+			expect(window.maestro.settings.set).not.toHaveBeenCalled();
+			fireEvent.change(screen.getByDisplayValue('Reusable prompt'), {
+				target: { value: 'Edited prompt' },
+			});
+			fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+			await screen.findByText('Command saved globally.');
+			expect(memoryApi.saveCommand).toHaveBeenCalledExactlyOnceWith(
+				event!.viewerId,
+				'host-preview',
+				{
+					command: '/synthetic',
+					description: 'Synthetic',
+					prompt: 'Edited prompt',
+				}
+			);
+			expect(window.maestro.settings.set).not.toHaveBeenCalled();
+			expect(memoryApi.closeCommandViewer).not.toHaveBeenCalledWith(event!.viewerId);
+			expect(useSettingsStore.getState().customAICommands[0]).toEqual(old);
+			expect(useSettingsStore.getState().customAICommands).toHaveLength(2);
+			expect(screen.queryByLabelText('Global command preview')).toBeNull();
+			act(() => draftListener?.(event));
+			expect(screen.queryByLabelText('Global command preview')).toBeNull();
+			expect(JSON.stringify(files)).toBe(beforeFiles);
+			expect(memoryApi.write).not.toHaveBeenCalled();
+		});
+		it.each(['retry', 'collision', 'revoked', 'foreign-response'] as const)(
+			'keeps the preview after host save %s without a settings write',
+			async (failure) => {
+				useSettingsStore.setState({ customAICommands: [] });
+				memoryApi.commandAvailability.mockResolvedValue({ status: 'available' });
+				memoryApi.generateCommand.mockImplementation(async (viewerId: string) => {
+					draftListener?.({
+						viewerId,
+						requestId: 'host-preview',
+						draft: { command: '/synthetic', description: 'Synthetic', prompt: 'Synthetic prompt' },
+					});
+					return { requestId: 'host-preview', status: 'preview' };
+				});
+				if (failure === 'revoked')
+					memoryApi.saveCommand.mockRejectedValueOnce(new Error('MemoryCommandUnavailable'));
+				else
+					memoryApi.saveCommand.mockResolvedValueOnce({
+						requestId: failure === 'foreign-response' ? 'foreign' : 'host-preview',
+						status: failure === 'foreign-response' ? 'saved' : failure,
+						commands: [],
+					});
+				renderCodex();
+				await screen.findByTestId('memory-preview');
+				fireEvent.click(screen.getByRole('button', { name: 'Prepare command draft' }));
+				await waitFor(() =>
+					expect(screen.getByRole('button', { name: 'Generate command' })).not.toBeDisabled()
+				);
+				fireEvent.click(screen.getByRole('button', { name: 'Generate command' }));
+				await screen.findByDisplayValue('Synthetic prompt');
+				fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+				await screen.findByRole('alert');
+				expect(screen.getByDisplayValue('Synthetic prompt')).toBeInTheDocument();
+				expect(useSettingsStore.getState().customAICommands).toEqual([]);
+				expect(screen.queryByText('Command saved globally.')).toBeNull();
+				fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+				expect(memoryApi.closeCommandViewer).toHaveBeenCalledWith(
+					memoryApi.generateCommand.mock.calls[0][0]
+				);
+				expect(memoryApi.saveCommand).toHaveBeenCalledOnce();
+			}
+		);
+		it('does not let an older confirmed save close a replacement preview', async () => {
+			useSettingsStore.setState({ customAICommands: [] });
+			let finish!: (saved: Awaited<ReturnType<typeof memoryApi.saveCommand>>) => void;
+			memoryApi.saveCommand.mockImplementationOnce(
+				() =>
+					new Promise((resolve) => {
+						finish = resolve;
+					})
+			);
+			memoryApi.commandAvailability.mockResolvedValue({ status: 'available' });
+			let sequence = 0;
+			memoryApi.generateCommand.mockImplementation(async (viewerId: string) => {
+				const requestId = `host-${++sequence}`;
+				draftListener?.({
+					viewerId,
+					requestId,
+					draft: {
+						command: `/draft-${sequence}`,
+						description: 'Synthetic',
+						prompt: 'Synthetic prompt',
+					},
+				});
+				return { requestId, status: 'preview' };
+			});
+			renderCodex();
+			await screen.findByTestId('memory-preview');
+			fireEvent.click(screen.getByRole('button', { name: 'Prepare command draft' }));
+			await waitFor(() =>
+				expect(screen.getByRole('button', { name: 'Generate command' })).not.toBeDisabled()
+			);
+			fireEvent.click(screen.getByRole('button', { name: 'Generate command' }));
+			await screen.findByDisplayValue('/draft-1');
+			fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+			fireEvent.click(screen.getByRole('button', { name: 'Discard command draft' }));
+			fireEvent.click(screen.getByRole('button', { name: 'Prepare command draft' }));
+			fireEvent.click(screen.getByRole('button', { name: 'Generate command' }));
+			await screen.findByDisplayValue('/draft-2');
+			await act(async () =>
+				finish({
+					requestId: 'host-1',
+					status: 'saved',
+					commands: [
+						{
+							id: 'host-created',
+							command: '/draft-1',
+							description: 'Synthetic',
+							prompt: 'Synthetic prompt',
+						},
+					],
+				})
+			);
+			expect(screen.getByDisplayValue('/draft-2')).toBeInTheDocument();
+			expect(screen.queryByText('Command saved globally.')).toBeNull();
+			expect(useSettingsStore.getState().customAICommands).toEqual([
+				expect.objectContaining({ command: '/draft-1' }),
+			]);
+		});
+		it('discards late replies after cancellation and ignores a different request viewer', async () => {
+			memoryApi.commandAvailability.mockResolvedValue({ status: 'available' });
+			let finish!: (value: unknown) => void;
+			memoryApi.generateCommand.mockImplementation(
+				() =>
+					new Promise((resolve) => {
+						finish = resolve;
+					})
+			);
+			renderCodex();
+			await screen.findByTestId('memory-preview');
+			fireEvent.click(screen.getByRole('button', { name: 'Prepare command draft' }));
+			const button = screen.getByRole('button', { name: 'Generate command' });
+			await waitFor(() => expect(button).not.toBeDisabled());
+			fireEvent.click(button);
+			const oldViewer = memoryApi.generateCommand.mock.calls[0][0];
+			fireEvent.click(screen.getByRole('button', { name: 'Discard command draft' }));
+			fireEvent.click(screen.getByRole('button', { name: 'Prepare command draft' }));
+			fireEvent.click(screen.getByRole('button', { name: 'Generate command' }));
+			await act(async () => {
+				draftListener?.({
+					viewerId: oldViewer,
+					requestId: 'late',
+					draft: { command: 'late', description: 'late', prompt: 'late' },
+				});
+			});
+			expect(screen.queryByText(/Validated command draft:/)).toBeNull();
+			await act(async () => {
+				finish({ requestId: 'host-id', status: 'error' });
+			});
+			await screen.findByText('Command draft failed');
+		});
+		it('shows permission denial as an actionable disabled generation state', async () => {
+			memoryApi.commandAvailability.mockResolvedValue({ status: 'permission-denied' });
+			renderCodex();
+			await screen.findByTestId('memory-preview');
+			await screen.findByText(
+				'Memory command plugin needs trusted signing and generator permissions'
+			);
+			fireEvent.click(screen.getByRole('button', { name: 'Prepare command draft' }));
+			expect(screen.getByRole('button', { name: 'Generate command' })).toBeDisabled();
+			expect(memoryApi.generateCommand).not.toHaveBeenCalled();
+		});
+		it('shows native source identity and retains current RC memory controls', async () => {
+			const { ref } = renderCodex();
+			await screen.findByTestId('memory-preview');
+			expect(listRowNames()).toEqual(files.map((f) => f.name));
+			expect(memoryApi.list).toHaveBeenCalledWith(
+				expect.objectContaining({ agentId: session.id, toolType: 'codex' })
+			);
+			expect(memoryApi.read).toHaveBeenCalledWith(
+				expect.objectContaining({ agentId: session.id, toolType: 'codex' }),
+				'memory_summary.md'
+			);
+			expect(screen.getByText(/Source agent: codex-source/)).toHaveTextContent(
+				sourceRef.memoryRoot
+			);
+			expect(screen.getByText('New Memory')).toBeInTheDocument();
+			expect(screen.getByText('Save')).toBeInTheDocument();
+			expect(screen.queryByText('Delete')).toBeNull();
+			expect(screen.getByTestId('memory-open-graph')).toBeInTheDocument();
+			expect(screen.getByLabelText('Filter memories by name or content')).toBeInTheDocument();
+			expect(ref.current!.getSnapshot()).toEqual({
+				sourceRef: { ...sourceRef, relativePath: 'memory_summary.md' },
+				textSnapshot: files[0].body,
+				dirty: false,
+			});
+		});
+		it('reads a nested source and retains the RC delete confirmation', async () => {
+			const { ref } = renderCodex();
+			await screen.findByTestId('memory-preview');
+			fireEvent.click(document.querySelector('[data-item-id="rollout_summaries/example.md"]')!);
+			await waitFor(() =>
+				expect(ref.current!.getSnapshot().sourceRef.relativePath).toBe(
+					'rollout_summaries/example.md'
+				)
+			);
+			fireEvent.keyDown(document.querySelector('[data-item-id="rollout_summaries/example.md"]')!, {
+				key: 'Backspace',
+			});
+			expect(mockOpenModal).toHaveBeenCalledWith('confirm', expect.anything());
+		});
+		it('captures the current local draft and UTF-16 selection without writing the source', async () => {
+			const original = files.map((f) => ({ ...f }));
+			const { ref } = renderCodex();
+			await screen.findByTestId('memory-preview');
+			fireEvent.click(screen.getByTestId('memory-view-mode-edit'));
+			const area = document.querySelector('textarea') as HTMLTextAreaElement;
+			fireEvent.change(area, { target: { value: 'Draft 😀 example' } });
+			area.setSelectionRange(6, 8);
+			expect(ref.current!.getSnapshot()).toMatchObject({
+				textSnapshot: 'Draft 😀 example',
+				dirty: true,
+				selection: { start: 6, end: 8 },
+			});
+			fireEvent.click(screen.getByTestId('memory-view-mode-preview'));
+			expect(ref.current!.getSnapshot()).toMatchObject({
+				textSnapshot: 'Draft 😀 example',
+				dirty: true,
+			});
+			expect(ref.current!.getSnapshot().selection).toBeUndefined();
+			expect(files).toEqual(original);
+		});
+		it('maps a selection in CRLF source to the original snapshot', async () => {
+			files[0].body = 'a\r\nb';
+			const { ref } = renderCodex();
+			await screen.findByTestId('memory-preview');
+			fireEvent.click(screen.getByTestId('memory-view-mode-edit'));
+			const area = document.querySelector('textarea') as HTMLTextAreaElement;
+			area.setSelectionRange(2, 3);
+			const snapshot = ref.current!.getSnapshot();
+			expect(snapshot.textSnapshot).toBe('a\r\nb');
+			expect(snapshot.selection).toEqual({ start: 3, end: 4 });
+			expect(snapshot.textSnapshot.slice(snapshot.selection!.start, snapshot.selection!.end)).toBe(
+				'b'
+			);
+		});
+		it.each([false, true])(
+			'distinguishes missing and empty memory roots (exists=%s)',
+			async (exists) => {
+				memoryApi.list.mockResolvedValueOnce({
+					success: true,
+					sourceRef,
+					exists,
+					layout: CODEX_LAYOUT,
+					entries: [],
+				});
+				const { ref } = renderCodex();
+				await screen.findByText('Codex has not written any memories on this account yet.');
+				expect(memoryApi.read).not.toHaveBeenCalled();
+				expect(() => ref.current!.getSnapshot()).toThrow('No loaded Codex memory source');
+				expect(screen.getByText('Create first memory')).toBeInTheDocument();
+			}
+		);
+		it.each(['response', 'rejection'])(
+			'reports list failure (%s) without fallback',
+			async (kind) => {
+				if (kind === 'response')
+					memoryApi.list.mockResolvedValueOnce({
+						success: false,
+						error: 'Synthetic access denied',
+					});
+				else memoryApi.list.mockRejectedValueOnce(new Error('Synthetic access denied'));
+				const { ref } = renderCodex();
+				await screen.findByText(/Synthetic access denied/);
+				expect(() => ref.current!.getSnapshot()).toThrow();
+			}
+		);
+		it('rejects a read with the wrong source identity', async () => {
+			memoryApi.read.mockResolvedValueOnce({
+				success: true,
+				content: 'wrong source',
+				sourceRef: { ...sourceRef, sourceAgentId: 'other', relativePath: 'memory_summary.md' },
+			});
+			const { ref } = renderCodex();
+			await screen.findByText(/source identity mismatch/);
+			expect(() => ref.current!.getSnapshot()).toThrow();
+			expect(screen.queryByText('wrong source')).toBeNull();
+		});
+		it('clears the previous snapshot when another file fails to read', async () => {
+			const { ref } = renderCodex();
+			await screen.findByTestId('memory-preview');
+			memoryApi.read.mockResolvedValueOnce({
+				success: false,
+				error: 'Synthetic read failed',
+			});
+			fireEvent.click(document.querySelector('[data-item-id="rollout_summaries/example.md"]')!);
+			await screen.findByText(/Synthetic read failed/);
+			expect(() => ref.current!.getSnapshot()).toThrow();
+		});
+		it('discards a late read when another file was selected', async () => {
+			const { ref } = renderCodex();
+			await screen.findByTestId('memory-preview');
+			let finish!: (value: Awaited<ReturnType<typeof memoryApi.read>>) => void;
+			memoryApi.read.mockImplementationOnce(
+				() =>
+					new Promise((resolve) => {
+						finish = resolve;
+					})
+			);
+			fireEvent.click(document.querySelector('[data-item-id="rollout_summaries/example.md"]')!);
+			expect(() => ref.current!.getSnapshot()).toThrow();
+			fireEvent.click(document.querySelector('[data-item-id="memory_summary.md"]')!);
+			await waitFor(() =>
+				expect(ref.current!.getSnapshot().sourceRef.relativePath).toBe('memory_summary.md')
+			);
+			await act(async () =>
+				finish({
+					success: true,
+					sourceRef: { ...sourceRef, relativePath: 'rollout_summaries/example.md' },
+					content: 'late',
+				})
+			);
+			expect(ref.current!.getSnapshot().textSnapshot).toBe(files[0].body);
+		});
+		it('isolates pending reads across source agent changes', async () => {
+			let finish!: (value: Awaited<ReturnType<typeof memoryApi.read>>) => void;
+			memoryApi.read.mockImplementationOnce(
+				() =>
+					new Promise((resolve) => {
+						finish = resolve;
+					})
+			);
+			const { ref, rerender } = renderCodex();
+			await waitFor(() => expect(memoryApi.read).toHaveBeenCalledTimes(1));
+			rerender(
+				<MemoryViewer
+					ref={ref}
+					theme={mockTheme}
+					activeSession={{ ...session, id: 'other-source' }}
+					onClose={vi.fn()}
+				/>
+			);
+			await waitFor(() =>
+				expect(ref.current!.getSnapshot().sourceRef.sourceAgentId).toBe('other-source')
+			);
+			await act(async () =>
+				finish({
+					success: true,
+					sourceRef: { ...sourceRef, relativePath: 'memory_summary.md' },
+					content: 'old agent',
+				})
+			);
+			expect(ref.current!.getSnapshot().sourceRef.sourceAgentId).toBe('other-source');
+			expect(ref.current!.getSnapshot().textSnapshot).toBe(files[0].body);
+		});
 	});
 
 	it('lists every memory when no filter is applied', async () => {

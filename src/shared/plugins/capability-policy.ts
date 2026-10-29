@@ -42,12 +42,14 @@ export function transcriptReadEgressConflict(
 	opts: { trusted: boolean }
 ): string | null {
 	if (opts.trusted) return null;
-	const hasTranscripts = held.some((h) => h.capability === 'transcripts:read');
-	if (!hasTranscripts) return null;
+	const content = held.find(
+		(h) => h.capability === 'transcripts:read' || h.capability === 'memory:selected'
+	);
+	if (!content) return null;
 	const egress = held.find((h) => EGRESS_CAPABILITIES.includes(h.capability));
 	if (!egress) return null;
 	return (
-		`transcripts:read cannot be combined with ${egress.capability} for an untrusted plugin ` +
+		`${content.capability} cannot be combined with ${egress.capability} for an untrusted plugin ` +
 		`(conversation content could be exfiltrated). Sign the plugin with a trusted key to allow this combination.`
 	);
 }

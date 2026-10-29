@@ -19,6 +19,8 @@ vi.mock('../../main/utils/remote-git', () => ({
 	execGitReadOnly: vi.fn(async () => ({ exitCode: 1, stdout: '', stderr: '' })),
 }));
 
+import { createCodexMemorySourceResolver, readCodexMemory } from '../../main/agents/codex-memory';
+import type { SessionInfo } from '../../shared/types';
 import { resolveMemoryLayout } from '../../main/memory-location';
 
 let tempDir: string;
@@ -47,6 +49,18 @@ describe('resolveMemoryLayout', () => {
 		const layout = await resolveMemoryLayout({ projectPath, toolType: 'codex', agentId: 'a1' });
 		expect(layout.directoryPath).toBe(path.join(codexHome, 'memories'));
 		expect(layout.scope).toBe('account');
+		const resolveSource = createCodexMemorySourceResolver(
+			(id) => sessions.find((s) => s.id === id) as unknown as SessionInfo,
+			resolveMemoryLayout
+		);
+		const source = await resolveSource('a1');
+		expect(source.codexHome).toBe(codexHome);
+		fs.mkdirSync(layout.directoryPath, { recursive: true });
+		fs.writeFileSync(path.join(layout.directoryPath, 'memory_summary.md'), 'Account B memory');
+		expect(await readCodexMemory(source, 'memory_summary.md')).toMatchObject({
+			content: 'Account B memory',
+			sourceRef: { sourceAgentId: 'a1', codexHome, memoryRoot: layout.directoryPath },
+		});
 	});
 
 	it('prefers the translation-managed knowledge directory over the native store', async () => {
@@ -63,6 +77,11 @@ describe('resolveMemoryLayout', () => {
 		const layout = await resolveMemoryLayout({ projectPath, toolType: 'codex', agentId: 'a1' });
 		expect(layout.directoryPath).toBe(path.join(managed, 'memory'));
 		expect(layout.nested).toBe(false);
+		const resolveSource = createCodexMemorySourceResolver(
+			(id) => sessions.find((s) => s.id === id) as unknown as SessionInfo,
+			resolveMemoryLayout
+		);
+		await expect(resolveSource('a1')).rejects.toThrow('Codex account memory required');
 	});
 
 	it('refuses a project path that is not the agent root', async () => {

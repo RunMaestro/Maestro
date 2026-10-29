@@ -559,7 +559,7 @@ export interface SettingsStoreActions
 	setEnableBetaUpdates: (value: boolean) => void;
 	setCrashReportingEnabled: (value: boolean) => void;
 	setLogViewerSelectedLevels: (value: string[]) => void;
-	setCustomAICommands: (value: CustomAICommand[]) => void;
+	setCustomAICommands: (value: CustomAICommand[]) => Promise<boolean>;
 	setUngroupedCollapsed: (value: boolean) => void;
 	setShowHiddenGroups: (value: boolean) => void;
 	setGroupChatsExpanded: (value: boolean) => void;
@@ -1161,9 +1161,10 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 			window.maestro.settings.set('logViewerSelectedLevels', value);
 		},
 
-		setCustomAICommands: (value) => {
-			set({ customAICommands: value });
-			window.maestro.settings.set('customAICommands', value);
+		setCustomAICommands: async (value) => {
+			const saved = await window.maestro.settings.set('customAICommands', value);
+			if (saved === true) set({ customAICommands: value });
+			return saved === true;
 		},
 
 		setUngroupedCollapsed: (value) => {

@@ -174,6 +174,69 @@ Close Maestro Lite only; host work continues
 | `--json` | Output JSON                                                    | -       |
 | `--yes`  | Explicitly confirm closing this client without a native dialog | -       |
 
+## `maestro-cli memory-command`
+
+Draft, preview and explicitly save a global command from Codex memory (JSON output)
+
+## `maestro-cli memory-command select`
+
+Register a MemoryCommandSelection JSON file without starting a generator
+
+| Option          | Description                                           | Default |
+| --------------- | ----------------------------------------------------- | ------- |
+| `--file <path>` | Explicit selection JSON file                          | -       |
+| `--viewer <id>` | Workflow owner namespace (reuse for subsequent verbs) | `"cli"` |
+| `--json`        | Output JSON                                           | -       |
+
+## `maestro-cli memory-command generate <request-id>`
+
+Start an owned request asynchronously; poll status for completion
+
+| Option          | Description                             | Default |
+| --------------- | --------------------------------------- | ------- |
+| `--viewer <id>` | Workflow owner namespace used by select | `"cli"` |
+| `--json`        | Output JSON                             | -       |
+
+## `maestro-cli memory-command status <request-id>`
+
+Read an owned request status without source or response text
+
+| Option          | Description                             | Default |
+| --------------- | --------------------------------------- | ------- |
+| `--viewer <id>` | Workflow owner namespace used by select | `"cli"` |
+| `--json`        | Output JSON                             | -       |
+
+## `maestro-cli memory-command cancel <request-id>`
+
+Cancel an owned request and clear its transient text
+
+| Option          | Description                             | Default |
+| --------------- | --------------------------------------- | ------- |
+| `--viewer <id>` | Workflow owner namespace used by select | `"cli"` |
+| `--json`        | Output JSON                             | -       |
+
+## `maestro-cli memory-command preview <request-id>`
+
+Read the draft as JSON; --editor also delivers an editable preview without saving
+
+| Option          | Description                                               | Default |
+| --------------- | --------------------------------------------------------- | ------- |
+| `--viewer <id>` | Workflow owner namespace used by select                   | `"cli"` |
+| `--json`        | Output JSON                                               | -       |
+| `--editor`      | Stage the existing command editor; --focus opens Settings | -       |
+| `--background`  | Keep the current view (default)                           | -       |
+| `--focus`       | Allow foreground placement                                | -       |
+
+## `maestro-cli memory-command save <request-id>`
+
+Explicitly save edited command/description/prompt JSON through the owned host request
+
+| Option          | Description                                              | Default |
+| --------------- | -------------------------------------------------------- | ------- |
+| `--file <path>` | JSON object with exactly command, description and prompt | -       |
+| `--viewer <id>` | Workflow owner namespace used by select                  | `"cli"` |
+| `--json`        | Output JSON                                              | -       |
+
 ## `maestro-cli agent-run`
 
 Record and inspect agent runs
@@ -2864,7 +2927,7 @@ Show the window state, the agent, the mode, and the current conversation
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
-## `maestro-cli quick-chat send [message...]`
+## `maestro-cli quick-chat send [message]`
 
 Send a message in the current Quick Chat (starts a chat if none is open); --image attaches images
 

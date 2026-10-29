@@ -35,6 +35,39 @@ const setSessions = vi.fn();
 const close = vi.fn();
 
 describe('QuickActions command builders', () => {
+	it.each([
+		['codex', false, true],
+		['claude-code', true, true],
+		['gemini-cli', false, false],
+	] as const)('memory palette entry for %s with capability %s', (toolType, capability, visible) => {
+		const open = vi.fn();
+		const commands = buildFeatureCommands({
+			activeSession: createMockSession({ toolType }),
+			hasActiveSessionCapability: () => capability,
+			setMemoryViewerOpen: open,
+			setQuickActionOpen: close,
+			setSuccessFlashNotification: noop,
+			setAgentSessionsOpen: noop,
+			setActiveAgentSessionId: noop,
+			bionifyReadingMode: false,
+			setBionifyReadingMode: noop,
+			audioFeedbackEnabled: false,
+			setAudioFeedbackEnabled: noop,
+			idleNotificationEnabled: false,
+			setIdleNotificationEnabled: noop,
+			showStarredSessionsSection: false,
+			setShowStarredSessionsSection: noop,
+			shortcuts: {},
+		});
+		const entry = commands.find((command) => command.id === 'openMemoryViewer');
+		expect(!!entry).toBe(visible);
+		if (entry) {
+			entry.action();
+			expect(open).toHaveBeenCalledWith(true);
+			expect(close).toHaveBeenCalledWith(false);
+		}
+	});
+
 	it('builds session jump and management commands', () => {
 		const session = createMockSession({ id: 's1', name: 'Atlas', bookmarked: true });
 		const jump = buildSessionJumpCommands({

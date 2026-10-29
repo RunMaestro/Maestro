@@ -14,7 +14,7 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { render, screen, fireEvent, within, waitFor, act } from '@testing-library/react';
 import { AICommandsPanel } from '../../../renderer/components/AICommandsPanel';
 import type { Theme, CustomAICommand } from '../../../renderer/types';
 
@@ -90,7 +90,7 @@ describe('AICommandsPanel', () => {
 	let mockSetCustomAICommands: ReturnType<typeof vi.fn>;
 
 	beforeEach(() => {
-		mockSetCustomAICommands = vi.fn();
+		mockSetCustomAICommands = vi.fn().mockReturnValue(true);
 		vi.clearAllMocks();
 	});
 
@@ -1235,10 +1235,9 @@ describe('AICommandsPanel', () => {
 				target: { value: '   ' },
 			});
 
-			// Button should be enabled because fields are technically not empty
-			// The component doesn't trim whitespace before checking
+			// Required fields reject whitespace-only input.
 			const createButton = screen.getByRole('button', { name: /Create/i });
-			expect(createButton).not.toBeDisabled();
+			expect(createButton).toBeDisabled();
 		});
 
 		it('should handle rapid create/cancel cycles', () => {
@@ -1670,5 +1669,273 @@ describe('AICommandsPanel', () => {
 			expect(rowFor('/assess')).toBeInTheDocument();
 			expect(rowFor('/close')).toBeInTheDocument();
 		});
+	});
+});
+
+describe('memory command preview and confirmed persistence', () => {
+	const draft = {
+		requestId: 'synthetic-request',
+		draft: { command: '/draft', description: 'Draft description', prompt: 'Synthetic prompt' },
+	};
+	it('ignores a late draft save completion after feature cleanup and preserves a subsequent normal form', async () => {
+		let finish!: (value: boolean) => void;
+		const hostSave = vi.fn(
+			() =>
+				new Promise<boolean>((resolve) => {
+					finish = resolve;
+				})
+		);
+		const complete = vi.fn();
+		const props = {
+			theme: mockTheme,
+			customAICommands: [],
+			setCustomAICommands: vi.fn(() => true),
+		};
+		const { rerender } = render(
+			<AICommandsPanel
+				{...props}
+				memoryCommandDraft={draft}
+				saveMemoryCommandDraft={hostSave}
+				onDraftComplete={complete}
+			/>
+		);
+		fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+		expect(hostSave).toHaveBeenCalledOnce();
+		rerender(<AICommandsPanel {...props} />);
+		fireEvent.click(screen.getByRole('button', { name: 'Add Command' }));
+		fireEvent.change(screen.getByPlaceholderText('/mycommand'), {
+			target: { value: '/normal-unsaved' },
+		});
+		fireEvent.change(screen.getByPlaceholderText('Short description for autocomplete'), {
+			target: { value: 'Normal unsaved description' },
+		});
+		await act(async () => finish(true));
+		expect(screen.getByDisplayValue('/normal-unsaved')).toBeInTheDocument();
+		expect(screen.getByDisplayValue('Normal unsaved description')).toBeInTheDocument();
+		expect(complete).not.toHaveBeenCalled();
+		expect(props.setCustomAICommands).not.toHaveBeenCalled();
+	});
+
+	it('keeps a normal edit when an independent active draft is cleared', () => {
+		const commands = [createMockCommand({ id: 'normal', command: '/normal' })];
+		const props = {
+			theme: mockTheme,
+			customAICommands: commands,
+			setCustomAICommands: vi.fn(() => true),
+		};
+		const { rerender } = render(<AICommandsPanel {...props} memoryCommandDraft={draft} />);
+		expandCommand('/normal');
+		fireEvent.click(screen.getByTitle('Edit command'));
+		fireEvent.change(screen.getByDisplayValue('Test command description'), {
+			target: { value: 'Unsaved normal edit' },
+		});
+		rerender(<AICommandsPanel {...props} />);
+		expect(screen.getByDisplayValue('Unsaved normal edit')).toBeInTheDocument();
+		expect(screen.queryByDisplayValue('Synthetic prompt')).not.toBeInTheDocument();
+	});
+	it('uses the request save for draft create, blocks double clicks and waits for host confirmation', async () => {
+		const settingsSave = vi.fn();
+		let finish!: (value: boolean) => void;
+		const hostSave = vi.fn(
+			() =>
+				new Promise<boolean>((resolve) => {
+					finish = resolve;
+				})
+		);
+		const complete = vi.fn();
+		render(
+			<AICommandsPanel
+				theme={mockTheme}
+				customAICommands={[]}
+				setCustomAICommands={settingsSave}
+				memoryCommandDraft={draft}
+				saveMemoryCommandDraft={hostSave}
+				onDraftComplete={complete}
+			/>
+		);
+		fireEvent.change(screen.getByDisplayValue('Synthetic prompt'), {
+			target: { value: 'Edited host prompt' },
+		});
+		const create = screen.getByRole('button', { name: 'Create' });
+		fireEvent.click(create);
+		fireEvent.click(create);
+		expect(hostSave).toHaveBeenCalledExactlyOnceWith({
+			...draft.draft,
+			prompt: 'Edited host prompt',
+		});
+		expect(settingsSave).not.toHaveBeenCalled();
+		expect(complete).not.toHaveBeenCalled();
+		await act(async () => finish(true));
+		expect(complete).toHaveBeenCalledExactlyOnceWith('saved');
+	});
+
+	it.each(['false', 'rejection', 'collision'] as const)(
+		'preserves request edits after host %s and retries through the host',
+		async (failure) => {
+			const settingsSave = vi.fn();
+			const hostSave = vi
+				.fn()
+				.mockImplementationOnce(() =>
+					failure === 'false'
+						? Promise.resolve(false)
+						: Promise.reject(
+								new Error(
+									failure === 'collision' ? 'MemoryCommandCollision' : 'MemoryCommandUnavailable'
+								)
+							)
+				)
+				.mockResolvedValue(true);
+			const complete = vi.fn();
+			render(
+				<AICommandsPanel
+					theme={mockTheme}
+					customAICommands={[]}
+					setCustomAICommands={settingsSave}
+					memoryCommandDraft={draft}
+					saveMemoryCommandDraft={hostSave}
+					onDraftComplete={complete}
+				/>
+			);
+			fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+			await screen.findByRole('alert');
+			expect(screen.getByDisplayValue('Synthetic prompt')).toBeInTheDocument();
+			expect(complete).not.toHaveBeenCalled();
+			fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+			await waitFor(() => expect(complete).toHaveBeenCalledWith('saved'));
+			expect(hostSave).toHaveBeenCalledTimes(2);
+			expect(settingsSave).not.toHaveBeenCalled();
+		}
+	);
+	it('prefills editable fields without writing, preserves the latest commands and saves exactly once', async () => {
+		const old = createMockCommand({ id: 'old', command: '/old' });
+		const added = createMockCommand({ id: 'added', command: '/added' });
+		let commands = [old];
+		let finish!: (saved: boolean) => void;
+		const save = vi.fn(
+			(_commands: CustomAICommand[]) =>
+				new Promise<boolean>((resolve) => {
+					finish = resolve;
+				})
+		);
+		const complete = vi.fn();
+		render(
+			<AICommandsPanel
+				theme={mockTheme}
+				customAICommands={[old]}
+				getCustomAICommands={() => commands}
+				setCustomAICommands={save}
+				memoryCommandDraft={draft}
+				onDraftComplete={complete}
+			/>
+		);
+		expect(save).not.toHaveBeenCalled();
+		fireEvent.change(screen.getByDisplayValue('/draft'), { target: { value: 'edited' } });
+		fireEvent.change(screen.getByDisplayValue('Draft description'), {
+			target: { value: 'Edited description' },
+		});
+		fireEvent.change(screen.getByDisplayValue('Synthetic prompt'), {
+			target: { value: 'Edited prompt' },
+		});
+		commands = [old, added];
+		const create = screen.getByRole('button', { name: 'Create' });
+		fireEvent.click(create);
+		fireEvent.click(create);
+		expect(save).toHaveBeenCalledOnce();
+		expect(save.mock.calls[0][0]).toEqual([
+			old,
+			added,
+			expect.objectContaining({
+				command: '/edited',
+				description: 'Edited description',
+				prompt: 'Edited prompt',
+				isBuiltIn: false,
+			}),
+		]);
+		expect(complete).not.toHaveBeenCalled();
+		expect(screen.getByDisplayValue('Edited prompt')).toBeInTheDocument();
+		await act(async () => finish(true));
+		expect(complete).toHaveBeenCalledWith('saved');
+		expect(screen.queryByDisplayValue('Edited prompt')).toBeNull();
+	});
+	it.each(['false', 'reject'])(
+		'keeps edits on persistence %s and permits a retry',
+		async (failure) => {
+			const save = vi
+				.fn()
+				.mockImplementationOnce(() =>
+					failure === 'false'
+						? Promise.resolve(false)
+						: Promise.reject(new Error('synthetic failure'))
+				)
+				.mockResolvedValue(true);
+			const complete = vi.fn();
+			render(
+				<AICommandsPanel
+					theme={mockTheme}
+					customAICommands={[]}
+					setCustomAICommands={save}
+					memoryCommandDraft={draft}
+					onDraftComplete={complete}
+				/>
+			);
+			fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+			await screen.findByRole('alert');
+			expect(complete).not.toHaveBeenCalled();
+			expect(screen.getByDisplayValue('Synthetic prompt')).toBeInTheDocument();
+			fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+			await waitFor(() => expect(complete).toHaveBeenCalledWith('saved'));
+			expect(save).toHaveBeenCalledTimes(2);
+		}
+	);
+	it('cancels a preview without writing', () => {
+		const save = vi.fn();
+		const complete = vi.fn();
+		render(
+			<AICommandsPanel
+				theme={mockTheme}
+				customAICommands={[]}
+				setCustomAICommands={save}
+				memoryCommandDraft={draft}
+				onDraftComplete={complete}
+			/>
+		);
+		fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+		expect(save).not.toHaveBeenCalled();
+		expect(complete).toHaveBeenCalledWith('cancelled');
+	});
+	it('reports a collision introduced after generation without overwriting the command', () => {
+		const save = vi.fn();
+		const existing = createMockCommand({ command: '/draft' });
+		render(
+			<AICommandsPanel
+				theme={mockTheme}
+				customAICommands={[]}
+				getCustomAICommands={() => [existing]}
+				setCustomAICommands={save}
+				memoryCommandDraft={draft}
+			/>
+		);
+		fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+		expect(screen.getByRole('alert')).toHaveTextContent('already exists');
+		expect(save).not.toHaveBeenCalled();
+		expect(screen.getByDisplayValue('Synthetic prompt')).toBeInTheDocument();
+	});
+	it('checks duplicate names when editing as well as creating', () => {
+		const save = vi.fn();
+		const first = createMockCommand({ id: 'first', command: '/first' });
+		const second = createMockCommand({ id: 'second', command: '/second' });
+		render(
+			<AICommandsPanel
+				theme={mockTheme}
+				customAICommands={[first, second]}
+				setCustomAICommands={save}
+			/>
+		);
+		expandCommand('/first');
+		fireEvent.click(screen.getByTitle('Edit command'));
+		fireEvent.change(screen.getByDisplayValue('/first'), { target: { value: '/second' } });
+		fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+		expect(screen.getByRole('alert')).toHaveTextContent('already exists');
+		expect(save).not.toHaveBeenCalled();
 	});
 });

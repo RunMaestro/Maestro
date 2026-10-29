@@ -8,9 +8,10 @@
  * POSIX literals pass locally and fail only on windows-latest.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import * as os from 'os';
 import * as path from 'path';
+import { buildAgentEnvironment } from '../../../shared/maestro-lib/launch/env';
 import {
 	getCodexHome,
 	getCodexSkillDirs,
@@ -28,6 +29,39 @@ describe('codex-config', () => {
 			expect(getCodexHome({ CODEX_HOME: path.join('/custom', 'codex') })).toBe(
 				path.join('/custom', 'codex')
 			);
+		});
+	});
+
+	describe('memory source home follows the local desktop launch environment', () => {
+		afterEach(() => vi.unstubAllEnvs());
+
+		it.each([
+			{ session: undefined, expected: 'provider' },
+			{
+				session: { CODEX_HOME: path.join('/synthetic', 'source-agent') },
+				expected: 'source-agent',
+			},
+			{ session: {}, expected: 'global' },
+		])('resolves the source with session env $session', ({ session, expected }) => {
+			vi.stubEnv('CODEX_HOME', path.join('/synthetic', 'inherited'));
+			const env = buildAgentEnvironment({
+				surface: 'desktop',
+				globalShellEnvVars: { CODEX_HOME: path.join('/synthetic', 'global') },
+				agentCustomEnvVars: { CODEX_HOME: path.join('/synthetic', 'provider') },
+				sessionCustomEnvVars: session,
+			});
+			expect(getCodexHome(env)).toBe(path.join('/synthetic', expected));
+		});
+
+		it('uses the native default after an explicit blank unsets inherited and global homes', () => {
+			vi.stubEnv('CODEX_HOME', path.join('/synthetic', 'inherited'));
+			const env = buildAgentEnvironment({
+				surface: 'desktop',
+				globalShellEnvVars: { CODEX_HOME: path.join('/synthetic', 'global') },
+				sessionCustomEnvVars: { CODEX_HOME: '' },
+			});
+			expect(env.CODEX_HOME).toBeUndefined();
+			expect(getCodexHome(env)).toBe(path.join(os.homedir(), '.codex'));
 		});
 	});
 

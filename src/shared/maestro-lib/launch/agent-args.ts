@@ -6,7 +6,13 @@ import { logger } from '../host';
  * shape lets CLI callers pass AgentDefinition (no capabilities/available). */
 type AgentConfigOverridable = Pick<
 	AgentConfig,
-	'configOptions' | 'defaultEnvVars' | 'readOnlyArgs' | 'resumeArgs' | 'batchModePrefix'
+	| 'configOptions'
+	| 'defaultEnvVars'
+	| 'readOnlyArgs'
+	| 'resumeArgs'
+	| 'batchModePrefix'
+	| 'id'
+	| 'yoloModeArgs'
 >;
 
 const LOG_CONTEXT = '[AgentArgs]';
@@ -356,6 +362,16 @@ export function applyAgentConfigOverrides(
 		overrides.readOnlyMode
 			? classifyReadOnlyFlags(agent?.readOnlyArgs ?? [])
 			: { flags: new Set<string>(), valueTakingFlags: new Set<string>() };
+	// Codex's bypass flag defeats --sandbox read-only even when it is appended
+	// by a custom override rather than the batch defaults.
+	if (overrides.readOnlyMode && agent?.id === 'codex') {
+		for (const flag of agent.yoloModeArgs ?? []) readOnlyPinnedFlags.add(flag);
+		readOnlyPinnedFlags.add('--yolo');
+		readOnlyPinnedFlags.add('--full-auto');
+		// Codex also accepts -s as an alias for --sandbox.
+		readOnlyPinnedFlags.add('-s');
+		readOnlyValueTakingFlags.add('-s');
+	}
 
 	if (agent && agent.configOptions) {
 		for (const option of agent.configOptions) {
@@ -424,6 +440,26 @@ export function applyAgentConfigOverrides(
 		finalArgs = [...finalArgs, ...parsedCustomArgs];
 	} else {
 		customArgsSource = 'none';
+	}
+
+	if (overrides.readOnlyMode && agent?.id === 'codex') {
+		// Profiles and arbitrary TOML overrides can change the permission policy.
+		// Only the existing model/effort/summary overrides are understood here.
+		for (let i = 0; i < finalArgs.length; i++) {
+			const arg = finalArgs[i];
+			if (/^(?:--profile(?:=|$)|-p|-s.+)/.test(arg))
+				throw new Error('CodexReadOnlyConfigUnsupported');
+			let config: string | undefined;
+			if (arg === '-c' || arg === '--config') config = finalArgs[++i] ?? '';
+			else if (arg.startsWith('--config=')) config = arg.slice('--config='.length);
+			else if (arg.startsWith('-c') && arg.length > 2) config = arg.slice(2).replace(/^=/, '');
+			if (
+				config !== undefined &&
+				(!/^\s*(model|model_reasoning_effort|model_reasoning_summary)\s*=/.test(config) ||
+					/[\r\n]/.test(config))
+			)
+				throw new Error('CodexReadOnlyConfigUnsupported');
+		}
 	}
 
 	// Env vars: agent defaults (lowest), then ONE user-configured set on top. The

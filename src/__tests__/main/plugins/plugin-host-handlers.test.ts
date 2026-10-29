@@ -33,6 +33,10 @@ import type { PluginManifest } from '../../../shared/plugins/plugin-manifest';
 import { MAESTRO_PUBLISHER_KEYS } from '../../../shared/plugins/publisher-keys';
 import { RELAY_PUBLISHER_KEY } from '../../../shared/plugins/relay-identity';
 import relayRelease from '../../shared/plugins/fixtures/relay-release-question.json';
+import { MemoryCommandDraftService } from '../../../main/plugins/memory-command-draft';
+import { createPluginHeadlessAgentRunner } from '../../../main/plugins/plugin-headless-agent-runner';
+import type { SessionInfo } from '../../../shared/types';
+import type { MemoryCommandSelection } from '../../../shared/memoryCommandDraft';
 import type { AgentSendProgressEvent } from '../../../shared/plugins/rpc-protocol';
 
 let kvBase: string;
@@ -3176,3 +3180,407 @@ it.each([true, false])(
 		}
 	}
 );
+describe('request-bound memory command draft RPCs', () => {
+	const owner = { pluginId: 'draft.plugin', hostClientId: 'client', viewerId: 'viewer' };
+	const draft = {
+		command: 'check',
+		description: 'Check synthetic input',
+		prompt: 'Review changes',
+	};
+	let service: MemoryCommandDraftService;
+	let selection: MemoryCommandSelection;
+	let grants: PermissionGrant[];
+	let trusted: boolean;
+	let sourceAllowed: boolean;
+	let cleanup: (pluginId: string) => Promise<void>;
+	let invalidateRuns: (pluginId: string) => void;
+	let deps: HostHandlerDeps;
+	let spawn: ReturnType<typeof vi.fn>;
+	let issueRunToken: ReturnType<typeof vi.fn>;
+	let preview: ReturnType<typeof vi.fn>;
+
+	beforeEach(() => {
+		const memoryHome = path.join(kvBase, 'codex-fixture');
+		fs.mkdirSync(path.join(memoryHome, 'memories'), { recursive: true });
+		fs.writeFileSync(
+			path.join(memoryHome, 'memories', 'MEMORY.md'),
+			'PRIVATE LEFT\r\n😀chosen\r\nPRIVATE RIGHT'
+		);
+		selection = {
+			requestId: 'provisional',
+			status: 'selected',
+			dirty: true,
+			sourceRef: {
+				sourceAgentId: 'source',
+				provider: 'codex',
+				location: { kind: 'local' },
+				codexHome: memoryHome,
+				memoryRoot: path.join(memoryHome, 'memories'),
+				relativePath: 'MEMORY.md',
+			},
+			textSnapshot: 'PRIVATE LEFT\r\n😀chosen\r\nPRIVATE RIGHT',
+			selection: { start: 14, end: 22 },
+			generator: {
+				agentId: 'generator',
+				provider: 'codex',
+				model: 'renderer-is-not-authority',
+				effort: 'low',
+			},
+		};
+		grants = [
+			{ capability: 'memory:selected', grantedAt: 1 },
+			{ capability: 'commands:preview', grantedAt: 1 },
+			{ capability: 'agents:dispatch', scope: 'generator,other', unattended: true, grantedAt: 1 },
+		];
+		trusted = true;
+		sourceAllowed = true;
+		service = new MemoryCommandDraftService({
+			getSource: (id) =>
+				id === 'source' ? { sourceAgentId: id, codexHome: memoryHome } : undefined,
+			getGenerator: (id) =>
+				id === 'generator'
+					? { agentId: id, provider: 'codex', model: 'stored', effort: 'high' }
+					: undefined,
+			isAllowed: () => sourceAllowed,
+		});
+		spawn = vi.fn(async () => ({
+			success: true,
+			response: JSON.stringify({ draft }),
+			agentSessionId: 'must-not-bind',
+		}));
+		issueRunToken = vi.fn();
+		preview = vi.fn();
+		const run = createPluginHeadlessAgentRunner({
+			getAgent: () =>
+				({
+					id: 'generator',
+					toolType: 'codex',
+					cwd: '/synthetic-project',
+					customModel: 'stored',
+					customEffort: 'high',
+					customEnvVars: {},
+				}) as SessionInfo,
+			detectAgent: async () => ({ available: true, path: '/selected/codex' }),
+			getGlobalEnvVars: () => ({ GLOBAL: 'kept' }),
+			getAgentConfig: () => ({ customEnvVars: { CODEX_HOME: '/provider-home' } }),
+			hasPluginTools: () => true,
+			spawn,
+			prepareSystemPrompt: async () => 'system',
+			issueRunToken,
+			revokeRunToken: vi.fn(),
+			cliScriptPath: () => '/cli.js',
+			audit: vi.fn(),
+		});
+		deps = makeDeps({
+			broker: brokerFor(() => grants),
+			isPluginTrusted: () => trusted,
+			dispatchUnattendedAllowed: (_plugin, agentId) =>
+				isPermittedUnattended(grants, 'agents:dispatch', agentId),
+			sendAgent: run,
+			memoryCommandDraft: service,
+			registerAgentRunCleanup: (fn) => {
+				invalidateRuns = fn;
+			},
+			previewMemoryCommandDraft: preview,
+			registerResourceCleanup: (fn) => {
+				cleanup = fn;
+			},
+		});
+	});
+
+	async function selected() {
+		return (await service.register(owner, selection)).requestId;
+	}
+	function params(requestId: string, extra: Record<string, unknown> = {}) {
+		return {
+			agentId: 'generator',
+			prompt: 'Create a reusable command from the supplied selection',
+			opts: { mode: 'draft', requestId, ...extra },
+		};
+	}
+
+	it('sends a released selection through the existing runner and accepts exactly its validated preview', async () => {
+		const id = await selected();
+		const handlers = buildHostCallHandlers(deps);
+		const snapshot = await handlers['memory.getSelectedSnapshot']!(owner.pluginId, {
+			requestId: id,
+		});
+		expect(snapshot).toMatchObject({ text: '😀chosen', generatorAgentId: 'generator' });
+		expect(JSON.stringify(snapshot)).not.toContain('PRIVATE');
+		const remember = vi.spyOn(deps.providerSessions!, 'remember');
+		const result = await handlers['agents.send']!(owner.pluginId, params(id));
+		expect(result).toEqual({ success: true, response: JSON.stringify({ draft }), sessionId: null });
+		expect(service.getStatus(owner, id).status).toBe('ready');
+		expect(spawn).toHaveBeenCalledWith(
+			'codex',
+			'/synthetic-project',
+			expect.any(String),
+			undefined,
+			expect.objectContaining({
+				readOnlyMode: true,
+				customModel: 'stored',
+				customEffort: 'high',
+				customEnvVars: {},
+				globalEnvVars: { GLOBAL: 'kept' },
+				pluginRunProofFile: undefined,
+				mcpCliScriptPath: undefined,
+				signal: expect.any(AbortSignal),
+			})
+		);
+		expect(issueRunToken).not.toHaveBeenCalled();
+		expect(remember).not.toHaveBeenCalled();
+		await expect(
+			handlers['commands.openDraft']!(owner.pluginId, {
+				requestId: id,
+				draft: { ...draft, prompt: 'forged' },
+			})
+		).rejects.toThrow('MemoryCommandInvalid');
+		expect(await handlers['commands.openDraft']!(owner.pluginId, { requestId: id, draft })).toEqual(
+			{ accepted: true }
+		);
+		expect(preview).toHaveBeenCalledWith({ requestId: id, owner, draft });
+		await expect(
+			handlers['commands.openDraft']!(owner.pluginId, { requestId: id, draft })
+		).rejects.toThrow('MemoryCommandInvalid');
+		await expect(handlers['agents.send']!(owner.pluginId, params(id))).rejects.toThrow(
+			'MemoryCommandInvalid'
+		);
+		expect(spawn).toHaveBeenCalledTimes(1);
+		expect(deps.settingsSet).not.toHaveBeenCalled();
+		expect(fs.readFileSync(path.join(selection.sourceRef.memoryRoot, 'MEMORY.md'), 'utf8')).toBe(
+			selection.textSnapshot
+		);
+	});
+
+	it('does not release a snapshot cancelled across the asynchronous reply boundary', async () => {
+		const id = await selected();
+		const get = service.get.bind(service);
+		vi.spyOn(service, 'get').mockImplementationOnce(async (...args) => {
+			const result = await get(...args);
+			service.cancelForHost(owner, id);
+			return result;
+		});
+		await expect(
+			buildHostCallHandlers(deps)['memory.getSelectedSnapshot']!(owner.pluginId, { requestId: id })
+		).rejects.toThrow('MemoryCommandInvalid');
+	});
+
+	it.each(['cancel', 'revoke'])(
+		'does not release a draft if %s races successful completion',
+		async (reason) => {
+			const id = await selected();
+			const complete = service.complete.bind(service);
+			vi.spyOn(service, 'complete').mockImplementationOnce(async (...args) => {
+				const result = await complete(...args);
+				if (reason === 'cancel') service.cancelForHost(owner, id);
+				else grants = [];
+				return result;
+			});
+			expect(
+				await buildHostCallHandlers(deps)['agents.send']!(owner.pluginId, params(id))
+			).toMatchObject({ success: false, response: null });
+			expect(service.getStatus(owner, id).status).toBe(reason === 'cancel' ? 'cancelled' : 'error');
+		}
+	);
+
+	it('terminalizes a failed preview route with a bounded error code', async () => {
+		const id = await selected();
+		const handlers = buildHostCallHandlers(deps);
+		await handlers['agents.send']!(owner.pluginId, params(id));
+		preview.mockImplementationOnce(() => {
+			throw new Error(selection.textSnapshot);
+		});
+		await expect(
+			handlers['commands.openDraft']!(owner.pluginId, { requestId: id, draft })
+		).rejects.toThrow('MemoryCommandUnavailable');
+		expect(service.getStatus(owner, id).status).toBe('error');
+	});
+
+	it('requires separate preview consent after generation and never writes settings', async () => {
+		const id = await selected();
+		const handlers = buildHostCallHandlers(deps);
+		await handlers['agents.send']!(owner.pluginId, params(id));
+		grants = grants.filter((g) => g.capability !== 'commands:preview');
+		await expect(
+			handlers['commands.openDraft']!(owner.pluginId, { requestId: id, draft })
+		).rejects.toThrow(/permission denied/);
+		expect(preview).not.toHaveBeenCalled();
+		expect(deps.settingsSet).not.toHaveBeenCalled();
+	});
+
+	it.each(['memory:selected', 'agents:dispatch', 'unattended', 'trust'])(
+		'denies missing %s before releasing text or spawning',
+		async (missing) => {
+			const id = await selected();
+			if (missing === 'trust') trusted = false;
+			else if (missing === 'unattended') grants = grants.map((g) => ({ ...g, unattended: false }));
+			else grants = grants.filter((g) => g.capability !== missing);
+			const handlers = buildHostCallHandlers(deps);
+			await expect(
+				handlers['memory.getSelectedSnapshot']!(owner.pluginId, { requestId: id })
+			).rejects.toThrow();
+			await expect(handlers['agents.send']!(owner.pluginId, params(id))).rejects.toThrow();
+			expect(spawn).not.toHaveBeenCalled();
+		}
+	);
+
+	it.each([
+		{ sessionId: 'foreign' },
+		{ sessionId: undefined },
+		{ customModel: 'override' },
+		{ readOnlyMode: false },
+		{ requestId: 'forged' },
+	])('rejects draft option smuggling: %j', async (extra) => {
+		const id = await selected();
+		await expect(
+			buildHostCallHandlers(deps)['agents.send']!(owner.pluginId, params(id, extra))
+		).rejects.toThrow();
+		expect(spawn).not.toHaveBeenCalled();
+	});
+
+	it('enforces plugin, generator and exact allowlist ownership for send/cancel', async () => {
+		const id = await selected();
+		const handlers = buildHostCallHandlers(deps);
+		for (const plugin of [owner.pluginId, 'foreign.plugin']) {
+			await expect(
+				handlers['agents.send']!(plugin, { ...params(id), agentId: 'other' })
+			).rejects.toThrow('MemoryCommandInvalid');
+			await expect(
+				handlers['agents.cancel']!(plugin, { agentId: 'other', requestId: id })
+			).rejects.toThrow('MemoryCommandInvalid');
+		}
+		await expect(
+			handlers['agents.cancel']!(owner.pluginId, { agentId: 'denied-agent', requestId: id })
+		).rejects.toThrow(/permission denied/);
+		expect(spawn).not.toHaveBeenCalled();
+	});
+
+	it.each(['grant', 'unattended', 'trust', 'source'])(
+		'rejects a quiet late result after %s revocation',
+		async (revoked) => {
+			const id = await selected();
+			spawn.mockImplementationOnce(async () => {
+				if (revoked === 'grant') grants = grants.filter((g) => g.capability !== 'memory:selected');
+				if (revoked === 'unattended') grants = grants.map((g) => ({ ...g, unattended: false }));
+				if (revoked === 'trust') trusted = false;
+				if (revoked === 'source') sourceAllowed = false;
+				return { success: true, response: JSON.stringify({ draft }), agentSessionId: 'late' };
+			});
+			const result = await buildHostCallHandlers(deps)['agents.send']!(owner.pluginId, params(id));
+			expect(result).toEqual({
+				success: false,
+				response: null,
+				sessionId: null,
+				error: 'MemoryCommandFailed',
+			});
+			expect(service.getStatus(owner, id).status).toBe('error');
+			expect(preview).not.toHaveBeenCalled();
+		}
+	);
+
+	it('drops commentary and summaries, then aborts progress on grant loss', async () => {
+		const id = await selected();
+		const onProgress = vi.fn();
+		spawn.mockImplementationOnce(async (_type, _cwd, _prompt, _session, opts) => {
+			opts.onProgress({ type: 'commentary', text: selection.textSnapshot, at: 'private' });
+			opts.onProgress({
+				type: 'tool',
+				tool: 'read_file',
+				summary: selection.textSnapshot,
+				status: 'started',
+				at: 'private',
+			});
+			grants = [];
+			opts.onProgress({ type: 'tool', tool: 'read_file', status: 'completed', at: 'private' });
+			expect(opts.signal.aborted).toBe(true);
+			return { success: true, response: JSON.stringify({ draft }) };
+		});
+		await buildHostCallHandlers(deps)['agents.send']!(owner.pluginId, params(id), { onProgress });
+		expect(onProgress).toHaveBeenCalledTimes(1);
+		expect(onProgress.mock.calls[0][0]).toEqual({
+			type: 'tool',
+			tool: 'read_file',
+			status: 'started',
+			at: expect.any(String),
+		});
+		expect(JSON.stringify(onProgress.mock.calls)).not.toContain('PRIVATE');
+		expect(service.getStatus(owner, id).status).toBe('error');
+	});
+
+	it.each(['cancel', 'cleanup', 'partial-grant', 'host-close', 'replace'])(
+		'shares its controller with %s and discards late success',
+		async (reason) => {
+			const id = await selected();
+			const handlers = buildHostCallHandlers(deps);
+			spawn.mockImplementationOnce(async (_type, _cwd, _prompt, _session, opts) => {
+				if (reason === 'cancel') {
+					expect(
+						await handlers['agents.cancel']!(owner.pluginId, {
+							agentId: 'generator',
+							requestId: id,
+						})
+					).toEqual({ cancelled: true });
+					expect(
+						await handlers['agents.cancel']!(owner.pluginId, {
+							agentId: 'generator',
+							requestId: id,
+						})
+					).toEqual({ cancelled: false });
+				} else if (reason === 'cleanup') await cleanup(owner.pluginId);
+				else if (reason === 'partial-grant') {
+					grants = [];
+					invalidateRuns(owner.pluginId);
+				} else if (reason === 'host-close') service.closeViewer(owner.hostClientId, owner.viewerId);
+				else await service.register(owner, selection);
+				expect(opts.signal.aborted).toBe(true);
+				return { success: true, response: JSON.stringify({ draft }) };
+			});
+			expect(await handlers['agents.send']!(owner.pluginId, params(id))).toMatchObject({
+				success: false,
+				response: null,
+				sessionId: null,
+			});
+			if (reason === 'cleanup' || reason === 'partial-grant')
+				expect(() => service.getStatus(owner, id)).toThrow('MemoryCommandInvalid');
+			else expect(service.getStatus(owner, id).status).toBe('cancelled');
+			expect(preview).not.toHaveBeenCalled();
+		}
+	);
+
+	it.each([
+		'timeout',
+		'throw',
+		'malformed',
+		'oversize',
+		'extra-field',
+		'missing-field',
+		'array',
+		'fenced',
+	])('terminalizes %s without exposing provider text', async (failure) => {
+		const id = await selected();
+		spawn.mockImplementationOnce(async () => {
+			if (failure === 'throw') throw new Error(selection.textSnapshot);
+			const responses: Record<string, string> = {
+				malformed: 'PRIVATE LEFT',
+				oversize: ' '.repeat(128 * 1024) + JSON.stringify({ draft }),
+				'extra-field': JSON.stringify({ draft, private: 'PRIVATE LEFT' }),
+				'missing-field': '{"draft":{"command":"check"}}',
+				array: '[]',
+				fenced: '```json\n' + JSON.stringify({ draft }) + '\n```',
+			};
+			return {
+				success: failure !== 'timeout',
+				response: responses[failure] ?? null,
+				error: selection.textSnapshot,
+			};
+		});
+		expect(await buildHostCallHandlers(deps)['agents.send']!(owner.pluginId, params(id))).toEqual({
+			success: false,
+			response: null,
+			sessionId: null,
+			error: 'MemoryCommandFailed',
+		});
+		expect(service.getStatus(owner, id).status).toBe('error');
+		expect(preview).not.toHaveBeenCalled();
+	});
+});

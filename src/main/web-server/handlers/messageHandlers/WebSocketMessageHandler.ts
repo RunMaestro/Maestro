@@ -34,6 +34,7 @@
  * are handled by ./autoRun.
  */
 
+import { handleMemoryCommand } from './memoryCommand';
 import { app } from 'electron';
 import { logger } from '../../../utils/logger';
 import { captureException } from '../../../utils/sentry';
@@ -351,6 +352,10 @@ export class WebSocketMessageHandler {
 
 			case 'star_tab':
 				handleStarTab(this.ctx, client, message);
+				break;
+
+			case 'memory_command':
+				void handleMemoryCommand(this.ctx, client, message);
 				break;
 
 			case 'snooze_command':

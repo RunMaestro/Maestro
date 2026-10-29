@@ -439,6 +439,58 @@ describe('persistence IPC handlers', () => {
 	});
 
 	describe('settings:set', () => {
+		it('exposes the same confirmed writer to request-bound host saves', async () => {
+			const { setSetting } = registerPersistenceHandlers({
+				settingsStore: mockSettingsStore as unknown as Store<MaestroSettings>,
+				sessionsStore: mockSessionsStore as unknown as Store<SessionsData>,
+				groupsStore: mockGroupsStore as unknown as Store<GroupsData>,
+				getWebServer: getWebServerFn,
+				flushSessionWrites: mockFlushSessionWrites,
+			});
+			mockWebServer.getWebClientCount.mockReturnValue(1);
+			const commands = [
+				{
+					id: 'synthetic',
+					command: '/synthetic',
+					description: 'Synthetic',
+					prompt: 'Synthetic prompt',
+				},
+			];
+			expect(await setSetting('customAICommands', commands, 42)).toBe(true);
+			expect(mockSettingsStore.set).toHaveBeenCalledExactlyOnceWith('customAICommands', commands);
+			expect(mockWebServer.broadcastCustomCommands).toHaveBeenCalledExactlyOnceWith(commands);
+			mockSettingsStore.set.mockImplementationOnce(() => {
+				throw new Error('synthetic disk failure');
+			});
+			expect(await setSetting('customAICommands', commands, 42)).toBe(false);
+			expect(mockWebServer.broadcastCustomCommands).toHaveBeenCalledOnce();
+		});
+		it('notifies every desktop window and web peer after an external CLI command save', async () => {
+			const { setSetting } = registerPersistenceHandlers({
+				settingsStore: mockSettingsStore as unknown as Store<MaestroSettings>,
+				sessionsStore: mockSessionsStore as unknown as Store<SessionsData>,
+				groupsStore: mockGroupsStore as unknown as Store<GroupsData>,
+				getWebServer: getWebServerFn,
+				flushSessionWrites: mockFlushSessionWrites,
+			});
+			const host = {
+				isDestroyed: () => false,
+				webContents: { id: 42, send: vi.fn(), isDestroyed: () => false },
+			};
+			vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([host] as any);
+			mockWebServer.getWebClientCount.mockReturnValue(1);
+			const commands = [
+				{
+					id: 'synthetic',
+					command: '/synthetic',
+					description: 'Synthetic',
+					prompt: 'Synthetic prompt',
+				},
+			];
+			expect(await setSetting('customAICommands', commands)).toBe(true);
+			expect(host.webContents.send).toHaveBeenCalledExactlyOnceWith('settings:externalChange');
+			expect(mockWebServer.broadcastCustomCommands).toHaveBeenCalledExactlyOnceWith(commands);
+		});
 		it.each(['mediaModelDirectory.child', 'mediaModelDirectory.child.deep'])(
 			'rejects nested media key %s without overwriting the directory',
 			async (key) => {

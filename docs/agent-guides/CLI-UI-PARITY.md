@@ -463,6 +463,31 @@ Closing/disconnecting Lite never stops host workloads. Errors return
 uncertainty and never retries a potentially mutating command; read status before
 acting again.
 
+## Codex Memory command drafting
+
+`memory-command select --file <selection.json>`, `generate <request-id>`,
+`status <request-id>`, `cancel <request-id>`, `preview <request-id> --background`
+and `save <request-id> --file <edited-draft.json>`
+use the same host draft service, plugin/RPC and headless runner as the Memory
+Viewer. The `memory_command` message is restricted to authenticated local CLI
+connections. `--viewer` separates workflows within that boot's CLI principal;
+repeat it on every verb. Status is text-free; preview explicitly returns the
+validated draft as JSON. Optional `preview --editor` stages a draft separately from
+the existing Settings AI Commands form. **Review draft** adopts it after any normal
+Create/Edit form is saved or cancelled, preserving unsaved fields on delivery.
+`--focus` opens closed Settings at AI Commands; already open Settings keep their
+section. Default background placement leaves the current view in place. The
+Plugins flag gates the subscription, staged/active draft controls and save action;
+disabling it cancels drafts without affecting normal global command management.
+A host-issued editor alias delegates
+exactly that CLI request to the native form. Both the native form and CLI Save
+call the same request-bound save, collision validator, and confirmed settings
+writer. CLI Save reads only the three edited fields from an explicit JSON file;
+there is no direct settings-file writer, settings-set workaround, or file dialog.
+`status` confirms `saved`; `collision`/`retry` exit nonzero without consuming the
+preview. Cancel/revoke and foreign owners cannot bypass the live save checks.
+See [the example workflow](../../examples/plugins/memory-command-draft/README.md).
+
 ## Open gaps
 
 Ranked by how often an agent is likely to hit them. Every entry is buildable

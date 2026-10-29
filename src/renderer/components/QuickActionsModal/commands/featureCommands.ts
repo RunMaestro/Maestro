@@ -272,7 +272,7 @@ export function buildFeatureCommands({
 	if (
 		activeSession &&
 		setMemoryViewerOpen &&
-		hasActiveSessionCapability?.('supportsProjectMemory')
+		(activeSession.toolType === 'codex' || hasActiveSessionCapability?.('supportsProjectMemory'))
 	) {
 		commands.push({
 			id: 'openMemoryViewer',

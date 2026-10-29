@@ -30,6 +30,7 @@ export interface HeadlessAgentReply {
 	toolReceipts?: PluginToolReceipt[];
 }
 export interface HeadlessTurnSettings {
+	mode?: 'draft';
 	originalAttachment?: import('./plugin-media-tools').OriginalAttachmentLease;
 }
 
@@ -141,4 +142,17 @@ export function getActivePluginManager(): PluginManager | null {
 
 export function isPluginsFeatureEnabled(): boolean {
 	return pluginsEnabledCheck ? pluginsEnabledCheck() : false;
+}
+
+// Same live host workflow as Electron IPC; never a second request store or runner.
+let memoryCommandCli:
+	| ((
+			request: import('../../shared/memoryCommandDraft').MemoryCommandCliRequest
+	  ) => Promise<Record<string, unknown>>)
+	| null = null;
+export function setMemoryCommandCli(handler: typeof memoryCommandCli): void {
+	memoryCommandCli = handler;
+}
+export function getMemoryCommandCli(): typeof memoryCommandCli {
+	return memoryCommandCli;
 }

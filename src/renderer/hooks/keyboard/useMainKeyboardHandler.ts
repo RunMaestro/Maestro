@@ -1040,7 +1040,10 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				}
 			} else if (ctx.isShortcut(e, 'openMemoryViewer')) {
 				e.preventDefault();
-				if (ctx.hasActiveSessionCapability('supportsProjectMemory')) {
+				if (
+					activeSession?.toolType === 'codex' ||
+					ctx.hasActiveSessionCapability('supportsProjectMemory')
+				) {
 					ctx.setMemoryViewerOpen(true);
 					trackShortcut('openMemoryViewer');
 				}

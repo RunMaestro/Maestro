@@ -629,6 +629,59 @@ describe('useInputProcessing', () => {
 			vi.useRealTimers();
 		});
 
+		it.each(['idle', 'busy'] as const)(
+			'routes a saved global memory command through the Codex %s queue',
+			async (state) => {
+				vi.useFakeTimers();
+				try {
+					const saved = {
+						id: 'saved-memory-command',
+						command: '/memory-review',
+						description: 'Memory review',
+						prompt: 'Edited prompt: $ARGUMENTS',
+						isBuiltIn: false,
+					};
+					vi.mocked(window.maestro.settings.set).mockResolvedValueOnce(true);
+					expect(await useSettingsStore.getState().setCustomAICommands([saved])).toBe(true);
+					const session = createMockSession({
+						toolType: 'codex',
+						state,
+						aiTabs: [createMockTab({ state })],
+					});
+					const deps = createDeps({
+						activeSession: session,
+						sessionsRef: { current: [session] },
+						inputValue: '/memory-review synthetic change',
+						customAICommands: useSettingsStore.getState().customAICommands,
+					});
+					const { result } = renderHook(() => useInputProcessing(deps));
+					await act(async () => {
+						await result.current.processInput();
+					});
+					await act(async () => {
+						vi.advanceTimersByTime(100);
+					});
+					const item =
+						state === 'idle'
+							? mockProcessQueuedItemRef.current.mock.calls[0][1]
+							: useSessionStore.getState().sessions[0].executionQueue[0];
+					expect(item).toEqual(
+						expect.objectContaining({
+							type: 'command',
+							command: saved.command,
+							commandArgs: 'synthetic change',
+							tabId: session.activeTabId,
+						})
+					);
+					expect(mockProcessQueuedItemRef.current).toHaveBeenCalledTimes(state === 'idle' ? 1 : 0);
+					expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+				} finally {
+					useSettingsStore.setState({ customAICommands: [] });
+					vi.useRealTimers();
+				}
+			}
+		);
+
 		it('does not match unknown slash command as custom command', async () => {
 			const deps = createDeps({
 				inputValue: '/unknown-command',

@@ -19,6 +19,7 @@ import { DebugAgentProbeModal } from './DebugAgentProbeModal';
 import { WidgetGallery } from './widgets/WidgetGallery';
 import { ProfilingCaptureModal } from './ProfilingCaptureModal';
 import { useProfilingAutoStop } from '../hooks/ui/useProfilingAutoStop';
+import { useMemoryCommandEditor } from '../hooks/settings/useMemoryCommandEditor';
 import { WindowsWarningModal } from './WindowsWarningModal';
 import { OnboardingSeriesHost } from './OnboardingSeriesHost';
 import { AppOverlays } from './AppOverlays';
@@ -292,6 +293,7 @@ function AppStandaloneModalsInner({
 		setTourOpen,
 		tourFromWizard,
 	} = useModalActions();
+	const memoryCommandEditor = useMemoryCommandEditor(settingsModalOpen);
 
 	// Self-source file explorer state
 	const isGraphViewOpen = useFileExplorerStore((s) => s.isGraphViewOpen);
@@ -714,6 +716,7 @@ function AppStandaloneModalsInner({
 						initialSelectedPromptId={settingsPromptId}
 						initialSettingId={settingsSettingId}
 						initialNavigationRequest={settingsNavigationRequest}
+						memoryCommandEditor={memoryCommandEditor}
 						hasNoAgents={hasNoAgents}
 						onThemeImportError={(msg) => setFlashNotification(msg)}
 						onThemeImportSuccess={(msg) => setFlashNotification(msg)}

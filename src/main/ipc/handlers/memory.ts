@@ -18,6 +18,8 @@ import {
 } from '../../memory-manager';
 import { resolveMemoryLayout } from '../../memory-location';
 import type { MemoryTarget } from '../../../shared/agentMemory';
+import { createCodexMemorySourceResolver, readCodexMemory } from '../../agents/codex-memory';
+import { getSessionsStore } from '../../stores/getters';
 import { logger } from '../../utils/logger';
 
 const LOG_CONTEXT = '[IPC:Memory]';
@@ -35,7 +37,21 @@ export function registerMemoryHandlers(): void {
 
 	ipcMain.handle('memory:read', async (_event, target: MemoryTarget, filename: string) => {
 		try {
-			const content = await readMemoryEntry(await resolveMemoryLayout(target), filename);
+			const layout = await resolveMemoryLayout(target);
+			if (target.toolType === 'codex' && target.agentId && layout.scope === 'account') {
+				const resolveSource = createCodexMemorySourceResolver(
+					(id) =>
+						getSessionsStore()
+							.get('sessions', [])
+							.find((s) => s.id === id),
+					resolveMemoryLayout
+				);
+				return {
+					success: true,
+					...(await readCodexMemory(await resolveSource(target.agentId), filename)),
+				};
+			}
+			const content = await readMemoryEntry(layout, filename);
 			return { success: true, content };
 		} catch (error) {
 			logger.error(`Failed to read memory ${filename}: ${error}`, LOG_CONTEXT);
