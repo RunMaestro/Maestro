@@ -30,6 +30,9 @@ export interface ProgramLoopMemoEntry {
 }
 export type ProgramLoopMemo = Record<string, ProgramLoopMemoEntry>;
 
+const taskNotificationKey = (planId: string, task: PianolaPlan['tasks'][number]) =>
+	planId + ':' + task.id + (task.runId ? ':' + task.runId : '');
+
 export function validateProgramLoopMemo(raw: unknown): ProgramLoopMemo {
 	const result: ProgramLoopMemo = Object.create(null);
 	if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return result;
@@ -207,7 +210,10 @@ export async function runProgramLoopTick(
 				.map((task) => plan.id + ':' + task.id)
 		)
 	);
-	const retainedNotifications = memo.notifiedTaskIds.filter((key) => !reopenedTaskKeys.has(key));
+	const retainedNotifications = memo.notifiedTaskIds.filter(
+		(key) =>
+			![...reopenedTaskKeys].some((taskKey) => key === taskKey || key.startsWith(taskKey + ':'))
+	);
 	if (retainedNotifications.length !== memo.notifiedTaskIds.length) {
 		memo.notifiedTaskIds = retainedNotifications;
 		await deps.persistMemo(memo);
@@ -245,13 +251,13 @@ export async function runProgramLoopTick(
 			plan.tasks.some(
 				(task) =>
 					(task.status === 'needs_review' || task.status === 'failed') &&
-					!memo.notifiedTaskIds.includes(plan.id + ':' + task.id)
+					!memo.notifiedTaskIds.includes(taskNotificationKey(plan.id, task))
 			)
 		);
 		const task = attentionPlan?.tasks.find(
 			(task) =>
 				(task.status === 'needs_review' || task.status === 'failed') &&
-				!memo.notifiedTaskIds.includes(attentionPlan.id + ':' + task.id)
+				!memo.notifiedTaskIds.includes(taskNotificationKey(attentionPlan.id, task))
 		);
 		if (resolutions.length) {
 			kind = 'founder-resolution';
@@ -310,7 +316,7 @@ export async function runProgramLoopTick(
 			prompt: deps.prompt(kind, vars) + '\n\n[Pianola wake ' + id + ']',
 			...(kind === 'plan-finished' ? { planId: plans[0].id } : {}),
 			...(kind === 'task-needs-attention' && task && attentionPlan
-				? { taskKey: attentionPlan.id + ':' + task.id }
+				? { taskKey: taskNotificationKey(attentionPlan.id, task) }
 				: {}),
 			resolutionIds: resolutions.map((ask) => ask.id + ':' + ask.resolution!.resolvedAt),
 		};

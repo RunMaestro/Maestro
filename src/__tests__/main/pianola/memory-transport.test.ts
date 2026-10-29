@@ -247,6 +247,7 @@ it('lets newly registered idle owners resume a fully drained bank immediately', 
 	const f = await fixture(0);
 	expect(f.db.transport.ready(f.runtime)).toBe(true);
 	f.db.transport.fence();
+	expect(f.db.transport.ready(f.runtime)).toBe(false);
 	f.db.transport.drainOwner(f.runtime);
 	const second = f.db.transport.registerOwner();
 	expect(f.db.transport.ready(second)).toBe(true);
