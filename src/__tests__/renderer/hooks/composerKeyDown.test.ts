@@ -210,6 +210,23 @@ describe('handleComposerPickerKey', () => {
 		expect(handleComposerPickerKey(keyEvent({ key: 'ArrowLeft' }).event, p.options)).toBe(false);
 	});
 
+	it('keeps Escape from the window even when not isolated', () => {
+		const closing = keyEvent({ key: 'Escape' });
+		handleComposerPickerKey(closing.event, picker().options);
+		expect(closing.stopPropagation).toHaveBeenCalled();
+
+		const composing = keyEvent({ key: 'Escape', ...CHROMIUM_COMPOSING });
+		handleComposerPickerKey(composing.event, picker().options);
+		expect(composing.stopPropagation).toHaveBeenCalled();
+	});
+
+	it('leaves Escape alone while the picker is closed', () => {
+		const { event, stopPropagation, preventDefault } = keyEvent({ key: 'Escape' });
+		expect(handleComposerPickerKey(event, picker({ open: false }).options)).toBe(false);
+		expect(stopPropagation).not.toHaveBeenCalled();
+		expect(preventDefault).not.toHaveBeenCalled();
+	});
+
 	describe('during an IME composition', () => {
 		it.each([
 			{ key: 'Enter' },
@@ -245,9 +262,11 @@ describe('handleComposerPickerKey', () => {
 	});
 
 	it('stops handled keys only when isolated from the window keys', () => {
-		const shared = keyEvent({ key: 'Tab' });
-		handleComposerPickerKey(shared.event, picker().options);
-		expect(shared.stopPropagation).not.toHaveBeenCalled();
+		for (const key of ['ArrowDown', 'ArrowUp', 'Tab', 'Enter']) {
+			const shared = keyEvent({ key });
+			handleComposerPickerKey(shared.event, picker().options);
+			expect(shared.stopPropagation).not.toHaveBeenCalled();
+		}
 
 		for (const key of ['ArrowDown', 'ArrowUp', 'Tab', 'Enter', 'Escape']) {
 			const isolated = keyEvent({ key });

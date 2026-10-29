@@ -15,8 +15,13 @@
  * and `handleEscapeInMain` in `useKeyboardNavigation`, and the Cmd+F routing in
  * `useMainKeyboardHandler`) recognise only the AI composer. A composer they do
  * not know sets the flag, and every key handled here then stops propagating, so
- * a picker Tab cannot move panel focus and a picker Escape cannot blur the
- * composer the user is still typing in. The AI composer leaves it off.
+ * a picker Tab cannot move panel focus. The AI composer leaves it off.
+ *
+ * The picker's Escape stops propagating in every composer, isolated or not:
+ * the window's `handleEscapeInMain` blurs any composer it sees Escape in, and
+ * it cannot know a picker was open, so letting the key through took the caret
+ * away from a composer the user only meant to close the picker in. Escape with
+ * the picker closed is not touched and still reaches the window.
  *
  * IME composition: while a composition is active the keystroke belongs to the
  * input method, which confirms a candidate with Enter, moves between candidates
@@ -207,14 +212,19 @@ const PICKER_KEYS = new Set(['ArrowDown', 'ArrowUp', 'Tab', 'Enter', 'Escape']);
 
 function consume(e: React.KeyboardEvent, options: WindowIsolation): void {
 	e.preventDefault();
-	if (options.isolateFromWindowKeys) e.stopPropagation();
+	if (stopsAtComposer(e, options)) e.stopPropagation();
+}
+
+/** Whether a picker key must not reach the window handlers (see the module comment). */
+function stopsAtComposer(e: React.KeyboardEvent, options: WindowIsolation): boolean {
+	return options.isolateFromWindowKeys === true || e.key === 'Escape';
 }
 
 /**
  * Claim a key the IME is using without acting on it. No preventDefault, which
- * would keep the key from the input method; the window still does not see it
- * when the composer is isolated.
+ * would keep the key from the input method; the window still does not see a
+ * key `consume` would have stopped.
  */
 function yieldToIme(e: React.KeyboardEvent, options: WindowIsolation): void {
-	if (options.isolateFromWindowKeys) e.stopPropagation();
+	if (stopsAtComposer(e, options)) e.stopPropagation();
 }

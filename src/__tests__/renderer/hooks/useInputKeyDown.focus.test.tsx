@@ -172,3 +172,37 @@ describe('Escape out of command mode (real DOM)', () => {
 		expect(document.activeElement).toBe(getByTestId('transcript'));
 	});
 });
+
+describe('Escape in the @ picker (real DOM)', () => {
+	afterEach(() => {
+		mockInputContext.atMentionOpen = false;
+	});
+
+	function setup() {
+		mockInputContext.atMentionOpen = true;
+		const utils = render(<Composer commandMode="off" setCommandMode={vi.fn()} inputValue="@" />);
+		const composer = utils.getByLabelText('composer') as HTMLTextAreaElement;
+		act(() => composer.focus());
+		expect(document.activeElement).toBe(composer);
+		return { ...utils, composer };
+	}
+
+	it('closes the picker and leaves the caret in the composer', () => {
+		const { composer } = setup();
+
+		fireEvent.keyDown(composer, { key: 'Escape', bubbles: true });
+
+		expect(mockInputContext.setAtMentionOpen).toHaveBeenCalledWith(false);
+		expect(document.activeElement).toBe(composer);
+	});
+
+	it('leaves the caret in the composer when Escape cancels an IME composition', () => {
+		const { composer } = setup();
+
+		fireEvent.keyDown(composer, { key: 'Escape', bubbles: true, isComposing: true });
+
+		// The IME owns the key: the picker stays open and the window does not blur.
+		expect(mockInputContext.setAtMentionOpen).not.toHaveBeenCalled();
+		expect(document.activeElement).toBe(composer);
+	});
+});
