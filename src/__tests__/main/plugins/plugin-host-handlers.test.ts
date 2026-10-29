@@ -3218,7 +3218,7 @@ describe('request-bound memory command draft RPCs', () => {
 				provider: 'codex',
 				location: { kind: 'local' },
 				codexHome: memoryHome,
-				// Match the reader's canonical root even when the temp directory is an alias.
+				// Match the reader's async realpath: sync resolution can retain Windows short paths.
 				memoryRoot: await fs.promises.realpath(path.join(memoryHome, 'memories')),
 				relativePath: 'MEMORY.md',
 			},

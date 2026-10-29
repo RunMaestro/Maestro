@@ -69,7 +69,7 @@ describe('resolveMemoryLayout', () => {
 				sourceRef: {
 					sourceAgentId: 'a1',
 					codexHome,
-					// The configured home can be an alias (including Windows short paths).
+					// Match the reader's async realpath: sync resolution can retain Windows short paths.
 					memoryRoot: await fs.promises.realpath(layout.directoryPath),
 				},
 			});
