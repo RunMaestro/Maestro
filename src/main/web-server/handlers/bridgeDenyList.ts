@@ -47,6 +47,8 @@ const METHODS: Record<string, string> = {
 	history:
 		'add clear delete getAll getAllPaginated getCueGroupRuns getFilePath getGraphData getOffsetForTimestamp listSessions reload update updateSessionName',
 	images: 'resolve',
+	// The browser records what its user opens and browses, and reads it back for the prompt.
+	journey: 'append path read',
 	leaderboard: 'get getInstallationId getLongestRuns',
 	live: 'getLiveSessions getStatus',
 	logger: 'getLogLevel log',
@@ -59,12 +61,13 @@ const METHODS: Record<string, string> = {
 	parquet: 'close export open query',
 	permission: 'respond',
 	pianola:
-		'apply-suggestion dismiss-ask get-asks get-brief get-decisions get-programs get-rules get-suggestions memory resolve-ask revise-plan-task save-rules set-program-status skip-plan-task supervise-program supervisor-add supervisor-list supervisor-remove supervisor-set-enabled',
+		'apply-suggestion dismiss-ask get-asks get-brief get-decisions get-programs get-rules get-suggestions memory resolve-ask resolve-decision review-suggestion revise-plan-task save-rules set-program-status skip-plan-task supervise-program supervisor-add supervisor-list supervisor-remove supervisor-set-enabled',
 	playbooks: 'create delete deleteAll export import list update',
 	plugins: 'contributions get-activity get-grants get-groupings invoke-command invoke-tool list',
 	process:
 		'broadcast-user-input cancelCommand getActiveProcesses getHeadlessActivity interrupt isTerminalBusy kill resize runCommand spawn spawnTerminalTab write',
-	prompts: 'get getAll getAllIds getBundledDefault getPath listFiles reset save',
+	prompts:
+		'get getAll getAllIds getBundledDefault getPath getSystemPromptPaths listFiles reset save',
 	sessions:
 		'getActiveSessionId getAll getBootstrap getDeferredContent setActiveSessionId setAll setMany',
 	settings: 'get getAll set',
@@ -80,7 +83,7 @@ const METHODS: Record<string, string> = {
 	tabNaming: 'generateTabName',
 	tabs: 'aiTabClosed',
 	tempfile: 'delete read write',
-	web: 'broadcastSessionState broadcastTabsChange broadcastUserInput requestNewTab startAutoRun controlAutoRun',
+	web: 'getAutoRunStates broadcastSessionState broadcastTabsChange broadcastUserInput requestNewTab requestCloseTab requestReopenTab startAutoRun controlAutoRun',
 	windows: 'getForSession getState list',
 	// floatingWidgets:* is absent on purpose: the browser build never opens widget windows.
 };
@@ -163,7 +166,7 @@ export function isRemoteSettingReadable(key: unknown): key is string {
 export function isRemoteSettingWritable(key: unknown): key is string {
 	return (
 		isRemoteSettingReadable(key) &&
-		!/^(?:webAuth|webInterface|persistentWebLink|encoreFeatures|dataviewJs|installationId|globalShowHotkey|customSyncPath|iCloudSyncEnabled|sshRemotes|leaderboardRegistration)/.test(
+		!/^(?:pianolaLearningIdentity|webAuth|webInterface|persistentWebLink|encoreFeatures|dataviewJs|installationId|globalShowHotkey|customSyncPath|iCloudSyncEnabled|sshRemotes|leaderboardRegistration)/.test(
 			key
 		)
 	);

@@ -2113,13 +2113,17 @@ export const FilePreview = React.memo(
 					// content box edge to edge. The CSV / JSONL tables keep the
 					// padding but scroll themselves, so the column stacks the find
 					// bar over them instead of scrolling. Every other view is a
-					// document that scrolls inside this padded column.
+					// document that scrolls inside this padded column. Its bottom
+					// padding (`pb-24`) lets the last lines scroll clear of the
+					// round controls floating in the bottom corners (the ToC
+					// button is ~56px tall from the edge), so they never sit on
+					// top of the text.
 					className={
 						isParquet
 							? 'flex-1 min-h-0 overflow-hidden'
 							: isTablePane
 								? 'flex-1 min-h-0 flex flex-col overflow-hidden px-6 pt-3 pb-6'
-								: 'flex-1 overflow-y-auto px-6 pt-3 pb-6 scrollbar-thin'
+								: 'flex-1 overflow-y-auto px-6 pt-3 pb-24 scrollbar-thin'
 					}
 					style={
 						{

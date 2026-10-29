@@ -90,6 +90,7 @@ describe('TEMPLATE_VARIABLES constant', () => {
 		expect(variables).toContain('{{AGENT_GROUP}}');
 		expect(variables).toContain('{{AGENT_SESSION_ID}}');
 		expect(variables).toContain('{{AGENT_HISTORY_PATH}}');
+		expect(variables).toContain('{{AGENT_JOURNEY_PATH}}');
 		expect(variables).toContain('{{COMPUTER_HISTORY_DIR}}');
 		expect(variables).toContain('{{MAESTRO_RUN_PATH}}');
 		expect(variables).toContain('{{TAB_ID}}');
@@ -294,6 +295,19 @@ describe('substituteTemplateVariables', () => {
 			});
 			const result = substituteTemplateVariables('History: {{AGENT_HISTORY_PATH}}', context);
 			expect(result).toBe('History: ');
+		});
+
+		it('should replace {{AGENT_JOURNEY_PATH}} with journeyFilePath, and with nothing when unset', () => {
+			const file = '/Users/test/.config/Maestro/journey/session-123.jsonl';
+			expect(
+				substituteTemplateVariables(
+					'Journey: {{AGENT_JOURNEY_PATH}}',
+					createTestContext({ journeyFilePath: file })
+				)
+			).toBe(`Journey: ${file}`);
+			expect(
+				substituteTemplateVariables('Journey: {{AGENT_JOURNEY_PATH}}', createTestContext({}))
+			).toBe('Journey: ');
 		});
 
 		it('should replace {{MAESTRO_RUN_PATH}} with maestroRunPath, and with nothing when unset', () => {

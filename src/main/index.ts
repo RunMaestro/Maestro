@@ -1,3 +1,7 @@
+import { flushPendingSessionWrites } from './stores/instances';
+import { RelayConversations } from './plugins/relay-conversations';
+import { broadcastSessionLifecycle } from './ipc/handlers/persistence';
+import { transcriptMessagesToLogEntries, stripSynopsisTurns } from '../shared/transcriptMessages';
 import { canonicalJson } from '../shared/canonicalJson';
 import { realpathSync, lstatSync } from 'fs';
 import { PluginAuthorityError } from './plugins/plugin-authority';
@@ -6,6 +10,7 @@ import { PluginTlsHost } from './plugins/plugin-tls';
 import { PluginCueEvents } from './plugins/plugin-cue-events';
 import { CueReceiptStore } from './cue/cue-receipt-store';
 import { PluginPrimitives } from './plugins/plugin-primitives';
+import { createRelayMailReader } from './plugins/relay-mail/reader';
 import { PluginConfirmationWindows } from './plugins/plugin-confirmation-window';
 import { configurePluginCueHost } from './cue/triggers/cue-plugin-trigger-source';
 import {
@@ -46,6 +51,8 @@ import { WebServer } from './web-server';
 import { AgentDetector } from './agents';
 import { createAgentConfigLookup } from './agents/agent-config-lookup';
 import { shouldDropSentryEvent } from '../shared/sentryFilters';
+import { sentryUserForInstallation } from '../shared/sentryContext';
+import { v8OomFingerprint } from '../shared/sentryGrouping';
 import { getBuildProvenance } from './utils/build-provenance';
 import {
 	initGlobalHotkey,
@@ -212,7 +219,12 @@ import { initializeStatsDB, closeStatsDB } from './stats';
 import { createSshRemoteStoreAdapter } from './utils/ssh-remote-resolver';
 import { stopSessionCleanup } from './group-chat/group-chat-moderator';
 import { initializePrompts, getPrompt, savePrompt } from './prompt-manager';
-import { captureException } from './utils/sentry';
+import {
+	captureException,
+	attachSentryScopeTags,
+	noteSentryAgentInventory,
+	noteSentryWorkReasons,
+} from './utils/sentry';
 import {
 	resolveToFilePath,
 	configureImageStore,
@@ -477,9 +489,32 @@ if (crashReportingEnabled && !isDevelopment && !buildProvenance.sentryDsn) {
 if (crashReportingEnabled && !isDevelopment && buildProvenance.sentryDsn) {
 	const sentryDsn = buildProvenance.sentryDsn;
 	import('@sentry/electron/main')
-		.then(({ init, setTag, IPCMode }) => {
+		.then(({ init, setTags, IPCMode }) => {
+			const version = app.getVersion();
 			init({
 				dsn: sentryDsn,
+				// Identify the install (a random GUID, never anything about the person)
+				// on the scope from the first event, rather than tagging it after init.
+				// `user.id` is what Sentry's Users column, "users affected" alert
+				// conditions, and crash-free-user rates count; without it every issue
+				// read "Users 0". The tags ride `initialScope` for the same reason: an
+				// event captured before the post-init `setTag` calls ran used to miss
+				// them, and a minidump found on the next launch reads this persisted
+				// scope.
+				initialScope: {
+					user: sentryUserForInstallation(installationId),
+					tags: {
+						installationId,
+						// Release channel (rc vs stable): RC builds use a -RC suffix
+						// (e.g., 0.16.1-RC), stable builds use plain semver.
+						channel: version.includes('-RC') ? 'rc' : 'stable',
+						// Distinguish our own release builds from a fork that supplied its
+						// own DSN. Only official builds should ever reach the
+						// smash-labs/maestro project, so an `unofficial` event there means
+						// the provenance gate has a hole in it.
+						build: buildProvenance.official ? 'official' : 'unofficial',
+					},
+				},
 				// Set release version for better debugging
 				release: app.getVersion(),
 				// Use Classic IPC mode to avoid "sentry-ipc:// URL scheme not supported" errors
@@ -506,19 +541,20 @@ if (crashReportingEnabled && !isDevelopment && buildProvenance.sentryDsn) {
 						delete event.user.ip_address;
 						delete event.user.email;
 					}
+					// One issue per process type for V8 OOMs, not one per failing
+					// allocation site. See src/shared/sentryGrouping.ts. The tag lets one
+					// search find every OOM across those per-process issues.
+					const oomFingerprint = v8OomFingerprint(event);
+					if (oomFingerprint) {
+						event.fingerprint = oomFingerprint;
+						event.tags = { ...event.tags, 'native.crash': 'v8-oom' };
+					}
 					return event;
 				},
 			});
-			// Add installation ID to Sentry for error correlation across installations
-			setTag('installationId', installationId);
-			// Tag release channel (rc vs stable) based on version string
-			// RC builds use -RC suffix (e.g., 0.16.1-RC), stable builds use plain semver
-			const version = app.getVersion();
-			setTag('channel', version.includes('-RC') ? 'rc' : 'stable');
-			// Distinguish our own release builds from a fork that supplied its own DSN.
-			// Only official builds should ever reach the smash-labs/maestro project, so an
-			// `unofficial` event there means the provenance gate has a hole in it.
-			setTag('build', buildProvenance.official ? 'official' : 'unofficial');
+			// Auto Run / agent context recorded before Sentry finished loading, and
+			// every change after it (see setSentryScopeTags).
+			attachSentryScopeTags({ setTags });
 
 			// Start memory monitoring for crash diagnostics (MAESTRO-5A/4Y)
 			// Records breadcrumbs with memory state every minute, warns above 1GB heap
@@ -529,6 +565,18 @@ if (crashReportingEnabled && !isDevelopment && buildProvenance.sentryDsn) {
 				.catch((err) => {
 					logger.warn('Failed to start memory monitoring', 'Startup', { error: String(err) });
 				});
+			// Tag the scope with the main heap so a main-process OOM minidump says
+			// how much it was carrying when it died (#1862). Agent and Auto Run
+			// counts are written on change instead (see setSentryScopeTags).
+			import('./utils/heap-guard')
+				.then(({ startCrashContextSampling }) => {
+					startCrashContextSampling();
+				})
+				.catch((err) => {
+					logger.warn('Failed to start crash context sampling', 'Startup', {
+						error: String(err),
+					});
+				});
 		})
 		.catch((err) => {
 			logger.warn('Failed to initialize Sentry', 'Startup', { error: String(err) });
@@ -538,6 +586,17 @@ if (crashReportingEnabled && !isDevelopment && buildProvenance.sentryDsn) {
 // Create local references to stores for use throughout this module
 // These are convenience variables - the actual stores are managed by ./stores module
 const sessionsStore = getSessionsStore();
+
+// Crash-report context: which agent types are configured and what background
+// work is in flight. Both are only counts and agent TYPE ids (never names,
+// paths, or prompts) and are pushed to the Sentry scope only when they change,
+// so an event costs nothing extra. The inventory is refreshed by the sessions
+// persistence handlers; the work context follows the power manager's block
+// reasons, which every Auto Run, agent turn, Cue run, and group chat round
+// registers whether or not sleep prevention is enabled.
+noteSentryAgentInventory(sessionsStore.get('sessions', []));
+noteSentryWorkReasons(powerManager.getStatus().reasons);
+powerManager.onReasonsChanged(noteSentryWorkReasons);
 const groupsStore = getGroupsStore();
 const agentConfigsStore = getAgentConfigsStore();
 const agentCapabilitiesStore = getAgentCapabilitiesStore();
@@ -2218,6 +2277,9 @@ app
 			);
 		const setPluginSessionsRaw = (sessions: Array<Record<string, unknown>>): void => {
 			sessionsStore.set('sessions', sessions as never);
+			// Plugin create/delete changes the agent list without going through the
+			// sessions persistence handlers, so refresh the crash-report inventory here.
+			noteSentryAgentInventory(sessions);
 		};
 		const pluginTabsList = (sessionId?: string): PluginTabMetadata[] => {
 			const out: PluginTabMetadata[] = [];
@@ -2715,7 +2777,11 @@ app
 				(getLiveSessions() as SessionInfo[]).find((session) => session.id === agentId),
 			detectAgent: async (type) => {
 				const detected = await agentDetector?.getAgent(type);
-				return { available: detected?.available === true, path: detected?.path };
+				return {
+					available: detected?.available === true,
+					path: detected?.path,
+					customPath: detected?.customPath,
+				};
 			},
 			getAgentConfig: getAgentConfigForAgent,
 			getGlobalEnvVars: () => store.get('shellEnvVars', {}),
@@ -2723,8 +2789,8 @@ app
 			spawn: spawnAgent,
 			recordRelayOrigin: markRelaySession,
 			prepareSystemPrompt: prepareMaestroSystemPromptCli,
-			issueRunToken: (agentId, ttlMs, receiptToolId) =>
-				pluginToolRunIdentity.issue(agentId, ttlMs, receiptToolId),
+			issueRunToken: (agentId, ttlMs, receiptToolId, unattended) =>
+				pluginToolRunIdentity.issue(agentId, ttlMs, receiptToolId, unattended),
 			getRunReceipts: (token) => pluginToolRunIdentity.getReceipts(token),
 			hasRunReceiptOverflow: (token) => pluginToolRunIdentity.hasReceiptOverflowed(token),
 			revokeRunToken: (token) => pluginToolRunIdentity.revoke(token),
@@ -2735,6 +2801,56 @@ app
 					'[PluginAudit]'
 				),
 		});
+		const updateRelayAgent = (
+			agentId: string,
+			update: (
+				agent: import('./stores/types').StoredSession
+			) => import('./stores/types').StoredSession
+		): void => {
+			const sessions = sessionsStore.get('sessions', []);
+			const baseline = sessions.find((agent) => agent.id === agentId);
+			if (!baseline) throw new Error('Relay agent no longer exists');
+			const updated = update(baseline);
+			sessionsStore.set(
+				'sessions',
+				sessions.map((agent) => (agent.id === agentId ? updated : agent))
+			);
+			broadcastSessionLifecycle(undefined, {
+				added: [],
+				removedIds: [],
+				updated: [updated],
+				baselines: [baseline],
+			});
+		};
+		const relayConversations = new RelayConversations({
+			baseDir: path.join(app.getPath('userData'), 'relay-conversations'),
+			getAgent: (id) => sessionsStore.get('sessions', []).find((agent) => agent.id === id),
+			updateAgent: updateRelayAgent,
+			flush: flushPendingSessionWrites,
+			run: runHeadlessAgent,
+			loadTranscript: async (agentId, providerSessionId) => {
+				const agent = (sessionsStore.get('sessions', []) as unknown as SessionInfo[]).find(
+					(candidate) => candidate.id === agentId
+				);
+				if (!agent) throw new Error('Relay agent not found');
+				const storage = getSessionStorage(agent.toolType);
+				if (!storage) throw new Error('Relay provider transcript unavailable');
+				const remoteId = agent.sessionSshRemoteConfig?.enabled
+					? agent.sessionSshRemoteConfig.remoteId
+					: null;
+				const ssh = remoteId ? getSshRemoteById(remoteId) : undefined;
+				const transcript = await storage.readSessionMessages(
+					relayProjectPath(agent),
+					providerSessionId,
+					{ offset: 0, limit: 500 },
+					ssh
+				);
+				return transcriptMessagesToLogEntries(stripSynopsisTurns(transcript.messages));
+			},
+		});
+		await relayConversations
+			.reconcileInterrupted()
+			.catch(() => logger.warn('Relay receipts unavailable; continuity remains closed', 'Plugins'));
 		onHeadlessAgentActivityChange(() => {
 			safeSend('process:headlessActivity', getHeadlessAgentActivity());
 		});
@@ -3088,24 +3204,32 @@ app
 					);
 				},
 				providerSessions: pluginProviderSessions,
-				recordRelayTurn: async (agentId, prompt, result) => {
+				relayConversations,
+				recordRelayTurn: async (agentId, prompt, result, beforeWrite) => {
+					beforeWrite?.();
 					const agent = (sessionsStore.get('sessions', []) as SessionInfo[]).find(
 						(session) => session.id === agentId
 					);
 					if (!agent) return;
 					if (result.sessionId) markRelaySession(agent, result.sessionId);
 					const projectPath = relayProjectPath(agent);
-					await getHistoryManager().addEntry(agent.id, projectPath, {
-						id: crypto.randomUUID(),
-						type: 'RELAY',
-						timestamp: Date.now(),
-						summary: (result.response || result.error || prompt).slice(0, 500),
-						fullResponse: result.response || undefined,
+					await getHistoryManager().addEntry(
+						agent.id,
 						projectPath,
-						sessionId: agent.id,
-						agentSessionId: result.sessionId || undefined,
-						success: result.success,
-					});
+						{
+							id: crypto.randomUUID(),
+							type: 'RELAY',
+							timestamp: Date.now(),
+							summary: (result.response || result.error || prompt).slice(0, 500),
+							fullResponse: result.response || undefined,
+							projectPath,
+							sessionId: agent.id,
+							agentSessionId: result.sessionId || undefined,
+							success: result.success,
+						},
+						undefined,
+						beforeWrite
+					);
 				},
 				// Direct plugin dispatch is never user-present, so it requires the
 				// separate unattended consent on TOP of the interactive allowlist grant
@@ -3184,6 +3308,7 @@ app
 		});
 		pluginSandboxHost = sandboxHost;
 		pluginManager = new PluginManager({
+			relayMailReader: createRelayMailReader(pluginPrimitives, pluginBroker),
 			toolIdentity,
 			toolProofFiles,
 			assertToolProofStorageActive,
@@ -3219,10 +3344,14 @@ app
 			},
 			// Complete uninstall (invariant #8): purge the plugin's KV store, its
 			// plugins.<id>.* settings, and its event subscriptions.
-			purgePluginData: (id) => {
+			purgePluginData: async (id) => {
 				authStore.uninstall(id);
 				try {
-					primitiveState.purgePlugin(id);
+					try {
+						primitiveState.purgePlugin(id);
+					} finally {
+						if (id === RELAY_PLUGIN_ID) await relayConversations.purge();
+					}
 				} finally {
 					pluginProviderSessions.purge(id);
 					purgePluginData(id, {
@@ -3366,6 +3495,7 @@ app
 				approved?: unknown;
 				approvedHighRisk?: unknown;
 				unattended?: unknown;
+				originalAudioExport?: unknown;
 			};
 			const pluginId = typeof p.pluginId === 'string' ? p.pluginId : '';
 			const nonce = typeof p.nonce === 'string' ? p.nonce : '';
@@ -3383,6 +3513,7 @@ app
 				approved,
 				approvedHighRisk,
 				unattended,
+				originalAudioExport: p.originalAudioExport === true,
 			});
 			closeConsentWindow();
 			if (outcome.ok) {

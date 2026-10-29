@@ -16,6 +16,7 @@ import type {
 	PianolaSupervisedTarget,
 	PianolaSuggestionsFile,
 	PianolaPlan,
+	PianolaSuggestionReview,
 } from '../../shared/pianola/storage';
 import type { PianolaSupervisorSnapshot } from '../ipc/handlers/pianola';
 import type {
@@ -24,6 +25,8 @@ import type {
 	PianolaAskStatus,
 	PianolaBrief,
 } from '../../shared/pianola/pianola-programs';
+import type { PianolaDecisionResolution } from '../../shared/pianola/pianola-decision-lifecycle';
+import type { PianolaScopeDeliveryResult } from '../../shared/pianola/pianola-scope-cycle';
 
 /**
  * Creates the Pianola API object for contextBridge exposure.
@@ -65,9 +68,23 @@ export function createPianolaApi() {
 		skipPlanTask: (planId: string, taskId: string): Promise<PianolaPlan> =>
 			ipcRenderer.invoke('pianola:skip-plan-task', planId, taskId),
 
-		/** Read the staged learning suggestions (rule proposals + profile draft). */
+		/** An explicit human answer, guarded against stale asks and duplicate delivery. */
+		resolveDecision: (resolution: PianolaDecisionResolution): Promise<PianolaScopeDeliveryResult> =>
+			ipcRenderer.invoke('pianola:resolve-decision', resolution),
+
+		/** Read revalidated proposals, accepted provenance and durable rule conflicts. */
 		getSuggestions: (): Promise<PianolaSuggestionsFile> =>
 			ipcRenderer.invoke('pianola:get-suggestions'),
+
+		confirmDesktopOwner: (): Promise<void> => ipcRenderer.invoke('pianola:confirm-desktop-owner'),
+
+		/** Explicit owner accept/edit/reject with optimistic source-evidence validation. */
+		reviewSuggestion: (
+			review: PianolaSuggestionReview
+		): Promise<{
+			rules: PianolaRule[];
+			suggestions: PianolaSuggestionsFile;
+		}> => ipcRenderer.invoke('pianola:review-suggestion', review),
 
 		/** Approve a suggestion: persist a rule and/or a profile draft. Returns updated rules. */
 		applySuggestion: (payload: {

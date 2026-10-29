@@ -32,6 +32,7 @@
  */
 
 import { useEffect, useRef, useCallback, useState } from 'react';
+import { flushSync } from 'react-dom';
 import type { Session } from '../../types';
 import { isLimitError } from '../../../shared/types';
 import {
@@ -46,6 +47,15 @@ import { MAX_PERSISTED_SESSION_LOGS } from '../../../shared/deferredSessionConte
 import { closedTabHistoryContext, projectClosedTabHistory } from '../../../shared/closedTabHistory';
 import { persistClientSessionView } from '../../utils/activeSessionPersistence';
 import { isWebDesktop } from '../../utils/runtimeContext';
+import {
+	isBridgeTransportError,
+	isBridgeTransportReady,
+	isExpectedBridgeError,
+	WEB_BRIDGE_STATE_EVENT,
+} from '../../../shared/bridgeError';
+import { canonicalJson } from '../../../shared/canonicalJson';
+import { mergeSessionPersistenceChanges } from '../../../shared/sessionPersistenceMerge';
+import { useEventListener } from './useEventListener';
 
 /**
  * Thrown by `persistInternal` when the session registry was never read back
@@ -348,6 +358,19 @@ export interface UseDebouncedPersistenceReturn {
 /** Default debounce delay in milliseconds */
 export const DEFAULT_DEBOUNCE_DELAY = 2000;
 export const SESSION_PERSISTENCE_BASELINE_EVENT = 'maestro:session-persistence-baseline';
+const SESSION_PERSISTENCE_REBASE_EVENT = 'maestro:session-persistence-rebase';
+
+/** Reconcile unsent persistence intent with host state before restoring the view. */
+export function rebasePendingSessionChanges(hostSessions: Session[]): Session[] {
+	const detail = { sessions: hostSessions };
+	window.dispatchEvent(new CustomEvent(SESSION_PERSISTENCE_REBASE_EVENT, { detail }));
+	return detail.sessions;
+}
+
+export interface SessionPersistenceBaseline {
+	sessions: Session[];
+	recovered?: boolean;
+}
 
 /**
  * Diff two sessions arrays by reference identity per element.
@@ -402,9 +425,8 @@ export function useDebouncedPersistence(
 	initialLoadComplete: React.MutableRefObject<boolean>,
 	delay: number = DEFAULT_DEBOUNCE_DELAY
 ): UseDebouncedPersistenceReturn {
-	// Track if there are pending changes
 	const [isPending, setIsPending] = useState(false);
-	// Mirror isPending so the store subscription can avoid setState on every
+	const mountedRef = useRef(true);
 	// streaming tick after the first dirty mark (would re-render App).
 	const isPendingRef = useRef(false);
 
@@ -440,6 +462,11 @@ export function useDebouncedPersistence(
 	// Retain its wire snapshot until our first successful save; restoration must
 	// not turn that host-owned row into a client-created row without a baseline.
 	const peerBaselinesRef = useRef(new Map<string, Session>());
+	const recoveryGenerationRef = useRef(0);
+	// A submitted write may have reached the host even if its reply was lost.
+	// Recovery must discard that attempted diff and retain only later local edits.
+	const attemptedSessionsRef = useRef<Session[] | null>(null);
+	const uncertainBaselineRef = useRef<Session[] | null>(null);
 
 	/**
 	 * Run one persistence pass. Throws on failure so callers can decide
@@ -475,6 +502,7 @@ export function useDebouncedPersistence(
 		if (!useSessionStore.getState().sessionsReadOk) {
 			throw new Error(SESSIONS_NOT_READ_MESSAGE);
 		}
+		const recoveryGeneration = recoveryGenerationRef.current;
 		const current = sessionsRef.current;
 		const peerBaselines = peerBaselinesRef.current;
 		const observedBaselines = (previous: Session[] | null, toPersist: Session[]): Session[] => {
@@ -505,6 +533,7 @@ export function useDebouncedPersistence(
 							sessionsForPersistence,
 							observedBaselines(mountedSessionsRef.current, current)
 						);
+			if (recoveryGeneration !== recoveryGenerationRef.current) return;
 			if (ok === false) {
 				throw new Error('Session persistence returned false (recoverable disk error)');
 			}
@@ -525,6 +554,7 @@ export function useDebouncedPersistence(
 		const dirtyForPersistence = sessionsToPersist.map(prepareSessionForPersistence);
 		const baselines = observedBaselines(previouslyPersistedRef.current, sessionsToPersist);
 		const ok = await window.maestro.sessions.setMany(dirtyForPersistence, tombstones, baselines);
+		if (recoveryGeneration !== recoveryGenerationRef.current) return;
 		if (ok === false) {
 			throw new Error('sessions:setMany returned false (recoverable disk error)');
 		}
@@ -545,6 +575,9 @@ export function useDebouncedPersistence(
 	 * handle it, and an unhandled rejection here would just produce noise.
 	 */
 	const persistSessions = useCallback(async (): Promise<void> => {
+		// Reconnect is control flow. Keep the dirty streak without producing a
+		// rejected invoke for every background flush; connected retries it below.
+		if (!isBridgeTransportReady() || uncertainBaselineRef.current) return;
 		if (flushingRef.current) {
 			flushRequestedRef.current = true;
 			return new Promise<void>((resolve) => rerunWaitersRef.current.push(resolve));
@@ -552,18 +585,25 @@ export function useDebouncedPersistence(
 
 		flushingRef.current = true;
 		const snapshot = sessionsRef.current;
+		const recoveryGeneration = recoveryGenerationRef.current;
+		attemptedSessionsRef.current = snapshot;
 		try {
 			await persistInternal();
+			if (recoveryGeneration !== recoveryGenerationRef.current) return;
+			uncertainBaselineRef.current = null;
 			if (sessionsRef.current === snapshot && !flushRequestedRef.current) {
 				isPendingRef.current = false;
-				setIsPending(false);
+				if (mountedRef.current) setIsPending(false);
 			}
 		} catch (err) {
-			logger.warn(
-				'[Persistence] flush failed; isPending preserved for next-mutation/beforeunload retry',
-				undefined,
-				err
-			);
+			if (recoveryGeneration !== recoveryGenerationRef.current) return;
+			const uncertain = isBridgeTransportError(err)
+				? err.submission === 'unknown'
+				: err instanceof Error && err.message.startsWith('Submission uncertainty:');
+			if (uncertain) uncertainBaselineRef.current = snapshot;
+			if (mountedRef.current) setIsPending(true);
+			if (isExpectedBridgeError(err)) return;
+			logger.warn('[Persistence] flush failed; pending changes retained for retry', undefined, err);
 			// persistInternal throws a "recoverable disk error" only when the main
 			// process deliberately returned false from setAll/setMany (e.g. a
 			// transient ENOSPC) - it throws purely to preserve `isPending` for the
@@ -576,9 +616,10 @@ export function useDebouncedPersistence(
 					extra: { operation: 'useDebouncedPersistence.persistSessions' },
 				});
 			}
-			// Deliberately do NOT setIsPending(false) - the failed write is
-			// still pending. Next mutation OR beforeunload will retry.
+			// The dirty streak survives. Reconnect, the next mutation, or
+			// beforeunload can retry once the bridge is ready.
 		} finally {
+			if (attemptedSessionsRef.current === snapshot) attemptedSessionsRef.current = null;
 			flushingRef.current = false;
 			const waiters = rerunWaitersRef.current;
 			rerunWaitersRef.current = [];
@@ -615,6 +656,8 @@ export function useDebouncedPersistence(
 			// diffs against the baseline, so a no-op flush is harmless.
 			if (latestSessions) {
 				sessionsRef.current = latestSessions;
+				isPendingRef.current = true;
+				if (!isBridgeTransportReady() || uncertainBaselineRef.current) setIsPending(true);
 				return persistSessions();
 			}
 
@@ -626,6 +669,78 @@ export function useDebouncedPersistence(
 		},
 		[persistSessions]
 	);
+
+	useEventListener(SESSION_PERSISTENCE_REBASE_EVENT, (event) => {
+		if (!isPendingRef.current && !attemptedSessionsRef.current) return;
+		const baseline =
+			uncertainBaselineRef.current ??
+			attemptedSessionsRef.current ??
+			previouslyPersistedRef.current ??
+			mountedSessionsRef.current;
+		if (!baseline) return;
+		const detail = (event as CustomEvent<{ sessions: Session[] }>).detail;
+		const before = new Map(baseline.map((session) => [session.id, session]));
+		const local = new Map(sessionsRef.current.map((session) => [session.id, session]));
+		const hostIds = new Set(detail.sessions.map((session) => session.id));
+		detail.sessions = detail.sessions.flatMap((host) => {
+			const current = local.get(host.id);
+			const observed = before.get(host.id) ?? peerBaselinesRef.current.get(host.id);
+			if (!current) return before.has(host.id) ? [] : [host];
+			if (!observed) return [host];
+			const rebased = mergeSessionPersistenceChanges(
+				prepareSessionForPersistence(current),
+				host,
+				prepareSessionForPersistence(observed),
+				true,
+				true
+			);
+			// Transcript rows and runtime remain authoritative even when a local
+			// metadata edit was waiting to be saved alongside newer host events.
+			const hostTabs = new Map(host.aiTabs.map((tab) => [tab.id, tab]));
+			return [
+				{
+					...rebased,
+					aiLogs: host.aiLogs,
+					shellLogs: host.shellLogs,
+					aiTabs: rebased.aiTabs.map((tab) => ({
+						...tab,
+						logs: hostTabs.get(tab.id)?.logs ?? tab.logs,
+					})),
+				},
+			];
+		});
+		for (const session of local.values()) {
+			if (!hostIds.has(session.id) && !before.has(session.id))
+				detail.sessions.push(prepareSessionForPersistence(session));
+		}
+	});
+	useEventListener(WEB_BRIDGE_STATE_EVENT, (event) => {
+		if ((event as CustomEvent<{ state: string }>).detail?.state === 'connected') void flushNow();
+	});
+	useEventListener(SESSION_PERSISTENCE_BASELINE_EVENT, (event) => {
+		const { sessions, recovered } = (event as CustomEvent<SessionPersistenceBaseline>).detail;
+		if (recovered) {
+			recoveryGenerationRef.current++;
+			if (timerRef.current) clearTimeout(timerRef.current);
+			timerRef.current = null;
+			flushRequestedRef.current = false;
+			peerBaselinesRef.current.clear();
+			sessionsRef.current = useSessionStore.getState().sessions;
+			previouslyPersistedRef.current = sessions;
+			uncertainBaselineRef.current = null;
+			attemptedSessionsRef.current = null;
+			startupBaselineNeedsFullFlushRef.current = false;
+			// Restoration can preserve unsent edits and client workflows. The
+			// recovered host is their new baseline, not proof they were saved.
+			isPendingRef.current =
+				canonicalJson(sessionsRef.current.map(prepareSessionForPersistence)) !==
+				canonicalJson(sessions.map(prepareSessionForPersistence));
+			flushSync(() => setIsPending(isPendingRef.current));
+		}
+		for (const session of sessions) {
+			peerBaselinesRef.current.set(session.id, structuredClone(session));
+		}
+	});
 
 	// Debounced persistence via store subscribe (no App-level sessions subscription)
 	useEffect(() => {
@@ -640,14 +755,7 @@ export function useDebouncedPersistence(
 			}
 			for (const id of payload.removedIds ?? []) peerBaselinesRef.current.delete(id);
 		});
-		const rememberBootstrap = (event: Event) => {
-			for (const session of (event as CustomEvent<Session[]>).detail) {
-				peerBaselinesRef.current.set(session.id, structuredClone(session));
-			}
-		};
-		window.addEventListener(SESSION_PERSISTENCE_BASELINE_EVENT, rememberBootstrap);
 		const schedulePersist = () => {
-			// Skip persistence during initial load
 			if (!initialLoadComplete.current) {
 				return;
 			}
@@ -674,9 +782,11 @@ export function useDebouncedPersistence(
 			// Restoration writes the loaded tree BEFORE it marks the read as ok, so
 			// the read succeeding is the moment that tree becomes the baseline.
 			// Missing it left the first flush on setAll, which keeps every id the
+			const readJustSucceeded = state.sessionsReadOk && !prevState.sessionsReadOk;
+			if (state.sessions === prevState.sessions && !readJustSucceeded) return;
+			if (state.sessions === sessionsRef.current && !readJustSucceeded) return;
 			// client omits, so an agent removed during startup (a worktree child
 			// the startup scan found gone) came back on the next launch.
-			const readJustSucceeded = state.sessionsReadOk && !prevState.sessionsReadOk;
 			if (state.sessions === prevState.sessions && !readJustSucceeded) return;
 			sessionsRef.current = state.sessions;
 			if (initialLoadComplete.current && isWebDesktop()) {
@@ -702,7 +812,6 @@ export function useDebouncedPersistence(
 		return () => {
 			unsubscribe();
 			unsubscribePeerSnapshots?.();
-			window.removeEventListener(SESSION_PERSISTENCE_BASELINE_EVENT, rememberBootstrap);
 			if (timerRef.current) {
 				clearTimeout(timerRef.current);
 			}
@@ -711,7 +820,9 @@ export function useDebouncedPersistence(
 
 	// Flush on unmount to prevent data loss
 	useEffect(() => {
+		mountedRef.current = true;
 		return () => {
+			mountedRef.current = false;
 			// On unmount, if there are pending changes, persist immediately
 			if (timerRef.current) {
 				clearTimeout(timerRef.current);
@@ -720,12 +831,9 @@ export function useDebouncedPersistence(
 			// Only flush if initial load is complete - otherwise we might save an empty array
 			// before sessions have been loaded, wiping out the user's data
 			if (initialLoadComplete.current) {
-				// persistInternal can throw; we can't propagate from a cleanup
-				// function, so swallow + log. The next launch will reconcile
-				// from disk regardless.
-				persistInternal().catch((err) => {
-					logger.warn('[Persistence] unmount flush failed', undefined, err);
-				});
+				// Share the serialized path with active writes. Offline work remains
+				// pending rather than submitting a second, uncertain mutation.
+				void persistSessions();
 			}
 		};
 	}, []);
@@ -749,13 +857,9 @@ export function useDebouncedPersistence(
 	useEffect(() => {
 		const handleBeforeUnload = () => {
 			if (isPendingRef.current) {
-				// Synchronous flush for beforeunload - uses the same dirty-only
-				// path as the debounce timer (see persistInternal).
-				// Swallow rejections: the window is closing, there's no caller
-				// above to handle them.
-				persistInternal().catch((err) => {
-					logger.warn('[Persistence] beforeunload flush failed', undefined, err);
-				});
+				// Serialize with an in-flight write instead of submitting its diff
+				// twice. The shared path retains failed saves and handles errors.
+				void persistSessions();
 			}
 		};
 
@@ -764,7 +868,7 @@ export function useDebouncedPersistence(
 		return () => {
 			window.removeEventListener('beforeunload', handleBeforeUnload);
 		};
-	}, [persistInternal]);
+	}, [persistSessions]);
 
 	return { isPending, flushNow };
 }

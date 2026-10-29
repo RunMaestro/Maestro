@@ -229,6 +229,10 @@ This project uses [Husky](https://typicode.github.io/husky/) and [lint-staged](h
 3. If there are unfixable errors, the commit is blocked
 4. Fixed files are automatically re-staged
 
+The hook caps filename argument batches at 6,000 characters so large commits in
+long Windows worktree paths stay below `cmd.exe`'s command-line limit.
+`lint-staged` processes every batch; no staged files or checks are skipped.
+
 **Setup is automatic** - hooks are installed when you run `npm install` (via the `prepare` script).
 
 **Bypassing hooks (emergency only):**
@@ -240,7 +244,7 @@ git commit --no-verify -m "emergency fix"
 **Running lint-staged manually:**
 
 ```bash
-npx lint-staged
+npx lint-staged --max-arg-length 6000
 ```
 
 **Troubleshooting:**

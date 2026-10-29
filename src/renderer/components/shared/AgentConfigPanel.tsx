@@ -31,6 +31,12 @@ import { logger } from '../../utils/logger';
 import { useKnownAuthDirs } from '../../hooks/agent/useKnownAuthDirs';
 import { AuthPathValueInput } from './AuthPathValueInput';
 import { EnvVarKeyInput } from './EnvVarKeyInput';
+import {
+	ENV_VARS_ADVANCED_MODE_STORAGE_KEY,
+	EnvVarsDotEnvInput,
+	EnvVarsModeToggle,
+} from './EnvVarsDotEnvInput';
+import { usePersistedToggle } from '../../hooks/ui/usePersistedToggle';
 import { BLANK_ENV_VAR_KEY } from '../../../shared/envVarCatalog';
 import { useKnownEnvVarKeys } from '../../hooks/agent/useKnownEnvVarKeys';
 import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
@@ -351,6 +357,15 @@ export interface AgentConfigPanelProps {
 	onEnvVarRemove: (key: string, enabled?: boolean) => void;
 	onEnvVarAdd: () => void;
 	onEnvVarsBlur: () => void;
+	/**
+	 * Replace both records whole. Pass it to get the Basic / Advanced toggle,
+	 * where Advanced edits every variable as `.env` text; omit it and the panel
+	 * is rows only. It exists because the row callbacks above cannot express a
+	 * paste: several of them fired in one tick each rebuild the record from the
+	 * same stale copy, so only the last would survive. `disabledVars` is always
+	 * `{}` for a consumer that does not pass `customEnvVarsDisabled`.
+	 */
+	onEnvVarsReplace?: (vars: Record<string, string>, disabledVars: Record<string, string>) => void;
 	// Agent-specific config options
 	agentConfig: Record<string, any>;
 	/**
@@ -437,6 +452,7 @@ export function AgentConfigPanel({
 	onEnvVarRemove,
 	onEnvVarAdd,
 	onEnvVarsBlur,
+	onEnvVarsReplace,
 	agentConfig,
 	configOptionNotes,
 	onConfigChange,
@@ -523,6 +539,12 @@ export function AgentConfigPanel({
 	// has taken the caret. Not derived from "is this row blank": a blank row can
 	// also arrive from disk, and that one must not steal focus on modal open.
 	const [focusNewEnvVarRow, setFocusNewEnvVarRow] = useState(false);
+	const { value: envVarsAdvancedPreferred, setValue: setEnvVarsAdvanced } = usePersistedToggle(
+		ENV_VARS_ADVANCED_MODE_STORAGE_KEY
+	);
+	// A consumer that cannot take a whole-record replace stays on rows, whatever
+	// the remembered preference says.
+	const envVarsAdvanced = envVarsAdvancedPreferred && Boolean(onEnvVarsReplace);
 	const [showingTooltip, setShowingTooltip] = useState<string | null>(null);
 
 	// Track stable IDs for env var entries to prevent focus loss when keys change
@@ -919,9 +941,20 @@ export function AgentConfigPanel({
 				className={`${padding} rounded border`}
 				style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
 			>
-				<label className="block text-xs font-medium mb-2" style={{ color: theme.colors.textDim }}>
-					Environment Variables (optional)
-				</label>
+				<div className="flex items-center justify-between gap-2 mb-2">
+					<label className="block text-xs font-medium" style={{ color: theme.colors.textDim }}>
+						Environment Variables (optional)
+					</label>
+					{onEnvVarsReplace && (
+						<div onClick={(e) => e.stopPropagation()}>
+							<EnvVarsModeToggle
+								advanced={envVarsAdvanced}
+								onChange={setEnvVarsAdvanced}
+								theme={theme}
+							/>
+						</div>
+					)}
+				</div>
 				<div className="space-y-2">
 					{/* Built-in env vars (read-only, shown when showBuiltInEnvVars is true) */}
 					{showBuiltInEnvVars &&
@@ -976,91 +1009,109 @@ export function AgentConfigPanel({
 								</div>
 							</div>
 						))}
-					{/* User-defined env vars */}
-					{envVarRows.map(({ key, value, enabled, id }) => {
-						const off = !enabled;
-						return (
-							<div key={`env-var-${id}`} className="flex gap-2 items-center">
-								{canToggleEnvVars && (
+					{/* User-defined env vars, as `.env` text */}
+					{envVarsAdvanced && onEnvVarsReplace && (
+						<div onClick={(e) => e.stopPropagation()}>
+							<EnvVarsDotEnvInput
+								theme={theme}
+								envVars={customEnvVars}
+								disabledEnvVars={canToggleEnvVars ? customEnvVarsDisabled : undefined}
+								onChange={onEnvVarsReplace}
+								onBlur={onEnvVarsBlur}
+							/>
+						</div>
+					)}
+					{/* User-defined env vars, a row each */}
+					{!envVarsAdvanced &&
+						envVarRows.map(({ key, value, enabled, id }) => {
+							const off = !enabled;
+							return (
+								<div key={`env-var-${id}`} className="flex gap-2 items-center">
+									{canToggleEnvVars && (
+										<GhostIconButton
+											onClick={(e) => {
+												e.stopPropagation();
+												onEnvVarToggle?.(key, off);
+											}}
+											padding="p-2"
+											title={
+												off
+													? `Enable ${key || 'variable'} (currently not passed to this agent)`
+													: `Disable ${key || 'variable'} (keeps the value, stops passing it to this agent)`
+											}
+											color={off ? theme.colors.textDim : theme.colors.accent}
+										>
+											{off ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+										</GhostIconButton>
+									)}
+									<EnvVarKeyInput
+										theme={theme}
+										value={getKeyDisplayValue(key)}
+										onChange={(nextKey) => handleKeyInputChange(key, nextKey)}
+										onBlur={() => handleKeyBlur(key, value, enabled)}
+										toolType={agent.id}
+										knownEnvVarKeys={knownEnvVarKeys}
+										usedKeys={envVarKeys}
+										autoFocus={focusNewEnvVarRow && key === BLANK_ENV_VAR_KEY}
+										onAutoFocused={() => setFocusNewEnvVarRow(false)}
+										className="p-2 rounded border bg-transparent outline-none text-xs font-mono"
+										style={{
+											borderColor: theme.colors.border,
+											color: theme.colors.textMain,
+											opacity: off ? 0.45 : 1,
+											textDecoration: off ? 'line-through' : undefined,
+										}}
+									/>
+									<span
+										className="flex items-center text-xs"
+										style={{ color: theme.colors.textDim }}
+									>
+										=
+									</span>
+									<AuthPathValueInput
+										envVarKey={key}
+										value={value}
+										knownAuthDirs={knownAuthDirs}
+										onChange={(updatedValue) => onEnvVarValueChange(key, updatedValue, enabled)}
+										onBlur={() => onEnvVarsBlur()}
+										className="flex-[2] p-2 rounded border bg-transparent outline-none text-xs font-mono"
+										containerClassName="flex-[2] min-w-0"
+										style={{
+											borderColor: theme.colors.border,
+											color: theme.colors.textMain,
+											opacity: off ? 0.45 : 1,
+											textDecoration: off ? 'line-through' : undefined,
+										}}
+									/>
 									<GhostIconButton
 										onClick={(e) => {
 											e.stopPropagation();
-											onEnvVarToggle?.(key, off);
+											onEnvVarRemove(key, enabled);
 										}}
 										padding="p-2"
-										title={
-											off
-												? `Enable ${key || 'variable'} (currently not passed to this agent)`
-												: `Disable ${key || 'variable'} (keeps the value, stops passing it to this agent)`
-										}
-										color={off ? theme.colors.textDim : theme.colors.accent}
+										title="Remove variable"
+										color={theme.colors.textDim}
 									>
-										{off ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+										<Trash2 className="w-3 h-3" />
 									</GhostIconButton>
-								)}
-								<EnvVarKeyInput
-									theme={theme}
-									value={getKeyDisplayValue(key)}
-									onChange={(nextKey) => handleKeyInputChange(key, nextKey)}
-									onBlur={() => handleKeyBlur(key, value, enabled)}
-									toolType={agent.id}
-									knownEnvVarKeys={knownEnvVarKeys}
-									usedKeys={envVarKeys}
-									autoFocus={focusNewEnvVarRow && key === BLANK_ENV_VAR_KEY}
-									onAutoFocused={() => setFocusNewEnvVarRow(false)}
-									className="p-2 rounded border bg-transparent outline-none text-xs font-mono"
-									style={{
-										borderColor: theme.colors.border,
-										color: theme.colors.textMain,
-										opacity: off ? 0.45 : 1,
-										textDecoration: off ? 'line-through' : undefined,
-									}}
-								/>
-								<span className="flex items-center text-xs" style={{ color: theme.colors.textDim }}>
-									=
-								</span>
-								<AuthPathValueInput
-									envVarKey={key}
-									value={value}
-									knownAuthDirs={knownAuthDirs}
-									onChange={(updatedValue) => onEnvVarValueChange(key, updatedValue, enabled)}
-									onBlur={() => onEnvVarsBlur()}
-									className="flex-[2] p-2 rounded border bg-transparent outline-none text-xs font-mono"
-									containerClassName="flex-[2] min-w-0"
-									style={{
-										borderColor: theme.colors.border,
-										color: theme.colors.textMain,
-										opacity: off ? 0.45 : 1,
-										textDecoration: off ? 'line-through' : undefined,
-									}}
-								/>
-								<GhostIconButton
-									onClick={(e) => {
-										e.stopPropagation();
-										onEnvVarRemove(key, enabled);
-									}}
-									padding="p-2"
-									title="Remove variable"
-									color={theme.colors.textDim}
-								>
-									<Trash2 className="w-3 h-3" />
-								</GhostIconButton>
-							</div>
-						);
-					})}
+								</div>
+							);
+						})}
 					{/* Add new env var button */}
-					<button
-						onClick={(e) => {
-							e.stopPropagation();
-							setFocusNewEnvVarRow(true);
-							onEnvVarAdd();
-						}}
-						className="flex items-center gap-1 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
-						style={{ color: theme.colors.textDim }}
-					>
-						<Plus className="w-3 h-3" />
-						Add Variable
-					</button>
+					{!envVarsAdvanced && (
+						<button
+							onClick={(e) => {
+								e.stopPropagation();
+								setFocusNewEnvVarRow(true);
+								onEnvVarAdd();
+							}}
+							className="flex items-center gap-1 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+							style={{ color: theme.colors.textDim }}
+						>
+							<Plus className="w-3 h-3" />
+							Add Variable
+						</button>
+					)}
 				</div>
 				<p className="text-xs opacity-50 mt-2">
 					Agent-specific environment variables (overrides global environment variables from

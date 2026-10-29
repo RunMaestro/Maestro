@@ -741,16 +741,19 @@ export function ThoughtStreamPanel({ theme }: ThoughtStreamPanelProps) {
 						<button
 							type="button"
 							onClick={() => setBarMode('steer')}
-							className="flex-1 min-w-0 flex items-center justify-center gap-1.5 rounded px-2 py-1.5 text-xs font-semibold border transition-colors hover:brightness-125"
+							// Styled as Search's peer, not as a lit button: a filled
+							// warning border at rest reads as already active. The
+							// compass keeps the accent so the two stay told apart.
+							className="flex-1 min-w-0 flex items-center justify-center gap-1.5 rounded px-2 py-1.5 text-xs font-medium border transition-colors hover:bg-white/5"
 							style={{
-								backgroundColor: theme.colors.warning + '20',
-								borderColor: theme.colors.warning,
-								color: theme.colors.warning,
+								backgroundColor: theme.colors.bgActivity,
+								borderColor: theme.colors.border,
+								color: theme.colors.textMain,
 							}}
 							title={steerButtonTitle}
 							data-testid="thought-stream-steer-toggle"
 						>
-							<Compass className="w-3.5 h-3.5 shrink-0" />
+							<Compass className="w-3.5 h-3.5 shrink-0" style={{ color: theme.colors.warning }} />
 							<span className="truncate">
 								{panelWidth < COMPACT_STEER_LABEL_WIDTH ? 'Steer' : 'Steer Auto Run'}
 							</span>

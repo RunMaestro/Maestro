@@ -572,6 +572,7 @@ const EMPTY_SNAPSHOT: PortfolioSnapshot = { brief: null, asks: [], programs: [] 
 export function usePianolaDashboardData(): {
 	data: DashboardData;
 	portfolio: PortfolioData;
+	decisions: PianolaDecisionRecord[];
 	refresh: () => void;
 } {
 	const sessions = useSessionStore((s) => s.sessions);
@@ -615,5 +616,5 @@ export function usePianolaDashboardData(): {
 		() => derivePortfolio(data, snapshot, sessions),
 		[data, snapshot, sessions]
 	);
-	return { data, portfolio, refresh: () => setNonce((n) => n + 1) };
+	return { data, portfolio, decisions, refresh: () => setNonce((n) => n + 1) };
 }

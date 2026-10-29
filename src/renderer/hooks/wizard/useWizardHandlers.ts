@@ -16,7 +16,13 @@
  * Contexts: useInlineWizardContext, useWizard, useInputContext
  */
 
+import {
+	isBridgeTransportReady,
+	isExpectedBridgeError,
+	WEB_BRIDGE_STATE_EVENT,
+} from '../../../shared/bridgeError';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useEventListener } from '../utils/useEventListener';
 import type {
 	ToolType,
 	LogEntry,
@@ -237,6 +243,9 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 	// ========================================================================
 	// Slash command discovery effect
 	// ========================================================================
+	// Keep reconnects on the current effect's cancellable discovery operation.
+	const discoverCommandsRef = useRef<(() => void) | null>(null);
+	useEventListener(WEB_BRIDGE_STATE_EVENT, () => discoverCommandsRef.current?.());
 	useEffect(() => {
 		const currentSession = selectActiveSession(useSessionStore.getState());
 		if (!currentSession) return;
@@ -288,7 +297,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 					});
 				}
 			} catch (error) {
-				if (!cancelled) {
+				if (!cancelled && !isExpectedBridgeError(error)) {
 					logger.error(
 						'[SlashCommandDiscovery] Failed to fetch custom commands:',
 						undefined,
@@ -335,7 +344,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 					});
 				}
 			} catch (error) {
-				if (!cancelled) {
+				if (!cancelled && !isExpectedBridgeError(error)) {
 					logger.error(
 						'[SlashCommandDiscovery] Failed to discover agent commands:',
 						undefined,
@@ -345,13 +354,19 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 			}
 		};
 
-		if (currentSession.toolType === 'claude-code') {
-			fetchCustomCommands();
-		}
-		discoverAgentCommands();
+		const discover = () => {
+			if (!isBridgeTransportReady()) return;
+			if (currentSession.toolType === 'claude-code') {
+				void fetchCustomCommands();
+			}
+			void discoverAgentCommands();
+		};
+		discoverCommandsRef.current = discover;
+		discover();
 
 		return () => {
 			cancelled = true;
+			discoverCommandsRef.current = null;
 		};
 	}, [
 		activeSessionId,

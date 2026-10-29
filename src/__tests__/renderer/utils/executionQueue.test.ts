@@ -95,6 +95,20 @@ describe('executionQueue helpers', () => {
 });
 
 describe('mergeQueuedItemIntoPrevious', () => {
+	it.each([
+		['user', 'user', 'user'],
+		['user', 'auto', 'auto'],
+		['user', undefined, undefined],
+		['auto', 'user', 'auto'],
+		[undefined, 'user', undefined],
+	] as const)('keeps merged provenance conservative for %s + %s', (first, second, expected) => {
+		const result = mergeQueuedItemIntoPrevious(
+			[msg('a', { querySource: first }), msg('b', { querySource: second })],
+			'b'
+		);
+		expect(result?.queue[0].querySource).toBe(expected);
+	});
+
 	const msg = (id: string, overrides: Partial<QueuedItem> = {}): QueuedItem => ({
 		id,
 		timestamp: 0,

@@ -117,6 +117,16 @@ To report to your own Sentry project (a fork, or local debugging), set
 `MAESTRO_SENTRY_DSN` before `npm run build`. Those builds are tagged
 `build: unofficial`.
 
+Renderer source maps: the release workflow builds the renderer with
+`MAESTRO_RENDERER_SOURCEMAPS=1` (hidden maps, no `sourceMappingURL` in the bundle),
+runs `sentry-cli sourcemaps inject` + `upload` against `dist/renderer` when the
+`SENTRY_AUTH_TOKEN` secret is present (release = the tag version, url prefix
+`app://app/`), then deletes every `.map` before packaging. The token needs the
+`project:releases` scope. Without it the step skips and renderer frames stay minified.
+The `vendor-xterm` chunk is the one exception: `skip-xterm-minify` swaps in the
+unminified code after the map is built, so it drops that chunk's map rather than upload
+one that points at the wrong lines.
+
 Also starts memory monitoring for crash diagnostics (breadcrumbs every 60s, warns above 500MB heap).
 
 #### 8. Convenience Store References

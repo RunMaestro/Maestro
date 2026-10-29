@@ -1,3 +1,4 @@
+import { isExpectedBridgeError } from '../../shared/bridgeError';
 import { logger } from '../utils/logger';
 /**
  * IPC Wrapper Utility
@@ -97,7 +98,8 @@ export async function createIpcMethod<T>(options: IpcMethodOptions<T>): Promise<
 	try {
 		result = await options.call();
 	} catch (error) {
-		logger.error(`${options.errorContext} error:`, undefined, error);
+		const expected = isExpectedBridgeError(error);
+		if (!expected) logger.error(`${options.errorContext} error:`, undefined, error);
 		if (options.rethrow) {
 			// Caller is responsible for handling/reporting.
 			throw error;
@@ -105,7 +107,7 @@ export async function createIpcMethod<T>(options: IpcMethodOptions<T>): Promise<
 		// Swallow path: the caller never sees this error, so report it to
 		// Sentry here - otherwise IPC failures behind read methods (return
 		// default on error) would be invisible in production.
-		void captureException(error, { extra: { context: options.errorContext } });
+		if (!expected) captureException(error, { extra: { context: options.errorContext } });
 		return options.defaultValue as T;
 	}
 	return options.transform ? options.transform(result) : result;

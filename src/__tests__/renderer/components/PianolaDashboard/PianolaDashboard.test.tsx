@@ -8,8 +8,11 @@
  * exercises only the view layer.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
+import { createMockNativeDecisionPair } from '../../../helpers/pianola';
+import { startPianolaDecision } from '../../../../shared/pianola/pianola-decision-lifecycle';
+import type { PianolaDecisionLifecycle } from '../../../../shared/pianola/storage';
 import type { Theme } from '../../../../renderer/types';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import { createMockSession } from '../../../helpers/mockSession';
@@ -69,7 +72,7 @@ function portfolioFor(data: DashboardData): PortfolioData {
 }
 
 function mockHook(data: DashboardData, portfolio: PortfolioData = portfolioFor(data)): void {
-	hookMock.usePianolaDashboardData.mockReturnValue({ data, portfolio, refresh });
+	hookMock.usePianolaDashboardData.mockReturnValue({ data, portfolio, decisions: [], refresh });
 }
 
 function selectWorkspaceTab(label: string): void {
@@ -121,6 +124,10 @@ beforeEach(() => {
 	useSessionStore.setState({ sessions: [] });
 	mockHook(populatedData());
 	supervisorMock.usePianolaSupervisor.mockReturnValue({
+		targets: [],
+		health: [],
+		checkpoints: [],
+		saveScope: vi.fn(),
 		watched: [],
 		watchable: [],
 		autoWatchNewAgents: false,
@@ -149,7 +156,12 @@ describe('PianolaDashboard data mapping', () => {
 		selectWorkspaceTab('Watched');
 		expect(screen.getByText('Watched by Pianola')).toBeInTheDocument();
 		expect(screen.getByText('Watch an agent')).toBeInTheDocument();
+		expect(screen.queryByText('Agent 0')).not.toBeInTheDocument();
+		expect(screen.getByRole('button', { name: '+ Add selection' })).toBeInTheDocument();
+		fireEvent.click(screen.getByRole('button', { name: 'Show agents' }));
 		expect(screen.getByText('Agent 0')).toBeInTheDocument();
+		expect(screen.getByText('Agent 5')).toBeInTheDocument();
+		fireEvent.click(screen.getByRole('button', { name: 'Hide agents' }));
 		expect(screen.queryByText('Agent 5')).not.toBeInTheDocument();
 		fireEvent.click(screen.getByRole('button', { name: 'Show agents' }));
 		expect(screen.getByText('Agent 5')).toBeInTheDocument();
@@ -603,5 +615,212 @@ describe('PianolaDashboard program loop', () => {
 		expect(screen.queryByText('Lead')).not.toBeInTheDocument();
 		expect(screen.getByText('Auto-answered')).toBeInTheDocument();
 		expect(screen.getByText('use tabs')).toBeInTheDocument();
+	});
+});
+
+// Compose the existing native evidence factory with the production lifecycle
+// initializer rather than introducing another decision mock factory.
+const pair = createMockNativeDecisionPair('dashboard');
+const pendingRecord = startPianolaDecision(
+	{
+		id: 'dashboard-decision',
+		timestamp: pair.askedAt,
+		agentId: pair.evidence!.agentId,
+		tabId: pair.sessionId,
+		classification: pair.classification,
+		decision: {
+			action: 'escalate',
+			matchedRuleId: null,
+			reason: 'Chris must choose the local inspection.',
+		},
+		dispatched: false,
+		dryRun: false,
+	},
+	{
+		scopeId: '11111111-1111-4111-8111-111111111111',
+		configurationFingerprint: 'a'.repeat(64),
+		bindingFingerprint: 'b'.repeat(64),
+		agentId: pair.evidence!.agentId,
+		tabId: pair.sessionId,
+		messageId: pair.classification.evidence.messageId!,
+		decisionId: 'dashboard-decision',
+		cursor: { id: pair.classification.evidence.messageId!, count: 1, textLength: pair.ask.length },
+	},
+	'fixture-manager',
+	'fixture-group'
+);
+
+describe('scope decision rendered lifecycle and guarded human controls', () => {
+	let originalResolve: typeof window.maestro.pianola.resolveDecision;
+	afterEach(() => {
+		window.maestro.pianola.resolveDecision = originalResolve;
+	});
+	beforeEach(() => {
+		hookMock.usePianolaDashboardData.mockReturnValue({
+			data: emptyData(),
+			portfolio: emptyPortfolio(),
+			decisions: [structuredClone(pendingRecord)],
+			refresh,
+		});
+		originalResolve = window.maestro.pianola.resolveDecision;
+		window.maestro.pianola.resolveDecision = vi.fn();
+	});
+
+	it.each([
+		[
+			'mira_processing',
+			'manager',
+			'Manager processing',
+			'Manager',
+			'Review the bounded naming question',
+		],
+		['waiting_human', 'human', 'Waiting for human', 'Human', 'Choose count or total'],
+		['agent_running', 'recipient', 'Agent continuing', 'Agent', 'Continue the acknowledged task'],
+		['blocked', 'operator', 'Blocked', 'Operator', 'Restore native transcript access'],
+		['paused', 'none', 'Paused', 'None', 'Explicitly resume the scope'],
+		['done', 'none', 'Done', 'None', 'Completion confirmed in transcript'],
+	] as const)(
+		'renders %s with its responsible actor and concrete next action',
+		(status, nextActor, label, actor, nextAction) => {
+			const record = structuredClone(pendingRecord);
+			record.lifecycle = { ...record.lifecycle!, status, nextActor, nextAction };
+			hookMock.usePianolaDashboardData.mockReturnValue({
+				data: emptyData(),
+				portfolio: emptyPortfolio(),
+				decisions: [record],
+				refresh,
+			});
+			render(<PianolaDashboard theme={theme} onJumpToAgent={vi.fn()} />);
+			expect(screen.getByText(new RegExp(label))).toBeInTheDocument();
+			expect(screen.getByText(`${actor}: ${nextAction}`)).toBeInTheDocument();
+			expect(screen.queryByRole('button', { name: 'Send human answer' }) !== null).toBe(
+				status === 'waiting_human'
+			);
+		}
+	);
+
+	it.each(['dry-run', 'acknowledged', 'admitted', 'unknown', 'accepted', 'wrong-actor'] as const)(
+		'withholds the answer form for %s evidence',
+		(kind) => {
+			const record = structuredClone(pendingRecord);
+			if (kind === 'dry-run') record.dryRun = true;
+			if (kind === 'acknowledged') record.lifecycle!.acknowledgedAt = record.timestamp;
+			if (kind === 'wrong-actor') record.lifecycle!.nextActor = 'manager';
+			if (['admitted', 'unknown', 'accepted'].includes(kind)) {
+				record.lifecycle!.phase = 'answer';
+				record.lifecycle!.delivery =
+					kind === 'admitted' ? 'intent' : (kind as PianolaDecisionLifecycle['delivery']);
+				if (kind === 'admitted') record.deliveryStatus = 'admitted';
+			}
+			hookMock.usePianolaDashboardData.mockReturnValue({
+				data: emptyData(),
+				portfolio: emptyPortfolio(),
+				decisions: [record],
+				refresh,
+			});
+			render(<PianolaDashboard theme={theme} onJumpToAgent={vi.fn()} />);
+			expect(screen.queryByRole('textbox', { name: 'Human answer' })).not.toBeInTheDocument();
+		}
+	);
+
+	it('sends one trimmed explicit answer without actor spoofing and distinguishes acceptance from acknowledgment', async () => {
+		let finish!: (value: { status: 'accepted' }) => void;
+		vi.mocked(window.maestro.pianola.resolveDecision).mockReturnValue(
+			new Promise((resolve) => {
+				finish = resolve;
+			})
+		);
+		render(<PianolaDashboard theme={theme} onJumpToAgent={vi.fn()} />);
+		const send = screen.getByRole('button', { name: 'Send human answer' });
+		expect(send).toBeDisabled();
+		fireEvent.change(screen.getByRole('textbox', { name: 'Human answer' }), {
+			target: { value: '  Use count.  ' },
+		});
+		fireEvent.click(send);
+		expect(send).toBeDisabled();
+		fireEvent.click(send);
+		expect(window.maestro.pianola.resolveDecision).toHaveBeenCalledExactlyOnceWith({
+			decisionId: pendingRecord.id,
+			answer: 'Use count.',
+		});
+		await act(async () => {
+			finish({ status: 'accepted' });
+		});
+		expect(screen.getByRole('status')).toHaveTextContent(
+			'Answer accepted for delivery; awaiting agent acknowledgment.'
+		);
+		expect(screen.queryByText(/Agent continuing/)).not.toBeInTheDocument();
+		expect(refresh).toHaveBeenCalledTimes(1);
+	});
+
+	it.each(['rejected', 'error'] as const)(
+		'keeps the answer and exposes %s without claiming delivery',
+		async (kind) => {
+			if (kind === 'error')
+				vi.mocked(window.maestro.pianola.resolveDecision).mockRejectedValueOnce(
+					new Error('native transport unavailable')
+				);
+			else
+				vi.mocked(window.maestro.pianola.resolveDecision).mockResolvedValueOnce({
+					status: 'rejected',
+					error: 'pending ask changed',
+				});
+			render(<PianolaDashboard theme={theme} onJumpToAgent={vi.fn()} />);
+			fireEvent.change(screen.getByRole('textbox', { name: 'Human answer' }), {
+				target: { value: 'Use count.' },
+			});
+			fireEvent.click(screen.getByRole('button', { name: 'Send human answer' }));
+			await waitFor(() =>
+				expect(screen.getByRole('status')).toHaveTextContent(
+					kind === 'error' ? 'native transport unavailable' : 'pending ask changed'
+				)
+			);
+			expect(screen.getByRole('textbox', { name: 'Human answer' })).toHaveValue('Use count.');
+			expect(screen.getByRole('button', { name: 'Send human answer' })).toBeEnabled();
+			expect(refresh).toHaveBeenCalledTimes(1);
+		}
+	);
+	it('allows a human to retry a persisted definitive rejection after refresh', async () => {
+		const rejected = structuredClone(pendingRecord);
+		rejected.lifecycle = { ...rejected.lifecycle!, phase: 'answer', delivery: 'rejected' };
+		rejected.deliveryStatus = 'admitted';
+		vi.mocked(window.maestro.pianola.resolveDecision).mockResolvedValueOnce({ status: 'accepted' });
+		const view = render(<PianolaDashboard theme={theme} onJumpToAgent={vi.fn()} />);
+		hookMock.usePianolaDashboardData.mockReturnValue({
+			data: emptyData(),
+			portfolio: emptyPortfolio(),
+			decisions: [rejected],
+			refresh,
+		});
+		view.rerender(<PianolaDashboard theme={theme} onJumpToAgent={vi.fn()} />);
+		fireEvent.change(screen.getByRole('textbox', { name: 'Human answer' }), {
+			target: { value: 'Try again' },
+		});
+		fireEvent.click(screen.getByRole('button', { name: 'Send human answer' }));
+		await waitFor(() =>
+			expect(window.maestro.pianola.resolveDecision).toHaveBeenCalledWith({
+				decisionId: rejected.id,
+				answer: 'Try again',
+			})
+		);
+		expect(await screen.findByRole('status')).toHaveTextContent('Answer accepted for delivery');
+	});
+
+	it('shows the handler message without the Electron IPC wrapper', async () => {
+		vi.mocked(window.maestro.pianola.resolveDecision).mockRejectedValueOnce(
+			new Error(
+				"Error invoking remote method 'pianola:resolveDecision': Error: Pending question changed"
+			)
+		);
+		render(<PianolaDashboard theme={theme} onJumpToAgent={vi.fn()} />);
+		fireEvent.change(screen.getByRole('textbox', { name: 'Human answer' }), {
+			target: { value: 'Use count' },
+		});
+		fireEvent.click(screen.getByRole('button', { name: 'Send human answer' }));
+		await waitFor(() =>
+			expect(screen.getByRole('status')).toHaveTextContent('Pending question changed')
+		);
+		expect(screen.getByRole('status')).not.toHaveTextContent('Error invoking remote method');
+		expect(screen.getByRole('textbox', { name: 'Human answer' })).toHaveValue('Use count');
 	});
 });

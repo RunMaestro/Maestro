@@ -14,7 +14,11 @@
 
 import { EventEmitter } from 'events';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { FLOATING_WIDGET_SPECS, type FloatingWidgetBounds } from '../../../shared/floatingWidgets';
+import {
+	FLOATING_WIDGET_SPECS,
+	NO_FLOATING_WIDGET_OVERFLOW as NO_OVERFLOW,
+	type FloatingWidgetBounds,
+} from '../../../shared/floatingWidgets';
 
 const { created, WORK_AREA } = vi.hoisted(() => ({
 	created: [] as unknown[],
@@ -113,6 +117,7 @@ type MockWindow = EventEmitter & {
 };
 
 const GAUGE = FLOATING_WIDGET_SPECS['throughput-gauge'];
+const MEDIA = FLOATING_WIDGET_SPECS['media-player'];
 
 /** An in-memory bounds store and registry, standing in for the real ones. */
 function makeDeps(initial?: FloatingWidgetBounds, overrides: { isDevelopment?: boolean } = {}) {
@@ -514,5 +519,90 @@ describe('floating widget window bounds', () => {
 
 		widget.show();
 		expect(lastWindow().getBounds()).toMatchObject({ x: 400, y: 300 });
+	});
+});
+
+describe('floating widget window overflow', () => {
+	beforeEach(() => {
+		created.length = 0;
+		vi.useFakeTimers();
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	/** A painted media window whose card sits at `y` in the 1000px-tall work area. */
+	function mediaAt(y: number) {
+		const made = makeDeps({ x: 100, y, width: 420, height: 96 });
+		const widget = createFloatingWidgetWindow(MEDIA, made.deps);
+		widget.show();
+		const win = lastWindow();
+		paint(win);
+		return { ...made, widget, win };
+	}
+
+	it('grows the window below the card when there is room, and reports the card alone', () => {
+		const { widget, win } = mediaAt(100);
+
+		expect(widget.setOverflow({ above: 330, below: 280 })).toEqual({ above: 0, below: 280 });
+		expect(win.getBounds()).toEqual({ x: 100, y: 100, width: 420, height: 376 });
+		expect(widget.getBounds()).toEqual({ x: 100, y: 100, width: 420, height: 96 });
+	});
+
+	it('grows above the card when it sits at the bottom of the screen', () => {
+		const { widget, win } = mediaAt(880);
+
+		expect(widget.setOverflow({ above: 330, below: 280 })).toEqual({ above: 330, below: 0 });
+		expect(win.getBounds()).toEqual({ x: 100, y: 550, width: 420, height: 426 });
+		expect(widget.getBounds()).toEqual({ x: 100, y: 880, width: 420, height: 96 });
+	});
+
+	it('never saves the borrowed room as the window size', () => {
+		const { widget, store } = mediaAt(100);
+
+		widget.setOverflow({ above: 0, below: 280 });
+		vi.advanceTimersByTime(1000);
+
+		expect(store.value).toEqual({ x: 100, y: 100, width: 420, height: 96 });
+	});
+
+	it('keeps a drag made while the room is borrowed, then gives the room back', () => {
+		const { widget, win, store } = mediaAt(880);
+		widget.setOverflow({ above: 330, below: 280 });
+
+		userDrag(win, { x: 200, y: 450 });
+		vi.advanceTimersByTime(1000);
+		expect(store.value).toEqual({ x: 200, y: 780, width: 420, height: 96 });
+
+		expect(widget.setOverflow(NO_OVERFLOW)).toEqual(NO_OVERFLOW);
+		expect(win.getBounds()).toEqual({ x: 200, y: 780, width: 420, height: 96 });
+	});
+
+	it('gives the room back on hide and on reload', () => {
+		const { widget, win } = mediaAt(100);
+
+		widget.setOverflow({ above: 0, below: 280 });
+		widget.hide();
+		expect(win.getBounds()).toEqual({ x: 100, y: 100, width: 420, height: 96 });
+
+		widget.show();
+		widget.setOverflow({ above: 0, below: 280 });
+		win.webContents.emit('did-start-loading');
+		expect(win.getBounds()).toEqual({ x: 100, y: 100, width: 420, height: 96 });
+	});
+
+	it('keeps the borrowed room around a caller resize', () => {
+		const { widget, win } = mediaAt(100);
+		widget.setOverflow({ above: 0, below: 280 });
+
+		expect(widget.setBounds({ height: 300 })).toEqual({ x: 100, y: 100, width: 420, height: 300 });
+		expect(win.getBounds()).toEqual({ x: 100, y: 100, width: 420, height: 580 });
+	});
+
+	it('grants nothing without a window', () => {
+		const { deps } = makeDeps();
+		const widget = createFloatingWidgetWindow(MEDIA, deps);
+		expect(widget.setOverflow({ above: 0, below: 280 })).toEqual(NO_OVERFLOW);
 	});
 });

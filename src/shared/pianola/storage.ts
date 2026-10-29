@@ -23,7 +23,14 @@ import {
 	type PianolaProgram,
 	type PianolaAsk,
 } from './pianola-programs';
-import { matchHasNarrowingPredicate } from './pianola-policy';
+import { learnableDecisionAction, matchHasNarrowingPredicate } from './pianola-policy';
+import { canonicalJson } from '../canonicalJson';
+import { isPianolaOwnerPrincipal, type PianolaOwnerPrincipal } from './owner-identity';
+import {
+	isPianolaScopeId,
+	validatePianolaScopeSelection,
+	type PianolaScopeSelection,
+} from './pianola-scope';
 
 /** Editable rules file (JSON array of PianolaRule), in the Maestro config dir. */
 export const PIANOLA_RULES_FILENAME = 'maestro-pianola-rules.json';
@@ -147,10 +154,62 @@ export interface PianolaDecisionRecord {
 	decision: PianolaDecision;
 	/** True if Pianola actually sent a message (auto-answer that was dispatched). */
 	dispatched: boolean;
+	/** Native admission happened; until an outcome arrives delivery is uncertain. */
+	deliveryStatus?: 'admitted';
+	/** Scope decisions retain their recipient binding and attributable resolution. */
+	lifecycle?: PianolaDecisionLifecycle;
+	/** Immutable evidence of a transport-attributed owner decision; absent on legacy logs. */
+	humanEvidence?: PianolaHumanDecisionEvidence;
 	/** True if running in dry-run mode (never dispatches). */
 	dryRun: boolean;
 	/** Populated when a dispatch attempt failed. */
 	error?: string;
+}
+
+/** Native owner resolution, never inferred from a transcript's user role or answer text. */
+export interface PianolaHumanDecisionEvidence {
+	version: 1;
+	sourceKind: 'native-human-resolution';
+	principal: PianolaOwnerPrincipal;
+	actorId: string;
+	agentId: string;
+	/** Group membership at decision time; undefined metadata excludes the sample. */
+	groupId: string | null;
+	tabId: string;
+	questionMessageId: string;
+	/** ID of the native answer event, independent of the eventual transcript echo. */
+	answerMessageId: string;
+	askedAt: string;
+	answeredAt: string;
+	question: string;
+	answer: string;
+	/** Semantic interpretation is deliberately unknown until equivalence is established. */
+	action: string | null;
+	conditions: string[] | null;
+}
+
+export interface PianolaDecisionLifecycle {
+	version: 1;
+	guard: import('./pianola-scope-cycle').PianolaScopeDeliveryGuard;
+	managerAgentId: string;
+	managerTabId?: string;
+	groupId: string | null;
+	status: 'mira_processing' | 'waiting_human' | 'agent_running' | 'blocked' | 'paused' | 'done';
+	nextActor: 'manager' | 'human' | 'recipient' | 'operator' | 'none';
+	nextAction: string;
+	phase: 'judgment' | 'answer' | 'none';
+	delivery: 'not_sent' | 'intent' | 'accepted' | 'rejected' | 'unknown';
+	updatedAt: string;
+	deadlineAt?: number;
+	acknowledgedAt?: string;
+	/** Unknown transcript authors are never relabeled as human decisions. */
+	source: {
+		kind: 'rule' | 'manager' | 'human' | 'unknown';
+		actorId?: string;
+		tabId?: string;
+		timestamp?: string;
+	};
+	answerMessageId?: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -177,6 +236,20 @@ function validateMatch(raw: unknown): PianolaRule['match'] | null {
 		)
 			return null;
 		match.kinds = raw.kinds as PianolaSignalKind[];
+	}
+	if (raw.groupId !== undefined) {
+		if (raw.groupId !== null && (typeof raw.groupId !== 'string' || !raw.groupId.trim()))
+			return null;
+		match.groupId = raw.groupId as string | null;
+	}
+	if (raw.exactQuestion !== undefined) {
+		if (
+			typeof raw.exactQuestion !== 'string' ||
+			!raw.exactQuestion.trim() ||
+			raw.exactQuestion.length > 16000
+		)
+			return null;
+		match.exactQuestion = raw.exactQuestion;
 	}
 	if (raw.topicIncludes !== undefined) {
 		if (!isStringArray(raw.topicIncludes)) return null;
@@ -205,6 +278,11 @@ export function validatePianolaRule(raw: unknown): PianolaRule | null {
 	if (match === null) return null;
 
 	if (raw.scopeId !== undefined && typeof raw.scopeId !== 'string') return null;
+	if (
+		(raw.scope === 'agent' || raw.scope === 'group') &&
+		(typeof raw.scopeId !== 'string' || !raw.scopeId.trim() || raw.scopeId.length > 200)
+	)
+		return null;
 	if (raw.answer !== undefined && typeof raw.answer !== 'string') return null;
 	if (raw.description !== undefined && typeof raw.description !== 'string') return null;
 
@@ -236,7 +314,7 @@ export function validatePianolaRule(raw: unknown): PianolaRule | null {
 
 const CONFIDENCES = ['low', 'medium', 'high'] as const;
 
-function isValidClassification(raw: unknown): raw is PianolaClassification {
+export function isValidClassification(raw: unknown): raw is PianolaClassification {
 	if (!isRecord(raw)) return false;
 	if (!SIGNAL_KINDS.includes(raw.kind as PianolaSignalKind)) return false;
 	if (!RISKS.includes(raw.risk as PianolaRisk)) return false;
@@ -276,9 +354,102 @@ export function validatePianolaDecisionRecord(raw: unknown): PianolaDecisionReco
 	if (typeof raw.dispatched !== 'boolean' || typeof raw.dryRun !== 'boolean') return null;
 	if (raw.projectPath !== undefined && typeof raw.projectPath !== 'string') return null;
 	if (raw.error !== undefined && typeof raw.error !== 'string') return null;
+	if (raw.deliveryStatus !== undefined && raw.deliveryStatus !== 'admitted') return null;
+	if (raw.lifecycle !== undefined && !isValidLifecycle(raw.lifecycle)) return null;
 	if (!isValidClassification(raw.classification)) return null;
 	if (!isValidDecision(raw.decision)) return null;
+	if (raw.humanEvidence !== undefined && !isValidHumanDecisionEvidence(raw.humanEvidence))
+		return null;
+	if (raw.lifecycle !== undefined) {
+		const life = raw.lifecycle as PianolaDecisionLifecycle;
+		if (
+			life.guard.decisionId !== raw.id ||
+			life.guard.agentId !== raw.agentId ||
+			life.guard.tabId !== raw.tabId ||
+			life.guard.messageId !== raw.classification.evidence.messageId
+		)
+			return null;
+	}
+	if (raw.humanEvidence !== undefined) {
+		const evidence = raw.humanEvidence as PianolaHumanDecisionEvidence;
+		if (
+			evidence.agentId !== raw.agentId ||
+			evidence.tabId !== raw.tabId ||
+			evidence.questionMessageId !==
+				(raw.classification as PianolaClassification).evidence.messageId
+		)
+			return null;
+	}
 	return raw as unknown as PianolaDecisionRecord;
+}
+
+export function isValidHumanDecisionEvidence(raw: unknown): raw is PianolaHumanDecisionEvidence {
+	if (!isRecord(raw)) return false;
+	return (
+		raw.version === 1 &&
+		raw.sourceKind === 'native-human-resolution' &&
+		isPianolaOwnerPrincipal(raw.principal) &&
+		[
+			'actorId',
+			'agentId',
+			'tabId',
+			'questionMessageId',
+			'answerMessageId',
+			'question',
+			'answer',
+		].every((key) => typeof raw[key] === 'string' && !!(raw[key] as string).trim()) &&
+		['askedAt', 'answeredAt'].every(
+			(key) => typeof raw[key] === 'string' && Number.isFinite(Date.parse(raw[key] as string))
+		) &&
+		(raw.groupId === null || (typeof raw.groupId === 'string' && !!raw.groupId)) &&
+		(raw.action === null || (typeof raw.action === 'string' && !!raw.action.trim())) &&
+		(raw.conditions === null || isStringArray(raw.conditions))
+	);
+}
+
+function isValidLifecycle(raw: unknown): raw is PianolaDecisionLifecycle {
+	if (!isRecord(raw) || raw.version !== 1 || !isRecord(raw.guard) || !isRecord(raw.source))
+		return false;
+	const guard = raw.guard;
+	return (
+		[
+			'scopeId',
+			'configurationFingerprint',
+			'bindingFingerprint',
+			'agentId',
+			'tabId',
+			'messageId',
+			'decisionId',
+		].every((key) => typeof guard[key] === 'string' && guard[key].length > 0) &&
+		isRecord(guard.cursor) &&
+		typeof guard.cursor.id === 'string' &&
+		Number.isSafeInteger(guard.cursor.count) &&
+		(guard.cursor.count as number) > 0 &&
+		Number.isSafeInteger(guard.cursor.textLength) &&
+		(guard.cursor.textLength as number) >= 0 &&
+		typeof raw.managerAgentId === 'string' &&
+		!!raw.managerAgentId &&
+		(raw.managerTabId === undefined || typeof raw.managerTabId === 'string') &&
+		(raw.groupId === null || typeof raw.groupId === 'string') &&
+		['mira_processing', 'waiting_human', 'agent_running', 'blocked', 'paused', 'done'].includes(
+			raw.status as string
+		) &&
+		['manager', 'human', 'recipient', 'operator', 'none'].includes(raw.nextActor as string) &&
+		typeof raw.nextAction === 'string' &&
+		['judgment', 'answer', 'none'].includes(raw.phase as string) &&
+		['not_sent', 'intent', 'accepted', 'rejected', 'unknown'].includes(raw.delivery as string) &&
+		typeof raw.updatedAt === 'string' &&
+		(raw.deadlineAt === undefined ||
+			(typeof raw.deadlineAt === 'number' && Number.isFinite(raw.deadlineAt))) &&
+		(raw.acknowledgedAt === undefined || typeof raw.acknowledgedAt === 'string') &&
+		(raw.answerMessageId === undefined || typeof raw.answerMessageId === 'string') &&
+		['rule', 'manager', 'human', 'unknown'].includes(raw.source.kind as string) &&
+		(raw.source.actorId === undefined || typeof raw.source.actorId === 'string') &&
+		(raw.source.timestamp === undefined || typeof raw.source.timestamp === 'string') &&
+		(!['manager', 'human'].includes(raw.source.kind as string) ||
+			(typeof raw.source.actorId === 'string' && !!raw.source.actorId)) &&
+		(raw.source.tabId === undefined || typeof raw.source.tabId === 'string')
+	);
 }
 
 /** Validate an untrusted rules payload, dropping any malformed entries. */
@@ -390,14 +561,15 @@ export function validatePianolaPlansFile(raw: unknown): PianolaPlansFile {
 export const PIANOLA_SUPERVISOR_FILENAME = 'maestro-pianola-supervisor.json';
 
 /** Background process kinds kept alive by the desktop supervisor. */
-export type PianolaSupervisedKind = 'watch' | 'orchestrate' | 'program';
+export type PianolaSupervisedKind = 'watch' | 'watch-scope' | 'orchestrate' | 'program';
 
 /**
  * One persisted background target the desktop supervisor manages. A 'watch'
  * target babysits a tab and needs both tabId and agentId; an 'orchestrate'
  * target drives a saved plan to completion and needs planId; a 'program'
  * target drives a program lead loop and needs programId. The optional
- * intervalSeconds / concurrency / idleHours tune the spawned CLI command.
+ * intervalSeconds / concurrency / idleHours tune the spawned CLI command. A 'watch-scope'
+ * target selects whole agents/groups and needs selection + managerAgentId.
  */
 export interface PianolaSupervisedTarget {
 	id: string;
@@ -410,6 +582,9 @@ export interface PianolaSupervisedTarget {
 	programId?: string;
 	intervalSeconds?: number;
 	concurrency?: number;
+	/** Agent/group selection, or a readable legacy selection awaiting migration. */
+	selection?: PianolaScopeSelection;
+	managerAgentId?: string;
 	/** Auto-watch targets are removed when their agent session is closed. */
 	autoCreated?: boolean;
 	/** Watch only: hours idle before the watcher retires itself (0 = never). */
@@ -430,7 +605,13 @@ export interface PianolaSupervisorFile {
 export function validatePianolaSupervisedTarget(raw: unknown): PianolaSupervisedTarget | null {
 	if (!isRecord(raw)) return null;
 	if (typeof raw.id !== 'string' || raw.id.length === 0) return null;
-	if (raw.kind !== 'watch' && raw.kind !== 'orchestrate' && raw.kind !== 'program') return null;
+	if (
+		raw.kind !== 'watch' &&
+		raw.kind !== 'watch-scope' &&
+		raw.kind !== 'orchestrate' &&
+		raw.kind !== 'program'
+	)
+		return null;
 	if (typeof raw.enabled !== 'boolean') return null;
 	if (typeof raw.createdAt !== 'number' || !Number.isFinite(raw.createdAt)) return null;
 
@@ -477,6 +658,22 @@ export function validatePianolaSupervisedTarget(raw: unknown): PianolaSupervised
 		}
 		target.idleHours = raw.idleHours;
 	}
+	if (target.kind === 'watch-scope') {
+		// The discriminated selection validator retains old path-based records
+		// without turning their roots into permission to monitor whole agents.
+		const selection = validatePianolaScopeSelection(raw.selection);
+		if (
+			!isPianolaScopeId(target.id) ||
+			!selection ||
+			typeof raw.managerAgentId !== 'string' ||
+			!raw.managerAgentId.trim() ||
+			raw.managerAgentId.length > 200
+		)
+			return null;
+		if (target.tabId || target.agentId || target.planId || target.autoCreated) return null;
+		target.selection = selection;
+		target.managerAgentId = raw.managerAgentId;
+	}
 
 	// Drop targets that lack the fields their kind needs to spawn a valid command.
 	if (target.kind === 'watch' && (!target.tabId || !target.agentId)) return null;
@@ -507,6 +704,143 @@ export function validatePianolaSupervisorFile(raw: unknown): PianolaSupervisorFi
  * written by the scheduled re-learn job and read by the in-app suggestions UI.
  * Nothing here is live; the user approves individual items to persist them.
  */
+export interface PianolaSuggestionCandidate {
+	id: string;
+	/** Exact disabled draft; timestamps are not part of the evidence identity. */
+	rule: PianolaRule;
+	action: string;
+	conditions: string[];
+	/** Explicit descriptions of the draft's enforced boundaries, not new policy. */
+	exclusions: string[];
+	evidence: PianolaHumanDecisionEvidence[];
+	sampleCount: number;
+	evidenceFingerprint: string;
+}
+
+export interface PianolaSuggestionRejection {
+	sourceKind: 'native-human-review';
+	principal: PianolaOwnerPrincipal;
+	candidateId: string;
+	evidenceFingerprint: string;
+	/** Retain the rejected proposal and its source links for audit/review. */
+	candidate: PianolaSuggestionCandidate;
+	rejectedAt: number;
+	actorId: string;
+	reason?: string;
+}
+
+/** Human approval receipt. Live activation is determined from the rules file. */
+export interface PianolaSuggestionApproval {
+	sourceKind: 'native-human-review';
+	principal: PianolaOwnerPrincipal;
+	candidate: PianolaSuggestionCandidate;
+	rule: PianolaRule;
+	approvedAt: number;
+	actorId: string;
+	edited: boolean;
+}
+
+/** Durable review request; neither its creation nor replay changes live policy. */
+export interface PianolaLearnedRuleConflict {
+	ruleId: string;
+	/** Bind to the exact accepted source version, including an intentional edit. */
+	evidenceFingerprint: string;
+	approvedAt: number;
+	detectedAt: number;
+	reason: 'source_corrected' | 'contradictory_decision';
+	status: 'needs_review';
+	nextActor: 'human';
+	nextAction: string;
+	/** Attributable new/corrected sources; the approval retains the original examples. */
+	evidence: PianolaHumanDecisionEvidence[];
+}
+
+export type PianolaSuggestionReview = {
+	candidateId: string;
+	evidenceFingerprint: string;
+} & (
+	| { operation: 'accept' }
+	| { operation: 'edit'; rule: PianolaRule }
+	| { operation: 'reject'; reason?: string }
+);
+
+/** Stable across generation time and corpus ordering; every source change matters. */
+export function pianolaCandidateEvidenceFingerprint(
+	candidate: Omit<PianolaSuggestionCandidate, 'evidenceFingerprint'>
+): string {
+	const { rule } = candidate;
+	return canonicalJson({
+		id: candidate.id,
+		scope: rule.scope,
+		scopeId: rule.scopeId,
+		match: rule.match,
+		action: candidate.action,
+		conditions: candidate.conditions,
+		exclusions: candidate.exclusions,
+		answer: rule.answer,
+		evidence: candidate.evidence.map((source) => canonicalJson(source)).sort(),
+	});
+}
+
+function validateSuggestionCandidate(raw: unknown): PianolaSuggestionCandidate | null {
+	if (!isRecord(raw)) return null;
+	const rule = validatePianolaRule(raw.rule);
+	if (
+		!rule ||
+		rule.enabled ||
+		rule.id !== raw.id ||
+		!['agent', 'group'].includes(rule.scope) ||
+		rule.action !== 'auto_answer' ||
+		rule.match.maxRisk !== 'low' ||
+		rule.match.kinds?.length !== 1 ||
+		rule.match.kinds[0] !== 'question' ||
+		rule.match.groupId === undefined ||
+		typeof raw.action !== 'string' ||
+		learnableDecisionAction(rule.match.exactQuestion ?? '') !== raw.action ||
+		!isStringArray(raw.conditions) ||
+		canonicalJson(raw.conditions) !== canonicalJson([rule.match.exactQuestion]) ||
+		!isStringArray(raw.exclusions) ||
+		!Array.isArray(raw.evidence) ||
+		raw.evidence.length === 0 ||
+		raw.sampleCount !== raw.evidence.length ||
+		typeof raw.evidenceFingerprint !== 'string'
+	)
+		return null;
+	const asks = new Set<string>();
+	const answers = new Set<string>();
+	for (const source of raw.evidence) {
+		if (
+			!isValidHumanDecisionEvidence(source) ||
+			source.question !== rule.match.exactQuestion ||
+			source.answer !== rule.answer ||
+			source.groupId !== rule.match.groupId ||
+			(rule.scope === 'agent' ? source.agentId : source.groupId) !== rule.scopeId ||
+			(source.action !== null && source.action !== raw.action) ||
+			(source.conditions !== null &&
+				canonicalJson(source.conditions) !== canonicalJson(raw.conditions))
+		)
+			return null;
+		const ask = canonicalJson([source.agentId, source.tabId, source.questionMessageId]);
+		const answer = canonicalJson([source.actorId, source.answerMessageId]);
+		if (asks.has(ask) || answers.has(answer)) return null;
+		asks.add(ask);
+		answers.add(answer);
+	}
+	const candidate: PianolaSuggestionCandidate = {
+		id: rule.id,
+		rule,
+		action: raw.action,
+		conditions: raw.conditions,
+		exclusions: raw.exclusions,
+		evidence: raw.evidence as PianolaHumanDecisionEvidence[],
+		sampleCount: raw.evidence.length,
+		evidenceFingerprint: raw.evidenceFingerprint,
+	};
+	return pianolaCandidateEvidenceFingerprint(candidate) === candidate.evidenceFingerprint
+		? candidate
+		: null;
+}
+
 export interface PianolaSuggestionsFile {
 	/** Epoch ms the suggestions were generated. */
 	generatedAt: number;
@@ -518,11 +852,18 @@ export interface PianolaSuggestionsFile {
 	proposedProfile: string;
 	/** The profile that was current when this draft was generated. */
 	previousProfile: string;
+	/** Optional only for legacy files; new synthesis always supplies source-linked candidates. */
+	candidates?: PianolaSuggestionCandidate[];
+	/** Review records survive regeneration, empty corpora and process restarts. */
+	rejections?: PianolaSuggestionRejection[];
+	approvals?: PianolaSuggestionApproval[];
+	conflicts?: PianolaLearnedRuleConflict[];
 }
 
 /**
  * Validate an untrusted suggestions payload, dropping malformed proposals.
- * Always returns a well-formed object so callers never null-check the shape.
+ * Legacy proposals degrade gracefully; invalid review evidence throws so a
+ * subsequent staging write cannot silently discard durable human decisions.
  */
 export function validatePianolaSuggestionsFile(raw: unknown): PianolaSuggestionsFile {
 	const result: PianolaSuggestionsFile = {
@@ -547,6 +888,135 @@ export function validatePianolaSuggestionsFile(raw: unknown): PianolaSuggestions
 	}
 	if (typeof raw.previousProfile === 'string') {
 		result.previousProfile = raw.previousProfile.slice(0, PIANOLA_PROFILE_MAX_CHARS);
+	}
+	// Review metadata must fail closed: silently dropping it could revive a rejected
+	// proposal or lose the human authorization for an edited rule.
+	if (raw.candidates !== undefined) {
+		if (!Array.isArray(raw.candidates)) throw new Error('InvalidSuggestionCandidates');
+		result.candidates = raw.candidates.map((item) => {
+			const candidate = validateSuggestionCandidate(item);
+			if (!candidate) throw new Error('InvalidSuggestionCandidate');
+			return candidate;
+		});
+		result.proposals = result.candidates.map((candidate) => candidate.rule);
+	}
+	if (raw.rejections !== undefined) {
+		if (!Array.isArray(raw.rejections)) throw new Error('InvalidSuggestionRejections');
+		result.rejections = raw.rejections.map((item) => {
+			if (
+				!isRecord(item) ||
+				item.sourceKind !== 'native-human-review' ||
+				!isPianolaOwnerPrincipal(item.principal) ||
+				typeof item.candidateId !== 'string' ||
+				!item.candidateId ||
+				typeof item.evidenceFingerprint !== 'string' ||
+				!item.evidenceFingerprint ||
+				typeof item.rejectedAt !== 'number' ||
+				!Number.isFinite(item.rejectedAt) ||
+				typeof item.actorId !== 'string' ||
+				!item.actorId.trim() ||
+				(item.reason !== undefined && typeof item.reason !== 'string')
+			)
+				throw new Error('InvalidSuggestionRejection');
+			const candidate = validateSuggestionCandidate(item.candidate);
+			if (
+				!candidate ||
+				candidate.id !== item.candidateId ||
+				candidate.evidenceFingerprint !== item.evidenceFingerprint
+			)
+				throw new Error('InvalidSuggestionRejection');
+			return {
+				sourceKind: 'native-human-review',
+				principal: item.principal,
+				candidateId: item.candidateId,
+				evidenceFingerprint: item.evidenceFingerprint,
+				candidate,
+				rejectedAt: item.rejectedAt,
+				actorId: item.actorId,
+				...(typeof item.reason === 'string' ? { reason: item.reason } : {}),
+			};
+		});
+	}
+	if (raw.approvals !== undefined) {
+		if (!Array.isArray(raw.approvals)) throw new Error('InvalidSuggestionApprovals');
+		result.approvals = raw.approvals.map((item) => {
+			if (
+				!isRecord(item) ||
+				item.sourceKind !== 'native-human-review' ||
+				!isPianolaOwnerPrincipal(item.principal)
+			)
+				throw new Error('InvalidSuggestionApproval');
+			const candidate = validateSuggestionCandidate(item.candidate);
+			const rule = validatePianolaRule(item.rule);
+			if (
+				!candidate ||
+				!rule ||
+				rule.id !== candidate.id ||
+				!rule.enabled ||
+				typeof item.approvedAt !== 'number' ||
+				!Number.isFinite(item.approvedAt) ||
+				typeof item.actorId !== 'string' ||
+				!item.actorId.trim() ||
+				typeof item.edited !== 'boolean'
+			)
+				throw new Error('InvalidSuggestionApproval');
+			if (
+				canonicalJson([rule.scope, rule.scopeId, rule.match, rule.action]) !==
+					canonicalJson([
+						candidate.rule.scope,
+						candidate.rule.scopeId,
+						candidate.rule.match,
+						candidate.rule.action,
+					]) ||
+				(!item.edited && rule.answer !== candidate.rule.answer)
+			)
+				throw new Error('InvalidSuggestionApproval');
+			return {
+				sourceKind: 'native-human-review',
+				principal: item.principal,
+				candidate,
+				rule,
+				approvedAt: item.approvedAt,
+				actorId: item.actorId,
+				edited: item.edited,
+			};
+		});
+	}
+	if (raw.conflicts !== undefined) {
+		if (!Array.isArray(raw.conflicts)) throw new Error('InvalidLearnedRuleConflicts');
+		result.conflicts = raw.conflicts.map((item) => {
+			if (
+				!isRecord(item) ||
+				!result.approvals?.some(
+					(approval) =>
+						approval.rule.id === item.ruleId &&
+						approval.candidate.evidenceFingerprint === item.evidenceFingerprint &&
+						approval.approvedAt === item.approvedAt
+				) ||
+				typeof item.detectedAt !== 'number' ||
+				!Number.isFinite(item.detectedAt) ||
+				!['source_corrected', 'contradictory_decision'].includes(String(item.reason)) ||
+				item.status !== 'needs_review' ||
+				item.nextActor !== 'human' ||
+				typeof item.nextAction !== 'string' ||
+				!item.nextAction.trim() ||
+				!Array.isArray(item.evidence) ||
+				!item.evidence.length ||
+				!item.evidence.every(isValidHumanDecisionEvidence)
+			)
+				throw new Error('InvalidLearnedRuleConflict');
+			return {
+				ruleId: item.ruleId as string,
+				evidenceFingerprint: item.evidenceFingerprint as string,
+				approvedAt: item.approvedAt as number,
+				detectedAt: item.detectedAt,
+				reason: item.reason as PianolaLearnedRuleConflict['reason'],
+				status: 'needs_review',
+				nextActor: 'human',
+				nextAction: item.nextAction,
+				evidence: item.evidence as PianolaHumanDecisionEvidence[],
+			};
+		});
 	}
 	return result;
 }

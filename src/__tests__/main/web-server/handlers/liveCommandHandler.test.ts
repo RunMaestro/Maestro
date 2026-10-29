@@ -28,8 +28,9 @@ vi.mock('../../../../main/web-server/live-mode', () => ({
 }));
 
 import { WebSocketMessageHandler } from '../../../../main/web-server/handlers/messageHandlers';
-import type { WebClient } from '../../../../main/web-server/handlers/messageHandlers';
 import { logger } from '../../../../main/utils/logger';
+import type { WebClient } from '../../../../main/web-server/handlers/messageHandlers';
+import WebSocket from 'ws';
 import type { LiveModeStatus } from '../../../../shared/liveMode';
 
 const OFF: LiveModeStatus = {
@@ -60,7 +61,7 @@ function createMockClient(cli = true) {
 		if (cb) pending.push(cb);
 	});
 	const client = {
-		socket: { send } as unknown as WebClient['socket'],
+		socket: { readyState: WebSocket.OPEN, send } as unknown as WebClient['socket'],
 		id: 'client-1',
 		connectedAt: 0,
 		cli,

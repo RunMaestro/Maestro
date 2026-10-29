@@ -51,11 +51,83 @@ import {
 	type DashboardResultRow,
 } from './usePianolaDashboardData';
 import { usePianolaSupervisor, type PianolaSupervisorState } from './usePianolaSupervisor';
+import { PianolaScopeControls } from './PianolaScopeControls';
 import type { PianolaSupervisedState } from '../../../main/pianola/pianola-supervisor';
 import { elevatedSurfaceStyle } from '../../utils/elevatedSurface';
 import { ipcErrorMessage } from '../../utils/ipcErrorMessage';
 import { updateSessionWith } from '../../stores/sessionStore';
 import { focusAiTabInSession } from '../../utils/tabHelpers';
+import type {
+	PianolaDecisionLifecycle,
+	PianolaDecisionRecord,
+} from '../../../shared/pianola/storage';
+
+const DECISION_STATUS: Record<PianolaDecisionLifecycle['status'], string> = {
+	mira_processing: 'Manager processing',
+	waiting_human: 'Waiting for human',
+	agent_running: 'Agent continuing',
+	blocked: 'Blocked',
+	paused: 'Paused',
+	done: 'Done',
+};
+
+const DECISION_ACTOR: Record<PianolaDecisionLifecycle['nextActor'], string> = {
+	manager: 'Manager',
+	human: 'Human',
+	recipient: 'Agent',
+	operator: 'Operator',
+	none: 'None',
+};
+
+function HumanDecision({
+	record,
+	refresh,
+}: {
+	record: PianolaDecisionRecord;
+	refresh: () => void;
+}): React.ReactElement {
+	const [answer, setAnswer] = React.useState('');
+	const [pending, setPending] = React.useState(false);
+	const [message, setMessage] = React.useState('');
+	return (
+		<form
+			onSubmit={(event) => {
+				event.preventDefault();
+				if (pending || !answer.trim()) return;
+				setPending(true);
+				setMessage('');
+				void window.maestro.pianola
+					.resolveDecision({ decisionId: record.id, answer: answer.trim() })
+					.then((result) => {
+						if (result.status === 'accepted') {
+							setAnswer('');
+							setMessage('Answer accepted for delivery; awaiting agent acknowledgment.');
+						} else setMessage(`${result.status}: ${result.error}`);
+						refresh();
+					})
+					.catch((error: unknown) => {
+						setMessage(ipcErrorMessage(error));
+						refresh();
+					})
+					.finally(() => setPending(false));
+			}}
+		>
+			<label>
+				Human answer{' '}
+				<textarea
+					value={answer}
+					maxLength={8000}
+					onChange={(event) => setAnswer(event.target.value)}
+					className="w-full text-black"
+				/>
+			</label>
+			<button type="submit" disabled={pending || !answer.trim()}>
+				Send human answer
+			</button>
+			{message && <div role="status">{message}</div>}
+		</form>
+	);
+}
 interface PianolaDashboardProps {
 	theme: Theme;
 	onJumpToAgent: (sessionId: string, tabId?: string) => void;
@@ -69,6 +141,7 @@ interface SectionProps {
 	emptyLabel: React.ReactNode;
 	headerAction?: React.ReactNode;
 	controlRow?: React.ReactNode;
+	collapsed?: boolean;
 	children: React.ReactNode;
 }
 
@@ -82,6 +155,7 @@ function Section({
 	emptyLabel,
 	headerAction,
 	controlRow,
+	collapsed = false,
 	children,
 }: SectionProps): React.ReactElement {
 	return (
@@ -102,7 +176,7 @@ function Section({
 				<div className="text-sm px-1 py-4" style={{ color: theme.colors.textDim }}>
 					{emptyLabel}
 				</div>
-			) : (
+			) : collapsed ? null : (
 				<div className="flex flex-col gap-2">{children}</div>
 			)}
 		</div>
@@ -944,7 +1018,7 @@ function WatchedSection({
 			<button
 				type="button"
 				disabled={watchable.length === 0}
-				onClick={() => setPickerOpen((o) => !o)}
+				onClick={() => setPickerOpen((open) => !open)}
 				className="flex items-center gap-1 text-xs px-2 py-1 rounded hover:bg-white/5 transition-colors disabled:opacity-40 disabled:cursor-default normal-case"
 				style={{ color: theme.colors.textDim }}
 				title={watchable.length === 0 ? 'No unwatched agents' : 'Watch an agent with Pianola'}
@@ -970,19 +1044,19 @@ function WatchedSection({
 							...elevatedSurfaceStyle(theme),
 						}}
 					>
-						{watchable.map((a) => (
+						{watchable.map((agent) => (
 							<button
-								key={a.agentId}
+								key={agent.agentId}
 								type="button"
 								onClick={() => {
 									setPickerOpen(false);
-									void watch(a.agentId, a.tabId);
+									void watch(agent.agentId, agent.tabId);
 								}}
 								className="w-full text-left px-3 py-1.5 text-sm flex items-center gap-2 hover:bg-white/5 transition-colors"
 								style={{ color: theme.colors.textMain }}
 							>
 								<Eye className="w-3.5 h-3.5 shrink-0" style={{ color: theme.colors.textDim }} />
-								<span className="truncate">{a.agentName}</span>
+								<span className="truncate">{agent.agentName}</span>
 							</button>
 						))}
 					</div>
@@ -998,6 +1072,7 @@ function WatchedSection({
 			title="Watched by Pianola"
 			count={watched.length}
 			emptyLabel="No agents watched yet. Add one and Pianola babysits its questions."
+			collapsed={collapsed}
 			headerAction={
 				<div className="flex items-center gap-1">
 					{collapsed && failingCount > 0 && (
@@ -1010,6 +1085,22 @@ function WatchedSection({
 						</span>
 					)}
 					{addButton}
+					{canCollapse && (
+						<button
+							type="button"
+							aria-expanded={!collapsed}
+							onClick={() => setExpanded((value) => !value)}
+							className="flex items-center gap-1 text-xs px-2 py-1 rounded hover:bg-white/5 normal-case"
+							style={{ color: theme.colors.textDim }}
+						>
+							{collapsed ? (
+								<ChevronRight className="w-3.5 h-3.5" />
+							) : (
+								<ChevronDown className="w-3.5 h-3.5" />
+							)}
+							{collapsed ? 'Show agents' : 'Hide agents'}
+						</button>
+					)}
 				</div>
 			}
 			controlRow={
@@ -1078,22 +1169,6 @@ function WatchedSection({
 					</button>
 				</div>
 			))}
-			{canCollapse && (
-				<button
-					type="button"
-					aria-expanded={!collapsed}
-					onClick={() => setExpanded((value) => !value)}
-					className="flex items-center gap-1 self-start text-xs px-2 py-1 rounded hover:bg-white/5 normal-case"
-					style={{ color: theme.colors.textDim }}
-				>
-					{collapsed ? (
-						<ChevronRight className="w-3.5 h-3.5" />
-					) : (
-						<ChevronDown className="w-3.5 h-3.5" />
-					)}
-					{collapsed ? 'Show agents' : 'Hide agents'}
-				</button>
-			)}
 		</Section>
 	);
 }
@@ -1103,8 +1178,9 @@ export function PianolaDashboard({
 	theme,
 	onJumpToAgent,
 }: PianolaDashboardProps): React.ReactElement {
-	const { data, portfolio, refresh } = usePianolaDashboardData();
+	const { data, portfolio, decisions, refresh } = usePianolaDashboardData();
 	const supervisor = usePianolaSupervisor();
+	const lifecycleDecisions = decisions.filter((record) => record.lifecycle);
 	const [secondaryView, setSecondaryView] = React.useState<SecondaryView>('programs');
 	const needsCount =
 		portfolio.asks.length +
@@ -1156,6 +1232,54 @@ export function PianolaDashboard({
 						Refresh
 					</button>
 				</header>
+
+				<PianolaScopeControls theme={theme} supervisor={supervisor} />
+
+				<Section
+					theme={theme}
+					icon={<ShieldQuestion className="w-3.5 h-3.5" />}
+					title="Pianola decisions"
+					count={lifecycleDecisions.length}
+					emptyLabel="No scope decisions recorded yet."
+				>
+					{lifecycleDecisions.map((record) => {
+						const life = record.lifecycle!;
+						return (
+							<div
+								key={record.id}
+								className="rounded px-3 py-2"
+								style={{ backgroundColor: theme.colors.bgSidebar }}
+							>
+								<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+									{DECISION_STATUS[life.status]} · {record.classification.topic}
+								</div>
+								<div className="text-xs" style={{ color: theme.colors.textDim }}>
+									{DECISION_ACTOR[life.nextActor]}: {life.nextAction}
+								</div>
+								{life.status === 'waiting_human' && (
+									<div className="text-sm select-text">
+										{record.classification.questionText ?? record.classification.topic} ·{' '}
+										{record.decision.reason}
+									</div>
+								)}
+								{life.status === 'waiting_human' &&
+									life.nextActor === 'human' &&
+									!record.dryRun &&
+									!life.acknowledgedAt &&
+									!(
+										life.phase === 'answer' &&
+										record.deliveryStatus === 'admitted' &&
+										life.delivery !== 'rejected'
+									) &&
+									!(
+										life.phase === 'answer' &&
+										life.delivery !== 'not_sent' &&
+										life.delivery !== 'rejected'
+									) && <HumanDecision record={record} refresh={refresh} />}
+							</div>
+						);
+					})}
+				</Section>
 
 				<div className="grid grid-cols-2 xl:grid-cols-4 gap-3 mb-4">
 					<MetricCard

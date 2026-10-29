@@ -213,7 +213,7 @@ export function useBatchedSessionUpdates(
 					// Process AI tab logs
 					const aiTabLogs = new Map<
 						string,
-						{ data: string; isStderr: boolean; timestamp: number }
+						{ data: string; isStderr: boolean; timestamp: number }[]
 					>();
 					let shellStdout = '';
 					let shellStderr = '';
@@ -225,17 +225,18 @@ export function useBatchedSessionUpdates(
 						if (!combinedData) continue;
 
 						if (logAcc.isAi && logAcc.tabId) {
-							// AI tab log
+							// Keep each channel separate in the order it first arrived. The
+							// accumulator already coalesced chunks within that channel.
 							const existing = aiTabLogs.get(logAcc.tabId);
+							const logData = {
+								data: combinedData,
+								isStderr: logAcc.isStderr,
+								timestamp: logAcc.timestamp,
+							};
 							if (existing) {
-								existing.data += combinedData;
-								existing.timestamp = Math.max(existing.timestamp, logAcc.timestamp);
+								existing.push(logData);
 							} else {
-								aiTabLogs.set(logAcc.tabId, {
-									data: combinedData,
-									isStderr: logAcc.isStderr,
-									timestamp: logAcc.timestamp,
-								});
+								aiTabLogs.set(logAcc.tabId, [logData]);
 							}
 						} else {
 							// Shell log
@@ -260,71 +261,72 @@ export function useBatchedSessionUpdates(
 						updatedSession = {
 							...updatedSession,
 							aiTabs: updatedSession.aiTabs.map((tab) => {
-								const logData = aiTabLogs.get(tab.id);
-								if (!logData) return tab;
+								const logChannels = aiTabLogs.get(tab.id);
+								if (!logChannels) return tab;
 
 								// ThinkingMode contract - inline clear point.
 								// When new assistant text arrives, drop transient thinking/tool entries
 								// from prior reasoning so the final answer replaces them. The matching
 								// exit-time clear lives in useAgentListeners → cleanupExitedTabLogs.
 								// Sticky mode opts out of BOTH clear points.
-								const existingLogs = tab.logs.filter((log) => {
-									if (log.source === 'thinking' || log.source === 'tool') {
+								const hasStdout = logChannels.some((log) => !log.isStderr);
+								const updatedLogs = tab.logs.filter((log) => {
+									if (hasStdout && (log.source === 'thinking' || log.source === 'tool')) {
 										return tab.showThinking === 'sticky';
 									}
 									return true;
 								});
-								const lastLog = existingLogs[existingLogs.length - 1];
+								for (const logData of logChannels) {
+									const lastLog = updatedLogs[updatedLogs.length - 1];
 
-								// Determine the source based on stderr flag
-								const logSource = logData.isStderr ? 'stderr' : 'stdout';
+									// Determine the source based on stderr flag
+									const logSource = logData.isStderr ? 'stderr' : 'stdout';
 
-								// Time-based grouping for AI output (500ms window). canAppendToLogEntry
-								// answers both halves of "may this be appended to": same source, AND not
-								// a self-contained card. Source alone is not enough - a `!` command's
-								// output card is `source: 'stdout'` but owns its own text, so streamed
-								// agent output used to land inside it. See utils/logEntries.ts.
-								//
-								// (A `logger.warn` for "refusing to coalesce into a non-stream entry"
-								// used to sit here. It was unreachable: it required lastLog.source to
-								// equal logSource while NOT being stdout/stderr, but logSource is always
-								// one of those two. It never fired for the bug it was meant to catch.)
-								const shouldGroup =
-									canAppendToLogEntry(lastLog, logSource) &&
-									logData.timestamp - lastLog.timestamp < 500;
+									// Time-based grouping for AI output (500ms window). canAppendToLogEntry
+									// answers both halves of "may this be appended to": same source, AND not
+									// a self-contained card. Source alone is not enough - a `!` command's
+									// output card is `source: 'stdout'` but owns its own text, so streamed
+									// agent output used to land inside it. See utils/logEntries.ts.
+									//
+									// (A `logger.warn` for "refusing to coalesce into a non-stream entry"
+									// used to sit here. It was unreachable: it required lastLog.source to
+									// equal logSource while NOT being stdout/stderr, but logSource is always
+									// one of those two. It never fired for the bug it was meant to catch.)
+									const shouldGroup =
+										canAppendToLogEntry(lastLog, logSource) &&
+										logData.timestamp - lastLog.timestamp < 500;
 
-								const shouldTagInteractive = isInteractive && !logData.isStderr;
+									const shouldTagInteractive = isInteractive && !logData.isStderr;
 
-								// Stamp the turn's codified model/effort onto the entry so the
-								// transcript records which configuration produced this response
-								// (rendered as footer pills next to the token-source pill). Read
-								// from the tab's send-time stamp, never the live tab/agent values:
-								// a model change made while this turn streams applies to the NEXT
-								// message, not to the one already running.
-								const turnSettings = {
-									...(tab.turnModel ? { turnModel: tab.turnModel } : {}),
-									...(tab.turnEffort ? { turnEffort: tab.turnEffort } : {}),
-								};
-
-								let updatedLogs: LogEntry[];
-								if (shouldGroup) {
-									updatedLogs = [...existingLogs];
-									updatedLogs[updatedLogs.length - 1] = {
-										...lastLog,
-										text: lastLog.text + logData.data,
-										...(shouldTagInteractive ? { renderStyle: 'text-stream' } : {}),
-										...turnSettings,
+									// Stamp the turn's codified model/effort onto the entry so the
+									// transcript records which configuration produced this response
+									// (rendered as footer pills next to the token-source pill). Read
+									// from the tab's send-time stamp, never the live tab/agent values:
+									// a model change made while this turn streams applies to the NEXT
+									// message, not to the one already running.
+									const turnSettings = {
+										...(tab.turnModel ? { turnModel: tab.turnModel } : {}),
+										...(tab.turnEffort ? { turnEffort: tab.turnEffort } : {}),
 									};
-								} else {
-									const newLog: LogEntry = {
-										id: generateId(),
-										timestamp: logData.timestamp,
-										source: logSource,
-										text: logData.data,
-										...(shouldTagInteractive ? { renderStyle: 'text-stream' } : {}),
-										...turnSettings,
-									};
-									updatedLogs = [...existingLogs, newLog];
+
+									if (shouldGroup) {
+										updatedLogs[updatedLogs.length - 1] = {
+											...lastLog,
+											text: lastLog.text + logData.data,
+											...(shouldTagInteractive ? { renderStyle: 'text-stream' } : {}),
+											...turnSettings,
+										};
+									} else {
+										const newLog: LogEntry = {
+											id: generateId(),
+											timestamp: logData.timestamp,
+											source: logSource,
+											text: logData.data,
+											...(shouldTagInteractive ? { renderStyle: 'text-stream' } : {}),
+											...turnSettings,
+										};
+										updatedLogs.push(newLog);
+									}
 								}
 
 								return { ...tab, logs: updatedLogs };

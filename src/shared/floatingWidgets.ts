@@ -72,6 +72,57 @@ export interface FloatingWidgetBounds {
 }
 
 /**
+ * Room a widget window borrows past its own card, in px, so something the card
+ * opens (the media player's queue and history lists) can be taller than the
+ * card itself. The window is transparent, so the borrowed strip is invisible
+ * except for what the widget draws into it.
+ *
+ * Overflow is TRANSIENT: it never reaches the bounds store, and `getBounds`
+ * reports the window without it, so the card's own size and spot are what get
+ * remembered and what the widget's sizing logic compares against.
+ */
+export interface FloatingWidgetOverflow {
+	above: number;
+	below: number;
+}
+
+export const NO_FLOATING_WIDGET_OVERFLOW: FloatingWidgetOverflow = { above: 0, below: 0 };
+
+/**
+ * Grow on ONE side: below when the need fits there, otherwise above when it
+ * fits there, otherwise whichever side has more room, as far as it goes. Below
+ * comes first because a dropdown reads downward from its button; above exists
+ * because the player opens in the bottom-right corner of the screen by default,
+ * where there is no room below at all.
+ *
+ * @param need  How much each side would have to grow for the content to fit.
+ * @param room  How far each side can grow before leaving the work area.
+ */
+export function planFloatingWidgetOverflow(
+	need: FloatingWidgetOverflow,
+	room: FloatingWidgetOverflow
+): FloatingWidgetOverflow {
+	const wantBelow = Math.max(0, Math.ceil(need.below));
+	const wantAbove = Math.max(0, Math.ceil(need.above));
+	const roomBelow = Math.max(0, Math.floor(room.below));
+	const roomAbove = Math.max(0, Math.floor(room.above));
+	if (wantBelow === 0) return NO_FLOATING_WIDGET_OVERFLOW;
+	if (wantBelow <= roomBelow) return { above: 0, below: wantBelow };
+	if (wantAbove <= roomAbove) return { above: wantAbove, below: 0 };
+	return roomBelow >= roomAbove
+		? { above: 0, below: roomBelow }
+		: { above: Math.min(wantAbove, roomAbove), below: 0 };
+}
+
+/** Coerce an IPC value; anything that is not two finite, non-negative numbers is none. */
+export function sanitizeFloatingWidgetOverflow(value: unknown): FloatingWidgetOverflow {
+	if (typeof value !== 'object' || value === null) return NO_FLOATING_WIDGET_OVERFLOW;
+	const { above, below } = value as Record<string, unknown>;
+	const side = (n: unknown) => (typeof n === 'number' && Number.isFinite(n) && n > 0 ? n : 0);
+	return { above: side(above), below: side(below) };
+}
+
+/**
  * What the primary window publishes for the throughput gauge widget (relayed
  * with `publishStoreState('throughput-gauge', ...)`). The rate engine stays in
  * the primary window; the widget only draws these readings.

@@ -15,10 +15,17 @@ import { useAppRemoteEventListeners } from '../../../../renderer/hooks/remote/us
 import type { Group } from '../../../../shared/types';
 import type { Session } from '../../../../renderer/types';
 
-const storeState: { groups: Group[] } = { groups: [] };
+const storeState: { groups: Group[]; groupPersistenceBaseline: Group[]; groupsLoaded: boolean } = {
+	groups: [],
+	groupPersistenceBaseline: [],
+	groupsLoaded: true,
+};
 
 vi.mock('../../../../renderer/stores/sessionStore', () => ({
-	useSessionStore: Object.assign(vi.fn(), { getState: vi.fn(() => storeState) }),
+	useSessionStore: Object.assign(vi.fn(), {
+		getState: vi.fn(() => storeState),
+		setState: (next: Partial<typeof storeState>) => Object.assign(storeState, next),
+	}),
 	selectSessionById: vi.fn(),
 }));
 vi.mock('../../../../renderer/stores/settingsStore', () => ({
@@ -38,12 +45,15 @@ vi.mock('../../../../renderer/utils/ids', () => ({ generateId: () => 'new-group'
 const createAck = vi.fn();
 const updateAck = vi.fn();
 const moveAck = vi.fn();
-const setAll = vi.fn().mockResolvedValue(undefined);
+const setAll = vi.fn().mockResolvedValue(true);
 
 const DEFAULT_EMOJI = '\u{1F4C2}';
 
 function setup(sessions: Session[] = []) {
-	const setGroups = vi.fn();
+	storeState.groupPersistenceBaseline = storeState.groups;
+	const setGroups = vi.fn((update: Group[] | ((groups: Group[]) => Group[])) => {
+		storeState.groups = typeof update === 'function' ? update(storeState.groups) : update;
+	});
 	const setSessions = vi.fn();
 	renderHook(() =>
 		useAppRemoteEventListeners({
@@ -95,6 +105,8 @@ function group(overrides: Partial<Group> & { id: string }): Group {
 beforeEach(() => {
 	vi.clearAllMocks();
 	storeState.groups = [];
+	storeState.groupPersistenceBaseline = [];
+	setAll.mockResolvedValue(true);
 	(window as any).maestro = {
 		process: {
 			sendRemoteCreateGroupResponse: createAck,
@@ -302,13 +314,17 @@ describe('maestro:remoteUpdateGroup', () => {
 
 	it('collapses a group and writes it to disk before acking', async () => {
 		storeState.groups = [group({ id: 'g1', collapsed: false })];
+		const baseline = storeState.groups;
 		const { setGroups } = setup();
 
 		dispatchUpdate('g1', { collapsed: true });
 		await flush();
 
 		expect(resultingGroups(setGroups, storeState.groups)[0]).toMatchObject({ collapsed: true });
-		expect(setAll).toHaveBeenCalledWith([expect.objectContaining({ id: 'g1', collapsed: true })]);
+		expect(setAll).toHaveBeenCalledWith(
+			[expect.objectContaining({ id: 'g1', collapsed: true })],
+			baseline
+		);
 		// `list groups --json` read right after the ack must see the new value.
 		expect(setAll.mock.invocationCallOrder[0]).toBeLessThan(updateAck.mock.invocationCallOrder[0]);
 		expect(updateAck).toHaveBeenCalledWith('ch', true);

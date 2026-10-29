@@ -78,6 +78,26 @@ describe('awaitSynopsisWriters', () => {
 		expect(result.killed).toEqual(['agent-1-synopsis-123']);
 	});
 
+	it('cancels a wait without killing the synopsis or retaining listeners', async () => {
+		const { registry, emitter } = makeRegistry([
+			{ sessionId: 'agent-1-synopsis-123', agentSessionId: 'thread-a' },
+		]);
+		const controller = new AbortController();
+		const pending = awaitSynopsisWriters(registry as never, 'thread-a', {
+			waitMs: 1_000,
+			signal: controller.signal,
+		}).then(
+			() => null,
+			(error: Error) => error
+		);
+		controller.abort();
+		await vi.advanceTimersByTimeAsync(2_000);
+		expect(await pending).toBeInstanceOf(Error);
+		expect(registry.kill).not.toHaveBeenCalled();
+		expect(emitter.listenerCount('exit')).toBe(0);
+		expect(vi.getTimerCount()).toBe(0);
+	});
+
 	it('does not wait on a non-synopsis process holding the session', async () => {
 		const { registry } = makeRegistry([
 			{ sessionId: 'agent-1-ai-tab-1', agentSessionId: 'thread-a' },

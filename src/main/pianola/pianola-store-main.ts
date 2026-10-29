@@ -10,6 +10,8 @@
  */
 
 import { app } from 'electron';
+import { settledDecisionPairs } from '../../shared/pianola/transcript-mining';
+import type { PianolaDecisionRecord } from '../../shared/pianola/storage';
 import * as path from 'path';
 import type {
 	RulesLoadResult,
@@ -17,6 +19,7 @@ import type {
 	PianolaSupervisedTarget,
 } from '../../shared/pianola/storage';
 import { createPianolaFsStore } from '../../shared/pianola/fs-store';
+import { canonicalJson } from '../../shared/canonicalJson';
 
 export type { RulesLoadResult, PianolaPlan, PianolaSupervisedTarget };
 
@@ -35,7 +38,35 @@ const store = createPianolaFsStore({
 export const readRulesResult = store.readRulesResult;
 export const readRules = store.readRules;
 export const writeRules = store.writeRules;
-export const appendDecision = store.appendDecision;
+const humanDecisionListeners = new Set<() => void>();
+
+/** Native settled-decision event. The durable log remains the restart/replay authority. */
+export function onHumanDecisionSettled(listener: () => void): () => void {
+	humanDecisionListeners.add(listener);
+	return () => {
+		humanDecisionListeners.delete(listener);
+	};
+}
+
+export function appendDecision(record: PianolaDecisionRecord): void {
+	const candidate = settledDecisionPairs([record])[0];
+	const alreadySettled =
+		candidate &&
+		settledDecisionPairs(store.readDecisions(), { snapshots: true }).some(
+			(pair) =>
+				((pair.evidence!.agentId === candidate.evidence!.agentId &&
+					pair.evidence!.tabId === candidate.evidence!.tabId &&
+					pair.evidence!.questionMessageId === candidate.evidence!.questionMessageId) ||
+					(pair.evidence!.actorId === candidate.evidence!.actorId &&
+						pair.evidence!.answerMessageId === candidate.evidence!.answerMessageId)) &&
+				canonicalJson([pair.evidence, pair.classification]) ===
+					canonicalJson([candidate.evidence, candidate.classification])
+		);
+	store.appendDecision(record);
+	if (candidate && !alreadySettled) {
+		for (const listener of humanDecisionListeners) listener();
+	}
+}
 export const readDecisions = store.readDecisions;
 export const readPlans = store.readPlans;
 export const writePlans = store.writePlans;
@@ -70,3 +101,9 @@ export const writeSupervisorTargetsAsync = store.writeSupervisorTargetsAsync;
 export const updateSupervisorTargetsAsync = store.updateSupervisorTargetsAsync;
 export const upsertSupervisorTargetAsync = store.upsertSupervisorTargetAsync;
 export const removeSupervisorTargetAsync = store.removeSupervisorTargetAsync;
+export const writeSupervisorTargets = store.writeSupervisorTargets;
+export const upsertSupervisorTarget = store.upsertSupervisorTarget;
+export const removeSupervisorTarget = store.removeSupervisorTarget;
+
+export const readScopeCheckpoint = store.readScopeCheckpoint;
+export const writeScopeCheckpoint = store.writeScopeCheckpoint;

@@ -2090,7 +2090,8 @@ function MaestroConsoleInner() {
 			if (currentSession.id !== activeSessionIdRef.current || currentTab?.id !== targetTabId)
 				return;
 
-			processInput();
+			// Context transfer/merge may originate from an agent or CLI request.
+			processInput(undefined, { querySource: 'auto' });
 		}, 100);
 
 		return () => clearTimeout(timeoutId);

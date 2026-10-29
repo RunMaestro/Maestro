@@ -59,3 +59,6 @@ export const writePianolaSupervisorTargets = store.writeSupervisorTargets;
 export const updatePianolaSupervisorTargets = store.updateSupervisorTargets;
 export const upsertPianolaSupervisorTarget = store.upsertSupervisorTarget;
 export const removePianolaSupervisorTarget = store.removeSupervisorTarget;
+
+export const readPianolaScopeCheckpoint = store.readScopeCheckpoint;
+export const writePianolaScopeCheckpoint = store.writeScopeCheckpoint;

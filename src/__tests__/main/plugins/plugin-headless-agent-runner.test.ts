@@ -1,4 +1,9 @@
+import { acquireProviderSessionWriter } from '../../../main/utils/provider-session-writer';
 import { describe, expect, it, vi } from 'vitest';
+import {
+	HEADLESS_RUN_TIMEOUT_MS,
+	HEADLESS_RUN_COMPLETION_TIMEOUT_MS,
+} from '../../../shared/plugins/headless-agent-timeouts';
 import * as fs from 'fs';
 import * as pathProber from '../../../main/agents/path-prober';
 import * as runIdentity from '../../../main/plugins/plugin-tool-run-identity';
@@ -22,6 +27,211 @@ const agent = {
 } as SessionInfo;
 
 describe('plugin headless agent runner', () => {
+	it('refuses ordinary sends after preflight consumes the absolute deadline', async () => {
+		let now = 1_000;
+		const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+		const spawn = vi.fn<PluginHeadlessRunnerDeps['spawn']>(async () => ({
+			success: true,
+			response: 'done',
+		}));
+		const issueRunToken = vi.fn(() => 'fixture-token');
+		const proof = vi
+			.spyOn(runIdentity, 'createPluginRunProofFile')
+			.mockReturnValue('/fixture/proof');
+		const removeProof = vi
+			.spyOn(runIdentity, 'removePluginRunProofFile')
+			.mockImplementation(() => {});
+		try {
+			const run = createPluginHeadlessAgentRunner({
+				getAgent: () => agent,
+				detectAgent: async () => ({ available: true }),
+				hasPluginTools: () => true,
+				spawn,
+				prepareSystemPrompt: async () => {
+					now += HEADLESS_RUN_TIMEOUT_MS + 1;
+					return undefined;
+				},
+				issueRunToken,
+				revokeRunToken: vi.fn(),
+				cliScriptPath: () => '/cli.js',
+				audit: vi.fn(),
+			});
+			await expect(run(agent.id, 'hello')).resolves.toMatchObject({
+				success: false,
+				error: 'Agent run stopped: absolute runtime ceiling exceeded',
+			});
+			expect(spawn).not.toHaveBeenCalled();
+			expect(issueRunToken).not.toHaveBeenCalled();
+			expect(proof).not.toHaveBeenCalled();
+		} finally {
+			clock.mockRestore();
+			proof.mockRestore();
+			removeProof.mockRestore();
+		}
+	});
+	it('serializes CLI and legacy plugin resumes behind a Relay provider writer', async () => {
+		const spawn = vi.fn(async () => ({
+			success: true,
+			response: 'done',
+			agentSessionId: 'relay-provider',
+		}));
+		const run = createPluginHeadlessAgentRunner({
+			getAgent: () => agent,
+			detectAgent: async () => ({ available: true, path: '/usr/bin/codex' }),
+			hasPluginTools: () => false,
+			spawn,
+			prepareSystemPrompt: async () => undefined,
+			issueRunToken: vi.fn(),
+			revokeRunToken: vi.fn(),
+			cliScriptPath: () => '/cli.js',
+			audit: vi.fn(),
+		});
+		const release = await acquireProviderSessionWriter(
+			'codex',
+			'relay-tab-process',
+			'relay-provider'
+		);
+		const cli = run('agent-a', 'cli followup', 'relay-provider');
+		const legacy = run('agent-a', 'legacy followup', 'relay-provider');
+		await new Promise(setImmediate);
+		expect(spawn).not.toHaveBeenCalled();
+		release();
+		await Promise.all([cli, legacy]);
+		expect(spawn).toHaveBeenCalledTimes(2);
+	});
+
+	it.each(['before', 'during'] as const)(
+		'returns a no-start cancellation when stopped %s the resumed writer wait',
+		async (when) => {
+			const controller = new AbortController();
+			const spawn = vi.fn(async () => ({ success: true, response: 'done' }));
+			const detectAgent = vi.fn(async () => ({ available: true }));
+			const run = createPluginHeadlessAgentRunner({
+				getAgent: () => agent,
+				detectAgent,
+				hasPluginTools: () => false,
+				spawn,
+				prepareSystemPrompt: async () => undefined,
+				issueRunToken: vi.fn(),
+				revokeRunToken: vi.fn(),
+				cliScriptPath: () => '/cli.js',
+				audit: vi.fn(),
+			});
+			const release = await acquireProviderSessionWriter(
+				'codex',
+				'desktop-writer',
+				'cancelled-provider'
+			);
+			try {
+				if (when === 'before') controller.abort();
+				const pending = run(agent.id, 'cancel me', 'cancelled-provider', controller.signal);
+				const cancelled = expect(pending).resolves.toEqual({
+					success: false,
+					executionStarted: false,
+					response: null,
+					sessionId: null,
+					error: 'Agent run cancelled',
+				});
+				if (when === 'during') {
+					await new Promise(setImmediate);
+					controller.abort();
+				}
+				await cancelled;
+				expect(detectAgent).not.toHaveBeenCalled();
+				expect(spawn).not.toHaveBeenCalled();
+				release();
+				await expect(run(agent.id, 'followup', 'cancelled-provider')).resolves.toMatchObject({
+					success: true,
+				});
+				expect(spawn).toHaveBeenCalledOnce();
+			} finally {
+				release();
+			}
+		}
+	);
+
+	it.each(['delay', 'expire', 'cancel'] as const)(
+		'counts original-audio staging against the absolute deadline on %s',
+		async (cause) => {
+			vi.useFakeTimers();
+			const controller = new AbortController();
+			const spawn = vi.fn<PluginHeadlessRunnerDeps['spawn']>(async () => ({
+				success: true,
+				response: 'done',
+			}));
+			const revokeRunToken = vi.fn();
+			const proof = vi
+				.spyOn(runIdentity, 'createPluginRunProofFile')
+				.mockReturnValue('/fixture/proof');
+			const removeProof = vi
+				.spyOn(runIdentity, 'removePluginRunProofFile')
+				.mockImplementation(() => {});
+			const run = createPluginHeadlessAgentRunner({
+				getAgent: () => agent,
+				detectAgent: async () => ({ available: true }),
+				hasPluginTools: () => true,
+				spawn,
+				prepareSystemPrompt: async () => undefined,
+				issueRunToken: () => 'staging-proof',
+				revokeRunToken,
+				cliScriptPath: () => '/cli.js',
+				audit: vi.fn(),
+			});
+			try {
+				const result = await run(
+					agent.id,
+					'read original',
+					undefined,
+					controller.signal,
+					'relay',
+					undefined,
+					undefined,
+					false,
+					undefined,
+					{
+						originalAttachment: {
+							signal: controller.signal,
+							check: () => {},
+							waitFor: async <T>(value: Promise<T>) => value,
+							prepare: async () => {
+								vi.advanceTimersByTime(cause === 'expire' ? HEADLESS_RUN_TIMEOUT_MS + 1 : 90_000);
+								if (cause === 'cancel') controller.abort();
+								return {
+									path: '/fixture/original.ogg',
+									receipt: { filename: 'original.ogg', bytes: 5, sha256: 'a'.repeat(64) },
+								};
+							},
+							handoff: () => {},
+						},
+					}
+				);
+				if (cause === 'delay') {
+					expect(result.success).toBe(true);
+					expect(spawn.mock.calls[0][4]).toMatchObject({
+						timeoutMs: HEADLESS_RUN_TIMEOUT_MS - 90_000,
+						requireProcessExit: true,
+					});
+				} else {
+					expect(result).toMatchObject({
+						success: false,
+						executionStarted: false,
+						error:
+							cause === 'cancel'
+								? 'Agent run cancelled'
+								: 'Agent run stopped: absolute runtime ceiling exceeded',
+					});
+					expect(spawn).not.toHaveBeenCalled();
+				}
+				expect(revokeRunToken).toHaveBeenCalledWith('staging-proof');
+				expect(removeProof).toHaveBeenCalledWith('/fixture/proof');
+				expect(vi.getTimerCount()).toBe(0);
+			} finally {
+				proof.mockRestore();
+				removeProof.mockRestore();
+				vi.useRealTimers();
+			}
+		}
+	);
 	it.each([true, false])(
 		'validates the selected agent binary before dispatch (valid: %s)',
 		async (valid) => {
@@ -56,7 +266,11 @@ describe('plugin headless agent runner', () => {
 						expect.objectContaining({ agentCommand: '/resolved/codex' })
 					);
 				} else {
-					expect(result).toMatchObject({ success: false, error: 'Agent CLI unavailable: codex' });
+					expect(result).toMatchObject({
+						success: false,
+						executionStarted: false,
+						error: 'Agent CLI unavailable: codex',
+					});
 					expect(spawn).not.toHaveBeenCalled();
 					expect(issueRunToken).not.toHaveBeenCalled();
 				}
@@ -376,7 +590,7 @@ describe('plugin headless agent runner', () => {
 		expect(fs.existsSync(secondProofFile)).toBe(false);
 	});
 
-	it('keeps authenticated tool delivery available through the full 60-minute run', async () => {
+	it('keeps authenticated tool delivery available through the full six-hour run', async () => {
 		vi.useFakeTimers();
 		const identity = new runIdentity.PluginToolRunIdentity();
 		const issueRunToken = vi.fn((id: string, ttl: number, toolId?: string) =>
@@ -388,17 +602,20 @@ describe('plugin headless agent runner', () => {
 			detectAgent: async () => ({ available: true }),
 			hasPluginTools: () => true,
 			spawn: async (_type, _cwd, _prompt, _session, options) => {
-				expect(options!.timeoutMs).toBe(60 * 60_000);
+				expect(options!.timeoutMs).toBe(358 * 60_000);
 				proofFile = options!.pluginRunProofFile!;
 				// Cross the old process/CLI deadlines and approach the new deadline.
-				vi.advanceTimersByTime(60 * 60_000 - 1);
+				vi.advanceTimersByTime(358 * 60_000 - 1);
 				expect(fs.existsSync(proofFile)).toBe(true);
 				const token = fs.readFileSync(proofFile, 'utf8');
 				expect(identity.resolve(token)).toEqual({ callerAgentId: 'agent-a' });
 				identity.recordReceipt(token, 'sh.maestro.relay/send', { messageIds: ['123'] });
 				return { success: true, response: 'delivered' };
 			},
-			prepareSystemPrompt: async () => undefined,
+			prepareSystemPrompt: async () => {
+				vi.advanceTimersByTime(120_000);
+				return undefined;
+			},
 			issueRunToken,
 			getRunReceipts: (token) => identity.getReceipts(token),
 			hasRunReceiptOverflow: (token) => identity.hasReceiptOverflowed(token),
@@ -421,7 +638,12 @@ describe('plugin headless agent runner', () => {
 				success: true,
 				toolReceipts: [{ agentId: 'agent-a', messageIds: ['123'] }],
 			});
-			expect(issueRunToken).toHaveBeenCalledWith('agent-a', 61 * 60_000, 'sh.maestro.relay/send');
+			expect(issueRunToken).toHaveBeenCalledWith(
+				'agent-a',
+				359 * 60_000,
+				'sh.maestro.relay/send',
+				true
+			);
 			expect(identity.resolve(issueRunToken.mock.results[0].value)).toEqual({
 				callerAgentId: null,
 			});
@@ -454,7 +676,8 @@ describe('plugin headless agent runner', () => {
 			usageStats: undefined,
 			error,
 		});
-		expect(spawn.mock.calls[0][4].timeoutMs).toBe(60 * 60_000);
+		expect(spawn.mock.calls[0][4].timeoutMs).toBeLessThanOrEqual(6 * 60 * 60_000);
+		expect(spawn.mock.calls[0][4].timeoutMs).toBeGreaterThan(359 * 60_000);
 		expect(revokeRunToken).toHaveBeenCalledWith('proof');
 	});
 
@@ -767,7 +990,8 @@ it.each(['success', 'error', 'throw', 'cancel-before-spawn'] as const)(
 					success: false,
 					response: null,
 					sessionId: null,
-					error: 'Agent run timed out or was cancelled',
+					error: 'Agent run cancelled',
+					executionStarted: false,
 				});
 				expect(spawn).not.toHaveBeenCalled();
 			} else {
@@ -781,12 +1005,17 @@ it.each(['success', 'error', 'throw', 'cancel-before-spawn'] as const)(
 			}
 			// Reporting is still pending: it must not hold the turn or its authority open.
 			expect(isAgentBusy(agent, undefined)).toBe(false);
-			expect(identity.resolve(issueRunToken.mock.results[0].value)).toEqual({
-				callerAgentId: null,
-			});
-			expect(removeProof).toHaveBeenCalledOnce();
-			proofFile = removeProof.mock.calls[0][0];
-			expect(fs.existsSync(proofFile)).toBe(false);
+			if (outcome === 'cancel-before-spawn') {
+				expect(issueRunToken).not.toHaveBeenCalled();
+				expect(removeProof).not.toHaveBeenCalled();
+			} else {
+				expect(identity.resolve(issueRunToken.mock.results[0].value)).toEqual({
+					callerAgentId: null,
+				});
+				expect(removeProof).toHaveBeenCalledOnce();
+				proofFile = removeProof.mock.calls[0][0];
+				expect(fs.existsSync(proofFile)).toBe(false);
+			}
 			expect(recordRelayOrigin).toHaveBeenCalledExactlyOnceWith(agent, 'conversation');
 			expect(reporter).toHaveBeenCalledExactlyOnceWith(provenanceError, {
 				operation: 'plugin-headless.recordRelayOrigin',
@@ -797,6 +1026,108 @@ it.each(['success', 'error', 'throw', 'cancel-before-spawn'] as const)(
 			reporter.mockReset();
 			removeProof.mockRestore();
 			if (proofFile && fs.existsSync(proofFile)) runIdentity.removePluginRunProofFile(proofFile);
+		}
+	}
+);
+
+it.each([
+	['custom binary', 'cancel'],
+	['custom binary', 'deadline'],
+	['detection', 'cancel'],
+	['detection', 'deadline'],
+	['prompt', 'cancel'],
+	['prompt', 'deadline'],
+] as const)('bounds stalled %s preparation by %s without late authority', async (stage, stop) => {
+	vi.useFakeTimers();
+	const controller = new AbortController();
+	let finish!: () => void;
+	const stalled = new Promise<void>((resolve) => {
+		finish = resolve;
+	});
+	const customProbe =
+		stage === 'custom binary'
+			? vi.spyOn(pathProber, 'checkCustomPath').mockImplementationOnce(async () => {
+					await stalled;
+					return { exists: true, path: '/resolved/codex' };
+				})
+			: undefined;
+	const spawn = vi.fn();
+	const issueRunToken = vi.fn();
+	const prepareSystemPrompt = vi.fn(async () => {
+		if (stage === 'prompt') await stalled;
+		return undefined;
+	});
+	const run = createPluginHeadlessAgentRunner({
+		getAgent: () => (stage === 'custom binary' ? { ...agent, customPath: '~/codex' } : agent),
+		detectAgent: async () => {
+			if (stage === 'detection') await stalled;
+			return { available: true };
+		},
+		hasPluginTools: () => true,
+		spawn,
+		prepareSystemPrompt,
+		issueRunToken,
+		revokeRunToken: vi.fn(),
+		cliScriptPath: () => '/cli.js',
+		audit: vi.fn(),
+	});
+	try {
+		const pending = run(agent.id, 'hello', undefined, controller.signal);
+		await vi.advanceTimersByTimeAsync(0);
+		if (stop === 'cancel') controller.abort();
+		else await vi.advanceTimersByTimeAsync(6 * 60 * 60_000);
+		const result = await Promise.race([
+			pending,
+			Promise.resolve().then(() => Promise.resolve('still waiting')),
+		]);
+		expect(result).toMatchObject({
+			success: false,
+			executionStarted: false,
+			error:
+				stop === 'cancel'
+					? 'Agent run cancelled'
+					: 'Agent run stopped: absolute runtime ceiling exceeded',
+		});
+		finish();
+		await vi.advanceTimersByTimeAsync(0);
+		expect(spawn).not.toHaveBeenCalled();
+		expect(issueRunToken).not.toHaveBeenCalled();
+		if (stage !== 'prompt') expect(prepareSystemPrompt).not.toHaveBeenCalled();
+		expect(vi.getTimerCount()).toBe(0);
+	} finally {
+		finish();
+		customProbe?.mockRestore();
+		vi.useRealTimers();
+	}
+});
+
+it.each(['user', 'auto', 'relay'] as const)(
+	'stamps %s provenance before exposing a headless proof',
+	async (origin) => {
+		const identity = new runIdentity.PluginToolRunIdentity();
+		const modes: boolean[] = [];
+		const run = createPluginHeadlessAgentRunner({
+			getAgent: () => agent,
+			detectAgent: async () => ({ available: true }),
+			hasPluginTools: () => true,
+			spawn: async () => ({ success: true, response: 'synthetic' }),
+			prepareSystemPrompt: async () => undefined,
+			issueRunToken: (id, ttl, receiptToolId, unattended) => {
+				const token = identity.issue(id, ttl, receiptToolId, unattended);
+				modes.push(identity.resolveVerified(token).unattended === true);
+				return token;
+			},
+			revokeRunToken: (token) => identity.revoke(token),
+			cliScriptPath: () => '/synthetic/cli.js',
+			audit: () => {},
+		});
+		try {
+			expect(
+				(await run('agent-a', 'synthetic request', undefined, undefined, origin)).success
+			).toBe(true);
+			expect(modes).toEqual([origin !== 'user']);
+		} finally {
+			identity.stop();
 		}
 	}
 );

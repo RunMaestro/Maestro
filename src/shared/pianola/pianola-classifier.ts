@@ -20,6 +20,8 @@ import type {
 } from './types';
 import { maxRisk, rateRisk } from './pianola-risk';
 import { extractOptions, looksLikeAsking } from './pianola-awaiting-detector';
+import { serializedJsonByteLength } from '../jsonUtils';
+import { PIANOLA_DECISION_RECORD_MAX_BYTES } from './storage';
 
 // Re-exported for convenience so callers can pull risk helpers from the classifier.
 export { riskAtMost, maxRisk } from './pianola-risk';
@@ -238,5 +240,15 @@ export function classifyMessages(messages: readonly PianolaMessage[]): PianolaCl
 	// destructive intent in an earlier assistant message of this turn still
 	// escalates even when the awaiting question itself reads low-risk. Preserves
 	// the existing kind/topic; only the risk severity incorporates the turn max.
-	return { ...classification, risk: maxRisk(classification.risk, currentTurnMaxRisk(messages)) };
+	// Keep exact text only when it fits a small share of the lifecycle budget.
+	// Omitting oversized text also prevents an exact-question rule from matching
+	// a truncated question. Risk and human evidence use the original transcript.
+	const questionBytes = serializedJsonByteLength(assistant.content);
+	return {
+		...classification,
+		...(questionBytes !== null && questionBytes <= PIANOLA_DECISION_RECORD_MAX_BYTES / 8
+			? { questionText: assistant.content }
+			: {}),
+		risk: maxRisk(classification.risk, currentTurnMaxRisk(messages)),
+	};
 }

@@ -13,6 +13,8 @@
  * the app - filtering it reduces alert fatigue without losing signal on real bugs.
  */
 
+import { isExpectedBridgeError } from './bridgeError';
+
 interface MinimalSentryEvent {
 	message?: string;
 	exception?: {
@@ -29,6 +31,12 @@ interface MinimalSentryEvent {
  */
 export function shouldDropSentryEvent(event: MinimalSentryEvent): boolean {
 	const values = event.exception?.values ?? [];
+	if (
+		isExpectedBridgeError(event.message) ||
+		values.some((value) => isExpectedBridgeError(value.value))
+	) {
+		return true;
+	}
 	const firstException = values[0];
 	const value = firstException?.value ?? '';
 	const type = firstException?.type ?? '';

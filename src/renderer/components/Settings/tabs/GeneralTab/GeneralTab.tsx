@@ -30,18 +30,20 @@ import {
 	useSyncStorageState,
 } from './hooks';
 import type { GeneralTabProps } from './types';
+import { isWebDesktop } from '../../../../utils/runtimeContext';
 
 export type { GeneralTabProps } from './types';
 
 export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
+	const remote = isWebDesktop();
 	const appVersion = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : 'unknown';
 	const settings = useSettings();
 
 	const shellState = useShellSettingsState({
 		setDefaultShell: settings.setDefaultShell,
 	});
-	const maestroCli = useMaestroCliState({ isOpen });
-	const syncStorage = useSyncStorageState({ isOpen });
+	const maestroCli = useMaestroCliState({ isOpen: isOpen && !remote });
+	const syncStorage = useSyncStorageState({ isOpen: isOpen && !remote });
 	const forcedParallelWarning = useForcedParallelWarningState({
 		forcedParallelExecution: settings.forcedParallelExecution,
 		forcedParallelAcknowledged: settings.forcedParallelAcknowledged,
@@ -61,7 +63,13 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				conductorProfile={settings.conductorProfile}
 				setConductorProfile={settings.setConductorProfile}
 			/>
-			<MaestroCliSection theme={theme} appVersion={appVersion} maestroCli={maestroCli} />
+			{remote ? (
+				<p className="text-xs" style={{ color: theme.colors.textDim }}>
+					CLI installation and storage location are managed on the host desktop.
+				</p>
+			) : (
+				<MaestroCliSection theme={theme} appVersion={appVersion} maestroCli={maestroCli} />
+			)}
 			<ShellSettingsSection
 				theme={theme}
 				defaultShell={settings.defaultShell}
@@ -188,6 +196,8 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				theme={theme}
 				crashReportingEnabled={settings.crashReportingEnabled}
 				setCrashReportingEnabled={settings.setCrashReportingEnabled}
+				userJourneyEnabled={settings.userJourneyEnabled}
+				setUserJourneyEnabled={settings.setUserJourneyEnabled}
 			/>
 			<BrowserSection
 				theme={theme}
@@ -202,7 +212,7 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				browserTabKeepAliveLimit={settings.browserTabKeepAliveLimit}
 				setBrowserTabKeepAliveLimit={settings.setBrowserTabKeepAliveLimit}
 			/>
-			<StorageLocationSection theme={theme} syncStorage={syncStorage} />
+			{!remote && <StorageLocationSection theme={theme} syncStorage={syncStorage} />}
 		</div>
 	);
 }

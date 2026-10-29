@@ -55,6 +55,12 @@ export interface MaestroWebClientConfig {
 
 /** Reconcile browser-held work with the main process after bridge recovery. */
 export const WEB_BRIDGE_RECONCILE_EVENT = 'maestro:webBridgeReconcile';
+/** An in-place authoritative refresh; submissions remain fenced until all work completes. */
+export interface WebBridgeReconcileDetail {
+	authoritative: true;
+	signal: AbortSignal;
+	waitUntil: (work: Promise<void>) => void;
+}
 
 declare global {
 	interface Window {

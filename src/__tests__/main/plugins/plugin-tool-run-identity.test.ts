@@ -10,6 +10,21 @@ import {
 } from '../../../main/plugins/plugin-tool-run-identity';
 
 describe('PluginToolRunIdentity', () => {
+	it('retains host-stamped run provenance and treats unspecified provenance as unattended', () => {
+		const runs = new PluginToolRunIdentity();
+		try {
+			const unknown = runs.issue('agent-a');
+			const interactive = runs.issue('agent-a', undefined, undefined, false);
+			const automatic = runs.issue('agent-a', undefined, undefined, true);
+			expect(runs.resolveVerified(unknown).unattended).toBe(true);
+			expect(runs.resolveVerified(interactive).unattended).toBe(false);
+			expect(runs.resolveVerified(automatic).unattended).toBe(true);
+			expect(Object.isFrozen(runs.resolveVerified(interactive))).toBe(true);
+		} finally {
+			runs.stop();
+		}
+	});
+
 	it('binds distinct local runs to exact agents and revokes a completed run', () => {
 		const runs = new PluginToolRunIdentity();
 		const a = runs.issue('agent-a');
@@ -35,13 +50,13 @@ describe('PluginToolRunIdentity', () => {
 		}
 	});
 
-	it('keeps headless identity and proof through 60 minutes and expires both at 61', () => {
+	it('keeps headless identity and proof through six hours and expires both at six hours plus cleanup', () => {
 		vi.useFakeTimers();
 		const runs = new PluginToolRunIdentity();
 		const token = runs.issue('relay-agent', HEADLESS_RUN_COMPLETION_TIMEOUT_MS);
 		const file = createPluginRunProofFile(token, HEADLESS_RUN_COMPLETION_TIMEOUT_MS);
 		try {
-			vi.advanceTimersByTime(60 * 60_000);
+			vi.advanceTimersByTime(6 * 60 * 60_000);
 			expect(runs.resolve(token)).toEqual({ callerAgentId: 'relay-agent' });
 			expect(fs.existsSync(file)).toBe(true);
 			vi.advanceTimersByTime(60_000);

@@ -198,8 +198,9 @@ The failed read leaves saved agents untouched and keeps persistence disabled
 until loading succeeds. An uncertain submission must be checked on the host
 before it is submitted again.
 A received save rejection is reported without permanently blocking later saves.
-A save with a lost acknowledgement remains held until the host view is reloaded;
-the rejected or uncertain write is never automatically resent.
+A save with a lost acknowledgement blocks further saves until the client finishes
+in-place authoritative recovery; the rejected or uncertain write is never
+automatically resent.
 
 A failed process start does not create a running capture. Host administration
 settings, including Encore feature controls, remain unavailable to browser/Lite
@@ -479,7 +480,9 @@ A reverse proxy must forward the original `Host` header (nginx: `proxy_set_heade
 
 ## Connection Handling
 
-The browser talks to the host over a WebSocket. It reconnects with bounded event replay when possible and reloads current host state after a host restart or replay gap. Commands are never automatically resent merely because the connection dropped. If a submission's acknowledgement is lost, its outcome is shown as uncertain: check the host's chat, running work and History before deciding whether to submit again. Unsent drafts and navigation remain client-local. Native Lite does not register the browser PWA's offline service worker; the ordinary browser/PWA path is unchanged.
+The browser talks to the host over a WebSocket. It reconnects with bounded event replay when possible and reconciles current host state after a host restart or replay gap. Opening handshakes have deadlines, stale sockets are replaced on wake or network restoration, and sustained outages use capped jittered backoff. Authoritative reconciliation is bounded and retried without remounting the active workflow. Commands are never automatically resent merely because the connection dropped. If a submission's acknowledgement is lost, its outcome is shown as uncertain: check the host's chat, running work and History before deciding whether to submit again.
+
+Native Lite also supervises its transport and renderer. SSH exits, temporary connection failures and renderer crashes trigger automatic recovery. Reconnected SSH tunnels and paired relays reuse their validated loopback port so unsent drafts and navigation retain the same client origin. Lite remembers the last manual or paired LAN/Tailscale connection and restores it after launch; direct hosts are rediscovered and their instance, peer and credential bindings verified again. Explicit Disconnect, forgotten pairing, revoked credentials, changed identity, incompatibility and trust failures stop automatic recovery. A manual URL whose endpoint or token changed still requires updated connection details. Unsent drafts and navigation remain client-local. Native Lite does not register the browser PWA's offline service worker; the ordinary browser/PWA path is unchanged.
 
 ## Screenshots
 

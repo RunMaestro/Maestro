@@ -522,6 +522,8 @@ export function mergeQueuedItemIntoPrevious(
 	const images = [...(target.images ?? []), ...(item.images ?? [])];
 	const merged: QueuedItem = {
 		...target,
+		// Combining queued data cannot promote automatic/unknown work to a human turn.
+		querySource: target.querySource === 'user' ? item.querySource : target.querySource,
 		text,
 		images: images.length > 0 ? images : undefined,
 		crossAgentMention: target.crossAgentMention || item.crossAgentMention || undefined,

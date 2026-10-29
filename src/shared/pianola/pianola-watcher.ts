@@ -97,6 +97,7 @@ export interface WatchTarget {
 	tabId: string;
 	agentId: string;
 	projectPath?: string;
+	groupId?: string | null;
 }
 
 /**
@@ -114,6 +115,8 @@ export interface PianolaJudgmentRequest {
 	promptText?: string;
 	/** Discrete options the agent offered, if any. */
 	options?: string[];
+	/** Complete current turn, including earlier intent and tool context. */
+	turnContext?: readonly PianolaMessage[];
 }
 
 /** Injected side effects. */
@@ -201,6 +204,10 @@ export function rehydrateWatchState(
 	if (!lastRecord || !lastMid) {
 		return { lastHandledMessageId: null, pendingRetry: null, pendingHandoff: null };
 	}
+	// Scope lifecycles own their pending actor, delivery uncertainty and receipt
+	// reconciliation. Never replay one through the legacy heuristic handoff path.
+	if (lastRecord.lifecycle)
+		return { lastHandledMessageId: lastMid, pendingRetry: null, pendingHandoff: null };
 	// A successfully-delivered handoff (escalate decision, not dispatched, no
 	// error) means we were awaiting Pianola's reply when we stopped. Restore the
 	// pending-handoff so the timeout resumes rather than re-handing-off, and keep
@@ -339,7 +346,11 @@ export async function runWatchIteration(
 	target: WatchTarget,
 	state: WatchState,
 	deps: WatchDeps,
-	options: { dryRun: boolean }
+	options: {
+		dryRun: boolean;
+		/** Enrollment eligibility must not remove messages needed for risk context. */
+		canActOnMessage?: (messageId: string) => boolean;
+	}
 ): Promise<{ state: WatchState; result: IterationResult }> {
 	const enriched = enrichWithAwaitingInput(messages);
 	const classification = classifyMessages(enriched);
@@ -393,6 +404,18 @@ export async function runWatchIteration(
 	}
 
 	const messageId = classification.evidence.messageId;
+	if (options.canActOnMessage && (!messageId || !options.canActOnMessage(messageId))) {
+		const result: IterationResult = {
+			classification,
+			decision: null,
+			record: null,
+			acted: false,
+			dispatched: false,
+			skipped: 'prompt precedes enrollment baseline',
+		};
+		deps.log(describe(result));
+		return { state, result };
+	}
 	if (messageId && messageId === state.lastHandledMessageId) {
 		const result: IterationResult = {
 			classification,
@@ -410,6 +433,8 @@ export async function runWatchIteration(
 	const decision = decide(classification, rules, {
 		projectPath: target.projectPath,
 		tabId: target.tabId,
+		agentId: target.agentId,
+		groupId: target.groupId,
 	});
 
 	// Thought-based handoff. When the rules did not cover this ask (the policy fell
@@ -533,6 +558,9 @@ export async function runWatchIteration(
 				context: context ?? undefined,
 				promptText: relevant?.awaitingInput?.prompt ?? relevant?.content,
 				options: relevant?.awaitingInput?.options,
+				turnContext: messages.slice(
+					messages.map((message) => message.role).lastIndexOf('user') + 1
+				),
 			});
 
 			if (res.success) {

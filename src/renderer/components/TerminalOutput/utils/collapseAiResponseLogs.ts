@@ -11,7 +11,7 @@ export const isHiddenProgressEntry = (log: LogEntry): boolean =>
  * output for one turn) fold into ONE bubble per user message, so a turn made of
  * several streamed entries reads as a single reply. These kinds stay standalone:
  *   - `user` messages,
- *   - `tool` / `thinking` entries,
+ *   - `tool` / `thinking` entries and `stderr` / `error` diagnostics,
  *   - self-contained cards (`isSelfContainedCard`): `!` command output, Agent
  *     Resilience outage markers, recovery prompts, tool-call cards. Each owns
  *     its own body and must not fold into a text group,
@@ -64,10 +64,11 @@ export function collapseAiResponseLogs(logs: LogEntry[]): LogEntry[] {
 		} else if (
 			log.source === 'tool' ||
 			log.source === 'thinking' ||
+			log.source === 'stderr' ||
 			log.source === 'error' ||
 			isSelfContainedCard(log)
 		) {
-			// Flush the response group, then keep tool/thinking/error entries and any
+			// Flush the response group, then keep tool/thinking/diagnostic entries and any
 			// self-contained card as their own entries.
 			//
 			// A card MUST NOT be merged into a text group. Grouping concatenates
@@ -75,9 +76,9 @@ export function collapseAiResponseLogs(logs: LogEntry[]): LogEntry[] {
 			// swallowed by a group loses its marker (`shellCommand`, `retryOutageId`,
 			// ...) and its body gets pasted onto the preceding agent reply as plain
 			// markdown - which is how `!ls` output ended up inside a chat bubble with
-			// its ANSI codes showing as literal text. An error entry must not merge
+			// its ANSI codes showing as literal text. A diagnostic entry must not merge
 			// either, or it gets silently concatenated (no separator) into a later,
-			// unrelated AI response.
+			// unrelated AI response, or styles that response as stderr.
 			//
 			// This used to name `retryOutageId` alone; every new card kind hit the
 			// same bug until it was added here too. isSelfContainedCard is the shared

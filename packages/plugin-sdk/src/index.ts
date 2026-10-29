@@ -486,9 +486,12 @@ export function describeCapability(capability: PluginCapability): string {
 // --- Host API version (from shared/plugins/host-api.ts) ---------------------
 
 /**
- * The host API version this Maestro build implements. 1.29.0 adds generic verified
- * invocations, consented TLS, opaque secrets, confirmed records and durable plugin
- * Cue events and read-only parentSessionId agent metadata. 1.25.0 adds resumable
+ * The host API version this Maestro build implements. 1.31.0 adds durable Relay
+ * conversation/message identity, replay receipts, and explicit task completion.
+ * 1.30.0 adds separately consented bounded original-audio staging for supported
+ * local agent sends. 1.29.0 adds generic verified invocations, consented TLS, opaque secrets,
+ * confirmed records, durable plugin Cue events and parentSessionId metadata.
+ * 1.25.0 added resumable
  * agents.send with public progress, verified plugin-tool caller identity, and
  * isolated agents.generateTitle. 1.24.0 added host-mediated services.
  * 1.23.0 adds independent
@@ -524,7 +527,7 @@ export function describeCapability(capability: PluginCapability): string {
  * `ui:contribute` / `ui:panel` / `ui:render-unsafe`; 1.3.0 added `tools` +
  * `keybindings`; 1.2.0 added `transcripts:read`.
  */
-export const HOST_API_VERSION = '1.29.0';
+export const HOST_API_VERSION = '1.31.0';
 
 /** Result of checking a plugin's declared host-API requirement. */
 export interface HostApiCompatibility {
@@ -1447,6 +1450,8 @@ export const HOST_API = {
 	'agents.get': { capability: 'agents:read' },
 	'agents.dispatch': { capability: 'agents:dispatch' },
 	'agents.send': { capability: 'agents:dispatch' },
+	'agents.completeConversation': { capability: 'agents:dispatch' },
+	'agents.restoreConversation': { capability: 'agents:dispatch' },
 	'agents.generateTitle': { capability: 'agents:dispatch' },
 	'notifications.toast': { capability: 'notifications:toast' },
 	'settings.get': { capability: 'settings:read' },
@@ -1624,6 +1629,18 @@ export type AgentSendProgressEvent =
 			summary?: string;
 	  };
 
+/** One completed original from the authenticated plugin's own media job. */
+export interface OriginalAttachmentRef {
+	jobId: string;
+	audioId: string;
+}
+/** Staging evidence only; does not prove provider inspection of audio. */
+export interface OriginalAttachmentReceipt {
+	filename: string;
+	bytes: number;
+	sha256: string;
+}
+
 export interface MaestroAgentsApi {
 	list(): Promise<unknown>;
 	get(agentId: string): Promise<unknown>;
@@ -1634,13 +1651,36 @@ export interface MaestroAgentsApi {
 	send(
 		agentId: string,
 		prompt: string,
-		opts?: { sessionId?: string; onProgress?: (event: AgentSendProgressEvent) => void }
+		opts?: {
+			sessionId?: string;
+			conversationId?: string;
+			messageId?: string;
+			onProgress?: (event: AgentSendProgressEvent) => void;
+			originalAttachments?: readonly [OriginalAttachmentRef];
+		}
 	): Promise<{
 		success: boolean;
 		response: string | null;
 		sessionId: string | null;
+		conversationId?: string;
+		tabId?: string;
+		replayed?: boolean;
 		error?: string;
+		originalAttachments?: readonly [OriginalAttachmentReceipt];
 	}>;
+	restoreConversation(
+		agentId: string,
+		opts: { conversationId: string; sessionId: string }
+	): Promise<{
+		success: boolean;
+		sessionId: string | null;
+		tabId?: string;
+		conversationId?: string;
+	}>;
+	completeConversation(
+		agentId: string,
+		opts: { conversationId: string; messageId: string }
+	): Promise<{ success: boolean }>;
 }
 
 /** Read metadata-only history entries (`history:read`). */

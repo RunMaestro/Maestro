@@ -41,6 +41,8 @@ import {
 	throughputGaugeToggle,
 } from './commands/throughput-gauge';
 import { sessionList, sessionShow } from './commands/session';
+import { journey } from './commands/journey';
+import { timeline, timelineShow } from './commands/timeline';
 import { listSessions } from './commands/list-sessions';
 import { openFile } from './commands/open-file';
 import { imageList, imageSave } from './commands/image';
@@ -223,7 +225,14 @@ import {
 	computerHistoryStatus,
 } from './commands/computer-history';
 import { setVerbosity } from './output/verbosity';
-import { pianolaWatch, pianolaRules, pianolaAddRule, pianolaLog } from './commands/pianola';
+import { pianolaWatchScope } from './commands/pianola-scope-watch';
+import {
+	pianolaWatch,
+	pianolaRules,
+	pianolaAddRule,
+	pianolaLog,
+	pianolaResolveDecision,
+} from './commands/pianola';
 import { pianolaMemory } from './commands/pianola-memory';
 import { pianolaLearn } from './commands/pianola-learn';
 import { pianolaProfile, pianolaSetProfile } from './commands/pianola-profile';
@@ -250,6 +259,7 @@ import {
 } from './commands/pianola-portfolio';
 import {
 	pianolaSuperviseWatch,
+	pianolaSuperviseScope,
 	pianolaSuperviseOrchestrate,
 	pianolaSuperviseProgram,
 	pianolaSuperviseList,
@@ -884,6 +894,46 @@ session
 	.option('--tail <n>', 'Only return the last N messages (applied after --since)')
 	.option('--json', 'Output as JSON (for scripting); default is a formatted transcript')
 	.action(sessionShow);
+
+// Timeline - one time-ordered list of what happened around an agent, merged
+// from its history, the User Journey, git, and (when on) Computer History. The
+// first stop for "where did we leave off": the tip of the iceberg, ending with
+// the commands that read more. `timeline show` opens one turn in full.
+const timelineCommand = program
+	.command('timeline')
+	.description('Show what happened, oldest first: agent turns, user actions in Maestro, commits')
+	.option('-a, --agent <id>', 'Agent ID or name (default: every agent)')
+	.option('--since <time>', 'Start: 30m, 2h, 1d, 1w, ISO-8601, or epoch (default 1d)')
+	.option('--until <time>', 'End (default now)')
+	.option('--sources <list>', 'Comma list of sources (default history,journey,git)')
+	.option('--tail <n>', 'Only the newest N events (default 30)')
+	.option('--per-source <n>', 'Only the newest N events of each source (default 15)')
+	.option('--grep <text>', 'Only events whose line matches (regex, case-insensitive)')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(timeline);
+
+timelineCommand
+	.command('show <entry>')
+	.description('Show one agent turn in full (its reply, tab, and timing) by an [entry <id>] handle')
+	.option('-a, --agent <id>', 'Agent ID or name (default: search every agent)')
+	.option('--json', 'Output as JSON (for scripting)')
+	// `timeline` declares --agent and --json too, and commander hands a shared
+	// flag to the parent, so read both levels.
+	.action((entry: string, _options, command: Command) =>
+		timelineShow(entry, command.optsWithGlobals())
+	);
+
+// User Journey - what the USER did inside Maestro (files opened, saved, renamed,
+// pages browsed), per agent. Read-only, straight off disk; the desktop records it.
+program
+	.command('journey')
+	.description('Show what the user did in Maestro: files opened/saved/renamed, pages browsed')
+	.option('-a, --agent <id>', 'Agent ID or name (default: every agent)')
+	.option('--since <timestamp>', 'Only entries at or after this time (ISO-8601 or epoch ms/sec)')
+	.option('--tail <n>', 'Only the newest N entries per agent (applied after the other filters)')
+	.option('--kind <kinds>', 'Comma list of kinds, e.g. file.save,browser.navigate')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(journey);
 
 // Group chat commands - start and drive multi-agent group chats in the desktop app.
 // `start` is how a script hands a job to a moderator (the release commands use it);
@@ -2760,6 +2810,27 @@ const pianola = encoreCommand(program, 'pianola', 'pianola', encoreFlags).descri
 );
 
 pianola
+	.command('resolve <id>')
+	.description('Resolve a persisted manager handoff or founder ask after revalidation')
+	.option('--answer <text>', 'Answer the requesting agent exactly once')
+	.option('--escalation <text>', 'Ask the human to decide, with a concrete recommendation')
+	.option('--option <text>', 'Resolve a founder ask with this option')
+	.option('--note <text>', 'Add a note to a founder-ask resolution')
+	.option('--background', 'Preserve the active agent and tab')
+	.option('--json', 'Output as JSON')
+	.action((id, options) =>
+		options.option !== undefined ? pianolaResolve(id, options) : pianolaResolveDecision(id, options)
+	);
+
+pianola
+	.command('watch-scope <scope-id>')
+	.description('Run one registered agent/group selection under the native supervisor')
+	.option('--once', 'Run one bounded scope cycle and exit')
+	.option('--dry-run', 'Classify and record without sending answers')
+	.option('--json', 'Output cycle status as JSON')
+	.action((scopeId, options) => pianolaWatchScope(scopeId, options));
+
+pianola
 	.command('watch <tab-id>')
 	.description('Watch a desktop tab and act on awaiting-input prompts per your rules')
 	.option('--agent <agent-id>', 'Agent id to dispatch answers to (defaults to the tab owner)')
@@ -2916,12 +2987,6 @@ pianola
 	.option('--json')
 	.action((options) => pianolaNeedsMe(options));
 pianola
-	.command('resolve <askId>')
-	.requiredOption('--option <text>')
-	.option('--note <text>')
-	.option('--json')
-	.action((askId, options) => pianolaResolve(askId, options));
-pianola
 	.command('dismiss <askId>')
 	.option('--json')
 	.action((askId, options) => pianolaDismiss(askId, options));
@@ -2998,6 +3063,18 @@ const pianolaSupervise = pianola
 	.description(
 		'Register desktop-supervised watchers and orchestrations (survive crashes/restarts)'
 	);
+
+pianolaSupervise
+	.command('scope')
+	.description('Create or replace an agent/group watch selection (new selections start paused)')
+	.requiredOption('--manager <agent-id>', 'Manager agent id')
+	.requiredOption('--label <label>', 'Selection label')
+	.option('--id <scope-id>', 'Replace an existing selection')
+	.option('--agents <ids>', 'Comma-separated agent IDs')
+	.option('--groups <ids>', 'Comma-separated group IDs')
+	.option('--exclude <ids>', 'Comma-separated excluded agent IDs')
+	.option('--json', 'Output as JSON')
+	.action((options) => pianolaSuperviseScope(options));
 
 pianolaSupervise
 	.command('watch <tabId>')

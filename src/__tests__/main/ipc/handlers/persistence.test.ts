@@ -76,6 +76,19 @@ const { backupSessionsBeforeWipeMock } = vi.hoisted(() => ({
 vi.mock('../../../../main/stores/sessions-backup', () => ({
 	backupSessionsBeforeWipe: backupSessionsBeforeWipeMock,
 }));
+const { backupGroupsBeforeWipeMock } = vi.hoisted(() => ({
+	backupGroupsBeforeWipeMock: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock('../../../../main/stores/groups-backup', () => ({
+	backupGroupsBeforeWipe: backupGroupsBeforeWipeMock,
+}));
+
+const { deleteJourneyMock } = vi.hoisted(() => ({
+	deleteJourneyMock: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock('../../../../main/user-journey-manager', () => ({
+	deleteJourney: deleteJourneyMock,
+}));
 
 // Mock the themes module
 vi.mock('../../../../main/themes', () => ({
@@ -989,7 +1002,16 @@ describe('persistence IPC handlers', () => {
 
 		it('keeps responsive owner inventory and falls back only for a missing owner during bootstrap', async () => {
 			vi.useFakeTimers();
-			mockSessionsStore.get.mockReturnValue([stored, { ...stored, id: 'missing-owner' }]);
+			mockSessionsStore.get.mockReturnValue([
+				{
+					...stored,
+					state: 'busy',
+					busySource: 'ai',
+					thinkingStartTime: 1,
+					aiTabs: stored.aiTabs.map((tab) => ({ ...tab, state: 'busy', thinkingStartTime: 1 })),
+				},
+				{ ...stored, id: 'missing-owner' },
+			]);
 			const browserTabs = [
 				{
 					id: 'private',
@@ -1020,8 +1042,12 @@ describe('persistence IPC handlers', () => {
 								removedIds: [],
 								orderIds: [],
 								snapshot: true,
+								tabInventory: [
+									{ id: 't1', state: 'idle', clearRuntimeFields: ['thinkingStartTime'] },
+									{ id: 'new-live-tab', name: 'Acknowledged before disk flush' },
+								],
 								runtime: { state: 'waiting_input', browserTabs, terminalTabs },
-								clearRuntimeFields: ['statusMessage'],
+								clearRuntimeFields: ['busySource', 'thinkingStartTime', 'statusMessage'],
 							},
 							payload.requestId
 						);
@@ -1046,11 +1072,25 @@ describe('persistence IPC handlers', () => {
 				]);
 				expect(bootstrap.browserTabs).toEqual(browserTabs);
 				expect(bootstrap.terminalTabs).toEqual(terminalTabs);
+				expect(bootstrap.state).toBe('waiting_input');
+				expect(bootstrap.busySource).toBeUndefined();
+				expect(bootstrap.thinkingStartTime).toBeUndefined();
+				expect(bootstrap.aiTabs[0].state).toBe('idle');
+				expect(bootstrap.aiTabs[0].thinkingStartTime).toBeUndefined();
+				expect(bootstrap.aiTabs).toEqual([
+					expect.objectContaining({ id: 't1', logs: [] }),
+					expect.objectContaining({
+						id: 'new-live-tab',
+						name: 'Acknowledged before disk flush',
+						logs: [],
+					}),
+				]);
+				expect(bootstrap.deferredContent.tabIds).toEqual(['t1', 'new-live-tab']);
 				expect(bootstrap.transcriptSnapshots).toEqual([
 					{
 						sessionId: stored.id,
 						runtime: { state: 'waiting_input', browserTabs, terminalTabs },
-						clearRuntimeFields: ['statusMessage'],
+						clearRuntimeFields: ['busySource', 'thinkingStartTime', 'statusMessage'],
 					},
 				]);
 				expect(fallback).not.toHaveProperty('transcriptSnapshots');
@@ -1115,7 +1155,7 @@ describe('persistence IPC handlers', () => {
 				const content = await handlers.get('sessions:getDeferredContent')!(
 					{ type: 'bridge' },
 					's1',
-					't1',
+					'new-live-tab',
 					false
 				);
 				expect(content.logs).toEqual(logs);
@@ -1761,6 +1801,50 @@ describe('persistence IPC handlers', () => {
 			toolType: 'claude-code',
 		};
 
+		it.each(['sessions:setAll', 'sessions:setMany'])(
+			'%s cannot persist a new remote human queue claim',
+			async (channel) => {
+				mockSessionsStore.get.mockReturnValue([]);
+				const incoming = {
+					...baseSession,
+					executionQueue: [
+						{ id: 'remote-item', type: 'message', text: 'Read mail', querySource: 'user' },
+					],
+				};
+				await handlers.get(channel)!({ type: 'bridge' } as any, [incoming], []);
+				const saved = mockSessionsStore.set.mock.calls.at(-1)![1] as (typeof incoming)[];
+				expect(saved[0].executionQueue[0].querySource).toBe('auto');
+			}
+		);
+
+		it.each(['sessions:setAll', 'sessions:setMany'])(
+			'%s demotes changed remote queue claims with an observed baseline',
+			async (channel) => {
+				const item = { id: 'host-item', type: 'message', text: 'Read mail', querySource: 'user' };
+				const untouched = { ...item, id: 'unchanged-item' };
+				const stored = { ...baseSession, executionQueue: [item, untouched] };
+				const baseline = structuredClone(stored);
+				const incoming = {
+					...stored,
+					executionQueue: [{ ...item, text: 'Different operation' }, untouched],
+				};
+				mockSessionsStore.get.mockReturnValue([stored]);
+				const handler = handlers.get(channel)!;
+				const result =
+					channel === 'sessions:setAll'
+						? await handler({ type: 'bridge' } as any, [incoming], [baseline])
+						: await handler({ type: 'bridge' } as any, [incoming], [], [baseline]);
+				expect(result).toBe(true);
+				const saved = mockSessionsStore.set.mock.calls.at(-1)![1] as (typeof stored)[];
+				expect(saved[0].executionQueue).toEqual([
+					{ ...item, text: 'Different operation', querySource: 'auto' },
+					untouched,
+				]);
+				expect(stored.executionQueue).toEqual([item, untouched]);
+				expect(baseline.executionQueue).toEqual([item, untouched]);
+			}
+		);
+
 		it('notifies Pianola of added and removed agents only after a durable write', async () => {
 			const onSessionsPersisted = vi.fn(() => {
 				expect(mockFlushSessionWrites).toHaveBeenCalledOnce();
@@ -2031,6 +2115,17 @@ describe('persistence IPC handlers', () => {
 			await handler!({} as any, [], ['s1']);
 
 			expect(mockWebServer.broadcastSessionRemoved).toHaveBeenCalledWith('s1');
+		});
+
+		it("deletes a removed agent's User Journey, and only for ids that existed", async () => {
+			deleteJourneyMock.mockClear();
+			mockSessionsStore.get.mockReturnValue([{ ...baseSession, id: 's1' }]);
+
+			const handler = handlers.get('sessions:setMany');
+			await handler!({} as any, [], ['s1', 'nonexistent']);
+
+			expect(deleteJourneyMock).toHaveBeenCalledTimes(1);
+			expect(deleteJourneyMock).toHaveBeenCalledWith('s1');
 		});
 
 		it('does not broadcast removals for ids that did not exist', async () => {
@@ -2355,38 +2450,94 @@ describe('persistence IPC handlers', () => {
 	});
 
 	describe('groups:setAll', () => {
-		it('should write groups to store', async () => {
-			const groups = [
-				{ id: 'group-1', name: 'Group 1' },
-				{ id: 'group-2', name: 'Group 2' },
-			];
-
-			const handler = handlers.get('groups:setAll');
-			const result = await handler!({} as any, groups);
-
-			expect(mockGroupsStore.set).toHaveBeenCalledWith('groups', groups);
-			expect(result).toBe(true);
-		});
-
-		it('should handle empty groups array', async () => {
-			const handler = handlers.get('groups:setAll');
-			const result = await handler!({} as any, []);
-
-			expect(mockGroupsStore.set).toHaveBeenCalledWith('groups', []);
-			expect(result).toBe(true);
-		});
-
-		it('should return false on ENOSPC write error', async () => {
-			const error = new Error('ENOSPC: no space left on device') as NodeJS.ErrnoException;
-			error.code = 'ENOSPC';
-			mockGroupsStore.set.mockImplementation(() => {
-				throw error;
+		it('orders recovery reads after an accepted group deletion awaiting its backup', async () => {
+			const original = [{ id: 'last', name: 'Last group', emoji: 'G', collapsed: false }];
+			let groups = original;
+			mockGroupsStore.get.mockImplementation(() => groups);
+			mockGroupsStore.set.mockImplementation((_key, value) => {
+				groups = value;
 			});
-
-			const handler = handlers.get('groups:setAll');
-			const result = await handler!({} as any, [{ id: 'g1', name: 'G1' }]);
-
-			expect(result).toBe(false);
+			let release!: () => void;
+			let started!: () => void;
+			const backingUp = new Promise<void>((resolve) => {
+				started = resolve;
+			});
+			backupGroupsBeforeWipeMock.mockImplementationOnce(() => {
+				started();
+				return new Promise<void>((resolve) => {
+					release = resolve;
+				});
+			});
+			const accepted = handlers.get('groups:setAll')!({}, [], original);
+			await backingUp;
+			let readSettled = false;
+			const recovery = handlers.get('groups:getAll')!({}).then((value: unknown) => {
+				readSettled = true;
+				return value;
+			});
+			try {
+				await new Promise((resolve) => setTimeout(resolve, 0));
+				expect(readSettled).toBe(false);
+			} finally {
+				release();
+				await accepted;
+			}
+			expect(await recovery).toEqual([]);
+		});
+		it('merges concurrent fields and preserves groups the writer never saw', async () => {
+			let groups = [{ id: 'base', name: 'Original', emoji: 'A', collapsed: false }];
+			mockGroupsStore.get.mockImplementation(() => groups);
+			mockGroupsStore.set.mockImplementation((_key, value) => {
+				groups = value;
+			});
+			const baseline = groups;
+			const handler = handlers.get('groups:setAll')!;
+			expect(
+				await handler(
+					{},
+					[...baseline, { id: 'peer', name: 'Peer', emoji: 'P', collapsed: false }],
+					baseline
+				)
+			).toBe(true);
+			await Promise.all([
+				handler({}, [{ ...baseline[0], emoji: 'B' }], baseline),
+				handler({}, [{ ...baseline[0], name: 'Renamed' }], baseline),
+			]);
+			expect(groups).toEqual([
+				{ id: 'base', name: 'Renamed', emoji: 'B', collapsed: false },
+				{ id: 'peer', name: 'Peer', emoji: 'P', collapsed: false },
+			]);
+		});
+		it('deletes only observed groups, promotes children, and does not resurrect peer deletions', async () => {
+			const root = { id: 'root', name: 'Root', emoji: 'R', collapsed: false };
+			const child = {
+				id: 'child',
+				name: 'Child',
+				emoji: 'C',
+				collapsed: false,
+				parentGroupId: 'root',
+			};
+			let groups = [root, child];
+			mockGroupsStore.get.mockImplementation(() => groups);
+			mockGroupsStore.set.mockImplementation((_key, value) => {
+				groups = value;
+			});
+			const handler = handlers.get('groups:setAll')!;
+			await handler({}, [], [root]);
+			expect(groups).toEqual([{ id: 'child', name: 'Child', emoji: 'C', collapsed: false }]);
+			await handler({}, [{ ...root, name: 'Stale rename' }], [root]);
+			expect(groups).toEqual([{ id: 'child', name: 'Child', emoji: 'C', collapsed: false }]);
+		});
+		it('refuses writes without a baseline and reports disk failure', async () => {
+			const handler = handlers.get('groups:setAll')!;
+			expect(await handler({}, [])).toBe(false);
+			expect(mockGroupsStore.set).not.toHaveBeenCalled();
+			mockGroupsStore.set.mockImplementation(() => {
+				throw Object.assign(new Error('Disk full'), { code: 'ENOSPC' });
+			});
+			expect(await handler({}, [{ id: 'g1', name: 'G1', emoji: 'G', collapsed: false }], [])).toBe(
+				false
+			);
 		});
 	});
 

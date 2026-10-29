@@ -84,23 +84,7 @@ import {
 // Group update helpers
 // ============================================================================
 
-/**
- * Write the group list straight to disk and wait for it.
- *
- * The store's own persistence runs from a React effect, so it lands after this
- * listener has already answered the caller. A CLI that verifies its write by
- * reading `maestro-groups.json` back would then see the pre-update list and
- * report a false mismatch. Flushing before responding makes the readback
- * deterministic; the effect's later write is the same data and is idempotent.
- * Same reasoning as the remote session-rename handler above.
- */
-async function flushGroupsToDisk(groups: Group[]): Promise<void> {
-	try {
-		await window.maestro.groups.setAll(groups);
-	} catch (error) {
-		logger.error('[Remote] Failed to persist group change:', undefined, error);
-	}
-}
+import { flushGroupsToDisk } from '../../services/groupPersistence';
 
 /**
  * Apply a validated update to one group. Pure so the ordering rules are
@@ -2119,8 +2103,11 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			collapsed: false,
 		};
 		setGroups((prev: Group[]) => [...prev, newGroup]);
-		await flushGroupsToDisk(useSessionStore.getState().groups);
-		window.maestro.process.sendRemoteCreateGroupResponse(responseChannel, { id: newGroupId });
+		const persisted = await flushGroupsToDisk();
+		window.maestro.process.sendRemoteCreateGroupResponse(
+			responseChannel,
+			persisted ? { id: newGroupId } : null
+		);
 	});
 
 	// Handle remote rename group from web interface
@@ -2174,8 +2161,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 
 		const nextGroups = applyGroupUpdate(currentGroups, groupId, request, clear);
 		setGroups(() => nextGroups);
-		await flushGroupsToDisk(nextGroups);
-		respond(true);
+		respond(await flushGroupsToDisk());
 	});
 
 	// Handle remote delete group from web interface (fire-and-forget)

@@ -50,11 +50,11 @@ class MockChildProcess extends EventEmitter {
 	pid = 12345;
 	exitCode: number | null = null;
 	signalCode: string | null = null;
-	stdin = {
+	// An EventEmitter, like a real pipe: emitting 'error' with no listener throws.
+	stdin = Object.assign(new EventEmitter(), {
 		write: vi.fn(),
 		end: vi.fn(),
-		on: vi.fn(),
-	};
+	});
 	stdout = new EventEmitter();
 	stderr = new EventEmitter();
 	killed = false;
@@ -315,6 +315,71 @@ describe('cue-process-lifecycle', () => {
 					cwd: '/projects/test',
 					stdio: ['ignore', 'pipe', 'pipe'],
 				})
+			);
+
+			mockChild.emit('close', 0);
+			await resultPromise;
+		});
+
+		it('starts a local Windows .cmd shim through cmd.exe (MAESTRO-R0)', async () => {
+			mockIsWindows.mockReturnValue(true);
+			const shim = 'C:\\Users\\First Last\\AppData\\Roaming\\npm\\codex.cmd';
+			const spec = createSpec({ command: shim, args: ['exec', '--json'] });
+			const resultPromise = runProcess(
+				'run-1',
+				spec,
+				createOptions({ stdinPrompt: 'line one\nline two' })
+			);
+			await vi.advanceTimersByTimeAsync(0);
+
+			expect(mockSpawn).toHaveBeenCalledWith(
+				`"${shim}"`,
+				['exec', '--json'],
+				expect.objectContaining({ shell: true, stdio: ['pipe', 'pipe', 'pipe'] })
+			);
+			expect(mockChild.stdin.write).toHaveBeenCalledWith(
+				'line one\nline two',
+				expect.any(Function)
+			);
+
+			mockChild.emit('close', 0);
+			await resultPromise;
+		});
+
+		it('absorbs stdin EPIPE when the child exits mid-write, and settles on the exit', async () => {
+			mockIsWindows.mockReturnValue(true);
+			const shim = 'C:\\Users\\dev\\AppData\\Roaming\\npm\\codex.cmd';
+			const prompt = 'x'.repeat(2_000_000);
+			const resultPromise = runProcess(
+				'run-1',
+				createSpec({ command: shim, args: ['exec', '--json'] }),
+				createOptions({ stdinPrompt: prompt })
+			);
+			await vi.advanceTimersByTimeAsync(0);
+
+			const epipe = Object.assign(new Error('write EPIPE'), { code: 'EPIPE' });
+			expect(() => mockChild.stdin.emit('error', epipe)).not.toThrow();
+			const writeCallback = mockChild.stdin.write.mock.calls[0][1] as (e?: Error) => void;
+			writeCallback(epipe);
+
+			mockChild.emit('close', 1);
+			expect((await resultPromise).status).toBe('failed');
+		});
+
+		it('does not put an SSH client behind a shell on Windows', async () => {
+			mockIsWindows.mockReturnValue(true);
+			const spec = createSpec({ command: 'C:\\Tools\\ssh.cmd', args: ['host'] });
+			const resultPromise = runProcess(
+				'run-1',
+				spec,
+				createOptions({ sshRemoteEnabled: true, sshStdinScript: 'echo hi' })
+			);
+			await vi.advanceTimersByTimeAsync(0);
+
+			expect(mockSpawn).toHaveBeenCalledWith(
+				'C:\\Tools\\ssh.cmd',
+				['host'],
+				expect.objectContaining({ shell: false })
 			);
 
 			mockChild.emit('close', 0);

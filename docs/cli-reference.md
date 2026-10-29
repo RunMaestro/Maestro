@@ -683,6 +683,42 @@ Print conversation history for a desktop tab
 | `--tail <n>`          | Only return the last N messages (applied after --since)              | -       |
 | `--json`              | Output as JSON (for scripting); default is a formatted transcript    | -       |
 
+## `maestro-cli timeline`
+
+Show what happened, oldest first: agent turns, user actions in Maestro, commits
+
+| Option             | Description                                              | Default |
+| ------------------ | -------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent ID or name (default: every agent)                  | -       |
+| `--since <time>`   | Start: 30m, 2h, 1d, 1w, ISO-8601, or epoch (default 1d)  | -       |
+| `--until <time>`   | End (default now)                                        | -       |
+| `--sources <list>` | Comma list of sources (default history,journey,git)      | -       |
+| `--tail <n>`       | Only the newest N events (default 30)                    | -       |
+| `--per-source <n>` | Only the newest N events of each source (default 15)     | -       |
+| `--grep <text>`    | Only events whose line matches (regex, case-insensitive) | -       |
+| `--json`           | Output as JSON (for scripting)                           | -       |
+
+## `maestro-cli timeline show <entry>`
+
+Show one agent turn in full (its reply, tab, and timing) by an [entry &lt;id>] handle
+
+| Option             | Description                                    | Default |
+| ------------------ | ---------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent ID or name (default: search every agent) | -       |
+| `--json`           | Output as JSON (for scripting)                 | -       |
+
+## `maestro-cli journey`
+
+Show what the user did in Maestro: files opened/saved/renamed, pages browsed
+
+| Option                | Description                                                           | Default |
+| --------------------- | --------------------------------------------------------------------- | ------- |
+| `-a, --agent <id>`    | Agent ID or name (default: every agent)                               | -       |
+| `--since <timestamp>` | Only entries at or after this time (ISO-8601 or epoch ms/sec)         | -       |
+| `--tail <n>`          | Only the newest N entries per agent (applied after the other filters) | -       |
+| `--kind <kinds>`      | Comma list of kinds, e.g. file.save,browser.navigate                  | -       |
+| `--json`              | Output as JSON (for scripting)                                        | -       |
+
 ## `maestro-cli group-chat`
 
 Start, message, and inspect group chats in the desktop app
@@ -2313,6 +2349,29 @@ Show settings, or change them with the flags below
 
 Pianola manager agent: watch tabs, auto-answer or escalate per your rules
 
+## `maestro-cli pianola resolve <id>`
+
+Resolve a persisted manager handoff or founder ask after revalidation
+
+| Option                | Description                                             | Default |
+| --------------------- | ------------------------------------------------------- | ------- |
+| `--answer <text>`     | Answer the requesting agent exactly once                | -       |
+| `--escalation <text>` | Ask the human to decide, with a concrete recommendation | -       |
+| `--option <text>`     | Resolve a founder ask with this option                  | -       |
+| `--note <text>`       | Add a note to a founder-ask resolution                  | -       |
+| `--background`        | Preserve the active agent and tab                       | -       |
+| `--json`              | Output as JSON                                          | -       |
+
+## `maestro-cli pianola watch-scope <scope-id>`
+
+Run one registered agent/group selection under the native supervisor
+
+| Option      | Description                                 | Default |
+| ----------- | ------------------------------------------- | ------- |
+| `--once`    | Run one bounded scope cycle and exit        | -       |
+| `--dry-run` | Classify and record without sending answers | -       |
+| `--json`    | Output cycle status as JSON                 | -       |
+
 ## `maestro-cli pianola watch <tab-id>`
 
 Watch a desktop tab and act on awaiting-input prompts per your rules
@@ -2483,14 +2542,6 @@ Manage product programs
 | -------- | ----------- | ------- |
 | `--json` | -           | -       |
 
-## `maestro-cli pianola resolve <askId>`
-
-| Option            | Description | Default |
-| ----------------- | ----------- | ------- |
-| `--option <text>` | -           | -       |
-| `--note <text>`   | -           | -       |
-| `--json`          | -           | -       |
-
 ## `maestro-cli pianola dismiss <askId>`
 
 | Option   | Description | Default |
@@ -2579,6 +2630,20 @@ Run the task validation oracle in the sandbox and append its Agent Run check
 ## `maestro-cli pianola supervise`
 
 Register desktop-supervised watchers and orchestrations (survive crashes/restarts)
+
+## `maestro-cli pianola supervise scope`
+
+Create or replace an agent/group watch selection (new selections start paused)
+
+| Option                 | Description                        | Default |
+| ---------------------- | ---------------------------------- | ------- |
+| `--manager <agent-id>` | Manager agent id                   | -       |
+| `--label <label>`      | Selection label                    | -       |
+| `--id <scope-id>`      | Replace an existing selection      | -       |
+| `--agents <ids>`       | Comma-separated agent IDs          | -       |
+| `--groups <ids>`       | Comma-separated group IDs          | -       |
+| `--exclude <ids>`      | Comma-separated excluded agent IDs | -       |
+| `--json`               | Output as JSON                     | -       |
 
 ## `maestro-cli pianola supervise watch <tabId>`
 
