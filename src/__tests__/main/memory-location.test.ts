@@ -70,7 +70,7 @@ describe('resolveMemoryLayout', () => {
 					sourceAgentId: 'a1',
 					codexHome,
 					// The configured home can be an alias (including Windows short paths).
-					memoryRoot: fs.realpathSync(layout.directoryPath),
+					memoryRoot: await fs.promises.realpath(layout.directoryPath),
 				},
 			});
 		}

@@ -3199,8 +3199,11 @@ describe('request-bound memory command draft RPCs', () => {
 	let issueRunToken: ReturnType<typeof vi.fn>;
 	let preview: ReturnType<typeof vi.fn>;
 
-	beforeEach(() => {
+	beforeEach(async () => {
+		const realHome = path.join(kvBase, 'codex-real');
 		const memoryHome = path.join(kvBase, 'codex-fixture');
+		fs.mkdirSync(realHome);
+		fs.symlinkSync(realHome, memoryHome, 'junction');
 		fs.mkdirSync(path.join(memoryHome, 'memories'), { recursive: true });
 		fs.writeFileSync(
 			path.join(memoryHome, 'memories', 'MEMORY.md'),
@@ -3216,7 +3219,7 @@ describe('request-bound memory command draft RPCs', () => {
 				location: { kind: 'local' },
 				codexHome: memoryHome,
 				// Match the reader's canonical root even when the temp directory is an alias.
-				memoryRoot: fs.realpathSync(path.join(memoryHome, 'memories')),
+				memoryRoot: await fs.promises.realpath(path.join(memoryHome, 'memories')),
 				relativePath: 'MEMORY.md',
 			},
 			textSnapshot: 'PRIVATE LEFT\r\n😀chosen\r\nPRIVATE RIGHT',
