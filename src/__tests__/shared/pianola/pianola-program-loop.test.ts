@@ -121,6 +121,20 @@ describe('program loop', () => {
 		expect(io.wake).toHaveBeenCalledTimes(2);
 		expect(state.memo.notifiedTaskIds).toEqual(['plan:task']);
 	});
+	it('keys failure notifications by attempt without requiring an intermediate tick', async () => {
+		const state = blank();
+		state.plans = [{ ...plan, tasks: [{ ...plan.tasks[0], status: 'failed', runId: 'run-1' }] }];
+		const io = deps();
+		io.persistMemo.mockImplementation((memo) => {
+			state.memo = JSON.parse(JSON.stringify(memo));
+		});
+		await runProgramLoopTick(state, io);
+		state.plans = [
+			{ ...plan, tasks: [{ ...plan.tasks[0], status: 'needs_review', runId: 'run-2' }] },
+		];
+		await runProgramLoopTick(state, io);
+		expect(io.wake).toHaveBeenCalledTimes(2);
+	});
 	it('does not resurrect manually disabled plan or lead-watch targets', async () => {
 		const state = blank();
 		state.plans = [{ ...plan, tasks: [{ ...plan.tasks[0], status: 'needs_review' }] }];

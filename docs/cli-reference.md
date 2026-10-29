@@ -359,7 +359,7 @@ Launch a Goal-Driven Auto Run: pursue a free-text goal until done
 | `--model <model>`        | Model to use for this run only, overriding the agent's configured default     | -       |
 | `--effort <effort>`      | Reasoning effort for this run only, overriding the agent's configured default | -       |
 
-## `maestro-cli run-doc <docs>`
+## `maestro-cli run-doc <docs...>`
 
 Run one or more Auto Run documents headlessly (no saved playbook required)
 
@@ -767,7 +767,7 @@ Open a file as a preview tab in the Maestro desktop app (audio and video play in
 | `--queue`          | Audio/video only: add to the media player queue and show the player without starting playback | -       |
 | `--json`           | Output as JSON (for scripting)                                                                | -       |
 
-## `maestro-cli open-graph [paths]`
+## `maestro-cli open-graph [paths...]`
 
 Open the Document Graph over specific markdown files or a directory
 
@@ -894,7 +894,7 @@ Refresh Auto Run documents in the Maestro desktop app
 | `--focus`          | Switch to the target agent while refreshing             | -       |
 | `--json`           | Output as JSON (for scripting)                          | -       |
 
-## `maestro-cli auto-run <docs>`
+## `maestro-cli auto-run <docs...>`
 
 Configure and optionally launch an auto-run with documents
 
@@ -2122,7 +2122,7 @@ Import a theme JSON file, apply it live, and activate it
 | `--no-activate` | Save the palette without switching to the Custom theme | -       |
 | `--json`        | Output as JSON (for scripting)                         | -       |
 
-## `maestro-cli theme set [assignments]`
+## `maestro-cli theme set [assignments...]`
 
 Set custom theme colors (key=value, e.g. accent=#ff0000) and/or re-base
 
@@ -2387,7 +2387,7 @@ Save a learned decision profile from --file or stdin (per-project or global)
 | `--pair-count <n>` | How many decision pairs this profile was synthesized from      | -       |
 | `--json`           | Output as JSON (for scripting)                                 | -       |
 
-## `maestro-cli pianola memory [action] [value]`
+## `maestro-cli pianola memory [action] [value...]`
 
 Backfill and retrieve evidence-backed user and project memory
 
@@ -2975,7 +2975,7 @@ Show the window state, the agent, the mode, and the current conversation
 | -------- | ------------------------------ | ------- |
 | `--json` | Output as JSON (for scripting) | -       |
 
-## `maestro-cli quick-chat send [message]`
+## `maestro-cli quick-chat send [message...]`
 
 Send a message in the current Quick Chat (starts a chat if none is open); --image attaches images
 

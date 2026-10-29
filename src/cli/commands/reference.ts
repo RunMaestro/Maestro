@@ -44,16 +44,20 @@ function optionInfo(cmd: Command, includeHidden: boolean): OptionInfo[] {
 		}));
 }
 
-/** Render the argument signature (e.g. "<agent-id> [message]") for a command. */
-function argSignature(cmd: Command): string {
-	// `registeredArguments` is the public-ish list of declared arguments; fall
-	// back to the legacy `_args` only if a Commander version lacks it.
-	const args =
-		(cmd as unknown as { registeredArguments?: { name(): string; required: boolean }[] })
-			.registeredArguments ??
-		(cmd as unknown as { _args?: { name(): string; required: boolean }[] })._args ??
-		[];
-	return args.map((a) => (a.required ? `<${a.name()}>` : `[${a.name()}]`)).join(' ');
+type CommandArgument = { name(): string; required: boolean; variadic?: boolean };
+
+/** Render the argument signature (e.g. "<agent-id> [message...]") for a command. */
+export function argSignature(cmd: Command): string {
+	// Commander exposes registeredArguments publicly; retain the legacy fallback for older versions.
+	const current = cmd as unknown as { registeredArguments?: CommandArgument[] };
+	const legacy = cmd as unknown as { _args?: CommandArgument[] };
+	const args = current.registeredArguments ?? legacy._args ?? [];
+	return args
+		.map((a) => {
+			const name = a.name() + (a.variadic ? '...' : '');
+			return a.required ? `<${name}>` : `[${name}]`;
+		})
+		.join(' ');
 }
 
 function buildInfo(cmd: Command, parentPath: string, includeHidden: boolean): CommandInfo {

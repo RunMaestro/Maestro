@@ -211,7 +211,9 @@ export class MemoryTransport {
 	registerOwner(): string {
 		const id = crypto.randomUUID();
 		this.db
-			.prepare('INSERT INTO memory_transport_owners VALUES(?,?,?,?,?,?,NULL)')
+			.prepare(
+				"INSERT INTO memory_transport_owners VALUES(?,?,?,?,?,?,(SELECT CASE WHEN state='fenced' THEN fence ELSE NULL END FROM memory_transport_gate WHERE id=1))"
+			)
 			.run(id, process.pid, threadId, Date.now(), runtimeBuild(), this.gate()!.epoch);
 		return id;
 	}
@@ -247,9 +249,9 @@ export class MemoryTransport {
 						(
 							this.db
 								.prepare(
-									'SELECT COUNT(*) n FROM memory_transport_owners WHERE id<>? AND drain_fence IS NOT (SELECT fence FROM memory_transport_gate WHERE id=1)'
+									'SELECT COUNT(*) n FROM memory_transport_owners WHERE drain_fence IS NOT (SELECT fence FROM memory_transport_gate WHERE id=1)'
 								)
-								.get(runtime) as { n: number }
+								.get() as { n: number }
 						).n === 0)
 				) {
 					const epoch = crypto.randomUUID();
