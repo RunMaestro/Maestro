@@ -23,7 +23,11 @@ import os from 'os';
 import path from 'path';
 import type Store from 'electron-store';
 
-import { deferStoreWrites, serializeWithMemoizedArray } from '../../../main/stores/deferred-writes';
+import {
+	deferStoreWrites,
+	serializeWithMemoizedArray,
+	sweepOrphanTempFiles,
+} from '../../../main/stores/deferred-writes';
 import { encodeWithMemoizedArray } from '../../../shared/memoizedJsonSerialize';
 
 vi.mock('../../../main/utils/logger', () => ({
@@ -454,5 +458,45 @@ describe('deferStoreWrites', () => {
 		await writer.flushAsync();
 
 		expect(fs.readdirSync(dir)).toEqual(['maestro-sessions.json']);
+	});
+
+	it('acknowledges a revision whose bytes are already on disk without rewriting it', async () => {
+		const store = makeStore({ sessions: [] });
+		const writer = deferStoreWrites(store, 'sessions');
+		writer.store.set('sessions', [{ id: 'a', logs: ['one'] }]);
+		await writer.flushAsync();
+		const writeFile = vi.spyOn(fsp, 'writeFile');
+		const writeFileSync = vi.spyOn(fs, 'writeFileSync');
+
+		// A peer echoing what the host already saved: new objects, same bytes.
+		writer.store.set('sessions', [{ id: 'a', logs: ['one'] }]);
+		await writer.flushAsync();
+		writer.store.set('sessions', [{ id: 'a', logs: ['one'] }]);
+		writer.flushSync();
+		expect(writeFile).not.toHaveBeenCalled();
+		expect(writeFileSync).not.toHaveBeenCalled();
+		expect(writer.hasPendingWrite()).toBe(false);
+
+		writer.store.set('sessions', [{ id: 'a', logs: ['one', 'two'] }]);
+		await writer.flushAsync();
+		expect(writeFile).toHaveBeenCalledOnce();
+		expect(readFile()).toEqual({ sessions: [{ id: 'a', logs: ['one', 'two'] }] });
+	});
+
+	it('removes temp files a dead writer left, and keeps live ones and other stores', async () => {
+		// Above every platform's pid ceiling, so no process can hold it.
+		const deadPid = 4194305;
+		const dead = `maestro-sessions.json.${deadPid}.3.tmp`;
+		const own = `maestro-sessions.json.${process.pid}.1.tmp`;
+		const liveCli = `maestro-sessions.json.${process.ppid}.1.tmp`;
+		const otherStore = `maestro-groups.json.${deadPid}.1.tmp`;
+		fs.writeFileSync(filePath, '{}');
+		for (const name of [dead, own, liveCli, otherStore]) fs.writeFileSync(path.join(dir, name), '');
+
+		await expect(sweepOrphanTempFiles(filePath)).resolves.toBe(1);
+
+		expect(fs.readdirSync(dir).sort()).toEqual(
+			['maestro-sessions.json', own, liveCli, otherStore].sort()
+		);
 	});
 });

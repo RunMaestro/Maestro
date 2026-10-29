@@ -36,6 +36,10 @@
  *     actually changed rather than to the whole file.
  *   - **Async, coalesced write.** Writes are batched behind a short timer and
  *     go out as an async atomic write (temp file + rename), off the UI thread.
+ *   - **No identical rewrites.** The file is still written whole, which is the
+ *     cost at scale (one user's store reached 141 MB across 400 agents). A
+ *     revision that serializes to the bytes already on disk is acknowledged
+ *     without writing, since peers echo saves the host already holds.
  *
  * Safe to cache because the main process is the sole writer of this file: the
  * app takes a single-instance lock, `maestro-sessions.json` is not watched, and
@@ -49,10 +53,12 @@
 
 import fs from 'fs';
 import fsp from 'fs/promises';
+import path from 'path';
 import type Store from 'electron-store';
 
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
+import { isPidAlive } from '../process-manager/utils/childProcessInfo';
 import {
 	encodeWithMemoizedArray,
 	serializeWithMemoizedArray,
@@ -107,6 +113,46 @@ async function writeFileAtomic(
 		});
 		throw err;
 	}
+}
+
+/**
+ * Delete temp files that a killed process left between its write and its
+ * rename. Nothing else removes them, and each is a full copy of the store
+ * (457 MB of them on one machine). A live pid's file may still be in flight
+ * (this process, or a CLI write through `atomicWriteJson`), so only files whose
+ * writer is gone are removed.
+ */
+export async function sweepOrphanTempFiles(filePath: string): Promise<number> {
+	const dir = path.dirname(filePath);
+	const prefix = `${path.basename(filePath)}.`;
+	let names: string[];
+	try {
+		names = await fsp.readdir(dir);
+	} catch {
+		return 0;
+	}
+	let removed = 0;
+	for (const name of names) {
+		if (!name.startsWith(prefix)) continue;
+		const pid = Number(/^(\d+)\.\d+\.tmp$/.exec(name.slice(prefix.length))?.[1]);
+		if (!pid || pid === process.pid || isPidAlive(pid)) continue;
+		try {
+			await fsp.unlink(path.join(dir, name));
+			removed += 1;
+		} catch {
+			// Already gone, or not ours to remove. Either way the store is intact.
+		}
+	}
+	return removed;
+}
+
+/** Whether two serializations are byte-identical. Unchanged elements share a chunk. */
+function sameChunks(a: Uint8Array[], b: Uint8Array[]): boolean {
+	if (a.length !== b.length) return false;
+	for (let i = 0; i < a.length; i++) {
+		if (a[i] !== b[i] && Buffer.compare(a[i], b[i]) !== 0) return false;
+	}
+	return true;
 }
 
 /** Synchronous counterpart of {@link writeFileAtomic}, for the quit path. */
@@ -182,6 +228,19 @@ export function deferStoreWrites<T extends Record<string, any>>(
 	let documentRevision = 0;
 	let durableRevision = 0;
 	let writeInFlight: Promise<void> | null = null;
+	// The bytes of the last committed document. A revision that serializes to the
+	// same bytes is already durable: on one 141 MB store, three of every five
+	// rewrites were byte-identical (a peer echoing a save the host already had).
+	let committedChunks: Uint8Array[] | null = null;
+
+	// Best-effort cleanup; a failure leaves the leftovers for the next launch.
+	void sweepOrphanTempFiles(store.path).then(
+		(removed) => {
+			if (removed > 0)
+				logger.info(`Removed ${removed} orphaned temp file(s) beside ${store.path}`, 'Sessions');
+		},
+		() => {}
+	);
 
 	/** Mark the current revision dirty and arrange a future ordered drain. */
 	function scheduleWrite(delayMs: number = WRITE_COALESCE_MS): void {
@@ -262,6 +321,10 @@ export function deferStoreWrites<T extends Record<string, any>>(
 					handleWriteError(err);
 					throw err;
 				}
+				if (committedChunks && sameChunks(committedChunks, data)) {
+					durableRevision = snapshotRevision;
+					continue;
+				}
 
 				try {
 					const committed = await writeFileAtomic(
@@ -269,7 +332,10 @@ export function deferStoreWrites<T extends Record<string, any>>(
 						data,
 						() => snapshotRevision > durableRevision
 					);
-					if (committed) durableRevision = snapshotRevision;
+					if (committed) {
+						durableRevision = snapshotRevision;
+						committedChunks = data;
+					}
 				} catch (err) {
 					handleWriteError(err);
 					throw err;
@@ -297,7 +363,13 @@ export function deferStoreWrites<T extends Record<string, any>>(
 		if (durableRevision >= documentRevision && !writeInFlight) return;
 		const snapshotRevision = documentRevision;
 		try {
-			writeFileAtomicSync(store.path, serialize());
+			const data = serialize();
+			// Unchanged bytes are on disk unless an async write is mid-flight, and
+			// that one may be an older snapshot, so only skip when nothing is.
+			if (!(committedChunks && !writeInFlight && sameChunks(committedChunks, data))) {
+				writeFileAtomicSync(store.path, data);
+				committedChunks = data;
+			}
 			// This also invalidates any older async snapshot whose temp-file write
 			// is still in flight; its guarded commit will discard that temp file.
 			durableRevision = snapshotRevision;
