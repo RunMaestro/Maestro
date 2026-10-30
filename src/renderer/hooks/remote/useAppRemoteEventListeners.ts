@@ -16,7 +16,7 @@ import { useEventListener } from '../utils/useEventListener';
 import { generateId } from '../../utils/ids';
 import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
-import { buildNewAgentRecord } from '../../../shared/newAgentRecord';
+import { buildNewAgentRecord, newAgentClaudeInteractive } from '../../../shared/newAgentRecord';
 import { asThinkingMode } from '../../../shared/types';
 import { resolveAutoRunDocumentNames } from '../../../shared/autoRunDocumentPaths';
 import {
@@ -35,7 +35,7 @@ import {
 	getTerminalTabDisplayName,
 	getTerminalSessionId,
 } from '../../utils/terminalTabHelpers';
-import type { Session, ToolType, Group, BatchRunConfig } from '../../types';
+import type { AdditionalDirectory, Session, ToolType, Group, BatchRunConfig } from '../../types';
 import type { BrowserTab } from '../../../shared/browserPage';
 import { logger } from '../../utils/logger';
 import { FILE_TREE_REFRESH_EVENT } from '../../utils/fileTreeRefresh';
@@ -62,6 +62,7 @@ import {
 	canCreateGroupInside,
 	canSetGroupParent,
 	removeGroupAndPromoteChildren,
+	setGroupCollapsed,
 	setGroupHidden,
 	setGroupParent,
 } from '../../../shared/groupHierarchy';
@@ -71,28 +72,19 @@ import {
 	type GroupUpdateRequest,
 } from '../../../shared/groupAppearance';
 import { isCodexTransport } from '../../../shared/codexTransport';
+import { withAgentInGroup } from '../../../shared/maestro-lib/agents/rules';
+import {
+	TAB_CONTEXT_OP_EVENT,
+	runRemoteTabContextOp,
+	type TabContextOpEventDetail,
+	type TabContextOpHandlers,
+} from '../../services/tabContextOps';
 
 // ============================================================================
 // Group update helpers
 // ============================================================================
 
-/**
- * Write the group list straight to disk and wait for it.
- *
- * The store's own persistence runs from a React effect, so it lands after this
- * listener has already answered the caller. A CLI that verifies its write by
- * reading `maestro-groups.json` back would then see the pre-update list and
- * report a false mismatch. Flushing before responding makes the readback
- * deterministic; the effect's later write is the same data and is idempotent.
- * Same reasoning as the remote session-rename handler above.
- */
-async function flushGroupsToDisk(groups: Group[]): Promise<void> {
-	try {
-		await window.maestro.groups.setAll(groups);
-	} catch (error) {
-		logger.error('[Remote] Failed to persist group change:', undefined, error);
-	}
-}
+import { flushGroupsToDisk } from '../../services/groupPersistence';
 
 /**
  * Apply a validated update to one group. Pure so the ordering rules are
@@ -114,6 +106,9 @@ function applyGroupUpdate(
 	}
 	if (request.hidden !== undefined) {
 		next = setGroupHidden(next, groupId, request.hidden);
+	}
+	if (request.collapsed !== undefined) {
+		next = setGroupCollapsed(next, groupId, request.collapsed);
 	}
 
 	return next.map((group) => {
@@ -176,6 +171,8 @@ export interface UseAppRemoteEventListenersDeps {
 	skipCurrentDocument: (sessionId: string) => void;
 	/** Abort a paused-on-error batch run entirely */
 	abortBatchOnError: (sessionId: string) => void;
+	/** The AI tab overlay menu's Context handlers (Compact, Merge Into, Send to Agent). */
+	tabContextOps: TabContextOpHandlers;
 }
 
 // ============================================================================
@@ -196,6 +193,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		resumeAfterError,
 		skipCurrentDocument,
 		abortBatchOnError,
+		tabContextOps,
 	} = deps;
 
 	/**
@@ -215,6 +213,27 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		logger.info('[Remote] active agent switched', undefined, { origin, sessionId });
 		setActiveSessionId(sessionId);
 	};
+
+	// --- Context: Compact / Merge Into / Send to Agent ---
+
+	// `maestro-cli tab compact|merge|transfer`, forwarded by useRemoteIntegration.
+	// Runs the overlay menu's own handlers and answers every path, a thrown
+	// handler included, so the CLI never waits out its timeout.
+	useEventListener(TAB_CONTEXT_OP_EVENT, (e: Event) => {
+		const { request, reply } = (e as CustomEvent<TabContextOpEventDetail>).detail;
+		runRemoteTabContextOp(request, tabContextOps)
+			.then(reply)
+			.catch((error: unknown) => {
+				captureException(error, {
+					extra: { event: TAB_CONTEXT_OP_EVENT, op: request.op, sessionId: request.sessionId },
+				});
+				reply({
+					success: false,
+					error: error instanceof Error ? error.message : String(error),
+					sessionId: request.sessionId,
+				});
+			});
+	});
 
 	// --- File Operations ---
 
@@ -1553,6 +1572,30 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				...(config?.autoRunFolderPath && {
 					autoRunFolderPath: config.autoRunFolderPath as string,
 				}),
+				// The remaining New Agent modal fields (`duplicate-agent` sends them),
+				// stored the way createNewSession() stores them.
+				...(Array.isArray(config?.additionalDirectories) && {
+					additionalDirectories: config.additionalDirectories as AdditionalDirectory[],
+				}),
+				...(typeof config?.enableMaestroP === 'boolean' && {
+					enableMaestroP: config.enableMaestroP,
+				}),
+				...(config?.enableMaestroP === true &&
+					(config.maestroPMode === 'interactive' || config.maestroPMode === 'dynamic') && {
+						maestroPMode: config.maestroPMode,
+					}),
+				...(config?.enableMaestroP === true &&
+					typeof config.maestroPPath === 'string' &&
+					config.maestroPPath && { maestroPPath: config.maestroPPath }),
+				...(typeof config?.retryOnAvailabilityErrors === 'boolean' && {
+					retryOnAvailabilityErrors: config.retryOnAvailabilityErrors,
+				}),
+				...(typeof config?.retryOnTokenExhaustion === 'boolean' && {
+					retryOnTokenExhaustion: config.retryOnTokenExhaustion,
+				}),
+				...(config?.codexAutoResetOnExhaustion === true && { codexAutoResetOnExhaustion: true }),
+				...(config?.codexTransport === 'app-server' && { codexTransport: 'app-server' as const }),
+				claudeInteractive: newAgentClaudeInteractive(toolType),
 			};
 
 			setSessions((prev: Session[]) => [...prev, newSession]);
@@ -2060,8 +2103,11 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			collapsed: false,
 		};
 		setGroups((prev: Group[]) => [...prev, newGroup]);
-		await flushGroupsToDisk(useSessionStore.getState().groups);
-		window.maestro.process.sendRemoteCreateGroupResponse(responseChannel, { id: newGroupId });
+		const persisted = await flushGroupsToDisk();
+		window.maestro.process.sendRemoteCreateGroupResponse(
+			responseChannel,
+			persisted ? { id: newGroupId } : null
+		);
 	});
 
 	// Handle remote rename group from web interface
@@ -2078,10 +2124,11 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 		window.maestro.process.sendRemoteRenameGroupResponse(responseChannel, true);
 	});
 
-	// Handle a remote group update (name / appearance / parent). The payload is
-	// already validated by the WS handler; what only the renderer can decide is
-	// whether the group exists and whether the requested reparent is legal, so
-	// both are checked before any state is written.
+	// Handle a remote group update (name / appearance / parent / hidden /
+	// collapsed). The payload is already validated by the WS handler; what only
+	// the renderer can decide is whether the group exists and whether the
+	// requested reparent is legal, so both are checked before any state is
+	// written.
 	useEventListener('maestro:remoteUpdateGroup', async (e: Event) => {
 		const { groupId, update, responseChannel } = (e as CustomEvent).detail as {
 			groupId: string;
@@ -2114,8 +2161,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 
 		const nextGroups = applyGroupUpdate(currentGroups, groupId, request, clear);
 		setGroups(() => nextGroups);
-		await flushGroupsToDisk(nextGroups);
-		respond(true);
+		respond(await flushGroupsToDisk());
 	});
 
 	// Handle remote delete group from web interface (fire-and-forget)
@@ -2137,9 +2183,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			window.maestro.process.sendRemoteMoveSessionToGroupResponse(responseChannel, false);
 			return;
 		}
-		setSessions((prev: Session[]) =>
-			prev.map((s) => (s.id === sessionId ? { ...s, groupId: groupId || undefined } : s))
-		);
+		setSessions((prev: Session[]) => withAgentInGroup(prev, sessionId, groupId));
 		window.maestro.process.sendRemoteMoveSessionToGroupResponse(responseChannel, true);
 	});
 }

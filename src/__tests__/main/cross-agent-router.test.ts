@@ -67,7 +67,11 @@ const targetSession = (): CrossAgentTargetSession => ({
 
 function harness(
 	sshStore: unknown = null,
-	overrides: { request?: Partial<CrossAgentRequest>; agent?: Record<string, unknown> } = {}
+	overrides: {
+		request?: Partial<CrossAgentRequest>;
+		agent?: Record<string, unknown>;
+		target?: Partial<CrossAgentTargetSession>;
+	} = {}
 ) {
 	const processManager = new FakeProcessManager();
 	const chunks: CrossAgentResponseChunk[] = [];
@@ -89,7 +93,7 @@ function harness(
 				}),
 			} as never,
 			sshStore: sshStore as never,
-			getTargetSession: targetSession,
+			getTargetSession: () => ({ ...targetSession(), ...overrides.target }),
 			onChunk: (c) => chunks.push(c),
 		});
 	// The runner keys its listeners on `cross-agent-<requestId>`; request() uses 'r1'.
@@ -271,6 +275,35 @@ describe('the desktop consult runner', () => {
 		emitExit(0);
 
 		for (const evt of LISTENED) expect(processManager.listenerCount(evt)).toBe(0);
+	});
+
+	// The consult runs in the target's own cwd, which a TUI target may trust (#1872).
+	it("lets a TUI target accept claude's folder trust for its own cwd", async () => {
+		const { dispatch } = harness();
+		await dispatch();
+
+		const config = vi.mocked(spawnGroupChatAgent).mock.calls[0][0];
+		expect(config.cwd).toBe('/proj');
+		expect(config.acceptWorkspaceTrust).toBe(true);
+	});
+
+	it('names the untrusted folder when maestro-p exits 7, not "no visible output"', async () => {
+		const { chunks, dispatch, emitExit } = harness();
+		await dispatch();
+
+		emitExit(7);
+
+		expect(chunks[0].error).toContain('has not trusted the folder /proj');
+		expect(chunks[0].error).not.toContain('no visible output');
+	});
+
+	it('keeps the generic message for exit 7 from a non-Claude target', async () => {
+		const { chunks, dispatch, emitExit } = harness(null, { target: { toolType: 'codex' } });
+		await dispatch();
+
+		emitExit(7);
+
+		expect(chunks[0].error).toContain('produced no visible output (exit code 7)');
 	});
 
 	it('kills the process and flushes the partial output once it goes silent', async () => {

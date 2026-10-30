@@ -5,11 +5,15 @@
  * key) the authorization ledger mints against and the refresh verifier compares.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { generateKeyPairSync, createHash, sign as cryptoSign, type KeyObject } from 'crypto';
+vi.mock('fs', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('fs')>();
+	return { ...actual, readFileSync: vi.fn(actual.readFileSync) };
+});
 import { pluginIdentity } from '../../../main/plugins/plugin-identity';
 import { computePluginContentHash } from '../../../main/plugins/plugin-signature';
 import { buildSigningPayload, SIGNATURE_FILENAME } from '../../../shared/plugins/signing';
@@ -61,6 +65,22 @@ describe('pluginIdentity', () => {
 		const id = pluginIdentity(dir, [publicKeyB64]);
 		expect(id!.signatureStatus).toBe('trusted');
 		expect(id!.signerKey).toBe(publicKeyB64);
+	});
+
+	it('uses one fresh signed file scan per identity and immediately detects subsequent tampering', () => {
+		signDir(dir, publicKeyB64, privateKey);
+		vi.mocked(fs.readFileSync).mockClear();
+		const first = pluginIdentity(dir, [publicKeyB64]);
+		expect(first?.signatureStatus).toBe('trusted');
+		expect(
+			vi
+				.mocked(fs.readFileSync)
+				.mock.calls.filter(([filename]) => String(filename) === path.join(dir, 'entry.js'))
+		).toHaveLength(1);
+		fs.writeFileSync(path.join(dir, 'entry.js'), 'changed after the prior check');
+		const next = pluginIdentity(dir, [publicKeyB64]);
+		expect(next?.signatureStatus).toBe('invalid');
+		expect(next?.contentHash).not.toBe(first?.contentHash);
 	});
 
 	it('reports untrusted when the signature verifies but the key is unknown', () => {

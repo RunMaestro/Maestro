@@ -6,6 +6,7 @@ import { CoworkingSetup } from '../../CoworkingSetup';
 import {
 	ComputerHistorySection,
 	MaestroRunSection,
+	PianolaSection,
 	CueSettingsSection,
 	DataviewSection,
 	DirectorNotesSection,
@@ -57,9 +58,10 @@ export function EncoreTab({ theme, isOpen, tileRequest }: EncoreTabProps) {
 	});
 
 	// Config bodies for the detail pane's Settings sub-tab, keyed by Encore
-	// flag. Features absent from this map (pianola) have no inline config -
+	// flag. Features absent from this map have no inline config -
 	// the detail pane falls back to their own affordance (Open Pianola).
 	const settingsBodies: Partial<Record<keyof EncoreFeatureFlags, ReactNode>> = {
+		pianola: <PianolaSection theme={theme} />,
 		usageStats: (
 			<UsageStatsSection
 				theme={theme}

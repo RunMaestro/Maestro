@@ -91,3 +91,42 @@ describe('handleCreateSession - context window provenance (finding AD1)', () => 
 		expect(config?.contextWindowSource).toBeUndefined();
 	});
 });
+
+describe('handleCreateSession - duplicate-agent fields', () => {
+	it('carries the New Agent modal fields duplicate-agent sends, explicit false included', () => {
+		const config = created({
+			additionalDirectories: [{ path: '/shared', read: true, write: false }],
+			enableMaestroP: false,
+			maestroPMode: 'interactive',
+			maestroPPath: '/opt/maestro-p',
+			retryOnAvailabilityErrors: false,
+			retryOnTokenExhaustion: true,
+			codexAutoResetOnExhaustion: true,
+			codexTransport: 'app-server',
+		});
+
+		expect(config).toMatchObject({
+			additionalDirectories: [{ path: '/shared', read: true, write: false }],
+			enableMaestroP: false,
+			maestroPMode: 'interactive',
+			maestroPPath: '/opt/maestro-p',
+			retryOnAvailabilityErrors: false,
+			retryOnTokenExhaustion: true,
+			codexAutoResetOnExhaustion: true,
+			codexTransport: 'app-server',
+		});
+	});
+
+	it('drops values that are not the field type', () => {
+		const config = created({
+			additionalDirectories: [],
+			enableMaestroP: 'yes',
+			maestroPMode: 'always',
+			retryOnAvailabilityErrors: 0,
+			codexAutoResetOnExhaustion: false,
+			codexTransport: 'grpc',
+		});
+
+		expect(config).toBeUndefined();
+	});
+});

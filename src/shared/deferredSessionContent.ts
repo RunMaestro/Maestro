@@ -2,6 +2,8 @@
 export interface DeferredSessionContent {
 	tabIds: string[];
 	commands?: true;
+	/** Cached metadata must not be treated as authoritative deletion evidence. */
+	ownerUnavailable?: true;
 }
 
 export const MAX_PERSISTED_SESSION_LOGS = 100;

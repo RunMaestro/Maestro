@@ -76,6 +76,8 @@ interface WhamUsageResponse {
 			secondary_window?: WhamUsageWindow;
 		};
 	}>;
+	/** Additional usage-credit details, independent of the reset-credit inventory below. */
+	credits?: unknown;
 	/**
 	 * Reset-credit inventory, which the usage payload already carries - so the
 	 * count beside the bars costs no extra request. The full per-credit list
@@ -174,8 +176,25 @@ export async function sampleCodexUsage(opts: SampleCodexUsageOptions): Promise<C
 		session,
 		weekly,
 		additionalLimits: parseAdditionalLimits(body.additional_rate_limits),
+		credits: parseCreditBalance(body.credits),
 		resetCredits: parseResetCreditCounts(body.rate_limit_reset_credits),
 	};
+}
+
+function parseCreditBalance(raw: unknown): CodexUsageSnapshot['credits'] {
+	if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+	if ('unlimited' in raw && raw.unlimited === true) return { kind: 'unlimited' };
+
+	const value = 'balance' in raw ? raw.balance : undefined;
+	// Wham reports decimal strings; also accept numbers for compatibility. Validate
+	// before conversion: Number(null), Number(''), and Number(false) invent a zero.
+	const balance = readCount(
+		typeof value === 'string' && /^\d+(?:\.\d+)?$/.test(value) ? Number(value) : value
+	);
+	// A positive decimal below Number's range must not turn into an actual zero.
+	if (balance === 0 && typeof value === 'string' && /[1-9]/.test(value)) return undefined;
+	// `has_credits` is only a flag, not a balance; false must never imply zero.
+	return balance === undefined ? undefined : { kind: 'balance', balance };
 }
 
 /**

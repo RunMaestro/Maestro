@@ -49,7 +49,7 @@ import {
 } from '../../../main/dataview/dataview-service';
 import type { VaultFs, VaultListing } from '../../../main/dataview/vault-fs';
 import { encoreDisabledMessage } from '../../../shared/encoreFeatureDefaults';
-import { PageIndex } from '../../../shared/dataview';
+import { PageIndex, decodeSandboxSnapshot } from '../../../shared/dataview';
 
 /** In-memory vaults by root. Each file is `{ text, mtime }` so a test can edit one in place. */
 type MemoryVault = Record<string, string>;
@@ -780,19 +780,31 @@ describe('DataviewJS requests (D3, D4)', () => {
 			expect(response.sshRemoteId).toBeNull();
 			expect(response.path).toBe('Notes/Note.md');
 			expect(response.revision).toBe(response.result.revision);
-			expect(response.result.files.sort()).toEqual(Object.keys(files).sort());
+			// JSON text the renderer passes through without decoding it.
+			expect(typeof response.result.json).toBe('string');
+			const snapshot = decodeSandboxSnapshot(response.result);
+			expect(snapshot.files.sort()).toEqual(Object.keys(files).sort());
 			// One entry per page the index holds (this fake stats every file, so the CSV is a page too).
 			const mainIndex = await service.getIndex(note, { agentCwd: root });
-			expect(response.result.pages.map((page) => page.path).sort()).toEqual(
+			expect(snapshot.pages.map((page) => page.path).sort()).toEqual(
 				[...mainIndex.pages.keys()].sort()
 			);
-			expect(response.result.pages.map((page) => page.path)).toContain('Notes/Other.md');
-			expect(response.result.stars).toEqual([]);
+			expect(snapshot.pages.map((page) => page.path)).toContain('Notes/Other.md');
+			expect(snapshot.stars).toEqual([]);
+		});
+
+		it('encodes once per index state: every block that asks gets the same text', async () => {
+			const first = await service.jsSnapshot({ filePath: note, agentId: 'local' });
+			const second = await service.jsSnapshot({ filePath: note, agentId: 'local' });
+			expect(second.result).toBe(first.result);
 		});
 
 		it('is a snapshot the guest can rebuild the same index from', async () => {
 			const response = await service.jsSnapshot({ filePath: note, agentId: 'local' });
-			const guestIndex = PageIndex.fromSnapshot(response.result, async () => '');
+			const guestIndex = PageIndex.fromSnapshot(
+				decodeSandboxSnapshot(response.result),
+				async () => ''
+			);
 			const mainIndex = await service.getIndex(note, { agentCwd: root });
 			expect([...guestIndex.pages.keys()].sort()).toEqual([...mainIndex.pages.keys()].sort());
 			expect(guestIndex.pages.get('Notes/Note.md')?.links.map((link) => link.path)).toEqual(

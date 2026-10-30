@@ -25,6 +25,7 @@ import {
 	VaultPaths,
 	Transferable,
 	createLinkResolver,
+	encodeSandboxSnapshot,
 	finishPage,
 	isMarkdownPagePath,
 	linkPathKey,
@@ -36,6 +37,7 @@ import {
 	type PageMetadata,
 	type PageParseWarning,
 	type SandboxIndexSnapshot,
+	type SandboxSnapshotPayload,
 } from '../../shared/dataview';
 import {
 	LOCAL_SESSION_READ_CONCURRENCY,
@@ -44,8 +46,8 @@ import {
 } from '../utils/concurrency';
 import { logger } from '../utils/logger';
 import {
-	dataviewCacheFilePath,
-	DATAVIEW_INDEX_CACHE_VERSION,
+	dataviewCachePath,
+	dataviewCacheShardOf,
 	readVaultCache,
 	writeVaultCache,
 	type CachedPage,
@@ -58,6 +60,10 @@ import {
 	type VaultFileStat,
 	type VaultFs,
 } from './vault-fs';
+import {
+	DATAVIEW_JS_LIST_ITEM_BYTES,
+	DATAVIEW_JS_SNAPSHOT_LIST_BUDGET_BYTES,
+} from '../../shared/dataview/sandboxHost';
 import { VAULT_MARKER_DIR } from './vault-root';
 import { createVaultWatcher, type VaultWatcher } from './vault-watcher';
 
@@ -78,7 +84,7 @@ export const DATAVIEW_FINISH_BATCH_SIZE = 256;
 /** How often a remote root is reconciled by `mtime` and `size`, since chokidar cannot watch over SSH. */
 export const DATAVIEW_REMOTE_POLL_MS = 30 * 1000;
 
-/** Changes within this window share one cache write; serializing a large index is not free. */
+/** Changes within this window share one cache write (of the shards they touched). */
 export const DATAVIEW_CACHE_WRITE_DEBOUNCE_MS = 1000;
 
 /** How the index learns about changes after `open()`. */
@@ -136,11 +142,18 @@ export class VaultIndex extends PageIndex {
 	lastScan: VaultScanStats | null = null;
 	/** Whether `open()` served the disk cache instead of waiting for a scan. */
 	cacheHit = false;
-	/** The cache file of this root, or null when the index keeps nothing on disk. */
-	readonly cacheFile: string | null;
+	/** The cache folder of this root, or null when the index keeps nothing on disk. */
+	readonly cachePath: string | null;
 
 	/** Path to its cached raw parse, the source of truth the pages are finished from. */
 	private readonly entries = new Map<string, CachedPage>();
+	/** The last {@link jsSnapshot}: every `dataviewjs` block of a note asks for one, at the same revision. */
+	private snapshotMemo: SandboxIndexSnapshot | null = null;
+	/** The encoding of {@link snapshotMemo} (`jsSnapshotPayload`), shared by every block that asks for it. */
+	private payloadMemo: {
+		snapshot: SandboxIndexSnapshot;
+		payload: Promise<SandboxSnapshotPayload>;
+	} | null = null;
 	private readonly listeners = new Set<VaultIndexListener>();
 	private readonly onWarning: (warning: PageParseWarning) => void;
 	private readonly watchEnabled: boolean;
@@ -151,7 +164,12 @@ export class VaultIndex extends PageIndex {
 	private watcher: VaultWatcher | null = null;
 	private pollTimer: ReturnType<typeof setInterval> | null = null;
 	private cacheWriteTimer: ReturnType<typeof setTimeout> | null = null;
-	private cacheDirty = false;
+	/** Cache shards whose pages changed since the last write. */
+	private readonly dirtyShards = new Set<number>();
+	/** Whether the file set or the stars changed since the last write (the manifest). */
+	private manifestDirty = false;
+	/** Whether the cache on disk is this index's: loaded at open, or written whole once. */
+	private cacheOwned = false;
 	private disposed = false;
 
 	constructor(
@@ -159,8 +177,8 @@ export class VaultIndex extends PageIndex {
 		options: VaultIndexOptions = {}
 	) {
 		super((path) => fs.readText(path));
-		this.cacheFile = options.cacheDir
-			? dataviewCacheFilePath(options.cacheDir, fs.root, fs.sshRemoteId)
+		this.cachePath = options.cacheDir
+			? dataviewCachePath(options.cacheDir, fs.root, fs.sshRemoteId)
 			: null;
 		this.watchEnabled = options.watch ?? true;
 		this.onWarning =
@@ -214,14 +232,15 @@ export class VaultIndex extends PageIndex {
 	}
 
 	private async runOpen(): Promise<void> {
-		const cached = this.cacheFile
-			? await readVaultCache(this.cacheFile, this.root, this.fs.sshRemoteId)
+		const cached = this.cachePath
+			? await readVaultCache(this.cachePath, this.root, this.fs.sshRemoteId)
 			: null;
 		// Watch before the first scan, so a change made during it is applied right after it.
 		this.startWatching();
 		if (cached) {
 			await this.exclusive(() => this.installCache(cached));
 			this.cacheHit = true;
+			this.cacheOwned = true;
 			this.scan().catch((error) =>
 				logger.warn(
 					`Dataview could not reconcile ${this.root} after loading its cache: ${String(error)}`,
@@ -280,23 +299,96 @@ export class VaultIndex extends PageIndex {
 	 * so it is one revision, never half of an update.
 	 */
 	jsSnapshot(): SandboxIndexSnapshot {
-		return {
+		if (this.snapshotMemo) return this.snapshotMemo;
+		// Admit pages smallest first, so one huge page cannot crowd out a thousand ordinary ones.
+		const itemCount = (entry: CachedPage): number => {
+			const lists = (entry.data as { lists?: unknown } | null)?.lists;
+			return Array.isArray(lists) ? lists.length : 0;
+		};
+		const bySize = [...this.entries].sort((a, b) => itemCount(a[1]) - itemCount(b[1]));
+		const kept = new Set<string>();
+		let spent = 0;
+		let omittedPages = 0;
+		for (const [path, entry] of bySize) {
+			const cost = itemCount(entry) * DATAVIEW_JS_LIST_ITEM_BYTES;
+			if (cost > 0 && spent + cost > DATAVIEW_JS_SNAPSHOT_LIST_BUDGET_BYTES) {
+				omittedPages++;
+				continue;
+			}
+			spent += cost;
+			kept.add(path);
+		}
+		if (omittedPages > 0) {
+			logger.warn(
+				`DataviewJS snapshot of ${this.root} omitted the tasks and lists of ${omittedPages} of ${this.entries.size} pages (budget ${DATAVIEW_JS_SNAPSHOT_LIST_BUDGET_BYTES} bytes)`,
+				LOG_CONTEXT
+			);
+		}
+		const snapshot: SandboxIndexSnapshot = {
 			revision: this.revision,
 			files: this.prefix.allFiles(),
 			folders: this.prefix.allFolders(),
 			stars: [...this.stars],
 			pages: Array.from(this.entries, ([path, entry]) => ({
 				path,
-				data: entry.data as Record<string, unknown>,
+				data: (kept.has(path)
+					? entry.data
+					: { ...(entry.data as Record<string, unknown>), lists: [] }) as Record<string, unknown>,
 			})),
+			...(omittedPages > 0 ? { omittedListPages: omittedPages } : {}),
 		};
+		this.snapshotMemo = snapshot;
+		return snapshot;
 	}
 
-	/** Write the cache now if anything changed since the last write. */
+	/**
+	 * {@link jsSnapshot} as the payload a guest receives (`dataview:jsSnapshot`): encoded once per index state,
+	 * in batches that yield to the event loop, so a large vault never stalls main for the whole encode.
+	 */
+	jsSnapshotPayload(): Promise<SandboxSnapshotPayload> {
+		const snapshot = this.jsSnapshot();
+		if (this.payloadMemo?.snapshot !== snapshot) {
+			this.payloadMemo = { snapshot, payload: encodeSandboxSnapshot(snapshot, yieldToEventLoop) };
+		}
+		return this.payloadMemo.payload;
+	}
+
+	/**
+	 * Write the cache now if anything changed since the last write: the manifest, and the shards of the pages
+	 * that changed. The first write of an index that did not load the cache replaces every shard.
+	 */
 	async flushCache(): Promise<void> {
-		if (!this.cacheFile || !this.cacheDirty) return;
-		this.cacheDirty = false;
-		await writeVaultCache(this.cacheFile, this.cacheSnapshot());
+		if (!this.cachePath || (!this.manifestDirty && this.dirtyShards.size === 0)) return;
+		const replace = !this.cacheOwned;
+		const shards = new Map<number, Record<string, CachedPage>>();
+		for (const shard of this.dirtyShards) shards.set(shard, {});
+		for (const [path, entry] of this.entries) {
+			const pages = replace
+				? this.shardPages(shards, dataviewCacheShardOf(path))
+				: shards.get(dataviewCacheShardOf(path));
+			if (pages) pages[path] = entry;
+		}
+		this.dirtyShards.clear();
+		this.manifestDirty = false;
+		this.cacheOwned = true;
+		await writeVaultCache(this.cachePath, {
+			root: this.root,
+			sshRemoteId: this.fs.sshRemoteId,
+			files: this.prefix.allFiles(),
+			folders: this.prefix.allFolders(),
+			stars: [...this.stars],
+			shards,
+			replace,
+		});
+	}
+
+	private shardPages(
+		shards: Map<number, Record<string, CachedPage>>,
+		shard: number
+	): Record<string, CachedPage> {
+		let pages = shards.get(shard);
+		if (!pages) shards.set(shard, (pages = {}));
+		return pages;
 	}
 
 	private exclusive<T>(fn: () => Promise<T>): Promise<T> {
@@ -540,6 +632,8 @@ export class VaultIndex extends PageIndex {
 	 * or removed, every page whose inlinks moved with them, and every page whose star flipped.
 	 */
 	private commit(update: IndexUpdate, filesChanged = true): void {
+		this.snapshotMemo = null;
+		this.payloadMemo = null;
 		const changed = new Set<string>();
 		const noteLinkTargets = (path: string) => {
 			for (const target of this.links.get(path)) changed.add(target);
@@ -550,16 +644,23 @@ export class VaultIndex extends PageIndex {
 			this.unindexPage(path);
 			this.entries.delete(path);
 			changed.add(path);
+			if (update.persist) this.dirtyShards.add(dataviewCacheShardOf(path));
 		}
 		for (const [path, { entry, page }] of update.parsed) {
 			noteLinkTargets(path);
+			// A page only finished again (its links) keeps its entry, and its shard stays as written.
+			if (update.persist && this.entries.get(path) !== entry)
+				this.dirtyShards.add(dataviewCacheShardOf(path));
 			this.entries.set(path, entry);
 			this.indexPage(path, page);
 			noteLinkTargets(path);
 			changed.add(path);
 		}
-		for (const path of update.stars) if (!this.stars.has(path)) changed.add(path);
-		for (const path of this.stars) if (!update.stars.has(path)) changed.add(path);
+		const flippedStars = [
+			...[...update.stars].filter((path) => !this.stars.has(path)),
+			...[...this.stars].filter((path) => !update.stars.has(path)),
+		];
+		for (const path of flippedStars) changed.add(path);
 
 		this.prefix = update.paths;
 		this.resolver = update.resolver;
@@ -569,7 +670,9 @@ export class VaultIndex extends PageIndex {
 			(path) => this.pages.has(path) || update.removed.has(path)
 		);
 		if (changedPages.length > 0) this.touch(changedPages);
-		if (update.persist && (changedPages.length > 0 || filesChanged)) this.scheduleCacheWrite();
+		if (update.persist && (filesChanged || flippedStars.length > 0)) this.manifestDirty = true;
+		if (update.persist && (this.manifestDirty || this.dirtyShards.size > 0))
+			this.scheduleCacheWrite();
 	}
 
 	/** Run `fn` over `items` in batches, yielding to the event loop between them. */
@@ -581,27 +684,12 @@ export class VaultIndex extends PageIndex {
 	}
 
 	private scheduleCacheWrite(): void {
-		if (!this.cacheFile) return;
-		this.cacheDirty = true;
-		if (this.cacheWriteTimer || this.disposed) return;
+		if (!this.cachePath || this.cacheWriteTimer || this.disposed) return;
 		this.cacheWriteTimer = setTimeout(() => {
 			this.cacheWriteTimer = null;
 			void this.flushCache();
 		}, DATAVIEW_CACHE_WRITE_DEBOUNCE_MS);
 		this.cacheWriteTimer.unref?.();
-	}
-
-	private cacheSnapshot(): VaultCacheFile {
-		return {
-			version: DATAVIEW_INDEX_CACHE_VERSION,
-			root: this.root,
-			sshRemoteId: this.fs.sshRemoteId,
-			savedAt: Date.now(),
-			files: this.prefix.allFiles(),
-			folders: this.prefix.allFolders(),
-			stars: [...this.stars],
-			pages: Object.fromEntries(this.entries),
-		};
 	}
 
 	/** The starred paths from `.obsidian/bookmarks.json`; empty when it is missing or malformed. */

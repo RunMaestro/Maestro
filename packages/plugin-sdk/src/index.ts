@@ -68,6 +68,12 @@ export function serializedJsonByteLength(value: unknown): number | null {
 /** The fixed vocabulary of things a sandboxed plugin can ask to do. Adding a
  * capability is a host-API change. Each maps to a brokered host call. */
 export type PluginCapability =
+	| 'invocations:inspect'
+	| 'net:tls'
+	| 'secrets:use'
+	| 'records:read'
+	| 'records:confirm'
+	| 'events:publish'
 	| 'fs:read' // read files under a path scope
 	| 'fs:write' // write files under a path scope
 	| 'services:call'
@@ -106,6 +112,13 @@ export type PluginCapability =
 	| 'ui:render-unsafe'; // high-trust custom UI in host-approved, non-protected regions
 
 export const PLUGIN_CAPABILITIES: readonly PluginCapability[] = [
+	'invocations:inspect',
+	'net:tls',
+	'secrets:use',
+	'records:read',
+	'records:confirm',
+	'events:publish',
+
 	'fs:read',
 	'fs:write',
 	'services:call',
@@ -148,6 +161,13 @@ export const PLUGIN_CAPABILITIES: readonly PluginCapability[] = [
 export type CapabilityRisk = 'low' | 'medium' | 'high';
 
 const CAPABILITY_RISK: Record<PluginCapability, CapabilityRisk> = {
+	'invocations:inspect': 'low',
+	'net:tls': 'high',
+	'secrets:use': 'high',
+	'records:read': 'medium',
+	'records:confirm': 'high',
+	'events:publish': 'high',
+
 	'notifications:toast': 'low',
 	'settings:read': 'low',
 	'agents:read': 'low',
@@ -197,9 +217,16 @@ const CAPABILITY_RISK: Record<PluginCapability, CapabilityRisk> = {
  * substring or wildcard), and an unscoped grant is a wildcard and therefore
  * DENIED - the opposite of path/host, where unscoped means broadest.
  */
-type ScopeKind = 'path' | 'host' | 'allowlist' | 'none';
+type ScopeKind = 'path' | 'host' | 'endpoint' | 'allowlist' | 'none';
 
 const CAPABILITY_SCOPE_KIND: Record<PluginCapability, ScopeKind> = {
+	'invocations:inspect': 'none',
+	'net:tls': 'endpoint',
+	'secrets:use': 'endpoint',
+	'records:read': 'allowlist',
+	'records:confirm': 'allowlist',
+	'events:publish': 'allowlist',
+
 	'fs:read': 'path',
 	'fs:write': 'path',
 	'fs:watch': 'path',
@@ -217,8 +244,9 @@ const CAPABILITY_SCOPE_KIND: Record<PluginCapability, ScopeKind> = {
 	'history:read': 'none',
 	'notifications:toast': 'none',
 	'settings:read': 'none',
-	// New caps are structurally namespaced/confined by their host handler, so
-	// they take no user-facing scope.
+	// New caps are structurally namespaced/confined by their host handler (the
+	// plugin's own KV/SQL dir, its own plugins.<id>.* settings keys, the fixed
+	// safe event-topic catalog), so they take no user-facing scope.
 	'settings:write': 'none',
 	'sessions:read': 'none',
 	'sessions:create': 'none',
@@ -340,6 +368,10 @@ function parsePermissions(input: unknown): PermissionParseResult {
 			out.errors.push(`capability "${capability}" does not take a scope`);
 			continue;
 		}
+		if (scopeKind === 'endpoint' && parsePluginEndpointScopes(scope) === null) {
+			out.errors.push(`capability ${capability} requires an exact DNS-name:port scope`);
+			continue;
+		}
 		if (scopeKind === 'allowlist') {
 			const err = validateAllowlistScope(capability, scope);
 			if (err) {
@@ -363,6 +395,19 @@ function parsePermissions(input: unknown): PermissionParseResult {
 /** Human-readable, stable description of a capability for the consent UI. */
 export function describeCapability(capability: PluginCapability): string {
 	switch (capability) {
+		case 'invocations:inspect':
+			return 'Inspect its own active host-verified invocation';
+		case 'net:tls':
+			return 'Exchange arbitrary bounded TLS bytes with this exact endpoint; protocol and read-only policy are enforced by the trusted plugin';
+		case 'secrets:use':
+			return 'Store a secret in the native keyring and consume it as encoded bytes on this exact endpoint; no secret export';
+		case 'records:read':
+			return 'Read its own integrity-protected records';
+		case 'records:confirm':
+			return 'Request trusted user confirmation to change its own sealed records';
+		case 'events:publish':
+			return 'Publish durable events to explicitly enabled Cue consumers owned by the user';
+
 		case 'fs:read':
 			return 'Read files';
 		case 'fs:write':
@@ -441,7 +486,12 @@ export function describeCapability(capability: PluginCapability): string {
 // --- Host API version (from shared/plugins/host-api.ts) ---------------------
 
 /**
- * The host API version this Maestro build implements. 1.25.0 adds resumable
+ * The host API version this Maestro build implements. 1.31.0 adds durable Relay
+ * conversation/message identity, replay receipts, and explicit task completion.
+ * 1.30.0 adds separately consented bounded original-audio staging for supported
+ * local agent sends. 1.29.0 adds generic verified invocations, consented TLS, opaque secrets,
+ * confirmed records, durable plugin Cue events and parentSessionId metadata.
+ * 1.25.0 added resumable
  * agents.send with public progress, verified plugin-tool caller identity, and
  * isolated agents.generateTitle. 1.24.0 added host-mediated services.
  * 1.23.0 adds independent
@@ -477,7 +527,7 @@ export function describeCapability(capability: PluginCapability): string {
  * `ui:contribute` / `ui:panel` / `ui:render-unsafe`; 1.3.0 added `tools` +
  * `keybindings`; 1.2.0 added `transcripts:read`.
  */
-export const HOST_API_VERSION = '1.25.0';
+export const HOST_API_VERSION = '1.31.0';
 
 /** Result of checking a plugin's declared host-API requirement. */
 export interface HostApiCompatibility {
@@ -1358,6 +1408,20 @@ export interface PluginEvent<T extends PluginEventTopic = PluginEventTopic> {
  * method union, the runtime list, and the method->capability map all DERIVE from
  * this. `satisfies` makes a typo'd capability a compile error. */
 export const HOST_API = {
+	'net.requestTlsConsent': { capability: 'net:tls' },
+	'secrets.remove': { capability: 'secrets:use' },
+	'invocations.inspect': { capability: 'invocations:inspect' },
+	'net.tlsOpen': { capability: 'net:tls' },
+	'net.tlsRead': { capability: 'net:tls' },
+	'net.tlsWrite': { capability: 'net:tls' },
+	'net.tlsClose': { capability: 'net:tls' },
+	'secrets.requestSetup': { capability: 'secrets:use' },
+	'records.read': { capability: 'records:read' },
+	'records.requestCommit': { capability: 'records:confirm' },
+	'events.consumers': { capability: 'events:publish' },
+	'events.begin': { capability: 'events:publish' },
+	'events.publish': { capability: 'events:publish' },
+
 	'fs.read': { capability: 'fs:read' },
 	'fs.write': { capability: 'fs:write' },
 	'services.register': { capability: 'services:provide' },
@@ -1386,6 +1450,8 @@ export const HOST_API = {
 	'agents.get': { capability: 'agents:read' },
 	'agents.dispatch': { capability: 'agents:dispatch' },
 	'agents.send': { capability: 'agents:dispatch' },
+	'agents.completeConversation': { capability: 'agents:dispatch' },
+	'agents.restoreConversation': { capability: 'agents:dispatch' },
 	'agents.generateTitle': { capability: 'agents:dispatch' },
 	'notifications.toast': { capability: 'notifications:toast' },
 	'settings.get': { capability: 'settings:read' },
@@ -1528,6 +1594,19 @@ export interface MaestroFsApi {
  * socket down. Both `send`/`close` reference the socket by its handle; the host
  * re-authorizes the socket's origin host. */
 export interface MaestroNetApi {
+	requestTlsConsent(params: PluginEndpoint & { secret: boolean }): Promise<{ granted: true }>;
+	tlsOpen(params: PluginEndpoint & { invocationId: string }): Promise<{ streamId: string }>;
+	tlsRead(params: {
+		streamId: string;
+		invocationId: string;
+		maxBytes: number;
+	}): Promise<{ base64: string; eof: boolean }>;
+	tlsWrite(params: {
+		streamId: string;
+		invocationId: string;
+		parts: PluginTlsPart[];
+	}): Promise<{ writtenBytes: number }>;
+	tlsClose(params: { streamId: string }): Promise<{ closed: true }>;
 	fetch(url: string, init?: unknown): Promise<unknown>;
 	connect(
 		url: string,
@@ -1550,6 +1629,18 @@ export type AgentSendProgressEvent =
 			summary?: string;
 	  };
 
+/** One completed original from the authenticated plugin's own media job. */
+export interface OriginalAttachmentRef {
+	jobId: string;
+	audioId: string;
+}
+/** Staging evidence only; does not prove provider inspection of audio. */
+export interface OriginalAttachmentReceipt {
+	filename: string;
+	bytes: number;
+	sha256: string;
+}
+
 export interface MaestroAgentsApi {
 	list(): Promise<unknown>;
 	get(agentId: string): Promise<unknown>;
@@ -1560,13 +1651,36 @@ export interface MaestroAgentsApi {
 	send(
 		agentId: string,
 		prompt: string,
-		opts?: { sessionId?: string; onProgress?: (event: AgentSendProgressEvent) => void }
+		opts?: {
+			sessionId?: string;
+			conversationId?: string;
+			messageId?: string;
+			onProgress?: (event: AgentSendProgressEvent) => void;
+			originalAttachments?: readonly [OriginalAttachmentRef];
+		}
 	): Promise<{
 		success: boolean;
 		response: string | null;
 		sessionId: string | null;
+		conversationId?: string;
+		tabId?: string;
+		replayed?: boolean;
 		error?: string;
+		originalAttachments?: readonly [OriginalAttachmentReceipt];
 	}>;
+	restoreConversation(
+		agentId: string,
+		opts: { conversationId: string; sessionId: string }
+	): Promise<{
+		success: boolean;
+		sessionId: string | null;
+		tabId?: string;
+		conversationId?: string;
+	}>;
+	completeConversation(
+		agentId: string,
+		opts: { conversationId: string; messageId: string }
+	): Promise<{ success: boolean }>;
 }
 
 /** Read metadata-only history entries (`history:read`). */
@@ -1711,6 +1825,13 @@ export type MaestroEventHandler<T extends PluginEventTopic = PluginEventTopic> =
 /** Subscribe to host event topics (`events:subscribe`). Payloads are
  * metadata-only; topics are the fixed PluginEventTopic catalog. */
 export interface MaestroEventsApi {
+	consumers(topic: string): Promise<PluginConsumer[]>;
+	begin(consumerId: string): Promise<{ invocationId: string; callerAgentId: string }>;
+	publish(params: {
+		invocationId: string;
+		eventId: string;
+		metadata: PluginJson;
+	}): Promise<PluginReceipt>;
 	on<T extends PluginEventTopic>(topic: T, handler: MaestroEventHandler<T>): void;
 	subscribe(topics: readonly PluginEventTopic[]): Promise<unknown>;
 	unsubscribe(topics?: readonly PluginEventTopic[]): Promise<unknown>;
@@ -1725,7 +1846,13 @@ export interface MaestroCommandsApi {
 export interface MaestroToolsApi {
 	register(
 		localId: string,
-		handler: (args: unknown, context: { readonly callerAgentId: string | null }) => unknown
+		handler: (
+			args: unknown,
+			context: {
+				readonly callerAgentId: string | null;
+				readonly invocationId?: string;
+			}
+		) => unknown
 	): void;
 }
 
@@ -1845,6 +1972,26 @@ export interface MaestroMediaApi {
 /** The full `maestro` runtime surface handed to `activate(maestro)`. Frozen and
  * namespaced exactly as the host injects it. */
 export interface MaestroSdk {
+	readonly invocations: {
+		inspect(invocationId: string): Promise<{ callerAgentId: string; active: true }>;
+	};
+	readonly secrets: {
+		remove(params: { secretRef: string }): Promise<{ removed: true }>;
+		requestSetup(params: {
+			key: string;
+			label: string;
+			endpoint: PluginEndpoint;
+		}): Promise<{ secretRef: string }>;
+	};
+	readonly records: {
+		read(key: string): Promise<PluginRecordValue | null>;
+		requestCommit(params: {
+			key: string;
+			expectedRevision: number;
+			value: PluginJson;
+			summary: string;
+		}): Promise<{ revision: number }>;
+	};
 	readonly services: MaestroServicesApi;
 	readonly media: MaestroMediaApi;
 	readonly pluginId: string;
@@ -2117,4 +2264,86 @@ export function isTranscriptionResult(
 		value.durationSeconds > 0 &&
 		value.durationSeconds <= MEDIA_LIMITS.maxDurationSeconds
 	);
+}
+
+/** JSON-only plugin primitives. No protocol, account or provider semantics. */
+export type PluginJson =
+	| null
+	| boolean
+	| number
+	| string
+	| PluginJson[]
+	| { [key: string]: PluginJson };
+
+export const PLUGIN_PRIMITIVE_ERRORS = {
+	PLUGIN_DENIED: 'Plugin access denied.',
+	PLUGIN_INVALID: 'Invalid plugin request.',
+	PLUGIN_LIMIT: 'Plugin request exceeds a limit.',
+	PLUGIN_TIMEOUT: 'Plugin request timed out.',
+	PLUGIN_CANCELED: 'Plugin request canceled.',
+	PLUGIN_UNAVAILABLE: 'Plugin service unavailable.',
+	PLUGIN_CONFLICT: 'Plugin record revision changed.',
+	PLUGIN_INTEGRITY: 'Plugin record integrity check failed.',
+} as const;
+export type PluginPrimitiveErrorCode = keyof typeof PLUGIN_PRIMITIVE_ERRORS;
+
+export interface PluginEndpoint {
+	host: string;
+	port: number;
+}
+export type PluginTlsPart = { base64: string } | { secretRef: string; encoding: 'quoted-ascii' };
+export interface PluginRecordValue {
+	revision: number;
+	value: PluginJson;
+}
+export interface PluginConsumer {
+	consumerId: string;
+	callerAgentId: string;
+	config: PluginJson;
+}
+export interface PluginReceipt {
+	receiptId: string;
+	status: 'accepted' | 'duplicate';
+}
+
+/** Exact DNS endpoint; no numeric/hex final label, IPs, URLs, wildcards or localhost. */
+export function pluginEndpointScope(host: unknown, port: unknown): string | undefined {
+	if (
+		typeof host !== 'string' ||
+		host.length > 253 ||
+		!host.includes('.') ||
+		!host.split('.').every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label)) ||
+		/^[0-9.]+$/.test(host) ||
+		/^(?:[0-9]+|0x[0-9a-f]*)$/.test(host.slice(host.lastIndexOf('.') + 1)) ||
+		host.endsWith('.localhost') ||
+		!Number.isInteger(port) ||
+		(port as number) < 1 ||
+		(port as number) > 65535
+	)
+		return undefined;
+	return `${host}:${port}`;
+}
+
+export function isPluginEndpointScope(scope: unknown): scope is string {
+	if (typeof scope !== 'string') return false;
+	const [host, port, extra] = scope.split(':');
+	return extra === undefined && pluginEndpointScope(host, Number(port)) === scope;
+}
+
+export const PLUGIN_RECORD_KEY_PATTERN = /^[a-z][a-z0-9._-]{0,63}$/;
+export const PLUGIN_TOPIC_PATTERN = /^[a-z][a-z0-9._-]{0,95}$/;
+
+/** Manifest sentinel grants no endpoint; sets are bounded and canonical. */
+export function parsePluginEndpointScopes(scope: unknown): readonly string[] | null {
+	if (scope === 'none') return [];
+	if (typeof scope !== 'string' || scope.length > 4200) return null;
+	const members = scope.split(',');
+	if (
+		!members.length ||
+		members.length > 16 ||
+		new Set(members).size !== members.length ||
+		!members.every(isPluginEndpointScope)
+	)
+		return null;
+	return members;
 }

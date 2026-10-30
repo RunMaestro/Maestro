@@ -289,6 +289,17 @@ Three fields are easy to omit and each has a visible cost. `tabName` is the labe
 
 Module-level functions, not a hook: the callers are a 15s sweep timer and an IPC listener, both outside React. `useRemoteIntegration`'s `dispatch --queue` path hand-rolled this item and had already drifted - a `agentSessionId.split('-')[0]` tab label instead of `getTabDisplayName`, and no `turnSettings` capture at all.
 
+### turnInterrupt.ts - stop a running turn
+
+The one Stop. The desktop Stop pill (`useInterruptHandler`), the REST route `POST /api/session/:id/interrupt` and `maestro-cli interrupt` all call `interruptTurn(sessionId, { tabId?, confirmForceKill? })`, which resolves to an `InterruptTurnResult` (`src/shared/turnInterrupt.ts`).
+
+- No `tabId`: the agent-level Stop. Ends compactions, retries, hand-offs and consults for the agent, cancels its pending synopsis and a terminal-mode command, signals every busy tab plus every live `{id}-ai-*` process in main's table, then settles: a runnable queued item starts on its tab, else the active tab and every busy tab go idle with `Canceled by user` on the active tab.
+- `tabId`: the same steps narrowed to that tab, then that tab goes idle and `syncAgentStateToTabs()` recomputes the agent. The queue is left to the exit listener, as when a turn ends on its own. An orphan is signalled only.
+- Nothing in scope running: `wasBusy: false`, nothing written. Safe to repeat.
+- A failed signal on the primary target: `confirmForceKill` (desktop only) escalates to a kill; without it the result is `SIGNAL_FAILED` and the store is not touched.
+
+`cancelPendingSynopsis` and the side-effect-gated `processQueuedItem` live in hooks, so `useInterruptHandler` registers them with `registerTurnInterruptDeps()`. Unregistered (tests, first render), a stop skips the synopsis cancel and leaves the queue alone; the exit listener drains it.
+
 ### snoozeWakePrompt.ts - run a snooze's prompt when its tab returns
 
 A snooze carries a note AND, optionally, a prompt. They address different readers: the note becomes the wake notification (for the user), the prompt is sent to the agent the instant the tab is back. Either, both, or neither.

@@ -3,6 +3,11 @@ import { renderHook, act } from '@testing-library/react';
 import { useFilePreviewHandlers } from '../../../renderer/hooks/mainPanel/useFilePreviewHandlers';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import type { Session, FilePreviewTab } from '../../../renderer/types';
+import { recordJourney } from '../../../renderer/services/userJourney';
+
+vi.mock('../../../renderer/services/userJourney', () => ({
+	recordJourney: vi.fn(),
+}));
 
 const mockWriteFile = vi.fn().mockResolvedValue(undefined);
 const mockSaveFile = vi.fn().mockResolvedValue(null);
@@ -173,6 +178,33 @@ describe('useFilePreviewHandlers', () => {
 			'new content',
 			expect.any(Number)
 		);
+	});
+
+	it('handleFilePreviewSave records a file.save with the line counts of the save', async () => {
+		// The tab in the store still holds what was on disk before this save.
+		const tab = makeFileTab({ content: 'a\nb\nc\n' });
+		useSessionStore.setState({
+			sessions: [makeSession({ filePreviewTabs: [tab] } as Partial<Session>)],
+		} as never);
+		const { result } = renderHook(() =>
+			useFilePreviewHandlers({
+				activeSession: makeSession(),
+				activeFileTabId: 'file-1',
+				activeFileTab: tab,
+			})
+		);
+
+		await act(async () => {
+			await result.current.handleFilePreviewSave('/test/project/src/test.ts', 'a\nB\nc\nd\n');
+		});
+
+		expect(recordJourney).toHaveBeenCalledWith('session-1', {
+			kind: 'file.save',
+			target: '/test/project/src/test.ts',
+			tabId: 'file-1',
+			linesAdded: 2,
+			linesRemoved: 1,
+		});
 	});
 
 	it('handleFilePreviewSave passes sshRemoteId for SSH-backed previews', async () => {
@@ -381,6 +413,7 @@ describe('useFilePreviewHandlers', () => {
 			expect(saveResult!).toBe(false);
 			expect(mockSaveFile).toHaveBeenCalled();
 			expect(mockWriteFile).not.toHaveBeenCalled();
+			expect(recordJourney).not.toHaveBeenCalled();
 		});
 
 		it('updates tab metadata after save-as', async () => {

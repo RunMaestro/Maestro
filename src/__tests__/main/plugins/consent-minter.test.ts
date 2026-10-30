@@ -128,10 +128,47 @@ function setup(opts?: {
 }
 
 describe('ConsentMinter', () => {
+	it('cannot remint after a revocation during the final fresh scan', async () => {
+		let listener: ((id: string) => void) | undefined;
+		let finish!: (identity: AuthIdentity) => void;
+		let scans = 0;
+		const mints: unknown[] = [];
+		const registry = new ConsentNonceRegistry({ newNonce: () => 'once' });
+		const minter = new ConsentMinter({
+			registry,
+			store: {
+				mint: (...args) => {
+					mints.push(args);
+				},
+				onPluginAuthorizationChange: (fn) => {
+					listener = fn;
+					return () => {
+						listener = undefined;
+					};
+				},
+			},
+			requested: () => [{ capability: 'fs:read' }],
+			identityOf: () =>
+				++scans === 2
+					? new Promise<AuthIdentity>((resolve) => {
+							finish = resolve;
+						})
+					: TRUSTED,
+			openPrompt: async () => SENDER,
+		});
+		await minter.requestConsent('p');
+		const pending = minter.confirm(SENDER, { pluginId: 'p', nonce: 'once', approved: ['fs:read'] });
+		while (!finish) await Promise.resolve();
+		listener!('p');
+		finish(TRUSTED);
+		expect(await pending).toEqual({ ok: false, reason: 'offer-changed' });
+		expect(mints).toEqual([]);
+		expect(listener).toBeUndefined();
+	});
 	it('mints when a confirm from the consent frame echoes the nonce and approves a subset', async () => {
 		const { minter, mints, captured } = setup();
 		await minter.requestConsent('p');
-		const out = minter.confirm(SENDER, {
+		const out = await minter.confirm(SENDER, {
 			pluginId: 'p',
 			nonce: captured.nonce!,
 			approved: ['fs:read'],
@@ -154,7 +191,7 @@ describe('ConsentMinter', () => {
 	it('rejects a confirm from any frame that is not the recorded consent frame', async () => {
 		const { minter, mints, captured } = setup();
 		await minter.requestConsent('p');
-		const out = minter.confirm(
+		const out = await minter.confirm(
 			{ webContentsId: 99, frameId: 1, url: 'app://consent' }, // different webContents
 			{ pluginId: 'p', nonce: captured.nonce!, approved: ['fs:read'] }
 		);
@@ -165,7 +202,7 @@ describe('ConsentMinter', () => {
 	it('rejects a confirm naming a different plugin than the open prompt', async () => {
 		const { minter, mints, captured } = setup();
 		await minter.requestConsent('p');
-		const out = minter.confirm(SENDER, {
+		const out = await minter.confirm(SENDER, {
 			pluginId: 'other',
 			nonce: captured.nonce!,
 			approved: ['fs:read'],
@@ -177,7 +214,11 @@ describe('ConsentMinter', () => {
 	it('rejects a forged / wrong nonce', async () => {
 		const { minter, mints } = setup();
 		await minter.requestConsent('p');
-		const out = minter.confirm(SENDER, { pluginId: 'p', nonce: 'WRONG', approved: ['fs:read'] });
+		const out = await minter.confirm(SENDER, {
+			pluginId: 'p',
+			nonce: 'WRONG',
+			approved: ['fs:read'],
+		});
 		expect(out).toEqual({ ok: false, reason: 'bad-nonce' });
 		expect(mints).toHaveLength(0);
 	});
@@ -185,7 +226,7 @@ describe('ConsentMinter', () => {
 	it('rejects approving a capability the prompt never offered', async () => {
 		const { minter, mints, captured } = setup({ requested: [{ capability: 'fs:read' }] });
 		await minter.requestConsent('p');
-		const out = minter.confirm(SENDER, {
+		const out = await minter.confirm(SENDER, {
 			pluginId: 'p',
 			nonce: captured.nonce!,
 			approved: ['fs:read', 'net:fetch'], // net:fetch was not offered
@@ -198,9 +239,15 @@ describe('ConsentMinter', () => {
 		const { minter, mints, captured } = setup();
 		await minter.requestConsent('p');
 		expect(
-			minter.confirm(SENDER, { pluginId: 'p', nonce: captured.nonce!, approved: ['fs:read'] }).ok
+			await (
+				await minter.confirm(SENDER, {
+					pluginId: 'p',
+					nonce: captured.nonce!,
+					approved: ['fs:read'],
+				})
+			).ok
 		).toBe(true);
-		const again = minter.confirm(SENDER, {
+		const again = await minter.confirm(SENDER, {
 			pluginId: 'p',
 			nonce: captured.nonce!,
 			approved: ['fs:read'],
@@ -209,9 +256,9 @@ describe('ConsentMinter', () => {
 		expect(mints).toHaveLength(1); // not re-minted
 	});
 
-	it('rejects a confirm when no prompt is open', () => {
+	it('rejects a confirm when no prompt is open', async () => {
 		const { minter } = setup();
-		expect(minter.confirm(SENDER, { pluginId: 'p', nonce: 'x', approved: [] })).toEqual({
+		expect(await minter.confirm(SENDER, { pluginId: 'p', nonce: 'x', approved: [] })).toEqual({
 			ok: false,
 			reason: 'no-prompt',
 		});
@@ -220,7 +267,7 @@ describe('ConsentMinter', () => {
 	it('refuses to mint a plugin whose identity is unhashable (symlink escape)', async () => {
 		const { minter, mints, captured } = setup({ identity: null });
 		await minter.requestConsent('p');
-		const out = minter.confirm(SENDER, {
+		const out = await minter.confirm(SENDER, {
 			pluginId: 'p',
 			nonce: captured.nonce!,
 			approved: ['fs:read'],
@@ -236,7 +283,7 @@ describe('ConsentMinter', () => {
 		];
 		const untrusted = setup({ requested, identity: UNTRUSTED });
 		await untrusted.minter.requestConsent('p');
-		const blocked = untrusted.minter.confirm(SENDER, {
+		const blocked = await untrusted.minter.confirm(SENDER, {
 			pluginId: 'p',
 			nonce: untrusted.captured.nonce!,
 			approved: ['transcripts:read', 'net:fetch'],
@@ -246,7 +293,7 @@ describe('ConsentMinter', () => {
 
 		const trusted = setup({ requested, identity: TRUSTED });
 		await trusted.minter.requestConsent('p');
-		const ok = trusted.minter.confirm(SENDER, {
+		const ok = await trusted.minter.confirm(SENDER, {
 			pluginId: 'p',
 			nonce: trusted.captured.nonce!,
 			approved: ['transcripts:read', 'net:fetch'],
@@ -279,7 +326,11 @@ describe('ConsentMinter', () => {
 		});
 		await m.requestConsent('p'); // nonce n-1 (still live, never consumed)
 		await m.requestConsent('p'); // supersedes; current nonce is n-2
-		const stale = m.confirm(SENDER, { pluginId: 'p', nonce: captured[0], approved: ['fs:read'] });
+		const stale = await m.confirm(SENDER, {
+			pluginId: 'p',
+			nonce: captured[0],
+			approved: ['fs:read'],
+		});
 		expect(stale).toEqual({ ok: false, reason: 'bad-nonce' });
 		expect(mints).toHaveLength(0);
 	});
@@ -295,7 +346,7 @@ describe('ConsentMinter - Phase-4 act-verb channels', () => {
 	it('REJECTS an act verb riding the plain approved[] channel (bundled-act-verb)', async () => {
 		const { minter, mints, captured } = setup({ requested: ACT_REQUESTED, identity: TRUSTED });
 		await minter.requestConsent('p');
-		const out = minter.confirm(SENDER, {
+		const out = await minter.confirm(SENDER, {
 			pluginId: 'p',
 			nonce: captured.nonce!,
 			// A forged confirm smuggling the act verb into the bundled click: the
@@ -309,7 +360,7 @@ describe('ConsentMinter - Phase-4 act-verb channels', () => {
 	it('mints an act verb ONLY via approvedHighRisk, keeping its allowlist scope, without unattended', async () => {
 		const { minter, mints, captured } = setup({ requested: ACT_REQUESTED, identity: TRUSTED });
 		await minter.requestConsent('p');
-		const out = minter.confirm(SENDER, {
+		const out = await minter.confirm(SENDER, {
 			pluginId: 'p',
 			nonce: captured.nonce!,
 			approved: ['fs:read'],
@@ -328,7 +379,7 @@ describe('ConsentMinter - Phase-4 act-verb channels', () => {
 	it('mints the unattended flag ONLY from the explicit unattended acceptance, per capability', async () => {
 		const { minter, mints, captured } = setup({ requested: ACT_REQUESTED, identity: TRUSTED });
 		await minter.requestConsent('p');
-		const out = minter.confirm(SENDER, {
+		const out = await minter.confirm(SENDER, {
 			pluginId: 'p',
 			nonce: captured.nonce!,
 			approved: [],
@@ -344,7 +395,7 @@ describe('ConsentMinter - Phase-4 act-verb channels', () => {
 	it('rejects unattended naming a capability not separately approved as high-risk', async () => {
 		const { minter, mints, captured } = setup({ requested: ACT_REQUESTED, identity: TRUSTED });
 		await minter.requestConsent('p');
-		const out = minter.confirm(SENDER, {
+		const out = await minter.confirm(SENDER, {
 			pluginId: 'p',
 			nonce: captured.nonce!,
 			approved: ['fs:read'],
@@ -358,7 +409,7 @@ describe('ConsentMinter - Phase-4 act-verb channels', () => {
 	it('rejects a non-act verb smuggled onto the approvedHighRisk channel', async () => {
 		const { minter, mints, captured } = setup({ requested: ACT_REQUESTED, identity: TRUSTED });
 		await minter.requestConsent('p');
-		const out = minter.confirm(SENDER, {
+		const out = await minter.confirm(SENDER, {
 			pluginId: 'p',
 			nonce: captured.nonce!,
 			approved: [],
@@ -374,7 +425,7 @@ describe('ConsentMinter - Phase-4 act-verb channels', () => {
 			identity: TRUSTED,
 		});
 		await minter.requestConsent('p');
-		const out = minter.confirm(SENDER, {
+		const out = await minter.confirm(SENDER, {
 			pluginId: 'p',
 			nonce: captured.nonce!,
 			approved: ['fs:read'],
@@ -387,12 +438,12 @@ describe('ConsentMinter - Phase-4 act-verb channels', () => {
 	it('a rejected bundled-act-verb confirm is one-shot (prompt burned, no retry)', async () => {
 		const { minter, mints, captured } = setup({ requested: ACT_REQUESTED, identity: TRUSTED });
 		await minter.requestConsent('p');
-		minter.confirm(SENDER, {
+		await minter.confirm(SENDER, {
 			pluginId: 'p',
 			nonce: captured.nonce!,
 			approved: ['agents:dispatch'],
 		});
-		const retry = minter.confirm(SENDER, {
+		const retry = await minter.confirm(SENDER, {
 			pluginId: 'p',
 			nonce: captured.nonce!,
 			approved: [],
@@ -473,11 +524,11 @@ describe('Dispatch allowlist during renewed consent', () => {
 			setRequests: (next: PermissionRequest[]) => {
 				manifestRequests = next;
 			},
-			confirm: (
+			confirm: async (
 				approvedHighRisk: PluginCapability[] = ['agents:dispatch'],
 				unattended: PluginCapability[] = []
 			) =>
-				minter.confirm(SENDER, {
+				await minter.confirm(SENDER, {
 					pluginId: 'p',
 					nonce: offer!.nonce,
 					approved: [],
@@ -491,7 +542,7 @@ describe('Dispatch allowlist during renewed consent', () => {
 		const f = renewed();
 		await f.minter.requestConsent('p');
 		expect(f.offer().requested[0].scope).toBe('agent-a,agent-b');
-		const out = f.confirm();
+		const out = await f.confirm();
 		expect(out.ok).toBe(true);
 		if (out.ok) {
 			expect(out.grants[0].scope).toBe('agent-a,agent-b');
@@ -509,11 +560,11 @@ describe('Dispatch allowlist during renewed consent', () => {
 		const withoutDispatch = renewed({ grants: [previousGrant] });
 		await withoutDispatch.minter.requestConsent('p');
 		expect(withoutDispatch.offer().requested[0].scope).toBe(obsidianCodexId);
-		expect(withoutDispatch.confirm([])).toEqual({ ok: true, grants: [] });
+		expect(await withoutDispatch.confirm([])).toEqual({ ok: true, grants: [] });
 
 		const withoutUnattended = renewed({ grants: [previousGrant] });
 		await withoutUnattended.minter.requestConsent('p');
-		const dispatchOnly = withoutUnattended.confirm(['agents:dispatch']);
+		const dispatchOnly = await withoutUnattended.confirm(['agents:dispatch']);
 		if (!dispatchOnly.ok) throw new Error(dispatchOnly.reason);
 		expect(dispatchOnly.grants[0]).toMatchObject({
 			capability: 'agents:dispatch',
@@ -523,7 +574,7 @@ describe('Dispatch allowlist during renewed consent', () => {
 
 		const fullyApproved = renewed({ grants: [previousGrant] });
 		await fullyApproved.minter.requestConsent('p');
-		const result = fullyApproved.confirm(['agents:dispatch'], ['agents:dispatch']);
+		const result = await fullyApproved.confirm(['agents:dispatch'], ['agents:dispatch']);
 		if (!result.ok) throw new Error(result.reason);
 		expect(result.grants[0]).toMatchObject({
 			capability: 'agents:dispatch',
@@ -536,7 +587,7 @@ describe('Dispatch allowlist during renewed consent', () => {
 		const f = renewed({ grants: [{ capability: 'agents:dispatch', grantedAt: 1 }] });
 		await f.minter.requestConsent('p');
 		expect(f.offer().requested[0].scope).toBeUndefined();
-		const out = f.confirm();
+		const out = await f.confirm();
 		if (!out.ok) throw new Error(out.reason);
 		expect(out.grants[0].scope).toBeUndefined();
 	});
@@ -547,7 +598,7 @@ describe('Dispatch allowlist during renewed consent', () => {
 		});
 		await f.minter.requestConsent('p');
 		expect(f.offer().requested[0].scope).toBe('CONFIGURE_IN_MAESTRO');
-		const out = f.confirm();
+		const out = await f.confirm();
 		if (!out.ok) throw new Error(out.reason);
 		expect(out.grants[0].scope).toBe('CONFIGURE_IN_MAESTRO');
 	});
@@ -564,7 +615,7 @@ describe('Dispatch allowlist during renewed consent', () => {
 			const f = renewed(opts);
 			await f.minter.requestConsent('p');
 			expect(f.offer().requested[0].scope).toBe('CONFIGURE_IN_MAESTRO');
-			const out = f.confirm();
+			const out = await f.confirm();
 			if (!out.ok) throw new Error(out.reason);
 			expect(out.grants[0].scope).toBe('CONFIGURE_IN_MAESTRO');
 		}
@@ -573,14 +624,14 @@ describe('Dispatch allowlist during renewed consent', () => {
 	it('drops dispatch access when the user does not approve it again', async () => {
 		const f = renewed();
 		await f.minter.requestConsent('p');
-		const out = f.confirm([]);
+		const out = await f.confirm([]);
 		expect(out).toEqual({ ok: true, grants: [] });
 	});
 
 	it('requires explicit renewed unattended approval and does not retain process scopes', async () => {
 		const f = renewed();
 		await f.minter.requestConsent('p');
-		const out = f.confirm(['agents:dispatch', 'process:spawn'], ['agents:dispatch']);
+		const out = await f.confirm(['agents:dispatch', 'process:spawn'], ['agents:dispatch']);
 		if (!out.ok) throw new Error(out.reason);
 		expect(out.grants.find((g) => g.capability === 'agents:dispatch')?.unattended).toBe(true);
 		expect(out.grants.find((g) => g.capability === 'process:spawn')?.scope).toBe('new-tool');
@@ -590,7 +641,7 @@ describe('Dispatch allowlist during renewed consent', () => {
 		const f = renewed({ requests: [{ capability: 'process:spawn', scope: 'new-tool' }] });
 		await f.minter.requestConsent('p');
 		expect(f.offer().requested.some((r) => r.capability === 'agents:dispatch')).toBe(false);
-		const out = f.confirm(['process:spawn']);
+		const out = await f.confirm(['process:spawn']);
 		if (!out.ok) throw new Error(out.reason);
 		expect(out.grants.map((grant) => grant.capability)).toEqual(['process:spawn']);
 	});
@@ -599,20 +650,57 @@ describe('Dispatch allowlist during renewed consent', () => {
 		const f = renewed();
 		await f.minter.requestConsent('p');
 		f.setGrants([]);
-		expect(f.confirm()).toEqual({ ok: false, reason: 'offer-changed' });
+		expect(await f.confirm()).toEqual({ ok: false, reason: 'offer-changed' });
 	});
 
 	it('rejects consent if the user changes the selection while the window is open', async () => {
 		const f = renewed();
 		await f.minter.requestConsent('p');
 		f.setGrants([{ capability: 'agents:dispatch', scope: 'agent-c', grantedAt: 2 }]);
-		expect(f.confirm()).toEqual({ ok: false, reason: 'offer-changed' });
+		expect(await f.confirm()).toEqual({ ok: false, reason: 'offer-changed' });
 	});
 
 	it('rejects consent if the new manifest removes Dispatch while the window is open', async () => {
 		const f = renewed();
 		await f.minter.requestConsent('p');
 		f.setRequests([{ capability: 'process:spawn', scope: 'new-tool' }]);
-		expect(f.confirm()).toEqual({ ok: false, reason: 'offer-changed' });
+		expect(await f.confirm()).toEqual({ ok: false, reason: 'offer-changed' });
+	});
+});
+
+describe('original audio export consent', () => {
+	it.each([false, true])('requires an independent export acceptance (%s)', async (accepted) => {
+		const { minter, captured, mints } = setup({
+			requested: [{ capability: 'media:tools', scope: 'discord-voice,discord-original-audio' }],
+		});
+		await minter.requestConsent('p');
+		expect(
+			(
+				await minter.confirm(SENDER, {
+					pluginId: 'p',
+					nonce: captured.nonce!,
+					approved: ['media:tools'],
+					originalAudioExport: accepted,
+				})
+			).ok
+		).toBe(true);
+		expect(mints[0].caps[0].scope).toBe(
+			accepted ? 'discord-voice,discord-original-audio' : 'discord-voice'
+		);
+		expect(mints[0].caps[0].originalAudioExport).toBe(accepted ? true : undefined);
+	});
+	it('does not upgrade an existing voice-only offer even with export checked', async () => {
+		const { minter, captured, mints } = setup({
+			requested: [{ capability: 'media:tools', scope: 'discord-voice' }],
+		});
+		await minter.requestConsent('p');
+		await minter.confirm(SENDER, {
+			pluginId: 'p',
+			nonce: captured.nonce!,
+			approved: ['media:tools'],
+			originalAudioExport: true,
+		});
+		expect(mints[0].caps[0].scope).toBe('discord-voice');
+		expect(mints[0].caps[0]).not.toHaveProperty('originalAudioExport');
 	});
 });

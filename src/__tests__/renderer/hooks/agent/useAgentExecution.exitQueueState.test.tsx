@@ -12,6 +12,9 @@
  *   - Exit with no queued items and no busy tabs still settles the session idle
  *   - Exit that dequeues an item marks the target tab busy (with its user log)
  *   - Exit that dequeues an item for a closed tab marks the orphan busy
+ *   - Exit leaves an item queued when its target tab is still mid-turn (MAESTRO-ZS)
+ *   - A held item whose busy target is a closed (orphan) tab keeps the agent busy
+ *   - A failed dispatch after the exit is logged, not left as an unhandled rejection
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -39,6 +42,7 @@ vi.mock('../../../../renderer/utils/logger', () => ({
 }));
 
 import { useAgentExecution } from '../../../../renderer/hooks/agent/useAgentExecution';
+import { logger } from '../../../../renderer/utils/logger';
 
 // ============================================================================
 // Harness
@@ -83,8 +87,11 @@ function installMaestroMock() {
  * Run spawnAgentForSession against `session`, fire a clean exit, and return the
  * session as the hook's setSessions reducer left it.
  */
-async function runExit(session: Session): Promise<Session> {
-	const sessionsRef = { current: [session] };
+async function runExit(
+	session: Session,
+	processQueuedItem: (sessionId: string, item: QueuedItem) => Promise<void> = vi.fn(async () => {}),
+	sessionsRef: { current: Session[] } = { current: [session] }
+): Promise<Session> {
 	const setSessions = vi.fn((updater: (prev: Session[]) => Session[]) => {
 		sessionsRef.current = updater(sessionsRef.current);
 	});
@@ -94,7 +101,7 @@ async function runExit(session: Session): Promise<Session> {
 			activeSession: session,
 			sessionsRef: sessionsRef as never,
 			setSessions: setSessions as never,
-			processQueuedItemRef: { current: vi.fn() } as never,
+			processQueuedItemRef: { current: processQueuedItem } as never,
 			getBatchState: () => ({ isRunning: false, worktreeActive: false }),
 		} as never)
 	);
@@ -230,5 +237,119 @@ describe('useAgentExecution - Auto Run exit vs. parallel tab busy state', () => 
 		// The foreground tab is untouched - the send is fire-and-forget.
 		expect(next.aiTabs.find((t) => t.id === 'tab-a')!.logs).toHaveLength(0);
 		expect(next.activeTabId).toBe('tab-a');
+	});
+
+	// MAESTRO-ZS: the user sent a prompt on tab-b while Auto Run was running, so
+	// tab-b's own `-ai-tab-b` process is live and a follow-up is queued for it.
+	// Dispatching that follow-up when the batch task exits collided with the live
+	// process ("Agent process already running for session ...-ai-tab-b").
+	it('leaves the item queued when its target tab is still mid-turn', async () => {
+		const processQueuedItem = vi.fn(async () => {});
+		const sessionsRef = {
+			current: [
+				createMockSession({
+					id: 'session-1',
+					state: 'busy',
+					busySource: 'ai',
+					activeTabId: 'tab-a',
+					executionQueue: [queuedMessage('tab-b')],
+					aiTabs: [
+						createMockAITab({ id: 'tab-a', state: 'idle' }),
+						createMockAITab({ id: 'tab-b', state: 'busy', thinkingStartTime: 1000 }),
+					],
+				}),
+			],
+		};
+
+		const next = await runExit(sessionsRef.current[0], processQueuedItem, sessionsRef);
+		await act(async () => {
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		});
+
+		expect(processQueuedItem).not.toHaveBeenCalled();
+		expect(next.executionQueue.map((item) => item.id)).toEqual(['queued-1']);
+		const busyTab = next.aiTabs.find((t) => t.id === 'tab-b')!;
+		expect(busyTab.state).toBe('busy');
+		expect(busyTab.logs).toHaveLength(0);
+		expect(next.activeTabId).toBe('tab-a');
+		// tab-b is still running, so the agent stays busy.
+		expect(next.state).toBe('busy');
+
+		// Let the Auto Run task's queue-drain poll settle so no timer outlives the test.
+		sessionsRef.current = [{ ...next, state: 'idle' }];
+		await act(async () => {
+			await new Promise((resolve) => setTimeout(resolve, 80));
+		});
+	});
+
+	// The same hold, but the user closed tab-c mid-turn so it lives in
+	// orphanedThinkingTabs. Every open tab is idle, so an aiTabs-only busy check
+	// settled the agent idle - and the Auto Run queue wait, which stops on an idle
+	// agent, resumed the run while the closed tab and its follow-up were pending.
+	it('keeps the agent busy when the held item targets a closed tab still mid-turn', async () => {
+		const processQueuedItem = vi.fn(async () => {});
+		const sessionsRef = {
+			current: [
+				createMockSession({
+					id: 'session-1',
+					state: 'busy',
+					busySource: 'ai',
+					activeTabId: 'tab-a',
+					executionQueue: [queuedMessage('tab-c')],
+					aiTabs: [createMockAITab({ id: 'tab-a', state: 'idle' })],
+					orphanedThinkingTabs: [
+						createMockAITab({ id: 'tab-c', state: 'busy', thinkingStartTime: 1000 }),
+					],
+				}),
+			],
+		};
+
+		const next = await runExit(sessionsRef.current[0], processQueuedItem, sessionsRef);
+		await act(async () => {
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		});
+
+		expect(processQueuedItem).not.toHaveBeenCalled();
+		expect(next.executionQueue.map((item) => item.id)).toEqual(['queued-1']);
+		expect(next.orphanedThinkingTabs?.[0].state).toBe('busy');
+		expect(next.state).toBe('busy');
+		expect(next.busySource).toBe('ai');
+
+		// Let the Auto Run task's queue-drain poll settle so no timer outlives the test.
+		sessionsRef.current = [{ ...next, state: 'idle' }];
+		await act(async () => {
+			await new Promise((resolve) => setTimeout(resolve, 80));
+		});
+	});
+
+	it('logs a failed dispatch instead of leaving the rejection unhandled', async () => {
+		const failure = new Error('Agent process already running for session session-1-ai-tab-b');
+		const processQueuedItem = vi.fn(() => Promise.reject(failure));
+		const session = createMockSession({
+			id: 'session-1',
+			state: 'busy',
+			busySource: 'ai',
+			activeTabId: 'tab-a',
+			executionQueue: [queuedMessage('tab-b')],
+			aiTabs: [
+				createMockAITab({ id: 'tab-a', state: 'idle' }),
+				createMockAITab({ id: 'tab-b', state: 'idle' }),
+			],
+		});
+
+		await runExit(session, processQueuedItem);
+		await act(async () => {
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		});
+
+		expect(processQueuedItem).toHaveBeenCalledWith(
+			'session-1',
+			expect.objectContaining({ id: 'queued-1' })
+		);
+		expect(logger.error).toHaveBeenCalledWith(
+			expect.stringContaining('Queued dispatch after batch task failed'),
+			undefined,
+			failure
+		);
 	});
 });

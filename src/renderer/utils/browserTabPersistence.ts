@@ -1,11 +1,15 @@
 import type { BrowserTab } from '../../shared/browserPage';
-import { PERSISTENT_BROWSER_TAB_PARTITION_PATTERN } from '../../shared/browserTabPartition';
+import {
+	EPHEMERAL_BROWSER_TAB_PARTITION_PREFIX,
+	PERSISTENT_BROWSER_TAB_PARTITION_PATTERN,
+} from '../../shared/browserTabPartition';
+
+export {
+	EPHEMERAL_BROWSER_TAB_PARTITION_PREFIX,
+	isEphemeralBrowserTab,
+} from '../../shared/browserTabPartition';
 
 const BROWSER_TAB_PARTITION_PREFIX = 'persist:maestro-browser-session-';
-// Ephemeral (incognito) browser tabs use a partition WITHOUT the `persist:`
-// prefix, so Electron keeps their session data purely in memory and discards
-// it when the app quits.
-export const EPHEMERAL_BROWSER_TAB_PARTITION_PREFIX = 'maestro-ephemeral-';
 export const DEFAULT_BROWSER_TAB_URL = 'about:blank';
 export const DEFAULT_BROWSER_TAB_TITLE = 'New Tab';
 
@@ -36,19 +40,6 @@ function randomEphemeralSuffix(): string {
 
 export function getEphemeralBrowserTabPartition(sessionId: string): string {
 	return `${EPHEMERAL_BROWSER_TAB_PARTITION_PREFIX}${sanitizeBrowserPartitionKey(sessionId)}-${randomEphemeralSuffix()}`;
-}
-
-/**
- * True when a tab is an ephemeral (incognito) browser tab. Checks the flag and
- * the partition prefix so a tab that carries only one of the two markers is
- * still recognized and excluded from persistence.
- */
-export function isEphemeralBrowserTab(tab: BrowserTab): boolean {
-	return (
-		tab.ephemeral === true ||
-		(typeof tab.partition === 'string' &&
-			tab.partition.startsWith(EPHEMERAL_BROWSER_TAB_PARTITION_PREFIX))
-	);
 }
 
 export function getSafeBrowserTabPartition(

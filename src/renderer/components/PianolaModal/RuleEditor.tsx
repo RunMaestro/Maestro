@@ -14,6 +14,16 @@ import { useModalLayer } from '../../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { RULE_SCOPES, RULE_ACTIONS, RULE_RISKS, RULE_KINDS, newBlankRule } from './shared';
 
+const SCOPE_IDENTIFIER: Record<
+	Exclude<PianolaRuleScope, 'global'>,
+	{ label: string; placeholder: string }
+> = {
+	project: { label: 'project path', placeholder: '/path/to/project' },
+	tab: { label: 'tab id', placeholder: 'tab-id' },
+	agent: { label: 'agent id', placeholder: 'agent-id' },
+	group: { label: 'group id', placeholder: 'group-id' },
+};
+
 export interface RuleEditorProps {
 	theme: Theme;
 	/** The rule to edit, or null to create a new one. */
@@ -73,12 +83,16 @@ export function RuleEditor({ theme, rule, onCancel, onSave }: RuleEditorProps) {
 			.split(',')
 			.map((s) => s.trim())
 			.filter(Boolean);
+		// These exact conditions are not editable in this legacy form. Preserve
+		// them when changing a description/answer instead of silently widening it.
 		const m: PianolaRule['match'] = {};
+		if (base.match.exactQuestion !== undefined) m.exactQuestion = base.match.exactQuestion;
+		if (base.match.groupId !== undefined) m.groupId = base.match.groupId;
 		if (draft.maxRisk) m.maxRisk = draft.maxRisk;
 		if (draft.kinds.length > 0) m.kinds = draft.kinds;
 		if (topicIncludes.length > 0) m.topicIncludes = topicIncludes;
 		return m;
-	}, [draft.maxRisk, draft.kinds, draft.topicIncludes]);
+	}, [base.match, draft.maxRisk, draft.kinds, draft.topicIncludes]);
 
 	// Mirror the policy's safety contract exactly (see hasNarrowingPredicate in
 	// pianola-policy.ts): max risk also counts as a narrowing predicate, so a
@@ -87,7 +101,7 @@ export function RuleEditor({ theme, rule, onCancel, onSave }: RuleEditorProps) {
 
 	const validationError = useMemo(() => {
 		if (draft.scope !== 'global' && draft.scopeId.trim().length === 0) {
-			return `A ${draft.scope} rule needs a ${draft.scope === 'project' ? 'project path' : 'tab id'}.`;
+			return `A ${draft.scope} rule needs a ${SCOPE_IDENTIFIER[draft.scope].label}.`;
 		}
 		if (isAutoAnswer && !hasNarrowing) {
 			return 'An auto-answer rule needs a narrowing condition: set a max risk, pick a kind, or add a topic.';
@@ -212,14 +226,16 @@ export function RuleEditor({ theme, rule, onCancel, onSave }: RuleEditorProps) {
 						{draft.scope !== 'global' && (
 							<div className="flex-[2]">
 								<label className="block text-xs mb-1" style={labelStyle}>
-									{draft.scope === 'project' ? 'Project path' : 'Tab id'}
+									{SCOPE_IDENTIFIER[draft.scope].label.replace(/^./, (letter) =>
+										letter.toUpperCase()
+									)}
 								</label>
 								<input
 									value={draft.scopeId}
 									onChange={(e) => setDraft((d) => ({ ...d, scopeId: e.target.value }))}
 									className="w-full px-2 py-1.5 text-sm rounded-md border"
 									style={inputStyle}
-									placeholder={draft.scope === 'project' ? '/path/to/project' : 'tab-id'}
+									placeholder={SCOPE_IDENTIFIER[draft.scope].placeholder}
 								/>
 							</div>
 						)}

@@ -19,6 +19,7 @@ describe('toSpawnGroupChatAgentConfig', () => {
 		readOnlyMode: true,
 		debugLabel: 'label',
 		maxWaitSeconds: 600,
+		acceptWorkspaceTrust: true,
 	};
 
 	it('carries every field of the library spawn across, renaming the two ids', () => {
@@ -45,6 +46,7 @@ describe('toSpawnGroupChatAgentConfig', () => {
 			readOnlyMode: true,
 			debugLabel: 'label',
 			maxWaitSeconds: 600,
+			acceptWorkspaceTrust: true,
 		});
 	});
 

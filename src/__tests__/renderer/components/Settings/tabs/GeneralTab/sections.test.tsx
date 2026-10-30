@@ -1,4 +1,5 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { useSettingsStore } from '../../../../../../renderer/stores/settingsStore';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import {
 	AutoResumeSection,
@@ -160,6 +161,28 @@ describe('GeneralTab section components', () => {
 		).toBeInTheDocument();
 	});
 
+	it('withholds Relay archive controls until the plugins feature is enabled', () => {
+		const original = useSettingsStore.getState().encoreFeatures;
+		try {
+			useSettingsStore.setState({ encoreFeatures: { ...original, plugins: false } });
+			const props = {
+				theme: mockTheme,
+				defaultSaveToHistory: false,
+				setDefaultSaveToHistory: vi.fn(),
+				synopsisDebounceSeconds: 30,
+				setSynopsisDebounceSeconds: vi.fn(),
+				groupCueEntries: false,
+				setGroupCueEntries: vi.fn(),
+			};
+			const view = render(<HistorySection {...props} />);
+			expect(screen.queryByText('Relay conversation archive')).not.toBeInTheDocument();
+			act(() => useSettingsStore.setState({ encoreFeatures: { ...original, plugins: true } }));
+			view.rerender(<HistorySection {...props} />);
+			expect(screen.getByText('Relay conversation archive')).toBeInTheDocument();
+		} finally {
+			act(() => useSettingsStore.setState({ encoreFeatures: original }));
+		}
+	});
 	it('shows and changes history synopsis debounce only when history is enabled', () => {
 		const setDefaultSaveToHistory = vi.fn();
 		const setSynopsisDebounceSeconds = vi.fn();

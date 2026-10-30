@@ -128,7 +128,7 @@ function verifyEd25519(payload: string, publicKeyB64: string, signatureB64: stri
 export function verifyPluginSignature(
 	pluginDir: string,
 	trustedKeys: readonly string[]
-): SignatureCheck {
+): SignatureCheck & { contentHash?: string } {
 	const sigPath = path.join(pluginDir, SIGNATURE_FILENAME);
 	let raw: string;
 	try {
@@ -161,21 +161,70 @@ export function verifyPluginSignature(
 			detail: err instanceof Error ? err.message : 'could not hash plugin files',
 		};
 	}
+	const contentHash = createHash('sha256')
+		.update(buildSigningPayload(actual), 'utf-8')
+		.digest('hex');
 	if (!fileSetsMatch(actual, manifest.files)) {
 		return {
 			status: 'invalid',
 			signerKey: manifest.publicKey,
 			detail: 'plugin files do not match the signed file set',
+			contentHash,
 		};
 	}
 
 	const payload = buildSigningPayload(manifest.files);
 	if (!verifyEd25519(payload, manifest.publicKey, manifest.signature)) {
-		return { status: 'invalid', signerKey: manifest.publicKey, detail: 'signature did not verify' };
+		return {
+			status: 'invalid',
+			signerKey: manifest.publicKey,
+			detail: 'signature did not verify',
+			contentHash,
+		};
 	}
 
 	return {
 		status: isTrustedKey(manifest.publicKey, trustedKeys) ? 'trusted' : 'untrusted',
+		contentHash,
 		signerKey: manifest.publicKey,
 	};
+}
+
+export function fingerprintPluginDir(source: string): string {
+	const hash = createHash('sha256');
+	const visit = (dir: string, relDir: string): void => {
+		let entries: fs.Dirent[];
+		try {
+			entries = fs
+				.readdirSync(dir, { withFileTypes: true })
+				.sort((a, b) => a.name.localeCompare(b.name));
+		} catch {
+			return;
+		}
+		for (const entry of entries) {
+			const abs = path.join(dir, entry.name);
+			const rel = relDir ? path.join(relDir, entry.name) : entry.name;
+			hash.update(rel.split(path.sep).join('/'));
+			hash.update('\0');
+			try {
+				const stat = fs.lstatSync(abs);
+				hash.update(`${stat.mode}:${stat.size}:`);
+				if (entry.isDirectory() && !entry.isSymbolicLink()) {
+					hash.update('dir\n');
+					visit(abs, rel);
+				} else if (entry.isFile()) {
+					hash.update('file\n');
+					hash.update(fs.readFileSync(abs));
+				} else if (entry.isSymbolicLink()) {
+					hash.update(`link:${fs.readlinkSync(abs)}\n`);
+				} else {
+					hash.update('other\n');
+				}
+			} catch {
+				hash.update('unreadable\n');
+			}
+		}
+	};
+	visit(source, '');
+	return hash.digest('hex');
 }

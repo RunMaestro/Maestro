@@ -64,6 +64,21 @@ describe('hasUsefulAnthropicQuotaDetails', () => {
 });
 
 describe('hasUsefulCodexQuotaDetails', () => {
+	it.each([
+		{ kind: 'balance', balance: 12.5 },
+		{ kind: 'balance', balance: 0 },
+		{ kind: 'unlimited' },
+	] as const)('accepts authenticated credit-only snapshots: %j', (credits) => {
+		expect(hasUsefulCodexQuotaDetails({ authState: 'authenticated', credits })).toBe(true);
+	});
+
+	it.each(['missing_auth', 'error'])(
+		'rejects credit-only snapshots with auth state %s',
+		(authState) => {
+			expect(hasUsefulCodexQuotaDetails({ authState, credits: { kind: 'unlimited' } })).toBe(false);
+		}
+	);
+
 	it('accepts an authenticated snapshot with any one valid window', () => {
 		expect(hasUsefulCodexQuotaDetails({ authState: 'authenticated', session: WINDOW })).toBe(true);
 		expect(hasUsefulCodexQuotaDetails({ authState: 'authenticated', weekly: WINDOW })).toBe(true);

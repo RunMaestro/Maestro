@@ -8,3 +8,4 @@ export { SymphonyRegistrySection } from './SymphonyRegistrySection';
 export { ThroughputGaugeSection } from './ThroughputGaugeSection';
 export { UsageStatsSection } from './UsageStatsSection';
 export { WakatimeSettings } from './WakatimeSettings';
+export { PianolaSection } from './PianolaSection';

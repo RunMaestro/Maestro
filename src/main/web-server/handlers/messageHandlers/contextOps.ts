@@ -6,122 +6,79 @@
  */
 
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
+import {
+	TAB_CONTEXT_OP_MESSAGES,
+	parseTabContextOpMessage,
+	type TabContextOp,
+	type TabContextOpResult,
+} from '../../../../shared/tabContextOps';
 
 /**
- * Handle merge_context message - merge context from source to target session
+ * Shared body of the three context messages: validate, forward to the
+ * renderer that owns the source agent, and ALWAYS answer with the typed
+ * `*_result` (never a bare `error` frame), so a waiting client is never left
+ * to its own timeout.
  */
+function handleTabContextOp(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage,
+	op: TabContextOp
+): void {
+	const reply = (result: TabContextOpResult) => {
+		ctx.send(client, {
+			type: TAB_CONTEXT_OP_MESSAGES[op].resultType,
+			...result,
+			requestId: message.requestId,
+			timestamp: Date.now(),
+		});
+	};
+
+	const parsed = parseTabContextOpMessage(op, message as Record<string, unknown>);
+	if (!parsed.ok) {
+		reply({ success: false, error: parsed.error });
+		return;
+	}
+
+	if (!ctx.callbacks.tabContextOp) {
+		reply({ success: false, error: 'Context operations not configured' });
+		return;
+	}
+
+	ctx.callbacks
+		.tabContextOp(parsed.request)
+		.then(reply)
+		.catch((error: unknown) => {
+			const msg = error instanceof Error ? error.message : String(error);
+			reply({ success: false, error: `Context ${op} failed: ${msg}` });
+		});
+}
+
+/** Handle merge_context - Context: Merge Into from the AI tab overlay menu. */
 export function handleMergeContext(
 	ctx: MessageHandlerContext,
 	client: WebClient,
 	message: WebClientMessage
 ): void {
-	const sourceSessionId = message.sourceSessionId as string;
-	const targetSessionId = message.targetSessionId as string;
-
-	if (!sourceSessionId || !targetSessionId) {
-		ctx.sendError(client, 'Missing sourceSessionId or targetSessionId');
-		return;
-	}
-
-	if (sourceSessionId === targetSessionId) {
-		ctx.sendError(client, 'Source and target sessions must be different');
-		return;
-	}
-
-	if (!ctx.callbacks.mergeContext) {
-		ctx.sendError(client, 'Context merge not configured');
-		return;
-	}
-
-	ctx.callbacks
-		.mergeContext(sourceSessionId, targetSessionId)
-		.then((success) => {
-			ctx.send(client, {
-				type: 'merge_context_result',
-				success,
-				requestId: message.requestId,
-				timestamp: Date.now(),
-			});
-		})
-		.catch((error) => {
-			ctx.sendError(client, `Failed to merge context: ${error.message}`);
-		});
+	handleTabContextOp(ctx, client, message, 'merge');
 }
 
-/**
- * Handle transfer_context message - transfer context from source to target session
- */
+/** Handle transfer_context - Context: Send to Agent from the AI tab overlay menu. */
 export function handleTransferContext(
 	ctx: MessageHandlerContext,
 	client: WebClient,
 	message: WebClientMessage
 ): void {
-	const sourceSessionId = message.sourceSessionId as string;
-	const targetSessionId = message.targetSessionId as string;
-
-	if (!sourceSessionId || !targetSessionId) {
-		ctx.sendError(client, 'Missing sourceSessionId or targetSessionId');
-		return;
-	}
-
-	if (sourceSessionId === targetSessionId) {
-		ctx.sendError(client, 'Source and target sessions must be different');
-		return;
-	}
-
-	if (!ctx.callbacks.transferContext) {
-		ctx.sendError(client, 'Context transfer not configured');
-		return;
-	}
-
-	ctx.callbacks
-		.transferContext(sourceSessionId, targetSessionId)
-		.then((success) => {
-			ctx.send(client, {
-				type: 'transfer_context_result',
-				success,
-				requestId: message.requestId,
-				timestamp: Date.now(),
-			});
-		})
-		.catch((error) => {
-			ctx.sendError(client, `Failed to transfer context: ${error.message}`);
-		});
+	handleTabContextOp(ctx, client, message, 'transfer');
 }
 
-/**
- * Handle summarize_context message - summarize context for a session
- */
+/** Handle summarize_context - Context: Compact from the AI tab overlay menu. */
 export function handleSummarizeContext(
 	ctx: MessageHandlerContext,
 	client: WebClient,
 	message: WebClientMessage
 ): void {
-	const sessionId = message.sessionId as string;
-
-	if (!sessionId) {
-		ctx.sendError(client, 'Missing sessionId');
-		return;
-	}
-
-	if (!ctx.callbacks.summarizeContext) {
-		ctx.sendError(client, 'Context summarize not configured');
-		return;
-	}
-
-	ctx.callbacks
-		.summarizeContext(sessionId)
-		.then((success) => {
-			ctx.send(client, {
-				type: 'summarize_context_result',
-				success,
-				requestId: message.requestId,
-				timestamp: Date.now(),
-			});
-		})
-		.catch((error) => {
-			ctx.sendError(client, `Failed to summarize context: ${error.message}`);
-		});
+	handleTabContextOp(ctx, client, message, 'compact');
 }
 
 /**

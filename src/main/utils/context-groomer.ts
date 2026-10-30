@@ -17,7 +17,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { logger } from './logger';
 import { buildAgentArgs, applyAgentConfigOverrides } from './agent-args';
 import { wrapSpawnWithSsh, sshUnresolvedRemoteMessage } from './ssh-spawn-wrapper';
-import type { SshRemoteConfig } from '../../shared/types';
+import type { AgentErrorType, SshRemoteConfig } from '../../shared/types';
 import { isWindows } from '../../shared/platformDetection';
 import { parseEffortRejection } from '../../shared/effortRejection';
 import type { AgentDetector } from '../agents';
@@ -32,6 +32,23 @@ import { getSshRemoteConfig, type SshRemoteSettingsStore } from './ssh-remote-re
 import { getClaudeTokenMode, type ClaudeTokenSourceFields } from '../../shared/claudeTokenMode';
 
 const LOG_CONTEXT = '[ContextGroomer]';
+
+/**
+ * A grooming run the agent itself reported as failed (an `agent-error` event).
+ * Carries the error category the provider's parser already assigned, so a
+ * caller can tell an expired login or a rate limit apart from a real fault
+ * without re-matching the provider-specific wording of the message.
+ */
+export class GroomingAgentError extends Error {
+	constructor(
+		message: string,
+		readonly agentErrorType: AgentErrorType | undefined
+	) {
+		// `name` stays 'Error' on purpose: it is the exception type Sentry groups
+		// by, and renaming it would split every existing grooming issue in two.
+		super(message);
+	}
+}
 
 /**
  * Minimal process manager interface required for context grooming.
@@ -194,6 +211,12 @@ export interface GroomContextOptions {
 	 * caller with no owning agent (Director's Notes, a utility agent).
 	 */
 	claudeTokenSource?: ClaudeTokenSourceFields;
+	/**
+	 * `projectRoot` is the owning agent's own working directory, so maestro-p may
+	 * accept claude's folder-trust prompt there (#1872). Leave unset for any other
+	 * folder. Ignored on the API path.
+	 */
+	acceptWorkspaceTrust?: boolean;
 	/** Optional callback for progress updates during grooming */
 	onProgress?: (update: GroomProgressUpdate) => void;
 }
@@ -277,6 +300,7 @@ async function groomContextOnce(
 		disableTools = false,
 		agentConfigValues,
 		claudeTokenSource,
+		acceptWorkspaceTrust,
 		onProgress,
 	} = options;
 
@@ -388,6 +412,7 @@ async function groomContextOnce(
 				args: resolvedArgs,
 				customEnvVars: resolvedEnvVars,
 				maxWaitSeconds: Math.ceil(timeoutMs / 1000),
+				acceptWorkspaceTrust,
 			});
 			spawnCommand = applied.command;
 			spawnArgs = applied.args;
@@ -420,6 +445,7 @@ async function groomContextOnce(
 					interactiveModeArgs: agent.interactiveModeArgs,
 					remoteClaudeBin: claudeDecision.claudeRealBinPath,
 					maxWaitSeconds: Math.ceil(timeoutMs / 1000),
+					acceptWorkspaceTrust,
 				})
 			: null;
 
@@ -596,8 +622,12 @@ async function groomContextOnce(
 						: typeof error === 'object' && error !== null && 'message' in error
 							? String((error as { message: unknown }).message)
 							: String(error);
+				const errorType =
+					typeof error === 'object' && error !== null && 'type' in error
+						? ((error as { type: unknown }).type as AgentErrorType)
+						: undefined;
 				logger.error('Grooming error', LOG_CONTEXT, { groomerSessionId, error: errorMsg });
-				reject(new Error(`Grooming error: ${errorMsg}`));
+				reject(new GroomingAgentError(`Grooming error: ${errorMsg}`, errorType));
 			}
 		};
 

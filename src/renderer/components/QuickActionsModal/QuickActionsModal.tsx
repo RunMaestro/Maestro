@@ -94,6 +94,7 @@ import { buildNewTabCommands, buildTabCommands } from './commands/tabCommands';
 import { buildTabGroupCommands } from './commands/tabGroupCommands';
 import { buildTileCommands } from './commands/tileCommands';
 import { buildWindowCommands } from './commands/windowCommands';
+import { withAgentInGroup } from '../../../shared/maestro-lib/agents/rules';
 import {
 	buildGroupWindowMoveTargets,
 	buildWindowMoveTargets,
@@ -533,14 +534,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	};
 
 	const handleMoveToGroup = (groupId: string) => {
-		const normalizedGroupId = groupId || undefined;
-		const updatedSessions = sessions.map((s) => {
-			if (s.id === activeSessionId) return { ...s, groupId: normalizedGroupId };
-			// Also update worktree children to keep groupId in sync
-			if (s.parentSessionId === activeSessionId) return { ...s, groupId: normalizedGroupId };
-			return s;
-		});
-		setSessions(updatedSessions);
+		setSessions(withAgentInGroup(sessions, activeSessionId, groupId));
 		setQuickActionOpen(false);
 	};
 

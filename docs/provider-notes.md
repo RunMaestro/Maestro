@@ -176,6 +176,26 @@ Only local chat turns use the app server. These keep running on `codex exec` eve
 
 If the app server cannot start (an older Codex build, or a handshake error), Maestro runs the turn on `codex exec` automatically. Conversations carry over in both directions, because both transports share the same Codex session.
 
+### Nonfatal notices
+
+Codex can report configuration notices as item-level `error` events without
+failing the turn. In standard desktop agent chats, Maestro displays these as
+separate **STDERR** diagnostics even when **Thinking** is off. They are not
+assistant answers and do not trigger failure or reasoning-effort retries.
+Top-level errors and `turn.failed` events still use normal error handling.
+
+These examples show a synthetic warning followed by a successful answer, with
+Thinking off, in dark and light themes:
+
+<Tabs>
+  <Tab title="Dark">
+    ![Codex warning separate from the successful answer in Dracula](./screenshots/codex-nonfatal-notice.dracula.png)
+  </Tab>
+  <Tab title="Light">
+    ![Codex warning separate from the successful answer in Catppuccin Latte](./screenshots/codex-nonfatal-notice.catppuccin-latte.png)
+  </Tab>
+</Tabs>
+
 ## OpenCode
 
 | Feature            | Support                        |

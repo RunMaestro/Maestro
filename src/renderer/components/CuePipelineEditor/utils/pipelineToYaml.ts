@@ -155,6 +155,9 @@ function applyTriggerEventConfig(sub: CueSubscription, triggerData: TriggerNodeD
 		sub.label = triggerData.customLabel;
 	}
 	switch (triggerData.eventType) {
+		case 'plugin.event':
+			sub.plugin = triggerData.config.plugin;
+			break;
 		case 'time.heartbeat':
 			if (triggerData.config.interval_minutes) {
 				sub.interval_minutes = triggerData.config.interval_minutes;
@@ -988,6 +991,7 @@ export function pipelinesToSubscriptionRecords(
 			} else if (sub.fan_out_prompts != null) {
 				record.fan_out_prompts = sub.fan_out_prompts;
 			}
+			if (sub.plugin != null) record.plugin = sub.plugin;
 			if (sub.filter != null) record.filter = sub.filter;
 			if (sub.fan_in_timeout_minutes != null)
 				record.fan_in_timeout_minutes = sub.fan_in_timeout_minutes;

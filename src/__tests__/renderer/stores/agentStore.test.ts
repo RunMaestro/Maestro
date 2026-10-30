@@ -1261,6 +1261,36 @@ describe('agentStore', () => {
 			mockGetAgent.mockResolvedValue(mockAgent);
 		});
 
+		it.each(['user', 'auto', undefined] as const)(
+			'preserves queued message and command provenance %s without promoting unknown callers',
+			async (querySource) => {
+				useSessionStore.getState().setSessions([createMockSession({ id: 'session-1' })]);
+				const deps = {
+					...defaultDeps,
+					customAICommands: [
+						{
+							id: 'read',
+							command: '/read',
+							description: 'Read mail',
+							prompt: 'Read authorized mail',
+						},
+					],
+				};
+				for (const type of ['message', 'command'] as const) {
+					mockSpawn.mockClear();
+					await useAgentStore
+						.getState()
+						.processQueuedItem(
+							'session-1',
+							createQueuedItem({ type, command: '/read', querySource }),
+							deps
+						);
+					expect(mockSpawn).toHaveBeenCalledTimes(1);
+					expect(mockSpawn.mock.calls[0][0].querySource).toBe(querySource);
+				}
+			}
+		);
+
 		it('spawns agent with queued message text', async () => {
 			const session = createMockSession({
 				id: 'session-1',

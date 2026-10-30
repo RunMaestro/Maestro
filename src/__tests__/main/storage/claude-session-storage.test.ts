@@ -61,6 +61,11 @@ vi.mock('fs/promises', () => {
 	return { default: fsMock, ...fsMock };
 });
 
+// Transcript reads stream; feed them from the readFile stub above.
+vi.mock('../../../main/utils/jsonl-stream', async () =>
+	(await import('../../helpers/mockJsonlStream')).jsonlStreamFromReadFileMock()
+);
+
 // Account dirs the storage falls back to when a transcript is not in the default
 // account. Empty unless a test names some.
 const mockAccountDirs = vi.fn(async (): Promise<string[]> => []);

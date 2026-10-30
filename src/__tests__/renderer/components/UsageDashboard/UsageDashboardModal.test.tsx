@@ -375,6 +375,37 @@ describe('UsageDashboardModal - remembers last-selected tab', () => {
 });
 
 describe('UsageDashboardModal - provider quota tabs', () => {
+	it.each([
+		{ kind: 'balance', balance: 12.5 },
+		{ kind: 'balance', balance: 0 },
+		{ kind: 'unlimited' },
+	] as const)(
+		'opens OpenAI Usage for a credit-only account without resampling: %j',
+		async (credits) => {
+			setEncoreFlags({ maestroCue: false, usageStats: true });
+			const snapshots = {
+				'/Users/me/.codex-work': {
+					sampledAt: '2026-05-23T00:00:00.000Z',
+					codexHomeKey: '/Users/me/.codex-work',
+					authState: 'authenticated' as const,
+					credits,
+				},
+			};
+			useCodexUsageStore.setState({ loaded: true, refreshing: false, snapshots });
+			mockAgents.getCodexUsageSnapshots.mockResolvedValue(snapshots);
+
+			render(<UsageDashboardModal isOpen={true} onClose={() => {}} theme={mockTheme} />);
+
+			await act(async () => {
+				fireEvent.click(screen.getByRole('tab', { name: 'OpenAI Usage' }));
+			});
+
+			expect(screen.getByTestId('codex-usage-mock')).toBeInTheDocument();
+			expect(mockAgents.getCodexUsageSnapshots).toHaveBeenCalled();
+			expect(mockAgents.refreshCodexUsageSnapshots).not.toHaveBeenCalled();
+		}
+	);
+
 	it('shows Anthropic Usage and OpenAI Usage only when useful provider snapshots exist', async () => {
 		setEncoreFlags({ maestroCue: true, usageStats: true });
 		seedAnthropicUsageSnapshots();

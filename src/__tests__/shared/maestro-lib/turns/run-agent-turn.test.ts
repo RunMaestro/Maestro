@@ -492,6 +492,21 @@ describe('runAgentTurn: the Claude token source', () => {
 		expect(argv).toContain('--dangerously-skip-permissions');
 		expect(env.MAESTRO_CLAUDE_BIN).toBe(turn.launch.command);
 		expect(env.ELECTRON_RUN_AS_NODE).toBe('1');
+		expect(env.MAESTRO_P_ACCEPT_WORKSPACE_TRUST).toBeUndefined();
+	});
+
+	it("lets a TUI turn accept claude's folder trust when the caller says it is the agent's own cwd (#1872)", async () => {
+		const envOut = outFile('env');
+		const run = await start(
+			assembleWithFakeAgent('claude-code', {
+				recording: 'captured-claude-code-normal',
+				env: { FAKE_AGENT_ENV_OUT: envOut },
+			}),
+			{ claudeTokenSource: tuiSource, maestroPBinPath: FAKE_AGENT_PATH, acceptWorkspaceTrust: true }
+		);
+		await run.result;
+
+		expect(JSON.parse(fs.readFileSync(envOut, 'utf8')).MAESTRO_P_ACCEPT_WORKSPACE_TRUST).toBe('1');
 	});
 
 	it('falls back to API when the TUI is chosen but no maestro-p is installed', async () => {

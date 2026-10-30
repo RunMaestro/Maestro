@@ -1,4 +1,5 @@
 import { ipcRenderer } from 'electron';
+import type { MentionRouting } from '../../../shared/crossAgentContext';
 
 export function createBrowserTabRemoteApi() {
 	return {
@@ -242,7 +243,8 @@ export function createBrowserTabRemoteApi() {
 				prompt: string,
 				responseChannel: string,
 				background?: boolean,
-				hidden?: boolean
+				hidden?: boolean,
+				mentionRouting?: MentionRouting
 			) => void
 		): (() => void) => {
 			const handler = (
@@ -251,10 +253,11 @@ export function createBrowserTabRemoteApi() {
 				prompt: string,
 				responseChannel: string,
 				background?: boolean,
-				hidden?: boolean
+				hidden?: boolean,
+				mentionRouting?: MentionRouting
 			) => {
 				try {
-					callback(sessionId, prompt, responseChannel, background, hidden);
+					callback(sessionId, prompt, responseChannel, background, hidden, mentionRouting);
 				} catch (error) {
 					ipcRenderer.send(responseChannel, false);
 					throw error;

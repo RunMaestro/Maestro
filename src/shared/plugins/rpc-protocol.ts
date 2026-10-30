@@ -13,6 +13,7 @@
  * plugin SDK so all three agree byte-for-byte.
  */
 
+import { pluginEndpointScope } from './primitives';
 import type { PluginCapability } from './permissions';
 
 /** Maximum length of a public tool action sent to a plugin. */
@@ -40,6 +41,20 @@ export type AgentSendProgressEvent =
  * never be called - the broker denies it and no handler is registered for it.
  */
 export const HOST_API = {
+	'net.requestTlsConsent': { capability: 'net:tls' },
+	'secrets.remove': { capability: 'secrets:use' },
+	'invocations.inspect': { capability: 'invocations:inspect' },
+	'net.tlsOpen': { capability: 'net:tls' },
+	'net.tlsRead': { capability: 'net:tls' },
+	'net.tlsWrite': { capability: 'net:tls' },
+	'net.tlsClose': { capability: 'net:tls' },
+	'secrets.requestSetup': { capability: 'secrets:use' },
+	'records.read': { capability: 'records:read' },
+	'records.requestCommit': { capability: 'records:confirm' },
+	'events.consumers': { capability: 'events:publish' },
+	'events.begin': { capability: 'events:publish' },
+	'events.publish': { capability: 'events:publish' },
+
 	'fs.read': { capability: 'fs:read' },
 	'fs.write': { capability: 'fs:write' },
 	'services.register': { capability: 'services:provide' },
@@ -68,6 +83,8 @@ export const HOST_API = {
 	'agents.get': { capability: 'agents:read' },
 	'agents.dispatch': { capability: 'agents:dispatch' },
 	'agents.send': { capability: 'agents:dispatch' },
+	'agents.completeConversation': { capability: 'agents:dispatch' },
+	'agents.restoreConversation': { capability: 'agents:dispatch' },
 	'agents.generateTitle': { capability: 'agents:dispatch' },
 	'notifications.toast': { capability: 'notifications:toast' },
 	'settings.get': { capability: 'settings:read' },
@@ -143,6 +160,12 @@ export const HANDLER_REAUTHORIZED_METHODS: ReadonlySet<HostMethod> = new Set<Hos
 	'services.openSettings',
 	'services.start',
 	'services.result',
+	'net.requestTlsConsent',
+	'secrets.remove',
+	'net.tlsRead',
+	'net.tlsWrite',
+	'events.begin',
+	'events.publish',
 	'net.send',
 	'net.close',
 ]);
@@ -174,6 +197,8 @@ export type HostControlMessage =
 			id: number;
 			commandId: string;
 			args?: unknown;
+			/** Internal host-issued nested handle; never an agent ID or model argument. */
+			invocationId?: string | null;
 			context: PluginToolCallerContext;
 	  }
 	| { kind: 'event'; topic: string; at: string; payload: unknown }
@@ -213,6 +238,17 @@ export function extractTarget(method: HostMethod, params: unknown): string | und
 		unknown
 	>;
 	switch (method) {
+		case 'net.tlsOpen':
+			return pluginEndpointScope(p.host, p.port);
+		case 'secrets.requestSetup': {
+			const endpoint = p.endpoint as Record<string, unknown> | undefined;
+			return endpoint && pluginEndpointScope(endpoint.host, endpoint.port);
+		}
+		case 'records.read':
+		case 'records.requestCommit':
+			return typeof p.key === 'string' ? p.key : undefined;
+		case 'events.consumers':
+			return typeof p.topic === 'string' ? p.topic : undefined;
 		case 'services.register':
 		case 'services.unregister':
 		case 'services.readiness':
@@ -264,6 +300,8 @@ export function extractTarget(method: HostMethod, params: unknown): string | und
 			return typeof p.projectPath === 'string' ? p.projectPath : undefined;
 		case 'agents.dispatch':
 		case 'agents.send':
+		case 'agents.completeConversation':
+		case 'agents.restoreConversation':
 		case 'agents.generateTitle':
 			// Allowlist scope target: the exact agent id the plugin wants to run.
 			// A missing/malformed id yields undefined, which an allowlist grant

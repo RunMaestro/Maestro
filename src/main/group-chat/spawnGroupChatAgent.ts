@@ -79,6 +79,12 @@ export interface SpawnGroupChatAgentConfig {
 	appendSystemPrompt?: string;
 	/** True when `args` resume an existing provider session. */
 	isResume?: boolean;
+	/**
+	 * `cwd` is the agent's own working directory, so maestro-p may accept
+	 * claude's folder-trust prompt there (#1872). Leave unset for any other
+	 * folder (the moderator's, a synthesis scratch dir).
+	 */
+	acceptWorkspaceTrust?: boolean;
 }
 
 export interface SpawnGroupChatAgentResult {
@@ -134,6 +140,7 @@ export async function spawnGroupChatAgent(
 			readOnlyMode: config.readOnlyMode,
 			debugLabel: config.debugLabel,
 			maxWaitSeconds: config.maxWaitSeconds,
+			acceptWorkspaceTrust: config.acceptWorkspaceTrust,
 		},
 		{
 			sshStore: sshStore ?? null,

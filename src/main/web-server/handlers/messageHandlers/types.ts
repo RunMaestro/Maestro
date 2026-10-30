@@ -39,7 +39,6 @@ import type {
 	NotifyCenterFlashParams,
 	MarketplaceManifestResult,
 	MarketplaceImportResult,
-	DesktopSessionEntry,
 	SessionHistoryResult,
 	GetSessionHistoryOptions,
 	EnqueueCommandResult,
@@ -49,10 +48,13 @@ import type {
 	ConsultAgentResult,
 	RenameTabResult,
 	SnoozeCommandCallback,
+	ClosedTabCommandCallback,
+	TabContextOpCallback,
 	AutoRunSteeringCommandCallback,
 	WindowCommandCallback,
 	ThroughputGaugeCommandCallback,
 	OpenFileTabOptions,
+	InterruptSessionCallback,
 } from '../../types';
 import type { DebugPackageDependencies } from '../../../debug-package';
 import type {
@@ -63,6 +65,7 @@ import type {
 } from '../../../cue-bundle-service';
 import type { MediaOpenMode } from '../../../../shared/mediaTypes';
 import type { AgentDelegationNotice } from '../../../../shared/agentDelegation';
+import type { MentionRouting } from '../../../../shared/crossAgentContext';
 import type { GroupAppearance, GroupUpdateRequest } from '../../../../shared/groupAppearance';
 import type { CadenzaPayload } from '../../../../shared/cadenza-types';
 import type { MovementPayload, MovementStateSnapshot } from '../../../../shared/movement-types';
@@ -135,7 +138,9 @@ export interface MessageHandlerCallbacks {
 		tabId?: string,
 		force?: boolean,
 		images?: string[],
-		background?: boolean
+		background?: boolean,
+		mentionRouting?: MentionRouting,
+		requireDeliveryReceipt?: boolean
 	) => Promise<boolean>;
 	switchMode: (
 		sessionId: string,
@@ -154,6 +159,8 @@ export interface MessageHandlerCallbacks {
 	starTab: (sessionId: string, tabId: string, starred: boolean) => Promise<boolean>;
 	/** `maestro-cli snooze` - park, list, wake, dismiss, reschedule, history. */
 	snoozeCommand: SnoozeCommandCallback;
+	/** `maestro-cli tab closed` / `tab reopen` - read and reopen the closed-tab stack. */
+	closedTabCommand: ClosedTabCommandCallback;
 	/** `maestro-cli steer-auto-run` - send a note, list notes and replies, cancel. */
 	autoRunSteeringCommand: AutoRunSteeringCommandCallback;
 	/** `maestro-cli window` - list windows, move an agent or a group between them. */
@@ -208,8 +215,11 @@ export interface MessageHandlerCallbacks {
 		sessionId: string,
 		prompt: string,
 		background?: boolean,
-		hidden?: boolean
+		hidden?: boolean,
+		mentionRouting?: MentionRouting
 	) => Promise<{ success: boolean; tabId?: string; queued?: boolean; error?: string }>;
+	/** Stop a running turn, the agent's or one tab's (`maestro-cli interrupt`). */
+	interruptSession: InterruptSessionCallback;
 	/** Consult another agent and return its answer (`maestro-cli ask`). */
 	consultAgent: (params: ConsultAgentParams) => Promise<ConsultAgentResult>;
 	/** Mark a delivered CLI dispatch in the calling agent's transcript. Fire-and-forget. */
@@ -221,7 +231,8 @@ export interface MessageHandlerCallbacks {
 		tabId?: string,
 		images?: string[],
 		background?: boolean,
-		held?: boolean
+		held?: boolean,
+		mentionRouting?: MentionRouting
 	) => Promise<EnqueueCommandResult>;
 	listQueue: (sessionId?: string) => Promise<{
 		success: boolean;
@@ -397,9 +408,7 @@ export interface MessageHandlerCallbacks {
 		chatId: string,
 		request: SteerGroupChatRequest
 	) => Promise<GroupChatSteerResult>;
-	mergeContext: (sourceSessionId: string, targetSessionId: string) => Promise<boolean>;
-	transferContext: (sourceSessionId: string, targetSessionId: string) => Promise<boolean>;
-	summarizeContext: (sessionId: string) => Promise<boolean>;
+	tabContextOp: TabContextOpCallback;
 	createGist: (
 		sessionId: string,
 		description: string,
@@ -469,7 +478,7 @@ export interface MessageHandlerCallbacks {
 	/** External-pickup primitive used by `maestro-cli session list`. Surfaces every
 	 *  open AI tab across all desktop agents so consumers (Maestro-Discord, Cue)
 	 *  can address tabs by id without owning a persistent channel. */
-	listDesktopSessions: () => DesktopSessionEntry[];
+	listDesktopSessions: () => ReturnType<import('../../types').ListDesktopSessionsCallback> | null;
 	/** Read-only conversation history fetch used by `maestro-cli session show
 	 *  <tabId>`. Filters (`sinceMs`, `tail`) live alongside the read so we don't
 	 *  ship the full transcript over the wire on every poll. */
@@ -487,7 +496,8 @@ export interface MessageHandlerCallbacks {
  */
 export interface MessageHandlerContext {
 	callbacks: Partial<MessageHandlerCallbacks>;
-	send: (client: WebClient, data: Record<string, unknown>) => void;
+	/** `onSent` runs once the frame is on the socket (see `live_command`). */
+	send: (client: WebClient, data: Record<string, unknown>, onSent?: () => void) => void;
 	sendError: (client: WebClient, message: string, extra?: Record<string, unknown>) => void;
 	reportHandlerError: (
 		client: WebClient,

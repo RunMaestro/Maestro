@@ -14,6 +14,8 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { reconcileSuggestionEvidence } from './pianola-synthesis';
+import { settledDecisionPairs } from './transcript-mining';
 import {
 	PIANOLA_RULES_FILENAME,
 	PIANOLA_DECISIONS_FILENAME,
@@ -23,6 +25,7 @@ import {
 	PIANOLA_SUGGESTIONS_FILENAME,
 	PIANOLA_DECISIONS_MAX_RECORDS,
 	PIANOLA_DECISIONS_COMPACT_BYTES,
+	PIANOLA_DECISION_RECORD_MAX_BYTES,
 	validatePianolaRules,
 	validatePianolaDecisionRecord,
 	validatePianolaPlansFile,
@@ -41,6 +44,12 @@ import {
 } from './storage';
 import { appendDecisionLine, compactDecisionLog } from './decision-log';
 import type { PianolaRule } from './types';
+import {
+	validatePianolaScopeCheckpoint,
+	type PianolaScopeCheckpoint,
+} from './pianola-scope-checkpoint';
+import { isPianolaScopeId } from './pianola-scope';
+import { canonicalJson } from '../canonicalJson';
 
 export interface PianolaFsStoreConfig {
 	/** Resolve the data dir (Electron userData for main, config dir for CLI). Re-read per op. */
@@ -75,6 +84,9 @@ export interface PianolaFsStore {
 	writeSupervisorTargets(targets: PianolaSupervisedTarget[]): PianolaSupervisedTarget[];
 	upsertSupervisorTarget(target: PianolaSupervisedTarget): PianolaSupervisedTarget[];
 	removeSupervisorTarget(id: string): PianolaSupervisedTarget[];
+	/** A missing checkpoint is a first enrollment; a corrupt one throws. */
+	readScopeCheckpoint(scopeId: string): PianolaScopeCheckpoint | null;
+	writeScopeCheckpoint(checkpoint: PianolaScopeCheckpoint): void;
 	/** Absolute path to the supervised-target registry the desktop supervisor watches. */
 	supervisorFilePath(): string;
 }
@@ -163,10 +175,19 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 	}
 
 	function appendDecision(record: PianolaDecisionRecord): void {
+		const line = `${JSON.stringify(record)}\n`;
+		// Scope audit-before-send must fail closed rather than silently dropping
+		// an oversized or unreadable lifecycle and then losing its durable claim.
+		if (
+			record.lifecycle &&
+			(!validatePianolaDecisionRecord(record) ||
+				Buffer.byteLength(line, 'utf-8') > PIANOLA_DECISION_RECORD_MAX_BYTES)
+		)
+			throw new Error('Invalid or oversized Pianola decision lifecycle');
 		const dir = resolveDir();
 		if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 		const file = path.join(dir, PIANOLA_DECISIONS_FILENAME);
-		appendDecisionLine(file, `${JSON.stringify(record)}\n`);
+		appendDecisionLine(file, line);
 		compactDecisionLog(file, PIANOLA_DECISIONS_MAX_RECORDS, PIANOLA_DECISIONS_COMPACT_BYTES);
 	}
 
@@ -196,16 +217,109 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 	}
 
 	function readSuggestions(): PianolaSuggestionsFile {
-		return readFileOr(
-			PIANOLA_SUGGESTIONS_FILENAME,
-			() => validatePianolaSuggestionsFile(undefined),
-			(parsed) => validatePianolaSuggestionsFile(parsed)
-		);
+		let content: string;
+		try {
+			content = fs.readFileSync(filePath(PIANOLA_SUGGESTIONS_FILENAME), 'utf-8');
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === 'ENOENT')
+				return validatePianolaSuggestionsFile(undefined);
+			throw error;
+		}
+		// Corruption must not erase persistent rejection/approval evidence.
+		const raw: unknown = JSON.parse(content);
+		if (!raw || typeof raw !== 'object' || Array.isArray(raw))
+			throw new Error('InvalidSuggestionFile');
+		return validatePianolaSuggestionsFile(raw);
 	}
 
 	function writeSuggestions(file: PianolaSuggestionsFile): PianolaSuggestionsFile {
-		const validated = validatePianolaSuggestionsFile(file);
-		writeJsonAtomic(PIANOLA_SUGGESTIONS_FILENAME, validated);
+		let validated = validatePianolaSuggestionsFile(file);
+		const current = readSuggestions();
+		// Re-read at the atomic write boundary: asynchronous mining must never
+		// overwrite a review that was committed while it was in flight.
+		if (current.rejections || validated.rejections) {
+			const rejections = new Map<
+				string,
+				NonNullable<PianolaSuggestionsFile['rejections']>[number]
+			>();
+			for (const item of [...(current.rejections ?? []), ...(validated.rejections ?? [])]) {
+				const key = canonicalJson([item.candidateId, item.evidenceFingerprint]);
+				const previous = rejections.get(key);
+				if (
+					previous &&
+					(previous.principal !== item.principal || previous.actorId !== item.actorId)
+				)
+					throw new Error('ConflictingSuggestionReview');
+				rejections.set(key, item);
+			}
+			validated.rejections = [...rejections.values()];
+		}
+		if (current.approvals || validated.approvals) {
+			const approvals = new Map<string, NonNullable<PianolaSuggestionsFile['approvals']>[number]>();
+			for (const item of [...(current.approvals ?? []), ...(validated.approvals ?? [])]) {
+				const key = canonicalJson([
+					item.candidate.id,
+					item.candidate.evidenceFingerprint,
+					item.approvedAt,
+				]);
+				const previous = approvals.get(key);
+				if (
+					previous &&
+					(previous.principal !== item.principal || previous.actorId !== item.actorId)
+				)
+					throw new Error('ConflictingSuggestionReview');
+				approvals.set(key, item);
+			}
+			validated.approvals = [...approvals.values()];
+		}
+		// Conflicts are durable review requests. Empty/legacy/stale writers cannot
+		// erase one or its source examples, including after log compaction.
+		if (current.conflicts || validated.conflicts) {
+			const conflicts = new Map<string, NonNullable<PianolaSuggestionsFile['conflicts']>[number]>();
+			for (const item of [...(current.conflicts ?? []), ...(validated.conflicts ?? [])]) {
+				const key = canonicalJson([item.ruleId, item.evidenceFingerprint, item.approvedAt]);
+				const previous = conflicts.get(key);
+				const evidence = new Map(
+					[...(previous?.evidence ?? []), ...item.evidence].map((source) => [
+						canonicalJson(source),
+						source,
+					])
+				);
+				conflicts.set(key, {
+					...item,
+					detectedAt: Math.min(previous?.detectedAt ?? item.detectedAt, item.detectedAt),
+					reason: previous?.reason === 'source_corrected' ? previous.reason : item.reason,
+					evidence: [...evidence.values()],
+				});
+			}
+			validated.conflicts = [...conflicts.values()];
+		}
+		if (validated.candidates) {
+			validated.candidates = validated.candidates.filter(
+				(candidate) =>
+					!validated.rejections?.some(
+						(item) =>
+							item.candidateId === candidate.id &&
+							item.evidenceFingerprint === candidate.evidenceFingerprint
+					)
+			);
+			validated.proposals = validated.candidates.map((candidate) => candidate.rule);
+		} else {
+			// Legacy writers cannot resurrect a rejected source-linked candidate.
+			validated.proposals = validated.proposals.filter(
+				(proposal) => !validated.rejections?.some((item) => item.candidateId === proposal.id)
+			);
+		}
+		// Re-read native evidence at the final write boundary. A correction or
+		// approval committed during asynchronous mining must win over old staging.
+		validated = reconcileSuggestionEvidence(
+			validated,
+			settledDecisionPairs(readDecisions(), { snapshots: true }),
+			readRulesResult().rules,
+			Date.now()
+		);
+		if (canonicalJson(validated) !== canonicalJson(current))
+			writeJsonAtomic(PIANOLA_SUGGESTIONS_FILENAME, validated);
 		return validated;
 	}
 
@@ -270,6 +384,47 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		return writeSupervisorTargets(next);
 	}
 
+	function checkpointName(scopeId: string): string {
+		if (!isPianolaScopeId(scopeId)) throw new Error('Invalid Pianola scope ID');
+		return `maestro-pianola-scope-${scopeId}.json`;
+	}
+
+	function readScopeCheckpoint(scopeId: string): PianolaScopeCheckpoint | null {
+		const file = filePath(checkpointName(scopeId));
+		let content: string;
+		try {
+			if (fs.statSync(file).size > 20 * 1024 * 1024)
+				throw new Error('Pianola checkpoint too large');
+			content = fs.readFileSync(file, 'utf-8');
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+			throw error;
+		}
+		let raw: unknown;
+		try {
+			raw = JSON.parse(content);
+		} catch {
+			throw new Error('Invalid Pianola scope checkpoint JSON');
+		}
+		const checkpoint = validatePianolaScopeCheckpoint(raw, scopeId);
+		if (!checkpoint) throw new Error('Invalid Pianola scope checkpoint');
+		return checkpoint;
+	}
+
+	function writeScopeCheckpoint(checkpoint: PianolaScopeCheckpoint): void {
+		const name = checkpointName(checkpoint.scopeId);
+		if (!validatePianolaScopeCheckpoint(checkpoint, checkpoint.scopeId)) {
+			throw new Error('Invalid Pianola scope checkpoint');
+		}
+		if (
+			Buffer.byteLength(JSON.stringify(checkpoint, null, indent), 'utf-8') + 1 >
+			20 * 1024 * 1024
+		) {
+			throw new Error('Pianola checkpoint too large');
+		}
+		writeJsonAtomic(name, checkpoint);
+	}
+
 	return {
 		readRulesResult,
 		readRules: () => readRulesResult().rules,
@@ -294,6 +449,8 @@ export function createPianolaFsStore(config: PianolaFsStoreConfig): PianolaFsSto
 		writeSupervisorTargets,
 		upsertSupervisorTarget,
 		removeSupervisorTarget,
+		readScopeCheckpoint,
+		writeScopeCheckpoint,
 		supervisorFilePath,
 	};
 }

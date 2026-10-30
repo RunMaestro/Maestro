@@ -538,7 +538,11 @@ describe('useRemoteHandlers', () => {
 				);
 			});
 
-			expect(planCrossAgentMentions).toHaveBeenCalledWith('@Reviewer look at this', 'session-1');
+			expect(planCrossAgentMentions).toHaveBeenCalledWith(
+				'@Reviewer look at this',
+				'session-1',
+				undefined
+			);
 			expect(dispatchCrossAgentMentions).toHaveBeenCalledWith(
 				plan,
 				'@Reviewer look at this',
@@ -558,6 +562,54 @@ describe('useRemoteHandlers', () => {
 			expect(tab.logs).toEqual([
 				expect.objectContaining({ source: 'user', text: '@Reviewer look at this' }),
 			]);
+		});
+
+		it('plans the mention with a dispatch --routing, which wins over the wording', async () => {
+			// "fix it, @Reviewer too" reads as parallel; `--routing consult-first`
+			// must plan it as consult-first, the way the composer strip's pick does.
+			const session = createMockSession({ inputMode: 'ai' });
+			const deps = createMockDeps({ sessionsRef: { current: [session] } });
+			const plan = {
+				targetSessionIds: ['reviewer-1'],
+				routing: 'consult-first',
+				inferredRouting: 'parallel',
+				routingSource: 'explicit',
+				suppressLocal: true,
+			};
+			vi.mocked(planCrossAgentMentions).mockReturnValueOnce(plan as any);
+
+			renderHook(() => useRemoteHandlers(deps));
+			const handler = (window.addEventListener as any).mock.calls.find(
+				(call: any[]) => call[0] === 'maestro:remoteCommand'
+			)[1];
+
+			await act(async () => {
+				await handler(
+					new CustomEvent('maestro:remoteCommand', {
+						detail: {
+							sessionId: 'session-1',
+							command: 'fix it, @Reviewer too',
+							inputMode: 'ai',
+							mentionRouting: 'consult-first',
+						},
+					})
+				);
+			});
+
+			expect(planCrossAgentMentions).toHaveBeenCalledWith(
+				'fix it, @Reviewer too',
+				'session-1',
+				'consult-first'
+			);
+			expect(dispatchCrossAgentMentions).toHaveBeenCalledWith(
+				plan,
+				'fix it, @Reviewer too',
+				expect.objectContaining({ id: 'session-1' }),
+				'tab-1',
+				undefined
+			);
+			// Consult first: this agent answers when the hold releases, not now.
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
 		});
 
 		it('drops a leading @mention when the agent has no AI tab to anchor the reply', async () => {

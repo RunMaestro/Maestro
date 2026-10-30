@@ -1,3 +1,4 @@
+vi.mock('../../../main/plugins/plugin-scan', async () => await import('../../helpers/pluginScan'));
 /**
  * @file plugin-manager-hot-reload.test.ts
  * @description Refresh-driven plugin hot reload. Editing a runnable plugin's
@@ -95,9 +96,9 @@ function makeSandbox(): PluginSandboxLifecycle {
 	};
 }
 
-function enableRunnablePlugin(manager: PluginManager, sandbox: PluginSandboxLifecycle): void {
-	manager.refresh();
-	manager.setEnabled('demo', true);
+async function enableRunnablePlugin(manager: PluginManager, sandbox: PluginSandboxLifecycle): void {
+	await manager.refresh();
+	await manager.setEnabled('demo', true);
 	expect(sandbox.start).toHaveBeenCalledTimes(1);
 	expect(sandbox.isRunning('demo')).toBe(true);
 	vi.mocked(sandbox.start).mockClear();
@@ -130,10 +131,10 @@ describe('PluginManager hot reload reconciliation', () => {
 			trustedKeys: () => [keys.publicKeyB64],
 		});
 		writeCodePlugin('demo');
-		enableRunnablePlugin(manager, sandbox);
+		await enableRunnablePlugin(manager, sandbox);
 
 		writeCodePlugin('demo', { version: '1.0.1', code: 'module.exports = "v1";' });
-		manager.refresh();
+		await manager.refresh();
 		await vi.waitFor(() => expect(sandbox.start).toHaveBeenCalledTimes(1));
 
 		expect(
@@ -155,11 +156,11 @@ describe('PluginManager hot reload reconciliation', () => {
 			trustedKeys: () => [keys.publicKeyB64],
 		});
 		writeCodePlugin('demo');
-		enableRunnablePlugin(manager, sandbox);
+		await enableRunnablePlugin(manager, sandbox);
 
 		fs.writeFileSync(path.join(pluginsDir(), 'demo', 'main.js'), 'module.exports = "v2";');
 		signPluginDir(path.join(pluginsDir(), 'demo'), keys);
-		manager.refresh();
+		await manager.refresh();
 		await vi.waitFor(() => expect(sandbox.start).toHaveBeenCalledTimes(1));
 
 		expect(sandbox.stop).toHaveBeenCalledTimes(1);
@@ -169,7 +170,7 @@ describe('PluginManager hot reload reconciliation', () => {
 		expect(sandbox.isRunning('demo')).toBe(true);
 	});
 
-	it('refreshes removal by stopping the sandbox and dropping the stale registry record', () => {
+	it('refreshes removal by stopping the sandbox and dropping the stale registry record', async () => {
 		const sandbox = makeSandbox();
 		const manager = new PluginManager({
 			isEnabled: () => true,
@@ -177,10 +178,10 @@ describe('PluginManager hot reload reconciliation', () => {
 			trustedKeys: () => [keys.publicKeyB64],
 		});
 		writeCodePlugin('demo');
-		enableRunnablePlugin(manager, sandbox);
+		await enableRunnablePlugin(manager, sandbox);
 
 		fs.rmSync(path.join(pluginsDir(), 'demo'), { recursive: true, force: true });
-		manager.refresh();
+		await manager.refresh();
 
 		expect(sandbox.stop).toHaveBeenCalledTimes(1);
 		expect(sandbox.stop).toHaveBeenCalledWith('demo');
@@ -199,7 +200,7 @@ describe('PluginManager hot reload with asynchronous sandbox shutdown', () => {
 	let pluginsEnabled: boolean;
 	let servicesReady: boolean;
 
-	beforeEach(() => {
+	beforeEach(async () => {
 		pluginsEnabled = true;
 		servicesReady = true;
 		vi.mocked(logger.warn).mockClear();
@@ -229,8 +230,8 @@ describe('PluginManager hot reload with asynchronous sandbox shutdown', () => {
 			onChange: () => manager.reconcileServiceDependencies(),
 		});
 		writeCodePlugin('demo');
-		manager.refresh();
-		manager.setEnabled('demo', true);
+		await manager.refresh();
+		await manager.setEnabled('demo', true);
 		expect(sandbox.isRunning('demo')).toBe(true);
 	});
 
@@ -246,8 +247,8 @@ describe('PluginManager hot reload with asynchronous sandbox shutdown', () => {
 
 	it('resumes panel commands only after child exit and resource cleanup', async () => {
 		writeCodePlugin('demo', { version: '1.0.1' });
-		manager.refresh();
-		manager.refresh();
+		await manager.refresh();
+		await manager.refresh();
 		expect(manager.getRegistry().records[0].enabled).toBe(true);
 		expect(manager.invokeCommand('demo/save-token', { token: 'test-token' })).toBe(false);
 		expect(forkMock).toHaveBeenCalledTimes(1);
@@ -263,12 +264,12 @@ describe('PluginManager hot reload with asynchronous sandbox shutdown', () => {
 
 	it('does not refresh or restart an unrelated plugin that crashes during the drain', async () => {
 		writeCodePlugin('other');
-		manager.refresh();
-		manager.setEnabled('other', true);
+		await manager.refresh();
+		await manager.setEnabled('other', true);
 		expect(sandbox.isRunning('other')).toBe(true);
 
 		writeCodePlugin('demo', { version: '1.0.1' });
-		manager.refresh();
+		await manager.refresh();
 		forkMock.mock.results[1].value.emit('exit', 1);
 		writeCodePlugin('other', { version: '1.0.1' });
 		forkMock.mock.results[0].value.emit('exit', 0);
@@ -284,12 +285,12 @@ describe('PluginManager hot reload with asynchronous sandbox shutdown', () => {
 
 	it('preserves supervisor ownership of a crashed consumer through production change callbacks', async () => {
 		writeCodePlugin('consumer', { requires: [mandatoryRequirement] });
-		manager.refresh();
-		manager.setEnabled('consumer', true);
+		await manager.refresh();
+		await manager.setEnabled('consumer', true);
 		expect(sandbox.isRunning('consumer')).toBe(true);
 
 		writeCodePlugin('demo', { version: '1.0.1' });
-		manager.refresh();
+		await manager.refresh();
 		forkMock.mock.results[1].value.emit('exit', 1);
 		forkMock.mock.results[0].value.emit('exit', 0);
 		finishCleanup();
@@ -305,15 +306,15 @@ describe('PluginManager hot reload with asynchronous sandbox shutdown', () => {
 		expect(sandbox.isRunning('consumer')).toBe(false);
 
 		// Explicit discovery retains the host's deliberate restart behavior.
-		manager.refresh();
+		await manager.refresh();
 		expect(sandbox.isRunning('consumer')).toBe(true);
 		expect(forkMock).toHaveBeenCalledTimes(4);
 	});
 
 	it('resumes a dependency-stopped consumer after its own resource drain', async () => {
 		writeCodePlugin('consumer', { requires: [mandatoryRequirement] });
-		manager.refresh();
-		manager.setEnabled('consumer', true);
+		await manager.refresh();
+		await manager.setEnabled('consumer', true);
 
 		servicesReady = false;
 		manager.reconcileServiceDependencies();
@@ -329,11 +330,11 @@ describe('PluginManager hot reload with asynchronous sandbox shutdown', () => {
 		expect(captureException).not.toHaveBeenCalled();
 	});
 
-	it('does not resume a waiting consumer after all sandboxes are stopped', () => {
+	it('does not resume a waiting consumer after all sandboxes are stopped', async () => {
 		servicesReady = false;
 		writeCodePlugin('consumer', { requires: [mandatoryRequirement] });
-		manager.refresh();
-		manager.setEnabled('consumer', true);
+		await manager.refresh();
+		await manager.setEnabled('consumer', true);
 		expect(sandbox.isRunning('consumer')).toBe(false);
 
 		manager.stopAllSandboxes();
@@ -346,11 +347,11 @@ describe('PluginManager hot reload with asynchronous sandbox shutdown', () => {
 
 	it('does not replace an unrelated record when the reloaded manifest changes identity', async () => {
 		writeCodePlugin('other');
-		manager.refresh();
-		manager.setEnabled('other', true);
+		await manager.refresh();
+		await manager.setEnabled('other', true);
 
 		writeCodePlugin('demo', { version: '1.0.1' });
-		manager.refresh();
+		await manager.refresh();
 		const pluginDir = path.join(pluginsDir(), 'demo');
 		const manifestPath = path.join(pluginDir, 'plugin.json');
 		const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
@@ -373,8 +374,8 @@ describe('PluginManager hot reload with asynchronous sandbox shutdown', () => {
 
 	it('does not restart a plugin disabled during the drain', async () => {
 		writeCodePlugin('demo', { version: '1.0.1' });
-		manager.refresh();
-		manager.setEnabled('demo', false);
+		await manager.refresh();
+		await manager.setEnabled('demo', false);
 		forkMock.mock.results[0].value.emit('exit', 0);
 		finishCleanup();
 		await manager.stopAndDrain('demo');
@@ -385,7 +386,7 @@ describe('PluginManager hot reload with asynchronous sandbox shutdown', () => {
 
 	it('does not restart a plugin whose bytes were tampered with during the drain', async () => {
 		writeCodePlugin('demo', { version: '1.0.1' });
-		manager.refresh();
+		await manager.refresh();
 		fs.writeFileSync(path.join(pluginsDir(), 'demo', 'main.js'), 'unsigned edit');
 		forkMock.mock.results[0].value.emit('exit', 0);
 		finishCleanup();
@@ -398,7 +399,7 @@ describe('PluginManager hot reload with asynchronous sandbox shutdown', () => {
 
 	it('does not restart a plugin being uninstalled during the drain', async () => {
 		writeCodePlugin('demo', { version: '1.0.1' });
-		manager.refresh();
+		await manager.refresh();
 		const removal = manager.uninstall('demo');
 		forkMock.mock.results[0].value.emit('exit', 0);
 		finishCleanup();
@@ -408,9 +409,27 @@ describe('PluginManager hot reload with asynchronous sandbox shutdown', () => {
 		expect(forkMock).toHaveBeenCalledTimes(1);
 	});
 
+	it('retires cached admission even when asynchronous uninstall cleanup rejects', async () => {
+		const target = manager as unknown as {
+			deps: { purgePluginData?: (id: string) => Promise<void> };
+		};
+		target.deps.purgePluginData = async () => {
+			await Promise.resolve();
+			writeCodePlugin('demo');
+			throw Error('receipt cleanup failed');
+		};
+		const removal = manager.uninstall('demo');
+		const rejected = expect(removal).rejects.toThrow(/receipt cleanup failed/);
+		forkMock.mock.results[0].value.emit('exit', 0);
+		finishCleanup();
+		await rejected;
+		expect(manager.getRegistry().records).toEqual([]);
+		expect(sandbox.isRunning('demo')).toBe(false);
+		expect(forkMock).toHaveBeenCalledTimes(1);
+	});
 	it('does not restart while the plugins feature is disabled during the drain', async () => {
 		writeCodePlugin('demo', { version: '1.0.1' });
-		manager.refresh();
+		await manager.refresh();
 		pluginsEnabled = false;
 		forkMock.mock.results[0].value.emit('exit', 0);
 		finishCleanup();
@@ -421,7 +440,7 @@ describe('PluginManager hot reload with asynchronous sandbox shutdown', () => {
 
 	it('cancels a pending reload when all sandboxes are stopped', async () => {
 		writeCodePlugin('demo', { version: '1.0.1' });
-		manager.refresh();
+		await manager.refresh();
 		manager.stopAllSandboxes();
 		forkMock.mock.results[0].value.emit('exit', 0);
 		finishCleanup();
@@ -434,7 +453,7 @@ describe('PluginManager hot reload with asynchronous sandbox shutdown', () => {
 	it('keeps a failed resource drain stopped and reports the reload failure', async () => {
 		const error = new Error('cleanup failed');
 		writeCodePlugin('demo', { version: '1.0.1' });
-		manager.refresh();
+		await manager.refresh();
 		forkMock.mock.results[0].value.emit('exit', 0);
 		rejectCleanup(error);
 		await vi.waitFor(() =>
@@ -454,7 +473,7 @@ describe('PluginManager hot reload with asynchronous sandbox shutdown', () => {
 	it('reports a replacement child that cannot start', async () => {
 		const error = new Error('fork failed');
 		writeCodePlugin('demo', { version: '1.0.1' });
-		manager.refresh();
+		await manager.refresh();
 		forkMock.mockImplementationOnce(() => {
 			throw error;
 		});
@@ -476,7 +495,7 @@ describe('PluginManager hot reload with asynchronous sandbox shutdown', () => {
 	it('reports unexpected registry change callback errors after reload', async () => {
 		const error = new Error('change callback failed');
 		writeCodePlugin('demo', { version: '1.0.1' });
-		manager.refresh();
+		await manager.refresh();
 		vi.spyOn(manager, 'reconcileServiceDependencies').mockImplementationOnce(() => {
 			throw error;
 		});

@@ -16,6 +16,7 @@
 import { FastifyInstance } from 'fastify';
 import { HistoryEntry } from '../../../shared/types';
 import { logger } from '../../utils/logger';
+import type { InterruptTurnResult } from '../../../shared/turnInterrupt';
 import type { Theme, SessionData, SessionDetail, LiveSessionInfo, RateLimitConfig } from '../types';
 
 // Re-export types for backwards compatibility
@@ -41,7 +42,7 @@ export interface ApiRouteCallbacks {
 	getSessionDetail: (sessionId: string, tabId?: string) => SessionDetail | null;
 	getTheme: () => Theme | null;
 	writeToSession: (sessionId: string, data: string) => boolean;
-	interruptSession: (sessionId: string) => Promise<boolean>;
+	interruptSession: (sessionId: string, tabId?: string) => Promise<InterruptTurnResult>;
 	getHistory: (
 		projectPath?: string,
 		sessionId?: string
@@ -262,6 +263,12 @@ export class ApiRoutes {
 			},
 			async (request, reply) => {
 				const { id } = request.params as { id: string };
+				// Optional: stop one tab instead of the whole agent. Query string
+				// first, then a JSON body, so both `?tabId=` and `{ "tabId": ... }` work.
+				const query = request.query as { tabId?: unknown } | undefined;
+				const body = request.body as { tabId?: unknown } | undefined;
+				const rawTabId = query?.tabId ?? body?.tabId;
+				const tabId = typeof rawTabId === 'string' && rawTabId ? rawTabId : undefined;
 
 				if (!this.callbacks.interruptSession) {
 					return reply.code(503).send({
@@ -272,20 +279,30 @@ export class ApiRoutes {
 				}
 
 				try {
-					// Forward to desktop's interrupt logic - handles state updates and broadcasts
-					const success = await this.callbacks.interruptSession(id);
-					if (!success) {
-						return reply.code(500).send({
-							error: 'Internal Server Error',
-							message: 'Failed to interrupt session',
+					// Forward to the desktop's Stop (`interruptTurn()`), which settles
+					// the agent's state and answers with what it stopped.
+					const result = await this.callbacks.interruptSession(id, tabId);
+					if (!result.success) {
+						const notFound = result.code === 'AGENT_NOT_FOUND' || result.code === 'TAB_NOT_FOUND';
+						return reply.code(notFound ? 404 : 500).send({
+							error: notFound ? 'Not Found' : 'Internal Server Error',
+							message: `Failed to interrupt session: ${result.error ?? result.code ?? 'unknown error'}`,
+							code: result.code,
+							sessionId: id,
+							tabId: result.tabId,
 							timestamp: Date.now(),
 						});
 					}
 
 					return {
 						success: true,
-						message: 'Interrupt signal sent successfully',
+						message: result.wasBusy ? 'Interrupt signal sent successfully' : 'Nothing to stop',
 						sessionId: id,
+						tabId: result.tabId,
+						wasBusy: result.wasBusy,
+						interrupted: result.interrupted,
+						stoppedTabIds: result.stoppedTabIds,
+						exited: result.exited,
 						timestamp: Date.now(),
 					};
 				} catch (error: any) {

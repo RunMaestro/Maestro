@@ -258,7 +258,8 @@ export interface CueModalData {
 		| 'pipeline-list'
 		| 'activity'
 		| 'backup'
-		| 'bundles';
+		| 'bundles'
+		| 'readiness';
 	/**
 	 * Agent to highlight and scroll to in the dashboard's session table.
 	 *

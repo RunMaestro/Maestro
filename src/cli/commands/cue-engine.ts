@@ -38,7 +38,12 @@ import {
 	type StandaloneCueLog,
 } from '../services/cue-standalone-engine';
 import { startCueTriggerInbox } from '../services/cue-trigger-inbox';
-import { readAgentConfigs, readLiveSessions, readSshRemotes } from '../services/storage';
+import {
+	readAgentConfigs,
+	readLiveSessions,
+	readSessions,
+	readSettingValue,
+} from '../services/storage';
 import { SqliteUnavailableError } from '../utils/native-sqlite';
 import {
 	applyDataDirOption,
@@ -46,7 +51,11 @@ import {
 	requireDataDirOrExit,
 } from '../services/data-dir-option';
 import { logger } from '../../main/utils/logger';
-import type { CueReadinessReport } from '../../main/cue/cue-readiness';
+import {
+	formatCueReadiness,
+	formatCueReadinessSummary,
+	type CueReadinessReport,
+} from '../../shared/cue/readiness';
 import { getAgentDisplayName } from '../../shared/agentMetadata';
 import { humanizeDuration } from '../../shared/duration';
 
@@ -174,12 +183,16 @@ async function statusPayloadOrReport(options: {
  * reason `cue-standalone-engine.ts` defers its executors).
  */
 async function computeCueReadiness(): Promise<CueReadinessReport> {
-	const { checkCueReadiness } = await import('../../main/cue/cue-readiness');
-	return checkCueReadiness({
-		sessions: readLiveSessions(),
-		agentConfigs: readAgentConfigs(),
-		sshRemotes: readSshRemotes(),
-	});
+	const { buildCueReadinessInputs, checkCueReadiness } =
+		await import('../../main/cue/cue-readiness');
+	return checkCueReadiness(
+		buildCueReadinessInputs({
+			sessions: readSessions,
+			encoreFeatures: () => readSettingValue('encoreFeatures'),
+			agentConfigs: readAgentConfigs,
+			sshRemotes: () => readSettingValue('sshRemotes'),
+		})
+	);
 }
 
 /**
@@ -188,10 +201,7 @@ async function computeCueReadiness(): Promise<CueReadinessReport> {
  */
 function logReadiness(report: CueReadinessReport, log: StandaloneCueLog, level: string): void {
 	if (report.ready) {
-		log(
-			'info',
-			`Ready: ${report.agents} agent(s), ${report.workspaces} workspace(s), ${report.subscriptions} subscription(s) checked, no gaps.`
-		);
+		log('info', formatCueReadinessSummary(report));
 		return;
 	}
 	for (const gap of report.gaps) {
@@ -472,7 +482,6 @@ export interface CueEngineCheckOptions {
 export async function cueEngineCheck(options: CueEngineCheckOptions = {}): Promise<void> {
 	applyDataDirOption(options.dataDir);
 	requireDataDirOrExit(options);
-	const { formatCueReadiness } = await import('../../main/cue/cue-readiness');
 	const report = await computeCueReadiness();
 	if (options.json) {
 		console.log(JSON.stringify(report, null, 2));

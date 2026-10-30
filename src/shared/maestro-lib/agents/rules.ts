@@ -976,7 +976,7 @@ export function activeAgentAfterRemoval(
 
 /** Worktree children (`parentSessionId`) travel with their parent when it changes group. */
 export function agentsMovingWithParent(
-	agents: readonly AgentRecord[],
+	agents: readonly { id: string; parentSessionId?: string }[],
 	agentId: string
 ): Set<string> {
 	const ids = new Set<string>([agentId]);
@@ -984,6 +984,30 @@ export function agentsMovingWithParent(
 		if (agent.parentSessionId === agentId) ids.add(agent.id);
 	}
 	return ids;
+}
+
+/**
+ * Put an agent, and the worktree children that travel with it, in `groupId`
+ * (`null`, `undefined`, or `''` is Ungrouped, which stores NO `groupId` key).
+ *
+ * The one write behind every Left Bar move: drag onto a group or Ungrouped, the
+ * context menu, the command palette, "create group and move", and
+ * `maestro-cli update-agent --group`. Returns the input unchanged when nothing
+ * moves, so a caller can tell a no-op from a write by identity.
+ */
+export function withAgentInGroup<
+	T extends { id: string; parentSessionId?: string; groupId?: string },
+>(agents: T[], agentId: string, groupId: string | null | undefined): T[] {
+	const target = groupId || undefined;
+	const moving = agentsMovingWithParent(agents, agentId);
+	if (!agents.some((agent) => moving.has(agent.id) && agent.groupId !== target)) return agents;
+	return agents.map((agent) => {
+		if (!moving.has(agent.id) || agent.groupId === target) return agent;
+		const next = { ...agent };
+		if (target) next.groupId = target;
+		else delete next.groupId;
+		return next;
+	});
 }
 
 // ---------------------------------------------------------------------------

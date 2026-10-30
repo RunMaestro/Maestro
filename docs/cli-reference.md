@@ -413,21 +413,22 @@ Send a message to an agent and get a JSON response
 
 Dispatch a prompt to an agent in the Maestro desktop app and return its tab/session ID
 
-| Option                            | Description                                                                                                                                                                                                                                                                                                                                                              | Default |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------- |
-| `--new-tab`                       | Create a fresh AI tab and deliver the prompt into it. The tab is hidden by default: it is named from the prompt but draws no chip until the user opens it from the completion toast or the delegation pill. A working agent cannot start a second turn, so the prompt is queued for the new tab and runs when the current turn ends (the response reports queued: true). | -       |
-| `--visible`                       | With --new-tab: give the new tab a chip in the tab strip instead of creating it hidden (it still opens in the background unless --focus)                                                                                                                                                                                                                                 | -       |
-| `--background`                    | Leave the view where it is (default with --new-tab; suppresses the agent switch otherwise)                                                                                                                                                                                                                                                                               | -       |
-| `-t, --tab <id>`                  | Target an existing tab by its tab id (mutually exclusive with --new-tab)                                                                                                                                                                                                                                                                                                 | -       |
-| `-f, --force`                     | Bypass the busy-state guard when writing to a busy tab; requires allowConcurrentSend (cannot be combined with --new-tab, which queues instead)                                                                                                                                                                                                                           | -       |
-| `--focus`                         | Switch to and focus the target agent/tab when dispatching (by default dispatch runs in the background without stealing focus)                                                                                                                                                                                                                                            | -       |
-| `--queue`                         | If the target tab is busy, queue the prompt into the execution queue (FIFO) instead of rejecting it; an idle target dispatches immediately. Cannot be combined with --new-tab (which already queues when the agent is busy) or --force. Returns the queue position.                                                                                                      | -       |
-| `--wait`                          | Alias for --queue                                                                                                                                                                                                                                                                                                                                                        | -       |
-| `--held`                          | Queue the prompt PAUSED, even when the agent is idle, like the Send menu's Queue Held. It keeps its place until `queue resume <item-id>`. Implies --queue; returns the item id.                                                                                                                                                                                          | -       |
-| `--notify-on-complete <agent-id>` | Wake this agent with a real turn in its live tab when THIS dispatch finishes. Correlated to the dispatched tab, fires exactly once, and waits for a multi-task Auto Run to finish rather than firing per task. Requires --new-tab or --tab.                                                                                                                              | -       |
-| `--callback-tab <id>`             | Specific tab of the --notify-on-complete agent to wake (default: its active AI tab)                                                                                                                                                                                                                                                                                      | -       |
-| `--callback-prompt <text>`        | Override the callback prompt body. \{\{DISPATCH_STATUS\}\}, \{\{DISPATCH_TAB_ID\}\}, \{\{DISPATCH_TARGET_ID\}\}, \{\{DISPATCH_OUTPUT\}\}, \{\{DISPATCH_DURATION\}\}, \{\{DISPATCH_TASKS_COMPLETED\}\}, \{\{DISPATCH_TASKS_TOTAL\}\}, \{\{DISPATCH_PROMPT\}\} and \{\{DISPATCH_CALLBACK_ID\}\} are substituted.                                                           | -       |
-| `--callback-timeout <seconds>`    | Give up and fire a timeout callback after this long (default 3600, max 86400)                                                                                                                                                                                                                                                                                            | -       |
+| Option                            | Description                                                                                                                                                                                                                                                                                                                                                                                    | Default |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `--new-tab`                       | Create a fresh AI tab and deliver the prompt into it. The tab is hidden by default: it is named from the prompt but draws no chip until the user opens it from the completion toast or the delegation pill. A working agent cannot start a second turn, so the prompt is queued for the new tab and runs when the current turn ends (the response reports queued: true).                       | -       |
+| `--visible`                       | With --new-tab: give the new tab a chip in the tab strip instead of creating it hidden (it still opens in the background unless --focus)                                                                                                                                                                                                                                                       | -       |
+| `--background`                    | Leave the view where it is (default with --new-tab; suppresses the agent switch otherwise)                                                                                                                                                                                                                                                                                                     | -       |
+| `-t, --tab <id>`                  | Target an existing tab by its tab id (mutually exclusive with --new-tab)                                                                                                                                                                                                                                                                                                                       | -       |
+| `-f, --force`                     | Bypass the busy-state guard when writing to a busy tab; requires allowConcurrentSend (cannot be combined with --new-tab, which queues instead)                                                                                                                                                                                                                                                 | -       |
+| `--focus`                         | Switch to and focus the target agent/tab when dispatching (by default dispatch runs in the background without stealing focus)                                                                                                                                                                                                                                                                  | -       |
+| `--queue`                         | If the target tab is busy, queue the prompt into the execution queue (FIFO) instead of rejecting it; an idle target dispatches immediately. Cannot be combined with --new-tab (which already queues when the agent is busy) or --force. Returns the queue position.                                                                                                                            | -       |
+| `--wait`                          | Alias for --queue                                                                                                                                                                                                                                                                                                                                                                              | -       |
+| `--routing <mode>`                | How the message's @mentions run, like the composer's routing strip: parallel (both answer, this agent waits for the reply), consult-first (the mentioned agent answers first), handoff (this agent's answer is sent on), or only (just the mentioned agents answer). Overrides what the wording implies. Requires an @mention of another agent in the message; read it back with `queue list`. | -       |
+| `--held`                          | Queue the prompt PAUSED, even when the agent is idle, like the Send menu's Queue Held. It keeps its place until `queue resume <item-id>`. Implies --queue; returns the item id.                                                                                                                                                                                                                | -       |
+| `--notify-on-complete <agent-id>` | Wake this agent with a real turn in its live tab when THIS dispatch finishes. Correlated to the dispatched tab, fires exactly once, and waits for a multi-task Auto Run to finish rather than firing per task. Requires --new-tab or --tab.                                                                                                                                                    | -       |
+| `--callback-tab <id>`             | Specific tab of the --notify-on-complete agent to wake (default: the calling tab when an agent notifies itself, else its active AI tab)                                                                                                                                                                                                                                                        | -       |
+| `--callback-prompt <text>`        | Override the callback prompt body. \{\{DISPATCH_STATUS\}\}, \{\{DISPATCH_TAB_ID\}\}, \{\{DISPATCH_TARGET_ID\}\}, \{\{DISPATCH_OUTPUT\}\}, \{\{DISPATCH_DURATION\}\}, \{\{DISPATCH_TASKS_COMPLETED\}\}, \{\{DISPATCH_TASKS_TOTAL\}\}, \{\{DISPATCH_PROMPT\}\} and \{\{DISPATCH_CALLBACK_ID\}\} are substituted.                                                                                 | -       |
+| `--callback-timeout <seconds>`    | Give up and fire a timeout callback after this long (default 3600, max 86400)                                                                                                                                                                                                                                                                                                                  | -       |
 
 ## `maestro-cli ask <agent-id> <question>`
 
@@ -681,6 +682,42 @@ Print conversation history for a desktop tab
 | `--since <timestamp>` | Only return messages after this timestamp (ISO-8601 or epoch ms/sec) | -       |
 | `--tail <n>`          | Only return the last N messages (applied after --since)              | -       |
 | `--json`              | Output as JSON (for scripting); default is a formatted transcript    | -       |
+
+## `maestro-cli timeline`
+
+Show what happened, oldest first: agent turns, user actions in Maestro, commits
+
+| Option             | Description                                              | Default |
+| ------------------ | -------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent ID or name (default: every agent)                  | -       |
+| `--since <time>`   | Start: 30m, 2h, 1d, 1w, ISO-8601, or epoch (default 1d)  | -       |
+| `--until <time>`   | End (default now)                                        | -       |
+| `--sources <list>` | Comma list of sources (default history,journey,git)      | -       |
+| `--tail <n>`       | Only the newest N events (default 30)                    | -       |
+| `--per-source <n>` | Only the newest N events of each source (default 15)     | -       |
+| `--grep <text>`    | Only events whose line matches (regex, case-insensitive) | -       |
+| `--json`           | Output as JSON (for scripting)                           | -       |
+
+## `maestro-cli timeline show <entry>`
+
+Show one agent turn in full (its reply, tab, and timing) by an [entry &lt;id>] handle
+
+| Option             | Description                                    | Default |
+| ------------------ | ---------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent ID or name (default: search every agent) | -       |
+| `--json`           | Output as JSON (for scripting)                 | -       |
+
+## `maestro-cli journey`
+
+Show what the user did in Maestro: files opened/saved/renamed, pages browsed
+
+| Option                | Description                                                           | Default |
+| --------------------- | --------------------------------------------------------------------- | ------- |
+| `-a, --agent <id>`    | Agent ID or name (default: every agent)                               | -       |
+| `--since <timestamp>` | Only entries at or after this time (ISO-8601 or epoch ms/sec)         | -       |
+| `--tail <n>`          | Only the newest N entries per agent (applied after the other filters) | -       |
+| `--kind <kinds>`      | Comma list of kinds, e.g. file.save,browser.navigate                  | -       |
+| `--json`              | Output as JSON (for scripting)                                        | -       |
 
 ## `maestro-cli group-chat`
 
@@ -1461,6 +1498,19 @@ Create a new agent in the Maestro desktop app
 | `--focus`                         | Select the new agent after creating it (default)                                                            | -               |
 | `--json`                          | Output as JSON (for scripting)                                                                              | -               |
 
+## `maestro-cli duplicate-agent <agent>`
+
+Duplicate an agent with the same settings the Left Bar "Duplicate..." copies (read back with show-agent)
+
+| Option              | Description                                                                                  | Default |
+| ------------------- | -------------------------------------------------------------------------------------------- | ------- |
+| `-n, --name <name>` | Name for the copy (default: "&lt;source name> (Copy)")                                       | -       |
+| `-g, --group <id>`  | Group ID or prefix for the copy (default: the source agent's group)                          | -       |
+| `-d, --cwd <path>`  | Working directory for the copy (default: the source agent's; a remote path for an SSH agent) | -       |
+| `--background`      | Create the copy without selecting it (Left Bar selection stays put)                          | -       |
+| `--focus`           | Select the copy after creating it (default)                                                  | -       |
+| `--json`            | Output as JSON (for scripting)                                                               | -       |
+
 ## `maestro-cli create-group <name>`
 
 Create a new group in the Maestro desktop app
@@ -1492,7 +1542,7 @@ Rename a group in the Maestro desktop app
 
 ## `maestro-cli update-group <group-id>`
 
-Update a group's name, icon, color, parent, or Left Bar visibility in the Maestro desktop app
+Update a group's name, icon, color, parent, Left Bar visibility, or collapsed state in the Maestro desktop app
 
 | Option                | Description                                                                                            | Default |
 | --------------------- | ------------------------------------------------------------------------------------------------------ | ------- |
@@ -1507,6 +1557,8 @@ Update a group's name, icon, color, parent, or Left Bar visibility in the Maestr
 | `--clear-parent`      | Promote the group to the top level                                                                     | -       |
 | `--hide`              | Park the group out of the Left Bar. Its agents stay reachable through search and the switcher          | -       |
 | `--show`              | Bring a hidden group back into the Left Bar                                                            | -       |
+| `--collapse`          | Fold the group in the Left Bar so its agents are tucked away                                           | -       |
+| `--expand`            | Unfold a collapsed group in the Left Bar                                                               | -       |
 | `--json`              | Output as JSON (for scripting)                                                                         | -       |
 
 ## `maestro-cli create-worktree`
@@ -1607,6 +1659,54 @@ Switch an agent between "ai" and "terminal" mode
 | `--background` | Refuse the switch if the agent is the one on screen, rather than changing what the user is looking at | -       |
 | `--focus`      | Switch even when the agent is the one on screen (default)                                             | -       |
 | `--json`       | Output as JSON (for scripting)                                                                        | -       |
+
+## `maestro-cli interrupt <agent-id>`
+
+Stop an agent's running turn (every busy tab, like the Stop pill), or one tab's with --tab
+
+| Option           | Description                                               | Default |
+| ---------------- | --------------------------------------------------------- | ------- |
+| `--tab <tab-id>` | Stop only this tab (exact id, unique prefix, or "active") | -       |
+| `--json`         | Output as JSON (for scripting)                            | -       |
+
+## `maestro-cli live`
+
+Read or switch Live mode (the web interface other devices on the network can open)
+
+## `maestro-cli live status`
+
+Show whether Live mode is on, its web interface URL, and Remote Control
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
+
+## `maestro-cli live on`
+
+Turn Live mode on, as the LIVE pill does (no-op when already on; answers with the status)
+
+| Option         | Description                                                          | Default |
+| -------------- | -------------------------------------------------------------------- | ------- |
+| `--tunnel`     | Also start Remote Control (the Cloudflare tunnel; needs cloudflared) | -       |
+| `--background` | Accepted for uniformity; Live mode moves no view                     | -       |
+| `--json`       | Output as JSON (for scripting)                                       | -       |
+
+## `maestro-cli live off`
+
+Turn Live mode off and stop Remote Control, as the LIVE pill does (no-op when already off)
+
+| Option         | Description                                      | Default |
+| -------------- | ------------------------------------------------ | ------- |
+| `--background` | Accepted for uniformity; Live mode moves no view | -       |
+| `--json`       | Output as JSON (for scripting)                   | -       |
+
+## `maestro-cli live tunnel <state>`
+
+Start (on) or stop (off) Remote Control, the Cloudflare tunnel to the web interface. "on" needs Live mode on.
+
+| Option   | Description                    | Default |
+| -------- | ------------------------------ | ------- |
+| `--json` | Output as JSON (for scripting) | -       |
 
 ## `maestro-cli tab`
 
@@ -1749,6 +1849,64 @@ Move a tab to a position in its agent's tab bar (0-based, or "first"/"last")
 | ------------------ | ---------------------------------------------- | ------- |
 | `-a, --agent <id>` | Whose active tab, when &lt;tab-id> is "active" | -       |
 | `--json`           | Output as JSON (for scripting)                 | -       |
+
+## `maestro-cli tab closed`
+
+List the closed tabs an agent can reopen, newest first (index 0 = Cmd+Shift+T)
+
+| Option             | Description                                                    | Default |
+| ------------------ | -------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Whose closed tabs (default: the agent selected in the desktop) | -       |
+| `--json`           | Output as JSON (for scripting)                                 | -       |
+
+## `maestro-cli tab reopen`
+
+Reopen a closed tab (default: the newest, as Cmd+Shift+T) and print its tab id
+
+| Option             | Description                                                      | Default |
+| ------------------ | ---------------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Whose closed tabs (default: the agent selected in the desktop)   | -       |
+| `--index <n>`      | Position from "tab closed" (0 = newest)                          | -       |
+| `--tab <tab-id>`   | The id the tab had when it was closed (exact or unique prefix)   | -       |
+| `--background`     | Restore the tab without moving the view (agent and tab stay put) | -       |
+| `--focus`          | Switch to the restored tab (default)                             | -       |
+| `--json`           | Output as JSON (for scripting)                                   | -       |
+
+## `maestro-cli tab compact [tab-id]`
+
+Context: Compact - summarize a tab into a new tab beside it (default: the active tab) and print its id
+
+| Option             | Description                                             | Default |
+| ------------------ | ------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Whose active tab, when &lt;tab-id> is "active"          | -       |
+| `--json`           | Output as JSON (for scripting)                          | -       |
+| `--background`     | Keep the source tab selected (no view change, no toast) | -       |
+| `--focus`          | Switch to the compacted tab (default)                   | -       |
+
+## `maestro-cli tab merge [tab-id]`
+
+Context: Merge Into - send a tab's transcript, verbatim, into another agent's tab (default: the active tab)
+
+| Option                  | Description                                                                     | Default |
+| ----------------------- | ------------------------------------------------------------------------------- | ------- |
+| `-a, --agent <id>`      | Whose active tab, when &lt;tab-id> is "active"                                  | -       |
+| `--json`                | Output as JSON (for scripting)                                                  | -       |
+| `--into <agent>`        | The agent whose tab receives the context                                        | -       |
+| `--target-tab <tab-id>` | The tab that receives it (default: that agent's active tab)                     | -       |
+| `--background`          | Stay put; the context waits on the target tab and sends when that tab is opened | -       |
+| `--focus`               | Jump to the target tab, which sends the context (default)                       | -       |
+
+## `maestro-cli tab transfer [tab-id]`
+
+Context: Send to Agent - open a new tab in another agent carrying this tab's transcript, verbatim
+
+| Option             | Description                                    | Default |
+| ------------------ | ---------------------------------------------- | ------- |
+| `-a, --agent <id>` | Whose active tab, when &lt;tab-id> is "active" | -       |
+| `--json`           | Output as JSON (for scripting)                 | -       |
+| `--to <agent>`     | The agent that gets the new tab                | -       |
+| `--background`     | Add the tab without selecting it or the agent  | -       |
+| `--focus`          | Jump to the new tab (default)                  | -       |
 
 ## `maestro-cli create-ssh-remote <name>`
 

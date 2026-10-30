@@ -29,6 +29,7 @@ import { getAgentCapabilities } from '../providers/capabilities';
 import { getAgentDefinition, type AgentConfig } from '../providers/definitions';
 import { readAgentConfigsStore, readSettingsStore } from '../store/read-stores';
 import { historyFilePath } from '../store/read-history';
+import { journeyFilePath } from '../store/read-journey';
 import type { TurnAgent, TurnContext } from './assemble';
 import { locateProviderBinary } from './provider-binary';
 import { isPianolaEnabled } from '../../agentVisibility';
@@ -182,6 +183,7 @@ async function readSystemPromptContext(
 	}
 
 	const shared = readPluginSectionContext(sshEnabled, sources, settingsData, loader);
+	const journeyFile = journeyFilePath(sources.paths.userDataDir, agent.id);
 	return {
 		...shared,
 		prompts: {
@@ -195,6 +197,7 @@ async function readSystemPromptContext(
 		},
 		gitBranch,
 		historyFilePath: historyPath,
+		journeyFilePath: sshEnabled ? undefined : journeyFile,
 	};
 }
 

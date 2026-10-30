@@ -91,7 +91,7 @@ function compactTab(value: unknown): CompactedValue<unknown> {
 }
 
 /**
- * Compact tool results in live and snoozed AI tabs without changing the input.
+ * Compact tool results in live, snoozed, and closed AI tabs without changing the input.
  * The generic return keeps the caller's full session shape intact.
  */
 export function compactSessionToolOutputs<T>(session: T): { session: T; compacted: number } {
@@ -132,7 +132,29 @@ export function compactSessionToolOutputs<T>(session: T): { session: T; compacte
 			})
 		: source.snoozedTabs;
 
+	// A stored closed AI tab keeps its logs when its provider cannot give the
+	// transcript back (see src/shared/closedTabHistory.ts), so it is compacted too.
+	const closedTabs = Array.isArray(source.unifiedClosedTabHistory)
+		? source.unifiedClosedTabHistory.map((entry) => {
+				if (!entry || typeof entry !== 'object') return entry;
+				const closed = entry as Record<string, unknown>;
+				if (closed.type !== 'ai') return entry;
+				const result = compactTab(closed.tab);
+				compacted += result.count;
+				return result.count > 0 ? { ...closed, tab: result.value } : entry;
+			})
+		: source.unifiedClosedTabHistory;
+
 	return compacted > 0
-		? { session: { ...source, aiLogs: legacyLogs.value, aiTabs, snoozedTabs } as T, compacted }
+		? {
+				session: {
+					...source,
+					aiLogs: legacyLogs.value,
+					aiTabs,
+					snoozedTabs,
+					...(closedTabs !== undefined ? { unifiedClosedTabHistory: closedTabs } : {}),
+				} as T,
+				compacted,
+			}
 		: { session, compacted: 0 };
 }

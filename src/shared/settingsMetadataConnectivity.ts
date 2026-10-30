@@ -136,6 +136,13 @@ export const CONNECTIVITY_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: true,
 		category: 'updates',
 	},
+	userJourneyEnabled: {
+		description:
+			'Record the User Journey: the files you open, save, create, rename, or delete and the pages you browse inside Maestro, per agent, so agents can read them with `maestro-cli timeline` and `journey`. Metadata only, kept on this machine. Off stops recording; entries already recorded stay until they age out.',
+		type: 'boolean',
+		default: true,
+		category: 'updates',
+	},
 
 	// --- Web Interface ---
 	webAuthEnabled: {

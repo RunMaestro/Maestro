@@ -24,6 +24,9 @@ import type { Theme } from '../types';
 
 const NO_DRAG_REGION = { WebkitAppRegion: 'no-drag' } as React.CSSProperties;
 const TOOLTIP_MAX_WIDTH = 260;
+/** The tinted pill shared by a queued message's actions (new tab, steer). */
+const ACTION_PILL_CLASS =
+	'shrink-0 inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-medium transition-opacity hover:opacity-80';
 
 /** How each kind of tab is drawn and described. */
 const ORIGINS: Record<QuickChatRouteOrigin, { icon: typeof Plus; label: string }> = {
@@ -106,6 +109,11 @@ export function QuickChatRouteLine({
 }: QuickChatRouteLineProps) {
 	const c = theme.colors;
 	const lineClass = 'flex justify-end items-center gap-2 min-w-0 text-[0.85em]';
+	const actionPillStyle = {
+		...NO_DRAG_REGION,
+		color: c.accent,
+		backgroundColor: c.accent + '33',
+	};
 
 	if (route.status === 'searching') {
 		return (
@@ -140,9 +148,11 @@ export function QuickChatRouteLine({
 							type="button"
 							onClick={onMoveToNewTab}
 							aria-label="Send to a new tab instead of waiting"
-							className="shrink-0 underline underline-offset-2 opacity-80 hover:opacity-100"
-							style={{ ...NO_DRAG_REGION, color: c.accent }}
+							className={ACTION_PILL_CLASS}
+							style={actionPillStyle}
+							data-testid="quick-chat-route-new-tab"
 						>
+							<Plus className="w-3.5 h-3.5" />
 							Send to a new tab
 						</button>
 					</Explained>
@@ -156,12 +166,8 @@ export function QuickChatRouteLine({
 								type="button"
 								onClick={onSteer}
 								aria-label="Steer this message into the running reply"
-								className="shrink-0 inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-medium transition-opacity hover:opacity-80"
-								style={{
-									...NO_DRAG_REGION,
-									color: c.accent,
-									backgroundColor: c.accent + '33',
-								}}
+								className={ACTION_PILL_CLASS}
+								style={actionPillStyle}
 								data-testid="quick-chat-route-steer"
 							>
 								<Navigation className="w-3.5 h-3.5" />

@@ -190,4 +190,38 @@ describe('FilePreviewHeader on a desktop', () => {
 		expect(screen.getByText('/Users/pedram/Pedsidian/Meetings')).toBeInTheDocument();
 		expect(screen.getByText('Size:')).toBeInTheDocument();
 	});
+
+	// MAESTRO-YS: an Untitled (unsaved) tab has an empty path. Reveal handed that
+	// empty string to shell:showItemInFolder, which rejects it.
+	it('offers no path-bound actions for an unsaved Untitled file', () => {
+		renderHeader({
+			file: { name: 'Untitled', content: '', path: '' },
+			directoryPath: '',
+		});
+
+		expect(screen.queryByTestId('reveal-in-folder-button')).not.toBeInTheDocument();
+		expect(screen.queryByTestId('delete-file-button')).not.toBeInTheDocument();
+	});
+
+	it('leaves the path-bound rows out of the phone sheet for an Untitled file', () => {
+		mockedUsePhoneLayout.mockReturnValue(true);
+		renderHeader({
+			file: { name: 'Untitled', content: '', path: '' },
+			directoryPath: '',
+		});
+		openSheet();
+
+		expect(screen.queryByText('Open in Default App')).not.toBeInTheDocument();
+		expect(screen.queryByText('Copy full path to clipboard')).not.toBeInTheDocument();
+		expect(screen.queryByText('Delete file')).not.toBeInTheDocument();
+		// Actions that do not need a path are still there.
+		expect(screen.getByText('View in Document Graph')).toBeInTheDocument();
+	});
+
+	it('keeps the path-bound actions for a saved file', () => {
+		renderHeader();
+
+		expect(screen.getByTestId('reveal-in-folder-button')).toBeInTheDocument();
+		expect(screen.getByTestId('delete-file-button')).toBeInTheDocument();
+	});
 });

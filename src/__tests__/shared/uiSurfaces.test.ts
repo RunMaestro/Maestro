@@ -81,6 +81,11 @@ describe('resolveUiSurfaceTab', () => {
 		expect(resolveUiSurfaceTab(cue, 'Scheduled Tasks')?.id).toBe('scheduled');
 	});
 
+	it('reaches the Cue Readiness tab (`maestro-cli open cue --tab readiness`)', () => {
+		expect(resolveUiSurfaceTab(cue, 'readiness')?.id).toBe('readiness');
+		expect(resolveUiSurfaceTab(cue, 'Readiness')?.label).toBe('Readiness');
+	});
+
 	it('returns null for a tab the surface does not have', () => {
 		expect(resolveUiSurfaceTab(cue, 'nope')).toBeNull();
 		const about = resolveUiSurface('about')!;

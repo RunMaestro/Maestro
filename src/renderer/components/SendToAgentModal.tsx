@@ -1,8 +1,8 @@
 /**
  * SendToAgentModal - Modal for sending session context to another Maestro session
  *
- * Allows users to transfer context from the current session/tab to a different
- * Maestro session. The context can be groomed to remove agent-specific artifacts
+ * Allows users to transfer context from the current session/tab into a new tab of
+ * any Maestro session, including the source agent itself. The context can be groomed to remove agent-specific artifacts
  * before transfer.
  *
  * Features:
@@ -19,6 +19,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { Search, ArrowRight, X, Loader2, Circle, Hammer } from 'lucide-react';
 import { GhostIconButton } from './ui/GhostIconButton';
 import { Spinner } from './ui/Spinner';
+import { MiniBadge } from './ui/MiniBadge';
 import type { Theme, Session, ToolType } from '../types';
 import type { MergeResult } from '../types/contextMerge';
 import { fuzzyMatchWithScore } from '../utils/search';
@@ -39,7 +40,7 @@ import { eventMatchesShortcutKeys } from '../utils/shortcutMatch';
 /**
  * Session availability status for display in the selection list
  */
-export type SessionStatus = 'idle' | 'busy' | 'current';
+export type SessionStatus = 'idle' | 'busy';
 
 /**
  * Session option for display in the selection list
@@ -50,6 +51,8 @@ export interface SessionOption {
 	toolType: ToolType;
 	status: SessionStatus;
 	projectRoot: string;
+	/** The agent the context comes from; sending to it opens a new tab there */
+	isSource: boolean;
 }
 
 /**
@@ -76,7 +79,7 @@ export interface SendToAgentModalProps {
 	sourceSession: Session;
 	/** The specific tab ID within the source session */
 	sourceTabId: string;
-	/** All sessions available as targets (will exclude source session) */
+	/** All sessions available as targets (the source session included) */
 	allSessions: Session[];
 	/** Callback when modal is closed */
 	onClose: () => void;
@@ -93,8 +96,6 @@ function getStatusLabel(status: SessionStatus): string {
 			return 'Idle';
 		case 'busy':
 			return 'Busy';
-		case 'current':
-			return 'Source';
 		default:
 			return '';
 	}
@@ -109,8 +110,6 @@ function getStatusColor(status: SessionStatus, theme: Theme): string {
 			return theme.colors.success;
 		case 'busy':
 			return theme.colors.warning;
-		case 'current':
-			return theme.colors.textDim;
 		default:
 			return theme.colors.textDim;
 	}
@@ -210,35 +209,20 @@ export function SendToAgentModal({
 		return estimateTokens(sourceTab.logs);
 	}, [sourceTab]);
 
-	// Build list of sessions with status (excluding the source session and terminal-only sessions)
+	// Build list of sessions with status (excluding terminal-only sessions). The
+	// source agent stays in the list: sending to it opens the context in a new tab
+	// of the same agent, which is the only target an agent with no duplicate has.
 	const sessionOptions = useMemo((): SessionOption[] => {
 		return allSessions
-			.filter((session) => {
-				// Exclude the source session
-				if (session.id === sourceSession.id) return false;
-				// Exclude terminal-only sessions
-				if (session.toolType === 'terminal') return false;
-				return true;
-			})
-			.map((session) => {
-				let status: SessionStatus;
-
-				if (session.id === sourceSession.id) {
-					status = 'current';
-				} else if (session.state === 'busy') {
-					status = 'busy';
-				} else {
-					status = 'idle';
-				}
-
-				return {
-					id: session.id,
-					name: getSessionDisplayName(session),
-					toolType: session.toolType,
-					status,
-					projectRoot: session.projectRoot,
-				};
-			});
+			.filter((session) => session.toolType !== 'terminal')
+			.map((session) => ({
+				id: session.id,
+				name: getSessionDisplayName(session),
+				toolType: session.toolType,
+				status: session.state === 'busy' ? 'busy' : 'idle',
+				projectRoot: session.projectRoot,
+				isSource: session.id === sourceSession.id,
+			}));
 	}, [allSessions, sourceSession.id]);
 
 	// Filter sessions based on search query
@@ -302,8 +286,7 @@ export function SendToAgentModal({
 	// Handle session selection
 	const handleSelectSession = useCallback(
 		(sessionId: string) => {
-			const session = sessionOptions.find((s) => s.id === sessionId);
-			if (session && session.status !== 'current') {
+			if (sessionOptions.some((s) => s.id === sessionId)) {
 				setSelectedSessionId(sessionId);
 			}
 		},
@@ -363,10 +346,7 @@ export function SendToAgentModal({
 			if (e.key >= '1' && e.key <= '9') {
 				const index = parseInt(e.key, 10) - 1;
 				if (index < filteredSessions.length) {
-					const session = filteredSessions[index];
-					if (session.status !== 'current') {
-						handleSelectSession(session.id);
-					}
+					handleSelectSession(filteredSessions[index].id);
 				}
 				return;
 			}
@@ -374,10 +354,7 @@ export function SendToAgentModal({
 			// Space to select highlighted session
 			if (e.key === ' ' && !e.shiftKey && filteredSessions[selectedIndex]) {
 				e.preventDefault();
-				const session = filteredSessions[selectedIndex];
-				if (session.status !== 'current') {
-					handleSelectSession(session.id);
-				}
+				handleSelectSession(filteredSessions[selectedIndex].id);
 				return;
 			}
 
@@ -396,10 +373,7 @@ export function SendToAgentModal({
 				if (selectedSessionId) {
 					handleSend();
 				} else if (filteredSessions[selectedIndex]) {
-					const session = filteredSessions[selectedIndex];
-					if (session.status !== 'current') {
-						handleSelectSession(session.id);
-					}
+					handleSelectSession(filteredSessions[selectedIndex].id);
 				}
 				return;
 			}
@@ -433,8 +407,7 @@ export function SendToAgentModal({
 	const canSend = useMemo(() => {
 		if (isSending) return false;
 		if (!selectedSessionId) return false;
-		const session = sessionOptions.find((s) => s.id === selectedSessionId);
-		return session && session.status !== 'current';
+		return sessionOptions.some((s) => s.id === selectedSessionId);
 	}, [selectedSessionId, sessionOptions, isSending]);
 
 	const targetIsBusy = selectedSession?.status === 'busy';
@@ -558,32 +531,28 @@ export function SendToAgentModal({
 								{filteredSessions.map((session, index) => {
 									const isHighlighted = index === selectedIndex;
 									const isSelected = selectedSessionId === session.id;
-									const isDisabled = session.status === 'current';
 
 									return (
 										<button
 											key={session.id}
 											ref={isHighlighted ? selectedItemRef : undefined}
-											onClick={() => !isDisabled && handleSelectSession(session.id)}
-											disabled={isDisabled}
+											onClick={() => handleSelectSession(session.id)}
 											role="option"
 											aria-selected={isSelected}
-											aria-disabled={isDisabled}
-											aria-label={`${session.name}, ${getStatusLabel(session.status)}${index < 9 ? `, press ${index + 1} to select` : ''}`}
-											className={`w-full p-3 rounded-lg border text-left transition-all duration-150 disabled:cursor-not-allowed flex items-center gap-3 ${isSelected ? 'animate-highlight-pulse' : ''}`}
+											aria-label={`${session.name}${session.isSource ? ', this agent, opens a new tab here' : ''}, ${getStatusLabel(session.status)}${index < 9 ? `, press ${index + 1} to select` : ''}`}
+											className={`w-full p-3 rounded-lg border text-left transition-all duration-150 flex items-center gap-3 ${isSelected ? 'animate-highlight-pulse' : ''}`}
 											style={
 												{
 													backgroundColor: isSelected
 														? theme.colors.accent
-														: isHighlighted && !isDisabled
+														: isHighlighted
 															? `${theme.colors.accent}20`
 															: theme.colors.bgMain,
 													borderColor: isSelected
 														? theme.colors.accent
-														: isHighlighted && !isDisabled
+														: isHighlighted
 															? theme.colors.accent
 															: theme.colors.border,
-													opacity: isDisabled ? 0.5 : 1,
 												} as React.CSSProperties
 											}
 										>
@@ -595,15 +564,25 @@ export function SendToAgentModal({
 											{/* Session Info */}
 											<div className="flex-1 min-w-0">
 												{/* Session Name */}
-												<div
-													className="text-sm font-medium truncate"
-													style={{
-														color: isSelected
-															? theme.colors.accentForeground
-															: theme.colors.textMain,
-													}}
-												>
-													{session.name}
+												<div className="flex items-center gap-1.5 min-w-0">
+													<div
+														className="text-sm font-medium truncate"
+														style={{
+															color: isSelected
+																? theme.colors.accentForeground
+																: theme.colors.textMain,
+														}}
+													>
+														{session.name}
+													</div>
+													{session.isSource && (
+														<MiniBadge
+															label="This agent"
+															title="Opens the context in a new tab of this agent"
+															theme={theme}
+															color={isSelected ? theme.colors.accentForeground : undefined}
+														/>
+													)}
 												</div>
 
 												{/* Project Path */}
@@ -636,7 +615,7 @@ export function SendToAgentModal({
 											</div>
 
 											{/* Quick Select Number */}
-											{index < 9 && !isDisabled && (
+											{index < 9 && (
 												<div
 													className="text-2xs opacity-50 shrink-0"
 													style={{

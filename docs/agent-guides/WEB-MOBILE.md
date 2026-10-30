@@ -64,11 +64,19 @@ The web-desktop build aliases `electron` to `src/web-desktop/electron-shim.ts` i
 - `contextBridge.exposeInMainWorld('maestro', ...)` writes to `window.maestro` in the browser.
 - `ipcRenderer.invoke(channel, ...args)` becomes a `bridge.invoke` WebSocket frame to `/$TOKEN/ws`, resolved by the main process and returned over the same socket.
 - Main -> renderer push events reach browser clients through `safeSend` (`src/main/utils/safe-send.ts`), which fans each event out to the desktop `webContents` AND to the bridge via `broadcastBridgeEvent`. (One deliberate exception is documented in [Deferred: web-server/callbacks/\*.ts](#deferred-web-servercallbacksts).)
-- Every broadcast frame carries a `seq`, and `BroadcastService` keeps the most recent ones. The `connected` frame carries the counter at connect time (`bridgeSeq`), which is where a fresh client's `lastSeq` starts. When the socket drops (mobile browsers suspend it on every app switch and screen lock), the shim reconnects with `?since=<lastSeq>&epoch=<serverRun>`; the server replays the missed frames right after `connected` and the page carries on in place. Only when the gap cannot be replayed (the server restarted, or the gap outran the buffer) does the shim fall back to `window.location.reload()`.
+- Every broadcast frame carries a `seq`, and `BroadcastService` keeps the most recent ones. The `connected` frame carries the counter at connect time (`bridgeSeq`), which is where a fresh client's `lastSeq` starts. When the socket drops, the shim reconnects with `?since=<lastSeq>&epoch=<serverRun>` and applies retained events in place. When the gap cannot be replayed, it reconciles authoritative host state without reloading or remounting the UI; submissions wait for the snapshot and queued events to finish applying.
 - Local audio/video: `fs:readFile` returns a `maestro-media://` stream URL that only the Electron protocol handler can serve. `resolveMediaStreamSrc()` (`src/renderer/utils/mediaStreamSrc.ts`) maps it in web-desktop onto `/<token>/media/stream/<mediaToken>/<hex>`, which `MediaRoutes` (`src/main/web-server/routes/mediaRoutes.ts`) hands to the SAME range-aware handler, so a browser plays and scrubs the file instead of showing "Cannot Play This File". Same shape as `resolveConcertoHtmlSrc()` for Concerto iframes.
 - Clipboard: never call `navigator.clipboard` directly from renderer code. It is undefined over plain HTTP (a plain LAN address), which is how web-desktop is usually reached, so the bare call throws before it copies. Route every copy through `safeClipboardWrite()` in `src/renderer/utils/clipboard.ts`, which owns the browser-vs-host decision and the insecure-context fallback.
 
 This is why the renderer's own Zustand stores, IPC service wrappers, and components all work in the browser with no web-specific fork.
+
+For renderer outage handling, reuse `BridgeTransportError`, `isExpectedBridgeError()`,
+`isBridgeTransportReady()`, and `WEB_BRIDGE_STATE_EVENT` from
+`src/shared/bridgeError.ts`. Recovery preserves pending session intent through
+`rebasePendingSessionChanges()` in
+`src/renderer/hooks/utils/useDebouncedPersistence.ts`. Read **Bridge transport
+errors and readiness** and **Rebasing unsaved session changes during recovery** in
+[CANONICAL-UTILITIES.md](CANONICAL-UTILITIES.md) before extending either path.
 
 ### Maestro Lite
 
@@ -80,7 +88,12 @@ initialize local agents, process management, chat stores, automation, or a host
 server. See [Remote Control](../remote-control.md) for startup and connection setup.
 
 The authenticated `/$TOKEN/api/lite/handshake` reports persistent host identity,
-protocol compatibility, owner-renderer readiness, and registered capabilities.
+protocol and workflow-qualification compatibility, owner-renderer readiness, and
+capabilities checked against the live bridge method/event inventory and policy.
+Representative read probes use the real dispatcher with the authenticated
+caller's identity and a three-second deadline; handshake checks never execute
+mutations. Missing operations or denied/invalid reads make that workflow
+unavailable rather than advertising partial readiness.
 SSH forwards only through client loopback and preserves host-key checks; direct
 HTTPS requires Web Login and valid TLS. Profiles pin host identity and isolate
 cookies, navigation, and drafts by connection/host. Disconnecting Lite never
@@ -114,10 +127,21 @@ web-desktop and Lite; in-app toast click actions still navigate within the clien
 
 Native Lite's periodic handshake is a health read, not the WebSocket's connection
 state. Network failures and HTTP 502/503/504 retain the current view and drafts;
-the native status follows the live bridge. Authentication, host identity and
-compatibility failures still close access. An acknowledged session-save rejection
-does not itself block a later distinct save. A save whose acknowledgement is lost
-remains held until the host view is reloaded; reconnect never replays it.
+the native status follows the live bridge. Failed or timed-out workflow reads
+return HTTP 503 after authorization is rechecked. Missing required API bindings,
+authentication, host identity and compatibility failures still close access. An
+acknowledged session-save rejection does not itself block a later distinct save.
+A lost save acknowledgement fences further saves until authoritative in-place
+recovery completes; reconnect never replays the uncertain mutation.
+
+Opening WebSocket handshakes have deadlines, wake/network events accelerate recovery,
+and sustained failures use capped jittered backoff. Terminal policy closes do not
+retry. Native Lite separately supervises SSH/direct transports and renderer crashes;
+automatic reconnects reuse the validated loopback port to preserve client-origin
+drafts. Last-connection metadata enables startup reattachment without persisting
+device credentials. Explicit disconnect, revocation, changed identity and trust
+failures disable that intent. Authoritative reconciliation has an overall deadline;
+each retry takes a fresh snapshot before applying newer queued events.
 
 New AI composer submissions keep their draft and attachments while
 authoritative process readiness is pending. A failed remote readiness read
@@ -167,8 +191,8 @@ These rules keep the clients in sync:
   the newest 1000, bounded by COUNT rather than age, because a suspended browser
   tab can be away for hours and no agent id is ever reused, so an old tombstone
   has nothing left to block but a stale write. Reconnect replays only a retained
-  event gap from the same server epoch; otherwise the client reboots from host
-  state rather than writing its stale snapshot. Both save handlers share one
+  event gap from the same server epoch; otherwise the client reconciles the full
+  host inventory in place without remounting the UI. Both save handlers share one
   main-process write queue. Writes carry their observed baseline and merge
   changed fields through `src/shared/sessionPersistenceMerge.ts`, preserving
   peer additions/deletions and reconciling observed tab and queue ordering.
@@ -176,6 +200,78 @@ These rules keep the clients in sync:
   authoritative. Remote writes cannot replace host-owned transcripts or run
   state, and client-local navigation and drafts never become another client
   or the host renderer's view.
+  Authoritative recovery advances a shared session reconciliation generation:
+  lifecycle and transcript tasks already queued or awaiting a read cannot
+  mutate the recovered inventory, and fresh events do not wait on the retired
+  queue. Owner metadata refreshes runtime for every agent and AI tab, including
+  inactive conversations whose turns completed while the client was offline.
+  The host Auto Run inventory removes stopped mirrors, refreshes paused and
+  running mirrors, and leaves locally owned runs intact; newer queued events
+  apply after that inventory. Client drafts and navigation remain local.
+- **Group writes carry their observed baseline.** `groups:setAll(groups, baseline)`
+  merges changed fields on the host, preserves peer additions and untouched
+  fields, and deletes only previously observed groups omitted from the incoming
+  registry.
+  Stale writers cannot resurrect peer deletions. Reads and writes serialize
+  through the same host queue, including the pre-wipe backup, so a recovery read
+  cannot overtake an accepted write. The renderer advances its baseline only
+  after acknowledgement. A missing baseline is a failed save, never a replacement
+  of the registry.
+- **Healthy heartbeats do not imply request completion.** Initial connection and
+  ordinary reads have 30-second deadlines; mutations have 120 seconds. Git
+  operations and recursive directory-size reads have a bounded ten-minute
+  deadline. Expiry rejects the request without automatically retrying it; an
+  expired mutation remains ambiguous. Session/group persistence expiry forces
+  authoritative recovery and fences stale saves.
+- **Failed event application fences client writes.** Synchronous
+  listener exceptions and asynchronous rejections stop dispatch and trigger
+  authoritative in-place recovery. Host metadata, visible conversation content,
+  and live turns refresh while mounted modals, wizard progress, unsaved file edits,
+  drafts, and client navigation remain intact. Read failures retry without a page
+  reload. Events received during the snapshot apply afterward, and recovery waits
+  for asynchronous state application before allowing submissions. Pre-recovery
+  reads and retired-socket events cannot overwrite the recovered state.
+- **Recovery uses live AI-tab inventory, not disk absence.** Private owner
+  metadata includes tabs acknowledged before the persistence debounce flush,
+  without host drafts, attachments or transcript payloads. Missing owners mark
+  cached inventory unavailable; authoritative recovery then retains the current
+  workflow and waits rather than interpreting stale absence as deletion. Active
+  client-only wizard tabs survive reconciliation and subsequent queued tab
+  inventories. Canonical AI and shell rows replace pre-outage rows, including
+  same-ID completions and host removals.
+- **Slow-client output is bounded per connection.** Live broadcasts, replay,
+  snapshots, control frames, and bridge replies share an 8 MiB pending-output
+  allowance. A supported result larger than that allowance is retained once and
+  delivered as native WebSocket text fragments, draining each fragment before
+  sending the next; at most 8 MiB of following messages may queue behind it. This
+  preserves the existing client protocol and Unicode without imposing an 8 MiB
+  result-size limit. An overflowing peer closes with code 1013 and terminates
+  after one second; other clients and host work continue. Reconnect uses replay
+  or authoritative in-place recovery.
+- **A lost save acknowledgement requires authoritative recovery.** Even when
+  the host can replay every missed event, replay does not establish whether an
+  unacknowledged persistence request committed. The bridge reconciles host
+  state in place before allowing new saves, preserves mounted client work and the
+  uncertainty notice, and never resends the uncertain mutation.
+- **Transient host-health failures retain the native view.** An unanswered
+  owning-renderer readiness check or failed required workflow read returns HTTP
+  503 after authorization is rechecked. Native health polling retains the mounted
+  view, drafts and live bridge; identity, authorization and genuine compatibility
+  failures remain fatal.
+- **A delayed renderer is not a dead host.** A watchdog delayed by renderer
+  suspension starts a fresh probe rather than closing a healthy connection. An
+  actual heartbeat timeout retires the socket locally without waiting for its
+  close handshake; the next connection ignores late old-socket events. Heartbeat
+  closures use private code 4000; the host records numeric close codes without
+  credentials or URLs.
+- **Remote clients do not take desktop ownership.** Conversation close/reopen
+  requests and read-only system-prompt paths are explicitly bridged. Native
+  panel persistence, orphaned Auto Run reclamation, and custom/idle notification
+  commands remain desktop-owned. Remote settings omit host CLI installation,
+  storage migration, and command-notification controls; client OS notifications
+  remain available. Notification inbox history, read state and clear operations
+  persist in client-local storage even though the shared preload exposes native
+  methods; host history and trusted native navigation channels remain private.
 - **Which agent a client is looking at is per-client.** Write and read it through
   `src/renderer/utils/activeSessionPersistence.ts`, never
   `window.maestro.sessions.getActiveSessionId()` directly. A browser tab reloads

@@ -43,6 +43,7 @@ import {
 	previewMentionDispatch,
 	withMentionTurnNotes,
 } from '../../services/crossAgentMentions';
+import type { MentionRouting } from '../../../shared/crossAgentContext';
 import { noteDirectDispatch } from '../../stores/retryStore';
 import { requestTabAutoNameForMessage } from '../../services/tabAutoNaming';
 import { logger } from '../../utils/logger';
@@ -171,6 +172,9 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				images?: string[];
 				/** New-tab provider commands that have no Maestro prompt expansion. */
 				literalPrompt?: boolean;
+				/** `dispatch --routing`: the `@mention` routing the composer strip
+				 *  would set. Absent leaves the wording in charge. */
+				mentionRouting?: MentionRouting;
 				/** Reply channel for the web server's delivery receipt. Set when the
 				 *  command arrived over `remote:executeCommand`; absent for
 				 *  in-renderer synthetic dispatches. */
@@ -184,6 +188,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				force,
 				images,
 				literalPrompt,
+				mentionRouting,
 				receiptChannel,
 			} = customEvent.detail;
 
@@ -376,8 +381,9 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 			// have typed, so a mention in it must consult the target agent too.
 			// The agent is idle here (the busy guard above), so the consult fires
 			// now; a busy agent's prompt goes through `dispatch --queue`, which
-			// stamps the intent on the queued item instead.
-			const mentionPlan = planCrossAgentMentions(command, sessionId);
+			// stamps the intent on the queued item instead. A routing the caller
+			// picked (`dispatch --routing`) wins over the wording, as the strip's does.
+			const mentionPlan = planCrossAgentMentions(command, sessionId, mentionRouting);
 			if (mentionPlan?.suppressLocal) {
 				// Leading mention: addressed only at the consulted agent(s). This
 				// agent does not answer, so record the user's bubble and skip the spawn.

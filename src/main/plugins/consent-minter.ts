@@ -1,3 +1,5 @@
+import { canonicalJson } from '../../shared/canonicalJson';
+import { parsePluginEndpointScopes } from '../../shared/plugins/primitives';
 /**
  * Consent minter - anti-forgery core (main process).
  *
@@ -145,11 +147,13 @@ export interface ConsentMinterDeps {
 		mint: (pluginId: string, caps: PermissionGrant[], identity: AuthIdentity) => void;
 		readGrants?: (pluginId: string) => PermissionGrant[];
 		entryIdentity?: (pluginId: string) => AuthIdentity | undefined;
+		onPluginAuthorizationChange?: (listener: (pluginId: string) => void) => () => void;
 	};
 	/** The plugin's manifest-requested permissions (capability + scope + reason). */
 	requested: (pluginId: string) => PermissionRequest[];
 	/** The plugin's CURRENT identity (content digest + signature), or null if unhashable. */
-	identityOf: (pluginId: string) => AuthIdentity | null;
+	identityOf: (pluginId: string) => AuthIdentity | null | Promise<AuthIdentity | null>;
+	senderStillCurrent?: (sender: ConsentSender) => boolean;
 	/** Open the main-owned consent window for {pluginId, offered, nonce}; resolves
 	 * with the consent window's own frame token - the only trusted confirmer. */
 	openPrompt: (req: {
@@ -196,13 +200,13 @@ export class ConsentMinter {
 	 * A second request supersedes any prior open prompt (its nonce stays single-use
 	 * in the registry and simply expires).
 	 */
-	private requestsForConsent(pluginId: string): PermissionRequest[] {
+	private async requestsForConsent(pluginId: string): Promise<PermissionRequest[]> {
 		const requested = this.deps.requested(pluginId);
 		const previous = this.deps.store.entryIdentity?.(pluginId);
 		if (!previous || previous.signatureStatus !== 'trusted' || !previous.signerKey) {
 			return requested;
 		}
-		const current = this.deps.identityOf(pluginId);
+		const current = await this.deps.identityOf(pluginId);
 		// Preserve the user's agent selection only for the same trusted publisher.
 		// Changed code still requires consent; revoked/uninstalled grants are absent.
 		if (
@@ -214,19 +218,28 @@ export class ConsentMinter {
 		const dispatch = this.deps.store
 			.readGrants?.(pluginId)
 			.find((grant) => grant.capability === 'agents:dispatch');
-		if (!dispatch) return requested;
+		const endpoints = this.deps.store.readGrants?.(pluginId) ?? [];
+		const scopedRequests = requested.map((r) => {
+			const saved = endpoints.find((g) => g.capability === r.capability);
+			return (r.capability === 'net:tls' || r.capability === 'secrets:use') &&
+				saved &&
+				parsePluginEndpointScopes(saved.scope) !== null
+				? { ...r, scope: saved.scope }
+				: r;
+		});
+		if (!dispatch) return scopedRequests;
 		const members = parseAllowlistScope(dispatch.scope);
 		const scope = members && members.every(isValidAllowlistMember) ? members.join(',') : undefined;
 		// An absent scope is an intentional deny-all selection. A malformed saved
 		// scope must not replace the manifest request with an unusable grant.
 		if (dispatch.scope !== undefined && scope === undefined) return requested;
-		return requested.map((request) =>
+		return scopedRequests.map((request) =>
 			request.capability === 'agents:dispatch' ? { ...request, scope } : request
 		);
 	}
 
 	async requestConsent(pluginId: string): Promise<void> {
-		const requested = this.requestsForConsent(pluginId).map((request) => ({ ...request }));
+		const requested = (await this.requestsForConsent(pluginId)).map((request) => ({ ...request }));
 		const offered = requested.map((r) => r.capability);
 		const nonce = this.deps.registry.issue(pluginId, offered);
 		const sender = await this.deps.openPrompt({ pluginId, offered, requested, nonce });
@@ -247,7 +260,7 @@ export class ConsentMinter {
 	 * nested no-user-present checkbox), which must itself be a subset of the
 	 * separately-approved act verbs.
 	 */
-	confirm(
+	async confirm(
 		sender: ConsentSender,
 		req: {
 			pluginId: string;
@@ -257,8 +270,10 @@ export class ConsentMinter {
 			approvedHighRisk?: readonly PluginCapability[];
 			/** Act verbs whose nested unattended consent the user also checked. */
 			unattended?: readonly PluginCapability[];
+			/** Explicit unchecked export consent, independent of local media processing. */
+			originalAudioExport?: boolean;
 		}
-	): MintOutcome {
+	): Promise<MintOutcome> {
 		const open = this.open;
 		this.open = null; // one-shot: a prompt can be confirmed at most once
 		if (!open) return { ok: false, reason: 'no-prompt' };
@@ -292,32 +307,66 @@ export class ConsentMinter {
 		if (!this.deps.registry.consume(req.nonce, req.pluginId, allApproved)) {
 			return { ok: false, reason: 'bad-nonce' };
 		}
-		const identity = this.deps.identityOf(req.pluginId);
-		if (!identity) return { ok: false, reason: 'no-identity' };
-		const currentRequests = this.requestsForConsent(req.pluginId);
-		if (
-			currentRequests.length !== open.requested.length ||
-			currentRequests.some(
-				(request, i) =>
-					request.capability !== open.requested[i].capability ||
-					request.scope !== open.requested[i].scope ||
-					request.reason !== open.requested[i].reason
-			)
-		)
-			return { ok: false, reason: 'offer-changed' };
-		const approvedSet = new Set(allApproved);
-		const toGrant = currentRequests.filter((r) => approvedSet.has(r.capability));
-		const unattendedSet = new Set(unattended);
-		// The separate, revocable unattended flag is minted ONLY from the
-		// explicit unattended acceptance - never inferred from the grant itself.
-		const grants = grantsFromRequests(toGrant, this.now()).map((g) =>
-			unattendedSet.has(g.capability) ? { ...g, unattended: true } : g
-		);
-		const conflict = transcriptReadEgressConflict(grants, {
-			trusted: identity.signatureStatus === 'trusted',
+		let authorizationChanged = false;
+		const unsubscribe = this.deps.store.onPluginAuthorizationChange?.((pluginId) => {
+			if (pluginId === req.pluginId) authorizationChanged = true;
 		});
-		if (conflict) return { ok: false, reason: 'conflict' };
-		this.deps.store.mint(req.pluginId, grants, identity);
-		return { ok: true, grants };
+		try {
+			const identity = await this.deps.identityOf(req.pluginId);
+			if (!identity) return { ok: false, reason: 'no-identity' };
+			const currentRequests = await this.requestsForConsent(req.pluginId);
+			if (
+				currentRequests.length !== open.requested.length ||
+				currentRequests.some(
+					(request, i) =>
+						request.capability !== open.requested[i].capability ||
+						request.scope !== open.requested[i].scope ||
+						request.reason !== open.requested[i].reason
+				)
+			)
+				return { ok: false, reason: 'offer-changed' };
+			const approvedSet = new Set(allApproved);
+			const toGrant = currentRequests
+				.filter((r) => approvedSet.has(r.capability))
+				.map((request) => {
+					if (request.capability !== 'media:tools' || req.originalAudioExport === true)
+						return request;
+					// An old bundled approval can never mint export authority. Re-consent
+					// with this unchecked removes export while retaining the voice scope.
+					const members = parseAllowlistScope(request.scope);
+					return {
+						...request,
+						scope:
+							members?.filter((member) => member !== 'discord-original-audio').join(',') ||
+							undefined,
+					};
+				})
+				.filter((request) => request.capability !== 'media:tools' || !!request.scope);
+			const unattendedSet = new Set(unattended);
+			// The separate, revocable unattended flag is minted ONLY from the
+			// explicit unattended acceptance - never inferred from the grant itself.
+			const grants = grantsFromRequests(toGrant, this.now()).map((g) => {
+				const grant = unattendedSet.has(g.capability) ? { ...g, unattended: true } : g;
+				return g.capability === 'media:tools' &&
+					req.originalAudioExport === true &&
+					parseAllowlistScope(g.scope)?.includes('discord-original-audio')
+					? { ...grant, originalAudioExport: true }
+					: grant;
+			});
+			const conflict = transcriptReadEgressConflict(grants, {
+				trusted: identity.signatureStatus === 'trusted',
+			});
+			if (conflict) return { ok: false, reason: 'conflict' };
+			const finalIdentity = await this.deps.identityOf(req.pluginId);
+			if (!finalIdentity || canonicalJson(finalIdentity) !== canonicalJson(identity))
+				return { ok: false, reason: 'no-identity' };
+			if (this.open !== null || this.deps.senderStillCurrent?.(sender) === false)
+				return { ok: false, reason: 'untrusted-sender' };
+			if (authorizationChanged) return { ok: false, reason: 'offer-changed' };
+			this.deps.store.mint(req.pluginId, grants, identity);
+			return { ok: true, grants };
+		} finally {
+			unsubscribe?.();
+		}
 	}
 }

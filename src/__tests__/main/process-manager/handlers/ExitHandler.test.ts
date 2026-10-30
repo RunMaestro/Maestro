@@ -22,7 +22,11 @@ vi.mock('../../../../main/utils/logger', () => ({
 }));
 
 vi.mock('../../../../shared/maestro-lib/parsers/error-patterns', () => ({
+	getErrorPatterns: vi.fn(() => ({})),
+	matchErrorPattern: vi.fn(() => null),
 	matchSshErrorPattern: vi.fn(() => null),
+	stripJsonEventLines: vi.fn((text: string) => text),
+	isClaudeLimitNotice: vi.fn(() => false),
 }));
 
 vi.mock('../../../../shared/maestro-lib/parsers/usage-aggregator', () => ({
@@ -70,6 +74,9 @@ vi.mock('../../../../main/utils/remote-fs', () => ({
 // ── Imports (after mocks) ──────────────────────────────────────────────────
 
 import { ExitHandler } from '../../../../main/process-manager/handlers/ExitHandler';
+import { StdoutHandler } from '../../../../main/process-manager/handlers/StdoutHandler';
+import { ClaudeOutputParser } from '../../../../main/parsers/claude-output-parser';
+import { CodexOutputParser } from '../../../../main/parsers/codex-output-parser';
 import {
 	nextSpawnGeneration,
 	resetSpawnGenerationsForTest,
@@ -164,6 +171,94 @@ describe('ExitHandler', () => {
 	});
 
 	describe('stream-json jsonBuffer processing at exit', () => {
+		it.each([
+			{ streamedText: '', resultEmitted: false },
+			{ streamedText: 'The final answer.', resultEmitted: false },
+			{ streamedText: 'The final answer.', resultEmitted: true },
+		])(
+			'emits a trailing warning without changing answer handling: %j',
+			async ({ streamedText, resultEmitted }) => {
+				const proc = createMockProcess({
+					isStreamJsonMode: true,
+					toolType: 'codex',
+					jsonBuffer: JSON.stringify({
+						type: 'item.completed',
+						item: { type: 'error', message: 'Ignored setting' },
+					}),
+					outputParser: new CodexOutputParser(),
+					streamedText,
+					resultEmitted,
+				});
+				processes.set('test-session', proc);
+				const stderrSpy = vi.fn();
+				const dataSpy = vi.fn();
+				const thinkingSpy = vi.fn();
+				const errorSpy = vi.fn();
+				emitter.on('stderr', stderrSpy);
+				emitter.on('data', dataSpy);
+				emitter.on('thinking-chunk', thinkingSpy);
+				emitter.on('agent-error', errorSpy);
+
+				await exitHandler.handleExit('test-session', 0);
+
+				expect(stderrSpy).toHaveBeenCalledExactlyOnceWith(
+					'test-session',
+					'Codex warning: Ignored setting\n'
+				);
+				if (streamedText && !resultEmitted) {
+					expect(dataSpy).toHaveBeenCalledExactlyOnceWith('test-session', streamedText);
+				} else {
+					expect(dataSpy).not.toHaveBeenCalled();
+				}
+				expect(thinkingSpy).not.toHaveBeenCalled();
+				expect(errorSpy).not.toHaveBeenCalled();
+				expect(proc.errorEmitted).toBe(false);
+				expect(proc.resultEmitted).toBe(Boolean(streamedText));
+				expect(proc.streamedText).toBe(streamedText);
+				expect(proc.stderrBuffer).toBe('');
+				expect(proc.stdoutBuffer).toBe('');
+				expect(proc.jsonBuffer).toBe('');
+			}
+		);
+
+		it('still reports a nonzero exit after displaying a trailing warning', async () => {
+			const parser = new CodexOutputParser();
+			const detectExitSpy = vi.spyOn(parser, 'detectErrorFromExit');
+			const proc = createMockProcess({
+				isStreamJsonMode: true,
+				toolType: 'codex',
+				jsonBuffer: JSON.stringify({
+					type: 'item.completed',
+					item: { type: 'error', message: 'Optional integration is unavailable' },
+				}),
+				stderrBuffer: 'Underlying process diagnostic',
+				outputParser: parser,
+			});
+			processes.set('test-session', proc);
+			const stderrSpy = vi.fn();
+			const errorSpy = vi.fn();
+			const dataSpy = vi.fn();
+			emitter.on('stderr', stderrSpy);
+			emitter.on('agent-error', errorSpy);
+			emitter.on('data', dataSpy);
+
+			await exitHandler.handleExit('test-session', 1);
+
+			expect(stderrSpy).toHaveBeenCalledExactlyOnceWith(
+				'test-session',
+				'Codex warning: Optional integration is unavailable\n'
+			);
+			expect(detectExitSpy).toHaveBeenCalledWith(1, 'Underlying process diagnostic', '');
+			expect(errorSpy).toHaveBeenCalledExactlyOnceWith(
+				'test-session',
+				expect.objectContaining({ type: 'agent_crashed', message: 'Agent exited with code 1' })
+			);
+			expect(dataSpy).not.toHaveBeenCalled();
+			expect(proc.errorEmitted).toBe(true);
+			expect(proc.resultEmitted).toBe(false);
+			expect(proc.stderrBuffer).toBe('Underlying process diagnostic');
+		});
+
 		it('should process remaining jsonBuffer content as a result message', async () => {
 			const resultJson = '{"type":"result","result":"Auth Bug Fix","session_id":"abc"}';
 			const mockParser = createMockOutputParser({
@@ -1468,6 +1563,70 @@ describe('ExitHandler', () => {
 	});
 
 	describe('exit event settlement argument', () => {
+		it.each(['\n', ''])(
+			'captures the final Claude result rather than an earlier failed investigation (delimiter: %j)',
+			async (delimiter) => {
+				const proc = createMockProcess({
+					isStreamJsonMode: true,
+					outputParser: new ClaudeOutputParser(),
+				});
+				processes.set('worker-ai-tab', proc);
+				const stdout = new StdoutHandler({ processes, emitter, bufferManager });
+				stdout.handleData(
+					'worker-ai-tab',
+					`${JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Build failed: investigating' }] } })}\n`
+				);
+				stdout.handleData(
+					'worker-ai-tab',
+					`${JSON.stringify({ type: 'result', subtype: 'success', result: 'Fixed the build. All checks pass.' })}${delimiter}`
+				);
+				const onExit = vi.fn();
+				emitter.on('exit', onExit);
+				await exitHandler.handleExit('worker-ai-tab', 0);
+				expect(onExit.mock.calls[0][3]).toEqual({
+					outcome: 'completed',
+					answerCaptured: true,
+					answerTail: 'Fixed the build. All checks pass.',
+				});
+			}
+		);
+
+		it('redacts a secret whose label falls just before the stored tail boundary', async () => {
+			const secret = 'private-boundary-password';
+			const proc = createMockProcess({
+				isStreamJsonMode: true,
+				resultEmitted: true,
+				streamedText: `password=${secret}\n${' '.repeat(4000 - secret.length - 1)}`,
+				outputParser: createMockOutputParser(),
+			});
+			processes.set('worker-ai-tab', proc);
+			const onExit = vi.fn();
+			emitter.on('exit', onExit);
+			await exitHandler.handleExit('worker-ai-tab', 0);
+			expect(onExit.mock.calls[0][3].answerTail).not.toContain(secret);
+			expect(onExit.mock.calls[0][3].answerTail.length).toBeLessThanOrEqual(4000);
+		});
+
+		it('carries a bounded redacted final answer before the renderer transcript is available', async () => {
+			const proc = createMockProcess({
+				toolType: 'codex',
+				isStreamJsonMode: true,
+				resultEmitted: true,
+				streamedText: `${'preliminary '.repeat(500)}token=super-secret-value\nTask failed: done-when`,
+				outputParser: createMockOutputParser(),
+			});
+			processes.set('worker-ai-tab', proc);
+			const onExit = vi.fn();
+			emitter.on('exit', onExit);
+
+			await exitHandler.handleExit('worker-ai-tab', 0);
+
+			const settlement = onExit.mock.calls[0][3];
+			expect(settlement.answerTail).toContain('Task failed: done-when');
+			expect(settlement.answerTail).not.toContain('super-secret-value');
+			expect(settlement.answerTail.length).toBeLessThanOrEqual(4000);
+		});
+
 		it('emits completed-with-warning when result was emitted but process exited with code 1', async () => {
 			const mockParser = createMockOutputParser();
 			const proc = createMockProcess({
@@ -1492,6 +1651,7 @@ describe('ExitHandler', () => {
 			expect(receivedSettlement).toEqual({
 				outcome: 'completed-with-warning',
 				answerCaptured: true,
+				answerTail: 'Final answer text',
 			});
 		});
 
@@ -1519,6 +1679,7 @@ describe('ExitHandler', () => {
 			expect(receivedSettlement).toEqual({
 				outcome: 'completed-with-warning',
 				answerCaptured: true,
+				answerTail: 'Batch task finished',
 			});
 		});
 

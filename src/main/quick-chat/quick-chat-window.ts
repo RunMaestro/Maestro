@@ -85,7 +85,8 @@ let quickWindowId: string | null = null;
 let layout: QuickChatLayout = 'compact';
 /**
  * The composer-only shape's height: the composer's own, as the window last
- * reported it. The user cannot drag it; the draft decides it.
+ * reported it, in the page's CSS pixels. The user cannot drag it; the draft
+ * decides it. See compactWindowHeight for the window's height.
  */
 let compactHeight = COMPACT_HEIGHT;
 /** Set once the user drags the window (or a saved spot was restored). */
@@ -95,7 +96,8 @@ let revealPending = false;
 /** The remembered size and spot, loaded once from the bounds store. */
 let saved: QuickChatWindowBounds | null = null;
 /** The live window's pending bounds save, flushed before the shape changes. */
-let pendingSave: DebouncedFunction<[Electron.Rectangle, QuickChatLayout, boolean]> | null = null;
+let pendingSave: DebouncedFunction<[Electron.Rectangle, QuickChatLayout, boolean, number]> | null =
+	null;
 /**
  * Where the window was before a diagram took it full screen, or null when no
  * diagram is open. While set, moves and resizes are the viewer's, not the
@@ -141,8 +143,27 @@ function widthNow(): number {
 	return Math.max(MIN_WIDTH, Math.round(saved?.width ?? DEFAULT_WIDTH));
 }
 
+/**
+ * The page's zoom factor. Chromium keeps page zoom per origin, so a zoom left
+ * on the main window (same origin) applies here too, and a CSS pixel is then
+ * not a window pixel.
+ */
+function zoomFactor(win: BrowserWindow | null = getQuickChatWindow()): number {
+	const zoom = win?.webContents.getZoomFactor();
+	return zoom && Number.isFinite(zoom) && zoom > 0 ? zoom : 1;
+}
+
+/**
+ * The window height that shows a composer `cssHeight` CSS pixels tall. Under a
+ * page zoom of 1.1, a 148px composer needs a 163px window, or its bottom row
+ * (the Send button) is clipped.
+ */
+function compactWindowHeight(cssHeight: number, win?: BrowserWindow | null): number {
+	return Math.round(cssHeight * zoomFactor(win));
+}
+
 function heightFor(next: QuickChatLayout): number {
-	if (next === 'compact') return compactHeight;
+	if (next === 'compact') return compactWindowHeight(compactHeight);
 	return Math.max(
 		MIN_EXPANDED_HEIGHT,
 		Math.round(saved?.expandedHeight ?? DEFAULT_EXPANDED_HEIGHT)
@@ -181,7 +202,9 @@ function boundsFor(next: QuickChatLayout): Electron.Rectangle {
  * the outgoing shape's limits clamp the incoming size.
  */
 function applyLayout(win: BrowserWindow, next: QuickChatLayout, bounds: Electron.Rectangle): void {
-	win.setMinimumSize(MIN_WIDTH, Math.min(COMPACT_HEIGHT, MIN_EXPANDED_HEIGHT));
+	// The bounds' own height is in the floor: a zoomed-out page makes the
+	// composer-only shape shorter than COMPACT_HEIGHT window pixels.
+	win.setMinimumSize(MIN_WIDTH, Math.min(COMPACT_HEIGHT, MIN_EXPANDED_HEIGHT, bounds.height));
 	win.setMaximumSize(NO_LIMIT, NO_LIMIT);
 	win.setBounds(bounds);
 	if (next === 'compact') {
@@ -202,14 +225,17 @@ function applyLayout(win: BrowserWindow, next: QuickChatLayout, bounds: Electron
  * being torn down and reports geometry nobody chose (a 0-wide frame was seen),
  * which would overwrite the size the user left it at. Anything smaller than
  * the window's own minimums is that kind of geometry, and is dropped.
+ * `minHeight` is the composer-only shape's floor in window pixels, taken at
+ * the event too: it moves with the page zoom (see compactWindowHeight).
  */
 function recordBounds(
 	b: Electron.Rectangle,
 	shape: QuickChatLayout,
 	placed: boolean,
+	minHeight: number,
 	deps: QuickChatWindowDeps
 ): void {
-	if (b.width < MIN_WIDTH || b.height < COMPACT_HEIGHT) return;
+	if (b.width < MIN_WIDTH || b.height < minHeight) return;
 	if (shape === 'expanded' && b.height < MIN_EXPANDED_HEIGHT) return;
 	const next: QuickChatWindowBounds = {
 		...saved,
@@ -287,13 +313,13 @@ function createQuickChatWindow(deps: QuickChatWindowDeps): BrowserWindow {
 	// A live drag or resize fires a flood of events; save once it settles, and
 	// right away when the window is put away or closed so a quit cannot drop it.
 	const persist = debounce(
-		(b: Electron.Rectangle, shape: QuickChatLayout, placed: boolean) =>
-			recordBounds(b, shape, placed, deps),
+		(b: Electron.Rectangle, shape: QuickChatLayout, placed: boolean, minHeight: number) =>
+			recordBounds(b, shape, placed, minHeight, deps),
 		WINDOW_STATE_SAVE_DEBOUNCE_MS
 	);
 	const capture = () => {
 		if (closing || win.isDestroyed() || fullViewRestore) return;
-		persist(win.getBounds(), layout, userPlaced);
+		persist(win.getBounds(), layout, userPlaced, compactWindowHeight(COMPACT_HEIGHT, win));
 	};
 	win.on('move', capture);
 	win.on('resize', capture);
@@ -436,17 +462,20 @@ export function setQuickChatLayout(next: QuickChatLayout): void {
  */
 export function setQuickChatCompactHeight(height: number): void {
 	if (!Number.isFinite(height)) return;
-	const next = Math.round(Math.min(MAX_COMPACT_HEIGHT, Math.max(COMPACT_HEIGHT, height)));
-	if (next === compactHeight) return;
-	compactHeight = next;
+	compactHeight = Math.round(Math.min(MAX_COMPACT_HEIGHT, Math.max(COMPACT_HEIGHT, height)));
 	const win = getQuickChatWindow();
 	if (!win || layout !== 'compact' || fullViewRestore) return;
+	// Compared in window pixels, not against the last report: the first report
+	// of a zoomed page is the default CSS height, and its window still needs to
+	// grow to fit it.
+	const next = compactWindowHeight(compactHeight, win);
 	const bounds = win.getBounds();
+	if (next === bounds.height) return;
 	const area = screen.getDisplayMatching(bounds).workArea;
 	const room = area.y + area.height - bounds.y;
 	applyLayout(win, 'compact', {
 		...bounds,
-		height: Math.max(COMPACT_HEIGHT, Math.min(next, room)),
+		height: Math.max(compactWindowHeight(COMPACT_HEIGHT, win), Math.min(next, room)),
 	});
 }
 

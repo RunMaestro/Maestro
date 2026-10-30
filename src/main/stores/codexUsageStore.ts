@@ -13,6 +13,7 @@ import os from 'os';
 import path from 'path';
 import Store from 'electron-store';
 
+import type { CodexCreditBalance } from '../../shared/codexCredits';
 import type { CodexResetCreditCounts } from '../../shared/codexResetCredits';
 import { partitionSnapshotsByAge, SNAPSHOT_RETENTION_MS } from './usageSnapshotRetention';
 
@@ -50,6 +51,8 @@ export interface CodexUsageSnapshot {
 	session?: CodexUsageWindow;
 	weekly?: CodexUsageWindow;
 	additionalLimits?: CodexAdditionalLimit[];
+	/** Additional usage credits; absent when the endpoint does not report a usable balance. */
+	credits?: CodexCreditBalance;
 	/**
 	 * Reset-credit inventory, which the usage payload carries for free. The
 	 * per-credit list lives behind `fetchCodexResetCredits()`; this is only the

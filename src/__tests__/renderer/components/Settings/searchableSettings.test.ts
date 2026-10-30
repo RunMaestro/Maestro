@@ -50,6 +50,24 @@ describe('searchableSettings', () => {
 		expect(searchSettings(query).some((s) => s.id === 'notifications-center')).toBe(true);
 	});
 
+	it.each([
+		'autopilot',
+		'automatic repairs',
+		'supervision',
+		'merge approval',
+		'Allow automatic repairs',
+		'three repair attempts',
+		'existing access',
+	])('finds the separate Pianola repair permission for %s only while enabled', (query) => {
+		expect(
+			searchSettings(query, [], { pianola: true }).some((s) => s.id === 'encore-pianola-auto-fix')
+		).toBe(true);
+		expect(
+			searchSettings(query, [], { pianola: false }).some((s) => s.id === 'encore-pianola-auto-fix')
+		).toBe(false);
+		expect(encoreTileForSetting('encore-pianola-auto-fix')).toBe('pianola');
+	});
+
 	describe('ALL_SEARCHABLE_SETTINGS', () => {
 		it('should contain entries from all tabs', () => {
 			const tabs = new Set(ALL_SEARCHABLE_SETTINGS.map((s) => s.tab));
@@ -77,6 +95,21 @@ describe('searchableSettings', () => {
 		});
 	});
 
+	it.each(['drafts', 'unread', 'starred', 'provider context'])(
+		'finds Relay archive for visible %s only while plugins is enabled',
+		(query) => {
+			expect(
+				searchSettings(query, [], { plugins: true }).some(
+					(entry) => entry.id === 'general-relay-archive'
+				)
+			).toBe(true);
+			expect(
+				searchSettings(query, [], { plugins: false }).some(
+					(entry) => entry.id === 'general-relay-archive'
+				)
+			).toBe(false);
+		}
+	);
 	describe('searchSettings', () => {
 		it('should return empty array for empty query', () => {
 			expect(searchSettings('')).toEqual([]);
@@ -299,6 +332,8 @@ describe('searchableSettings', () => {
 			['spell check', 'general-spell-check'],
 			['spelling', 'general-spell-check'],
 			['typo', 'general-spell-check'],
+			['user journey', 'general-user-journey'],
+			['record the files', 'general-user-journey'],
 			['group cue', 'general-group-cue-entries'],
 			['collapse cue runs', 'general-group-cue-entries'],
 			['repeated', 'general-group-cue-entries'],

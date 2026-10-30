@@ -367,6 +367,67 @@ describe('PowerManager', () => {
 		});
 	});
 
+	describe('onReasonsChanged', () => {
+		it('reports the reason set on add and remove, even with sleep prevention off', async () => {
+			const { powerManager } = PowerManagerModule;
+			const listener = vi.fn();
+			powerManager.onReasonsChanged(listener);
+
+			powerManager.addBlockReason('autorun:agent-1');
+			powerManager.addBlockReason('session:agent-2');
+			powerManager.removeBlockReason('autorun:agent-1');
+
+			expect(powerManager.isEnabled()).toBe(false);
+			expect(listener.mock.calls.map(([reasons]) => reasons)).toEqual([
+				['autorun:agent-1'],
+				['autorun:agent-1', 'session:agent-2'],
+				['session:agent-2'],
+			]);
+		});
+
+		it('does not report a no-op add, a type change on an existing reason, or an unknown remove', async () => {
+			const { powerManager } = PowerManagerModule;
+			powerManager.addBlockReason('session:a');
+			const listener = vi.fn();
+			powerManager.onReasonsChanged(listener);
+
+			powerManager.addBlockReason('session:a');
+			powerManager.addBlockReason('session:a', 'prevent-display-sleep');
+			powerManager.removeBlockReason('session:missing');
+
+			expect(listener).not.toHaveBeenCalled();
+		});
+
+		it('reports clearAllReasons only when something was cleared', async () => {
+			const { powerManager } = PowerManagerModule;
+			const listener = vi.fn();
+			powerManager.onReasonsChanged(listener);
+
+			powerManager.clearAllReasons();
+			expect(listener).not.toHaveBeenCalled();
+
+			powerManager.addBlockReason('cue:run:r1');
+			powerManager.clearAllReasons();
+			expect(listener).toHaveBeenLastCalledWith([]);
+		});
+
+		it('stops reporting after unsubscribe, and a throwing listener cannot break blocking', async () => {
+			const { powerManager } = PowerManagerModule;
+			powerManager.setEnabled(true);
+			const throwing = vi.fn(() => {
+				throw new Error('boom');
+			});
+			const unsubscribe = powerManager.onReasonsChanged(throwing);
+
+			expect(() => powerManager.addBlockReason('session:a')).not.toThrow();
+			expect(powerManager.getStatus().blocking).toBe(true);
+
+			unsubscribe();
+			powerManager.removeBlockReason('session:a');
+			expect(throwing).toHaveBeenCalledTimes(1);
+		});
+	});
+
 	describe('getStatus', () => {
 		it('should return correct initial state', async () => {
 			const { powerManager } = PowerManagerModule;

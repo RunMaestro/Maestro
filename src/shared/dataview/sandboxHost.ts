@@ -35,8 +35,29 @@ export const DATAVIEW_GUEST_CSP =
 	"connect-src 'none'; child-src 'none'; frame-src 'none'; object-src 'none'; " +
 	"form-action 'none'; base-uri 'none'; webrtc 'block'";
 
-/** A run that has not answered `render.done` or `render.error` within this long loses its guest (D4). */
+/**
+ * A run that has not answered `render.done` or `render.error` within this long of its `index.ready` loses its
+ * guest (D4). The budget is the script's own: the index build before it has {@link DATAVIEW_JS_INDEX_TIMEOUT_MS}.
+ */
 export const DATAVIEW_JS_RUN_TIMEOUT_MS = 5000;
+
+/**
+ * How long a guest may take to decode the snapshot and build the run's index before `index.ready`. A 16k-page
+ * vault took about 3.5 s, which left a script 1.5 s of the 5 s budget when both shared it. Trusted code runs in
+ * this phase, so the bound is only there for a guest that hangs.
+ */
+export const DATAVIEW_JS_INDEX_TIMEOUT_MS = 30_000;
+
+/**
+ * The most list-item data one `run` snapshot carries, as an estimate in bytes (`DATAVIEW_JS_LIST_ITEM_BYTES`
+ * per item). Every task and list item of a page costs about a kilobyte of raw parse, so a 16k-page vault came to
+ * 400 MB: cloned through IPC into the renderer and again into each guest, it froze the app before the watchdog
+ * could fire. Pages are admitted smallest first; a page past the budget keeps its metadata and loses `lists`.
+ */
+export const DATAVIEW_JS_SNAPSHOT_LIST_BUDGET_BYTES = 24 * 1024 * 1024;
+
+/** Estimated bytes of one list item or task in a snapshot (measured at 1.2 to 1.6 KB, text excluded). */
+export const DATAVIEW_JS_LIST_ITEM_BYTES = 1500;
 
 /** The tallest a guest frame grows, in CSS pixels; taller output scrolls inside the frame. */
 export const DATAVIEW_JS_MAX_FRAME_HEIGHT = 10_000;

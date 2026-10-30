@@ -31,6 +31,7 @@ import type { CodexTransport } from '../../../shared/codexTransport';
 import { logger } from '../../utils/logger';
 import { killAgentAiProcesses } from '../../services/process';
 import { removeGroupAndPromoteChildren } from '../../../shared/groupHierarchy';
+import { withAgentInGroup } from '../../../shared/maestro-lib/agents/rules';
 
 // ============================================================================
 // Dependencies interface
@@ -502,14 +503,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 	const handleGroupCreated = useCallback(
 		(groupId: string) => {
 			if (pendingMoveToGroupSessionId) {
-				setSessions((prev) =>
-					prev.map((s) => {
-						if (s.id === pendingMoveToGroupSessionId) return { ...s, groupId };
-						// Also update worktree children to keep groupId in sync
-						if (s.parentSessionId === pendingMoveToGroupSessionId) return { ...s, groupId };
-						return s;
-					})
-				);
+				setSessions((prev) => withAgentInGroup(prev, pendingMoveToGroupSessionId, groupId));
 				setPendingMoveToGroupSessionId(null);
 			}
 		},

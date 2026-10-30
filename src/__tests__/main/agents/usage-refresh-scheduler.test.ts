@@ -293,6 +293,29 @@ describe('UsageRefreshScheduler', () => {
 			expect(runCodexMock).not.toHaveBeenCalled();
 		});
 
+		it.each([
+			{ kind: 'balance', balance: 12.5 },
+			{ kind: 'balance', balance: 0 },
+			{ kind: 'unlimited' },
+		] as const)('keeps cached credit-only Codex accounts warm: %j', async (credits) => {
+			claudeSnapshotsMock.mockReturnValue(usefulClaudeSnapshot);
+			codexSnapshotsMock.mockReturnValue({
+				codex: {
+					sampledAt: new Date(0).toISOString(),
+					codexHomeKey: '/home/u/.codex',
+					authState: 'authenticated',
+					credits,
+				},
+			});
+			const s = makeSettingsStore({});
+			const scheduler = new UsageRefreshScheduler(makeDeps(s.store));
+
+			await scheduler.warmUp();
+
+			expect(runClaudeMock).not.toHaveBeenCalled();
+			expect(runCodexMock).not.toHaveBeenCalled();
+		});
+
 		it('treats an unauthenticated/empty snapshot as cold', async () => {
 			claudeSnapshotsMock.mockReturnValue({
 				claude: { ...usefulClaudeSnapshot.claude, authState: 'unauthenticated' },

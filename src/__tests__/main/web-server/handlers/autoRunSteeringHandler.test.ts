@@ -6,6 +6,7 @@
 // that reply, so a dropped or unlabeled answer is a command that hangs.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { WebSocket } from 'ws';
 
 vi.mock('../../../../main/utils/logger', () => ({
 	logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -24,7 +25,7 @@ import { MAX_STEERING_NOTE_LENGTH } from '../../../../shared/autorunSteering';
 
 function createMockClient(): WebClient {
 	return {
-		socket: { send: vi.fn() } as unknown as WebClient['socket'],
+		socket: { readyState: WebSocket.OPEN, send: vi.fn() } as unknown as WebClient['socket'],
 		id: 'client-1',
 		connectedAt: 0,
 	};

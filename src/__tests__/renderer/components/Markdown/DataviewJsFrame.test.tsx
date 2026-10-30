@@ -16,12 +16,12 @@ import type { DataviewDocumentScope } from '../../../../renderer/components/Mark
 import {
 	DATAVIEW_GUEST_URL,
 	DATAVIEW_JS_MAX_FRAME_HEIGHT,
+	DATAVIEW_JS_INDEX_TIMEOUT_MS,
 	DATAVIEW_JS_RUN_TIMEOUT_MS,
 	SANDBOX_TO_GUEST_CHANNEL,
 	SANDBOX_TO_HOST_CHANNEL,
 	dataviewGuestPartition,
 	type DataviewChangeEvent,
-	type SandboxIndexSnapshot,
 } from '../../../../shared/dataview';
 import { PANEL_THEME_CHANNEL } from '../../../../shared/plugins/panel-theme';
 import { DATAVIEW_REFRESH_DEBOUNCE_MS } from '../../../../renderer/hooks/file/useLiveDataviewResult';
@@ -29,6 +29,7 @@ import { resetDataviewJsGuestSlotsForTests } from '../../../../renderer/services
 import { openUrl } from '../../../../renderer/utils/openUrl';
 import { toggleDataviewResultTask } from '../../../../renderer/services/dataviewTaskToggle';
 import { mockTheme } from '../../../helpers/mockTheme';
+import { snapshotPayload } from '../../../helpers/dataviewFixtureVault';
 
 vi.mock('../../../../renderer/utils/openUrl', () => ({ openUrl: vi.fn() }));
 vi.mock('../../../../renderer/services/dataviewTaskToggle', () => ({
@@ -39,13 +40,13 @@ const ROOT = '/vault';
 const NOTE = '/vault/Notes/Note.md';
 
 function snapshotResponse(revision = 1, root = ROOT) {
-	const result: SandboxIndexSnapshot = {
+	const result = snapshotPayload({
 		revision,
 		files: ['Notes/Note.md', 'Notes/Other.md'],
 		folders: ['Notes'],
 		stars: [],
 		pages: [],
-	};
+	});
 	return { root, sshRemoteId: null, revision, path: 'Notes/Note.md', result };
 }
 
@@ -150,6 +151,10 @@ async function startFrame(code = 'dv.paragraph("hi")', doc = scope()) {
 	const guest = await mountedGuest(view.container);
 	domReady(guest);
 	return { view, guest, doc, run: lastRun(guest) };
+}
+
+function indexReady(run: { runId: string }) {
+	return { type: 'index.ready', runId: run.runId };
 }
 
 function done(run: { runId: string; blockId: string }, height = 120) {
@@ -317,6 +322,7 @@ describe('DataviewJsFrame: the watchdog and a dying guest', () => {
 	it('replaces a guest that does not answer within 5 s, shows a timeout, and runs nothing until asked', async () => {
 		vi.useFakeTimers();
 		const { guest, view, run } = await startFrame('while (true) {}');
+		guestSays(guest, indexReady(run));
 		await act(async () => {
 			await vi.advanceTimersByTimeAsync(DATAVIEW_JS_RUN_TIMEOUT_MS - 1);
 		});
@@ -340,6 +346,40 @@ describe('DataviewJsFrame: the watchdog and a dying guest', () => {
 		domReady(fresh);
 		expect(runs(fresh)).toHaveLength(1);
 		expect(screen.queryByText(/did not finish within 5 seconds/)).toBeNull();
+	});
+
+	it('gives the index build its own budget, and the script 5 s from its first index.ready only', async () => {
+		vi.useFakeTimers();
+		const { guest, view, run } = await startFrame('while (true) {}');
+		// Still building the index: 5 s is not the limit yet.
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(DATAVIEW_JS_RUN_TIMEOUT_MS * 2);
+		});
+		expect(view.container.querySelector('webview')).toBe(guest);
+
+		guestSays(guest, indexReady(run));
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(DATAVIEW_JS_RUN_TIMEOUT_MS - 1);
+		});
+		// A second index.ready (a script posting it) buys no more time.
+		guestSays(guest, indexReady(run));
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(1);
+		});
+		expect(screen.getByText(/did not finish within 5 seconds/)).toBeTruthy();
+	});
+
+	it('stops a guest that never finishes building the index', async () => {
+		vi.useFakeTimers();
+		const { guest, view } = await startFrame();
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(DATAVIEW_JS_INDEX_TIMEOUT_MS - 1);
+		});
+		expect(view.container.querySelector('webview')).toBe(guest);
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(1);
+		});
+		expect(screen.getByText(/did not finish within 5 seconds/)).toBeTruthy();
 	});
 
 	it('never fires after the run answered', async () => {

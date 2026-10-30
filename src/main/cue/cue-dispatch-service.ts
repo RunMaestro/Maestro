@@ -1,3 +1,4 @@
+import { isDurableCueEvent, authorizePluginCueEvent } from './triggers/cue-plugin-trigger-source';
 import * as crypto from 'crypto';
 import type { MainLogLevel } from '../../shared/logger-types';
 import type {
@@ -29,7 +30,7 @@ export interface CueDispatchServiceDeps {
 		notify?: CueNotifyConfig,
 		autoRun?: CueAutoRunConfig,
 		turnSettings?: CueTurnSettings
-	) => void;
+	) => void | boolean;
 	onLog: (level: MainLogLevel, message: string, data?: unknown) => void;
 	/**
 	 * Optional metadata-only hook fired once per subscription dispatch, carrying
@@ -88,6 +89,9 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 			chainRootId?: string,
 			parentEventId?: string
 		): number {
+			if (!authorizePluginCueEvent(event, ownerSessionId, sub.name, false)) return 0;
+			// Durable fan-out has no atomic admission contract in this API version.
+			if (isDurableCueEvent(event) && sub.fan_out?.length) return 0;
 			// Telemetry: one `trigger_fired` per subscription dispatch (not per
 			// fan-out target). Best-effort and gated on Encore flags inside the
 			// telemetry module - never throws into the dispatch path.
@@ -113,7 +117,6 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 				const skippedTargets: string[] = [];
 				for (let i = 0; i < sub.fan_out.length; i++) {
 					const targetName = sub.fan_out[i];
-					// Stable id first, then name-or-id (see findFanOutTarget).
 					const targetSession = findFanOutTarget(allSessions, targetName, sub.fan_out_ids?.[i]);
 
 					if (!targetSession) {
@@ -143,7 +146,7 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 						skippedTargets.push(`${targetName} (empty prompt)`);
 						continue;
 					}
-					deps.executeRun(
+					const accepted = deps.executeRun(
 						targetSession.id,
 						prompt,
 						fanOutEvent,
@@ -160,7 +163,7 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 						undefined, // autoRun: same
 						turnSettings
 					);
-					dispatched++;
+					if (accepted !== false) dispatched++;
 				}
 				// If every fan-out target was skipped the user sees nothing happen -
 				// surface a loud error so they can fix the broken prompts. This was
@@ -207,7 +210,7 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 					return 0;
 				}
 			}
-			deps.executeRun(
+			const accepted = deps.executeRun(
 				ownerSessionId,
 				prompt,
 				event,
@@ -224,7 +227,7 @@ export function createCueDispatchService(deps: CueDispatchServiceDeps): CueDispa
 				resolvedAutoRun,
 				turnSettings
 			);
-			return 1;
+			return isDurableCueEvent(event) ? (accepted === true ? 1 : 0) : accepted === false ? 0 : 1;
 		},
 	};
 }

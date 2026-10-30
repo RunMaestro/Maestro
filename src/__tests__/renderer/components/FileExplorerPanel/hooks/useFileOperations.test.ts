@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useFileOperations } from '../../../../../renderer/components/FileExplorerPanel/hooks/useFileOperations';
 import type { FileNode } from '../../../../../renderer/types/fileTree';
+import { recordJourney } from '../../../../../renderer/services/userJourney';
 
 vi.mock('../../../../../renderer/utils/fileExplorer', () => ({
 	removeNodeFromTree: vi.fn((tree: any) => tree),
@@ -12,6 +13,10 @@ vi.mock('../../../../../renderer/utils/fileExplorer', () => ({
 
 vi.mock('../../../../../renderer/utils/sentry', () => ({
 	captureException: vi.fn(),
+}));
+
+vi.mock('../../../../../renderer/services/userJourney', () => ({
+	recordJourney: vi.fn(),
 }));
 
 const fileNode: FileNode = { name: 'App.tsx', type: 'file' };
@@ -101,6 +106,25 @@ describe('useFileOperations', () => {
 		});
 		expect(mockMaestro.fs.rename).toHaveBeenCalled();
 		expect(onShowFlash).toHaveBeenCalledWith('Renamed to "App2.tsx"');
+		expect(recordJourney).toHaveBeenCalledWith('sess-1', {
+			kind: 'file.rename',
+			target: '/project/App2.tsx',
+			fromPath: '/project/App.tsx',
+		});
+	});
+
+	it('handleRename records nothing when the rename fails', async () => {
+		mockMaestro.fs.rename.mockRejectedValueOnce(new Error('EACCES'));
+		const { result } = renderHook(() => useFileOperations(defaultArgs));
+		act(() => {
+			result.current.openRenameModal(fileNode, 'App.tsx');
+			result.current.setRenameValue('App2.tsx');
+		});
+		await act(async () => {
+			await result.current.handleRename();
+		});
+		expect(result.current.renameError).toBe('EACCES');
+		expect(recordJourney).not.toHaveBeenCalled();
 	});
 
 	it('handleRename updates expanded-path set when renaming a folder', async () => {
@@ -175,6 +199,24 @@ describe('useFileOperations', () => {
 		expect(refreshFileTree).toHaveBeenCalledWith('sess-1');
 		expect(expandFolder).toHaveBeenCalledWith('components');
 		expect(onShowFlash).toHaveBeenCalledWith('Created "NewComp.tsx"');
+		expect(recordJourney).toHaveBeenCalledWith('sess-1', {
+			kind: 'file.create',
+			target: '/project/components/NewComp.tsx',
+		});
+	});
+
+	it('handleCreateNewFile records nothing when the write fails', async () => {
+		mockMaestro.fs.writeFile.mockRejectedValueOnce(new Error('EEXIST'));
+		const { result } = renderHook(() => useFileOperations(defaultArgs));
+		act(() => {
+			result.current.openNewFileModal('components', '/project/components');
+			result.current.setNewFileValue('NewComp.tsx');
+		});
+		await act(async () => {
+			await result.current.handleCreateNewFile();
+		});
+		expect(result.current.newFileError).toBe('EEXIST');
+		expect(recordJourney).not.toHaveBeenCalled();
 	});
 
 	it('handleCreateNewFile calls mkdir (not writeFile) when opened as a folder', async () => {
@@ -214,6 +256,22 @@ describe('useFileOperations', () => {
 		expect(mockMaestro.fs.delete).toHaveBeenCalled();
 		expect(onShowFlash).toHaveBeenCalledWith('Deleted "App.tsx"');
 		expect(result.current.deleteModal).toBeNull();
+		expect(recordJourney).toHaveBeenCalledWith('sess-1', {
+			kind: 'file.delete',
+			target: '/project/App.tsx',
+		});
+	});
+
+	it('handleDelete records nothing when the delete fails', async () => {
+		mockMaestro.fs.delete.mockRejectedValueOnce(new Error('EBUSY'));
+		const { result } = renderHook(() => useFileOperations(defaultArgs));
+		await act(async () => {
+			await result.current.openDeleteModal(fileNode, 'App.tsx');
+		});
+		await act(async () => {
+			await result.current.handleDelete();
+		});
+		expect(recordJourney).not.toHaveBeenCalled();
 	});
 
 	it('setRenameValue clears renameError', () => {
