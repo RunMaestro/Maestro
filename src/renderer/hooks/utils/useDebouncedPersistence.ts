@@ -508,10 +508,33 @@ export function useDebouncedPersistence(
 		// A peer save that lands while this write is in flight is not in `current`,
 		// so its baseline must outlive this write.
 		const peerBaselinesAtStart = new Map(peerBaselines);
-		const releaseSavedPeerBaselines = () => {
+		const releaseSavedPeerBaselines = (saved: Session[], savedFrom: Session[]) => {
+			const savedById = new Map(saved.map((session) => [session.id, session]));
+			const fromById = new Map(savedFrom.map((session) => [session.id, session]));
 			for (const session of current) {
-				if (peerBaselines.get(session.id) === peerBaselinesAtStart.get(session.id))
+				const retained = peerBaselines.get(session.id);
+				if (retained === peerBaselinesAtStart.get(session.id)) {
 					peerBaselines.delete(session.id);
+					continue;
+				}
+				// That peer save was folded into the baseline from before this write.
+				// Apply what this write saved on top of it, as the host did, or an edit
+				// that undoes this one diffs as unchanged and is never written.
+				const savedSession = savedById.get(session.id);
+				const savedBaseline = fromById.get(session.id);
+				if (retained && savedSession && savedBaseline)
+					peerBaselines.set(
+						session.id,
+						structuredClone(
+							mergeSessionPersistenceChanges(
+								savedSession,
+								retained,
+								savedBaseline,
+								isWebDesktop(),
+								false
+							)
+						)
+					);
 			}
 		};
 		const observedBaselines = (previous: Session[] | null, toPersist: Session[]): Session[] => {
@@ -531,23 +554,21 @@ export function useDebouncedPersistence(
 			const tombstones = mountedSessionsRef.current
 				? diffSessions(mountedSessionsRef.current, current).tombstones
 				: [];
+			const startupBaselines = observedBaselines(mountedSessionsRef.current, current);
 			const ok =
 				tombstones.length > 0
 					? await window.maestro.sessions.setMany(
 							sessionsForPersistence,
 							tombstones,
-							observedBaselines(mountedSessionsRef.current, current)
+							startupBaselines
 						)
-					: await window.maestro.sessions.setAll(
-							sessionsForPersistence,
-							observedBaselines(mountedSessionsRef.current, current)
-						);
+					: await window.maestro.sessions.setAll(sessionsForPersistence, startupBaselines);
 			if (recoveryGeneration !== recoveryGenerationRef.current) return;
 			if (ok === false) {
 				throw new Error('Session persistence returned false (recoverable disk error)');
 			}
 			previouslyPersistedRef.current = current;
-			releaseSavedPeerBaselines();
+			releaseSavedPeerBaselines(sessionsForPersistence, startupBaselines);
 			startupBaselineNeedsFullFlushRef.current = false;
 			return;
 		}
@@ -568,7 +589,7 @@ export function useDebouncedPersistence(
 			throw new Error('sessions:setMany returned false (recoverable disk error)');
 		}
 		previouslyPersistedRef.current = current;
-		releaseSavedPeerBaselines();
+		releaseSavedPeerBaselines(dirtyForPersistence, baselines);
 		startupBaselineNeedsFullFlushRef.current = false;
 	}, []);
 

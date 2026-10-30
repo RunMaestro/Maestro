@@ -487,16 +487,23 @@ describe('deferStoreWrites', () => {
 		// Above every platform's pid ceiling, so no process can hold it.
 		const deadPid = 4194305;
 		const dead = `maestro-sessions.json.${deadPid}.3.tmp`;
+		// A pid from another machine sharing a synced folder reads as dead here,
+		// so a recent file may still be that machine's write in flight.
+		const recent = `maestro-sessions.json.${deadPid}.4.tmp`;
 		const own = `maestro-sessions.json.${process.pid}.1.tmp`;
 		const liveCli = `maestro-sessions.json.${process.ppid}.1.tmp`;
 		const otherStore = `maestro-groups.json.${deadPid}.1.tmp`;
 		fs.writeFileSync(filePath, '{}');
-		for (const name of [dead, own, liveCli, otherStore]) fs.writeFileSync(path.join(dir, name), '');
+		const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+		for (const name of [dead, recent, own, liveCli, otherStore]) {
+			fs.writeFileSync(path.join(dir, name), '');
+			if (name !== recent) fs.utimesSync(path.join(dir, name), twoHoursAgo, twoHoursAgo);
+		}
 
 		await expect(sweepOrphanTempFiles(filePath)).resolves.toBe(1);
 
 		expect(fs.readdirSync(dir).sort()).toEqual(
-			['maestro-sessions.json', own, liveCli, otherStore].sort()
+			['maestro-sessions.json', recent, own, liveCli, otherStore].sort()
 		);
 	});
 });

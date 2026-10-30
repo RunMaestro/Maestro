@@ -115,14 +115,21 @@ async function writeFileAtomic(
 	}
 }
 
+/** A temp file younger than this may be another machine's write in flight. */
+const ORPHAN_TEMP_MIN_AGE_MS = 60 * 60 * 1000;
+
 /**
  * Delete temp files that a killed process left between its write and its
  * rename. Nothing else removes them, and each is a full copy of the store
  * (457 MB of them on one machine). A live pid's file may still be in flight
  * (this process, or a CLI write through `atomicWriteJson`), so only files whose
  * writer is gone are removed.
+ *
+ * The pid only means something on this machine. The store can live in a synced
+ * folder another machine also writes, so a recent file is left alone too: a
+ * write still in flight is minutes old at most, while a crash leftover is not.
  */
-export async function sweepOrphanTempFiles(filePath: string): Promise<number> {
+export async function sweepOrphanTempFiles(filePath: string, now = Date.now()): Promise<number> {
 	const dir = path.dirname(filePath);
 	const prefix = `${path.basename(filePath)}.`;
 	let names: string[];
@@ -136,8 +143,10 @@ export async function sweepOrphanTempFiles(filePath: string): Promise<number> {
 		if (!name.startsWith(prefix)) continue;
 		const pid = Number(/^(\d+)\.\d+\.tmp$/.exec(name.slice(prefix.length))?.[1]);
 		if (!pid || pid === process.pid || isPidAlive(pid)) continue;
+		const tempPath = path.join(dir, name);
 		try {
-			await fsp.unlink(path.join(dir, name));
+			if (now - (await fsp.stat(tempPath)).mtimeMs < ORPHAN_TEMP_MIN_AGE_MS) continue;
+			await fsp.unlink(tempPath);
 			removed += 1;
 		} catch {
 			// Already gone, or not ours to remove. Either way the store is intact.
