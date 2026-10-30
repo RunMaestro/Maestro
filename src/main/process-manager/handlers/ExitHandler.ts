@@ -23,6 +23,7 @@ import {
 import { FALLBACK_CONTEXT_WINDOW } from '../../../shared/agentConstants';
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import { isSupersededGeneration } from '../generation';
+import { redactPrompt } from '../../../shared/agent-run/redact';
 import {
 	resolveTurnOutcome,
 	type TurnFacts,
@@ -507,6 +508,16 @@ export class ExitHandler {
 		// the key, leaving a process the user cannot stop.
 		if (this.processes.get(sessionId) === managedProcess) {
 			this.processes.delete(sessionId);
+		}
+		if (
+			settlement &&
+			(settlement.outcome === 'completed' || settlement.outcome === 'completed-with-warning') &&
+			managedProcess.streamedText?.trim()
+		) {
+			// The renderer can persist its transcript after this event. Consumers
+			// that decide dependency readiness must see the final answer, never an
+			// earlier partial snapshot that happened to look stable for two polls.
+			settlement.answerTail = redactPrompt(managedProcess.streamedText.slice(-4000));
 		}
 		this.emitter.emit('exit', sessionId, code, undefined, settlement);
 	}

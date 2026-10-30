@@ -240,6 +240,9 @@ export class AgentRunCaptureService {
 					exitCode: input.exitCode,
 					...(input.signal ? { signal: input.signal } : {}),
 					...(input.settlement ? input.settlement : {}),
+					...(input.settlement?.answerTail
+						? { answerTail: redactPrompt(input.settlement.answerTail.slice(-4000)) }
+						: {}),
 					durationMs,
 					completedAt: ts,
 				},

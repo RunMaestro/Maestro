@@ -1560,6 +1560,26 @@ describe('ExitHandler', () => {
 	});
 
 	describe('exit event settlement argument', () => {
+		it('carries a bounded redacted final answer before the renderer transcript is available', async () => {
+			const proc = createMockProcess({
+				toolType: 'codex',
+				isStreamJsonMode: true,
+				resultEmitted: true,
+				streamedText: `${'preliminary '.repeat(500)}token=super-secret-value\nTask failed: done-when`,
+				outputParser: createMockOutputParser(),
+			});
+			processes.set('worker-ai-tab', proc);
+			const onExit = vi.fn();
+			emitter.on('exit', onExit);
+
+			await exitHandler.handleExit('worker-ai-tab', 0);
+
+			const settlement = onExit.mock.calls[0][3];
+			expect(settlement.answerTail).toContain('Task failed: done-when');
+			expect(settlement.answerTail).not.toContain('super-secret-value');
+			expect(settlement.answerTail.length).toBeLessThanOrEqual(4000);
+		});
+
 		it('emits completed-with-warning when result was emitted but process exited with code 1', async () => {
 			const mockParser = createMockOutputParser();
 			const proc = createMockProcess({
@@ -1584,6 +1604,7 @@ describe('ExitHandler', () => {
 			expect(receivedSettlement).toEqual({
 				outcome: 'completed-with-warning',
 				answerCaptured: true,
+				answerTail: 'Final answer text',
 			});
 		});
 
@@ -1611,6 +1632,7 @@ describe('ExitHandler', () => {
 			expect(receivedSettlement).toEqual({
 				outcome: 'completed-with-warning',
 				answerCaptured: true,
+				answerTail: 'Batch task finished',
 			});
 		});
 
