@@ -5,6 +5,8 @@ import {
 	handleComposerPickerKey,
 	handleComposerSendKey,
 	isImeComposing,
+	PICKER_KEYS,
+	yieldKeyToIme,
 } from '../../../renderer/hooks/input/composerKeyDown';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { OUTPUT_SEARCH_INPUT_SELECTOR } from '../../../renderer/hooks/ui/useOutputSearchLayer';
@@ -53,6 +55,39 @@ describe('isImeComposing', () => {
 		).toBe(true);
 		expect(isImeComposing(keyEvent({ key: 'Enter', keyCode: 13 }).event)).toBe(false);
 		expect(isImeComposing(keyEvent({ key: 'Enter' }).event)).toBe(false);
+	});
+});
+
+describe('yieldKeyToIme', () => {
+	it('claims a listed key mid-composition without preventDefault, in both shapes', () => {
+		for (const shape of [CHROMIUM_COMPOSING, SAFARI_CONFIRM]) {
+			for (const key of ['Enter', 'Tab', 'ArrowDown', 'ArrowUp']) {
+				const { event, preventDefault, stopPropagation } = keyEvent({ key, ...shape });
+				expect(yieldKeyToIme(event, PICKER_KEYS)).toBe(true);
+				expect(preventDefault).not.toHaveBeenCalled();
+				expect(stopPropagation).not.toHaveBeenCalled();
+			}
+		}
+	});
+
+	it('stops a composing Escape at the composer so the window does not blur it', () => {
+		const { event, preventDefault, stopPropagation } = keyEvent({
+			key: 'Escape',
+			...CHROMIUM_COMPOSING,
+		});
+		expect(yieldKeyToIme(event, PICKER_KEYS)).toBe(true);
+		expect(preventDefault).not.toHaveBeenCalled();
+		expect(stopPropagation).toHaveBeenCalledTimes(1);
+	});
+
+	it('leaves an unlisted key and every key outside a composition alone', () => {
+		const unlisted = keyEvent({ key: 'ArrowLeft', ...CHROMIUM_COMPOSING });
+		expect(yieldKeyToIme(unlisted.event, PICKER_KEYS)).toBe(false);
+		for (const key of PICKER_KEYS) {
+			const plain = keyEvent({ key, keyCode: 13 });
+			expect(yieldKeyToIme(plain.event, PICKER_KEYS)).toBe(false);
+			expect(plain.stopPropagation).not.toHaveBeenCalled();
+		}
 	});
 });
 
