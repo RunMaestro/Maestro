@@ -32,6 +32,77 @@ import type {
 } from '../agents/session-storage';
 
 /**
+ * Builds the page `applyMessagePagination` would return while holding only the
+ * messages that page can contain.
+ *
+ * Pages are counted from the NEWEST message backwards, so the page is always
+ * inside the last `offset + limit` messages. A reader that streams a
+ * transcript pushes every message in file order; everything older than that
+ * window is dropped as it falls out, and only the count survives. Memory then
+ * tracks the page size instead of the transcript size, which is what keeps a
+ * resume or scroll-back of a multi-hundred-MB transcript from exhausting the
+ * main-process heap (#1862).
+ *
+ * Messages are addressed by their position in the whole transcript, so a
+ * reader can still patch an earlier message (Codex merges a tool's output into
+ * its call) when that message is inside the window.
+ */
+export class MessagePageCollector {
+	private readonly offset: number;
+	private readonly limit: number;
+	/** Messages that can still land in the page; the newest is last. */
+	private readonly keep: number;
+	private window: SessionMessage[] = [];
+	private total = 0;
+
+	constructor(options?: SessionReadOptions) {
+		this.offset = options?.offset ?? 0;
+		this.limit = options?.limit ?? 20;
+		this.keep = Math.max(0, this.offset) + Math.max(0, this.limit);
+	}
+
+	/** Append the next message in transcript order. Returns its position. */
+	push(message: SessionMessage): number {
+		this.window.push(message);
+		this.total += 1;
+		// Trim in batches, not per push: shifting the array on every message
+		// would make a long transcript quadratic.
+		if (this.window.length > this.keep * 2 + 64) {
+			this.window = this.window.slice(this.window.length - this.keep);
+		}
+		return this.total - 1;
+	}
+
+	/**
+	 * Replace the message at `position` when it is still held. A message that
+	 * already fell out of the window is older than any page this read can
+	 * return, so there is nothing to update.
+	 */
+	update(position: number, updater: (message: SessionMessage) => SessionMessage): void {
+		const index = position - (this.total - this.window.length);
+		if (index < 0 || index >= this.window.length) return;
+		this.window[index] = updater(this.window[index]);
+	}
+
+	result(): SessionMessagesResult {
+		// When offset >= total, there are no messages left to return
+		if (this.offset >= this.total) {
+			return { messages: [], total: this.total, hasMore: false };
+		}
+
+		const endIndex = this.total - this.offset;
+		const startIndex = Math.max(0, endIndex - this.limit);
+		const base = this.total - this.window.length;
+
+		return {
+			messages: this.window.slice(startIndex - base, endIndex - base),
+			total: this.total,
+			hasMore: startIndex > 0,
+		};
+	}
+}
+
+/**
  * A simplified message representation for search purposes.
  * Subclasses provide these from their agent-specific message format.
  */
@@ -233,27 +304,9 @@ export abstract class BaseSessionStorage implements AgentSessionStorage {
 		allMessages: SessionMessage[],
 		options?: SessionReadOptions
 	): SessionMessagesResult {
-		const offset = options?.offset ?? 0;
-		const limit = options?.limit ?? 20;
-
-		// When offset >= total, there are no messages left to return
-		if (offset >= allMessages.length) {
-			return {
-				messages: [],
-				total: allMessages.length,
-				hasMore: false,
-			};
-		}
-
-		const endIndex = allMessages.length - offset;
-		const startIndex = Math.max(0, endIndex - limit);
-		const slice = allMessages.slice(startIndex, endIndex);
-
-		return {
-			messages: slice,
-			total: allMessages.length,
-			hasMore: startIndex > 0,
-		};
+		const page = new MessagePageCollector(options);
+		for (const message of allMessages) page.push(message);
+		return page.result();
 	}
 
 	/**

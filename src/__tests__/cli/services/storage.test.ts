@@ -143,14 +143,14 @@ describe('storage service', () => {
 			expect(result).toContain('Maestro');
 		});
 
-		it('should return Linux config path with XDG_CONFIG_HOME', () => {
+		it('should return the lowercase Linux config path with XDG_CONFIG_HOME', () => {
 			vi.mocked(os.platform).mockReturnValue('linux');
 			vi.mocked(os.homedir).mockReturnValue('/home/testuser');
 			process.env.XDG_CONFIG_HOME = '/home/testuser/.custom-config';
 
 			const result = getConfigDirectory();
 
-			expect(result).toBe(path.join('/home/testuser/.custom-config', 'Maestro'));
+			expect(result).toBe(path.join('/home/testuser/.custom-config', 'maestro'));
 		});
 
 		it('should return Linux config path fallback without XDG_CONFIG_HOME', () => {
@@ -160,7 +160,7 @@ describe('storage service', () => {
 
 			const result = getConfigDirectory();
 
-			expect(result).toBe(path.join('/home/testuser', '.config', 'Maestro'));
+			expect(result).toBe(path.join('/home/testuser', '.config', 'maestro'));
 		});
 
 		it('should use Linux path for unknown platforms', () => {

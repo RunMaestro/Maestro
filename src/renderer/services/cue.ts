@@ -18,6 +18,7 @@ import type {
 	ScheduledTaskCreateInput,
 	ScheduledTaskUpdateInput,
 } from '../../shared/cue/scheduled-tasks';
+import type { CueReadinessReport } from '../../shared/cue/readiness';
 import { createIpcMethod } from './ipcWrapper';
 
 export const cueService = {
@@ -76,6 +77,15 @@ export const cueService = {
 			call: () => window.maestro.cue.getEventCount(),
 			errorContext: 'Cue getEventCount',
 			defaultValue: 0,
+		});
+	},
+
+	/** Rethrows: the Readiness tab shows a failed check rather than a fake report. */
+	async checkReadiness(): Promise<CueReadinessReport> {
+		return createIpcMethod({
+			call: () => window.maestro.cue.checkReadiness(),
+			errorContext: 'Cue checkReadiness',
+			rethrow: true,
 		});
 	},
 

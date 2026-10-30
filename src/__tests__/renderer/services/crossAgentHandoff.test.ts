@@ -175,4 +175,14 @@ describe('arm / drop', () => {
 		expect(tab().pendingMentionHandoff).toBeUndefined();
 		expect(tab('tab-2').pendingMentionHandoff).toBeUndefined();
 	});
+
+	it("a Stop aimed at one tab drops only that tab's hand-off", () => {
+		const handoff = { targets: [KENSHO], message: 'm' };
+		seed([], handoff);
+
+		dropMentionHandoffs(SOURCE_ID, 'tab-2');
+
+		expect(tab('tab-2').pendingMentionHandoff).toBeUndefined();
+		expect(tab().pendingMentionHandoff).toEqual(handoff);
+	});
 });

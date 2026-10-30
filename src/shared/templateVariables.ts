@@ -18,6 +18,7 @@ import { resolveEncoreFeatures, type EncoreFeatureDefaults } from './encoreFeatu
  *   {{AGENT_GROUP}}       - Agent's group name (if grouped)
  *   {{AGENT_SESSION_ID}}  - Agent session ID (for conversation continuity)
  *   {{AGENT_HISTORY_PATH}} - Path to agent's history JSON file (for task recall)
+ *   {{AGENT_JOURNEY_PATH}} - Path to agent's User Journey JSONL file (what the user did in Maestro)
  *   {{TAB_ID}}            - This conversation's AI tab ID (for CLI targeting; empty on headless spawns)
  *   {{TAB_NAME}}          - Custom tab name (alias: SESSION_NAME)
  *   {{TOOL_TYPE}}         - Agent type (claude-code, codex, opencode, factory-droid)
@@ -217,6 +218,11 @@ export interface TemplateContext {
 	// History file path for task recall
 	historyFilePath?: string;
 	/**
+	 * The agent's User Journey file, for {{AGENT_JOURNEY_PATH}}. Builders leave
+	 * it unset for SSH-remote agents, whose shell cannot reach that path.
+	 */
+	journeyFilePath?: string;
+	/**
 	 * `<userData>/computer-history` on the Maestro machine, for the Computer
 	 * History system-prompt section. Builders leave it unset for SSH-remote
 	 * agents, whose shell cannot reach that path.
@@ -241,6 +247,10 @@ export interface TemplateContext {
 	now?: Date;
 	// Cue event context (for Cue automation prompts)
 	cue?: {
+		pluginId?: string;
+		pluginTopic?: string;
+		pluginEventId?: string;
+		pluginMetadata?: string;
 		eventType?: string;
 		eventTimestamp?: string;
 		triggerName?: string;
@@ -342,6 +352,7 @@ export const TEMPLATE_VARIABLES = [
 		encoreFlag: 'maestroRun',
 	},
 	{ variable: '{{AGENT_HISTORY_PATH}}', description: 'History file path (task recall)' },
+	{ variable: '{{AGENT_JOURNEY_PATH}}', description: 'User Journey file path (user actions)' },
 	{ variable: '{{AGENT_NAME}}', description: 'Agent name' },
 	{ variable: '{{AGENT_PATH}}', description: 'Agent home directory path' },
 	{ variable: '{{AGENT_SESSION_ID}}', description: 'Agent session ID' },
@@ -370,6 +381,14 @@ export const TEMPLATE_VARIABLES = [
 		cueOnly: true,
 	},
 	{ variable: '{{CUE_EVENT_TIMESTAMP}}', description: 'Cue event timestamp', cueOnly: true },
+	{ variable: '{{CUE_PLUGIN_ID}}', description: 'Authenticated plugin ID', cueOnly: true },
+	{
+		variable: '{{CUE_PLUGIN_TOPIC}}',
+		description: 'Authenticated plugin event topic',
+		cueOnly: true,
+	},
+	{ variable: '{{CUE_PLUGIN_EVENT_ID}}', description: 'Stable plugin event ID', cueOnly: true },
+	{ variable: '{{CUE_PLUGIN_METADATA}}', description: 'Opaque plugin event JSON', cueOnly: true },
 	{ variable: '{{CUE_EVENT_TYPE}}', description: 'Cue event type', cueOnly: true },
 	{
 		variable: '{{CUE_GH_ASSIGNEES}}',
@@ -547,6 +566,128 @@ export const TEMPLATE_VARIABLES_GENERAL = TEMPLATE_VARIABLES.filter(
 	(v) => !v.autoRunOnly && !v.cueOnly
 );
 
+/** A Cue template variable whose value a third party can write. */
+export interface CueUntrustedTemplateVariable {
+	/** The variable name, without braces. */
+	variable: string;
+	/** The `TemplateContext.cue` field the variable is substituted from. */
+	contextKey: keyof NonNullable<TemplateContext['cue']>;
+	/** The Cue event types that fill the variable. */
+	events: readonly string[];
+	/** What the text is, for a block notice. */
+	description: string;
+}
+
+const CUE_GITHUB_EVENTS = ['github.pull_request', 'github.issue', 'github.label'] as const;
+
+/**
+ * The Cue template variables that carry UNTRUSTED text: text written by
+ * someone other than the user, which Cue then substitutes into a prompt or a
+ * shell command. This is the one list the prompt-injection screen reads
+ * (`src/shared/cue/injection-screen.ts`), so adding a variable that carries
+ * outside text means adding it here.
+ *
+ * In: GitHub titles, bodies, comments and the head branch of a pull request
+ * (the author of a fork names it), the content of a watched task file, and
+ * everything a webhook sender controls, and plugin-provided event metadata.
+ *
+ * Out, on purpose: labels and the base branch (set by people with write access
+ * to the repository), authors and URLs (a fixed character set), file paths (a
+ * local file name), `{{CUE_CLI_PROMPT}}` (typed by the person who ran the
+ * trigger), and `{{CUE_SOURCE_OUTPUT}}` with its per-source forms (the output
+ * of the user's own upstream agent, which reads as instructions by nature and
+ * would be flagged constantly).
+ */
+export const CUE_UNTRUSTED_TEMPLATE_VARIABLES: readonly CueUntrustedTemplateVariable[] = [
+	{
+		variable: 'CUE_PLUGIN_METADATA',
+		contextKey: 'pluginMetadata',
+		events: ['plugin.event'],
+		description: 'plugin event metadata',
+	},
+	{
+		variable: 'CUE_GH_TITLE',
+		contextKey: 'ghTitle',
+		events: CUE_GITHUB_EVENTS,
+		description: 'pull request or issue title',
+	},
+	{
+		variable: 'CUE_GH_BODY',
+		contextKey: 'ghBody',
+		events: CUE_GITHUB_EVENTS,
+		description: 'pull request or issue body',
+	},
+	{
+		variable: 'CUE_NEW_COMMENTS',
+		contextKey: 'ghNewComments',
+		events: CUE_GITHUB_EVENTS,
+		description: 'new comments',
+	},
+	{
+		variable: 'CUE_GH_BRANCH',
+		contextKey: 'ghBranch',
+		events: CUE_GITHUB_EVENTS,
+		description: 'pull request head branch',
+	},
+	{
+		variable: 'CUE_TASK_CONTENT',
+		contextKey: 'taskContent',
+		events: ['task.pending'],
+		description: 'task file content',
+	},
+	{
+		variable: 'CUE_TASK_LIST',
+		contextKey: 'taskList',
+		events: ['task.pending'],
+		description: 'pending task list',
+	},
+	{
+		variable: 'CUE_WEBHOOK_BODY',
+		contextKey: 'webhookBody',
+		events: ['webhook.received'],
+		description: 'webhook payload',
+	},
+	{
+		variable: 'CUE_WEBHOOK_HEADERS',
+		contextKey: 'webhookHeaders',
+		events: ['webhook.received'],
+		description: 'webhook request headers',
+	},
+	{
+		variable: 'CUE_WEBHOOK_EVENT',
+		contextKey: 'webhookEvent',
+		events: ['webhook.received'],
+		description: 'webhook event name',
+	},
+	{
+		variable: 'CUE_WEBHOOK_DELIVERY_ID',
+		contextKey: 'webhookDeliveryId',
+		events: ['webhook.received'],
+		description: 'webhook delivery id',
+	},
+];
+
+/**
+ * The untrusted variables a set of templates references, in list order.
+ * Matching is case-insensitive, the same as {@link substituteTemplateVariables}:
+ * a variable this misses would still be substituted.
+ */
+export function findCueUntrustedTemplateVariables(
+	templates: readonly (string | undefined | null)[]
+): CueUntrustedTemplateVariable[] {
+	const text = templates
+		.filter((template): template is string => typeof template === 'string')
+		.join('\n')
+		.toUpperCase();
+	if (!text.includes('{{')) return [];
+	return CUE_UNTRUSTED_TEMPLATE_VARIABLES.filter((entry) => text.includes(`{{${entry.variable}}}`));
+}
+
+/** Whether an event type fills any untrusted variable. */
+export function cueEventCarriesUntrustedText(eventType: string): boolean {
+	return CUE_UNTRUSTED_TEMPLATE_VARIABLES.some((entry) => entry.events.includes(eventType));
+}
+
 /**
  * Drop the variables of every Encore Feature that is switched off, for the
  * pickers and help panels that LIST variables. Substitution is unaffected: a
@@ -581,6 +722,7 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		goalExitCriteria,
 		predecessorHandoff,
 		historyFilePath,
+		journeyFilePath,
 		computerHistoryDir,
 		maestroRunPath,
 		conductorProfile,
@@ -599,6 +741,7 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		AGENT_GROUP: groupName || '',
 		AGENT_SESSION_ID: session.agentSessionId || '',
 		AGENT_HISTORY_PATH: historyFilePath || '',
+		AGENT_JOURNEY_PATH: journeyFilePath || '',
 		COMPUTER_HISTORY_DIR: computerHistoryDir || '',
 		MAESTRO_RUN_PATH: maestroRunPath || '',
 		// The AI tab this spawn belongs to. Empty for headless spawns (CLI send,
@@ -678,6 +821,10 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 			: getMaestroCLIPath(),
 
 		// Cue variables
+		CUE_PLUGIN_ID: context.cue?.pluginId ?? '',
+		CUE_PLUGIN_TOPIC: context.cue?.pluginTopic ?? '',
+		CUE_PLUGIN_EVENT_ID: context.cue?.pluginEventId ?? '',
+		CUE_PLUGIN_METADATA: context.cue?.pluginMetadata ?? '',
 		CUE_EVENT_TYPE: context.cue?.eventType || '',
 		CUE_EVENT_TIMESTAMP: context.cue?.eventTimestamp || '',
 		CUE_TRIGGER_NAME: context.cue?.triggerName || '',

@@ -155,8 +155,8 @@ export function handleRenameGroup(
 }
 
 /**
- * Handle update_group message - change a group's name, appearance, parent, or
- * whether it is parked out of the Left Bar.
+ * Handle update_group message - change a group's name, appearance, parent,
+ * whether it is parked out of the Left Bar, or whether it is folded.
  *
  * Everything is validated here, before the renderer is asked to mutate
  * anything, so a request carrying one bad field cannot half-apply. The renderer
@@ -193,6 +193,15 @@ export function handleUpdateGroup(
 			return;
 		}
 		request.hidden = rawHidden;
+	}
+
+	const rawCollapsed = (message as Record<string, unknown>).collapsed;
+	if (rawCollapsed !== undefined) {
+		if (typeof rawCollapsed !== 'boolean') {
+			ctx.sendError(client, 'Invalid collapsed');
+			return;
+		}
+		request.collapsed = rawCollapsed;
 	}
 
 	const rawClear = (message as Record<string, unknown>).clear;

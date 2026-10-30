@@ -71,12 +71,17 @@ class NodeSqliteDatabaseShim {
 	 * (`table_info(cue_events)`) returns one row per column, which is what the
 	 * additive-column migration reads.
 	 */
-	pragma(source: string): unknown {
+	pragma(source: string, options: { simple?: boolean } = {}): unknown {
 		if (source.includes('=')) {
 			this.db.exec(`PRAGMA ${source}`);
 			return [];
 		}
-		return this.db.prepare(`PRAGMA ${source}`).all();
+		const rows = this.db.prepare(`PRAGMA ${source}`).all();
+		return options.simple ? Object.values(rows[0] ?? {})[0] : rows;
+	}
+
+	exec(sql: string): void {
+		this.db.exec(sql);
 	}
 
 	prepare(sql: string): ReturnType<DatabaseSync['prepare']> {
@@ -101,6 +106,11 @@ class NodeSqliteDatabaseShim {
 				throw err;
 			}
 		};
+	}
+
+	function(name: string, fn: () => number): this {
+		this.db.function(name, fn);
+		return this;
 	}
 
 	close(): void {

@@ -258,6 +258,37 @@ describe('UsageDashboardModal shell components', () => {
 		expect(switchViewMode).toHaveBeenCalledWith('activity');
 	});
 
+	it('scrolls the active tab into view when the selection changes', () => {
+		const viewModeTabs = [
+			{ value: 'overview' as const, label: 'Overview' },
+			{ value: 'activity' as const, label: 'Activity' },
+		];
+		const props = { theme, viewModeTabs, switchViewMode: vi.fn(), onKeyDown: vi.fn() };
+		const { rerender } = render(<UsageDashboardTabs {...props} viewMode="overview" />);
+
+		const activityTab = screen.getByRole('tab', { name: 'Activity' });
+		const scrollSpy = vi.fn();
+		activityTab.scrollIntoView = scrollSpy;
+
+		rerender(<UsageDashboardTabs {...props} viewMode="activity" />);
+		expect(scrollSpy).toHaveBeenCalledWith(expect.objectContaining({ block: 'nearest' }));
+	});
+
+	it('forwards the tab strip element to the parent ref', () => {
+		const ref = { current: null as HTMLDivElement | null };
+		render(
+			<UsageDashboardTabs
+				ref={ref}
+				theme={theme}
+				viewMode="overview"
+				viewModeTabs={[{ value: 'overview', label: 'Overview' }]}
+				switchViewMode={vi.fn()}
+				onKeyDown={vi.fn()}
+			/>
+		);
+		expect(ref.current).toBe(screen.getByTestId('view-mode-tabs'));
+	});
+
 	it('renders footer range text and exact database size formatting', () => {
 		render(
 			<UsageDashboardFooter

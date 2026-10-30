@@ -76,19 +76,24 @@ Maestro's own system prompt tells agents to **pass `--background` by default** a
 
 **The flag is additive: one verb's default changed.** An unflagged call behaves exactly as it always has, except `refresh-auto-run`, which is now background by default because its old focusing default only ever pulled you away from the agent you were looking at.
 
-| Command                     | Default when neither flag is passed         |
-| --------------------------- | ------------------------------------------- |
-| `open-file`                 | switches to the file                        |
-| `open-terminal`             | switches to the new terminal                |
-| `open-browser`              | switches to the new browser tab             |
-| `tab new`                   | switches to the new tab                     |
-| `dispatch --new-tab`        | **background** (as it always was)           |
-| `dispatch` (no `--new-tab`) | selects the target agent                    |
-| `create-agent`              | selects the new agent                       |
-| `create-worktree`           | selects the new agent                       |
-| `switch-mode`               | switches the mode                           |
-| `refresh-auto-run`          | **background** (`--focus` to switch)        |
-| `refresh-files`             | **already quiet**; flag accepted, no effect |
+| Command                     | Default when neither flag is passed                    |
+| --------------------------- | ------------------------------------------------------ |
+| `open-file`                 | switches to the file                                   |
+| `open-terminal`             | switches to the new terminal                           |
+| `open-browser`              | switches to the new browser tab                        |
+| `tab new`                   | switches to the new tab                                |
+| `tab reopen`                | switches to the restored tab                           |
+| `tab compact`               | switches to the compacted tab                          |
+| `tab merge`                 | switches to the receiving tab, which sends the context |
+| `tab transfer`              | switches to the new tab in the target agent            |
+| `dispatch --new-tab`        | **background** (as it always was)                      |
+| `dispatch` (no `--new-tab`) | selects the target agent                               |
+| `create-agent`              | selects the new agent                                  |
+| `duplicate-agent`           | selects the new agent                                  |
+| `create-worktree`           | selects the new agent                                  |
+| `switch-mode`               | switches the mode                                      |
+| `refresh-auto-run`          | **background** (`--focus` to switch)                   |
+| `refresh-files`             | **already quiet**; flag accepted, no effect            |
 
 `focus-agent`, `send --tab`, `open`, and `open-graph` exist _to_ move the view - you named that intent - so they take no placement flag. The graph in particular is a full-window overlay whose only effect is being looked at, so a background one would do nothing at all.
 
@@ -207,6 +212,9 @@ maestro-cli dispatch <agent-id> "and now run the tests" -t <tab-id>
 
 # Force a write to a busy tab (requires allowConcurrentSend=true)
 maestro-cli dispatch <agent-id> "interrupt with this" -f
+
+# Pick how an @mention runs instead of leaving it to the wording
+maestro-cli dispatch <agent-id> "fix the flaky test, then tell @Reviewer" --routing handoff
 ```
 
 Output is always JSON. `sessionId` and `tabId` are the same value, duplicated so polling consumers can use either name:
@@ -220,14 +228,15 @@ Output is always JSON. `sessionId` and `tabId` are the same value, duplicated so
 }
 ```
 
-| Flag             | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--new-tab`      | Create a fresh AI tab in the target agent and deliver the prompt into it. The tab is hidden: it is named from the prompt and runs normally, but draws no chip in the tab strip until you open it from the completion toast or the caller's delegation pill. If the agent is mid-turn the prompt is queued for the new tab and runs when that turn ends, so the response reports `queued: true`. Mutually exclusive with `-t` and `-f` (a new tab owns no turn for `--force` to bypass) |
-| `--visible`      | With `--new-tab`: give the new tab a chip in the tab strip instead of creating it hidden. `--focus` implies it                                                                                                                                                                                                                                                                                                                                                                         |
-| `--background`   | Leave the view where it is. Already the default with `--new-tab`; without it, suppresses the agent switch                                                                                                                                                                                                                                                                                                                                                                              |
-| `--focus`        | Move the view to the target after dispatching                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `-t, --tab <id>` | Target an existing tab by id (from a previous `dispatch`). Mutually exclusive with `--new-tab`                                                                                                                                                                                                                                                                                                                                                                                         |
-| `-f, --force`    | Bypass the busy-state guard. Gated by `allowConcurrentSend`; errors with code `FORCE_NOT_ALLOWED`. Cannot be combined with `--new-tab`                                                                                                                                                                                                                                                                                                                                                 |
+| Flag               | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `--new-tab`        | Create a fresh AI tab in the target agent and deliver the prompt into it. The tab is hidden: it is named from the prompt and runs normally, but draws no chip in the tab strip until you open it from the completion toast or the caller's delegation pill. If the agent is mid-turn the prompt is queued for the new tab and runs when that turn ends, so the response reports `queued: true`. Mutually exclusive with `-t` and `-f` (a new tab owns no turn for `--force` to bypass)                                                     |
+| `--visible`        | With `--new-tab`: give the new tab a chip in the tab strip instead of creating it hidden. `--focus` implies it                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `--background`     | Leave the view where it is. Already the default with `--new-tab`; without it, suppresses the agent switch                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `--focus`          | Move the view to the target after dispatching                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `-t, --tab <id>`   | Target an existing tab by id (from a previous `dispatch`). Mutually exclusive with `--new-tab`                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `-f, --force`      | Bypass the busy-state guard. Gated by `allowConcurrentSend`; errors with code `FORCE_NOT_ALLOWED`. Cannot be combined with `--new-tab`                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `--routing <mode>` | How the message's `@mentions` run, the same pick as the composer's routing strip: `parallel` (both answer; this agent waits for the reply), `consult-first` (the mentioned agent answers first), `handoff` (this agent's answer is sent on), or `only` (just the mentioned agents answer). Overrides what the wording implies. Works with `--queue` and `--new-tab`. Errors with `INVALID_OPTIONS` for an unknown mode or a message that mentions no other agent. Read it back with `queue list`, which shows each item's `mentionRouting` |
 
 Error codes: `INVALID_OPTIONS`, `AGENT_NOT_FOUND`, `FORCE_NOT_ALLOWED`, `MAESTRO_NOT_RUNNING`, `SESSION_NOT_FOUND`, `NEW_TAB_NO_ID`, `COMMAND_FAILED`. `NEW_TAB_NO_ID` fires when the desktop app acknowledges `--new-tab` without returning a tab id, leaving callers nothing to chain follow-up dispatches against. Requires the Maestro desktop app to be running.
 
@@ -258,7 +267,7 @@ The response echoes the armed callback:
 | Flag                              | Description                                                                               |
 | --------------------------------- | ----------------------------------------------------------------------------------------- |
 | `--notify-on-complete <agent-id>` | Agent to wake when this dispatch finishes. Requires `--new-tab` or `--tab`                |
-| `--callback-tab <id>`             | Specific caller tab to wake. Default: the caller's active AI tab                          |
+| `--callback-tab <id>`             | Specific caller tab to wake. Default: the tab that ran `dispatch`, else the active AI tab |
 | `--callback-prompt <text>`        | Replace the default wake-up prompt body. `{{DISPATCH_*}}` variables below are substituted |
 | `--callback-timeout <seconds>`    | Give up and fire a `timeout` callback after this long. Default 3600, hard cap 86400       |
 
@@ -527,6 +536,12 @@ maestro-cli create-agent "Full Config" -d /workspace \
 	--ssh-cwd /remote/workdir \
 	--auto-run-folder ~/playbooks/full-config
 
+# Duplicate an agent the way the Left Bar's "Duplicate..." does
+maestro-cli duplicate-agent <agent-id>
+
+# Duplicate into another directory and group, under a new name
+maestro-cli duplicate-agent <agent-id> --name "Reviewer" --cwd ../other-repo -g <group-id> --json
+
 # Remove an agent
 maestro-cli remove-agent <agent-id>
 
@@ -638,6 +653,17 @@ The flag table below covers `create-agent`:
 | `--focus`                         | Select the new agent after creating it (default)         | -                          |
 | `--json`                          | Machine-readable JSON output                             | -                          |
 
+`duplicate-agent <agent>` copies what the Left Bar's **Duplicate...** copies, through the same rules the New Agent modal prefills from: provider, working directory, group, additional directories, nudge and new session messages, custom path, args, env vars, model, effort, context window and provider path, Adaptive Mode, Agent Resilience, Codex automatic resets and transport, and the SSH remote. It does not copy tabs, history, the Auto Run folder (the copy gets `<cwd>/.maestro/playbooks`), or SSH history-sync flags. A name already in use is refused, as in the modal; sharing the source's directory prints a warning. The Pianola manager cannot be duplicated. Read the copy back with `show-agent <new-id>`.
+
+| Flag                | Description                                                                     | Default                |
+| ------------------- | ------------------------------------------------------------------------------- | ---------------------- |
+| `-n, --name <name>` | Name for the copy                                                               | `<source name> (Copy)` |
+| `-g, --group <id>`  | Group ID or prefix for the copy                                                 | the source's group     |
+| `-d, --cwd <path>`  | Working directory for the copy; a remote path, taken as typed, for an SSH agent | the source's directory |
+| `--background`      | Create the copy without selecting it in the Left Bar                            | -                      |
+| `--focus`           | Select the copy after creating it (default)                                     | -                      |
+| `--json`            | Machine-readable JSON output                                                    | -                      |
+
 ### Creating, Updating, and Removing Groups
 
 Manage Left Bar groups from the command line, including their appearance and nesting, so a bootstrap script or CI job can reproduce a whole workspace layout without anyone clicking through the desktop UI. Requires the Maestro desktop app to be running. Use a group ID with `create-agent -g` or `update-agent --group` to place agents into it, and `update-agent --group none` to move an agent back out.
@@ -668,6 +694,10 @@ maestro-cli update-group <group-id> --clear-parent
 # Remove appearance you set earlier
 maestro-cli update-group <group-id> --clear-icon --clear-color
 
+# Fold a group in the Left Bar, or unfold it
+maestro-cli update-group <group-id> --collapse
+maestro-cli update-group <group-id> --expand
+
 # Remove an (empty) group
 maestro-cli remove-group <group-id>
 
@@ -696,7 +726,9 @@ Notes on behavior:
 - **Icon and color survive the Groups+ feature gate.** Turning Groups+ off falls back to the legacy emoji presentation but does not discard stored icon and color; turning it back on restores them.
 - Group nesting is one level deep: a root group can hold child groups, but a child group cannot hold its own children.
 
-`maestro-cli list groups --json` reports `icon`, `color`, and `parentGroupId` alongside the existing fields, so a script can read back exactly what it set.
+`maestro-cli list groups --json` reports `icon`, `color`, `parentGroupId`, and `collapsed` alongside the existing fields, so a script can read back exactly what it set.
+
+There is no reorder verb: the Left Bar sorts groups and agents by name, and a drag only changes membership. Move an agent with `update-agent --group` (its worktree children travel with it), and a group with `update-group --parent` / `--clear-parent`.
 
 `create-group` flags:
 
@@ -721,6 +753,8 @@ Notes on behavior:
 | `--clear-icon`        | Remove the icon                                                         | -       |
 | `--clear-color`       | Remove the label color                                                  | -       |
 | `--clear-parent`      | Promote the group to the top level                                      | -       |
+| `--collapse`          | Fold the group in the Left Bar. Mutually exclusive with `--expand`      | -       |
+| `--expand`            | Unfold a collapsed group in the Left Bar                                | -       |
 | `--json`              | Machine-readable JSON output                                            | -       |
 
 `remove-group` flags:
@@ -830,12 +864,29 @@ maestro-cli tab enter-to-send <tab-id> false    # "inherit" = global setting
 maestro-cli tab move <tab-id> first
 maestro-cli tab move <tab-id> 2
 
+# Reopen a closed tab, as Cmd+Shift+T does. "tab closed" lists the stack,
+# newest first; reopen takes the newest, or one entry by --index or --tab.
+maestro-cli tab closed -a <agent-id>
+maestro-cli tab reopen -a <agent-id>
+maestro-cli tab reopen -a <agent-id> --index 2
+maestro-cli tab reopen -a <agent-id> --tab <closed-tab-id> --background
+
+# The tab menu's Context items. Each acts on the active tab unless you name one,
+# and prints the tab it produced. Merge and transfer move the transcript verbatim.
+maestro-cli tab compact -a <agent-id>                         # summarize into a new tab
+maestro-cli tab merge <tab-id> --into <agent-id> [--target-tab <tab-id>]
+maestro-cli tab transfer <tab-id> --to <agent-id> --background
+
 # Pin an agent to the Bookmarks section at the top of the Left Bar
 maestro-cli bookmark <agent-id>
 maestro-cli unbookmark <agent-id>
 ```
 
-`tab new` and `switch-mode` both take `--background` / `--focus`; see [Who Moves the View](#who-moves-the-view---background----focus). `switch-mode --background` refuses when the target is the agent already on screen, since the mode change _is_ the view change there, and tells you to re-run with `--focus` if you meant it anyway.
+`tab reopen` prints the restored tab's new ID; without `-a` it acts on the agent selected in the desktop, and an empty stack or a bad `--index` / `--tab` exits 1 with a message. The closed-tab stack is kept across restarts, capped at 25 entries per agent.
+
+`tab compact` prints the compacted tab's ID and how much smaller its context is; it refuses a tab too small to compact. `tab merge` sends into the target agent's active tab unless `--target-tab` names another (another tab of the same agent works too); with `--background` the context waits on that tab and sends when it is next opened, which the output says. `tab transfer` prints the new tab's ID in the target agent; a busy target queues the context behind its running turn. A compaction can take minutes, so the CLI waits up to 10 minutes; if any of the three runs out of time it exits 5 and says the operation may still be running, rather than reporting a failure.
+
+`tab new`, `tab reopen`, `tab compact`, `tab merge`, `tab transfer`, and `switch-mode` take `--background` / `--focus`; see [Who Moves the View](#who-moves-the-view---background----focus). `switch-mode --background` refuses when the target is the agent already on screen, since the mode change _is_ the view change there, and tells you to re-run with `--focus` if you meant it anyway.
 
 Find tab IDs with `maestro-cli session list`. `tab new` returns the new tab's ID (printed, or in the JSON payload with `--json`). Every verb that takes a `<tab-id>` also accepts the literal `active`, which resolves to the tab the agent currently has selected - `-a <agent-id>` says whose, and without it the CLI uses the agent the desktop has focused.
 
@@ -844,6 +895,58 @@ An agent running inside Maestro gets its **own** tab ID in its system prompt (th
 Bookmark, unread, star, and save-to-history are explicit set operations rather than toggles, so re-running a script lands on the same state either way. `tab thinking` is the one exception, and only in its `cycle` form, which advances one step the way clicking the chip does. Read the current values back with `maestro-cli tab show <tab-id>`, `maestro-cli show agent <id> --json` (field `bookmarked`), or `maestro-cli session list --json` (fields `starred`, `thinking`, `readOnly`, `model`, `effort`, `saveToHistory`, `enterToSend`, `active`).
 
 `model`, `effort`, and `enter-to-send` are per-tab overrides: `inherit` clears the override so the tab follows the agent's model/effort or the global `enterToSendAI` setting again. That is not the same as `false` - `tab enter-to-send <tab-id> false` pins the tab to Cmd+Enter even when the global default is Enter. Agent-wide defaults still live on `maestro-cli update-agent <id> --model/--effort`. `bookmark` also has a flag form, `maestro-cli update-agent <id> --bookmark true`, for when you are already changing other agent settings in the same call.
+
+### Stopping a Running Turn (`interrupt`)
+
+Stop a turn another agent cannot get out of, the same as clicking the red Stop pill. It requires the desktop app to be running.
+
+```bash
+# Stop every busy tab of an agent (what the Stop pill does)
+maestro-cli interrupt <agent-id>
+
+# Stop one tab only: an exact tab ID, a unique prefix, or "active"
+maestro-cli interrupt <agent-id> --tab <tab-id>
+maestro-cli interrupt <agent-id> --tab active
+
+# Machine-readable result
+maestro-cli interrupt <agent-id> --json
+```
+
+The stop goes through the same code as the desktop: it signals the tab's own process, cancels a pending auto-retry, context compaction, hand-off, or consult for that scope, and settles the tab to idle. With no `--tab`, every busy tab of the agent stops; `--tab` leaves the agent's other tabs running.
+
+The verb is safe to re-run. When nothing is running it prints `Nothing to stop` and exits 0 (`wasBusy: false` in JSON). A failed stop exits 1, and a desktop that never answered exits 5. The JSON payload is `{ success, agentId, tabId, wasBusy, interrupted, stoppedTabIds, exited }`. `exited: true` means the stopped processes are gone, so `maestro-cli tab show <tab-id>` (the `State` row) and `maestro-cli session list --json` (field `state`) already read idle; when it is `false`, the CLI prints the `tab show` command to check again.
+
+An agent cannot interrupt itself from inside its own turn: the verb refuses the caller's own agent, or `--tab` naming the caller's own tab. A sibling tab of the same agent is allowed.
+
+### Live Mode (`live`)
+
+Read or switch Live mode, the LIVE pill in the Left Bar that opens the web interface to other devices on the network, and Remote Control, the Cloudflare tunnel that opens it to the internet. It requires the desktop app to be running.
+
+```bash
+# On or off, the web interface URL, and Remote Control
+maestro-cli live status
+maestro-cli live status --json
+
+# Turn it on or off (each answers with the resulting status)
+maestro-cli live on
+maestro-cli live off --json
+
+# Live mode and Remote Control in one step
+maestro-cli live on --tunnel
+
+# Remote Control alone (Live mode must already be on)
+maestro-cli live tunnel on
+maestro-cli live tunnel off
+```
+
+`live on` and `live off` run the same main-process switch as the pill, so every open window's pill follows. They are explicit set verbs, safe to re-run: when Live is already in the requested state nothing restarts, the access token stays the same, and the command prints `Live mode was already on` (`changed: false` in JSON). `live off` also stops Remote Control (the tunnel), as the pill does; `live on` starts it only with `--tunnel`.
+
+Remote Control needs `cloudflared` on your PATH (macOS: `brew install cloudflared`), and refuses while Live is off, because the only server running then is the local one `maestro-cli` itself talks to. It does not restart the server, so `live tunnel on` simply waits for the tunnel (up to 45 seconds) and prints its public URL. The LIVE panel's Remote Control row follows whatever the CLI does.
+
+Switching Live replaces the server the CLI talks to, so the desktop answers first and then switches. The CLI reconnects and polls `live status` until the switch finishes (up to 20 seconds), then prints the result. A failed switch exits 1 with the desktop's error, which `live status` also shows as `Last error` until the next success. The JSON payload is `{ success, changed, live, url, remoteControl, remoteControlUrl, remoteControlError?, revision, lastError? }`; `live status --json` has the same fields without `changed`.
+
+> [!WARNING]
+> `live on` opens the web interface to every device that can reach this machine on the network, with no confirmation, the same as clicking the pill. Anyone holding the URL (it carries the access token) can drive your agents.
 
 ### Listing Resources
 
@@ -1204,6 +1307,12 @@ maestro-cli encore disable maestroCue
 
 Encore feature IDs: `directorNotes`, `usageStats`, `symphony`, `maestroCue`, `pianola`, `quickChat`, and on macOS `maestroRun`. Friendly aliases are accepted (for example `cue` for `maestroCue`, `quick-chat` for `quickChat`). Group Chat is a core feature with no Encore flag, so `group-chat` is not an alias for `symphony`.
 
+`autopilot`, `auto-pilot`, and `pilot` remain aliases for enabling Pianola. They do not grant automatic repair permission. `encore list --json` includes `pianola.mode` (`disabled`, `supervision`, or `automatic_repairs`), the saved `autoFixEnabled` permission, and `automaticMergeAvailable: false`.
+
+Automatic repairs are a separate opt-in in **Settings > Plugins > Pianola > Settings > Automatic repairs**, or via `maestro-cli settings set pianolaAutoFixEnabled true`. The setting defaults to `false` and is re-read before repair actions. Set it to `false` to revoke permission. Repair dispatches remain bounded; repair workers can change files within their existing access. Enabling repairs does not authorize merging. The current merge adapter records `skipped` and never executes a merge.
+
+Legacy hand-edited `encoreFeatures.autopilot` values no longer grant repair permission. Review the separate setting and opt in explicitly if repairs are wanted; no migration silently enables them.
+
 Gloss levels, least to most: `off` (the shipped flat look), `sheen`, `strong`, `max`. Gloss only adds highlights and shadows to the sidebars, headers, tab bar and composer, so it changes no theme color and leaves text exactly as legible. It has no effect on light themes.
 
 ### MaestroRun (macOS)
@@ -1347,6 +1456,11 @@ maestro-cli settings agent reset codex model
 | `contextWindow`    | number | Context window size in tokens                                                                                     |
 | `reasoningEffort`  | string | Reasoning effort level (`low`, `medium`, `high`)                                                                  |
 | `reasoningSummary` | string | Codex only: reasoning shown in Thinking (`auto`, `concise`, `detailed`, `none`); empty inherits the Codex default |
+
+Codex configuration notices, such as an ignored setting, appear as `Codex warning:`
+diagnostics in the desktop transcript even with Thinking off. Headless CLI runs
+print them to stderr. These notices do not stop the turn or become part of the
+assistant's answer; actual turn failures still use normal error handling.
 
 <Info>
 Settings and agent config changes made via the CLI are automatically detected by the running Maestro desktop app. The app watches for file changes and reloads immediately - it's as if you toggled the setting in the Settings modal yourself.

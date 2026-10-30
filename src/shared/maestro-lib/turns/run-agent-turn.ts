@@ -117,6 +117,11 @@ export interface RunAgentTurnOptions {
 	 */
 	claudeSpawnDeps?: ClaudeSpawnCoreDeps;
 	maestroPBinPath?: string | null;
+	/**
+	 * The turn runs in the agent's own working directory, so a TUI turn may accept claude's
+	 * folder-trust prompt there (#1872). Leave unset for any other folder.
+	 */
+	acceptWorkspaceTrust?: boolean;
 	/** Aborting stops the turn, from the terminate stage. */
 	signal?: AbortSignal;
 	/** How long each stop stage gets. Default: `INTERACTIVE_STOP_GRACE_MS`. */
@@ -381,6 +386,7 @@ export async function runAgentTurn(
 					decision: claudeDecision,
 					interactiveModeArgs: provider.interactiveModeArgs,
 					remoteClaudeBin: claudeDecision.claudeRealBinPath,
+					acceptWorkspaceTrust: options.acceptWorkspaceTrust,
 				})
 			: null;
 		const wrap = deps.wrapSpawnWithSsh ?? wrapSpawnWithSsh;
@@ -431,6 +437,7 @@ export async function runAgentTurn(
 				command: plan.command,
 				args: plan.args,
 				customEnvVars: {},
+				acceptWorkspaceTrust: options.acceptWorkspaceTrust,
 			});
 			// What maestro-p adds (MAESTRO_CLAUDE_BIN and friends) goes over the planned
 			// environment, which already holds the user's variables.

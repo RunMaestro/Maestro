@@ -24,6 +24,7 @@ import {
 	getForceSendTitle,
 	shouldOfferForceSend,
 	shouldOfferSteer,
+	getSteerTitle,
 } from '../utils/executionQueue';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { displayImageSrc } from '../utils/sessionImageSrc';
@@ -351,6 +352,8 @@ export const QueuedItemsList = memo(
 								? getSteerContext(item)
 								: null;
 						const showSteerButton = shouldOfferSteer(steerContext);
+						const canSteer = !!steerContext?.canSteer;
+						const steerTitle = steerContext ? getSteerTitle(steerContext) : undefined;
 						// Merge is offered only when the card drawn directly above this
 						// one is the item it would fold into. Without a tab filter the
 						// list can interleave tabs, and the merge target is always the
@@ -400,6 +403,8 @@ export const QueuedItemsList = memo(
 											: setShowForcedParallelRequired(true)
 									}
 									showSteerButton={showSteerButton}
+									canSteer={canSteer}
+									steerTitle={steerTitle}
 									onSteer={() => onSteerQueuedItem?.(item.id)}
 									onOpenLightbox={onOpenLightbox}
 									onTogglePause={
@@ -573,6 +578,11 @@ interface QueuedItemRowProps {
 	onForceSend: () => void;
 	/** Chat steering: offer to inject this message into the turn already running. */
 	showSteerButton: boolean;
+	/** False when the button is shown dimmed (see shouldOfferSteer): the tooltip
+	 *  says why, and a click does nothing. */
+	canSteer: boolean;
+	/** Why it can or cannot be steered. Shown as the button's tooltip. */
+	steerTitle?: string;
 	onSteer: () => void;
 	onTogglePause?: () => void;
 	/** Fold this message into the one above it. Absent when that is not possible. */
@@ -603,6 +613,8 @@ function QueuedItemRow({
 	forceSendTitle,
 	onForceSend,
 	showSteerButton,
+	canSteer,
+	steerTitle,
 	onSteer,
 	onTogglePause,
 	onMergeUp,
@@ -843,13 +855,15 @@ function QueuedItemRow({
 						)}
 						{showSteerButton && (
 							<button
-								onClick={onSteer}
-								className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium whitespace-nowrap transition-opacity hover:opacity-80"
+								onClick={canSteer ? onSteer : undefined}
+								aria-disabled={!canSteer}
+								className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium whitespace-nowrap transition-opacity ${canSteer ? 'hover:opacity-80' : 'cursor-not-allowed'}`}
 								style={{
-									backgroundColor: theme.colors.accent + '33',
+									backgroundColor: theme.colors.accent + (canSteer ? '33' : '15'),
 									color: theme.colors.accent,
+									opacity: canSteer ? 1 : 0.5,
 								}}
-								title="Send this into the turn that is running now, so the agent can change course mid-task"
+								title={steerTitle}
 							>
 								<Navigation className="w-3.5 h-3.5" />
 								Steer

@@ -182,6 +182,8 @@ export interface AgentPickerGridProps {
 	onEnvVarValueChange: (agentId: string, key: string, value: string) => void;
 	onEnvVarRemove: (agentId: string, key: string) => void;
 	onEnvVarAdd: (agentId: string) => void;
+	/** Replace an agent's variables whole (Advanced `.env` mode). */
+	onEnvVarsReplace: (agentId: string, vars: Record<string, string>) => void;
 	onConfigChange: (agentId: string, key: string, value: any) => void;
 	onConfigBlur: (agentId: string, key: string, value: any) => void;
 	onRefreshModels: (agentId: string) => void;

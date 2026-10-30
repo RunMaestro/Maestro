@@ -17,6 +17,39 @@ function exceptionEvent(type: string, value: string) {
 }
 
 describe('shouldDropSentryEvent', () => {
+	it('drops expected host reconnect events from direct SDK callers', () => {
+		expect(
+			shouldDropSentryEvent(
+				exceptionEvent(
+					'Error',
+					'Not submitted: restoring authoritative host state. Your current work is retained.'
+				)
+			)
+		).toBe(true);
+		expect(
+			shouldDropSentryEvent({
+				message: 'Not submitted: reconnecting to the host. Your current work is retained.',
+			})
+		).toBe(true);
+	});
+
+	it('retains uncertain submissions and unexpected host failures', () => {
+		expect(
+			shouldDropSentryEvent(
+				exceptionEvent(
+					'Error',
+					'Submission uncertainty: connection lost before acknowledgement of process:spawn'
+				)
+			)
+		).toBe(false);
+		expect(
+			shouldDropSentryEvent(exceptionEvent('Error', 'Bridge request timed out: process:spawn'))
+		).toBe(false);
+		expect(shouldDropSentryEvent(exceptionEvent('Error', 'Invalid host snapshot payload'))).toBe(
+			false
+		);
+	});
+
 	describe('OS / filesystem environment', () => {
 		it('drops ENOSPC out-of-disk errors', () => {
 			expect(
@@ -142,6 +175,39 @@ describe('shouldDropSentryEvent', () => {
 					)
 				)
 			).toBe(true);
+		});
+
+		// MAESTRO-15T: the Linux wording of the same refusal.
+		it('drops the Linux trash failure through shell:trashItem', () => {
+			expect(
+				shouldDropSentryEvent(
+					exceptionEvent(
+						'Error',
+						"Error invoking remote method 'shell:trashItem': Error: Failed to move item to trash"
+					)
+				)
+			).toBe(true);
+		});
+
+		// MAESTRO-16F/16G/176: agent prose linked as a path is too long to stat.
+		it('drops ENAMETOOLONG through fs:stat and fs:readFile', () => {
+			for (const [method, op] of [
+				['fs:stat', 'Failed to get file stats: Error: ENAMETOOLONG: name too long, stat'],
+				['fs:readFile', 'Failed to read file: Error: ENAMETOOLONG: name too long, open'],
+			]) {
+				expect(
+					shouldDropSentryEvent(
+						exceptionEvent(
+							'Error',
+							`Error invoking remote method '${method}': Error: ${op} '/consegna verificata; nessun output trovato...'`
+						)
+					)
+				).toBe(true);
+			}
+		});
+
+		it('keeps ENAMETOOLONG from a spawn, which is our own argv', () => {
+			expect(shouldDropSentryEvent(exceptionEvent('Error', 'spawn ENAMETOOLONG'))).toBe(false);
 		});
 
 		it('keeps a generic delete failure that did NOT come from shell:trashItem', () => {

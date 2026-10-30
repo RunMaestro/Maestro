@@ -653,6 +653,25 @@ describe('cancel and settle transitions', () => {
 		expect(processQueuedItem.mock.calls[0][0]).toBe('stopB');
 	});
 
+	// `maestro-cli interrupt --tab` stops one turn: the agent's other tabs keep
+	// their retries, and the count tells the Stop whether it had anything to end.
+	it("stopRetriesForAgent with a tabId ends only that tab's outage and counts it", () => {
+		setupTabs('stopT', ['t1', 't2']);
+		seedSnapshot('stopT', 't1');
+		seedSnapshot('stopT', 't2');
+		scheduleRetryForError('stopT', 't1', overload());
+		scheduleRetryForError('stopT', 't2', overload());
+
+		expect(stopRetriesForAgent('stopT', 't2')).toBe(1);
+		expect(getRetryEntry('stopT', 't2')).toBeUndefined();
+		expect(getRetryEntry('stopT', 't1')?.status).toBe('scheduled');
+
+		// Nothing left on that tab: a repeat is a counted no-op.
+		expect(stopRetriesForAgent('stopT', 't2')).toBe(0);
+		expect(stopRetriesForAgent('stopT')).toBe(1);
+		expect(getRetryEntry('stopT', 't1')).toBeUndefined();
+	});
+
 	it('clearRetryIfSettled clears an in-flight entry (clean completion)', () => {
 		setupSession('s11', 't1');
 		seedSnapshot('s11', 't1');

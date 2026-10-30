@@ -19,8 +19,9 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import semver from 'semver';
+import { canonicalJson } from '../../shared/canonicalJson';
 import { validatePluginManifest, type PluginManifest } from '../../shared/plugins/plugin-manifest';
-import { verifyPluginSignature } from './plugin-signature';
+import { scanPluginFiles } from './plugin-scan';
 import { pluginsDir, isSafePluginFolderName } from './plugin-store-main';
 
 const MANIFEST_FILENAME = 'plugin.json';
@@ -76,6 +77,7 @@ function readManifest(dir: string): PluginManifest | null {
 export interface SeedBundledPluginsDeps {
 	/** Trusted keys (baked publisher anchor + user keys) to verify against. */
 	trustedKeys: () => string[];
+	isActive?: () => boolean;
 	onLog?: (message: string) => void;
 	onError?: (error: unknown) => void;
 }
@@ -83,10 +85,12 @@ export interface SeedBundledPluginsDeps {
 /**
  * Copy trusted bundled plugins into the user's plugins dir. See file header.
  */
-export function seedBundledPlugins(deps: SeedBundledPluginsDeps): void {
+export async function seedBundledPlugins(deps: SeedBundledPluginsDeps): Promise<void> {
 	const root = bundledPluginsRoot();
 	if (!root) return;
 	const trusted = deps.trustedKeys();
+	const stillCurrent = () =>
+		deps.isActive?.() !== false && canonicalJson(trusted) === canonicalJson(deps.trustedKeys());
 	let entries: fs.Dirent[];
 	try {
 		entries = fs.readdirSync(root, { withFileTypes: true });
@@ -96,6 +100,7 @@ export function seedBundledPlugins(deps: SeedBundledPluginsDeps): void {
 	}
 	const targetRoot = pluginsDir();
 	for (const entry of entries) {
+		if (!stillCurrent()) return;
 		if (!entry.isDirectory()) continue;
 		const src = path.join(root, entry.name);
 		try {
@@ -110,7 +115,7 @@ export function seedBundledPlugins(deps: SeedBundledPluginsDeps): void {
 				continue;
 			}
 			// Trust gate: only seed a bundled plugin that verifies `trusted`.
-			const sig = verifyPluginSignature(src, trusted);
+			const sig = (await scanPluginFiles(src, trusted)).signature;
 			if (sig.status !== 'trusted') {
 				deps.onLog?.(`bundled plugin "${id}" not seeded (signature: ${sig.status})`);
 				continue;
@@ -121,7 +126,7 @@ export function seedBundledPlugins(deps: SeedBundledPluginsDeps): void {
 			// of the same id (even the same version) must be replaced by the trusted
 			// bundled copy - not only an absent or older one.
 			const installedTrusted =
-				!!installed && verifyPluginSignature(dest, trusted).status === 'trusted';
+				!!installed && (await scanPluginFiles(dest, trusted)).signature.status === 'trusted';
 			const shouldSeed =
 				!installed ||
 				!installedTrusted ||
@@ -130,6 +135,7 @@ export function seedBundledPlugins(deps: SeedBundledPluginsDeps): void {
 					!!semver.valid(bundled.version) &&
 					!!semver.valid(installed.version) &&
 					semver.gt(bundled.version, installed.version));
+			if (!stillCurrent()) return;
 			if (!shouldSeed) continue;
 			// Stage a full copy into a temp sibling, then atomically swap it in with a
 			// backup + rollback, so a failed copy (disk full, permissions) never
@@ -146,6 +152,15 @@ export function seedBundledPlugins(deps: SeedBundledPluginsDeps): void {
 				recursive: true,
 				filter: (from) => !fs.lstatSync(from).isSymbolicLink(),
 			});
+			try {
+				const staged = await scanPluginFiles(staging, trusted);
+				if (staged.signature.status !== 'trusted' || !stillCurrent()) {
+					fs.rmSync(staging, { recursive: true, force: true });
+					return;
+				}
+			} finally {
+				if (!stillCurrent()) fs.rmSync(staging, { recursive: true, force: true });
+			}
 			const hadDest = fs.existsSync(dest);
 			if (hadDest) fs.renameSync(dest, backup);
 			try {

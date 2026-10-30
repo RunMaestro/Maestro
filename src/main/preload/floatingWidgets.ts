@@ -12,7 +12,11 @@
  */
 
 import { ipcRenderer } from 'electron';
-import type { FloatingWidgetBounds, FloatingWidgetId } from '../../shared/floatingWidgets';
+import type {
+	FloatingWidgetBounds,
+	FloatingWidgetId,
+	FloatingWidgetOverflow,
+} from '../../shared/floatingWidgets';
 
 /**
  * Listen on a channel whose first argument is a widget id, calling back only
@@ -60,6 +64,17 @@ export function createFloatingWidgetsApi() {
 			bounds: FloatingWidgetBounds
 		): Promise<Electron.Rectangle | null> =>
 			ipcRenderer.invoke('floatingWidgets:setBounds', id, bounds),
+
+		/**
+		 * Borrow room past the widget's card for content taller than it (not
+		 * saved). `need` is how far each side would have to grow; resolves with
+		 * what the window granted. A zero need gives the room back.
+		 */
+		setOverflow: (
+			id: FloatingWidgetId,
+			need: FloatingWidgetOverflow
+		): Promise<FloatingWidgetOverflow> =>
+			ipcRenderer.invoke('floatingWidgets:setOverflow', id, need),
 
 		// --- State: published by the authority, mirrored everywhere else ---
 

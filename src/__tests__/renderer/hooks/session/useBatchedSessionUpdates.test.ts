@@ -19,9 +19,118 @@ import {
 } from '../../../../renderer/hooks/session/useBatchedSessionUpdates';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import type { Session, UsageStats } from '../../../../renderer/types';
+import { createMockSession } from '../../../helpers/mockSession';
+import { createMockAITab } from '../../../helpers/mockTab';
+import { resetStore } from '../../../helpers/resetStores';
 
 const ONE_M = 1_000_000;
 const FALLBACK = 200_000;
+
+describe('useBatchedSessionUpdates keeps AI diagnostics separate from answers', () => {
+	beforeEach(() => {
+		resetStore(useSessionStore);
+	});
+
+	it.each([
+		{ showThinking: 'off' as const, stderrFirst: true },
+		{ showThinking: 'off' as const, stderrFirst: false },
+		{ showThinking: 'on' as const, stderrFirst: true },
+		{ showThinking: 'on' as const, stderrFirst: false },
+		{ showThinking: 'sticky' as const, stderrFirst: true },
+		{ showThinking: 'sticky' as const, stderrFirst: false },
+	])(
+		'preserves both channels with Thinking $showThinking and stderrFirst=$stderrFirst',
+		({ showThinking, stderrFirst }) => {
+			useSessionStore.setState({
+				sessions: [
+					createMockSession({
+						id: 's1',
+						state: 'busy',
+						aiTabs: [createMockAITab({ id: 't1', state: 'busy', showThinking })],
+					}),
+				],
+			});
+			const { result } = renderHook(() => useBatchedSessionUpdates(10_000));
+			const channels = stderrFirst ? [true, false] : [false, true];
+
+			act(() => {
+				for (const isStderr of channels) {
+					// Both channels arrive before a single flush. Same-channel chunks
+					// still coalesce, but diagnostics never become assistant output.
+					result.current.appendLog(
+						's1',
+						't1',
+						true,
+						isStderr ? 'Codex warning: ' : 'The ',
+						isStderr
+					);
+					result.current.appendLog(
+						's1',
+						't1',
+						true,
+						isStderr ? 'ignored setting\n' : 'answer.',
+						isStderr
+					);
+				}
+				result.current.flushNow();
+			});
+
+			const session = useSessionStore.getState().sessions[0];
+			const tab = session.aiTabs[0];
+			expect(tab.logs.map(({ source, text }) => ({ source, text }))).toEqual(
+				channels.map((isStderr) => ({
+					source: isStderr ? 'stderr' : 'stdout',
+					text: isStderr ? 'Codex warning: ignored setting\n' : 'The answer.',
+				}))
+			);
+			expect(session.state).toBe('busy');
+			expect(tab.state).toBe('busy');
+			expect(tab.agentError).toBeUndefined();
+		}
+	);
+
+	it.each(['on', 'sticky'] as const)(
+		'keeps Thinking %s through a diagnostic and applies normal answer cleanup',
+		(showThinking) => {
+			const thinking = {
+				id: 'thinking',
+				timestamp: 1,
+				source: 'thinking' as const,
+				text: 'Working',
+			};
+			useSessionStore.setState({
+				sessions: [
+					createMockSession({
+						id: 's1',
+						aiTabs: [createMockAITab({ id: 't1', showThinking, logs: [thinking] })],
+					}),
+				],
+			});
+			const { result } = renderHook(() => useBatchedSessionUpdates(10_000));
+			act(() => {
+				result.current.appendLog('s1', 't1', true, 'Codex warning: ignored setting\n', true);
+				result.current.flushNow();
+			});
+			expect(useSessionStore.getState().sessions[0].aiTabs[0].logs).toEqual([
+				thinking,
+				expect.objectContaining({ source: 'stderr', text: 'Codex warning: ignored setting\n' }),
+			]);
+
+			act(() => {
+				result.current.appendLog('s1', 't1', true, 'The answer.');
+				result.current.flushNow();
+			});
+			const logs = useSessionStore.getState().sessions[0].aiTabs[0].logs;
+			expect(logs.filter((log) => log.source === 'thinking')).toEqual(
+				showThinking === 'sticky' ? [thinking] : []
+			);
+			expect(logs.slice(-2)).toEqual([
+				expect.objectContaining({ source: 'stderr', text: 'Codex warning: ignored setting\n' }),
+				expect.objectContaining({ source: 'stdout', text: 'The answer.' }),
+			]);
+		}
+	);
+});
 
 describe('mergeContextWindow', () => {
 	it('keeps a resolved window when an unresolved delta arrives', () => {

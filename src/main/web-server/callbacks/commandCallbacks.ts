@@ -5,6 +5,14 @@ import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
 import { requestFromRenderer } from './remoteRequest';
 import type { ConsultAgentResult } from '../types';
+import type { MentionRouting } from '../../../shared/crossAgentContext';
+import { snapshotAiTurnProcesses, waitForAiTurnsToExit } from '../../utils/agent-busy';
+import {
+	INTERRUPT_TURN_EXIT_WAIT_MS,
+	INTERRUPT_TURN_RENDERER_TIMEOUT_MS,
+	interruptTurnFailure,
+	parseInterruptTurnResult,
+} from '../../../shared/turnInterrupt';
 
 /**
  * The renderer's answer to a `remote:executeCommand` send: did it accept the
@@ -78,10 +86,10 @@ export function registerCommandCallbacks(
 	server: WebServer,
 	deps: Pick<
 		WebServerFactoryDependencies,
-		'getMainWindow' | 'getWindowForSession' | 'sessionsStore'
+		'getMainWindow' | 'getWindowForSession' | 'sessionsStore' | 'getProcessManager'
 	>
 ): void {
-	const { getMainWindow, getWindowForSession, sessionsStore } = deps;
+	const { getMainWindow, getWindowForSession, sessionsStore, getProcessManager } = deps;
 	const resolveSessionWindow = (sessionId: string) =>
 		getWindowForSession?.(sessionId) ?? getMainWindow();
 
@@ -96,7 +104,9 @@ export function registerCommandCallbacks(
 			tabId?: string,
 			force?: boolean,
 			images?: string[],
-			background?: boolean
+			background?: boolean,
+			mentionRouting?: MentionRouting,
+			requireDeliveryReceipt?: boolean
 		) => {
 			const targetWindow = resolveSessionWindow(sessionId);
 			if (!targetWindow) {
@@ -140,7 +150,7 @@ export function registerCommandCallbacks(
 					fallback: { accepted: false, reason: 'renderer-timeout', timedOut: true },
 					timeoutMs: REMOTE_COMMAND_RECEIPT_TIMEOUT_MS,
 					parse: parseRemoteCommandReceipt,
-					args: [sessionId, command, inputMode, tabId, force, images, background],
+					args: [sessionId, command, inputMode, tabId, force, images, background, mentionRouting],
 				}
 			);
 			if (!receipt.accepted) {
@@ -150,6 +160,11 @@ export function registerCommandCallbacks(
 						: `[Web → Renderer] Renderer rejected command for session ${sessionId}: ${receiptReasonCode(receipt.reason)}`,
 					'WebServer'
 				);
+			}
+			// A missing/malformed receipt says nothing about delivery. Scoped
+			// callers preserve the durable intent when this throws.
+			if (requireDeliveryReceipt && (receipt.timedOut || receipt.reason === 'malformed-receipt')) {
+				throw new Error('Renderer delivery outcome unknown');
 			}
 			return receipt.accepted;
 		}
@@ -206,24 +221,45 @@ export function registerCommandCallbacks(
 		callerWindow.webContents.send('remote:agentDelegation', notice);
 	});
 
-	// Set up callback for web server to interrupt sessions through the desktop
-	// This forwards to the renderer which handles state updates and broadcasts
-	server.setInterruptSessionCallback(async (sessionId: string) => {
+	// Stop a running turn through the desktop's own Stop (`interruptTurn()` in
+	// the renderer), on the window that owns the agent. The renderer answers with
+	// what it stopped; main then waits, bounded, for those processes to leave its
+	// table, so `tab show` and `session list` read idle when the caller returns.
+	server.setInterruptSessionCallback(async (sessionId: string, tabId?: string) => {
+		const scopeTabId = tabId ?? null;
 		const targetWindow = resolveSessionWindow(sessionId);
-		if (!targetWindow) {
+		if (!targetWindow || !isWebContentsAvailable(targetWindow)) {
 			logger.warn('No owning window is available for interrupt', 'WebServer');
-			return false;
+			return interruptTurnFailure(
+				sessionId,
+				scopeTabId,
+				'RENDERER_UNAVAILABLE',
+				'No Maestro window owns this agent'
+			);
 		}
 
-		// Forward to renderer - it will handle interrupt, state update, and broadcasts
-		// This ensures web interrupts go through exact same code path as desktop interrupts
-		logger.debug(`Forwarding interrupt to renderer for session ${sessionId}`, 'WebServer');
-		if (!isWebContentsAvailable(targetWindow)) {
-			logger.warn('webContents is not available for interrupt', 'WebServer');
-			return false;
-		}
-		targetWindow.webContents.send('remote:interrupt', sessionId);
-		return true;
+		const processManager = getProcessManager();
+		const liveBefore = snapshotAiTurnProcesses(processManager, sessionId, scopeTabId);
+		logger.debug(
+			`Forwarding interrupt to renderer | session=${sessionId} | tab=${tabId ?? 'all'}`,
+			'WebServer'
+		);
+		const result = await requestFromRenderer(targetWindow, 'remote:interrupt', {
+			args: [sessionId, scopeTabId],
+			parse: (raw) => parseInterruptTurnResult(raw, sessionId, scopeTabId),
+			fallback: interruptTurnFailure(
+				sessionId,
+				scopeTabId,
+				'RENDERER_TIMEOUT',
+				'The Maestro window did not answer the interrupt in time'
+			),
+			timeoutMs: INTERRUPT_TURN_RENDERER_TIMEOUT_MS,
+		});
+		if (!result.success) return result;
+		return {
+			...result,
+			exited: await waitForAiTurnsToExit(processManager, liveBefore, INTERRUPT_TURN_EXIT_WAIT_MS),
+		};
 	});
 
 	// Set up callback for web server to switch session mode through the desktop

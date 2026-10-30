@@ -42,9 +42,15 @@ vi.mock('fs/promises', () => ({
 	},
 }));
 
+// Transcript reads stream; feed them from the readFile stub above.
+vi.mock('../../../main/utils/jsonl-stream', async () =>
+	(await import('../../helpers/mockJsonlStream')).jsonlStreamFromReadFileMock()
+);
+
 import fs from 'fs/promises';
 import { CodexSessionStorage } from '../../../main/storage/codex-session-storage';
 import { readDirRemote, readFileRemote, statRemote } from '../../../main/utils/remote-fs';
+import { readFirstJsonlLine } from '../../../main/utils/jsonl-stream';
 import type { SshRemoteConfig } from '../../../shared/types';
 import type Store from 'electron-store';
 import type { ClaudeSessionOriginsData } from '../../../main/stores/types';
@@ -556,5 +562,96 @@ describe('CodexSessionStorage - readSessionMessages', () => {
 		const toolUseArr = toolMsg!.toolUse as any[];
 		expect(toolUseArr[0].state.status).toBe('completed');
 		expect(toolUseArr[0].state.output).toBe('');
+	});
+
+	it('merges a tool output into a call older than the page instead of adding a message', async () => {
+		// Messages are paged without holding the whole rollout (#1862). A call that
+		// has scrolled out of the page still exists, so its output must merge, not
+		// surface as a standalone message that would change the count and the page.
+		const message = (i: number) =>
+			JSON.stringify({
+				timestamp: '2026-03-08T03:10:30.000Z',
+				type: 'response_item',
+				payload: {
+					type: 'message',
+					role: i % 2 === 0 ? 'user' : 'assistant',
+					id: `msg_${i}`,
+					content: [{ type: 'input_text', text: `message ${i}` }],
+				},
+			});
+		const lines = [
+			JSON.stringify({
+				timestamp: '2026-03-08T03:10:29.000Z',
+				type: 'response_item',
+				payload: {
+					type: 'function_call',
+					name: 'shell_command',
+					arguments: '{"command":"ls"}',
+					call_id: 'call_old',
+				},
+			}),
+			...Array.from({ length: 200 }, (_, i) => message(i)),
+			JSON.stringify({
+				timestamp: '2026-03-08T03:11:00.000Z',
+				type: 'response_item',
+				payload: { type: 'function_call_output', call_id: 'call_old', output: 'a.txt' },
+			}),
+		];
+		vi.spyOn(storage as any, 'findSessionFile').mockResolvedValue(
+			'/home/user/.codex/sessions/2026/03/08/long.jsonl'
+		);
+		vi.mocked(fs.readFile).mockResolvedValue(lines.join('\n'));
+
+		const page = await storage.readSessionMessages('C:\\Users\\test\\project', 'long-session', {
+			offset: 0,
+			limit: 5,
+		});
+		const everything = await storage.readSessionMessages(
+			'C:\\Users\\test\\project',
+			'long-session',
+			{ offset: 0, limit: 1000 }
+		);
+
+		expect(page.total).toBe(201);
+		expect(everything.total).toBe(201);
+		expect(page.messages.map((m) => m.content)).toEqual(
+			everything.messages.slice(-5).map((m) => m.content)
+		);
+		expect(page.messages.some((m) => m.content === 'a.txt')).toBe(false);
+		const call = everything.messages[0].toolUse as any[];
+		expect(call[0].state).toMatchObject({ status: 'completed', output: 'a.txt' });
+	});
+
+	it('finds an ISO-named rollout by its header without reading other rollouts whole', async () => {
+		// Current rollout names carry an ISO timestamp the filename pattern does
+		// not match, so the lookup falls back to each file's header. It must read
+		// only that header: the fallback runs for every rollout until the match,
+		// and a rollout can be hundreds of MB (#1862).
+		const dir = '/home/user/.codex/sessions/2026/03/08';
+		const other = `${dir}/rollout-2026-03-08T03-10-28-019ccb6c-0000-7000-8000-000000000001.jsonl`;
+		const target = `${dir}/rollout-2026-03-08T03-12-00-019ccb6c-c0fd-7b70-92b7-558f514099c6.jsonl`;
+		vi.spyOn(storage as any, 'findAllSessionFiles').mockResolvedValue(
+			[other, target].map((filePath) => ({ filePath, filename: filePath.split('/').pop() }))
+		);
+		const headers: Record<string, string> = {
+			[other]: JSON.stringify({ type: 'session_meta', payload: { id: 'someone-else' } }),
+			[target]: JSON.stringify({
+				type: 'session_meta',
+				payload: { id: '019ccb6c-c0fd-7b70-92b7-558f514099c6' },
+			}),
+		};
+		vi.mocked(readFirstJsonlLine).mockImplementation(async (filePath) => headers[filePath]);
+		vi.mocked(fs.readFile).mockResolvedValue(createSessionContent());
+
+		const result = await storage.readSessionMessages(
+			'C:\\Users\\test\\project',
+			'019ccb6c-c0fd-7b70-92b7-558f514099c6',
+			{ offset: 0, limit: 50 }
+		);
+
+		expect(result.total).toBeGreaterThan(0);
+		expect(readFirstJsonlLine).toHaveBeenCalledWith(other);
+		// The only whole read is the transcript stream of the match.
+		expect(vi.mocked(fs.readFile).mock.calls.map(([p]) => p)).toEqual([target]);
 	});
 });

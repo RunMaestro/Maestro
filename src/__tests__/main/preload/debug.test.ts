@@ -8,10 +8,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mockInvoke = vi.fn();
 const mockOn = vi.fn();
 const mockRemoveListener = vi.fn();
+const mockSend = vi.fn();
 
 vi.mock('electron', () => ({
 	ipcRenderer: {
 		invoke: (...args: unknown[]) => mockInvoke(...args),
+		send: (...args: unknown[]) => mockSend(...args),
 		on: (...args: unknown[]) => mockOn(...args),
 		removeListener: (...args: unknown[]) => mockRemoveListener(...args),
 	},
@@ -173,6 +175,30 @@ describe('Debug Preload API', () => {
 					'debug:profilingProgress',
 					expect.any(Function)
 				);
+			});
+		});
+		describe('Auto Run snapshot request', () => {
+			it('hands the response channel to the subscriber and unsubscribes', () => {
+				const callback = vi.fn();
+				let registered: ((event: unknown, responseChannel: string) => void) | undefined;
+				mockOn.mockImplementation((_channel: string, handler: typeof registered) => {
+					registered = handler;
+				});
+
+				const cleanup = api.onAutoRunSnapshotRequest(callback);
+
+				expect(mockOn).toHaveBeenCalledWith('debug:autoRunSnapshotRequest', expect.any(Function));
+				registered?.({}, 'debug:autoRunSnapshotRequest:response:abc');
+				expect(callback).toHaveBeenCalledWith('debug:autoRunSnapshotRequest:response:abc');
+
+				cleanup();
+				expect(mockRemoveListener).toHaveBeenCalledWith('debug:autoRunSnapshotRequest', registered);
+			});
+
+			it('sends the reply on the response channel', () => {
+				const reply = { ok: true as const, snapshots: [] };
+				api.sendAutoRunSnapshotResponse('debug:autoRunSnapshotRequest:response:abc', reply);
+				expect(mockSend).toHaveBeenCalledWith('debug:autoRunSnapshotRequest:response:abc', reply);
 			});
 		});
 	});

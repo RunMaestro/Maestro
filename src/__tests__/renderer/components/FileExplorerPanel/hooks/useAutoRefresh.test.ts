@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
+import { logger } from '../../../../../renderer/utils/logger';
+import { captureException } from '../../../../../renderer/utils/sentry';
 import { useAutoRefresh } from '../../../../../renderer/components/FileExplorerPanel/hooks/useAutoRefresh';
 
 vi.mock('../../../../../renderer/utils/logger', () => ({
@@ -25,6 +27,7 @@ describe('useAutoRefresh', () => {
 		vi.clearAllMocks();
 	});
 	afterEach(() => {
+		delete (window as unknown as Record<string, unknown>).__MAESTRO_BRIDGE_STATE__;
 		vi.useRealTimers();
 	});
 
@@ -89,6 +92,45 @@ describe('useAutoRefresh', () => {
 			vi.advanceTimersByTime(300000);
 		});
 		expect(refreshFileTree).not.toHaveBeenCalled();
+	});
+
+	it('pauses polling while restoring and refreshes once when recovery completes', async () => {
+		const state = window as unknown as Record<string, unknown>;
+		state.__MAESTRO_BRIDGE_STATE__ = 'restoring';
+		const refreshFileTree = vi.fn().mockResolvedValue(undefined);
+		renderHook(() => useAutoRefresh({ ...defaultArgs, autoRefreshInterval: 5, refreshFileTree }));
+		await act(async () => vi.advanceTimersByTime(15000));
+		expect(refreshFileTree).not.toHaveBeenCalled();
+		await act(async () => {
+			state.__MAESTRO_BRIDGE_STATE__ = 'connected';
+			window.dispatchEvent(
+				new CustomEvent('maestro:bridge-state', { detail: { state: 'connected' } })
+			);
+		});
+		expect(refreshFileTree).toHaveBeenCalledTimes(1);
+	});
+
+	it('settles a manual refresh rejected during reconnect without an error cascade', async () => {
+		const refreshFileTree = vi
+			.fn()
+			.mockRejectedValue(
+				new Error('Not submitted: reconnecting to the host. Your current work is retained.')
+			);
+		const { result } = renderHook(() => useAutoRefresh({ ...defaultArgs, refreshFileTree }));
+		await act(async () => {
+			await expect(result.current.handleRefresh()).resolves.toBeUndefined();
+		});
+		expect(logger.error).not.toHaveBeenCalled();
+		expect(captureException).not.toHaveBeenCalled();
+	});
+
+	it('keeps unexpected refresh failures visible', async () => {
+		const error = new Error('Invalid tree result');
+		const refreshFileTree = vi.fn().mockRejectedValue(error);
+		renderHook(() => useAutoRefresh({ ...defaultArgs, autoRefreshInterval: 5, refreshFileTree }));
+		await act(async () => vi.advanceTimersByTime(5000));
+		expect(logger.error).toHaveBeenCalledOnce();
+		expect(captureException).toHaveBeenCalledWith(error, expect.anything());
 	});
 
 	it('overlay opens after 400ms hover delay on refresh button', () => {

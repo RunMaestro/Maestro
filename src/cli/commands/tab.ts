@@ -13,6 +13,14 @@
 // enter-to-send, save-to-history) are the CLI half of the composer chips: one
 // tab's state, written through the allowlisted + flushed config path so a
 // script can set a value and read it straight back with "tab show".
+//
+// "tab closed" and "tab reopen" are the CLI half of Cmd+Shift+T: they read and
+// restore an agent's closed-tab stack through the closed_tab_command message,
+// which the renderer answers with the shortcut's own reopen function.
+//
+// "tab compact", "tab merge" and "tab transfer" are the overlay menu's Context:
+// Compact, Merge Into and Send to Agent, sent as summarize_context,
+// merge_context and transfer_context and run by the menu's own handlers.
 
 import {
 	sendSimpleCommand,
@@ -24,11 +32,28 @@ import {
 	listDesktopTabs,
 	type SimpleResult,
 	exitIfMaestroNotRunning,
+	errorFrameMessage,
+	failFromError,
+	ACTIVE_TAB_KEYWORD,
 } from '../services/session-command';
+import { withMaestroClient, CommandTimeoutError } from '../services/maestro-client';
+import { ExitCode, exitWith } from '../exit-codes';
+import {
+	TAB_CONTEXT_OP_CLI_MARGIN_MS,
+	TAB_CONTEXT_OP_MESSAGES,
+	TAB_CONTEXT_OP_REPLY_MS,
+	buildTabContextOpMessage,
+	type TabContextOp,
+	type TabContextOpRequest,
+	type TabContextOpResult,
+} from '../../shared/tabContextOps';
 import { formatSuccess } from '../output/formatter';
 import { nextThinkingMode, type ThinkingMode } from '../../shared/types';
 import type { DesktopTabEntry } from '../../shared/desktopTabs';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
+import { formatRelativeTime } from '../../shared/formatters';
+import type { ClosedTabCommandRequest, ClosedTabSummary } from '../../shared/closedTabCommands';
+import { resolveAgentId, readActiveAgentId } from '../services/storage';
 
 interface TabNewOptions {
 	agent: string;
@@ -456,4 +481,380 @@ export async function tabShow(tabId: string, options: TabMutateOptions): Promise
 	row('Enter to send', inherited(entry.enterToSend));
 	row('Starred', String(entry.starred));
 	row('Unread', String(entry.hasUnread ?? false));
+}
+
+interface ClosedTabOptions {
+	/** Whose stack. Absent means the agent the desktop has selected. */
+	agent?: string;
+	json?: boolean;
+}
+
+interface TabReopenOptions extends ClosedTabOptions {
+	/** Position in the stack, as typed (0 is what Cmd+Shift+T reopens next). */
+	index?: string;
+	/** The id the tab had when it was closed (exact or unique prefix). */
+	tab?: string;
+	background?: boolean;
+	focus?: boolean;
+}
+
+interface ClosedTabResponse extends SimpleResult {
+	closedTabs?: ClosedTabSummary[];
+	reopened?: ClosedTabSummary;
+	tabId?: string;
+	tabType?: ClosedTabSummary['type'];
+	wasDuplicate?: boolean;
+	content?: string;
+}
+
+/**
+ * The agent whose closed-tab stack a verb acts on: `--agent` when given, else
+ * the agent the desktop has selected (the one Cmd+Shift+T would act on).
+ */
+function resolveClosedTabAgent(options: ClosedTabOptions): string {
+	if (options.agent) return resolveAgentOrFail(options.agent, options.json);
+	const active = readActiveAgentId();
+	if (!active) {
+		return failCommand(
+			'No active agent recorded. Pass --agent <id> to say whose closed tabs you mean.',
+			options.json
+		);
+	}
+	try {
+		return resolveAgentId(active);
+	} catch (error) {
+		return failCommand(error instanceof Error ? error.message : String(error), options.json);
+	}
+}
+
+/** Send one closed-tab verb and hand back the desktop's answer, or exit. */
+async function sendClosedTabCommand(
+	request: ClosedTabCommandRequest,
+	json?: boolean
+): Promise<ClosedTabResponse> {
+	let result: ClosedTabResponse;
+	try {
+		result = (await sendSimpleCommand(
+			{ type: 'closed_tab_command', ...request },
+			'closed_tab_command_result'
+		)) as ClosedTabResponse;
+	} catch (error) {
+		exitIfMaestroNotRunning(error, { json });
+		return failCommand(error instanceof Error ? error.message : String(error), json);
+	}
+	// Outside the try, so the desktop's own refusal ("no closed tabs") is what
+	// gets reported rather than being re-caught and re-worded.
+	if (!result.success) {
+		failCommand(result.error || errorFrameMessage(result) || 'Closed-tab command failed', json);
+	}
+	return result;
+}
+
+/** One row of `tab closed`, for a human. */
+function describeClosedTab(entry: ClosedTabSummary): string {
+	const kind = entry.tiled ? `${entry.type}, tiled` : entry.type;
+	return `  ${String(entry.index).padStart(2)}  ${entry.label}  (${kind}, ${entry.tabId}, closed ${formatRelativeTime(entry.closedAt)})`;
+}
+
+/**
+ * `maestro-cli tab closed` - list an agent's closed-tab stack, newest first.
+ * Index 0 is the entry Cmd+Shift+T (and `tab reopen` with no target) restores
+ * next. An empty stack is not an error here: "nothing to reopen" is an answer.
+ */
+export async function tabClosed(options: ClosedTabOptions): Promise<void> {
+	const sessionId = resolveClosedTabAgent(options);
+	const result = await sendClosedTabCommand({ action: 'list', sessionId }, options.json);
+	const closedTabs = result.closedTabs ?? [];
+
+	if (options.json) {
+		console.log(JSON.stringify({ success: true, sessionId, closedTabs }, null, 2));
+		return;
+	}
+	if (closedTabs.length === 0) {
+		console.log(`No closed tabs for ${sessionId}`);
+		return;
+	}
+	console.log(`Closed tabs for ${sessionId} (newest first):`);
+	for (const entry of closedTabs) console.log(describeClosedTab(entry));
+}
+
+/**
+ * `maestro-cli tab reopen` - restore one closed tab, by default the newest
+ * (exactly what Cmd+Shift+T does), or the one named by `--index` / `--tab`.
+ * Prints the restored tab's id, which is usually NEW for an AI tab.
+ */
+export async function tabReopen(options: TabReopenOptions): Promise<void> {
+	const tabId = options.tab?.trim();
+	if (options.index !== undefined && tabId) {
+		failCommand('Pass --index or --tab, not both', options.json);
+	}
+	let index: number | undefined;
+	if (options.index !== undefined) {
+		const raw = options.index.trim();
+		if (!/^\d+$/.test(raw)) {
+			failCommand(
+				`Invalid index "${options.index}". Use a 0-based position from "tab closed".`,
+				options.json
+			);
+		}
+		index = Number(raw);
+	}
+
+	const sessionId = resolveClosedTabAgent(options);
+	const background = resolveBackgroundFlag(options, 'tab-reopen');
+	const result = await sendClosedTabCommand(
+		{
+			action: 'reopen',
+			sessionId,
+			...(index !== undefined ? { index } : {}),
+			...(tabId ? { tabId } : {}),
+			background,
+		},
+		options.json
+	);
+
+	if (options.json) {
+		console.log(
+			JSON.stringify({
+				success: true,
+				sessionId,
+				tabId: result.tabId ?? null,
+				tabType: result.tabType ?? null,
+				reopened: result.reopened ?? null,
+				wasDuplicate: result.wasDuplicate === true,
+				content: result.content ?? null,
+				background,
+			})
+		);
+		return;
+	}
+	const label = result.reopened?.label ?? 'tab';
+	const where = background ? ' (background)' : '';
+	console.log(
+		formatSuccess(
+			result.wasDuplicate
+				? `"${label}" was already open; dropped it from the closed tabs${where}`
+				: `Reopened "${label}" for ${sessionId}${where}`
+		)
+	);
+	if (result.tabId) console.log(`  Tab: ${result.tabId}`);
+	if (result.content === 'pending') {
+		console.log('  Content is still loading in the desktop app.');
+	} else if (result.content === 'unavailable' || result.content === 'failed') {
+		console.log(`  Content could not be read back (${result.content}).`);
+	}
+}
+
+interface TabContextOptions extends TabMutateOptions {
+	background?: boolean;
+	focus?: boolean;
+}
+
+interface TabMergeOptions extends TabContextOptions {
+	/** The agent whose tab receives the context. */
+	into: string;
+	/** The tab that receives it (default: that agent's active AI tab). */
+	targetTab?: string;
+}
+
+interface TabTransferOptions extends TabContextOptions {
+	/** The agent that gets a new tab carrying the context. */
+	to: string;
+}
+
+/** How each operation is named in a human-facing line. */
+const TAB_CONTEXT_OP_LABELS: Record<TabContextOp, string> = {
+	compact: 'compaction',
+	merge: 'context merge',
+	transfer: 'context transfer',
+};
+
+/**
+ * A timeout is reported apart from a refusal: the desktop may still finish the
+ * operation (a compaction is a full summarization turn), so the caller is told
+ * to look rather than to retry. Exit 5, the CLI's code for "no answer in time".
+ */
+function failTabContextTimeout(op: TabContextOp, json?: boolean): never {
+	const seconds = Math.round(TAB_CONTEXT_OP_REPLY_MS[op] / 1000);
+	const message =
+		`Timed out after ${seconds}s waiting for the ${TAB_CONTEXT_OP_LABELS[op]} to finish. ` +
+		'It may still be running in Maestro; check with "maestro-cli session list".';
+	if (json) console.log(JSON.stringify({ success: false, timedOut: true, error: message }));
+	else console.error(`Error: ${message}`);
+	return exitWith(ExitCode.Timeout);
+}
+
+/**
+ * Resolve a tab argument (`active` by default) to its entry, and refuse a tab
+ * that belongs to a different agent than `--agent` names.
+ */
+async function resolveContextTab(
+	tabId: string | undefined,
+	agent: string | undefined,
+	json?: boolean
+): Promise<DesktopTabEntry> {
+	const agentId = agent ? resolveAgentOrFail(agent, json) : undefined;
+	let entry: DesktopTabEntry;
+	try {
+		entry = await resolveTabEntry(tabId ?? ACTIVE_TAB_KEYWORD, agentId);
+	} catch (error) {
+		exitIfMaestroNotRunning(error, { json });
+		return failCommand(error instanceof Error ? error.message : String(error), json);
+	}
+	if (agentId && entry.agentId !== agentId) {
+		failCommand(`Tab ${entry.tabId} belongs to agent ${entry.agentId}, not ${agentId}`, json);
+	}
+	return entry;
+}
+
+/** Send one context operation and hand back the desktop's answer, or exit. */
+async function sendTabContextOp(
+	request: TabContextOpRequest,
+	json?: boolean
+): Promise<TabContextOpResult> {
+	const { op } = request;
+	let result: TabContextOpResult;
+	try {
+		result = await withMaestroClient((client) =>
+			client.sendCommand<TabContextOpResult>(
+				buildTabContextOpMessage(request),
+				TAB_CONTEXT_OP_MESSAGES[op].resultType,
+				TAB_CONTEXT_OP_REPLY_MS[op] + TAB_CONTEXT_OP_CLI_MARGIN_MS
+			)
+		);
+	} catch (error) {
+		exitIfMaestroNotRunning(error, { json });
+		if (error instanceof CommandTimeoutError) failTabContextTimeout(op, json);
+		return failFromError(error, json);
+	}
+	// Outside the try, so the desktop's own refusal is what gets reported.
+	if (result.timedOut) failTabContextTimeout(op, json);
+	if (!result.success) {
+		failCommand(result.error || errorFrameMessage(result) || `Context ${op} failed`, json);
+	}
+	return result;
+}
+
+/**
+ * `maestro-cli tab compact` - Context: Compact. Summarizes the tab into a new
+ * tab beside it ("<name> Compacted <date>") and prints the new tab's id. The
+ * source tab is left as it was, plus a line saying where the summary went.
+ */
+export async function tabCompact(
+	tabId: string | undefined,
+	options: TabContextOptions
+): Promise<void> {
+	const background = resolveBackgroundFlag(options, 'tab-compact');
+	const entry = await resolveContextTab(tabId, options.agent, options.json);
+	const result = await sendTabContextOp(
+		{ op: 'compact', sessionId: entry.agentId, tabId: entry.tabId, background },
+		options.json
+	);
+
+	if (options.json) {
+		console.log(
+			JSON.stringify({
+				success: true,
+				agentId: entry.agentId,
+				tabId: entry.tabId,
+				newTabId: result.newTabId ?? null,
+				reductionPercent: result.reductionPercent ?? null,
+				background,
+			})
+		);
+		return;
+	}
+	const reduction =
+		result.reductionPercent !== undefined ? ` (${result.reductionPercent}% smaller)` : '';
+	console.log(formatSuccess(`Compacted tab ${entry.tabId} into a new tab${reduction}`));
+	if (result.newTabId) console.log(`  Tab: ${result.newTabId}`);
+}
+
+/**
+ * `maestro-cli tab merge` - Context: Merge Into. Moves the tab's transcript,
+ * verbatim, into a tab of another agent (or another tab of the same agent),
+ * whose composer sends it on. With `--background` the context waits on that
+ * tab until it is next opened, unless it is already the tab on screen.
+ */
+export async function tabMerge(tabId: string | undefined, options: TabMergeOptions): Promise<void> {
+	const background = resolveBackgroundFlag(options, 'tab-merge');
+	const targetAgentId = resolveAgentOrFail(options.into, options.json);
+	const entry = await resolveContextTab(tabId, options.agent, options.json);
+	const targetTabId = options.targetTab
+		? (await resolveContextTab(options.targetTab, targetAgentId, options.json)).tabId
+		: undefined;
+	const result = await sendTabContextOp(
+		{
+			op: 'merge',
+			sessionId: entry.agentId,
+			tabId: entry.tabId,
+			targetSessionId: targetAgentId,
+			...(targetTabId ? { targetTabId } : {}),
+			background,
+		},
+		options.json
+	);
+
+	if (options.json) {
+		console.log(
+			JSON.stringify({
+				success: true,
+				agentId: entry.agentId,
+				tabId: entry.tabId,
+				targetAgentId,
+				targetTabId: result.targetTabId ?? targetTabId ?? null,
+				staged: result.staged === true,
+				background,
+			})
+		);
+		return;
+	}
+	console.log(formatSuccess(`Merged tab ${entry.tabId} into agent ${targetAgentId}`));
+	if (result.targetTabId) console.log(`  Tab: ${result.targetTabId}`);
+	if (result.staged) console.log('  The context sends when that tab is next opened.');
+}
+
+/**
+ * `maestro-cli tab transfer` - Context: Send to Agent. Opens a new tab in the
+ * target agent carrying the tab's transcript, verbatim, and starts the agent
+ * on it (or queues it behind a running turn). Prints the new tab's id.
+ */
+export async function tabTransfer(
+	tabId: string | undefined,
+	options: TabTransferOptions
+): Promise<void> {
+	const background = resolveBackgroundFlag(options, 'tab-transfer');
+	const targetAgentId = resolveAgentOrFail(options.to, options.json);
+	const entry = await resolveContextTab(tabId, options.agent, options.json);
+	if (entry.agentId === targetAgentId) {
+		failCommand('Send to Agent needs a different agent than the source tab', options.json);
+	}
+	const result = await sendTabContextOp(
+		{
+			op: 'transfer',
+			sessionId: entry.agentId,
+			tabId: entry.tabId,
+			targetSessionId: targetAgentId,
+			background,
+		},
+		options.json
+	);
+
+	if (options.json) {
+		console.log(
+			JSON.stringify({
+				success: true,
+				agentId: entry.agentId,
+				tabId: entry.tabId,
+				targetAgentId,
+				newTabId: result.newTabId ?? null,
+				queued: result.queued === true,
+				background,
+			})
+		);
+		return;
+	}
+	console.log(formatSuccess(`Sent tab ${entry.tabId} to agent ${targetAgentId}`));
+	if (result.newTabId) console.log(`  Tab: ${result.newTabId}`);
+	if (result.queued) console.log('  The agent is busy; the context runs when its turn finishes.');
 }

@@ -10,6 +10,7 @@ import { cueStatusForTurn } from '../cue/cue-turn-status';
 import { captureException } from '../utils/sentry';
 import { GROUP_CHAT_PREFIX, type ProcessListenerDependencies } from './types';
 import { extractCopilotUsageFromDisk } from '../group-chat/copilot-usage-extractor';
+import { parseProcessId } from '../../shared/maestro-lib/client/bridge-frames';
 
 type ExitEventArgs = Parameters<ProcessManagerEvents['exit']>;
 
@@ -263,8 +264,15 @@ export function setupExitListener(
 		// exit-code test is only a fallback for exits that carry no settlement.
 		if (isCueEnabled?.() && getCueEngine) {
 			const cueEngine = getCueEngine();
-			if (cueEngine?.hasCompletionSubscribers(sessionId)) {
-				cueEngine.notifyAgentCompleted(sessionId, {
+			// Process exits identify the physical AI tab, while subscriptions
+			// identify its agent. Keep both: matching on the process id drops
+			// Dispatch completions; dropping it loses which worker tab ended.
+			const target = parseProcessId(sessionId);
+			const agentId = target?.agentId ?? sessionId;
+			if (cueEngine?.hasCompletionSubscribers(agentId)) {
+				cueEngine.notifyAgentCompleted(agentId, {
+					sourceProcessId: sessionId,
+					...(target?.kind === 'tab' ? { sourceTabId: target.tabId } : {}),
 					status: settlement
 						? cueStatusForTurn({
 								outcome: settlement.outcome,

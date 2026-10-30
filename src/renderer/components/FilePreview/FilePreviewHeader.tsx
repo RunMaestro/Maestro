@@ -227,6 +227,11 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 	// and be missing from the other. Save is deliberately absent: it is a labelled
 	// primary control with a dirty state, and it stays inline on both.
 	const actions: FilePreviewHeaderAction[] = [];
+	// An Untitled tab (New File, not saved yet) has no path. Every action that
+	// hands the path to the OS has nothing to act on there: Reveal used to send
+	// an empty string to `shell:showItemInFolder`, which rejects it
+	// (MAESTRO-YS). Those actions come back once the file is saved.
+	const hasDiskPath = !!file.path;
 	// Word-wrap toggle - edit mode only. Switches between soft-wrap (default;
 	// long lines wrap at whitespace) and no-wrap (horizontal scroll).
 	if (toolbarVisibility.wordWrap && isEditableText && markdownEditMode) {
@@ -356,7 +361,7 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 	// the shell bridge. In the web-desktop build the host is not the browser
 	// user's device, so hide it there (as we already do over SSH, where file://
 	// can't reach the remote host).
-	if (toolbarVisibility.openInDefault && !sshRemoteId && !isWebDesktop()) {
+	if (toolbarVisibility.openInDefault && hasDiskPath && !sshRemoteId && !isWebDesktop()) {
 		actions.push({
 			kind: 'button',
 			key: 'openInDefault',
@@ -368,7 +373,7 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 		});
 	}
 	// Reveal in Finder / Explorer / File Manager - local files only.
-	if (toolbarVisibility.revealInFolder && !sshRemoteId) {
+	if (toolbarVisibility.revealInFolder && hasDiskPath && !sshRemoteId) {
 		actions.push({
 			kind: 'button',
 			key: 'revealInFolder',
@@ -380,7 +385,7 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 			testId: 'reveal-in-folder-button',
 		});
 	}
-	if (toolbarVisibility.copyPath) {
+	if (toolbarVisibility.copyPath && hasDiskPath) {
 		actions.push({
 			kind: 'button',
 			key: 'copyPath',
@@ -391,7 +396,7 @@ export const FilePreviewHeader = React.memo(function FilePreviewHeader({
 	}
 	// Delete file - last in the row, and always behind a confirmation. Same flow
 	// as the command palette's "File: Delete" entry.
-	if (toolbarVisibility.delete && onDelete) {
+	if (toolbarVisibility.delete && hasDiskPath && onDelete) {
 		actions.push({
 			kind: 'button',
 			key: 'delete',

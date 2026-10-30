@@ -737,9 +737,55 @@ describe('Debug Package Collectors', () => {
 			expect(missing.snapshotAvailable).toBe(false);
 			expect(missing.activeSessions).toEqual([]);
 
+			expect(missing.unavailableReason).toBe('not-requested');
+			expect(missing.unavailableDetail).toEqual(expect.any(String));
+
 			const empty = collectBatchState([]);
 			expect(empty.snapshotAvailable).toBe(true);
 			expect(empty.activeSessions).toEqual([]);
+			expect(empty.unavailableReason).toBeUndefined();
+		});
+
+		it('should record why the windows could not report Auto Run state', async () => {
+			const { collectBatchState } =
+				await import('../../../main/debug-package/collectors/batch-state');
+
+			const result = collectBatchState({
+				available: false,
+				reason: 'timeout',
+				detail: 'No Maestro window answered the request for Auto Run state in time.',
+				windowsAsked: 2,
+			});
+
+			expect(result).toEqual({
+				snapshotAvailable: false,
+				unavailableReason: 'timeout',
+				unavailableDetail: 'No Maestro window answered the request for Auto Run state in time.',
+				activeSessions: [],
+			});
+		});
+
+		it('should note windows that stayed silent when others answered', async () => {
+			const { collectBatchState } =
+				await import('../../../main/debug-package/collectors/batch-state');
+
+			const partial = collectBatchState({
+				available: true,
+				snapshots: [makeSnapshot({ sessionId: 'session-live', isRunning: true })],
+				windowsAsked: 3,
+				windowsAnswered: 2,
+			});
+			expect(partial.snapshotAvailable).toBe(true);
+			expect(partial.windowsUnanswered).toBe(1);
+			expect(partial.activeSessions.map((s) => s.sessionId)).toEqual(['session-live']);
+
+			const full = collectBatchState({
+				available: true,
+				snapshots: [],
+				windowsAsked: 1,
+				windowsAnswered: 1,
+			});
+			expect(full.windowsUnanswered).toBeUndefined();
 		});
 
 		it('should keep a paused run that has completed work', async () => {

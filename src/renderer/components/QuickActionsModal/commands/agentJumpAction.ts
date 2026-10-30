@@ -1,4 +1,6 @@
 import type { Session } from '../../../types';
+import { updateSessionWith } from '../../../stores/sessionStore';
+import { focusAiTabInSession } from '../../../utils/tabHelpers';
 
 /**
  * Resolve which window currently surfaces an agent. Returns the owning window's
@@ -22,6 +24,12 @@ interface MakeAgentJumpActionArgs {
 	 * every jump switches locally as before.
 	 */
 	getSessionWindow?: GetSessionWindow;
+	/**
+	 * AI tab to land on (see `getRunningJumpTab`). A running agent's jump goes to
+	 * the tab doing the work, reopening it when the user closed it mid-turn.
+	 * Omitted = the agent's own active tab, unchanged.
+	 */
+	tabId?: string;
 }
 
 /**
@@ -36,6 +44,7 @@ export function makeAgentJumpAction({
 	setActiveSessionId,
 	revealJumpTarget,
 	getSessionWindow,
+	tabId,
 }: MakeAgentJumpActionArgs): () => void {
 	return () => {
 		// Agent lives in another window: focus that window instead of stealing it.
@@ -45,6 +54,9 @@ export function makeAgentJumpAction({
 			return;
 		}
 		setActiveSessionId(session.id);
+		if (tabId) {
+			updateSessionWith(session.id, (s) => focusAiTabInSession(s, tabId));
+		}
 		revealJumpTarget(session);
 	};
 }

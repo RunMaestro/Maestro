@@ -66,6 +66,15 @@ for (const name of [...GIT_REPOSITORY_ENV_VARS, ...HOST_AGENT_ENV_VARS]) {
 	delete process.env[name];
 }
 
+// Knobs maestro-p exports to the claude it drives, so they reach any shell an
+// agent on a TUI turn runs - including a pre-push hook. Spawn builders copy
+// process.env into the env they build, so an inherited value makes every
+// "does not opt in" assertion fail on a machine where nothing is wrong.
+const MAESTRO_P_ENV_VARS = ['MAESTRO_P_ACCEPT_WORKSPACE_TRUST'];
+for (const name of MAESTRO_P_ENV_VARS) {
+	delete process.env[name];
+}
+
 export default defineConfig({
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	plugins: [react() as any],

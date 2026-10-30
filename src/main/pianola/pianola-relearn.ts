@@ -14,18 +14,29 @@
  * background watcher that died is brought back on the same cadence.
  */
 
-import { synthesizeSuggestions } from '../../shared/pianola/pianola-synthesis';
-import type { DecisionPair } from '../../shared/pianola/transcript-mining';
+import {
+	reconcileSuggestionEvidence,
+	synthesizeSuggestions,
+} from '../../shared/pianola/pianola-synthesis';
+import {
+	confirmedHumanDecisionPairs,
+	type DecisionPair,
+} from '../../shared/pianola/transcript-mining';
 import type { PianolaRule } from '../../shared/pianola/types';
 import type { PianolaSuggestionsFile } from '../../shared/pianola/storage';
 
 export interface RelearnDeps {
 	/** Whether the `pianola` Encore flag is on. Re-read on every run. */
 	isEnabled: () => boolean;
-	/** Mine the installed CLIs' transcripts into a labeled decision corpus. */
+	/** Read attributable settled decisions; unknown-origin imports are filtered again. */
 	mine: () => Promise<DecisionPair[]>;
 	/** Read the user's current rules + global decision-profile markdown (live state). */
-	readExisting: () => { rules: PianolaRule[]; profile: string };
+	readExisting: () => {
+		rules: PianolaRule[];
+		profile: string;
+		minSamples?: number;
+		suggestions?: PianolaSuggestionsFile;
+	};
 	/** Persist the staged suggestions. Proposal-only; never the live profile/rules. */
 	writeSuggestions: (file: PianolaSuggestionsFile) => void;
 	/** Relaunch any enabled supervised target whose child is not alive. Returns count. */
@@ -68,21 +79,43 @@ export async function runRelearnJob(deps: RelearnDeps): Promise<RelearnResult> {
 	}
 
 	try {
-		const pairs = await deps.mine();
-		const { rules, profile } = deps.readExisting();
-		const { proposals, profileDiff } = synthesizeSuggestions({
+		const snapshots = await deps.mine();
+		const pairs = confirmedHumanDecisionPairs(snapshots);
+		const { rules, profile, minSamples, suggestions } = deps.readExisting();
+		const synthesis = synthesizeSuggestions({
 			pairs,
+			minSamples,
 			existingRules: rules,
 			existingProfile: profile,
 			now: deps.now(),
 		});
-		deps.writeSuggestions({
-			generatedAt: deps.now(),
-			pairCount: pairs.length,
-			proposals,
-			proposedProfile: profileDiff.after,
-			previousProfile: profileDiff.before,
-		});
+		const candidates = synthesis.candidates.filter(
+			(candidate) =>
+				!suggestions?.rejections?.some(
+					(item) =>
+						item.candidateId === candidate.id &&
+						item.evidenceFingerprint === candidate.evidenceFingerprint
+				)
+		);
+		const proposals = candidates.map((candidate) => candidate.rule);
+		deps.writeSuggestions(
+			reconcileSuggestionEvidence(
+				{
+					generatedAt: deps.now(),
+					pairCount: pairs.length,
+					proposals,
+					candidates,
+					rejections: suggestions?.rejections ?? [],
+					approvals: suggestions?.approvals ?? [],
+					conflicts: suggestions?.conflicts ?? [],
+					proposedProfile: synthesis.profileDiff.after,
+					previousProfile: synthesis.profileDiff.before,
+				},
+				snapshots,
+				rules,
+				deps.now()
+			)
+		);
 		const relaunched = deps.relaunchStale();
 		deps.log(
 			`staged ${proposals.length} proposal(s) from ${pairs.length} pair(s); relaunched ${relaunched} stale target(s)`

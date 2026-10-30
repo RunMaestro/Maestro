@@ -12,6 +12,8 @@ export const PIANOLA_AGENT_RUN_STATES: readonly PianolaAgentRunState[] = [
 	'waiting_input',
 	'connecting',
 	'error',
+	'unknown',
+	'completed',
 ];
 
 export const PIANOLA_TASK_STATUSES: readonly PianolaTaskStatus[] = [
@@ -47,6 +49,7 @@ export function mapPianolaRunStateToAgentRunStatus(
 	if (state === 'error' || options.failure) return 'failed';
 	if (state === 'busy' || state === 'connecting') return 'running';
 	if (state === 'waiting_input') return 'waiting';
+	if (state === 'completed') return 'completed';
 	if (state === 'idle' && isWorkingPianolaState(options.previousState)) return 'completed';
 	return 'waiting';
 }
@@ -152,12 +155,12 @@ function toPianolaMetadata(task: PianolaTaskLike): Record<string, unknown> {
 }
 
 export function pianolaPlanToCampaign(plan: PianolaPlanLike): Campaign {
-	const runIds = plan.tasks.map((task) => pianolaTaskAgentRunId(plan.id, task.id));
+	const runIds = plan.tasks.map((task) => task.runId ?? pianolaTaskAgentRunId(plan.id, task.id));
 	const tasks: CampaignTask[] = plan.tasks.map((task) => ({
 		id: task.id,
 		title: task.title,
 		status: mapPianolaTaskStatusToCampaignTaskStatus(task.status),
-		runId: pianolaTaskAgentRunId(plan.id, task.id),
+		runId: task.runId ?? pianolaTaskAgentRunId(plan.id, task.id),
 		dependsOn: [...task.dependsOn],
 		prompt: task.prompt,
 		...(task.agentType !== undefined ? { agentType: task.agentType } : {}),

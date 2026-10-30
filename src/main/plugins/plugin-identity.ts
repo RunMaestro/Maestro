@@ -27,8 +27,9 @@ export function pluginIdentity(dir: string, trustedKeys: readonly string[]): Aut
 		// computePluginContentHash throws on a symlink (escape) or unreadable tree;
 		// verifyPluginSignature rethrows non-ENOENT signature.json read errors. Either
 		// way an identity we can't establish safely is not mintable → null.
-		const contentHash = computePluginContentHash(dir);
 		const check = verifyPluginSignature(dir, trustedKeys);
+		// Reuse this verification's fresh file set, never a cached prior check.
+		const contentHash = check.contentHash ?? computePluginContentHash(dir);
 		return {
 			contentHash,
 			signatureStatus: check.status,

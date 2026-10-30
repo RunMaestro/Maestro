@@ -1469,22 +1469,17 @@ export async function submitFeedbackConversation(
 		};
 	}
 
-	// Live state as of filing: an anonymized section on the issue, and the Auto
-	// Run counters the support package cannot read on its own (they live only in
-	// the renderer, so a package built here used to ship that section empty).
+	// Live state as of filing: an anonymized section on the issue. The support
+	// package asks the app windows for Auto Run state itself (through
+	// `debugPackageDeps.requestAutoRunSnapshots`), so every main-built package
+	// shares one fetch, one merge rule, and a recorded reason when it fails.
 	const liveDiagnosis = await captureFeedbackLiveDiagnosis();
 
 	// Generate and upload debug package if requested
 	let debugPackageMarkdown = '';
 	if (payload.includeDebugPackage && debugPackageDeps) {
 		try {
-			const packageResult = await generateDebugPackage(
-				os.tmpdir(),
-				debugPackageDeps,
-				liveDiagnosis.rendererAvailable
-					? { autoRunSnapshots: liveDiagnosis.autoRunSnapshots }
-					: undefined
-			);
+			const packageResult = await generateDebugPackage(os.tmpdir(), debugPackageDeps);
 			if (packageResult.success && packageResult.path) {
 				try {
 					debugPackageMarkdown = await uploadFeedbackZip(

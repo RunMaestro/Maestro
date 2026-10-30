@@ -16,6 +16,12 @@
 import type { PianolaMessage, PianolaClassification } from './types';
 import { classifyMessages } from './pianola-classifier';
 import { enrichWithAwaitingInput } from './pianola-awaiting-detector';
+import {
+	isValidHumanDecisionEvidence,
+	type PianolaHumanDecisionEvidence,
+	type PianolaDecisionRecord,
+} from './storage';
+import { canonicalJson } from '../canonicalJson';
 
 /** Which installed agent a transcript came from. */
 export type TranscriptAgent = 'claude-code' | 'codex';
@@ -25,7 +31,7 @@ export type ReplyPolarity = 'affirmative' | 'negative' | 'other';
 
 /** One mined "agent asked -> user answered" decision. */
 export interface DecisionPair {
-	agent: TranscriptAgent;
+	agent: TranscriptAgent | 'native';
 	sessionId: string;
 	projectPath?: string;
 	/** Classification of the ask (kind / risk / topic), from the shared classifier. */
@@ -38,6 +44,90 @@ export interface DecisionPair {
 	polarity: ReplyPolarity;
 	askedAt: string;
 	repliedAt: string;
+	/** Missing provenance remains inspectable but is never a learning sample. */
+	evidence?: PianolaHumanDecisionEvidence;
+	/** Conflicting snapshots of one source veto learning without increasing count. */
+	conflictingEvidence?: boolean;
+}
+
+/** Convert committed explicit human resolutions. Recipient delivery is a separate outcome.
+ * Legacy/rule/manager records are not evidence, even when their send was accepted.
+ */
+export function settledDecisionPairs(
+	records: readonly PianolaDecisionRecord[],
+	options: { snapshots?: boolean } = {}
+): DecisionPair[] {
+	const pairs: DecisionPair[] = [];
+	for (const record of records) {
+		const evidence = record.humanEvidence;
+		if (
+			!isValidHumanDecisionEvidence(evidence) ||
+			record.dryRun ||
+			record.lifecycle?.phase !== 'answer' ||
+			record.lifecycle.source.kind !== 'human' ||
+			record.lifecycle.source.actorId !== evidence.actorId ||
+			record.lifecycle.groupId !== evidence.groupId ||
+			record.decision.action !== 'auto_answer' ||
+			record.decision.answer !== evidence.answer ||
+			record.agentId !== evidence.agentId ||
+			record.tabId !== evidence.tabId ||
+			record.classification.evidence.messageId !== evidence.questionMessageId
+		)
+			continue;
+		pairs.push({
+			agent: 'native',
+			sessionId: record.tabId,
+			projectPath: record.projectPath,
+			classification: record.classification,
+			ask: evidence.question,
+			reply: evidence.answer,
+			polarity: replyPolarity(evidence.answer),
+			askedAt: evidence.askedAt,
+			repliedAt: evidence.answeredAt,
+			evidence,
+		});
+	}
+	// Conflict review needs the actual corrected source, not only the first
+	// independent sample plus a veto flag. Counting callers keep the folded view.
+	return options.snapshots ? pairs : confirmedHumanDecisionPairs(pairs);
+}
+
+/** Dedup by recipient ask AND answer event, never by a generic yes or risk label. */
+export function confirmedHumanDecisionPairs(pairs: readonly DecisionPair[]): DecisionPair[] {
+	const asks = new Map<string, DecisionPair>();
+	const answers = new Set<string>();
+	const confirmed: DecisionPair[] = [];
+	for (const pair of pairs) {
+		const evidence = pair.evidence;
+		if (
+			!isValidHumanDecisionEvidence(evidence) ||
+			pair.ask !== evidence.question ||
+			pair.reply !== evidence.answer ||
+			pair.sessionId !== evidence.tabId ||
+			pair.classification.evidence.messageId !== evidence.questionMessageId ||
+			pair.askedAt !== evidence.askedAt ||
+			pair.repliedAt !== evidence.answeredAt
+		)
+			continue;
+		const askKey = canonicalJson([evidence.agentId, evidence.tabId, evidence.questionMessageId]);
+		const answerKey = canonicalJson([evidence.actorId, evidence.answerMessageId]);
+		const previous = asks.get(askKey);
+		if (previous) {
+			if (
+				canonicalJson([previous.evidence, previous.classification]) !==
+					canonicalJson([pair.evidence, pair.classification]) ||
+				pair.conflictingEvidence
+			)
+				previous.conflictingEvidence = true;
+			continue;
+		}
+		if (answers.has(answerKey)) continue;
+		const sample = { ...pair };
+		asks.set(askKey, sample);
+		answers.add(answerKey);
+		confirmed.push(sample);
+	}
+	return confirmed;
 }
 
 /** Aggregate view over a set of decision pairs. */
@@ -267,7 +357,8 @@ export function aggregateDecisionPairs(pairs: readonly DecisionPair[]): Decision
 	const byPolarity = emptyPolarityCounts();
 	const byRiskPolarity: Record<string, Record<ReplyPolarity, number>> = {};
 
-	for (const pair of pairs) {
+	const confirmed = confirmedHumanDecisionPairs(pairs);
+	for (const pair of confirmed) {
 		const risk = pair.classification.risk;
 		byRisk[risk] = (byRisk[risk] ?? 0) + 1;
 		byPolarity[pair.polarity] += 1;
@@ -275,5 +366,5 @@ export function aggregateDecisionPairs(pairs: readonly DecisionPair[]): Decision
 		byRiskPolarity[risk][pair.polarity] += 1;
 	}
 
-	return { total: pairs.length, byRisk, byPolarity, byRiskPolarity };
+	return { total: confirmed.length, byRisk, byPolarity, byRiskPolarity };
 }

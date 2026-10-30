@@ -5,7 +5,11 @@
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
 
-vi.mock('../../../cli/services/maestro-client', () => ({ withMaestroClient: vi.fn() }));
+vi.mock('../../../cli/services/maestro-client', () => ({
+	withMaestroClient: vi.fn(),
+	CommandTimeoutError: class CommandTimeoutError extends Error {},
+	UnsupportedCommandError: class UnsupportedCommandError extends Error {},
+}));
 vi.mock('../../../cli/services/storage', () => ({
 	resolveAgentId: vi.fn((id: string) => id),
 	readActiveAgentId: vi.fn(() => null),
@@ -29,8 +33,13 @@ import {
 	tabEffort,
 	tabEnterToSend,
 	tabShow,
+	tabClosed,
+	tabReopen,
+	tabCompact,
+	tabMerge,
+	tabTransfer,
 } from '../../../cli/commands/tab';
-import { withMaestroClient } from '../../../cli/services/maestro-client';
+import { withMaestroClient, CommandTimeoutError } from '../../../cli/services/maestro-client';
 import { resolveAgentId, readActiveAgentId } from '../../../cli/services/storage';
 import { formatError } from '../../../cli/output/formatter';
 
@@ -330,5 +339,316 @@ describe('tab commands', () => {
 		const printed = JSON.parse(consoleSpy.mock.calls.at(-1)?.[0] as string);
 		expect(printed.tab.tabId).toBe('tab-bbbb');
 		expect(printed.tab.model).toBe('opus');
+	});
+
+	describe('closed tabs', () => {
+		const CLOSED = [
+			{ index: 0, type: 'ai', label: 'Refactor', tabId: 'tab-old1', closedAt: Date.now() - 60_000 },
+			{
+				index: 1,
+				type: 'file',
+				label: 'notes.md',
+				tabId: 'file-9',
+				closedAt: Date.now() - 120_000,
+				tiled: true,
+			},
+		];
+
+		it("tab closed lists the agent's stack, newest first", async () => {
+			const getPayload = mockTab({ success: true, closedTabs: CLOSED });
+			await tabClosed({ agent: 'agent-1' });
+			expect(getPayload()).toEqual({
+				type: 'closed_tab_command',
+				action: 'list',
+				sessionId: 'agent-1',
+			});
+			const printed = consoleSpy.mock.calls.map((c) => String(c[0])).join('\n');
+			expect(printed).toContain('Refactor');
+			expect(printed).toContain('tab-old1');
+			expect(printed).toContain('file, tiled');
+		});
+
+		it('tab closed --json prints the stack as data', async () => {
+			mockTab({ success: true, closedTabs: CLOSED });
+			await tabClosed({ agent: 'agent-1', json: true });
+			const printed = JSON.parse(consoleSpy.mock.calls.at(-1)?.[0] as string);
+			expect(printed).toEqual({ success: true, sessionId: 'agent-1', closedTabs: CLOSED });
+		});
+
+		it('tab closed on an empty stack says so and exits cleanly', async () => {
+			mockTab({ success: true, closedTabs: [] });
+			await tabClosed({ agent: 'agent-1' });
+			expect(processExitSpy).not.toHaveBeenCalled();
+			expect(consoleSpy).toHaveBeenCalledWith('No closed tabs for agent-1');
+		});
+
+		it("tab closed falls back to the desktop's selected agent", async () => {
+			vi.mocked(readActiveAgentId).mockReturnValue('agent-2');
+			const getPayload = mockTab({ success: true, closedTabs: [] });
+			await tabClosed({});
+			expect(getPayload().sessionId).toBe('agent-2');
+		});
+
+		it('tab closed fails loudly with no --agent and no selected agent', async () => {
+			mockTab({ success: true, closedTabs: [] });
+			await expect(tabClosed({})).rejects.toThrow('__exit__');
+			expect(formatError).toHaveBeenCalledWith(expect.stringContaining('No active agent'));
+		});
+
+		it('tab reopen with no target restores the newest entry and focuses it', async () => {
+			const getPayload = mockTab({
+				success: true,
+				tabId: 'tab-new1',
+				tabType: 'ai',
+				reopened: CLOSED[0],
+				content: 'loaded',
+			});
+			await tabReopen({ agent: 'agent-1' });
+			expect(getPayload()).toEqual({
+				type: 'closed_tab_command',
+				action: 'reopen',
+				sessionId: 'agent-1',
+				background: false,
+			});
+			expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Reopened "Refactor"'));
+			expect(consoleSpy).toHaveBeenCalledWith('  Tab: tab-new1');
+		});
+
+		it('tab reopen --index sends the position as a number', async () => {
+			const getPayload = mockTab({ success: true, tabId: 'file-9', reopened: CLOSED[1] });
+			await tabReopen({ agent: 'agent-1', index: '1' });
+			expect(getPayload().index).toBe(1);
+			expect(getPayload()).not.toHaveProperty('tabId');
+		});
+
+		it('tab reopen --tab sends the original tab id', async () => {
+			const getPayload = mockTab({ success: true, tabId: 'tab-new1', reopened: CLOSED[0] });
+			await tabReopen({ agent: 'agent-1', tab: 'tab-old' });
+			expect(getPayload().tabId).toBe('tab-old');
+			expect(getPayload()).not.toHaveProperty('index');
+		});
+
+		it('tab reopen --background puts background on the wire', async () => {
+			const getPayload = mockTab({ success: true, tabId: 'tab-new1', reopened: CLOSED[0] });
+			await tabReopen({ agent: 'agent-1', background: true });
+			expect(getPayload().background).toBe(true);
+		});
+
+		it('tab reopen --json reports the restored tab id', async () => {
+			mockTab({
+				success: true,
+				tabId: 'tab-new1',
+				tabType: 'ai',
+				reopened: CLOSED[0],
+				content: 'pending',
+			});
+			await tabReopen({ agent: 'agent-1', json: true });
+			const printed = JSON.parse(consoleSpy.mock.calls.at(-1)?.[0] as string);
+			expect(printed).toMatchObject({
+				success: true,
+				sessionId: 'agent-1',
+				tabId: 'tab-new1',
+				tabType: 'ai',
+				wasDuplicate: false,
+				content: 'pending',
+				background: false,
+			});
+			expect(printed.reopened.tabId).toBe('tab-old1');
+		});
+
+		it("tab reopen on an empty stack exits non-zero with the desktop's message", async () => {
+			mockTab({ success: false, error: 'No closed tabs to reopen for agent-1' });
+			await expect(tabReopen({ agent: 'agent-1', json: true })).rejects.toThrow('__exit__');
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+			const printed = JSON.parse(consoleSpy.mock.calls.at(-1)?.[0] as string);
+			expect(printed).toEqual({ success: false, error: 'No closed tabs to reopen for agent-1' });
+		});
+
+		it('tab reopen refuses --index and --tab together before contacting the app', async () => {
+			mockTab({ success: true });
+			await expect(tabReopen({ agent: 'agent-1', index: '0', tab: 'tab-old' })).rejects.toThrow(
+				'__exit__'
+			);
+			expect(withMaestroClient).not.toHaveBeenCalled();
+		});
+
+		it.each(['-1', '1.5', 'two', ''])('tab reopen refuses --index %j', async (index) => {
+			mockTab({ success: true });
+			await expect(tabReopen({ agent: 'agent-1', index })).rejects.toThrow('__exit__');
+			expect(withMaestroClient).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('tab compact / merge / transfer', () => {
+		/** Capture every command the verb sends with its timeout, answering the op with `result`. */
+		function mockContextOp(result: unknown) {
+			const sent: Array<{
+				payload: Record<string, unknown>;
+				responseType: string;
+				timeoutMs?: number;
+			}> = [];
+			vi.mocked(withMaestroClient).mockImplementation(async (action) =>
+				action({
+					sendCommand: vi
+						.fn()
+						.mockImplementation(
+							(payload: Record<string, unknown>, responseType: string, timeoutMs?: number) => {
+								if (payload.type === 'list_desktop_sessions') {
+									return Promise.resolve({ sessions: SESSIONS });
+								}
+								sent.push({ payload, responseType, timeoutMs });
+								return result instanceof Error ? Promise.reject(result) : Promise.resolve(result);
+							}
+						),
+				} as never)
+			);
+			return sent;
+		}
+		const lastJson = () => JSON.parse(consoleSpy.mock.calls.at(-1)?.[0] as string);
+
+		it('tab compact defaults to the active tab of -a and prints the new tab id', async () => {
+			const sent = mockContextOp({ success: true, newTabId: 'tab-new', reductionPercent: 64 });
+			await tabCompact(undefined, { agent: 'agent-2' });
+
+			expect(sent).toHaveLength(1);
+			expect(sent[0].payload).toEqual({
+				type: 'summarize_context',
+				sessionId: 'agent-2',
+				tabId: 'tab-bbbb',
+			});
+			expect(sent[0].responseType).toBe('summarize_context_result');
+			// A compaction is a summarization turn: minutes, not the default 10 s.
+			expect(sent[0].timeoutMs).toBeGreaterThan(10 * 60_000);
+			expect(consoleSpy).toHaveBeenCalledWith('  Tab: tab-new');
+		});
+
+		it('tab compact --background --json resolves an explicit tab prefix', async () => {
+			const sent = mockContextOp({ success: true, newTabId: 'tab-new', reductionPercent: 64 });
+			await tabCompact('tab-cc', { background: true, json: true });
+
+			expect(sent[0].payload).toEqual({
+				type: 'summarize_context',
+				sessionId: 'agent-1',
+				tabId: 'tab-cccc',
+				background: true,
+			});
+			expect(lastJson()).toEqual({
+				success: true,
+				agentId: 'agent-1',
+				tabId: 'tab-cccc',
+				newTabId: 'tab-new',
+				reductionPercent: 64,
+				background: true,
+			});
+		});
+
+		it('tab compact refuses a tab that belongs to another agent than -a', async () => {
+			const sent = mockContextOp({ success: true });
+			await expect(tabCompact('tab-bbbb', { agent: 'agent-1' })).rejects.toThrow('__exit__');
+			expect(sent).toHaveLength(0);
+		});
+
+		it("tab compact reports the desktop's refusal and exits 1", async () => {
+			mockContextOp({ success: false, error: 'Context too small' });
+			await expect(tabCompact(undefined, { agent: 'agent-1', json: true })).rejects.toThrow(
+				'__exit__'
+			);
+			expect(processExitSpy).toHaveBeenCalledWith(1);
+			expect(lastJson()).toEqual({ success: false, error: 'Context too small' });
+		});
+
+		it('tab compact reports a timeout apart from a failure (exit 5)', async () => {
+			mockContextOp(new CommandTimeoutError('summarize_context_result'));
+			await expect(tabCompact(undefined, { agent: 'agent-1', json: true })).rejects.toThrow(
+				'__exit__'
+			);
+			expect(processExitSpy).toHaveBeenCalledWith(5);
+			expect(lastJson()).toMatchObject({ success: false, timedOut: true });
+			expect(lastJson().error).toContain('may still be running');
+		});
+
+		it("treats main's timedOut answer as a timeout too", async () => {
+			mockContextOp({ success: false, timedOut: true, error: 'still summarizing' });
+			await expect(tabCompact(undefined, { agent: 'agent-1' })).rejects.toThrow('__exit__');
+			expect(processExitSpy).toHaveBeenCalledWith(5);
+		});
+
+		it('tab merge sends both tabs and reports the receiving tab', async () => {
+			const sent = mockContextOp({ success: true, targetTabId: 'tab-bbbb' });
+			await tabMerge('tab-dddd', { into: 'agent-2', targetTab: 'tab-bbbb', json: true });
+
+			expect(sent[0].payload).toEqual({
+				type: 'merge_context',
+				sourceSessionId: 'agent-1',
+				targetSessionId: 'agent-2',
+				tabId: 'tab-dddd',
+				targetTabId: 'tab-bbbb',
+			});
+			expect(lastJson()).toEqual({
+				success: true,
+				agentId: 'agent-1',
+				tabId: 'tab-dddd',
+				targetAgentId: 'agent-2',
+				targetTabId: 'tab-bbbb',
+				staged: false,
+				background: false,
+			});
+		});
+
+		it('tab merge --background says when the context waits for the tab to be opened', async () => {
+			const sent = mockContextOp({ success: true, targetTabId: 'tab-bbbb', staged: true });
+			await tabMerge(undefined, { agent: 'agent-1', into: 'agent-2', background: true });
+
+			expect(sent[0].payload).toMatchObject({ tabId: 'tab-aaaa', background: true });
+			expect(sent[0].payload).not.toHaveProperty('targetTabId');
+			expect(consoleSpy).toHaveBeenCalledWith('  The context sends when that tab is next opened.');
+		});
+
+		it('tab merge refuses a --target-tab that is not in the --into agent', async () => {
+			const sent = mockContextOp({ success: true });
+			await expect(
+				tabMerge('tab-aaaa', { into: 'agent-2', targetTab: 'tab-cccc' })
+			).rejects.toThrow('__exit__');
+			expect(sent).toHaveLength(0);
+		});
+
+		it('tab transfer opens a tab in the target and prints its id', async () => {
+			const sent = mockContextOp({ success: true, newTabId: 'tab-moved', queued: true });
+			await tabTransfer('tab-aaaa', { to: 'agent-2', focus: true, json: true });
+
+			expect(sent[0].payload).toEqual({
+				type: 'transfer_context',
+				sourceSessionId: 'agent-1',
+				targetSessionId: 'agent-2',
+				tabId: 'tab-aaaa',
+			});
+			expect(sent[0].responseType).toBe('transfer_context_result');
+			expect(lastJson()).toEqual({
+				success: true,
+				agentId: 'agent-1',
+				tabId: 'tab-aaaa',
+				targetAgentId: 'agent-2',
+				newTabId: 'tab-moved',
+				queued: true,
+				background: false,
+			});
+		});
+
+		it('tab transfer refuses the source agent as the target before sending', async () => {
+			const sent = mockContextOp({ success: true });
+			await expect(tabTransfer('tab-aaaa', { to: 'agent-1' })).rejects.toThrow('__exit__');
+			expect(sent).toHaveLength(0);
+		});
+
+		it("tab transfer reports the desktop's failure", async () => {
+			mockContextOp({ success: false, error: 'Agent agent-2 is a terminal and has no AI tabs' });
+			await expect(tabTransfer('tab-aaaa', { to: 'agent-2', json: true })).rejects.toThrow(
+				'__exit__'
+			);
+			expect(lastJson()).toEqual({
+				success: false,
+				error: 'Agent agent-2 is a terminal and has no AI tabs',
+			});
+		});
 	});
 });

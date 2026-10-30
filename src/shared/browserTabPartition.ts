@@ -15,6 +15,11 @@
  *  - ephemeral : `maestro-ephemeral-<sanitized session id>-<random8 lowercase alnum>`
  */
 
+import type { BrowserTab } from './browserPage';
+
+/** Prefix of an ephemeral (incognito) partition: no `persist:`, so Electron keeps it in memory only. */
+export const EPHEMERAL_BROWSER_TAB_PARTITION_PREFIX = 'maestro-ephemeral-';
+
 /** Persistent (on-disk) browser-tab partition, e.g. `persist:maestro-browser-session-abc`. */
 export const PERSISTENT_BROWSER_TAB_PARTITION_PATTERN =
 	/^persist:maestro-browser-session-[A-Za-z0-9_-]+$/;
@@ -32,5 +37,18 @@ export function isAllowedBrowserTabPartition(partition: string): boolean {
 	return (
 		PERSISTENT_BROWSER_TAB_PARTITION_PATTERN.test(partition) ||
 		EPHEMERAL_BROWSER_TAB_PARTITION_PATTERN.test(partition)
+	);
+}
+
+/**
+ * True when a tab is an ephemeral (incognito) browser tab. Checks the flag and
+ * the partition prefix so a tab that carries only one of the two markers is
+ * still recognized and excluded from persistence.
+ */
+export function isEphemeralBrowserTab(tab: Pick<BrowserTab, 'ephemeral' | 'partition'>): boolean {
+	return (
+		tab.ephemeral === true ||
+		(typeof tab.partition === 'string' &&
+			tab.partition.startsWith(EPHEMERAL_BROWSER_TAB_PARTITION_PREFIX))
 	);
 }

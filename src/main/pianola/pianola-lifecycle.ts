@@ -15,8 +15,15 @@ import { PianolaSupervisor } from './pianola-supervisor';
 import { PianolaRelearnScheduler } from './pianola-relearn-scheduler';
 import { runRelearnJob } from './pianola-relearn';
 import { isEncoreFeatureEnabled } from '../../shared/encoreFeatureDefaults';
-import { readRules, writeSuggestions, getProfile } from './pianola-store-main';
-import type { DecisionPair } from '../../shared/pianola/transcript-mining';
+import {
+	readRules,
+	writeSuggestions,
+	readSuggestions,
+	getProfile,
+	readDecisions,
+	onHumanDecisionSettled,
+} from './pianola-store-main';
+import { settledDecisionPairs, type DecisionPair } from '../../shared/pianola/transcript-mining';
 import type { PianolaRule } from '../../shared/pianola/types';
 import type { getSettingsStore, getSessionsStore } from '../stores';
 
@@ -120,17 +127,23 @@ export function createPianolaLifecycle(deps: PianolaLifecycleDependencies): Pian
 
 	// Pianola scheduled re-learn: keeps the learned profile fresh as a PROPOSAL
 	// (stages suggestions; never overwrites the live profile/rules) and
-	// relaunches stale supervised targets, on a fixed cadence. Armed only while
-	// encoreFeatures.pianola is on, and still self-gates per tick on it. Mining
-	// reuses the existing `pianola learn` crawler via the bundled CLI; the
-	// composition is pure with injected deps.
+	// relaunches stale supervised targets, on a fixed cadence. Self-gates per
+	// tick on encoreFeatures.pianola and immediately on a new native human decision.
+	// The audit corpus has transport identity; raw CLI role=user text does not.
 	const relearnScheduler = new PianolaRelearnScheduler({
+		onHumanDecisionSettled,
 		isEnabled: () => isEncoreFeatureEnabled(deps.settingsStore, 'pianola'),
 		runJob: async () => {
 			await runRelearnJob({
 				isEnabled: () => isEncoreFeatureEnabled(deps.settingsStore, 'pianola'),
-				mine: mineDecisionPairsViaCli,
-				readExisting: readExistingForRelearn,
+				// Raw CLI transcripts do not authenticate their user-role author.
+				// Only settled, transport-attributed owner answers enter native learning.
+				mine: async () => settledDecisionPairs(readDecisions(), { snapshots: true }),
+				readExisting: () => ({
+					...readExistingForRelearn(),
+					minSamples: deps.settingsStore.get('pianolaLearningMinSamples'),
+					suggestions: readSuggestions(),
+				}),
 				writeSuggestions,
 				relaunchStale: () => supervisor?.relaunchStale() ?? 0,
 				now: Date.now,

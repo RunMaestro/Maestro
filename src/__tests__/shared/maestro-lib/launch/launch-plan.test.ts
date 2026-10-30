@@ -6,6 +6,7 @@ import {
 import { resolveSshLaunchTarget } from '../../../../shared/maestro-lib/launch/ssh-remote-resolver';
 import { getAgentDefinition } from '../../../../shared/maestro-lib/providers/definitions';
 import { getAgentCapabilities } from '../../../../shared/maestro-lib/providers/capabilities';
+import { WINDOWS_PROMPT_ARGV_MAX_CHARS } from '../../../../shared/maestro-lib/launch/prompt-delivery';
 import type { SshRemoteConfig } from '../../../../shared/types';
 
 function remote(overrides: Partial<SshRemoteConfig> = {}): SshRemoteConfig {
@@ -186,6 +187,31 @@ describe('buildAgentLaunchPlan', () => {
 			expect(result.plan.args).toEqual(['exec', '--json', '--', 'fix the bug']);
 			expect(result.plan.prompt.via).toBe('argv');
 			expect(result.plan.stdin).toBeUndefined();
+		}
+	);
+
+	// MAESTRO-16E: Cue and the CLI keep a short Windows prompt in argv on
+	// purpose, but one past the CreateProcess cap can only fail there with
+	// ENAMETOOLONG. The host's own OS (hostIsWindows) is what moves it to stdin.
+	it.each(['cli', 'cue'] as const)(
+		'moves a prompt past the Windows command-line cap to stdin for the %s surface',
+		(surface) => {
+			const long = 'x'.repeat(WINDOWS_PROMPT_ARGV_MAX_CHARS + 1);
+
+			const onWindows = buildAgentLaunchPlan(input({ surface, isWindowsHost: true, prompt: long }));
+			if (!onWindows.ok) throw new Error(onWindows.error);
+			expect(onWindows.plan.prompt).toEqual({ via: 'stdin', format: 'raw', args: [] });
+			expect(onWindows.plan.args).toEqual(['exec', '--json']);
+			expect(onWindows.plan.stdin).toBe(long);
+
+			// The same prompt fits a Linux or macOS command line, so it stays in argv.
+			const offWindows = buildAgentLaunchPlan(
+				input({ surface, isWindowsHost: false, prompt: long })
+			);
+			if (!offWindows.ok) throw new Error(offWindows.error);
+			expect(offWindows.plan.prompt.via).toBe('argv');
+			expect(offWindows.plan.args).toEqual(['exec', '--json', '--', long]);
+			expect(offWindows.plan.stdin).toBeUndefined();
 		}
 	);
 

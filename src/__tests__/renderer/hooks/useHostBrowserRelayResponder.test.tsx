@@ -6,8 +6,11 @@ import { createMockSession } from '../../helpers/mockSession';
 import type { BrowserRelayRequest } from '../../../shared/browserRelay';
 
 vi.mock('../../../renderer/utils/runtimeContext', () => ({ isWebDesktop: () => false }));
+const windowContext = vi.hoisted(() => ({
+	current: null as null | { isMainWindow: boolean; ownsSession: (id: string) => boolean },
+}));
 vi.mock('../../../renderer/contexts/WindowContext', () => ({
-	useWindowContextOptional: () => null,
+	useWindowContextOptional: () => windowContext.current,
 }));
 
 const originalApi = window.maestro.browserSession;
@@ -22,6 +25,7 @@ const target = {
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	windowContext.current = null;
 	useSessionStore.setState({
 		sessions: [
 			createMockSession({
@@ -87,5 +91,25 @@ describe('native browser relay resolution', () => {
 				expect.objectContaining({ ok: true, webContentsId: undefined })
 			)
 		);
+	});
+});
+
+// MAESTRO-16N: main only accepts readiness from the primary window, so a
+// secondary window registering it threw an unhandled rejection on open.
+describe('relay readiness registration', () => {
+	it('registers and releases readiness from the primary window', () => {
+		windowContext.current = { isMainWindow: true, ownsSession: () => true };
+		const { unmount } = renderHook(() => useHostBrowserRelayResponder());
+		expect(window.maestro.browserSession.relayReady).toHaveBeenCalledWith(true);
+		unmount();
+		expect(window.maestro.browserSession.relayReady).toHaveBeenCalledWith(false);
+	});
+
+	it('never registers readiness from a secondary window, but still answers relay requests', () => {
+		windowContext.current = { isMainWindow: false, ownsSession: () => true };
+		const { unmount } = renderHook(() => useHostBrowserRelayResponder());
+		expect(window.maestro.browserSession.onRelayRequest).toHaveBeenCalled();
+		unmount();
+		expect(window.maestro.browserSession.relayReady).not.toHaveBeenCalled();
 	});
 });

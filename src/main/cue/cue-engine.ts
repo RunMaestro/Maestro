@@ -1,3 +1,5 @@
+import { CUE_EVENT_TYPES } from '../../shared/cue/contracts';
+import { isDurableCueEvent } from './triggers/cue-plugin-trigger-source';
 /**
  * Cue Engine Core - thin façade for Maestro Cue event-driven automation.
  *
@@ -63,7 +65,12 @@ import type { SessionState } from './cue-session-state';
 import { createCueRecoveryService, type CueRecoveryService } from './cue-recovery-service';
 import { createCueCleanupService, type CueCleanupService } from './cue-cleanup-service';
 import { createCueMetrics, type CueMetrics, type CueMetricsCollector } from './cue-metrics';
-import { createCueQueuePersistence, type CueQueuePersistence } from './cue-queue-persistence';
+import {
+	createCueQueuePersistence,
+	type CueQueuePersistence,
+	type RestoredQueueEntry,
+	type DurableRestoreState,
+} from './cue-queue-persistence';
 import { countCueEvents, getRecentCueEvents } from './cue-db';
 import { CUE_ACTIVITY_LOG_MAX, cueEventRecordsToRunResults } from './cue-activity-entries';
 import { loadCueConfigDetailed } from './cue-yaml-loader';
@@ -95,6 +102,8 @@ const MAX_CHAIN_DEPTH = 10;
 /** Dependencies injected into the CueEngine */
 export interface CueEngineDeps {
 	getSessions: () => SessionInfo[];
+	/** Raw persisted membership, never the live/feature-filtered agent list. */
+	hasStoredSession?: (sessionId: string) => boolean;
 	onCueRun: (request: {
 		runId: string;
 		sessionId: string;
@@ -256,6 +265,14 @@ export class CueEngine {
 	private cleanupService: CueCleanupService;
 	private metrics: CueMetricsCollector = createCueMetrics();
 	private queuePersistence: CueQueuePersistence;
+	/** Only rejected restore rows: accepted live queue rows must never be replayed. */
+	private pendingPluginRestoreIds: Set<string> | null = new Set();
+	private retryingPluginRestore = false;
+	private deferredPluginRestoreOwners = new Map<
+		string,
+		{ sessionId: string; subscriptionName: string }
+	>();
+	private confirmedRemovedCueOwners = new Set<string>();
 	/** Durable fan-in progress; standalone runner only (see cue-fan-in-persistence.ts). */
 	private fanInPersistence: CueFanInPersistence | undefined;
 	private deps: CueEngineDeps;
@@ -343,6 +360,7 @@ export class CueEngine {
 				return (state?.config.settings?.timeout_minutes ?? 30) * 60 * 1000;
 			},
 			knownSessionIds: () => new Set(deps.getSessions().map((s) => s.id)),
+			durableSourceState: (id, name) => this.durableRestoreState(id, name),
 			knownSubscriptionNames: () => {
 				const names = new Set<string>();
 				for (const state of this.registry.snapshot().values()) {
@@ -355,6 +373,21 @@ export class CueEngine {
 		this.runManager = createCueRunManager({
 			getSessions: deps.getSessions,
 			getSessionSettings: (sessionId) => this.registry.get(sessionId)?.config.settings,
+			canDrainSession: (sessionId) =>
+				this.enabled &&
+				this.registry.has(sessionId) &&
+				deps.getSessions().some((session) => session.id === sessionId),
+			onDurableRowsDetached: (sessionId, entries) => {
+				for (const entry of entries) {
+					if (!entry.persistId) continue;
+					this.pendingPluginRestoreIds?.add(entry.persistId);
+					this.deferredPluginRestoreOwners.set(entry.persistId, {
+						sessionId,
+						subscriptionName: entry.subscriptionName,
+					});
+				}
+				// No retry here: teardown/Stop All must first finish clearing live state.
+			},
 			onCueRun: deps.onCueRun,
 			onStopCueRun: deps.onStopCueRun,
 			onLog: meteredOnLog,
@@ -504,7 +537,7 @@ export class CueEngine {
 				autoRun,
 				turnSettings
 			) => {
-				this.runManager.execute(
+				return this.runManager.execute(
 					sessionId,
 					prompt,
 					event,
@@ -633,7 +666,10 @@ export class CueEngine {
 			onLog: meteredOnLog,
 		});
 		this.heartbeat = createCueHeartbeat({
-			onTick: () => this.cleanupService.onTick(),
+			onTick: () => {
+				this.cleanupService.onTick();
+				this.retryPendingPluginEvents();
+			},
 			// Route heartbeat-failure notifications through the metered log
 			// channel so the engine's recordMetricFromPayload bumps the
 			// heartbeatFailures counter exactly once per failure run.
@@ -717,6 +753,9 @@ export class CueEngine {
 
 		this.startReason = reason === 'system-boot' ? 'system-boot' : null;
 		this.enabled = true;
+		this.pendingPluginRestoreIds = new Set();
+		this.deferredPluginRestoreOwners.clear();
+		this.confirmedRemovedCueOwners.clear();
 		// Reset metrics so startedAt reflects THIS start, not the collector's
 		// construction. Without this, startedAt is fixed at engine-instance
 		// creation time, making "uptime" rate calcs wrong across stop/start
@@ -732,7 +771,8 @@ export class CueEngine {
 		// initializes: initSession can enqueue this boot's own app.startup or
 		// initial heartbeat behind a busy slot, and that enqueue persists a row
 		// the restore below would otherwise run a second time.
-		const persistedBeforeBoot = this.queuePersistence.persistedIds();
+		this.queuePersistence.beginRestoreEpoch();
+		this.pendingPluginRestoreIds = this.queuePersistence.persistedIds(true);
 
 		const sessions = this.deps.getSessions();
 		for (const session of sessions) {
@@ -746,48 +786,7 @@ export class CueEngine {
 		// The prior persistId is discarded via remove() inside the restore
 		// helper's session-missing drop path (if applicable), or is discarded
 		// implicitly on re-enqueue since we never reuse the old id.
-		const restored = this.queuePersistence.restoreAll(persistedBeforeBoot);
-		for (const [sessionId, entries] of restored) {
-			for (const entry of entries) {
-				// Remove the persisted row immediately - runManager.execute will
-				// re-persist with a fresh id when it re-queues (or dispatches
-				// immediately if a slot is available).
-				this.queuePersistence.remove(entry.persistId);
-				// Pass the original queuedAt so drainQueue's staleness check
-				// still reflects real user wait time, not the restart time.
-				this.runManager.execute(
-					sessionId,
-					entry.prompt,
-					entry.event,
-					entry.subscriptionName,
-					entry.outputPrompt,
-					entry.chainDepth,
-					entry.cliOutput,
-					entry.action,
-					entry.command,
-					entry.queuedAt,
-					// Persisted queue rows don't carry pipelineName (no schema
-					// column for it). The summary builder will fall back to
-					// stripping the `-chain-N` suffix off subscriptionName, so
-					// restored runs degrade gracefully to the legacy label.
-					undefined,
-					// Phase 01 - chain lineage round-tripped through the
-					// queue table so resumed runs stay attached to their
-					// chain root in stats. Roots and rows persisted before
-					// usageStats was enabled come back as undefined.
-					entry.chainRootId,
-					entry.parentEventId,
-					// The two action payloads that travel with the run instead of
-					// being re-read from the subscription: a notify's `sticky`, and
-					// the documents an `action: autorun` run was scheduled with.
-					entry.notify,
-					entry.autoRun,
-					entry.turnSettings,
-					// Work a drain deferred is not buffered overflow: restore all of it.
-					entry.drainedAt !== undefined
-				);
-			}
-		}
+		this.retryPendingPluginEvents();
 
 		// Partial fan-ins a previous run left on disk (standalone only). After
 		// sessions init, so the subscriptions they belong to can be looked up.
@@ -802,11 +801,129 @@ export class CueEngine {
 		this.heartbeat.start();
 	}
 
+	private durableRestoreState(sessionId: string, name: string): DurableRestoreState {
+		if (this.confirmedRemovedCueOwners.has(sessionId)) return 'removed';
+		if (!this.deps.getSessions().some((session) => session.id === sessionId)) return 'deferred';
+		const state = this.registry.get(sessionId);
+		if (!state) return 'deferred';
+		return state.config.subscriptions.some(
+			(sub) => sub.name === name && sub.event === 'plugin.event'
+		)
+			? 'ready'
+			: 'removed';
+	}
+
+	private restoreQueueEntry(sessionId: string, entry: RestoredQueueEntry): void {
+		if (entry.deferred) {
+			this.pendingPluginRestoreIds?.add(entry.persistId);
+			this.deferredPluginRestoreOwners.set(entry.persistId, {
+				sessionId,
+				subscriptionName: entry.subscriptionName,
+			});
+			return;
+		}
+		if (!CUE_EVENT_TYPES.includes(entry.event.type)) return;
+		// Remove the persisted row immediately - runManager.execute will
+		// re-persist with a fresh id when it re-queues (or dispatches
+		// immediately if a slot is available).
+		if (!isDurableCueEvent(entry.event)) this.queuePersistence.remove(entry.persistId);
+		// Pass the original queuedAt so drainQueue's staleness check
+		// still reflects real user wait time, not the restart time.
+		const accepted = this.runManager.execute(
+			sessionId,
+			entry.prompt,
+			entry.event,
+			entry.subscriptionName,
+			entry.outputPrompt,
+			entry.chainDepth,
+			entry.cliOutput,
+			entry.action,
+			entry.command,
+			entry.queuedAt,
+			// Persisted queue rows don't carry pipelineName (no schema
+			// column for it). The summary builder will fall back to
+			// stripping the `-chain-N` suffix off subscriptionName, so
+			// restored runs degrade gracefully to the legacy label.
+			undefined,
+			// Phase 01 - chain lineage round-tripped through the
+			// queue table so resumed runs stay attached to their
+			// chain root in stats. Roots and rows persisted before
+			// usageStats was enabled come back as undefined.
+			entry.chainRootId,
+			entry.parentEventId,
+			// The two action payloads that travel with the run instead of
+			// being re-read from the subscription: a notify's `sticky`, and
+			// the documents an `action: autorun` run was scheduled with.
+			entry.notify,
+			entry.autoRun,
+			entry.turnSettings,
+			// Work a drain deferred is not buffered overflow: restore all of it.
+			entry.drainedAt !== undefined
+		);
+		if (isDurableCueEvent(entry.event)) {
+			if (accepted === true) {
+				this.queuePersistence.remove(entry.persistId);
+				this.pendingPluginRestoreIds?.delete(entry.persistId);
+			} else {
+				this.pendingPluginRestoreIds?.add(entry.persistId);
+			}
+		}
+	}
+
+	/** Retry acknowledged startup work after plugin activation or a queue slot opens. */
+	retryPendingPluginEvents(): void {
+		if (
+			!this.enabled ||
+			this.drainInProgress ||
+			this.retryingPluginRestore ||
+			this.pendingPluginRestoreIds?.size === 0
+		)
+			return;
+		this.retryingPluginRestore = true;
+		try {
+			if (this.pendingPluginRestoreIds === null) {
+				this.pendingPluginRestoreIds = this.queuePersistence.persistedIds(true);
+				if (this.pendingPluginRestoreIds === null) return;
+				// A failed startup snapshot excludes current-start writes. Detached
+				// queued rows explicitly rejoin; still-active accepted writes do not.
+				for (const id of this.deferredPluginRestoreOwners.keys())
+					this.pendingPluginRestoreIds.add(id);
+			}
+			const eligible = new Set(
+				[...this.pendingPluginRestoreIds].filter((id) => {
+					const owner = this.deferredPluginRestoreOwners.get(id);
+					return (
+						!owner ||
+						this.durableRestoreState(owner.sessionId, owner.subscriptionName) !== 'deferred'
+					);
+				})
+			);
+			if (eligible.size === 0) return;
+			const restored = this.queuePersistence.restoreAll(eligible);
+			if (restored === null) return;
+			// Drop only this successful read's candidates. Parked owners stay
+			// pending without DB polling; accepted IDs stay excluded even if
+			// removing the old row failed.
+			for (const id of eligible) {
+				this.pendingPluginRestoreIds.delete(id);
+				this.deferredPluginRestoreOwners.delete(id);
+			}
+			for (const [sessionId, entries] of restored) {
+				for (const entry of entries) this.restoreQueueEntry(sessionId, entry);
+			}
+		} finally {
+			this.retryingPluginRestore = false;
+		}
+	}
+
 	/** Disable the engine, clearing all timers and watchers */
 	stop(): void {
 		if (!this.enabled) return;
 
 		this.enabled = false;
+		this.pendingPluginRestoreIds = new Set();
+		this.deferredPluginRestoreOwners.clear();
+		this.confirmedRemovedCueOwners.clear();
 		this.startReason = null;
 		if (this.lockHeartbeat) {
 			clearInterval(this.lockHeartbeat);
@@ -1104,6 +1221,9 @@ export class CueEngine {
 		const reason = this.startReason ?? 'refresh';
 		cueDebugLog('engine:refreshSession:start', { sessionId, projectRoot, reason });
 		const result = this.sessionRuntimeService.refreshSession(sessionId, projectRoot, reason);
+		if (result.reloaded) this.confirmedRemovedCueOwners.delete(sessionId);
+		else if (result.configRemoved) this.confirmedRemovedCueOwners.add(sessionId);
+		this.retryPendingPluginEvents();
 		cueDebugLog('engine:refreshSession:result', {
 			sessionId,
 			projectRoot,
@@ -1130,6 +1250,13 @@ export class CueEngine {
 	/** Teardown all subscriptions for a session */
 	removeSession(sessionId: string): void {
 		this.sessionRuntimeService.removeSession(sessionId);
+		// This API also tears down root moves and dormant agents. Only the
+		// raw-store deletion together with this explicit teardown is terminal.
+		if (this.deps.hasStoredSession?.(sessionId) === false) {
+			this.confirmedRemovedCueOwners.add(sessionId);
+			this.queuePersistence.clearSession(sessionId, { includeDurable: true });
+		} else this.confirmedRemovedCueOwners.delete(sessionId);
+		this.retryPendingPluginEvents();
 	}
 
 	/** Returns status of all sessions with Cue configs */

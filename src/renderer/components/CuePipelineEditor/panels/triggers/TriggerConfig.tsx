@@ -1,3 +1,4 @@
+import { pluginJson } from '../../../../../shared/plugins/plugin-json';
 /**
  * TriggerConfig - Event-type-specific configuration fields for trigger nodes.
  *
@@ -5,7 +6,7 @@
  * file change, agent completed, GitHub PR/issue/label, task pending, webhook).
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Theme } from '../../../../types';
 import type { PipelineNode, TriggerNodeData } from '../../../../../shared/cue-pipeline-types';
 import { CUE_COLOR } from '../../../../../shared/cue-pipeline-types';
@@ -37,6 +38,12 @@ interface TriggerConfigProps {
 export function TriggerConfig({ node, theme, onUpdateNode }: TriggerConfigProps) {
 	const data = node.data as TriggerNodeData;
 	const [localConfig, setLocalConfig] = useState(data.config);
+	const [pluginConfigError, setPluginConfigError] = useState('');
+	const pluginDraftValid = useRef(true);
+	useEffect(() => {
+		pluginDraftValid.current = true;
+		setPluginConfigError('');
+	}, [node.id, data.eventType]);
 	const [localCustomLabel, setLocalCustomLabel] = useState(data.customLabel ?? '');
 	// Whether the GitHub trigger's webhook section is shown. Open whenever the
 	// trigger already carries webhook settings; the checkbox opens it for a new one.
@@ -87,6 +94,7 @@ export function TriggerConfig({ node, theme, onUpdateNode }: TriggerConfigProps)
 		const unregister = registerPendingEdit(() => {
 			flushConfig();
 			flushLabel();
+			return pluginDraftValid.current;
 		});
 		return () => {
 			flushConfig();
@@ -104,7 +112,7 @@ export function TriggerConfig({ node, theme, onUpdateNode }: TriggerConfigProps)
 	);
 
 	const updateConfig = useCallback(
-		(key: string, value: string | number) => {
+		(key: string, value: string | number | NonNullable<TriggerNodeData['config']['plugin']>) => {
 			const updated = { ...localConfig, [key]: value };
 			setLocalConfig(updated);
 			debouncedUpdate(updated);
@@ -560,6 +568,69 @@ export function TriggerConfig({ node, theme, onUpdateNode }: TriggerConfigProps)
 						<code>maestro-cli cue trigger "{data.customLabel || data.label || 'name'}"</code>.
 						Supports an optional <code>--prompt</code> override.
 					</div>
+				</div>
+			);
+		case 'plugin.event':
+			return (
+				<div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+					{nameField}
+					{(
+						[
+							['pluginId', 'Plugin ID'],
+							['topic', 'Event topic'],
+						] as const
+					).map(([key, label]) => (
+						<label key={key} style={themedLabelStyle}>
+							{label}
+							<input
+								style={themedInputStyle}
+								value={localConfig.plugin?.[key] ?? ''}
+								onChange={(event) =>
+									updateConfig('plugin', {
+										pluginId: '',
+										topic: '',
+										config: {},
+										...localConfig.plugin,
+										[key]: event.target.value,
+									})
+								}
+							/>
+						</label>
+					))}
+					<label style={themedLabelStyle}>
+						Source configuration (JSON)
+						<textarea
+							key={node.id}
+							style={themedInputStyle}
+							rows={6}
+							defaultValue={JSON.stringify(localConfig.plugin?.config ?? {}, null, 2)}
+							onChange={(event) => {
+								try {
+									const config = pluginJson(JSON.parse(event.target.value));
+									updateConfig('plugin', {
+										pluginId: '',
+										topic: '',
+										...localConfig.plugin,
+										config,
+									});
+									pluginDraftValid.current = true;
+									setPluginConfigError('');
+								} catch {
+									pluginDraftValid.current = false;
+									setPluginConfigError('Enter valid JSON up to 16 KiB.');
+								}
+							}}
+						/>
+					</label>
+					{pluginConfigError && (
+						<p role="alert" style={{ color: theme.colors.error, fontSize: 12 }}>
+							{pluginConfigError}
+						</p>
+					)}
+					<p style={{ color: theme.colors.textDim, fontSize: 12 }}>
+						This agent owns the consumer. The selected plugin interprets source configuration and
+						supplies event metadata.
+					</p>
 				</div>
 			);
 		case 'webhook.received': {

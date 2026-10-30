@@ -18,6 +18,7 @@ import {
 	Package,
 	AlarmClock,
 	ListChecks,
+	ShieldCheck,
 } from 'lucide-react';
 import type { Theme } from '../../types';
 import { ToggleSwitchTrack } from '../ui/ToggleSwitch';
@@ -36,7 +37,8 @@ export type CueModalTab =
 	| 'pipeline-list'
 	| 'activity'
 	| 'backup'
-	| 'bundles';
+	| 'bundles'
+	| 'readiness';
 
 const TABS: ReadonlyArray<{
 	id: CueModalTab;
@@ -50,6 +52,7 @@ const TABS: ReadonlyArray<{
 	{ id: 'activity', label: 'Activity Log', icon: Activity },
 	{ id: 'backup', label: 'Backup', icon: Archive },
 	{ id: 'bundles', label: 'Bundles', icon: Package },
+	{ id: 'readiness', label: 'Readiness', icon: ShieldCheck },
 ];
 
 export interface CueModalHeaderProps {

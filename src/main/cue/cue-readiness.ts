@@ -29,6 +29,9 @@
  * Gaps carry names, paths and ids, never a secret value.
  *
  * Electron-free: the CLI and the standalone engine run it under plain Node.
+ * The desktop (`cue:checkReadiness`, the Cue modal's Readiness tab) runs it
+ * too, over its live stores: both surfaces assemble the inputs with
+ * `buildCueReadinessInputs`, so they check the same agents the same way.
  */
 
 import * as fs from 'fs';
@@ -47,69 +50,19 @@ import {
 	type SecretLookupOptions,
 } from '../../shared/serverSecrets';
 import { findFanOutTarget } from '../../shared/cue/fan-out-target';
+import { filterLiveAgents } from '../../shared/agentVisibility';
 import { isGhInstalled } from '../utils/cliDetection';
 import { GH_TOKEN_SECRET_NAMES } from './cue-gh-token';
+import type { CueReadinessGap, CueReadinessReport } from '../../shared/cue/readiness';
 
-export type CueReadinessGapKind =
-	/** The provider is unknown, has no output parser, or cannot run a turn without a terminal. */
-	| 'unsupported-provider'
-	/** The provider's binary is not at its configured path, or not found on this machine. */
-	| 'binary-missing'
-	/** The agent's working directory or project root does not exist. */
-	| 'workspace-missing'
-	/** A secret an agent or webhook needs is set nowhere. */
-	| 'secret-missing'
-	/** A secret file exists but cannot be used (unreadable, empty, too large). */
-	| 'secret-unusable'
-	/** The agent runs over SSH and its remote is missing or disabled. */
-	| 'ssh-remote'
-	/**
-	 * cue.yaml does not parse or validate, names a prompt file that is missing,
-	 * or has a settings.owner_agent_id that leaves its unpinned subscriptions with no owner.
-	 */
-	| 'cue-config'
-	/** A subscription names an agent that does not exist in this data directory, or pins one from another workspace. */
-	| 'unknown-agent'
-	/** A host tool something needs (gh) is not installed. */
-	| 'tool-missing'
-	/**
-	 * A `github.*` trigger has no `repo:`. Its trigger source refuses it, so it
-	 * never polls or receives webhooks; the engine does not detect the repo.
-	 */
-	| 'github-repo-missing'
-	/**
-	 * The data directory has no agents, or no enabled subscription runs on any
-	 * of them: an engine started on it would sit idle while reporting healthy,
-	 * which on a server almost always means the bundle was never imported.
-	 */
-	| 'nothing-to-run';
-
-export interface CueReadinessGap {
-	kind: CueReadinessGapKind;
-	/** One actionable sentence. Names and paths only, never a secret value. */
-	message: string;
-	agentId?: string;
-	agentName?: string;
-	subscription?: string;
-	/** The project root (workspace folder) the gap belongs to. */
-	workspace?: string;
-	/** The secret's NAME. */
-	secret?: string;
-	tool?: string;
-}
-
-export interface CueReadinessReport {
-	ready: boolean;
-	/** ISO time the check ran; the status endpoint reports how fresh it is. */
-	checkedAt: string;
-	/** Agents checked: those that run an enabled subscription (owner rule applied), and every fan-out target of one. */
-	agents: number;
-	/** Project roots with a cue.yaml. */
-	workspaces: number;
-	/** Subscriptions that loaded, disabled ones included (readiness checks only the enabled). */
-	subscriptions: number;
-	gaps: CueReadinessGap[];
-}
+// The report's shape and its wording live in shared, so the Cue modal's
+// Readiness tab renders them without bundling this checker.
+export type {
+	CueReadinessGap,
+	CueReadinessGapKind,
+	CueReadinessReport,
+} from '../../shared/cue/readiness';
+export { formatCueReadiness } from '../../shared/cue/readiness';
 
 export interface CueReadinessInputs {
 	/** The data directory's agents (`maestro-sessions.json`). */
@@ -130,6 +83,38 @@ export interface CueReadinessProbes {
 	planSessionTurn: typeof planSessionTurn;
 	isGhInstalled: () => Promise<boolean>;
 	loadCueConfig: typeof loadCueConfigDetailed;
+}
+
+/**
+ * Where the readiness inputs come from, as raw stored values: the CLI reads
+ * the data directory's store files, the desktop its live stores. The rules
+ * that turn them into inputs live in `buildCueReadinessInputs`, never in a
+ * caller, so `cue engine check` and the Readiness tab report the same gaps.
+ */
+export interface CueReadinessSource {
+	/** Every stored agent (`maestro-sessions.json`), dormant ones included. */
+	sessions(): SessionInfo[];
+	/** The `encoreFeatures` setting, as stored. */
+	encoreFeatures(): unknown;
+	/** `maestro-agent-configs.json`'s per-provider configs. */
+	agentConfigs(): Record<string, Record<string, unknown> | undefined>;
+	/** The `sshRemotes` setting, as stored: a hand-edited file can hold a non-array. */
+	sshRemotes(): unknown;
+}
+
+/** The readiness inputs for one data directory, from whichever store holds it. */
+export function buildCueReadinessInputs(source: CueReadinessSource): CueReadinessInputs {
+	const remotes = source.sshRemotes();
+	return {
+		// Live agents only: a dormant Pianola (flag off) runs nothing.
+		sessions: filterLiveAgents(source.sessions(), source.encoreFeatures()),
+		agentConfigs: source.agentConfigs(),
+		sshRemotes: Array.isArray(remotes)
+			? remotes.filter(
+					(remote): remote is SshRemoteConfig => !!remote && typeof remote === 'object'
+				)
+			: [],
+	};
 }
 
 const DEFAULT_PROBES: CueReadinessProbes = {
@@ -438,14 +423,4 @@ export async function checkCueReadiness(inputs: CueReadinessInputs): Promise<Cue
 		subscriptions: subscriptionCount,
 		gaps,
 	};
-}
-
-/** The report as text lines, one per gap, for a terminal. */
-export function formatCueReadiness(report: CueReadinessReport): string[] {
-	const summary = `${report.agents} agent(s), ${report.workspaces} workspace(s), ${report.subscriptions} subscription(s)`;
-	if (report.ready) return [`Ready: ${summary} checked, no gaps.`];
-	return [
-		`Not ready: ${report.gaps.length} gap(s) across ${summary}.`,
-		...report.gaps.map((gap) => `  - [${gap.kind}] ${gap.message}`),
-	];
 }

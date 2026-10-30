@@ -49,6 +49,7 @@ import type {
 	Unsubscribe,
 } from '../client/types';
 import { logger } from '../host';
+import { isAgentOwnWorkingDirectory } from '../launch/interactive-mode';
 import type { BinaryDetectionResult } from '../launch/path-prober';
 import { createOutputParser } from '../parsers/parser-factory';
 import type { MaestroPaths } from '../paths/resolve';
@@ -249,6 +250,9 @@ export function createRuntimeTurns(options: RuntimeTurnsOptions): RuntimeTurns {
 			sshStore,
 			claudeTokenSource: getClaudeTokenSourceFields(record as ClaudeTokenSourceFields),
 			maestroPBinPath: host.maestroPBinPath ?? null,
+			// A chat turn runs in the agent's own cwd, so a TUI turn may accept claude's
+			// folder-trust prompt there (#1872).
+			acceptWorkspaceTrust: isAgentOwnWorkingDirectory(turn.launch.cwd, agent),
 		});
 		if (!started.ok) throw new Error(started.message);
 		const run = started.run;

@@ -23,6 +23,8 @@ export interface ExpectedGroupState {
 	parentGroupId?: string;
 	/** Parked out of the Left Bar (`true`) or back in it (`false`). */
 	hidden?: boolean;
+	/** Folded in the Left Bar (`true`) or unfolded (`false`). */
+	collapsed?: boolean;
 	/** Fields that must be absent (or, for emoji, back at the default) afterwards. */
 	cleared?: readonly ('emoji' | 'icon' | 'color' | 'parent')[];
 }
@@ -78,6 +80,13 @@ export function verifyPersistedGroup(groupId: string, expected: ExpectedGroupSta
 	if (expected.hidden !== undefined && !!stored.hidden !== expected.hidden) {
 		mismatches.push(
 			`group is ${stored.hidden ? 'hidden' : 'visible'}, expected ${expected.hidden ? 'hidden' : 'visible'}`
+		);
+	}
+
+	// Groups written before the flag existed may store no `collapsed` key.
+	if (expected.collapsed !== undefined && !!stored.collapsed !== expected.collapsed) {
+		mismatches.push(
+			`group is ${stored.collapsed ? 'collapsed' : 'expanded'}, expected ${expected.collapsed ? 'collapsed' : 'expanded'}`
 		);
 	}
 
@@ -143,5 +152,6 @@ export function describePersistedGroup(groupId: string): Partial<Group> {
 		...(stored.color ? { color: stored.color } : {}),
 		...(stored.parentGroupId ? { parentGroupId: stored.parentGroupId } : {}),
 		...(stored.hidden ? { hidden: true } : {}),
+		collapsed: !!stored.collapsed,
 	};
 }

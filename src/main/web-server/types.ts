@@ -6,9 +6,15 @@ import type { TranslationReport } from '../../shared/maestro-lib/translation/typ
 
 import type { AutoRunBroadcastState } from '../../shared/autoRunBroadcast';
 import type { QueueSteerResult } from '../../shared/chatSteering';
+import type { InterruptTurnResult } from '../../shared/turnInterrupt';
 import type { GroupChatSteerResult } from '../../shared/groupChatSteering';
-import type { DesktopTabEntry } from '../../shared/desktopTabs';
+import type { DesktopTabEntry, DesktopSessionsSnapshot } from '../../shared/desktopTabs';
 import type { SnoozeCommandRequest, SnoozeCommandResult } from '../../shared/snoozeCommands';
+import type {
+	ClosedTabCommandRequest,
+	ClosedTabCommandResult,
+} from '../../shared/closedTabCommands';
+import type { TabContextOpRequest, TabContextOpResult } from '../../shared/tabContextOps';
 import type {
 	SteeringCommandRequest,
 	SteeringCommandResult,
@@ -18,7 +24,8 @@ import type {
 	ThroughputGaugeCommandRequest,
 	ThroughputGaugeCommandResult,
 } from '../../shared/throughputGaugeCommands';
-import type { UsageStats } from '../../shared/types';
+import type { AdditionalDirectory, UsageStats } from '../../shared/types';
+import type { CodexTransport } from '../../shared/codexTransport';
 import type { RemoteGroupChatMessage, RemoteGroupChatState } from '../../shared/groupChatRemote';
 import type { ToastClickAction } from '../../shared/toastClickAction';
 import type { CueTurnSettings } from '../../shared/cue/turn-settings';
@@ -29,6 +36,7 @@ import type { Shortcut } from '../../shared/shortcut-types';
 import type { CadenzaPayload } from '../../shared/cadenza-types';
 import type { MovementPayload, MovementStateSnapshot } from '../../shared/movement-types';
 import type { AgentDelegationNotice } from '../../shared/agentDelegation';
+import type { MentionRouting } from '../../shared/crossAgentContext';
 import type { WebActingUser } from '../../shared/webLogin';
 import type {
 	ConcertoDesignerAction,
@@ -287,6 +295,12 @@ export interface WebClientMessage {
 	background?: boolean;
 	/** new_ai_tab_with_prompt only: create the tab with no chip in the strip. */
 	hidden?: boolean;
+	/**
+	 * `dispatch --routing`: how the prompt's `@mentions` run, as if the composer's
+	 * routing strip had been set. Accepted on send_command, new_ai_tab_with_prompt
+	 * and enqueue_command; untrusted until `parseMentionRoutingField` reads it.
+	 */
+	mentionRouting?: unknown;
 	/** open_file_tab only: the older, weaker `--no-switch` ask. */
 	switchToAgent?: boolean;
 	/** open_file_tab only: `'queue'` adds audio/video to the player paused. */
@@ -337,14 +351,21 @@ export type ExecuteCommandCallback = (
 	 * (the renderer selects it "for visual feedback"), so the web/mobile client and
 	 * every in-app caller keep focusing exactly as they do now.
 	 */
-	background?: boolean
+	background?: boolean,
+	/** `dispatch --routing`: the `@mention` routing the composer strip would set. */
+	mentionRouting?: MentionRouting,
+	/** Throw on a missing/malformed receipt instead of reporting a rejection. */
+	requireDeliveryReceipt?: boolean
 ) => Promise<boolean>;
 
 /**
- * Callback type for interrupting a session through the desktop's existing logic.
- * This forwards to the renderer which handles state updates and broadcasts.
+ * Stop a running turn through the renderer's `interruptTurn()`: the whole agent,
+ * or one tab when `tabId` is given. Resolves with what the stop did.
  */
-export type InterruptSessionCallback = (sessionId: string) => Promise<boolean>;
+export type InterruptSessionCallback = (
+	sessionId: string,
+	tabId?: string
+) => Promise<InterruptTurnResult>;
 
 /**
  * Callback type for switching session input mode through the desktop's existing logic.
@@ -416,6 +437,15 @@ export type StarTabCallback = (
  * thrown error there reads as a broken command instead of "no such snooze".
  */
 export type SnoozeCommandCallback = (request: SnoozeCommandRequest) => Promise<SnoozeCommandResult>;
+/**
+ * One closed-tab verb (`maestro-cli tab closed` / `tab reopen`), forwarded to
+ * the renderer that owns the agent - it holds the live closed-tab stack - and
+ * answered with what it found or restored. Resolves rather than rejects on a
+ * miss, for the same reason `SnoozeCommandCallback` does.
+ */
+export type ClosedTabCommandCallback = (
+	request: ClosedTabCommandRequest
+) => Promise<ClosedTabCommandResult>;
 /**
  * One Auto Run steering verb, forwarded to the renderer - which holds the notes
  * its run loop reads - and answered with whatever it did. Resolves rather than
@@ -546,7 +576,9 @@ export type NewAITabWithPromptCallback = (
 	prompt: string,
 	background?: boolean,
 	/** Create the tab with no chip in the strip (see `AITab.hidden`). */
-	hidden?: boolean
+	hidden?: boolean,
+	/** `dispatch --routing`: the `@mention` routing the composer strip would set. */
+	mentionRouting?: MentionRouting
 ) => Promise<NewAITabWithPromptResult>;
 /**
  * Result of enqueuing (or immediately dispatching) a CLI prompt into the
@@ -584,7 +616,9 @@ export type EnqueueCommandCallback = (
 	images?: string[],
 	background?: boolean,
 	/** Queue Held: always queue, paused, even on an idle agent. */
-	held?: boolean
+	held?: boolean,
+	/** `dispatch --routing`: the `@mention` routing the composer strip would set. */
+	mentionRouting?: MentionRouting
 ) => Promise<EnqueueCommandResult>;
 /**
  * A single queued item, mirrored from the renderer's executionQueue for CLI
@@ -600,6 +634,8 @@ export interface QueuedItemSnapshot {
 	commandArgs?: string;
 	tabName?: string;
 	paused?: boolean;
+	/** The `@mention` routing picked for this item (strip or `dispatch --routing`). */
+	mentionRouting?: MentionRouting;
 }
 /**
  * Per-session queue snapshot returned by the list_queue round-trip. Carries the
@@ -1027,7 +1063,7 @@ export interface GetSessionHistoryOptions {
 }
 
 /** Callback to enumerate all open AI tabs across all desktop agents. */
-export type ListDesktopSessionsCallback = () => DesktopSessionEntry[];
+export type ListDesktopSessionsCallback = () => DesktopSessionEntry[] | DesktopSessionsSnapshot;
 
 /** Callback to fetch a tab's full conversation history by tabId. */
 export type GetSessionHistoryCallback = (
@@ -1064,6 +1100,7 @@ export type SettingValue = string | number | boolean | null;
  * Curated subset of settings exposed to the web interface.
  */
 export interface WebSettings {
+	relayArchiveHours: number;
 	theme: string;
 	fontSize: number;
 	enterToSendAI: boolean;
@@ -1257,6 +1294,21 @@ export interface CreateSessionConfig {
 		workingDirOverride?: string;
 	};
 	autoRunFolderPath?: string;
+	/** Extra directories granted beyond the working directory. */
+	additionalDirectories?: AdditionalDirectory[];
+	/** Adaptive Mode (Claude token source). Absent means the agent's default. */
+	enableMaestroP?: boolean;
+	/** Only meaningful with {@link enableMaestroP} on. */
+	maestroPMode?: 'interactive' | 'dynamic';
+	/** Only meaningful with {@link enableMaestroP} on. */
+	maestroPPath?: string;
+	/** Agent Resilience toggles; absent means ON. */
+	retryOnAvailabilityErrors?: boolean;
+	retryOnTokenExhaustion?: boolean;
+	/** Codex only: spend a reset credit on quota exhaustion. Absent means off. */
+	codexAutoResetOnExhaustion?: boolean;
+	/** Codex only: chat-turn transport. Absent means `exec`. */
+	codexTransport?: CodexTransport;
 }
 
 export type CreateSessionCallback = (
@@ -1444,15 +1496,11 @@ export type GetGroupChatsCallback = () => Promise<GroupChatState[]>;
 // Context Management Callback Types
 // =============================================================================
 
-export type MergeContextCallback = (
-	sourceSessionId: string,
-	targetSessionId: string
-) => Promise<boolean>;
-export type TransferContextCallback = (
-	sourceSessionId: string,
-	targetSessionId: string
-) => Promise<boolean>;
-export type SummarizeContextCallback = (sessionId: string) => Promise<boolean>;
+/**
+ * One overlay-menu context operation (Compact, Merge Into, Send to Agent),
+ * answered by the renderer that owns the source agent.
+ */
+export type TabContextOpCallback = (request: TabContextOpRequest) => Promise<TabContextOpResult>;
 export type CreateGistCallback = (
 	sessionId: string,
 	description: string,

@@ -171,7 +171,7 @@ describe('cli-server-discovery', () => {
 				readCliServerInfo();
 
 				expect(mockFs.readFileSync).toHaveBeenCalledWith(
-					path.join('/home/testuser/.custom-config', 'Maestro', 'cli-server.json'),
+					path.join('/home/testuser/.custom-config', 'maestro', 'cli-server.json'),
 					'utf-8'
 				);
 			} finally {
@@ -193,7 +193,7 @@ describe('cli-server-discovery', () => {
 				readCliServerInfo();
 
 				expect(mockFs.readFileSync).toHaveBeenCalledWith(
-					path.join('/home/testuser', '.config', 'Maestro', 'cli-server.json'),
+					path.join('/home/testuser', '.config', 'maestro', 'cli-server.json'),
 					'utf-8'
 				);
 			} finally {
@@ -220,7 +220,7 @@ describe('cli-server-discovery', () => {
 					path.join(resolveUserDataDir(), 'cli-server.json'),
 					'utf-8'
 				);
-				expect(resolveUserDataDir()).toBe(path.join('/home/testuser', '.config', 'Maestro'));
+				expect(resolveUserDataDir()).toBe(path.join('/home/testuser', '.config', 'maestro'));
 			} finally {
 				if (originalXdg !== undefined) process.env.XDG_CONFIG_HOME = originalXdg;
 			}

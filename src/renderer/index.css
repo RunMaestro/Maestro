@@ -1249,13 +1249,20 @@ svg.wand-profiling-active {
 }
 
 /* Default: all elements visible */
-.header-session-name,
 .header-cost-widget,
 .header-uuid-pill,
 .header-context-widget,
-.header-git-branch-text,
 .header-git-status-full {
 	display: flex;
+}
+
+/* The two text labels that `truncate` must stay BLOCK, never flex.
+   `text-overflow: ellipsis` only applies to a block container's own inline
+   content; on a flex container the text becomes an anonymous flex item and
+   is clipped mid-glyph with no ellipsis ("burn/2026-10-15-ske'"). */
+.header-session-name,
+.header-git-branch-text {
+	display: block;
 }
 
 /* Git status compact mode hidden by default (shown at narrow widths) */

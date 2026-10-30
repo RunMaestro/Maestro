@@ -65,6 +65,7 @@ export const CUE_MODAL_TABS: UiSurfaceTab[] = [
 	{ id: 'activity', label: 'Activity Log' },
 	{ id: 'backup', label: 'Backup' },
 	{ id: 'bundles', label: 'Bundles' },
+	{ id: 'readiness', label: 'Readiness' },
 ];
 
 export const UI_SURFACES: UiSurface[] = [

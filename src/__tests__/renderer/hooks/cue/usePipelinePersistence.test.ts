@@ -859,6 +859,21 @@ describe('usePipelinePersistence', () => {
 	});
 
 	describe('handleSave - pending-edits flush (debounce race)', () => {
+		it('does not persist when a focused config draft refuses the save flush', async () => {
+			registerPendingEdit(() => false);
+			const h = setup({});
+			await act(async () => {
+				await h.result.current.handleSave();
+			});
+			expect(mockWriteYaml).not.toHaveBeenCalled();
+			expect(mockNotifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'warning',
+					title: 'Fix invalid configuration before saving',
+				})
+			);
+		});
+
 		it('invokes every registered pending-edit flush before reading state', async () => {
 			const flushA = vi.fn();
 			const flushB = vi.fn();

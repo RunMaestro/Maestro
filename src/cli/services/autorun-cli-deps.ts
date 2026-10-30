@@ -47,6 +47,8 @@ function autoRunTurnOptions(session: SessionInfo): SpawnAgentOptions {
 		enableMaestroP: session.enableMaestroP,
 		maestroPMode: session.maestroPMode,
 		maestroPPath: session.maestroPPath,
+		// Every Auto Run turn runs in the agent's own cwd (#1872).
+		acceptWorkspaceTrust: true,
 	};
 }
 

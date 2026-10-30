@@ -1,3 +1,4 @@
+vi.mock('../../../main/plugins/plugin-scan', async () => await import('../../helpers/pluginScan'));
 /**
  * @file plugins-handlers.test.ts
  * @description Locks the invariant that the plugin READ channels

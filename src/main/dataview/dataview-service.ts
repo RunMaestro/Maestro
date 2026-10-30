@@ -61,7 +61,7 @@ import {
 	type DataviewStatusRequest,
 	type DataviewTrustRequest,
 	type DataviewTrustResponse,
-	type SandboxIndexSnapshot,
+	type SandboxSnapshotPayload,
 } from '../../shared/dataview';
 import {
 	cleanTrustedRoots,
@@ -74,7 +74,7 @@ import {
 import { normalizeRootRelativePath } from '../../shared/pathContainment';
 import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
-import { DATAVIEW_CACHE_DIR_NAME, dataviewCacheFilePath, deleteVaultCache } from './vault-cache';
+import { DATAVIEW_CACHE_DIR_NAME, dataviewCachePath, deleteVaultCache } from './vault-cache';
 import {
 	createLocalVaultFs,
 	createRemoteVaultFs,
@@ -297,24 +297,24 @@ export class DataviewService {
 
 	/**
 	 * The index a DataviewJS run of the note at `filePath` reads (`dataview:jsSnapshot`, D4): every page's
-	 * cached raw parse plus the file, folder, and star lists, with `path` the note `dv.current()` binds to.
-	 * Refused unless DataviewJS is on and the note's vault root is trusted (D3), and for a note outside its
-	 * root.
+	 * cached raw parse plus the file, folder, and star lists, as JSON text the renderer passes to the guest
+	 * untouched (`SandboxSnapshotPayload`), with `path` the note `dv.current()` binds to. Refused unless
+	 * DataviewJS is on and the note's vault root is trusted (D3), and for a note outside its root.
 	 */
 	async jsSnapshot(
 		request: DataviewJsSnapshotRequest
-	): Promise<DataviewQueryResponse<SandboxIndexSnapshot>> {
+	): Promise<DataviewQueryResponse<SandboxSnapshotPayload>> {
 		this.requireJsEnabled();
 		const { index, filePath, thisPath } = await this.openNote(request);
 		this.requireTrustedRoot(index.root, index.fs.sshRemoteId);
 		if (thisPath === null) throw new Error(outsideRootMessage(filePath, index.root));
-		const snapshot = index.jsSnapshot();
+		const payload = await index.jsSnapshotPayload();
 		return {
 			root: index.root,
 			sshRemoteId: index.fs.sshRemoteId,
-			revision: snapshot.revision,
+			revision: payload.revision,
 			path: thisPath,
-			result: snapshot,
+			result: payload,
 		};
 	}
 
@@ -693,7 +693,7 @@ export class DataviewService {
 		if (!cacheDir) return;
 		const separator = key.indexOf('\0');
 		const sshRemoteId = key.slice(0, separator) || null;
-		await deleteVaultCache(dataviewCacheFilePath(cacheDir, key.slice(separator + 1), sshRemoteId));
+		await deleteVaultCache(dataviewCachePath(cacheDir, key.slice(separator + 1), sshRemoteId));
 	}
 
 	private emit(event: DataviewChangeEvent): void {

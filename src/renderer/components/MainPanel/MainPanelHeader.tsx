@@ -337,10 +337,15 @@ export const MainPanelHeader = React.memo(function MainPanelHeader({
 				.filter(Boolean)
 				.join(' - ');
 
+	// `gap-4` is the MINIMUM spacing between the three zones (left cluster,
+	// AUTO pill, right cluster). `justify-between` spreads them apart only while
+	// there is spare width; once the left cluster has shrunk to fit, nothing
+	// else separated the zones and the AUTO pill sat flush against the context
+	// readout beside it.
 	return (
 		<div
 			ref={headerRef}
-			className={`chrome-sheen header-container h-16 border-b flex items-center justify-between px-6 shrink-0 relative z-20 ${isCurrentSessionAutoMode ? 'header-auto-mode' : ''}`}
+			className={`chrome-sheen header-container h-16 border-b flex items-center justify-between gap-4 px-6 shrink-0 relative z-20 ${isCurrentSessionAutoMode ? 'header-auto-mode' : ''}`}
 			style={{
 				borderColor: theme.colors.border,
 				backgroundColor: theme.colors.bgSidebar,

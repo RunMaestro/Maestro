@@ -23,8 +23,8 @@ let mockChildProcess: any;
 function createMockChildProcess() {
 	return {
 		pid: 12345,
-		stdout: Object.assign(new EventEmitter(), { setEncoding: vi.fn() }),
-		stderr: Object.assign(new EventEmitter(), { setEncoding: vi.fn() }),
+		stdout: Object.assign(new EventEmitter(), { setEncoding: vi.fn(), destroy: vi.fn() }),
+		stderr: Object.assign(new EventEmitter(), { setEncoding: vi.fn(), destroy: vi.fn() }),
 		stdin: { write: vi.fn(), end: vi.fn(), on: vi.fn() },
 		on: vi.fn(),
 		unref: vi.fn(),
@@ -117,6 +117,11 @@ import { isWindows } from '../../../../shared/platformDetection';
 import { getAgentDefinition } from '../../../../main/agents/definitions';
 import { getAgentCapabilities as getRealAgentCapabilities } from '../../../../main/agents/capabilities';
 import { logger } from '../../../../main/utils/logger';
+import * as supervisor from '../../../../shared/maestro-lib/control/agent-process-supervisor';
+import {
+	CODEX_STARTUP_TIMEOUT_MS,
+	HEADLESS_IDLE_PROFILE,
+} from '../../../../shared/plugins/headless-agent-timeouts';
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 /**
@@ -166,6 +171,30 @@ describe('ChildProcessSpawner', () => {
 			mockChildProcess = createMockChildProcess();
 			return mockChildProcess;
 		});
+	});
+
+	it.each([
+		{ args: ['exec'], prompt: 'prompt' },
+		{ args: [], sshStdinScript: 'script' },
+	])('uses startup and idle budgets without a desktop Codex lifetime ceiling', (config) => {
+		vi.useFakeTimers();
+		const spy = vi.spyOn(supervisor, 'superviseAgentProcess');
+		try {
+			const { spawner } = createTestContext();
+			expect(
+				spawner.spawn(createBaseConfig({ toolType: 'codex', command: 'codex', ...config })).success
+			).toBe(true);
+			expect(spy).toHaveBeenCalledOnce();
+			expect(spy.mock.calls[0][1]).toMatchObject({
+				startupMs: CODEX_STARTUP_TIMEOUT_MS,
+				idle: HEADLESS_IDLE_PROFILE,
+			});
+			expect(spy.mock.calls[0][1].timeoutMs).toBeUndefined();
+		} finally {
+			spy.mock.results[0]?.value?.dispose();
+			spy.mockRestore();
+			vi.useRealTimers();
+		}
 	});
 
 	describe('isStreamJsonMode detection', () => {
@@ -361,6 +390,35 @@ describe('ChildProcessSpawner', () => {
 
 			const proc = processes.get('test-session');
 			expect(proc?.isBatchMode).toBe(false);
+		});
+	});
+
+	// MAESTRO-153: a wizard prompt carrying a NUL byte made Node refuse the spawn
+	// ("The argument 'args[4]' must be a string without null bytes").
+	describe('NUL bytes in arguments', () => {
+		it('drops them from the prompt and every other argument before spawning', () => {
+			const { spawner } = createTestContext();
+
+			const result = spawner.spawn(
+				createBaseConfig({
+					args: ['--print', '--append-system-prompt', 'sys\0tem'],
+					prompt: 'Conductor\0 Profile\0',
+				})
+			);
+
+			expect(result.success).toBe(true);
+			const spawnedArgs = mockSpawn.mock.calls[0][1] as string[];
+			expect(spawnedArgs.some((arg) => arg.includes('\0'))).toBe(false);
+			expect(spawnedArgs).toContain('system');
+			expect(spawnedArgs).toContain('Conductor Profile');
+		});
+
+		it('leaves arguments without NUL bytes untouched', () => {
+			const { spawner } = createTestContext();
+
+			spawner.spawn(createBaseConfig({ args: ['--print'], prompt: 'plain' }));
+
+			expect(mockSpawn.mock.calls[0][1]).toEqual(['--print', '--', 'plain']);
 		});
 	});
 

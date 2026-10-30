@@ -201,6 +201,12 @@ export interface GroupChatSpawn {
 	/** The silence budget a maestro-p run is told, in seconds (`--max-wait`). */
 	maxWaitSeconds?: number;
 	/**
+	 * `cwd` is the agent's own working directory, so maestro-p may accept
+	 * claude's folder-trust prompt there (#1872). Leave unset for any other
+	 * folder (the moderator's, a synthesis scratch dir).
+	 */
+	acceptWorkspaceTrust?: boolean;
+	/**
 	 * The Maestro system prompt this turn carries, when the host built one. The
 	 * host delivers it exactly like a tab spawn: the native flag when the agent
 	 * has one, otherwise embedded into `prompt`, and not re-embedded when

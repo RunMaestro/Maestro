@@ -135,6 +135,37 @@ describe('spawnGroupChatAgent', () => {
 		expect(spawned.args).not.toContain('--max-wait');
 	});
 
+	// #1872: the router opts in only when the participant runs in its own agent cwd.
+	it.each([
+		[true, '1'],
+		[undefined, undefined],
+	])(
+		'acceptWorkspaceTrust=%s sets MAESTRO_P_ACCEPT_WORKSPACE_TRUST=%s on the maestro-p spawn',
+		async (acceptWorkspaceTrust, expected) => {
+			mockResolve.mockReturnValue({
+				mode: 'interactive',
+				reason: 'auto',
+				maestroPBinPath: '/bundled/maestro-p.js',
+				claudeRealBinPath: '/usr/local/bin/claude',
+			});
+
+			await spawnGroupChatAgent({
+				sessionId: 'sess-trust',
+				agentId: 'claude-code',
+				agent: makeAgent(),
+				command: '/usr/local/bin/claude',
+				args: ['--print', '--', 'hello'],
+				cwd: '/tmp/work',
+				tokenMode: 'interactive',
+				acceptWorkspaceTrust,
+				processManager,
+			});
+
+			const spawned = spawnSpy.mock.calls[0][0] as { customEnvVars?: Record<string, string> };
+			expect(spawned.customEnvVars?.MAESTRO_P_ACCEPT_WORKSPACE_TRUST).toBe(expected);
+		}
+	);
+
 	it('does not inject --max-wait on the API path (no maestro-p)', async () => {
 		mockResolve.mockReturnValue({ mode: 'api', reason: 'auto', maestroPBinPath: null });
 

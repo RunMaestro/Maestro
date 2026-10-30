@@ -35,6 +35,21 @@ interface CreateAgentOptions {
 	json?: boolean;
 }
 
+/**
+ * Send a `create_session` message and wait for its reply. The one create path
+ * `create-agent` and `duplicate-agent` share; throws when the app is absent.
+ */
+export async function sendCreateSession(
+	payload: Record<string, unknown>
+): Promise<{ success: boolean; sessionId?: string; error?: string }> {
+	return withMaestroClient((client) =>
+		client.sendCommand<{ type: string; success: boolean; sessionId?: string; error?: string }>(
+			{ ...payload, type: 'create_session' },
+			'create_session_result'
+		)
+	);
+}
+
 export async function createAgent(name: string, options: CreateAgentOptions): Promise<void> {
 	if (!VALID_TYPES.has(options.type)) {
 		const msg = `Invalid agent type "${options.type}". Must be one of: ${[...VALID_TYPES].join(', ')}`;
@@ -160,14 +175,7 @@ export async function createAgent(name: string, options: CreateAgentOptions): Pr
 	if (options.autoRunFolder) payload.autoRunFolderPath = path.resolve(options.autoRunFolder);
 
 	try {
-		const result = await withMaestroClient(async (client) => {
-			return client.sendCommand<{
-				type: string;
-				success: boolean;
-				sessionId?: string;
-				error?: string;
-			}>(payload, 'create_session_result');
-		});
+		const result = await sendCreateSession(payload);
 
 		if (result.success) {
 			if (options.json) {

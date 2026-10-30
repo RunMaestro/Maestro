@@ -45,6 +45,7 @@ vi.mock('../../../main/cue/cue-engine-lock', () => ({
 	isCueEngineLockInForeignPidNamespace: vi.fn(() => false),
 }));
 
+import { checkCueReadiness } from '../../../main/cue/cue-readiness';
 import { createStandaloneCueEngine } from '../../../cli/services/cue-standalone-engine';
 import { startCueTriggerInbox } from '../../../cli/services/cue-trigger-inbox';
 import { cueEngineCheck, cueEngineStart } from '../../../cli/commands/cue-engine';
@@ -184,6 +185,31 @@ describe('cue engine check', () => {
 			'Not ready: 3 gap(s) across 2 agent(s), 1 workspace(s), 3 subscription(s).'
 		);
 		for (const gap of notReady.gaps) expect(printed).toContain(gap.message);
+	});
+
+	it('checks the data directory through the shared input assembly', async () => {
+		const coder = { id: 'a1', name: 'Coder', toolType: 'codex', projectRoot: tmp };
+		const pianola = { ...coder, id: 'pi', name: 'Pianola', isPianola: true };
+		fs.writeFileSync(
+			path.join(tmp, 'maestro-sessions.json'),
+			JSON.stringify({ sessions: [coder, pianola] })
+		);
+		fs.writeFileSync(
+			path.join(tmp, 'maestro-agent-configs.json'),
+			JSON.stringify({ configs: { codex: { customPath: '/opt/codex' } } })
+		);
+		fs.writeFileSync(
+			path.join(tmp, 'maestro-settings.json'),
+			JSON.stringify({ sshRemotes: [{ id: 'r1', name: 'Box' }, null] })
+		);
+		await cueEngineCheck({ dataDir: tmp });
+		// The desktop's `cue:checkReadiness` builds its inputs with the same
+		// `buildCueReadinessInputs`: dormant Pianola dropped, junk remotes skipped.
+		expect(checkCueReadiness).toHaveBeenLastCalledWith({
+			sessions: [coder],
+			agentConfigs: { codex: { customPath: '/opt/codex' } },
+			sshRemotes: [{ id: 'r1', name: 'Box' }],
+		});
 	});
 
 	it('prints the report as JSON and exits 0 when ready', async () => {

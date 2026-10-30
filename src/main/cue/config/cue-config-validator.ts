@@ -1,3 +1,4 @@
+import { parseCuePluginSource } from '../triggers/cue-plugin-trigger-source';
 import picomatch from 'picomatch';
 import {
 	CUE_EVENT_TYPES,
@@ -435,7 +436,15 @@ function validateEventSpecificFields(
 	errors: string[]
 ): void {
 	const event = sub.event as string;
-	if (event === 'time.heartbeat') {
+	if (event === 'plugin.event') {
+		try {
+			parseCuePluginSource(sub.plugin);
+		} catch {
+			errors.push(`${prefix}: exact plugin source is required`);
+		}
+		if (Array.isArray(sub.fan_out) && sub.fan_out.length > 0)
+			errors.push(`${prefix}: "fan_out" is not supported for plugin.event subscriptions`);
+	} else if (event === 'time.heartbeat') {
 		if (
 			typeof sub.interval_minutes !== 'number' ||
 			!Number.isFinite(sub.interval_minutes) ||

@@ -23,6 +23,7 @@ import { validateHandshake, HostConnectionError } from './handshake';
 import { connectionPage } from './ui';
 import { parseSshConfig } from '../utils/ssh-config-parser';
 import { startLiteControlServer } from './control-server';
+import { LiteLastConnections } from './last-connection';
 import { resolveLiteDataDirectory } from '../../shared/lite-control';
 import type { LiteControlOptions, LiteControlState } from '../../shared/lite-control';
 
@@ -45,9 +46,11 @@ export async function startLite(): Promise<void> {
 	await app.whenReady();
 	const profiles = new LiteProfiles(app.getPath('userData'));
 	const deviceCredentials = new DeviceCredentials(app.getPath('userData'));
+	const lastConnections = new LiteLastConnections(app.getPath('userData'));
 	let loadError: string | undefined;
 	try {
 		await profiles.load();
+		await lastConnections.load();
 	} catch (error) {
 		loadError = `Cannot load saved profiles: ${String(error)}`;
 	}
@@ -80,27 +83,58 @@ export async function startLite(): Promise<void> {
 	let poll: NodeJS.Timeout | undefined;
 	let hostName = '';
 	let busyPoll = false;
+	let recoveryTimer: NodeJS.Timeout | undefined;
+	let recoveryResetTimer: NodeJS.Timeout | undefined;
+	let recoveryAttempt = 0;
+	let recovery: LiteControlState['recovery'];
+	let autoRecover = false;
+	let directRecovery = false;
+	let rendererNeedsReload = false;
+	let rendererFailures: number[] = [];
 	let controlServer: { close(): Promise<void> } | undefined;
 	let discovered: DiscoveredConnection | undefined;
+	let lastDiscovered: Pick<DiscoveredConnection, 'profile' | 'peerId'> | undefined;
 	let discoveredSession: Session | undefined;
 	const discovery = new DiscoveryController(
 		publish,
 		() => profiles.list(),
 		(connection) => {
-			discovered = connection;
-			discoveredSession = session.fromPartition('maestro-lite-discovered-' + randomUUID());
-			void connect(connection.profile.id);
+			const previous = lastDiscovered;
+			const sameVerifiedHost =
+				!!previous &&
+				previous?.profile.instanceId === connection.profile.instanceId &&
+				previous.profile.url === connection.profile.url &&
+				previous.profile.transport === connection.profile.transport &&
+				previous.peerId === connection.peerId;
+			const next = {
+				...connection,
+				profile: {
+					...connection.profile,
+					...(previous && sameVerifiedHost
+						? { id: previous.profile.id, localPort: previous.profile.localPort }
+						: {}),
+				},
+			};
+			discovered = next;
+			lastDiscovered = next;
+			if (!sameVerifiedHost || !discoveredSession)
+				discoveredSession = session.fromPartition('maestro-lite-discovered-' + randomUUID());
+			const automatic = directRecovery;
+			void connect(
+				next.profile.id,
+				undefined,
+				automatic && !!view && !rendererNeedsReload,
+				automatic
+			);
 		},
 		(reason) => {
-			if (selected === discovered?.profile.id) selected = undefined;
 			discovered = undefined;
-			discoveredSession = undefined;
-			fail(
+			recover(
 				reason === 'network-changed'
-					? 'Your network changed. Check Tailscale, then choose the host again.'
+					? 'Your network changed. Waiting to verify the same host again.'
 					: reason === 'pairing-failed'
 						? 'Pairing could not finish. Choose the host to try again.'
-						: 'The connection closed. Choose the host to reconnect.'
+						: 'The connection closed. Waiting to reconnect.'
 			);
 		},
 		deviceCredentials
@@ -113,6 +147,7 @@ export async function startLite(): Promise<void> {
 			picker,
 			commandsVisible,
 			canReturn: !!view,
+			recovery,
 			profiles: profiles.list(),
 			discoveryPairing: discovery.snapshot(),
 			aliases,
@@ -120,8 +155,9 @@ export async function startLite(): Promise<void> {
 	}
 	const localUrl = `data:text/html;charset=utf-8,${encodeURIComponent(connectionPage)}`;
 	function publish(): void {
-		if (!window.isDestroyed()) window.webContents.send('lite:state', getState());
-		if (view) {
+		if (window.isDestroyed()) return;
+		window.webContents.send('lite:state', getState());
+		if (view && !view.webContents.isDestroyed()) {
 			view.setVisible(!picker);
 			const [width, height] = window.getContentSize();
 			view.setBounds({ x: 0, y: 72, width, height: Math.max(0, height - 72) });
@@ -140,28 +176,112 @@ export async function startLite(): Promise<void> {
 		view.webContents.close();
 		view = undefined;
 	}
-	function disconnect(): Promise<void> {
+	function teardown(preserveView = false): Promise<void> {
 		connectionVersion++;
+		clearTimeout(recoveryResetTimer);
 		abort?.abort();
 		abort = undefined;
 		clearInterval(poll);
 		poll = undefined;
-		removeView();
+		if (!preserveView) removeView();
 		if (tunnel) tunnelClosing = tunnel.stop();
 		tunnel = undefined;
-		picker = true;
+		picker = preserveView && view ? false : true;
 		commandsVisible = false;
-		hostName = '';
-		status = 'Disconnected. Work on the host keeps running.';
-		error = undefined;
+		if (!preserveView) hostName = '';
 		publish();
 		return Promise.all([tunnelClosing, transportOpening]).then(() => {});
 	}
+	function disconnect(): Promise<void> {
+		autoRecover = false;
+		clearTimeout(recoveryTimer);
+		recoveryTimer = undefined;
+		recoveryAttempt = 0;
+		recovery = undefined;
+		const closing = teardown();
+		status = 'Disconnected. Work on the host keeps running.';
+		error = undefined;
+		publish();
+		return Promise.all([closing, lastConnections.disable().catch(() => {})]).then(() => {});
+	}
 	function fail(message: string): void {
-		disconnect();
+		autoRecover = false;
+		void lastConnections.disable().catch(() => {});
+		clearTimeout(recoveryTimer);
+		recoveryTimer = undefined;
+		recovery = undefined;
+		void teardown();
 		status = 'Connection failed';
 		error = message;
 		publish();
+	}
+	function recover(cause: unknown, renderer = false): void {
+		if (!autoRecover || !selected || window.isDestroyed()) return;
+		const message = cause instanceof Error ? cause.message : String(cause);
+		if (renderer) {
+			rendererNeedsReload = true;
+			const now = Date.now();
+			rendererFailures = [...rendererFailures.filter((time) => now - time < 60000), now];
+			if (rendererFailures.length > 3) {
+				fail('The host view crashed repeatedly. Reconnect to try again.');
+				return;
+			}
+		}
+		clearInterval(poll);
+		poll = undefined;
+		if (recoveryTimer) return;
+		const ceiling = Math.min(30000, 1000 * 2 ** recoveryAttempt);
+		const delay = Math.floor(Math.random() * (ceiling + 1));
+		recoveryAttempt++;
+		recovery = { attempt: recoveryAttempt, nextRetryAt: Date.now() + delay };
+		status = `Reconnecting · ${hostName || 'selected host'}`;
+		error = message;
+		publish();
+		recoveryTimer = setTimeout(() => {
+			recoveryTimer = undefined;
+			void attemptRecovery();
+		}, delay);
+	}
+	async function attemptRecovery(): Promise<void> {
+		const id = selected;
+		if (!autoRecover || !id) return;
+		if (id.startsWith('discovered-') && discovered?.profile.id !== id) {
+			const previous = lastDiscovered;
+			if (!previous) {
+				fail('Select and pair the discovered private host first.');
+				return;
+			}
+			const snapshot = discovery.snapshot().discovery;
+			const origin = new URL(previous.profile.url).origin;
+			const row = snapshot.candidates.find(
+				(candidate) =>
+					candidate.id === previous.profile.instanceId &&
+					candidate.endpoint === origin &&
+					candidate.availability === 'ready'
+			);
+			if (!row) {
+				recover('Waiting for the same verified host to reappear.');
+				return;
+			}
+			directRecovery = true;
+			try {
+				await discovery.control('pair-request', {
+					key: row.key,
+					generation: snapshot.generation,
+					name: row.name,
+				});
+			} catch (cause) {
+				const message = cause instanceof Error ? cause.message : String(cause);
+				if (/identity|pair again|incompatible/i.test(message)) fail(message);
+				else recover(cause);
+			} finally {
+				directRecovery = false;
+			}
+			return;
+		}
+		const preserveView = !!view && !rendererNeedsReload;
+		rendererNeedsReload = false;
+		await connect(id, undefined, preserveView, true);
 	}
 	function makeView(
 		browserSession: Session,
@@ -241,12 +361,30 @@ export async function startLite(): Promise<void> {
 			}
 			return { action: 'deny' };
 		});
-		remote.webContents.on('will-attach-webview', (event) => event.preventDefault());
-		remote.webContents.on('before-input-event', (event, input) => shortcuts(event, input));
 		browserSession.setPermissionRequestHandler((_contents, _permission, callback) =>
 			callback(false)
 		);
 		browserSession.setPermissionCheckHandler(() => false);
+		let unresponsiveTimer: NodeJS.Timeout | undefined;
+		remote.webContents.on('render-process-gone', (_event, details) => {
+			if (poll && details.reason !== 'clean-exit')
+				recover(new Error(`Host view ended (${details.reason}).`), true);
+		});
+		remote.webContents.on(
+			'did-fail-load',
+			(_event, errorCode, description, _validatedURL, isMainFrame) => {
+				if (poll && isMainFrame && errorCode !== -3)
+					recover(new Error(`Host view failed to load: ${description} (${errorCode}).`), true);
+			}
+		);
+		remote.webContents.on('unresponsive', () => {
+			clearTimeout(unresponsiveTimer);
+			unresponsiveTimer = setTimeout(() => {
+				if (poll) recover(new Error('Host view is not responding.'), true);
+			}, 15000);
+		});
+		remote.webContents.on('responsive', () => clearTimeout(unresponsiveTimer));
+		remote.webContents.once('destroyed', () => clearTimeout(unresponsiveTimer));
 		const download = (event: Event, item: DownloadItem, contents: WebContents) => {
 			if (contents !== remote.webContents) return;
 			if (!permitted(item.getURL()) && !item.getURL().startsWith(`blob:${base.origin}/`)) {
@@ -264,17 +402,43 @@ export async function startLite(): Promise<void> {
 		);
 		return remote;
 	}
+	async function loadView(contents: WebContents, url: string, signal: AbortSignal): Promise<void> {
+		const interrupted = Promise.withResolvers<never>();
+		const cancel = () => interrupted.reject(new Error('Connection canceled.'));
+		const timer = setTimeout(
+			() => interrupted.reject(new Error('Host view load timed out.')),
+			15000
+		);
+		signal.addEventListener('abort', cancel, { once: true });
+		try {
+			if (signal.aborted) cancel();
+			await Promise.race([contents.loadURL(url), interrupted.promise]);
+		} finally {
+			clearTimeout(timer);
+			signal.removeEventListener('abort', cancel);
+		}
+	}
 	async function handshake(
 		browserSession: Session,
 		base: URL,
 		signal: AbortSignal
 	): Promise<unknown | undefined> {
-		const response = await browserSession.fetch(`${base}/api/lite/handshake`, {
-			signal: AbortSignal.any([signal, AbortSignal.timeout(10000)]),
-			credentials: 'include',
-			redirect: 'error',
-			headers: { 'Cache-Control': 'no-store' },
-		});
+		const deadline = Promise.withResolvers<never>();
+		const timer = setTimeout(() => deadline.reject(new Error('Host handshake timed out.')), 10000);
+		let response: Response;
+		try {
+			response = await Promise.race([
+				browserSession.fetch(`${base}/api/lite/handshake`, {
+					signal: AbortSignal.any([signal, AbortSignal.timeout(10000)]),
+					credentials: 'include',
+					redirect: 'error',
+					headers: { 'Cache-Control': 'no-store' },
+				}),
+				deadline.promise,
+			]);
+		} finally {
+			clearTimeout(timer);
+		}
 		if (response.status === 401) return undefined;
 		if (response.status === 502 || response.status === 503 || response.status === 504)
 			throw new Error('Host handshake temporarily unavailable (HTTP ' + response.status + ').');
@@ -293,8 +457,22 @@ export async function startLite(): Promise<void> {
 		return response.json();
 	}
 	/** Drain the previous transport, cancel superseded attempts and validate host trust before showing remote content. */
-	async function connect(id: string, initialState?: () => void): Promise<void> {
-		const closing = disconnect();
+	async function connect(
+		id: string,
+		initialState?: () => void,
+		preserveView = false,
+		automatic = false
+	): Promise<void> {
+		clearTimeout(recoveryTimer);
+		autoRecover = true;
+		recoveryTimer = undefined;
+		if (!automatic) {
+			recoveryAttempt = 0;
+			rendererFailures = [];
+		}
+		const retainedView = view;
+		const retainView = preserveView && !!retainedView;
+		const closing = teardown(retainView);
 		const version = connectionVersion;
 		await closing;
 		if (version !== connectionVersion || window.isDestroyed()) {
@@ -307,11 +485,14 @@ export async function startLite(): Promise<void> {
 		const signal = controller.signal;
 		try {
 			const selectedDiscovery = discovered?.profile.id === id ? discovered : undefined;
-			let profile = selectedDiscovery?.profile ?? profiles.get(id);
-
-			// The partition already isolates profile + host; keep view state across app restarts.
+			let profile: LiteProfile;
+			try {
+				profile = selectedDiscovery?.profile ?? profiles.get(id);
+			} catch (cause) {
+				throw new HostConnectionError(cause instanceof Error ? cause.message : String(cause));
+			}
 			const clientId = encodeURIComponent(profile.id);
-			status = `Connecting · ${profile.name}`;
+			status = `${automatic ? 'Reconnecting transport' : 'Opening transport'} · ${profile.name}`;
 			publish();
 			let base = normalizeRemoteUrl(profile.url, profile.transport);
 			if (profile.transport === 'tailscale' || profile.transport === 'lan') {
@@ -319,12 +500,20 @@ export async function startLite(): Promise<void> {
 					throw new HostConnectionError('Select and pair the discovered private host first.');
 				const opening =
 					profile.transport === 'lan'
-						? openLanRelay(base, selectedDiscovery.credential, signal)
+						? openLanRelay(
+								base,
+								selectedDiscovery.credential,
+								signal,
+								profile.localPort,
+								!retainView
+							)
 						: openTailnetRelay(
 								base,
 								selectedDiscovery.credential,
 								signal,
-								selectedDiscovery.peerId!
+								selectedDiscovery.peerId!,
+								profile.localPort,
+								!retainView
 							);
 				transportOpening = opening.then(
 					() => {},
@@ -342,10 +531,11 @@ export async function startLite(): Promise<void> {
 					profile.ssh!,
 					base,
 					signal,
-					(message) => {
-						if (abort === controller) fail(message);
+					(cause) => {
+						if (abort === controller) recover(cause);
 					},
-					profile.localPort
+					profile.localPort,
+					!retainView
 				);
 				transportOpening = opening.then(
 					() => {},
@@ -359,11 +549,15 @@ export async function startLite(): Promise<void> {
 				tunnel = result.tunnel;
 				base = result.url;
 			}
+			status = `Validating host · ${profile.name}`;
+			publish();
 			const authentication = selectedDiscovery
 				? discoveredSession!
 				: session.fromPartition('maestro-lite-auth-' + randomUUID());
 			if (profile.transport === 'tailscale' || profile.transport === 'lan')
 				await authentication.setProxy({ mode: 'direct' });
+			status = `Checking authorization · ${profile.name}`;
+			publish();
 			if (selectedDiscovery)
 				authentication.webRequest.onBeforeSendHeaders((details, callback) => {
 					const url = new URL(details.url);
@@ -377,7 +571,7 @@ export async function startLite(): Promise<void> {
 					for (const key of Object.keys(headers))
 						if (key.toLowerCase() === ADMISSION_HEADER) delete headers[key];
 					if (sameOrigin && inside) {
-						if (signal.aborted || discovered !== selectedDiscovery) {
+						if (signal.aborted || discovered?.credential !== selectedDiscovery.credential) {
 							callback({ cancel: true });
 							return;
 						}
@@ -385,6 +579,8 @@ export async function startLite(): Promise<void> {
 					}
 					callback({ requestHeaders: headers });
 				});
+			status = `Reading host state · ${profile.name}`;
+			publish();
 			let raw = await handshake(authentication, base, signal);
 			if (raw === undefined) {
 				if (selectedDiscovery)
@@ -418,9 +614,11 @@ export async function startLite(): Promise<void> {
 				signal.addEventListener('abort', canceled, { once: true });
 				if (signal.aborted) canceled();
 				try {
-					const loaded = view.webContents
-						.loadURL(`${base}/login?next=${encodeURIComponent(next)}`)
-						.then(() => initialState?.());
+					const loaded = loadView(
+						view.webContents,
+						`${base}/login?next=${encodeURIComponent(next)}`,
+						signal
+					).then(() => initialState?.());
 					const [, authenticated] = await Promise.all([loaded, login.promise]);
 					raw = authenticated;
 				} finally {
@@ -430,7 +628,9 @@ export async function startLite(): Promise<void> {
 			}
 			if (signal.aborted) return;
 			const host = validateHandshake(raw, profile, !!selectedDiscovery);
-			const localPort = profile.transport === 'ssh' ? Number(base.port) : undefined;
+			const localPort = ['ssh', 'tailscale', 'lan'].includes(profile.transport)
+				? Number(base.port)
+				: undefined;
 			if (
 				!selectedDiscovery &&
 				(profile.instanceId !== host.instanceId || profile.localPort !== localPort)
@@ -438,6 +638,20 @@ export async function startLite(): Promise<void> {
 				profile = { ...profile, instanceId: host.instanceId, localPort };
 				await profiles.save(profile);
 			}
+			if (signal.aborted) return;
+			if (selectedDiscovery && profile.localPort !== localPort) {
+				profile = { ...profile, localPort };
+				discovered = { ...selectedDiscovery, profile };
+				void lastConnections.remember(profile, signal).catch(() => {});
+			}
+			if (selectedDiscovery) lastDiscovered = { ...selectedDiscovery, profile };
+			if (
+				!id.startsWith('discovered-') ||
+				profile.transport === 'lan' ||
+				profile.transport === 'tailscale'
+			)
+				await lastConnections.remember(profile, signal).catch(() => {});
+			if (signal.aborted) return;
 			const isolated = selectedDiscovery
 				? authentication
 				: session.fromPartition(hostPartition(profile.id, host.instanceId));
@@ -458,20 +672,40 @@ export async function startLite(): Promise<void> {
 					...(cookie.session ? {} : { expirationDate: cookie.expirationDate }),
 				});
 			}
-			validateHandshake(await handshake(isolated, base, signal), profile, !!selectedDiscovery);
+			if (isolated !== authentication)
+				validateHandshake(await handshake(isolated, base, signal), profile, !!selectedDiscovery);
 			// Native Lite is online-only: migrate PWA workers without clearing host cookies or drafts.
 			await isolated.clearStorageData({ storages: ['serviceworkers', 'cachestorage'] });
 			if (signal.aborted) return;
-			removeView();
-			view = makeView(isolated, base, true);
-			window.contentView.addChildView(view);
+			const reuseView =
+				retainView &&
+				retainedView === view &&
+				(profile.transport === 'ssh' || !!selectedDiscovery) &&
+				!view.webContents.isDestroyed() &&
+				new URL(view.webContents.getURL()).origin === base.origin;
+			if (!reuseView) {
+				removeView();
+				view = makeView(isolated, base, true);
+				window.contentView.addChildView(view);
+			}
 			hostName =
 				host.hostName === profile.name ? host.hostName : `${host.hostName} (${profile.name})`;
 			picker = false;
 			status = `Opening Maestro on ${hostName}`;
 			error = undefined;
+			recovery = undefined;
+			rendererNeedsReload = false;
+			recoveryResetTimer = setTimeout(() => {
+				recoveryAttempt = 0;
+				rendererFailures = [];
+			}, 30000);
 			publish();
-			await view.webContents.loadURL(`${base}/desktop?lite=1&liteClientId=${clientId}`);
+			if (!reuseView)
+				await loadView(
+					view!.webContents,
+					`${base}/desktop?lite=1&liteClientId=${clientId}`,
+					signal
+				);
 			initialState?.();
 			let count = 0;
 			poll = setInterval(() => {
@@ -489,7 +723,7 @@ export async function startLite(): Promise<void> {
 									);
 								validateHandshake(response, profile, !!selectedDiscovery);
 							} catch (cause) {
-								if (cause instanceof HostConnectionError) throw cause;
+								if (cause instanceof HostConnectionError && !cause.retryable) throw cause;
 								// A failed health read does not determine the live bridge state.
 							}
 						}
@@ -503,7 +737,8 @@ export async function startLite(): Promise<void> {
 						}
 					} catch (cause) {
 						if (!signal.aborted) {
-							if (cause instanceof HostConnectionError) fail(cause.message);
+							if (cause instanceof HostConnectionError && !cause.retryable) fail(cause.message);
+							else if (cause instanceof HostConnectionError) recover(cause);
 							else {
 								status = `Reconnecting · ${hostName}. Check your last message before sending it again.`;
 								error = String(cause);
@@ -516,12 +751,10 @@ export async function startLite(): Promise<void> {
 				})();
 			}, 1000);
 		} catch (cause) {
-			if (!signal.aborted)
-				fail(
-					cause instanceof HostConnectionError
-						? cause.message
-						: `Could not connect. Check that the host is awake, Maestro Remote Control is enabled, and the connection details are correct. Then try Connect again.\n\nDetails: ${cause instanceof Error ? cause.message : String(cause)}`
-				);
+			if (!signal.aborted) {
+				if (cause instanceof HostConnectionError && !cause.retryable) fail(cause.message);
+				else recover(cause);
+			}
 		} finally {
 			initialState?.();
 		}
@@ -545,6 +778,13 @@ export async function startLite(): Promise<void> {
 			case 'pair-read':
 			case 'pair-cancel':
 			case 'pair-forget':
+				if (name === 'pair-forget') {
+					autoRecover = false;
+					clearTimeout(recoveryTimer);
+					await lastConnections.disable().catch(() => {});
+					lastDiscovered = undefined;
+					discoveredSession = undefined;
+				}
 				await discovery.control(name, payload);
 				return { state: getState() };
 			case 'discover':
@@ -608,7 +848,12 @@ export async function startLite(): Promise<void> {
 					publish();
 					break;
 				}
-				if (cli) {
+				if (name === 'reconnect' && id.startsWith('discovered-') && discovered?.profile.id !== id) {
+					autoRecover = true;
+					clearTimeout(recoveryTimer);
+					recoveryTimer = undefined;
+					await attemptRecovery();
+				} else if (cli) {
 					const initial = Promise.withResolvers<void>();
 					void connect(id, initial.resolve);
 					await initial.promise;
@@ -739,6 +984,8 @@ export async function startLite(): Promise<void> {
 	window.webContents.on('before-input-event', (event, input) => shortcuts(event, input));
 	window.on('resize', publish);
 	window.on('closed', () => {
+		autoRecover = false;
+		clearTimeout(recoveryTimer);
 		discovery.close();
 		abort?.abort();
 		clearInterval(poll);
@@ -750,6 +997,8 @@ export async function startLite(): Promise<void> {
 	});
 	let stoppingControl: Promise<void> | undefined;
 	app.on('before-quit', (event) => {
+		autoRecover = false;
+		clearTimeout(recoveryTimer);
 		abort?.abort();
 		tunnel?.stop();
 		if (controlServer) {
@@ -796,4 +1045,22 @@ export async function startLite(): Promise<void> {
 	);
 	controlServer = await startLiteControlServer(app.getPath('userData'), control);
 	await window.loadURL(localUrl);
+	const restore = lastConnections.get();
+	if (restore?.enabled) {
+		const { profile } = restore;
+		if (profile.transport === 'lan' || profile.transport === 'tailscale') {
+			selected = profile.id;
+			lastDiscovered = { profile };
+			autoRecover = true;
+			hostName = profile.name;
+			await discovery.control('discovery-start', {
+				lan: profile.transport === 'lan',
+				tailscale: profile.transport === 'tailscale',
+				tailscalePeers: profile.transport === 'tailscale',
+			});
+			await attemptRecovery();
+		} else if (profiles.list().some((candidate) => candidate.id === profile.id)) {
+			await connect(profile.id, undefined, false, true);
+		}
+	}
 }
