@@ -914,6 +914,9 @@ export class StdoutHandler {
 			// accumulated streamedText (covers Copilot where the result event
 			// is empty and Factory Droid which never sends an explicit result).
 			const resultText = event.text || managedProcess.streamedText || '';
+			// The terminal result supersedes interim narration. Exit consumers must
+			// capture the answer we actually emitted, including a recovered build.
+			managedProcess.streamedText = resultText;
 
 			// Log synopsis result processing (for debugging empty synopsis issue)
 			if (sessionId.includes('-synopsis-')) {
@@ -963,6 +966,7 @@ export class StdoutHandler {
 
 		if (msgRecord.type === 'result' && msgRecord.result && !managedProcess.resultEmitted) {
 			managedProcess.resultEmitted = true;
+			managedProcess.streamedText = msgRecord.result as string;
 			logger.debug('[ProcessManager] Emitting result data', 'ProcessManager', {
 				sessionId,
 				resultLength: (msgRecord.result as string).length,

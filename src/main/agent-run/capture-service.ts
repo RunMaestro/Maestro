@@ -25,6 +25,7 @@ import {
 	resolveAgentRunProvider,
 	deriveTerminalStatus,
 	redactPrompt,
+	redactAnswerTail,
 	type AgentRun,
 	type AgentRunEvent,
 	type AgentRunStatus,
@@ -241,7 +242,7 @@ export class AgentRunCaptureService {
 					...(input.signal ? { signal: input.signal } : {}),
 					...(input.settlement ? input.settlement : {}),
 					...(input.settlement?.answerTail
-						? { answerTail: redactPrompt(input.settlement.answerTail.slice(-4000)) }
+						? { answerTail: redactAnswerTail(input.settlement.answerTail) }
 						: {}),
 					durationMs,
 					completedAt: ts,

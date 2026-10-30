@@ -26,6 +26,7 @@ vi.mock('../../../../shared/maestro-lib/parsers/error-patterns', () => ({
 	matchErrorPattern: vi.fn(() => null),
 	matchSshErrorPattern: vi.fn(() => null),
 	stripJsonEventLines: vi.fn((text: string) => text),
+	isClaudeLimitNotice: vi.fn(() => false),
 }));
 
 vi.mock('../../../../shared/maestro-lib/parsers/usage-aggregator', () => ({
@@ -73,6 +74,8 @@ vi.mock('../../../../main/utils/remote-fs', () => ({
 // ── Imports (after mocks) ──────────────────────────────────────────────────
 
 import { ExitHandler } from '../../../../main/process-manager/handlers/ExitHandler';
+import { StdoutHandler } from '../../../../main/process-manager/handlers/StdoutHandler';
+import { ClaudeOutputParser } from '../../../../main/parsers/claude-output-parser';
 import { CodexOutputParser } from '../../../../main/parsers/codex-output-parser';
 import {
 	nextSpawnGeneration,
@@ -1560,6 +1563,43 @@ describe('ExitHandler', () => {
 	});
 
 	describe('exit event settlement argument', () => {
+		it('captures the final Claude result rather than an earlier failed investigation', async () => {
+			const proc = createMockProcess({
+				isStreamJsonMode: true,
+				outputParser: new ClaudeOutputParser(),
+			});
+			processes.set('worker-ai-tab', proc);
+			const stdout = new StdoutHandler({ processes, emitter, bufferManager });
+			stdout.handleData(
+				'worker-ai-tab',
+				`${JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Build failed: investigating' }] } })}\n`
+			);
+			stdout.handleData(
+				'worker-ai-tab',
+				`${JSON.stringify({ type: 'result', subtype: 'success', result: 'Fixed the build. All checks pass.' })}\n`
+			);
+			const onExit = vi.fn();
+			emitter.on('exit', onExit);
+			await exitHandler.handleExit('worker-ai-tab', 0);
+			expect(onExit.mock.calls[0][3].answerTail).toBe('Fixed the build. All checks pass.');
+		});
+
+		it('redacts a secret whose label falls just before the stored tail boundary', async () => {
+			const secret = 'private-boundary-password';
+			const proc = createMockProcess({
+				isStreamJsonMode: true,
+				resultEmitted: true,
+				streamedText: `password=${secret}\n${' '.repeat(4000 - secret.length - 1)}`,
+				outputParser: createMockOutputParser(),
+			});
+			processes.set('worker-ai-tab', proc);
+			const onExit = vi.fn();
+			emitter.on('exit', onExit);
+			await exitHandler.handleExit('worker-ai-tab', 0);
+			expect(onExit.mock.calls[0][3].answerTail).not.toContain(secret);
+			expect(onExit.mock.calls[0][3].answerTail.length).toBeLessThanOrEqual(4000);
+		});
+
 		it('carries a bounded redacted final answer before the renderer transcript is available', async () => {
 			const proc = createMockProcess({
 				toolType: 'codex',
