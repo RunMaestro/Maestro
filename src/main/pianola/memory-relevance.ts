@@ -387,11 +387,13 @@ export class LocalMemoryRelevance {
 				(model: unknown) =>
 					record(model) &&
 					model.name === this.config.model &&
-					model.digest === MEMORY_RELEVANCE_DIGEST
+					!model.remote_model &&
+					!model.remote_host &&
+					(this.config.model !== MEMORY_RELEVANCE_MODEL || model.digest === MEMORY_RELEVANCE_DIGEST)
 			)
 		)
 			throw new MemoryRelevanceError(
-				`required ${this.config.model} digest is unavailable or mismatched; no fallback`
+				`required local ${this.config.model} digest is unavailable, mismatched, or cloud-backed; no fallback`
 			);
 	}
 	private async judge(

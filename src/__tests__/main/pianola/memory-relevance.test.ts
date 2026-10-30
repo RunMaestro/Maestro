@@ -32,7 +32,9 @@ function gate(
 	value: unknown,
 	head: unknown = { facets: ['Which cipher protects stored records?'], complete: true },
 	digest = MEMORY_RELEVANCE_DIGEST,
-	doneReason = 'stop'
+	doneReason = 'stop',
+	model = 'qwen3:8b',
+	remote = false
 ) {
 	const request: typeof fetchWithTimeout = async (url, options) => {
 		const body = options?.body
@@ -42,9 +44,19 @@ function gate(
 		return new Response(
 			JSON.stringify(
 				url.endsWith('/api/tags')
-					? { models: [{ name: 'qwen3:8b', digest }] }
+					? {
+							models: [
+								{
+									name: model,
+									digest,
+									...(remote
+										? { remote_model: 'qwen3.6-cloud', remote_host: 'https://ollama.com:443' }
+										: {}),
+								},
+							],
+						}
 					: {
-							model: 'qwen3:8b',
+							model,
 							done: true,
 							done_reason: doneReason,
 							message: { content: JSON.stringify(output) },
@@ -70,6 +82,39 @@ describe('local memory semantic qualification contract', () => {
 		await expect(
 			gate({}, undefined, 'different-digest').selectRelevant('Which cipher?', [])
 		).rejects.toThrow('digest');
+	});
+	it('accepts the installed digest of a deliberately selected local model', async () => {
+		const selected = gate(
+			{ relations: { 0: ['related_background'] } },
+			undefined,
+			'selected-model-digest',
+			'stop',
+			'qwen3.6'
+		);
+		selected.configure({
+			provider: 'local',
+			model: 'qwen3.6',
+			endpoint: 'http://127.0.0.1:11434',
+		});
+		await expect(selected.selectRelevant('Which cipher?', candidates)).resolves.toEqual([]);
+	});
+	it('rejects cloud-backed Ollama tags when local qualification is selected', async () => {
+		const selected = gate(
+			{ relations: { 0: ['related_background'] } },
+			undefined,
+			'selected-model-digest',
+			'stop',
+			'qwen3.6',
+			true
+		);
+		selected.configure({
+			provider: 'local',
+			model: 'qwen3.6',
+			endpoint: 'http://127.0.0.1:11434',
+		});
+		await expect(selected.selectRelevant('Which cipher?', candidates)).rejects.toThrow(
+			/cloud|local/
+		);
 	});
 	it.each([
 		{ relations: [] },

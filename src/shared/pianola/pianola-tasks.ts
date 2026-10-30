@@ -397,15 +397,25 @@ export function markTaskStatus(
 }
 
 /** Requeue reviewed work while preserving its oracle, role agent, and completed dependencies. */
-export function revisePlanTask(plan: PianolaPlan, taskId: string, prompt: string): PianolaPlan {
+export function revisePlanTask(
+	plan: PianolaPlan,
+	taskId: string,
+	prompt: string,
+	attemptId?: string
+): PianolaPlan {
 	if (!prompt.trim()) throw new Error('A revised task requires a non-empty prompt.');
 	const task = plan.tasks.find((entry) => entry.id === taskId);
 	if (!task) throw new Error(`No task with id "${taskId}" in plan "${plan.id}".`);
 	if (task.status !== 'needs_review' && task.status !== 'failed')
 		throw new Error(`Task "${taskId}" must be awaiting review or failed before revision.`);
-	const revised: PianolaTask = { ...task, prompt, status: 'pending' };
+	const revised: PianolaTask = {
+		...task,
+		prompt,
+		status: 'pending',
+		...(attemptId !== undefined ? { runId: attemptId } : {}),
+	};
 	delete revised.tabId;
-	delete revised.runId;
+	if (attemptId === undefined) delete revised.runId;
 	delete revised.error;
 	delete revised.fixAttempts;
 	delete revised.validationUnknownAttempts;

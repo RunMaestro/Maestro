@@ -57,6 +57,7 @@ import {
 	type PianolaTask,
 } from '../../shared/pianola/pianola-tasks';
 import { assertOneActivePlanPerProgram } from '../../shared/pianola/pianola-programs';
+import { generateUUID } from '../../shared/uuid';
 import {
 	checkFromVerdict,
 	translatePianolaSandboxPath,
@@ -742,7 +743,7 @@ export async function pianolaPlanRevise(
 				updatePianolaPlans((plans) => {
 					const plan = plans.find((entry) => entry.id === planId);
 					if (!plan) throw new Error(`No Pianola plan with id "${planId}".`);
-					const revised = revisePlanTask(plan, taskId, options.prompt);
+					const revised = revisePlanTask(plan, taskId, options.prompt, generateUUID());
 					assertOneActivePlanPerProgram(revised, plans);
 					return plans.map((entry) => (entry.id === planId ? revised : entry));
 				});
@@ -1128,6 +1129,17 @@ export async function pianolaOrchestrate(
 				);
 			}
 			const prompt = context ? `${task.prompt}\n\n${context}` : task.prompt;
+			if (programPausedNow()) return { success: false, error: 'program paused' };
+			const currentPlan = getPianolaPlan(plan.id) ?? plan;
+			const currentLimit = plan.programId
+				? (readPianolaPrograms().find((entry) => entry.id === plan.programId)?.charter
+						.maxConcurrent ?? concurrencyLimit)
+				: concurrencyLimit;
+			const activeCount = currentPlan.tasks.filter(
+				(entry) => entry.status === 'running' || entry.status === 'fixing'
+			).length;
+			if (activeCount >= currentLimit)
+				return { success: false, error: 'program concurrency limit reached' };
 			const res = await runDispatch(agentId, prompt, { tab: task.tabId });
 			if (res.success) historyCache.delete(task.tabId);
 			return { success: !!res.success, tabId: task.tabId, error: res.error };

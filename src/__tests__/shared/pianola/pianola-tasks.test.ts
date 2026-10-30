@@ -393,6 +393,12 @@ describe('revisePlanTask', () => {
 			expect(original.tasks[1]).toEqual(reviewed);
 		}
 	);
+	it('uses a distinct supplied identity for a reopened attempt', () => {
+		const original = plan([task({ id: 'reviewed', status: 'failed', runId: 'old-run' })]);
+		const revised = revisePlanTask(original, 'reviewed', 'Correct the work.', 'new-run');
+		expect(revised.tasks[0]).toMatchObject({ status: 'pending', runId: 'new-run' });
+		expect(revised.tasks[0].runId).not.toBe(original.tasks[0].runId);
+	});
 	it('reopens only descendants whose remaining prerequisites are no longer blocked', () => {
 		const original = plan([
 			task({ id: 'tail', status: 'blocked', dependsOn: ['child'], error: 'upstream failed' }),

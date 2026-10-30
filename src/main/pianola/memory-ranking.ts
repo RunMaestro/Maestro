@@ -96,7 +96,7 @@ function lexicalPrior(
 	if (candidate.lexicalScore === undefined) return 0;
 	if (bestScore === null || worstScore === null) return 0;
 	const spread = bestScore - worstScore;
-	if (spread <= 0) return candidate.lexicalScore === bestScore ? 1 : 0;
+	if (spread === 0) return candidate.lexicalScore === bestScore ? 1 : 0;
 	// BM25 scores are negative and the best match is the most negative.
 	return Math.max(0, Math.min(1, (candidate.lexicalScore - worstScore) / spread));
 }

@@ -244,6 +244,80 @@ describe('pianolaOrchestrate - iteration error resilience', () => {
 		expect(errorSpy).not.toHaveBeenCalled();
 		expect(runDispatch).not.toHaveBeenCalled();
 	});
+	it('rechecks program pause after memory recall before dispatching', async () => {
+		let paused = false;
+		vi.mocked(getPianolaPlan).mockReturnValue({ ...PLAN, programId: 'p' });
+		vi.mocked(readPianolaPrograms).mockImplementation(
+			() =>
+				[
+					{
+						id: 'p',
+						status: paused ? 'paused' : 'active',
+						charter: { validationRequired: false, maxAttempts: 3 },
+					},
+				] as never
+		);
+		memoryRequestMock.mockImplementation(async () => {
+			paused = true;
+			return { context: '', memories: [] };
+		});
+		vi.mocked(runDispatch).mockResolvedValue({ success: true });
+		runIterationMock.mockImplementation(
+			async (state: OrchestratorState, deps: OrchestratorDeps) => {
+				const result = await deps.dispatch(
+					{ id: 't', title: 'T', prompt: 'p', dependsOn: [], status: 'pending', tabId: 'tab' },
+					'agent-1'
+				);
+				expect(result).toMatchObject({ success: false, error: 'program paused' });
+				return doneResult(state);
+			}
+		);
+		await pianolaOrchestrate('plan-1', { once: true });
+		expect(runDispatch).not.toHaveBeenCalled();
+	});
+	it('rechecks the live concurrency charter after memory recall', async () => {
+		let maxConcurrent = 2;
+		const currentPlan: PianolaPlan = {
+			...PLAN,
+			programId: 'p',
+			tasks: [
+				{ id: 'running', title: 'Running', prompt: 'r', dependsOn: [], status: 'running' },
+				{
+					id: 'target',
+					title: 'Target',
+					prompt: 't',
+					dependsOn: [],
+					status: 'pending',
+					tabId: 'tab',
+				},
+			],
+		};
+		vi.mocked(getPianolaPlan).mockReturnValue(currentPlan);
+		vi.mocked(readPianolaPrograms).mockImplementation(
+			() =>
+				[
+					{
+						id: 'p',
+						status: 'active',
+						charter: { validationRequired: false, maxAttempts: 3, maxConcurrent },
+					},
+				] as never
+		);
+		memoryRequestMock.mockImplementation(async () => {
+			maxConcurrent = 1;
+			return { context: '', memories: [] };
+		});
+		vi.mocked(runDispatch).mockResolvedValue({ success: true });
+		runIterationMock.mockImplementation(
+			async (state: OrchestratorState, deps: OrchestratorDeps) => {
+				const result = await deps.dispatch(currentPlan.tasks[1], 'agent-1');
+				expect(result.success).toBe(false);
+				return doneResult(state);
+			}
+		);
+		await pianolaOrchestrate('plan-1', { once: true });
+		expect(runDispatch).not.toHaveBeenCalled();
+	});
 	it('pins boundary reads, initial dispatch, and fix dispatch to the same active tab', async () => {
 		vi.mocked(readSettingValue).mockReturnValue({ pianola: true, autopilot: true });
 		sendCommandMock.mockImplementation(async (command) =>
@@ -1129,7 +1203,15 @@ describe('pianola plan revise', () => {
 		await pianolaPlanRevise(PLAN.id, 'reviewed', { prompt: 'Founder correction', json: true });
 		expect(saved[0]).toEqual({
 			...original,
-			tasks: [completed, { ...original.tasks[1], prompt: 'Founder correction', status: 'pending' }],
+			tasks: [
+				completed,
+				{
+					...original.tasks[1],
+					prompt: 'Founder correction',
+					status: 'pending',
+					runId: expect.any(String),
+				},
+			],
 		});
 		expect(saved[1]).toEqual(other);
 	});

@@ -90,7 +90,7 @@ export interface OrchestratorDeps {
 		task: PianolaTask,
 		agentId: string
 	) => Promise<{ success: boolean; tabId?: string; error?: string }>;
-	/** Persist the updated plan once per iteration (called at the end with the final plan). */
+	/** Persist after each accepted dispatch and at the end of the iteration. */
 	persist: (plan: PianolaPlan) => void;
 	/** Human-readable progress line. */
 	log: (line: string) => void;
@@ -437,6 +437,9 @@ export async function runOrchestratorIteration(
 			validationUnknownAttempts: 0,
 			tabId: dispatchedTask.tabId ?? res.tabId,
 		});
+		// Checkpoint accepted work before another await or task can begin. A supervisor
+		// pause/rebind may terminate this CLI, and resume must not replay this dispatch.
+		deps.persist(plan);
 		// Dispatch acknowledgement is not evidence that a turn started. Wait for an
 		// observed busy state or a new assistant reply before accepting idle as done.
 		prevStates[task.id] = 'idle';

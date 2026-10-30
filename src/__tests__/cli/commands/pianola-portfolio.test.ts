@@ -15,6 +15,7 @@ const { state, connect, sendCommand, disconnect } = vi.hoisted(() => ({
 		asks: [] as PianolaAsk[],
 		plans: [] as PianolaPlan[],
 		targets: [] as PianolaSupervisedTarget[],
+		sessions: null as null | Record<string, unknown>[],
 	},
 	connect: vi.fn(),
 	sendCommand: vi.fn(),
@@ -32,6 +33,17 @@ vi.mock('../../../cli/services/agent-run-store', () => ({ readAgentRuns: vi.fn((
 vi.mock('../../../cli/services/storage', () => ({
 	readSshRemotes: vi.fn(() => [{ id: 'wsl-dev', name: 'Dev Box' }]),
 	getConfigDirectory: vi.fn(() => 'C:\\fake\\maestro-dev'),
+	readLiveSessions: () =>
+		state.sessions ?? [
+			...state.programs.flatMap((program) =>
+				Object.values(program.roles).map((role) => ({
+					id: role.agentId,
+					name: role.name,
+					cwd: program.root,
+				}))
+			),
+			...['lead', 'eng', 'market', 'cto', 'cmo', 'social'].map((id) => ({ id })),
+		],
 }));
 vi.mock('../../../cli/services/pianola-store', () => ({
 	readPianolaPrograms: () => state.programs,
@@ -70,6 +82,7 @@ beforeEach(() => {
 	state.asks = [];
 	state.plans = [];
 	state.targets = [];
+	state.sessions = null;
 	vi.clearAllMocks();
 	vi.spyOn(console, 'log').mockImplementation(() => {});
 	connect.mockResolvedValue(undefined);
@@ -108,16 +121,13 @@ describe('portfolio CLI commands', () => {
 		};
 		state.programs = [original];
 		fs.writeFileSync(file, JSON.stringify({ programs: [{ ...original, title: 'New' }] }));
+		state.sessions = [
+			{
+				id: 'lead',
+				customEnvVars: { API_KEY: 'keep', CUSTOM_PATH: '/tools', MAESTRO_USER_DATA: 'old' },
+			},
+		];
 		sendCommand.mockImplementation(async (command) => {
-			if (command.type === 'get_sessions')
-				return {
-					sessions: [
-						{
-							id: 'lead',
-							customEnvVars: { API_KEY: 'keep', CUSTOM_PATH: '/tools', MAESTRO_USER_DATA: 'old' },
-						},
-					],
-				};
 			if (command.type === 'update_session_config')
 				state.programs = [{ ...original, status: 'paused', createdAt: 123 }];
 			return { success: true };
@@ -165,22 +175,17 @@ describe('portfolio CLI commands', () => {
 				],
 			})
 		);
-		sendCommand.mockImplementation(async (command) =>
-			command.type === 'get_sessions'
-				? {
-						sessions: [
-							{
-								id: 'recovered',
-								name: 'Lead',
-								cwd: '/remote',
-								toolType: 'omp',
-								sessionSshRemoteConfig: { enabled: true, remoteId: 'wsl-dev' },
-								customEnvVars: { API_KEY: 'keep', CUSTOM_PATH: '/tools', CUSTOM_MANIFEST: 'old' },
-							},
-						],
-					}
-				: { success: true }
-		);
+		state.sessions = [
+			{
+				id: 'recovered',
+				name: 'Lead',
+				cwd: '/remote',
+				toolType: 'omp',
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'wsl-dev' },
+				customEnvVars: { API_KEY: 'keep', CUSTOM_PATH: '/tools', CUSTOM_MANIFEST: 'old' },
+			},
+		];
+		sendCommand.mockImplementation(async () => ({ success: true }));
 		try {
 			await pianolaProgramApply({ file, json: true });
 			expect(state.programs[0].roles.lead.agentId).toBe('recovered');
@@ -271,6 +276,7 @@ describe('portfolio CLI commands', () => {
 		const live: { id: string; name: string; cwd: string; toolType: string }[] = [
 			{ id: 'eng', name: 'Engineer', cwd: newRoot, toolType: 'omp' },
 		];
+		state.sessions = live;
 		let failCwd = true;
 		sendCommand.mockImplementation(async (command) => {
 			if (command.type === 'get_sessions') return { sessions: live };
@@ -330,21 +336,16 @@ describe('portfolio CLI commands', () => {
 		};
 		state.programs = [original];
 		fs.writeFileSync(file, JSON.stringify({ programs: [{ ...original, remoteId: 'new-remote' }] }));
-		sendCommand.mockImplementation(async (command) =>
-			command.type === 'get_sessions'
-				? {
-						sessions: [
-							{
-								id: 'lead',
-								name: 'Lead',
-								cwd: '/remote',
-								toolType: 'omp',
-								sessionSshRemoteConfig: { enabled: true, remoteId: 'wsl-dev' },
-							},
-						],
-					}
-				: { success: true }
-		);
+		state.sessions = [
+			{
+				id: 'lead',
+				name: 'Lead',
+				cwd: '/remote',
+				toolType: 'omp',
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'wsl-dev' },
+			},
+		];
+		sendCommand.mockImplementation(async () => ({ success: true }));
 		try {
 			await pianolaProgramApply({ file, json: true });
 			expect(sendCommand).toHaveBeenCalledWith(
@@ -540,7 +541,7 @@ describe('portfolio CLI commands', () => {
 		await pianolaProgramApply({ file, json: true });
 		expect(state.programs[0]).toEqual(saved);
 		expect(connect).toHaveBeenCalledTimes(1);
-		expect(sendCommand).toHaveBeenCalledTimes(2);
+		expect(sendCommand).toHaveBeenCalledTimes(1);
 		expect(disconnect).toHaveBeenCalledTimes(1);
 	});
 	it('retries a role left unassigned by an interrupted apply', async () => {

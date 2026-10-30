@@ -140,7 +140,12 @@ export async function pianolaProgramLoop(
 									}>({ type: 'list_desktop_sessions' }, 'desktop_sessions_list');
 									tabId = updated.sessions?.find((session) => session.agentId === agentId)?.tabId;
 								}
-								return { success: response.success, tabId, error: response.error };
+								return {
+									success: response.success,
+									tabId,
+									error: response.error,
+									code: response.code,
+								};
 							},
 							ensureWatch: (agentId, tabId) => {
 								updatePianolaSupervisorTargets((current) => {

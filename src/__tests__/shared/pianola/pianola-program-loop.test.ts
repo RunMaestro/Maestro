@@ -135,6 +135,33 @@ describe('program loop', () => {
 		await runProgramLoopTick(state, io);
 		expect(io.wake).toHaveBeenCalledTimes(2);
 	});
+	it('does not clear a failed task notification when another task ID is its prefix', async () => {
+		const state = blank();
+		state.plans = [
+			{
+				...plan,
+				tasks: [{ ...plan.tasks[0], id: 'deploy:db', status: 'failed', runId: 'run-1' }],
+			},
+		];
+		const io = deps();
+		io.persistMemo.mockImplementation((memo) => {
+			state.memo = JSON.parse(JSON.stringify(memo));
+		});
+		await runProgramLoopTick(state, io);
+		expect(io.wake).toHaveBeenCalledTimes(1);
+		state.plans = [
+			{
+				...plan,
+				tasks: [
+					{ ...plan.tasks[0], id: 'deploy', status: 'pending' },
+					{ ...plan.tasks[0], id: 'deploy:db', status: 'failed', runId: 'run-1' },
+				],
+			},
+		];
+		await runProgramLoopTick(state, io);
+		expect(io.wake).toHaveBeenCalledTimes(1);
+		expect(state.memo.notifiedTaskIds).toEqual(['plan:deploy%3Adb:run-1']);
+	});
 	it('does not resurrect manually disabled plan or lead-watch targets', async () => {
 		const state = blank();
 		state.plans = [{ ...plan, tasks: [{ ...plan.tasks[0], status: 'needs_review' }] }];
@@ -292,6 +319,25 @@ describe('program loop', () => {
 		await runProgramLoopTick(state, io);
 		expect(io.wake).toHaveBeenCalledTimes(1);
 		expect(io.ensureWatch).toHaveBeenCalledWith('lead', 'accepted-tab');
+		expect(state.memo.pendingWake).toBeUndefined();
+	});
+	it('retains the same wake intent after an uncertain transport acknowledgement', async () => {
+		const state = blank();
+		const io = deps();
+		io.persistMemo.mockImplementation((memo) => {
+			state.memo = structuredClone(memo);
+		});
+		io.wake.mockResolvedValueOnce({
+			success: false,
+			code: 'COMMAND_FAILED',
+			error: 'acknowledgement timeout',
+		});
+		await runProgramLoopTick(state, io);
+		const pendingId = state.memo.pendingWake!.id;
+		io.findWake.mockResolvedValueOnce({ success: true, tabId: 'accepted-tab' });
+		await runProgramLoopTick(state, io);
+		expect(io.findWake).toHaveBeenCalledWith('lead', pendingId);
+		expect(io.wake).toHaveBeenCalledTimes(1);
 		expect(state.memo.pendingWake).toBeUndefined();
 	});
 	it('delivers founder choice and note once on the next safe wake, including during an active plan', async () => {

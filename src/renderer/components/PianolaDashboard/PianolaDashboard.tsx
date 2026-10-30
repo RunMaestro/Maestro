@@ -40,6 +40,7 @@ import type {
 } from '../../../shared/pianola/pianola-programs';
 import { FormInput } from '../ui/FormInput';
 import { MiniBadge } from '../ui/MiniBadge';
+import { StatCard } from '../widgets';
 import {
 	usePianolaDashboardData,
 	type DashboardAgentRow,
@@ -205,45 +206,6 @@ function DashboardPanel({
 		>
 			{children}
 		</section>
-	);
-}
-
-function MetricCard({
-	theme,
-	icon,
-	label,
-	value,
-	accent,
-}: {
-	theme: Theme;
-	icon: React.ReactNode;
-	label: string;
-	value: number;
-	accent: string;
-}): React.ReactElement {
-	return (
-		<div
-			className="rounded-lg px-3 py-2.5 flex items-center gap-3"
-			style={{
-				backgroundColor: theme.colors.bgSidebar,
-				border: `1px solid ${theme.colors.border}`,
-			}}
-		>
-			<span
-				className="w-8 h-8 rounded-md flex items-center justify-center shrink-0"
-				style={{ backgroundColor: theme.colors.bgMain, color: accent }}
-			>
-				{icon}
-			</span>
-			<div>
-				<div className="text-lg font-semibold leading-6" style={{ color: theme.colors.textMain }}>
-					{value}
-				</div>
-				<div className="text-xs" style={{ color: theme.colors.textDim }}>
-					{label}
-				</div>
-			</div>
-		</div>
 	);
 }
 
@@ -1282,33 +1244,33 @@ export function PianolaDashboard({
 				</Section>
 
 				<div className="grid grid-cols-2 xl:grid-cols-4 gap-3 mb-4">
-					<MetricCard
+					<StatCard
 						theme={theme}
-						icon={<AlertCircle className="w-4 h-4" />}
+						icon={AlertCircle}
 						label="Needs you"
 						value={needsCount}
-						accent={needsCount > 0 ? theme.colors.warning : theme.colors.success}
+						color={needsCount > 0 ? theme.colors.warning : theme.colors.success}
 					/>
-					<MetricCard
+					<StatCard
 						theme={theme}
-						icon={<Loader2 className="w-4 h-4" />}
+						icon={Loader2}
 						label="Working now"
 						value={workingCount}
-						accent={theme.colors.accent}
+						color={theme.colors.accent}
 					/>
-					<MetricCard
+					<StatCard
 						theme={theme}
-						icon={<BadgeCheck className="w-4 h-4" />}
+						icon={BadgeCheck}
 						label="Verified results"
 						value={verifiedCount}
-						accent={theme.colors.success}
+						color={theme.colors.success}
 					/>
-					<MetricCard
+					<StatCard
 						theme={theme}
-						icon={<Repeat className="w-4 h-4" />}
+						icon={Repeat}
 						label="Supervised programs"
 						value={supervisedPrograms}
-						accent={theme.colors.accent}
+						color={theme.colors.accent}
 					/>
 				</div>
 

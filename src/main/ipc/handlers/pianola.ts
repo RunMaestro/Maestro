@@ -752,7 +752,12 @@ export function registerPianolaHandlers(deps: PianolaHandlerDependencies): void 
 						if (!plan) throw new Error(`No Pianola plan with id "${planId}".`);
 						const task = plan.tasks.find((entry) => entry.id === taskId);
 						if (!task) throw new Error(`No task with id "${taskId}" in plan "${planId}".`);
-						revised = revisePlanTask(plan, taskId, (prompt as string | undefined) ?? task.prompt);
+						revised = revisePlanTask(
+							plan,
+							taskId,
+							(prompt as string | undefined) ?? task.prompt,
+							generateUUID()
+						);
 						assertOneActivePlanPerProgram(revised, plans);
 						return plans.map((entry) => (entry.id === planId ? revised! : entry));
 					});
