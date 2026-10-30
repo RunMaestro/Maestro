@@ -813,7 +813,12 @@ export async function pianolaOrchestrate(
 						reason: `auto-fix attempt ${(task.fixAttempts ?? 0) + 1}`,
 					});
 				}
-				return { success: !!res.success, tabId: tabId ?? undefined, error: res.error };
+				return {
+					success: !!res.success,
+					tabId: tabId ?? undefined,
+					error: res.error,
+					deliveryUncertain: uncertain,
+				};
 			} catch (error) {
 				// The transport may have lost a response after delivery. Park the claim
 				// without an identity instead of automatically repeating the repair.

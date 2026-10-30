@@ -508,6 +508,63 @@ describe('Pianola real CLI adapter and orchestration engine', () => {
 		expect(runs.find((run) => run.id === 'captured')?.tabId).toBe('tab');
 	});
 
+	it.each(['tabId', 'sessionId'] as const)(
+		'holds an uncertain failed repair with a %s response identity across controller restarts',
+		async (identity) => {
+			mocks.settings.mockImplementation((key) =>
+				key === 'pianolaAutoFixEnabled' ? true : { pianola: true }
+			);
+			startBound({
+				status: 'needs_review',
+				runId: 'captured',
+				executionRunId: 'captured',
+				requiredChecks: ['acceptance'],
+				fixAttempts: 1,
+			});
+			plan.tasks.push({ ...child, id: 'independent', dependsOn: [] });
+			runs = [
+				{
+					...captured(),
+					status: 'needs_review',
+					checks: [{ name: 'acceptance', status: 'failed' }],
+				},
+			];
+			// The dispatch contract can carry an identity without confirming delivery.
+			mocks.dispatch.mockResolvedValue({
+				success: false,
+				[identity]: 'unconfirmed-fix-tab',
+				code: 'COMMAND_FAILED',
+				error: 'repair acknowledgement lost',
+			});
+			await pianolaOrchestrate(plan.id, { once: true, concurrency: '1' });
+			expect(plan.tasks[0]).toMatchObject({
+				status: 'needs_review',
+				holdReason: 'delivery_uncertain',
+				runId: 'captured',
+				fixAttempts: 2,
+			});
+			expect(plan.tasks[0].tabId).toBeUndefined();
+			expect(plan.tasks[0].executionRunId).toBeUndefined();
+			const held = { ...plan.tasks[0] };
+			await pianolaOrchestrate(plan.id, { once: true, concurrency: '1' });
+			expect(plan.tasks[0]).toEqual(held);
+			// A late pass on the old acceptance ledger cannot identify the repair.
+			runs = runs.map((run) => ({
+				...run,
+				checks: [{ name: 'acceptance', status: 'passed' }],
+			}));
+			await pianolaOrchestrate(plan.id, { once: true, concurrency: '1' });
+			expect(plan.tasks[0]).toEqual(held);
+			expect(plan.tasks[1].status).toBe('pending');
+			expect(plan.tasks[2].status).toBe('pending');
+			expect(mocks.dispatch).toHaveBeenCalledExactlyOnceWith(
+				'agent',
+				expect.stringContaining('captured'),
+				{ newTab: true, background: true }
+			);
+		}
+	);
+
 	it('retains an ambiguous delivery claim after a lost dispatch response and does not retry it', async () => {
 		mocks.dispatch.mockRejectedValueOnce(new Error('lost dispatch response'));
 		await tick();
