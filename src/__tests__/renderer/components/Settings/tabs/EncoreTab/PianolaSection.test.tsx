@@ -4,16 +4,18 @@ import { PianolaSection } from '../../../../../../renderer/components/Settings/t
 import { useSettingsStore, loadAllSettings } from '../../../../../../renderer/stores/settingsStore';
 import { useNotificationStore } from '../../../../../../renderer/stores/notificationStore';
 import { mockTheme } from '../../../../../helpers/mockTheme';
+import { resetStores } from '../../../../../helpers/resetStores';
 
 describe('Pianola repair permission', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
-		useNotificationStore.setState({ toasts: [] });
+		resetStores(useSettingsStore, useNotificationStore);
 		useSettingsStore.setState({
 			pianolaAutoFixEnabled: false,
 			encoreFeatures: { ...useSettingsStore.getState().encoreFeatures, pianola: true },
 		});
-		vi.mocked(window.maestro.settings.set).mockResolvedValue(true);
+		vi.mocked(window.maestro.settings.set).mockReset().mockResolvedValue(true);
+		vi.mocked(window.maestro.settings.getAll).mockReset().mockResolvedValue({});
 	});
 
 	it('shows supervision without granting repairs by mounting the settings UI', () => {

@@ -16,7 +16,7 @@ export function PianolaSection({ theme }: { theme: Theme }) {
 	const mode = !enabled ? 'Disabled' : autoFixEnabled ? 'Automatic repairs' : 'Supervision';
 
 	return (
-		<div data-setting-id="encore-pianola-auto-fix" className="space-y-3">
+		<div data-setting-id="encore-pianola-auto-fix">
 			<SettingsSectionHeading icon={Wrench} description={`Current mode: ${mode}.`}>
 				Automatic repairs
 			</SettingsSectionHeading>
