@@ -242,14 +242,19 @@ export function deferStoreWrites<T extends Record<string, any>>(
 	// rewrites were byte-identical (a peer echoing a save the host already had).
 	let committedChunks: Uint8Array[] | null = null;
 
-	// Best-effort cleanup; a failure leaves the leftovers for the next launch.
-	void sweepOrphanTempFiles(store.path).then(
-		(removed) => {
-			if (removed > 0)
-				logger.info(`Removed ${removed} orphaned temp file(s) beside ${store.path}`, 'Sessions');
-		},
-		() => {}
-	);
+	// Best-effort cleanup; a failure leaves the leftovers for the next launch. A
+	// leftover too recent to judge at startup (a relaunch right after a crash) is
+	// looked at again once it is old enough, instead of at the next launch.
+	const sweep = () =>
+		void sweepOrphanTempFiles(store.path).then(
+			(removed) => {
+				if (removed > 0)
+					logger.info(`Removed ${removed} orphaned temp file(s) beside ${store.path}`, 'Sessions');
+			},
+			() => {}
+		);
+	sweep();
+	setTimeout(sweep, ORPHAN_TEMP_MIN_AGE_MS).unref?.();
 
 	/** Mark the current revision dirty and arrange a future ordered drain. */
 	function scheduleWrite(delayMs: number = WRITE_COALESCE_MS): void {

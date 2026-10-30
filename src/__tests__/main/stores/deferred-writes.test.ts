@@ -506,4 +506,26 @@ describe('deferStoreWrites', () => {
 			['maestro-sessions.json', recent, own, liveCli, otherStore].sort()
 		);
 	});
+
+	it('looks again, once it is old enough, at a leftover too recent to judge at startup', async () => {
+		// A relaunch right after a crash finds the crash's temp file under an hour
+		// old; it must not wait for the next launch.
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+		try {
+			const store = makeStore({ sessions: [] });
+			const leftover = path.join(dir, 'maestro-sessions.json.4194305.9.tmp');
+			fs.writeFileSync(leftover, '');
+			const minuteAgo = new Date(Date.now() - 60 * 1000);
+			fs.utimesSync(leftover, minuteAgo, minuteAgo);
+
+			deferStoreWrites(store, 'sessions');
+			await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+			expect(fs.existsSync(leftover)).toBe(true);
+
+			await vi.advanceTimersByTimeAsync(50 * 60 * 1000);
+			await vi.waitFor(() => expect(fs.existsSync(leftover)).toBe(false));
+		} finally {
+			vi.useRealTimers();
+		}
+	});
 });
