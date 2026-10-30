@@ -22,6 +22,7 @@ import type { ParsedEvent } from '../../../../shared/maestro-lib/parsers/agent-o
 import { createOutputParser } from '../../../../shared/maestro-lib/parsers/parser-factory';
 // The desktop spawners' own import path: the library must escape with that code.
 import { escapeCmdArg } from '../../../../main/process-manager/utils/shellEscape';
+import { cmdShellArgProblem } from '../../../../shared/maestro-lib/launch/windows-command';
 import { CAPTURED_RECORDINGS } from '../../../main/process-manager/recordings/captured';
 import { createScratchDir, fakeAgentSpec, fakeTurnFromRecording } from './fakeAgent';
 
@@ -671,6 +672,37 @@ describe('applyWindowsShellRules', () => {
 			expect(exit.spawnError).toBeUndefined();
 			expect(exit.exitCode).toBe(0);
 			expect(JSON.parse(exit.stdoutText.trim())).toEqual({ argv: args, stdin: prompt });
+		}
+	);
+
+	// The other half of cmdShellArgProblem's % rule: a lone % (and an empty %%)
+	// is left alone on a cmd.exe command line and by npm's bare %* forwarding.
+	// Several in one command line also pair up ACROSS arguments, and those names
+	// contain a quote, so nothing defines them and they pass unchanged too.
+	it.runIf(process.platform === 'win32')(
+		'delivers lone % signs through a .cmd shim unchanged',
+		async () => {
+			const shimDir = path.join(scratch.dir, 'percent shim');
+			fs.mkdirSync(shimDir, { recursive: true });
+			fs.writeFileSync(
+				path.join(shimDir, 'echo.mjs'),
+				"process.stdout.write(JSON.stringify(process.argv.slice(2)) + '\\n');\n"
+			);
+			const shimPath = path.join(shimDir, 'echo.cmd');
+			fs.writeFileSync(shimPath, `@"${process.execPath}" "%~dp0\\echo.mjs" %*\r\n`);
+
+			const args = ['100%', '%20', '50% off', '%%', 'plain'];
+			for (const arg of args) expect(cmdShellArgProblem(arg)).toBeNull();
+			const handle = startTurn(
+				applyWindowsShellRules({ command: shimPath, args, cwd: scratch.dir, env: process.env }),
+				{},
+				OPTIONS
+			);
+			const exit = await handle.done;
+
+			expect(exit.spawnError).toBeUndefined();
+			expect(exit.exitCode).toBe(0);
+			expect(JSON.parse(exit.stdoutText.trim())).toEqual(args);
 		}
 	);
 });

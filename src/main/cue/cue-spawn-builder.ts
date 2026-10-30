@@ -21,7 +21,7 @@ import {
 } from '../../shared/maestro-lib/launch/launch-plan';
 import { buildSpawnPath } from '../utils/spawnPath';
 import {
-	cmdShellArgProblem,
+	cmdShellArgsRefusal,
 	windowsShellReason,
 } from '../../shared/maestro-lib/launch/windows-command';
 import { isWindows } from '../../shared/platformDetection';
@@ -74,37 +74,6 @@ export interface SpawnSpec {
 	/** Main-process proof to revoke after this Cue run. Never logged. */
 	pluginRunToken?: string;
 	pluginRunProofFile?: string;
-}
-
-/**
- * A bare flag name: `--long-name` or a single-letter `-c`. Anything else that
- * starts with `-` can carry a value of its own (`-pSECRET`, a value that
- * happens to start with a dash), so it is never named in a message.
- */
-const CMD_SHELL_FLAG_NAME = /^(--[A-Za-z][A-Za-z0-9-]*|-[A-Za-z])$/;
-
-/**
- * Name `args[index]` for a refusal message without quoting it. A value can be
- * a credential (a custom `--api-key=...`), and the message lands in the Cue log
- * and the run history; a bare flag name is not a secret, so a value is named by
- * the flag it belongs to, and anything else by its position.
- */
-function describeCmdShellArg(
-	args: readonly string[],
-	index: number,
-	promptArgs: ReadonlySet<string>
-): string {
-	const arg = args[index];
-	if (promptArgs.has(arg)) return 'the prompt';
-	const eq = arg.indexOf('=');
-	if (eq > 0 && CMD_SHELL_FLAG_NAME.test(arg.slice(0, eq))) {
-		return `the value of ${arg.slice(0, eq)}`;
-	}
-	const previous = index > 0 ? args[index - 1] : undefined;
-	if (previous !== undefined && CMD_SHELL_FLAG_NAME.test(previous)) {
-		return `the value of ${previous}`;
-	}
-	return `argument ${index + 1}`;
 }
 
 /** Error result when the spawn spec cannot be built (e.g. unknown agent). */
@@ -471,9 +440,8 @@ export async function buildSpawnSpec(
 	// instructions, as planSessionTurn does.
 	if (!sshRemoteUsed && isWindows() && windowsShellReason(command).reason !== null) {
 		const promptArgs = plan.prompt.via === 'argv' ? new Set(plan.prompt.args) : new Set<string>();
-		for (const [index, arg] of spawnArgs.entries()) {
-			const problem = cmdShellArgProblem(arg);
-			if (!problem) continue;
+		const refusal = cmdShellArgsRefusal(spawnArgs, promptArgs);
+		if (refusal) {
 			// The run never starts, so nothing else would release its MCP identity.
 			if (pluginRunToken) pluginToolRunIdentity.revoke(pluginRunToken);
 			if (pluginRunProofFile) {
@@ -485,10 +453,9 @@ export async function buildSpawnSpec(
 					});
 				}
 			}
-			const what = describeCmdShellArg(spawnArgs, index, promptArgs);
 			return {
 				ok: false,
-				message: `${agentDef.name} at ${command} only starts through cmd.exe, which cannot pass ${what} intact: ${problem}`,
+				message: `${agentDef.name} at ${command} only starts through cmd.exe, which ${refusal}`,
 			};
 		}
 	}

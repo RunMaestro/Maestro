@@ -989,7 +989,23 @@ describe('cue-spawn-builder', () => {
 			expect(result.ok).toBe(false);
 			if (result.ok) return;
 			expect(result.message).toContain('cannot pass the prompt intact');
-			expect(result.message).toContain('it contains %, which cmd.exe expands as a variable');
+			expect(result.message).toContain(
+				'it contains a %NAME% pair, which cmd.exe expands as a variable'
+			);
+		});
+
+		it('runs a prompt with a lone % on the command line: cmd.exe leaves it alone', async () => {
+			argvOnly();
+			const prompt = 'Cut it by 50% off';
+
+			const result = await buildSpawnSpec(
+				createConfig({ customPath: shimPath, enableMaestroP: false }),
+				prompt
+			);
+
+			expect(result.ok).toBe(true);
+			if (!result.ok) return;
+			expect(result.spec.args).toContain(prompt);
 		});
 
 		it('refuses a prompt containing ^ for a provider that cannot read stdin', async () => {
@@ -1060,12 +1076,19 @@ describe('cue-spawn-builder', () => {
 			}
 
 			it('names a --flag=value argument by its flag', async () => {
-				const message = await refusalFor(['--print', '--verbose', '--api-key=ab%cd']);
+				const message = await refusalFor(['--print', '--verbose', '--api-key=ab%cd%']);
 
 				expect(message).toContain(
-					'cannot pass the value of --api-key intact: it contains %, which cmd.exe expands as a variable'
+					'cannot pass the value of --api-key intact: it contains a %NAME% pair, which cmd.exe expands as a variable'
 				);
 				expect(message).not.toContain('ab%cd');
+			});
+
+			it('names the value of a --flag value pair with a %NAME% secret by its flag', async () => {
+				const message = await refusalFor(['--print', '--api-key', 'sk-%SECRET%-value']);
+
+				expect(message).toContain('cannot pass the value of --api-key intact');
+				expect(message).not.toContain('SECRET');
 			});
 
 			it('names the value of a --flag value pair by its flag', async () => {
@@ -1078,7 +1101,7 @@ describe('cue-spawn-builder', () => {
 			});
 
 			it('names any other argument by its position', async () => {
-				const message = await refusalFor(['--print', '--verbose', '--', 'ab%cd']);
+				const message = await refusalFor(['--print', '--verbose', '--', 'ab%cd%']);
 
 				expect(message).toContain('cannot pass argument 4 intact');
 				expect(message).not.toContain('ab%cd');
@@ -1099,7 +1122,7 @@ describe('cue-spawn-builder', () => {
 			});
 
 			it('never names a preceding value that only starts with a dash', async () => {
-				const message = await refusalFor(['--print', '--token', '-secret-value', 'bad%arg']);
+				const message = await refusalFor(['--print', '--token', '-secret-value', 'bad%arg%']);
 
 				expect(message).toContain('cannot pass argument 4 intact');
 				expect(message).not.toContain('secret-value');
@@ -1107,7 +1130,7 @@ describe('cue-spawn-builder', () => {
 			});
 
 			it('never names the part before = unless it is a bare flag name', async () => {
-				const message = await refusalFor(['-pSECRET=ab%cd', '--print']);
+				const message = await refusalFor(['-pSECRET=ab%cd%', '--print']);
 
 				expect(message).toContain('cannot pass argument 1 intact');
 				expect(message).not.toContain('SECRET');
@@ -1116,7 +1139,7 @@ describe('cue-spawn-builder', () => {
 			it('can only name a flag, never a value, after a flag that takes no value', async () => {
 				// Shape alone cannot tell that --print takes no value, so the label is
 				// imprecise here, but what it names is still only a flag.
-				const message = await refusalFor(['--print', '-pSECRET=ab%cd']);
+				const message = await refusalFor(['--print', '-pSECRET=ab%cd%']);
 
 				expect(message).toContain('cannot pass the value of --print intact');
 				expect(message).not.toContain('SECRET');

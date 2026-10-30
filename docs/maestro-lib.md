@@ -27,18 +27,18 @@ It is not:
 
 `planSessionTurn` checks every request before anything starts, and refuses what could not run correctly:
 
-| Reason          | When                                                                                                                                                                                                                                                                  |
-| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `unknown-agent` | The agent id is not one Maestro knows.                                                                                                                                                                                                                                |
-| `no-batch-mode` | The provider cannot run a single turn without a terminal.                                                                                                                                                                                                             |
-| `no-parser`     | Maestro has no parser for the provider's output, so the answer could not be read. The turn is refused rather than run blind.                                                                                                                                          |
-| `no-resume`     | You asked to resume, and the provider cannot resume a session.                                                                                                                                                                                                        |
-| `no-read-only`  | You asked for a read-only turn, and the provider's command line cannot enforce one. A program with nobody watching gets read-only or a refusal, never a turn that only looks read-only.                                                                               |
-| `not-installed` | The provider's binary was not found on `PATH`, in its known install locations, or at the `command` you gave.                                                                                                                                                          |
-| `windows-shell` | On Windows, the provider is installed as a `.cmd` shim that only starts through cmd.exe, and an argument cannot pass through cmd.exe intact (a prompt with a line break, `%` or `^`, for a provider that cannot read its prompt from stdin). See [Windows](#windows). |
-| `launch`        | The launch could not be planned. The message says why.                                                                                                                                                                                                                |
+| Reason          | When                                                                                                                                                                                                                                                                           |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `unknown-agent` | The agent id is not one Maestro knows.                                                                                                                                                                                                                                         |
+| `no-batch-mode` | The provider cannot run a single turn without a terminal.                                                                                                                                                                                                                      |
+| `no-parser`     | Maestro has no parser for the provider's output, so the answer could not be read. The turn is refused rather than run blind.                                                                                                                                                   |
+| `no-resume`     | You asked to resume, and the provider cannot resume a session.                                                                                                                                                                                                                 |
+| `no-read-only`  | You asked for a read-only turn, and the provider's command line cannot enforce one. A program with nobody watching gets read-only or a refusal, never a turn that only looks read-only.                                                                                        |
+| `not-installed` | The provider's binary was not found on `PATH`, in its known install locations, or at the `command` you gave.                                                                                                                                                                   |
+| `windows-shell` | On Windows, the provider is installed as a `.cmd` shim that only starts through cmd.exe, and an argument cannot pass through cmd.exe intact (a line break, a `%NAME%` pair or `^`; for the prompt, only when the provider cannot read it from stdin). See [Windows](#windows). |
+| `launch`        | The launch could not be planned. The message says why.                                                                                                                                                                                                                         |
 
-What each provider supports in maestro-lib `0.3.0`:
+What each provider supports in maestro-lib `0.4.0`:
 
 | Agent id        | Name            | Runs a turn | Resume | Read-only |
 | --------------- | --------------- | ----------- | ------ | --------- |
@@ -375,11 +375,11 @@ npm installs most agent CLIs on Windows as `.cmd` shims (`claude.cmd`, `codex.cm
 
 - If the binary is a `.cmd` or `.bat` shim, a bare `.exe` name, or a shebang script, the spec has `shell: true`. Every argument is escaped for cmd.exe, and a command path with spaces is quoted. A plain `.exe` with a path starts directly, with no shell.
 - The prompt goes over stdin for every provider that can read it there, so quotes, `%`, `&`, `|`, `^` and line breaks reach the agent as typed. This also avoids cmd.exe's limit of about 8 KB per command line.
-- A provider that only takes its prompt on the command line keeps it there. If an argument contains a line break, `%` or `^`, cmd.exe cannot pass it intact, so the turn is refused with `windows-shell` instead of running with a changed prompt.
+- A provider that only takes its prompt on the command line keeps it there. Every argument on a cmd.exe command line is checked, the provider's own flags and values as well as such a prompt. If one contains a line break, a `%NAME%` pair or `^`, cmd.exe cannot pass it intact, so the turn is refused with `windows-shell` instead of running with a changed argument. A lone `%` (`100%`, `%20`) passes. The refusal names the argument (the prompt, a flag's value, or its position) and never quotes its value.
 
 On other hosts the spec is unchanged.
 
-If you build a spec yourself, pass it through `applyWindowsShellRules(spec)` to apply the same rules. It returns the spec unchanged on other hosts, for a command that can start directly, and for a spec that already sets `shell`, so applying it twice is safe. `turnProcessSpecFromPlan` already applies it. Put the prompt in `spec.stdin` when the provider reads its prompt from stdin, and check other arguments with `cmdShellArgProblem(arg)`, which returns the reason cmd.exe cannot carry an argument, or `null` if it can.
+If you build a spec yourself, pass it through `applyWindowsShellRules(spec)` to apply the same rules. It returns the spec unchanged on other hosts, for a command that can start directly, and for a spec that already sets `shell`, so applying it twice is safe. `turnProcessSpecFromPlan` already applies it. Put the prompt in `spec.stdin` when the provider reads its prompt from stdin, and check other arguments with `cmdShellArgProblem(arg)`, which returns the reason cmd.exe cannot carry an argument, or `null` if it can. `cmdShellArgsRefusal(args, promptArgs)` checks a whole argument list and returns a refusal that names the first bad argument by its flag or position without quoting its value.
 
 ## Lower-level pieces
 

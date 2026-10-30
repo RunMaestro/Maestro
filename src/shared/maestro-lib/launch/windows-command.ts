@@ -83,23 +83,102 @@ export function quoteCommandForCmdShell(command: string): string {
 // the desktop's `src/main/process-manager/utils/shellEscape.ts` re-exports.
 
 /**
+ * Text cmd.exe treats as a variable reference on a command line: a `%`, at
+ * least one character, and the next `%`.
+ *
+ * cmd.exe takes everything between two `%` signs as the name, so a name is not
+ * limited to letters and digits (`%ProgramFiles(x86)%`, `%a b%`, `%=C:%`), and
+ * the substring and substitution forms (`%PATH:~0,3%`, `%X:a=b%`) are the same
+ * shape. On a command line (unlike in a batch file) an undefined name is left
+ * as it is and `%%` has no special meaning, so `%%PATH%%` still expands the
+ * inner `%PATH%`; the pair is found wherever it sits. The pattern does not ask
+ * whether the name is defined: dynamic variables (`%CD%`, `%RANDOM%`,
+ * `%ERRORLEVEL%`) are never in the spawn environment, names match without
+ * regard to case, and a pair with a name nobody defines costs only a refusal.
+ */
+const CMD_PERCENT_PAIR = /%[^%]+%/;
+
+/**
  * Why `arg` cannot reach the program intact as one argument of a cmd.exe
  * command line built with `escapeCmdArg()`, or null when it can.
  *
  * - A line break ends the command line, so the rest of the argument is lost
  *   (or runs as a second command).
- * - `%NAME%` is expanded inside double quotes, and there is no escape for it
- *   on a command line.
+ * - A `%NAME%` pair (`CMD_PERCENT_PAIR`) is expanded inside double quotes,
+ *   and there is no escape for it on a command line.
  * - `^` is literal inside double quotes, so the `^^` that `escapeCmdArg()`
  *   writes arrives doubled. The escaper stays as it is: the desktop spawners
  *   use it byte for byte.
+ *
+ * A `%` with no partner (`100%`, `%20`, `50% off`) and an empty `%%` pass
+ * unchanged: cmd.exe leaves them alone on a command line, and npm's `.cmd`
+ * shim forwards its arguments with a bare `%*`, which is not expanded a second
+ * time. A shim that forwards through `CALL` would expand them again; that is
+ * the shim's own parsing, outside what this rule can see. Two lone `%` in
+ * DIFFERENT arguments do form a pair on the joined line, but `escapeCmdArg()`
+ * quotes every argument holding a `%`, so that name always contains a `"`,
+ * which no variable Windows defines has.
  *
  * A launcher that runs through cmd.exe sends a prompt like this over stdin
  * instead, when the provider reads it there.
  */
 export function cmdShellArgProblem(arg: string): string | null {
 	if (/[\r\n]/.test(arg)) return 'it contains a line break, which ends a cmd.exe command line';
-	if (arg.includes('%')) return 'it contains %, which cmd.exe expands as a variable';
+	if (CMD_PERCENT_PAIR.test(arg)) {
+		return 'it contains a %NAME% pair, which cmd.exe expands as a variable';
+	}
 	if (arg.includes('^')) return 'it contains ^, which cmd.exe would pass on doubled';
+	return null;
+}
+
+/**
+ * A bare flag name: `--long-name` or a single-letter `-c`. Anything else that
+ * starts with `-` can carry a value of its own (`-pSECRET`, a value that
+ * happens to start with a dash), so it is never named in a message.
+ */
+const CMD_SHELL_FLAG_NAME = /^(--[A-Za-z][A-Za-z0-9-]*|-[A-Za-z])$/;
+
+/**
+ * Name `args[index]` for a refusal message without quoting it. A value can be
+ * a credential (a custom `--api-key=...`), and the message lands in logs and
+ * run history; a bare flag name is not a secret, so a value is named by the
+ * flag it belongs to, and anything else by its position.
+ */
+function describeCmdShellArg(
+	args: readonly string[],
+	index: number,
+	promptArgs: ReadonlySet<string>
+): string {
+	const arg = args[index];
+	if (promptArgs.has(arg)) return 'the prompt';
+	const eq = arg.indexOf('=');
+	if (eq > 0 && CMD_SHELL_FLAG_NAME.test(arg.slice(0, eq))) {
+		return `the value of ${arg.slice(0, eq)}`;
+	}
+	const previous = index > 0 ? args[index - 1] : undefined;
+	if (previous !== undefined && CMD_SHELL_FLAG_NAME.test(previous)) {
+		return `the value of ${previous}`;
+	}
+	return `argument ${index + 1}`;
+}
+
+/**
+ * The first argument cmd.exe cannot carry intact (`cmdShellArgProblem()`),
+ * phrased for a refusal - "cannot pass the value of --api-key intact: it
+ * contains ..." - or null when every argument is safe. The argument is named
+ * by the flag it belongs to, by its position, or as "the prompt" when it is
+ * one of `promptArgs`, and never quoted, because it can be a credential.
+ * Callers prefix who refused: "<agent> at <path> only starts through cmd.exe,
+ * which ...".
+ */
+export function cmdShellArgsRefusal(
+	args: readonly string[],
+	promptArgs: ReadonlySet<string> = new Set()
+): string | null {
+	for (const [index, arg] of args.entries()) {
+		const problem = cmdShellArgProblem(arg);
+		if (!problem) continue;
+		return `cannot pass ${describeCmdShellArg(args, index, promptArgs)} intact: ${problem}`;
+	}
 	return null;
 }
