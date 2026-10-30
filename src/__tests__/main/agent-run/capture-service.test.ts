@@ -396,6 +396,8 @@ describe('AgentRunCaptureService.captureExit', () => {
 		const throwing = makeStore({
 			findActiveRunBySession: () =>
 				baseRun({ id: 'run-boom', sessionId: 'sess-boom', status: 'running', createdAt: 1000 }),
+			getAgentRun: () =>
+				baseRun({ id: 'run-boom', sessionId: 'sess-boom', status: 'running', createdAt: 1000 }),
 			upsertAgentRun: () => {
 				throw new Error('disk full');
 			},
