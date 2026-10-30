@@ -98,7 +98,7 @@ function runningState(t: PianolaTask): OrchestratorState {
 describe('reactiveEnabled gate (ISC-8.13)', () => {
 	it('leaves a needs_review task untouched when reactiveEnabled returns false', async () => {
 		const p = plan([task({ id: 'A', status: 'needs_review' })]);
-		const dispatchFix = vi.fn(async () => ({ success: true }));
+		const dispatchFix = vi.fn(async () => ({ success: true, tabId: 'fix-tab' }));
 		const requestMerge = vi.fn(async () => ({ merged: true }));
 		const deps = makeReactiveDeps({
 			reactiveEnabled: () => false,
@@ -119,7 +119,7 @@ describe('reactiveEnabled gate (ISC-8.13)', () => {
 
 	it('leaves a needs_review task untouched when reactiveEnabled is absent', async () => {
 		const p = plan([task({ id: 'A', status: 'needs_review' })]);
-		const dispatchFix = vi.fn(async () => ({ success: true }));
+		const dispatchFix = vi.fn(async () => ({ success: true, tabId: 'fix-tab' }));
 		const requestMerge = vi.fn(async () => ({ merged: true }));
 		const deps = makeReactiveDeps({
 			// reactiveEnabled omitted entirely.
@@ -187,7 +187,7 @@ describe('green task merge + settle (ISC-8.14)', () => {
 	it('does not treat a task with open findings as green (no merge)', async () => {
 		const p = plan([task({ id: 'A', status: 'needs_review', runId: 'r-A' })]);
 		const requestMerge = vi.fn(async () => ({ merged: true }));
-		const dispatchFix = vi.fn(async () => ({ success: true }));
+		const dispatchFix = vi.fn(async () => ({ success: true, tabId: 'fix-tab' }));
 		const deps = makeReactiveDeps({
 			reactiveEnabled: () => true,
 			// checks pass but a finding is still open -> NOT fully green.
@@ -213,7 +213,7 @@ describe('bounded auto-fix cycle (ISC-8.8)', () => {
 	it('dispatches a fix for an open-findings task, moving it to fixing and incrementing fixAttempts', async () => {
 		const p = plan([task({ id: 'A', status: 'needs_review', runId: 'r-A' })]);
 		const ledger: PianolaTaskLedger = { openFindings: 2, checksPassed: false, runId: 'r-A' };
-		const dispatchFix = vi.fn(async () => ({ success: true }));
+		const dispatchFix = vi.fn(async () => ({ success: true, tabId: 'fix-tab' }));
 		const deps = makeReactiveDeps({
 			reactiveEnabled: () => true,
 			getRunLedger: vi.fn(async () => ledger),
@@ -246,7 +246,7 @@ describe('bounded auto-fix cycle (ISC-8.8)', () => {
 
 	it('still dispatches a fix at fixAttempts 2 (just under the cap)', async () => {
 		const p = plan([task({ id: 'A', status: 'needs_review', runId: 'r-A', fixAttempts: 2 })]);
-		const dispatchFix = vi.fn(async () => ({ success: true }));
+		const dispatchFix = vi.fn(async () => ({ success: true, tabId: 'fix-tab' }));
 		const deps = makeReactiveDeps({
 			reactiveEnabled: () => true,
 			getRunLedger: vi.fn(async () => ({ openFindings: 1, checksPassed: false, runId: 'r-A' })),
@@ -262,7 +262,7 @@ describe('bounded auto-fix cycle (ISC-8.8)', () => {
 
 	it('escalates a still-needs_review task to failed at the cap, dispatching no further fix', async () => {
 		const p = plan([task({ id: 'A', status: 'needs_review', runId: 'r-A', fixAttempts: 3 })]);
-		const dispatchFix = vi.fn(async () => ({ success: true }));
+		const dispatchFix = vi.fn(async () => ({ success: true, tabId: 'fix-tab' }));
 		const notify = vi.fn(async () => {});
 		const deps = makeReactiveDeps({
 			reactiveEnabled: () => true,
@@ -291,7 +291,7 @@ describe('bounded auto-fix cycle (ISC-8.8)', () => {
 			checksPassed: false,
 			runId: 'r-A',
 		};
-		const dispatchFix = vi.fn(async () => ({ success: true }));
+		const dispatchFix = vi.fn(async () => ({ success: true, tabId: 'fix-tab' }));
 		const deps = makeReactiveDeps({
 			runStates: { A: 'idle' },
 			reactiveEnabled: () => true,

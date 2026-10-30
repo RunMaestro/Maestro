@@ -42,6 +42,30 @@ describe('Pianola AgentRun adapter', () => {
 		expect(mapAgentRunStatusToPianolaRunState('queued')).toBeNull();
 	});
 
+	it('projects the active acceptance run id instead of a deterministic duplicate', () => {
+		const [campaign] = pianolaPlansToCampaigns({
+			plans: [
+				{
+					id: 'plan',
+					title: 'Plan',
+					createdAt: 1,
+					tasks: [
+						{
+							id: 'task',
+							title: 'Task',
+							prompt: 'work',
+							status: 'running',
+							dependsOn: [],
+							runId: 'captured-run',
+						},
+					],
+				},
+			],
+		});
+		expect(campaign.runIds).toEqual(['captured-run']);
+		expect(campaign.tasks[0].runId).toBe('captured-run');
+	});
+
 	it('converts Pianola plans into campaigns with first-class task payload fields', () => {
 		const [campaign] = pianolaPlansToCampaigns({
 			plans: [

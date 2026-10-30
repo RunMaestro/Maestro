@@ -20,6 +20,7 @@ const {
 	appendAgentRunEventMock,
 	getAgentRunMock,
 	findActiveRunBySessionMock,
+	readAgentRunsMock,
 } = vi.hoisted(() => ({
 	connectMock: vi.fn(),
 	sendCommandMock: vi.fn(),
@@ -29,6 +30,7 @@ const {
 	appendAgentRunEventMock: vi.fn(),
 	getAgentRunMock: vi.fn(),
 	findActiveRunBySessionMock: vi.fn(),
+	readAgentRunsMock: vi.fn(),
 }));
 
 vi.mock('../../../cli/services/storage', () => ({ readSettingValue: vi.fn() }));
@@ -54,6 +56,7 @@ vi.mock('../../../cli/services/agent-run-store', () => ({
 	appendAgentRunEvent: appendAgentRunEventMock,
 	getAgentRun: getAgentRunMock,
 	findActiveRunBySession: findActiveRunBySessionMock,
+	readAgentRuns: readAgentRunsMock,
 }));
 
 import {
@@ -104,6 +107,7 @@ describe('pianolaOrchestrate - iteration error resilience', () => {
 		vi.mocked(getPianolaPlan).mockReturnValue(PLAN);
 		getAgentRunMock.mockReturnValue(undefined);
 		findActiveRunBySessionMock.mockReturnValue(undefined);
+		readAgentRunsMock.mockReturnValue([]);
 		upsertAgentRunMock.mockImplementation((run) => run);
 		appendAgentRunEventMock.mockImplementation((event) => event);
 	});
@@ -155,6 +159,21 @@ describe('pianolaOrchestrate - iteration error resilience', () => {
 				},
 			],
 		};
+		const captured = {
+			id: 'captured:task-1',
+			sessionId: 'agent-1-ai-tab-1',
+			tabId: 'tab-1',
+			provider: 'claude-code',
+			createdAt: 1,
+			updatedAt: 1,
+			status: 'running',
+			artifacts: [],
+			touchedFiles: [],
+			checks: [],
+			reviews: [],
+		};
+		readAgentRunsMock.mockReturnValue([captured]);
+		getAgentRunMock.mockReturnValue(captured);
 		vi.mocked(getPianolaPlan).mockReturnValue(plan);
 		runIterationMock.mockResolvedValue({
 			state: { plan: runningPlan, prevStates: { 'task-1': 'connecting' } },
@@ -169,7 +188,7 @@ describe('pianolaOrchestrate - iteration error resilience', () => {
 
 		expect(upsertAgentRunMock).toHaveBeenCalledWith(
 			expect.objectContaining({
-				id: 'pianola:plan-2:task-1',
+				id: 'captured:task-1',
 				provider: 'claude-code',
 				status: 'running',
 				agentId: 'agent-1',
@@ -180,7 +199,7 @@ describe('pianolaOrchestrate - iteration error resilience', () => {
 		);
 		expect(appendAgentRunEventMock).toHaveBeenCalledWith(
 			expect.objectContaining({
-				runId: 'pianola:plan-2:task-1',
+				runId: 'captured:task-1',
 				type: 'pianola.dispatched',
 				status: 'running',
 			})
@@ -293,7 +312,7 @@ describe('pianolaOrchestrate - iteration error resilience', () => {
 	it('marks the run fixing through the producer when dispatchFix really dispatches (ISC-5.9)', async () => {
 		// Autopilot on so the CLI's dispatchFix dep acts.
 		vi.mocked(readSettingValue).mockReturnValue({ pianola: true, autopilot: true });
-		vi.mocked(runDispatch).mockResolvedValue({ success: true } as never);
+		vi.mocked(runDispatch).mockResolvedValue({ success: true, tabId: 'fix-tab' } as never);
 		getAgentRunMock.mockImplementation((id: string) =>
 			id === 'run-fx'
 				? {
@@ -331,6 +350,7 @@ describe('pianolaOrchestrate - iteration error resilience', () => {
 				dependsOn: [],
 				status: 'needs_review',
 				agentId: 'agent-1',
+				tabId: 'tab-1',
 				fixAttempts: 0,
 			},
 			{ runId: 'run-fx', openFindings: 1, checksPassed: false }
@@ -352,7 +372,11 @@ describe('pianolaOrchestrate - iteration error resilience', () => {
 
 	it('writes no fixing status when the fix dispatch fails (ISC-5.9 anti)', async () => {
 		vi.mocked(readSettingValue).mockReturnValue({ pianola: true, autopilot: true });
-		vi.mocked(runDispatch).mockResolvedValue({ success: false, error: 'agent busy' } as never);
+		vi.mocked(runDispatch).mockResolvedValue({
+			success: false,
+			code: 'DISPATCH_REFUSED',
+			error: 'agent busy',
+		} as never);
 		let capturedDeps: Record<string, unknown> | undefined;
 		runIterationMock.mockImplementation(async (state: OrchestratorState, deps: unknown) => {
 			capturedDeps = deps as Record<string, unknown>;

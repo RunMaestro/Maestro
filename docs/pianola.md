@@ -100,6 +100,35 @@ maestro-cli pianola orchestrate <plan-id>
 
 Orchestrations are recorded in the agent run ledger alongside everything else, so a plan that ran overnight has the same audit trail as a prompt that was answered by a rule.
 
+### Worker completion and acceptance
+
+Each orchestrated task gets a dedicated background AI tab. A dispatch receipt confirms delivery. Queued or connecting work, an unavailable transcript, and a missing or closed worker tab cannot complete a task or release its dependents. A task delivered without a confirmed tab is held in `needs_review`; reconcile the delivery before retrying it.
+
+Pianola binds the physical process capture to that exact agent and tab, including workers that finish between polls. Modern completion receipts carry a bounded final answer, so a renderer persistence delay cannot hide a final failure such as `Task failed: done-when`. Structured provider errors, interruption, crash and nonzero exits take precedence over success. Older receipts without final text require a nonempty, stable post-exit transcript; that fallback does not prove native delivery timing on an older desktop.
+
+Successful execution and acceptance are separate. Existing plans without declared checks retain execution-only completion. To require evidence, add an optional `requiredChecks` list to a task:
+
+```json
+{
+	"id": "build",
+	"title": "Build",
+	"prompt": "Build the change, then record the acceptance check on this task's active AgentRun.",
+	"dependsOn": [],
+	"status": "pending",
+	"requiredChecks": ["acceptance"]
+}
+```
+
+Every named check must exist on the task's active `runId` and be `passed`. Missing, pending, running, failed or skipped checks hold the task in `needs_review` and keep dependents pending. Existing recorded checks and open high/critical findings also participate in acceptance. Late check updates are re-read before newly ready tasks dispatch; a passing checks-only hold can clear without authorizing automatic repairs. Evidence arriving after a dependent already started cannot undo that work, so declare required checks before dispatch.
+
+Read the saved plan with `pianola plan show <plan-id> --json` to find the active `runId`; the deterministic `pianola:<plan>:<task>` projection is not necessarily the worker's run. `executionRunId` identifies the current physical process receipt. A repair gets a fresh tab and receipt while `runId` continues to identify the acceptance ledger the repair must update. Waiting for a missing or still-running check never triggers a repair by itself.
+
+The controller persists a claim before dispatch and the confirmed tab afterward. On controller recovery it retains those bindings. If a response was lost, a claim without a tab waits for reconciliation rather than dispatching the same prompt again. Desktop restart recovery marks interrupted physical runs failed; dispatch callbacks are in memory and do not survive a desktop restart. Use one controller to release dependents.
+
+### Combining Cue, dispatch and watchers
+
+Use Cue for triggers and technical monitoring, dispatch callbacks for worker return, Pianola watchers for waiting questions, and explicit acceptance evidence for dependency release. A heartbeat can detect stale runs and missing callbacks; deduplicate it against the controller and avoid answering the same question concurrently with a watcher. Completion callbacks report execution ending and are not acceptance evidence.
+
 ## Learning from how you already work
 
 ```bash
