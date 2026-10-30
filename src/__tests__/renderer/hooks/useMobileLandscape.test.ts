@@ -436,4 +436,86 @@ describe('useMobileLandscape', () => {
 			expect(firstValue).toBe(secondValue);
 		});
 	});
+
+	describe('device orientation (soft keyboard in Firefox for Android)', () => {
+		// Firefox for Android shrinks the LAYOUT viewport when the keyboard opens,
+		// so a portrait phone reports innerWidth > innerHeight while typing.
+		// jsdom has no screen.orientation; install a controllable one per test.
+		let orientation: EventTarget & { type: string };
+
+		function setScreenOrientation(type: string) {
+			orientation.type = type;
+		}
+
+		beforeEach(() => {
+			orientation = Object.assign(new EventTarget(), { type: 'portrait-primary' });
+			Object.defineProperty(window.screen, 'orientation', {
+				configurable: true,
+				get: () => orientation,
+			});
+		});
+
+		afterEach(() => {
+			delete (window.screen as any).orientation;
+		});
+
+		it('keeps a portrait phone out of landscape when the keyboard shrinks the viewport', () => {
+			enableTouchViaMaxTouchPoints(5);
+			setWindowDimensions(412, 880);
+
+			const { result } = renderHook(() => useMobileLandscape());
+			expect(result.current).toBe(false);
+
+			// Tap the composer: the keyboard takes 480px of a 412px-wide phone.
+			act(() => {
+				setWindowDimensions(412, 400);
+				triggerResize();
+			});
+			expect(result.current).toBe(false);
+		});
+
+		it('detects a phone that really is in landscape', () => {
+			enableTouchViaMaxTouchPoints(5);
+			setScreenOrientation('landscape-primary');
+			setWindowDimensions(915, 412);
+
+			const { result } = renderHook(() => useMobileLandscape());
+			expect(result.current).toBe(true);
+		});
+
+		it('reads the screen orientation over the viewport shape', () => {
+			enableTouchViaMaxTouchPoints(5);
+			setScreenOrientation('landscape-secondary');
+			// A viewport that looks portrait does not override the device.
+			setWindowDimensions(400, 450);
+
+			const { result } = renderHook(() => useMobileLandscape());
+			expect(result.current).toBe(true);
+		});
+
+		it('updates on a screen orientation change event', () => {
+			enableTouchViaMaxTouchPoints(5);
+			setWindowDimensions(412, 880);
+
+			const { result } = renderHook(() => useMobileLandscape());
+			expect(result.current).toBe(false);
+
+			act(() => {
+				setScreenOrientation('landscape-primary');
+				setWindowDimensions(880, 400);
+				orientation.dispatchEvent(new Event('change'));
+			});
+			expect(result.current).toBe(true);
+		});
+
+		it('removes the screen orientation listener on unmount', () => {
+			const removeSpy = vi.spyOn(orientation, 'removeEventListener');
+			enableTouchViaMaxTouchPoints(5);
+
+			const { unmount } = renderHook(() => useMobileLandscape());
+			unmount();
+
+			expect(removeSpy).toHaveBeenCalledWith('change', expect.any(Function));
+		});
+	});
 });
