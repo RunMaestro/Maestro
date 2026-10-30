@@ -61,6 +61,7 @@ import {
 	isRemoteSettingWritable,
 } from '../../../../main/web-server/handlers/bridgeDenyList';
 import { createWebApi } from '../../../../main/preload/web';
+import type { LocalModelTaskReadiness } from '../../../../shared/local-models/task-readiness';
 
 function makeClient(user?: { id: string; username: string; displayName: string }) {
 	return {
@@ -821,6 +822,62 @@ describe('handleBridgeInvoke desktop-only channels', () => {
 
 		uninstallWebContentsBridgeHook();
 	});
+});
+
+describe('local model task readiness over the bridge', () => {
+	it.each([{ args: [] }, { args: ['git-drafts'] }])(
+		'returns host readiness for $args',
+		async ({ args }) => {
+			const readiness: LocalModelTaskReadiness[] = [
+				{
+					taskId: 'git-drafts',
+					label: 'Git drafts',
+					needs: 'text-gen',
+					assignment: { type: 'off' },
+					state: 'off',
+					detail: 'This task is switched off.',
+				},
+			];
+			const handler = vi.fn(async () => readiness);
+			invokeHandlers.set('localModels:taskReadiness', handler);
+			const send = vi.fn();
+
+			await handleBridgeInvoke(
+				makeClient(),
+				{
+					type: 'bridge.invoke',
+					requestId: 'readiness',
+					channel: 'localModels:taskReadiness',
+					args,
+				},
+				send
+			);
+
+			expect(handler).toHaveBeenCalledWith(expect.objectContaining({ type: 'bridge' }), ...args);
+			expect(send.mock.calls[0][1]).toMatchObject({
+				requestId: 'readiness',
+				ok: true,
+				result: readiness,
+			});
+		}
+	);
+
+	it.each(['download', 'runTask', 'server:start', 'server:key', 'systemOne:setKey'])(
+		'keeps localModels:%s private',
+		async (operation) => {
+			const channel = `localModels:${operation}`;
+			const handler = vi.fn();
+			invokeHandlers.set(channel, handler);
+			const send = vi.fn();
+			await handleBridgeInvoke(
+				makeClient(),
+				{ type: 'bridge.invoke', requestId: 'private', channel, args: [] },
+				send
+			);
+			expect(handler).not.toHaveBeenCalled();
+			expect(send.mock.calls[0][1]).toMatchObject({ ok: false });
+		}
+	);
 });
 
 describe('notification history over the bridge', () => {

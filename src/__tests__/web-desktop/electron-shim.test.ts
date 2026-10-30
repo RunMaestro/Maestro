@@ -461,6 +461,7 @@ describe('web-desktop electron-shim bridge reconnect', () => {
 	});
 	it.each([
 		['plugins:contributions', 'PluginsDisabled'],
+		['localModels:taskReadiness', 'Readiness unavailable'],
 		[
 			'acappella:input-devices',
 			'Channel "acappella:input-devices" is not available over the web interface',

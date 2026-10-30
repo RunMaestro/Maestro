@@ -69,6 +69,7 @@ const READ_ONLY_CHANNELS = new Set([
 	'history:reload',
 	'images:resolve',
 	'journey:path',
+	'localModels:taskReadiness',
 	'memory:orphans',
 	'pianola:supervisor-list',
 	'feedback:drafts:list',

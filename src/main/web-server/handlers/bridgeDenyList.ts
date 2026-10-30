@@ -51,6 +51,8 @@ const METHODS: Record<string, string> = {
 	journey: 'append path read',
 	leaderboard: 'get getInstallationId getLongestRuns',
 	live: 'getLiveSessions getStatus',
+	// The shared renderer checks task availability on mount; this read starts no models.
+	localModels: 'taskReadiness',
 	logger: 'getLogLevel log',
 	// Read-only: a browser-spawned agent needs it to build the same system prompt.
 	maestroRun: 'readyPath',
