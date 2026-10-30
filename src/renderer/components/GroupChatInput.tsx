@@ -52,11 +52,15 @@ import type { AtMentionSuggestion } from '../hooks/input/useAtMentionCompletion'
 import { AtMentionPopover } from './InputArea/overlays/AtMentionPopover';
 import { getAtMentionTrigger } from './InputArea/utils/inputTriggers';
 import { useScrollIntoView } from '../hooks/ui/useScrollIntoView';
+import {
+	handleComposerFindKey,
+	handleComposerPickerKey,
+	handleComposerSendKey,
+} from '../hooks/input/composerKeyDown';
 import { StagedImagesStrip } from './InputArea/components/StagedImagesStrip';
 import { moveStagedImage } from '../utils/stagedImageOrder';
 import { useUIStore } from '../stores/uiStore';
 import { groupChatOutputSearchKey } from '../utils/outputSearch';
-import { OUTPUT_SEARCH_INPUT_SELECTOR } from '../hooks/ui/useOutputSearchLayer';
 import { useAutosizeTextarea } from '../hooks/ui/useAutosizeTextarea';
 import { useToastAvoidZone } from '../hooks/ui/useToastAvoidZone';
 import { KEYSTROKE_TEXTAREA_MAX_HEIGHT } from '../utils/textareaSizing';
@@ -308,6 +312,12 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 		}
 	}, [message, onSend, readOnlyMode, cancelDraft, onDraftChange, groupChatId, stagedImages]);
 
+	const closeAtMention = useCallback(() => {
+		setAtMentionOpen(false);
+		setAtMentionFilter('');
+		setAtMentionStartIndex(-1);
+	}, []);
+
 	// Keyboard-driven accept (Tab/Enter). A row clicked directly in the popover
 	// is instead accepted by AtMentionPopover's own internal handler, wired
 	// through the setInputValue/setOpen/... props passed to it below.
@@ -319,9 +329,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 			const accept = buildMentionAccept(message, atMentionStartIndex, atMentionFilter, item);
 			setMessage(accept.value);
 			persistDraft(accept.value, groupChatId);
-			setAtMentionOpen(false);
-			setAtMentionFilter('');
-			setAtMentionStartIndex(-1);
+			closeAtMention();
 			inputRef.current?.focus();
 			// Land the caret right after the inserted token, deferred a frame so it
 			// runs after the controlled value commits (matches AtMentionPopover's own
@@ -331,7 +339,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 				if (el) el.selectionStart = el.selectionEnd = accept.caretPos;
 			});
 		},
-		[message, atMentionStartIndex, atMentionFilter, persistDraft, groupChatId]
+		[message, atMentionStartIndex, atMentionFilter, persistDraft, groupChatId, closeAtMention]
 	);
 
 	// AtMentionPopover's own click-to-accept path calls this instead of
@@ -345,103 +353,42 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 		[persistDraft, groupChatId]
 	);
 
+	// The shared composer keys, in the AI composer's order: Find, the `@`
+	// picker, then send. The window keyboard handlers only know the AI composer,
+	// so every key handled here is isolated from them. Escape with the picker
+	// closed is left to the window's handleEscapeInMain, which knows where the
+	// room's transcript is. The read-only and image carousel chords are not
+	// handled here and bubble to the window handler, which acts on the room.
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent) => {
-			// Handle hotkeys that should work even when input has focus
-			if (e.metaKey || e.ctrlKey) {
-				// Cmd+F: open transcript Find (group chat has no TerminalOutput to catch this).
-				// Alt must be excluded: Opt+Cmd+F is cross-tab search and is not available here.
-				// stopPropagation means the window handler never runs, so refocus here when
-				// the bar is already open.
-				if (e.key === 'f' && !e.shiftKey && !e.altKey) {
-					e.preventDefault();
-					e.stopPropagation();
-					const key = groupChatOutputSearchKey(groupChatId);
-					const ui = useUIStore.getState();
-					if (ui.outputSearchByKey[key]?.open) {
-						document.querySelector<HTMLInputElement>(OUTPUT_SEARCH_INPUT_SELECTOR)?.focus();
-					} else {
-						ui.setOutputSearchOpen(key, true);
-					}
-					return;
-				}
-				// The read-only and image carousel chords bubble to the window
-				// handler, which reads the live bindings and acts on the room.
-				// Cmd+Enter: Send message (when enterToSend is false) or ignore (when enterToSend is true)
-				// Either way, we must stop propagation to prevent global handler from switching views
-				if (e.key === 'Enter') {
-					e.preventDefault();
-					e.stopPropagation();
-					if (!enterToSend) {
-						handleSend();
-					}
-					// When enterToSend is true, Cmd+Enter does nothing (plain Enter sends)
-					return;
-				}
-				// Let global shortcuts bubble up (Cmd+K, Cmd+,, Cmd+/, etc.)
-				// Don't stop propagation for meta/ctrl key combinations not handled above
+			if (
+				handleComposerFindKey(e, {
+					resolveSearchKey: () => groupChatOutputSearchKey(groupChatId),
+					isolateFromWindowKeys: true,
+				})
+			) {
 				return;
 			}
-
-			// Mirrors AI Chat's useInputKeyDown shape: gated on atMentionOpen alone
-			// (not atMentionItems.length > 0), so Escape and Tab/Enter still fire
-			// when the popover is showing an empty state - AtMentionPopover stays
-			// mounted and renders "No agents available" rather than unmounting.
-			if (atMentionOpen) {
-				if (e.key === 'ArrowDown') {
-					e.preventDefault();
-					e.stopPropagation();
-					if (atMentionItems.length > 0) {
-						setSelectedAtMentionIndex((prev) => Math.min(prev + 1, atMentionItems.length - 1));
-					}
-					return;
-				}
-				if (e.key === 'ArrowUp') {
-					e.preventDefault();
-					e.stopPropagation();
-					if (atMentionItems.length > 0) {
-						setSelectedAtMentionIndex((prev) => Math.max(prev - 1, 0));
-					}
-					return;
-				}
-				if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
-					e.preventDefault();
-					e.stopPropagation();
-					// atMentionItems can shrink for reasons other than an Arrow keypress
-					// (the session/group list changing, or the filter narrowing results)
-					// while the popover is open, so the index isn't guaranteed to still
-					// be in range. Look the item up rather than assume it's there - a
-					// stale, out-of-range index falls through to closing the popover
-					// with nothing inserted, same as AI Chat, instead of either
-					// crashing or silently auto-accepting an item the user never
-					// highlighted.
-					const selected = atMentionItems[selectedAtMentionIndex];
-					if (selected) {
-						acceptAtMention(selected);
-					} else {
-						setAtMentionOpen(false);
-						setAtMentionFilter('');
-						setAtMentionStartIndex(-1);
-					}
-					return;
-				}
-				if (e.key === 'Escape') {
-					e.preventDefault();
-					e.stopPropagation();
-					setAtMentionOpen(false);
-					setAtMentionFilter('');
-					setAtMentionStartIndex(-1);
-					return;
-				}
+			if (
+				handleComposerPickerKey(e, {
+					open: atMentionOpen,
+					items: atMentionItems,
+					selectedIndex: selectedAtMentionIndex,
+					setSelectedIndex: setSelectedAtMentionIndex,
+					accept: acceptAtMention,
+					close: closeAtMention,
+					inputRef,
+					isolateFromWindowKeys: true,
+				})
+			) {
+				return;
 			}
-
-			// Handle send based on enterToSend setting (plain Enter, no modifier)
-			if (enterToSend) {
-				if (e.key === 'Enter' && !e.shiftKey) {
-					e.preventDefault();
-					handleSend();
-				}
-			}
+			handleComposerSendKey(e, {
+				enterToSend,
+				send: handleSend,
+				inputRef,
+				isolateFromWindowKeys: true,
+			});
 		},
 		[
 			handleSend,
@@ -449,8 +396,10 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 			atMentionItems,
 			selectedAtMentionIndex,
 			acceptAtMention,
+			closeAtMention,
 			enterToSend,
 			groupChatId,
+			inputRef,
 		]
 	);
 

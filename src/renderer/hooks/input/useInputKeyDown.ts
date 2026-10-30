@@ -18,7 +18,6 @@ import {
 } from '../input/useMentionPicker';
 import { useInputContext } from '../../contexts/InputContext';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
-import { useUIStore } from '../../stores/uiStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { filterSlashCommands } from '../../utils/search';
 import { logger } from '../../utils/logger';
@@ -31,6 +30,14 @@ import {
 import { aiCommandKey, getAiCommandEntry, useAiCommandStore } from '../../stores/aiCommandStore';
 import { acceptAiCommand, dismissAiCommand } from '../../services/aiCommand';
 import { eventMatchesShortcutKeys } from '../../utils/shortcutMatch';
+import {
+	handleComposerFindKey,
+	handleComposerPickerKey,
+	handleComposerSendKey,
+	isImeComposing,
+	PICKER_KEYS,
+	yieldKeyToIme,
+} from './composerKeyDown';
 import { useEventListener } from '../utils/useEventListener';
 import { STEER_SEND_EVENT, steerNewestQueuedMessage } from '../../services/chatSteering';
 import { useGroupChatStore } from '../../stores/groupChatStore';
@@ -51,6 +58,22 @@ export const FORCED_PARALLEL_SEND_EVENT = 'maestro:forcedParallelSend';
  * as {@link FORCED_PARALLEL_SEND_EVENT}, because the composer owns the draft.
  */
 export const HOLD_SEND_EVENT = 'maestro:holdSend';
+
+/** Every key the command proposal card answers with (see the card branch). */
+const AI_COMMAND_CARD_KEYS: ReadonlySet<string> = new Set([
+	'Enter',
+	'Escape',
+	'ArrowLeft',
+	'ArrowRight',
+	'Backspace',
+	'y',
+	'Y',
+	'n',
+	'N',
+]);
+
+/** Keys the branches after the send rules act on: history recall and the Tab trigger. */
+const TRAILING_KEYS: ReadonlySet<string> = new Set(['ArrowUp', 'Tab']);
 
 // ============================================================================
 // Dependencies interface
@@ -243,15 +266,12 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 
 			// Cmd+F opens output search from input field. Search is scoped per
 			// agent+AI-tab, so target the active window's slot.
-			// Alt must be excluded: Opt+Cmd+F is cross-tab search, and on
-			// Windows/Linux it still reports e.key === 'f' (macOS rewrites it to 'ƒ'),
-			// so without this guard that combo silently opens the in-tab Find bar.
-			if (e.key === 'f' && (e.metaKey || e.ctrlKey) && !e.altKey) {
-				e.preventDefault();
-				if (activeSession) {
-					const key = outputSearchKeyFor(activeSession.id, activeSession.activeTabId);
-					useUIStore.getState().setOutputSearchOpen(key, true);
-				}
+			if (
+				handleComposerFindKey(e, {
+					resolveSearchKey: () =>
+						activeSession ? outputSearchKeyFor(activeSession.id, activeSession.activeTabId) : null,
+				})
+			) {
 				return;
 			}
 
@@ -277,6 +297,9 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 					? getAiCommandEntry(activeSession.id, activeSession.activeTabId)
 					: undefined;
 			if (aiCommandEntry && activeSession) {
+				// Mid-composition the key is the IME's: it never answers the card.
+				// The textarea is readOnly while a card shows, so this is defence.
+				if (yieldKeyToIme(e, AI_COMMAND_CARD_KEYS)) return;
 				const entryKey = aiCommandKey(aiCommandEntry.sessionId, aiCommandEntry.tabId);
 				const decline = () => {
 					// The request text comes back so the user can refine it. Declining is
@@ -380,6 +403,9 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 
 			// Handle tab completion dropdown
 			if (tabCompletionOpen && isShellInput) {
+				// Mid-composition the IME owns these keys; the dropdown stays open
+				// and answers them again once the composition ends.
+				if (yieldKeyToIme(e, PICKER_KEYS)) return;
 				if (e.key === 'ArrowDown') {
 					e.preventDefault();
 					const newIndex = Math.min(
@@ -432,7 +458,8 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 			// Handle unified @ mention picker (AI mode only)
 			if (atMentionOpen && activeSession?.inputMode === 'ai') {
 				// Left/Right cycle the category filter and MUST NOT move the caret.
-				if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+				// Mid-composition they move between IME segments instead.
+				if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && !isImeComposing(e)) {
 					e.preventDefault();
 					const cycle = MENTION_CATEGORY_CYCLE;
 					const currentIdx = cycle.indexOf(atMentionCategory);
@@ -441,60 +468,54 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 					setAtMentionCategory(cycle[nextIdx]);
 					setSelectedAtMentionIndex(0);
 					return;
-				} else if (e.key === 'ArrowDown') {
-					e.preventDefault();
-					if (atMentionItems.length > 0) {
-						setSelectedAtMentionIndex((prev) => Math.min(prev + 1, atMentionItems.length - 1));
-					}
-					return;
-				} else if (e.key === 'ArrowUp') {
-					e.preventDefault();
-					if (atMentionItems.length > 0) {
-						setSelectedAtMentionIndex((prev) => Math.max(prev - 1, 0));
-					}
-					return;
-				} else if (e.key === 'Tab' || e.key === 'Enter') {
-					e.preventDefault();
-					const selected = atMentionItems[selectedAtMentionIndex];
-					if (selected) {
-						const accept = buildMentionAccept(
-							inputValue,
-							atMentionStartIndex,
-							atMentionFilter,
-							selected
-						);
-						setInputValue(accept.value);
-						// Land the caret right after the inserted token (past its
-						// trailing space) so typing continues seamlessly. Deferred a
-						// frame so it runs after the controlled value commits.
-						requestAnimationFrame(() => {
-							const el = inputRef.current;
-							if (el) el.selectionStart = el.selectionEnd = accept.caretPos;
-						});
-						if (accept.keepOpen) {
-							// Directory drill-in: keep the picker open and re-filter
-							// inside the chosen folder (category preserved).
-							setAtMentionFilter(accept.nextFilter);
-							setSelectedAtMentionIndex(0);
-							return;
-						}
-					}
+				}
+				const closeAtMention = () => {
 					setAtMentionOpen(false);
 					setAtMentionFilter('');
 					setAtMentionStartIndex(-1);
-					return;
-				} else if (e.key === 'Escape') {
-					e.preventDefault();
-					setAtMentionOpen(false);
-					setAtMentionFilter('');
-					setAtMentionStartIndex(-1);
-					inputRef.current?.focus();
+				};
+				if (
+					handleComposerPickerKey(e, {
+						open: true,
+						items: atMentionItems,
+						selectedIndex: selectedAtMentionIndex,
+						setSelectedIndex: setSelectedAtMentionIndex,
+						inputRef,
+						close: closeAtMention,
+						accept: (selected) => {
+							const accept = buildMentionAccept(
+								inputValue,
+								atMentionStartIndex,
+								atMentionFilter,
+								selected
+							);
+							setInputValue(accept.value);
+							// Land the caret right after the inserted token (past its
+							// trailing space) so typing continues seamlessly. Deferred a
+							// frame so it runs after the controlled value commits.
+							requestAnimationFrame(() => {
+								const el = inputRef.current;
+								if (el) el.selectionStart = el.selectionEnd = accept.caretPos;
+							});
+							if (accept.keepOpen) {
+								// Directory drill-in: keep the picker open and re-filter
+								// inside the chosen folder (category preserved).
+								setAtMentionFilter(accept.nextFilter);
+								setSelectedAtMentionIndex(0);
+								return;
+							}
+							closeAtMention();
+						},
+					})
+				) {
 					return;
 				}
 			}
 
 			// Handle slash command autocomplete
 			if (slashCommandOpen) {
+				// Same as the tab completion dropdown above.
+				if (yieldKeyToIme(e, PICKER_KEYS)) return;
 				const isTerminalMode = activeSession?.inputMode === 'terminal';
 				const query = inputValue.toLowerCase().replace(/^\//, '');
 				const filteredCommands = filterSlashCommands(allSlashCommands, query, !!isTerminalMode);
@@ -540,7 +561,7 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 				// candidate with Enter. Return without acting: steering the
 				// half-composed text cannot be taken back, and falling through would
 				// let the Enter rules below send it as a plain message instead.
-				if (e.nativeEvent?.isComposing) return;
+				if (isImeComposing(e)) return;
 				e.preventDefault();
 				runSteerSend();
 				return;
@@ -552,25 +573,32 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 				// main key must be Enter. Non-Enter shortcuts are not supported by design.
 				if (settings.forcedParallelExecution && activeSession?.inputMode === 'ai') {
 					const fpShortcut = settings.shortcuts.forcedParallelSend;
-					if (fpShortcut && eventMatchesShortcutKeys(e, fpShortcut.keys)) {
+					// Mid-composition the Enter is the IME's; the send rules below leave it.
+					if (fpShortcut && eventMatchesShortcutKeys(e, fpShortcut.keys) && !isImeComposing(e)) {
 						e.preventDefault();
 						runForcedParallelSend();
 						return;
 					}
 				}
+			}
 
-				if (enterToSendAI && !e.shiftKey) {
-					e.preventDefault();
-					processInput();
-				} else if (!enterToSendAI && (e.metaKey || e.ctrlKey)) {
-					e.preventDefault();
-					processInput();
-				}
-			} else if (e.key === 'Escape') {
-				e.preventDefault();
-				inputRef.current?.blur();
-				terminalOutputRef.current?.focus();
-			} else if (e.key === 'ArrowUp') {
+			if (
+				handleComposerSendKey(e, {
+					enterToSend: enterToSendAI,
+					send: () => processInput(),
+					inputRef,
+					escapeFocusTarget: terminalOutputRef,
+				})
+			) {
+				return;
+			}
+
+			// Mid-composition the IME moves between candidates with ArrowUp and
+			// Tab, so neither opens history or completion, and Tab is not
+			// prevented (which would take it from the input method).
+			if (yieldKeyToIme(e, TRAILING_KEYS)) return;
+
+			if (e.key === 'ArrowUp') {
 				if (activeSession?.inputMode === 'terminal') {
 					e.preventDefault();
 					setCommandHistoryOpen(true);
