@@ -10,6 +10,9 @@
  *                 (the `| rationale` portion is optional)
  *   - Complete:   `<!-- maestro:goal-complete -->`
  *   - Deadlock:   `<!-- maestro:deadlock: reason here -->`  (reason optional)
+ *   - Plan:       `<!-- maestro:plan -->` ... `<!-- /maestro:plan -->`, a block
+ *                 whose body is the agent's full Plan list (read by
+ *                 `parsePlanMarker` in `goalPlan.ts`)
  *
  * Parsing is deliberately regex-based and dependency-free - no markdown/HTML
  * parser is pulled in. Regexes are whitespace-tolerant and well-anchored to the
@@ -55,12 +58,26 @@ const DEADLOCK_RE = /<!--\s*maestro:deadlock\s*(?::\s*([\s\S]*?))?\s*-->/g;
 const ANY_MARKER_RE = /<!--\s*maestro:[\s\S]*?-->/g;
 
 /**
+ * Matches a whole plan block, open tag, body and close tag:
+ * `<!-- maestro:plan -->\n- [ ] step <!-- id:new -->\n<!-- /maestro:plan -->`.
+ *
+ * The body is non-greedy so two blocks in one response stay two matches (the
+ * last one wins, like every other marker). An open tag with no close tag is
+ * not a block: `parsePlanMarker` reads nothing from it, and display stripping
+ * removes only the tag through `ANY_MARKER_RE`, leaving the half-written list
+ * visible rather than guessing where it ends.
+ */
+const PLAN_BLOCK_RE = /<!--\s*maestro:plan\s*-->([\s\S]*?)<!--\s*\/\s*maestro:plan\s*-->/g;
+
+/**
  * Strip every Maestro control marker comment from `text` for display.
  *
  * These `<!-- maestro:... -->` comments are an internal control channel between
  * the agent and the Auto Run engine - users should never see them in history
- * details or any rendered surface. Collapses the blank lines a removed marker
- * leaves behind so a trailing marker doesn't produce a dangling gap.
+ * details or any rendered surface. A plan block goes with its body: the list
+ * inside is engine input, and the human reads the merged result in the Plan Doc.
+ * Collapses the blank lines a removed marker leaves behind so a trailing marker
+ * doesn't produce a dangling gap.
  */
 export function stripMaestroMarkers(text: string): string {
 	if (!text.includes('<!--')) {
@@ -68,6 +85,7 @@ export function stripMaestroMarkers(text: string): string {
 	}
 	return (
 		text
+			.replace(PLAN_BLOCK_RE, '')
 			.replace(ANY_MARKER_RE, '')
 			// Collapse 3+ newlines (left by a marker on its own line) to a clean break.
 			.replace(/\n{3,}/g, '\n\n')
@@ -93,6 +111,15 @@ function lastMatch(re: RegExp, text: string): RegExpMatchArray | null {
 		last = match;
 	}
 	return last;
+}
+
+/**
+ * The body of the LAST closed plan block in `agentText`, or `null` when there
+ * is none. The body is returned raw (indentation intact); turning it into
+ * items is `parsePlanMarker`'s job in `goalPlan.ts`.
+ */
+export function lastPlanBlockBody(agentText: string): string | null {
+	return lastMatch(PLAN_BLOCK_RE, agentText)?.[1] ?? null;
 }
 
 /** Trim a captured group; return `null` when absent or empty after trimming. */

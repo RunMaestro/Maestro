@@ -31,6 +31,16 @@ import {
 	type TemplateContext,
 } from '../../../utils/templateVariables';
 import { prependNewSessionMessage } from '../../../../shared/newSessionMessage';
+import {
+	formatSteeringNotesBlock,
+	type AutoRunSteeringNote,
+} from '../../../../shared/autorunSteering';
+import {
+	clearPendingSteeringNotes,
+	clearSteeringNotes,
+	recordSteeringResponse,
+	takeSteeringNotesForDispatch,
+} from '../../../services/autoRunSteering';
 import { gitService } from '../../../services/git';
 import { logger } from '../../../utils/logger';
 import { notifyToast } from '../../../stores/notificationStore';
@@ -268,6 +278,10 @@ export function useGoalRunner({
 				return;
 			}
 
+			// A steering note belongs to the run it was typed during. Anything left
+			// over from a previous run must not open the first iteration of this one.
+			clearSteeringNotes(sessionId);
+
 			// Initialize visibility-based time tracking and reset the stop flag.
 			timeTracking.startTracking(sessionId);
 			stopRequestedRefs.current[sessionId] = false;
@@ -437,6 +451,9 @@ export function useGoalRunner({
 			// Handoff note carried from the previous iteration's session into the next
 			// (fresh-context) iteration's prompt. Empty for the first iteration.
 			let predecessorBlurb = '';
+			// Steering notes an iteration took before a limit pause. The retry is the
+			// same iteration, so it carries them forward instead of losing them.
+			let retrySteeringNotes: AutoRunSteeringNote[] = [];
 
 			// Start stats tracking. Record the goal as the document path behind a
 			// `Goal: ` prefix (trimmed to a readable length) so the run is
@@ -512,12 +529,29 @@ export function useGoalRunner({
 					goalExitCriteria: goalConfig.exitCriteria,
 					predecessorHandoff: formatPredecessorHandoff(predecessorBlurb),
 				};
+				// Taken once per iteration, right before the prompt is built: a note the
+				// operator sends after this line belongs to the NEXT iteration. Same
+				// contract as the document runner (useBatchRunner).
+				const steeringNotes = [...retrySteeringNotes, ...takeSteeringNotesForDispatch(sessionId)];
+				retrySteeringNotes = [];
+				// Notes ride in FRONT of the prompt, prepended after substitution so a
+				// `{{...}}` the operator typed stays literal. The New Session Message then
+				// wraps the steered prompt, exactly as useDocumentProcessor does.
+				const substitutedPrompt = substituteTemplateVariables(goalPromptTemplate, templateContext);
+				const steeringBlock = formatSteeringNotesBlock(steeringNotes);
+				const steeredPrompt = steeringBlock
+					? `${steeringBlock}\n\n---\n\n${substitutedPrompt}`
+					: substitutedPrompt;
+				if (steeringBlock) {
+					logger.info(
+						`[GoalRunner] Delivering ${steeringNotes.length} steering note(s)`,
+						undefined,
+						{ iteration }
+					);
+				}
 				// Each goal iteration spawns a fresh provider session, so prefix the
 				// agent's New Session Message onto every spawn (matches interactive behavior).
-				const prompt = prependNewSessionMessage(
-					substituteTemplateVariables(goalPromptTemplate, templateContext),
-					session.newSessionMessage
-				);
+				const prompt = prependNewSessionMessage(steeredPrompt, session.newSessionMessage);
 
 				const iterationStart = Date.now();
 				let result: Awaited<ReturnType<SpawnAgentFn>>;
@@ -585,6 +619,11 @@ export function useGoalRunner({
 						delete errorResolutionRefs.current[sessionId];
 
 						if (action === 'abort' || action === 'skip-document') {
+							recordSteeringResponse(sessionId, steeringNotes, {
+								summary: `Iteration ${iteration} stopped`,
+								text: result.error || 'Stopped by user after a limit pause.',
+								success: false,
+							});
 							exitReason = 'stopped-by-user';
 							exitDetail = 'Stopped by user.';
 							break;
@@ -593,6 +632,7 @@ export function useGoalRunner({
 						// Resume: retry the SAME iteration. Revert the counter so the limited
 						// attempt is not counted, then loop back to re-spawn the same prompt.
 						iteration--;
+						retrySteeringNotes = steeringNotes;
 						continue;
 					}
 				}
@@ -674,6 +714,14 @@ export function useGoalRunner({
 				const fullResponse = stripMaestroMarkers(rawFullResponse);
 				const rationaleText = markers.rationale?.trim();
 				const iterationSummary = `Goal progress: ${displayProgress}% - ${rationaleText || synopsis}`;
+
+				// Bring the iteration's reply back to the notes it was steered by, failed
+				// iterations included, so the Thought Stream shows it under the note.
+				recordSteeringResponse(sessionId, steeringNotes, {
+					summary: synopsis,
+					text: fullResponse,
+					success: result.success,
+				});
 				onAddHistoryEntry({
 					type: 'AUTO',
 					timestamp: Date.now(),
@@ -874,6 +922,10 @@ export function useGoalRunner({
 					}
 				}
 			}
+
+			// The run is over, so there is no next iteration to deliver a note to. Drop
+			// anything still pending; the delivered notes and their replies stay.
+			clearPendingSteeringNotes(sessionId);
 
 			// Always flush debounced updates and dispatch COMPLETE_BATCH to clean up state.
 			flushDebouncedUpdate(sessionId);
