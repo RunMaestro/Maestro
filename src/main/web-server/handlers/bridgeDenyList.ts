@@ -37,7 +37,7 @@ const METHODS: Record<string, string> = {
 		'generateSynopsis getGraphData getOffsetForTimestamp getRichOverviewStats getUnifiedHistory',
 	documentGraph: 'unwatchFolder watchFolder',
 	feedback:
-		'check-gh-auth compose-prompt drafts:delete drafts:list drafts:save get-conversation-prompt issues:delete issues:list issues:refresh-states search-issues submit submit-conversation subscribe-issue',
+		'check-gh-auth compose-prompt drafts:delete drafts:list drafts:save get-conversation-prompt gh-login-command issues:delete issues:list issues:refresh-states list-accounts remember-account search-issues submit submit-conversation subscribe-issue',
 	fonts: 'detect',
 	fs: 'cancelReadFile compressFolder copyPath countItems delete deleteMany directoryInfo directorySize downloadRemoteFile fetchImageAsBase64 homeDir listTreeRemote mkdir readDir readDirTree readFile rename stat writeFile writeImageFile',
 	git: 'branch branches cancelCommand checkGhCli checkoutBranch commitAll commitCount createGist createPR diff getDefaultBranch getRepoRoot graph info init isRepo listWorktrees log numstat remote removeWorktree runCommand scanWorktreeDirectory show showFile status switch tags unwatchWorktreeDirectory watchWorktreeDirectory worktreeCheckout worktreeInfo worktreeRunSetup worktreeSetup',

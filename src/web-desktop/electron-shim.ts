@@ -70,6 +70,7 @@ const READ_ONLY_CHANNELS = new Set([
 	'memory:orphans',
 	'pianola:supervisor-list',
 	'feedback:drafts:list',
+	'feedback:gh-login-command',
 	'feedback:issues:list',
 	'feedback:search-issues',
 	'parquet:open',
