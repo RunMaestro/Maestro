@@ -589,6 +589,13 @@ entry needs a stated reason, the same way a Covered row needs a verb.
   `dataview query` on a `dataviewjs` block exits 2. The block's source is
   readable with `dataview query <file> --json`; there is no rendered output
   for an agent to read back.
+- **Upload local files to the host from a composer** (the Upload button on
+  the AI composer and, since step 5 of the composer parity plan, the Group
+  Chat composer). Web-desktop only: it copies files from the BROWSER's device
+  to the host and appends their `@path` mentions to the draft. There is no
+  CLI verb, and none is planned: an agent runs on the host, so the files it
+  would upload are already there, and it can mention them in `dispatch` or
+  `group-chat` text directly.
 
 ### Backstage plugin updates
 

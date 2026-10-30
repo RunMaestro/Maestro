@@ -2,7 +2,7 @@
  * PhoneSheetRows - the row vocabulary every `PhoneBottomSheet` is built from.
  *
  * `PhoneBottomSheet` owns the chrome (scrim, grip, swipe, safe area). These are
- * what goes INSIDE it, and there are only three shapes:
+ * what goes INSIDE it, and there are only four shapes:
  *
  *   - `PhoneSheetSection` - an expandable header with its options beneath. The
  *     desktop equivalent is a pill that advances one step per click, which is a
@@ -15,8 +15,10 @@
  *   - `PhoneSheetActionRow` - a row that DOES something rather than selecting a
  *     value (copy, reveal, delete). A peer of a section header, so it carries
  *     the same height.
+ *   - `PhoneSheetSwitchRow` - a plain on/off setting. A boolean has nothing to
+ *     list, so it stays a switch rather than becoming a section.
  *
- * All three are sized for a thumb rather than a cursor: 52px for a top-level row
+ * All of them are sized for a thumb rather than a cursor: 52px for a top-level row
  * and 44px for a nested option, Apple's 44pt minimum. The sizes are set HERE
  * because no stylesheet sets a floor: `src/web/index.css` declares one, but
  * nothing imports that file, so the web-desktop bundle never loads it.
@@ -161,6 +163,50 @@ export function PhoneSheetActionRow({
 		>
 			<Icon className="w-4 h-4 shrink-0" style={{ color: iconColor ?? theme.colors.textDim }} />
 			<span className="text-sm flex-1 min-w-0">{label}</span>
+		</button>
+	);
+}
+
+export interface PhoneSheetSwitchRowProps {
+	icon: LucideIcon;
+	label: string;
+	checked: boolean;
+	onToggle: () => void;
+	/** Tint for the icon and the On label while checked. */
+	accent: string;
+	theme: Theme;
+	testId?: string;
+}
+
+export function PhoneSheetSwitchRow({
+	icon: Icon,
+	label,
+	checked,
+	onToggle,
+	accent,
+	theme,
+	testId,
+}: PhoneSheetSwitchRowProps) {
+	const tint = checked ? accent : theme.colors.textDim;
+	return (
+		<button
+			type="button"
+			onClick={onToggle}
+			className="flex w-full items-center gap-3 px-4 text-left border-b"
+			style={{
+				minHeight: PHONE_SHEET_ROW_HEIGHT,
+				borderColor: theme.colors.border,
+				color: theme.colors.textMain,
+			}}
+			role="switch"
+			aria-checked={checked}
+			data-testid={testId}
+		>
+			<Icon className="w-4 h-4 shrink-0" style={{ color: tint }} />
+			<span className="text-sm flex-1 min-w-0">{label}</span>
+			<span className="text-xs font-mono" style={{ color: tint }}>
+				{checked ? 'On' : 'Off'}
+			</span>
 		</button>
 	);
 }

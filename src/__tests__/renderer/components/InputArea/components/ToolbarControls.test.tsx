@@ -267,6 +267,54 @@ describe('ToolbarControls', () => {
 			expect(screen.queryByTestId('composer-options-model')).not.toBeInTheDocument();
 		});
 
+		it('draws no "..." when the sheet would be empty', () => {
+			renderPhoneToolbar({ capabilities: TERMINAL_CAPABILITIES });
+
+			expect(screen.queryByTestId('composer-options-button')).not.toBeInTheDocument();
+		});
+
+		it('mounts the sheet for surface rows alone, drawn after the sections', () => {
+			renderPhoneToolbar({
+				capabilities: TERMINAL_CAPABILITIES,
+				sheetExtras: <div data-testid="surface-row">Surface</div>,
+			});
+
+			fireEvent.click(screen.getByTestId('composer-options-button'));
+			expect(screen.getByTestId('surface-row')).toBeInTheDocument();
+			expect(screen.queryByTestId('composer-options-history')).not.toBeInTheDocument();
+		});
+
+		it('takes the Send title, disabled state and tone from the surface', () => {
+			const processInput = vi.fn();
+			const { rerender } = renderPhoneToolbar({
+				processInput,
+				sendTitle: 'Queue message',
+				sendDisabled: true,
+			});
+			const send = screen.getByRole('button', { name: 'Queue message' });
+			expect(send).toBeDisabled();
+			expect(send).toHaveStyle({ backgroundColor: inputAreaTheme.colors.border });
+			fireEvent.click(send);
+			expect(processInput).not.toHaveBeenCalled();
+
+			rerender(
+				<ToolbarControls
+					theme={inputAreaTheme}
+					capabilities={AI_CAPABILITIES}
+					isTerminalMode={false}
+					enterToSend
+					setEnterToSend={vi.fn()}
+					setStagedImages={vi.fn()}
+					processInput={processInput}
+					sendTitle="Queue message"
+					sendTone="warning"
+				/>
+			);
+			expect(screen.getByRole('button', { name: 'Queue message' })).toHaveStyle({
+				backgroundColor: inputAreaTheme.colors.warning,
+			});
+		});
+
 		it('renders exactly one image file input', () => {
 			// The attach buttons reach it by ref; one input per toolbar.
 			const { container } = renderPhoneToolbar();

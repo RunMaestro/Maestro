@@ -43,19 +43,41 @@ export interface ToolbarControlsProps {
 	/** Provider id, so the permission pill reads as the agent's own word for it. */
 	agentId?: string;
 	onUploadFiles?: (files: File[]) => void;
-	/** Whether `standard` mode is functional for this agent (has a working relay). */
-	hasStandardCapability: boolean;
-	/** The permission mode in effect, shown by the pill and the phone sheet. */
-	permissionMode: PermissionMode;
-	/** Set a permission mode (the pill steps to the next one; the sheet names one). */
-	onPermissionModeChange: (mode: PermissionMode) => void;
-	/** Set a thinking mode by name (the phone sheet). */
-	onThinkingModeChange: (mode: ThinkingMode) => void;
 	/**
 	 * Surface-specific controls, drawn in the toggle group just before the
-	 * Enter-to-send toggle. Not drawn on a phone, where the toggle group is.
+	 * Enter-to-send toggle. Not drawn on a phone; see `sheetExtras`.
 	 */
 	toolbarExtras?: ReactNode;
+	/**
+	 * Surface-specific rows for the phone options sheet, built with the
+	 * PhoneSheetRows primitives. The phone counterpart of `toolbarExtras`.
+	 */
+	sheetExtras?: ReactNode;
+	/** Element id for the hidden image input, a stable hook for tests. Defaults to the AI composer's. */
+	imageInputId?: string;
+	/** Names this surface in image read-error reports. Defaults to the AI composer's. */
+	imageReportComponent?: string;
+	/** Refuses a picked image before it is read (see ImageAttachInput). */
+	checkImageFile?: (file: File) => string | null;
+	/** Phone Send title and accessible name. Defaults to Send message / Run command. */
+	sendTitle?: string;
+	/** Phone Send drawn muted and refusing clicks. */
+	sendDisabled?: boolean;
+	/** Phone Send tint; `warning` marks a send that will queue. */
+	sendTone?: 'accent' | 'warning';
+
+	// The per-tab agent settings below are read only when the matching
+	// capability is on (permission, thinking, saveToHistory, modelEffort), so a
+	// surface that turns those off need not supply them.
+
+	/** Whether `standard` mode is functional for this agent (has a working relay). */
+	hasStandardCapability?: boolean;
+	/** The permission mode in effect, shown by the pill and the phone sheet. */
+	permissionMode?: PermissionMode;
+	/** Set a permission mode (the pill steps to the next one; the sheet names one). */
+	onPermissionModeChange?: (mode: PermissionMode) => void;
+	/** Set a thinking mode by name (the phone sheet). */
+	onThinkingModeChange?: (mode: ThinkingMode) => void;
 	enterToSend: boolean;
 	setEnterToSend: (value: boolean) => void;
 	setStagedImages: React.Dispatch<React.SetStateAction<string[]>>;
@@ -68,22 +90,22 @@ export interface ToolbarControlsProps {
 	onOpenPromptComposer?: () => void;
 	shortcuts?: Record<string, Shortcut>;
 	showFlashNotification?: (message: string) => void;
-	tabSaveToHistory: boolean;
+	tabSaveToHistory?: boolean;
 	onToggleTabSaveToHistory?: () => void;
-	tabShowThinking: ThinkingMode;
+	tabShowThinking?: ThinkingMode;
 	onToggleTabShowThinking?: () => void;
 	currentModel?: string;
 	currentEffort?: string;
-	availableModels: string[];
-	availableEfforts: string[];
+	availableModels?: string[];
+	availableEfforts?: string[];
 	onModelChange?: (model: string) => void;
 	onEffortChange?: (effort: string) => void;
-	modelMenuOpen: boolean;
-	setModelMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
-	modelMenuRef: React.RefObject<HTMLDivElement>;
-	effortMenuOpen: boolean;
-	setEffortMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
-	effortMenuRef: React.RefObject<HTMLDivElement>;
+	modelMenuOpen?: boolean;
+	setModelMenuOpen?: React.Dispatch<React.SetStateAction<boolean>>;
+	modelMenuRef?: React.RefObject<HTMLDivElement>;
+	effortMenuOpen?: boolean;
+	setEffortMenuOpen?: React.Dispatch<React.SetStateAction<boolean>>;
+	effortMenuRef?: React.RefObject<HTMLDivElement>;
 	/**
 	 * Send the composer's contents. Only used on a phone, where the send button
 	 * moves into this row (see the phone branch below); the desktop keeps it in
@@ -92,6 +114,11 @@ export interface ToolbarControlsProps {
 	processInput?: () => void;
 }
 
+// Stable stand-ins for the per-tab settings a surface without them omits.
+const NO_OPTIONS: string[] = [];
+const UNUSED_MENU_REF: React.RefObject<HTMLDivElement> = { current: null };
+function noop(): void {}
+
 export const ToolbarControls = memo(function ToolbarControls({
 	theme,
 	capabilities,
@@ -99,11 +126,18 @@ export const ToolbarControls = memo(function ToolbarControls({
 	terminalCwd,
 	agentId,
 	onUploadFiles,
-	hasStandardCapability,
-	permissionMode: rawPermissionMode,
-	onPermissionModeChange,
-	onThinkingModeChange,
+	hasStandardCapability = false,
+	permissionMode: rawPermissionMode = 'full',
+	onPermissionModeChange = noop,
+	onThinkingModeChange = noop,
 	toolbarExtras,
+	sheetExtras,
+	imageInputId = 'image-file-input',
+	imageReportComponent = 'InputArea.ToolbarControls',
+	checkImageFile,
+	sendTitle,
+	sendDisabled = false,
+	sendTone = 'accent',
 	enterToSend,
 	setEnterToSend,
 	setStagedImages,
@@ -113,22 +147,22 @@ export const ToolbarControls = memo(function ToolbarControls({
 	onOpenPromptComposer,
 	shortcuts,
 	showFlashNotification,
-	tabSaveToHistory,
+	tabSaveToHistory = false,
 	onToggleTabSaveToHistory,
-	tabShowThinking,
+	tabShowThinking = 'off',
 	onToggleTabShowThinking,
 	currentModel,
 	currentEffort,
-	availableModels,
-	availableEfforts,
+	availableModels = NO_OPTIONS,
+	availableEfforts = NO_OPTIONS,
 	onModelChange,
 	onEffortChange,
-	modelMenuOpen,
-	setModelMenuOpen,
-	modelMenuRef,
-	effortMenuOpen,
-	setEffortMenuOpen,
-	effortMenuRef,
+	modelMenuOpen = false,
+	setModelMenuOpen = noop,
+	modelMenuRef = UNUSED_MENU_REF,
+	effortMenuOpen = false,
+	setEffortMenuOpen = noop,
+	effortMenuRef = UNUSED_MENU_REF,
 	processInput,
 }: ToolbarControlsProps) {
 	const { isNarrow: isNarrowViewport } = useViewportBreakpoint();
@@ -202,20 +236,27 @@ export const ToolbarControls = memo(function ToolbarControls({
 	const imageFileInput = (
 		<ImageAttachInput
 			ref={imageInputRef}
-			id="image-file-input"
+			id={imageInputId}
 			setStagedImages={setStagedImages}
 			showFlashNotification={showFlashNotification}
-			reportComponent="InputArea.ToolbarControls"
+			reportComponent={imageReportComponent}
+			checkFile={checkImageFile}
 		/>
 	);
 
-	// The phone sheet mounts only when it has a section to show, judged by the
-	// same flags its sections read.
-	const sheetHasSections =
+	// The phone sheet mounts only when it has something to show: a section, judged
+	// by the same flags its sections read, or the surface's own rows.
+	const sheetHasContent =
 		capabilities.saveToHistory ||
 		capabilities.permission ||
 		capabilities.thinking ||
-		capabilities.modelEffort;
+		capabilities.modelEffort ||
+		!!sheetExtras;
+	// The "..." is drawn only when it opens something. Terminal mode keeps the
+	// button it has always drawn even though no sheet is behind it there: a
+	// known gap, left as it is until it is fixed on its own.
+	const showOptionsButton = sheetHasContent || isTerminalMode;
+	const phoneSendTitle = sendTitle ?? (isTerminalMode ? 'Run command' : 'Send message');
 
 	// Phone: the row holds only what a thumb reaches for mid-sentence - attach an
 	// image, send, and the "..." that opens every other setting as a half-screen
@@ -273,32 +314,39 @@ export const ToolbarControls = memo(function ToolbarControls({
 						<button
 							type="button"
 							onClick={() => processInput()}
+							disabled={sendDisabled}
 							className="mx-auto flex h-9 w-14 items-center justify-center rounded-lg shadow-sm transition-all"
 							style={{
-								backgroundColor: theme.colors.accent,
-								color: theme.colors.accentForeground,
+								backgroundColor: sendDisabled
+									? theme.colors.border
+									: sendTone === 'warning'
+										? theme.colors.warning
+										: theme.colors.accent,
+								color: sendDisabled ? theme.colors.textDim : theme.colors.accentForeground,
 							}}
-							title={isTerminalMode ? 'Run command' : 'Send message'}
-							aria-label={isTerminalMode ? 'Run command' : 'Send message'}
+							title={phoneSendTitle}
+							aria-label={phoneSendTitle}
 						>
 							<ArrowUp className="w-5 h-5" />
 						</button>
 					)}
-					<button
-						type="button"
-						onClick={() => setOptionsSheetOpen(true)}
-						className="flex h-9 w-9 items-center justify-center rounded-full transition-all opacity-70"
-						style={{ color: theme.colors.textDim, border: `1px solid ${theme.colors.border}` }}
-						title="More options"
-						aria-label="More options"
-						aria-haspopup="dialog"
-						aria-expanded={optionsSheetOpen}
-						data-testid="composer-options-button"
-					>
-						<MoreHorizontal className="w-5 h-5" />
-					</button>
+					{showOptionsButton && (
+						<button
+							type="button"
+							onClick={() => setOptionsSheetOpen(true)}
+							className="flex h-9 w-9 items-center justify-center rounded-full transition-all opacity-70"
+							style={{ color: theme.colors.textDim, border: `1px solid ${theme.colors.border}` }}
+							title="More options"
+							aria-label="More options"
+							aria-haspopup="dialog"
+							aria-expanded={optionsSheetOpen}
+							data-testid="composer-options-button"
+						>
+							<MoreHorizontal className="w-5 h-5" />
+						</button>
+					)}
 				</div>
-				{sheetHasSections && (
+				{sheetHasContent && (
 					<ComposerOptionsSheet
 						open={optionsSheetOpen}
 						onClose={() => setOptionsSheetOpen(false)}
@@ -321,6 +369,7 @@ export const ToolbarControls = memo(function ToolbarControls({
 						currentEffort={currentEffort}
 						availableEfforts={availableEfforts}
 						onEffortChange={capabilities.modelEffort ? onEffortChange : undefined}
+						extraRows={sheetExtras}
 					/>
 				)}
 			</>
