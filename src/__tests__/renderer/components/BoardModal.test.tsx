@@ -425,6 +425,38 @@ describe('BoardModal cycle rejection', () => {
 	});
 });
 
+describe('BoardModal status conflict', () => {
+	it('refreshes the board while preserving the draft, then reopens the current status', async () => {
+		const card = makeCard({ id: 'cardA', title: 'Card A' });
+		const board: Board = { id: 'b1', name: 'My Board', cards: [card] };
+		installApis([board]);
+		boardApi.updateCard.mockRejectedValue(new Error('Card status changed'));
+
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		fireEvent.click(await screen.findByText('Card A'));
+		fireEvent.change(screen.getByPlaceholderText('e.g. Design the schema'), {
+			target: { value: 'Unsaved title' },
+		});
+		boardApi.list.mockResolvedValue([{ ...board, cards: [{ ...card, status: 'running' }] }]);
+		fireEvent.click(screen.getByRole('button', { name: /Save changes/i }));
+
+		await waitFor(() => expect(boardApi.list).toHaveBeenCalledTimes(2));
+		await waitFor(() =>
+			expect(notifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({ message: expect.stringContaining('Reopen the card') })
+			)
+		);
+		expect(screen.getByPlaceholderText('e.g. Design the schema')).toHaveValue('Unsaved title');
+		expect(screen.getByLabelText('Move to')).toHaveValue('todo');
+
+		fireEvent.click(screen.getByRole('button', { name: /Back to board/i }));
+		fireEvent.click(await screen.findByRole('button', { name: /^Discard$/i }));
+		fireEvent.click(await screen.findByRole('button', { name: /^Card A, Running$/i }));
+		expect(await screen.findByLabelText('Move to')).toHaveValue('running');
+		expect(screen.getByPlaceholderText('e.g. Design the schema')).toHaveValue('Card A');
+	});
+});
+
 describe('BoardModal worktree isolation (Phase 4)', () => {
 	it('materializes a WorktreeRef in the addCard payload when the toggle is on', async () => {
 		const board: Board = { id: '1a2b3c4d-b', name: 'My Board', cards: [] };
