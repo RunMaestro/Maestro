@@ -28,6 +28,8 @@
  * with the arrows or Tab, and cancels with Escape. The picker and send branches
  * then act on nothing (they still claim the key, so a surface's own branches do
  * not act on it either), and a half-composed draft is never sent or accepted.
+ * A surface's own popovers and key branches yield the same way through
+ * `yieldKeyToIme`.
  */
 
 import type React from 'react';
@@ -208,7 +210,32 @@ export function handleComposerSendKey(
 	return false;
 }
 
-const PICKER_KEYS = new Set(['ArrowDown', 'ArrowUp', 'Tab', 'Enter', 'Escape']);
+/**
+ * The keys a composer popover (the `@` picker, slash commands, shell tab
+ * completion) navigates, accepts and closes with. Mid-composition every one of
+ * them belongs to the IME.
+ */
+export const PICKER_KEYS: ReadonlySet<string> = new Set([
+	'ArrowDown',
+	'ArrowUp',
+	'Tab',
+	'Enter',
+	'Escape',
+]);
+
+/**
+ * For a surface's own branches (the AI composer's slash commands, shell tab
+ * completion, command proposal card, history recall and Tab trigger): true when
+ * an IME composition is active and the key is one of `keys`, after claiming it
+ * the way the picker does mid-composition. The caller returns without acting.
+ * No preventDefault, so the input method still gets the key; Escape stops
+ * propagating so the window handler does not blur the composer mid-word.
+ */
+export function yieldKeyToIme(e: React.KeyboardEvent, keys: ReadonlySet<string>): boolean {
+	if (!isImeComposing(e) || !keys.has(e.key)) return false;
+	yieldToIme(e, {});
+	return true;
+}
 
 function consume(e: React.KeyboardEvent, options: WindowIsolation): void {
 	e.preventDefault();

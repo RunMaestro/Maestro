@@ -2184,3 +2184,263 @@ describe('useInputKeyDown - AI command mode', () => {
 		});
 	});
 });
+
+// ============================================================================
+// IME composition: the AI composer's own popovers and key branches
+// ============================================================================
+
+describe('IME composition leaves the AI composer branches alone', () => {
+	/** Chromium mid-composition, and Safari's confirming Enter after compositionend. */
+	const COMPOSING_SHAPES = [
+		['isComposing', { nativeEvent: { isComposing: true } }],
+		['keyCode 229', { keyCode: 229, nativeEvent: { isComposing: false } }],
+	] as const;
+
+	describe('command proposal card', () => {
+		const SESSION_ID = 'session-1';
+		const TAB_ID = 'tab-1';
+		const ENTRY_KEY = `${SESSION_ID}:${TAB_ID}`;
+
+		function seedCard(outcome: { command?: string; error?: string; choice?: 'cancel' }) {
+			useAiCommandStore.setState({ entries: {} });
+			const store = useAiCommandStore.getState();
+			store.beginAiCommand({
+				requestId: 'req-1',
+				sessionId: SESSION_ID,
+				tabId: TAB_ID,
+				request: 'what is eating disk space',
+			});
+			if (outcome.command) store.resolveAiCommand('req-1', outcome.command);
+			if (outcome.error) store.failAiCommand('req-1', outcome.error);
+			if (outcome.choice) store.setAiCommandChoice(ENTRY_KEY, outcome.choice);
+		}
+
+		function render() {
+			const deps = createMockDeps({ getCommandMode: () => 'ai' });
+			const { result } = renderHook(() => useInputKeyDown(deps));
+			return { deps, press: (e: React.KeyboardEvent) => result.current.handleInputKeyDown(e) };
+		}
+
+		beforeEach(() => {
+			useAiCommandStore.setState({ entries: {} });
+			setActiveSession({ activeTabId: TAB_ID });
+		});
+
+		it.each(COMPOSING_SHAPES)(
+			'a composing Enter (%s) does not run, then Enter runs',
+			(_, shape) => {
+				seedCard({ command: 'du -sh *' });
+				const { deps, press } = render();
+
+				const composing = createKeyEvent('Enter', shape);
+				act(() => press(composing));
+				expect(acceptAiCommand).not.toHaveBeenCalled();
+				expect(deps.setInputValue).not.toHaveBeenCalled();
+				expect(deps.processInput).not.toHaveBeenCalled();
+				expect(composing.preventDefault).not.toHaveBeenCalled();
+
+				const plain = createKeyEvent('Enter');
+				act(() => press(plain));
+				expect(acceptAiCommand).toHaveBeenCalledTimes(1);
+				expect(plain.preventDefault).toHaveBeenCalled();
+			}
+		);
+
+		it.each(COMPOSING_SHAPES)(
+			'a composing Enter (%s) on Cancel does not decline, then Enter declines',
+			(_, shape) => {
+				seedCard({ command: 'du -sh *', choice: 'cancel' });
+				const { deps, press } = render();
+
+				act(() => press(createKeyEvent('Enter', shape)));
+				expect(dismissAiCommand).not.toHaveBeenCalled();
+				expect(deps.setInputValue).not.toHaveBeenCalled();
+
+				act(() => press(createKeyEvent('Enter')));
+				expect(acceptAiCommand).not.toHaveBeenCalled();
+				expect(deps.setInputValue).toHaveBeenCalledWith('what is eating disk space');
+			}
+		);
+
+		it.each(COMPOSING_SHAPES)(
+			'a composing Enter (%s) on an error does not hand the request back, then Enter does',
+			(_, shape) => {
+				seedCard({ error: 'model unavailable' });
+				const { deps, press } = render();
+
+				act(() => press(createKeyEvent('Enter', shape)));
+				expect(dismissAiCommand).not.toHaveBeenCalled();
+
+				act(() => press(createKeyEvent('Enter')));
+				expect(deps.setInputValue).toHaveBeenCalledWith('what is eating disk space');
+			}
+		);
+
+		it('a composing arrow or Escape neither moves the choice nor declines', () => {
+			seedCard({ command: 'du -sh *' });
+			const { deps, press } = render();
+
+			act(() => press(createKeyEvent('ArrowRight', { nativeEvent: { isComposing: true } } as any)));
+			expect(useAiCommandStore.getState().entries[ENTRY_KEY].choice).toBe('run');
+
+			const escape = createKeyEvent('Escape', { keyCode: 229 });
+			act(() => press(escape));
+			expect(dismissAiCommand).not.toHaveBeenCalled();
+			expect(deps.setInputValue).not.toHaveBeenCalled();
+			expect(escape.preventDefault).not.toHaveBeenCalled();
+			expect(escape.stopPropagation).toHaveBeenCalled();
+		});
+	});
+
+	describe('shell tab completion', () => {
+		const suggestions = [
+			{ value: 'src/', type: 'folder' as const, label: 'src/' },
+			{ value: 'package.json', type: 'file' as const, label: 'package.json' },
+		] as any;
+
+		beforeEach(() => {
+			mockInputContext.tabCompletionOpen = true;
+			mockInputContext.selectedTabCompletionIndex = 0;
+			setActiveSession({ inputMode: 'terminal' });
+		});
+
+		it.each(COMPOSING_SHAPES)(
+			'a composing Enter (%s) does not accept, then Enter accepts',
+			(_, shape) => {
+				const deps = createMockDeps({ tabCompletionSuggestions: suggestions });
+				const { result } = renderHook(() => useInputKeyDown(deps));
+
+				const composing = createKeyEvent('Enter', shape);
+				act(() => result.current.handleInputKeyDown(composing));
+				expect(deps.setInputValue).not.toHaveBeenCalled();
+				expect(mockInputContext.setTabCompletionOpen).not.toHaveBeenCalled();
+				expect(deps.processInput).not.toHaveBeenCalled();
+				expect(composing.preventDefault).not.toHaveBeenCalled();
+
+				act(() => result.current.handleInputKeyDown(createKeyEvent('Enter')));
+				expect(deps.setInputValue).toHaveBeenCalledWith('src/');
+				expect(mockInputContext.setTabCompletionOpen).toHaveBeenCalledWith(false);
+			}
+		);
+
+		it('composing arrows, Tab and Escape leave the dropdown as it is', () => {
+			const deps = createMockDeps({ tabCompletionSuggestions: suggestions });
+			const { result } = renderHook(() => useInputKeyDown(deps));
+
+			for (const key of ['ArrowDown', 'ArrowUp', 'Tab', 'Escape']) {
+				const e = createKeyEvent(key, { keyCode: 229 });
+				act(() => result.current.handleInputKeyDown(e));
+				expect(e.preventDefault).not.toHaveBeenCalled();
+			}
+			expect(mockInputContext.setSelectedTabCompletionIndex).not.toHaveBeenCalled();
+			expect(mockInputContext.setTabCompletionFilter).not.toHaveBeenCalled();
+			expect(mockInputContext.setTabCompletionOpen).not.toHaveBeenCalled();
+			expect(deps.setInputValue).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('slash command popover', () => {
+		const commands = [
+			{ command: '/help', description: 'Show help' },
+			{ command: '/clear', description: 'Clear output' },
+		];
+
+		beforeEach(() => {
+			mockInputContext.slashCommandOpen = true;
+			mockInputContext.selectedSlashCommandIndex = 0;
+			setActiveSession({ inputMode: 'ai' });
+		});
+
+		it.each(COMPOSING_SHAPES)(
+			'a composing Enter (%s) does not accept, then Enter accepts',
+			(_, shape) => {
+				const deps = createMockDeps({ inputValue: '/h', allSlashCommands: commands });
+				const { result } = renderHook(() => useInputKeyDown(deps));
+
+				const composing = createKeyEvent('Enter', shape);
+				act(() => result.current.handleInputKeyDown(composing));
+				expect(deps.setInputValue).not.toHaveBeenCalled();
+				expect(mockInputContext.setSlashCommandOpen).not.toHaveBeenCalled();
+				expect(deps.processInput).not.toHaveBeenCalled();
+				expect(composing.preventDefault).not.toHaveBeenCalled();
+
+				act(() => result.current.handleInputKeyDown(createKeyEvent('Enter')));
+				expect(deps.setInputValue).toHaveBeenCalledWith('/help ');
+				expect(mockInputContext.setSlashCommandOpen).toHaveBeenCalledWith(false);
+			}
+		);
+
+		it('composing arrows, Tab and Escape leave the popover open and the selection put', () => {
+			const deps = createMockDeps({ inputValue: '/', allSlashCommands: commands });
+			const { result } = renderHook(() => useInputKeyDown(deps));
+
+			const escape = createKeyEvent('Escape', { nativeEvent: { isComposing: true } } as any);
+			for (const e of [
+				createKeyEvent('ArrowDown', { keyCode: 229 }),
+				createKeyEvent('ArrowUp', { keyCode: 229 }),
+				createKeyEvent('Tab', { keyCode: 229 }),
+				escape,
+			]) {
+				act(() => result.current.handleInputKeyDown(e));
+				expect(e.preventDefault).not.toHaveBeenCalled();
+			}
+			expect(escape.stopPropagation).toHaveBeenCalled();
+			expect(mockInputContext.setSelectedSlashCommandIndex).not.toHaveBeenCalled();
+			expect(mockInputContext.setSlashCommandOpen).not.toHaveBeenCalled();
+			expect(deps.setInputValue).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('history recall and the Tab trigger', () => {
+		it.each(COMPOSING_SHAPES)(
+			'a composing ArrowUp (%s) in a terminal does not open history, then ArrowUp does',
+			(_, shape) => {
+				setActiveSession({ inputMode: 'terminal' });
+				const deps = createMockDeps({ inputValue: 'git' });
+				const { result } = renderHook(() => useInputKeyDown(deps));
+
+				act(() => result.current.handleInputKeyDown(createKeyEvent('ArrowUp', shape)));
+				expect(mockInputContext.setCommandHistoryOpen).not.toHaveBeenCalled();
+
+				act(() => result.current.handleInputKeyDown(createKeyEvent('ArrowUp')));
+				expect(mockInputContext.setCommandHistoryOpen).toHaveBeenCalledWith(true);
+			}
+		);
+
+		it.each(COMPOSING_SHAPES)(
+			'a composing Tab (%s) in AI chat reaches the IME, then Tab is prevented as before',
+			(_, shape) => {
+				setActiveSession({ inputMode: 'ai' });
+				const deps = createMockDeps({ inputValue: 'hello' });
+				const { result } = renderHook(() => useInputKeyDown(deps));
+
+				const composing = createKeyEvent('Tab', shape);
+				act(() => result.current.handleInputKeyDown(composing));
+				expect(composing.preventDefault).not.toHaveBeenCalled();
+
+				const plain = createKeyEvent('Tab');
+				act(() => result.current.handleInputKeyDown(plain));
+				expect(plain.preventDefault).toHaveBeenCalled();
+			}
+		);
+
+		it('a composing Tab in a terminal does not open completion, then Tab does', () => {
+			setActiveSession({ inputMode: 'terminal' });
+			const deps = createMockDeps({
+				inputValue: 'gi',
+				getTabCompletionSuggestions: vi.fn().mockReturnValue([
+					{ value: 'git', type: 'history', label: 'git' },
+					{ value: 'gist', type: 'history', label: 'gist' },
+				]),
+			});
+			const { result } = renderHook(() => useInputKeyDown(deps));
+
+			act(() => result.current.handleInputKeyDown(createKeyEvent('Tab', { keyCode: 229 })));
+			expect(deps.getTabCompletionSuggestions).not.toHaveBeenCalled();
+			expect(mockInputContext.setTabCompletionOpen).not.toHaveBeenCalled();
+
+			act(() => result.current.handleInputKeyDown(createKeyEvent('Tab')));
+			expect(mockInputContext.setTabCompletionOpen).toHaveBeenCalledWith(true);
+		});
+	});
+});
