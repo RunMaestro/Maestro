@@ -273,12 +273,17 @@ function taskRunStatus(task: PianolaTask, fallback: AgentRunStatus): AgentRunSta
 function capturedRunForTask(task: PianolaTask): AgentRun | undefined {
 	if (!task.agentId || !task.tabId) return undefined;
 	const processId = tabProcessId(task.agentId, task.tabId);
-	const prior = task.executionRunId ? getAgentRun(task.executionRunId) : undefined;
+	const followsLiveContinuation = task.status === 'running' || task.status === 'fixing';
+	const pinnedRunId = task.executionRunId ?? (!followsLiveContinuation ? task.runId : undefined);
+	const prior = pinnedRunId ? getAgentRun(pinnedRunId) : undefined;
 	if (
-		task.executionRunId &&
+		pinnedRunId &&
 		(!prior || prior.sessionId !== processId || (prior.tabId && prior.tabId !== task.tabId))
 	)
 		return undefined;
+	// Settled tasks retain their physical receipt. Later work in the same chat
+	// belongs to a different turn and cannot revoke this task's acceptance.
+	if (!followsLiveContinuation) return prior;
 	const newest = readAgentRuns()
 		.filter((run) => run.sessionId === processId && (!run.tabId || run.tabId === task.tabId))
 		.sort((a, b) => b.createdAt - a.createdAt)[0];
@@ -374,12 +379,13 @@ function recordPianolaAgentRunProgress(
 		if (task) upsertPianolaTaskRun(plan.id, task, taskRunStatus(task, 'failed'), 'pianola.failed');
 	}
 	// Mirror this plan's acceptance decision onto its selected run. The generic
-	// review producer still requires findings; the plan also has explicit check
-	// evidence, so checks-only holds use a distinct audited Pianola event.
+	// review producer still requires findings and protects terminal records. The
+	// controller's typed acceptance holds use a distinct audited Pianola event
+	// for both late findings and check evidence.
 	for (const task of plan.tasks) {
 		if (task.status === 'needs_review' && task.runId) {
 			const ledger = ledgerForTask(task);
-			if (ledger?.checksPassed === false) {
+			if (task.holdReason === 'acceptance' || ledger?.checksPassed === false) {
 				const run = getAgentRun(task.runId);
 				if (run && run.status !== 'needs_review')
 					upsertPianolaTaskRun(plan.id, task, 'needs_review', 'pianola.acceptance_pending');

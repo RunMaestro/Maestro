@@ -218,13 +218,17 @@ export async function runOrchestratorIteration(
 				failedTaskIds.push(task.id);
 				await safeNotify(deps, plan.tasks.find((entry) => entry.id === task.id) ?? task);
 			} else if (ledger && (ledger.openCriticalOrHighFindings ?? 0) > 0) {
-				plan = markTaskStatus(plan, task.id, 'needs_review', { runId: ledger.runId });
+				plan = markTaskStatus(plan, task.id, 'needs_review', {
+					runId: ledger.runId,
+					holdReason: 'acceptance',
+				});
 				deps.log(
 					`[orchestrator] task "${task.id}" needs_review (${ledger.openCriticalOrHighFindings} open findings)`
 				);
 			} else if (
 				(task.requiredChecks?.length && !ledger) ||
 				ledger?.executionComplete === false ||
+				ledger?.checksPending === true ||
 				(ledger && ledger.checksPassed === false)
 			) {
 				plan = markTaskStatus(plan, task.id, 'needs_review', {
@@ -279,6 +283,7 @@ export async function runOrchestratorIteration(
 				requiredMissing ||
 				ledger?.executionComplete === false ||
 				ledger?.checksPassed === false ||
+				ledger?.checksPending === true ||
 				(ledger?.openCriticalOrHighFindings ?? 0) > 0;
 			if (task.status === 'done' && blocked) {
 				plan = markTaskStatus(plan, task.id, 'needs_review', {
@@ -291,9 +296,9 @@ export async function runOrchestratorIteration(
 				task.status === 'needs_review' &&
 				task.holdReason === 'acceptance' &&
 				!blocked &&
-				ledger?.checksPassed === true &&
-				(ledger.openFindings ?? 0) === 0 &&
-				deps.reactiveEnabled?.() !== true
+				ledger &&
+				(!task.requiredChecks?.length || ledger.checksPassed === true) &&
+				(ledger.openFindings ?? 0) === 0
 			) {
 				plan = markTaskStatus(plan, task.id, 'done', {
 					runId: ledger.runId,

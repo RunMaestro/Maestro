@@ -694,4 +694,93 @@ describe('Pianola real CLI adapter and orchestration engine', () => {
 		expect(mocks.dispatch).toHaveBeenCalledTimes(1);
 		expect(plan.tasks[1].status).toBe('pending');
 	});
+	it.each([
+		['done', 'busy'],
+		['done', 'failed'],
+		['needs_review', 'busy'],
+		['needs_review', 'failed'],
+	] as const)(
+		'keeps the %s task pinned when a later same-tab run is %s',
+		async (status, laterState) => {
+			startBound();
+			let now = 10;
+			const capture = new AgentRunCaptureService({
+				getAgentRun: mocks.getRun,
+				findActiveRunBySession: mocks.findActive,
+				upsertAgentRun: mocks.upsertRun,
+				appendAgentRunEvent: mocks.appendEvent,
+				now: () => now++,
+			});
+			const original = capture.captureSpawn({
+				sessionId: 'agent-ai-tab',
+				tabId: 'tab',
+				toolType: 'codex',
+				cwd: '/project',
+			})!;
+			await capture.captureExit({
+				sessionId: 'agent-ai-tab',
+				exitCode: 0,
+				settlement: {
+					outcome: 'completed',
+					answerCaptured: true,
+					answerTail: 'Delivered the original task.',
+				},
+			});
+			runs = runs.map((run) => ({ ...run, checks: [{ name: 'acceptance', status: 'passed' }] }));
+			plan.tasks[0] = {
+				...plan.tasks[0],
+				status,
+				runId: original.id,
+				executionRunId: original.id,
+				...(status === 'needs_review' ? { holdReason: 'acceptance' } : {}),
+			};
+			capture.captureSpawn({
+				sessionId: 'agent-ai-tab',
+				tabId: 'tab',
+				toolType: 'codex',
+				cwd: '/project',
+			});
+			if (laterState === 'failed')
+				await capture.captureExit({ sessionId: 'agent-ai-tab', exitCode: 1 });
+			await tick();
+			expect(plan.tasks[0]).toMatchObject({
+				status: 'done',
+				runId: original.id,
+				executionRunId: original.id,
+			});
+			expect(plan.tasks[1].status).toBe('running');
+		}
+	);
+
+	it.each([false, true])(
+		'releases a resolved late finding without inventing checks (repairs enabled: %s)',
+		async (repairsEnabled) => {
+			startBound({ status: 'done', runId: 'captured', executionRunId: 'captured' });
+			runs = [
+				{
+					...captured(),
+					reviews: [
+						{ severity: 'high', category: 'review', message: 'Needs correction', status: 'open' },
+					],
+				},
+			];
+			await tick();
+			expect(plan.tasks[0]).toMatchObject({ status: 'needs_review', holdReason: 'acceptance' });
+			expect(runs.find((run) => run.id === 'captured')?.status).toBe('needs_review');
+			expect(plan.tasks[1].status).toBe('pending');
+			runs = runs.map((run) => ({
+				...run,
+				reviews: run.reviews.map((review) => ({ ...review, status: 'fixed' })),
+			}));
+			mocks.settings.mockImplementation((key) =>
+				key === 'pianolaAutoFixEnabled'
+					? repairsEnabled
+					: { pianola: true, autopilot: repairsEnabled }
+			);
+			await tick();
+			expect(plan.tasks[0].status).toBe('done');
+			expect(plan.tasks[1].status).toBe('running');
+			expect(mocks.dispatch).toHaveBeenCalledTimes(1);
+		}
+	);
 });
