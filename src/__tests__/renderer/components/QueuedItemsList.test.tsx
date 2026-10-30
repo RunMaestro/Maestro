@@ -205,6 +205,20 @@ describe('QueuedItemsList force-send shortcut gate', () => {
 		expect(screen.getByText('Force Send Message?')).toBeInTheDocument();
 	});
 
+	it('draws the confirmation outside the list, so the Main Panel cannot clip its buttons', () => {
+		// In place, a phone drew the card under the composer with Force Send hidden.
+		const { container } = setup(forceSendProps);
+		fireShortcut();
+		const title = screen.getByText('Force Send Message?');
+		expect(container.contains(title)).toBe(false);
+		expect(document.body.contains(title)).toBe(true);
+		// The card's own Force Send stays in the list; the dialog's confirm is outside it.
+		const confirm = screen
+			.getAllByRole('button', { name: 'Force Send' })
+			.filter((button) => !container.contains(button));
+		expect(confirm).toHaveLength(1);
+	});
+
 	it('ignores the shortcut when disabled, so only one tiled pane can respond', () => {
 		setup({ ...forceSendProps, shortcutEnabled: false });
 		fireShortcut();

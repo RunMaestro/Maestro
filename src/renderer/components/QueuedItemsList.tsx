@@ -444,6 +444,7 @@ export const QueuedItemsList = memo(
 						theme={theme}
 						title="Remove Queued Message?"
 						priority={MODAL_PRIORITIES.CONFIRM}
+						portal
 						onClose={() => setQueueRemoveConfirmId(null)}
 						width={448}
 						initialFocusRef={removeConfirmButtonRef}
@@ -471,6 +472,9 @@ export const QueuedItemsList = memo(
 						title="Force Send Message?"
 						headerIcon={<Hammer className="w-5 h-5" style={{ color: theme.colors.warning }} />}
 						priority={MODAL_PRIORITIES.CONFIRM}
+						// The queue renders inside the Main Panel. In place, a phone drew
+						// this card under the composer with its buttons hidden behind it.
+						portal
 						onClose={() => setForceSendConfirmId(null)}
 						width={448}
 						initialFocusRef={forceSendConfirmButtonRef}

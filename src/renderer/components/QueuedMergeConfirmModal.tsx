@@ -49,6 +49,7 @@ export function QueuedMergeConfirmModal({
 			title="Merge Queued Messages?"
 			headerIcon={<Merge className="w-5 h-5" style={{ color: theme.colors.accent }} />}
 			priority={MODAL_PRIORITIES.CONFIRM}
+			portal
 			onClose={onCancel}
 			width={560}
 			initialFocusRef={confirmButtonRef}
