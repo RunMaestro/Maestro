@@ -201,7 +201,10 @@ describe('desktop exit to Cue completion adapter', () => {
 		onDispatch = vi.fn();
 	});
 
-	afterEach(() => fanInTracker?.reset());
+	afterEach(() => {
+		fanInTracker?.reset();
+		vi.useRealTimers();
+	});
 
 	function connect(
 		subscriptions: Array<Pick<CueSubscription, 'name' | 'event'> & Partial<CueSubscription>>
@@ -342,7 +345,47 @@ describe('desktop exit to Cue completion adapter', () => {
 		expect(onDispatch).not.toHaveBeenCalled();
 		processManager.emit('exit', `${otherWorker.id}-ai-tab-three`, 0);
 		expect(onDispatch).toHaveBeenCalledOnce();
+		expect(onDispatch.mock.calls[0][2].payload.perSourceCompletions).toEqual({
+			[worker.id]: {
+				sourceProcessId: `${worker.id}-ai-tab-two`,
+				sourceTabId: 'tab-two',
+			},
+			[otherWorker.id]: {
+				sourceProcessId: `${otherWorker.id}-ai-tab-three`,
+				sourceTabId: 'tab-three',
+			},
+		});
 		expect(fanInTracker.getActiveTrackerKeys()).toEqual([]);
+	});
+
+	it('retains the known worker identity when fan-in times out with partial results', () => {
+		vi.useFakeTimers();
+		connect([
+			{
+				name: 'partial-workers',
+				event: 'agent.completed',
+				source_session: [worker.id, otherWorker.id],
+				fan_in_timeout_minutes: 1,
+				fan_in_timeout_on_fail: 'continue',
+			},
+		]);
+
+		processManager.emit('exit', `${worker.id}-ai-task-tab`, 0);
+		vi.advanceTimersByTime(60_000);
+
+		expect(onDispatch).toHaveBeenCalledOnce();
+		expect(onDispatch.mock.calls[0][2].payload).toMatchObject({
+			partial: true,
+			perSourceCompletions: {
+				[worker.id]: {
+					sourceProcessId: `${worker.id}-ai-task-tab`,
+					sourceTabId: 'task-tab',
+				},
+			},
+		});
+		expect(onDispatch.mock.calls[0][2].payload.perSourceCompletions).not.toHaveProperty(
+			otherWorker.id
+		);
 	});
 
 	it('does not route terminal, group-chat or Cue-owned process IDs as a worker completion', () => {

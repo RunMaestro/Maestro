@@ -300,7 +300,9 @@ Fires when another Maestro agent finishes a task. This is the foundation for age
 
 A `source_sub` condition requires a completion from that Cue subscription. External Dispatch completions have no `triggeredBy`, so they do not satisfy `source_sub`. Cue's own run-completion path retains the subscription name, output and run lineage. The plugin bus event also named `agent.completed` is a separate channel.
 
-For a single-source subscription, `filter: { sourceTabId: '<worker-tab-id>' }` limits it to one explicit worker tab. Fan-in tracks one arrival per source agent; two tabs belonging to the same agent do not satisfy two sources. This is a technical execution outcome, not acceptance of the worker's deliverable. Use an acceptance check before releasing dependent work. A Dispatch `--notify-on-complete` callback is a separate explicit return channel and currently does not survive a desktop restart.
+For a single-source subscription, `filter: { sourceTabId: '<worker-tab-id>' }` limits it to one explicit worker tab. Fan-in tracks one arrival per source agent; two tabs belonging to the same agent do not satisfy two sources. Complete and partial fan-in events retain known desktop identities in `perSourceCompletions`, keyed by base agent ID, with each entry carrying `sourceProcessId` and the explicit `sourceTabId` when available. If another tab of the same agent completes before the join fires, that agent's latest arrival replaces the earlier one.
+
+Desktop fan-in progress is held in memory and is lost on desktop restart. Only the standalone engine persists partial fan-in progress; its existing storage schema has no desktop process/tab fields, so restored sources have no invented desktop identities. This is a technical execution outcome, not acceptance of the worker's deliverable. Use an acceptance check before releasing dependent work. A Dispatch `--notify-on-complete` callback is a separate explicit return channel and currently does not survive a desktop restart.
 
 **Example - single source:**
 
