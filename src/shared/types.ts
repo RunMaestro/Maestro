@@ -788,6 +788,9 @@ export interface AgentError {
 	/** The category of error */
 	type: AgentErrorType;
 
+	/** Set only when the host supervisor terminates the turn; overrides a successful process exit. */
+	source?: 'host-supervision';
+
 	/** Human-readable error message for display */
 	message: string;
 

@@ -77,6 +77,21 @@ describe('searchableSettings', () => {
 		});
 	});
 
+	it.each(['drafts', 'unread', 'starred', 'provider context'])(
+		'finds Relay archive for visible %s only while plugins is enabled',
+		(query) => {
+			expect(
+				searchSettings(query, [], { plugins: true }).some(
+					(entry) => entry.id === 'general-relay-archive'
+				)
+			).toBe(true);
+			expect(
+				searchSettings(query, [], { plugins: false }).some(
+					(entry) => entry.id === 'general-relay-archive'
+				)
+			).toBe(false);
+		}
+	);
 	describe('searchSettings', () => {
 		it('should return empty array for empty query', () => {
 			expect(searchSettings('')).toEqual([]);
@@ -299,6 +314,8 @@ describe('searchableSettings', () => {
 			['spell check', 'general-spell-check'],
 			['spelling', 'general-spell-check'],
 			['typo', 'general-spell-check'],
+			['user journey', 'general-user-journey'],
+			['record the files', 'general-user-journey'],
 			['group cue', 'general-group-cue-entries'],
 			['collapse cue runs', 'general-group-cue-entries'],
 			['repeated', 'general-group-cue-entries'],

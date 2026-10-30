@@ -8,6 +8,7 @@ import { isWebDesktop } from '../../utils/runtimeContext';
 
 import type { TunnelStatus } from '../../hooks/remote/useLiveOverlay';
 import { openUrl } from '../../utils/openUrl';
+import { useEventListener } from '../../hooks/utils/useEventListener';
 
 /**
  * "On" in this panel is green rather than the theme accent: the URL, the dot
@@ -15,6 +16,9 @@ import { openUrl } from '../../utils/openUrl';
  * read as a different kind of state.
  */
 const LIVE_ON_COLOR = '#22c55e';
+
+/** Gap kept between the panel's bottom edge and the bottom of the window. */
+const VIEWPORT_PADDING_PX = 8;
 
 interface LiveOverlayPanelProps {
 	theme: Theme;
@@ -68,19 +72,33 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 	const containerRef = useRef<HTMLDivElement>(null);
 	const [isPersistPending, setIsPersistPending] = useState(false);
 	const [pairingError, setPairingError] = useState('');
-	const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
+	const [position, setPosition] = useState<{
+		top: number;
+		left: number;
+		maxHeight: number;
+	} | null>(null);
+
+	// Position below the parent (LIVE button wrapper) using fixed positioning.
+	// The height budget is measured from where the panel LANDS, not from the
+	// viewport: a viewport-relative cap still ran the QR code and everything under
+	// it off the bottom of a short window, with nothing to scroll them back.
+	const measurePosition = useCallback(() => {
+		const parent = containerRef.current?.parentElement;
+		if (!parent) return;
+		const rect = parent.getBoundingClientRect();
+		setPosition({
+			top: rect.bottom,
+			left: rect.left,
+			maxHeight: Math.max(0, window.innerHeight - rect.bottom - VIEWPORT_PADDING_PX),
+		});
+	}, []);
 
 	useEffect(() => {
-		const el = containerRef.current;
-		if (!el) return;
-		// Position below the parent (LIVE button wrapper) using fixed positioning
-		const parent = el.parentElement;
-		if (parent) {
-			const rect = parent.getBoundingClientRect();
-			setPosition({ top: rect.bottom, left: rect.left });
-		}
-		el.focus();
-	}, []);
+		measurePosition();
+		containerRef.current?.focus();
+	}, [measurePosition]);
+
+	useEventListener('resize', measurePosition);
 
 	// Restart web server and tunnel together so URL/QR stay in sync
 	const handleServerRestart = useCallback(async () => {
@@ -101,10 +119,10 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 	return (
 		<div
 			ref={containerRef}
-			className="fixed pt-2 z-50 outline-none"
+			className="fixed pt-2 z-50 outline-none flex flex-col"
 			style={{
 				width: '320px',
-				maxHeight: 'calc(100vh - 120px)',
+				maxHeight: position ? `${position.maxHeight}px` : undefined,
 				top: position ? `${position.top}px` : 0,
 				left: position ? `${position.left}px` : 0,
 				visibility: position ? 'visible' : 'hidden',
@@ -121,7 +139,7 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 			}}
 		>
 			<div
-				className="rounded-lg shadow-2xl overflow-y-auto scrollbar-thin"
+				className="min-h-0 rounded-lg shadow-2xl overflow-y-auto scrollbar-thin"
 				style={{
 					backgroundColor: theme.colors.bgSidebar,
 					border: `1px solid ${theme.colors.border}`,

@@ -19,7 +19,7 @@ import type { GroupChatQueueState } from '../../shared/group-chat-types';
 import { useSessionStore } from '../stores/sessionStore';
 import { mentionSessionEquality } from '../stores/sessionEquality';
 import { filterLiveAgents } from '../../shared/agentVisibility';
-import { ArrowUp, Bell, ImageIcon, Eye, Keyboard, PenLine } from 'lucide-react';
+import { ImageIcon, Eye, Keyboard, PenLine } from 'lucide-react';
 import type {
 	Theme,
 	GroupChatParticipant,
@@ -34,7 +34,12 @@ import {
 	formatEnterToSendTooltip,
 } from '../utils/shortcutFormatter';
 import { QueuedItemsList } from './QueuedItemsList';
-import { NotificationPopover } from './NotificationPopover';
+import {
+	ComposerSendColumn,
+	ImageAttachInput,
+	applyTrimmedTextPaste,
+	clipboardHasImage,
+} from './ChatComposer';
 import { useImageAnnotatorStore } from './ImageAnnotator/imageAnnotatorStore';
 import { logger } from '../utils/logger';
 import { useDraftPersistence } from '../hooks/input/useDraftPersistence';
@@ -69,6 +74,25 @@ const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
 
 /** Allowed image MIME types */
 const ALLOWED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+
+/**
+ * The room's attach checks: a type allowlist and a size cap. Returns the
+ * message the user is shown, or null to accept the file. AI chat applies
+ * neither, so these stay with the room rather than in the shared input.
+ */
+function checkGroupChatImageFile(file: File): string | null {
+	if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
+		logger.warn(`[GroupChatInput] Invalid file type rejected: ${file.type}`);
+		return 'Unsupported image type (PNG, JPEG, GIF or WebP)';
+	}
+	if (file.size > MAX_IMAGE_SIZE) {
+		logger.warn(
+			`[GroupChatInput] File too large rejected: ${(file.size / 1024 / 1024).toFixed(2)}MB (max: 10MB)`
+		);
+		return 'Image too large (max 10MB)';
+	}
+	return null;
+}
 
 /**
  * Group Chat has no file/directory mentions, only agents and groups - the unified
@@ -174,8 +198,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 	const localInputRef = useRef<HTMLTextAreaElement>(null);
 	const inputRef = inputRefProp ?? localInputRef;
 	const prevGroupChatIdRef = useRef(groupChatId);
-	const [notificationPopoverOpen, setNotificationPopoverOpen] = useState(false);
-	const notificationBtnRef = useRef<HTMLButtonElement>(null);
+	const imageInputRef = useRef<HTMLInputElement>(null);
 	const lastPersistedDraftRef = useRef<{ groupChatId: string; draft: string } | null>(null);
 	// Shared with AI Chat's own draft write-back (useInputSync) - see
 	// useDraftPersistence's doc comment for why a key (here, groupChatId)
@@ -455,34 +478,14 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 	// Wrapped paste handler that trims text and delegates images to prop handler
 	const handlePasteWrapped = useCallback(
 		(e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-			const items = e.clipboardData.items;
-			const hasImage = Array.from(items).some((item) => item.type.startsWith('image/'));
-
-			// Handle text paste with whitespace trimming (when no images)
-			if (!hasImage) {
-				const text = e.clipboardData.getData('text/plain');
-				if (text) {
-					const trimmedText = text.trim();
-					// Only intercept if trimming actually changed the text
-					if (trimmedText !== text) {
-						e.preventDefault();
-						const target = e.target as HTMLTextAreaElement;
-						const start = target.selectionStart ?? 0;
-						const end = target.selectionEnd ?? 0;
-						const newValue = message.slice(0, start) + trimmedText + message.slice(end);
-						setMessage(newValue);
-						persistDraft(newValue, groupChatId);
-						// Set cursor position after the pasted text
-						requestAnimationFrame(() => {
-							target.selectionStart = target.selectionEnd = start + trimmedText.length;
-						});
-					}
-				}
+			if (clipboardHasImage(e.clipboardData)) {
+				handlePaste?.(e);
 				return;
 			}
-
-			// Delegate image handling to prop handler
-			handlePaste?.(e);
+			applyTrimmedTextPaste(e, message, (newValue) => {
+				setMessage(newValue);
+				persistDraft(newValue, groupChatId);
+			});
 		},
 		[message, persistDraft, groupChatId, handlePaste]
 	);
@@ -500,42 +503,6 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 		flushDraft();
 		onOpenPromptComposer?.();
 	}, [flushDraft, onOpenPromptComposer]);
-
-	const handleImageSelect = useCallback(
-		(e: React.ChangeEvent<HTMLInputElement>) => {
-			const files = Array.from(e.target.files || []);
-			files.forEach((file) => {
-				// Validate file type
-				if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
-					logger.warn(`[GroupChatInput] Invalid file type rejected: ${file.type}`);
-					return;
-				}
-				// Validate file size
-				if (file.size > MAX_IMAGE_SIZE) {
-					logger.warn(
-						`[GroupChatInput] File too large rejected: ${(file.size / 1024 / 1024).toFixed(2)}MB (max: 10MB)`
-					);
-					return;
-				}
-				const reader = new FileReader();
-				reader.onload = (event) => {
-					if (event.target?.result) {
-						const imageData = event.target!.result as string;
-						setStagedImages((prev) => {
-							if (prev.includes(imageData)) {
-								showFlashNotification?.('Duplicate image ignored');
-								return prev;
-							}
-							return [...prev, imageData];
-						});
-					}
-				};
-				reader.readAsDataURL(file);
-			});
-			e.target.value = '';
-		},
-		[showFlashNotification]
-	);
 
 	// Reordering the strip reorders what the agent receives (every send path
 	// walks stagedImages in order - see stagedImageOrder.ts). Group Chat has no
@@ -752,19 +719,19 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 								</button>
 							)}
 							<button
-								onClick={() => document.getElementById('group-chat-image-input')?.click()}
+								onClick={() => imageInputRef.current?.click()}
 								className="p-1 hover:bg-white/10 rounded opacity-50 hover:opacity-100"
 								title="Attach Image"
 							>
 								<ImageIcon className="w-4 h-4" />
 							</button>
-							<input
+							<ImageAttachInput
+								ref={imageInputRef}
 								id="group-chat-image-input"
-								type="file"
-								accept="image/*"
-								multiple
-								className="hidden"
-								onChange={handleImageSelect}
+								setStagedImages={setStagedImages}
+								showFlashNotification={showFlashNotification}
+								reportComponent="GroupChatInput"
+								checkFile={checkGroupChatImageFile}
 							/>
 						</div>
 
@@ -802,46 +769,16 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 					</div>
 				</div>
 
-				{/* Notifications & Send Button - Right Side */}
-				<div className="self-end flex flex-col gap-2">
-					<button
-						ref={notificationBtnRef}
-						type="button"
-						onClick={() => setNotificationPopoverOpen((prev) => !prev)}
-						className="p-2 rounded-lg border transition-all"
-						style={{
-							backgroundColor: theme.colors.bgMain,
-							borderColor: theme.colors.border,
-							color: theme.colors.textDim,
-						}}
-						title="Notification Settings"
-					>
-						<Bell className="w-4 h-4" />
-					</button>
-					{notificationPopoverOpen && (
-						<NotificationPopover
-							theme={theme}
-							anchorRef={notificationBtnRef}
-							onClose={() => setNotificationPopoverOpen(false)}
-						/>
-					)}
-					<button
-						onClick={handleSend}
-						disabled={!message.trim()}
-						className="p-2 rounded-md shadow-sm transition-all hover:opacity-90 cursor-pointer"
-						style={{
-							backgroundColor: message.trim()
-								? isBusy
-									? theme.colors.warning
-									: theme.colors.accent
-								: theme.colors.border,
-							color: message.trim() ? theme.colors.accentForeground : theme.colors.textDim,
-						}}
-						title={isBusy ? 'Queue message' : 'Send message'}
-					>
-						<ArrowUp className="w-4 h-4" />
-					</button>
-				</div>
+				{/* Notifications & Send Button - Right Side. No Send menu: a busy
+				    room queues through main. */}
+				<ComposerSendColumn
+					theme={theme}
+					className="self-end"
+					onSend={handleSend}
+					sendTitle={isBusy ? 'Queue message' : 'Send message'}
+					sendDisabled={!message.trim()}
+					sendTone={isBusy ? 'warning' : 'accent'}
+				/>
 			</div>
 		</div>
 	);

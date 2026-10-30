@@ -265,6 +265,11 @@ function asAutoRunOwner(owner: unknown): AutoRunOwner | undefined {
  */
 export function registerWebHandlers(deps: WebHandlerDependencies): void {
 	const { getWebServer, setWebServer, createWebServer, settingsStore } = deps;
+	ipcMain.handle('web:getAutoRunStates', () => {
+		const server = getWebServer();
+		if (!server) throw new Error('Host Auto Run inventory is unavailable');
+		return server.getAutoRunStates();
+	});
 	ipcMain.handle(
 		'web:startAutoRun',
 		async (_, sessionId: string, config: BatchRunConfig, folderPath: string) => {

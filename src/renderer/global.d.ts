@@ -256,6 +256,7 @@ import type { WindowCommandRequest, WindowCommandResult } from '../shared/window
 import type { WebUserPublic } from '../shared/webLogin';
 import type { ComputerHistoryApi } from '../main/preload/computerHistory';
 import type { MaestroRunApi } from '../main/preload/maestroRun';
+import type { JourneyApi } from '../main/preload/journey';
 import type { DataviewApi } from '../main/preload/dataview';
 
 interface MaestroAPI {
@@ -308,7 +309,11 @@ interface MaestroAPI {
 	};
 	sessions: {
 		getAll: () => Promise<any[]>;
-		getBootstrap: () => Promise<any[]>;
+		getBootstrap: () => Promise<
+			(import('./types').Session & {
+				transcriptSnapshots?: import('../shared/sessionTranscript').SessionRuntimeSnapshot[];
+			})[]
+		>;
 		getDeferredContent: (
 			sessionId: string,
 			tabId: string | null,
@@ -375,7 +380,10 @@ interface MaestroAPI {
 	};
 	groups: {
 		getAll: () => Promise<any[]>;
-		setAll: (groups: any[]) => Promise<boolean>;
+		setAll: (
+			groups: import('../shared/types').Group[],
+			baseline: import('../shared/types').Group[]
+		) => Promise<boolean>;
 	};
 	process: {
 		onRemoteStartAutoRun: (
@@ -468,6 +476,7 @@ interface MaestroAPI {
 			Array<{
 				sessionId: string;
 				toolType: string;
+				/** OS PID, or 0 for a Host-owned Relay turn cancelled by session ID. */
 				pid: number;
 				cwd: string;
 				isTerminal: boolean;
@@ -504,6 +513,12 @@ interface MaestroAPI {
 		) => () => void;
 		/** `signal` is set only when the process was killed by a signal, never on a clean exit. */
 		onExit: (callback: (sessionId: string, code: number, signal?: number) => void) => () => void;
+		getPendingPermissions: () => Promise<
+			import('../shared/pendingPermissions').PendingPermissionSnapshot
+		>;
+		onPendingPermissionsChanged: (
+			callback: (snapshot: import('../shared/pendingPermissions').PendingPermissionSnapshot) => void
+		) => () => void;
 		onPermissionRequest: (
 			callback: (request: {
 				requestId: string;
@@ -1495,6 +1510,9 @@ interface MaestroAPI {
 		) => Promise<{ success: boolean }>;
 	};
 	web: {
+		getAutoRunStates: () => Promise<
+			Record<string, import('../shared/autoRunBroadcast').AutoRunBroadcastState>
+		>;
 		onLiteReady: (getReady: () => boolean) => () => void;
 		startAutoRun: (
 			sessionId: string,
@@ -4624,6 +4642,10 @@ interface MaestroAPI {
 		notifyAiTabClosed: (agentId: string, tabId: string) => void;
 	};
 
+	// User Journey API (per-agent log of user actions inside Maestro). Record
+	// through recordJourney() in src/renderer/services/userJourney.ts.
+	journey: JourneyApi;
+
 	// AI Command API (plain-English request -> one shell command line)
 	aiCommand: {
 		suggest: (config: {
@@ -4917,7 +4939,14 @@ interface MaestroAPI {
 		getRules: () => Promise<RulesLoadResult>;
 		saveRules: (rules: PianolaRule[]) => Promise<PianolaRule[]>;
 		getDecisions: (limit?: number) => Promise<PianolaDecisionRecord[]>;
+		resolveDecision: (
+			resolution: import('../shared/pianola/pianola-decision-lifecycle').PianolaDecisionResolution
+		) => Promise<import('../shared/pianola/pianola-scope-cycle').PianolaScopeDeliveryResult>;
 		getSuggestions: () => Promise<PianolaSuggestionsFile>;
+		confirmDesktopOwner: () => Promise<void>;
+		reviewSuggestion: (
+			review: import('../shared/pianola/storage').PianolaSuggestionReview
+		) => Promise<{ rules: PianolaRule[]; suggestions: PianolaSuggestionsFile }>;
 		applySuggestion: (payload: {
 			rule?: PianolaRule;
 			profile?: { text: string; projectPath?: string };

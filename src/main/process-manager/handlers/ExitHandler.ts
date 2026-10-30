@@ -206,11 +206,19 @@ export class ExitHandler {
 			// envelope, as StdoutHandler runs it on every line, because a failure is
 			// not always typed `error`: Claude Code's failed turn ends on a `result`
 			// flagged `is_error: true`, which would otherwise render as the answer.
+			// A nonfatal `warning` is display-only and never reaches detection.
 			const flushedError =
-				event && !managedProcess.errorEmitted && !managedProcess.interrupted
+				event &&
+				event.type !== 'warning' &&
+				!managedProcess.errorEmitted &&
+				!managedProcess.interrupted
 					? outputParser.detectErrorFromParsed((event.raw as unknown) ?? event)
 					: null;
-			if (event?.type === 'error' || flushedError) {
+			if (event?.type === 'warning') {
+				// Match StdoutHandler when the last diagnostic has no trailing newline.
+				// This is display-only: do not add it to stderrBuffer or the answer.
+				if (event.text) this.emitter.emit('stderr', sessionId, `${event.text}\n`);
+			} else if (event?.type === 'error' || flushedError) {
 				const agentError = flushedError;
 				if (agentError) {
 					agentError.sessionId = sessionId;

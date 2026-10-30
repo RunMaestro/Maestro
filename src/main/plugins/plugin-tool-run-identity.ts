@@ -21,6 +21,8 @@ export const PLUGIN_TOOL_RUN_LIMITS = Object.freeze({
 
 /** Supplied exclusively by the host's run lifecycle, never by tool arguments. */
 export interface PluginToolRunAuthority {
+	/** Host-stamped execution mode. Unspecified callers conservatively require unattended consent. */
+	readonly unattended?: boolean;
 	readonly signal: AbortSignal;
 	assertActive(): void;
 }
@@ -54,6 +56,7 @@ interface PluginLifetime {
 
 interface RunProof {
 	readonly agentId: string;
+	readonly unattended: boolean;
 	readonly invocations: Set<string>;
 	readonly expiresAt: number;
 	readonly controller: AbortController;
@@ -182,6 +185,7 @@ export class PluginToolRunIdentity {
 			const proof = token;
 			run = {
 				agentId: agent,
+				unattended: authority.unattended !== false,
 				invocations: new Set(),
 				expiresAt,
 				controller: new AbortController(),
@@ -213,7 +217,8 @@ export class PluginToolRunIdentity {
 	issue(
 		agentId: unknown,
 		authority?: PluginToolRunAuthority | number,
-		ttlOrReceipt?: number | string
+		ttlOrReceipt?: number | string,
+		unattended = true
 	): string {
 		if (authority && typeof authority === 'object')
 			return this.issueAuthorized(
@@ -224,7 +229,7 @@ export class PluginToolRunIdentity {
 		const controller = new AbortController();
 		const token = this.issueAuthorized(
 			agentId,
-			{ signal: controller.signal, assertActive: () => {} },
+			{ signal: controller.signal, assertActive: () => {}, unattended },
 			authority ?? PLUGIN_TOOL_RUN_LIMITS.defaultTtlMs
 		);
 		if (
@@ -306,6 +311,7 @@ export class PluginToolRunIdentity {
 		this.check(token, run);
 		const context = Object.freeze({
 			callerAgentId: run.agentId,
+			unattended: run.unattended,
 			signal: run.controller.signal,
 			assertActive: () => this.check(token, run),
 		});
@@ -488,6 +494,7 @@ export class PluginToolRunIdentity {
 		return Object.freeze({
 			pluginId: invocation.pluginId,
 			callerAgentId: invocation.run.agentId,
+			unattended: invocation.run.unattended,
 			signal: invocation.controller.signal,
 			assertActive: () => this.checkInvocation(handle, invocation),
 		});

@@ -226,6 +226,8 @@ export type BatchState = BatchRunState;
  */
 /** Optional pins for deferred sends (replay / recovery) so a late timeout cannot retarget. */
 export type ProcessInputOptions = {
+	/** Automatic context sends must retain their origin instead of inheriting a composer click. */
+	querySource?: QueuedItem['querySource'];
 	forceParallel?: boolean;
 	/**
 	 * Steer Running Turn: when this send lands in the queue, hand it straight to
@@ -313,6 +315,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 	 */
 	const processInput = useCallback(
 		async (overrideInputValue?: string, options?: ProcessInputOptions) => {
+			const querySource = options?.querySource ?? 'user';
 			// Flush any pending batched updates before processing user input
 			// This ensures AI output appears before the user's new message
 			flushBatchedUpdates?.();
@@ -584,6 +587,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 								timestamp: Date.now(),
 								tabId: activeTab?.id || activeSession.activeTabId,
 								type: 'command',
+								querySource,
 								command: matchingCustomCommand.command,
 								commandArgs, // Arguments passed after the command (for $ARGUMENTS substitution)
 								commandDescription: matchingCustomCommand.description,
@@ -895,6 +899,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							timestamp: Date.now(),
 							tabId: activeTab?.id || activeSession.activeTabId,
 							type: 'message',
+							querySource,
 							text: effectiveInputValue,
 							images: [...effectiveImages],
 							tabName:
@@ -1153,6 +1158,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						timestamp: Date.now(),
 						tabId: liveTab?.id || liveSession.activeTabId,
 						type: 'message',
+						querySource,
 						text: effectiveInputValue,
 						images: [...effectiveImages],
 						// See the slash-command path above: a fallback label, not the
@@ -1537,6 +1543,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				timestamp: Date.now(),
 				tabId,
 				type: 'message',
+				querySource,
 				text: effectiveInputValue,
 				images: [...effectiveImages],
 				tabName: tab ? getTabDisplayName(tab) : undefined,
@@ -1664,6 +1671,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						// argument builders (resumeArgs, readOnlyArgs, etc.) to construct the final args
 						await window.maestro.process.spawn({
 							sessionId: targetSessionId,
+							querySource,
 							toolType: freshSession.toolType,
 							cwd: freshSession.cwd,
 							command: commandToUse,

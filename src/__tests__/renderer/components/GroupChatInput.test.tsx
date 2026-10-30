@@ -899,6 +899,100 @@ describe('GroupChatInput', () => {
 	// paused queue sends nothing, and an item already in flight cannot be pulled
 	// back. Both used to be invisible, so messages sat there with no explanation
 	// and no control.
+	describe('send column', () => {
+		it('disables Send until there is text', () => {
+			const onSend = vi.fn();
+			render(<GroupChatInput {...createDefaultProps({ onSend })} />);
+
+			const send = screen.getByTitle('Send message');
+			expect(send).toBeDisabled();
+
+			typeInTextarea(screen.getByRole('textbox') as HTMLTextAreaElement, 'hello');
+			expect(send).not.toBeDisabled();
+			fireEvent.click(send);
+
+			expect(onSend).toHaveBeenCalledWith('hello', undefined, false);
+		});
+
+		it('offers to queue while the room is busy, in the warning tint, with no Send menu', () => {
+			const theme = createMockTheme();
+			render(<GroupChatInput {...createDefaultProps({ theme, state: 'moderator-thinking' })} />);
+			typeInTextarea(screen.getByRole('textbox') as HTMLTextAreaElement, 'next');
+
+			const send = screen.getByTitle('Queue message');
+			expect(send).toHaveStyle({ backgroundColor: theme.colors.warning });
+			expect(send).not.toHaveAttribute('aria-haspopup');
+		});
+	});
+
+	describe('attach image', () => {
+		it('opens its own file input from the Attach Image button', () => {
+			const { container } = render(<GroupChatInput {...createDefaultProps()} />);
+			const input = container.querySelector('#group-chat-image-input') as HTMLInputElement;
+			const click = vi.spyOn(input, 'click');
+
+			fireEvent.click(screen.getByTitle('Attach Image'));
+
+			expect(click).toHaveBeenCalled();
+		});
+
+		it('tells the user why a picked file was refused', () => {
+			const showFlashNotification = vi.fn();
+			const setStagedImages = vi.fn();
+			const { container } = render(
+				<GroupChatInput
+					{...createDefaultProps({ showFlashNotification, stagedImages: [], setStagedImages })}
+				/>
+			);
+			const input = container.querySelector('#group-chat-image-input') as HTMLInputElement;
+			const huge = new File(['x'], 'huge.png', { type: 'image/png' });
+			Object.defineProperty(huge, 'size', { value: 11 * 1024 * 1024 });
+
+			fireEvent.change(input, {
+				target: { files: [new File(['x'], 'doc.svg', { type: 'image/svg+xml' }), huge] },
+			});
+
+			expect(showFlashNotification).toHaveBeenCalledWith(
+				'Unsupported image type (PNG, JPEG, GIF or WebP)'
+			);
+			expect(showFlashNotification).toHaveBeenCalledWith('Image too large (max 10MB)');
+			expect(setStagedImages).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('paste', () => {
+		function paste(textarea: HTMLTextAreaElement, text: string, types = ['text/plain']) {
+			fireEvent.paste(textarea, {
+				clipboardData: {
+					items: types.map((type) => ({ type })),
+					getData: () => text,
+				},
+			});
+		}
+
+		it('trims a text paste and persists it as the draft', () => {
+			vi.useFakeTimers();
+			const onDraftChange = vi.fn();
+			render(<GroupChatInput {...createDefaultProps({ onDraftChange })} />);
+			const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+
+			paste(textarea, '  hello\n');
+
+			expect(textarea.value).toBe('hello');
+			act(() => vi.advanceTimersByTime(300));
+			expect(onDraftChange).toHaveBeenLastCalledWith('hello', 'test-group-chat');
+		});
+
+		it('hands an image paste to the shared handler untrimmed', () => {
+			const handlePaste = vi.fn();
+			render(<GroupChatInput {...createDefaultProps({ handlePaste })} />);
+
+			paste(screen.getByRole('textbox') as HTMLTextAreaElement, '', ['image/png']);
+
+			expect(handlePaste).toHaveBeenCalled();
+		});
+	});
+
 	describe('queue state', () => {
 		const queuedItem = (id: string, text: string) => ({ id, timestamp: 1, text });
 

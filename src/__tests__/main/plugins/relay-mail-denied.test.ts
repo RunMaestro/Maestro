@@ -405,3 +405,86 @@ it('keeps ordinary verified tool admission independent of unavailable sealed plu
 	).not.toThrow();
 	expect(unavailable).not.toHaveBeenCalled();
 });
+
+it('automatic context transfer enters the composer with unattended provenance', () => {
+	const text = fs.readFileSync(path.join(__dirname, '../../../renderer/App.tsx'), 'utf8');
+	const file = ts.createSourceFile(
+		'App.tsx',
+		text,
+		ts.ScriptTarget.Latest,
+		true,
+		ts.ScriptKind.TSX
+	);
+	let effect: ts.CallExpression | undefined;
+	const visit = (node: ts.Node): void => {
+		if (
+			ts.isCallExpression(node) &&
+			node.expression.getText(file) === 'useEffect' &&
+			node.arguments[0]?.getText(file).includes('autoSendOnActivate')
+		)
+			effect = node;
+		ts.forEachChild(node, visit);
+	};
+	visit(file);
+	expect(effect).toBeDefined();
+	// Execute the actual App admission effect, including its delayed target checks.
+	const run = new Function(
+		'activeSession',
+		'getActiveTab',
+		'updateAiTab',
+		'setTimeout',
+		'useSessionStore',
+		'activeSessionIdRef',
+		'processInput',
+		'clearTimeout',
+		`return (${effect!.arguments[0].getText(file)})();`
+	);
+	const session = { id: owner, aiTabs: [{ id: 'fixture-tab', autoSendOnActivate: true }] };
+	const processInput = vi.fn();
+	run(
+		session,
+		(s: typeof session) => s.aiTabs[0],
+		vi.fn(),
+		(callback: () => void) => {
+			callback();
+			return 1;
+		},
+		{ getState: () => ({ sessions: [session] }) },
+		{ current: owner },
+		processInput,
+		vi.fn()
+	);
+	expect(processInput).toHaveBeenCalledWith(undefined, { querySource: 'auto' });
+});
+
+it.each([
+	{ querySource: 'user', unattended: false },
+	{ querySource: 'auto', unattended: true },
+	{ querySource: 'cue', unattended: true },
+	{ querySource: undefined, unattended: true },
+])('desktop proof admission preserves $querySource provenance', ({ querySource, unattended }) => {
+	const text = fs.readFileSync(
+		path.join(__dirname, '../../../main/ipc/handlers/process/handle-spawn.ts'),
+		'utf8'
+	);
+	const file = ts.createSourceFile('handle-spawn.ts', text, ts.ScriptTarget.Latest, true);
+	let issuance: ts.CallExpression | undefined;
+	const visit = (node: ts.Node): void => {
+		if (
+			ts.isCallExpression(node) &&
+			node.expression.getText(file) === 'pluginToolRunIdentity.issue'
+		)
+			issuance = node;
+		ts.forEachChild(node, visit);
+	};
+	visit(file);
+	expect(issuance?.arguments.length).toBe(4);
+	// Execute the actual shipped admission expression, not a copied boolean policy.
+	const stamp = new Function('config', `return ${issuance!.arguments[3].getText(file)}`);
+	const run = pluginToolRunIdentity.issue(owner, undefined, undefined, stamp({ querySource }));
+	try {
+		expect(pluginToolRunIdentity.resolveVerified(run).unattended).toBe(unattended);
+	} finally {
+		pluginToolRunIdentity.revoke(run);
+	}
+});

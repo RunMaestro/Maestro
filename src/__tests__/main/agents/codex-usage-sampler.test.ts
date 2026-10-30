@@ -372,6 +372,110 @@ describe('codex-usage-sampler', () => {
 		);
 	});
 
+	describe('additional usage credits', () => {
+		it.each([
+			['4321.1257500000', 4321.12575],
+			[125.25, 125.25],
+			['0', 0],
+			['0.0000', 0],
+			[0, 0],
+		])('preserves an explicit balance of %s', async (balance, expected) => {
+			await writeAuth();
+			respondWith({
+				credits: { has_credits: expected > 0, unlimited: false, balance },
+				rate_limit_reset_credits: { available_count: 1, applicable_available_count: 0 },
+			});
+
+			const snapshot = await sampleCodexUsage({ codexHome: TEST_ROOT });
+
+			expect(snapshot.credits).toEqual({ kind: 'balance', balance: expected });
+			expect(snapshot.resetCredits).toEqual({ available: 1, applicable: 0 });
+		});
+
+		it.each([
+			undefined,
+			null,
+			'',
+			true,
+			[],
+			{},
+			{ has_credits: false },
+			{ has_credits: true },
+			{ balance: undefined },
+			{ balance: null },
+			{ balance: '' },
+			{ balance: ' ' },
+			{ balance: false },
+			{ balance: true },
+			{ balance: [] },
+			{ balance: {} },
+			{ balance: 'invalid' },
+			{ balance: '0x10' },
+			{ balance: '1e3' },
+			{ balance: 'Infinity' },
+			{ balance: '9'.repeat(400) },
+			{ balance: `0.${'0'.repeat(400)}1` },
+			{ balance: Number.NaN },
+			{ balance: Number.POSITIVE_INFINITY },
+			{ balance: Number.NEGATIVE_INFINITY },
+			{ balance: -1 },
+			{ balance: '-1.5' },
+			{ unlimited: 'true' },
+		])('leaves absent or malformed credit details unavailable (%j)', async (credits) => {
+			await writeAuth();
+			respondWith({
+				credits,
+				rate_limit: { primary_window: { used_percent: 33, reset_at: 1779550000 } },
+				rate_limit_reset_credits: { available_count: 1 },
+			});
+
+			const snapshot = await sampleCodexUsage({ codexHome: TEST_ROOT });
+
+			expect(snapshot.authState).toBe('authenticated');
+			expect(snapshot.credits).toBeUndefined();
+			expect(snapshot.session?.percent).toBe(33);
+			expect(snapshot.resetCredits?.available).toBe(1);
+		});
+
+		it.each([undefined, null, '0', 'unavailable'])(
+			'reports explicitly unlimited credits without requiring a balance (%j)',
+			async (balance) => {
+				await writeAuth();
+				respondWith({ credits: { unlimited: true, balance } });
+
+				const snapshot = await sampleCodexUsage({ codexHome: TEST_ROOT });
+
+				expect(snapshot.credits).toEqual({ kind: 'unlimited' });
+			}
+		);
+
+		it('uses an explicit balance independently of the has_credits flag', async () => {
+			await writeAuth();
+			respondWith({ credits: { has_credits: false, balance: '12.5' } });
+
+			const snapshot = await sampleCodexUsage({ codexHome: TEST_ROOT });
+
+			expect(snapshot.credits).toEqual({ kind: 'balance', balance: 12.5 });
+		});
+
+		it('copies only the sanitized credit balance into the snapshot', async () => {
+			await writeAuth();
+			respondWith({
+				credits: {
+					balance: '12.5',
+					has_credits: true,
+					unlimited: false,
+					unexpected_account_metadata: 'not-for-renderer',
+				},
+			});
+
+			const snapshot = await sampleCodexUsage({ codexHome: TEST_ROOT });
+
+			expect(snapshot.credits).toEqual({ kind: 'balance', balance: 12.5 });
+			expect(JSON.stringify(snapshot)).not.toContain('not-for-renderer');
+		});
+	});
+
 	// The reset-credit counts ride the usage payload, so the sampler is where
 	// they enter the app. `applicable` is the one that must survive the trip
 	// unchanged: absent means UNKNOWN, and coercing it to 0 here would tell

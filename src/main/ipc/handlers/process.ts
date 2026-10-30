@@ -1,3 +1,8 @@
+import {
+	cancelRelayConversationTurn,
+	getLiveRelayConversationTurns,
+} from '../../plugins/relay-conversations';
+import { getPendingPermissionSnapshot } from '../../permission-relay/registry';
 import { getHeadlessAgentActivity } from '../../utils/headless-agent-activity';
 import { ipcMain, BrowserWindow } from 'electron';
 import Store from 'electron-store';
@@ -24,7 +29,7 @@ import type { SshRemoteConfig } from '../../../shared/types';
 import { buildSshOptionArgs } from '../../../shared/sshOptions';
 import { MaestroSettings } from './persistence';
 import { getDefaultShell, resolveConfiguredShell } from '../../stores/defaults';
-import { handleProcessSpawn } from './process/handle-spawn';
+import { handleProcessSpawn, cancelPendingDesktopSpawns } from './process/handle-spawn';
 import type { SpawnProcessConfig } from './process/spawn-types';
 import {
 	initPermissionRelay,
@@ -169,6 +174,8 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 		)
 	);
 
+	ipcMain.handle('process:getPendingPermissions', () => getPendingPermissionSnapshot());
+
 	// Renderer -> main: the user's allow/deny decision for a relayed request.
 	ipcMain.handle(
 		'permission:respond',
@@ -267,6 +274,11 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 		'process:interrupt',
 		withIpcErrorLogging(handlerOpts('interrupt'), async (sessionId: string) => {
 			const processManager = requireProcessManager(getProcessManager);
+			if (
+				!processManager.get(sessionId) &&
+				(cancelPendingDesktopSpawns(sessionId) || cancelRelayConversationTurn(sessionId))
+			)
+				return true;
 			logger.info(`Interrupting process: ${sessionId}`, LOG_CONTEXT, { sessionId });
 			return processManager.interrupt(sessionId);
 		})
@@ -277,6 +289,11 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 		'process:kill',
 		withIpcErrorLogging(handlerOpts('kill'), async (sessionId: string) => {
 			const processManager = requireProcessManager(getProcessManager);
+			if (
+				!processManager.get(sessionId) &&
+				(cancelPendingDesktopSpawns(sessionId) || cancelRelayConversationTurn(sessionId))
+			)
+				return true;
 			logger.info(`Killing process: ${sessionId}`, LOG_CONTEXT, { sessionId });
 			// Detach any interactive replay listener. A user-initiated kill
 			// shouldn't trigger an API-mode replay even if it happens to exit 2.
@@ -336,6 +353,13 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					return entry;
 				})
 			);
+
+			// Direct Host Relay runners do not spawn through ProcessManager. Include
+			// their authoritative registry so renderer reloads can restore Stop.
+			const managedIds = new Set(result.map((entry) => entry.sessionId));
+			for (const turn of getLiveRelayConversationTurns()) {
+				if (!managedIds.has(turn.sessionId)) result.push(turn);
+			}
 
 			// Append active Cue run processes if available
 			const cueProcesses = deps.getCueProcesses?.() ?? [];

@@ -234,6 +234,9 @@ export function buildAgentLaunchPlan(input: AgentLaunchInput): AgentLaunchPlanRe
 		isWindowsHost:
 			(input.surface === 'desktop' && (input.isWindowsHost ?? isWindows())) ||
 			input.cmdShellLaunch === true,
+		// A prompt too long for this machine's command line still moves to
+		// stdin on every surface: in argv the spawn could only fail.
+		hostIsWindows: input.isWindowsHost ?? isWindows(),
 		sshRemote: target.kind === 'remote',
 		hasImages: input.hasImages,
 	});

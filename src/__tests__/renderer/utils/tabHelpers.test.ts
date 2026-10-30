@@ -44,6 +44,7 @@ import {
 	focusAiTabInSession,
 	getWriteModeTab,
 	getBusyTabs,
+	getRunningJumpTab,
 	getNavigableTabs,
 	navigateToNextTab,
 	navigateToPrevTab,
@@ -1682,6 +1683,50 @@ describe('tabHelpers', () => {
 	});
 
 	// Shared jump transform behind toasts, deep links, and the thinking status pill.
+	describe('getRunningJumpTab', () => {
+		it('prefers the active tab when it is the busy one', () => {
+			const session = createMockSession({
+				aiTabs: [
+					createMockTab({ id: 'tab-1', state: 'busy' }),
+					createMockTab({ id: 'tab-2', state: 'busy' }),
+				],
+				activeTabId: 'tab-2',
+			});
+			expect(getRunningJumpTab(session)?.id).toBe('tab-2');
+		});
+
+		it('picks the first busy open tab when the active tab is idle', () => {
+			const session = createMockSession({
+				aiTabs: [createMockTab({ id: 'tab-1' }), createMockTab({ id: 'tab-2', state: 'busy' })],
+				activeTabId: 'tab-1',
+			});
+			expect(getRunningJumpTab(session)?.id).toBe('tab-2');
+		});
+
+		it('falls back to a busy tab the user closed mid-turn', () => {
+			const session = createMockSession({
+				aiTabs: [createMockTab({ id: 'tab-1' })],
+				activeTabId: 'tab-1',
+				orphanedThinkingTabs: [
+					createMockTab({ id: 'parked', state: 'idle' }),
+					createMockTab({ id: 'orphan-1', state: 'busy' }),
+				],
+			});
+			expect(getRunningJumpTab(session)?.id).toBe('orphan-1');
+		});
+
+		it('skips hidden consult tabs and returns undefined when nothing runs', () => {
+			const session = createMockSession({
+				aiTabs: [
+					createMockTab({ id: 'tab-1' }),
+					createMockTab({ id: 'consult', state: 'busy', hidden: true }),
+				],
+				activeTabId: 'tab-1',
+			});
+			expect(getRunningJumpTab(session)).toBeUndefined();
+		});
+	});
+
 	describe('focusAiTabInSession', () => {
 		it('lands on an open tab and clears every non-AI view', () => {
 			const session = createMockSession({
@@ -1729,6 +1774,28 @@ describe('tabHelpers', () => {
 
 			expect(next.aiTabs).toHaveLength(2);
 			expect(next.activeTabId).not.toBe('tab-1');
+			expect(next.inputMode).toBe('ai');
+		});
+
+		it('reopens a busy tab closed mid-turn that is no longer in the closed-tab history', () => {
+			const orphan = createMockTab({ id: 'orphan-1', state: 'busy' });
+			const session = createMockSession({
+				aiTabs: [createMockTab({ id: 'tab-1' })],
+				activeTabId: 'tab-1',
+				unifiedTabOrder: [{ type: 'ai', id: 'tab-1' }],
+				unifiedClosedTabHistory: [],
+				closedTabHistory: [],
+				orphanedThinkingTabs: [orphan],
+				activeGroupId: 'group-1',
+			});
+
+			const next = focusAiTabInSession(session, 'orphan-1');
+
+			expect(next.aiTabs.map((t) => t.id)).toEqual(['tab-1', 'orphan-1']);
+			expect(next.activeTabId).toBe('orphan-1');
+			expect(next.orphanedThinkingTabs).toBeUndefined();
+			expect(next.unifiedTabOrder).toContainEqual({ type: 'ai', id: 'orphan-1' });
+			expect(next.activeGroupId).toBeNull();
 			expect(next.inputMode).toBe('ai');
 		});
 

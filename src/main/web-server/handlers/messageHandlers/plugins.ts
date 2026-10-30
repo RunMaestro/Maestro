@@ -18,6 +18,7 @@ import {
 	isRelayConversationIdentity,
 } from '../../../../shared/plugins/relay-identity';
 import { evaluatePluginDispatch } from '../../../../shared/plugins/plugin-dispatch-gate';
+import { relayMailReadOperation } from '../../../plugins/relay-mail/contract';
 import { pluginToolRunIdentity } from '../../../plugins/plugin-tool-run-identity';
 import { LOG_CONTEXT } from './shared';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
@@ -141,7 +142,8 @@ export async function handlePluginsSendAgent(
 				prompt,
 				sessionId as string | undefined,
 				controller.signal,
-				'user',
+				// The CLI boot secret authenticates the caller, not a human turn.
+				'auto',
 				undefined,
 				requiredToolId as string | undefined,
 				...(requirePluginTools === true ? ([true] as const) : [])
@@ -198,9 +200,11 @@ export async function handlePluginsSendAgent(
 /**
  * Handle plugins_call_tool - risk-gate a model-initiated plugin tool call,
  * then invoke it via the broker. The toolId MUST be a declared `tools`
- * contribution (never an arbitrary command handler), and risk is rated on the
- * model's ARGUMENTS via the shared Pianola gate. Only the trusted, authenticated
- * Relay reply transport is exempt from the topic ceiling. Tool failures: `{ ok:false, error }`; blocks: `{ blocked:true }`.
+ * contribution (never an arbitrary command handler). Ordinary calls use the
+ * shared Pianola gate; only the authenticated pinned Relay reply transport has
+ * the conversational topic exception. Known Relay reads instead execute fixed
+ * Host code under native identity and domain permissions. Tool failures return
+ * `{ ok:false, error }`; topic blocks return `{ blocked:true }`.
  */
 export async function handlePluginsCallTool(
 	ctx: MessageHandlerContext,
@@ -238,9 +242,14 @@ export async function handlePluginsCallTool(
 			return;
 		}
 		const args = 'args' in message ? message.args : undefined;
+		const hostMailRead = relayMailReadOperation(declaredTool) !== undefined;
+		if (hostMailRead && !verified) {
+			respond({ ok: false, error: 'PLUGIN_DENIED' });
+			return;
+		}
 		let argText = '';
 		try {
-			argText = JSON.stringify(args ?? {});
+			if (!hostMailRead) argText = JSON.stringify(args ?? {});
 		} catch {
 			argText = '';
 		}
@@ -272,7 +281,9 @@ export async function handlePluginsCallTool(
 			}
 		}
 		const verdict = evaluatePluginDispatch(riskText);
-		if (!relayReply && !verdict.eligible) {
+		// Known reads execute fixed Host code with live native/domain authority.
+		// Their prose/search strings are data, not authority or effect declarations.
+		if (!relayReply && !hostMailRead && !verdict.eligible) {
 			respond({ ok: false, blocked: true, risk: verdict.risk, reason: verdict.reason });
 			return;
 		}

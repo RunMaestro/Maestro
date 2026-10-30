@@ -12,6 +12,7 @@
 import { memo, useCallback, useMemo, useState } from 'react';
 import type { Theme } from '../../types';
 import { DURATION_LADDER_DAYS, DURATION_MS, humanizeDuration } from '../../../shared/duration';
+import { formatCount } from '../../../shared/formatters';
 import { useCodexUsageStore, type CodexUsageSnapshot } from '../../stores/codexUsageStore';
 import { useUIStore } from '../../stores/uiStore';
 import { makeAccountKeyHelpers, resolveLatestSampledAt } from './quota/quotaFormatting';
@@ -121,6 +122,17 @@ const AccountRow = memo(function AccountRow({
 	const shortName = deriveShortName(codexHomeKey);
 	const hasBars =
 		snapshot.session || snapshot.weekly || (snapshot.additionalLimits?.length ?? 0) > 0;
+	const creditBalance = snapshot.credits?.kind === 'balance' ? snapshot.credits.balance : undefined;
+	const creditBalanceLabel =
+		snapshot.credits?.kind === 'unlimited'
+			? 'Unlimited'
+			: creditBalance === undefined
+				? 'Not available'
+				: // formatCount groups digits with up to three decimal places. Never
+					// round a positive remainder into an apparent zero balance.
+					creditBalance > 0 && creditBalance < 0.001
+					? `<${formatCount(0.001)}`
+					: formatCount(creditBalance);
 
 	return (
 		<div className="space-y-2" data-testid={`${TEST_ID_PREFIX}-row-${shortName}`}>
@@ -210,6 +222,27 @@ const AccountRow = memo(function AccountRow({
 				>
 					<span style={{ color: theme.colors.accent }}>○</span>
 					<span>Quota endpoint returned no rate-limit windows for this account.</span>
+				</div>
+			)}
+
+			{snapshot.authState === 'authenticated' && (
+				<div
+					className="flex items-center justify-between gap-3 px-3 py-2 rounded text-xs"
+					style={{ backgroundColor: theme.colors.bgActivity }}
+					data-testid={`${TEST_ID_PREFIX}-credits-${shortName}`}
+				>
+					<span style={{ color: theme.colors.textDim }}>Available credits</span>
+					<span
+						className="font-medium tabular-nums"
+						style={{ color: snapshot.credits ? theme.colors.textMain : theme.colors.textDim }}
+						title={
+							creditBalance === undefined
+								? undefined
+								: `${creditBalance} credits reported by this account`
+						}
+					>
+						{creditBalanceLabel}
+					</span>
 				</div>
 			)}
 

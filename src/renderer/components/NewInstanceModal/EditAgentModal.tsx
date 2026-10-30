@@ -1164,6 +1164,10 @@ export function EditAgentModal({
 							onEnvVarAdd={() => {
 								setCustomEnvVars((prev) => withBlankEnvVarRow(prev));
 							}}
+							onEnvVarsReplace={(vars, disabledVars) => {
+								setCustomEnvVars(vars);
+								setCustomEnvVarsDisabled(disabledVars);
+							}}
 							onEnvVarsBlur={() => {
 								/* Saved on modal save */
 							}}

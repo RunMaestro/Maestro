@@ -93,6 +93,11 @@ vi.mock('fs/promises', () => ({
 	},
 }));
 
+// Transcript reads stream; feed them from the readFile stub above.
+vi.mock('../../main/utils/jsonl-stream', async () =>
+	(await import('../helpers/mockJsonlStream')).jsonlStreamFromReadFileMock()
+);
+
 // listSessions now serves unchanged transcripts from the on-disk parse cache,
 // which resolves its location through electron's userData path.
 vi.mock('electron', () => ({
@@ -1295,6 +1300,49 @@ describe('ClaudeSessionStorage', () => {
 			// Only the user message should survive
 			expect(result.messages).toHaveLength(1);
 			expect(result.messages[0].type).toBe('user');
+		});
+
+		// Valid JSON whose shape breaks the conversion: the content filter reads
+		// `b.type` off a null block. One such record must be skipped, not fail the
+		// read and lock the user out of the rest of the conversation.
+		const withDamagedRecord = () =>
+			[
+				JSON.stringify(userMsg('before')),
+				JSON.stringify({ type: 'user', message: { role: 'user', content: [null] } }),
+				JSON.stringify(assistantMsg('after')),
+			].join('\n');
+
+		it('skips a damaged record and keeps the rest of a local transcript', async () => {
+			vi.mocked(fs.readFile).mockResolvedValue(withDamagedRecord());
+
+			const result = await storage.readSessionMessages('/test/project', 'sess-1');
+			expect(result.messages.map((m) => m.content)).toEqual(['before', 'after']);
+			expect(result.total).toBe(2);
+		});
+
+		it('skips a damaged record and keeps the rest of a remote transcript', async () => {
+			const remoteFs = await import('../../main/utils/remote-fs');
+			vi.mocked(remoteFs.readFileRemote).mockResolvedValue({
+				success: true,
+				data: withDamagedRecord(),
+			});
+			const sshConfig = {
+				id: 'r1',
+				name: 'r1',
+				host: 'h',
+				port: 22,
+				username: 'u',
+				privateKeyPath: '~/.ssh/id_ed25519',
+				enabled: true,
+			} as const;
+
+			const result = await storage.readSessionMessages(
+				'/remote/project',
+				'sess-1',
+				undefined,
+				sshConfig
+			);
+			expect(result.messages.map((m) => m.content)).toEqual(['before', 'after']);
 		});
 	});
 

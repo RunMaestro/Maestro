@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { STEERING_SOCKET_ENV_VAR } from '../../../chatSteering';
 import { resolveClaudeSpawnModeCore } from '../../launch/interactive-mode';
+import { POSIX_PROMPT_ARGV_MAX_BYTES } from '../../launch/prompt-delivery';
 import type { SshRemoteSettingsStore } from '../../launch/ssh-remote-resolver';
 import { getAgentDefinition } from '../../providers/definitions';
 import type { AgentConfig } from '../../providers/definitions';
@@ -113,6 +114,39 @@ describe('prepareGroupChatSpawn', () => {
 				sendPromptViaStdin: true,
 				sendPromptViaStdinRaw: false,
 			});
+		});
+
+		// MAESTRO-16C/16P/RM/VR: off Windows the Windows config is a no-op, so a synthesis or
+		// consult whose prompt carried a long history went into argv and the spawn died with E2BIG.
+		it('sends a prompt too long for the command line over stdin, for an agent that reads it', async () => {
+			const long = 'x'.repeat(POSIX_PROMPT_ARGV_MAX_BYTES + 1);
+			const prepared = await prepareGroupChatSpawn(spawnOf({ prompt: long }), depsOf());
+
+			expect(prepared.prompt).toBe(long);
+			expect(prepared.sendPromptViaStdinRaw).toBe(true);
+			expect(prepared.sendPromptViaStdin).toBe(false);
+		});
+
+		it('keeps a normal prompt on the command line', async () => {
+			const prepared = await prepareGroupChatSpawn(spawnOf(), depsOf());
+			expect(prepared.sendPromptViaStdinRaw).toBe(false);
+		});
+
+		it('keeps an over-long prompt in argv for an agent that cannot read stdin', async () => {
+			const omp = {
+				...getAgentDefinition('omp')!,
+				available: true,
+				capabilities: getAgentCapabilities('omp'),
+			} as AgentConfig;
+			const prepared = await prepareGroupChatSpawn(
+				spawnOf({
+					providerId: 'omp',
+					agent: omp,
+					prompt: 'x'.repeat(POSIX_PROMPT_ARGV_MAX_BYTES + 1),
+				}),
+				depsOf()
+			);
+			expect(prepared.sendPromptViaStdinRaw).toBe(false);
 		});
 	});
 

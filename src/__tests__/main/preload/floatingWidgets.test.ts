@@ -63,6 +63,18 @@ describe('Floating widgets preload API', () => {
 			expect(result).toEqual(rect);
 		});
 
+		it('setOverflow passes the id and the need, and returns the grant', async () => {
+			mockInvoke.mockResolvedValue({ above: 0, below: 200 });
+
+			const result = await api.setOverflow('media-player', { above: 260, below: 200 });
+
+			expect(mockInvoke).toHaveBeenCalledWith('floatingWidgets:setOverflow', 'media-player', {
+				above: 260,
+				below: 200,
+			});
+			expect(result).toEqual({ above: 0, below: 200 });
+		});
+
 		it('setBounds passes the id and the partial bounds', async () => {
 			mockInvoke.mockResolvedValue({ x: 0, y: 0, width: 500, height: 96 });
 

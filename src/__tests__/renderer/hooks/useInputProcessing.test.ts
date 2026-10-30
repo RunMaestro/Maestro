@@ -693,6 +693,7 @@ describe('useInputProcessing', () => {
 			expect(updatedSessions[0].executionQueue.length).toBe(1);
 			expect(updatedSessions[0].executionQueue[0].type).toBe('command');
 			expect(updatedSessions[0].executionQueue[0].command).toBe('/test');
+			expect(updatedSessions[0].executionQueue[0].querySource).toBe('user');
 		});
 
 		describe('forced parallel for slash commands', () => {
@@ -1371,6 +1372,51 @@ describe('useInputProcessing', () => {
 			expect([first.item?.text, second.item?.text]).toEqual(['A', 'B']);
 		});
 
+		it('stamps human composer sends as user turns', async () => {
+			const session = createMockSession({ state: 'idle' });
+			const deps = createDeps({ activeSession: session, inputValue: 'Read my mail' });
+			const { result } = renderHook(() => useInputProcessing(deps));
+			await act(async () => {
+				await result.current.processInput();
+			});
+			expect(window.maestro.process.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({ querySource: 'user' })
+			);
+		});
+
+		it.each(['idle', 'busy'] as const)(
+			'preserves automatic context provenance when the tab is %s',
+			async (state) => {
+				const session = createMockSession({ state });
+				if (state === 'busy') {
+					vi.mocked(window.maestro.process.getActiveProcesses).mockResolvedValue([
+						{
+							sessionId: `${session.id}-ai-${session.activeTabId}`,
+							toolType: session.toolType,
+							pid: 32828,
+							cwd: session.cwd,
+							isTerminal: false,
+							isBatchMode: true,
+							startTime: 1700000000000,
+						},
+					]);
+				}
+				const deps = createDeps({ activeSession: session, inputValue: 'Transferred context' });
+				const { result } = renderHook(() => useInputProcessing(deps));
+				await act(async () => {
+					await result.current.processInput(undefined, { querySource: 'auto' });
+				});
+				if (state === 'idle') {
+					expect(window.maestro.process.spawn).toHaveBeenCalledWith(
+						expect.objectContaining({ querySource: 'auto' })
+					);
+				} else {
+					expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+					expect(useSessionStore.getState().sessions[0].executionQueue[0].querySource).toBe('auto');
+				}
+			}
+		);
+
 		it('re-queues the message when the spawn collides with a live turn', async () => {
 			// "Agent process already running" means the tab was mid-turn when this
 			// dispatch landed - the provider never saw the message. Dropping it is
@@ -1397,6 +1443,7 @@ describe('useInputProcessing', () => {
 			const [live] = useSessionStore.getState().sessions;
 			expect(live.executionQueue).toHaveLength(1);
 			expect(live.executionQueue[0].text).toBe('do not lose me');
+			expect(live.executionQueue[0].querySource).toBe('user');
 			// A collision leaves the busy state alone: a live process is still
 			// streaming into that tab, and clearing it told every busy-based rule in
 			// the app that the agent was free.
@@ -1458,6 +1505,7 @@ describe('useInputProcessing', () => {
 			const [live] = useSessionStore.getState().sessions;
 			expect(live.executionQueue).toHaveLength(1);
 			expect(live.executionQueue[0].text).toBe('first');
+			expect(live.executionQueue[0].querySource).toBe('user');
 		});
 
 		describe('repeat submit while the ownership probe is out', () => {

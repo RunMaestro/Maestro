@@ -387,6 +387,7 @@ export interface SettingsStoreState
 	/** When true, agents consulted via @-mention may write; when false (default), consults are read-only. */
 	crossAgentMentionsWritable: boolean;
 	crossAgentHandoffsWritable: boolean;
+	relayArchiveHours: number;
 	defaultSaveToHistory: boolean;
 	synopsisDebounceSeconds: number;
 	defaultShowThinking: ThinkingMode;
@@ -497,6 +498,7 @@ export interface SettingsStoreState
 	bmadEnabled: boolean;
 	lastSelectedPromptId: string | null;
 	spellCheck: boolean;
+	userJourneyEnabled: boolean;
 	pianolaAutoWatchNewAgents: boolean;
 }
 
@@ -529,6 +531,7 @@ export interface SettingsStoreActions
 	setSendButtonMenu: (value: boolean) => void;
 	setCrossAgentMentionsWritable: (value: boolean) => void;
 	setCrossAgentHandoffsWritable: (value: boolean) => void;
+	setRelayArchiveHours: (value: number) => void;
 	setDefaultSaveToHistory: (value: boolean) => void;
 	setSynopsisDebounceSeconds: (value: number) => void;
 	setDefaultShowThinking: (value: ThinkingMode) => void;
@@ -620,6 +623,7 @@ export interface SettingsStoreActions
 	setBmadEnabled: (value: boolean) => void;
 	setLastSelectedPromptId: (value: string | null) => void;
 	setSpellCheck: (value: boolean) => void;
+	setUserJourneyEnabled: (value: boolean) => void;
 	setPianolaAutoWatchNewAgents: (value: boolean) => Promise<void>;
 
 	// Async setters
@@ -784,6 +788,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		sendButtonMenu: true,
 		crossAgentMentionsWritable: false,
 		crossAgentHandoffsWritable: true,
+		relayArchiveHours: 24,
 		defaultSaveToHistory: true,
 		synopsisDebounceSeconds: 0,
 		defaultShowThinking: 'off',
@@ -881,6 +886,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		bmadEnabled: true,
 		lastSelectedPromptId: null,
 		spellCheck: false,
+		userJourneyEnabled: true,
 		pianolaAutoWatchNewAgents: false,
 
 		...createAnnotatorSlice(set, get, api),
@@ -990,6 +996,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 			window.maestro.settings.set('crossAgentHandoffsWritable', value);
 		},
 
+		setRelayArchiveHours: (value) => {
+			const hours = Number.isFinite(value) ? Math.max(0, Math.min(8760, value)) : 24;
+			set({ relayArchiveHours: hours });
+			window.maestro.settings.set('relayArchiveHours', hours);
+		},
 		setDefaultSaveToHistory: (value) => {
 			set({ defaultSaveToHistory: value });
 			window.maestro.settings.set('defaultSaveToHistory', value);
@@ -1546,6 +1557,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setSpellCheck: (value) => {
 			set({ spellCheck: value });
 			window.maestro.settings.set('spellCheck', value);
+		},
+
+		setUserJourneyEnabled: (value) => {
+			set({ userJourneyEnabled: value });
+			window.maestro.settings.set('userJourneyEnabled', value);
 		},
 
 		setPianolaAutoWatchNewAgents: async (value) => {
@@ -2136,6 +2152,11 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['crossAgentHandoffsWritable'] !== undefined)
 			patch.crossAgentHandoffsWritable = allSettings['crossAgentHandoffsWritable'] as boolean;
 
+		if (
+			typeof allSettings['relayArchiveHours'] === 'number' &&
+			Number.isFinite(allSettings['relayArchiveHours'])
+		)
+			patch.relayArchiveHours = Math.max(0, Math.min(8760, allSettings['relayArchiveHours']));
 		if (allSettings['defaultSaveToHistory'] !== undefined)
 			patch.defaultSaveToHistory = allSettings['defaultSaveToHistory'] as boolean;
 
@@ -2784,6 +2805,9 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['spellCheck'] !== undefined)
 			patch.spellCheck = allSettings['spellCheck'] as boolean;
 
+		// On unless explicitly switched off.
+		patch.userJourneyEnabled = allSettings['userJourneyEnabled'] !== false;
+
 		patch.pianolaAutoWatchNewAgents = allSettings['pianolaAutoWatchNewAgents'] === true;
 
 		hydrateAnnotatorSettings(allSettings, patch);
@@ -3050,6 +3074,7 @@ export function getSettingsActions() {
 		setFilePreviewToolbarButtonVisibility: state.setFilePreviewToolbarButtonVisibility,
 		setModeratorStandingInstructions: state.setModeratorStandingInstructions,
 		setSpellCheck: state.setSpellCheck,
+		setUserJourneyEnabled: state.setUserJourneyEnabled,
 		setPianolaAutoWatchNewAgents: state.setPianolaAutoWatchNewAgents,
 		setAutoRunDisabled: state.setAutoRunDisabled,
 		setDotfilesToggleHidden: state.setDotfilesToggleHidden,

@@ -744,8 +744,12 @@ describe('GitStatusWidget', () => {
 			const container = screen.getByRole('button').parentElement!;
 			fireEvent.mouseEnter(container);
 
-			const filePath = screen.getByText('very/long/path/to/deeply/nested/file.ts');
+			// The text sits in a <bdi> inside the start-truncating span that carries the title.
+			const filePath = screen
+				.getByText('very/long/path/to/deeply/nested/file.ts')
+				.closest('[title]');
 			expect(filePath).toHaveAttribute('title', 'very/long/path/to/deeply/nested/file.ts');
+			expect(filePath).toHaveClass('overflow-hidden', 'whitespace-nowrap');
 		});
 	});
 

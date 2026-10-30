@@ -9,6 +9,13 @@
 import type { SettingMetadata } from './settingsMetadata';
 
 export const EXPERIENCE_SETTINGS_METADATA: Record<string, SettingMetadata> = {
+	relayArchiveHours: {
+		description:
+			'Hide explicitly completed Relay conversation tabs after this many inactive hours; 0 disables. Drafts, unread, starred, selected and active work stay open.',
+		type: 'number',
+		default: 24,
+		category: 'integrations',
+	},
 	// --- Context Management ---
 	contextManagementSettings: {
 		description: 'Context grooming settings: auto-groom, max tokens, warning thresholds.',

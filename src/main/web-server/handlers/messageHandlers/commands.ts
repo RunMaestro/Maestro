@@ -15,6 +15,124 @@ import { interruptTurnFailure } from '../../../../shared/turnInterrupt';
 import { parseMentionRoutingField } from '../../../../shared/crossAgentContext';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
 
+import { getSettingsStore } from '../../../stores';
+import * as pianolaStore from '../../../pianola/pianola-store-main';
+import {
+	deliverPianolaScopeDecision,
+	resolvePianolaDecision,
+} from '../../../pianola/pianola-decisions';
+import { updatePianolaDecision } from '../../../../shared/pianola/pianola-decision-lifecycle';
+import { readCallerMessageFields } from '../../../../shared/agentDelegation';
+
+/** Scope delivery never falls back to unguarded send_command on older hosts. */
+export async function handlePianolaScopeReply(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	let result;
+	try {
+		if (!client.cli) throw new Error('Scope admission requires the native CLI');
+		const flags = getSettingsStore().get('encoreFeatures', {}) as Record<string, boolean>;
+		if (flags.pianola !== true) throw new Error('Pianola disabled');
+		if (typeof message.answer !== 'string' || !message.answer.trim())
+			throw new Error('Decision message unavailable');
+		const raw = message.guard as Record<string, unknown> | undefined;
+		if (!raw || raw.agentId !== message.sessionId || raw.tabId !== message.tabId)
+			throw new Error('Scope recipient mismatch');
+		result = await deliverPianolaScopeDecision(
+			ctx.callbacks,
+			raw,
+			message.answer,
+			message.judgment === true
+		);
+	} catch (error) {
+		result = {
+			status: 'rejected',
+			error: error instanceof Error ? error.message : 'Scope admission failed',
+		};
+		const raw = message.guard as Record<string, unknown> | undefined;
+		const record =
+			client.cli && raw
+				? pianolaStore
+						.readDecisions()
+						.find(
+							(candidate) =>
+								candidate.id === raw.decisionId &&
+								candidate.agentId === message.sessionId &&
+								candidate.tabId === message.tabId
+						)
+				: undefined;
+		if (record?.lifecycle?.delivery === 'intent') {
+			if (record.deliveryStatus === 'admitted')
+				result = {
+					status: 'unknown',
+					error: 'Native admission was recorded; reconcile before retrying',
+				};
+			pianolaStore.appendDecision(
+				updatePianolaDecision(
+					record,
+					{
+						delivery: result.status === 'unknown' ? 'unknown' : 'rejected',
+						status:
+							result.status !== 'unknown' && record.lifecycle.phase === 'judgment'
+								? 'waiting_human'
+								: 'blocked',
+						nextActor:
+							result.status !== 'unknown' && record.lifecycle.phase === 'judgment'
+								? 'human'
+								: 'operator',
+						nextAction: result.error,
+					},
+					new Date().toISOString()
+				)
+			);
+		}
+	}
+	ctx.send(client, { type: 'pianola_scope_reply_result', ...result, requestId: message.requestId });
+}
+
+/** CLI answers are attributable only to the configured manager and its bound tab. */
+export async function handlePianolaDecisionResolve(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	try {
+		if (!client.cli) throw new Error('Manager resolution requires the native CLI');
+		const flags = getSettingsStore().get('encoreFeatures', {}) as Record<string, boolean>;
+		if (flags.pianola !== true) throw new Error('Pianola disabled');
+		const caller = readCallerMessageFields(message);
+		if (!caller?.fromTabId) throw new Error('Manager agent and tab identity required');
+		const result = await resolvePianolaDecision(ctx.callbacks, message, {
+			kind: 'manager',
+			agentId: caller.fromSessionId,
+			tabId: caller.fromTabId,
+		});
+		ctx.send(client, {
+			type: 'pianola_decision_resolve_result',
+			...result,
+			success: result.status === 'accepted',
+			requestId: message.requestId,
+		});
+	} catch (error) {
+		const record = pianolaStore
+			.readDecisions()
+			.find((candidate) => candidate.id === message.decisionId);
+		const uncertain =
+			record?.deliveryStatus === 'admitted' &&
+			record.lifecycle?.phase === 'answer' &&
+			(record.lifecycle.delivery === 'intent' || record.lifecycle.delivery === 'unknown');
+		ctx.send(client, {
+			type: 'pianola_decision_resolve_result',
+			success: false,
+			status: uncertain ? 'unknown' : 'rejected',
+			error: error instanceof Error ? error.message : 'Decision resolution failed',
+			requestId: message.requestId,
+		});
+	}
+}
+
 /**
  * Timeout bounds for a cross-agent consult. A consult spawns a whole agent turn,
  * so the floor is generous and the ceiling is an hour - past that the caller has

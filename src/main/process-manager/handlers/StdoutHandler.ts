@@ -694,6 +694,14 @@ export class StdoutHandler {
 		// Ahead of every early return below, so a subscriber sees each line once.
 		emitParsedEvent(this.emitter, sessionId, event);
 
+		// Nonfatal provider notices use the existing diagnostic channel, not
+		// agent-error or thinking-chunk. They must remain visible with Thinking
+		// off, without consuming the error latch or becoming the final answer.
+		if (event.type === 'warning') {
+			if (event.text) this.emitter.emit('stderr', sessionId, `${event.text}\n`);
+			return;
+		}
+
 		// OpenCode emits multiple steps: step_start → text → tool_use → step_finish(tool-calls) → repeat
 		// Each step may have a text event. Only the final text (before reason:"stop") is the real result.
 		// Reset resultEmitted on each new step so the last text event wins instead of the first.

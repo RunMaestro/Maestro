@@ -5,8 +5,16 @@ import type { ProcessConfig } from '../../../../../main/process-manager/types';
 import { getAgentCapabilities } from '../../../../../shared/maestro-lib/providers/capabilities';
 import { getAgentDefinition } from '../../../../../shared/maestro-lib/providers/definitions';
 import type { ToolType } from '../../../../../shared/types';
+import type * as ProviderSessionWriter from '../../../../../main/utils/provider-session-writer';
 
 vi.mock('electron', () => ({ app: { getPath: () => process.cwd() } }));
+vi.mock('../../../../../main/utils/provider-session-writer', async (importOriginal) => {
+	const actual = await importOriginal<typeof ProviderSessionWriter>();
+	return {
+		...actual,
+		acquireProviderSessionWriter: vi.fn(async () => () => {}),
+	};
+});
 async function spawnNative(
 	toolType: ToolType,
 	overrides: Partial<SpawnProcessConfig> = {},
@@ -23,6 +31,7 @@ async function spawnNative(
 		spawn: vi.fn(() => ({ success: true, pid: 4242 })),
 		get: vi.fn(),
 		getAll: vi.fn(() => []),
+		on: vi.fn(),
 	};
 	const config = {
 		sessionId: 'agent-1-ai-tab-1',

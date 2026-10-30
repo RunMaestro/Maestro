@@ -27,6 +27,7 @@ import { useSettingsStore } from '../stores/settingsStore';
 import { shortcutSuffix } from './ui/ShortcutHint';
 import { logger } from '../utils/logger';
 import { showOsNotification } from '../stores/notificationStore';
+import { isWebDesktop } from '../utils/runtimeContext';
 
 interface NotificationsPanelProps {
 	osNotificationsEnabled: boolean;
@@ -93,6 +94,9 @@ export function NotificationsPanel({
 	// inert until the master toggle is on, but their values are kept.
 	const inboxEnabled = settings.notificationCenterEnabled;
 	const inboxOptionProps = { theme, disabled: !inboxEnabled, clickableRow: inboxEnabled };
+	// A remote client (web-desktop / Lite) owns no local shell, so the custom and
+	// idle commands run on the host desktop and are configured there.
+	const remote = isWebDesktop();
 
 	// Custom notification test state
 	const [testNotificationId, setTestNotificationId] = useState<number | null>(null);
@@ -183,317 +187,325 @@ export function NotificationsPanel({
 				</button>
 			</div>
 
-			{/* Custom Notification */}
-			<div data-setting-id="notifications-custom">
-				<SettingCheckbox
-					icon={Volume2}
-					sectionLabel="Custom Notification"
-					title="Enable Custom Notification"
-					description="Execute a custom command when AI tasks complete, such as text-to-speech feedback"
-					checked={audioFeedbackEnabled}
-					onChange={setAudioFeedbackEnabled}
-					theme={theme}
-				/>
-
-				{/* Command Chain Configuration */}
-				<div className="mt-3">
-					<label className="block text-xs font-medium opacity-70 mb-1">Command Chain</label>
-					<div className="flex gap-2">
-						<input
-							type="text"
-							value={audioFeedbackCommand}
-							onChange={(e) => setAudioFeedbackCommand(e.target.value)}
-							placeholder="say"
-							className="flex-1 p-2 rounded border bg-transparent outline-none text-sm font-mono"
-							style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+			{remote ? (
+				<p className="text-xs" style={{ color: theme.colors.textDim }}>
+					Custom and idle notification commands are managed on the host desktop.
+				</p>
+			) : (
+				<>
+					{/* Custom Notification */}
+					<div data-setting-id="notifications-custom">
+						<SettingCheckbox
+							icon={Volume2}
+							sectionLabel="Custom Notification"
+							title="Enable Custom Notification"
+							description="Execute a custom command when AI tasks complete, such as text-to-speech feedback"
+							checked={audioFeedbackEnabled}
+							onChange={setAudioFeedbackEnabled}
+							theme={theme}
 						/>
-						{testNotificationId !== null ? (
-							<button
-								onClick={async () => {
-									logger.info(
-										'[Notification] Stop test button clicked, id:',
-										undefined,
-										testNotificationId
-									);
-									try {
-										await window.maestro.notification.stopSpeak(testNotificationId);
-									} catch (err) {
-										logger.error('[Notification] Stop error:', undefined, err);
-									}
-									setTestNotificationId(null);
-									setTestStatus('idle');
-								}}
-								className="px-3 py-2 rounded text-xs font-medium transition-all flex items-center gap-1"
-								style={{
-									backgroundColor: theme.colors.error,
-									color: '#fff',
-									border: `1px solid ${theme.colors.error}`,
-								}}
-							>
-								<Square className="w-3 h-3" fill="currentColor" />
-								Stop
-							</button>
-						) : (
-							<button
-								onClick={async () => {
-									logger.info(
-										'[Notification] Test button clicked, command:',
-										undefined,
-										audioFeedbackCommand
-									);
-									setTestStatus('running');
-									setTestError(null);
-									try {
-										const result = await window.maestro.notification.speak(
-											"Howdy, I'm Maestro, here to conduct your agentic tools into a well-tuned symphony.",
-											audioFeedbackCommand
-										);
-										logger.info('[Notification] Speak result:', undefined, result);
-										if (result.success && result.notificationId) {
-											setTestNotificationId(result.notificationId);
-											// Don't change status to 'success' yet - stay in 'running'
-											// and show Stop button while process is active.
-											// The onCommandCompleted listener will clear testNotificationId
-											// when the process exits, which hides the Stop button.
-										} else {
-											setTestStatus('error');
-											setTestError(result.error || 'Command failed');
-										}
-									} catch (err) {
-										logger.error('[Notification] Speak error:', undefined, err);
-										setTestStatus('error');
-										setTestError(String(err));
-									}
-								}}
-								disabled={testStatus === 'running'}
-								className="px-3 py-2 rounded text-xs font-medium transition-all flex items-center gap-1.5 min-w-[70px] justify-center"
-								style={{
-									backgroundColor:
-										testStatus === 'success'
-											? theme.colors.success + '20'
-											: testStatus === 'error'
-												? theme.colors.error + '20'
-												: theme.colors.bgActivity,
-									color:
-										testStatus === 'success'
-											? theme.colors.success
-											: testStatus === 'error'
-												? theme.colors.error
-												: theme.colors.textMain,
-									border: `1px solid ${
-										testStatus === 'success'
-											? theme.colors.success
-											: testStatus === 'error'
-												? theme.colors.error
-												: theme.colors.border
-									}`,
-									opacity: testStatus === 'running' ? 0.7 : 1,
-								}}
-							>
-								{testStatus === 'running' ? (
-									<>
-										<Spinner size={12} />
-										Running
-									</>
-								) : testStatus === 'success' ? (
-									<>
-										<Check className="w-3 h-3" />
-										Success
-									</>
-								) : testStatus === 'error' ? (
-									<>
-										<AlertCircle className="w-3 h-3" />
-										Failed
-									</>
+
+						{/* Command Chain Configuration */}
+						<div className="mt-3">
+							<label className="block text-xs font-medium opacity-70 mb-1">Command Chain</label>
+							<div className="flex gap-2">
+								<input
+									type="text"
+									value={audioFeedbackCommand}
+									onChange={(e) => setAudioFeedbackCommand(e.target.value)}
+									placeholder="say"
+									className="flex-1 p-2 rounded border bg-transparent outline-none text-sm font-mono"
+									style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+								/>
+								{testNotificationId !== null ? (
+									<button
+										onClick={async () => {
+											logger.info(
+												'[Notification] Stop test button clicked, id:',
+												undefined,
+												testNotificationId
+											);
+											try {
+												await window.maestro.notification.stopSpeak(testNotificationId);
+											} catch (err) {
+												logger.error('[Notification] Stop error:', undefined, err);
+											}
+											setTestNotificationId(null);
+											setTestStatus('idle');
+										}}
+										className="px-3 py-2 rounded text-xs font-medium transition-all flex items-center gap-1"
+										style={{
+											backgroundColor: theme.colors.error,
+											color: '#fff',
+											border: `1px solid ${theme.colors.error}`,
+										}}
+									>
+										<Square className="w-3 h-3" fill="currentColor" />
+										Stop
+									</button>
 								) : (
-									'Test'
+									<button
+										onClick={async () => {
+											logger.info(
+												'[Notification] Test button clicked, command:',
+												undefined,
+												audioFeedbackCommand
+											);
+											setTestStatus('running');
+											setTestError(null);
+											try {
+												const result = await window.maestro.notification.speak(
+													"Howdy, I'm Maestro, here to conduct your agentic tools into a well-tuned symphony.",
+													audioFeedbackCommand
+												);
+												logger.info('[Notification] Speak result:', undefined, result);
+												if (result.success && result.notificationId) {
+													setTestNotificationId(result.notificationId);
+													// Don't change status to 'success' yet - stay in 'running'
+													// and show Stop button while process is active.
+													// The onCommandCompleted listener will clear testNotificationId
+													// when the process exits, which hides the Stop button.
+												} else {
+													setTestStatus('error');
+													setTestError(result.error || 'Command failed');
+												}
+											} catch (err) {
+												logger.error('[Notification] Speak error:', undefined, err);
+												setTestStatus('error');
+												setTestError(String(err));
+											}
+										}}
+										disabled={testStatus === 'running'}
+										className="px-3 py-2 rounded text-xs font-medium transition-all flex items-center gap-1.5 min-w-[70px] justify-center"
+										style={{
+											backgroundColor:
+												testStatus === 'success'
+													? theme.colors.success + '20'
+													: testStatus === 'error'
+														? theme.colors.error + '20'
+														: theme.colors.bgActivity,
+											color:
+												testStatus === 'success'
+													? theme.colors.success
+													: testStatus === 'error'
+														? theme.colors.error
+														: theme.colors.textMain,
+											border: `1px solid ${
+												testStatus === 'success'
+													? theme.colors.success
+													: testStatus === 'error'
+														? theme.colors.error
+														: theme.colors.border
+											}`,
+											opacity: testStatus === 'running' ? 0.7 : 1,
+										}}
+									>
+										{testStatus === 'running' ? (
+											<>
+												<Spinner size={12} />
+												Running
+											</>
+										) : testStatus === 'success' ? (
+											<>
+												<Check className="w-3 h-3" />
+												Success
+											</>
+										) : testStatus === 'error' ? (
+											<>
+												<AlertCircle className="w-3 h-3" />
+												Failed
+											</>
+										) : (
+											'Test'
+										)}
+									</button>
 								)}
-							</button>
-						)}
+							</div>
+							{/* Error message display */}
+							{testError && (
+								<p
+									className="text-xs mt-2 px-2 py-1 rounded"
+									style={{
+										color: theme.colors.error,
+										backgroundColor: theme.colors.error + '10',
+									}}
+								>
+									{testError}
+								</p>
+							)}
+							<p className="text-xs opacity-50 mt-2" style={{ color: theme.colors.textDim }}>
+								Command that accepts text via stdin. Chain multiple commands using pipes (e.g.,{' '}
+								<code
+									className="px-1 py-0.5 rounded"
+									style={{ backgroundColor: theme.colors.bgActivity }}
+								>
+									cmd1 | cmd2
+								</code>
+								) to mix and match tools. Default TTS examples:{' '}
+								<code
+									className="px-1 py-0.5 rounded"
+									style={{ backgroundColor: theme.colors.bgActivity }}
+								>
+									say
+								</code>{' '}
+								(macOS),{' '}
+								<code
+									className="px-1 py-0.5 rounded"
+									style={{ backgroundColor: theme.colors.bgActivity }}
+								>
+									espeak
+								</code>{' '}
+								(Linux),{' '}
+								<code
+									className="px-1 py-0.5 rounded"
+									style={{ backgroundColor: theme.colors.bgActivity }}
+								>
+									festival --tts
+								</code>
+								. You can also use non-TTS commands or combine them, e.g.,{' '}
+								<code
+									className="px-1 py-0.5 rounded"
+									style={{ backgroundColor: theme.colors.bgActivity }}
+								>
+									tee ~/log.txt | say
+								</code>{' '}
+								to log and speak simultaneously.
+							</p>
+						</div>
 					</div>
-					{/* Error message display */}
-					{testError && (
-						<p
-							className="text-xs mt-2 px-2 py-1 rounded"
-							style={{
-								color: theme.colors.error,
-								backgroundColor: theme.colors.error + '10',
-							}}
-						>
-							{testError}
-						</p>
-					)}
-					<p className="text-xs opacity-50 mt-2" style={{ color: theme.colors.textDim }}>
-						Command that accepts text via stdin. Chain multiple commands using pipes (e.g.,{' '}
-						<code
-							className="px-1 py-0.5 rounded"
-							style={{ backgroundColor: theme.colors.bgActivity }}
-						>
-							cmd1 | cmd2
-						</code>
-						) to mix and match tools. Default TTS examples:{' '}
-						<code
-							className="px-1 py-0.5 rounded"
-							style={{ backgroundColor: theme.colors.bgActivity }}
-						>
-							say
-						</code>{' '}
-						(macOS),{' '}
-						<code
-							className="px-1 py-0.5 rounded"
-							style={{ backgroundColor: theme.colors.bgActivity }}
-						>
-							espeak
-						</code>{' '}
-						(Linux),{' '}
-						<code
-							className="px-1 py-0.5 rounded"
-							style={{ backgroundColor: theme.colors.bgActivity }}
-						>
-							festival --tts
-						</code>
-						. You can also use non-TTS commands or combine them, e.g.,{' '}
-						<code
-							className="px-1 py-0.5 rounded"
-							style={{ backgroundColor: theme.colors.bgActivity }}
-						>
-							tee ~/log.txt | say
-						</code>{' '}
-						to log and speak simultaneously.
-					</p>
-				</div>
-			</div>
 
-			{/* Idle Notification */}
-			<div data-setting-id="notifications-idle">
-				<SettingCheckbox
-					icon={Coffee}
-					sectionLabel="Idle Notification"
-					title="Enable Idle Notification"
-					description="Execute a custom command when all agents and Auto Runs finish and Maestro becomes idle"
-					checked={idleNotificationEnabled}
-					onChange={setIdleNotificationEnabled}
-					theme={theme}
-				/>
-
-				{/* Command Configuration */}
-				<div className="mt-3">
-					<label className="block text-xs font-medium opacity-70 mb-1">Command</label>
-					<div className="flex gap-2">
-						<input
-							type="text"
-							value={idleNotificationCommand}
-							onChange={(e) => setIdleNotificationCommand(e.target.value)}
-							placeholder="say Maestro is idle"
-							className="flex-1 p-2 rounded border bg-transparent outline-none text-sm font-mono"
-							style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+					{/* Idle Notification */}
+					<div data-setting-id="notifications-idle">
+						<SettingCheckbox
+							icon={Coffee}
+							sectionLabel="Idle Notification"
+							title="Enable Idle Notification"
+							description="Execute a custom command when all agents and Auto Runs finish and Maestro becomes idle"
+							checked={idleNotificationEnabled}
+							onChange={setIdleNotificationEnabled}
+							theme={theme}
 						/>
-						{idleTestNotificationId !== null ? (
-							<button
-								onClick={async () => {
-									try {
-										await window.maestro.notification.stopSpeak(idleTestNotificationId);
-									} catch (err) {
-										console.error('[IdleNotification] Stop error:', err);
-									}
-									setIdleTestNotificationId(null);
-									setIdleTestStatus('idle');
-								}}
-								className="px-3 py-2 rounded text-xs font-medium transition-all flex items-center gap-1"
-								style={{
-									backgroundColor: theme.colors.error,
-									color: '#fff',
-									border: `1px solid ${theme.colors.error}`,
-								}}
-							>
-								<Square className="w-3 h-3" fill="currentColor" />
-								Stop
-							</button>
-						) : (
-							<button
-								onClick={async () => {
-									setIdleTestStatus('running');
-									setIdleTestError(null);
-									try {
-										const result = await window.maestro.notification.speak(
-											'Maestro is idle',
-											idleNotificationCommand
-										);
-										if (result.success && result.notificationId) {
-											setIdleTestNotificationId(result.notificationId);
-										} else {
-											setIdleTestStatus('error');
-											setIdleTestError(result.error || 'Command failed');
-										}
-									} catch (err) {
-										setIdleTestStatus('error');
-										setIdleTestError(String(err));
-									}
-								}}
-								disabled={idleTestStatus === 'running'}
-								className="px-3 py-2 rounded text-xs font-medium transition-all flex items-center gap-1.5 min-w-[70px] justify-center"
-								style={{
-									backgroundColor:
-										idleTestStatus === 'success'
-											? theme.colors.success + '20'
-											: idleTestStatus === 'error'
-												? theme.colors.error + '20'
-												: theme.colors.bgActivity,
-									color:
-										idleTestStatus === 'success'
-											? theme.colors.success
-											: idleTestStatus === 'error'
-												? theme.colors.error
-												: theme.colors.textMain,
-									border: `1px solid ${
-										idleTestStatus === 'success'
-											? theme.colors.success
-											: idleTestStatus === 'error'
-												? theme.colors.error
-												: theme.colors.border
-									}`,
-									opacity: idleTestStatus === 'running' ? 0.7 : 1,
-								}}
-							>
-								{idleTestStatus === 'running' ? (
-									<>
-										<Loader2 className="w-3 h-3 animate-spin" />
-										Running
-									</>
-								) : idleTestStatus === 'success' ? (
-									<>
-										<Check className="w-3 h-3" />
-										Success
-									</>
-								) : idleTestStatus === 'error' ? (
-									<>
-										<AlertCircle className="w-3 h-3" />
-										Failed
-									</>
+
+						{/* Command Configuration */}
+						<div className="mt-3">
+							<label className="block text-xs font-medium opacity-70 mb-1">Command</label>
+							<div className="flex gap-2">
+								<input
+									type="text"
+									value={idleNotificationCommand}
+									onChange={(e) => setIdleNotificationCommand(e.target.value)}
+									placeholder="say Maestro is idle"
+									className="flex-1 p-2 rounded border bg-transparent outline-none text-sm font-mono"
+									style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+								/>
+								{idleTestNotificationId !== null ? (
+									<button
+										onClick={async () => {
+											try {
+												await window.maestro.notification.stopSpeak(idleTestNotificationId);
+											} catch (err) {
+												console.error('[IdleNotification] Stop error:', err);
+											}
+											setIdleTestNotificationId(null);
+											setIdleTestStatus('idle');
+										}}
+										className="px-3 py-2 rounded text-xs font-medium transition-all flex items-center gap-1"
+										style={{
+											backgroundColor: theme.colors.error,
+											color: '#fff',
+											border: `1px solid ${theme.colors.error}`,
+										}}
+									>
+										<Square className="w-3 h-3" fill="currentColor" />
+										Stop
+									</button>
 								) : (
-									'Test'
+									<button
+										onClick={async () => {
+											setIdleTestStatus('running');
+											setIdleTestError(null);
+											try {
+												const result = await window.maestro.notification.speak(
+													'Maestro is idle',
+													idleNotificationCommand
+												);
+												if (result.success && result.notificationId) {
+													setIdleTestNotificationId(result.notificationId);
+												} else {
+													setIdleTestStatus('error');
+													setIdleTestError(result.error || 'Command failed');
+												}
+											} catch (err) {
+												setIdleTestStatus('error');
+												setIdleTestError(String(err));
+											}
+										}}
+										disabled={idleTestStatus === 'running'}
+										className="px-3 py-2 rounded text-xs font-medium transition-all flex items-center gap-1.5 min-w-[70px] justify-center"
+										style={{
+											backgroundColor:
+												idleTestStatus === 'success'
+													? theme.colors.success + '20'
+													: idleTestStatus === 'error'
+														? theme.colors.error + '20'
+														: theme.colors.bgActivity,
+											color:
+												idleTestStatus === 'success'
+													? theme.colors.success
+													: idleTestStatus === 'error'
+														? theme.colors.error
+														: theme.colors.textMain,
+											border: `1px solid ${
+												idleTestStatus === 'success'
+													? theme.colors.success
+													: idleTestStatus === 'error'
+														? theme.colors.error
+														: theme.colors.border
+											}`,
+											opacity: idleTestStatus === 'running' ? 0.7 : 1,
+										}}
+									>
+										{idleTestStatus === 'running' ? (
+											<>
+												<Loader2 className="w-3 h-3 animate-spin" />
+												Running
+											</>
+										) : idleTestStatus === 'success' ? (
+											<>
+												<Check className="w-3 h-3" />
+												Success
+											</>
+										) : idleTestStatus === 'error' ? (
+											<>
+												<AlertCircle className="w-3 h-3" />
+												Failed
+											</>
+										) : (
+											'Test'
+										)}
+									</button>
 								)}
-							</button>
-						)}
+							</div>
+							{idleTestError && (
+								<p
+									className="text-xs mt-2 px-2 py-1 rounded"
+									style={{
+										color: theme.colors.error,
+										backgroundColor: theme.colors.error + '10',
+									}}
+								>
+									{idleTestError}
+								</p>
+							)}
+							<p className="text-xs opacity-50 mt-2" style={{ color: theme.colors.textDim }}>
+								Runs when all agents finish and no Auto Run is active.
+								{maestroCueEnabled && " Cue tasks don't count as activity."} The command receives
+								&quot;Maestro is idle&quot; via stdin.
+							</p>
+						</div>
 					</div>
-					{idleTestError && (
-						<p
-							className="text-xs mt-2 px-2 py-1 rounded"
-							style={{
-								color: theme.colors.error,
-								backgroundColor: theme.colors.error + '10',
-							}}
-						>
-							{idleTestError}
-						</p>
-					)}
-					<p className="text-xs opacity-50 mt-2" style={{ color: theme.colors.textDim }}>
-						Runs when all agents finish and no Auto Run is active.
-						{maestroCueEnabled && " Cue tasks don't count as activity."} The command receives
-						&quot;Maestro is idle&quot; via stdin.
-					</p>
-				</div>
-			</div>
+				</>
+			)}
 
 			{/* Toast Duration */}
 			<div data-setting-id="notifications-toast">

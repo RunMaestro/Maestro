@@ -14,6 +14,7 @@
  * `electron` module so the test doesn't need a real Electron runtime.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { ipcRenderer } from 'electron';
 
 type Handler = (event: unknown, ...args: unknown[]) => unknown;
 
@@ -29,6 +30,7 @@ const { invokeHandlers, sendListeners } = vi.hoisted(() => ({
 }));
 
 vi.mock('electron', () => ({
+	ipcRenderer: { invoke: vi.fn() },
 	ipcMain: {
 		_invokeHandlers: invokeHandlers,
 		listenerCount: (channel: string) => (sendListeners.has(channel) ? 1 : 0),
@@ -60,6 +62,7 @@ import {
 	isRemoteMethodAllowed,
 	isRemoteSettingWritable,
 } from '../../../../main/web-server/handlers/bridgeDenyList';
+import { createWebApi } from '../../../../main/preload/web';
 
 function makeClient(user?: { id: string; username: string; displayName: string }) {
 	return {
@@ -84,6 +87,109 @@ beforeEach(() => {
 });
 
 describe('handleBridgeInvoke', () => {
+	it.each([false, true])('stamps generic bridge spawns as unattended (cli=%s)', async (cli) => {
+		const handler = vi.fn().mockResolvedValue({ success: true });
+		invokeHandlers.set('process:spawn', handler);
+		for (const querySource of ['user', 'auto', undefined]) {
+			const config = { sessionId: 'fixture-ai-tab', prompt: 'Read authorized mail', querySource };
+			await handleBridgeInvoke(
+				{ ...makeClient(), cli },
+				{ type: 'bridge.invoke', requestId: 'spawn', channel: 'process:spawn', args: [config] },
+				vi.fn()
+			);
+			expect(handler).toHaveBeenLastCalledWith(expect.anything(), {
+				...config,
+				querySource: 'auto',
+			});
+			expect(config.querySource).toBe(querySource);
+		}
+	});
+
+	it.each([{ args: [] }, { args: [null] }, { args: [[]] }, { args: [{}, 'user'] }])(
+		'rejects malformed remote spawn arguments %j',
+		async ({ args }) => {
+			const handler = vi.fn();
+			invokeHandlers.set('process:spawn', handler);
+			const send = vi.fn();
+			await handleBridgeInvoke(
+				makeClient(),
+				{ type: 'bridge.invoke', requestId: 'invalid', channel: 'process:spawn', args },
+				send
+			);
+			expect(handler).not.toHaveBeenCalled();
+			expect(send.mock.calls[0][1]).toMatchObject({ ok: false });
+		}
+	);
+
+	it('allows remote conversation close/reopen and prompt context without transferring run ownership', async () => {
+		const tabs = new Set(['keep', 'close']);
+		let ownerClaims = 0;
+		invokeHandlers.set(
+			'web:requestCloseTab',
+			(_event, agentId, tabId) => agentId === 'agent' && tabs.delete(String(tabId))
+		);
+		invokeHandlers.set('web:requestReopenTab', (_event, agentId, tabId) => {
+			if (agentId !== 'agent') return null;
+			tabs.add(String(tabId));
+			return { tabId };
+		});
+		invokeHandlers.set('prompts:getSystemPromptPaths', () => ({
+			success: true,
+			computerHistoryDir: '/host/computer-history',
+		}));
+		invokeHandlers.set('web:takeOrphanedAutoRuns', () => {
+			ownerClaims++;
+			return [];
+		});
+		const client = makeClient();
+		const send = vi.fn();
+		await handleBridgeInvoke(
+			client,
+			{
+				type: 'bridge.invoke',
+				requestId: 1,
+				channel: 'web:requestCloseTab',
+				args: ['agent', 'close'],
+			},
+			send
+		);
+		expect(tabs).toEqual(new Set(['keep']));
+		expect(send.mock.calls.at(-1)?.[1]).toMatchObject({ ok: true, result: true });
+		await handleBridgeInvoke(
+			client,
+			{
+				type: 'bridge.invoke',
+				requestId: 2,
+				channel: 'web:requestReopenTab',
+				args: ['agent', 'close'],
+			},
+			send
+		);
+		expect(tabs).toEqual(new Set(['keep', 'close']));
+		expect(send.mock.calls.at(-1)?.[1]).toMatchObject({ ok: true, result: { tabId: 'close' } });
+		await handleBridgeInvoke(
+			client,
+			{ type: 'bridge.invoke', requestId: 3, channel: 'prompts:getSystemPromptPaths', args: [] },
+			send
+		);
+		expect(send.mock.calls.at(-1)?.[1]).toMatchObject({
+			ok: true,
+			result: { computerHistoryDir: '/host/computer-history' },
+		});
+		await handleBridgeInvoke(
+			client,
+			{
+				type: 'bridge.invoke',
+				requestId: 4,
+				channel: 'web:takeOrphanedAutoRuns',
+				args: ['remote'],
+			},
+			send
+		);
+		expect(send.mock.calls.at(-1)?.[1]).toMatchObject({ ok: false });
+		expect(ownerClaims).toBe(0);
+	});
+
 	it('rejects empty/non-string channel without touching ipcMain', async () => {
 		const send = vi.fn();
 		const client = makeClient();
@@ -240,6 +346,85 @@ describe('handleBridgeInvoke', () => {
 	});
 
 	void lastSend; // helper kept available for future tests; tsc would warn if unused.
+});
+
+describe('browser conversation operations through the bridge', () => {
+	beforeEach(() => {
+		// Web-desktop runs the real preload API with ipcRenderer.invoke carried
+		// as bridge.invoke. Do not mock requestCloseTab itself: that skips the
+		// remote method inventory that distinguishes this path from CLI close_tab.
+		vi.mocked(ipcRenderer.invoke).mockImplementation(async (channel, ...args) => {
+			const send = vi.fn();
+			await handleBridgeInvoke(
+				makeClient(),
+				{ type: 'bridge.invoke', requestId: 1, channel, args },
+				send
+			);
+			const response = send.mock.calls[0][1] as {
+				ok: boolean;
+				result?: unknown;
+				error?: string;
+			};
+			if (!response.ok) throw new Error(response.error);
+			return response.result;
+		});
+	});
+
+	it.each([true, false])('waits for the owner close acknowledgement %s', async (closed) => {
+		let acknowledge!: (result: boolean) => void;
+		const handler = vi.fn(
+			() =>
+				new Promise<boolean>((resolve) => {
+					acknowledge = resolve;
+				})
+		);
+		invokeHandlers.set('web:requestCloseTab', handler);
+
+		let settled = false;
+		const pending = createWebApi()
+			.requestCloseTab('agent-1', 'inactive-tab')
+			.then(
+				(result) => ({ result }),
+				(error: unknown) => ({ error })
+			)
+			.finally(() => {
+				settled = true;
+			});
+		await Promise.resolve();
+		expect(handler).toHaveBeenCalledTimes(1);
+		expect(handler.mock.calls[0].slice(1)).toEqual(['agent-1', 'inactive-tab']);
+		expect(settled).toBe(false);
+		acknowledge(closed);
+		await expect(pending).resolves.toEqual({ result: closed });
+	});
+
+	it.each([{ tabId: 'desktop-restored-tab' }, null])(
+		'forwards the owner reopen result %j',
+		async (reopened) => {
+			const handler = vi.fn().mockResolvedValue(reopened);
+			invokeHandlers.set('web:requestReopenTab', handler);
+
+			await expect(createWebApi().requestReopenTab('agent-1', 'closed-tab')).resolves.toEqual(
+				reopened
+			);
+			expect(handler).toHaveBeenCalledTimes(1);
+			expect(handler.mock.calls[0].slice(1)).toEqual(['agent-1', 'closed-tab']);
+		}
+	);
+
+	it.each([
+		'remote:closeTab',
+		'remote:closeTab:response:private',
+		'remote:reopenTab',
+		'remote:reopenTab:response:private',
+	])('keeps the trusted owner channel %s private', async (channel) => {
+		const handler = vi.fn();
+		invokeHandlers.set(channel, handler);
+		await expect(ipcRenderer.invoke(channel, 'agent-1', 'tab-1')).rejects.toThrow(
+			'not available over the web interface'
+		);
+		expect(handler).not.toHaveBeenCalled();
+	});
 });
 
 describe('broadcastBridgeEvent', () => {
@@ -472,6 +657,21 @@ describe('handleBridgeInvoke denied channels', () => {
 		}
 	});
 
+	it('lets a browser record and read its User Journey', async () => {
+		for (const channel of ['journey:append', 'journey:read', 'journey:path']) {
+			const handler = vi.fn(async () => 'ok');
+			invokeHandlers.set(channel, handler);
+			const send = vi.fn();
+			await handleBridgeInvoke(
+				makeClient(),
+				{ type: 'bridge.invoke', requestId: channel, channel, args: ['agent-1'] },
+				send
+			);
+			expect(handler).toHaveBeenCalled();
+			expect((send.mock.calls[0][1] as Record<string, unknown>).ok).toBe(true);
+		}
+	});
+
 	it('refuses windows:setPanelState (a browser has no window of its own to persist)', async () => {
 		const handler = vi.fn();
 		invokeHandlers.set('windows:setPanelState', handler);
@@ -658,9 +858,25 @@ describe('handleBridgeInvoke desktop-only channels', () => {
 });
 
 describe('notification history over the bridge', () => {
-	it('acknowledges the startup migration through the shared history handler', async () => {
-		const change = { action: 'migrate', records: [] };
-		const snapshot = { success: true, records: [], revision: 1 };
+	it.each([
+		{ action: 'migrate', records: [] },
+		{ action: 'read', ids: ['host-notification'] },
+	])('returns the host history snapshot for a $action change', async (change) => {
+		const snapshot = {
+			success: true,
+			records: [
+				{
+					id: 'host-notification',
+					title: 'Completed',
+					message: 'Done',
+					timestamp: 1,
+					read: change.action === 'read',
+					color: 'green',
+					type: 'success',
+				},
+			],
+			revision: 1,
+		};
 		const handler = vi.fn(async () => snapshot);
 		invokeHandlers.set('notification:changeHistory', handler);
 		const send = vi.fn();
@@ -680,7 +896,7 @@ describe('notification history over the bridge', () => {
 		expect(send.mock.calls[0][1]).toMatchObject({ requestId: 22, ok: true, result: snapshot });
 	});
 
-	it('fans committed history snapshots out without exposing native notification actions', () => {
+	it('fans committed history snapshots out to browsers', () => {
 		const broadcastToAll = vi.fn();
 		installWebContentsBridgeHook({
 			broadcastToAll,
@@ -693,12 +909,16 @@ describe('notification history over the bridge', () => {
 				channel: 'notification:historyChanged',
 				args: [snapshot],
 			});
-			expect(isRemoteMethodAllowed('notification:speak')).toBe(false);
-			expect(isRemoteMethodAllowed('notification:navigateToSource')).toBe(false);
-			expect(isRemoteEventAllowed('notification:activateAction')).toBe(false);
 		} finally {
 			uninstallWebContentsBridgeHook();
 		}
+	});
+
+	it('keeps host notification delivery and trusted renderer activation private', () => {
+		for (const operation of ['show', 'speak', 'stopSpeak', 'ready', 'navigateToSource']) {
+			expect(isRemoteMethodAllowed(`notification:${operation}`)).toBe(false);
+		}
+		expect(isRemoteEventAllowed('notification:activateAction')).toBe(false);
 	});
 });
 

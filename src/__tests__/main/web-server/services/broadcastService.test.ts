@@ -29,6 +29,7 @@ import {
 import type { Theme } from '../../../../shared/theme-types';
 
 import { createMockTheme } from '../../../helpers/mockTheme';
+import { WEB_CLIENT_MAX_BUFFERED_BYTES } from '../../../../main/web-server/services/socket-send';
 
 // Mock the logger
 vi.mock('../../../../main/utils/logger', () => ({
@@ -57,6 +58,10 @@ function createMockClient(
 		socket: {
 			readyState: options?.readyState ?? WebSocket.OPEN,
 			send: vi.fn(),
+			bufferedAmount: 0,
+			close: vi.fn(),
+			terminate: vi.fn(),
+			once: vi.fn(),
 		} as unknown as WebSocket,
 	};
 }
@@ -102,6 +107,53 @@ describe('BroadcastService', () => {
 		service = new BroadcastService();
 		clients = new Map();
 		service.setGetWebClientsCallback(() => clients);
+	});
+
+	it('disconnects only a backlogged peer, preserves replay, and keeps live output flowing', () => {
+		vi.useFakeTimers();
+		try {
+			const slow = createMockClient('slow');
+			const healthy = createMockClient('healthy');
+			Object.defineProperty(slow.socket, 'bufferedAmount', {
+				value: WEB_CLIENT_MAX_BUFFERED_BYTES,
+			});
+			clients.set(slow.id, slow);
+			clients.set(healthy.id, healthy);
+			service.broadcastToAll({ type: 'session_output', data: 'first' });
+			service.broadcastToAll({ type: 'session_output', data: 'second' });
+			expect(slow.socket.send).not.toHaveBeenCalled();
+			expect(slow.socket.close).toHaveBeenCalledWith(1013, expect.any(String));
+			expect(
+				vi.mocked(healthy.socket.send).mock.calls.map(([data]) => JSON.parse(String(data)).data)
+			).toEqual(['first', 'second']);
+			expect(
+				service.resumeBridgeClient(service.bridgeEpoch, 0)?.map((data) => JSON.parse(data).data)
+			).toEqual(['first', 'second']);
+			vi.advanceTimersByTime(1000);
+			expect(slow.socket.terminate).toHaveBeenCalledTimes(1);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('isolates a synchronous transport failure from healthy subscribers', () => {
+		vi.useFakeTimers();
+		try {
+			const broken = createMockClient('broken');
+			const healthy = createMockClient('healthy');
+			vi.mocked(broken.socket.send).mockImplementation(() => {
+				throw new Error('Socket failed');
+			});
+			clients.set(broken.id, broken);
+			clients.set(healthy.id, healthy);
+			service.broadcastToAll({ type: 'session_output', data: 'still running' });
+			expect(JSON.parse(String(vi.mocked(healthy.socket.send).mock.calls[0][0])).data).toBe(
+				'still running'
+			);
+		} finally {
+			vi.clearAllTimers();
+			vi.useRealTimers();
+		}
 	});
 
 	describe('Core Broadcasting', () => {

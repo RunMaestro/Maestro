@@ -29,6 +29,7 @@ import { renderHook, act } from '@testing-library/react';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { EventEmitter } from 'node:events';
 
 const mocks = vi.hoisted(() => ({
 	isWindows: vi.fn(() => false),
@@ -114,6 +115,7 @@ import type { AITab, BatchRunState, Session } from '../../../renderer/types';
 import { assembleTurn } from '../../../shared/maestro-lib/turns/assemble';
 import { loadTurnContext } from '../../../shared/maestro-lib/turns/context';
 import { historyFilePath } from '../../../shared/maestro-lib/store/read-history';
+import { journeyFilePath } from '../../../shared/maestro-lib/store/read-journey';
 import { computerHistoryDir } from '../../../shared/computer-history/paths';
 import { prepareMaestroSystemPrompt } from '../../../renderer/utils/spawnHelpers';
 import { createPromptLoader } from '../../../shared/maestro-lib/prompts/load';
@@ -333,23 +335,29 @@ describe('assembleTurn parity with the desktop', () => {
 
 	/** Run the desktop's main half on that config and return what the process manager was handed. */
 	async function runMain(fixture: Fixture, config: SpawnProcessConfig) {
-		const processManager = {
+		const processManager = Object.assign(new EventEmitter(), {
 			spawn: vi.fn((_config: unknown) => ({ success: true, pid: 4242 })),
 			get: vi.fn(),
 			// The synopsis-writer gate scans running processes before every spawn.
 			getAll: vi.fn(() => []),
-		};
-		const configs = fixture.providerConfig ? { [fixture.toolType]: fixture.providerConfig } : {};
-		await handleProcessSpawn(config, {
-			getProcessManager: () => processManager as never,
-			getAgentDetector: () => ({ getAgent: async () => detectedAgent(fixture.toolType) }) as never,
-			agentConfigsStore: {
-				get: (_key: string, fallback: unknown) => (_key === 'configs' ? configs : fallback),
-			} as never,
-			settingsStore: { get: (_key: string, fallback: unknown) => fallback } as never,
-			getMainWindow: () => null,
-			sessionsStore: { get: (_key: string, fallback: unknown) => fallback } as never,
 		});
+		const configs = fixture.providerConfig ? { [fixture.toolType]: fixture.providerConfig } : {};
+		try {
+			await handleProcessSpawn(config, {
+				getProcessManager: () => processManager as never,
+				getAgentDetector: () =>
+					({ getAgent: async () => detectedAgent(fixture.toolType) }) as never,
+				agentConfigsStore: {
+					get: (_key: string, fallback: unknown) => (_key === 'configs' ? configs : fallback),
+				} as never,
+				settingsStore: { get: (_key: string, fallback: unknown) => fallback } as never,
+				getMainWindow: () => null,
+				sessionsStore: { get: (_key: string, fallback: unknown) => fallback } as never,
+			});
+		} finally {
+			// Model process close so the shared provider writer is released between fixtures.
+			processManager.emit('exit', config.sessionId, 0);
+		}
 		expect(processManager.spawn).toHaveBeenCalledTimes(1);
 		return processManager.spawn.mock.calls[0][0] as unknown as {
 			args: string[];
@@ -536,6 +544,10 @@ describe('the system prompt: library reads against prepareMaestroSystemPrompt', 
 					})),
 				},
 				history: { getFilePath: vi.fn().mockResolvedValue(historyFile) },
+				journey: {
+					...win.maestro?.journey,
+					getPath: vi.fn(async () => journeyFilePath(tmp, session.id)),
+				},
 				maestroRun: {
 					...win.maestro?.maestroRun,
 					readyPath: vi.fn(async () => (fixture.maestroRunReady ? RUN_BINARY : null)),

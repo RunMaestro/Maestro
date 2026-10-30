@@ -105,7 +105,8 @@ export function registerCommandCallbacks(
 			force?: boolean,
 			images?: string[],
 			background?: boolean,
-			mentionRouting?: MentionRouting
+			mentionRouting?: MentionRouting,
+			requireDeliveryReceipt?: boolean
 		) => {
 			const targetWindow = resolveSessionWindow(sessionId);
 			if (!targetWindow) {
@@ -159,6 +160,11 @@ export function registerCommandCallbacks(
 						: `[Web → Renderer] Renderer rejected command for session ${sessionId}: ${receiptReasonCode(receipt.reason)}`,
 					'WebServer'
 				);
+			}
+			// A missing/malformed receipt says nothing about delivery. Scoped
+			// callers preserve the durable intent when this throws.
+			if (requireDeliveryReceipt && (receipt.timedOut || receipt.reason === 'malformed-receipt')) {
+				throw new Error('Renderer delivery outcome unknown');
 			}
 			return receipt.accepted;
 		}

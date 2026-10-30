@@ -13,6 +13,7 @@ import { useModalStore } from '../../../renderer/stores/modalStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import { notifyToast } from '../../../renderer/stores/notificationStore';
 import { notifyCenterFlash } from '../../../renderer/stores/centerFlashStore';
+import { recordJourney } from '../../../renderer/services/userJourney';
 import { createMockSession } from '../../helpers/mockSession';
 import type { Session } from '../../../renderer/types';
 
@@ -26,6 +27,10 @@ vi.mock('../../../renderer/stores/centerFlashStore', () => ({
 
 vi.mock('../../../renderer/utils/sentry', () => ({
 	captureException: vi.fn(),
+}));
+
+vi.mock('../../../renderer/services/userJourney', () => ({
+	recordJourney: vi.fn(),
 }));
 
 const SESSION_ID = 'agent-1';
@@ -112,6 +117,10 @@ describe('requestFileDeletion', () => {
 		expect(session.activeFileTabId).toBeNull();
 		expect(refreshed).toEqual([SESSION_ID]);
 		expect(notifyCenterFlash).toHaveBeenCalled();
+		expect(recordJourney).toHaveBeenCalledWith(SESSION_ID, {
+			kind: 'file.delete',
+			target: FILE_PATH,
+		});
 	});
 
 	it('keeps the tab open and reports the failure when the delete fails', async () => {
@@ -126,6 +135,7 @@ describe('requestFileDeletion', () => {
 			expect.objectContaining({ color: 'red', title: 'Delete failed' })
 		);
 		expect(notifyCenterFlash).not.toHaveBeenCalled();
+		expect(recordJourney).not.toHaveBeenCalled();
 	});
 
 	it('does nothing without a session to act on', () => {

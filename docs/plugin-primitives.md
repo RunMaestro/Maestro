@@ -197,3 +197,9 @@ Identity verification reuses its freshly verified file map for the authorization
 it never reuses a previous call or a TTL/watch cache. Whole-tree manager checks remain
 synchronous at authority boundaries, so large plugin trees still have a main-thread
 cost. This change does not claim a general performance bound or remove fresh checks.
+
+The raw primitives above continue to make no protocol/read-only claim. Separately,
+[Host-executed Relay mail reads](relay-host-contract.md#host-executed-relay-mail-reads-1291)
+compose them into six fixed, natively authenticated reads. That Host executor
+interprets the existing confirmed Relay policy and emits/project reads itself;
+it never delegates its privileged execution to plugin code.

@@ -14,6 +14,7 @@ import {
 	groupChatEmitters,
 	isExpectedGroomingFailure,
 	resolveParticipantSshRemoteConfig,
+	resolveParticipantWorkspaceTrust,
 } from '../../../../main/ipc/handlers/groupChat';
 import {
 	resetGroupChatQueueForTests,
@@ -1633,5 +1634,29 @@ describe('resolveParticipantSshRemoteConfig', () => {
 		});
 
 		expect(resolveParticipantSshRemoteConfig('Backend')).toBeUndefined();
+	});
+});
+
+describe('resolveParticipantWorkspaceTrust', () => {
+	// The reset summary can be the first TUI spawn in the participant's folder,
+	// where claude's trust prompt defaults to "No, exit" (#1872).
+	beforeEach(() => {
+		mockStoredSessions.length = 0;
+	});
+
+	it("accepts trust in the source agent's own directory", () => {
+		mockStoredSessions.push({ id: 's1', name: 'Backend', cwd: '/projects/api' });
+
+		expect(resolveParticipantWorkspaceTrust('Backend', '/projects/api')).toBe(true);
+	});
+
+	it('refuses trust in any other directory', () => {
+		mockStoredSessions.push({ id: 's1', name: 'Backend', cwd: '/projects/api' });
+
+		expect(resolveParticipantWorkspaceTrust('Backend', '/Users/me')).toBe(false);
+	});
+
+	it('refuses trust when the source agent is gone', () => {
+		expect(resolveParticipantWorkspaceTrust('Backend', '/projects/api')).toBe(false);
 	});
 });

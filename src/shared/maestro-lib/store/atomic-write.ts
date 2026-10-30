@@ -16,10 +16,12 @@
 import * as fs from 'fs/promises';
 
 import { assertSerializedJsonIsSafe } from '../../jsonUtils';
+import { createKeyedWriteQueue } from '../../keyedWriteQueue';
 
 /** Rename retries on a transient Windows lock: 3 retries at 100, 200, 400 ms. */
 const RENAME_MAX_RETRIES = 3;
 const RENAME_BASE_DELAY_MS = 100;
+const renames = createKeyedWriteQueue();
 
 let tempSequence = 0;
 
@@ -82,7 +84,7 @@ export async function atomicWriteFile(
 		);
 		for (let attempt = 0; attempt <= RENAME_MAX_RETRIES; attempt++) {
 			try {
-				await fs.rename(tmp, filePath);
+				await renames.enqueue(filePath, () => fs.rename(tmp, filePath));
 				return;
 			} catch (err) {
 				const code = (err as NodeJS.ErrnoException).code;

@@ -13,8 +13,15 @@
  *   2. Otherwise the platform default plus the app name, and the app name is
  *      NOT constant: Electron uses `package.json` `name` ("maestro") when
  *      running unpackaged and the bundle's `productName` ("Maestro") once
- *      packaged. Both spellings exist in the wild, which is why the fallbacks
- *      scattered around this repo disagree with each other.
+ *      packaged. Linux is the exception: a packaged Linux app writes the
+ *      lowercase name too (`productName` only sits under `build`, #1813), so
+ *      there the guess is lowercase either way. Both spellings exist in the
+ *      wild, which is why the fallbacks scattered around this repo disagreed
+ *      with each other. The guess is checked against the disk:
+ *        - when both spellings exist (only possible on a case-sensitive
+ *          filesystem), the one holding the app's state wins; see
+ *          `APP_STATE_MARKERS`. When both or neither hold it, the guess stands.
+ *        - when only the other spelling exists, it wins.
  *   3. Development adds one more hop: the app redirects to a sibling
  *      `maestro-dev` directory unless `USE_PROD_DATA` is set.
  *
@@ -32,6 +39,17 @@ const UNPACKAGED_APP_NAME = 'maestro';
 const PACKAGED_APP_NAME = 'Maestro';
 /** Sibling directory the app redirects to in development. */
 const DEV_APP_NAME = 'maestro-dev';
+
+/**
+ * Files only the desktop app writes into its data directory, all on its first
+ * launch, which is what tells the real directory from an empty twin. The CLI
+ * and the headless Cue runner never write them (they DO write
+ * `maestro-settings.json`, `maestro-agent-configs.json` and `cue.db`, so
+ * those prove nothing). The sessions store moves out with a custom Storage
+ * Location; the window state never does. `cli-server.json` is no use: it only
+ * exists while the app runs, and it is always written to the lowercase name.
+ */
+const APP_STATE_MARKERS = ['maestro-sessions.json', 'maestro-window-state.json'];
 
 export interface UserDataDirOptions {
 	env?: NodeJS.ProcessEnv;
@@ -85,8 +103,8 @@ function probeIsPackaged(): boolean {
  * this is for the ones that cannot.
  *
  * A process with no Electron cannot tell a dev checkout's `maestro` from an
- * installed `Maestro`, so it assumes the installed spelling. A standalone
- * runner must therefore check the directory it got (see
+ * installed `Maestro` (macOS, Windows), so it assumes the installed spelling.
+ * A standalone runner must therefore check the directory it got (see
  * `assertUserDataDirExists`) rather than open whatever database happens to be
  * at the computed path.
  */
@@ -119,9 +137,42 @@ function decideUserDataDir(options: UserDataDirOptions): { dir: string; rule: Us
 	if (!isPackaged && isDevelopment && !env.USE_PROD_DATA) {
 		return { dir: path.join(root, DEV_APP_NAME), rule: 'development redirect' };
 	}
-	return isPackaged
-		? { dir: path.join(root, PACKAGED_APP_NAME), rule: 'packaged default' }
-		: { dir: path.join(root, UNPACKAGED_APP_NAME), rule: 'unpackaged default' };
+	const rule: UserDataDirRule = isPackaged ? 'packaged default' : 'unpackaged default';
+	// Guessing lowercase on Linux also keeps a CLI write made before the app's
+	// first launch from creating a second, capitalized directory.
+	const guessCapitalized = isPackaged && platform !== 'linux';
+	const preferred = path.join(root, guessCapitalized ? PACKAGED_APP_NAME : UNPACKAGED_APP_NAME);
+	const other = path.join(root, guessCapitalized ? UNPACKAGED_APP_NAME : PACKAGED_APP_NAME);
+	// The guessed spelling is only a guess. On a case-sensitive filesystem the
+	// wrong one is a different directory, and any CLI write creates it, so mere
+	// existence cannot settle it: prefer the one the app has written. A
+	// case-insensitive volume answers the same for both and keeps the guess.
+	if (holdsAppState(other) && !holdsAppState(preferred)) return { dir: other, rule };
+	if (!isExistingDirectory(preferred) && isExistingDirectory(other)) return { dir: other, rule };
+	return { dir: preferred, rule };
+}
+
+/** Whether `candidate` holds a file only the desktop app writes. */
+function holdsAppState(candidate: string): boolean {
+	return APP_STATE_MARKERS.some((marker) => isExistingFile(path.join(candidate, marker)));
+}
+
+/** A probe, like `isExistingDirectory`: anything unreadable answers no. */
+function isExistingFile(candidate: string): boolean {
+	try {
+		return fs.statSync(candidate).isFile();
+	} catch {
+		return false;
+	}
+}
+
+/** `isDirectory` for a probe: an unreadable candidate is not one to pick. */
+function isExistingDirectory(candidate: string): boolean {
+	try {
+		return isDirectory(candidate);
+	} catch {
+		return false;
+	}
 }
 
 /** The rule that chose the directory `resolveUserDataDir` returns, for diagnostics. */
@@ -171,10 +222,11 @@ export function resolveProductionDataDir(userDataDir: string): string {
  * Refuse to proceed when the resolved directory is not Maestro's.
  *
  * For a process that starts with no app running, an absent directory means the
- * spelling was guessed wrong (a dev checkout writes `maestro`, an install
- * writes `Maestro`), and creating it would open an empty database beside the
- * real one instead of failing. Callers that legitimately create the directory -
- * the app itself, and the CLI's first write - must not call this.
+ * spelling was guessed wrong (a dev checkout and a Linux install write
+ * `maestro`, a macOS or Windows install writes `Maestro`), and creating it
+ * would open an empty database beside the real one instead of failing.
+ * Callers that legitimately create the directory - the app itself, and the
+ * CLI's first write - must not call this.
  *
  * Throws with the other candidates it can see, so the fix (`MAESTRO_USER_DATA`)
  * is obvious from the message.

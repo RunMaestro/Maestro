@@ -215,3 +215,95 @@ describe('PluginSandboxHost.stop onStop hook', () => {
 		expect(handler).not.toHaveBeenCalled();
 	});
 });
+
+describe('agents.send original audio typed RPC failures', () => {
+	it.each([
+		'MediaInvalid',
+		'MediaDenied',
+		'MediaTooLarge',
+		'MediaTimeout',
+		'MediaCancelled',
+		'MediaBusy',
+		'MediaUnavailable',
+		'MediaProcessFailed',
+		'https://cdn.discordapp.com/private?token=secret',
+	])('exposes an allowlisted code only: %s', async (failure) => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-original-rpc-'));
+		try {
+			fs.writeFileSync(path.join(dir, 'entry.js'), '// fixture');
+			const host = new PluginSandboxHost({
+				broker: { authorize: () => ({ allowed: true }) } as unknown as PermissionBroker,
+				handlers: {
+					'agents.send': async () => {
+						throw new Error(failure);
+					},
+				},
+			});
+			host.start('p', dir, 'entry.js');
+			const proc = forkMock.mock.results.at(-1)!.value;
+			const listener = proc.on.mock.calls.findLast(([name]) => name === 'message')![1];
+			postMessage.mockClear();
+			listener({
+				id: 140,
+				method: 'agents.send',
+				params: {
+					agentId: 'a',
+					prompt: 'hello',
+					opts: { originalAttachments: [{ jobId: 'job', audioId: 'audio' }] },
+				},
+			});
+			await vi.waitFor(() =>
+				expect(postMessage).toHaveBeenCalledWith({
+					id: 140,
+					ok: false,
+					error: failure.startsWith('Media') ? failure : 'MediaProcessFailed',
+					errorCode: failure.startsWith('Media') ? failure : 'MediaProcessFailed',
+				})
+			);
+		} finally {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
+
+it('rechecks original-audio response authority at the final RPC publication boundary', async () => {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-original-publish-'));
+	try {
+		fs.writeFileSync(path.join(dir, 'entry.js'), '// fixture');
+		const host = new PluginSandboxHost({
+			broker: { authorize: () => ({ allowed: true }) } as unknown as PermissionBroker,
+			handlers: {
+				'agents.send': async (_id, _params, context) => {
+					context!.setResponseGuard!(() => {
+						throw new Error('MediaDenied');
+					});
+					return { success: true, response: 'must not escape', sessionId: 'late' };
+				},
+			},
+		});
+		host.start('p', dir, 'entry.js');
+		const proc = forkMock.mock.results.at(-1)!.value;
+		const listener = proc.on.mock.calls.findLast(([name]) => name === 'message')![1];
+		postMessage.mockClear();
+		listener({
+			id: 141,
+			method: 'agents.send',
+			params: {
+				agentId: 'a',
+				prompt: 'hello',
+				opts: { originalAttachments: [{ jobId: 'job', audioId: 'audio' }] },
+			},
+		});
+		await vi.waitFor(() =>
+			expect(postMessage).toHaveBeenCalledWith({
+				id: 141,
+				ok: false,
+				error: 'MediaDenied',
+				errorCode: 'MediaDenied',
+			})
+		);
+		expect(JSON.stringify(postMessage.mock.calls)).not.toContain('must not escape');
+	} finally {
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
+});

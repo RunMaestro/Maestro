@@ -13,7 +13,9 @@ export async function openTailnetRelay(
 	endpoint: URL,
 	credential: string,
 	signal: AbortSignal,
-	peerId: string
+	peerId: string,
+	preferredPort?: number,
+	allowPortFallback = true
 ): Promise<{ url: URL; tunnel: { stop(): Promise<void> } }> {
 	const origin = directTailnetOrigin(endpoint.origin);
 	return openPairedRelay(
@@ -27,7 +29,9 @@ export async function openTailnetRelay(
 				throw new Error('The Tailscale node identity changed. Verify and pair again.');
 			return binding;
 		},
-		(next, initial) => next.device === initial.device && next.tailnet === initial.tailnet
+		(next, initial) => next.device === initial.device && next.tailnet === initial.tailnet,
+		preferredPort,
+		allowPortFallback
 	);
 }
 
@@ -38,7 +42,9 @@ export async function openTailnetRelay(
 export async function openLanRelay(
 	endpoint: URL,
 	credential: string,
-	signal: AbortSignal
+	signal: AbortSignal,
+	preferredPort?: number,
+	allowPortFallback = true
 ): Promise<{ url: URL; tunnel: { stop(): Promise<void> } }> {
 	const origin = lanOrigin(endpoint.origin);
 	return openPairedRelay(
@@ -47,7 +53,9 @@ export async function openLanRelay(
 		signal,
 		origin,
 		() => lanDestination(origin, signal),
-		() => true
+		() => true,
+		preferredPort,
+		allowPortFallback
 	);
 }
 
@@ -61,7 +69,9 @@ async function openPairedRelay<T extends { hostname: string; port: number; local
 	signal: AbortSignal,
 	origin: string,
 	readDestination: () => Promise<T>,
-	sameIdentity: (next: T, initial: T) => boolean
+	sameIdentity: (next: T, initial: T) => boolean,
+	preferredPort?: number,
+	allowPortFallback = true
 ): Promise<{ url: URL; tunnel: { stop(): Promise<void> } }> {
 	if (
 		endpoint.pathname !== CONNECT_PATH ||
@@ -242,13 +252,25 @@ async function openPairedRelay<T extends { hostname: string; port: number; local
 	const onAbort = () => {
 		void stop();
 	};
-	await new Promise<void>((resolve, reject) => {
-		server.once('error', reject);
-		server.listen(0, '127.0.0.1', () => {
-			server.removeListener('error', reject);
-			resolve();
+	const listen = (port: number) =>
+		new Promise<void>((resolve, reject) => {
+			server.once('error', reject);
+			server.listen(port, '127.0.0.1', () => {
+				server.removeListener('error', reject);
+				resolve();
+			});
 		});
-	});
+	try {
+		await listen(preferredPort ?? 0);
+	} catch (error) {
+		if (
+			!allowPortFallback ||
+			!preferredPort ||
+			(error as NodeJS.ErrnoException).code !== 'EADDRINUSE'
+		)
+			throw error;
+		await listen(0);
+	}
 	const address = server.address();
 	if (!address || typeof address === 'string') {
 		await stop();

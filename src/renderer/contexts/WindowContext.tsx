@@ -38,7 +38,7 @@ import {
 } from 'react';
 import { formatWindowTitle, type WindowInfo } from '../../shared/window-types';
 import type { WindowCommandResult } from '../../shared/windowCommands';
-import { useSessionStore } from '../stores/sessionStore';
+import { selectNeedsInputCount, useSessionStore } from '../stores/sessionStore';
 import { notifyToast } from '../stores/notificationStore';
 import { selectGroupsPlusEnabled, useSettingsStore } from '../stores/settingsStore';
 import { collectGroupAgentIds } from '../utils/windowTargets';
@@ -236,6 +236,12 @@ export function WindowProvider({ children }: { children: ReactNode }) {
 	// This makes the web build's permissiveness explicit by design rather than
 	// an accident of `windows:getState` failing over the bridge.
 	const windowScoped = useMemo(() => !isWebDesktop(), []);
+	// Session.state is the agent-level input-request signal. AI tabs only track
+	// idle/busy; unread output and idle conversations do not imply a request.
+	// Select a number so transcript updates do not re-render this root provider.
+	const waitingInputCount = useSessionStore((state) =>
+		windowScoped ? 0 : selectNeedsInputCount(state)
+	);
 	// isMainWindow and the initial windowId are known synchronously from the URL,
 	// so the very first render already reflects the correct window identity.
 	const paramWindowId = useMemo(() => readWindowIdParam(), []);
@@ -389,16 +395,21 @@ export function WindowProvider({ children }: { children: ReactNode }) {
 		[windows, windowId]
 	);
 
-	// Reflect a secondary window's name (or number, "Maestro [2]") in its OS title
+	// Browser clients show the number of agents awaiting input across all windows.
+	// Reflect a secondary native window's name (or number, "Maestro [2]") in its OS title
 	// so users can tell windows apart in Cmd+Tab / Mission Control. A custom name
 	// wins over the number badge. Only secondary windows get a badge; the primary
 	// keeps its descriptive HTML title untouched. Re-runs whenever a hydrate shifts
 	// this window's number or its name changes.
 	useEffect(() => {
 		if (typeof document === 'undefined') return;
+		if (!windowScoped) {
+			document.title = waitingInputCount > 0 ? `(${waitingInputCount}) Maestro` : 'Maestro';
+			return;
+		}
 		if (isMainWindow || windowNumber === null) return;
 		document.title = ownName && ownName.length > 0 ? ownName : formatWindowTitle(windowNumber);
-	}, [isMainWindow, windowNumber, ownName]);
+	}, [windowScoped, waitingInputCount, isMainWindow, windowNumber, ownName]);
 
 	const ownsSession = useCallback(
 		(sessionId: string): boolean => {

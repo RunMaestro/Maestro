@@ -643,7 +643,9 @@ export const AIOverviewTab = forwardRef<TabFocusHandle, AIOverviewTabProps>(func
 					ref={contentRef}
 					tabIndex={-1}
 					onKeyDown={handleContentKeyDown}
-					className="flex-1 overflow-y-auto p-6 scrollbar-thin outline-none"
+					// `pb-24` lets the last lines scroll clear of the floating TOC
+					// button pinned bottom-right, matching the file preview.
+					className="flex-1 overflow-y-auto px-6 pt-6 pb-24 scrollbar-thin outline-none"
 				>
 					{/* Font-scale override - applies to both Plain and Rich narratives. */}
 					<style>{proseScaleRule}</style>

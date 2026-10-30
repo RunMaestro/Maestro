@@ -4,6 +4,7 @@ import { promisify } from 'util';
 import net from 'net';
 import { buildSshConnectionArgs, describeSshConnectionError } from '../../shared/sshConnection';
 import type { SshRemoteConfig } from '../../shared/types';
+import { HostConnectionError } from './handshake';
 
 export function tunnelArgs(config: SshRemoteConfig, endpoint: URL, localPort: number): string[] {
 	if (!Number.isInteger(localPort) || localPort < 1 || localPort > 65535)
@@ -76,11 +77,12 @@ export async function openTunnel(
 	config: SshRemoteConfig,
 	endpoint: URL,
 	signal: AbortSignal,
-	onExit: (message: string) => void,
-	preferredPort?: number
+	onExit: (error: HostConnectionError) => void,
+	preferredPort?: number,
+	allowPortFallback = true
 ): Promise<{ tunnel: OwnedTunnel; url: URL }> {
 	const port = await availablePort(preferredPort).catch((error: NodeJS.ErrnoException) => {
-		if (preferredPort && error.code === 'EADDRINUSE') return availablePort();
+		if (allowPortFallback && preferredPort && error.code === 'EADDRINUSE') return availablePort();
 		throw error;
 	});
 	const args = tunnelArgs(config, endpoint, port);
@@ -109,20 +111,24 @@ export async function openTunnel(
 		shell: false,
 	});
 	const tunnel = new OwnedTunnel(child);
+	let established = false;
 	let stderr = '';
-	let failure: Error | undefined;
+	let failure: HostConnectionError | undefined;
 	child.stderr?.on('data', (data: Buffer) => {
 		stderr = (stderr + data.toString()).slice(-8192);
 	});
 	child.once('error', (error) => {
-		failure = error;
+		failure = new HostConnectionError(error.message, true);
 	});
 	child.once('exit', (code) => {
-		failure = new Error(
+		const message =
 			describeSshConnectionError(stderr) ??
-				`SSH forwarding ended (${code ?? 'signal'}): ${stderr.trim()}`
+			`SSH forwarding ended (${code ?? 'signal'}): ${stderr.trim()}`;
+		failure = new HostConnectionError(
+			message,
+			established || !/host key|authenticity|verification|permission denied/i.test(message)
 		);
-		if (!signal.aborted) onExit(failure.message);
+		if (established && !signal.aborted) onExit(failure);
 	});
 	const stop = () => tunnel.stop();
 	signal.addEventListener('abort', stop, { once: true });
@@ -147,6 +153,7 @@ export async function openTunnel(
 				const url = new URL(endpoint);
 				url.hostname = '127.0.0.1';
 				url.port = String(port);
+				established = true;
 				return { tunnel, url };
 			}
 			const delay = Promise.withResolvers<void>();

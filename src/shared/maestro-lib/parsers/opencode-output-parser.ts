@@ -188,6 +188,7 @@ export class OpenCodeOutputParser implements AgentOutputParser {
 			return {
 				type: 'tool_use',
 				toolName: msg.part?.tool,
+				...(msg.part?.callID ? { toolCallId: msg.part.callID } : {}),
 				toolState: msg.part?.state,
 				sessionId: msg.sessionID,
 				raw: msg,
@@ -209,6 +210,7 @@ export class OpenCodeOutputParser implements AgentOutputParser {
 			const usage = this.extractUsageFromRaw(msg);
 			if (usage) {
 				event.usage = usage;
+				if (msg.part?.id) event.usageEventId = msg.part.id;
 			}
 
 			return event;

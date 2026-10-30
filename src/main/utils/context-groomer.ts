@@ -211,6 +211,12 @@ export interface GroomContextOptions {
 	 * caller with no owning agent (Director's Notes, a utility agent).
 	 */
 	claudeTokenSource?: ClaudeTokenSourceFields;
+	/**
+	 * `projectRoot` is the owning agent's own working directory, so maestro-p may
+	 * accept claude's folder-trust prompt there (#1872). Leave unset for any other
+	 * folder. Ignored on the API path.
+	 */
+	acceptWorkspaceTrust?: boolean;
 	/** Optional callback for progress updates during grooming */
 	onProgress?: (update: GroomProgressUpdate) => void;
 }
@@ -294,6 +300,7 @@ async function groomContextOnce(
 		disableTools = false,
 		agentConfigValues,
 		claudeTokenSource,
+		acceptWorkspaceTrust,
 		onProgress,
 	} = options;
 
@@ -405,6 +412,7 @@ async function groomContextOnce(
 				args: resolvedArgs,
 				customEnvVars: resolvedEnvVars,
 				maxWaitSeconds: Math.ceil(timeoutMs / 1000),
+				acceptWorkspaceTrust,
 			});
 			spawnCommand = applied.command;
 			spawnArgs = applied.args;
@@ -437,6 +445,7 @@ async function groomContextOnce(
 					interactiveModeArgs: agent.interactiveModeArgs,
 					remoteClaudeBin: claudeDecision.claudeRealBinPath,
 					maxWaitSeconds: Math.ceil(timeoutMs / 1000),
+					acceptWorkspaceTrust,
 				})
 			: null;
 

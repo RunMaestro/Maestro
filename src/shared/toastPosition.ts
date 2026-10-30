@@ -57,6 +57,16 @@ export const toastSidePanel = (
 export const TOAST_TOP_OFFSET = 48;
 
 /**
+ * Band (px) at the top of the window the stack never paints over when it
+ * would cover primary navigation: the 40px title bar, the Right Bar's 64px
+ * Files / History / Auto Run tab strip (`h-16`), and an 8px gap. It applies
+ * only to a right-side stack while the Right Bar is open: a bottom stack never
+ * grows above it (overflow scrolls inside the stack), and a top stack starts
+ * below it. Any other stack clears only the title bar (`TOAST_TOP_OFFSET`).
+ */
+export const TOAST_TAB_STRIP_CLEARANCE = 112;
+
+/**
  * Distance (px) a bottom-anchored stack sits above the window bottom when
  * nothing needs to be cleared. Matches the gap between stacked toasts.
  */

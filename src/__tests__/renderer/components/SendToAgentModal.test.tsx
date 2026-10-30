@@ -621,6 +621,36 @@ describe('SendToAgentModal', () => {
 		});
 	});
 
+	describe('source agent as target', () => {
+		it('lists the source agent and sends the context to it', async () => {
+			const sourceSession = createMockSession({ name: 'Emmett' });
+			renderWithLayerStack(
+				<SendToAgentModal
+					theme={testTheme}
+					isOpen={true}
+					sourceSession={sourceSession}
+					sourceTabId="tab-1"
+					allSessions={[sourceSession]}
+					onClose={mockOnClose}
+					onSend={mockOnSend}
+				/>
+			);
+
+			const row = screen.getByText('Emmett').closest('button')!;
+			expect(row).not.toBeDisabled();
+			expect(screen.getByText('This agent')).toBeInTheDocument();
+
+			fireEvent.click(row);
+			fireEvent.click(screen.getByRole('button', { name: /send to session/i }));
+			await waitFor(() => {
+				expect(mockOnSend).toHaveBeenCalledWith('test-session-1', {
+					groomContext: true,
+					targetSessionId: 'test-session-1',
+				});
+			});
+		});
+	});
+
 	describe('busy target', () => {
 		const renderModal = () =>
 			renderWithLayerStack(

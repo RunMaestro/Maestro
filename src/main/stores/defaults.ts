@@ -78,6 +78,7 @@ export function resolveConfiguredShell(store: ShellSettingsReader): string {
 // ============================================================================
 
 export const SETTINGS_DEFAULTS: MaestroSettings = {
+	relayArchiveHours: 24,
 	activeThemeId: 'dracula',
 	shortcuts: {},
 	fontSize: 14,
@@ -130,6 +131,7 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	concertoStageFloating: false,
 	concertoStagePosition: null,
 	spellCheck: false,
+	userJourneyEnabled: true,
 	usageRefreshIntervals: {},
 	pianolaAutoWatchNewAgents: false,
 	annotatorPenColor: '#9146FF',

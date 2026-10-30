@@ -297,12 +297,47 @@ describe('useWizardHandlers', () => {
 
 	afterEach(() => {
 		cleanup();
+		delete (window as unknown as Record<string, unknown>).__MAESTRO_BRIDGE_STATE__;
 	});
 
 	// ========================================================================
 	// Slash command discovery effect
 	// ========================================================================
 	describe('slash command discovery effect', () => {
+		it('waits for host recovery before discovering commands and resumes without another edit', async () => {
+			const state = window as unknown as Record<string, unknown>;
+			state.__MAESTRO_BRIDGE_STATE__ = 'restoring';
+			const session = createMockSession({ agentCommands: undefined });
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			renderHook(() => useWizardHandlers(createMockDeps()));
+			await act(async () => {});
+			expect(window.maestro.agents.discoverSlashCommands).not.toHaveBeenCalled();
+			expect(window.maestro.claude.getCommands).not.toHaveBeenCalled();
+			await act(async () => {
+				state.__MAESTRO_BRIDGE_STATE__ = 'connected';
+				window.dispatchEvent(
+					new CustomEvent('maestro:bridge-state', { detail: { state: 'connected' } })
+				);
+			});
+			expect(window.maestro.agents.discoverSlashCommands).toHaveBeenCalledOnce();
+			expect(window.maestro.claude.getCommands).toHaveBeenCalledOnce();
+		});
+
+		it('does not turn expected reconnect discovery failures into logger errors', async () => {
+			const session = createMockSession({ agentCommands: undefined });
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			const error = new Error(
+				'Not submitted: reconnecting to the host. Your current work is retained.'
+			);
+			vi.mocked(window.maestro.claude.getCommands).mockRejectedValue(error);
+			vi.mocked(window.maestro.agents.discoverSlashCommands).mockRejectedValue(error);
+			const spy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+			renderHook(() => useWizardHandlers(createMockDeps()));
+			await act(async () => {});
+			expect(spy).not.toHaveBeenCalled();
+			spy.mockRestore();
+		});
+
 		it('refreshes Codex commands when global environment settings change', async () => {
 			const session = createMockSession({ toolType: 'codex' });
 			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });

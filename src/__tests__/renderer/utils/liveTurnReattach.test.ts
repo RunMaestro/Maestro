@@ -129,4 +129,20 @@ describe('applyLiveAiTurns', () => {
 		expect(session.thinkingStartTime).toBe(7777);
 		expect(session.aiTabs[0].thinkingStartTime).toBe(7777);
 	});
+
+	it('preserves an open input request while reattaching several running tabs', () => {
+		const waiting = createMockSession({ ...idleSession(), state: 'waiting_input' });
+		const turns = [
+			{ sessionId: waiting.id, tabId: 'tab-1', pid: 42, startTime: 1000 },
+			{ sessionId: waiting.id, tabId: 'tab-2', pid: 43, startTime: 2000 },
+		];
+		const [reattached] = applyLiveAiTurns([waiting], turns);
+
+		expect(reattached.state).toBe('waiting_input');
+		expect(reattached.aiPid).toBe(42);
+		expect(reattached.aiTabs.map((tab) => tab.state)).toEqual(['busy', 'busy']);
+
+		const [answered] = applyLiveAiTurns([{ ...reattached, state: 'busy' }], turns);
+		expect(answered.state).toBe('busy');
+	});
 });

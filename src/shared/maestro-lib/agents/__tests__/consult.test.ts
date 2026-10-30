@@ -286,6 +286,28 @@ describe('the consult service completion rule', () => {
 		expect(chunks[0].targetAgentSessionId).toBeUndefined();
 	});
 
+	it('reports a host error on exit zero, retains partial text and disarms supervision', async () => {
+		const { dispatch, runner, chunks, service } = harness();
+		await dispatch();
+		runner.session('failed-session');
+		runner.observer?.onEnd({
+			exitCode: 0,
+			error: 'Authentication or MCP blocked',
+			readText: () => ' partial answer ',
+		});
+		expect(chunks).toHaveLength(1);
+		expect(chunks[0]).toMatchObject({
+			done: true,
+			chunk: 'partial answer',
+			error: 'Authentication or MCP blocked',
+		});
+		expect(chunks[0].targetAgentSessionId).toBeUndefined();
+		expect(service.activeCount()).toBe(0);
+		vi.advanceTimersByTime(HARD_MS * 2);
+		expect(chunks).toHaveLength(1);
+		expect(runner.stopped).toEqual([]);
+	});
+
 	it('reports no visible output for an empty exit, clean or not', async () => {
 		const clean = harness();
 		await clean.dispatch();

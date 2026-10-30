@@ -215,6 +215,28 @@ describe('groomContext', () => {
 			expect(args[args.indexOf('--max-wait') + 1]).toBe('60');
 		});
 
+		// AI command mode can be the first TUI spawn in an agent's folder, and
+		// claude's trust prompt there defaults to "No, exit" (#1872).
+		it.each([
+			['accepts', true, '1'],
+			['does not accept', undefined, undefined],
+		])("%s claude's folder trust when the caller opts in: %s", async (_label, opt, expected) => {
+			await groomContext(
+				{
+					projectRoot: '/project',
+					agentType: 'claude-code',
+					prompt: 'summarize',
+					claudeTokenSource: { enableMaestroP: true, maestroPMode: 'interactive', maestroPPath },
+					acceptWorkspaceTrust: opt,
+				},
+				mockPM,
+				createMockAgentDetector(tuiAgent())
+			);
+
+			const env = mockPM._lastSpawnConfig!.customEnvVars as Record<string, string> | undefined;
+			expect(env?.MAESTRO_P_ACCEPT_WORKSPACE_TRUST).toBe(expected);
+		});
+
 		it('stays on claude --print when the agent is set to API', async () => {
 			await groomContext(
 				{

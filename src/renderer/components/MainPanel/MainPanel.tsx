@@ -8,13 +8,19 @@ import { MemoryViewer } from '../MemoryViewer';
 import { TabBar } from '../TabBar';
 import type { BrowserTabViewHandle } from './BrowserTabView';
 import { gitService } from '../../services/git';
+import { jumpToAgent } from '../../services/agentNavigation';
 import { useAgentCapabilities } from '../../hooks';
 import {
 	useAgentModelEffortOptions,
 	resolveModelEffort,
 } from '../../hooks/agent/useAgentModelEffortOptions';
 import { useUIStore } from '../../stores/uiStore';
-import { useSessionStore, selectActiveSession, updateSessionWith } from '../../stores/sessionStore';
+import {
+	selectNeedsInputCount,
+	useSessionStore,
+	selectActiveSession,
+	updateSessionWith,
+} from '../../stores/sessionStore';
 import { useTabStore } from '../../stores/tabStore';
 import { getTabDerivedState } from '../../hooks/tabs/useTabHandlers';
 import {
@@ -212,11 +218,7 @@ export const MainPanel = React.memo(
 		// of agents waiting on the user (badged on the Dashboard tab).
 		const pianolaView = useUIStore((s) => s.pianolaView);
 		const setPianolaView = useUIStore((s) => s.setPianolaView);
-		const pianolaNeedsInputCount = useSessionStore(
-			(s) =>
-				s.sessions.filter((x) => !x.isPianola && !x.parentSessionId && x.state === 'waiting_input')
-					.length
-		);
+		const pianolaNeedsInputCount = useSessionStore(selectNeedsInputCount);
 		// Pianola's manager chrome is Encore-gated, and RENDER has to ask the same
 		// question the navigable lists do. The agent persists in the session store
 		// after the flag is switched off (so re-enabling restores the same chat) and
@@ -1339,7 +1341,13 @@ export const MainPanel = React.memo(
 						    Chat view (and every non-Pianola agent) renders the normal content. */}
 						{showPianolaWorkspace && pianolaView === 'dashboard' ? (
 							<ErrorBoundary>
-								<PianolaDashboard theme={theme} onJumpToAgent={setActiveSessionId} />
+								<PianolaDashboard
+									theme={theme}
+									onJumpToAgent={(sessionId, tabId) => {
+										if (tabId) jumpToAgent(sessionId, { tabId });
+										else setActiveSessionId(sessionId);
+									}}
+								/>
 							</ErrorBoundary>
 						) : (
 							<>

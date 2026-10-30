@@ -149,7 +149,14 @@ export async function resolveClaudeSpawnContext(
 			baseSessionId
 		);
 		if (persistedSession?.id) tokenSourceSessionId = persistedSession.id;
-		acceptWorkspaceTrust = isAgentOwnWorkingDirectory(config.cwd, persistedSession);
+		// The renderer persists agents on a debounce, so a just-created agent's
+		// first turn can spawn before its record lands. Token mode already falls
+		// back to the spawn payload in that window, so trust has to as well, or
+		// the turn resolves to TUI and exits 7 in the folder the user just picked.
+		// The only spawns with no persisted owner are a new agent's own turns.
+		acceptWorkspaceTrust = persistedSession
+			? isAgentOwnWorkingDirectory(config.cwd, persistedSession)
+			: !!config.cwd;
 
 		// Over SSH, warm the remote maestro-p probe BEFORE resolving so the
 		// resolver's TUI->API backstop fires on the very first spawn - the

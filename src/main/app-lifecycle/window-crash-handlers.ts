@@ -37,6 +37,17 @@ async function reportCrashToSentry(
 }
 
 /**
+ * How many times a window may reload its renderer inside
+ * {@link RENDERER_RELOAD_WINDOW_MS} before it stops trying. A renderer that
+ * cannot start at all (`launch-failed`: no usable sandbox, a container without
+ * /dev/shm) dies again the moment it is reloaded, so an uncapped reload spun
+ * forever and sent a fatal Sentry event per attempt - 248 in 23 seconds from
+ * one Linux install (MAESTRO-164/165).
+ */
+export const MAX_RENDERER_RELOADS = 3;
+export const RENDERER_RELOAD_WINDOW_MS = 60_000;
+
+/**
  * Capture renderer crashes, unresponsive windows, load failures, and console
  * errors that the renderer process cannot report itself.
  *
@@ -47,12 +58,48 @@ export function attachWindowCrashHandlers(
 	mainWindow: BrowserWindow,
 	getIsQuitting?: () => boolean
 ): void {
+	// When this window's recent auto-reloads happened, to tell a one-off crash
+	// apart from a renderer that dies every time it is started.
+	let recentReloads: number[] = [];
+	let reportedCrashLoop = false;
+	// One reload at a time: an exit that arrives while a reload is already queued
+	// shares it rather than queueing another and spending a second slot of the
+	// budget on the same death (approach from #1903).
+	let reloadPending = false;
+
 	// Handle renderer process termination (crash, kill, OOM, etc.)
 	mainWindow.webContents.on('render-process-gone', (_event, details) => {
 		logger.error('Renderer process gone', 'Window', {
 			reason: details.reason,
 			exitCode: details.exitCode,
 		});
+
+		const wantsReload = details.reason !== 'clean-exit' && !getIsQuitting?.();
+		const scheduleReload = wantsReload && !reloadPending;
+		if (scheduleReload) {
+			const now = Date.now();
+			recentReloads = recentReloads.filter((at) => now - at < RENDERER_RELOAD_WINDOW_MS);
+			if (recentReloads.length >= MAX_RENDERER_RELOADS) {
+				// Crash loop: another reload would only die the same way. Report the
+				// give-up once instead of one fatal event per attempt.
+				if (!reportedCrashLoop) {
+					reportedCrashLoop = true;
+					logger.error('Renderer keeps exiting; stopped reloading it', 'Window', {
+						reason: details.reason,
+						exitCode: details.exitCode,
+						reloads: recentReloads.length,
+					});
+					reportCrashToSentry(
+						`Renderer crash loop, stopped reloading: ${details.reason}`,
+						'fatal',
+						{ reason: details.reason, exitCode: details.exitCode, reloads: recentReloads.length }
+					);
+				}
+				return;
+			}
+			recentReloads.push(now);
+			reportedCrashLoop = false;
+		}
 
 		// `killed` (signal-terminated) and `clean-exit` are not crashes, so
 		// reporting them as `fatal` Sentry events is pure noise; genuine
@@ -72,12 +119,18 @@ export function attachWindowCrashHandlers(
 		// The main process outlives a SIGTERM aimed at the renderer (a stray
 		// `pkill -f` whose pattern hits Chromium's `--lang=en-US` flag is
 		// enough), and without a reload the window stays black for good.
-		if (details.reason !== 'clean-exit' && !getIsQuitting?.()) {
+		if (scheduleReload) {
 			logger.info('Attempting to reload renderer after it exited', 'Window', {
 				reason: details.reason,
 			});
+			reloadPending = true;
 			setTimeout(() => {
-				if (!mainWindow.isDestroyed() && !getIsQuitting?.()) {
+				reloadPending = false;
+				if (
+					!mainWindow.isDestroyed() &&
+					!mainWindow.webContents.isDestroyed() &&
+					!getIsQuitting?.()
+				) {
 					mainWindow.webContents.reload();
 				}
 			}, 1000);

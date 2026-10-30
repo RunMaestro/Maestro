@@ -72,17 +72,16 @@ describe('ToolbarControls', () => {
 		expect(screen.getByText('~/project/src')).toBeInTheDocument();
 	});
 
-	it('opens prompt composer and triggers file input lookup', () => {
+	it('opens prompt composer and the image file picker', () => {
 		const onOpenPromptComposer = vi.fn();
-		const click = vi.fn();
-		vi.spyOn(document, 'getElementById').mockReturnValue({ click } as any);
-		renderToolbar({ onOpenPromptComposer });
+		const { container } = renderToolbar({ onOpenPromptComposer });
+		const fileInput = container.querySelector('#image-file-input') as HTMLInputElement;
+		const click = vi.spyOn(fileInput, 'click');
 
 		fireEvent.click(screen.getByTitle(/Open Prompt Composer/));
 		fireEvent.click(screen.getByTitle('Attach Image'));
 
 		expect(onOpenPromptComposer).toHaveBeenCalled();
-		expect(document.getElementById).toHaveBeenCalledWith('image-file-input');
 		expect(click).toHaveBeenCalled();
 	});
 
@@ -209,8 +208,7 @@ describe('ToolbarControls', () => {
 		});
 
 		it('renders exactly one image file input', () => {
-			// The attach button reaches it by element id, so a second copy would
-			// make the click resolve to whichever mounted first.
+			// The attach buttons reach it by ref; one input per toolbar.
 			const { container } = renderPhoneToolbar();
 			expect(container.querySelectorAll('#image-file-input')).toHaveLength(1);
 		});

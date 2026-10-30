@@ -760,14 +760,32 @@ describe('claude-usage-sampler', () => {
 			expect(captureMessageMock).toHaveBeenCalledTimes(2);
 		});
 
-		it('forgets the history after a success so a flapping account reports again', async () => {
-			primeFailure(Object.assign(new Error('boom'), { code: 1 }));
-			await sampleUsage(OPTS);
+		it('does not re-report a failure that alternates with another on the same dir', async () => {
+			// Field shape behind the post-fix MAESTRO-Q2 volume: one account flipping
+			// between two exit codes reported on every flip.
+			for (let i = 0; i < 6; i++) {
+				const code = i % 2 === 0 ? 1 : 143;
+				primeFailure(Object.assign(new Error('boom'), { code }));
+				await sampleUsage(OPTS);
+			}
+
+			expect(captureMessageMock).toHaveBeenCalledTimes(2);
+			expect(captureMessageMock.mock.calls.map((c) => (c[2] as { reason: string }).reason)).toEqual(
+				['exit: 1', 'exit: 143']
+			);
+		});
+
+		it('does not let a success between failures reset the re-report interval', async () => {
+			for (let i = 0; i < 3; i++) {
+				primeFailure(Object.assign(new Error('boom'), { code: 1 }));
+				await sampleUsage(OPTS);
+				primeSuccess(wireEnvelope());
+				expect(await sampleUsage(OPTS)).not.toBeNull();
+			}
 			expect(captureMessageMock).toHaveBeenCalledTimes(1);
 
-			primeSuccess(wireEnvelope());
-			expect(await sampleUsage(OPTS)).not.toBeNull();
-
+			// The interval still bounds the silence for a flapping account.
+			vi.setSystemTime(new Date(FROZEN_NOW + FAILURE_REREPORT_INTERVAL_MS));
 			primeFailure(Object.assign(new Error('boom'), { code: 1 }));
 			await sampleUsage(OPTS);
 			expect(captureMessageMock).toHaveBeenCalledTimes(2);

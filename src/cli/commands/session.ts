@@ -13,6 +13,7 @@
 
 import { withMaestroClient } from '../services/maestro-client';
 import { exitIfMaestroNotRunning } from '../services/session-command';
+import { parseCliTimestamp } from '../utils/parse';
 import { formatRelativeTime } from '../../shared/formatters';
 import type { DesktopTabEntry as DesktopSessionEntry } from '../../shared/desktopTabs';
 
@@ -45,32 +46,6 @@ interface SessionShowResult {
 
 function emitErrorJson(error: string, code: string): void {
 	console.log(JSON.stringify({ success: false, error, code }, null, 2));
-}
-
-/**
- * Parse `--since` accepting:
- *   - ISO-8601 timestamps ("2026-04-28T10:00:00Z") - output of a previous
- *     `session show`'s `messages[].timestamp`, the natural cursor source.
- *   - Numeric epoch values (ms or seconds - auto-detected by magnitude).
- * Returns ms epoch for the wire, or null if the input is unparseable so the
- * caller can fail loudly with INVALID_OPTION rather than silently filtering.
- */
-function parseSinceToMs(since: string): number | null {
-	const trimmed = since.trim();
-	if (!trimmed) return null;
-
-	if (/^-?\d+$/.test(trimmed)) {
-		const num = Number(trimmed);
-		if (!Number.isFinite(num)) return null;
-		// Heuristic: timestamps after ~2001 in seconds (1e9) vs ms (1e12). A bare
-		// integer below 1e12 is interpreted as seconds; above as ms. Picks the
-		// right interpretation for both `Date.now()` and `Date.now() / 1000`.
-		return num >= 1e12 ? num : num * 1000;
-	}
-
-	const parsed = Date.parse(trimmed);
-	if (Number.isNaN(parsed)) return null;
-	return parsed;
 }
 
 export async function sessionList(options: SessionListOptions): Promise<void> {
@@ -121,7 +96,7 @@ export async function sessionList(options: SessionListOptions): Promise<void> {
 export async function sessionShow(tabId: string, options: SessionShowOptions): Promise<void> {
 	let sinceMs: number | undefined;
 	if (options.since !== undefined) {
-		const parsed = parseSinceToMs(options.since);
+		const parsed = parseCliTimestamp(options.since);
 		if (parsed === null) {
 			emitErrorJson(
 				`Invalid --since value: ${options.since} (expected ISO-8601 or epoch number)`,

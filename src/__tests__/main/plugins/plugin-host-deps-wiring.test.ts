@@ -474,9 +474,9 @@ describe('production net:connect wiring (persistent socket sink)', () => {
 });
 
 describe('uninstall authority before optional Cue storage', () => {
-	it.each(['secret', 'receipt'])(
+	it.each(['secret', 'receipt', 'relay'])(
 		'retires other owned resources even when %s deletion fails',
-		(failure) => {
+		async (failure) => {
 			let callback: ts.ArrowFunction | undefined;
 			const visit = (node: ts.Node): void => {
 				if (
@@ -496,6 +496,10 @@ describe('uninstall authority before optional Cue storage', () => {
 			const sessions = vi.fn();
 			const groups = vi.fn();
 			const background = vi.fn();
+			const relayPurge = vi.fn(async () => {
+				await Promise.resolve();
+				if (failure === 'relay') throw new Error('Synthetic unavailable Relay ledger');
+			});
 			const code = ts.transpileModule(`const purge = ${callback!.getText(sf)}`, {
 				compilerOptions: { target: ts.ScriptTarget.ES2024 },
 			}).outputText;
@@ -511,6 +515,8 @@ describe('uninstall authority before optional Cue storage', () => {
 				'groupingRegistry',
 				'backgroundSupervisor',
 				'purgePluginEventReceipts',
+				'RELAY_PLUGIN_ID',
+				'relayConversations',
 				`${code}\nreturn purge;`
 			)(
 				{ uninstall: retired },
@@ -525,13 +531,18 @@ describe('uninstall authority before optional Cue storage', () => {
 				{ teardown: background },
 				() => {
 					if (failure === 'receipt') throw new Error('Synthetic locked Cue database');
-				}
+				},
+				'com.example.owner',
+				{ purge: relayPurge }
 			);
-			expect(() => purge('com.example.owner')).toThrow(
+			await expect(purge('com.example.owner')).rejects.toThrow(
 				failure === 'secret'
 					? 'Synthetic unavailable native keyring'
-					: 'Synthetic locked Cue database'
+					: failure === 'receipt'
+						? 'Synthetic locked Cue database'
+						: 'Synthetic unavailable Relay ledger'
 			);
+			expect(relayPurge).toHaveBeenCalledOnce();
 			for (const operation of [retired, secrets, sessions, groups, background])
 				expect(operation).toHaveBeenCalledWith('com.example.owner');
 		}

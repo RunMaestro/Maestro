@@ -45,6 +45,8 @@ import { isPromptAvailable } from '../../../../shared/promptDefinitions';
 import { useActiveSession } from '../../../hooks/session/useActiveSession';
 import { useSettingsStore } from '../../../stores/settingsStore';
 import { gitService } from '../../../services/git';
+import { loadJourneyFilePath } from '../../../utils/spawnHelpers';
+import { isSessionRemote } from '../../../utils/sessionHelpers';
 import { DualPaneFileEditor, type DualPaneFileEditorItem } from '../../shared/DualPaneFileEditor';
 import { FilterInput } from '../../ui/FilterInput';
 import { SegmentedControl } from '../../ui/SegmentedControl';
@@ -631,6 +633,10 @@ export function MaestroPromptsTab({
 				} catch {
 					// ignore
 				}
+				const journeyFilePath = await loadJourneyFilePath(
+					activeSession.id,
+					isSessionRemote(activeSession)
+				);
 				if (cancelled) return;
 				setPreviewContent(
 					substituteTemplateVariables(content, {
@@ -638,6 +644,7 @@ export function MaestroPromptsTab({
 						gitBranch,
 						groupId: (activeSession as any).groupId,
 						historyFilePath,
+						journeyFilePath,
 						conductorProfile,
 					})
 				);

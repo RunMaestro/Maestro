@@ -40,6 +40,7 @@ export interface SessionStoreState {
 	// Core entities
 	sessions: Session[];
 	groups: Group[];
+	groupPersistenceBaseline: Group[];
 
 	// Active session
 	activeSessionId: string;
@@ -47,6 +48,9 @@ export interface SessionStoreState {
 	// Initialization
 	sessionsLoaded: boolean;
 	initialLoadComplete: boolean;
+
+	// Authoritative recovery retires state-event work from the previous inventory.
+	sessionReconciliationGeneration: number;
 	initialFileTreeReady: boolean;
 
 	// True only once the group registry has been READ back successfully. Group
@@ -195,9 +199,11 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
 	// --- State ---
 	sessions: [],
 	groups: [],
+	groupPersistenceBaseline: [],
 	activeSessionId: '',
 	sessionsLoaded: false,
 	initialLoadComplete: false,
+	sessionReconciliationGeneration: 0,
 	initialFileTreeReady: false,
 	groupsLoaded: false,
 	sessionsReadOk: false,
@@ -441,6 +447,12 @@ export const selectSessionById =
 	(id: string) =>
 	(state: SessionStore): Session | undefined =>
 		state.sessions.find((s) => s.id === id);
+
+/** Logical agents that need a decision, matching the Pianola dashboard badge. */
+export const selectNeedsInputCount = (state: SessionStore): number =>
+	state.sessions.filter(
+		(session) => !session.isPianola && !session.parentSessionId && session.state === 'waiting_input'
+	).length;
 
 export const selectIsAnySessionBusy = (state: SessionStore): boolean =>
 	state.sessions.some((s) => s.state === 'busy');

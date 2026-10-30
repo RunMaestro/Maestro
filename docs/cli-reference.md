@@ -683,6 +683,42 @@ Print conversation history for a desktop tab
 | `--tail <n>`          | Only return the last N messages (applied after --since)              | -       |
 | `--json`              | Output as JSON (for scripting); default is a formatted transcript    | -       |
 
+## `maestro-cli timeline`
+
+Show what happened, oldest first: agent turns, user actions in Maestro, commits
+
+| Option             | Description                                              | Default |
+| ------------------ | -------------------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent ID or name (default: every agent)                  | -       |
+| `--since <time>`   | Start: 30m, 2h, 1d, 1w, ISO-8601, or epoch (default 1d)  | -       |
+| `--until <time>`   | End (default now)                                        | -       |
+| `--sources <list>` | Comma list of sources (default history,journey,git)      | -       |
+| `--tail <n>`       | Only the newest N events (default 30)                    | -       |
+| `--per-source <n>` | Only the newest N events of each source (default 15)     | -       |
+| `--grep <text>`    | Only events whose line matches (regex, case-insensitive) | -       |
+| `--json`           | Output as JSON (for scripting)                           | -       |
+
+## `maestro-cli timeline show <entry>`
+
+Show one agent turn in full (its reply, tab, and timing) by an [entry &lt;id>] handle
+
+| Option             | Description                                    | Default |
+| ------------------ | ---------------------------------------------- | ------- |
+| `-a, --agent <id>` | Agent ID or name (default: search every agent) | -       |
+| `--json`           | Output as JSON (for scripting)                 | -       |
+
+## `maestro-cli journey`
+
+Show what the user did in Maestro: files opened/saved/renamed, pages browsed
+
+| Option                | Description                                                           | Default |
+| --------------------- | --------------------------------------------------------------------- | ------- |
+| `-a, --agent <id>`    | Agent ID or name (default: every agent)                               | -       |
+| `--since <timestamp>` | Only entries at or after this time (ISO-8601 or epoch ms/sec)         | -       |
+| `--tail <n>`          | Only the newest N entries per agent (applied after the other filters) | -       |
+| `--kind <kinds>`      | Comma list of kinds, e.g. file.save,browser.navigate                  | -       |
+| `--json`              | Output as JSON (for scripting)                                        | -       |
+
 ## `maestro-cli group-chat`
 
 Start, message, and inspect group chats in the desktop app

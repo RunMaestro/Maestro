@@ -139,3 +139,35 @@ export function removeGroupAndPromoteChildren(groups: readonly Group[], groupId:
 			group.parentGroupId === groupId ? { ...group, parentGroupId: undefined } : group
 		);
 }
+
+/** Apply only changes made since this writer read the registry. Unseen peers survive. */
+export function mergeGroupPersistenceChanges(
+	current: Group[],
+	incoming: Group[],
+	baseline: Group[]
+): Group[] {
+	const before = new Map(baseline.map((group) => [group.id, group]));
+	const updates = new Map(incoming.map((group) => [group.id, group]));
+	const merged = current.flatMap((group) => {
+		const previous = before.get(group.id);
+		const update = updates.get(group.id);
+		if (!previous) return [group];
+		if (!update) return [];
+		const next = { ...group };
+		for (const key of Object.keys({ ...previous, ...update }) as (keyof Group)[]) {
+			if (key !== 'id' && update[key] !== previous[key]) {
+				Object.assign(next, { [key]: update[key] });
+			}
+		}
+		return [next];
+	});
+	const present = new Set(current.map((group) => group.id));
+	for (const group of incoming) {
+		// A missing observed id was deleted by a peer, not created by this writer.
+		if (!before.has(group.id) && !present.has(group.id)) {
+			merged.push(group);
+			present.add(group.id);
+		}
+	}
+	return normalizeGroupHierarchy(merged);
+}

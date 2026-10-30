@@ -32,7 +32,7 @@ import {
 	observedPlatformFor,
 } from '../../shared/computer-history/exclusions';
 import { GIB } from '../../shared/computer-history/config';
-import { parseDurationInput, parseTimeInput } from '../../shared/computer-history/timeRange';
+import { parseDurationInput, parseTimeInput } from '../../shared/timeInput';
 import {
 	UNTRUSTED_FENCE_BEGIN,
 	UNTRUSTED_FENCE_END,

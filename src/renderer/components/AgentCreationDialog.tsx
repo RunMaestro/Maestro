@@ -560,6 +560,17 @@ export function AgentCreationDialog({
 																[agent.id]: withBlankEnvVarRow(prev[agent.id] ?? {}),
 															}));
 														}}
+														onEnvVarsReplace={(vars) => {
+															setCustomAgentEnvVars((prev) => {
+																const newVars = { ...prev };
+																if (Object.keys(vars).length > 0) {
+																	newVars[agent.id] = vars;
+																} else {
+																	delete newVars[agent.id];
+																}
+																return newVars;
+															});
+														}}
 														onEnvVarsBlur={() => {}}
 														agentConfig={agentConfigs[agent.id] || {}}
 														onConfigChange={(key, value) => {

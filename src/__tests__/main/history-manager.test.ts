@@ -666,6 +666,29 @@ describe('HistoryManager', () => {
 			`${sanitizeSessionId('session-1')}${HISTORY_JSONL_EXT}`
 		);
 
+		it('rechecks brokered write authority after filesystem preflight before appending', async () => {
+			let allowed = true;
+			mockExistsSync.mockImplementation((file) => {
+				if (String(file) === sessionFile) {
+					allowed = false;
+					return true;
+				}
+				return false;
+			});
+			await expect(
+				manager.addEntry(
+					'session-1',
+					'/test/project',
+					createMockEntry({ id: 'denied' }),
+					undefined,
+					() => {
+						if (!allowed) throw new Error('MediaDenied');
+					}
+				)
+			).rejects.toThrow('MediaDenied');
+			expect(mockAppendFileSync).not.toHaveBeenCalled();
+		});
+
 		it('appends a line for a session that has no file yet', async () => {
 			mockExistsSync.mockReturnValue(false);
 			const entry = createMockEntry({ id: 'new-entry' });

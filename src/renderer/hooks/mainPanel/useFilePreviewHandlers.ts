@@ -1,8 +1,10 @@
 import { useMemo, useCallback } from 'react';
 import type { Session, FilePreviewTab } from '../../types';
-import { updateFileTab } from '../../stores/sessionStore';
+import { selectSessionById, updateFileTab, useSessionStore } from '../../stores/sessionStore';
 import { getFileTabFileName } from '../../utils/tabHelpers';
 import { requestFileTreeRefresh } from '../../utils/fileTreeRefresh';
+import { recordJourney } from '../../services/userJourney';
+import { countLineChanges } from '../../../shared/lineChanges';
 
 interface UseFilePreviewHandlersParams {
 	activeSession: Session | null;
@@ -116,6 +118,23 @@ export function useFilePreviewHandlers({
 			}
 
 			await window.maestro.fs.writeFile(savePath, content, filePreviewSshRemoteId);
+
+			// The tab still holds the bytes it loaded or last saved, which is what
+			// this save replaced on disk. Read from the store, not a dep, so this
+			// callback is not rebuilt on every keystroke. Counts only: the journey
+			// never stores content.
+			if (activeSession?.id) {
+				const previousContent =
+					selectSessionById(activeSession.id)(useSessionStore.getState())?.filePreviewTabs.find(
+						(tab) => tab.id === activeFileTabId
+					)?.content ?? '';
+				recordJourney(activeSession.id, {
+					kind: 'file.save',
+					target: savePath,
+					...(activeFileTabId ? { tabId: activeFileTabId } : {}),
+					...countLineChanges(previousContent, content),
+				});
+			}
 
 			// Stamp the tab with the mtime our own write just produced. The tab's
 			// lastModified is what the change poller compares the disk against, so a

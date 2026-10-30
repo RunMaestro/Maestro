@@ -37,7 +37,7 @@ import {
 	DEFAULT_STDERR_TAIL_LIMIT,
 	type StartTurnOptions,
 } from '../../shared/maestro-lib/run/start-turn';
-import { TurnCapture } from '../../shared/maestro-lib/run/turn-capture';
+import { TurnCapture, usageReportingFor } from '../../shared/maestro-lib/run/turn-capture';
 import { replaceUsageStats } from '../../shared/maestro-lib/streaming/usage-totals';
 import type { TurnOutcome } from '../../shared/maestro-lib/streaming/turn-outcome';
 import { resolveCliTurnResult, interruptedResult, spawnFailureResult } from './turn-result';
@@ -56,8 +56,12 @@ import {
 	applyAgentConfigOverrides,
 	buildAdditionalDirArgs,
 } from '../../shared/maestro-lib/launch/agent-args';
-import { superviseAgentProcess } from './agent-process-supervisor';
-import { CODEX_STARTUP_TIMEOUT_MS } from '../../shared/plugins/headless-agent-timeouts';
+import { superviseAgentProcess, assertHeadlessIdleProfile } from './agent-process-supervisor';
+import {
+	CODEX_STARTUP_TIMEOUT_MS,
+	HEADLESS_IDLE_PROFILE,
+	type HeadlessIdleProfile,
+} from '../../shared/plugins/headless-agent-timeouts';
 import {
 	buildMcpInjection,
 	mergeMcpInjectionArgs,
@@ -174,11 +178,13 @@ type SpawnOverrides = Pick<
 	| 'pluginRunProofFile'
 	| 'mcpCliScriptPath'
 	| 'timeoutMs'
+	| 'idle'
 	| 'onProgress'
 	| 'onProcessStarted'
+	| 'requireProcessExit'
 	| 'maestroPMaxWaitSeconds'
 	| 'acceptWorkspaceTrust'
->;
+> & { deadlineAt?: number };
 
 /** Derive an action only from known tool names and narrow public metadata fields. */
 function publicToolSummary(tool: string, input: unknown): string | undefined {
@@ -1146,6 +1152,9 @@ async function spawnClaudeAgent(
 		}
 	};
 
+	if (overrides.signal?.aborted) return interruptedResult();
+	if (overrides.deadlineAt !== undefined && Date.now() >= overrides.deadlineAt)
+		return spawnFailureResult('Agent run stopped: absolute runtime ceiling exceeded');
 	const turn = startTurn(
 		{
 			command: spawnCommand,
@@ -1157,7 +1166,11 @@ async function spawnClaudeAgent(
 		{
 			onStarted: overrides.onProcessStarted,
 			onStdout: () => wakaHeartbeat?.(),
-			onLine: processLine,
+			onLine: (line) => {
+				const event = claudeParser?.parseJsonLine(line);
+				if (event) supervision.observe(event);
+				processLine(line);
+			},
 			onOversizedLine: warnOversizedLineBuffer,
 		},
 		cliTurnOptions(undefined)
@@ -1167,7 +1180,18 @@ async function spawnClaudeAgent(
 		forcedStop = () => resolve(undefined);
 	});
 	const supervision = superviseAgentProcess(turn.child, {
-		timeoutMs: overrides.timeoutMs,
+		timeoutMs:
+			overrides.deadlineAt === undefined
+				? overrides.timeoutMs
+				: Math.max(1, overrides.deadlineAt - Date.now()),
+		idle: overrides.idle,
+		usageReporting: usageReportingFor('claude-code'),
+		onStatus: (text) =>
+			emitAgentProgress(overrides.onProgress, {
+				type: 'activity',
+				text,
+				at: new Date().toISOString(),
+			}),
 		signal: overrides.signal,
 		onStop: (reason) => {
 			stopped = true;
@@ -1176,6 +1200,7 @@ async function spawnClaudeAgent(
 		onForcedStop: forcedStop,
 	});
 	const exit = await Promise.race([turn.done, forced]);
+	if (overrides.requireProcessExit) await supervision.processExited;
 	stopped = true;
 	supervision.dispose();
 	if (stopReason)
@@ -1474,6 +1499,9 @@ async function spawnJsonLineAgent(
 		});
 	};
 
+	if (overrides.signal?.aborted) return interruptedResult();
+	if (overrides.deadlineAt !== undefined && Date.now() >= overrides.deadlineAt)
+		return spawnFailureResult('Agent run stopped: absolute runtime ceiling exceeded');
 	const turn = startTurn(
 		{
 			command: spawnCommand,
@@ -1491,16 +1519,12 @@ async function spawnJsonLineAgent(
 					return;
 				}
 				capture.handleEvent(event);
-				if (
-					toolType === 'codex' &&
-					!event.isRetryNotice &&
-					event.raw &&
-					typeof event.raw === 'object' &&
-					((['text', 'result'].includes(event.type) && Boolean(event.text)) ||
-						event.type === 'tool_use' ||
-						event.type === 'usage')
-				)
-					supervision.modelActivity();
+				supervision.observe(event);
+				// A nonfatal provider notice (Codex item-level `error`) goes to stderr,
+				// never into the answer or the error path.
+				if (event.type === 'warning' && event.text) {
+					console.error(event.text);
+				}
 				if (event.type === 'tool_use') {
 					const tool =
 						typeof event.toolName === 'string' &&
@@ -1572,7 +1596,18 @@ async function spawnJsonLineAgent(
 		forcedStop = () => resolve(undefined);
 	});
 	const supervision = superviseAgentProcess(turn.child, {
-		timeoutMs: overrides.timeoutMs,
+		timeoutMs:
+			overrides.deadlineAt === undefined
+				? overrides.timeoutMs
+				: Math.max(1, overrides.deadlineAt - Date.now()),
+		idle: overrides.idle,
+		usageReporting: usageReportingFor(toolType),
+		onStatus: (text) =>
+			emitAgentProgress(overrides.onProgress, {
+				type: 'activity',
+				text,
+				at: new Date().toISOString(),
+			}),
 		signal: overrides.signal,
 		startupMs: toolType === 'codex' ? CODEX_STARTUP_TIMEOUT_MS : undefined,
 		onStop: (reason) => {
@@ -1582,6 +1617,7 @@ async function spawnJsonLineAgent(
 		onForcedStop: forcedStop,
 	});
 	const exit = await Promise.race([turn.done, forced]);
+	if (overrides.requireProcessExit) await supervision.processExited;
 	stopped = true;
 	supervision.dispose();
 	if (stopReason)
@@ -1635,11 +1671,19 @@ async function spawnJsonLineAgent(
  * the spawner merges agent + session overrides via applyAgentConfigOverrides().
  */
 export interface SpawnAgentOptions {
+	/**
+	 * Host-owned original attachments must outlive the actual child. On an
+	 * unconfirmed stop, retain this call and its caller's resources until exit,
+	 * close or a failed spawn is observed. Generic turns keep their bounded stop.
+	 */
+	requireProcessExit?: boolean;
 	/** Host-only lifecycle callback; no plugin can assert its own busy state. */
 	onProcessStarted?: (pid: number | undefined) => void;
 	pluginRunProofFile?: string;
 	mcpCliScriptPath?: string;
 	timeoutMs?: number;
+	/** Host-owned semantic inactivity policy; no public CLI flag. */
+	idle?: Readonly<HeadlessIdleProfile>;
 	onProgress?: (event: AgentSendProgressEvent) => void;
 	/** Resume an existing agent session */
 	agentSessionId?: string;
@@ -1753,7 +1797,67 @@ export async function spawnAgent(
 	agentSessionId?: string,
 	options?: SpawnAgentOptions
 ): Promise<AgentResult> {
-	const result = await spawnAgentOnce(toolType, cwd, prompt, agentSessionId, options);
+	// A standalone Codex caller gets the same host-owned inactivity/tool
+	// budgets as agents.send. Startup alone cannot catch a later auth/MCP stall.
+	// Preserve an absolute ceiling only when the caller explicitly supplies one.
+	if (toolType === 'codex')
+		options = {
+			...options,
+			idle: options?.idle ?? HEADLESS_IDLE_PROFILE,
+		};
+	assertHeadlessIdleProfile(options?.idle, options?.timeoutMs);
+	// Effort fallback and asynchronous launch planning share one absolute ceiling.
+	const deadlineAt = options?.timeoutMs ? Date.now() + options.timeoutMs : undefined;
+	const runAttempt = async (attemptOptions?: SpawnAgentOptions): Promise<AgentResult> => {
+		const signal = attemptOptions?.signal;
+		if (signal?.aborted) return interruptedResult();
+		const remainingMs = deadlineAt === undefined ? undefined : deadlineAt - Date.now();
+		if (remainingMs !== undefined && remainingMs <= 0)
+			return spawnFailureResult('Agent run stopped: absolute runtime ceiling exceeded');
+		if (remainingMs === undefined && !signal)
+			return spawnAgentOnce(toolType, cwd, prompt, agentSessionId, attemptOptions, deadlineAt);
+
+		// Bound preparation only. Once a child exists its supervisor owns stop and
+		// settlement, so the caller keeps authority until process cleanup finishes.
+		let stopPreparation: () => void = () => {};
+		const stopped = new Promise<AgentResult>((resolve) => {
+			stopPreparation = () =>
+				resolve(
+					signal?.aborted
+						? { ...interruptedResult(), error: 'Agent run cancelled' }
+						: spawnFailureResult('Agent run stopped: absolute runtime ceiling exceeded')
+				);
+		});
+		const timer = remainingMs === undefined ? undefined : setTimeout(stopPreparation, remainingMs);
+		timer?.unref?.();
+		const cleanupPreparation = () => {
+			clearTimeout(timer);
+			signal?.removeEventListener('abort', stopPreparation);
+		};
+		signal?.addEventListener('abort', stopPreparation, { once: true });
+		try {
+			return await Promise.race([
+				spawnAgentOnce(
+					toolType,
+					cwd,
+					prompt,
+					agentSessionId,
+					{
+						...attemptOptions,
+						onProcessStarted: (pid) => {
+							cleanupPreparation();
+							attemptOptions?.onProcessStarted?.(pid);
+						},
+					},
+					deadlineAt
+				),
+				stopped,
+			]);
+		} finally {
+			cleanupPreparation();
+		}
+	};
+	const result = await runAttempt(options);
 	if (result.success || !options?.customEffort) return result;
 
 	const rejection = parseEffortRejection(`${result.error ?? ''}\n${result.response ?? ''}`);
@@ -1763,10 +1867,7 @@ export async function spawnAgent(
 	console.error(
 		`[maestro] ${describeEffortRejection(toolType, rejection)} Retrying at the agent's configured effort.`
 	);
-	return spawnAgentOnce(toolType, cwd, prompt, agentSessionId, {
-		...options,
-		customEffort: undefined,
-	});
+	return runAttempt({ ...options, customEffort: undefined });
 }
 
 async function spawnAgentOnce(
@@ -1774,7 +1875,8 @@ async function spawnAgentOnce(
 	cwd: string,
 	prompt: string,
 	agentSessionId?: string,
-	options?: SpawnAgentOptions
+	options?: SpawnAgentOptions,
+	deadlineAt?: number
 ): Promise<AgentResult> {
 	if (options?.signal?.aborted) return interruptedResult();
 
@@ -1792,10 +1894,13 @@ async function spawnAgentOnce(
 	const readOnly = options?.readOnlyMode;
 	const sshRemoteConfig = options?.sshRemoteConfig;
 	const overrides: SpawnOverrides = {
+		requireProcessExit: options?.requireProcessExit,
 		signal: options?.signal,
 		pluginRunProofFile: options?.pluginRunProofFile,
 		mcpCliScriptPath: options?.mcpCliScriptPath,
 		timeoutMs: options?.timeoutMs,
+		deadlineAt,
+		idle: options?.idle,
 		onProgress: options?.onProgress,
 		onProcessStarted: options?.onProcessStarted,
 		customModel: options?.customModel,

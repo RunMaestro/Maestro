@@ -150,8 +150,26 @@ export function mergeSessionPersistenceChanges<T extends RecordData>(
 	stored: T | undefined,
 	baseline: T | undefined,
 	preserveClient = false,
-	preserveLive = false
+	preserveLive = false,
+	remoteQueue = false
 ): T {
-	if (!stored || !baseline) return incoming;
-	return mergeRecord(incoming, stored, baseline, preserveClient, preserveLive) as T;
+	const result =
+		!stored || !baseline
+			? incoming
+			: (mergeRecord(incoming, stored, baseline, preserveClient, preserveLive) as T);
+	if (!remoteQueue || !Array.isArray(result.executionQueue)) return result;
+	// Remote persistence may retain an unchanged Host-observed human turn, but
+	// cannot create one or reuse its origin after changing the queued operation.
+	const current = new Map(
+		(Array.isArray(stored?.executionQueue) ? stored.executionQueue : []).map((item: RecordData) => [
+			item.id,
+			item,
+		])
+	);
+	return {
+		...result,
+		executionQueue: result.executionQueue.map((item: RecordData) =>
+			same(item, current.get(item.id)) ? item : { ...item, querySource: 'auto' }
+		),
+	};
 }
