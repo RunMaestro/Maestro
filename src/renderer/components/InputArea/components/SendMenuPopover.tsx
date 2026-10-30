@@ -348,9 +348,7 @@ export const SendMenuPopover = memo(function SendMenuPopover({
 					/>
 				</div>
 				<p className="text-xs-plus leading-snug mt-1.5" style={{ color: theme.colors.textDim }}>
-					{sendButtonMenu
-						? 'Off: a click sends at once. Right-click Send still opens this menu.'
-						: 'A click sends at once. Right-click Send opens this menu any time.'}
+					Right-click Send always shows this menu.
 				</p>
 			</div>
 		</div>,

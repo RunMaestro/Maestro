@@ -202,5 +202,6 @@ describe('SendMenuPopover', () => {
 		renderMenu();
 		fireEvent.click(screen.getByLabelText('Show this menu on click'));
 		expect(useSettingsStore.getState().sendButtonMenu).toBe(false);
+		expect(screen.getByText('Right-click Send always shows this menu.')).toBeInTheDocument();
 	});
 });
