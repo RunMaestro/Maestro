@@ -125,6 +125,25 @@ describe('ComposerSendColumn', () => {
 			expect(screen.queryByTestId('send-menu')).not.toBeInTheDocument();
 		});
 
+		it('opens the menu on right-click even when a click would send', () => {
+			const { onSend, send } = renderWithMenu(() => false);
+			const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+			send.dispatchEvent(event);
+
+			expect(event.defaultPrevented).toBe(true);
+			expect(screen.getByTestId('send-menu')).toBeInTheDocument();
+			expect(onSend).not.toHaveBeenCalled();
+		});
+
+		it('leaves right-click alone when the menu is unavailable (terminal mode)', () => {
+			renderWithMenu(() => false, false);
+			const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+			screen.getByTitle('Send message').dispatchEvent(event);
+
+			expect(event.defaultPrevented).toBe(false);
+			expect(screen.queryByTestId('send-menu')).not.toBeInTheDocument();
+		});
+
 		it('drops the popup attributes when the menu is unavailable (terminal mode)', () => {
 			const { send } = renderWithMenu(() => false, false);
 

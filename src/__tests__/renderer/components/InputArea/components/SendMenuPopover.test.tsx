@@ -188,6 +188,15 @@ describe('SendMenuPopover', () => {
 		window.removeEventListener(FORCED_PARALLEL_SEND_EVENT, force);
 	});
 
+	it('says the agent is idle and labels the first row Send when nothing works', () => {
+		seed({ state: 'idle' }, [createMockAITab({ id: 'tab-1', state: 'idle' })]);
+		const { processInput } = renderMenu();
+		expect(screen.getByText('Agent is idle')).toBeInTheDocument();
+		expect(row('queue').textContent).toContain('Send');
+		fireEvent.click(row('queue'));
+		expect(processInput).toHaveBeenCalledTimes(1);
+	});
+
 	it('turns the menu off from its own toggle', () => {
 		seed();
 		renderMenu();
