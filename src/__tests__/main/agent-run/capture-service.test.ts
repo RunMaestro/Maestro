@@ -301,6 +301,23 @@ describe('AgentRunCaptureService.captureExit', () => {
 		expect(settled?.metadata?.durationMs).toBe(200);
 	});
 
+	it('redacts the full receipt before persisting its bounded answer tail', async () => {
+		const secret = 'private-boundary-password';
+		const padding = ' '.repeat(4000 - secret.length - 1);
+		const answerTail = `password=${secret}\n${padding}`;
+		const spawned = service.captureSpawn({
+			sessionId: 'worker-ai-tab',
+			tabId: 'tab',
+			toolType: 'codex',
+		})!;
+		await service.captureExit({
+			sessionId: 'worker-ai-tab',
+			exitCode: 0,
+			settlement: { outcome: 'completed', answerCaptured: true, answerTail },
+		});
+		expect(store.runs.get(spawned.id)?.metadata?.answerTail).toBe(`[redacted]\n${padding}`);
+	});
+
 	// ISC-8.4 - exit 0 but an enrich hook surfaces an open critical finding.
 	it('diverts a clean exit to needs_review when enrich adds an open critical finding', async () => {
 		store.seed(baseRun({ id: 'run-3', sessionId: 'sess-3', status: 'running', createdAt: 1000 }));

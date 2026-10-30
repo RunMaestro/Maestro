@@ -376,7 +376,9 @@ export async function runOrchestratorIteration(
 				});
 				deps.persist(plan);
 				const fix = await deps.dispatchFix(task, ledger);
-				if (fix.success && !fix.tabId) {
+				// An uncertain failure may already have started work. Keep its persisted
+				// claim and attempt count; only a confirmed refusal can restore them.
+				if ((fix.success && !fix.tabId) || (!fix.success && fix.deliveryUncertain)) {
 					plan = markTaskStatus(plan, task.id, 'needs_review', {
 						holdReason: 'delivery_uncertain',
 						error: 'repair dispatch missing confirmed tab identity; reconcile manually',

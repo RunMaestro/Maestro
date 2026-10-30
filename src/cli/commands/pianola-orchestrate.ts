@@ -120,12 +120,11 @@ function pianolaEnabledNow(): boolean {
 	return isEncoreEnabled('pianola');
 }
 
-/** F8 (ISC-8.12/8.13): the reactive fix/merge loop is gated on autopilot, read
- *  fresh each iteration so revoking it stops auto-actions immediately. With it
- *  off, Pianola behaves exactly as the current supervisor (no auto-fix/merge). */
+/** Repair permission is separate from enabling Pianola. Re-read each action
+ * so revocation takes effect without restarting the orchestrator. Legacy
+ * encoreFeatures.autopilot never grants this explicit permission. */
 function autopilotEnabledNow(): boolean {
-	const flags = readSettingValue('encoreFeatures') as Record<string, unknown> | undefined;
-	return flags?.pianola === true && flags?.autopilot === true;
+	return pianolaEnabledNow() && readSettingValue('pianolaAutoFixEnabled') === true;
 }
 
 /** Project a captured AgentRun into the engine's ledger view (F8 / ISC-8.3). */
@@ -784,8 +783,9 @@ export async function pianolaOrchestrate(
 		reactiveEnabled: () => autopilotEnabledNow(),
 		getRunLedger: async (task) => ledgerForTask(task),
 		dispatchFix: async (task, ledger) => {
-			// Gated + audited: only auto-fix when autopilot is on this iteration.
-			if (!autopilotEnabledNow()) return { success: false, error: 'autopilot off' };
+			// Gated + audited: only auto-fix with explicit repair permission.
+			if (!autopilotEnabledNow())
+				return { success: false, error: 'Pianola automatic repairs are disabled' };
 			const fixPrompt = `The acceptance ledger is AgentRun ${ledger.runId ?? '(unavailable)'}. It has ${ledger.openFindings ?? 0} open review finding(s) and/or failing checks. Required checks: ${(task.requiredChecks ?? []).join(', ') || '(existing ledger checks)'}. Address them and record evidence on that exact acceptance run, then stop.`;
 			const agentId = task.agentId;
 			if (!agentId) return { success: false, error: 'no agent bound' };
@@ -821,11 +821,13 @@ export async function pianolaOrchestrate(
 			}
 		},
 		requestMerge: async (task, ledger) => {
-			// Gated + risk-rated + audited (ISC-8.9/8.10/8.14): never auto-merge when
-			// autopilot is off, only when the run is fully green (checks passed AND
+			// Repair permission does not authorize a merge. This adapter only records
+			// a skipped outcome for eligible runs; no merge executor is available.
+			// Eligibility still requires a fully green run (checks passed AND
 			// zero open findings of ANY severity), and never when the merge action
 			// rates high-risk (high-risk-always-escalates).
-			if (!autopilotEnabledNow()) return { merged: false, error: 'autopilot off' };
+			if (!autopilotEnabledNow())
+				return { merged: false, error: 'Pianola automatic repairs are disabled' };
 			if (ledger.checksPassed !== true || (ledger.openFindings ?? 0) > 0) {
 				return { merged: false, error: 'not green (needs passing checks + zero open findings)' };
 			}

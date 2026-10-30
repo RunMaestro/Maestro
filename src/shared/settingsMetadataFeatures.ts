@@ -78,6 +78,13 @@ export const FEATURES_SETTINGS_METADATA: Record<string, SettingMetadata> = {
 		default: { ...ENCORE_FEATURE_DEFAULTS },
 		category: 'advanced',
 	},
+	pianolaAutoFixEnabled: {
+		description:
+			'Allow bounded automatic repairs for Pianola tasks that need review. Requires Pianola; does not authorize merging.',
+		type: 'boolean',
+		default: false,
+		category: 'advanced',
+	},
 	pianolaAutoWatchNewAgents: {
 		description: 'Automatically watch newly created top-level agents when Pianola is enabled.',
 		type: 'boolean',

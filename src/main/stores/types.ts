@@ -134,6 +134,7 @@ export interface MaestroSettings {
 	usageRefreshIntervals: Record<string, number>;
 	/** Add a supervised Pianola watch for each newly created top-level agent. */
 	pianolaAutoWatchNewAgents: boolean;
+	pianolaAutoFixEnabled: boolean;
 	/** Minimum independent matching human samples for a proposal; default three. */
 	pianolaLearningMinSamples?: number;
 	/** Owner binding for learning; absent defaults to verified native desktop ownership. */

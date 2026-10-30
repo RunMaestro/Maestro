@@ -309,9 +309,60 @@ describe('pianolaOrchestrate - iteration error resilience', () => {
 		);
 	});
 
+	it('requires explicit repair permission and re-reads revocation at the CLI adapter', async () => {
+		let repairs = true;
+		vi.mocked(readSettingValue).mockImplementation((key) =>
+			key === 'pianolaAutoFixEnabled' ? repairs : { pianola: true }
+		);
+		let deps: { reactiveEnabled: () => boolean } | undefined;
+		runIterationMock.mockImplementation(async (state, captured) => {
+			deps = captured;
+			return doneResult(state);
+		});
+		await pianolaOrchestrate('plan-1', { once: true });
+		expect(deps!.reactiveEnabled()).toBe(true);
+		repairs = false;
+		expect(deps!.reactiveEnabled()).toBe(false);
+	});
+
+	it('does not treat a legacy autopilot flag as explicit repair permission', async () => {
+		vi.mocked(readSettingValue).mockImplementation((key) =>
+			key === 'encoreFeatures' ? { pianola: true, autopilot: true } : undefined
+		);
+		let capturedDeps: { reactiveEnabled: () => boolean } | undefined;
+		runIterationMock.mockImplementation(async (state, deps) => {
+			capturedDeps = deps;
+			return doneResult(state);
+		});
+		await pianolaOrchestrate('plan-1', { once: true });
+		expect(capturedDeps!.reactiveEnabled()).toBe(false);
+	});
+
+	it('does not execute a merge when automatic repairs are explicitly enabled', async () => {
+		vi.mocked(readSettingValue).mockImplementation((key) =>
+			key === 'pianolaAutoFixEnabled' ? true : { pianola: true }
+		);
+		let capturedDeps:
+			| { requestMerge: (task: unknown, ledger: unknown) => Promise<{ merged: boolean }> }
+			| undefined;
+		runIterationMock.mockImplementation(async (state, deps) => {
+			capturedDeps = deps;
+			return doneResult(state);
+		});
+		await pianolaOrchestrate('plan-1', { once: true });
+		const result = await capturedDeps!.requestMerge(
+			{ id: 'task-1', title: 'Build', prompt: 'Build a local fixture' },
+			{ runId: 'run-1', checksPassed: true, openFindings: 0 }
+		);
+		expect(result.merged).toBe(false);
+		expect(runDispatch).not.toHaveBeenCalled();
+	});
+
 	it('marks the run fixing through the producer when dispatchFix really dispatches (ISC-5.9)', async () => {
 		// Autopilot on so the CLI's dispatchFix dep acts.
-		vi.mocked(readSettingValue).mockReturnValue({ pianola: true, autopilot: true });
+		vi.mocked(readSettingValue).mockImplementation((key) =>
+			key === 'pianolaAutoFixEnabled' ? true : { pianola: true }
+		);
 		vi.mocked(runDispatch).mockResolvedValue({ success: true, tabId: 'fix-tab' } as never);
 		getAgentRunMock.mockImplementation((id: string) =>
 			id === 'run-fx'
@@ -371,7 +422,9 @@ describe('pianolaOrchestrate - iteration error resilience', () => {
 	});
 
 	it('writes no fixing status when the fix dispatch fails (ISC-5.9 anti)', async () => {
-		vi.mocked(readSettingValue).mockReturnValue({ pianola: true, autopilot: true });
+		vi.mocked(readSettingValue).mockImplementation((key) =>
+			key === 'pianolaAutoFixEnabled' ? true : { pianola: true }
+		);
 		vi.mocked(runDispatch).mockResolvedValue({
 			success: false,
 			code: 'DISPATCH_REFUSED',

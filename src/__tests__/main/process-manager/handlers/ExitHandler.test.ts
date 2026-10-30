@@ -1563,26 +1563,33 @@ describe('ExitHandler', () => {
 	});
 
 	describe('exit event settlement argument', () => {
-		it('captures the final Claude result rather than an earlier failed investigation', async () => {
-			const proc = createMockProcess({
-				isStreamJsonMode: true,
-				outputParser: new ClaudeOutputParser(),
-			});
-			processes.set('worker-ai-tab', proc);
-			const stdout = new StdoutHandler({ processes, emitter, bufferManager });
-			stdout.handleData(
-				'worker-ai-tab',
-				`${JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Build failed: investigating' }] } })}\n`
-			);
-			stdout.handleData(
-				'worker-ai-tab',
-				`${JSON.stringify({ type: 'result', subtype: 'success', result: 'Fixed the build. All checks pass.' })}\n`
-			);
-			const onExit = vi.fn();
-			emitter.on('exit', onExit);
-			await exitHandler.handleExit('worker-ai-tab', 0);
-			expect(onExit.mock.calls[0][3].answerTail).toBe('Fixed the build. All checks pass.');
-		});
+		it.each(['\n', ''])(
+			'captures the final Claude result rather than an earlier failed investigation (delimiter: %j)',
+			async (delimiter) => {
+				const proc = createMockProcess({
+					isStreamJsonMode: true,
+					outputParser: new ClaudeOutputParser(),
+				});
+				processes.set('worker-ai-tab', proc);
+				const stdout = new StdoutHandler({ processes, emitter, bufferManager });
+				stdout.handleData(
+					'worker-ai-tab',
+					`${JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Build failed: investigating' }] } })}\n`
+				);
+				stdout.handleData(
+					'worker-ai-tab',
+					`${JSON.stringify({ type: 'result', subtype: 'success', result: 'Fixed the build. All checks pass.' })}${delimiter}`
+				);
+				const onExit = vi.fn();
+				emitter.on('exit', onExit);
+				await exitHandler.handleExit('worker-ai-tab', 0);
+				expect(onExit.mock.calls[0][3]).toEqual({
+					outcome: 'completed',
+					answerCaptured: true,
+					answerTail: 'Fixed the build. All checks pass.',
+				});
+			}
+		);
 
 		it('redacts a secret whose label falls just before the stored tail boundary', async () => {
 			const secret = 'private-boundary-password';

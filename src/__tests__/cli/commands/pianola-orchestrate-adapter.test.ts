@@ -601,60 +601,69 @@ describe('Pianola real CLI adapter and orchestration engine', () => {
 		expect(plan.tasks[0].status).toBe('done');
 		expect(plan.tasks[1].status).toBe('running');
 	});
-	it('follows a genuine same-tab continuation after a watcher answers a completed question', async () => {
-		startBound();
-		let now = 10;
-		const capture = new AgentRunCaptureService({
-			getAgentRun: mocks.getRun,
-			findActiveRunBySession: mocks.findActive,
-			upsertAgentRun: mocks.upsertRun,
-			appendAgentRunEvent: mocks.appendEvent,
-			now: () => now++,
-		});
-		const question = capture.captureSpawn({
-			sessionId: 'agent-ai-tab',
-			tabId: 'tab',
-			toolType: 'codex',
-			cwd: '/project',
-		})!;
-		await capture.captureExit({
-			sessionId: 'agent-ai-tab',
-			exitCode: 0,
-			settlement: {
-				outcome: 'completed',
-				answerCaptured: true,
-				answerTail: 'Which file should I edit?',
-			},
-		});
-		await tick();
-		expect(plan.tasks[0]).toMatchObject({
-			status: 'running',
-			runId: question.id,
-			executionRunId: question.id,
-		});
-		const continuation = capture.captureSpawn({
-			sessionId: 'agent-ai-tab',
-			tabId: 'tab',
-			toolType: 'codex',
-			cwd: '/project',
-		})!;
-		await capture.captureExit({
-			sessionId: 'agent-ai-tab',
-			exitCode: 0,
-			settlement: {
-				outcome: 'completed',
-				answerCaptured: true,
-				answerTail: 'Completed the selected file.',
-			},
-		});
-		await tick();
-		expect(plan.tasks[0]).toMatchObject({
-			status: 'done',
-			runId: continuation.id,
-			executionRunId: continuation.id,
-		});
-		expect(plan.tasks[1].status).toBe('running');
-	});
+	it.each(['running', 'fixing'] as const)(
+		'follows a genuine same-tab continuation for a %s task after a watcher answers a question',
+		async (status) => {
+			startBound({ status });
+			if (status === 'fixing') {
+				plan.tasks[0].runId = 'acceptance-ledger';
+				runs = [
+					{ ...captured(), id: 'acceptance-ledger', sessionId: 'other-ai-tab', tabId: 'other-tab' },
+				];
+			}
+			let now = 10;
+			const capture = new AgentRunCaptureService({
+				getAgentRun: mocks.getRun,
+				findActiveRunBySession: mocks.findActive,
+				upsertAgentRun: mocks.upsertRun,
+				appendAgentRunEvent: mocks.appendEvent,
+				now: () => now++,
+			});
+			const question = capture.captureSpawn({
+				sessionId: 'agent-ai-tab',
+				tabId: 'tab',
+				toolType: 'codex',
+				cwd: '/project',
+			})!;
+			await capture.captureExit({
+				sessionId: 'agent-ai-tab',
+				exitCode: 0,
+				settlement: {
+					outcome: 'completed',
+					answerCaptured: true,
+					answerTail: 'Which file should I edit?',
+				},
+			});
+			await tick();
+			expect(plan.tasks[0]).toMatchObject({
+				status,
+				runId: status === 'fixing' ? 'acceptance-ledger' : question.id,
+				executionRunId: question.id,
+			});
+			const continuation = capture.captureSpawn({
+				sessionId: 'agent-ai-tab',
+				tabId: 'tab',
+				toolType: 'codex',
+				cwd: '/project',
+			})!;
+			await capture.captureExit({
+				sessionId: 'agent-ai-tab',
+				exitCode: 0,
+				settlement: {
+					outcome: 'completed',
+					answerCaptured: true,
+					answerTail: 'Completed the selected file.',
+				},
+			});
+			await tick();
+			expect(plan.tasks[0]).toMatchObject({
+				status: 'done',
+				runId: status === 'fixing' ? 'acceptance-ledger' : continuation.id,
+				executionRunId: continuation.id,
+			});
+			expect(plan.tasks[1].status).toBe('running');
+		}
+	);
 
 	it('clears stale physical identities before a reset task crosses the dispatch boundary', async () => {
 		plan.tasks[0] = {
@@ -695,13 +704,17 @@ describe('Pianola real CLI adapter and orchestration engine', () => {
 		expect(plan.tasks[1].status).toBe('pending');
 	});
 	it.each([
-		['done', 'busy'],
-		['done', 'failed'],
-		['needs_review', 'busy'],
-		['needs_review', 'failed'],
+		['done', 'busy', true],
+		['done', 'busy', false],
+		['done', 'failed', true],
+		['done', 'failed', false],
+		['needs_review', 'busy', true],
+		['needs_review', 'busy', false],
+		['needs_review', 'failed', true],
+		['needs_review', 'failed', false],
 	] as const)(
-		'keeps the %s task pinned when a later same-tab run is %s',
-		async (status, laterState) => {
+		'keeps the %s task pinned when a later same-tab run is %s (checks: %s)',
+		async (status, laterState, hasChecks) => {
 			startBound();
 			let now = 10;
 			const capture = new AgentRunCaptureService({
@@ -726,7 +739,10 @@ describe('Pianola real CLI adapter and orchestration engine', () => {
 					answerTail: 'Delivered the original task.',
 				},
 			});
-			runs = runs.map((run) => ({ ...run, checks: [{ name: 'acceptance', status: 'passed' }] }));
+			runs = runs.map((run) => ({
+				...run,
+				checks: hasChecks ? [{ name: 'acceptance', status: 'passed' }] : [],
+			}));
 			plan.tasks[0] = {
 				...plan.tasks[0],
 				status,

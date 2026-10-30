@@ -244,6 +244,100 @@ describe('bounded auto-fix cycle (ISC-8.8)', () => {
 		expect(taskOf(r.state, 'A')?.fixAttempts).toBe(1);
 	});
 
+	it.each([undefined, 'unconfirmed-fix-tab'])(
+		'holds an uncertain failed repair without redelivery or stale acceptance (tab: %s)',
+		async (tabId) => {
+			const ledger: PianolaTaskLedger = {
+				runId: 'acceptance-A',
+				openFindings: 1,
+				checksPassed: false,
+			};
+			const dispatchFix = vi.fn(async () => ({
+				success: false,
+				deliveryUncertain: true,
+				tabId,
+				error: 'repair response lost after possible delivery',
+			}));
+			const requestMerge = vi.fn(async () => ({ merged: true }));
+			const deps = makeReactiveDeps({
+				reactiveEnabled: () => true,
+				getRunLedger: vi.fn(async (entry) =>
+					entry.id === 'A' ? ledger : { openFindings: 1, checksPassed: false }
+				),
+				dispatchFix,
+				requestMerge,
+			});
+			const p = plan([
+				task({
+					id: 'A',
+					status: 'needs_review',
+					runId: 'acceptance-A',
+					tabId: 'old-tab',
+					executionRunId: 'old-execution',
+					fixAttempts: 1,
+				}),
+				task({ id: 'B', status: 'needs_review' }),
+				task({ id: 'child', dependsOn: ['A'] }),
+				task({ id: 'independent' }),
+			]);
+			const first = await runOrchestratorIteration(initialOrchestratorState(p), deps, {
+				concurrencyLimit: 1,
+			});
+			expect(taskOf(first.state, 'A')).toMatchObject({
+				status: 'needs_review',
+				holdReason: 'delivery_uncertain',
+				runId: 'acceptance-A',
+				fixAttempts: 2,
+			});
+			expect(taskOf(first.state, 'A')?.tabId).toBeUndefined();
+			expect(taskOf(first.state, 'A')?.executionRunId).toBeUndefined();
+			expect(deps.persist).toHaveBeenNthCalledWith(
+				1,
+				expect.objectContaining({
+					tasks: expect.arrayContaining([
+						expect.objectContaining({
+							id: 'A',
+							status: 'fixing',
+							tabId: undefined,
+							executionRunId: undefined,
+							fixAttempts: 2,
+						}),
+					]),
+				})
+			);
+			// The still-failing ledger must not trigger a second repair, even when a
+			// restarted controller has lost all in-memory observations.
+			const retry = await runOrchestratorIteration(
+				initialOrchestratorState(first.state.plan),
+				deps,
+				{ concurrencyLimit: 1 }
+			);
+			expect(taskOf(retry.state, 'A')).toEqual(taskOf(first.state, 'A'));
+			expect(dispatchFix).toHaveBeenCalledTimes(1);
+			expect(deps.dispatch).not.toHaveBeenCalled();
+			// Even an old green ledger cannot approve an unidentified repair.
+			ledger.openFindings = 0;
+			ledger.checksPassed = true;
+			const next = await runOrchestratorIteration(
+				initialOrchestratorState(retry.state.plan),
+				deps,
+				{
+					concurrencyLimit: 1,
+				}
+			);
+			expect(taskOf(next.state, 'A')).toEqual(taskOf(first.state, 'A'));
+			expect(statusOf(next.state, 'child')).toBe('pending');
+			expect(statusOf(next.state, 'independent')).toBe('pending');
+			expect(dispatchFix).toHaveBeenCalledTimes(1);
+			expect(deps.dispatch).not.toHaveBeenCalled();
+			expect(first.completedTaskIds).toEqual([]);
+			expect(next.completedTaskIds).not.toContain('A');
+			expect(next.failedTaskIds).toEqual([]);
+			expect(statusOf(next.state, 'B')).toBe('needs_review');
+			expect(requestMerge).not.toHaveBeenCalled();
+		}
+	);
+
 	it('still dispatches a fix at fixAttempts 2 (just under the cap)', async () => {
 		const p = plan([task({ id: 'A', status: 'needs_review', runId: 'r-A', fixAttempts: 2 })]);
 		const dispatchFix = vi.fn(async () => ({ success: true, tabId: 'fix-tab' }));

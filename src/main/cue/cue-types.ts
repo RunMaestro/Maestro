@@ -29,6 +29,10 @@ import type { CueEvent, CueEventType, CueRunStatus } from '../../shared/cue';
 /** Data passed with an agent completion notification for chaining */
 export interface AgentCompletionData {
 	sessionName?: string;
+	/** Desktop process identity, separate from the base agent used to match sources. */
+	sourceProcessId?: string;
+	/** Explicit worker tab, when the desktop process identifies one. Never guessed from the active tab. */
+	sourceTabId?: string;
 	status?: CueRunStatus;
 	exitCode?: number | null;
 	durationMs?: number;
