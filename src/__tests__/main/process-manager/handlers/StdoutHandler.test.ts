@@ -2633,7 +2633,7 @@ describe('StdoutHandler', () => {
 		it('should emit the final text result (last step) not just the first', () => {
 			// Reproduces issue #512: step1 text was shown, step3 final summary was dropped
 			const parser = createOpenCodeParser();
-			const { handler, bufferManager, sessionId } = createTestContext({
+			const { handler, bufferManager, sessionId, proc } = createTestContext({
 				isStreamJsonMode: true,
 				toolType: 'opencode',
 				outputParser: parser as any,
@@ -2687,9 +2687,9 @@ describe('StdoutHandler', () => {
 				(call: any[]) => call[1]
 			);
 
-			// Both the intermediate and final texts should be emitted
-			expect(emittedTexts).toContain('Intermediate thinking...');
-			expect(emittedTexts).toContain('Final summary answer.');
+			// Hold the complete final answer until exit reconciliation, never publish narration as final.
+			expect(emittedTexts).toEqual([]);
+			expect(proc.streamedText).toBe('Final summary answer.');
 		});
 
 		it('should reset resultEmitted on each new step_start for opencode', () => {
@@ -2704,13 +2704,14 @@ describe('StdoutHandler', () => {
 			sendJsonLine(handler, sessionId, { type: 'step_start', sessionID: 'ses_abc' });
 			expect(proc.resultEmitted).toBe(false);
 
-			// After text (result), resultEmitted becomes true
+			// After text, retain it for exit without marking it published
 			sendJsonLine(handler, sessionId, {
 				type: 'text',
 				sessionID: 'ses_abc',
 				part: { text: 'Step 1 text.' },
 			});
-			expect(proc.resultEmitted).toBe(true);
+			expect(proc.resultEmitted).toBe(false);
+			expect(proc.streamedText).toBe('Step 1 text.');
 
 			// New step_start resets it
 			sendJsonLine(handler, sessionId, { type: 'step_start', sessionID: 'ses_abc' });
