@@ -33,6 +33,8 @@ export interface PRCreationTarget {
 	targetBranch: string;
 	title: string;
 	description: string;
+	/** SSH remote the repo lives on; the push and `gh pr create` run there. */
+	sshRemoteId?: string;
 }
 
 export interface PRCreationRun extends PRCreationTarget {
@@ -89,7 +91,14 @@ export const usePRCreationStore = create<PRCreationStore>()((set, get) => ({
 			});
 
 		void window.maestro.git
-			.createPR(target.worktreePath, target.targetBranch, target.title, target.description)
+			.createPR(
+				target.worktreePath,
+				target.targetBranch,
+				target.title,
+				target.description,
+				undefined,
+				target.sshRemoteId
+			)
 			.then((result) => {
 				if (result.success && result.prUrl) {
 					settle({ status: 'success', prUrl: result.prUrl });

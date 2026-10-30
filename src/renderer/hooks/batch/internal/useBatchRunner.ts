@@ -1604,14 +1604,21 @@ export function useBatchRunner({
 				worktreePath
 			) {
 				// For worktree-dispatched runs, the main repo is the parent session's cwd
-				const mainRepoCwd = config.worktreeTarget
-					? getSessions().find((s) => s.id === session.parentSessionId)?.cwd || session.cwd
-					: session.cwd;
+				const parentSession = config.worktreeTarget
+					? getSessions().find((s) => s.id === session.parentSessionId)
+					: undefined;
+				const mainRepoCwd = parentSession?.cwd || session.cwd;
+				// config.worktree never carries the SSH remote; without it the push runs locally
+				const prSshRemoteId =
+					sshRemoteId ||
+					parentSession?.sshRemoteId ||
+					parentSession?.sessionSshRemoteConfig?.remoteId ||
+					undefined;
 
 				const prResult = await worktreeManager.createPR({
 					worktreePath,
 					mainRepoCwd,
-					worktree,
+					worktree: { ...worktree, sshRemoteId: prSshRemoteId },
 					documents,
 					totalCompletedTasks,
 				});

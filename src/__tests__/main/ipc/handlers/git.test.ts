@@ -3804,6 +3804,140 @@ export function Component() {
 				error: 'Failed to create PR',
 			});
 		});
+		describe('on an SSH remote', () => {
+			const sshRemote = {
+				id: 'ssh-remote-123',
+				name: 'devbox',
+				enabled: true,
+				host: 'devbox.example.com',
+				port: 22,
+			};
+
+			beforeEach(() => {
+				mockSettingsStore.get.mockReturnValue([sshRemote]);
+			});
+
+			it('pushes and runs gh pr create on the remote, never locally', async () => {
+				const remoteGit = await import('../../../../main/utils/remote-git');
+				const sshCommandBuilder = await import('../../../../main/utils/ssh-command-builder');
+				vi.mocked(remoteGit.execGitRemote).mockResolvedValueOnce({
+					stdout: '',
+					stderr: '',
+					exitCode: 0,
+				});
+				vi.mocked(sshCommandBuilder.buildSshCommand).mockResolvedValueOnce({
+					command: 'ssh',
+					args: ['devbox.example.com', 'gh pr create'],
+				});
+				vi.mocked(execFile.execFileNoThrow).mockResolvedValueOnce({
+					stdout: 'https://github.com/user/repo/pull/7\n',
+					stderr: '',
+					exitCode: 0,
+				});
+
+				const handler = handlers.get('git:createPR');
+				const result = await handler!(
+					{} as any,
+					'/home/user/worktrees/repo/feature',
+					'main',
+					'Title',
+					'Body',
+					'/opt/homebrew/bin/gh',
+					'ssh-remote-123'
+				);
+
+				expect(remoteGit.execGitRemote).toHaveBeenCalledWith(['push', '-u', 'origin', 'HEAD'], {
+					sshRemote,
+					remoteCwd: '/home/user/worktrees/repo/feature',
+				});
+				expect(sshCommandBuilder.buildSshCommand).toHaveBeenCalledWith(sshRemote, {
+					command: 'gh',
+					args: ['pr', 'create', '--base', 'main', '--title', 'Title', '--body-file', '-'],
+					cwd: '/home/user/worktrees/repo/feature',
+				});
+				// The body goes through stdin so it never lands in the logged SSH command line
+				expect(execFile.execFileNoThrow).toHaveBeenCalledTimes(1);
+				expect(execFile.execFileNoThrow).toHaveBeenCalledWith(
+					'ssh',
+					['devbox.example.com', 'gh pr create'],
+					undefined,
+					{ input: 'Body' }
+				);
+				expect(result).toEqual({ success: true, prUrl: 'https://github.com/user/repo/pull/7' });
+			});
+
+			it('stops before gh when the remote push fails', async () => {
+				const remoteGit = await import('../../../../main/utils/remote-git');
+				vi.mocked(remoteGit.execGitRemote).mockResolvedValueOnce({
+					stdout: '',
+					stderr: 'rejected',
+					exitCode: 1,
+				});
+
+				const handler = handlers.get('git:createPR');
+				const result = await handler!(
+					{} as any,
+					'/home/user/worktrees/repo/feature',
+					'main',
+					'Title',
+					'Body',
+					undefined,
+					'ssh-remote-123'
+				);
+
+				expect(execFile.execFileNoThrow).not.toHaveBeenCalled();
+				expect(result).toEqual({ success: false, error: 'Failed to push branch: rejected' });
+			});
+
+			it('names the remote when gh is missing there', async () => {
+				const remoteGit = await import('../../../../main/utils/remote-git');
+				vi.mocked(remoteGit.execGitRemote).mockResolvedValueOnce({
+					stdout: '',
+					stderr: '',
+					exitCode: 0,
+				});
+				vi.mocked(execFile.execFileNoThrow).mockResolvedValueOnce({
+					stdout: '',
+					stderr: 'sh: 1: gh: command not found',
+					exitCode: 127,
+				});
+
+				const handler = handlers.get('git:createPR');
+				const result = await handler!(
+					{} as any,
+					'/home/user/worktrees/repo/feature',
+					'main',
+					'Title',
+					'Body',
+					undefined,
+					'ssh-remote-123'
+				);
+
+				expect(result).toEqual({
+					success: false,
+					error:
+						'GitHub CLI (gh) is not installed on devbox. Please install it there to create PRs.',
+				});
+			});
+
+			it('reports an unknown SSH remote without running anything', async () => {
+				const remoteGit = await import('../../../../main/utils/remote-git');
+				const handler = handlers.get('git:createPR');
+				const result = await handler!(
+					{} as any,
+					'/home/user/worktrees/repo/feature',
+					'main',
+					'Title',
+					'Body',
+					undefined,
+					'missing-remote'
+				);
+
+				expect(remoteGit.execGitRemote).not.toHaveBeenCalled();
+				expect(execFile.execFileNoThrow).not.toHaveBeenCalled();
+				expect(result).toEqual({ success: false, error: 'SSH remote not found: missing-remote' });
+			});
+		});
 	});
 
 	describe('git:checkGhCli', () => {
@@ -4071,6 +4205,34 @@ export function Component() {
 	});
 
 	describe('git:getDefaultBranch', () => {
+		it('should detect the default branch on the SSH remote', async () => {
+			mockSettingsStore.get.mockReturnValue([
+				{
+					id: 'ssh-remote-123',
+					name: 'devbox',
+					enabled: true,
+					host: 'devbox.example.com',
+					port: 22,
+				},
+			]);
+			const remoteGit = await import('../../../../main/utils/remote-git');
+			vi.mocked(remoteGit.execGitRemote).mockResolvedValueOnce({
+				stdout: '* remote origin\n  HEAD branch: master\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const handler = handlers.get('git:getDefaultBranch');
+			const result = await handler!({} as any, '/home/dev/repo', 'ssh-remote-123');
+
+			expect(remoteGit.execGitRemote).toHaveBeenCalledWith(['remote', 'show', 'origin'], {
+				sshRemote: expect.objectContaining({ id: 'ssh-remote-123' }),
+				remoteCwd: '/home/dev/repo',
+			});
+			expect(execFile.execFileNoThrow).not.toHaveBeenCalled();
+			expect(result).toEqual({ success: true, branch: 'master' });
+		});
+
 		it('should return branch from remote when HEAD branch is available', async () => {
 			vi.mocked(execFile.execFileNoThrow).mockResolvedValueOnce({
 				// git remote show origin

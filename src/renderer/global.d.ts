@@ -1525,13 +1525,17 @@ interface MaestroAPI {
 			baseBranch: string,
 			title: string,
 			body: string,
-			ghPath?: string
+			ghPath?: string,
+			sshRemoteId?: string
 		) => Promise<{
 			success: boolean;
 			prUrl?: string;
 			error?: string;
 		}>;
-		getDefaultBranch: (cwd: string) => Promise<{
+		getDefaultBranch: (
+			cwd: string,
+			sshRemoteId?: string
+		) => Promise<{
 			success: boolean;
 			branch?: string;
 			error?: string;
