@@ -588,6 +588,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 			if (/cycl/i.test(message)) {
 				setCycleError('This parent selection would create a dependency cycle.');
 			} else if (/status changed|set by the dispatcher/i.test(message)) {
+				await load(false);
 				notifyToast({
 					color: 'red',
 					title: 'Board',
@@ -600,7 +601,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 		} finally {
 			setSaving(false);
 		}
-	}, [draft, board, projectRoot, canSaveDraft, closeEditor, applyBoard]);
+	}, [draft, board, projectRoot, canSaveDraft, closeEditor, applyBoard, load]);
 
 	const handleDeleteCard = useCallback(
 		async (cardId: string) => {
