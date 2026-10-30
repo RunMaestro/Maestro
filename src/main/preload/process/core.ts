@@ -4,6 +4,12 @@ import { ipcRenderer } from 'electron';
 import type { CallUsage, UsageStats } from '../../../shared/types';
 import type { ParsedQuestion } from '../../permission-relay/types';
 import type { SteeringResultFrame } from '../../../shared/chatSteering';
+import type {
+	HarnessInteractionRequest,
+	HarnessInteractionResolveResult,
+	HarnessInteractionResponse,
+	HarnessInteractionSettledEvent,
+} from '../../../shared/harness-control/types';
 
 /**
  * Configuration for spawning a process
@@ -208,6 +214,9 @@ export function createProcessCoreApi() {
 		 */
 		kill: (sessionId: string): Promise<boolean> => ipcRenderer.invoke('process:kill', sessionId),
 
+		closeAgent: (agentId: string): Promise<boolean> =>
+			ipcRenderer.invoke('process:closeAgent', agentId),
+
 		/**
 		 * Resize process terminal
 		 */
@@ -324,6 +333,30 @@ export function createProcessCoreApi() {
 				| { behavior: 'allow'; updatedInput?: Record<string, unknown> }
 				| { behavior: 'deny'; message: string }
 		): Promise<boolean> => ipcRenderer.invoke('permission:respond', requestId, decision),
+
+		onHarnessInteractionRequest: (
+			callback: (request: HarnessInteractionRequest) => void
+		): (() => void) => {
+			const handler = (_: unknown, request: HarnessInteractionRequest) => callback(request);
+			ipcRenderer.on('process:harness-interaction-request', handler);
+			return () => ipcRenderer.removeListener('process:harness-interaction-request', handler);
+		},
+
+		onHarnessInteractionSettled: (
+			callback: (event: HarnessInteractionSettledEvent) => void
+		): (() => void) => {
+			const handler = (_: unknown, event: HarnessInteractionSettledEvent) => callback(event);
+			ipcRenderer.on('process:harness-interaction-settled', handler);
+			return () => ipcRenderer.removeListener('process:harness-interaction-settled', handler);
+		},
+
+		listHarnessInteractions: (): Promise<HarnessInteractionRequest[]> =>
+			ipcRenderer.invoke('harnessControl:listPending'),
+
+		respondHarnessInteraction: (
+			response: HarnessInteractionResponse
+		): Promise<HarnessInteractionResolveResult> =>
+			ipcRenderer.invoke('harnessControl:respond', response),
 
 		/**
 		 * Subscribe to agent session ID events

@@ -26,6 +26,7 @@ import type {
 } from '../../shared/throughputGaugeCommands';
 import type { AdditionalDirectory, UsageStats } from '../../shared/types';
 import type { CodexTransport } from '../../shared/codexTransport';
+import type { HarnessControlMode } from '../../shared/maestro-lib/providers/native-control';
 import type { RemoteGroupChatMessage, RemoteGroupChatState } from '../../shared/groupChatRemote';
 import type { ToastClickAction } from '../../shared/toastClickAction';
 import type { CueTurnSettings } from '../../shared/cue/turn-settings';
@@ -1309,6 +1310,8 @@ export interface CreateSessionConfig {
 	codexAutoResetOnExhaustion?: boolean;
 	/** Codex only: chat-turn transport. Absent means `exec`. */
 	codexTransport?: CodexTransport;
+	/** Optional native protocol mode. Absent means current. */
+	harnessControlMode?: HarnessControlMode;
 }
 
 export type CreateSessionCallback = (

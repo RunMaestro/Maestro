@@ -3,11 +3,14 @@ import type { IPty } from 'node-pty';
 import type { OpencodeClient } from '@opencode-ai/sdk';
 import type { AgentOutputParser, ParsedEvent } from '../parsers';
 import type { AgentError, CallUsage } from '../../shared/types';
+import type { AdditionalDirectory } from '../../shared/types';
+import type { HarnessControlMode } from '../../shared/maestro-lib/providers/native-control';
 import type { UsageAccumulator } from '../../shared/maestro-lib/streaming/usage-accumulator';
 import type { TurnOutcome } from '../../shared/maestro-lib/streaming/turn-outcome';
 import type { CodexTransport } from '../../shared/codexTransport';
 import type { CodexAppServerSshLaunch } from '../codex-app-server/ssh-launch';
 import type { CodexAppServerProcessHandle } from '../codex-app-server/protocol';
+import type { HarnessControlHandle } from '../../shared/harness-control/types';
 
 /**
  * Kill/interrupt handle for server-backed processes, whose stop starts with a
@@ -40,6 +43,7 @@ export interface ProcessConfig {
 	reuseTerminal?: boolean;
 	requiresPty?: boolean;
 	prompt?: string;
+	appendSystemPrompt?: string;
 	shell?: string;
 	shellArgs?: string;
 	shellEnvVars?: Record<string, string>;
@@ -103,6 +107,16 @@ export interface ProcessConfig {
 	 *  than `'app-server'` (including absent) means `codex exec`. A preference:
 	 *  the spawner still runs exec for turns app-server cannot carry. */
 	codexTransport?: CodexTransport;
+	modelId?: string;
+	/** Effective three-way permission mode, when the caller selected one. */
+	permissionMode?: 'full' | 'standard' | 'readonly';
+	/** Opt-in native protocol mode and its independently built ACP launch args. */
+	harnessControlMode?: HarnessControlMode;
+	nativeAcpArgs?: string[];
+	sessionAdditionalDirectories?: AdditionalDirectory[];
+	nativeRpcProtocol?: 'pi-rpc' | 'omp-rpc';
+	nativeRpcArgs?: string[];
+	effort?: string;
 	/** An app-server turn on an SSH remote: the launch the spawn handler built
 	 *  beside the exec wrapper, set only when the turn wants app-server. The
 	 *  app-server spawner runs it; exec ignores it. */
@@ -202,6 +216,10 @@ export interface ManagedProcess {
 	opencodeClient?: OpencodeClient;
 	/** Codex app-server turn state (thread id, turn id, request channel) for steering. */
 	codexAppServer?: CodexAppServerProcessHandle;
+	/** Optional native control mode. Absent means the current transport owns control. */
+	harnessControl?: HarnessControlHandle;
+	/** Native SDK completion is authoritative; no CLI on-disk shutdown marker is expected. */
+	skipCopilotShutdownWait?: boolean;
 	/** Monotonic spawn number for this session id, claimed at registration.
 	 *  Lets a late event from a killed process recognize that a newer spawn owns
 	 *  the session even after that newer spawn has removed its own map entry.

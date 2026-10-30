@@ -83,6 +83,15 @@ import {
 	type ClaudeSpawnCoreDeps,
 	type PackagedAppHost,
 } from '../../shared/maestro-lib/launch/interactive-mode';
+import {
+	resolveHarnessControlMode,
+	type HarnessControlMode,
+} from '../../shared/maestro-lib/providers/native-control';
+import type {
+	HarnessInteractionRequest,
+	HarnessInteractionResolution,
+} from '../../shared/harness-control/types';
+import { spawnNativeSdkAgent } from './native-sdk-agent';
 
 // Types from the SSH wrapper are imported type-only so no runtime module load
 // happens for non-SSH sessions - the SSH chain pulls in execFile/which helpers
@@ -1680,6 +1689,17 @@ export interface SpawnAgentOptions {
 	agentSessionId?: string;
 	/** Run in read-only/plan mode (uses centralized agent definitions for provider-specific flags) */
 	readOnlyMode?: boolean;
+	/** Opt into a provider-native SDK/protocol transport for this CLI turn. */
+	harnessControlMode?: HarnessControlMode;
+	/** Native approval behavior. Absent preserves the CLI's existing full-access behavior. */
+	permissionMode?: 'full' | 'standard' | 'readonly';
+	/** Authorized CLI owner for native permission, question, and elicitation requests. */
+	onHarnessInteraction?: (
+		request: HarnessInteractionRequest
+	) => Promise<HarnessInteractionResolution> | HarnessInteractionResolution;
+	/** Stable ownership identity included in native interaction requests. */
+	nativeSessionId?: string;
+	nativeTabId?: string;
 	/** Per-session model override (wins over agent-level model). */
 	customModel?: string;
 	/** Per-session effort/reasoning override (wins over agent-level). */
@@ -1860,6 +1880,17 @@ async function spawnAgentOnce(
 ): Promise<AgentResult> {
 	if (options?.signal?.aborted) return interruptedResult();
 
+	if (
+		options &&
+		resolveHarnessControlMode({ toolType, harnessControlMode: options.harnessControlMode }) ===
+			'native'
+	) {
+		if (options.sshRemoteConfig?.enabled) {
+			return spawnFailureResult('Native CLI control is local-only; use the current SSH transport');
+		}
+		const command = options.agentCommand ?? (await resolveLocalAgentCommand(toolType));
+		return spawnNativeSdkAgent(toolType, cwd, prompt, agentSessionId, options, command);
+	}
 	const readOnly = options?.readOnlyMode;
 	const sshRemoteConfig = options?.sshRemoteConfig;
 	const overrides: SpawnOverrides = {

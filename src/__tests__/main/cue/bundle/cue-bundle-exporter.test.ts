@@ -80,6 +80,7 @@ function seed(): void {
 				customPath: '/opt/local/bin/claude',
 				autoRunFolderPath: path.join(alphaRoot, '.maestro/playbooks'),
 				customModel: 'opus',
+				harnessControlMode: 'native',
 				customEnvVars: {
 					ANTHROPIC_API_KEY: SECRET_VALUE,
 					LOG_LEVEL: 'debug',
@@ -310,6 +311,7 @@ describe('exportCueBundle - pipeline', () => {
 			required: ['ANTHROPIC_API_KEY'],
 			machineSpecific: ['CLAUDE_CONFIG_DIR'],
 		});
+		expect(alpha.harnessControlMode).toBe('native');
 		// The provider-level env applies when the agent has none of its own.
 		const writer = JSON.parse(
 			entries.get('agents/agent-writer.json')!.toString('utf-8')

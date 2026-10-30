@@ -10,7 +10,7 @@
 import * as esbuild from 'esbuild';
 import * as fs from 'fs';
 import * as path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '..');
@@ -103,6 +103,9 @@ async function build() {
 			plugins: [rawMdPlugin],
 			define: {
 				__MAESTRO_CLI_VERSION__: JSON.stringify(cliVersion),
+				'import.meta.url': JSON.stringify(pathToFileURL(outfile).href),
+				'import.meta.filename': JSON.stringify(outfile),
+				'import.meta.dirname': JSON.stringify(path.dirname(outfile)),
 			},
 		});
 

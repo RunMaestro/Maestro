@@ -72,6 +72,7 @@ import {
 	type GroupUpdateRequest,
 } from '../../../shared/groupAppearance';
 import { isCodexTransport } from '../../../shared/codexTransport';
+import { isHarnessControlMode } from '../../../shared/maestro-lib/providers/native-control';
 import { withAgentInGroup } from '../../../shared/maestro-lib/agents/rules';
 import {
 	TAB_CONTEXT_OP_EVENT,
@@ -1595,6 +1596,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 				}),
 				...(config?.codexAutoResetOnExhaustion === true && { codexAutoResetOnExhaustion: true }),
 				...(config?.codexTransport === 'app-server' && { codexTransport: 'app-server' as const }),
+				...(config?.harnessControlMode === 'native' && { harnessControlMode: 'native' as const }),
 				claudeInteractive: newAgentClaudeInteractive(toolType),
 			};
 
@@ -1952,6 +1954,7 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 			// Codex transport opt-in (`update-agent --codex-transport`). Validated
 			// below, since an unknown value must never reach the spawner.
 			'codexTransport',
+			'harnessControlMode',
 			// UI state
 			'bookmarked',
 		]);
@@ -1969,6 +1972,17 @@ export function useAppRemoteEventListeners(deps: UseAppRemoteEventListenersDeps)
 					error: `Invalid value for field '${key}'`,
 				});
 				return;
+			}
+			if (key === 'harnessControlMode' && value !== null && !isHarnessControlMode(value)) {
+				window.maestro.process.sendRemoteUpdateSessionConfigResponse(responseChannel, {
+					success: false,
+					error: `Invalid value for field '${key}'`,
+				});
+				return;
+			}
+			if (key === 'harnessControlMode' && value === 'current') {
+				updated.harnessControlMode = undefined;
+				continue;
 			}
 			// `exec` is the default, so it is stored the way the Edit Agent modal
 			// stores it: as an unset field.

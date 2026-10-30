@@ -22,12 +22,20 @@ import { EventEmitter } from 'events';
 import { logger } from '../../utils/logger';
 import { createOutputParser } from '../../parsers';
 import { captureException } from '../../utils/sentry';
+import { fetchWithTimeout } from '../../utils/fetchWithTimeout';
 import type { ProcessConfig, ManagedProcess, SpawnResult } from '../types';
 import type { DataBufferManager } from '../handlers/DataBufferManager';
 import { StdoutHandler } from '../handlers/StdoutHandler';
 import { ExitHandler } from '../handlers/ExitHandler';
 import { opencodeServerManager } from '../../opencode-server/OpencodeServerManager';
 import { OpencodeEventTranslator } from '../../opencode-server/event-translator';
+import { nextSpawnGeneration } from '../generation';
+import { harnessInteractionBroker } from '../../harness-control/integration';
+import {
+	opencodePermissionOpenRequest,
+	opencodePermissionResponse,
+} from '../../opencode-server/permission-requests';
+import type { OpencodePermissionRequest } from '../../opencode-server/permission-requests';
 import type { Event, OpencodeClient } from '@opencode-ai/sdk';
 
 /** Parsed agent invocation bits we need from the CLI-style args. */
@@ -81,6 +89,7 @@ function parseInvocation(config: ProcessConfig): OpencodeInvocation {
 export class OpencodeServerSpawner {
 	private stdoutHandler: StdoutHandler;
 	private exitHandler: ExitHandler;
+	private readonly pendingPermissions = new Map<string, string>();
 
 	constructor(
 		private processes: Map<string, ManagedProcess>,
@@ -150,6 +159,32 @@ export class OpencodeServerSpawner {
 					streamAbort.abort();
 				},
 			},
+			harnessControl: {
+				getCapabilities: () => ({
+					protocol: 'opencode-http',
+					protocolVersion: '1',
+					steering: 'none',
+					permissionRequests: true,
+					questions: false,
+					elicitations: false,
+					modelSwitch: false,
+					modeSwitch: false,
+					imagePrompts: false,
+					resume: true,
+				}),
+				steer: async ({ id }) => ({
+					type: 'steering',
+					id,
+					verdict: 'refused',
+					refusal: 'editor-unavailable',
+					detail: 'OpenCode native control does not support mid-turn steering.',
+				}),
+				interrupt: async () => this.abortActiveSession(managedProcess),
+				close: async () => {
+					this.abortActiveSession(managedProcess);
+					streamAbort.abort();
+				},
+			},
 		};
 		const lifecycle: Lifecycle = {
 			isFinished: () => finished,
@@ -165,6 +200,7 @@ export class OpencodeServerSpawner {
 			},
 		};
 
+		managedProcess.spawnGeneration = nextSpawnGeneration(sessionId);
 		this.processes.set(sessionId, managedProcess);
 
 		if (!prompt) {
@@ -210,6 +246,73 @@ export class OpencodeServerSpawner {
 		});
 	}
 
+	private handlePermissionUpdated(
+		permission: OpencodePermissionRequest,
+		managedProcess: ManagedProcess,
+		serverUrl: string,
+		currentProtocol: boolean
+	): void {
+		if (this.pendingPermissions.has(permission.id)) return;
+		try {
+			const opened = harnessInteractionBroker.open(
+				opencodePermissionOpenRequest(permission, {
+					sessionId: managedProcess.sessionId,
+					tabId: managedProcess.tabId,
+					spawnGeneration: managedProcess.spawnGeneration ?? 1,
+				})
+			);
+			this.pendingPermissions.set(permission.id, opened.request.requestId);
+			void opened.completion
+				.then(async (resolution) => {
+					if (this.pendingPermissions.get(permission.id) !== opened.request.requestId) return;
+					this.pendingPermissions.delete(permission.id);
+					const response = opencodePermissionResponse(resolution);
+					if (currentProtocol) {
+						const query = new URLSearchParams({ directory: managedProcess.cwd });
+						const result = await fetchWithTimeout(
+							`${serverUrl}/permission/${encodeURIComponent(permission.id)}/reply?${query}`,
+							{
+								method: 'POST',
+								headers: { 'content-type': 'application/json' },
+								body: JSON.stringify({ reply: response }),
+							}
+						);
+						if (!result.ok)
+							throw new Error(`OpenCode rejected permission response for ${permission.id}`);
+						return;
+					}
+					const client = managedProcess.opencodeClient;
+					const ocSessionId = managedProcess.opencodeSessionId;
+					if (!client || !ocSessionId) return;
+					const result = await client.postSessionIdPermissionsPermissionId({
+						path: { id: ocSessionId, permissionID: permission.id },
+						query: { directory: managedProcess.cwd },
+						body: { response },
+					});
+					if (result.error || result.data === false) {
+						throw new Error(`OpenCode rejected permission response for ${permission.id}`);
+					}
+				})
+				.catch((error) => {
+					this.emitAgentError(managedProcess, error);
+					this.abortActiveSession(managedProcess);
+				});
+		} catch (error) {
+			this.emitAgentError(managedProcess, error);
+			this.abortActiveSession(managedProcess);
+		}
+	}
+
+	private handlePermissionReplied(event: {
+		properties: { sessionID: string; permissionID?: string; requestID?: string };
+	}): void {
+		const permissionId = event.properties.permissionID ?? event.properties.requestID;
+		if (!permissionId) return;
+		const brokerId = this.pendingPermissions.get(permissionId);
+		if (!brokerId) return;
+		this.pendingPermissions.delete(permissionId);
+		harnessInteractionBroker.withdraw(brokerId);
+	}
 	private abortActiveSession(managedProcess: ManagedProcess): void {
 		const client = managedProcess.opencodeClient;
 		const ocSessionId = managedProcess.opencodeSessionId;
@@ -242,6 +345,7 @@ export class OpencodeServerSpawner {
 		let client: OpencodeClient;
 		let ocSessionId: string;
 		let subscription: { stream: unknown };
+		let serverUrl = '';
 
 		// Bail if the spawn was interrupted/killed during an await below. Without
 		// this, stale setup work could fire a prompt on an abandoned session or
@@ -250,12 +354,13 @@ export class OpencodeServerSpawner {
 		const cancelled = (): boolean => streamAbort.signal.aborted || lifecycle.isFinished();
 
 		try {
-			({ client } = await opencodeServerManager.ensureServer({
+			({ client, url: serverUrl } = await opencodeServerManager.ensureServer({
 				binaryPath: command,
 				customEnvVars: config.customEnvVars,
 				shellEnvVars: config.shellEnvVars,
 				extraPathDirs: config.extraPathDirs,
 				cwd,
+				permissionMode: config.permissionMode,
 			}));
 			if (cancelled()) {
 				lifecycle.finish(0);
@@ -282,7 +387,10 @@ export class OpencodeServerSpawner {
 			// Subscribe to the shared server's event stream BEFORE firing the prompt
 			// so no early part events are missed. The stream is multiplexed across
 			// all sessions; the translator filters down to ours.
-			subscription = await client.event.subscribe({ signal: streamAbort.signal });
+			subscription = await client.event.subscribe({
+				signal: streamAbort.signal,
+				query: { directory: cwd },
+			});
 			if (cancelled()) {
 				lifecycle.finish(0);
 				return;
@@ -324,6 +432,25 @@ export class OpencodeServerSpawner {
 			try {
 				for await (const event of subscription.stream as AsyncIterable<Event>) {
 					if (lifecycle.isFinished()) break;
+					if (event.type === 'permission.updated') {
+						if (event.properties.sessionID === ocSessionId) {
+							this.handlePermissionUpdated(event.properties, managedProcess, serverUrl, false);
+						}
+						continue;
+					}
+					if ((event.type as string) === 'permission.asked') {
+						const permission = event.properties as OpencodePermissionRequest;
+						if (permission.sessionID === ocSessionId) {
+							this.handlePermissionUpdated(permission, managedProcess, serverUrl, true);
+						}
+						continue;
+					}
+					if (event.type === 'permission.replied') {
+						if (event.properties.sessionID === ocSessionId) {
+							this.handlePermissionReplied(event);
+						}
+						continue;
+					}
 					const { lines, idle, errored } = translator.handle(event);
 					for (const line of lines) {
 						this.stdoutHandler.handleData(sessionId, line + '\n');
@@ -353,7 +480,7 @@ export class OpencodeServerSpawner {
 
 		// Fire the prompt (async: events stream live via the subscription above).
 		try {
-			await client.session.promptAsync({
+			const promptResult = await client.session.promptAsync({
 				path: { id: ocSessionId },
 				query: { directory: cwd },
 				body: {
@@ -362,6 +489,7 @@ export class OpencodeServerSpawner {
 					...(invocation.agent ? { agent: invocation.agent } : {}),
 				},
 			});
+			if (promptResult.error) throw promptResult.error;
 		} catch (promptErr) {
 			// Surface the failure and stop the pump; the session errored, not the
 			// whole transport, so no CLI fallback (that would re-run the prompt).

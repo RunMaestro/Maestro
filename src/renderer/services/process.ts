@@ -252,6 +252,7 @@ export async function killAgentAiProcesses(agentId: string): Promise<void> {
 		logger.warn('[process] Could not list AI processes to kill', undefined, { agentId, error });
 	}
 	await Promise.all([...ids].map((id) => window.maestro.process.kill(id)));
+	await window.maestro.process.closeAgent(agentId);
 }
 
 /**

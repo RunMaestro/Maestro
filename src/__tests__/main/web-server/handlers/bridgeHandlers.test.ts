@@ -45,6 +45,8 @@ vi.mock('electron', () => ({
 
 import {
 	broadcastBridgeEvent,
+	broadcastBridgeEventToSessionSubscribers,
+	isBridgeSessionOwner,
 	handleBridgeInvoke,
 	installWebContentsBridgeHook,
 	uninstallWebContentsBridgeHook,
@@ -449,6 +451,38 @@ describe('broadcastBridgeEvent', () => {
 		expect(typeof payload.timestamp).toBe('number');
 
 		uninstallWebContentsBridgeHook();
+	});
+
+	it('targets private interactions to session subscribers and checks the same owner scope', () => {
+		const broadcastToAll = vi.fn();
+		const broadcastToSubscribers = vi.fn(() => true);
+		const isClientSubscribed = vi.fn(() => true);
+		installWebContentsBridgeHook({
+			broadcastToAll,
+			broadcastToSubscribers,
+			isClientSubscribed,
+		} as unknown as Parameters<typeof installWebContentsBridgeHook>[0]);
+
+		expect(
+			broadcastBridgeEventToSessionSubscribers(
+				'process:harness-interaction-request',
+				[{ requestId: 'request-a' }],
+				'agent-a'
+			)
+		).toBe(true);
+		expect(broadcastToSubscribers).toHaveBeenCalledWith(
+			'agent-a',
+			expect.objectContaining({
+				type: 'bridge.event',
+				channel: 'process:harness-interaction-request',
+			})
+		);
+		expect(isBridgeSessionOwner('browser-a', 'agent-a')).toBe(true);
+		expect(isClientSubscribed).toHaveBeenCalledWith('browser-a', 'agent-a');
+		expect(broadcastToAll).not.toHaveBeenCalled();
+
+		uninstallWebContentsBridgeHook();
+		expect(isBridgeSessionOwner('browser-a', 'agent-a')).toBe(false);
 	});
 
 	it('never fans out a denied channel (Computer History status push)', () => {

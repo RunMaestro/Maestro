@@ -14,6 +14,12 @@ import { PtySpawner } from './spawners/PtySpawner';
 import { ChildProcessSpawner } from './spawners/ChildProcessSpawner';
 import { OpencodeServerSpawner } from './spawners/OpencodeServerSpawner';
 import { CodexAppServerSpawner } from './spawners/CodexAppServerSpawner';
+import { AcpServerSpawner } from './spawners/AcpServerSpawner';
+import { RpcServerSpawner } from './spawners/RpcServerSpawner';
+import { HermesApiSpawner } from './spawners/HermesApiSpawner';
+import { ClaudeSdkSpawner } from './spawners/ClaudeSdkSpawner';
+import { CopilotSdkSpawner } from './spawners/CopilotSdkSpawner';
+import { AntigravitySdkSpawner } from './spawners/AntigravitySdkSpawner';
 import { codexAppServerConfigBlocker, wantsCodexAppServer } from '../codex-app-server/invocation';
 import { DataBufferManager } from './handlers/DataBufferManager';
 import { pushResolvedOmpContextWindow } from './handlers/StdoutHandler';
@@ -42,6 +48,8 @@ import {
 	INTERACTIVE_STOP_GRACE_MS,
 } from '../../shared/maestro-lib/control/termination';
 import { signalRemoteAgent, type RemoteSignalMode } from '../utils/ssh-remote-signal';
+import { HarnessControlRegistry } from '../harness-control/HarnessControlRegistry';
+import type { HarnessControlCapabilities } from '../../shared/harness-control/types';
 
 export interface ProcessManagerOptions {
 	/** Maestro's version, reported to `codex app-server` as `clientInfo.version`. */
@@ -71,8 +79,15 @@ export class ProcessManager extends EventEmitter {
 	private childProcessSpawner: ChildProcessSpawner;
 	private opencodeServerSpawner: OpencodeServerSpawner;
 	private codexAppServerSpawner: CodexAppServerSpawner;
+	private acpServerSpawner: AcpServerSpawner;
+	private rpcServerSpawner: RpcServerSpawner;
+	private hermesApiSpawner: HermesApiSpawner;
+	private claudeSdkSpawner: ClaudeSdkSpawner;
+	private copilotSdkSpawner: CopilotSdkSpawner;
+	private antigravitySdkSpawner: AntigravitySdkSpawner;
 	private localCommandRunner: LocalCommandRunner;
 	private sshCommandRunner: SshCommandRunner;
+	private readonly harnessControls = new HarnessControlRegistry();
 	private readonly isCoworkingEnabled: () => boolean;
 
 	constructor(
@@ -86,6 +101,7 @@ export class ProcessManager extends EventEmitter {
 		options: ProcessManagerOptions = {}
 	) {
 		super();
+		this.on('exit', (sessionId: string) => this.harnessControls.forget(sessionId));
 		this.isCoworkingEnabled = options.isCoworkingEnabled ?? (() => true);
 		this.bufferManager = new DataBufferManager(this.processes, this);
 		this.ptySpawner = new PtySpawner(this.processes, this, this.bufferManager);
@@ -96,7 +112,7 @@ export class ProcessManager extends EventEmitter {
 			this.processes,
 			this,
 			this.bufferManager,
-			(config) => this.childProcessSpawner.spawn(config)
+			(config) => this.fallbackToCli(config)
 		);
 		// Same contract for Codex: a turn the app-server transport cannot carry,
 		// or whose server will not start, runs on `codex exec` instead.
@@ -104,8 +120,45 @@ export class ProcessManager extends EventEmitter {
 			this.processes,
 			this,
 			this.bufferManager,
-			(config) => this.childProcessSpawner.spawn(config),
+			(config) => this.fallbackToCli(config),
 			{ clientVersion: options.appVersion }
+		);
+		this.acpServerSpawner = new AcpServerSpawner(
+			this.processes,
+			this,
+			this.bufferManager,
+			(config) => this.fallbackToCli(config),
+			{ clientVersion: options.appVersion }
+		);
+		this.rpcServerSpawner = new RpcServerSpawner(
+			this.processes,
+			this,
+			this.bufferManager,
+			(config) => this.fallbackToCli(config)
+		);
+		this.hermesApiSpawner = new HermesApiSpawner(
+			this.processes,
+			this,
+			this.bufferManager,
+			(config) => this.fallbackToCli(config)
+		);
+		this.claudeSdkSpawner = new ClaudeSdkSpawner(
+			this.processes,
+			this,
+			this.bufferManager,
+			(config) => this.fallbackToCli(config)
+		);
+		this.copilotSdkSpawner = new CopilotSdkSpawner(
+			this.processes,
+			this,
+			this.bufferManager,
+			(config) => this.fallbackToCli(config)
+		);
+		this.antigravitySdkSpawner = new AntigravitySdkSpawner(
+			this.processes,
+			this,
+			this.bufferManager,
+			(config) => this.fallbackToCli(config)
 		);
 		this.localCommandRunner = new LocalCommandRunner(this);
 		this.sshCommandRunner = new SshCommandRunner(this);
@@ -265,7 +318,10 @@ export class ProcessManager extends EventEmitter {
 			// The same `spawn` seam the CLI path emits below. This transport
 			// reports `exit` through the shared handlers, so a listener that pairs
 			// the two would otherwise see every turn here end without a start.
-			if (serveResult.success) this.emitSpawn(config);
+			if (serveResult.success) {
+				this.registerHarnessControl(config);
+				this.emitSpawn(config);
+			}
 			return serveResult;
 		}
 
@@ -306,7 +362,23 @@ export class ProcessManager extends EventEmitter {
 		// fingerprint, unlike OpenCode serve), so it takes the coworking env like
 		// any CLI spawn and is routed after the injection.
 		let result: SpawnResult;
-		if (this.shouldUseCodexAppServer(configWithCoworkingSession)) {
+		if (configWithCoworkingSession.harnessControlMode === 'native') {
+			if (configWithCoworkingSession.toolType === 'hermes') {
+				result = this.hermesApiSpawner.spawn(configWithCoworkingSession);
+			} else if (configWithCoworkingSession.toolType === 'claude-code') {
+				result = this.claudeSdkSpawner.spawn(configWithCoworkingSession);
+			} else if (configWithCoworkingSession.toolType === 'copilot-cli') {
+				result = this.copilotSdkSpawner.spawn(configWithCoworkingSession);
+			} else if (configWithCoworkingSession.toolType === 'antigravity') {
+				result = this.antigravitySdkSpawner.spawn(configWithCoworkingSession);
+			} else if (configWithCoworkingSession.nativeAcpArgs) {
+				result = this.acpServerSpawner.spawn(configWithCoworkingSession);
+			} else if (configWithCoworkingSession.nativeRpcProtocol) {
+				result = this.rpcServerSpawner.spawn(configWithCoworkingSession);
+			} else {
+				result = this.childProcessSpawner.spawn(configWithCoworkingSession);
+			}
+		} else if (this.shouldUseCodexAppServer(configWithCoworkingSession)) {
 			result = this.codexAppServerSpawner.spawn(configWithCoworkingSession);
 		} else if (this.shouldUsePty(configWithCoworkingSession)) {
 			result = this.ptySpawner.spawn(configWithCoworkingSession);
@@ -314,7 +386,10 @@ export class ProcessManager extends EventEmitter {
 			result = this.childProcessSpawner.spawn(configWithCoworkingSession);
 		}
 
-		if (result.success) this.emitSpawn(config);
+		if (result.success) {
+			this.registerHarnessControl(config);
+			this.emitSpawn(config);
+		}
 
 		return result;
 	}
@@ -330,6 +405,27 @@ export class ProcessManager extends EventEmitter {
 			this.emit('spawn', config);
 		} catch {
 			// Capture is best-effort; never let it break process spawning.
+		}
+	}
+
+	/** Negotiated control features for an explicitly selected native transport. */
+	getHarnessControlCapabilities(sessionId: string): HarnessControlCapabilities | null {
+		return this.harnessControls.getCapabilities(sessionId);
+	}
+
+	private fallbackToCli(config: ProcessConfig): SpawnResult {
+		this.harnessControls.forget(config.sessionId);
+		return this.childProcessSpawner.spawn(config);
+	}
+
+	private registerHarnessControl(config: ProcessConfig): void {
+		const managed = this.processes.get(config.sessionId);
+		if (managed?.harnessControl && managed.spawnGeneration) {
+			this.harnessControls.register(
+				config.sessionId,
+				managed.spawnGeneration,
+				managed.harnessControl
+			);
 		}
 	}
 
@@ -411,6 +507,9 @@ export class ProcessManager extends EventEmitter {
 				refusal: 'not-running',
 				detail: STEERING_TURN_FINISHED_DETAIL,
 			};
+		}
+		if (this.harnessControls.has(sessionId)) {
+			return this.harnessControls.steer(sessionId, text);
 		}
 		if (process.codexAppServer) {
 			return steerCodexAppServerTurn(process.codexAppServer, { id, text }, (verdict) =>
@@ -500,6 +599,10 @@ export class ProcessManager extends EventEmitter {
 		process.interrupted = true;
 
 		try {
+			if (this.harnessControls.has(sessionId)) {
+				void this.harnessControls.interrupt(sessionId);
+				return true;
+			}
 			if (process.sdkController) {
 				// Server-backed process (OpenCode SDK, Codex app-server): interrupt the
 				// in-flight turn over its protocol; the controller escalates if needed.
@@ -572,7 +675,7 @@ export class ProcessManager extends EventEmitter {
 		{ sync = false, shutdown = false }: { sync?: boolean; shutdown?: boolean } = {}
 	): boolean {
 		const proc = this.processes.get(sessionId);
-		if (!proc) return false;
+		if (!proc) return this.copilotSdkSpawner.closeSession(sessionId);
 
 		// A kill is a stop Maestro asked for (a closed tab, the Process Monitor, a
 		// watchdog), so the exit it causes is not a crash. The resolver reads any
@@ -585,7 +688,9 @@ export class ProcessManager extends EventEmitter {
 			}
 			this.bufferManager.flushDataBuffer(sessionId);
 
-			if (proc.sdkController) {
+			if (this.harnessControls.has(sessionId)) {
+				void this.harnessControls.close(sessionId, { sync, shutdown });
+			} else if (proc.sdkController) {
 				// Server-backed process (OpenCode SDK, Codex app-server): the stop
 				// starts with a protocol call. The controller tears its transport down
 				// (and runs the stop ladder on any child it owns); the exit event
@@ -687,6 +792,18 @@ export class ProcessManager extends EventEmitter {
 		}
 		// Tear down the shared OpenCode server(s) that back the SDK path.
 		opencodeServerManager.shutdown();
+		void this.copilotSdkSpawner.closeAll().catch((error) => {
+			captureException(error instanceof Error ? error : new Error(String(error)), {
+				context: 'Copilot native connection shutdown',
+			});
+		});
+	}
+	/** Stop every active turn for an agent and dispose retained native runtimes. */
+	closeAgent(agentId: string): void {
+		for (const proc of [...this.processes.values()]) {
+			if (proc.sessionId.replace(/-ai(?:-.+)?$/, '') === agentId) this.kill(proc.sessionId);
+		}
+		this.copilotSdkSpawner.closeAgent(agentId);
 	}
 
 	/**

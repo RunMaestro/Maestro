@@ -13,6 +13,7 @@ import { useModalStore, selectModalOpen, selectModalData } from '../../stores/mo
 import { useTabStore } from '../../stores/tabStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import type { CodexTransport } from '../../../shared/codexTransport';
+import type { HarnessControlMode } from '../../../shared/maestro-lib/providers/native-control';
 
 /**
  * Props for the AppSessionModals component
@@ -54,7 +55,8 @@ export interface AppSessionModalsProps {
 		/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
 		codexAutoResetOnExhaustion?: boolean,
 		/** Codex only: which transport chat turns use. `undefined` means `exec`. */
-		codexTransport?: CodexTransport
+		codexTransport?: CodexTransport,
+		harnessControlMode?: HarnessControlMode
 	) => void;
 	existingSessions: Session[];
 	sourceSession?: Session; // For agent duplication
@@ -95,7 +97,8 @@ export interface AppSessionModalsProps {
 		/** Codex only: spend a reset credit automatically on quota exhaustion. Defaults off. */
 		codexAutoResetOnExhaustion?: boolean,
 		/** Codex only: which transport chat turns use. `undefined` means `exec`. */
-		codexTransport?: CodexTransport
+		codexTransport?: CodexTransport,
+		harnessControlMode?: HarnessControlMode
 	) => void;
 	editAgentSession: Session | null;
 

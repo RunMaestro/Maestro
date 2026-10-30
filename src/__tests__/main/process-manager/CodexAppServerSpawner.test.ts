@@ -60,6 +60,11 @@ import type { ManagedProcess, ProcessConfig } from '../../../main/process-manage
 import type { CodexAppServerMessage } from '../../../main/codex-app-server/protocol';
 import { steerCodexAppServerTurn } from '../../../main/codex-app-server/steering';
 import { STEERING_MAX_TEXT_BYTES, type SteeringResultFrame } from '../../../shared/chatSteering';
+import {
+	harnessInteractionBroker,
+	initHarnessControl,
+} from '../../../main/harness-control/integration';
+import type { HarnessInteractionRequest } from '../../../shared/harness-control/types';
 
 // ── Fixtures ───────────────────────────────────────────────────────────────
 
@@ -279,6 +284,7 @@ beforeEach(() => {
 	mockSpawn.mockReset();
 	mockStopProcess.mockClear();
 	mockSignalRemoteAgent.mockClear();
+	harnessInteractionBroker.closeAll();
 });
 
 // ── Tests ──────────────────────────────────────────────────────────────────
@@ -485,6 +491,58 @@ describe('CodexAppServerSpawner', () => {
 		);
 	});
 
+	it('routes a Standard approval through the broker and returns the native decision', async () => {
+		const server = new FakeAppServer((msg, s) => {
+			if (msg.method === 'initialize') s.send({ id: msg.id, result: {} });
+			if (msg.method === 'thread/start')
+				s.send({ id: msg.id, result: { thread: { id: 'thread-1' } } });
+			if (msg.method === 'turn/start') {
+				s.send({ id: msg.id, result: { turn: { id: 'turn-1' } } });
+				s.send({
+					id: 'approval-1',
+					method: 'item/commandExecution/requestApproval',
+					params: {
+						turnId: 'turn-1',
+						itemId: 'item-1',
+						reason: 'Run tests?',
+						availableDecisions: ['accept', 'decline', 'cancel'],
+					},
+				});
+			}
+		});
+		const h = createHarness(server);
+		const requests: HarnessInteractionRequest[] = [];
+		const window = {
+			isDestroyed: () => false,
+			webContents: {
+				isDestroyed: () => false,
+				send: (_channel: string, request: HarnessInteractionRequest) => {
+					requests.push(request);
+					queueMicrotask(() => {
+						harnessInteractionBroker.resolve({
+							requestId: request.requestId,
+							outcome: 'selected',
+							optionId: 'decision-0',
+						});
+					});
+				},
+			},
+		};
+		initHarnessControl({ getMainWindow: () => window as never }, null);
+
+		h.spawner.spawn(
+			h.config({
+				permissionMode: 'standard',
+				args: ['-C', '/tmp/codex-project', 'exec', '--json', '--skip-git-repo-check'],
+			})
+		);
+
+		await vi.waitFor(() => expect(server.responseTo('approval-1')).toBeDefined());
+		expect(server.responseTo('approval-1')?.result).toEqual({ decision: 'accept' });
+		expect(server.sent('thread/start')[0].params).toMatchObject({ approvalPolicy: 'on-request' });
+		expect(requests[0]).toMatchObject({ sessionId: h.sessionId, provider: 'codex' });
+		server.exit(0);
+	});
 	it('falls back to exec when the handshake fails', async () => {
 		const server = new FakeAppServer((msg, s) => {
 			if (msg.method === 'initialize') {
@@ -525,6 +583,20 @@ describe('CodexAppServerSpawner', () => {
 
 		await vi.waitFor(() => expect(h.fallbackToCli).toHaveBeenCalledTimes(1));
 		expect(h.errors).toEqual([]);
+	});
+
+	it('does not fall back to prompt-less exec for a Standard turn', async () => {
+		const server = new FakeAppServer((msg, s) => {
+			if (msg.method === 'initialize') {
+				s.send({ id: msg.id, error: { code: -32603, message: 'boom' } });
+			}
+		});
+		const h = createHarness(server);
+		h.spawner.spawn(h.config({ permissionMode: 'standard' }));
+
+		await vi.waitFor(() => expect(h.errors).toHaveLength(1));
+		expect(h.fallbackToCli).not.toHaveBeenCalled();
+		expect(server.sent('turn/start')).toEqual([]);
 	});
 
 	it('hands turns it cannot carry straight to exec', () => {

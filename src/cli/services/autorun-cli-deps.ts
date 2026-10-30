@@ -41,6 +41,8 @@ function autoRunTurnOptions(session: SessionInfo): SpawnAgentOptions {
 		customEnvVars: session.customEnvVars,
 		requiredSecrets: session.requiredSecrets,
 		sshRemoteConfig: session.sessionSshRemoteConfig,
+		harnessControlMode: session.harnessControlMode,
+		nativeSessionId: session.id,
 		// This is Auto Run, not someone typing. Marks the turn so delegation
 		// reporting downstream of the spawn does not count it as hands-on work.
 		querySource: 'auto',
@@ -59,6 +61,8 @@ function goalTurnOptions(session: SessionInfo): SpawnAgentOptions {
 		customEnvVars: session.customEnvVars,
 		requiredSecrets: session.requiredSecrets,
 		sshRemoteConfig: session.sessionSshRemoteConfig,
+		harnessControlMode: session.harnessControlMode,
+		nativeSessionId: session.id,
 	};
 }
 

@@ -116,7 +116,8 @@
 			"node_modules/@napi-rs/keyring/**/*",
 			"node_modules/@napi-rs/keyring-*/*",
 			"node_modules/bindings/**/*",
-			"node_modules/file-uri-to-path/**/*"
+			"node_modules/file-uri-to-path/**/*",
+			"node_modules/@github/copilot-sdk-*/**/*"
 		],
 		"mac": {
 			"category": "public.app-category.developer-tools",
@@ -360,8 +361,8 @@
 		}
 	},
 	"dependencies": {
-		"@serenity-kit/opaque": "1.1.0",
-		"dns-packet": "5.6.1",
+		"@agentclientprotocol/sdk": "^2.0.2",
+		"@anthropic-ai/claude-agent-sdk": "^0.3.310",
 		"@codemirror/commands": "^6.10.3",
 		"@codemirror/lang-cpp": "^6.0.3",
 		"@codemirror/lang-css": "^6.3.1",
@@ -391,10 +392,12 @@
 		"@fastify/websocket": "^11.3.3",
 		"@gitgraph/core": "^1.5.0",
 		"@gitgraph/react": "^1.6.0",
+		"@github/copilot-sdk": "^1.0.26",
 		"@lezer/highlight": "^1.2.3",
 		"@napi-rs/keyring": "2.0.0",
 		"@opencode-ai/sdk": "^1.17.13",
 		"@sentry/electron": "^7.13.0",
+		"@serenity-kit/opaque": "1.1.0",
 		"@tanstack/react-virtual": "^3.13.13",
 		"@types/d3-force": "^3.0.10",
 		"@types/dompurify": "^3.0.5",
@@ -414,6 +417,7 @@
 		"d3-force": "^3.0.0",
 		"date-fns": "^4.1.0",
 		"diff": "^8.0.2",
+		"dns-packet": "5.6.1",
 		"dompurify": "^3.4.16",
 		"electron-store": "^8.2.0",
 		"electron-updater": "^6.8.3",
@@ -454,10 +458,10 @@
 		"remove-markdown": "^0.5.5",
 		"semver": "^7.7.4",
 		"shiki": "^4.0.2",
+		"smol-toml": "1.9.1",
 		"undici": "^7.29.1",
 		"ws": "^8.16.0",
-		"zustand": "^5.0.11",
-		"smol-toml": "1.9.1"
+		"zustand": "^5.0.11"
 	},
 	"devDependencies": {
 		"@electron/notarize": "^3.1.1",

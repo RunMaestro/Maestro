@@ -25,6 +25,10 @@ import {
 } from '../../../shared/claudeTokenMode';
 import { CODEX_TRANSPORTS, type CodexTransport } from '../../../shared/codexTransport';
 import { readOpenCodeAgentArg, writeOpenCodeAgentArg } from '../../../shared/opencodeAgentArg';
+import {
+	supportsNativeControl,
+	type HarnessControlMode,
+} from '../../../shared/maestro-lib/providers/native-control';
 import { useRemoteMaestroPAvailable } from '../../hooks/agent/useRemoteMaestroPAvailable';
 import { openUrl } from '../../utils/openUrl';
 import { logger } from '../../utils/logger';
@@ -76,6 +80,11 @@ const CODEX_TRANSPORT_LABELS: Record<CodexTransport, string> = {
 const CODEX_TRANSPORT_OPTIONS: { value: CodexTransport; label: string }[] = CODEX_TRANSPORTS.map(
 	(value) => ({ value, label: CODEX_TRANSPORT_LABELS[value] })
 );
+
+const HARNESS_CONTROL_OPTIONS: { value: HarnessControlMode; label: string }[] = [
+	{ value: 'current', label: 'current (default)' },
+	{ value: 'native', label: 'native control' },
+];
 
 // Built-in environment variables that Maestro sets automatically
 const BUILT_IN_ENV_VARS: { key: string; description: string; value: string }[] = [
@@ -433,6 +442,9 @@ export interface AgentConfigPanelProps {
 	 */
 	codexTransport?: CodexTransport;
 	onCodexTransportChange?: (transport: CodexTransport) => void;
+	/** Optional native protocol mode for providers with a qualified native adapter. */
+	harnessControlMode?: HarnessControlMode;
+	onHarnessControlModeChange?: (mode: HarnessControlMode) => void;
 }
 
 export function AgentConfigPanel({
@@ -483,6 +495,8 @@ export function AgentConfigPanel({
 	onCodexAutoResetChange,
 	codexTransport = 'exec',
 	onCodexTransportChange,
+	harnessControlMode = 'current',
+	onHarnessControlModeChange,
 }: AgentConfigPanelProps): JSX.Element {
 	const callOnConfigBlurSafely = (key: string, committedValue: any) => {
 		const maybePromise = onConfigBlur(key, committedValue);
@@ -866,6 +880,29 @@ export function AgentConfigPanel({
 						{isSshEnabled && codexTransport === 'app-server'
 							? ' This agent runs over SSH, so its turns use codex exec.'
 							: ''}
+					</p>
+				</div>
+			)}
+
+			{supportsNativeControl(agent.id) && onHarnessControlModeChange && (
+				<div
+					className={`${padding} rounded border`}
+					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+					data-testid="harness-control-mode-option"
+				>
+					<span className="block text-xs font-medium mb-2" style={{ color: theme.colors.textDim }}>
+						Control Mode
+					</span>
+					<ToggleButtonGroup
+						options={HARNESS_CONTROL_OPTIONS}
+						value={harnessControlMode}
+						onChange={onHarnessControlModeChange}
+						theme={theme}
+					/>
+					<p className="text-xs opacity-50 mt-2">
+						current is the default and preserves the existing CLI flow. native control opts into a
+						provider protocol with streaming events and native approval prompts where supported.
+						Steering semantics vary by provider. SSH turns are not supported in native mode.
 					</p>
 				</div>
 			)}

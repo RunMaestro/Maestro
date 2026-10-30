@@ -80,6 +80,7 @@ import { gitService } from '../../../renderer/services/git';
 import { validateNewSession } from '../../../renderer/utils/sessionValidation';
 import { parseSynopsis } from '../../../shared/synopsis';
 import type { Session, AITab } from '../../../renderer/types';
+import type { WizardState } from '../../../renderer/components/Wizard/WizardContext/types';
 import { createMockAITab } from '../../helpers/mockTab';
 import { createMockSession as baseCreateMockSession } from '../../helpers/mockSession';
 
@@ -2315,6 +2316,55 @@ describe('useWizardHandlers', () => {
 					projectPath: '/projects/my-app',
 				})
 			);
+		});
+
+		it('drops a stale native selection when the provider does not support it', async () => {
+			for (const [selectedAgent, expected] of [
+				['copilot-cli', 'native'],
+				['codex', undefined],
+			] as const) {
+				useSessionStore.setState({ sessions: [], activeSessionId: null });
+				const deps = createMockDeps({
+					wizardContext: {
+						state: {
+							currentStep: 'review',
+							isOpen: true,
+							selectedAgent,
+							availableAgents: [],
+							agentName: 'Native Project',
+							directoryPath: '/projects/native-app',
+							isGitRepo: false,
+							detectedAgentPath: null,
+							directoryError: null,
+							hasExistingAutoRunDocs: false,
+							existingDocsCount: 0,
+							existingDocsChoice: null,
+							conversationHistory: [],
+							confidenceLevel: 90,
+							isReadyToProceed: true,
+							isConversationLoading: false,
+							conversationError: null,
+							generatedDocuments: [],
+							currentDocumentIndex: 0,
+							isGeneratingDocuments: false,
+							generationError: null,
+							editedPhase1Content: null,
+							wantsTour: false,
+							isComplete: false,
+							createdSessionId: null,
+							harnessControlMode: 'native',
+							// Launch-focused fixture; unrelated wizard fields are intentionally omitted.
+						} as unknown as WizardState,
+						completeWizard: vi.fn().mockResolvedValue(undefined),
+						clearResumeState: vi.fn().mockResolvedValue(undefined),
+					},
+				});
+				const { result } = renderHook(() => useWizardHandlers(deps));
+				await act(async () => {
+					await result.current.handleWizardLaunchSession(false);
+				});
+				expect(useSessionStore.getState().sessions[0].harnessControlMode).toBe(expected);
+			}
 		});
 
 		it('inherits the wizard Claude Token Source pick (TUI) on the new session', async () => {

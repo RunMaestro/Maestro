@@ -230,6 +230,11 @@ export function setupIpcHandlers(deps: IpcBootstrapDependencies): void {
 		agentConfigsStore: deps.agentConfigsStore,
 		settingsStore: deps.settingsStore,
 		getMainWindow: deps.getMainWindow,
+		getWindowForSession: (sessionId) => {
+			const ownerId = deps.windowRegistry.getWindowForSession(sessionId);
+			const owner = ownerId ? deps.windowRegistry.get(ownerId) : undefined;
+			return owner?.browserWindow ?? null;
+		},
 		safeSend: deps.safeSend,
 		sessionsStore: deps.sessionsStore,
 		interactiveReplayController: deps.getInteractiveReplayController() ?? undefined,

@@ -555,6 +555,7 @@ export class ExitHandler {
 		managedProcess: ManagedProcess
 	): Promise<void> {
 		if (managedProcess.toolType !== 'copilot-cli') return;
+		if (managedProcess.skipCopilotShutdownWait) return;
 		const agentSessionId = managedProcess.agentSessionId;
 		if (!agentSessionId) return;
 

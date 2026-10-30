@@ -96,6 +96,8 @@ export interface AgentConfig extends BaseAgentConfig {
 	// These are optional - agents that don't have them use hardcoded behavior
 	batchModePrefix?: string[]; // Args added before base args for batch mode (e.g., ['run'] for OpenCode)
 	batchModeArgs?: string[]; // Args only applied in batch mode (e.g., ['--skip-git-repo-check'] for Codex exec)
+	/** Batch args that would bypass native approval prompts are omitted in Standard mode. */
+	skipBatchModeArgsInStandardMode?: boolean;
 	jsonOutputArgs?: string[]; // Args for JSON output format (e.g., ['--format', 'json'])
 	resumeArgs?: (sessionId: string) => string[]; // Function to build resume args
 	readOnlyArgs?: string[]; // Args for read-only/plan mode (e.g., ['--agent', 'plan'])
@@ -282,6 +284,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		//   - Read-only: --sandbox read-only (can only read files)
 		batchModePrefix: ['exec'], // Codex uses 'exec' subcommand for batch mode
 		batchModeArgs: ['--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check'], // Args only valid on 'exec' subcommand
+		skipBatchModeArgsInStandardMode: true,
 		jsonOutputArgs: ['--json'], // JSON output format (must come before resume subcommand)
 		resumeArgs: (sessionId: string) => ['resume', sessionId], // Resume with session/thread ID
 		// Read-only/plan mode. Do NOT add --dangerously-bypass-approvals-and-sandbox
@@ -491,6 +494,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		args: [],
 		batchModePrefix: [],
 		batchModeArgs: ['-y'],
+		skipBatchModeArgsInStandardMode: true,
 		jsonOutputArgs: ['--output-format', 'stream-json'],
 		resumeArgs: (sessionId: string) => ['--resume', sessionId],
 		// Qwen Code (qwen-code v0.19.x) ships a first-class `--approval-mode plan` that denies
@@ -532,6 +536,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		args: [],
 		batchModePrefix: ['chat'],
 		batchModeArgs: ['-Q', '--yolo'],
+		skipBatchModeArgsInStandardMode: true,
 		yoloModeArgs: ['--yolo'],
 		promptArgs: (prompt: string) => ['-q', prompt],
 		stdinPromptArgs: ['--query-file', '-'],
@@ -707,6 +712,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		// Always skip permissions in batch mode (like Claude Code's --dangerously-skip-permissions)
 		// Maestro requires full access to work properly
 		batchModeArgs: ['--skip-permissions-unsafe'],
+		skipBatchModeArgsInStandardMode: true,
 
 		// JSON output for parsing
 		jsonOutputArgs: ['-o', 'stream-json'],
@@ -885,6 +891,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		//    boolean flag dedups cleanly.
 		// Keep batchModeArgs === yoloModeArgs so the CLI read-only filter strips it.
 		batchModeArgs: ['--always-approve'],
+		skipBatchModeArgsInStandardMode: true,
 		jsonOutputArgs: ['--output-format', 'streaming-json'], // JSONL event stream on stdout
 		promptArgs: (prompt: string) => ['-p', prompt], // Single-turn headless prompt
 		resumeArgs: (sessionId: string) => ['--resume', sessionId], // Resume by session UUID

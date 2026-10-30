@@ -1,0 +1,30 @@
+{
+	"permission": {
+		"sessionId": "session-a",
+		"tabId": "tab-a",
+		"spawnGeneration": 1,
+		"turnId": "turn-a",
+		"toolCallId": "call-a",
+		"kind": "permission",
+		"provider": "fixture-agent",
+		"title": "Run the test command?",
+		"toolName": "Bash",
+		"input": { "command": "bun test" },
+		"options": [
+			{ "optionId": "allow", "label": "Allow once", "kind": "allow-once" },
+			{ "optionId": "deny", "label": "Deny", "kind": "reject-once" }
+		]
+	},
+	"question": {
+		"sessionId": "session-a",
+		"tabId": "tab-a",
+		"spawnGeneration": 1,
+		"kind": "question",
+		"provider": "fixture-agent",
+		"title": "Choose an implementation",
+		"options": [
+			{ "optionId": "native", "label": "Native protocol", "kind": "choice" },
+			{ "optionId": "current", "label": "Current transport", "kind": "choice" }
+		]
+	}
+}

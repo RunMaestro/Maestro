@@ -43,6 +43,7 @@ import { resolveActiveNavTab } from './useNavigationHistory';
 import type { NavHistoryEntry } from './useNavigationHistory';
 import { captureException } from '../../utils/sentry';
 import type { CodexTransport } from '../../../shared/codexTransport';
+import type { HarnessControlMode } from '../../../shared/maestro-lib/providers/native-control';
 import { persistTabStarred } from '../../utils/starredSessions';
 import { flushGroupsToDisk } from '../../services/groupPersistence';
 import { toggleTabUnreadFilter } from '../../services/unreadFilters';
@@ -106,6 +107,7 @@ export interface SessionLifecycleReturn {
 		codexAutoResetOnExhaustion?: boolean,
 		/** Codex only: which transport chat turns use. `undefined` means `exec`. */
 		codexTransport?: CodexTransport,
+		harnessControlMode?: HarnessControlMode,
 		acceptTranslationLimitations?: boolean,
 		selectedUserResources?: string[],
 		migrationPlanId?: string,
@@ -204,6 +206,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			codexAutoResetOnExhaustion?: boolean,
 			/** Codex only: which transport chat turns use. `undefined` means `exec`. */
 			codexTransport?: CodexTransport,
+			harnessControlMode?: HarnessControlMode,
 			acceptTranslationLimitations?: boolean,
 			selectedUserResources?: string[],
 			migrationPlanId?: string,
@@ -294,6 +297,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 					// Codex because `resolveCodexTransport` ignores it there. Only the
 					// opt-in is stored, so choosing Standard clears the field.
 					codexTransport: codexTransport === 'app-server' ? 'app-server' : undefined,
+					harnessControlMode: harnessControlMode === 'native' ? 'native' : undefined,
 				};
 
 				const next = { ...s, ...updatedFields };

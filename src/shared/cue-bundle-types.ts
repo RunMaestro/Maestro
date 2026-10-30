@@ -33,6 +33,7 @@
  */
 
 import type { CodexTransport } from './codexTransport';
+import type { HarnessControlMode } from './maestro-lib/providers/native-control';
 import type { SessionInfo } from './types';
 
 /** Bump only on a breaking change to the archive layout or this manifest. */
@@ -231,6 +232,7 @@ export interface CueBundleAgentSettings {
 	retryOnTokenExhaustion?: boolean;
 	codexAutoResetOnExhaustion?: boolean;
 	codexTransport?: CodexTransport;
+	harnessControlMode?: HarnessControlMode;
 	/** File tree auto-refresh interval in seconds (0 = off). */
 	fileTreeAutoRefreshInterval?: number;
 	/** Document Graph layout preference. */
@@ -307,6 +309,7 @@ export const CUE_BUNDLE_AGENT_FIELDS = [
 	'retryOnTokenExhaustion',
 	'codexAutoResetOnExhaustion',
 	'codexTransport',
+	'harnessControlMode',
 	'fileTreeAutoRefreshInterval',
 	'documentGraphLayout',
 	'customEnvVars',

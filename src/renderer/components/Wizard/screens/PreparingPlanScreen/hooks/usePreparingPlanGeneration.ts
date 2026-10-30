@@ -116,6 +116,7 @@ export function usePreparingPlanGeneration({
 					subfolder: 'Initiation',
 					sshRemoteConfig: state.sessionSshRemoteConfig,
 					claudeTokenSource: getClaudeTokenSourceFields(state),
+					harnessControlMode: state.harnessControlMode,
 				},
 				{
 					onStart: () => {
