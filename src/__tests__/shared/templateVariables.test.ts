@@ -7,6 +7,8 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
+	findCueUntrustedTemplateVariables,
+	cueEventCarriesUntrustedText,
 	TEMPLATE_VARIABLES,
 	TEMPLATE_VARIABLES_GENERAL,
 	substituteTemplateVariables,
@@ -32,6 +34,23 @@ function createTestContext(overrides: Partial<TemplateContext> = {}): TemplateCo
 		...overrides,
 	};
 }
+
+describe('plugin Cue metadata trust boundary', () => {
+	it('classifies substituted metadata as outside text even in lower-case command templates', () => {
+		const command = 'process --payload "{{cue_plugin_metadata}}"';
+		expect(findCueUntrustedTemplateVariables([command])).toEqual([
+			expect.objectContaining({
+				variable: 'CUE_PLUGIN_METADATA',
+				contextKey: 'pluginMetadata',
+				events: ['plugin.event'],
+			}),
+		]);
+		expect(cueEventCarriesUntrustedText('plugin.event')).toBe(true);
+		expect(
+			findCueUntrustedTemplateVariables(['{{CUE_PLUGIN_ID}} {{CUE_PLUGIN_EVENT_ID}}'])
+		).toEqual([]);
+	});
+});
 
 describe('TEMPLATE_VARIABLES constant', () => {
 	it('should export an array', () => {
@@ -71,6 +90,7 @@ describe('TEMPLATE_VARIABLES constant', () => {
 		expect(variables).toContain('{{AGENT_GROUP}}');
 		expect(variables).toContain('{{AGENT_SESSION_ID}}');
 		expect(variables).toContain('{{AGENT_HISTORY_PATH}}');
+		expect(variables).toContain('{{AGENT_JOURNEY_PATH}}');
 		expect(variables).toContain('{{COMPUTER_HISTORY_DIR}}');
 		expect(variables).toContain('{{MAESTRO_RUN_PATH}}');
 		expect(variables).toContain('{{TAB_ID}}');
@@ -275,6 +295,19 @@ describe('substituteTemplateVariables', () => {
 			});
 			const result = substituteTemplateVariables('History: {{AGENT_HISTORY_PATH}}', context);
 			expect(result).toBe('History: ');
+		});
+
+		it('should replace {{AGENT_JOURNEY_PATH}} with journeyFilePath, and with nothing when unset', () => {
+			const file = '/Users/test/.config/Maestro/journey/session-123.jsonl';
+			expect(
+				substituteTemplateVariables(
+					'Journey: {{AGENT_JOURNEY_PATH}}',
+					createTestContext({ journeyFilePath: file })
+				)
+			).toBe(`Journey: ${file}`);
+			expect(
+				substituteTemplateVariables('Journey: {{AGENT_JOURNEY_PATH}}', createTestContext({}))
+			).toBe('Journey: ');
 		});
 
 		it('should replace {{MAESTRO_RUN_PATH}} with maestroRunPath, and with nothing when unset', () => {

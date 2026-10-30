@@ -7,7 +7,9 @@ import {
 	historyFilePath,
 	legacyHistoryFilePath,
 	pageHistoryEntries,
+	findHistoryEntries,
 	readHistory,
+	readRecentHistory,
 	type HistoryEntry,
 } from '../read-history';
 
@@ -180,5 +182,132 @@ describe('pageHistoryEntries', () => {
 	it('returns an empty page past the oldest entry', () => {
 		const page = pageHistoryEntries([entry('a', 5)], { before: 1 });
 		expect(page).toEqual({ entries: [], total: 1, hasMore: false, malformedLines: 0 });
+	});
+});
+
+describe('readRecentHistory', () => {
+	let historyDir: string;
+	const paths = () => ({ historyDir });
+	const NOW = 1_800_000_000_000;
+	const MIN = 60_000;
+
+	beforeEach(() => {
+		historyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-lib-recent-history-'));
+	});
+
+	afterEach(() => {
+		fs.rmSync(historyDir, { recursive: true, force: true });
+	});
+
+	it('returns the entries inside the window, oldest first', async () => {
+		fs.writeFileSync(
+			historyFilePath(historyDir, 'agent-1'),
+			jsonl([entry('old', NOW - 300 * MIN), entry('b', NOW - 20 * MIN), entry('a', NOW - 30 * MIN)])
+		);
+		const entries = await readRecentHistory(paths(), 'agent-1', { sinceMs: NOW - 60 * MIN });
+		expect(entries.map((e) => e.id)).toEqual(['a', 'b']);
+	});
+
+	it('applies the until bound and keeps only the newest `limit`', async () => {
+		fs.writeFileSync(
+			historyFilePath(historyDir, 'agent-1'),
+			jsonl([1, 2, 3, 4, 5].map((n) => entry(`e${n}`, NOW - (10 - n) * MIN)))
+		);
+		const entries = await readRecentHistory(paths(), 'agent-1', {
+			sinceMs: NOW - 60 * MIN,
+			untilMs: NOW - 6 * MIN,
+			limit: 2,
+		});
+		expect(entries.map((e) => e.id)).toEqual(['e3', 'e4']);
+	});
+
+	it('walks back across chunk boundaries without losing or splitting a line', async () => {
+		// ~2 KB per entry: well over one 256 KB chunk, so lines straddle chunk edges.
+		const filler = 'x'.repeat(2000);
+		const all = Array.from({ length: 400 }, (_, i) =>
+			entry(`e${i}`, NOW - (400 - i) * MIN, { fullResponse: `${filler} é ${i}` })
+		);
+		fs.writeFileSync(historyFilePath(historyDir, 'agent-1'), jsonl(all));
+		const entries = await readRecentHistory(paths(), 'agent-1', { sinceMs: NOW - 250 * MIN });
+		expect(entries.map((e) => e.id)).toEqual(all.slice(150).map((e) => e.id));
+		expect(entries[0].fullResponse).toBe(`${filler} é 150`);
+	});
+
+	it('skips a torn line and normalizes legacy consults', async () => {
+		fs.writeFileSync(
+			historyFilePath(historyDir, 'agent-1'),
+			`${jsonl([entry('a', NOW - MIN, { type: 'AUTO', sourceAgentName: 'Docs' })])}{"id":"torn`
+		);
+		const entries = await readRecentHistory(paths(), 'agent-1', { sinceMs: NOW - 60 * MIN });
+		expect(entries.map((e) => [e.id, e.type])).toEqual([['a', 'AGENT']]);
+	});
+
+	it('reads a legacy single-object file whole', async () => {
+		fs.writeFileSync(
+			legacyHistoryFilePath(historyDir, 'agent-1'),
+			JSON.stringify({ entries: [entry('new', NOW - MIN), entry('old', NOW - 300 * MIN)] })
+		);
+		const entries = await readRecentHistory(paths(), 'agent-1', { sinceMs: NOW - 60 * MIN });
+		expect(entries.map((e) => e.id)).toEqual(['new']);
+	});
+
+	it('reads a missing file as no entries', async () => {
+		expect(await readRecentHistory(paths(), 'nobody', { sinceMs: 0 })).toEqual([]);
+	});
+});
+
+describe('findHistoryEntries', () => {
+	let historyDir: string;
+	const paths = () => ({ historyDir });
+
+	beforeEach(() => {
+		historyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maestro-lib-find-history-'));
+		fs.writeFileSync(
+			historyFilePath(historyDir, 'agent-1'),
+			jsonl([
+				entry('abcd-1', 1),
+				entry('ffff-1', 2),
+				entry('legacy', 3, { type: 'AUTO', sourceAgentName: 'Docs' }),
+			])
+		);
+		fs.writeFileSync(
+			historyFilePath(historyDir, 'agent-2'),
+			`${jsonl([entry('abcd-2', 4)])}{"id":"abcd-torn`
+		);
+		fs.writeFileSync(
+			legacyHistoryFilePath(historyDir, 'agent-3'),
+			JSON.stringify({ entries: [entry('abcd-3', 5)] })
+		);
+	});
+
+	afterEach(() => {
+		fs.rmSync(historyDir, { recursive: true, force: true });
+	});
+
+	it('finds every entry whose id starts with the prefix, with its agent', async () => {
+		const found = await findHistoryEntries(paths(), ['agent-1', 'agent-2', 'agent-3'], 'abcd');
+		expect(found.map((f) => [f.agentId, f.entry.id])).toEqual([
+			['agent-1', 'abcd-1'],
+			['agent-2', 'abcd-2'],
+			['agent-3', 'abcd-3'],
+		]);
+	});
+
+	it('matches the id, not text elsewhere in the entry, and normalizes legacy consults', async () => {
+		fs.writeFileSync(
+			historyFilePath(historyDir, 'agent-4'),
+			jsonl([entry('zzzz-1', 1, { summary: 'mentions ffff-1 in passing' })])
+		);
+		expect(await findHistoryEntries(paths(), ['agent-4'], 'ffff')).toEqual([]);
+		const [legacy] = await findHistoryEntries(paths(), ['agent-1'], 'legacy');
+		expect(legacy.entry.type).toBe('AGENT');
+	});
+
+	it('reads only the agents it is given, and an empty prefix or missing file as nothing', async () => {
+		expect((await findHistoryEntries(paths(), ['agent-2'], 'abcd')).map((f) => f.entry.id)).toEqual(
+			['abcd-2']
+		);
+		expect(await findHistoryEntries(paths(), ['agent-1'], '')).toEqual([]);
+		expect(await findHistoryEntries(paths(), ['nobody'], 'abcd')).toEqual([]);
 	});
 });

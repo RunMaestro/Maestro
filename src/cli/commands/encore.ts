@@ -100,8 +100,14 @@ function resolveFeature(input: string): string | null {
 
 export function encoreList(options: EncoreOptions): void {
 	const flags = readFlags();
+	const autoFixEnabled = readSettingValue('pianolaAutoFixEnabled') === true;
+	const pianola = {
+		mode: !flags.pianola ? 'disabled' : autoFixEnabled ? 'automatic_repairs' : 'supervision',
+		autoFixEnabled,
+		automaticMergeAvailable: false,
+	};
 	if (options.json) {
-		console.log(JSON.stringify({ features: flags }));
+		console.log(JSON.stringify({ features: flags, pianola }));
 		return;
 	}
 	console.log('Encore Features:');
@@ -111,6 +117,7 @@ export function encoreList(options: EncoreOptions): void {
 			`  ${flags[key] ? 'on ' : 'off'}  ${key}${' '.repeat(Math.max(1, 16 - key.length))}${label}`
 		);
 	}
+	console.log(`  Pianola mode: ${pianola.mode}. Automatic merge is unavailable.`);
 }
 
 /** Toggle one supported Encore feature while preserving the desktop's other saved flags. */
@@ -144,6 +151,10 @@ export async function encoreSet(
 	};
 	flags[key] = enabled;
 
+	const note =
+		key === 'pianola' && ['autopilot', 'auto-pilot', 'pilot'].includes(feature.trim().toLowerCase())
+			? 'Autopilot is an alias for Pianola. Automatic repairs require the separate pianolaAutoFixEnabled setting; automatic merge is unavailable.'
+			: undefined;
 	try {
 		const result = await sendSimpleCommand(
 			{ type: 'set_setting', key: 'encoreFeatures', value: flags },
@@ -151,8 +162,8 @@ export async function encoreSet(
 		);
 		reportResult(result, {
 			json: options.json,
-			successMessage: `${enabled ? 'Enabled' : 'Disabled'} Encore feature: ${FEATURES[key]}`,
-			jsonExtra: { feature: key, enabled },
+			successMessage: `${enabled ? 'Enabled' : 'Disabled'} Encore feature: ${FEATURES[key]}${note ? `. ${note}` : ''}`,
+			jsonExtra: { feature: key, enabled, ...(note ? { note } : {}) },
 		});
 	} catch (error) {
 		exitIfMaestroNotRunning(error, { json: options.json });

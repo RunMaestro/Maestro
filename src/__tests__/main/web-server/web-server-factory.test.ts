@@ -54,6 +54,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setRenameTabCallback = vi.fn();
 			setStarTabCallback = vi.fn();
 			setSnoozeCommandCallback = vi.fn();
+			setClosedTabCommandCallback = vi.fn();
 			setAutoRunSteeringCommandCallback = vi.fn();
 			setWindowCommandCallback = vi.fn();
 			setThroughputGaugeCommandCallback = vi.fn();
@@ -130,9 +131,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setArchiveGroupChatCallback = vi.fn();
 			setSendGroupChatMessageCallback = vi.fn();
 			setSteerGroupChatCallback = vi.fn();
-			setMergeContextCallback = vi.fn();
-			setTransferContextCallback = vi.fn();
-			setSummarizeContextCallback = vi.fn();
+			setTabContextOpCallback = vi.fn();
 			setCreateGistCallback = vi.fn();
 			setGetCueSubscriptionsCallback = vi.fn();
 			setToggleCueSubscriptionCallback = vi.fn();
@@ -233,7 +232,6 @@ import {
 	createWebServerFactory,
 	type WebServerFactoryDependencies,
 } from '../../../main/web-server/web-server-factory';
-import { WebServer } from '../../../main/web-server/WebServer';
 import { tunnelManager } from '../../../main/tunnel-manager';
 import { buildWebSettingsSnapshot } from '../../../main/web-server/web-settings-snapshot';
 import { getThemeById } from '../../../main/themes';
@@ -247,6 +245,14 @@ import {
 } from '../../../main/concerto-html';
 import { getSessionIdsBusyWithCli } from '../../../shared/cli-activity';
 import { steerNewMessage, steerQueuedItem } from '../../../main/group-chat/group-chat-queue';
+import {
+	getAutoRunStateTracker,
+	resetAutoRunStateTracker,
+} from '../../../main/autorun/autorun-state-tracker';
+import {
+	pianolaScopeSnapshotFromDesktop,
+	runPianolaScopeCycle,
+} from '../../../shared/pianola/pianola-scope-cycle';
 
 describe('web-server/web-server-factory', () => {
 	let mockSettingsStore: WebServerFactoryDependencies['settingsStore'];
@@ -257,12 +263,14 @@ describe('web-server/web-server-factory', () => {
 	let mockProcessManager: {
 		write: ReturnType<typeof vi.fn>;
 		get: ReturnType<typeof vi.fn>;
+		getAll: ReturnType<typeof vi.fn>;
 	};
 	let deps: WebServerFactoryDependencies;
 
 	beforeEach(() => {
 		vi.clearAllMocks();
 		clearConcertoHtmlDocumentsForTests();
+		resetAutoRunStateTracker();
 		vi.mocked(getSessionIdsBusyWithCli).mockReturnValue(new Set<string>());
 
 		mockSettingsStore = {
@@ -327,6 +335,7 @@ describe('web-server/web-server-factory', () => {
 		mockProcessManager = {
 			write: vi.fn().mockReturnValue(true),
 			get: vi.fn().mockReturnValue(undefined),
+			getAll: vi.fn().mockReturnValue([]),
 		};
 
 		deps = {
@@ -599,7 +608,7 @@ describe('web-server/web-server-factory', () => {
 				},
 			]);
 
-			expect(getCallback()()[0].state).toBe('busy');
+			expect(getCallback()().sessions[0].state).toBe('busy');
 		});
 
 		it('overrides stale idle when the tab has a live managed process', () => {
@@ -616,7 +625,7 @@ describe('web-server/web-server-factory', () => {
 				id === 'agent-a-ai-tab-a' ? { pid: 123 } : undefined
 			);
 
-			expect(getCallback()()[0].state).toBe('busy');
+			expect(getCallback()().sessions[0].state).toBe('busy');
 		});
 
 		it('keeps an inactive sibling idle when only the active tab is running', () => {
@@ -636,7 +645,7 @@ describe('web-server/web-server-factory', () => {
 				id === 'agent-a-ai-tab-a' ? { pid: 123 } : undefined
 			);
 
-			const entries = getCallback()();
+			const entries = getCallback()().sessions;
 			expect(entries.map((entry: { state: string }) => entry.state)).toEqual(['busy', 'idle']);
 		});
 
@@ -652,8 +661,164 @@ describe('web-server/web-server-factory', () => {
 			]);
 			vi.mocked(getSessionIdsBusyWithCli).mockReturnValue(new Set(['agent-a']));
 
-			const entries = getCallback()();
+			const entries = getCallback()().sessions;
 			expect(entries.map((entry: { state: string }) => entry.state)).toEqual(['busy', 'unknown']);
+		});
+	});
+
+	describe('native scope census', () => {
+		it('retains a tabless parent and enrolls background work through the real cycle', async () => {
+			const sessions = [
+				{ id: 'parent', cwd: '/project', aiTabs: [] },
+				{
+					id: 'child',
+					cwd: '/worktrees/child',
+					parentSessionId: 'parent',
+					activeTabId: 'active',
+					aiTabs: [
+						{
+							id: 'background',
+							state: 'idle',
+							createdAt: 10,
+							logs: [{ id: 'stream', source: 'ai', text: 'Working.', timestamp: 20 }],
+						},
+					],
+				},
+			];
+			vi.mocked(mockSessionsStore.get).mockReturnValue(sessions);
+			mockProcessManager.get.mockImplementation((id: string) =>
+				id === 'child-ai-background' ? { pid: 1 } : undefined
+			);
+			const server = createWebServerFactory(deps)();
+			const callback = (server.setListDesktopSessionsCallback as ReturnType<typeof vi.fn>).mock
+				.calls[0][0];
+			const readSnapshot = async () =>
+				pianolaScopeSnapshotFromDesktop({ success: true, ...callback() });
+			const snapshot = await readSnapshot();
+			expect(snapshot.owners.map((owner) => owner.id)).toEqual(['parent', 'child']);
+			expect(snapshot.tabs[0]).toMatchObject({ tabId: 'background', busy: true, paused: false });
+			const scopeId = '11111111-1111-4111-8111-111111111111';
+			let checkpoint: any = null;
+			const decisions: any[] = [];
+			const dispatch = vi.fn(async () => ({ status: 'accepted' as const }));
+			const cycleDeps = {
+				store: {
+					readSupervisorTargets: () => [
+						{
+							id: scopeId,
+							kind: 'watch-scope' as const,
+							enabled: true,
+							createdAt: 1,
+							managerAgentId: 'manager',
+							selection: {
+								label: 'parent agent',
+								mode: 'agents-and-groups' as const,
+								agentIds: ['parent'],
+								groupIds: [],
+								excludedAgentIds: [],
+							},
+						},
+					],
+					readScopeCheckpoint: () => structuredClone(checkpoint),
+					writeScopeCheckpoint: (value: any) => {
+						checkpoint = structuredClone(value);
+					},
+					readDecisions: () => decisions,
+				},
+				readSnapshot,
+				readTranscript: async () => ({
+					agentId: 'child',
+					tabId: 'background',
+					messages: sessions[1].aiTabs
+						.map((tab) =>
+							tab.logs!.map((log) => ({
+								id: log.id,
+								role: 'assistant' as const,
+								source: log.source,
+								content: log.text,
+								timestamp: new Date(log.timestamp).toISOString(),
+							}))
+						)
+						.flat(),
+				}),
+				watch: {
+					readRules: () => [
+						{
+							id: 'rule',
+							enabled: true,
+							scope: 'global' as const,
+							match: { kinds: ['question' as const], maxRisk: 'low' as const },
+							action: 'auto_answer' as const,
+							answer: 'Controlled reply.',
+							priority: 1,
+							createdAt: 1,
+							updatedAt: 1,
+						},
+					],
+					recordDecision: (record: any) => {
+						decisions.push(record);
+					},
+					now: () => new Date().toISOString(),
+					genId: () => String(decisions.length + 1),
+					log: () => {},
+				},
+				dispatch,
+			};
+			await runPianolaScopeCycle(scopeId, cycleDeps, { dryRun: false });
+			expect(dispatch).not.toHaveBeenCalled();
+			mockProcessManager.get.mockReturnValue(undefined);
+			sessions[1].aiTabs[0].logs![0].text = 'Should I run tests?';
+			await runPianolaScopeCycle(scopeId, cycleDeps, { dryRun: false });
+			await runPianolaScopeCycle(scopeId, cycleDeps, { dryRun: false });
+			expect(dispatch).toHaveBeenCalledTimes(1);
+			expect(dispatch.mock.calls[0]).toMatchObject([
+				{ agentId: 'child', tabId: 'background' },
+				'Controlled reply.',
+				{ scopeId, messageId: 'stream' },
+			]);
+		});
+
+		it.each([
+			{ isRunning: true },
+			{ isRunning: true, errorPaused: true },
+			{ isRunning: true, isStopping: true },
+		])('excludes Auto Run ownership between processes: %j', (state) => {
+			vi.mocked(mockSessionsStore.get).mockReturnValue([
+				{
+					id: 'owner',
+					cwd: '/project',
+					aiTabs: [{ id: 'tab', state: 'idle', createdAt: 1, logs: [] }],
+				},
+			]);
+			getAutoRunStateTracker().update('owner', state);
+			const server = createWebServerFactory(deps)();
+			const callback = (server.setListDesktopSessionsCallback as ReturnType<typeof vi.fn>).mock
+				.calls[0][0];
+			expect(
+				pianolaScopeSnapshotFromDesktop({ success: true, ...callback() }).tabs[0]
+			).toMatchObject({ paused: true, busy: false });
+		});
+
+		it('refuses unavailable liveness and never includes snoozed or closed tab payloads', () => {
+			vi.mocked(mockSessionsStore.get).mockReturnValue([
+				{
+					id: 'owner',
+					cwd: '/project',
+					aiTabs: [],
+					snoozedTabs: [{ type: 'ai', tab: { id: 'parked' } }],
+					closedTabHistory: [{ tab: { id: 'closed' } }],
+				},
+			]);
+			deps.getProcessManager = vi.fn().mockReturnValue(null);
+			const server = createWebServerFactory(deps)();
+			const callback = (server.setListDesktopSessionsCallback as ReturnType<typeof vi.fn>).mock
+				.calls[0][0];
+			const snapshot = callback();
+			expect(snapshot.sessions).toEqual([]);
+			expect(snapshot.owners).toHaveLength(1);
+			expect(() => pianolaScopeSnapshotFromDesktop({ success: true, ...snapshot })).toThrow(
+				'census'
+			);
 		});
 	});
 
@@ -940,6 +1105,43 @@ describe('web-server/web-server-factory', () => {
 			await expect(resultPromise).resolves.toBe(false);
 		});
 
+		it('preserves mention routing while strict native delivery requires a receipt', async () => {
+			vi.useFakeTimers();
+			try {
+				const server = createWebServerFactory(deps)();
+				const callback = vi.mocked(server.setExecuteCommandCallback).mock.calls[0][0];
+				const routing = 'consult-first' as const;
+				const result = callback(
+					'session-1',
+					'test command',
+					'ai',
+					'tab-1',
+					false,
+					undefined,
+					true,
+					routing,
+					true
+				);
+				const rejected = expect(result).rejects.toThrow('Renderer delivery outcome unknown');
+				expect(mockWebContents.send).toHaveBeenCalledWith(
+					'remote:executeCommand',
+					'session-1',
+					'test command',
+					'ai',
+					'tab-1',
+					false,
+					undefined,
+					true,
+					routing,
+					expect.any(String)
+				);
+				await vi.advanceTimersByTimeAsync(3000);
+				await rejected;
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
 		it('does not log raw command text at info level (info shows length only)', async () => {
 			const createWebServer = createWebServerFactory(deps);
 			const server = createWebServer();
@@ -1027,30 +1229,84 @@ describe('web-server/web-server-factory', () => {
 	});
 
 	describe('interruptSessionCallback behavior', () => {
-		it('should return false when mainWindow is null', async () => {
-			deps.getMainWindow = vi.fn().mockReturnValue(null);
-			const createWebServer = createWebServerFactory(deps);
-			const server = createWebServer();
-
+		const interruptCallback = () => {
+			const server = createWebServerFactory(deps)();
 			const setInterruptCallback = server.setInterruptSessionCallback as ReturnType<typeof vi.fn>;
-			const callback = setInterruptCallback.mock.calls[0][0];
+			return setInterruptCallback.mock.calls[0][0];
+		};
+		/** Answer the renderer side of the `remote:interrupt` request. */
+		const answerInterrupt = (reply: unknown) => {
+			const request = (mockWebContents.send as ReturnType<typeof vi.fn>).mock.calls.find(
+				(call) => call[0] === 'remote:interrupt'
+			);
+			const responseChannel = request?.[request.length - 1];
+			vi.mocked(ipcMain.on).mock.calls.find((call) => call[0] === responseChannel)?.[1]?.(
+				{ sender: mockWebContents } as never,
+				reply
+			);
+			return request;
+		};
 
-			const result = await callback('session-1');
+		it('answers RENDERER_UNAVAILABLE when no window owns the agent', async () => {
+			deps.getMainWindow = vi.fn().mockReturnValue(null);
 
-			expect(result).toBe(false);
+			const result = await interruptCallback()('session-1');
+
+			expect(result).toMatchObject({
+				success: false,
+				code: 'RENDERER_UNAVAILABLE',
+				sessionId: 'session-1',
+				tabId: null,
+			});
 		});
 
-		it('should send interrupt to renderer', async () => {
-			const createWebServer = createWebServerFactory(deps);
-			const server = createWebServer();
+		it('forwards the tab to the renderer and reports exited once its turn is gone', async () => {
+			// The turn is live when the request arrives and gone when main checks.
+			mockProcessManager.getAll = vi
+				.fn()
+				.mockReturnValue([{ sessionId: 'session-1-ai-tab-1', startTime: 5, isTerminal: false }]);
 
-			const setInterruptCallback = server.setInterruptSessionCallback as ReturnType<typeof vi.fn>;
-			const callback = setInterruptCallback.mock.calls[0][0];
+			const resultPromise = interruptCallback()('session-1', 'tab-1');
+			const request = answerInterrupt({
+				success: true,
+				sessionId: 'spoofed',
+				tabId: 'spoofed',
+				wasBusy: true,
+				interrupted: true,
+				stoppedTabIds: ['tab-1'],
+				exited: true,
+			});
 
-			const result = await callback('session-1');
+			expect(request).toEqual(['remote:interrupt', 'session-1', 'tab-1', expect.any(String)]);
+			// Ids come from the request, never the reply; `exited` is main's own read.
+			await expect(resultPromise).resolves.toEqual({
+				success: true,
+				sessionId: 'session-1',
+				tabId: 'tab-1',
+				wasBusy: true,
+				interrupted: true,
+				stoppedTabIds: ['tab-1'],
+				exited: true,
+			});
+		});
 
-			expect(result).toBe(true);
-			expect(mockWebContents.send).toHaveBeenCalledWith('remote:interrupt', 'session-1');
+		it('sends a null tab for an agent-level stop and returns a failure without waiting', async () => {
+			mockProcessManager.getAll = vi.fn().mockReturnValue([]);
+
+			const resultPromise = interruptCallback()('session-1');
+			const request = answerInterrupt({
+				success: false,
+				code: 'SIGNAL_FAILED',
+				error: 'kill failed',
+			});
+
+			expect(request).toEqual(['remote:interrupt', 'session-1', null, expect.any(String)]);
+			await expect(resultPromise).resolves.toMatchObject({
+				success: false,
+				code: 'SIGNAL_FAILED',
+				error: 'kill failed',
+				exited: false,
+			});
 		});
 	});
 
@@ -1162,7 +1418,10 @@ describe('web-server/web-server-factory', () => {
 				if (key === 'sessions') return sessions;
 				return defaultValue;
 			}) as any;
-			const originalSettingsGet = mockSettingsStore.get as ReturnType<typeof vi.fn>;
+			const originalSettingsGet = mockSettingsStore.get as (
+				key: string,
+				defaultValue?: unknown
+			) => unknown;
 			mockSettingsStore.get = vi.fn((key: string, defaultValue?: any) => {
 				if (key === 'sshRemotes') return sshRemotes;
 				return originalSettingsGet(key, defaultValue);
@@ -1698,7 +1957,30 @@ describe('web-server/web-server-factory', () => {
 				'tab-1',
 				undefined,
 				undefined,
+				undefined,
 				undefined
+			);
+		});
+
+		it('setEnqueueCommandCallback forwards a dispatch --routing to the renderer', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer();
+			const callback = (server.setEnqueueCommandCallback as ReturnType<typeof vi.fn>).mock
+				.calls[0][0];
+
+			void callback('session-1', 'tell @Backend', 'ai', 'tab-1', undefined, true, false, 'handoff');
+
+			expect(mockWebContents.send).toHaveBeenCalledWith(
+				'remote:enqueueCommand',
+				'session-1',
+				'tell @Backend',
+				expect.any(String),
+				'ai',
+				'tab-1',
+				undefined,
+				true,
+				false,
+				'handoff'
 			);
 		});
 
@@ -1832,48 +2114,100 @@ describe('web-server/web-server-factory', () => {
 		});
 	});
 
-	describe('contextOpsCallbacks smoke', () => {
-		it('setMergeContextCallback forwards to the renderer', () => {
-			const createWebServer = createWebServerFactory(deps);
-			const server = createWebServer() as any;
-			const callback = server.setMergeContextCallback.mock.calls[0][0];
-
-			void callback('source-1', 'target-1');
-
-			expect(mockWebContents.send).toHaveBeenCalledWith(
-				'remote:mergeContext',
-				'source-1',
-				'target-1',
-				expect.any(String)
+	describe('contextOpsCallbacks', () => {
+		const contextOpCallback = () => {
+			const server = createWebServerFactory(deps)() as any;
+			return server.setTabContextOpCallback.mock.calls[0][0];
+		};
+		/** Answer the renderer side of one context-op request. */
+		const answer = (channel: string, reply: unknown, webContents = mockWebContents) => {
+			const request = (webContents.send as ReturnType<typeof vi.fn>).mock.calls.find(
+				(call) => call[0] === channel
 			);
+			const responseChannel = request?.[request.length - 1];
+			vi.mocked(ipcMain.on).mock.calls.find((call) => call[0] === responseChannel)?.[1]?.(
+				{ sender: webContents } as never,
+				reply
+			);
+			return request;
+		};
+
+		it.each([
+			['compact', 'remote:summarizeContext'],
+			['merge', 'remote:mergeContext'],
+			['transfer', 'remote:transferContext'],
+		] as const)('forwards %s on %s with the request object', async (op, channel) => {
+			const request = {
+				op,
+				sessionId: 'source-1',
+				tabId: 'tab-1',
+				...(op !== 'compact' ? { targetSessionId: 'target-1' } : {}),
+			};
+			const resultPromise = contextOpCallback()(request);
+
+			const sent = answer(channel, { success: true, newTabId: 'tab-new' });
+
+			expect(sent?.[1]).toEqual(request);
+			await expect(resultPromise).resolves.toEqual({ success: true, newTabId: 'tab-new' });
 		});
 
-		it('setTransferContextCallback forwards to the renderer', () => {
-			const createWebServer = createWebServerFactory(deps);
-			const server = createWebServer() as any;
-			const callback = server.setTransferContextCallback.mock.calls[0][0];
+		it('sends to the window that owns the source agent', () => {
+			const secondaryWebContents = {
+				send: vi.fn(),
+				isDestroyed: vi.fn().mockReturnValue(false),
+			};
+			const secondaryWindow = {
+				isDestroyed: vi.fn().mockReturnValue(false),
+				webContents: secondaryWebContents,
+			};
+			deps.getWindowForSession = vi
+				.fn()
+				.mockReturnValue(secondaryWindow as unknown as BrowserWindow);
 
-			void callback('source-1', 'target-1');
+			void contextOpCallback()({ op: 'compact', sessionId: 'session-2' });
 
-			expect(mockWebContents.send).toHaveBeenCalledWith(
-				'remote:transferContext',
-				'source-1',
-				'target-1',
-				expect.any(String)
-			);
-		});
-
-		it('setSummarizeContextCallback forwards to the renderer', () => {
-			const createWebServer = createWebServerFactory(deps);
-			const server = createWebServer() as any;
-			const callback = server.setSummarizeContextCallback.mock.calls[0][0];
-
-			void callback('session-1');
-
-			expect(mockWebContents.send).toHaveBeenCalledWith(
+			expect(deps.getWindowForSession).toHaveBeenCalledWith('session-2');
+			expect(secondaryWebContents.send).toHaveBeenCalledWith(
 				'remote:summarizeContext',
-				'session-1',
+				{ op: 'compact', sessionId: 'session-2' },
 				expect.any(String)
+			);
+			expect(mockWebContents.send).not.toHaveBeenCalled();
+		});
+
+		it('turns a malformed reply into a failure', async () => {
+			const resultPromise = contextOpCallback()({ op: 'compact', sessionId: 'session-1' });
+
+			answer('remote:summarizeContext', 'yes');
+
+			await expect(resultPromise).resolves.toMatchObject({ success: false });
+		});
+
+		it('answers timedOut when the renderer outlives the budget', async () => {
+			vi.useFakeTimers();
+			try {
+				const resultPromise = contextOpCallback()({
+					op: 'merge',
+					sessionId: 'source-1',
+					targetSessionId: 'target-1',
+				});
+
+				await vi.advanceTimersByTimeAsync(60_000);
+
+				await expect(resultPromise).resolves.toMatchObject({
+					success: false,
+					timedOut: true,
+				});
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it('fails at once when no window is available', async () => {
+			deps.getMainWindow = vi.fn().mockReturnValue(null);
+
+			await expect(contextOpCallback()({ op: 'compact', sessionId: 'session-1' })).resolves.toEqual(
+				{ success: false, error: 'Maestro window is not available' }
 			);
 		});
 	});
@@ -2456,7 +2790,9 @@ describe('web-server/web-server-factory', () => {
 				isDestroyed: vi.fn().mockReturnValue(false),
 				webContents: secondaryWebContents,
 			};
-			deps.getWindowForSession = vi.fn().mockReturnValue(secondaryWindow as BrowserWindow);
+			deps.getWindowForSession = vi
+				.fn()
+				.mockReturnValue(secondaryWindow as unknown as BrowserWindow);
 
 			const server = createWebServerFactory(deps)() as any;
 			const callback = server.setExecuteCommandCallback.mock.calls[0][0];
@@ -2485,6 +2821,7 @@ describe('web-server/web-server-factory', () => {
 				undefined,
 				undefined,
 				undefined,
+				undefined,
 				expect.any(String),
 			]);
 
@@ -2506,7 +2843,9 @@ describe('web-server/web-server-factory', () => {
 				isDestroyed: vi.fn().mockReturnValue(false),
 				webContents: secondaryWebContents,
 			};
-			deps.getWindowForSession = vi.fn().mockReturnValue(secondaryWindow as BrowserWindow);
+			deps.getWindowForSession = vi
+				.fn()
+				.mockReturnValue(secondaryWindow as unknown as BrowserWindow);
 
 			const createWebServer = createWebServerFactory(deps);
 			const server = createWebServer() as any;
@@ -2584,7 +2923,9 @@ describe('web-server/web-server-factory', () => {
 				isDestroyed: vi.fn().mockReturnValue(false),
 				webContents: secondaryWebContents,
 			};
-			deps.getWindowForSession = vi.fn().mockReturnValue(secondaryWindow as BrowserWindow);
+			deps.getWindowForSession = vi
+				.fn()
+				.mockReturnValue(secondaryWindow as unknown as BrowserWindow);
 
 			const server = createWebServerFactory(deps)() as any;
 			const callback = server.setOpenDocumentGraphCallback.mock.calls[0][0];

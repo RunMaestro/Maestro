@@ -8,7 +8,8 @@
  */
 
 import type { ProcessManager } from '../process-manager';
-import type { ProcessConfig } from '../process-manager/types';
+import type { ProcessConfig, TurnSettlement } from '../process-manager/types';
+import type { AgentError } from '../../shared/types';
 import {
 	findActiveRunBySession,
 	getAgentRun,
@@ -65,9 +66,16 @@ export function setupAgentRunCapture(
 		});
 	});
 
-	processManager.on('exit', (sessionId: string, code: number) => {
-		void service.captureExit({ sessionId, exitCode: code });
+	processManager.on('agent-error', (sessionId: string, error: AgentError) => {
+		service.captureError(sessionId, error);
 	});
+
+	processManager.on(
+		'exit',
+		(sessionId: string, code: number, signal?: number, settlement?: TurnSettlement) => {
+			void service.captureExit({ sessionId, exitCode: code, signal, settlement });
+		}
+	);
 
 	logger.info('AgentRun capture wired to ProcessManager', LOG_CONTEXT);
 	return service;

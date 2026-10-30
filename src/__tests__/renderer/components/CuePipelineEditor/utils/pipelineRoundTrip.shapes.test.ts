@@ -819,3 +819,33 @@ describe('round-trip: action notify and one-shot timing', () => {
 		).toBe(ONE_SHOT);
 	});
 });
+
+describe('round-trip: authenticated plugin source configuration', () => {
+	it('preserves separate source owners and nested opaque config through two saves', () => {
+		const sources = [
+			{ pluginId: 'com.example.source', topic: 'item.received', config: { source: { id: 'one' } } },
+			{ pluginId: 'com.example.source', topic: 'item.received', config: { source: { id: 'two' } } },
+		];
+		const original = pipeline(
+			'PluginSources',
+			'#06b6d4',
+			[
+				trigger('t1', 'plugin.event', { plugin: sources[0] }),
+				trigger('t2', 'plugin.event', { plugin: sources[1] }),
+				agent('a1', 'sess-a', 'Alpha'),
+			],
+			[
+				edge('e1', 't1', 'a1', { prompt: 'process first source' }),
+				edge('e2', 't2', 'a1', { prompt: 'process second source' }),
+			]
+		);
+		const sessions: PipelineSession[] = [{ id: 'sess-a', name: 'Alpha', toolType: 'claude-code' }];
+		const first = roundTrip([original], sessions);
+		const second = roundTrip(first, sessions);
+		const restored = second[0].nodes
+			.filter((node) => node.type === 'trigger')
+			.map((node) => (node.data as TriggerNodeData).config.plugin);
+		expect(restored).toHaveLength(2);
+		expect(restored).toEqual(expect.arrayContaining(sources));
+	});
+});

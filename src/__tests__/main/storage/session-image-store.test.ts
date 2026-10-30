@@ -248,6 +248,38 @@ describe('session-image-store', () => {
 			expect(second.sessions[0]).toBe(first.sessions[0]);
 		});
 
+		it('relocates images in closed AI tabs and leaves other closed entries alone', async () => {
+			const terminal = { type: 'terminal', tab: { id: 'term' }, unifiedIndex: 0, closedAt: 1 };
+			const sessions = [
+				{
+					id: 's1',
+					unifiedClosedTabHistory: [
+						{
+							type: 'ai',
+							tab: {
+								id: 'closed',
+								logs: [{ id: 'l1', images: [IMG_A] }],
+								stagedImages: [IMG_B],
+							},
+							unifiedIndex: 0,
+							closedAt: 1,
+						},
+						terminal,
+					],
+				},
+			];
+
+			const result = await relocateSessionImages(sessions);
+			expect(result.relocated).toBe(2);
+			const closed = (result.sessions[0] as any).unifiedClosedTabHistory;
+			expect(isImageRef(closed[0].tab.logs[0].images[0])).toBe(true);
+			expect(isImageRef(closed[0].tab.stagedImages[0])).toBe(true);
+			expect(closed[1]).toBe(terminal);
+
+			const again = await relocateSessionImages(result.sessions);
+			expect(again.sessions[0]).toBe(result.sessions[0]);
+		});
+
 		it('leaves a session object untouched (same reference) when it has no inline images', async () => {
 			const clean = { id: 's', aiTabs: [{ id: 't', logs: [{ id: 'l', text: 'x' }] }] };
 			const result = await relocateSessionImages([clean]);

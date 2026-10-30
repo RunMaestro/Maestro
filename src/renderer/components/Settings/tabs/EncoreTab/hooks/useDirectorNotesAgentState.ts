@@ -57,10 +57,16 @@ export function useDirectorNotesAgentState({
 	// the path from before that update landed. The args/env-var blur paths call
 	// this with no argument, unaffected, and keep reading current state as
 	// before.
+	//
+	// Only a string counts as a path. This is handed straight to blur props, and
+	// an input that forwards its own onBlur passes the FocusEvent here: stored as
+	// customPath it poisoned the setting, and the IPC write (then every Director's
+	// Notes run) threw "An object could not be cloned" (MAESTRO-11C).
 	const persistCustomConfig = (pathValue?: string) => {
 		setDirectorNotesSettings({
 			...directorNotesSettings,
-			customPath: (pathValue ?? agentConfiguration.customPath) || undefined,
+			customPath:
+				(typeof pathValue === 'string' ? pathValue : agentConfiguration.customPath) || undefined,
 			customArgs: agentConfiguration.customArgs || undefined,
 			customEnvVars:
 				Object.keys(agentConfiguration.customEnvVars).length > 0

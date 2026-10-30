@@ -4,6 +4,9 @@ import { ipcMain } from 'electron';
 // Track registered handlers
 const registeredHandlers = new Map<string, Function>();
 
+// Desktop windows the Live Mode state push should reach. Mutated per test.
+let mockBrowserWindows: any[] = [];
+
 // Mock ipcMain
 vi.mock('electron', () => ({
 	ipcMain: {
@@ -13,6 +16,9 @@ vi.mock('electron', () => ({
 	},
 	app: {
 		getVersion: vi.fn(() => '0.0.0-test'),
+	},
+	BrowserWindow: {
+		getAllWindows: vi.fn(() => mockBrowserWindows),
 	},
 }));
 
@@ -69,6 +75,7 @@ describe('web handlers', () => {
 		vi.clearAllMocks();
 		registeredHandlers.clear();
 		lastWrittenInfo = null;
+		mockBrowserWindows = [];
 		resetAutoRunStateTracker();
 		// Re-wire the writeCliServerInfo / readCliServerInfo mocks after
 		// clearAllMocks blew away their implementations.
@@ -474,6 +481,30 @@ describe('web handlers', () => {
 			expect(result).toEqual({ success: true, url: 'http://localhost:8080' });
 		});
 
+		it('should push the new state to every window so the LIVE panel follows a CLI toggle', async () => {
+			webServerRef.current = null;
+			mockWebServer.isActive.mockReturnValue(false);
+			mockWebServer.start.mockImplementation(async () => {
+				mockWebServer.isActive.mockReturnValue(true);
+				return { port: 8080, token: 'mock-security-token', url: 'http://localhost:8080' };
+			});
+			const win = {
+				isDestroyed: () => false,
+				webContents: { isDestroyed: () => false, send: vi.fn() },
+			};
+			mockBrowserWindows = [win];
+
+			const handler = registeredHandlers.get('live:startServer');
+			await handler!({});
+
+			expect(win.webContents.send).toHaveBeenCalledWith('live:stateChanged', {
+				live: true,
+				url: 'http://localhost:8080',
+				remoteControl: false,
+				remoteControlUrl: null,
+			});
+		});
+
 		it('should replace a loopback-only CLI server with a LAN server even when persistentWebLink is on', async () => {
 			// The CLI server never listens on the LAN. Live ON must swap it for
 			// one that does; the persistent token survives because the factory
@@ -805,6 +836,37 @@ describe('web handlers', () => {
 			// Same as stopServer: CLI must remain reachable.
 			expect(writeCliServerInfo).toHaveBeenCalled();
 			expect(result).toEqual({ success: true, count: 2 });
+		});
+
+		it('should push live: false once the loopback CLI server is back', async () => {
+			const cliServer = {
+				...mockWebServer,
+				isActive: vi.fn().mockReturnValue(false),
+				isLanAccessible: vi.fn().mockReturnValue(false),
+				getPort: vi.fn().mockReturnValue(9090),
+				getSecurityToken: vi.fn().mockReturnValue('cli-token'),
+				start: vi.fn().mockResolvedValue({
+					port: 9090,
+					token: 'cli-token',
+					url: 'http://127.0.0.1:9090/cli-token',
+				}),
+			};
+			mockCreateWebServer.mockReturnValueOnce(cliServer);
+			const win = {
+				isDestroyed: () => false,
+				webContents: { isDestroyed: () => false, send: vi.fn() },
+			};
+			mockBrowserWindows = [win];
+
+			const handler = registeredHandlers.get('live:disableAll');
+			await handler!({});
+
+			expect(win.webContents.send).toHaveBeenCalledWith('live:stateChanged', {
+				live: false,
+				url: null,
+				remoteControl: false,
+				remoteControlUrl: null,
+			});
 		});
 
 		it('should return count 0 when no live sessions', async () => {

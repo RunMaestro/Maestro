@@ -27,6 +27,7 @@ vi.mock('../../../main/web-server/handlers/bridgeHandlers', () => ({
 import {
 	createSafeSend,
 	isWebContentsAvailable,
+	sendToInvoker,
 	type GetBroadcastWindows,
 	type SafeSendFn,
 } from '../../../main/utils/safe-send';
@@ -438,6 +439,37 @@ describe('utils/safe-send', () => {
 				// Inside this block, maybeWindow should be typed as BrowserWindow
 				expect(maybeWindow.webContents).toBeDefined();
 			}
+		});
+	});
+
+	describe('sendToInvoker', () => {
+		beforeEach(() => {
+			vi.mocked(broadcastBridgeEvent).mockClear();
+		});
+
+		it('sends to the invoking WebContents and not to the bridge', () => {
+			const sender = { isDestroyed: vi.fn().mockReturnValue(false), send: vi.fn() };
+			sendToInvoker({ sender }, 'git:commandOutput', { runId: 'r1', chunk: 'x' });
+			expect(sender.send).toHaveBeenCalledWith('git:commandOutput', { runId: 'r1', chunk: 'x' });
+			expect(broadcastBridgeEvent).not.toHaveBeenCalled();
+		});
+
+		it('drops the push when the invoking WebContents is destroyed', () => {
+			const sender = { isDestroyed: vi.fn().mockReturnValue(true), send: vi.fn() };
+			sendToInvoker({ sender }, 'git:commandOutput', { runId: 'r1' });
+			expect(sender.send).not.toHaveBeenCalled();
+			expect(broadcastBridgeEvent).not.toHaveBeenCalled();
+		});
+
+		// MAESTRO-14Y: the web-desktop bridge invokes handlers with a synthetic
+		// event that has no `sender`. Reading `sender.isDestroyed()` threw.
+		it('falls back to the bridge fan-out for an event with no sender', () => {
+			expect(() =>
+				sendToInvoker({}, 'git:commandOutput', { runId: 'r1', chunk: 'x' })
+			).not.toThrow();
+			expect(broadcastBridgeEvent).toHaveBeenCalledWith('git:commandOutput', [
+				{ runId: 'r1', chunk: 'x' },
+			]);
 		});
 	});
 });

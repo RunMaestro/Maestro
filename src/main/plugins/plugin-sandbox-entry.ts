@@ -240,9 +240,15 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
 	function invokeTool(json) {
 		var msg;
 		try { msg = JSON.parse(json); } catch (e) { return Promise.resolve(JSON.stringify({ ok: false, error: 'malformed tool invocation' })); }
+		var verified = Object.prototype.hasOwnProperty.call(msg, 'invocationId');
+		var invocationId = verified ? msg.invocationId : null;
+		if (verified && (typeof invocationId !== 'string' || !/^[0-9a-f]{64}$/.test(invocationId))) return Promise.resolve(JSON.stringify({ok: false, error: 'tool invocation failed'}));
+		var context = Object.freeze({callerAgentId: msg.context && typeof msg.context.callerAgentId === 'string' ? msg.context.callerAgentId : null, ...(verified ? {invocationId: invocationId} : {})});
+
 		var commandId = msg && typeof msg.commandId === 'string' ? msg.commandId : '';
 		var isService = commandId.indexOf('service:') === 0;
 		function failure(err) {
+			if (verified) return JSON.stringify({ok: false, error: 'tool invocation failed'});
 			if (isService) {
 				var code = 'ServiceFailed';
 				try {
@@ -263,7 +269,7 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
 		}
 		return new Promise(function (resolve) {
 			try {
-				Promise.resolve(handler(msg.args, Object.freeze({ callerAgentId: msg.context && typeof msg.context.callerAgentId === 'string' ? msg.context.callerAgentId : null }))).then(
+				Promise.resolve(handler(msg.args, context)).then(
 					function (result) {
 						var body;
 						try { body = JSON.stringify({ ok: true, result: result === undefined ? null : result }); }
@@ -285,6 +291,10 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
 	function buildSdk(pluginId) {
 		return Object.freeze({
 			pluginId: pluginId,
+ invocations: Object.freeze({ inspect: function(id) { return hostCall('invocations.inspect', {invocationId:id}); } }),
+ secrets: Object.freeze({ requestSetup: function(params) { return hostCall('secrets.requestSetup', params); }, remove: function(params) { return hostCall('secrets.remove', params); } }),
+ records: Object.freeze({ read: function(key) { return hostCall('records.read', {key:key}); }, requestCommit: function(params) { return hostCall('records.requestCommit', params); } }),
+
 			fs: Object.freeze({
 				read: function (path) { return hostCall('fs.read', { path: path }); },
 				write: function (path, contents) { return hostCall('fs.write', { path: path, contents: contents }); },
@@ -332,6 +342,12 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
 				close: function (jobId) { return hostCall('media.close', { jobId: jobId }); }
 			}),
 			net: Object.freeze({
+ requestTlsConsent: function(params) { return hostCall('net.requestTlsConsent', params); },
+				tlsOpen: function(params) { return hostCall('net.tlsOpen', params); },
+				tlsRead: function(params) { return hostCall('net.tlsRead', params); },
+				tlsWrite: function(params) { return hostCall('net.tlsWrite', params); },
+				tlsClose: function(params) { return hostCall('net.tlsClose', params); },
+
 				fetch: function (url, init) { return hostCall('net.fetch', { url: url, init: init }); },
 				connect: function (url, opts) { return hostCall('net.connect', { url: url, protocols: opts && opts.protocols, headers: opts && opts.headers }); },
 				send: function (socketId, data) { return hostCall('net.send', { socketId: socketId, data: data }); },
@@ -351,6 +367,8 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
 					}
 					return hostCall('agents.send', { agentId: agentId, prompt: prompt, opts: wireOpts }, opts && opts.onProgress);
 				},
+				restoreConversation: function (agentId, opts) { return hostCall('agents.restoreConversation', { agentId: agentId, conversationId: opts && opts.conversationId, sessionId: opts && opts.sessionId }); },
+				completeConversation: function (agentId, opts) { return hostCall('agents.completeConversation', { agentId: agentId, conversationId: opts && opts.conversationId, messageId: opts && opts.messageId }); },
 				generateTitle: function (agentId, firstMessage) { return hostCall('agents.generateTitle', { agentId: agentId, firstMessage: firstMessage }); }
 			}),
 			history: Object.freeze({
@@ -405,6 +423,9 @@ const BOOTSTRAP_SOURCE = String.raw`(function bootstrap(bridge) {
 				close: function (tabId) { return hostCall('tabs.close', { tabId: tabId }); }
 			}),
 			events: Object.freeze({
+				consumers: function(topic) { return hostCall('events.consumers', {topic:topic}); },
+				begin: function(consumerId) { return hostCall('events.begin', {consumerId:consumerId}); },
+				publish: function(params) { return hostCall('events.publish', params); },
 				on: function (topic, handler) {
 					if (typeof topic !== 'string' || typeof handler !== 'function') return;
 					var set = eventHandlers.get(topic);
@@ -598,25 +619,50 @@ if (parentPort) {
 			return;
 		}
 		if (msg.kind === 'invokeTool') {
-			const id = typeof msg.id === 'number' ? msg.id : -1;
+			if (typeof msg.id !== 'number' || !Number.isSafeInteger(msg.id) || msg.id < 1) return;
+			const id = msg.id;
+			const verified = Object.prototype.hasOwnProperty.call(msg, 'invocationId');
 			const reply = (res: Omit<ToolResult, 'kind' | 'id'>): void => {
 				parentPort?.postMessage({ kind: 'toolResult', id, ...res });
 			};
-			if (!activeRealm) {
-				reply({ ok: false, error: 'plugin is not running' });
+			// Preserve field presence: JSON must not erase an explicit undefined proof
+			// and turn a malformed verified invocation into an ordinary call.
+			if (
+				verified &&
+				(typeof msg.invocationId !== 'string' ||
+					msg.invocationId.length !== 64 ||
+					!/^[0-9a-f]{64}$/.test(msg.invocationId))
+			) {
+				reply({ ok: false, error: 'malformed tool invocation' });
 				return;
 			}
-			void activeRealm
-				.invokeTool(
-					JSON.stringify({ commandId: msg.commandId, args: msg.args, context: msg.context })
-				)
+			const realm = activeRealm;
+			if (!realm) {
+				reply({ ok: false, error: verified ? 'tool invocation failed' : 'plugin is not running' });
+				return;
+			}
+			// Keep sync serialization/entry failures on the same correlated error path.
+			void Promise.resolve()
+				.then(() => {
+					if (activeRealm !== realm) throw new Error('tool invocation failed');
+					return realm.invokeTool(
+						JSON.stringify({
+							commandId: msg.commandId,
+							args: msg.args,
+							context: msg.context,
+							...(verified ? { invocationId: msg.invocationId } : {}),
+						})
+					);
+				})
 				.then((json) => {
+					if (activeRealm !== realm) throw new Error('tool invocation failed');
 					try {
 						reply(JSON.parse(json) as Omit<ToolResult, 'kind' | 'id'>);
 					} catch {
 						reply({ ok: false, error: 'malformed tool result' });
 					}
-				});
+				})
+				.catch(() => reply({ ok: false, error: 'tool invocation failed' }));
 			return;
 		}
 		if (msg.kind === 'event') {

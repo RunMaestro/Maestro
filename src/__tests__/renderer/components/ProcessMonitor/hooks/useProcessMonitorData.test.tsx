@@ -108,11 +108,15 @@ describe('useProcessMonitorData', () => {
 	});
 
 	it('refresh() shows the spinner for at least 500ms', async () => {
+		vi.useRealTimers();
+		vi.useFakeTimers();
 		const { result } = renderHook(() => useProcessMonitorData());
-		await waitFor(() => expect(result.current.isLoading).toBe(false));
 		await act(async () => {
-			void result.current.refresh();
 			await Promise.resolve();
+		});
+		expect(result.current.isLoading).toBe(false);
+		await act(async () => {
+			await result.current.refresh();
 		});
 		expect(result.current.isRefreshing).toBe(true);
 		await act(async () => {
@@ -120,9 +124,9 @@ describe('useProcessMonitorData', () => {
 		});
 		expect(result.current.isRefreshing).toBe(true);
 		await act(async () => {
-			vi.advanceTimersByTime(2);
+			vi.advanceTimersByTime(1);
 		});
-		await waitFor(() => expect(result.current.isRefreshing).toBe(false));
+		expect(result.current.isRefreshing).toBe(false);
 	});
 
 	it('clears the polling interval on unmount', async () => {

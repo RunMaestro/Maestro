@@ -34,7 +34,10 @@ import { captureException } from '../../../renderer/utils/sentry';
 
 // The planner's verdict is the seam under test: a queued CLI prompt must carry
 // it as the same flags a composer-queued message does.
-vi.mock('../../../renderer/services/crossAgentMentions', () => ({
+vi.mock('../../../renderer/services/crossAgentMentions', async (importOriginal) => ({
+	// The real `queuedMentionFields`, so a CLI-queued item is stamped by the same
+	// function a composer-queued one is.
+	...(await importOriginal<typeof import('../../../renderer/services/crossAgentMentions')>()),
 	planCrossAgentMentions: vi.fn(() => null),
 }));
 
@@ -82,7 +85,9 @@ describe('useRemoteIntegration', () => {
 		| Parameters<typeof window.maestro.process.onRemoteCommand>[0]
 		| undefined;
 	let onRemoteSwitchModeHandler: ((sessionId: string, mode: 'ai' | 'terminal') => void) | undefined;
-	let onRemoteInterruptHandler: ((sessionId: string) => void) | undefined;
+	let onRemoteInterruptHandler:
+		| Parameters<typeof window.maestro.process.onRemoteInterrupt>[0]
+		| undefined;
 	let onRemoteSelectSessionHandler: ((sessionId: string, tabId?: string) => void) | undefined;
 	let onRemoteSelectTabHandler:
 		| ((
@@ -126,6 +131,13 @@ describe('useRemoteIntegration', () => {
 	let onRemoteSnoozeCommandHandler:
 		| ((request: Record<string, unknown>, responseChannel: string) => void)
 		| undefined;
+	let onRemoteClosedTabCommandHandler:
+		| ((request: Record<string, unknown>, responseChannel: string) => void)
+		| undefined;
+	const contextOpHandlers: Record<
+		string,
+		((request: Record<string, unknown>, responseChannel: string) => void) | undefined
+	> = {};
 	let onRemoteThroughputGaugeCommandHandler:
 		| ((request: Record<string, unknown>, responseChannel: string) => void)
 		| undefined;
@@ -209,6 +221,7 @@ describe('useRemoteIntegration', () => {
 			onRemoteInterruptHandler = handler;
 			return () => {};
 		}),
+		sendRemoteInterruptResponse: vi.fn(),
 		onRemoteSelectSession: vi.fn().mockImplementation((handler) => {
 			onRemoteSelectSessionHandler = handler;
 			return () => {};
@@ -249,6 +262,26 @@ describe('useRemoteIntegration', () => {
 			return () => {};
 		}),
 		sendRemoteSnoozeCommandResponse: vi.fn(),
+		onRemoteClosedTabCommand: vi.fn().mockImplementation((handler) => {
+			onRemoteClosedTabCommandHandler = handler;
+			return () => {};
+		}),
+		sendRemoteClosedTabCommandResponse: vi.fn(),
+		onRemoteSummarizeContext: vi.fn().mockImplementation((handler) => {
+			contextOpHandlers.compact = handler;
+			return () => {};
+		}),
+		sendRemoteSummarizeContextResponse: vi.fn(),
+		onRemoteMergeContext: vi.fn().mockImplementation((handler) => {
+			contextOpHandlers.merge = handler;
+			return () => {};
+		}),
+		sendRemoteMergeContextResponse: vi.fn(),
+		onRemoteTransferContext: vi.fn().mockImplementation((handler) => {
+			contextOpHandlers.transfer = handler;
+			return () => {};
+		}),
+		sendRemoteTransferContextResponse: vi.fn(),
 		onRemoteThroughputGaugeCommand: vi.fn().mockImplementation((handler) => {
 			onRemoteThroughputGaugeCommandHandler = handler;
 			return () => {};
@@ -649,6 +682,40 @@ describe('useRemoteIntegration', () => {
 	});
 
 	describe('remote command handling', () => {
+		it('carries a dispatch --routing into the maestro:remoteCommand event', () => {
+			const session = createMockSession({ id: 'session-1', state: 'idle' });
+			const deps = createDeps({ sessions: [session] });
+			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteCommandHandler?.(
+					'session-1',
+					'check with @Backend',
+					'ai',
+					undefined,
+					undefined,
+					undefined,
+					true,
+					'consult-first',
+					'receipt-1'
+				);
+			});
+
+			expect(dispatchEventSpy).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'maestro:remoteCommand',
+					detail: expect.objectContaining({
+						command: 'check with @Backend',
+						mentionRouting: 'consult-first',
+						receiptChannel: 'receipt-1',
+					}),
+				})
+			);
+			dispatchEventSpy.mockRestore();
+		});
+
 		it('dispatches maestro:remoteCommand event when command is received', () => {
 			const session = createMockSession({ id: 'session-1', state: 'idle' });
 			const deps = createDeps({ sessions: [session] });
@@ -808,6 +875,7 @@ describe('useRemoteIntegration', () => {
 					undefined,
 					undefined,
 					undefined,
+					undefined,
 					'receipt-1'
 				);
 			});
@@ -830,6 +898,7 @@ describe('useRemoteIntegration', () => {
 					'session-1',
 					'test command',
 					'ai',
+					undefined,
 					undefined,
 					undefined,
 					undefined,
@@ -857,6 +926,7 @@ describe('useRemoteIntegration', () => {
 					'session-1',
 					'test command',
 					'ai',
+					undefined,
 					undefined,
 					undefined,
 					undefined,
@@ -993,44 +1063,100 @@ describe('useRemoteIntegration', () => {
 	});
 
 	describe('remote interrupt handling', () => {
-		it('sends interrupt and sets session to idle', async () => {
-			const session = createMockSession({ id: 'session-1', state: 'busy', inputMode: 'ai' });
-			const deps = createDeps({ sessions: [session] });
+		// Every AI tab runs its turn as `{id}-ai-{tabId}`; the bare `{id}-ai` the
+		// listener used to signal is spawned by nothing, so a REST stop ended
+		// nothing while writing the agent idle.
+		const busyAgent = () => {
+			const tabA = createMockTab({ id: 'tab-a', state: 'busy' });
+			const tabB = createMockTab({ id: 'tab-b', state: 'busy' });
+			return createMockSession({
+				id: 'session-1',
+				state: 'busy',
+				busySource: 'ai',
+				inputMode: 'ai',
+				aiTabs: [tabA, tabB],
+				activeTabId: 'tab-a',
+			});
+		};
+
+		it('signals every busy tab by its per-tab process id when no tab is named', async () => {
+			const deps = createDeps({ sessions: [busyAgent()] });
 
 			renderHook(() => useRemoteIntegration(deps));
 
 			await act(async () => {
-				await onRemoteInterruptHandler?.('session-1');
+				await onRemoteInterruptHandler?.('session-1', undefined, 'interrupt-reply-1');
 			});
 
-			expect(mockProcess.interrupt).toHaveBeenCalledWith('session-1-ai');
+			expect(mockProcess.interrupt).toHaveBeenCalledWith('session-1-ai-tab-a');
+			expect(mockProcess.interrupt).toHaveBeenCalledWith('session-1-ai-tab-b');
+			expect(mockProcess.interrupt).not.toHaveBeenCalledWith('session-1-ai');
 			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
 			expect(updated?.state).toBe('idle');
+			expect(mockProcess.sendRemoteInterruptResponse).toHaveBeenCalledWith(
+				'interrupt-reply-1',
+				expect.objectContaining({
+					success: true,
+					sessionId: 'session-1',
+					tabId: null,
+					wasBusy: true,
+					stoppedTabIds: expect.arrayContaining(['tab-a', 'tab-b']),
+				})
+			);
 		});
 
-		it('ignores interrupt when session not found', async () => {
+		it('stops only the named tab and leaves the other turn running', async () => {
+			const deps = createDeps({ sessions: [busyAgent()] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			await act(async () => {
+				await onRemoteInterruptHandler?.('session-1', 'tab-b', 'interrupt-reply-2');
+			});
+
+			expect(mockProcess.interrupt).toHaveBeenCalledWith('session-1-ai-tab-b');
+			expect(mockProcess.interrupt).not.toHaveBeenCalledWith('session-1-ai-tab-a');
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
+			expect(updated?.aiTabs.find((t) => t.id === 'tab-b')?.state).toBe('idle');
+			expect(updated?.aiTabs.find((t) => t.id === 'tab-a')?.state).toBe('busy');
+			expect(updated?.state).toBe('busy');
+			expect(mockProcess.sendRemoteInterruptResponse).toHaveBeenCalledWith(
+				'interrupt-reply-2',
+				expect.objectContaining({ success: true, tabId: 'tab-b', stoppedTabIds: ['tab-b'] })
+			);
+		});
+
+		it('answers AGENT_NOT_FOUND without signalling anything', async () => {
 			const deps = createDeps({ sessions: [] });
 
 			renderHook(() => useRemoteIntegration(deps));
 
 			await act(async () => {
-				await onRemoteInterruptHandler?.('nonexistent');
+				await onRemoteInterruptHandler?.('nonexistent', undefined, 'interrupt-reply-3');
 			});
 
 			expect(mockProcess.interrupt).not.toHaveBeenCalled();
+			expect(mockProcess.sendRemoteInterruptResponse).toHaveBeenCalledWith(
+				'interrupt-reply-3',
+				expect.objectContaining({ success: false, code: 'AGENT_NOT_FOUND' })
+			);
 		});
 
-		it('interrupts terminal process when session is in terminal mode', async () => {
-			const session = createMockSession({ id: 'session-1', state: 'busy', inputMode: 'terminal' });
+		it('reports an idle agent as nothing to stop', async () => {
+			const session = createMockSession({ id: 'session-1', state: 'idle', inputMode: 'ai' });
 			const deps = createDeps({ sessions: [session] });
 
 			renderHook(() => useRemoteIntegration(deps));
 
 			await act(async () => {
-				await onRemoteInterruptHandler?.('session-1');
+				await onRemoteInterruptHandler?.('session-1', undefined, 'interrupt-reply-4');
 			});
 
-			expect(mockProcess.interrupt).toHaveBeenCalledWith('session-1-terminal');
+			expect(mockProcess.interrupt).not.toHaveBeenCalled();
+			expect(mockProcess.sendRemoteInterruptResponse).toHaveBeenCalledWith(
+				'interrupt-reply-4',
+				expect.objectContaining({ success: true, wasBusy: false, interrupted: false })
+			);
 		});
 	});
 
@@ -1330,6 +1456,42 @@ describe('useRemoteIntegration', () => {
 			]);
 		});
 
+		it('preserves a client-only active wizard when the host inventory omits it', () => {
+			const host = createMockTab({ id: 'host' });
+			const wizard = createMockTab({
+				id: 'local-wizard',
+				inputValue: 'unfinished draft',
+				wizardState: {
+					isActive: true,
+					conversationHistory: [{ role: 'user', text: 'unfinished wizard' }],
+				} as AITab['wizardState'],
+			});
+			const stale = createMockTab({ id: 'removed-on-host' });
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [host, wizard, stale],
+				activeTabId: wizard.id,
+				unifiedTabOrder: [
+					{ type: 'ai', id: wizard.id },
+					{ type: 'ai', id: host.id },
+					{ type: 'ai', id: stale.id },
+				],
+			});
+			const deps = createDeps({ sessions: [session], activeSessionId: session.id });
+			renderHook(() => useRemoteIntegration(deps));
+			act(() =>
+				onRemoteSelectTabHandler?.(session.id, host.id, [{ ...host, name: 'Renamed on host' }])
+			);
+			const current = useSessionStore.getState().sessions[0];
+			expect(current.aiTabs.map((tab) => tab.id)).toEqual([host.id, wizard.id]);
+			expect(current.aiTabs.find((tab) => tab.id === wizard.id)).toEqual(wizard);
+			expect(current.activeTabId).toBe(wizard.id);
+			expect(current.unifiedTabOrder).toEqual([
+				{ type: 'ai', id: wizard.id },
+				{ type: 'ai', id: host.id },
+			]);
+		});
+
 		it('keeps the browser on its own tab when the desktop changes selection in the viewed session', () => {
 			const tab1 = createMockTab({ id: 'tab-1' });
 			const tab2 = createMockTab({ id: 'tab-2' });
@@ -1523,6 +1685,62 @@ describe('useRemoteIntegration', () => {
 				}
 			}
 		);
+
+		it('stamps a dispatch --routing on the prompt a busy agent queues for the new tab', () => {
+			const session = createMockSession({ id: 'session-1', state: 'busy', executionQueue: [] });
+			useSessionStore.setState({ sessions: [session] });
+			vi.mocked(planCrossAgentMentions).mockReturnValueOnce({
+				targetSessionIds: ['reviewer-1'],
+				routing: 'parallel',
+				inferredRouting: 'handoff',
+				routingSource: 'explicit',
+				suppressLocal: false,
+			});
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+			act(() => {
+				onRemoteNewAITabWithPromptHandler?.(
+					'session-1',
+					'then tell @Reviewer',
+					'chan-route',
+					true,
+					true,
+					'parallel'
+				);
+			});
+
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.executionQueue[0]).toMatchObject({
+				text: 'then tell @Reviewer',
+				tabId: updated.aiTabs.at(-1)!.id,
+				mentionRouting: 'parallel',
+			});
+		});
+
+		it('forwards a dispatch --routing to the remote-command path on an idle agent', () => {
+			const session = createMockSession({ id: 'session-1', state: 'idle' });
+			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+			act(() => {
+				onRemoteNewAITabWithPromptHandler?.(
+					'session-1',
+					'@Reviewer look',
+					'chan-route-idle',
+					true,
+					true,
+					'only'
+				);
+			});
+
+			expect(dispatchEventSpy).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'maestro:remoteCommand',
+					detail: expect.objectContaining({ command: '@Reviewer look', mentionRouting: 'only' }),
+				})
+			);
+			dispatchEventSpy.mockRestore();
+		});
 
 		it('refuses terminal targets before creating a tab', () => {
 			const session = createMockSession({ id: 'terminal-agent', toolType: 'terminal' });
@@ -1993,13 +2211,104 @@ describe('useRemoteIntegration', () => {
 				);
 			});
 
-			expect(planCrossAgentMentions).toHaveBeenCalledWith('@Reviewer check this', 'session-1');
+			expect(planCrossAgentMentions).toHaveBeenCalledWith(
+				'@Reviewer check this',
+				'session-1',
+				undefined
+			);
+			// No --routing: nothing is stamped, so the drain still routes by wording.
+			expect(
+				useSessionStore.getState().sessions.find((s) => s.id === 'session-1')?.executionQueue[0]
+					.mentionRouting
+			).toBeUndefined();
 			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
 			expect(updated?.executionQueue[0]).toMatchObject({
 				text: '@Reviewer check this',
 				crossAgentMention: true,
 				crossAgentOnly: true,
 			});
+		});
+
+		it('stamps a dispatch --routing on the queued item, as the routing strip does', () => {
+			const tab = createMockTab({ id: 'tab-1' });
+			const session = createMockSession({
+				id: 'session-1',
+				state: 'busy',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+				executionQueue: [],
+			});
+			useSessionStore.setState({ sessions: [session] });
+			vi.mocked(planCrossAgentMentions).mockReturnValueOnce({
+				targetSessionIds: ['reviewer-1'],
+				routing: 'handoff',
+				inferredRouting: 'parallel',
+				routingSource: 'explicit',
+				suppressLocal: false,
+			});
+
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+			act(() => {
+				onRemoteEnqueueCommandHandler?.(
+					'session-1',
+					'fix it, @Reviewer too',
+					'chan-r',
+					'ai',
+					'tab-1',
+					undefined,
+					true,
+					false,
+					'handoff'
+				);
+			});
+
+			expect(planCrossAgentMentions).toHaveBeenCalledWith(
+				'fix it, @Reviewer too',
+				'session-1',
+				'handoff'
+			);
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'session-1');
+			expect(updated?.executionQueue[0]).toMatchObject({
+				crossAgentMention: true,
+				crossAgentOnly: false,
+				mentionRouting: 'handoff',
+			});
+		});
+
+		it('hands a dispatch --routing to the shared remote-command path on an idle agent', () => {
+			const tab = createMockTab({ id: 'tab-1' });
+			const session = createMockSession({
+				id: 'session-1',
+				state: 'idle',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({ sessions: [session] });
+			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+			act(() => {
+				onRemoteEnqueueCommandHandler?.(
+					'session-1',
+					'@Reviewer look',
+					'chan-ri',
+					'ai',
+					'tab-1',
+					undefined,
+					true,
+					false,
+					'only'
+				);
+			});
+
+			expect(dispatchEventSpy).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'maestro:remoteCommand',
+					detail: expect.objectContaining({ tabId: 'tab-1', mentionRouting: 'only' }),
+				})
+			);
+			dispatchEventSpy.mockRestore();
 		});
 
 		it('appends after existing items so ordering stays FIFO and position advances', () => {
@@ -2162,6 +2471,7 @@ describe('useRemoteIntegration', () => {
 				type: 'message' as const,
 				text: 'queued prompt',
 				tabName: 'PR review',
+				mentionRouting: 'handoff' as const,
 			};
 			const session = createMockSession({
 				id: 'session-1',
@@ -2186,7 +2496,14 @@ describe('useRemoteIntegration', () => {
 					queues: [
 						expect.objectContaining({
 							sessionId: 'session-1',
-							items: [expect.objectContaining({ id: 'q1', text: 'queued prompt' })],
+							// The picked routing is the read-back for `dispatch --routing`.
+							items: [
+								expect.objectContaining({
+									id: 'q1',
+									text: 'queued prompt',
+									mentionRouting: 'handoff',
+								}),
+							],
 						}),
 					],
 				})
@@ -2467,6 +2784,92 @@ describe('useRemoteIntegration', () => {
 				'snooze-response',
 				expect.objectContaining({ success: false })
 			);
+		});
+	});
+
+	describe('remote closed-tab command', () => {
+		// `maestro-cli tab closed` / `tab reopen` block on this reply. The
+		// service is covered in closedTabCommands.test.ts; this pins the wiring.
+		it('lists the live stack on its response channel', async () => {
+			const closed = createMockTab({ id: 'closed-1', name: 'Old chat' });
+			const session = createMockSession({
+				id: 'session-1',
+				unifiedClosedTabHistory: [{ type: 'ai', tab: closed, unifiedIndex: 1, closedAt: 100 }],
+			});
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+			act(() => {
+				onRemoteClosedTabCommandHandler?.(
+					{ action: 'list', sessionId: 'session-1' },
+					'closed-response'
+				);
+			});
+
+			const send = window.maestro.process.sendRemoteClosedTabCommandResponse as ReturnType<
+				typeof vi.fn
+			>;
+			await waitFor(() =>
+				expect(send).toHaveBeenCalledWith('closed-response', {
+					success: true,
+					closedTabs: [
+						{ index: 0, type: 'ai', label: 'Old chat', tabId: 'closed-1', closedAt: 100 },
+					],
+				})
+			);
+		});
+
+		it('answers an empty stack with a failure rather than silence', async () => {
+			const session = createMockSession({ id: 'session-1', unifiedClosedTabHistory: [] });
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [session] })));
+
+			act(() => {
+				onRemoteClosedTabCommandHandler?.(
+					{ action: 'reopen', sessionId: 'session-1' },
+					'closed-response'
+				);
+			});
+
+			const send = window.maestro.process.sendRemoteClosedTabCommandResponse as ReturnType<
+				typeof vi.fn
+			>;
+			await waitFor(() =>
+				expect(send).toHaveBeenCalledWith('closed-response', {
+					success: false,
+					error: 'No closed tabs to reopen',
+				})
+			);
+		});
+	});
+
+	describe('remote context operations', () => {
+		// `maestro-cli tab compact|merge|transfer`. The handlers live in App's
+		// hooks, so this hook only forwards; useAppRemoteEventListeners answers.
+		// Each reply must reach the preload sender for its own channel.
+		it.each([
+			['compact', 'sendRemoteSummarizeContextResponse'],
+			['merge', 'sendRemoteMergeContextResponse'],
+			['transfer', 'sendRemoteTransferContextResponse'],
+		] as const)('forwards %s as a window event whose reply uses %s', (op, sender) => {
+			renderHook(() => useRemoteIntegration(createDeps({ sessions: [] })));
+			const listener = vi.fn((e: Event) => {
+				(e as CustomEvent).detail.reply({ success: true, newTabId: 'tab-new' });
+			});
+			window.addEventListener('maestro:tabContextOp', listener);
+			try {
+				const request = { op, sessionId: 'session-1' };
+				act(() => {
+					contextOpHandlers[op]?.(request, `${op}-response`);
+				});
+
+				expect(listener).toHaveBeenCalledTimes(1);
+				expect((listener.mock.calls[0][0] as CustomEvent).detail.request).toEqual(request);
+				expect(window.maestro.process[sender]).toHaveBeenCalledWith(`${op}-response`, {
+					success: true,
+					newTabId: 'tab-new',
+				});
+			} finally {
+				window.removeEventListener('maestro:tabContextOp', listener);
+			}
 		});
 	});
 

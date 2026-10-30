@@ -592,3 +592,30 @@ describe('normalizer - tier / model / effort passthrough', () => {
 		expect(sub.model).toBeUndefined();
 	});
 });
+
+describe('plugin source normalization failures', () => {
+	it.each([
+		{ pluginId: 'invalid id', topic: 'fixture.received', config: {} },
+		{ pluginId: 'com.example.fixture', topic: '', config: {} },
+		{
+			pluginId: 'com.example.fixture',
+			topic: 'fixture.received',
+			config: { huge: 'x'.repeat(17 * 1024) },
+		},
+	])(
+		'keeps unrelated subscriptions available for validation when the source is malformed',
+		(plugin) => {
+			const raw = yaml.dump({
+				subscriptions: [
+					{ name: 'bad-source', event: 'plugin.event', plugin },
+					{ name: 'startup', event: 'app.startup', prompt: 'work' },
+				],
+			});
+			const doc = parseCueConfigDocument(raw, projectRoot);
+			expect(doc).not.toBeNull();
+			const { config } = materializeCueConfig(doc!);
+			expect(config.subscriptions.find((sub) => sub.name === 'startup')).toBeDefined();
+			expect(config.subscriptions.find((sub) => sub.name === 'bad-source')?.plugin).toBeUndefined();
+		}
+	);
+});

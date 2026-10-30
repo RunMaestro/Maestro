@@ -100,6 +100,28 @@ export function handleCreateSession(
 	}
 	// autoRunFolderPath can be set outside of the agent's cwd (no confinement needed)
 	if (message.autoRunFolderPath) config.autoRunFolderPath = message.autoRunFolderPath as string;
+	// The rest of the New Agent modal's fields, so `duplicate-agent` creates the
+	// same agent the modal does. Booleans are copied when present: an explicit
+	// `false` is a choice (Adaptive Mode off over SSH, resilience opted out).
+	if (Array.isArray(message.additionalDirectories) && message.additionalDirectories.length > 0) {
+		config.additionalDirectories =
+			message.additionalDirectories as CreateSessionConfig['additionalDirectories'];
+	}
+	if (typeof message.enableMaestroP === 'boolean') config.enableMaestroP = message.enableMaestroP;
+	if (message.maestroPMode === 'interactive' || message.maestroPMode === 'dynamic') {
+		config.maestroPMode = message.maestroPMode;
+	}
+	if (message.maestroPPath) config.maestroPPath = message.maestroPPath as string;
+	if (typeof message.retryOnAvailabilityErrors === 'boolean') {
+		config.retryOnAvailabilityErrors = message.retryOnAvailabilityErrors;
+	}
+	if (typeof message.retryOnTokenExhaustion === 'boolean') {
+		config.retryOnTokenExhaustion = message.retryOnTokenExhaustion;
+	}
+	if (message.codexAutoResetOnExhaustion === true) config.codexAutoResetOnExhaustion = true;
+	if (message.codexTransport === 'app-server' || message.codexTransport === 'exec') {
+		config.codexTransport = message.codexTransport;
+	}
 	const hasConfig = Object.keys(config).length > 0;
 
 	ctx.callbacks
@@ -479,11 +501,27 @@ export function handleListDesktopSessions(
 	client: WebClient,
 	message: WebClientMessage
 ): void {
-	const sessions = ctx.callbacks.listDesktopSessions ? ctx.callbacks.listDesktopSessions() : [];
+	// A missing callback is distinct from a valid snapshot with no open tabs.
+	// Treating both as an empty list could retire a scoped watch's baselines.
+	const capturedAt = Date.now();
+	const snapshot = ctx.callbacks.listDesktopSessions?.();
+	if (!snapshot) {
+		ctx.send(client, {
+			type: 'desktop_sessions_list',
+			success: false,
+			error: 'Desktop sessions not configured',
+			requestId: message.requestId,
+		});
+		return;
+	}
+	// The callback is synchronous: timestamp and membership/cursors share one
+	// main-process turn instead of using a timestamp invented after the response.
 	ctx.send(client, {
 		type: 'desktop_sessions_list',
 		success: true,
-		sessions,
+		// Old callbacks remain usable for ordinary tab-list clients, but must
+		// never masquerade as a complete supervision census.
+		...(Array.isArray(snapshot) ? { sessions: snapshot, capturedAt } : snapshot),
 		requestId: message.requestId,
 	});
 }

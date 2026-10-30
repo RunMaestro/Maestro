@@ -47,6 +47,19 @@ describe('projectWebSession', () => {
 		});
 	});
 
+	it('drops both closed-tab stacks: a browser keeps its own and never writes the host one', () => {
+		const projected = projectWebSession(
+			storedAgent({
+				closedTabHistory: [{ tab: { id: 'old', logs: [] }, index: 0, closedAt: 1 }],
+				unifiedClosedTabHistory: [
+					{ type: 'ai', tab: { id: 'old', logs: [] }, unifiedIndex: 0, closedAt: 1 },
+				],
+			})
+		);
+		expect(projected).not.toHaveProperty('closedTabHistory');
+		expect(projected).not.toHaveProperty('unifiedClosedTabHistory');
+	});
+
 	it('derives createdAt for a legacy agent from the oldest log it is about to drop', () => {
 		const projected = projectWebSession(storedAgent({ createdAt: undefined }));
 		expect(projected.createdAt).toBe(1);

@@ -18,6 +18,13 @@ export function useHostBrowserRelayResponder(): void {
 	useEffect(() => {
 		if (isWebDesktop()) return;
 		const api = window.maestro.browserSession;
+		// Readiness belongs to the primary window: main's `browser:relayReady`
+		// refuses every other sender. A secondary window still answers relay
+		// requests for the agents it owns (below), but registering readiness from
+		// it threw "Only the owning host renderer can register browser readiness"
+		// as an unhandled rejection every time one opened (MAESTRO-16N).
+		// `isMainWindow` is fixed for the window's lifetime (read from its URL).
+		const registersReadiness = contextRef.current?.isMainWindow ?? true;
 		const known = new Map<string, BrowserRelayTarget>();
 		const unsubscribe = api.onRelayRequest((request) => {
 			void (async () => {
@@ -183,13 +190,13 @@ export function useHostBrowserRelayResponder(): void {
 				void api.pageClose(target);
 			}
 		});
-		void api.relayReady(true);
+		if (registersReadiness) void api.relayReady(true);
 		return () => {
 			unsubscribe();
 			creations();
 			events();
 			sessions();
-			void api.relayReady(false);
+			if (registersReadiness) void api.relayReady(false);
 		};
 	}, []);
 }

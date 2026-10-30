@@ -14,6 +14,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { CodexPlanUsage } from '../../../../renderer/components/UsageDashboard/CodexPlanUsage';
 import { useCodexUsageStore } from '../../../../renderer/stores/codexUsageStore';
+import { useCodexResetCreditsStore } from '../../../../renderer/stores/codexResetCreditsStore';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import { useUIStore } from '../../../../renderer/stores/uiStore';
 import { selectModalData, useModalStore } from '../../../../renderer/stores/modalStore';
@@ -42,6 +43,7 @@ beforeEach(() => {
 	};
 
 	useCodexUsageStore.getState().__resetForTests();
+	useCodexResetCreditsStore.getState().__resetForTests();
 	useSessionStore.setState({ sessions: [] } as any);
 	useUIStore.setState({ hiddenQuotaAccounts: {} });
 	useModalStore.getState().closeAll();
@@ -232,6 +234,174 @@ describe('CodexPlanUsage - multi-account tabs', () => {
 			.getAllByRole('progressbar')
 			.map((bar) => bar.getAttribute('aria-valuenow'));
 		expect(values).toEqual(['42', '7', '99']);
+	});
+});
+
+describe('CodexPlanUsage - available credits', () => {
+	it('shows the account balance separately from reset inventory without spending a reset', () => {
+		const consumeResetCredit = vi.fn();
+		window.maestro.agents.consumeCodexResetCredit = consumeResetCredit;
+		useCodexResetCreditsStore.setState({
+			entries: { '/Users/me/.codex': { credits: [], counts: { available: 1 } } },
+		});
+		seedSnapshots({
+			'/Users/me/.codex': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				codexHomeKey: '/Users/me/.codex',
+				authState: 'authenticated',
+				weekly: { percent: 33, resetsAt: '2026-05-22T00:00:00.000Z' },
+				credits: { kind: 'balance', balance: 4321.12575 },
+				resetCredits: { available: 1 },
+			},
+		});
+
+		render(<CodexPlanUsage theme={theme} autoRefresh={false} />);
+
+		expect(screen.getByTestId('codex-plan-credits-default')).toHaveTextContent(
+			'Available credits4,321.126'
+		);
+		expect(screen.getByTitle('4321.12575 credits reported by this account')).toHaveTextContent(
+			'4,321.126'
+		);
+		expect(screen.getByTestId('codex-plan-default-reset-credits')).toHaveTextContent(
+			'Usage resets1 available'
+		);
+		expect(consumeResetCredit).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		['missing', undefined, 'Not available'],
+		['null', null, 'Not available'],
+		['zero', { kind: 'balance', balance: 0 }, '0'],
+		['unlimited', { kind: 'unlimited' }, 'Unlimited'],
+		['small positive', { kind: 'balance', balance: 0.000001 }, '<0.001'],
+	] as const)('renders a %s balance accurately', (_label, credits, expected) => {
+		// Reset inventory and a weekly percentage cannot supply a missing balance.
+		useCodexResetCreditsStore.setState({
+			entries: { '/Users/me/.codex': { credits: [], counts: { available: 1 } } },
+		});
+		seedSnapshots({
+			'/Users/me/.codex': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				codexHomeKey: '/Users/me/.codex',
+				authState: 'authenticated',
+				weekly: { percent: 33, resetsAt: '2026-05-22T00:00:00.000Z' },
+				credits,
+				resetCredits: { available: 1 },
+			},
+		});
+
+		render(<CodexPlanUsage theme={theme} autoRefresh={false} />);
+
+		expect(screen.getByTestId('codex-plan-credits-default')).toHaveTextContent(
+			`Available credits${expected}`
+		);
+	});
+
+	it('shows credits even when the account reports no rate-limit windows', () => {
+		seedSnapshots({
+			'/Users/me/.codex': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				codexHomeKey: '/Users/me/.codex',
+				authState: 'authenticated',
+				credits: { kind: 'balance', balance: 12.5 },
+			},
+		});
+
+		render(<CodexPlanUsage theme={theme} autoRefresh={false} />);
+
+		expect(screen.getByTestId('codex-plan-credits-default')).toHaveTextContent(
+			'Available credits12.5'
+		);
+		expect(screen.getByText(/no rate-limit windows/)).toBeInTheDocument();
+		expect(screen.queryAllByRole('progressbar')).toHaveLength(0);
+	});
+
+	it.each([false, true])(
+		'keeps balances attached to their accounts with showAllAccounts=%s',
+		(showAllAccounts) => {
+			seedSnapshots({
+				'/Users/me/.codex': {
+					sampledAt: '2026-05-15T00:00:00.000Z',
+					codexHomeKey: '/Users/me/.codex',
+					authState: 'authenticated',
+					credits: { kind: 'balance', balance: 21 },
+				},
+				'/Users/me/.codex-work': {
+					sampledAt: '2026-05-15T00:00:00.000Z',
+					codexHomeKey: '/Users/me/.codex-work',
+					authState: 'authenticated',
+					credits: { kind: 'balance', balance: 84 },
+				},
+			});
+
+			render(
+				<CodexPlanUsage theme={theme} showAllAccounts={showAllAccounts} autoRefresh={false} />
+			);
+
+			expect(screen.getByTestId('codex-plan-credits-default')).toHaveTextContent(
+				'Available credits21'
+			);
+			if (!showAllAccounts) {
+				expect(screen.queryByTestId('codex-plan-credits-work')).toBeNull();
+				fireEvent.click(screen.getByTestId('codex-plan-tab-work'));
+				expect(screen.queryByTestId('codex-plan-credits-default')).toBeNull();
+			}
+			expect(screen.getByTestId('codex-plan-credits-work')).toHaveTextContent(
+				'Available credits84'
+			);
+		}
+	);
+
+	it.each(['unauthenticated', 'missing_auth', 'error'])(
+		'does not display a cached balance when the account is %s',
+		(authState) => {
+			seedSnapshots({
+				'/Users/me/.codex': {
+					sampledAt: '2026-05-15T00:00:00.000Z',
+					codexHomeKey: '/Users/me/.codex',
+					authState,
+					credits: { kind: 'balance', balance: 21 },
+				},
+			});
+
+			render(<CodexPlanUsage theme={theme} autoRefresh={false} />);
+
+			expect(screen.queryByTestId('codex-plan-credits-default')).toBeNull();
+			expect(screen.getByTestId(`codex-plan-row-default-${authState}`)).toBeInTheDocument();
+		}
+	);
+
+	it('replaces a previously available balance when a refreshed snapshot omits credits', async () => {
+		seedSnapshots({
+			'/Users/me/.codex': {
+				sampledAt: '2026-05-15T00:00:00.000Z',
+				codexHomeKey: '/Users/me/.codex',
+				authState: 'authenticated',
+				credits: { kind: 'balance', balance: 21 },
+			},
+		});
+		getCodexUsageSnapshotsMock.mockResolvedValue({
+			'/Users/me/.codex': {
+				sampledAt: '2026-05-15T01:00:00.000Z',
+				codexHomeKey: '/Users/me/.codex',
+				authState: 'authenticated',
+				weekly: { percent: 33, resetsAt: '2026-05-22T00:00:00.000Z' },
+			},
+		});
+		render(<CodexPlanUsage theme={theme} autoRefresh={false} />);
+		expect(screen.getByTestId('codex-plan-credits-default')).toHaveTextContent(
+			'Available credits21'
+		);
+
+		fireEvent.click(screen.getByTestId('codex-plan-refresh'));
+
+		await waitFor(() =>
+			expect(screen.getByTestId('codex-plan-credits-default')).toHaveTextContent(
+				'Available creditsNot available'
+			)
+		);
+		expect(screen.queryByTitle('21 credits reported by this account')).toBeNull();
 	});
 });
 

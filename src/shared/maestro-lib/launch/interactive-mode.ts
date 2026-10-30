@@ -33,6 +33,7 @@ import type { SelectModeInput, SelectModeResult, UsageSnapshot } from './claude-
 import type { ClaudeTokenMode } from '../../claudeTokenMode';
 import { isBlankEnvValue } from '../../agentEnvironment';
 import { effectiveAgentCustomEnvVars } from '../../providerProfiles';
+import { normalizeWorktreePath } from '../../worktreePaths';
 
 const LOG_CONTEXT = 'ClaudeSpawnCore';
 
@@ -402,6 +403,36 @@ export function resolveClaudeSpawnModeCore(
 /** Convenience: the built-in selectMode, re-exported so surfaces share one impl. */
 export const defaultSelectMode = builtinSelectMode;
 
+/**
+ * The env opt-in that makes maestro-p answer claude's folder-trust prompt with
+ * "Yes" instead of failing the turn as `workspace_untrusted` (exit 7). Trust
+ * persists in claude for that folder.
+ */
+export const MAESTRO_P_ACCEPT_WORKSPACE_TRUST_ENV = 'MAESTRO_P_ACCEPT_WORKSPACE_TRUST';
+
+/** maestro-p's exit code when claude's folder-trust prompt ended the turn. */
+export const MAESTRO_P_WORKSPACE_UNTRUSTED_EXIT_CODE = 7;
+
+/**
+ * Whether a spawn runs in the agent's own configured working directory.
+ *
+ * Choosing TUI or Dynamic for an agent counts as trusting that one folder
+ * (#1872). An agent that only ran `claude --print` never saw claude's trust
+ * prompt, so its cwd is usually untrusted on its account, and without the
+ * opt-in every turn after the switch failed with exit 7. Any other folder (the
+ * home dir, a temp dir, a probe dir) gets no opt-in and still fails loudly.
+ */
+export function isAgentOwnWorkingDirectory(
+	cwd: string | undefined,
+	agent: { cwd?: string; projectRoot?: string } | null | undefined
+): boolean {
+	if (!cwd || !agent) return false;
+	const target = normalizeWorktreePath(cwd);
+	return [agent.cwd, agent.projectRoot].some(
+		(dir) => typeof dir === 'string' && dir.length > 0 && normalizeWorktreePath(dir) === target
+	);
+}
+
 export interface StandaloneClaudeSpawnCoreDepsOptions {
 	/** Where the maestro-p script is, or null when this install has none (the decision falls back to API). */
 	getMaestroPBinPath: () => string | null;
@@ -469,6 +500,12 @@ export interface ApplyClaudeSpawnInput {
 	 * honors their configured timeout instead of maestro-p's built-in default.
 	 */
 	maxWaitSeconds?: number;
+	/**
+	 * The spawn runs in the agent's own working directory, so maestro-p may
+	 * accept claude's folder-trust prompt there. See
+	 * {@link isAgentOwnWorkingDirectory}. Leave unset for any other folder.
+	 */
+	acceptWorkspaceTrust?: boolean;
 }
 
 export interface ApplyClaudeSpawnResult {
@@ -502,6 +539,7 @@ export function applyClaudeSpawnDecision(input: ApplyClaudeSpawnInput): ApplyCla
 			// unconditionally keeps both surfaces correct.
 			ELECTRON_RUN_AS_NODE: '1',
 		};
+		if (input.acceptWorkspaceTrust) env[MAESTRO_P_ACCEPT_WORKSPACE_TRUST_ENV] = '1';
 		// Under ELECTRON_RUN_AS_NODE, maestro-p runs as pure Node and does
 		// `require('node-pty')`, which esbuild left external. In a packaged app
 		// maestro-p.js sits at the resources root, OUTSIDE the asar, so Node can't
@@ -610,6 +648,8 @@ export function buildRemoteInteractiveSpawn(input: {
 	interactiveModeArgs?: string[];
 	remoteClaudeBin?: string;
 	maxWaitSeconds?: number;
+	/** Same contract as {@link ApplyClaudeSpawnInput.acceptWorkspaceTrust}. */
+	acceptWorkspaceTrust?: boolean;
 }): RemoteInteractiveSpawn | null {
 	const { decision, interactiveModeArgs, remoteClaudeBin } = input;
 	if (decision.mode !== 'interactive' || !decision.remote) {
@@ -623,6 +663,7 @@ export function buildRemoteInteractiveSpawn(input: {
 	if (remoteClaudeBin && remoteClaudeBin.length > 0) {
 		env.MAESTRO_CLAUDE_BIN = remoteClaudeBin;
 	}
+	if (input.acceptWorkspaceTrust) env[MAESTRO_P_ACCEPT_WORKSPACE_TRUST_ENV] = '1';
 	return {
 		command: REMOTE_MAESTRO_P_COMMAND,
 		prependArgs: [...maxWaitArgs, ...(interactiveModeArgs ?? [])],

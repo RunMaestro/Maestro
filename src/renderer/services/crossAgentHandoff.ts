@@ -78,15 +78,18 @@ export function armMentionHandoff(sessionId: string, tabId: string, handoff: Men
 	updateAiTab(sessionId, tabId, (tab) => ({ ...tab, pendingMentionHandoff: handoff }));
 }
 
-/** Clear every armed hand-off on an agent (Stop is agent-level). */
-export function dropMentionHandoffs(sessionId: string): void {
+/**
+ * Clear the armed hand-offs on an agent (Stop is agent-level), or on one tab
+ * when `tabId` is given (a Stop aimed at a single turn).
+ */
+export function dropMentionHandoffs(sessionId: string, tabId?: string): void {
+	const armed = (t: { id: string; pendingMentionHandoff?: unknown }) =>
+		!!t.pendingMentionHandoff && (!tabId || t.id === tabId);
 	const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
-	if (!session?.aiTabs.some((t) => t.pendingMentionHandoff)) return;
+	if (!session?.aiTabs.some(armed)) return;
 	updateSessionWith(sessionId, (s) => ({
 		...s,
-		aiTabs: s.aiTabs.map((t) =>
-			t.pendingMentionHandoff ? { ...t, pendingMentionHandoff: undefined } : t
-		),
+		aiTabs: s.aiTabs.map((t) => (armed(t) ? { ...t, pendingMentionHandoff: undefined } : t)),
 	}));
 }
 

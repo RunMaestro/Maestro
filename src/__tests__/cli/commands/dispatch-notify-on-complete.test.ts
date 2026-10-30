@@ -3,7 +3,7 @@
  * @description CLI validation + payload wiring for `dispatch --notify-on-complete`.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('../../../cli/services/maestro-client', () => ({
 	withMaestroClient: vi.fn(),
@@ -180,6 +180,57 @@ describe('dispatch --notify-on-complete', () => {
 			expect(result.success).toBe(false);
 			expect(result.code).toBe('CALLBACK_NOT_ARMED');
 			expect(result.tabId).toBe('tab-1');
+		});
+
+		describe('default callback tab from the caller shell', () => {
+			beforeEach(() => {
+				vi.stubEnv('MAESTRO_CALLER_AGENT_ID', 'caller');
+				vi.stubEnv('MAESTRO_CALLER_TAB_ID', 'caller-tab');
+			});
+			afterEach(() => {
+				vi.unstubAllEnvs();
+			});
+
+			it('wakes the tab that dispatched when an agent notifies itself', async () => {
+				const captured = mockSend({ tabId: 'new-tab', callbackId: 'cb_10' });
+				await runDispatch('target', 'go', { newTab: true, notifyOnComplete: 'caller' });
+				expect(captured[0].callbackTab).toBe('caller-tab');
+			});
+
+			it('keeps an explicit --callback-tab', async () => {
+				const captured = mockSend({ tabId: 'new-tab', callbackId: 'cb_11' });
+				await runDispatch('target', 'go', {
+					newTab: true,
+					notifyOnComplete: 'caller',
+					callbackTab: 'other-tab',
+				});
+				expect(captured[0].callbackTab).toBe('other-tab');
+			});
+
+			it('leaves the tab unset when notifying a different agent', async () => {
+				const captured = mockSend({ tabId: 'new-tab', callbackId: 'cb_12' });
+				await runDispatch('target', 'go', { newTab: true, notifyOnComplete: 'orchestrator' });
+				expect(captured[0].callbackTab).toBeUndefined();
+			});
+
+			it('allows dispatching to another tab of its own agent', async () => {
+				const captured = mockSend({ tabId: 'new-tab', callbackId: 'cb_13' });
+				const result = await runDispatch('caller', 'go', {
+					newTab: true,
+					notifyOnComplete: 'caller',
+				});
+				expect(result.success).toBe(true);
+				expect(captured[0].callbackTab).toBe('caller-tab');
+			});
+
+			it('still rejects waking the tab it dispatches into', async () => {
+				const result = await runDispatch('caller', 'go', {
+					tab: 'caller-tab',
+					notifyOnComplete: 'caller',
+				});
+				expect(result.success).toBe(false);
+				expect(result.error).toContain('cannot target the dispatch target itself');
+			});
 		});
 
 		it('omits callback fields entirely when the flag is absent', async () => {

@@ -68,3 +68,15 @@ export interface MaestroMediaApi {
 	/** Cancels pending work, waits for child exit and removes all artifacts. Idempotent. */
 	close(jobId: string): Promise<void>;
 }
+
+/** One completed original from the authenticated plugin's own media job. */
+export interface OriginalAttachmentRef {
+	jobId: string;
+	audioId: string;
+}
+/** Staging evidence only; does not prove provider inspection of audio. */
+export interface OriginalAttachmentReceipt {
+	filename: string;
+	bytes: number;
+	sha256: string;
+}

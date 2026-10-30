@@ -44,6 +44,7 @@ export function stoppedBeforeLaunchResult(args: {
 		pipelineName: args.pipelineName,
 		event: args.event,
 		status: 'stopped',
+		executionStarted: false,
 		stdout: '',
 		stderr: '',
 		exitCode: null,

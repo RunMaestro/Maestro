@@ -8,12 +8,13 @@
  * so the server stays unit-testable.
  */
 
-import type { BrowserWindow } from 'electron';
+import { BrowserWindow } from 'electron';
 import type { EventEmitter } from 'events';
 import * as fs from 'fs';
 import { logger } from '../utils/logger';
 import { permissionRelayServer } from './PermissionRelayServer';
-import { registerSpawn, resolvePending } from './registry';
+import { registerSpawn, resolvePending, subscribePendingPermissions } from './registry';
+import { createSafeSend } from '../utils/safe-send';
 import { buildRelayArgs, resolveBridgeScriptPath } from './spawn-args';
 import type { PermissionDecision } from './types';
 
@@ -40,6 +41,12 @@ export function initPermissionRelay(
 		return;
 	}
 	initialized = true;
+
+	const send = createSafeSend(() => BrowserWindow.getAllWindows());
+	subscribePendingPermissions((snapshot) => {
+		// Status only: prompt bodies and per-spawn authentication tokens stay private.
+		send('process:pending-permissions', snapshot);
+	});
 
 	permissionRelayServer.setOnRequest((request) => {
 		const win = getMainWindow();

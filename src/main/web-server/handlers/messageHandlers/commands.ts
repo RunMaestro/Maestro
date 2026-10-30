@@ -2,7 +2,7 @@
  * Commands domain WebSocket message handlers.
  *
  * Extracted from WebSocketMessageHandler.ts. Handles: send_command, switch_mode,
- * select_session.
+ * interrupt_turn, select_session, cross_agent_ask.
  */
 
 import { logger } from '../../../utils/logger';
@@ -11,7 +11,127 @@ import { getDispatchCallbackRegistry } from '../../../dispatch-callbacks';
 import { armDispatchCallback } from './dispatchCallbacks';
 import { noteDispatchDelegation } from './agentDelegation';
 import { LOG_CONTEXT } from './shared';
+import { interruptTurnFailure } from '../../../../shared/turnInterrupt';
+import { parseMentionRoutingField } from '../../../../shared/crossAgentContext';
 import type { WebClient, WebClientMessage, MessageHandlerContext } from './types';
+
+import { getSettingsStore } from '../../../stores';
+import * as pianolaStore from '../../../pianola/pianola-store-main';
+import {
+	deliverPianolaScopeDecision,
+	resolvePianolaDecision,
+} from '../../../pianola/pianola-decisions';
+import { updatePianolaDecision } from '../../../../shared/pianola/pianola-decision-lifecycle';
+import { readCallerMessageFields } from '../../../../shared/agentDelegation';
+
+/** Scope delivery never falls back to unguarded send_command on older hosts. */
+export async function handlePianolaScopeReply(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	let result;
+	try {
+		if (!client.cli) throw new Error('Scope admission requires the native CLI');
+		const flags = getSettingsStore().get('encoreFeatures', {}) as Record<string, boolean>;
+		if (flags.pianola !== true) throw new Error('Pianola disabled');
+		if (typeof message.answer !== 'string' || !message.answer.trim())
+			throw new Error('Decision message unavailable');
+		const raw = message.guard as Record<string, unknown> | undefined;
+		if (!raw || raw.agentId !== message.sessionId || raw.tabId !== message.tabId)
+			throw new Error('Scope recipient mismatch');
+		result = await deliverPianolaScopeDecision(
+			ctx.callbacks,
+			raw,
+			message.answer,
+			message.judgment === true
+		);
+	} catch (error) {
+		result = {
+			status: 'rejected',
+			error: error instanceof Error ? error.message : 'Scope admission failed',
+		};
+		const raw = message.guard as Record<string, unknown> | undefined;
+		const record =
+			client.cli && raw
+				? pianolaStore
+						.readDecisions()
+						.find(
+							(candidate) =>
+								candidate.id === raw.decisionId &&
+								candidate.agentId === message.sessionId &&
+								candidate.tabId === message.tabId
+						)
+				: undefined;
+		if (record?.lifecycle?.delivery === 'intent') {
+			if (record.deliveryStatus === 'admitted')
+				result = {
+					status: 'unknown',
+					error: 'Native admission was recorded; reconcile before retrying',
+				};
+			pianolaStore.appendDecision(
+				updatePianolaDecision(
+					record,
+					{
+						delivery: result.status === 'unknown' ? 'unknown' : 'rejected',
+						status:
+							result.status !== 'unknown' && record.lifecycle.phase === 'judgment'
+								? 'waiting_human'
+								: 'blocked',
+						nextActor:
+							result.status !== 'unknown' && record.lifecycle.phase === 'judgment'
+								? 'human'
+								: 'operator',
+						nextAction: result.error,
+					},
+					new Date().toISOString()
+				)
+			);
+		}
+	}
+	ctx.send(client, { type: 'pianola_scope_reply_result', ...result, requestId: message.requestId });
+}
+
+/** CLI answers are attributable only to the configured manager and its bound tab. */
+export async function handlePianolaDecisionResolve(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): Promise<void> {
+	try {
+		if (!client.cli) throw new Error('Manager resolution requires the native CLI');
+		const flags = getSettingsStore().get('encoreFeatures', {}) as Record<string, boolean>;
+		if (flags.pianola !== true) throw new Error('Pianola disabled');
+		const caller = readCallerMessageFields(message);
+		if (!caller?.fromTabId) throw new Error('Manager agent and tab identity required');
+		const result = await resolvePianolaDecision(ctx.callbacks, message, {
+			kind: 'manager',
+			agentId: caller.fromSessionId,
+			tabId: caller.fromTabId,
+		});
+		ctx.send(client, {
+			type: 'pianola_decision_resolve_result',
+			...result,
+			success: result.status === 'accepted',
+			requestId: message.requestId,
+		});
+	} catch (error) {
+		const record = pianolaStore
+			.readDecisions()
+			.find((candidate) => candidate.id === message.decisionId);
+		const uncertain =
+			record?.deliveryStatus === 'admitted' &&
+			record.lifecycle?.phase === 'answer' &&
+			(record.lifecycle.delivery === 'intent' || record.lifecycle.delivery === 'unknown');
+		ctx.send(client, {
+			type: 'pianola_decision_resolve_result',
+			success: false,
+			status: uncertain ? 'unknown' : 'rejected',
+			error: error instanceof Error ? error.message : 'Decision resolution failed',
+			requestId: message.requestId,
+		});
+	}
+}
 
 /**
  * Timeout bounds for a cross-agent consult. A consult spawns a whole agent turn,
@@ -71,6 +191,16 @@ export function handleSendCommand(
 		return;
 	}
 	const effectiveCommand = command ?? '';
+
+	// `dispatch --routing`: a routing the caller named but that is not one is
+	// refused, never dropped, so the prompt cannot run on the wording's routing
+	// behind a caller who asked for another.
+	const routingField = parseMentionRoutingField(message.mentionRouting);
+	if (!routingField.ok) {
+		ctx.sendError(client, routingField.error, { sessionId });
+		return;
+	}
+	const mentionRouting = routingField.routing;
 
 	// Get session details to check state and determine how to handle
 	const sessionDetail = ctx.callbacks.getSessionDetail?.(sessionId);
@@ -155,7 +285,8 @@ export function handleSendCommand(
 				requestedTabId,
 				force,
 				images,
-				background
+				background,
+				mentionRouting
 			)
 			.then((success) => {
 				if (!success) cancelArmedCallback();
@@ -293,6 +424,61 @@ export function handleSwitchMode(
 		})
 		.catch((error) => {
 			ctx.sendError(client, `Failed to switch mode: ${error.message}`);
+		});
+}
+
+/**
+ * Handle interrupt_turn message - stop a running turn (`maestro-cli interrupt`).
+ *
+ * No `tabId` is the agent-level Stop the desktop pill runs (every busy tab);
+ * a `tabId` narrows it to that tab. The reply is the renderer's
+ * `InterruptTurnResult` plus main's `exited` read of the process table, so the
+ * caller knows whether anything ran and whether it has stopped. A call with
+ * nothing to stop succeeds with `wasBusy: false`.
+ */
+export function handleInterruptTurn(
+	ctx: MessageHandlerContext,
+	client: WebClient,
+	message: WebClientMessage
+): void {
+	const sessionId = typeof message.sessionId === 'string' ? message.sessionId : '';
+	const tabId = typeof message.tabId === 'string' && message.tabId ? message.tabId : undefined;
+
+	const reply = (payload: Record<string, unknown>) => {
+		ctx.send(client, { type: 'interrupt_turn_result', ...payload, requestId: message.requestId });
+	};
+
+	if (!sessionId) {
+		reply({ success: false, error: 'Missing sessionId' });
+		return;
+	}
+	if (!ctx.callbacks.interruptSession) {
+		reply({
+			...interruptTurnFailure(
+				sessionId,
+				tabId ?? null,
+				'RENDERER_UNAVAILABLE',
+				'Interrupting a turn is not configured'
+			),
+		});
+		return;
+	}
+
+	logger.info(
+		`[Web] Received interrupt_turn: session=${sessionId}, tab=${tabId ?? 'all'}`,
+		LOG_CONTEXT
+	);
+	ctx.callbacks
+		.interruptSession(sessionId, tabId)
+		.then((result) => reply({ ...result }))
+		.catch((error) => {
+			ctx.reportHandlerError(
+				client,
+				error,
+				'interrupt_turn',
+				{ sessionId, tabId, requestId: message.requestId },
+				'Failed to interrupt turn'
+			);
 		});
 }
 

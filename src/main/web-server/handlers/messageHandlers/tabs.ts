@@ -10,6 +10,7 @@
 import path from 'path';
 import { readBackgroundField, readSwitchToAgentField } from '../../../../shared/focusPlacement';
 import { isRemoteMediaUrl, type MediaOpenMode } from '../../../../shared/mediaTypes';
+import { parseMentionRoutingField } from '../../../../shared/crossAgentContext';
 import fs from 'fs/promises';
 import { logger } from '../../../utils/logger';
 import { validateCallbackRequest, armDispatchCallback } from './dispatchCallbacks';
@@ -734,6 +735,14 @@ export function handleNewAITabWithPrompt(
 		return;
 	}
 
+	// `dispatch --new-tab --routing`: refuse a routing that is not one before
+	// the tab exists, so a bad flag leaves no orphan tab behind.
+	const routingField = parseMentionRoutingField(message.mentionRouting);
+	if (!routingField.ok) {
+		sendErrorResult(routingField.error);
+		return;
+	}
+
 	// Reject impossible callback requests BEFORE the tab exists. Arming needs
 	// the fresh tab id, but every tab-independent rejection (no registry,
 	// unknown caller, self-target) would otherwise surface only after the tab
@@ -746,7 +755,7 @@ export function handleNewAITabWithPrompt(
 	}
 
 	ctx.callbacks
-		.newAITabWithPrompt(sessionId, prompt, background, hidden)
+		.newAITabWithPrompt(sessionId, prompt, background, hidden, routingField.routing)
 		.then((result) => {
 			// Arm the callback only once the fresh tab id is known - that id is
 			// the correlation key. `isNewTab` lets the registry adopt a spawn the

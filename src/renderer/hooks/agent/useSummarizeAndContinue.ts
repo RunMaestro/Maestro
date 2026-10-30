@@ -21,11 +21,12 @@ import type { SummarizeProgress, SummarizeResult } from '../../types/contextMerg
 import { contextSummarizationService } from '../../services/contextSummarizer';
 import { createTabAtPosition } from '../../utils/tabHelpers';
 import { useOperationStore, selectIsAnySummarizing } from '../../stores/operationStore';
-import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
+import { useSessionStore, selectActiveSession, selectSessionById } from '../../stores/sessionStore';
 import { notifyToast } from '../../stores/notificationStore';
 import type { SummarizeState, TabSummarizeState } from '../../stores/operationStore';
 import { logger } from '../../utils/logger';
 import { getClaudeTokenSourceFields } from '../../../shared/claudeTokenMode';
+import type { TabContextOpResult } from '../../../shared/tabContextOps';
 
 // Re-export types from the canonical store location
 export type { SummarizeState, TabSummarizeState } from '../../stores/operationStore';
@@ -48,8 +49,14 @@ export interface UseSummarizeAndContinueResult {
 	getTabSummarizeState: (tabId: string) => TabSummarizeState | null;
 	/** Check if any tab is currently summarizing */
 	isAnySummarizing: boolean;
-	/** Start the summarization process for a specific tab */
-	startSummarize: (sourceTabId: string) => Promise<{
+	/**
+	 * Start the summarization process for a specific tab of `sessionId`
+	 * (default: the active agent).
+	 */
+	startSummarize: (
+		sourceTabId: string,
+		sessionId?: string
+	) => Promise<{
 		newTabId: string;
 		updatedSession: Session;
 		systemLogEntry: LogEntry;
@@ -66,6 +73,17 @@ export interface UseSummarizeAndContinueResult {
 	minContextUsagePercent: number;
 	/** High-level handler: validates, summarizes, updates session, shows toast (Tier 3E) */
 	handleSummarizeAndContinue: (tabId?: string) => void;
+	/**
+	 * Context: Compact for one tab of any agent - the body behind
+	 * `handleSummarizeAndContinue`, also run by `maestro-cli tab compact`.
+	 * Resolves once the compacted tab exists (or the attempt failed); never throws.
+	 * `background` keeps the source tab selected and skips the success toast.
+	 */
+	summarizeTab: (
+		sessionId: string,
+		tabId: string,
+		options?: { background?: boolean }
+	) => Promise<TabContextOpResult>;
 }
 
 /**
@@ -160,9 +178,11 @@ export function useSummarizeAndContinue(): UseSummarizeAndContinueResult {
 	 */
 	const startSummarize = useCallback(
 		async (
-			sourceTabId: string
+			sourceTabId: string,
+			sessionId?: string
 		): Promise<{ newTabId: string; updatedSession: Session; systemLogEntry: LogEntry } | null> => {
-			const session = selectActiveSession(useSessionStore.getState());
+			const state = useSessionStore.getState();
+			const session = sessionId ? selectSessionById(sessionId)(state) : selectActiveSession(state);
 			if (!session) {
 				return null;
 			}
@@ -342,113 +362,140 @@ export function useSummarizeAndContinue(): UseSummarizeAndContinueResult {
 	}, []);
 
 	/**
-	 * High-level handler: validates, runs summarization, updates session state,
-	 * shows toast notification. Extracted from App.tsx wrapper (Tier 3E).
+	 * Compact one tab of one agent: validates, runs summarization, inserts the
+	 * compacted tab, shows the toasts. The overlay menu, palette, shortcut and
+	 * composer reach it through `handleSummarizeAndContinue`; the CLI calls it
+	 * directly with an explicit agent and tab.
+	 */
+	const summarizeTab = useCallback(
+		async (
+			sessionId: string,
+			targetTabId: string,
+			options: { background?: boolean } = {}
+		): Promise<TabContextOpResult> => {
+			const session = selectSessionById(sessionId)(useSessionStore.getState());
+			if (!session) return { success: false, error: `Agent not found: ${sessionId}` };
+			const targetTab = session.aiTabs.find((t) => t.id === targetTabId);
+			const subject = { sessionId, tabId: targetTabId };
+
+			if (!targetTab || !canSummarize(session.contextUsage, targetTab.logs)) {
+				const message = `Context too small. Need at least ${contextSummarizationService.getMinContextUsagePercent()}% usage, ~2k tokens, or 8+ messages to compact.`;
+				notifyToast({
+					type: 'warning',
+					title: 'Cannot Compact',
+					message,
+					sessionId,
+					tabId: targetTabId,
+				});
+				return {
+					success: false,
+					error: targetTab ? message : `Tab not found: ${targetTabId}`,
+					...subject,
+				};
+			}
+
+			// Store session info for toast navigation
+			const sourceSessionName = session.name;
+			const { setSessions } = useSessionStore.getState();
+
+			try {
+				const result = await startSummarize(targetTabId, sessionId);
+				if (!result) {
+					// startSummarize returned null after setting an error state in
+					// operationStore. Pull the actual error so the toast can
+					// surface it directly instead of pointing users at a "tab"
+					// that never renders details.
+					const tabState = useOperationStore.getState().summarizeStates.get(targetTabId);
+					const detail =
+						tabState?.state === 'summarizing'
+							? 'This tab is already being compacted.'
+							: tabState?.error?.trim();
+					const message = detail
+						? `Failed to compact context: ${detail}`
+						: 'Failed to compact context.';
+					notifyToast({
+						type: 'error',
+						title: 'Compaction Failed',
+						message,
+						sessionId,
+						tabId: targetTabId,
+					});
+					return { success: false, error: message, ...subject };
+				}
+
+				// Apply only deterministic deltas to the live session (avoid stale snapshot spread)
+				setSessions((prev) =>
+					prev.map((s) => {
+						if (s.id !== sessionId) return s;
+						// Insert the new tab if not already present
+						const newTab = result.updatedSession.aiTabs.find((t) => t.id === result.newTabId);
+						const hasNewTab = s.aiTabs.some((t) => t.id === result.newTabId);
+						// Find insertion point: right after the source tab
+						let updatedTabs = s.aiTabs;
+						if (newTab && !hasNewTab) {
+							const sourceIdx = s.aiTabs.findIndex((t) => t.id === targetTabId);
+							const insertIdx = sourceIdx >= 0 ? sourceIdx + 1 : s.aiTabs.length;
+							updatedTabs = [...s.aiTabs.slice(0, insertIdx), newTab, ...s.aiTabs.slice(insertIdx)];
+						}
+						return {
+							...s,
+							activeTabId: options.background ? s.activeTabId : result.newTabId,
+							aiTabs: updatedTabs.map((tab) =>
+								tab.id === targetTabId
+									? { ...tab, logs: [...tab.logs, result.systemLogEntry] }
+									: tab
+							),
+						};
+					})
+				);
+
+				const reductionPercent = Number(result.systemLogEntry.text.match(/(\d+)%/)?.[1] ?? '0');
+				if (!options.background) {
+					// Show success notification with click-to-navigate
+					notifyToast({
+						type: 'success',
+						title: 'Context Compacted',
+						message: `Reduced context by ${reductionPercent}%. Click to view the new tab.`,
+						sessionId,
+						tabId: result.newTabId,
+						project: sourceSessionName,
+					});
+				}
+
+				// Clear the summarization state for this tab
+				clearTabState(targetTabId);
+				return { success: true, ...subject, newTabId: result.newTabId, reductionPercent };
+			} catch (err) {
+				logger.error('[summarizeTab] Unexpected error:', undefined, err);
+				const detail = err instanceof Error ? err.message : String(err);
+				const message = detail
+					? `An unexpected error occurred during compaction: ${detail}`
+					: 'An unexpected error occurred during compaction.';
+				notifyToast({
+					type: 'error',
+					title: 'Compaction Failed',
+					message,
+					sessionId,
+					tabId: targetTabId,
+				});
+				clearTabState(targetTabId);
+				return { success: false, error: message, ...subject };
+			}
+		},
+		[canSummarize, startSummarize, clearTabState]
+	);
+
+	/**
+	 * High-level handler: compacts a tab of the active agent (default: its
+	 * active tab). Extracted from App.tsx wrapper (Tier 3E).
 	 */
 	const handleSummarizeAndContinue = useCallback(
 		(tabId?: string) => {
 			const session = selectActiveSession(useSessionStore.getState());
 			if (!session || session.inputMode !== 'ai') return;
-
-			const targetTabId = tabId || session.activeTabId;
-			const targetTab = session.aiTabs.find((t) => t.id === targetTabId);
-
-			if (!targetTab || !canSummarize(session.contextUsage, targetTab.logs)) {
-				notifyToast({
-					type: 'warning',
-					title: 'Cannot Compact',
-					message: `Context too small. Need at least ${contextSummarizationService.getMinContextUsagePercent()}% usage, ~2k tokens, or 8+ messages to compact.`,
-					sessionId: session.id,
-					tabId: targetTabId,
-				});
-				return;
-			}
-
-			// Store session info for toast navigation
-			const sourceSessionId = session.id;
-			const sourceSessionName = session.name;
-			const { setSessions } = useSessionStore.getState();
-
-			startSummarize(targetTabId)
-				.then((result) => {
-					if (result) {
-						// Apply only deterministic deltas to the live session (avoid stale snapshot spread)
-						setSessions((prev) =>
-							prev.map((s) => {
-								if (s.id !== sourceSessionId) return s;
-								// Insert the new tab if not already present
-								const newTab = result.updatedSession.aiTabs.find((t) => t.id === result.newTabId);
-								const hasNewTab = s.aiTabs.some((t) => t.id === result.newTabId);
-								// Find insertion point: right after the source tab
-								let updatedTabs = s.aiTabs;
-								if (newTab && !hasNewTab) {
-									const sourceIdx = s.aiTabs.findIndex((t) => t.id === targetTabId);
-									const insertIdx = sourceIdx >= 0 ? sourceIdx + 1 : s.aiTabs.length;
-									updatedTabs = [
-										...s.aiTabs.slice(0, insertIdx),
-										newTab,
-										...s.aiTabs.slice(insertIdx),
-									];
-								}
-								return {
-									...s,
-									activeTabId: result.newTabId,
-									aiTabs: updatedTabs.map((tab) =>
-										tab.id === targetTabId
-											? { ...tab, logs: [...tab.logs, result.systemLogEntry] }
-											: tab
-									),
-								};
-							})
-						);
-
-						// Show success notification with click-to-navigate
-						const reductionPercent = result.systemLogEntry.text.match(/(\d+)%/)?.[1] ?? '0';
-						notifyToast({
-							type: 'success',
-							title: 'Context Compacted',
-							message: `Reduced context by ${reductionPercent}%. Click to view the new tab.`,
-							sessionId: sourceSessionId,
-							tabId: result.newTabId,
-							project: sourceSessionName,
-						});
-
-						// Clear the summarization state for this tab
-						clearTabState(targetTabId);
-					} else {
-						// startSummarize returned null after setting an error state in
-						// operationStore. Pull the actual error so the toast can
-						// surface it directly instead of pointing users at a "tab"
-						// that never renders details.
-						const tabState = useOperationStore.getState().summarizeStates.get(targetTabId);
-						const detail = tabState?.error?.trim();
-						notifyToast({
-							type: 'error',
-							title: 'Compaction Failed',
-							message: detail
-								? `Failed to compact context: ${detail}`
-								: 'Failed to compact context.',
-							sessionId: sourceSessionId,
-							tabId: targetTabId,
-						});
-					}
-				})
-				.catch((err) => {
-					logger.error('[handleSummarizeAndContinue] Unexpected error:', undefined, err);
-					const detail = err instanceof Error ? err.message : String(err);
-					notifyToast({
-						type: 'error',
-						title: 'Compaction Failed',
-						message: detail
-							? `An unexpected error occurred during compaction: ${detail}`
-							: 'An unexpected error occurred during compaction.',
-						sessionId: sourceSessionId,
-						tabId: targetTabId,
-					});
-					clearTabState(targetTabId);
-				});
+			void summarizeTab(session.id, tabId || session.activeTabId);
 		},
-		[canSummarize, startSummarize, clearTabState]
+		[summarizeTab]
 	);
 
 	return {
@@ -469,6 +516,7 @@ export function useSummarizeAndContinue(): UseSummarizeAndContinueResult {
 		canSummarize,
 		minContextUsagePercent: contextSummarizationService.getMinContextUsagePercent(),
 		handleSummarizeAndContinue,
+		summarizeTab,
 	};
 }
 

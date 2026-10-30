@@ -1,3 +1,4 @@
+import type { PendingPermissionSnapshot } from '../../../shared/pendingPermissions';
 import type { HeadlessAgentActivity } from '../../../shared/headlessAgentActivity';
 import { ipcRenderer } from 'electron';
 import type { CallUsage, UsageStats } from '../../../shared/types';
@@ -62,6 +63,7 @@ export interface RunCommandConfig {
 export interface ActiveProcess {
 	sessionId: string;
 	toolType: string;
+	/** OS PID, or 0 for a Host-owned Relay turn cancelled by session ID. */
 	pid: number;
 	cwd: string;
 	isTerminal: boolean;
@@ -287,6 +289,13 @@ export function createProcessCoreApi() {
 		 * Subscribe to Claude Code permission-relay requests (standard mode).
 		 * The renderer shows a prompt and replies via respondPermission().
 		 */
+		getPendingPermissions: (): Promise<PendingPermissionSnapshot> =>
+			ipcRenderer.invoke('process:getPendingPermissions'),
+		onPendingPermissionsChanged: (callback: (snapshot: PendingPermissionSnapshot) => void) => {
+			const handler = (_: unknown, snapshot: PendingPermissionSnapshot) => callback(snapshot);
+			ipcRenderer.on('process:pending-permissions', handler);
+			return () => ipcRenderer.removeListener('process:pending-permissions', handler);
+		},
 		onPermissionRequest: (
 			callback: (request: {
 				requestId: string;

@@ -539,6 +539,26 @@ describe('useTabHandlers', () => {
 			expect(['tab-1', 'tab-2', 'tab-3']).not.toContain(session.aiTabs[0].id);
 		});
 
+		it('handleCloseAllTabs records every closed tab in the unified history at its position', () => {
+			const tab1 = createMockAITab({ id: 'tab-1' });
+			const tab2 = createMockAITab({ id: 'tab-2' });
+			const tab3 = createMockAITab({ id: 'tab-3' });
+			setupSessionWithTabs([tab1, tab2, tab3]);
+
+			const { result } = renderHook(() => useTabHandlers());
+			act(() => {
+				result.current.handleCloseAllTabs();
+			});
+
+			// Cmd+Shift+T pops the unified stack, so close-all must feed it (newest first).
+			const history = getSession().unifiedClosedTabHistory;
+			expect(history.map((entry) => [entry.type, entry.tab.id, entry.unifiedIndex])).toEqual([
+				['ai', 'tab-3', 2],
+				['ai', 'tab-2', 1],
+				['ai', 'tab-1', 0],
+			]);
+		});
+
 		it('handleCloseOtherTabs keeps only the active tab', () => {
 			const tab1 = createMockAITab({ id: 'tab-1' });
 			const tab2 = createMockAITab({ id: 'tab-2' });

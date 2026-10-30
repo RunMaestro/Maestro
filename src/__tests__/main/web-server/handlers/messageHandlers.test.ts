@@ -1,3 +1,7 @@
+vi.mock(
+	'../../../../main/plugins/plugin-scan',
+	async () => await import('../../../helpers/pluginScan')
+);
 import { MAESTRO_PUBLISHER_KEYS } from '../../../../shared/plugins/publisher-keys';
 import { RELAY_PUBLISHER_KEY } from '../../../../shared/plugins/relay-identity';
 /**
@@ -27,6 +31,7 @@ import { WebSocket } from 'ws';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { performance } from 'perf_hooks';
 import {
 	WebSocketMessageHandler,
 	type WebClient,
@@ -38,7 +43,8 @@ import {
 	isPluginsFeatureEnabled,
 	getHeadlessAgentRunner,
 } from '../../../../main/plugins/plugin-manager-singleton';
-import type { PluginManager } from '../../../../main/plugins/plugin-manager';
+import { PluginManager } from '../../../../main/plugins/plugin-manager';
+import { PluginAuthorityError } from '../../../../main/plugins/plugin-authority';
 import { pluginToolRunIdentity } from '../../../../main/plugins/plugin-tool-run-identity';
 import {
 	initDispatchCallbacks,
@@ -148,6 +154,15 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 		consultAgent: vi.fn().mockResolvedValue({ success: true, answer: 'Because HMAC.' }),
 		noteAgentDelegation: vi.fn(),
 		switchMode: vi.fn().mockResolvedValue(true),
+		interruptSession: vi.fn().mockResolvedValue({
+			success: true,
+			sessionId: 'session-1',
+			tabId: null,
+			wasBusy: true,
+			interrupted: true,
+			stoppedTabIds: ['tab-1'],
+			exited: true,
+		}),
 		selectSession: vi.fn().mockResolvedValue(true),
 		selectTab: vi.fn().mockResolvedValue(true),
 		newTab: vi.fn().mockResolvedValue({ tabId: 'new-tab-123' }),
@@ -247,9 +262,7 @@ function createMockCallbacks(): MessageHandlerCallbacks {
 			verdict: 'delivered',
 			targets: ['Moderator'],
 		}),
-		mergeContext: vi.fn().mockResolvedValue(true),
-		transferContext: vi.fn().mockResolvedValue(true),
-		summarizeContext: vi.fn().mockResolvedValue(true),
+		tabContextOp: vi.fn().mockResolvedValue({ success: true }),
 		createGist: vi.fn().mockResolvedValue({ success: true, gistUrl: 'https://gist.example' }),
 		getCueSubscriptions: vi.fn().mockResolvedValue([]),
 		toggleCueSubscription: vi.fn().mockResolvedValue(true),
@@ -568,13 +581,52 @@ describe('WebSocketMessageHandler', () => {
 					undefined,
 					false,
 					undefined,
-					false
+					false,
+					undefined
 				);
 			});
 
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
 			expect(response.type).toBe('command_result');
 			expect(response.success).toBe(true);
+		});
+
+		it('forwards a dispatch --routing to executeCommand', async () => {
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'check with @Backend first',
+				inputMode: 'ai',
+				mentionRouting: 'consult-first',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.executeCommand).toHaveBeenCalledWith(
+					'session-1',
+					'check with @Backend first',
+					'ai',
+					undefined,
+					false,
+					undefined,
+					false,
+					'consult-first'
+				);
+			});
+		});
+
+		it('refuses an unknown routing instead of sending on the wording', () => {
+			handler.handleMessage(client, {
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'hi @Backend',
+				inputMode: 'ai',
+				mentionRouting: 'sideways',
+			});
+
+			expect(callbacks.executeCommand).not.toHaveBeenCalled();
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('error');
+			expect(response.message).toContain('Unknown mention routing');
 		});
 
 		it('marks a delivered CLI dispatch in the calling agent transcript', async () => {
@@ -653,7 +705,8 @@ describe('WebSocketMessageHandler', () => {
 					undefined,
 					false,
 					undefined,
-					false
+					false,
+					undefined
 				);
 			});
 		});
@@ -719,7 +772,8 @@ describe('WebSocketMessageHandler', () => {
 					'tab-explicit',
 					false,
 					undefined,
-					false
+					false,
+					undefined
 				);
 			});
 
@@ -750,7 +804,8 @@ describe('WebSocketMessageHandler', () => {
 					undefined,
 					false,
 					images,
-					false
+					false,
+					undefined
 				);
 			});
 
@@ -789,7 +844,8 @@ describe('WebSocketMessageHandler', () => {
 					undefined,
 					false,
 					images,
-					false
+					false,
+					undefined
 				);
 			});
 		});
@@ -813,7 +869,8 @@ describe('WebSocketMessageHandler', () => {
 					undefined,
 					true,
 					undefined,
-					false
+					false,
+					undefined
 				);
 			});
 
@@ -839,7 +896,8 @@ describe('WebSocketMessageHandler', () => {
 					undefined,
 					false,
 					undefined,
-					true
+					true,
+					undefined
 				);
 			});
 		});
@@ -863,7 +921,8 @@ describe('WebSocketMessageHandler', () => {
 					undefined,
 					false,
 					undefined,
-					false
+					false,
+					undefined
 				);
 			});
 		});
@@ -970,6 +1029,96 @@ describe('WebSocketMessageHandler', () => {
 
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
 			expect(response.type).toBe('error');
+		});
+	});
+
+	describe('Interrupt Turn (maestro-cli interrupt)', () => {
+		const lastReply = () => {
+			const calls = (client.socket.send as any).mock.calls;
+			return JSON.parse(calls[calls.length - 1][0]);
+		};
+
+		it('stops the whole agent when no tab is named and echoes the requestId', async () => {
+			handler.handleMessage(client, {
+				type: 'interrupt_turn',
+				sessionId: 'session-1',
+				requestId: 'req-1',
+			});
+
+			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+			expect(callbacks.interruptSession).toHaveBeenCalledWith('session-1', undefined);
+			expect(lastReply()).toMatchObject({
+				type: 'interrupt_turn_result',
+				requestId: 'req-1',
+				success: true,
+				tabId: null,
+				wasBusy: true,
+				stoppedTabIds: ['tab-1'],
+				exited: true,
+			});
+		});
+
+		it('narrows the stop to the named tab', async () => {
+			handler.handleMessage(client, {
+				type: 'interrupt_turn',
+				sessionId: 'session-1',
+				tabId: 'tab-2',
+				requestId: 'req-2',
+			});
+
+			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+			expect(callbacks.interruptSession).toHaveBeenCalledWith('session-1', 'tab-2');
+		});
+
+		it('passes nothing-to-stop through as a success', async () => {
+			(callbacks.interruptSession as any).mockResolvedValueOnce({
+				success: true,
+				sessionId: 'session-1',
+				tabId: null,
+				wasBusy: false,
+				interrupted: false,
+				stoppedTabIds: [],
+				exited: false,
+			});
+			handler.handleMessage(client, { type: 'interrupt_turn', sessionId: 'session-1' });
+
+			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+			expect(lastReply()).toMatchObject({ success: true, wasBusy: false });
+		});
+
+		it('rejects a missing sessionId without calling the desktop', () => {
+			handler.handleMessage(client, { type: 'interrupt_turn', requestId: 'req-3' });
+
+			expect(lastReply()).toMatchObject({
+				type: 'interrupt_turn_result',
+				success: false,
+				error: 'Missing sessionId',
+				requestId: 'req-3',
+			});
+			expect(callbacks.interruptSession).not.toHaveBeenCalled();
+		});
+
+		it('answers RENDERER_UNAVAILABLE when no desktop callback is wired', () => {
+			const bare = new WebSocketMessageHandler();
+			bare.setCallbacks({ ...createMockCallbacks(), interruptSession: undefined } as any);
+			bare.handleMessage(client, { type: 'interrupt_turn', sessionId: 'session-1' });
+
+			expect(lastReply()).toMatchObject({
+				type: 'interrupt_turn_result',
+				success: false,
+				code: 'RENDERER_UNAVAILABLE',
+			});
+		});
+
+		it('reports a thrown callback as an error frame', async () => {
+			(callbacks.interruptSession as any).mockRejectedValueOnce(new Error('bridge down'));
+			handler.handleMessage(client, { type: 'interrupt_turn', sessionId: 'session-1' });
+
+			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+			expect(lastReply()).toMatchObject({
+				type: 'error',
+				message: expect.stringContaining('bridge down'),
+			});
 		});
 	});
 
@@ -2515,6 +2664,40 @@ describe('WebSocketMessageHandler', () => {
 			});
 		});
 
+		it('forwards a dispatch --new-tab --routing to newAITabWithPrompt', async () => {
+			handler.handleMessage(client, {
+				type: 'new_ai_tab_with_prompt',
+				sessionId: 'session-1',
+				prompt: '@Backend look',
+				mentionRouting: 'only',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.newAITabWithPrompt).toHaveBeenCalledWith(
+					'session-1',
+					'@Backend look',
+					false,
+					false,
+					'only'
+				);
+			});
+		});
+
+		it('refuses an unknown routing before creating the tab', () => {
+			handler.handleMessage(client, {
+				type: 'new_ai_tab_with_prompt',
+				sessionId: 'session-1',
+				prompt: '@Backend look',
+				mentionRouting: 'all',
+			});
+
+			expect(callbacks.newAITabWithPrompt).not.toHaveBeenCalled();
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response.type).toBe('new_ai_tab_with_prompt_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('Unknown mention routing');
+		});
+
 		it('should forward sessionId and prompt to callback', async () => {
 			handler.handleMessage(client, {
 				type: 'new_ai_tab_with_prompt',
@@ -2529,7 +2712,8 @@ describe('WebSocketMessageHandler', () => {
 					'session-1',
 					'Summarize the repo',
 					false,
-					false
+					false,
+					undefined
 				);
 			});
 
@@ -2555,7 +2739,8 @@ describe('WebSocketMessageHandler', () => {
 					'session-1',
 					'Summarize the repo',
 					true,
-					false
+					false,
+					undefined
 				);
 			});
 		});
@@ -2574,7 +2759,8 @@ describe('WebSocketMessageHandler', () => {
 					'session-1',
 					'Summarize the repo',
 					true,
-					true
+					true,
+					undefined
 				);
 			});
 		});
@@ -2593,7 +2779,8 @@ describe('WebSocketMessageHandler', () => {
 					'session-1',
 					'Summarize the repo',
 					false,
-					false
+					false,
+					undefined
 				);
 			});
 		});
@@ -2904,7 +3091,8 @@ describe('WebSocketMessageHandler', () => {
 					'tab-1',
 					undefined,
 					true,
-					false
+					false,
+					undefined
 				);
 			});
 
@@ -2917,6 +3105,45 @@ describe('WebSocketMessageHandler', () => {
 				expect(response.itemId).toBe('item-1');
 				expect(response.tabId).toBe('tab-mock-123');
 			});
+		});
+
+		it('forwards a dispatch --queue --routing to the callback', async () => {
+			handler.handleMessage(client, {
+				type: 'enqueue_command',
+				sessionId: 'session-1',
+				command: 'then tell @Backend',
+				inputMode: 'ai',
+				mentionRouting: 'handoff',
+			});
+
+			await vi.waitFor(() => {
+				expect(callbacks.enqueueCommand).toHaveBeenCalledWith(
+					'session-1',
+					'then tell @Backend',
+					'ai',
+					undefined,
+					undefined,
+					false,
+					false,
+					'handoff'
+				);
+			});
+		});
+
+		it('refuses an unknown routing without queuing anything', () => {
+			handler.handleMessage(client, {
+				type: 'enqueue_command',
+				sessionId: 'session-1',
+				command: 'then tell @Backend',
+				inputMode: 'ai',
+				mentionRouting: 42,
+			});
+
+			expect(callbacks.enqueueCommand).not.toHaveBeenCalled();
+			const response = lastSend();
+			expect(response.type).toBe('enqueue_command_result');
+			expect(response.success).toBe(false);
+			expect(response.error).toContain('Unknown mention routing');
 		});
 
 		it('rejects an enqueue with neither command nor images without calling the callback', () => {
@@ -3100,7 +3327,8 @@ describe('WebSocketMessageHandler', () => {
 					undefined,
 					undefined,
 					false,
-					true
+					true,
+					undefined
 				);
 			});
 		});
@@ -4905,11 +5133,31 @@ describe('WebSocketMessageHandler', () => {
 			expect(response.requestId).toBe('req-1');
 		});
 
-		it('returns an empty list when the callback is unconfigured rather than echoing', () => {
-			// Unknown-type echo would confuse the CLI's request/response pairing
-			// (`MaestroClient` matches by responseType). Returning the empty
-			// success shape keeps the wire contract intact even when the desktop
-			// hasn't wired up the callback yet - older builds on a newer CLI.
+		it('preserves the versioned native owner census and its original host capture time', () => {
+			const snapshot = {
+				supervisionVersion: 1,
+				complete: true,
+				capturedAt: 123,
+				owners: [
+					{
+						id: 'tabless',
+						cwd: '/project',
+						parentSessionId: null,
+						isPianola: false,
+						remote: false,
+					},
+				],
+				sessions: [],
+			};
+			(callbacks.listDesktopSessions as any).mockReturnValue(snapshot);
+			handler.handleMessage(client, { type: 'list_desktop_sessions', requestId: 'req-scope' });
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response).toMatchObject({ ...snapshot, success: true, requestId: 'req-scope' });
+		});
+
+		it('fails closed when the callback is unconfigured rather than retiring membership', () => {
+			// Preserve request/response pairing, but never treat missing metadata
+			// as evidence that every previously supervised tab has closed.
 			callbacks.listDesktopSessions = undefined;
 			handler.setCallbacks(callbacks);
 
@@ -4917,8 +5165,30 @@ describe('WebSocketMessageHandler', () => {
 
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
 			expect(response.type).toBe('desktop_sessions_list');
-			expect(response.success).toBe(true);
-			expect(response.sessions).toEqual([]);
+			expect(response.success).toBe(false);
+			expect(response.error).toBe('Desktop sessions not configured');
+			expect(response.requestId).toBe('req-1');
+			expect(response.sessions).toBeUndefined();
+			expect(response.capturedAt).toBeUndefined();
+		});
+
+		it('returns a timestamped empty snapshot when the configured callback has no tabs', () => {
+			callbacks.listDesktopSessions = vi.fn().mockReturnValue([]);
+			handler.setCallbacks(callbacks);
+			const before = Date.now();
+
+			handler.handleMessage(client, { type: 'list_desktop_sessions', requestId: 'req-empty' });
+
+			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(response).toMatchObject({
+				type: 'desktop_sessions_list',
+				success: true,
+				sessions: [],
+				requestId: 'req-empty',
+				capturedAt: expect.any(Number),
+			});
+			expect(response.capturedAt).toBeGreaterThanOrEqual(before);
+			expect(response.capturedAt).toBeLessThanOrEqual(Date.now());
 		});
 	});
 
@@ -5318,6 +5588,30 @@ describe('WebSocketMessageHandler', () => {
 
 			expect(callbacks.updateGroup).not.toHaveBeenCalled();
 		});
+
+		it('forwards a collapse request on update_group', async () => {
+			handler.handleMessage(client, { type: 'update_group', groupId: 'group-1', collapsed: true });
+
+			await vi.waitFor(() => {
+				expect(callbacks.updateGroup).toHaveBeenCalledWith('group-1', { collapsed: true });
+			});
+		});
+
+		it('forwards an expand request on update_group', async () => {
+			handler.handleMessage(client, { type: 'update_group', groupId: 'group-1', collapsed: false });
+
+			await vi.waitFor(() => {
+				expect(callbacks.updateGroup).toHaveBeenCalledWith('group-1', { collapsed: false });
+			});
+		});
+
+		it('rejects an update_group whose collapsed is not a boolean', () => {
+			handler.handleMessage(client, { type: 'update_group', groupId: 'group-1', collapsed: 1 });
+
+			expect(callbacks.updateGroup).not.toHaveBeenCalled();
+			const payload = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+			expect(payload.message).toContain('Invalid collapsed');
+		});
 	});
 });
 
@@ -5333,6 +5627,60 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 		description: 'does stuff',
 		inputSchema: { type: 'object' },
 	};
+	let childActive = true;
+	let consentActive = true;
+	const sandboxInvokeTool = vi.fn();
+	function verifiedManager(declared = tool): PluginManager {
+		const manager = new PluginManager({
+			prepareToolRecordActive: async () => {},
+			isEnabled: isPluginsFeatureEnabled,
+			getGrants: () => [],
+			toolIdentity: pluginToolRunIdentity,
+			assertToolRecordActive: () => {
+				if (!consentActive) throw new PluginAuthorityError('PLUGIN_DENIED');
+			},
+			sandbox: {
+				start: vi.fn(),
+				stop: vi.fn(),
+				stopAll: vi.fn(),
+				isRunning: () => true,
+				runningIds: () => [declared.pluginId],
+				invokeCommand: vi.fn(() => true),
+				invokeTool: sandboxInvokeTool,
+				captureToolLifetime: () => () => {
+					if (!childActive) throw new PluginAuthorityError('PLUGIN_DENIED');
+				},
+			},
+		});
+		manager.getRegistry().records.push({
+			id: declared.pluginId,
+			source: '/synthetic/plugin',
+			enabled: true,
+			loadStatus: 'ok',
+			errors: [],
+			signature: { status: 'trusted', signerKey: RELAY_PUBLISHER_KEY },
+			manifest: {
+				id: declared.pluginId,
+				name: 'Tool fixture',
+				version: '1.0.0',
+				tier: 1,
+				entry: 'entry.js',
+				maestro: { minHostApi: '1.29.0' },
+				permissions: [],
+				contributes: {
+					tools: [
+						{
+							id: declared.localId,
+							name: declared.name,
+							description: declared.description,
+							inputSchema: declared.inputSchema,
+						},
+					],
+				},
+			},
+		});
+		return manager;
+	}
 	const fakeManager = {
 		getContributions: () => ({ tools: [tool] }),
 		invokeTool,
@@ -5348,6 +5696,8 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 		handler.setCallbacks(createMockCallbacks());
 		client = createMockClient();
 		invokeTool.mockReset();
+		sandboxInvokeTool.mockReset();
+		childActive = consentActive = true;
 		vi.mocked(getActivePluginManager).mockReturnValue(fakeManager);
 		vi.mocked(isPluginsFeatureEnabled).mockReturnValue(true);
 		vi.mocked(getHeadlessAgentRunner).mockReturnValue(null);
@@ -5423,7 +5773,8 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 	});
 
 	it('binds tool identity to a run proof, ignoring forged model arguments and tabId', async () => {
-		invokeTool.mockResolvedValue({ done: true });
+		vi.mocked(getActivePluginManager).mockReturnValue(verifiedManager());
+		sandboxInvokeTool.mockResolvedValue({ done: true });
 		const runToken = pluginToolRunIdentity.issue('agent-a');
 		try {
 			handler.handleMessage(client, {
@@ -5433,21 +5784,30 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 				tabId: 'agent-b',
 				runToken,
 			});
-			await vi.waitFor(() => expect(invokeTool).toHaveBeenCalled());
-			expect(invokeTool).toHaveBeenCalledWith(
-				'acme/dostuff',
+			await vi.waitFor(() => expect(lastResult().ok).toBe(true));
+			expect(sandboxInvokeTool).toHaveBeenCalledWith(
+				'acme',
+				'dostuff',
 				{ agentId: 'agent-b' },
-				{ callerAgentId: 'agent-a' }
+				{
+					runContext: expect.objectContaining({
+						callerAgentId: 'agent-a',
+						assertActive: expect.any(Function),
+						signal: expect.any(AbortSignal),
+					}),
+				}
 			);
+			expect(invokeTool).not.toHaveBeenCalled();
 		} finally {
 			pluginToolRunIdentity.revoke(runToken);
 		}
 	});
 
 	it('records a receipt only after a successful active tool call for the armed run', async () => {
+		vi.mocked(getActivePluginManager).mockReturnValue(verifiedManager());
 		const token = pluginToolRunIdentity.issue('agent-a', 60_000, 'acme/dostuff');
 		try {
-			invokeTool.mockResolvedValue({ messageIds: ['123'], privateBody: 'do not retain' });
+			sandboxInvokeTool.mockResolvedValue({ messageIds: ['123'], privateBody: 'do not retain' });
 			handler.handleMessage(client, {
 				type: 'plugins_call_tool',
 				toolId: 'acme/dostuff',
@@ -5470,6 +5830,7 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 	});
 
 	it('records no receipt when the tool fails or its plugin deactivates', async () => {
+		vi.mocked(getActivePluginManager).mockReturnValue(verifiedManager());
 		const token = pluginToolRunIdentity.issue('agent-a', 60_000, 'acme/dostuff');
 		try {
 			handler.handleMessage(client, {
@@ -5481,7 +5842,7 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalledTimes(1));
 			expect(lastResult().blocked).toBe(true);
 			expect(pluginToolRunIdentity.getReceipts(token)).toEqual([]);
-			invokeTool.mockRejectedValueOnce(new Error('Discord rejected the send'));
+			sandboxInvokeTool.mockRejectedValueOnce(new Error('Discord rejected the send'));
 			handler.handleMessage(client, {
 				type: 'plugins_call_tool',
 				toolId: 'acme/dostuff',
@@ -5489,7 +5850,7 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 			});
 			await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalledTimes(2));
 			expect(pluginToolRunIdentity.getReceipts(token)).toEqual([]);
-			invokeTool.mockImplementationOnce(async () => {
+			sandboxInvokeTool.mockImplementationOnce(async () => {
 				vi.mocked(isPluginsFeatureEnabled).mockReturnValue(false);
 				return { messageIds: ['124'] };
 			});
@@ -5505,6 +5866,32 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 		}
 	});
 
+	it.each(['run', 'child', 'consent'] as const)(
+		'withholds a receipt and success after %s authority is revoked during the child call',
+		async (revoked) => {
+			vi.mocked(getActivePluginManager).mockReturnValue(verifiedManager());
+			const token = pluginToolRunIdentity.issue('agent-a', 60_000, 'acme/dostuff');
+			try {
+				sandboxInvokeTool.mockImplementationOnce(async () => {
+					if (revoked === 'run') pluginToolRunIdentity.revoke(token);
+					if (revoked === 'child') childActive = false;
+					if (revoked === 'consent') consentActive = false;
+					return { messageIds: ['124'] };
+				});
+				handler.handleMessage(client, {
+					type: 'plugins_call_tool',
+					toolId: tool.id,
+					runToken: token,
+				});
+				await vi.waitFor(() => expect(client.socket.send).toHaveBeenCalled());
+				expect(lastResult()).toMatchObject({ ok: false, error: 'PLUGIN_DENIED' });
+				expect(pluginToolRunIdentity.getReceipts(token)).toEqual([]);
+			} finally {
+				pluginToolRunIdentity.revoke(token);
+			}
+		}
+	);
+
 	it('delivers authenticated trusted Relay reply text unchanged through the MCP host boundary', async () => {
 		const relayTool = {
 			...tool,
@@ -5514,22 +5901,13 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 			name: 'Send reply',
 			description: 'Send a message',
 		};
-		vi.mocked(getActivePluginManager).mockReturnValue({
-			getContributions: () => ({ tools: [relayTool] }),
-			getActiveRecords: () => [
-				{
-					id: 'sh.maestro.relay',
-					signature: { status: 'trusted', signerKey: RELAY_PUBLISHER_KEY },
-				},
-			],
-			invokeTool,
-		} as unknown as PluginManager);
+		vi.mocked(getActivePluginManager).mockReturnValue(verifiedManager(relayTool));
 		const runToken = pluginToolRunIdentity.issue('agent-a');
 		const args = {
 			text: 'Ein Release kann alle Plugins enthalten. Discuss deployment and secrets.',
 			threadId: '30',
 		};
-		invokeTool.mockResolvedValue({ messageIds: ['100'] });
+		sandboxInvokeTool.mockResolvedValue({ messageIds: ['100'] });
 		try {
 			handler.handleMessage(client, {
 				type: 'plugins_call_tool',
@@ -5538,7 +5916,9 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 				runToken,
 			});
 			await vi.waitFor(() => expect(lastResult().ok).toBe(true));
-			expect(invokeTool).toHaveBeenCalledWith(relayTool.id, args, { callerAgentId: 'agent-a' });
+			expect(sandboxInvokeTool).toHaveBeenCalledWith('sh.maestro.relay', 'send', args, {
+				runContext: expect.objectContaining({ callerAgentId: 'agent-a' }),
+			});
 			expect(lastResult().result).toEqual({ messageIds: ['100'] });
 		} finally {
 			pluginToolRunIdentity.revoke(runToken);
@@ -5567,7 +5947,7 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 			let runToken: string | undefined;
 			if (proof === 'forged') runToken = 'f'.repeat(64);
 			if (proof === 'expired') {
-				const now = vi.spyOn(Date, 'now').mockReturnValue(1);
+				const now = vi.spyOn(performance, 'now').mockReturnValue(1);
 				runToken = pluginToolRunIdentity.issue('agent-a', 1);
 				now.mockReturnValue(3);
 			} else if (proof === 'revoked') {
@@ -5701,17 +6081,8 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 			pluginId: 'sh.maestro.relay',
 			localId: 'send',
 		};
-		vi.mocked(getActivePluginManager).mockReturnValue({
-			getContributions: () => ({ tools: [relayTool] }),
-			getActiveRecords: () => [
-				{
-					id: 'sh.maestro.relay',
-					signature: { status: 'trusted', signerKey: RELAY_PUBLISHER_KEY },
-				},
-			],
-			invokeTool,
-		} as unknown as PluginManager);
-		invokeTool.mockRejectedValue(new Error('Thread is not bound to caller'));
+		vi.mocked(getActivePluginManager).mockReturnValue(verifiedManager(relayTool));
+		sandboxInvokeTool.mockRejectedValue(new Error('Thread is not bound to caller'));
 		const runToken = pluginToolRunIdentity.issue('agent-a');
 		try {
 			handler.handleMessage(client, {
@@ -5720,14 +6091,14 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 				args: { text: 'Release', threadId: 'foreign' },
 				runToken,
 			});
-			await vi.waitFor(() => expect(lastResult().error).toBe('Thread is not bound to caller'));
+			await vi.waitFor(() => expect(lastResult().error).toBe('PLUGIN_DENIED'));
 			expect(lastResult().ok).toBe(false);
 		} finally {
 			pluginToolRunIdentity.revoke(runToken);
 		}
 	});
 
-	it('runs a local CLI request through the host runner and returns its provider session', async () => {
+	it('host-stamps a local CLI request as automatic and returns its provider session', async () => {
 		const run = vi.fn(async () => ({ success: true, response: 'hello', sessionId: 'provider-1' }));
 		vi.mocked(getHeadlessAgentRunner).mockReturnValue(run);
 		client.cliAuthenticated = true;
@@ -5738,6 +6109,7 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 			type: 'plugins_send_agent',
 			agentId: 'agent-a',
 			prompt: 'hello',
+			querySource: 'user',
 		});
 		await vi.waitFor(() => expect(run).toHaveBeenCalled());
 		expect(run).toHaveBeenCalledWith(
@@ -5745,7 +6117,7 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 			'hello',
 			undefined,
 			expect.any(AbortSignal),
-			'user',
+			'auto',
 			undefined,
 			undefined
 		);
@@ -5824,7 +6196,7 @@ describe('WebSocketMessageHandler - plugin MCP tool bridge', () => {
 			'report',
 			undefined,
 			expect.any(AbortSignal),
-			'user',
+			'auto',
 			undefined,
 			'acme/dostuff'
 		);

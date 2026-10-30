@@ -209,15 +209,22 @@ export function registerCrossAgentHandlers(deps: CrossAgentHandlerDependencies):
 		'cross-agent:cancel',
 		withIpcErrorLogging(
 			handlerOpts('cancel'),
-			async (payload: { sourceSessionId: string }): Promise<{ canceled: number }> => {
+			async (payload: {
+				sourceSessionId: string;
+				sourceTabId?: string;
+			}): Promise<{ canceled: number }> => {
 				// Stop in the source agent must reach every agent its turn fanned out to,
 				// not just the tab process. Addressed by source agent (never by request
 				// id) because the renderer only learns a request id once `send` resolves,
 				// and a Stop pressed before that would otherwise miss a live consult.
-				const canceled = cancelCrossAgentRequestsForSource(payload.sourceSessionId);
+				// A Stop aimed at one tab narrows it to that tab's consults.
+				const sourceTabId =
+					typeof payload.sourceTabId === 'string' ? payload.sourceTabId : undefined;
+				const canceled = cancelCrossAgentRequestsForSource(payload.sourceSessionId, sourceTabId);
 				if (canceled > 0) {
 					logger.info(`${LOG_CONTEXT} Stopped in-flight consults`, LOG_CONTEXT, {
 						sourceSessionId: payload.sourceSessionId,
+						sourceTabId,
 						canceled,
 					});
 				}

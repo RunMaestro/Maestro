@@ -355,3 +355,106 @@ describe('handleSummarizeAndContinue (Tier 3E)', () => {
 		consoleSpy.mockRestore();
 	});
 });
+
+// ============================================================================
+// summarizeTab - the core behind handleSummarizeAndContinue, also run by
+// `maestro-cli tab compact` for any agent's tab.
+// ============================================================================
+
+describe('summarizeTab', () => {
+	it('compacts a tab of an agent that is not on screen and reports the new tab', async () => {
+		const onScreen = createMockSession({ id: 'session-on-screen' });
+		const other = createMockSession({ id: 'session-2' });
+		useSessionStore.setState({ sessions: [onScreen, other], activeSessionId: onScreen.id });
+		const { result } = renderHook(() => useSummarizeAndContinue());
+
+		let outcome: Awaited<ReturnType<typeof result.current.summarizeTab>> | undefined;
+		await act(async () => {
+			outcome = await result.current.summarizeTab('session-2', 'tab-1');
+		});
+
+		expect(contextSummarizationService.summarizeContext).toHaveBeenCalledWith(
+			expect.objectContaining({ sourceSessionId: 'session-2', sourceTabId: 'tab-1' }),
+			expect.any(Array),
+			expect.any(Function)
+		);
+		expect(outcome).toEqual({
+			success: true,
+			sessionId: 'session-2',
+			tabId: 'tab-1',
+			newTabId: 'new-tab-1',
+			reductionPercent: 70,
+		});
+		const updated = useSessionStore.getState().sessions.find((s) => s.id === 'session-2');
+		expect(updated!.activeTabId).toBe('new-tab-1');
+		expect(useSessionStore.getState().activeSessionId).toBe('session-on-screen');
+	});
+
+	it('keeps the source tab selected and skips the success toast in the background', async () => {
+		const session = createMockSession();
+		seedActiveSession(session);
+		const { result } = renderHook(() => useSummarizeAndContinue());
+
+		let outcome: Awaited<ReturnType<typeof result.current.summarizeTab>> | undefined;
+		await act(async () => {
+			outcome = await result.current.summarizeTab(session.id, 'tab-1', { background: true });
+		});
+
+		expect(outcome).toMatchObject({ success: true, newTabId: 'new-tab-1' });
+		const updated = useSessionStore.getState().sessions.find((s) => s.id === session.id);
+		expect(updated!.aiTabs.map((t) => t.id)).toEqual(['tab-1', 'new-tab-1']);
+		expect(updated!.activeTabId).toBe('tab-1');
+		expect(notifyToast).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'success' }));
+	});
+
+	it('answers an unknown agent without running anything', async () => {
+		seedActiveSession(createMockSession());
+		const { result } = renderHook(() => useSummarizeAndContinue());
+
+		let outcome: Awaited<ReturnType<typeof result.current.summarizeTab>> | undefined;
+		await act(async () => {
+			outcome = await result.current.summarizeTab('ghost', 'tab-1');
+		});
+
+		expect(outcome).toEqual({ success: false, error: 'Agent not found: ghost' });
+		expect(contextSummarizationService.summarizeContext).not.toHaveBeenCalled();
+	});
+
+	it('returns the failure the toast shows', async () => {
+		(
+			contextSummarizationService.summarizeContext as ReturnType<typeof vi.fn>
+		).mockRejectedValueOnce(new Error('provider exploded'));
+		const session = createMockSession();
+		seedActiveSession(session);
+		const { result } = renderHook(() => useSummarizeAndContinue());
+
+		let outcome: Awaited<ReturnType<typeof result.current.summarizeTab>> | undefined;
+		await act(async () => {
+			outcome = await result.current.summarizeTab(session.id, 'tab-1');
+		});
+
+		expect(outcome).toEqual({
+			success: false,
+			error: 'Failed to compact context: provider exploded',
+			sessionId: session.id,
+			tabId: 'tab-1',
+		});
+		expect(notifyToast).toHaveBeenCalledWith(
+			expect.objectContaining({ type: 'error', title: 'Compaction Failed' })
+		);
+	});
+
+	it('returns the too-small refusal', async () => {
+		(contextSummarizationService.canSummarize as ReturnType<typeof vi.fn>).mockReturnValue(false);
+		const session = createMockSession();
+		seedActiveSession(session);
+		const { result } = renderHook(() => useSummarizeAndContinue());
+
+		let outcome: Awaited<ReturnType<typeof result.current.summarizeTab>> | undefined;
+		await act(async () => {
+			outcome = await result.current.summarizeTab(session.id, 'tab-1');
+		});
+
+		expect(outcome).toMatchObject({ success: false, error: expect.stringContaining('too small') });
+	});
+});

@@ -1,3 +1,7 @@
+import {
+	isRemoteMethodAllowed,
+	isRemoteEventAllowed,
+} from '../../../main/web-server/handlers/bridgeDenyList';
 import { describe, it, expect, vi, afterEach, beforeAll, afterAll } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -9,6 +13,8 @@ import {
 	createPending,
 	resolvePending,
 	relayRegistryStats,
+	getPendingPermissionSnapshot,
+	subscribePendingPermissions,
 } from '../../../main/permission-relay/registry';
 import { buildRelayArgs } from '../../../main/permission-relay/spawn-args';
 import { parseQuestionRequest } from '../../../main/permission-relay/question-request';
@@ -20,6 +26,38 @@ import {
 import type { PermissionRequest } from '../../../main/permission-relay/types';
 
 describe('permission-relay registry', () => {
+	it('keeps the registry snapshot and status push native-only', () => {
+		expect(isRemoteMethodAllowed('process:getPendingPermissions')).toBe(false);
+		expect(isRemoteEventAllowed('process:pending-permissions')).toBe(false);
+	});
+
+	it('publishes only versioned process IDs and clears them on timeout and exit', async () => {
+		vi.useFakeTimers();
+		const spawn = registerSpawn({ sessionId: 'agent-ai-tab', tabId: 'tab' });
+		const changes = vi.fn();
+		const off = subscribePendingPermissions(changes);
+		try {
+			const timed = createPending('timed-status', spawn.token, 10);
+			expect(getPendingPermissionSnapshot()).toEqual({
+				version: expect.any(Number),
+				processIds: ['agent-ai-tab'],
+			});
+			const version = getPendingPermissionSnapshot().version;
+			await vi.advanceTimersByTimeAsync(10);
+			await timed;
+			expect(getPendingPermissionSnapshot().processIds).toEqual([]);
+			expect(getPendingPermissionSnapshot().version).toBeGreaterThan(version);
+			const exited = createPending('exited-status', spawn.token);
+			spawn.cleanup();
+			await exited;
+			expect(changes).toHaveBeenLastCalledWith({ version: expect.any(Number), processIds: [] });
+		} finally {
+			off();
+			spawn.cleanup();
+			vi.useRealTimers();
+		}
+	});
+
 	it('registers a spawn and looks up its binding', () => {
 		const { token, cleanup } = registerSpawn({ sessionId: 's1', tabId: 't1' });
 		expect(lookupBinding(token)).toEqual({ sessionId: 's1', tabId: 't1' });
@@ -250,6 +288,7 @@ describe('permission-relay server AskUserQuestion round-trip', () => {
 		// Stand in for the renderer: answer via deny+message (the proven shape).
 		server.setOnRequest((req) => {
 			captured = req;
+			expect(getPendingPermissionSnapshot().processIds).toContain('sQ');
 			resolvePending(req.requestId, { behavior: 'deny', message: 'Color: Blue' });
 		});
 

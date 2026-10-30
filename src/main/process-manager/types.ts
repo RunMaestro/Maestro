@@ -236,6 +236,8 @@ export interface CommandResult {
 export interface TurnSettlement {
 	outcome: TurnOutcome;
 	answerCaptured: boolean;
+	/** Bounded, redacted final assistant text for consumers racing renderer persistence. */
+	answerTail?: string;
 }
 
 /**

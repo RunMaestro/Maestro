@@ -31,6 +31,13 @@ import type { SleepAwareSpan } from '../../services/systemSleep';
 export interface UseAutoRunAchievementsDeps {
 	/** IDs of sessions with active batch runs */
 	activeBatchSessionIds: string[];
+	/**
+	 * Whether this renderer owns app-wide side effects (`useIsLifecycleOwner`).
+	 * Cue credit is broadcast to every window and every web-desktop client, so
+	 * only the owner may credit it, or each one adds the same minutes and ships
+	 * the same delta to the leaderboard. Defaults to true (single-window app).
+	 */
+	isLifecycleOwner?: boolean;
 }
 
 // ============================================================================
@@ -38,7 +45,7 @@ export interface UseAutoRunAchievementsDeps {
 // ============================================================================
 
 export function useAutoRunAchievements(deps: UseAutoRunAchievementsDeps): void {
-	const { activeBatchSessionIds } = deps;
+	const { activeBatchSessionIds, isLifecycleOwner = true } = deps;
 
 	// PERF: Peak-stats signature only - do not subscribe to full sessions[]. Streaming
 	// log/token flushes must not wake App; re-run when agent/busy/queue counts shift.
@@ -58,6 +65,7 @@ export function useAutoRunAchievements(deps: UseAutoRunAchievementsDeps): void {
 	// on the render after hydration, so the sample taken during load is not lost.
 	const settingsLoaded = useSettingsStore((s) => s.settingsLoaded);
 	const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures?.maestroCue === true);
+	const cueCreditListening = maestroCueEnabled || !settingsLoaded;
 
 	// --- Store actions (stable via getState) ---
 	const { updateAutoRunProgress, updateUsageStats } = useSettingsStore.getState();
@@ -71,6 +79,11 @@ export function useAutoRunAchievements(deps: UseAutoRunAchievementsDeps): void {
 	const autoRunProgressRef = useRef<{ lastUpdateSpan: SleepAwareSpan | null }>({
 		lastUpdateSpan: null,
 	});
+	// Cue credit that arrived before settings hydrated. The store still holds
+	// the zeroed default then, so crediting would persist a few minutes as the
+	// lifetime total, and the leaderboard submit would drop the delta for want
+	// of a registration. Held here and applied once settings are loaded.
+	const pendingCueCreditMsRef = useRef(0);
 
 	// Credit a block of achievement time and raise the standing ovation if it
 	// crosses a badge threshold. Shared by the Auto Run timer below and the Cue
@@ -139,25 +152,43 @@ export function useAutoRunAchievements(deps: UseAutoRunAchievementsDeps): void {
 	// renderer simply accrues it through the same path as Auto Run. Subscribed
 	// whenever the Cue Encore Feature is on, regardless of whether any Auto Run
 	// is active; with Cue off there is no engine to credit, so no listener.
+	// Before settings hydrate the flag is not known yet, so the listener stays
+	// up then and holds any credit until the load settles it.
+	const creditCueTime = (creditMs: number): void => {
+		if (!(creditMs > 0)) return;
+		creditAchievementTime(creditMs, 'cue');
+		// Ship the same delta to the leaderboard. The server accumulates from
+		// deltaMs, so time credited only locally would drift below the server
+		// total forever. deltaRuns is 0 because a Cue run is not an Auto Run and
+		// must not inflate totalRuns.
+		//
+		// This lives here rather than in creditAchievementTime because the Auto
+		// Run timer above shares that helper, and Auto Run already submits its
+		// full elapsed time once on completion (useBatchHandlers) - submitting
+		// per tick too would double-count.
+		void submitLeaderboardTimeDelta({ deltaMs: creditMs, source: 'cue' });
+	};
+
 	useEffect(() => {
-		if (!maestroCueEnabled) return;
+		if (!isLifecycleOwner || !cueCreditListening) return;
 		const unsubscribe = cueService.onActivityUpdate((payload) => {
-			if (payload?.type === 'conductorTimeCredit') {
-				creditAchievementTime(payload.creditMs, 'cue');
-				// Ship the same delta to the leaderboard. The server accumulates
-				// from deltaMs, so time credited only locally would drift below
-				// the server total forever. deltaRuns is 0 because a Cue run is
-				// not an Auto Run and must not inflate totalRuns.
-				//
-				// This lives here rather than in creditAchievementTime because
-				// the Auto Run timer above shares that helper, and Auto Run
-				// already submits its full elapsed time once on completion
-				// (useBatchHandlers) - submitting per tick too would double-count.
-				void submitLeaderboardTimeDelta({ deltaMs: payload.creditMs, source: 'cue' });
+			if (payload?.type !== 'conductorTimeCredit') return;
+			if (!useSettingsStore.getState().settingsLoaded) {
+				pendingCueCreditMsRef.current += payload.creditMs > 0 ? payload.creditMs : 0;
+				return;
 			}
+			creditCueTime(payload.creditMs);
 		});
 		return unsubscribe;
-	}, [maestroCueEnabled]);
+	}, [isLifecycleOwner, cueCreditListening]);
+
+	useEffect(() => {
+		if (!settingsLoaded || !isLifecycleOwner) return;
+		const pending = pendingCueCreditMsRef.current;
+		if (pending <= 0) return;
+		pendingCueCreditMsRef.current = 0;
+		creditCueTime(pending);
+	}, [settingsLoaded, isLifecycleOwner]);
 
 	// Track peak usage stats for achievements image
 	useEffect(() => {

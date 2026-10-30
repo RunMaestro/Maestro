@@ -3,6 +3,18 @@ import type { MaestroCliStatus } from '../../../../../../shared/maestro-cli';
 import { captureException } from '../../../../../utils/sentry';
 import type { MaestroCliState } from '../types';
 
+/**
+ * The path the filesystem refused to let the installer write, when that is
+ * why the install failed. The error crosses IPC as text (`Error invoking
+ * remote method ...: Error: EACCES: permission denied, mkdir '<path>'`), so the
+ * errno code survives only inside the message.
+ */
+export function permissionDeniedPath(err: unknown): string | null {
+	const message = err instanceof Error ? err.message : String(err);
+	const match = message.match(/\b(?:EACCES|EPERM|EROFS): [^,]*, \w+ '([^']+)'/);
+	return match ? match[1] : null;
+}
+
 interface UseMaestroCliStateArgs {
 	isOpen: boolean;
 }
@@ -61,6 +73,16 @@ export function useMaestroCliState({ isOpen }: UseMaestroCliStateArgs): MaestroC
 				});
 			}
 		} catch (err) {
+			// A folder or shell rc file the app is not allowed to write is the
+			// user's environment, not a Maestro bug: tell them which path, and
+			// keep it out of Sentry (MAESTRO-15R, MAESTRO-15Z, MAESTRO-177).
+			const deniedPath = permissionDeniedPath(err);
+			if (deniedPath) {
+				setStatusError(
+					`Failed to install/update Maestro CLI: no permission to write ${deniedPath}. Fix its permissions and try again.`
+				);
+				return;
+			}
 			setStatusError('Failed to install/update Maestro CLI');
 			captureException(err instanceof Error ? err : new Error(String(err)), {
 				extra: { context: 'GeneralTab: Maestro CLI install/update' },

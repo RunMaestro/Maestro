@@ -9,18 +9,19 @@ import {
 	type StatsIndexingState,
 } from '../../../shared/statsIndexing';
 
-const scanning = (files = STATS_INDEXING_VISIBLE_MIN_FILES): StatsIndexingState => ({
+const scanning = (surfaced = true): StatsIndexingState => ({
 	jobs: [
 		{
 			id: 'global-stats',
 			label: 'Usage totals',
 			reason: 'upgrade',
 			doneFiles: 0,
-			totalFiles: files,
+			totalFiles: STATS_INDEXING_VISIBLE_MIN_FILES,
 			doneBytes: 0,
 			totalBytes: 1000,
 			startedAt: 0,
 			updatedAt: 0,
+			surfaced,
 		},
 	],
 });
@@ -58,8 +59,8 @@ describe('statsIndexingStore', () => {
 		expect(useStatsIndexingStore.getState().presentation).toBe('card');
 	});
 
-	it('does not count a scan below the visibility threshold as active', () => {
-		useStatsIndexingStore.getState().applyState(scanning(STATS_INDEXING_VISIBLE_MIN_FILES - 1));
+	it('does not count a scan main has not surfaced as active', () => {
+		useStatsIndexingStore.getState().applyState(scanning(false));
 		expect(selectStatsIndexingActive(useStatsIndexingStore.getState())).toBe(false);
 	});
 });

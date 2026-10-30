@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			http-equiv="Content-Security-Policy"
+			content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; form-action 'none'"
+		/>
+		<title>Plugin confirmation</title>
+		<style>
+			body {
+				font: 14px system-ui;
+				background: #101216;
+				color: #eee;
+				margin: 24px;
+			}
+			pre {
+				white-space: pre-wrap;
+				overflow-wrap: anywhere;
+				max-height: 360px;
+				overflow: auto;
+				background: #20242a;
+				padding: 12px;
+			}
+			input {
+				display: block;
+				width: 95%;
+				margin: 12px 0;
+				padding: 8px;
+			}
+			button {
+				margin: 12px 8px 0 0;
+				padding: 10px;
+			}
+		</style>
+	</head>
+	<body>
+		<h1>Confirm plugin request</h1>
+		<p id="identity"></p>
+		<p id="summary"></p>
+		<pre id="value"></pre>
+		<label id="secret" hidden
+			>Secret (kept in the native keyring)<input
+				id="password"
+				type="password"
+				autocomplete="new-password"
+				maxlength="4096"
+		/></label>
+		<p>
+			This authorizes the trusted plugin to use this configuration. The plugin controls its protocol
+			and account policy.
+		</p>
+		<button id="cancel">Cancel</button><button id="approve">Confirm</button>
+		<p id="error"></p>
+		<script>
+			(async () => {
+				const bridge = window.pluginConfirmation,
+					offer = await bridge.getOffer();
+				if (offer) {
+					document.getElementById('identity').textContent = offer.pluginId + ' · ' + offer.key;
+					document.getElementById('summary').textContent = offer.summary;
+					document.getElementById('value').textContent = JSON.stringify(offer.value, null, 2);
+					document.getElementById('secret').hidden = offer.kind !== 'secret';
+					async function confirm(approved) {
+						const field = document.getElementById('password');
+						const value = offer.kind === 'secret' && approved ? field.value : undefined;
+						field.value = '';
+						const result = await bridge.confirm(offer.nonce, approved, value);
+						if (!result.ok)
+							document.getElementById('error').textContent = 'Confirmation failed. Request again.';
+					}
+					document.getElementById('cancel').addEventListener('click', () => confirm(false));
+					document.getElementById('approve').addEventListener('click', () => confirm(true));
+				}
+			})().catch(() => {
+				document.getElementById('error').textContent = 'Confirmation unavailable. Request again.';
+			});
+		</script>
+	</body>
+</html>

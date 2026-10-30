@@ -1,3 +1,4 @@
+import { createCuePluginTriggerSource } from './cue-plugin-trigger-source';
 /**
  * Factory that maps a Cue event type to its trigger source implementation.
  *
@@ -46,6 +47,8 @@ export function createTriggerSource(
 		case 'github.issue':
 		case 'github.label':
 			return createCueGitHubPollerTriggerSource(ctx);
+		case 'plugin.event':
+			return createCuePluginTriggerSource(ctx);
 		case 'webhook.received':
 			return createCueWebhookTriggerSource(ctx);
 		case 'agent.completed':

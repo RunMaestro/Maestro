@@ -21,6 +21,8 @@ import {
 	normalizeHistoryEntries,
 } from '../../shared/history';
 import { resolveSyncDir } from '../../shared/syncPath';
+import type { ReadJourneyOptions, UserJourneyEntry } from '../../shared/userJourney';
+import { journeyFilePath, readJourneyFile } from '../../shared/maestro-lib/store/read-journey';
 import {
 	DORMANT_PIANOLA_MESSAGE,
 	filterLiveAgents,
@@ -50,12 +52,15 @@ export function getSyncDir(): string {
 /**
  * Store files the desktop opens under the sync directory. Must match the
  * stores `initializeStores()` (src/main/stores/instances.ts) gives
- * `cwd: _syncPath`; anything not listed is read from the config directory.
+ * `cwd: _syncPath`, for every one of them the CLI reads; anything not listed
+ * is read from the config directory. `maestro-agent-session-origins` is synced
+ * too, but nothing in the CLI reads it yet: list it here when something does.
  */
 const SYNCED_STORE_FILES: ReadonlySet<string> = new Set([
 	'maestro-sessions.json',
 	'maestro-groups.json',
 	'maestro-settings.json',
+	'maestro-claude-session-origins.json',
 ]);
 
 function getStoreFileDir(filename: string): string {
@@ -63,11 +68,20 @@ function getStoreFileDir(filename: string): string {
 }
 
 /**
+ * Absolute path of a desktop store file, in the directory the desktop keeps
+ * it in (see `SYNCED_STORE_FILES`). For readers outside this module that need
+ * their own error handling around the read.
+ */
+export function getStoreFilePath(filename: string): string {
+	return path.join(getStoreFileDir(filename), filename);
+}
+
+/**
  * Read and parse an Electron Store JSON file
  * Returns undefined if file doesn't exist
  */
 function readStoreFile<T>(filename: string): T | undefined {
-	const filePath = path.join(getStoreFileDir(filename), filename);
+	const filePath = getStoreFilePath(filename);
 
 	try {
 		const content = fs.readFileSync(filePath, 'utf-8');
@@ -317,6 +331,42 @@ export function readHistoryPaginated(options?: {
 	const { projectPath, sessionId, pagination } = options || {};
 	const entries = readHistory(projectPath, sessionId);
 	return paginateEntries(entries, pagination);
+}
+
+// ============================================================================
+// User Journey
+// ============================================================================
+
+/**
+ * Absolute path of an agent's User Journey file. Lives in the config directory
+ * (never the sync directory), next to `history/`, matching
+ * `getJourneyFilePath()` in `src/main/user-journey-manager.ts`.
+ */
+export function getJourneyFilePath(agentId: string): string {
+	return journeyFilePath(getConfigDir(), agentId);
+}
+
+/**
+ * An agent's User Journey, oldest first, inside retention and the entry cap,
+ * with the same filters the desktop's `journey:read` applies. Read-only: the
+ * desktop app owns every write and prune. A missing or unreadable file reads
+ * as no entries.
+ */
+export function readJourney(agentId: string, options: ReadJourneyOptions = {}): UserJourneyEntry[] {
+	return readJourneyFile(getJourneyFilePath(agentId), options);
+}
+
+// ============================================================================
+// Timeline
+// ============================================================================
+
+/**
+ * The data directories `readTimeline()` reads: history and journey files and
+ * the Computer History store all live in the config directory, never the sync
+ * directory.
+ */
+export function getTimelinePaths(): { userDataDir: string; historyDir: string } {
+	return { userDataDir: getConfigDir(), historyDir: getHistoryDir() };
 }
 
 /**

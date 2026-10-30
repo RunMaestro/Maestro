@@ -17,12 +17,13 @@ import { DATAVIEW_JS_DESKTOP_ONLY_TEXT } from '../../../../renderer/components/M
 import type { DataviewDocumentScope } from '../../../../renderer/components/Markdown/components/DataviewDocumentContext';
 import {
 	DATAVIEW_GUEST_URL,
+	DATAVIEW_JS_INDEX_TIMEOUT_MS,
 	DATAVIEW_JS_RUN_TIMEOUT_MS,
 	SANDBOX_TO_GUEST_CHANNEL,
 	SANDBOX_TO_HOST_CHANNEL,
 	dataviewGuestPartition,
 	type DataviewChangeEvent,
-	type SandboxIndexSnapshot,
+	type SandboxSnapshotPayload,
 } from '../../../../shared/dataview';
 import { DATAVIEW_REFRESH_DEBOUNCE_MS } from '../../../../renderer/hooks/file/useLiveDataviewResult';
 import { resetDataviewJsGuestSlotsForTests } from '../../../../renderer/services/dataviewJsGuestSlots';
@@ -30,6 +31,7 @@ import { clearCachedResources } from '../../../../renderer/hooks/utils/useCached
 import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { isWebDesktop } from '../../../../renderer/utils/runtimeContext';
 import { mockTheme } from '../../../helpers/mockTheme';
+import { snapshotPayload } from '../../../helpers/dataviewFixtureVault';
 
 vi.mock('../../../../renderer/utils/runtimeContext', () => ({ isWebDesktop: vi.fn(() => false) }));
 
@@ -37,13 +39,13 @@ const ROOT = '/vault';
 const NOTE = '/vault/Notes/Note.md';
 
 function snapshotResponse(revision = 1) {
-	const result: SandboxIndexSnapshot = {
+	const result = snapshotPayload({
 		revision,
 		files: ['Notes/Note.md'],
 		folders: ['Notes'],
 		stars: [],
 		pages: [],
-	};
+	});
 	return { root: ROOT, sshRemoteId: null, revision, path: 'Notes/Note.md', result };
 }
 
@@ -114,7 +116,7 @@ interface SentEval {
 	type: 'eval';
 	runId: string;
 	thisPath: string;
-	snapshot: SandboxIndexSnapshot;
+	snapshot: SandboxSnapshotPayload;
 	expressions: { id: string; source: string }[];
 }
 
@@ -317,6 +319,26 @@ describe('DataviewJsInlineQuery: the note guest', () => {
 });
 
 describe('DataviewJsInlineQuery: watchdog and refresh', () => {
+	it('gives the index build its own budget before the first expression gets 5 s', async () => {
+		vi.useFakeTimers();
+		const { view, guest, run } = await startNote(['while (true) {}']);
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(DATAVIEW_JS_INDEX_TIMEOUT_MS - 1);
+		});
+		expect(view.container.querySelector('webview')).toBe(guest);
+
+		guestSays(guest, { type: 'index.ready', runId: run.runId });
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(DATAVIEW_JS_RUN_TIMEOUT_MS - 1);
+		});
+		// Honored once: a second one does not restart the script's budget.
+		guestSays(guest, { type: 'index.ready', runId: run.runId });
+		await act(async () => {
+			await vi.advanceTimersByTimeAsync(1);
+		});
+		expect(screen.getByText(/did not finish within 5 seconds/)).toBeTruthy();
+	});
+
 	it('stops the expression that runs past 5 s, replaces the guest, and evaluates the rest there', async () => {
 		vi.useFakeTimers();
 		const { view, guest, run } = await startNote(['1', 'while (true) {}', '3']);

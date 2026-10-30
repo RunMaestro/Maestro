@@ -1,12 +1,13 @@
 /**
- * Computer History - `--since` / `--until` / `--for` parsing (pure).
+ * Recall-window parsing for `--since` / `--until` / `--for` flags (pure), shared
+ * by `maestro-cli computer-history` and `maestro-cli timeline`.
  *
  * Durations reuse the Cue scheduler's `parseScheduleDuration` (`30s`, `20m`,
  * `2h`, `1d`) and add weeks (`1w`), which a recall window needs and a Cue
  * heartbeat does not. Absolute values are ISO-8601 or epoch numbers.
  */
 
-import { parseScheduleDuration } from '../cue/scheduled-tasks';
+import { parseScheduleDuration } from './cue/scheduled-tasks';
 
 const WEEK_MS = 7 * 86_400_000;
 

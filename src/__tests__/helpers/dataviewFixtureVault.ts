@@ -11,9 +11,11 @@ import type { VaultFs } from '../../main/dataview/vault-fs';
 import {
 	Transferable,
 	VaultPaths,
+	dataviewJsonReplacer,
 	isMarkdownPagePath,
 	parseRawPage,
 	type SandboxIndexSnapshot,
+	type SandboxSnapshotPayload,
 } from '../../shared/dataview';
 
 export const DATAVIEW_FIXTURE_VAULT = path.resolve(__dirname, '..', 'fixtures', 'dataview-vault');
@@ -74,6 +76,20 @@ export function fixtureSnapshot(revision = 1): SandboxIndexSnapshot {
 		return { path: relPath, data: Transferable.transferable(raw) as Record<string, unknown> };
 	});
 	return { revision, files: paths.allFiles(), folders: paths.allFolders(), stars: [], pages };
+}
+
+/**
+ * A snapshot as the payload `dataview:jsSnapshot` answers and a `run` or `eval` message carries: its JSON
+ * text. Synchronous, for tests; main encodes with `encodeSandboxSnapshot()`, which decodes to the same value.
+ */
+export function snapshotPayload(snapshot: SandboxIndexSnapshot): SandboxSnapshotPayload {
+	return {
+		revision: snapshot.revision,
+		...(snapshot.omittedListPages === undefined
+			? {}
+			: { omittedListPages: snapshot.omittedListPages }),
+		json: JSON.stringify(snapshot, dataviewJsonReplacer),
+	};
 }
 
 /** A fixture vault file's text, by vault-relative path. */

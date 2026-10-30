@@ -286,6 +286,28 @@ describe('the consult service completion rule', () => {
 		expect(chunks[0].targetAgentSessionId).toBeUndefined();
 	});
 
+	it('reports a host error on exit zero, retains partial text and disarms supervision', async () => {
+		const { dispatch, runner, chunks, service } = harness();
+		await dispatch();
+		runner.session('failed-session');
+		runner.observer?.onEnd({
+			exitCode: 0,
+			error: 'Authentication or MCP blocked',
+			readText: () => ' partial answer ',
+		});
+		expect(chunks).toHaveLength(1);
+		expect(chunks[0]).toMatchObject({
+			done: true,
+			chunk: 'partial answer',
+			error: 'Authentication or MCP blocked',
+		});
+		expect(chunks[0].targetAgentSessionId).toBeUndefined();
+		expect(service.activeCount()).toBe(0);
+		vi.advanceTimersByTime(HARD_MS * 2);
+		expect(chunks).toHaveLength(1);
+		expect(runner.stopped).toEqual([]);
+	});
+
 	it('reports no visible output for an empty exit, clean or not', async () => {
 		const clean = harness();
 		await clean.dispatch();
@@ -440,6 +462,21 @@ describe('cancelForSource', () => {
 		expect(service.cancelForSource('some-other-agent')).toBe(0);
 		expect(runner.stopped).toEqual([]);
 		expect(chunks).toHaveLength(0);
+	});
+
+	it("with a tab, stops only the consults that tab's turn started", async () => {
+		// `maestro-cli interrupt --tab` stops one turn; a consult another tab of the
+		// same agent fanned out keeps answering.
+		const { service, dispatch, runner } = harness();
+		await dispatch(request({ requestId: 'r1', sourceTabId: 'tab-a' }));
+		await dispatch(request({ requestId: 'r2', sourceTabId: 'tab-b' }));
+
+		expect(service.cancelForSource('src', 'tab-b')).toBe(1);
+		expect(runner.stopped).toEqual(['cross-agent-r2']);
+		expect(service.activeCount()).toBe(1);
+
+		expect(service.cancelForSource('src')).toBe(1);
+		expect(runner.stopped).toEqual(['cross-agent-r2', 'cross-agent-r1']);
 	});
 
 	it('is a no-op for a consult that already finished', async () => {

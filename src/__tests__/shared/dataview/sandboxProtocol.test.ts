@@ -6,8 +6,12 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+	dataviewJsonReplacer,
+	decodeSandboxSnapshot,
+	encodeSandboxSnapshot,
 	parseSandboxMessage,
 	SANDBOX_MAX_GUEST_MESSAGE_BYTES,
+	SNAPSHOT_ENCODE_BATCH_PAGES,
 	type SandboxGuestMessage,
 	type SandboxHostMessage,
 	type SandboxParseResult,
@@ -45,6 +49,7 @@ const VALID_GUEST: Record<SandboxGuestMessage['type'], Raw> = {
 	'toggle.task': { type: 'toggle.task', path: 'Tasks.md', line: 3, text: 'Ship it' },
 	'render.done': { type: 'render.done', blockId: 'b-1', runId: 'run-1', height: 240 },
 	'render.error': { type: 'render.error', blockId: 'b-1', runId: 'run-1', message: 'boom' },
+	'index.ready': { type: 'index.ready', runId: 'run-1' },
 	'eval.result': {
 		type: 'eval.result',
 		runId: 'inline-run-1',
@@ -64,6 +69,21 @@ function snapshot(overrides: Raw = {}): Raw {
 	};
 }
 
+/** A snapshot as it travels: `{ revision, json }`, the text of `snapshot(overrides)`. */
+function payload(overrides: Raw = {}, extra: Raw = {}): Raw {
+	const snap = snapshot(overrides);
+	return { revision: snap.revision, json: JSON.stringify(snap, dataviewJsonReplacer), ...extra };
+}
+
+const decodeReason = (raw: Raw): string => {
+	try {
+		decodeSandboxSnapshot(raw as never);
+	} catch (error) {
+		return (error as Error).message;
+	}
+	throw new Error('expected the snapshot to be refused');
+};
+
 function run(overrides: Raw = {}): Raw {
 	return {
 		type: 'run',
@@ -71,7 +91,7 @@ function run(overrides: Raw = {}): Raw {
 		blockId: 'b-1',
 		source: 'dv.table(["Name"], dv.pages("#person").map(p => [p.file.link]))',
 		thisPath: 'People/Ada.md',
-		snapshot: snapshot(),
+		snapshot: payload(),
 		...overrides,
 	};
 }
@@ -81,7 +101,7 @@ function evalRun(overrides: Raw = {}): Raw {
 		type: 'eval',
 		runId: 'inline-run-1',
 		thisPath: 'People/Ada.md',
-		snapshot: snapshot(),
+		snapshot: payload(),
 		expressions: [
 			{ id: 'expr-1', source: 'dv.pages().length' },
 			{ id: 'expr-2', source: 'dv.current().file.name' },
@@ -165,19 +185,25 @@ describe('parseSandboxMessage: valid host messages', () => {
 		});
 	});
 
-	it('passes snapshot page data through by reference, Map and Set included', () => {
-		const data = { path: 'People/Ada.md', fields: new Map([['role', 'engineer']]) };
-		const message = hostOk(
-			run({ snapshot: snapshot({ pages: [{ path: 'People/Ada.md', data }] }) })
-		);
-		expect(message.type === 'run' && message.snapshot.pages[0].data).toBe(data);
+	it('passes the snapshot text through untouched', () => {
+		const sent = payload();
+		const message = hostOk(run({ snapshot: sent }));
+		expect(message.type === 'run' && message.snapshot.json).toBe(sent.json);
+	});
+
+	it('accepts the count of pages whose lists were left out, and refuses a bad one', () => {
+		const message = hostOk(run({ snapshot: payload({}, { omittedListPages: 3 }) }));
+		expect(message.type === 'run' && message.snapshot.omittedListPages).toBe(3);
+		expect(() => hostOk(run({ snapshot: payload({}, { omittedListPages: -1 }) }))).toThrow();
 	});
 
 	it('has no size cap: a run snapshot over 1 MB is accepted', () => {
 		const files = Array.from({ length: 40_000 }, (_, i) => `Notes/a-long-note-name-${i}.md`);
 		expect(JSON.stringify(files).length).toBeGreaterThan(SANDBOX_MAX_GUEST_MESSAGE_BYTES);
-		const message = hostOk(run({ snapshot: snapshot({ files }) }));
-		expect(message.type === 'run' && message.snapshot.files).toHaveLength(40_000);
+		const message = hostOk(run({ snapshot: payload({ files }) }));
+		expect(message.type === 'run' && decodeSandboxSnapshot(message.snapshot).files).toHaveLength(
+			40_000
+		);
 	});
 });
 
@@ -332,21 +358,23 @@ describe('parseSandboxMessage: unknown and malformed messages', () => {
 		);
 	});
 
-	it('refuses malformed host messages', () => {
-		expect(hostReason(run({ snapshot: snapshot({ pages: undefined }) }))).toBe(
-			'run.snapshot is missing pages'
+	it('refuses an index.ready without a valid run id, or with extra fields', () => {
+		expect(guestReason({ type: 'index.ready' })).toBe('index.ready is missing runId');
+		expect(guestReason({ type: 'index.ready', runId: 'a b' })).toBe(
+			'index.ready.runId is not a valid id'
 		);
-		expect(hostReason(run({ snapshot: snapshot({ revision: -1 }) }))).toBe(
+		expect(guestReason({ type: 'index.ready', runId: 'r', extra: 1 })).toBe(
+			'index.ready has an unexpected field "extra"'
+		);
+	});
+
+	it('refuses malformed host messages', () => {
+		expect(hostReason(run({ snapshot: { revision: 7 } }))).toBe('run.snapshot is missing json');
+		expect(hostReason(run({ snapshot: { revision: -1, json: '{}' } }))).toBe(
 			'run.snapshot.revision is not an integer of at least 0'
 		);
-		expect(hostReason(run({ snapshot: snapshot({ files: ['a.md', 7] }) }))).toBe(
-			'run.snapshot.files[] is not a string'
-		);
-		expect(hostReason(run({ snapshot: snapshot({ stars: 'a.md' }) }))).toBe(
-			'run.snapshot.stars is not an array'
-		);
-		expect(hostReason(run({ snapshot: snapshot({ pages: [{ path: 'a.md', data: [] }] }) }))).toBe(
-			'run.snapshot.pages[].data is not a plain object'
+		expect(hostReason(run({ snapshot: snapshot() }))).toBe(
+			'run.snapshot has an unexpected field "files"'
 		);
 		expect(hostReason(run({ thisPath: '../outside.md' }))).toBe(
 			'run.thisPath is not a path inside the vault root: "../outside.md"'
@@ -563,21 +591,74 @@ describe('parseSandboxMessage: prototype pollution', () => {
 	);
 
 	it('refuses a __proto__ key inside a host snapshot', () => {
-		const page = JSON.parse('{"path":"a.md","data":{},"__proto__":{"polluted":true}}');
-		expect(hostReason(run({ snapshot: snapshot({ pages: [page] }) }))).toBe(
-			'run.snapshot.pages[] has an unexpected field "__proto__"'
-		);
-		const snap = JSON.parse(
-			'{"revision":1,"files":[],"folders":[],"stars":[],"pages":[],"__proto__":{"polluted":true}}'
-		);
-		expect(hostReason(run({ snapshot: snap }))).toBe(
-			'run.snapshot has an unexpected field "__proto__"'
-		);
+		expect(
+			decodeReason({
+				revision: 1,
+				json: '{"revision":1,"files":[],"folders":[],"stars":[],"pages":[{"path":"a.md","data":{},"__proto__":{"polluted":true}}]}',
+			})
+		).toBe('snapshot.pages[] has an unexpected field "__proto__"');
+		expect(
+			decodeReason({
+				revision: 1,
+				json: '{"revision":1,"files":[],"folders":[],"stars":[],"pages":[],"__proto__":{"polluted":true}}',
+			})
+		).toBe('snapshot has an unexpected field "__proto__"');
 		expect(({} as Raw).polluted).toBeUndefined();
 	});
 
 	it('accepts a null-prototype message', () => {
 		const raw = Object.assign(Object.create(null), VALID_GUEST['io.load']);
 		expect(guestOk(raw)).toEqual(VALID_GUEST['io.load']);
+	});
+});
+
+describe('snapshot payload: encodeSandboxSnapshot and decodeSandboxSnapshot', () => {
+	it('round-trips page data, Map and Set included', async () => {
+		const data = {
+			path: 'People/Ada.md',
+			fields: new Map([['role', 'engineer']]),
+			tags: new Set(['#a']),
+		};
+		const sent = snapshot({ pages: [{ path: 'People/Ada.md', data }], omittedListPages: 2 });
+		const encoded = await encodeSandboxSnapshot(sent as never);
+		expect(encoded.revision).toBe(7);
+		expect(encoded.omittedListPages).toBe(2);
+		const decoded = decodeSandboxSnapshot(encoded);
+		expect(decoded.files).toEqual(sent.files);
+		expect(decoded.omittedListPages).toBe(2);
+		expect(decoded.pages[0].data.fields).toEqual(new Map([['role', 'engineer']]));
+		expect(decoded.pages[0].data.tags).toEqual(new Set(['#a']));
+	});
+
+	it('encodes a vault with no pages, and pauses between page batches', async () => {
+		expect(
+			decodeSandboxSnapshot(await encodeSandboxSnapshot(snapshot({ pages: [] }) as never)).pages
+		).toEqual([]);
+
+		const pages = Array.from({ length: SNAPSHOT_ENCODE_BATCH_PAGES * 2 + 1 }, (_, i) => ({
+			path: `p${i}.md`,
+			data: { path: `p${i}.md` },
+		}));
+		let pauses = 0;
+		const encoded = await encodeSandboxSnapshot(snapshot({ pages }) as never, async () => {
+			pauses++;
+		});
+		expect(pauses).toBe(2);
+		expect(decodeSandboxSnapshot(encoded).pages.map((page) => page.path)).toEqual(
+			pages.map((page) => page.path)
+		);
+	});
+
+	it('refuses text that does not parse, a malformed snapshot, or another revision', () => {
+		expect(decodeReason({ revision: 7, json: '{"revision":' })).toMatch(
+			/^snapshot\.json does not parse: /
+		);
+		expect(decodeReason(payload({ pages: undefined }))).toBe('snapshot is missing pages');
+		expect(decodeReason(payload({ files: ['a.md', 7] }))).toBe('snapshot.files[] is not a string');
+		expect(decodeReason(payload({ stars: 'a.md' }))).toBe('snapshot.stars is not an array');
+		expect(decodeReason(payload({ pages: [{ path: 'a.md', data: [] }] }))).toBe(
+			'snapshot.pages[].data is not a plain object'
+		);
+		expect(decodeReason({ ...payload(), revision: 8 })).toBe('snapshot.json is revision 7, not 8');
 	});
 });

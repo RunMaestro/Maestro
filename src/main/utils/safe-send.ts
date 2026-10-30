@@ -3,7 +3,7 @@
  * Handles cases where the renderer has been disposed.
  */
 
-import { BrowserWindow } from 'electron';
+import { BrowserWindow, type WebContents } from 'electron';
 import { logger } from './logger';
 import { broadcastBridgeEvent } from '../web-server/handlers/bridgeHandlers';
 
@@ -85,6 +85,40 @@ export function createSafeSend(getWindows: GetBroadcastWindows) {
 
 /** Type for the safeSend function */
 export type SafeSendFn = ReturnType<typeof createSafeSend>;
+
+/**
+ * The part of an `ipcMain.handle` event that `sendToInvoker` reads. `sender` is
+ * optional on purpose: the web-desktop bridge (`handleBridgeInvoke` in
+ * `web-server/handlers/bridgeHandlers.ts`) calls the same handlers with a
+ * synthetic event that has no WebContents at all.
+ */
+export interface InvokerEvent {
+	sender?: Pick<WebContents, 'isDestroyed' | 'send'> | null;
+}
+
+/**
+ * Push a progress message back to whoever invoked an `ipcMain.handle` channel.
+ *
+ * A desktop window gets it on its own WebContents, so two windows never see each
+ * other's progress. A web-desktop browser client has no WebContents - the bridge
+ * invokes the handler with a synthetic event - so the push goes out as a
+ * `bridge.event` instead, the same route `safeSend` uses for every other push.
+ *
+ * Reading `event.sender.isDestroyed()` directly is what threw
+ * `Cannot read properties of undefined (reading 'isDestroyed')` from inside a git
+ * child's stdout handler for every pull or push started from a browser
+ * (MAESTRO-14Y): an uncaught exception in the main process, and a live console
+ * that never showed a line of output.
+ */
+export function sendToInvoker(event: InvokerEvent, channel: string, ...args: unknown[]): void {
+	const sender = event.sender;
+	if (!sender) {
+		broadcastBridgeEvent(channel, args);
+		return;
+	}
+	if (sender.isDestroyed()) return;
+	sender.send(channel, ...args);
+}
 
 /**
  * Check if a BrowserWindow's webContents is available for IPC.

@@ -109,6 +109,7 @@ function makeController(id: FloatingWidgetId, windowId: number) {
 		getWindow: vi.fn(() => (state.window ? asWindow(state.window) : null)),
 		getBounds: vi.fn(() => null),
 		setBounds: vi.fn(() => ({ x: 1, y: 2, width: 300, height: 200 })),
+		setOverflow: vi.fn(() => ({ above: 0, below: 120 })),
 		isReady: vi.fn(() => state.ready),
 		markReady: vi.fn(() => {
 			state.ready = true;
@@ -203,6 +204,7 @@ describe('init', () => {
 				'floatingWidgets:hide',
 				'floatingWidgets:isVisible',
 				'floatingWidgets:setBounds',
+				'floatingWidgets:setOverflow',
 				'floatingWidgets:show',
 				'floatingWidgets:toggle',
 			].sort()
@@ -214,7 +216,7 @@ describe('init', () => {
 				'floatingWidgets:ready',
 			].sort()
 		);
-		expect(ipcMain.handle).toHaveBeenCalledTimes(7);
+		expect(ipcMain.handle).toHaveBeenCalledTimes(8);
 		expect(ipcMain.on).toHaveBeenCalledTimes(3);
 	});
 });
@@ -294,6 +296,21 @@ describe('window control channels', () => {
 			).toThrow('Floating widget bounds must be an object');
 		}
 		expect(media.controller.setBounds).toHaveBeenCalledTimes(1);
+	});
+
+	it('setOverflow passes a sanitized need through and returns what was granted', () => {
+		const { relay, media } = setup();
+		relay.init();
+
+		const result = handlers.get('floatingWidgets:setOverflow')!(sender(1), 'media-player', {
+			above: 300,
+			below: 120,
+		});
+		expect(media.controller.setOverflow).toHaveBeenCalledWith({ above: 300, below: 120 });
+		expect(result).toEqual({ above: 0, below: 120 });
+
+		handlers.get('floatingWidgets:setOverflow')!(sender(1), 'media-player', 'tall');
+		expect(media.controller.setOverflow).toHaveBeenLastCalledWith({ above: 0, below: 0 });
 	});
 });
 

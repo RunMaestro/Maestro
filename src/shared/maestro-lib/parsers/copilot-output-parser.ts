@@ -278,6 +278,7 @@ export class CopilotOutputParser implements AgentOutputParser {
 				type: 'result',
 				text: content,
 				toolUseBlocks: toolUseBlocks.length > 0 ? toolUseBlocks : undefined,
+				...(msg.id ? { usageEventId: msg.id } : {}),
 				usage,
 				raw: msg,
 			};
@@ -291,6 +292,7 @@ export class CopilotOutputParser implements AgentOutputParser {
 				type: 'text',
 				text: '',
 				toolUseBlocks,
+				...(msg.id ? { usageEventId: msg.id } : {}),
 				usage,
 				raw: msg,
 			};
@@ -299,6 +301,7 @@ export class CopilotOutputParser implements AgentOutputParser {
 		// Empty content, no tools - pure signal event, nothing to render.
 		return {
 			type: 'system',
+			...(msg.id ? { usageEventId: msg.id } : {}),
 			usage,
 			raw: msg,
 		};

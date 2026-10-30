@@ -17,6 +17,7 @@ import type {
 } from '../../../shared/parquet/types';
 import { closeParquetFile, openParquetFile } from '../../parquet/parquet-file';
 import { exportParquetMatches, queryParquet } from '../../parquet/parquet-query';
+import { sendToInvoker } from '../../utils/safe-send';
 
 export function registerParquetHandlers(): void {
 	// Open a parquet file and read its footer. Cheap even for multi-GB files:
@@ -28,15 +29,14 @@ export function registerParquetHandlers(): void {
 	// the sender on `parquet:fetchProgress`. Progress goes to the WebContents
 	// that asked rather than to every window: two windows can have different
 	// files open, and a broadcast would make each of them render the other's
-	// progress bar.
+	// progress bar. A web-desktop client has no WebContents of its own, so for
+	// it `sendToInvoker` falls back to the bridge fan-out.
 	ipcMain.handle(
 		'parquet:open',
 		async (event, filePath: string, sshRemoteId?: string): Promise<ParquetFileInfo> =>
-			openParquetFile(filePath, sshRemoteId, (progress) => {
-				if (!event.sender.isDestroyed()) {
-					event.sender.send('parquet:fetchProgress', progress);
-				}
-			})
+			openParquetFile(filePath, sshRemoteId, (progress) =>
+				sendToInvoker(event, 'parquet:fetchProgress', progress)
+			)
 	);
 
 	// Read one window of rows. See src/main/parquet/parquet-query.ts for the

@@ -36,6 +36,7 @@ vi.mock('electron', async () => {
 		webContents = Object.assign(new EventEmitter(), {
 			send: vi.fn(),
 			setWindowOpenHandler: vi.fn(),
+			getZoomFactor: vi.fn(() => 1),
 		});
 		show = vi.fn(() => {
 			this.visible = true;
@@ -101,7 +102,10 @@ type Bounds = { x: number; y: number; width: number; height: number };
 type MockWindow = EventEmitter & {
 	show: ReturnType<typeof vi.fn>;
 	setAlwaysOnTop: ReturnType<typeof vi.fn>;
-	webContents: EventEmitter & { send: ReturnType<typeof vi.fn> };
+	webContents: EventEmitter & {
+		send: ReturnType<typeof vi.fn>;
+		getZoomFactor: ReturnType<typeof vi.fn>;
+	};
 	setBounds: (b: Bounds) => void;
 	getBounds: () => Bounds;
 	isVisible: () => boolean;
@@ -313,6 +317,32 @@ describe('Quick Chat window bounds', () => {
 		vi.advanceTimersByTime(1000);
 		// A draft's height is never the conversation's.
 		expect(store.value?.expandedHeight).toBe(520);
+	});
+
+	it('sizes the composer-only shape in window pixels under a page zoom', async () => {
+		const { deps: d, store } = makeDeps({ x: 100, y: 120, width: 600 });
+		const mod = await freshModule();
+		mod.showQuickChatWindow(d);
+		const win = lastWindow();
+		// Chromium zooms per origin: a zoom left on the main window lands here.
+		win.webContents.getZoomFactor.mockReturnValue(1.1);
+
+		// The first report is the default height, which still needs a taller window.
+		mod.setQuickChatCompactHeight(148);
+		expect(win.getBounds().height).toBe(163);
+		expect(win.maximumSize[1]).toBe(163);
+
+		mod.setQuickChatCompactHeight(300);
+		expect(win.getBounds().height).toBe(330);
+
+		// Zoomed out, the window goes below COMPACT_HEIGHT and its spot still saves.
+		win.webContents.getZoomFactor.mockReturnValue(0.9);
+		mod.setQuickChatCompactHeight(148);
+		expect(win.getBounds().height).toBe(133);
+		win.emit('will-move');
+		win.setBounds({ ...win.getBounds(), x: 40, y: 60 });
+		vi.advanceTimersByTime(1000);
+		expect(store.value).toMatchObject({ x: 40, y: 60, width: 600 });
 	});
 
 	it('stops a growing draft at the bottom of the display', async () => {

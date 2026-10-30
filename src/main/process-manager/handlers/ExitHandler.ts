@@ -23,6 +23,7 @@ import {
 import { FALLBACK_CONTEXT_WINDOW } from '../../../shared/agentConstants';
 import { getAgentDisplayName } from '../../../shared/agentMetadata';
 import { isSupersededGeneration } from '../generation';
+import { redactAnswerTail } from '../../../shared/agent-run/redact';
 import {
 	resolveTurnOutcome,
 	type TurnFacts,
@@ -206,11 +207,19 @@ export class ExitHandler {
 			// envelope, as StdoutHandler runs it on every line, because a failure is
 			// not always typed `error`: Claude Code's failed turn ends on a `result`
 			// flagged `is_error: true`, which would otherwise render as the answer.
+			// A nonfatal `warning` is display-only and never reaches detection.
 			const flushedError =
-				event && !managedProcess.errorEmitted && !managedProcess.interrupted
+				event &&
+				event.type !== 'warning' &&
+				!managedProcess.errorEmitted &&
+				!managedProcess.interrupted
 					? outputParser.detectErrorFromParsed((event.raw as unknown) ?? event)
 					: null;
-			if (event?.type === 'error' || flushedError) {
+			if (event?.type === 'warning') {
+				// Match StdoutHandler when the last diagnostic has no trailing newline.
+				// This is display-only: do not add it to stderrBuffer or the answer.
+				if (event.text) this.emitter.emit('stderr', sessionId, `${event.text}\n`);
+			} else if (event?.type === 'error' || flushedError) {
 				const agentError = flushedError;
 				if (agentError) {
 					agentError.sessionId = sessionId;
@@ -499,6 +508,16 @@ export class ExitHandler {
 		// the key, leaving a process the user cannot stop.
 		if (this.processes.get(sessionId) === managedProcess) {
 			this.processes.delete(sessionId);
+		}
+		if (
+			settlement &&
+			(settlement.outcome === 'completed' || settlement.outcome === 'completed-with-warning') &&
+			managedProcess.streamedText?.trim()
+		) {
+			// The renderer can persist its transcript after this event. Consumers
+			// that decide dependency readiness must see the final answer, never an
+			// earlier partial snapshot that happened to look stable for two polls.
+			settlement.answerTail = redactAnswerTail(managedProcess.streamedText);
 		}
 		this.emitter.emit('exit', sessionId, code, undefined, settlement);
 	}

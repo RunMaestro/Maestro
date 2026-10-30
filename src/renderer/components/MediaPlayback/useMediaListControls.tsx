@@ -18,6 +18,10 @@ interface MediaListControlsOptions {
 	 * handing it back leaves focus on `<body>`.
 	 */
 	returnFocusRef?: RefObject<HTMLElement | null>;
+	/** Which side of its button the open list hangs on. Defaults to below. */
+	listPlacement?: 'below' | 'above';
+	/** Re-places the open list when it changes (see `MediaListMenu`'s `layoutKey`). */
+	listLayoutKey?: unknown;
 }
 
 interface MediaListControls {
@@ -28,6 +32,12 @@ interface MediaListControls {
 	buttons: ReactNode;
 	/** The open list's menu (portaled), rendered anywhere inside the player. */
 	menus: ReactNode;
+	/** The open list's element, for a host that sizes room around it. */
+	listMenuRef: RefObject<HTMLDivElement>;
+	/** The button the open list hangs off, or a ref to nothing while none is open. */
+	listAnchorRef: RefObject<HTMLButtonElement>;
+	/** Rows in the open list (0 while none is open), so a host can re-size when it changes. */
+	listEntryCount: number;
 }
 
 /**
@@ -42,6 +52,8 @@ interface MediaListControls {
 export function useMediaListControls({
 	theme,
 	returnFocusRef,
+	listPlacement,
+	listLayoutKey,
 }: MediaListControlsOptions): MediaListControls {
 	const items = useMediaPlaybackStore((s) => s.items);
 	const history = useMediaPlaybackStore((s) => s.history);
@@ -153,6 +165,8 @@ export function useMediaListControls({
 					onClose={closeList}
 					testId="media-queue-menu"
 					theme={theme}
+					placement={listPlacement}
+					layoutKey={listLayoutKey}
 				/>
 			)}
 
@@ -180,10 +194,21 @@ export function useMediaListControls({
 					onClose={closeList}
 					testId="media-history-menu"
 					theme={theme}
+					placement={listPlacement}
+					layoutKey={listLayoutKey}
 				/>
 			)}
 		</>
 	);
 
-	return { openList, closeList, buttons, menus };
+	return {
+		openList,
+		closeList,
+		buttons,
+		menus,
+		listMenuRef,
+		listAnchorRef: openList === 'history' ? historyButtonRef : queueButtonRef,
+		listEntryCount:
+			openList === 'queue' ? upcoming.length : openList === 'history' ? history.length : 0,
+	};
 }

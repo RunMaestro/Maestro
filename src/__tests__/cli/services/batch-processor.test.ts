@@ -426,6 +426,26 @@ describe('batch-processor', () => {
 			expect(synopsisSpawnOpts?.appendSystemPrompt).toBeUndefined();
 		});
 
+		it("lets the task and synopsis turns accept claude's folder trust for the agent's cwd (#1872)", async () => {
+			let callCount = 0;
+			vi.mocked(readDocAndCountTasks).mockImplementation(() => {
+				callCount++;
+				if (callCount <= 3) return { content: '- [ ] Task', taskCount: 1 };
+				return { content: '', taskCount: 0 };
+			});
+			vi.mocked(spawnAgent).mockResolvedValue({
+				success: true,
+				response: '**Summary:** ok\n**Details:** ok',
+				agentSessionId: 'claude-session-123',
+			});
+
+			await collectEvents(runPlaybook(mockSession(), mockPlaybook(), '/playbooks'));
+
+			expect(vi.mocked(spawnAgent).mock.calls.length).toBeGreaterThanOrEqual(2);
+			expect(vi.mocked(spawnAgent).mock.calls[0][4]?.acceptWorkspaceTrust).toBe(true);
+			expect(vi.mocked(spawnAgent).mock.calls[1][4]?.acceptWorkspaceTrust).toBe(true);
+		});
+
 		it('builds the system prompt once per playbook run, not once per task', async () => {
 			vi.mocked(prepareMaestroSystemPromptCli).mockResolvedValue('the maestro context');
 			// Three tasks then completion: scan + processing call + after-task call

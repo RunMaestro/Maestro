@@ -2,13 +2,24 @@
 // addressable tab/session IDs so callers (Maestro-Discord, Cue) can address
 // the same tab on follow-up calls without owning a persistent channel.
 
-import { resolveAgentId, readSettingValue } from '../services/storage';
+import {
+	resolveAgentId,
+	readSettingValue,
+	readLiveSessions,
+	readGroups,
+} from '../services/storage';
 import { withMaestroClient, UnsupportedCommandError } from '../services/maestro-client';
 import { ExitCode } from '../exit-codes';
 import { MaestroNotRunningError, MAESTRO_NOT_RUNNING_CODE } from '../services/maestro-not-running';
 import { getSettingDefault } from '../../shared/settingsMetadata';
 import { resolveBackgroundFlag } from '../../shared/focusPlacement';
-import { callerMessageFields, readCallerIdentity } from '../../shared/agentDelegation';
+import {
+	callerMessageFields,
+	readCallerIdentity,
+	type CallerIdentity,
+} from '../../shared/agentDelegation';
+import { parseMentionRoutingField, type MentionRouting } from '../../shared/crossAgentContext';
+import { resolveMentionedTargetSessionIds } from '../../shared/maestro-lib/mentions/roster';
 
 export interface DispatchOptions {
 	newTab?: boolean;
@@ -49,12 +60,21 @@ export interface DispatchOptions {
 	 * other runs of the same agent do not trigger it. Requires --new-tab or --tab.
 	 */
 	notifyOnComplete?: string;
-	/** Specific caller tab to wake. Defaults to the caller's active AI tab. */
+	/**
+	 * Specific caller tab to wake. Defaults to the tab that ran this command when
+	 * it notifies its own agent, otherwise to the caller's active AI tab.
+	 */
 	callbackTab?: string;
 	/** Overrides the default callback prompt body ({{DISPATCH_*}} substituted). */
 	callbackPrompt?: string;
 	/** Give up and fire a `timeout` callback after this many seconds. */
 	callbackTimeout?: string;
+	/**
+	 * How the prompt's `@mentions` run (`parallel`, `consult-first`, `handoff`,
+	 * `only`), as if the composer's routing strip had been set. Without it the
+	 * wording decides, exactly as for a typed message.
+	 */
+	routing?: string;
 }
 
 /** Hard cap mirrored from the main-process registry (24h). */
@@ -93,10 +113,16 @@ export interface DispatchResponse {
  * mandatory: without `--new-tab` or `--tab` the dispatch lands in whichever tab
  * happens to be active, and there is nothing stable to correlate a completion
  * against.
+ *
+ * When an agent asks to be notified itself and names no `--callback-tab`, the
+ * callback goes back to the tab that ran this command (from its stamped shell
+ * identity). Falling back to the agent's ACTIVE tab dropped the result into
+ * whatever unrelated conversation the user was viewing when the run finished.
  */
 function buildCallbackFields(
 	options: DispatchOptions,
-	targetAgentId: string
+	targetAgentId: string,
+	caller: CallerIdentity | undefined
 ):
 	| { ok: true; fields: Record<string, unknown>; callerAgentId?: string }
 	| { ok: false; response: DispatchResponse } {
@@ -140,10 +166,13 @@ function buildCallbackFields(
 		return { ok: false, response: { success: false, error: msg, code: 'AGENT_NOT_FOUND' } };
 	}
 
+	const callbackTab =
+		options.callbackTab ?? (caller?.agentId === callerAgentId ? caller.tabId : undefined);
+
 	// A callback that wakes the tab it is waiting on never terminates.
 	if (
 		callerAgentId === targetAgentId &&
-		(!options.callbackTab || (options.tab && options.callbackTab === options.tab))
+		(!callbackTab || (options.tab && callbackTab === options.tab))
 	) {
 		return {
 			ok: false,
@@ -177,7 +206,7 @@ function buildCallbackFields(
 		callerAgentId,
 		fields: {
 			notifyOnComplete: callerAgentId,
-			...(options.callbackTab ? { callbackTab: options.callbackTab } : {}),
+			...(callbackTab ? { callbackTab } : {}),
 			...(options.callbackPrompt ? { callbackPrompt: options.callbackPrompt } : {}),
 			...(callbackTimeoutSeconds !== undefined ? { callbackTimeout: callbackTimeoutSeconds } : {}),
 		},
@@ -257,6 +286,18 @@ function mapDispatchError(error: unknown, agentId: string): DispatchResponse {
 	return { success: false, error: `Command failed: ${msg}`, code: 'COMMAND_FAILED' };
 }
 
+/** Whether `message` `@mentions` any live agent other than `agentId`. */
+function mentionsAnotherAgent(message: string, agentId: string): boolean {
+	return resolveMentionedTargetSessionIds(message, readLiveSessions(), readGroups(), agentId).some(
+		(id) => id !== agentId
+	);
+}
+
+/** The outgoing message field for `--routing`, empty when the wording decides. */
+function mentionRoutingFields(routing: MentionRouting | undefined): Record<string, unknown> {
+	return routing ? { mentionRouting: routing } : {};
+}
+
 /**
  * Run the dispatch flow. Exported separately from the CLI action so
  * programmatic callers (e.g., Maestro-Discord, Cue) and tests can invoke
@@ -318,6 +359,11 @@ export async function runDispatch(
 		};
 	}
 
+	const routingField = parseMentionRoutingField(options.routing);
+	if (!routingField.ok) {
+		return { success: false, error: `--routing: ${routingField.error}`, code: 'INVALID_OPTIONS' };
+	}
+
 	// --force is gated by the `allowConcurrentSend` setting. It's off by default
 	// because concurrent writes can interleave responses in the target tab.
 	if (options.force) {
@@ -342,23 +388,44 @@ export async function runDispatch(
 		return { success: false, error: msg, code: 'AGENT_NOT_FOUND' };
 	}
 
+	// A routing only steers the consults a message's `@mentions` start, so a
+	// message that mentions no other agent has nothing for it to route. Resolved
+	// with the roster functions the desktop's planner uses, over the same agents.
+	if (routingField.routing && !mentionsAnotherAgent(message, agentId)) {
+		return {
+			success: false,
+			error: `--routing ${routingField.routing} needs an @mention of another agent in the message; this message mentions none, so there is nothing to route`,
+			code: 'INVALID_OPTIONS',
+		};
+	}
+	const routingFields = mentionRoutingFields(routingField.routing);
+
 	// Dispatch runs in the background by default (no focus stealing); only an
 	// explicit `--focus` (Commander: focus === true) tells the desktop to switch
 	// to and focus the target agent/tab. The `background` bit is threaded to both
 	// the new-tab and existing-tab command paths.
 	const background = resolveBackgroundFlag(options, 'dispatch-new-tab');
 
-	const callback = buildCallbackFields(options, agentId);
-	if (!callback.ok) return callback.response;
-
 	// Who is dispatching, when this runs inside a Maestro agent's shell. The
 	// desktop uses it to mark the hand-off in the CALLER's transcript; a human or
 	// an external script has no identity and the message goes out unchanged.
-	const caller = callerMessageFields(readCallerIdentity(process.env));
+	const callerIdentity = readCallerIdentity(process.env);
+	const caller = callerMessageFields(callerIdentity);
+
+	const callback = buildCallbackFields(options, agentId, callerIdentity);
+	if (!callback.ok) return callback.response;
 
 	// --queue routes through the renderer's authoritative execution queue.
 	if (queue) {
-		return runQueueDispatch(agentId, message, options, background, callback.fields, caller);
+		return runQueueDispatch(
+			agentId,
+			message,
+			options,
+			background,
+			callback.fields,
+			routingFields,
+			caller
+		);
 	}
 	try {
 		const dispatched = await withMaestroClient(async (client): Promise<DispatchedPrompt> => {
@@ -381,6 +448,7 @@ export async function runDispatch(
 						// target's tab strip. A focused tab is never hidden.
 						...(background && !options.visible ? { hidden: true } : {}),
 						...callback.fields,
+						...routingFields,
 						...caller,
 					},
 					'new_ai_tab_with_prompt_result'
@@ -434,6 +502,7 @@ export async function runDispatch(
 					// spread below it.
 					...(background ? { background: true } : {}),
 					...callback.fields,
+					...routingFields,
 					...caller,
 				},
 				'command_result'
@@ -498,6 +567,7 @@ async function runQueueDispatch(
 	options: DispatchOptions,
 	background: boolean,
 	callbackFields: Record<string, unknown>,
+	routingFields: Record<string, unknown>,
 	callerFields: Record<string, unknown>
 ): Promise<DispatchResponse> {
 	try {
@@ -521,6 +591,7 @@ async function runQueueDispatch(
 					...(background ? { background: true } : {}),
 					...(options.held ? { held: true } : {}),
 					...callbackFields,
+					...routingFields,
 					...callerFields,
 				},
 				'enqueue_command_result'
