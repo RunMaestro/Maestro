@@ -50,8 +50,14 @@ import {
 export interface TurnInterruptDeps {
 	/** Kill the agent's pending `{id}-synopsis-*` processes (ids live in a hook ref). */
 	cancelPendingSynopsis: (sessionId: string) => Promise<void>;
-	/** Start a queued item now (side-effect gated on a web-desktop client). */
+	/** Start a queued item now. */
 	processQueuedItem: (sessionId: string, item: QueuedItem) => Promise<void>;
+	/**
+	 * Whether this client drains the agent's queue. A web-desktop client does not:
+	 * the owning desktop renderer's exit listener starts the next item, so a Stop
+	 * there must leave the queue alone rather than start it a second time.
+	 */
+	ownsQueue: (sessionId: string) => boolean;
 }
 
 let turnInterruptDeps: TurnInterruptDeps | null = null;
@@ -350,7 +356,10 @@ function settleStoppedTab(sessionId: string, tabId: string, note: LogEntry): voi
  * that nobody would send; the exit listener drains it instead.
  */
 function settleStoppedAgent(sessionId: string, note: LogEntry, startQueued: boolean): void {
-	const dispatch = startQueued ? turnInterruptDeps?.processQueuedItem : undefined;
+	const dispatch =
+		startQueued && turnInterruptDeps?.ownsQueue(sessionId)
+			? turnInterruptDeps.processQueuedItem
+			: undefined;
 	let startedItem: QueuedItem | undefined;
 	updateSessionWith(sessionId, (s): Session => {
 		const { item: nextItem, remaining: remainingQueue } = dispatch
