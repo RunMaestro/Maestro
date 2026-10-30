@@ -18,7 +18,8 @@ import {
 import { parseQuery } from './vendor/query/parse';
 import { parseField } from './vendor/expression/parse';
 import { DataviewSettings } from './settings';
-import { mapTaskGroups, toWireValue } from './wire';
+import { isTaskGroup, mapTaskGroups, toWireValue } from './wire';
+import { formatCount } from '../formatters';
 import type {
 	DataviewErrorResult,
 	DataviewIndexReader,
@@ -29,6 +30,54 @@ import type {
 
 /** Upstream's prefix for a block error (`Dataview: <error>`). */
 export const DATAVIEW_BLOCK_ERROR_PREFIX = 'Dataview: ';
+
+/**
+ * Most rows one result carries (top-level tasks for a `TASK` query). A query over a large vault without
+ * `LIMIT` would otherwise send every page through IPC and render every row; past this the result keeps
+ * the first rows and says how many there were (`total`).
+ */
+export const DATAVIEW_MAX_RESULT_ROWS = 1000;
+
+/** The note a truncated result shows under its rows, or null when nothing was left out. */
+export function dataviewTruncationNote(result: { total?: number }, shown: number): string | null {
+	if (result.total === undefined || result.total <= shown) return null;
+	return `Showing the first ${formatCount(shown)} of ${formatCount(result.total)} results. Add a LIMIT to the query to choose which.`;
+}
+
+/** Top-level tasks (not `GROUP BY` levels) in a task grouping. */
+export function countTaskGroupRows(groups: readonly unknown[]): number {
+	return groups.reduce<number>(
+		(total, entry) =>
+			total + (isTaskGroup<unknown>(entry) ? countTaskGroupRows(entry.rows as unknown[]) : 1),
+		0
+	);
+}
+
+/**
+ * The first `max` top-level tasks of a grouping, in order, keeping the `GROUP BY` levels they sit in. A
+ * group whose tasks are all cut is dropped.
+ */
+function truncateTaskGroups(groups: unknown[], max: number): unknown[] {
+	const kept: unknown[] = [];
+	let budget = max;
+	for (const entry of groups) {
+		if (budget <= 0) break;
+		if (isTaskGroup<unknown>(entry)) {
+			const rows = truncateTaskGroups(entry.rows as unknown[], budget);
+			budget -= countTaskGroupRows(rows);
+			if (rows.length > 0) kept.push({ ...entry, rows });
+		} else {
+			kept.push(entry);
+			budget--;
+		}
+	}
+	return kept;
+}
+
+/** `{ total }` when `count` is over the cap, so a result says it was truncated; empty otherwise. */
+function totalField(count: number): { total?: number } {
+	return count > DATAVIEW_MAX_RESULT_ROWS ? { total: count } : {};
+}
 
 /**
  * Deprecated task aliases (`subtasks` is `children`, `header` is `section`, `real` is `task`).
@@ -140,9 +189,10 @@ export async function executeDql(
 				return {
 					kind: 'table',
 					headers: names,
-					rows: data.map((row) => row.map(toWireValue)),
+					rows: data.slice(0, DATAVIEW_MAX_RESULT_ROWS).map((row) => row.map(toWireValue)),
 					idMeaning,
 					warnings: rowWarnings(core),
+					...totalField(data.length),
 				};
 			}
 			case 'list': {
@@ -151,9 +201,10 @@ export async function executeDql(
 				const { core, data, primaryMeaning } = result.value;
 				return {
 					kind: 'list',
-					items: data.map(toWireValue),
+					items: data.slice(0, DATAVIEW_MAX_RESULT_ROWS).map(toWireValue),
 					idMeaning: primaryMeaning,
 					warnings: rowWarnings(core),
+					...totalField(data.length),
 				};
 			}
 			case 'task': {
@@ -161,14 +212,20 @@ export async function executeDql(
 				if (!result.successful) return errorResult(DATAVIEW_BLOCK_ERROR_PREFIX + result.error);
 				const { core, tasks } = result.value;
 				const encodeTask = createTaskWireEncoder(index);
+				const taskCount = countTaskGroupRows(tasks as unknown[]);
+				const shown =
+					taskCount > DATAVIEW_MAX_RESULT_ROWS
+						? truncateTaskGroups(tasks as unknown[], DATAVIEW_MAX_RESULT_ROWS)
+						: tasks;
 				return {
 					kind: 'task',
-					groups: mapTaskGroups(tasks as Literal[], (value) =>
+					groups: mapTaskGroups(shown as Literal[], (value) =>
 						// Group keys are plain values; tasks lose their copied page fields.
 						isTaskItem(value) ? encodeTask(value) : toWireValue(value)
 					),
 					idMeaning: core.idMeaning,
 					warnings: rowWarnings(core),
+					...totalField(taskCount),
 				};
 			}
 		}

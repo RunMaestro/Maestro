@@ -39,6 +39,8 @@ Results behave like the rest of the preview:
 - **Task checkboxes** in a `TASK` result rewrite that task's line in the note it came from.
 - **Live refresh.** Edit, add, or delete a note and every block whose result could change runs again.
 - **Errors** show inside the block with Dataview's own message. A broken query never breaks the rest of the preview.
+- **Large results.** A block shows at most 1,000 rows (or tasks) and says how many the query found. Add a `LIMIT` to choose which ones.
+- **Slow queries.** Queries run in the background, so a slow one never freezes Maestro. A query that runs longer than 5 seconds is stopped and shows an error. It runs again after a minute, or as soon as you edit it.
 
 Dataview renders in File Preview (both the rich and the fast renderer) and in the Auto Run document preview. Agent chat messages never run queries: a query an agent shows you stays code.
 

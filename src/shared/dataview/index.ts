@@ -124,7 +124,10 @@ export {
 	executeDql,
 	executeInlineDql,
 	parseErrorLine,
+	countTaskGroupRows,
+	dataviewTruncationNote,
 	DATAVIEW_BLOCK_ERROR_PREFIX,
+	DATAVIEW_MAX_RESULT_ROWS,
 } from './execute';
 export { extractDataviewBlocks } from './blocks';
 export type { DataviewBlock, DataviewBlockLanguage } from './blocks';

@@ -64,6 +64,7 @@ import {
 	DATAVIEW_JS_LIST_ITEM_BYTES,
 	DATAVIEW_JS_SNAPSHOT_LIST_BUDGET_BYTES,
 } from '../../shared/dataview/sandboxHost';
+import type { QueryMirrorPage, QueryMirrorPaths } from './query-worker-protocol';
 import { VAULT_MARKER_DIR } from './vault-root';
 import { createVaultWatcher, type VaultWatcher } from './vault-watcher';
 
@@ -97,6 +98,24 @@ export interface VaultIndexChange {
 }
 
 export type VaultIndexListener = (change: VaultIndexChange) => void;
+
+/**
+ * One commit as a query worker mirrors it (`query-runner.ts`): what the update set, finished again, or
+ * removed. `seq` counts every commit, including one that left the revision where it was (a file that no
+ * page links to appeared), so a mirror can tell a commit it already holds from one it lacks.
+ */
+export interface VaultIndexCommit {
+	seq: number;
+	revision: number;
+	/** The new file set, when it changed (always for {@link VaultIndex.mirrorState}). */
+	paths?: QueryMirrorPaths;
+	/** Pages set or finished again, each with its cached raw parse. */
+	set: QueryMirrorPage[];
+	removed: string[];
+	stars: string[];
+}
+
+export type VaultIndexCommitListener = (commit: VaultIndexCommit) => void;
 
 /** What the last full scan (a reconcile against the whole file system) did. */
 export interface VaultScanStats {
@@ -155,6 +174,9 @@ export class VaultIndex extends PageIndex {
 		payload: Promise<SandboxSnapshotPayload>;
 	} | null = null;
 	private readonly listeners = new Set<VaultIndexListener>();
+	private readonly commitListeners = new Set<VaultIndexCommitListener>();
+	/** Commits so far ({@link VaultIndexCommit.seq}). */
+	private commitSeq = 0;
 	private readonly onWarning: (warning: PageParseWarning) => void;
 	private readonly watchEnabled: boolean;
 	/** Every update (open, scan, watcher batch) chains here, so two never interleave. */
@@ -211,6 +233,33 @@ export class VaultIndex extends PageIndex {
 		this.listeners.add(listener);
 		return () => {
 			this.listeners.delete(listener);
+		};
+	}
+
+	/**
+	 * Subscribe to every commit, with the pages it carried. Listeners run synchronously inside the commit,
+	 * before the change listeners, so a mirror always hears of a commit before anyone can query its result.
+	 * Returns the unsubscribe function.
+	 */
+	onCommit(listener: VaultIndexCommitListener): () => void {
+		this.commitListeners.add(listener);
+		return () => {
+			this.commitListeners.delete(listener);
+		};
+	}
+
+	/**
+	 * The whole index as one commit, for a mirror starting from nothing. Taken synchronously, so it is one
+	 * state. The pages are references to the cached raw parse, not copies.
+	 */
+	mirrorState(): VaultIndexCommit {
+		return {
+			seq: this.commitSeq,
+			revision: this.revision,
+			paths: { files: this.prefix.allFiles(), folders: this.prefix.allFolders() },
+			set: Array.from(this.entries, ([path, entry]) => ({ path, data: entry.data })),
+			removed: [],
+			stars: [...this.stars],
 		};
 	}
 
@@ -291,6 +340,7 @@ export class VaultIndex extends PageIndex {
 		this.cacheWriteTimer = null;
 		await this.flushCache();
 		this.listeners.clear();
+		this.commitListeners.clear();
 	}
 
 	/**
@@ -669,6 +719,19 @@ export class VaultIndex extends PageIndex {
 		const changedPages = [...changed].filter(
 			(path) => this.pages.has(path) || update.removed.has(path)
 		);
+		this.commitSeq += 1;
+		if (this.commitListeners.size > 0) {
+			this.emitCommit({
+				seq: this.commitSeq,
+				revision: changedPages.length > 0 ? this.revision + 1 : this.revision,
+				...(filesChanged
+					? { paths: { files: update.paths.allFiles(), folders: update.paths.allFolders() } }
+					: {}),
+				set: Array.from(update.parsed, ([path, { entry }]) => ({ path, data: entry.data })),
+				removed: [...update.removed],
+				stars: [...update.stars],
+			});
+		}
 		if (changedPages.length > 0) this.touch(changedPages);
 		if (update.persist && (filesChanged || flippedStars.length > 0)) this.manifestDirty = true;
 		if (update.persist && (this.manifestDirty || this.dirtyShards.size > 0))
@@ -704,6 +767,16 @@ export class VaultIndex extends PageIndex {
 			return starredPathsFromBookmarks(JSON.parse(text));
 		} catch {
 			return new Set();
+		}
+	}
+
+	private emitCommit(commit: VaultIndexCommit): void {
+		for (const listener of [...this.commitListeners]) {
+			try {
+				listener(commit);
+			} catch (error) {
+				logger.error(`Dataview commit listener failed: ${String(error)}`, LOG_CONTEXT);
+			}
 		}
 	}
 
