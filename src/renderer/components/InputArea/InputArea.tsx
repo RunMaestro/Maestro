@@ -27,6 +27,9 @@ import { NotificationSendControls } from './components/NotificationSendControls'
 import { PhoneComposerHandle } from './components/PhoneComposerHandle';
 import { StagedImagesStrip } from './components/StagedImagesStrip';
 import { ToolbarControls } from './components/ToolbarControls';
+import { useAiTabToolbarBinding } from './hooks/useAiTabToolbarBinding';
+import { formatTerminalCwd } from './utils/terminalPath';
+import { aiCanAttachImages, deriveAiComposerCapabilities } from '../ChatComposer';
 import { usePhoneLayout } from '../../hooks/ui/useViewportBreakpoint';
 import { usePersistedToggle } from '../../hooks/ui/usePersistedToggle';
 import { useInputAreaAutosize } from './hooks/useInputAreaAutosize';
@@ -186,18 +189,26 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	// PERF: Memoize derived state to avoid recalculation on every render
 	const isResumingSession = !!activeTab?.agentSessionId;
 	const commandMode = useComposerInputStore(selectAiCommandMode);
-	const canAttachImages = useMemo(() => {
-		// Neither command rung has anywhere to put an image: one pipes the draft to
-		// a shell, the other asks for a command line. Hide the affordance rather
-		// than leaving a button that stages an attachment the send path drops on
-		// the floor.
-		if (commandMode !== 'off') return false;
-		// Check if images are supported - depends on whether we're resuming an existing session
-		// If the active tab has an agentSessionId, we're resuming and need to check supportsImageInputOnResume
-		return isResumingSession
-			? hasCapability('supportsImageInputOnResume')
-			: hasCapability('supportsImageInput');
-	}, [isResumingSession, hasCapability, commandMode]);
+	// Hide the attach affordance rather than leaving a button that stages an
+	// attachment the send path drops on the floor (see aiCanAttachImages).
+	const canAttachImages = useMemo(
+		() => aiCanAttachImages({ commandMode, isResumingSession, hasCapability }),
+		[isResumingSession, hasCapability, commandMode]
+	);
+	// What the toolbar offers. Memoized on its sources so a keystroke, which
+	// re-renders this component, hands the memoized toolbar the same object.
+	const composerCapabilities = useMemo(
+		() =>
+			deriveAiComposerCapabilities({
+				inputMode: session.inputMode,
+				commandMode,
+				isResumingSession,
+				hasCapability,
+				supportsThinking,
+			}),
+		[session.inputMode, commandMode, isResumingSession, hasCapability, supportsThinking]
+	);
+	const toolbarBinding = useAiTabToolbarBinding(session.id, activeTab);
 
 	// PERF: Memoize mode-related derived state
 	// `isReadOnlyMode` stays off the destructure: rc's ToolbarControls reads the
@@ -716,12 +727,15 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 						/>
 
 						<ToolbarControls
-							session={session}
 							theme={theme}
+							capabilities={composerCapabilities}
 							isTerminalMode={isTerminalMode}
-							canAttachImages={canAttachImages}
-							hasReadOnlyCapability={hasCapability('supportsReadOnlyMode')}
+							terminalCwd={isTerminalMode ? formatTerminalCwd(session) : undefined}
+							agentId={session.toolType}
 							hasStandardCapability={hasCapability('supportsStandardPermissionMode')}
+							permissionMode={toolbarBinding.permissionMode}
+							onPermissionModeChange={toolbarBinding.onPermissionModeChange}
+							onThinkingModeChange={toolbarBinding.onThinkingModeChange}
 							enterToSend={enterToSend}
 							setEnterToSend={setEnterToSend}
 							setStagedImages={setStagedImages}
@@ -729,14 +743,14 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 							voiceSupported={voice.voiceSupported}
 							isVoiceListening={voice.isListening}
 							onToggleVoiceInput={handleToggleVoiceInput}
-							onOpenPromptComposer={onOpenPromptComposer}
+							// The prompt composer is an AI-mode affordance; terminal mode offers none.
+							onOpenPromptComposer={session.inputMode === 'ai' ? onOpenPromptComposer : undefined}
 							shortcuts={shortcuts}
 							showFlashNotification={showFlashNotification}
 							tabSaveToHistory={tabSaveToHistory}
 							onToggleTabSaveToHistory={onToggleTabSaveToHistory}
 							tabShowThinking={tabShowThinking}
 							onToggleTabShowThinking={onToggleTabShowThinking}
-							supportsThinking={supportsThinking}
 							currentModel={currentModel}
 							currentEffort={currentEffort}
 							availableModels={availableModels}
