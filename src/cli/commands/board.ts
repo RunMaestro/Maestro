@@ -1,3 +1,4 @@
+import { requireEncore } from '../utils/encore-gate';
 /**
  * `maestro-cli board` - drive the persistent Board (task DAG) headlessly.
  *
@@ -664,6 +665,8 @@ function createCardPrFromCli(
 
 /** `board tick --agent <id> [--board <id>]` - run one dispatcher pass headlessly. */
 export async function boardTick(options: BoardTickOptions): Promise<void> {
+	requireEncore('board', options.json);
+	requireEncore('maestroCue', options.json);
 	try {
 		const session = resolveAgentSession(options.agent);
 		const summaries = await tickBoardsOnce(session.projectRoot, options.board, options.json);
@@ -702,6 +705,8 @@ export async function boardTick(options: BoardTickOptions): Promise<void> {
  * It exits non-zero so a supervisor notices.
  */
 export async function boardWatch(options: BoardWatchOptions): Promise<void> {
+	requireEncore('board', options.json);
+	requireEncore('maestroCue', options.json);
 	let projectRoot: string;
 	let intervalMs: number;
 	try {
@@ -802,6 +807,8 @@ async function tickBoardsOnce(
 	boardHint: string | undefined,
 	json: boolean | undefined
 ): Promise<TickSummary[]> {
+	requireEncore('board', json);
+	requireEncore('maestroCue', json);
 	let boards = listBoards(projectRoot);
 	if (boardHint) {
 		boards = [resolveBoard(projectRoot, boardHint)];

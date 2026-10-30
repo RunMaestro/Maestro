@@ -57,33 +57,22 @@ import type { CardAssignment, CardSpawnRequest, CardSpawnResult } from './board-
 import { executeCuePrompt, stopCueRun } from '../cue/cue-executor';
 import { createCueEvent } from '../cue/cue-types';
 import type { TemplateContext } from '../../shared/templateVariables';
+import { generateUUID } from '../../shared/uuid';
 import { logger } from '../utils/logger';
 
 /** Default per-card run budget (mirrors the Cue default `timeout_minutes: 30`). */
 const DEFAULT_CARD_TIMEOUT_MS = 30 * 60 * 1000;
 
-/**
- * Live card runs: cardId -> the Cue `runId` its process is registered under.
- *
- * `executeCuePrompt` exposes no cancellation handle of its own; the run is
- * addressable by the `runId` we mint for it, and `stopCueRun(runId)` is exactly
- * how Cue stops one of its own runs. Remembering that id per card is therefore
- * the whole cancellation mechanism - see {@link cancelBoardCardRun}.
- */
-const activeCardRunIds = new Map<string, string>();
+/** Attempt-owned cancellation covers preparation as well as the live process. */
+const activeCardRuns = new Map<string, { runId: string; controller: AbortController }>();
 
-/**
- * Kill the in-flight agent process for a card. Returns `true` when a live run
- * was found and stopped, `false` when the card has no registered run (already
- * finished, or running in another process such as the CLI). Wired into the
- * dispatcher as `cancelSpawn`.
- */
+/** Stop preparation and, if already launched, the attempt's Cue process. */
 export function cancelBoardCardRun(cardId: string): boolean {
-	const runId = activeCardRunIds.get(cardId);
-	if (!runId) return false;
-	// Leave the map entry to `runCardPrompt`'s finally block: the process exit is
-	// what actually clears it, and deleting here would race a second cancel.
-	return stopCueRun(runId);
+	const run = activeCardRuns.get(cardId);
+	if (!run) return false;
+	run.controller.abort();
+	stopCueRun(run.runId);
+	return true;
 }
 
 /** The host context a board spawn needs, injected from index.ts where these
@@ -220,34 +209,50 @@ export async function spawnBoardCard(
 	ctx: BoardSpawnContext
 ): Promise<CardSpawnResult> {
 	const { card, overrides, agentId } = request;
-	// Resolve the base session: the pool-chosen worker (`agentId`) on the Phase 6
-	// path, else the card's profile base agent (legacy single-agent path).
-	const baseSession = resolveBaseSession(projectRoot, card, agentId, ctx);
-	if (!baseSession) {
-		return {
-			output: '',
-			exitCode: null,
-			error: `Board card "${card.id}": worker agent could not be resolved.`,
-		};
-	}
-	// The Cue executor has no system-prompt injection field, so the profile's
-	// role (`appendSystemPrompt`) is prepended to the card prompt as a preamble,
-	// followed by the four-question handoff reminder (structured completion
-	// metadata). model/effort/args flow through the native override fields below.
-	const roleLine = overrides.appendSystemPrompt ? `${overrides.appendSystemPrompt}\n\n` : '';
-	const promptText =
-		`${roleLine}${CARD_HANDOFF_REMINDER}\n\n---\n\n${card.title}\n\n${card.body}`.trim();
+	const run = { runId: `board-${card.id}-${generateUUID()}`, controller: new AbortController() };
+	activeCardRuns.set(card.id, run);
+	try {
+		// Resolve the base session: the pool-chosen worker (`agentId`) on the Phase 6
+		// path, else the card's profile base agent (legacy single-agent path).
+		const baseSession = resolveBaseSession(projectRoot, card, agentId, ctx);
+		if (!baseSession) {
+			return {
+				output: '',
+				exitCode: null,
+				error: `Board card "${card.id}": worker agent could not be resolved.`,
+			};
+		}
+		// The Cue executor has no system-prompt injection field, so the profile's
+		// role (`appendSystemPrompt`) is prepended to the card prompt as a preamble,
+		// followed by the four-question handoff reminder (structured completion
+		// metadata). model/effort/args flow through the native override fields below.
+		const roleLine = overrides.appendSystemPrompt ? `${overrides.appendSystemPrompt}\n\n` : '';
+		const promptText =
+			`${roleLine}${CARD_HANDOFF_REMINDER}\n\n---\n\n${card.title}\n\n${card.body}`.trim();
 
-	// Phase 4: a card that opted into isolation runs in its own checkout. The
-	// worktree is created on first claim and reused by every retry.
-	let worktree: { path: string; branch: string } | undefined;
-	if (card.worktree) {
-		const provisioned = await provisionCardWorktree(projectRoot, card, baseSession);
-		if (!provisioned.ok) return provisioned.result;
-		worktree = provisioned.worktree;
-	}
+		// Phase 4: a card that opted into isolation runs in its own checkout. The
+		// worktree is created on first claim and reused by every retry.
+		let worktree: { path: string; branch: string } | undefined;
+		if (card.worktree) {
+			const provisioned = await provisionCardWorktree(projectRoot, card, baseSession);
+			if (run.controller.signal.aborted) return { output: '', exitCode: null };
+			if (!provisioned.ok) return provisioned.result;
+			worktree = provisioned.worktree;
+		}
 
-	return runCardPrompt(projectRoot, card, promptText, baseSession, overrides, ctx, worktree);
+		return await runCardPrompt(
+			projectRoot,
+			card,
+			promptText,
+			baseSession,
+			overrides,
+			ctx,
+			worktree,
+			run
+		);
+	} finally {
+		if (activeCardRuns.get(card.id) === run) activeCardRuns.delete(card.id);
+	}
 }
 
 /**
@@ -358,7 +363,8 @@ async function runCardPrompt(
 	baseSession: Record<string, any>,
 	overrides: ProfileSpawnOverrides,
 	ctx: BoardSpawnContext,
-	worktree?: { path: string; branch: string }
+	worktree?: { path: string; branch: string },
+	run?: { runId: string; controller: AbortController }
 ): Promise<CardSpawnResult> {
 	const runCwd = worktree?.path ?? projectRoot;
 	// Left loosely typed (the base session is a Record<string, any>) so it flows
@@ -372,7 +378,8 @@ async function runCardPrompt(
 		resolvedAgentPath = await ctx.resolveAgentPath(toolType);
 	}
 
-	const runId = `board-${card.id}-${ctx.nowMs()}`;
+	if (run?.controller.signal.aborted) return { output: '', exitCode: null };
+	const runId = run?.runId ?? `board-${card.id}-${generateUUID()}`;
 	const templateContext: TemplateContext = {
 		session: {
 			id: baseSession.id,
@@ -387,61 +394,54 @@ async function runCardPrompt(
 	};
 	const event = createCueEvent('cli.trigger', `board:${card.id}`, { board: true });
 
-	// Register the run id BEFORE awaiting so a cancel arriving mid-run can find it.
-	activeCardRunIds.set(card.id, runId);
-	try {
-		const result = await executeCuePrompt({
-			runId,
-			session: {
-				id: baseSession.id,
-				name: baseSession.name,
-				toolType,
-				cwd: runCwd,
-				projectRoot,
-				autoRunFolderPath: baseSession.autoRunFolderPath,
-			},
-			subscription: {
-				name: `board:${card.title}`,
-				event: event.type,
-				enabled: true,
-				prompt: promptText,
-			},
-			event,
-			promptPath: promptText,
+	const result = await executeCuePrompt({
+		runId,
+		signal: run?.controller.signal,
+		session: {
+			id: baseSession.id,
+			name: baseSession.name,
 			toolType,
-			// `CueExecutionConfig.projectRoot` IS the spawn cwd (see
-			// `cue-spawn-builder`), so an isolated card points it at its worktree.
-			projectRoot: runCwd,
-			templateContext,
-			timeoutMs: DEFAULT_CARD_TIMEOUT_MS,
-			// Honor the base agent's SSH + token-source config (never bypass the SSH path).
-			sshRemoteConfig: baseSession.sessionSshRemoteConfig,
-			customPath: resolvedAgentPath,
-			customArgs: overrides.customArgs,
-			customEnvVars: baseSession.customEnvVars,
-			customModel: overrides.customModel,
-			customEffort: overrides.customEffort,
-			enableMaestroP: baseSession.enableMaestroP,
-			maestroPMode: baseSession.maestroPMode,
-			maestroPPath: baseSession.maestroPPath,
-			onLog: (level, message) => {
-				if (level === 'error') logger.error(message, 'Board');
-				else if (level === 'warn') logger.warn(message, 'Board');
-				else if (level === 'debug') logger.debug(message, 'Board');
-				else logger.cue(message, 'Board');
-			},
-			sshStore: ctx.getSshStore(),
-			agentConfigValues,
-		});
+			cwd: runCwd,
+			projectRoot,
+			autoRunFolderPath: baseSession.autoRunFolderPath,
+		},
+		subscription: {
+			name: `board:${card.title}`,
+			event: event.type,
+			enabled: true,
+			prompt: promptText,
+		},
+		event,
+		promptPath: promptText,
+		toolType,
+		// `CueExecutionConfig.projectRoot` IS the spawn cwd (see
+		// `cue-spawn-builder`), so an isolated card points it at its worktree.
+		projectRoot: runCwd,
+		templateContext,
+		timeoutMs: DEFAULT_CARD_TIMEOUT_MS,
+		// Honor the base agent's SSH + token-source config (never bypass the SSH path).
+		sshRemoteConfig: baseSession.sessionSshRemoteConfig,
+		customPath: resolvedAgentPath,
+		customArgs: overrides.customArgs,
+		customEnvVars: baseSession.customEnvVars,
+		customModel: overrides.customModel,
+		customEffort: overrides.customEffort,
+		enableMaestroP: baseSession.enableMaestroP,
+		maestroPMode: baseSession.maestroPMode,
+		maestroPPath: baseSession.maestroPPath,
+		onLog: (level, message) => {
+			if (level === 'error') logger.error(message, 'Board');
+			else if (level === 'warn') logger.warn(message, 'Board');
+			else if (level === 'debug') logger.debug(message, 'Board');
+			else logger.cue(message, 'Board');
+		},
+		sshStore: ctx.getSshStore(),
+		agentConfigValues,
+	});
 
-		return {
-			output: result.stdout,
-			exitCode: result.exitCode,
-			...(worktree ? { worktreePath: worktree.path, worktreeBranch: worktree.branch } : {}),
-		};
-	} finally {
-		// Only clear our own registration: a retry claimed after this run started
-		// would already have replaced the entry with its own run id.
-		if (activeCardRunIds.get(card.id) === runId) activeCardRunIds.delete(card.id);
-	}
+	return {
+		output: result.stdout,
+		exitCode: result.exitCode,
+		...(worktree ? { worktreePath: worktree.path, worktreeBranch: worktree.branch } : {}),
+	};
 }

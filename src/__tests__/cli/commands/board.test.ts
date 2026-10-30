@@ -17,11 +17,13 @@ import { execFileSync } from 'child_process';
 const mockGetSessionById = vi.fn();
 const mockResolveAgentId = vi.fn();
 const mockReadSessions = vi.fn();
+const mockReadSettingValue = vi.fn(() => ({ board: true, maestroCue: true }));
 
 vi.mock('../../../cli/services/storage', () => ({
 	getSessionById: (id: string) => mockGetSessionById(id),
 	resolveAgentId: (partial: string) => mockResolveAgentId(partial),
 	readSessions: () => mockReadSessions(),
+	readSettingValue: () => mockReadSettingValue(),
 }));
 
 // `board tick` is the only command that spawns; the agent itself is faked so
@@ -908,4 +910,25 @@ describe('maestro-cli board', () => {
 		await boardList({ agent: 'ghost', json: true });
 		expect(exitSpy).toHaveBeenCalledWith(1);
 	});
+});
+
+describe('dispatch Encore gates', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		vi.spyOn(console, 'log').mockImplementation(() => {});
+		vi.spyOn(process, 'exit').mockImplementation(() => {
+			throw new Error('gate exit');
+		});
+	});
+	afterEach(() => vi.restoreAllMocks());
+	it.each(['board', 'maestroCue'] as const)(
+		'refuses tick and watch while %s is off before looking up an agent',
+		async (flag) => {
+			mockReadSettingValue.mockReturnValueOnce({ board: true, maestroCue: true, [flag]: false });
+			await expect(boardTick({ agent: 'missing', json: true })).rejects.toThrow();
+			mockReadSettingValue.mockReturnValueOnce({ board: true, maestroCue: true, [flag]: false });
+			await expect(boardWatch({ agent: 'missing', json: true })).rejects.toThrow();
+			expect(mockSpawnAgent).not.toHaveBeenCalled();
+		}
+	);
 });

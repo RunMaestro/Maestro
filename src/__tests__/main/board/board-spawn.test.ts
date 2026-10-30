@@ -33,7 +33,11 @@ vi.mock('../../../main/utils/logger', () => ({
 	logger: { error: vi.fn(), warn: vi.fn(), debug: vi.fn(), cue: vi.fn() },
 }));
 
-import { spawnBoardCard, type BoardSpawnContext } from '../../../main/board/board-spawn';
+import {
+	spawnBoardCard,
+	cancelBoardCardRun,
+	type BoardSpawnContext,
+} from '../../../main/board/board-spawn';
 import { WORKTREE_SSH_UNSUPPORTED } from '../../../main/board/board-worktree';
 import type { BoardCard } from '../../../shared/board/types';
 
@@ -157,5 +161,68 @@ describe('spawnBoardCard worktree isolation', () => {
 		);
 
 		expect(spawnedCwd()).toBe(PROJECT_ROOT);
+	});
+});
+
+describe('Stop during Board launch preparation', () => {
+	it('prevents launch after worktree provisioning finishes', async () => {
+		let finish!: (value: unknown) => void;
+		ensureCardWorktree.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					finish = resolve;
+				})
+		);
+		const pending = spawnBoardCard(
+			PROJECT_ROOT,
+			{
+				card: card({ worktree: { path: WORKTREE_PATH, branch: WORKTREE_BRANCH } }),
+				overrides: {},
+				agentId: 'agent-1',
+			},
+			context()
+		);
+		expect(cancelBoardCardRun('c1')).toBe(true);
+		finish({ ok: true, path: WORKTREE_PATH, branch: WORKTREE_BRANCH });
+		await pending;
+		expect(executeCuePrompt).not.toHaveBeenCalled();
+		expect(cancelBoardCardRun('c1')).toBe(false);
+	});
+
+	it('keeps a resumed attempt owned when canceled path resolution finishes late', async () => {
+		let finish!: (value: string) => void;
+		const ctx = context();
+		ctx.resolveAgentPath = () =>
+			new Promise((resolve) => {
+				finish = resolve;
+			});
+		const old = spawnBoardCard(
+			PROJECT_ROOT,
+			{ card: card(), overrides: {}, agentId: 'agent-1' },
+			ctx
+		);
+		expect(cancelBoardCardRun('c1')).toBe(true);
+		let complete!: (value: unknown) => void;
+		executeCuePrompt.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					complete = resolve;
+				})
+		);
+		const resumed = spawnBoardCard(
+			PROJECT_ROOT,
+			{ card: card(), overrides: {}, agentId: 'agent-1' },
+			context()
+		);
+		const signal = executeCuePrompt.mock.calls[0][0].signal as AbortSignal;
+		finish('/usr/bin/agent');
+		await old;
+		expect(executeCuePrompt).toHaveBeenCalledTimes(1);
+		expect(signal.aborted).toBe(false);
+		expect(cancelBoardCardRun('c1')).toBe(true);
+		expect(signal.aborted).toBe(true);
+		complete({ stdout: '', exitCode: null });
+		await resumed;
+		expect(cancelBoardCardRun('c1')).toBe(false);
 	});
 });

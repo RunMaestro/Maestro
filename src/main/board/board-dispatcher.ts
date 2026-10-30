@@ -35,7 +35,7 @@ import {
 	type CardRun,
 	type CardRunOutcome,
 } from '../../shared/board/types';
-import { getEligibleCards } from '../../shared/board/graph';
+import { getBlockers, getEligibleCards } from '../../shared/board/graph';
 import { parseCardMarkers } from '../../shared/board/cardMarkers';
 import type { ProfileSpawnOverrides } from '../../shared/profiles/types';
 
@@ -239,7 +239,12 @@ export function promoteEligibleCards(board: Board, nowIso: string): BoardCard[] 
 function readyCardsInDispatchOrder(board: Board): BoardCard[] {
 	return board.cards
 		.map((card, index) => ({ card, index }))
-		.filter((entry) => entry.card.status === 'ready')
+		.filter(
+			(entry) =>
+				entry.card.status === 'ready' &&
+				!entry.card.heldByUser &&
+				getBlockers(entry.card, board).length === 0
+		)
 		.sort(
 			(a, b) =>
 				cardPriorityRank(b.card) - cardPriorityRank(a.card) ||

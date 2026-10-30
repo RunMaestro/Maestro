@@ -16,6 +16,7 @@ import { getClaudeTokenMode } from '../../../shared/claudeTokenMode';
 import { normalizeAdditionalDirectories } from '../../../shared/additionalDirectories';
 import { formatTokensCompact } from '../../../shared/formatters';
 import { getActiveTab } from '../../utils/tabHelpers';
+import { useSettingsStore } from '../../stores/settingsStore';
 import { useSessionStore, selectSessionById } from '../../stores/sessionStore';
 import {
 	resolveContextWindow,
@@ -96,6 +97,7 @@ export function EditAgentModal({
 	const [retryOnTokenExhaustion, setRetryOnTokenExhaustion] = useState(true);
 	// Board worker pool opt-in (Board Phase 6). Default OFF: an agent is never a
 	// board worker unless explicitly enabled here.
+	const boardEnabled = useSettingsStore((state) => state.encoreFeatures.board);
 	const [boardWorker, setBoardWorker] = useState(false);
 	// Codex automatic usage resets. Defaults OFF - see `codexAutoResetOnExhaustion`
 	// on Session for why this one does NOT follow the resilience flags' default-on
@@ -1035,24 +1037,26 @@ export function EditAgentModal({
 
 				{/* Board worker pool opt-in (Board Phase 6). Default OFF so an agent is
 				    never auto-assigned board work unless explicitly enabled. */}
-				<label
-					className="flex items-start gap-2 cursor-pointer"
-					style={{ color: theme.colors.textMain }}
-				>
-					<input
-						type="checkbox"
-						className="mt-0.5"
-						checked={boardWorker}
-						onChange={(e) => setBoardWorker(e.target.checked)}
-					/>
-					<span className="text-xs">
-						<span className="font-bold">Board worker</span>
-						<span className="block opacity-70">
-							Let the Board auto-assign role-only cards to this agent when it is free. Cards can
-							still pin this agent by name regardless of this setting.
+				{boardEnabled && (
+					<label
+						className="flex items-start gap-2 cursor-pointer"
+						style={{ color: theme.colors.textMain }}
+					>
+						<input
+							type="checkbox"
+							className="mt-0.5"
+							checked={boardWorker}
+							onChange={(e) => setBoardWorker(e.target.checked)}
+						/>
+						<span className="text-xs">
+							<span className="font-bold">Board worker</span>
+							<span className="block opacity-70">
+								Let the Board auto-assign role-only cards to this agent when it is free. Cards can
+								still pin this agent by name regardless of this setting.
+							</span>
 						</span>
-					</span>
-				</label>
+					</label>
+				)}
 				{/* Working Directory */}
 				<div>
 					<FormInput

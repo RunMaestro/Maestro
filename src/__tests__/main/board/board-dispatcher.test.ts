@@ -1238,3 +1238,30 @@ describe('worktree metadata (Phase 4)', () => {
 		]);
 	});
 });
+
+describe('ready dependency revalidation', () => {
+	it.each(['legacy', 'pool'])(
+		'%s waits when a completed parent regresses, then dispatches after approval',
+		(mode) => {
+			const parent = card({ id: 'A', status: 'done' });
+			const child = card({ id: 'B', parents: ['A'] });
+			const state = board([parent, child]);
+			promoteEligibleCards(state, NOW);
+			expect(child.status).toBe('ready');
+			parent.status = 'review';
+			const claim = () =>
+				mode === 'legacy'
+					? claimReadyCards(state, 1, NOW)
+					: claimReadyCardsPooled(state, 1, NOW, () => ({
+							kind: 'assigned',
+							agentId: 'worker',
+							overrides: {},
+						})).claimed;
+			expect(claim()).toHaveLength(0);
+			expect(child.runs).toBeUndefined();
+			parent.status = 'done';
+			expect(claim()).toHaveLength(1);
+			expect(child.status).toBe('running');
+		}
+	);
+});

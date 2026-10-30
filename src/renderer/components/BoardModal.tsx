@@ -205,6 +205,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 		[draft]
 	);
 
+	const loadGenerationRef = useRef(0);
 	const selectedBoardIdRef = useRef<string | null>(null);
 	selectedBoardIdRef.current = selectedBoardId;
 
@@ -217,6 +218,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 	// assignees. Reused by the push listener and by explicit refresh.
 	const load = useCallback(
 		async (showSpinner = true) => {
+			const generation = ++loadGenerationRef.current;
 			if (!projectRoot) {
 				setBoards([]);
 				setProfiles([]);
@@ -229,6 +231,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 					window.maestro.board.list(projectRoot),
 					window.maestro.profiles.list(projectRoot),
 				]);
+				if (generation !== loadGenerationRef.current) return;
 				setProfiles(profileList);
 				setBoards(boardList);
 				// Keep the currently-open board if it still exists, else the one this
@@ -242,6 +245,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 					null;
 				setSelectedBoardId(next?.id ?? null);
 			} catch (err) {
+				if (generation !== loadGenerationRef.current) return;
 				logger.error(`Failed to load board: ${String(err)}`);
 				if (showSpinner) {
 					// A corrupt board.yaml / profiles.yaml now fails closed in the main
@@ -258,7 +262,7 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 					});
 				}
 			} finally {
-				if (showSpinner) setLoading(false);
+				if (generation === loadGenerationRef.current) setLoading(false);
 			}
 		},
 		[projectRoot]
@@ -266,6 +270,9 @@ export function BoardModal({ theme, onClose }: BoardModalProps) {
 
 	useEffect(() => {
 		void load(true);
+		return () => {
+			loadGenerationRef.current++;
+		};
 	}, [load]);
 
 	// Remember the selection so reopening the Board lands on the same one.

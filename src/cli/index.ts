@@ -1554,7 +1554,9 @@ cuePipeline
 // Mirrors the board:* IPC surface via the same Electron-free storage module the
 // desktop uses. `board tick` runs one dispatcher pass (promote / claim / spawn /
 // apply) reusing the Phase 3 pure helpers + the existing CLI spawn path.
-const board = program.command('board').description('Manage and dispatch the Maestro Board');
+const board = encoreCommand(program, 'board', 'board', encoreFlags).description(
+	'Manage and dispatch the Maestro Board'
+);
 
 board
 	.command('list')
@@ -1681,7 +1683,9 @@ board
 
 // Profile commands - manage Agent Profiles (.maestro/profiles.yaml), mirroring
 // the profiles:* IPC surface via the same Electron-free storage module.
-const profile = program.command('profile').description('Manage Agent Profiles');
+const profile = encoreCommand(program, 'profile', 'board', encoreFlags).description(
+	'Manage Agent Profiles'
+);
 
 profile
 	.command('list')

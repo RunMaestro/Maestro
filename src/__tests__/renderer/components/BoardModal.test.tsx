@@ -7,7 +7,7 @@ import { LayerStackProvider } from '../../../renderer/contexts/LayerStackContext
  * a dependency cycle with an inline error (never calling the persist IPC).
  */
 
-import { fireEvent, render, screen, waitFor, cleanup, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, cleanup, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BoardModal } from '../../../renderer/components/BoardModal';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
@@ -1245,5 +1245,29 @@ describe('BoardModal profile refresh during edit (G1 interplay)', () => {
 		expect(await screen.findByRole('option', { name: 'Implementer' })).toBeInTheDocument();
 		// ...and the in-progress title edit is untouched.
 		expect(screen.getByPlaceholderText('e.g. Design the schema')).toHaveValue('Survives refresh');
+	});
+});
+
+describe('BoardModal overlapping refreshes', () => {
+	it('ignores an older response arriving after the current board', async () => {
+		installApis([{ id: 'b1', name: 'Initial board', cards: [] }]);
+		render(<BoardModal theme={mockTheme} onClose={vi.fn()} />);
+		await screen.findByRole('option', { name: 'Initial board' });
+		let older!: (value: Board[]) => void;
+		boardApi.list.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					older = resolve;
+				})
+		);
+		act(() => emitBoardChanged());
+		boardApi.list.mockResolvedValueOnce([{ id: 'b1', name: 'Current board', cards: [] }]);
+		act(() => emitBoardChanged());
+		await screen.findByRole('option', { name: 'Current board' });
+		await act(async () => {
+			older([{ id: 'b1', name: 'Stale board', cards: [] }]);
+		});
+		expect(screen.queryByText('Stale board')).not.toBeInTheDocument();
+		expect(screen.getByRole('option', { name: 'Current board' })).toBeInTheDocument();
 	});
 });

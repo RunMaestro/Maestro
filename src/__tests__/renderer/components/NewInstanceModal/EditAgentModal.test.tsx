@@ -11,6 +11,7 @@ vi.mock('../../../../renderer/services/providerTranslation', () => ({
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { EditAgentModal } from '../../../../renderer/components/NewInstanceModal/EditAgentModal';
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 import { useSessionStore } from '../../../../renderer/stores/sessionStore';
 import type { Theme, Session, AgentConfig } from '../../../../renderer/types';
 
@@ -135,6 +136,25 @@ describe('EditAgentModal', () => {
 			size: 0,
 			mtimeMs: 0,
 		});
+	});
+
+	it('hides the Board worker control until Board is enabled', async () => {
+		const flags = useSettingsStore.getState().encoreFeatures;
+		useSettingsStore.setState({ encoreFeatures: { ...flags, board: false } });
+		render(
+			<EditAgentModal
+				isOpen
+				onClose={onClose}
+				onSave={onSave}
+				theme={theme}
+				session={createSession({ boardWorker: true })}
+				existingSessions={[]}
+			/>
+		);
+		expect(screen.queryByText('Board worker')).not.toBeInTheDocument();
+		act(() => useSettingsStore.setState({ encoreFeatures: { ...flags, board: true } }));
+		expect(await screen.findByRole('checkbox', { name: /Board worker/ })).toBeChecked();
+		act(() => useSettingsStore.setState({ encoreFeatures: flags }));
 	});
 
 	it('should render null when isOpen is false', () => {
