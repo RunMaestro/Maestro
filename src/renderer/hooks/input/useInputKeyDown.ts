@@ -35,6 +35,8 @@ import {
 	handleComposerPickerKey,
 	handleComposerSendKey,
 	isImeComposing,
+	PICKER_KEYS,
+	yieldKeyToIme,
 } from './composerKeyDown';
 import { useEventListener } from '../utils/useEventListener';
 import { STEER_SEND_EVENT, steerNewestQueuedMessage } from '../../services/chatSteering';
@@ -56,6 +58,22 @@ export const FORCED_PARALLEL_SEND_EVENT = 'maestro:forcedParallelSend';
  * as {@link FORCED_PARALLEL_SEND_EVENT}, because the composer owns the draft.
  */
 export const HOLD_SEND_EVENT = 'maestro:holdSend';
+
+/** Every key the command proposal card answers with (see the card branch). */
+const AI_COMMAND_CARD_KEYS: ReadonlySet<string> = new Set([
+	'Enter',
+	'Escape',
+	'ArrowLeft',
+	'ArrowRight',
+	'Backspace',
+	'y',
+	'Y',
+	'n',
+	'N',
+]);
+
+/** Keys the branches after the send rules act on: history recall and the Tab trigger. */
+const TRAILING_KEYS: ReadonlySet<string> = new Set(['ArrowUp', 'Tab']);
 
 // ============================================================================
 // Dependencies interface
@@ -279,6 +297,9 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 					? getAiCommandEntry(activeSession.id, activeSession.activeTabId)
 					: undefined;
 			if (aiCommandEntry && activeSession) {
+				// Mid-composition the key is the IME's: it never answers the card.
+				// The textarea is readOnly while a card shows, so this is defence.
+				if (yieldKeyToIme(e, AI_COMMAND_CARD_KEYS)) return;
 				const entryKey = aiCommandKey(aiCommandEntry.sessionId, aiCommandEntry.tabId);
 				const decline = () => {
 					// The request text comes back so the user can refine it. Declining is
@@ -382,6 +403,9 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 
 			// Handle tab completion dropdown
 			if (tabCompletionOpen && isShellInput) {
+				// Mid-composition the IME owns these keys; the dropdown stays open
+				// and answers them again once the composition ends.
+				if (yieldKeyToIme(e, PICKER_KEYS)) return;
 				if (e.key === 'ArrowDown') {
 					e.preventDefault();
 					const newIndex = Math.min(
@@ -490,6 +514,8 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 
 			// Handle slash command autocomplete
 			if (slashCommandOpen) {
+				// Same as the tab completion dropdown above.
+				if (yieldKeyToIme(e, PICKER_KEYS)) return;
 				const isTerminalMode = activeSession?.inputMode === 'terminal';
 				const query = inputValue.toLowerCase().replace(/^\//, '');
 				const filteredCommands = filterSlashCommands(allSlashCommands, query, !!isTerminalMode);
@@ -566,6 +592,11 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 			) {
 				return;
 			}
+
+			// Mid-composition the IME moves between candidates with ArrowUp and
+			// Tab, so neither opens history or completion, and Tab is not
+			// prevented (which would take it from the input method).
+			if (yieldKeyToIme(e, TRAILING_KEYS)) return;
 
 			if (e.key === 'ArrowUp') {
 				if (activeSession?.inputMode === 'terminal') {
