@@ -264,6 +264,16 @@ describe('InputArea', () => {
 			expect(screen.getByRole('textbox')).toBeInTheDocument();
 		});
 
+		// Structure guard for the shared ComposerTextarea (jsdom does no layout): its
+		// root must sit directly in the bordered column box, which stretches it to
+		// full width. A wrapper row in between shrinks it to its intrinsic width.
+		it("mounts the textarea's root directly in the bordered composer box", () => {
+			render(<InputArea {...createDefaultProps()} />);
+			const root = screen.getByRole('textbox').parentElement!;
+			expect(root).toHaveClass('relative', 'flex', 'items-start');
+			expect(root.parentElement).toHaveClass('border', 'rounded-lg', 'flex', 'flex-col');
+		});
+
 		it('uses native textarea text when the AI draft has no recognized mention', () => {
 			const props = createDefaultProps({ inputValue: 'plain text with unknown @todo token' });
 			const { container } = render(<InputArea {...props} />);

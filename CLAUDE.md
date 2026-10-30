@@ -273,6 +273,7 @@ Keep rationale OUT of this list. `npm run docs:verify` fails when an index line 
 - **Trimming a text paste in a composer:** `applyTrimmedTextPaste(e, currentValue, setValue)` / `clipboardHasImage()` in `src/renderer/components/ChatComposer/pasteTrim.ts`.
 - **Composer keys both chat composers share (Cmd+F, `@` picker, Enter / Cmd+Enter, Escape):** `handleComposerFindKey()`, `handleComposerPickerKey()`, `handleComposerSendKey()` in `src/renderer/hooks/input/composerKeyDown.ts`
 - **Which optional controls a composer toolbar offers:** `ComposerCapabilities`, `deriveAiComposerCapabilities()`, `aiCanAttachImages()`, `GROUP_CHAT_COMPOSER_CAPABILITIES` in `src/renderer/components/ChatComposer/capabilities.ts`
+- **A chat composer's textarea with live `@mention` chips:** `<ComposerTextarea>` in `src/renderer/components/ChatComposer/ComposerTextarea.tsx`
 - **Shell tab completion:** `useTabCompletion()` in `src/renderer/hooks/input/useTabCompletion.ts` (terminal composer and command mode)
 - **Revealing output the user asked for, past a paused auto-scroll:** `requestTranscriptScrollToBottom(sessionId, tabId)` in `src/renderer/services/transcriptScroll.ts`
 - **Appending to a transcript entry:** `canAppendToLogEntry(entry, source)` / `isSelfContainedCard(entry)` in `src/renderer/utils/logEntries.ts`
