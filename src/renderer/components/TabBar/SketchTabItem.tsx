@@ -9,6 +9,7 @@ import { getTabKindColor } from './tabBarUtils';
 import { getSketchTabLabel } from '../../utils/tabHelpers';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { ShortcutHint, shortcutSuffix } from '../ui/ShortcutHint';
+import { sketchAgentWorkLabel, useSketchAgentWork } from '../SketchBook/useSketchAgentWork';
 
 export interface SketchTabItemProps {
 	tab: SketchTab;
@@ -46,7 +47,8 @@ const MENU_ITEM_HOVER = 'hover:bg-white/10';
 /**
  * A Sketch Book tab chip. Same shell as {@link BrowserTabItem} (hover or
  * long-press overlay, drag to reorder, middle-click close) without the
- * page-content actions a sketch does not have.
+ * page-content actions a sketch does not have. While an agent works on the
+ * sketch it shows the AI tab's pulsing busy dot (`useSketchAgentWork()`).
  */
 export const SketchTabItem = memo(function SketchTabItem({
 	tab,
@@ -93,6 +95,8 @@ export const SketchTabItem = memo(function SketchTabItem({
 	const tabShortcuts = useSettingsStore((s) => s.tabShortcuts);
 	// The same title the tiled pane bar shows, so the two never disagree.
 	const label = getSketchTabLabel(tab);
+	const agentWork = useSketchAgentWork(tab.sketchId);
+	const working = agentWork ? sketchAgentWorkLabel(agentWork) : null;
 	const hoverBgColor = theme.mode === 'light' ? 'rgba(0, 0, 0, 0.06)' : 'rgba(255, 255, 255, 0.08)';
 
 	const tabStyle = useMemo(
@@ -165,7 +169,7 @@ export const SketchTabItem = memo(function SketchTabItem({
 				${isDragOver ? 'ring-2 ring-inset' : ''}
 			`}
 			style={tabStyle}
-			title={label}
+			title={working ? `${label} (${working})` : label}
 			onClick={handleTabSelect}
 			onDoubleClick={() => onRename?.(tab.id)}
 			onFocus={handleMouseEnter}
@@ -210,6 +214,16 @@ export const SketchTabItem = memo(function SketchTabItem({
 			>
 				{label}
 			</span>
+
+			{working && (
+				<div
+					className="w-2 h-2 rounded-full shrink-0 animate-pulse"
+					style={{ backgroundColor: theme.colors.warning }}
+					role="status"
+					aria-label={working}
+					data-testid="sketch-tab-working"
+				/>
+			)}
 
 			{(isHovered || isActive) && (
 				<button

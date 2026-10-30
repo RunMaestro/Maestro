@@ -14,6 +14,7 @@ import { ipcRenderer } from 'electron';
 import type { SaveToProjectOptions } from '../sketch/sketch-store';
 import type {
 	OpenedSketch,
+	SketchAgentActivity,
 	SketchMintedLink,
 	SketchPresenceChange,
 	SketchRendererRequest,
@@ -64,6 +65,9 @@ const BOT_POLICY_CHANGED_CHANNEL = 'sketch:botPolicyChanged';
 
 /** Matches `SKETCH_PRESENCE_CHANNEL` in `src/main/sketch/sketch-presence.ts`. */
 const PRESENCE_CHANNEL = 'sketch:presence';
+
+/** Matches `SKETCH_AGENT_ACTIVITY_CHANNEL` in `src/main/sketch/sketch-mcp-bridge.ts`. */
+const AGENT_ACTIVITY_CHANNEL = 'sketch:agentActivity';
 
 /** Creates the Sketch Book API object for contextBridge exposure. */
 export function createSketchApi() {
@@ -192,6 +196,12 @@ export function createSketchApi() {
 			const handler = (_: unknown, change: SketchPresenceChange) => callback(change);
 			ipcRenderer.on(PRESENCE_CHANNEL, handler);
 			return () => ipcRenderer.removeListener(PRESENCE_CHANNEL, handler);
+		},
+		/** An agent called a sketch tool on one sketch. Returns the unsubscribe. */
+		onAgentActivity: (callback: (activity: SketchAgentActivity) => void): (() => void) => {
+			const handler = (_: unknown, activity: SketchAgentActivity) => callback(activity);
+			ipcRenderer.on(AGENT_ACTIVITY_CHANNEL, handler);
+			return () => ipcRenderer.removeListener(AGENT_ACTIVITY_CHANNEL, handler);
 		},
 		/** The room's policy and whether B2 may be turned on (spec section 5). */
 		botPolicyStatus: (sketchId: string): Promise<SketchBotPolicyStatus> =>

@@ -1,6 +1,7 @@
 /**
  * Maestro's controls inside the Sketch Book canvas (SketchCanvasChrome):
- * Collaborate at the top right; the screening badge at the footer center and
+ * Collaborate at the top right, with the agent working pill beside it while
+ * an agent works on the sketch; the screening badge at the footer center and
  * Library in the footer beside Help.
  */
 
@@ -46,6 +47,7 @@ const FakeSidebar = {
 function chromeWith(overrides: Partial<SketchCanvasChrome> = {}): SketchCanvasChrome {
 	return {
 		collaborate: { open: false, live: false, shortcut: '⌘ ⇧ C', onToggle: vi.fn() },
+		working: null,
 		...overrides,
 	};
 }
@@ -108,6 +110,21 @@ describe('SketchTopRightUI', () => {
 		const collaborate = screen.getByTestId('sketch-collaborate-button');
 		expect(collaborate.className).toMatch(/\bactive\b/);
 		expect(collaborate.getAttribute('aria-pressed')).toBe('true');
+	});
+
+	it('shows no working pill while no agent works on the sketch', () => {
+		render(<SketchTopRightUI chrome={chromeWith()} />);
+		expect(screen.queryByTestId('sketch-agent-working')).toBeNull();
+	});
+
+	it('shows the working pill before Collaborate as a status, not a control', () => {
+		render(<SketchTopRightUI chrome={chromeWith({ working: 'Ada is drawing' })} />);
+
+		const pill = screen.getByTestId('sketch-agent-working');
+		expect(pill.getAttribute('role')).toBe('status');
+		expect(pill.textContent).toBe('Ada is drawing');
+		expect(pill.nextElementSibling).toBe(screen.getByTestId('sketch-collaborate-button'));
+		expect(screen.getAllByRole('button')).toHaveLength(1);
 	});
 });
 

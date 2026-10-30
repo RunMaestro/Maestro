@@ -101,15 +101,15 @@ describe('SearchPopover Sketch Books row', () => {
 		useSettingsStore.setState({ showTabCountBadge: true });
 	});
 
-	it("opens this agent's sketches from the bottom of the menu", () => {
+	it('opens every Sketch Book from the bottom of the menu', () => {
 		const onShowSketchBooks = vi.fn();
 		setup({ onShowSketchBooks });
 		fireEvent.click(screen.getByTitle('Search… (7 open tabs)'));
 
 		const buttons = screen.getAllByRole('button');
-		expect(buttons[buttons.length - 1]).toHaveTextContent('See Sketches (this agent)');
+		expect(buttons[buttons.length - 1]).toHaveTextContent('See All Sketch Books');
 
-		fireEvent.click(screen.getByText('See Sketches (this agent)'));
+		fireEvent.click(screen.getByText('See All Sketch Books'));
 		expect(onShowSketchBooks).toHaveBeenCalledTimes(1);
 		expect(screen.queryByText('Search Tabs')).not.toBeInTheDocument();
 	});
@@ -118,6 +118,6 @@ describe('SearchPopover Sketch Books row', () => {
 		setup();
 		fireEvent.click(screen.getByTitle('Search… (7 open tabs)'));
 		expect(screen.getByText('See All Snoozed Tabs')).toBeInTheDocument();
-		expect(screen.queryByText('See Sketches (this agent)')).not.toBeInTheDocument();
+		expect(screen.queryByText('See All Sketch Books')).not.toBeInTheDocument();
 	});
 });

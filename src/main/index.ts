@@ -209,7 +209,11 @@ import {
 } from './ipc/handlers';
 import { setupIpcHandlers } from './ipc/bootstrap';
 import { stopCoworkingBridge } from './coworking/coworking-bridge';
-import { startSketchMcpBridge, stopSketchMcpBridge } from './sketch/sketch-mcp-bridge';
+import {
+	SKETCH_AGENT_ACTIVITY_CHANNEL,
+	startSketchMcpBridge,
+	stopSketchMcpBridge,
+} from './sketch/sketch-mcp-bridge';
 import { getSketchToolService } from './sketch/sketch-tools';
 import { syncSketchMcpServerOff, syncSketchMcpServerOn } from './sketch/sketch-mcp-install';
 import { refreshSketchCloudScreening } from './sketch/sketch-cloud-consent';
@@ -2067,6 +2071,8 @@ app
 					void startSketchMcpBridge({
 						getProcessManager: () => processManager,
 						tools: getSketchToolService(),
+						// Every window shows the agent working on the sketch it calls on.
+						onToolCall: (activity) => safeSend(SKETCH_AGENT_ACTIVITY_CHANNEL, activity),
 					});
 					void syncSketchMcpServerOn();
 				},

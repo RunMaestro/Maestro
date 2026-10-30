@@ -90,6 +90,11 @@ export interface MarkdownProps {
 	 * Absent leaves shell fences without a Run button.
 	 */
 	commandRun?: { sessionId: string; tabId: string };
+	/**
+	 * Chat preset only. Draw a placeholder instead of loading any image, for text
+	 * from someone outside this computer (a Sketch Book guest).
+	 */
+	blockImages?: boolean;
 
 	// --- Document preset ---
 	/** Render YAML frontmatter as a table. Defaults to true for document. */
@@ -139,6 +144,7 @@ export const Markdown = memo(function Markdown({
 	codexDirectives = false,
 	codexFollowup,
 	commandRun,
+	blockImages = false,
 	frontmatter = true,
 	imageRenderer,
 	customLanguageRenderers,
@@ -268,6 +274,7 @@ export const Markdown = memo(function Markdown({
 						setFileMenu({ x: e.clientX, y: e.clientY, filePath: absPath, fileName }),
 					codexFollowup: chatFollowup,
 					commandRun: chatCommandRun,
+					blockImages,
 				});
 			case 'release-notes':
 				return createReleaseNotesMarkdownComponents(theme);
@@ -307,6 +314,7 @@ export const Markdown = memo(function Markdown({
 		codeBlockStyle,
 		chatFollowup,
 		chatCommandRun,
+		blockImages,
 	]);
 
 	// Memoize the ReactMarkdown element: react-markdown re-runs the full remark+

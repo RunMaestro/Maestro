@@ -47,7 +47,7 @@ async function openWith(initial: SketchScene) {
 }
 
 beforeEach(() => {
-	useSketchSessionStore.setState({ sessions: {} });
+	useSketchSessionStore.setState({ sessions: {}, agentActivity: {} });
 	sketchApi.readScene.mockReset();
 	sketchApi.writeScene.mockReset().mockResolvedValue(undefined);
 	(window.maestro as unknown as { sketch: typeof sketchApi }).sketch = sketchApi;
@@ -432,6 +432,31 @@ describe('bot requests', () => {
 		store.updateSketchBotRequest(SKETCH_ID, 'nope', (entry) => ({ ...entry, status: 'running' }));
 		store.removeSketchBotRequest(SKETCH_ID, 'nope');
 		expect(session()).toBe(before);
+	});
+});
+
+describe('agent activity', () => {
+	it('keeps the latest call per sketch, before any session opens, stamped on arrival', () => {
+		const store = useSketchSessionStore.getState();
+		store.noteSketchAgentActivity({ agentId: 'a1', sketchId: SKETCH_ID, writes: false }, 10);
+		store.noteSketchAgentActivity({ agentId: 'a1', sketchId: SKETCH_ID, writes: true }, 20);
+		store.noteSketchAgentActivity({ agentId: 'a1', sketchId: 'sketch-2', writes: false }, 30);
+
+		expect(useSketchSessionStore.getState().agentActivity).toEqual({
+			[SKETCH_ID]: { agentId: 'a1', writes: true, at: 20 },
+			'sketch-2': { agentId: 'a1', writes: false, at: 30 },
+		});
+		expect(session()).toBeUndefined();
+	});
+
+	it('forgets a deleted sketch with its session', async () => {
+		await openWith(scene());
+		const store = useSketchSessionStore.getState();
+		store.noteSketchAgentActivity({ agentId: 'a1', sketchId: SKETCH_ID, writes: true }, 5);
+		store.dropSketchSession(SKETCH_ID);
+
+		expect(session()).toBeUndefined();
+		expect(useSketchSessionStore.getState().agentActivity[SKETCH_ID]).toBeUndefined();
 	});
 });
 

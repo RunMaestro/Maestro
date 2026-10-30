@@ -33,9 +33,9 @@ Closing a Sketch tab never deletes the drawing. **Reopen Closed Tab** (`Cmd+Shif
 | Keyboard        | `Opt+Cmd+Shift+K` (macOS) or `Alt+Ctrl+Shift+K` (Windows and Linux)                       |
 | Command palette | **Sketch Books**                                                                          |
 | Menu            | **Sketch Books** in the hamburger menu of the Left Bar, or **File** > **Sketch Books...** |
-| Tab bar         | The search (magnifier) menu, then **See Sketches (this agent)**                           |
+| Tab bar         | The search (magnifier) menu, then **See All Sketch Books**                                |
 
-The keyboard, palette and menus list every sketch on this computer across all agents, newest first. The tab bar entry lists only the current agent's sketches, both the ones open in its tabs and the closed ones. Type to search by sketch name, agent name, or id. Each row shows the owning agent, when the sketch was made, and whether it is **Open** in a tab or **Shared**.
+Every way in lists every sketch on this computer across all agents, newest first, both the ones open in tabs and the closed ones. Type to search by sketch name, agent name, or id. Each row shows the owning agent, when the sketch was made, and whether it is **Open** in a tab or **Shared**.
 
 | Action | How                                       | Notes                                                                                      |
 | ------ | ----------------------------------------- | ------------------------------------------------------------------------------------------ |
@@ -100,7 +100,7 @@ When an agent runs `share`, `unshare`, `link`, `reset-link`, `revoke-link`, or `
 
 Type `@bot` (or `@` and the agent's name) in the room chat to ask the agent for something. The agent answers in the chat and draws on the board.
 
-You chat from the **Chat** tab of the Collaborate panel. The panel opens on it when the sketch has a room or the agent has posted, and again whenever a guest request or a held reply waits on you; messages that arrive while another tab shows are counted on the **Chat** tab. It ends in a message box: **Enter** sends, **Shift+Enter** starts a new line. A message that starts with `@bot` asks the agent; anything else goes to the room for everyone to read. On a sketch you have not shared, every message asks the agent.
+You chat from the **Chat** tab of the Collaborate panel. The panel opens on it when the sketch has a room or the agent has posted, and again whenever a guest request or a held reply waits on you; messages that arrive while another tab shows are counted on the **Chat** tab. It ends in a message box: **Enter** sends, **Shift+Enter** starts a new line. A message that starts with `@bot` asks the agent; anything else goes to the room for everyone to read. On a sketch you have not shared, every message asks the agent. Messages render as Markdown, like the rest of Maestro's chats. Images in a guest's message do not load: a placeholder shows where each one would be, so a guest cannot learn your address or point Maestro at a file on your computer.
 
 ```bash
 maestro-cli sketch chat <sketchId> --last 10            # read the chat

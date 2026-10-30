@@ -3,9 +3,11 @@
  * holds what the agent posts with `sketch_chat_post` (T12), the room's chat
  * as the bot relay mirrors it (`sketchBotRelay.ts`), and the conductor's own
  * `@bot` messages and their local replies. Names come from the posting actor,
- * never from the text. Bot replies the outbound screen holds wait at the
- * bottom with their "Publish anyway" chip (`SketchHeldReplyChip`), after the
- * guests' requests waiting on Run or Deny (`SketchApprovalChip`, B2).
+ * never from the text. Every message renders as chat markdown; a guest's
+ * images stay placeholders (`blockImages`). Bot replies the outbound screen
+ * holds wait at the bottom with their "Publish anyway" chip
+ * (`SketchHeldReplyChip`), after the guests' requests waiting on Run or Deny
+ * (`SketchApprovalChip`, B2).
  *
  * A conductor message whose turn ran restricted because a guest edited the
  * board carries "Run with full access" once that turn is over (Q2). It runs
@@ -24,6 +26,7 @@ import { formatRelativeTime } from '../../../shared/formatters';
 import { useStickToBottom } from '../../hooks/ui/useStickToBottom';
 import type { SketchBotRequest, SketchChatMessage } from '../../stores/sketchSessionStore';
 import { HeaderActionButton } from '../ui/HeaderActionButton';
+import { Markdown } from '../Markdown';
 import { SketchApprovalChip } from './SketchApprovalChip';
 import { SketchHeldReplyChip } from './SketchHeldReplyChip';
 import { SketchChatComposer } from './SketchChatComposer';
@@ -110,11 +113,16 @@ export function SketchChatPane({
 							</span>
 							<span style={{ color: theme.colors.textDim }}>{formatRelativeTime(message.ts)}</span>
 						</div>
-						<div
-							className="text-sm whitespace-pre-wrap break-words select-text"
-							style={{ color: theme.colors.textMain }}
-						>
-							{message.text}
+						<div className="text-sm select-text">
+							<Markdown
+								preset="chat"
+								theme={theme}
+								content={message.text}
+								className="text-[inherit] break-words"
+								chatLineBreaks
+								chatMath
+								blockImages={message.actor.kind === 'guest'}
+							/>
 						</div>
 						{message.request && escalatable.has(message.id) && (
 							<EscalateControl

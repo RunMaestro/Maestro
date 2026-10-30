@@ -43,6 +43,14 @@ export const SKETCH_TOOL_NAMES = [
 
 export type SketchToolName = (typeof SKETCH_TOOL_NAMES)[number];
 
+/** The tools that change the canvas. */
+export const SKETCH_CANVAS_WRITE_TOOLS: ReadonlySet<SketchToolName> = new Set([
+	'sketch_add_elements',
+	'sketch_update_elements',
+	'sketch_delete_elements',
+	'sketch_from_mermaid',
+]);
+
 export function isSketchToolName(value: unknown): value is SketchToolName {
 	return typeof value === 'string' && (SKETCH_TOOL_NAMES as readonly string[]).includes(value);
 }

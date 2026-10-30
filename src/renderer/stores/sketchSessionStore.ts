@@ -41,6 +41,12 @@
  *   bumps `externalRevision` like an agent write, but stamps nothing: the
  *   author of a remote version is the op's envelope actor, recorded by the
  *   room client, never `customData`.
+ *
+ * Beside the sessions, `agentActivity` keeps each sketch's latest agent tool
+ * call (main's `sketch:agentActivity` push), stamped with this window's clock
+ * on arrival. It is kept apart from the session because a call can arrive
+ * before any session is open. `useSketchAgentWork()` reads it with the bot
+ * requests to show that the agent is working on the sketch.
  */
 
 import { create } from 'zustand';
@@ -58,7 +64,7 @@ import {
 } from '../../shared/sketch/attribution';
 import { createKeyedWriteQueue } from '../../shared/keyedWriteQueue';
 import type { SketchBotRequestStatus } from '../../shared/sketch/bot-requests';
-import type { SketchImageApprovals } from '../../shared/sketch/commands';
+import type { SketchAgentActivity, SketchImageApprovals } from '../../shared/sketch/commands';
 import type { SketchWireElement } from '../../shared/sketch/payloads';
 import type { Screening } from '../../shared/sketch/protocol';
 import type { SketchRoomStats } from '../../shared/sketch/room-stats';
@@ -154,6 +160,15 @@ export interface SketchFocusRequest {
 	elementIds: string[];
 	/** Unique per request, so a view clears only the one it handled. */
 	nonce: number;
+}
+
+/** An agent's latest sketch tool call on one sketch, as this window received it. */
+export interface SketchAgentActivityMark {
+	agentId: string;
+	/** The call changes the canvas. */
+	writes: boolean;
+	/** This window's clock when the push arrived, comparable with a tab's `thinkingStartTime`. */
+	at: number;
 }
 
 /** The agent behind an agent write. */
@@ -304,6 +319,10 @@ export interface SketchLocalChangeResult {
 
 interface SketchSessionState {
 	sessions: Record<string, SketchSession>;
+	/** Each sketch's latest agent tool call, keyed by sketch id. */
+	agentActivity: Record<string, SketchAgentActivityMark>;
+	/** Main's `sketch:agentActivity` push arrived. `at` defaults to now. */
+	noteSketchAgentActivity: (activity: SketchAgentActivity, at?: number) => void;
 	/**
 	 * Read the sketch's scene into a session. A ready session is left alone, a
 	 * loading one is awaited (the promise settles when that read does), and a
@@ -491,6 +510,13 @@ export const useSketchSessionStore = create<SketchSessionState>((set, get) => {
 
 	return {
 		sessions: {},
+		agentActivity: {},
+
+		noteSketchAgentActivity: ({ agentId, sketchId, writes }, at = Date.now()) => {
+			set((state) => ({
+				agentActivity: { ...state.agentActivity, [sketchId]: { agentId, writes, at } },
+			}));
+		},
 
 		openSketchSession: (sketchId) => {
 			const pending = pendingOpens.get(sketchId);
@@ -716,9 +742,10 @@ export const useSketchSessionStore = create<SketchSessionState>((set, get) => {
 
 		dropSketchSession: (sketchId) => {
 			set((state) => {
-				if (!state.sessions[sketchId]) return state;
+				if (!state.sessions[sketchId] && !state.agentActivity[sketchId]) return state;
 				const { [sketchId]: _dropped, ...sessions } = state.sessions;
-				return { sessions };
+				const { [sketchId]: _activity, ...agentActivity } = state.agentActivity;
+				return { sessions, agentActivity };
 			});
 		},
 	};

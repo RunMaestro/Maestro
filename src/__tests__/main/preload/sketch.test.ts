@@ -209,6 +209,20 @@ describe('Sketch Book Preload API', () => {
 		expect(mockRemoveListener).toHaveBeenCalledWith('sketch:presence', handler);
 	});
 
+	it('listens for agent tool-call activity and stops on unsubscribe', () => {
+		const callback = vi.fn();
+		const unsubscribe = api.onAgentActivity(callback);
+
+		expect(mockOn).toHaveBeenCalledWith('sketch:agentActivity', expect.any(Function));
+		const handler = mockOn.mock.calls[0][1] as (...args: unknown[]) => void;
+		const activity = { agentId: 'agent-1', sketchId: 'sk-1', writes: true };
+		handler({}, activity);
+		expect(callback).toHaveBeenCalledWith(activity);
+
+		unsubscribe();
+		expect(mockRemoveListener).toHaveBeenCalledWith('sketch:agentActivity', handler);
+	});
+
 	it('answers on the response channel main named', () => {
 		api.sendRemoteCommandResponse('remote:sketchCommand:response:1', {
 			success: true,

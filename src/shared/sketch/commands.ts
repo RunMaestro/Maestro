@@ -248,6 +248,18 @@ export interface SketchPresenceChange {
 	reason: SketchPresenceReason;
 }
 
+/**
+ * Main's push to every window on each sketch tool call an agent makes on one
+ * sketch (`sketch:agentActivity`), before the tool runs. The window shows the
+ * agent as working on the sketch until the turn that made the call ends.
+ */
+export interface SketchAgentActivity {
+	agentId: string;
+	sketchId: string;
+	/** The call changes the canvas (add, update, delete, Mermaid). */
+	writes: boolean;
+}
+
 /** One element's version: what the room is known to hold after a snapshot upload. */
 export interface SketchElementVersion {
 	id: string;

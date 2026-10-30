@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { Image } from 'lucide-react';
 import { Spinner } from '../ui/Spinner';
+import { BlockedImage } from '../Markdown/components/BlockedImage';
 import { imageCache, resolveImagePath } from './filePreviewUtils';
 import { safeDecodeURIComponent } from '../../../shared/stringUtils';
 
@@ -176,20 +177,7 @@ export const MarkdownImage = React.memo(function MarkdownImage({
 
 	// Show placeholder for blocked remote images
 	if (!dataUrl && isRemoteUrl && !showRemoteImages) {
-		return (
-			<span
-				className="inline-flex items-center gap-2 px-3 py-2 rounded my-2"
-				style={{
-					backgroundColor: theme.colors.bgActivity,
-					border: `1px dashed ${theme.colors.border}`,
-				}}
-			>
-				<Image className="w-4 h-4" style={{ color: theme.colors.textDim }} />
-				<span className="text-xs" style={{ color: theme.colors.textDim }}>
-					Remote image blocked
-				</span>
-			</span>
-		);
+		return <BlockedImage theme={theme} label="Remote image blocked" />;
 	}
 
 	if (!dataUrl) {

@@ -39,6 +39,7 @@ import { routeQueuedAutoItem } from '../../services/autoTurn';
 import { runCrossAgentAsk } from '../../services/crossAgentAsk';
 import { runRemoteSnoozeCommand } from '../../services/snoozeActions';
 import { runRemoteSketchCommand } from '../../services/sketchRemoteCommands';
+import { useSketchSessionStore } from '../../stores/sketchSessionStore';
 import { runRemoteClosedTabCommand } from '../../services/closedTabCommands';
 import { runRemoteThroughputGaugeCommand } from '../../services/throughputGaugeCommands';
 import { runRemoteSteeringCommand } from '../../services/autoRunSteering';
@@ -1202,6 +1203,12 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			}
 		);
 
+		// An agent called a sketch tool: the Sketch tab and its chip show it
+		// working until the turn that made the call ends (`useSketchAgentWork()`).
+		const unsubscribeSketchActivity = window.maestro.sketch.onAgentActivity((activity) =>
+			useSketchSessionStore.getState().noteSketchAgentActivity(activity)
+		);
+
 		// `maestro-cli tab closed` / `tab reopen`. This window owns the agent's
 		// live closed-tab stack, so it lists and reopens through the same
 		// function Cmd+Shift+T calls. Async: a reopen answers after the tab's
@@ -1557,6 +1564,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			unsubscribeStarTab();
 			unsubscribeSnoozeCommand();
 			unsubscribeSketchCommand();
+			unsubscribeSketchActivity();
 			unsubscribeClosedTabCommand();
 			unsubscribeSummarizeContext();
 			unsubscribeMergeContext();

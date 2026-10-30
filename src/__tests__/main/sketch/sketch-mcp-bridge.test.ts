@@ -178,6 +178,33 @@ describe('sketch MCP bridge routing', () => {
 		expect(tools.sketch_read_scene).not.toHaveBeenCalled();
 	});
 
+	it('reports each checked call on a sketch before the tool runs, and nothing else', async () => {
+		const onToolCall = vi.fn();
+		const order: string[] = [];
+		onToolCall.mockImplementation(() => order.push('activity'));
+		const { call } = setup({
+			onToolCall,
+			tools: {
+				sketch_list: async () => ({}),
+				sketch_read_scene: async () => order.push('read'),
+				sketch_add_elements: async () => ({}),
+			},
+		});
+		await call('hello', { agentId: 'alpha' });
+		await call('sketch_list');
+		await call('sketch_read_scene', { sketchId: 'sk-beta' });
+		await call('sketch_from_mermaid', { sketchId: 'sk-alpha' });
+		expect(onToolCall).not.toHaveBeenCalled();
+
+		await call('sketch_read_scene', { sketchId: 'sk-alpha' });
+		await call('sketch_add_elements', { sketchId: 'sk-alpha' });
+		expect(order).toEqual(['activity', 'read', 'activity']);
+		expect(onToolCall.mock.calls).toEqual([
+			[{ agentId: 'alpha', sketchId: 'sk-alpha', writes: false }],
+			[{ agentId: 'alpha', sketchId: 'sk-alpha', writes: true }],
+		]);
+	});
+
 	it('requires a sketchId on every sketch-scoped tool', async () => {
 		const { call } = setup();
 		await call('hello', { agentId: 'alpha' });

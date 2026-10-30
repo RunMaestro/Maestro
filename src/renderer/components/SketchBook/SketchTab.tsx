@@ -46,7 +46,10 @@
  * room too (links with Copy, Reset, Revoke and Unsuspend, members with Kick
  * and Unlock, flagged elements, Reset all access). The button sits inside the
  * canvas (`SketchCanvasChrome.tsx`); the screening badge sits at the center
- * of the canvas footer, and Library moves to the footer beside Help.
+ * of the canvas footer, and Library moves to the footer beside Help. While an
+ * agent works on the sketch (a running `@bot` turn, from a guest on the web or
+ * from the conductor, or a sketch tool call in a turn still running), a
+ * working pill sits beside Collaborate (`useSketchAgentWork()`).
  * Opening a shared sketch joins its room when this
  * window has no client for it yet (`ensureSketchRoomConnected()`), which is
  * how a room comes back after a restart.
@@ -78,6 +81,7 @@ import { ExcalidrawDialogEscHost } from './ExcalidrawDialogClose';
 import { useSketchKeyboard } from './useSketchKeyboard';
 import { SketchFooter, SketchTopRightUI, type SketchCanvasChrome } from './SketchCanvasChrome';
 import { SketchChatPane } from './SketchChatPane';
+import { sketchAgentWorkLabel, useSketchAgentWork } from './useSketchAgentWork';
 import { SketchSharePanel, type CollaborateTab } from './SketchSharePanel';
 import { useElementWidth } from '../../hooks/ui/useElementWidth';
 import { SketchScreenOutageBanner, SketchScreeningBadge } from './SketchRoomScreening';
@@ -206,6 +210,8 @@ export function SketchTabView({ sketchId, theme }: SketchTabViewProps) {
 		return room && room.connection !== 'stopped' ? room.screening.server : null;
 	});
 	const roomStats = useSketchSessionStore((s) => s.sessions[sketchId]?.room?.stats ?? null);
+	const agentWork = useSketchAgentWork(sketchId);
+	const working = agentWork ? sketchAgentWorkLabel(agentWork) : null;
 	const [api, setApi] = React.useState<ExcalidrawImperativeAPI | null>(null);
 	const [canvas, setCanvas] = React.useState<HTMLDivElement | null>(null);
 	useSketchKeyboard(canvas);
@@ -246,8 +252,9 @@ export function SketchTabView({ sketchId, theme }: SketchTabViewProps) {
 				shortcut: shortcutText(COLLABORATE_SHORTCUT_KEYS),
 				onToggle: toggleCollaborate,
 			},
+			working,
 		}),
-		[collaborateOpen, roomConnection, toggleCollaborate]
+		[collaborateOpen, roomConnection, toggleCollaborate, working]
 	);
 	const badge = React.useMemo(
 		() => (roomScreening ? <SketchScreeningBadge screening={roomScreening} theme={theme} /> : null),

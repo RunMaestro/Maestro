@@ -4,7 +4,8 @@
  *
  * - Top right (`renderTopRightUI`): Collaborate, in the corner Excalidraw
  *   gives its Library button. Its panel holds sharing and the room (members,
- *   links, flagged elements).
+ *   links, flagged elements). While an agent works on the sketch, a working
+ *   pill with a spinner sits to its left (`useSketchAgentWork()`).
  * - Footer (`Footer`): the room's screening badge at the center, and Library
  *   at the right beside Excalidraw's Help button. The default Library button
  *   at the top right is hidden by `excalidrawOverrides.css`.
@@ -16,6 +17,7 @@
 
 import type React from 'react';
 import { BookOpen, UserPlus } from 'lucide-react';
+import { Spinner } from '../ui/Spinner';
 import type {
 	Footer as ExcalidrawFooter,
 	Sidebar as ExcalidrawSidebar,
@@ -32,6 +34,8 @@ export interface SketchCanvasChrome {
 		shortcut: string;
 		onToggle: () => void;
 	};
+	/** "Ada is drawing" while an agent works on the sketch, else null. */
+	working: string | null;
 }
 
 /** Lucide's stroke at Excalidraw's icon weight. */
@@ -91,18 +95,33 @@ function ChromeButton({
 }
 
 export function SketchTopRightUI({ chrome }: SketchTopRightUIProps) {
-	const { collaborate } = chrome;
+	const { collaborate, working } = chrome;
 	return (
-		<ChromeButton
-			icon={<UserPlus strokeWidth={ICON_STROKE} />}
-			label="Collaborate"
-			title={collaborate.shortcut ? `Collaborate (${collaborate.shortcut})` : 'Collaborate'}
-			ariaLabel="Collaborate on this sketch"
-			pressed={collaborate.open}
-			live={collaborate.live}
-			onClick={collaborate.onToggle}
-			testId="sketch-collaborate-button"
-		/>
+		<>
+			{working && (
+				<div
+					className="sidebar-trigger sketch-chrome-button sketch-chrome-status"
+					role="status"
+					title={working}
+					data-testid="sketch-agent-working"
+				>
+					<div>
+						<Spinner size={16} color="var(--color-primary)" ariaLabel={working} />
+					</div>
+					<div className="sidebar-trigger__label">{working}</div>
+				</div>
+			)}
+			<ChromeButton
+				icon={<UserPlus strokeWidth={ICON_STROKE} />}
+				label="Collaborate"
+				title={collaborate.shortcut ? `Collaborate (${collaborate.shortcut})` : 'Collaborate'}
+				ariaLabel="Collaborate on this sketch"
+				pressed={collaborate.open}
+				live={collaborate.live}
+				onClick={collaborate.onToggle}
+				testId="sketch-collaborate-button"
+			/>
+		</>
 	);
 }
 

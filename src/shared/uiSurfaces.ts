@@ -408,7 +408,7 @@ export const UI_SURFACES: UiSurface[] = [
 		shortcutId: 'showSketchBooks',
 		commandPalette: 'Sketch Books',
 		click: 'Sketch Books in the Left Bar hamburger menu',
-		agentClick: 'See Sketches (this agent) in the tab bar search menu',
+		agentClick: "See All Sketch Books in the tab bar search menu, then search the agent's name",
 		agentOptional: true,
 		encore: 'sketchBook',
 	},

@@ -1,7 +1,7 @@
 /**
  * SketchBooksModal - every Sketch Book on this computer, across every agent,
- * newest first, or one agent's when `agentId` is set (the tab bar search
- * menu). Both open and closed sketches are listed: the sketch store keeps a
+ * newest first, or one agent's when `agentId` is set (`maestro-cli open
+ * sketch-books --agent`). Both open and closed sketches are listed: the sketch store keeps a
  * drawing after its tab closes, so this list is the way back to it once the
  * closed-tab history has moved on.
  *

@@ -76,6 +76,7 @@
  */
 
 import type * as net from 'net';
+import type { SketchAgentActivity } from '../../shared/sketch/commands';
 import type { SketchRecord } from '../../shared/sketch/types';
 import {
 	bindHandshakeOwner,
@@ -88,12 +89,16 @@ import { logger } from '../utils/logger';
 import { captureException } from '../utils/sentry';
 import { findSketchOwnerAgent, getSketchService, type SketchOwnerAgent } from './sketch-service';
 import {
+	SKETCH_CANVAS_WRITE_TOOLS,
 	getSketchBridgeSocketPath,
 	isSketchToolName,
 	type SketchToolName,
 } from './sketch-mcp-types';
 
 const LOG_CTX = '[SketchBook][Bridge]';
+
+/** The push each sketch-scoped tool call sends to every window. Matches the preload. */
+export const SKETCH_AGENT_ACTIVITY_CHANNEL = 'sketch:agentActivity';
 
 /** Tools that act on the agent rather than on one sketch. Every other tool names one by `sketchId`. */
 const AGENT_SCOPED_TOOLS: ReadonlySet<SketchToolName> = new Set(['sketch_list', 'sketch_create']);
@@ -158,6 +163,11 @@ export interface SketchBridgeDispatcherDeps {
 	/** The sketch record with this id, or `null`. Throws while Sketch Book is off. */
 	getSketch?: (sketchId: string) => Promise<SketchRecord | null>;
 	tools?: SketchToolService;
+	/**
+	 * A checked call on one sketch is about to run, so the windows can show the
+	 * agent working on it. Not called for T1 and T2, which name no sketch.
+	 */
+	onToolCall?: (activity: SketchAgentActivity) => void;
 }
 
 export type SketchBridgeDispatcher = (
@@ -273,6 +283,13 @@ export function createSketchBridgeDispatcher(
 					`sketch bridge: ${tool} is not available yet.`
 				);
 			}
+			if (sketch) {
+				deps.onToolCall?.({
+					agentId,
+					sketchId: sketch.sketchId,
+					writes: SKETCH_CANVAS_WRITE_TOOLS.has(tool),
+				});
+			}
 			const result = await handler({ agent: local.agent, params, ...(sketch ? { sketch } : {}) });
 			return { id, result };
 		} catch (err) {
@@ -316,6 +333,8 @@ export interface SketchMcpBridgeOptions {
 	getProcessManager: () => SketchProcessLookup | null;
 	/** The tool service. Defaults to none, so every tool answers "not available". */
 	tools?: SketchToolService;
+	/** Each checked call on one sketch, before it runs (the windows' working indicator). */
+	onToolCall?: (activity: SketchAgentActivity) => void;
 }
 
 /**
@@ -334,6 +353,7 @@ export async function startSketchMcpBridge(options: SketchMcpBridgeOptions): Pro
 				return processId ? agentIdFromProcessId(processId) : null;
 			}),
 		tools: options.tools,
+		onToolCall: options.onToolCall,
 	});
 	try {
 		await bridgeServer.start();

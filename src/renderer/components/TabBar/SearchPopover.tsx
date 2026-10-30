@@ -269,7 +269,7 @@ export const SearchPopover = memo(function SearchPopover({
 								onClick={() => closeAndDo(onShowSketchBooks)}
 							>
 								<BookOpen className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
-								See Sketches (this agent)
+								See All Sketch Books
 							</button>
 						)}
 					</div>,

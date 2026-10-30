@@ -38,6 +38,12 @@
 	color: var(--icon-green-fill-color);
 }
 
+/* The agent working pill beside Collaborate: a status, not a control. */
+.excalidraw .sketch-chrome-status {
+	cursor: default;
+	color: var(--color-primary);
+}
+
 /* The footer's middle zone, split in three: an empty start, the screening
  * badge at the center, and Library at the end beside Help. */
 .excalidraw .sketch-chrome-footer {

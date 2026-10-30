@@ -16,6 +16,7 @@ import type { ExtraProps } from 'react-markdown';
 import type { Theme } from '../../types';
 import { applyReadableTextTransforms } from '../../utils/markdownConfig';
 import { LocalImage } from './components/LocalImage';
+import { BlockedImage } from './components/BlockedImage';
 import { InlineCode } from './components/InlineCode';
 import { createMarkdownLink } from './components/MarkdownLink';
 import { createShikiCodeBlock } from './components/ShikiCodeBlock';
@@ -64,6 +65,12 @@ export interface ChatMarkdownComponentsOptions {
 	 * leaves shell fences with just their copy button.
 	 */
 	commandRun?: CodeFenceCommandTarget;
+	/**
+	 * Draw a placeholder instead of loading any image. For text from someone
+	 * outside this computer (a Sketch Book guest): a remote image would tell them
+	 * this computer's address, and a local path would read a file on their say-so.
+	 */
+	blockImages?: boolean;
 }
 
 export function createChatMarkdownComponents(
@@ -82,6 +89,7 @@ export function createChatMarkdownComponents(
 		onFileContextMenu,
 		codexFollowup,
 		commandRun,
+		blockImages = false,
 	} = options;
 
 	const withReadableTransforms = (children: React.ReactNode) =>
@@ -174,6 +182,15 @@ export function createChatMarkdownComponents(
 			<h6 {...props}>{withReadableTransforms(children)}</h6>
 		),
 		img: ({ node: _node, src, alt, ...props }: JSX.IntrinsicElements['img'] & ExtraProps) => {
+			if (blockImages) {
+				return (
+					<BlockedImage
+						theme={theme}
+						label={alt ? `Image not loaded: ${alt}` : 'Image not loaded'}
+						title={typeof src === 'string' ? src : undefined}
+					/>
+				);
+			}
 			// Use LocalImage component to handle file:// URLs via IPC.
 			// Extract width from data-maestro-width attribute if present.
 			const widthStr = (props as Record<string, unknown>)['data-maestro-width'] as
