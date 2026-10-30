@@ -50,6 +50,21 @@ describe('searchableSettings', () => {
 		expect(searchSettings(query).some((s) => s.id === 'notifications-center')).toBe(true);
 	});
 
+	it.each(['autopilot', 'automatic repairs', 'supervision', 'merge approval'])(
+		'finds the separate Pianola repair permission for %s only while enabled',
+		(query) => {
+			expect(
+				searchSettings(query, [], { pianola: true }).some((s) => s.id === 'encore-pianola-auto-fix')
+			).toBe(true);
+			expect(
+				searchSettings(query, [], { pianola: false }).some(
+					(s) => s.id === 'encore-pianola-auto-fix'
+				)
+			).toBe(false);
+			expect(encoreTileForSetting('encore-pianola-auto-fix')).toBe('pianola');
+		}
+	);
+
 	describe('ALL_SEARCHABLE_SETTINGS', () => {
 		it('should contain entries from all tabs', () => {
 			const tabs = new Set(ALL_SEARCHABLE_SETTINGS.map((s) => s.tab));

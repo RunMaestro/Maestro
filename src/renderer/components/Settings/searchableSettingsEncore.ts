@@ -299,6 +299,24 @@ export const ENCORE_SETTINGS: SearchableSetting[] = [
 		],
 	},
 	{
+		id: 'encore-pianola-auto-fix',
+		tab: 'encore',
+		tabLabel: 'Plugins',
+		label: 'Automatic repairs',
+		description:
+			'Pianola supervision and bounded automatic repairs. Merge requires separate approval and is unavailable automatically.',
+		keywords: [
+			'pianola',
+			'autopilot',
+			'repair',
+			'automatic repairs',
+			'supervision',
+			'merge',
+			'approval',
+		],
+		requiresEncore: 'pianola',
+	},
+	{
 		id: 'encore-concerto',
 		tab: 'encore',
 		tabLabel: 'Plugins',

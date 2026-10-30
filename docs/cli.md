@@ -1307,6 +1307,12 @@ maestro-cli encore disable maestroCue
 
 Encore feature IDs: `directorNotes`, `usageStats`, `symphony`, `maestroCue`, `pianola`, `quickChat`, and on macOS `maestroRun`. Friendly aliases are accepted (for example `cue` for `maestroCue`, `quick-chat` for `quickChat`). Group Chat is a core feature with no Encore flag, so `group-chat` is not an alias for `symphony`.
 
+`autopilot`, `auto-pilot`, and `pilot` remain aliases for enabling Pianola. They do not grant automatic repair permission. `encore list --json` includes `pianola.mode` (`disabled`, `supervision`, or `automatic_repairs`), the saved `autoFixEnabled` permission, and `automaticMergeAvailable: false`.
+
+Automatic repairs are a separate opt-in in **Settings > Plugins > Pianola > Settings > Automatic repairs**, or via `maestro-cli settings set pianolaAutoFixEnabled true`. The setting defaults to `false` and is re-read before repair actions. Set it to `false` to revoke permission. Repair dispatches remain bounded; repair workers can change files within their existing access. Enabling repairs does not authorize merging. The current merge adapter records `skipped` and never executes a merge.
+
+Legacy hand-edited `encoreFeatures.autopilot` values no longer grant repair permission. Review the separate setting and opt in explicitly if repairs are wanted; no migration silently enables them.
+
 Gloss levels, least to most: `off` (the shipped flat look), `sheen`, `strong`, `max`. Gloss only adds highlights and shadows to the sidebars, headers, tab bar and composer, so it changes no theme color and leaves text exactly as legible. It has no effect on light themes.
 
 ### MaestroRun (macOS)

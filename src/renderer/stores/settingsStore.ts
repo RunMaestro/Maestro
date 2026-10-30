@@ -500,6 +500,7 @@ export interface SettingsStoreState
 	spellCheck: boolean;
 	userJourneyEnabled: boolean;
 	pianolaAutoWatchNewAgents: boolean;
+	pianolaAutoFixEnabled: boolean;
 }
 
 export interface SettingsStoreActions
@@ -624,6 +625,7 @@ export interface SettingsStoreActions
 	setLastSelectedPromptId: (value: string | null) => void;
 	setSpellCheck: (value: boolean) => void;
 	setUserJourneyEnabled: (value: boolean) => void;
+	setPianolaAutoFixEnabled: (value: boolean) => Promise<void>;
 	setPianolaAutoWatchNewAgents: (value: boolean) => Promise<void>;
 
 	// Async setters
@@ -888,6 +890,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		spellCheck: false,
 		userJourneyEnabled: true,
 		pianolaAutoWatchNewAgents: false,
+		pianolaAutoFixEnabled: false,
 
 		...createAnnotatorSlice(set, get, api),
 		...createWakatimeSlice(set, get, api),
@@ -1562,6 +1565,12 @@ export const useSettingsStore = create<SettingsStore>()((set, get, api) => {
 		setUserJourneyEnabled: (value) => {
 			set({ userJourneyEnabled: value });
 			window.maestro.settings.set('userJourneyEnabled', value);
+		},
+
+		setPianolaAutoFixEnabled: async (value) => {
+			const saved = await window.maestro.settings.set('pianolaAutoFixEnabled', value);
+			if (saved === false) throw new Error('Automatic repair permission was not saved');
+			set({ pianolaAutoFixEnabled: value });
 		},
 
 		setPianolaAutoWatchNewAgents: async (value) => {
@@ -2808,6 +2817,7 @@ export async function loadAllSettings(): Promise<void> {
 		// On unless explicitly switched off.
 		patch.userJourneyEnabled = allSettings['userJourneyEnabled'] !== false;
 
+		patch.pianolaAutoFixEnabled = allSettings['pianolaAutoFixEnabled'] === true;
 		patch.pianolaAutoWatchNewAgents = allSettings['pianolaAutoWatchNewAgents'] === true;
 
 		hydrateAnnotatorSettings(allSettings, patch);
@@ -3076,6 +3086,7 @@ export function getSettingsActions() {
 		setSpellCheck: state.setSpellCheck,
 		setUserJourneyEnabled: state.setUserJourneyEnabled,
 		setPianolaAutoWatchNewAgents: state.setPianolaAutoWatchNewAgents,
+		setPianolaAutoFixEnabled: state.setPianolaAutoFixEnabled,
 		setAutoRunDisabled: state.setAutoRunDisabled,
 		setDotfilesToggleHidden: state.setDotfilesToggleHidden,
 		setAutoRunInactivityTimeoutMin: state.setAutoRunInactivityTimeoutMin,
